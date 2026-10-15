@@ -20,24 +20,22 @@
 //     A second SECTION evaluates an interior RCUT2B of an OPTIM RCUT2B box:
 //     the lists are built once at the box top (detail::nn_safe_rcutmax) and
 //     the descriptors filter them at the candidate's cutoff.
-//   * A candidate whose cutoff exceeds the one-time lists (OPTIM RCUT2B box
-//     [4, 5], evaluated at 5.5, e.g. proposed by an optimiser that ignores
-//     the bounds) is evaluated with lists that cover it: its loss equals that
-//     of the same host with the box [4, 6], and the journal's DIAGNOSTICS
-//     section counts the rebuild ("Neighbour lists rebuilt").
-//   * The same with a trained host (a training DBFILE, every weight fitted
-//     by OALGO 4 with a ridge, three OPTIM dimensions): the candidate is
-//     trained, validated and differentiated on the rebuilt lists, so its
-//     loss and its analytical gradient (HPO_Host::analytical_gradient, no
-//     parameter routed to finite differences) equal those of the [4, 6]
-//     host.
-//   * A candidate whose rebuilt lists NNFinder refuses (RCUT2B 100 A on
-//     6.2 A cells: more than 10^4 image cells) fails, and the analytical
-//     gradient at that point hands every parameter to finite differences
-//     instead of differentiating the trainer on the one-time lists.
-//   * A run that reads no dataset (no training DBFILE, no --validation; the
-//     loss from PC_OBSERVABLE) has no lists to rebuild, so a candidate beyond
-//     the OPTIM box top is neither warned about nor counted as a rebuild.
+//   * The one-time lists cover every cutoff of the OPTIM box: a candidate
+//     on the box top (OPTIM RCUT2B box [4, 5], evaluated at 5) has the loss
+//     of the same host with the box [4, 6].
+//   * A candidate whose cutoff lies beyond the OPTIM box (box [4, 5],
+//     evaluated at 5.5, as an optimiser that ignores the bounds proposes)
+//     is not evaluated (owner decision, MK, 2026-10-15; box_penalty.h): its
+//     loss is the box's score of its distance, 0.5 of the box's width, no
+//     list is built for it, and the journal's DIAGNOSTICS count it ("Out-of-
+//     box points"). So with a trained host (a training DBFILE, every weight
+//     fitted by OALGO 4 with a ridge, three OPTIM dimensions): the
+//     candidate is not trained, and the analytical gradient at it hands
+//     every parameter to finite differences (it has no fit to
+//     differentiate). A candidate far beyond the box (RCUT2B 100 A on 6.2 A
+//     cells, more than 10^4 image cells) is scored the same way: NNFinder is
+//     not asked for its lists. And so in a run that reads no dataset (no
+//     training DBFILE, no --validation; the loss from PC_OBSERVABLE).
 //   * Every loss compared is a real one (finite, positive, below 1e10): a
 //     failed evaluation returns FAIL_SCORE (DBL_MAX without a FAILSCORE
 //     line), and two failures would compare equal.
@@ -45,14 +43,10 @@
 // Before the exact-image fix the original cells lose periodic images (the
 // image bound ignored the atoms' offsets inside the cell, sheared
 // representations were searched in their given basis, unwrapped atoms were
-// searched from their raw positions), and a candidate beyond the lists was
-// scored with the short lists without a word. Trained on the one-time lists
-// such a candidate fails (DescriptorsCalc refuses a list shorter than the
-// model cutoff); differentiated on them, the refusal is thrown inside the
-// OpenMP loops of compute_analytical_gradient_from_trainer (dloss_dtheta.h)
-// and terminates the process -- which is also what the refused-rebuild case
-// does before its fix. The no-dataset case fails before its fix: the rebuild
-// was counted and warned about whether or not any list was read.
+// searched from their raw positions). Before the box fix a candidate beyond
+// the box was evaluated with neighbour lists rebuilt at its cutoff (counted
+// as "Neighbour lists rebuilt"), and RCUT2B 100 failed on NNFinder's
+// refusal of its lists.
 //
 // Hidden [nn_e2e][.] like the other HPO_Host end-to-end groups: operator()
 // fills the thread-local trainer cache and the HPOLog / HPO_Host statics;
@@ -64,6 +58,7 @@
 #include <tadah/core/context.h>
 #include <tadah/core/element.h>
 #include <tadah/core/periodic_table.h>
+#include <tadah/hpo/box_penalty.h>
 #include <tadah/hpo/hpo_host.h>
 #include <tadah/hpo/hpo_log.h>
 #include <tadah/hpo/hpo_targets.h>
@@ -83,6 +78,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <optional>
 #include <sstream>
 #include <string>
@@ -569,22 +565,10 @@ std::string line_with(const std::string& text, const std::string& needle) {
     return {};
 }
 
-/* The count of DIAGNOSTICS' "Neighbour lists rebuilt" line in @p diag, or
- * -1 when it has no such line (or no count after its colon). */
-long rebuilt_count(const std::string& diag) {
-    const std::string rebuilt = line_with(diag, "Neighbour lists rebuilt");
-    const auto colon = rebuilt.find(':');
-    if (colon == std::string::npos) return -1;
-    long count = -1;
-    std::istringstream count_in(rebuilt.substr(colon + 1));
-    count_in >> count;
-    return count_in ? count : -1;
-}
-
 /* The trained hosts' potential: RCUT2B 4.5 inside the OPTIM boxes, RCUTMB 4
  * below them (the lists are built at the RCUT2B box top), and Gaussians out
- * to 5.3, so the shells between 5 and 5.5 enter the fit, the validation
- * loss and every derivative at a candidate RCUT2B of 5.5. */
+ * to 5.3, so the shells between 5 and 5.5 would enter the fit at a
+ * candidate RCUT2B of 5.5 if it were trained. */
 const Potential kTrainedPot{4.5, "2.5 3.2 3.9 4.6 5.3", "1.0 1.0 1.0 1.0 1.0",
                             4.0};
 
@@ -661,18 +645,6 @@ ParamVec trained_point(double cgrid5, double rcut2b, double sgrid5) {
     return p;
 }
 
-/* The journal line analytical_gradient writes when the gradient helper
- * could not form the gradient (it threw) and every parameter was handed to
- * finite differences (hpo_host_impl.hpp): "Analytical gradient could not
- * be formed at this point (occurrence k): <why>; ...". It read
- * "analytical_gradient: helper threw '<why>' -- routing every theta to
- * FD"; the cases check that no such line is written, so both texts are
- * looked for. Before the fix: the checks pass as well (a pin: neither line
- * is written). */
-constexpr const char* kHelperThrewToFd = "routing every theta to FD";
-constexpr const char* kGradientNotFormed =
-    "Analytical gradient could not be formed at this point";
-
 }  // namespace
 
 TEST_CASE("nn e2e: thin triclinic and unwrapped validation cells give the "
@@ -699,8 +671,9 @@ TEST_CASE("nn e2e: thin triclinic and unwrapped validation cells give the "
     }
 }
 
-TEST_CASE("nn e2e: a candidate cutoff beyond the neighbour lists is "
-          "evaluated with rebuilt lists", "[nn_e2e][.]")
+TEST_CASE("nn e2e: the one-time lists cover every cutoff of the OPTIM box, "
+          "and a candidate cutoff beyond the box is not evaluated",
+          "[nn_e2e][.]")
 {
     PeriodicTable::initialize();
     ScratchDir sd;
@@ -713,214 +686,132 @@ TEST_CASE("nn e2e: a candidate cutoff beyond the neighbour lists is "
     /* RCUT2B 4.5 lies inside both boxes; RCUTMB 4 below them, so the lists
      * are built at the box top. */
     const Potential pot{4.5, "2.5 3.2 3.9 4.6 5.3", "1.0 1.0 1.0 1.0 1.0", 4.0};
-    const double candidate = 5.5;
 
+    /* Pins: at the box top 5 the loss of the box [4, 5] equals that of the
+     * box [4, 6], and neither run has an out-of-box point. At 5.5 the box
+     * [4, 5] scores out_of_box_score(DBL_MAX, 0.5) -- its distance is half
+     * the box's width -- without a "Neighbour lists rebuilt" line, with
+     * DIAGNOSTICS "Out-of-box points : 1" and the WARNING "eval 1: RCUT2B[1]
+     * = 5.5 lies outside its OPTIM box [4, 5]: it is not evaluated".
+     * Before the fix: at 5.5 the box [4, 5] gave the loss of the box [4, 6]
+     * (evaluated on lists rebuilt at 5.5, "Neighbour lists rebuilt : 1"). */
     for (std::size_t m = 0; m < kMetrics.size(); ++m) {
         const std::string& metric = kMetrics[m].first;
         const std::string& line = kMetrics[m].second;
         CAPTURE(metric);
 
-        /* Box [4, 5]: lists at 5; the candidate at 5.5 is beyond them (an
-         * optimiser that ignores the bounds proposed it). */
-        std::string journal_a;
-        const double loss_a = validation_loss(
-            sd.dir, "short" + std::to_string(m), {st}, line,
-            "OPTIM RCUT2B (1) 4.0 5.0\n", candidate, pot, &journal_a);
+        std::string journal_top;
+        const double loss_top = validation_loss(
+            sd.dir, "top" + std::to_string(m), {st}, line,
+            "OPTIM RCUT2B (1) 4.0 5.0\n", 5.0, pot, &journal_top);
+        const double loss_top_long = validation_loss(
+            sd.dir, "toplong" + std::to_string(m), {st}, line,
+            "OPTIM RCUT2B (1) 4.0 6.0\n", 5.0, pot);
+        CAPTURE(loss_top, loss_top_long);
+        require_real_loss(loss_top);
+        require_real_loss(loss_top_long);
+        CHECK(loss_top == Approx(loss_top_long).epsilon(1e-12));
+        CHECK(journal_top.find("Out-of-box points") == std::string::npos);
 
-        /* Box [4, 6]: lists at 6 cover the candidate. */
-        std::string journal_b;
-        const double loss_b = validation_loss(
-            sd.dir, "long" + std::to_string(m), {st}, line,
-            "OPTIM RCUT2B (1) 4.0 6.0\n", candidate, pot, &journal_b);
-
-        CAPTURE(loss_a, loss_b);
-        require_real_loss(loss_a);
-        require_real_loss(loss_b);
-        CHECK(loss_a == Approx(loss_b).epsilon(1e-12));
-
-        /* The rebuild is counted in DIAGNOSTICS: one evaluation of one
-         * structure in one DBFILE, so the count is 1 whatever it counts. */
-        {
-            INFO(journal_a);
-            const std::string diag_a = diagnostics_section(journal_a);
-            REQUIRE_FALSE(diag_a.empty());
-            const std::string rebuilt = line_with(diag_a, "Neighbour lists rebuilt");
-            CAPTURE(rebuilt);
-            CHECK(rebuilt_count(diag_a) == 1);
-        }
-
-        /* A candidate inside the lists needs no rebuild. */
-        {
-            INFO(journal_b);
-            const std::string diag_b = diagnostics_section(journal_b);
-            REQUIRE_FALSE(diag_b.empty());
-            CHECK(diag_b.find("Neighbour lists rebuilt") == std::string::npos);
-        }
+        std::string journal_out;
+        const double loss_out = validation_loss(
+            sd.dir, "out" + std::to_string(m), {st}, line,
+            "OPTIM RCUT2B (1) 4.0 5.0\n", 5.5, pot, &journal_out);
+        CAPTURE(loss_out);
+        CHECK(loss_out ==
+              tadah::hpo::out_of_box_score(
+                  std::numeric_limits<double>::max(), 0.5));
+        INFO(journal_out);
+        const std::string diag = diagnostics_section(journal_out);
+        REQUIRE_FALSE(diag.empty());
+        CHECK(diag.find("Neighbour lists rebuilt") == std::string::npos);
+        CHECK(line_with(diag, "Out-of-box points").find(": 1 ") !=
+              std::string::npos);
+        CHECK(journal_out.find("= 5.5 lies outside its OPTIM box [4, 5]: it "
+                               "is not evaluated") != std::string::npos);
     }
 }
 
-TEST_CASE("nn e2e: a trained candidate beyond the neighbour lists gives the "
-          "loss and analytical gradient of a box that contains it",
-          "[nn_e2e][.]")
+TEST_CASE("nn e2e: a trained candidate beyond the OPTIM box is neither "
+          "trained nor differentiated", "[nn_e2e][.]")
 {
     PeriodicTable::initialize();
     ScratchDir sd;
 
     /* The fifth Gaussian at 5.1 with width 1.2 (inside their boxes) and
-     * RCUT2B 5.5: beyond the box [4, 5], inside [4, 6]. */
-    const ParamVec p = trained_point(5.1, 5.5, 1.2);
-
-    struct Eval {
-        double loss = 0.0;
-        ParamVec g;
-        std::vector<int> needs_fd;
-        std::string journal;
-    };
-    /* One evaluation, then the analytical gradient at the same point (what
-     * HYBRID asks for after the objective), on a fresh host whose RCUT2B box
-     * tops at @p rcut_top. */
-    auto evaluate = [&](const std::string& tag, double rcut_top) {
-        Eval e;
-        e.journal = with_trained_host(sd.dir, tag, rcut_top, [&](Host& host) {
-            CAPTURE(rcut_top);
-            REQUIRE_NOTHROW(e.loss = host(p));
-            CAPTURE(e.loss);
-            require_real_loss(e.loss);
-            bool ok = false;
-            REQUIRE_NOTHROW(ok = host.analytical_gradient(p, e.g, e.needs_fd));
-            REQUIRE(ok);
-        });
-        return e;
-    };
-
-    /* Box [4, 5]: one-time lists at 5, so the candidate is trained,
-     * validated and differentiated on lists rebuilt at 5.5. Before the fix
-     * the training read the one-time lists (DescriptorsCalc refuses them:
-     * FAIL_SCORE, caught by require_real_loss) and the gradient read them
-     * too (the refusal inside an OpenMP loop terminates the process). */
-    const Eval a = evaluate("short", 5.0);
-    /* Box [4, 6]: the one-time lists at 6 cover the candidate. */
-    const Eval b = evaluate("long", 6.0);
-
-    CAPTURE(a.loss, b.loss);
-    CHECK(a.loss == Approx(b.loss).epsilon(1e-12));
-
-    /* The same analytical gradient, every parameter differentiated
-     * analytically in both (none handed to finite differences). */
-    REQUIRE(a.g.size() == 3);
-    REQUIRE(b.g.size() == 3);
-    CHECK(a.needs_fd == b.needs_fd);
-    CHECK(a.needs_fd.empty());
-    double gmax = 0.0;
-    for (long i = 0; i < b.g.size(); ++i)
-        gmax = std::max(gmax, std::fabs(b.g(i)));
-    CAPTURE(gmax);
-    REQUIRE(gmax > 0.0);
-    for (long i = 0; i < a.g.size(); ++i) {
-        CAPTURE(i, a.g(i), b.g(i));
-        CHECK(std::isfinite(a.g(i)));
-        CHECK(a.g(i) == Approx(b.g(i)).epsilon(1e-10));
-    }
-
-    /* The rebuild is counted, and no gradient went to finite differences
-     * because the gradient helper threw. */
-    {
-        INFO(a.journal);
-        const std::string diag_a = diagnostics_section(a.journal);
-        REQUIRE_FALSE(diag_a.empty());
-        CAPTURE(line_with(diag_a, "Neighbour lists rebuilt"));
-        CHECK(rebuilt_count(diag_a) >= 1);
-        CHECK(a.journal.find(kHelperThrewToFd) == std::string::npos);
-        CHECK(a.journal.find(kGradientNotFormed) == std::string::npos);
-    }
-    {
-        INFO(b.journal);
-        const std::string diag_b = diagnostics_section(b.journal);
-        REQUIRE_FALSE(diag_b.empty());
-        CHECK(diag_b.find("Neighbour lists rebuilt") == std::string::npos);
-        CHECK(b.journal.find(kHelperThrewToFd) == std::string::npos);
-        CHECK(b.journal.find(kGradientNotFormed) == std::string::npos);
-    }
-}
-
-TEST_CASE("nn e2e: a candidate whose rebuilt lists are refused does not stop "
-          "the gradient", "[nn_e2e][.]")
-{
-    PeriodicTable::initialize();
-    ScratchDir sd;
-
-    /* A point inside the boxes, then the same point at RCUT2B 100 A: on the
-     * 6.2 A cells NNFinder would need (2 N + 1)^3 > 10^4 image cells (it
-     * accepts a cube only with an edge above about a tenth of the cutoff),
-     * so it refuses to rebuild the lists and the evaluation fails. */
+     * RCUT2B 5.5 (0.5 of the width beyond the box [4, 5]) or 100 (95 of it:
+     * on the 6.2 A cells NNFinder would need (2 N + 1)^3 > 10^4 image cells
+     * and refuse the lists). */
     const ParamVec inside = trained_point(5.1, 4.5, 1.2);
-    const ParamVec refused = trained_point(5.1, 100.0, 1.2);
+    struct Leg { const char* tag; double rcut2b, distance; };
+    for (const Leg& leg : {Leg{"out", 5.5, 0.5}, Leg{"far", 100.0, 95.0}}) {
+        DYNAMIC_SECTION("RCUT2B " << leg.rcut2b) {
+            const ParamVec p = trained_point(5.1, leg.rcut2b, 1.2);
+            double loss = 0.0;
+            bool ok = false;
+            ParamVec g;
+            std::vector<int> needs_fd;
+            std::string gap;
+            const std::string journal = with_trained_host(
+                sd.dir, leg.tag, 5.0, [&](Host& host) {
+                    /* An optimiser's first steps: the cached trainer is
+                     * trained at a point inside the box and differentiated
+                     * analytically. */
+                    double loss_inside = 0.0;
+                    REQUIRE_NOTHROW(loss_inside = host(inside));
+                    require_real_loss(loss_inside);
+                    ParamVec g_inside;
+                    std::vector<int> fd_inside;
+                    REQUIRE(host.analytical_gradient(inside, g_inside,
+                                                     fd_inside));
+                    REQUIRE(fd_inside.empty());
 
-    double loss_refused = 0.0;
-    bool ok = false;
-    ParamVec g;
-    std::vector<int> needs_fd;
-    const std::string journal = with_trained_host(
-        sd.dir, "refused", 5.0, [&](Host& host) {
-            /* An optimiser's first steps: the cached trainer is trained at
-             * a point inside the box and differentiated analytically. */
-            double loss_inside = 0.0;
-            REQUIRE_NOTHROW(loss_inside = host(inside));
-            CAPTURE(loss_inside);
-            require_real_loss(loss_inside);
-            ParamVec g_inside;
-            std::vector<int> fd_inside;
-            REQUIRE(host.analytical_gradient(inside, g_inside, fd_inside));
-            REQUIRE(fd_inside.empty());
-
-            /* The refused candidate fails ... */
-            REQUIRE_NOTHROW(loss_refused = host(refused));
-            CAPTURE(loss_refused);
-            REQUIRE(loss_refused > 1e10);
-
-            /* ... and HYBRID asks for the gradient at the point it has just
-             * evaluated (a FAIL_SCORE is finite). The trainer has the 100 A
-             * model; the lists it could be differentiated on do not exist.
-             * Before the fix this call used the one-time 5 A lists: the
-             * refusal of DescriptorsCalc, thrown inside an OpenMP loop of
-             * compute_analytical_gradient_from_trainer (dloss_dtheta.h),
-             * called std::terminate and this test binary aborted here. */
-            REQUIRE_NOTHROW(ok = host.analytical_gradient(refused, g,
-                                                           needs_fd));
-        });
-
-    /* The evaluation (eval 2) failed because NNFinder refused the rebuild,
-     * so the case tests what it names. */
-    {
-        INFO(journal);
-        const std::string refusal =
-            line_with(journal, "the cell is too small for the cutoff 100 A");
-        CAPTURE(refusal);
-        CHECK(refusal.find("eval 2:") != std::string::npos);
-    }
-
-    /* Every parameter is handed to finite differences: nothing is
-     * differentiated on lists shorter than the model cutoff. */
-    REQUIRE(ok);
-    REQUIRE(g.size() == 3);
-    std::vector<int> fd = needs_fd;
-    std::sort(fd.begin(), fd.end());
-    CHECK(fd == std::vector<int>{0, 1, 2});
-    for (long i = 0; i < g.size(); ++i) {
-        CAPTURE(i);
-        CHECK(std::isfinite(g(i)));
+                    REQUIRE_NOTHROW(loss = host(p));
+                    REQUIRE_NOTHROW(ok = host.analytical_gradient(p, g,
+                                                                   needs_fd));
+                    gap = host.analytical_gradient_gap();
+                });
+            /* Pins: the box's score of the distance, no training (the
+             * gradient has no fit to differentiate: every parameter is
+             * handed to finite differences, which GradientProvider replaces
+             * by the score's slope at such a point), no list asked of
+             * NNFinder, DIAGNOSTICS "Out-of-box points : 1".
+             * Before the fix: RCUT2B 5.5 was trained, validated and
+             * differentiated on lists rebuilt at 5.5 (a real loss, no
+             * parameter handed to finite differences); RCUT2B 100 failed
+             * (DBL_MAX) on NNFinder's refusal, "the cell is too small for
+             * the cutoff 100 A". */
+            CAPTURE(loss);
+            CHECK(loss == tadah::hpo::out_of_box_score(
+                              std::numeric_limits<double>::max(),
+                              leg.distance));
+            REQUIRE(ok);
+            std::vector<int> fd = needs_fd;
+            std::sort(fd.begin(), fd.end());
+            CHECK(fd == std::vector<int>{0, 1, 2});
+            CHECK(gap.find("outside the OPTIM box") != std::string::npos);
+            INFO(journal);
+            CHECK(journal.find("the cell is too small for the cutoff") ==
+                  std::string::npos);
+            const std::string diag = diagnostics_section(journal);
+            REQUIRE_FALSE(diag.empty());
+            CHECK(diag.find("Neighbour lists rebuilt") == std::string::npos);
+            CHECK(line_with(diag, "Out-of-box points").find(": 1 ") !=
+                  std::string::npos);
+        }
     }
 }
 
-TEST_CASE("nn e2e: a run that reads no dataset counts no neighbour-list "
-          "rebuild", "[nn_e2e][.]")
+TEST_CASE("nn e2e: a run that reads no dataset does not evaluate a "
+          "candidate beyond the OPTIM box either", "[nn_e2e][.]")
 {
     PeriodicTable::initialize();
     ScratchDir sd;
 
     /* No training DBFILE, no --validation, every weight pinned: the loss is
      * the cohesive energy of a bcc crystal the observable relaxes with its
-     * own neighbour lists. OPTIM RCUT2B box [4, 5], evaluated at 5.5. */
+     * own neighbour lists. OPTIM RCUT2B box [4, 5], evaluated at its top 5
+     * and at 5.5. */
     const fs::path hpo_cfg = sd.dir / "observable.hpo";
     {
         /* GRAD_STRATEGY HYBRID: an unset one resolves to ANALYTICAL with
@@ -945,42 +836,38 @@ TEST_CASE("nn e2e: a run that reads no dataset counts no neighbour-list "
     HPOTargets trg(ctx, hpo_cfg.string());
     REQUIRE_NOTHROW(validate_hpo_setup(ctx, trg, false, false));
     double model_cutoff = 0.0;
+    double loss_top = 0.0, loss_out = 0.0;
     {
         Host host(ctx, trg, /*val_cfg=*/"");
         REQUIRE(host.train_size() == 0u);
         REQUIRE(host.val_size() == 0u);
         ParamVec p(1);
-        p(0) = 5.5;
-        double loss = 0.0;
-        REQUIRE_NOTHROW(loss = host(p));
-        CHECK(std::isfinite(loss));
+        p(0) = 5.0;
+        REQUIRE_NOTHROW(loss_top = host(p));
         const auto* tr = Host::tls_trainer_for_test();
         REQUIRE(tr != nullptr);
         model_cutoff = tr->dc.neighbour_cutoff();
+        p(0) = 5.5;
+        REQUIRE_NOTHROW(loss_out = host(p));
         host.flush_remaining();
     }
     const std::string journal = j.finish();
     Host::reset_globals_for_test();
 
-    /* The candidate's model reads pairs beyond the one-time cutoff (the box
-     * top 5), so the host did reach the rebuild decision. */
-    REQUIRE(model_cutoff == 5.5);
-
-    /* Nothing was rebuilt, so nothing is counted or warned about (before
-     * the fix both said lists were rebuilt). A journal entry is one line. */
+    /* Pins: the box top is evaluated (a loss below FAILSCORE 1e8, the
+     * model's cutoff 5); 5.5 is scored out_of_box_score(1e8, 0.5), with
+     * DIAGNOSTICS "Out-of-box points : 1" and no rebuild line.
+     * Before the fix: 5.5 was evaluated (a model cutoff of 5.5, its own
+     * loss). */
+    CAPTURE(loss_top, loss_out);
+    CHECK(model_cutoff == 5.0);
+    CHECK(std::isfinite(loss_top));
+    CHECK(loss_top < 0.999e8);
+    CHECK(loss_out == tadah::hpo::out_of_box_score(1e8, 0.5));
     INFO(journal);
     const std::string diag = diagnostics_section(journal);
     REQUIRE_FALSE(diag.empty());
     CHECK(diag.find("Neighbour lists rebuilt") == std::string::npos);
-    std::string warned;
-    {
-        std::istringstream lines(journal);
-        std::string line;
-        while (warned.empty() && std::getline(lines, line))
-            if (line.find("WARNING") != std::string::npos &&
-                line.find("evaluated with lists rebuilt") != std::string::npos)
-                warned = line;
-    }
-    CAPTURE(warned);
-    CHECK(warned.empty());
+    CHECK(line_with(diag, "Out-of-box points").find(": 1 ") !=
+          std::string::npos);
 }

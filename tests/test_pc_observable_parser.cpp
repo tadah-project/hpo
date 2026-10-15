@@ -417,10 +417,11 @@ TEST_CASE("HPOTargets rejects PC_LAMMPS with gradient-based optimisers",
         std::filesystem::remove(cfg);
     }
 
-    /* CERES:LBFGS rejected (gradient-based, no special-case). */
+    /* CERES:STEEPEST_DESCENT rejected (gradient-based, no special-case;
+     * the case named CERES:LBFGS, refused since: a pin). */
     {
         auto cfg = write_temp_config(
-            std::string("OPTIMIZER\nLIB CERES\nALGO LBFGS\nMAXEVAL 1\nENDOPTIMIZER\nLOSS L2\n")
+            std::string("OPTIMIZER\nLIB CERES\nALGO STEEPEST_DESCENT\nMAXEVAL 1\nENDOPTIMIZER\nLOSS L2\n")
             + pc_lammps_line);
         CHECK_THROWS_WITH(
             tadah::hpo::HPOTargets(ctx, cfg.string()),
@@ -793,7 +794,10 @@ TEST_CASE("HPOTargets resolves an unset GRAD_STRATEGY to ANALYTICAL in the "
         CHECK(parse(plain("NLOPT", "LD_LBFGS") + observable).outer == analytical);
         CHECK(parse(plain("NLOPT", "LD_MMA", "    FTOL_REL 1e-6\n") +
                     observable).outer == analytical);
-        CHECK(parse(plain("CERES", "LBFGS") + observable).outer == analytical);
+        /* CERES:STEEPEST_DESCENT (it was CERES:LBFGS, refused since; before
+         * the fix the case passes as well, a pin) */
+        CHECK(parse(plain("CERES", "STEEPEST_DESCENT") + observable).outer ==
+              analytical);
         /* GD_MLSL_LDS's and LD_AUGLAG's default local search is LD_MMA
          * (their own points are evaluated without a gradient). */
         CHECK(parse(plain("NLOPT", "GD_MLSL_LDS") + observable).outer ==

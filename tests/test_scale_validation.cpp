@@ -101,7 +101,9 @@ TEST_CASE("scale_validation: STEP is rejected on every non-consuming backend",
         {"TADAH", "ANNEAL_PT",  "STEP_FRAC"},
         {"ASA",   "ASA",        "temperatures"},
         {"DLIB",  "BFGS",       "fd_step"},
-        {"CERES", "LBFGS",      "max_ls_iter"},
+        /* was CERES:LBFGS, refused since; before the fix the case passes
+         * as well (a pin) */
+        {"CERES", "STEEPEST_DESCENT", "max_ls_iter"},
     };
     for (const auto& r : rows) {
         INFO(r.lib << ":" << r.algo);
@@ -173,33 +175,37 @@ TEST_CASE("scale_validation: bounds-ignoring backends warn at startup",
 {
     /* Once per run and backend: the check runs at parse time, at startup
      * and when each phase starts, and it printed the same WARNING each
-     * time (three times in a plain run). The text says what an evaluation
-     * outside the box does -- it is evaluated there and can become the
-     * best, warned about and counted -- and which optimisers keep to the
-     * box (review item 4). The CERES drivers are the only backends that
-     * ignore the bounds: NLOPT:LN_NEWUOA, which did, is refused, so the
+     * time (three times in a plain run). The text says what a point the
+     * optimiser proposes outside the box does -- it is not evaluated: it is
+     * scored as a failure graded by its distance to the box, counts
+     * against MAXEVAL and is never the best (box_penalty.h; owner decision,
+     * MK, 2026-10-15) --, and which optimisers keep to the box (review item
+     * 4). CERES:STEEPEST_DESCENT is the only registered backend that
+     * ignores the bounds: NLOPT:LN_NEWUOA, which did, is refused, so the
      * check throws its refusal and warns nothing.
-     * Before the fix: LN_NEWUOA was accepted with the WARNING "NLOPT:
-     * LN_NEWUOA (OUTER): ignores the OPTIM box: NLopt calls LN_NEWUOA
-     * without bounds ... LN_BOBYQA keeps to the box" (once), so the
-     * REQUIRE_THROWS fails, and the journal had two such WARNINGs. */
+     * Pins: that WARNING once, for CERES:STEEPEST_DESCENT.
+     * Before the fix: the WARNING said such a point is evaluated there and
+     * can become the best ("... its iterates can leave the box ... and are
+     * evaluated there, and such a point can become the best ..."), for
+     * CERES:LBFGS, refused since. */
     JournalCapture j;
     auto sp = make_spec("NLOPT", "LN_NEWUOA");
     REQUIRE_THROWS_WITH(validate_optimizer_scaling(sp, "OUTER"),
                         Catch::StartsWith("NLOPT:LN_NEWUOA is refused: "));
     CHECK(count_of(j.text(), "ignores the OPTIM box") == 0u);
 
-    auto ce = make_spec("CERES", "LBFGS");
+    auto ce = make_spec("CERES", "STEEPEST_DESCENT");
     for (const char* where : {"OUTER", "run"})
         REQUIRE_NOTHROW(validate_optimizer_scaling(ce, where));
     const std::string ceres =
-        "CERES:LBFGS (OUTER): ignores the OPTIM box: Ceres' "
-        "GradientProblemSolver has no bounds, so its iterates can leave the "
-        "box (a LOG dimension stays positive, a linear one is unbounded) and "
-        "are evaluated there, and such a point can become the best; the "
-        "first is reported with a WARNING and DIAGNOSTICS counts them all "
-        "(finite differences at such a point step towards the box). "
-        "DLIB:BFGS and the NLopt LD_* algorithms keep to the box";
+        "CERES:STEEPEST_DESCENT (OUTER): ignores the OPTIM box: Ceres' "
+        "GradientProblemSolver has no bounds, so its line searches can "
+        "propose points outside the box (a LOG dimension stays positive, a "
+        "linear one is unbounded). Such a point is not evaluated: it is "
+        "scored as a failure graded by its distance to the box, whose slope "
+        "points back into it, it counts against MAXEVAL and it is never the "
+        "best; the first is reported with a WARNING and DIAGNOSTICS counts "
+        "them all. DLIB:BFGS and the NLopt LD_* algorithms keep to the box";
     CHECK(count_of(j.text(), ceres) == 1u);
     CHECK(count_of(j.text(), "ignores the OPTIM box") == 1u);
 }

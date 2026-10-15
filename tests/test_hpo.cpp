@@ -724,50 +724,69 @@ tadah::hpo::OptimizerSpec make_minimal_ceres_spec(const std::string& algo)
 }
 }  // namespace
 
-TEST_CASE("HPO parses standalone CERES LBFGS optimizer blocks",
-          "[HPO][optim][ceres][lbfgs][parse]")
+TEST_CASE("HPO parses standalone CERES STEEPEST_DESCENT optimizer blocks",
+          "[HPO][optim][ceres][parse]")
 {
+    /* Pins: CERES:STEEPEST_DESCENT's block with its stops and PARAMs.
+     * Before the fix: passes as well (a pin; the case parsed CERES:LBFGS
+     * with PARAM max_lbfgs_rank 10, which is refused since). */
     ScopedTempFile input(R"(OPTIMIZER
 LIB CERES
-ALGO LBFGS
+ALGO STEEPEST_DESCENT
 MAXEVAL 30
 FTOL_REL 1e-7
 XTOL_REL 1e-9
 PARAM fd_step 1e-6
 PARAM tol_gradinf 1e-8
-PARAM max_lbfgs_rank 10
 ENDOPTIMIZER
 )");
     tadah::core::Context ctx;
     tadah::hpo::HPOTargets trg(ctx, input.path.string());
 
     CHECK(trg.spec.lib  == "CERES");
-    CHECK(trg.spec.algo == "LBFGS");
+    CHECK(trg.spec.algo == "STEEPEST_DESCENT");
     REQUIRE(trg.spec.stop.maxeval.has_value());
     CHECK(*trg.spec.stop.maxeval == 30u);
     CHECK(trg.spec.stop.ftol_rel == Approx(1e-7));
     CHECK(trg.spec.stop.xtol_rel == Approx(1e-9));
     CHECK(trg.spec.param.at("fd_step")        == Approx(1e-6));
     CHECK(trg.spec.param.at("tol_gradinf")    == Approx(1e-8));
-    CHECK(trg.spec.param.at("max_lbfgs_rank") == Approx(10.0));
 }
 
-TEST_CASE("HPO parses CERES WOLFE/NLCG/STEEPEST_DESCENT",
-          "[HPO][optim][ceres][parse]")
+TEST_CASE("CERES:LBFGS, WOLFE and NLCG are refused at their block's line: "
+          "their Wolfe line search stalls at a point outside the OPTIM box",
+          "[HPO][optim][ceres][parse][out_of_box]")
 {
-    for (const std::string algo : {"WOLFE", "NLCG", "STEEPEST_DESCENT"}) {
+    /* A point outside the OPTIM box is scored, not evaluated (box_penalty.h;
+     * owner decision, MK, 2026-10-15), and Ceres' Wolfe line search
+     * shrinks its step to nothing at that score (optimizer_caps.cpp).
+     * Pins: the block naming CERES:LBFGS, WOLFE or NLCG is refused at its
+     * closing line, "CERES:<ALGO> is refused: Ceres' GradientProblemSolver
+     * has no bounds, ...", naming NLOPT:LD_LBFGS, DLIB:BFGS and
+     * CERES:STEEPEST_DESCENT; the lookup gives the same text.
+     * Before the fix: all three parsed and ran (and evaluated their points
+     * outside the box). */
+    for (const std::string algo : {"LBFGS", "WOLFE", "NLCG"}) {
+        INFO(algo);
         ScopedTempFile input("OPTIMIZER\nLIB CERES\nALGO " + algo +
                              "\nMAXEVAL 5\nENDOPTIMIZER\n");
         tadah::core::Context ctx;
-        tadah::hpo::HPOTargets trg(ctx, input.path.string());
-        CHECK(trg.spec.lib  == "CERES");
-        CHECK(trg.spec.algo == algo);
+        CHECK_THROWS_WITH(
+            tadah::hpo::HPOTargets(ctx, input.path.string()),
+            Catch::Contains("CERES:" + algo + " is refused: Ceres' "
+                            "GradientProblemSolver has no bounds") &&
+                Catch::Contains("Use NLOPT:LD_LBFGS (L-BFGS within the box) "
+                                "or DLIB:BFGS, or CERES:STEEPEST_DESCENT"));
+        CHECK_THROWS_WITH(tadah::hpo::optimizer_caps("CERES", algo),
+                          Catch::StartsWith("CERES:" + algo + " is refused: "));
     }
 }
 
 TEST_CASE("HPO parses GRAD_STRATEGY",
           "[HPO][optim][grad_strategy][parse]")
 {
+    /* Before the fix: passes as well (a pin; its CERES blocks named
+     * CERES:LBFGS, which is refused since). */
     /* default (unset) */
     {
         ScopedTempFile input(R"(OPTIMIZER
@@ -798,7 +817,7 @@ ENDOPTIMIZER
     {
         ScopedTempFile input(R"(OPTIMIZER
 LIB CERES
-ALGO LBFGS
+ALGO STEEPEST_DESCENT
 GRAD_STRATEGY ANALYTICAL
 MAXEVAL 5
 ENDOPTIMIZER
@@ -812,7 +831,7 @@ ENDOPTIMIZER
     {
         ScopedTempFile input(R"(OPTIMIZER
 LIB CERES
-ALGO LBFGS
+ALGO STEEPEST_DESCENT
 GRAD_STRATEGY HYBRID
 MAXEVAL 5
 ENDOPTIMIZER
@@ -827,7 +846,7 @@ ENDOPTIMIZER
     {
         ScopedTempFile input(R"(OPTIMIZER
 LIB CERES
-ALGO LBFGS
+ALGO STEEPEST_DESCENT
 GRAD_STRATEGY AUTODIFF
 MAXEVAL 5
 ENDOPTIMIZER
@@ -852,11 +871,13 @@ ENDOPTIMIZER
     }
 }
 
-TEST_CASE("CERES caps registry exposes the four GradientProblemSolver algos",
-          "[HPO][optim][ceres][caps]")
+TEST_CASE("CERES caps registry exposes STEEPEST_DESCENT, the GradientProblemSolver "
+          "algo HPO runs", "[HPO][optim][ceres][caps]")
 {
+    /* Before the fix: passes as well (a pin; it also looked up CERES:LBFGS,
+     * WOLFE and NLCG, refused since). */
     const std::string library = "CERES";
-    for (const std::string algo : {"LBFGS", "WOLFE", "NLCG", "STEEPEST_DESCENT"}) {
+    for (const std::string algo : {"STEEPEST_DESCENT"}) {
         const auto& caps = tadah::hpo::optimizer_caps(library, algo);
         CHECK(caps.is_gradient_based);
         CHECK_FALSE(caps.is_global);
@@ -871,31 +892,33 @@ TEST_CASE("CERES NLLS family is refused by the caps registry",
 {
     /* Pins: Ceres' least-squares solvers are refused through the caps
      * registry's refusal table (optimizer_caps.cpp): the lookup throws
-     * "CERES:<ALGO> is refused: <reason>", naming the four Ceres solvers
-     * HPO runs, so every check that looks the backend up -- the parser's at
-     * the block's closing line, validate_hpo_setup, run_inner -- reports
-     * the same text; reject_refused_backend() throws it with the phase in
-     * front; the four registered solvers and another library's
-     * LEVENBERG_MARQUARDT (a typo, unknown) are not refused.
-     * Before the fix: the lookup threw "unknown optimizer CERES:<ALGO> (not
-     * registered in optimizer_caps)", and only a helper of its own,
-     * reject_deferred_ceres_nlls(), which run_inner() and validate_backend()
-     * called after the HPOTargets constructor's lookup had already thrown
-     * that text, said "CERES:<ALGO> is deferred to a later phase ... Use
-     * CERES:LBFGS, ..."; reject_refused_backend() did not throw. */
+     * "CERES:<ALGO> is refused: <reason>", the reason naming
+     * CERES:STEEPEST_DESCENT, the Ceres solver HPO runs, and the
+     * bound-constrained gradient searches NLOPT:LD_LBFGS and DLIB:BFGS, so
+     * every check that looks the backend up -- the parser's at the block's
+     * closing line, validate_hpo_setup, run_inner -- reports the same text;
+     * reject_refused_backend() throws it with the phase in front;
+     * CERES:STEEPEST_DESCENT and another library's LEVENBERG_MARQUARDT (a
+     * typo, unknown) are not refused.
+     * Before the fix: the reason named "CERES:LBFGS, CERES:WOLFE,
+     * CERES:NLCG or CERES:STEEPEST_DESCENT", three solvers refused since
+     * (their Wolfe line search stalls at a point outside the OPTIM box). */
     for (const std::string algo : {"LEVENBERG_MARQUARDT", "DOGLEG", "SUBSPACE_DOGLEG"}) {
         INFO(algo);
         CHECK_THROWS_WITH(tadah::hpo::optimizer_caps("CERES", algo),
                           Catch::StartsWith("CERES:" + algo + " is refused: ") &&
-                          Catch::Contains("Use CERES:LBFGS, CERES:WOLFE, "
-                                          "CERES:NLCG or CERES:STEEPEST_DESCENT"));
+                          Catch::Contains("Use CERES:STEEPEST_DESCENT, Ceres' "
+                                          "line-search solver of a scalar loss "
+                                          "that HPO runs, or a bound-constrained "
+                                          "gradient search: NLOPT:LD_LBFGS or "
+                                          "DLIB:BFGS"));
         CHECK_THROWS_WITH(tadah::hpo::reject_refused_backend("CERES", algo,
                                                              "the EXPLORE block"),
                           Catch::StartsWith("the EXPLORE block: CERES:" + algo +
                                             " is refused: "));
     }
-    /* The registered solvers are not refused. */
-    for (const std::string algo : {"LBFGS", "WOLFE", "NLCG", "STEEPEST_DESCENT"}) {
+    /* The registered solver is not refused. */
+    for (const std::string algo : {"STEEPEST_DESCENT"}) {
         INFO(algo);
         CHECK_NOTHROW(tadah::hpo::reject_refused_backend("CERES", algo));
         CHECK_NOTHROW(tadah::hpo::optimizer_caps("CERES", algo));
@@ -906,35 +929,27 @@ TEST_CASE("CERES NLLS family is refused by the caps registry",
                       Catch::StartsWith("unknown optimiser DLIB:LEVENBERG_MARQUARDT: "));
 }
 
+/* The CERES validators: CERES:STEEPEST_DESCENT's, the Ceres solver HPO runs
+ * (CERES:LBFGS, WOLFE and NLCG are refused by the caps registry). Before
+ * the fix the cases below ran the same checks through the LBFGS, WOLFE and
+ * NLCG validators as well, which are gone with those solvers; each passes
+ * before the fix as well (a pin), except the case on the PARAMs of the
+ * refused solvers. */
 TEST_CASE("CERES validators accept minimal bounded specs",
           "[HPO][optim][ceres][validate]")
 {
-    {
-        auto sp = make_minimal_ceres_spec("LBFGS");
-        CHECK_NOTHROW(tadah::hpo::detail::validate_ceres_lbfgs_spec(sp));
-    }
-    {
-        auto sp = make_minimal_ceres_spec("WOLFE");
-        CHECK_NOTHROW(tadah::hpo::detail::validate_ceres_wolfe_spec(sp));
-    }
-    {
-        auto sp = make_minimal_ceres_spec("NLCG");
-        CHECK_NOTHROW(tadah::hpo::detail::validate_ceres_nlcg_spec(sp));
-    }
-    {
-        auto sp = make_minimal_ceres_spec("STEEPEST_DESCENT");
-        CHECK_NOTHROW(tadah::hpo::detail::validate_ceres_steepest_spec(sp));
-    }
+    auto sp = make_minimal_ceres_spec("STEEPEST_DESCENT");
+    CHECK_NOTHROW(tadah::hpo::detail::validate_ceres_steepest_spec(sp));
 }
 
 TEST_CASE("CERES validators reject INNER blocks",
           "[HPO][optim][ceres][validate]")
 {
-    auto sp = make_minimal_ceres_spec("LBFGS");
+    auto sp = make_minimal_ceres_spec("STEEPEST_DESCENT");
     sp.inner = std::make_unique<tadah::hpo::OptimizerSpec>();
     sp.inner->lib = "NLOPT";
     sp.inner->algo = "LN_BOBYQA";
-    CHECK_THROWS_WITH(tadah::hpo::detail::validate_ceres_lbfgs_spec(sp),
+    CHECK_THROWS_WITH(tadah::hpo::detail::validate_ceres_steepest_spec(sp),
                       Catch::Contains("standalone optimiser") &&
                       Catch::Contains("INNER"));
 }
@@ -942,9 +957,9 @@ TEST_CASE("CERES validators reject INNER blocks",
 TEST_CASE("CERES validators reject integer-valued parameters",
           "[HPO][optim][ceres][validate]")
 {
-    auto sp = make_minimal_ceres_spec("WOLFE");
+    auto sp = make_minimal_ceres_spec("STEEPEST_DESCENT");
     sp.is_int = {true, false};
-    CHECK_THROWS_WITH(tadah::hpo::detail::validate_ceres_wolfe_spec(sp),
+    CHECK_THROWS_WITH(tadah::hpo::detail::validate_ceres_steepest_spec(sp),
                       Catch::Contains("integer-valued"));
 }
 
@@ -952,15 +967,15 @@ TEST_CASE("CERES validators reject FTOL_ABS / XTOL_ABS",
           "[HPO][optim][ceres][validate]")
 {
     {
-        auto sp = make_minimal_ceres_spec("LBFGS");
+        auto sp = make_minimal_ceres_spec("STEEPEST_DESCENT");
         sp.stop.ftol_abs = 1e-6;
-        CHECK_THROWS_WITH(tadah::hpo::detail::validate_ceres_lbfgs_spec(sp),
+        CHECK_THROWS_WITH(tadah::hpo::detail::validate_ceres_steepest_spec(sp),
                           Catch::Contains("FTOL_REL"));
     }
     {
-        auto sp = make_minimal_ceres_spec("LBFGS");
+        auto sp = make_minimal_ceres_spec("STEEPEST_DESCENT");
         sp.stop.xtol_abs = 1e-8;
-        CHECK_THROWS_WITH(tadah::hpo::detail::validate_ceres_lbfgs_spec(sp),
+        CHECK_THROWS_WITH(tadah::hpo::detail::validate_ceres_steepest_spec(sp),
                           Catch::Contains("XTOL_REL"));
     }
 }
@@ -968,61 +983,56 @@ TEST_CASE("CERES validators reject FTOL_ABS / XTOL_ABS",
 TEST_CASE("CERES validators reject unsupported PARAMs",
           "[HPO][optim][ceres][validate]")
 {
-    auto sp = make_minimal_ceres_spec("LBFGS");
+    auto sp = make_minimal_ceres_spec("STEEPEST_DESCENT");
     sp.param["bogus_param"] = 1.0;
-    CHECK_THROWS_WITH(tadah::hpo::detail::validate_ceres_lbfgs_spec(sp),
+    CHECK_THROWS_WITH(tadah::hpo::detail::validate_ceres_steepest_spec(sp),
                       Catch::Contains("does not support PARAM"));
 }
 
-TEST_CASE("CERES LBFGS validator rejects non-positive max_lbfgs_rank",
+TEST_CASE("CERES:STEEPEST_DESCENT refuses PARAM max_lbfgs_rank and nlcg_type, "
+          "the PARAMs of the refused CERES:LBFGS and CERES:NLCG",
           "[HPO][optim][ceres][validate]")
 {
-    auto sp = make_minimal_ceres_spec("LBFGS");
-    sp.param["max_lbfgs_rank"] = 0.0;
-    CHECK_THROWS_WITH(tadah::hpo::detail::validate_ceres_lbfgs_spec(sp),
-                      Catch::Contains("max_lbfgs_rank"));
-}
-
-TEST_CASE("CERES NLCG validator rejects bad nlcg_type",
-          "[HPO][optim][ceres][validate][nlcg]")
-{
-    auto sp = make_minimal_ceres_spec("NLCG");
-    sp.param["nlcg_type"] = 5.0;
-    CHECK_THROWS_WITH(tadah::hpo::detail::validate_ceres_nlcg_spec(sp),
-                      Catch::Contains("nlcg_type"));
+    /* Pins: PARAM max_lbfgs_rank and PARAM nlcg_type, which
+     * CERES:STEEPEST_DESCENT does not read, are refused as any other PARAM
+     * it does not read ("does not support PARAM max_lbfgs_rank; supported:
+     * fd_step, fd_kernel, diff_method, tol_gradinf, max_iter,
+     * max_ls_iter").
+     * Before the fix: both were accepted on every CERES solver, read by
+     * CERES:LBFGS and CERES:NLCG only, and the list of supported PARAMs
+     * named them. */
+    for (const std::string key : {"max_lbfgs_rank", "nlcg_type"}) {
+        INFO(key);
+        auto sp = make_minimal_ceres_spec("STEEPEST_DESCENT");
+        sp.param[key] = 1.0;
+        CHECK_THROWS_WITH(
+            tadah::hpo::detail::validate_ceres_steepest_spec(sp),
+            Catch::Equals("CERES:STEEPEST_DESCENT does not support PARAM " +
+                          key + "; supported: fd_step, fd_kernel, diff_method, "
+                          "tol_gradinf, max_iter, max_ls_iter"));
+    }
 }
 
 /* Ceres refuses a negative function_tolerance (FTOL_REL) or
  * parameter_tolerance (XTOL_REL), max_num_iterations (PARAM max_iter)
  * below 0 and max_num_line_search_step_size_iterations (PARAM max_ls_iter)
  * below 1 before it evaluates anything, and the integer PARAMs (max_iter,
- * max_ls_iter, max_lbfgs_rank, nlcg_type) are Ceres ints.
- * Pins: each validator refuses FTOL_REL -1 and XTOL_REL -0.001 ("requires
+ * max_ls_iter) are Ceres ints.
+ * Pins: the validator refuses FTOL_REL -1 and XTOL_REL -0.001 ("requires
  * FTOL_REL >= 0", "requires XTOL_REL >= 0"), PARAM max_iter -1, 1.5 and
  * 3e9 ("requires PARAM max_iter to be an integer from 0 to 2147483647"),
  * PARAM max_ls_iter 0 and 2.5 ("... from 1 to 2147483647"), naming the
- * value; CERES:LBFGS refuses max_lbfgs_rank 2.5 and 3e9, CERES:NLCG
- * nlcg_type 1.5; the edges are accepted: FTOL_REL 0, XTOL_REL 0, max_iter 0
- * and 2147483647, max_ls_iter 1, max_lbfgs_rank 1, nlcg_type 2.
- * Before the fix: all accepted -- Ceres then refused the negative values
- * at run time ("Invalid configuration", which ended the search as a
- * FAILURE), and a fraction was cut to an int (2.5 ran as 2) or a value past
- * an int converted to an undefined one. */
+ * value; the edges are accepted: FTOL_REL 0, XTOL_REL 0, max_iter 0 and
+ * 2147483647, max_ls_iter 1.
+ * Before the fix: passes as well (a pin; it also checked CERES:LBFGS's
+ * max_lbfgs_rank and CERES:NLCG's nlcg_type, PARAMs refused since). */
 TEST_CASE("CERES validators refuse the tolerances and integer PARAMs Ceres "
           "cannot take", "[HPO][optim][ceres][validate]")
 {
     const auto validate = [](const tadah::hpo::OptimizerSpec& sp) {
-        if (sp.algo == "LBFGS")
-            tadah::hpo::detail::validate_ceres_lbfgs_spec(sp);
-        else if (sp.algo == "WOLFE")
-            tadah::hpo::detail::validate_ceres_wolfe_spec(sp);
-        else if (sp.algo == "NLCG")
-            tadah::hpo::detail::validate_ceres_nlcg_spec(sp);
-        else
-            tadah::hpo::detail::validate_ceres_steepest_spec(sp);
+        tadah::hpo::detail::validate_ceres_steepest_spec(sp);
     };
-    for (const std::string algo :
-         {"LBFGS", "WOLFE", "NLCG", "STEEPEST_DESCENT"}) {
+    for (const std::string algo : {"STEEPEST_DESCENT"}) {
         INFO("CERES:" << algo);
         const std::string who = "CERES:" + algo + " requires ";
         {
@@ -1070,33 +1080,6 @@ TEST_CASE("CERES validators refuse the tolerances and integer PARAMs Ceres "
         CHECK_NOTHROW(validate(edges));
         edges.param["max_iter"] = 2147483647.0;
         CHECK_NOTHROW(validate(edges));
-    }
-    for (const auto& bad : {std::make_pair(2.5, "2.5"),
-                            std::make_pair(3e9, "3e+09")}) {
-        auto sp = make_minimal_ceres_spec("LBFGS");
-        sp.param["max_lbfgs_rank"] = bad.first;
-        CHECK_THROWS_WITH(
-            tadah::hpo::detail::validate_ceres_lbfgs_spec(sp),
-            Catch::StartsWith("CERES:LBFGS requires PARAM max_lbfgs_rank to "
-                              "be an integer from 1 to 2147483647") &&
-            Catch::EndsWith(std::string(", got ") + bad.second));
-    }
-    {
-        auto sp = make_minimal_ceres_spec("LBFGS");
-        sp.param["max_lbfgs_rank"] = 1.0;
-        CHECK_NOTHROW(tadah::hpo::detail::validate_ceres_lbfgs_spec(sp));
-    }
-    {
-        auto sp = make_minimal_ceres_spec("NLCG");
-        sp.param["nlcg_type"] = 1.5;
-        CHECK_THROWS_WITH(tadah::hpo::detail::validate_ceres_nlcg_spec(sp),
-                          Catch::StartsWith("CERES:NLCG PARAM nlcg_type must "
-                                            "be 0 (FLETCHER_REEVES), 1 "
-                                            "(POLAK_RIBIERE), or 2 "
-                                            "(HESTENES_STIEFEL)") &&
-                          Catch::EndsWith(", got 1.5"));
-        sp.param["nlcg_type"] = 2.0;
-        CHECK_NOTHROW(tadah::hpo::detail::validate_ceres_nlcg_spec(sp));
     }
 }
 
@@ -1339,8 +1322,10 @@ TEST_CASE("GradientProvider Hybrid runs masked FD on needs_fd indices",
     CHECK(g(0) == Approx(std::cos(1.0)).margin(1e-12));
     /* FD on index 1 with default fd_step=1e-6 hits 2y = 1.0 to FD precision. */
     CHECK(g(1) == Approx(1.0).margin(1e-5));
-    /* 1 (analytical pass) + 2 (central-diff for index 1) = 3. */
-    CHECK(counter.load() == 3u);
+    /* 1 (the loss at the point, which gradient() evaluates first: its kind
+     * decides every difference) + 1 (analytical pass) + 2 (central-diff for
+     * index 1) = 4. Before the fix: 3, without the loss at the point. */
+    CHECK(counter.load() == 4u);
 }
 
 TEST_CASE("GradientProvider Hybrid respects MAXEVAL on FD pass",
@@ -1359,8 +1344,12 @@ TEST_CASE("GradientProvider Hybrid respects MAXEVAL on FD pass",
         return true;
     };
 
-    /* Cap = 2: analytical pass consumes 1; only one of the two FD samples
-     * fits before the cap → gradient returns false (graceful termination). */
+    /* Cap = 2: the loss at the point and the analytical pass consume them;
+     * no FD sample fits before the cap → gradient returns false (graceful
+     * termination).
+     * Before the fix: passes as well (a pin; the analytical pass and one of
+     * the two FD samples consumed the cap: gradient() did not evaluate the
+     * loss at the point first). */
     auto gp = tadah::hpo::make_gradient_provider<DlibVec, void>(
         sp, host, &counter, /*maxeval=*/2, agf);
 
@@ -1404,8 +1393,9 @@ TEST_CASE("GradientProvider Hybrid takes finite differences on every "
     REQUIRE(gp.gradient(x, g));
     CHECK(g(0) == Approx(std::cos(1.0)).margin(1e-6));
     CHECK(g(1) == Approx(1.0).margin(1e-6));
-    /* The analytical pass and the central pair of each parameter. */
-    CHECK(counter.load() == 5u);
+    /* The loss at the point, the analytical pass and the central pair of
+     * each parameter. Before the fix: 5, without the loss at the point. */
+    CHECK(counter.load() == 6u);
 }
 
 TEST_CASE("GradientProvider Hybrid without callback throws wiring error",

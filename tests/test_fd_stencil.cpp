@@ -348,14 +348,18 @@ TEST_CASE("fd stencil: the evaluation count and MAXEVAL",
             nfd = {0, 1};   /* dimension 3 is analytical */
             return true;
         };
-        {   /* interior: the analytical pass and the central pair */
+        {   /* interior: the centre, the analytical pass and the central
+             * pair. Pins: four counted evaluations (gradient() evaluates the
+             * loss at the point first: its kind decides every difference).
+             * Before the fix: three (the centre was not evaluated for a
+             * central stencil). */
             ProjectingHost host{f, box, {}};
             std::atomic<unsigned long> counter{0};
             auto gp = tadah::hpo::make_gradient_provider<Vec, void>(
                 sp, host, &counter, 0, agf);
             Vec g;
             REQUIRE(gp.gradient(vec({0.5, 0.5}), g));
-            CHECK(counter.load() == 3u);
+            CHECK(counter.load() == 4u);
             CHECK(g(0) == Approx(1.0));
         }
         {   /* at a bound: the analytical pass, the centre, two points */
@@ -407,11 +411,34 @@ TEST_CASE("fd stencil: failed evaluations of a one-sided stencil",
     const std::vector<std::pair<double, double>> box = {{0.0, 1.0}};
     const auto sp = spec_over(box, 1e-2);
 
-    SECTION("a failed stencil point is a Stencil failure naming it") {
-        /* the default FAILSCORE above u = 0.015: at u = 0 the stencil is
-         * 0.01 and 0.02 */
+    SECTION("a failed far point: the 2-point difference with the near one") {
+        /* the default FAILSCORE above u = 0.015: at u = 0 the one-sided
+         * stencil is 0.01 and 0.02.
+         * Pins: 0.02 fails, so the forward difference of the point and 0.01
+         * is the gradient: 1; three evaluations.
+         * Before the fix: a Stencil failure naming 0.02 ("at X[1] = 0, the
+         * stencil point X[1] = 0.02 failed: loss 1.797693135e+308"). */
         ProjectingHost host{[](const Vec& u) {
                                 return u(0) > 0.015 ? kMax : u(0);
+                            },
+                            box, {}};
+        std::atomic<unsigned long> counter{0};
+        auto gp = tadah::hpo::make_gradient_provider<Vec, void>(sp, host,
+                                                                &counter, 0);
+        Vec g;
+        REQUIRE(gp.gradient(vec({0.0}), g));
+        CHECK(g(0) == Approx(1.0).epsilon(1e-12));
+        CHECK(host.asked.size() == 3u);
+    }
+    SECTION("a failed near point at the bound: no side of the point's kind") {
+        /* the default FAILSCORE above u = 0.005: at u = 0 the one-sided
+         * stencil's near point 0.01 fails, and the other side lies outside
+         * the box.
+         * Pins: a Stencil failure naming 0.01; two evaluations (0.02 is not
+         * evaluated).
+         * Before the fix: the same failure (a pin of that ending). */
+        ProjectingHost host{[](const Vec& u) {
+                                return u(0) > 0.005 ? kMax : u(0);
                             },
                             box, {}};
         std::atomic<unsigned long> counter{0};
@@ -421,8 +448,9 @@ TEST_CASE("fd stencil: failed evaluations of a one-sided stencil",
         CHECK_FALSE(gp.gradient(vec({0.0}), g));
         CHECK(gp.failure->kind == GradientFailure::Stencil);
         CHECK(gp.failure->detail ==
-              "at X[1] = 0, the stencil point X[1] = 0.02 failed: loss "
+              "at X[1] = 0, the stencil point X[1] = 0.01 failed: loss "
               "1.797693135e+308");
+        CHECK(host.asked.size() == 2u);
     }
     SECTION("the loss at the point itself is part of the stencil") {
         /* Pins: the failed loss at the upper bound fails the gradient
@@ -445,12 +473,13 @@ TEST_CASE("fd stencil: failed evaluations of a one-sided stencil",
         CHECK(gp.failure->detail == "the loss at X[1] = 1 is 1.797693135e+308");
         CHECK(host.asked.size() == 1u);
     }
-    SECTION("a finite FAILSCORE: a failed stencil point fails the gradient") {
+    SECTION("a finite FAILSCORE: a failed stencil point is not differenced") {
         /* FAILSCORE 1e9 above u = 0.015: at u = 0 the stencil is 0.01
          * (usable) and 0.02.
-         * Pins: a Stencil failure naming 0.02 and its loss 1e9.
-         * Before the fix: the finite, steep difference (4 x 0.01 - 1e9) /
-         * 0.02 was the gradient (this section pinned it). */
+         * Pins: the forward difference of the point and 0.01: 1.
+         * Before the fix: a Stencil failure naming 0.02 and its loss 1e9;
+         * before that, the finite, steep difference (4 x 0.01 - 1e9) / 0.02
+         * was the gradient. */
         auto sp9 = sp;
         sp9.failscore = 1e9;
         ProjectingHost host{[](const Vec& u) {
@@ -461,13 +490,13 @@ TEST_CASE("fd stencil: failed evaluations of a one-sided stencil",
         auto gp = tadah::hpo::make_gradient_provider<Vec, void>(sp9, host,
                                                                 &counter, 0);
         Vec g;
-        CHECK_FALSE(gp.gradient(vec({0.0}), g));
-        CHECK(gp.failure->kind == GradientFailure::Stencil);
-        CHECK(gp.failure->detail ==
-              "at X[1] = 0, the stencil point X[1] = 0.02 failed: loss "
-              "1000000000");
+        REQUIRE(gp.gradient(vec({0.0}), g));
+        CHECK(g(0) == Approx(1.0).epsilon(1e-12));
     }
     SECTION("a non-finite loss at a stencil point") {
+        /* Pins: NaN at 0.02 is a failure: the forward difference with 0.01.
+         * Before the fix: a Stencil failure "the stencil point X[1] = 0.02
+         * failed: loss nan". */
         ProjectingHost host{[](const Vec& u) {
                                 return u(0) > 0.015
                                            ? std::numeric_limits<double>::quiet_NaN()
@@ -478,10 +507,8 @@ TEST_CASE("fd stencil: failed evaluations of a one-sided stencil",
         auto gp = tadah::hpo::make_gradient_provider<Vec, void>(sp, host,
                                                                 &counter, 0);
         Vec g;
-        CHECK_FALSE(gp.gradient(vec({0.0}), g));
-        CHECK(gp.failure->kind == GradientFailure::Stencil);
-        CHECK(gp.failure->detail ==
-              "at X[1] = 0, the stencil point X[1] = 0.02 failed: loss nan");
+        REQUIRE(gp.gradient(vec({0.0}), g));
+        CHECK(g(0) == Approx(1.0).epsilon(1e-12));
     }
     SECTION("HYBRID: a centre that is not finite") {
         const std::vector<std::pair<double, double>> box2 = {{0.0, 1.0},
@@ -600,13 +627,20 @@ TEST_CASE("fd stencil: a box narrower than the stencil is refused",
     }
 }
 
-TEST_CASE("fd stencil: a point outside its box is differenced towards it",
-          "[HPO][grad_provider][fd_stencil]")
+TEST_CASE("fd stencil: a point outside its box is not differenced",
+          "[HPO][grad_provider][fd_stencil][out_of_box]")
 {
-    /* Only a gradient search that leaves the box (CERES), or one started
-     * at a point another search left outside, asks for such a gradient. It
-     * kept the central stencil, which reached further outside (-0.51);
-     * owner decision D4 (2026-09-29): one-sided towards the box. */
+    /* Only a gradient search that leaves the box (CERES) asks for such a
+     * gradient. Owner decision D4 (2026-09-29) differenced it one-sided
+     * towards the box; a point outside the box is not evaluated now
+     * (box_penalty.h; owner decision, MK, 2026-10-15), and its gradient is
+     * the slope of its out-of-box score.
+     * Pins: the gradient at -0.5 below the box [0, 1] is the slope of
+     * graded_failscore(FS, D, d, 1) at d = 0.5, -0.25e-3 FS / (1 + d)^2
+     * (pointing away from the box), and the host is not asked for anything;
+     * fd_plan refuses the centre (std::logic_error).
+     * Before the fix: the host was asked for -0.5, -0.49 and -0.48, and the
+     * gradient was the one-sided difference of x^2 there, -1. */
     const std::vector<std::pair<double, double>> box = {{0.0, 1.0}};
     const auto sp = spec_over(box, 1e-2);
     std::vector<Vec> asked;
@@ -622,10 +656,14 @@ TEST_CASE("fd stencil: a point outside its box is differenced towards it",
                                                             0);
     Vec g;
     REQUIRE(gp.gradient(vec({-0.5}), g));
-    REQUIRE(asked.size() == 3u);
-    CHECK(asked[1](0) == -0.5 + 1e-2);
-    CHECK(asked[2](0) == -0.5 + 2.0 * 1e-2);
-    CHECK(g(0) == Approx(-1.0));
+    CHECK(asked.empty());
+    CHECK(counter.load() == 0u);
+    const double fs = *sp.failscore;
+    CHECK(g(0) == Approx(-0.25e-3 * fs / (1.5 * 1.5)).epsilon(1e-12));
+    CHECK_THROWS_AS(tadah::hpo::fd_plan(-0.5, 0.0, 1.0,
+                                        tadah::hpo::FdRule::Width,
+                                        tadah::hpo::FdScheme::Central, 1e-2),
+                    std::logic_error);
 }
 
 TEST_CASE("fd stencil: the largest fd_step that fits is exact where the step "
@@ -694,22 +732,23 @@ TEST_CASE("fd stencil: the largest fd_step that fits is exact where the step "
     }
 }
 
-TEST_CASE("fd stencil: a box that fits keeps the stencil of a point outside "
-          "it from reaching further out, FORWARD with fd_step up to 2",
+TEST_CASE("fd stencil: a box symmetric about 0 fits a FORWARD fd_step up to "
+          "2, and fd_plan refuses a centre outside the box",
           "[HPO][fd_stencil][fd_fit]")
 {
     using tadah::hpo::FdRule;
     using tadah::hpo::FdScheme;
     using tadah::hpo::fd_largest_fitting_step;
     using tadah::hpo::fd_plan;
-    /* fd_plan throws std::logic_error if the stencil of a point outside the
-     * box would reach further outside than the point, which a box fd_fit
-     * accepts rules out. Its message and comment said such a box bounds
-     * fd_step by 1: so it does for CENTRAL (u - 2h >= a at the bound of
-     * larger magnitude), but FORWARD needs only u - h >= a there, and a box
-     * symmetric about 0 fits fd_step up to 2 (review 2, finding 4). A
-     * guard of the invariant at that step: it held before the message was
-     * corrected. */
+    /* FORWARD needs only u - h >= a at the bound of larger magnitude, and a
+     * box symmetric about 0 fits fd_step up to 2; CENTRAL up to 1 (review 2,
+     * finding 4).
+     * Pins: those limits, and fd_plan refuses (std::logic_error) a centre
+     * outside the box with either scheme: a point outside the OPTIM box is
+     * not differenced (box_penalty.h; owner decision, MK, 2026-10-15).
+     * Before the fix: fd_plan planned a stencil towards the box from such a
+     * centre (owner decision D4), which this case checked kept no point
+     * further out than the centre. */
     const double a = -100.0, b = 100.0;
     for (FdRule rule : {FdRule::Width, FdRule::Ceres}) {
         CAPTURE(static_cast<int>(rule));
@@ -718,17 +757,12 @@ TEST_CASE("fd stencil: a box that fits keeps the stencil of a point outside "
         REQUIRE(largest);
         CHECK(*largest > 1.0);
         CHECK(*largest <= 2.0);
-        const auto out_by = [&](double x) {
-            return x < a ? a - x : (x > b ? x - b : 0.0);
-        };
         for (double u : {-100.5, -101.0, -150.0, -1e3, -1e6, 100.5, 101.0,
                          150.0, 1e3, 1e6}) {
             CAPTURE(u);
-            std::optional<tadah::hpo::FdStencil> st;
-            REQUIRE_NOTHROW(st = fd_plan(u, a, b, rule, FdScheme::Forward,
-                                         *largest));
-            REQUIRE(st);
-            CHECK(out_by(st->p1) <= out_by(u));
+            for (FdScheme scheme : {FdScheme::Forward, FdScheme::Central})
+                CHECK_THROWS_AS(fd_plan(u, a, b, rule, scheme, *largest),
+                                std::logic_error);
         }
         const auto central =
             fd_largest_fitting_step(a, b, rule, FdScheme::Central);

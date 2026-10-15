@@ -16,13 +16,17 @@
  * finite FAILSCORE, so between two failures the difference was an exact 0
  * (a start inside the failure region "converged") and under a finite
  * FAILSCORE a failed stencil point gave a steep, finite slope. The loss at
- * the point decides now: usable, the first failed stencil evaluation fails
- * the gradient; failed, the gradient fails at once -- unless it is a
+ * the point decides now: failed, the gradient fails at once -- unless it is a
  * graded failure under FAILSCORE_GRADING ON, whose differences are its
- * direction out of the failure region, taken as they are unless every one
- * is 0. ANALYTICAL and HYBRID read the loss the caller gives (gradient_at)
- * before their analytical pass: a failed one, but for a graded failure
- * under FAILSCORE_GRADING ON, fails the gradient at once. */
+ * direction out of the failure region, unless every one is 0. And a
+ * difference never mixes the kinds (owner decision, MK, 2026-10-15): each
+ * component takes the side of its stencil whose points are of the kind of
+ * the loss at the point -- usable at a usable point, graded failures at a
+ * graded one --, one-sided into that side as a bound there would make it,
+ * and fails the gradient when no side is. ANALYTICAL and HYBRID read the
+ * loss the caller gives (gradient_at) before their analytical pass: a failed
+ * one, but for a graded failure under FAILSCORE_GRADING ON, fails the
+ * gradient at once. */
 
 #include "catch2/catch.hpp"
 
@@ -118,48 +122,48 @@ Vec point(double a, double b)
 
 }  // namespace
 
-TEST_CASE("GradientProvider: a failed stencil evaluation is a Stencil "
-          "failure that names the point and the stencil point",
+TEST_CASE("GradientProvider: a failed stencil point on one side: the "
+          "difference is taken on the other side",
           "[HPO][grad_provider][gradient_failure]")
 {
+    /* f = x + y, the default FAILSCORE below x = 0. The central stencil of
+     * 0.1 along the first dimension is 0.3 and -0.1, and -0.1 fails.
+     * Pins: the gradient (1, 1): the first component the one-sided 3-point
+     * difference into the usable side, 0.3 and 0.5 with the loss at the
+     * point, as a bound at -0.1 would make it; six evaluations (the point,
+     * 0.3, -0.1, 0.5, and 0.7 and 0.3 along y).
+     * Before the fix: no gradient, a Stencil failure naming -0.1 ("at
+     * CGRID2B[2] = 0.1, the stencil point CGRID2B[2] = -0.1 failed: loss
+     * 1.797693135e+308"), after three evaluations. */
     const auto sp = inhouse_spec();
     FailBelowZero host;
     std::atomic<unsigned long> counter{0};
     auto gp = tadah::hpo::make_gradient_provider<Vec, void>(sp, host,
                                                             &counter, 0);
     Vec g;
-    /* The stencil of 0.1 along the first dimension is 0.3 and -0.1. */
-    CHECK_FALSE(gp.gradient(point(0.1, 0.5), g));
-    CHECK(gp.failure->kind == GradientFailure::Stencil);
-    CHECK(gp.failure->cause ==
-          "a failed evaluation in the finite-difference stencil");
-    CHECK(gp.failure->detail ==
-          "at CGRID2B[2] = 0.1, the stencil point CGRID2B[2] = -0.1 "
-          "failed: loss 1.797693135e+308");
-    /* Pins: the status names no usable gradient, whatever the cause.
-     * Before the fix: "STOPPED -- gradient not finite: ...", which a failed
-     * stencil evaluation under a finite FAILSCORE is not. */
-    CHECK(tadah::hpo::gradient_stop_status(*gp.failure) ==
-          "STOPPED -- no usable gradient: a failed evaluation in the "
-          "finite-difference stencil");
+    REQUIRE(gp.gradient(point(0.1, 0.5), g));
+    CHECK(gp.failure->kind == GradientFailure::None);
+    CHECK(g(0) == Approx(1.0).epsilon(1e-12));
+    CHECK(g(1) == Approx(1.0).epsilon(1e-12));
+    CHECK(host.calls.load() == 6u);
 
-    /* The next call starts afresh. */
+    /* The next call starts afresh: the central differences. */
     REQUIRE(gp.gradient(point(1.0, 0.5), g));
     CHECK(gp.failure->kind == GradientFailure::None);
     CHECK(g(0) == Approx(1.0));
     CHECK(g(1) == Approx(1.0));
 }
-
-TEST_CASE("GradientProvider: a failed stencil evaluation fails the gradient "
-          "under a finite FAILSCORE too",
+TEST_CASE("GradientProvider: under a finite FAILSCORE a failed stencil point "
+          "is not differenced either",
           "[HPO][grad_provider][gradient_failure]")
 {
     /* FAILSCORE 1e9: the stencil of 0.1 is 0.3 and -0.1, and -0.1 fails.
-     * Pins: no gradient, a Stencil failure naming -0.1 and its loss 1e9.
-     * Before the fix: the difference (0.8 - 1e9) / 0.4 did not overflow and
-     * was returned as the gradient, as steep as the jump to FAILSCORE, and
-     * the optimisers followed it (DLIB:BFGS evaluated the bound 28 times in
-     * a row). This case pinned that gradient. */
+     * Pins: the gradient along x is the one-sided difference of the usable
+     * side (0.3 and 0.5): 1.
+     * Before the fix: no gradient, a Stencil failure naming -0.1 and its
+     * loss 1e9; before that, the difference (0.8 - 1e9) / 0.4, as steep as
+     * the jump to FAILSCORE, which the optimisers followed (DLIB:BFGS
+     * evaluated the bound 28 times in a row). */
     auto sp = inhouse_spec();
     sp.failscore = 1e9;
     struct FailAt1e9 {
@@ -171,15 +175,9 @@ TEST_CASE("GradientProvider: a failed stencil evaluation fails the gradient "
     auto gp = tadah::hpo::make_gradient_provider<Vec, void>(sp, host,
                                                             &counter, 0);
     Vec g;
-    CHECK_FALSE(gp.gradient(point(0.1, 0.5), g));
-    CHECK(gp.failure->kind == GradientFailure::Stencil);
-    CHECK(gp.failure->cause ==
-          "a failed evaluation in the finite-difference stencil");
-    CHECK(gp.failure->detail ==
-          "at CGRID2B[2] = 0.1, the stencil point CGRID2B[2] = -0.1 "
-          "failed: loss 1000000000");
+    REQUIRE(gp.gradient(point(0.1, 0.5), g));
+    CHECK(g(0) == Approx(1.0).epsilon(1e-12));
 }
-
 TEST_CASE("GradientProvider: a start inside the failure region: the failed "
           "loss at the point fails the gradient before its stencil is "
           "evaluated", "[HPO][grad_provider][gradient_failure]")
@@ -233,11 +231,13 @@ TEST_CASE("GradientProvider: a usable point whose two stencil points fail "
 {
     /* A feasible island narrower than the stencil: usable on |x| <= 0.1,
      * the default FAILSCORE elsewhere; at (0, 0.5) the stencil is 0.2 and
-     * -0.2.
-     * Pins: no gradient, a Stencil failure naming 0.2, after two
-     * evaluations (the point, 0.2; -0.2 is not evaluated).
-     * Before the fix: g(0) = (FS - FS) / 0.4 = 0 after five evaluations, a
-     * gradient that said the island's edge was flat. */
+     * -0.2, and the island has no side to take.
+     * Pins: no gradient, a Stencil failure naming both stencil points, after
+     * three evaluations (the point, 0.2, -0.2); the status names no usable
+     * gradient.
+     * Before the fix: the failure named 0.2 alone ("the stencil point
+     * CGRID2B[2] = 0.2 failed: loss 1.797693135e+308"), after two
+     * evaluations (-0.2 was not evaluated). */
     auto sp = inhouse_spec();
     Counted host{[](const Vec& x) {
         return std::abs(x(0)) <= 0.1 ? x(0) + x(1) : kMax;
@@ -248,48 +248,52 @@ TEST_CASE("GradientProvider: a usable point whose two stencil points fail "
     Vec g;
     CHECK_FALSE(gp.gradient(point(0.0, 0.5), g));
     CHECK(gp.failure->kind == GradientFailure::Stencil);
+    CHECK(gp.failure->cause ==
+          "a failed evaluation in the finite-difference stencil");
     CHECK(gp.failure->detail ==
-          "at CGRID2B[2] = 0, the stencil point CGRID2B[2] = 0.2 failed: "
-          "loss 1.797693135e+308");
-    CHECK(host.calls.load() == 2u);
+          "at CGRID2B[2] = 0, the stencil points CGRID2B[2] = 0.2 and "
+          "CGRID2B[2] = -0.2 failed: losses 1.797693135e+308 and "
+          "1.797693135e+308");
+    CHECK(host.calls.load() == 3u);
+    CHECK(tadah::hpo::gradient_stop_status(*gp.failure) ==
+          "STOPPED -- no usable gradient: a failed evaluation in the "
+          "finite-difference stencil");
 }
-
-TEST_CASE("GradientProvider: the first failed stencil point ends the "
-          "gradient", "[HPO][grad_provider][gradient_failure]")
+TEST_CASE("GradientProvider: a failed first stencil point: the other side is "
+          "taken, one evaluation more for its far point",
+          "[HPO][grad_provider][gradient_failure]")
 {
     /* The default FAILSCORE above x = 0.2; at (0.1, 0.5) the stencil is 0.3
      * (evaluated first) and -0.1.
-     * Pins: a Stencil failure naming 0.3, after two evaluations (the point,
-     * 0.3; -0.1 is not evaluated).
-     * Before the fix: three evaluations: -0.1 too, before the difference
-     * overflowed. */
+     * Pins: 0.3 fails, so the first component is the one-sided difference
+     * into the lower side, -0.1 and -0.3 with the loss at the point: 1; six
+     * evaluations (the point, 0.3, -0.1, -0.3, 0.7, 0.3).
+     * Before the fix: a Stencil failure naming 0.3, after two evaluations
+     * (the point, 0.3; -0.1 was not evaluated). */
     auto sp = inhouse_spec();
     Counted host{[](const Vec& x) { return x(0) > 0.2 ? kMax : x(0) + x(1); }};
     std::atomic<unsigned long> counter{0};
     auto gp = tadah::hpo::make_gradient_provider<Vec, void>(sp, host,
                                                             &counter, 0);
     Vec g;
-    CHECK_FALSE(gp.gradient(point(0.1, 0.5), g));
-    CHECK(gp.failure->kind == GradientFailure::Stencil);
-    CHECK(gp.failure->detail ==
-          "at CGRID2B[2] = 0.1, the stencil point CGRID2B[2] = 0.3 failed: "
-          "loss 1.797693135e+308");
-    CHECK(host.calls.load() == 2u);
+    REQUIRE(gp.gradient(point(0.1, 0.5), g));
+    CHECK(g(0) == Approx(1.0).epsilon(1e-12));
+    CHECK(g(1) == Approx(1.0).epsilon(1e-12));
+    CHECK(host.calls.load() == 6u);
 }
-
 TEST_CASE("GradientProvider: a graded failure next to a usable point is a "
           "failed evaluation, with FAILSCORE_GRADING OFF and ON",
           "[HPO][grad_provider][gradient_failure][failscore_grading]")
 {
     /* FAILSCORE 1e9; x < 0 scores 0.9995e9, inside the failure band
      * [0.999e9, 1e9). At the usable point (0.1, 0.5) the stencil point -0.1
-     * is such a failure: the difference is the jump to it, not a slope,
-     * graded or not.
-     * Pins: no gradient, a Stencil failure naming -0.1 and its loss, under
-     * FAILSCORE_GRADING OFF and ON; a loss of 0.998e9 there, below the
-     * band, is usable and gives the gradient.
-     * Before the fix: the gradient (0.8 - 0.9995e9) / 0.4, finite and
-     * steep, in both. */
+     * is such a failure: the difference would be the jump to it, not a
+     * slope, graded or not.
+     * Pins: the first component is the one-sided difference of the usable
+     * side, 1, under FAILSCORE_GRADING OFF and ON; a loss of 0.998e9 there,
+     * below the band, is usable and the central difference takes it.
+     * Before the fix: no gradient, a Stencil failure naming -0.1 and its
+     * loss, in both; before that the gradient (0.8 - 0.9995e9) / 0.4. */
     for (const bool grading : {false, true}) {
         DYNAMIC_SECTION("FAILSCORE_GRADING " << (grading ? "ON" : "OFF")) {
             auto sp = inhouse_spec();
@@ -302,11 +306,8 @@ TEST_CASE("GradientProvider: a graded failure next to a usable point is a "
             auto gp = tadah::hpo::make_gradient_provider<Vec, void>(
                 sp, host, &counter, 0);
             Vec g;
-            CHECK_FALSE(gp.gradient(point(0.1, 0.5), g));
-            CHECK(gp.failure->kind == GradientFailure::Stencil);
-            CHECK(gp.failure->detail ==
-                  "at CGRID2B[2] = 0.1, the stencil point CGRID2B[2] = -0.1 "
-                  "failed: loss 999500000");
+            REQUIRE(gp.gradient(point(0.1, 0.5), g));
+            CHECK(g(0) == Approx(1.0).epsilon(1e-12));
 
             Counted below{[](const Vec& x) {
                 return x(0) < 0.0 ? 0.998e9 : x(0) + x(1);
@@ -318,25 +319,26 @@ TEST_CASE("GradientProvider: a graded failure next to a usable point is a "
         }
     }
 }
-
 TEST_CASE("GradientProvider: under FAILSCORE_GRADING a graded failure at the "
-          "point has the graded slope as its gradient",
-          "[HPO][grad_provider][gradient_failure][failscore_grading]")
+          "point has the graded slope as its gradient, next to the usable "
+          "side too", "[HPO][grad_provider][gradient_failure][failscore_grading]")
 {
     /* FAILSCORE 1e9, FAILSCORE_GRADING ON: below x = 0 the graded band-D
      * loss of v = -x, which falls towards the usable side; x + y above. A
      * graded failure is no usable loss, but its differences point out of
      * the failure region, which is what the grading is for.
-     * Pins (passes before the fix as well: a pin of the graded slope, which
-     * a rule that failed every failed evaluation would break): at (-1,
-     * 0.5) the gradient is the central difference of the graded losses at
-     * -0.8 and -1.2, and 0 along y, after five evaluations; at (-0.1, 0.5),
-     * next to the usable side, the difference of the usable 0.6 at 0.1 and
-     * the graded loss at -0.3, a direction out (negative) but as steep as
-     * the jump from the failure band to the usable loss (below -1e9), not
-     * the band's own slope: a limit of the rule, documented with its
-     * consequences (DLIB:BFGS can evaluate a bound again and again, LD_SLSQP
-     * stop at once, Ceres leave the box) and left to a follow-up. */
+     * Pins: at (-1, 0.5) the gradient is the central difference of the
+     * graded losses at -0.8 and -1.2, and 0 along y, after five evaluations
+     * (unchanged by the fix: a pin of that part); at (-0.1, 0.5), next to the
+     * usable side, the one-sided difference of the graded side, -0.3 and
+     * -0.5 with the loss at the point: the band's own slope, negative (a
+     * direction out of the failure region), of the order of 1e5, not the
+     * jump to the usable side.
+     * Before the fix: at (-0.1, 0.5) the difference of the usable 0.6 at 0.1
+     * and the graded loss at -0.3, (0.6 - f(-0.3)) / 0.4, below -1e9: as
+     * steep as the jump from the failure band, a documented limit
+     * (DLIB:BFGS evaluated a bound again and again, LD_SLSQP stopped at
+     * once, Ceres left the box). */
     auto sp = inhouse_spec();
     sp.failscore = 1e9;
     sp.failscore_grading = true;
@@ -356,10 +358,14 @@ TEST_CASE("GradientProvider: under FAILSCORE_GRADING a graded failure at the "
     CHECK(host.calls.load() == 5u);
 
     REQUIRE(gp.gradient(point(-0.1, 0.5), g));
-    CHECK(g(0) == Approx((0.6 - graded_below_zero(-0.3)) / 0.4));
-    CHECK(g(0) < -1e9);
+    const double y0 = graded_below_zero(-0.1);
+    const double one_sided =
+        (4.0 * (graded_below_zero(-0.1 - 0.2) - y0) -
+         (graded_below_zero(-0.1 + 2.0 * -0.2) - y0)) / (2.0 * -0.2);
+    CHECK(g(0) == Approx(one_sided).epsilon(1e-9));
+    CHECK(g(0) < 0.0);
+    CHECK(g(0) > -1e6);
 }
-
 TEST_CASE("GradientProvider: under FAILSCORE_GRADING a flat graded failure "
           "region, or FAILSCORE itself at the point, fails the gradient",
           "[HPO][grad_provider][gradient_failure][failscore_grading]")
@@ -422,19 +428,24 @@ TEST_CASE("GradientProvider: HYBRID's finite differences follow the same "
         return true;
     };
     SECTION("gradient() inside the failure region") {
-        /* Pins: without the loss at the point, the first central stencil
-         * point -0.8 fails the gradient at once under FAILSCORE_GRADING
-         * OFF: two counted evaluations (the analytical pass, -0.8).
-         * Before the fix: g(0) = 0 (two equal failures), three. */
+        /* Pins: gradient() evaluates the loss at the point first (its kind
+         * decides the gradient), finds it failed and fails the gradient
+         * there, before the analytical pass: one counted evaluation, the
+         * failure naming the loss at the point ("a failed evaluation at the
+         * point").
+         * Before the fix: the analytical pass ran first and the first
+         * central stencil point -0.8 failed the gradient ("at CGRID2B[2] =
+         * -1, the stencil point CGRID2B[2] = -0.8 failed: ..."), two counted
+         * evaluations. */
         FailBelowZero host;
         auto gp = tadah::hpo::make_gradient_provider<Vec, void>(
             sp, host, &counter, 0, agf);
         CHECK_FALSE(gp.gradient(point(-1.0, 0.5), g));
         CHECK(gp.failure->kind == GradientFailure::Stencil);
         CHECK(gp.failure->detail ==
-              "at CGRID2B[2] = -1, the stencil point CGRID2B[2] = -0.8 "
-              "failed: loss 1.797693135e+308");
-        CHECK(counter.load() == 2u);
+              "the loss at CGRID2B[2] = -1, SGRID2B[2] = 0.5 is "
+              "1.797693135e+308");
+        CHECK(counter.load() == 1u);
     }
     SECTION("gradient_at() with a failed loss at the point") {
         /* Pins: the caller's loss fails the gradient before the analytical
@@ -527,14 +538,12 @@ TEST_CASE("GradientProvider: HYBRID's finite differences follow the same "
          * Pins: gradient_at with the graded loss at (-1, 0.5) runs no
          * analytical pass and differences both parameters: the graded
          * slope, g(1) = 0, after four stencil evaluations; gradient()
-         * without it evaluates the point once its first central stencil
-         * point has failed, to tell a graded failure there from a usable
-         * loss, and then takes the graded slope: four counted evaluations
-         * (the analytical pass, -0.8, the point, -1.2).
-         * Before the fix: gradient() never evaluated the point: three; and
-         * until 2026-10-12 gradient_at took the analytical g(1) = 1 at the
-         * graded failure (three counted evaluations: the analytical pass,
-         * -0.8, -1.2). */
+         * without it evaluates the point first, finds the graded failure and
+         * does the same: five counted evaluations (the point, then the four
+         * stencil points), g(1) = 0.
+         * Before the fix: gradient() ran the analytical pass first and kept
+         * its g(1) = 1 at the graded failure (four counted evaluations: the
+         * analytical pass, -0.8, the point, -1.2). */
         sp.failscore = 1e9;
         sp.failscore_grading = true;
         Counted host{[](const Vec& x) {
@@ -552,17 +561,19 @@ TEST_CASE("GradientProvider: HYBRID's finite differences follow the same "
         counter = 0;
         REQUIRE(gp.gradient(point(-1.0, 0.5), g));
         CHECK(g(0) == Approx(slope).epsilon(1e-12));
-        CHECK(g(1) == 1.0);
-        CHECK(counter.load() == 4u);
+        CHECK(g(1) == 0.0);
+        CHECK(counter.load() == 5u);
     }
     SECTION("FAILSCORE_GRADING ON: a usable point whose central stencil "
             "points fail") {
         /* FAILSCORE 1e9 (ungraded) outside |x| <= 0.1, at (0, 0.5).
-         * Pins: gradient() evaluates the point once the stencil point 0.2
-         * has failed, finds it usable, and fails the gradient there: three
-         * counted evaluations (the analytical pass, 0.2, the point).
-         * Before the fix: g(0) = 0 (two equal failures), three (the
-         * analytical pass, 0.2, -0.2). */
+         * Pins: gradient() evaluates the point first (usable), runs the
+         * analytical pass, and the differenced component has no usable
+         * side: 0.2 and -0.2 fail; four counted evaluations (the point, the
+         * analytical pass, 0.2, -0.2), the failure naming both.
+         * Before the fix: three counted evaluations (the analytical pass,
+         * 0.2, the point evaluated after 0.2 had failed), the failure
+         * naming 0.2 alone. */
         sp.failscore = 1e9;
         sp.failscore_grading = true;
         Counted host{[](const Vec& x) {
@@ -573,9 +584,9 @@ TEST_CASE("GradientProvider: HYBRID's finite differences follow the same "
         CHECK_FALSE(gp.gradient(point(0.0, 0.5), g));
         CHECK(gp.failure->kind == GradientFailure::Stencil);
         CHECK(gp.failure->detail ==
-              "at CGRID2B[2] = 0, the stencil point CGRID2B[2] = 0.2 failed: "
-              "loss 1000000000");
-        CHECK(counter.load() == 3u);
+              "at CGRID2B[2] = 0, the stencil points CGRID2B[2] = 0.2 and "
+              "CGRID2B[2] = -0.2 failed: losses 1000000000 and 1000000000");
+        CHECK(counter.load() == 4u);
     }
     SECTION("FAILSCORE_GRADING ON: a flat graded failure region") {
         /* FAILSCORE 1e9; a constant graded failure 0.99975e9 below x = 0
@@ -586,11 +597,11 @@ TEST_CASE("GradientProvider: HYBRID's finite differences follow the same "
          * region", with the graded loss given (gradient_at: four counted
          * evaluations, no analytical pass and both parameters differenced;
          * three, the analytical pass, -0.8 and -1.2, until 2026-10-12) and
-         * without it (gradient(): four, the point evaluated once -0.8 has
-         * failed).
-         * Before the fix: g(0) = 0, a zero difference of two failures,
-         * returned as the gradient in both, and a gradient search took the
-         * point for converged. */
+         * without it (gradient(): five, the point first, then as
+         * gradient_at).
+         * Before the fix: gradient() made four counted evaluations (the
+         * analytical pass, -0.8, the point evaluated once -0.8 had failed,
+         * -1.2). */
         sp.failscore = 1e9;
         sp.failscore_grading = true;
         Counted host{[](const Vec& x) {
@@ -609,19 +620,18 @@ TEST_CASE("GradientProvider: HYBRID's finite differences follow the same "
         CHECK_FALSE(gp.gradient(point(-1.0, 0.5), g));
         CHECK(gp.failure->kind == GradientFailure::Stencil);
         CHECK(gp.failure->detail == flat);
-        CHECK(counter.load() == 4u);
+        CHECK(counter.load() == 5u);
     }
     SECTION("FAILSCORE_GRADING ON: FAILSCORE at the point that gradient() "
             "evaluates") {
         /* FAILSCORE 1e9 (ungraded: an infrastructure failure, a loss the
          * host clamped) below x = 0.
-         * Pins: gradient() at (-1, 0.5) evaluates the point once its first
-         * central stencil point -0.8 has failed, finds FAILSCORE there, and
-         * fails the gradient at it: a Stencil failure naming the loss at the
-         * point, three counted evaluations (the analytical pass, -0.8, the
-         * point; -1.2 is not evaluated).
-         * Before the fix: g(0) = (1e9 - 1e9) / 0.4 = 0, returned as the
-         * gradient. */
+         * Pins: gradient() at (-1, 0.5) evaluates the point first, finds
+         * FAILSCORE there, and fails the gradient at it before the
+         * analytical pass: a Stencil failure naming the loss at the point,
+         * one counted evaluation.
+         * Before the fix: three counted evaluations (the analytical pass,
+         * -0.8, the point evaluated once -0.8 had failed). */
         sp.failscore = 1e9;
         sp.failscore_grading = true;
         Counted host{[](const Vec& x) { return x(0) < 0.0 ? 1e9 : x(0) + x(1); }};
@@ -631,7 +641,7 @@ TEST_CASE("GradientProvider: HYBRID's finite differences follow the same "
         CHECK(gp.failure->kind == GradientFailure::Stencil);
         CHECK(gp.failure->detail ==
               "the loss at CGRID2B[2] = -1, SGRID2B[2] = 0.5 is 1000000000");
-        CHECK(counter.load() == 3u);
+        CHECK(counter.load() == 1u);
     }
 }
 
@@ -837,20 +847,24 @@ TEST_CASE("GradientProvider: ANALYTICAL at a candidate rejected before "
                                         "[0, 1])"));
 }
 
-TEST_CASE("GradientProvider: a non-finite stencil or centre loss is a "
-          "Stencil failure", "[HPO][grad_provider][gradient_failure]")
+TEST_CASE("GradientProvider: a non-finite stencil loss is of another kind, "
+          "a non-finite loss at the point a Stencil failure",
+          "[HPO][grad_provider][gradient_failure]")
 {
+    /* NaN below x = 0.
+     * Pins: at (0.1, 0.5) the stencil point -0.1 is NaN, a failure, so the
+     * first component takes the usable side (0.3, 0.5): 1; a NaN loss at
+     * the point fails the gradient at once.
+     * Before the fix: at (0.1, 0.5) a Stencil failure "the stencil point
+     * CGRID2B[2] = -0.1 failed: loss nan". */
     const auto sp = inhouse_spec();
     NanBelowZero host;
     std::atomic<unsigned long> counter{0};
     auto gp = tadah::hpo::make_gradient_provider<Vec, void>(sp, host,
                                                             &counter, 0);
     Vec g;
-    CHECK_FALSE(gp.gradient(point(0.1, 0.5), g));
-    CHECK(gp.failure->kind == GradientFailure::Stencil);
-    CHECK(gp.failure->detail ==
-          "at CGRID2B[2] = 0.1, the stencil point CGRID2B[2] = -0.1 "
-          "failed: loss nan");
+    REQUIRE(gp.gradient(point(0.1, 0.5), g));
+    CHECK(g(0) == Approx(1.0).epsilon(1e-12));
 
     CHECK_FALSE(gp.gradient(point(-1.0, 0.5), g));
     CHECK(gp.failure->kind == GradientFailure::Stencil);
@@ -902,7 +916,14 @@ TEST_CASE("GradientProvider: HYBRID's masked pass and the analytical pass "
     FailBelowZero host;
     std::atomic<unsigned long> counter{0};
 
-    SECTION("a failed evaluation in the masked finite-difference pass") {
+    SECTION("failed evaluations on both sides in the masked "
+            "finite-difference pass") {
+        /* Pins: a usable island |x| <= 0.1 at (0, 0.5): the differenced
+         * component has no usable side, a Stencil failure naming both
+         * stencil points; at (0.1, 0.5) with failures below x = 0 the
+         * usable side is taken (0.3, 0.5): g(0) = 1, g(1) the analytical 1.
+         * Before the fix: at (0.1, 0.5) a Stencil failure naming -0.1 alone
+         * ("the stencil point CGRID2B[2] = -0.1 failed: ..."). */
         auto agf = [](const Vec&, Vec& g, std::vector<int>& nfd) {
             g.set_size(2);
             g(0) = 0.0;
@@ -913,11 +934,20 @@ TEST_CASE("GradientProvider: HYBRID's masked pass and the analytical pass "
         auto gp = tadah::hpo::make_gradient_provider<Vec, void>(
             sp, host, &counter, 0, agf);
         Vec g;
-        CHECK_FALSE(gp.gradient(point(0.1, 0.5), g));
-        CHECK(gp.failure->kind == GradientFailure::Stencil);
-        CHECK(gp.failure->detail ==
-              "at CGRID2B[2] = 0.1, the stencil point CGRID2B[2] = -0.1 "
-              "failed: loss 1.797693135e+308");
+        REQUIRE(gp.gradient(point(0.1, 0.5), g));
+        CHECK(g(0) == Approx(1.0).epsilon(1e-12));
+        CHECK(g(1) == 1.0);
+        Counted island{[](const Vec& x) {
+            return std::abs(x(0)) <= 0.1 ? x(0) + x(1) : kMax;
+        }};
+        auto gp2 = tadah::hpo::make_gradient_provider<Vec, void>(
+            sp, island, &counter, 0, agf);
+        CHECK_FALSE(gp2.gradient(point(0.0, 0.5), g));
+        CHECK(gp2.failure->kind == GradientFailure::Stencil);
+        CHECK(gp2.failure->detail ==
+              "at CGRID2B[2] = 0, the stencil points CGRID2B[2] = 0.2 and "
+              "CGRID2B[2] = -0.2 failed: losses 1.797693135e+308 and "
+              "1.797693135e+308");
     }
     SECTION("an analytical pass that cannot be formed") {
         auto agf = [](const Vec&, Vec&, std::vector<int>&) { return false; };
@@ -959,20 +989,31 @@ TEST_CASE("GradientProvider: the Ceres kernel reports a failed stencil "
     Vec g;
 
     SECTION("a failed stencil evaluation") {
+        /* Pins: Ceres' relative step, 0.2 * |u| (at least sqrt(epsilon)):
+         * 0.01 at u = 0.05, whose stencil stays above zero; 1.49e-8 at
+         * u = 0, whose stencil reaches below it: the usable side is taken
+         * (2^-26 and 2^-25), g(0) = 1; on an island |x| <= 1e-8 neither
+         * side is usable, a Stencil failure naming both points.
+         * Before the fix: at u = 0 a Stencil failure naming -2^-26. */
         FailBelowZero host;
         auto gp = tadah::hpo::make_gradient_provider<Vec, void>(
             sp, host, &counter, 0);
-        /* Ceres' relative step, 0.2 * |u| (at least sqrt(epsilon)): 0.01
-         * at u = 0.05, whose stencil stays above zero ... */
         REQUIRE(gp.gradient(point(0.05, 0.5), g));
         CHECK(gp.failure->kind == GradientFailure::None);
-        /* ... and 1.49e-8 at u = 0, whose stencil reaches below it. */
-        CHECK_FALSE(gp.gradient(point(0.0, 0.5), g));
-        CHECK(gp.failure->kind == GradientFailure::Stencil);
-        CHECK_THAT(gp.failure->detail,
-                   Catch::StartsWith("at CGRID2B[2] = 0, the stencil point "
-                                     "CGRID2B[2] = -") &&
-                   Catch::EndsWith(" failed: loss 1.797693135e+308"));
+        REQUIRE(gp.gradient(point(0.0, 0.5), g));
+        CHECK(g(0) == Approx(1.0).epsilon(1e-6));
+        Counted island{[](const Vec& x) {
+            return std::abs(x(0)) <= 1e-8 ? x(0) + x(1) : kMax;
+        }};
+        auto gp2 = tadah::hpo::make_gradient_provider<Vec, void>(
+            sp, island, &counter, 0);
+        CHECK_FALSE(gp2.gradient(point(0.0, 0.5), g));
+        CHECK(gp2.failure->kind == GradientFailure::Stencil);
+        CHECK_THAT(gp2.failure->detail,
+                   Catch::StartsWith("at CGRID2B[2] = 0, the stencil points "
+                                     "CGRID2B[2] = 1.4") &&
+                   Catch::EndsWith(" failed: losses 1.797693135e+308 and "
+                                   "1.797693135e+308"));
     }
     SECTION("a non-finite loss") {
         NanBelowZero host;

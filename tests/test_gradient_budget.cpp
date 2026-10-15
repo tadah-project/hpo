@@ -195,7 +195,8 @@ std::string record_central2(const std::string& budget, const std::string& needs)
  * the loss at a starting point (1 evaluation) and the gradient there (4
  * evaluations: central differences in 2 dimensions, GRAD_STRATEGY
  * NUMERICAL) before it evaluates a point it steps to, which needs MAXEVAL 6
- * or more", for NLOPT:LD_LBFGS, DLIB:BFGS and CERES:LBFGS; MAXEVAL 6 gets
+ * or more", for NLOPT:LD_LBFGS, DLIB:BFGS and CERES:STEEPEST_DESCENT (it
+ * was CERES:LBFGS, refused since: that row a pin); MAXEVAL 6 gets
  * none (tmp/repro lbfgs6, dlib6, ceres6: the sixth evaluation is the first
  * step).
  * Before the fix: no WARNING for any of them (the search ended
@@ -206,7 +207,8 @@ TEST_CASE("startup validation: a gradient search whose MAXEVAL cannot pay for "
 {
     for (const auto& [lib, algo] : std::vector<std::pair<std::string,
                                                          std::string>>{
-             {"NLOPT", "LD_LBFGS"}, {"DLIB", "BFGS"}, {"CERES", "LBFGS"}}) {
+             {"NLOPT", "LD_LBFGS"}, {"DLIB", "BFGS"},
+             {"CERES", "STEEPEST_DESCENT"}}) {
         for (const char* maxeval : {"4", "5"}) {
             INFO(lib << ":" << algo << " MAXEVAL " << maxeval);
             const std::string journal =

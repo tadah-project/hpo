@@ -1268,8 +1268,12 @@ TEST_CASE("startup validation: NLOPT:LN_NEWUOA, the Ceres least-squares "
         "NLOPT:LN_NEWUOA is refused: NLopt 2.10 runs LN_NEWUOA without the "
         "OPTIM box";
     const std::string bobyqa = "Use NLOPT:LN_BOBYQA";
+    /* the NLLS refusal named "Use CERES:LBFGS, CERES:WOLFE, CERES:NLCG or
+     * CERES:STEEPEST_DESCENT" before the fix (three of them refused since) */
     const std::string ceres_use =
-        "Use CERES:LBFGS, CERES:WOLFE, CERES:NLCG or CERES:STEEPEST_DESCENT";
+        "Use CERES:STEEPEST_DESCENT, Ceres' line-search solver of a scalar "
+        "loss that HPO runs, or a bound-constrained gradient search: "
+        "NLOPT:LD_LBFGS or DLIB:BFGS";
     const std::string explain = "; `tadah explain ALGO` lists the optimisers";
     const std::string top = "the STRATEGY-level optimiser";
     struct Case {
@@ -1597,13 +1601,13 @@ TEST_CASE("startup validation: each phase's backend checks run at startup",
               "    REFINE\n      LIB DLIB\n      ALGO BFGS\n"
               "      MAXTIME 60\n    ENDREFINE\n",
               "the PRESTAGE refinement: DLIB:BFGS does not support MAXTIME"},
-             {"the PRESTAGE exploration: CERES:LBFGS with STOPVAL",
+             {"the PRESTAGE exploration: CERES:STEEPEST_DESCENT with STOPVAL",
               "    TYPE PRESTAGE\n    LIB DLIB\n    ALGO BFGS\n"
               "    MAXEVAL 20\n    EXPLORE\n      LIB CERES\n"
-              "      ALGO LBFGS\n      MAXEVAL 12\n      STOPVAL 0.1\n"
+              "      ALGO STEEPEST_DESCENT\n      MAXEVAL 12\n      STOPVAL 0.1\n"
               "    ENDEXPLORE\n",
               hpo_test::ceres_expect(
-                  "the PRESTAGE exploration (EXPLORE block): CERES:LBFGS "
+                  "the PRESTAGE exploration (EXPLORE block): CERES:STEEPEST_DESCENT "
                   "does not support STOPVAL",
                   "the PRESTAGE exploration (EXPLORE block): ")},
              {"TADAH:ANNEAL with an unknown PARAM",
@@ -1713,21 +1717,21 @@ TEST_CASE("startup validation: a phase's settings refused at startup name the "
     };
     const std::string top = "the STRATEGY-level optimiser: ";
     const std::vector<Case> cases = {
-        {"CERES:LBFGS FTOL_REL -1",
-         strategy_config("    TYPE PLAIN\n    LIB CERES\n    ALGO LBFGS\n"
+        {"CERES:STEEPEST_DESCENT FTOL_REL -1",
+         strategy_config("    TYPE PLAIN\n    LIB CERES\n    ALGO STEEPEST_DESCENT\n"
                          "    MAXEVAL 20\n    FTOL_REL -1\n"),
          "ENDOPTIMIZER",
-         top + hpo_test::ceres_expect("CERES:LBFGS requires FTOL_REL >= 0 "
+         top + hpo_test::ceres_expect("CERES:STEEPEST_DESCENT requires FTOL_REL >= 0 "
                                       "(Ceres' function_tolerance), got -1")},
-        {"an EXPLORE block's CERES:WOLFE PARAM max_iter 1.5",
+        {"an EXPLORE block's CERES:STEEPEST_DESCENT PARAM max_iter 1.5",
          strategy_config("    TYPE PRESTAGE\n    LIB DLIB\n    ALGO BFGS\n"
                          "    MAXEVAL 20\n    EXPLORE\n      LIB CERES\n"
-                         "      ALGO WOLFE\n      MAXEVAL 12\n"
+                         "      ALGO STEEPEST_DESCENT\n      MAXEVAL 12\n"
                          "      PARAM max_iter 1.5\n    ENDEXPLORE\n"),
          "ENDEXPLORE",
          "the PRESTAGE exploration (EXPLORE block): " +
              hpo_test::ceres_expect(
-                 "CERES:WOLFE requires PARAM max_iter to be an integer from "
+                 "CERES:STEEPEST_DESCENT requires PARAM max_iter to be an integer from "
                  "0 to 2147483647 (Ceres' max_num_iterations), got 1.5")},
         {"a REFINE block's DLIB:BFGS MAXTIME",
          strategy_config("    TYPE PRESTAGE\n" + kExploreGfs +
@@ -2134,12 +2138,13 @@ TEST_CASE("startup validation: the backend checks reject no valid "
         const auto v = judge(strategy_config(body));
         CHECK(v.startup == "");
     }
-    /* CERES:LBFGS ends on its own as well. A build without Ceres refuses
+    /* CERES:STEEPEST_DESCENT (it was CERES:LBFGS, refused since: a pin)
+     * ends on its own as well. A build without Ceres refuses
      * every LIB CERES as not built (ceres_build.h): a pin of that refusal,
      * for the phase. Before this test change: such a build failed the case
      * here, expecting no refusal. */
     CHECK(judge(strategy_config("    TYPE PLAIN\n    LIB CERES\n"
-                                "    ALGO LBFGS\n")).startup ==
+                                "    ALGO STEEPEST_DESCENT\n")).startup ==
           hpo_test::ceres_expect("", "the STRATEGY-level optimiser: "));
 }
 
@@ -3236,12 +3241,13 @@ TEST_CASE("startup validation: finite differences fit every OPTIM box, "
         /* a number for fd_kernel: the same message on every backend. DLIB:BFGS
          * said it "does not support PARAM fd_kernel" while listing it as
          * supported, and the CERES drivers left it out of their list (review
-         * 2, finding 2). A build without Ceres refuses CERES:LBFGS as not
-         * built first (ceres_build.h; a pin of that refusal; before this
+         * 2, finding 2; CERES:STEEPEST_DESCENT stands in for CERES:LBFGS,
+         * refused since). A build without Ceres refuses
+         * CERES:STEEPEST_DESCENT as not built first (ceres_build.h; a pin of that refusal; before this
          * test change such a build failed here, expecting the fd_kernel
          * message). */
         for (const std::string& backend :
-             {std::string("DLIB:BFGS"), std::string("CERES:LBFGS"),
+             {std::string("DLIB:BFGS"), std::string("CERES:STEEPEST_DESCENT"),
               std::string("NLOPT:LD_LBFGS")}) {
             const std::string lib = backend.substr(0, backend.find(':'));
             const std::string algo = backend.substr(backend.find(':') + 1);

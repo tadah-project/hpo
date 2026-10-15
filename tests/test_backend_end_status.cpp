@@ -490,12 +490,12 @@ struct CeresCase {
     ceres::LineSearchType ls;
 };
 
-CeresCase ceres_case(const std::string& algo)
+/* CERES:STEEPEST_DESCENT, the Ceres solver HPO runs (CERES:LBFGS, WOLFE
+ * and NLCG are refused: their Wolfe line search stalls at a point outside
+ * the OPTIM box). The cases below that ran CERES:LBFGS run it now; each
+ * passes before the fix as well (a pin of the ending it names). */
+CeresCase ceres_case(const std::string&)
 {
-    if (algo == "LBFGS")  return {algo, ceres::LBFGS, ceres::WOLFE};
-    if (algo == "WOLFE")  return {algo, ceres::BFGS, ceres::WOLFE};
-    if (algo == "NLCG")   return {algo, ceres::NONLINEAR_CONJUGATE_GRADIENT,
-                                  ceres::WOLFE};
     return {"STEEPEST_DESCENT", ceres::STEEPEST_DESCENT, ceres::ARMIJO};
 }
 
@@ -533,15 +533,15 @@ TEST_CASE("End status: CERES records a spent MAXEVAL as MAXEVAL reached",
     CHECK(lr.status() == "CERES:STEEPEST_DESCENT: MAXEVAL reached");
 }
 
-/* Pins: MAXEVAL 1 under LBFGS: the loss at the start is the only
+/* Pins: MAXEVAL 1 under STEEPEST_DESCENT: the loss at the start is the only
  * evaluation, its gradient is refused for the budget ("Initial cost and
- * jacobian evaluation failed."), and the status is "CERES:LBFGS: MAXEVAL
- * reached".
+ * jacobian evaluation failed."), and the status is
+ * "CERES:STEEPEST_DESCENT: MAXEVAL reached".
  * Before the fix: no status. */
 TEST_CASE("End status: CERES records MAXEVAL spent at its first gradient",
           "[HPO][stop_status][ceres]")
 {
-    auto sp = make_spec("CERES", "LBFGS", {-1.0, -1.0}, {1.0, 1.0},
+    auto sp = make_spec("CERES", "STEEPEST_DESCENT", {-1.0, -1.0}, {1.0, 1.0},
                         {0.5, -0.3});
     sp.stop.maxeval = 1;
     LoggedRun lr;
@@ -550,19 +550,19 @@ TEST_CASE("End status: CERES records MAXEVAL spent at its first gradient",
     CHECK(host.n() == 1u);
     CHECK(journal.find("Initial cost and jacobian evaluation failed.") !=
           std::string::npos);
-    CHECK(lr.status() == "CERES:LBFGS: MAXEVAL reached");
+    CHECK(lr.status() == "CERES:STEEPEST_DESCENT: MAXEVAL reached");
 }
 
 /* Pins: PARAM tol_gradinf 1e3 (Ceres' gradient_tolerance, a max-norm)
  * holds at the start: Ceres converges with "Gradient tolerance reached"
- * after the loss and its 4-point stencil, and the status is "CERES:LBFGS:
- * tol_gradinf reached"; the stop line gives the value, "PARAM tol_gradinf
- * = 1000".
+ * after the loss and its 4-point stencil, and the status is
+ * "CERES:STEEPEST_DESCENT: tol_gradinf reached"; the stop line gives the
+ * value, "PARAM tol_gradinf = 1000".
  * Before the fix: no status. */
 TEST_CASE("End status: CERES records its gradient tolerance as tol_gradinf "
           "reached", "[HPO][stop_status][ceres]")
 {
-    auto sp = make_spec("CERES", "LBFGS", {-1.0, -1.0}, {1.0, 1.0},
+    auto sp = make_spec("CERES", "STEEPEST_DESCENT", {-1.0, -1.0}, {1.0, 1.0},
                         {0.5, -0.3});
     sp.stop.maxeval = 200;
     sp.param["tol_gradinf"] = 1e3;
@@ -570,45 +570,44 @@ TEST_CASE("End status: CERES records its gradient tolerance as tol_gradinf "
     StubHost host{bowl};
     const std::string journal = run_ceres(sp, host, lr);
     CHECK(host.n() == 5u);
-    CHECK(journal.find("CERES:LBFGS stopped: tol_gradinf reached after 5 "
+    CHECK(journal.find("CERES:STEEPEST_DESCENT stopped: tol_gradinf reached after 5 "
                        "evaluation(s): PARAM tol_gradinf = 1000; Ceres: "
                        "Gradient tolerance reached.") != std::string::npos);
-    CHECK(lr.status() == "CERES:LBFGS: tol_gradinf reached");
+    CHECK(lr.status() == "CERES:STEEPEST_DESCENT: tol_gradinf reached");
 }
 
 /* Pins: Ceres' function_tolerance (FTOL_REL, by default 1e-6) on the
  * quartic, whose loss falls slowly near its minimum: Ceres converges with
- * "Function tolerance reached", the status is "CERES:LBFGS: FTOL_REL
+ * "Function tolerance reached", the status is "CERES:STEEPEST_DESCENT: FTOL_REL
  * reached", and the stop line says the value is the default, "FTOL_REL =
  * 1e-06 (default)".
  * Before the fix: no status. */
 TEST_CASE("End status: CERES records its function tolerance as FTOL_REL "
           "reached", "[HPO][stop_status][ceres]")
 {
-    auto sp = make_spec("CERES", "LBFGS", {-1.0, -1.0}, {1.0, 1.0},
+    auto sp = make_spec("CERES", "STEEPEST_DESCENT", {-1.0, -1.0}, {1.0, 1.0},
                         {0.5, -0.3});
     sp.stop.maxeval = 500;
     LoggedRun lr;
     StubHost host{quartic};
     const std::string journal = run_ceres(sp, host, lr);
     CHECK(host.n() < 500u);
-    CHECK(journal.find("CERES:LBFGS stopped: FTOL_REL reached after ") !=
+    CHECK(journal.find("CERES:STEEPEST_DESCENT stopped: FTOL_REL reached after ") !=
           std::string::npos);
     CHECK(journal.find(": FTOL_REL = 1e-06 (default); Ceres: Function "
                        "tolerance reached.") != std::string::npos);
-    CHECK(lr.status() == "CERES:LBFGS: FTOL_REL reached");
+    CHECK(lr.status() == "CERES:STEEPEST_DESCENT: FTOL_REL reached");
 }
 
 /* Pins: XTOL_REL 1e-2 (Ceres' parameter_tolerance) on the quartic, with
  * FTOL_REL and PARAM tol_gradinf too small to fire: Ceres converges with
- * "Parameter tolerance reached", the status is "CERES:LBFGS: XTOL_REL
- * reached" and the stop line gives "XTOL_REL = 0.01". (On the bowl LBFGS
- * lands on the minimum, where the gradient test fires first.)
+ * "Parameter tolerance reached", the status is "CERES:STEEPEST_DESCENT:
+ * XTOL_REL reached" and the stop line gives "XTOL_REL = 0.01".
  * Before the fix: no status. */
 TEST_CASE("End status: CERES records its parameter tolerance as XTOL_REL "
           "reached", "[HPO][stop_status][ceres]")
 {
-    auto sp = make_spec("CERES", "LBFGS", {-1.0, -1.0}, {1.0, 1.0},
+    auto sp = make_spec("CERES", "STEEPEST_DESCENT", {-1.0, -1.0}, {1.0, 1.0},
                         {0.5, -0.3});
     sp.stop.maxeval = 2000;
     sp.stop.xtol_rel = 1e-2;
@@ -620,7 +619,7 @@ TEST_CASE("End status: CERES records its parameter tolerance as XTOL_REL "
     CHECK(host.n() < 2000u);
     CHECK(journal.find(": XTOL_REL = 0.01; Ceres: Parameter tolerance "
                        "reached.") != std::string::npos);
-    CHECK(lr.status() == "CERES:LBFGS: XTOL_REL reached");
+    CHECK(lr.status() == "CERES:STEEPEST_DESCENT: XTOL_REL reached");
 }
 
 /* Pins: PARAM max_iter 1 (Ceres' max_num_iterations) on the quartic,
@@ -694,16 +693,17 @@ TEST_CASE("End status: CERES records a line-search failure as STOPPED with "
  * The validators refuse every setting of HPO's that Ceres would
  * (test_hpo.cpp), so options Ceres refuses are HPO's error. The driver is
  * called here without its validator (PARAM max_ls_iter 0).
- * Pins: the driver throws std::logic_error "internal error: CERES:LBFGS:
- * Ceres refuses the options built from a validated spec: Invalid
- * configuration. ..." before any evaluation, and records no status.
+ * Pins: the driver throws std::logic_error "internal error:
+ * CERES:STEEPEST_DESCENT: Ceres refuses the options built from a validated
+ * spec: Invalid configuration. ..." before any evaluation, and records no
+ * status.
  * Before the fix: Ceres' FAILURE was the search's ending, "STOPPED --
- * CERES:LBFGS: FAILURE (Invalid configuration)", as if the search had
- * stopped. */
+ * CERES:STEEPEST_DESCENT: FAILURE (Invalid configuration)", as if the
+ * search had stopped. */
 TEST_CASE("End status: CERES options that Ceres refuses are an internal "
           "error, not an ending", "[HPO][stop_status][ceres]")
 {
-    auto sp = make_spec("CERES", "LBFGS", {-1.0, -1.0}, {1.0, 1.0},
+    auto sp = make_spec("CERES", "STEEPEST_DESCENT", {-1.0, -1.0}, {1.0, 1.0},
                         {0.5, -0.3});
     sp.stop.maxeval = 50;
     sp.param["max_ls_iter"] = 0.0;
@@ -714,7 +714,7 @@ TEST_CASE("End status: CERES options that Ceres refuses are an internal "
         Catch::Matchers::Predicate<std::logic_error>(
             [](const std::logic_error& e) {
                 const std::string w = e.what();
-                return w.rfind("internal error: CERES:LBFGS: Ceres refuses "
+                return w.rfind("internal error: CERES:STEEPEST_DESCENT: Ceres refuses "
                                "the options built from a validated spec: "
                                "Invalid configuration.", 0) == 0;
             },

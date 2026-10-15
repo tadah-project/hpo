@@ -266,11 +266,13 @@ TEST_CASE("seed anchors: every adapter's first evaluation is the seed bitwise",
         CHECK(seed_position(evals(*anchored, asa)) == 5u);
     }
 #ifdef TADAH_USE_CERES
-    SECTION("CERES:LBFGS") {
-        check_first_eval_is_seed(seed_spec("CERES", "LBFGS"),
+    SECTION("CERES:STEEPEST_DESCENT") {
+        /* a pin (the section ran CERES:LBFGS, refused since) */
+        check_first_eval_is_seed(seed_spec("CERES", "STEEPEST_DESCENT"),
             [](const OptimizerSpec& s, RecordingHost& h) {
                 tadah::hpo::detail::run_ceres_gradient_problem<Vec, NoRunner>(
-                    s, h, ceres::LBFGS, ceres::WOLFE, "LBFGS");
+                    s, h, ceres::STEEPEST_DESCENT, ceres::ARMIJO,
+                    "STEEPEST_DESCENT");
             });
     }
 #endif
