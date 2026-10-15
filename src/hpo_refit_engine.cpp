@@ -174,26 +174,29 @@ bool HPORefitEngine::compact_fit(const tadah::core::Context &c,
   const int nmax_all = std::max({nums.nmax[0], nums.nmax[1], nums.nmax[2]});
 
   // ---- reachability first: compact mode NEEDS the energy metric ----
-  // The lattice/a0 are already guaranteed recognised by the crystal gate in
-  // RefitEngine::run() (models::eam_lattice::require_crystal: a known
-  // lattice, a0 > 0), and REFIT_REACH_SMIN is at least 0.1
-  // (read_refit_numbers), so r_reach = REFIT_REACH_SMIN x the nearest-
-  // neighbour distance is positive for every configuration. A non-positive
-  // window is a bug in what reached this hook (the compact fit selects its
-  // rungs on the window), not a table the fitter declines: an internal
-  // error, not a fallback to the dense fit (owner decision, MK, 2026-10-15).
+  // The crystal gate in RefitEngine::run()
+  // (models::eam_lattice::require_crystal_on_grid) has refused an unknown
+  // lattice, a0 <= 0, and a crystal whose nearest neighbours at a/a0 =
+  // REFIT_REACH_SMIN are less than the table's step dr apart, with the same
+  // REFIT_REACH_SMIN (read_refit_numbers, the default 0.75 when unset) and
+  // the same function, eam_lattice::reach_distance, that gives r_reach
+  // here: so r_reach >= dr > 0 for every run that reaches this hook. A
+  // smaller one is a bug in what reached it (the compact fit's windows start
+  // from it), not a table the fitter declines: an internal error, not a
+  // fallback to the dense fit (owner decision, MK, 2026-10-15).
   EAMRefit probe(eam, cfg);
   probe.analyze_reachability();
-  if (!(probe.r_reach() > 0.0))
+  if (!(probe.r_reach() >= eam.dr()))
     throw std::logic_error(
-        "tadah refit[compact]: internal error: the reachable pair-distance "
-        "window is empty (r_reach = " + core::to_string(probe.r_reach(), 4) +
-        " A, from REFIT_REACH_SMIN " + core::to_string(cfg.reach_smin, 4) +
-        " and the " + eam.lattice() + " lattice of a0 = " +
-        core::to_string(eam.lattice_param(), 4) + " A), although the crystal "
-        "gate (a known lattice, a0 > 0) and the range of REFIT_REACH_SMIN "
-        "(0.1 to 1) make it positive for every configuration; this is a bug, "
-        "please report it");
+        "tadah refit[compact]: internal error: the reachability analysis "
+        "gave r_reach = " + core::format_roundtrip(probe.r_reach()) +
+        " A (REFIT_REACH_SMIN " + core::format_roundtrip(cfg.reach_smin) +
+        " x the nearest-neighbour distance of the " + eam.lattice() +
+        " lattice of a0 = " + core::format_roundtrip(eam.lattice_param()) +
+        " A), less than the step of the table's radial grid, dr = " +
+        core::format_roundtrip(eam.dr()) + " A, although the crystal gate "
+        "of tadah refit (eam_lattice::require_crystal_on_grid) refuses every "
+        "such table; this is a bug, please report it");
   const double rcut = eam.rcut();
   const double a0 = eam.lattice_param();
   const std::string lattice = eam.lattice();
