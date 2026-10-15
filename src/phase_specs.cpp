@@ -121,6 +121,17 @@ std::optional<OptimizerSpec> single_local_search(const OptimizerSpec& spec)
     return single_local_search(*local);
 }
 
+std::optional<OptimizerSpec> search_ignoring_start(const OptimizerSpec& spec)
+{
+    const OptimizerCaps& caps = optimizer_caps(spec);
+    if (!caps.starts_at_x0) return spec;
+    if (caps.accepts_inner && !caps.is_global) {
+        const std::optional<OptimizerSpec> local = inner_run_spec(spec);
+        if (local) return search_ignoring_start(*local);
+    }
+    return std::nullopt;
+}
+
 namespace {
 
 /* A point the refinement's candidates stand in for at startup: the spec's

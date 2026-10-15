@@ -149,6 +149,35 @@ std::string startup_journal(const std::string& config)
     return journal;
 }
 
+/* What validate_hpo_setup() refuses `config` with, its line included ("" when
+ * it accepts it); the parser must accept it. */
+std::string startup_refusal(const std::string& config)
+{
+    tadah::core::PeriodicTable::initialize();
+    const fs::path file =
+        fs::temp_directory_path() / (unique_name("tadah_budget_") + ".hpo");
+    {
+        std::ofstream os(file);
+        REQUIRE(os.good());
+        os << config;
+    }
+    Context ctx = make_ctx();
+    std::string what;
+    {
+        JournalCapture j;
+        INFO("config:\n" << config);
+        HPOTargets trg(ctx, file.string());
+        try {
+            tadah::hpo::validate_hpo_setup(ctx, trg, true, true);
+        } catch (const std::exception& e) {
+            what = e.what();
+        }
+    }
+    std::error_code ec;
+    fs::remove(file, ec);
+    return what;
+}
+
 std::size_t count_of(const std::string& text, const std::string& needle)
 {
     std::size_t n = 0;
@@ -961,24 +990,23 @@ std::string own_central2(const std::string& budget, const std::string& needs)
  * centre of its box (global.cc, FillRegular: the midpoint is the last trial
  * added and the first taken; GD_STOGO_RAND with NLopt's default population
  * as well), where it takes its first gradient. So a StoGO search starting at
- * a point the run has evaluated -- a PRESTAGE refinement's candidate, the
- * seed point of NOISE CALIBRATION -- takes no loss from the run's record:
- * in 2-D under NUMERICAL central differences it spends 1 + 4 evaluations
- * before its first step, as from any start:
- *   - the PRESTAGE refinement GD_STOGO and GD_STOGO_RAND at MAXEVAL 5: "the
- *     PRESTAGE refinement NLOPT:GD_STOGO: MAXEVAL 5 takes no step: its
- *     gradient search, which does not start at the point it is given,
- *     evaluates the loss at a point of its own (1 evaluation) and the
- *     gradient there (4 evaluations: ...) ..., which needs MAXEVAL 6 or
- *     more"; MAXEVAL 6 gets none;
- *   - the PLAIN GD_STOGO under NOISE CALIBRATION 3 at MAXEVAL 5, and without
- *     a calibration, the same text;
+ * a point the run has evaluated -- the seed point of NOISE CALIBRATION --
+ * takes no loss from the run's record: in 2-D under NUMERICAL central
+ * differences it spends 1 + 4 evaluations before its first step, as from
+ * any start:
+ *   - the PLAIN GD_STOGO and GD_STOGO_RAND under NOISE CALIBRATION 3 at
+ *     MAXEVAL 5, and without a calibration: "the STRATEGY-level optimiser
+ *     NLOPT:GD_STOGO: MAXEVAL 5 takes no step: its gradient search, which
+ *     does not start at the point it is given, evaluates the loss at a
+ *     point of its own (1 evaluation) and the gradient there (4
+ *     evaluations: ...) ..., which needs MAXEVAL 6 or more"; MAXEVAL 6 gets
+ *     none;
  *   - AUGLAG goes straight into its local search, so with an INNER GD_STOGO
- *     its first gradient is StoGO's: the PRESTAGE refinement NLOPT:AUGLAG at
- *     MAXEVAL 5 is warned the same way, and its INNER GD_STOGO MAXEVAL 1
- *     reads "(1 + 4 evaluations: ...), so each local search, which does not
- *     start at the point it is given, evaluates a point of its own and ends
- *     there";
+ *     its first gradient is StoGO's: the PLAIN NLOPT:AUGLAG under NOISE
+ *     CALIBRATION 3 at MAXEVAL 5 is warned the same way, and its INNER
+ *     GD_STOGO MAXEVAL 1 reads "(1 + 4 evaluations: ...), so each local
+ *     search, which does not start at the point it is given, evaluates a
+ *     point of its own and ends there";
  *   - an MLSL's local search starts at a point MLSL evaluated, unless it is
  *     StoGO: GD_MLSL with INNER GD_STOGO at MAXEVAL 10 reads "MLSL evaluates
  *     its starting point and its first 4 samples without a gradient (5
@@ -986,17 +1014,33 @@ std::string own_central2(const std::string& budget, const std::string& needs)
  *     at the point MLSL gives it, evaluates the loss at a point of its own
  *     (1 evaluation) and the gradient there (4 evaluations: ...) ..., which
  *     needs MAXEVAL 11 or more", and its INNER GD_STOGO MAXEVAL 1 the INNER
- *     text above.
- * Before the fix: start_is_recorded took every NLopt search's start as its
- * first call, so the refinement and the calibrated PLAIN run at MAXEVAL 5,
- * which take no step, were not warned (they "took the loss at its starting
- * point from the run's record", needing 5; lanes/D/tmp/review/xl2-search
- * stogo2, stogo3, stogo: the box centre and its stencil, no step), the
- * uncalibrated PLAIN text said "evaluates the loss at a starting point",
- * the AUGLAG INNER text said its local search starts at a point the run has
- * evaluated, and the GD_MLSL one at MAXEVAL 10 was not warned (needing 10)
- * and its INNER text said MLSL's local searches start at points it
- * evaluated: every check but those of no warning at MAXEVAL 6 fails. */
+ *     text above;
+ *   - the PRESTAGE refinement on GD_STOGO or GD_STOGO_RAND, and on an
+ *     AUGLAG whose INNER search is GD_STOGO, is refused at startup (it would
+ *     never use the exploration's candidate; test_startup_validation_
+ *     strategy.cpp has the whole text): "STRATEGY TYPE PRESTAGE cannot
+ *     refine with NLOPT:GD_STOGO: it does not start at the point it is
+ *     given ..." and "the INNER block of the PRESTAGE refinement:
+ *     NLOPT:AUGLAG runs its INNER search NLOPT:GD_STOGO from the point it
+ *     is given ...".
+ * Until the refinement was refused (owner decision, MK, 2026-10-15) the
+ * PRESTAGE refinement legs pinned the warning ("the PRESTAGE refinement
+ * NLOPT:GD_STOGO: MAXEVAL 5 takes no step: ...", "the PRESTAGE refinement
+ * NLOPT:AUGLAG ...", "the INNER block of the PRESTAGE refinement
+ * NLOPT:GD_STOGO: ..."), which the PLAIN legs under NOISE CALIBRATION 3 now
+ * pin; GD_STOGO_RAND was not run as PLAIN, nor the PLAIN legs at MAXEVAL 6.
+ * Before the refusal: the refinements were accepted (the refusal checks
+ * fail); the warning legs pass as well (pins).
+ * Before the fix of the warning: start_is_recorded took every NLopt
+ * search's start as its first call, so the refinement and the calibrated
+ * PLAIN run at MAXEVAL 5, which take no step, were not warned (they "took
+ * the loss at its starting point from the run's record", needing 5;
+ * lanes/D/tmp/review/xl2-search stogo2, stogo3, stogo: the box centre and
+ * its stencil, no step), the uncalibrated PLAIN text said "evaluates the
+ * loss at a starting point", the AUGLAG INNER text said its local search
+ * starts at a point the run has evaluated, and the GD_MLSL one at MAXEVAL
+ * 10 was not warned (needing 10) and its INNER text said MLSL's local
+ * searches start at points it evaluated. */
 TEST_CASE("startup validation: the gradient budget warning of a search that "
           "does not start at the point it is given counts a point of its own",
           "[startup_validation][gradient_budget][stogo]")
@@ -1005,26 +1049,28 @@ TEST_CASE("startup validation: the gradient budget warning of a search that "
         INFO(algo);
         const std::string lines =
             std::string("    LIB NLOPT\n    ALGO ") + algo + "\n";
-        const std::string journal = startup_journal(prestage(lines, "5"));
-        CHECK(count_of(journal, std::string("the PRESTAGE refinement NLOPT:") +
-                                    algo +
-                                    own_central2("MAXEVAL 5",
-                                                 "MAXEVAL 6 or more")) == 1u);
-        CHECK(count_of(journal, kNoStep) == 1u);
-        CHECK(count_of(startup_journal(prestage(lines, "6")), kNoStep) == 0u);
-    }
-
-    const std::string stogo_plain =
-        "    TYPE PLAIN\n    LIB NLOPT\n    ALGO GD_STOGO\n    MAXEVAL 5\n";
-    for (const char* n : {"3", "0"}) {
-        INFO("NOISE CALIBRATION " << n);
-        const std::string journal =
-            startup_journal(with_calibration(n, stogo_plain));
-        CHECK(count_of(journal,
-                       "the STRATEGY-level optimiser NLOPT:GD_STOGO" +
-                           own_central2("MAXEVAL 5", "MAXEVAL 6 or more")) ==
-              1u);
-        CHECK(count_of(journal, kNoStep) == 1u);
+        for (const char* n : {"3", "0"}) {
+            INFO("NOISE CALIBRATION " << n);
+            const std::string journal = startup_journal(with_calibration(
+                n, "    TYPE PLAIN\n" + lines + "    MAXEVAL 5\n"));
+            CHECK(count_of(journal,
+                           std::string("the STRATEGY-level optimiser NLOPT:") +
+                               algo +
+                               own_central2("MAXEVAL 5", "MAXEVAL 6 or more")) ==
+                  1u);
+            CHECK(count_of(journal, kNoStep) == 1u);
+            CHECK(count_of(startup_journal(with_calibration(
+                               n, "    TYPE PLAIN\n" + lines +
+                                      "    MAXEVAL 6\n")),
+                           kNoStep) == 0u);
+        }
+        CHECK_THAT(startup_refusal(prestage(lines, "5")),
+                   Catch::StartsWith("Error on line ") &&
+                       Catch::Contains(
+                           std::string("STRATEGY TYPE PRESTAGE cannot refine "
+                                       "with NLOPT:") +
+                           algo + ": it does not start at the point it is "
+                                  "given"));
     }
 
     const std::string own_inner =
@@ -1038,14 +1084,22 @@ TEST_CASE("startup validation: the gradient budget warning of a search that "
         const std::string auglag =
             "    LIB NLOPT\n    ALGO AUGLAG\n    INNER\n      LIB NLOPT\n"
             "      ALGO GD_STOGO\n      MAXEVAL 1\n    ENDINNER\n";
-        const std::string journal = startup_journal(prestage(auglag, "5"));
+        const std::string journal = startup_journal(with_calibration(
+            "3", "    TYPE PLAIN\n" + auglag + "    MAXEVAL 5\n"));
         CHECK(count_of(journal,
-                       "the PRESTAGE refinement NLOPT:AUGLAG" +
+                       "the STRATEGY-level optimiser NLOPT:AUGLAG" +
                            own_central2("MAXEVAL 5", "MAXEVAL 6 or more")) ==
               1u);
-        CHECK(count_of(journal, "the INNER block of the PRESTAGE refinement "
-                                "NLOPT:GD_STOGO: " + own_inner) == 1u);
+        CHECK(count_of(journal, "the INNER block of the STRATEGY-level "
+                                "optimiser NLOPT:GD_STOGO: " + own_inner) ==
+              1u);
         CHECK(count_of(journal, kNoStep) == 2u);
+        CHECK_THAT(startup_refusal(prestage(auglag, "5")),
+                   Catch::StartsWith("Error on line ") &&
+                       Catch::Contains("the INNER block of the PRESTAGE "
+                                       "refinement: NLOPT:AUGLAG runs its "
+                                       "INNER search NLOPT:GD_STOGO from the "
+                                       "point it is given"));
     }
     {
         const std::string journal = startup_journal(mlsl_plain(

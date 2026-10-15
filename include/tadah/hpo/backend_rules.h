@@ -213,9 +213,13 @@ GradientCost gradient_cost(const OptimizerSpec& spec);
  * "... takes no step: its gradient search, which does not start at the
  * point it is given, evaluates the loss at a point of its own (1
  * evaluation) and the gradient there (...) ..., which needs MAXEVAL 6 or
- * more", wherever the phase starts. Under NOISE_CALIBRATION the first of
- * several MULTISTART starts begins at the seed point and the later ones
- * elsewhere: where their budgets differ, "the first MULTISTART start ..."
+ * more", wherever the phase starts (a PLAIN run, an exploration, MLSL's
+ * INNER search; the PRESTAGE refinement and a MULTISTART start refuse such
+ * a search at startup, require_prestage_refinement() and
+ * require_inner_start_used(), strategy_rules.h). Under NOISE_CALIBRATION
+ * the first of several MULTISTART starts begins at the seed point and the
+ * later ones elsewhere: where their budgets differ, "the first MULTISTART
+ * start ..."
  * and "each MULTISTART start after the first ..." are warned apart.
  * Over strategy_phase_specs():
  * every phase whose optimiser obtains gradients (obtains_gradients(): an

@@ -571,21 +571,15 @@ std::string start_clause(bool from_record, const std::string& evaluated_where,
 constexpr unsigned kMlslDefaultSamples = 4;
 
 /* Whether the first call of a search of `spec` is at the point it is given
- * (OptimizerCaps::starts_at_x0): not for NLopt's StoGO, which samples its
- * own box from its centre, nor for DIRECT or AGS. AUGLAG, with no
- * constraint, goes straight into its local search from its starting point
- * (auglag.c), so its first call is that search's (single_local_search's
- * rule). MLSL evaluates its starting point first (mlsl.c); where its local
- * searches start is local_starts_at_given(). */
+ * (search_ignoring_start(), phase_specs.h): not for NLopt's StoGO, which
+ * samples its own box from its centre, nor for DIRECT or AGS. AUGLAG, with
+ * no constraint, goes straight into its local search from its starting
+ * point (auglag.c), so its first call is that search's (single_local_
+ * search's rule). MLSL evaluates its starting point first (mlsl.c); where
+ * its local searches start is local_starts_at_given(). */
 bool first_call_at_start(const OptimizerSpec& spec)
 {
-    const OptimizerCaps& caps = optimizer_caps(spec);
-    if (!caps.starts_at_x0) return false;
-    if (caps.accepts_inner && !caps.is_global) {
-        const std::optional<OptimizerSpec> local = inner_run_spec(spec);
-        return !local || first_call_at_start(*local);
-    }
-    return true;
+    return !search_ignoring_start(spec);
 }
 
 /* Whether the local search an MLSL or AUGLAG runs (inner_run_spec) starts at

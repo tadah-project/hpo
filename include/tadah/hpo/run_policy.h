@@ -286,10 +286,11 @@ public:
       : k_(k), parallel_(parallel), budget_per_start_(budget_per_start),
         batch_(batch) {}
 
-  /* The startup rule (strategy_rules.h), applied again when the policy
+  /* The startup rules (strategy_rules.h), applied again when the policy
    * runs: a safety net for specs built outside HPOTargets. */
   static void validate(const OptimizerSpec& spec) {
     require_multistart_backend(spec);
+    require_inner_start_used(spec);
   }
 
   void run(const OptimizerSpec& spec, HPO_Host<Vec,Runner>& host) override {
@@ -480,6 +481,7 @@ public:
   static void validate(const OptimizerSpec& spec) {
     require_prestage_explore(spec);
     require_prestage_refinement(spec);
+    require_inner_start_used(spec);
   }
 
   void run(const OptimizerSpec& spec, HPO_Host<Vec,Runner>& host) override {

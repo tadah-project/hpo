@@ -21,6 +21,13 @@ namespace engines {
 class HPORefitEngine : public tadah::mlip::engines::RefitEngine {
 protected:
   bool has_compact_fitter() const override;
+  /** The compact fit of `eam` (with Ceres): fills `refit` and `st` and
+   *  returns true; it declines no table, so run() never falls back to the
+   *  dense fit. An EAMRefit::r_reach() below the table's dr, which the
+   *  crystal gate of run() (models::eam_lattice::require_crystal_on_grid)
+   *  refuses for every table, is std::logic_error. Without Ceres it is
+   *  never called (has_compact_fitter() is false, so run() refuses
+   *  REFIT_MODE compact) and throws std::logic_error. */
   bool compact_fit(const tadah::core::Context &c,
                    const tadah::models::EAMSetflIO &eam,
                    tadah::models::EAMRefitConfig &cfg,
