@@ -474,10 +474,7 @@ void validate_backend(const OptimizerSpec& spec, RestartStop restart,
             "CERES support is not built; reconfigure with "
             "-DTADAH_ENABLE_CERES=ON");
 #else
-        if (algo == "LBFGS")                 detail::validate_ceres_lbfgs_spec(spec);
-        else if (algo == "WOLFE")            detail::validate_ceres_wolfe_spec(spec);
-        else if (algo == "NLCG")             detail::validate_ceres_nlcg_spec(spec);
-        else if (algo == "STEEPEST_DESCENT") detail::validate_ceres_steepest_spec(spec);
+        if (algo == "STEEPEST_DESCENT") detail::validate_ceres_steepest_spec(spec);
 #endif
     }
     /* Every backend that needs a stop has checked it above; this covers

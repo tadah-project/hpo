@@ -2,22 +2,24 @@
 /*
  * ceres_adapter.h -- drivers for the Ceres GradientProblemSolver family.
  *
- * Algos exposed in this rollout:
- *   CERES:LBFGS              -- line_search_direction_type = LBFGS, Wolfe LS
- *   CERES:WOLFE              -- direction = BFGS,  Wolfe LS (full-Hessian BFGS)
- *   CERES:NLCG               -- direction = NONLINEAR_CONJUGATE_GRADIENT
+ * The algorithm HPO runs:
  *   CERES:STEEPEST_DESCENT   -- direction = STEEPEST_DESCENT, Armijo LS
  *
- * Algos explicitly deferred (not exposed; rejected at dispatch in
- * run_policy_base.h):
+ * Refused by the caps registry (optimizer_caps.cpp, kRefused):
+ *   CERES:LBFGS, CERES:WOLFE, CERES:NLCG -- Ceres' Wolfe line search
+ *   stalls at the score of a point outside the OPTIM box (below);
  *   CERES:LEVENBERG_MARQUARDT, CERES:DOGLEG, CERES:SUBSPACE_DOGLEG
  * -- degenerate over a scalar loss; require residual-mode loss exposure
  * (objective semantics change Sigmar^2 vs. mean(r)) and benefit most from
- * autodiff. Both belong to a later phase.
+ * autodiff.
  *
- * Bounds caveat: GradientProblemSolver does not enforce box constraints.
- * Users wanting bounds-enforced gradient optimization should choose
- * NLOPT:LD_LBFGS or DLIB:BFGS instead.
+ * Bounds: GradientProblemSolver does not enforce box constraints, so its
+ * line searches propose points outside the OPTIM box. HPO_Host does not
+ * evaluate such a point: it scores it as a failure graded by its distance
+ * to the box (box_penalty.h), and the GradientProvider gives it the slope
+ * of that score, which points back into the box, so the line search steps
+ * back from it; it counts against MAXEVAL and is never the best (owner
+ * decision, MK, 2026-10-15). NLOPT:LD_LBFGS and DLIB:BFGS keep to the box.
  *
  * Design echoes dlib_adapter.h:
  *   - validators throw std::runtime_error with a message naming the
@@ -206,16 +208,16 @@ inline void validate_ceres_common_(const OptimizerSpec& sp,
     if (sp.stop.maxeval && *sp.stop.maxeval == 0)
         throw std::runtime_error("CERES:" + algo + " requires MAXEVAL > 0 when provided");
 
-    /* PARAM keys recognised across all four CERES gradient algos:
+    /* PARAM keys of CERES:STEEPEST_DESCENT:
      *   fd_step           -- finite-difference step (fd_stencil.h)
      *   diff_method       -- 0 CENTRAL (default), 1 FORWARD (2, RIDDERS,
      *                        is refused)
      *   (fd_kernel        -- the step rule, a word: param_raw)
      *   tol_gradinf       -- gradient_tolerance (max-norm of the gradient)
-     *   max_lbfgs_rank    -- LBFGS only
-     *   nlcg_type         -- NLCG only: 0 FR, 1 PR, 2 HS
      *   max_iter          -- max_num_iterations cap (defaults to MAXEVAL or INT_MAX)
      *   max_ls_iter       -- max line search step size iterations
+     * (max_lbfgs_rank and nlcg_type, the PARAMs of the refused CERES:LBFGS
+     * and CERES:NLCG, are refused as any PARAM the solver does not read.)
      */
     /* PARAM fd_step, fd_kernel and diff_method are the gradient's finite
      * differences: validate_hpo_setup checks them on every phase that takes
@@ -228,14 +230,11 @@ inline void validate_ceres_common_(const OptimizerSpec& sp,
     for (const auto& kv : sp.param) {
         if (is_fd_param(kv.first)) continue;
         if (std::find(common_params.begin(), common_params.end(), kv.first)
-                == common_params.end()
-            && kv.first != "max_lbfgs_rank"   // LBFGS-only, accepted everywhere
-                                              // for forward-compat; ignored elsewhere
-            && kv.first != "nlcg_type") {     // NLCG-only, idem
+                == common_params.end()) {
             throw std::runtime_error(
                 "CERES:" + algo + " does not support PARAM " + kv.first +
                 "; supported: fd_step, fd_kernel, diff_method, tol_gradinf, "
-                "max_iter, max_ls_iter, max_lbfgs_rank, nlcg_type");
+                "max_iter, max_ls_iter");
         }
     }
     if (auto it = sp.param.find("tol_gradinf"); it != sp.param.end())
@@ -251,25 +250,6 @@ inline void validate_ceres_common_(const OptimizerSpec& sp,
                               "iterations");
 }
 
-inline void validate_ceres_lbfgs_spec(const OptimizerSpec& sp) {
-    validate_ceres_common_(sp, "LBFGS");
-    validate_ceres_int_param_(sp, "LBFGS", "max_lbfgs_rank", 1,
-                              "Ceres' max_lbfgs_rank");
-}
-inline void validate_ceres_wolfe_spec(const OptimizerSpec& sp) {
-    validate_ceres_common_(sp, "WOLFE");
-}
-inline void validate_ceres_nlcg_spec(const OptimizerSpec& sp) {
-    validate_ceres_common_(sp, "NLCG");
-    if (auto it = sp.param.find("nlcg_type"); it != sp.param.end()) {
-        const double v = it->second;
-        if (!(v == 0.0 || v == 1.0 || v == 2.0))
-            throw std::runtime_error(
-                "CERES:NLCG PARAM nlcg_type must be 0 (FLETCHER_REEVES), "
-                "1 (POLAK_RIBIERE), or 2 (HESTENES_STIEFEL), got " +
-                ceres_value_text(v));
-    }
-}
 inline void validate_ceres_steepest_spec(const OptimizerSpec& sp) {
     validate_ceres_common_(sp, "STEEPEST_DESCENT");
 }
@@ -383,9 +363,8 @@ inline std::optional<double> ceres_param(const OptimizerSpec& sp,
     return it->second;
 }
 
-/* Map TADAH StopCriteria + PARAM keys onto Ceres' tolerance fields and
- * (for NLCG) the conjugate-gradient subtype. Returns options ready to
- * pass to ceres::Solve. */
+/* Map TADAH StopCriteria + PARAM keys onto Ceres' tolerance fields.
+ * Returns options ready to pass to ceres::Solve. */
 inline ceres::GradientProblemSolver::Options
 make_ceres_options(const OptimizerSpec& sp,
                    ceres::LineSearchDirectionType dir,
@@ -411,22 +390,6 @@ make_ceres_options(const OptimizerSpec& sp,
 
     if (auto v = ceres_param(sp, "max_ls_iter"))
         opt.max_num_line_search_step_size_iterations = static_cast<int>(*v);
-
-    /* LBFGS-only: max_lbfgs_rank (default 20). Ignored for other dirs. */
-    if (dir == ceres::LBFGS) {
-        opt.max_lbfgs_rank = static_cast<int>(
-            ceres_param(sp, "max_lbfgs_rank").value_or(20.0));
-    }
-
-    /* NLCG subtype. */
-    if (dir == ceres::NONLINEAR_CONJUGATE_GRADIENT) {
-        const int t = static_cast<int>(ceres_param(sp, "nlcg_type").value_or(0.0));
-        switch (t) {
-            case 1: opt.nonlinear_conjugate_gradient_type = ceres::POLAK_RIBIERE;   break;
-            case 2: opt.nonlinear_conjugate_gradient_type = ceres::HESTENES_STIEFEL; break;
-            default: opt.nonlinear_conjugate_gradient_type = ceres::FLETCHER_REEVES;
-        }
-    }
 
     return opt;
 }
@@ -638,45 +601,6 @@ inline void run_ceres_gradient_problem(const OptimizerSpec& sp,
 }  // namespace detail
 
 /* ---- Public adapters ------------------------------------------------ */
-
-template<class Vec, class Runner>
-inline void run_ceres_lbfgs(const OptimizerSpec& sp,
-                            HPO_Host<Vec, Runner>& host)
-{
-    detail::validate_ceres_lbfgs_spec(sp);
-#ifdef TADAH_USE_CERES
-    detail::run_ceres_gradient_problem<Vec, Runner>(
-        sp, host, ceres::LBFGS, ceres::WOLFE, "LBFGS");
-#else
-    detail::run_ceres_gradient_problem<Vec, Runner>(sp, host, 0, 0, "LBFGS");
-#endif
-}
-
-template<class Vec, class Runner>
-inline void run_ceres_wolfe(const OptimizerSpec& sp,
-                            HPO_Host<Vec, Runner>& host)
-{
-    detail::validate_ceres_wolfe_spec(sp);
-#ifdef TADAH_USE_CERES
-    detail::run_ceres_gradient_problem<Vec, Runner>(
-        sp, host, ceres::BFGS, ceres::WOLFE, "WOLFE");
-#else
-    detail::run_ceres_gradient_problem<Vec, Runner>(sp, host, 0, 0, "WOLFE");
-#endif
-}
-
-template<class Vec, class Runner>
-inline void run_ceres_nlcg(const OptimizerSpec& sp,
-                           HPO_Host<Vec, Runner>& host)
-{
-    detail::validate_ceres_nlcg_spec(sp);
-#ifdef TADAH_USE_CERES
-    detail::run_ceres_gradient_problem<Vec, Runner>(
-        sp, host, ceres::NONLINEAR_CONJUGATE_GRADIENT, ceres::WOLFE, "NLCG");
-#else
-    detail::run_ceres_gradient_problem<Vec, Runner>(sp, host, 0, 0, "NLCG");
-#endif
-}
 
 template<class Vec, class Runner>
 inline void run_ceres_steepest_descent(const OptimizerSpec& sp,

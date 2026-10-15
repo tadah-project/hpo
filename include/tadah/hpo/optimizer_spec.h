@@ -26,8 +26,8 @@ struct StopCriteria {
 };
 
 /* GradStrategy -- selector for the unified gradient provider used by
- * gradient-based HPO optimizers (DLIB:BFGS, CERES:LBFGS/WOLFE/NLCG/
- * STEEPEST_DESCENT, future NLOPT:LD_*).
+ * gradient-based HPO optimizers (DLIB:BFGS, CERES:STEEPEST_DESCENT,
+ * NLOPT:LD_*).
  *
  *   NUMERICAL  -- finite differences on full forward passes through the
  *                host, kept inside the OPTIM box (one-sided within a step
@@ -297,7 +297,7 @@ struct OptimizerSpec {
     std::vector<StepOverride> step_overrides;
 
     /* Gradient backend used by gradient-based optimizers (DLIB:BFGS,
-     * CERES:LBFGS/...). std::nullopt means default (NUMERICAL). The
+     * CERES:STEEPEST_DESCENT, NLOPT:LD_*). std::nullopt means default (NUMERICAL). The
      * field lives at OptimizerSpec scope (not PARAM) because it is
      * shared across optimizer families. See GradStrategy doc above. */
     std::optional<GradStrategy> grad_strategy;

@@ -181,10 +181,12 @@ struct OptimizerCaps {
      * runs with. */
     const char* default_inner = nullptr;
 
-    /* The backend evaluates outside the OPTIM box: CERES'
-     * GradientProblemSolver has no box constraints (the four CERES drivers
-     * are the only such backends: NLopt's LN_NEWUOA, called with lb = ub =
-     * NULL, is refused). Surfaced as a startup WARNING with bounds_note. */
+    /* The backend proposes points outside the OPTIM box: CERES'
+     * GradientProblemSolver has no box constraints (CERES:STEEPEST_DESCENT,
+     * the CERES driver HPO registers, is the only such backend: NLopt's
+     * LN_NEWUOA, called with lb = ub = NULL, and Ceres' Wolfe drivers are
+     * refused). Such a point is scored, not evaluated
+     * (box_penalty.h). Surfaced as a startup WARNING with bounds_note. */
     bool        ignores_bounds = false;
     const char* bounds_note    = "";
 };
@@ -193,9 +195,10 @@ struct OptimizerCaps {
  * the library version HPO builds makes them unsafe to run, or they do not
  * solve the problem HPO poses, one scalar loss inside the OPTIM box (the
  * refusal table in optimizer_caps.cpp, each entry with its repro:
- * NLOPT:LN_NEWUOA_BOUND, LN_NEWUOA, NLOPT_LD_LBFGS_NOCEDAL, and Ceres'
- * least-squares solvers CERES:LEVENBERG_MARQUARDT, DOGLEG and
- * SUBSPACE_DOGLEG). A refused backend is not registered, so
+ * NLOPT:LN_NEWUOA_BOUND, LN_NEWUOA, NLOPT_LD_LBFGS_NOCEDAL, Ceres' Wolfe
+ * line-search drivers CERES:LBFGS, WOLFE and NLCG, which stall at a point
+ * outside the box scored by box_penalty.h, and Ceres' least-squares solvers
+ * CERES:LEVENBERG_MARQUARDT, DOGLEG and SUBSPACE_DOGLEG). A refused backend is not registered, so
  * filter_optimizer_caps() and every list of alternatives leave it out, and
  * find_optimizer_caps() returns nullptr.
  *

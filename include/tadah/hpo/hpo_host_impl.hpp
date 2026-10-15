@@ -990,13 +990,10 @@ void HPO_Host<P,R>::count_reused_repeat(const RecordedEval<P>& e) {
 
 template<class P,class R>
 std::optional<RecordedEval<P>> HPO_Host<P,R>::recorded(const P& asked) const {
-  /* The point operator() would evaluate for `asked` (its snap onto the box,
-   * then the RHOFORM projection; pure, no counts). */
-  P snapped, projected;
-  const P& box = snapped_onto_box(asked, snapped);
-  const P& point = form_proj_idx_.empty() ? box
-                                          : positive_form_of(box, projected);
-  return run_record_.find(point);
+  /* The point operator() would evaluate for `asked` (its snap onto the box;
+   * pure, no counts). */
+  P snapped;
+  return run_record_.find(snapped_onto_box(asked, snapped));
 }
 
 template<class P,class R>
@@ -1104,10 +1101,6 @@ template<class P, class R>
 thread_local std::optional<detail::FitSwitches>
 HPO_Host<P,R>::tls_last_validation_switches_{};
 
-template<class P, class R>
-thread_local std::shared_ptr<const typename HPO_Host<P,R>::RebuiltLists>
-HPO_Host<P,R>::tls_rebuilt_lists_{};
-
 /* ----------  constructor ---------------------------------------------- */
 template<class P, class R>
 HPO_Host<P,R>::HPO_Host(core::Context master_ctx,
@@ -1162,26 +1155,25 @@ HPO_Host<P,R>::HPO_Host(core::Context master_ctx,
             "before training as graded band-D failures");
     }
 
-    /* RHOFORM NONNEG / MONOTONE: every evaluated AMPGRIDMB amplitude must be
-     * >= 0 (DM_REAM refuses a negative one). The boxes are non-negative
-     * (HPOTargets), and finite differences keep to them (fd_stencil.h),
-     * but an optimiser that ignores the bounds can step below 0, so
-     * operator() evaluates -- and records -- the candidate projected onto
-     * AMPGRIDMB >= 0. Flat indices in the update_context order. */
+    /* RHOFORM NONNEG / MONOTONE: every evaluated AMPGRIDMB amplitude is
+     * >= 0 (DM_REAM refuses a negative one): the boxes are non-negative
+     * (HPOTargets), finite differences keep to them (fd_stencil.h), and a
+     * point outside them is not evaluated (operator(), box_penalty.h).
+     * Flat indices in the update_context order. */
     if (models::context_has_ream(master_ctx_)) {
         const auto form = models::stored_rhoform(master_ctx_);
         if (form && models::rhoform_is_positive(*form)) {
+            std::vector<std::size_t> nonneg;
             for (const auto& r : make_param_ref_table(trg_))
                 if (models::optim_key_lower_bound(r.theta_name, form) ==
                     models::OptimLowerBound::NonNegative)
-                    form_proj_idx_.push_back(r.flat_idx);
-            form_proj_name_ = models::rhoform_name(*form);
+                    nonneg.push_back(r.flat_idx);
             /* A zero lower bound on those dims is the form's limit, not a
              * choice of box: the bound audit does not read a best sitting
              * there as bound pressure. */
             if (const SearchSpacePtr sp = trg_.space()) {
                 std::vector<bool> hard(sp->dim(), false);
-                for (std::size_t k : form_proj_idx_)
+                for (std::size_t k : nonneg)
                     if (k < hard.size() && sp->at(k).lo == 0.0) hard[k] = true;
                 std::lock_guard<std::mutex> lg(bound_occ_mtx_);
                 bound_occ_.set_hard_lo(std::move(hard));
@@ -1484,50 +1476,6 @@ void HPO_Host<P,R>::update_context(core::Context& ctx,
     detail::update_candidate_context(ctx, trg_, p, knot2b_, knotmb_);
 }
 
-/* ----------  helper: positive-form projection ------------------------- */
-template<class P, class R>
-const P& HPO_Host<P,R>::positive_form_of(const P& p, P& buf) const
-{
-    bool any = false;
-    for (std::size_t k : form_proj_idx_)
-        any = any || p(static_cast<long>(k)) < 0.0;
-    if (!any) return p;   // in the box (NaN is left to DM_REAM)
-    buf = p;
-    for (std::size_t k : form_proj_idx_) {
-        const long i = static_cast<long>(k);
-        if (buf(i) < 0.0) buf(i) = 0.0;
-    }
-    return buf;
-}
-
-template<class P, class R>
-const P& HPO_Host<P,R>::project_positive_form(const P& p, P& buf,
-                                              std::size_t iter) const
-{
-    std::size_t n_neg = 0, first = 0;
-    for (std::size_t k : form_proj_idx_)
-        if (p(static_cast<long>(k)) < 0.0 && n_neg++ == 0) first = k;
-    if (n_neg == 0) return p;   // in the box (NaN is left to DM_REAM)
-
-    positive_form_of(p, buf);
-    try {
-        if (HPOLog::instance().record_form_projection() == 1) {
-            char v[32];
-            std::snprintf(v, sizeof v, "%.4e", p(static_cast<long>(first)));
-            HPOLog::instance().info(
-                "eval " + std::to_string(iter) + ": RHOFORM " +
-                form_proj_name_ + ": " + param_labels_[first] + " = " + v +
-                (n_neg > 1 ? " (and " + std::to_string(n_neg - 1) +
-                                 " more AMPGRIDMB coordinate(s))"
-                           : std::string()) +
-                " below 0 is evaluated and recorded as 0: the candidate is "
-                "projected onto AMPGRIDMB >= 0 (a point outside the OPTIM "
-                "box, which only an optimiser that ignores the bounds "
-                "evaluates); DIAGNOSTICS counts every projection");
-        }
-    } catch (...) { /* journalling must never fail an evaluation */ }
-    return buf;
-}
 
 /* ----------  helper: evaluations outside the OPTIM box ---------------- */
 template<class P, class R>
@@ -1563,78 +1511,54 @@ const P& HPO_Host<P,R>::snap_onto_box(const P& p, P& buf) const
 }
 
 template<class P, class R>
-void HPO_Host<P,R>::note_out_of_box(const P& p, std::size_t iter) const
+void HPO_Host<P,R>::note_out_of_box(const P& p, const OutOfBox& o,
+                                    double score, std::size_t iter,
+                                    std::size_t k) const
 {
-    const SearchSpacePtr space = trg_.space();
-    if (!space) return;
-    const std::size_t n =
-        std::min(space->dim(), static_cast<std::size_t>(p.size()));
-    std::size_t n_out = 0, first = 0;
-    for (std::size_t k = 0; k < n; ++k) {
-        const double v = p(static_cast<long>(k));
-        const DimSpec& d = space->at(k);
-        /* NaN is not outside: its evaluation is reported as it fails */
-        if ((v < d.lo || v > d.hi) && n_out++ == 0) first = k;
-    }
-    if (n_out == 0) return;
+    /* Rate-limited as the gate rejects' notes: the first 5, then powers of
+     * two (the first one a WARNING). */
+    if (!(k <= 5 || (k & (k - 1)) == 0)) return;
     try {
-        if (HPOLog::instance().record_out_of_box_eval() != 1) return;
-        const DimSpec& d = space->at(first);
+        const SearchSpacePtr space = trg_.space();
+        const std::size_t first = o.first;
         const std::string label =
-            first < param_labels_.size() ? param_labels_[first] : d.key;
-        const std::string msg =
+            first < param_labels_.size()
+                ? param_labels_[first]
+                : (space && first < space->dim() ? space->at(first).key
+                                                  : std::string("X"));
+        std::string box;
+        if (space && first < space->dim())
+            box = " [" + core::format_roundtrip(space->at(first).lo) + ", " +
+                  core::format_roundtrip(space->at(first).hi) + "]";
+        const std::string where =
             "eval " + std::to_string(iter) + ": " + label + " = " +
             core::format_roundtrip(p(static_cast<long>(first))) +
-            " lies outside its OPTIM box [" + core::format_roundtrip(d.lo) +
-            ", " + core::format_roundtrip(d.hi) + "]" +
-            (n_out > 1 ? " (and " + std::to_string(n_out - 1) +
-                             " more coordinate(s))"
-                       : std::string()) +
-            " and is evaluated there: finite differences keep to the box, and "
-            "a point proposed within rounding of a bound is evaluated on it, "
-            "so an optimiser that ignores the bounds (CERES:*), or a start "
-            "it handed on, stepped outside it; the "
-            "loss of such a point can become the best. DIAGNOSTICS counts "
-            "every evaluation outside the box";
-        std::cerr << "[HPO] WARNING: " << msg << "\n";
-        HPOLog::instance().warning(msg);
-    } catch (...) { /* journalling must never fail an evaluation */ }
-}
-
-template<class P, class R>
-std::shared_ptr<const typename HPO_Host<P,R>::RebuiltLists>
-HPO_Host<P,R>::rebuilt_lists(double cutoff, std::size_t iter) const
-{
-    /* Only the datasets this evaluation reads: the training set when it
-     * is fitted (pinned weights are scattered without it), the validation
-     * set when there is one. A run that reads neither needs no lists. */
-    const bool train_read = has_train_data_ && !all_weights_fixed_;
-    if (!train_read && !has_validation_) return nullptr;
-    auto lists = std::make_shared<RebuiltLists>();
-    lists->cutoff = cutoff;
-    if (train_read) {
-        lists->train = train_stdb_;
-        nnf_.calc(lists->train, cutoff);
-    }
-    if (has_validation_) {
-        lists->val = val_stdb_;
-        nnf_.calc(lists->val, cutoff);
-    }
-    try {
-        if (HPOLog::instance().record_nn_rebuild() == 1) {
+            " lies outside its OPTIM box" + box +
+            (o.count > 1 ? " (and " + std::to_string(o.count - 1) +
+                               " more coordinate(s))"
+                         : std::string());
+        const std::string scored =
+            "scored " + core::format_roundtrip(score) + ", a failure graded "
+            "by its distance to the box, " +
+            core::format_roundtrip(o.distance) + " in the search's "
+            "coordinates";
+        if (k == 1) {
             const std::string msg =
-                "eval " + std::to_string(iter) + ": the model reads pairs up to " +
-                core::format_roundtrip(cutoff) + " A, beyond the one-time "
-                "neighbour lists (" + core::format_roundtrip(nn_list_cutoff_) +
-                " A, sized for the OPTIM box), so it is evaluated with lists "
-                "rebuilt for it: a point outside the OPTIM box, from an "
-                "optimiser that ignores the bounds. DIAGNOSTICS counts every "
-                "such evaluation";
+                where + ": it is not evaluated, and is " + scored + " (the "
+                "box is the configuration's contract: no point outside it is "
+                "trained or can be the best). Finite differences keep to the "
+                "box, and a point proposed within rounding of a bound is "
+                "evaluated on it, so an optimiser that ignores the bounds "
+                "(CERES:*) proposed it; such a point counts against MAXEVAL. "
+                "DIAGNOSTICS counts every such point";
             std::cerr << "[HPO] WARNING: " << msg << "\n";
             HPOLog::instance().warning(msg);
+        } else {
+            HPOLog::instance().info(where + ": not evaluated, " + scored +
+                                    "; total out-of-box points=" +
+                                    std::to_string(k));
         }
     } catch (...) { /* journalling must never fail an evaluation */ }
-    return lists;
 }
 
 /* ----------  helper: train/val structure counts ----------------------- */
@@ -2994,22 +2918,16 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
   Result r;
   r.iter   = ++g_iter_;
     /* A coordinate proposed outside its box within rounding is evaluated
-     * on the bound (owner decision D10); a point further out is counted
-     * (and the first warned about) -- both before any projection. `p_box`
-     * is p_in itself when nothing was snapped. */
+     * on the bound (owner decision D10). `p` is p_in itself when nothing
+     * was snapped. A point further out is not evaluated (below). */
     P p_snap;
-    const P& p_box = snap_onto_box(p_in, p_snap);
-    note_out_of_box(p_box, r.iter);
-    /* RHOFORM NONNEG / MONOTONE: evaluate the candidate with its AMPGRIDMB
-     * coordinates projected onto [0, inf) -- before the gates and the
-     * context build -- and record the projected point (params rows, pots),
-     * so every recorded point is a valid potential. `p` below is that
-     * point: p_box itself when no such coordinate is negative, and always
-     * under SIGNED (form_proj_idx_ is empty). */
-    P p_proj;
-    const P& p = form_proj_idx_.empty()
-                     ? p_box
-                     : project_positive_form(p_box, p_proj, r.iter);
+    const P& p = snap_onto_box(p_in, p_snap);
+    /* The OPTIM box is the configuration's contract (box_penalty.h; owner
+     * decision, MK, 2026-10-15): a point outside it is scored by its
+     * distance to the box, not evaluated. */
+    const SearchSpacePtr box_space = trg_.space();
+    const std::optional<OutOfBox> out_box =
+        box_space ? outside_box(*box_space, p) : std::nullopt;
     /* Which chain (PT replica / PA walker) is this? Bridged from the driver
      * via a thread_local; keys the per-chain warm-start cache so results are
      * independent of fan-out execution order. 0 for serial / NLOPT / dlib. */
@@ -3096,6 +3014,45 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
      *    run shuts down cleanly (result files flushed, journal closed).
      *  - StagnationStop -- must propagate to RestartPolicy. */
     try {
+
+    /* A point outside the OPTIM box (box_penalty.h): not evaluated -- no
+     * context, no gate, no training, no LAMMPS --, scored out_of_box_score()
+     * of its distance to the box whatever FAILSCORE_GRADING says (always a
+     * failure, never the best), with the bookkeeping of a completed
+     * evaluation: its loss.tadah and params.tadah rows, the census (a failed
+     * evaluation), the stagnation window; no DUMP archive (out_of_box). The
+     * gradient there is the slope of the score (GradientProvider), not an
+     * analytical one: the trainer slot holds no fit of it. */
+    if (out_box) {
+        r.out_of_box = true;
+        r.loss = out_of_box_score(trg_.FAIL_SCORE, out_box->distance);
+        const std::size_t k = HPOLog::instance().record_out_of_box_point();
+        note_out_of_box(p, *out_box, r.loss, r.iter, k);
+        tls_trainer_theta_stale_ = true;
+        tls_untrained_why_ = "the point lies outside the OPTIM box and is not "
+                             "evaluated: it has no fit to differentiate";
+        tls_analytical_failure_why_.clear();
+        {
+          const std::size_t threshold =
+              stagnation_threshold_.load(std::memory_order_relaxed);
+          if (threshold > 0 && !probe::active())
+            detail::throw_if_stagnated(r.iter, threshold, iter_at_last_best_,
+                                       reused_since_best_, best_mtx_,
+                                       best_pubs_);
+        }
+        r.wall_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::high_resolution_clock::now() - t0);
+        const std::size_t save_iter = r.iter;
+        const double save_loss = r.loss;
+        const double save_wall_ms = static_cast<double>(r.wall_ms.count());
+        submit_result(std::move(r), trg_, master_ctx_, val_ctx_,
+                      train_stdb_, val_stdb_, param_labels_, report_,
+                      n_val_datasets_, cw_, prec_);
+        HPOLog::instance().record_eval(save_iter, save_wall_ms,
+                                       EvalLoss::Failed);
+        _census.done = true;   /* counted here, with the measured wall */
+        return save_loss;
+    }
 
     /* Pre-training reject (the feasibility gates below): a graded band-D
      * loss BEFORE any training work (the pre-LAMMPS skip-caps idiom
@@ -3197,16 +3154,14 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
     t_train_start = std::chrono::high_resolution_clock::now();
     /* train ------------------------------------------------------------ */
     stage_watchdog::enter(r.iter, "train");
-    /* From here until training succeeds the trainer slot and this thread's
-     * rebuilt lists do not describe a trained theta = p. If anything below
-     * throws, the next analytical_gradient() must fall back to finite
-     * differences instead of differentiating that state (on lists that may
-     * not cover p's cutoff). */
+    /* From here until training succeeds the trainer slot does not describe
+     * a trained theta = p. If anything below throws, the next
+     * analytical_gradient() must fall back to finite differences instead
+     * of differentiating that state. */
     tls_trainer_theta_stale_ = true;
     tls_untrained_why_ = "its training did not complete: there is no fit "
                          "to differentiate";
     tls_analytical_failure_why_.clear();
-    tls_rebuilt_lists_.reset();
     {
         /* Every evaluation trains a Trainer built from its own candidate
          * context ctx (master_ctx_ plus p): whatever the descriptors, the
@@ -3224,17 +3179,22 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
         cache.trainer.reset(new (cache.buf) mlip::Trainer(ctx, tls_ws_));
         cache.host = generation_;
         /* Neighbour lists: the one-time lists hold every pair up to
-         * nn_list_cutoff_ (the OPTIM box tops). A candidate whose model
-         * reads pairs further out -- a point outside the box -- is
-         * trained, validated and differentiated on lists rebuilt for it;
-         * a shorter list would silently lack pairs (DescriptorsCalc
-         * refuses one). */
+         * nn_list_cutoff_, every cutoff of the OPTIM box, and a point
+         * outside the box is not evaluated (above). A model reading pairs
+         * further out would be HPO's error: the lists would silently lack
+         * pairs (DescriptorsCalc refuses such a list). The evaluation's
+         * catch records the throw. */
         const double nn_needed = cache.trainer->dc.neighbour_cutoff();
         if (nn_needed > nn_list_cutoff_)
-            tls_rebuilt_lists_ = rebuilt_lists(nn_needed, r.iter);
+            throw std::logic_error(
+                "internal error: eval " + std::to_string(r.iter) +
+                ": the model reads pairs up to " +
+                core::format_roundtrip(nn_needed) + " A, beyond the "
+                "one-time neighbour lists (" +
+                core::format_roundtrip(nn_list_cutoff_) + " A), which "
+                "cover every cutoff inside the OPTIM box");
         if (has_train_data_ && !all_weights_fixed_) {
-            cache.trainer->train(tls_rebuilt_lists_ ? tls_rebuilt_lists_->train
-                                                    : train_stdb_);
+            cache.trainer->train(train_stdb_);
         } else {
             /* No training DBFILE, or FIXINDEX pins every weight: the LS
              * solve is absent/vacuous, so scatter the FIXWEIGHT values
@@ -3302,10 +3262,9 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
      * comment block (PotHeaderWriter::write_potential_body;
      * get_param_file() leaves out DBFILE). */
     if (has_validation_) {
-        /* The one-time lists (or this candidate's rebuilt ones) cover the
-         * model cutoff; the descriptors filter pairs by their own cutoffs. */
-        const mlip::StructureDB& val_db =
-            tls_rebuilt_lists_ ? tls_rebuilt_lists_->val : val_stdb_;
+        /* The one-time lists cover the model cutoff; the descriptors filter
+         * pairs by their own cutoffs. */
+        const mlip::StructureDB& val_db = val_stdb_;
         /* What validation predicts follows its metrics, not what training
          * fitted: forces whenever PC_FRMSE is set, stresses whenever
          * PC_SRMSE is set (validation_switches()). The model's predict reads
@@ -4043,7 +4002,9 @@ void HPO_Host<P,R>::submit_result(Result&& res, const HPOTargets& trg,
         }
 
         /* ---- archive ANY pot every ---------------------------------- */
-        if(e.iter % trg.dumpPotEvery == 0){
+        /* Not a point outside the OPTIM box: it was not evaluated, and no
+         * potential outside the box is written (box_penalty.h). */
+        if(!e.out_of_box && e.iter % trg.dumpPotEvery == 0){
             std::ostringstream pa;
 
             PotHeaderWriter::write_archive_header(pa, e, cw, prec);
@@ -4582,12 +4543,8 @@ bool HPO_Host<P,R>::analytical_gradient(const P& x, P& g,
                 detail::g_analytical_helper_failure.load(
                     std::memory_order_relaxed))
             throw std::runtime_error(*injected);
-        /* The lists of the evaluation the trainer slot holds: rebuilt
-         * ones when its cutoff exceeded the one-time lists. */
-        const auto& lists = tls_rebuilt_lists_;
         if (!compute_analytical_gradient_from_trainer(
-                *cache.trainer, lists ? lists->train : train_stdb_,
-                lists ? lists->val : val_stdb_, trg_, prefs,
+                *cache.trainer, train_stdb_, val_stdb_, trg_, prefs,
                 g_flat, needs_fd, sims_grad_provider, obs_grad_provider))
             throw std::logic_error(
                 "compute_analytical_gradient_from_trainer returned false "

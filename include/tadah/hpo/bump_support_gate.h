@@ -20,8 +20,7 @@
 // as best). The prebuilt NN list needs no padding: RCUT stays
 // authoritative on bump channels and nn_safe_rcutmax covers every OPTIM
 // RCUT high bound, so any in-box candidate this gate passes is inside the
-// list (a candidate beyond it, outside the box, is evaluated on lists
-// rebuilt for it: HPO_Host::rebuilt_lists).
+// list (a candidate outside the box is not evaluated: box_penalty.h).
 //
 // The table is built ONCE (HPO_Host ctor) and arms only bumps whose box
 // can actually violate — a config that passes the STRICT corner check

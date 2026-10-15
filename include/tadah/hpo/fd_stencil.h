@@ -62,12 +62,19 @@
  * caller has just evaluated (GradientProvider::gradient_at), else
  * evaluated once per gradient.
  *
- * A centre outside the box -- a gradient search that ignores the bounds
- * (OptimizerCaps::ignores_bounds: the CERES drivers) gets one, and so does
- * a search started at a point another one left outside the box -- is
- * differenced one-sided towards the box (FORWARD: the one step towards
- * it): no point of its stencil lies further outside than the centre (the
- * owner's decision D4, 2026-09-29).
+ * A point outside the box is not differenced: a gradient search that
+ * ignores the bounds (OptimizerCaps::ignores_bounds: the CERES drivers)
+ * gets the slope of its out-of-box score there (box_penalty.h,
+ * GradientProvider; owner decision, MK, 2026-10-15, which retires D4, the
+ * difference towards the box from outside it), and a coordinate within
+ * rounding outside its box is differenced on the bound, where it is
+ * evaluated (D10). fd_plan refuses a centre outside the box.
+ *
+ * Kinds. A difference never mixes a usable loss with a failure, nor a graded
+ * failure with a usable loss or an ungraded failure (owner decision, MK,
+ * 2026-10-15): GradientProvider takes, per component, the side of the
+ * stencil whose losses are of the kind of the loss at the point, the
+ * stencil a bound there would give (gradient_provider.h, fd_component).
  *
  * Narrow boxes (fd_fit, fd_box_error). A box in which some u has no
  * stencil is refused at startup (validate_hpo_setup, every phase that
@@ -178,23 +185,18 @@ struct FdStencil {
     double s  = 0.0;   /* the signed step of OneSided / Forward (+h or -h) */
     double p1 = 0.0;   /* the coordinates evaluated, in this order */
     double p2 = 0.0;
-    bool   outside = false;   /* u lies outside the box */
     /* A stencil a bound turned: one-sided into the box instead of central,
-     * backward instead of forward, or towards the box from outside it. */
+     * or backward instead of forward. */
     bool   turned = false;
 
     bool needs_centre() const { return kind != Kind::Central; }
 };
 
 /* The stencil of internal coordinate u in the box [a, b] with `rule`,
- * `scheme` and `fd_step` (see the file comment); std::nullopt when u lies
- * in the box and none fits (fd_fit refuses such a box). A NaN u gets the
- * central stencil (its evaluations fail). Throws std::logic_error if a
- * stencil of a u outside the box would reach further outside than u, which
- * a box fd_fit accepts rules out: the stencil of the bound nearer u fits
- * inside the box, the step grows with |u| by at most fd_step per unit, and
- * the stencil of the bound of larger magnitude bounds fd_step by 1 for
- * CENTRAL (two steps inside the box) and by 2 for FORWARD (one step). */
+ * `scheme` and `fd_step` (see the file comment); std::nullopt when none
+ * fits (fd_fit refuses such a box). A NaN u gets the central stencil (its
+ * evaluations fail). Throws std::logic_error for a u outside the box,
+ * which is not differenced (see the file comment). */
 std::optional<FdStencil> fd_plan(double u, double a, double b, FdRule rule,
                                  FdScheme scheme, double fd_step);
 
