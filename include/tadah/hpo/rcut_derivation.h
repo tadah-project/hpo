@@ -83,6 +83,10 @@ inline double nn_safe_rcutmax(const core::Context &master,
   };
   scan("RCUT2B");
   scan("RCUTMB");
+  for(const auto &kv:trg.optimap)
+    if(kv.first.size()>=22 &&
+       kv.first.compare(kv.first.size()-22,22,".DENSITY.CUTOFF.RADIUS")==0)
+      scan(kv.first);
   if (models::potedit::derived_knot_rcut(master, "2B")) scan("CGRID2B");
   if (models::potedit::derived_knot_rcut(master, "MB")) scan("CGRIDMB");
   return rcutmax;

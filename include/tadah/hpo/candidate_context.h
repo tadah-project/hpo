@@ -14,6 +14,7 @@
 #include <tadah/core/context.h>
 #include <tadah/hpo/hpo_targets.h>
 #include <tadah/hpo/rcut_derivation.h>
+#include <tadah/models/descriptors/dm/embed_spec.h>
 
 namespace tadah {
 namespace hpo {
@@ -34,10 +35,18 @@ namespace detail {
 template <class P>
 void update_candidate_context(core::Context &ctx, const HPOTargets &trg,
                               const P &p, bool knot2b, bool knotmb) {
-  for (const auto &kv : trg.optimap) ctx.remove(kv.first);
+  for (const auto &kv : trg.optimap)
+    if(kv.first.find('.')==std::string::npos) ctx.remove(kv.first);
 
   std::size_t idx = 0;
+  std::map<std::string,std::vector<double>> named;
   for (const auto &kv : trg.optimap) {
+    if(kv.first.find('.')!=std::string::npos) {
+      auto &values=named[kv.first];
+      for(std::size_t i=0;i<kv.second.opt.size();++i)
+        values.push_back(kv.second.opt[i]?p(idx++):core::to_double(kv.second.config[i]));
+      continue;
+    }
     for (std::size_t i = 0; i < kv.second.opt.size(); ++i) {
       if (kv.second.opt[i]) ctx.add(kv.first, p(idx++));
       else                  ctx.add(kv.first, kv.second.config[i]);
@@ -51,6 +60,8 @@ void update_candidate_context(core::Context &ctx, const HPOTargets &trg,
    * every cutoff inside the OPTIM box (detail::nn_safe_rcutmax), and a
    * candidate outside the box is not evaluated (box_penalty.h). */
   apply_knot_rcut_derivation(ctx, knot2b, knotmb);
+  if(!named.empty()) models::write_embed_coordinates(ctx,named);
+  else models::resolve_embed_blocks(ctx);
 }
 
 } // namespace detail

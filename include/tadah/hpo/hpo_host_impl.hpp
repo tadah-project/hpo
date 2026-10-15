@@ -1407,7 +1407,7 @@ HPO_Host<P,R>::HPO_Host(core::Context master_ctx,
      * inserted into master_ctx_. */
     /* (NORM does not matter: a linear model's trained weights are
      * converted back to raw-descriptor weights, mlip::to_raw_descriptors.) */
-    embf0_diag_ = models::context_has_ream(master_ctx_)
+    embf0_diag_ = (models::context_has_ream(master_ctx_) || !master_ctx_.blocks("DESCRIPTOR").empty())
                && models::model_is_linear(master_ctx_);
 
     /* param labels: ONE builder (HPOTargets::build_search_space), the same

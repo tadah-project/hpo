@@ -184,7 +184,7 @@ std::size_t derive_weight_count(const core::Context &train_ctx) {
 
 RawEmbeddingF0 derive_raw_embedding_f0(const core::Context &train_ctx) {
   RawEmbeddingF0 out;
-  if (!models::context_has_ream(train_ctx)) {
+  if (!models::context_has_ream(train_ctx) && train_ctx.blocks("DESCRIPTOR").empty()) {
     out.reason = "no DM_REAM many-body block";
     return out;
   }
@@ -863,6 +863,8 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
     throw std::runtime_error(msg);
   }
 
+  if(!train_ctx.blocks("DESCRIPTOR").empty())
+    (void)detail::build_bump_gate_table(train_ctx,trg);
   /* DM_REAM density gates (RHOGATE, RHOBARGATE; rho_gates.h): the
    * semantic checks, then every CONFIG/WARM seed evaluated as a candidate
    * by the per-candidate functions (SEED ERROR | WARN), before any data is
