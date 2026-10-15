@@ -1577,7 +1577,12 @@ void HPOTargets::read(const std::string& fn)
      * reject any GRAD_STRATEGY. */
     if (!observables.empty()) {
         for (const auto& b : optimiser_blocks) {
-            if (b.inner || b.sp->grad_strategy || !obtains_gradients(*b.sp))
+            /* (an INNER block of another LIB than NLopt is refused at
+             * startup, require_inner_backend: its enclosing block has no
+             * local search to resolve a GRAD_STRATEGY for) */
+            if (b.inner || b.sp->grad_strategy ||
+                (b.sp->inner && b.sp->inner->lib != "NLOPT") ||
+                !obtains_gradients(*b.sp))
                 continue;
             b.sp->grad_strategy = GradStrategy::Analytical;
             b.sp->grad_strategy_resolved = true;
@@ -1630,6 +1635,11 @@ void HPOTargets::read(const std::string& fn)
             const bool dlib_bfgs_exception =
                 (sp.lib == "DLIB" && sp.algo == "BFGS");
             if (dlib_bfgs_exception) return;
+            /* An INNER block of another LIB than NLopt is refused at startup
+             * as not NLopt (require_inner_backend), whatever it names; its
+             * enclosing MLSL or AUGLAG has no local search to ask about. */
+            if (inner && sp.lib != "NLOPT") return;
+            if (sp.inner && sp.inner->lib != "NLOPT") return;
             if (!obtains_gradients(sp)) return;
             const std::string requires_free = inner
                 ? " PC_LAMMPS requires a gradient-free optimiser, and an "
