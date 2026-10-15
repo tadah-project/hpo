@@ -228,17 +228,22 @@ std::string record_central2(const std::string& budget, const std::string& needs)
  * or more", for NLOPT:LD_LBFGS, DLIB:BFGS and CERES:STEEPEST_DESCENT (it
  * was CERES:LBFGS, refused since: that row a pin); MAXEVAL 6 gets
  * none (tmp/repro lbfgs6, dlib6, ceres6: the sixth evaluation is the first
- * step).
+ * step). The CERES row runs in a build with Ceres only: without it
+ * (TADAH_ENABLE_CERES OFF) startup refuses LIB CERES ("CERES support is not
+ * built"), which failed the case there
+ * (tmp/before_fix_box_and_slopes_review_noceres_suite.txt).
  * Before the fix: no WARNING for any of them (the search ended
  * MAXEVAL_REACHED at its starting point: tmp/repro a2_lbfgs3, a2_dlib3). */
 TEST_CASE("startup validation: a gradient search whose MAXEVAL cannot pay for "
           "one step is warned about",
           "[startup_validation][gradient_budget]")
 {
-    for (const auto& [lib, algo] : std::vector<std::pair<std::string,
-                                                         std::string>>{
-             {"NLOPT", "LD_LBFGS"}, {"DLIB", "BFGS"},
-             {"CERES", "STEEPEST_DESCENT"}}) {
+    std::vector<std::pair<std::string, std::string>> searches = {
+        {"NLOPT", "LD_LBFGS"}, {"DLIB", "BFGS"}};
+#ifdef TADAH_USE_CERES
+    searches.push_back({"CERES", "STEEPEST_DESCENT"});
+#endif
+    for (const auto& [lib, algo] : searches) {
         for (const char* maxeval : {"4", "5"}) {
             INFO(lib << ":" << algo << " MAXEVAL " << maxeval);
             const std::string journal =
