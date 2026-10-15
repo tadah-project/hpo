@@ -5,6 +5,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- Correct the annealing registry's help and generated documentation for
+  `NEPS`: serial and population annealing use temperature-end loss history,
+  while parallel tempering counts global-best stall windows. Document the
+  audit probes included in the `INIT_JITTER_MAXEVAL AUTO` cap and the current
+  population-annealing limitation: `JITTER AUTO` uses uniform proposal-scale
+  bounds without calibration, so its calibration controls are accepted but
+  unused. This updates documentation strings only; parser rules, defaults
+  and numerical evaluation are unchanged.
+
 ## [1.6.0] — unreleased
 
 ### Added
