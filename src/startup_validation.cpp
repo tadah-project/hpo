@@ -467,6 +467,16 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
     HPOLog::instance().warning(w);
   }
 
+  /* --- settings a search that ignores its start point does not read -----
+   * A WARNING each (start_point_warnings, backend_rules.h): an INIT block
+   * whose points such a search never evaluates, and a RESTART block whose
+   * rounds repeat round 0 when it draws no random numbers either. */
+  for (const std::string &w :
+       start_point_warnings(trg.spec, trg.repeat_reuse_blocker())) {
+    std::cerr << "[HPO] WARNING: " << w << "\n";
+    HPOLog::instance().warning(w);
+  }
+
   /* --- RHOFORM NONNEG / MONOTONE: optimisers that can leave the box -----
    * The evaluated AMPGRIDMB coordinates are projected onto [0, inf)
    * (HPO_Host); say so when the optimiser of a phase can put them outside

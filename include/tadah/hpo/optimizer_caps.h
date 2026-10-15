@@ -168,6 +168,24 @@ struct OptimizerCaps {
      * reads that point"); "" for every other backend. */
     const char* start_note = "";
 
+    /* Whether a run of a backend whose starts_at_x0 is false draws random
+     * numbers, so that a run with another seed asks for other points (nlopt
+     * 2.10 sources):
+     *   Never         GD_STOGO (stogo.cc: no random trial point), GN_DIRECT,
+     *                 GN_DIRECT_L and the three _NOSCAL forms (optimize.c
+     *                 runs GN_DIRECT_L_RAND_NOSCAL with GN_DIRECT_L_NOSCAL's
+     *                 cdirect settings), GN_ORIG_DIRECT and GN_ORIG_DIRECT_L
+     *                 (DIRect.c), GN_AGS (ags);
+     *   BetweenSides  GN_DIRECT_L_RAND: cdirect.c draws only to choose one of
+     *                 several equally long sides of a box, which a box of
+     *                 one dimension never has;
+     *   Always        GD_STOGO_RAND (its random trial points);
+     *   NotRecorded   every backend whose first call is at its point.
+     * A search that draws none asks for the same points in every run: the
+     * RESTART warning of start_point_warnings() (backend_rules.h). */
+    enum class RandomDraws { NotRecorded, Never, BetweenSides, Always };
+    RandomDraws random_draws = RandomDraws::NotRecorded;
+
     /* How the tolerances end the run when one of them is costly, the last
      * clause of require_stop()'s message and a line of the ALGO help (""
      * for none): DIRECT tests XTOL on every rectangle it divides, the

@@ -429,7 +429,18 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn,
         (spec.strategy_type == StrategyType::PRESTAGE && spec.prestage != nullptr);
     const bool backend_consumes = optimizer_caps(spec).accepts_multi_seed;
     const bool multi_seed_consumer = strategy_consumes || backend_consumes;
-    if (spec.optim_init.size() > 1 && !multi_seed_consumer) {
+    /* A search that does not start at the point it is given consumes none
+     * of them: validate_hpo_setup() says so about the INIT block
+     * (start_point_warnings, backend_rules.h). Asked only of registered
+     * backends: the startup checks refuse the others with their own
+     * message. */
+    const bool registered =
+        find_optimizer_caps(spec.lib, spec.algo) &&
+        (!spec.inner ||
+         find_optimizer_caps(spec.inner->lib, spec.inner->algo));
+    const bool ignores_start =
+        registered && search_ignoring_start(spec).has_value();
+    if (spec.optim_init.size() > 1 && !multi_seed_consumer && !ignores_start) {
       /* Surface compatible options from the live caps registry rather
        * than hard-coding LIB:ALGO names -- the registry is the single
        * source of truth for who consumes >1 seed in one run. */
@@ -805,6 +816,12 @@ void HPOTargets::read(const std::string& fn)
                 if (!active_opt)
                     throw std::runtime_error("INIT block requires an active OptimizerSpec");
                 active_init = &active_opt->init_strategy_spec;
+                /* The block's line: its first INIT block when it has two
+                 * (they make one chain). */
+                if (active_init->line == 0) {
+                    active_init->line = nline;
+                    active_init->line_text = line;
+                }
                 /* Suspend active_opt so SEED/STRATEGY don't get gobbled by
                  * dispatch_opt_attr; restored on ENDINIT. */
                 inner_parent = active_opt;     // reuse field for stash
@@ -950,6 +967,10 @@ void HPOTargets::read(const std::string& fn)
                 if (block != STRATEGY_BLK)
                     throw std::runtime_error("RESTART block must appear inside STRATEGY");
                 active_init = &spec.restart.init_strategy;
+                if (spec.restart.line == 0) {
+                    spec.restart.line = nline;
+                    spec.restart.line_text = line;
+                }
                 /* Suspend active_opt while inside RESTART so SEED/STRATEGY
                  * go to active_init, not the OUTER spec. A RESTART with no
                  * STRATEGY lines falls back to a single CONFIG point. */

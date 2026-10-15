@@ -876,6 +876,147 @@ GradientCost gradient_cost(const OptimizerSpec& spec)
     return c;
 }
 
+namespace {
+
+/* "<who> <name><aside> does not start at the point it is given (<note>)",
+ * for a phase `phase` whose search `blind` (search_ignoring_start(phase))
+ * does not start at its point; for an AUGLAG, whose local search it is,
+ * "<who> <name><aside> runs its INNER search <inner> from the point it is
+ * given, and <inner> does not start at the point it is given (<note>)". */
+std::string ignores_its_start(const std::string& who,
+                              const OptimizerSpec& phase,
+                              const OptimizerSpec& blind,
+                              const std::string& aside)
+{
+    const std::string head = who + " " + backend_name(phase) + aside;
+    const std::string note = optimizer_caps(blind).start_note;
+    if (!optimizer_caps(phase).starts_at_x0)
+        return head + " does not start at the point it is given (" + note +
+               ")";
+    const std::string inner = backend_name(blind);
+    return head + " runs its INNER search " + inner + " from the point it is "
+           "given, and " + inner + " does not start at the point it is given "
+           "(" + note + ")";
+}
+
+/* How the search `blind` of a phase of `dims` OPTIM dimensions draws no
+ * random numbers (OptimizerCaps::random_draws), as a clause; nullopt when
+ * it draws them. */
+std::optional<std::string> draws_no_random_numbers(const OptimizerSpec& blind,
+                                                   std::size_t dims)
+{
+    using RD = OptimizerCaps::RandomDraws;
+    const RD draws = optimizer_caps(blind).random_draws;
+    if (draws == RD::Never) return std::string(" and draws no random numbers");
+    if (draws == RD::BetweenSides && dims == 1)
+        return std::string(
+            " and, in one OPTIM dimension, draws no random numbers (it draws "
+            "them only to choose between equally long sides of a box)");
+    return std::nullopt;
+}
+
+std::string block_on_line(const char* block, std::size_t line)
+{
+    return std::string("the ") + block + " block" +
+           (line > 0 ? " on line " + std::to_string(line) : std::string()) +
+           ": ";
+}
+
+}  // namespace
+
+std::vector<std::string> start_point_warnings(const OptimizerSpec& root,
+                                              const std::string& reuse_blocker)
+{
+    std::vector<std::string> out;
+    /* The search each round starts with: PLAIN's STRATEGY-level optimiser,
+     * PRESTAGE's exploration (MULTISTART starts and a PRESTAGE refinement
+     * on such a search are refused). */
+    const bool prestage = root.strategy_type == StrategyType::PRESTAGE;
+    if (root.strategy_type == StrategyType::MULTISTART) return out;
+    const OptimizerSpec* phase = prestage ? root.prestage.get() : &root;
+    if (!phase || phase->lib == "NOT SET" || phase->algo == "NOT SET")
+        return out;
+    const std::optional<OptimizerSpec> blind = search_ignoring_start(*phase);
+    if (!blind) return out;
+    const std::string who = prestage ? "the PRESTAGE exploration"
+                                     : "the STRATEGY-level optimiser";
+    const std::string calibration =
+        should_run_noise_calibration(root.noise.calibration_n)
+            ? " (NOISE CALIBRATION evaluates the first of them " +
+                  std::to_string(root.noise.calibration_n) + " times)"
+            : std::string();
+    const std::string to_start =
+        prestage ? " To start the exploration at them, use an exploration "
+                   "optimiser that starts at the point it is given."
+                 : " To start the search at them, use an optimiser that "
+                   "starts at the point it is given.";
+
+    /* An INIT block with a METHOD: the phase's own (PLAIN: the
+     * OPTIMIZER/STRATEGY-level block; PRESTAGE: the EXPLORE block's), and
+     * under PRESTAGE the OPTIMIZER-level block, which the exploration takes
+     * when its EXPLORE block has none (share_init_with_nested_phases) and
+     * the refinement only when the exploration has no usable candidate. */
+    const InitStrategySpec& own = phase->init_strategy_spec;
+    if (!own.chain.empty())
+        out.push_back(
+            block_on_line("INIT", own.line) +
+            ignores_its_start(who, *phase, *blind, "") + ", so the " +
+            (prestage ? "exploration" : "search") +
+            " never evaluates the block's INIT points" +
+            (prestage ? std::string() : calibration) + "." + to_start);
+    const InitStrategySpec& outer = root.init_strategy_spec;
+    if (prestage && own.chain.empty() && !outer.chain.empty())
+        out.push_back(
+            block_on_line("INIT", outer.line) +
+            ignores_its_start(who, *phase, *blind,
+                              ", which is given the block's INIT points (its "
+                              "EXPLORE block has no INIT block),") +
+            ", so the exploration never evaluates them" + calibration +
+            "; the refinement starts from them only when no evaluation of "
+            "the exploration has a usable loss." + to_start);
+
+    /* An active RESTART block, the search drawing no random numbers: every
+     * round repeats round 0's points (RestartPolicy changes the start
+     * points and the SEEDs only). */
+    if (root.restart.active()) {
+        const std::optional<std::string> draws =
+            draws_no_random_numbers(*blind, phase->low.size());
+        if (draws) {
+            std::string w = block_on_line("RESTART", root.restart.line) +
+                            ignores_its_start(who, *phase, *blind, "") +
+                            *draws + ", so " +
+                            (prestage
+                                 ? "the exploration of every RESTART round, "
+                                   "whatever points it starts from, asks for "
+                                   "round 0's exploration points again"
+                                 : "every RESTART round, whatever points it "
+                                   "starts from, asks for round 0's points "
+                                   "again");
+            if (reuse_blocker.empty())
+                w += prestage
+                         ? ", which the run's record answers: a round's "
+                           "refinement starts from candidates among round "
+                           "0's exploration points"
+                         : ", which the run's record answers: no round after "
+                           "round 0 evaluates a new point, and the RESTART "
+                           "block's only effect is to end the run once round "
+                           "0 has had no new best in AFTER_STAGNATION " +
+                               std::to_string(root.restart.after_stagnation) +
+                               " evaluations";
+            else
+                w += " as long as their losses are those of round 0 (the run "
+                     "evaluates them again: " + reuse_blocker + ")";
+            w += prestage ? ". For explorations that search anew, use an "
+                            "exploration optimiser that starts at the point "
+                            "it is given."
+                          : ". For rounds that search anew, use an optimiser "
+                            "that starts at the point it is given.";
+            out.push_back(w);
+        }
+    }
+    return out;
+}
+
 std::vector<std::string> gradient_budget_warnings(const OptimizerSpec& root,
                                                   bool reuse)
 {

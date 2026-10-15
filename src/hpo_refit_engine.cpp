@@ -34,7 +34,7 @@ namespace engines {
 // REFIT_MODE compact before it would call compact_fit().
 bool HPORefitEngine::has_compact_fitter() const { return false; }
 
-bool HPORefitEngine::compact_fit(const tadah::core::Context &,
+void HPORefitEngine::compact_fit(const tadah::core::Context &,
                                  const tadah::models::EAMSetflIO &,
                                  tadah::models::EAMRefitConfig &,
                                  std::unique_ptr<tadah::models::EAMRefit> &,
@@ -161,7 +161,7 @@ BlipFit build_init_seed(const RefitConfig &rc, InitBasis::Channel ch,
 
 bool HPORefitEngine::has_compact_fitter() const { return true; }
 
-bool HPORefitEngine::compact_fit(const tadah::core::Context &c,
+void HPORefitEngine::compact_fit(const tadah::core::Context &c,
                                  const tadah::models::EAMSetflIO &eam,
                                  tadah::models::EAMRefitConfig &cfg,
                                  std::unique_ptr<tadah::models::EAMRefit> &refit,
@@ -180,10 +180,12 @@ bool HPORefitEngine::compact_fit(const tadah::core::Context &c,
   // REFIT_REACH_SMIN are less than the table's step dr apart, with the same
   // REFIT_REACH_SMIN (read_refit_numbers, the default 0.75 when unset) and
   // the same function, eam_lattice::reach_distance, that gives r_reach
-  // here: so r_reach >= dr > 0 for every run that reaches this hook. A
+  // here, and a crystal whose nearest neighbours at a0 are at or beyond
+  // rcut: so dr <= r_reach < rcut for every run that reaches this hook. A
   // smaller one is a bug in what reached it (the compact fit's windows start
-  // from it), not a table the fitter declines: an internal error, not a
-  // fallback to the dense fit (owner decision, MK, 2026-10-15).
+  // from it), not a table the fitter declines: an internal error (owner
+  // decision, MK, 2026-10-15; the hook has no other outcome than a fit or
+  // an exception).
   EAMRefit probe(eam, cfg);
   probe.analyze_reachability();
   if (!(probe.r_reach() >= eam.dr()))
@@ -1216,7 +1218,6 @@ bool HPORefitEngine::compact_fit(const tadah::core::Context &c,
             "refit_curve_{phi,rho,F}.dat (value/d1/d2 inspection), "
             "refit_basis_info.dat (knot/blip positions), "
             "refit_ladder_trace.dat, hpotarget");
-  return true;
 }
 
 #endif  // TADAH_USE_CERES

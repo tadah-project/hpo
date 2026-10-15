@@ -115,6 +115,12 @@ struct InitStrategySpec {
     std::optional<std::uint64_t> seed;         // SEED for stochastic strategies
     std::string warm_on_mismatch = "warn";     // warn | error | skip: the WARM entries of
                                                // this block's chain (build_init_strategy)
+    /* The line of the hpotarget file that opens the block (INIT; for the
+     * chain of a RESTART block, RestartSpec::line), and its text: 0 and ""
+     * for a spec built outside the parser, or without an INIT block. Its
+     * startup warnings name it (start_point_warnings, backend_rules.h). */
+    std::size_t line = 0;
+    std::string line_text;
 };
 
 /* InitOrigin -- where one resolved INIT start point came from
@@ -176,6 +182,12 @@ struct RestartSpec {
      * to seed_points. Every round draws the chain afresh (RestartPolicy). */
     std::vector<std::vector<double>> seed_points;
     std::vector<InitOrigin>          seed_origins;
+
+    /* The line of the hpotarget file that opens the block (RESTART) and its
+     * text; 0 and "" for a spec built outside the parser. Its startup
+     * warning names it (start_point_warnings, backend_rules.h). */
+    std::size_t line = 0;
+    std::string line_text;
 
     /* RESTART takes effect only when both AFTER_STAGNATION and MAX are
      * positive. The one rule for build_run_policy() and for the
