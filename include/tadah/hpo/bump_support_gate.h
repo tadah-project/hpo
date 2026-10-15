@@ -140,6 +140,8 @@ inline BindingRcut derive_binding_rcut(const core::Context &ctx,
 /** \brief One hard-cutoff bump channel with the bumps that can violate
  *  c + w/eta <= rcut for SOME candidate in the OPTIM boxes. */
 struct BumpGateChannel {
+  bool physical_width=false;
+  bool exact_support=false;
   std::string ckey, skey, rkey;  /* "CGRID2B"/"SGRID2B"/"RCUT2B" or MB */
   double w = 0.0;                /* half-width units: Blip 2, Blip5 3 */
   BindingRcut rcut;
@@ -225,6 +227,35 @@ build_bump_gate_table(const core::Context &ctx, const HPOTargets &trg) {
     }
     if (!ch.bumps.empty()) tbl.push_back(std::move(ch));
   }
+  for(const auto &spec:models::embed_specs(ctx))if(spec.cutoff=="NONE") {
+    BumpGateChannel ch;ch.exact_support=true;
+    ch.physical_width=spec.density.coordinates==models::EmbedCoordinates::Widths;
+    ch.w=models::embed_support(spec.density.basis);
+    ch.ckey=core::to_upper(spec.id+".density.centres");
+    ch.skey=core::to_upper(spec.id+(ch.physical_width?".density.widths":".density.eta"));
+    ch.rkey=core::to_upper(spec.id+".density.cutoff.radius");
+    ch.rcut.fixed_max=ch.rcut.min_reachable=ch.rcut.max_reachable=spec.radius;
+    const double tol=16*std::numeric_limits<double>::epsilon()*std::max(1.0,spec.radius);
+    auto limits=[&](const std::string &key,std::size_t i,double value) {
+      auto it=trg.optimap.find(key);
+      if(it!=trg.optimap.end() && i<it->second.opt.size() && it->second.opt[i])
+        return std::make_pair(it->second.lowbound[i],it->second.highbound[i]);
+      return std::make_pair(value,value);
+    };
+    for(std::size_t i=0;i<spec.density.centres.size();++i) {
+      BumpGateChannel::Bump b;b.index=i;b.c_fix=spec.density.centres[i];
+      b.s_fix=spec.density.basis==models::EmbedBasis::Knot5?1:spec.density.scales[i];
+      b.c_flat=flat_of(ch.ckey,i);b.s_flat=flat_of(ch.skey,i);
+      auto c=limits(ch.ckey,i,b.c_fix),s=limits(ch.skey,i,b.s_fix);
+      double least=c.first+ch.w*(ch.physical_width?s.first:1/s.second);
+      double most=c.second+ch.w*(ch.physical_width?s.second:1/s.first);
+      if(least>spec.radius+tol || (trg.BUMPGATE_STRICT && most>spec.radius+tol))
+        throw std::runtime_error("DM_Embed support gate: "+ch.ckey+"["+std::to_string(i+1)+"] "+
+          (trg.BUMPGATE_STRICT?"has an infeasible box corner under BUMPGATE STRICT":"has no feasible point in its OPTIM box"));
+      if(most>spec.radius+tol && (b.c_flat>=0 || b.s_flat>=0))ch.bumps.push_back(b);
+    }
+    if(!ch.bumps.empty())tbl.push_back(std::move(ch));
+  }
   return tbl;
 }
 
@@ -246,7 +277,7 @@ inline double bump_gate_violation(const std::vector<BumpGateChannel> &tbl,
   for (const auto &ch : tbl) {
     double rcut = ch.rcut.fixed_max;
     for (long j : ch.rcut.flat_idx) rcut = std::max(rcut, p(j));
-    const double tol = models::bump_rcut_tol(rcut);
+    const double tol = ch.exact_support?16*std::numeric_limits<double>::epsilon()*std::max(1.0,rcut):models::bump_rcut_tol(rcut);
     for (const auto &b : ch.bumps) {
       const double c = b.c_flat >= 0 ? p(b.c_flat) : b.c_fix;
       const double eta = b.s_flat >= 0 ? p(b.s_flat) : b.s_fix;
@@ -255,8 +286,10 @@ inline double bump_gate_violation(const std::vector<BumpGateChannel> &tbl,
                              : 1.0 - eta * rcut / ch.w;
         continue;
       }
-      const double reach = c + ch.w / eta;
-      if (reach > rcut + tol) v += (reach - rcut) * eta / ch.w;
+      const double support=ch.physical_width?ch.w*eta:ch.w/eta;
+      const double reach = c + support;
+      if (reach > rcut + tol)
+        v += ch.exact_support?(reach-rcut)/(support>0?support:std::max(1.0,rcut)):(reach-rcut)*eta/ch.w;
     }
   }
   return v;

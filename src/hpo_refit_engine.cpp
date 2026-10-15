@@ -8,6 +8,7 @@
 
 #ifdef TADAH_USE_CERES
 #include <tadah/hpo/refit/compact_fitter.h>
+#include <tadah/hpo/refit/embed_compact.h>
 #include <tadah/hpo/refit/refit_config.h>
 #include <tadah/hpo/refit/refit_parser.h>
 #include <tadah/models/descriptors/basis_kind.h>
@@ -166,6 +167,11 @@ void HPORefitEngine::compact_fit(const tadah::core::Context &c,
                                  tadah::models::EAMRefitConfig &cfg,
                                  std::unique_ptr<tadah::models::EAMRefit> &refit,
                                  SelfTest &st) {
+  if(cfg.component) {
+    refit=compact_embed_fit(c,eam,cfg);
+    st=run_self_test(eam,*refit,cfg.reach_smin);
+    return;
+  }
   // ---- the configuration numbers, strictly and with their ranges ----
   // (read_refit_numbers also refuses a NMAX whose curve sample grid of
   // 4 x NMAX points per function, below, does not fit an int)
