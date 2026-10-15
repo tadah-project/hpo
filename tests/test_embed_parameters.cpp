@@ -3,6 +3,8 @@
 #include <tadah/core/periodic_table.h>
 #include <tadah/hpo/hpo_targets.h>
 #include <tadah/hpo/candidate_context.h>
+#include <tadah/hpo/bump_support_gate.h>
+#include <tadah/hpo/rho_gates.h>
 #include <tadah/models/descriptors/dm/embed_spec.h>
 #include <chrono>
 #include <filesystem>
@@ -62,4 +64,31 @@ TEST_CASE("DM_Embed OPTIM refuses inactive aliases discrete fields and repeated 
     "OPTIM ta.embedding.widths (1) 0.4 0.6\nOPTIM TA.EMBEDDING.WIDTHS (1) 0.4 0.7\n"}) {
     auto c=config(); File f(line); REQUIRE_THROWS(hpo::HPOTargets(c,f.path.string()));
   }
+}
+
+TEST_CASE("DM_Embed NONE support gate uses physical width coordinates and strict corners",
+          "[unified-dm][HPO][support]") {
+  auto c=config();auto blocks=c.blocks();
+  for(auto &line:blocks[0].lines)if(line=="TYPE Cut_Poly")line="TYPE NONE";
+  c.replace_blocks(blocks);
+  File f("OPTIM ta.density.centres (2) 1 8\n");hpo::HPOTargets targets(c,f.path.string());
+  auto table=hpo::detail::build_bump_gate_table(c,targets);REQUIRE(table.size()==1);
+  REQUIRE(hpo::detail::bump_gate_violation(table,Point{{2}})==0);
+  REQUIRE(hpo::detail::bump_gate_violation(table,Point{{7}})>0);
+  targets.BUMPGATE_STRICT=true;REQUIRE_THROWS(hpo::detail::build_bump_gate_table(c,targets));
+  File radius("OPTIM ta.density.cutoff.radius (1) 5 7\n");
+  REQUIRE_THROWS(hpo::HPOTargets(c,radius.path.string()));
+}
+
+TEST_CASE("DM_Embed density gates read the local component form and density",
+          "[unified-dm][HPO][density-gates]") {
+  auto c=config();
+  File f("OPTIM ta.density.amplitudes (1) 0.2 0.6\n"
+         "RHOBARGATE bcc 3.3 0.9 1.1 NPTS 11\n");
+  hpo::HPOTargets targets(c,f.path.string());
+  REQUIRE_NOTHROW(hpo::detail::validate_density_gates(c,targets));
+  const auto gates=hpo::detail::build_density_gates(c,targets);
+  REQUIRE(gates.rhobar.has_value());
+  const auto result=hpo::detail::eval_rhobar_gate(*gates.rhobar,c,true);
+  REQUIRE_FALSE(result.abstain);REQUIRE_FALSE(result.fail);
 }
