@@ -257,8 +257,7 @@ TEST_CASE_METHOD(PTFixture,
                       "non-increasing and convex") != std::string::npos);
     CHECK(logged.find("compact default") == std::string::npos);
     CHECK(slurp("refit_opt.log").find("compact mode") != std::string::npos);
-    CHECK(tadah::models::stored_rhoform(
-              tadah::core::CoreUserConfigParser().parse("pot.tadah")) ==
+    CHECK(tadah::models::embed_specs(tadah::core::CoreUserConfigParser().parse("pot.tadah")).at(0).form ==
           RhoForm::NonNeg);
   }
   SECTION("NONNEG with the defaulted Knot5: the WARNING naming Blip5") {
@@ -281,8 +280,7 @@ TEST_CASE_METHOD(PTFixture,
             std::string::npos);
       CHECK(logged.find("HINT: RHOFORM NONNEG") == std::string::npos);
       CHECK(slurp("refit_opt.log").find("basis=Knot5") != std::string::npos);
-      CHECK(tadah::models::stored_rhoform(
-                tadah::core::CoreUserConfigParser().parse("pot.tadah")) ==
+      CHECK(tadah::models::embed_specs(tadah::core::CoreUserConfigParser().parse("pot.tadah")).at(0).form ==
             RhoForm::NonNeg);
     }
   }
