@@ -5,6 +5,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- Named component OPTIM paths with selected-coordinate bounds, AUTO rules, candidate updates, warm starts and exact checkpoint persistence. Component spatial radii determine neighbor ranges; envelope matching densities do not.
+- Component-aware NONE support gates and single-component density gates.
+- Compact component refitting by variable projection over independent density/embedding centres and scales, retaining selected physical-width coordinates. Pair shapes use the configured pair grid; legacy ladder settings are refused for this path.
+- LAMMPS generic/accelerated/legacy parity coverage for DM_Embed, using the owner-approved existing tolerance for summed virial/force comparisons.
+
+### Fixed
+- Read structured saved potentials through their configuration parser during WARM initialization; preserve local zero-reference diagnostics and CLI energy-reference advice.
+
 ## [1.6.0] — unreleased
 
 ### Added

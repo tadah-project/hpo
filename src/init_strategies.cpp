@@ -16,7 +16,9 @@
 #include <tadah/hpo/hpo_targets.h>
 #include <tadah/hpo/seed_stream.h>
 #include <tadah/hpo/warmstart_cache.h>
+#include <tadah/models/descriptors/dm/embed_spec.h>
 #include <tadah/core/context.h>
+#include <tadah/core/core_user_config_parser.h>
 #include <tadah/core/utils.h>
 #include <tadah/core/number_format.h>
 #include <tadah/models/descriptors/dm/embf0.h>
@@ -283,6 +285,7 @@ public:
          * land box/relax in a different basin, producing a loss that
          * does not match what this file's header claims. */
         std::vector<char> buf;
+        bool structured=false;
         std::string line;
         std::size_t hot_loaded = 0;
         while (std::getline(in, line)) {
@@ -292,6 +295,8 @@ public:
                 if (warmstart::try_parse_line(line)) ++hot_loaded;
                 continue;
             }
+            std::istringstream header(line);std::string key;header>>key;
+            structured=structured || core::to_upper(key)=="DESCRIPTOR";
             buf.insert(buf.end(), line.begin(), line.end());
             buf.push_back('\n');
         }
@@ -305,7 +310,10 @@ public:
 
         core::Context loaded;
         try {
-            loaded.deserialize(buf);
+            if(structured) {
+              std::istringstream input(std::string(buf.begin(),buf.end()));
+              loaded=core::CoreUserConfigParser().parse(input);
+            } else loaded.deserialize(buf);
         } catch (const std::exception& e) {
             /* Same class as a missing file: an unreadable seed cannot be
              * warm-started from, and falling through would silently
@@ -381,9 +389,14 @@ public:
             std::vector<std::string> loaded_vec;
             bool key_present = false;
             try {
-                std::size_t n = loaded.size(kv.first);
-                loaded_vec.resize(n);
-                loaded.get<std::vector<std::string>>(kv.first, loaded_vec);
+                if(kv.first.find('.')!=std::string::npos) {
+                  auto binding=models::embed_binding(loaded,kv.first);
+                  for(double v:binding.values) loaded_vec.push_back(core::format_roundtrip(v));
+                } else {
+                  std::size_t n = loaded.size(kv.first);
+                  loaded_vec.resize(n);
+                  loaded.get<std::vector<std::string>>(kv.first, loaded_vec);
+                }
                 key_present = true;
             } catch (...) {
                 key_present = false;
