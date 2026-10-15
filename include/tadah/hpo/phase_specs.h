@@ -95,6 +95,23 @@ bool obtains_gradients(const OptimizerSpec& spec);
  * reads its MAXEVAL and MAXTIME, which AUGLAG does not report. */
 std::optional<OptimizerSpec> single_local_search(const OptimizerSpec& spec);
 
+/* The search a run of `spec` starts with, when its first call is not at
+ * the point the run is given (OptimizerCaps::starts_at_x0): `spec` itself
+ * for NLopt's StoGO, DIRECT and AGS, which never read that point; for
+ * NLopt's AUGLAG, which HPO runs without a constraint, so that auglag.c
+ * goes straight into its local search from that point (single_local_
+ * search()'s rule), that local search (inner_run_spec()) when it is such a
+ * search. nullopt when the first call is at the point: every other
+ * backend, and an MLSL, which evaluates its starting point first (mlsl.c;
+ * where its local searches start is the business of the gradient-budget
+ * warning, backend_rules.cpp). Looks up the caps of `spec` and of its
+ * local search (optimizer_caps(), which throws for one the registry
+ * refuses or does not have). The refusals of require_prestage_refinement()
+ * and require_inner_start_used() (strategy_rules.h) and the gradient-
+ * budget warning's start (gradient_budget_warnings(), backend_rules.h)
+ * take it from here. */
+std::optional<OptimizerSpec> search_ignoring_start(const OptimizerSpec& spec);
+
 /* `what`, a refusal of the settings of the phase that runs `spec`, at the
  * line its block closes at (OptimizerSpec::block_line), in the parser's
  * form "Error on line N: <what>\nLine: <text>" (config_line_error,

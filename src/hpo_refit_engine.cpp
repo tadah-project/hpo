@@ -175,27 +175,25 @@ bool HPORefitEngine::compact_fit(const tadah::core::Context &c,
 
   // ---- reachability first: compact mode NEEDS the energy metric ----
   // The lattice/a0 are already guaranteed recognised by the crystal gate in
-  // RefitEngine::run(), and REFIT_REACH_SMIN is at least 0.1
+  // RefitEngine::run() (models::eam_lattice::require_crystal: a known
+  // lattice, a0 > 0), and REFIT_REACH_SMIN is at least 0.1
   // (read_refit_numbers), so r_reach = REFIT_REACH_SMIN x the nearest-
-  // neighbour distance is positive; a non-positive reachable window would
-  // still be unusable for rung selection, so this (defensive) case falls
-  // back to the dense fit, saying why and what that fit reads.
+  // neighbour distance is positive for every configuration. A non-positive
+  // window is a bug in what reached this hook (the compact fit selects its
+  // rungs on the window), not a table the fitter declines: an internal
+  // error, not a fallback to the dense fit (owner decision, MK, 2026-10-15).
   EAMRefit probe(eam, cfg);
   probe.analyze_reachability();
-  if (probe.r_reach() <= 0.0) {
-    Logger::instance().log(LogLevel::WARNING,
-        "tadah refit[compact]: the reachable pair-distance window could not "
-        "be computed (r_reach = " + core::to_string(probe.r_reach(), 4) +
+  if (!(probe.r_reach() > 0.0))
+    throw std::logic_error(
+        "tadah refit[compact]: internal error: the reachable pair-distance "
+        "window is empty (r_reach = " + core::to_string(probe.r_reach(), 4) +
         " A, from REFIT_REACH_SMIN " + core::to_string(cfg.reach_smin, 4) +
         " and the " + eam.lattice() + " lattice of a0 = " +
-        core::to_string(eam.lattice_param(), 4) + " A), and the compact fit "
-        "selects its rungs on it: falling back to the dense fit, which reads "
-        "none of the compact keys (REFIT_COMPACT_*, REFIT_OBJECTIVE, "
-        "REFIT_CURVE_*, the stage blocks) and takes its own keys' defaults "
-        "(REFIT_LEVEL balanced, REFIT_MAX_ESCALATIONS 4), which REFIT_MODE "
-        "compact refuses: set REFIT_MODE dense to configure that fit.");
-    return false;
-  }
+        core::to_string(eam.lattice_param(), 4) + " A), although the crystal "
+        "gate (a known lattice, a0 > 0) and the range of REFIT_REACH_SMIN "
+        "(0.1 to 1) make it positive for every configuration; this is a bug, "
+        "please report it");
   const double rcut = eam.rcut();
   const double a0 = eam.lattice_param();
   const std::string lattice = eam.lattice();
