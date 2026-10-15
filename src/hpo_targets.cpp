@@ -1814,6 +1814,47 @@ std::string HPOTargets::optim_discrete_index_error(const std::string& key,
   return "";
 }
 
+std::string HPOTargets::optim_component_key_error(const core::Context& ctx,
+                                                  const std::string& key) {
+  static const struct { const char* key; bool density; const char* field; }
+      legacy[] = {{"CGRIDMB", true, "CENTRES"},   {"SGRIDMB", true, ""},
+                  {"AMPGRIDMB", true, "AMPLITUDES"},
+                  {"CEMBFUNC", false, "CENTRES"}, {"SEMBFUNC", false, ""},
+                  {"RCUTMB", true, "CUTOFF.RADIUS"}};
+  const std::string k = core::to_upper(key);
+  const auto* row = std::find_if(std::begin(legacy), std::end(legacy),
+                                 [&](const auto& r) { return k == r.key; });
+  if (row == std::end(legacy) || ctx.has_stored(k)) return "";
+  const auto specs = models::embed_specs(ctx);
+  if (specs.empty()) return "";
+  std::string paths;
+  for (const auto& s : specs) {
+    const auto& c = row->density ? s.density : s.embedding;
+    std::string field = row->field;
+    if (field.empty())  // a width: the coordinate the block declares
+      field = c.basis == models::EmbedBasis::Knot5
+                  ? ""
+                  : c.coordinates == models::EmbedCoordinates::Widths ? "WIDTHS"
+                                                                      : "ETA";
+    const std::string id = core::to_upper(s.id);
+    const std::string channel = row->density ? ".DENSITY." : ".EMBEDDING.";
+    paths += (paths.empty() ? "" : ", ") +
+             (field.empty()
+                  ? id + channel + "* (a Knot5 component has no width)"
+                  : id + channel + field +
+                        (field == "CUTOFF.RADIUS" && s.cutoff == "NONE"
+                             ? " (a parameter when the CUTOFF TYPE is not "
+                               "NONE)"
+                             : ""));
+  }
+  return "OPTIM " + k + ": the potential has no " + k + " key: its many-body "
+         "term is DM_Embed component(s) (DESCRIPTOR blocks), whose " +
+         (row->density ? "density" : "embedding") + " parameter is the named "
+         "path " + paths + "; write OPTIM <path> (indices) <low> <high> (the "
+         "starter target of tadah refit names the paths; a target written "
+         "for a DM_REAM potential names the legacy keys).";
+}
+
 std::string HPOTargets::optim_internal_key_error(const std::string& key) {
   const std::string k = core::to_upper(key);
   if (core::BlueprintParser::getInternalKeysMapRef().count(k) == 0) return "";
@@ -2047,6 +2088,10 @@ void HPOTargets::process_optim_config(std::istringstream& iss,
   /* Internal keys, before context.size(k), which would materialise the
    * blueprint default into the run context. */
   if (const std::string e = optim_internal_key_error(k); !e.empty())
+    throw std::runtime_error(e);
+  /* A legacy many-body key of a DM_Embed potential, before context.size(k),
+   * which refuses an absent key without naming the component path. */
+  if (const std::string e = optim_component_key_error(context, k); !e.empty())
     throw std::runtime_error(e);
 
   Opti& omap = optimap[k];

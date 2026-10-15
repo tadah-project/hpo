@@ -167,18 +167,6 @@ void HPORefitEngine::compact_fit(const tadah::core::Context &c,
                                  tadah::models::EAMRefitConfig &cfg,
                                  std::unique_ptr<tadah::models::EAMRefit> &refit,
                                  SelfTest &st) {
-  if(cfg.component) {
-    refit=compact_embed_fit(c,eam,cfg);
-    st=run_self_test(eam,*refit,cfg.reach_smin);
-    return;
-  }
-  // ---- the configuration numbers, strictly and with their ranges ----
-  // (read_refit_numbers also refuses a NMAX whose curve sample grid of
-  // 4 x NMAX points per function, below, does not fit an int)
-  const tadah::mlip::engines::RefitNumbers nums =
-      tadah::mlip::engines::read_refit_numbers(c);
-  const int nmax_all = std::max({nums.nmax[0], nums.nmax[1], nums.nmax[2]});
-
   // ---- reachability first: compact mode NEEDS the energy metric ----
   // The crystal gate in RefitEngine::run()
   // (models::eam_lattice::require_crystal_on_grid) has refused an unknown
@@ -205,6 +193,19 @@ void HPORefitEngine::compact_fit(const tadah::core::Context &c,
         core::format_roundtrip(eam.dr()) + " A, although the crystal gate "
         "of tadah refit (eam_lattice::require_crystal_on_grid) refuses every "
         "such table; this is a bug, please report it");
+  // The compact fit of DM_Embed components (their grids are its seeds; the
+  // ladder below is the DM_REAM compact fit), after the same invariant.
+  if (cfg.component) {
+    refit = compact_embed_fit(c, eam, cfg);
+    st = run_self_test(eam, *refit, cfg.reach_smin);
+    return;
+  }
+  // ---- the configuration numbers, strictly and with their ranges ----
+  // (read_refit_numbers also refuses a NMAX whose curve sample grid of
+  // 4 x NMAX points per function, below, does not fit an int)
+  const tadah::mlip::engines::RefitNumbers nums =
+      tadah::mlip::engines::read_refit_numbers(c);
+  const int nmax_all = std::max({nums.nmax[0], nums.nmax[1], nums.nmax[2]});
   const double rcut = eam.rcut();
   const double a0 = eam.lattice_param();
   const std::string lattice = eam.lattice();

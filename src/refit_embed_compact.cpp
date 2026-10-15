@@ -1,10 +1,14 @@
 #include <tadah/core/logger.h>
 #include <tadah/hpo/refit/embed_compact.h>
+#include <tadah/mlip/engines/refit_keys.h>
 #ifdef TADAH_USE_CERES
 #include <algorithm>
 #include <ceres/gradient_problem.h>
 #include <ceres/gradient_problem_solver.h>
 #include <cmath>
+#include <exception>
+#include <stdexcept>
+#include <string>
 
 namespace tadah {
 namespace hpo {
@@ -17,6 +21,11 @@ class Objective final : public ceres::FirstOrderFunction {
   const models::EAMSetflIO &eam_;
   models::EAMRefitConfig cfg_;
   std::vector<Variable> variables_;
+  // What Evaluate caught (Ceres's solve must not be unwound through):
+  // the first internal error, rethrown after the solve, and the last
+  // trial point the model refused.
+  mutable std::exception_ptr internal_;
+  mutable std::string refused_;
 
 public:
   Objective(const models::EAMSetflIO &eam, const models::EAMRefitConfig &cfg,
@@ -67,9 +76,12 @@ public:
     }
     return cfg;
   }
-  bool Evaluate(const double *x, double *cost,
-                double *gradient) const override {
-    try {
+  /** The cost (and gradient) at x. Throws what the fit throws: a
+   *  precondition refusal of the table (EAMRefit), a component the trial
+   *  point makes invalid (std::runtime_error), an internal error
+   *  (std::logic_error). */
+  bool cost_at(const double *x, double *cost, double *gradient) const {
+    {
       auto cfg = decode(x);
       models::EAMRefit fit(eam_, cfg);
       fit.fit();
@@ -134,10 +146,33 @@ public:
         }
       }
       return std::isfinite(*cost);
-    } catch (const std::exception &) {
-      return false;
-    } // Ceres rejects infeasible trial points.
+    }
   }
+  /** Ceres's callback: a trial point the model refuses (std::runtime_error:
+   *  a centre or scale it cannot evaluate) is infeasible, which Ceres
+   *  handles by stepping back; anything else (std::logic_error, an internal
+   *  error) stops the solve and is rethrown by rethrow_internal(). The
+   *  starting point is evaluated before the solve with cost_at, outside
+   *  any catch, so a precondition refusal reports itself. */
+  bool Evaluate(const double *x, double *cost,
+                double *gradient) const override {
+    if (internal_)
+      return false;
+    try {
+      return cost_at(x, cost, gradient);
+    } catch (const std::runtime_error &e) {
+      refused_ = e.what();
+      return false;
+    } catch (...) {
+      internal_ = std::current_exception();
+      return false;
+    }
+  }
+  void rethrow_internal() const {
+    if (internal_)
+      std::rethrow_exception(internal_);
+  }
+  const std::string &last_refusal() const { return refused_; }
 };
 } // namespace
 std::unique_ptr<models::EAMRefit>
@@ -151,22 +186,56 @@ compact_embed_fit(const core::Context &context, const models::EAMSetflIO &eam,
       throw std::runtime_error("tadah refit: " + key.first +
                                " belongs to the legacy ladder; component grids "
                                "are the compact seeds");
+  const int iterations =
+      mlip::engines::read_refit_numbers(context).component_iterations;
   std::vector<double> x;
   auto *function = new Objective(eam, cfg, x);
   ceres::GradientProblem problem(function);
+  // The starting point (the configured grids) outside the solve: a table
+  // the declared FORM cannot follow, or a component that cannot be
+  // evaluated, is refused here with its own message.
+  {
+    double cost = 0;
+    std::vector<double> gradient(x.size());
+    if (!function->cost_at(x.data(), &cost, gradient.data()))
+      throw std::runtime_error(
+          "DM_Embed compact refit: the declared components give a non-finite "
+          "fit cost at their configured grids");
+  }
   ceres::GradientProblemSolver::Options options;
-  options.max_num_iterations = 60;
+  options.max_num_iterations = iterations;
   options.line_search_direction_type = ceres::LBFGS;
+  // no progress lines (glog, stderr) whatever VERBOSE is; the summary is
+  // logged below
+  options.logging_type = ceres::SILENT;
+  options.minimizer_progress_to_stdout = false;
   ceres::GradientProblemSolver::Summary summary;
   ceres::Solve(options, problem, x.data(), &summary);
+  function->rethrow_internal();
   if (!summary.IsSolutionUsable())
-    throw std::runtime_error("DM_Embed compact refit: " +
-                             summary.BriefReport());
+    throw std::runtime_error(
+        "DM_Embed compact refit: the centre/scale optimisation failed: " +
+        summary.message +
+        (function->last_refusal().empty()
+             ? std::string()
+             : " (last trial point refused: " + function->last_refusal() +
+                   ")"));
   cfg = function->decode(x.data());
   auto fit = std::make_unique<models::EAMRefit>(eam, cfg);
   fit->fit();
   core::Logger::instance().log(
       core::LogLevel::INFO, "DM_Embed compact refit: ", summary.BriefReport());
+  if (summary.termination_type == ceres::NO_CONVERGENCE)
+    core::Logger::instance().log(
+        core::LogLevel::WARNING,
+        "DM_Embed compact refit: the centre/scale optimisation stopped after " +
+            std::to_string(iterations) +
+            " iterations without converging (" + summary.message +
+            "); the potential is written at the point it reached. Raise "
+            "REFIT_COMPONENT_ITERATIONS (" + std::to_string(iterations) +
+            (context.has_stored("REFIT_COMPONENT_ITERATIONS") ? ""
+                                                              : ", the default") +
+            ") to let it converge.");
   return fit;
 }
 } // namespace hpo

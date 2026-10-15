@@ -102,3 +102,26 @@ TEST_CASE("DM_Embed WARM reads saved blocks in selected width coordinates", "[un
   auto strategy=hpo::build_init_strategy(spec);hpo::InitContext init{targets.spec,targets,0,&c};
   const auto points=strategy->generate(init,1);REQUIRE(points.size()==1);REQUIRE(points[0][0]==0.61);
 }
+
+/* Pins: OPTIM on a legacy many-body key (CGRIDMB, SGRIDMB, AMPGRIDMB,
+ * CEMBFUNC, SEMBFUNC, RCUTMB) of a potential whose many-body term is a
+ * DM_Embed component, which has no such key, is refused naming the key and
+ * the component path that holds the parameter (the refit's starter target
+ * names them; an hpotarget of a DM_REAM refit names the legacy keys).
+ * Before the fix the refusal was 'Key not found in the Context object:
+ * CGRIDMB'. */
+TEST_CASE("DM_Embed OPTIM of a legacy many-body key names the component path",
+          "[unified-dm][HPO]") {
+  auto c=config();
+  const std::vector<std::pair<std::string,std::string>> keys{
+    {"CGRIDMB","TA.DENSITY.CENTRES"},{"SGRIDMB","TA.DENSITY.WIDTHS"},
+    {"AMPGRIDMB","TA.DENSITY.AMPLITUDES"},{"CEMBFUNC","TA.EMBEDDING.CENTRES"},
+    {"SEMBFUNC","TA.EMBEDDING.WIDTHS"},{"RCUTMB","TA.DENSITY.CUTOFF.RADIUS"}};
+  for(const auto &[key,path]:keys) {
+    CAPTURE(key);
+    File f("OPTIM "+key+" (1) 0.5 1.5\n");
+    REQUIRE_THROWS_WITH(hpo::HPOTargets(c,f.path.string()),
+                        Catch::Contains("OPTIM "+key) && Catch::Contains(path) &&
+                        Catch::Contains("DM_Embed"));
+  }
+}
