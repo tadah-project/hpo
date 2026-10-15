@@ -10,6 +10,10 @@
 //    N_STARTS;
 //  - the PRESTAGE refinement does the same over the TOPK candidates, so a
 //    configured TOPK > 1 needs a refinement optimiser MULTISTART accepts;
+//  - the PRESTAGE refinement, and the INNER search of an AUGLAG under
+//    MULTISTART or as the refinement, starts at the point it is given: a
+//    search that does not (NLopt's StoGO, DIRECT and AGS) never uses the
+//    candidates or the INIT points those strategies are for;
 //  - TYPE PRESTAGE needs an EXPLORE block;
 //  - an INNER block needs an optimiser that runs one (NLopt's MLSL and
 //    AUGLAG), and names an NLopt algorithm, which is what they run.
@@ -2122,7 +2126,10 @@ TEST_CASE("startup validation: the backend checks reject no valid "
              "    TYPE PRESTAGE\n    LIB DLIB\n    ALGO BFGS\n"
              "    MAXEVAL 20\n    EXPLORE\n      LIB NLOPT\n"
              "      ALGO GN_CRS2_LM\n    ENDEXPLORE\n" + kRestart,
-             "    TYPE PRESTAGE\n    LIB NLOPT\n    ALGO GN_DIRECT_L\n"
+             /* The refinement on a global search without a stop of its
+              * own (GN_CRS2_LM: it was GN_DIRECT_L, which a refinement no
+              * longer takes, as it does not start at its candidate). */
+             "    TYPE PRESTAGE\n    LIB NLOPT\n    ALGO GN_CRS2_LM\n"
              "    EXPLORE\n      LIB DLIB\n      ALGO GFS\n"
              "      MAXEVAL 12\n    ENDEXPLORE\n" + kRestart,
              "    TYPE PLAIN\n    LIB NLOPT\n    ALGO AUGLAG\n"
@@ -2360,12 +2367,14 @@ TEST_CASE("startup validation: a backend with no convergence test and no "
                      "      ALGO GN_CRS2_LM\n    ENDEXPLORE\n",
                      "the PRESTAGE exploration (EXPLORE block): "
                      "NLOPT:GN_CRS2_LM needs a stop: ", kAnyTolerance});
-    cases.push_back({"the PRESTAGE refinement: NLOPT:GN_DIRECT_L without a stop",
-                     "    TYPE PRESTAGE\n    LIB NLOPT\n    ALGO GN_DIRECT_L\n"
+    /* The refinement: GN_CRS2_LM (it was GN_DIRECT_L, which a refinement
+     * no longer takes, as it does not start at its candidate). */
+    cases.push_back({"the PRESTAGE refinement: NLOPT:GN_CRS2_LM without a stop",
+                     "    TYPE PRESTAGE\n    LIB NLOPT\n    ALGO GN_CRS2_LM\n"
                      "    EXPLORE\n      LIB DLIB\n      ALGO GFS\n"
                      "      MAXEVAL 12\n    ENDEXPLORE\n",
-                     "the PRESTAGE refinement: NLOPT:GN_DIRECT_L needs a stop: ",
-                     kAnyTolerance + kDirectXtol});
+                     "the PRESTAGE refinement: NLOPT:GN_CRS2_LM needs a stop: ",
+                     kAnyTolerance});
     /* AUGLAG ends when its local search ends: an INNER search that needs a
      * stop takes MAXEVAL, MAXTIME and STOPVAL from the enclosing block
      * (NLopt hands them on, and replaces the INNER block's own STOPVAL),
@@ -3661,5 +3670,273 @@ TEST_CASE("startup validation: NOISE AUTO derives fd_step where the "
               "(the resolution of an unset GRAD_STRATEGY with PC_OBSERVABLE); "
               "remove AUTO from the NOISE block.");
         CHECK(resolved.trg->spec.param.count("fd_step") == 0u);
+    }
+}
+
+/* ======================================================================
+ * The points a search starts from are the whole purpose of the PRESTAGE
+ * refinement (the exploration's candidates) and of the MULTISTART starts
+ * (the INIT points). A search whose first call is not at the point it is
+ * given never uses them: NLopt's StoGO, DIRECT and AGS (OptimizerCaps::
+ * starts_at_x0 false: stogo.cc, cdirect.c, DIRect.c and ags.cc never read
+ * x0), and an AUGLAG, which runs its INNER search from its starting point,
+ * with such an INNER search (owner decision, MK, 2026-10-15).
+ * ==================================================================== */
+
+namespace {
+
+/* Where a backend that does not start at the point it is given starts
+ * instead, as the refusal says it (lanes/F/tmp/sr_probe: the refinement's
+ * first points in [4, 6] x [0.1, 0.4] were (5, 0.25) and its stencil for
+ * GD_STOGO, (5, 0.25), (4.33, 0.25), (5.67, 0.25) for GN_DIRECT_L, (5.0002,
+ * 0.2500), (4.0002, 0.25), (5.9998, 0.25) for GN_AGS). */
+std::string start_note_of(const std::string& algo)
+{
+    if (algo == "GD_STOGO")
+        return "StoGO evaluates the centre of the OPTIM box first and then "
+               "samples the whole box";
+    if (algo == "GD_STOGO_RAND")
+        return "StoGO evaluates the centre of the OPTIM box first (with "
+               "POPULATION 2n + 1 or more, n the OPTIM dimensions, a random "
+               "point of the box) and then samples the whole box";
+    if (algo.rfind("GN_DIRECT", 0) == 0 || algo.rfind("GN_ORIG_DIRECT", 0) == 0)
+        return "DIRECT evaluates the centre of the OPTIM box first and then "
+               "divides the whole box";
+    if (algo == "GN_AGS")
+        return "AGS evaluates points of a space-filling curve through the "
+               "whole OPTIM box, the first near its centre";
+    return "";
+}
+
+/* The local optimisers whose first call is at the point they are given,
+ * as LIB:ALGO, sorted: every registered backend that is not global, starts
+ * at its point (OptimizerCaps::starts_at_x0) and is not an AUGLAG without
+ * NLopt's default local optimiser (it starts where its INNER block does);
+ * `nlopt_only`: those of NLopt, which an INNER block can name. */
+std::vector<std::string> starting_where_given(bool nlopt_only)
+{
+    std::vector<std::string> out;
+    for (const auto* c : tadah::hpo::filter_optimizer_caps(
+             [](const OptimizerCaps&) { return true; })) {
+        if (c->is_global || !c->starts_at_x0) continue;
+        if (c->accepts_inner && c->default_inner == nullptr) continue;
+        if (nlopt_only && c->lib != "NLOPT") continue;
+        out.push_back(c->lib + ":" + c->algo);
+    }
+    std::sort(out.begin(), out.end());
+    return out;
+}
+
+std::string joined(const std::vector<std::string>& v)
+{
+    std::string s;
+    for (std::size_t i = 0; i < v.size(); ++i) s += (i ? ", " : "") + v[i];
+    return s;
+}
+
+}  // namespace
+
+/* Pins: the PRESTAGE refinement on every registered backend whose first
+ * call is not at the point it is given (OptimizerCaps::starts_at_x0 false:
+ * the eleven NLopt algorithms GD_STOGO, GD_STOGO_RAND, GN_AGS, GN_DIRECT,
+ * GN_DIRECT_L, GN_DIRECT_L_NOSCAL, GN_DIRECT_L_RAND,
+ * GN_DIRECT_L_RAND_NOSCAL, GN_DIRECT_NOSCAL, GN_ORIG_DIRECT and
+ * GN_ORIG_DIRECT_L), with TOPK 1 (the default) and TOPK 3, written at the
+ * STRATEGY level or in a REFINE block, is refused at startup, at the
+ * ENDOPTIMIZER line, with "STRATEGY TYPE PRESTAGE cannot refine with
+ * NLOPT:<ALGO>: it does not start at the point it is given (<where it
+ * starts>; NLopt never reads that point), so the refinement would never use
+ * the exploration's candidates, for any TOPK. Use a local optimiser, which
+ * starts at each candidate (<every local optimiser of the registry that
+ * starts at its point>), or run NLOPT:<ALGO> as the exploration (EXPLORE
+ * block) or once, as STRATEGY TYPE PLAIN." -- also with TOPK 3, before the
+ * TOPK rule, whose advice (TOPK 1) would not help -- and StagedPolicy::
+ * validate() gives the same text; an AUGLAG whose INNER search is one of
+ * them is refused at the INNER block's ENDINNER line, as the refinement
+ * ("the INNER block of the PRESTAGE refinement: NLOPT:AUGLAG runs its
+ * INNER search NLOPT:GD_STOGO from the point it is given (each candidate
+ * of the exploration), and ... so the refinement would never use the
+ * exploration's candidates. Use a local NLopt algorithm in the INNER block,
+ * which starts at the point it is given (<every such NLopt algorithm>).")
+ * and under MULTISTART ("the INNER block of the STRATEGY-level optimiser:
+ * ... (each MULTISTART start's INIT point), ..., so no MULTISTART start
+ * would begin at its INIT point. ..., or STRATEGY TYPE PLAIN to run
+ * NLOPT:LN_AUGLAG once."), MultiStartPolicy::validate() alike. The lists
+ * hold DLIB:BFGS, NLOPT:LN_BOBYQA and the AUGLAGs with a default local
+ * optimiser, and no global optimiser, no TADAH backend and no NLOPT:AUGLAG
+ * (which needs an INNER block). A refinement that starts at its candidate
+ * passes: local ones, NLOPT:GN_CRS2_LM (x0 is the first member of its
+ * population), TADAH:RANDOM (it evaluates its INIT point first), an MLSL
+ * with an INNER StoGO (MLSL evaluates its starting point first), an AUGLAG
+ * with a local INNER search; and so do a PLAIN run and an exploration on
+ * one of them, whose start is no purpose of theirs.
+ * Before the fix: the TOPK 1 refinements and the AUGLAG cases were
+ * accepted (startup and policy ""; the refinement ran over the whole box
+ * and never evaluated its candidate, lanes/F/tmp/sr_probe/run_direct,
+ * run_stogo, run_ags), and the TOPK 3 ones were refused with the TOPK
+ * message ("STRATEGY TYPE PRESTAGE with TOPK 3 cannot refine with ... or
+ * TOPK 1 to refine the best candidate once."): every refusal check fails;
+ * the passing cases pass as well (pins). */
+TEST_CASE("startup validation: a PRESTAGE refinement or MULTISTART whose "
+          "search does not start at the point it is given is refused, "
+          "naming the local optimisers that do",
+          "[startup_validation][strategy][prestage][start_point]")
+{
+    const std::vector<std::string> local = starting_where_given(false);
+    const std::vector<std::string> nlopt_local = starting_where_given(true);
+    const auto has = [](const std::vector<std::string>& v,
+                        const std::string& s) {
+        return std::find(v.begin(), v.end(), s) != v.end();
+    };
+    CHECK(has(local, "DLIB:BFGS"));
+    CHECK(has(local, "NLOPT:LN_BOBYQA"));
+    CHECK(has(local, "NLOPT:LN_AUGLAG"));
+    CHECK_FALSE(has(local, "NLOPT:AUGLAG"));
+    CHECK(has(nlopt_local, "NLOPT:LN_BOBYQA"));
+    CHECK_FALSE(has(nlopt_local, "DLIB:BFGS"));
+    for (const auto& name : local) {
+        INFO(name);
+        CHECK(name.rfind("NLOPT:G", 0) != 0);
+        CHECK(name.rfind("TADAH:", 0) != 0);
+    }
+
+    const auto own = [&](const std::string& algo) {
+        return "STRATEGY TYPE PRESTAGE cannot refine with NLOPT:" + algo +
+               ": it does not start at the point it is given (" +
+               start_note_of(algo) + "; NLopt never reads that point), so "
+               "the refinement would never use the exploration's candidates, "
+               "for any TOPK. Use a local optimiser, which starts at each "
+               "candidate (" + joined(local) + "), or run NLOPT:" + algo +
+               " as the exploration (EXPLORE block) or once, as STRATEGY "
+               "TYPE PLAIN.";
+    };
+    const auto refused_at = [](const std::string& config, const Verdict& v,
+                               const std::string& closing,
+                               const std::string& message) {
+        const auto at = line_of(config, closing);
+        REQUIRE(at.first > 0);
+        CHECK(v.startup == message);
+        CHECK(v.startup_raw == "Error on line " + std::to_string(at.first) +
+                                   ": " + message + "\nLine: " + at.second);
+        CHECK(v.policy == message);
+    };
+
+    SECTION("the refinement on each such backend, TOPK 1 and 3") {
+        std::vector<std::string> blind;
+        for (const auto* c : tadah::hpo::filter_optimizer_caps(
+                 [](const OptimizerCaps& k) { return !k.starts_at_x0; }))
+            blind.push_back(c->lib + ":" + c->algo);
+        std::sort(blind.begin(), blind.end());
+        CHECK(blind == std::vector<std::string>{
+                           "NLOPT:GD_STOGO", "NLOPT:GD_STOGO_RAND",
+                           "NLOPT:GN_AGS", "NLOPT:GN_DIRECT",
+                           "NLOPT:GN_DIRECT_L", "NLOPT:GN_DIRECT_L_NOSCAL",
+                           "NLOPT:GN_DIRECT_L_RAND",
+                           "NLOPT:GN_DIRECT_L_RAND_NOSCAL",
+                           "NLOPT:GN_DIRECT_NOSCAL", "NLOPT:GN_ORIG_DIRECT",
+                           "NLOPT:GN_ORIG_DIRECT_L"});
+        for (const std::string& name : blind) {
+            const std::string algo = name.substr(name.find(':') + 1);
+            REQUIRE_FALSE(start_note_of(algo).empty());
+            for (const std::string topk : {"", "    TOPK 3\n"}) {
+                INFO(name << (topk.empty() ? " TOPK 1" : " TOPK 3"));
+                const std::string config =
+                    strategy_config(prestage_body("NLOPT", algo, topk));
+                refused_at(config, judge(config), "ENDOPTIMIZER", own(algo));
+            }
+        }
+    }
+    SECTION("a REFINE block is the same refinement optimiser") {
+        const std::string config = strategy_config(
+            "    TYPE PRESTAGE\n" + kExploreGfs +
+            "    REFINE\n      LIB NLOPT\n      ALGO GD_STOGO\n"
+            "      MAXEVAL 20\n    ENDREFINE\n");
+        refused_at(config, judge(config), "ENDOPTIMIZER", own("GD_STOGO"));
+    }
+    SECTION("an AUGLAG whose INNER search does not start at its point") {
+        const std::string nlopt_list = joined(nlopt_local);
+        const auto inner_of_refinement = [&](const std::string& auglag,
+                                             const std::string& inner) {
+            return "the INNER block of the PRESTAGE refinement: NLOPT:" +
+                   auglag + " runs its INNER search NLOPT:" + inner +
+                   " from the point it is given (each candidate of the "
+                   "exploration), and NLOPT:" + inner + " does not start at "
+                   "the point it is given (" + start_note_of(inner) +
+                   "; NLopt never reads that point), so the refinement would "
+                   "never use the exploration's candidates. Use a local "
+                   "NLopt algorithm in the INNER block, which starts at the "
+                   "point it is given (" + nlopt_list + ").";
+        };
+        {
+            INFO("AUGLAG with an INNER GD_STOGO as the refinement");
+            const std::string config = strategy_config(
+                "    TYPE PRESTAGE\n    LIB NLOPT\n    ALGO AUGLAG\n"
+                "    MAXEVAL 20\n    INNER\n      LIB NLOPT\n"
+                "      ALGO GD_STOGO\n      MAXEVAL 5\n    ENDINNER\n" +
+                kExploreGfs);
+            refused_at(config, judge(config), "ENDINNER",
+                       inner_of_refinement("AUGLAG", "GD_STOGO"));
+        }
+        {
+            INFO("LN_AUGLAG with an INNER GN_DIRECT_L in a REFINE block, "
+                 "TOPK 2");
+            const std::string config = strategy_config(
+                "    TYPE PRESTAGE\n    TOPK 2\n" + kExploreGfs +
+                "    REFINE\n      LIB NLOPT\n      ALGO LN_AUGLAG\n"
+                "      MAXEVAL 20\n      INNER\n        LIB NLOPT\n"
+                "        ALGO GN_DIRECT_L\n      ENDINNER\n    ENDREFINE\n");
+            refused_at(config, judge(config), "ENDINNER",
+                       inner_of_refinement("LN_AUGLAG", "GN_DIRECT_L"));
+        }
+        {
+            INFO("LN_AUGLAG with an INNER GN_AGS under MULTISTART");
+            const std::string config = strategy_config(
+                "    TYPE MULTISTART\n    LIB NLOPT\n    ALGO LN_AUGLAG\n"
+                "    MAXEVAL 20\n    N_STARTS 2\n    INNER\n"
+                "      LIB NLOPT\n      ALGO GN_AGS\n    ENDINNER\n");
+            refused_at(config, judge(config), "ENDINNER",
+                       "the INNER block of the STRATEGY-level optimiser: "
+                       "NLOPT:LN_AUGLAG runs its INNER search NLOPT:GN_AGS "
+                       "from the point it is given (each MULTISTART start's "
+                       "INIT point), and NLOPT:GN_AGS does not start at the "
+                       "point it is given (" + start_note_of("GN_AGS") +
+                       "; NLopt never reads that point), so no MULTISTART "
+                       "start would begin at its INIT point. Use a local "
+                       "NLopt algorithm in the INNER block, which starts at "
+                       "the point it is given (" + nlopt_list + "), or "
+                       "STRATEGY TYPE PLAIN to run NLOPT:LN_AUGLAG once.");
+        }
+    }
+    SECTION("a search that starts at its point passes, and so do PLAIN and "
+            "an exploration") {
+        for (const std::string& body : std::vector<std::string>{
+                 prestage_body("NLOPT", "LN_BOBYQA", "    TOPK 3\n"),
+                 prestage_body("DLIB", "BFGS", ""),
+                 prestage_body("NLOPT", "GN_CRS2_LM", ""),
+                 prestage_body("TADAH", "RANDOM", ""),
+                 "    TYPE PRESTAGE\n    LIB NLOPT\n    ALGO G_MLSL_LDS\n"
+                 "    MAXEVAL 20\n    INNER\n      LIB NLOPT\n"
+                 "      ALGO GD_STOGO\n      MAXEVAL 5\n    ENDINNER\n" +
+                     kExploreGfs,
+                 "    TYPE PRESTAGE\n    LIB NLOPT\n    ALGO AUGLAG\n"
+                 "    MAXEVAL 20\n    INNER\n      LIB NLOPT\n"
+                 "      ALGO LN_BOBYQA\n    ENDINNER\n" + kExploreGfs,
+                 "    TYPE MULTISTART\n    LIB NLOPT\n    ALGO LN_AUGLAG\n"
+                 "    MAXEVAL 20\n    N_STARTS 2\n    INNER\n"
+                 "      LIB NLOPT\n      ALGO LN_SBPLX\n    ENDINNER\n",
+                 "    TYPE PLAIN\n    LIB NLOPT\n    ALGO GN_DIRECT_L\n"
+                 "    MAXEVAL 20\n",
+                 "    TYPE PLAIN\n    LIB NLOPT\n    ALGO AUGLAG\n"
+                 "    MAXEVAL 20\n    INNER\n      LIB NLOPT\n"
+                 "      ALGO GD_STOGO\n      MAXEVAL 5\n    ENDINNER\n",
+                 "    TYPE PRESTAGE\n    LIB DLIB\n    ALGO BFGS\n"
+                 "    MAXEVAL 20\n    EXPLORE\n      LIB NLOPT\n"
+                 "      ALGO GN_DIRECT_L\n      MAXEVAL 12\n"
+                 "    ENDEXPLORE\n"}) {
+            INFO(body);
+            const auto v = judge(strategy_config(body));
+            CHECK(v.startup == "");
+            CHECK(v.policy == "");
+        }
     }
 }

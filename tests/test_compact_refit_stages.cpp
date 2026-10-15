@@ -8,10 +8,14 @@
 #include "compact_refit_harness.h"
 
 #include <tadah/hpo/refit/refit_parser.h>
+#include <tadah/models/eam/eam_refit.h>
+#include <tadah/models/eam/eam_setfl_io.h>
 
 #include <array>
 #include <cmath>
+#include <memory>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -833,6 +837,74 @@ TEST_CASE_METHOD(PTFixture,
       CHECK(note[0].find("lower REFIT_COMPACT_NMAX") != std::string::npos);
     }
   }
+}
+
+namespace {
+
+/* The compact fitter's hook, as RefitEngine::run() calls it (protected):
+ * the seam by which a test hands it a configuration no `tadah refit` run
+ * can reach. */
+struct CompactFitHook : tadah::hpo::engines::HPORefitEngine {
+  using tadah::hpo::engines::HPORefitEngine::compact_fit;
+};
+
+}  // namespace
+
+/* Pins: HPORefitEngine::compact_fit() given a reachable pair-distance
+ * window that is empty -- REFIT_REACH_SMIN 0 on the synthetic fcc table
+ * (a0 = 3.6 A), so r_reach = 0 x the nearest-neighbour distance -- throws
+ * std::logic_error "tadah refit[compact]: internal error: the reachable
+ * pair-distance window is empty (r_reach = 0.0000 A, from REFIT_REACH_SMIN
+ * 0.0000 and the fcc lattice of a0 = 3.6000 A), although the crystal gate
+ * (a known lattice, a0 > 0) and the range of REFIT_REACH_SMIN (0.1 to 1)
+ * make it positive for every configuration; this is a bug, please report
+ * it" and fits nothing (no EAMRefit). No `tadah refit` run reaches it: run()'s
+ * crystal gate refuses an unknown lattice and a0 <= 0, and REFIT_REACH_SMIN
+ * is read in [0.1, 1] (read_refit_numbers), so only a caller of the hook can
+ * hand it such a configuration (owner decision, MK, 2026-10-15: an
+ * internal error, not a fallback).
+ * Before the fix: compact_fit() logged a WARNING ("... could not be computed
+ * ... falling back to the dense fit ...") and returned false, for run() to
+ * fit the table in dense mode: no exception, the checks fail. */
+TEST_CASE_METHOD(PTFixture,
+                 "tadah refit compact: an empty reachable pair-distance "
+                 "window is an internal error, not a fallback to the dense "
+                 "fit",
+                 "[compact][refit][reachability]") {
+  ScopedTempDir tmp;
+  write_synth_eam("synth.eam.alloy");
+  const Context c = compact_context("SIGNED");
+  tadah::models::EAMSetflIO eam;
+  eam.read_setfl("synth.eam.alloy");
+  eam.build_splines();
+  tadah::models::EAMRefitConfig cfg;
+  cfg.basis = "Blip5";
+  cfg.reach_smin = 0.0;
+  std::unique_ptr<tadah::models::EAMRefit> refit;
+  CompactFitHook::SelfTest st;
+  CompactFitHook hook;
+  std::string what;
+  bool logic_error = false, returned = false;
+  try {
+    (void)hook.compact_fit(c, eam, cfg, refit, st);
+    returned = true;
+  } catch (const std::logic_error &e) {
+    logic_error = true;
+    what = e.what();
+  } catch (const std::exception &e) {
+    what = e.what();
+  }
+  INFO("what: " << what);
+  CHECK_FALSE(returned);
+  CHECK(logic_error);
+  CHECK(what ==
+        "tadah refit[compact]: internal error: the reachable pair-distance "
+        "window is empty (r_reach = 0.0000 A, from REFIT_REACH_SMIN 0.0000 "
+        "and the fcc lattice of a0 = 3.6000 A), although the crystal gate (a "
+        "known lattice, a0 > 0) and the range of REFIT_REACH_SMIN (0.1 to 1) "
+        "make it positive for every configuration; this is a bug, please "
+        "report it");
+  CHECK(refit == nullptr);
 }
 
 #endif  // TADAH_USE_CERES
