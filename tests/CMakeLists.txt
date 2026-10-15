@@ -520,3 +520,12 @@ endif()
 # tadah_add_header_check). Before the fix: fails on hpo_host_impl.hpp,
 # which does not include hpo_host.h ('expected initializer before <').
 tadah_add_header_check(tadah.hpo)
+
+# tadah.hpo_text (ctest -L text): no line of the repository's text files
+# carries a person's initials, a reference to co-workers, a decision
+# attributed to the code's owner, the name of an AI tool, a note kept
+# outside the repository or filler wording (cmake-tools'
+# tadah_add_text_check). Before the fix: fails, 231 lines: 134 with a person's
+# initials, 55 decision notes, 41 workspace notes and .gitignore's entry for
+# an AI tool's state directory.
+tadah_add_text_check(tadah.hpo)
