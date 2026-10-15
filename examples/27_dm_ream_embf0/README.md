@@ -32,6 +32,18 @@ which the compact fit never read and which `tadah refit` now refuses under
 `REFIT_MODE compact`). Add `EMBF0 FREE` to the seed to see the raw
 embedding instead: Eiso is then the candidate's raw F(0).
 
+The seed was written by `tadah refit` before 1.6.0, which wrote the
+many-body term as `DM_REAM`; this example keeps it to show a DM_REAM seed.
+`tadah refit` 1.6.0 writes a `DM_Embed` component instead (`DESCRIPTOR
+eam DM_Embed` and `TYPEMB @eam`, with no `CEMBFUNC`, `RHOFORM` or `EMBF0`
+lines), so the recipe above now gives a potential for which `config.hpo`'s
+`OPTIM CEMBFUNC` is refused, naming the component path to use instead
+(`OPTIM CEMBFUNC: the potential has no CEMBFUNC key: ... the named path
+EAM.EMBEDDING.CENTRES; ...`): with such a seed, search the negative
+embedding knots as `OPTIM EAM.EMBEDDING.CENTRES (<index>)` (the starter
+`refit.hpotarget` of the refit lists them), and its `best_pot.tadah`
+declares `REFERENCE ZERO` in the component's `EMBEDDING` block.
+
 Run:
 
     bash ./run.sh
