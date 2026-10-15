@@ -19,8 +19,8 @@ bool loss_has_derivative_wrt_observed(const tadah::LossFunction& fn)
         case Type::TUKEY:
             return true;
         /* Non-residual: MAPE depends on |y|, RMSLE on log(y); the
-         * "negate loss_prime" trick doesn't hold. Phase 3.7+ can
-         * hand-code these; for 3.5 we route the observable to FD. */
+         * "negate loss_prime" trick doesn't hold. These could be
+         * hand-coded; for now the observable is routed to FD. */
         case Type::MAPE:
         case Type::RMSLE:
             return false;
@@ -302,7 +302,7 @@ bool compute_sims_grad_dWchain(
     const std::size_t n_theta = theta_row_to_g_idx.size();
 
     for (const auto& script : scripts) {
-        /* Phase A masking: skip provider-marked failed scripts. Their
+        /* Masking: skip provider-marked failed scripts. Their
          * loss is FAIL_SCORE (a constant clamp set by the host's
          * outvar/varloss FAIL_SCORE path) so dFAIL_SCORE/dtheta = 0 -- the
          * contribution to the gradient is exactly zero in the
@@ -359,11 +359,11 @@ bool compute_observables_grad_dWchain(
      * kind / needs_adjoint=true) doesn't leave a half-applied g_out
      * behind. Mirrors compute_sims_grad_dWchain's all-or-nothing
      * commit semantics for structural failures; per-observable
-     * `failed=true` is masked (Phase A). */
+     * `failed=true` is masked. */
     std::vector<double> stage(g_out_inout.size(), 0.0);
 
     for (const auto& obs : observables) {
-        /* Phase A masking: provider-marked failure (relaxer diverged,
+        /* Masking: provider-marked failure (relaxer diverged,
          * NaN value, ...) or a constant value. Skip. dFAIL_SCORE/dtheta =
          * d(const)/dtheta = 0. */
         if (obs.failed || obs.constant) continue;

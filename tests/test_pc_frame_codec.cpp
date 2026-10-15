@@ -1,6 +1,5 @@
 /* PC_ISOLATION wire codec unit tests (no process spawning, no sockets for
- * the pure payload tests; a socketpair for the frame-level tests).
- * Design: INVESTIGATIONS/PC_ISOLATION_process_pool.md section 4. */
+ * the pure payload tests; a socketpair for the frame-level tests). */
 
 #include "catch2/catch.hpp"
 

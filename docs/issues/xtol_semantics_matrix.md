@@ -17,7 +17,7 @@ The row read `NEWUOA*`, which covered NEWUOA_BOUND too; HPO refuses NEWUOA_BOUND
 (`nlopt_newuoa_bound_stall.md`).
 
 Under `OPTIM_SCALE AUTO` (unit box) XTOL_ABS is a fraction of every width and the |x|-relative tests are
-comparable across dims but vacuous next to a lower bound (phase 3 HINT). Under NONE they mix units.
+comparable across dims but vacuous next to a lower bound. Under NONE they mix units.
 
 **Proposal:** document this table in `hpo.rst` (optimizer.rst "Scaling, steps and tolerances by
 backend"), and consider deriving a per-dim `xtol_abs` vector from `NOISE_CALIBRATION` (see

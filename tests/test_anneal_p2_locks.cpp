@@ -1,5 +1,5 @@
 /*
- * Locking tests for the P2 kernel/driver correctness fixes that are not
+ * Locking tests for kernel/driver correctness fixes that are not
  * already pinned elsewhere:
  *   - the two-pass T0 calibration (journal lines, skip conditions, and
  *     exact budget accounting),

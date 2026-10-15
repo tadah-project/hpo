@@ -282,9 +282,9 @@ std::string method_lines_warning(const std::string& algo, int line = 10)
  * LN_SBPLX and GN_CRS2_LM, which start at their point, and an inactive
  * RESTART (MAX 0). The gradient searches (StoGO), the RAND forms in two
  * dimensions and the METHOD lines of a RESTART block are the next case's.
- * Before the fix: none of these warnings was given (tmp/sr_probe/
- * run_restart_direct: round 1 asked for round 0's points, answered from the
- * record, without a word at startup): every count is 0. */
+ * Before the fix: none of these warnings was given (a RESTART run: round 1
+ * asked for round 0's points, answered from the record, without a word at
+ * startup): every count is 0. */
 TEST_CASE("startup validation: RESTART on a search that does not start at "
           "its point and draws no random numbers warns that its rounds "
           "repeat round 0",
@@ -337,8 +337,8 @@ TEST_CASE("startup validation: RESTART on a search that does not start at "
     }
 
     /* An AUGLAG whose INNER search is such a search: refused at startup
-     * since no INNER search is a global one (no nested global search: owner
-     * decision, MK, 2026-10-15; require_inner_backend), so the RESTART
+     * since no INNER search is a global one (no nested global search:
+     * require_inner_backend), so the RESTART
      * warning start_point_warnings() would give for it (the AUGLAG recursion
      * of search_ignoring_start) is never given. The configuration this
      * section warned about is refused at its ENDINNER line instead. */
@@ -484,7 +484,7 @@ TEST_CASE("startup validation: RESTART on a search that does not start at "
  * gradient ("..., which the run's record answers: no round after round 0
  * evaluates a new point, and the RESTART block's only effect is to end the
  * run ...", although each round evaluated round 0's stencils again:
- * tmp/review/v_f1, 4 evaluations after round 0), and GD_STOGO_RAND,
+ * 4 evaluations after round 0), and GD_STOGO_RAND,
  * GN_DIRECT_L_RAND in 2 dimensions and the METHOD lines got no warning
  * (GD_STOGO_RAND was taken to draw random numbers from its first trial
  * point): every exact-text count is 0. */

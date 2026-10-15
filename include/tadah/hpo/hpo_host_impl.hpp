@@ -214,7 +214,7 @@ struct Scope {
  * Histories live in the run-owned MetricSkipTracker, keyed by metric and
  * (for indexed declarations) dataset identity. */
 namespace header_detail {
-  /* D18: truncated column labels must stay DISTINCT.
+  /* Truncated column labels must stay DISTINCT.
    *
    * Column titles are cut to max_title_len_ with a trailing '*', which is
    * fine until two different names share a prefix. run22's best_loss.tadah
@@ -272,7 +272,7 @@ void HPO_Host<P,R>::init_loss(const std::string& fn) const
   std::ofstream f(fn);
 
   f << std::left << std::setw(iter_cw_) << "#ITERATION" << std::right;
-  /* D19: which replica produced this row. Under ANNEAL_PT/PA every
+  /* Which replica produced this row. Under ANNEAL_PT/PA every
    * evaluation belongs to a slot, and without this column a row cannot
    * be attributed to one -- run22 wrote 2.5 GB of rows in which a
    * TOTAL_LOSS/N of 4.1e5 (a hot replica's rejected proposal) was
@@ -312,7 +312,7 @@ void HPO_Host<P,R>::init_loss(const std::string& fn) const
     f << std::setw(cw_) << "L(SRMSE)[avg]";
   }
 
-  std::set<std::string> seen_loss;   /* D18: keep truncated titles distinct */
+  std::set<std::string> seen_loss;   /* keep truncated titles distinct */
   for (const auto &lsim : trg_.LS) {
     for (const auto &varname : lsim.n_varloss)
       f << std::setw(cw_)
@@ -355,7 +355,7 @@ void HPO_Host<P,R>::init_outvar(const std::string& fn) const
   if (trg_.use_srmse)
     f << std::setw(cw_) << "SRMSE";
 
-  std::set<std::string> seen_outvar;   /* D18 */
+  std::set<std::string> seen_outvar;
   for (const auto &lsim : trg_.LS) {
     for (const auto &n_outvar : lsim.n_outvar)
       f << std::setw(cw_)
@@ -379,7 +379,7 @@ void HPO_Host<P,R>::init_params(const std::string& fn) const
   f << std::left << std::setw(iter_cw_) << "#ITERATION" << std::right;
   f << std::setw(slot_cw_) << "SLOT";
 
-  /* D18: label every column with its INDEX, not just its family name.
+  /* Label every column with its INDEX, not just its family name.
    * This used to print the bare key, so a 16-element family produced 16
    * identical "AMPGRIDMB" headings and a 174-column params.tadah could not
    * be read by name at all. param_labels_ already carries the indexed form
@@ -404,7 +404,7 @@ void HPO_Host<P,R>::init_stats(const std::string& fn) const
   f << std::left << std::setw(iter_cw_) << "#ITERATION" << std::right;
   f << std::setw(slot_cw_) << "SLOT";
 
-  std::set<std::string> seen_stats;   /* D18 */
+  std::set<std::string> seen_stats;
   auto write_header = [&](const std::string& label) {
     for (std::size_t i = 1; i <= n_val_datasets_; ++i)
       f << std::setw(cw_)
@@ -422,7 +422,7 @@ void HPO_Host<P,R>::init_stats(const std::string& fn) const
   if (trg_.use_frmse)  write_header("FRMSE");
   if (trg_.use_srmse)  write_header("SRMSE");
   f << std::endl;
-  /* D18: say so when there is nothing to say. With no training/validation
+  /* Say so when there is nothing to say. With no training/validation
    * database no per-structure metric is active, so this file used to be a
    * lone "#ITERATION" heading followed by one bare integer per evaluation
    * -- 2.9 MB of stats.tadah and 1.7 MB of best_stats.tadah in run22,
@@ -578,7 +578,7 @@ void HPO_Host<P,R>::print_stats_line(std::ostream& f, size_t it, const Result& e
                                      const HPOTargets& trg, std::size_t n_val,
                                      std::size_t cw, int prec)
 {
-  /* D18: with no metric enabled this row would be a bare iteration number
+  /* With no metric enabled this row would be a bare iteration number
    * and nothing else -- run22 accumulated 4.6 MB of exactly that across
    * stats.tadah and best_stats.tadah. The header explains the emptiness
    * once; repeating an empty row per evaluation says nothing. */
@@ -1308,7 +1308,7 @@ HPO_Host<P,R>::HPO_Host(core::Context master_ctx,
         }
         /* PC_FRMSE leaves out structures with force weight 0, PC_SRMSE those
          * with stress weight 0; a dataset of only such structures is not
-         * measured (nan, left out of the average; MK, 2026-10-06). A run in
+         * measured (nan, left out of the average). A run in
          * which no dataset is measured, or in which an indexed PC_FRMSE
          * weights a dataset that is not, is refused here. */
         {
@@ -1789,7 +1789,7 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
                                const PcTaskResult& tres) -> bool {
     const auto& lsim = LS[i];
 
-    /* D17: say WHY the task failed, in both PC_ISOLATION modes.
+    /* Say WHY the task failed, in both PC_ISOLATION modes.
      *
      * The message comes from execute_script_task -- the LAMMPS message of
      * an error inside the script, of a hot value it refused to inject or
@@ -1841,7 +1841,7 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
 
     bool fail = (tres.status != PcTaskStatus::OK);
 
-    /* D5: never index a wire-supplied vector on trust.
+    /* Never index a wire-supplied vector on trust.
      *
      * The outvar, hot-var and fail-var loops below are bounded by the
      * HOST's spec (lsim.n_outvar.size(), lsim.hotvars.size(),
@@ -1919,8 +1919,8 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
      *   - a variable the line is for, that cannot be read or has no number,
      *     fails the task exactly as a failed run does: its variables take
      *     --failscore, the evaluation is aborted (a hot script's cold
-     *     scripts do not run), the failvars grade band B, and the D17 line
-     *     below names the variable and why. That is a --varloss variable of
+     *     scripts do not run), the failvars grade band B, and the
+     *     journal_task_failure line below names the variable and why. That is a --varloss variable of
      *     a PC_LAMMPS line, the S of the PC_FAILPROBE line (its first
      *     --outvar; the line has no --varloss), which grades every failure
      *     of the evaluation -- an S that cannot be read is a failed probe,
@@ -1934,7 +1934,7 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
      *     evaluation's); a failvar vouched;
      *   - a diagnostic (declared only with --outvar) is "" or text -- NaN
      *     in outvar.tadah -- and the evaluation keeps its loss; its own line
-     *     says so, rate-limited like D17.
+     *     says so, rate-limited like journal_task_failure's.
      * Every variable at fault is named, with its read-back error or why
      * its value has no number, in one order: the line's variables, then the
      * hot, then the fail variables, each group in the line's order, joined
@@ -2089,7 +2089,7 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
       }
     }
 
-    /* D17 (journal_task_failure above). */
+    /* Say why (journal_task_failure above). */
     if (status == PcTaskStatus::POT_BUILD_FAIL ||
         status == PcTaskStatus::RUN_FAIL)
       journal_task_failure(error_msg);
@@ -2164,7 +2164,7 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
      * invisible vs ms-scale LAMMPS) so the fan-out diagnostic works without
      * TADAH_HPO_BENCH. The detailed CSV stays gated below.
      *
-     * D10: a FAILED task that reports no time at all did not cost zero -- it
+     * A FAILED task that reports no time at all did not cost zero -- it
      * failed before anything could be measured (the worker-exception path
      * returns a default-constructed result). Feeding that 0 into the EWMA
      * would halve this script's estimated cost and, via the
@@ -2918,13 +2918,13 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
   Result r;
   r.iter   = ++g_iter_;
     /* A coordinate proposed outside its box within rounding is evaluated
-     * on the bound (owner decision D10). `p` is p_in itself when nothing
-     * was snapped. A point further out is not evaluated (below). */
+     * on the bound. `p` is p_in itself when nothing was snapped. A point
+     * further out is not evaluated (below). */
     P p_snap;
     const P& p = snap_onto_box(p_in, p_snap);
-    /* The OPTIM box is the configuration's contract (box_penalty.h; owner
-     * decision, MK, 2026-10-15): a point outside it is scored by its
-     * distance to the box, not evaluated. */
+    /* The OPTIM box is the configuration's contract (box_penalty.h): a
+     * point outside it is scored by its distance to the box, not
+     * evaluated. */
     const SearchSpacePtr box_space = trg_.space();
     const std::optional<OutOfBox> out_box =
         box_space ? outside_box(*box_space, p) : std::nullopt;
@@ -2945,7 +2945,7 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
         HPOLog::instance().warning(msg);
     };
 
-    /* D3: every evaluation that consumed an iter slot must reach the
+    /* Every evaluation that consumed an iter slot must reach the
      * journal's census, including the ones that leave through a catch.
      *
      * record_eval() used to be called only on the success path, from inside
@@ -3210,7 +3210,7 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
     t_train_end = std::chrono::high_resolution_clock::now();
     stage_watchdog::leave(r.iter, "train", _stage_log);
 
-    /* -- Per-iter health monitor (Phase 6) ---------------------------
+    /* -- Per-iter health monitor -------------------------------------
      * Cheap O(P) scan of the weights the model now holds (fitted, or
      * provisioned from FIXWEIGHT), partitioned by the column layout of
      * the model's design matrix: the function's layout (phi_layout) of
@@ -3351,7 +3351,7 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
 
     /* PC_OBSERVABLE: typed observables fold into the same loss_sum /
      * loss_count accumulators as fit + sims. Skipped on bad-pot --
-     * unlike the original D4c assumption ("observables are cheap"),
+     * unlike the original assumption ("observables are cheap"),
      * cohesive_energy with maxeval=5000 and --max-wall-time can still
      * be ~1 s per bad-pot iter, worth gating. If an observable
      * diverges its loss component is FAIL_SCORE and the eval fails
@@ -3416,7 +3416,7 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
       const durable_best::Key key{
           r.loss, r.source_rank, r.chain_id, r.iter};
       const double cur = g_best_.load(std::memory_order_relaxed);
-      /* D2: a failure is never an achievement.
+      /* A failure is never an achievement.
        *
        * Every comparison below is against g_best_, which starts at DBL_MAX.
        * A NaN loses all of them and so could never win, but a FAILURE is
@@ -3514,7 +3514,7 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
     const bool        save_best    = r.is_best;
     const bool        save_nan     = r.was_nan_clamped;
     const EvalLoss    save_kind    = loss_kind(r);
-    /* D4: the graded-failure band of this eval. Disjoint from save_nan --
+    /* The graded-failure band of this eval. Disjoint from save_nan --
      * a killed worker or a failed script yields a finite failscore, so it
      * never trips the NaN path. Worst band wins within the eval. */
     const int         save_fail_band = r.fail.band;
@@ -3588,7 +3588,7 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
                     comps.push_back({std::move(lbl), v});
                 }
             }
-            /* PC_OBSERVABLE (D4c) -- typed observable contributions to
+            /* PC_OBSERVABLE -- typed observable contributions to
              * the top-breakdown. Symmetric with the PC_LAMMPS loop
              * above: pull r.v_obs_loss[k], named <kind>[k] (1-based) as
              * in the journal's loss section, so two terms of one kind
@@ -3728,7 +3728,7 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
          * but by then per-eval logs are lost).
          *
          * An interrupted evaluation has no loss: the census counts it as
-         * a failed one (D3), not as a NaN/Inf clamping. (Unreachable
+         * a failed one, not as a NaN/Inf clamping. (Unreachable
          * today: operator() raises the stop before the try, before it
          * evaluates anything.) */
         r.loss = trg_.FAIL_SCORE;
@@ -3822,7 +3822,7 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
          * not leak the iter slot. Build a synthetic FAIL_SCORE Result
          * carrying r.iter and submit it so the writer's next_flush_
          * cursor can advance past this iter. The census counts it as an
-         * evaluation that threw (D3), not as a NaN/Inf clamping. */
+         * evaluation that threw, not as a NaN/Inf clamping. */
         r.loss = trg_.FAIL_SCORE;
         _census.loss = EvalLoss::Threw;
         r.wall_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -4206,7 +4206,7 @@ void HPO_Host<P,R>::submit_result(Result&& res, const HPOTargets& trg,
     _writer_debug_log("EXIT wid=" + std::to_string(_wid));
 }
 
-/* ---------- analytical gradient callback (Phase 2A.4) ---------------- *
+/* ---------- analytical gradient callback ----------------------------- *
  *
  * Wires the IFT chain rule end-to-end against the live trainer slot.
  * The optimizer's cost-then-gradient call sequence guarantees that
@@ -4302,7 +4302,7 @@ bool HPO_Host<P,R>::analytical_gradient(const P& x, P& g,
     }
     std::vector<double> g_flat;
 
-    /* Phase 3.7B-orchestrator -- SimsGradProvider construction.
+    /* Orchestrator -- SimsGradProvider construction.
      *
      * Lambda spins up a fresh LAMMPS instance per script, runs the
      * relaxed-state script with the current iteration's pot, then folds
@@ -4312,7 +4312,7 @@ bool HPO_Host<P,R>::analytical_gradient(const P& x, P& g,
      * `compute_sims_grad_dWchain` call which aliases pointers into
      * `lt->aeds` / `lt->adjoint_snapshot`).
      *
-     * Phase 3.7B-warmstart: hot-var scripts are now supported. A
+     * Warm start: hot-var scripts are now supported. A
      * name-keyed snapshot is built from the warmstart cache (with
      * `hv.initial` / midpoint fallback when the cache is unprimed) at
      * the start of each lambda invocation; every script -- hot or cold
@@ -4336,7 +4336,7 @@ bool HPO_Host<P,R>::analytical_gradient(const P& x, P& g,
     std::vector<typename R::LMPPtr> lmp_holders;
     SimsGradProvider sims_grad_provider = nullptr;
 
-    /* PC_OBSERVABLE (D4c) -- typed-observable provider lambda. Parallel
+    /* PC_OBSERVABLE -- typed-observable provider lambda. Parallel
      * to SimsGradProvider but much simpler: the observable's
      * evaluate() is pure Tadah (no LAMMPS instance, no adjoint
      * snapshot for `needs_adjoint=false` observables like
@@ -4346,7 +4346,7 @@ bool HPO_Host<P,R>::analytical_gradient(const P& x, P& g,
      * Hot-var warmstart: lives inside Observable state (a0_current_
      * for cohesive_energy), updated in-place on every evaluate call.
      * No external WarmStart cache plumbing needed -- the Observable
-     * owns its hot vars per the D3 design contract. */
+     * owns its hot vars. */
     ObservableGradProvider obs_grad_provider = nullptr;
     if (!trg_.observables.empty()) {
         obs_grad_provider =

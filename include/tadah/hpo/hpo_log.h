@@ -310,7 +310,7 @@ public:
      *     evaluated for its one-sided or forward differences;
      *   - record_snap: an evaluation with a coordinate proposed outside its
      *     box within rounding (SearchSpace::snapped_onto_box), evaluated on
-     *     the bound (the host; owner decision D10). */
+     *     the bound (the host). */
     std::size_t record_out_of_box_point();
     std::size_t record_snap();
     std::size_t snaps() const {
@@ -422,7 +422,7 @@ public:
     std::size_t rows_lost         () const { return n_rows_lost_       .load(std::memory_order_relaxed); }
     std::size_t archives_lost     () const { return n_archives_lost_   .load(std::memory_order_relaxed); }
 
-    /** Register the shared script-executor pool width (Option A: THREADS).
+    /** Register the shared script-executor pool width (THREADS).
      *  Enables the honest pool-utilisation figure in the periodic SUMMARY:
      *  util = Σ script busy / (pool width x window elapsed). Without it the
      *  per-script stats still print but no utilisation is claimed.
@@ -552,7 +552,7 @@ public:
     std::vector<std::pair<int, std::size_t>> take_best_slot_window();
     /** Same histogram accumulated over the whole session. */
     std::vector<std::pair<int, std::size_t>> best_slot_totals() const;
-    /** D29: eval number of the LAST new best recorded per slot, sorted by
+    /** Eval number of the LAST new best recorded per slot, sorted by
      *  slot.  Separates "this slot still contributes" from "this slot's
      *  cumulative count is a fossil of the initial transient" (one observed long run's
      *  hot-slot counts all dated from the first ~500 of 20,457 bests).

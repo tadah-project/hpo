@@ -1460,7 +1460,7 @@ namespace {
 // (HPORefitEngine), the ladder searches widths in [0.03 eta0, 80 eta0] and
 // FUSE keeps them at or above its width floor. A width <= 0 here is a
 // broken invariant, not a bump to pass over: its c + w/eta is no support
-// edge (owner decision 2026-09-29).
+// edge.
 void require_positive_bump_widths(const BlipFit &f, const char *who) {
   for (int k = 0; k < f.n(); ++k)
     if (!(f.eta[k] > 0.0))

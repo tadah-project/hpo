@@ -43,8 +43,7 @@ using Registry = std::unordered_map<CapsKey, OptimizerCaps, CapsKeyHash>;
  * and NLopt refused one only once the run had started ("dimension 1 must
  * be >= 2", 0 evaluations). The box is the configuration's contract, and
  * LN_BOBYQA is Powell's bound-constrained successor of NEWUOA, so HPO
- * refuses LN_NEWUOA as it refuses LN_NEWUOA_BOUND (owner decision taken
- * under MK's mandate, 2026-10-12). The analysis:
+ * refuses LN_NEWUOA as it refuses LN_NEWUOA_BOUND. The analysis:
  * docs/issues/nlopt_newuoa_ignores_bounds.md.
  *
  * NLOPT:LN_NEWUOA_BOUND -- NLopt v2.10.0 (HPO/CMakeLists.txt fetches
@@ -91,26 +90,25 @@ using Registry = std::unordered_map<CapsKey, OptimizerCaps, CapsKeyHash>;
  *
  * CERES:LBFGS, WOLFE, NLCG -- Ceres' GradientProblemSolver has no bounds, and
  * HPO does not evaluate a point outside the OPTIM box: it scores it as a
- * failure graded by its distance to the box (box_penalty.h; owner decision,
- * MK, 2026-10-15), a loss in [0.99975, 1) x FAILSCORE, far above every
+ * failure graded by its distance to the box (box_penalty.h), a loss in [0.99975, 1) x FAILSCORE, far above every
  * usable loss. These three search with Ceres' Wolfe line search, whose zoom
  * phase interpolates that value with a cubic and shrinks the step to a
  * vanishing fraction of the trial (a fraction of order |slope x step| /
  * (FAILSCORE - loss)): measured with CERES:LBFGS, WOLFE and NLCG alike,
- *   (O4) OPTIM RCUT2B [4, 6], CGRID2B (2) [0.1, 2] on the HPO examples'
+ *   - OPTIM RCUT2B [4, 6], CGRID2B (2) [0.1, 2] on the HPO examples'
  *   common Ta model, FAILSCORE 1e16, MAXEVAL 25: the first trial left the
  *   box, the search took a step of 0 and ended "Parameter tolerance
  *   reached" at its start after 16 evaluations (loss 13.84); it had
  *   evaluated 20 of its 25 points outside the box before, ending at
  *   MAXEVAL with RCUT2B 11.2;
- *   (A36) the straddle fixture of test_hpo_termination.cpp, FAILSCORE 1e9,
+ *   - the straddle fixture of test_hpo_termination.cpp, FAILSCORE 1e9,
  *   FAILSCORE_GRADING ON, from CGRID2B[2] = 1.4: after two trials outside
  *   the box it moved by 2.5e-7 per iteration and ran to MAXEVAL 60 (best
  *   95.39 on a stencil point, 1.968), where it had converged before
  *   (XTOL_REL, 15 evaluations, at 2.4 outside the box).
  * CERES:STEEPEST_DESCENT, whose Armijo line search contracts each step by
- * 1e-3 at most, converges on A36 (FTOL_REL, 30 evaluations, 1.985) and stays
- * registered. The box is the configuration's contract, so HPO refuses the
+ * 1e-3 at most, converges on the straddle fixture (FTOL_REL, 30 evaluations,
+ * 1.985) and stays registered. The box is the configuration's contract, so HPO refuses the
  * three, naming the bound-constrained alternatives.
  *
  * CERES:LEVENBERG_MARQUARDT, DOGLEG, SUBSPACE_DOGLEG -- Ceres' least-squares
@@ -257,7 +255,7 @@ Registry build_registry()
         c.supports_ftol_rel = true;
         c.supports_ftol_abs = true;
         /* The replica ladder keeps its temperatures: no end of schedule
-         * (the phase 4b and 4c probes ran it until it was killed). */
+         * (probe runs ran it until it was killed). */
         c.needs_stop = true;
         c.stop_note  = "parallel tempering keeps its temperature ladder, so "
                        "no schedule ends it, and it runs until it is "
@@ -377,7 +375,7 @@ Registry build_registry()
      * same StopCriteria via nlopt::opt::set_*; algorithm-class flags are
      * inferred from the canonical name prefix.
      *
-     * Which stops end a run (nlopt 2.10 sources; the phase 4c probes ran
+     * Which stops end a run (nlopt 2.10 sources; probe runs ran
      * each algorithm without any, on a synthetic objective and through
      * hpo_run, and with each criterion alone):
      *   - MAXEVAL, MAXTIME and STOPVAL end every algorithm.

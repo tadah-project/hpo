@@ -64,7 +64,7 @@ public:
     /* ----------------------------------------------------------------- *
      *  Derivative wrt ypred:  dL/d(ypred)
      *
-     *  Used by HPO analytical / hybrid gradients (Phase 2) to chain into
+     *  Used by HPO analytical / hybrid gradients to chain into
      *  d(metric)/d(theta). Sign convention matches the loss definition:
      *  with r = y - ypred, dL/dypred = (dL/dr) * (-1).
      *

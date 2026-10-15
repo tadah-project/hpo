@@ -1,5 +1,5 @@
 /* The in-house finite-difference stencil at the bounds (fd_stencil.h,
- * gradient_provider.h; owner decision 2026-09-29, C4).
+ * gradient_provider.h).
  *
  * The in-house kernel (GRAD_STRATEGY NUMERICAL with fd_kernel inhouse, the
  * default under OPTIM_SCALE AUTO) and HYBRID's masked pass took the
@@ -572,8 +572,7 @@ TEST_CASE("fd stencil: a box narrower than the stencil is refused",
             const std::string what = refused(spec_over(box, 0.4), box,
                                              vec({u, 0.5}));
             /* The message names the step's source, the rule, a point
-             * without a stencil and the largest fd_step that fits (owner
-             * decision D1(a); review item 8). */
+             * without a stencil and the largest fd_step that fits. */
             CHECK_THAT(what,
                        Catch::StartsWith("PARAM fd_step 0.4 does not fit these "
                                          "OPTIM boxes: no finite-difference "
@@ -633,10 +632,9 @@ TEST_CASE("fd stencil: a point outside its box is not differenced",
           "[HPO][grad_provider][fd_stencil][out_of_box]")
 {
     /* Only a gradient search that leaves the box (CERES) asks for such a
-     * gradient. Owner decision D4 (2026-09-29) differenced it one-sided
-     * towards the box; a point outside the box is not evaluated now
-     * (box_penalty.h; owner decision, MK, 2026-10-15), and its gradient is
-     * the slope of its out-of-box score.
+     * gradient. An earlier rule differenced it one-sided towards the box;
+     * a point outside the box is not evaluated now (box_penalty.h), and its
+     * gradient is the slope of its out-of-box score.
      * Pins: the gradient at -0.5 below the box [0, 1] is the slope of
      * graded_failscore(FS, D, d, 1) at d = 0.5, -0.25e-3 FS / (1 + d)^2
      * (pointing away from the box), and the host is not asked for anything;
@@ -683,7 +681,7 @@ TEST_CASE("fd stencil: the largest fd_step that fits is exact where the step "
      * and 1 - 1 backward): 1/2 fits CENTRAL and 1 FORWARD. The check kept
      * a margin of an ulp or two on every step and refused both (the
      * largest it accepted: 0.49999999999999989 and 0.99999999999999978),
-     * against the documented limits (review 2, finding 3). The in-house
+     * against the documented limits. The in-house
      * rule: 1/3 (the largest double below it) and 1/2. */
     struct Limit {
         FdRule rule;
@@ -743,13 +741,12 @@ TEST_CASE("fd stencil: a box symmetric about 0 fits a FORWARD fd_step up to "
     using tadah::hpo::fd_largest_fitting_step;
     using tadah::hpo::fd_plan;
     /* FORWARD needs only u - h >= a at the bound of larger magnitude, and a
-     * box symmetric about 0 fits fd_step up to 2; CENTRAL up to 1 (review 2,
-     * finding 4).
+     * box symmetric about 0 fits fd_step up to 2; CENTRAL up to 1.
      * Pins: those limits, and fd_plan refuses (std::logic_error) a centre
      * outside the box with either scheme: a point outside the OPTIM box is
-     * not differenced (box_penalty.h; owner decision, MK, 2026-10-15).
+     * not differenced (box_penalty.h).
      * Before the fix: fd_plan planned a stencil towards the box from such a
-     * centre (owner decision D4), which this case checked kept no point
+     * centre, which this case checked kept no point
      * further out than the centre. */
     const double a = -100.0, b = 100.0;
     for (FdRule rule : {FdRule::Width, FdRule::Ceres}) {

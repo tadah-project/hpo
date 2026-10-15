@@ -1,6 +1,6 @@
 # LN_NEWUOA ignores the OPTIM box entirely (refused)
 
-**Status:** refused since 2026-10-12 (owner decision taken in MK's absence: the `OPTIM` box is the
+**Status:** refused since 2026-10-12 (the `OPTIM` box is the
 configuration's contract). `NLOPT:LN_NEWUOA` is an entry of the caps registry's refusal table
 (`src/optimizer_caps.cpp`, `backend_refusal()`), as `LN_NEWUOA_BOUND` is: `tadah hpo` stops before it loads
 any data, at the line that closes the block that names it (`ENDOPTIMIZER`, `ENDEXPLORE`, `ENDINNER`),

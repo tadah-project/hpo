@@ -1,9 +1,10 @@
-// Phase 3.4 — DenseAdjointSolver tests.
+// DenseAdjointSolver tests.
 //
 // Pure Eigen — no LAMMPS, no pair_tadah. The solver is the
-// LDLT-driven half of the IFT chain, fed by 3.2 (Hessian) and 3.3
-// (observable rhs); verifying it in isolation lets Phase 3.5 trust
-// the result.
+// LDLT-driven half of the IFT chain, fed by the Hessian
+// (LammpsHessianAssembler) and the observable rhs (ObservableHandle);
+// verifying it in isolation lets the sims_grad chain rule trust the
+// result.
 
 #include "catch2/catch.hpp"
 
@@ -16,7 +17,7 @@
 
 TEST_CASE("adjoint_solver — diagonal-plus-noise H: λ matches H.inverse() · rhs "
           "to 1e-12",
-          "[adjoint_solver][phase3]")
+          "[adjoint_solver][adjoint]")
 {
     const int n = 12;
     Eigen::MatrixXd D = Eigen::MatrixXd::Identity(n, n) * 100.0;
@@ -46,7 +47,7 @@ TEST_CASE("adjoint_solver — diagonal-plus-noise H: λ matches H.inverse() · r
 
 TEST_CASE("adjoint_solver — zero rhs returns zero λ via fast-path "
           "(no factorisation use)",
-          "[adjoint_solver][phase3]")
+          "[adjoint_solver][adjoint]")
 {
     Eigen::MatrixXd H = Eigen::MatrixXd::Identity(6, 6) * 2.0;
     tadah::hpo::DenseAdjointSolver solver(H);
@@ -59,7 +60,7 @@ TEST_CASE("adjoint_solver — zero rhs returns zero λ via fast-path "
 
 TEST_CASE("adjoint_solver — acoustic translation in rhs is projected out: "
           "λ identical with/without the constant shift",
-          "[adjoint_solver][phase3]")
+          "[adjoint_solver][adjoint]")
 {
     const int Natoms = 3;
     const int n_atom = 3 * Natoms;
@@ -91,7 +92,7 @@ TEST_CASE("adjoint_solver — acoustic translation in rhs is projected out: "
 }
 
 TEST_CASE("adjoint_solver — Tikhonov bump kicks in on near-singular H",
-          "[adjoint_solver][phase3]")
+          "[adjoint_solver][adjoint]")
 {
     const int n = 4;
     Eigen::MatrixXd H = Eigen::MatrixXd::Identity(n, n);
@@ -111,7 +112,7 @@ TEST_CASE("adjoint_solver — Tikhonov bump kicks in on near-singular H",
 }
 
 TEST_CASE("adjoint_solver — round-trip H·λ ≈ rhs_projected within 1e-8",
-          "[adjoint_solver][phase3]")
+          "[adjoint_solver][adjoint]")
 {
     const int Natoms = 4;
     const int n_atom = 3 * Natoms;
@@ -148,7 +149,7 @@ TEST_CASE("adjoint_solver — round-trip H·λ ≈ rhs_projected within 1e-8",
 }
 
 TEST_CASE("adjoint_solver — rejects size mismatches and non-square H",
-          "[adjoint_solver][phase3]")
+          "[adjoint_solver][adjoint]")
 {
     Eigen::MatrixXd Hsq = Eigen::MatrixXd::Identity(5, 5);
     Eigen::MatrixXd Hnon(5, 3);
@@ -171,7 +172,7 @@ TEST_CASE("adjoint_solver — rejects size mismatches and non-square H",
 
 TEST_CASE("adjoint_solver — multiple solves on the same factorisation "
           "stay consistent (factorisation isn't invalidated between calls)",
-          "[adjoint_solver][phase3]")
+          "[adjoint_solver][adjoint]")
 {
     const int n = 8;
     Eigen::MatrixXd H = Eigen::MatrixXd::Identity(n, n) * 5.0;

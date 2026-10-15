@@ -160,7 +160,7 @@ TEST_CASE_METHOD(PTFixture,
                  "tadah refit compact: a radial INIT anchor with eta <= 0 is "
                  "an error in every RHOFORM",
                  "[compact][refit][rhoform][bump_width]") {
-  // Owner decision (2026-09-29, C8): a radial bump needs a width > 0 in
+  // A radial bump needs a width > 0 in
   // every form. INIT PHI MANUAL 5.0 -1.0 PIN was fitted as its mirror (the
   // bump is even in eta) and the bump-support checks skipped it.
   ScopedTempDir tmp;

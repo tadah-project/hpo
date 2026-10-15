@@ -214,7 +214,7 @@ bool dispatch_opt_attr(const std::string &key, std::istringstream &iss,
       a.grad_strategy = GradStrategy::Hybrid;
     else if (v == "AUTODIFF")
       throw std::runtime_error(
-          "GRAD_STRATEGY=AUTODIFF was renamed to ANALYTICAL in Phase 2; "
+          "GRAD_STRATEGY=AUTODIFF was renamed to ANALYTICAL; "
           "the prior stub now backs a closed-form analytical gradient. "
           "Use GRAD_STRATEGY ANALYTICAL (strict -- every theta must have a "
           "registered analytical derivative) or GRAD_STRATEGY HYBRID "

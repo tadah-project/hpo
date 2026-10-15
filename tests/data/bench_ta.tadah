@@ -1,6 +1,6 @@
 # The Ta potential of HPO's LAMMPS-driven test cases (bench_pot.h):
-# test_lammps_hessian.cpp, test_hpo_phase3_pilot.cpp, bench_pair_tadah.cpp
-# (CTest hpo_lammps_hessian, hpo_phase3_pilot, hpo_bench_pair_tadah;
+# test_lammps_hessian.cpp, test_hpo_adjoint_pilot.cpp, bench_pair_tadah.cpp
+# (CTest hpo_lammps_hessian, hpo_adjoint_pilot, hpo_bench_pair_tadah;
 # ctest -L bench). TADAH_BENCH_POT names another one.
 #
 # Provenance: the lines below are Tadah.MLIP's Quick Start potential,

@@ -283,7 +283,7 @@ int hpo_run_journaled(core::Context& ctx, HPOLog& log,
 {
 #ifdef TADAH_ENABLE_OPENMP
     {
-        /* Under the shared-pool model (Option A) OpenMP no longer drives the
+        /* Under the shared-pool model OpenMP no longer drives the
          * pc_lammps fan-out -- THREADS does (see the ScriptExecutor log below).
          * OMP_NUM_THREADS now controls only the residual OpenMP kernels
          * (neighbour-list build, data-stats); journal its width for the record. */
@@ -325,8 +325,7 @@ int hpo_run_journaled(core::Context& ctx, HPOLog& log,
      * section includes with CONFIG; a potential of an earlier version has
      * them as key lines: a 1.5.x best_pot.tadah has HPOTARGET, VERBOSE and
      * NUMERIC, and VALIDATION when its run had a validation file) are not
-     * read for this run (MK's decisions of
-     * 2026-10-14): TaskFactory's parse skipped them and the WARNING names
+     * read for this run: TaskFactory's parse skipped them and the WARNING names
      * those this run reads (no UNCERTAINTY, no OUTFILE); a ctx without a
      * provenance is taken as one file and the dataset keys and UNCERTAINTY
      * are removed here (no parse stores a potential's run settings), before
@@ -445,7 +444,7 @@ int hpo_run_journaled(core::Context& ctx, HPOLog& log,
         ctx.contains("DBFILE") && ctx.size("DBFILE") > 0;
     validate_hpo_setup(ctx, trg, has_train_db, !val.empty());
 
-    /* Parallelisation model (Option A): THREADS is the TOTAL width of the shared
+    /* Parallelisation model: THREADS is the TOTAL width of the shared
      * worker pool -- the number of threads that actually run pc_lammps scripts
      * AND MLIP train/predict, i.e. the per-rank CPU-core budget. ONE pool serves
      * serial ANNEAL (SA) and every ANNEAL_PT/PA replica; idle workers block on a
@@ -749,14 +748,14 @@ int hpo_run_journaled(core::Context& ctx, HPOLog& log,
     }
     log.write_loss_section(trg);
 
-    /* -- IterHealthMonitor mode (Phase 6) ----------------------------- */
+    /* -- IterHealthMonitor mode --------------------------------------- */
     {
         HealthLogMode hlm = health_log_mode_from_context(ctx);
         global_iter_health_monitor().set_mode(hlm);
         global_iter_health_monitor().clear_state();
     }
 
-    /* -- Pre-flight audit (Phase 5) -----------------------------------
+    /* -- Pre-flight audit ---------------------------------------------
      * Walk every configured descriptor's meta() and run the per-param /
      * cross-param HealthChecks on the training StructureDB. A fixed
      * `CGRIDMB` outside the data's support is flagged here with a

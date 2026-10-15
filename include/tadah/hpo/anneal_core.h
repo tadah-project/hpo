@@ -533,8 +533,8 @@ inline Knobs Knobs::parse(const OptimizerSpec& sp, AlgoKind kind)
     throw std::runtime_error(
         ctx + " does not use STEP; set PARAM STEP_FRAC (and PARAM "
         "STEP_MODE for ANNEAL_PT) instead");
-  /* THREADS is honoured by EVERY family under the shared-pool model
-   * (Option A): it sizes the per-rank worker pool that runs the pc_lammps
+  /* THREADS is honoured by EVERY family under the shared-pool model:
+   * it sizes the per-rank worker pool that runs the pc_lammps
    * fan-out + MLIP train/predict. Serial ANNEAL still drives ONE chain, but
    * its within-eval fan-out runs on that pool, so THREADS is meaningful here
    * too -- only THREADS 0 is rejected. PT/PA additionally use THREADS to cap
@@ -950,7 +950,7 @@ inline Knobs Knobs::parse(const OptimizerSpec& sp, AlgoKind kind)
   }
   kb.boundary_mode = static_cast<BoundaryMode>(boundary_raw);
   /* BOUNDARY_MODE REDRAW is announced by announce_knobs() when the
-   * driver starts (D23), not here: Knobs::parse() is also the startup
+   * driver starts, not here: Knobs::parse() is also the startup
    * check of the spec (backend_rules.h), which journals nothing. */
 
   /* -- validation beyond the registry ranges ------------------------- */
@@ -1035,7 +1035,7 @@ inline Knobs Knobs::parse(const OptimizerSpec& sp, AlgoKind kind)
  * run starts (Knobs::parse() writes nothing, so the startup check of the
  * spec does not repeat them).
  *
- * D23: REDRAW is not a symmetric proposal, and the acceptance rule does
+ * REDRAW is not a symmetric proposal, and the acceptance rule does
  * not correct for that.
  *
  * constrain_proposal's redraw branch resamples only the offending
@@ -1677,7 +1677,7 @@ struct ChainState {
   Vec    x;
   double f = std::numeric_limits<double>::infinity();
   std::vector<double> V;
-  /* D27 trust-region anchor for the diagonal RAM: the calibrated per-dim
+  /* Trust-region anchor for the diagonal RAM: the calibrated per-dim
    * scale recorded once after warm-up.  Empty = no trust region (serial,
    * PA, Corana, and legacy callers). */
   std::vector<double> V_baseline;
@@ -1766,7 +1766,7 @@ void apply_diagonal_ram(ChainState<Vec>& c,
         scalar + 0.5 * (delta[i] - shape_mean), -log2, log2);
     long double next = static_cast<long double>(c.V[i]) *
                        std::exp(static_cast<long double>(log_sigma_factor));
-    /* D27: the centred shape term is a mean-zero random walk with no
+    /* The centred shape term is a mean-zero random walk with no
      * restoring force, so per-dim sigma can still drift far from its
      * calibrated scale over long runs.  Bound it to a factor of the
      * recorded baseline.  The support floor/cap is applied LAST:

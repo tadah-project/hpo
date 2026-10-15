@@ -1,7 +1,7 @@
 # ASA lessons for the in-house MC family (ANNEAL / ANNEAL_PT / ANNEAL_PA)
 
 Observations collected while vendoring Ingber's ASA-30.53 as `LIB ASA /
-ALGO ASA` (2026-08-19). These are HYPOTHESES for a future session, not
+ALGO ASA` (2026-08-19). These are HYPOTHESES for future work, not
 prescriptions: each should be re-ranked against live evidence on the
 current configs before any implementation (see the house rule: iterate
 on evidence, not on ticket prescriptions). Sources: `external/asa/asa.c`
@@ -16,8 +16,8 @@ insensitive dimension gets its temperature RAISED (its k_i index is
 recomputed from the new temperature), so a dimension that went quiet can
 wake up. The Corana V-update in our family only reacts to acceptance
 ratios and has a hard floor — once V hits `V_FLOOR_FRAC` it tends to
-stay there (the documented V_FLOOR absorbing state; the D27 trust region
-bounds drift but still adds no restoring force). Observation: the
+stay there (the documented V_FLOOR absorbing state; the diagonal-RAM trust
+region, `STEP_TRUST_FACTOR`, bounds drift but still adds no restoring force). Observation: the
 mechanism that prevents ASA's equivalent of the absorbing state is not
 the floor but the periodic sensitivity-driven RESET. A cheap experiment:
 per-rung tangents at the incumbent (D+1 evals per reanneal cadence,
@@ -125,7 +125,7 @@ what broke THREADS-invariance in the first ASA integration attempt.
 ## 11. Sensitivity probes are cheap and reusable
 
 ASA buys its per-dim adaptivity with D finite-difference tangents per
-reanneal cycle. ANNEAL_PT's D28 warm-up calibration spends far more
+reanneal cycle. ANNEAL_PT's step warm-up calibration spends far more
 evals per (slot, dim) bracketing acceptance. Observation: a
 tangent-style probe (one central difference per dim at the incumbent)
 gives a sensitivity ranking for a fraction of the cost and could seed

@@ -370,7 +370,7 @@ LammpsHessianAssembler::assemble(LAMMPS_NS::LAMMPS* lmp,
      * central difference over s_beta of dE/ds_alpha, which
      * strain_derivative() reads from the LAMMPS pair virial of each strained
      * state (-tr(d_alpha F^-1 W), F and d_alpha from the strained boxes as
-     * LAMMPS holds them): the diagonal and the off-diagonal (Phase 3.7E)
+     * LAMMPS holds them): the diagonal and the off-diagonal
      * alike, from the 2 * box_dofs strained computes the cross terms need
      * (vflag=1, no extra strain perturbations). The virial is a first
      * derivative, so its difference over 2 h_strain carries the virial's
@@ -531,7 +531,7 @@ LammpsHessianAssembler::assemble(LAMMPS_NS::LAMMPS* lmp,
          * evaluates lazily -- by the time the (j, i) entry is written,
          * the (i, j) entry has already been overwritten. Force a
          * temporary via `.eval()` so the rhs computes from the
-         * original H values throughout. Pre-3.7E this surfaced as
+         * original H values throughout. Without it this surfaced as
          * ~1e-8 asymmetry on the Voigt-6 box block, masked at the
          * iso path (1x1 box block trivially symmetric). */
         H = (0.5 * (H + H.transpose())).eval();

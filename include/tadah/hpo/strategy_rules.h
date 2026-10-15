@@ -69,8 +69,8 @@ void require_inner_driver(const OptimizerSpec& inner_spec,
  *   - the INNER optimiser is an NLopt algorithm (LIB NLOPT),
  *   - it does not need an INNER block of its own (INNER blocks do not
  *     nest), and
- *   - it is a local optimiser (not OptimizerCaps::is_global; owner
- *     decision, MK, 2026-10-15: no nested global search). Every search that
+ *   - it is a local optimiser (not OptimizerCaps::is_global: no nested
+ *     global search). Every search that
  *     does not start at the point it is given (OptimizerCaps::starts_at_x0:
  *     StoGO, DIRECT, AGS) is global, and its refusal says where it starts
  *     instead: "the INNER block of the PRESTAGE refinement: NLOPT:AUGLAG

@@ -757,8 +757,8 @@ TEST_CASE("CERES:LBFGS, WOLFE and NLCG are refused at their block's line: "
           "their Wolfe line search stalls at a point outside the OPTIM box",
           "[HPO][optim][ceres][parse][out_of_box]")
 {
-    /* A point outside the OPTIM box is scored, not evaluated (box_penalty.h;
-     * owner decision, MK, 2026-10-15), and Ceres' Wolfe line search
+    /* A point outside the OPTIM box is scored, not evaluated (box_penalty.h),
+     * and Ceres' Wolfe line search
      * shrinks its step to nothing at that score (optimizer_caps.cpp).
      * Pins: the block naming CERES:LBFGS, WOLFE or NLCG is refused at its
      * closing line, "CERES:<ALGO> is refused: Ceres' GradientProblemSolver
@@ -841,7 +841,7 @@ ENDOPTIMIZER
         REQUIRE(trg.spec.grad_strategy.has_value());
         CHECK(*trg.spec.grad_strategy == tadah::hpo::GradStrategy::Hybrid);
     }
-    /* AUTODIFF — Phase-1 keyword, removed in Phase 2 with a tailored
+    /* AUTODIFF — an early keyword, removed with a tailored
      * migration message pointing at ANALYTICAL/HYBRID. */
     {
         ScopedTempFile input(R"(OPTIMIZER
@@ -1373,8 +1373,8 @@ TEST_CASE("GradientProvider Hybrid takes finite differences on every "
      * chain that failed. HYBRID skipped the finite differences there and
      * returned g = 0, so DLIB:BFGS ended COMPLETED at its start after two
      * evaluations (example 01 without PC_LAMMPS, GRAD_STRATEGY HYBRID).
-     * The owner's decision (2026-09-29, review item 9): difference every
-     * parameter, as the host's journal line already said it would. */
+     * The fix: difference every parameter, as the host's journal line
+     * already said it would. */
     auto agf = [](const DlibVec& x, DlibVec& g, std::vector<int>& nfd) -> bool {
         g.set_size(2);
         g(0) = 0.0;

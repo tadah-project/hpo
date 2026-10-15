@@ -291,10 +291,10 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn,
    * whose local search is one, under GRAD_STRATEGY NUMERICAL or HYBRID;
    * read() has resolved an unset GRAD_STRATEGY by now). Where it takes
    * none -- a derivative-free optimiser, GRAD_STRATEGY ANALYTICAL --
-   * validate_hpo_setup refuses the AUTO, which would have no effect (owner
-   * decision D7, 2026-09-29; it printed "ignored" to stderr), and so it
-   * does beside a PARAM fd_step written in the block (owner decision D8:
-   * the written step won, with a note on stderr). read() rejects a
+   * validate_hpo_setup refuses the AUTO, which would have no effect (it
+   * printed "ignored" to stderr), and so it does beside a PARAM fd_step
+   * written in the block (the written step won, with a note on stderr).
+   * read() rejects a
    * configuration without LIB/ALGO. */
   if (spec.noise.autodetect &&
       takes_fd_gradients(PhaseSpec{"the STRATEGY-level optimiser", spec})) {
@@ -1283,7 +1283,7 @@ void HPOTargets::read(const std::string& fn)
             else if (key=="QFLUSH") {
                 QFLUSH_THRESHOLD = parse_uint(single_value(iss, key), key);
             }
-            /* D14: these are moduli (`iter % every`), so 0 is an integer
+            /* These are moduli (`iter % every`), so 0 is an integer
              * division by zero -- SIGFPE on the first evaluation, with no
              * message. "0" is also the spelling a user naturally reaches for
              * to mean "do not write these files", which makes it a trap
@@ -1459,7 +1459,7 @@ void HPOTargets::read(const std::string& fn)
      * the search changes rho(r) or its window, so every candidate has the
      * -c density and its one verdict (OPTIM WATOM only scales the density,
      * and the gate verdicts are scale-invariant). Refused at the gate's
-     * line, the first in the file (owner decision 2026-09-29). */
+     * line, the first in the file. */
     {
         bool armed = false;
         for(const auto &kv:optimap) if(kv.first.find(".DENSITY.")!=std::string::npos)
@@ -1612,7 +1612,7 @@ void HPOTargets::read(const std::string& fn)
 
     /* PC_LAMMPS: no gradients.
      *
-     * The HPO-side analytical-gradient wiring for PC_LAMMPS (Phase 3
+     * The HPO-side analytical-gradient wiring for PC_LAMMPS (the
      * IFT-adjoint chain) is not engaged. PC_LAMMPS configs must
      * use gradient-free optimisers -- NLOPT GN_* / LN_*, TADAH built-ins
      * (RANDOM/GRID/ANNEAL). The single accepted gradient-based exception

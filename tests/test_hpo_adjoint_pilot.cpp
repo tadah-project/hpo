@@ -1,6 +1,6 @@
-// Phase 3.6 — pilot end-to-end integration.
+// Pilot end-to-end integration of the LAMMPS analytical-gradient chain.
 //
-// Exercises the full Phase 3 chain on a real LAMMPS+pair_tadah run:
+// Exercises the full chain on a real LAMMPS+pair_tadah run:
 //   1. Spin up LAMMPS, run a minimal BCC Ta `box/relax + minimize` block.
 //   2. Build SimsGradScriptInput from the relaxed state via the new
 //      `populate_sims_grad_input_from_lammps` driver — pulls aeds,
@@ -9,13 +9,13 @@
 //      verify `g_out` matches the closed-form expectation for cohesive
 //      E per atom: λ_k=0 ⇒ dO/dW = (Σ_a aeds(:,a)) / N.
 //
-// Cohesive-E-only is the pilot path the plan specified (∂g/∂x = 0).
-// Lattice-constant (λ≠0) parity is Phase 3.7's job and depends on the
-// Hessian sametag fix logged as 3.6 follow-up.
+// Cohesive-E-only is the pilot path (∂g/∂x = 0). Lattice-constant (λ≠0)
+// parity is the lattice-constant cases' job and depends on the Hessian
+// sametag fix.
 //
 // Hidden (`[.][!benchmark]` like the rest of the LAMMPS-driven cases), so
-// not discovered: the eight cases run in the CTest entry hpo_phase3_pilot
-// (label bench), `test_hpo "[phase3_pilot],[phase3_orchestrator]"`, on the
+// not discovered: the eight cases run in the CTest entry hpo_adjoint_pilot
+// (label bench), `test_hpo "[adjoint_pilot],[adjoint_orchestrator]"`, on the
 // potential of bench_pot.h (the shipped tests/data/bench_ta.tadah unless
 // TADAH_BENCH_POT names another).
 
@@ -50,7 +50,7 @@
 
 namespace {
 
-/* Phase 3.7C BCC iso script: lattice constant observable. Same shape
+/* BCC iso script: lattice constant observable. Same shape
  * as the pilot script but exposes `var_lx = lx` (and a redundant
  * `e_per` for cross-checks). Single LAMMPS block, single observable,
  * single relaxed state. */
@@ -83,7 +83,7 @@ std::vector<std::string> bcc_lattice_constant_script()
     };
 }
 
-/* Phase 3.7E (3.7D follow-up) BCC aniso script: same observable as
+/* BCC aniso script: same observable as
  * the iso script but with `box/relax aniso 0 0 0` so all three
  * diagonal box DOFs are free during relaxation. The cubic equilibrium
  * has lx = ly = lz; the test exercises the Voigt-6 dvirial_dW chain
@@ -165,7 +165,7 @@ tadah::hpo::LammpsSim make_pilot_lsim()
     return ls;
 }
 
-/* Phase 3.7B-warmstart pilot — same BCC Ta cohesive-E observable but
+/* Warmstart pilot — same BCC Ta cohesive-E observable but
  * sources the initial lattice constant from a hot-var seed `${hot_a0}`.
  * Mirrors the production pattern where a hot script references a
  * warmstarted relaxation seed. */
@@ -214,9 +214,9 @@ tadah::hpo::LammpsSim make_hotvar_pilot_lsim()
 
 }  // namespace
 
-TEST_CASE("phase3_pilot — chain rule on cohesive E per atom matches "
+TEST_CASE("adjoint_pilot — chain rule on cohesive E per atom matches "
           "the closed-form (Σ aeds) / N for L2 loss",
-          "[phase3_pilot][phase3][.][!benchmark]")
+          "[adjoint_pilot][adjoint][.][!benchmark]")
 {
     const std::string pot_path = hpo_test::bench_pot_path();
     tadah::core::PeriodicTable::initialize();   // ATOM symbols of the pot
@@ -314,7 +314,7 @@ TEST_CASE("phase3_pilot — chain rule on cohesive E per atom matches "
 }
 
 // ----------------------------------------------------------------------------
-// Phase 3.7.5: pair_tadah dvirial_dW FD parity.
+// pair_tadah dvirial_dW FD parity.
 //
 // At the relaxed state x*, the iso-strain mixed partial is
 //   ∂²E/∂ε∂W_c|_iso = ∂D_total[c]/∂ε|_iso     (since E = W·D_total)
@@ -325,9 +325,9 @@ TEST_CASE("phase3_pilot — chain rule on cohesive E per atom matches "
 // Independent FD reference: rescale all atom positions and box edges by
 // (1+ε), call pair->compute (capture_adjoint_state=true populates aeds),
 // sum per-atom AEDs; compare to dvirial_dW captured at ε=0.
-TEST_CASE("phase3_pilot — pair_tadah dvirial_dW matches FD of Σ aed under "
+TEST_CASE("adjoint_pilot — pair_tadah dvirial_dW matches FD of Σ aed under "
           "iso strain to 1e-5 relative",
-          "[phase3_pilot][phase3][.][!benchmark]")
+          "[adjoint_pilot][adjoint][.][!benchmark]")
 {
     const std::string pot_path = hpo_test::bench_pot_path();
     tadah::core::PeriodicTable::initialize();   // ATOM symbols of the pot
@@ -470,9 +470,9 @@ TEST_CASE("phase3_pilot — pair_tadah dvirial_dW matches FD of Σ aed under "
 }
 
 // ----------------------------------------------------------------------------
-// Phase 3.7D — Voigt-6 dvirial_dW FD parity.
+// Voigt-6 dvirial_dW FD parity.
 //
-// Generalises the iso (3.7.5) test to the full Voigt-6 block. For each
+// Generalises the iso test above to the full Voigt-6 block. For each
 // Voigt α apply F = I + h·voigt_basis(α) on box edges + atom positions
 // (matching LammpsHessianAssembler::apply_strain), pair->compute with
 // capture_adjoint_state=true to repopulate aeds, sum local AEDs to get
@@ -487,9 +487,9 @@ TEST_CASE("phase3_pilot — pair_tadah dvirial_dW matches FD of Σ aed under "
 // the bias/intercept descriptor row but stay well under the bound on
 // non-trivial descriptors. Bias row is excluded from the relative check
 // (its FD residual is pure round-off — would divide by ~0).
-TEST_CASE("phase3_pilot — pair_tadah Voigt-6 dvirial_dW matches FD of "
-          "Σ aed under each Voigt strain to 1e-4 relative (Phase 3.7D)",
-          "[phase3_pilot][phase3][.][!benchmark]")
+TEST_CASE("adjoint_pilot — pair_tadah Voigt-6 dvirial_dW matches FD of "
+          "Σ aed under each Voigt strain to 1e-4 relative",
+          "[adjoint_pilot][adjoint][.][!benchmark]")
 {
     const std::string pot_path = hpo_test::bench_pot_path();
     tadah::core::PeriodicTable::initialize();   // ATOM symbols of the pot
@@ -681,10 +681,10 @@ TEST_CASE("phase3_pilot — pair_tadah Voigt-6 dvirial_dW matches FD of "
     CHECK(max_rel < 1e-4);
 }
 
-TEST_CASE("phase3_pilot — adjoint snapshot is captured at the post-"
+TEST_CASE("adjoint_pilot — adjoint snapshot is captured at the post-"
           "minimize state and survives the Hessian assembler's "
           "central-diff sweep",
-          "[phase3_pilot][phase3][.][!benchmark]")
+          "[adjoint_pilot][adjoint][.][!benchmark]")
 {
     const std::string pot_path = hpo_test::bench_pot_path();
     tadah::core::PeriodicTable::initialize();   // ATOM symbols of the pot
@@ -723,7 +723,7 @@ TEST_CASE("phase3_pilot — adjoint snapshot is captured at the post-"
 }
 
 // ----------------------------------------------------------------------------
-// Phase 3.7C: lattice constant FD-over-W parity.
+// Lattice constant FD-over-W parity.
 //
 // End-to-end validation of the IFT-adjoint stack on a non-trivial
 // observable (lx). The chain reads:
@@ -734,14 +734,14 @@ TEST_CASE("phase3_pilot — adjoint snapshot is captured at the post-"
 // instance per side, re-relax, read lx; dlx/dW[c_fd]_FD =
 // (lx_plus - lx_minus) / (2·h_w).
 //
-// Touches every Phase 3 component: AdjointSnapshot dvirial_dW capture
-// (3.7.5), LammpsHessianAssembler box block (3.2) + sametag fix
-// (3.7A), DenseAdjointSolver (3.4), observable registry (3.3),
-// apply_ift_chain_kernel box block (3.7.5), LammpsTadah lifecycle
-// stability across multiple instances (3.6 dtor crash fix).
-TEST_CASE("phase3_pilot — lattice constant dlx/dW matches FD over W[c] "
-          "to 1e-4 relative (Phase 3.7C)",
-          "[phase3_pilot][phase3][.][!benchmark]")
+// Touches every component of the chain: AdjointSnapshot dvirial_dW
+// capture, LammpsHessianAssembler box block + sametag fix,
+// DenseAdjointSolver, observable registry, apply_ift_chain_kernel box
+// block, LammpsTadah lifecycle stability across multiple instances (the
+// dtor crash fix).
+TEST_CASE("adjoint_pilot — lattice constant dlx/dW matches FD over W[c] "
+          "to 1e-4 relative",
+          "[adjoint_pilot][adjoint][.][!benchmark]")
 {
     const std::string pot_path = hpo_test::bench_pot_path();
     tadah::core::PeriodicTable::initialize();   // ATOM symbols of the pot
@@ -937,30 +937,30 @@ TEST_CASE("phase3_pilot — lattice constant dlx/dW matches FD over W[c] "
 }
 
 // ----------------------------------------------------------------------------
-// Phase 3.7E (3.7D follow-up) — end-to-end Voigt-6 aniso parity.
+// End-to-end Voigt-6 aniso parity.
 //
-// Mirrors the 3.7C iso test exactly except for two changes:
+// Mirrors the iso lattice-constant test exactly except for two changes:
 //   (a) script uses `box/relax aniso` (3 diagonal box DOFs free during
 //       relaxation; cubic equilibrium for stress-free Ta);
 //   (b) `populate_sims_grad_input_from_lammps` is called with
 //       `box_dofs == 6` instead of 1 — the chain runs through
-//       pair_tadah's Voigt-6 dvirial_dW accumulator (3.7D),
-//       LammpsHessianAssembler's 6×6 box Hessian block (3.2 + 3.7A),
+//       pair_tadah's Voigt-6 dvirial_dW accumulator,
+//       LammpsHessianAssembler's 6×6 box Hessian block,
 //       DenseAdjointSolver's 6-component lambda solve, observable
 //       registry's `lattice_constant` Voigt placement (axis 0 ⇒ row
 //       3N+0), and apply_ift_chain_kernel's box-block term over all 6
 //       Voigt rows.
 //
-// FD reference is identical to the 3.7C test (perturb W[c_fd] ± h_w,
+// FD reference is identical to the iso test (perturb W[c_fd] ± h_w,
 // re-relax, read lx). Physically the response should match the iso
 // case for a stress-free cubic Ta cell — the analytical paths differ
 // (Voigt-6 vs Voigt-1) but converge on the same physical dlx/dW.
 //
-// This validates the 3.7D Voigt-6 accumulator together with every
+// This validates the Voigt-6 accumulator together with every
 // other Voigt-6-aware component in the chain.
-TEST_CASE("phase3_pilot — lattice constant dlx/dW via Voigt-6 chain "
-          "matches FD over W[c] to 1e-4 relative (Phase 3.7E)",
-          "[phase3_pilot][phase3][.][!benchmark]")
+TEST_CASE("adjoint_pilot — lattice constant dlx/dW via Voigt-6 chain "
+          "matches FD over W[c] to 1e-4 relative",
+          "[adjoint_pilot][adjoint][.][!benchmark]")
 {
     const std::string pot_path = hpo_test::bench_pot_path();
     tadah::core::PeriodicTable::initialize();   // ATOM symbols of the pot
@@ -1021,7 +1021,7 @@ TEST_CASE("phase3_pilot — lattice constant dlx/dW via Voigt-6 chain "
     lsim.lossFn    = {tadah::LossFunction(tadah::LossFunction::Type::L2)};
     lsim.failscore = 1.0e8;
 
-    /* The load-bearing change: box_dofs = 6 (was 1 in the 3.7C test). */
+    /* The load-bearing change: box_dofs = 6 (was 1 in the iso test). */
     tadah::hpo::SimsGradScriptInput in;
     REQUIRE(tadah::hpo::populate_sims_grad_input_from_lammps(
         lmp_base.get(), lsim, {raw_lx_base}, {"lx"},
@@ -1059,7 +1059,7 @@ TEST_CASE("phase3_pilot — lattice constant dlx/dW via Voigt-6 chain "
         dlx_dW_anal, in.dvirial_dW, in.box_dofs);
     REQUIRE(dlx_dW_anal.size() == in.ctx.n_desc);
 
-    /* ------- FD reference (same h_w as 3.7C, same c_fd) ------- */
+    /* ------- FD reference (same h_w as the iso test, same c_fd) ------- */
 
     const int c_fd = 2;
     const double w_c0 = w_base[c_fd];
@@ -1105,12 +1105,12 @@ TEST_CASE("phase3_pilot — lattice constant dlx/dW via Voigt-6 chain "
      *
      * 5e-4 leaves comfortable headroom against natural variation
      * across descriptor types / cells / step-sizes while staying tight
-     * enough to catch the kind of bug that 3.7E originally exposed
+     * enough to catch the kind of bug this test originally exposed
      * (the missing box-box off-diagonals were a 1.2 = 120% relative
      * disagreement). */
     CHECK(relerr < 5.0e-4);
 
-    /* The chain's box part, as in the 3.7C case: lambda's atom entries
+    /* The chain's box part, as in the iso case: lambda's atom entries
      * set to 0, against central differences at h_w = 1e-6 |W|. The atom
      * entries (1.4e-5 here) times the snapshot's dF/dW make the 2.4e-5 of
      * the full chain above.
@@ -1141,7 +1141,7 @@ TEST_CASE("phase3_pilot — lattice constant dlx/dW via Voigt-6 chain "
 }
 
 // ----------------------------------------------------------------------------
-// Phase 3.7B-orchestrator: end-to-end SimsGradProvider lambda body.
+// End-to-end SimsGradProvider lambda body.
 //
 // Validates the lambda body that `HPO_Host::analytical_gradient` builds
 // when `trg_.LS` is non-empty. The lambda's per-script logic is:
@@ -1155,12 +1155,12 @@ TEST_CASE("phase3_pilot — lattice constant dlx/dW via Voigt-6 chain "
 // This test reproduces that pipeline against the pilot's BCC Ta script
 // using a SYNTHETIC dWdtheta (identity, n_desc rows). The result must
 // match the closed-form (Σ aeds)/N · 2·w·(v−t) that case 1 of
-// `[phase3_pilot]` already verified — but here the expressions and
+// `[adjoint_pilot]` already verified — but here the expressions and
 // box_dofs come from the helpers, not hand-coded constants. A
 // regression in either helper would surface as a parity break here.
-TEST_CASE("phase3_orchestrator — SimsGradProvider lambda body matches "
+TEST_CASE("adjoint_orchestrator — SimsGradProvider lambda body matches "
           "the closed-form on the pilot script (helpers + populate + chain)",
-          "[phase3_orchestrator][phase3][.][!benchmark]")
+          "[adjoint_orchestrator][adjoint][.][!benchmark]")
 {
     const std::string pot_path = hpo_test::bench_pot_path();
     tadah::core::PeriodicTable::initialize();   // ATOM symbols of the pot
@@ -1215,7 +1215,7 @@ TEST_CASE("phase3_orchestrator — SimsGradProvider lambda body matches "
     REQUIRE(in.v_observed.size() == 1);
 
     /* Synthetic identity dWdtheta over n_desc rows so g_out picks out
-     * one dL/dW coefficient per θ. Mirrors the [phase3_pilot] case 1
+     * one dL/dW coefficient per θ. Mirrors the [adjoint_pilot] case 1
      * setup so we can assert the same closed-form. */
     const int n_desc = in.ctx.n_desc;
     std::vector<double> dWdtheta(static_cast<std::size_t>(n_desc * n_desc), 0.0);
@@ -1264,9 +1264,9 @@ TEST_CASE("phase3_orchestrator — SimsGradProvider lambda body matches "
 }
 
 // ----------------------------------------------------------------------------
-// Phase 3.7B-warmstart: hot-var script analytical gradient.
+// Hot-var script analytical gradient.
 //
-// Before 3.7B-warmstart, the gradient lambda short-circuited on any
+// Before the warmstart support, the gradient lambda short-circuited on any
 // script with non-empty `hotvars`, forcing all-FD for the whole call.
 // Now the lambda builds a name-keyed `hot_snapshot` map from the
 // warmstart cache (with `initial` / midpoint fallback) and injects
@@ -1280,10 +1280,10 @@ TEST_CASE("phase3_orchestrator — SimsGradProvider lambda body matches "
 //   3. End-to-end happy path: snapshot seed flows through LAMMPS variable
 //      injection → script runs → relaxed-state observable → chain rule
 //      → g_out matches the cohesive-E closed-form to 1e-10 rel.
-TEST_CASE("phase3_orchestrator — hot-var script analytical path: "
+TEST_CASE("adjoint_orchestrator — hot-var script analytical path: "
           "snapshot construction + script injection + chain matches "
-          "the closed-form (Phase 3.7B-warmstart)",
-          "[phase3_orchestrator][phase3][.][!benchmark]")
+          "the closed-form (warm start)",
+          "[adjoint_orchestrator][adjoint][.][!benchmark]")
 {
     const std::string pot_path = hpo_test::bench_pot_path();
     tadah::core::PeriodicTable::initialize();   // ATOM symbols of the pot
@@ -1443,6 +1443,6 @@ TEST_CASE("phase3_orchestrator — hot-var script analytical path: "
 // The HPO_Host::analytical_gradient lambda body construction is
 // reachable by inspection (when `trg_.LS` is non-empty the lambda is
 // installed; nullptr is only passed when `trg_.LS` is empty).
-// The [phase3_orchestrator] cases above exercise the lambda's full
+// The [adjoint_orchestrator] cases above exercise the lambda's full
 // happy-path body — helpers + populate + chain — on real LAMMPS,
-// including the Phase 3.7B-warmstart hot-var injection path.
+// including the warmstart hot-var injection path.

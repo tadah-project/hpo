@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # run_reference_suite.sh -- execute HPO examples and verify each against
-# its reference_fingerprint.json. Designed for CI consumption (Session D
-# wires this into pipelines).
+# its reference_fingerprint.json. Designed for CI consumption.
 #
 # CONTRACT
 #   * Run modes (mutually exclusive):

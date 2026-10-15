@@ -139,7 +139,7 @@ def build_fingerprint(example_dir: Path, overrides: dict) -> dict:
     # best_loss columns: skip leading "ITERATION", trailing "TOTAL_LOSS/N"
     components = {}
     for i, col in enumerate(loss_hdr):
-        # SLOT is the replica/slot bookkeeping column (D19), not a loss term.
+        # SLOT is the replica/slot bookkeeping column, not a loss term.
         if col in ("ITERATION", "SLOT", "TOTAL_LOSS/N"):
             continue
         try:

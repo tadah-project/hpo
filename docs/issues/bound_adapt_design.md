@@ -1,7 +1,7 @@
-# BOUND_ADAPT — opt-in, boundary-only OPTIM box adaptation (phase 7, evidence-gated)
+# BOUND_ADAPT — opt-in, boundary-only OPTIM box adaptation (evidence-gated)
 
-Not implemented; designed. Wait for real-run evidence from the phase-5 bound-occupancy audit before
-building it (user decision 2026-09-07: last phase, gated on audit data).
+Not implemented; designed. Wait for real-run evidence from the bound-occupancy audit before
+building it.
 
 **Contract:** `BOUND_ADAPT … ENDBOUND_ADAPT` inside `STRATEGY`: `TRIGGER RESTART`, `GROW <g>` (2.0, > 1),
 `SHRINK <s>` (0 = off), `EDGE <e>` (0.02), `MAX_FACTOR <f>` (8), `MAX_ROUNDS <n>` (3), `ALLOW_KEYS …`,

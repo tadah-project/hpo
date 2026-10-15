@@ -1786,8 +1786,8 @@ TEST_CASE("Run record: the startup budget warning of a search that starts "
  *     BUDGET_PER_START 5 takes no step: its gradient search evaluates the
  *     loss at a starting point (1 evaluation) ..., which needs
  *     BUDGET_PER_START 6 or more", and none for the first start.
- * Until the refinement on StoGO was refused (owner decision, MK,
- * 2026-10-15) the StoGO legs ran it as that refinement, after an LN_SBPLX
+ * Until the refinement on StoGO was refused the StoGO legs ran it as that
+ * refinement, after an LN_SBPLX
  * exploration of 4 evaluations from the configuration's point (rows 1-4;
  * the centre row 5, its stencil rows 6-9; MAXEVAL 5 warned "the PRESTAGE
  * refinement NLOPT:GD_STOGO: MAXEVAL 5 ...", 9 rows; MAXEVAL 6 a step at
@@ -1796,10 +1796,10 @@ TEST_CASE("Run record: the startup budget warning of a search that starts "
  * before it (hpo_run ran the refinement, status 0).
  * Before the fix of the warning: the StoGO refinement at MAXEVAL 5 was not
  * warned (the warning took the loss at its start from the run's record,
- * needing 5; lanes/D/tmp/review/xl2-search stogo2: no warning, the box
+ * needing 5; a run before the fix: no warning, the box
  * centre and its stencil, no step), and the MULTISTART WARNING was "each
  * MULTISTART start NLOPT:LD_LBFGS: BUDGET_PER_START 5 ...", which claimed
- * the first start, which steps (xl2-search msn). */
+ * the first start, which steps. */
 TEST_CASE("Run record: the startup budget warning of NLopt's StoGO and of "
           "the MULTISTART starts under NOISE CALIBRATION follows the run",
           "[HPO][termination][repeat_points][gradient_budget][stogo]")
@@ -3239,7 +3239,7 @@ TEST_CASE("Termination: each RESTART round derives the seed of every "
     SECTION("a PRESTAGE steps by TOPK: its refinement starts never share "
             "a seed")
     {
-        /* The owner's worked example: SEED 7, TOPK 3, MAX 2. The
+        /* A worked example: SEED 7, TOPK 3, MAX 2. The
          * refinement multistarts the TOPK candidates, candidate i with the
          * round's SEED + i (StagedPolicy -> MultiStartPolicy). Only
          * MULTISTART runs N_STARTS starts (the parser rejects N_STARTS under
@@ -4108,7 +4108,7 @@ TEST_CASE("Termination: the PRESTAGE refinement starts of a restarted run "
     /* The refinement multistarts the TOPK candidates, candidate i with
      * SEED + i. Round r now runs it with SEED + r*TOPK + i; it stepped by
      * N_STARTS (1 here), so round 1's candidates reused seeds 8 and 9 of
-     * round 0. The owner's worked example: SEED 7, TOPK 3, MAX 2 gives
+     * round 0. A worked example: SEED 7, TOPK 3, MAX 2 gives
      * {7,8,9}, {10,11,12}, {13,14,15}.
      *
      * The run is deterministic: every round starts from the configuration's
@@ -4300,7 +4300,7 @@ namespace {
  * start points: `init_seed` is the INIT block's SEED line (or ""), `seed`
  * the STRATEGY block's and `inner_seed` the INNER block's. MULTISTART
  * takes only local optimisers, and an INNER block only a local search (no
- * nested global search, owner decision, MK, 2026-10-15); of the local
+ * nested global search); of the local
  * NLopt algorithms LN_PRAXIS alone draws from NLopt's random number
  * generator, for its random steps once it stalls: on this loss a PLAIN run
  * from the configuration's point under SEED 10 and SEED 20 evaluates the
@@ -4413,7 +4413,7 @@ TEST_CASE("Termination: NLopt MULTISTART starts with an INIT SEED each draw "
  * three different sets. This is the check
  * the runs of an AUGLAG with an INNER GN_CRS2_LM made end to end (start i
  * drew the CRS2 population of SEED + i); an INNER block no longer takes a
- * global search (owner decision, MK, 2026-10-15), and LN_PRAXIS's points
+ * global search, and LN_PRAXIS's points
  * depend on the start point, which MULTISTART takes from the INIT chain.
  * Before the fix: passes as well (a pin). */
 TEST_CASE("NLopt: MULTISTART start i draws from SEED + i",
@@ -4564,8 +4564,8 @@ std::size_t line_number(const std::string& text, const std::string& line)
  * NLopt and `inner` in its INNER block; `indent` is that block's
  * indentation, the INNER block's lines have two spaces more. Each INNER
  * search is LN_PRAXIS, a local one (the REFINE block's was GN_CRS2_LM, a
- * global search, which an INNER block no longer takes: owner decision, MK,
- * 2026-10-15; the cases only parse the configuration). */
+ * global search, which an INNER block no longer takes; the cases only
+ * parse the configuration). */
 struct InnerContext {
     std::string enclosing;
     std::string indent;
@@ -4803,8 +4803,8 @@ TEST_CASE("NLopt: an INIT block inside INNER is rejected at startup, so no "
 
 /* The run is NLopt's GN_MLSL, whose samples come from NLopt's random number
  * generator, with an INNER LN_BOBYQA. It was an AUGLAG with an INNER
- * GN_CRS2_LM, a global search, which an INNER block no longer takes (owner
- * decision, MK, 2026-10-15). Before that fix: passes as well (a pin). */
+ * GN_CRS2_LM, a global search, which an INNER block no longer takes.
+ * Before that fix: passes as well (a pin). */
 TEST_CASE("NLopt: make_nlopt seeds a run with an INNER once, from the block "
           "that runs it, and refuses an INNER seed", "[HPO][seed][nlopt]")
 {
@@ -4879,8 +4879,8 @@ TEST_CASE("NLopt: make_nlopt refuses an INNER spec with a GRAD_STRATEGY",
      * GRAD_STRATEGY obtains. */
     using tadah::hpo::GradStrategy;
     /* The INNER search is LN_BOBYQA, a local one (it was GN_CRS2_LM, a
-     * global search, which an INNER block no longer takes: owner decision,
-     * MK, 2026-10-15; before that fix: passes as well, a pin). */
+     * global search, which an INNER block no longer takes; before that
+     * fix: passes as well, a pin). */
     tadah::hpo::OptimizerSpec sp;
     sp.lib = "NLOPT";
     sp.algo = "AUGLAG";
@@ -4909,12 +4909,11 @@ TEST_CASE("Termination: NLopt MULTISTART starts draw from the STRATEGY "
           "block's SEED, and an INNER SEED is rejected",
           "[HPO][termination][seed][nlopt]")
 {
-    /* The owner's example: SEED 10 on the STRATEGY block and SEED 20 on the
+    /* An example: SEED 10 on the STRATEGY block and SEED 20 on the
      * INNER. The INNER SEED used to seed NLopt in place of SEED + i, so all
      * three starts drew SEED 20's numbers. The INNER search is LN_PRAXIS
      * (it was GN_CRS2_LM, a global search, which an INNER block no longer
-     * takes: owner decision, MK, 2026-10-15; before that fix the test
-     * passes as well, a pin). */
+     * takes; before that fix the test passes as well, a pin). */
     const std::string inner_seed = "      SEED 20";
     const std::string rejected =
         auglag_praxis_multistart("", "    SEED 10\n", inner_seed + "\n");
@@ -6223,8 +6222,8 @@ TEST_CASE("Termination: the RESTART stagnation stop ends a search that has "
               true},
              /* LD_MMA, a local search whose only convergence test is the
               * tolerances (it was GN_DIRECT_L, a global search, which an
-              * INNER block no longer takes: owner decision, MK,
-              * 2026-10-15; before that fix: passes as well, a pin). */
+              * INNER block no longer takes; before that fix: passes as
+              * well, a pin). */
              {"NLOPT:AUGLAG over an INNER NLOPT:LD_MMA",
               "    TYPE PLAIN\n    LIB NLOPT\n    ALGO AUGLAG\n"
               "    INNER\n      LIB NLOPT\n      ALGO LD_MMA\n"
@@ -6361,7 +6360,7 @@ TEST_CASE("Termination: DLIB:BFGS records why it ended",
  *               refinement of TOPK 2 candidates (TOPK 1 for a global
  *               backend; one that does not start at the point it is given,
  *               OptimizerCaps::starts_at_x0, is refused at startup: until
- *               that refusal, owner decision, MK, 2026-10-15, the sweep ran
+ *               that refusal the sweep ran
  *               NLopt's StoGO, DIRECT and AGS as the refinement too, and
  *               they recorded their end there);
  *   RESTART     PLAIN under an active RESTART (AFTER_STAGNATION 4, MAX 1):
@@ -7164,8 +7163,8 @@ TEST_CASE("Finite differences: a failed stencil point at the start point: "
           "every finite-difference backend takes the usable side and reaches "
           "the bound", "[HPO][termination][fd_gradient]")
 {
-    /* A difference never mixes a usable loss with a failure (owner
-     * decision, MK, 2026-10-15): from 1.6 the central stencil is 1.8 and
+    /* A difference never mixes a usable loss with a failure: from 1.6
+     * the central stencil is 1.8 and
      * 1.4, 1.4 fails (below 1.47), and the gradient is the one-sided
      * difference into the usable side, 1.8 and 2.0, with the loss at 1.6.
      * Pins: the first four evaluations 1.6, 1.8, 1.4 (failed) and 2.0; the
@@ -7215,8 +7214,8 @@ TEST_CASE("Finite differences: with Ceres' step rule a failed stencil point "
     /* PARAM fd_kernel ceres: Ceres' step rule, fd_step * |u| = 0.1 at
      * u = 0.5 (CGRID2B[2] = 1.5): the central stencil 1.6 and 1.4, and 1.4
      * fails; the gradient is the one-sided difference into the usable
-     * side, 1.6 and 1.7 (owner decision, MK, 2026-10-15: a difference never
-     * mixes a usable loss with a failure).
+     * side, 1.6 and 1.7 (a difference never mixes a usable loss with a
+     * failure).
      * Pins: the first four evaluations 1.5, 1.6, 1.4 (failed), 1.7; no stop
      * line at 1.5; DLIB:BFGS reaches the bound 2.0 after 9 evaluations
      * ("FTOL_ABS reached"); NLOPT:LD_LBFGS, misled next to the failure
@@ -7269,7 +7268,7 @@ TEST_CASE("Finite differences: DLIB:BFGS goes on past a later point with a "
      * 1.8, BFGS's line search tries 1.059 (a failed evaluation: dlib steps
      * back), accepts 1.726; the stencil of its next point 1.6676 reaches
      * 1.4676, which fails, and the gradient there is the one-sided
-     * difference into the usable side (owner decision, MK, 2026-10-15).
+     * difference into the usable side.
      * Pins: the search goes on to the edge of the failure region, 1.4813
      * (loss 0.250056, the best), and ends "DLIB:BFGS: FTOL_ABS reached"
      * after 54 evaluations; no stop line.
@@ -7322,8 +7321,8 @@ TEST_CASE("Gradient not finite: NLopt and Ceres reject a later point whose "
     /* NLopt sees +inf at a point whose gradient is not finite, Ceres a
      * failed evaluation: both reject the point and step back, and the
      * search goes on. A point next to the failure region whose stencil
-     * fails on one side takes the other side (owner decision, MK,
-     * 2026-10-15). LD_MMA (its trust region shrinks; only at a start point
+     * fails on one side takes the other side. LD_MMA (its trust region
+     * shrinks; only at a start point
      * without a finite gradient did it stall) and LD_LBFGS spend MAXEVAL
      * and end MAXEVAL_REACHED; CERES:STEEPEST_DESCENT ends "FAILURE
      * (Numerical failure in line search)" after 54, at the edge of the
@@ -7410,8 +7409,8 @@ TEST_CASE("Gradient not finite: AUGLAG's local search stops at a starting "
      * usable gradient", no usable loss (status 1; a pin: the loss at the
      * point decides there, as before the fix). From 1.6 the stencil point
      * 1.4 fails and the gradient is the one-sided difference of 1.8 and
-     * 2.0 (owner decision, MK, 2026-10-15: a difference never mixes a usable
-     * loss with a failure): the search goes on to the bound 2.0, the first
+     * 2.0 (a difference never mixes a usable loss with a failure): the
+     * search goes on to the bound 2.0, the first
      * four evaluations 1.6, 1.8, 1.4, 2.0; LD_AUGLAG with its default or an
      * INNER LD_MMA ends MAXEVAL_REACHED after 9, AUGLAG with an INNER LD_LBFGS
      * FTOL_REACHED after 6, with LD_TNEWTON after 9, LN_AUGLAG with LD_SLSQP
@@ -7493,7 +7492,7 @@ TEST_CASE("No usable gradient: the straddle searches that ended right after "
      * right after it rejected a point says so, on an outage", and the Ceres
      * case).
      * A point next to the failure region whose stencil fails on one side
-     * takes the other side (owner decision, MK, 2026-10-15), so with the
+     * takes the other side, so with the
      * tolerances the searches converge before MAXEVAL.
      * Pins: every evaluation in the box [1, 2], a usable one after a failed
      * one, no stop line; LD_SLSQP 60 evaluations, MAXEVAL_REACHED; with
@@ -7565,12 +7564,12 @@ TEST_CASE("Gradient not finite: AUGLAG's local search that spends its own "
     /* AUGLAG with the INNER search LD_SLSQP of the case above, from 1.72
      * with the ERMSE target 10.5, and an INNER MAXEVAL 4: its fourth
      * objective call is the point 1.6393, whose stencil point 1.4393 fails,
-     * and its gradient is the forward difference with 1.8393 (owner
-     * decision, MK, 2026-10-15: a difference never mixes a usable loss with
-     * a failure); the search ends there on its MAXEVAL, which AUGLAG reports
+     * and its gradient is the forward difference with 1.8393 (a difference
+     * never mixes a usable loss with a failure); the search ends there on
+     * its MAXEVAL, which AUGLAG reports
      * as FTOL_REACHED, like any ending of its local search: the run keeps
      * AUGLAG's own status. An INNER MAXEVAL counts the local search's NLopt
-     * calls, not its evaluations (owner decision, 2026-10-07; the journal's
+     * calls, not its evaluations (the journal's
      * "Inner stop criteria" say so): its 4 calls are 8 evaluations here (the
      * rejected points 1.074 and 1.397 cost one each). AUGLAG's evaluation of
      * the point the search returned, 1.6393, eval 6, is answered with its
@@ -7761,8 +7760,8 @@ TEST_CASE("Gradient not finite: under MULTISTART the other starts run, and "
      * second (x[1]), and the CONFIG start, last, is the last evaluation.
      * Before the fix: passes as well (a pin). The case started at 1.6, whose
      * gradient failed then at the stencil point 1.4 and is the one-sided
-     * difference into the usable side now (owner decision, MK, 2026-10-15;
-     * the case "a failed stencil point at the start point" above). */
+     * difference into the usable side now (the case "a failed stencil
+     * point at the start point" above). */
     const auto multistart = [](const std::string& chain,
                                const std::string& seed) {
         return "OPTIMIZER\n  INIT\n" + chain + "    SEED " + seed +
@@ -7988,7 +7987,7 @@ TEST_CASE("Finite differences: a failed stencil point is not differenced "
      * difference (98.29 - 1e9) / 0.4 was finite, a slope as steep as the
      * jump to FAILSCORE, which the backends followed until a difference
      * that reached a failure failed the gradient. A difference never mixes
-     * a usable loss with a failure (owner decision, MK, 2026-10-15): the
+     * a usable loss with a failure: the
      * gradient is the one-sided difference of 1.8 and 2.0, as under the
      * default FAILSCORE.
      * Pins: every backend evaluates 1.6, 1.8, 1.4 (loss 1e9) and 2.0 first,
@@ -8053,8 +8052,8 @@ TEST_CASE("No usable gradient: under FAILSCORE_GRADING a start inside the "
      * failures; its line search steps back to 1.361, whose stencil point
      * 1.561 is usable); the first loss is graded and no stop line or
      * stencil trailer follows. A graded difference takes graded failures
-     * on both sides (owner decision, MK, 2026-10-15: never a usable loss
-     * and a failure): 1.45 and 1.05 at 1.25. TADAH_FAILSCORE_GRADING=ON without
+     * on both sides (never a usable loss and a failure):
+     * 1.45 and 1.05 at 1.25. TADAH_FAILSCORE_GRADING=ON without
      * the key does the same (the override reaches the gradient; DLIB:BFGS
      * here). Without grading the start's loss 1e9 fails its gradient: one
      * evaluation, no usable loss, status 1.
@@ -8128,7 +8127,7 @@ TEST_CASE("Finite differences: under FAILSCORE_GRADING a graded start next "
     /* FAILSCORE 1e9, FAILSCORE_GRADING ON, from CGRID2B[2] = 1.4: a graded
      * band-D failure (the skip cap, 9.9975000111e8) whose central stencil
      * point 1.6 is usable (99.97) and 1.2 graded (9.9975000125e8). A
-     * difference never mixes the kinds (owner decision, MK, 2026-10-15):
+     * difference never mixes the kinds:
      * the gradient at 1.4 is the backward difference with 1.2, the graded
      * slope, not the jump to 1.6; a point an optimiser proposes outside the
      * box is scored out_of_box_score(FAILSCORE, d), not evaluated.
@@ -8143,14 +8142,13 @@ TEST_CASE("Finite differences: under FAILSCORE_GRADING a graded start next "
      * lies in the box; DIAGNOSTICS counts the out-of-box points ("Out-of-box
      * points : 3", no such line for the bounded two) and the mixed-kind
      * stencils (1, and 2 for CERES:STEEPEST_DESCENT); no stop line; status 0.
-     * Before the fix: passes as well (a pin, added in review, of the fix of
+     * Before the fix: passes as well (a pin of the fix of
      * this branch; nothing pinned the reproducer through hpo_run). A mutant
      * that differences a graded CENTRAL stencil as it is, v1-dev's rule,
      * fails it: LD_SLSQP 3 evaluations, CERES:STEEPEST_DESCENT 43,
-     * DLIB:BFGS without the mixed-kind line
-     * (tmp/before_fix_box_and_slopes_review_pins.txt). On v1-dev
-     * before it (19187dd; the same runs through tadah hpo,
-     * tmp/bs/repro/before/a36_*): LD_SLSQP stopped after 3 evaluations,
+     * DLIB:BFGS without the mixed-kind line. On v1-dev
+     * before it (19187dd; the same runs through tadah hpo): LD_SLSQP
+     * stopped after 3 evaluations,
      * "STOPPED -- bug: more than iter SQP iterations (...)";
      * CERES:STEEPEST_DESCENT evaluated 26 of its 39 points outside the box
      * and ended "FAILURE (Numerical failure in line search)", its best 2.4,
@@ -8339,8 +8337,8 @@ TEST_CASE("No usable gradient: under GRAD_STRATEGY ANALYTICAL or HYBRID a "
 }
 
 /* ======================================================================
- * Finite differences and the OPTIM box, end to end (fd_stencil.h; owner
- * decisions D1-D6, 2026-09-29). The straddle objective with the ERMSE
+ * Finite differences and the OPTIM box, end to end (fd_stencil.h).
+ * The straddle objective with the ERMSE
  * target 0 falls towards CGRID2B[2] = 2, the upper bound of [1, 2], and
  * the searches start on it (PARAM fd_step 0.2: h = 0.2 of the width).
  * ==================================================================== */
@@ -8374,8 +8372,8 @@ TEST_CASE("Finite differences: a search on the upper bound evaluates nothing "
      * the default under OPTIM_SCALE NONE) evaluated 2.2, outside the box;
      * HYBRID, with no analytical derivative (OALGO 1), took none and ended
      * at its start. The CERES driver ignores the bounds: its line search
-     * proposes points outside the box, and none of them is evaluated (owner
-     * decision, MK, 2026-10-15): each is scored as a failure graded by its
+     * proposes points outside the box, and none of them is evaluated: each
+     * is scored as a failure graded by its
      * distance to the box, 1.797243...e+308 to 1.797468...e+308 here, with
      * that score's slope as its gradient and no stencil.
      * Pins (CERES:STEEPEST_DESCENT): 21 rows, the start and its stencil, then
@@ -8390,7 +8388,7 @@ TEST_CASE("Finite differences: a search on the upper bound evaluates nothing "
      * drivers evaluated their points outside the box (the line "lies
      * outside its OPTIM box [1, 2] and is evaluated there", DIAGNOSTICS
      * "Out-of-box evaluations" and "Out-of-box gradients"), each with a
-     * one-sided stencil stepping towards the box (D4).
+     * one-sided stencil stepping towards the box.
      *
      * Every gradient takes the loss its caller has just evaluated at its
      * point as its centre, NUMERICAL as HYBRID: the start 2, then its
@@ -8508,8 +8506,8 @@ TEST_CASE("Box: CERES:STEEPEST_DESCENT in two dimensions: no point outside "
     /* The straddle objective in two dimensions, CGRID2B[2] in [1, 2] and
      * SGRID2B[2] in [4, 6], from CGRID2B[2] = 1.9: the loss falls towards
      * the bound CGRID2B[2] = 2, and Ceres' GradientProblemSolver, which has
-     * no bounds, proposes points beyond it. None of them is evaluated (owner
-     * decision, MK, 2026-10-15): each is scored
+     * no bounds, proposes points beyond it. None of them is evaluated:
+     * each is scored
      * out_of_box_score(FAILSCORE, d) of its distance d to the box in the
      * search's coordinates (OPTIM_SCALE AUTO: fractions of each box's
      * width; the default FAILSCORE, the largest double).
@@ -8524,7 +8522,7 @@ TEST_CASE("Box: CERES:STEEPEST_DESCENT in two dimensions: no point outside "
      * A build without Ceres (TADAH_ENABLE_CERES OFF) does not compile the
      * case, as every other Ceres run of this file: it failed there, "CERES
      * support is not built; reconfigure with -DTADAH_ENABLE_CERES=ON" at
-     * startup (tmp/before_fix_box_and_slopes_review_noceres.txt). */
+     * startup. */
     const double fs = std::numeric_limits<double>::max();
     TaRun run(plain_block("    TYPE PLAIN\n    LIB CERES\n"
                           "    ALGO STEEPEST_DESCENT\n    MAXEVAL 40\n"
@@ -8598,7 +8596,7 @@ TEST_CASE("Finite differences: HYBRID differences every parameter when no "
     /* OALGO 1: the analytical gradient does not cover the setup, and the
      * journal says every parameter uses finite differences. HYBRID
      * returned g = 0 instead: DLIB:BFGS ended COMPLETED at its start after
-     * two evaluations (review item 9, fixed at the owner's request). From
+     * two evaluations. From
      * 1.9 the search now reaches the bound 2, where the loss is lowest. */
     TaRun run(straddle_block("DLIB", "BFGS", "    GRAD_STRATEGY HYBRID\n"),
               straddle_root("0"));
@@ -8632,7 +8630,7 @@ TEST_CASE("Finite differences: LD_SLSQP from 1.8 spends exactly MAXEVAL",
      * gradient takes the loss its caller has just evaluated as its centre,
      * a point whose loss failed, 1.0586 and 1.4293 here, is rejected, a
      * point whose stencil fails on one side, 1.4775 the first, takes the
-     * one-sided difference on the other (owner decision, MK, 2026-10-15),
+     * one-sided difference on the other,
      * and the call that asks again for 1.7073, evaluated with its gradient,
      * is answered from it without an evaluation); the last is the failed
      * central stencil point of 1.4780 and is not asked for twice in a row.
@@ -8651,8 +8649,7 @@ TEST_CASE("Finite differences: LD_SLSQP from 1.8 spends exactly MAXEVAL",
      * counted its stencil evaluations against MAXEVAL and NLopt its
      * objective calls; once the provider's budget was spent, SLSQP
      * converged on 1.677689403 and asked for that point again and again --
-     * the last 25 evaluations -- until NLopt's own count ended it (the open
-     * issue "NLopt MAXEVAL accounting" of RELEASE-1.6.0-FOLLOWUPS.md).
+     * the last 25 evaluations -- until NLopt's own count ended it.
      * Until the bounded stencil (2026-09-29) the central stencil of 1.143
      * took a zero difference of two failures at 1.343 and 0.943, outside
      * the box, and the search ended after 22 evaluations. */
@@ -8689,7 +8686,7 @@ TEST_CASE("Snap onto the box: NLopt LN_COBYLA under OPTIM_SCALE NONE rounds a "
      * bound; OPTIM_SCALE NONE hands it the real box). It was evaluated
      * there -- 29 of the 60 evaluations -- and warned about as a point
      * outside the box; it is evaluated on the bound now and counted as
-     * snapped (owner decision D10). COBYLA asks for one of its points again
+     * snapped. COBYLA asks for one of its points again
      * among its 60 calls, answered without an evaluation: 59 evaluations
      * (60 until 2026-10-12). */
     const std::string root =
@@ -8868,7 +8865,7 @@ TEST_CASE("PRESTAGE: an exploration without a usable loss leaves the "
  * Before the fix: a WARNING "PRESTAGE: produced no candidates -- running
  * outer optimiser as-is" (journal only), and the refinement ran from the
  * OPTIMIZER-level INIT point: 3 evaluations (its MAXEVAL), no error.
- * Before the message was corrected (cross-lane review 2): its parenthesis
+ * Before the message was corrected: its parenthesis
  * read "every exploration a configuration sets evaluates at least one
  * point: ...", which the run's record made false (an exploration can make
  * no evaluation and go on): the Contains checks fail. */
@@ -8929,7 +8926,7 @@ TEST_CASE("PRESTAGE: an exploration that made no evaluation is an error, not "
  * from it (rows 3-5: NLopt charges its first call, the seed again, answered
  * from the record), and the run ends with status 0, its trailer the
  * refinement's MAXEVAL_REACHED, with no "returned without evaluating a
- * point" (lanes/D/tmp/review/xl2-search/ps0 in 1-D).
+ * point".
  * Before the fix: passes as well (a pin of the rule that the docs and the
  * changelogs now state: they said that every exploration evaluates at
  * least one point, so one that made none ends FAILED). */
@@ -9164,8 +9161,8 @@ TEST_CASE("GRAD_STRATEGY ANALYTICAL: a candidate the bump gate rejects "
      * and LD_TNEWTON_PRECOND_RESTART reached MAXEVAL 20 first. DLIB:BFGS
      * and CERES:STEEPEST_DESCENT ask no gradient at a rejected candidate
      * of this search, so they are not among the cases; CERES:LBFGS, WOLFE
-     * and NLCG were, until they were refused (owner decision, MK,
-     * 2026-10-15). Before the fix: the NLopt cases pass as well (a pin). */
+     * and NLCG were, until they were refused. Before the fix: the NLopt
+     * cases pass as well (a pin). */
     const std::vector<GradientBackend> backends = {
         {"NLOPT", "LD_LBFGS"}, {"NLOPT", "LD_MMA"}, {"NLOPT", "LD_SLSQP"},
         {"NLOPT", "LD_CCSAQ"}, {"NLOPT", "LD_TNEWTON"},

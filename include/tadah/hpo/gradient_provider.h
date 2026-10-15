@@ -100,8 +100,8 @@
  * (FAILSCORE itself -- FAILSCORE_GRADING OFF, an infrastructure failure, a
  * loss the host clamped -- or a loss that is not finite).
  *
- * A difference never mixes the kinds (owner decision, MK, 2026-10-15): one
- * between two failures is an exact 0 ((FS - FS) / 2h), which a search took
+ * A difference never mixes the kinds: one between two failures is an exact
+ * 0 ((FS - FS) / 2h), which a search took
  * for convergence at a start inside the failure region, and one between a
  * usable loss and a failure, or a graded failure and a usable loss or an
  * ungraded one, is as large as the jump into or out of the failure band
@@ -181,14 +181,14 @@
  * run FAILED at every rejected candidate, and at a fit the analytical pass
  * could not differentiate.
  *
- * A point outside the OPTIM box (box_penalty.h; owner decision, MK,
- * 2026-10-15) is not evaluated: HPO_Host scores it out_of_box_score() of its
- * distance to the box, and every strategy gives it the slope of that score
- * (detail::out_of_box_gradient), pointing away from the box, without
+ * A point outside the OPTIM box (box_penalty.h) is not evaluated: HPO_Host
+ * scores it out_of_box_score() of its distance to the box, and every
+ * strategy gives it the slope of that score (detail::out_of_box_gradient),
+ * pointing away from the box, without
  * evaluating or counting anything and without a stencil -- no difference
  * reads an out-of-box score, and no stencil of a point inside the box
  * leaves it. A coordinate within rounding outside its box is evaluated on
- * the bound (D10) and differenced there (FdBox::onto).
+ * the bound and differenced there (FdBox::onto).
  *
  * Journal (HPOLog): a component a bound turned (one-sided into the box,
  * backward) is counted per dimension, and so is one taken without a point
@@ -259,7 +259,7 @@ inline const std::string kGradientStencilCause =
 /* The cause of a Stencil failure of the finite differences at a graded
  * failure (FAILSCORE_GRADING ON) whose stencil has, on every side that fits
  * in the box, a loss of another kind: a usable loss or an ungraded failure
- * (owner decision, MK, 2026-10-15: a difference never mixes the kinds). */
+ * (a difference never mixes the kinds). */
 inline const std::string kGradientGradedSidesCause =
     "a graded failure without a side of graded failures in its "
     "finite-difference stencil";
@@ -631,9 +631,8 @@ struct FdBox {
                              std::to_string(lo.size()));
   }
   /** x with each coordinate outside the box moved onto its bound: the
-   *  point a coordinate within rounding outside its box is evaluated at
-   *  (owner decision D10); a NaN coordinate stays (its evaluation fails as
-   *  such). Called for a point inside the box by the rule of
+   *  point a coordinate within rounding outside its box is evaluated at;
+   *  a NaN coordinate stays (its evaluation fails as such). Called for a point inside the box by the rule of
    *  box_penalty.h. */
   template<class Vec>
   Vec onto(const Vec& x) const {
@@ -649,7 +648,7 @@ struct FdBox {
 
 /* Component idx of the finite-difference gradient at x (fd_stencil.h),
  * whose loss y0 is of the kind `kind` (Usable or Graded; a Failed one ends
- * the gradient before), of one kind (owner decision, MK, 2026-10-15): the
+ * the gradient before), of one kind: the
  * stencil fd_plan chooses, its points evaluated in its order; a point whose
  * loss is of another kind (StencilReport::classify) ends its side, and the
  * difference is taken on the other side, as a bound there would make it:
@@ -1073,7 +1072,7 @@ make_gradient_provider(const OptimizerSpec&     sp,
       box.require(x_in.size());
       if (outside(x_in, g)) return true;
       /* A coordinate within rounding outside its box is evaluated on the
-       * bound (owner decision D10): it is differenced there. */
+       * bound: it is differenced there. */
       const Vec x = box.onto(x_in);
       /* The caller's loss at x, before the analytical pass: a failed one
        * fails the gradient whatever is differenced (as under ANALYTICAL:
@@ -1210,7 +1209,7 @@ make_gradient_provider(const OptimizerSpec&     sp,
     box.require(x_in.size());
     if (outside(x_in, g)) return true;
     /* A coordinate within rounding outside its box is evaluated on the
-     * bound (owner decision D10): it is differenced there. */
+     * bound: it is differenced there. */
     const Vec x = box.onto(x_in);
     const auto eval = [&](const Vec& p, double& y) {
       if (maxeval > 0 && eval_counter->load() >= maxeval) {

@@ -102,8 +102,8 @@ struct OptimizerCaps {
      * FTOL_ABS as dlib's solver epsilon (the precision of its local model
      * fits), so its supports_ftol_abs is false (reads_ftol_abs_as_setting).
      * NLopt: the global algorithms and LD_MMA/LD_CCSAQ/LD_SLSQP list the
-     * tolerances their stop tests read (nlopt 2.10 sources, checked by the
-     * phase 4c probes); the other NLopt algorithms keep NLopt's generic
+     * tolerances their stop tests read (nlopt 2.10 sources, checked by
+     * probe runs); the other NLopt algorithms keep NLopt's generic
      * set. */
     bool supports_maxeval   = true;
     bool supports_maxtime   = false;
@@ -121,7 +121,7 @@ struct OptimizerCaps {
 
     /* The backend has no convergence test and no finite schedule: without
      * a stop criterion it runs until it is interrupted (each measured by
-     * the phase 4c probes). require_stop() (backend_rules.h) refuses such
+     * probe runs). require_stop() (backend_rules.h) refuses such
      * a spec at startup unless it sets MAXEVAL or another criterion the
      * supports_* flags mark; stop_note says why, for the message. Every
      * other backend ends on its own when no criterion is set: a

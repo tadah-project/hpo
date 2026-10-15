@@ -19,8 +19,7 @@
  * to the box (box_penalty.h), and the GradientProvider gives it the slope
  * of that score, which points away from the box, so a descent step leads
  * back into it and the line search steps back from the point; it counts
- * against MAXEVAL and is never the best (owner
- * decision, MK, 2026-10-15). NLOPT:LD_LBFGS and DLIB:BFGS keep to the box.
+ * against MAXEVAL and is never the best. NLOPT:LD_LBFGS and DLIB:BFGS keep to the box.
  *
  * Design echoes dlib_adapter.h:
  *   - validators throw std::runtime_error with a message naming the

@@ -477,7 +477,7 @@ TEST_CASE("Density gates read WATOM and RCUTMBMAX with the number grammar "
 
 TEST_CASE("Density gates: a gate that no OPTIM line arms is refused at its "
           "line", "[hpo][rhogate][rhobargate][gate_arming]") {
-  // Owner decision (2026-09-29, C6): a gate whose verdict no search can
+  // A gate whose verdict no search can
   // change -- no OPTIM dimension on AMPGRIDMB, CGRIDMB, SGRIDMB or RCUTMB
   // (OPTIM WATOM only scales the density) -- cannot act: every candidate
   // has the -c density and its one verdict. It was accepted with an INFO

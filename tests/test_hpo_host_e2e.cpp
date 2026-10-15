@@ -1,11 +1,11 @@
-// HPO_Host end-to-end integration test (Phase 3 follow-up).
+// HPO_Host end-to-end integration test.
 //
 // Validates production wiring of HPO_Host<ParamVec, LammpsRunner>::
 // analytical_gradient — specifically the SimsGradProvider lambda
 // construction at hpo_host_impl.hpp:~2186. Prior coverage was indirect:
 // `[live_trainer][sims_grad_provider]` (test_hpo_analytical.cpp) tested
 // `compute_analytical_gradient_from_trainer`'s ability to fold in a
-// synthetic provider, and `[phase3_orchestrator]` reproduced the
+// synthetic provider, and `[adjoint_orchestrator]` reproduced the
 // lambda's body inline on a real LAMMPS instance. Neither exercised
 // HPO_Host's own construction of the lambda.
 //
@@ -186,8 +186,8 @@ tadah::core::Context make_ta_master_context(
 }  // namespace
 
 TEST_CASE("HPO_Host::analytical_gradient end-to-end on a Trainer with no "
-          "PC_LAMMPS line (Phase 3 follow-up)",
-          "[hpo_host_e2e][phase3][.][!benchmark]")
+          "PC_LAMMPS line",
+          "[hpo_host_e2e][adjoint][.][!benchmark]")
 {
     tadah::core::PeriodicTable::initialize();
     Host::reset_globals_for_test();
@@ -352,7 +352,7 @@ TEST_CASE("HPO_Host::analytical_gradient end-to-end with one PC_OBSERVABLE "
 
 /* Companion case: same fixture but with a PC_LAMMPS line pointing at a
  * cohesive-E pilot script (mirrors the simple_bcc_pilot_script from
- * test_hpo_phase3_pilot.cpp). This case verifies that:
+ * test_hpo_adjoint_pilot.cpp). This case verifies that:
  *   - HPO_Host constructs with a non-empty trg_.LS
  *   - operator()'s LAMMPS-eval path executes (PC_LAMMPS scripts run)
  *   - analytical_gradient builds the SimsGradProvider lambda, and the
@@ -366,8 +366,8 @@ TEST_CASE("HPO_Host::analytical_gradient end-to-end with one PC_OBSERVABLE "
  * was taken).
  */
 TEST_CASE("HPO_Host::analytical_gradient end-to-end with one PC_LAMMPS "
-          "cohesive-E script (Phase 3 follow-up)",
-          "[hpo_host_e2e][phase3][.][!benchmark]")
+          "cohesive-E script",
+          "[hpo_host_e2e][adjoint][.][!benchmark]")
 {
     tadah::core::PeriodicTable::initialize();
     Host::reset_globals_for_test();
@@ -387,7 +387,7 @@ TEST_CASE("HPO_Host::analytical_gradient end-to-end with one PC_LAMMPS "
         os << "DBFILE " << val_db.string() << "\n";
     }
 
-    /* Mirrors simple_bcc_pilot_script from test_hpo_phase3_pilot.cpp.
+    /* Mirrors simple_bcc_pilot_script from test_hpo_adjoint_pilot.cpp.
      * 16-atom BCC cell, box/relax iso, cohesive E per atom. */
     {
         std::ofstream os(script);
@@ -736,8 +736,8 @@ TEST_CASE("The host refuses a validation DBFILE that lists one dataset twice",
 namespace {
 
 /* The opening and end lines of the training record of a potential file.
- * The opening line said "(not read by tadah)" before MK's decision of
- * 2026-10-14 (option 2): refit --edit reads the block, to copy it. */
+ * The opening line said "(not read by tadah)" before it was corrected:
+ * refit --edit reads the block, to copy it. */
 const std::string kRecordOpen =
     "# --- training record (no key is read from it) ---";
 const std::string kRecordEnd = "# --- end of training record ---";
@@ -812,13 +812,13 @@ std::map<std::string, std::vector<std::string>> key_lines(const std::string& tex
  * Before the fix: no file had a training record (config.hpo and
  * config.val appeared nowhere in it), and the DATA section's training line
  * ended with the path of train.db.
- * Before the training record (MK's decision of 2026-10-14): the case was
+ * Before the training record: the case was
  * named "The potentials of an evaluation record no input of the run", and
  * it checked that the paths of config.hpo and config.val appear nowhere in
  * the files. Before the potential-content fix: each of the three files had
  * the key lines "HPOTARGET <config.hpo>", "VALIDATION <config.val>" and
  * "VERBOSE 0".
- * Before the opening line was corrected (MK, 2026-10-14, option 2): it read
+ * Before the opening line was corrected: it read
  * "# --- training record (not read by tadah) ---": REQUIRE(opened) stops
  * the case. */
 TEST_CASE("The potentials of an evaluation keep the inputs of the run in "
@@ -951,7 +951,7 @@ TEST_CASE("The potentials of an evaluation keep the inputs of the run in "
     }
 }
 
-/* Pins (MK's decision of 2026-10-14, option 2): the potentials one
+/* Pins: the potentials one
  * evaluation writes -- best_pot.tadah, the BDUMP archive and the DUMP
  * archive -- keep the keys that prepared the training data in their
  * training record, not as key lines: with EFILTER -1 1, FFILTER 100,
@@ -1642,7 +1642,7 @@ TEST_CASE("PC_OBSERVABLE analytical gradient matches central differences of "
 
 /* ---- two atoms at the same position -------------------------------------
  * NNFinder refuses a structure with two atoms at one position, naming the
- * structure and the atoms (report_leftovers.md section 3, option A), and
+ * structure and the atoms, and
  * HPO_Host builds the neighbour lists of the validation and training sets
  * in its constructor. So `tadah hpo` stops at startup with that message
  * instead of failing every evaluation ("Error in DGELSD: info = -4" in

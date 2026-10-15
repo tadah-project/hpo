@@ -365,7 +365,7 @@ TEST_CASE("Run record: HPO_Host answers for the point an evaluation would "
 
 /* Pins: under RHOFORM NONNEG (the DM_REAM fixture, OPTIM AMPGRIDMB (3) in
  * [0, 0.5]) an AMPGRIDMB coordinate below 0 lies outside the box and is not
- * evaluated (owner decision, MK, 2026-10-15; box_penalty.h): after
+ * evaluated (box_penalty.h): after
  * host(-1e-6), scored a failure graded by its distance, HPO_Host::recorded
  * answers for none of -1e-6, -0.3 and 0 (a failure is not recorded, and 0
  * was not evaluated); after host(0), evaluated, it answers for 0 with that

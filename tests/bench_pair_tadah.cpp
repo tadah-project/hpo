@@ -1,6 +1,6 @@
 // bench_pair_tadah.cpp
 //
-// Phase 2A.5 microbench gate. Drives pair_tadah::compute on a 256-atom
+// Microbench gate. Drives pair_tadah::compute on a 256-atom
 // bcc Ta cell and lets a CI step gate PRs on median throughput.
 //
 // The test is tagged [.][!benchmark], so it is hidden (not discovered);

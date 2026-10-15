@@ -684,8 +684,7 @@ TEST_CASE("startup validation: GRAD_STRATEGY ANALYTICAL needs the settings "
     CHECK_THAT(rejected(ctx, target(analytical, "PC_SRMSE 0 1\n")),
                Catch::Contains("PC_SRMSE"));
   }
-  /* Approved behaviour change (MK, known-issues session 2026-09-30,
-   * workstream 1), not a weakening: this SECTION used to assert that
+  /* A behaviour change, not a weakening: this SECTION used to assert that
    * ANALYTICAL + PC_FRMSE + FORCE false is refused with "PC_FRMSE needs
    * FORCE true". FORCE now decides only what training fits; validation
    * predicts forces whenever PC_FRMSE is set, and the analytical gradient
@@ -737,8 +736,8 @@ TEST_CASE("startup validation: GRAD_STRATEGY ANALYTICAL needs the settings "
    * passes.
    * Before the fix: passes as well (a pin of why this no-DBFILE refusal,
    * unlike the others of tadah hpo, does not end with the advice; the
-   * check of the advice's wording since the training record, MK's decision
-   * of 2026-10-14, is added beside the old one). */
+   * check of the advice's wording since the training record is added
+   * beside the old one). */
   SECTION("no training DBFILE with every weight pinned: HYBRID, not a "
           "DBFILE line") {
     Context pinned = good_ctx();

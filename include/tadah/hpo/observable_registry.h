@@ -11,7 +11,7 @@ namespace tadah::core { class aeds_type2; }
 namespace tadah::hpo {
 
 /* Snapshot of the relaxed-state data an observable handle needs to
- * assemble its gradients. The host (Phase 3.5) populates this from a
+ * assemble its gradients. The host populates this from a
  * LAMMPS+pair_tadah pair at the relaxed configuration x* -- keeps the
  * registry LAMMPS-agnostic and unit-testable without an in-process
  * LAMMPS instance.
@@ -38,7 +38,7 @@ struct ObservableContext {
  *   dg_dx(ctx, out) -> out has size 3*ctx.nlocal + ctx.box_dofs
  *   dg_dW(ctx, out) -> out has size ctx.n_desc
  *
- * `dg_dx_is_zero` is the optimisation hint Phase 3.4 uses to skip the
+ * `dg_dx_is_zero` is the optimisation hint the adjoint solve uses to skip the
  * Hessian solve entirely (dg/dx = 0 => lambda_k = 0). `kind` is human
  * readable, for logging only. */
 struct ObservableHandle {

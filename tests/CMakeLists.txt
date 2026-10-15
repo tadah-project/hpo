@@ -157,7 +157,7 @@ endforeach()
 #                         the iso and Voigt-6 box blocks, Tikhonov, the
 #                         adjoint snapshot) and the vflag=1 microbench; the
 #                         two LAMMPS-free cases of the file are discovered
-#   hpo_phase3_pilot      test_hpo_phase3_pilot.cpp: the PC_LAMMPS adjoint
+#   hpo_adjoint_pilot     test_hpo_adjoint_pilot.cpp: the PC_LAMMPS adjoint
 #                         chain on real relaxations (closed-form cohesive
 #                         energy, dvirial_dW against finite differences,
 #                         dlx/dW against re-relaxed finite differences, the
@@ -174,13 +174,13 @@ endforeach()
 # case has an entry.
 add_test(NAME hpo_lammps_hessian
     COMMAND test_hpo "[lammps_hessian][.]" --warn NoTests)
-add_test(NAME hpo_phase3_pilot
-    COMMAND test_hpo "[phase3_pilot],[phase3_orchestrator]" --warn NoTests)
+add_test(NAME hpo_adjoint_pilot
+    COMMAND test_hpo "[adjoint_pilot],[adjoint_orchestrator]" --warn NoTests)
 add_test(NAME hpo_bench_pair_tadah
     COMMAND test_hpo "[bench][pair_tadah]" --warn NoTests)
 add_test(NAME hpo_host_e2e
     COMMAND test_hpo "[hpo_host_e2e]" --warn NoTests)
-set_tests_properties(hpo_lammps_hessian hpo_phase3_pilot hpo_bench_pair_tadah
+set_tests_properties(hpo_lammps_hessian hpo_adjoint_pilot hpo_bench_pair_tadah
                      hpo_host_e2e
     PROPERTIES
         LABELS "hpo;bench"
@@ -520,3 +520,12 @@ endif()
 # tadah_add_header_check). Before the fix: fails on hpo_host_impl.hpp,
 # which does not include hpo_host.h ('expected initializer before <').
 tadah_add_header_check(tadah.hpo)
+
+# tadah.hpo_text (ctest -L text): no line of the repository's text files
+# carries a person's initials, a reference to co-workers, a decision
+# attributed to the code's owner, the name of an AI tool, a note kept
+# outside the repository or filler wording (cmake-tools'
+# tadah_add_text_check). Before the fix: fails, 231 lines: 134 with a person's
+# initials, 55 decision notes, 41 workspace notes and .gitignore's entry for
+# an AI tool's state directory.
+tadah_add_text_check(tadah.hpo)

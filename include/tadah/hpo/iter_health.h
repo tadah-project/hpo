@@ -1,7 +1,7 @@
 #ifndef TADAH_HPO_ITER_HEALTH_H
 #define TADAH_HPO_ITER_HEALTH_H
 
-// Phase 6 -- per-iteration HPO health monitor.
+// Per-iteration HPO health monitor.
 //
 // The monitor records cheap per-block aggregates of the weights the
 // model of every HPO evaluation holds (fitted, or provisioned from

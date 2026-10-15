@@ -1,7 +1,6 @@
 // test_nn_exact_e2e.cpp
 //
-// Exact neighbour lists through the HPO host (workstream C,
-// DESIGN-nnfinder-exact-images.md, section 5.3 and the C handover):
+// Exact neighbour lists through the HPO host:
 //
 //   * A validation-only host with a fixed potential (every weight pinned by
 //     FIXINDEX/FIXWEIGHT, OPTIM FIXWEIGHT (1); no training DBFILE) gives the
@@ -25,7 +24,7 @@
 //     of the same host with the box [4, 6].
 //   * A candidate whose cutoff lies beyond the OPTIM box (box [4, 5],
 //     evaluated at 5.5, as an optimiser that ignores the bounds proposes)
-//     is not evaluated (owner decision, MK, 2026-10-15; box_penalty.h): its
+//     is not evaluated (box_penalty.h): its
 //     loss is the box's score of its distance, 0.5 of the box's width, no
 //     list is built for it, and the journal's DIAGNOSTICS count it ("Out-of-
 //     box points"). So with a trained host (a training DBFILE, every weight

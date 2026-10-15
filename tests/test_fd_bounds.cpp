@@ -1,6 +1,5 @@
 /* Finite-difference gradients near the edge of the OPTIM box, with both
- * step rules (fd_stencil.h, gradient_provider.h; owner decisions D1-D6,
- * 2026-09-29).
+ * step rules (fd_stencil.h, gradient_provider.h).
  *
  * The in-house stencil kept to the box (one-sided within a step of a
  * bound), but the other step rule -- Ceres' numeric differentiation, the
@@ -185,7 +184,7 @@ TEST_CASE("fd bounds: no finite-difference point lies outside the OPTIM box, "
      * point the gradient evaluates lies in the REAL box, and a CENTRAL
      * gradient is x^3's slope to 1e-6 relative. Ceres' rule (the default
      * under NONE) evaluated u -+ h there, outside the box, and FORWARD u + h
-     * above it; a LOG box's upper end came back one ulp above it (D6). */
+     * above it; a LOG box's upper end came back one ulp above it. */
     const double fd_step = 5e-5;
     struct Box { const char* name; double lo, hi; ScaleKind kind; };
     for (const Box& box : {Box{"LIN [4, 6]", 4.0, 6.0, ScaleKind::Linear},
@@ -467,7 +466,7 @@ TEST_CASE("fd bounds: Ceres' rule next to a bound -- the cost, MAXEVAL and "
 TEST_CASE("fd bounds: HYBRID honours PARAM fd_kernel and diff_method, and "
           "keeps to the box", "[HPO][grad_provider][fd_bounds][hybrid]")
 {
-    /* HYBRID's finite differences are those of NUMERICAL (D5); they used to
+    /* HYBRID's finite differences are those of NUMERICAL; they used to
      * be the in-house central stencil whatever fd_kernel and diff_method
      * said. X[2] is analytical, X[1] differenced. */
     const auto agf = [](const Vec&, Vec& g, std::vector<int>& nfd) {
@@ -554,9 +553,9 @@ TEST_CASE("fd bounds: diff_method 1 takes forward differences, 1 + n "
 TEST_CASE("box penalty: which points lie outside the OPTIM box, their "
           "distance, score and slope", "[HPO][fd_bounds][out_of_box]")
 {
-    /* box_penalty.h (owner decision, MK, 2026-10-15). Pins:
+    /* box_penalty.h. Pins:
      *  - a point inside, on a bound, within kSnapUlps (8) units in the last
-     *    place of one (evaluated on it, D10) or NaN is not outside;
+     *    place of one (evaluated on it) or NaN is not outside;
      *  - beyond that, the signed excess per dimension in the search's
      *    coordinates (OPTIM_SCALE AUTO: a fraction of the box's width;
      *    NONE on a LOG dimension: ln x), the first dimension outside, how
@@ -654,8 +653,8 @@ TEST_CASE("fd bounds: a point outside the box is not differenced: every "
           "strategy gives it the slope of its out-of-box score",
           "[HPO][grad_provider][fd_bounds][out_of_box]")
 {
-    /* A point outside the OPTIM box is not evaluated (box_penalty.h; owner
-     * decision, MK, 2026-10-15): HPO_Host scores it
+    /* A point outside the OPTIM box is not evaluated (box_penalty.h):
+     * HPO_Host scores it
      * graded_failscore(FS, D, d, 1) of its distance d to the box in the
      * search's coordinates, and the gradient there is that score's slope.
      * Pins: NUMERICAL (gradient and gradient_at), HYBRID and ANALYTICAL give
@@ -665,7 +664,7 @@ TEST_CASE("fd bounds: a point outside the box is not differenced: every "
      * 0.02), at (-0.5, 1.5) in two dimensions (d = sqrt(0.5)); under NONE
      * on a LOG dimension [0.1, 10] at ln 20 (d = ln 2); DIAGNOSTICS has no
      * "Out-of-box gradients" line, and a point within rounding of a bound
-     * (D10) is differenced on the bound.
+     * is differenced on the bound.
      * Before the fix: the centre was differenced one-sided towards the box
      * (u = 1.02: the host asked for 1.02, 1.0098 and 0.9996, g = 2.04 for
      * x^2), counted ("Out-of-box gradients    : 2 ..."), and ANALYTICAL and
@@ -810,8 +809,8 @@ TEST_CASE("fd bounds: a difference taken without a point of another kind is "
 {
     /* The default FAILSCORE below X[1] = 0.3. At X[1] = 0.35 the central
      * stencil is 0.45 and 0.25, and 0.25 fails: the one-sided difference
-     * into the usable side, 0.45 and 0.55, is taken (owner decision, MK,
-     * 2026-10-15: a difference never mixes the kinds).
+     * into the usable side, 0.45 and 0.55, is taken (a difference never
+     * mixes the kinds).
      * Pins: two such gradients (at 0.35 and 0.36) give the slope 1 along
      * X[1]; one INFO line names the first ("finite differences: at X[1] =
      * 0.35 (a usable loss), the stencil point X[1] = 0.25 (loss
@@ -870,9 +869,8 @@ TEST_CASE("fd bounds: a difference taken without two points of another kind "
      * Before the fix: passes as well (a pin of the plural line of
      * StencilReport::mixed and of the 2-point fallback when the far point
      * of the other side fails, which no test reached; a mutant that took the
-     * one-sided difference through the failed far point fails it,
-     * tmp/before_fix_box_and_slopes_review_pins.txt). Before the same-kind
-     * rule (owner decision, MK, 2026-10-15) the gradient failed at 0.25. */
+     * one-sided difference through the failed far point fails it). Before
+     * the same-kind rule the gradient failed at 0.25. */
     Journal j;
     const auto sp = spec_on({dim("X[1]", 0.0, 1.0), dim("X[2]", 0.0, 1.0)},
                             true, 0.1);
@@ -980,7 +978,7 @@ TEST_CASE("fd bounds: HYBRID takes the optimiser's own loss at the point for "
 {
     /* The NLopt objective and Ceres' FirstOrderFunction evaluate the loss
      * and then ask for the gradient of the same point: HYBRID evaluated
-     * that point again for a one-sided difference (review item 2). */
+     * that point again for a one-sided difference. */
     SECTION("NLopt LD_LBFGS") {
         Journal j;
         HybridBowl host;
@@ -1199,9 +1197,9 @@ double wall(double x, std::size_t)
 
 /* The wall with a pit, failed too, on (1.85, 1.89): at 1.6875 the central
  * stencil 1.8875 and 1.4875 both fail, so the point has no usable side (a
- * difference never mixes a usable loss with a failure, owner decision, MK,
- * 2026-10-15), where the wall alone failed only 1.4875 and the gradient is
- * one-sided into 1.8875 and 2.0875. */
+ * difference never mixes a usable loss with a failure), where the wall
+ * alone failed only 1.4875 and the gradient is one-sided into 1.8875 and
+ * 2.0875. */
 double wall_pit(double x, std::size_t k)
 {
     return x > 1.85 && x < 1.89 ? kMax : wall(x, k);
@@ -1263,8 +1261,8 @@ TEST_CASE("No usable gradient: MLSL moves on from a rejected local start "
      * Pins: they are stopped there: 2 evaluations (1.9, 1.7), the stop line
      * once and the status "STOPPED -- no usable gradient: ...".
      *
-     * A difference never mixes a usable loss with a failure (owner
-     * decision, MK, 2026-10-15): next to the plain wall, a point whose one
+     * A difference never mixes a usable loss with a failure: next to the
+     * plain wall, a point whose one
      * stencil side fails takes the other, and is no rejected start; these
      * stubs fail both sides, or the only side, to keep one.
      * Before the fix: MLSL's requests at 1.6875 were (1.6875, 1.8875) only,
@@ -1357,8 +1355,8 @@ TEST_CASE("No usable gradient: MLSL ends when an LD_LBFGS, LD_TNEWTON* or "
     /* The wall stub from 1.9, MAXEVAL 400: G_MLSL_LDS (POPULATION 3) with
      * an INNER block of each LD_* algorithm, and GD_MLSL_LDS with the same
      * INNER blocks (the same runs). Within a step of the wall, 1.53, the
-     * gradient is the one-sided difference into the usable side (owner
-     * decision, MK, 2026-10-15: a difference never mixes the kinds), so
+     * gradient is the one-sided difference into the usable side (a
+     * difference never mixes the kinds), so
      * MLSL's local searches converge on the wall itself; the line search of
      * LD_LBFGS, LD_TNEWTON* and LD_VAR1/LD_VAR2 (NLopt's Luksan codes)
      * steps across it, to 1.529962214, whose loss fails, and NLopt returns

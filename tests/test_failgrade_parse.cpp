@@ -6,7 +6,6 @@
 //   - PC_FAILPROBE line: flag stripping (--gate/--s0), probe marking,
 //     and every parse-time rejection (varloss / missing outvar /
 //     hotvar / failvar / duplicate probe).
-// Design: INVESTIGATIONS/SMOOTH_FAILSCORE_analysis.md sections 4.6-4.8.
 
 #include "catch2/catch.hpp"
 

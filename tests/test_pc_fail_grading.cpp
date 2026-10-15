@@ -1,6 +1,5 @@
 /* Graded-FAILSCORE arithmetic tests (pc_fail_grading.h).
- * Properties under test are exactly the design invariants
- * (INVESTIGATIONS/SMOOTH_FAILSCORE_analysis.md 4.2/4.7):
+ * Properties under test are exactly the design invariants:
  *   - every failure loss lives in [0.999*FS, FS)  (separation + filters);
  *   - within a band, less violation => strictly lower loss (direction);
  *   - every band-X value < every band-(X+1) value (repair-path ordering);

@@ -601,10 +601,9 @@ void HPOLog::write_optimizer_section(const OptimizerSpec&            sp,
         write_stop_criteria(sp.inner->stop, "    ");
         /* NLopt hands each local search an evaluation limit in its own
          * count, objective calls, and the objective cannot tell the local
-         * searches apart: the INNER MAXEVAL keeps that count (owner
-         * decision, 2026-10-07), while run_nlopt counts the enclosing
-         * block's MAXEVAL in evaluations. The two differ for a gradient
-         * search. */
+         * searches apart: the INNER MAXEVAL keeps that count, while
+         * run_nlopt counts the enclosing block's MAXEVAL in evaluations.
+         * The two differ for a gradient search. */
         bool inner_gradient = false;
         try {
             inner_gradient = optimizer_caps(*sp.inner).is_gradient_based;

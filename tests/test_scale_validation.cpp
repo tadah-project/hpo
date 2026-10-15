@@ -178,11 +178,10 @@ TEST_CASE("scale_validation: bounds-ignoring backends warn at startup",
      * time (three times in a plain run). The text says what a point the
      * optimiser proposes outside the box does -- it is not evaluated: it is
      * scored as a failure graded by its distance to the box, counts
-     * against MAXEVAL and is never the best (box_penalty.h; owner decision,
-     * MK, 2026-10-15) --, and which optimisers keep to the box (review item
-     * 4). CERES:STEEPEST_DESCENT is the only registered backend that
-     * ignores the bounds: NLOPT:LN_NEWUOA, which did, is refused, so the
-     * check throws its refusal and warns nothing.
+     * against MAXEVAL and is never the best (box_penalty.h) --, and which
+     * optimisers keep to the box. CERES:STEEPEST_DESCENT is the only
+     * registered backend that ignores the bounds: NLOPT:LN_NEWUOA, which
+     * did, is refused, so the check throws its refusal and warns nothing.
      * Pins: that WARNING once, for CERES:STEEPEST_DESCENT; the slope of
      * the score points away from the box (box_penalty.h: g_k = c e_k, c > 0,
      * e_k > 0 above the box), so a descent step leads back into it.

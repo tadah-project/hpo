@@ -769,7 +769,7 @@ TEST_CASE("compact fitter: the joint refinement keeps every free bump inside "
 
 TEST_CASE("compact FUSE: the held re-run passes share the stage's MAXEVAL",
           "[compact][fuse_budget]") {
-  // Owner decision (2026-09-29): FUSE MAXEVAL (Ceres iterations) bounds the
+  // FUSE MAXEVAL (Ceres iterations) bounds the
   // whole FUSE stage. The held re-run passes -- the fallback when the
   // linear re-solve after the bump-support projection leaves the E-V
   // residuals above tolerance -- ran up to n_phi + n_rho more joint solves

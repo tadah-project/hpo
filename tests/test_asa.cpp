@@ -1425,7 +1425,7 @@ TEST_CASE("ASA probes stay in the box at the largest Delta the check "
      * accepted, a probe ASA computed could lie a few ulps outside the box
      * where the real one met its bound: x - 2 Delta |x| at x = hi below lo
      * in these boxes (the exit curvature, Curvature_0 0). The check now
-     * bounds the probes as computed (review 2, finding 7). */
+     * bounds the probes as computed. */
     using tadah::hpo::asa_largest_fitting_delta;
     const std::vector<std::pair<double, double>> boxes = {
         {-0.0077981798734812714, 0.12877021024572782},
@@ -1485,7 +1485,7 @@ TEST_CASE("ASA's exit curvature evaluates the points it tests (TADAH-PATCH 8)",
      * differently: at x = 0.58058058058058049 in [0.58, 1.16] with the
      * default Delta_X 0.001, x - Delta |x| = 0.58 exactly, but (1 - Delta) x
      * = 0.57999999999999985, an ulp below the box, and ASA evaluated it at
-     * its exit (owner decision D9: patch the bundled ASA). The box passes
+     * its exit (fixed by patching the bundled ASA). The box passes
      * asa_probe_fit, so no Delta could have ruled it out. */
     const double lo = 0.58, hi = 1.16, x0 = 0.58058058058058049;
     const double delta = 0.001;

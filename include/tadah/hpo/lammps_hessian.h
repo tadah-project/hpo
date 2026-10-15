@@ -9,7 +9,7 @@ namespace tadah::hpo {
 
 /* Central-difference Hessian of E(x, eps) over pair_tadah::compute.
  *
- * Used by the Phase 3 IFT-adjoint to solve H . lambda_k = (dg_k/dx)^T at the
+ * Used by the IFT-adjoint to solve H . lambda_k = (dg_k/dx)^T at the
  * relaxed state x*. Owns only configuration; produces a fresh dense
  * Eigen::MatrixXd of size (3*nlocal + n_box_dofs) on every assemble().
  *
@@ -26,7 +26,7 @@ namespace tadah::hpo {
  *
  * Symmetrisation and Tikhonov regularisation are applied unconditionally
  * before return; finite-precision drift can otherwise leave H slightly
- * asymmetric or carry near-zero pivots into the LDLT in 3.4.
+ * asymmetric or carry near-zero pivots into the LDLT (adjoint_solver.h).
  */
 class LammpsHessianAssembler {
 public:

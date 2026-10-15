@@ -1,7 +1,7 @@
 #pragma once
 /* The Ta potential of the LAMMPS-driven cases (bench_pair_tadah.cpp,
- * test_hpo_phase3_pilot.cpp, test_lammps_hessian.cpp; CTest
- * hpo_bench_pair_tadah, hpo_phase3_pilot, hpo_lammps_hessian, label bench):
+ * test_hpo_adjoint_pilot.cpp, test_lammps_hessian.cpp; CTest
+ * hpo_bench_pair_tadah, hpo_adjoint_pilot, hpo_lammps_hessian, label bench):
  *
  *  1. TADAH_BENCH_POT, when set: the user names a potential to run them
  *     with, so a file that cannot be read is an error.

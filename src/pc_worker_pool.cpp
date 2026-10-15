@@ -293,7 +293,7 @@ PcTaskResult PcWorkerPool::execute(int slot, std::uint32_t script_idx,
    * channel 0. */
   std::lock_guard<std::mutex> lk(ch.mtx);
 
-  /* D10: a killed task still consumed wall time -- usually the MOST of any
+  /* A killed task still consumed wall time -- usually the MOST of any
    * task in the eval, since it typically burned the whole deadline. It used
    * to report create_ms = run_ms = 0 (the struct defaults), and the host
    * folds those into the per-script EWMA that drives the longest-processing-
