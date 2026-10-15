@@ -244,19 +244,43 @@ static void print_nlopt_caps(std::ostream& os,const std::string& algo)
             os<<"   * STEP is rejected: " << c.step_note << "\n";
         if (c.ignores_bounds)
             os<<"   * WARNING: " << c.bounds_note << "\n";
+        /* MLSL and AUGLAG: what their INNER block takes (require_inner_
+         * backend(), strategy_rules.h: a local NLopt algorithm). */
+        if (c.accepts_inner) {
+            const std::string text =
+                std::string("INNER ... ENDINNER: the local search it runs, "
+                            "from ") +
+                (c.is_global ? "the points it samples in the OPTIM box"
+                             : "its own starting point") +
+                ": LIB NLOPT and a local ALGO; a global one (`tadah explain "
+                "ALGO` marks each) is refused, and so is one that needs an "
+                "INNER block of its own. " +
+                (c.default_inner
+                     ? std::string("Without one NLopt runs its default ") +
+                           c.default_inner + "."
+                     : std::string("The block is required: NLopt has no "
+                                   "default local optimiser for it."));
+            /* Words, at most 76 columns a line. */
+            std::istringstream words(text);
+            std::string line = "   *", word;
+            while (words >> word) {
+                if (line.size() > 5 && line.size() + 1 + word.size() > 76) {
+                    os << line << "\n";
+                    line = "    ";
+                }
+                line += " " + word;
+            }
+            os << line << "\n";
+        }
     } catch (const std::exception&) { /* unregistered: nothing to add */ }
 }
 
 static void print_ceres_caps(std::ostream& os, const std::string& algo)
 {
     const OptimizerCaps* c = find_optimizer_caps("CERES", algo);
-    if (!c) { os << "   * (unknown CERES algo; registered: LBFGS, NLCG, "
-                    "STEEPEST_DESCENT, WOLFE)\n"; return; }
-    const char* what =
-        algo == "LBFGS" ? "limited-memory BFGS, Wolfe line search"
-        : algo == "WOLFE" ? "full BFGS, Wolfe line search"
-        : algo == "NLCG" ? "nonlinear conjugate gradient"
-                         : "steepest descent, Armijo line search";
+    if (!c) { os << "   * (unknown CERES algo; registered: "
+                    "STEEPEST_DESCENT)\n"; return; }
+    const char* what = "steepest descent, Armijo line search";
     os << "   * Ceres' GradientProblemSolver: " << what << "; local, "
           "gradient-based (GRAD_STRATEGY NUMERICAL by default)\n";
 #ifndef TADAH_USE_CERES
@@ -270,12 +294,6 @@ static void print_ceres_caps(std::ostream& os, const std::string& algo)
           "2147483647; MAXEVAL counts the evaluations)\n"
           "   * PARAM max_ls_iter <int>     (line-search step-size "
           "iterations, 1 to 2147483647)\n";
-    if (algo == "LBFGS")
-        os << "   * PARAM max_lbfgs_rank <int>  (limited-memory rank, "
-              "default 20)\n";
-    if (algo == "NLCG")
-        os << "   * PARAM nlcg_type 0|1|2   (FLETCHER_REEVES, default; "
-              "POLAK_RIBIERE; HESTENES_STIEFEL)\n";
     os << "   * PARAM fd_step, fd_kernel, diff_method  (the finite "
           "differences of the gradient)\n";
     os << "   * STEP is rejected: " << c->step_note << "\n";

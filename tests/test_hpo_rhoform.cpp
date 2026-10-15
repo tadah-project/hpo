@@ -12,13 +12,15 @@
 //   - INIT provenance (OptimizerSpec::optim_init_origin);
 //   - validate_hpo_setup validates a bare DM_REAM density, and the probes
 //     that swallow construction errors rethrow models::DensityFormError;
-//   - one startup WARNING names each phase that can still evaluate an
-//     amplitude outside a NONNEG / MONOTONE box: an optimiser that ignores
-//     the bounds (finite differences keep to the box with either step
-//     rule, fd_stencil.h);
-//   - HPO_Host evaluates a NONNEG / MONOTONE candidate projected onto
-//     AMPGRIDMB >= 0 (hidden host-level cases, run explicitly with
-//     ./test_hpo "[rhoform_e2e]").
+//   - no RHOFORM startup WARNING names a phase: no phase evaluates an
+//     amplitude outside a NONNEG / MONOTONE box (finite differences keep to
+//     the box with either step rule, fd_stencil.h), and an optimiser that
+//     ignores the bounds (CERES:STEEPEST_DESCENT) has its own WARNING, which
+//     says that a point it proposes outside the box is not evaluated;
+//   - HPO_Host does not evaluate a NONNEG / MONOTONE candidate outside the
+//     box: it scores it by its distance to the box (box_penalty.h), and
+//     evaluates one inside it as it is (hidden host-level cases, run
+//     explicitly with ./test_hpo "[rhoform_e2e]").
 
 #include "tadah_test_skip.hpp"  // before catch2/catch.hpp
 #include "catch2/catch.hpp"
@@ -32,6 +34,7 @@
 #include <tadah/hpo/hpo_log.h>
 #include <tadah/hpo/hpo_targets.h>
 #include <tadah/hpo/init_strategy.h>
+#include <tadah/hpo/pc_fail_grading.h>
 #include <tadah/hpo/run_policy_base.h>
 #include <tadah/hpo/runners.h>
 #include <tadah/hpo/startup_validation.h>
@@ -611,55 +614,52 @@ const std::string kKernelWords = "finite-difference step";
 
 }  // namespace
 
-/* Pins: the one WARNING names a phase whose optimiser ignores the OPTIM
- * bounds, CERES:LBFGS, as the STRATEGY-level optimiser and as the PRESTAGE
- * refinement (not the DLIB:GFS exploration, which keeps to the box), and
- * there is none under RHOFORM SIGNED or without OPTIM AMPGRIDMB. A build
- * without Ceres (TADAH_ENABLE_CERES OFF) has no CERES:LBFGS: the case is
- * Skipped there, naming it. Before this test change: the case had the
- * sections of the next one too, and such a build failed these sections
- * ("Error on line 7: the STRATEGY-level optimiser: CERES support is not
- * built; ..."). */
-TEST_CASE("RHOFORM NONNEG/MONOTONE: one WARNING when an optimiser can leave "
-          "the box", "[hpo][rhoform][startup_validation][ceres]") {
+/* A point an optimiser proposes outside the OPTIM box is not evaluated
+ * (box_penalty.h; owner decision, MK, 2026-10-15), so no AMPGRIDMB amplitude
+ * below 0 is evaluated, and there is no projection to warn about.
+ * Pins: with CERES:STEEPEST_DESCENT (which ignores the bounds) as the
+ * STRATEGY-level optimiser and as the PRESTAGE refinement, the journal has
+ * the CERES WARNING ("... Such a point is not evaluated: it is scored as a
+ * failure graded by its distance to the box ...") and no RHOFORM WARNING
+ * ("... can evaluate AMPGRIDMB amplitudes outside the non-negative OPTIM
+ * box ... projected onto AMPGRIDMB >= 0 ..."). A build without Ceres
+ * (TADAH_ENABLE_CERES OFF) has no CERES:STEEPEST_DESCENT: the case is
+ * Skipped there, naming it.
+ * Before the fix: the RHOFORM WARNING named the phase ("RHOFORM NONNEG: the
+ * STRATEGY-level optimiser CERES:STEEPEST_DESCENT (ignores the OPTIM
+ * bounds) can evaluate AMPGRIDMB amplitudes ..."), and the CERES WARNING
+ * said such points are evaluated there. */
+TEST_CASE("RHOFORM NONNEG/MONOTONE: no projection WARNING when an optimiser "
+          "can leave the box: such a point is not evaluated",
+          "[hpo][rhoform][startup_validation][ceres][out_of_box]") {
 #ifndef TADAH_USE_CERES
-  TADAH_SKIP("the optimiser of these cases, CERES:LBFGS, is not built "
-             "(TADAH_ENABLE_CERES OFF)");
+  TADAH_SKIP("the optimiser of these cases, CERES:STEEPEST_DESCENT, is not "
+             "built (TADAH_ENABLE_CERES OFF)");
 #endif
   PeriodicTable::initialize();
+  const std::string kNotEvaluated =
+      "ignores the OPTIM box: Ceres' GradientProblemSolver has no bounds, so "
+      "its line searches can propose points outside the box";
   SECTION("an ignores_bounds optimiser") {
     const std::string txt = box_warning_journal(
-        "NONNEG", "OPTIMIZER\nLIB CERES\nALGO LBFGS\nMAXEVAL 5\nENDOPTIMIZER\n");
-    CHECK_THAT(txt, Catch::Contains("RHOFORM NONNEG: the STRATEGY-level "
-                                    "optimiser CERES:LBFGS (ignores the OPTIM "
-                                    "bounds) " + kOutsideBox) &&
-                        Catch::Contains("projected onto AMPGRIDMB >= 0, "
-                                        "evaluated and recorded there (the "
-                                        "optimiser is given that loss for its "
-                                        "own point); DIAGNOSTICS counts the "
-                                        "projections and every evaluation "
-                                        "outside the box."));
+        "NONNEG", "OPTIMIZER\nLIB CERES\nALGO STEEPEST_DESCENT\nMAXEVAL 5\n"
+                  "ENDOPTIMIZER\n");
+    CHECK(txt.find(kOutsideBox) == std::string::npos);
+    CHECK(txt.find("projected onto AMPGRIDMB") == std::string::npos);
+    CHECK_THAT(txt, Catch::Contains(kNotEvaluated) &&
+                        Catch::Contains("Such a point is not evaluated: it is "
+                                        "scored as a failure graded by its "
+                                        "distance to the box"));
     CHECK(txt.find(kKernelWords) == std::string::npos);
   }
-  SECTION("named by the phase that runs it (phase_specs)") {
+  SECTION("the PRESTAGE refinement") {
     const std::string txt = box_warning_journal(
-        "NONNEG", "OPTIMIZER\nSTRATEGY\nTYPE PRESTAGE\nLIB CERES\nALGO LBFGS\n"
-                  "MAXEVAL 5\nTOPK 1\nEXPLORE\nLIB DLIB\nALGO GFS\nMAXEVAL 10\n"
-                  "ENDEXPLORE\nENDSTRATEGY\nENDOPTIMIZER\n");
-    CHECK_THAT(txt, Catch::Contains("RHOFORM NONNEG: the PRESTAGE refinement "
-                                    "CERES:LBFGS (ignores the OPTIM bounds) " +
-                                    kOutsideBox));
-    CHECK(txt.find("PRESTAGE exploration (EXPLORE block) DLIB:GFS") ==
-          std::string::npos);   // GFS keeps to the box
-  }
-  SECTION("none: SIGNED, or no OPTIM AMPGRIDMB") {
-    CHECK(box_warning_journal("SIGNED", "OPTIMIZER\nLIB CERES\nALGO LBFGS\n"
-                                        "MAXEVAL 5\nENDOPTIMIZER\n")
-              .find(kOutsideBox) == std::string::npos);
-    CHECK(box_warning_journal("NONNEG", "OPTIMIZER\nLIB CERES\nALGO LBFGS\n"
-                                        "MAXEVAL 5\nENDOPTIMIZER\n",
-                              "OPTIM CEMBFUNC (1) -0.5 0.1\n")
-              .find(kOutsideBox) == std::string::npos);
+        "NONNEG", "OPTIMIZER\nSTRATEGY\nTYPE PRESTAGE\nLIB CERES\n"
+                  "ALGO STEEPEST_DESCENT\nMAXEVAL 5\nTOPK 1\nEXPLORE\n"
+                  "LIB DLIB\nALGO GFS\nMAXEVAL 10\nENDEXPLORE\nENDSTRATEGY\n"
+                  "ENDOPTIMIZER\n");
+    CHECK(txt.find(kOutsideBox) == std::string::npos);
+    CHECK_THAT(txt, Catch::Contains(kNotEvaluated));
   }
 }
 
@@ -805,8 +805,9 @@ std::size_t count_of_text(const std::string& text, const std::string& what)
 
 }  // namespace
 
-TEST_CASE("HPO_Host: NONNEG/MONOTONE candidates are evaluated projected onto "
-          "AMPGRIDMB >= 0", "[rhoform_e2e][rhoform_projection_e2e][.]") {
+TEST_CASE("HPO_Host: NONNEG/MONOTONE candidates outside the box are not "
+          "evaluated, inside it they are evaluated as they are",
+          "[rhoform_e2e][rhoform_projection_e2e][.]") {
   PeriodicTable::initialize();
   ScratchDir sd("tadah_rhoform_e2e_");
   const fs::path val_db  = sd.dir / "val.db";
@@ -824,89 +825,75 @@ TEST_CASE("HPO_Host: NONNEG/MONOTONE candidates are evaluated projected onto "
   const std::string one_eval =
       "OPTIMIZER\nLIB DLIB\nALGO BFGS\nMAXEVAL 1\nENDOPTIMIZER\n";
 
-  SECTION("an out-of-box probe is evaluated and recorded at its projection") {
+  SECTION("an out-of-box probe is not evaluated: it is scored by its "
+          "distance to the box") {
+    /* A point outside the OPTIM box (box_penalty.h; owner decision, MK,
+     * 2026-10-15): -1e-6 below the box [0, 0.5] lies 2e-6 of its width
+     * outside it (OPTIM_SCALE AUTO), beyond the 8-ulp snap.
+     * Pins: its loss is graded_failscore(1e9, D, 2e-6, 1) (band D's range,
+     * FAILSCORE_GRADING OFF), the WARNING says it is not evaluated and names
+     * the score, DIAGNOSTICS counts it ("Out-of-box points       : 1"); its
+     * params row is the point proposed, -1e-6; nothing is projected; the
+     * first usable evaluation, 0, is the first best.
+     * Before the fix: it was evaluated at its projection 0 (loss_probe ==
+     * loss_zero, a usable loss), recorded there and counted as a projection
+     * ("Positive-form projection: 1 evaluation(s)") and as an evaluation
+     * outside the box. */
     for (const char* form : {"NONNEG", "MONOTONE"}) {
       CAPTURE(form);
       Journal j;
       Host::reset_globals_for_test();
+      /* the best of the form before is no best of this host */
+      fs::remove("best_pot.tadah");
       const fs::path hpo_cfg = target(one_eval);
       Context ctx = make_ream_ctx(form, "0.5 0.3 0.0");
       ctx.add("HPOTARGET", hpo_cfg.string());
       HPOTargets trg(ctx, hpo_cfg.string());
       REQUIRE_NOTHROW(validate_hpo_setup(ctx, trg, false, true));
       double loss_probe = 0.0, loss_zero = 0.0, loss_in = 0.0;
+      const double score = tadah::hpo::graded_failscore(
+          fs_score, tadah::hpo::FailBand::D, 1e-6 / 0.5, 1.0);
       {
         Host host(ctx, trg, val_cfg.string());
         ParamVec p(1);
-        /* below the box: finite differences keep to the box, so only the
-         * optimiser asks for it (one that ignores the bounds) */
         p(0) = -1e-6;
         REQUIRE_NOTHROW(loss_probe = host(p));
-        CHECK(std::isfinite(loss_probe));
-        CHECK(loss_probe < fs_score);
-        CHECK(HPOLog::instance().form_projections() == 1);
-        const auto* tr = Host::tls_trainer_for_test();
-        REQUIRE(tr != nullptr);
-        CHECK(pot_amplitude(tr, 2) == 0.0);
-        CHECK(file_amplitude("best_pot.tadah", 2) == 0.0);   // the first best
+        CHECK(loss_probe == Approx(score).epsilon(1e-15));
+        CHECK(loss_probe >= 0.99975 * fs_score);
+        CHECK_FALSE(fs::exists("best_pot.tadah"));   /* never a best */
 
         p(0) = 0.0;
         REQUIRE_NOTHROW(loss_zero = host(p));
-        CHECK(loss_zero == loss_probe);   // the same point, bit for bit
+        CHECK(loss_zero < 0.999 * fs_score);
+        CHECK(pot_amplitude(Host::tls_trainer_for_test(), 2) == 0.0);
+        CHECK(file_amplitude("best_pot.tadah", 2) == 0.0);   // the first best
         p(0) = 0.25;
         REQUIRE_NOTHROW(loss_in = host(p));
         CHECK(pot_amplitude(Host::tls_trainer_for_test(), 2) == 0.25);
-        CHECK(HPOLog::instance().form_projections() == 1);   // in-box: no-op
         host.flush_remaining();
       }
       const auto rows = table_rows("params.tadah");
       REQUIRE(rows.size() == 3);
-      CHECK(rows[0].back() == 0.0);   // the recorded point is the projection
+      CHECK(rows[0].back() == -1e-6);   // the point proposed
+      CHECK(rows[1].back() == 0.0);
       CHECK(rows[2].back() == 0.25);
       const std::string txt = j.finish();
-      /* The projection texts named the Ceres finite-difference kernel,
-       * which keeps to the box now (owner decision D2(a)); the point is
-       * also counted as an evaluation outside the box, before the
-       * projection (D4(a)). */
-      CHECK_THAT(txt, Catch::Contains(std::string("eval 1: RHOFORM ") + form +
-                                      ": AMPGRIDMB[3] = "
-                                      "-1.0000e-06 below 0 is evaluated and "
-                                      "recorded as 0: the candidate is "
-                                      "projected onto AMPGRIDMB >= 0 (a point "
-                                      "outside the OPTIM box, which only an "
-                                      "optimiser that ignores the bounds "
-                                      "evaluates)") &&
-                          Catch::Contains("Positive-form projection: 1 evaluation(s)") &&
-                          Catch::Contains("(points outside the OPTIM box: an\n"
-                                          "    optimiser that ignores the "
-                                          "bounds)") &&
-                          Catch::Contains("eval 1: AMPGRIDMB[3] = -1e-06 lies "
-                                          "outside its OPTIM box [0, 0.5] and "
-                                          "is evaluated there") &&
-                          /* a point proposed within rounding of a bound
-                           * is evaluated on it (owner decision D10), so
-                           * what is evaluated outside the box is an
-                           * optimiser that ignores the bounds, or a start
-                           * it handed on (review 2, finding 3) */
-                          Catch::Contains("Out-of-box evaluations  : 1 (points "
-                                          "outside the OPTIM box, evaluated "
-                                          "there: an\n    optimiser that "
-                                          "ignores the bounds; see the first "
-                                          "such WARNING)\n") &&
-                          /* the CERES drivers alone ignore the bounds:
-                           * the text named "(CERES:*, NLopt LN_NEWUOA)"
-                           * until LN_NEWUOA was refused */
-                          Catch::Contains("is evaluated there: finite "
-                                          "differences keep to the box, and a "
-                                          "point proposed within rounding of a "
-                                          "bound is evaluated on it, so an "
-                                          "optimiser that ignores the bounds "
-                                          "(CERES:*), or a start it handed "
-                                          "on, stepped outside it;"));
+      CHECK_THAT(txt, Catch::Contains("eval 1: AMPGRIDMB[3] = -1e-06 lies "
+                                      "outside its OPTIM box [0, 0.5]: it is "
+                                      "not evaluated, and is scored ") &&
+                          Catch::Contains("Out-of-box points       : 1 ("
+                                          "proposed outside the OPTIM box by "
+                                          "an optimiser that\n    ignores the "
+                                          "bounds, not evaluated: scored as "
+                                          "failures graded by their\n    "
+                                          "distance to the box; see the first "
+                                          "such WARNING)\n"));
+      CHECK(txt.find("Positive-form projection") == std::string::npos);
+      CHECK(txt.find("is evaluated and recorded as 0") == std::string::npos);
       CHECK(count_of_text(txt, "lies outside its OPTIM box") == 1u);
       /* the best sits on the form's zero lower bound: a hard bound, no
        * widen-that-side advisory */
-      REQUIRE(loss_probe <= loss_in);
+      REQUIRE(loss_zero <= loss_in);
       CHECK_THAT(txt, Catch::Contains("LO*   0.0000e+00    0.0000e+00") &&
                           Catch::Contains("(* a hard lower bound: RHOFORM "
                                           "NONNEG/MONOTONE require AMPGRIDMB >= 0"));
@@ -934,7 +921,6 @@ TEST_CASE("HPO_Host: NONNEG/MONOTONE candidates are evaluated projected onto "
     REQUIRE_NOTHROW(loss = host(p));
     CHECK(std::isfinite(loss));
     CHECK(pot_amplitude(Host::tls_trainer_for_test(), 2) == -1e-6);
-    CHECK(HPOLog::instance().form_projections() == 0);
     CHECK(j.finish().find("Positive-form projection") == std::string::npos);
     Host::reset_globals_for_test();
   }
@@ -969,7 +955,6 @@ TEST_CASE("HPO_Host: NONNEG/MONOTONE candidates are evaluated projected onto "
       REQUIRE_NOTHROW(tadah::hpo::run_inner<ParamVec, ::LammpsRunner>(trg.spec, host));
       host.flush_remaining();
     }
-    CHECK(HPOLog::instance().form_projections() == 0);
     const auto loss_rows = table_rows("loss.tadah");
     const auto par_rows  = table_rows("params.tadah");
     REQUIRE(loss_rows.size() >= 3);
@@ -1027,7 +1012,6 @@ TEST_CASE("HPO_Host: NONNEG/MONOTONE candidates are evaluated projected onto "
       REQUIRE_NOTHROW(tadah::hpo::run_inner<ParamVec, ::LammpsRunner>(trg.spec, host));
       host.flush_remaining();
     }
-    CHECK(HPOLog::instance().form_projections() == 0);
     const auto par_rows = table_rows("params.tadah");
     REQUIRE(par_rows.size() >= 3);
     CHECK(par_rows[0].back() == 0.0);
@@ -1074,12 +1058,20 @@ TEST_CASE("HPO_Host: a point proposed within rounding outside its box is "
    * outside its OPTIM box by no more than rounding -- 8 units in the last
    * place of the box's scale, in the real or the optimiser's coordinates --
    * is evaluated on the bound, recorded there and counted in DIAGNOSTICS
-   * ("Snapped onto the box"), with no WARNING; one further out is evaluated
-   * where it was proposed, counted and warned about. NLopt rounds points on
-   * a bound up to 2 ulps past it under OPTIM_SCALE NONE (LN_COBYLA,
-   * LN_PRAXIS, LN_BOBYQA, the unscaled DIRECT variants): each was evaluated
-   * outside the box, warned about, and a NONNEG amplitude a hair below 0
-   * was projected. */
+   * ("Snapped onto the box"), with no WARNING; one further out is not
+   * evaluated: it is scored by its distance to the box (box_penalty.h;
+   * owner decision, MK, 2026-10-15), recorded where it was proposed,
+   * counted and warned about. NLopt rounds points on a bound up to 2 ulps
+   * past it under OPTIM_SCALE NONE (LN_COBYLA, LN_PRAXIS, LN_BOBYQA, the
+   * unscaled DIRECT variants): each was evaluated outside the box, warned
+   * about, and a NONNEG amplitude a hair below 0 was projected.
+   * Pins (the points beyond the snap): their loss is
+   * graded_failscore(1e9, D, d, 1) of their distance d in the search's
+   * coordinates, the trainer still holds the previous evaluation's
+   * amplitude, DIAGNOSTICS "Out-of-box points".
+   * Before the fix: they were evaluated where they were proposed (the
+   * trainer held 0.5 + 16 ulp, 0.6, and 0.5 (1 + 1e-9) under NONE), counted
+   * as "Out-of-box evaluations". */
   PeriodicTable::initialize();
   ScratchDir sd("tadah_snap_e2e_");
   const fs::path val_db  = sd.dir / "val.db";
@@ -1096,7 +1088,13 @@ TEST_CASE("HPO_Host: a point proposed within rounding outside its box is "
        << "LOSS L2\nPC_EMAE 0 1\nFAILSCORE 1e9\n" << lines;
     return p;
   };
-  struct Probe { double x, evaluated; };
+  /* `evaluated`: the amplitude the trainer holds after the call; `d`: for a
+   * point beyond the snap, its distance to the box in the search's
+   * coordinates (< 0: inside or snapped, evaluated). */
+  struct Probe { double x, evaluated, d; };
+  const auto score = [](double d) {
+    return tadah::hpo::graded_failscore(1e9, tadah::hpo::FailBand::D, d, 1.0);
+  };
 
   SECTION("OPTIM_SCALE AUTO: a linear box [0, 0.5]") {
     Journal j;
@@ -1108,12 +1106,13 @@ TEST_CASE("HPO_Host: a point proposed within rounding outside its box is "
     REQUIRE_NOTHROW(validate_hpo_setup(ctx, trg, false, true));
     const double u = ulp(0.5);   /* the box's scale: max(|lo|, |hi|) */
     const std::vector<Probe> probes = {
-        {std::nextafter(0.5, 1.0), 0.5},     /* 1 ulp above */
-        {0.5 + 8 * u, 0.5},                  /* 8 ulps above */
-        {-std::numeric_limits<double>::denorm_min(), 0.0},   /* below 0 */
-        {-8 * u, 0.0},
-        {0.5 + 16 * u, 0.5 + 16 * u},        /* beyond: evaluated as asked */
-        {0.6, 0.6}};
+        {std::nextafter(0.5, 1.0), 0.5, -1.0},     /* 1 ulp above */
+        {0.5 + 8 * u, 0.5, -1.0},                  /* 8 ulps above */
+        {-std::numeric_limits<double>::denorm_min(), 0.0, -1.0},   /* below 0 */
+        {-8 * u, 0.0, -1.0},
+        /* beyond: scored, not evaluated (the trainer keeps 0) */
+        {0.5 + 16 * u, 0.0, (0.5 + 16 * u - 0.5) / 0.5},
+        {0.6, 0.0, (0.6 - 0.5) / 0.5}};
     {
       Host host(ctx, trg, val_cfg.string());
       ParamVec p(1);
@@ -1124,11 +1123,9 @@ TEST_CASE("HPO_Host: a point proposed within rounding outside its box is "
         REQUIRE_NOTHROW(loss = host(p));
         CHECK(std::isfinite(loss));
         CHECK(pot_amplitude(Host::tls_trainer_for_test(), 2) == pr.evaluated);
+        if (pr.d >= 0.0) CHECK(loss == Approx(score(pr.d)).epsilon(1e-15));
+        else             CHECK(loss < 0.999e9);
       }
-      /* the two below 0 were snapped onto 0, not projected; the two
-       * beyond the tolerance are evaluated outside the box */
-      CHECK(HPOLog::instance().form_projections() == 0);
-      CHECK(HPOLog::instance().out_of_box_evals() == 2);
       host.flush_remaining();
     }
     const auto rows = table_rows("params.tadah");
@@ -1141,11 +1138,17 @@ TEST_CASE("HPO_Host: a point proposed within rounding outside its box is "
                                     "proposed outside the OPTIM box within\n"
                                     "    rounding, 8 units in the last place, "
                                     "and evaluated on the bound)\n") &&
-                        Catch::Contains("Out-of-box evaluations  : 2 ("));
-    /* one WARNING, at the first evaluation beyond the tolerance */
-    CHECK(count_of_text(txt, "lies outside its OPTIM box") == 1u);
+                        Catch::Contains("Out-of-box points       : 2 ("));
+    CHECK(txt.find("Positive-form projection") == std::string::npos);
+    /* one WARNING, at the first point beyond the tolerance, and an INFO
+     * line for the second */
+    CHECK(count_of_text(txt, "lies outside its OPTIM box") == 2u);
+    CHECK(count_of_text(txt, "lies outside its OPTIM box [0, 0.5]: it is not "
+                             "evaluated") == 1u);
     CHECK_THAT(txt, Catch::Contains("eval 5: AMPGRIDMB[3] = 0.500000000000001") &&
-                        Catch::Contains("lies outside its OPTIM box [0, 0.5]"));
+                        Catch::Contains("eval 6: AMPGRIDMB[3] = 0.6 lies outside "
+                                        "its OPTIM box [0, 0.5]: not evaluated, "
+                                        "scored "));
     Host::reset_globals_for_test();
   }
 
@@ -1166,24 +1169,27 @@ TEST_CASE("HPO_Host: a point proposed within rounding outside its box is "
     const double above = std::exp(std::log(0.5) + 4 * ulp(m));
     REQUIRE(above - 0.5 > 8 * ulp(0.5));   /* beyond 8 ulps in x */
     const std::vector<Probe> probes = {
-        {above, 0.5},
-        {std::nextafter(0.01, 0.0), 0.01},
-        {0.5 * (1 + 1e-9), 0.5 * (1 + 1e-9)}};
+        {above, 0.5, -1.0},
+        {std::nextafter(0.01, 0.0), 0.01, -1.0},
+        /* beyond: scored, not evaluated (the trainer keeps 0.01); the
+         * distance in the optimiser's coordinates, ln x - ln 0.5 */
+        {0.5 * (1 + 1e-9), 0.01, std::log(0.5 * (1 + 1e-9)) - std::log(0.5)}};
     {
       Host host(ctx, trg, val_cfg.string());
       ParamVec p(1);
       for (const Probe& pr : probes) {
         CAPTURE(pr.x);
         p(0) = pr.x;
-        REQUIRE_NOTHROW(host(p));
+        double loss = 0.0;
+        REQUIRE_NOTHROW(loss = host(p));
         CHECK(pot_amplitude(Host::tls_trainer_for_test(), 2) == pr.evaluated);
+        if (pr.d >= 0.0) CHECK(loss == Approx(score(pr.d)).epsilon(1e-15));
       }
-      CHECK(HPOLog::instance().out_of_box_evals() == 1);
       host.flush_remaining();
     }
     const std::string txt = j.finish();
     CHECK_THAT(txt, Catch::Contains("Snapped onto the box    : 2 (") &&
-                        Catch::Contains("Out-of-box evaluations  : 1 ("));
+                        Catch::Contains("Out-of-box points       : 1 ("));
     CHECK(count_of_text(txt, "lies outside its OPTIM box") == 1u);
     Host::reset_globals_for_test();
   }

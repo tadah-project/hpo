@@ -756,7 +756,9 @@ void check_no_usable_loss(std::size_t evals, const std::string& fail_row) {
  * usable gradient: a failed evaluation at the point (the loss at RCUT2B =
  * 5.2 is 1.797693135e+308)"; the run ends without a usable loss (status 1,
  * no best_pot.tadah). Under FAILSCORE 1e16 DLIB:BFGS likewise ("... is
- * 1e+16").
+ * 1e+16"). The Ceres case runs CERES:STEEPEST_DESCENT (CERES:LBFGS, the
+ * case until 2026-10-15, is refused since; before that change
+ * CERES:STEEPEST_DESCENT passes as well, a pin).
  * Before the fix: the loss there was the mean of L(ERMSE) and FAILSCORE,
  * usable. Under the default FAILSCORE it was 8.988465674e+307 at every
  * point near the start, the gradient 0, and every backend converged on it
@@ -777,8 +779,8 @@ TEST_CASE("a gradient search that starts where a PC_OBSERVABLE term fails "
         {"NLOPT", "LD_SLSQP", "", "1.797693135e+308", row_text(kMax)},
         {"DLIB", "BFGS", "FAILSCORE 1e16\n", "1e+16", row_text(1e16)}};
 #ifdef TADAH_USE_CERES
-    backends.push_back(
-        {"CERES", "LBFGS", "", "1.797693135e+308", row_text(kMax)});
+    backends.push_back({"CERES", "STEEPEST_DESCENT", "", "1.797693135e+308",
+                        row_text(kMax)});
 #endif
     for (const Backend& b : backends) {
         const std::string name = b.lib + ":" + b.algo;
@@ -804,7 +806,9 @@ TEST_CASE("a gradient search that starts where a PC_OBSERVABLE term fails "
 }
 
 /* Pins: under FAILSCORE_GRADING ON (FAILSCORE 1e16) a gradient search --
- * DLIB:BFGS, LD_LBFGS, CERES:LBFGS when built; GRAD_STRATEGY HYBRID, every
+ * DLIB:BFGS, LD_LBFGS, CERES:STEEPEST_DESCENT when built (CERES:LBFGS
+ * until it was refused, 2026-10-15; CERES:STEEPEST_DESCENT passes before
+ * that change as well, a pin); GRAD_STRATEGY HYBRID, every
  * parameter differenced, PARAM fd_step 0.05 -- that starts at RCUT2B =
  * 5.2, where the observable fails, stops at its first gradient: the start
  * and its stencil points 5.125 and 5.275 (the step is 0.05 of the box
@@ -837,7 +841,7 @@ TEST_CASE("a graded gradient search that starts where a PC_OBSERVABLE term "
     std::vector<Backend> backends = {{"DLIB", "BFGS"},
                                      {"NLOPT", "LD_LBFGS"}};
 #ifdef TADAH_USE_CERES
-    backends.push_back({"CERES", "LBFGS"});
+    backends.push_back({"CERES", "STEEPEST_DESCENT"});
 #endif
     for (const Backend& b : backends) {
         const std::string name = b.lib + ":" + b.algo;
@@ -933,7 +937,9 @@ std::string trained_root() {
 }  // namespace
 
 /* Pins: under FAILSCORE_GRADING ON (FAILSCORE 1e16) a gradient search on a
- * trained model -- DLIB:BFGS, LD_LBFGS, CERES:LBFGS when built; no
+ * trained model -- DLIB:BFGS, LD_LBFGS, CERES:STEEPEST_DESCENT when built
+ * (CERES:LBFGS until it was refused, 2026-10-15; CERES:STEEPEST_DESCENT
+ * passes before that change as well, a pin); no
  * GRAD_STRATEGY, which resolves to ANALYTICAL for PC_OBSERVABLE -- that
  * starts at RCUT2B = 5.2, where the observable fails (a graded band-B
  * failure, graded_failscore(1e16, B, 1, 1) = 9.99375e+15), stops at its
@@ -961,7 +967,7 @@ TEST_CASE("an analytical gradient search that starts at a graded "
     std::vector<Backend> backends = {{"DLIB", "BFGS"},
                                      {"NLOPT", "LD_LBFGS"}};
 #ifdef TADAH_USE_CERES
-    backends.push_back({"CERES", "LBFGS"});
+    backends.push_back({"CERES", "STEEPEST_DESCENT"});
 #endif
     for (const Backend& b : backends) {
         const std::string name = b.lib + ":" + b.algo;
@@ -1002,7 +1008,8 @@ TEST_CASE("an analytical gradient search that starts at a graded "
  * has one, and differenced nothing: DLIB:BFGS ended "FTOL_ABS reached
  * after 4 evaluation(s)" with 2 rows, LD_LBFGS made 12 evaluations,
  * CERES:LBFGS left the box and ended "tol_gradinf reached" with status
- * 0. */
+ * 0. The Ceres case runs CERES:STEEPEST_DESCENT (CERES:LBFGS until it was
+ * refused, 2026-10-15); it passes before that change as well (a pin). */
 TEST_CASE("a HYBRID gradient search that starts at a graded PC_OBSERVABLE "
           "failure differences every parameter there",
           "[HPO][partial_failure][run]") {
@@ -1013,7 +1020,7 @@ TEST_CASE("a HYBRID gradient search that starts at a graded PC_OBSERVABLE "
     std::vector<Backend> backends = {{"DLIB", "BFGS"},
                                      {"NLOPT", "LD_LBFGS"}};
 #ifdef TADAH_USE_CERES
-    backends.push_back({"CERES", "LBFGS"});
+    backends.push_back({"CERES", "STEEPEST_DESCENT"});
 #endif
     for (const Backend& b : backends) {
         const std::string name = b.lib + ":" + b.algo;

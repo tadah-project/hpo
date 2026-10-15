@@ -89,6 +89,30 @@ using Registry = std::unordered_map<CapsKey, OptimizerCaps, CapsKeyHash>;
  * argument" once its setup was done. The repro is the unit test that
  * calls nlopt_optimize() with it (test_optimizer_caps_step.cpp).
  *
+ * CERES:LBFGS, WOLFE, NLCG -- Ceres' GradientProblemSolver has no bounds, and
+ * HPO does not evaluate a point outside the OPTIM box: it scores it as a
+ * failure graded by its distance to the box (box_penalty.h; owner decision,
+ * MK, 2026-10-15), a loss in [0.99975, 1) x FAILSCORE, far above every
+ * usable loss. These three search with Ceres' Wolfe line search, whose zoom
+ * phase interpolates that value with a cubic and shrinks the step to a
+ * vanishing fraction of the trial (a fraction of order |slope x step| /
+ * (FAILSCORE - loss)): measured with CERES:LBFGS, WOLFE and NLCG alike,
+ *   (O4) OPTIM RCUT2B [4, 6], CGRID2B (2) [0.1, 2] on the HPO examples'
+ *   common Ta model, FAILSCORE 1e16, MAXEVAL 25: the first trial left the
+ *   box, the search took a step of 0 and ended "Parameter tolerance
+ *   reached" at its start after 16 evaluations (loss 13.84); it had
+ *   evaluated 20 of its 25 points outside the box before, ending at
+ *   MAXEVAL with RCUT2B 11.2;
+ *   (A36) the straddle fixture of test_hpo_termination.cpp, FAILSCORE 1e9,
+ *   FAILSCORE_GRADING ON, from CGRID2B[2] = 1.4: after two trials outside
+ *   the box it moved by 2.5e-7 per iteration and ran to MAXEVAL 60 (best
+ *   95.39 on a stencil point, 1.968), where it had converged before
+ *   (XTOL_REL, 15 evaluations, at 2.4 outside the box).
+ * CERES:STEEPEST_DESCENT, whose Armijo line search contracts each step by
+ * 1e-3 at most, converges on A36 (FTOL_REL, 30 evaluations, 1.985) and stays
+ * registered. The box is the configuration's contract, so HPO refuses the
+ * three, naming the bound-constrained alternatives.
+ *
  * CERES:LEVENBERG_MARQUARDT, DOGLEG, SUBSPACE_DOGLEG -- Ceres' least-squares
  * Solver minimises a sum of squared residuals, with their Jacobian; HPO
  * gives an optimiser one scalar loss, over which these methods degenerate
@@ -106,9 +130,20 @@ constexpr const char* kCeresLeastSquares =
     "HPO does not run Ceres' least-squares Solver (LEVENBERG_MARQUARDT, "
     "DOGLEG, SUBSPACE_DOGLEG): it minimises a sum of squared residuals with "
     "their derivatives, and HPO gives an optimiser one scalar loss, over "
-    "which these methods degenerate. Use CERES:LBFGS, CERES:WOLFE, "
-    "CERES:NLCG or CERES:STEEPEST_DESCENT, Ceres' line-search solvers of a "
-    "scalar loss";
+    "which these methods degenerate. Use CERES:STEEPEST_DESCENT, Ceres' "
+    "line-search solver of a scalar loss that HPO runs, or a bound-"
+    "constrained gradient search: NLOPT:LD_LBFGS or DLIB:BFGS";
+constexpr const char* kCeresWolfe =
+    "Ceres' GradientProblemSolver has no bounds, and a point it proposes "
+    "outside the OPTIM box is not evaluated: it is scored as a failure "
+    "graded by its distance to the box, in [0.99975, 1) x FAILSCORE, far "
+    "above every usable loss. Ceres' Wolfe line search interpolates that "
+    "value and shrinks its step to almost nothing (a 2-D run stopped at its "
+    "start after 16 evaluations, 'Parameter tolerance reached' with a step "
+    "of 0; a 1-D run moved by 2.5e-7 per iteration until MAXEVAL). Use "
+    "NLOPT:LD_LBFGS (L-BFGS within the box) or DLIB:BFGS, or "
+    "CERES:STEEPEST_DESCENT, whose Armijo line search steps back from such "
+    "a point";
 constexpr Refusal kRefused[] = {
     {"NLOPT", "LN_NEWUOA_BOUND",
      "NLopt 2.10 plans each LN_NEWUOA_BOUND step with a nested LD_MMA run "
@@ -135,6 +170,9 @@ constexpr Refusal kRefused[] = {
      "NLopt 2.10 does not implement it (NLopt names it, but its optimiser "
      "rejects it as an invalid argument, so every run of it failed once "
      "its setup was done). Use NLOPT:LD_LBFGS, NLopt's L-BFGS"},
+    {"CERES", "LBFGS", kCeresWolfe},
+    {"CERES", "WOLFE", kCeresWolfe},
+    {"CERES", "NLCG", kCeresWolfe},
     {"CERES", "LEVENBERG_MARQUARDT", kCeresLeastSquares},
     {"CERES", "DOGLEG", kCeresLeastSquares},
     {"CERES", "SUBSPACE_DOGLEG", kCeresLeastSquares},
@@ -301,17 +339,14 @@ Registry build_registry()
         add(r, c);
     }
 
-    /* CERES -- GradientProblemSolver family (LBFGS / WOLFE / NLCG /
-     * STEEPEST_DESCENT). All four are local, gradient-based, accept
-     * function/parameter tolerance (relative) and a gradient-norm
-     * tolerance via PARAM tol_gradinf. The Solver family (LEVENBERG_
-     * MARQUARDT, DOGLEG, SUBSPACE_DOGLEG) is refused (kRefused above):
-     * those algorithms are degenerate over a scalar loss and would need
-     * residual-mode loss exposure plus autodiff. */
+    /* CERES -- GradientProblemSolver: STEEPEST_DESCENT (Armijo line
+     * search), local, gradient-based, with the function/parameter tolerances
+     * (relative) and a gradient-norm tolerance via PARAM tol_gradinf. The
+     * Wolfe-line-search directions (LBFGS, WOLFE, NLCG) and the Solver
+     * family (LEVENBERG_MARQUARDT, DOGLEG, SUBSPACE_DOGLEG) are refused
+     * (kRefused above). */
     {
-        const char* ceres_grad_algos[] = {
-            "LBFGS", "WOLFE", "NLCG", "STEEPEST_DESCENT"
-        };
+        const char* ceres_grad_algos[] = {"STEEPEST_DESCENT"};
         for (const char* a : ceres_grad_algos) {
             OptimizerCaps c;
             c.lib                = "CERES";
@@ -325,12 +360,15 @@ Registry build_registry()
                                    "STEP (PARAM max_ls_iter caps the line-search iterations)";
             c.ignores_bounds     = true;
             c.bounds_note        = "ignores the OPTIM box: Ceres' GradientProblemSolver has no "
-                                   "bounds, so its iterates can leave the box (a LOG dimension "
-                                   "stays positive, a linear one is unbounded) and are evaluated "
-                                   "there, and such a point can become the best; the first is "
-                                   "reported with a WARNING and DIAGNOSTICS counts them all "
-                                   "(finite differences at such a point step towards the box). "
-                                   "DLIB:BFGS and the NLopt LD_* algorithms keep to the box";
+                                   "bounds, so its line searches can propose points outside "
+                                   "the box (a LOG dimension stays positive, a linear one is "
+                                   "unbounded). Such a point is not evaluated: it is scored as "
+                                   "a failure graded by its distance to the box, whose slope "
+                                   "points away from the box, so a descent step leads back "
+                                   "into it; it counts against MAXEVAL and it is never the "
+                                   "best; the first is reported with a WARNING and DIAGNOSTICS "
+                                   "counts them all. DLIB:BFGS and the NLopt LD_* algorithms "
+                                   "keep to the box";
             add(r, c);
         }
     }

@@ -337,10 +337,12 @@ TEST_CASE("MULTISTART: run-level exceptions escape a start, others do not",
 TEST_CASE("CERES: a host exception aborts the solve and is rethrown",
           "[HPO][ceres][failure_handling]")
 {
+    /* CERES:STEEPEST_DESCENT (the case ran CERES:LBFGS, refused since: a
+     * pin) */
     using tadah::hpo::detail::run_ceres_gradient_problem;
     for (const char* kernel : {"inhouse", "ceres"}) {
         CAPTURE(kernel);
-        auto sp = make_spec("CERES", "LBFGS");
+        auto sp = make_spec("CERES", "STEEPEST_DESCENT");
         sp.param_raw["fd_kernel"] = kernel;
         StubHost host;
         host.throw_at = 5;
@@ -349,7 +351,7 @@ TEST_CASE("CERES: a host exception aborts the solve and is rethrown",
         };
         try {
             run_ceres_gradient_problem<Vec, NoRunner>(
-                sp, host, ceres::LBFGS, ceres::WOLFE, "LBFGS");
+                sp, host, ceres::STEEPEST_DESCENT, ceres::ARMIJO, "STEEPEST_DESCENT");
             FAIL("run_ceres_gradient_problem returned normally");
         } catch (const tadah::hpo::durable_best::Error& e) {
             CHECK(std::string(e.what()) == "persist failed under Ceres");
@@ -358,12 +360,12 @@ TEST_CASE("CERES: a host exception aborts the solve and is rethrown",
     }
 
     /* Control-flow exceptions keep their type too. */
-    auto sp = make_spec("CERES", "LBFGS");
+    auto sp = make_spec("CERES", "STEEPEST_DESCENT");
     StubHost host;
     host.throw_at = 1;
     host.thrower = [] { throw tadah::core::ShutdownRequested{}; };
     CHECK_THROWS_AS((run_ceres_gradient_problem<Vec, NoRunner>(
-                        sp, host, ceres::LBFGS, ceres::WOLFE, "LBFGS")),
+                        sp, host, ceres::STEEPEST_DESCENT, ceres::ARMIJO, "STEEPEST_DESCENT")),
                     tadah::core::ShutdownRequested);
     CHECK(host.calls == 1);
 }

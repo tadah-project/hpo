@@ -209,14 +209,14 @@ GradientCost gradient_cost(const OptimizerSpec& spec);
  * evaluates the loss at its starting point again (1 evaluation) ...".
  * NLopt's StoGO (GD_STOGO, GD_STOGO_RAND; OptimizerCaps::starts_at_x0)
  * does not start at the point it is given -- its first trial is the centre
- * of its box -- and neither does an AUGLAG whose INNER search is StoGO:
- * "... takes no step: its gradient search, which does not start at the
- * point it is given, evaluates the loss at a point of its own (1
- * evaluation) and the gradient there (...) ..., which needs MAXEVAL 6 or
- * more", wherever the phase starts (a PLAIN run, an exploration, MLSL's
- * INNER search; the PRESTAGE refinement and a MULTISTART start refuse such
- * a search at startup, require_prestage_refinement() and
- * require_inner_start_used(), strategy_rules.h). Under NOISE_CALIBRATION
+ * of its box: "... takes no step: its gradient search, which does not
+ * start at the point it is given, evaluates the loss at a point of its own
+ * (1 evaluation) and the gradient there (...) ..., which needs MAXEVAL 6 or
+ * more", wherever the phase starts (a PLAIN run, an exploration; the
+ * PRESTAGE refinement refuses such a search at startup,
+ * require_prestage_refinement(), MULTISTART every global one,
+ * require_multistart_backend(), and an INNER block every global one,
+ * require_inner_backend(), strategy_rules.h). Under NOISE_CALIBRATION
  * the first of several MULTISTART starts begins at the seed point and the
  * later ones elsewhere: where their budgets differ, "the first MULTISTART
  * start ..."
@@ -249,9 +249,8 @@ GradientCost gradient_cost(const OptimizerSpec& spec);
  * gradient there (...) ..., which needs MAXEVAL 11 or more" under NUMERICAL
  * without `reuse`, "... (1 evaluation: one analytical gradient,
  * GRAD_STRATEGY ANALYTICAL) ..., which needs MAXEVAL 8 or more" under
- * ANALYTICAL; an INNER GD_STOGO starts at a point of its own, "... then
- * its first local search, which does not start at the point MLSL gives
- * it, evaluates the loss at a point of its own (1 evaluation) ...". AUGLAG
+ * ANALYTICAL (an INNER block names a local search, which starts at the
+ * point MLSL gives it: require_inner_backend(), strategy_rules.h). AUGLAG
  * goes straight into its local search. And an INNER block whose local
  * search obtains gradients and whose own MAXEVAL, in NLopt's calls (each
  * the loss and the gradient at a point), is 1; an MLSL's local searches

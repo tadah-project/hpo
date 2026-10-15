@@ -106,16 +106,18 @@ endforeach()
 #   embf0_e2e      test_hpo_embf0_e2e.cpp: DM_REAM EMBF0 per candidate
 #   rcut_e2e       test_rcut_autoderive.cpp: knot RCUT re-derivation
 #   rhoform_e2e    test_hpo_rhoform.cpp: RHOFORM through hpo_run (an invalid
-#                  density form stops the run; the NONNEG/MONOTONE
-#                  projection, [rhoform_projection_e2e], is one of its cases)
+#                  density form stops the run; a NONNEG/MONOTONE amplitude
+#                  below 0, outside its box, is not evaluated,
+#                  [rhoform_projection_e2e], one of its cases)
 #   rhogate_e2e    test_rho_gates.cpp: RHOGATE rejects before training
 #   rhobargate_e2e test_rho_gates.cpp: RHOBARGATE rejects before training
 #   bumpgate_e2e   test_bump_support_gate.cpp: BUMPGATE rejects before
 #                  training (also tagged [!benchmark])
 #   nn_e2e         test_nn_exact_e2e.cpp: exact neighbour lists -- thin,
 #                  triclinic, sheared and unwrapped validation cells give
-#                  the loss of their supercells; a candidate cutoff beyond
-#                  the one-time lists is evaluated with rebuilt lists
+#                  the loss of their supercells; the one-time lists cover
+#                  every cutoff of the OPTIM box, and a candidate cutoff
+#                  beyond the box is not evaluated
 #   valmetric_e2e  test_validation_follows_metric_e2e.cpp: validation
 #                  predicts forces/stresses when PC_FRMSE/PC_SRMSE ask,
 #                  whatever FORCE/STRESS training used, and leaves out the

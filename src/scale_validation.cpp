@@ -230,11 +230,18 @@ void audit_search_space_widths(const OptimizerSpec& sp)
 void run_scale_validation(const OptimizerSpec& root, bool check_start_points)
 {
     const bool csp = check_start_points;
+    /* An INNER search is a local NLopt algorithm: an INNER block of another
+     * LIB is refused at startup as not NLopt (require_inner_backend),
+     * whatever it names, so it has no scaling of its own to check here
+     * (its caps would be looked up for a refused or unknown optimiser). */
+    const auto nlopt_inner = [](const OptimizerSpec& s) {
+        return s.inner && s.inner->lib == "NLOPT";
+    };
     validate_optimizer_scaling(root, "OUTER", csp);
-    if (root.inner) validate_optimizer_scaling(*root.inner, "INNER", csp);
+    if (nlopt_inner(root)) validate_optimizer_scaling(*root.inner, "INNER", csp);
     if (root.prestage) {
         validate_optimizer_scaling(*root.prestage, "PRESTAGE", csp);
-        if (root.prestage->inner)
+        if (nlopt_inner(*root.prestage))
             validate_optimizer_scaling(*root.prestage->inner, "PRESTAGE.INNER", csp);
     }
 

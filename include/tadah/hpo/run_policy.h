@@ -290,7 +290,7 @@ public:
    * runs: a safety net for specs built outside HPOTargets. */
   static void validate(const OptimizerSpec& spec) {
     require_multistart_backend(spec);
-    require_inner_start_used(spec);
+    require_inner_backend(spec, run_phase_name(spec));
   }
 
   void run(const OptimizerSpec& spec, HPO_Host<Vec,Runner>& host) override {
@@ -487,7 +487,7 @@ public:
   static void validate(const OptimizerSpec& spec) {
     require_prestage_explore(spec);
     require_prestage_refinement(spec);
-    require_inner_start_used(spec);
+    require_inner_backend(spec, run_phase_name(spec));
   }
 
   void run(const OptimizerSpec& spec, HPO_Host<Vec,Runner>& host) override {

@@ -116,10 +116,8 @@ inline void detail::run_inner_dispatch(const OptimizerSpec& spec,
     throw std::runtime_error(
         "CERES support is not built; reconfigure with -DTADAH_ENABLE_CERES=ON");
 #else
-    if      (spec.algo == "LBFGS")            run_ceres_lbfgs           <Vec,Runner>(spec, host);
-    else if (spec.algo == "WOLFE")            run_ceres_wolfe           <Vec,Runner>(spec, host);
-    else if (spec.algo == "NLCG")             run_ceres_nlcg            <Vec,Runner>(spec, host);
-    else if (spec.algo == "STEEPEST_DESCENT") run_ceres_steepest_descent<Vec,Runner>(spec, host);
+    /* CERES:LBFGS, WOLFE and NLCG are refused (optimizer_caps.cpp). */
+    if (spec.algo == "STEEPEST_DESCENT") run_ceres_steepest_descent<Vec,Runner>(spec, host);
     else throw std::runtime_error("unknown CERES algo " + spec.algo);
 #endif
   } else {

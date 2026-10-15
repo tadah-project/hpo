@@ -95,7 +95,10 @@ TEST_CASE("explain_optimiser: ALGO and LIB print the table of the "
     }
     CHECK_THAT(table, Catch::Contains("\n  LD_LBFGS ") &&
                       Catch::Contains("local, gradient-based"));
-    CHECK_THAT(table, Catch::Contains("\n  LBFGS ") &&
+    /* CERES:STEEPEST_DESCENT (the row checked was CERES:LBFGS, refused
+     * since: listed under Refused; before the fix the case passes as well,
+     * a pin) */
+    CHECK_THAT(table, Catch::Contains("\n  STEEPEST_DESCENT ") &&
                       Catch::Contains("ignores the OPTIM box"));
     CHECK_THAT(table, Catch::Contains("needs a stop"));
     CHECK_THAT(table, Catch::Contains("runs a local search"));
@@ -108,8 +111,8 @@ TEST_CASE("explain_optimiser: ALGO and LIB print the table of the "
 /* Pins: `tadah explain <LIB>:<ALGO>`, or `tadah explain <ALGO>` alone, in
  * any letter case, prints that optimiser's ALGO help
  * (OptimizerSpec::print_caps): NLOPT:LD_LBFGS for "LD_LBFGS", "ld_lbfgs"
- * and "NLOPT:LD_LBFGS", CERES:LBFGS, ASA:ASA for "ASA" (an ALGO name before
- * a LIB name), the REFUSED text of NLOPT:LN_NEWUOA for "NLOPT:LN_NEWUOA" and
+ * and "NLOPT:LD_LBFGS", CERES:STEEPEST_DESCENT, ASA:ASA for "ASA" (an ALGO
+ * name before a LIB name), the REFUSED text of NLOPT:LN_NEWUOA for "NLOPT:LN_NEWUOA" and
  * "LN_NEWUOA"; a LIB name alone prints its section of the table ("NLOPT":
  * its rows, no other library's). A LIB:ALGO HPO does not have is an error
  * naming what is wrong, the startup check's text ("tadah explain: unknown
@@ -129,7 +132,10 @@ TEST_CASE("explain_optimiser: one optimiser, a library, and the names it "
         CHECK(explained(name, &known) == lbfgs);
         CHECK(known);
     }
-    CHECK(explained("CERES:LBFGS") == caps_help("CERES", "LBFGS"));
+    /* CERES:STEEPEST_DESCENT (it was CERES:LBFGS, refused since; before
+     * the fix the case passes as well, a pin) */
+    CHECK(explained("CERES:STEEPEST_DESCENT") ==
+          caps_help("CERES", "STEEPEST_DESCENT"));
     CHECK(explained("ASA") == caps_help("ASA", "ASA"));
     const std::string newuoa = explained("NLOPT:LN_NEWUOA");
     CHECK_THAT(newuoa, Catch::StartsWith("Options for NLOPT:LN_NEWUOA\n"
@@ -153,4 +159,80 @@ TEST_CASE("explain_optimiser: one optimiser, a library, and the names it "
     bool known = true;
     CHECK(explained("bogus", &known).empty());
     CHECK_FALSE(known);
+}
+
+/* Pins: the ALGO help of the optimisers that run a local search (NLopt's
+ * six MLSL and six AUGLAG forms, OptimizerCaps::accepts_inner) says what
+ * their INNER block takes, in one entry wrapped at 76 columns: "INNER ...
+ * ENDINNER: the local search it runs, from the points it samples in the
+ * OPTIM box" (MLSL) or "from its own starting point" (AUGLAG), ": LIB NLOPT
+ * and a local ALGO; a global one (`tadah explain ALGO` marks each) is
+ * refused, and so is one that needs an INNER block of its own.", then
+ * "Without one NLopt runs its default LN_COBYLA." (LD_MMA for the GD_ and
+ * LD_ forms) or, for AUGLAG, AUGLAG_EQ, G_MLSL and G_MLSL_LDS, "The block
+ * is required: NLopt has no default local optimiser for it." (owner
+ * decision, MK, 2026-10-15: no nested global search). No other optimiser's
+ * help has the entry.
+ * Before the fix: no ALGO help says what an INNER block takes (the entry is
+ * missing from all twelve): the checks of the twelve fail. */
+TEST_CASE("explain_optimiser: the ALGO help of MLSL and AUGLAG says that "
+          "their INNER block takes a local optimiser",
+          "[HPO][explain][inner]")
+{
+    const std::string head = "   * INNER ... ENDINNER: ";
+    /* The entry, its lines joined: from its head to the next entry. */
+    const auto entry = [&](const std::string& help) {
+        const auto at = help.find(head);
+        if (at == std::string::npos) return std::string();
+        const auto end = help.find("\n   * ", at + 1);
+        std::string e = help.substr(at, end == std::string::npos
+                                            ? std::string::npos
+                                            : end - at);
+        std::istringstream lines(e);
+        std::string joined, line;
+        while (std::getline(lines, line)) {
+            INFO("line: '" << line << "'");
+            CHECK(line.size() <= 76u);
+            const auto p = line.find_first_not_of(' ');
+            const std::string text =
+                p == std::string::npos ? std::string() : line.substr(p);
+            joined += (joined.empty() ? "" : " ") + text;
+        }
+        return joined;
+    };
+    const std::string takes =
+        ": LIB NLOPT and a local ALGO; a global one (`tadah explain ALGO` "
+        "marks each) is refused, and so is one that needs an INNER block of "
+        "its own. ";
+    const std::string required =
+        "The block is required: NLopt has no default local optimiser for it.";
+    std::size_t with_inner = 0;
+    for (const auto* c : filter_optimizer_caps(
+             [](const OptimizerCaps&) { return true; })) {
+        INFO(c->lib << ":" << c->algo);
+        const std::string help = caps_help(c->lib, c->algo);
+        if (!c->accepts_inner) {
+            CHECK(help.find("INNER ... ENDINNER") == std::string::npos);
+            continue;
+        }
+        ++with_inner;
+        const bool mlsl = c->algo.find("MLSL") != std::string::npos;
+        const bool needs = c->algo == "AUGLAG" || c->algo == "AUGLAG_EQ" ||
+                           c->algo == "G_MLSL" || c->algo == "G_MLSL_LDS";
+        const bool derivative = c->algo.rfind("GD_", 0) == 0 ||
+                                c->algo.rfind("LD_", 0) == 0;
+        CHECK(entry(help) ==
+              "* INNER ... ENDINNER: the local search it runs, from " +
+                  std::string(mlsl ? "the points it samples in the OPTIM box"
+                                   : "its own starting point") +
+                  takes +
+                  (needs ? required
+                         : std::string("Without one NLopt runs its default ") +
+                               (derivative ? "LD_MMA" : "LN_COBYLA") + "."));
+    }
+    CHECK(with_inner == 12u);
+    CHECK_THAT(explained("NLOPT:G_MLSL_LDS"),
+               Catch::Contains("\n   * INNER ... ENDINNER: the local search "
+                               "it runs, from the points it\n     samples in "
+                               "the OPTIM box: LIB NLOPT"));
 }

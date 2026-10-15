@@ -20,6 +20,7 @@
 
 #include "catch2/catch.hpp"
 
+#include <tadah/hpo/box_penalty.h>
 #include <tadah/hpo/gradient_provider.h>
 #include <tadah/hpo/hpo_log.h>
 #include <tadah/hpo/nlopt_adapter.h>
@@ -120,22 +121,6 @@ struct Recorder {
     double operator()(const Vec& x) const {
         asked.push_back(x);
         return f(x);
-    }
-};
-
-/* f of the REAL point projected onto the box, as HPO_Host evaluates an
- * AMPGRIDMB amplitude below 0 at 0 (RHOFORM NONNEG / MONOTONE). */
-struct ProjectingHost {
-    std::function<double(const Vec&)> f;
-    std::vector<std::pair<double, double>> box;
-    mutable std::vector<Vec> asked;
-    double operator()(const Vec& x) const {
-        asked.push_back(x);
-        Vec p = x;
-        for (long i = 0; i < p.size(); ++i)
-            p(i) = std::clamp(p(i), box[static_cast<std::size_t>(i)].first,
-                              box[static_cast<std::size_t>(i)].second);
-        return f(p);
     }
 };
 
@@ -249,17 +234,21 @@ TEST_CASE("fd bounds: a NONNEG amplitude on its zero bound gets its full "
           "slope, with either step rule",
           "[HPO][grad_provider][fd_bounds][rhoform]")
 {
-    /* f = 5 a of the REAL amplitude a in [0, 0.5], which the host projects
-     * onto a >= 0 (HPO_Host, RHOFORM NONNEG). At a = 0 the central
-     * difference of Ceres' rule evaluated -2^-26, projected to 0, and gave
-     * (f(h) - f(0)) / 2h, half the slope. */
+    /* f = 5 a of the REAL amplitude a in [0, 0.5] (RHOFORM NONNEG). At
+     * a = 0 the central difference of Ceres' rule evaluated -2^-26, which
+     * the host then evaluated at 0 (an amplitude below 0 is outside the
+     * box, and not evaluated at all since 2026-10-15: box_penalty.h), and
+     * gave (f(h) - f(0)) / 2h, half the slope. Every point asked for lies in
+     * the box.
+     * Before the fix: passes as well (a pin; the stub host evaluated an
+     * amplitude below 0 at 0, as HPO_Host's RHOFORM projection did, which no
+     * stencil point asks for). */
     for (const bool normalise : {true, false}) {
         for (const std::string kernel : {"", "inhouse", "ceres"}) {
             CAPTURE(normalise, kernel);
             const auto sp = spec_on({dim("AMPGRIDMB[3]", 0.0, 0.5)}, normalise,
                                     1e-6, kernel);
-            ProjectingHost host{[](const Vec& p) { return 5.0 * p(0); },
-                                {{0.0, 0.5}}, {}};
+            Recorder host{[](const Vec& p) { return 5.0 * p(0); }, {}};
             std::atomic<unsigned long> counter{0};
             auto gp = tadah::hpo::make_gradient_provider<Vec, NoRunner>(
                 sp, host, &counter, 0);
@@ -456,7 +445,12 @@ TEST_CASE("fd bounds: Ceres' rule next to a bound -- the cost, MAXEVAL and "
         CHECK(counter.load() == 2u);
         CHECK(host.asked.size() == 2u);
     }
-    SECTION("a failed u - 2h is a Stencil failure naming that point") {
+    SECTION("a failed u - 2h: the 2-point difference with u - h") {
+        /* Pins: at the upper bound 1 the one-sided stencil is 0.99 and
+         * 0.98; 0.98 fails, so the backward difference of the point and
+         * 0.99 is the gradient, 1.
+         * Before the fix: a Stencil failure naming 0.98 ("at X[1] = 1, the
+         * stencil point X[1] = 0.98 failed: loss 1.797693135e+308"). */
         const auto sp = spec_on({dim("X[1]", 0.0, 1.0)}, true, 1e-2, "ceres");
         Recorder host{[](const Vec& x) { return x(0) < 0.985 ? kMax : x(0); },
                       {}};
@@ -464,11 +458,9 @@ TEST_CASE("fd bounds: Ceres' rule next to a bound -- the cost, MAXEVAL and "
         auto gp = tadah::hpo::make_gradient_provider<Vec, NoRunner>(
             sp, host, &counter, 0);
         Vec g;
-        CHECK_FALSE(gp.gradient(vec({1.0}), g));
-        CHECK(gp.failure->kind == GradientFailure::Stencil);
-        CHECK(gp.failure->detail ==
-              "at X[1] = 1, the stencil point X[1] = 0.98 failed: loss "
-              "1.797693135e+308");
+        REQUIRE(gp.gradient(vec({1.0}), g));
+        CHECK(g(0) == Approx(1.0).epsilon(1e-9));
+        CHECK(host.asked.size() == 3u);
     }
 }
 
@@ -503,11 +495,14 @@ TEST_CASE("fd bounds: HYBRID honours PARAM fd_kernel and diff_method, and "
     SECTION("fd_kernel ceres: Ceres' rule") {
         auto sp = spec_on(unit2, true, 1e-2, "ceres");
         sp.grad_strategy = GradStrategy::Hybrid;
-        /* inside: 1 + 2m, the points u +- |u| fd_step */
-        CHECK(run(sp, vec({0.5, 0.5}), asked) == 3u);
-        REQUIRE(asked.size() == 2u);
-        CHECK(asked[0](0) == 0.5 + 5e-3);
-        CHECK(asked[1](0) == 0.5 - 5e-3);
+        /* inside: 2 + 2m, the centre (gradient() evaluates the loss at the
+         * point first: its kind decides every difference) and the points
+         * u +- |u| fd_step. Before the fix: 1 + 2m, without the centre. */
+        CHECK(run(sp, vec({0.5, 0.5}), asked) == 4u);
+        REQUIRE(asked.size() == 3u);
+        CHECK(asked[0](0) == 0.5);
+        CHECK(asked[1](0) == 0.5 + 5e-3);
+        CHECK(asked[2](0) == 0.5 - 5e-3);
         /* at the bound: 2 + 2m, the centre and one-sided 2^-26, 2^-25 */
         CHECK(run(sp, vec({0.0, 0.5}), asked) == 4u);
         REQUIRE(asked.size() == 3u);
@@ -556,41 +551,207 @@ TEST_CASE("fd bounds: diff_method 1 takes forward differences, 1 + n "
     }
 }
 
-TEST_CASE("fd bounds: a point outside the box is differenced towards it, and "
-          "counted", "[HPO][grad_provider][fd_bounds]")
+TEST_CASE("box penalty: which points lie outside the OPTIM box, their "
+          "distance, score and slope", "[HPO][fd_bounds][out_of_box]")
 {
-    /* Only a gradient search that leaves the box (the CERES drivers), or
-     * one started at a point another search left outside, asks for it. The
-     * central stencil of 1.02 evaluated 1.03, further outside (owner
-     * decision D4). */
-    Journal j;
-    const auto sp = spec_on({dim("X[1]", 0.0, 1.0)}, true, 1e-2);
-    Recorder host{[](const Vec& x) { return x(0) * x(0); }, {}};
-    std::atomic<unsigned long> counter{0};
-    auto gp = tadah::hpo::make_gradient_provider<Vec, NoRunner>(
-        sp, host, &counter, 0);
-    Vec g;
-    REQUIRE(gp.gradient(vec({1.02}), g));
-    REQUIRE(host.asked.size() == 3u);
-    const double h = 1e-2 * 1.02;   /* fd_step * max(|u|, 1) */
-    CHECK(host.asked[0](0) == 1.02);
-    CHECK(host.asked[1](0) == 1.02 - h);
-    CHECK(host.asked[2](0) == 1.02 - 2.0 * h);
-    CHECK(g(0) == Approx(2.04).epsilon(1e-9));
-    /* below the box, FORWARD: the one step up */
-    auto fwd = spec_on({dim("X[1]", 0.0, 1.0)}, true, 1e-2, "", 1);
-    auto gp2 = tadah::hpo::make_gradient_provider<Vec, NoRunner>(
-        fwd, host, &counter, 0);
-    host.asked.clear();
-    REQUIRE(gp2.gradient(vec({-0.5}), g));
-    REQUIRE(host.asked.size() == 2u);
-    CHECK(host.asked[1](0) == -0.5 + 1e-2);
-    const std::string t = j.text();
-    CHECK_THAT(t, Catch::Contains("Out-of-box gradients    : 2 (at points outside the OPTIM "
-                                  "box, each finite\n    difference stepped "
-                                  "towards the box)\n") &&
-                  Catch::Contains("finite differences: X[1] = 1.02 lies outside "
-                                  "its OPTIM box [0, 1]"));
+    /* box_penalty.h (owner decision, MK, 2026-10-15). Pins:
+     *  - a point inside, on a bound, within kSnapUlps (8) units in the last
+     *    place of one (evaluated on it, D10) or NaN is not outside;
+     *  - beyond that, the signed excess per dimension in the search's
+     *    coordinates (OPTIM_SCALE AUTO: a fraction of the box's width;
+     *    NONE on a LOG dimension: ln x), the first dimension outside, how
+     *    many are, and the Euclidean distance; x <= 0 on a LOG dimension
+     *    is at an infinite distance, where the slope is 0;
+     *  - the score lies in [0.99975, 1) x FAILSCORE (band D's range) for
+     *    the smallest normal FAILSCORE, 1, 1e9 and the largest double (the
+     *    parser refuses a subnormal one), grows with the distance, and is
+     *    never a usable loss (loss_is_feasible false);
+     *  - the slope, 0.25e-3 FS / (1 + d)^2 e_k / d, points away from the
+     *    box and is the derivative of the score.
+     * Before the fix: does not compile (box_penalty.h is new). */
+    ScalePolicy autos;
+    autos.normalise = true;
+    ScalePolicy none;
+    none.normalise = false;
+    const SearchSpace lin = SearchSpace::build(
+        {dim("X[1]", 0.0, 2.0), dim("X[2]", 1.0, 5.0)}, autos);
+    const SearchSpace logd = SearchSpace::build(
+        {dim("X[1]", 0.1, 10.0, ScaleKind::Log)}, none);
+    const auto at = [](std::initializer_list<double> v) {
+        return std::vector<double>(v);
+    };
+
+    SECTION("inside, on a bound, within the snap, NaN: not outside") {
+        CHECK_FALSE(tadah::hpo::outside_box(lin, at({1.0, 3.0})));
+        CHECK_FALSE(tadah::hpo::outside_box(lin, at({0.0, 5.0})));
+        CHECK_FALSE(tadah::hpo::outside_box(
+            lin, at({std::nextafter(2.0, 3.0), 3.0})));
+        CHECK_FALSE(tadah::hpo::outside_box(
+            lin, at({std::numeric_limits<double>::quiet_NaN(), 3.0})));
+    }
+    SECTION("beyond: the excess in fractions of each width") {
+        const auto o = tadah::hpo::outside_box(lin, at({2.5, 0.0}));
+        REQUIRE(o);
+        CHECK(o->count == 2u);
+        CHECK(o->first == 0u);
+        REQUIRE(o->excess.size() == 2u);
+        CHECK(o->excess[0] == Approx(0.25).epsilon(1e-12));
+        CHECK(o->excess[1] == Approx(-0.25).epsilon(1e-12));
+        CHECK(o->distance == Approx(std::sqrt(0.125)).epsilon(1e-12));
+        const auto one = tadah::hpo::outside_box(lin, at({1.0, 6.0}));
+        REQUIRE(one);
+        CHECK(one->count == 1u);
+        CHECK(one->first == 1u);
+        CHECK(one->distance == Approx(0.25).epsilon(1e-12));
+    }
+    SECTION("a LOG dimension under NONE: ln x, and x <= 0 infinitely far") {
+        const auto o = tadah::hpo::outside_box(logd, at({20.0}));
+        REQUIRE(o);
+        CHECK(o->distance == Approx(std::log(2.0)).epsilon(1e-12));
+        const auto z = tadah::hpo::outside_box(logd, at({-1.0}));
+        REQUIRE(z);
+        CHECK(z->distance == std::numeric_limits<double>::infinity());
+        std::vector<double> g;
+        tadah::hpo::out_of_box_slope(*z, 1e9, g);
+        REQUIRE(g.size() == 1u);
+        CHECK(g[0] == 0.0);
+        CHECK(tadah::hpo::out_of_box_score(1e9, z->distance) < 1e9);
+    }
+    SECTION("the score: band D's range, growing, never usable") {
+        for (const double fs : {std::numeric_limits<double>::min(), 1.0, 1e9,
+                                std::numeric_limits<double>::max()}) {
+            CAPTURE(fs);
+            double previous = 0.0;
+            for (const double d : {1e-12, 1e-3, 0.5, 1.0, 10.0, 1e6}) {
+                CAPTURE(d);
+                const double l = tadah::hpo::out_of_box_score(fs, d);
+                CHECK(l >= 0.99975 * fs);
+                CHECK(l < fs);
+                CHECK(l > previous);
+                CHECK_FALSE(tadah::hpo::loss_is_feasible(l, fs));
+                previous = l;
+            }
+        }
+    }
+    SECTION("the slope points away from the box: the score's derivative") {
+        const double fs = 1e9;
+        const auto o = tadah::hpo::outside_box(lin, at({2.5, 0.0}));
+        REQUIRE(o);
+        std::vector<double> g;
+        tadah::hpo::out_of_box_slope(*o, fs, g);
+        REQUIRE(g.size() == 2u);
+        CHECK(g[0] > 0.0);   /* above the box: the score grows upwards */
+        CHECK(g[1] < 0.0);   /* below it: the score grows downwards */
+        const double d = o->distance, h = 1e-6;
+        const double dl = (tadah::hpo::out_of_box_score(fs, d + h) -
+                           tadah::hpo::out_of_box_score(fs, d - h)) / (2 * h);
+        CHECK(g[0] == Approx(dl * o->excess[0] / d).epsilon(1e-5));
+        CHECK(g[1] == Approx(dl * o->excess[1] / d).epsilon(1e-5));
+    }
+}
+
+TEST_CASE("fd bounds: a point outside the box is not differenced: every "
+          "strategy gives it the slope of its out-of-box score",
+          "[HPO][grad_provider][fd_bounds][out_of_box]")
+{
+    /* A point outside the OPTIM box is not evaluated (box_penalty.h; owner
+     * decision, MK, 2026-10-15): HPO_Host scores it
+     * graded_failscore(FS, D, d, 1) of its distance d to the box in the
+     * search's coordinates, and the gradient there is that score's slope.
+     * Pins: NUMERICAL (gradient and gradient_at), HYBRID and ANALYTICAL give
+     * dL/du_k = 0.25e-3 FS sigma'(d) e_k / d (sigma'(d) = 1 / (1 + d)^2,
+     * e_k the signed excess), with no host call, nothing counted and no
+     * analytical pass: under OPTIM_SCALE AUTO at u = 1.02 over [0, 1] (d =
+     * 0.02), at (-0.5, 1.5) in two dimensions (d = sqrt(0.5)); under NONE
+     * on a LOG dimension [0.1, 10] at ln 20 (d = ln 2); DIAGNOSTICS has no
+     * "Out-of-box gradients" line, and a point within rounding of a bound
+     * (D10) is differenced on the bound.
+     * Before the fix: the centre was differenced one-sided towards the box
+     * (u = 1.02: the host asked for 1.02, 1.0098 and 0.9996, g = 2.04 for
+     * x^2), counted ("Out-of-box gradients    : 2 ..."), and ANALYTICAL and
+     * HYBRID ran their analytical pass. */
+    const double fs = 1e9;
+    const auto slope = [fs](double e, double d) {
+        return 0.25e-3 * fs / ((1.0 + d) * (1.0 + d)) * e / d;
+    };
+    unsigned long passes = 0;
+    const auto agf = [&passes](const Vec& x, Vec& g, std::vector<int>& nfd) {
+        ++passes;
+        g.set_size(x.size());
+        for (long i = 0; i < x.size(); ++i) g(i) = 1.0;
+        nfd.clear();
+        return true;
+    };
+    SECTION("OPTIM_SCALE AUTO, one dimension, every strategy") {
+        Journal j;
+        for (const auto strat :
+             {GradStrategy::Numerical, GradStrategy::Hybrid,
+              GradStrategy::Analytical}) {
+            CAPTURE(static_cast<int>(strat));
+            auto sp = spec_on({dim("X[1]", 0.0, 1.0)}, true, 1e-2);
+            sp.failscore = fs;
+            sp.grad_strategy = strat;
+            Recorder host{[](const Vec& x) { return x(0) * x(0); }, {}};
+            std::atomic<unsigned long> counter{0};
+            auto gp = tadah::hpo::make_gradient_provider<Vec, NoRunner>(
+                sp, host, &counter, 0, agf);
+            Vec g;
+            passes = 0;
+            REQUIRE(gp.gradient(vec({1.02}), g));
+            CHECK(g(0) == Approx(slope(0.02, 0.02)).epsilon(1e-9));
+            REQUIRE(gp.gradient_at(vec({1.02}), 0.99975e9, g));
+            CHECK(g(0) == Approx(slope(0.02, 0.02)).epsilon(1e-9));
+            CHECK(host.asked.empty());
+            CHECK(counter.load() == 0u);
+            CHECK(passes == 0u);
+        }
+        const std::string t = j.text();
+        CHECK(t.find("Out-of-box gradients") == std::string::npos);
+        CHECK(t.find("finite differences: X[1] = 1.02") == std::string::npos);
+    }
+    SECTION("two dimensions: the slope along the excess") {
+        auto sp = spec_on({dim("X[1]", 0.0, 1.0), dim("X[2]", 0.0, 1.0)}, true,
+                          1e-2);
+        sp.failscore = fs;
+        Recorder host{[](const Vec& x) { return x(0) + x(1); }, {}};
+        std::atomic<unsigned long> counter{0};
+        auto gp = tadah::hpo::make_gradient_provider<Vec, NoRunner>(
+            sp, host, &counter, 0);
+        Vec g;
+        REQUIRE(gp.gradient(vec({-0.5, 1.5}), g));
+        const double d = std::sqrt(0.5);
+        CHECK(g(0) == Approx(slope(-0.5, d)).epsilon(1e-9));
+        CHECK(g(1) == Approx(slope(0.5, d)).epsilon(1e-9));
+        CHECK(host.asked.empty());
+    }
+    SECTION("OPTIM_SCALE NONE, a LOG dimension: the distance in ln x") {
+        auto sp = spec_on({dim("X[1]", 0.1, 10.0, ScaleKind::Log)}, false,
+                          1e-2);
+        sp.failscore = fs;
+        Recorder host{[](const Vec& x) { return x(0); }, {}};
+        std::atomic<unsigned long> counter{0};
+        auto gp = tadah::hpo::make_gradient_provider<Vec, NoRunner>(
+            sp, host, &counter, 0);
+        Vec g;
+        REQUIRE(gp.gradient(vec({std::log(20.0)}), g));
+        const double e = std::log(20.0) - std::log(10.0);
+        CHECK(g(0) == Approx(slope(e, e)).epsilon(1e-9));
+        CHECK(host.asked.empty());
+    }
+    SECTION("within rounding of a bound: differenced on the bound") {
+        auto sp = spec_on({dim("X[1]", 0.0, 1.0)}, true, 1e-2);
+        sp.failscore = fs;
+        Recorder host{[](const Vec& x) { return x(0) * x(0); }, {}};
+        std::atomic<unsigned long> counter{0};
+        auto gp = tadah::hpo::make_gradient_provider<Vec, NoRunner>(
+            sp, host, &counter, 0);
+        Vec g;
+        REQUIRE(gp.gradient(vec({std::nextafter(1.0, 2.0)}), g));
+        REQUIRE(host.asked.size() == 3u);
+        CHECK(host.asked[1](0) == 1.0 - 1e-2);
+        CHECK(host.asked[2](0) == 1.0 + 2.0 * -1e-2);
+        CHECK(g(0) == Approx(2.0).epsilon(1e-9));
+    }
 }
 
 TEST_CASE("fd bounds: the journal names the first one-sided difference of "
@@ -618,9 +779,13 @@ TEST_CASE("fd bounds: the journal names the first one-sided difference of "
                           "3-point difference, at RCUT2B = 5.98 and RCUT2B = "
                           "5.96 with the loss at the point itself; DIAGNOSTICS "
                           "counts such differences per dimension") &&
+                      /* it said "(a coordinate within a step of its
+                       * bound, or outside\n    the box, differenced into
+                       * it)" before the fix: a point outside the box is not
+                       * differenced now */
                       Catch::Contains("One-sided differences   : 4 (a coordinate "
-                                      "within a step of its bound, or outside\n"
-                                      "    the box, differenced into it): "
+                                      "within a step of its bound, differenced\n"
+                                      "    into the box): "
                                       "RCUT2B 3, CGRID2B[2] 1\n"));
         CHECK(t.find("Out-of-box gradients") == std::string::npos);
     }
@@ -637,6 +802,103 @@ TEST_CASE("fd bounds: the journal names the first one-sided difference of "
         CHECK(t.find("outside the OPTIM box") == std::string::npos);
         CHECK(t.find("HYBRID centre losses") == std::string::npos);
     }
+}
+
+TEST_CASE("fd bounds: a difference taken without a point of another kind is "
+          "journalled once per dimension and counted in DIAGNOSTICS",
+          "[HPO][grad_provider][fd_bounds][hpolog][gradient_failure]")
+{
+    /* The default FAILSCORE below X[1] = 0.3. At X[1] = 0.35 the central
+     * stencil is 0.45 and 0.25, and 0.25 fails: the one-sided difference
+     * into the usable side, 0.45 and 0.55, is taken (owner decision, MK,
+     * 2026-10-15: a difference never mixes the kinds).
+     * Pins: two such gradients (at 0.35 and 0.36) give the slope 1 along
+     * X[1]; one INFO line names the first ("finite differences: at X[1] =
+     * 0.35 (a usable loss), the stencil point X[1] = 0.25 (loss
+     * 1.797693135e+308) is of another kind, so the difference is taken
+     * without it: one-sided 3-point difference, at X[1] = 0.45 and X[1] =
+     * 0.55 with the loss at the point itself; ..."), and DIAGNOSTICS counts
+     * both, "Mixed-kind stencils     : 2 (...): X[1] 2".
+     * Before the fix: both gradients failed (a Stencil failure naming 0.25),
+     * and neither line was written. */
+    Journal j;
+    const auto sp = spec_on({dim("X[1]", 0.0, 1.0), dim("X[2]", 0.0, 1.0)},
+                            true, 0.1);
+    Recorder host{[](const Vec& x) { return x(0) < 0.3 ? kMax : x(0) + x(1); },
+                  {}};
+    std::atomic<unsigned long> counter{0};
+    auto gp = tadah::hpo::make_gradient_provider<Vec, NoRunner>(sp, host,
+                                                                &counter, 0);
+    Vec g;
+    REQUIRE(gp.gradient(vec({0.35, 0.5}), g));
+    CHECK(g(0) == Approx(1.0).epsilon(1e-9));
+    REQUIRE(gp.gradient(vec({0.36, 0.5}), g));
+    CHECK(g(0) == Approx(1.0).epsilon(1e-9));
+    const std::string t = j.text();
+    CHECK(count_of(t, "finite differences: at X[1] = ") == 1u);
+    CHECK_THAT(t, Catch::Contains(
+                      "finite differences: at X[1] = 0.35 (a usable loss), the "
+                      "stencil point X[1] = 0.25 (loss 1.797693135e+308) is of "
+                      "another kind, so the difference is taken without it: "
+                      "one-sided 3-point difference, at X[1] = 0.45 and X[1] = "
+                      "0.55 with the loss at the point itself; a difference "
+                      "never mixes a usable loss with a failure; DIAGNOSTICS "
+                      "counts such differences per dimension") &&
+                  Catch::Contains("Mixed-kind stencils     : 2 (a stencil "
+                                  "point held a loss of another kind than "
+                                  "the\n    point's own -- a failure next to a "
+                                  "usable loss, a usable loss or an\n    "
+                                  "ungraded failure next to a graded one -- "
+                                  "and the difference was taken\n    without "
+                                  "it): X[1] 2\n"));
+}
+
+TEST_CASE("fd bounds: a difference taken without two points of another kind "
+          "names both in its journal line",
+          "[HPO][grad_provider][fd_bounds][hpolog][gradient_failure]")
+{
+    /* A usable island [0.3, 0.5] in the default FAILSCORE. At X[1] = 0.35
+     * the central stencil is 0.45 and 0.25, and 0.25 fails; the one-sided
+     * difference into the usable side would read 0.55, which fails too.
+     * Pins: the gradient along X[1] is the forward 2-point difference with
+     * 0.45, 1; the INFO line names both points ("finite differences: at
+     * X[1] = 0.35 (a usable loss), the stencil points X[1] = 0.25 (loss
+     * 1.797693135e+308) and X[1] = 0.55 (loss 1.797693135e+308) are of
+     * another kind, so the difference is taken without them: forward
+     * difference, at X[1] = 0.45; ..."), and DIAGNOSTICS counts the
+     * component, "Mixed-kind stencils     : 1 (...): X[1] 1".
+     * Before the fix: passes as well (a pin of the plural line of
+     * StencilReport::mixed and of the 2-point fallback when the far point
+     * of the other side fails, which no test reached; a mutant that took the
+     * one-sided difference through the failed far point fails it,
+     * tmp/before_fix_box_and_slopes_review_pins.txt). Before the same-kind
+     * rule (owner decision, MK, 2026-10-15) the gradient failed at 0.25. */
+    Journal j;
+    const auto sp = spec_on({dim("X[1]", 0.0, 1.0), dim("X[2]", 0.0, 1.0)},
+                            true, 0.1);
+    Recorder host{[](const Vec& x) {
+                      return x(0) >= 0.3 && x(0) <= 0.5 ? x(0) + x(1) : kMax;
+                  },
+                  {}};
+    std::atomic<unsigned long> counter{0};
+    auto gp = tadah::hpo::make_gradient_provider<Vec, NoRunner>(sp, host,
+                                                                &counter, 0);
+    Vec g;
+    REQUIRE(gp.gradient(vec({0.35, 0.5}), g));
+    CHECK(g(0) == Approx(1.0).epsilon(1e-9));
+    CHECK(g(1) == Approx(1.0).epsilon(1e-9));
+    const std::string t = j.text();
+    CHECK(count_of(t, "finite differences: at X[1] = ") == 1u);
+    CHECK_THAT(t, Catch::Contains(
+                      "finite differences: at X[1] = 0.35 (a usable loss), the "
+                      "stencil points X[1] = 0.25 (loss 1.797693135e+308) and "
+                      "X[1] = 0.55 (loss 1.797693135e+308) are of another "
+                      "kind, so the difference is taken without them: forward "
+                      "difference, at X[1] = 0.45; a difference never mixes a "
+                      "usable loss with a failure; DIAGNOSTICS counts such "
+                      "differences per dimension") &&
+                  Catch::Contains("Mixed-kind stencils     : 1 (") &&
+                  Catch::Contains("without it): X[1] 1\n"));
 }
 
 TEST_CASE("fd bounds: the OPTIMISER section says how finite differences are "
@@ -729,12 +991,14 @@ TEST_CASE("fd bounds: HYBRID takes the optimiser's own loss at the point for "
         CHECK(j.text().find("HYBRID centre losses") == std::string::npos);
     }
 #ifdef TADAH_USE_CERES
-    SECTION("CERES:LBFGS") {
+    SECTION("CERES:STEEPEST_DESCENT") {
+        /* Before the fix: passes as well (a pin; it ran CERES:LBFGS,
+         * refused since). */
         Journal j;
         HybridBowl host;
         tadah::hpo::detail::run_ceres_gradient_problem<Vec, NoRunner>(
-            hybrid_bowl_spec("CERES", "LBFGS"), host, ceres::LBFGS,
-            ceres::WOLFE, "LBFGS");
+            hybrid_bowl_spec("CERES", "STEEPEST_DESCENT"), host,
+            ceres::STEEPEST_DESCENT, ceres::ARMIJO, "STEEPEST_DESCENT");
         REQUIRE(host.asked.size() >= 3u);
         CHECK_FALSE(host.start_repeated());
         CHECK(j.text().find("HYBRID centre losses") == std::string::npos);
@@ -933,6 +1197,24 @@ double wall(double x, std::size_t)
     return x < 1.53 ? kMax : 1.0 + (x - 1.53);
 }
 
+/* The wall with a pit, failed too, on (1.85, 1.89): at 1.6875 the central
+ * stencil 1.8875 and 1.4875 both fail, so the point has no usable side (a
+ * difference never mixes a usable loss with a failure, owner decision, MK,
+ * 2026-10-15), where the wall alone failed only 1.4875 and the gradient is
+ * one-sided into 1.8875 and 2.0875. */
+double wall_pit(double x, std::size_t k)
+{
+    return x > 1.85 && x < 1.89 ? kMax : wall(x, k);
+}
+
+/* A wall at 1.75: from the start 1.9 the one-sided stencil (1.7, 1.5) at
+ * the upper bound fails at its near point, and the other side lies outside
+ * the box: the start has no usable gradient. */
+double high_wall(double x, std::size_t)
+{
+    return x < 1.75 ? kMax : 1.0 + (x - 1.75);
+}
+
 /* The gradient requests at `x` from the call `from` on: consecutive
  * (x, x + h, x - h) calls, the point and its central stencil. */
 std::size_t requests_at(const std::vector<double>& asked, std::size_t from,
@@ -959,13 +1241,15 @@ TEST_CASE("No usable gradient: MLSL moves on from a rejected local start "
      * local start (the case above); this probes whether the local search
      * MLSL runs, any LD_* algorithm, moves on from one or asks for it again
      * and again (a stall that would spend the budget there). The wall stub
-     * from 1.9; MAXEVAL 60 (the enclosing block's, which NLopt hands on).
+     * with a pit (wall_pit) from 1.9; MAXEVAL 60 (the enclosing block's,
+     * which NLopt hands on).
      *
      * G_MLSL_LDS, POPULATION 3, with an INNER block of each LD_* algorithm,
      * and GD_MLSL_LDS without one (NLopt's default local search, LD_MMA):
      * MLSL samples 1.9 (the start), 1.6875, 1.9375 and 1.4375 (failed),
      * and starts its first local search at the best of them, 1.6875, whose
-     * stencil point 1.4875 fails: the local start is rejected.
+     * stencil points 1.8875 and 1.4875 both fail: the local start is
+     * rejected.
      * Pins: the requests at 1.6875 (1.6875, 1.8875, 1.4875): 1 for LD_LBFGS,
      * LD_SLSQP, LD_TNEWTON*, LD_VAR1 and LD_VAR2, 2 for LD_MMA, LD_CCSAQ and
      * the default local search, 2 for LD_AUGLAG and LD_AUGLAG_EQ and then
@@ -974,16 +1258,23 @@ TEST_CASE("No usable gradient: MLSL moves on from a rejected local start "
      * exactly 60 evaluations; no stop line.
      *
      * AUGLAG and LD_AUGLAG with an INNER block of each LD_* algorithm run
-     * one local search, from 1.9, whose stencil point 1.5 fails.
-     * Pins: they are stopped there: 3 evaluations (1.9, 1.7, 1.5), the stop
-     * line once and the status "STOPPED -- no usable gradient: ...".
+     * one local search, from 1.9, whose one-sided stencil's near point 1.7
+     * fails (high_wall), with no other side in the box.
+     * Pins: they are stopped there: 2 evaluations (1.9, 1.7), the stop line
+     * once and the status "STOPPED -- no usable gradient: ...".
      *
-     * Before the fix: passes as well (a pin: probed 2026-10-07, every LD_*
-     * local search moves on from a rejected start, under G_MLSL_LDS,
-     * GD_MLSL_LDS, G_MLSL and GD_MLSL alike, so no code changed; the
-     * follow-up had probed only GD_MLSL_LDS's default LD_MMA). The 60
-     * evaluations end before a local search reaches the edge of the
-     * failure region; how MLSL ends there is the next case's. */
+     * A difference never mixes a usable loss with a failure (owner
+     * decision, MK, 2026-10-15): next to the plain wall, a point whose one
+     * stencil side fails takes the other, and is no rejected start; these
+     * stubs fail both sides, or the only side, to keep one.
+     * Before the fix: MLSL's requests at 1.6875 were (1.6875, 1.8875) only,
+     * the first failed stencil point ending the gradient (requests_at
+     * counted none of the (x, x + h, x - h) triples), and the plain wall
+     * gave the rejected start these cases pinned, AUGLAG's three
+     * evaluations (1.9, 1.7, 1.5) included; with the plain wall the start's
+     * gradient is now one-sided and AUGLAG ran to MAXEVAL. The 60
+     * evaluations end before a local search reaches the edge of the failure
+     * region; how MLSL ends there is the next case's. */
     struct MlslCase { std::string inner; std::size_t requests, reevaluations; };
     std::vector<MlslCase> mlsl;
     for (const auto& a : kLocalGradientAlgorithms) {
@@ -1006,7 +1297,7 @@ TEST_CASE("No usable gradient: MLSL moves on from a rejected local start "
                     region_spec("NLOPT", c.inner, 1.9));
                 sp.inner->stop.maxeval.reset();
             }
-            RegionHost host{wall, {}, {}};
+            RegionHost host{wall_pit, {}, {}};
             const std::string status = run_region(sp, host);
             const auto& x = host.asked;
             REQUIRE(x.size() > 4u);
@@ -1039,18 +1330,17 @@ TEST_CASE("No usable gradient: MLSL moves on from a rejected local start "
                 sp.inner = std::make_unique<OptimizerSpec>(
                     region_spec("NLOPT", inner, 1.9));
                 sp.inner->stop.maxeval.reset();
-                RegionHost host{wall, {}, {}};
+                RegionHost host{high_wall, {}, {}};
                 const std::string status = run_region(sp, host);
-                REQUIRE(host.asked.size() == 3u);
+                REQUIRE(host.asked.size() == 2u);
                 CHECK(host.asked[0] == Approx(1.9));
                 CHECK(host.asked[1] == Approx(1.7));
-                CHECK(host.asked[2] == Approx(1.5));
                 CHECK(status == "STOPPED -- " + kNoUsableStencil);
                 CHECK(count_of(j.text(),
                                "NLOPT:" + outer + " stopped: " +
                                    kNoUsableStencil +
                                    " (at X[1] = 1.9, the stencil point X[1] = "
-                                   "1.5 failed: loss 1.797693135e+308); a local "
+                                   "1.7 failed: loss 1.797693135e+308); a local "
                                    "gradient search has no step to take from a "
                                    "starting point without a usable gradient") ==
                       1u);
@@ -1066,41 +1356,38 @@ TEST_CASE("No usable gradient: MLSL ends when an LD_LBFGS, LD_TNEWTON* or "
 {
     /* The wall stub from 1.9, MAXEVAL 400: G_MLSL_LDS (POPULATION 3) with
      * an INNER block of each LD_* algorithm, and GD_MLSL_LDS with the same
-     * INNER blocks (the same runs). MLSL's local searches converge on the
-     * edge of the region where the gradient is usable, X[1] = 1.73 (the
-     * wall plus h): below it the stencil point x - h fails, so each request
-     * there is rejected (+inf and a zero gradient). The line search of
+     * INNER blocks (the same runs). Within a step of the wall, 1.53, the
+     * gradient is the one-sided difference into the usable side (owner
+     * decision, MK, 2026-10-15: a difference never mixes the kinds), so
+     * MLSL's local searches converge on the wall itself; the line search of
      * LD_LBFGS, LD_TNEWTON* and LD_VAR1/LD_VAR2 (NLopt's Luksan codes)
-     * halves its step towards the edge, finds no usable point and returns
+     * steps across it, to 1.529962214, whose loss fails, and NLopt returns
      * NLOPT_FAILURE; NLopt's MLSL ends its whole search when a local search
      * returns an error (mlsl.c: `if (lret < 0) { ret = lret; goto done; }`).
      * HPO cannot end one local search alone: a forced stop is an error to
      * MLSL as well. LD_MMA, LD_CCSAQ, LD_SLSQP and the LD_AUGLAG local
      * searches end theirs without an error, and MLSL goes on to MAXEVAL.
-     * Pins: LD_LBFGS 141 evaluations, LD_TNEWTON and LD_TNEWTON_PRECOND
-     * 185, LD_TNEWTON_RESTART and LD_TNEWTON_PRECOND_RESTART 179, LD_VAR1
-     * and LD_VAR2 170; the last 8 requests are the line search's, each
-     * (x, x + h, x - h) with x below 1.73 and rising towards it and x - h
-     * failed, the last at 1.729564343; the status "STOPPED -- no usable
-     * gradient: ..." and the stop line once, "(at X[1] = 1.729564343, the
-     * stencil point X[1] = 1.529564343 failed: loss 1.797693135e+308);
-     * NLopt ended right after it (nlopt failure)". LD_MMA, LD_CCSAQ,
-     * LD_SLSQP, LD_AUGLAG and LD_AUGLAG_EQ: 400 evaluations,
-     * MAXEVAL_REACHED, no stop line. In a probe (walls at 1.517, 1.4123 and
-     * 1.2345, and a quadratic loss) the first group ended early in the same
-     * way and the second reached MAXEVAL; with the wall at 1.61 every one
-     * reached it.
-     * Before the fix: passes as well (a pin of how NLopt's MLSL ends next to
-     * a failure region, probed 2026-10-07 after review; no code changed:
-     * whether HPO should keep MLSL going there is an owner decision). */
+     * Pins: LD_LBFGS 87 evaluations, LD_TNEWTON and LD_TNEWTON_PRECOND 132,
+     * LD_TNEWTON_RESTART and LD_TNEWTON_PRECOND_RESTART 125, LD_VAR1 and
+     * LD_VAR2 98, the last of them 1.529962214, failed; the status
+     * "STOPPED -- no usable gradient: ..." and the stop line once, "(the
+     * loss at X[1] = 1.529962214 is 1.797693135e+308); NLopt ended right
+     * after it (nlopt failure)". LD_MMA, LD_CCSAQ, LD_SLSQP, LD_AUGLAG and
+     * LD_AUGLAG_EQ: 400 evaluations, MAXEVAL_REACHED, no stop line.
+     * Before the fix: below 1.73 (the wall plus h) the stencil point x - h
+     * failed and every request there was rejected, so the local searches
+     * converged on 1.73 and ended after LD_LBFGS 141, LD_TNEWTON* 185 and
+     * 179, LD_VAR* 170 evaluations, their last 8 requests the line search's
+     * (x, x + h, x - h) rising towards 1.73, the stop line "(at X[1] =
+     * 1.729564343, the stencil point X[1] = 1.529564343 failed: ...)". */
     struct Ending { std::size_t evals; bool early; };
     const auto ending = [](const std::string& a) {
-        if (a == "LD_LBFGS") return Ending{141u, true};
+        if (a == "LD_LBFGS") return Ending{87u, true};
         if (a == "LD_TNEWTON" || a == "LD_TNEWTON_PRECOND")
-            return Ending{185u, true};
+            return Ending{132u, true};
         if (a == "LD_TNEWTON_RESTART" || a == "LD_TNEWTON_PRECOND_RESTART")
-            return Ending{179u, true};
-        if (a == "LD_VAR1" || a == "LD_VAR2") return Ending{170u, true};
+            return Ending{125u, true};
+        if (a == "LD_VAR1" || a == "LD_VAR2") return Ending{98u, true};
         return Ending{400u, false};
     };
     for (const std::string outer : {"G_MLSL_LDS", "GD_MLSL_LDS"}) {
@@ -1128,26 +1415,13 @@ TEST_CASE("No usable gradient: MLSL ends when an LD_LBFGS, LD_TNEWTON* or "
                     CHECK(status == "STOPPED -- " + kNoUsableStencil);
                     CHECK(count_of(t, "NLOPT:" + outer + " stopped: " +
                                           kNoUsableStencil +
-                                          " (at X[1] = 1.729564343, the "
-                                          "stencil point X[1] = 1.529564343 "
-                                          "failed: loss 1.797693135e+308); "
-                                          "NLopt ended right after it (nlopt "
-                                          "failure)") == 1u);
-                    REQUIRE(x.size() >= 24u);
-                    const std::size_t first = x.size() - 24u;
-                    for (std::size_t k = 0; k < 8u; ++k) {
-                        const std::size_t i = first + 3u * k;
-                        INFO("request " << k << " at X[1] = " << x[i]);
-                        CHECK(x[i] < 1.73);
-                        if (k > 0) CHECK(x[i] > x[i - 3u]);
-                        CHECK(x[i + 1u] == Approx(x[i] + 0.2).margin(1e-12));
-                        CHECK(x[i + 2u] == Approx(x[i] - 0.2).margin(1e-12));
-                        CHECK(host.losses[i] < 1e300);
-                        CHECK(host.losses[i + 1u] < 1e300);
-                        CHECK(host.losses[i + 2u] == kMax);
-                    }
-                    CHECK(x[x.size() - 3u] ==
-                          Approx(1.729564343).margin(1e-9));
+                                          " (the loss at X[1] = 1.529962214 "
+                                          "is 1.797693135e+308); NLopt ended "
+                                          "right after it (nlopt failure)") ==
+                          1u);
+                    REQUIRE_FALSE(x.empty());
+                    CHECK(x.back() == Approx(1.529962214).margin(1e-9));
+                    CHECK(host.losses.back() == kMax);
                 }
             }
         }
@@ -1180,7 +1454,9 @@ TEST_CASE("No usable gradient: under FAILSCORE_GRADING a search from a graded "
     std::vector<std::pair<std::string, std::string>> backends = {
         {"NLOPT", "LD_LBFGS"}, {"NLOPT", "LD_MMA"}};
 #ifdef TADAH_USE_CERES
-    backends.push_back({"CERES", "LBFGS"});
+    /* CERES:STEEPEST_DESCENT, the Ceres solver HPO runs (this case ran
+     * CERES:LBFGS, refused since: a pin of the same rule). */
+    backends.push_back({"CERES", "STEEPEST_DESCENT"});
 #endif
     for (const auto& b : backends) {
         DYNAMIC_SECTION(b.first << ":" << b.second) {
@@ -1218,7 +1494,9 @@ TEST_CASE("No usable gradient: a CERES search from a start inside the "
      * Before the fix: 3 evaluations (the start and its stencil, a zero
      * difference of two failures), Ceres' CONVERGENCE at iteration 0, no
      * status and no stop line. */
-    for (const char* algo : {"LBFGS", "WOLFE", "NLCG", "STEEPEST_DESCENT"}) {
+    /* CERES:STEEPEST_DESCENT, the Ceres solver HPO runs (the case also
+     * ran CERES:LBFGS, WOLFE and NLCG, refused since). */
+    for (const char* algo : {"STEEPEST_DESCENT"}) {
         DYNAMIC_SECTION(algo) {
             Journal j;
             RegionHost host{straddle, {}, {}};
@@ -1333,51 +1611,36 @@ TEST_CASE("No usable gradient: a Ceres search that ends with FAILURE right "
 {
     /* The outage of the NLopt case from the 7th call on. Ceres' line
      * search steps back from a point without a usable gradient, and ends
-     * with FAILURE when it finds no valid step: from 1.6 LBFGS, WOLFE and
-     * NLCG reach 1.2 and end "Numerical failure in line search" there; from
-     * 1.95 they leave the box (Ceres' GradientProblemSolver has no bounds)
-     * and end "Cost and jacobian evaluation failed." These are the endings
-     * of the straddle cases that a zero gradient between two failures used
-     * to make (test_hpo_termination.cpp, "No usable gradient: the straddle
+     * with FAILURE when it finds no valid step: from 1.6
+     * CERES:STEEPEST_DESCENT, the Ceres solver HPO runs, ends "Numerical
+     * failure in line search" after the outage. These are the endings of
+     * the straddle cases that a zero gradient between two failures used to
+     * make (test_hpo_termination.cpp, "No usable gradient: the straddle
      * searches that ended right after a rejection go on to MAXEVAL").
-     * Pins: from 1.6 7 evaluations, the stop line "(the loss at X[1] = 1.2
+     * Pins: 27 evaluations, the stop line "(the loss at X[1] = 1.000001376
      * is 1.797693135e+308); Ceres ended right after it (FAILURE: Numerical
-     * failure in line search"; from 1.95 27 evaluations and "Ceres ended
-     * right after it (FAILURE: Cost and jacobian evaluation failed.)"; the
-     * status "STOPPED -- no usable gradient: ..." in both.
-     * Before the fix: the outage's failures came with a zero gradient and
-     * Ceres went on, to MAXEVAL (60 evaluations), from either start, with
-     * no status and no stop line. */
-    for (const char* algo : {"LBFGS", "WOLFE", "NLCG"}) {
+     * failure in line search", the status "STOPPED -- no usable gradient:
+     * ...".
+     * Before the fix: the case ran CERES:LBFGS, WOLFE and NLCG, refused
+     * since (their Wolfe line search stalls at a point outside the OPTIM
+     * box): from 1.6 they ended at 1.2 after 7 evaluations, and from 1.95
+     * they left the box and ended "Cost and jacobian evaluation failed."
+     * after 27. */
+    for (const char* algo : {"STEEPEST_DESCENT"}) {
         DYNAMIC_SECTION(algo << " from 1.6") {
             Journal j;
             RegionHost host{outage(6), {}, {}};
             const std::string status =
                 run_region(region_spec("CERES", algo, 1.6), host);
-            CHECK(host.asked.size() == 7u);
-            CHECK(status == "STOPPED -- " + kNoUsableStencil);
-            CHECK(count_of(j.text(),
-                           std::string("CERES:") + algo + " stopped: " +
-                               kNoUsableStencil +
-                               " (the loss at X[1] = 1.2 is "
-                               "1.797693135e+308); Ceres ended right after it "
-                               "(FAILURE: Numerical failure in line "
-                               "search") == 1u);
-        }
-        DYNAMIC_SECTION(algo << " from 1.95") {
-            Journal j;
-            RegionHost host{outage(6), {}, {}};
-            const std::string status =
-                run_region(region_spec("CERES", algo, 1.95), host);
             CHECK(host.asked.size() == 27u);
             CHECK(status == "STOPPED -- " + kNoUsableStencil);
             CHECK(count_of(j.text(),
                            std::string("CERES:") + algo + " stopped: " +
                                kNoUsableStencil +
-                               " (the loss at X[1] = ") == 1u);
-            CHECK(count_of(j.text(),
-                           "Ceres ended right after it (FAILURE: Cost and "
-                           "jacobian evaluation failed.)") == 1u);
+                               " (the loss at X[1] = 1.000001376 is "
+                               "1.797693135e+308); Ceres ended right after it "
+                               "(FAILURE: Numerical failure in line "
+                               "search") == 1u);
         }
     }
 }
