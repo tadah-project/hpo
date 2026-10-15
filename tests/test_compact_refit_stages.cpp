@@ -969,4 +969,50 @@ TEST_CASE_METHOD(PTFixture,
   CHECK_FALSE(fs::exists("pot.tadah"));
 }
 
+/* Pins: a compact `tadah refit` of the synthetic fcc table (rcut 5 A)
+ * whose element line gives a0 = 361 (copper's lattice constant in
+ * picometres) is refused by RefitEngine::run()'s crystal gate, before any
+ * fitting, with the std::runtime_error "tadah refit: the lattice constant
+ * of the EAM header, a0 = 361 A, puts the nearest neighbours of the fcc
+ * crystal 255.26554800834364 A apart, at or beyond the table's cutoff,
+ * rcut = 5 A: the crystal has no pair within the cutoff. Edit the element
+ * line of the setfl file (`<Z> <mass> <a0> <lattice>`): set the
+ * equilibrium lattice constant, in Angstrom (a value in picometres is 100
+ * times the value in Angstrom)."; no ladder runs and no pot.tadah is
+ * written.
+ * Before the fix: the gate took no cutoff, and the compact fit started its
+ * windows at 0.8 x r_reach = 153 A, above rcut, ran its phi ladder and
+ * failed inside the fitter: "compact_fitter clamp_bump_support_params:
+ * radial bump 1 (mu 153.159329) has width eta -0.006749 <= 0; every radial
+ * bump width must be > 0" (tmp/rg_probe/a0pm): the text and ladder checks
+ * fail. */
+TEST_CASE_METHOD(PTFixture,
+                 "tadah refit compact: a lattice constant whose nearest "
+                 "neighbours are beyond the cutoff is refused by the crystal "
+                 "gate",
+                 "[compact][refit][reachability]") {
+  ScopedTempDir tmp;
+  write_synth_eam("synth.eam.alloy");
+  {
+    std::string body = slurp("synth.eam.alloy");
+    const std::string line = "\n29 63.55 3.6 fcc\n";
+    const auto at = body.find(line);
+    REQUIRE(at != std::string::npos);
+    body.replace(at, line.size(), "\n29 63.55 361 fcc\n");
+    std::ofstream("synth.eam.alloy") << body;
+  }
+  const auto [what, logged] = run_compact(compact_context("SIGNED"));
+  INFO(logged);
+  CHECK(what ==
+        "tadah refit: the lattice constant of the EAM header, a0 = 361 A, "
+        "puts the nearest neighbours of the fcc crystal 255.26554800834364 A "
+        "apart, at or beyond the table's cutoff, rcut = 5 A: the crystal has "
+        "no pair within the cutoff. Edit the element line of the setfl file "
+        "(`<Z> <mass> <a0> <lattice>`): set the equilibrium lattice constant, "
+        "in Angstrom (a value in picometres is 100 times the value in "
+        "Angstrom).");
+  CHECK(log_lines("---- phi ladder ----").empty());
+  CHECK_FALSE(fs::exists("pot.tadah"));
+}
+
 #endif  // TADAH_USE_CERES
