@@ -14,6 +14,7 @@
 #include <tadah/hpo/hpo_targets.h>
 #include <tadah/hpo/observables/cohesive_energy.h>
 #include <tadah/hpo/observables/observable_parser.h>
+#include <tadah/hpo/strategy_rules.h>
 
 #include <cmath>
 #include <filesystem>
@@ -606,6 +607,157 @@ TEST_CASE("HPOTargets judges an MLSL or AUGLAG under PC_LAMMPS by its local "
                        "NLOPT:LD_LBFGS is gradient-based. PC_LAMMPS requires "
                        "a gradient-free optimiser") &&
                    Catch::EndsWith("\nLine:     ENDINNER"));
+    }
+    std::filesystem::remove(script_path);
+}
+
+/* Pins: with PC_LAMMPS, the refusal of a gradient-based optimiser in an
+ * INNER block names what an INNER block takes there: an INNER search is a
+ * local NLopt algorithm (require_inner_backend(), at startup), so of the
+ * advice of the other blocks only the derivative-free local NLopt
+ * algorithms remain, every one, from the registry:
+ *   "--hpotarget defines PC_LAMMPS but INNER's optimiser NLOPT:LD_MMA is
+ *   gradient-based. PC_LAMMPS requires a gradient-free optimiser, and an
+ *   INNER search is a local NLopt algorithm: name a derivative-free one in
+ *   the INNER block (NLOPT:LN_AUGLAG, NLOPT:LN_AUGLAG_EQ, NLOPT:LN_BOBYQA,
+ *   NLOPT:LN_COBYLA, NLOPT:LN_NELDERMEAD, NLOPT:LN_PRAXIS,
+ *   NLOPT:LN_SBPLX)."
+ * at the INNER block's ENDINNER line -- for example 14's G_MLSL_LDS with an
+ * INNER LD_MMA, an INNER GD_STOGO (gradient-based and global), an INNER
+ * CERES:LBFGS, and an EXPLORE block's INNER LD_LBFGS; an INNER LD_AUGLAG,
+ * whose NLopt default local optimiser LD_MMA takes the gradient, is
+ * refused naming LD_MMA, without the advice of an INNER block of its own
+ * (an INNER block has none). None of these names NLOPT GN_*, TADAH or
+ * DLIB:BFGS. Each algorithm the advice names is accepted in that INNER
+ * block by the parser and by validate_run_policy() (startup's INNER
+ * rules). The STRATEGY-level and EXPLORE blocks keep their advice ("(NLOPT
+ * GN_*\/LN_*, TADAH RANDOM/GRID/ANNEAL). The only gradient-based exception
+ * is DLIB:BFGS ...": a pin).
+ * Before the fix: every INNER refusal gave the other blocks' advice,
+ * "PC_LAMMPS requires a gradient-free optimiser (NLOPT GN_*\/LN_*, TADAH
+ * RANDOM/GRID/ANNEAL). The only gradient-based exception is DLIB:BFGS
+ * (...)", and the INNER LD_AUGLAG one "...; an INNER block with a
+ * derivative-free one takes none. ...": an INNER GN_* is refused at
+ * startup as a global INNER search, an INNER TADAH or DLIB block as not
+ * NLopt, so the advice led to another refusal; the checks of the INNER
+ * messages fail, the accepted list and the other blocks' advice pass as
+ * well (pins). */
+TEST_CASE("HPOTargets names, for an INNER block under PC_LAMMPS, the "
+          "derivative-free local NLopt algorithms an INNER block takes",
+          "[hpo][pc_observable_parser][hpotargets][pc_lammps_grad_drop]"
+          "[no_nested_global]")
+{
+    tadah::core::PeriodicTable::initialize();
+    auto script_path = std::filesystem::current_path() /
+                       "test_pc_lammps_inner_advice_stub.in";
+    {
+        std::ofstream f(script_path);
+        f << "# stub script\nprint \"hi\"\nvariable xyz equal 0.0\n";
+    }
+    auto ctx = make_context_for_targets();
+    const std::string pc_lammps =
+        "PC_LAMMPS --script " + script_path.string() +
+        " --varloss xyz 1.0 100 --outvar xyz\n";
+    /* The refusal of the parse of `body`, and, when the parse accepts it,
+     * that of validate_run_policy() on its spec ("" when both accept it). */
+    auto error = [&](const std::string& body, bool startup) {
+        auto cfg = write_temp_config(body);
+        std::string what;
+        try {
+            tadah::hpo::HPOTargets trg(ctx, cfg.string());
+            if (startup) tadah::hpo::validate_run_policy(trg.spec);
+        } catch (const std::exception& e) {
+            what = e.what();
+        }
+        std::filesystem::remove(cfg);
+        return what;
+    };
+    /* Example 14's search: G_MLSL_LDS with an INNER block of `lib`:`algo`. */
+    auto mlsl = [&](const std::string& lib, const std::string& algo) {
+        return "OPTIMIZER\n  STRATEGY\n    TYPE PLAIN\n    LIB NLOPT\n"
+               "    ALGO G_MLSL_LDS\n    MAXEVAL 120\n    POPULATION 5\n"
+               "    INNER\n      LIB " + lib + "\n      ALGO " + algo +
+               "\n    ENDINNER\n  ENDSTRATEGY\nENDOPTIMIZER\nLOSS L2\n" +
+               pc_lammps;
+    };
+    const std::string inner_advice =
+        " PC_LAMMPS requires a gradient-free optimiser, and an INNER search "
+        "is a local NLopt algorithm: name a derivative-free one in the INNER "
+        "block (NLOPT:LN_AUGLAG, NLOPT:LN_AUGLAG_EQ, NLOPT:LN_BOBYQA, "
+        "NLOPT:LN_COBYLA, NLOPT:LN_NELDERMEAD, NLOPT:LN_PRAXIS, "
+        "NLOPT:LN_SBPLX).";
+
+    struct Case { std::string what, body, message, line; };
+    std::vector<Case> cases;
+    for (const auto& [lib, algo] :
+         std::vector<std::pair<std::string, std::string>>{
+             {"NLOPT", "LD_MMA"}, {"NLOPT", "GD_STOGO"}, {"CERES", "LBFGS"}})
+        cases.push_back({"an INNER " + lib + ":" + algo, mlsl(lib, algo),
+                         "--hpotarget defines PC_LAMMPS but INNER's optimiser "
+                         + lib + ":" + algo + " is gradient-based." +
+                             inner_advice,
+                         "    ENDINNER"});
+    cases.push_back({"an INNER NLOPT:LD_AUGLAG", mlsl("NLOPT", "LD_AUGLAG"),
+                     "--hpotarget defines PC_LAMMPS but INNER's optimiser "
+                     "NLOPT:LD_AUGLAG takes a gradient: NLopt's MLSL and "
+                     "AUGLAG take one for their local search, and NLopt's "
+                     "default local optimiser, NLOPT:LD_MMA, is "
+                     "gradient-based." + inner_advice,
+                     "    ENDINNER"});
+    cases.push_back(
+        {"an EXPLORE block's INNER NLOPT:LD_LBFGS",
+         "OPTIMIZER\n  STRATEGY\n    TYPE PRESTAGE\n    LIB NLOPT\n"
+         "    ALGO LN_BOBYQA\n    MAXEVAL 1\n    EXPLORE\n      LIB NLOPT\n"
+         "      ALGO GN_MLSL_LDS\n      MAXEVAL 1\n      INNER\n"
+         "        LIB NLOPT\n        ALGO LD_LBFGS\n      ENDINNER\n"
+         "    ENDEXPLORE\n  ENDSTRATEGY\nENDOPTIMIZER\nLOSS L2\n" + pc_lammps,
+         "--hpotarget defines PC_LAMMPS but EXPLORE INNER's optimiser "
+         "NLOPT:LD_LBFGS is gradient-based." + inner_advice,
+         "      ENDINNER"});
+    for (const auto& c : cases) {
+        INFO(c.what);
+        const std::string got = error(c.body, false);
+        CHECK(got == error_at_block_end(c.body, "ENDINNER") + c.message +
+                         "\nLine: " + c.line);
+        CHECK_THAT(got, !(Catch::Contains("GN_*") || Catch::Contains("TADAH") ||
+                          Catch::Contains("DLIB:BFGS")));
+    }
+
+    /* Each algorithm the advice names is accepted in that INNER block, by
+     * the parser and at startup. */
+    for (const std::string algo : {"LN_AUGLAG", "LN_AUGLAG_EQ", "LN_BOBYQA",
+                                   "LN_COBYLA", "LN_NELDERMEAD", "LN_PRAXIS",
+                                   "LN_SBPLX"}) {
+        INFO("an INNER NLOPT:" << algo);
+        CHECK(error(mlsl("NLOPT", algo), true) == "");
+    }
+
+    /* The STRATEGY-level and EXPLORE blocks keep their advice. */
+    const std::string other =
+        " PC_LAMMPS requires a gradient-free optimiser (NLOPT GN_*/LN_*, "
+        "TADAH RANDOM/GRID/ANNEAL). The only gradient-based exception is "
+        "DLIB:BFGS (uses per-theta-per-iter dtheta, not a full gradient).";
+    {
+        const std::string body =
+            "OPTIMIZER\n  STRATEGY\n    LIB NLOPT\n    ALGO LD_LBFGS\n"
+            "    MAXEVAL 1\n  ENDSTRATEGY\nENDOPTIMIZER\nLOSS L2\n" + pc_lammps;
+        CHECK(error(body, false) ==
+              error_at_block_end(body, "ENDOPTIMIZER") +
+                  "--hpotarget defines PC_LAMMPS but OPTIMIZER's optimiser "
+                  "NLOPT:LD_LBFGS is gradient-based." + other +
+                  "\nLine: ENDOPTIMIZER");
+    }
+    {
+        const std::string body =
+            "OPTIMIZER\n  STRATEGY\n    TYPE PRESTAGE\n    LIB NLOPT\n"
+            "    ALGO LN_BOBYQA\n    MAXEVAL 1\n    EXPLORE\n      LIB NLOPT\n"
+            "      ALGO LD_MMA\n      MAXEVAL 1\n    ENDEXPLORE\n"
+            "  ENDSTRATEGY\nENDOPTIMIZER\nLOSS L2\n" + pc_lammps;
+        CHECK(error(body, false) ==
+              error_at_block_end(body, "ENDEXPLORE") +
+                  "--hpotarget defines PC_LAMMPS but EXPLORE's optimiser "
+                  "NLOPT:LD_MMA is gradient-based." + other +
+                  "\nLine:     ENDEXPLORE");
     }
     std::filesystem::remove(script_path);
 }
