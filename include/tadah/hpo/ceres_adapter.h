@@ -17,8 +17,9 @@
  * line searches propose points outside the OPTIM box. HPO_Host does not
  * evaluate such a point: it scores it as a failure graded by its distance
  * to the box (box_penalty.h), and the GradientProvider gives it the slope
- * of that score, which points back into the box, so the line search steps
- * back from it; it counts against MAXEVAL and is never the best (owner
+ * of that score, which points away from the box, so a descent step leads
+ * back into it and the line search steps back from the point; it counts
+ * against MAXEVAL and is never the best (owner
  * decision, MK, 2026-10-15). NLOPT:LD_LBFGS and DLIB:BFGS keep to the box.
  *
  * Design echoes dlib_adapter.h:

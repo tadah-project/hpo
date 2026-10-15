@@ -364,10 +364,11 @@ Registry build_registry()
                                    "the box (a LOG dimension stays positive, a linear one is "
                                    "unbounded). Such a point is not evaluated: it is scored as "
                                    "a failure graded by its distance to the box, whose slope "
-                                   "points back into it, it counts against MAXEVAL and it is "
-                                   "never the best; the first is reported with a WARNING and "
-                                   "DIAGNOSTICS counts them all. DLIB:BFGS and the NLopt LD_* "
-                                   "algorithms keep to the box";
+                                   "points away from the box, so a descent step leads back "
+                                   "into it; it counts against MAXEVAL and it is never the "
+                                   "best; the first is reported with a WARNING and DIAGNOSTICS "
+                                   "counts them all. DLIB:BFGS and the NLopt LD_* algorithms "
+                                   "keep to the box";
             add(r, c);
         }
     }
