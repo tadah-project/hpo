@@ -8,15 +8,21 @@
 // PRESTAGE exploration -- two settings that are about its starting points
 // have no effect on it, and validate_hpo_setup warns, once each, naming the
 // line of the block:
-//  - a RESTART block, when the search also draws no random numbers: every
-//    round asks for round 0's points again, whatever points it starts from
-//    (the run's record answers them), so no round after round 0 searches
-//    anew;
+//  - a RESTART block, when the search also draws no random numbers before
+//    it asks for a point of its own (StoGO, DIRECT and AGS; GN_DIRECT_L_RAND
+//    in one dimension; GD_STOGO_RAND below POPULATION 2n + 1 until its
+//    first local search, from the box centre, ends): every round asks for
+//    round 0's points again, whatever points it starts from (the run's
+//    record answers their losses; StoGO's gradients, which a round forms
+//    itself, are evaluated again), so no round after round 0 searches anew;
+//  - a RESTART block with METHOD lines on such a search that draws random
+//    numbers (GN_DIRECT_L_RAND in two or more dimensions, GD_STOGO_RAND at
+//    POPULATION 2n + 1 or more): no round evaluates the block's points;
 //  - an INIT block with a METHOD: the search never evaluates its points.
-// A search that starts at its point, or one that draws random numbers
-// (GD_STOGO_RAND; GN_DIRECT_L_RAND in two or more dimensions), gets neither
-// RESTART warning; an INIT block without a METHOD (its SEED only) and an
-// inactive RESTART block get none.
+// A search that starts at its point gets no RESTART warning; an INIT block
+// without a METHOD (its SEED only), a RESTART block without METHOD lines on
+// a search that draws random numbers and an inactive RESTART block get
+// none.
 #include "catch2/catch.hpp"
 
 #include <tadah/core/context.h>
@@ -169,10 +175,13 @@ std::size_t count_of(const std::string& text, const std::string& needle)
 }
 
 /* A PLAIN run of NLOPT:`algo` (MAXEVAL 20) under an active RESTART block,
- * which opens on line 10 (line 9 with kRoot1). */
+ * which opens on line 10 (line 9 with kRoot1), with METHOD RANDOM 1 unless
+ * `method` is false; `extra` is STRATEGY lines after the block. */
 std::string plain_restart(const std::string& algo,
                           const std::string& root = kRoot,
-                          const std::string& max = "1")
+                          const std::string& max = "1",
+                          const std::string& extra = "",
+                          bool method = true)
 {
     return root +
            "OPTIMIZER\n"
@@ -183,10 +192,10 @@ std::string plain_restart(const std::string& algo,
            "    MAXEVAL 20\n"
            "    RESTART\n"
            "      AFTER_STAGNATION 3\n"
-           "      MAX " + max + "\n"
-           "      METHOD RANDOM 1\n"
+           "      MAX " + max + "\n" +
+           (method ? "      METHOD RANDOM 1\n" : "") +
            "      SEED 5\n"
-           "    ENDRESTART\n"
+           "    ENDRESTART\n" + extra +
            "  ENDSTRATEGY\n"
            "ENDOPTIMIZER\n";
 }
@@ -203,7 +212,8 @@ const std::string kAnew =
 
 /* The RESTART warning of a PLAIN run whose STRATEGY-level optimiser is
  * NLOPT:`algo` (`draws`: how it draws no random numbers), RESTART on line
- * `line`, the run answering repeats from its record. */
+ * `line`, the run answering repeats from its record (a search that
+ * obtains no gradient). */
 std::string plain_restart_warning(const std::string& algo, int line = 10,
                                   const std::string& draws =
                                       " and draws no random numbers")
@@ -219,36 +229,59 @@ std::string plain_restart_warning(const std::string& algo, int line = 10,
            "new best in AFTER_STAGNATION 3 evaluations." + kAnew;
 }
 
+/* What a round of a gradient search (StoGO) asks for at round 0's points
+ * under GRAD_STRATEGY NUMERICAL, the default: the record answers the
+ * losses, the stencils are evaluated again. */
+const std::string kStencils =
+    ", and their gradients: the run's record answers their losses, but a "
+    "round forms its gradients itself and evaluates their finite-difference "
+    "stencils again (GRAD_STRATEGY NUMERICAL)";
+
+/* The RESTART warning of a PLAIN run of NLOPT:`algo`, a start-ignoring
+ * search that draws random numbers, whose RESTART block (line `line`) has
+ * METHOD lines. */
+std::string method_lines_warning(const std::string& algo, int line = 10)
+{
+    return "the RESTART block on line " + std::to_string(line) +
+           ": the STRATEGY-level optimiser NLOPT:" + algo +
+           " does not start at the point it is given (" + note(algo) +
+           "), so no RESTART round evaluates the points of the block's "
+           "METHOD lines: a round's search differs from round 0's only in "
+           "the random numbers it draws. To start each round at the block's "
+           "points, use an optimiser that starts at the point it is given.";
+}
+
 }  // namespace
 
 /* Pins: under STRATEGY TYPE PLAIN with an active RESTART block (line 10),
- * each NLopt search that does not start at the point it is given and draws
- * no random numbers -- GD_STOGO, GN_DIRECT, GN_DIRECT_L, the three _NOSCAL
- * forms (NLopt 2.10 runs all three as DIRECT-L, GN_DIRECT_L_RAND_NOSCAL
- * included), GN_ORIG_DIRECT, GN_ORIG_DIRECT_L, GN_AGS -- gets exactly one
- * startup WARNING, in the journal and on standard error ("[HPO] WARNING:
- * "): "the RESTART block on line 10: the STRATEGY-level optimiser
- * NLOPT:GN_DIRECT_L does not start at the point it is given (DIRECT
- * evaluates the centre of the OPTIM box first and then divides the whole
- * box; NLopt never reads that point) and draws no random numbers, so every
- * RESTART round, whatever points it starts from, asks for round 0's points
- * again, which the run's record answers: no round after round 0 evaluates
- * a new point, and the RESTART block's only effect is to end the run once
- * round 0 has had no new best in AFTER_STAGNATION 3 evaluations. For
- * rounds that search anew, use an optimiser that starts at the point it is
- * given." (each with its own start note). GN_DIRECT_L_RAND in one OPTIM
- * dimension (RESTART on line 9) gets it with "and, in one OPTIM dimension,
- * draws no random numbers (it draws them only to choose between equally
- * long sides of a box)"; in two it is not warned about, nor is
- * GD_STOGO_RAND. With a --skip-rel filter, which makes the run evaluate a
- * repeated point again, the warning says "asks for round 0's points again
- * as long as their losses are those of round 0 (the run evaluates them
- * again: PC_ERMSE --skip-rel: ...)". An AUGLAG whose INNER search is
- * GN_DIRECT_L names both ("NLOPT:LN_AUGLAG runs its INNER search
- * NLOPT:GN_DIRECT_L from the point it is given, and NLOPT:GN_DIRECT_L does
- * not start ..."); a PRESTAGE exploration on GN_DIRECT_L gets the
- * exploration's text (RESTART on line 15). No warning: LN_SBPLX and
- * GN_CRS2_LM, which start at their point, and an inactive RESTART (MAX 0).
+ * each NLopt search that does not start at the point it is given, draws
+ * no random numbers and obtains no gradient -- GN_DIRECT, GN_DIRECT_L, the
+ * three _NOSCAL forms (NLopt 2.10 runs all three as DIRECT-L,
+ * GN_DIRECT_L_RAND_NOSCAL included), GN_ORIG_DIRECT, GN_ORIG_DIRECT_L,
+ * GN_AGS -- gets exactly one startup WARNING, in the journal and on
+ * standard error ("[HPO] WARNING: "): "the RESTART block on line 10: the
+ * STRATEGY-level optimiser NLOPT:GN_DIRECT_L does not start at the point
+ * it is given (DIRECT evaluates the centre of the OPTIM box first and then
+ * divides the whole box; NLopt never reads that point) and draws no random
+ * numbers, so every RESTART round, whatever points it starts from, asks for
+ * round 0's points again, which the run's record answers: no round after
+ * round 0 evaluates a new point, and the RESTART block's only effect is to
+ * end the run once round 0 has had no new best in AFTER_STAGNATION 3
+ * evaluations. For rounds that search anew, use an optimiser that starts
+ * at the point it is given." (each with its own start note). GN_DIRECT_L_RAND
+ * in one OPTIM dimension (RESTART on line 9) gets it with "and, in one
+ * OPTIM dimension, draws no random numbers (it draws them only to choose
+ * between equally long sides of a box)". With a --skip-rel filter, which
+ * makes the run evaluate a repeated point again, the warning says "asks
+ * for round 0's points again as long as their losses are those of round 0
+ * (the run evaluates them again: PC_ERMSE --skip-rel: ...)". An AUGLAG
+ * whose INNER search is GN_DIRECT_L names both ("NLOPT:LN_AUGLAG runs its
+ * INNER search NLOPT:GN_DIRECT_L from the point it is given, and
+ * NLOPT:GN_DIRECT_L does not start ..."); a PRESTAGE exploration on
+ * GN_DIRECT_L gets the exploration's text (RESTART on line 15). No warning:
+ * LN_SBPLX and GN_CRS2_LM, which start at their point, and an inactive
+ * RESTART (MAX 0). The gradient searches (StoGO), the RAND forms in two
+ * dimensions and the METHOD lines of a RESTART block are the next case's.
  * Before the fix: none of these warnings was given (tmp/sr_probe/
  * run_restart_direct: round 1 asked for round 0's points, answered from the
  * record, without a word at startup): every count is 0. */
@@ -260,7 +293,7 @@ TEST_CASE("startup validation: RESTART on a search that does not start at "
     SECTION("each search that draws no random numbers")
     {
         for (const char* algo :
-             {"GD_STOGO", "GN_DIRECT", "GN_DIRECT_L", "GN_DIRECT_NOSCAL",
+             {"GN_DIRECT", "GN_DIRECT_L", "GN_DIRECT_NOSCAL",
               "GN_DIRECT_L_NOSCAL", "GN_DIRECT_L_RAND_NOSCAL",
               "GN_ORIG_DIRECT", "GN_ORIG_DIRECT_L", "GN_AGS"}) {
             INFO("NLOPT:" << algo);
@@ -273,8 +306,7 @@ TEST_CASE("startup validation: RESTART on a search that does not start at "
         }
     }
 
-    SECTION("GN_DIRECT_L_RAND draws random numbers only in two or more "
-            "dimensions; GD_STOGO_RAND always")
+    SECTION("GN_DIRECT_L_RAND draws no random numbers in one dimension")
     {
         const Startup one = startup(plain_restart("GN_DIRECT_L_RAND", kRoot1));
         INFO("journal:\n" << one.journal);
@@ -284,11 +316,7 @@ TEST_CASE("startup validation: RESTART on a search that does not start at "
                            " and, in one OPTIM dimension, draws no random "
                            "numbers (it draws them only to choose between "
                            "equally long sides of a box)")) == 1);
-        for (const char* algo : {"GN_DIRECT_L_RAND", "GD_STOGO_RAND"}) {
-            INFO("NLOPT:" << algo << " in 2 dimensions");
-            const Startup two = startup(plain_restart(algo));
-            CHECK(count_of(two.journal, "the RESTART block on line") == 0);
-        }
+        CHECK(count_of(one.journal, "the RESTART block on line") == 1);
     }
 
     SECTION("a run that evaluates a repeated point again")
@@ -393,6 +421,269 @@ TEST_CASE("startup validation: RESTART on a search that does not start at "
         }
         const Startup off = startup(plain_restart("GN_DIRECT_L", kRoot, "0"));
         CHECK(count_of(off.journal, "the RESTART block on line") == 0);
+    }
+}
+
+/* Pins: the RESTART warning of a start-ignoring search says what its
+ * rounds cost and what they never read (RESTART on line 10, PLAIN, 2
+ * OPTIM dimensions):
+ *  - GD_STOGO, which obtains gradients: "the RESTART block on line 10: the
+ *    STRATEGY-level optimiser NLOPT:GD_STOGO does not start at the point it
+ *    is given (StoGO evaluates ...; NLopt never reads that point) and draws
+ *    no random numbers, so every RESTART round, whatever points it starts
+ *    from, asks for round 0's points again, and their gradients: the run's
+ *    record answers their losses, but a round forms its gradients itself
+ *    and evaluates their finite-difference stencils again (GRAD_STRATEGY
+ *    NUMERICAL): no round after round 0 evaluates a new point, and each
+ *    round evaluates up to AFTER_STAGNATION 3 of round 0's points again
+ *    before it ends without a new best. For rounds that search anew, use an
+ *    optimiser that starts at the point it is given."; under GRAD_STRATEGY
+ *    HYBRID "..., and their gradients: the run's record answers their
+ *    losses where a round asks for no gradient, but each point at which it
+ *    asks for one is evaluated again, with its gradient (GRAD_STRATEGY
+ *    HYBRID differentiates an evaluation of the point): ..."; as a PRESTAGE
+ *    exploration (RESTART on line 15) "... asks for round 0's exploration
+ *    points again, and their gradients: ... (GRAD_STRATEGY NUMERICAL): a
+ *    round's refinement starts from candidates among round 0's exploration
+ *    points. ...";
+ *  - GD_STOGO_RAND below POPULATION 2n + 1 = 5, whose first trial point is
+ *    the box centre and whose first local search, from it, draws nothing:
+ *    "... (StoGO evaluates the centre ...) and, with POPULATION 4 (NLopt's
+ *    default, 2n for n = 2 OPTIM dimensions), less than 2n + 1 = 5, takes
+ *    the centre of the box as its first trial point and runs a local
+ *    search from it before any of its random trial points, so every
+ *    RESTART round, whatever points it starts from, asks first for the
+ *    points of round 0's first local search again, and their gradients:
+ *    ... (GRAD_STRATEGY NUMERICAL): until that search ends a round
+ *    evaluates no new point, and it reaches its random trial points only if
+ *    the search ends before the round has had AFTER_STAGNATION 3
+ *    evaluations without a new best. For rounds that search anew, use an
+ *    optimiser that starts at the point it is given, or POPULATION 5 (2n +
+ *    1) or more, whose trial points are all random." (POPULATION 3: "with
+ *    POPULATION 3, less than 2n + 1 = 5 (n = 2 OPTIM dimensions), ...");
+ *  - a search that draws random numbers, GN_DIRECT_L_RAND in 2 dimensions
+ *    and GD_STOGO_RAND at POPULATION 5, under a RESTART block with METHOD
+ *    lines: "the RESTART block on line 10: the STRATEGY-level optimiser
+ *    NLOPT:GN_DIRECT_L_RAND does not start at the point it is given (...),
+ *    so no RESTART round evaluates the points of the block's METHOD lines:
+ *    a round's search differs from round 0's only in the random numbers it
+ *    draws. To start each round at the block's points, use an optimiser
+ *    that starts at the point it is given."; a PRESTAGE exploration on
+ *    GN_DIRECT_L_RAND that takes the round's points (its EXPLORE block has
+ *    no INIT block; RESTART on line 15) "the RESTART block on line 15: the
+ *    PRESTAGE exploration NLOPT:GN_DIRECT_L_RAND, which is given each
+ *    round's points (its EXPLORE block has no INIT block), does not start
+ *    at the point it is given (...), so no round's exploration evaluates
+ *    the points of the block's METHOD lines, and a round's refinement
+ *    starts from them only when no evaluation of its exploration has a
+ *    usable loss: a round's exploration differs from round 0's only in the
+ *    random numbers it draws. To start each round's exploration at them,
+ *    use an exploration optimiser that starts at the point it is given."
+ * Each is the one RESTART warning of its run. No RESTART warning: a
+ * RESTART block without METHOD lines on GN_DIRECT_L_RAND in 2 dimensions
+ * (its rounds draw new numbers from a fresh seed), an exploration with an
+ * INIT block of its own (the round's points are not the exploration's).
+ * Before the fix: GD_STOGO got the text of the searches that obtain no
+ * gradient ("..., which the run's record answers: no round after round 0
+ * evaluates a new point, and the RESTART block's only effect is to end the
+ * run ...", although each round evaluated round 0's stencils again:
+ * tmp/review/v_f1, 4 evaluations after round 0), and GD_STOGO_RAND,
+ * GN_DIRECT_L_RAND in 2 dimensions and the METHOD lines got no warning
+ * (GD_STOGO_RAND was taken to draw random numbers from its first trial
+ * point): every exact-text count is 0. */
+TEST_CASE("startup validation: the RESTART warning says what a round of a "
+          "gradient search costs, when GD_STOGO_RAND repeats round 0 and "
+          "which METHOD lines no round reads",
+          "[startup][restart][start_point]")
+{
+    SECTION("GD_STOGO evaluates round 0's stencils again")
+    {
+        const std::string tail =
+            ": no round after round 0 evaluates a new point, and each round "
+            "evaluates up to AFTER_STAGNATION 3 of round 0's points again "
+            "before it ends without a new best." + kAnew;
+        const std::string head =
+            "the RESTART block on line 10: the STRATEGY-level optimiser "
+            "NLOPT:GD_STOGO does not start at the point it is given (" +
+            note("GD_STOGO") + ") and draws no random numbers, so every "
+            "RESTART round, whatever points it starts from, asks for round "
+            "0's points again";
+        {
+            const Startup s = startup(plain_restart("GD_STOGO"));
+            INFO("journal:\n" << s.journal << "\nstderr:\n" << s.err);
+            const std::string w = head + kStencils + tail;
+            CHECK(count_of(s.journal, w) == 1);
+            CHECK(count_of(s.err, "[HPO] WARNING: " + w + "\n") == 1);
+            CHECK(count_of(s.journal, "the RESTART block on line") == 1);
+        }
+        {
+            const Startup s = startup(plain_restart(
+                "GD_STOGO", kRoot, "1", "    GRAD_STRATEGY HYBRID\n"));
+            INFO("journal:\n" << s.journal);
+            CHECK(count_of(s.journal,
+                           head +
+                               ", and their gradients: the run's record "
+                               "answers their losses where a round asks for "
+                               "no gradient, but each point at which it asks "
+                               "for one is evaluated again, with its "
+                               "gradient (GRAD_STRATEGY HYBRID differentiates "
+                               "an evaluation of the point)" + tail) == 1);
+        }
+    }
+
+    SECTION("a PRESTAGE exploration on GD_STOGO")
+    {
+        const std::string config =
+            kRoot +
+            "OPTIMIZER\n"            // 4
+            "  STRATEGY\n"
+            "    TYPE PRESTAGE\n"
+            "    LIB NLOPT\n"
+            "    ALGO LN_BOBYQA\n"
+            "    MAXEVAL 10\n"
+            "    EXPLORE\n"          // 10
+            "      LIB NLOPT\n"
+            "      ALGO GD_STOGO\n"
+            "      MAXEVAL 8\n"
+            "    ENDEXPLORE\n"
+            "    RESTART\n"          // 15
+            "      AFTER_STAGNATION 3\n"
+            "      MAX 1\n"
+            "    ENDRESTART\n"
+            "  ENDSTRATEGY\n"
+            "ENDOPTIMIZER\n";
+        const Startup s = startup(config);
+        INFO("journal:\n" << s.journal);
+        CHECK(count_of(
+                  s.journal,
+                  "the RESTART block on line 15: the PRESTAGE exploration "
+                  "NLOPT:GD_STOGO does not start at the point it is given (" +
+                      note("GD_STOGO") + ") and draws no random numbers, so "
+                      "the exploration of every RESTART round, whatever "
+                      "points it starts from, asks for round 0's exploration "
+                      "points again" + kStencils +
+                      ": a round's refinement starts from candidates among "
+                      "round 0's exploration points. For explorations that "
+                      "search anew, use an exploration optimiser that starts "
+                      "at the point it is given.") == 1);
+    }
+
+    SECTION("GD_STOGO_RAND below POPULATION 2n + 1 repeats round 0's first "
+            "local search")
+    {
+        const std::string rest =
+            ", takes the centre of the box as its first trial point and runs "
+            "a local search from it before any of its random trial points, "
+            "so every RESTART round, whatever points it starts from, asks "
+            "first for the points of round 0's first local search again" +
+            kStencils +
+            ": until that search ends a round evaluates no new point, and it "
+            "reaches its random trial points only if the search ends before "
+            "the round has had AFTER_STAGNATION 3 evaluations without a new "
+            "best. For rounds that search anew, use an optimiser that starts "
+            "at the point it is given, or POPULATION 5 (2n + 1) or more, "
+            "whose trial points are all random.";
+        const std::string head =
+            "the RESTART block on line 10: the STRATEGY-level optimiser "
+            "NLOPT:GD_STOGO_RAND does not start at the point it is given (" +
+            note("GD_STOGO_RAND") + ") and, with POPULATION ";
+        {
+            const Startup s = startup(plain_restart("GD_STOGO_RAND"));
+            INFO("journal:\n" << s.journal << "\nstderr:\n" << s.err);
+            const std::string w =
+                head + "4 (NLopt's default, 2n for n = 2 OPTIM dimensions), "
+                       "less than 2n + 1 = 5" + rest;
+            CHECK(count_of(s.journal, w) == 1);
+            CHECK(count_of(s.err, "[HPO] WARNING: " + w + "\n") == 1);
+            CHECK(count_of(s.journal, "the RESTART block on line") == 1);
+        }
+        {
+            const Startup s = startup(plain_restart(
+                "GD_STOGO_RAND", kRoot, "1", "    POPULATION 3\n"));
+            INFO("journal:\n" << s.journal);
+            CHECK(count_of(s.journal,
+                           head + "3, less than 2n + 1 = 5 (n = 2 OPTIM "
+                                  "dimensions)" + rest) == 1);
+            CHECK(count_of(s.journal, "the RESTART block on line") == 1);
+        }
+    }
+
+    SECTION("a search that draws random numbers never reads the RESTART "
+            "block's METHOD lines")
+    {
+        {
+            const Startup s = startup(plain_restart("GN_DIRECT_L_RAND"));
+            INFO("journal:\n" << s.journal << "\nstderr:\n" << s.err);
+            const std::string w = method_lines_warning("GN_DIRECT_L_RAND");
+            CHECK(count_of(s.journal, w) == 1);
+            CHECK(count_of(s.err, "[HPO] WARNING: " + w + "\n") == 1);
+            CHECK(count_of(s.journal, "the RESTART block on line") == 1);
+        }
+        {
+            const Startup s = startup(plain_restart(
+                "GD_STOGO_RAND", kRoot, "1", "    POPULATION 5\n"));
+            INFO("journal:\n" << s.journal);
+            CHECK(count_of(s.journal, method_lines_warning("GD_STOGO_RAND")) ==
+                  1);
+            CHECK(count_of(s.journal, "the RESTART block on line") == 1);
+        }
+        {
+            // without METHOD lines: nothing the rounds do not read
+            const Startup s = startup(
+                plain_restart("GN_DIRECT_L_RAND", kRoot, "1", "", false));
+            INFO("journal:\n" << s.journal);
+            CHECK(count_of(s.journal, "the RESTART block on line") == 0);
+        }
+
+        const auto prestage = [](const std::string& explore_init) {
+            return kRoot +
+                   "OPTIMIZER\n"            // 4
+                   "  STRATEGY\n"
+                   "    TYPE PRESTAGE\n"
+                   "    LIB NLOPT\n"
+                   "    ALGO LN_BOBYQA\n"
+                   "    MAXEVAL 10\n"
+                   "    EXPLORE\n"          // 10
+                   "      LIB NLOPT\n"
+                   "      ALGO GN_DIRECT_L_RAND\n"
+                   "      MAXEVAL 8\n" + explore_init +
+                   "    ENDEXPLORE\n"
+                   "    RESTART\n"          // 15 (19 with an EXPLORE INIT)
+                   "      AFTER_STAGNATION 3\n"
+                   "      MAX 1\n"
+                   "      METHOD RANDOM 1\n"
+                   "    ENDRESTART\n"
+                   "  ENDSTRATEGY\n"
+                   "ENDOPTIMIZER\n";
+        };
+        {
+            const Startup s = startup(prestage(""));
+            INFO("journal:\n" << s.journal);
+            CHECK(count_of(
+                      s.journal,
+                      "the RESTART block on line 15: the PRESTAGE exploration "
+                      "NLOPT:GN_DIRECT_L_RAND, which is given each round's "
+                      "points (its EXPLORE block has no INIT block), does not "
+                      "start at the point it is given (" +
+                          note("GN_DIRECT_L_RAND") +
+                          "), so no round's exploration evaluates the points "
+                          "of the block's METHOD lines, and a round's "
+                          "refinement starts from them only when no "
+                          "evaluation of its exploration has a usable loss: a "
+                          "round's exploration differs from round 0's only in "
+                          "the random numbers it draws. To start each round's "
+                          "exploration at them, use an exploration optimiser "
+                          "that starts at the point it is given.") == 1);
+            CHECK(count_of(s.journal, "the RESTART block on line") == 1);
+        }
+        {
+            const Startup s = startup(prestage(
+                "      INIT\n        METHOD RANDOM 2\n        SEED 3\n"
+                "      ENDINIT\n"));
+            INFO("journal:\n" << s.journal);
+            CHECK(count_of(s.journal, "the RESTART block on line") == 0);
+            CHECK(count_of(s.journal, "the INIT block on line 14") == 1);
+        }
     }
 }
 

@@ -975,17 +975,19 @@ TEST_CASE_METHOD(PTFixture,
  * fitting, with the std::runtime_error "tadah refit: the lattice constant
  * of the EAM header, a0 = 361 A, puts the nearest neighbours of the fcc
  * crystal 255.26554800834364 A apart, at or beyond the table's cutoff,
- * rcut = 5 A: the crystal has no pair within the cutoff. Edit the element
- * line of the setfl file (`<Z> <mass> <a0> <lattice>`): set the
- * equilibrium lattice constant, in Angstrom (a value in picometres is 100
- * times the value in Angstrom)."; no ladder runs and no pot.tadah is
- * written.
- * Before the fix: the gate took no cutoff, and the compact fit started its
- * windows at 0.8 x r_reach = 153 A, above rcut, ran its phi ladder and
- * failed inside the fitter: "compact_fitter clamp_bump_support_params:
- * radial bump 1 (mu 153.159329) has width eta -0.006749 <= 0; every radial
- * bump width must be > 0" (tmp/rg_probe/a0pm): the text and ladder checks
- * fail. */
+ * rcut = 5 A, and LAMMPS (pair_style eam/alloy) counts a pair only below
+ * rcut: the crystal has no interaction in LAMMPS. Edit the element line of
+ * the setfl file (`<Z> <mass> <a0> <lattice>`): set the equilibrium
+ * lattice constant, in Angstrom (a value in picometres is 100 times the
+ * value in Angstrom)."; no ladder runs and no pot.tadah is written.
+ * Before the fix: the refusal said "...: the crystal has no pair within
+ * the cutoff." (tadah itself counts a pair at exactly rcut), so the text
+ * check fails. Before the crystal gate took the cutoff, the compact fit
+ * started its windows at 0.8 x r_reach = 153 A, above rcut, ran its phi
+ * ladder and failed inside the fitter: "compact_fitter
+ * clamp_bump_support_params: radial bump 1 (mu 153.159329) has width eta
+ * -0.006749 <= 0; every radial bump width must be > 0"
+ * (tmp/rg_probe/a0pm). */
 TEST_CASE_METHOD(PTFixture,
                  "tadah refit compact: a lattice constant whose nearest "
                  "neighbours are beyond the cutoff is refused by the crystal "
@@ -1006,8 +1008,10 @@ TEST_CASE_METHOD(PTFixture,
   CHECK(what ==
         "tadah refit: the lattice constant of the EAM header, a0 = 361 A, "
         "puts the nearest neighbours of the fcc crystal 255.26554800834364 A "
-        "apart, at or beyond the table's cutoff, rcut = 5 A: the crystal has "
-        "no pair within the cutoff. Edit the element line of the setfl file "
+        "apart, at or beyond the table's cutoff, rcut = 5 A, and LAMMPS "
+        "(pair_style eam/alloy) counts a pair only below rcut: the crystal "
+        "has no interaction in LAMMPS. Edit the element line of the setfl "
+        "file "
         "(`<Z> <mass> <a0> <lattice>`): set the equilibrium lattice constant, "
         "in Angstrom (a value in picometres is 100 times the value in "
         "Angstrom).");
