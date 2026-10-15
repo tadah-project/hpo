@@ -5,6 +5,7 @@
 #include <tadah/hpo/candidate_context.h>
 #include <tadah/hpo/bump_support_gate.h>
 #include <tadah/hpo/rho_gates.h>
+#include <tadah/hpo/init_strategy.h>
 #include <tadah/models/descriptors/dm/embed_spec.h>
 #include <chrono>
 #include <filesystem>
@@ -27,9 +28,9 @@ core::Context config() {
 }
 struct File {
   std::filesystem::path path;
-  File(const std::string &s):path(std::filesystem::temp_directory_path()/
+  File(const std::string &s,bool optimizer=true):path(std::filesystem::temp_directory_path()/
     ("tadah-embed-optim-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()))) {
-    std::ofstream f(path); f<<s<<"OPTIMIZER\nLIB DLIB\nALGO BFGS\nMAXEVAL 2\nENDOPTIMIZER\n";
+    std::ofstream f(path); f<<s;if(optimizer)f<<"OPTIMIZER\nLIB DLIB\nALGO BFGS\nMAXEVAL 2\nENDOPTIMIZER\n";
   }
   ~File() { std::error_code e; std::filesystem::remove(path,e); }
 };
@@ -91,4 +92,13 @@ TEST_CASE("DM_Embed density gates read the local component form and density",
   REQUIRE(gates.rhobar.has_value());
   const auto result=hpo::detail::eval_rhobar_gate(*gates.rhobar,c,true);
   REQUIRE_FALSE(result.abstain);REQUIRE_FALSE(result.fail);
+}
+
+TEST_CASE("DM_Embed WARM reads saved blocks in selected width coordinates", "[unified-dm][HPO][warm]") {
+  auto c=config(),saved=c;models::embed_binding(saved,"ta.embedding.widths").write(saved,0,0.61);
+  std::ostringstream text;saved.write_potential(text,18);File seed(text.str(),false);
+  File f("OPTIM ta.embedding.widths (1) 0.4 0.7\n");hpo::HPOTargets targets(c,f.path.string());
+  hpo::InitStrategySpec spec;spec.warm_on_mismatch="error";spec.chain.push_back({"WARM",{seed.path.string()}});
+  auto strategy=hpo::build_init_strategy(spec);hpo::InitContext init{targets.spec,targets,0,&c};
+  const auto points=strategy->generate(init,1);REQUIRE(points.size()==1);REQUIRE(points[0][0]==0.61);
 }
