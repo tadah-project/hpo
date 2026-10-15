@@ -782,8 +782,16 @@ TEST_CASE("startup validation: an INNER block needs an optimiser that runs "
                              "    MAXEVAL 60\n";
 
     SECTION("a non-NLopt INNER optimiser under MLSL") {
+        /* CERES:LBFGS, refused in every other block (optimizer_caps.cpp),
+         * is refused here by the INNER rule, whose advice holds for an
+         * INNER block: an INNER search is a local NLopt algorithm.
+         * Before the fix: the parser refused it at ENDINNER with the CERES
+         * refusal, whose advice (NLOPT:LD_LBFGS or DLIB:BFGS, or
+         * CERES:STEEPEST_DESCENT) names two optimisers an INNER block does
+         * not take: the parse REQUIRE fails for it. */
         for (const auto& la : std::vector<std::pair<std::string, std::string>>{
-                 {"DLIB", "BFGS"}, {"DLIB", "GFS"}, {"TADAH", "ANNEAL"}}) {
+                 {"DLIB", "BFGS"}, {"DLIB", "GFS"}, {"TADAH", "ANNEAL"},
+                 {"CERES", "LBFGS"}}) {
             INFO(la.first << ":" << la.second);
             const auto v = judge(strategy_config(
                 "    TYPE PLAIN\n" + mlsl + inner(la.first, la.second)));
