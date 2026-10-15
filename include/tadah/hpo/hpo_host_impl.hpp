@@ -4596,8 +4596,8 @@ bool HPO_Host<P,R>::analytical_gradient(const P& x, P& g,
  *
  * Logs the analytical-vs-FD split on the first analytical_gradient call
  * (per process). Users running GRAD_STRATEGY=HYBRID / ANALYTICAL with
- * a gradient-based optimiser (NLOPT:LD_LBFGS, DLIB:BFGS, CERES:LBFGS,
- * ...) have no other way to verify whether the closed-form path is
+ * a gradient-based optimiser (NLOPT:LD_LBFGS, DLIB:BFGS,
+ * CERES:STEEPEST_DESCENT, ...) have no other way to verify whether the closed-form path is
  * actually engaging -- the wall-clock difference vs Numerical depends on
  * the descriptor stack and is easy to misattribute. The log emits:
  *

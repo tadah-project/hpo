@@ -156,9 +156,12 @@
  * keep the analytical gradient there: with every failed PC_OBSERVABLE term
  * a band-B failure, a search that started where one failed converged on
  * the graded loss (DLIB:BFGS FTOL_ABS, NLopt "algorithm converged").
- * gradient(x, g) without the loss (DLIB:BFGS for a point that is not its
- * last evaluation) has nothing to classify: ANALYTICAL, and HYBRID for
- * what it does not difference, give the analytical gradient there.
+ * Every backend passes the loss it has just evaluated with each gradient
+ * it asks for (gradient_at: the NLopt and Ceres adapters, DLIB:BFGS), so the
+ * kind of the point is always known. gradient(x, g) without it, which no
+ * backend calls, has nothing to classify under ANALYTICAL, which gives the
+ * analytical gradient there; HYBRID's evaluates the loss at x first
+ * (below).
  *
  * A point the host has no fit of -- a candidate the bump-support or a
  * density gate rejected before training (a graded band-D failure under

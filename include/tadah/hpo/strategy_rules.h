@@ -100,7 +100,8 @@ void require_prestage_explore(const OptimizerSpec& spec);
  * evaluates the centre of the OPTIM box first and then divides the whole
  * box; NLopt never reads that point), so the refinement would never use
  * the exploration's candidates, for any TOPK. Use a local optimiser, which
- * starts at each candidate (CERES:LBFGS, ..., every one), or run
+ * starts at each candidate (CERES:STEEPEST_DESCENT, DLIB:BFGS, ..., every
+ * one), or run
  * NLOPT:GN_DIRECT_L as the exploration (EXPLORE block) or once, as
  * STRATEGY TYPE PLAIN." (checked before the TOPK rule); and with a
  * configured TOPK > 1 one that runs_from_each_start() accepts -- whatever

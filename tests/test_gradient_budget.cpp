@@ -5,8 +5,9 @@
 // cannot pay for both and one more evaluation ends the search where it
 // started: with GRAD_STRATEGY NUMERICAL and central differences in n
 // dimensions the start costs 1 + 2n evaluations, so MAXEVAL 2n + 1 or less
-// takes no step (LD_LBFGS, DLIB:BFGS and CERES:LBFGS in 2-D: MAXEVAL 4 and 5
-// evaluate the start and its stencil, MAXEVAL 6 a first step). Such a budget
+// takes no step (LD_LBFGS and DLIB:BFGS in 2-D, and CERES:LBFGS, refused
+// since: MAXEVAL 4 and 5 evaluate the start and its stencil, MAXEVAL 6 a
+// first step). Such a budget
 // can be deliberate (a probe of the start), so validate_hpo_setup warns, for
 // every phase that has a MAXEVAL of its own, naming what the gradient costs
 // and the budget that takes a step.

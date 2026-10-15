@@ -12,13 +12,15 @@
 //   - INIT provenance (OptimizerSpec::optim_init_origin);
 //   - validate_hpo_setup validates a bare DM_REAM density, and the probes
 //     that swallow construction errors rethrow models::DensityFormError;
-//   - one startup WARNING names each phase that can still evaluate an
-//     amplitude outside a NONNEG / MONOTONE box: an optimiser that ignores
-//     the bounds (finite differences keep to the box with either step
-//     rule, fd_stencil.h);
-//   - HPO_Host evaluates a NONNEG / MONOTONE candidate projected onto
-//     AMPGRIDMB >= 0 (hidden host-level cases, run explicitly with
-//     ./test_hpo "[rhoform_e2e]").
+//   - no RHOFORM startup WARNING names a phase: no phase evaluates an
+//     amplitude outside a NONNEG / MONOTONE box (finite differences keep to
+//     the box with either step rule, fd_stencil.h), and an optimiser that
+//     ignores the bounds (CERES:STEEPEST_DESCENT) has its own WARNING, which
+//     says that a point it proposes outside the box is not evaluated;
+//   - HPO_Host does not evaluate a NONNEG / MONOTONE candidate outside the
+//     box: it scores it by its distance to the box (box_penalty.h), and
+//     evaluates one inside it as it is (hidden host-level cases, run
+//     explicitly with ./test_hpo "[rhoform_e2e]").
 
 #include "tadah_test_skip.hpp"  // before catch2/catch.hpp
 #include "catch2/catch.hpp"

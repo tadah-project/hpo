@@ -63,15 +63,14 @@ RawEmbeddingF0 derive_raw_embedding_f0(const core::Context &train_ctx);
  *   - a DM_REAM configuration must declare RHOFORM, and a bare DM_REAM
  *     density must be valid for its form (models::DensityFormError): the
  *     grids, the MONOTONE cutoff whitelist and, under NONNEG / MONOTONE,
- *     WATOM > 0. Under NONNEG / MONOTONE with an OPTIM AMPGRIDMB, one
- *     WARNING that walks the phases of the run (strategy_phase_specs: the
- *     STRATEGY-level optimiser, each MULTISTART start, the PRESTAGE
- *     exploration and refinement, every INNER block, the local search of
- *     an MLSL or AUGLAG included) and names each one whose optimiser
- *     ignores the bounds (OptimizerCaps::ignores_bounds: the CERES
- *     drivers) and so can evaluate outside the box. Such
- *     amplitudes are projected onto [0, inf) by HPO_Host. Finite
- *     differences keep to the box (fd_stencil.h), so they are not named;
+ *     WATOM > 0. No AMPGRIDMB amplitude below 0 is evaluated, so none is
+ *     warned about: a NONNEG / MONOTONE box does not reach below 0, finite
+ *     differences keep to the box (fd_stencil.h), and HPO_Host scores a
+ *     point an optimiser that ignores the bounds proposes outside it, by
+ *     its distance to the box, without evaluating it (box_penalty.h); such
+ *     an optimiser (OptimizerCaps::ignores_bounds: CERES:STEEPEST_DESCENT)
+ *     has the startup WARNING of validate_optimizer_scaling, once per run
+ *     and backend;
  *   - every width of a radial bump channel (SGRID2B of D2_Blip/D2_Blip5,
  *     SGRIDMB of a Blip/Blip5 density) is > 0, in every form
  *     (models::optim_low_bound_rule(key, ctx));
