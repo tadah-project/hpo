@@ -3775,14 +3775,21 @@ std::string joined(const std::vector<std::string>& v)
  * population), TADAH:RANDOM (it evaluates its INIT point first), an MLSL
  * with an INNER StoGO (MLSL evaluates its starting point first), an AUGLAG
  * with a local INNER search; and so do a PLAIN run and an exploration on
- * one of them, whose start is no purpose of theirs.
+ * one of them, whose start is no purpose of theirs. The lists name no
+ * refused optimiser: the first entry is CERES:STEEPEST_DESCENT, and
+ * CERES:LBFGS, CERES:NLCG and CERES:WOLFE (refused, optimizer_caps.cpp) are
+ * not in them.
  * Before the fix: the TOPK 1 refinements and the AUGLAG cases were
  * accepted (startup and policy ""; the refinement ran over the whole box
  * and never evaluated its candidate, lanes/F/tmp/sr_probe/run_direct,
  * run_stogo, run_ags), and the TOPK 3 ones were refused with the TOPK
  * message ("STRATEGY TYPE PRESTAGE with TOPK 3 cannot refine with ... or
  * TOPK 1 to refine the best candidate once."): every refusal check fails;
- * the passing cases pass as well (pins). */
+ * the passing cases pass as well (pins). The checks of the refused CERES
+ * drivers pass as well (a pin of the registry this branch merged with; on
+ * v1-dev 8a3f95a, which registered the three, the list began "CERES:LBFGS,
+ * CERES:NLCG, CERES:STEEPEST_DESCENT, CERES:WOLFE, DLIB:BFGS", and the
+ * documentation quoted it). */
 TEST_CASE("startup validation: a PRESTAGE refinement or MULTISTART whose "
           "search does not start at the point it is given is refused, "
           "naming the local optimisers that do",
@@ -3798,6 +3805,11 @@ TEST_CASE("startup validation: a PRESTAGE refinement or MULTISTART whose "
     CHECK(has(local, "NLOPT:LN_BOBYQA"));
     CHECK(has(local, "NLOPT:LN_AUGLAG"));
     CHECK_FALSE(has(local, "NLOPT:AUGLAG"));
+    REQUIRE(local.size() >= 2u);
+    CHECK(local[0] == "CERES:STEEPEST_DESCENT");
+    CHECK(local[1] == "DLIB:BFGS");
+    for (const char* refused : {"CERES:LBFGS", "CERES:NLCG", "CERES:WOLFE"})
+        CHECK_FALSE(has(local, refused));
     CHECK(has(nlopt_local, "NLOPT:LN_BOBYQA"));
     CHECK_FALSE(has(nlopt_local, "DLIB:BFGS"));
     for (const auto& name : local) {

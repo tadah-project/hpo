@@ -100,11 +100,15 @@ TEST_CASE("OptimizerCaps: bounds-ignoring backends are flagged",
      * (Ceres' GradientProblemSolver has no bounds; such a point is scored,
      * not evaluated: box_penalty.h); its note says so; every registered
      * NLopt algorithm keeps to the box.
+     * The score's slope points away from the box (box_penalty.h), so a
+     * descent step leads back into it, and the note says so.
      * Before the fix: the four CERES drivers were flagged (CERES:LBFGS,
      * NLCG and WOLFE are refused now: their Wolfe line search stalls at a
      * point outside the box), and the note said such points are evaluated
      * there ("... and are evaluated there, and such a point can become the
-     * best ..."). */
+     * best ..."); then (review) it gave the slope the wrong sign ("...
+     * whose slope points back into it, it counts against MAXEVAL ..."): the
+     * Contains check fails. */
     const auto unbounded = filter_optimizer_caps(
         [](const OptimizerCaps& c) { return c.ignores_bounds; });
     CHECK(format_caps_list(unbounded, unbounded.size()) ==
@@ -114,7 +118,8 @@ TEST_CASE("OptimizerCaps: bounds-ignoring backends are flagged",
     CHECK_THAT(std::string(optimizer_caps("CERES", "STEEPEST_DESCENT").bounds_note),
                Catch::Contains("Such a point is not evaluated: it is scored "
                                "as a failure graded by its distance to the "
-                               "box, whose slope points back into it, it "
+                               "box, whose slope points away from the box, "
+                               "so a descent step leads back into it; it "
                                "counts against MAXEVAL and it is never the "
                                "best"));
     CHECK_FALSE(optimizer_caps("DLIB", "BFGS").ignores_bounds);

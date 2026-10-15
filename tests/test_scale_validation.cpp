@@ -183,11 +183,15 @@ TEST_CASE("scale_validation: bounds-ignoring backends warn at startup",
      * 4). CERES:STEEPEST_DESCENT is the only registered backend that
      * ignores the bounds: NLOPT:LN_NEWUOA, which did, is refused, so the
      * check throws its refusal and warns nothing.
-     * Pins: that WARNING once, for CERES:STEEPEST_DESCENT.
+     * Pins: that WARNING once, for CERES:STEEPEST_DESCENT; the slope of
+     * the score points away from the box (box_penalty.h: g_k = c e_k, c > 0,
+     * e_k > 0 above the box), so a descent step leads back into it.
      * Before the fix: the WARNING said such a point is evaluated there and
      * can become the best ("... its iterates can leave the box ... and are
      * evaluated there, and such a point can become the best ..."), for
-     * CERES:LBFGS, refused since. */
+     * CERES:LBFGS, refused since; then (review) it gave the slope the wrong
+     * sign, "... graded by its distance to the box, whose slope points back
+     * into it, it counts against MAXEVAL ...": the count of this text is 0. */
     JournalCapture j;
     auto sp = make_spec("NLOPT", "LN_NEWUOA");
     REQUIRE_THROWS_WITH(validate_optimizer_scaling(sp, "OUTER"),
@@ -203,9 +207,10 @@ TEST_CASE("scale_validation: bounds-ignoring backends warn at startup",
         "propose points outside the box (a LOG dimension stays positive, a "
         "linear one is unbounded). Such a point is not evaluated: it is "
         "scored as a failure graded by its distance to the box, whose slope "
-        "points back into it, it counts against MAXEVAL and it is never the "
-        "best; the first is reported with a WARNING and DIAGNOSTICS counts "
-        "them all. DLIB:BFGS and the NLopt LD_* algorithms keep to the box";
+        "points away from the box, so a descent step leads back into it; it "
+        "counts against MAXEVAL and it is never the best; the first is "
+        "reported with a WARNING and DIAGNOSTICS counts them all. DLIB:BFGS "
+        "and the NLopt LD_* algorithms keep to the box";
     CHECK(count_of(j.text(), ceres) == 1u);
     CHECK(count_of(j.text(), "ignores the OPTIM box") == 1u);
 }

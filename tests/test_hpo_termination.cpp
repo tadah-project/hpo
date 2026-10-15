@@ -7794,6 +7794,127 @@ TEST_CASE("No usable gradient: under FAILSCORE_GRADING a start inside the "
     }
 }
 
+TEST_CASE("Finite differences: under FAILSCORE_GRADING a graded start next "
+          "to the usable side is differenced on its graded side, and no "
+          "point outside the OPTIM box is evaluated",
+          "[HPO][termination][fd_gradient][failscore_grading][out_of_box]")
+{
+    /* FAILSCORE 1e9, FAILSCORE_GRADING ON, from CGRID2B[2] = 1.4: a graded
+     * band-D failure (the skip cap, 9.9975000111e8) whose central stencil
+     * point 1.6 is usable (99.97) and 1.2 graded (9.9975000125e8). A
+     * difference never mixes the kinds (owner decision, MK, 2026-10-15):
+     * the gradient at 1.4 is the backward difference with 1.2, the graded
+     * slope, not the jump to 1.6; a point an optimiser proposes outside the
+     * box is scored out_of_box_score(FAILSCORE, d), not evaluated.
+     * Pins: every backend evaluates 1.4, 1.6 (usable) and 1.2 (graded)
+     * first; DLIB:BFGS then reaches the bound 2.0 (95.2545212249, the best)
+     * and ends "FTOL_ABS reached" after 6 evaluations, NLOPT:LD_SLSQP the
+     * same 6 and ends roundoff-limited, with no "bug: more than iter SQP
+     * iterations"; CERES:STEEPEST_DESCENT proposes 3 points outside [1, 2]
+     * -- each row carries out_of_box_score(1e9, d) of its own coordinate, d
+     * its distance to the box (the box is 1 wide) -- and ends "FTOL_REL
+     * reached" after 30, its best 1.985421581 in the box; every other row
+     * lies in the box; DIAGNOSTICS counts the out-of-box points ("Out-of-box
+     * points : 3", no such line for the bounded two) and the mixed-kind
+     * stencils (1, and 2 for CERES:STEEPEST_DESCENT); no stop line; status 0.
+     * Before the fix: passes as well (a pin, added in review, of the fix of
+     * this branch; nothing pinned the reproducer through hpo_run). A mutant
+     * that differences a graded CENTRAL stencil as it is, v1-dev's rule,
+     * fails it: LD_SLSQP 3 evaluations, CERES:STEEPEST_DESCENT 43,
+     * DLIB:BFGS without the mixed-kind line
+     * (tmp/before_fix_box_and_slopes_review_pins.txt). On v1-dev
+     * before it (19187dd; the same runs through tadah hpo,
+     * tmp/bs/repro/before/a36_*): LD_SLSQP stopped after 3 evaluations,
+     * "STOPPED -- bug: more than iter SQP iterations (...)";
+     * CERES:STEEPEST_DESCENT evaluated 26 of its 39 points outside the box
+     * and ended "FAILURE (Numerical failure in line search)", its best 2.4,
+     * outside the box; DLIB:BFGS made the same six evaluations, its first
+     * gradient the jump from 1.2 to 1.6 (about -2.5e9 per unit), and no
+     * DIAGNOSTICS line counted a mixed-kind stencil. */
+    struct Case {
+        std::string lib, algo, status;
+        std::size_t evals, mixed, outside;
+        double best;
+    };
+    std::vector<Case> cases = {
+        {"DLIB", "BFGS", "DLIB:BFGS: FTOL_ABS reached", 6u, 1u, 0u, 2.0},
+        {"NLOPT", "LD_SLSQP",
+         "STOPPED -- nlopt roundoff-limited (algorithm converged; consider "
+         "adding ftol_rel / xtol_rel / maxeval to stop cleanly next time)",
+         6u, 1u, 0u, 2.0}};
+#ifdef TADAH_USE_CERES
+    cases.push_back({"CERES", "STEEPEST_DESCENT",
+                     "CERES:STEEPEST_DESCENT: FTOL_REL reached", 30u, 2u, 3u,
+                     1.985421581250845});
+#endif
+    for (const auto& c : cases) {
+        const std::string name = c.lib + ":" + c.algo;
+        DYNAMIC_SECTION(name) {
+            TaRun run(straddle_block(c.lib, c.algo),
+                      straddle_root_fs("1e9", "FAILSCORE_GRADING ON\n"));
+            int status = -1;
+            REQUIRE_NOTHROW(status = straddle_run(run, "1.4", name));
+            CHECK(status == 0);
+            const auto x = evaluated_cgrid2();
+            const auto loss = data_rows("loss.tadah");
+            REQUIRE(x.size() == c.evals);
+            REQUIRE(loss.size() == c.evals);
+            CHECK(x[0] == Approx(1.4));
+            CHECK(x[1] == Approx(1.6));
+            CHECK(x[2] == Approx(1.2));
+            CHECK(loss_value(loss[0].back()) ==
+                  Approx(9.9975000111e8).epsilon(1e-10));
+            CHECK(loss_value(loss[1].back()) < 0.999e9);
+            CHECK(loss_value(loss[2].back()) ==
+                  Approx(9.9975000125e8).epsilon(1e-10));
+            if (c.lib != "CERES") {
+                CHECK(x[3] == 2.0);
+                CHECK(loss_value(loss[3].back()) ==
+                      Approx(95.2545212249).epsilon(1e-10));
+            }
+            std::size_t outside = 0;
+            for (std::size_t k = 0; k < x.size(); ++k) {
+                if (x[k] >= 1.0 && x[k] <= 2.0) continue;
+                CAPTURE(k, x[k]);
+                ++outside;
+                const double d = x[k] > 2.0 ? x[k] - 2.0 : 1.0 - x[k];
+                CHECK(loss_value(loss[k].back()) ==
+                      Approx(tadah::hpo::out_of_box_score(1e9, d))
+                          .epsilon(1e-12));
+            }
+            CHECK(outside == c.outside);
+            const std::string journal = read_file("hpo_run.log");
+            if (c.outside)
+                CHECK_THAT(journal,
+                           Catch::Contains("Out-of-box points       : " +
+                                           std::to_string(c.outside) + " ("));
+            else
+                CHECK(journal.find("Out-of-box points") == std::string::npos);
+            const std::string mixed = std::to_string(c.mixed);
+            CHECK_THAT(journal,
+                       Catch::Contains("Mixed-kind stencils     : " + mixed +
+                                       " (") &&
+                           Catch::Contains("without it): CGRID2B[2] " + mixed +
+                                           "\n"));
+            CHECK(journal.find("bug: more than iter SQP iterations") ==
+                  std::string::npos);
+            CHECK(journal.find("stopped: no usable gradient") ==
+                  std::string::npos);
+            CHECK(journal_status(journal) == c.status);
+            const auto best = data_rows("best_params.tadah");
+            REQUIRE_FALSE(best.empty());
+            const double xb = std::stod(best.back().back());
+            CHECK(xb >= 1.0);
+            CHECK(xb <= 2.0);
+            CHECK(xb == Approx(c.best).epsilon(1e-9));
+            const auto best_loss = data_rows("best_loss.tadah");
+            REQUIRE_FALSE(best_loss.empty());
+            CHECK(std::stod(best_loss.back().back()) < 0.999e9);
+            check_run_files();
+        }
+    }
+}
+
 TEST_CASE("No usable gradient: under GRAD_STRATEGY ANALYTICAL or HYBRID a "
           "start inside the failure region stops at its first gradient",
           "[HPO][termination][fd_gradient][analytical]")
@@ -8053,6 +8174,7 @@ TEST_CASE("Finite differences: a search on the upper bound evaluates nothing "
     }
 }
 
+#ifdef TADAH_USE_CERES
 TEST_CASE("Box: CERES:STEEPEST_DESCENT in two dimensions: no point outside "
           "the OPTIM box is evaluated or can be the best",
           "[HPO][termination][fd_gradient][out_of_box]")
@@ -8072,7 +8194,11 @@ TEST_CASE("Box: CERES:STEEPEST_DESCENT in two dimensions: no point outside "
      * best_params.tadah lies in the box, with a usable loss; status 0.
      * Before the fix: the points outside the box were evaluated there, with
      * losses of the model trained at them (the line "... lies outside its
-     * OPTIM box ... and is evaluated there"), and one could be the best. */
+     * OPTIM box ... and is evaluated there"), and one could be the best.
+     * A build without Ceres (TADAH_ENABLE_CERES OFF) does not compile the
+     * case, as every other Ceres run of this file: it failed there, "CERES
+     * support is not built; reconfigure with -DTADAH_ENABLE_CERES=ON" at
+     * startup (tmp/before_fix_box_and_slopes_review_noceres.txt). */
     const double fs = std::numeric_limits<double>::max();
     TaRun run(plain_block("    TYPE PLAIN\n    LIB CERES\n"
                           "    ALGO STEEPEST_DESCENT\n    MAXEVAL 40\n"
@@ -8137,6 +8263,7 @@ TEST_CASE("Box: CERES:STEEPEST_DESCENT in two dimensions: no point outside "
     CHECK(std::stod(best_loss.back().back()) < 0.999 * fs);
     check_run_files();
 }
+#endif  // TADAH_USE_CERES
 
 TEST_CASE("Finite differences: HYBRID differences every parameter when no "
           "analytical derivative can be formed", "[HPO][termination]"

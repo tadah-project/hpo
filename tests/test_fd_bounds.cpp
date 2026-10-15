@@ -853,6 +853,54 @@ TEST_CASE("fd bounds: a difference taken without a point of another kind is "
                                   "it): X[1] 2\n"));
 }
 
+TEST_CASE("fd bounds: a difference taken without two points of another kind "
+          "names both in its journal line",
+          "[HPO][grad_provider][fd_bounds][hpolog][gradient_failure]")
+{
+    /* A usable island [0.3, 0.5] in the default FAILSCORE. At X[1] = 0.35
+     * the central stencil is 0.45 and 0.25, and 0.25 fails; the one-sided
+     * difference into the usable side would read 0.55, which fails too.
+     * Pins: the gradient along X[1] is the forward 2-point difference with
+     * 0.45, 1; the INFO line names both points ("finite differences: at
+     * X[1] = 0.35 (a usable loss), the stencil points X[1] = 0.25 (loss
+     * 1.797693135e+308) and X[1] = 0.55 (loss 1.797693135e+308) are of
+     * another kind, so the difference is taken without them: forward
+     * difference, at X[1] = 0.45; ..."), and DIAGNOSTICS counts the
+     * component, "Mixed-kind stencils     : 1 (...): X[1] 1".
+     * Before the fix: passes as well (a pin of the plural line of
+     * StencilReport::mixed and of the 2-point fallback when the far point
+     * of the other side fails, which no test reached; a mutant that took the
+     * one-sided difference through the failed far point fails it,
+     * tmp/before_fix_box_and_slopes_review_pins.txt). Before the same-kind
+     * rule (owner decision, MK, 2026-10-15) the gradient failed at 0.25. */
+    Journal j;
+    const auto sp = spec_on({dim("X[1]", 0.0, 1.0), dim("X[2]", 0.0, 1.0)},
+                            true, 0.1);
+    Recorder host{[](const Vec& x) {
+                      return x(0) >= 0.3 && x(0) <= 0.5 ? x(0) + x(1) : kMax;
+                  },
+                  {}};
+    std::atomic<unsigned long> counter{0};
+    auto gp = tadah::hpo::make_gradient_provider<Vec, NoRunner>(sp, host,
+                                                                &counter, 0);
+    Vec g;
+    REQUIRE(gp.gradient(vec({0.35, 0.5}), g));
+    CHECK(g(0) == Approx(1.0).epsilon(1e-9));
+    CHECK(g(1) == Approx(1.0).epsilon(1e-9));
+    const std::string t = j.text();
+    CHECK(count_of(t, "finite differences: at X[1] = ") == 1u);
+    CHECK_THAT(t, Catch::Contains(
+                      "finite differences: at X[1] = 0.35 (a usable loss), the "
+                      "stencil points X[1] = 0.25 (loss 1.797693135e+308) and "
+                      "X[1] = 0.55 (loss 1.797693135e+308) are of another "
+                      "kind, so the difference is taken without them: forward "
+                      "difference, at X[1] = 0.45; a difference never mixes a "
+                      "usable loss with a failure; DIAGNOSTICS counts such "
+                      "differences per dimension") &&
+                  Catch::Contains("Mixed-kind stencils     : 1 (") &&
+                  Catch::Contains("without it): X[1] 1\n"));
+}
+
 TEST_CASE("fd bounds: the OPTIMISER section says how finite differences are "
           "taken", "[HPO][fd_bounds][hpolog]")
 {
