@@ -850,26 +850,29 @@ struct CompactFitHook : tadah::hpo::engines::HPORefitEngine {
 
 }  // namespace
 
-/* Pins: HPORefitEngine::compact_fit() given a reachable pair-distance
- * window that is empty -- REFIT_REACH_SMIN 0 on the synthetic fcc table
- * (a0 = 3.6 A), so r_reach = 0 x the nearest-neighbour distance -- throws
- * std::logic_error "tadah refit[compact]: internal error: the reachable
- * pair-distance window is empty (r_reach = 0.0000 A, from REFIT_REACH_SMIN
- * 0.0000 and the fcc lattice of a0 = 3.6000 A), although the crystal gate
- * (a known lattice, a0 > 0) and the range of REFIT_REACH_SMIN (0.1 to 1)
- * make it positive for every configuration; this is a bug, please report
- * it" and fits nothing (no EAMRefit). No `tadah refit` run reaches it: run()'s
- * crystal gate refuses an unknown lattice and a0 <= 0, and REFIT_REACH_SMIN
- * is read in [0.1, 1] (read_refit_numbers), so only a caller of the hook can
- * hand it such a configuration (owner decision, MK, 2026-10-15: an
- * internal error, not a fallback).
- * Before the fix: compact_fit() logged a WARNING ("... could not be computed
- * ... falling back to the dense fit ...") and returned false, for run() to
- * fit the table in dense mode: no exception, the checks fail. */
+/* Pins: HPORefitEngine::compact_fit() given a reachability analysis whose
+ * r_reach is less than the step dr of the table's radial grid --
+ * REFIT_REACH_SMIN 0 on the synthetic fcc table (a0 = 3.6 A, dr = 0.0125313
+ * A), so r_reach = 0 x the nearest-neighbour distance -- throws
+ * std::logic_error "tadah refit[compact]: internal error: the reachability
+ * analysis gave r_reach = 0 A (REFIT_REACH_SMIN 0 x the nearest-neighbour
+ * distance of the fcc lattice of a0 = 3.6 A), less than the step of the
+ * table's radial grid, dr = 0.0125313 A, although the crystal gate of
+ * tadah refit (eam_lattice::require_crystal_on_grid) refuses every such
+ * table; this is a bug, please report it" and fits nothing (no EAMRefit).
+ * No `tadah refit` run reaches it: run()'s crystal gate refuses a table
+ * whose crystal's nearest neighbours at REFIT_REACH_SMIN are less than dr
+ * apart (the next test), so only a caller of the hook can hand it one
+ * (owner decision, MK, 2026-10-15: an internal error, not a fallback).
+ * Before the fix: the internal error said "the reachable pair-distance
+ * window is empty (r_reach = 0.0000 A, from REFIT_REACH_SMIN 0.0000 and the
+ * fcc lattice of a0 = 3.6000 A), although the crystal gate (a known
+ * lattice, a0 > 0) and the range of REFIT_REACH_SMIN (0.1 to 1) make it
+ * positive for every configuration; ..." (a gate that a subnormal a0
+ * passes, the next test): the text check fails. */
 TEST_CASE_METHOD(PTFixture,
-                 "tadah refit compact: an empty reachable pair-distance "
-                 "window is an internal error, not a fallback to the dense "
-                 "fit",
+                 "tadah refit compact: an r_reach below the table's dr is an "
+                 "internal error, not a fallback to the dense fit",
                  "[compact][refit][reachability]") {
   ScopedTempDir tmp;
   write_synth_eam("synth.eam.alloy");
@@ -898,13 +901,72 @@ TEST_CASE_METHOD(PTFixture,
   CHECK_FALSE(returned);
   CHECK(logic_error);
   CHECK(what ==
-        "tadah refit[compact]: internal error: the reachable pair-distance "
-        "window is empty (r_reach = 0.0000 A, from REFIT_REACH_SMIN 0.0000 "
-        "and the fcc lattice of a0 = 3.6000 A), although the crystal gate (a "
-        "known lattice, a0 > 0) and the range of REFIT_REACH_SMIN (0.1 to 1) "
-        "make it positive for every configuration; this is a bug, please "
-        "report it");
+        "tadah refit[compact]: internal error: the reachability analysis "
+        "gave r_reach = 0 A (REFIT_REACH_SMIN 0 x the nearest-neighbour "
+        "distance of the fcc lattice of a0 = 3.6 A), less than the step of "
+        "the table's radial grid, dr = 0.0125313 A, although the crystal "
+        "gate of tadah refit (eam_lattice::require_crystal_on_grid) refuses "
+        "every such table; this is a bug, please report it");
   CHECK(refit == nullptr);
+}
+
+/* Pins: a compact `tadah refit` (REFIT_REACH_SMIN 0.1) of the synthetic fcc
+ * table whose element line gives a0 = 1e-323 (a subnormal, which the setfl
+ * reader reads) is refused by RefitEngine::run()'s crystal gate, a
+ * std::runtime_error and not the internal error: "tadah refit: the lattice
+ * constant of the EAM header, a0 = 1e-323 A, puts the nearest neighbours of
+ * the fcc crystal 0 A apart at the strongest compression the refit tests
+ * (a/a0 = REFIT_REACH_SMIN 0.1), less than the step of the table's radial
+ * grid, dr = 0.0125313 A: the table describes no pair distance of that
+ * crystal. Edit the element line of the setfl file (`<Z> <mass> <a0>
+ * <lattice>`): set the equilibrium lattice constant, in Angstrom."; it
+ * writes no pot.tadah.
+ * Before the fix: the gate asked for a known lattice and a0 > 0 only, and
+ * compact_fit's r_reach = 0.1 x a0 / sqrt(2) underflowed to 0:
+ * std::logic_error "tadah refit[compact]: internal error: the reachable
+ * pair-distance window is empty (r_reach = 0.0000 A, from REFIT_REACH_SMIN
+ * 0.1000 and the fcc lattice of a0 = 0.0000 A), ...; this is a bug, please
+ * report it". */
+TEST_CASE_METHOD(PTFixture,
+                 "tadah refit compact: a subnormal lattice constant is "
+                 "refused by the crystal gate, not the internal error",
+                 "[compact][refit][reachability]") {
+  ScopedTempDir tmp;
+  write_synth_eam("synth.eam.alloy");
+  {
+    std::string body = slurp("synth.eam.alloy");
+    const std::string line = "\n29 63.55 3.6 fcc\n";
+    const auto at = body.find(line);
+    REQUIRE(at != std::string::npos);
+    body.replace(at, line.size(), "\n29 63.55 1e-323 fcc\n");
+    std::ofstream("synth.eam.alloy") << body;
+  }
+  Context c = compact_context("SIGNED");
+  c.add("REFIT_REACH_SMIN", 0.1);
+  tadah::mlip::Task task("refit", c);
+  std::string what;
+  bool logic_error = false, runtime_error = false;
+  try {
+    tadah::hpo::engines::HPORefitEngine().run(task);
+  } catch (const std::logic_error &e) {
+    logic_error = true;
+    what = e.what();
+  } catch (const std::runtime_error &e) {
+    runtime_error = true;
+    what = e.what();
+  }
+  INFO("what: " << what);
+  CHECK_FALSE(logic_error);
+  CHECK(runtime_error);
+  CHECK(what ==
+        "tadah refit: the lattice constant of the EAM header, a0 = 1e-323 A, "
+        "puts the nearest neighbours of the fcc crystal 0 A apart at the "
+        "strongest compression the refit tests (a/a0 = REFIT_REACH_SMIN "
+        "0.1), less than the step of the table's radial grid, dr = "
+        "0.0125313 A: the table describes no pair distance of that crystal. "
+        "Edit the element line of the setfl file (`<Z> <mass> <a0> "
+        "<lattice>`): set the equilibrium lattice constant, in Angstrom.");
+  CHECK_FALSE(fs::exists("pot.tadah"));
 }
 
 #endif  // TADAH_USE_CERES
