@@ -418,10 +418,11 @@ TEST_CASE("HPOTargets rejects PC_LAMMPS with gradient-based optimisers",
         std::filesystem::remove(cfg);
     }
 
-    /* CERES:LBFGS rejected (gradient-based, no special-case). */
+    /* CERES:STEEPEST_DESCENT rejected (gradient-based, no special-case;
+     * the case named CERES:LBFGS, refused since: a pin). */
     {
         auto cfg = write_temp_config(
-            std::string("OPTIMIZER\nLIB CERES\nALGO LBFGS\nMAXEVAL 1\nENDOPTIMIZER\nLOSS L2\n")
+            std::string("OPTIMIZER\nLIB CERES\nALGO STEEPEST_DESCENT\nMAXEVAL 1\nENDOPTIMIZER\nLOSS L2\n")
             + pc_lammps_line);
         CHECK_THROWS_WITH(
             tadah::hpo::HPOTargets(ctx, cfg.string()),
@@ -691,7 +692,7 @@ TEST_CASE("HPOTargets names, for an INNER block under PC_LAMMPS, the "
     std::vector<Case> cases;
     for (const auto& [lib, algo] :
          std::vector<std::pair<std::string, std::string>>{
-             {"NLOPT", "LD_MMA"}, {"NLOPT", "GD_STOGO"}, {"CERES", "LBFGS"}})
+             {"NLOPT", "LD_MMA"}, {"NLOPT", "GD_STOGO"}})
         cases.push_back({"an INNER " + lib + ":" + algo, mlsl(lib, algo),
                          "--hpotarget defines PC_LAMMPS but INNER's optimiser "
                          + lib + ":" + algo + " is gradient-based." +
@@ -721,6 +722,27 @@ TEST_CASE("HPOTargets names, for an INNER block under PC_LAMMPS, the "
                          "\nLine: " + c.line);
         CHECK_THAT(got, !(Catch::Contains("GN_*") || Catch::Contains("TADAH") ||
                           Catch::Contains("DLIB:BFGS")));
+    }
+
+    /* An INNER CERES:LBFGS, a refused optimiser of another LIB: the INNER
+     * rule refuses it at startup (an INNER search is a local NLopt
+     * algorithm), and neither the parser nor the PC_LAMMPS rule gives it
+     * the CERES refusal, whose advice (DLIB:BFGS, CERES:STEEPEST_DESCENT)
+     * an INNER block does not take. Before the fix: the parser refused it
+     * at ENDINNER with that refusal ("... CERES:LBFGS is refused: ...
+     * Use NLOPT:LD_LBFGS (L-BFGS within the box) or DLIB:BFGS, or
+     * CERES:STEEPEST_DESCENT ..."): the parse check fails. */
+    {
+        const std::string body = mlsl("CERES", "LBFGS");
+        CHECK(error(body, false) == "");
+        const std::string got = error(body, true);
+        CHECK_THAT(got, Catch::Contains("names CERES:LBFGS, but "
+                                        "NLOPT:G_MLSL_LDS runs its INNER "
+                                        "search with NLopt: set LIB NLOPT "
+                                        "and an NLopt ALGO"));
+        CHECK_THAT(got, !(Catch::Contains("is refused") ||
+                          Catch::Contains("DLIB:BFGS") ||
+                          Catch::Contains("STEEPEST_DESCENT")));
     }
 
     /* Each algorithm the advice names is accepted in that INNER block, by
@@ -945,7 +967,10 @@ TEST_CASE("HPOTargets resolves an unset GRAD_STRATEGY to ANALYTICAL in the "
         CHECK(parse(plain("NLOPT", "LD_LBFGS") + observable).outer == analytical);
         CHECK(parse(plain("NLOPT", "LD_MMA", "    FTOL_REL 1e-6\n") +
                     observable).outer == analytical);
-        CHECK(parse(plain("CERES", "LBFGS") + observable).outer == analytical);
+        /* CERES:STEEPEST_DESCENT (it was CERES:LBFGS, refused since; before
+         * the fix the case passes as well, a pin) */
+        CHECK(parse(plain("CERES", "STEEPEST_DESCENT") + observable).outer ==
+              analytical);
         /* GD_MLSL_LDS's and LD_AUGLAG's default local search is LD_MMA
          * (their own points are evaluated without a gradient). */
         CHECK(parse(plain("NLOPT", "GD_MLSL_LDS") + observable).outer ==

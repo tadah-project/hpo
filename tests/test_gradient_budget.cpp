@@ -5,8 +5,9 @@
 // cannot pay for both and one more evaluation ends the search where it
 // started: with GRAD_STRATEGY NUMERICAL and central differences in n
 // dimensions the start costs 1 + 2n evaluations, so MAXEVAL 2n + 1 or less
-// takes no step (LD_LBFGS, DLIB:BFGS and CERES:LBFGS in 2-D: MAXEVAL 4 and 5
-// evaluate the start and its stencil, MAXEVAL 6 a first step). Such a budget
+// takes no step (LD_LBFGS and DLIB:BFGS in 2-D, and CERES:LBFGS, refused
+// since: MAXEVAL 4 and 5 evaluate the start and its stencil, MAXEVAL 6 a
+// first step). Such a budget
 // can be deliberate (a probe of the start), so validate_hpo_setup warns, for
 // every phase that has a MAXEVAL of its own, naming what the gradient costs
 // and the budget that takes a step.
@@ -224,18 +225,25 @@ std::string record_central2(const std::string& budget, const std::string& needs)
  * the loss at a starting point (1 evaluation) and the gradient there (4
  * evaluations: central differences in 2 dimensions, GRAD_STRATEGY
  * NUMERICAL) before it evaluates a point it steps to, which needs MAXEVAL 6
- * or more", for NLOPT:LD_LBFGS, DLIB:BFGS and CERES:LBFGS; MAXEVAL 6 gets
+ * or more", for NLOPT:LD_LBFGS, DLIB:BFGS and CERES:STEEPEST_DESCENT (it
+ * was CERES:LBFGS, refused since: that row a pin); MAXEVAL 6 gets
  * none (tmp/repro lbfgs6, dlib6, ceres6: the sixth evaluation is the first
- * step).
+ * step). The CERES row runs in a build with Ceres only: without it
+ * (TADAH_ENABLE_CERES OFF) startup refuses LIB CERES ("CERES support is not
+ * built"), which failed the case there
+ * (tmp/before_fix_box_and_slopes_review_noceres_suite.txt).
  * Before the fix: no WARNING for any of them (the search ended
  * MAXEVAL_REACHED at its starting point: tmp/repro a2_lbfgs3, a2_dlib3). */
 TEST_CASE("startup validation: a gradient search whose MAXEVAL cannot pay for "
           "one step is warned about",
           "[startup_validation][gradient_budget]")
 {
-    for (const auto& [lib, algo] : std::vector<std::pair<std::string,
-                                                         std::string>>{
-             {"NLOPT", "LD_LBFGS"}, {"DLIB", "BFGS"}, {"CERES", "LBFGS"}}) {
+    std::vector<std::pair<std::string, std::string>> searches = {
+        {"NLOPT", "LD_LBFGS"}, {"DLIB", "BFGS"}};
+#ifdef TADAH_USE_CERES
+    searches.push_back({"CERES", "STEEPEST_DESCENT"});
+#endif
+    for (const auto& [lib, algo] : searches) {
         for (const char* maxeval : {"4", "5"}) {
             INFO(lib << ":" << algo << " MAXEVAL " << maxeval);
             const std::string journal =

@@ -38,6 +38,7 @@
 #include <tadah/hpo/pc_fail_grading.h>
 #include <tadah/hpo/optimizer_spec.h>
 #include <tadah/hpo/bound_audit.h>
+#include <tadah/hpo/box_penalty.h>
 #include <tadah/hpo/pot_header_writer.h>
 #include <tadah/hpo/rho_gates.h>
 #include <tadah/hpo/repeat_points.h>     // RunRecord, RecordedEval
@@ -159,6 +160,13 @@ struct EvalResult
      * sims_failed: that mean, one FAIL_SCORE term among usable ones, was a
      * usable-looking loss below 0.999 * FAIL_SCORE. */
     bool terms_failed = false;
+
+    /* The point lies outside the OPTIM box (box_penalty.h): it was not
+     * evaluated, and its loss is out_of_box_score() of its distance to the
+     * box (owner decision, MK, 2026-10-15). Its rows go to loss.tadah and
+     * params.tadah like any evaluation's; the writer writes no DUMP
+     * archive for it, and it is never a best. */
+    bool out_of_box = false;
 
     /* PC_OBSERVABLE (Tier 1/2) results, one entry per
      * trg_.observables[k]. v_obs_value[k] is the computed observable
@@ -306,9 +314,9 @@ public:
     std::string repeat_reuse_blocker() const { return trg_.repeat_reuse_blocker(); }
 
     /** The run's evaluation of the point an evaluation of the REAL point
-     *  @p asked would make -- @p asked after the snap onto the box and the
-     *  RHOFORM projection operator() applies -- when it gave a usable loss,
-     *  or none. operator() records every evaluation of the run with a
+     *  @p asked would make -- @p asked after the snap onto the box that
+     *  operator() applies -- when it gave a usable loss, or none (a point
+     *  outside the OPTIM box is scored, not evaluated: box_penalty.h). operator() records every evaluation of the run with a
      *  usable loss, whichever backend asked for it; the record starts empty
      *  at every run (prepare_best_publication). NLopt and DLIB:BFGS answer a
      *  repeat from it when repeat_reuse_blocker() is "", and count one
@@ -466,12 +474,6 @@ private:
      * channel. Empty -- the common case, and always under BUMPGATE
      * STRICT -- means no per-eval check. Built once in the ctor. */
     std::vector<detail::BumpGateChannel> bump_gate_;
-    /* RHOFORM NONNEG / MONOTONE: the flat indices of the OPTIM'd AMPGRIDMB
-     * coordinates, projected onto [0, inf) before every evaluation
-     * (project_positive_form). Empty -- SIGNED, no DM_REAM block, or no
-     * OPTIM AMPGRIDMB -- means no per-eval work. Built once in the ctor. */
-    std::vector<std::size_t>     form_proj_idx_;
-    std::string                  form_proj_name_;   // "NONNEG" | "MONOTONE"
     /* DM_REAM density (a bare DM_REAM many-body term; rho_gates.h): the
      * RHOGATE / RHOBARGATE tables, checked right after update_context and
      * before training, and the settings of the density summary recorded at
@@ -480,10 +482,11 @@ private:
     std::optional<detail::DensityGates> density_;
     mlip::NNFinder               nnf_;
     /* Cutoff of the one-time neighbour lists of train_stdb_ / val_stdb_
-     * (detail::nn_safe_rcutmax: the stated RCUTMAX and the OPTIM box tops).
-     * A candidate whose model reads pairs further out -- a point outside
-     * the OPTIM box, from an optimiser that ignores the bounds -- is
-     * evaluated with lists rebuilt at its cutoff (rebuilt_lists). */
+     * (detail::nn_safe_rcutmax: the stated RCUTMAX, the OPTIM RCUT2B /
+     * RCUTMB box tops and, for knot channels, the CGRID box tops): every
+     * candidate inside the OPTIM box reads pairs within it, and a point
+     * outside the box is not evaluated (box_penalty.h). A model cutoff
+     * beyond it is an internal error (operator()). */
     double                       nn_list_cutoff_ = 0.0;
 
     /* ---------- data for pot header writer ----------------------------- */
@@ -496,36 +499,29 @@ private:
 
     /* ---------- helpers (pure) ----------------------------------------- */
     void update_context(core::Context&, const ParamVec&) const;
-    /** @p p with its AMPGRIDMB coordinates projected onto [0, inf), as
-     *  project_positive_form, without its count and journal line: @p p
-     *  itself when none is negative, else @p buf. */
-    const ParamVec& positive_form_of(const ParamVec& p, ParamVec& buf) const;
     /** @p p snapped onto the box, as snap_onto_box, without its count:
      *  @p p itself when nothing is snapped, else @p buf. */
     const ParamVec& snapped_onto_box(const ParamVec& p, ParamVec& buf) const;
-    /** @p p with its AMPGRIDMB coordinates projected onto [0, inf)
-     *  (form_proj_idx_): @p p itself when none is negative, else @p buf
-     *  holding the projection. Counts the projection in HPOLog and
-     *  journals the first one (eval @p iter). Never throws. */
-    const ParamVec& project_positive_form(const ParamVec& p, ParamVec& buf,
-                                          std::size_t iter) const;
     /** @p p with each coordinate proposed outside its OPTIM box within
      *  rounding (SearchSpace::snapped_onto_box) moved onto the bound: @p p
      *  itself when there is none, else @p buf. Counts such an evaluation
      *  in HPOLog (record_snap), with no warning: NLopt's own arithmetic
      *  rounds a point on a bound past it under OPTIM_SCALE NONE (owner
-     *  decision D10). Before the out-of-box count and any projection.
+     *  decision D10). Before the out-of-box rule (box_penalty.h).
      *  Never throws. */
     const ParamVec& snap_onto_box(const ParamVec& p, ParamVec& buf) const;
-    /** Counts evaluation @p iter in HPOLog when a coordinate of the REAL
-     *  point @p p lies outside its OPTIM box (record_out_of_box_eval), and
-     *  warns at the first: finite differences keep to the box
-     *  (fd_stencil.h), and so do ASA's probes (asa_probe_box_error,
+    /** Journals point @p iter, the REAL point @p p outside its OPTIM box
+     *  as @p o describes, scored @p score, the @p k-th such point of the
+     *  run (HPOLog::record_out_of_box_point): a WARNING at the first (on
+     *  stderr too), INFO lines for the next ones rate-limited as the gate
+     *  rejects' (the first 5, then powers of two). Finite differences keep
+     *  to the box (fd_stencil.h), ASA's probes too (asa_probe_box_error,
      *  TADAH-PATCH 8), and a point within rounding of a bound was snapped
      *  onto it, so an optimiser that ignores the bounds
-     *  (OptimizerCaps::ignores_bounds), or a start it handed on, put it
-     *  there. After snap_onto_box, before any projection. Never throws. */
-    void note_out_of_box(const ParamVec& p, std::size_t iter) const;
+     *  (OptimizerCaps::ignores_bounds: the CERES drivers) proposed it.
+     *  Never throws. */
+    void note_out_of_box(const ParamVec& p, const OutOfBox& o, double score,
+                         std::size_t iter, std::size_t k) const;
     void fill_validation(Result&, const mlip::Analytics&)  const;
     void run_lammps     (Result&) const;
 
@@ -726,28 +722,6 @@ private:
     /* See last_validation_switches_for_test(). */
     static thread_local std::optional<detail::FitSwitches>
         tls_last_validation_switches_;
-
-    /* Neighbour lists rebuilt for one evaluation whose model cutoff exceeds
-     * nn_list_cutoff_: copies of the datasets the evaluation reads (the
-     * training set when it is fitted, the validation set when there is
-     * one) with lists at `cutoff`; a set it does not read stays empty. */
-    struct RebuiltLists {
-        double            cutoff = 0.0;
-        mlip::StructureDB train;
-        mlip::StructureDB val;
-    };
-    /* The rebuilt lists of this thread's latest evaluation, or nullptr when
-     * the one-time lists covered it (or it reads no dataset):
-     * analytical_gradient differentiates the evaluation the trainer slot
-     * holds, on the same lists. Cleared, with tls_trainer_theta_stale_ set,
-     * before an evaluation touches the trainer, so a failed evaluation
-     * leaves no state for the gradient to use. */
-    static thread_local std::shared_ptr<const RebuiltLists> tls_rebuilt_lists_;
-    /* Build RebuiltLists at @p cutoff for evaluation @p iter, counted in
-     * DIAGNOSTICS (the first one also warned); nullptr, and not counted,
-     * when the evaluation reads no dataset. */
-    std::shared_ptr<const RebuiltLists> rebuilt_lists(double cutoff,
-                                                      std::size_t iter) const;
 
 public:
     /** Test hook: expose the Trainer of this thread's latest evaluation (of

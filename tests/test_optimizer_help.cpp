@@ -95,7 +95,10 @@ TEST_CASE("explain_optimiser: ALGO and LIB print the table of the "
     }
     CHECK_THAT(table, Catch::Contains("\n  LD_LBFGS ") &&
                       Catch::Contains("local, gradient-based"));
-    CHECK_THAT(table, Catch::Contains("\n  LBFGS ") &&
+    /* CERES:STEEPEST_DESCENT (the row checked was CERES:LBFGS, refused
+     * since: listed under Refused; before the fix the case passes as well,
+     * a pin) */
+    CHECK_THAT(table, Catch::Contains("\n  STEEPEST_DESCENT ") &&
                       Catch::Contains("ignores the OPTIM box"));
     CHECK_THAT(table, Catch::Contains("needs a stop"));
     CHECK_THAT(table, Catch::Contains("runs a local search"));
@@ -108,8 +111,8 @@ TEST_CASE("explain_optimiser: ALGO and LIB print the table of the "
 /* Pins: `tadah explain <LIB>:<ALGO>`, or `tadah explain <ALGO>` alone, in
  * any letter case, prints that optimiser's ALGO help
  * (OptimizerSpec::print_caps): NLOPT:LD_LBFGS for "LD_LBFGS", "ld_lbfgs"
- * and "NLOPT:LD_LBFGS", CERES:LBFGS, ASA:ASA for "ASA" (an ALGO name before
- * a LIB name), the REFUSED text of NLOPT:LN_NEWUOA for "NLOPT:LN_NEWUOA" and
+ * and "NLOPT:LD_LBFGS", CERES:STEEPEST_DESCENT, ASA:ASA for "ASA" (an ALGO
+ * name before a LIB name), the REFUSED text of NLOPT:LN_NEWUOA for "NLOPT:LN_NEWUOA" and
  * "LN_NEWUOA"; a LIB name alone prints its section of the table ("NLOPT":
  * its rows, no other library's). A LIB:ALGO HPO does not have is an error
  * naming what is wrong, the startup check's text ("tadah explain: unknown
@@ -129,7 +132,10 @@ TEST_CASE("explain_optimiser: one optimiser, a library, and the names it "
         CHECK(explained(name, &known) == lbfgs);
         CHECK(known);
     }
-    CHECK(explained("CERES:LBFGS") == caps_help("CERES", "LBFGS"));
+    /* CERES:STEEPEST_DESCENT (it was CERES:LBFGS, refused since; before
+     * the fix the case passes as well, a pin) */
+    CHECK(explained("CERES:STEEPEST_DESCENT") ==
+          caps_help("CERES", "STEEPEST_DESCENT"));
     CHECK(explained("ASA") == caps_help("ASA", "ASA"));
     const std::string newuoa = explained("NLOPT:LN_NEWUOA");
     CHECK_THAT(newuoa, Catch::StartsWith("Options for NLOPT:LN_NEWUOA\n"

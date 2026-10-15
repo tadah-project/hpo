@@ -1,7 +1,7 @@
 #pragma once
 /*
  * gradient_provider.h -- unified gradient backend for gradient-based HPO
- * optimizers (DLIB:BFGS, CERES:LBFGS/WOLFE/NLCG/STEEPEST_DESCENT,
+ * optimizers (DLIB:BFGS, CERES:STEEPEST_DESCENT,
  * NLOPT:LD_* and the local search of MLSL / AUGLAG).
  *
  * Three strategies, selected by OptimizerSpec::grad_strategy (or default):
@@ -11,13 +11,15 @@
  *                              rule, evaluated by Tadah), CENTRAL or
  *                              FORWARD (PARAM diff_method), never outside
  *                              the OPTIM box: one-sided into it within a
- *                              step of a bound. The loss at the point is
- *                              the caller's (gradient_at, below), then each
- *                              dimension's stencil: 2n evaluations
- *                              (CENTRAL, and one-sided within a step of a
- *                              bound), n (FORWARD); gradient(x, g)
- *                              evaluates the loss at the point first, one
- *                              more.
+ *                              step of a bound; and of one kind (below).
+ *                              The loss at the point is the caller's
+ *                              (gradient_at, below), then each dimension's
+ *                              stencil: 2n evaluations (CENTRAL, and
+ *                              one-sided within a step of a bound), n
+ *                              (FORWARD), one more for a CENTRAL component
+ *                              that turns one-sided next to a failure;
+ *                              gradient(x, g) evaluates the loss at the
+ *                              point first, one more.
  *   GradStrategy::Analytical -- strict closed-form. The caller provides
  *                              an `analytical_grad_fn` callback that
  *                              fills g[] and reports the theta indices
@@ -91,46 +93,45 @@
  * not finite, or at least 0.999 FAILSCORE -- FAILSCORE or a graded
  * failure, loss_is_feasible(); HPO_Host clamps a non-finite loss to
  * FAILSCORE, so in a run a failed evaluation is always a finite number).
- * A difference that reads one is no slope, whatever FAILSCORE is: between
- * two failures it is an exact 0 ((FS - FS) / 2h), which a search took for
- * convergence at a start inside the failure region, and against a usable
- * loss it is as large as the jump to FAILSCORE (it overflows under the
- * default, the largest double, and is a finite, steep slope under a finite
- * FAILSCORE such as 1e9). The finite differences read the loss at the
- * point first (StencilReport::classify), then:
+ * The loss at the point is of one of three kinds (StencilReport::classify):
+ * usable, a graded failure (FAILSCORE_GRADING ON,
+ * OptimizerSpec::failscore_grading: a loss in [0.999 FS, FS), whose
+ * grading measures the way out of the failure region), or another failure
+ * (FAILSCORE itself -- FAILSCORE_GRADING OFF, an infrastructure failure, a
+ * loss the host clamped -- or a loss that is not finite).
  *
- *   a usable loss at x       -- the first failed stencil evaluation fails
- *                               the gradient (Stencil), and the stencil
- *                               points after it are not evaluated;
- *   a failure at x           -- FAILSCORE_GRADING OFF, or a loss equal to
- *                               FAILSCORE (an ungraded failure), or a loss
- *                               that is not finite: the gradient fails at
- *                               once (Stencil), before any stencil point;
- *   a graded failure at x    -- FAILSCORE_GRADING ON
- *                               (OptimizerSpec::failscore_grading), a loss
- *                               in [0.999 FS, FS): the point has no usable
- *                               loss, and its gradient is the direction
- *                               out of the failure region that the grading
- *                               provides. Every stencil point is evaluated
- *                               and the differences are taken as they are
- *                               (graded differences, or the jump to a
- *                               usable neighbour, as steep as the jump out
- *                               of the failure band: a documented limit, a
- *                               search can then sit on a bound or stop at
- *                               once); a stencil loss that is
- *                               not finite still fails the gradient, and so
- *                               does a gradient whose every differenced
- *                               component is 0: a flat failure region (a
- *                               saturated measure, a band that is constant
- *                               without PC_FAILPROBE).
+ * A difference never mixes the kinds (owner decision, MK, 2026-10-15): one
+ * between two failures is an exact 0 ((FS - FS) / 2h), which a search took
+ * for convergence at a start inside the failure region, and one between a
+ * usable loss and a failure, or a graded failure and a usable loss or an
+ * ungraded one, is as large as the jump into or out of the failure band
+ * (it overflows under the default FAILSCORE, the largest double, and is a
+ * steep, finite slope under one such as 1e9: from a graded failure next to
+ * the usable side a search sat on a bound, or NLopt's LD_SLSQP stopped with
+ * "bug: more than iter SQP iterations"). The finite differences read the
+ * loss at the point first, then:
+ *
+ *   another failure at x      -- the gradient fails at once (Stencil),
+ *                                before any stencil point;
+ *   a usable loss or a graded failure at x
+ *                             -- each component takes the side of its
+ *                                stencil whose points are of that kind
+ *                                (detail::fd_component: a CENTRAL stencil
+ *                                with one side of another kind turns
+ *                                one-sided into the other side, a FORWARD
+ *                                one backward, as a bound there would make
+ *                                it); without such a side the gradient
+ *                                fails (Stencil), and so does one at a
+ *                                graded failure whose every component is 0:
+ *                                a flat failure region (a saturated
+ *                                measure, a band that is constant without
+ *                                PC_FAILPROBE).
  *
  * A one-sided or forward stencil (fd_stencil.h) takes the loss at x itself.
- * HYBRID knows the loss at x from the caller (gradient_at), or evaluates
- * it for a one-sided or forward stencil; with neither, it does not
- * evaluate x for a central stencil, and a failed central stencil point
- * then fails the gradient at once under FAILSCORE_GRADING OFF, and under
- * ON makes it evaluate x (counted, HPOLog::record_hybrid_centre) to tell a
- * graded failure at x from a usable loss. An evaluation with a failed term
+ * HYBRID knows the loss at x from the caller (gradient_at); its gradient()
+ * evaluates it first (counted, HPOLog::record_hybrid_centre), as NUMERICAL's
+ * does: its kind decides the gradient, and the analytical pass then
+ * differentiates the host's evaluation of x. An evaluation with a failed term
  * (a PC_LAMMPS simulation, a PC_OBSERVABLE term) is a failed evaluation:
  * HPO_Host scores it FAILSCORE, or a graded failure, never the mean of its
  * terms (which stayed below 0.999 FS and read as usable here).
@@ -155,9 +156,12 @@
  * keep the analytical gradient there: with every failed PC_OBSERVABLE term
  * a band-B failure, a search that started where one failed converged on
  * the graded loss (DLIB:BFGS FTOL_ABS, NLopt "algorithm converged").
- * gradient(x, g) without the loss (DLIB:BFGS for a point that is not its
- * last evaluation) has nothing to classify: ANALYTICAL, and HYBRID for
- * what it does not difference, give the analytical gradient there.
+ * Every backend passes the loss it has just evaluated with each gradient
+ * it asks for (gradient_at: the NLopt and Ceres adapters, DLIB:BFGS), so the
+ * kind of the point is always known. gradient(x, g) without it, which no
+ * backend calls, has nothing to classify under ANALYTICAL, which gives the
+ * analytical gradient there; HYBRID's evaluates the loss at x first
+ * (below).
  *
  * A point the host has no fit of -- a candidate the bump-support or a
  * density gate rejected before training (a graded band-D failure under
@@ -177,16 +181,26 @@
  * run FAILED at every rejected candidate, and at a fit the analytical pass
  * could not differentiate.
  *
+ * A point outside the OPTIM box (box_penalty.h; owner decision, MK,
+ * 2026-10-15) is not evaluated: HPO_Host scores it out_of_box_score() of its
+ * distance to the box, and every strategy gives it the slope of that score
+ * (detail::out_of_box_gradient), pointing away from the box, without
+ * evaluating or counting anything and without a stencil -- no difference
+ * reads an out-of-box score, and no stencil of a point inside the box
+ * leaves it. A coordinate within rounding outside its box is evaluated on
+ * the bound (D10) and differenced there (FdBox::onto).
+ *
  * Journal (HPOLog): a component a bound turned (one-sided into the box,
- * backward, or towards the box from a point outside it) is counted per
- * dimension, and the first of each dimension gets an INFO line; a gradient
- * at a point outside the box, and HYBRID's own evaluations of the centre,
- * are counted too. DIAGNOSTICS prints the counts that are not zero.
+ * backward) is counted per dimension, and so is one taken without a point
+ * of another kind ("Mixed-kind stencils"); the first of each dimension gets
+ * an INFO line. HYBRID's own evaluations of the point are counted too.
+ * DIAGNOSTICS prints the counts that are not zero.
  *
  * Lifetime: capture by reference is safe because the provider is built
  * inside a `run_<lib>_<algo>` adapter and consumed within the same call.
  */
 
+#include <tadah/hpo/box_penalty.h>
 #include <tadah/hpo/fd_stencil.h>
 #include <tadah/hpo/hpo_host.h>
 #include <tadah/hpo/hpo_log.h>
@@ -236,9 +250,19 @@ struct GradientFailureInfo {
 };
 
 /* The cause of a Stencil failure of the finite differences (NUMERICAL,
- * HYBRID's differenced components). */
+ * HYBRID's differenced components): a failed loss at the point, or, at a
+ * usable one, a failed stencil point on every side of the stencil that fits
+ * in the box. */
 inline const std::string kGradientStencilCause =
     "a failed evaluation in the finite-difference stencil";
+
+/* The cause of a Stencil failure of the finite differences at a graded
+ * failure (FAILSCORE_GRADING ON) whose stencil has, on every side that fits
+ * in the box, a loss of another kind: a usable loss or an ungraded failure
+ * (owner decision, MK, 2026-10-15: a difference never mixes the kinds). */
+inline const std::string kGradientGradedSidesCause =
+    "a graded failure without a side of graded failures in its "
+    "finite-difference stencil";
 
 /* The cause of a Stencil failure of ANALYTICAL and HYBRID at a failed loss
  * the caller gives (gradient_at), before their analytical pass. */
@@ -324,10 +348,9 @@ bool same_point(const Vec& a, const Vec& b)
 /* What the loss at the point says about its finite differences (the file
  * comment). */
 enum class CentreLoss {
-  Usable,   /* a usable loss: a failed stencil evaluation fails the
-               gradient */
-  Graded,   /* a graded failure under FAILSCORE_GRADING ON: the differences
-               are taken as they are */
+  Usable,   /* a usable loss: its differences take usable points only */
+  Graded,   /* a graded failure under FAILSCORE_GRADING ON: its differences
+               take graded failures only */
   Failed    /* any other failed evaluation: the gradient fails at once */
 };
 
@@ -432,9 +455,8 @@ struct StencilReport {
 
   /** The derivative along dimension i, from the stencil evaluations `pts`
    *  (point, loss), overflowed (NotFinite). The points of a one-sided or
-   *  forward stencil include x itself. A failed evaluation at a usable
-   *  point never gets here (fd_component ends the gradient at it: point);
-   *  at a graded failure the losses are taken as they are. */
+   *  forward stencil include x itself. Every loss of `pts` is of the kind
+   *  of the loss at x (fd_component). */
   void stencil(const Vec& x, long i,
                const std::vector<std::pair<Vec, double>>& pts) const {
     std::ostringstream os;
@@ -448,13 +470,67 @@ struct StencilReport {
             "the finite-difference quotient overflowed", os.str()};
   }
 
-  /** A stencil evaluation (xs, ys) of dimension i failed and ends the
-   *  gradient; the stencil points after it are not evaluated. */
-  void point(const Vec& x, long i, const Vec& xs, double ys) const {
+  /** No side of the stencil of dimension i is of the kind `kind` of the
+   *  loss `y0` at x: `other` holds the stencil points evaluated whose loss
+   *  is of another kind (point, loss), on every side that fits in the box.
+   *  At a usable loss they failed (kGradientStencilCause); at a graded
+   *  failure they are usable losses or ungraded failures
+   *  (kGradientGradedSidesCause). */
+  void no_side(const Vec& x, long i, double y0, CentreLoss kind,
+               const std::vector<std::pair<Vec, double>>& other) const {
     std::ostringstream os;
-    os << "at " << at(x, i) << ", the stencil point " << at(xs, i)
-       << " failed: loss " << num(ys);
-    *out = {GradientFailure::Stencil, kGradientStencilCause, os.str()};
+    os << "at " << at(x, i);
+    if (kind == CentreLoss::Graded)
+      os << " (a graded failure, loss " << num(y0) << ")";
+    os << ", the stencil point" << (other.size() == 1 ? " " : "s ");
+    for (std::size_t k = 0; k < other.size(); ++k)
+      os << (k ? " and " : "") << at(other[k].first, i);
+    os << (kind == CentreLoss::Graded
+               ? (other.size() == 1 ? " is not a graded failure"
+                                    : " are not graded failures")
+               : " failed")
+       << ": loss" << (other.size() == 1 ? " " : "es ");
+    for (std::size_t k = 0; k < other.size(); ++k)
+      os << (k ? " and " : "") << num(other[k].second);
+    *out = {GradientFailure::Stencil,
+            kind == CentreLoss::Graded ? kGradientGradedSidesCause
+                                       : kGradientStencilCause,
+            os.str()};
+  }
+
+  /** Component i of the gradient at x was taken with the stencil `taken`
+   *  instead of the one planned, because the stencil points `other` held
+   *  losses of another kind than the loss at x (fd_component): counted per
+   *  dimension (DIAGNOSTICS "Mixed-kind stencils"), and the first of each
+   *  dimension journalled. Never throws. */
+  void mixed(const Vec& x, long i,
+             const std::vector<std::pair<Vec, double>>& other,
+             const FdStencil& taken, CentreLoss kind) const {
+    try {
+      if (HPOLog::instance().record_mixed_kind(label(i)) != 1) return;
+      Vec p1 = x, p2 = x;
+      p1(i) = taken.p1;
+      p2(i) = taken.p2;
+      std::ostringstream os;
+      os << "finite differences: at " << at(x, i) << " ("
+         << (kind == CentreLoss::Graded ? "a graded failure" : "a usable loss")
+         << "), the stencil point" << (other.size() == 1 ? " " : "s ");
+      for (std::size_t k = 0; k < other.size(); ++k)
+        os << (k ? " and " : "") << at(other[k].first, i) << " (loss "
+           << num(other[k].second) << ")";
+      os << (other.size() == 1 ? " is" : " are") << " of another kind, so "
+         << "the difference is taken without "
+         << (other.size() == 1 ? "it" : "them") << ": ";
+      if (taken.kind == FdStencil::Kind::OneSided)
+        os << "one-sided 3-point difference, at " << at(p1, i) << " and "
+           << at(p2, i) << " with the loss at the point itself";
+      else
+        os << (taken.s > 0 ? "forward" : "backward") << " difference, at "
+           << at(p1, i);
+      os << "; a difference never mixes a usable loss with a failure; "
+            "DIAGNOSTICS counts such differences per dimension";
+      HPOLog::instance().info(os.str());
+    } catch (...) { /* journalling never fails a gradient */ }
   }
 
   /** The analytical gradient failed (NotFinite); `what` says how ("could
@@ -494,15 +570,9 @@ struct StencilReport {
       p1(i) = st.p1;
       p2(i) = st.p2;
       std::ostringstream os;
-      os << "finite differences: " << at(x, i);
-      if (st.outside)
-        os << " lies outside its OPTIM box " << box
-           << " (where the optimiser put it): the difference steps "
-              "towards the box";
-      else
-        os << " lies within a step of its "
-           << (st.s > 0 ? "lower" : "upper") << " bound (OPTIM box " << box
-           << ")";
+      os << "finite differences: " << at(x, i) << " lies within a step of its "
+         << (st.s > 0 ? "lower" : "upper") << " bound (OPTIM box " << box
+         << ")";
       if (st.kind == FdStencil::Kind::OneSided)
         os << ": one-sided 3-point difference, at " << at(p1, i) << " and "
            << at(p2, i) << " with the loss at the point itself";
@@ -560,94 +630,179 @@ struct FdBox {
                              std::to_string(n) + " dimensions in a box of " +
                              std::to_string(lo.size()));
   }
-  /** Whether no coordinate of x lies outside the box (a NaN coordinate is
-   *  not outside: its evaluation fails as such). */
+  /** x with each coordinate outside the box moved onto its bound: the
+   *  point a coordinate within rounding outside its box is evaluated at
+   *  (owner decision D10); a NaN coordinate stays (its evaluation fails as
+   *  such). Called for a point inside the box by the rule of
+   *  box_penalty.h. */
   template<class Vec>
-  bool contains(const Vec& x) const {
-    for (long i = 0; i < x.size(); ++i) {
+  Vec onto(const Vec& x) const {
+    Vec y = x;
+    for (long i = 0; i < y.size(); ++i) {
       const auto k = static_cast<std::size_t>(i);
-      if (x(i) < lo[k] || x(i) > hi[k]) return false;
+      if (y(i) < lo[k]) y(i) = lo[k];
+      else if (y(i) > hi[k]) y(i) = hi[k];
     }
-    return true;
+    return y;
   }
 };
 
-/* Component idx of the finite-difference gradient at x (fd_stencil.h):
- * the stencil fd_plan chooses, whose points are evaluated in its order.
- * `eval(p, y)` evaluates point p into y, counting it (false: MAXEVAL spent,
- * reported); `centre(y0)` gives the loss at x itself, usable or a graded
- * failure (false: MAXEVAL spent or a failure the gradient cannot
- * difference, reported), for a one-sided or forward stencil.
- * `take_failed(i, p, y)` decides about a stencil loss y at p that failed
- * but is finite: true takes it as it is (a graded failure at x), false
- * ends the gradient (reported). A stencil loss that is not finite always
- * ends it. Each stencil loss is decided as soon as it is evaluated, so the
- * points after a failed one are not evaluated. Returns false with
+/* Component idx of the finite-difference gradient at x (fd_stencil.h),
+ * whose loss y0 is of the kind `kind` (Usable or Graded; a Failed one ends
+ * the gradient before), of one kind (owner decision, MK, 2026-10-15): the
+ * stencil fd_plan chooses, its points evaluated in its order; a point whose
+ * loss is of another kind (StencilReport::classify) ends its side, and the
+ * difference is taken on the other side, as a bound there would make it:
+ *   CENTRAL   a side of another kind -> the one-sided 3-point difference
+ *             into the other side (its far point u -+ 2h one more
+ *             evaluation) when it lies in the box, else, and when that far
+ *             point is of another kind too, the 2-point difference with
+ *             u -+ h;
+ *   ONE-SIDED (a bound turned it) its far point of another kind -> the
+ *             2-point difference with its near point; its near point of
+ *             another kind -> the backward 2-point difference when u - s
+ *             lies in the box (it does not, for a stencil a bound turned);
+ *   FORWARD   of another kind -> the backward difference when u - s lies in
+ *             the box.
+ * Without a side of the kind of y0 the gradient fails (no_side). A
+ * difference with a point of another kind is no slope: against a failure
+ * as large as the jump into the failure band, between two failures of the
+ * grading's measure only when both are graded. `eval(p, y)` evaluates point
+ * p into y, counting it (false: MAXEVAL spent, reported). Returns false with
  * `report` filled. */
-template<class Vec, class Eval, class Centre, class TakeFailed>
+template<class Vec, class Eval>
 bool fd_component(const Vec& x, long idx, const FdSettings& fs,
-                  const FdBox& box, Eval& eval, Centre& centre,
-                  TakeFailed& take_failed,
+                  const FdBox& box, Eval& eval, double y0, CentreLoss kind,
                   const StencilReport<Vec>& report, double& gi)
 {
   const auto k = static_cast<std::size_t>(idx);
+  const double u = x(idx);
+  const double a = box.lo[k], b = box.hi[k];
   const std::optional<FdStencil> st =
-      fd_plan(x(idx), box.lo[k], box.hi[k], fs.rule, fs.scheme, fs.fd_step);
+      fd_plan(u, a, b, fs.rule, fs.scheme, fs.fd_step);
   if (!st)   /* the gradient refused such a box first (fd_box_error) */
     throw std::logic_error(
         "GradientProvider: no finite-difference stencil fits the box of " +
-        report.label(idx) + " at " + StencilReport<Vec>::num(x(idx)));
+        report.label(idx) + " at " + StencilReport<Vec>::num(u));
   if (st->turned) report.turned(x, idx, *st);
 
-  /* A stencil loss the gradient can take: usable, or a finite failure
-   * that take_failed accepts. */
-  const auto take = [&](const Vec& p, double y) {
-    if (!report.failed(y)) return true;
-    if (!std::isfinite(y)) {
-      report.point(x, idx, p, y);
-      return false;
+  const auto point = [&](double c) {
+    Vec p = x;
+    p(idx) = c;
+    return p;
+  };
+  const auto same = [&](double y) { return report.classify(y) == kind; };
+  /* The points evaluated whose loss is of another kind. */
+  std::vector<std::pair<Vec, double>> other;
+  /* The derivative of stencil `t` from its losses (y1 at t.p1, y2 at
+   * t.p2), and the points it read for the overflow report. */
+  const auto finish = [&](const FdStencil& t, double y1, double y2) {
+    gi = fd_combine(t, fs.rule, y0, y1, y2);
+    if (std::isfinite(gi)) {
+      if (!other.empty()) report.mixed(x, idx, other, t, kind);
+      return true;
     }
-    return static_cast<bool>(take_failed(idx, p, y));
+    std::vector<std::pair<Vec, double>> pts;
+    if (t.kind != FdStencil::Kind::Central) pts.push_back({x, y0});
+    pts.push_back({point(t.p1), y1});
+    if (t.kind != FdStencil::Kind::Forward) pts.push_back({point(t.p2), y2});
+    report.stencil(x, idx, pts);
+    return false;
+  };
+  /* The 2-point difference with the point u + s of loss y1. */
+  const auto two_point = [&](double s, double c, double y1) {
+    FdStencil t = *st;
+    t.kind = FdStencil::Kind::Forward;
+    t.s = s;
+    t.p1 = c;
+    return finish(t, y1, 0.0);
+  };
+  /* The side of sign `s` (+h or -h), whose near point c = u + s, of loss
+   * yn, is of the kind of y0: one-sided 3-point when its far point lies
+   * in the box and is of that kind, else 2-point. */
+  const auto side = [&](double s, double c, double yn) {
+    const double far = u + 2.0 * s;
+    if (far >= a && far <= b) {
+      double yf = 0.0;
+      if (!eval(point(far), yf)) return false;
+      if (same(yf)) {
+        FdStencil t = *st;
+        t.kind = FdStencil::Kind::OneSided;
+        t.s = s;
+        t.p1 = c;
+        t.p2 = far;
+        return finish(t, yn, yf);
+      }
+      other.push_back({point(far), yf});
+    }
+    return two_point(s, c, yn);
+  };
+  /* The backward 2-point difference of a stencil of sign s whose near
+   * point is of another kind, when u - s lies in the box. */
+  const auto backward = [&](double s) {
+    const double c = u + -s;
+    if (c >= a && c <= b) {
+      double yb = 0.0;
+      if (!eval(point(c), yb)) return false;
+      if (same(yb)) return two_point(-s, c, yb);
+      other.push_back({point(c), yb});
+    }
+    report.no_side(x, idx, y0, kind, other);
+    return false;
   };
 
   if (st->kind == FdStencil::Kind::Central) {
-    Vec xp = x; xp(idx) = st->p1;
-    Vec xm = x; xm(idx) = st->p2;
     double yp = 0.0, ym = 0.0;
-    if (!eval(xp, yp)) return false;
-    if (!take(xp, yp)) return false;
-    if (!eval(xm, ym)) return false;
-    if (!take(xm, ym)) return false;
-    gi = fd_combine(*st, fs.rule, 0.0, yp, ym);
-    if (!std::isfinite(gi)) {
-      report.stencil(x, idx, {{xp, yp}, {xm, ym}});
+    if (!eval(point(st->p1), yp)) return false;
+    if (same(yp)) {
+      if (!eval(point(st->p2), ym)) return false;
+      if (same(ym)) return finish(*st, yp, ym);
+      other.push_back({point(st->p2), ym});
+      return side(st->h, st->p1, yp);
+    }
+    other.push_back({point(st->p1), yp});
+    if (!eval(point(st->p2), ym)) return false;
+    if (!same(ym)) {
+      other.push_back({point(st->p2), ym});
+      report.no_side(x, idx, y0, kind, other);
       return false;
     }
-    return true;
+    return side(-st->h, st->p2, ym);
   }
 
-  double y0 = 0.0, y1 = 0.0, y2 = 0.0;
-  if (!centre(y0)) return false;
-  Vec x1 = x; x1(idx) = st->p1;
-  if (!eval(x1, y1)) return false;
-  if (!take(x1, y1)) return false;
-  if (st->kind == FdStencil::Kind::Forward) {
-    gi = fd_combine(*st, fs.rule, y0, y1, 0.0);
-    if (!std::isfinite(gi)) {
-      report.stencil(x, idx, {{x, y0}, {x1, y1}});
-      return false;
-    }
-    return true;
+  double y1 = 0.0;
+  if (!eval(point(st->p1), y1)) return false;
+  if (!same(y1)) {
+    other.push_back({point(st->p1), y1});
+    return backward(st->s);
   }
-  Vec x2 = x; x2(idx) = st->p2;
-  if (!eval(x2, y2)) return false;
-  if (!take(x2, y2)) return false;
-  gi = fd_combine(*st, fs.rule, y0, y1, y2);
-  if (!std::isfinite(gi)) {
-    report.stencil(x, idx, {{x, y0}, {x1, y1}, {x2, y2}});
-    return false;
-  }
-  return true;
+  if (st->kind == FdStencil::Kind::Forward) return finish(*st, y1, 0.0);
+  double y2 = 0.0;
+  if (!eval(point(st->p2), y2)) return false;
+  if (same(y2)) return finish(*st, y1, y2);
+  other.push_back({point(st->p2), y2});
+  return two_point(st->s, st->p1, y1);
+}
+
+/* Whether the internal point x of `sp` lies outside its OPTIM box
+ * (box_penalty.h): the rule of HPO_Host::operator() on the REAL point
+ * sp.out(x) it is given, so the two agree; a spec without a SearchSpace
+ * (hand-built) has its internal bounds as the box. */
+template<class Vec>
+std::optional<OutOfBox> out_of_box(const OptimizerSpec& sp, const Vec& x)
+{
+  if (sp.space) return outside_box(*sp.space, sp.out(x));
+  return outside_internal_box(sp.low, sp.high, x);
+}
+
+/* The slope at a point outside the box (out_of_box): that of its score,
+ * out_of_box_score() of the FAILSCORE of `sp` (the default, the largest
+ * double, when it has none), in internal coordinates. */
+template<class Vec>
+void out_of_box_gradient(const OptimizerSpec& sp, const OutOfBox& o, Vec& g)
+{
+  out_of_box_slope(o, sp.failscore.value_or(std::numeric_limits<double>::max()),
+                   g);
 }
 
 }  // namespace detail
@@ -750,6 +905,16 @@ make_gradient_provider(const OptimizerSpec&     sp,
     }
   };
 
+  /* A point outside the OPTIM box (box_penalty.h; the file comment): the
+   * slope of its score, for every strategy, without an evaluation. True
+   * with g filled when x lies outside the box. */
+  const auto outside = [&sp](const Vec& x, Vec& g) {
+    const std::optional<OutOfBox> o = detail::out_of_box(sp, x);
+    if (!o) return false;
+    detail::out_of_box_gradient(sp, *o, g);
+    return true;
+  };
+
   gp.exhausted = [eval_counter, maxeval]() {
     return maxeval > 0 && eval_counter->load() >= maxeval;
   };
@@ -783,9 +948,10 @@ make_gradient_provider(const OptimizerSpec&     sp,
       if constexpr (detail::has_analytical_gradient_gap<HostT>::value)
         no_fit_why = [&host]() { return host.analytical_gradient_gap(); };
       gp.gradient = [analytical_grad_fn, eval_counter, maxeval,
-                     pull_to_internal, failure, report, no_fit_why]
+                     pull_to_internal, failure, report, no_fit_why, outside]
                     (const Vec& x, Vec& g)->bool {
         *failure = {};
+        if (outside(x, g)) return true;
         if (maxeval > 0 && eval_counter->load() >= maxeval) {
           report.budget();
           return false;
@@ -847,9 +1013,12 @@ make_gradient_provider(const OptimizerSpec&     sp,
      * the analytical pass -- the analytical gradient there is that of the
      * loss before the failure (a skip cap's uncapped loss, the terms that
      * did not fail), not of the FAILSCORE or the graded loss the optimiser
-     * sees, and a search took it for a slope and converged on it. */
-    gp.gradient_at = [grad, failure, report](const Vec& x, double fx, Vec& g) {
+     * sees, and a search took it for a slope and converged on it. A point
+     * outside the box has the slope of its score. */
+    gp.gradient_at = [grad, failure, report, outside](const Vec& x, double fx,
+                                                      Vec& g) {
       *failure = {};
+      if (outside(x, g)) return true;
       switch (report.classify(fx)) {
         case detail::CentreLoss::Failed:
           report.failed_point(x, fx);
@@ -890,18 +1059,22 @@ make_gradient_provider(const OptimizerSpec&     sp,
       return gp;
     }
 
-    /* `fx`: the caller's loss at x (gradient_at), or nullptr. */
+    /* `fx`: the loss at x, the caller's (gradient_at) or gradient()'s. */
     const auto hybrid = [&host, &sp, eval_counter, maxeval,
                          analytical_grad_fn, pull_to_internal, failure,
-                         report, setup, box]
-                        (const Vec& x, const double* fx, Vec& g)->bool {
+                         report, setup, box, outside]
+                        (const Vec& x_in, double fx, Vec& g)->bool {
       *failure = {};
       /* Any parameter may need finite differences (the analytical pass
        * routes every one there when it cannot be formed), so every box
        * must hold the stencil (validate_hpo_setup refuses one that does
        * not). */
       setup->require(sp);
-      box.require(x.size());
+      box.require(x_in.size());
+      if (outside(x_in, g)) return true;
+      /* A coordinate within rounding outside its box is evaluated on the
+       * bound (owner decision D10): it is differenced there. */
+      const Vec x = box.onto(x_in);
       /* The caller's loss at x, before the analytical pass: a failed one
        * fails the gradient whatever is differenced (as under ANALYTICAL:
        * the analytical gradient there is not that of the loss the
@@ -913,11 +1086,10 @@ make_gradient_provider(const OptimizerSpec&     sp,
        * that did not fail -- and a search that took it converged inside
        * the failure region; the differences give the graded slope, or a
        * flat failure region (below). */
-      const bool graded_at_x =
-          fx && report.classify(*fx) == detail::CentreLoss::Graded;
-      if (fx && !graded_at_x &&
-          report.classify(*fx) == detail::CentreLoss::Failed) {
-        report.failed_point(x, *fx);
+      const detail::CentreLoss cls = report.classify(fx);
+      const bool graded_at_x = cls == detail::CentreLoss::Graded;
+      if (cls == detail::CentreLoss::Failed) {
+        report.failed_point(x, fx);
         return false;
       }
       const auto over = [&]() {
@@ -950,74 +1122,32 @@ make_gradient_provider(const OptimizerSpec&     sp,
        * chain that failed) -- is differenced. HYBRID used to return g = 0
        * in that case, so a gradient search stopped at its start as
        * "converged". */
-      if (!needs_fd.empty() && !box.contains(x))
-        HPOLog::instance().record_out_of_box_gradient();
-
       const auto eval = [&](const Vec& p, double& y) {
         if (over()) return false;
         eval_counter->fetch_add(1);
         y = host(sp.out(p));
         return true;
       };
-      /* The analytical pass does not evaluate the loss: the finite
-       * differences take the caller's loss at x (gradient_at; a failed one
-       * ended the gradient above), else a one-sided or forward stencil
-       * evaluates it, once per gradient. The loss at x is classified as
-       * NUMERICAL's (the file comment): a failure the gradient cannot
-       * difference ends it before any stencil point. */
-      std::optional<detail::CentreLoss> cls;
-      double y0 = 0.0;
-      const auto centre = [&](double& y) {
-        if (!cls) {
-          if (fx) {
-            y0 = *fx;
-          } else {
-            if (!eval(x, y0)) return false;
-            HPOLog::instance().record_hybrid_centre();
-          }
-          cls = report.classify(y0);
-          if (*cls == detail::CentreLoss::Failed) {
-            report.centre(x, y0);
+      if (!needs_fd.empty()) {
+        /* The loss at x decides the kind of every difference (the file
+         * comment); a failed one ended the gradient above. */
+        const double y0 = fx;
+        for (int idx : needs_fd) {
+          double gi = 0.0;
+          if (!detail::fd_component(x, idx, setup->s, box, eval, y0, cls,
+                                    report, gi))
+            return false;
+          g(idx) = gi;
+        }
+        /* A graded failure whose every difference is 0 gives no way out. */
+        if (cls == detail::CentreLoss::Graded) {
+          bool any = false;
+          for (int idx : needs_fd)
+            if (g(idx) != 0.0) any = true;
+          if (!any) {
+            report.flat(x, y0);
             return false;
           }
-        }
-        y = y0;
-        return true;
-      };
-      /* A failed stencil loss: taken as it is at a graded failure. Without
-       * the loss at x (gradient(), central stencils only), it fails the
-       * gradient at once under FAILSCORE_GRADING OFF (whatever x's loss is,
-       * the gradient fails), and under ON the loss at x is evaluated to
-       * tell a graded failure from a usable loss. */
-      const auto take_failed = [&](long i, const Vec& p, double y) {
-        if (!cls && sp.failscore_grading) {
-          double c = 0.0;
-          if (!centre(c)) return false;
-        }
-        if (cls && *cls == detail::CentreLoss::Graded) return true;
-        report.point(x, i, p, y);
-        return false;
-      };
-      if (!needs_fd.empty() && fx) {
-        double c = 0.0;
-        if (!centre(c)) return false;
-      }
-
-      for (int idx : needs_fd) {
-        double gi = 0.0;
-        if (!detail::fd_component(x, idx, setup->s, box, eval, centre,
-                                  take_failed, report, gi))
-          return false;
-        g(idx) = gi;
-      }
-      /* A graded failure whose every difference is 0 gives no way out. */
-      if (cls && *cls == detail::CentreLoss::Graded) {
-        bool any = false;
-        for (int idx : needs_fd)
-          if (g(idx) != 0.0) any = true;
-        if (!any) {
-          report.flat(x, y0);
-          return false;
         }
       }
 
@@ -1030,11 +1160,28 @@ make_gradient_provider(const OptimizerSpec&     sp,
         }
       return true;
     };
-    gp.gradient = [hybrid](const Vec& x, Vec& g) {
-      return hybrid(x, nullptr, g);
+    /* gradient() without the caller's loss evaluates the loss at x first
+     * (counted, HPOLog::record_hybrid_centre): its kind decides the whole
+     * gradient (the file comment) -- a failure ends it, a graded failure
+     * is differenced in every parameter --, and the analytical pass then
+     * differentiates the host's evaluation of x itself. */
+    gp.gradient = [hybrid, &host, &sp, eval_counter, maxeval, failure, report,
+                   setup, box, outside](const Vec& x, Vec& g) {
+      *failure = {};
+      setup->require(sp);
+      box.require(x.size());
+      if (outside(x, g)) return true;
+      if (maxeval > 0 && eval_counter->load() >= maxeval) {
+        report.budget();
+        return false;
+      }
+      eval_counter->fetch_add(1);
+      const double y0 = host(sp.out(box.onto(x)));
+      HPOLog::instance().record_hybrid_centre();
+      return hybrid(x, y0, g);
     };
     gp.gradient_at = [hybrid](const Vec& x, double fx, Vec& g) {
-      return hybrid(x, &fx, g);
+      return hybrid(x, fx, g);
     };
     return gp;
   }
@@ -1048,19 +1195,23 @@ make_gradient_provider(const OptimizerSpec&     sp,
   // box, where the step collapses to 1.5e-8 next to u = 0, every lower
   // bound). The loss at x -- the caller's, else evaluated first -- then
   // each dimension's stencil, central or forward, one-sided into the box
-  // within a step of a bound: both old kernels' points and arithmetic in
-  // the interior (fd_stencil.h).
+  // within a step of a bound, of the kind of the loss at x
+  // (fd_component): both old kernels' points and arithmetic in the
+  // interior (fd_stencil.h).
   /* `fx`: the caller's loss at x (gradient_at), the one the optimiser was
    * given, or nullptr (gradient): evaluated here first. */
   const auto numerical = [&host, &sp, eval_counter, maxeval, failure, report,
-                          setup, box]
-                         (const Vec& x, const double* fx, Vec& g)->bool {
+                          setup, box, outside]
+                         (const Vec& x_in, const double* fx, Vec& g)->bool {
     *failure = {};
     /* An invalid setting or a box narrower than the stencil
      * (validate_hpo_setup refuses both): before any evaluation. */
     setup->require(sp);
-    box.require(x.size());
-    if (!box.contains(x)) HPOLog::instance().record_out_of_box_gradient();
+    box.require(x_in.size());
+    if (outside(x_in, g)) return true;
+    /* A coordinate within rounding outside its box is evaluated on the
+     * bound (owner decision D10): it is differenced there. */
+    const Vec x = box.onto(x_in);
     const auto eval = [&](const Vec& p, double& y) {
       if (maxeval > 0 && eval_counter->load() >= maxeval) {
         report.budget();
@@ -1074,10 +1225,10 @@ make_gradient_provider(const OptimizerSpec&     sp,
      * evaluated here (the bad-evaluation contract of both old kernels,
      * Ceres' evaluating the residual at x first, with HPO's notion of a
      * failed evaluation). A failure the gradient cannot difference ends it
-     * here, and no stencil point is evaluated; at a usable loss a failed
-     * stencil evaluation ends it; at a graded failure the differences are
-     * taken as they are (the file comment). A one-sided or forward stencil
-     * uses the loss; a central one does not. */
+     * here, and no stencil point is evaluated; otherwise its kind --
+     * usable, or a graded failure -- is the kind of every difference (the
+     * file comment). A one-sided or forward stencil uses the loss; a
+     * central one does not. */
     double y0 = 0.0;
     if (fx) y0 = *fx;
     else if (!eval(x, y0)) return false;
@@ -1086,27 +1237,17 @@ make_gradient_provider(const OptimizerSpec&     sp,
       report.centre(x, y0);
       return false;
     }
-    const bool graded = cls == detail::CentreLoss::Graded;
-    const auto centre = [&](double& y) {
-      y = y0;
-      return true;
-    };
-    const auto take_failed = [&](long i, const Vec& p, double y) {
-      if (graded) return true;
-      report.point(x, i, p, y);
-      return false;
-    };
     const long n = x.size();
     g.set_size(n);
     for (long idx = 0; idx < n; ++idx) {
       double gi = 0.0;
-      if (!detail::fd_component(x, idx, setup->s, box, eval, centre,
-                                take_failed, report, gi))
+      if (!detail::fd_component(x, idx, setup->s, box, eval, y0, cls, report,
+                                gi))
         return false;
       g(idx) = gi;
     }
     /* A graded failure whose every difference is 0 gives no way out. */
-    if (graded) {
+    if (cls == detail::CentreLoss::Graded) {
       bool any = false;
       for (long idx = 0; idx < n; ++idx)
         if (g(idx) != 0.0) any = true;

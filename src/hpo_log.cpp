@@ -157,7 +157,7 @@ void HPOLog::reset_for_test()
 }
 
 /* Everything a journal reports of its run: the census, the gate and
- * projection counts, the I/O retries, the best and its metrics, the
+ * out-of-box counts, the I/O retries, the best and its metrics, the
  * cadence and pin tallies, the milestones, the timing and fan-out
  * statistics, the EMBF0, density and occupancy reports and the per-run
  * notes. open() calls it for every run, so the journal of a second run in
@@ -176,7 +176,6 @@ void HPOLog::reset_run_locked()
     for (auto& b : n_fail_band_) b.store(0, std::memory_order_relaxed);
     for (auto& g : n_gate_) g.store(0, std::memory_order_relaxed);
     for (auto& g : n_gate_note_) g.store(0, std::memory_order_relaxed);
-    n_form_proj_.store(0, std::memory_order_relaxed);
     reset_fd_counters_locked();
     n_io_retry_durable_.store(0, std::memory_order_relaxed);
     n_io_retry_writer_ .store(0, std::memory_order_relaxed);
@@ -1343,34 +1342,19 @@ std::size_t HPOLog::next_gate_note(GateKind kind)
                1, std::memory_order_relaxed) + 1;
 }
 
-std::size_t HPOLog::record_form_projection()
-{
-    return n_form_proj_.fetch_add(1, std::memory_order_relaxed) + 1;
-}
-
 std::size_t HPOLog::record_snap()
 {
     return n_snap_.fetch_add(1, std::memory_order_relaxed) + 1;
 }
 
-std::size_t HPOLog::record_out_of_box_eval()
+std::size_t HPOLog::record_out_of_box_point()
 {
-    return n_oob_eval_.fetch_add(1, std::memory_order_relaxed) + 1;
-}
-
-std::size_t HPOLog::record_out_of_box_gradient()
-{
-    return n_oob_grad_.fetch_add(1, std::memory_order_relaxed) + 1;
+    return n_oob_point_.fetch_add(1, std::memory_order_relaxed) + 1;
 }
 
 std::size_t HPOLog::record_hybrid_centre()
 {
     return n_hybrid_centre_.fetch_add(1, std::memory_order_relaxed) + 1;
-}
-
-std::size_t HPOLog::record_nn_rebuild()
-{
-    return n_nn_rebuild_.fetch_add(1, std::memory_order_relaxed) + 1;
 }
 
 std::size_t HPOLog::record_repeat_reused()
@@ -1409,14 +1393,30 @@ std::size_t HPOLog::one_sided(const std::string& label) const
     return 0;
 }
 
+std::size_t HPOLog::record_mixed_kind(const std::string& label)
+{
+    std::lock_guard<std::mutex> lg(mtx_);
+    for (auto& e : mixed_kind_)
+        if (e.first == label) return ++e.second;
+    mixed_kind_.emplace_back(label, 1);
+    return 1;
+}
+
+std::size_t HPOLog::mixed_kind(const std::string& label) const
+{
+    std::lock_guard<std::mutex> lg(mtx_);
+    for (const auto& e : mixed_kind_)
+        if (e.first == label) return e.second;
+    return 0;
+}
+
 void HPOLog::reset_fd_counters_locked()
 {
-    n_oob_eval_.store(0, std::memory_order_relaxed);
+    n_oob_point_.store(0, std::memory_order_relaxed);
     n_snap_.store(0, std::memory_order_relaxed);
-    n_oob_grad_.store(0, std::memory_order_relaxed);
     n_hybrid_centre_.store(0, std::memory_order_relaxed);
-    n_nn_rebuild_.store(0, std::memory_order_relaxed);
     one_sided_.clear();
+    mixed_kind_.clear();
     n_repeat_reused_.store(0, std::memory_order_relaxed);
     n_repeat_again_.store(0, std::memory_order_relaxed);
     n_ls_not_run_.store(0, std::memory_order_relaxed);
@@ -2288,24 +2288,12 @@ void HPOLog::finish(const std::string& status_str)
         }
     }
 
-    /* RHOFORM NONNEG / MONOTONE: evaluations whose AMPGRIDMB coordinates
-     * were projected onto [0, inf). Printed only when one was. */
-    {
-        const std::size_t np = n_form_proj_.load(std::memory_order_relaxed);
-        if (np > 0)
-            f_ << "  " << std::left << std::setw(KW) << "Positive-form projection"
-               << ": " << np << " evaluation(s) with an AMPGRIDMB amplitude < 0,\n"
-                  "    evaluated and recorded at 0 (points outside the OPTIM box: an\n"
-                  "    optimiser that ignores the bounds)\n";
-    }
-
     /* Finite differences and the OPTIM box (fd_stencil.h): each line only
      * when its count is > 0, so the DIAGNOSTICS of a run that never came
      * within a step of a bound stay byte-identical. */
     {
-        const std::size_t oe = n_oob_eval_.load(std::memory_order_relaxed);
+        const std::size_t oe = n_oob_point_.load(std::memory_order_relaxed);
         const std::size_t sn = n_snap_.load(std::memory_order_relaxed);
-        const std::size_t og = n_oob_grad_.load(std::memory_order_relaxed);
         const std::size_t hc = n_hybrid_centre_.load(std::memory_order_relaxed);
         if (sn > 0)
             f_ << "  " << std::left << std::setw(KW) << "Snapped onto the box"
@@ -2313,21 +2301,11 @@ void HPOLog::finish(const std::string& status_str)
                   "within\n    rounding, " << SearchSpace::kSnapUlps
                << " units in the last place, and evaluated on the bound)\n";
         if (oe > 0)
-            f_ << "  " << std::left << std::setw(KW) << "Out-of-box evaluations"
-               << ": " << oe << " (points outside the OPTIM box, evaluated "
-                  "there: an\n    optimiser that ignores the bounds; see the "
-                  "first such WARNING)\n";
-        if (og > 0)
-            f_ << "  " << std::left << std::setw(KW) << "Out-of-box gradients"
-               << ": " << og << " (at points outside the OPTIM box, each "
-                  "finite\n    difference stepped towards the box)\n";
-        const std::size_t nr = n_nn_rebuild_.load(std::memory_order_relaxed);
-        if (nr > 0)
-            f_ << "  " << std::left << std::setw(KW) << "Neighbour lists rebuilt"
-               << ": " << nr << " evaluation(s) with a cutoff above the "
-                  "one-time neighbour\n    lists (sized for the OPTIM box), "
-                  "evaluated with lists rebuilt for them;\n    see the first "
-                  "such WARNING\n";
+            f_ << "  " << std::left << std::setw(KW) << "Out-of-box points"
+               << ": " << oe << " (proposed outside the OPTIM box by an "
+                  "optimiser that\n    ignores the bounds, not evaluated: "
+                  "scored as failures graded by their\n    distance to the "
+                  "box; see the first such WARNING)\n";
         if (!one_sided_.empty()) {
             std::size_t total_os = 0;
             std::string per_dim;
@@ -2338,14 +2316,28 @@ void HPOLog::finish(const std::string& status_str)
             }
             f_ << "  " << std::left << std::setw(KW) << "One-sided differences"
                << ": " << total_os << " (a coordinate within a step of its "
-                  "bound, or outside\n"
-                  "    the box, differenced into it): " << per_dim << "\n";
+                  "bound, differenced\n"
+                  "    into the box): " << per_dim << "\n";
+        }
+        if (!mixed_kind_.empty()) {
+            std::size_t total = 0;
+            std::string per_dim;
+            for (const auto& e : mixed_kind_) {
+                total += e.second;
+                per_dim += (per_dim.empty() ? "" : ", ") + e.first + " " +
+                           std::to_string(e.second);
+            }
+            f_ << "  " << std::left << std::setw(KW) << "Mixed-kind stencils"
+               << ": " << total << " (a stencil point held a loss of another "
+                  "kind than the\n    point's own -- a failure next to a "
+                  "usable loss, a usable loss or an\n    ungraded failure next "
+                  "to a graded one -- and the difference was taken\n    "
+                  "without it): " << per_dim << "\n";
         }
         if (hc > 0)
             f_ << "  " << std::left << std::setw(KW) << "HYBRID centre losses"
-               << ": " << hc << " (evaluations of a gradient's point for its\n"
-                  "    one-sided or forward differences, where the optimiser's "
-                  "own loss could not\n    be reused)\n";
+               << ": " << hc << " (evaluations of a gradient's point, where "
+                  "the optimiser's\n    own loss could not be reused)\n";
     }
 
     /* Repeated points (repeat_points.h): each line only when its count is

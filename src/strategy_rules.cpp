@@ -182,8 +182,15 @@ void require_inner_driver(const OptimizerSpec& s, const std::string& enclosing)
 {
     const std::string missing = missing_driver(s);
     if (missing.empty()) {
-        require_registered_backend(s.lib, s.algo,
-                                   "the INNER block inside " + enclosing);
+        /* An INNER search is a local NLopt algorithm: an INNER block of
+         * another LIB is refused by that rule at startup
+         * (require_inner_backend), whatever it names, with advice that
+         * holds for an INNER block; the refusal table's advice for a
+         * refused optimiser of another LIB (CERES:LBFGS: DLIB:BFGS,
+         * CERES:STEEPEST_DESCENT) does not. */
+        if (s.lib == "NLOPT")
+            require_registered_backend(s.lib, s.algo,
+                                       "the INNER block inside " + enclosing);
         return;
     }
     throw std::runtime_error(
@@ -211,11 +218,13 @@ void require_inner_backend(const OptimizerSpec& parent,
             default_inner_algorithms() + " without one");
     if (!parent.inner) return;
     const OptimizerSpec& inner = *parent.inner;
-    /* A refused INNER optimiser, with the INNER block's phase: NLopt would
-     * run it inside the enclosing run (build_nlopt). */
-    reject_refused_backend(inner.lib, inner.algo,
-                           "the INNER block of " +
-                               (phase.empty() ? name : phase));
+    /* A refused INNER NLopt algorithm, with the INNER block's phase: NLopt
+     * would run it inside the enclosing run (build_nlopt). An INNER block
+     * of another LIB is refused below as not NLopt, whatever it names. */
+    if (inner.lib == "NLOPT")
+        reject_refused_backend(inner.lib, inner.algo,
+                               "the INNER block of " +
+                                   (phase.empty() ? name : phase));
     if (!optimizer_caps(parent).accepts_inner) {
         const std::string where =
             phase.empty() ? "" : " (the INNER block of " + phase + ")";

@@ -49,7 +49,8 @@ TEST_CASE("OptimizerCaps: StepUse classification per backend",
         {"ASA",   "ASA",             StepUse::Rejected},
         {"DLIB",  "GFS",             StepUse::Rejected},
         {"DLIB",  "BFGS",            StepUse::Rejected},
-        {"CERES", "LBFGS",           StepUse::Rejected},
+        /* CERES:LBFGS was a row before the fix (refused since); before the
+         * fix the case passes as well (a pin) */
         {"CERES", "STEEPEST_DESCENT",StepUse::Rejected},
     };
     for (const auto& r : rows) {
@@ -94,19 +95,33 @@ TEST_CASE("OptimizerCaps: every registered backend carries a STEP note",
 TEST_CASE("OptimizerCaps: bounds-ignoring backends are flagged",
           "[HPO][caps][bounds]")
 {
-    /* Pins: the backends that evaluate outside the OPTIM box are the four
-     * CERES drivers, and only they (Ceres' GradientProblemSolver has no
-     * bounds); every registered NLopt algorithm keeps to the box.
-     * Before the fix: NLOPT:LN_NEWUOA, which NLopt runs without the box,
-     * was registered and flagged too (5 backends); it is refused now, as
-     * LN_NEWUOA_BOUND is (see the test cases below). */
+    /* Pins: the backend that proposes points outside the OPTIM box is
+     * CERES:STEEPEST_DESCENT, the CERES driver HPO registers, and only it
+     * (Ceres' GradientProblemSolver has no bounds; such a point is scored,
+     * not evaluated: box_penalty.h); its note says so; every registered
+     * NLopt algorithm keeps to the box.
+     * The score's slope points away from the box (box_penalty.h), so a
+     * descent step leads back into it, and the note says so.
+     * Before the fix: the four CERES drivers were flagged (CERES:LBFGS,
+     * NLCG and WOLFE are refused now: their Wolfe line search stalls at a
+     * point outside the box), and the note said such points are evaluated
+     * there ("... and are evaluated there, and such a point can become the
+     * best ..."); then (review) it gave the slope the wrong sign ("...
+     * whose slope points back into it, it counts against MAXEVAL ..."): the
+     * Contains check fails. */
     const auto unbounded = filter_optimizer_caps(
         [](const OptimizerCaps& c) { return c.ignores_bounds; });
     CHECK(format_caps_list(unbounded, unbounded.size()) ==
-          "CERES:LBFGS, CERES:NLCG, CERES:STEEPEST_DESCENT, CERES:WOLFE");
+          "CERES:STEEPEST_DESCENT");
     CHECK_FALSE(optimizer_caps("NLOPT", "LN_BOBYQA").ignores_bounds);
-    CHECK(optimizer_caps("CERES", "LBFGS").ignores_bounds);
-    CHECK(optimizer_caps("CERES", "NLCG").ignores_bounds);
+    CHECK(optimizer_caps("CERES", "STEEPEST_DESCENT").ignores_bounds);
+    CHECK_THAT(std::string(optimizer_caps("CERES", "STEEPEST_DESCENT").bounds_note),
+               Catch::Contains("Such a point is not evaluated: it is scored "
+                               "as a failure graded by its distance to the "
+                               "box, whose slope points away from the box, "
+                               "so a descent step leads back into it; it "
+                               "counts against MAXEVAL and it is never the "
+                               "best"));
     CHECK_FALSE(optimizer_caps("DLIB", "BFGS").ignores_bounds);
     CHECK_FALSE(optimizer_caps("TADAH", "ANNEAL").ignores_bounds);
 }
@@ -278,17 +293,19 @@ TEST_CASE("OptimizerCaps: NLOPT:LN_NEWUOA, which ignores the OPTIM box, is "
  * SUBSPACE_DOGLEG, are refused through the refusal table, as the refused
  * NLopt algorithms are: backend_refusal() says why (they minimise a sum of
  * squared residuals, and HPO gives an optimiser one scalar loss) and names
- * the four solvers HPO runs; the caps lookup throws "CERES:<ALGO> is
- * refused: <reason>", so every phase's check reports it with the phase and
- * its line (test_startup_validation_strategy.cpp); the ALGO help says
- * REFUSED (CERES had no help: "(no info)").
- * Before the fix: they were unregistered, not refused: backend_refusal() was
- * nullptr (the REQUIRE fails), the lookup threw "unknown optimizer
- * CERES:LEVENBERG_MARQUARDT (not registered in optimizer_caps)", and only
- * validate_backend() and run_inner() gave the deferral text, after the
- * HPOTargets constructor had thrown that one. */
+ * CERES:STEEPEST_DESCENT, the Ceres solver HPO runs, and the
+ * bound-constrained NLOPT:LD_LBFGS and DLIB:BFGS; the caps lookup throws
+ * "CERES:<ALGO> is refused: <reason>", so every phase's check reports it
+ * with the phase and its line (test_startup_validation_strategy.cpp); the
+ * ALGO help says REFUSED.
+ * Before the fix: the reason named "Use CERES:LBFGS, CERES:WOLFE,
+ * CERES:NLCG or CERES:STEEPEST_DESCENT", three solvers refused since (their
+ * Wolfe line search stalls at a point outside the OPTIM box), and
+ * CERES:LBFGS was the registered solver this case checked. (Before the
+ * refusal table, they were unregistered: the lookup threw "unknown
+ * optimizer CERES:LEVENBERG_MARQUARDT (not registered in optimizer_caps)".) */
 TEST_CASE("OptimizerCaps: the Ceres least-squares solvers are refused, naming "
-          "the four HPO runs", "[HPO][caps][refused]")
+          "the solvers HPO runs", "[HPO][caps][refused]")
 {
     for (const char* algo :
          {"LEVENBERG_MARQUARDT", "DOGLEG", "SUBSPACE_DOGLEG"}) {
@@ -298,8 +315,10 @@ TEST_CASE("OptimizerCaps: the Ceres least-squares solvers are refused, naming "
         CHECK_THAT(std::string(reason),
                    Catch::Contains("sum of squared residuals") &&
                    Catch::Contains("one scalar loss") &&
-                   Catch::Contains("Use CERES:LBFGS, CERES:WOLFE, CERES:NLCG "
-                                   "or CERES:STEEPEST_DESCENT"));
+                   Catch::Contains("Use CERES:STEEPEST_DESCENT, Ceres' "
+                                   "line-search solver of a scalar loss that "
+                                   "HPO runs, or a bound-constrained gradient "
+                                   "search: NLOPT:LD_LBFGS or DLIB:BFGS"));
         CHECK_THROWS_WITH(optimizer_caps("CERES", algo),
                           std::string("CERES:") + algo + " is refused: " +
                               reason);
@@ -307,9 +326,9 @@ TEST_CASE("OptimizerCaps: the Ceres least-squares solvers are refused, naming "
         CHECK_THAT(caps_help("CERES", algo),
                    Catch::StartsWith(std::string("Options for CERES:") + algo +
                                      "\n   * REFUSED: ") &&
-                   Catch::Contains("Use CERES:LBFGS"));
+                   Catch::Contains("Use CERES:STEEPEST_DESCENT"));
     }
-    CHECK(backend_refusal("CERES", "LBFGS") == nullptr);
+    CHECK(backend_refusal("CERES", "STEEPEST_DESCENT") == nullptr);
     CHECK(backend_refusal("NLOPT", "DOGLEG") == nullptr);
 }
 
@@ -342,19 +361,28 @@ TEST_CASE("OptimizerCaps: an unknown optimiser is named with what is wrong",
                                         "there is no LIB nlopt (LIB is ASA, "));
 }
 
-/* Pins: the ALGO help of the four CERES drivers (OptimizerSpec::print_caps,
- * `tadah explain CERES:LBFGS`) names the solver, the stops that end a run
- * (from the caps registry: MAXEVAL, FTOL_REL, XTOL_REL), the PARAM keys the
- * driver reads -- tol_gradinf, max_iter, max_ls_iter, the finite
- * differences' fd_step / fd_kernel / diff_method, max_lbfgs_rank for LBFGS
- * alone and nlcg_type for NLCG alone --, that STEP is rejected, and that it
- * ignores the OPTIM box.
- * Before the fix: "Options for CERES:LBFGS\n   * (no info)\n" for each:
- * print_caps had no CERES branch. */
+/* Pins: the ALGO help of CERES:STEEPEST_DESCENT (OptimizerSpec::print_caps,
+ * `tadah explain CERES:STEEPEST_DESCENT`) names the solver, the stops that
+ * end a run (from the caps registry: MAXEVAL, FTOL_REL, XTOL_REL), the PARAM
+ * keys the driver reads -- tol_gradinf, max_iter, max_ls_iter, the finite
+ * differences' fd_step / fd_kernel / diff_method, neither max_lbfgs_rank nor
+ * nlcg_type --, that STEP is rejected, and that it ignores the OPTIM box and
+ * that a point it proposes outside the box is not evaluated; the help of
+ * CERES:LBFGS, WOLFE and NLCG says REFUSED with their reason.
+ * Before the fix: the four were described (LBFGS with max_lbfgs_rank, NLCG
+ * with nlcg_type), and the WARNING said a point outside the box is
+ * evaluated there. */
 TEST_CASE("OptimizerCaps: the ALGO help describes the CERES drivers",
           "[HPO][caps][help]")
 {
-    for (const char* algo : {"LBFGS", "WOLFE", "NLCG", "STEEPEST_DESCENT"}) {
+    for (const char* algo : {"LBFGS", "WOLFE", "NLCG"}) {
+        INFO(algo);
+        CHECK_THAT(caps_help("CERES", algo),
+                   Catch::StartsWith(std::string("Options for CERES:") + algo +
+                                     "\n   * REFUSED: Ceres' "
+                                     "GradientProblemSolver has no bounds"));
+    }
+    for (const char* algo : {"STEEPEST_DESCENT"}) {
         INFO(algo);
         const std::string help = caps_help("CERES", algo);
         INFO(help);
@@ -371,11 +399,10 @@ TEST_CASE("OptimizerCaps: the ALGO help describes the CERES drivers",
                    Catch::Contains("STEP is rejected: Ceres chooses the "
                                    "initial line-search step itself") &&
                    Catch::Contains("WARNING: ignores the OPTIM box") &&
+                   Catch::Contains("Such a point is not evaluated") &&
                    !Catch::Contains("(no info)"));
-        CHECK((help.find("PARAM max_lbfgs_rank") != std::string::npos) ==
-              (a == "LBFGS"));
-        CHECK((help.find("PARAM nlcg_type") != std::string::npos) ==
-              (a == "NLCG"));
+        CHECK(help.find("PARAM max_lbfgs_rank") == std::string::npos);
+        CHECK(help.find("PARAM nlcg_type") == std::string::npos);
     }
 }
 
