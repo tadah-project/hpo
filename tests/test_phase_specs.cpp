@@ -130,6 +130,36 @@ TEST_CASE("phase specs: the MULTISTART plan and each start's spec",
             CHECK(sub.algo == "BFGS");
         }
     }
+    SECTION("an NLopt spec seeded by its INIT block's SEED: start i takes "
+            "that SEED + i") {
+        /* Pins: NLopt takes the INIT block's SEED when its block has no SEED
+         * (make_nlopt), so start i of such a spec gets the INIT SEED + i
+         * (7, 8, 9) and no SEED; a DLIB spec, which no INIT SEED seeds, and
+         * an NLopt spec with a SEED of its own (SEED + i) keep the INIT SEED.
+         * Before the fix: every start of the NLopt spec kept the INIT SEED 7
+         * (the NLopt checks fail). */
+        auto s = local_spec(3);
+        s.lib = "NLOPT";
+        s.algo = "LN_SBPLX";
+        s.init_strategy_spec.seed = 7;
+        const MultiStartPlan plan = plan_multistart(s, 3, std::nullopt);
+        REQUIRE(plan.starts == 3u);
+        for (std::size_t i = 0; i < 3; ++i) {
+            INFO("start " << i);
+            const OptimizerSpec sub = multistart_start_spec(s, plan, i);
+            CHECK(sub.init_strategy_spec.seed ==
+                  std::optional<std::uint64_t>(7 + i));
+            CHECK_FALSE(sub.seed);
+        }
+        auto d = local_spec(3);
+        d.init_strategy_spec.seed = 7;
+        CHECK(multistart_start_spec(d, plan, 2).init_strategy_spec.seed ==
+              std::optional<std::uint64_t>(7));
+        s.seed = 3;
+        const OptimizerSpec own = multistart_start_spec(s, plan, 2);
+        CHECK(own.seed == std::optional<std::uint64_t>(5));
+        CHECK(own.init_strategy_spec.seed == std::optional<std::uint64_t>(7));
+    }
     SECTION("BUDGET_PER_START is each start's MAXEVAL") {
         auto s = local_spec(4);
         s.stop.maxeval = 20;

@@ -168,6 +168,34 @@ struct OptimizerCaps {
      * reads that point"); "" for every other backend. */
     const char* start_note = "";
 
+    /* Whether a run of a backend whose starts_at_x0 is false draws random
+     * numbers, so that a run with other numbers asks for other points
+     * (nlopt 2.10 sources):
+     *   Never         GD_STOGO (stogo.cc: no random trial point), GN_DIRECT,
+     *                 GN_DIRECT_L and the three _NOSCAL forms (optimize.c
+     *                 runs GN_DIRECT_L_RAND_NOSCAL with GN_DIRECT_L_NOSCAL's
+     *                 cdirect settings), GN_ORIG_DIRECT and GN_ORIG_DIRECT_L
+     *                 (DIRect.c), GN_AGS (ags);
+     *   BetweenSides  GN_DIRECT_L_RAND: cdirect.c draws only to choose one of
+     *                 several equally long sides of a box, which a box of
+     *                 one dimension never has;
+     *   TrialPoints   GD_STOGO_RAND: POPULATION random trial points per box
+     *                 (optimize.c POP(2n); stogo.cc det_pnts = 2n + 1 -
+     *                 POPULATION). Below POPULATION 2n + 1, NLopt's default
+     *                 2n included, the box centre is a trial point too and
+     *                 the first taken (global.cc NewtonTest adds the random
+     *                 points, then FillRegular the centre last; TBox::
+     *                 RemoveTrial takes the last), and the local search from
+     *                 it draws nothing: a run asks for the points of that
+     *                 search before any random one. At 2n + 1 or more every
+     *                 trial point is random;
+     *   NotRecorded   every backend whose first call is at its point.
+     * A search that draws none (before its first random trial point) asks
+     * for the same points in every run: the RESTART warnings of
+     * start_point_warnings() (backend_rules.h). */
+    enum class RandomDraws { NotRecorded, Never, BetweenSides, TrialPoints };
+    RandomDraws random_draws = RandomDraws::NotRecorded;
+
     /* How the tolerances end the run when one of them is costly, the last
      * clause of require_stop()'s message and a line of the ALGO help (""
      * for none): DIRECT tests XTOL on every rectangle it divides, the

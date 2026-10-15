@@ -544,6 +544,18 @@ Registry build_registry()
             c.start_note = "AGS evaluates points of a space-filling curve "
                            "through the whole OPTIM box, the first near its "
                            "centre; NLopt never reads that point";
+        /* Which of them draw random numbers (OptimizerCaps::random_draws):
+         * GD_STOGO_RAND its POPULATION trial points (stogo.cc, POP(2n)),
+         * the box centre first below POPULATION 2n + 1; GN_DIRECT_L_RAND
+         * only between equally long sides (cdirect.c, which_div 2); the
+         * other StoGO and DIRECT forms and AGS none (optimize.c hands every
+         * _NOSCAL form which_alg 13, GN_DIRECT_L_NOSCAL's). */
+        if (!c.starts_at_x0)
+            c.random_draws =
+                s == "GD_STOGO_RAND" ? OptimizerCaps::RandomDraws::TrialPoints
+                : s == "GN_DIRECT_L_RAND"
+                    ? OptimizerCaps::RandomDraws::BetweenSides
+                    : OptimizerCaps::RandomDraws::Never;
 
         /* Initial-step consumption, verified against nlopt 2.10
          * src/api/optimize.c (see StepUse doc in optimizer_caps.h). */

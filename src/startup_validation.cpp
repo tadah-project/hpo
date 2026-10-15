@@ -447,6 +447,19 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
     HPOLog::instance().warning(w);
   }
 
+  /* --- settings a search that ignores its start point does not read -----
+   * A WARNING each (start_point_warnings, backend_rules.h): an INIT block
+   * whose points such a search never evaluates, a RESTART block whose
+   * rounds repeat round 0 (all of it when the search draws no random
+   * numbers either, its first local search for GD_STOGO_RAND below
+   * POPULATION 2n + 1), and the METHOD lines of a RESTART block on such a
+   * search that draws them, which no round evaluates. */
+  for (const std::string &w :
+       start_point_warnings(trg.spec, trg.repeat_reuse_blocker())) {
+    std::cerr << "[HPO] WARNING: " << w << "\n";
+    HPOLog::instance().warning(w);
+  }
+
   const bool has_fw = train_ctx.contains("FIXWEIGHT");
   const bool has_fi = train_ctx.contains("FIXINDEX");
 

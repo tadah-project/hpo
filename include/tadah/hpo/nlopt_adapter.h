@@ -226,7 +226,9 @@ inline bool withheld_reaches_stopval(double f, const OptimizerSpec& sp)
  * per-start SEED + i of MULTISTART and the PRESTAGE refinement, and the
  * seeds RESTART derives, arrive here as sp.seed. The INIT block's SEED,
  * which draws the block's INIT points, seeds NLopt only when the block has
- * no SEED. NLopt has one random stream per run: MLSL and AUGLAG run their
+ * no SEED (OptimizerSpec::nlopt_seed_from_init(); MULTISTART and RESTART
+ * offset it as they offset SEED, and it arrives here so offset). NLopt
+ * has one random stream per run: MLSL and AUGLAG run their
  * INNER search inside this run and draw it from the same stream, so the
  * INNER spec has no seed of its own. HPOTargets rejects SEED inside an
  * INNER block at startup (and has no INIT block there); a spec built

@@ -83,6 +83,7 @@
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <tuple>
 #include <vector>
 
 namespace {
@@ -3111,19 +3112,23 @@ std::vector<Point> reference_points(const std::string& optimizer)
 }
 
 /* An inner policy that records the seeds of every phase each round runs
- * with, and ends the round with a stagnation stop. */
+ * with (and the SEED of its INIT block), and ends the round with a
+ * stagnation stop. */
 struct SeedRecorder : tadah::hpo::RunPolicy<ParamVec, ::LammpsRunner> {
     struct Seeds {
         std::optional<std::uint64_t> outer, inner, explore, explore_inner;
+        std::optional<std::uint64_t> outer_init, explore_init;
     };
     std::vector<Seeds> rounds;
     void run(const tadah::hpo::OptimizerSpec& spec, Host&) override
     {
         Seeds s;
         s.outer = spec.seed;
+        s.outer_init = spec.init_strategy_spec.seed;
         if (spec.inner) s.inner = spec.inner->seed;
         if (spec.prestage) {
             s.explore = spec.prestage->seed;
+            s.explore_init = spec.prestage->init_strategy_spec.seed;
             if (spec.prestage->inner)
                 s.explore_inner = spec.prestage->inner->seed;
         }
@@ -3264,6 +3269,67 @@ TEST_CASE("Termination: each RESTART round derives the seed of every "
                 CHECK(*rounds[r].outer + i == expected[r][i]);
                 CHECK(start_seeds.insert(*rounds[r].outer + i).second);
             }
+        }
+    }
+
+    SECTION("an NLopt phase seeded by its INIT block's SEED: that SEED is "
+            "derived")
+    {
+        /* Pins: NLopt takes an INIT block's SEED when its block has no SEED
+         * (make_nlopt), so RESTART derives that SEED as it derives SEED: the
+         * outer spec's INIT SEED 7 under MULTISTART N_STARTS 3 is 7, 10, 13
+         * (SEED + r*S) and the EXPLORE spec's INIT SEED 30 is 30, 31, 32,
+         * neither spec getting a SEED. Nothing else reads an INIT block's
+         * SEED once its points are drawn at startup: a DLIB phase keeps its
+         * INIT SEED 7 in every round, and so does an NLopt phase with a SEED
+         * of its own (5, 6, 7), whose SEED NLopt takes. The run's own spec
+         * keeps its seeds.
+         * Before the fix: derive_restart_seeds derived SEED only, so an NLopt
+         * search seeded by its INIT block drew round 0's random numbers in
+         * every round: outer_init 7 and explore_init 30 in every round (the
+         * NLopt checks fail). */
+        OptimizerSpec spec;
+        spec.lib = "NLOPT";
+        spec.algo = "LN_SBPLX";
+        spec.strategy_type = tadah::hpo::StrategyType::MULTISTART;
+        spec.multistart.n_starts = 3;
+        spec.init_strategy_spec.seed = 7;
+        spec.prestage = std::make_unique<OptimizerSpec>();
+        spec.prestage->lib = "NLOPT";
+        spec.prestage->algo = "GN_CRS2_LM";
+        spec.prestage->init_strategy_spec.seed = 30;
+
+        const auto rounds = rounds_of(spec);
+        for (std::uint64_t r = 0; r < rounds.size(); ++r) {
+            INFO("round " << r);
+            CHECK(rounds[r].outer_init == std::optional<std::uint64_t>(7 + 3 * r));
+            CHECK(rounds[r].explore_init == std::optional<std::uint64_t>(30 + r));
+            CHECK_FALSE(rounds[r].outer);
+            CHECK_FALSE(rounds[r].explore);
+        }
+        CHECK(spec.init_strategy_spec.seed == std::optional<std::uint64_t>(7));
+        CHECK(spec.prestage->init_strategy_spec.seed ==
+              std::optional<std::uint64_t>(30));
+
+        OptimizerSpec dlib;
+        dlib.lib = "DLIB";
+        dlib.algo = "BFGS";
+        dlib.init_strategy_spec.seed = 7;
+        for (const auto& round : rounds_of(dlib)) {
+            CHECK(round.outer_init == std::optional<std::uint64_t>(7));
+            CHECK_FALSE(round.outer);
+        }
+
+        OptimizerSpec own;
+        own.lib = "NLOPT";
+        own.algo = "GN_CRS2_LM";
+        own.seed = 5;
+        own.init_strategy_spec.seed = 7;
+        const auto own_rounds = rounds_of(own);
+        for (std::uint64_t r = 0; r < own_rounds.size(); ++r) {
+            INFO("round " << r);
+            CHECK(own_rounds[r].outer == std::optional<std::uint64_t>(5 + r));
+            CHECK(own_rounds[r].outer_init == std::optional<std::uint64_t>(7));
         }
     }
 
@@ -3738,6 +3804,170 @@ TEST_CASE("Termination: without a RESTART SEED the restart points come from "
         "      SEED " + std::to_string(*drawn_restart_seed(a.journal)) + "\n");
     CHECK(again.rounds[1].front() == a.rounds[1].front());
     CHECK(again.rounds[2].front() == a.rounds[2].front());
+}
+
+/* Pins: a PLAIN NLOPT:GN_CRS2_LM run (MAXEVAL 200) seeded only by its INIT
+ * block's SEED 7 (no METHOD: it starts at the configuration's point), under
+ * RESTART (AFTER_STAGNATION 6, MAX 2, METHOD RANDOM 1, SEED 5), evaluates
+ * exactly the points of the same run seeded by the STRATEGY block's SEED 7,
+ * round after round: round r seeds NLopt with 7 + r either way. The journal
+ * names the derived seed: "RESTART 1/2 -- fresh init from RANDOM; RESTART
+ * SEED 6, INIT SEED 8" and "... 2/2 ...; RESTART SEED 7, INIT SEED 9" (the
+ * STRATEGY-seeded run: "..., SEED 8", "..., SEED 9"). Each of the three
+ * rounds ends on stagnation, and rounds 1 and 2 evaluate more new points
+ * than their two start points.
+ * Before the fix: the INIT block's SEED was not derived: round r seeded
+ * NLopt with 7 again, so CRS2 drew round 0's population again and every
+ * call of rounds 1 and 2 after their start point asked for a point of
+ * round 0, answered from the record ("StagnationStop fired at a repeat of
+ * eval 6 answered from the run's record"); the RESTART line named no
+ * optimiser seed ("RESTART 1/2 -- fresh init from RANDOM; RESTART SEED
+ * 6"): the journal checks, the comparison with the STRATEGY-seeded run and
+ * the new-point count (2, the start points) fail. */
+TEST_CASE("Termination: an NLopt search seeded by its INIT block's SEED "
+          "draws new random numbers in each RESTART round",
+          "[HPO][termination][restart][seed]")
+{
+    const auto crs = [](const std::string& init, const std::string& seed) {
+        return "OPTIMIZER\n" + init +
+               "  STRATEGY\n    TYPE PLAIN\n    LIB NLOPT\n"
+               "    ALGO GN_CRS2_LM\n    MAXEVAL 200\n" + seed +
+               "    RESTART\n      AFTER_STAGNATION 6\n      MAX 2\n"
+               "      METHOD RANDOM 1\n      SEED 5\n    ENDRESTART\n"
+               "  ENDSTRATEGY\nENDOPTIMIZER\n";
+    };
+    struct Run {
+        std::vector<Point> pts;
+        std::string journal;
+        std::vector<StagnationWindow> stops;
+    };
+    const auto run = [](const std::string& optimizer) {
+        Run out;
+        TaRun r(optimizer);
+        int status = -1;
+        REQUIRE_NOTHROW(status = tadah::hpo::hpo_run(r.ctx));
+        CHECK(status == 0);
+        out.journal = read_file("hpo_run.log");
+        out.pts = evaluated_points();
+        out.stops = stagnation_windows(out.journal);
+        return out;
+    };
+    const Run init = run(crs("  INIT\n    SEED 7\n  ENDINIT\n", ""));
+    const Run own = run(crs("", "    SEED 7\n"));
+    INFO("INIT-seeded journal:\n" << init.journal);
+    CHECK(init.journal.find("RESTART 1/2 -- fresh init from RANDOM; RESTART "
+                            "SEED 6, INIT SEED 8\n") != std::string::npos);
+    CHECK(init.journal.find("RESTART 2/2 -- fresh init from RANDOM; RESTART "
+                            "SEED 7, INIT SEED 9\n") != std::string::npos);
+    CHECK(own.journal.find("RESTART 1/2 -- fresh init from RANDOM; RESTART "
+                           "SEED 6, SEED 8\n") != std::string::npos);
+    CHECK(init.pts == own.pts);
+    REQUIRE(init.stops.size() == 3u);
+    const std::size_t round0 = init.stops.front().eval;
+    REQUIRE(round0 <= init.pts.size());
+    const std::set<Point> earlier(init.pts.begin(), init.pts.begin() + round0);
+    std::size_t fresh = 0;
+    for (std::size_t i = round0; i < init.pts.size(); ++i)
+        fresh += earlier.count(init.pts[i]) == 0u;
+    CHECK(fresh > 2u);
+}
+
+/* Pins: MULTISTART (and the PRESTAGE refinement it runs) gives start i of an
+ * NLopt search seeded only by its INIT block's SEED that SEED + i, as it
+ * gives a SEED: N_STARTS 2 of NLOPT:LN_SBPLX with an INIT block METHOD
+ * RANDOM 2, SEED 7 journals "MULTISTART start 1/2 -- running inner optimiser
+ * (INIT seed=7)" and "MULTISTART start 2/2 -- running inner optimiser (INIT
+ * seed=8)".
+ * Before the fix: every start took the INIT block's SEED 7, and the start
+ * lines named no seed ("MULTISTART start 2/2 -- running inner optimiser"):
+ * the checks fail. */
+TEST_CASE("Termination: MULTISTART gives each start of an NLopt search "
+          "seeded by its INIT block the INIT SEED + i",
+          "[HPO][termination][multistart][seed]")
+{
+    TaRun run("OPTIMIZER\n  INIT\n    METHOD RANDOM 2\n    SEED 7\n"
+              "  ENDINIT\n  STRATEGY\n    TYPE MULTISTART\n    LIB NLOPT\n"
+              "    ALGO LN_SBPLX\n    MAXEVAL 8\n    N_STARTS 2\n"
+              "  ENDSTRATEGY\nENDOPTIMIZER\n");
+    int status = -1;
+    REQUIRE_NOTHROW(status = tadah::hpo::hpo_run(run.ctx));
+    CHECK(status == 0);
+    const std::string journal = read_file("hpo_run.log");
+    INFO(journal);
+    CHECK(journal.find("MULTISTART start 1/2 -- running inner optimiser "
+                       "(INIT seed=7)\n") != std::string::npos);
+    CHECK(journal.find("MULTISTART start 2/2 -- running inner optimiser "
+                       "(INIT seed=8)\n") != std::string::npos);
+}
+
+/* Pins: what the RESTART rounds of NLopt's StoGO evaluate, as the startup
+ * WARNING says (PLAIN, 3 OPTIM dimensions, MAXEVAL 60, STRATEGY SEED 11,
+ * RESTART AFTER_STAGNATION 4, MAX 1, METHOD RANDOM 1, SEED 5): round 1
+ * makes evaluations, and
+ *  - GD_STOGO: each is at a point of round 0 (the box centre's loss comes
+ *    from the record, its stencil is evaluated again); the WARNING names
+ *    the stencils ("evaluates their finite-difference stencils again
+ *    (GRAD_STRATEGY NUMERICAL): no round after round 0 evaluates a new
+ *    point");
+ *  - GD_STOGO_RAND at the default POPULATION 6 (2n, below 2n + 1 = 7): each
+ *    is at a point of round 0 (its first trial point is the box centre);
+ *    the WARNING says "asks first for the points of round 0's first local
+ *    search again";
+ *  - GD_STOGO_RAND at POPULATION 7: its first evaluation is a point round 0
+ *    did not evaluate (its trial points are all random, drawn with SEED
+ *    12); the WARNING says "so no RESTART round evaluates the points of the
+ *    block's METHOD lines".
+ * Before the fix: the evaluations are the same (a pin of the behaviour),
+ * but GD_STOGO's WARNING said "which the run's record answers: no round
+ * after round 0 evaluates a new point, and the RESTART block's only effect
+ * is to end the run ..." and GD_STOGO_RAND got none: the WARNING checks
+ * fail. */
+TEST_CASE("Termination: a RESTART round of StoGO evaluates what the startup "
+          "warning says",
+          "[HPO][termination][restart][start_point]")
+{
+    const auto stogo = [](const std::string& algo, const std::string& pop) {
+        return plain_block("    TYPE PLAIN\n    LIB NLOPT\n    ALGO " + algo +
+                           "\n    MAXEVAL 60\n    SEED 11\n" + pop +
+                           "    RESTART\n      AFTER_STAGNATION 4\n"
+                           "      MAX 1\n      METHOD RANDOM 1\n"
+                           "      SEED 5\n    ENDRESTART\n");
+    };
+    for (const auto& [algo, pop, warning, repeats] :
+         std::vector<std::tuple<std::string, std::string, std::string, bool>>{
+             {"GD_STOGO", "",
+              "evaluates their finite-difference stencils again "
+              "(GRAD_STRATEGY NUMERICAL): no round after round 0 evaluates a "
+              "new point", true},
+             {"GD_STOGO_RAND", "",
+              "asks first for the points of round 0's first local search "
+              "again", true},
+             {"GD_STOGO_RAND", "    POPULATION 7\n",
+              "so no RESTART round evaluates the points of the block's METHOD "
+              "lines", false}}) {
+        INFO("NLOPT:" << algo << " " << pop);
+        TaRun run(stogo(algo, pop));
+        int status = -1;
+        REQUIRE_NOTHROW(status = tadah::hpo::hpo_run(run.ctx));
+        CHECK(status == 0);
+        const std::string journal = read_file("hpo_run.log");
+        INFO(journal);
+        CHECK(journal.find(warning) != std::string::npos);
+        const auto pts = evaluated_points();
+        const auto stops = stagnation_windows(journal);
+        REQUIRE(stops.size() == 2u);
+        const std::size_t round0 = stops.front().eval;
+        REQUIRE(round0 < pts.size());  // round 1 makes evaluations
+        const std::set<Point> earlier(pts.begin(), pts.begin() + round0);
+        if (repeats) {
+            for (std::size_t i = round0; i < pts.size(); ++i) {
+                INFO("eval " << (i + 1));
+                CHECK(earlier.count(pts[i]) == 1u);
+            }
+        } else {
+            CHECK(earlier.count(pts[round0]) == 0u);
+        }
+    }
 }
 
 TEST_CASE("RESTART: a SEED no METHOD of the chain draws from is reported at "
