@@ -130,6 +130,15 @@ public:
      * configuration sets them (an evaluation could not write a candidate
      * into one). Returns the error message, "" for another key. */
     static std::string optim_internal_key_error(const std::string& key);
+    /* OPTIM on a legacy many-body key (CGRIDMB, SGRIDMB, AMPGRIDMB,
+     * CEMBFUNC, SEMBFUNC, RCUTMB) that @p ctx does not store, while its
+     * many-body term is DM_Embed components (DESCRIPTOR blocks): refused
+     * naming the component path of each block that holds the parameter
+     * (<ID>.DENSITY.CENTRES, <ID>.DENSITY.ETA or .WIDTHS as declared, ...).
+     * A stored key (a DM_REAM term beside the blocks) is searchable.
+     * Returns the error message, "" otherwise. */
+    static std::string optim_component_key_error(const core::Context& ctx,
+                                                 const std::string& key);
     /* OPTIM on a value that the key's formats (blueprint value_type, every
      * alternative) take only as an integer -- SBASIS, the first value of
      * OALGO -- is refused: a searched value is continuous, and an integer
