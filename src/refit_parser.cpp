@@ -340,8 +340,8 @@ constexpr bool kAlias = false;
 // Every spelling of each stage (the NLopt long names and the fitter's short
 // names alike), with the library of `tadah hpo` it belongs to. The ALGO
 // names are the refit's own: its dlib global search is GLOBAL (`tadah hpo`
-// calls dlib's GFS), and its LBFGS is dlib's L-BFGS (a CERES algorithm in
-// `tadah hpo`; NLopt's is LD_LBFGS). UNIFORM, the refit's own uniform
+// calls dlib's GFS), and its LBFGS is dlib's L-BFGS (in `tadah hpo`
+// CERES:LBFGS names Ceres' L-BFGS, which it refuses; NLopt's is LD_LBFGS). UNIFORM, the refit's own uniform
 // start, runs no global search: like NONE, it belongs to no library.
 const std::vector<AlgoSpelling> kExploreOuterAlgos = {
     {"UNIFORM", "UNIFORM", kNoOptimiser, kListed},

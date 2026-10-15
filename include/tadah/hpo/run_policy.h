@@ -290,7 +290,7 @@ public:
    * runs: a safety net for specs built outside HPOTargets. */
   static void validate(const OptimizerSpec& spec) {
     require_multistart_backend(spec);
-    require_inner_start_used(spec);
+    require_inner_backend(spec, run_phase_name(spec));
   }
 
   void run(const OptimizerSpec& spec, HPO_Host<Vec,Runner>& host) override {
@@ -354,10 +354,16 @@ public:
            * (multistart_start_spec, phase_specs.h). */
           const OptimizerSpec sub = multistart_start_spec(spec, plan, i);
 
+          /* The start's seed: its SEED, or the INIT block's SEED that NLopt
+           * takes without one. */
           const std::string start_msg =
               "MULTISTART start " + std::to_string(i+1) + "/" +
               std::to_string(actual_k) + " -- running inner optimiser" +
-              (sub.seed ? " (seed=" + std::to_string(*sub.seed) + ")" : "");
+              (sub.seed ? " (seed=" + std::to_string(*sub.seed) + ")"
+               : sub.nlopt_seed_from_init()
+                   ? " (INIT seed=" +
+                         std::to_string(*sub.init_strategy_spec.seed) + ")"
+                   : "");
           std::cout << "[HPO] " << start_msg << "\n";
           HPOLog::instance().info(start_msg);
           run_inner<Vec,Runner>(sub, host);
@@ -481,7 +487,7 @@ public:
   static void validate(const OptimizerSpec& spec) {
     require_prestage_explore(spec);
     require_prestage_refinement(spec);
-    require_inner_start_used(spec);
+    require_inner_backend(spec, run_phase_name(spec));
   }
 
   void run(const OptimizerSpec& spec, HPO_Host<Vec,Runner>& host) override {
@@ -700,12 +706,14 @@ private:
  * from it (OptimizerSpec::derive_restart_seeds: the outer spec
  * SEED + r*seeded_starts() -- N_STARTS under MULTISTART, TOPK under
  * PRESTAGE, 1 under PLAIN -- so no two starts of the run share a seed; the
- * EXPLORE spec SEED + r), so a seeded stochastic optimiser draws new
- * random numbers instead of replaying round 0's; round 0 keeps every SEED.
- * An INNER block has no SEED: its search draws from the enclosing run's
- * random stream. The journal's "RESTART r/MAX" line lists the round's
- * seeds: the restart points' ("RESTART SEED", drawn or the block's), then
- * the derived optimiser seeds.
+ * EXPLORE spec SEED + r; an NLopt phase without SEED its INIT block's
+ * SEED, which NLopt takes, the same way), so a seeded stochastic optimiser
+ * draws new random numbers instead of replaying round 0's; round 0 keeps
+ * every SEED. An INNER block has no SEED: its search draws from the
+ * enclosing run's random stream. The journal's "RESTART r/MAX" line lists
+ * the round's seeds: the restart points' ("RESTART SEED", drawn or the
+ * block's), then the derived optimiser seeds ("INIT SEED" for an INIT
+ * block's).
  *
  * When the MAX restarts are used up, the next stagnation ends the run
  * normally, with the trailer "STOPPED -- stagnation: no new best in W
@@ -853,7 +861,9 @@ private:
 
   /* "RESTART SEED 43, SEED 6, EXPLORE SEED 1718": the seed the round's
    * points were drawn with, then the seeds of the phases that have one (an
-   * INNER block has none). */
+   * INNER block has none) -- for an NLopt phase that takes its INIT block's
+   * SEED (OptimizerSpec::nlopt_seed_from_init()), that SEED as derived for
+   * the round: "INIT SEED 8", "EXPLORE INIT SEED 31". */
   static std::string describe_seeds(
       const std::optional<std::uint64_t>& point_seed, const OptimizerSpec& s)
   {
@@ -865,9 +875,16 @@ private:
       oss << sep << phase << "SEED " << *seed;
       sep = ", ";
     };
+    const auto add_phase = [&](const char* phase, const char* init_phase,
+                               const OptimizerSpec& p) {
+      if (p.nlopt_seed_from_init())
+        add(init_phase, p.init_strategy_spec.seed);
+      else
+        add(phase, p.seed);
+    };
     add("RESTART ", point_seed);
-    add("", s.seed);
-    if (s.prestage) add("EXPLORE ", s.prestage->seed);
+    add_phase("", "INIT ", s);
+    if (s.prestage) add_phase("EXPLORE ", "EXPLORE INIT ", *s.prestage);
     return oss.str();
   }
 

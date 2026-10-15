@@ -335,34 +335,15 @@ std::optional<FdStencil> fd_plan(double u, double a, double b, FdRule rule,
         st.p2 = u - h;
         return st;
     }
-    if (u < a || u > b) {
-        /* Outside the box (where the optimiser put it): towards it (owner
-         * decision D4). */
-        st.outside = true;
-        st.turned = true;
-        st.s = u < a ? h : -h;
-        st.p1 = u + st.s;
-        if (scheme == FdScheme::Central) {
-            st.kind = FdStencil::Kind::OneSided;
-            st.p2 = u + 2.0 * st.s;
-        } else {
-            st.kind = FdStencil::Kind::Forward;
-        }
-        const auto out_by = [a, b](double x) {
-            return x < a ? a - x : (x > b ? x - b : 0.0);
-        };
-        const double d = out_by(u);
-        if (out_by(st.p1) > d ||
-            (st.kind == FdStencil::Kind::OneSided && out_by(st.p2) > d))
-            throw std::logic_error(
-                "fd_plan: the finite-difference stencil of u = " + num(u) +
-                ", outside the box [" + num(a) + ", " + num(b) +
-                "], reaches further outside than u with h = " + num(h) +
-                " (a box fd_fit accepts rules this out: the stencil of its "
-                "bound of larger magnitude fits inside it, which bounds "
-                "fd_step by 1 for CENTRAL and by 2 for FORWARD)");
-        return st;
-    }
+    if (u < a || u > b)
+        /* The gradient provider gives a point outside the box the slope of
+         * its out-of-box score (box_penalty.h; owner decision, MK,
+         * 2026-10-15), and differences a coordinate within rounding outside
+         * its box on the bound (D10): no stencil is planned outside. */
+        throw std::logic_error(
+            "fd_plan: u = " + num(u) + " lies outside the box [" + num(a) +
+            ", " + num(b) + "]: a point outside the OPTIM box is not "
+            "differenced");
     if (scheme == FdScheme::Forward) {
         st.kind = FdStencil::Kind::Forward;
         const double xp = u + h;

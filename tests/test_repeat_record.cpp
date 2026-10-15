@@ -6,8 +6,8 @@
  *    evaluation took back to a point where it stood (BfgsBoxEnd::Revisit,
  *    bfgs_box_search (e)), after the stop strategy's own test;
  *  - HPO_Host::recorded() answers for the point an evaluation of the asked
- *    point would make (the snap onto the box, the RHOFORM projection), and
- *    starts empty at every run;
+ *    point would make (the snap onto the box; a point outside the box is
+ *    not evaluated and not recorded), and starts empty at every run;
  *  - a RESTART round's RANDOM and LHS methods draw a stream of their own
  *    (InitStream::Restart), SOBOL its block.
  *
@@ -363,14 +363,18 @@ TEST_CASE("Run record: HPO_Host answers for the point an evaluation would "
     HPOLog::instance().reset_for_test();
 }
 
-/* Pins: under RHOFORM NONNEG an AMPGRIDMB coordinate below 0 is evaluated
- * at 0 (the projection), so HPO_Host::recorded answers for any negative one
- * with the evaluation of 0: after an evaluation of AMPGRIDMB (3) = -1e-6 (the
- * DM_REAM fixture, OPTIM AMPGRIDMB (3) in [0, 0.5]) it gives that loss for
- * -1e-6, -0.3 and 0, the recorded point 0, and nothing for 0.25.
- * Before the fix: does not compile (HPO_Host::recorded is new). */
-TEST_CASE("Run record: HPO_Host answers for a point the RHOFORM projection "
-          "evaluates elsewhere", "[HPO][repeat_points][run_record][rhoform]")
+/* Pins: under RHOFORM NONNEG (the DM_REAM fixture, OPTIM AMPGRIDMB (3) in
+ * [0, 0.5]) an AMPGRIDMB coordinate below 0 lies outside the box and is not
+ * evaluated (owner decision, MK, 2026-10-15; box_penalty.h): after
+ * host(-1e-6), scored a failure graded by its distance, HPO_Host::recorded
+ * answers for none of -1e-6, -0.3 and 0 (a failure is not recorded, and 0
+ * was not evaluated); after host(0), evaluated, it answers for 0 with that
+ * evaluation, and still for none of -1e-6 and -0.3, and not for 0.25.
+ * Before the fix: an AMPGRIDMB below 0 was evaluated at 0 (the RHOFORM
+ * projection), and recorded() answered for -1e-6, -0.3 and 0 with the
+ * evaluation of -1e-6. */
+TEST_CASE("Run record: HPO_Host does not answer for a point outside the "
+          "OPTIM box", "[HPO][repeat_points][run_record][rhoform]")
 {
     tadah::core::PeriodicTable::initialize();
     rhoform_test::ScratchDir sd("tadah_repeat_record_ream_");
@@ -387,26 +391,33 @@ TEST_CASE("Run record: HPO_Host answers for a point the RHOFORM projection "
                                                           "0.5 0.3 0.0");
     ctx.add("HPOTARGET", hpo.string());
     tadah::hpo::HPOTargets trg(ctx, hpo.string());
+    const auto at = [](double a) {
+        Vec q(1);
+        q(0) = a;
+        return q;
+    };
     {
         Host host(ctx, trg, val.string());
         host.prepare_best_publication();
-        Vec p(1);
-        p(0) = -1e-6;
-        const double l = host(p);
-        const std::size_t e = Host::g_iter_value();
+        const double out = host(at(-1e-6));
+        CHECK(out >= 0.99975e9);
+        CHECK(out < 1e9);
         for (const double a : {-1e-6, -0.3, 0.0}) {
             CAPTURE(a);
-            Vec q(1);
-            q(0) = a;
-            const auto r = host.recorded(q);
-            REQUIRE(r);
-            CHECK(std::memcmp(&r->loss, &l, sizeof l) == 0);
-            CHECK(r->eval == std::optional<std::size_t>(e));
-            CHECK(r->point(0) == 0.0);
+            CHECK_FALSE(host.recorded(at(a)));
         }
-        Vec in(1);
-        in(0) = 0.25;
-        CHECK_FALSE(host.recorded(in));
+        const double l = host(at(0.0));
+        CHECK(l < 0.999e9);
+        const std::size_t e = Host::g_iter_value();
+        const auto r = host.recorded(at(0.0));
+        REQUIRE(r);
+        CHECK(std::memcmp(&r->loss, &l, sizeof l) == 0);
+        CHECK(r->eval == std::optional<std::size_t>(e));
+        CHECK(r->point(0) == 0.0);
+        for (const double a : {-1e-6, -0.3, 0.25}) {
+            CAPTURE(a);
+            CHECK_FALSE(host.recorded(at(a)));
+        }
         host.flush_remaining();
     }
     Host::reset_globals_for_test();

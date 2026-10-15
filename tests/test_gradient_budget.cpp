@@ -5,8 +5,9 @@
 // cannot pay for both and one more evaluation ends the search where it
 // started: with GRAD_STRATEGY NUMERICAL and central differences in n
 // dimensions the start costs 1 + 2n evaluations, so MAXEVAL 2n + 1 or less
-// takes no step (LD_LBFGS, DLIB:BFGS and CERES:LBFGS in 2-D: MAXEVAL 4 and 5
-// evaluate the start and its stencil, MAXEVAL 6 a first step). Such a budget
+// takes no step (LD_LBFGS and DLIB:BFGS in 2-D, and CERES:LBFGS, refused
+// since: MAXEVAL 4 and 5 evaluate the start and its stencil, MAXEVAL 6 a
+// first step). Such a budget
 // can be deliberate (a probe of the start), so validate_hpo_setup warns, for
 // every phase that has a MAXEVAL of its own, naming what the gradient costs
 // and the budget that takes a step.
@@ -224,18 +225,25 @@ std::string record_central2(const std::string& budget, const std::string& needs)
  * the loss at a starting point (1 evaluation) and the gradient there (4
  * evaluations: central differences in 2 dimensions, GRAD_STRATEGY
  * NUMERICAL) before it evaluates a point it steps to, which needs MAXEVAL 6
- * or more", for NLOPT:LD_LBFGS, DLIB:BFGS and CERES:LBFGS; MAXEVAL 6 gets
+ * or more", for NLOPT:LD_LBFGS, DLIB:BFGS and CERES:STEEPEST_DESCENT (it
+ * was CERES:LBFGS, refused since: that row a pin); MAXEVAL 6 gets
  * none (tmp/repro lbfgs6, dlib6, ceres6: the sixth evaluation is the first
- * step).
+ * step). The CERES row runs in a build with Ceres only: without it
+ * (TADAH_ENABLE_CERES OFF) startup refuses LIB CERES ("CERES support is not
+ * built"), which failed the case there
+ * (tmp/before_fix_box_and_slopes_review_noceres_suite.txt).
  * Before the fix: no WARNING for any of them (the search ended
  * MAXEVAL_REACHED at its starting point: tmp/repro a2_lbfgs3, a2_dlib3). */
 TEST_CASE("startup validation: a gradient search whose MAXEVAL cannot pay for "
           "one step is warned about",
           "[startup_validation][gradient_budget]")
 {
-    for (const auto& [lib, algo] : std::vector<std::pair<std::string,
-                                                         std::string>>{
-             {"NLOPT", "LD_LBFGS"}, {"DLIB", "BFGS"}, {"CERES", "LBFGS"}}) {
+    std::vector<std::pair<std::string, std::string>> searches = {
+        {"NLOPT", "LD_LBFGS"}, {"DLIB", "BFGS"}};
+#ifdef TADAH_USE_CERES
+    searches.push_back({"CERES", "STEEPEST_DESCENT"});
+#endif
+    for (const auto& [lib, algo] : searches) {
         for (const char* maxeval : {"4", "5"}) {
             INFO(lib << ":" << algo << " MAXEVAL " << maxeval);
             const std::string journal =
@@ -971,9 +979,8 @@ namespace {
 
 /* The tail of a 2-D NUMERICAL central warning of a gradient search that
  * does not start at the point it is given (NLopt's StoGO samples its own
- * box, global.cc; an AUGLAG whose INNER search is StoGO): it evaluates a
- * point of its own and the gradient there, whatever the run has recorded
- * at its starting point. */
+ * box, global.cc): it evaluates a point of its own and the gradient there,
+ * whatever the run has recorded at its starting point. */
 std::string own_central2(const std::string& budget, const std::string& needs)
 {
     return ": " + budget + " takes no step: its gradient search, which does "
@@ -1001,28 +1008,34 @@ std::string own_central2(const std::string& budget, const std::string& needs)
  *     point of its own (1 evaluation) and the gradient there (4
  *     evaluations: ...) ..., which needs MAXEVAL 6 or more"; MAXEVAL 6 gets
  *     none;
- *   - AUGLAG goes straight into its local search, so with an INNER GD_STOGO
- *     its first gradient is StoGO's: the PLAIN NLOPT:AUGLAG under NOISE
- *     CALIBRATION 3 at MAXEVAL 5 is warned the same way, and its INNER
- *     GD_STOGO MAXEVAL 1 reads "(1 + 4 evaluations: ...), so each local
- *     search, which does not start at the point it is given, evaluates a
- *     point of its own and ends there";
- *   - an MLSL's local search starts at a point MLSL evaluated, unless it is
- *     StoGO: GD_MLSL with INNER GD_STOGO at MAXEVAL 10 reads "MLSL evaluates
- *     its starting point and its first 4 samples without a gradient (5
- *     evaluations; ...), then its first local search, which does not start
- *     at the point MLSL gives it, evaluates the loss at a point of its own
- *     (1 evaluation) and the gradient there (4 evaluations: ...) ..., which
- *     needs MAXEVAL 11 or more", and its INNER GD_STOGO MAXEVAL 1 the INNER
- *     text above;
- *   - the PRESTAGE refinement on GD_STOGO or GD_STOGO_RAND, and on an
- *     AUGLAG whose INNER search is GD_STOGO, is refused at startup (it would
- *     never use the exploration's candidate; test_startup_validation_
- *     strategy.cpp has the whole text): "STRATEGY TYPE PRESTAGE cannot
- *     refine with NLOPT:GD_STOGO: it does not start at the point it is
- *     given ..." and "the INNER block of the PRESTAGE refinement:
- *     NLOPT:AUGLAG runs its INNER search NLOPT:GD_STOGO from the point it
- *     is given ...".
+ *   - the PRESTAGE refinement on GD_STOGO or GD_STOGO_RAND is refused at
+ *     startup (it would never use the exploration's candidate;
+ *     test_startup_validation_strategy.cpp has the whole text): "STRATEGY
+ *     TYPE PRESTAGE cannot refine with NLOPT:GD_STOGO: it does not start at
+ *     the point it is given ...";
+ *   - StoGO is a global optimiser, so an INNER block does not take it (no
+ *     nested global search, owner decision, MK, 2026-10-15): the PLAIN
+ *     NLOPT:AUGLAG with an INNER GD_STOGO under NOISE CALIBRATION 3, the
+ *     same AUGLAG as the PRESTAGE refinement and GD_MLSL with an INNER
+ *     GD_STOGO are refused at startup, at the ENDINNER line: "the INNER
+ *     block of the STRATEGY-level optimiser: NLOPT:AUGLAG cannot run
+ *     NLOPT:GD_STOGO as its INNER search: an INNER search is a local
+ *     search, ..." (test_startup_validation_strategy.cpp has the whole
+ *     text).
+ * Before the no-nested-global fix: the PLAIN AUGLAG and the GD_MLSL with
+ * an INNER GD_STOGO were accepted, and these legs pinned two WARNINGs of
+ * each: the AUGLAG's at MAXEVAL 5 as the PLAIN GD_STOGO's, and its INNER
+ * GD_STOGO MAXEVAL 1's "(1 + 4 evaluations: ...), so each local search,
+ * which does not start at the point it is given, evaluates a point of its
+ * own and ends there"; GD_MLSL's at MAXEVAL 10 "MLSL evaluates its starting
+ * point and its first 4 samples without a gradient (5 evaluations; ...),
+ * then its first local search, which does not start at the point MLSL
+ * gives it, evaluates the loss at a point of its own (1 evaluation) and
+ * the gradient there (4 evaluations: ...) ..., which needs MAXEVAL 11 or
+ * more", and the INNER text above; the AUGLAG refinement was refused with
+ * "the INNER block of the PRESTAGE refinement: NLOPT:AUGLAG runs its INNER
+ * search NLOPT:GD_STOGO from the point it is given ...": the three refusal
+ * checks fail.
  * Until the refinement was refused (owner decision, MK, 2026-10-15) the
  * PRESTAGE refinement legs pinned the warning ("the PRESTAGE refinement
  * NLOPT:GD_STOGO: MAXEVAL 5 takes no step: ...", "the PRESTAGE refinement
@@ -1073,56 +1086,38 @@ TEST_CASE("startup validation: the gradient budget warning of a search that "
                                   "given"));
     }
 
-    const std::string own_inner =
-        "MAXEVAL 1 takes no step: NLopt counts an INNER block's MAXEVAL in "
-        "its calls, each the loss and the gradient at a point (1 + 4 "
-        "evaluations: central differences in 2 dimensions, GRAD_STRATEGY "
-        "NUMERICAL), so each local search, which does not start at the point "
-        "it is given, evaluates a point of its own and ends there, which "
-        "needs MAXEVAL 2 or more";
     {
         const std::string auglag =
             "    LIB NLOPT\n    ALGO AUGLAG\n    INNER\n      LIB NLOPT\n"
             "      ALGO GD_STOGO\n      MAXEVAL 1\n    ENDINNER\n";
-        const std::string journal = startup_journal(with_calibration(
-            "3", "    TYPE PLAIN\n" + auglag + "    MAXEVAL 5\n"));
-        CHECK(count_of(journal,
-                       "the STRATEGY-level optimiser NLOPT:AUGLAG" +
-                           own_central2("MAXEVAL 5", "MAXEVAL 6 or more")) ==
-              1u);
-        CHECK(count_of(journal, "the INNER block of the STRATEGY-level "
-                                "optimiser NLOPT:GD_STOGO: " + own_inner) ==
-              1u);
-        CHECK(count_of(journal, kNoStep) == 2u);
+        CHECK_THAT(startup_refusal(with_calibration(
+                       "3", "    TYPE PLAIN\n" + auglag + "    MAXEVAL 5\n")),
+                   Catch::StartsWith("Error on line ") &&
+                       Catch::Contains("the INNER block of the STRATEGY-level "
+                                       "optimiser: NLOPT:AUGLAG cannot run "
+                                       "NLOPT:GD_STOGO as its INNER search: "
+                                       "an INNER search is a local search") &&
+                       Catch::EndsWith("ENDINNER"));
         CHECK_THAT(startup_refusal(prestage(auglag, "5")),
                    Catch::StartsWith("Error on line ") &&
                        Catch::Contains("the INNER block of the PRESTAGE "
-                                       "refinement: NLOPT:AUGLAG runs its "
-                                       "INNER search NLOPT:GD_STOGO from the "
-                                       "point it is given"));
+                                       "refinement: NLOPT:AUGLAG cannot run "
+                                       "NLOPT:GD_STOGO as its INNER search: "
+                                       "an INNER search is a local search") &&
+                       Catch::EndsWith("ENDINNER"));
     }
-    {
-        const std::string journal = startup_journal(mlsl_plain(
-            "GD_MLSL", "10",
-            "    INNER\n      LIB NLOPT\n      ALGO GD_STOGO\n"
-            "      MAXEVAL 1\n    ENDINNER\n"));
-        CHECK(count_of(journal,
-                       "the STRATEGY-level optimiser NLOPT:GD_MLSL: MAXEVAL "
-                       "10 takes no step of a local search: MLSL evaluates its "
-                       "starting point and its first 4 samples without a "
-                       "gradient (5 evaluations; POPULATION 4, NLopt's "
-                       "default), then its first local search, which does not "
-                       "start at the point MLSL gives it, evaluates the loss "
-                       "at a point of its own (1 evaluation) and the gradient "
-                       "there (4 evaluations: central differences in 2 "
-                       "dimensions, GRAD_STRATEGY NUMERICAL) before it "
-                       "evaluates a point it steps to, which needs MAXEVAL 11 "
-                       "or more") == 1u);
-        CHECK(count_of(journal, "the INNER block of the STRATEGY-level "
-                                "optimiser NLOPT:GD_STOGO: " + own_inner) ==
-              1u);
-        CHECK(count_of(journal, kNoStep) == 2u);
-    }
+    CHECK_THAT(startup_refusal(mlsl_plain(
+                   "GD_MLSL", "10",
+                   "    INNER\n      LIB NLOPT\n      ALGO GD_STOGO\n"
+                   "      MAXEVAL 1\n    ENDINNER\n")),
+               Catch::StartsWith("Error on line ") &&
+                   Catch::Contains("the INNER block of the STRATEGY-level "
+                                   "optimiser: NLOPT:GD_MLSL cannot run "
+                                   "NLOPT:GD_STOGO as its INNER search: an "
+                                   "INNER search is a local search, which "
+                                   "NLOPT:GD_MLSL starts at the points it "
+                                   "samples in the OPTIM box") &&
+                   Catch::EndsWith("ENDINNER"));
 }
 
 namespace {

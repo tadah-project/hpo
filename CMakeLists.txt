@@ -81,7 +81,7 @@ endif()
 tadah_declare_testing()
 
 option(TADAH_ENABLE_ASAN  "Enable AddressSanitizer (-fsanitize=address -fno-omit-frame-pointer)" OFF)
-option(TADAH_ENABLE_CERES "Enable Ceres Solver optimizer family (LBFGS/WOLFE/NLCG/STEEPEST_DESCENT)" ON)
+option(TADAH_ENABLE_CERES "Enable Ceres Solver (CERES:STEEPEST_DESCENT and the compact refit fitter)" ON)
 
 # (option) Developer builds -DTADAH_DEVELOP=ON
 tadah_use_local_module(Tadah.MLIP MLIP)          # FetchContent name + folder name
@@ -154,9 +154,9 @@ if(NOT TADAH_BUILD_DOCS_ONLY)
 endif()
 
 # ---------------------------------------------------------------------------
-# Ceres Solver -- the CERES:LBFGS/WOLFE/NLCG/STEEPEST_DESCENT optimizer
-# family of tadah hpo and the compact fitter of tadah refit
-# (refit_compact_fitter.cpp). Without it (TADAH_ENABLE_CERES OFF) LIB CERES
+# Ceres Solver -- CERES:STEEPEST_DESCENT, the Ceres optimiser of tadah hpo
+# (CERES:LBFGS, WOLFE and NLCG are refused), and the compact fitter of
+# tadah refit (refit_compact_fitter.cpp). Without it (TADAH_ENABLE_CERES OFF) LIB CERES
 # is refused and tadah refit refuses REFIT_MODE compact.
 # ---------------------------------------------------------------------------
 if(NOT TADAH_BUILD_DOCS_ONLY AND TADAH_ENABLE_CERES)

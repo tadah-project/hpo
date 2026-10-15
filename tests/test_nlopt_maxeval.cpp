@@ -323,8 +323,14 @@ TEST_CASE("NLopt MAXEVAL: an analytical gradient counts as one evaluation, "
  *   - the budget: LD_LBFGS at MAXEVAL 1 and STOPVAL 100 evaluates the start
  *     (24.2), whose gradient MAXEVAL cuts short;
  *   - a failed stencil evaluation: LD_LBFGS (NUMERICAL) at STOPVAL 100
- *     from the start, whose stencil point (-1.2, 1 - 1e-6) fails (the
- *     default FAILSCORE): the journal line names the cause;
+ *     from the start, whose stencil points (-1.2, 1 +- 1e-6) both fail (the
+ *     default FAILSCORE; a ridge of usable losses one point wide): the
+ *     journal line names the cause. With only (-1.2, 1 - 1e-6) failed the
+ *     gradient is the forward difference with (-1.2, 1 + 1e-6) and
+ *     (-1.2, 1 + 2e-6), a difference never mixing a usable loss with a
+ *     failure (owner decision, MK, 2026-10-15): NLopt is given 24.2 and
+ *     ends on its own STOPVAL test, STOPVAL_REACHED with no withheld-loss
+ *     line, its last evaluation (-1.2, 1 + 2e-6);
  *   - a gradient that is not finite at a later point: LD_LBFGS under
  *     ANALYTICAL at STOPVAL 1, whose fourth point (loss 0.19) is the first
  *     at or below it and gets a NaN analytical gradient: 4 losses and 4
@@ -344,7 +350,12 @@ TEST_CASE("NLopt MAXEVAL: an analytical gradient counts as one evaluation, "
  * a starting point without a finite gradient); the later point: NLopt was
  * given +inf there and went on, to its own STOPVAL_REACHED at a later
  * point, after 6 losses and 6 analytical gradients. No journal line said
- * that a loss NLopt was not given met STOPVAL. */
+ * that a loss NLopt was not given met STOPVAL. The ridge section passes
+ * before the box-and-slopes fix as well (a pin); the cliff section failed
+ * there: its gradient failed at (-1.2, 1 - 1e-6), the last evaluation,
+ * and the loss 24.2 was withheld ("... NLopt was not given it: its point
+ * has no usable gradient: a failed evaluation in the finite-difference
+ * stencil"). */
 TEST_CASE("NLopt STOPVAL: a loss at or below it that NLopt was not given "
           "ends the search STOPVAL_REACHED", "[HPO][nlopt][maxeval][stopval]")
 {
@@ -363,7 +374,34 @@ TEST_CASE("NLopt STOPVAL: a loss at or below it that NLopt was not given "
                            "not given it: its gradient could not be "
                            "completed within MAXEVAL") != std::string::npos);
     }
-    SECTION("a failed stencil evaluation at the start") {
+    SECTION("failed stencil evaluations on both sides at the start") {
+        struct Ridge : Valley {
+            double operator()(const Vec& x) {
+                asked.push_back(x);
+                return std::fabs(x(1) - 1.0) > 1e-7
+                           ? std::numeric_limits<double>::max()
+                           : valley(x);
+            }
+        };
+        Journal j;
+        auto sp = nlopt_spec("LD_LBFGS", 60);
+        sp.stop.stopval = 100.0;
+        Ridge host;
+        REQUIRE_NOTHROW(tadah::hpo::run_nlopt_impl<Vec, NoRunner>(sp, host));
+        REQUIRE_FALSE(host.asked.empty());
+        /* the last evaluation is the stencil point that failed */
+        CHECK(host.asked.back()(0) == -1.2);
+        CHECK(host.asked.back()(1) < 1.0);
+        const std::string journal = j.text();
+        CHECK(status_of(journal) == kStopvalReached);
+        CHECK(journal.find(stopval_line) != std::string::npos);
+        CHECK(journal.find("the loss 24.2 is at or below STOPVAL 100, and "
+                           "NLopt was not given it: its point has no usable "
+                           "gradient: a failed evaluation in the "
+                           "finite-difference stencil") != std::string::npos);
+        CHECK(journal.find("stopped: no usable gradient") == std::string::npos);
+    }
+    SECTION("a failed stencil evaluation on one side at the start") {
         struct Cliff : Valley {
             double operator()(const Vec& x) {
                 asked.push_back(x);
@@ -377,16 +415,13 @@ TEST_CASE("NLopt STOPVAL: a loss at or below it that NLopt was not given "
         Cliff host;
         REQUIRE_NOTHROW(tadah::hpo::run_nlopt_impl<Vec, NoRunner>(sp, host));
         REQUIRE_FALSE(host.asked.empty());
-        /* the last evaluation is the stencil point that failed */
+        /* the last evaluation is the far point of the forward difference */
         CHECK(host.asked.back()(0) == -1.2);
-        CHECK(host.asked.back()(1) < 1.0);
+        CHECK(host.asked.back()(1) == Approx(1.0 + 2e-6).epsilon(1e-12));
         const std::string journal = j.text();
         CHECK(status_of(journal) == kStopvalReached);
         CHECK(journal.find(stopval_line) != std::string::npos);
-        CHECK(journal.find("the loss 24.2 is at or below STOPVAL 100, and "
-                           "NLopt was not given it: its point has no usable "
-                           "gradient: a failed evaluation in the "
-                           "finite-difference stencil") != std::string::npos);
+        CHECK(journal.find("NLopt was not given it") == std::string::npos);
         CHECK(journal.find("stopped: no usable gradient") == std::string::npos);
     }
     SECTION("an analytical gradient not finite at a later point") {
@@ -527,7 +562,9 @@ TEST_CASE("NLopt MAXEVAL: the journal says what an INNER MAXEVAL counts",
 }
 
 /* Pins: on the valley at MAXEVAL 60 (NUMERICAL, CENTRAL), NLopt's LD_LBFGS,
- * LD_MMA and LD_TNEWTON and CERES:LBFGS (WOLFE) ask the host for 60 points
+ * LD_MMA and LD_TNEWTON and CERES:STEEPEST_DESCENT (ARMIJO; the section ran
+ * CERES:LBFGS, refused since; it passes before the fix as well, a pin) ask
+ * the host for 60 points
  * and never for one point twice in a row: each gradient's first evaluation
  * is a stencil point, not the point whose loss its caller has just
  * evaluated.
@@ -549,15 +586,16 @@ TEST_CASE("Finite differences: NLopt and Ceres evaluate no point twice in a "
         }
     }
 #ifdef TADAH_USE_CERES
-    SECTION("CERES:LBFGS") {
+    SECTION("CERES:STEEPEST_DESCENT") {
         Journal j;
-        auto sp = nlopt_spec("LBFGS", 60);
+        auto sp = nlopt_spec("STEEPEST_DESCENT", 60);
         sp.lib = "CERES";
         sp.seed.reset();
         Valley host;
         REQUIRE_NOTHROW(
             tadah::hpo::detail::run_ceres_gradient_problem<Vec, NoRunner>(
-                sp, host, ceres::LBFGS, ceres::WOLFE, "LBFGS"));
+                sp, host, ceres::STEEPEST_DESCENT, ceres::ARMIJO,
+                "STEEPEST_DESCENT"));
         CHECK(host.asked.size() == 60u);
         CHECK(host.repeats() == 0u);
     }
@@ -656,13 +694,15 @@ TEST_CASE("Finite differences: a caller's loss that is not finite fails the "
 
 namespace {
 
-/* The valley, with a failed loss just below x(1) = 0: the stencil point
- * (0, -1e-6) of GD_STOGO's first gradient, at the centre of [-2, 2]^2
- * (loss 1), fails. */
-struct CentreCliff : Valley {
+/* The valley, with failed losses just below and just above x(1) = 0: the
+ * stencil points (0, 1e-6) and (0, -1e-6) of GD_STOGO's first gradient, at
+ * the centre of [-2, 2]^2 (loss 1), fail, and the gradient has no side of
+ * usable losses (a difference never mixes a usable loss with a failure;
+ * owner decision, MK, 2026-10-15). */
+struct CentreRidge : Valley {
     double operator()(const Vec& x) {
         asked.push_back(x);
-        return (x(1) < -1e-7 && x(1) > -1e-5)
+        return (std::fabs(x(1)) > 1e-7 && std::fabs(x(1)) < 1e-5)
                    ? std::numeric_limits<double>::max()
                    : valley(x);
     }
@@ -678,7 +718,8 @@ double seconds_since(std::chrono::steady_clock::time_point t0)
 
 /* Pins: GD_STOGO ignores NLopt's forced stop. At MAXEVAL 60, MAXTIME 60
  * and STOPVAL 2, its first gradient, at the centre of [-2, 2]^2 (loss 1),
- * has a stencil point that fails, (0, -1e-6): the loss 1 is withheld and
+ * has stencil points that fail on both sides, (0, 1e-6) and (0, -1e-6), the
+ * last: the loss 1 is withheld and
  * ends the search STOPVAL_REACHED with no evaluation after that stencil
  * point, though StoGO calls the objective on until NLopt's own MAXEVAL ends
  * it: the objective refuses those calls, and run_nlopt_impl returns in
@@ -686,7 +727,9 @@ double seconds_since(std::chrono::steady_clock::time_point t0)
  * (backend_rules; the next test case).
  * Before the fix: passes as well (a pin of the path the startup rule
  * relies on: NLopt's own MAXEVAL ends a StoGO search the objective
- * stopped, at once). */
+ * stopped, at once). The failed band lay below 0 alone until 2026-10-15,
+ * when a gradient with a usable side became that side's difference: the
+ * loss 1 was then given to StoGO, which ran on to MAXEVAL 60. */
 TEST_CASE("NLopt STOPVAL: GD_STOGO, which ignores the forced stop, ends at a "
           "withheld loss through NLopt's own MAXEVAL",
           "[HPO][nlopt][maxeval][stopval]")
@@ -695,7 +738,7 @@ TEST_CASE("NLopt STOPVAL: GD_STOGO, which ignores the forced stop, ends at a "
     auto sp = nlopt_spec("GD_STOGO", 60);
     sp.stop.stopval = 2.0;
     sp.stop.maxtime = 60.0;
-    CentreCliff host;
+    CentreRidge host;
     const auto t0 = std::chrono::steady_clock::now();
     REQUIRE_NOTHROW(tadah::hpo::run_nlopt_impl<Vec, NoRunner>(sp, host));
     CHECK(seconds_since(t0) < 10.0);
@@ -736,7 +779,7 @@ TEST_CASE("NLopt STOPVAL: GD_STOGO without MAXEVAL is refused before it "
             sp.stop.maxeval.reset();
             sp.stop.maxtime = 2.0;
             sp.stop.stopval = 2.0;
-            CentreCliff host;
+            CentreRidge host;
             const auto t0 = std::chrono::steady_clock::now();
             CHECK_THROWS_WITH(
                 (tadah::hpo::run_nlopt_impl<Vec, NoRunner>(sp, host)),
@@ -852,10 +895,20 @@ void check_budget_warning_follows_run(const BudgetCase& c)
  *     evaluation 10;
  *   - GD_STOGO and GD_STOGO_RAND, which do not start at the point they are
  *     given: the centre of the box (0, 0), its stencil, a first step at
- *     evaluation 6; AUGLAG with INNER GD_STOGO the same;
- *   - GD_MLSL with INNER GD_STOGO: the start and 4 samples, then the local
- *     search's own start, the centre (not one of MLSL's points), and its
- *     stencil, a first step at evaluation 11.
+ *     evaluation 6;
+ *   - specs startup refuses: AUGLAG with INNER GD_STOGO (the same as
+ *     GD_STOGO) and GD_MLSL with INNER GD_STOGO (the start and 4 samples,
+ *     then the local search's own start, the centre, not one of MLSL's
+ *     points, and its stencil, a first step at evaluation 11).
+ *     require_inner_backend() (strategy_rules.h) refuses a global INNER
+ *     search at the ENDINNER line, so no run prints the warning of these
+ *     two: they pin the rule gradient_budget_warnings() keeps for an INNER
+ *     search that does not start at the point it is handed (OptimizerCaps::
+ *     starts_at_x0, local_starts_at_given(), backend_rules.cpp), called on
+ *     the spec directly and checked against NLopt's run of it
+ *     (run_nlopt_impl applies no startup rule).
+ * Before the INNER rule (fix/no-nested-global): the same, and startup
+ * accepted the two INNER GD_STOGO specs and printed their warning.
  * Before the fix: does not compile (gradient_budget_warnings takes the
  * run's reuse permission since fix/budget-reuse); with the old call
  * (gradient_budget_warnings(sp)) it passes, as it did when the MLSL rule
@@ -878,10 +931,10 @@ TEST_CASE("NLopt MAXEVAL: the startup warning of a gradient budget that "
          std::nullopt, 3, 4, 10},
         {"GD_STOGO", "GD_STOGO", "", std::nullopt, 0, 1, 6},
         {"GD_STOGO_RAND", "GD_STOGO_RAND", "", std::nullopt, 0, 1, 6},
-        {"AUGLAG, INNER GD_STOGO", "AUGLAG", "GD_STOGO", std::nullopt, 0, 1,
-         6},
-        {"GD_MLSL, INNER GD_STOGO", "GD_MLSL", "GD_STOGO", std::nullopt, 0, 6,
-         11}};
+        {"AUGLAG, INNER GD_STOGO (refused at startup)", "AUGLAG", "GD_STOGO",
+         std::nullopt, 0, 1, 6},
+        {"GD_MLSL, INNER GD_STOGO (refused at startup)", "GD_MLSL",
+         "GD_STOGO", std::nullopt, 0, 6, 11}};
     for (const auto& c : cases)
         DYNAMIC_SECTION(c.label) { check_budget_warning_follows_run<Valley>(c); }
 }
@@ -903,7 +956,9 @@ TEST_CASE("NLopt MAXEVAL: the startup warning of a gradient budget that "
  *     no loss from the record: GD_MLSL with INNER GD_STOGO, whose local
  *     search starts at the centre of the box, a point MLSL has not
  *     evaluated, at 11 (the start, 4 samples, the centre and its 4-point
- *     stencil), and GD_STOGO alone at 6;
+ *     stencil) -- a spec startup refuses (require_inner_backend(): an
+ *     INNER search is a local one), which pins the rule of the function
+ *     as the case above does --, and GD_STOGO alone at 6;
  *   - BlockedValley (a reason): every repeat is evaluated again: GD_MLSL
  *     at 11, G_MLSL_LDS POPULATION 3 at 10, under ANALYTICAL 8, LD_LBFGS
  *     and AUGLAG 6.
@@ -936,8 +991,8 @@ TEST_CASE("NLopt MAXEVAL: the startup warning of a gradient budget follows "
         {"reused: GD_MLSL, INNER LD_LBFGS, HYBRID", "GD_MLSL", "LD_LBFGS",
          GradStrategy::Hybrid, 0, 5, 8},
         {"reused: GD_STOGO", "GD_STOGO", "", std::nullopt, 0, 1, 6},
-        {"reused: GD_MLSL, INNER GD_STOGO", "GD_MLSL", "GD_STOGO",
-         std::nullopt, 0, 6, 11}};
+        {"reused: GD_MLSL, INNER GD_STOGO (refused at startup)", "GD_MLSL",
+         "GD_STOGO", std::nullopt, 0, 6, 11}};
     for (const auto& c : reused)
         DYNAMIC_SECTION(c.label) {
             check_budget_warning_follows_run<ReusingValley>(c);

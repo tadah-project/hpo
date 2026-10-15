@@ -339,7 +339,9 @@ tadah::hpo::OptimizerSpec bounded_spec(const std::string& lib,
 TEST_CASE("Every PARAM key named in a CERES / DLIB:BFGS STEP hint is "
           "accepted by that adapter", "[HPO][optimizer_caps][step]")
 {
-    for (const char* algo : {"LBFGS", "WOLFE", "NLCG", "STEEPEST_DESCENT"}) {
+    /* Before the fix: passes as well (a pin; it also checked CERES:LBFGS,
+     * WOLFE and NLCG, refused since). */
+    for (const char* algo : {"STEEPEST_DESCENT"}) {
         INFO("CERES:" << algo);
         const auto& caps = tadah::hpo::optimizer_caps("CERES", algo);
         CHECK_THAT(caps.step_note, !Catch::Contains("max_line_search_step_size"));
@@ -349,24 +351,16 @@ TEST_CASE("Every PARAM key named in a CERES / DLIB:BFGS STEP hint is "
             INFO("PARAM " << k);
             auto sp = bounded_spec("CERES", algo);
             sp.param[k] = 5.0;
-            const std::string a = algo;
-            if (a == "LBFGS")
-                CHECK_NOTHROW(tadah::hpo::detail::validate_ceres_lbfgs_spec(sp));
-            else if (a == "WOLFE")
-                CHECK_NOTHROW(tadah::hpo::detail::validate_ceres_wolfe_spec(sp));
-            else if (a == "NLCG")
-                CHECK_NOTHROW(tadah::hpo::detail::validate_ceres_nlcg_spec(sp));
-            else
-                CHECK_NOTHROW(tadah::hpo::detail::validate_ceres_steepest_spec(sp));
+            CHECK_NOTHROW(tadah::hpo::detail::validate_ceres_steepest_spec(sp));
         }
     }
     {
         /* The STEP rejection itself must not advertise a rejected key. */
-        auto sp = bounded_spec("CERES", "LBFGS");
+        auto sp = bounded_spec("CERES", "STEEPEST_DESCENT");
         sp.step = 0.1;
         std::string msg;
         try {
-            tadah::hpo::detail::validate_ceres_lbfgs_spec(sp);
+            tadah::hpo::detail::validate_ceres_steepest_spec(sp);
         } catch (const std::exception& e) { msg = e.what(); }
         CHECK_THAT(msg, Catch::Contains("does not support STEP"));
         CHECK_THAT(msg, Catch::Contains("max_ls_iter"));

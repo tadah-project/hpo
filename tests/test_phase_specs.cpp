@@ -130,6 +130,36 @@ TEST_CASE("phase specs: the MULTISTART plan and each start's spec",
             CHECK(sub.algo == "BFGS");
         }
     }
+    SECTION("an NLopt spec seeded by its INIT block's SEED: start i takes "
+            "that SEED + i") {
+        /* Pins: NLopt takes the INIT block's SEED when its block has no SEED
+         * (make_nlopt), so start i of such a spec gets the INIT SEED + i
+         * (7, 8, 9) and no SEED; a DLIB spec, which no INIT SEED seeds, and
+         * an NLopt spec with a SEED of its own (SEED + i) keep the INIT SEED.
+         * Before the fix: every start of the NLopt spec kept the INIT SEED 7
+         * (the NLopt checks fail). */
+        auto s = local_spec(3);
+        s.lib = "NLOPT";
+        s.algo = "LN_SBPLX";
+        s.init_strategy_spec.seed = 7;
+        const MultiStartPlan plan = plan_multistart(s, 3, std::nullopt);
+        REQUIRE(plan.starts == 3u);
+        for (std::size_t i = 0; i < 3; ++i) {
+            INFO("start " << i);
+            const OptimizerSpec sub = multistart_start_spec(s, plan, i);
+            CHECK(sub.init_strategy_spec.seed ==
+                  std::optional<std::uint64_t>(7 + i));
+            CHECK_FALSE(sub.seed);
+        }
+        auto d = local_spec(3);
+        d.init_strategy_spec.seed = 7;
+        CHECK(multistart_start_spec(d, plan, 2).init_strategy_spec.seed ==
+              std::optional<std::uint64_t>(7));
+        s.seed = 3;
+        const OptimizerSpec own = multistart_start_spec(s, plan, 2);
+        CHECK(own.seed == std::optional<std::uint64_t>(5));
+        CHECK(own.init_strategy_spec.seed == std::optional<std::uint64_t>(7));
+    }
     SECTION("BUDGET_PER_START is each start's MAXEVAL") {
         auto s = local_spec(4);
         s.stop.maxeval = 20;
@@ -271,8 +301,9 @@ TEST_CASE("phase specs: every phase of each STRATEGY TYPE",
     }
 }
 
-/* A build without Ceres refuses every CERES:LBFGS spec here as not built
- * (ceres_build.h), the deferred CERES:LEVENBERG_MARQUARDT with its own
+/* CERES:STEEPEST_DESCENT stands in for CERES:LBFGS, refused since (a pin).
+ * A build without Ceres refuses every CERES:STEEPEST_DESCENT spec here as
+ * not built (ceres_build.h), the deferred CERES:LEVENBERG_MARQUARDT with its own
  * message first: a pin of that refusal. Before this test change such a
  * build failed the CERES rows, expecting the Ceres validator's result. */
 TEST_CASE("backend rules: validate_backend runs each backend's own checks",
@@ -290,7 +321,7 @@ TEST_CASE("backend rules: validate_backend runs each backend's own checks",
              {"TADAH", "RANDOM"}, {"TADAH", "GRID"}, {"TADAH", "ANNEAL"},
              {"TADAH", "ANNEAL_PT"}, {"TADAH", "ANNEAL_PA"}, {"ASA", "ASA"},
              {"DLIB", "GFS"}, {"DLIB", "BFGS"}, {"NLOPT", "LN_SBPLX"},
-             {"CERES", "LBFGS"}}) {
+             {"CERES", "STEEPEST_DESCENT"}}) {
         INFO(la.first << ":" << la.second);
         CHECK(error_of(with(la.first, la.second)) ==
               (la.first == "CERES" ? hpo_test::ceres_expect("")
@@ -304,8 +335,8 @@ TEST_CASE("backend rules: validate_backend runs each backend's own checks",
     for (const auto& c : std::vector<Case>{
              {"DLIB", "BFGS", [](OptimizerSpec& s) { s.stop.maxtime = 60; },
               "DLIB:BFGS does not support MAXTIME"},
-             {"CERES", "LBFGS", [](OptimizerSpec& s) { s.stop.stopval = 1; },
-              hpo_test::ceres_expect("CERES:LBFGS does not support STOPVAL")},
+             {"CERES", "STEEPEST_DESCENT", [](OptimizerSpec& s) { s.stop.stopval = 1; },
+              hpo_test::ceres_expect("CERES:STEEPEST_DESCENT does not support STOPVAL")},
              {"TADAH", "ANNEAL",
               [](OptimizerSpec& s) { s.param["NOT_A_KEY"] = 1; },
               "TADAH:ANNEAL: unknown PARAM 'NOT_A_KEY'"},
@@ -374,8 +405,8 @@ TEST_CASE("backend rules: validate_backend runs each backend's own checks",
               "NLopt INNER spec with a STOPVAL: NLopt's MLSL and AUGLAG "
               "replace the INNER search's STOPVAL with the enclosing "
               "block's; set STOPVAL on the enclosing block"},
-             {"CERES", "LBFGS", [](OptimizerSpec& s) { s.seed = 3; },
-              hpo_test::ceres_expect("CERES:LBFGS does not support SEED")}}) {
+             {"CERES", "STEEPEST_DESCENT", [](OptimizerSpec& s) { s.seed = 3; },
+              hpo_test::ceres_expect("CERES:STEEPEST_DESCENT does not support SEED")}}) {
         INFO(c.lib << ":" << c.algo << " -> " << c.message);
         auto s = with(c.lib, c.algo);
         c.set(s);
@@ -552,13 +583,14 @@ TEST_CASE("backend rules: a backend with no convergence test and no finite "
              {"TADAH", "GRID"}, {"DLIB", "BFGS"}, {"NLOPT", "LN_SBPLX"},
              {"NLOPT", "LN_COBYLA"}, {"NLOPT", "LD_LBFGS"},
              {"NLOPT", "GN_ORIG_DIRECT_L"}, {"NLOPT", "LN_AUGLAG"},
-             {"CERES", "LBFGS"}, {"ASA", "ASA"}, {"TADAH", "ANNEAL_PA"}}) {
+             {"CERES", "STEEPEST_DESCENT"}, {"ASA", "ASA"}, {"TADAH", "ANNEAL_PA"}}) {
         INFO(la.first << ":" << la.second);
         auto t = local_spec(1);
         t.lib = la.first;
         t.algo = la.second;
-        /* without Ceres, CERES:LBFGS is refused as not built (ceres_build.h;
-         * a pin: before this test change such a build failed here) */
+        /* without Ceres, CERES:STEEPEST_DESCENT is refused as not built
+         * (ceres_build.h; a pin: before this test change such a build failed
+         * here; the row named CERES:LBFGS, refused since) */
         CHECK(error_of(t) == (la.first == "CERES" ? hpo_test::ceres_expect("")
                                                   : std::string()));
     }
@@ -804,7 +836,7 @@ TEST_CASE("phase specs: a run obtains gradients when its search takes them",
     CHECK(obtains_gradients(nlopt("LD_LBFGS")));
     CHECK(obtains_gradients(nlopt("GD_STOGO")));
     CHECK(obtains_gradients(spec("DLIB", "BFGS")));
-    CHECK(obtains_gradients(spec("CERES", "LBFGS")));
+    CHECK(obtains_gradients(spec("CERES", "STEEPEST_DESCENT")));   /* was LBFGS */
     CHECK_FALSE(obtains_gradients(nlopt("LN_SBPLX")));
     CHECK_FALSE(obtains_gradients(nlopt("GN_CRS2_LM")));
     CHECK_FALSE(obtains_gradients(spec("TADAH", "RANDOM")));

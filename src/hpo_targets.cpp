@@ -433,7 +433,18 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn,
         (spec.strategy_type == StrategyType::PRESTAGE && spec.prestage != nullptr);
     const bool backend_consumes = optimizer_caps(spec).accepts_multi_seed;
     const bool multi_seed_consumer = strategy_consumes || backend_consumes;
-    if (spec.optim_init.size() > 1 && !multi_seed_consumer) {
+    /* A search that does not start at the point it is given consumes none
+     * of them: validate_hpo_setup() says so about the INIT block
+     * (start_point_warnings, backend_rules.h). Asked only of registered
+     * backends: the startup checks refuse the others with their own
+     * message. */
+    const bool registered =
+        find_optimizer_caps(spec.lib, spec.algo) &&
+        (!spec.inner ||
+         find_optimizer_caps(spec.inner->lib, spec.inner->algo));
+    const bool ignores_start =
+        registered && search_ignoring_start(spec).has_value();
+    if (spec.optim_init.size() > 1 && !multi_seed_consumer && !ignores_start) {
       /* Surface compatible options from the live caps registry rather
        * than hard-coding LIB:ALGO names -- the registry is the single
        * source of truth for who consumes >1 seed in one run. */
@@ -809,6 +820,12 @@ void HPOTargets::read(const std::string& fn)
                 if (!active_opt)
                     throw std::runtime_error("INIT block requires an active OptimizerSpec");
                 active_init = &active_opt->init_strategy_spec;
+                /* The block's line: its first INIT block when it has two
+                 * (they make one chain). */
+                if (active_init->line == 0) {
+                    active_init->line = nline;
+                    active_init->line_text = line;
+                }
                 /* Suspend active_opt so SEED/STRATEGY don't get gobbled by
                  * dispatch_opt_attr; restored on ENDINIT. */
                 inner_parent = active_opt;     // reuse field for stash
@@ -954,6 +971,10 @@ void HPOTargets::read(const std::string& fn)
                 if (block != STRATEGY_BLK)
                     throw std::runtime_error("RESTART block must appear inside STRATEGY");
                 active_init = &spec.restart.init_strategy;
+                if (spec.restart.line == 0) {
+                    spec.restart.line = nline;
+                    spec.restart.line_text = line;
+                }
                 /* Suspend active_opt while inside RESTART so SEED/STRATEGY
                  * go to active_init, not the OUTER spec. A RESTART with no
                  * STRATEGY lines falls back to a single CONFIG point. */
@@ -1577,7 +1598,12 @@ void HPOTargets::read(const std::string& fn)
      * reject any GRAD_STRATEGY. */
     if (!observables.empty()) {
         for (const auto& b : optimiser_blocks) {
-            if (b.inner || b.sp->grad_strategy || !obtains_gradients(*b.sp))
+            /* (an INNER block of another LIB than NLopt is refused at
+             * startup, require_inner_backend: its enclosing block has no
+             * local search to resolve a GRAD_STRATEGY for) */
+            if (b.inner || b.sp->grad_strategy ||
+                (b.sp->inner && b.sp->inner->lib != "NLOPT") ||
+                !obtains_gradients(*b.sp))
                 continue;
             b.sp->grad_strategy = GradStrategy::Analytical;
             b.sp->grad_strategy_resolved = true;
@@ -1605,11 +1631,18 @@ void HPOTargets::read(const std::string& fn)
      * with a derivative-free INNER block used to be refused for their D
      * although they take no gradient.
      *
+     * An INNER block takes a local NLopt algorithm (require_inner_backend(),
+     * at startup: no GN_*, TADAH or DLIB block), so its refusal names the
+     * derivative-free local NLopt algorithms, every one, from the registry
+     * (nlopt_inner_searches_without_gradient()), and an INNER block with an
+     * MLSL or AUGLAG has no INNER block of its own to replace its default
+     * local optimiser with.
+     *
      * Also reject any explicit GRAD_STRATEGY={NUMERICAL,HYBRID,
      * ANALYTICAL} when PC_LAMMPS is present -- these tags only make
      * sense with PC_OBSERVABLE. */
     auto reject_pc_lammps_grad =
-        [&](const OptimizerSpec& sp, const char* tag) {
+        [&](const OptimizerSpec& sp, const char* tag, bool inner) {
             if (sp.grad_strategy) {
                 throw std::runtime_error(with_block_line(sp,
                     std::string("--hpotarget defines PC_LAMMPS but ") + tag
@@ -1623,12 +1656,21 @@ void HPOTargets::read(const std::string& fn)
             const bool dlib_bfgs_exception =
                 (sp.lib == "DLIB" && sp.algo == "BFGS");
             if (dlib_bfgs_exception) return;
+            /* An INNER block of another LIB than NLopt is refused at startup
+             * as not NLopt (require_inner_backend), whatever it names; its
+             * enclosing MLSL or AUGLAG has no local search to ask about. */
+            if (inner && sp.lib != "NLOPT") return;
+            if (sp.inner && sp.inner->lib != "NLOPT") return;
             if (!obtains_gradients(sp)) return;
-            const std::string requires_free =
-                " PC_LAMMPS requires a gradient-free optimiser (NLOPT "
-                "GN_*/LN_*, TADAH RANDOM/GRID/ANNEAL). The only "
-                "gradient-based exception is DLIB:BFGS (uses "
-                "per-theta-per-iter dtheta, not a full gradient).";
+            const std::string requires_free = inner
+                ? " PC_LAMMPS requires a gradient-free optimiser, and an "
+                  "INNER search is a local NLopt algorithm: name a "
+                  "derivative-free one in the INNER block (" +
+                      nlopt_inner_searches_without_gradient() + ")."
+                : " PC_LAMMPS requires a gradient-free optimiser (NLOPT "
+                  "GN_*/LN_*, TADAH RANDOM/GRID/ANNEAL). The only "
+                  "gradient-based exception is DLIB:BFGS (uses "
+                  "per-theta-per-iter dtheta, not a full gradient).";
             if (optimizer_caps(sp).accepts_inner) {
                 /* An MLSL or AUGLAG that takes a gradient for its local
                  * search: an INNER block's is refused at that block. */
@@ -1641,8 +1683,12 @@ void HPOTargets::read(const std::string& fn)
                     " takes a gradient: NLopt's MLSL and AUGLAG take one for "
                     "their local search, and NLopt's default local "
                     "optimiser, " + local.lib + ":" + local.algo +
-                    ", is gradient-based; an INNER block with a "
-                    "derivative-free one takes none." + requires_free));
+                    ", is gradient-based" +
+                    (inner ? std::string(".")
+                           : std::string("; an INNER block with a "
+                                         "derivative-free one takes "
+                                         "none.")) +
+                    requires_free));
             }
             throw std::runtime_error(with_block_line(sp,
                 std::string("--hpotarget defines PC_LAMMPS but ") + tag
@@ -1651,7 +1697,7 @@ void HPOTargets::read(const std::string& fn)
         };
     if (!LS.empty())
         for (const auto& b : optimiser_blocks)
-            reject_pc_lammps_grad(*b.sp, b.tag);
+            reject_pc_lammps_grad(*b.sp, b.tag, b.inner);
 }
 
 std::string HPOTargets::repeat_reuse_blocker() const {

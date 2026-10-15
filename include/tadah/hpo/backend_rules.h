@@ -209,14 +209,14 @@ GradientCost gradient_cost(const OptimizerSpec& spec);
  * evaluates the loss at its starting point again (1 evaluation) ...".
  * NLopt's StoGO (GD_STOGO, GD_STOGO_RAND; OptimizerCaps::starts_at_x0)
  * does not start at the point it is given -- its first trial is the centre
- * of its box -- and neither does an AUGLAG whose INNER search is StoGO:
- * "... takes no step: its gradient search, which does not start at the
- * point it is given, evaluates the loss at a point of its own (1
- * evaluation) and the gradient there (...) ..., which needs MAXEVAL 6 or
- * more", wherever the phase starts (a PLAIN run, an exploration, MLSL's
- * INNER search; the PRESTAGE refinement and a MULTISTART start refuse such
- * a search at startup, require_prestage_refinement() and
- * require_inner_start_used(), strategy_rules.h). Under NOISE_CALIBRATION
+ * of its box: "... takes no step: its gradient search, which does not
+ * start at the point it is given, evaluates the loss at a point of its own
+ * (1 evaluation) and the gradient there (...) ..., which needs MAXEVAL 6 or
+ * more", wherever the phase starts (a PLAIN run, an exploration; the
+ * PRESTAGE refinement refuses such a search at startup,
+ * require_prestage_refinement(), MULTISTART every global one,
+ * require_multistart_backend(), and an INNER block every global one,
+ * require_inner_backend(), strategy_rules.h). Under NOISE_CALIBRATION
  * the first of several MULTISTART starts begins at the seed point and the
  * later ones elsewhere: where their budgets differ, "the first MULTISTART
  * start ..."
@@ -249,9 +249,8 @@ GradientCost gradient_cost(const OptimizerSpec& spec);
  * gradient there (...) ..., which needs MAXEVAL 11 or more" under NUMERICAL
  * without `reuse`, "... (1 evaluation: one analytical gradient,
  * GRAD_STRATEGY ANALYTICAL) ..., which needs MAXEVAL 8 or more" under
- * ANALYTICAL; an INNER GD_STOGO starts at a point of its own, "... then
- * its first local search, which does not start at the point MLSL gives
- * it, evaluates the loss at a point of its own (1 evaluation) ...". AUGLAG
+ * ANALYTICAL (an INNER block names a local search, which starts at the
+ * point MLSL gives it: require_inner_backend(), strategy_rules.h). AUGLAG
  * goes straight into its local search. And an INNER block whose local
  * search obtains gradients and whose own MAXEVAL, in NLopt's calls (each
  * the loss and the gradient at a point), is 1; an MLSL's local searches
@@ -262,5 +261,93 @@ GradientCost gradient_cost(const OptimizerSpec& spec);
  * then). */
 std::vector<std::string> gradient_budget_warnings(const OptimizerSpec& root,
                                                   bool reuse);
+
+/* The startup WARNINGs about settings that have no effect on a search that
+ * does not start at the point it is given (search_ignoring_start(),
+ * phase_specs.h: NLopt's StoGO, DIRECT and AGS, and an AUGLAG whose local
+ * search is one), where such a search is accepted: the STRATEGY-level
+ * optimiser under PLAIN and the PRESTAGE exploration (a PRESTAGE
+ * refinement and a MULTISTART start on one are refused,
+ * strategy_rules.h). One line each, naming the line that opens the block
+ * (InitStrategySpec::line, RestartSpec::line; "the INIT block: ..." for a
+ * spec built outside the parser):
+ *  - an INIT block with a METHOD: the search never evaluates its points --
+ *    "the INIT block on line 5: the STRATEGY-level optimiser
+ *    NLOPT:GN_DIRECT_L does not start at the point it is given (DIRECT
+ *    evaluates the centre of the OPTIM box first and then divides the
+ *    whole box; NLopt never reads that point), so the search never
+ *    evaluates the block's INIT points. To start the search at them, use
+ *    an optimiser that starts at the point it is given." (under NOISE
+ *    CALIBRATION, which evaluates the first of them, "... INIT points
+ *    (NOISE CALIBRATION evaluates the first of them 2 times). ..."); the
+ *    EXPLORE block's own INIT block likewise for the exploration, and an
+ *    OPTIMIZER-level one that the exploration takes, its EXPLORE block
+ *    having none ("..., which is given the block's INIT points (its
+ *    EXPLORE block has no INIT block), does not start ..., so the
+ *    exploration never evaluates them; the refinement starts from them
+ *    only when no evaluation of the exploration has a usable loss. ...");
+ *  - an active RESTART block, when the search draws no random numbers
+ *    either (OptimizerCaps::random_draws: Never, or BetweenSides in one
+ *    OPTIM dimension): every round asks for round 0's points again,
+ *    whatever points it starts from -- "the RESTART block on line 10:
+ *    the STRATEGY-level optimiser NLOPT:GN_DIRECT_L does not start ...
+ *    and draws no random numbers, so every RESTART round, whatever points
+ *    it starts from, asks for round 0's points again, which the run's
+ *    record answers: no round after round 0 evaluates a new point, and the
+ *    RESTART block's only effect is to end the run once round 0 has had no
+ *    new best in AFTER_STAGNATION 3 evaluations. For rounds that search
+ *    anew, use an optimiser that starts at the point it is given."; for a
+ *    search that obtains gradients (GD_STOGO), whose gradients a round
+ *    forms itself, "... asks for round 0's points again, and their
+ *    gradients: the run's record answers their losses, but a round forms
+ *    its gradients itself and evaluates their finite-difference stencils
+ *    again (GRAD_STRATEGY NUMERICAL): no round after round 0 evaluates a
+ *    new point, and each round evaluates up to AFTER_STAGNATION 3 of round
+ *    0's points again before it ends without a new best. ..." (ANALYTICAL
+ *    and HYBRID: "... where a round asks for no gradient, but each point at
+ *    which it asks for one is evaluated again, with its gradient
+ *    (GRAD_STRATEGY HYBRID differentiates an evaluation of the point)");
+ *    GD_STOGO_RAND below POPULATION 2n + 1 (TrialPoints), whose first trial
+ *    point is the box centre, "... and, with POPULATION 4 (NLopt's default,
+ *    2n for n = 2 OPTIM dimensions), less than 2n + 1 = 5, takes the centre
+ *    of the box as its first trial point and runs a local search from it
+ *    before any of its random trial points, so every RESTART round,
+ *    whatever points it starts from, asks first for the points of round
+ *    0's first local search again, and their gradients: ...: until that
+ *    search ends a round evaluates no new point, and it reaches its random
+ *    trial points only if the search ends before the round has had
+ *    AFTER_STAGNATION 3 evaluations without a new best. For rounds that
+ *    search anew, use an optimiser that starts at the point it is given, or
+ *    POPULATION 5 (2n + 1) or more, whose trial points are all random.";
+ *    with a `reuse_blocker` (HPOTargets::repeat_reuse_blocker(): why the
+ *    run evaluates a point it has evaluated again) "... asks for round 0's
+ *    points again as long as their losses are those of round 0 (the run
+ *    evaluates them again: <reuse_blocker>). ..."; under PRESTAGE "... so
+ *    the exploration of every RESTART round, whatever points it starts
+ *    from, asks for round 0's exploration points again, which the run's
+ *    record answers: a round's refinement starts from candidates among
+ *    round 0's exploration points. ...";
+ *  - an active RESTART block with METHOD lines, when the search draws
+ *    random numbers (GN_DIRECT_L_RAND in two or more dimensions,
+ *    GD_STOGO_RAND at POPULATION 2n + 1 or more): no round evaluates the
+ *    block's points -- "the RESTART block on line 10: the STRATEGY-level
+ *    optimiser NLOPT:GN_DIRECT_L_RAND does not start ..., so no RESTART
+ *    round evaluates the points of the block's METHOD lines: a round's
+ *    search differs from round 0's only in the random numbers it draws. To
+ *    start each round at the block's points, use an optimiser that starts
+ *    at the point it is given."; under PRESTAGE, for an exploration that
+ *    takes the round's points (its EXPLORE block has no INIT block), "...
+ *    the PRESTAGE exploration NLOPT:GN_DIRECT_L_RAND, which is given each
+ *    round's points (its EXPLORE block has no INIT block), does not start
+ *    ..., so no round's exploration evaluates the points of the block's
+ *    METHOD lines, and a round's refinement starts from them only when no
+ *    evaluation of its exploration has a usable loss: ...".
+ * An AUGLAG is named with its local search ("NLOPT:LN_AUGLAG runs its
+ * INNER search NLOPT:GN_DIRECT_L from the point it is given, and
+ * NLOPT:GN_DIRECT_L does not start ..."). validate_hpo_setup() journals
+ * each after the gradient-budget warnings, once the phases' backends are
+ * known to be registered. */
+std::vector<std::string> start_point_warnings(const OptimizerSpec& root,
+                                              const std::string& reuse_blocker);
 
 }  // namespace tadah::hpo

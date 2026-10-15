@@ -287,45 +287,37 @@ public:
     void record_density_best(std::size_t eval_num, double loss,
                              const detail::DensitySummary& summary);
 
-    /** Tally one evaluation whose AMPGRIDMB coordinates were projected onto
-     *  [0, inf) under RHOFORM NONNEG / MONOTONE (HPO_Host::operator()): a
-     *  point outside the OPTIM box, which only an optimiser that ignores
-     *  the bounds evaluates (finite differences keep to the box,
-     *  fd_stencil.h), evaluated and recorded at its projection. Returns the
-     *  running count (the host journals the first projection). DIAGNOSTICS
-     *  prints the total when it is > 0, so other runs are unchanged. */
-    std::size_t record_form_projection();
-    /** Evaluations projected so far (record_form_projection). */
-    std::size_t form_projections() const {
-        return n_form_proj_.load(std::memory_order_relaxed);
-    }
-
     /** Finite differences and the OPTIM box (fd_stencil.h,
      *  gradient_provider.h, HPO_Host::operator()). Relaxed counters, no file
      *  I/O; DIAGNOSTICS prints each only when it is > 0, so the DIAGNOSTICS
      *  of a run that never came near a bound are unchanged. Reset by open()
      *  and reset_for_test(). Each returns the running count.
-     *   - record_out_of_box_eval: an evaluated REAL point outside its
-     *     OPTIM box, counted before any projection (the host warns at the
-     *     first);
-     *   - record_out_of_box_gradient: a finite-difference gradient at an
-     *     internal point outside the box (differenced towards it);
+     *   - record_out_of_box_point: a REAL point an optimiser proposed
+     *     outside its OPTIM box, not evaluated but scored by its distance
+     *     to the box (box_penalty.h; the host warns at the first);
      *   - record_one_sided: a finite-difference component of dimension
-     *     `label` that a bound turned (one-sided into the box, backward
-     *     instead of forward, or towards the box from outside it); the
-     *     count is per dimension, and the caller journals the first;
+     *     `label` that a bound turned (one-sided into the box, or backward
+     *     instead of forward); the count is per dimension, and the caller
+     *     journals the first;
+     *   - record_mixed_kind: a finite-difference component of dimension
+     *     `label` whose stencil had a point with a loss of another kind
+     *     than the loss at its point (a failure next to a usable loss, a
+     *     usable loss or an ungraded failure next to a graded one), taken
+     *     without it (gradient_provider.h, fd_component; DIAGNOSTICS
+     *     "Mixed-kind stencils"); per dimension, the caller journals the
+     *     first;
      *   - record_hybrid_centre: the loss at a HYBRID gradient's point,
      *     evaluated for its one-sided or forward differences;
      *   - record_snap: an evaluation with a coordinate proposed outside its
      *     box within rounding (SearchSpace::snapped_onto_box), evaluated on
      *     the bound (the host; owner decision D10). */
-    std::size_t record_out_of_box_eval();
+    std::size_t record_out_of_box_point();
     std::size_t record_snap();
     std::size_t snaps() const {
         return n_snap_.load(std::memory_order_relaxed);
     }
-    std::size_t record_out_of_box_gradient();
     std::size_t record_one_sided(const std::string& label);
+    std::size_t record_mixed_kind(const std::string& label);
     std::size_t record_hybrid_centre();
     /** Repeated points (repeat_points.h). Relaxed counters, no file I/O;
      *  DIAGNOSTICS prints each only when it is > 0. Reset by open() and
@@ -356,25 +348,19 @@ public:
     std::size_t line_searches_not_run() const {
         return n_ls_not_run_.load(std::memory_order_relaxed);
     }
-    std::size_t out_of_box_evals() const {
-        return n_oob_eval_.load(std::memory_order_relaxed);
-    }
-    std::size_t out_of_box_gradients() const {
-        return n_oob_grad_.load(std::memory_order_relaxed);
+    /** The points outside the OPTIM box scored so far
+     *  (record_out_of_box_point). */
+    std::size_t out_of_box_points() const {
+        return n_oob_point_.load(std::memory_order_relaxed);
     }
     std::size_t hybrid_centres() const {
         return n_hybrid_centre_.load(std::memory_order_relaxed);
     }
-    /** An evaluation whose model cutoff exceeds the one-time neighbour
-     *  lists (HPO_Host builds them at detail::nn_safe_rcutmax), evaluated
-     *  with lists rebuilt for it; DIAGNOSTICS prints the count when it is
-     *  > 0. Reset with the counters above. Returns the running count. */
-    std::size_t record_nn_rebuild();
-    std::size_t nn_rebuilds() const {
-        return n_nn_rebuild_.load(std::memory_order_relaxed);
-    }
     /** The one-sided components counted so far for `label` (0 if none). */
     std::size_t one_sided(const std::string& label) const;
+    /** The mixed-kind components counted so far for `label` (0 if none;
+     *  record_mixed_kind). */
+    std::size_t mixed_kind(const std::string& label) const;
 
     /** Transient-I/O accounting: retries of the durable best
      *  potential and of the per-evaluation logs/archives, rows dropped after
@@ -699,15 +685,10 @@ private:
      * per-gate rate-limit counters of the reject notes (next_gate_note). */
     std::atomic<std::size_t> n_gate_[kGateKinds] = {};
     std::atomic<std::size_t> n_gate_note_[kGateKinds] = {};
-    /* Positive-form projections (record_form_projection). */
-    std::atomic<std::size_t> n_form_proj_ {0};
-    /* Finite differences and the OPTIM box (record_out_of_box_eval, ...). */
-    std::atomic<std::size_t> n_oob_eval_      {0};
+    /* Finite differences and the OPTIM box (record_out_of_box_point, ...). */
+    std::atomic<std::size_t> n_oob_point_     {0};
     std::atomic<std::size_t> n_snap_          {0};
-    std::atomic<std::size_t> n_oob_grad_      {0};
     std::atomic<std::size_t> n_hybrid_centre_ {0};
-    /* Evaluations with rebuilt neighbour lists (record_nn_rebuild). */
-    std::atomic<std::size_t> n_nn_rebuild_    {0};
     /* Repeated points (record_repeat_reused, ...); repeat_again_why_ is
      * protected by mtx_. */
     std::atomic<std::size_t> n_repeat_reused_ {0};
@@ -717,6 +698,9 @@ private:
     /* One-sided components per dimension, in the order first seen --
      * protected by mtx_. */
     std::vector<std::pair<std::string, std::size_t>> one_sided_;
+    /* Mixed-kind components per dimension (record_mixed_kind), in the
+     * order first seen -- protected by mtx_. */
+    std::vector<std::pair<std::string, std::size_t>> mixed_kind_;
     void reset_fd_counters_locked();
     /* Transient-I/O retries / losses (record_io_retry_* etc.). */
     std::atomic<std::size_t> n_io_retry_durable_{0};

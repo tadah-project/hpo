@@ -123,26 +123,6 @@ ModelProbe probe_model(const core::Context &train_ctx) {
   }
 }
 
-/* The phases of the run (strategy_phase_specs, phase_specs.h: the
- * STRATEGY-level optimiser, each MULTISTART start, the PRESTAGE exploration
- * and refinement, every INNER block) whose optimiser ignores the OPTIM
- * bounds (OptimizerCaps::ignores_bounds: the CERES drivers) and can so
- * evaluate outside the box. Finite differences keep
- * to the box (fd_stencil.h), whatever their step rule. "<phase>
- * <LIB:ALGO> (ignores the OPTIM bounds)" per entry. Called after
- * validate_phase_backends, so every phase names a known optimiser. */
-std::vector<std::string> unbounded_optimisers(const OptimizerSpec &root) {
-  std::vector<std::string> out;
-  for (const PhaseSpec &phase : strategy_phase_specs(root)) {
-    const OptimizerSpec &s = phase.spec;
-    if (s.lib == "NOT SET") continue;
-    if (optimizer_caps(s).ignores_bounds)
-      out.push_back(phase.name + " " + s.lib + ":" + s.algo +
-                    " (ignores the OPTIM bounds)");
-  }
-  return out;
-}
-
 /* Why `s`, which asks for no gradient (obtains_gradients), takes none, as
  * a clause that follows "NLOPT:GD_MLSL_LDS takes no gradient": "" for a
  * backend without a local search of its own; for NLopt's MLSL and AUGLAG,
@@ -467,37 +447,17 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
     HPOLog::instance().warning(w);
   }
 
-  /* --- RHOFORM NONNEG / MONOTONE: optimisers that can leave the box -----
-   * The evaluated AMPGRIDMB coordinates are projected onto [0, inf)
-   * (HPO_Host); say so when the optimiser of a phase can put them outside
-   * the (non-negative) box: a backend that ignores the bounds. Finite
-   * differences keep to the box (fd_stencil.h). After the phase checks
-   * above, on the same phases. */
-  if (models::context_has_ream(train_ctx)) {
-    const models::RhoForm form = models::require_rhoform(train_ctx, "tadah hpo");
-    bool amp_optim = false;
-    for (const auto &kv : trg.optimap)
-      if (models::optim_key_lower_bound(kv.first, form) ==
-          models::OptimLowerBound::NonNegative)
-        for (bool b : kv.second.opt) amp_optim = amp_optim || b;
-    if (amp_optim) {
-      const std::vector<std::string> ub = unbounded_optimisers(trg.spec);
-      if (!ub.empty()) {
-        std::string msg = std::string("RHOFORM ") + models::rhoform_name(form) +
-                          ": ";
-        for (std::size_t i = 0; i < ub.size(); ++i)
-          msg += (i ? ", " : "") + ub[i];
-        msg += " can evaluate AMPGRIDMB amplitudes outside the non-negative "
-               "OPTIM box. An amplitude below 0 is not a valid " +
-               std::string(models::rhoform_name(form)) + " density: every "
-               "such point is projected onto AMPGRIDMB >= 0, evaluated and "
-               "recorded there (the optimiser is given that loss for its own "
-               "point); DIAGNOSTICS counts the projections and every "
-               "evaluation outside the box.";
-        std::cerr << "[HPO] WARNING: " << msg << "\n";
-        HPOLog::instance().warning(msg);
-      }
-    }
+  /* --- settings a search that ignores its start point does not read -----
+   * A WARNING each (start_point_warnings, backend_rules.h): an INIT block
+   * whose points such a search never evaluates, a RESTART block whose
+   * rounds repeat round 0 (all of it when the search draws no random
+   * numbers either, its first local search for GD_STOGO_RAND below
+   * POPULATION 2n + 1), and the METHOD lines of a RESTART block on such a
+   * search that draws them, which no round evaluates. */
+  for (const std::string &w :
+       start_point_warnings(trg.spec, trg.repeat_reuse_blocker())) {
+    std::cerr << "[HPO] WARNING: " << w << "\n";
+    HPOLog::instance().warning(w);
   }
 
   const bool has_fw = train_ctx.contains("FIXWEIGHT");

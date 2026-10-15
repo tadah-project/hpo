@@ -155,10 +155,10 @@ struct OptimizerCaps {
      * evaluated only when its first call is there. The other backends
      * evaluate every point they ask for and keep the default. A search on
      * one of these never uses the point it is given, so a PRESTAGE
-     * refinement on one, and an AUGLAG whose INNER search is one under
-     * MULTISTART or as the refinement, is refused at startup
-     * (require_prestage_refinement(), require_inner_start_used(),
-     * strategy_rules.h). */
+     * refinement on one is refused at startup (require_prestage_
+     * refinement(), strategy_rules.h); each is global, so it is refused as
+     * an INNER search too (require_inner_backend(), whose refusal names
+     * start_note). */
     bool        starts_at_x0 = true;
 
     /* Where the first call of a backend whose starts_at_x0 is false is
@@ -167,6 +167,34 @@ struct OptimizerCaps {
      * of the OPTIM box first and then divides the whole box; NLopt never
      * reads that point"); "" for every other backend. */
     const char* start_note = "";
+
+    /* Whether a run of a backend whose starts_at_x0 is false draws random
+     * numbers, so that a run with other numbers asks for other points
+     * (nlopt 2.10 sources):
+     *   Never         GD_STOGO (stogo.cc: no random trial point), GN_DIRECT,
+     *                 GN_DIRECT_L and the three _NOSCAL forms (optimize.c
+     *                 runs GN_DIRECT_L_RAND_NOSCAL with GN_DIRECT_L_NOSCAL's
+     *                 cdirect settings), GN_ORIG_DIRECT and GN_ORIG_DIRECT_L
+     *                 (DIRect.c), GN_AGS (ags);
+     *   BetweenSides  GN_DIRECT_L_RAND: cdirect.c draws only to choose one of
+     *                 several equally long sides of a box, which a box of
+     *                 one dimension never has;
+     *   TrialPoints   GD_STOGO_RAND: POPULATION random trial points per box
+     *                 (optimize.c POP(2n); stogo.cc det_pnts = 2n + 1 -
+     *                 POPULATION). Below POPULATION 2n + 1, NLopt's default
+     *                 2n included, the box centre is a trial point too and
+     *                 the first taken (global.cc NewtonTest adds the random
+     *                 points, then FillRegular the centre last; TBox::
+     *                 RemoveTrial takes the last), and the local search from
+     *                 it draws nothing: a run asks for the points of that
+     *                 search before any random one. At 2n + 1 or more every
+     *                 trial point is random;
+     *   NotRecorded   every backend whose first call is at its point.
+     * A search that draws none (before its first random trial point) asks
+     * for the same points in every run: the RESTART warnings of
+     * start_point_warnings() (backend_rules.h). */
+    enum class RandomDraws { NotRecorded, Never, BetweenSides, TrialPoints };
+    RandomDraws random_draws = RandomDraws::NotRecorded;
 
     /* How the tolerances end the run when one of them is costly, the last
      * clause of require_stop()'s message and a line of the ALGO help (""
@@ -193,10 +221,12 @@ struct OptimizerCaps {
      * runs with. */
     const char* default_inner = nullptr;
 
-    /* The backend evaluates outside the OPTIM box: CERES'
-     * GradientProblemSolver has no box constraints (the four CERES drivers
-     * are the only such backends: NLopt's LN_NEWUOA, called with lb = ub =
-     * NULL, is refused). Surfaced as a startup WARNING with bounds_note. */
+    /* The backend proposes points outside the OPTIM box: CERES'
+     * GradientProblemSolver has no box constraints (CERES:STEEPEST_DESCENT,
+     * the CERES driver HPO registers, is the only such backend: NLopt's
+     * LN_NEWUOA, called with lb = ub = NULL, and Ceres' Wolfe drivers are
+     * refused). Such a point is scored, not evaluated
+     * (box_penalty.h). Surfaced as a startup WARNING with bounds_note. */
     bool        ignores_bounds = false;
     const char* bounds_note    = "";
 };
@@ -205,9 +235,10 @@ struct OptimizerCaps {
  * the library version HPO builds makes them unsafe to run, or they do not
  * solve the problem HPO poses, one scalar loss inside the OPTIM box (the
  * refusal table in optimizer_caps.cpp, each entry with its repro:
- * NLOPT:LN_NEWUOA_BOUND, LN_NEWUOA, NLOPT_LD_LBFGS_NOCEDAL, and Ceres'
- * least-squares solvers CERES:LEVENBERG_MARQUARDT, DOGLEG and
- * SUBSPACE_DOGLEG). A refused backend is not registered, so
+ * NLOPT:LN_NEWUOA_BOUND, LN_NEWUOA, NLOPT_LD_LBFGS_NOCEDAL, Ceres' Wolfe
+ * line-search drivers CERES:LBFGS, WOLFE and NLCG, which stall at a point
+ * outside the box scored by box_penalty.h, and Ceres' least-squares solvers
+ * CERES:LEVENBERG_MARQUARDT, DOGLEG and SUBSPACE_DOGLEG). A refused backend is not registered, so
  * filter_optimizer_caps() and every list of alternatives leave it out, and
  * find_optimizer_caps() returns nullptr.
  *

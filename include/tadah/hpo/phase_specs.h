@@ -43,7 +43,9 @@ MultiStartPlan plan_multistart(const OptimizerSpec& spec, std::size_t n_starts,
 
 /* Start `i` (0-based, below plan.starts) of `plan`: `spec` with the single
  * INIT point i, the plan's per-start MAXEVAL, and SEED + i when `spec` has
- * a SEED (the starts draw different random numbers). */
+ * a SEED -- or, for an NLopt spec that NLopt seeds from its INIT block's
+ * SEED (OptimizerSpec::nlopt_seed_from_init()), that SEED + i -- so the
+ * starts draw different random numbers. */
 OptimizerSpec multistart_start_spec(const OptimizerSpec& spec,
                                     const MultiStartPlan& plan, std::size_t i);
 
@@ -106,10 +108,13 @@ std::optional<OptimizerSpec> single_local_search(const OptimizerSpec& spec);
  * where its local searches start is the business of the gradient-budget
  * warning, backend_rules.cpp). Looks up the caps of `spec` and of its
  * local search (optimizer_caps(), which throws for one the registry
- * refuses or does not have). The refusals of require_prestage_refinement()
- * and require_inner_start_used() (strategy_rules.h) and the gradient-
- * budget warning's start (gradient_budget_warnings(), backend_rules.h)
- * take it from here. */
+ * refuses or does not have). The refusal of require_prestage_refinement()
+ * (strategy_rules.h) and the gradient-budget warning's start
+ * (gradient_budget_warnings(), backend_rules.h) take it from here. Every
+ * search that does not start at its point is global, and an INNER search
+ * is a local one (require_inner_backend(), strategy_rules.h), so no
+ * configuration that startup accepts has an AUGLAG for which the recursion
+ * finds one. */
 std::optional<OptimizerSpec> search_ignoring_start(const OptimizerSpec& spec);
 
 /* `what`, a refusal of the settings of the phase that runs `spec`, at the
