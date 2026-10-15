@@ -106,7 +106,7 @@ is why `run.sh` `cd`s into the example before invoking `tadah`.
 These examples exercise the documented `STRATEGY` types (`PLAIN`,
 `MULTISTART`, `PRESTAGE`, the `RESTART` decorator), every `INIT` method
 and the `LIB` families that today work with `PC_LAMMPS`.
-`CERES:LBFGS/WOLFE/NLCG/STEEPEST_DESCENT` and the gradient-based NLopt
+`CERES:STEEPEST_DESCENT` and the gradient-based NLopt
 algorithms (`LD_*`, `GD_*`) are not shown here: `PC_LAMMPS` rejects
 every gradient-based backend except `DLIB:BFGS` (use it or a
 gradient-free family for LAMMPS-driven loss terms). They do run with

@@ -6,8 +6,8 @@
  *    evaluation took back to a point where it stood (BfgsBoxEnd::Revisit,
  *    bfgs_box_search (e)), after the stop strategy's own test;
  *  - HPO_Host::recorded() answers for the point an evaluation of the asked
- *    point would make (the snap onto the box, the RHOFORM projection), and
- *    starts empty at every run;
+ *    point would make (the snap onto the box; a point outside the box is
+ *    not evaluated and not recorded), and starts empty at every run;
  *  - a RESTART round's RANDOM and LHS methods draw a stream of their own
  *    (InitStream::Restart), SOBOL its block.
  *

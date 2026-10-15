@@ -6,14 +6,16 @@
  * central difference (f(u+h) - f(u-h)) / 2h at every point. At a
  * coordinate within h of its bound one stencil point lay outside the
  * OPTIM box: evaluated there, or -- for a RHOFORM NONNEG/MONOTONE
- * amplitude, which HPO_Host projects onto AMPGRIDMB >= 0 -- at the bound,
- * so that at a coordinate on its bound the "derivative" was
+ * amplitude, which HPO_Host then projected onto AMPGRIDMB >= 0 -- at the
+ * bound, so that at a coordinate on its bound the "derivative" was
  * (f(h) - f(0)) / 2h, half the one-sided slope. Within h of a bound the
  * stencil is now one-sided into the box, (-3 f(u) + 4 f(u+h) - f(u+2h)) /
  * 2h and its mirror, second order like the central one; away from the
  * bounds the central stencil is unchanged, bit for bit. The stub hosts
- * here project every point onto the box, as HPO_Host projects an
- * amplitude, and record what they were asked for. */
+ * here project every point onto the box, as HPO_Host projected an
+ * amplitude then (it now evaluates no point outside the box:
+ * box_penalty.h), and record what they were asked for, so all_inside()
+ * shows that no stencil leaves the box. */
 
 #include "catch2/catch.hpp"
 
@@ -89,9 +91,9 @@ Vec vec(std::initializer_list<double> v)
     return x;
 }
 
-/* f of the REAL point projected onto the box, as HPO_Host evaluates an
- * AMPGRIDMB amplitude below 0 at 0; every point asked for is recorded as
- * given. */
+/* f of the REAL point projected onto the box, as HPO_Host evaluated an
+ * AMPGRIDMB amplitude below 0 at 0 before the box rule (box_penalty.h);
+ * every point asked for is recorded as given. */
 struct ProjectingHost {
     std::function<double(const Vec&)> f;
     std::vector<std::pair<double, double>> box;
