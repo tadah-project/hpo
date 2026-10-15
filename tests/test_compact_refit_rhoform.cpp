@@ -13,6 +13,7 @@
 #include <tadah/core/context.h>
 #include <tadah/core/core_user_config_parser.h>
 #include <tadah/models/descriptors/dm/dm_ream.h>
+#include <tadah/models/descriptors/dm/embed_kernel.h>
 #include <tadah/models/descriptors/dm/rhoform.h>
 
 #include <cmath>
@@ -76,26 +77,25 @@ TEST_CASE_METHOD(PTFixture,
 
     // the written potential declares the form and loads in it
     Context pot = tadah::core::CoreUserConfigParser().parse("pot.tadah");
-    REQUIRE(pot.has_stored("RHOFORM"));
-    CHECK(tadah::models::stored_rhoform(pot) == f);
-    std::vector<double> amps(pot.size("AMPGRIDMB"));
-    pot.get("AMPGRIDMB", amps);
+    auto specs=tadah::models::embed_specs(pot);REQUIRE(specs.size()==1);
+    CHECK(specs[0].form == f);
+    std::vector<double> amps=specs[0].density.amplitudes;
     REQUIRE_FALSE(amps.empty());
     if (tadah::models::rhoform_is_positive(f))
       for (double a : amps) REQUIRE(a >= 0.0);
     pot.add("VERBOSE", 0);
-    tadah::models::DM_REAM dm(pot);
-    REQUIRE(dm.density().form == f);
+    tadah::models::EmbedEvaluator dm(specs[0]);
+    REQUIRE(dm.spec().form == f);
 
     // the density the potential evaluates (Cut_Dummy: f_c = 1 below rcut)
     // follows the table (1 - r/5)^2 on the sampled shells, and carries the
     // form's guarantees on [0, rcut)
-    double err = 0.0, prev = dm.density().value(0.0, 1.0), term_sum = 0.0;
+    double err = 0.0, prev = dm.density(0.0).value, term_sum = 0.0;
     for (double a : amps) term_sum += std::fabs(a);
     int rises = 0;
     for (int i = 1; i < 5000; ++i) {
       const double r = 5.0 * i / 5000.0;
-      const double v = dm.density().value(r, 1.0);
+      const double v = dm.density(r).value;
       if (r >= 2.2) {
         const double x = 1.0 - r / 5.0;
         err = std::max(err, std::fabs(v - x * x));
