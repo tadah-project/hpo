@@ -29,6 +29,7 @@
 #include <tadah/core/periodic_table.h>
 #include <tadah/hpo/runners.h>
 #include <tadah/tadah.lammps/lammps_tadah.h>
+#include <tadah/models/eam/embed_edit.h>
 
 #include <force.h>
 #include <input.h>
@@ -164,12 +165,13 @@ struct Run {
     std::vector<std::string> exact;   // forces, fnorm, pressures (lossless)
 };
 
-Run run_case(LammpsRunner& runner, bool eamfast, const char* embf0) {
+Run run_case(LammpsRunner& runner, bool eamfast, const char* embf0,bool unified=false) {
     Run r;
     const std::string pot_path = write_pot(eamfast, embf0);
     tadah::core::Context pot_ctx;
     REQUIRE_NOTHROW(pot_ctx =
         tadah::core::CoreUserConfigParser().parse(pot_path));
+    if(unified)tadah::models::replace_ream_with_embed(pot_ctx);
 
     auto lmp = runner.create_instance(
         {"lmp", "-log", "none", "-screen", "none"});
@@ -350,6 +352,25 @@ TEST_CASE("DM_REAM fast path: EMBF0 ZERO/FREE on EAMFAST and generic kernels",
     REQUIRE(af.e_iso == 0.0);
     REQUIRE(af.e == zf.e);
     REQUIRE(af.exact == zf.exact);
+}
+
+TEST_CASE("DM_Embed LAMMPS generic accelerated and legacy kernels agree", "[unified-dm][pair_tadah][eamfast]") {
+  tadah::core::PeriodicTable::initialize();LammpsRunner runner;
+  for(const char *reference:{"ZERO","FREE"}) {
+    const auto legacy=run_case(runner,false,reference);
+    const auto generic=run_case(runner,false,reference,true);
+    const auto fast=run_case(runner,true,reference,true);
+    REQUIRE(fast.fast);REQUIRE_FALSE(generic.fast);
+    REQUIRE(generic.e==Approx(legacy.e).margin(1e-9));
+    REQUIRE(fast.e==Approx(generic.e).margin(1e-8));
+    const auto p=parity(generic,fast),q=parity(legacy,generic);
+    // Summed force/virial parity uses the established 1e-8 tolerance
+    // for independently certified radial tables (per-function tolerance 1e-9).
+    REQUIRE(p.fnorm<1e-8);REQUIRE(p.pressure<1e-8);REQUIRE(p.force<1e-8);
+    // The relative virial comparison is sensitive to cancellation in the
+    // net pressure; use the approved summed LAMMPS tolerance here too.
+    REQUIRE(q.fnorm<1e-8);REQUIRE(q.pressure<1e-8);REQUIRE(q.force<1e-8);
+  }
 }
 
 TEST_CASE("pair_coeff warns when a DM_REAM potential has no EMBF0 line",

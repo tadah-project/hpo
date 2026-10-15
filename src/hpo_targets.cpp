@@ -1,4 +1,5 @@
 #include <tadah/hpo/hpo_targets.h>
+#include <tadah/models/descriptors/dm/embed_spec.h>
 #include <tadah/hpo/observables/observable_parser.h>
 #include <tadah/hpo/hpo_log.h>
 #include <tadah/hpo/init_strategy.h>
@@ -209,6 +210,7 @@ void HPOTargets::Opti::resize(size_t s) {
 HPOTargets::HPOTargets(core::Context &c, std::string fn,
                        const mlip::KeyProvenance *provenance)
     : context(c) {
+  models::resolve_embed_blocks(context);
   /* The training record of the potential files, taken before anything
    * below can insert a default into the context. */
   training_record = mlip::training_record(context, provenance);
@@ -235,6 +237,8 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn,
    * WARM seeds (form check) that depend on it. Stored value only. */
   if (models::context_has_ream(context))
     rho_form_ = models::require_rhoform(context, "tadah hpo");
+  else if(models::embed_specs(context).size()==1)
+    rho_form_=models::embed_specs(context)[0].form;
 
   /* LS keeps configuration order: the outvar/loss columns, the
    * per-evaluation rows and the potential-file header are emitted in LS
@@ -1437,6 +1441,8 @@ void HPOTargets::read(const std::string& fn)
      * line, the first in the file (owner decision 2026-09-29). */
     {
         bool armed = false;
+        for(const auto &kv:optimap) if(kv.first.find(".DENSITY.")!=std::string::npos)
+          for(bool selected:kv.second.opt)armed=armed||selected;
         for (const auto& k : density_gate_keys()) {
             const auto it = optimap.find(k);
             if (it == optimap.end()) continue;
@@ -1998,7 +2004,10 @@ void HPOTargets::process_optim_config(std::istringstream& iss,
     throw std::runtime_error(e);
 
   Opti& omap = optimap[k];
-  size_t s = context.size(k);
+  const bool named=k.find('.')!=std::string::npos;
+  std::optional<models::EmbedParameterBinding> binding;
+  if(named) binding=models::embed_binding(context,k);
+  size_t s = named?binding->values.size():context.size(k);
   omap.resize(s);
 
   std::vector<std::string> tokens = parse_optim_line(iss);
@@ -2088,9 +2097,12 @@ void HPOTargets::process_optim_config(std::istringstream& iss,
    * Gaussian basis, under NONNEG. Every form: a radial bump width box
    * (SGRID2B of D2_Blip/D2_Blip5, SGRIDMB of a Blip/Blip5 density) is
    * positive. */
-  const bool nonneg_amp = models::optim_key_lower_bound(k, rho_form_) ==
-                          models::OptimLowerBound::NonNegative;
-  const auto low_rule = models::optim_low_bound_rule(k, context);
+  const bool named_amp=named && k.size()>=11 && k.compare(k.size()-11,11,".AMPLITUDES")==0;
+  const bool nonneg_amp = named ? named_amp && binding->positive :
+      models::optim_key_lower_bound(k, rho_form_) == models::OptimLowerBound::NonNegative;
+  auto low_rule = named ? std::optional<models::OptimLowBoundRule>{} : models::optim_low_bound_rule(k, context);
+  if(named && binding->positive)
+    low_rule=models::OptimLowBoundRule{!named_amp,named_amp?"nonnegative amplitudes":"a positive scale or radius",k};
   const std::string form_name =
       rho_form_ ? std::string("RHOFORM ") + models::rhoform_name(*rho_form_) : "";
 
@@ -2134,7 +2146,7 @@ void HPOTargets::process_optim_config(std::istringstream& iss,
                                "(the neighbour list is sized from an explicit high bound); "
                                "give explicit bounds");
     if (!mode_set) {
-      rule.geometric = optim_key_positive_only(k);
+      rule.geometric = named ? binding->positive && !named_amp : optim_key_positive_only(k);
       rule.factor    = rule.geometric ? 2.0 : 0.5;
     }
     /* Non-negative amplitudes: NNLS fits put amplitudes at exactly 0, so a
@@ -2185,7 +2197,10 @@ void HPOTargets::process_optim_config(std::istringstream& iss,
     }
   }
 
-  context.get<std::vector<std::string>>(k, omap.config);
+  if(named) {
+    omap.config.clear();
+    for(double v:binding->values) omap.config.push_back(core::format_roundtrip(v));
+  } else context.get<std::vector<std::string>>(k, omap.config);
 
   /* AUTO: the group floor is r * max|x0| over the indices of THIS line. */
   double group_max = 0.0;
