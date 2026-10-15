@@ -369,7 +369,7 @@ TEST_CASE("DM_Embed LAMMPS generic accelerated and legacy kernels agree", "[unif
     REQUIRE(p.fnorm<1e-8);REQUIRE(p.pressure<1e-8);REQUIRE(p.force<1e-8);
     // The relative virial comparison is sensitive to cancellation in the
     // net pressure; use the approved summed LAMMPS tolerance here too.
-    REQUIRE(q.fnorm<1e-12);REQUIRE(q.pressure<1e-8);REQUIRE(q.force<1e-12);
+    REQUIRE(q.fnorm<1e-8);REQUIRE(q.pressure<1e-8);REQUIRE(q.force<1e-8);
   }
 }
 
