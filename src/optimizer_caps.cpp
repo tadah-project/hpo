@@ -519,6 +519,30 @@ Registry build_registry()
          * DIRECT and AGS take x0 as their output only. */
         c.starts_at_x0 = !(starts("GD_STOGO") || starts("GN_DIRECT") ||
                            starts("GN_ORIG_DIRECT") || starts("GN_AGS"));
+        /* Where they start instead (stogo/global.cc FillRegular and
+         * FillRandom, cdirect.c, ags.cc; measured as the PRESTAGE refinement
+         * of a 2-D run in [4, 6] x [0.1, 0.4]: GN_DIRECT_L's first points
+         * (5, 0.25), (4.33, 0.25), (5.67, 0.25), GD_STOGO's (5, 0.25) and
+         * its stencil, GN_AGS's (5.0002, 0.2500), (4.0002, 0.25),
+         * (5.9998, 0.25); none at the candidate). */
+        if (starts("GD_STOGO"))
+            c.start_note =
+                s == "GD_STOGO_RAND"
+                    ? "StoGO evaluates the centre of the OPTIM box first (with "
+                      "POPULATION 2n + 1 or more, n the OPTIM dimensions, a "
+                      "random point of the box) and then samples the whole "
+                      "box; NLopt never reads that point"
+                    : "StoGO evaluates the centre of the OPTIM box first and "
+                      "then samples the whole box; NLopt never reads that "
+                      "point";
+        else if (starts("GN_DIRECT") || starts("GN_ORIG_DIRECT"))
+            c.start_note = "DIRECT evaluates the centre of the OPTIM box first "
+                           "and then divides the whole box; NLopt never reads "
+                           "that point";
+        else if (starts("GN_AGS"))
+            c.start_note = "AGS evaluates points of a space-filling curve "
+                           "through the whole OPTIM box, the first near its "
+                           "centre; NLopt never reads that point";
 
         /* Initial-step consumption, verified against nlopt 2.10
          * src/api/optimize.c (see StepUse doc in optimizer_caps.h). */

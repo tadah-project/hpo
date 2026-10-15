@@ -153,8 +153,20 @@ struct OptimizerCaps {
      * gradient-budget warning (gradient_budget_warnings, backend_rules.h)
      * takes the start of a search on one of them for a point the run has
      * evaluated only when its first call is there. The other backends
-     * evaluate every point they ask for and keep the default. */
+     * evaluate every point they ask for and keep the default. A search on
+     * one of these never uses the point it is given, so a PRESTAGE
+     * refinement on one, and an AUGLAG whose INNER search is one under
+     * MULTISTART or as the refinement, is refused at startup
+     * (require_prestage_refinement(), require_inner_start_used(),
+     * strategy_rules.h). */
     bool        starts_at_x0 = true;
+
+    /* Where the first call of a backend whose starts_at_x0 is false is
+     * instead, what it then evaluates, and that it never reads the point it
+     * is given: the clause of those refusals ("DIRECT evaluates the centre
+     * of the OPTIM box first and then divides the whole box; NLopt never
+     * reads that point"); "" for every other backend. */
+    const char* start_note = "";
 
     /* How the tolerances end the run when one of them is costly, the last
      * clause of require_stop()'s message and a line of the ALGO help (""

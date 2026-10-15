@@ -1759,16 +1759,22 @@ TEST_CASE("Run record: the startup budget warning of a search that starts "
  * ones or not:
  *   - NLopt's StoGO does not start at the point it is given: its first
  *     trial is the centre of its box (stogo/global.cc), here (0.5, 5.5)
- *     with SGRID2B (2) in [4, 7]. A PRESTAGE refinement NLOPT:GD_STOGO
- *     (TOPK 1) after an LN_SBPLX exploration of 4 evaluations from the
- *     configuration's point (0.5, 5) evaluates that centre (row 5, at no
- *     earlier row's point) and its 4-point stencil (rows 6-9) before any
- *     step, not the candidate: at MAXEVAL 5 the WARNING "the PRESTAGE
- *     refinement NLOPT:GD_STOGO: MAXEVAL 5 takes no step: its gradient
- *     search, which does not start at the point it is given, evaluates the
- *     loss at a point of its own (1 evaluation) ..., which needs MAXEVAL 6
- *     or more", once, and 9 rows; at MAXEVAL 6 none, and row 10 is a step,
- *     near none of rows 1-9;
+ *     with SGRID2B (2) in [4, 7]. A PLAIN NLOPT:GD_STOGO under NOISE
+ *     CALIBRATION 2, whose calibration evaluates the configuration's point
+ *     (0.5, 5) twice (rows 1-2), evaluates that centre (row 3, at no
+ *     earlier row's point) and its 4-point stencil (rows 4-7) before any
+ *     step, not the seed point: at MAXEVAL 5 the WARNING "the
+ *     STRATEGY-level optimiser NLOPT:GD_STOGO: MAXEVAL 5 takes no step: its
+ *     gradient search, which does not start at the point it is given,
+ *     evaluates the loss at a point of its own (1 evaluation) ..., which
+ *     needs MAXEVAL 6 or more", once, and 7 rows; at MAXEVAL 6 none, and
+ *     row 8 is a step, near none of rows 1-7;
+ *   - a PRESTAGE refinement NLOPT:GD_STOGO (TOPK 1, after an LN_SBPLX
+ *     exploration) is refused at startup: hpo_run throws "Error on line
+ *     ...: STRATEGY TYPE PRESTAGE cannot refine with NLOPT:GD_STOGO: it
+ *     does not start at the point it is given ...", the journal records it
+ *     ("startup: Error on line ...", its first line) and nothing is
+ *     evaluated (no loss.tadah);
  *   - under NOISE CALIBRATION 2 the first MULTISTART start (LD_LBFGS, INIT
  *     LHS 2, SEED 3, N_STARTS 2) begins at the seed point the calibration
  *     evaluated (rows 1-2) and takes its loss from the run's record: at
@@ -1779,13 +1785,20 @@ TEST_CASE("Run record: the startup budget warning of a search that starts "
  *     BUDGET_PER_START 5 takes no step: its gradient search evaluates the
  *     loss at a starting point (1 evaluation) ..., which needs
  *     BUDGET_PER_START 6 or more", and none for the first start.
- * Before the fix: the StoGO refinement at MAXEVAL 5 was not warned (the
- * warning took the loss at its start from the run's record, needing 5;
- * lanes/D/tmp/review/xl2-search stogo2: no warning, the box centre and its
- * stencil, no step), and the MULTISTART WARNING was "each MULTISTART start
- * NLOPT:LD_LBFGS: BUDGET_PER_START 5 ...", which claimed the first start,
- * which steps (xl2-search msn): the StoGO MAXEVAL 5 and the MULTISTART
- * checks fail; the StoGO MAXEVAL 6 leg passes as well (a pin). */
+ * Until the refinement on StoGO was refused (owner decision, MK,
+ * 2026-10-15) the StoGO legs ran it as that refinement, after an LN_SBPLX
+ * exploration of 4 evaluations from the configuration's point (rows 1-4;
+ * the centre row 5, its stencil rows 6-9; MAXEVAL 5 warned "the PRESTAGE
+ * refinement NLOPT:GD_STOGO: MAXEVAL 5 ...", 9 rows; MAXEVAL 6 a step at
+ * row 10); the PLAIN legs under NOISE CALIBRATION check the same warning
+ * rule, and pass before the refusal as well (pins); the refusal leg fails
+ * before it (hpo_run ran the refinement, status 0).
+ * Before the fix of the warning: the StoGO refinement at MAXEVAL 5 was not
+ * warned (the warning took the loss at its start from the run's record,
+ * needing 5; lanes/D/tmp/review/xl2-search stogo2: no warning, the box
+ * centre and its stencil, no step), and the MULTISTART WARNING was "each
+ * MULTISTART start NLOPT:LD_LBFGS: BUDGET_PER_START 5 ...", which claimed
+ * the first start, which steps (xl2-search msn). */
 TEST_CASE("Run record: the startup budget warning of NLopt's StoGO and of "
           "the MULTISTART starts under NOISE CALIBRATION follows the run",
           "[HPO][termination][repeat_points][gradient_budget][stogo]")
@@ -1797,25 +1810,28 @@ TEST_CASE("Run record: the startup budget warning of NLopt's StoGO and of "
         "LOSS L2\nFAILSCORE 1e9\nQFLUSH 1000\nDIGITS 15\nPC_ERMSE 0 1\n"
         "OPTIM CGRID2B (1) 0.1 0.9\nOPTIM SGRID2B (2) 4.0 7.0\n";
     const auto stogo = [&](unsigned maxeval) {
-        return plain_block("    TYPE PRESTAGE\n    LIB NLOPT\n"
-                           "    ALGO GD_STOGO\n    MAXEVAL " +
-                           std::to_string(maxeval) +
-                           "\n    TOPK 1\n    EXPLORE\n      LIB NLOPT\n"
-                           "      ALGO LN_SBPLX\n      MAXEVAL 4\n"
-                           "    ENDEXPLORE\n");
+        return "OPTIMIZER\n  NOISE\n    CALIBRATION 2\n  ENDNOISE\n"
+               "  STRATEGY\n    TYPE PLAIN\n    LIB NLOPT\n"
+               "    ALGO GD_STOGO\n    MAXEVAL " +
+               std::to_string(maxeval) + "\n  ENDSTRATEGY\nENDOPTIMIZER\n";
     };
-    /* The refinement's first row is the box centre, at no earlier row's
-     * point, and the next 4 rows its stencil. */
+    /* Rows 1-2 are the calibration's, at the configuration's point; the
+     * search's first row is the box centre, at no earlier row's point, and
+     * the next 4 rows its stencil. */
     const auto centre_first = [](const std::vector<std::vector<double>>& pts) {
-        REQUIRE(pts.size() >= 9u);
-        CHECK(std::fabs(pts[4][0] - 0.5) < 1e-12);
-        CHECK(std::fabs(pts[4][1] - 5.5) < 1e-12);
-        for (std::size_t j = 0; j < 4; ++j)
-            CHECK_FALSE(near_point(pts[j], pts[4]));
-        CHECK(stencil_centre(pts, 5, 5, 8) == std::optional<std::size_t>(4));
+        REQUIRE(pts.size() >= 7u);
+        for (std::size_t j = 0; j < 2; ++j) {
+            CHECK(std::fabs(pts[j][0] - 0.5) < 1e-12);
+            CHECK(std::fabs(pts[j][1] - 5.0) < 1e-12);
+        }
+        CHECK(std::fabs(pts[2][0] - 0.5) < 1e-12);
+        CHECK(std::fabs(pts[2][1] - 5.5) < 1e-12);
+        for (std::size_t j = 0; j < 2; ++j)
+            CHECK_FALSE(near_point(pts[j], pts[2]));
+        CHECK(stencil_centre(pts, 3, 3, 6) == std::optional<std::size_t>(2));
     };
-    SECTION("the PRESTAGE refinement NLOPT:GD_STOGO, MAXEVAL 5: warned, no "
-            "step") {
+    SECTION("NOISE CALIBRATION 2, PLAIN NLOPT:GD_STOGO, MAXEVAL 5: warned, "
+            "no step") {
         TaRun run(stogo(5), root);
         int status = -1;
         REQUIRE_NOTHROW(status = tadah::hpo::hpo_run(run.ctx));
@@ -1824,7 +1840,7 @@ TEST_CASE("Run record: the startup budget warning of NLopt's StoGO and of "
         const std::string journal = read_file("hpo_run.log");
         INFO("journal:\n" << journal);
         CHECK(count_of(journal,
-                       "the PRESTAGE refinement NLOPT:GD_STOGO: MAXEVAL 5 "
+                       "the STRATEGY-level optimiser NLOPT:GD_STOGO: MAXEVAL 5 "
                        "takes no step: its gradient search, which does not "
                        "start at the point it is given, evaluates the loss at "
                        "a point of its own (1 evaluation) and the gradient "
@@ -1834,11 +1850,11 @@ TEST_CASE("Run record: the startup budget warning of NLopt's StoGO and of "
                        "or more") == 1u);
         CHECK(count_of(journal, kNoStep) == 1u);
         const auto pts = params_points();
-        CHECK(pts.size() == 9u);
+        CHECK(pts.size() == 7u);
         centre_first(pts);
     }
-    SECTION("the PRESTAGE refinement NLOPT:GD_STOGO, MAXEVAL 6: not warned, "
-            "a step") {
+    SECTION("NOISE CALIBRATION 2, PLAIN NLOPT:GD_STOGO, MAXEVAL 6: not "
+            "warned, a step") {
         TaRun run(stogo(6), root);
         int status = -1;
         REQUIRE_NOTHROW(status = tadah::hpo::hpo_run(run.ctx));
@@ -1848,12 +1864,38 @@ TEST_CASE("Run record: the startup budget warning of NLopt's StoGO and of "
         INFO("journal:\n" << journal);
         CHECK(count_of(journal, kNoStep) == 0u);
         const auto pts = params_points();
-        REQUIRE(pts.size() == 10u);
+        REQUIRE(pts.size() == 8u);
         centre_first(pts);
         bool far = true;
-        for (std::size_t j = 0; j < 9; ++j)
-            far = far && !near_point(pts[j], pts[9]);
+        for (std::size_t j = 0; j < 7; ++j)
+            far = far && !near_point(pts[j], pts[7]);
         CHECK(far);
+    }
+    SECTION("the PRESTAGE refinement NLOPT:GD_STOGO is refused at startup") {
+        TaRun run(plain_block("    TYPE PRESTAGE\n    LIB NLOPT\n"
+                              "    ALGO GD_STOGO\n    MAXEVAL 5\n"
+                              "    TOPK 1\n    EXPLORE\n      LIB NLOPT\n"
+                              "      ALGO LN_SBPLX\n      MAXEVAL 4\n"
+                              "    ENDEXPLORE\n"),
+                  root);
+        std::string what;
+        try {
+            (void)tadah::hpo::hpo_run(run.ctx);
+        } catch (const std::exception& e) {
+            what = e.what();
+        }
+        INFO("refusal: " << what);
+        CHECK_THAT(what, Catch::StartsWith("Error on line ") &&
+                             Catch::Contains(
+                                 "STRATEGY TYPE PRESTAGE cannot refine with "
+                                 "NLOPT:GD_STOGO: it does not start at the "
+                                 "point it is given") &&
+                             Catch::EndsWith("\nLine: ENDOPTIMIZER"));
+        /* The journal writes each line of a refusal as a line of its own. */
+        CHECK(read_file("hpo_run.log")
+                  .find("startup: " + what.substr(0, what.find('\n'))) !=
+              std::string::npos);
+        CHECK_FALSE(fs::exists("loss.tadah"));
     }
     SECTION("NOISE CALIBRATION 2, MULTISTART NLOPT:LD_LBFGS, "
             "BUDGET_PER_START 5: the later start warned") {
@@ -5991,7 +6033,11 @@ TEST_CASE("Termination: DLIB:BFGS records why it ended",
  *               refused at startup);
  *   PRESTAGE    a TADAH:RANDOM exploration, then the backend as the
  *               refinement of TOPK 2 candidates (TOPK 1 for a global
- *               backend);
+ *               backend; one that does not start at the point it is given,
+ *               OptimizerCaps::starts_at_x0, is refused at startup: until
+ *               that refusal, owner decision, MK, 2026-10-15, the sweep ran
+ *               NLopt's StoGO, DIRECT and AGS as the refinement too, and
+ *               they recorded their end there);
  *   RESTART     PLAIN under an active RESTART (AFTER_STAGNATION 4, MAX 1):
  *               the backend's status, or RESTART's own once its restart is
  *               used.
@@ -6049,6 +6095,8 @@ void check_every_backend_records_its_end(const std::string& strategy)
         if (c->lib == "CERES") continue;   // registered, not built
 #endif
         if (strategy == "MULTISTART" && !tadah::hpo::runs_from_each_start(*c))
+            continue;                      // refused at startup
+        if (strategy == "PRESTAGE" && !c->starts_at_x0)
             continue;                      // refused at startup
         DYNAMIC_SECTION(c->lib << ":" << c->algo) {
             TaRun run(registry_block(*c, strategy));

@@ -91,16 +91,53 @@ void require_multistart_backend(const OptimizerSpec& spec);
 /* STRATEGY TYPE PRESTAGE: an EXPLORE block that names an optimiser. */
 void require_prestage_explore(const OptimizerSpec& spec);
 
-/* STRATEGY TYPE PRESTAGE: `spec` names a refinement optimiser, and with a
+/* STRATEGY TYPE PRESTAGE: `spec` names a refinement optimiser; one whose
+ * first call is at the point it is given, for any TOPK: the refinement
+ * starts from the exploration's candidates, which a search that does not
+ * start there (OptimizerCaps::starts_at_x0: NLopt's StoGO, DIRECT and AGS)
+ * never uses -- "STRATEGY TYPE PRESTAGE cannot refine with
+ * NLOPT:GN_DIRECT_L: it does not start at the point it is given (DIRECT
+ * evaluates the centre of the OPTIM box first and then divides the whole
+ * box; NLopt never reads that point), so the refinement would never use
+ * the exploration's candidates, for any TOPK. Use a local optimiser, which
+ * starts at each candidate (CERES:LBFGS, ..., every one), or run
+ * NLOPT:GN_DIRECT_L as the exploration (EXPLORE block) or once, as
+ * STRATEGY TYPE PLAIN." (checked before the TOPK rule); and with a
  * configured TOPK > 1 one that runs_from_each_start() accepts -- whatever
- * number of candidates the exploration will harvest. */
+ * number of candidates the exploration will harvest. An AUGLAG whose INNER
+ * search does not start at its point is require_inner_start_used()'s. */
 void require_prestage_refinement(const OptimizerSpec& spec);
+
+/* Under STRATEGY TYPE MULTISTART and PRESTAGE the points a search starts
+ * from -- each start's INIT point, each candidate of the exploration --
+ * are the configuration's whole purpose. NLopt's AUGLAG, a local
+ * algorithm, runs its INNER search from the point it is given (HPO sets no
+ * constraint, auglag.c), so with an INNER search that does not start at
+ * its point (search_ignoring_start(), phase_specs.h: StoGO, DIRECT, AGS)
+ * it never uses them: throws "the INNER block of the PRESTAGE refinement:
+ * NLOPT:AUGLAG runs its INNER search NLOPT:GD_STOGO from the point it is
+ * given (each candidate of the exploration), and NLOPT:GD_STOGO does not
+ * start at the point it is given (StoGO evaluates ...; NLopt never reads
+ * that point), so the refinement would never use the exploration's
+ * candidates. Use a local NLopt algorithm in the INNER block, which starts
+ * at the point it is given (NLOPT:LD_AUGLAG, ..., every one)." (under
+ * MULTISTART "... (each MULTISTART start's INIT point) ..., so no
+ * MULTISTART start would begin at its INIT point. ..., or STRATEGY TYPE
+ * PLAIN to run NLOPT:AUGLAG once."). The global optimisers that do not
+ * start at their point are refused by require_multistart_backend() and
+ * require_prestage_refinement() already; MLSL evaluates its starting point
+ * first (mlsl.c). A no-op under PLAIN. It applies require_inner_backend()
+ * first, so the INNER search it looks at is one the INNER rules accept;
+ * validate_run_policy() runs it after them, at the INNER block's line. */
+void require_inner_start_used(const OptimizerSpec& spec);
 
 /* Every rule of spec.strategy_type: require_driver() for PLAIN,
  * require_multistart_backend() for MULTISTART, require_prestage_explore()
  * and require_prestage_refinement() for PRESTAGE; then
  * require_inner_backend() for the INNER block of the STRATEGY-level
- * optimiser and, under PRESTAGE, of the EXPLORE block. A refusal of a
+ * optimiser, require_inner_start_used() for it under MULTISTART and
+ * PRESTAGE, and require_inner_backend() for the INNER block of the EXPLORE
+ * block under PRESTAGE. A refusal of a
  * parsed spec names the line of the block it is about
  * (OptimizerSpec::block_line, with_block_line): "Error on line N: ...
  * \nLine: ENDOPTIMIZER" (or the INNER block's ENDINNER, the EXPLORE
