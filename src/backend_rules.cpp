@@ -223,8 +223,11 @@ bool reads_tolerance(const ToleranceKey& t, const OptimizerSpec& spec,
 
 /* Where to set the tolerance `t` that an MLSL or AUGLAG `spec` refuses:
  * in the INNER block, when its search tests it; otherwise the stops that
- * search honours, as require_inner_run_stop() names them (an INNER GN_ESCH
- * tests no tolerance either). Without an INNER block only G_MLSL and
+ * search honours, as require_inner_run_stop() names them. Every local
+ * NLopt algorithm, the only INNER search startup accepts
+ * (require_inner_backend(), strategy_rules.h), tests every tolerance, so
+ * the second branch is the caps' rule for an INNER search that tests
+ * fewer, which no registered one is. Without an INNER block only G_MLSL and
  * G_MLSL_LDS refuse one (tolerance_tested: they have no default local
  * optimiser), a spec require_inner_backend() refuses: the block it needs. */
 std::string inner_tolerance_advice(const ToleranceKey& t,
@@ -582,8 +585,9 @@ bool first_call_at_start(const OptimizerSpec& spec)
 /* Whether the local search an MLSL or AUGLAG runs (inner_run_spec) starts at
  * the point it is handed -- for MLSL one of its own evaluated points
  * (nlopt_optimize_limited from a point of its sample tree), for AUGLAG the
- * phase's start --, as every local NLopt algorithm does; an INNER GD_STOGO
- * starts at the centre of its box instead. */
+ * phase's start --, as every local NLopt algorithm does
+ * (OptimizerCaps::starts_at_x0), and an INNER block names only local ones
+ * (require_inner_backend(), strategy_rules.h). */
 bool local_starts_at_given(const OptimizerSpec& spec)
 {
     const std::optional<OptimizerSpec> local = inner_run_spec(spec);
@@ -598,8 +602,9 @@ bool local_starts_at_given(const OptimizerSpec& spec)
  * at one of these points (nlopt_optimize_limited from a point of its
  * sample tree), a point the search has evaluated, and asks for the loss
  * and the gradient there (start_clause) -- unless that local search does
- * not start at the point it is handed (local_starts_at_given: an INNER
- * GD_STOGO), when it asks for a point of its own. Its own starting point is
+ * not start at the point it is handed (local_starts_at_given; no local
+ * search startup accepts as an INNER search is one), when it asks for a
+ * point of its own. Its own starting point is
  * the phase's: when that is a point the run has evaluated
  * (`start_recorded`, start_is_recorded), the call there, which asks for no
  * gradient, is answered from the record under `reuse` (RepeatUse::Record).
@@ -656,7 +661,7 @@ bool same_point_bits(const std::vector<double>& a, const std::vector<double>& b)
  * objective and DLIB:BFGS; CERES, DLIB:GFS and the TADAH drivers evaluate
  * every point they ask for) and whose first call is at the point it is
  * given (first_call_at_start: not NLopt's StoGO, which samples its own box
- * from its centre, nor an AUGLAG whose INNER search is StoGO):
+ * from its centre):
  *   - a PRESTAGE refinement starts at an exploration candidate, a usable
  *     evaluation of the run (the refinement takes usable candidates only);
  *   - under NOISE_CALIBRATION (should_run_noise_calibration) the run's
@@ -810,10 +815,10 @@ void phase_budget_warnings(const OptimizerSpec& root, const std::string& name,
      * gradient at a point, so one call is its starting point -- for an
      * MLSL a point it evaluated, every local search's (mlsl.c starts
      * them at points of its sample tree), whose loss the record can
-     * answer; for AUGLAG the phase's start; for an INNER GD_STOGO a point
-     * of its own (local_starts_at_given), which the record does not
-     * answer. NLopt counts a call answered from the record too, so the
-     * budget is the same. */
+     * answer; for AUGLAG the phase's start (local_starts_at_given: an INNER
+     * search is a local one, which starts at the point it is handed).
+     * NLopt counts a call answered from the record too, so the budget is
+     * the same. */
     if (!s.inner || !s.inner->stop.maxeval || *s.inner->stop.maxeval >= 2)
         return;
     const std::optional<OptimizerSpec> local = inner_run_spec(s);

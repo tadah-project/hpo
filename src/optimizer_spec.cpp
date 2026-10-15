@@ -244,6 +244,34 @@ static void print_nlopt_caps(std::ostream& os,const std::string& algo)
             os<<"   * STEP is rejected: " << c.step_note << "\n";
         if (c.ignores_bounds)
             os<<"   * WARNING: " << c.bounds_note << "\n";
+        /* MLSL and AUGLAG: what their INNER block takes (require_inner_
+         * backend(), strategy_rules.h: a local NLopt algorithm). */
+        if (c.accepts_inner) {
+            const std::string text =
+                std::string("INNER ... ENDINNER: the local search it runs, "
+                            "from ") +
+                (c.is_global ? "the points it samples in the OPTIM box"
+                             : "its own starting point") +
+                ": LIB NLOPT and a local ALGO; a global one (`tadah explain "
+                "ALGO` marks each) is refused, and so is one that needs an "
+                "INNER block of its own. " +
+                (c.default_inner
+                     ? std::string("Without one NLopt runs its default ") +
+                           c.default_inner + "."
+                     : std::string("The block is required: NLopt has no "
+                                   "default local optimiser for it."));
+            /* Words, at most 76 columns a line. */
+            std::istringstream words(text);
+            std::string line = "   *", word;
+            while (words >> word) {
+                if (line.size() > 5 && line.size() + 1 + word.size() > 76) {
+                    os << line << "\n";
+                    line = "    ";
+                }
+                line += " " + word;
+            }
+            os << line << "\n";
+        }
     } catch (const std::exception&) { /* unregistered: nothing to add */ }
 }
 

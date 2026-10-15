@@ -4,7 +4,6 @@
 #include <tadah/hpo/phase_specs.h>
 
 #include <algorithm>
-#include <optional>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -33,18 +32,11 @@ std::string backend_name(const OptimizerSpec& s)
 }
 
 /* The phases as validate_run_policy() names them: the EXPLORE block, and
- * the optimiser of `s` itself -- under PRESTAGE the refinement.
- * require_driver()'s refusal, validate_run_policy() and
- * reject_refused_backends() take them from here, so all three name a phase
- * alike. */
+ * the optimiser of `s` itself -- under PRESTAGE the refinement
+ * (run_phase_name(), strategy_rules.h). require_driver()'s refusal,
+ * validate_run_policy() and reject_refused_backends() take them from here,
+ * so all three name a phase alike. */
 constexpr const char* kExploreBlock = "the EXPLORE block";
-
-std::string run_phase_name(const OptimizerSpec& s)
-{
-    return s.strategy_type == StrategyType::PRESTAGE
-               ? "the PRESTAGE refinement"
-               : "the STRATEGY-level optimiser";
-}
 
 /* The backends runs_from_each_start() accepts, sorted (format_caps_list),
  * from the live registry rather than a hard-coded list. */
@@ -143,6 +135,13 @@ const char* strategy_type_name(StrategyType type)
         case StrategyType::PRESTAGE:   return "PRESTAGE";
     }
     return "?";
+}
+
+std::string run_phase_name(const OptimizerSpec& s)
+{
+    return s.strategy_type == StrategyType::PRESTAGE
+               ? "the PRESTAGE refinement"
+               : "the STRATEGY-level optimiser";
 }
 
 void require_driver(const OptimizerSpec& s, DriverPhase phase)
@@ -244,11 +243,50 @@ void require_inner_backend(const OptimizerSpec& parent,
             " names " + backend_name(inner) + ", which needs an INNER block "
             "of its own; INNER blocks do not nest: pick a local algorithm "
             "such as LN_BOBYQA");
+    /* No nested global search (owner decision, MK, 2026-10-15): an INNER
+     * search is the local search MLSL starts at the points it samples, and
+     * AUGLAG (HPO sets it no constraint, auglag.c) once at its own starting
+     * point; a global optimiser there searches the whole box from each of
+     * them. Every search that does not start at the point it is given
+     * (OptimizerCaps::starts_at_x0: StoGO, DIRECT, AGS) is a global one, so
+     * the rule covers them too, with where they start instead. */
+    if (inner_caps && inner_caps->is_global) {
+        const std::string in = backend_name(inner);
+        const OptimizerCaps& caps = optimizer_caps(parent);
+        std::string what = in + " is a global optimiser";
+        if (!inner_caps->starts_at_x0)
+            what += std::string(" that does not start at the point it is "
+                                "given (") +
+                    inner_caps->start_note + ")";
+        throw std::runtime_error(
+            "the INNER block of " + (phase.empty() ? name : phase) + ": " +
+            name + " cannot run " + in + " as its INNER search: an INNER "
+            "search is a local search, which " + name + " starts at " +
+            (caps.is_global ? "the points it samples in the OPTIM box"
+                            : "its own starting point") +
+            ", and " + what + ". Use a local NLopt algorithm in the INNER "
+            "block, which starts at the point it is given (" +
+            nlopt_local_starting_at_their_point() + "), or run " + in +
+            " as the exploration (EXPLORE block) or once, as STRATEGY TYPE "
+            "PLAIN.");
+    }
 }
 
 bool runs_from_each_start(const OptimizerCaps& caps)
 {
     return !caps.is_global || caps.accepts_multi_seed;
+}
+
+std::string nlopt_inner_searches_without_gradient()
+{
+    const auto caps = filter_optimizer_caps([](const OptimizerCaps& c) {
+        if (c.lib != "NLOPT" || !starts_where_given(c)) return false;
+        OptimizerSpec sp;
+        sp.lib = c.lib;
+        sp.algo = c.algo;
+        return !obtains_gradients(sp);
+    });
+    return format_caps_list(caps, caps.size());
 }
 
 void require_multistart_backend(const OptimizerSpec& spec)
@@ -311,43 +349,6 @@ void require_prestage_refinement(const OptimizerSpec& spec)
         "), or TOPK 1 to refine the best candidate once.");
 }
 
-void require_inner_start_used(const OptimizerSpec& spec)
-{
-    if (spec.strategy_type == StrategyType::PLAIN) return;
-    /* The INNER search looked at below is one the INNER rules accept. */
-    const std::string phase = run_phase_name(spec);
-    require_inner_backend(spec, phase);
-    const OptimizerCaps& caps = optimizer_caps(spec);
-    /* NLopt's AUGLAG: a local algorithm that runs a local search, from its
-     * starting point (auglag.c, HPO setting no constraint). MLSL evaluates
-     * its starting point first (mlsl.c); a global optimiser under
-     * MULTISTART is require_multistart_backend()'s. */
-    if (!caps.accepts_inner || caps.is_global) return;
-    const std::optional<OptimizerSpec> local = inner_run_spec(spec);
-    if (!local) return;   // an AUGLAG without one: require_inner_backend()'s
-    const std::optional<OptimizerSpec> blind = search_ignoring_start(*local);
-    if (!blind) return;
-    const std::string name = backend_name(spec);
-    const std::string inner = backend_name(*blind);
-    const bool prestage = spec.strategy_type == StrategyType::PRESTAGE;
-    throw std::runtime_error(
-        "the INNER block of " + phase + ": " + name + " runs its INNER "
-        "search " + inner + " from the point it is given (" +
-        (prestage ? "each candidate of the exploration"
-                  : "each MULTISTART start's INIT point") +
-        "), and " + inner + " does not start at the point it is given (" +
-        optimizer_caps(*blind).start_note + "), so " +
-        (prestage ? "the refinement would never use the exploration's "
-                    "candidates"
-                  : "no MULTISTART start would begin at its INIT point") +
-        ". Use a local NLopt algorithm in the INNER block, which starts at "
-        "the point it is given (" + nlopt_local_starting_at_their_point() +
-        ")" +
-        (prestage ? ""
-                  : ", or STRATEGY TYPE PLAIN to run " + name + " once") +
-        ".");
-}
-
 void validate_run_policy(const OptimizerSpec& spec)
 {
     /* Each refusal names the line of the block it is about, as the
@@ -378,9 +379,6 @@ void validate_run_policy(const OptimizerSpec& spec)
     });
     at(spec.inner ? *spec.inner : spec,
        [&] { require_inner_backend(spec, run_phase_name(spec)); });
-    /* After the INNER rules, whose refusal of the INNER block comes first. */
-    at(spec.inner ? *spec.inner : spec,
-       [&] { require_inner_start_used(spec); });
     if (spec.strategy_type == StrategyType::PRESTAGE) {
         const OptimizerSpec& explore = *spec.prestage;
         at(explore.inner ? *explore.inner : explore,

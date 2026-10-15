@@ -895,10 +895,20 @@ void check_budget_warning_follows_run(const BudgetCase& c)
  *     evaluation 10;
  *   - GD_STOGO and GD_STOGO_RAND, which do not start at the point they are
  *     given: the centre of the box (0, 0), its stencil, a first step at
- *     evaluation 6; AUGLAG with INNER GD_STOGO the same;
- *   - GD_MLSL with INNER GD_STOGO: the start and 4 samples, then the local
- *     search's own start, the centre (not one of MLSL's points), and its
- *     stencil, a first step at evaluation 11.
+ *     evaluation 6;
+ *   - specs startup refuses: AUGLAG with INNER GD_STOGO (the same as
+ *     GD_STOGO) and GD_MLSL with INNER GD_STOGO (the start and 4 samples,
+ *     then the local search's own start, the centre, not one of MLSL's
+ *     points, and its stencil, a first step at evaluation 11).
+ *     require_inner_backend() (strategy_rules.h) refuses a global INNER
+ *     search at the ENDINNER line, so no run prints the warning of these
+ *     two: they pin the rule gradient_budget_warnings() keeps for an INNER
+ *     search that does not start at the point it is handed (OptimizerCaps::
+ *     starts_at_x0, local_starts_at_given(), backend_rules.cpp), called on
+ *     the spec directly and checked against NLopt's run of it
+ *     (run_nlopt_impl applies no startup rule).
+ * Before the INNER rule (fix/no-nested-global): the same, and startup
+ * accepted the two INNER GD_STOGO specs and printed their warning.
  * Before the fix: does not compile (gradient_budget_warnings takes the
  * run's reuse permission since fix/budget-reuse); with the old call
  * (gradient_budget_warnings(sp)) it passes, as it did when the MLSL rule
@@ -921,10 +931,10 @@ TEST_CASE("NLopt MAXEVAL: the startup warning of a gradient budget that "
          std::nullopt, 3, 4, 10},
         {"GD_STOGO", "GD_STOGO", "", std::nullopt, 0, 1, 6},
         {"GD_STOGO_RAND", "GD_STOGO_RAND", "", std::nullopt, 0, 1, 6},
-        {"AUGLAG, INNER GD_STOGO", "AUGLAG", "GD_STOGO", std::nullopt, 0, 1,
-         6},
-        {"GD_MLSL, INNER GD_STOGO", "GD_MLSL", "GD_STOGO", std::nullopt, 0, 6,
-         11}};
+        {"AUGLAG, INNER GD_STOGO (refused at startup)", "AUGLAG", "GD_STOGO",
+         std::nullopt, 0, 1, 6},
+        {"GD_MLSL, INNER GD_STOGO (refused at startup)", "GD_MLSL",
+         "GD_STOGO", std::nullopt, 0, 6, 11}};
     for (const auto& c : cases)
         DYNAMIC_SECTION(c.label) { check_budget_warning_follows_run<Valley>(c); }
 }
@@ -946,7 +956,9 @@ TEST_CASE("NLopt MAXEVAL: the startup warning of a gradient budget that "
  *     no loss from the record: GD_MLSL with INNER GD_STOGO, whose local
  *     search starts at the centre of the box, a point MLSL has not
  *     evaluated, at 11 (the start, 4 samples, the centre and its 4-point
- *     stencil), and GD_STOGO alone at 6;
+ *     stencil) -- a spec startup refuses (require_inner_backend(): an
+ *     INNER search is a local one), which pins the rule of the function
+ *     as the case above does --, and GD_STOGO alone at 6;
  *   - BlockedValley (a reason): every repeat is evaluated again: GD_MLSL
  *     at 11, G_MLSL_LDS POPULATION 3 at 10, under ANALYTICAL 8, LD_LBFGS
  *     and AUGLAG 6.
@@ -979,8 +991,8 @@ TEST_CASE("NLopt MAXEVAL: the startup warning of a gradient budget follows "
         {"reused: GD_MLSL, INNER LD_LBFGS, HYBRID", "GD_MLSL", "LD_LBFGS",
          GradStrategy::Hybrid, 0, 5, 8},
         {"reused: GD_STOGO", "GD_STOGO", "", std::nullopt, 0, 1, 6},
-        {"reused: GD_MLSL, INNER GD_STOGO", "GD_MLSL", "GD_STOGO",
-         std::nullopt, 0, 6, 11}};
+        {"reused: GD_MLSL, INNER GD_STOGO (refused at startup)", "GD_MLSL",
+         "GD_STOGO", std::nullopt, 0, 6, 11}};
     for (const auto& c : reused)
         DYNAMIC_SECTION(c.label) {
             check_budget_warning_follows_run<ReusingValley>(c);
