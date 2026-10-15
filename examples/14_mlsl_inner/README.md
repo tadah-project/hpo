@@ -32,3 +32,12 @@ line (`the INNER block of the STRATEGY-level optimiser: NLOPT:G_MLSL_LDS
 cannot run NLOPT:GN_CRS2_LM as its INNER search: an INNER search is a
 local search, ...`). Run a global search on its own instead: as a `PLAIN`
 run or as the `PRESTAGE` exploration.
+
+This run has `PC_LAMMPS`, which takes no gradient, so its `INNER` search
+is a derivative-free local NLopt algorithm. A gradient-based one is refused
+when the file is read, at the `ENDINNER` line, naming those it can be
+(`--hpotarget defines PC_LAMMPS but INNER's optimiser NLOPT:LD_MMA is
+gradient-based. PC_LAMMPS requires a gradient-free optimiser, and an INNER
+search is a local NLopt algorithm: name a derivative-free one in the INNER
+block (NLOPT:LN_AUGLAG, NLOPT:LN_AUGLAG_EQ, NLOPT:LN_BOBYQA,
+NLOPT:LN_COBYLA, NLOPT:LN_NELDERMEAD, NLOPT:LN_PRAXIS, NLOPT:LN_SBPLX).`).
