@@ -31,6 +31,7 @@
 #include <filesystem>
 #include <fstream>
 #include <tadah/core/context.h>
+#include <tadah/core/core_user_config_parser.h>
 #include <tadah/core/element.h>
 #include <tadah/core/periodic_table.h>
 #include <tadah/core/aeds_type.h>
@@ -3812,4 +3813,172 @@ TEST_CASE("Indexed ERMSE and FRMSE live trainer gradients match finite differenc
             CHECK(grad[0] == Approx(fd).epsilon(1e-3).margin(1e-7));
         }
     }
+}
+
+/* ------------------------------------------------------------------------
+ * Joined legacy many-body descriptors (DM_mJoin) and DM_Embed potentials.
+ * ------------------------------------------------------------------------ */
+
+namespace {
+
+/* A DM_mJoin of two DM_Blip children (two functions each, Cut_Poly), the
+ * joined CGRIDMB/SGRIDMB lists `cg`/`sg` (four values: the first child's,
+ * then the second's). Energy-only BF_Linear, OALGO 4. */
+Context make_mjoin_blip_context(const std::vector<double>& cg,
+                                const std::vector<double>& sg, double rcut)
+{
+    Context c;
+    c.add("ATOM", "H");
+    c.add("WATOM", 1);
+    c.add("INIT2B", "false");
+    c.add("INITMB", "true");
+    c.add("TYPEMB", "DM_mJoin");
+    for (int child = 0; child < 2; ++child) {
+        c.add("TYPEMB", "DM_Blip");
+        c.add("TYPEMB", 0);
+        c.add("TYPEMB", 2);
+        c.add("TYPEMB", 2);
+        c.add("TYPEMB", "H");
+        c.add("TYPEMB", "H");
+        c.add("RCTYPEMB", "Cut_Poly");
+        c.add("RCUTMB", rcut);
+    }
+    for (double v : cg) c.add("CGRIDMB", v);
+    for (double v : sg) c.add("SGRIDMB", v);
+    c.add("FORCE", "false");
+    c.add("STRESS", "false");
+    c.add("EWEIGHT", 1.0);
+    c.add("FWEIGHT", 1.0);
+    c.add("SWEIGHT", 1.0);
+    c.add("BIAS", "false");
+    c.add("NORM", "false");
+    c.add("VERBOSE", 0);
+    c.add("MODEL", "M_BLR");
+    c.add("MODEL", "BF_Linear");
+    c.add("LAMBDA", 1e-3);
+    c.add("OALGO", 4);
+    return c;
+}
+
+}  // namespace
+
+/* Pins: on a live trainer whose many-body descriptor joins two DM_Blip
+ * (DM_mJoin), OPTIM CGRIDMB (1) and (3), the first function of each child
+ * in the joined list, are routed to finite differences (needs_fd: the
+ * joined index is not an index of a child's grid), and a parameter the
+ * analytical gradient does form agrees with the central difference of the
+ * validation loss. HYBRID takes the routed parameters by finite
+ * differences and ANALYTICAL names them. Before the fix DM_mJoin passed
+ * index 1 to both children: CGRIDMB (1) was differentiated analytically
+ * with the second child's first function added, a wrong gradient. */
+TEST_CASE("compute_analytical_gradient_from_trainer leaves joined legacy "
+          "grids of DM_mJoin to finite differences",
+          "[HPO][analytical_gradient][live_trainer][mjoin]")
+{
+    using tadah::mlip::memory::MLIPWorkspaceManager;
+    tadah::core::PeriodicTable::initialize();
+    const std::vector<double> cg_0 = {1.0, 1.8, 1.2, 2.2};
+    const std::vector<double> sg_0 = {1.0, 1.2, 0.9, 1.1};
+    const double rcut = 3.0;
+
+    auto train_stdb = make_h3_stdb(/*N=*/5, rcut);
+    auto val_stdb   = make_h3_stdb(/*N=*/3, rcut);
+    for (auto& s : val_stdb.structures)
+        for (auto& a : s.atoms) a.position[1] += 0.07;
+    {
+        NNFinder finder;
+        for (auto& s : val_stdb.structures) finder.calc(s, rcut);
+    }
+    for (std::size_t i = 0; i < train_stdb.size(); ++i)
+        train_stdb.structures[i].energy = 0.05 * static_cast<double>(i + 1);
+    for (std::size_t i = 0; i < val_stdb.size(); ++i)
+        val_stdb.structures[i].energy = 0.07 * static_cast<double>(i + 1);
+
+    MLIPWorkspaceManager ws_main;
+    Context c_main = make_mjoin_blip_context(cg_0, sg_0, rcut);
+    Trainer host(c_main, ws_main);
+    host.train(train_stdb);
+    REQUIRE(host.DCS.dmb->label() == "DM_mJoin");
+
+    ScopedTempFileLocal cfg(R"(OPTIMIZER
+LIB DLIB
+ALGO BFGS
+MAXEVAL 1
+ENDOPTIMIZER
+LOSS L2
+PC_EMAE 0 1
+OPTIM CGRIDMB (1,3) 0.0 4.0
+)");
+    Context ctx_for_targets = make_mjoin_blip_context(cg_0, sg_0, rcut);
+    tadah::hpo::HPOTargets trg(ctx_for_targets, cfg.path.string());
+    auto prefs = tadah::hpo::make_param_ref_table(trg);
+    REQUIRE(prefs.size() == 2);
+
+    std::vector<double> g_anal;
+    std::vector<int>    needs_fd;
+    REQUIRE(tadah::hpo::compute_analytical_gradient_from_trainer(
+        host, train_stdb, val_stdb, trg, prefs, g_anal, needs_fd));
+
+    auto loss_at = [&](const std::vector<double>& cg) {
+        MLIPWorkspaceManager ws_h;
+        Context c_h = make_mjoin_blip_context(cg, sg_0, rcut);
+        Trainer t_h(c_h, ws_h);
+        t_h.train(train_stdb);
+        const auto pred_e = predict_energies(t_h, val_stdb);
+        return trg.globalLoss.loss(emae_scaled(val_stdb, pred_e), trg.emae,
+                                   trg.w_emae);
+    };
+    const double h = 1e-5;
+    for (std::size_t i = 0; i < prefs.size(); ++i) {
+        const std::size_t k = prefs[i].arg_pos - 1;
+        auto cp = cg_0, cm = cg_0;
+        cp[k] += h;
+        cm[k] -= h;
+        const double fd = (loss_at(cp) - loss_at(cm)) / (2.0 * h);
+        const bool routed =
+            std::find(needs_fd.begin(), needs_fd.end(),
+                      static_cast<int>(prefs[i].flat_idx)) != needs_fd.end();
+        INFO("CGRIDMB(" << prefs[i].arg_pos << ") analytical=" << g_anal[i]
+             << " FD=" << fd << " routed=" << routed);
+        if (!routed) {
+            const double rel = std::abs(g_anal[i] - fd) /
+                std::max({std::abs(g_anal[i]), std::abs(fd), 1e-12});
+            CHECK(rel < 1e-3);
+        }
+        CHECK(routed);
+    }
+}
+
+/* Pins: the potential of a trainer whose many-body term is a DM_Embed
+ * component (get_param_file: what tadah hpo writes as best_pot.tadah, the
+ * durable best and the archives) has none of the legacy many-body keys
+ * RCTYPEMB and RCUTMB, which the component's CUTOFF block replaces (the
+ * refit writer leaves them out too). Before the fix the descriptor
+ * calculator added the default 'RCTYPEMB Cut_Dummy' to the trainer's
+ * context, and best_pot.tadah carried it next to the block's cutoff. */
+TEST_CASE("A DM_Embed trainer's potential carries no legacy many-body cutoff key",
+          "[HPO][unified-dm][best_pot]")
+{
+    using tadah::mlip::memory::MLIPWorkspaceManager;
+    tadah::core::PeriodicTable::initialize();
+    std::istringstream in(
+        "ATOM H\nWATOM 1\nVERBOSE 0\nINIT2B false\nINITMB true\n"
+        "BIAS false\nNORM false\nFORCE false\nSTRESS false\n"
+        "MODEL M_BLR BF_Linear\nLAMBDA 1e-3\nOALGO 4\n"
+        "DESCRIPTOR h DM_Embed\nPAIRS H H\nDENSITY\nBASIS Blip5\n"
+        "FORM SIGNED\nCENTRES 1 2\nETA 1 1\nAMPLITUDES 1 0.5\nCUTOFF\n"
+        "TYPE Cut_Poly\nRADIUS 3\nENDCUTOFF\nENDDENSITY\nEMBEDDING\n"
+        "BASIS Gaussian\nCENTRES 0 0.5 1\nETA 2 2 2\nREFERENCE ZERO\n"
+        "ENDEMBEDDING\nENDDESCRIPTOR\n");
+    Context c = tadah::core::CoreUserConfigParser().parse(in);
+    auto train_stdb = make_h3_stdb(/*N=*/5, 3.0);
+    for (std::size_t i = 0; i < train_stdb.size(); ++i)
+        train_stdb.structures[i].energy = 0.05 * static_cast<double>(i + 1);
+    MLIPWorkspaceManager ws;
+    Trainer host(c, ws);
+    host.train(train_stdb);
+    const Context pot = host.model->get_param_file();
+    CHECK_FALSE(pot.has_stored("RCTYPEMB"));
+    CHECK_FALSE(pot.has_stored("RCUTMB"));
+    CHECK(pot.blocks("DESCRIPTOR").size() == 1);
 }
