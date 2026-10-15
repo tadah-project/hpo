@@ -297,15 +297,52 @@ std::vector<std::string> gradient_budget_warnings(const OptimizerSpec& root,
  *    record answers: no round after round 0 evaluates a new point, and the
  *    RESTART block's only effect is to end the run once round 0 has had no
  *    new best in AFTER_STAGNATION 3 evaluations. For rounds that search
- *    anew, use an optimiser that starts at the point it is given."; with a
- *    `reuse_blocker` (HPOTargets::repeat_reuse_blocker(): why the run
- *    evaluates a point it has evaluated again) "... asks for round 0's
+ *    anew, use an optimiser that starts at the point it is given."; for a
+ *    search that obtains gradients (GD_STOGO), whose gradients a round
+ *    forms itself, "... asks for round 0's points again, and their
+ *    gradients: the run's record answers their losses, but a round forms
+ *    its gradients itself and evaluates their finite-difference stencils
+ *    again (GRAD_STRATEGY NUMERICAL): no round after round 0 evaluates a
+ *    new point, and each round evaluates up to AFTER_STAGNATION 3 of round
+ *    0's points again before it ends without a new best. ..." (ANALYTICAL
+ *    and HYBRID: "... where a round asks for no gradient, but each point at
+ *    which it asks for one is evaluated again, with its gradient
+ *    (GRAD_STRATEGY HYBRID differentiates an evaluation of the point)");
+ *    GD_STOGO_RAND below POPULATION 2n + 1 (TrialPoints), whose first trial
+ *    point is the box centre, "... and, with POPULATION 4 (NLopt's default,
+ *    2n for n = 2 OPTIM dimensions), less than 2n + 1 = 5, takes the centre
+ *    of the box as its first trial point and runs a local search from it
+ *    before any of its random trial points, so every RESTART round,
+ *    whatever points it starts from, asks first for the points of round
+ *    0's first local search again, and their gradients: ...: until that
+ *    search ends a round evaluates no new point, and it reaches its random
+ *    trial points only if the search ends before the round has had
+ *    AFTER_STAGNATION 3 evaluations without a new best. For rounds that
+ *    search anew, use an optimiser that starts at the point it is given, or
+ *    POPULATION 5 (2n + 1) or more, whose trial points are all random.";
+ *    with a `reuse_blocker` (HPOTargets::repeat_reuse_blocker(): why the
+ *    run evaluates a point it has evaluated again) "... asks for round 0's
  *    points again as long as their losses are those of round 0 (the run
  *    evaluates them again: <reuse_blocker>). ..."; under PRESTAGE "... so
  *    the exploration of every RESTART round, whatever points it starts
  *    from, asks for round 0's exploration points again, which the run's
  *    record answers: a round's refinement starts from candidates among
- *    round 0's exploration points. ...".
+ *    round 0's exploration points. ...";
+ *  - an active RESTART block with METHOD lines, when the search draws
+ *    random numbers (GN_DIRECT_L_RAND in two or more dimensions,
+ *    GD_STOGO_RAND at POPULATION 2n + 1 or more): no round evaluates the
+ *    block's points -- "the RESTART block on line 10: the STRATEGY-level
+ *    optimiser NLOPT:GN_DIRECT_L_RAND does not start ..., so no RESTART
+ *    round evaluates the points of the block's METHOD lines: a round's
+ *    search differs from round 0's only in the random numbers it draws. To
+ *    start each round at the block's points, use an optimiser that starts
+ *    at the point it is given."; under PRESTAGE, for an exploration that
+ *    takes the round's points (its EXPLORE block has no INIT block), "...
+ *    the PRESTAGE exploration NLOPT:GN_DIRECT_L_RAND, which is given each
+ *    round's points (its EXPLORE block has no INIT block), does not start
+ *    ..., so no round's exploration evaluates the points of the block's
+ *    METHOD lines, and a round's refinement starts from them only when no
+ *    evaluation of its exploration has a usable loss: ...".
  * An AUGLAG is named with its local search ("NLOPT:LN_AUGLAG runs its
  * INNER search NLOPT:GN_DIRECT_L from the point it is given, and
  * NLOPT:GN_DIRECT_L does not start ..."). validate_hpo_setup() journals

@@ -43,7 +43,9 @@ MultiStartPlan plan_multistart(const OptimizerSpec& spec, std::size_t n_starts,
 
 /* Start `i` (0-based, below plan.starts) of `plan`: `spec` with the single
  * INIT point i, the plan's per-start MAXEVAL, and SEED + i when `spec` has
- * a SEED (the starts draw different random numbers). */
+ * a SEED -- or, for an NLopt spec that NLopt seeds from its INIT block's
+ * SEED (OptimizerSpec::nlopt_seed_from_init()), that SEED + i -- so the
+ * starts draw different random numbers. */
 OptimizerSpec multistart_start_spec(const OptimizerSpec& spec,
                                     const MultiStartPlan& plan, std::size_t i);
 

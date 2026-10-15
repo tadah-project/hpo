@@ -455,6 +455,17 @@ struct OptimizerSpec {
         }
     }
 
+    /* Whether NLopt seeds its generator with this spec's INIT block's SEED:
+     * an NLopt phase without a SEED of its own whose INIT block has one
+     * (make_nlopt). The rules that give each start and each RESTART round
+     * a seed of its own (multistart_start_spec, derive_restart_seeds)
+     * offset that SEED as they offset SEED; nothing else reads it once the
+     * block's points are drawn at startup. */
+    bool nlopt_seed_from_init() const noexcept
+    {
+        return lib == "NLOPT" && !seed && init_strategy_spec.seed.has_value();
+    }
+
     /* The seeds of RESTART round `round` (1..MAX), derived from `round0`:
      * the spec as parsed, whose SEEDs round 0 runs with. Every phase with
      * a SEED gets a new one, so a restarted seeded stochastic optimiser
@@ -465,11 +476,14 @@ struct OptimizerSpec {
      *    SEED + r*seeded_starts() + i, which no other round uses (SEED 7,
      *    TOPK 3: {7,8,9}, {10,11,12}, {13,14,15});
      *  - the EXPLORE spec: SEED + round.
-     * An INNER spec has no SEED: NLopt draws the INNER search from the
-     * random stream of the enclosing block's run, which that block's
-     * derived SEED seeds (make_nlopt). A phase without SEED stays without
-     * one. The sums wrap modulo 2^64, like MULTISTART's. RestartPolicy
-     * applies this to its copy of the spec on every restart, together with
+     * An NLopt phase without a SEED that NLopt seeds from its INIT block's
+     * SEED (nlopt_seed_from_init()) gets that SEED derived the same way
+     * (INIT SEED + round*seeded_starts(), EXPLORE INIT SEED + round). An
+     * INNER spec has no SEED: NLopt draws the INNER search from the random
+     * stream of the enclosing block's run, which that block's derived seed
+     * seeds (make_nlopt). A phase without either SEED stays without one.
+     * The sums wrap modulo 2^64, like MULTISTART's. RestartPolicy applies
+     * this to its copy of the spec on every restart, together with
      * share_init_with_nested_phases(); round 0 keeps every SEED. */
     void derive_restart_seeds(const OptimizerSpec& round0, std::size_t round)
     {
@@ -480,8 +494,15 @@ struct OptimizerSpec {
                      : std::nullopt;
         };
         seed = derive(round0.seed, round0.seeded_starts());
-        if (prestage && round0.prestage)
+        if (round0.nlopt_seed_from_init())
+            init_strategy_spec.seed = derive(round0.init_strategy_spec.seed,
+                                             round0.seeded_starts());
+        if (prestage && round0.prestage) {
             prestage->seed = derive(round0.prestage->seed, 1);
+            if (round0.prestage->nlopt_seed_from_init())
+                prestage->init_strategy_spec.seed =
+                    derive(round0.prestage->init_strategy_spec.seed, 1);
+        }
     }
 
     /* Shim for hand-built specs (tests): low/high hold REAL bounds on

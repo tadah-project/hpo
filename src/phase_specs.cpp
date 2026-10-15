@@ -43,8 +43,14 @@ OptimizerSpec multistart_start_spec(const OptimizerSpec& spec,
     if (plan.per_start_maxeval) sub.stop.maxeval = *plan.per_start_maxeval;
     /* Decorrelate the starts: reusing one seed hands every start the same
      * proposal stream, so stochastic optimisers (ANNEAL) produce
-     * near-duplicate chains that differ only by their start point. */
-    if (spec.seed) sub.seed = *spec.seed + static_cast<std::uint64_t>(i);
+     * near-duplicate chains that differ only by their start point. NLopt
+     * without a SEED takes the INIT block's (nlopt_seed_from_init()), which
+     * is offset the same way. */
+    if (spec.seed)
+        sub.seed = *spec.seed + static_cast<std::uint64_t>(i);
+    else if (spec.nlopt_seed_from_init())
+        sub.init_strategy_spec.seed =
+            *spec.init_strategy_spec.seed + static_cast<std::uint64_t>(i);
     return sub;
 }
 

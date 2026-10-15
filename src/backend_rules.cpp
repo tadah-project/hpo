@@ -899,20 +899,81 @@ std::string ignores_its_start(const std::string& who,
            "(" + note + ")";
 }
 
-/* How the search `blind` of a phase of `dims` OPTIM dimensions draws no
- * random numbers (OptimizerCaps::random_draws), as a clause; nullopt when
- * it draws them. */
-std::optional<std::string> draws_no_random_numbers(const OptimizerSpec& blind,
-                                                   std::size_t dims)
+/* Which of round 0's points a RESTART round of the search `blind`
+ * (search_ignoring_start) asks for again, whatever points it starts from:
+ * all of them (it draws no random numbers, OptimizerCaps::random_draws), the
+ * points of its first local search (GD_STOGO_RAND below POPULATION 2n + 1,
+ * which runs it from the box centre before any random trial point), or
+ * none it need ask for (it draws its numbers from the round's seed). */
+enum class RoundRepeat { None, All, FirstLocalSearch };
+struct RoundRepeatClause {
+    RoundRepeat what = RoundRepeat::None;
+    std::string clause;  // " and draws no random numbers", ...
+};
+
+/* The RoundRepeat of the search `blind` of a phase of `dims` OPTIM
+ * dimensions, with the clause that says why. */
+RoundRepeatClause round_repeat(const OptimizerSpec& blind, std::size_t dims)
 {
     using RD = OptimizerCaps::RandomDraws;
     const RD draws = optimizer_caps(blind).random_draws;
-    if (draws == RD::Never) return std::string(" and draws no random numbers");
+    if (draws == RD::Never)
+        return {RoundRepeat::All, " and draws no random numbers"};
     if (draws == RD::BetweenSides && dims == 1)
-        return std::string(
-            " and, in one OPTIM dimension, draws no random numbers (it draws "
-            "them only to choose between equally long sides of a box)");
-    return std::nullopt;
+        return {RoundRepeat::All,
+                " and, in one OPTIM dimension, draws no random numbers (it "
+                "draws them only to choose between equally long sides of a "
+                "box)"};
+    if (draws == RD::TrialPoints) {
+        /* optimize.c: POP(2n) random trial points, NLopt's default 2n for
+         * an unset or zero POPULATION; stogo.cc det_pnts = 2n + 1 - it. */
+        const std::size_t full = 2 * dims + 1;
+        const bool own = blind.pop && *blind.pop > 0;
+        const std::size_t pop = own ? *blind.pop : 2 * dims;
+        if (pop < full) {
+            const std::string n =
+                "n = " + std::to_string(dims) +
+                (dims == 1 ? " OPTIM dimension" : " OPTIM dimensions");
+            std::string c = " and, with POPULATION " + std::to_string(pop);
+            c += own ? ", less than 2n + 1 = " + std::to_string(full) + " (" +
+                           n + ")"
+                     : " (NLopt's default, 2n for " + n +
+                           "), less than 2n + 1 = " + std::to_string(full);
+            c += ", takes the centre of the box as its first trial point and "
+                 "runs a local search from it before any of its random trial "
+                 "points";
+            return {RoundRepeat::FirstLocalSearch, c};
+        }
+    }
+    return {};
+}
+
+/* What a RESTART round gets when it asks for round 0's points again (the
+ * run's record, repeat_points.h): with a `reuse_blocker` the run evaluates
+ * them again; else the record answers their losses, and a search that
+ * obtains gradients forms them itself (the record keeps no gradient of an
+ * earlier search): under GRAD_STRATEGY NUMERICAL the round evaluates the
+ * finite-difference stencils again (RepeatUse::Centre), under ANALYTICAL
+ * and HYBRID each point at which it asks for one (RepeatUse::Evaluate). */
+std::string round_answer(const OptimizerSpec& phase, const OptimizerSpec& blind,
+                         const std::string& reuse_blocker)
+{
+    if (!reuse_blocker.empty())
+        return " as long as their losses are those of round 0 (the run "
+               "evaluates them again: " + reuse_blocker + ")";
+    if (!obtains_gradients(blind)) return ", which the run's record answers";
+    const GradStrategy g = phase.grad_strategy.value_or(GradStrategy::Numerical);
+    if (repeat_use(true, g, /*with_gradient=*/true, /*has_gradient=*/false) ==
+        RepeatUse::Centre)
+        return ", and their gradients: the run's record answers their losses, "
+               "but a round forms its gradients itself and evaluates their "
+               "finite-difference stencils again (GRAD_STRATEGY " +
+               std::string(grad_strategy_name(g)) + ")";
+    return ", and their gradients: the run's record answers their losses "
+           "where a round asks for no gradient, but each point at which it "
+           "asks for one is evaluated again, with its gradient (GRAD_STRATEGY " +
+           std::string(grad_strategy_name(g)) +
+           " differentiates an evaluation of the point)";
 }
 
 std::string block_on_line(const char* block, std::size_t line)
@@ -975,43 +1036,99 @@ std::vector<std::string> start_point_warnings(const OptimizerSpec& root,
             "; the refinement starts from them only when no evaluation of "
             "the exploration has a usable loss." + to_start);
 
-    /* An active RESTART block, the search drawing no random numbers: every
-     * round repeats round 0's points (RestartPolicy changes the start
-     * points and the SEEDs only). */
+    /* An active RESTART block (RestartPolicy changes the start points and
+     * the seeds only): a search that draws no random numbers repeats round
+     * 0's points in every round (GD_STOGO_RAND below POPULATION 2n + 1 the
+     * points of its first local search), and one that draws them never
+     * evaluates the points of the block's METHOD lines either. */
     if (root.restart.active()) {
-        const std::optional<std::string> draws =
-            draws_no_random_numbers(*blind, phase->low.size());
-        if (draws) {
+        const std::size_t dims = phase->low.size();
+        const RoundRepeatClause rep = round_repeat(*blind, dims);
+        const std::string window =
+            "AFTER_STAGNATION " + std::to_string(root.restart.after_stagnation);
+        if (rep.what != RoundRepeat::None) {
+            const bool first = rep.what == RoundRepeat::FirstLocalSearch;
+            const std::string asks =
+                first ? "asks first for the points of round 0's first local "
+                        "search again"
+                      : prestage ? "asks for round 0's exploration points again"
+                                 : "asks for round 0's points again";
             std::string w = block_on_line("RESTART", root.restart.line) +
                             ignores_its_start(who, *phase, *blind, "") +
-                            *draws + ", so " +
-                            (prestage
-                                 ? "the exploration of every RESTART round, "
-                                   "whatever points it starts from, asks for "
-                                   "round 0's exploration points again"
-                                 : "every RESTART round, whatever points it "
-                                   "starts from, asks for round 0's points "
-                                   "again");
-            if (reuse_blocker.empty())
-                w += prestage
-                         ? ", which the run's record answers: a round's "
-                           "refinement starts from candidates among round "
-                           "0's exploration points"
-                         : ", which the run's record answers: no round after "
-                           "round 0 evaluates a new point, and the RESTART "
-                           "block's only effect is to end the run once round "
-                           "0 has had no new best in AFTER_STAGNATION " +
-                               std::to_string(root.restart.after_stagnation) +
-                               " evaluations";
-            else
-                w += " as long as their losses are those of round 0 (the run "
-                     "evaluates them again: " + reuse_blocker + ")";
+                            rep.clause + ", so " +
+                            (prestage ? "the exploration of every RESTART "
+                                        "round, whatever points it starts "
+                                        "from, "
+                                      : "every RESTART round, whatever points "
+                                        "it starts from, ") +
+                            asks + round_answer(*phase, *blind, reuse_blocker);
+            if (reuse_blocker.empty()) {
+                if (first)
+                    w += prestage
+                             ? ": until that search ends a round's "
+                               "exploration evaluates no new point, and it "
+                               "reaches its random trial points only if the "
+                               "search ends before the exploration has had " +
+                                   window + " evaluations without a new best"
+                             : ": until that search ends a round evaluates no "
+                               "new point, and it reaches its random trial "
+                               "points only if the search ends before the "
+                               "round has had " + window +
+                                   " evaluations without a new best";
+                else if (prestage)
+                    w += ": a round's refinement starts from candidates among "
+                         "round 0's exploration points";
+                else if (obtains_gradients(*blind))
+                    w += ": no round after round 0 evaluates a new point, and "
+                         "each round evaluates up to " + window +
+                         " of round 0's points again before it ends without a "
+                         "new best";
+                else
+                    w += ": no round after round 0 evaluates a new point, and "
+                         "the RESTART block's only effect is to end the run "
+                         "once round 0 has had no new best in " + window +
+                         " evaluations";
+            }
+            const std::string population =
+                first ? ", or POPULATION " + std::to_string(2 * dims + 1) +
+                            " (2n + 1) or more, whose trial points are all "
+                            "random"
+                      : std::string();
             w += prestage ? ". For explorations that search anew, use an "
                             "exploration optimiser that starts at the point "
-                            "it is given."
+                            "it is given" + population + "."
                           : ". For rounds that search anew, use an optimiser "
-                            "that starts at the point it is given.";
+                            "that starts at the point it is given" +
+                                population + ".";
             out.push_back(w);
+        } else if (!root.restart.init_strategy.chain.empty() &&
+                   (!prestage || phase->init_strategy_spec.chain.empty())) {
+            /* The round's points go to the search (to a PRESTAGE
+             * exploration without an INIT block of its own,
+             * share_init_with_nested_phases), which never evaluates them;
+             * only its random numbers differ from round 0's. */
+            out.push_back(
+                block_on_line("RESTART", root.restart.line) +
+                (prestage
+                     ? ignores_its_start(who, *phase, *blind,
+                                         ", which is given each round's "
+                                         "points (its EXPLORE block has no "
+                                         "INIT block),") +
+                           ", so no round's exploration evaluates the points "
+                           "of the block's METHOD lines, and a round's "
+                           "refinement starts from them only when no "
+                           "evaluation of its exploration has a usable loss: "
+                           "a round's exploration differs from round 0's only "
+                           "in the random numbers it draws. To start each "
+                           "round's exploration at them, use an exploration "
+                           "optimiser that starts at the point it is given."
+                     : ignores_its_start(who, *phase, *blind, "") +
+                           ", so no RESTART round evaluates the points of the "
+                           "block's METHOD lines: a round's search differs "
+                           "from round 0's only in the random numbers it "
+                           "draws. To start each round at the block's points, "
+                           "use an optimiser that starts at the point it is "
+                           "given."));
         }
     }
     return out;
