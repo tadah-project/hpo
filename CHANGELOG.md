@@ -6,6 +6,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Changed
+- Use affirmative manual prose in the annealing parameter registry and
+  generated help, including kernel selection, replica initialisation and
+  calibration budgets. This is a documentation-only revision of 11 key
+  descriptions; defaults, ranges, parser rules and numerical behavior are
+  preserved.
 - Correct the annealing registry's help and generated documentation for
   `NEPS`: serial and population annealing use temperature-end loss history,
   while parallel tempering counts global-best stall windows. Document the

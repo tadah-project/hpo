@@ -78,7 +78,7 @@ default = "0"
 kinds = ["serial", "pt", "pa"]
 group = "steps"
 rank = 1
-doc = "Select the Corana per-dimension adaptive-step kernel instead of the whole-vector CLASSIC kernel."
+doc = "Kernel selection: ON uses Corana per-dimension adaptive steps; OFF uses whole-vector CLASSIC proposals."
 
 [[key]]
 name = "STEP_FRAC"
@@ -212,7 +212,7 @@ default_pa = "0.90"
 kinds = ["serial", "pa"]
 group = "temperature"
 rank = 3
-doc = "Geometric cooling ratio per temperature rung (Corana 1987 r_T = 0.85). ANNEAL_PT holds a static (optionally self-adapting) ladder and takes no RT."
+doc = "Geometric cooling ratio per temperature rung (Corana 1987 r_T = 0.85). ANNEAL_PT uses a ladder with fixed endpoints and optional interior adaptation; it rejects RT."
 custom_range = true   # (0,1); message reports the got-value
 
 [[key]]
@@ -302,7 +302,7 @@ default = "1e3"
 kinds = ["pt"]
 group = "ladder"
 rank = 2
-doc = "Ratio T_HOT / T_COLD used when T_COLD is not set."
+doc = "Ratio T_HOT / T_COLD used to derive an omitted T_COLD."
 min = 1.0
 min_open = true
 
@@ -445,7 +445,7 @@ default = "JITTER"
 kinds = ["pt", "pa"]
 group = "init"
 rank = 1
-doc = "Slot 1 starts at the seed. Other slots: JITTER uses Gaussian displacements with the initial proposal scales; JITTER <fraction> uses uniform displacements on +/-fraction*width; UNIFORM draws from the OPTIM box. ANNEAL_PT JITTER AUTO <p> measures per-dimension uniform bounds against a seed-relative loss band, then applies INIT_JITTER_LADDER scaling. ANNEAL_PA accepts JITTER AUTO <p> but does not run this calibration: it uses the initial proposal scales as uniform bounds and ignores p. INIT_JITTER_LADDER also scales the other PT JITTER forms."
+doc = "Slot 1 starts at the seed. Other slots: JITTER uses Gaussian displacements with the initial proposal scales; JITTER <fraction> uses uniform displacements on +/-fraction*width; UNIFORM draws from the OPTIM box. ANNEAL_PT JITTER AUTO <p> measures per-dimension uniform bounds against a seed-relative loss band, then applies INIT_JITTER_LADDER scaling. ANNEAL_PA JITTER AUTO <p> uses the initial proposal scales as uniform bounds; p and the calibration controls are inactive. INIT_JITTER_LADDER also scales the other PT JITTER forms."
 
 # NOTE the INIT_JITTER_* keys below are gated on `INIT_MODE JITTER AUTO <p>`,
 # which the rule table cannot express: AUTO is an EXTRA token on the JITTER
@@ -459,7 +459,7 @@ default = "0.5"
 kinds = ["pt", "pa"]
 group = "init"
 rank = 2
-doc = "ANNEAL_PT INIT_MODE JITTER AUTO: cap on the measured sigma as a fraction of the OPTIM interval; also the screen probe point. Accepted but unused by the current ANNEAL_PA driver."
+doc = "ANNEAL_PT INIT_MODE JITTER AUTO: cap on the measured sigma as a fraction of the OPTIM interval; also the screen probe point. Accepted as an inactive setting by the current ANNEAL_PA driver."
 min = 0.0
 min_open = true
 max = 1.0
@@ -472,7 +472,7 @@ default = "8"
 kinds = ["pt", "pa"]
 group = "init"
 rank = 3
-doc = "ANNEAL_PT INIT_MODE JITTER AUTO: maximum objective probes per dimension, split between the two sides. Accepted but unused by the current ANNEAL_PA driver."
+doc = "ANNEAL_PT INIT_MODE JITTER AUTO: maximum objective probes per dimension, split between the two sides. Accepted as an inactive setting by the current ANNEAL_PA driver."
 min = 2
 range_msg = "must be >= 2 (one screen probe per side)"
 
@@ -484,7 +484,7 @@ accepts_auto = 0.0
 kinds = ["pt", "pa"]
 group = "init"
 rank = 4
-doc = "ANNEAL_PT INIT_MODE JITTER AUTO: hard cap on calibration probes. AUTO resolves to measured_dimensions * INIT_JITTER_PROBES + min(INIT_JITTER_AUDIT, measured_dimensions), where INIT_JITTER_SAMPLE limits the measured dimensions. These probes are outside MAXEVAL. Accepted but unused by the current ANNEAL_PA driver."
+doc = "ANNEAL_PT INIT_MODE JITTER AUTO: hard cap on calibration probes. AUTO resolves to measured_dimensions * INIT_JITTER_PROBES + min(INIT_JITTER_AUDIT, measured_dimensions), where INIT_JITTER_SAMPLE limits the measured dimensions. These probes are outside MAXEVAL. Accepted as an inactive setting by the current ANNEAL_PA driver."
 custom_range = true   # AUTO, or >= 1 when set numerically
 
 [[key]]
@@ -494,7 +494,7 @@ default = "0"
 kinds = ["pt", "pa"]
 group = "init"
 rank = 6
-doc = "ANNEAL_PT INIT_MODE JITTER AUTO: measure at most this many dimensions, chosen round-robin across parameter families; the rest inherit their family's median sigma/width and are flagged `inferred`. 0 = measure every dimension. Accepted but unused by the current ANNEAL_PA driver."
+doc = "ANNEAL_PT INIT_MODE JITTER AUTO: measure at most this many dimensions, chosen round-robin across parameter families; the rest inherit their family's median sigma/width and are flagged `inferred`. 0 = measure every dimension. Accepted as an inactive setting by the current ANNEAL_PA driver."
 
 [[key]]
 name = "INIT_JITTER_AUDIT"
@@ -503,7 +503,7 @@ default = "32"
 kinds = ["pt", "pa"]
 group = "init"
 rank = 7
-doc = "ANNEAL_PT INIT_MODE JITTER AUTO: re-probe at most this many measured dimensions at sigma/2 to detect a loss that is non-monotone in displacement. The sampled bounds do not prove monotonicity. 0 = skip the audit. Accepted but unused by the current ANNEAL_PA driver."
+doc = "ANNEAL_PT INIT_MODE JITTER AUTO: re-probe at most this many measured dimensions at sigma/2 to detect a loss that is non-monotone in displacement. The audit assesses the sampled displacements. 0 = skip the audit. Accepted as an inactive setting by the current ANNEAL_PA driver."
 
 [[key]]
 name = "INIT_JITTER_LADDER"
@@ -514,7 +514,7 @@ accepts_off = 0.0
 kinds = ["pt"]
 group = "init"
 rank = 8
-doc = "Scale each slot's initial jitter by (T_k/T_HOT)^gamma, so cold slots start near the seed and hot ones explore. AUTO = gamma 0.5, the equipartition law (the equilibrium coordinate spread about a locally quadratic minimum goes as sqrt(T)), floored at the resolvable coordinate scale so cold slots cannot collapse onto the seed. OFF = every slot uses the same sigma (pre-1.5.0 behaviour). A number in (0,4] sets gamma directly. Applies to every INIT_MODE JITTER variant, not only AUTO."
+doc = "Scale each slot's initial jitter by (T_k/T_HOT)^gamma, so cold slots start near the seed and hot ones explore. AUTO = gamma 0.5, the equipartition law (the equilibrium coordinate spread about a locally quadratic minimum goes as sqrt(T)), floored at the resolvable coordinate scale to keep displacements representable. OFF = every slot uses the same sigma (pre-1.5.0 behaviour). A number in (0,4] sets gamma directly. Applies to every INIT_MODE JITTER variant, including AUTO."
 custom_range = true   # AUTO, OFF, or 0 < gamma <= 4
 
 [[key]]
@@ -524,7 +524,7 @@ default = "0.25"
 kinds = ["pt", "pa"]
 group = "init"
 rank = 5
-doc = "ANNEAL_PT INIT_MODE JITTER AUTO: share of the search's MAXTIME available to calibration when MAXTIME is set. INIT_JITTER_MAXEVAL independently caps probes; MAXEVAL is not charged. Accepted but unused by the current ANNEAL_PA driver."
+doc = "ANNEAL_PT INIT_MODE JITTER AUTO: share of the search's MAXTIME available to calibration when MAXTIME is set. INIT_JITTER_MAXEVAL separately caps the calibration probes, which use their own budget. Accepted as an inactive setting by the current ANNEAL_PA driver."
 min = 0.0
 min_open = true
 max = 1.0
