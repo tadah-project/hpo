@@ -1019,6 +1019,12 @@ TEST_CASE("Strict numbers: QFLUSH, DIGITS, OUTPUT and BOUTPUT are integers "
     CHECK(parse_config(root_home("OUTPUT").config("7")).outputEvery == 7u);
 }
 
+/* Pins also: parsing creates no directory. The archive directory is the
+ * run's output: the evaluation host of a run creates it (test_hpo_host_e2e's
+ * DUMP and BDUMP cases write into one only a target file names), and
+ * `tadah hpo --check` (test_hpo_check.cpp), which builds no such host,
+ * leaves the working directory as it is.
+ * Before the change: the parse created the directory. */
 TEST_CASE("Strict numbers: DUMP and BDUMP take a cadence and a directory",
           "[HPO][hpo_targets][strict_numbers]")
 {
@@ -1048,7 +1054,9 @@ TEST_CASE("Strict numbers: DUMP and BDUMP take a cadence and a directory",
         CHECK_FALSE(fs::exists(dir));
         const auto trg = parse_config(h.config("5 " + dir.string()));
         CHECK((key == "DUMP" ? trg.dumpPotEvery : trg.dumpBestPotEvery) == 5u);
-        CHECK(fs::exists(dir));
+        CHECK((key == "DUMP" ? trg.dumpPotDir : trg.dumpBestPotDir) ==
+              dir.string());
+        CHECK_FALSE(fs::exists(dir));
         fs::remove_all(dir);
     }
 }
