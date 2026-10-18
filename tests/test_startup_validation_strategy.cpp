@@ -526,9 +526,11 @@ TEST_CASE("startup validation: a phase without LIB or ALGO is rejected by "
                                         "not set"));
     }
     SECTION("an OPTIMIZER block that is never closed") {
+        /* Refused as open, at its OPTIMIZER line (line 3), before what it
+         * sets is checked: its ENDOPTIMIZER line checks the optimiser. */
         const auto msg = parse_error(kRoot + "OPTIMIZER\n  MAXEVAL 5\n");
-        CHECK_THAT(msg, Catch::Contains("names no optimiser: LIB and ALGO are "
-                                        "not set"));
+        CHECK(msg == "Error on line 3: OPTIMIZER block not closed with "
+                     "ENDOPTIMIZER\nLine: OPTIMIZER");
     }
     SECTION("a spec built outside the parser gets the same text from the "
             "policies") {
@@ -611,10 +613,13 @@ TEST_CASE("startup validation: an INNER block without LIB or ALGO is "
         }
     }
     SECTION("an INNER block that is never closed, at the end of the file") {
+        /* Refused as open, at its INNER line (line 9), the innermost of
+         * the open blocks, before what it sets is checked: its ENDINNER
+         * line checks the optimiser. */
         const auto msg = parse_error(head + "    TYPE PLAIN\n" + mlsl +
                                      "    INNER\n      LIB NLOPT\n");
-        CHECK_THAT(msg, Catch::Contains("the INNER block inside STRATEGY names "
-                                        "no optimiser: ALGO is not set"));
+        CHECK(msg == "Error on line 9: INNER block not closed with ENDINNER\n"
+                     "Line:     INNER");
     }
     SECTION("an INNER block that names LIB and ALGO passes") {
         CHECK(parse_error(head + "    TYPE PLAIN\n" + mlsl +
@@ -753,13 +758,17 @@ TEST_CASE("startup validation: a second STRATEGY block is rejected at its "
                                      "4)") &&
                    Catch::EndsWith("Line:   STRATEGY"));
     }
-    SECTION("in a second OPTIMIZER block") {
+    SECTION("in a second OPTIMIZER block, which is refused first") {
+        /* The second OPTIMIZER block (line 11) is refused at its own line,
+         * before its STRATEGY block (line 12) is read: there is one
+         * OPTIMIZER block (test_hpotarget_block_structure.cpp). */
         const auto twice = parse_error(
             kRoot + "OPTIMIZER\n  STRATEGY\n" + first + "  ENDSTRATEGY\n"
             "ENDOPTIMIZER\nOPTIMIZER\n  STRATEGY\n    TYPE PLAIN\n"
             "  ENDSTRATEGY\nENDOPTIMIZER\n");
-        CHECK_THAT(twice, Catch::StartsWith("Error on line 12: STRATEGY block "
-                                            "given more than once"));
+        CHECK(twice == "Error on line 11: OPTIMIZER block given more than "
+                       "once (the first opens on line 3); write every "
+                       "optimiser setting in one block\nLine: OPTIMIZER");
     }
 }
 
@@ -1104,9 +1113,9 @@ TEST_CASE("startup validation: NLOPT:LN_NEWUOA_BOUND is refused at the line "
      * MULTISTART, the PRESTAGE refinement; ENDSTRATEGY and ENDREFINE check
      * no optimiser), ENDEXPLORE for the PRESTAGE exploration, ENDINNER for
      * an INNER block (under G_MLSL_LDS and LN_AUGLAG, inside STRATEGY,
-     * EXPLORE and REFINE), and the end of the file for an OPTIMIZER block
-     * never closed -- naming the phase, as the other messages of these
-     * blocks do, with the caps registry's reason and replacement. A spec
+     * EXPLORE and REFINE) -- naming the phase, as the other messages of
+     * these blocks do, with the caps registry's reason and replacement (an
+     * OPTIMIZER block never closed is refused as open). A spec
      * built outside the parser gets the refusal from validate_backend() (no
      * phase), validate_run_policy() and the MULTISTART policy (the
      * STRATEGY-level optimiser), validate_phase_backends() and
@@ -1182,11 +1191,12 @@ TEST_CASE("startup validation: NLOPT:LN_NEWUOA_BOUND is refused at the line "
                    Catch::Contains("Use NLOPT:LN_BOBYQA") &&
                    Catch::EndsWith("\nLine: " + c.closing));
     }
-    /* An OPTIMIZER block the file never closes: at the end of the file,
-     * with no line, as its missing LIB or ALGO. */
-    CHECK_THAT(parse_error(kRoot + "OPTIMIZER\n  LIB NLOPT\n"
-                                   "  ALGO LN_NEWUOA_BOUND\n  MAXEVAL 5\n"),
-               Catch::StartsWith(top + ": " + refused));
+    /* An OPTIMIZER block the file never closes is refused as open, at its
+     * OPTIMIZER line, before its optimiser is checked. */
+    CHECK(parse_error(kRoot + "OPTIMIZER\n  LIB NLOPT\n"
+                              "  ALGO LN_NEWUOA_BOUND\n  MAXEVAL 5\n") ==
+          "Error on line 3: OPTIMIZER block not closed with ENDOPTIMIZER\n"
+          "Line: OPTIMIZER");
 
     /* A spec built outside the parser. */
     const auto bound = [](const std::string& algo, std::uint64_t maxeval) {
