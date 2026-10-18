@@ -50,29 +50,26 @@ build directory.
 | `src/`               | Implementation translation units. |
 | `tests/`             | Unit and integration tests. |
 | `examples/`          | Worked-through `config.hpo` reference suite (see `run_reference_suite.sh`). |
-| `blueprint/`         | Registry files the documentation reads (see `blueprint/README.md`). |
+| `blueprint/`         | Registry files for the documentation (see `blueprint/README.md`). |
 
 ## Generated files
 
-Two checked-in files are generated, and a CTest entry fails when one
-differs from what its source produces. Regenerate the file and commit it
-with the change that alters it.
+Some checked-in files are generated, and a CTest entry fails when one
+differs from what produces it. Regenerate such a file and commit it with
+the change that alters it.
 
-- `include/tadah/hpo/anneal_keys_gen.h`, from `blueprint/anneal_keys.toml`:
-
-  ```bash
-  python3 blueprint/gen_anneal_keys.py --header
-  ```
-
-  CTest `hpo_anneal_registry_sync`.
-- `blueprint/optimizers_gen.toml`, the optimiser registry and the ALGO help
-  of every optimiser, for the documentation (built without C++). Regenerate
-  it after a change to `src/optimizer_caps.cpp`, the ALGO help
-  (`src/optimizer_spec.cpp`, `src/asa_options.cpp`,
-  `blueprint/anneal_keys.toml`) or the NLopt version:
+- `include/tadah/hpo/anneal_keys_gen.h` (CTest `hpo_anneal_registry_sync`)
+  and `blueprint/optimizers_gen.toml` (CTest
+  `hpo_optimizer_registry_sync`): `blueprint/README.md` says what each is
+  generated from and how to regenerate it.
+- The `reference_fingerprint.json` of each example, which
+  `examples/tools/generate_fingerprint.py` writes from a run of the example
+  and its entry in `examples/tools/tolerance_overrides.json` (CTest
+  `hpo_example_fingerprint_overrides_sync` fails when a fingerprint's
+  fields from that file differ from it). After a change to the file, run
+  the example (see `examples/README.md`) and regenerate its fingerprint:
 
   ```bash
-  cmake --build build --target hpo_regenerate_optimizer_registry
+  python3 examples/tools/generate_fingerprint.py examples/<example> \
+      --overrides examples/tools/tolerance_overrides.json
   ```
-
-  CTest `hpo_optimizer_registry_sync` (label `docs`).

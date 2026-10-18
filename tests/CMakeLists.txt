@@ -302,14 +302,13 @@ set_tests_properties(hpo_anneal_registry_sync PROPERTIES
     LABELS "anneal"
     TIMEOUT 30)
 
-# The optimiser registry for the documentation, which is built without C++:
-# blueprint/optimizers_gen.toml, checked in, holds every LIB:ALGO of the
-# caps registry (registered or refused) with its capabilities, its row of
-# `tadah explain ALGO` and its `tadah explain LIB:ALGO` text, written by
-# tools/hpo_registry_export.cpp. hpo_optimizer_registry_sync fails when the
-# file differs from what the code produces, naming the command that
-# regenerates it:
-#   cmake --build <build directory> --target hpo_regenerate_optimizer_registry
+# The optimiser registry, written for the documentation, which is built
+# without C++: blueprint/optimizers_gen.toml, checked in, holds every
+# LIB:ALGO of the caps registry (registered or refused) with its
+# capabilities, its row of `tadah explain ALGO` and its `tadah explain
+# LIB:ALGO` text, written by tools/hpo_registry_export.cpp.
+# hpo_optimizer_registry_sync fails when the file differs from what the code
+# produces, naming the command that regenerates it (blueprint/README.md).
 # Before the fix: fails, the file does not exist.
 cmake_path(SET _hpo_optimizers_gen NORMALIZE
     "${CMAKE_CURRENT_SOURCE_DIR}/../blueprint/optimizers_gen.toml")

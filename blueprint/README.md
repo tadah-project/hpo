@@ -1,8 +1,9 @@
 # Registry files
 
-The files in this directory describe parts of `tadah hpo` as data. The
-documentation (Tadah.MLIP `docs/`) reads them: it is built without C++, so it
-cannot ask the code. A CTest entry fails when a file and the code differ.
+The files in this directory describe parts of `tadah hpo` as data, for the
+documentation (Tadah.MLIP `docs/`): it is built without C++, so it cannot ask
+the code. The documentation reads `anneal_keys.toml`; `optimizers_gen.toml`
+is written for it. A CTest entry fails when a file and the code differ.
 
 | File | Kept in step by |
 |---|---|
@@ -19,20 +20,22 @@ checked-in header differs.
 
 ## optimizers_gen.toml
 
-Generated from the optimiser registry (`src/optimizer_caps.cpp`) and the
-ALGO help (`src/optimizer_spec.cpp`, `src/asa_options.cpp`, and
-`anneal_keys.toml` for the annealers' `PARAM` keys). Do not edit it.
-Regenerate it after a change to any of these or to the NLopt version, and
-commit it with that change:
+The optimiser registry and the ALGO help of every optimiser, written for
+the documentation. Generated from the optimiser registry
+(`src/optimizer_caps.cpp`), the ALGO help (`src/optimizer_spec.cpp`,
+`src/asa_options.cpp`, and `anneal_keys.toml` for the annealers' `PARAM`
+keys) and the NLopt version HPO is built with. Do not edit it. Regenerate
+it after a change to any of these, and commit it with that change:
 
 ```bash
 cmake --build <build directory> --target hpo_regenerate_optimizer_registry
 ```
 
-The target builds `hpo_registry_export` and runs it with `--write` on this
-file. `hpo_optimizer_registry_sync` runs it with `--check` and fails when the
-file differs from what the code produces. Both read the text back as TOML
-before they write or compare it. The text is the same in every build of one
+The target builds `hpo_registry_export` (`tests/tools/hpo_registry_export.cpp`)
+and runs it with `--write` on this file. CTest `hpo_optimizer_registry_sync`
+(label `docs`) runs it with `--check` and fails when the file differs from
+what the code produces. Both read the text back as TOML before they write or
+compare it. The text is the same in every build of one
 NLopt version: the ALGO help leaves out the lines that say what a build lacks
 (a build without Ceres).
 
