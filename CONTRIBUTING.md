@@ -55,8 +55,8 @@ build directory.
 ## Generated files
 
 Some checked-in files are generated, and a CTest entry fails when one
-differs from what produces it. Regenerate such a file and commit it with
-the change that alters it.
+differs from what produces it. Such a file is regenerated and committed
+with the change that alters it.
 
 - `include/tadah/hpo/anneal_keys_gen.h` (CTest `hpo_anneal_registry_sync`)
   and `blueprint/optimizers_gen.toml` (CTest
@@ -66,8 +66,9 @@ the change that alters it.
   `examples/tools/generate_fingerprint.py` writes from a run of the example
   and its entry in `examples/tools/tolerance_overrides.json` (CTest
   `hpo_example_fingerprint_overrides_sync` fails when a fingerprint's
-  fields from that file differ from it). After a change to the file, run
-  the example (see `examples/README.md`) and regenerate its fingerprint:
+  fields from that file differ from it). After a change to the file, the
+  example is run again (see `examples/README.md`) and its fingerprint is
+  regenerated:
 
   ```bash
   python3 examples/tools/generate_fingerprint.py examples/<example> \

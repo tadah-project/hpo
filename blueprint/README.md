@@ -24,8 +24,9 @@ The optimiser registry and the ALGO help of every optimiser, written for
 the documentation. Generated from the optimiser registry
 (`src/optimizer_caps.cpp`), the ALGO help (`src/optimizer_spec.cpp`,
 `src/asa_options.cpp`, and `anneal_keys.toml` for the annealers' `PARAM`
-keys) and the NLopt version HPO is built with. Do not edit it. Regenerate
-it after a change to any of these, and commit it with that change:
+keys) and the NLopt version HPO is built with. It is not edited by hand:
+after a change to any of these, the command below regenerates it, and it
+is committed with that change:
 
 ```bash
 cmake --build <build directory> --target hpo_regenerate_optimizer_registry
