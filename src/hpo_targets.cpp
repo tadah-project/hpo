@@ -1703,6 +1703,29 @@ void HPOTargets::read(const std::string& fn)
         }
     }
 
+    /* The seed of a PRESTAGE exploration that sets none. A run's random
+     * numbers come from the SEEDs written in its target file: the
+     * refinement's starts (SEED + i) and every RESTART round (SEED + r*S,
+     * the exploration's SEED + r) derive theirs from them. An exploration
+     * whose optimiser reads SEED and that has no seed of its own -- no
+     * SEED and, for NLopt, no INIT block SEED (nlopt_seed_from_init) --
+     * takes the STRATEGY-level SEED, so a run with SEED in its OPTIMIZER
+     * or STRATEGY block repeats its exploration as it repeats its
+     * refinement. The refinement draws streams of its own key
+     * (phase_stream_seed, seed_stream.h), so the two phases do not share
+     * random numbers. An exploration whose optimiser reads no SEED
+     * (DLIB:GFS) takes none. The journal names the exploration's seed and
+     * where it comes from (seed_from_strategy). */
+    if (spec.prestage && spec.seed && !spec.prestage->seed &&
+        !spec.prestage->nlopt_seed_from_init()) {
+        const OptimizerCaps* caps =
+            find_optimizer_caps(spec.prestage->lib, spec.prestage->algo);
+        if (caps && caps->reads_seed) {
+            spec.prestage->seed = spec.seed;
+            spec.prestage->seed_from_strategy = true;
+        }
+    }
+
     /* PC_LAMMPS: no gradients.
      *
      * The HPO-side analytical-gradient wiring for PC_LAMMPS (the

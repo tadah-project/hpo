@@ -813,6 +813,18 @@ void HPOLog::write_optimizer_section(const OptimizerSpec&            sp,
             if (obtains_gradients(ps))
                 f_ << "    EXPLORE GRAD_STRATEGY: " << grad_strategy_text(ps)
                    << "\n";
+            /* The exploration's seed: its SEED (or the STRATEGY-level
+             * SEED it takes without one, HPOTargets::read) or, for NLopt
+             * without either, its INIT block's SEED. */
+            if (ps.seed)
+                f_ << "    EXPLORE SEED      : " << *ps.seed
+                   << (ps.seed_from_strategy
+                           ? " (the STRATEGY-level SEED)" : "")
+                   << "\n";
+            else if (ps.nlopt_seed_from_init())
+                f_ << "    EXPLORE SEED      : "
+                   << *ps.init_strategy_spec.seed
+                   << " (the EXPLORE INIT block's SEED)\n";
             /* An EXPLORE without a METHOD chain of its own starts from the
              * OUTER's INIT points (share_init_with_nested_phases). */
             if (ps.init_strategy_spec.chain.empty())
