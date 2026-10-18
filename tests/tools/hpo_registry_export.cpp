@@ -7,18 +7,25 @@
  *   hpo_registry_export --check FILE    exit status 0 when FILE holds
  *                                       exactly that text, 1 otherwise
  *
- * The text is sorted and the same in every build of one NLopt version
- * (the version is part of it). CTest hpo_optimizer_registry_sync runs
+ * The entries are sorted by LIB, then ALGO. The text is the same in every
+ * build of one NLopt version (the version is part of it): the ALGO help is
+ * written without the lines that say what a build lacks
+ * (BuildNotes::Omit, optimizer_spec.h). CTest hpo_optimizer_registry_sync runs
  * --check on the checked-in file; the target
  * hpo_regenerate_optimizer_registry runs --write on it. Before the text is
  * written or compared, it is read back as TOML (toml11), and every value
  * must be the one written. Exit status 2: a usage error.
  */
 
+#include <tadah/hpo/optimizer_caps.h>
+#include <tadah/hpo/optimizer_help.h>
+#include <tadah/hpo/optimizer_spec.h>
+
 #include <toml.hpp>
 
 #include <nlopt.hpp>
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <fstream>
@@ -50,10 +57,16 @@ struct Table {
     {
         fields.push_back({std::move(key), std::move(value), multiline});
     }
+    /* A note of the registry: nullptr is written as "", as none. */
+    void add(std::string key, const char* text)
+    {
+        add(std::move(key), std::string(text ? text : ""));
+    }
 };
 
 struct Document {
     Table meta;
+    std::vector<Table> optimizers;  // sorted by lib, then algo
 };
 
 constexpr const char* kHeader =
@@ -66,7 +79,7 @@ constexpr const char* kHeader =
     "# build directory B with\n"
     "#   cmake --build B --target hpo_regenerate_optimizer_registry\n"
     "# CTest hpo_optimizer_registry_sync fails when it differs from what the\n"
-    "# code produces. The fields: blueprint/README.md.\n";
+    "# code produces. README.md, next to this file, describes the fields.\n";
 
 std::string nlopt_version()
 {
@@ -76,11 +89,143 @@ std::string nlopt_version()
            std::to_string(bugfix);
 }
 
+using namespace tadah::hpo;
+
+const char* step_use_token(StepUse u)
+{
+    switch (u) {
+        case StepUse::Rejected:         return "rejected";
+        case StepUse::Ignored:          return "ignored";
+        case StepUse::PerDimVector:     return "per_dim_vector";
+        case StepUse::PerDimRescale:    return "per_dim_rescale";
+        case StepUse::MinCollapsed:     return "min_collapsed";
+        case StepUse::TrustHalfWidth:   return "trust_half_width";
+        case StepUse::ForwardedToInner: return "forwarded_to_inner";
+        case StepUse::GridCount:        return "grid_count";
+        case StepUse::WidthFraction:    return "width_fraction";
+    }
+    throw std::runtime_error("a StepUse without a token");
+}
+
+const char* random_draws_token(OptimizerCaps::RandomDraws d)
+{
+    using D = OptimizerCaps::RandomDraws;
+    switch (d) {
+        case D::NotRecorded:  return "not_recorded";
+        case D::Never:        return "never";
+        case D::BetweenSides: return "between_sides";
+        case D::TrialPoints:  return "trial_points";
+    }
+    throw std::runtime_error("a RandomDraws without a token");
+}
+
+/* The attributes a run reads besides its stops, sorted. */
+Strings reads(const OptimizerCaps& c)
+{
+    Strings keys;
+    if (c.reads_ftol_abs_as_setting) keys.push_back("FTOL_ABS");
+    if (c.reads_population)          keys.push_back("POPULATION");
+    if (c.reads_seed)                keys.push_back("SEED");
+    if (c.reads_vector_storage)      keys.push_back("VECTOR_ARR");
+    return keys;
+}
+
+/* The stop criteria that end a run, in the order of the ALGO help. */
+Strings stops(const OptimizerCaps& c)
+{
+    Strings keys;
+    if (c.supports_maxeval)  keys.push_back("MAXEVAL");
+    if (c.supports_maxtime)  keys.push_back("MAXTIME");
+    if (c.supports_stopval)  keys.push_back("STOPVAL");
+    if (c.supports_ftol_rel) keys.push_back("FTOL_REL");
+    if (c.supports_ftol_abs) keys.push_back("FTOL_ABS");
+    if (c.supports_xtol_rel) keys.push_back("XTOL_REL");
+    if (c.supports_xtol_abs) keys.push_back("XTOL_ABS");
+    return keys;
+}
+
+/* What `tadah explain LIB:ALGO` prints, without the lines that depend on
+ * the build (BuildNotes::Omit). */
+std::string explain_text(const std::string& lib, const std::string& algo)
+{
+    std::ostringstream os;
+    OptimizerSpec::print_caps(os, lib, algo, BuildNotes::Omit);
+    return os.str();
+}
+
+Table registered_entry(const OptimizerCaps& c)
+{
+    Table t;
+    t.add("lib", c.lib);
+    t.add("algo", c.algo);
+    t.add("status", "registered");
+    t.add("row_text", optimiser_row_text(c));
+    t.add("global", c.is_global);
+    t.add("gradient_based", c.is_gradient_based);
+    t.add("accepts_inner", c.accepts_inner);
+    t.add("default_inner", c.default_inner);
+    t.add("accepts_multi_seed", c.accepts_multi_seed);
+    t.add("reads", reads(c));
+    t.add("warns_unread_seed", c.warns_unread_seed);
+    t.add("stops", stops(c));
+    t.add("needs_stop", c.needs_stop);
+    t.add("stop_note", c.stop_note);
+    t.add("ignores_forced_stop", c.ignores_forced_stop);
+    t.add("tolerance_note", c.tolerance_note);
+    t.add("untested_tolerance_note", c.untested_tolerance_note);
+    t.add("step_use", step_use_token(c.step_use));
+    t.add("step_use_text", step_use_name(c.step_use));
+    t.add("step_consumed", step_use_consumes(c.step_use));
+    t.add("step_note", c.step_note);
+    t.add("starts_at_x0", c.starts_at_x0);
+    t.add("start_note", c.start_note);
+    t.add("random_draws", random_draws_token(c.random_draws));
+    t.add("ignores_bounds", c.ignores_bounds);
+    t.add("bounds_note", c.bounds_note);
+    t.add("explain_text", explain_text(c.lib, c.algo), true);
+    return t;
+}
+
+Table refused_entry(const std::string& lib, const std::string& algo)
+{
+    Table t;
+    t.add("lib", lib);
+    t.add("algo", algo);
+    t.add("status", "refused");
+    t.add("reason", backend_refusal(lib, algo));
+    t.add("explain_text", explain_text(lib, algo), true);
+    return t;
+}
+
 Document build_document()
 {
     Document doc;
     doc.meta.add("schema", std::int64_t{1});
     doc.meta.add("nlopt_version", nlopt_version());
+    doc.meta.add("libraries", optimizer_libraries());
+
+    /* Every backend, registered or refused, by (lib, algo). */
+    std::vector<std::pair<std::string, std::string>> names;
+    for (const OptimizerCaps* c :
+         filter_optimizer_caps([](const OptimizerCaps&) { return true; }))
+        names.emplace_back(c->lib, c->algo);
+    for (const std::string& name : refused_backend_names()) {
+        const std::size_t colon = name.find(':');
+        names.emplace_back(name.substr(0, colon), name.substr(colon + 1));
+    }
+    std::sort(names.begin(), names.end());
+    const auto twice = std::adjacent_find(names.begin(), names.end());
+    if (twice != names.end())
+        throw std::runtime_error(twice->first + ":" + twice->second +
+                                 " is listed twice (registered and refused)");
+
+    for (const auto& [lib, algo] : names) {
+        if (backend_refusal(lib, algo))
+            doc.optimizers.push_back(refused_entry(lib, algo));
+        else
+            doc.optimizers.push_back(
+                registered_entry(optimizer_caps(lib, algo)));
+    }
     return doc;
 }
 
@@ -150,6 +295,10 @@ std::string write_document(const Document& doc)
     std::ostringstream os;
     os << kHeader << "\n[meta]\n";
     write_table(os, doc.meta);
+    for (const Table& t : doc.optimizers) {
+        os << "\n[[optimizer]]\n";
+        write_table(os, t);
+    }
     return os.str();
 }
 
@@ -203,11 +352,19 @@ void check_read_back(const Document& doc, const std::string& text)
         throw std::runtime_error(std::string("the text is not TOML: ") +
                                  e.what());
     }
-    if (root.as_table().size() != 1)
-        throw std::runtime_error("the text has " +
-                                 std::to_string(root.as_table().size()) +
-                                 " top-level keys, 1 written");
+    if (root.as_table().size() != 2 || !root.contains("meta") ||
+        !root.contains("optimizer"))
+        throw std::runtime_error("the top-level keys are not meta and "
+                                 "optimizer");
     check_table(root.at("meta"), doc.meta, "meta");
+    const toml::value& list = root.at("optimizer");
+    if (!list.is_array() || list.as_array().size() != doc.optimizers.size())
+        throw std::runtime_error("optimizer is not an array of " +
+                                 std::to_string(doc.optimizers.size()) +
+                                 " tables");
+    for (std::size_t i = 0; i < doc.optimizers.size(); ++i)
+        check_table(list.as_array()[i], doc.optimizers[i],
+                    "optimizer[" + std::to_string(i) + "]");
 }
 
 /* ---- the command ----------------------------------------------------- */

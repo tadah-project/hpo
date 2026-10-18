@@ -275,7 +275,8 @@ static void print_nlopt_caps(std::ostream& os,const std::string& algo)
     } catch (const std::exception&) { /* unregistered: nothing to add */ }
 }
 
-static void print_ceres_caps(std::ostream& os, const std::string& algo)
+static void print_ceres_caps(std::ostream& os, const std::string& algo,
+                             [[maybe_unused]] BuildNotes notes)
 {
     const OptimizerCaps* c = find_optimizer_caps("CERES", algo);
     if (!c) { os << "   * (unknown CERES algo; registered: "
@@ -284,8 +285,9 @@ static void print_ceres_caps(std::ostream& os, const std::string& algo)
     os << "   * Ceres' GradientProblemSolver: " << what << "; local, "
           "gradient-based (GRAD_STRATEGY NUMERICAL by default)\n";
 #ifndef TADAH_USE_CERES
-    os << "   * this build has no Ceres (TADAH_ENABLE_CERES OFF): a run is "
-          "refused\n";
+    if (notes == BuildNotes::Include)
+        os << "   * this build has no Ceres (TADAH_ENABLE_CERES OFF): a run "
+              "is refused\n";
 #endif
     print_stops(os, "CERES", algo);
     os << "   * PARAM tol_gradinf <double>  (gradient tolerance, the largest "
@@ -329,7 +331,7 @@ std::optional<OptimizerSpec> tadah::hpo::anchor_seed_points(const OptimizerSpec&
 }
 
 void OptimizerSpec::print_caps(std::ostream& os, const std::string& lib,
-                               const std::string& algo)
+                               const std::string& algo, BuildNotes notes)
 {
     os<<"Options for "<<lib<<":"<<algo<<"\n";
     /* A backend the caps registry refuses (optimizer_caps.h), of any
@@ -343,8 +345,14 @@ void OptimizerSpec::print_caps(std::ostream& os, const std::string& lib,
     else if (lib=="DLIB")  print_dlib_caps (os,algo);
     else if (lib=="NLOPT") print_nlopt_caps(os,algo);
     else if (lib=="ASA")   print_asa_caps  (os,algo);
-    else if (lib=="CERES") print_ceres_caps(os,algo);
+    else if (lib=="CERES") print_ceres_caps(os,algo,notes);
     else os<<"   * (no info)\n";
+}
+
+void OptimizerSpec::print_caps(std::ostream& os, const std::string& lib,
+                               const std::string& algo)
+{
+    print_caps(os, lib, algo, BuildNotes::Include);
 }
 
 void OptimizerSpec::print_caps(const std::string& lib,
@@ -362,8 +370,9 @@ std::string upper_ascii(std::string s)
     return s;
 }
 
-/* What a backend is, for its row of the table. */
-std::string row_text(const OptimizerCaps& c)
+}  // namespace
+
+std::string tadah::hpo::optimiser_row_text(const OptimizerCaps& c)
 {
     std::string t = c.is_global ? "global" : "local";
     if (c.accepts_inner)
@@ -378,8 +387,6 @@ std::string row_text(const OptimizerCaps& c)
     if (c.ignores_bounds) t += ", ignores the OPTIM box";
     return t;
 }
-
-}  // namespace
 
 void tadah::hpo::print_optimiser_table(std::ostream& out, const std::string& lib)
 {
@@ -404,7 +411,7 @@ void tadah::hpo::print_optimiser_table(std::ostream& out, const std::string& lib
                   });
         for (const auto* c : rows)
             out << "  " << std::left << std::setw(static_cast<int>(width + 2))
-                << c->algo << row_text(*c) << "\n";
+                << c->algo << optimiser_row_text(*c) << "\n";
 #ifndef TADAH_USE_CERES
         if (l == "CERES")
             out << "  (this build has no Ceres, TADAH_ENABLE_CERES OFF: a run "
