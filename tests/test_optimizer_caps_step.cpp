@@ -161,9 +161,11 @@ TEST_CASE("OptimizerCaps: NLOPT:LN_NEWUOA_BOUND is refused, naming the "
      * returns at once (docs/issues/nlopt_newuoa_bound_stall.md, case F with
      * STOPAT).
      * Before the review fix: "after every stop HPO makes through the
-     * objective (...)", with no such bound. */
+     * objective (...)", with no such bound. The reason names the command,
+     * tadah hpo; before the help was rewritten for a user it said "HPO",
+     * and this check fails on that text. */
     CHECK_THROWS_WITH(optimizer_caps("NLOPT", "LN_NEWUOA_BOUND"),
-                      Catch::Contains("after every stop HPO makes through "
+                      Catch::Contains("after every stop tadah hpo makes through "
                                       "the objective (a signal, a RESTART "
                                       "stagnation stop, an error that ends "
                                       "the run) from a run's (2n+1)-th "
@@ -258,7 +260,9 @@ static std::string caps_help(const std::string& lib, const std::string& algo)
  * so the best potential can lie outside the bounds; it needs two OPTIM
  * dimensions -- and names NLOPT:LN_BOBYQA; the caps lookup throws
  * "NLOPT:LN_NEWUOA is refused: <reason>"; no caps list offers it; the ALGO
- * help says REFUSED.
+ * help says REFUSED. The reason says in words that NLopt passes NEWUOA no
+ * bounds (it quoted NLopt's source before the help was rewritten for a
+ * user: the "it passes NEWUOA no bounds" check fails on that text).
  * Before the fix: registered (ignores_bounds, a startup WARNING), with no
  * refusal: backend_refusal() was nullptr and the REQUIRE fails. */
 TEST_CASE("OptimizerCaps: NLOPT:LN_NEWUOA, which ignores the OPTIM box, is "
@@ -268,7 +272,7 @@ TEST_CASE("OptimizerCaps: NLOPT:LN_NEWUOA, which ignores the OPTIM box, is "
     REQUIRE(reason != nullptr);
     CHECK_THAT(std::string(reason),
                Catch::Contains("without the OPTIM box") &&
-               Catch::Contains("lb = ub = NULL") &&
+               Catch::Contains("it passes NEWUOA no bounds") &&
                Catch::Contains("the best potential can lie outside") &&
                Catch::Contains("two OPTIM dimensions or more") &&
                Catch::EndsWith("Use NLOPT:LN_BOBYQA, Powell's "
@@ -297,7 +301,9 @@ TEST_CASE("OptimizerCaps: NLOPT:LN_NEWUOA, which ignores the OPTIM box, is "
  * bound-constrained NLOPT:LD_LBFGS and DLIB:BFGS; the caps lookup throws
  * "CERES:<ALGO> is refused: <reason>", so every phase's check reports it
  * with the phase and its line (test_startup_validation_strategy.cpp); the
- * ALGO help says REFUSED.
+ * ALGO help says REFUSED. The reason names the command, tadah hpo (it said
+ * "HPO" before the help was rewritten for a user, and the check of its
+ * last sentence fails on that text).
  * Before the fix: the reason named "Use CERES:LBFGS, CERES:WOLFE,
  * CERES:NLCG or CERES:STEEPEST_DESCENT", three solvers refused since (their
  * Wolfe line search stalls at a point outside the OPTIM box), and
@@ -317,8 +323,9 @@ TEST_CASE("OptimizerCaps: the Ceres least-squares solvers are refused, naming "
                    Catch::Contains("one scalar loss") &&
                    Catch::Contains("Use CERES:STEEPEST_DESCENT, Ceres' "
                                    "line-search solver of a scalar loss that "
-                                   "HPO runs, or a bound-constrained gradient "
-                                   "search: NLOPT:LD_LBFGS or DLIB:BFGS"));
+                                   "tadah hpo runs, or a bound-constrained "
+                                   "gradient search: NLOPT:LD_LBFGS or "
+                                   "DLIB:BFGS"));
         CHECK_THROWS_WITH(optimizer_caps("CERES", algo),
                           std::string("CERES:") + algo + " is refused: " +
                               reason);

@@ -10,9 +10,14 @@
 #include <tadah/hpo/optimizer_help.h>
 #include <tadah/hpo/optimizer_spec.h>
 
+#include <algorithm>
+#include <cctype>
 #include <iostream>
+#include <regex>
+#include <set>
 #include <sstream>
 #include <string>
+#include <utility>
 #include <vector>
 
 using namespace tadah::hpo;
@@ -34,6 +39,77 @@ std::string caps_help(const std::string& lib, const std::string& algo)
     std::ostringstream out;
     OptimizerSpec::print_caps(out, lib, algo);
     return out.str();
+}
+
+std::string caps_help(const std::string& lib, const std::string& algo,
+                      BuildNotes notes)
+{
+    std::ostringstream out;
+    OptimizerSpec::print_caps(out, lib, algo, notes);
+    return out.str();
+}
+
+/* Every LIB:ALGO, registered or refused, sorted. */
+std::vector<std::pair<std::string, std::string>> every_backend()
+{
+    std::vector<std::pair<std::string, std::string>> names;
+    for (const auto* c : filter_optimizer_caps(
+             [](const OptimizerCaps&) { return true; }))
+        names.emplace_back(c->lib, c->algo);
+    for (const std::string& name : refused_backend_names()) {
+        const auto colon = name.find(':');
+        names.emplace_back(name.substr(0, colon), name.substr(colon + 1));
+    }
+    std::sort(names.begin(), names.end());
+    return names;
+}
+
+/* What makes `text` other than text for a user, one entry per fault: the
+ * module name HPO for the command (tadah hpo); a source file, patch, C++
+ * name or function; a word of development jargon or history; American
+ * spelling in prose (key names, written in capitals or with an
+ * underscore, are as the program reads them). */
+std::vector<std::string> user_text_faults(const std::string& text)
+{
+    std::vector<std::string> faults;
+    static const std::regex hpo("(^|[^A-Za-z0-9_])HPO([^A-Za-z0-9_]|$)");
+    if (std::regex_search(text, hpo))
+        faults.push_back("HPO, not tadah hpo");
+    static const std::regex file("[A-Za-z0-9_]+\\.(c|cc|cpp|h|hpp|py)"
+                                 "([^A-Za-z0-9_]|$)");
+    std::smatch m;
+    if (std::regex_search(text, m, file))
+        faults.push_back("a source file: " + m.str());
+    for (const char* bad : {"::", "TADAH-PATCH", "external/", "vendored",
+                            "random_device", "knob", "subblock", "directive",
+                            "stanza", "legacy", "previously", "no longer",
+                            "pre-1."})
+        if (text.find(bad) != std::string::npos)
+            faults.push_back(std::string("'") + bad + "'");
+    /* -ize and -yze, except the words of size */
+    static const std::regex word("[A-Za-z_]+");
+    static const std::regex american(
+        "(iz|yz)(e|es|ed|ing|er|ers|ation|ations)$|^behavior|^color|"
+        "^center|^journaled$|^labeled$|^modeled$");
+    static const std::set<std::string> size = {
+        "size", "sizes", "sized", "sizing", "resize", "resizes", "resized",
+        "resizing"};
+    for (auto it = std::sregex_iterator(text.begin(), text.end(), word);
+         it != std::sregex_iterator(); ++it) {
+        const std::string w = it->str();
+        if (w.find('_') != std::string::npos) continue;  // a key name
+        bool capitals = true;
+        for (const char ch : w)
+            if (std::islower(static_cast<unsigned char>(ch))) capitals = false;
+        if (capitals) continue;  // a key name: OPTIMIZER
+        std::string lower = w;
+        for (char& ch : lower)
+            ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+        if (size.count(lower)) continue;
+        if (std::regex_search(lower, american))
+            faults.push_back("American spelling: " + w);
+    }
+    return faults;
 }
 
 }  // namespace
@@ -234,4 +310,116 @@ TEST_CASE("explain_optimiser: the ALGO help of MLSL and AUGLAG says that "
                Catch::Contains("\n   * INNER ... ENDINNER: the local search "
                                "it runs, from the points it\n     samples in "
                                "the OPTIM box: LIB NLOPT"));
+}
+
+/* Pins: BuildNotes::Omit leaves out every line of the ALGO help that says
+ * what this build lacks, so the text written for the documentation
+ * (blueprint/optimizers_gen.toml) is the same in every build of one NLopt
+ * version. For every LIB:ALGO, registered or refused: the Omit text has no
+ * line about "this build"; print_caps without BuildNotes prints the
+ * Include text, which `tadah explain` prints. In a build with Ceres the
+ * two texts are the same for every LIB:ALGO. In a build without Ceres
+ * (TADAH_ENABLE_CERES OFF) the Include text of CERES:STEEPEST_DESCENT has
+ * the line "this build has no Ceres (TADAH_ENABLE_CERES OFF): a run is
+ * refused" and its Omit text is that text without the line; every other
+ * LIB:ALGO's two texts are the same.
+ * Fails in a build without Ceres when print_ceres_caps prints the line
+ * whatever BuildNotes says (the Omit check removed): the Omit text of
+ * CERES:STEEPEST_DESCENT then has it. In a build with Ceres the line is
+ * not compiled, and this case checks only that no other line depends on
+ * the build. */
+TEST_CASE("print_caps: BuildNotes::Omit leaves out the lines that depend on "
+          "the build", "[HPO][explain][build_notes]")
+{
+    const std::string ceres_line =
+        "   * this build has no Ceres (TADAH_ENABLE_CERES OFF): a run is "
+        "refused\n";
+    const auto names = every_backend();
+    REQUIRE(names.size() > 50u);
+    std::size_t with_line = 0;
+    for (const auto& [lib, algo] : names) {
+        INFO(lib << ":" << algo);
+        const std::string include = caps_help(lib, algo, BuildNotes::Include);
+        const std::string omit = caps_help(lib, algo, BuildNotes::Omit);
+        CHECK(caps_help(lib, algo) == include);
+        CHECK(omit.find("this build") == std::string::npos);
+        const auto at = include.find(ceres_line);
+        if (at == std::string::npos) {
+            CHECK(omit == include);
+            continue;
+        }
+        ++with_line;
+        CHECK((lib == "CERES" && algo == "STEEPEST_DESCENT"));
+        std::string without = include;
+        without.erase(at, ceres_line.size());
+        CHECK(omit == without);
+    }
+#ifdef TADAH_USE_CERES
+    CHECK(with_line == 0u);
+#else
+    CHECK(with_line == 1u);
+#endif
+}
+
+/* Pins: the ALGO help of every LIB:ALGO, registered or refused (the text
+ * `tadah explain` prints, and the text written for the documentation), and
+ * every text of the optimiser registry the documentation's copy holds (the
+ * row of the table, the STEP use, the notes, the reason of a refusal) are
+ * text for a user: they name the command, tadah hpo, never the module
+ * HPO; no source file, patch, C++ name or function of Tadah! or of a
+ * library (optimize.c, external/asa, TADAH-PATCH 7, nlopt::opt::set_param,
+ * random_device); no development jargon ("knob", "Dead knobs") or history
+ * ("pre-1.5.0 behaviour"); British spelling in prose ("global optimiser",
+ * "equalisation", "written to the journal"); key names as the program
+ * reads them.
+ * Before the fix: fails on the help of ASA:ASA (external/asa, TADAH-PATCH
+ * 7, "knob", "HPO host"), TADAH:ANNEAL (random_device, "Dead knobs"),
+ * TADAH:ANNEAL_PT ("equalization", "pre-1.5.0"), the twenty global NLopt
+ * algorithms ("global optimizer", nlopt::opt::set_param on every NLopt
+ * one), the refusals of NLOPT:LN_NEWUOA (optimize.c), NLOPT:LN_NEWUOA_BOUND
+ * and the Ceres least-squares solvers ("HPO"), and the notes of
+ * NLOPT:GD_STOGO and the AUGLAG forms ("HPO"). */
+TEST_CASE("explain_optimiser: the ALGO help and the optimiser registry are "
+          "text for a user", "[HPO][explain][user_text]")
+{
+    std::size_t checked = 0;
+    const auto check = [&](const std::string& where, const char* text) {
+        if (!text) return;
+        INFO(where << ":\n" << text);
+        const auto faults = user_text_faults(text);
+        std::string all;
+        for (const auto& f : faults) all += "\n  " + f;
+        INFO("faults:" << all);
+        CHECK(faults.empty());
+        ++checked;
+    };
+    for (const auto& [lib, algo] : every_backend()) {
+        const std::string name = lib + ":" + algo;
+        check(name + " help", caps_help(lib, algo).c_str());
+        check(name + " help (Omit)",
+              caps_help(lib, algo, BuildNotes::Omit).c_str());
+        if (const char* reason = backend_refusal(lib, algo)) {
+            check(name + " reason", reason);
+            continue;
+        }
+        const OptimizerCaps& c = optimizer_caps(lib, algo);
+        check(name + " row", optimiser_row_text(c).c_str());
+        check(name + " STEP use", step_use_name(c.step_use));
+        check(name + " stop_note", c.stop_note);
+        check(name + " tolerance_note", c.tolerance_note);
+        check(name + " untested_tolerance_note", c.untested_tolerance_note);
+        check(name + " step_note", c.step_note);
+        check(name + " start_note", c.start_note);
+        check(name + " bounds_note", c.bounds_note);
+        check(name + " default_inner", c.default_inner);
+    }
+    CHECK(checked > 400u);
+    /* the check itself: each kind of fault is found */
+    CHECK(user_text_faults("HPO runs it").size() == 1u);
+    CHECK(user_text_faults("tadah hpo runs it; OPTIMIZER, HPO_X").empty());
+    CHECK(user_text_faults("see asa_usr.c").size() == 1u);
+    CHECK(user_text_faults("a global optimizer").size() == 1u);
+    CHECK(user_text_faults("Equalized, journaled").size() == 2u);
+    CHECK(user_text_faults("the block resizing keeps its size").empty());
+    CHECK(user_text_faults("the primary knob").size() == 1u);
 }

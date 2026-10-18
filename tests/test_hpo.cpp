@@ -89,13 +89,20 @@ TEST_CASE("ANNEAL capability help exposes corrected public contracts",
 
     /* The key listings are generated from the registry
      * (blueprint/anneal_keys.toml), so these checks pin the emitter
-     * format and a few registry facts, not hand-written prose. */
+     * format and a few registry facts, not hand-written prose.
+     * The help is text for a user: the keys a family does not read are
+     * "refused" ("Dead knobs are hard errors" before the help was
+     * rewritten), ANNEAL_PA "accepts and does not use" the INIT_JITTER
+     * calibration keys of ANNEAL_PT ("Accepted as an inactive setting by
+     * the current ANNEAL_PA driver"), and no key's help gives history
+     * (INIT_JITTER_LADDER OFF was "(pre-1.5.0 behaviour)"): these checks
+     * fail on the text before that rewrite. */
     const std::string serial = capture("ANNEAL");
     CHECK(serial.find("PARAM T_INIT") != std::string::npos);
     CHECK(serial.find("PARAM CHAIN_LENGTH (default auto)")
           != std::string::npos);
     CHECK(serial.find("PARAM RT (default 0.85)") != std::string::npos);
-    CHECK(serial.find("Dead knobs are hard errors: STEP")
+    CHECK(serial.find("Keys it does not read are refused: STEP")
           != std::string::npos);
 
     const std::string pt = capture("ANNEAL_PT");
@@ -105,12 +112,24 @@ TEST_CASE("ANNEAL capability help exposes corrected public contracts",
     CHECK(pt.find("best-stall") != std::string::npos);
     CHECK(pt.find("With REPLICAS fixed") != std::string::npos);
     CHECK(pt.find("PARAM RT") == std::string::npos);
+    CHECK(pt.find("OFF = every slot uses the same sigma.")
+          != std::string::npos);
+    CHECK(pt.find("pre-1.5.0") == std::string::npos);
 
     const std::string pa = capture("ANNEAL_PA");
     CHECK(pa.find("all-fail skips") != std::string::npos);
     CHECK(pa.find("POPULATION <R> population size") != std::string::npos);
     CHECK(pa.find("PARAM INIT_MODE <JITTER|UNIFORM> (default JITTER)")
           != std::string::npos);
+    /* INIT_JITTER_MAX, _PROBES, _MAXEVAL, _MAXTIME_FRAC, _SAMPLE and
+     * _AUDIT, each listed once */
+    std::size_t unused = 0;
+    for (auto at = pa.find("ANNEAL_PA accepts it and does not use it.");
+         at != std::string::npos;
+         at = pa.find("ANNEAL_PA accepts it and does not use it.", at + 1))
+        ++unused;
+    CHECK(unused == 6u);
+    CHECK(pa.find("driver") == std::string::npos);
 }
 
 TEST_CASE("HPO placeholder — see comments above for planned tests", "[HPO]")
@@ -902,16 +921,18 @@ TEST_CASE("CERES NLLS family is refused by the caps registry",
      * typo, unknown) are not refused.
      * Before the fix: the reason named "CERES:LBFGS, CERES:WOLFE,
      * CERES:NLCG or CERES:STEEPEST_DESCENT", three solvers refused since
-     * (their Wolfe line search stalls at a point outside the OPTIM box). */
+     * (their Wolfe line search stalls at a point outside the OPTIM box).
+     * The reason names the command, tadah hpo ("HPO" before the help was
+     * rewritten for a user). */
     for (const std::string algo : {"LEVENBERG_MARQUARDT", "DOGLEG", "SUBSPACE_DOGLEG"}) {
         INFO(algo);
         CHECK_THROWS_WITH(tadah::hpo::optimizer_caps("CERES", algo),
                           Catch::StartsWith("CERES:" + algo + " is refused: ") &&
                           Catch::Contains("Use CERES:STEEPEST_DESCENT, Ceres' "
                                           "line-search solver of a scalar loss "
-                                          "that HPO runs, or a bound-constrained "
-                                          "gradient search: NLOPT:LD_LBFGS or "
-                                          "DLIB:BFGS"));
+                                          "that tadah hpo runs, or a "
+                                          "bound-constrained gradient search: "
+                                          "NLOPT:LD_LBFGS or DLIB:BFGS"));
         CHECK_THROWS_WITH(tadah::hpo::reject_refused_backend("CERES", algo,
                                                              "the EXPLORE block"),
                           Catch::StartsWith("the EXPLORE block: CERES:" + algo +

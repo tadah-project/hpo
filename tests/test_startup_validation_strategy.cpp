@@ -1281,10 +1281,11 @@ TEST_CASE("startup validation: NLOPT:LN_NEWUOA, the Ceres least-squares "
         "OPTIM box";
     const std::string bobyqa = "Use NLOPT:LN_BOBYQA";
     /* the NLLS refusal named "Use CERES:LBFGS, CERES:WOLFE, CERES:NLCG or
-     * CERES:STEEPEST_DESCENT" before the fix (three of them refused since) */
+     * CERES:STEEPEST_DESCENT" before the fix (three of them refused since),
+     * and "HPO" for the command before the help was rewritten for a user */
     const std::string ceres_use =
         "Use CERES:STEEPEST_DESCENT, Ceres' line-search solver of a scalar "
-        "loss that HPO runs, or a bound-constrained gradient search: "
+        "loss that tadah hpo runs, or a bound-constrained gradient search: "
         "NLOPT:LD_LBFGS or DLIB:BFGS";
     const std::string explain = "; `tadah explain ALGO` lists the optimisers";
     const std::string top = "the STRATEGY-level optimiser";
@@ -2184,10 +2185,12 @@ const std::string kNoTolerance =
     "; set MAXEVAL, MAXTIME or STOPVAL (it honours no tolerance)";
 /* GD_STOGO ignores NLopt's forced stop: once HPO has to end it, only
  * NLopt's own MAXEVAL ends it promptly (MAXTIME after the rest of its
- * time). */
+ * time). The note names the command, tadah hpo ("HPO" before the help was
+ * rewritten for a user). */
 const std::string kStogoNote =
     "NLopt's StoGO has no convergence test of its own and ignores NLopt's "
-    "forced stop, by which HPO ends a search (on a signal, an error, the "
+    "forced stop, by which tadah hpo ends a search (on a signal, an error, "
+    "the "
     "RESTART stagnation stop, or a loss at or below STOPVAL that NLopt was "
     "not given): it then calls on, each call refused, and only NLopt's own "
     "evaluation count ends it promptly (MAXTIME only once the rest of its "
@@ -2688,8 +2691,8 @@ TEST_CASE("startup validation: NLopt rejects a tolerance, POPULATION or "
                                              inner_bobyqa),
                              top + "NLOPT:" + algo + " does not support " +
                                  key + " with an INNER block: AUGLAG ends "
-                                 "when its INNER search ends (HPO sets no "
-                                 "constraint) and tests the block's "
+                                 "when its INNER search ends (tadah hpo sets "
+                                 "no constraint) and tests the block's "
                                  "tolerances only to name that ending, and "
                                  "NLopt passes them to no INNER search; set "
                                  "it in the INNER block, whose local search "
