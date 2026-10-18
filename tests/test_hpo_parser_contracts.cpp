@@ -35,6 +35,7 @@
 //     build_run_policy still wraps the remaining strategies in
 //     RestartPolicy when RESTART is set.
 
+#include "tadah_test_skip.hpp"  // before catch2/catch.hpp
 #include "catch2/catch.hpp"
 
 #include <tadah/core/context.h>
@@ -1020,10 +1021,11 @@ TEST_CASE("Strict numbers: QFLUSH, DIGITS, OUTPUT and BOUTPUT are integers "
 }
 
 /* Pins also: parsing creates no directory. The archive directory is the
- * run's output: the evaluation host of a run creates it (test_hpo_host_e2e's
- * DUMP and BDUMP cases write into one only a target file names), and
- * `tadah hpo --check` (test_hpo_check.cpp), which builds no such host,
- * leaves the working directory as it is.
+ * run's output: the run creates it once every startup check passed, before
+ * its first evaluation (hpo_run(); test_hpo_host_e2e's DUMP and BDUMP cases
+ * create it as the run does, and write into one only a target file names),
+ * and `tadah hpo --check` (test_hpo_check.cpp) leaves the working
+ * directory as it is.
  * Before the change: the parse created the directory. */
 TEST_CASE("Strict numbers: DUMP and BDUMP take a cadence and a directory",
           "[HPO][hpo_targets][strict_numbers]")
@@ -1058,6 +1060,110 @@ TEST_CASE("Strict numbers: DUMP and BDUMP take a cadence and a directory",
               dir.string());
         CHECK_FALSE(fs::exists(dir));
         fs::remove_all(dir);
+    }
+}
+
+/* Pins: the directory of a DUMP or BDUMP line is checked at its line, as
+ * the target file is read (for `tadah hpo --check` and the run alike),
+ * and the check creates nothing: a directory in a directory that does not
+ * exist ("DUMP directory '<root>/missing/pots' cannot be created: the
+ * directory '<root>/missing' does not exist (tadah hpo creates only the
+ * last directory of the path)"), a path that is a file ("... '<root>/a_file'
+ * exists and is not a directory") and a directory in a file ("... cannot be
+ * created: '<root>/a_file' is not a directory") are refused, at the line;
+ * an existing directory, a new one in an existing directory, the same
+ * written with a trailing '/', and a relative one in the working directory
+ * are accepted, and none is created.
+ * Before the check: the parse accepted the three (the run stopped when it
+ * created the directory, after it had loaded the data, or wrote no archive
+ * into the file): the refusal checks fail. */
+TEST_CASE("DUMP and BDUMP refuse a directory the run cannot create, at "
+          "their line, and create nothing",
+          "[HPO][hpo_targets][archive_directories]")
+{
+    const fs::path root = unique_temp_path("_archive");
+    fs::create_directories(root);
+    struct RemoveDir {
+        fs::path p;
+        ~RemoveDir() { std::error_code ec; fs::remove_all(p, ec); }
+    } cleanup{root};
+    const fs::path file = root / "a_file";
+    std::ofstream(file) << "not a directory\n";
+    for (const std::string key : {"DUMP", "BDUMP"}) {
+        INFO(key);
+        const auto h = root_home(key);
+        const std::string what = key + " directory '";
+        const fs::path missing = root / "missing" / "pots";
+        CHECK_THAT(parse_error(h.config("5 " + missing.string())),
+                   Catch::StartsWith(
+                       h.at() + what + missing.string() +
+                       "' cannot be created: the directory '" +
+                       (root / "missing").string() +
+                       "' does not exist (tadah hpo creates only the last "
+                       "directory of the path)"));
+        CHECK_THAT(parse_error(h.config("5 " + file.string())),
+                   Catch::StartsWith(h.at() + what + file.string() +
+                                     "' exists and is not a directory"));
+        const fs::path in_file = file / "pots";
+        CHECK_THAT(parse_error(h.config("5 " + in_file.string())),
+                   Catch::StartsWith(h.at() + what + in_file.string() +
+                                     "' cannot be created: '" +
+                                     file.string() +
+                                     "' is not a directory"));
+        CHECK_FALSE(fs::exists(root / "missing"));
+
+        const auto existing = parse_config(h.config("5 " + root.string()));
+        CHECK((key == "DUMP" ? existing.dumpPotDir
+                             : existing.dumpBestPotDir) == root.string());
+        for (const std::string dir :
+             {(root / "new").string(), (root / "new").string() + "/",
+              std::string("tadah_no_such_archive")}) {
+            INFO("directory " << dir);
+            const auto trg = parse_config(h.config("5 " + dir));
+            CHECK((key == "DUMP" ? trg.dumpPotDir : trg.dumpBestPotDir) ==
+                  dir);
+            CHECK_FALSE(fs::exists(dir));
+        }
+    }
+}
+
+/* Pins: the directory of a DUMP or BDUMP line must be one the run can
+ * write into: an existing directory without write permission ("DUMP
+ * directory '<root>/ro' is not writable") and a new one in such a
+ * directory ("... '<root>/ro/pots' cannot be created: the directory
+ * '<root>/ro' is not writable") are refused at the line.
+ * Before the check: both were accepted, and the run wrote no archive (each
+ * one a WARNING in the journal) or stopped when it created the directory.
+ * Skipped as root, whose writes no permission stops. */
+TEST_CASE("DUMP and BDUMP refuse a directory the run cannot write into",
+          "[HPO][hpo_targets][archive_directories]")
+{
+    if (::geteuid() == 0)
+        TADAH_SKIP("running as root: file permissions are not enforced");
+    const fs::path root = unique_temp_path("_archive_ro");
+    const fs::path ro = root / "ro";
+    fs::create_directories(ro);
+    struct RemoveDir {
+        fs::path p, ro;
+        ~RemoveDir()
+        {
+            std::error_code ec;
+            fs::permissions(ro, fs::perms::owner_all, ec);
+            fs::remove_all(p, ec);
+        }
+    } cleanup{root, ro};
+    fs::permissions(ro, fs::perms::owner_read | fs::perms::owner_exec);
+    for (const std::string key : {"DUMP", "BDUMP"}) {
+        INFO(key);
+        const auto h = root_home(key);
+        CHECK_THAT(parse_error(h.config("5 " + ro.string())),
+                   Catch::StartsWith(h.at() + key + " directory '" +
+                                     ro.string() + "' is not writable"));
+        CHECK_THAT(parse_error(h.config("5 " + (ro / "pots").string())),
+                   Catch::StartsWith(h.at() + key + " directory '" +
+                                     (ro / "pots").string() +
+                                     "' cannot be created: the directory '" +
+                                     ro.string() + "' is not writable"));
     }
 }
 

@@ -854,6 +854,9 @@ TEST_CASE("The potentials of an evaluation keep the inputs of the run in "
         log.open((sd.dir / "journal.log").string(), "test",
                  sd.dir.string(), 1);
         log.write_loss_section(trg);
+        /* The run creates the DUMP and BDUMP directories before its
+         * first evaluation (hpo_run()), not its evaluation host. */
+        trg.create_archive_directories();
         host.prepare_best_publication();
         ParamVec p(1); p(0) = 0.5;
         const double total = host(p);
@@ -1000,6 +1003,9 @@ TEST_CASE("The potentials of an evaluation keep the keys that prepared the "
         log.open((sd.dir / "journal.log").string(), "test",
                  sd.dir.string(), 1);
         log.write_loss_section(trg);
+        /* The run creates the DUMP and BDUMP directories before its
+         * first evaluation (hpo_run()), not its evaluation host. */
+        trg.create_archive_directories();
         host.prepare_best_publication();
         ParamVec p(1); p(0) = 0.5;
         const double total = host(p);
