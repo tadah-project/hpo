@@ -95,11 +95,11 @@ using Registry = std::unordered_map<CapsKey, OptimizerCaps, CapsKeyHash>;
  * phase interpolates that value with a cubic and shrinks the step to a
  * vanishing fraction of the trial (a fraction of order |slope x step| /
  * (FAILSCORE - loss)): measured with CERES:LBFGS, WOLFE and NLCG alike,
- *   - OPTIM RCUT2B [4, 6], CGRID2B (2) [0.1, 2] on the HPO examples'
- *   common Ta model, FAILSCORE 1e16, MAXEVAL 25: the first trial left the
- *   box, the search took a step of 0 and ended "Parameter tolerance
- *   reached" at its start after 16 evaluations (loss 13.84); it had
- *   evaluated 20 of its 25 points outside the box before, ending at
+ *   - OPTIM RCUT2B [4, 6], CGRID2B (2) [0.1, 2] on the shared Ta model of
+ *   the tests (tests/data/ta/common), FAILSCORE 1e16, MAXEVAL 25: the first
+ *   trial left the box, the search took a step of 0 and ended "Parameter
+ *   tolerance reached" at its start after 16 evaluations (loss 13.84); it
+ *   had evaluated 20 of its 25 points outside the box before, ending at
  *   MAXEVAL with RCUT2B 11.2;
  *   - the straddle fixture of test_hpo_termination.cpp, FAILSCORE 1e9,
  *   FAILSCORE_GRADING ON, from CGRID2B[2] = 1.4: after two trials outside

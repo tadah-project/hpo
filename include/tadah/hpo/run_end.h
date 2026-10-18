@@ -8,9 +8,9 @@
  * the whole run (run_driver.h), and a normal end without one is an internal
  * error there. The drivers of TADAH (RANDOM, GRID, ANNEAL, ANNEAL_PT,
  * ANNEAL_PA), DLIB (GFS, BFGS) and CERES record "<LIB>:<ALGO>: <reason>"
- * with a fixed reason text from this table, so a script or a fingerprint
- * can match it; the numbers (the evaluations made, a tolerance and whether
- * it is the default) are in the journal's stop line, never in the status.
+ * with a fixed reason text from this table, so a script can match it; the
+ * numbers (the evaluations made, a tolerance and whether it is the default)
+ * are in the journal's stop line, never in the status.
  * A Ceres ending this table has no reason for is named by Ceres'
  * termination type and the head of its message, a fixed text as well
  * (ceres_message_head, ceres_adapter.h): "CERES:<ALGO>: CONVERGENCE
