@@ -1432,11 +1432,11 @@ HPO_Host<P,R>::HPO_Host(core::Context master_ctx,
                 " OPTIM dimension(s)");
     }
 
-    /* The outputs of a run: its archive directories and the headers of its
-     * result files. A host of `tadah hpo --check` writes none. */
+    /* The outputs of a run: the headers of its result files. A host of
+     * `tadah hpo --check` writes none. The run creates its archive
+     * directories once every startup check passed
+     * (HPOTargets::create_archive_directories). */
     if (purpose_ == HostPurpose::Run) {
-        trg_.create_archive_directories();
-
         init_loss   (trg_.lossFile);
         init_outvar (trg_.outvarFile);
         init_params (trg_.paramsFile);

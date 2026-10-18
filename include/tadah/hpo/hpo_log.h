@@ -78,6 +78,13 @@ struct PinnedDim {
                         * (CORANA: the V floor; CLASSIC: sigma[i]) */
 };
 
+/* One WARNING or HINT line of a run's journal: its tag ("WARNING",
+ * "HINT") and its text (lines separated by '\n'). */
+struct JournalNote {
+    std::string tag;
+    std::string text;
+};
+
 /* =========================================================================
  * HPOLog -- the logger.
  * ========================================================================= */
@@ -111,8 +118,16 @@ public:
      *  writes no file): closes a journal an earlier run in this process
      *  left open -- one that stopped during its setup, before its trailer
      *  -- and starts the run state afresh, as open() does, without a file.
-     *  Every writer then writes nothing until the next open(). */
+     *  Every writer then writes nothing until the next open(), but the
+     *  WARNING and HINT events, which it keeps, in order, for
+     *  notes_without_journal(). */
     void begin_without_journal();
+
+    /** The WARNING and HINT events since begin_without_journal(), in the
+     *  order they came: the lines a run writes to its journal that the
+     *  check shows (write_check_summary). Empty after open() and
+     *  reset_for_test(). */
+    std::vector<JournalNote> notes_without_journal() const;
 
     /** The MPI rank whose journal this is, and the number of ranks of the
      *  run. Each rank of a multi-rank run keeps its own journal, which
@@ -769,6 +784,12 @@ private:
     /* first_in_run / count_in_run -- protected by mtx_; reset by open()
      * and reset_for_test(). */
     std::map<std::string, std::size_t> run_notes_;
+    /* begin_without_journal(): event() keeps the WARNING and HINT events
+     * (notes_without_journal) while no journal is open -- protected by
+     * mtx_; reset by open(), begin_without_journal() and
+     * reset_for_test(). */
+    bool                     keep_notes_ = false;
+    std::vector<JournalNote> kept_notes_;
     std::vector<double>      pin_low_, pin_high_;
     std::vector<char>        pin_log_;             // 1 = log-scaled dim
     double                   pin_floor_frac_ = 0.0;

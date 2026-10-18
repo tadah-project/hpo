@@ -23,13 +23,17 @@
 
 #include <algorithm>
 #include <cmath>
+#include <filesystem>
 #include <iomanip>
+#include <iostream>
 #include <optional>
 #include <random>
 #include <fstream>
 #include <sstream>
 #include <stdexcept>
+#include <system_error>
 #include <unordered_map>
+#include <unistd.h>   // access(): the archive directories
 
 namespace tadah {
 namespace hpo {
@@ -1308,14 +1312,17 @@ void HPOTargets::read(const std::string& fn)
             }
             else if (key=="DUMP" || key=="BDUMP") {
                 /* <cadence> <directory>. The directory is the run's
-                 * output: the evaluation host of a run creates it
-                 * (create_archive_directories), parsing does not. */
+                 * output: checked here, at its line, for the run and for
+                 * `tadah hpo --check` alike, and created by the run once
+                 * every startup check passed (create_archive_directories);
+                 * parsing creates nothing. */
                 std::string every, dir;
                 if (!(iss >> every >> dir))
                     throw std::runtime_error(
                         key + " requires a cadence and a directory");
                 expect_end(iss, key + " takes a cadence and a directory");
                 const std::size_t n = parse_uint(every, key + " cadence", 1);
+                check_archive_directory(key, dir);
                 if (key == "DUMP") { dumpPotEvery = n; dumpPotDir = dir; }
                 else { dumpBestPotEvery = n; dumpBestPotDir = dir; }
             }
@@ -1746,26 +1753,72 @@ double HPOTargets::parse_pc_worker_timeout(const std::string& token,
 
 void HPOTargets::create_archive_directories() const {
   if (dumpPotEvery != std::numeric_limits<size_t>::max())
-    handle_directory_creation(dumpPotDir);
+    create_archive_directory("DUMP", dumpPotDir);
   if (dumpBestPotEvery != std::numeric_limits<size_t>::max())
-    handle_directory_creation(dumpBestPotDir);
+    create_archive_directory("BDUMP", dumpBestPotDir);
 }
 
-void HPOTargets::handle_directory_creation(const std::string& directory) {
-  try {
-    if (!fs::exists(directory)) {
-      if (fs::create_directory(directory)) {
-        std::cout << "Directory created: " << directory << std::endl;
-      } else {
-        std::cerr << "Failed to create directory: " << directory << std::endl;
-      }
-    } else {
-      std::cout << "Directory already exists: " << directory << std::endl;
-    }
-  } catch (const std::exception& e) {
-    throw std::runtime_error("Error in handle_directory_creation: "
-                             + std::string(e.what()));
+namespace {
+/* Whether the process can create entries in the directory @p dir: write
+ * and search permission (access(2), the real user's). */
+bool writable_directory(const fs::path& dir) {
+  return ::access(dir.c_str(), W_OK | X_OK) == 0;
+}
+}  // namespace
+
+void HPOTargets::check_archive_directory(const std::string& key,
+                                         const std::string& dir) {
+  const std::string what = key + " directory '" + dir + "'";
+  const fs::path path(dir);
+  std::error_code ec;
+  const fs::file_status st = fs::status(path, ec);
+  if (st.type() != fs::file_type::not_found) {
+    if (ec)
+      throw std::runtime_error(what + " cannot be read: " + ec.message());
+    if (!fs::is_directory(st))
+      throw std::runtime_error(what + " exists and is not a directory");
+    if (!writable_directory(path))
+      throw std::runtime_error(what + " is not writable");
+    return;
   }
+  /* A new directory: the run creates the last directory of the path, in
+   * its parent ("pots/" is "pots", whose parent is the working
+   * directory). */
+  fs::path last = path;
+  if (!last.has_filename()) last = last.parent_path();
+  fs::path parent = last.parent_path();
+  if (parent.empty()) parent = ".";
+  const std::string cannot = what + " cannot be created: ";
+  const fs::file_status ps = fs::status(parent, ec);
+  if (ps.type() == fs::file_type::not_found)
+    throw std::runtime_error(cannot + "the directory '" + parent.string() +
+                             "' does not exist (tadah hpo creates only the "
+                             "last directory of the path)");
+  if (ec)
+    throw std::runtime_error(cannot + "'" + parent.string() +
+                             "' cannot be read: " + ec.message());
+  if (!fs::is_directory(ps))
+    throw std::runtime_error(cannot + "'" + parent.string() +
+                             "' is not a directory");
+  if (!writable_directory(parent))
+    throw std::runtime_error(cannot + "the directory '" + parent.string() +
+                             "' is not writable");
+}
+
+void HPOTargets::create_archive_directory(const std::string& key,
+                                          const std::string& dir) {
+  std::error_code ec;
+  if (fs::create_directory(dir, ec)) {
+    std::cout << "Directory created: " << dir << std::endl;
+    return;
+  }
+  if (!ec && fs::is_directory(dir, ec)) {
+    std::cout << "Directory already exists: " << dir << std::endl;
+    return;
+  }
+  throw std::runtime_error(
+      key + " directory '" + dir + "' could not be created: " +
+      (ec ? ec.message() : std::string("it exists and is not a directory")));
 }
 
 /* Positive-only OPTIM keys, from the same table the refit hpotarget writer

@@ -181,22 +181,61 @@ void write_loss(std::ostream& out, const HPOTargets& trg)
         out << "  " << r.first << "  " << r.second << "\n";
 }
 
+/* ", with 2 warnings and 1 hint" for @p notes; "" for none. */
+std::string notes_count(const std::vector<JournalNote>& notes)
+{
+    std::size_t warnings = 0, hints = 0;
+    for (const auto& n : notes) (n.tag == "HINT" ? hints : warnings) += 1;
+    std::vector<std::string> parts;
+    if (warnings) parts.push_back(count_of(warnings, "warning"));
+    if (hints)    parts.push_back(count_of(hints, "hint"));
+    if (parts.empty()) return "";
+    return ", with " + parts[0] + (parts.size() > 1 ? " and " + parts[1] : "");
+}
+
 }  // namespace
+
+void write_check_notes(std::ostream& out,
+                       const std::vector<JournalNote>& notes)
+{
+    if (notes.empty()) return;
+    out << "Warnings and hints, which a run writes to its journal "
+           "(hpo_run.log):\n";
+    const std::string under(11, ' ');  // "  " + the tag column + "  "
+    for (const auto& n : notes) {
+        out << "  " << padded(n.tag, 7) << "  ";
+        std::size_t start = 0;
+        for (;;) {
+            const std::size_t nl = n.text.find('\n', start);
+            out << n.text.substr(start, nl == std::string::npos
+                                            ? std::string::npos
+                                            : nl - start) << "\n";
+            if (nl == std::string::npos) break;
+            start = nl + 1;
+            out << under;
+        }
+    }
+}
 
 void write_check_summary(std::ostream& out, const std::string& target_file,
                          const HPOTargets& trg, std::size_t n_train,
-                         std::size_t n_val)
+                         std::size_t n_val,
+                         const std::vector<JournalNote>& notes)
 {
     out << "tadah hpo --check: " << target_file
-        << " passed the startup checks.\n\n";
+        << " passed the startup checks" << notes_count(notes) << ".\n\n";
     write_search_space(out, trg);
     out << "\n";
     write_optimiser(out, trg.spec);
     out << "\n";
     write_loss(out, trg);
     out << "\nData: " << count_of(n_train, "training structure") << ", "
-        << count_of(n_val, "validation structure") << "\n\n"
-        << "No candidate was evaluated and no file was written.\n";
+        << count_of(n_val, "validation structure") << "\n\n";
+    if (!notes.empty()) {
+        write_check_notes(out, notes);
+        out << "\n";
+    }
+    out << "No candidate was evaluated and no file was written.\n";
     out.flush();
 }
 

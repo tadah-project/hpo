@@ -208,9 +208,11 @@ struct EvalResult
 
 /* What an HPO_Host is built for.
  *   Run    the evaluations of a run: the constructor loads and checks the
- *          data, creates the DUMP and BDUMP archive directories
- *          (HPOTargets::create_archive_directories) and writes the headers
- *          of the result files (loss.tadah, params.tadah, ...).
+ *          data and writes the headers of the result files (loss.tadah,
+ *          params.tadah, ...). The DUMP and BDUMP archive directories are
+ *          the caller's to create before the first evaluation
+ *          (HPOTargets::create_archive_directories; hpo_run() creates them
+ *          once every startup check passed).
  *   Check  the startup checks of `tadah hpo --check` (hpo_run with CHECK
  *          true): the constructor loads and checks the data as for a run,
  *          and writes no file and creates no directory. Such a host

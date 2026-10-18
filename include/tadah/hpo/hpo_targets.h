@@ -74,7 +74,19 @@ private:
 
     size_t ui_offset(std::vector<std::string> &tokens, size_t ui);
     std::vector<std::string> parse_optim_line(std::istringstream& iss);
-    static void handle_directory_creation(const std::string& directory);
+    /* Throws when the run cannot create the archive directory @p dir of
+     * the line @p key (DUMP, BDUMP) or write into it, and creates nothing:
+     * a path that exists must be a directory the run can write into; one
+     * that does not, a new directory in an existing directory the run can
+     * write into (the run creates the last directory of the path only). The
+     * parse checks each DUMP and BDUMP line with it, at the line. */
+    static void check_archive_directory(const std::string& key,
+                                        const std::string& dir);
+    /* Creates the archive directory @p dir of the line @p key, which
+     * check_archive_directory() accepted (one that exists is kept; each is
+     * named on standard output). */
+    static void create_archive_directory(const std::string& key,
+                                         const std::string& dir);
     /* One OPTIM line (on line @p nline of the file). The key is
      * upper-cased: OPTIM keys are case-insensitive, as configuration keys
      * are. */
@@ -170,10 +182,11 @@ public:
      * OPTIM box was derived by an AUTO rule) into `dir`. */
     void write_search_space_files(const std::string& dir) const;
     /* Creates the archive directories of the DUMP and BDUMP lines (one
-     * that exists is kept; each is named on standard output). The
-     * evaluation host of a run calls it (HPO_Host, HostPurpose::Run):
-     * parsing the target file creates nothing, and `tadah hpo --check`
-     * leaves the working directory as it is. */
+     * that exists is kept; each is named on standard output). The parse
+     * checks each at its line and creates nothing; hpo_run() calls this
+     * once every startup check of the run passed, before its first
+     * evaluation, so a run that stops at startup creates none, and `tadah
+     * hpo --check` leaves the working directory as it is. */
     void create_archive_directories() const;
 
     /* Typed observables (Tier 1 / Tier 2 of the PC_OBSERVABLE redesign).
