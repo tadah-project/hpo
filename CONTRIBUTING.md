@@ -48,5 +48,4 @@ build directory.
 |---|---|
 | `include/tadah/hpo/` | Public headers (drivers, init strategies, run policies, loss terms). |
 | `src/`               | Implementation translation units. |
-| `tests/`             | Unit and integration tests. |
-| `examples/`          | Worked-through `config.hpo` reference suite (see `run_reference_suite.sh`). |
+| `tests/`             | Unit and integration tests; `tests/data/` holds their data (`tests/data/ta`: the Ta training and validation configurations, datasets, LAMMPS scripts and target files). |
