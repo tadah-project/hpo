@@ -220,6 +220,16 @@ bool contains(const std::string& s, const std::string& what)
     return s.find(what) != std::string::npos;
 }
 
+/* Standard error into a string while it lives. */
+struct CaptureCerr {
+    std::ostringstream text;
+    std::streambuf* old;
+    CaptureCerr() : old(std::cerr.rdbuf(text.rdbuf())) {}
+    ~CaptureCerr() { std::cerr.rdbuf(old); }
+    CaptureCerr(const CaptureCerr&) = delete;
+    CaptureCerr& operator=(const CaptureCerr&) = delete;
+};
+
 /* The width of the residual OpenMP kernels at @p n while it lives (the
  * OpenMP runtime's, else OMP_NUM_THREADS, as hpo_run() reads it): a run
  * without THREADS warns at startup when it is above 1. */
@@ -613,4 +623,45 @@ TEST_CASE("hpo --check: a run with CHECK false writes no CHECK line into "
         }
         CHECK_FALSE(has_check);
     }
+}
+
+/* Pins: a check that stops at a startup error after the run's startup has
+ * warned writes those WARNING and HINT lines to standard error before the
+ * error propagates, as a run has them in its journal: for a setup without
+ * THREADS whose residual OpenMP width is 2, refused by the pre-flight audit
+ * (AUDIT error, RCUT2B 1), standard error reads "tadah hpo --check: the
+ * startup checks stopped at the error below.", then "Warnings and hints,
+ * which a run writes to its journal (hpo_run.log):" and "  WARNING  THREADS
+ * not set: ...", and hpo_run() throws the audit's error.
+ * Before the change: nothing was written (the check dropped every journal
+ * line of its startup). */
+TEST_CASE("hpo --check: the startup warnings before an error are written "
+          "to standard error",
+          "[HPO][hpo_check]")
+{
+    fresh_process_state();
+    ScratchDir sd("warnings_error");
+    write_inputs(kOptimizer + kRootLines);
+    const ResidualOmpWidth omp(2);
+    REQUIRE(omp.width() == 2);
+    tadah::core::Context ctx =
+        make_ta_context("train.db", "config.hpo", "config.val");
+    ctx.remove("RCUT2B");
+    ctx.add("RCUT2B", 1.0);
+    ctx.add("AUDIT", "error");
+    ctx.add("CHECK", "true");
+    std::string error, err;
+    {
+        CaptureCerr capture;
+        error = error_of([&] { return tadah::hpo::hpo_run(ctx); });
+        err = capture.text.str();
+    }
+    INFO("error: " << error << "\nstandard error:\n" << err);
+    CHECK(contains(error, "preflight_audit"));
+    CHECK(contains(err, "tadah hpo --check: the startup checks stopped at "
+                        "the error below.\nWarnings and hints, which a run "
+                        "writes to its journal (hpo_run.log):\n"));
+    CHECK(contains(err, "\n  WARNING  THREADS not set: the pc_lammps "
+                        "fan-out and MLIP train/predict run on a SINGLE "
+                        "worker."));
 }
