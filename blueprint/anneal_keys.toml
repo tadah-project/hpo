@@ -324,7 +324,7 @@ default = "0"
 kinds = ["pt"]
 group = "ladder"
 rank = 4
-doc = "Adapt interior ladder temperatures toward equal pair swap acceptance (endpoints fixed; Kone-Kofke ~23% motivates equalisation)."
+doc = "Adapts interior ladder temperatures toward equal pair swap acceptance (endpoints fixed; Kone-Kofke ~23% motivates equalisation)."
 
 [[key]]
 name = "LADDER_ADAPT_EVERY"
@@ -380,7 +380,7 @@ default = "1"
 kinds = ["pt"]
 group = "ladder"
 rank = 9
-doc = "Freeze ladder adaptation once per-pair acceptances are statistically indistinguishable from equalised."
+doc = "Freezes ladder adaptation once per-pair acceptances are statistically indistinguishable from equalised."
 
 [[key]]
 name = "SWAP_EVERY"
@@ -494,7 +494,7 @@ default = "0"
 kinds = ["pt", "pa"]
 group = "init"
 rank = 6
-doc = "ANNEAL_PT INIT_MODE JITTER AUTO: measure at most this many dimensions, chosen round-robin across parameter families; the rest inherit their family's median sigma/width and are flagged `inferred`. 0 = measure every dimension. ANNEAL_PA accepts it and does not use it."
+doc = "ANNEAL_PT INIT_MODE JITTER AUTO measures at most this many dimensions, chosen round-robin across parameter families; the rest inherit their family's median sigma/width and are flagged `inferred`. 0 = measure every dimension. ANNEAL_PA accepts it and does not use it."
 
 [[key]]
 name = "INIT_JITTER_AUDIT"
@@ -503,7 +503,7 @@ default = "32"
 kinds = ["pt", "pa"]
 group = "init"
 rank = 7
-doc = "ANNEAL_PT INIT_MODE JITTER AUTO: re-probe at most this many measured dimensions at sigma/2 to detect a loss that is non-monotone in displacement. The audit assesses the sampled displacements. 0 = skip the audit. ANNEAL_PA accepts it and does not use it."
+doc = "ANNEAL_PT INIT_MODE JITTER AUTO re-probes at most this many measured dimensions at sigma/2 to detect a loss that is non-monotone in displacement. The audit assesses the sampled displacements. 0 = no audit. ANNEAL_PA accepts it and does not use it."
 
 [[key]]
 name = "INIT_JITTER_LADDER"
@@ -514,7 +514,7 @@ accepts_off = 0.0
 kinds = ["pt"]
 group = "init"
 rank = 8
-doc = "Scale each slot's initial jitter by (T_k/T_HOT)^gamma, so cold slots start near the seed and hot ones explore. AUTO = gamma 0.5, the equipartition law (the equilibrium coordinate spread about a locally quadratic minimum goes as sqrt(T)), floored at the resolvable coordinate scale to keep displacements representable. OFF = every slot uses the same sigma. A number in (0,4] sets gamma directly. Applies to every INIT_MODE JITTER variant, including AUTO."
+doc = "Scales each slot's initial jitter by (T_k/T_HOT)^gamma, so cold slots start near the seed and hot ones explore. AUTO = gamma 0.5, the equipartition law (the equilibrium coordinate spread about a locally quadratic minimum goes as sqrt(T)), floored at the resolvable coordinate scale to keep displacements representable. OFF = every slot uses the same sigma. A number in (0,4] sets gamma directly. Applies to every INIT_MODE JITTER variant, including AUTO."
 custom_range = true   # AUTO, OFF, or 0 < gamma <= 4
 
 [[key]]

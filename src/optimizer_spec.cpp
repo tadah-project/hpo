@@ -148,8 +148,8 @@ static void print_tadah_caps(std::ostream& os, const std::string& algo)
             "     the system's random source). THREADS <n> sizes the shared\n"
             "     per-eval fan-out pool (the chain itself is serial).\n"
             "   * Keys it does not read are refused: STEP, XTOL_*, VECTOR_ARR,\n"
-            "     GRAD_STRATEGY, unknown PARAM keys; for POPULATION use\n"
-            "     TADAH:ANNEAL_PA.\n";
+            "     GRAD_STRATEGY, unknown PARAM keys, and\n"
+            "     POPULATION, which TADAH:ANNEAL_PA reads.\n";
         print_anneal_family_caps(os, tadah::hpo::anneal_registry::KIND_SERIAL);
     }
     else if(algo=="ANNEAL_PT")

@@ -128,9 +128,10 @@ constexpr const char* kCeresLeastSquares =
     "tadah hpo does not run Ceres' least-squares Solver (LEVENBERG_MARQUARDT, "
     "DOGLEG, SUBSPACE_DOGLEG): it minimises a sum of squared residuals with "
     "their derivatives, and tadah hpo gives an optimiser one scalar loss, "
-    "over which these methods degenerate. Use CERES:STEEPEST_DESCENT, Ceres' "
-    "line-search solver of a scalar loss that tadah hpo runs, or a bound-"
-    "constrained gradient search: NLOPT:LD_LBFGS or DLIB:BFGS";
+    "over which these methods degenerate. The recommended replacements are "
+    "CERES:STEEPEST_DESCENT, Ceres' line-search solver of a scalar loss "
+    "that tadah hpo runs, and the bound-constrained gradient searches "
+    "NLOPT:LD_LBFGS and DLIB:BFGS";
 constexpr const char* kCeresWolfe =
     "Ceres' GradientProblemSolver has no bounds, and a point it proposes "
     "outside the OPTIM box is not evaluated: it is scored as a failure "
@@ -138,10 +139,10 @@ constexpr const char* kCeresWolfe =
     "above every usable loss. Ceres' Wolfe line search interpolates that "
     "value and shrinks its step to almost nothing (a 2-D run stopped at its "
     "start after 16 evaluations, 'Parameter tolerance reached' with a step "
-    "of 0; a 1-D run moved by 2.5e-7 per iteration until MAXEVAL). Use "
-    "NLOPT:LD_LBFGS (L-BFGS within the box) or DLIB:BFGS, or "
-    "CERES:STEEPEST_DESCENT, whose Armijo line search steps back from such "
-    "a point";
+    "of 0; a 1-D run moved by 2.5e-7 per iteration until MAXEVAL). The "
+    "recommended replacements are NLOPT:LD_LBFGS (L-BFGS within the box), "
+    "DLIB:BFGS and CERES:STEEPEST_DESCENT, whose Armijo line search steps "
+    "back from such a point";
 constexpr Refusal kRefused[] = {
     {"NLOPT", "LN_NEWUOA_BOUND",
      "NLopt 2.10 plans each LN_NEWUOA_BOUND step with a nested LD_MMA run "
@@ -153,8 +154,8 @@ constexpr Refusal kRefused[] = {
      "on, the last of NEWUOA's starting points for n OPTIM dimensions, as "
      "the objective then returns HUGE_VAL, NLopt's convention for a forced "
      "stop. It reaches it too when the loss barely changes over the trust "
-     "region. Ctrl-C, SIGTERM, MAXTIME and RESTART wait that long. Use "
-     "NLOPT:LN_BOBYQA, Powell's "
+     "region. Ctrl-C, SIGTERM, MAXTIME and RESTART wait that long. The "
+     "recommended replacement is NLOPT:LN_BOBYQA, Powell's "
      "bound-constrained successor of NEWUOA (its STEP rescales each "
      "dimension instead of setting one radius)"},
     {"NLOPT", "LN_NEWUOA",
@@ -162,13 +163,14 @@ constexpr Refusal kRefused[] = {
      "bounds, so its evaluations leave the box and the best potential can "
      "lie outside the bounds the configuration sets (a 2-D run made 20 of "
      "its 25 evaluations outside the box, and its best was one of them). It "
-     "also needs two OPTIM dimensions or more. Use NLOPT:LN_BOBYQA, "
-     "Powell's bound-constrained successor of NEWUOA (its STEP rescales each "
-     "dimension instead of setting one radius)"},
+     "also needs two OPTIM dimensions or more. The recommended replacement "
+     "is NLOPT:LN_BOBYQA, Powell's bound-constrained successor of NEWUOA "
+     "(its STEP rescales each dimension instead of setting one radius)"},
     {"NLOPT", "NLOPT_LD_LBFGS_NOCEDAL",
      "NLopt 2.10 does not implement it: NLopt names it, but its optimiser "
      "rejects it as an invalid argument, so a run of it would fail once its "
-     "setup was done. Use NLOPT:LD_LBFGS, NLopt's L-BFGS"},
+     "setup was done. The recommended replacement is NLOPT:LD_LBFGS, "
+     "NLopt's L-BFGS"},
     {"CERES", "LBFGS", kCeresWolfe},
     {"CERES", "WOLFE", kCeresWolfe},
     {"CERES", "NLCG", kCeresWolfe},
