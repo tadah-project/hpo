@@ -4008,6 +4008,57 @@ TEST_CASE("RESTART: a SEED no METHOD of the chain draws from is reported at "
                !Catch::Contains(unused));
 }
 
+/* A PRESTAGE run with SEED 7 in its STRATEGY block whose GN_CRS2_LM
+ * exploration (MAXEVAL 20) has no SEED of its own: the exploration takes
+ * the STRATEGY-level SEED, so two runs evaluate the same points, the points
+ * of the run with SEED 7 in its EXPLORE block too, and the journal names
+ * the exploration's seed and where it comes from ("EXPLORE SEED      : 7
+ * (the STRATEGY-level SEED)"; "EXPLORE SEED      : 7" when the EXPLORE
+ * block sets it). The TADAH:RANDOM refinement (MAXEVAL 3) draws from the
+ * SEED's refinement streams in both runs.
+ * Before the fix: the exploration had no seed, so CRS2 drew its population
+ * from NLopt's generator unseeded (its time seed, or the state an earlier
+ * run left), the two runs differed and the journal named no exploration
+ * seed. */
+TEST_CASE("Termination: a PRESTAGE run seeded at the STRATEGY level "
+          "repeats its exploration", "[HPO][termination][prestage][seed]")
+{
+    const auto prestage = [](const std::string& explore_seed) {
+        return plain_block(
+            "    TYPE PRESTAGE\n    LIB TADAH\n    ALGO RANDOM\n"
+            "    MAXEVAL 3\n    SEED 7\n    TOPK 1\n"
+            "    EXPLORE\n      LIB NLOPT\n      ALGO GN_CRS2_LM\n"
+            "      MAXEVAL 20\n" + explore_seed + "    ENDEXPLORE\n");
+    };
+    struct Run {
+        std::vector<Point> pts;
+        std::string journal;
+    };
+    const auto run = [](const std::string& optimizer) {
+        Run out;
+        TaRun r(optimizer);
+        int status = -1;
+        REQUIRE_NOTHROW(status = tadah::hpo::hpo_run(r.ctx));
+        CHECK(status == 0);
+        out.journal = read_file("hpo_run.log");
+        out.pts = evaluated_points();
+        return out;
+    };
+    const Run a = run(prestage(""));
+    const Run b = run(prestage(""));
+    const Run own = run(prestage("      SEED 7\n"));
+    INFO("journal:\n" << a.journal);
+    REQUIRE(a.pts.size() >= 20u);
+    CHECK(a.journal.find("    EXPLORE SEED      : 7 (the STRATEGY-level "
+                         "SEED)\n") != std::string::npos);
+    CHECK(own.journal.find("    EXPLORE SEED      : 7\n") !=
+          std::string::npos);
+    CHECK(evals_between(a.pts, 1, 20) == evals_between(b.pts, 1, 20));
+    CHECK(evals_between(a.pts, 1, 20) == evals_between(own.pts, 1, 20));
+    CHECK(a.pts == b.pts);
+    CHECK(a.pts == own.pts);
+}
+
 TEST_CASE("Termination: a restarted seeded exploration draws a new "
           "population", "[HPO][termination][restart][seed]")
 {
