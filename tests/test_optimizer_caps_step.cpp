@@ -151,7 +151,8 @@ TEST_CASE("OptimizerCaps: NLOPT:LN_NEWUOA_BOUND is refused, naming the "
                       Catch::Contains("nested LD_MMA run") &&
                       Catch::Contains("non-finite value") &&
                       Catch::Contains("HUGE_VAL") &&
-                      Catch::EndsWith("Use NLOPT:LN_BOBYQA, Powell's "
+                      Catch::EndsWith("The recommended replacement is "
+                                      "NLOPT:LN_BOBYQA, Powell's "
                                       "bound-constrained successor of NEWUOA "
                                       "(its STEP rescales each dimension "
                                       "instead of setting one radius)"));
@@ -187,7 +188,8 @@ TEST_CASE("OptimizerCaps: NLOPT:LN_NEWUOA_BOUND is refused, naming the "
     CHECK_THAT(out.str(),
                Catch::StartsWith("Options for NLOPT:LN_NEWUOA_BOUND\n"
                                  "   * REFUSED: ") &&
-               Catch::Contains("Use NLOPT:LN_BOBYQA") &&
+               Catch::Contains("The recommended replacement is "
+                               "NLOPT:LN_BOBYQA") &&
                !Catch::Contains("STEP <double>") &&
                !Catch::Contains("Stops that end a run"));
 }
@@ -250,7 +252,11 @@ static std::string caps_help(const std::string& lib, const std::string& algo)
     return out.str();
 }
 
-/* NLopt 2.10 runs LN_NEWUOA without the OPTIM box (optimize.c calls newuoa
+/* A refusal's reason ends with the recommended replacement, said of the
+ * optimiser ("The recommended replacement is ..."), not to the reader
+ * ("Use ..."): the checks of that ending fail on the text before the help
+ * was rewritten so.
+ * NLopt 2.10 runs LN_NEWUOA without the OPTIM box (optimize.c calls newuoa
  * with lb = ub = NULL): a 2-D run of MAXEVAL 25 made 20 evaluations outside
  * the box, and the best potential, at RCUT2B 8.11 for a [4, 6] box, was one
  * of them (docs/issues/nlopt_newuoa_ignores_bounds.md); in 1-D NLopt refuses
@@ -275,7 +281,8 @@ TEST_CASE("OptimizerCaps: NLOPT:LN_NEWUOA, which ignores the OPTIM box, is "
                Catch::Contains("it passes NEWUOA no bounds") &&
                Catch::Contains("the best potential can lie outside") &&
                Catch::Contains("two OPTIM dimensions or more") &&
-               Catch::EndsWith("Use NLOPT:LN_BOBYQA, Powell's "
+               Catch::EndsWith("The recommended replacement is "
+                               "NLOPT:LN_BOBYQA, Powell's "
                                "bound-constrained successor of NEWUOA (its "
                                "STEP rescales each dimension instead of "
                                "setting one radius)"));
@@ -288,7 +295,8 @@ TEST_CASE("OptimizerCaps: NLOPT:LN_NEWUOA, which ignores the OPTIM box, is "
     CHECK_THAT(caps_help("NLOPT", "LN_NEWUOA"),
                Catch::StartsWith("Options for NLOPT:LN_NEWUOA\n"
                                  "   * REFUSED: ") &&
-               Catch::Contains("Use NLOPT:LN_BOBYQA") &&
+               Catch::Contains("The recommended replacement is "
+                               "NLOPT:LN_BOBYQA") &&
                !Catch::Contains("WARNING") &&
                !Catch::Contains("Stops that end a run"));
 }
@@ -321,10 +329,11 @@ TEST_CASE("OptimizerCaps: the Ceres least-squares solvers are refused, naming "
         CHECK_THAT(std::string(reason),
                    Catch::Contains("sum of squared residuals") &&
                    Catch::Contains("one scalar loss") &&
-                   Catch::Contains("Use CERES:STEEPEST_DESCENT, Ceres' "
+                   Catch::Contains("The recommended replacements are "
+                                   "CERES:STEEPEST_DESCENT, Ceres' "
                                    "line-search solver of a scalar loss that "
-                                   "tadah hpo runs, or a bound-constrained "
-                                   "gradient search: NLOPT:LD_LBFGS or "
+                                   "tadah hpo runs, and the bound-constrained "
+                                   "gradient searches NLOPT:LD_LBFGS and "
                                    "DLIB:BFGS"));
         CHECK_THROWS_WITH(optimizer_caps("CERES", algo),
                           std::string("CERES:") + algo + " is refused: " +
@@ -333,7 +342,8 @@ TEST_CASE("OptimizerCaps: the Ceres least-squares solvers are refused, naming "
         CHECK_THAT(caps_help("CERES", algo),
                    Catch::StartsWith(std::string("Options for CERES:") + algo +
                                      "\n   * REFUSED: ") &&
-                   Catch::Contains("Use CERES:STEEPEST_DESCENT"));
+                   Catch::Contains("The recommended replacements are "
+                                   "CERES:STEEPEST_DESCENT"));
     }
     CHECK(backend_refusal("CERES", "STEEPEST_DESCENT") == nullptr);
     CHECK(backend_refusal("NLOPT", "DOGLEG") == nullptr);
@@ -446,7 +456,8 @@ TEST_CASE("OptimizerCaps: NLOPT_LD_LBFGS_NOCEDAL, which NLopt does not "
     REQUIRE(reason != nullptr);
     CHECK_THAT(std::string(reason),
                Catch::Contains("NLopt 2.10 does not implement it") &&
-               Catch::Contains("Use NLOPT:LD_LBFGS"));
+               Catch::Contains("The recommended replacement is "
+                               "NLOPT:LD_LBFGS"));
     CHECK_THROWS_WITH(optimizer_caps("NLOPT", "NLOPT_LD_LBFGS_NOCEDAL"),
                       std::string("NLOPT:NLOPT_LD_LBFGS_NOCEDAL is refused: ") +
                           reason);
@@ -462,5 +473,6 @@ TEST_CASE("OptimizerCaps: NLOPT_LD_LBFGS_NOCEDAL, which NLopt does not "
     CHECK_THAT(out.str(),
                Catch::StartsWith("Options for NLOPT:NLOPT_LD_LBFGS_NOCEDAL\n"
                                  "   * REFUSED: ") &&
-               Catch::Contains("Use NLOPT:LD_LBFGS"));
+               Catch::Contains("The recommended replacement is "
+                               "NLOPT:LD_LBFGS"));
 }

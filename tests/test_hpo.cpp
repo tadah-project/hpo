@@ -95,14 +95,19 @@ TEST_CASE("ANNEAL capability help exposes corrected public contracts",
      * rewritten), ANNEAL_PA "accepts and does not use" the INIT_JITTER
      * calibration keys of ANNEAL_PT ("Accepted as an inactive setting by
      * the current ANNEAL_PA driver"), and no key's help gives history
-     * (INIT_JITTER_LADDER OFF was "(pre-1.5.0 behaviour)"): these checks
-     * fail on the text before that rewrite. */
+     * (INIT_JITTER_LADDER OFF was "(pre-1.5.0 behaviour)"); the help says
+     * what a key does, not what the reader is to do ("Adapts ...", not
+     * "Adapt ..."; POPULATION is read by TADAH:ANNEAL_PA, not "use
+     * TADAH:ANNEAL_PA"): these checks fail on the text before that
+     * rewrite. */
     const std::string serial = capture("ANNEAL");
     CHECK(serial.find("PARAM T_INIT") != std::string::npos);
     CHECK(serial.find("PARAM CHAIN_LENGTH (default auto)")
           != std::string::npos);
     CHECK(serial.find("PARAM RT (default 0.85)") != std::string::npos);
     CHECK(serial.find("Keys it does not read are refused: STEP")
+          != std::string::npos);
+    CHECK(serial.find("POPULATION, which TADAH:ANNEAL_PA reads")
           != std::string::npos);
 
     const std::string pt = capture("ANNEAL_PT");
@@ -115,6 +120,15 @@ TEST_CASE("ANNEAL capability help exposes corrected public contracts",
     CHECK(pt.find("OFF = every slot uses the same sigma.")
           != std::string::npos);
     CHECK(pt.find("pre-1.5.0") == std::string::npos);
+    for (const char* doc :
+         {"Adapts interior ladder temperatures",
+          "Freezes ladder adaptation once",
+          "ANNEAL_PT INIT_MODE JITTER AUTO measures at most",
+          "ANNEAL_PT INIT_MODE JITTER AUTO re-probes at most",
+          "Scales each slot's initial jitter"}) {
+        INFO(doc);
+        CHECK(pt.find(doc) != std::string::npos);
+    }
 
     const std::string pa = capture("ANNEAL_PA");
     CHECK(pa.find("all-fail skips") != std::string::npos);
@@ -794,8 +808,9 @@ TEST_CASE("CERES:LBFGS, WOLFE and NLCG are refused at their block's line: "
             tadah::hpo::HPOTargets(ctx, input.path.string()),
             Catch::Contains("CERES:" + algo + " is refused: Ceres' "
                             "GradientProblemSolver has no bounds") &&
-                Catch::Contains("Use NLOPT:LD_LBFGS (L-BFGS within the box) "
-                                "or DLIB:BFGS, or CERES:STEEPEST_DESCENT"));
+                Catch::Contains("The recommended replacements are "
+                                "NLOPT:LD_LBFGS (L-BFGS within the box), "
+                                "DLIB:BFGS and CERES:STEEPEST_DESCENT"));
         CHECK_THROWS_WITH(tadah::hpo::optimizer_caps("CERES", algo),
                           Catch::StartsWith("CERES:" + algo + " is refused: "));
     }
@@ -928,11 +943,12 @@ TEST_CASE("CERES NLLS family is refused by the caps registry",
         INFO(algo);
         CHECK_THROWS_WITH(tadah::hpo::optimizer_caps("CERES", algo),
                           Catch::StartsWith("CERES:" + algo + " is refused: ") &&
-                          Catch::Contains("Use CERES:STEEPEST_DESCENT, Ceres' "
+                          Catch::Contains("The recommended replacements are "
+                                          "CERES:STEEPEST_DESCENT, Ceres' "
                                           "line-search solver of a scalar loss "
-                                          "that tadah hpo runs, or a "
-                                          "bound-constrained gradient search: "
-                                          "NLOPT:LD_LBFGS or DLIB:BFGS"));
+                                          "that tadah hpo runs, and the "
+                                          "bound-constrained gradient searches "
+                                          "NLOPT:LD_LBFGS and DLIB:BFGS"));
         CHECK_THROWS_WITH(tadah::hpo::reject_refused_backend("CERES", algo,
                                                              "the EXPLORE block"),
                           Catch::StartsWith("the EXPLORE block: CERES:" + algo +

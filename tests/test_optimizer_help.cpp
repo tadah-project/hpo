@@ -66,9 +66,11 @@ std::vector<std::pair<std::string, std::string>> every_backend()
 
 /* What makes `text` other than text for a user, one entry per fault: the
  * module name HPO for the command (tadah hpo); a source file, patch, C++
- * name or function; a word of development jargon or history; American
- * spelling in prose (key names, written in capitals or with an
- * underscore, are as the program reads them). */
+ * name or function; a word of development jargon or history; a word that
+ * addresses the reader (you, your, we, our, us, let's); American spelling
+ * in prose
+ * (key names, written in capitals or with an underscore, are as the
+ * program reads them). */
 std::vector<std::string> user_text_faults(const std::string& text)
 {
     std::vector<std::string> faults;
@@ -86,6 +88,12 @@ std::vector<std::string> user_text_faults(const std::string& text)
                             "pre-1."})
         if (text.find(bad) != std::string::npos)
             faults.push_back(std::string("'") + bad + "'");
+    static const std::regex reader(
+        "(^|[^A-Za-z])([Yy]ou|[Yy]our|[Yy]ours|[Yy]ourself|[Ww]e|[Oo]ur|"
+        "[Uu]s|[Ll]et's)"
+        "([^A-Za-z]|$)");
+    if (std::regex_search(text, m, reader))
+        faults.push_back("addresses the reader: " + m.str(2));
     /* -ize and -yze, except the words of size */
     static const std::regex word("[A-Za-z_]+");
     static const std::regex american(
@@ -369,16 +377,18 @@ TEST_CASE("print_caps: BuildNotes::Omit leaves out the lines that depend on "
  * HPO; no source file, patch, C++ name or function of Tadah! or of a
  * library (optimize.c, external/asa, TADAH-PATCH 7, nlopt::opt::set_param,
  * random_device); no development jargon ("knob", "Dead knobs") or history
- * ("pre-1.5.0 behaviour"); British spelling in prose ("global optimiser",
- * "equalisation", "written to the journal"); key names as the program
- * reads them.
+ * ("pre-1.5.0 behaviour"); no word that addresses the reader, and a
+ * refusal's reason names the recommended replacement of the optimiser
+ * instead of telling the reader what to use ("Use NLOPT:LN_BOBYQA, ...");
+ * British spelling in prose ("global optimiser", "equalisation", "written
+ * to the journal"); key names as the program reads them.
  * Before the fix: fails on the help of ASA:ASA (external/asa, TADAH-PATCH
  * 7, "knob", "HPO host"), TADAH:ANNEAL (random_device, "Dead knobs"),
  * TADAH:ANNEAL_PT ("equalization", "pre-1.5.0"), the twenty global NLopt
  * algorithms ("global optimizer", nlopt::opt::set_param on every NLopt
  * one), the refusals of NLOPT:LN_NEWUOA (optimize.c), NLOPT:LN_NEWUOA_BOUND
  * and the Ceres least-squares solvers ("HPO"), and the notes of
- * NLOPT:GD_STOGO and the AUGLAG forms ("HPO"). */
+ * NLOPT:GD_STOGO and the AUGLAG forms ("HPO"); every refusal on "Use". */
 TEST_CASE("explain_optimiser: the ALGO help and the optimiser registry are "
           "text for a user", "[HPO][explain][user_text]")
 {
@@ -400,6 +410,10 @@ TEST_CASE("explain_optimiser: the ALGO help and the optimiser registry are "
               caps_help(lib, algo, BuildNotes::Omit).c_str());
         if (const char* reason = backend_refusal(lib, algo)) {
             check(name + " reason", reason);
+            const std::string r = reason;
+            INFO(name << " reason: " << r);
+            CHECK(r.rfind("Use ", 0) == std::string::npos);
+            CHECK(r.find(". Use ") == std::string::npos);
             continue;
         }
         const OptimizerCaps& c = optimizer_caps(lib, algo);
@@ -422,4 +436,6 @@ TEST_CASE("explain_optimiser: the ALGO help and the optimiser registry are "
     CHECK(user_text_faults("Equalized, journaled").size() == 2u);
     CHECK(user_text_faults("the block resizing keeps its size").empty());
     CHECK(user_text_faults("the primary knob").size() == 1u);
+    CHECK(user_text_faults("Your run: set it if you like").size() == 1u);
+    CHECK(user_text_faults("the weight and the outer search").empty());
 }

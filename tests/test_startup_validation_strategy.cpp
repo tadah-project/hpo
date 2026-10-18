@@ -1179,7 +1179,8 @@ TEST_CASE("startup validation: NLOPT:LN_NEWUOA_BOUND is refused at the line "
         CHECK_THAT(parse_error(c.config),
                    Catch::StartsWith("Error on line " + std::to_string(c.line) +
                                      ": " + c.phase + ": " + refused) &&
-                   Catch::Contains("Use NLOPT:LN_BOBYQA") &&
+                   Catch::Contains("The recommended replacement is "
+                                   "NLOPT:LN_BOBYQA") &&
                    Catch::EndsWith("\nLine: " + c.closing));
     }
     /* An OPTIMIZER block the file never closes: at the end of the file,
@@ -1205,7 +1206,8 @@ TEST_CASE("startup validation: NLOPT:LN_NEWUOA_BOUND is refused at the line "
                                                 tadah::hpo::RestartStop::Off);
                }),
                Catch::StartsWith(refused) &&
-               Catch::Contains("Use NLOPT:LN_BOBYQA"));
+               Catch::Contains("The recommended replacement is "
+                               "NLOPT:LN_BOBYQA"));
     CHECK_THAT(error_of([&] { tadah::hpo::validate_run_policy(sp); }),
                Catch::StartsWith(top + ": " + refused));
     sp.strategy_type = StrategyType::MULTISTART;
@@ -1279,14 +1281,15 @@ TEST_CASE("startup validation: NLOPT:LN_NEWUOA, the Ceres least-squares "
     const std::string newuoa =
         "NLOPT:LN_NEWUOA is refused: NLopt 2.10 runs LN_NEWUOA without the "
         "OPTIM box";
-    const std::string bobyqa = "Use NLOPT:LN_BOBYQA";
+    const std::string bobyqa =
+        "The recommended replacement is NLOPT:LN_BOBYQA";
     /* the NLLS refusal named "Use CERES:LBFGS, CERES:WOLFE, CERES:NLCG or
      * CERES:STEEPEST_DESCENT" before the fix (three of them refused since),
      * and "HPO" for the command before the help was rewritten for a user */
     const std::string ceres_use =
-        "Use CERES:STEEPEST_DESCENT, Ceres' line-search solver of a scalar "
-        "loss that tadah hpo runs, or a bound-constrained gradient search: "
-        "NLOPT:LD_LBFGS or DLIB:BFGS";
+        "The recommended replacements are CERES:STEEPEST_DESCENT, Ceres' "
+        "line-search solver of a scalar loss that tadah hpo runs, and the "
+        "bound-constrained gradient searches NLOPT:LD_LBFGS and DLIB:BFGS";
     const std::string explain = "; `tadah explain ALGO` lists the optimisers";
     const std::string top = "the STRATEGY-level optimiser";
     struct Case {
@@ -1574,7 +1577,8 @@ TEST_CASE("startup validation: NLOPT:LN_NEWUOA_BOUND is refused by hpo_run "
     CHECK_THAT(err, Catch::StartsWith("Error on line 8: the STRATEGY-level "
                                       "optimiser: NLOPT:LN_NEWUOA_BOUND is "
                                       "refused: ") &&
-                    Catch::Contains("Use NLOPT:LN_BOBYQA"));
+                    Catch::Contains("The recommended replacement is "
+                                    "NLOPT:LN_BOBYQA"));
 }
 
 /* ======================================================================
