@@ -50,3 +50,29 @@ build directory.
 | `src/`               | Implementation translation units. |
 | `tests/`             | Unit and integration tests. |
 | `examples/`          | Worked-through `config.hpo` reference suite (see `run_reference_suite.sh`). |
+| `blueprint/`         | Registry files the documentation reads (see `blueprint/README.md`). |
+
+## Generated files
+
+Two checked-in files are generated, and a CTest entry fails when one
+differs from what its source produces. Regenerate the file and commit it
+with the change that alters it.
+
+- `include/tadah/hpo/anneal_keys_gen.h`, from `blueprint/anneal_keys.toml`:
+
+  ```bash
+  python3 blueprint/gen_anneal_keys.py --header
+  ```
+
+  CTest `hpo_anneal_registry_sync`.
+- `blueprint/optimizers_gen.toml`, the optimiser registry and the ALGO help
+  of every optimiser, for the documentation (built without C++). Regenerate
+  it after a change to `src/optimizer_caps.cpp`, the ALGO help
+  (`src/optimizer_spec.cpp`, `src/asa_options.cpp`,
+  `blueprint/anneal_keys.toml`) or the NLopt version:
+
+  ```bash
+  cmake --build build --target hpo_regenerate_optimizer_registry
+  ```
+
+  CTest `hpo_optimizer_registry_sync` (label `docs`).
