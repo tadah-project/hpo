@@ -21,29 +21,16 @@ target_compile_definitions(test_hpo PRIVATE CATCH_CONFIG_ENABLE_BENCHMARKING)
 target_compile_definitions(test_hpo PRIVATE
     "TADAH_BENCH_DEFAULT_POT=\"${CMAKE_CURRENT_SOURCE_DIR}/data/bench_ta.tadah\"")
 
-# Worked examples (HPO/examples). test_examples_parse.cpp gives every
-# examples/*/config.hpo a test case of its own: the list is generated here,
-# and CONFIGURE_DEPENDS re-globs the directory on every build, so a new
-# example is picked up (and fails until examples/tools/parse_guard.manifest
-# names what it needs). The PC_OBSERVABLE gradient tests
-# (test_hpo_host_e2e.cpp) train on the examples' shared Ta data.
-cmake_path(SET _hpo_examples_dir NORMALIZE
-    "${CMAKE_CURRENT_SOURCE_DIR}/../examples")
-file(GLOB _hpo_example_configs CONFIGURE_DEPENDS
-    "${_hpo_examples_dir}/*/config.hpo")
-list(SORT _hpo_example_configs)
-set(_hpo_example_cases "")
-foreach(_cfg IN LISTS _hpo_example_configs)
-    cmake_path(GET _cfg PARENT_PATH _dir)
-    cmake_path(GET _dir FILENAME _name)
-    string(APPEND _hpo_example_cases "TADAH_EXAMPLE_PARSE_CASE(\"${_name}\")\n")
-endforeach()
-file(CONFIGURE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/examples_parse_cases.inc"
-     CONTENT "${_hpo_example_cases}" @ONLY)
-target_include_directories(test_hpo PRIVATE
-    "${CMAKE_CURRENT_BINARY_DIR}/generated")
+# The Ta test set, data/ta: in common/ the shared training and validation
+# configurations, the two VASP-derived datasets (common/data/README.md gives
+# their provenance) and the LAMMPS scripts; a DM_REAM seed potential,
+# ta2_refit_seed.tadah; and in target_files/ the target files that
+# test_ta_target_files.cpp parses, one test case each. The data tests
+# (test_ta_data_cells.cpp, test_shipped_data_stress_sign.cpp), the
+# PC_OBSERVABLE gradient tests (test_hpo_host_e2e.cpp), the multi-rank
+# cases (mpi/hpo_mpi_e2e.py) and scripts/run_mpi_smoke.sh use it too.
 target_compile_definitions(test_hpo PRIVATE
-    "TADAH_HPO_EXAMPLES_DIR=\"${_hpo_examples_dir}\"")
+    "TADAH_HPO_TA_DATA_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/data/ta\"")
 
 include(Catch)
 catch_discover_tests(test_hpo)
@@ -495,7 +482,7 @@ if(TADAH_HPO_MPI)
                 "--preflags=${_mpi_preflags}"
                 "--postflags=${_mpi_postflags}"
                 "--tadah=$<$<TARGET_EXISTS:tadah>:$<TARGET_FILE:tadah>>"
-                --examples=${CMAKE_CURRENT_SOURCE_DIR}/../examples
+                --data=${CMAKE_CURRENT_SOURCE_DIR}/data/ta
                 --workdir=${CMAKE_CURRENT_BINARY_DIR}/hpo_mpi_e2e)
         set_tests_properties(hpo_mpi_e2e_${_case} PROPERTIES
             LABELS "mpi;e2e"

@@ -10,6 +10,10 @@
 #   * rank-suffixed outputs (.r1) appear at -np 2 and rank 0's
 #     best_loss.tadah carries the GLOBAL winner.
 #
+# It runs the target files anneal_pt.hpo and anneal_pa.hpo of the Ta test
+# set (tests/data/ta/target_files) on its training and validation
+# configurations (tests/data/ta/common).
+#
 # Usage:
 #   TADAH_MPI_BIN=/path/to/mpi-enabled/tadah \
 #   MPIRUN=/usr/bin/mpirun \
@@ -26,7 +30,8 @@ HERE=$(cd "$(dirname "$0")/.." && pwd)          # HPO repo root
 BIN=${TADAH_MPI_BIN:?set TADAH_MPI_BIN to the TADAH_HPO_MPI tadah binary}
 MPIRUN=${MPIRUN:-mpirun}
 WORK=${1:-$(mktemp -d /tmp/tadah_mpi_smoke.XXXXXX)}
-COMMON="$HERE/examples/common"
+TA="$HERE/tests/data/ta"
+COMMON="$TA/common"
 
 mkdir -p "$WORK"
 ln -sfn "$COMMON" "$WORK/common"
@@ -46,7 +51,7 @@ run_case() {
 }
 
 for algo in pt pa; do
-  cfg="$HERE/examples/1$([ "$algo" = pt ] && echo 8_anneal_pt || echo 9_anneal_pa)/config.hpo"
+  cfg="$TA/target_files/anneal_$algo.hpo"
   run_case "$algo" "$cfg" 1
   run_case "$algo" "$cfg" 2
   b1=$(cat "$WORK/${algo}_np1/BEST" 2>/dev/null || echo NA1)

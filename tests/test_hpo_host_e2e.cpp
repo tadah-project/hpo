@@ -1547,21 +1547,21 @@ TEST_CASE("The journal names the k-th PC_OBSERVABLE cohesive_energy[k], "
  * descriptor parameter twice: through the refitted weights, and directly,
  * through the descriptors of the relaxed crystal and of the isolated atom
  * at fixed weights (the relaxation itself adds nothing at a stationary
- * geometry). The model is the examples' shared Ta potential with the
- * settings the analytical gradient needs (OALGO 4 and a ridge LAMBDA),
- * i.e. the configuration of example 22_pc_observable.
+ * geometry). The model is the shared Ta model of the tests
+ * (tests/data/ta/common/config.tadah) with the settings the analytical
+ * gradient needs (OALGO 4 and a ridge LAMBDA).
  * ------------------------------------------------------------------- */
 namespace {
 
-const fs::path& examples_common_dir()
+const fs::path& ta_common_dir()
 {
-    static const fs::path dir = fs::path(TADAH_HPO_EXAMPLES_DIR) / "common";
+    static const fs::path dir = fs::path(TADAH_HPO_TA_DATA_DIR) / "common";
     return dir;
 }
 
-tadah::core::Context examples_ta_context()
+tadah::core::Context ta_context()
 {
-    const fs::path& common = examples_common_dir();
+    const fs::path& common = ta_common_dir();
     tadah::core::Context c(tadah::core::CoreUserConfigParser().parse(
         (common / "config.tadah").string()));
     c.remove("DBFILE");
@@ -1593,7 +1593,7 @@ TEST_CASE("PC_OBSERVABLE analytical gradient matches central differences of "
     ScratchDir sd;
     const auto hpo = sd.dir / "config.hpo", val = sd.dir / "config.val";
     std::ofstream(val) << "DBFILE "
-                       << (examples_common_dir() / "data" / "elastic.tadahdb").string()
+                       << (ta_common_dir() / "data" / "elastic.tadahdb").string()
                        << "\n";
     std::ofstream(hpo)
         << "OPTIMIZER\nLIB DLIB\nALGO BFGS\nMAXEVAL 1\nGRAD_STRATEGY HYBRID\n"
@@ -1604,7 +1604,7 @@ TEST_CASE("PC_OBSERVABLE analytical gradient matches central differences of "
            "--maxeval 500 --etol 1e-12\n"
            "OPTIM RCUT2B (1) 4.0 6.0\n"
            "OPTIM SGRIDMB (1) 0.1 0.4\n";
-    auto ctx = examples_ta_context();
+    auto ctx = ta_context();
     tadah::hpo::HPOTargets trg(ctx, hpo.string());
     REQUIRE(trg.spec.parameter_labels ==
             std::vector<std::string>{"RCUT2B", "SGRIDMB"});

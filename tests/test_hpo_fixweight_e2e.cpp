@@ -1429,8 +1429,8 @@ TEST_CASE("seed anchor: tadah hpo WARM + MAXEVAL 1 reproduces the seed file",
 
 /* NLopt BOBYQA/COBYLA/PRAXIS round the start point before evaluating it
  * (a few ulp off u0; see kSeedAnchorUlps): the seed-anchor window still
- * evaluates -- and writes -- the WARM seed bit for bit. The seed is
- * example 17's FIXWEIGHT (2-11) in explicit [-300, 300] boxes on an
+ * evaluates -- and writes -- the WARM seed bit for bit. The search is
+ * OPTIM FIXWEIGHT (2-11) in explicit [-300, 300] boxes on an
  * 11-weight D2_BP model; DUMP keeps the
  * first evaluation's potential (PRAXIS makes a second one even at
  * MAXEVAL 1). Needs TADAH_BINARY (the tadah_cli entries of
