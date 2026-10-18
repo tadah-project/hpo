@@ -1,3 +1,4 @@
+#include <tadah/hpo/check_summary.h>
 #include <tadah/hpo/hpo_host.h>
 #include <tadah/hpo/hpo_targets.h>
 #include <tadah/hpo/runners.h>
@@ -173,9 +174,61 @@ FitSwitchSources fit_switch_sources(const core::Context& ctx,
     return {source("FORCE"), source("STRESS")};
 }
 
-int hpo_run_journaled(core::Context& ctx, HPOLog& log,
-                      const FitSwitchSources& fit_sources,
-                      const mlip::KeyProvenance* provenance);
+/* What hpo_run() does with its context: a run, or the startup checks of a
+ * run (CHECK true: `tadah hpo --check`). */
+enum class RunMode { Run, Check };
+
+int hpo_run_from_startup(core::Context& ctx, HPOLog& log,
+                         const FitSwitchSources& fit_sources,
+                         const mlip::KeyProvenance* provenance, RunMode mode);
+
+/* How the run executes its PC_LAMMPS simulations: PC_ISOLATION of the
+ * target file or its environment override TADAH_PC_ISOLATION, and the
+ * worker deadline PC_WORKER_TIMEOUT or TADAH_PC_WORKER_TIMEOUT. */
+struct PcIsolation {
+    std::string mode;            // "THREAD" | "PROCESS"
+    bool        explicit_mode;   // the target file or the environment named it
+    double      worker_timeout;  // seconds; 0: derived from each script's limit
+};
+
+/* The run's PC_ISOLATION settings, with every check of them: an override
+ * that is not a number (TADAH_PC_WORKER_TIMEOUT), a mode that is neither
+ * THREAD nor PROCESS, and, in the MPI build, a PROCESS that was asked for
+ * (the default PROCESS is THREAD there) throw. */
+PcIsolation resolve_pc_isolation(const HPOTargets& trg, HPOLog& log)
+{
+    PcIsolation pc{trg.PC_ISOLATION, trg.PC_ISOLATION_set,
+                   trg.PC_WORKER_TIMEOUT};
+    if (const char* e = std::getenv("TADAH_PC_ISOLATION")) {
+        if (*e) { pc.mode = e; pc.explicit_mode = true; }
+    }
+    if (const char* e = std::getenv("TADAH_PC_WORKER_TIMEOUT")) {
+        if (*e) pc.worker_timeout = HPOTargets::parse_pc_worker_timeout(
+                    e, "TADAH_PC_WORKER_TIMEOUT");
+    }
+    if (pc.mode != "THREAD" && pc.mode != "PROCESS")
+        throw std::runtime_error(
+            "PC_ISOLATION must be THREAD or PROCESS, got '" + pc.mode + "'");
+#ifdef TADAH_HPO_MPI
+    if (pc.mode == "PROCESS") {
+        /* A fork+exec'd child of an MPI parent must never touch MPI
+         * (LAMMPS instances need an initialized MPI in this build).
+         * EXPLICIT requests hard-error; the serial-build DEFAULT of
+         * PROCESS quietly falls back to THREAD here. */
+        if (pc.explicit_mode)
+            throw std::runtime_error(
+                "PC_ISOLATION PROCESS is not supported in the MPI build "
+                "(TADAH_HPO_MPI): the worker processes cannot initialize "
+                "MPI. Use the serial build, or PC_ISOLATION THREAD.");
+        pc.mode = "THREAD";
+        log.info("PC_ISOLATION: THREAD (MPI build -- the PROCESS worker "
+                 "pool is serial-build only)");
+    }
+#else
+    (void)log;
+#endif
+    return pc;
+}
 
 /* The worker pools of one run: the script executor -- THREADS workers that
  * run the PC_LAMMPS fan-out and, through MLIP's parallel backend, the
@@ -231,6 +284,13 @@ int hpo_run(core::Context& ctx)
 
 int hpo_run(core::Context& ctx, const mlip::KeyProvenance* provenance)
 {
+    /* CHECK (`tadah hpo --check`, CHECK true in a TASK hpo section) tells
+     * this function what to do; it is no key of the model. It is taken out
+     * of the context before anything copies it, so no potential of the run
+     * has a CHECK line (a task's context holds CHECK false by default). */
+    const bool check = ctx.has_stored("CHECK") && ctx.get<bool>("CHECK");
+    if (ctx.has_stored("CHECK")) ctx.remove("CHECK");
+
     /* The run builds the model of every evaluation, and the potential each
      * PC_LAMMPS script runs, from one configuration: at VERBOSE > 0 a
      * kernel prints its settings line ("Kern_RBF | sigma: 1 | gamma: 1")
@@ -240,6 +300,17 @@ int hpo_run(core::Context& ctx, const mlip::KeyProvenance* provenance)
     models::KernelSettingsLineScope kernel_settings_line;
     const FitSwitchSources fit_sources = fit_switch_sources(ctx, provenance);
 
+    auto& log = HPOLog::instance();
+    if (check) {
+        /* A check writes no file, so it keeps no journal: every journal
+         * line of the startup goes nowhere. A journal an earlier run in
+         * this process left open (it stopped at startup) is closed first,
+         * so that none of them goes into it. */
+        log.begin_without_journal();
+        return hpo_run_from_startup(ctx, log, fit_sources, provenance,
+                                    RunMode::Check);
+    }
+
     /* -- Open run journal first -------------------------------------
      * This must precede HPOTargets construction so that diagnostics
      * emitted while parsing OPTIMIZER, OPTIM, and INIT_STRATEGY blocks
@@ -247,7 +318,6 @@ int hpo_run(core::Context& ctx, const mlip::KeyProvenance* provenance)
      * promotion, implicit-CONFIG suppression, ...) reach both stdout
      * and the journal. The OPTIMISER section is written later, after
      * trg.spec has been finalised. */
-    auto& log = HPOLog::instance();
     {
         std::string version = "unknown";
         try { version = core::BlueprintParser::getBlueprintTadah().version; }
@@ -266,7 +336,8 @@ int hpo_run(core::Context& ctx, const mlip::KeyProvenance* provenance)
      * error of the run itself arrives after drive_run() has written the
      * trailer and closed the journal, and then nothing more is written. */
     try {
-        return hpo_run_journaled(ctx, log, fit_sources, provenance);
+        return hpo_run_from_startup(ctx, log, fit_sources, provenance,
+                                    RunMode::Run);
     } catch (const std::exception& e) {
         log.event("ERROR", std::string("startup: ") + e.what());
         throw;
@@ -275,12 +346,23 @@ int hpo_run(core::Context& ctx, const mlip::KeyProvenance* provenance)
 
 namespace {
 
-/* hpo_run() once the journal is open. @p provenance: where the keys of
- * ctx came from (for the training record of the potential files). */
-int hpo_run_journaled(core::Context& ctx, HPOLog& log,
-                      const FitSwitchSources& fit_sources,
-                      const mlip::KeyProvenance* provenance)
+/* hpo_run() once the journal is open (RunMode::Run), or without a journal
+ * (RunMode::Check). @p provenance: where the keys of ctx came from (for the
+ * training record of the potential files).
+ *
+ * A check makes every startup check of the run, in the run's order, and
+ * skips what writes or starts something: the signal handlers, the worker
+ * pools (no PC_ISOLATION PROCESS worker), the journal sections, the
+ * search-space sidecars, the result files and the DUMP and BDUMP
+ * directories (HPO_Host's HostPurpose::Check), and everything that
+ * evaluates. Once the run policy is built it writes the summary
+ * (write_check_summary) to standard output and returns 0. An error is
+ * thrown as the run throws it. */
+int hpo_run_from_startup(core::Context& ctx, HPOLog& log,
+                         const FitSwitchSources& fit_sources,
+                         const mlip::KeyProvenance* provenance, RunMode mode)
 {
+    const bool check = mode == RunMode::Check;
 #ifdef TADAH_ENABLE_OPENMP
     {
         /* Under the shared-pool model OpenMP no longer drives the
@@ -312,8 +394,9 @@ int hpo_run_journaled(core::Context& ctx, HPOLog& log,
      * start of the next evaluation) under ctrl+C or SLURM cancellation. The
      * exception unwinds every optimiser and strategy to drive_run() below,
      * which flushes the result files, writes the SHUTDOWN trailer and makes
-     * hpo_run() return 128 + the signal number. */
-    core::SignalHandler::install();
+     * hpo_run() return 128 + the signal number. A check evaluates nothing:
+     * a signal ends it at once. */
+    if (!check) core::SignalHandler::install();
 
     /* The hot-variable seeds of an earlier run in this process are not this
      * run's: cleared before HPOTargets, whose WARM init strategy primes
@@ -444,6 +527,18 @@ int hpo_run_journaled(core::Context& ctx, HPOLog& log,
         ctx.contains("DBFILE") && ctx.size("DBFILE") > 0;
     validate_hpo_setup(ctx, trg, has_train_db, !val.empty());
 
+    /* ---- PC_ISOLATION: pc_lammps execution mode --------------------
+     * PROCESS = persistent worker-process pool (one child per fan-out
+     * slot; LAMMPS globals unshared -- the free(): invalid pointer race
+     * class is structurally gone). THREAD = in-process (pre-existing
+     * behaviour; kept one production cycle as a deprecated fallback).
+     * Env override TADAH_PC_ISOLATION lets the A/B and determinism
+     * harnesses switch modes without touching configs. Design:
+     * INVESTIGATIONS/PC_ISOLATION_process_pool.md. Resolved and checked
+     * here, for the run and for a check alike; the run builds its pool
+     * below. */
+    const PcIsolation pc = resolve_pc_isolation(trg, log);
+
     /* Parallelisation model: THREADS is the TOTAL width of the shared
      * worker pool -- the number of threads that actually run pc_lammps scripts
      * AND MLIP train/predict, i.e. the per-rank CPU-core budget. ONE pool serves
@@ -456,9 +551,11 @@ int hpo_run_journaled(core::Context& ctx, HPOLog& log,
      * in algorithms_p{t,a}.h -- which is enough to keep the THREADS-wide pool fed
      * since one replica's eval alone submits many more tasks than THREADS.) */
     /* THREADS is an integer from 1 to INT_MAX (checked at its line). The
-     * run's pools live until hpo_run() returns or throws (RunPools). */
-    RunPools pools(static_cast<int>(trg.spec.num_threads.value_or(1)));
-    {
+     * run's pools live until hpo_run() returns or throws (RunPools). A
+     * check builds none: it starts no worker. */
+    std::optional<RunPools> pools;
+    if (!check) {
+        pools.emplace(static_cast<int>(trg.spec.num_threads.value_or(1)));
         /* The width of the pool that runs: the journal reports it, and the
          * PROCESS pool below has one worker process per executor worker
          * (a task runs on the channel of its executor worker's id). */
@@ -490,43 +587,9 @@ int hpo_run_journaled(core::Context& ctx, HPOLog& log,
                 "widens the fan-out -- set THREADS <n> in the STRATEGY block to "
                 "run scripts concurrently.");
 
-        /* ---- PC_ISOLATION: pc_lammps execution mode --------------------
-         * PROCESS = persistent worker-process pool (one child per fan-out
-         * slot; LAMMPS globals unshared -- the free(): invalid pointer race
-         * class is structurally gone). THREAD = in-process (pre-existing
-         * behaviour; kept one production cycle as a deprecated fallback).
-         * Env override TADAH_PC_ISOLATION lets the A/B and determinism
-         * harnesses switch modes without touching configs. Design:
-         * INVESTIGATIONS/PC_ISOLATION_process_pool.md */
-        std::string pc_mode = trg.PC_ISOLATION;
-        bool pc_mode_explicit = trg.PC_ISOLATION_set;
-        if (const char* e = std::getenv("TADAH_PC_ISOLATION")) {
-            if (*e) { pc_mode = e; pc_mode_explicit = true; }
-        }
-        double pc_wtimeout = trg.PC_WORKER_TIMEOUT;
-        if (const char* e = std::getenv("TADAH_PC_WORKER_TIMEOUT")) {
-            if (*e) pc_wtimeout = HPOTargets::parse_pc_worker_timeout(
-                        e, "TADAH_PC_WORKER_TIMEOUT");
-        }
-        if (pc_mode != "THREAD" && pc_mode != "PROCESS")
-            throw std::runtime_error(
-                "PC_ISOLATION must be THREAD or PROCESS, got '" + pc_mode + "'");
-#ifdef TADAH_HPO_MPI
-        if (pc_mode == "PROCESS") {
-            /* A fork+exec'd child of an MPI parent must never touch MPI
-             * (LAMMPS instances need an initialized MPI in this build).
-             * EXPLICIT requests hard-error; the serial-build DEFAULT of
-             * PROCESS quietly falls back to THREAD here. */
-            if (pc_mode_explicit)
-                throw std::runtime_error(
-                    "PC_ISOLATION PROCESS is not supported in the MPI build "
-                    "(TADAH_HPO_MPI): the worker processes cannot initialize "
-                    "MPI. Use the serial build, or PC_ISOLATION THREAD.");
-            pc_mode = "THREAD";
-            log.info("PC_ISOLATION: THREAD (MPI build -- the PROCESS worker "
-                     "pool is serial-build only)");
-        }
-#endif
+        const std::string& pc_mode = pc.mode;
+        const bool pc_mode_explicit = pc.explicit_mode;
+        const double pc_wtimeout = pc.worker_timeout;
         if (pc_mode == "PROCESS") {
 #ifdef TADAH_HPO_MPI
             /* unreachable: handled above */
@@ -660,22 +723,29 @@ int hpo_run_journaled(core::Context& ctx, HPOLog& log,
     } catch (...) { elem_str.clear(); }
     if (elem_str.empty()) elem_str = "(could not determine)";
 
-    /* -- Write setup sections ----------------------------------------- */
-    log.write_files_section(ctx.get<std::string>("HPOTARGET"), val, trg);
+    /* -- Write setup sections (a check writes neither them nor the
+     * sidecars) ------------------------------------------------------ */
+    if (!check) {
+        log.write_files_section(ctx.get<std::string>("HPOTARGET"), val, trg);
 
-    log.write_optimizer_section(trg.spec, param_labels);
+        log.write_optimizer_section(trg.spec, param_labels);
 
-    /* Machine-readable search-space sidecars next to the journal:
-     * hpo_search_space.tsv (one row per dim) always; hpo_optim_resolved.hpo
-     * (a paste-ready explicit OPTIM block) when any box was derived by an
-     * AUTO rule, so a later run can pin exactly what this one searched. */
-    trg.write_search_space_files(".");
+        /* Machine-readable search-space sidecars next to the journal:
+         * hpo_search_space.tsv (one row per dim) always;
+         * hpo_optim_resolved.hpo (a paste-ready explicit OPTIM block) when
+         * any box was derived by an AUTO rule, so a later run can pin
+         * exactly what this one searched. */
+        trg.write_search_space_files(".");
+    }
 
-    /* Build HPO_Host (loads train + val structures, applies load transforms) */
-    HPO_Host<V,R> host(ctx, trg, val);
+    /* Build HPO_Host (loads train + val structures, applies load
+     * transforms). A check's host loads and checks the data as the run's
+     * does, and creates no result file and no archive directory. */
+    HPO_Host<V,R> host(ctx, trg, val,
+                       check ? HostPurpose::Check : HostPurpose::Run);
     /* This run's evaluations are numbered on from an earlier run's in the
      * process; the journal's milestones count this run's. */
-    log.set_eval_base(HPO_Host<V,R>::g_iter_value());
+    if (!check) log.set_eval_base(HPO_Host<V,R>::g_iter_value());
     /* EMBF0 (DM_REAM only): the -c potential's raw F(0) for POTENTIAL SETUP,
      * and the RESULT line's start/best values. Reads stored values only. */
     core::Context reference_context=ctx;
@@ -685,74 +755,79 @@ int hpo_run_journaled(core::Context& ctx, HPOLog& log,
     const bool embf0_zero=reference_mode==models::EmbF0Mode::Zero;
     std::optional<RawEmbeddingF0> embf0_seed;
     if (has_ream) embf0_seed = derive_raw_embedding_f0(ctx);
-    log.write_potential_section(ctx, host.train_size(), host.val_size(), elem_str,
-                                embf0_seed ? &*embf0_seed : nullptr);
-    {
-        HPOLog::FitSwitchReport fit;
-        fit.force          = ctx.get<bool>("FORCE");
-        fit.force_source   = fit_sources.force;
-        fit.stress         = ctx.get<bool>("STRESS");
-        fit.stress_source  = fit_sources.stress;
-        fit.has_validation = !val.empty();
-        fit.val_forces     = trg.use_frmse;
-        fit.val_stresses   = trg.use_srmse;
-        log.write_fit_switches(fit);
-    }
-    if (has_ream) log.arm_embf0(embf0_zero, host.embf0_diagnostic());
-    /* DM_REAM density report (a bare DM_REAM many-body term): the -c
-     * potential's and each WARM seed's rho_raw(r) -- and rhobar(a) under
-     * RHOBARGATE -- in POTENTIAL SETUP; RESULT repeats it for the best.
-     * Stored values only; never throws. */
-    if (detail::context_is_bare_ream(ctx))
-        log.write_density_report(detail::startup_density_report(ctx, trg),
-                                 trg.RHOBARGATE.has_value());
-    {
-        const auto& tr = host.load_transform_report();
-        const auto& vr = host.val_load_transform_report();
-        const std::size_t n_train_loaded =
-            host.train_size() + tr.n_dropped_energy + tr.n_dropped_force;
-        const std::size_t n_val_loaded =
-            host.val_size() + vr.n_dropped_energy + vr.n_dropped_force;
-        log.write_load_transforms_section(tr, n_train_loaded,
-                                          vr, n_val_loaded);
+    /* The journal's setup sections: the run's alone. */
+    if (!check) {
+        log.write_potential_section(ctx, host.train_size(), host.val_size(), elem_str,
+                                    embf0_seed ? &*embf0_seed : nullptr);
+        {
+            HPOLog::FitSwitchReport fit;
+            fit.force          = ctx.get<bool>("FORCE");
+            fit.force_source   = fit_sources.force;
+            fit.stress         = ctx.get<bool>("STRESS");
+            fit.stress_source  = fit_sources.stress;
+            fit.has_validation = !val.empty();
+            fit.val_forces     = trg.use_frmse;
+            fit.val_stresses   = trg.use_srmse;
+            log.write_fit_switches(fit);
+        }
+        if (has_ream) log.arm_embf0(embf0_zero, host.embf0_diagnostic());
+        /* DM_REAM density report (a bare DM_REAM many-body term): the -c
+         * potential's and each WARM seed's rho_raw(r) -- and rhobar(a) under
+         * RHOBARGATE -- in POTENTIAL SETUP; RESULT repeats it for the best.
+         * Stored values only; never throws. */
+        if (detail::context_is_bare_ream(ctx))
+            log.write_density_report(detail::startup_density_report(ctx, trg),
+                                     trg.RHOBARGATE.has_value());
+        {
+            const auto& tr = host.load_transform_report();
+            const auto& vr = host.val_load_transform_report();
+            const std::size_t n_train_loaded =
+                host.train_size() + tr.n_dropped_energy + tr.n_dropped_force;
+            const std::size_t n_val_loaded =
+                host.val_size() + vr.n_dropped_energy + vr.n_dropped_force;
+            log.write_load_transforms_section(tr, n_train_loaded,
+                                              vr, n_val_loaded);
 
-        /* EMBF0 ZERO fixes the DM_REAM isolated-atom energy at 0: fitting
-         * absolute reference energies then needs another per-atom constant.
-         * n_intercept_columns > 0, from stored values (no BIAS default
-         * inserted). The toggles are named with their options: a -c seed
-         * is a potential, whose own toggle line is not read
-         * (mlip::potential_line_not_read). */
-        const auto bias = ctx.stored_value("BIAS");
-        const bool intercepts =
-            bias && *bias == "true" && ctx.stored_value("ATOM").has_value();
-        // The stored keys as well as the reports: on the MPI host the
-        // training report is not filled.
-        const bool eshift_keys =
-            ctx.has_stored("ESHIFT") ||
-            ctx.stored_value("ESHIFT_ATOM") == std::optional<std::string>("true") ||
-            ctx.stored_value("ESHIFT_DBATOM") == std::optional<std::string>("true");
-        if ((has_train_db || !val.empty()) && has_ream && embf0_zero &&
-            !intercepts && !eshift_keys && tr.eshift.empty() &&
-            vr.eshift.empty())
-            log.hint(std::string(ctx.blocks("DESCRIPTOR").empty()?"EMBF0 ZERO":"REFERENCE ZERO")+" fixes the "+reference_selector.dmb->label()+" isolated-atom energy at 0 "
-                     "and the model has no other per-atom constant (BIAS "
-                     "false, no ESHIFT). If reference energies are absolute "
-                     "(e.g. DFT totals), set ESHIFT or give the run "
-                     "ESHIFT_ATOM or ESHIFT_DBATOM (--eshift-atom, "
-                     "--eshift-dbatom: a potential's own line of them is not "
-                     "read), all compatible with EAMFAST. BIAS true also "
-                     "adds a per-atom constant, but its intercept columns, "
-                     "one per ATOM species, precede the descriptor weights "
-                     "(FIXINDEX/FIXWEIGHT indices shift) and it disables "
-                     "EAMFAST.");
+            /* EMBF0 ZERO fixes the DM_REAM isolated-atom energy at 0: fitting
+             * absolute reference energies then needs another per-atom constant.
+             * n_intercept_columns > 0, from stored values (no BIAS default
+             * inserted). The toggles are named with their options: a -c seed
+             * is a potential, whose own toggle line is not read
+             * (mlip::potential_line_not_read). */
+            const auto bias = ctx.stored_value("BIAS");
+            const bool intercepts =
+                bias && *bias == "true" && ctx.stored_value("ATOM").has_value();
+            // The stored keys as well as the reports: on the MPI host the
+            // training report is not filled.
+            const bool eshift_keys =
+                ctx.has_stored("ESHIFT") ||
+                ctx.stored_value("ESHIFT_ATOM") == std::optional<std::string>("true") ||
+                ctx.stored_value("ESHIFT_DBATOM") == std::optional<std::string>("true");
+            if ((has_train_db || !val.empty()) && has_ream && embf0_zero &&
+                !intercepts && !eshift_keys && tr.eshift.empty() &&
+                vr.eshift.empty())
+                log.hint(std::string(ctx.blocks("DESCRIPTOR").empty()?"EMBF0 ZERO":"REFERENCE ZERO")+" fixes the "+reference_selector.dmb->label()+" isolated-atom energy at 0 "
+                         "and the model has no other per-atom constant (BIAS "
+                         "false, no ESHIFT). If reference energies are absolute "
+                         "(e.g. DFT totals), set ESHIFT or give the run "
+                         "ESHIFT_ATOM or ESHIFT_DBATOM (--eshift-atom, "
+                         "--eshift-dbatom: a potential's own line of them is not "
+                         "read), all compatible with EAMFAST. BIAS true also "
+                         "adds a per-atom constant, but its intercept columns, "
+                         "one per ATOM species, precede the descriptor weights "
+                         "(FIXINDEX/FIXWEIGHT indices shift) and it disables "
+                         "EAMFAST.");
+        }
+        log.write_loss_section(trg);
     }
-    log.write_loss_section(trg);
 
     /* -- IterHealthMonitor mode --------------------------------------- */
     {
-        HealthLogMode hlm = health_log_mode_from_context(ctx);
-        global_iter_health_monitor().set_mode(hlm);
-        global_iter_health_monitor().clear_state();
+        const HealthLogMode hlm = health_log_mode_from_context(ctx);
+        if (!check) {
+            global_iter_health_monitor().set_mode(hlm);
+            global_iter_health_monitor().clear_state();
+        }
     }
 
     /* -- Pre-flight audit ---------------------------------------------
@@ -795,6 +870,14 @@ int hpo_run_journaled(core::Context& ctx, HPOLog& log,
      * Targets pointer flows through to RestartPolicy for fresh-init
      * generation on stagnation. */
     auto policy = build_run_policy<V,R>(sp, &trg);
+
+    /* A check ends here, every startup check passed: the summary, and no
+     * evaluation. */
+    if (check) {
+        write_check_summary(std::cout, ctx.get<std::string>("HPOTARGET"),
+                            trg, host.train_size(), host.val_size());
+        return EXIT_SUCCESS;
+    }
 
     /* The stagnation threshold and top-K tracking are process-wide statics
      * that each policy arms inside run() (RESTART, PRESTAGE). A policy that

@@ -74,7 +74,7 @@ private:
 
     size_t ui_offset(std::vector<std::string> &tokens, size_t ui);
     std::vector<std::string> parse_optim_line(std::istringstream& iss);
-    void handle_directory_creation(const std::string& directory);
+    static void handle_directory_creation(const std::string& directory);
     /* One OPTIM line (on line @p nline of the file). The key is
      * upper-cased: OPTIM keys are case-insensitive, as configuration keys
      * are. */
@@ -169,6 +169,12 @@ public:
     /* hpo_search_space.tsv (always) + hpo_optim_resolved.hpo (when any
      * OPTIM box was derived by an AUTO rule) into `dir`. */
     void write_search_space_files(const std::string& dir) const;
+    /* Creates the archive directories of the DUMP and BDUMP lines (one
+     * that exists is kept; each is named on standard output). The
+     * evaluation host of a run calls it (HPO_Host, HostPurpose::Run):
+     * parsing the target file creates nothing, and `tadah hpo --check`
+     * leaves the working directory as it is. */
+    void create_archive_directories() const;
 
     /* Typed observables (Tier 1 / Tier 2 of the PC_OBSERVABLE redesign).
      * Each entry is a polymorphic Observable* -- concrete subclasses live in

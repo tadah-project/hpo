@@ -325,6 +325,18 @@ void HPOLog::open(const std::string& path,
     f_.flush();
 }
 
+void HPOLog::begin_without_journal()
+{
+    std::lock_guard<std::mutex> lg(mtx_);
+    last_status_.clear();
+    if (f_.is_open()) f_.close();
+    /* A closed stream with its error state set: every write to it is
+     * dropped (event() returns before writing, the section writers' output
+     * fails), and open() clears the state. */
+    f_.setstate(std::ios::badbit);
+    reset_run_locked();
+}
+
 /* -------------------------------------------------------------------------
  * HPOLog -- primitive writers
  * ------------------------------------------------------------------------- */

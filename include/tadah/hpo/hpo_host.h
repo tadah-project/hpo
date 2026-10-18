@@ -22,6 +22,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <tuple>
@@ -205,6 +206,18 @@ struct EvalResult
     core::Context                          pot_ctx;
 };
 
+/* What an HPO_Host is built for.
+ *   Run    the evaluations of a run: the constructor loads and checks the
+ *          data, creates the DUMP and BDUMP archive directories
+ *          (HPOTargets::create_archive_directories) and writes the headers
+ *          of the result files (loss.tadah, params.tadah, ...).
+ *   Check  the startup checks of `tadah hpo --check` (hpo_run with CHECK
+ *          true): the constructor loads and checks the data as for a run,
+ *          and writes no file and creates no directory. Such a host
+ *          evaluates nothing: operator() and prepare_best_publication()
+ *          throw std::logic_error. */
+enum class HostPurpose { Run, Check };
+
 /* =========================================================================
  *  HPO_Host  -  stateless evaluation functor
  * ========================================================================= */
@@ -217,7 +230,8 @@ class HPO_Host
 public:
     HPO_Host(core::Context master,
         HPOTargets&   trg,
-        const std::string& val_cfg);
+        const std::string& val_cfg,
+        HostPurpose purpose = HostPurpose::Run);
 
     double operator()(const ParamVec& p) const;      // thread-safe
 
@@ -425,6 +439,7 @@ private:
     /* ---------- immutable after construction --------------------------- */
     core::Context                master_ctx_;
     HPOTargets&                  trg_;
+    HostPurpose                  purpose_;
     /* Stage 1b.1: per-script fan-out cost estimate (EWMA of create+run ms),
      * indexed by script index into trg_.LS. Drives longest-processing-time-
      * first (LPT) fan-out ordering so the slowest scripts dispatch first and

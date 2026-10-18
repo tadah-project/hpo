@@ -29,7 +29,21 @@ struct OptimizerSpec;
  * <what>" for another std::exception and "FAILED -- non-standard
  * exception" for any other; the caller exits with 1. A startup error
  * (the configuration, validate_hpo_setup()) is thrown before any trailer,
- * after an "ERROR startup: ..." journal line. See run_driver.h. */
+ * after an "ERROR startup: ..." journal line. See run_driver.h.
+ *
+ * With CHECK true in the context (`tadah hpo --check`, CHECK true in a
+ * TASK hpo section) it makes the startup checks of the run alone, in the
+ * run's order -- the training configuration, the target file and its
+ * LAMMPS scripts, validate_hpo_setup(), PC_ISOLATION, the training and
+ * validation datasets (loaded as the run loads them), HEALTH_LOG, the
+ * pre-flight audit and the run policy -- then writes the summary of
+ * write_check_summary() (check_summary.h) to standard output and returns
+ * 0. It evaluates nothing, installs no signal handler, starts no worker
+ * and writes no file: no journal (one an earlier run in the process left
+ * open is closed: HPOLog::begin_without_journal), no search-space
+ * sidecar, no result file, no DUMP or BDUMP directory. A startup error is
+ * thrown as the run throws it. CHECK is taken out of the context (the
+ * run's too, CHECK false): no potential of the run has a CHECK line. */
 int hpo_run(core::Context&);
 /* The same, with where the context's keys came from (the command line, the
  * configuration file, the defaults): the journal's POTENTIAL SETUP names

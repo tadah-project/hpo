@@ -107,6 +107,13 @@ public:
 
     bool is_open() const { return f_.is_open(); }
 
+    /** Starts a run that keeps no journal (`tadah hpo --check`, which
+     *  writes no file): closes a journal an earlier run in this process
+     *  left open -- one that stopped during its setup, before its trailer
+     *  -- and starts the run state afresh, as open() does, without a file.
+     *  Every writer then writes nothing until the next open(). */
+    void begin_without_journal();
+
     /** The MPI rank whose journal this is, and the number of ranks of the
      *  run. Each rank of a multi-rank run keeps its own journal, which
      *  counts that rank's evaluations only; with `world` > 1 the

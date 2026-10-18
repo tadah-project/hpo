@@ -1307,8 +1307,9 @@ void HPOTargets::read(const std::string& fn)
                     parse_uint(single_value(iss, key), key, 1, 15));
             }
             else if (key=="DUMP" || key=="BDUMP") {
-                /* <cadence> <directory>: the directory is created only once
-                 * the whole line is valid. */
+                /* <cadence> <directory>. The directory is the run's
+                 * output: the evaluation host of a run creates it
+                 * (create_archive_directories), parsing does not. */
                 std::string every, dir;
                 if (!(iss >> every >> dir))
                     throw std::runtime_error(
@@ -1317,7 +1318,6 @@ void HPOTargets::read(const std::string& fn)
                 const std::size_t n = parse_uint(every, key + " cadence", 1);
                 if (key == "DUMP") { dumpPotEvery = n; dumpPotDir = dir; }
                 else { dumpBestPotEvery = n; dumpBestPotDir = dir; }
-                handle_directory_creation(dir);
             }
 
             /* loss -------------------------------------------------- */
@@ -1742,6 +1742,13 @@ double HPOTargets::parse_pc_worker_timeout(const std::string& token,
         origin + " is too large for the worker deadline, got '" + token +
         "' (it is kept in 64-bit milliseconds: at most about 9.2e15 s)");
   return v;
+}
+
+void HPOTargets::create_archive_directories() const {
+  if (dumpPotEvery != std::numeric_limits<size_t>::max())
+    handle_directory_creation(dumpPotDir);
+  if (dumpBestPotEvery != std::numeric_limits<size_t>::max())
+    handle_directory_creation(dumpBestPotDir);
 }
 
 void HPOTargets::handle_directory_creation(const std::string& directory) {
