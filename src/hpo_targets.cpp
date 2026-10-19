@@ -737,6 +737,13 @@ void HPOTargets::read(const std::string& fn)
     /* The line of each PC_EMAE, PC_ErRMSE, PC_ERSQ and PC_SRMSE line: one
      * of each (PC_ERMSE and PC_FRMSE: ValidationMetricTargets::add). */
     std::map<std::string, std::size_t> metric_lines;
+    /* Where each optimiser attribute was set, per optimiser: the line and
+     * the block. An attribute is set once for its optimiser -- OPTIMIZER,
+     * STRATEGY and REFINE configure the STRATEGY-level one, a repeated
+     * EXPLORE block continues the first -- so a second line, which would
+     * replace the first's value, is refused. */
+    struct AttrSet { std::size_t line; Block block; };
+    std::map<std::pair<const OptimizerSpec*, std::string>, AttrSet> attr_set;
 
     /* The block the open INNER block sits in: an INNER block opens only
      * inside STRATEGY, EXPLORE or REFINE. */
@@ -1105,7 +1112,37 @@ void HPOTargets::read(const std::string& fn)
 
             /* Common opt-attribute keys (LIB/ALGO/MAXEVAL/...) accepted in
              * any block where active_opt is set. */
+            /* The attribute a line of an optimiser sets: its key; PARAM
+             * <name> for a PARAM line; none for a STEP <KEY> override, which
+             * refines the block-wide STEP of some dimensions. */
+            std::string attr = key;
+            if (key == "PARAM" || key == "STEP") {
+                std::istringstream peek(line);
+                std::string k0, first;
+                peek >> k0 >> first;
+                if (key == "PARAM") attr = "PARAM " + first;
+                else if (!first.empty() && !is_number_shaped(first)) attr.clear();
+            }
             if (active_opt && dispatch_opt_attr(key, iss, *active_opt)) {
+                if (!attr.empty()) {
+                    const auto [it, fresh] = attr_set.emplace(
+                        std::make_pair(active_opt, attr), AttrSet{nline, block});
+                    if (!fresh) {
+                        const AttrSet& first = it->second;
+                        if (first.block == block)
+                            throw std::runtime_error(
+                                attr + " is set twice in the " +
+                                block_name(block) + " block (first on line " +
+                                std::to_string(first.line) + "); give it once");
+                        throw std::runtime_error(
+                            attr + " is set on line " +
+                            std::to_string(first.line) + " in the " +
+                            block_name(first.block) + " block and again here "
+                            "in the " + block_name(block) + " block; both "
+                            "blocks configure the same optimiser, so give it "
+                            "once");
+                    }
+                }
                 /* Strict arity. dispatch_opt_attr() reads exactly the value
                  * tokens its key defines, so anything still on the line is a
                  * typo, a stray word, or a value for a key that does not take
