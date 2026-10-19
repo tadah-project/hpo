@@ -1788,6 +1788,11 @@ TEST_CASE("durable best: a persistent failure fails the run",
     CHECK(n >= 1);
     CHECK(data_rows(sd.dir / "loss.tadah") == n);
     CHECK_FALSE(fs::exists(sd.dir / "best_pot.tadah"));
+    /* The run ends with an error, and the lock file it cannot take (every
+     * later lock open fails) stays: the journal says so, a WARNING. */
+    CHECK(fs::exists(sd.dir / "best_pot.tadah.lock"));
+    CHECK(line_with(journal, "the lock file of the best potential stays")
+              .find("WARNING") != std::string::npos);
 }
 
 /* At the end of a run the lock files of the best potential go. One that
@@ -2167,6 +2172,8 @@ TEST_CASE("durable best: a blip right after SIGINT still saves the best",
     CHECK(line_with(journal, "Best potential saved").find(": best_pot.tadah") !=
           std::string::npos);
     CHECK(contains(read_text(sd.dir / "best_pot.tadah"), "# HPO_SOURCE_EVAL 1"));
+    /* a run a signal ends leaves no lock file */
+    CHECK_FALSE(fs::exists(sd.dir / "best_pot.tadah.lock"));
     const std::size_t n = total_evaluations(journal);
     CHECK(n >= 1);
     CHECK(data_rows(sd.dir / "loss.tadah") == n);
