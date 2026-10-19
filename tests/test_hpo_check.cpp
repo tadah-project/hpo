@@ -911,15 +911,21 @@ std::string in_working_directory(const std::string& file)
 
 }  // namespace
 
-/* Pins: an existing output file of the run that the run cannot write --
- * loss.tadah, hpo_run.log and best_pot.tadah.lock with owner read
- * permission alone -- stops the check and the run with one message,
- * before the journal and before any data is loaded: "'loss.tadah' in the
- * working directory '<dir>' is not writable: tadah hpo rewrites it" (the
- * same for hpo_run.log), "'best_pot.tadah.lock' ... is not writable: tadah
- * hpo opens it to lock best_pot.tadah"; the run writes no hpo_run.log (the
- * one that exists keeps its line) and no search-space file, and the
- * working directory is as it was.
+/* Pins: an existing output file of the run is opened as the run opens it
+ * (to write, the lock to read and write), without creating or truncating
+ * it, and one the run cannot open -- loss.tadah, hpo_run.log and
+ * best_pot.tadah.lock with owner read permission alone, and
+ * best_pot.tadah.lock with owner write permission alone -- stops the check
+ * and the run with one message, the open's own error, before the journal
+ * and before any data is loaded: "'loss.tadah' in the working directory
+ * '<dir>' cannot be opened: Permission denied (tadah hpo rewrites it)"
+ * (the same for hpo_run.log), "'best_pot.tadah.lock' ... cannot be opened:
+ * Permission denied (tadah hpo opens it to lock best_pot.tadah)"; the run
+ * writes no hpo_run.log (the one that exists keeps its line) and no
+ * search-space file, and the working directory is as it was.
+ * Before the open: the messages read "is not writable: tadah hpo rewrites
+ * it", and a write-only lock, which the run cannot open to read, passed
+ * the check (the run stopped at it after writing its journal).
  * Before the change: the result files and the lock were checked after the
  * journal was opened (the run wrote hpo_run.log, its error in it), and the
  * lock's message said "tadah hpo rewrites it". Before the output files were
@@ -934,27 +940,35 @@ TEST_CASE("hpo --check: an output file the run cannot write stops the "
         TADAH_SKIP("running as root: file permissions are not enforced");
     struct Case {
         const char* file;
+        fs::perms perms;
         const char* says;
     };
+    const std::string denied = "cannot be opened: Permission denied ";
     const std::vector<Case> cases = {
-        {"loss.tadah", "is not writable: tadah hpo rewrites it"},
-        {"hpo_run.log", "is not writable: tadah hpo rewrites it"},
-        {"best_pot.tadah.lock",
-         "is not writable: tadah hpo opens it to lock best_pot.tadah"},
+        {"loss.tadah", fs::perms::owner_read,
+         "(tadah hpo rewrites it)"},
+        {"hpo_run.log", fs::perms::owner_read, "(tadah hpo rewrites it)"},
+        {"best_pot.tadah.lock", fs::perms::owner_read,
+         "(tadah hpo opens it to lock best_pot.tadah)"},
+        {"best_pot.tadah.lock", fs::perms::owner_write,
+         "(tadah hpo opens it to lock best_pot.tadah)"},
     };
     for (const Case& c : cases) {
-        INFO("file: " << c.file);
+        INFO("file: " << c.file << ", owner "
+                      << (c.perms == fs::perms::owner_read ? "read" : "write")
+                      << " permission alone");
         ScratchDir sd("read_only_output");
         write_inputs(kOptimizer + kRootLines);
         std::ofstream(c.file) << "kept\n";
-        read_only_file(c.file);
+        fs::permissions(c.file, c.perms);
         const auto before = entries(sd.dir);
         const auto [check_error, run_error] = check_and_run_errors();
         INFO("run: " << run_error << "\ncheck: " << check_error);
-        CHECK(run_error == in_working_directory(c.file) + c.says);
+        CHECK(run_error == in_working_directory(c.file) + denied + c.says);
         CHECK(check_error == run_error);
         CHECK(entries(sd.dir) == before);
         CHECK_FALSE(fs::exists("hpo_search_space.tsv"));
+        fs::permissions(c.file, fs::perms::owner_read);
         std::ifstream in(c.file);
         std::string line;
         std::getline(in, line);
@@ -977,8 +991,12 @@ TEST_CASE("hpo --check: an output file the run cannot write stops the "
  *     '<dir>' is a symbolic link to '<dir>/nowhere/loss', which cannot be
  *     created: the directory '<dir>/nowhere' does not exist";
  *   - loss.tadah in a loop of links (loss.tadah -> loop -> loss.tadah)
- *     stops both: "... cannot be resolved: too many levels of symbolic
- *     links";
+ *     stops both with the open's own error: "... cannot be opened: Too
+ *     many levels of symbolic links (tadah hpo rewrites it)";
+ *   - loss.tadah a link to a name that ends in '/' (lost/) stops both: a
+ *     file cannot be created there ("... is a symbolic link to
+ *     '<dir>/lost', which cannot be created: a file name cannot end in '/'
+ *     or '/.'");
  *   - loss.tadah a link to a file not yet created in a directory that
  *     exists, directly (out/loss) or through a second link (chain ->
  *     out/loss), is accepted: the run creates out/loss through the links
@@ -1044,8 +1062,24 @@ TEST_CASE("hpo --check: best_pot.tadah as a directory and the symbolic "
         const auto [check_error, run_error] = check_and_run_errors();
         INFO("run: " << run_error << "\ncheck: " << check_error);
         CHECK(run_error == in_working_directory("loss.tadah") +
-                               "cannot be resolved: too many levels of "
-                               "symbolic links");
+                               "cannot be opened: Too many levels of "
+                               "symbolic links (tadah hpo rewrites it)");
+        CHECK(check_error == run_error);
+        CHECK(entries(sd.dir) == before);
+    }
+    {
+        INFO("loss.tadah links to a name that ends in '/'");
+        ScratchDir sd("slash_result");
+        write_inputs(kOptimizer + kRootLines);
+        fs::create_symlink("lost/", "loss.tadah");
+        const auto before = entries(sd.dir);
+        const auto [check_error, run_error] = check_and_run_errors();
+        INFO("run: " << run_error << "\ncheck: " << check_error);
+        CHECK(run_error == in_working_directory("loss.tadah") +
+                               "is a symbolic link to '" +
+                               fs::current_path().string() +
+                               "/lost', which cannot be created: a file name "
+                               "cannot end in '/' or '/.'");
         CHECK(check_error == run_error);
         CHECK(entries(sd.dir) == before);
     }
@@ -1105,7 +1139,8 @@ TEST_CASE("hpo --check: best_pot.tadah as a directory and the symbolic "
  * accepted -- the check passes, the run returns 0 and leaves it as it was
  * ("# stale") --, and with an AUTO box (OPTIM SGRID2B (2) AUTO) the check
  * and the run refuse it with one message, "'hpo_optim_resolved.hpo' in the
- * working directory '<dir>' is not writable: tadah hpo rewrites it".
+ * working directory '<dir>' cannot be opened: Permission denied (tadah hpo
+ * rewrites it)".
  * Before the change: it was refused whatever the boxes (v1-dev ran with
  * explicit boxes and left it alone). Skipped as root, whose writes no
  * permission stops. */
@@ -1141,7 +1176,8 @@ TEST_CASE("hpo --check: hpo_optim_resolved.hpo is checked only when a box "
         const auto [check_error, run_error] = check_and_run_errors();
         INFO("run: " << run_error << "\ncheck: " << check_error);
         CHECK(run_error == in_working_directory("hpo_optim_resolved.hpo") +
-                               "is not writable: tadah hpo rewrites it");
+                               "cannot be opened: Permission denied (tadah "
+                               "hpo rewrites it)");
         CHECK(check_error == run_error);
     }
 }

@@ -72,6 +72,11 @@ namespace {
 
 namespace fs = std::filesystem;
 
+/* A directory created at unique_temp_path(@p ext), as the operating system
+ * names it (symbolic links in the temporary directory's path resolved):
+ * the archive-directory messages print physical paths. */
+fs::path physical_temp_dir(const std::string& ext);
+
 /* Unique per process and per call: ctest runs the cases of this file as
  * concurrent processes. Removed on scope exit. */
 fs::path unique_temp_path(const std::string& ext)
@@ -82,6 +87,13 @@ fs::path unique_temp_path(const std::string& ext)
             std::to_string(counter++) + "_" +
             std::to_string(std::chrono::steady_clock::now()
                                .time_since_epoch().count()) + ext);
+}
+
+fs::path physical_temp_dir(const std::string& ext)
+{
+    const fs::path dir = unique_temp_path(ext);
+    fs::create_directories(dir);
+    return fs::canonical(dir);
 }
 
 struct TempFile {
@@ -1075,7 +1087,13 @@ TEST_CASE("Strict numbers: DUMP and BDUMP take a cadence and a directory",
  * '<root>/nowhere', which does not exist") are refused, at the line; an
  * existing directory, a new one in an existing directory, the same written
  * with a trailing '/', and a relative one in the working directory are
- * accepted, and none is created.
+ * accepted, and none is created. A trailing '/' or '/.' is taken as mkdir
+ * takes it: "<dangling>/" is refused as the link, "<root>/pots/." with pots
+ * missing is refused ("... cannot be resolved: it walks '.' in
+ * '<root>/pots', which does not exist"), "<root>/fresh/" is accepted and
+ * created by the run.
+ * Before the trailing-separator rule: "<dangling>/" and "<root>/pots/."
+ * were accepted (the run then failed creating them).
  * Before the check: the parse accepted the first three (the run stopped
  * when it created the directory, after it had loaded the data, or wrote no
  * archive into the file): the refusal checks fail.
@@ -1086,8 +1104,7 @@ TEST_CASE("DUMP and BDUMP refuse a directory the run cannot create, at "
           "their line, and create nothing",
           "[HPO][hpo_targets][archive_directories]")
 {
-    const fs::path root = unique_temp_path("_archive");
-    fs::create_directories(root);
+    const fs::path root = physical_temp_dir("_archive");
     struct RemoveDir {
         fs::path p;
         ~RemoveDir() { std::error_code ec; fs::remove_all(p, ec); }
@@ -1125,6 +1142,30 @@ TEST_CASE("DUMP and BDUMP refuse a directory the run cannot create, at "
                                      (root / "nowhere").string() +
                                      "', which does not exist"));
         CHECK_FALSE(fs::exists(root / "nowhere"));
+        /* A trailing '/' or '/.' as mkdir takes it: "<dangling>/" is the
+         * link itself (refused as above), "<root>/pots/." walks '.' in a
+         * directory that does not exist (mkdir fails), "<root>/fresh/" is
+         * the directory fresh (accepted, created by the run). */
+        CHECK_THAT(parse_error(h.config("5 " + dangling.string() + "/")),
+                   Catch::StartsWith(h.at() + what + dangling.string() +
+                                     "/' is a symbolic link to '" +
+                                     (root / "nowhere").string() +
+                                     "', which does not exist"));
+        const std::string dot = (root / "pots").string() + "/.";
+        CHECK_THAT(parse_error(h.config("5 " + dot)),
+                   Catch::StartsWith(h.at() + what + dot +
+                                     "' cannot be resolved: it walks '.' in '" +
+                                     (root / "pots").string() +
+                                     "', which does not exist"));
+        {
+            const std::string fresh = (root / "fresh").string() + "/";
+            const auto trg = parse_config(h.config("5 " + fresh));
+            CHECK_FALSE(fs::exists(root / "fresh"));
+            trg.create_archive_directories();
+            CHECK(fs::is_directory(root / "fresh"));
+            fs::remove_all(root / "fresh");
+        }
+        CHECK_FALSE(fs::exists(root / "pots"));
 
         const auto existing = parse_config(h.config("5 " + root.string()));
         CHECK((key == "DUMP" ? existing.dumpPotDir
@@ -1166,8 +1207,7 @@ TEST_CASE("DUMP and BDUMP: a directory inside the other's is accepted in "
           "either order and created after it",
           "[HPO][hpo_targets][archive_directories]")
 {
-    const fs::path root = unique_temp_path("_archive_nested");
-    fs::create_directories(root);
+    const fs::path root = physical_temp_dir("_archive_nested");
     struct RemoveDir {
         fs::path p;
         ~RemoveDir() { std::error_code ec; fs::remove_all(p, ec); }
@@ -1263,6 +1303,43 @@ TEST_CASE("DUMP and BDUMP: a directory inside the other's is accepted in "
     CHECK_FALSE(fs::exists(root / "elsewhere" / "archive"));
     CHECK_FALSE(fs::exists(root / "missing2"));
 
+    /* The creation order follows the resolved paths: lnk3 a link to
+     * <root>/archive, which does not exist yet, "BDUMP 5 <root>/archive"
+     * with "DUMP 5 <root>/lnk3/all", in either order: accepted, nothing
+     * created, and create_archive_directories() creates <root>/archive
+     * first, then <root>/archive/all through the link (in the order of the
+     * lines as written, DUMP first, mkdir of lnk3/all fails). */
+    fs::create_symlink(archive, root / "lnk3");
+    for (const bool bdump_first : {true, false}) {
+        INFO("BDUMP line first: " << bdump_first);
+        const std::string bdump = "BDUMP 5 " + archive.string() + "\n";
+        const std::string dump =
+            "DUMP 5 " + (root / "lnk3" / "all").string() + "\n";
+        const auto trg = parse_config(
+            kOptimizer + (bdump_first ? bdump + dump : dump + bdump));
+        CHECK_FALSE(fs::exists(archive));
+        trg.create_archive_directories();
+        CHECK(fs::is_directory(archive / "all"));
+        fs::remove_all(archive);
+    }
+
+    /* "BDUMP 5 <root>/best/." with "DUMP 5 <root>/best/pots": the BDUMP
+     * line walks '.' in <root>/best, which does not exist (mkdir fails),
+     * and is refused at its line. */
+    {
+        const std::string best_dot = (root / "best").string() + "/.";
+        CHECK_THAT(parse_error(kOptimizer + "BDUMP 5 " + best_dot +
+                               "\nDUMP 5 " + (root / "best" / "pots").string() +
+                               "\n"),
+                   Catch::StartsWith("Error on line " +
+                                     std::to_string(line - 1) +
+                                     ": BDUMP directory '" + best_dot +
+                                     "' cannot be resolved: it walks '.' in '" +
+                                     (root / "best").string() +
+                                     "', which does not exist"));
+        CHECK_FALSE(fs::exists(root / "best"));
+    }
+
     /* "DUMP 5 ../archive" with "BDUMP 5 ../archive/best", relative to a
      * working directory <root>/work, in either order: accepted, and both
      * created, the outer first. */
@@ -1290,6 +1367,9 @@ TEST_CASE("DUMP and BDUMP: a directory inside the other's is accepted in "
  * directory '<root>/ro' is not writable") and a new one in such a
  * directory ("... '<root>/ro/pots' cannot be created: the directory
  * '<root>/ro' is not writable") are refused at the line.
+ * A directory under one without any permission (mode 000) cannot be
+ * resolved: "... cannot be resolved: '<root>/locked/pots' cannot be read:
+ * Permission denied" (it was reported as a file type).
  * Before the check: both were accepted, and the run wrote no archive (each
  * one a WARNING in the journal) or stopped when it created the directory.
  * Skipped as root, whose writes no permission stops. */
@@ -1298,7 +1378,7 @@ TEST_CASE("DUMP and BDUMP refuse a directory the run cannot write into",
 {
     if (::geteuid() == 0)
         TADAH_SKIP("running as root: file permissions are not enforced");
-    const fs::path root = unique_temp_path("_archive_ro");
+    const fs::path root = physical_temp_dir("_archive_ro");
     const fs::path ro = root / "ro";
     fs::create_directories(ro);
     struct RemoveDir {
@@ -1311,9 +1391,22 @@ TEST_CASE("DUMP and BDUMP refuse a directory the run cannot write into",
         }
     } cleanup{root, ro};
     fs::permissions(ro, fs::perms::owner_read | fs::perms::owner_exec);
+    const fs::path locked = root / "locked";
+    fs::create_directories(locked);
+    struct Unlock {
+        fs::path p;
+        ~Unlock() { std::error_code ec; fs::permissions(p, fs::perms::owner_all, ec); }
+    } unlock{locked};
+    fs::permissions(locked, fs::perms::none);
     for (const std::string key : {"DUMP", "BDUMP"}) {
         INFO(key);
         const auto h = root_home(key);
+        CHECK_THAT(parse_error(h.config("5 " + (locked / "pots").string())),
+                   Catch::StartsWith(h.at() + key + " directory '" +
+                                     (locked / "pots").string() +
+                                     "' cannot be resolved: '" +
+                                     (locked / "pots").string() +
+                                     "' cannot be read: Permission denied"));
         CHECK_THAT(parse_error(h.config("5 " + ro.string())),
                    Catch::StartsWith(h.at() + key + " directory '" +
                                      ro.string() + "' is not writable"));

@@ -96,9 +96,10 @@ tests/data/ta, --data), and checks one case:
                     1, within 20 s (the exit handshake waits 30 s for a
                     rank that is blocked, then aborts the job); its output
                     has rank 1's refusal ("'loss.tadah.r1' in the working
-                    directory '<dir>' is not writable: tadah hpo rewrites
-                    it", "'best_pot.tadah.r1.lock' ... is not writable:
-                    tadah hpo opens it to lock best_pot.tadah.r1") and rank
+                    directory '<dir>' cannot be opened: Permission denied
+                    (tadah hpo rewrites it)", "'best_pot.tadah.r1.lock' ...
+                    cannot be opened: Permission denied (tadah hpo opens it
+                    to lock best_pot.tadah.r1)") and rank
                     0's ("the check of the output files failed on another
                     MPI rank"), and no "aborting the job"; no journal
                     (hpo_run.log.r0, hpo_run.log.r1) and no result file of
@@ -492,9 +493,10 @@ def case_output_refusal(r):
     args = ["-c", "../ta2_refit_seed.tadah"]
     for name, file, says in (
             ("loss_r1", "loss.tadah.r1",
-             "is not writable: tadah hpo rewrites it"),
+             "cannot be opened: Permission denied (tadah hpo rewrites it)"),
             ("lock_r1", "best_pot.tadah.r1.lock",
-             "is not writable: tadah hpo opens it to lock best_pot.tadah.r1")):
+             "cannot be opened: Permission denied (tadah hpo opens it to "
+             "lock best_pot.tadah.r1)")):
         def prepare(d, file=file):
             (d / file).write_text("kept\n")
             (d / file).chmod(0o444)
