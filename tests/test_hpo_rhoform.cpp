@@ -1062,6 +1062,9 @@ TEST_CASE("HPO_Host: a point outside the OPTIM box gets no DUMP archive, "
     ctx.add("HPOTARGET", hpo_cfg.string());
     HPOTargets trg(ctx, hpo_cfg.string());
     REQUIRE_NOTHROW(validate_hpo_setup(ctx, trg, false, true));
+    /* the run creates the DUMP directory before its first evaluation;
+     * parsing the target file creates nothing */
+    trg.create_archive_directories();
     {
       Host host(ctx, trg, val_cfg.string());
       ParamVec p(1);
