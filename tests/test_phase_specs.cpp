@@ -383,6 +383,42 @@ TEST_CASE("phase specs: every phase of each STRATEGY TYPE",
  * not built (ceres_build.h), the deferred CERES:LEVENBERG_MARQUARDT with its own
  * message first: a pin of that refusal. Before this test change such a
  * build failed the CERES rows, expecting the Ceres validator's result. */
+/* DLIB:GFS reads FTOL_ABS as the accuracy of dlib's solver, which dlib
+ * requires to be >= 0: a negative one is refused at startup, naming the
+ * phase and the value ("the STRATEGY-level optimiser: DLIB:GFS: FTOL_ABS is
+ * the accuracy of dlib's solver and must be >= 0 (got -0.001)"), and 0 is
+ * accepted.
+ * Before the fix: startup accepted it, and the search failed inside dlib
+ * after the training data had been read ("Failing expression was 0 <=
+ * eps"). */
+TEST_CASE("backend rules: DLIB:GFS refuses a negative FTOL_ABS at startup",
+          "[HPO][backend_rules]")
+{
+    auto s = local_spec(1);
+    s.lib = "DLIB";
+    s.algo = "GFS";
+    s.stop.maxeval = 10;
+    s.stop.ftol_abs = -1e-3;
+    CHECK(error_of(s) == "DLIB:GFS: FTOL_ABS is the accuracy of dlib's "
+                         "solver and must be >= 0 (got -0.001)");
+    s.stop.ftol_abs = 0.0;
+    CHECK(error_of(s) == "");
+
+    const OptimizerSpec parsed = parse_spec(
+        "OPTIMIZER\nLIB DLIB\nALGO GFS\nMAXEVAL 10\nFTOL_ABS -1e-3\n"
+        "ENDOPTIMIZER\n");
+    std::string what;
+    try {
+        tadah::hpo::validate_phase_backends(parsed);
+    } catch (const std::exception& e) {
+        what = e.what();
+    }
+    CHECK_THAT(what, Catch::Contains(
+                         "the STRATEGY-level optimiser: DLIB:GFS: FTOL_ABS is "
+                         "the accuracy of dlib's solver and must be >= 0 "
+                         "(got -0.001)"));
+}
+
 TEST_CASE("backend rules: validate_backend runs each backend's own checks",
           "[HPO][backend_rules]")
 {
