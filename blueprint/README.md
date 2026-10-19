@@ -3,12 +3,14 @@
 The files in this directory describe parts of `tadah hpo` as data, for the
 documentation (Tadah.MLIP `docs/`): it is built without C++, so it cannot ask
 the code. The documentation reads `anneal_keys.toml`; `optimizers_gen.toml`
-is written for it. A CTest entry fails when a file and the code differ.
+is written for it, and so is the target-file registry, `hpotarget.toml` and
+its part files. A CTest entry fails when a file and the code differ.
 
 | File | Kept in step by |
 |---|---|
 | `anneal_keys.toml` | `gen_anneal_keys.py`, CTest `hpo_anneal_registry_sync` |
 | `optimizers_gen.toml` | `tests/tools/hpo_registry_export.cpp`, CTest `hpo_optimizer_registry_sync` |
+| `hpotarget*.toml` | `hpotarget_registry.py`, the CTest entries of "The target-file registry" |
 
 ## anneal_keys.toml
 
@@ -97,3 +99,301 @@ A registered optimiser has these fields (an empty string means none):
   other search.
 - `ignores_bounds`, `bounds_note`: the search proposes points outside the
   `OPTIM` box; the note is the startup warning.
+
+## The target-file registry
+
+`hpotarget.toml` and the part files its `meta.parts` lists describe the
+target file of `tadah hpo` (`--hpotarget`): how a line is read, the eight
+blocks and where each opens, every key with its values, default, range and
+refusals, the options of the `PC_*` lines, the `OPTIM` grammar and the
+`PARAM` keys of the optimisers. The parser is the source. Every message in
+the registry is the parser's text, copied from the code, and the checks at
+the end of this section fail when the registry and the parser differ.
+`hpotarget_registry.py` (Python 3.11 or later, standard library only) loads
+the files, checks them and returns them as dataclasses.
+
+### Files
+
+| File | Contents |
+|---|---|
+| `hpotarget.toml` | `[meta]`, `[lexing]`, `[reading]`, `[structure]`, `[group.OPTIMIZER]`, the eight `[[block]]` tables; the top-level keys that `hpotarget_lines.toml` does not hold, with the options of `RHOGATE` and `RHOBARGATE`; `[[removed]]`, `[[rule]]`, `[[env]]`; the wrappers and the training configurations of the examples |
+| `hpotarget_optimizer.toml` | the keys of the optimiser group, `LOG_HP`, the keys of the `STRATEGY`, `INIT`, `NOISE` and `RESTART` blocks; `[[strategy_type]]`, `[[init_method]]`; the rules of the `INNER` block |
+| `hpotarget_lines.toml` | the top-level keys `PC_EMAE`, `PC_ERMSE`, `PC_ErRMSE`, `PC_ERSQ`, `PC_SRMSE`, `PC_FRMSE`, `PC_LAMMPS`, `PC_FAILPROBE`, `PC_OBSERVABLE`, `LOSS` and `OPTIM`; their options (`[[line_option]]`); the observable kinds and the `OPTIM` forms (`[[form]]`); `[[loss_function]]`, `[optim]`, `[[optim_target]]`; the rules between these lines, and between them and the optimisers |
+| `hpotarget_params.toml` | `[[param]]`, `[[param_excluded]]`, `[[param_policy]]`; the `PARAM` keys of the annealers are those of `anneal_keys.toml`, which `meta.anneal_keys` names |
+
+Only `hpotarget.toml` holds `[meta]`, `[lexing]`, `[reading]`,
+`[structure]`, `[group.*]` and `[[block]]`. A part file holds the other
+tables, and may define wrappers, training configurations and fixtures of
+its own; its examples use those of `hpotarget.toml` and its own.
+
+### Ids
+
+Every entry has an id, unique across the files: a scope, a dot and a name,
+as the target file writes the name. The documentation links to the ids.
+
+- key: `<scope>.<NAME>`, the scope its group (`OPTIMIZER.MAXEVAL`) or the
+  first block it is valid in, `ROOT` for a top-level key (`ROOT.FAILSCORE`,
+  `STRATEGY.TYPE`, `INIT.METHOD`);
+- line option: `<line>.<option>`, the line a top-level key or a form
+  (`PC_LAMMPS.--hotvar`, `OPTIM.AUTO.RATIO`);
+- form: `<line>.<form>` (`PC_OBSERVABLE.cohesive_energy`, `OPTIM.AUTO`);
+- loss function `LOSS.<NAME>`, STRATEGY type `STRATEGY.TYPE.<NAME>`, INIT
+  method `METHOD.<NAME>`, `OPTIM` target `OPTIM.TARGET.<KEY>`, rule
+  `RULE.<name>`;
+- `PARAM` key: `PARAM.<optimiser>.<name>`, the optimiser a `LIB:ALGO`, a
+  `LIB`, or `FD` for the finite-difference keys
+  (`PARAM.DLIB:BFGS.tol_gradinf`, `PARAM.CERES.max_iter`,
+  `PARAM.FD.fd_step`); `PARAM` policy: `PARAM.<LIB or LIB:ALGO>`;
+- set by the loader: `BLOCK.<NAME>`, `GROUP.<NAME>`, `REMOVED.<NAME>`,
+  `ENV.<NAME>`, and `LEXING`, `READING`, `STRUCTURE` and `OPTIM` for the
+  sections.
+
+A name may have several entries when the parser reads it in different
+places: `ROOT.MAXTIME` (the script timeout) and `OPTIMIZER.MAXTIME` (a stop
+of the search), `OPTIMIZER.SEED` and `INIT.SEED`. Two keys of one name are
+never valid in one block.
+
+### Messages and placeholders
+
+`error_frame`, `underflow_note`, a field named `msg` and a field whose name
+ends in `_msg` are message templates: `{name}` marks a value the parser puts
+there. A template uses the placeholder names of the parser's messages
+(`PLACEHOLDERS` in `hpotarget_registry.py`). The messages of `[lexing]`,
+`[structure]` and `[group.*]`, and a block's `repeat_msg`, `misplaced_msg`,
+`unknown_msg` and `refuse_msg`, have a fixed set each
+(`FIXED_PLACEHOLDERS`); those of `[reading]` hold `what`, `min`, `max`,
+`tok`, `note`, `noun`, `underflow` and `key`. An example, an error and a
+wrapper hold no placeholder other than a wrapper's slot: they are the text
+itself. `${name}`, a LAMMPS variable reference, is text, not a placeholder
+(`timer timeout ${maxtime}` in the refusal of `--invar maxtime`).
+
+Every refusal the parser makes inside the file is framed by
+`lexing.error_frame`, `Error on line {line}: {what}\nLine: {text}`, with the
+last physical line of the logical line and its joined text; an `error` field
+holds the `{what}` part.
+
+### Examples, invalid lines, wrappers
+
+Every entry, and `[lexing]`, `[reading]`, `[structure]`, `[optim]` and
+`[group.*]`, may have `examples` and `invalid`, arrays of tables with these
+fields:
+
+- `wrap`: the wrapper the text goes into, or `none` when the text is the
+  whole target file;
+- `text`: the lines that take the wrapper's slot, one or more, continued
+  lines included;
+- `check`: `parse` (the target file is read) or `startup` (it is read, and
+  passes the startup checks of `tadah hpo`); `startup` for an example and
+  `parse` for an invalid line by default;
+- `context`: the training configuration (`[context.*]`), by default the
+  wrapper's;
+- `env`: environment variables set while the case runs;
+- `doc`: what the case shows (optional);
+- `error` (invalid lines only): the message without its frame;
+- `at` (invalid lines only): the line the frame names. A number counts the
+  logical lines from the first line of the text, 1 by default; a key names
+  the first logical line from there that starts with it (`ENDOPTIMIZER`);
+  `none` means a message without a frame.
+
+A wrapper, `[wrapper.<name>]` (`text`, `doc`, optional `context`), is a
+complete target file with one slot line, `{line}`: with the slot left empty,
+the parser and the startup checks accept it, so a case fails for its own
+text. `hpotarget.toml` has `root`, `end`, `optimizer`, `strategy`, `init`,
+`noise`, `restart`, `explore`, `refine` and `inner`; its `[wrapper.*]`
+comment says where each slot is. A training configuration,
+`[context.<name>]` (`config`, `doc`, optional `has_train_db` and
+`has_validation`, both `true` by default), is the text of a `--config`
+file; `default` is a one-species two-body model that builds without data.
+A fixture, `[fixture.<name>]` (`path`, `text`, optional `doc`), is a file
+written next to the target file before each case, such as a LAMMPS script
+that a `PC_LAMMPS` line names.
+
+### Tables and fields
+
+Fields are required unless marked optional. `doc` is one or two sentences
+for the reference page and `long_doc` (optional) the detail; both, and
+`quirk`, `condition` and every other `doc`, are written in the impersonal
+voice, without history or source references. `quirk` (optional) states
+behaviour kept as the parser has it although a reader would not expect it.
+
+`[meta]`: `version` (the layout of the registry, 1), `api` (the loader's
+API, 1), `parts` (the part files, in order), `anneal_keys` and `optimizers`
+(the files with the annealers' `PARAM` keys and the optimiser list).
+
+`[lexing]`: `doc`; `comment`, `continuation`; `key_case` (`exact`: keys are
+matched as written); `error_frame`, `unfinished_msg`, `missing_file_msg`;
+`bool_true`, `bool_false` (the boolean words); `timespec_words` (the words
+of a LAMMPS time spec).
+
+`[reading]`: `doc` (the number, integer and boolean grammar) and the
+messages of the value readers: `integer_msg`, `integer_range_msg`,
+`note_msg`, `finite_msg`, `positive_msg`, `underflow_note`,
+`requires_value_msg`, `single_value_msg`, `bool_msg`, `timespec_msg`,
+`script_timeout_msg`, `script_timeout_large_msg`. An argument's `kind`
+selects the reader, and its `what`, `min`, `max` and `noun` fill the
+message.
+
+`[structure]`: `doc`; `check_order`, the order in which the parser tries a
+line (block lines, removed keywords, the INNER refusals, the optimiser
+group, the INIT and RESTART keys, the NOISE keys, `LOG_HP`, the STRATEGY
+keys, the unknown-key refusal of the block, the top-level keys; the loader
+requires exactly this order); `end_without_open_msg`, `end_mismatch_msg`,
+`end_takes_no_value_msg`, `open_takes_no_value_msg`, `unclosed_msg`,
+`unknown_root_msg`, `removed_msg`.
+
+`[group.<NAME>]`: `blocks` (where the keys of the group are valid),
+`leftover_msg` (a value after the last one a key reads), `doc`.
+
+`[[block]]`: `name`, `end` (`END<name>`), `parents` (`ROOT` or blocks),
+`repeat` (`error`: a second block is refused with `repeat_msg`;
+`error_per_parent`: once in each enclosing block; `merge`: a second block
+continues the first), `repeat_msg`, `misplaced_msg` (opened where no parent
+allows), `unknown_msg`, `unknown_first` (optional: an unknown key is refused
+there before the `LOG_HP` check, so `LOG_HP` inside `INIT` is an unknown
+key), `aliases` (optional: a word read as another key inside the block,
+`STRATEGY = "INIT.METHOD"`), `refuse` and `refuse_msg` (optional: group keys
+the block refuses, each with `key` and `why`), `unreachable_msgs` (optional:
+messages the parser holds for the block that no file reaches), `requires`
+(optional: conditions checked at the opening line), `close_checks`
+(optional: checks at or after the END line), `quirk`, `doc`. `requires` and
+`close_checks` are arrays of `msg` and `doc` (when the check is made).
+
+`[[key]]`: `id`, `name`; `group` or `blocks` (one of them); `synopsis` (the
+line as the reference shows it, `MAXEVAL <n>`); `args` (optional);
+`repeat` (`last_wins`, `warn_last_wins`: last wins with a warning, `error`:
+refused with `repeat_msg`, `add`: each line adds an entry); `repeat_msg`;
+`misplaced_msg` (optional: the refusal of the key in a block where it is not
+valid, when the parser has one of its own); `default` (optional:
+`{ literal = "..." }`, the value as a file writes it, or
+`{ text = "..." }`, a sentence); `alias_of` (optional: the id of the key it
+is another name for); `refused` (optional: the parser reads the key only to
+refuse it; the text says why); `env` (optional: the `[[env]]` name that
+overrides it); `checks` (optional: refusals of the key's values that no
+argument reader makes, `msg` and `doc`); `doc`, `long_doc`, `quirk`.
+
+`args`, an array of tables, one per value in the order of the line:
+`name`; `kind`; `optional`, `repeat` (optional booleans); `min`, `max`
+(numbers, or `INT_MAX`, `UINT_MAX`, `UINT64_MAX`); `words` and
+`refused_words` (a table of word = message) for a `word`; `what` (the
+`{what}` of the reader's message, often `"{key}"`); `msg` (the key's own
+message when the value is refused); `noun` (for `positive`); `default`;
+`doc`. The kinds:
+
+- `integer`: decimal digits only, between `min` and `max`;
+- `number`: a finite decimal number;
+- `positive`: a finite number > 0;
+- `word`: one of `words`;
+- `name`: any word, such as a file name, a LAMMPS variable, or a `LIB` or
+  `ALGO` value (those come from the optimiser list, `optimizers_gen.toml`,
+  so `LIB` and `ALGO` list no `words`);
+- `bool`: a word of `bool_true` or `bool_false`;
+- `timespec`: a LAMMPS time spec;
+- `indices`: an index list in parentheses, `(1,3-5)`;
+- `tokens`: the rest of the line, read by the grammar the `synopsis` and
+  `doc` give (`PARAM`, `PC_LAMMPS`);
+- `loss`: a loss function name and its parameters.
+
+`[[line_option]]`: `id`, `option` (as written: `--hotvar`, `RATIO`),
+`lines`, `synopsis`, `args`, `repeat`, `repeat_msg`, `default`, `refused`,
+`quirk`, `checks` (optional: refusals of the option's values, `msg` and
+`doc`), `doc`, `long_doc`.
+
+`[[form]]`: `id`, `line`, `word` (optional: the word that selects the form;
+none for the form without one), `synopsis`, `args`, `refused`, `quirk`,
+`checks`, `doc`, `long_doc`.
+
+`[[removed]]`: `name`, `hint` (the parser's text after `was removed from the
+grammar: `), `doc` (optional).
+
+`[[rule]]`: `id`, `check` (`parse` or `startup`), `msg` (optional), `keys`
+(optional: the ids of the entries it concerns), `quirk`, `doc`. A rule
+relates keys or blocks to each other, such as `PC_OBSERVABLE` and
+`PC_LAMMPS` in one file.
+
+`[[env]]`: `name` (`TADAH_...`), `key` (the id of the key it overrides),
+`values` (optional), `msg` (optional), `doc`.
+
+`[[loss_function]]`: `id`, `name`, `params` (optional: `name`, `default`,
+`gt`, `doc`), `doc`.
+
+`[[strategy_type]]`: `id`, `name`, `keys` (the ids of the STRATEGY keys of
+this TYPE), `checks`, `quirk`, `doc`.
+
+`[[init_method]]`: `id`, `name`, `args`, `refused`, `checks`, `quirk`,
+`doc`.
+
+`[optim]`: `doc`, `synopsis` (the forms of an `OPTIM` line),
+`positive_only` (optional: the keys of positive values, whose `AUTO` box
+without `RATIO` or `FRAC` is `RATIO 2`, where any other key's is
+`FRAC 0.5`),
+`auto_excluded_prefix` (optional: the key prefix `AUTO` refuses), `checks`
+(optional).
+
+`[[optim_target]]`: `id`, `key`, `status` (`refused` or `special`),
+`indices` (optional), `msg` (optional), `condition` (optional: when it
+applies), `doc`.
+
+`[[param]]`: `id`, `name`, `optimizers` (the `LIB:ALGO` or `LIB` names that
+read it; `*` for a key every optimiser reads, as `doc` says), `args`,
+`default`, `indexed` (optional: the name takes a dimension suffix,
+`[<i>]`), `checks`, `quirk`, `doc`, `long_doc`.
+
+`[[param_excluded]]`: `id`, `name`, `optimizers`, `why` (the parser's
+text), `doc` (optional). A `PARAM` key the optimiser names but does not
+take.
+
+`[[param_policy]]`: `id`, `optimizers`, `msg` (optional), `quirk`, `doc`. What an
+optimiser does with a `PARAM` key that no `[[param]]` entry names, such as
+NLopt, which passes a number to its algorithm, and the refusal `msg` of an
+optimiser that reads a fixed set.
+
+### Changing the registry
+
+Adding a key starts with its entry, in the file of its kind: `doc`,
+`default` when it has one, at least one example, and one invalid line with
+the parser's message. Until the parser reads the key, the coverage check
+reports its name as "not in the parser", and the conformance case of the
+file fails on its example.
+
+A removed key moves to `[[removed]]` with the parser's hint, and a renamed
+key also gets an entry under the name that replaces it. While the registry
+keeps the entry of a key the parser does not read, the coverage check
+reports its name and the conformance case fails on its examples.
+
+A change of a value, a default, a range or a message changes the entry's
+`args`, `default` or message, and its examples: the conformance case fails
+on a message that differs from the parser's and on an example the parser
+refuses.
+
+### Checks
+
+| CTest entry | What fails it |
+|---|---|
+| `hpo_hpotarget_registry_python` | the loader, on synthetic registries (`tests/test_hpotarget_registry.py`) |
+| `hpo_hpotarget_registry_check` | `hpotarget_registry.py --check`: an unknown table or field, a wrong type, a missing field, a repeated id, a reference to nothing, a placeholder a message may not hold, a wrapper without exactly one slot line, documentation text that addresses the reader |
+| `hpo_hpotarget_registry_coverage` | a name the parser's sources recognise without an entry, or an entry whose name they do not recognise (`tests/check_hpotarget_coverage.py`; its docstring says how the names are extracted and what the extraction cannot see) |
+| `hpo_hpotarget_coverage_tool` | the extraction itself, on synthetic sources (`tests/test_check_hpotarget_coverage.py`) |
+| `hpo_hpotarget_registry_conformance` | an example the parser refuses, an invalid line it accepts or refuses with another message (`tests/test_hpotarget_registry_conformance.cpp`, every case of tag `[hpotarget_registry]`) |
+
+All five have the label `docs`. The conformance test reads the TOML when
+it runs, so a change to the registry needs no rebuild; it has one Catch2
+case per file, which the tag `[hpotarget_main]`, `[hpotarget_optimizer]`,
+`[hpotarget_lines]` or `[hpotarget_params]` selects, and a part file is read
+with `hpotarget.toml`. `TADAH_HPOTARGET_REGISTRY_DIR` names another
+directory to read the registry from. One part file is checked with:
+
+```bash
+python3 HPO/blueprint/hpotarget_registry.py --check --part hpotarget_lines.toml
+build_tadah/_deps/tadah.hpo-build/tests/test_hpo "[hpotarget_lines]"
+```
+
+and the whole registry with:
+
+```bash
+python3 HPO/blueprint/hpotarget_registry.py --check
+python3 HPO/tests/check_hpotarget_coverage.py HPO
+ctest --test-dir build_tadah -R hpotarget --output-on-failure
+```
+
+With `--part`, a reference into a part file not read is listed as a note,
+not checked; the full check resolves it.

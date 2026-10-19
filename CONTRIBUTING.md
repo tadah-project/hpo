@@ -34,8 +34,9 @@ build directory.
   versions.
 - LAPACK / BLAS at link time (provided by the build environment).
 - Python 3.11 or later for the tests (`BUILD_TESTING`): the registry drift
-  gate `hpo_anneal_registry_sync` reads TOML with `tomllib`, and the
-  configure step refuses an older interpreter
+  gate `hpo_anneal_registry_sync` and the checks of the target-file
+  registry read TOML with `tomllib`, and the configure step refuses an
+  older interpreter
   (`cmake/hpo_test_python.cmake`).
 - A LAMMPS library built with [Tadah!LAMMPS](https://git.ecdf.ed.ac.uk/tadah/tadah.lammps)
   is needed at link time only when building HPO against the
@@ -51,6 +52,23 @@ build directory.
 | `tests/`             | Unit and integration tests. |
 | `examples/`          | Worked-through `config.hpo` reference suite (see `run_reference_suite.sh`). |
 | `blueprint/`         | Registry files for the documentation (see `blueprint/README.md`). |
+
+## The target-file registry
+
+`blueprint/hpotarget.toml` and its part files describe the target file of
+`tadah hpo` (`--hpotarget`) as the parser reads it: every block, key,
+option and `PARAM` key, with the parser's own messages. The files are
+written by hand. Tests compare them with the parser: each example is
+accepted, each invalid line is refused with exactly its message, and every
+name the parser's sources recognise has an entry. A change to what the
+parser accepts, or to one of its messages, therefore changes the registry
+in the same commit. `blueprint/README.md` ("The target-file registry")
+describes the files and the checks, which run with:
+
+```bash
+python3 blueprint/hpotarget_registry.py --check
+ctest --test-dir <build directory> -R hpotarget --output-on-failure
+```
 
 ## Generated files
 
