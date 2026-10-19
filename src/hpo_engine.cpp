@@ -28,8 +28,9 @@ int HPOEngine::run(mlip::Task &task) {
    * 128 + signal after SIGINT/SIGTERM/SIGUSR2 (see run_driver.h). */
   int status = EXIT_SUCCESS;
   try {
+    /* HPOTargets expands the grids (D_mJoin::expand_grids), and keeps what
+     * it leaves out of a -c potential for its messages. */
     core::Context context = task.getContext();
-    models::D_mJoin::expand_grids(context);
 
     const bool has_train_db =
         context.contains("DBFILE") && context.size("DBFILE") > 0;

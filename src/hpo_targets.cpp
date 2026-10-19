@@ -241,7 +241,7 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn,
     }
   }
 
-  models::D_mJoin::expand_grids(context);
+  left_out_ = models::D_mJoin::expand_grids(context);
 
   /* RHOFORM (the DM_REAM density form) is mandatory and has no default:
    * read it before the OPTIM lines (non-negative AMPGRIDMB boxes) and the
@@ -3041,7 +3041,39 @@ void HPOTargets::process_optim_config(std::istringstream& iss,
     }
     try {
       size_t i = ui_offset(omap.config, ui);
-      if (i>=s) throw std::runtime_error("Out of bound index: " + core::to_string(ui));
+      if (i>=s) {
+        std::string why;
+        /* Values of a potential its descriptors do not read were left out
+         * (D_mJoin::expand_grids): the indices address the values kept. */
+        for (const auto& lo : left_out_) {
+          if (lo.key != k) continue;
+          std::vector<std::string> out, rest = lo.kept;
+          for (const auto& v : lo.given) {
+            const auto it = std::find(rest.begin(), rest.end(), v);
+            if (it != rest.end()) rest.erase(it);
+            else out.push_back(v);
+          }
+          why = " (" + k + " has " + core::to_string(lo.kept.size()) +
+                (lo.kept.size() == 1 ? " value" : " values") +
+                ": of the potential's " + k + " " + core::join(lo.given) +
+                ", the descriptors do not read " + core::join(out) +
+                (out.size() == 1 ? ", which was" : ", which were") +
+                " left out, and OPTIM indices address the values kept, " +
+                core::join(lo.kept);
+          if (ui >= 1 && ui <= lo.given.size()) {
+            const std::string& v = lo.given[ui - 1];
+            const auto it = std::find(lo.kept.begin(), lo.kept.end(), v);
+            if (it != lo.kept.end())
+              why += "; the potential's value at index " + core::to_string(ui) +
+                     ", " + v + ", is index " +
+                     core::to_string(static_cast<std::size_t>(
+                         it - lo.kept.begin()) + 1);
+          }
+          why += ")";
+        }
+        throw std::runtime_error("Out of bound index: " + core::to_string(ui) +
+                                 why);
+      }
       /* One OPTIM line per index: a second box for an index would replace
        * the first without a word. Lines of one key that select other
        * indices add to it (in any case, the key being upper-cased). */

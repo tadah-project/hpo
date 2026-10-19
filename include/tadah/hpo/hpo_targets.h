@@ -9,6 +9,7 @@
 #include <tadah/hpo/observables/observable.h>
 #include <tadah/hpo/optimizer_spec.h>
 #include <tadah/hpo/validation_metric.h>
+#include <tadah/models/descriptors/d_mjoin.h>
 #include <tadah/models/descriptors/dm/rhoform.h>
 #include <tadah/mlip/training_record.h>
 
@@ -112,6 +113,10 @@ private:
     void bind_space_recursive();
 
     core::Context &context;
+    /* The values of a -c potential that its descriptors do not read, left
+     * out of `context` for the run (D_mJoin::expand_grids): an OPTIM index
+     * past the values kept names them. */
+    std::vector<models::D_mJoin::LeftOut> left_out_;
     SearchSpacePtr space_;
     /* OPTIM_SCALE (root key): AUTO by default -- every OPTIM dimension is
      * mapped to the unit box; NONE is the legacy escape hatch (raw units,
