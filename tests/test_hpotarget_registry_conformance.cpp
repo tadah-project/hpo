@@ -33,6 +33,7 @@
 #include <tadah/core/core_user_config_parser.h>
 #include <tadah/core/periodic_table.h>
 #include <tadah/hpo/hpo_targets.h>
+#include <tadah/hpo/hpo.h>
 #include <tadah/hpo/startup_validation.h>
 
 #include <algorithm>
@@ -447,6 +448,48 @@ struct Outcome {
     std::string startup_error;   // "" when validate_hpo_setup accepts it
 };
 
+/* What hpo_run with CHECK true (`tadah hpo --check`) throws for the file
+ * of `comp`, "" when it returns: an invalid case with check = "check"
+ * shows a refusal the run makes before it reads its data (the training
+ * configuration is also its validation configuration, whose data the
+ * check never reaches). */
+std::string run_check(const Registry& reg, const Composed& comp,
+                      const std::map<std::string, std::string>& env)
+{
+    const auto ctx_it = reg.contexts.find(comp.context);
+    if (ctx_it == reg.contexts.end())
+        throw std::runtime_error("context '" + comp.context + "' is not in "
+                                 "the files read");
+    tadah::core::PeriodicTable::initialize();
+    ScratchCwd cwd;
+    for (const auto& [name, f] : reg.fixtures) {
+        const fs::path p(f.path);
+        if (p.has_parent_path()) fs::create_directories(p.parent_path());
+        std::ofstream os(p);
+        os << f.text;
+    }
+    {
+        std::ofstream os("target.hpo");
+        os << comp.file;
+    }
+    {
+        std::ofstream os("config.val");
+        os << ctx_it->second.config;
+    }
+    ScopedEnv scoped(env);
+    std::istringstream config(ctx_it->second.config);
+    tadah::core::Context ctx = tadah::core::CoreUserConfigParser().parse(config);
+    ctx.add("HPOTARGET", "target.hpo");
+    ctx.add("VALIDATION", "config.val");
+    ctx.add("CHECK", "true");
+    try {
+        tadah::hpo::hpo_run(ctx);
+    } catch (const std::exception& e) {
+        return e.what()[0] ? e.what() : "(empty message)";
+    }
+    return "";
+}
+
 Outcome run_file(const Registry& reg, const Composed& comp, bool startup,
                  const std::map<std::string, std::string>& env)
 {
@@ -502,9 +545,21 @@ std::string conformance_failure(const Registry& reg, const Case& c)
     try {
         const Composed comp = compose(reg, c);
         const bool startup = c.check == "startup";
-        const Outcome got = run_file(reg, comp, startup, c.env);
         const std::string file = "\n--- target file ---\n" + comp.file +
                                  "-------------------";
+        if (c.check == "check") {
+            if (c.kind == "example")
+                return "check = \"check\" is for an invalid case" + file;
+            const std::string want = expected_error(reg, c, comp);
+            const std::string got = run_check(reg, comp, c.env);
+            if (got.empty())
+                return "tadah hpo --check accepts the invalid case; "
+                       "expected:\n" + want + file;
+            if (got != want)
+                return "expected:\n" + want + "\ngot:\n" + got + file;
+            return "";
+        }
+        const Outcome got = run_file(reg, comp, startup, c.env);
         if (c.kind == "example") {
             if (!got.parse_error.empty())
                 return "the parser refuses the example:\n" + got.parse_error +

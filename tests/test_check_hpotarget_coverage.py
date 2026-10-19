@@ -125,6 +125,71 @@ class Extraction(unittest.TestCase):
         self.assertIn('sp.lib == "NLOPT"', problems[1])
         self.assertIn('tokens[i] == "-var"', problems[2])
 
+    def test_scoped_tables(self):
+        # The lines of a PC_* option and the TYPE of a STRATEGY key come
+        # from the second fields of their tables.
+        self.assertEqual(cov.pc_line_option_of('{"--gate", false, true}'),
+                         ("line_option:PC_FAILPROBE",))
+        self.assertEqual(cov.pc_line_option_of('{"--script", true, true}'),
+                         ("line_option:PC_LAMMPS",
+                          "line_option:PC_FAILPROBE"))
+        self.assertEqual(cov.strategy_type_key_of(
+            '{"TOPK", StrategyType::PRESTAGE, "why"}'),
+            ("strategy_type_key:PRESTAGE",))
+        (self.root / "src" / "t.cpp").write_text(
+            'static const Opt k[] = {\n  {"--a", true, false},\n'
+            '  {"--b", false, true},\n};\n')
+        rule = cov.Rule("t", "src/t.cpp", compare=False,
+                        tables=[(r"\bk\s*\[\]", "first",
+                                 cov.pc_line_option_of)])
+        found, problems = self.run_rules([rule])
+        self.assertEqual(problems, [])
+        self.assertEqual({(f.name, f.vocabularies) for f in found},
+                         {("--a", ("line_option:PC_LAMMPS",)),
+                          ("--b", ("line_option:PC_FAILPROBE",))})
+
+    def test_comparisons_the_rules_cannot_read(self):
+        # A key compared with a named constant, a constructed string or
+        # compare() is reported, unless the rule gives the reason.
+        (self.root / "src" / "u.cpp").write_text(
+            'bool f(const std::string& key) {\n'
+            '  if (key == kNewKey) return true;\n'
+            '  if (key == std::string("NEW")) return true;\n'
+            '  if (key.compare("NEWER") == 0) return true;\n'
+            '  return key == "OLD";\n}\n')
+        rule = cov.Rule("u", "src/u.cpp", r"^bool f\(",
+                        operands={"key": ("key:ROOT",)})
+        _, problems = self.run_rules([rule])
+        text = "\n".join(problems)
+        self.assertIn("src/u.cpp:2: comparison in u that this check cannot "
+                      "read: 'key == kNewKey'", text)
+        self.assertIn("'key == std::string('", text)
+        self.assertIn("'.compare('", text)
+        ok = cov.Rule("u", "src/u.cpp", r"^bool f\(",
+                      operands={"key": ("key:ROOT",)},
+                      unread_ok={"key == kNewKey": "r1",
+                                 "key == std::string(": "r2",
+                                 ".compare(": "r3"})
+        _, problems = self.run_rules([ok])
+        self.assertEqual(problems, [])
+
+    def test_name_shaped_literals_no_rule_reads(self):
+        # A set of names the rule does not read: each name is handed on
+        # for compare(), unless the rule says why it is no name.
+        (self.root / "src" / "v.cpp").write_text(
+            'bool f(const std::string& key) {\n'
+            '  static const std::set<std::string> s = {"QFLUSH", "--opt",'
+            ' "lower", "A B"};\n'
+            '  if (s.count(key)) return true;\n'
+            '  return key == "OLD";\n}\n')
+        unread = []
+        rule = cov.Rule("v", "src/v.cpp", r"^bool f\(",
+                        operands={"key": ("key:ROOT",)},
+                        not_names={"--opt": "not a name"})
+        with mock.patch.object(cov, "EXTRACTION", [rule]):
+            cov.extract(self.root, unread)
+        self.assertEqual([lit for lit, _ in unread], ["QFLUSH"])
+
     def test_literal_on_the_left(self):
         (self.root / "src" / "b.cpp").write_text(
             'bool f(std::string k) {\n  return "X" == k;\n}\n')
@@ -185,10 +250,28 @@ class Compare(unittest.TestCase):
         self.assertIn("not in the parser: 'Z' (block)", problems[0])
 
     def test_vocabulary_no_rule_reads(self):
-        reg = FakeRegistry({"block": {"A"}})
+        reg = FakeRegistry({"block": {"A"}, "word": {"ON"}})
         problems = self.compare(self.found(("A", ("block",))), reg)
-        self.assertEqual(problems,
-                         ["no extraction rule reads the vocabulary word"])
+        self.assertIn("no extraction rule reads the vocabulary word",
+                      problems)
+
+    def test_empty_vocabulary_needs_no_rule(self):
+        # A vocabulary the registry leaves empty (the keys of TYPE PLAIN)
+        # needs no rule that reads it.
+        reg = FakeRegistry({"block": {"A"}})
+        self.assertEqual(self.compare(self.found(("A", ("block",))), reg),
+                         [])
+
+    def test_unread_literal_unknown_to_the_registry(self):
+        reg = FakeRegistry({"block": {"A"}, "word": {"ON"},
+                            "registry_name": {"A", "ON"}})
+        found = self.found(("A", ("block",)), ("ON", ("word",)))
+        with mock.patch.object(cov, "VOCABULARIES", self.VOCAB):
+            problems = cov.compare(found, reg, [("NEWKEY", "src/a.cpp:3"),
+                                                ("ON", "src/a.cpp:4")])
+        self.assertEqual(len(problems), 1)
+        self.assertIn("unclassified literal: 'NEWKEY' at src/a.cpp:3",
+                      problems[0])
 
     def test_key_scope_no_rule_reads(self):
         reg = FakeRegistry({"block": {"A"}, "word": {"ON"}},

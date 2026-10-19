@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import contextlib
 import io
+import json
 import pathlib
 import sys
 import tempfile
@@ -107,10 +108,33 @@ doc = "The local search."
 
 [wrapper.root]
 doc = "The slot first."
+block = "ROOT"
 text = """
 {line}
 OPTIMIZER
 LIB NLOPT
+ENDOPTIMIZER
+"""
+
+[wrapper.optimizer]
+doc = "The slot inside OPTIMIZER."
+block = "OPTIMIZER"
+text = """
+OPTIMIZER
+LIB NLOPT
+{line}
+ENDOPTIMIZER
+"""
+
+[wrapper.inner]
+doc = "The slot inside INNER."
+block = "INNER"
+text = """
+OPTIMIZER
+LIB NLOPT
+INNER
+{line}
+ENDINNER
 ENDOPTIMIZER
 """
 
@@ -148,6 +172,15 @@ repeat = "last_wins"
 doc = "The library of the optimiser."
 args = [{ name = "library", kind = "word", words = ["NLOPT", "TADAH"] }]
 
+[[key.examples]]
+wrap = "optimizer"
+text = "LIB TADAH"
+
+[[key.invalid]]
+wrap = "optimizer"
+text = "LIB NLOPT TADAH"
+error = "LIB takes no further value here (unexpected 'TADAH')"
+
 [[key]]
 id = "OPTIMIZER.SEED"
 name = "SEED"
@@ -157,13 +190,18 @@ repeat = "last_wins"
 doc = "The seed of the optimiser."
 args = [{ name = "n", kind = "integer", min = 0, max = "UINT64_MAX" }]
 
+[[key.examples]]
+wrap = "optimizer"
+text = "SEED 7"
+
 [[key.invalid]]
 wrap = "inner_a"
 text = "SEED 1"
-error = "SEED is not accepted"
+error = "SEED is not accepted inside an INNER block: the enclosing run draws it; set SEED on the enclosing OPTIMIZER block"
 
 [wrapper.inner_a]
 doc = "The slot inside INNER."
+block = "INNER"
 context = "ctx_a"
 text = """
 OPTIMIZER
@@ -186,6 +224,17 @@ name = "GRID_POINTS"
 optimizers = ["TADAH:GRID"]
 doc = "Points per dimension."
 args = [{ name = "n", kind = "integer", min = 2 }]
+checks = [{ msg = "GRID_POINTS must be at least 2", doc = "A value below 2." }]
+
+[[param.examples]]
+wrap = "optimizer"
+text = "PARAM GRID_POINTS 5"
+
+[[param.invalid]]
+wrap = "optimizer"
+at = "ENDOPTIMIZER"
+text = "PARAM GRID_POINTS 1"
+error = "GRID_POINTS must be at least 2"
 
 [[loss_function]]
 id = "LOSS.HUBER"
@@ -243,10 +292,12 @@ class Registry(unittest.TestCase):
 
     def load(self, **kw):
         self.write()
+        kw.setdefault("templates", False)
         return hr.load(self.dir, **kw)
 
     def errors(self, **kw) -> str:
         self.write()
+        kw.setdefault("templates", False)
         with self.assertRaises(hr.RegistryError) as cm:
             hr.load(self.dir, **kw)
         return "\n".join(cm.exception.errors)
@@ -281,14 +332,15 @@ class Registry(unittest.TestCase):
     def test_cases_take_their_defaults_and_their_file(self):
         reg = self.load()
         cases = reg.cases()
-        self.assertEqual(len(cases), 4)
+        self.assertEqual(len(cases), 9)
         ex = next(c for c in cases if c.kind == "example")
         self.assertEqual((ex.owner, ex.part, ex.check, ex.at),
                          ("ROOT.FAILSCORE", "hpotarget.toml", "startup", 1))
         inv = [c for c in cases if c.kind == "invalid"]
         self.assertTrue(all(c.check == "parse" for c in inv))
         self.assertEqual([c.owner for c in reg.cases("part_a.toml")],
-                         ["OPTIMIZER.SEED"])
+                         ["OPTIMIZER.LIB", "OPTIMIZER.LIB", "OPTIMIZER.SEED",
+                          "OPTIMIZER.SEED"])
 
     def test_vocabularies(self):
         reg = self.load()
@@ -366,6 +418,36 @@ class Registry(unittest.TestCase):
             ''')
         self.assertIn("SEED is also valid in INNER as OPTIMIZER.SEED",
                       self.errors())
+
+    def test_every_entry_kind_has_an_invalid_line(self):
+        self.edit("part_b.toml", '''
+[[param.invalid]]
+wrap = "optimizer"
+at = "ENDOPTIMIZER"
+text = "PARAM GRID_POINTS 1"
+error = "GRID_POINTS must be at least 2"
+''', "")
+        self.assertIn("PARAM.TADAH:GRID.GRID_POINTS: an entry has an invalid "
+                      "line", self.errors())
+
+    def test_line_option_repeat_msg_goes_with_error(self):
+        option = textwrap.dedent('''
+            [[line_option]]
+            id = "SEED.WIDE"
+            option = "WIDE"
+            lines = ["SEED"]
+            synopsis = "WIDE"
+            repeat = "error"
+            doc = "A wider draw."
+            ''')
+        self.files["part_b.toml"] += option
+        self.assertIn("SEED.WIDE: repeat_msg goes with repeat error, and "
+                      "only with it", self.errors())
+        self.files["part_b.toml"] = self.files["part_b.toml"].replace(
+            'repeat = "error"\ndoc = "A wider', 'repeat = "last_wins"\n'
+            'repeat_msg = "WIDE twice"\ndoc = "A wider')
+        self.assertIn("SEED.WIDE: repeat_msg goes with repeat error, and "
+                      "only with it", self.errors())
 
     def test_key_id_is_its_scope_and_name(self):
         self.edit("hpotarget.toml", 'id = "ROOT.FAILSCORE"',
@@ -474,6 +556,9 @@ class Registry(unittest.TestCase):
                   "got '0' (timer timeout ${maxtime})\"")
         self.edit("hpotarget.toml", "takes no further value here",
                   "(timer timeout ${maxtime}) takes no further value here")
+        self.edit("part_a.toml", "LIB takes no further value here",
+                  "LIB (timer timeout ${maxtime}) takes no further value "
+                  "here")
         reg = self.load()
         self.assertIn("${maxtime}", reg.keys[0].invalid[0].error)
         self.assertIn("${maxtime}", reg.groups["OPTIMIZER"].leftover_msg)
@@ -537,7 +622,7 @@ class Registry(unittest.TestCase):
                   'text = "FAILSCORE 0"\nat = 0\ncheck = "run"')
         e = self.errors()
         self.assertIn("at counts logical lines from 1", e)
-        self.assertIn("check 'run' is not parse or startup", e)
+        self.assertIn("check 'run' is not parse, startup or check", e)
         self.edit("hpotarget.toml", 'at = 0\ncheck = "run"', 'at = "2x"')
         self.assertIn("at '2x' is not a line number, a key or none",
                       self.errors())
@@ -709,7 +794,204 @@ class Registry(unittest.TestCase):
         self.assertIn("abbreviation 'ML SL' is not one word", self.errors())
 
     # ---- the command ---------------------------------------------------------
+    # ---- what the generated checks and the conformance test rely on ----
+    def test_meta_version(self):
+        self.edit("hpotarget.toml", "version = 1", "version = 7")
+        self.assertIn("version 7 is not the layout this loader reads, 1",
+                      self.errors())
+
+    def test_wrapper_names_its_block(self):
+        self.edit("hpotarget.toml", 'block = "OPTIMIZER"\n', "")
+        self.assertIn("[wrapper.optimizer]: required field 'block' is "
+                      "missing", self.errors())
+        self.edit("part_a.toml", 'block = "INNER"', 'block = "OPTIMIZER"')
+        self.assertIn("[wrapper.inner_a]: block is 'OPTIMIZER', but the slot "
+                      "is in INNER", self.errors())
+
+    def test_wrapper_names_a_registered_optimizer(self):
+        self.edit("hpotarget.toml", 'block = "ROOT"\n',
+                  'block = "ROOT"\noptimizer = "TADAH:NOPE"\n')
+        self.assertIn("optimizer 'TADAH:NOPE' is not a registered LIB:ALGO",
+                      self.errors())
+
+    def test_each_place_has_its_wrapper(self):
+        self.edit("hpotarget.toml", "[wrapper.inner]", "[wrapper.inner2]")
+        self.assertIn("[wrapper.inner] is the wrapper of the block INNER",
+                      self.errors())
+
+    def test_key_needs_an_example_and_an_invalid_line(self):
+        self.edit("part_a.toml", '[[key.examples]]\nwrap = "optimizer"\n'
+                                 'text = "SEED 7"\n', "")
+        self.assertIn("OPTIMIZER.SEED: a key that is not refused has an "
+                      "example", self.errors())
+        self.files["part_a.toml"] += textwrap.dedent('''
+            [[key]]
+            id = "OPTIMIZER.POPULATION"
+            name = "POPULATION"
+            group = "OPTIMIZER"
+            synopsis = "POPULATION <n>"
+            repeat = "last_wins"
+            refused = "No optimiser here keeps a population."
+            doc = "The population."
+            ''')
+        e = self.errors()
+        self.assertIn("OPTIMIZER.POPULATION: a key has an invalid line", e)
+        self.assertNotIn("OPTIMIZER.POPULATION: a key that is not refused",
+                         e)
+
+    def test_example_puts_the_key_in_one_of_its_blocks(self):
+        # INNER refuses SEED: an example of SEED inside INNER is out of
+        # place, and so is FAILSCORE inside OPTIMIZER.
+        self.edit("part_a.toml", 'wrap = "optimizer"\ntext = "SEED 7"',
+                  'wrap = "inner"\ntext = "SEED 7"')
+        self.edit("hpotarget.toml", 'wrap = "root"\ntext = "FAILSCORE 10"',
+                  'wrap = "optimizer"\ntext = "FAILSCORE 10"')
+        e = self.errors()
+        self.assertIn("example 0 puts SEED in INNER, which is not one of its "
+                      "blocks (OPTIMIZER)", e)
+        self.assertIn("example 0 puts FAILSCORE in OPTIMIZER, which is not "
+                      "one of its blocks (ROOT)", e)
+        self.edit("hpotarget.toml", 'wrap = "optimizer"\ntext = "FAILSCORE '
+                                    '10"', 'wrap = "root"\ntext = "QFLUSH 1"')
+        self.assertIn("example 0 has no FAILSCORE line", self.errors())
+
+    def test_arguments_are_in_the_synopsis(self):
+        self.edit("part_a.toml", 'synopsis = "SEED <n>"',
+                  'synopsis = "SEED <count>"')
+        self.assertIn("the argument <n> is not in the synopsis 'SEED "
+                      "<count>'", self.errors())
+
+    def test_doc_has_at_most_two_sentences(self):
+        self.edit("part_b.toml", 'doc = "Points per dimension."',
+                  'doc = "Points per dimension. Two. Three."')
+        self.assertIn("PARAM.TADAH:GRID.GRID_POINTS: doc: 3 sentences",
+                      self.errors())
+
+    def test_long_doc_of_blocks_and_sections(self):
+        self.edit("hpotarget.toml", 'doc = "The search."',
+                  'doc = "The search."\nlong_doc = "The detail."')
+        self.edit("hpotarget.toml", 'doc = "Blocks nest."',
+                  'doc = "Blocks nest."\nlong_doc = "The detail."')
+        reg = self.load()
+        self.assertEqual(reg.block("OPTIMIZER").long_doc, "The detail.")
+        self.assertEqual(reg.structure.long_doc, "The detail.")
+
+    def test_error_is_a_message_of_the_registry(self):
+        self.edit("hpotarget.toml",
+                  "FAILSCORE must be a positive finite number, got '0'",
+                  "FAILSCORE is wrong")
+        self.assertIn("ROOT.FAILSCORE invalid 0: the error is no message of "
+                      "the entry", self.errors())
+        # msg_of names the entry whose message it is.
+        self.edit("hpotarget.toml", 'error = "FAILSCORE is wrong"',
+                  'error = "FAILSCORE is wrong"\nmsg_of = "RULE.nothing"')
+        self.assertIn("msg_of 'RULE.nothing' is not an entry", self.errors())
+        self.files["part_b.toml"] = self.files["part_b.toml"].replace(
+            'check = "startup"\nkeys',
+            'check = "startup"\nmsg = "{key} is wrong"\nkeys')
+        self.edit("hpotarget.toml", 'msg_of = "RULE.nothing"',
+                  'msg_of = "RULE.FAILSCORE_with_GRID"')
+        self.load()
+
+    def test_every_message_has_a_case_or_a_reason(self):
+        self.give_every_message_a_reason()
+        self.load(templates=True)
+        self.edit("hpotarget.toml", "{ msg = \"unfinished line {line}\", why "
+                                    "= \"Not exercised here.\" }, ", "")
+        self.assertIn("LEXING: unfinished_msg: no invalid case shows the "
+                      "message 'unfinished line {line}'",
+                      self.errors(templates=True))
+
+    def test_untested_names_a_message_of_the_entry(self):
+        self.give_every_message_a_reason()
+        self.edit("hpotarget.toml", '"HPO file {file} not found"',
+                  '"HPO file missing"')
+        self.assertIn("untested: 'HPO file missing' is no message of the "
+                      "entry", self.errors(templates=True))
+
+    def test_check_mode_shows_a_refusal_of_the_run(self):
+        self.edit("hpotarget.toml", 'text = "FAILSCORE 0"',
+                  'text = "FAILSCORE 0"\ncheck = "check"')
+        self.assertIn('check = "check" shows a refusal of the run, which '
+                      'names no line: at = "none"', self.errors())
+        self.edit("hpotarget.toml", 'check = "check"',
+                  'check = "check"\nat = "none"')
+        self.load()
+        self.edit("hpotarget.toml", 'wrap = "root"\ntext = "FAILSCORE 10"',
+                  'wrap = "root"\ncheck = "check"\ntext = "FAILSCORE 10"')
+        self.assertIn("check 'check' is not parse or startup", self.errors())
+
+    def test_unchecked_goes_with_a_text_default(self):
+        self.edit("hpotarget.toml", 'default = { literal = "1e6" }',
+                  'default = { literal = "1e6", unchecked = "why" }')
+        self.assertIn("default.unchecked goes with a text default",
+                      self.errors())
+        self.edit("hpotarget.toml",
+                  'default = { literal = "1e6", unchecked = "why" }',
+                  'default = { text = "1e6", unchecked = "No setting holds '
+                  'it." }')
+        reg = self.load()
+        self.assertEqual(reg.keys[0].default.unchecked,
+                         "No setting holds it.")
+
+    def test_helpers_compose_and_place_a_line(self):
+        reg = self.load()
+        case = reg.keys[1].examples[0]          # LIB TADAH in OPTIMIZER
+        comp, ln, block = hr.key_line(reg, case, "LIB")
+        self.assertEqual((comp.slot, ln.first, ln.text, block),
+                         (3, 3, "LIB TADAH", "OPTIMIZER"))
+        self.assertEqual(hr.block_wrappers(reg),
+                         {"ROOT": "root", "OPTIMIZER": "optimizer",
+                          "INNER": "inner"})
+        lines = hr.logical_lines("A 1 \\\n  2 # c\n\nB\n")
+        self.assertEqual([(x.first, x.last, x.text, x.key) for x in lines],
+                         [(1, 2, "A 1   2", "A"), (4, 4, "B", "B")])
+        rx = hr.template_regex("{key} is set twice (first on line "
+                               "{first_line})", {"key": "QFLUSH"})
+        self.assertTrue(rx.match("QFLUSH is set twice (first on line 3)"))
+        self.assertFalse(rx.match("DIGITS is set twice (first on line 3)"))
+        self.assertEqual(hr.sentences("One. Two, e.g. this. Three"), 2)
+
+    def give_every_message_a_reason(self):
+        """untested for every message no invalid case of the synthetic
+        registry shows, so that a full --check passes."""
+        def reasons(*msgs):
+            items = ", ".join("{ msg = %s, why = \"Not exercised here.\" }"
+                              % json.dumps(m) for m in msgs)
+            return f"untested = [{items}]\n"
+        self.edit("hpotarget.toml", '[lexing]\n', '[lexing]\n' + reasons(
+            "unfinished line {line}", "HPO file {file} not found"))
+        self.edit("hpotarget.toml", '[reading]\n', '[reading]\n' + reasons(
+            "{what} must be an integer >= {min}, got '{tok}'",
+            "{what} must be an integer from {min} to {max}, got '{tok}'",
+            " ({note})",
+            "{what} must be a finite number, got '{tok}'{underflow}",
+            "{key} requires a value",
+            "{key} takes a single value (unexpected '{tok}')",
+            "{what}: expected boolean, got '{tok}'",
+            "{what} must be a time, got '{tok}'",
+            "{what} must be positive, got '{tok}'",
+            "{what} is too large, got '{tok}'"))
+        self.edit("hpotarget.toml", '[structure]\n', '[structure]\n' +
+                  reasons("{end} without matching {name}",
+                          "{end} does not close {open} of line {open_line}",
+                          "{end} closes {name} (unexpected '{tok}')",
+                          "{name} opens a block (unexpected '{tok}')",
+                          "{name} block not closed with {end}",
+                          'unknown key "{key}"',
+                          "'{key}' was removed from the grammar: {hint}"))
+        self.edit("hpotarget.toml", 'name = "OPTIMIZER"\n',
+                  'name = "OPTIMIZER"\n' + reasons(
+                      "OPTIMIZER inside {parent} of line {parent_line}",
+                      "unknown key '{key}' in this block"))
+        self.edit("hpotarget.toml", 'name = "INNER"\n',
+                  'name = "INNER"\n' + reasons(
+                      "INNER outside OPTIMIZER",
+                      "unknown key '{key}' inside INNER block (only {keys} "
+                      "are valid)"))
+
     def test_check_command(self):
+        self.give_every_message_a_reason()
         self.write()
         out = io.StringIO()
         with contextlib.redirect_stdout(out):

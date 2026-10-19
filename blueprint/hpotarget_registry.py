@@ -100,6 +100,12 @@ ARG_KINDS = {"integer", "number", "positive", "word", "name", "bool",
 INT_LIMITS = {"INT_MAX": 2**31 - 1, "UINT_MAX": 2**32 - 1,
               "UINT64_MAX": 2**64 - 1}
 CHECKS = {"parse", "startup"}
+# An invalid case may also run as `tadah hpo --check` does (hpo_run with
+# CHECK true), for a refusal the run makes before it reads its data, such
+# as that of an environment override.
+INVALID_CHECKS = CHECKS | {"check"}
+REGISTRY_VERSION = 1
+DOC_SENTENCES = 2
 
 
 class RegistryError(Exception):
@@ -127,6 +133,7 @@ class Case:
     doc: str = ""
     error: str | None = None
     at: int | str = 1
+    msg_of: str = ""      # id of the entry whose message the error is
 
 
 @dataclass
@@ -134,6 +141,13 @@ class Check:
     """A refusal a block or an entry makes, with when it applies."""
     msg: str
     doc: str
+
+
+@dataclass
+class Untested:
+    """A message of an entry that no invalid case shows, and why."""
+    msg: str
+    why: str
 
 
 @dataclass
@@ -159,6 +173,7 @@ class Arg:
 class Default:
     literal: str | None = None
     text: str | None = None
+    unchecked: str | None = None   # why no setting holds a text's number
 
 
 @dataclass
@@ -182,6 +197,8 @@ class Section:
     part: str
     fields: dict[str, Any]
     doc: str = ""
+    long_doc: str = ""
+    untested: list[Untested] = field(default_factory=list)
     examples: list[Case] = field(default_factory=list)
     invalid: list[Case] = field(default_factory=list)
 
@@ -204,6 +221,8 @@ class Group:
     blocks: list[str]
     leftover_msg: str
     doc: str
+    long_doc: str = ""
+    untested: list[Untested] = field(default_factory=list)
     examples: list[Case] = field(default_factory=list)
     invalid: list[Case] = field(default_factory=list)
 
@@ -228,6 +247,8 @@ class Block:
     requires: list[Check] = field(default_factory=list)
     close_checks: list[Check] = field(default_factory=list)
     quirk: str = ""
+    long_doc: str = ""
+    untested: list[Untested] = field(default_factory=list)
     examples: list[Case] = field(default_factory=list)
     invalid: list[Case] = field(default_factory=list)
 
@@ -253,6 +274,7 @@ class Key:
     quirk: str = ""
     env: str = ""
     checks: list[Check] = field(default_factory=list)
+    untested: list[Untested] = field(default_factory=list)
     examples: list[Case] = field(default_factory=list)
     invalid: list[Case] = field(default_factory=list)
 
@@ -277,6 +299,7 @@ class LineOption:
     refused: str = ""
     quirk: str = ""
     checks: list[Check] = field(default_factory=list)
+    untested: list[Untested] = field(default_factory=list)
     examples: list[Case] = field(default_factory=list)
     invalid: list[Case] = field(default_factory=list)
 
@@ -294,6 +317,7 @@ class Form:
     refused: str = ""
     quirk: str = ""
     checks: list[Check] = field(default_factory=list)
+    untested: list[Untested] = field(default_factory=list)
     examples: list[Case] = field(default_factory=list)
     invalid: list[Case] = field(default_factory=list)
 
@@ -305,6 +329,7 @@ class Removed:
     part: str
     hint: str
     doc: str = ""
+    untested: list[Untested] = field(default_factory=list)
     examples: list[Case] = field(default_factory=list)
     invalid: list[Case] = field(default_factory=list)
 
@@ -320,6 +345,7 @@ class Rule:
     msg_doc: str = ""     # what the message holds, said in words
     keys: list[str] = field(default_factory=list)
     quirk: str = ""
+    untested: list[Untested] = field(default_factory=list)
     examples: list[Case] = field(default_factory=list)
     invalid: list[Case] = field(default_factory=list)
 
@@ -333,6 +359,8 @@ class Env:
     doc: str
     values: list[str] = field(default_factory=list)
     msg: str = ""
+    checks: list[Check] = field(default_factory=list)
+    untested: list[Untested] = field(default_factory=list)
     examples: list[Case] = field(default_factory=list)
     invalid: list[Case] = field(default_factory=list)
 
@@ -344,6 +372,7 @@ class LossFunction:
     part: str
     doc: str
     params: list[LossParam] = field(default_factory=list)
+    untested: list[Untested] = field(default_factory=list)
     examples: list[Case] = field(default_factory=list)
     invalid: list[Case] = field(default_factory=list)
 
@@ -357,6 +386,7 @@ class StrategyType:
     keys: list[str] = field(default_factory=list)
     quirk: str = ""
     checks: list[Check] = field(default_factory=list)
+    untested: list[Untested] = field(default_factory=list)
     examples: list[Case] = field(default_factory=list)
     invalid: list[Case] = field(default_factory=list)
 
@@ -371,6 +401,7 @@ class InitMethod:
     refused: str = ""
     quirk: str = ""
     checks: list[Check] = field(default_factory=list)
+    untested: list[Untested] = field(default_factory=list)
     examples: list[Case] = field(default_factory=list)
     invalid: list[Case] = field(default_factory=list)
 
@@ -385,6 +416,7 @@ class OptimTarget:
     indices: list[int] = field(default_factory=list)
     msg: str = ""
     condition: str = ""
+    untested: list[Untested] = field(default_factory=list)
     examples: list[Case] = field(default_factory=list)
     invalid: list[Case] = field(default_factory=list)
 
@@ -402,6 +434,7 @@ class Param:
     long_doc: str = ""
     quirk: str = ""
     checks: list[Check] = field(default_factory=list)
+    untested: list[Untested] = field(default_factory=list)
     examples: list[Case] = field(default_factory=list)
     invalid: list[Case] = field(default_factory=list)
 
@@ -414,6 +447,7 @@ class ParamExcluded:
     optimizers: list[str]
     why: str
     doc: str = ""
+    untested: list[Untested] = field(default_factory=list)
     examples: list[Case] = field(default_factory=list)
     invalid: list[Case] = field(default_factory=list)
 
@@ -426,6 +460,8 @@ class ParamPolicy:
     doc: str
     msg: str = ""
     quirk: str = ""
+    checks: list[Check] = field(default_factory=list)
+    untested: list[Untested] = field(default_factory=list)
     examples: list[Case] = field(default_factory=list)
     invalid: list[Case] = field(default_factory=list)
 
@@ -436,6 +472,8 @@ class Wrapper:
     part: str
     text: str
     doc: str
+    block: str = ""             # the block its slot is in, or ROOT
+    optimizer: str = ""         # LIB:ALGO of the STRATEGY-level optimiser
     context: str = "default"
 
 
@@ -561,6 +599,9 @@ class Registry:
             return {r.name for r in self.removed}
         if name == "line_option":
             return {o.option for o in self.line_options}
+        if name.startswith("line_option:"):
+            line = name.split(":", 1)[1]
+            return {o.option for o in self.line_options if line in o.lines}
         if name == "form":
             return {f.word for f in self.forms if f.word}
         if name == "loss":
@@ -572,6 +613,11 @@ class Registry:
         if name == "strategy_type_key":
             ids = {i for t in self.strategy_types for i in t.keys}
             return {k.name for k in self.keys if k.id in ids}
+        if name.startswith("strategy_type_key:"):
+            t = name.split(":", 1)[1]
+            ids = {i for st in self.strategy_types if st.name == t
+                   for i in st.keys}
+            return {k.name for k in self.keys if k.id in ids}
         if name == "optim_target":
             return {t.key for t in self.optim_targets}
         if name == "param":
@@ -580,6 +626,16 @@ class Registry:
             return {p.name for p in self.param_excluded}
         if name == "env":
             return {e.name for e in self.envs}
+        if name == "registry_name":
+            # Every name the registry declares, of any kind.
+            out: set[str] = set()
+            for v in ("block", "block_end", "alias", "group_key",
+                      "inner_refused", "removed", "line_option", "form",
+                      "loss", "init_method", "strategy_type", "optim_target",
+                      "param", "param_excluded", "env", "word"):
+                out |= self.vocabulary(v)
+            out |= {k.name for k in self.keys}
+            return out
         if name == "word":
             words: set[str] = set()
             for e in self.entries():
@@ -595,6 +651,213 @@ class Registry:
         raise KeyError(f"unknown vocabulary {name!r}")
 
 
+# ------------------------------------------------- target-file helpers ----
+# The target file as the parser reads it, for the checks below and for
+# tests/check_hpotarget_generated.py: a case put into its wrapper, its
+# logical lines, the block each line is in, and the messages of an entry.
+
+@dataclass
+class Logical:
+    """A logical line: its first and last physical lines (from 1), its text
+    (the comment cut, trailing blanks removed, continued lines joined) and
+    its key, the first word."""
+    first: int
+    last: int
+    text: str
+    key: str
+
+
+def logical_lines(file: str) -> list[Logical]:
+    out: list[Logical] = []
+    lines = file.split("\n")
+    if lines and lines[-1] == "":
+        lines.pop()
+
+    def cut(s: str) -> str:
+        p = s.find("#")
+        return (s[:p] if p >= 0 else s).rstrip()
+
+    i = 0
+    while i < len(lines):
+        first = i + 1
+        text = cut(lines[i])
+        while text.endswith("\\") and i + 1 < len(lines):
+            i += 1
+            text = text[:-1] + cut(lines[i])
+        i += 1
+        words = text.split()
+        if words:
+            out.append(Logical(first, i, text, words[0]))
+    return out
+
+
+@dataclass
+class Composed:
+    file: str
+    slot: int        # the physical line the case's text starts on
+    context: str
+
+
+def compose(reg: "Registry", wrap: str, text: str,
+            context: str | None = None) -> Composed:
+    """The target file of a case: `text` in the slot of the wrapper `wrap`
+    (the whole file for wrap = none)."""
+    if wrap == "none":
+        f = text
+        slot = 1
+        ctx = context or "default"
+    else:
+        w = reg.wrappers[wrap]
+        lines = w.text.strip("\n").split("\n")
+        slot = lines.index("{line}") + 1
+        lines[slot - 1] = text.strip("\n")
+        f = "\n".join(lines)
+        ctx = context or w.context
+    if not f.endswith("\n"):
+        f += "\n"
+    return Composed(f, slot, ctx)
+
+
+def line_blocks(reg: "Registry", file: str) -> list[tuple[Logical, str]]:
+    """Each logical line of `file` with the block it is in (ROOT at the top
+    level): a block line opens its block, its END line closes it, and a
+    word a block takes as another key (INIT's STRATEGY) opens nothing."""
+    names = {b.name for b in reg.blocks}
+    ends = {b.end: b.name for b in reg.blocks}
+    aliases = {b.name: set(b.aliases) for b in reg.blocks}
+    stack: list[str] = []
+    out = []
+    for ln in logical_lines(file):
+        here = stack[-1] if stack else "ROOT"
+        if ln.key in ends:
+            out.append((ln, here))
+            if stack:
+                stack.pop()
+            continue
+        if ln.key in names and ln.key not in aliases.get(here, set()):
+            out.append((ln, here))
+            stack.append(ln.key)
+            continue
+        out.append((ln, here))
+    return out
+
+
+def block_wrappers(reg: "Registry") -> dict[str, str]:
+    """The wrapper of each place a line can be, ROOT and each block, named
+    after it in lower case: the generated checks put a line into each
+    (tests/check_hpotarget_generated.py)."""
+    return {p: p.lower() for p in ["ROOT"] + [b.name for b in reg.blocks]}
+
+
+def key_line(reg: "Registry", c: Case, name: str
+             ) -> tuple[Composed, Logical, str] | None:
+    """The first line of the key `name` in the case `c`, from the line its
+    text starts on (a word a block reads as the key, as INIT's STRATEGY for
+    METHOD, counts), with the composed file and the block the line is
+    in."""
+    comp = compose(reg, c.wrap, c.text, c.context)
+    alias = {b.name: {w for w, ref in b.aliases.items()
+                      if ref.rsplit(".", 1)[-1] == name}
+             for b in reg.blocks}
+    for ln, block in line_blocks(reg, comp.file):
+        if ln.first >= comp.slot and (
+                ln.key == name or ln.key in alias.get(block, set())):
+            return comp, ln, block
+    return None
+
+
+PLACEHOLDER_ANY = "(?s:.*?)"
+
+
+def template_regex(template: str, fill: dict[str, str] | None = None
+                   ) -> re.Pattern:
+    """A message template as a regular expression: each placeholder is
+    any text, or the text `fill` gives it."""
+    out, pos = "", 0
+    for m in PLACEHOLDER.finditer(template):
+        out += re.escape(template[pos:m.start()])
+        name = m.group(1)
+        out += (re.escape(fill[name]) if fill and name in fill
+                else PLACEHOLDER_ANY)
+        pos = m.end()
+    out += re.escape(template[pos:])
+    return re.compile("^" + out + "$")
+
+
+def entry_templates(e: Any) -> list[tuple[str, str, dict[str, str]]]:
+    """The message templates an entry holds: (field, template, fill), fill
+    the placeholders the entry itself gives (a block's refusals)."""
+    out: list[tuple[str, str, dict[str, str]]] = []
+    if isinstance(e, Section):
+        for k, v in e.fields.items():
+            if isinstance(v, str) and (k.endswith("_msg") or k == "msg"):
+                out.append((k, v, {}))
+    for f in ("repeat_msg", "misplaced_msg", "msg", "unknown_msg",
+              "leftover_msg"):
+        v = getattr(e, f, "")
+        if isinstance(v, str) and v:
+            out.append((f, v, {}))
+    for kind in ("checks", "close_checks", "requires"):
+        lst = getattr(e, kind, None)
+        if lst is None and isinstance(e, Section):
+            lst = e.fields.get(kind)
+        for c in lst or []:
+            out.append((kind, c.msg, {}))
+    for a in getattr(e, "args", []) or []:
+        if a.msg:
+            out.append(("args.msg", a.msg, {}))
+        for msg in a.refused_words.values():
+            out.append(("args.refused_words", msg, {}))
+    if isinstance(e, Block) and e.refuse_msg:
+        for r in e.refuse:
+            out.append(("refuse_msg", e.refuse_msg,
+                        {"key": r.key, "why": r.why}))
+    return out
+
+
+def shared_templates(reg: "Registry"
+                     ) -> list[tuple[str, str, str, dict[str, str]]]:
+    """The templates any case may show: those of [lexing], [reading],
+    [structure], the blocks, the groups, and the removal message with each
+    hint: (id, field, template, fill)."""
+    out = []
+    for e in [reg.lexing, reg.reading, reg.structure] + list(reg.blocks) + \
+            list(reg.groups.values()):
+        out += [(e.id, f, t, fill) for f, t, fill in entry_templates(e)]
+    removed = reg.structure.fields.get("removed_msg", "")
+    for rm in reg.removed:
+        out.append((reg.structure.id, "removed_msg", removed,
+                    {"hint": rm.hint, "key": rm.name}))
+    return out
+
+
+def own_templates(reg: "Registry", e: Any
+                  ) -> list[tuple[str, str, str, dict[str, str]]]:
+    """The templates of an entry, (id, field, template, fill); an excluded
+    PARAM key takes those of the PARAM policies of its optimisers, with its
+    name and its reason filled in."""
+    out = [(e.id, f, t, fill) for f, t, fill in entry_templates(e)]
+    if isinstance(e, ParamExcluded):
+        for p in reg.param_policies:
+            if set(p.optimizers) & set(e.optimizers):
+                for f, t, _ in entry_templates(p):
+                    if "{why}" in t:
+                        out.append((p.id, f, t,
+                                    {"why": e.why, "key": e.name}))
+    return out
+
+
+def sentences(text: str) -> int:
+    """The number of sentences of a documentation text."""
+    t = re.sub(r"`[^`]*`", "x", text)
+    n = 0
+    for m in re.finditer(r"[.!?](?=\s+[A-Z(`'\"]|\s*$)", t):
+        if re.search(r"\b(e\.g|i\.e|etc|vs|cf)\.$", t[:m.end()]):
+            continue
+        n += 1
+    return max(n, 1 if t.strip() else 0)
+
+
 # -------------------------------------------------------------- schema ----
 # Per kind: field -> (type, required). Types: str, int, bool, number,
 # list[str], list[int], dict[str,str], int|str, and the structured ones
@@ -605,7 +868,8 @@ O = False
 CASE_FIELDS = {"wrap": ("str", R), "text": ("str", R), "check": ("str", O),
                "context": ("str", O), "env": ("dict[str,str]", O),
                "doc": ("str", O)}
-INVALID_FIELDS = dict(CASE_FIELDS, error=("str", R), at=("int|str", O))
+INVALID_FIELDS = dict(CASE_FIELDS, error=("str", R), at=("int|str", O),
+                      msg_of=("str", O))
 CHECK_FIELDS = {"msg": ("str", R), "doc": ("str", R)}
 ARG_FIELDS = {"name": ("str", R), "kind": ("str", R),
               "optional": ("bool", O), "repeat": ("bool", O),
@@ -614,26 +878,29 @@ ARG_FIELDS = {"name": ("str", R), "kind": ("str", R),
               "words": ("list[str]", O), "refused_words": ("dict[str,str]", O),
               "what": ("str", O), "msg": ("str", O), "noun": ("str", O),
               "default": ("any", O), "doc": ("str", O)}
-DOC_FIELDS = {"examples": ("cases", O), "invalid": ("invalid", O)}
+DOC_FIELDS = {"examples": ("cases", O), "invalid": ("invalid", O),
+              "untested": ("untested", O)}
 
 SCHEMA: dict[str, dict[str, tuple[str, bool]]] = {
     "meta": {"version": ("int", R), "api": ("int", R),
              "parts": ("list[str]", R), "anneal_keys": ("str", R),
              "optimizers": ("str", R), "optimizer_docs": ("str", R)},
-    "lexing": dict(DOC_FIELDS, doc=("str", R), comment=("str", R),
+    "lexing": dict(DOC_FIELDS, doc=("str", R), long_doc=("str", O),
+                   comment=("str", R),
                    continuation=("str", R), key_case=("str", R),
                    error_frame=("str", R), unfinished_msg=("str", R),
                    missing_file_msg=("str", R), bool_true=("list[str]", R),
                    bool_false=("list[str]", R),
                    timespec_words=("list[str]", R)),
-    "reading": dict(DOC_FIELDS, doc=("str", R), integer_msg=("str", R),
+    "reading": dict(DOC_FIELDS, doc=("str", R), long_doc=("str", O),
+                    integer_msg=("str", R),
                     integer_range_msg=("str", R), note_msg=("str", R),
                     finite_msg=("str", R), positive_msg=("str", R),
                     underflow_note=("str", R), requires_value_msg=("str", R),
                     single_value_msg=("str", R), bool_msg=("str", R),
                     timespec_msg=("str", R), script_timeout_msg=("str", R),
                     script_timeout_large_msg=("str", R)),
-    "structure": dict(DOC_FIELDS, doc=("str", R),
+    "structure": dict(DOC_FIELDS, doc=("str", R), long_doc=("str", O),
                       check_order=("list[str]", R),
                       end_without_open_msg=("str", R),
                       end_mismatch_msg=("str", R),
@@ -641,13 +908,15 @@ SCHEMA: dict[str, dict[str, tuple[str, bool]]] = {
                       open_takes_no_value_msg=("str", R),
                       unclosed_msg=("str", R), unknown_root_msg=("str", R),
                       removed_msg=("str", R)),
-    "optim": dict(DOC_FIELDS, doc=("str", R), synopsis=("list[str]", R),
+    "optim": dict(DOC_FIELDS, doc=("str", R), long_doc=("str", O),
+                  synopsis=("list[str]", R),
                   positive_only=("list[str]", O),
                   auto_excluded_prefix=("str", O), checks=("checks", O)),
     "lammps_script": dict(DOC_FIELDS, doc=("str", R), long_doc=("str", O),
                           fixture=("str", R)),
     "group": dict(DOC_FIELDS, blocks=("list[str]", R),
-                  leftover_msg=("str", R), doc=("str", R)),
+                  leftover_msg=("str", R), doc=("str", R),
+                  long_doc=("str", O)),
     "block": dict(DOC_FIELDS, name=("str", R), end=("str", R),
                   parents=("list[str]", R), repeat=("str", R),
                   repeat_msg=("str", O), misplaced_msg=("str", R),
@@ -655,7 +924,7 @@ SCHEMA: dict[str, dict[str, tuple[str, bool]]] = {
                   aliases=("dict[str,str]", O), refuse=("refuse", O),
                   refuse_msg=("str", O), unreachable_msgs=("list[str]", O),
                   requires=("checks", O), close_checks=("checks", O),
-                  quirk=("str", O), doc=("str", R)),
+                  quirk=("str", O), doc=("str", R), long_doc=("str", O)),
     "key": dict(DOC_FIELDS, id=("str", R), name=("str", R),
                 group=("str", O), blocks=("list[str]", O),
                 synopsis=("str", R), args=("args", O), repeat=("str", R),
@@ -682,7 +951,8 @@ SCHEMA: dict[str, dict[str, tuple[str, bool]]] = {
                  msg_doc=("str", O), keys=("list[str]", O),
                  quirk=("str", O)),
     "env": dict(DOC_FIELDS, name=("str", R), key=("str", R),
-                doc=("str", R), values=("list[str]", O), msg=("str", O)),
+                doc=("str", R), values=("list[str]", O), msg=("str", O),
+                checks=("checks", O)),
     "loss_function": dict(DOC_FIELDS, id=("str", R), name=("str", R),
                           params=("params", O), doc=("str", R)),
     "strategy_type": dict(DOC_FIELDS, id=("str", R), name=("str", R),
@@ -706,9 +976,11 @@ SCHEMA: dict[str, dict[str, tuple[str, bool]]] = {
                            doc=("str", O)),
     "param_policy": dict(DOC_FIELDS, id=("str", R),
                          optimizers=("list[str]", R), doc=("str", R),
-                         msg=("str", O), quirk=("str", O)),
+                         msg=("str", O), quirk=("str", O),
+                         checks=("checks", O)),
     "wrapper": {"text": ("str", R), "context": ("str", O),
-                "doc": ("str", R)},
+                "doc": ("str", R), "block": ("str", R),
+                "optimizer": ("str", O)},
     "context": {"config": ("str", R), "has_train_db": ("bool", O),
                 "has_validation": ("bool", O), "doc": ("str", R)},
     "fixture": {"path": ("str", R), "text": ("str", R), "doc": ("str", O)},
@@ -734,9 +1006,10 @@ TITLE_WIDTH = 80
 
 class _Loader:
     def __init__(self, directory: pathlib.Path, parts: list[str] | None,
-                 resolve: bool = True):
+                 resolve: bool = True, templates: bool = True):
         self.dir = directory
         self.must_resolve = resolve
+        self.templates = templates
         self.errors: list[str] = []
         self.notes: list[str] = []
         self.only_parts = parts
@@ -791,7 +1064,8 @@ class _Loader:
         if typ == "dict[str,str]":
             return isinstance(v, dict) and all(
                 isinstance(x, str) for x in v.values())
-        if typ in ("cases", "invalid", "args", "checks", "refuse", "params"):
+        if typ in ("cases", "invalid", "args", "checks", "refuse", "params",
+                   "untested"):
             return isinstance(v, list) and all(isinstance(x, dict) for x in v)
         if typ == "default":
             return isinstance(v, dict)
@@ -812,8 +1086,14 @@ class _Loader:
                     continue
                 check = c.get("check", "startup" if kind == "example"
                               else "parse")
-                if check not in CHECKS:
+                if kind == "example" and check not in CHECKS:
                     self.err(w, f"check '{check}' is not parse or startup")
+                if kind == "invalid" and check not in INVALID_CHECKS:
+                    self.err(w, f"check '{check}' is not parse, startup or "
+                                "check")
+                if check == "check" and c.get("at", 1) != "none":
+                    self.err(w, "check = \"check\" shows a refusal of the "
+                                "run, which names no line: at = \"none\"")
                 at = c.get("at", 1)
                 if isinstance(at, int) and at < 1:
                     self.err(w, "at counts logical lines from 1")
@@ -828,7 +1108,7 @@ class _Loader:
                                 check=check, context=c.get("context"),
                                 env=dict(c.get("env", {})),
                                 doc=c.get("doc", ""), error=c.get("error"),
-                                at=at))
+                                at=at, msg_of=c.get("msg_of", "")))
             out.append(got)
         return tuple(out)
 
@@ -885,17 +1165,34 @@ class _Loader:
             out.append(Check(**c))
         return out
 
+    def untested(self, where: str, f: dict) -> list[Untested]:
+        out = []
+        for i, t in enumerate(f.get("untested", [])):
+            w = f"{where}.untested[{i}]"
+            u = self.fields(w, "_untested", t)
+            if not u:
+                continue
+            self.placeholders(w, "msg", u.get("msg", ""), PLACEHOLDERS)
+            self.voice(w, "why", u.get("why", ""))
+            out.append(Untested(**u))
+        return out
+
     def default(self, where: str, f: dict) -> Default | None:
         d = f.get("default")
         if d is None:
             return None
-        extra = set(d) - {"literal", "text"}
-        if extra or len(d) != 1 or not all(isinstance(v, str)
-                                           for v in d.values()):
+        extra = set(d) - {"literal", "text", "unchecked"}
+        kinds = {"literal", "text"} & set(d)
+        if extra or len(kinds) != 1 or not all(isinstance(v, str)
+                                               for v in d.values()):
             self.err(where, "default is { literal = \"...\" } or "
-                            "{ text = \"...\" }")
+                            "{ text = \"...\" }, with unchecked = "
+                            "\"...\" for a text")
             return None
+        if "unchecked" in d and "text" not in d:
+            self.err(where, "default.unchecked goes with a text default")
         self.doc_text(where, "default.text", d.get("text", ""))
+        self.voice(where, "default.unchecked", d.get("unchecked", ""))
         return Default(**d)
 
     # ---- text checks -------------------------------------------------------
@@ -1053,11 +1350,14 @@ class _Loader:
         self.message_fields(where, top, f)
         ex, inv = self.cases(where, ident, part, f)
         extra = {k: v for k, v in f.items()
-                 if k not in ("doc", "examples", "invalid")}
+                 if k not in ("doc", "long_doc", "examples", "invalid",
+                              "untested")}
         if top == "optim":
             extra["checks"] = self.checks(where, f, "checks")
         return Section(id=ident, part=part, fields=extra,
-                       doc=f.get("doc", ""), examples=ex, invalid=inv)
+                       doc=f.get("doc", ""), long_doc=f.get("long_doc", ""),
+                       untested=self.untested(where, f), examples=ex,
+                       invalid=inv)
 
     def build(self, meta_f, singles, acc, full, files, words) -> Registry:
         meta = Meta(**meta_f)
@@ -1086,8 +1386,10 @@ class _Loader:
             groups[name] = Group(id=ident, name=name, part=part,
                                  blocks=f.get("blocks", []),
                                  leftover_msg=f.get("leftover_msg", ""),
-                                 doc=f.get("doc", ""), examples=ex,
-                                 invalid=inv)
+                                 doc=f.get("doc", ""),
+                                 long_doc=f.get("long_doc", ""),
+                                 untested=self.untested(where, f),
+                                 examples=ex, invalid=inv)
 
         blocks: list[Block] = []
         for part, i, t in acc["block"]:
@@ -1105,8 +1407,9 @@ class _Loader:
                     refuse.append(Refusal(**rf))
             kw = {k: v for k, v in f.items()
                   if k not in ("examples", "invalid", "refuse", "requires",
-                               "close_checks")}
+                               "close_checks", "untested")}
             b = Block(id=ident, part=part, refuse=refuse,
+                      untested=self.untested(where, f),
                       requires=self.checks(where, f, "requires"),
                       close_checks=self.checks(where, f, "close_checks"),
                       examples=ex, invalid=inv, **kw)
@@ -1148,8 +1451,8 @@ class _Loader:
                 ex, inv = self.cases(where, ident, part, f)
                 kw = {k: v for k, v in f.items()
                       if k not in ("examples", "invalid", "args", "checks",
-                                   "default", "params", "id")}
-                more: dict[str, Any] = {}
+                                   "default", "params", "id", "untested")}
+                more: dict[str, Any] = {"untested": self.untested(where, f)}
                 if "args" in SCHEMA[kind]:
                     more["args"] = self.args(where, f)
                 if "checks" in SCHEMA[kind]:
@@ -1238,6 +1541,7 @@ class _Loader:
         self.check_entries(reg)
         self.check_references(reg)
         self.check_cases(reg)
+        self.check_harness(reg)
         reg.notes = self.notes
         if self.errors:
             raise RegistryError(self.errors)
@@ -1339,6 +1643,9 @@ class _Loader:
             if o.repeat not in KEY_REPEAT:
                 self.err(w, f"repeat '{o.repeat}' is not one of "
                             f"{', '.join(sorted(KEY_REPEAT))}")
+            if (o.repeat == "error") != bool(o.repeat_msg):
+                self.err(w, "repeat_msg goes with repeat error, and only "
+                            "with it")
         seen_opt: dict[tuple[str, str], str] = {}
         for o in reg.line_options:
             for line in o.lines:
@@ -1468,6 +1775,143 @@ class _Loader:
             self.err(where, f"context '{name}' is in {c.part}: a part file "
                             f"uses those of {MAIN_FILE} and its own")
 
+    def check_harness(self, reg: Registry) -> None:
+        """What the generated checks and the conformance test rely on, and
+        what an entry needs: the version, the wrappers' blocks, the cases
+        of each entry, the block of each example of a key, the arguments
+        in the synopsis, the messages of the invalid cases, and the length
+        of a doc."""
+        if reg.meta.version != REGISTRY_VERSION:
+            self.err(f"{MAIN_FILE} [meta]", f"version {reg.meta.version} is "
+                     f"not the layout this loader reads, {REGISTRY_VERSION}")
+        places = {b.name for b in reg.blocks} | {"ROOT"}
+        optimizers = self.optimiser_names(reg)
+        for name, w in reg.wrappers.items():
+            where = f"{w.part} [wrapper.{name}]"
+            if w.block not in places:
+                self.err(where, f"block '{w.block}' is not ROOT or a block")
+            elif w.text.split("\n").count("{line}") == 1:
+                marker = "__SLOT__"
+                comp = compose(reg, name, marker)
+                got = [b for ln, b in line_blocks(reg, comp.file)
+                       if ln.key == marker]
+                if got and got[0] != w.block:
+                    self.err(where, f"block is '{w.block}', but the slot is "
+                                    f"in {got[0]}")
+            if w.optimizer and optimizers is not None and \
+                    w.optimizer not in optimizers:
+                self.err(where, f"optimizer '{w.optimizer}' is not a "
+                                "registered LIB:ALGO")
+        for block, wname in block_wrappers(reg).items():
+            w = reg.wrappers.get(wname)
+            if w is None or w.part != MAIN_FILE or w.block != block:
+                self.err(MAIN_FILE, f"[wrapper.{wname}] is the wrapper of "
+                                    f"the block {block} (block = "
+                                    f"\"{block}\"), in {MAIN_FILE}")
+
+        # The cases of an entry, and the block of each example of a key.
+        for k in reg.keys:
+            w = k._where  # type: ignore[attr-defined]
+            if not k.refused and not k.examples:
+                self.err(w, "a key that is not refused has an example")
+            if not k.invalid:
+                self.err(w, "a key has an invalid line")
+            if k.group in reg.groups:
+                allowed = {b for b in reg.groups[k.group].blocks
+                           if k.name not in {r.key for r in
+                                             reg.block(b).refuse}}
+            else:
+                allowed = set(k.blocks)
+            for c in k.examples:
+                if c.wrap != "none" and c.wrap not in reg.wrappers:
+                    continue
+                found = key_line(reg, c, k.name)
+                if found is None:
+                    self.err(w, f"example {c.index} has no {k.name} line")
+                elif found[2] not in allowed:
+                    self.err(w, f"example {c.index} puts {k.name} in "
+                                f"{found[2]}, which is not one of its blocks "
+                                f"({', '.join(sorted(allowed))})")
+        for kind in ("line_options", "forms", "params"):
+            for e in getattr(reg, kind):
+                if not getattr(e, "refused", "") and not e.examples:
+                    self.err(e._where, "an entry that is not refused has "  # type: ignore[attr-defined]
+                                       "an example")
+                if not e.invalid:
+                    self.err(e._where, "an entry has an invalid line")  # type: ignore[attr-defined]
+
+        # Every argument but a word is a <name> of the synopsis.
+        for e in reg.entries():
+            syn = getattr(e, "synopsis", None)
+            if not isinstance(syn, str):
+                continue
+            for a in getattr(e, "args", []) or []:
+                if a.kind not in ("word", "tokens", "loss") and \
+                        f"<{a.name}>" not in syn:
+                    self.err(e.id, f"the argument <{a.name}> is not in the "
+                                   f"synopsis '{syn}'")
+
+        # A doc is one or two sentences; the detail is in long_doc.
+        for e in reg.entries():
+            d = getattr(e, "doc", "")
+            if isinstance(d, str) and d and sentences(d) > DOC_SENTENCES:
+                self.err(e.id, f"doc: {sentences(d)} sentences; a doc has "
+                               f"at most {DOC_SENTENCES}, the detail goes "
+                               "into long_doc")
+
+        # The message of each invalid case is one the registry holds: of
+        # its entry, of the entry msg_of names, or of [lexing], [reading],
+        # [structure], a block or a group. Each message of an entry is
+        # shown by an invalid case, or listed in untested with the reason.
+        byid = reg.by_id()
+        shared = [(i, f, t, fill, template_regex(t, fill))
+                  for i, f, t, fill in shared_templates(reg)]
+        matched: set[tuple[str, str, str]] = set()
+        for c in reg.cases():
+            if c.kind != "invalid" or c.error is None:
+                continue
+            where = f"{c.part} {c.owner} invalid {c.index}"
+            e = byid.get(c.owner)
+            cands = own_templates(reg, e) if e is not None else []
+            if c.msg_of:
+                m = byid.get(c.msg_of)
+                if m is None:
+                    self.err(where, f"msg_of '{c.msg_of}' is not an entry")
+                else:
+                    cands = cands + own_templates(reg, m)
+            hit = False
+            for i, f, t, fill in cands:
+                if template_regex(t, fill).match(c.error):
+                    matched.add((i, f, t))
+                    hit = True
+            for i, f, t, fill, rx in shared:
+                if rx.match(c.error):
+                    matched.add((i, f, t))
+                    hit = True
+            if not hit:
+                self.err(where, "the error is no message of the entry, of "
+                                "the entry msg_of names, or of [lexing], "
+                                "[reading], [structure], a block or a "
+                                "group: add it to the entry's checks (or "
+                                "name the entry whose message it is with "
+                                f"msg_of): '{c.error[:100]}'")
+        if not (self.full and self.templates):
+            return
+        for e in reg.entries():
+            own = {(f, t) for f, t, _ in entry_templates(e)}
+            excused = {u.msg for u in getattr(e, "untested", [])}
+            excused |= set(getattr(e, "unreachable_msgs", []) or [])
+            for u in getattr(e, "untested", []):
+                if u.msg not in {t for _, t in own}:
+                    self.err(e.id, f"untested: '{u.msg[:80]}' is no message "
+                                   "of the entry")
+            for f, t in sorted(own):
+                if (e.id, f, t) in matched or t in excused:
+                    continue
+                self.err(e.id, f"{f}: no invalid case shows the message "
+                               f"'{t[:90]}': add one, or list it in "
+                               "untested with the reason")
+
     def check_cases(self, reg: Registry) -> None:
         for c in reg.cases():
             where = f"{c.part} {c.owner} {c.kind} {c.index}"
@@ -1495,6 +1939,7 @@ class _Loader:
 SCHEMA["_case"] = CASE_FIELDS
 SCHEMA["_invalid"] = INVALID_FIELDS
 SCHEMA["_check"] = CHECK_FIELDS
+SCHEMA["_untested"] = {"msg": ("str", R), "why": ("str", R)}
 SCHEMA["_arg"] = ARG_FIELDS
 SCHEMA["_refuse"] = {"key": ("str", R), "why": ("str", R)}
 SCHEMA["_described"] = {"doc": ("str", R)}
@@ -1503,14 +1948,17 @@ SCHEMA["_param"] = {"name": ("str", R), "default": ("number|str", R),
 
 
 def load(directory: pathlib.Path | str | None = None,
-         parts: list[str] | None = None, resolve: bool = True) -> Registry:
+         parts: list[str] | None = None, resolve: bool = True,
+         templates: bool = True) -> Registry:
     """Load the registry in `directory` (this script's by default): the
     main file and every part of meta.parts, or only the parts in `parts`.
     With resolve=False a reference that names no entry is a note, not an
-    error (for a check that reads an incomplete registry). Raises
-    RegistryError listing every problem found."""
+    error (for a check that reads an incomplete registry). With
+    templates=False a message template that no invalid case shows is not
+    an error (for the tests of the other checks). Raises RegistryError
+    listing every problem found."""
     d = pathlib.Path(directory) if directory is not None else SCRIPT_DIR
-    return _Loader(d, parts, resolve).run()
+    return _Loader(d, parts, resolve, templates).run()
 
 
 def summary(reg: Registry) -> str:

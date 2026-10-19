@@ -316,12 +316,14 @@ set_tests_properties(hpo_optimizer_registry_sync PROPERTIES
 # The target-file registry: blueprint/hpotarget.toml and the part files its
 # meta.parts lists describe every block, key, option and PARAM key of the
 # target file, for the documentation (blueprint/README.md, "The
-# target-file registry"). Four checks keep it equal to the parser:
+# target-file registry"). These checks keep it equal to the parser:
 #  - hpo_hpotarget_registry_python: the loader, hpotarget_registry.py, on
 #    synthetic registries (tests/test_hpotarget_registry.py);
 #  - hpo_hpotarget_registry_check: the registry files pass the loader's
 #    checks (unknown fields, duplicate ids, references, placeholders,
-#    wrappers);
+#    wrappers and their blocks, the cases each entry needs, the block of
+#    each example of a key, the message of each invalid case and a case
+#    or a reason for each message, the length of a doc);
 #  - hpo_hpotarget_registry_coverage: every name the parser's sources
 #    recognise has a registry entry and every registry name is one they
 #    recognise (tests/check_hpotarget_coverage.py, its docstring lists what
@@ -334,7 +336,9 @@ set_tests_properties(hpo_optimizer_registry_sync PROPERTIES
 #    [hpotarget_optimizer], [hpotarget_lines], [hpotarget_params]).
 #    hpo_hpotarget_registry_conformance runs them all under the label docs
 #    (tag [hpotarget_registry]); --warn NoTests: a tag that matches no test
-#    case fails instead of passing.
+#    case fails instead of passing;
+#  - hpo_hpotarget_registry_generated: the cases derived from the
+#    structured fields (below).
 # Before the registry: the check, the coverage and the conformance cases
 # fail, the files do not exist.
 cmake_path(SET _hpo_blueprint_dir NORMALIZE
@@ -374,6 +378,31 @@ add_test(NAME hpo_hpotarget_registry_conformance
 set_tests_properties(hpo_hpotarget_registry_conformance PROPERTIES
     LABELS "docs"
     TIMEOUT 120)
+# The generated checks: cases derived from the structured fields of the
+# registry (the blocks of each key, its repeat rule, the ranges and words
+# of its arguments, the PARAM keys of each optimiser, the options of each
+# line, the defaults), run through the parser by hpotarget_case_runner
+# (tests/tools/hpotarget_case_runner.cpp) and compared by
+# tests/check_hpotarget_generated.py, whose docstring lists the checks
+# and what they cannot see. hpo_hpotarget_generated_tool tests the
+# generator on a synthetic registry.
+add_executable(hpotarget_case_runner tools/hpotarget_case_runner.cpp)
+target_link_libraries(hpotarget_case_runner PRIVATE tadah.core tadah.hpo)
+add_test(NAME hpo_hpotarget_registry_generated
+    COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/check_hpotarget_generated.py
+        --runner $<TARGET_FILE:hpotarget_case_runner>
+        --registry ${_hpo_blueprint_dir})
+set_tests_properties(hpo_hpotarget_registry_generated PROPERTIES
+    LABELS "docs"
+    TIMEOUT 900)
+add_test(NAME hpo_hpotarget_generated_tool
+    COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/test_check_hpotarget_generated.py)
+set_tests_properties(hpo_hpotarget_generated_tool PROPERTIES
+    LABELS "docs"
+    TIMEOUT 60
+    FAIL_REGULAR_EXPRESSION "\nRan 0 tests ")
 
 # Boost drift gate: every Boost header HPO includes must be in the Boost
 # Tadah vendors (MLIP's external/boost, on HPO's include path through

@@ -14,6 +14,16 @@ blueprint/hpotarget_registry.py) declares, per vocabulary:
     parser"): an entry for a key, an option, a word or a PARAM key the
     parser does not know fails.
 
+The vocabularies of the options follow their lines: line_option:<line>,
+for each line or form the registry gives options (PC_LAMMPS,
+PC_FAILPROBE, the metric lines, RHOGATE, RHOBARGATE, OPTIM, OPTIM.AUTO,
+PC_OBSERVABLE.cohesive_energy), and the STRATEGY keys of each TYPE,
+strategy_type_key:<TYPE>. An option the registry gives a line the parser
+does not take it on fails as "not in the parser", where the sources say
+which line takes the option: the table of lammps_sim.cpp (its on_lammps
+and on_failprobe fields) and the functions of each line. The keys of a
+TYPE come from the second field of kStrategyTypeKeys.
+
 Exits 1 and lists each difference, 0 when there is none.
 
 How the names are extracted
@@ -26,13 +36,24 @@ expression on its definition, which must match exactly once), and reads:
   - comparisons `<operand> == "<literal>"` and `!=` in the function; each
     operand that occurs is mapped to the vocabularies its literals belong
     to, or ignored with a reason. A comparison whose operand the rule does
-    not map is an error ("unclassified comparison"), so a new name compared
-    in a scanned function cannot go unseen, and neither can a comparison
-    with the literal on the left;
+    not map is an error ("unclassified comparison"), and so is one with
+    the literal on the left;
   - tables: the string literals of a braced initializer (`name = {...}` or
-    `name[] = {...}`), each one or the first of each element;
+    `name[] = {...}`), each one or the first of each element, whose
+    vocabulary may depend on the element's other fields;
   - calls: the literal argument of a call pattern (`param.find("...")`,
     `ceres_param(sp, "...")`, `std::getenv("TADAH_...")`).
+
+In a function a rule names, two more things are errors, so that a name
+read in another way is seen:
+  - a comparison the rule cannot read: the operand compared with a named
+    constant (`key == kNewKey`), with a constructed string
+    (`key == std::string(...)`), or compare(), unless the rule's
+    unread_ok gives the reason ("unread comparison");
+  - a literal shaped like a name of the target file (an upper-case word
+    or an option --name) that no rule reads and the registry does not
+    know, as a name kept in a set or a map, unless the rule's not_names
+    gives the reason ("unclassified literal").
 
 A rule that finds nothing is an error: the code moved and the rule needs
 updating.
@@ -43,9 +64,17 @@ What it cannot see
     one variable, `key`, so a name found there counts for a block, an END
     line, a key of the optimiser group (PARAM and STEP, compared to name
     what a line sets once) or a key of ROOT, OPTIMIZER, STRATEGY, INIT
-    (METHOD, which adds to its chain), NOISE or RESTART alike. The blocks a
-    registry entry names are checked by the conformance test, through its
-    examples and invalid lines;
+    (METHOD, which adds to its chain), NOISE or RESTART alike. The blocks
+    of a key are checked by tests/check_hpotarget_generated.py, which puts
+    each key into every block;
+  - the line of an option a function shared by two lines reads
+    (LammpsSim::parse_tokens for PC_LAMMPS and PC_FAILPROBE,
+    parse_gate_options for RHOGATE and RHOBARGATE): a name found there
+    counts for both lines. check_hpotarget_generated.py puts each option
+    on every line;
+  - a literal that is not shaped like a name (a lower-case word, as a
+    LOSS name or a lattice), outside the comparisons, tables and calls the
+    rules read;
   - a name the parser builds instead of writing it: END lines are matched
     as literals in HPOTargets::read, but block_ended_by() builds "END" +
     name; a rule that compares a computed string;
@@ -76,8 +105,11 @@ What it cannot see
     refit_parser.cpp), the environment overrides' values in hpo.cpp, and
     density_gate_keys() (the keys of the RHOGATE arming rule, named in its
     message);
-  - messages: the conformance test compares the registry's messages with
-    the parser's, for the entries that have an invalid example.
+  - messages: the conformance test compares each invalid case's error with
+    the parser's, and hpotarget_registry.py --check requires each message
+    template of an entry to match an invalid case (or to give the reason
+    it has none), so a template is compared with the parser through the
+    cases that match it.
 """
 
 from __future__ import annotations
@@ -194,11 +226,40 @@ class Rule:
         default_factory=list)            # (regex with one group, vocab)
     finds_names: bool = True             # False: it only guards against
                                          # unclassified comparisons
+    unread_ok: dict[str, str] = dataclasses.field(
+        default_factory=dict)            # comparison start -> why it is
+                                         # no name of the target file
+    not_names: dict[str, str] = dataclasses.field(
+        default_factory=dict)            # literal -> why it is no name
 
 
 IGNORE_OPTIMISERS = "an optimiser name (LIB or ALGO value: the optimiser list)"
 IGNORE_INIT_MODE = ("the INIT_MODE grammar of the annealers' PARAM keys "
                     "(anneal_keys.toml)")
+METRIC_OPTIONS = ("line_option:PC_EMAE", "line_option:PC_ERMSE",
+                  "line_option:PC_ErRMSE", "line_option:PC_ERSQ",
+                  "line_option:PC_SRMSE", "line_option:PC_FRMSE")
+
+
+def pc_line_option_of(element: str) -> tuple[str, ...]:
+    """The lines an element {"--opt", on_lammps, on_failprobe} of
+    lammps_sim.cpp's line_options() table gives its option to."""
+    flags = [f.strip() for f in element.strip("{} \n").split(",")[1:3]]
+    out = []
+    if flags and flags[0] == "true":
+        out.append("line_option:PC_LAMMPS")
+    if len(flags) > 1 and flags[1] == "true":
+        out.append("line_option:PC_FAILPROBE")
+    return tuple(out)
+
+
+def strategy_type_key_of(element: str) -> tuple[str, ...]:
+    """The TYPE of an element {"KEY", StrategyType::TYPE, ...} of
+    strategy_rules.cpp's kStrategyTypeKeys."""
+    m = re.search(r"StrategyType::(\w+)", element)
+    return (f"strategy_type_key:{m.group(1)}",) if m else ()
+
+
 READ_KEY = ("block", "block_end", "group_key", "key:ROOT", "key:OPTIMIZER",
             "key:STRATEGY", "key:INIT", "key:NOISE", "key:RESTART")
 PARAM_FIND = (r'param(?:_raw)?\s*\.\s*(?:find|count)\(\s*"([^"]+)"\s*\)',
@@ -209,11 +270,19 @@ EXTRACTION: list[Rule] = [
          r"^void HPOTargets::read\(",
          operands={"key": READ_KEY, "t": ("strategy_type", "word"),
                    "v": ("word",), "PC_ISOLATION": ("word",),
-                   "flag": ("line_option",), "toks[i2]": ("line_option",)},
+                   "flag": METRIC_OPTIONS,
+                   "toks[i2]": ("line_option:PC_FAILPROBE",)},
          ignore={"sp.lib": IGNORE_OPTIMISERS, "sp.algo": IGNORE_OPTIMISERS,
                  "sp.inner->lib": IGNORE_OPTIMISERS,
                  "b.sp->inner->lib": IGNORE_OPTIMISERS},
-         tables=[(r"kBlockNames\s*\[\]", "all", ("block",))]),
+         tables=[(r"kBlockNames\s*\[\]", "all", ("block",))],
+         unread_ok={"key == std::string(": "an END line: END and a block "
+                                           "name of kBlockNames, which the "
+                                           "table is read for"},
+         not_names={"END": "the prefix of an END line, joined to a block "
+                           "name of kBlockNames",
+                    "NLOPT": IGNORE_OPTIMISERS, "DLIB": IGNORE_OPTIMISERS,
+                    "BFGS": IGNORE_OPTIMISERS}),
     Rule("the INIT and RESTART keys", "src/hpo_targets.cpp",
          r"^static bool dispatch_init_attr\(",
          operands={"key": ("key:INIT", "alias"),
@@ -223,16 +292,27 @@ EXTRACTION: list[Rule] = [
          operands={"key": ("inner_refused",)}),
     Rule("the removed keywords", "src/hpo_targets.cpp",
          r"^static bool reject_old_keyword\(", compare=False,
-         tables=[(r"\bmap\s*\[\]", "first", ("removed",))]),
+         tables=[(r"\bmap\s*\[\]", "first", ("removed",))],
+         unread_ok={"key == r": "a keyword of the table, which is read as "
+                                "a table"}),
     Rule("the OPTIM line", "src/hpo_targets.cpp",
          r"^void HPOTargets::process_optim_config\(",
-         operands={"k": ("optim_target",), "opt": ("line_option",),
-                   "tag": ("line_option",),
-                   "upper(toks[toks.size() - 2])": ("line_option",),
-                   "upper(tokens.front())": ("form",)}),
+         operands={"k": ("optim_target",),
+                   "opt": ("line_option:OPTIM.AUTO",),
+                   "tag": ("line_option:OPTIM",),
+                   "upper(toks[toks.size() - 2])": ("line_option:OPTIM",),
+                   "upper(tokens.front())": ("form",)},
+         unread_ok={".compare(": "the suffix .AMPLITUDES of a DM_Embed "
+                                 "component path",
+                    "key != k": "a value of the potential left out, found "
+                                "by its OPTIM key"},
+         not_names={"RCUT": "the prefix of the cutoff keys that AUTO "
+                            "refuses ([optim] auto_excluded_prefix)"}),
     Rule("the OPTIM structure keys", "src/hpo_targets.cpp",
          r"^std::string HPOTargets::optim_structure_key_error\(",
-         tables=[(r"\bstructure\s*\[\]", "first", ("optim_target",))]),
+         tables=[(r"\bstructure\s*\[\]", "first", ("optim_target",))],
+         unread_ok={"k == e": "a key of the table, which is read as a "
+                              "table"}),
     Rule("the OPTIM discrete index", "src/hpo_targets.cpp",
          r"^std::string HPOTargets::optim_discrete_index_error\(",
          operands={"core::to_upper(key)": ("optim_target",)}),
@@ -241,10 +321,15 @@ EXTRACTION: list[Rule] = [
          ignore={"field": "a DM_Embed component path in the message",
                  "s.cutoff": "the CUTOFF TYPE of the training "
                              "configuration, in the message"},
-         tables=[(r"\blegacy\s*\[\]", "first", ("optim_target",))]),
+         tables=[(r"\blegacy\s*\[\]", "first", ("optim_target",))],
+         unread_ok={"k == r": "a key of the table, which is read as a "
+                              "table"},
+         not_names={f: "a field of a DM_Embed component path"
+                    for f in ("CENTRES", "AMPLITUDES", "WIDTHS", "ETA")}),
     Rule("the gate options", "src/hpo_targets.cpp",
          r"^void parse_gate_options\(",
-         operands={"kw": ("line_option",), "m": ("word",)}),
+         operands={"kw": ("line_option:RHOGATE", "line_option:RHOBARGATE"),
+                   "m": ("word",)}),
     Rule("the RHOBARGATE lattice", "src/hpo_targets.cpp",
          r"^RhoBarGateSpec parse_rhobargate\(",
          operands={"s.lattice": ("word",)}),
@@ -252,7 +337,12 @@ EXTRACTION: list[Rule] = [
          r"^HPOTargets::HPOTargets\(",
          operands={"v": ("word",)},
          ignore={"s.lib": IGNORE_OPTIMISERS},
-         calls=[(r'std::getenv\(\s*"(TADAH_[A-Z_]+)"\s*\)', ("env",))]),
+         calls=[(r'std::getenv\(\s*"(TADAH_[A-Z_]+)"\s*\)', ("env",))],
+         not_names={"TADAH": IGNORE_OPTIMISERS,
+                    "ANNEAL": IGNORE_OPTIMISERS, "ASA": IGNORE_OPTIMISERS,
+                    "NLOPT": IGNORE_OPTIMISERS,
+                    "OUTER": "the name of the STRATEGY-level phase in a "
+                             "message"}),
     Rule("the booleans", "src/optimizer_block.cpp", r"^bool parse_bool\(",
          operands={"lo": ("word",)}),
     Rule("the optimiser keys", "src/optimizer_block.cpp",
@@ -261,12 +351,15 @@ EXTRACTION: list[Rule] = [
     Rule("the optimiser key reader", "src/optimizer_block.cpp",
          r"^bool dispatch_opt_attr\(",
          operands={"key": ("group_key",), "v": ("word",)},
-         ignore={"ukey": IGNORE_INIT_MODE, "up(vals[i])": IGNORE_INIT_MODE}),
+         ignore={"ukey": IGNORE_INIT_MODE, "up(vals[i])": IGNORE_INIT_MODE},
+         not_names={"INIT_MODE": IGNORE_INIT_MODE}),
     Rule("the PARAM value grammar", "src/optimizer_block.cpp",
          r"^bool param_takes_another_value\(",
          ignore={"key": IGNORE_INIT_MODE, "up(next)": IGNORE_INIT_MODE,
                  "up(sofar[0])": IGNORE_INIT_MODE,
                  "up(sofar[1])": IGNORE_INIT_MODE},
+         not_names={"JITTER": IGNORE_INIT_MODE,
+                    "INIT_MODE": IGNORE_INIT_MODE},
          finds_names=False),
     Rule("the LAMMPS time spec", "src/strict_parse.cpp",
          r"^std::optional<double> parse_lammps_timespec\(",
@@ -274,13 +367,14 @@ EXTRACTION: list[Rule] = [
     Rule("the STRATEGY keys of one TYPE", "src/strategy_rules.cpp",
          compare=False,
          tables=[(r"kStrategyTypeKeys\s*\[\]", "first",
-                  ("strategy_type_key",))]),
+                  strategy_type_key_of)]),
     Rule("the PC_LAMMPS and PC_FAILPROBE options", "src/lammps_sim.cpp",
          r"^static const std::vector<LineOption>& line_options\(",
-         tables=[(r"\bk", "first", ("line_option",))]),
+         tables=[(r"\bk", "first", pc_line_option_of)]),
     Rule("the PC_LAMMPS reader", "src/lammps_sim.cpp",
          r"^void LammpsSim::parse_tokens\(",
-         operands={"tokens[i]": ("line_option",)},
+         operands={"tokens[i]": ("line_option:PC_LAMMPS",
+                                 "line_option:PC_FAILPROBE")},
          ignore={"name": "the LAMMPS variable maxtime, which HPO reserves "
                          "for the script timeout"},
          ignore_literals={"-var": "a LAMMPS command-line option, passed to "
@@ -292,7 +386,8 @@ EXTRACTION: list[Rule] = [
          operands={"kind": ("form",)}),
     Rule("the cohesive_energy options", "src/observable_parser.cpp",
          r"^parse_cohesive_energy\(",
-         operands={"t": ("line_option",), "kind": ("word",),
+         operands={"t": ("line_option:PC_OBSERVABLE.cohesive_energy",),
+                   "kind": ("word",),
                    "lattice": ("word",), "name": ("word",)},
          ignore={"substr(0, 2)": "the option prefix --"}),
     Rule("the loss functions", "src/loss_function.cpp",
@@ -312,6 +407,7 @@ EXTRACTION: list[Rule] = [
          r"^inline void validate_dlib_bfgs_spec\(",
          operands={"kv.first": ("param",)},
          ignore={"sp.lib": IGNORE_OPTIMISERS, "sp.algo": IGNORE_OPTIMISERS},
+         not_names={"DLIB": IGNORE_OPTIMISERS, "BFGS": IGNORE_OPTIMISERS},
          calls=[(r'dlib_param\(\s*\w+\s*,\s*"([^"]+)"\s*\)', ("param",))]),
     Rule("the CERES PARAM keys", "include/tadah/hpo/ceres_adapter.h",
          r"^inline void validate_ceres_common_\(",
@@ -337,19 +433,30 @@ EXTRACTION: list[Rule] = [
 # Registry.vocabulary names). A key scope the registry uses must be here.
 VOCABULARIES = ("block", "block_end", "alias", "key:ROOT", "key:OPTIMIZER",
                 "key:STRATEGY", "key:INIT", "key:NOISE", "key:RESTART",
-                "group_key", "inner_refused", "removed", "line_option",
-                "form", "loss", "init_method", "strategy_type",
-                "strategy_type_key", "optim_target", "param",
+                "group_key", "inner_refused", "removed", "form", "loss",
+                "init_method", "strategy_type", "optim_target", "param",
                 "param_excluded", "env", "word")
+
+
+def vocabularies(reg) -> tuple[str, ...]:
+    """VOCABULARIES and the scoped ones of the registry: the options of
+    each line (line_option:<line>) and the STRATEGY keys of each TYPE
+    (strategy_type_key:<TYPE>)."""
+    lines = sorted({ln for o in reg.line_options for ln in o.lines})
+    types = sorted(t.name for t in reg.strategy_types)
+    return VOCABULARIES + tuple(f"line_option:{ln}" for ln in lines) + \
+        tuple(f"strategy_type_key:{t}" for t in types)
 
 
 def line_of(src: str, pos: int) -> int:
     return src.count("\n", 0, pos) + 1
 
 
-def table_literals(text: str, how: str) -> list[str]:
+def table_literals(text: str, how: str) -> list[tuple[str, str]]:
+    """The names of a braced table: each literal ("all"), or the first
+    literal of each element ("first"), with the text of its element."""
     if how == "all":
-        return [m.group(1) for m in STRING.finditer(text)]
+        return [(m.group(1), m.group(0)) for m in STRING.finditer(text)]
     out = []
     inner = text[1:-1]
     pos = 0
@@ -360,15 +467,62 @@ def table_literals(text: str, how: str) -> list[str]:
         a, b = braced(inner, k)
         m = STRING.search(inner[a:b])
         if m:
-            out.append(m.group(1))
+            out.append((m.group(1), inner[a:b]))
         pos = b
     return out
 
 
-def extract(hpo: pathlib.Path) -> tuple[list[Found], list[str]]:
-    """The names the rules find, and the problems of the rules."""
+# A comparison of a scanned function that the rules cannot read: the key
+# compared with a named constant or a constructed string, or compare().
+UNREAD_COMPARISON = re.compile(
+    r"\b(?:key|k|kw|opt|tag|flag|t|v)\s*(?:==|!=)\s*(?:std::string\s*\(|"
+    r"[A-Za-z_][\w:]*\b(?!\s*\())|\.compare\s*\(")
+# A literal shaped like a name of the target file: a key, a word or an
+# option.
+NAME_SHAPED = re.compile(r'"([A-Z][A-Z0-9_]+|--[a-z][a-z0-9-]*)"')
+
+
+def unread_comparisons(rule: Rule, src: str, offset: int,
+                       body: str) -> list[str]:
+    out = []
+    for m in UNREAD_COMPARISON.finditer(body):
+        text = m.group(0)
+        if any(text.startswith(f"{op} ") or text.startswith(op)
+               for op in rule.unread_ok):
+            continue
+        where = f"{rule.file}:{line_of(src, offset + m.start())}"
+        out.append(f"{where}: comparison in {rule.label} that this check "
+                   f"cannot read: '{text.strip()}' (compare with a literal, "
+                   "or list the operand in the rule's unread_ok with the "
+                   "reason)")
+    return out
+
+
+def name_literals(rule: Rule, src: str, offset: int, body: str,
+                  read: set[str]) -> list[tuple[str, str]]:
+    """The name-shaped literals of a scanned function that no rule reads:
+    (literal, place). compare() reports those the registry does not know
+    and the rule does not ignore."""
+    out = []
+    for m in NAME_SHAPED.finditer(body):
+        lit = m.group(1)
+        if lit in read or lit in rule.ignore_literals or \
+                lit in rule.not_names:
+            continue
+        out.append((lit, f"{rule.file}:{line_of(src, offset + m.start())} "
+                         f"({rule.label})"))
+    return out
+
+
+def extract(hpo: pathlib.Path,
+            unread: list | None = None) -> tuple[list[Found], list[str]]:
+    """The names the rules find, and the problems of the rules. `unread`
+    receives the name-shaped literals of the scanned functions that no
+    rule reads (name_literals), for compare() to look up."""
     found: list[Found] = []
     problems: list[str] = []
+    if unread is None:
+        unread = []
     cache: dict[str, str] = {}
     for rule in EXTRACTION:
         path = hpo / rule.file
@@ -391,6 +545,7 @@ def extract(hpo: pathlib.Path) -> tuple[list[Found], list[str]]:
             a, b = braced(src, hits[0].end())
             offset, body = a, src[a:b]
         n_found = 0
+        rule_names: set[str] = set()
         if rule.compare:
             for m in COMPARISON.finditer(body):
                 operand, literal = m.group(1), m.group(3)
@@ -405,6 +560,7 @@ def extract(hpo: pathlib.Path) -> tuple[list[Found], list[str]]:
                         "to a vocabulary, or ignore it with a reason)")
                     continue
                 found.append(Found(literal, vocab, f"{where} ({rule.label})"))
+                rule_names.add(literal)
                 n_found += 1
             for m in LITERAL_LEFT.finditer(body):
                 where = f"{rule.file}:{line_of(src, offset + m.start())}"
@@ -422,25 +578,51 @@ def extract(hpo: pathlib.Path) -> tuple[list[Found], list[str]]:
             a, b = braced(body, m.end() - 1)
             names = table_literals(body[a:b], how)
             where = f"{rule.file}:{line_of(src, offset + a)}"
-            for name in names:
-                found.append(Found(name, vocab, f"{where} ({rule.label})"))
+            for name, element in names:
+                vocabs = vocab(element) if callable(vocab) else vocab
+                if vocabs:
+                    found.append(Found(name, vocabs,
+                                       f"{where} ({rule.label})"))
+                    rule_names.add(name)
             n_found += len(names)
         for call_re, vocab in rule.calls:
             for m in re.finditer(call_re, body):
                 where = f"{rule.file}:{line_of(src, offset + m.start())}"
                 found.append(Found(m.group(1), vocab,
                                    f"{where} ({rule.label})"))
+                rule_names.add(m.group(1))
                 n_found += 1
+        if rule.function:
+            problems += unread_comparisons(rule, src, offset, body)
+            unread.extend(name_literals(rule, src, offset, body,
+                                        rule_names))
         if n_found == 0 and rule.finds_names:
             problems.append(f"{rule.file}: {rule.label}: the rule finds no "
                             "name: the extraction rule needs updating")
     return found, problems
 
 
-def compare(found: list[Found], reg) -> list[str]:
-    """The differences between the names found and the registry's."""
+def compare(found: list[Found], reg,
+            unread: list[tuple[str, str]] = ()) -> list[str]:
+    """The differences between the names found and the registry's, and
+    the name-shaped literals no rule reads that the registry does not
+    know."""
     problems: list[str] = []
-    vocab = {v: reg.vocabulary(v) for v in VOCABULARIES}
+    names = vocabularies(reg) if hasattr(reg, "line_options") else \
+        VOCABULARIES
+    vocab = {v: reg.vocabulary(v) for v in names}
+    if unread:
+        known = reg.vocabulary("registry_name")
+        reported = set()
+        for lit, where in unread:
+            if lit in known or lit in reported:
+                continue
+            reported.add(lit)
+            problems.append(f"unclassified literal: '{lit}' at {where} is "
+                            "shaped like a name of the target file, no rule "
+                            "reads it and the registry does not know it "
+                            "(read it in a rule, or give the reason in the "
+                            "rule's not_names)")
     missing: dict[tuple[str, tuple[str, ...]], list[str]] = {}
     for f in found:
         if not any(f.name in vocab[v] for v in f.vocabularies):
@@ -450,13 +632,13 @@ def compare(found: list[Found], reg) -> list[str]:
                 if len(places) > 1 else "")
         problems.append(f"missing from the registry: '{name}' "
                         f"({' or '.join(vocabs)}), {places[0]}{more}")
-    seen: dict[str, set[str]] = {v: set() for v in VOCABULARIES}
+    seen: dict[str, set[str]] = {v: set() for v in names}
     for f in found:
         for v in f.vocabularies:
             seen[v].add(f.name)
     used = {v for f in found for v in f.vocabularies}
-    for v in VOCABULARIES:
-        if v not in used:
+    for v in names:
+        if v not in used and vocab[v]:
             problems.append(f"no extraction rule reads the vocabulary {v}")
         for name in sorted(vocab[v] - seen[v]):
             problems.append(f"not in the parser: '{name}' ({v}) is declared "
@@ -485,7 +667,8 @@ def main(argv: list[str] | None = None) -> int:
     sys.path.insert(0, str(registry_dir))
     import hpotarget_registry  # noqa: E402  (the registry's own loader)
 
-    found, problems = extract(args.hpo)
+    unread: list[tuple[str, str]] = []
+    found, problems = extract(args.hpo, unread)
     try:
         reg = hpotarget_registry.load(registry_dir, resolve=False)
     except hpotarget_registry.RegistryError as e:
@@ -494,7 +677,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"check_hpotarget_coverage.py: the registry does not load "
               f"({len(e.errors)} error(s))")
         return 1
-    problems += compare(found, reg)
+    problems += compare(found, reg, unread)
     for p in problems:
         print(p)
     names = len({(f.name, f.vocabularies) for f in found})
