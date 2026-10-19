@@ -17,9 +17,9 @@
 # capture), no EAM fast path, at least 4 weights (the lattice cases require
 # 4 and perturb WEIGHTS[2] = -10.48) and a physical bcc Ta: in the 4-atom cell of
 # test_lammps_hessian.cpp it relaxes to a = 3.2944 A with C11 = 212 GPa and
-# C12 = 91 GPa (the box block of the Hessian, V = 71.51 A^3). The HPO
-# examples' model (examples/common/config.tadah, energies only) has
-# C12 = -103 GPa there.
+# C12 = 91 GPa (the box block of the Hessian, V = 71.51 A^3). The shared
+# Ta model of the HPO tests (data/ta/common/config.tadah, energies only)
+# has C12 = -103 GPa there.
 ATOM              Ta
 BIAS              false
 CEMBFUNC          0.5   0.75   1   1.25   1.5

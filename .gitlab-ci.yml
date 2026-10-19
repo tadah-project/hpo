@@ -2,7 +2,6 @@ stages:
   - lint
   - build_debug
   - build_release
-  - examples
   - release
 
 cache:
@@ -37,7 +36,7 @@ build_debug:
         -DTADAH_ENABLE_OPENMP=ON -DBUILD_TESTING=ON -DFETCHCONTENT_UPDATES_DISCONNECTED=ON
     - make -j ${CPU_BUILD}
     - make test
-    - cd ..; gcovr -e '.*tests.*|external|.*/_deps/.*|.*examples.*|build' -r .
+    - cd ..; gcovr -e '.*tests.*|external|.*/_deps/.*|build' -r .
   coverage: /^TOTAL.*\s+(\d+\%)$/
 
 build_release_shared:
@@ -64,35 +63,6 @@ build_release_static:
         -DBUILD_SHARED_LIBS=OFF -DCMAKE_INSTALL_PREFIX=${INSTALL_PATH} -DFETCHCONTENT_UPDATES_DISCONNECTED=ON
     - make -j ${CPU_BUILD}
 
-# ---- HPO examples (driver: examples/run_reference_suite.sh) ------------
-# Depend on the build_release_* artifacts; gated to manual for the same
-# TADAH_LAMMPS_DIR reason as the build jobs above.
-hpo_examples_fast:
-  stage: examples
-  rules:
-    - when: manual
-      allow_failure: true
-  script:
-    - if [ -x examples/run_reference_suite.sh ]; then
-        bash examples/run_reference_suite.sh --fast;
-      else
-        echo "examples/run_reference_suite.sh not present yet";
-        exit 0;
-      fi
-
-hpo_examples_full:
-  stage: examples
-  rules:
-    - when: manual
-      allow_failure: true
-  script:
-    - if [ -x examples/run_reference_suite.sh ]; then
-        bash examples/run_reference_suite.sh --full;
-      else
-        echo "examples/run_reference_suite.sh not present";
-        exit 0;
-      fi
-
 # ---- Lint (codespell) ---------------------------------------------------
 lint_codespell:
   stage: lint
@@ -111,7 +81,7 @@ lint_codespell:
         }
       fi
       export PATH="$HOME/.local/bin:$PATH"
-      codespell --skip='./build*,./external,./_deps,./tests/data,./examples/*/best_*' --ignore-words-list='Strat,strat,MAPE,mape,lamda,lamdas,fof,unparseable,re-use,re-uses,re-used,re-using,nd,SEH' || true
+      codespell --skip='./build*,./external,./_deps,./tests/data' --ignore-words-list='Strat,strat,MAPE,mape,lamda,lamdas,fof,unparseable,re-use,re-uses,re-used,re-using,nd,SEH' || true
   allow_failure: true
 
 # ---- Source-tarball release (tag-gated) --------------------------------

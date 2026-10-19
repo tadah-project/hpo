@@ -623,7 +623,8 @@ TEST_CASE("HPOTargets judges an MLSL or AUGLAG under PC_LAMMPS by its local "
  *   the INNER block (NLOPT:LN_AUGLAG, NLOPT:LN_AUGLAG_EQ, NLOPT:LN_BOBYQA,
  *   NLOPT:LN_COBYLA, NLOPT:LN_NELDERMEAD, NLOPT:LN_PRAXIS,
  *   NLOPT:LN_SBPLX)."
- * at the INNER block's ENDINNER line -- for example 14's G_MLSL_LDS with an
+ * at the INNER block's ENDINNER line -- for the G_MLSL_LDS search of
+ * data/ta/target_files/mlsl_inner.hpo with an
  * INNER LD_MMA, an INNER GD_STOGO (gradient-based and global), an INNER
  * CERES:LBFGS, and an EXPLORE block's INNER LD_LBFGS; an INNER LD_AUGLAG,
  * whose NLopt default local optimiser LD_MMA takes the gradient, is
@@ -679,7 +680,8 @@ TEST_CASE("HPOTargets names, for an INNER block under PC_LAMMPS, the "
         std::filesystem::remove(cfg);
         return what;
     };
-    /* Example 14's search: G_MLSL_LDS with an INNER block of `lib`:`algo`. */
+    /* The search of data/ta/target_files/mlsl_inner.hpo: G_MLSL_LDS with an
+     * INNER block of `lib`:`algo`. */
     auto mlsl = [&](const std::string& lib, const std::string& algo) {
         return "OPTIMIZER\n  STRATEGY\n    TYPE PLAIN\n    LIB NLOPT\n"
                "    ALGO G_MLSL_LDS\n    MAXEVAL 120\n    POPULATION 5\n"

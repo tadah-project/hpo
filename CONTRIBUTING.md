@@ -48,5 +48,16 @@ build directory.
 |---|---|
 | `include/tadah/hpo/` | Public headers (drivers, init strategies, run policies, loss terms). |
 | `src/`               | Implementation translation units. |
-| `tests/`             | Unit and integration tests. |
-| `examples/`          | Worked-through `config.hpo` reference suite (see `run_reference_suite.sh`). |
+| `tests/`             | Unit and integration tests; `tests/data/` holds their data (`tests/data/ta`: the Ta training and validation configurations, datasets, LAMMPS scripts and target files). |
+| `blueprint/`         | Registry files for the documentation (see `blueprint/README.md`). |
+
+## Generated files
+
+Some checked-in files are generated, and a CTest entry fails when one
+differs from what produces it. Such a file is regenerated and committed
+with the change that alters it.
+
+- `include/tadah/hpo/anneal_keys_gen.h` (CTest `hpo_anneal_registry_sync`)
+  and `blueprint/optimizers_gen.toml` (CTest
+  `hpo_optimizer_registry_sync`): `blueprint/README.md` says what each is
+  generated from and how to regenerate it.

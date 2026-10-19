@@ -996,8 +996,8 @@ TEST_CASE("startup validation: the ANALYTICAL rule applies to the block "
 
 /* FAILSCORE_GRADING ON bands the failure losses below FAILSCORE, so it
  * needs a finite FAILSCORE. The rule used to live in hpo_run() alone, so a
- * setup checked with validate_hpo_setup() -- the examples' parse guard,
- * any embedding -- passed it. */
+ * setup checked with validate_hpo_setup() -- the target-file parse cases
+ * (test_ta_target_files.cpp), any embedding -- passed it. */
 TEST_CASE("startup validation: FAILSCORE_GRADING ON needs a finite FAILSCORE",
           "[startup_validation][failscore_grading]") {
   const std::string head = "OPTIM WATOM (1) 0.1 5.0\nPC_ERMSE 0 1\n"
