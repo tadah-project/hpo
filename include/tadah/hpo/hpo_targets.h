@@ -245,7 +245,11 @@ public:
      *     them, the refusal being the open's own error ("'loss.tadah' in
      *     the working directory '<dir>' cannot be opened: Permission
      *     denied (tadah hpo rewrites it)", "... (tadah hpo opens it to
-     *     lock best_pot.tadah)", the lock's own potential); a best
+     *     lock best_pot.tadah)", the lock's own potential); a socket is
+     *     refused (the run's open fails with ENXIO), a named pipe is
+     *     checked for permission and not opened, except as a result file,
+     *     which the run reopens for each row and which a pipe would block
+     *     (refused), and a device is opened without waiting; a best
      *     potential, which the run replaces, no directory ("... is a
      *     directory: tadah hpo writes a file of that name");
      *   - check_search_space_files(), once the target file is read: the

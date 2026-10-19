@@ -2127,24 +2127,29 @@ std::string working_directory() {
 
 /* What the run does with an output file in the working directory. */
 enum class OutputUse {
-  Rewritten,  // opens it to write (the journal, a result file)
+  Rewritten,  // opens it to write, once (the journal, a search-space file)
+  Reopened,   // opens it to write, again for each row (a result file)
   Locked,     // opens it to write and locks it (the lock of a best potential)
   Replaced    // replaces or removes the name (a best potential)
 };
 
 /* Whether the run can open the existing file @p file as it does -- to
  * write, and to read too (@p read_too: a lock) --: 0, or the errno of the
- * failure. A regular file is opened so, without creating or truncating
- * it, and closed; a directory is refused (EISDIR). A named pipe, socket or
- * device is not opened -- opening and closing a FIFO's write end would end
- * the stream of its reader --, and its permission is checked instead
- * (faccessat with the effective ids): the run's own open of it waits for
- * its reader as it would. Links are followed as the open follows them. */
+ * failure. Links are followed as the open follows them. A directory is
+ * refused (EISDIR), and so is a socket, which the run's open cannot open
+ * (ENXIO). A named pipe is not opened -- opening and closing its write end
+ * would end the stream of its reader --, and its permission is checked
+ * instead (faccessat with the effective ids): the run's own open of it
+ * waits for its reader. A regular file, and a character or block device,
+ * are opened as the run opens them, without creating or truncating them,
+ * without waiting and without taking a controlling terminal, and closed:
+ * nothing is written. */
 int open_as_the_run(const std::string& file, bool read_too) {
   struct stat st;
   if (::stat(file.c_str(), &st) != 0) return errno;
   if (S_ISDIR(st.st_mode)) return EISDIR;
-  if (!S_ISREG(st.st_mode)) {
+  if (S_ISSOCK(st.st_mode)) return ENXIO;
+  if (S_ISFIFO(st.st_mode)) {
     const int mode = read_too ? (R_OK | W_OK) : W_OK;
     return ::faccessat(AT_FDCWD, file.c_str(), mode, AT_EACCESS) == 0 ? 0
                                                                        : errno;
@@ -2159,10 +2164,11 @@ int open_as_the_run(const std::string& file, bool read_too) {
 
 /* Throws when the run cannot write the output file @p file of the working
  * directory as @p use says (@p locked: the best potential a lock is of).
- * A file the run writes through (Rewritten, Locked) that exists is opened
- * as the run opens it (open_as_the_run): the system decides, following
- * every link, and the refusal is the open's own error ("... cannot be
- * opened: Permission denied (tadah hpo rewrites it)"). One that does not
+ * A file the run writes through (Rewritten, Reopened, Locked) that exists
+ * is opened as the run opens it (open_as_the_run): the system decides,
+ * following every link, and the refusal is the open's own error ("...
+ * cannot be opened: Permission denied (tadah hpo rewrites it)"); a file
+ * the run reopens for each row (Reopened) cannot be a named pipe. One that does not
  * exist is checked where the system would create it
  * (resolve_physically): a name that ends in '/' or '/.' cannot be a file,
  * and the file must be in a directory that exists and the run can write
@@ -2187,6 +2193,16 @@ void check_output_file(const std::string& file, OutputUse use,
   const std::string purpose = use == OutputUse::Locked
                                   ? "tadah hpo opens it to lock " + locked
                                   : std::string("tadah hpo rewrites it");
+  /* A file the run reopens for each row cannot be a pipe: the reader gets
+   * the end of the file when the run closes it, and the next open waits
+   * for a reader for ever. */
+  if (use == OutputUse::Reopened) {
+    struct stat st;
+    if (::stat(file.c_str(), &st) == 0 && S_ISFIFO(st.st_mode))
+      throw std::runtime_error(where + " is a named pipe: tadah hpo reopens "
+                               "the file for each row it writes, and a pipe "
+                               "would block it");
+  }
   const int err = open_as_the_run(file, use == OutputUse::Locked);
   if (err == 0) return;
   if (err != ENOENT)
@@ -2259,7 +2275,7 @@ void HPOTargets::check_run_outputs(const std::string& journal) {
   for (const std::string* f :
        {&n.loss, &n.outvar, &n.params, &n.stats, &n.bestLoss, &n.bestOutvar,
         &n.bestParams, &n.bestStats})
-    check_output_file(*f, OutputUse::Rewritten);
+    check_output_file(*f, OutputUse::Reopened);
   for (const std::string* f : {&n.canonicalBestPot, &n.localBestPot}) {
     check_output_file(*f, OutputUse::Replaced);
     check_output_file(*f + ".lock", OutputUse::Locked, *f);
