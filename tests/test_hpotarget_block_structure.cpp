@@ -24,14 +24,16 @@
 //    NLOPT` opened the block and dropped `LIB NLOPT`, and `ENDOPTIMIZER
 //    junk here` closed it).
 // A repeated INIT, NOISE, EXPLORE, REFINE or RESTART block continues the
-// first: its lines set the same settings, a METHOD line adds to the same
-// chain and an INIT, NOISE or RESTART key set in both takes the later
-// value. An optimiser key (LIB, ALGO, MAXEVAL, SEED, PARAM <name>, ...) is
-// set once for its optimiser: a second line is refused at its line, naming
-// the first, whether it stands in the same block, a repeated block or
-// another block that configures the same optimiser (OPTIMIZER, STRATEGY
-// and REFINE configure the STRATEGY-level one); a REFINE line replaced the
-// STRATEGY block's value without a word.
+// first: its lines set the same settings and a METHOD line adds to the same
+// chain. Every key is set once for what it configures: a second line is
+// refused at its line, naming the first, whether it stands in the same
+// block, a repeated block or another block that configures the same thing
+// -- an optimiser key (LIB, ALGO, MAXEVAL, SEED, PARAM <name>, ...) for its
+// optimiser (OPTIMIZER, STRATEGY and REFINE configure the STRATEGY-level
+// one), an INIT key for the starting points of its optimiser, a NOISE,
+// RESTART or STRATEGY key for the run. A later line replaced the first's
+// value without a word. METHOD lines add to their chain and STEP <KEY>
+// overrides layer over the block-wide STEP: neither is a repeat.
 // A NOISE block takes AUTO and CALIBRATION: an optimiser key inside it is
 // refused at its line, as every other key (it set the optimiser of the
 // OPTIMIZER block around it).
@@ -51,6 +53,7 @@
 #include <fstream>
 #include <map>
 #include <memory>
+#include <optional>
 #include <string>
 #include <system_error>
 #include <unistd.h>
@@ -458,7 +461,7 @@ TEST_CASE("hpotarget block structure: a repeated INIT, NOISE, EXPLORE, "
     SECTION("INIT") {
         ScopedTempFile tf(kRoot + Lines{"OPTIMIZER", "  LIB DLIB",
                                         "  ALGO BFGS", "  INIT",
-                                        "    METHOD CONFIG", "    SEED 1",
+                                        "    METHOD CONFIG", "    K_TOTAL 2",
                                         "  ENDINIT", "  INIT",
                                         "    METHOD RANDOM 2", "    SEED 7",
                                         "  ENDINIT", "ENDOPTIMIZER"});
@@ -470,6 +473,7 @@ TEST_CASE("hpotarget block structure: a repeated INIT, NOISE, EXPLORE, "
         CHECK(init.chain[1].method == "RANDOM");
         CHECK(init.chain[1].line == 11);
         CHECK(init.seed == 7u);
+        CHECK(init.k_total == std::optional<std::size_t>(2));
         /* The block's line is the first block's. */
         CHECK(init.line == 6);
     }
@@ -492,12 +496,12 @@ TEST_CASE("hpotarget block structure: a repeated INIT, NOISE, EXPLORE, "
     SECTION("NOISE") {
         ScopedTempFile tf(kRoot + Lines{"OPTIMIZER", "  LIB DLIB",
                                         "  ALGO BFGS", "  NOISE",
-                                        "    CALIBRATION 3", "  ENDNOISE",
-                                        "  NOISE", "    CALIBRATION 4",
+                                        "    CALIBRATION 4", "  ENDNOISE",
+                                        "  NOISE", "    AUTO true",
                                         "  ENDNOISE", "ENDOPTIMIZER"});
         HPOTargets trg(ctx, tf.path.string());
         CHECK(trg.spec.noise.calibration_n == 4u);
-        CHECK_FALSE(trg.spec.noise.autodetect);
+        CHECK(trg.spec.noise.autodetect);
     }
     SECTION("EXPLORE") {
         ScopedTempFile tf(kRoot + Lines{"OPTIMIZER", "  STRATEGY",
@@ -554,10 +558,10 @@ TEST_CASE("hpotarget block structure: a repeated INIT, NOISE, EXPLORE, "
  * line is refused at its line, naming the line and block of the first:
  *  - in a REFINE block, after the STRATEGY block set it: "ALGO is set on
  *    line 7 in the STRATEGY block and again here in the REFINE block; both
- *    blocks configure the same optimiser, so give it once";
+ *    blocks configure the same optimiser, so each key is given once";
  *  - in a STRATEGY block, after the OPTIMIZER block set it;
  *  - twice in one block, or in a repeated block: "MAXEVAL is set twice in
- *    the EXPLORE block (first on line 12); give it once";
+ *    the EXPLORE block (first on line 12); each key is given once";
  *  - PARAM with one name twice ("PARAM STEP_FRAC is set twice ..."), the
  *    block-wide STEP twice, and a key set twice in an INNER block.
  * The same key for two optimisers (the STRATEGY-level one and the EXPLORE
@@ -581,7 +585,7 @@ TEST_CASE("hpotarget block structure: an optimiser key set twice for one "
         CHECK(parse_error(f) ==
               at_line(15, "ALGO is set on line 7 in the STRATEGY block and "
                           "again here in the REFINE block; both blocks "
-                          "configure the same optimiser, so give it once",
+                          "configure the same optimiser, so each key is given once",
                       "      ALGO LN_BOBYQA"));
     }
     SECTION("OPTIMIZER and STRATEGY") {
@@ -592,7 +596,7 @@ TEST_CASE("hpotarget block structure: an optimiser key set twice for one "
         CHECK(parse_error(f) ==
               at_line(8, "MAXEVAL is set on line 4 in the OPTIMIZER block "
                          "and again here in the STRATEGY block; both blocks "
-                         "configure the same optimiser, so give it once",
+                         "configure the same optimiser, so each key is given once",
                       "    MAXEVAL 9"));
     }
     SECTION("twice in one block") {
@@ -603,7 +607,7 @@ TEST_CASE("hpotarget block structure: an optimiser key set twice for one "
                                       "ENDOPTIMIZER"};
         CHECK(parse_error(f) ==
               at_line(9, "SEED is set twice in the STRATEGY block (first on "
-                         "line 8); give it once",
+                         "line 8); each key is given once",
                       "    SEED 2"));
     }
     SECTION("in a repeated EXPLORE block") {
@@ -616,7 +620,7 @@ TEST_CASE("hpotarget block structure: an optimiser key set twice for one "
                               "ENDOPTIMIZER"};
         CHECK(parse_error(f) ==
               at_line(14, "MAXEVAL is set twice in the EXPLORE block (first "
-                          "on line 11); give it once",
+                          "on line 11); each key is given once",
                       "      MAXEVAL 20"));
     }
     SECTION("PARAM of one name, the block-wide STEP, a key of an INNER "
@@ -629,7 +633,7 @@ TEST_CASE("hpotarget block structure: an optimiser key set twice for one "
                                         "    PARAM STEP_FRAC 0.2",
                                         "  ENDSTRATEGY", "ENDOPTIMIZER"}) ==
               at_line(10, "PARAM STEP_FRAC is set twice in the STRATEGY "
-                          "block (first on line 8); give it once",
+                          "block (first on line 8); each key is given once",
                       "    PARAM STEP_FRAC 0.2"));
         CHECK(parse_error(kRoot + Lines{"OPTIMIZER", "  STRATEGY",
                                         "    LIB NLOPT", "    ALGO LN_SBPLX",
@@ -637,7 +641,7 @@ TEST_CASE("hpotarget block structure: an optimiser key set twice for one "
                                         "    STEP 0.2", "  ENDSTRATEGY",
                                         "ENDOPTIMIZER"}) ==
               at_line(9, "STEP is set twice in the STRATEGY block (first on "
-                         "line 8); give it once",
+                         "line 8); each key is given once",
                       "    STEP 0.2"));
         CHECK(parse_error(kRoot + Lines{"OPTIMIZER", "  STRATEGY",
                                         "    LIB NLOPT",
@@ -647,7 +651,7 @@ TEST_CASE("hpotarget block structure: an optimiser key set twice for one "
                                         "      MAXEVAL 6", "    ENDINNER",
                                         "  ENDSTRATEGY", "ENDOPTIMIZER"}) ==
               at_line(12, "MAXEVAL is set twice in the INNER block (first on "
-                          "line 11); give it once",
+                          "line 11); each key is given once",
                       "      MAXEVAL 6"));
     }
     SECTION("the same key for two optimisers, PARAM of two names") {
@@ -667,6 +671,103 @@ TEST_CASE("hpotarget block structure: an optimiser key set twice for one "
         CHECK(trg.spec.prestage->stop.maxeval == 12u);
         CHECK(trg.spec.param.at("STEP_FRAC") == 0.1);
         CHECK(trg.spec.param.at("T0_PROBES") == 10);
+    }
+}
+
+/* Pins and fixes: a key of an INIT, NOISE, RESTART or STRATEGY block is set
+ * once for what it configures. A second line is refused at its line, naming
+ * the line of the first ("SEED is set twice in the INIT block (first on
+ * line 7); each key is given once"): in one block, in a repeated block, and
+ * in the INIT blocks inside OPTIMIZER and inside STRATEGY, which both set
+ * the starting points of the STRATEGY-level optimiser. METHOD lines in two
+ * INIT blocks add to one chain (the case above).
+ * Before the fix: the later line replaced the first's value without a
+ * word. */
+TEST_CASE("hpotarget block structure: a key of an INIT, NOISE, RESTART or "
+          "STRATEGY block set twice is refused at the second line",
+          "[hpotarget][block_structure]")
+{
+    const std::string once = "; each key is given once";
+    SECTION("INIT: in one block, in a repeated block, inside OPTIMIZER and "
+            "inside STRATEGY") {
+        CHECK(parse_error(kRoot + Lines{"OPTIMIZER", "  LIB DLIB",
+                                        "  ALGO BFGS", "  INIT",
+                                        "    SEED 1", "    SEED 2",
+                                        "  ENDINIT", "ENDOPTIMIZER"}) ==
+              at_line(8, "SEED is set twice in the INIT block (first on "
+                         "line 7)" + once, "    SEED 2"));
+        CHECK(parse_error(kRoot + Lines{"OPTIMIZER", "  LIB DLIB",
+                                        "  ALGO BFGS", "  INIT",
+                                        "    K_TOTAL 2", "  ENDINIT", "  INIT",
+                                        "    K_TOTAL 3", "  ENDINIT",
+                                        "ENDOPTIMIZER"}) ==
+              at_line(10, "K_TOTAL is set twice in the INIT block (first on "
+                          "line 7)" + once, "    K_TOTAL 3"));
+        CHECK(parse_error(kRoot + Lines{"OPTIMIZER", "  INIT",
+                                        "    WARM_ON_MISMATCH warn",
+                                        "  ENDINIT", "  STRATEGY",
+                                        "    LIB DLIB", "    ALGO BFGS",
+                                        "    INIT",
+                                        "      WARM_ON_MISMATCH error",
+                                        "    ENDINIT", "  ENDSTRATEGY",
+                                        "ENDOPTIMIZER"}) ==
+              at_line(11, "WARM_ON_MISMATCH is set twice in the INIT block "
+                          "(first on line 5)" + once,
+                      "      WARM_ON_MISMATCH error"));
+    }
+    SECTION("NOISE") {
+        CHECK(parse_error(kRoot + Lines{"OPTIMIZER", "  LIB DLIB",
+                                        "  ALGO BFGS", "  NOISE",
+                                        "    CALIBRATION 3", "  ENDNOISE",
+                                        "  NOISE", "    CALIBRATION 4",
+                                        "  ENDNOISE", "ENDOPTIMIZER"}) ==
+              at_line(10, "CALIBRATION is set twice in the NOISE block "
+                          "(first on line 7)" + once, "    CALIBRATION 4"));
+        CHECK(parse_error(kRoot + Lines{"OPTIMIZER", "  LIB DLIB",
+                                        "  ALGO BFGS", "  NOISE",
+                                        "    AUTO true", "    AUTO false",
+                                        "  ENDNOISE", "ENDOPTIMIZER"}) ==
+              at_line(8, "AUTO is set twice in the NOISE block (first on "
+                         "line 7)" + once, "    AUTO false"));
+    }
+    SECTION("RESTART") {
+        const Lines head = kRoot + Lines{"OPTIMIZER", "  STRATEGY",
+                                         "    LIB DLIB", "    ALGO BFGS",
+                                         "    RESTART",
+                                         "      AFTER_STAGNATION 5"};
+        CHECK(parse_error(head + Lines{"      MAX 2", "      MAX 3",
+                                       "    ENDRESTART", "  ENDSTRATEGY",
+                                       "ENDOPTIMIZER"}) ==
+              at_line(10, "MAX is set twice in the RESTART block (first on "
+                          "line 9)" + once, "      MAX 3"));
+        CHECK(parse_error(head + Lines{"    ENDRESTART", "    RESTART",
+                                       "      AFTER_STAGNATION 6",
+                                       "    ENDRESTART", "  ENDSTRATEGY",
+                                       "ENDOPTIMIZER"}) ==
+              at_line(11, "AFTER_STAGNATION is set twice in the RESTART "
+                          "block (first on line 8)" + once,
+                      "      AFTER_STAGNATION 6"));
+        CHECK(parse_error(head + Lines{"      SEED 4", "      SEED 5",
+                                       "    ENDRESTART", "  ENDSTRATEGY",
+                                       "ENDOPTIMIZER"}) ==
+              at_line(10, "SEED is set twice in the RESTART block (first on "
+                          "line 9)" + once, "      SEED 5"));
+    }
+    SECTION("STRATEGY") {
+        CHECK(parse_error(kRoot + Lines{"OPTIMIZER", "  STRATEGY",
+                                        "    TYPE MULTISTART",
+                                        "    TYPE PLAIN", "    LIB DLIB",
+                                        "    ALGO BFGS", "  ENDSTRATEGY",
+                                        "ENDOPTIMIZER"}) ==
+              at_line(6, "TYPE is set twice in the STRATEGY block (first on "
+                         "line 5)" + once, "    TYPE PLAIN"));
+        CHECK(parse_error(kRoot + Lines{"OPTIMIZER", "  STRATEGY",
+                                        "    TYPE MULTISTART",
+                                        "    N_STARTS 2", "    N_STARTS 3",
+                                        "    LIB DLIB", "    ALGO BFGS",
+                                        "  ENDSTRATEGY", "ENDOPTIMIZER"}) ==
+              at_line(7, "N_STARTS is set twice in the STRATEGY block (first "
+                         "on line 6)" + once, "    N_STARTS 3"));
     }
 }
 

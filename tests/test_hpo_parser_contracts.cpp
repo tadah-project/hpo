@@ -1736,6 +1736,51 @@ TEST_CASE("tadah refit: SEED in an OPTIMIZER block is rejected with the "
                                  "MAXEVAL 100 ENDOPTIMIZER") == "");
 }
 
+/* A tadah refit stage sets each key once, as a target file does: a key
+ * given twice in an OPTIMIZER block, in its INNER block, or as MAXEVAL and
+ * its alias MAXITER, is refused, naming the block ("REFINE: MAXEVAL is set
+ * twice in the OPTIMIZER block (as MAXEVAL and as MAXITER, its alias); each
+ * key is given once"), and so are a second OPTIMIZER block in a stage and a
+ * stage key given twice (ENABLED, MAX_ADD). A PARAM of another name is no
+ * repeat.
+ * Before the fix: the later value replaced the first without a word (a
+ * second OPTIMIZER block replaced the first's settings). */
+TEST_CASE("tadah refit: a key set twice in a stage is refused",
+          "[HPO][refit][strict_numbers]")
+{
+    const std::string once = "; each key is given once";
+    CHECK(refit_error("REFINE", "OPTIMIZER LIB CERES ALGO LM MAXEVAL 5 "
+                                "MAXEVAL 9 ENDOPTIMIZER") ==
+          "REFINE: MAXEVAL is set twice in the OPTIMIZER block" + once);
+    CHECK(refit_error("REFINE", "OPTIMIZER LIB CERES ALGO LM MAXEVAL 5 "
+                                "MAXITER 9 ENDOPTIMIZER") ==
+          "REFINE: MAXEVAL is set twice in the OPTIMIZER block (as MAXEVAL "
+          "and as MAXITER, its alias)" + once);
+    CHECK(refit_error("FUSE", "OPTIMIZER LIB CERES ALGO DOGLEG GTOL 1e-6 "
+                              "GTOL 1e-8 ENDOPTIMIZER") ==
+          "FUSE: GTOL is set twice in the OPTIMIZER block" + once);
+    CHECK(refit_error("EXPLORE", "OPTIMIZER LIB NLOPT ALGO GN_MLSL_LDS "
+                                 "MAXEVAL 100 INNER LIB NLOPT ALGO LN_SBPLX "
+                                 "MAXEVAL 5 MAXEVAL 6 ENDINNER "
+                                 "ENDOPTIMIZER") ==
+          "EXPLORE INNER: MAXEVAL is set twice in the INNER block" + once);
+    CHECK(refit_error("REFINE", "OPTIMIZER LIB CERES ALGO LM ENDOPTIMIZER "
+                                "OPTIMIZER LIB CERES ALGO DOGLEG "
+                                "ENDOPTIMIZER") ==
+          "REFINE: the OPTIMIZER block is given twice; a stage takes one "
+          "OPTIMIZER block");
+    CHECK(refit_error("REFINE", "ENABLED true ENABLED false") ==
+          "REFINE: ENABLED is set twice" + once);
+    CHECK(refit_error("EXPLORE", "MAX_ADD 2 MAX_ADD 3 OPTIMIZER LIB NLOPT "
+                                 "ALGO GN_MLSL_LDS MAXEVAL 100 "
+                                 "ENDOPTIMIZER") ==
+          "EXPLORE: MAX_ADD is set twice" + once);
+    /* the same key in the OPTIMIZER and the INNER block: two optimisers */
+    CHECK(refit_error("EXPLORE", "OPTIMIZER LIB NLOPT ALGO GN_MLSL_LDS "
+                                 "MAXEVAL 100 INNER LIB NLOPT ALGO LN_SBPLX "
+                                 "MAXEVAL 5 ENDINNER ENDOPTIMIZER") == "");
+}
+
 TEST_CASE("tadah refit: OPTIMIZER block numbers are strict",
           "[HPO][refit][strict_numbers]")
 {
