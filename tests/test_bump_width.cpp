@@ -325,8 +325,9 @@ TEST_CASE("a bump centre beyond the low bound of an OPTIM RCUT2B box is "
                       "CGRID2B bump 1 centre 4 lies beyond the OPTIM RCUT2B "
                       "low bound 3.5: a candidate whose RCUT2B is below the "
                       "centre keeps only the bump's inner shoulder "
-                      "(pathological) — raise the OPTIM RCUT2B low bound "
-                      "above 4 or move the centre below it."));
+                      "(pathological); with the OPTIM RCUT2B low bound "
+                      "above 4, or the centre below 3.5, no candidate "
+                      "does."));
     CHECK(w.find("CGRID2B bump 2") == std::string::npos);
   }
   {

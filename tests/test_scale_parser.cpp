@@ -520,7 +520,7 @@ ENDOPTIMIZER
  * RATIO 2), naming the line's key and what to write instead ("OPTIM WATOM:
  * FLOOR and GROUP_FLOOR set the smallest half-width of an AUTO FRAC box;
  * AUTO RATIO makes the geometric box [x0/f, x0*f], which they do not
- * change: use FRAC <p> with them, or drop them"). FRAC with FLOOR stays
+ * change, so they are given with FRAC <p> only"). FRAC with FLOOR stays
  * accepted (the case above).
  * Before the fix: the floors were accepted and ignored ('AUTO RATIO 2
  * FLOOR 5' gave the box [0.5, 2] of RATIO 2 alone). */
@@ -539,8 +539,8 @@ TEST_CASE("OPTIM AUTO RATIO refuses FLOOR and GROUP_FLOOR",
           Catch::Contains("OPTIM WATOM: FLOOR and GROUP_FLOOR set the "
                           "smallest half-width of an AUTO FRAC box; AUTO "
                           "RATIO makes the geometric box [x0/f, x0*f], "
-                          "which they do not change: use FRAC <p> with "
-                          "them, or drop them"));
+                          "which they do not change, so they are given with "
+                          "FRAC <p> only"));
     }
     {
       /* the floor before RATIO, and a shape tag after it */
@@ -559,8 +559,8 @@ TEST_CASE("OPTIM AUTO RATIO refuses FLOOR and GROUP_FLOOR",
           Catch::Contains("OPTIM SGRID2B: FLOOR and GROUP_FLOOR set the "
                           "smallest half-width of an AUTO FRAC box; the "
                           "AUTO box of SGRID2B is geometric by default "
-                          "(RATIO 2), which they do not change: add FRAC "
-                          "<p> to use them, or drop them"));
+                          "(RATIO 2), which they do not change, so they are "
+                          "given with FRAC <p> only"));
     }
   }
   {
