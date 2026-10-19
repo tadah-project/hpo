@@ -737,13 +737,17 @@ void HPOTargets::read(const std::string& fn)
     /* The line of each PC_EMAE, PC_ErRMSE, PC_ERSQ and PC_SRMSE line: one
      * of each (PC_ERMSE and PC_FRMSE: ValidationMetricTargets::add). */
     std::map<std::string, std::size_t> metric_lines;
-    /* Where each optimiser attribute was set, per optimiser: the line and
-     * the block. An attribute is set once for its optimiser -- OPTIMIZER,
-     * STRATEGY and REFINE configure the STRATEGY-level one, a repeated
-     * EXPLORE block continues the first -- so a second line, which would
-     * replace the first's value, is refused. */
+    /* Where each key was set, per thing it configures (an optimiser, the
+     * starting points of one, the NOISE, RESTART or STRATEGY settings, the
+     * search space): the line and the block. A key is set once for what it
+     * configures -- OPTIMIZER, STRATEGY and REFINE configure the
+     * STRATEGY-level optimiser, the INIT blocks inside OPTIMIZER and
+     * STRATEGY its starting points, a repeated block continues the first --
+     * so a second line, which would replace the first's value, is refused.
+     * METHOD lines add to their chain and STEP <KEY> overrides layer over
+     * the block-wide STEP: neither is set this way. */
     struct AttrSet { std::size_t line; Block block; };
-    std::map<std::pair<const OptimizerSpec*, std::string>, AttrSet> attr_set;
+    std::map<std::pair<const void*, std::string>, AttrSet> attr_set;
 
     /* The block the open INNER block sits in: an INNER block opens only
      * inside STRATEGY, EXPLORE or REFINE. */
@@ -847,6 +851,27 @@ void HPOTargets::read(const std::string& fn)
     auto rtrim = [](std::string& s){
         s.erase(std::find_if(s.rbegin(), s.rend(),
                  [](int c){return !std::isspace(c);} ).base(), s.end());
+    };
+
+    /* Records that `attr` of `target` is set at this line, or refuses the
+     * line when an earlier one set it; `what` names what two blocks of
+     * different types that set it both configure. */
+    auto set_once = [&](const void* target, const std::string& attr,
+                        const char* what) {
+        const auto [it, fresh] = attr_set.emplace(
+            std::make_pair(target, attr), AttrSet{nline, block});
+        if (fresh) return;
+        const AttrSet& first = it->second;
+        if (first.block == block)
+            throw std::runtime_error(
+                attr + " is set twice in the " + block_name(block) +
+                " block (first on line " + std::to_string(first.line) +
+                "); each key is given once");
+        throw std::runtime_error(
+            attr + " is set on line " + std::to_string(first.line) +
+            " in the " + block_name(first.block) + " block and again here in "
+            "the " + block_name(block) + " block; both blocks configure the "
+            "same " + what + ", so each key is given once");
     };
 
     while (std::getline(ifs,line))
@@ -1124,25 +1149,7 @@ void HPOTargets::read(const std::string& fn)
                 else if (!first.empty() && !is_number_shaped(first)) attr.clear();
             }
             if (active_opt && dispatch_opt_attr(key, iss, *active_opt)) {
-                if (!attr.empty()) {
-                    const auto [it, fresh] = attr_set.emplace(
-                        std::make_pair(active_opt, attr), AttrSet{nline, block});
-                    if (!fresh) {
-                        const AttrSet& first = it->second;
-                        if (first.block == block)
-                            throw std::runtime_error(
-                                attr + " is set twice in the " +
-                                block_name(block) + " block (first on line " +
-                                std::to_string(first.line) + "); give it once");
-                        throw std::runtime_error(
-                            attr + " is set on line " +
-                            std::to_string(first.line) + " in the " +
-                            block_name(first.block) + " block and again here "
-                            "in the " + block_name(block) + " block; both "
-                            "blocks configure the same optimiser, so give it "
-                            "once");
-                    }
-                }
+                if (!attr.empty()) set_once(active_opt, attr, "optimiser");
                 /* Strict arity. dispatch_opt_attr() reads exactly the value
                  * tokens its key defines, so anything still on the line is a
                  * typo, a stray word, or a value for a key that does not take
@@ -1162,16 +1169,22 @@ void HPOTargets::read(const std::string& fn)
 
             /* INIT / RESTART block keys */
             if (block == INIT_BLK || block == RESTART_BLK) {
-                if (active_init && dispatch_init_attr(key, iss, *active_init, nline, line))
+                if (active_init && dispatch_init_attr(key, iss, *active_init, nline, line)) {
+                    /* METHOD (and its alias STRATEGY) adds to the chain */
+                    if (key != "METHOD" && key != "STRATEGY")
+                        set_once(active_init, key, "starting points");
                     continue;
+                }
                 if (block == RESTART_BLK) {
                     if (key=="AFTER_STAGNATION") {
                         spec.restart.after_stagnation =
                             parse_uint(single_value(iss, key), key);
+                        set_once(&spec.restart, key, "restarts");
                         continue;
                     }
                     if (key=="MAX") {
                         spec.restart.max = parse_uint(single_value(iss, key), key);
+                        set_once(&spec.restart, key, "restarts");
                         continue;
                     }
                 }
@@ -1187,6 +1200,7 @@ void HPOTargets::read(const std::string& fn)
                     iss >> v;
                     expect_end(iss, "AUTO takes a single value");
                     spec.noise.autodetect = v.empty() ? true : parse_bool(v, "NOISE.AUTO");
+                    set_once(&spec.noise, key, "noise settings");
                     continue;
                 }
                 if (key=="CALIBRATION") {
@@ -1194,6 +1208,7 @@ void HPOTargets::read(const std::string& fn)
                     if (v == 1)
                         throw std::runtime_error("NOISE.CALIBRATION must be 0 (off) or >= 2");
                     spec.noise.calibration_n = v;
+                    set_once(&spec.noise, key, "noise settings");
                     continue;
                 }
                 throw std::runtime_error("unknown key '" + key + "' inside NOISE "
@@ -1215,13 +1230,7 @@ void HPOTargets::read(const std::string& fn)
                             "LOG_HP must be a finite ratio >= 1 (a dimension is "
                             "log-scaled when high/low >= LOG_HP and low > 0), "
                             "got '" + tok + "'");
-                    if (spec.log_threshold) {
-                        std::ostringstream oss;
-                        oss << "LOG_HP given more than once; the last value ("
-                            << v << ") wins";
-                        std::cerr << "[HPO] " << oss.str() << "\n";
-                        HPOLog::instance().warning(oss.str());
-                    }
+                    set_once(&spec.log_threshold, key, "search space");
                     spec.log_threshold = v;
                     continue;
                 }
@@ -1239,6 +1248,7 @@ void HPOTargets::read(const std::string& fn)
                     else if (t=="MULTISTART") spec.strategy_type = StrategyType::MULTISTART;
                     else if (t=="PRESTAGE")   spec.strategy_type = StrategyType::PRESTAGE;
                     else throw std::runtime_error("STRATEGY TYPE must be PLAIN, MULTISTART, or PRESTAGE (got '" + t + "')");
+                    set_once(&spec.strategy_type, key, "strategy");
                     strategy_type_given = true;
                     continue;
                 }
@@ -1249,10 +1259,12 @@ void HPOTargets::read(const std::string& fn)
                 /* MULTISTART knobs. */
                 if (key=="N_STARTS") {
                     spec.multistart.n_starts = parse_uint(single_value(iss, key), key, 1);
+                    set_once(&spec.strategy_type, key, "strategy");
                     continue;
                 }
                 if (key=="PARALLEL") {
                     spec.multistart.parallel = parse_uint(single_value(iss, key), key, 1);
+                    set_once(&spec.strategy_type, key, "strategy");
                     continue;
                 }
                 if (key=="BUDGET_PER_START") {
@@ -1261,11 +1273,13 @@ void HPOTargets::read(const std::string& fn)
                     spec.multistart.budget_per_start =
                         parse_uint(single_value(iss, key), key, 1,
                                    std::numeric_limits<int>::max());
+                    set_once(&spec.strategy_type, key, "strategy");
                     continue;
                 }
                 /* PRESTAGE knob. */
                 if (key=="TOPK") {
                     spec.stage_topk = parse_uint(single_value(iss, key), key, 1);
+                    set_once(&spec.strategy_type, key, "strategy");
                     continue;
                 }
                 throw std::runtime_error("unknown key '" + key + "' inside STRATEGY block");
