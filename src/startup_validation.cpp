@@ -763,9 +763,10 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
              core::to_string(mu[i]) + " lies beyond the OPTIM " + rkey +
              " low bound " + core::to_string(rcut_strict) + ": a candidate "
              "whose " + rkey + " is below the centre keeps only the bump's "
-             "inner shoulder (pathological) — raise the OPTIM " + rkey +
-             " low bound above " + core::to_string(mu[i]) + " or move the "
-             "centre below it.");
+             "inner shoulder (pathological); with the OPTIM " + rkey +
+             " low bound above " + core::to_string(mu[i]) + ", or the "
+             "centre below " + core::to_string(rcut_strict) + ", no "
+             "candidate does.");
       if (!hard || reach <= rcut + tol) continue;
       gate_errors.push_back(
           ckey + " bump " + core::to_string(i + 1) + " (centre " +

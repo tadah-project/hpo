@@ -2426,11 +2426,11 @@ void HPOTargets::process_optim_config(std::istringstream& iss,
           "OPTIM " + k + ": FLOOR and GROUP_FLOOR set the smallest "
           "half-width of an AUTO FRAC box; " +
           (mode_set ? std::string("AUTO RATIO makes the geometric box "
-                                  "[x0/f, x0*f], which they do not change: "
-                                  "use FRAC <p> with them, or drop them")
+                                  "[x0/f, x0*f], which they do not change, "
+                                  "so they are given with FRAC <p> only")
                     : "the AUTO box of " + k + " is geometric by default "
-                      "(RATIO 2), which they do not change: add FRAC <p> "
-                      "to use them, or drop them"));
+                      "(RATIO 2), which they do not change, so they are "
+                      "given with FRAC <p> only"));
     /* Non-negative amplitudes: NNLS fits put amplitudes at exactly 0, so a
      * linear rule without a floor gets the refit writer's group floor
      * (1e-3 max|x0| of the line) and the box [0, d] for a zero seed. */
