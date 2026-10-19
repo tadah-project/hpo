@@ -886,6 +886,32 @@ void HPOTargets::read(const std::string& fn)
             what + ", so each key is given once");
     };
 
+    /* FAILSCORE, LOSS and PC_SCRIPT_TIMEOUT (MAXTIME): each PC_LAMMPS and
+     * PC_FAILPROBE line takes the value given above it, and the run-wide
+     * uses (the ceiling of every loss, the validation metrics' loss, the
+     * PROCESS worker deadline) the last one. A second line is read only
+     * after such a line has taken the first: otherwise it would replace
+     * it without effect on any line. The line and spelling of the value
+     * set, and whether a line has taken it. */
+    struct LineSetting { std::size_t line; std::string spelling; bool taken; };
+    std::map<std::string, LineSetting> line_settings;
+    auto set_for_lines = [&](const std::string& key) {
+        const std::string name = key == "MAXTIME" ? "PC_SCRIPT_TIMEOUT" : key;
+        const auto it = line_settings.find(name);
+        if (it != line_settings.end() && !it->second.taken)
+            throw std::runtime_error(
+                key + " is set twice (first on line " +
+                std::to_string(it->second.line) +
+                (it->second.spelling != key ? ", as " + it->second.spelling
+                                            : std::string()) +
+                ") and no PC_LAMMPS or PC_FAILPROBE line between takes the "
+                "first; each key is given once");
+        line_settings[name] = {nline, key, false};
+    };
+    auto lines_take_settings = [&]() {
+        for (auto& [name, setting] : line_settings) setting.taken = true;
+    };
+
     while (std::getline(ifs,line))
     {
         ++nline;
@@ -1334,8 +1360,9 @@ void HPOTargets::read(const std::string& fn)
 
             /* A top-level key that takes one value is set once: a second
              * line would replace the first's value. FAILSCORE, LOSS and
-             * PC_SCRIPT_TIMEOUT (MAXTIME) apply to the PC_LAMMPS lines
-             * after them; the metric and gate keys refuse a repeat
+             * PC_SCRIPT_TIMEOUT (MAXTIME) are set again only after a
+             * PC_LAMMPS or PC_FAILPROBE line has taken them
+             * (set_for_lines); the metric and gate keys refuse a repeat
              * themselves. */
             {
                 static const std::set<std::string> once = {
@@ -1359,6 +1386,7 @@ void HPOTargets::read(const std::string& fn)
              * to FAILSCORE. Negative losses (negative-weight --varloss
              * terms) stay usable under any positive FAILSCORE. */
             if (key=="FAILSCORE") {
+                set_for_lines(key);
                 FAIL_SCORE = parse_positive(single_value(iss, key), key,
                                             "finite number");
             }
@@ -1367,13 +1395,15 @@ void HPOTargets::read(const std::string& fn)
              * LAMMPS `timer timeout` after each clear. MAXTIME is
              * the legacy alias, kept so existing .hpo configs keep parsing.
              * NOTE: the OPTIMIZER-block MAXTIME (whole-run stop) is a DIFFERENT
-             * setting parsed in optimizer_block.cpp -- do not conflate. If both
-             * spellings appear here, the later line wins (each overwrites
-             * MAX_TIME); hpo.cpp warns when both were given. */
+             * setting parsed in optimizer_block.cpp -- do not conflate. The
+             * two spellings are one key (set_for_lines); with a PC_LAMMPS
+             * line between, the later line is the run-wide value, and
+             * hpo.cpp warns when both spellings were given. */
             else if (key=="PC_SCRIPT_TIMEOUT" || key=="MAXTIME") {
                 /* A LAMMPS time spec that is off, unlimited or positive:
                  * it becomes `timer timeout <spec>`, and its seconds size
                  * the PROCESS worker deadline. */
+                set_for_lines(key);
                 MAX_TIME = single_value(iss, key);
                 MAX_TIME_seconds = parse_script_timeout(MAX_TIME, key);
                 MAX_TIME_key = key;
@@ -1451,6 +1481,7 @@ void HPOTargets::read(const std::string& fn)
                 for (const auto& t : keep) { cmd2 += ' '; cmd2 += t; }
                 LS.emplace_back(cmd2, MAX_TIME, FAIL_SCORE, globalLoss,
                                 /*failprobe=*/true);
+                lines_take_settings();
                 LammpsSim& probe = LS.back();
                 if (!probe.n_varloss.empty() || !probe.i_varloss.empty())
                     throw std::runtime_error(
@@ -1508,6 +1539,7 @@ void HPOTargets::read(const std::string& fn)
             /* loss -------------------------------------------------- */
             else if (key=="LOSS")
             {
+                set_for_lines(key);
                 /* LOSS <type> [<param>]. The optional parameter (HUBER
                  * delta, TUKEY c) is validated and defaulted by
                  * LossFunction::resolve_params -- the same path the
@@ -1550,6 +1582,7 @@ void HPOTargets::read(const std::string& fn)
             {
                 std::string cmd; std::getline(iss,cmd);
                 LS.emplace_back(cmd, MAX_TIME, FAIL_SCORE, globalLoss);
+                lines_take_settings();
             }
 
             /* Typed observables ------------------------------------
