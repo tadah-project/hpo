@@ -4008,6 +4008,28 @@ TEST_CASE("RESTART: a SEED no METHOD of the chain draws from is reported at "
                !Catch::Contains(unused));
 }
 
+/* best_pot.tadah.lock, the file the publications of the best potential
+ * lock (durable_best.h), goes when the run ends: no rank publishes after
+ * the run's last collective. A run that ends normally leaves
+ * best_pot.tadah and no lock file, and so does a second run in the same
+ * process and directory.
+ * Before the fix: an empty best_pot.tadah.lock stayed in the directory
+ * after every run. */
+TEST_CASE("Termination: a run leaves no best_pot.tadah.lock",
+          "[HPO][termination][durable_best]")
+{
+    TaRun run(plain_block("    TYPE PLAIN\n    LIB TADAH\n    ALGO RANDOM\n"
+                          "    MAXEVAL 3\n    SEED 1\n"));
+    for (int pass = 0; pass < 2; ++pass) {
+        INFO("run " << pass + 1);
+        int status = -1;
+        REQUIRE_NOTHROW(status = tadah::hpo::hpo_run(run.ctx));
+        CHECK(status == 0);
+        CHECK(fs::exists("best_pot.tadah"));
+        CHECK_FALSE(fs::exists("best_pot.tadah.lock"));
+    }
+}
+
 /* A PRESTAGE run with SEED 7 in its STRATEGY block whose GN_CRS2_LM
  * exploration (MAXEVAL 20) has no SEED of its own: the exploration takes
  * the STRATEGY-level SEED, so two runs evaluate the same points, the points
