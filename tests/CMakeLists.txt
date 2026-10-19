@@ -449,13 +449,15 @@ if(TADAH_HPO_MPI)
 
     # Multi-rank `tadah hpo` end to end (mpi/hpo_mpi_e2e.py): the RESTART
     # and gradient-search refusals, the LAMMPS fast kernels, the density
-    # gates and the density report on 1 and 2 ranks. The cases run the
+    # gates and the density report on 1 and 2 ranks, and a startup check
+    # that one rank fails alone (output_refusal). The cases run the
     # built `tadah` (Skipped, 77, in a build without it). Every argument is
     # one --key=value token: MLIP's add_test() drops an empty argument.
     # The launcher's flags as one shell-quoted string each (no ';').
     string(REPLACE ";" " " _mpi_preflags "${MPIEXEC_PREFLAGS}")
     string(REPLACE ";" " " _mpi_postflags "${MPIEXEC_POSTFLAGS}")
-    foreach(_case restart_refusal gradient_refusal eamfast rhogates)
+    foreach(_case restart_refusal gradient_refusal eamfast rhogates
+                  output_refusal)
         add_test(NAME hpo_mpi_e2e_${_case}
             COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/mpi/hpo_mpi_e2e.py

@@ -16,6 +16,7 @@
  * allreduced, so ranks always agree on loop exits).
  */
 #include <cstdint>
+#include <exception>
 #include <limits>
 #include <stdexcept>
 #include <string>
@@ -244,5 +245,39 @@ inline void hpo_scatterv(const std::vector<double>& all,
                          const std::vector<int>&) { local = all; }
 
 #endif
+
+/* The error each rank throws after a startup step that every rank makes
+ * on its own and that can fail on one rank alone (a rank-suffixed file it
+ * cannot write): the rank's own error where the step failed on it,
+ * "<what> failed on another MPI rank" where it failed on another rank
+ * alone (@p any_failed: the ranks' failure flags combined), "" (no error)
+ * where it failed on no rank. */
+inline std::string agreed_startup_error(const std::string& local_error,
+                                        bool any_failed,
+                                        const std::string& what)
+{
+    if (!any_failed) return {};
+    return local_error.empty() ? what + " failed on another MPI rank"
+                               : local_error;
+}
+
+/* Makes @p step on this rank and throws, on every rank, when it failed on
+ * any rank (agreed_startup_error): one collective, which every rank reaches
+ * whether or not its step failed, so no rank waits in a later collective
+ * for a peer that stopped. A serial run is one rank. */
+template <class Step>
+void run_on_every_rank(const std::string& what, Step&& step)
+{
+    std::string local_error;
+    try {
+        step();
+    } catch (const std::exception& e) {
+        local_error = e.what();
+    }
+    const std::string error = agreed_startup_error(
+        local_error, hpo_allreduce_max(local_error.empty() ? 0 : 1) != 0,
+        what);
+    if (!error.empty()) throw std::runtime_error(error);
+}
 
 }  // namespace tadah::hpo

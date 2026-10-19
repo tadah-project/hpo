@@ -74,7 +74,36 @@ private:
 
     size_t ui_offset(std::vector<std::string> &tokens, size_t ui);
     std::vector<std::string> parse_optim_line(std::istringstream& iss);
-    void handle_directory_creation(const std::string& directory);
+    /* Throws when the run cannot create the archive directory @p dir of
+     * the line @p key (DUMP, BDUMP) or write into it, and creates nothing.
+     * The path is taken where the operating system puts it (every symbolic
+     * link followed, '..' taken from the directory reached; one the system
+     * cannot resolve is refused): one that exists must be a directory the
+     * run can write into; one that does not must not be a symbolic link
+     * itself (mkdir does not follow it), and must be in a directory that
+     * exists and the run can write into, or in @p created_first (resolved
+     * likewise; empty: none), the other archive line's directory, which
+     * the run creates first and which the path is resolved through as a
+     * directory that exists ("archive/." is that directory, "archive/./
+     * best" a directory in it); the run creates the last directory of the
+     * path only. */
+    static void check_archive_directory(const std::string& key,
+                                        const std::string& dir,
+                                        const std::filesystem::path& created_first);
+    /* The DUMP and BDUMP directories, checked together once the target
+     * file is read (check_archive_directory), in the order of their lines,
+     * each error at its line: one inside the other's new directory is
+     * accepted, whatever the order of the lines. */
+    void check_archive_directories() const;
+    /* The line of the last DUMP and BDUMP line (number 0: none), for the
+     * errors of check_archive_directories(). */
+    struct ArchiveLine { std::size_t number = 0; std::string text; };
+    ArchiveLine dumpPotLine, dumpBestPotLine;
+    /* Creates the archive directory @p dir of the line @p key, which
+     * check_archive_directory() accepted (one that exists is kept; each is
+     * named on standard output). */
+    static void create_archive_directory(const std::string& key,
+                                         const std::string& dir);
     /* One OPTIM line (on line @p nline of the file). The key is
      * upper-cased: OPTIM keys are case-insensitive, as configuration keys
      * are. */
@@ -169,6 +198,74 @@ public:
     /* hpo_search_space.tsv (always) + hpo_optim_resolved.hpo (when any
      * OPTIM box was derived by an AUTO rule) into `dir`. */
     void write_search_space_files(const std::string& dir) const;
+    /* Creates the archive directories of the DUMP and BDUMP lines (one
+     * that exists is kept; each is named on standard output), the one
+     * inside the other's after it. The parse checks them and creates
+     * nothing; hpo_run() calls this once it has prepared best_pot.tadah
+     * (its lock taken), just before its first evaluation, so a run that
+     * stops before creates none, and `tadah hpo --check` leaves the
+     * working directory as it is. */
+    void create_archive_directories() const;
+
+    /* The names of the search-space files a run writes into the working
+     * directory (write_search_space_files). */
+    static constexpr const char* kSearchSpaceFile = "hpo_search_space.tsv";
+    static constexpr const char* kResolvedOptimFile = "hpo_optim_resolved.hpo";
+
+    /* The names of the files a run writes into the working directory:
+     * the result files and the local best potential carry the rank suffix
+     * (hpo_rank_suffix()), best_pot.tadah, the canonical best potential,
+     * none. The members below (lossFile, ...) hold them;
+     * check_run_outputs() checks them before the run has read its target
+     * file. */
+    struct OutputNames {
+        std::string loss, outvar, params, stats;
+        std::string bestLoss, bestOutvar, bestParams, bestStats;
+        std::string canonicalBestPot, localBestPot;
+    };
+    static OutputNames output_names();
+
+    /* Whether the run writes the search-space files: hpo_search_space.tsv
+     * when the target file has a search space, hpo_optim_resolved.hpo when
+     * a box of it comes from an AUTO rule (write_search_space_files). */
+    bool writes_search_space_file() const;
+    bool writes_resolved_optim_file() const;
+
+    /* Throw when the run cannot write its output files into the working
+     * directory, and create nothing (`tadah hpo --check` and the run
+     * alike, before any data is loaded):
+     *   - check_run_outputs(journal), before the run opens its journal: the
+     *     working directory must be a directory the run can write into
+     *     ("the working directory '<dir>' is not writable: tadah hpo
+     *     writes its journal (hpo_run.log), its result files and
+     *     best_pot.tadah there"); the journal @p journal and the result
+     *     files, when they exist, files the run can open to write, and the
+     *     lock of each best potential one it can open to read and write,
+     *     opened as the run opens them without creating or truncating
+     *     them, the refusal being the open's own error ("'loss.tadah' in
+     *     the working directory '<dir>' cannot be opened: Permission
+     *     denied (tadah hpo rewrites it)", "... (tadah hpo opens it to
+     *     lock best_pot.tadah)", the lock's own potential); a socket is
+     *     refused (the run's open fails with ENXIO), a named pipe is
+     *     checked for permission and not opened, except as a result file,
+     *     which the run reopens for each row and which a pipe would block
+     *     (refused), and a device is opened without waiting; a best
+     *     potential, which the run replaces, no directory ("... is a
+     *     directory: tadah hpo writes a file of that name");
+     *   - check_search_space_files(), once the target file is read: the
+     *     search-space files the run writes (writes_search_space_file(),
+     *     writes_resolved_optim_file()), as the result files.
+     * A file the run writes through that does not exist is checked where
+     * the operating system would create it, every symbolic link followed:
+     * a name that ends in '/' or '/.' cannot be a file, and the file must
+     * be in a directory that exists and the run can write into
+     * ("'loss.tadah' ... is a symbolic link to '<dir>/x/loss', which cannot
+     * be created: the directory '<dir>/x' does not exist"); a path the
+     * system cannot resolve is refused. A best potential, which the run
+     * replaces, is checked by its own name: a link there is replaced by
+     * the file, not followed. */
+    static void check_run_outputs(const std::string& journal);
+    void check_search_space_files() const;
 
     /* Typed observables (Tier 1 / Tier 2 of the PC_OBSERVABLE redesign).
      * Each entry is a polymorphic Observable* -- concrete subclasses live in
@@ -327,19 +424,18 @@ public:
      * multi-rank runs sharing one working directory never clobber each
      * other. The unsuffixed namespace is reserved for canonical shared
      * artifacts; the suffix is empty in non-MPI builds and 1-rank runs. */
-    const std::string lossFile       = "loss.tadah"        + hpo_rank_suffix();
-    const std::string outvarFile     = "outvar.tadah"      + hpo_rank_suffix();
-    const std::string paramsFile     = "params.tadah"      + hpo_rank_suffix();
-    const std::string statsFile      = "stats.tadah"       + hpo_rank_suffix();
-    const std::string bestLossFile    = "best_loss.tadah"   + hpo_rank_suffix();
-    const std::string bestOutvarFile  = "best_outvar.tadah" + hpo_rank_suffix();
-    const std::string bestParamsFile  = "best_params.tadah" + hpo_rank_suffix();
-    const std::string bestStatsFile   = "best_stats.tadah"  + hpo_rank_suffix();
+    const std::string lossFile       = output_names().loss;
+    const std::string outvarFile     = output_names().outvar;
+    const std::string paramsFile     = output_names().params;
+    const std::string statsFile      = output_names().stats;
+    const std::string bestLossFile    = output_names().bestLoss;
+    const std::string bestOutvarFile  = output_names().bestOutvar;
+    const std::string bestParamsFile  = output_names().bestParams;
+    const std::string bestStatsFile   = output_names().bestStats;
     /* best_pot.tadah is canonical across ranks. Multi-rank runs also keep an
      * explicit local file for every rank, including best_pot.tadah.r0. */
-    const std::string canonicalBestPotFile = "best_pot.tadah";
-    const std::string localBestPotFile =
-        std::string("best_pot.tadah") + hpo_rank_suffix();
+    const std::string canonicalBestPotFile = output_names().canonicalBestPot;
+    const std::string localBestPotFile = output_names().localBestPot;
     /* Prevent rank-local archive ordinals from truncating one shared file. */
     const std::string potArchiveSuffix = hpo_rank_suffix();
     LossFunction globalLoss;
