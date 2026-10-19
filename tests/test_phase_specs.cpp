@@ -378,11 +378,6 @@ TEST_CASE("phase specs: every phase of each STRATEGY TYPE",
     }
 }
 
-/* CERES:STEEPEST_DESCENT stands in for CERES:LBFGS, refused since (a pin).
- * A build without Ceres refuses every CERES:STEEPEST_DESCENT spec here as
- * not built (ceres_build.h), the deferred CERES:LEVENBERG_MARQUARDT with its own
- * message first: a pin of that refusal. Before this test change such a
- * build failed the CERES rows, expecting the Ceres validator's result. */
 /* DLIB:GFS reads FTOL_ABS as the accuracy of dlib's solver, which dlib
  * requires to be >= 0: a negative one is refused at startup, naming the
  * phase and the value ("the STRATEGY-level optimiser: DLIB:GFS: FTOL_ABS is
@@ -419,6 +414,11 @@ TEST_CASE("backend rules: DLIB:GFS refuses a negative FTOL_ABS at startup",
                          "(got -0.001)"));
 }
 
+/* CERES:STEEPEST_DESCENT stands in for CERES:LBFGS, refused since (a pin).
+ * A build without Ceres refuses every CERES:STEEPEST_DESCENT spec here as
+ * not built (ceres_build.h), the deferred CERES:LEVENBERG_MARQUARDT with its own
+ * message first: a pin of that refusal. Before this test change such a
+ * build failed the CERES rows, expecting the Ceres validator's result. */
 TEST_CASE("backend rules: validate_backend runs each backend's own checks",
           "[HPO][backend_rules]")
 {
