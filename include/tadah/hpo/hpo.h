@@ -29,7 +29,36 @@ struct OptimizerSpec;
  * <what>" for another std::exception and "FAILED -- non-standard
  * exception" for any other; the caller exits with 1. A startup error
  * (the configuration, validate_hpo_setup()) is thrown before any trailer,
- * after an "ERROR startup: ..." journal line. See run_driver.h. */
+ * after an "ERROR startup: ..." journal line. See run_driver.h.
+ *
+ * With CHECK true in the context (`tadah hpo --check`, CHECK true in a
+ * TASK hpo section) it makes the startup checks of the run alone, in the
+ * run's order -- the working directory and the journal, result files,
+ * best potentials and locks the run writes there
+ * (HPOTargets::check_run_outputs, before a run opens its journal), the
+ * training configuration, the target file (its DUMP and BDUMP directories
+ * included) and its LAMMPS scripts, the search-space files the run writes
+ * (HPOTargets::check_search_space_files), validate_hpo_setup(),
+ * PC_ISOLATION and THREADS, the training and
+ * validation datasets (loaded as the run loads them), HEALTH_LOG, the
+ * pre-flight audit and the STRATEGY TYPE and RESTART settings -- then
+ * writes the summary of write_check_summary() (check_summary.h) to
+ * standard output, with the WARNING and HINT lines the run writes to its
+ * journal at startup, and returns 0. It evaluates nothing, installs no
+ * signal handler, starts no worker and writes no file: no journal (one an
+ * earlier run in the process left open is closed:
+ * HPOLog::begin_without_journal), no search-space sidecar, no result file,
+ * no DUMP or BDUMP directory. A startup error is thrown as the run throws
+ * it, after those WARNING and HINT lines on standard error. CHECK is taken
+ * out of the context (the run's too, CHECK false); a potential has no
+ * CHECK line (Tadah.MLIP's training_record_keys()) and no parse stores a
+ * potential's (Tadah.CORE's run_setting_keys()). A check starts no
+ * PC_ISOLATION PROCESS worker and takes no lock of best_pot.tadah: the run
+ * does both after the check's last step, and stops if either fails.
+ *
+ * A run creates its DUMP and BDUMP directories, the one inside the other's
+ * after it, once it has prepared best_pot.tadah (its lock taken), just
+ * before its first evaluation: a run that stops before creates none. */
 int hpo_run(core::Context&);
 /* The same, with where the context's keys came from (the command line, the
  * configuration file, the defaults): the journal's POTENTIAL SETUP names

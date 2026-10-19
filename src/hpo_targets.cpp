@@ -23,13 +23,22 @@
 
 #include <algorithm>
 #include <cmath>
+#include <deque>
+#include <filesystem>
 #include <iomanip>
+#include <iostream>
 #include <optional>
 #include <random>
 #include <fstream>
 #include <sstream>
 #include <stdexcept>
+#include <system_error>
 #include <unordered_map>
+#include <unistd.h>   // access(): the archive directories
+#include <fcntl.h>    // open(): the output files
+#include <sys/stat.h> // stat(): the output files
+#include <cerrno>
+#include <cstring>
 
 namespace tadah {
 namespace hpo {
@@ -1398,17 +1407,25 @@ void HPOTargets::read(const std::string& fn)
                     parse_uint(single_value(iss, key), key, 1, 15));
             }
             else if (key=="DUMP" || key=="BDUMP") {
-                /* <cadence> <directory>: the directory is created only once
-                 * the whole line is valid. */
+                /* <cadence> <directory>. The directory is the run's
+                 * output: the two are checked together once the file is
+                 * read (check_archive_directories), each error at its
+                 * line, for the run and for `tadah hpo --check` alike, and
+                 * created by the run just before its first evaluation
+                 * (create_archive_directories); parsing creates nothing. */
                 std::string every, dir;
                 if (!(iss >> every >> dir))
                     throw std::runtime_error(
                         key + " requires a cadence and a directory");
                 expect_end(iss, key + " takes a cadence and a directory");
                 const std::size_t n = parse_uint(every, key + " cadence", 1);
-                if (key == "DUMP") { dumpPotEvery = n; dumpPotDir = dir; }
-                else { dumpBestPotEvery = n; dumpBestPotDir = dir; }
-                handle_directory_creation(dir);
+                if (key == "DUMP") {
+                    dumpPotEvery = n; dumpPotDir = dir;
+                    dumpPotLine = {nline, line};
+                } else {
+                    dumpBestPotEvery = n; dumpBestPotDir = dir;
+                    dumpBestPotLine = {nline, line};
+                }
             }
 
             /* loss -------------------------------------------------- */
@@ -1579,6 +1596,10 @@ void HPOTargets::read(const std::string& fn)
                 g.key + " line.", g.text));
         }
     }
+
+    /* The DUMP and BDUMP directories, together: one may be inside the
+     * other's new directory, whatever the order of their lines. */
+    check_archive_directories();
 
     /* A file without an OPTIMIZER block names no optimiser. */
     require_driver(spec, DriverPhase::Run);
@@ -1837,21 +1858,451 @@ double HPOTargets::parse_pc_worker_timeout(const std::string& token,
   return v;
 }
 
-void HPOTargets::handle_directory_creation(const std::string& directory) {
-  try {
-    if (!fs::exists(directory)) {
-      if (fs::create_directory(directory)) {
-        std::cout << "Directory created: " << directory << std::endl;
-      } else {
-        std::cerr << "Failed to create directory: " << directory << std::endl;
-      }
-    } else {
-      std::cout << "Directory already exists: " << directory << std::endl;
-    }
-  } catch (const std::exception& e) {
-    throw std::runtime_error("Error in handle_directory_creation: "
-                             + std::string(e.what()));
+namespace {
+/* Whether the process can create entries in the directory @p dir: write
+ * and search permission (access(2), the real user's). */
+bool writable_directory(const fs::path& dir) {
+  return ::access(dir.c_str(), W_OK | X_OK) == 0;
+}
+
+/* A path as the operating system finds it when the run opens or creates
+ * it (resolve_physically). */
+struct PhysicalPath {
+  fs::path path;               // absolute, without a link, '.' or '..'
+  bool exists = false;         // something exists at path
+  bool through_links = false;  // a symbolic link was followed to reach it
+  bool names_directory = false;  // it ends in '/', '/.' or '/..' (as given,
+                                 // or as a link target spliced in at its
+                                 // end): only a directory has such a name
+  fs::path own_link;           // the target the path's own link stores, its
+                               // trailing '/' and '.' set aside (empty: the
+                               // path names no link)
+};
+
+/* @p given as the operating system resolves it to open or create it: from
+ * the root, one component after the other, every symbolic link followed --
+ * the one the path ends with too, to a file not yet created -- and '.' and
+ * '..' taken in the directory reached so far. Throws, with the reason
+ * alone, where the system cannot resolve it: more than 40 links, the
+ * system's limit ("too many levels of symbolic links"), '.' or '..' in a
+ * directory that does not exist or is no directory, and a component it
+ * cannot read ("'<path>' cannot be read: Permission denied").
+ * @p will_exist (absolute and resolved; empty: none) is a directory that
+ * does not exist yet and that the run creates first, the other archive
+ * line's: it is taken as an existing directory ('.' and '..' in it, as the
+ * system takes them once it exists), and what lies below it as missing.
+ * (fs::weakly_canonical takes the part of a path that does not exist
+ * lexically, and stops at a link to a file not yet created.) */
+PhysicalPath resolve_physically(const std::string& given,
+                                const fs::path& will_exist = fs::path()) {
+  std::error_code ec;
+  const fs::path abs = fs::absolute(fs::path(given), ec);
+  if (ec) throw std::runtime_error(ec.message());
+  PhysicalPath out;
+  /* The path's own link: its last named component, its trailing '/' and
+   * '.' set aside ("lnk/" names the link lnk, as mkdir takes it). */
+  {
+    fs::path last = abs;
+    while (last.has_parent_path() && last != last.root_path() &&
+           (last.filename().empty() || last.filename() == "."))
+      last = last.parent_path();
+    std::error_code lec;
+    if (fs::is_symlink(fs::symlink_status(last, lec)))
+      out.own_link = fs::read_symlink(last, lec);
   }
+  std::deque<fs::path> todo;
+  for (const fs::path& c : abs.relative_path()) todo.push_back(c);
+  fs::path cur = abs.root_path();
+  /* The first component on the way that does not exist, or is no
+   * directory though more follow (empty: none); below it the path is
+   * taken as written. */
+  fs::path stop;
+  bool stop_exists = false;
+  int links = 0;
+  /* Whether the components taken last were '', '.' or '..': the path then
+   * names a directory. */
+  bool trailing = false;
+  const auto missing = [&] {
+    return std::string(stop_exists && cur == stop ? "is not a directory"
+                                                  : "does not exist");
+  };
+  while (!todo.empty()) {
+    const fs::path c = todo.front();
+    todo.pop_front();
+    if (c.empty()) {
+      trailing = true;
+      continue;
+    }
+    if (c == ".") {
+      if (!stop.empty())
+        throw std::runtime_error("it walks '.' in '" + cur.string() +
+                                 "', which " + missing());
+      trailing = true;
+      continue;
+    }
+    if (c == "..") {
+      if (!stop.empty())
+        throw std::runtime_error("it walks '..' out of '" + cur.string() +
+                                 "', which " + missing());
+      cur = cur.parent_path();
+      trailing = true;
+      continue;
+    }
+    trailing = false;
+    const fs::path next = cur / c;
+    if (!stop.empty()) {
+      cur = next;
+      continue;
+    }
+    const fs::file_status ls = fs::symlink_status(next, ec);
+    if (ec && ls.type() != fs::file_type::not_found)
+      throw std::runtime_error("'" + next.string() +
+                               "' cannot be read: " + ec.message());
+    if (fs::is_symlink(ls)) {
+      if (++links > 40)
+        throw std::runtime_error("too many levels of symbolic links");
+      const fs::path target = fs::read_symlink(next, ec);
+      if (ec)
+        throw std::runtime_error("'" + next.string() +
+                                 "' cannot be read: " + ec.message());
+      out.through_links = true;
+      if (target.is_absolute()) cur = target.root_path();
+      std::deque<fs::path> parts;
+      for (const fs::path& t : target.relative_path()) parts.push_back(t);
+      todo.insert(todo.begin(), parts.begin(), parts.end());
+      continue;
+    }
+    if (ls.type() == fs::file_type::not_found) {
+      if (!will_exist.empty() && next == will_exist) {
+        cur = next;  // there once the run has created it
+        continue;
+      }
+      stop = next;
+      stop_exists = false;
+    } else if (!fs::is_directory(ls) &&
+               std::any_of(todo.begin(), todo.end(), [](const fs::path& t) {
+                 return !t.empty() && t != ".";
+               })) {
+      stop = next;
+      stop_exists = true;
+    }
+    cur = next;
+  }
+  out.path = cur;
+  out.exists = stop.empty();
+  out.names_directory = trailing;
+  return out;
+}
+
+/* @p dir resolved (resolve_physically, with @p will_exist), or nullopt
+ * when it cannot be. */
+std::optional<PhysicalPath> resolved_or_none(
+    const std::string& dir, const fs::path& will_exist = fs::path()) {
+  try {
+    return resolve_physically(dir, will_exist);
+  } catch (const std::exception&) {
+    return std::nullopt;
+  }
+}
+
+/* The directory of the archive line @p dir as the run finds it before it
+ * creates any: its resolved path when the run creates it (it does not
+ * exist, and the path names no link), else empty. */
+fs::path created_by_the_run(const std::string& dir) {
+  const auto r = resolved_or_none(dir);
+  return r && !r->exists && r->own_link.empty() ? r->path : fs::path();
+}
+}  // namespace
+
+void HPOTargets::create_archive_directories() const {
+  const bool dump = dumpPotEvery != std::numeric_limits<size_t>::max();
+  const bool bdump = dumpBestPotEvery != std::numeric_limits<size_t>::max();
+  /* The DUMP directory first, unless the system puts it inside the BDUMP
+   * directory. */
+  bool bdump_first = false;
+  if (dump && bdump) {
+    const fs::path b = created_by_the_run(dumpBestPotDir);
+    const auto d = resolved_or_none(dumpPotDir, b);
+    /* The DUMP directory is the BDUMP one ("archive/.") or inside it. */
+    bdump_first =
+        !b.empty() && d && (d->path == b || d->path.parent_path() == b);
+  }
+  if (bdump_first) create_archive_directory("BDUMP", dumpBestPotDir);
+  if (dump) create_archive_directory("DUMP", dumpPotDir);
+  if (bdump && !bdump_first) create_archive_directory("BDUMP", dumpBestPotDir);
+}
+
+void HPOTargets::check_archive_directories() const {
+  struct Archive {
+    const char* key;
+    const std::string& dir;
+    bool active;
+    const ArchiveLine& line;
+  };
+  const Archive a[2] = {
+      {"DUMP", dumpPotDir,
+       dumpPotEvery != std::numeric_limits<size_t>::max(), dumpPotLine},
+      {"BDUMP", dumpBestPotDir,
+       dumpBestPotEvery != std::numeric_limits<size_t>::max(),
+       dumpBestPotLine}};
+  /* In the order of their lines, so that the first line in error is the
+   * one named. */
+  const int first = a[1].line.number < a[0].line.number ? 1 : 0;
+  for (int k : {first, 1 - first}) {
+    const Archive& self = a[k];
+    const Archive& other = a[1 - k];
+    if (!self.active) continue;
+    /* The other line's directory, where the system puts it, when the run
+     * creates it: one inside it is created after it. Whether the run can
+     * create it is checked at its own line. */
+    const fs::path created_first =
+        other.active ? created_by_the_run(other.dir) : fs::path();
+    try {
+      check_archive_directory(self.key, self.dir, created_first);
+    } catch (const std::exception& e) {
+      throw std::runtime_error(
+          config_line_error(self.line.number, e.what(), self.line.text));
+    }
+  }
+}
+
+void HPOTargets::check_archive_directory(const std::string& key,
+                                         const std::string& dir,
+                                         const fs::path& created_first) {
+  const std::string what = key + " directory '" + dir + "'";
+  PhysicalPath r;
+  try {
+    r = resolve_physically(dir, created_first);
+  } catch (const std::exception& e) {
+    throw std::runtime_error(what + " cannot be resolved: " + e.what());
+  }
+  /* The other line's directory itself ("archive/."), which the run
+   * creates first. */
+  if (!created_first.empty() && r.path == created_first) return;
+  std::error_code ec;
+  if (r.exists) {
+    const fs::file_status st = fs::status(r.path, ec);
+    if (ec)
+      throw std::runtime_error(what + " cannot be read: " + ec.message());
+    if (!fs::is_directory(st))
+      throw std::runtime_error(what + " exists and is not a directory");
+    if (!writable_directory(r.path))
+      throw std::runtime_error(what + " is not writable");
+    return;
+  }
+  /* mkdir does not follow a link the path itself names: a link to a
+   * directory that does not exist stops it. */
+  if (!r.own_link.empty())
+    throw std::runtime_error(what + " is a symbolic link to '" +
+                             r.own_link.string() + "', which does not exist");
+  /* A missing directory: the run creates the last directory of the path,
+   * in the directory the system puts it in -- after the other archive
+   * line's directory, when that is it. */
+  const fs::path parent = r.path.parent_path();
+  if (!created_first.empty() && parent == created_first) return;
+  const std::string cannot = what + " cannot be created: ";
+  const fs::file_status ps = fs::status(parent, ec);
+  if (ps.type() == fs::file_type::not_found)
+    throw std::runtime_error(cannot + "the directory '" + parent.string() +
+                             "' does not exist (tadah hpo creates only the "
+                             "last directory of the path)");
+  if (ec)
+    throw std::runtime_error(cannot + "'" + parent.string() +
+                             "' cannot be read: " + ec.message());
+  if (!fs::is_directory(ps))
+    throw std::runtime_error(cannot + "'" + parent.string() +
+                             "' is not a directory");
+  if (!writable_directory(parent))
+    throw std::runtime_error(cannot + "the directory '" + parent.string() +
+                             "' is not writable");
+}
+
+namespace {
+/* The working directory, for the messages on the run's output files. */
+std::string working_directory() {
+  std::error_code ec;
+  const fs::path cwd = fs::current_path(ec);
+  return ec ? std::string(".") : cwd.string();
+}
+
+/* What the run does with an output file in the working directory. */
+enum class OutputUse {
+  Rewritten,  // opens it to write, once (the journal, a search-space file)
+  Reopened,   // opens it to write, again for each row (a result file)
+  Locked,     // opens it to write and locks it (the lock of a best potential)
+  Replaced    // replaces or removes the name (a best potential)
+};
+
+/* Whether the run can open the existing file @p file as it does -- to
+ * write, and to read too (@p read_too: a lock) --: 0, or the errno of the
+ * failure. Links are followed as the open follows them. A directory is
+ * refused (EISDIR), and so is a socket, which the run's open cannot open
+ * (ENXIO). A named pipe is not opened -- opening and closing its write end
+ * would end the stream of its reader --, and its permission is checked
+ * instead (faccessat with the effective ids): the run's own open of it
+ * waits for its reader. A regular file, and a character or block device,
+ * are opened as the run opens them, without creating or truncating them,
+ * without waiting and without taking a controlling terminal, and closed:
+ * nothing is written. */
+int open_as_the_run(const std::string& file, bool read_too) {
+  struct stat st;
+  if (::stat(file.c_str(), &st) != 0) return errno;
+  if (S_ISDIR(st.st_mode)) return EISDIR;
+  if (S_ISSOCK(st.st_mode)) return ENXIO;
+  if (S_ISFIFO(st.st_mode)) {
+    const int mode = read_too ? (R_OK | W_OK) : W_OK;
+    return ::faccessat(AT_FDCWD, file.c_str(), mode, AT_EACCESS) == 0 ? 0
+                                                                       : errno;
+  }
+  const int fd = ::open(file.c_str(),
+                        (read_too ? O_RDWR : (O_WRONLY | O_APPEND)) |
+                            O_NONBLOCK | O_NOCTTY | O_CLOEXEC);
+  if (fd < 0) return errno;
+  ::close(fd);
+  return 0;
+}
+
+/* Throws when the run cannot write the output file @p file of the working
+ * directory as @p use says (@p locked: the best potential a lock is of).
+ * A file the run writes through (Rewritten, Reopened, Locked) that exists
+ * is opened as the run opens it (open_as_the_run): the system decides,
+ * following every link, and the refusal is the open's own error ("...
+ * cannot be opened: Permission denied (tadah hpo rewrites it)"); a file
+ * the run reopens for each row (Reopened) cannot be a named pipe. One that does not
+ * exist is checked where the system would create it
+ * (resolve_physically): a name that ends in '/' or '/.' cannot be a file,
+ * and the file must be in a directory that exists and the run can write
+ * into (the run creates the file, no directory). A file the run replaces
+ * (Replaced) is checked by its own name: a symbolic link there is
+ * replaced, not followed, and only a directory of that name stops the
+ * run. */
+void check_output_file(const std::string& file, OutputUse use,
+                       const std::string& locked = std::string()) {
+  const std::string where =
+      "'" + file + "' in the working directory '" + working_directory() + "'";
+  std::error_code ec;
+  if (use == OutputUse::Replaced) {
+    const fs::file_status ls = fs::symlink_status(file, ec);
+    if (ec && ls.type() != fs::file_type::not_found)
+      throw std::runtime_error(where + " cannot be read: " + ec.message());
+    if (fs::is_directory(ls))
+      throw std::runtime_error(where + " is a directory: tadah hpo writes a "
+                               "file of that name");
+    return;
+  }
+  const std::string purpose = use == OutputUse::Locked
+                                  ? "tadah hpo opens it to lock " + locked
+                                  : std::string("tadah hpo rewrites it");
+  /* A file the run reopens for each row cannot be a pipe: the reader gets
+   * the end of the file when the run closes it, and the next open waits
+   * for a reader for ever. */
+  if (use == OutputUse::Reopened) {
+    struct stat st;
+    if (::stat(file.c_str(), &st) == 0 && S_ISFIFO(st.st_mode))
+      throw std::runtime_error(where + " is a named pipe: tadah hpo reopens "
+                               "the file for each row it writes, and a pipe "
+                               "would block it");
+  }
+  const int err = open_as_the_run(file, use == OutputUse::Locked);
+  if (err == 0) return;
+  if (err != ENOENT)
+    throw std::runtime_error(where + " cannot be opened: " +
+                             std::strerror(err) + " (" + purpose + ")");
+  /* Nothing to open: where the system would create the file. */
+  PhysicalPath r;
+  try {
+    r = resolve_physically(file);
+  } catch (const std::exception& e) {
+    throw std::runtime_error(where + " cannot be resolved: " + e.what());
+  }
+  const std::string subject =
+      r.through_links
+          ? where + " is a symbolic link to '" + r.path.string() + "', which"
+          : where;
+  const std::string cannot = subject + " cannot be created: ";
+  if (r.names_directory)
+    throw std::runtime_error(cannot +
+                             "a file name cannot end in '/' or '/.'");
+  if (r.exists)
+    throw std::runtime_error(where + " cannot be opened: " +
+                             std::strerror(err) + " (" + purpose + ")");
+  const fs::path dir = r.path.parent_path();
+  const fs::file_status ds = fs::status(dir, ec);
+  if (ds.type() == fs::file_type::not_found)
+    throw std::runtime_error(cannot + "the directory '" + dir.string() +
+                             "' does not exist");
+  if (ec)
+    throw std::runtime_error(cannot + "'" + dir.string() +
+                             "' cannot be read: " + ec.message());
+  if (!fs::is_directory(ds))
+    throw std::runtime_error(cannot + "'" + dir.string() +
+                             "' is not a directory");
+  if (!writable_directory(dir))
+    throw std::runtime_error(cannot + "the directory '" + dir.string() +
+                             "' is not writable");
+}
+}  // namespace
+
+HPOTargets::OutputNames HPOTargets::output_names() {
+  const std::string r = hpo_rank_suffix();
+  return {"loss.tadah" + r,      "outvar.tadah" + r,
+          "params.tadah" + r,    "stats.tadah" + r,
+          "best_loss.tadah" + r, "best_outvar.tadah" + r,
+          "best_params.tadah" + r, "best_stats.tadah" + r,
+          "best_pot.tadah",      "best_pot.tadah" + r};
+}
+
+bool HPOTargets::writes_search_space_file() const {
+  return static_cast<bool>(space_);
+}
+
+bool HPOTargets::writes_resolved_optim_file() const {
+  if (!space_) return false;
+  for (std::size_t i = 0; i < space_->dim(); ++i)
+    if (space_->at(i).origin != BoxOrigin::Explicit) return true;
+  return false;
+}
+
+void HPOTargets::check_run_outputs(const std::string& journal) {
+  std::error_code ec;
+  if (!fs::is_directory(fs::status(".", ec)) || !writable_directory("."))
+    throw std::runtime_error(
+        "the working directory '" + working_directory() +
+        "' is not writable: tadah hpo writes its journal (hpo_run.log), its "
+        "result files and best_pot.tadah there");
+  check_output_file(journal, OutputUse::Rewritten);
+  const OutputNames n = output_names();
+  for (const std::string* f :
+       {&n.loss, &n.outvar, &n.params, &n.stats, &n.bestLoss, &n.bestOutvar,
+        &n.bestParams, &n.bestStats})
+    check_output_file(*f, OutputUse::Reopened);
+  for (const std::string* f : {&n.canonicalBestPot, &n.localBestPot}) {
+    check_output_file(*f, OutputUse::Replaced);
+    check_output_file(*f + ".lock", OutputUse::Locked, *f);
+  }
+}
+
+void HPOTargets::check_search_space_files() const {
+  if (writes_search_space_file())
+    check_output_file(kSearchSpaceFile, OutputUse::Rewritten);
+  if (writes_resolved_optim_file())
+    check_output_file(kResolvedOptimFile, OutputUse::Rewritten);
+}
+
+void HPOTargets::create_archive_directory(const std::string& key,
+                                          const std::string& dir) {
+  std::error_code ec;
+  if (fs::create_directory(dir, ec)) {
+    std::cout << "Directory created: " << dir << std::endl;
+    return;
+  }
+  if (!ec && fs::is_directory(dir, ec)) {
+    std::cout << "Directory already exists: " << dir << std::endl;
+    return;
+  }
+  throw std::runtime_error(
+      key + " directory '" + dir + "' could not be created: " +
+      (ec ? ec.message() : std::string("it exists and is not a directory")));
 }
 
 /* Positive-only OPTIM keys, from the same table the refit hpotarget writer
@@ -2065,7 +2516,7 @@ void HPOTargets::write_search_space_files(const std::string& dir) const {
       width[c] = header[c].size();
       for (const auto& r : rows) width[c] = std::max(width[c], r[c].size());
     }
-    std::ofstream tsv(dir + "/hpo_search_space.tsv");
+    std::ofstream tsv(dir + "/" + kSearchSpaceFile);
     tsv <<
       "# tadah hpo search space -- one row per optimised dimension, in optimiser order\n"
       "# (the same order as the params.tadah columns and the journal tables).\n"
@@ -2096,11 +2547,8 @@ void HPOTargets::write_search_space_files(const std::string& dir) const {
     emit(header);
     for (const auto& r : rows) emit(r);
   }
-  bool any_auto = false;
-  for (std::size_t i = 0; i < ss.dim(); ++i)
-    if (ss.at(i).origin != BoxOrigin::Explicit) any_auto = true;
-  if (!any_auto) return;
-  std::ofstream hpo(dir + "/hpo_optim_resolved.hpo");
+  if (!writes_resolved_optim_file()) return;
+  std::ofstream hpo(dir + "/" + kResolvedOptimFile);
   hpo << "# Resolved OPTIM block (explicit bounds for every searched dimension).\n"
          "# Written by tadah hpo because at least one box was derived by an AUTO rule;\n"
          "# paste these lines in place of the AUTO lines to pin exactly this search space.\n";

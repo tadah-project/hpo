@@ -225,6 +225,8 @@ void HPOLog::reset_run_locked()
     reset_density_locked();
     reset_occupancy_locked();
     run_notes_.clear();
+    keep_notes_ = false;
+    kept_notes_.clear();
     clear_eval_context();
 }
 
@@ -325,6 +327,26 @@ void HPOLog::open(const std::string& path,
     f_.flush();
 }
 
+void HPOLog::begin_without_journal()
+{
+    std::lock_guard<std::mutex> lg(mtx_);
+    last_status_.clear();
+    if (f_.is_open()) f_.close();
+    /* A closed stream with its error state set: every write to it is
+     * dropped (event() returns before writing, the section writers' output
+     * fails), and open() clears the state. */
+    f_.setstate(std::ios::badbit);
+    reset_run_locked();
+    /* What the journal would have warned of is kept: the check shows it. */
+    keep_notes_ = true;
+}
+
+std::vector<JournalNote> HPOLog::notes_without_journal() const
+{
+    std::lock_guard<std::mutex> lg(mtx_);
+    return kept_notes_;
+}
+
 /* -------------------------------------------------------------------------
  * HPOLog -- primitive writers
  * ------------------------------------------------------------------------- */
@@ -372,7 +394,11 @@ void HPOLog::separator()
 void HPOLog::event(const std::string& tag, const std::string& msg)
 {
     std::lock_guard<std::mutex> lg(mtx_);
-    if (!f_.is_open()) return;
+    if (!f_.is_open()) {
+        if (keep_notes_ && (tag == "WARNING" || tag == "HINT"))
+            kept_notes_.push_back({tag, msg});
+        return;
+    }
     /* Lazy SETUP DIAGNOSTICS header: emit before the first event when no
      * other section has been started yet (init-time diagnostics that fire
      * during HPOTargets construction land here). */

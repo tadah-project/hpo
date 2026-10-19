@@ -1046,6 +1046,10 @@ void HPO_Host<P,R>::reset_best_state_for_fresh_run() {
 
 template<class P,class R>
 void HPO_Host<P,R>::prepare_best_publication() const {
+    if (purpose_ == HostPurpose::Check)
+        throw std::logic_error("HPO_Host: a host built for the startup "
+                               "checks (tadah hpo --check) publishes no "
+                               "potential");
     std::string local_error;
     {
         /* A new run publishes again: its first failure trips the latch
@@ -1105,9 +1109,10 @@ HPO_Host<P,R>::tls_last_validation_switches_{};
 template<class P, class R>
 HPO_Host<P,R>::HPO_Host(core::Context master_ctx,
                         HPOTargets&   trg,
-                        const std::string& val_cfg)
+                        const std::string& val_cfg,
+                        HostPurpose purpose)
 : master_ctx_(std::move(master_ctx))
-, trg_(trg), script_ewma_ms_(trg.LS.size()), spec_(trg.spec)
+, trg_(trg), purpose_(purpose), script_ewma_ms_(trg.LS.size()), spec_(trg.spec)
 , use_lammps_( !trg.LS.empty() )
 , has_train_data_( master_ctx_.contains("DBFILE")
                    && master_ctx_.size("DBFILE") > 0 )
@@ -1427,19 +1432,26 @@ HPO_Host<P,R>::HPO_Host(core::Context master_ctx,
                 " OPTIM dimension(s)");
     }
 
-    init_loss   (trg_.lossFile);
-    init_outvar (trg_.outvarFile);
-    init_params (trg_.paramsFile);
-    init_stats  (trg_.statsFile);
-    init_loss   (trg_.bestLossFile);
-    init_outvar (trg_.bestOutvarFile);
-    init_params (trg_.bestParamsFile);
-    init_stats  (trg_.bestStatsFile);
+    /* The outputs of a run: the headers of its result files. A host of
+     * `tadah hpo --check` writes none. The run creates its archive
+     * directories after prepare_best_publication()
+     * (HPOTargets::create_archive_directories). */
+    if (purpose_ == HostPurpose::Run) {
+        init_loss   (trg_.lossFile);
+        init_outvar (trg_.outvarFile);
+        init_params (trg_.paramsFile);
+        init_stats  (trg_.statsFile);
+        init_loss   (trg_.bestLossFile);
+        init_outvar (trg_.bestOutvarFile);
+        init_params (trg_.bestParamsFile);
+        init_stats  (trg_.bestStatsFile);
 
-    /* The writer opens these files at its first drain and takes their
-     * header-only sizes as committed offsets; drop any it still holds from
-     * an earlier run in this process (their offsets are stale now). */
-    reset_writer_files();
+        /* The writer opens these files at its first drain and takes their
+         * header-only sizes as committed offsets; drop any it still holds
+         * from an earlier run in this process (their offsets are stale
+         * now). */
+        reset_writer_files();
+    }
 
     /* Durable-best retries are visible: one WARNING per retried failure,
      * counted for the DIAGNOSTICS line (transient retries only: the
@@ -2906,6 +2918,9 @@ void HPO_Host<P,R>::note_failed_publication(
 template<class P, class R>
 double HPO_Host<P,R>::operator()(const P& p_in) const
 {
+  if (purpose_ == HostPurpose::Check)
+    throw std::logic_error("HPO_Host: a host built for the startup checks "
+                           "(tadah hpo --check) evaluates no candidate");
   /* Cooperative shutdown: SIGINT/SIGTERM/SIGUSR2 raised the stop flag.
    * Throw before consuming an iter slot. The exception unwinds every
    * optimiser and strategy to drive_run() (run_driver.h), which flushes
