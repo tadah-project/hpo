@@ -33,10 +33,10 @@
 // one), an INIT key for the starting points of its optimiser, a NOISE,
 // RESTART or STRATEGY key for the run, and a top-level key that takes one
 // value (QFLUSH, OUTPUT, DUMP, ...). A later line replaced the first's
-// value without a word. METHOD lines add to their chain, STEP <KEY>
+// value without a word. METHOD lines add to their chain and STEP <KEY>
 // overrides of other indices layer over the block-wide STEP and over each
-// other, and FAILSCORE, LOSS and PC_SCRIPT_TIMEOUT apply to the PC_LAMMPS
-// lines after them: none of them is a repeat.
+// other: neither is a repeat. FAILSCORE, LOSS and PC_SCRIPT_TIMEOUT are set
+// again only after a PC_LAMMPS or PC_FAILPROBE line has taken them.
 // A NOISE block takes AUTO and CALIBRATION: an optimiser key inside it is
 // refused at its line, as every other key (it set the optimiser of the
 // OPTIMIZER block around it).
@@ -812,9 +812,7 @@ TEST_CASE("hpotarget block structure: a key of an INIT, NOISE, RESTART or "
  * block is: QFLUSH, OUTPUT, BOUTPUT, DIGITS, DUMP, BDUMP,
  * FAILSCORE_GRADING, BUMPGATE, PC_ISOLATION and PC_WORKER_TIMEOUT. A second
  * line is refused at its line, naming the first ("QFLUSH is set twice
- * (first on line 3); each key is given once"). FAILSCORE, LOSS and
- * PC_SCRIPT_TIMEOUT (MAXTIME) apply to the PC_LAMMPS lines after them, so a
- * later line is read.
+ * (first on line 3); each key is given once").
  * Before the fix: the later line replaced the first without a word. */
 TEST_CASE("hpotarget block structure: a top-level key that takes one value "
           "set twice is refused at the second line",
@@ -842,12 +840,84 @@ TEST_CASE("hpotarget block structure: a top-level key that takes one value "
     }
     std::error_code ec;
     fs::remove_all(dir, ec);
-    /* the keys the PC_LAMMPS lines after them take */
-    CHECK(parse_error(kRoot + Lines{"FAILSCORE 1e9", "LOSS L2",
-                                    "PC_SCRIPT_TIMEOUT 60", "FAILSCORE 1e8",
-                                    "LOSS L1", "PC_SCRIPT_TIMEOUT 90",
-                                    "OPTIMIZER", "  LIB DLIB",
-                                    "  ALGO BFGS", "ENDOPTIMIZER"}) == "");
+}
+
+/* Fixes: FAILSCORE, LOSS and PC_SCRIPT_TIMEOUT (its alias MAXTIME) are set
+ * once for each PC_LAMMPS or PC_FAILPROBE line that takes them: a second
+ * line is read only after such a line has taken the first, and is refused
+ * otherwise, naming the first ("LOSS is set twice (first on line 3) and no
+ * PC_LAMMPS or PC_FAILPROBE line between takes the first; each key is
+ * given once"). The run-wide uses (the validation metrics' loss, the
+ * ceiling of every loss) take the last line.
+ * Before the fix: a second line with no PC_LAMMPS line between replaced
+ * the first without a word, for the validation metrics and the run's
+ * ceiling too. */
+TEST_CASE("hpotarget block structure: FAILSCORE, LOSS or PC_SCRIPT_TIMEOUT "
+          "set again before a PC_LAMMPS line takes it is refused",
+          "[hpotarget][block_structure]")
+{
+    const fs::path script =
+        fs::temp_directory_path() / (unique_name("tadah_hbs_s") + ".in");
+    { std::ofstream os(script); os << "variable xyz equal 0.0\n"; }
+    const std::string pc_lammps = "PC_LAMMPS --script " + script.string() +
+                                  " --varloss xyz 1.0 100 --outvar xyz";
+    const Lines block = {"OPTIMIZER", "  LIB DLIB", "  ALGO GFS",
+                         "  MAXEVAL 4", "ENDOPTIMIZER"};
+    struct Case { std::string first, second, message; };
+    for (const auto& c : std::vector<Case>{
+             {"LOSS L1", "LOSS L2",
+              "LOSS is set twice (first on line 3)"},
+             {"FAILSCORE 1e9", "FAILSCORE 1e6",
+              "FAILSCORE is set twice (first on line 3)"},
+             {"PC_SCRIPT_TIMEOUT 60", "PC_SCRIPT_TIMEOUT 90",
+              "PC_SCRIPT_TIMEOUT is set twice (first on line 3)"},
+             {"PC_SCRIPT_TIMEOUT 60", "MAXTIME 90",
+              "MAXTIME is set twice (first on line 3, as "
+              "PC_SCRIPT_TIMEOUT)"}}) {
+        INFO(c.second);
+        CHECK(parse_error(kRoot + Lines{c.first, c.second} + block) ==
+              at_line(4, c.message + " and no PC_LAMMPS or PC_FAILPROBE "
+                                     "line between takes the first; each "
+                                     "key is given once", c.second));
+        /* a PC_LAMMPS line between takes the first */
+        CHECK(parse_error(kRoot + Lines{c.first, pc_lammps, c.second,
+                                        pc_lammps} + block) == "");
+    }
+    std::error_code ec;
+    fs::remove(script, ec);
+}
+
+/* The grids of a single DM_Poly line whose channel function reads SEMBFUNC
+ * are expanded before the OPTIM lines are read: OPTIM CGRIDMB (2) of
+ * 'CGRIDMB LIN 3 2 4.5' starts at the second centre, 3.25.
+ * Before the fix: the line kept its generator as written, so CGRIDMB (2)
+ * was the generator's start, 2, and the search moved it. */
+TEST_CASE("hpotarget: OPTIM addresses the expanded grid of a DM_PS_SQRT "
+          "line", "[hpotarget][dm_poly]")
+{
+    PeriodicTable::initialize();
+    Context ctx;
+    ctx.add("ATOM", "Ta");
+    ctx.add("WATOM", 1.0);
+    ctx.add("DBFILE", "dummy.db");
+    ctx.add("INIT2B", "false");
+    ctx.add("INITMB", "true");
+    ctx.add("TYPEMB", "DM_PS_SQRT 1 3 3 Ta Ta");
+    ctx.add("CGRIDMB", "LIN 3 2.0 4.5");
+    ctx.add("SGRIDMB", "1.0 1.0 1.0");
+    ctx.add("RCTYPEMB", "Cut_Cos");
+    ctx.add("RCUTMB", 5.0);
+    ctx.add("VERBOSE", 0);
+    ctx.add("MODEL", "M_BLR BF_Linear");
+    ScopedTempFile tf(Lines{"OPTIM CGRIDMB (2) 1.0 5.0", "PC_ERMSE 0 1",
+                            "OPTIMIZER", "  LIB NLOPT", "  ALGO LN_SBPLX",
+                            "  MAXEVAL 3", "ENDOPTIMIZER"});
+    HPOTargets trg(ctx, tf.path.string());
+    REQUIRE(trg.spec.optim_init.size() == 1);
+    REQUIRE(trg.spec.optim_init.front().size() == 1);
+    CHECK(trg.spec.optim_init.front()[0] == 3.25);
+    REQUIRE(ctx.size("CGRIDMB") == 3);
+    CHECK(ctx.get<double>("CGRIDMB", 2) == 4.5);
 }
 
 /* Fixes: a STEP <KEY> override is set once for its key and indices: an
