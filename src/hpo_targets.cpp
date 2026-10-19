@@ -25,6 +25,7 @@
 #include <cmath>
 #include <iomanip>
 #include <map>
+#include <set>
 #include <optional>
 #include <random>
 #include <fstream>
@@ -739,15 +740,20 @@ void HPOTargets::read(const std::string& fn)
     std::map<std::string, std::size_t> metric_lines;
     /* Where each key was set, per thing it configures (an optimiser, the
      * starting points of one, the NOISE, RESTART or STRATEGY settings, the
-     * search space): the line and the block. A key is set once for what it
-     * configures -- OPTIMIZER, STRATEGY and REFINE configure the
-     * STRATEGY-level optimiser, the INIT blocks inside OPTIMIZER and
-     * STRATEGY its starting points, a repeated block continues the first --
-     * so a second line, which would replace the first's value, is refused.
-     * METHOD lines add to their chain and STEP <KEY> overrides layer over
-     * the block-wide STEP: neither is set this way. */
-    struct AttrSet { std::size_t line; Block block; };
+     * search space, the run for a top-level key): the line, the block and
+     * the block around it. A key is set once for what it configures --
+     * OPTIMIZER, STRATEGY and REFINE configure the STRATEGY-level
+     * optimiser, the INIT blocks inside OPTIMIZER, STRATEGY and REFINE its
+     * starting points, a repeated block continues the first -- so a second
+     * line, which would replace the first's value, is refused. A STEP <KEY>
+     * override is set once for its key and indices, and layers over the
+     * block-wide STEP and over overrides of other indices. METHOD lines add
+     * to their chain, and FAILSCORE, LOSS and PC_SCRIPT_TIMEOUT apply to the
+     * PC_LAMMPS lines after them: none of them is set this way. */
+    struct AttrSet { std::size_t line; Block block; Block parent; };
     std::map<std::pair<const void*, std::string>, AttrSet> attr_set;
+    /* What a top-level key configures: the run. */
+    static const char run_settings = 0;
 
     /* The block the open INNER block sits in: an INNER block opens only
      * inside STRATEGY, EXPLORE or REFINE. */
@@ -858,20 +864,36 @@ void HPOTargets::read(const std::string& fn)
      * different types that set it both configure. */
     auto set_once = [&](const void* target, const std::string& attr,
                         const char* what) {
+        const Block parent = open_blocks.size() >= 2
+                                 ? open_blocks[open_blocks.size() - 2].id
+                                 : ROOT;
         const auto [it, fresh] = attr_set.emplace(
-            std::make_pair(target, attr), AttrSet{nline, block});
+            std::make_pair(target, attr), AttrSet{nline, block, parent});
         if (fresh) return;
         const AttrSet& first = it->second;
-        if (first.block == block)
+        if (block == ROOT)
+            throw std::runtime_error(
+                attr + " is set twice (first on line " +
+                std::to_string(first.line) + "); each key is given once");
+        if (first.block == block && first.parent == parent)
             throw std::runtime_error(
                 attr + " is set twice in the " + block_name(block) +
                 " block (first on line " + std::to_string(first.line) +
                 "); each key is given once");
+        /* Blocks of one type inside two blocks (the INIT blocks inside
+         * OPTIMIZER and inside STRATEGY) are named by the block around
+         * them. */
+        const bool by_parent = first.block == block;
+        const auto where = [&](Block b, Block around) {
+            return std::string("the ") + block_name(b) + " block" +
+                   (by_parent ? std::string(" inside ") + block_name(around)
+                              : std::string());
+        };
         throw std::runtime_error(
-            attr + " is set on line " + std::to_string(first.line) +
-            " in the " + block_name(first.block) + " block and again here in "
-            "the " + block_name(block) + " block; both blocks configure the "
-            "same " + what + ", so each key is given once");
+            attr + " is set on line " + std::to_string(first.line) + " in " +
+            where(first.block, first.parent) + " and again here in " +
+            where(block, parent) + "; both blocks configure the same " +
+            what + ", so each key is given once");
     };
 
     while (std::getline(ifs,line))
@@ -1149,6 +1171,22 @@ void HPOTargets::read(const std::string& fn)
                 else if (!first.empty() && !is_number_shaped(first)) attr.clear();
             }
             if (active_opt && dispatch_opt_attr(key, iss, *active_opt)) {
+                /* A STEP <KEY> override: once for its key and indices
+                 * ("WATOM(1)" and "WATOM (1)" are one). */
+                if (attr.empty() && key == "STEP" &&
+                    !active_opt->step_overrides.empty()) {
+                    const StepOverride& ov = active_opt->step_overrides.back();
+                    std::set<std::size_t> idx(ov.indices.begin(),
+                                              ov.indices.end());
+                    attr = "STEP " + ov.key;
+                    if (!idx.empty()) {
+                        std::string list;
+                        for (const std::size_t i : idx)
+                            list += (list.empty() ? "" : ",") +
+                                    std::to_string(i);
+                        attr += "(" + list + ")";
+                    }
+                }
                 if (!attr.empty()) set_once(active_opt, attr, "optimiser");
                 /* Strict arity. dispatch_opt_attr() reads exactly the value
                  * tokens its key defines, so anything still on the line is a
@@ -1304,6 +1342,19 @@ void HPOTargets::read(const std::string& fn)
              * BDUMP and friends are ROOT-level and fall through. */
             if (block != ROOT) {
                 throw std::runtime_error("unknown key '" + key + "' in this block");
+            }
+
+            /* A top-level key that takes one value is set once: a second
+             * line would replace the first's value. FAILSCORE, LOSS and
+             * PC_SCRIPT_TIMEOUT (MAXTIME) apply to the PC_LAMMPS lines
+             * after them; the metric and gate keys refuse a repeat
+             * themselves. */
+            {
+                static const std::set<std::string> once = {
+                    "QFLUSH", "OUTPUT", "BOUTPUT", "DIGITS", "DUMP",
+                    "BDUMP", "FAILSCORE_GRADING", "BUMPGATE", "PC_ISOLATION",
+                    "PC_WORKER_TIMEOUT"};
+                if (once.count(key)) set_once(&run_settings, key, "run");
             }
 
             /* ==================  global (ROOT) section  =========== */
