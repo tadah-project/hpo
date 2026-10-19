@@ -1779,11 +1779,12 @@ void HPOTargets::read(const std::string& fn)
      *
      * The HPO-side analytical-gradient wiring for PC_LAMMPS (the
      * IFT-adjoint chain) is not engaged. PC_LAMMPS configs must
-     * use gradient-free optimisers -- NLOPT GN_* / LN_*, TADAH built-ins
-     * (RANDOM/GRID/ANNEAL). The single accepted gradient-based exception
-     * is DLIB:BFGS, which performs its own per-theta-per-iter finite-
-     * difference dtheta inside dlib::find_min and never asks the host
-     * for a full gradient vector.
+     * use gradient-free optimisers -- every registered optimiser whose run
+     * takes no gradient (searches_without_gradient(), strategy_rules.h).
+     * The single accepted gradient-based optimiser is DLIB:BFGS, which
+     * takes the central-difference gradient of the loss
+     * (GradientProvider, GRAD_STRATEGY NUMERICAL), as an NLopt LD_*
+     * algorithm would.
      *
      * A block is refused when it asks the host for gradients
      * (obtains_gradients), not for the D of its name: NLopt's MLSL and
@@ -1832,10 +1833,9 @@ void HPOTargets::read(const std::string& fn)
                   "INNER search is a local NLopt algorithm: name a "
                   "derivative-free one in the INNER block (" +
                       nlopt_inner_searches_without_gradient() + ")."
-                : " PC_LAMMPS requires a gradient-free optimiser (NLOPT "
-                  "GN_*/LN_*, TADAH RANDOM/GRID/ANNEAL). The only "
-                  "gradient-based exception is DLIB:BFGS (uses "
-                  "per-theta-per-iter dtheta, not a full gradient).";
+                : " PC_LAMMPS requires a gradient-free optimiser (" +
+                      searches_without_gradient() + ") or DLIB:BFGS, the "
+                      "one gradient-based optimiser it accepts.";
             if (optimizer_caps(sp).accepts_inner) {
                 /* An MLSL or AUGLAG that takes a gradient for its local
                  * search: an INNER block's is refused at that block. */

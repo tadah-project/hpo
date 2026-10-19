@@ -109,6 +109,13 @@ bool runs_from_each_start(const OptimizerCaps& caps);
  * gradient-based one. */
 std::string nlopt_inner_searches_without_gradient();
 
+/* Every registered optimiser whose run takes no gradient (obtains_gradients()
+ * of the optimiser with no INNER block), sorted, from the registry:
+ * "ASA:ASA, DLIB:GFS, NLOPT:..., TADAH:RANDOM". The optimisers a block can
+ * name in a run with PC_LAMMPS, which takes no gradient, besides DLIB:BFGS:
+ * HPOTargets::read() names them when it refuses a gradient-based one. */
+std::string searches_without_gradient();
+
 /* STRATEGY TYPE MULTISTART: `spec` names an optimiser, and one that
  * runs_from_each_start() accepts, for any N_STARTS. A multi-seed backend
  * (OptimizerCaps::accepts_multi_seed: DLIB:GFS) runs every start in one

@@ -298,6 +298,17 @@ std::string nlopt_inner_searches_without_gradient()
     return format_caps_list(caps, caps.size());
 }
 
+std::string searches_without_gradient()
+{
+    const auto caps = filter_optimizer_caps([](const OptimizerCaps& c) {
+        OptimizerSpec sp;
+        sp.lib = c.lib;
+        sp.algo = c.algo;
+        return !obtains_gradients(sp);
+    });
+    return format_caps_list(caps, caps.size());
+}
+
 void require_multistart_backend(const OptimizerSpec& spec)
 {
     require_driver(spec, DriverPhase::Run);
