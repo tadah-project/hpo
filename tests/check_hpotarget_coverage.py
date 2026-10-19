@@ -41,9 +41,11 @@ What it cannot see
 ------------------
   - where a key of HPOTargets::read is valid: every comparison there is on
     one variable, `key`, so a name found there counts for a block, an END
-    line or a key of ROOT, OPTIMIZER, STRATEGY, NOISE or RESTART alike.
-    The blocks a registry entry names are checked by the conformance test,
-    through its examples and invalid lines;
+    line, a key of the optimiser group (PARAM and STEP, compared to name
+    what a line sets once) or a key of ROOT, OPTIMIZER, STRATEGY, INIT
+    (METHOD, which adds to its chain), NOISE or RESTART alike. The blocks a
+    registry entry names are checked by the conformance test, through its
+    examples and invalid lines;
   - a name the parser builds instead of writing it: END lines are matched
     as literals in HPOTargets::read, but block_ended_by() builds "END" +
     name; a rule that compares a computed string;
@@ -197,8 +199,8 @@ class Rule:
 IGNORE_OPTIMISERS = "an optimiser name (LIB or ALGO value: the optimiser list)"
 IGNORE_INIT_MODE = ("the INIT_MODE grammar of the annealers' PARAM keys "
                     "(anneal_keys.toml)")
-READ_KEY = ("block", "block_end", "key:ROOT", "key:OPTIMIZER",
-            "key:STRATEGY", "key:NOISE", "key:RESTART")
+READ_KEY = ("block", "block_end", "group_key", "key:ROOT", "key:OPTIMIZER",
+            "key:STRATEGY", "key:INIT", "key:NOISE", "key:RESTART")
 PARAM_FIND = (r'param(?:_raw)?\s*\.\s*(?:find|count)\(\s*"([^"]+)"\s*\)',
               ("param",))
 
