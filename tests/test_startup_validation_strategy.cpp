@@ -687,53 +687,52 @@ TEST_CASE("startup validation: a STRATEGY key of another TYPE is rejected at "
         HPOTargets trg(ctx, ok.path.string());
         CHECK(trg.spec.multistart.n_starts == 3);
     }
-    SECTION("the last TYPE line decides") {
+    SECTION("a second TYPE line is refused") {
+        /* TYPE is set once (it was: the last TYPE line decided, and
+         * N_STARTS was refused under the later TYPE PLAIN). */
         const auto msg = parse_error(strategy_config(
             "    TYPE MULTISTART\n    N_STARTS 3\n    TYPE PLAIN\n"
             "    LIB DLIB\n    ALGO BFGS\n"));
-        CHECK_THAT(msg, Catch::StartsWith("Error on line 6: N_STARTS is not "
-                                          "accepted with STRATEGY TYPE PLAIN"));
+        CHECK_THAT(msg, Catch::StartsWith("Error on line 7: TYPE is set twice "
+                                          "in the STRATEGY block (first on "
+                                          "line 5); each key is given once"));
     }
 }
 
-TEST_CASE("startup validation: an EXPLORE or REFINE block that a later TYPE "
-          "line takes out of PRESTAGE is rejected at its own line",
+TEST_CASE("startup validation: a TYPE line after an EXPLORE or REFINE "
+          "block is refused as a second TYPE line",
           "[startup_validation][strategy][knobs][prestage]")
 {
     /* EXPLORE and REFINE need TYPE PRESTAGE before them; a TYPE line after
-     * them used to switch the strategy silently: the EXPLORE block was
-     * dropped (the run was PLAIN) and a REFINE block configured the PLAIN
-     * optimiser. The TYPE the block ends with decides, as for the keys of
-     * one TYPE. Lines 1-4 are the root keys, OPTIMIZER and STRATEGY. */
+     * them used to switch the strategy silently (the EXPLORE block was
+     * dropped and the run was PLAIN; a REFINE block configured the PLAIN
+     * optimiser), and then was refused at the block's line, the last TYPE
+     * line deciding. TYPE is set once: the second TYPE line is refused at
+     * its line, whatever it names, the same TYPE included. Lines 1-4 are the
+     * root keys, OPTIMIZER and STRATEGY. */
     const std::string head = "    TYPE PRESTAGE\n    LIB DLIB\n    ALGO BFGS\n"
                              "    MAXEVAL 3\n";   // lines 5-8
+    const std::string twice = "TYPE is set twice in the STRATEGY block "
+                              "(first on line 5); each key is given once";
     SECTION("EXPLORE, then TYPE PLAIN") {
         const auto msg = parse_error(strategy_config(
             head + kExploreGfs + "    TYPE PLAIN\n"));
-        CHECK_THAT(msg,
-                   Catch::StartsWith("Error on line 9: EXPLORE block is only "
-                                     "valid with TYPE PRESTAGE, but the "
-                                     "STRATEGY block ends with TYPE PLAIN") &&
-                   Catch::Contains("set TYPE PRESTAGE or remove the EXPLORE "
-                                   "block") &&
-                   Catch::EndsWith("Line:     EXPLORE"));
+        CHECK_THAT(msg, Catch::StartsWith("Error on line 14: " + twice) &&
+                            Catch::EndsWith("Line:     TYPE PLAIN"));
     }
     SECTION("REFINE, then TYPE MULTISTART") {
         const auto msg = parse_error(strategy_config(
             "    TYPE PRESTAGE\n"
             "    REFINE\n      LIB DLIB\n      ALGO BFGS\n    ENDREFINE\n"
             "    TYPE MULTISTART\n"));
-        /* REFINE opens on line 6. */
-        CHECK_THAT(msg,
-                   Catch::StartsWith("Error on line 6: REFINE block is only "
-                                     "valid with TYPE PRESTAGE, but the "
-                                     "STRATEGY block ends with TYPE "
-                                     "MULTISTART") &&
-                   Catch::EndsWith("Line:     REFINE"));
+        /* REFINE opens on line 6; the second TYPE is line 10. */
+        CHECK_THAT(msg, Catch::StartsWith("Error on line 10: " + twice) &&
+                            Catch::EndsWith("Line:     TYPE MULTISTART"));
     }
-    SECTION("a TYPE PRESTAGE line repeated after the blocks is accepted") {
-        CHECK(parse_error(strategy_config(head + kExploreGfs +
-                                          "    TYPE PRESTAGE\n")) == "");
+    SECTION("TYPE PRESTAGE repeated after the blocks") {
+        const auto msg = parse_error(strategy_config(
+            head + kExploreGfs + "    TYPE PRESTAGE\n"));
+        CHECK_THAT(msg, Catch::StartsWith("Error on line 14: " + twice));
     }
 }
 
