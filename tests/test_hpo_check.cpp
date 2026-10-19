@@ -38,6 +38,7 @@
 #include <omp.h>
 #endif
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <csignal>
@@ -55,7 +56,9 @@
 #include <system_error>
 #include <thread>
 #include <fcntl.h>
+#include <sys/socket.h>
 #include <sys/stat.h>
+#include <sys/un.h>
 #include <sys/wait.h>
 #include <unistd.h>
 #include <utility>
@@ -1315,5 +1318,110 @@ TEST_CASE("hpo --check: the check and the run of a setup whose journal is a "
             make_ta_context("train.db", "config.hpo", "config.val");
         CaptureCout quiet;
         REQUIRE(tadah::hpo::hpo_run(ctx) == 0);
+    }
+}
+
+namespace {
+
+/* A Unix socket bound at @p name (the socket file stays once the socket
+ * is closed). */
+void make_socket_file(const std::string& name)
+{
+    const int fd = ::socket(AF_UNIX, SOCK_STREAM, 0);
+    REQUIRE(fd >= 0);
+    sockaddr_un addr{};
+    addr.sun_family = AF_UNIX;
+    REQUIRE(name.size() < sizeof(addr.sun_path));
+    std::copy(name.begin(), name.end(), addr.sun_path);
+    const int bound =
+        ::bind(fd, reinterpret_cast<const sockaddr*>(&addr), sizeof(addr));
+    ::close(fd);
+    REQUIRE(bound == 0);
+}
+
+}  // namespace
+
+/* Pins: the special files among the output files are checked as the run
+ * will use them:
+ *   - a socket as best_pot.tadah.lock or loss.tadah stops the check and the
+ *     run alike, the run's open failing with ENXIO: "'best_pot.tadah.lock'
+ *     in the working directory '<dir>' cannot be opened: No such device or
+ *     address (tadah hpo opens it to lock best_pot.tadah)", "'loss.tadah'
+ *     ... cannot be opened: No such device or address (tadah hpo rewrites
+ *     it)";
+ *   - a named pipe as loss.tadah, a file the run reopens for each row it
+ *     writes, stops both: "'loss.tadah' ... is a named pipe: tadah hpo
+ *     reopens the file for each row it writes, and a pipe would block it"
+ *     (the run is made only once the check has refused it: a run that took
+ *     the pipe would wait for ever);
+ *   - loss.tadah a symbolic link to /dev/null, a device the run can open,
+ *     is accepted: the check passes and the run returns 0.
+ * (A named pipe as hpo_run.log, which the run opens once, is accepted: the
+ * case above.)
+ * Before the change: a socket and a named pipe passed the check (their
+ * permission alone was checked); the run then stopped at the lock socket
+ * or wrote no history, and waited for ever on the pipe. */
+TEST_CASE("hpo --check: sockets, named pipes and devices among the output "
+          "files", "[HPO][hpo_check]")
+{
+    const std::string nxio = "cannot be opened: No such device or address ";
+    struct Case {
+        const char* file;
+        const char* purpose;
+    };
+    for (const Case& c :
+         {Case{"best_pot.tadah.lock",
+               "(tadah hpo opens it to lock best_pot.tadah)"},
+          Case{"loss.tadah", "(tadah hpo rewrites it)"}}) {
+        INFO("a socket as " << c.file);
+        ScratchDir sd("socket_output");
+        write_inputs(kOptimizer + kRootLines);
+        make_socket_file(c.file);
+        const auto before = entries(sd.dir);
+        const auto [check_error, run_error] = check_and_run_errors();
+        INFO("run: " << run_error << "\ncheck: " << check_error);
+        CHECK(run_error == in_working_directory(c.file) + nxio + c.purpose);
+        CHECK(check_error == run_error);
+        CHECK(entries(sd.dir) == before);
+    }
+    {
+        INFO("a named pipe as loss.tadah");
+        ScratchDir sd("fifo_result");
+        write_inputs(kOptimizer + kRootLines);
+        REQUIRE(::mkfifo("loss.tadah", 0600) == 0);
+        const auto before = entries(sd.dir);
+        std::string check_error, run_error;
+        fresh_process_state();
+        {
+            tadah::core::Context ctx =
+                make_ta_context("train.db", "config.hpo", "config.val");
+            ctx.add("CHECK", "true");
+            check_error = error_of([&] { return tadah::hpo::hpo_run(ctx); });
+        }
+        INFO("check: " << check_error);
+        REQUIRE_FALSE(check_error.empty());
+        fresh_process_state();
+        {
+            tadah::core::Context ctx =
+                make_ta_context("train.db", "config.hpo", "config.val");
+            run_error = error_of([&] { return tadah::hpo::hpo_run(ctx); });
+        }
+        INFO("run: " << run_error);
+        CHECK(run_error == in_working_directory("loss.tadah") +
+                               "is a named pipe: tadah hpo reopens the file "
+                               "for each row it writes, and a pipe would "
+                               "block it");
+        CHECK(check_error == run_error);
+        CHECK(entries(sd.dir) == before);
+    }
+    {
+        INFO("loss.tadah a link to /dev/null");
+        ScratchDir sd("dev_null_result");
+        write_inputs(kOptimizer + kRootLines);
+        fs::create_symlink("/dev/null", "loss.tadah");
+        const auto [check_error, run_error] = check_and_run_errors();
+        INFO("run: " << run_error << "\ncheck: " << check_error);
+        CHECK(check_error.empty());
+        CHECK(run_error.empty());
     }
 }
