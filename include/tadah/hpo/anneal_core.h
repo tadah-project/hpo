@@ -508,14 +508,30 @@ inline Knobs Knobs::parse(const OptimizerSpec& sp, AlgoKind kind)
     if (ki->type == reg::AnnealKeyType::Enum) continue;
     if (ki->type == reg::AnnealKeyType::Bool) continue;   // ON/OFF, see pbool
     const std::string t = anneal_upper(kv.second);
-    if ((ki->accepts_auto && t == "AUTO") || (ki->accepts_off && t == "OFF"))
+    /* AUTO only in the kinds that derive the value (auto_kinds): the
+     * serial driver derives CHAIN_LENGTH and NT from MAXEVAL; ANNEAL_PA has
+     * no such derivation, and the 0 sentinel would give it rungs of 0
+     * evaluations. */
+    const bool auto_here = ki->accepts_auto && (ki->auto_kinds & kind_mask);
+    if ((auto_here && t == "AUTO") || (ki->accepts_off && t == "OFF"))
       continue;
     std::string accepted = "a number";
-    if (ki->accepts_auto) accepted += ", AUTO";
-    if (ki->accepts_off)  accepted += ", OFF";
+    if (auto_here)       accepted += ", AUTO";
+    if (ki->accepts_off) accepted += ", OFF";
+    std::string elsewhere;
+    if (ki->accepts_auto && !auto_here && t == "AUTO") {
+      std::string members;
+      for (const auto& [mask, name] :
+           {std::pair<unsigned, const char*>{reg::KIND_SERIAL, "TADAH:ANNEAL"},
+            {reg::KIND_PT, "TADAH:ANNEAL_PT"},
+            {reg::KIND_PA, "TADAH:ANNEAL_PA"}})
+        if (ki->auto_kinds & mask)
+          members += (members.empty() ? "" : " and ") + std::string(name);
+      elsewhere = "; AUTO is accepted by " + members + " only";
+    }
     throw std::runtime_error(
         ctx + ": PARAM " + kv.first + " must be " + accepted + " (got '" +
-        kv.second + "')");
+        kv.second + "'" + elsewhere + ")");
   }
 
   /* -- spec-level knobs that are dead for this family --------------- */
@@ -594,7 +610,8 @@ inline Knobs Knobs::parse(const OptimizerSpec& sp, AlgoKind kind)
      * while REPLICAS itself must be >= 2). */
     if (auto rit = sp.param_raw.find(k); rit != sp.param_raw.end()) {
       const std::string t = anneal_upper(rit->second);
-      if (ki.accepts_auto && t == "AUTO") return ki.auto_value;
+      if (ki.accepts_auto && (ki.auto_kinds & kind_mask) && t == "AUTO")
+        return ki.auto_value;
       if (ki.accepts_off  && t == "OFF")  return ki.off_value;
     }
     auto it = sp.param.find(k);

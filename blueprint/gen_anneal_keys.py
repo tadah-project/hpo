@@ -35,7 +35,8 @@ KEY_FIELDS = {"name", "type", "default", "default_serial", "default_pt",
               "default_pa", "values", "kinds", "group", "rank", "doc",
               "long_doc", "range_doc",
               "min", "max", "min_open", "max_open", "range_msg", "range_note",
-              "report_value", "custom_range", "accepts_auto", "accepts_off"}
+              "report_value", "custom_range", "accepts_auto", "auto_kinds",
+              "accepts_off"}
 RULE_FIELDS = {"type", "key", "flag", "other", "kind", "enum_key", "value", "msg"}
 RENAMED_FIELDS = {"old", "kinds", "msg"}
 
@@ -140,6 +141,13 @@ def load(toml_path: pathlib.Path) -> dict:
             fail(f"key {key['name']}: 'values' is enum-only")
         if key["type"] == "bool" and ("min" in key or "max" in key):
             fail(f"key {key['name']}: bool keys take no range")
+        if "auto_kinds" in key:
+            if "accepts_auto" not in key:
+                fail(f"key {key['name']}: auto_kinds without accepts_auto")
+            if (not key["auto_kinds"] or
+                    any(k not in key["kinds"] for k in key["auto_kinds"])):
+                fail(f"key {key['name']}: auto_kinds {key['auto_kinds']!r} "
+                     f"is not a subset of kinds {key['kinds']!r}")
         # Resolve per-kind defaults: override > base > absent.
         key["_def"] = {}
         for kind in key["kinds"]:
@@ -255,6 +263,7 @@ def emit(data: dict) -> str:
     out("  // literal value (V_FLOOR_FRAC, LADDER_MIN_GAP) declare neither.")
     out("  bool accepts_auto, accepts_off;")
     out("  double auto_value, off_value;")
+    out("  unsigned auto_kinds;     // KIND_* bitmask of the kinds that accept AUTO")
     out("};")
     out("")
     out("struct AnnealKeyRule {")
@@ -308,7 +317,10 @@ def emit(data: dict) -> str:
         off_v = fmt_double(float(key["accepts_off"])) if has_off else "0.0"
         out(f"   {range_msg}, {bool_lit(bool(key.get('report_value')))}, "
             f"{enum_vals}, {enum_count},")
-        out(f"   {bool_lit(has_auto)}, {bool_lit(has_off)}, {auto_v}, {off_v}}},")
+        auto_kinds = (" | ".join(KINDS[k] for k in key.get("auto_kinds", key["kinds"]))
+                      if has_auto else "0u")
+        out(f"   {bool_lit(has_auto)}, {bool_lit(has_off)}, {auto_v}, {off_v},")
+        out(f"   {auto_kinds}}},")
     out("};")
     out("")
     rule_cpp = {"requires_flag": "RequiresFlag", "conflicts_flag": "ConflictsFlag",

@@ -397,9 +397,9 @@ TEST_CASE("LammpsHessianAssembler — the box block is the strain derivative "
 // for α ≠ β). On a cubic crystal in equilibrium the (xx,yy)/(xx,zz)/
 // (yy,zz) off-diagonals are V·C12 (Poisson coupling) and must be
 // positive (C12 > 0 for Ta: 40.75 eV, C12 = 91 GPa, with the shipped
-// potential; a potential with unphysical elasticity, such as the HPO
-// examples' energies-only model, C12 = -103 GPa, fails it). Symmetric
-// across the box-box block.
+// potential; a potential with unphysical elasticity, such as the
+// energies-only model of data/ta/common/config.tadah, C12 = -103 GPa,
+// fails it). Symmetric across the box-box block.
 TEST_CASE("LammpsHessianAssembler — box-box off-diagonals are populated "
           "for box_dofs=6 on a cubic crystal",
           "[lammps_hessian][adjoint][.][!benchmark]")
@@ -434,7 +434,7 @@ TEST_CASE("LammpsHessianAssembler — box-box off-diagonals are populated "
      * Pins: the box is orthogonal, and |H(shear, shear)| < 1e-2. Measured
      * with the shipped potential: exactly 0 (9.95e-4 while the diagonal was
      * the energy's second difference: about 1e-13 eV of energy round-off
-     * over h_strain^2 = 1e-10; with the HPO examples' model exactly 0
+     * over h_strain^2 = 1e-10; with the data/ta/common model exactly 0
      * either way). The same cell made triclinic (change_box all triclinic)
      * gives 9.154 eV (9.155 eV from the energy), V.C44/4 for C44 = 82 GPa
      * (the assembler applies half the shear): the bound is three orders
@@ -442,7 +442,7 @@ TEST_CASE("LammpsHessianAssembler — box-box off-diagonals are populated "
      * Before the fix (the case had no CTest entry then): it checked
      * H(alpha, alpha) > 0 for all six, which passed or failed on the sign of
      * the round-off: it passed with the shipped potential and failed
-     * (0.0 > 0.0) with the examples' model. */
+     * (0.0 > 0.0) with the data/ta/common model. */
     REQUIRE(fx.lmp->domain->triclinic == 0);
     for (int alpha = 3; alpha < 6; ++alpha) {
         INFO("alpha = " << alpha);

@@ -29,7 +29,9 @@ in-house FD kernel under AUTO (Ceres' delta collapses to sqrt(eps) at u~0); per-
 XTOL_REL-only HINT for SBPLX/NM; ANNEAL `resolvable_coordinate_scale` floored at eps*width; ASA u=0
 reanneal note; DLIB:GFS hidden-ln WARNING (NONE only).
 
-## Gate results (2026-09-08)
+## Results on the worked examples (2026-09-08)
+Measured on the worked examples of `examples/` and their reference fingerprints, both removed in
+1.6.0 (the Ta data they used is `tests/data/ta/common`, re-converted on 2026-10-01).
 `TADAH_OPTIM_SCALE=NONE`: 21/21 example fingerprints byte-identical. `AUTO`: 14/21 identical; 03/07/08
 within 0.2 %, 06/12/21 better, 04 (DLIB:BFGS, 30 evals) 5.6 % worse = basin selection (at 4x budget NONE
 finds the SGRIDMB~0.34 basin at 0.0643, AUTO the 0.24 basin at 0.0739 that example 03 also finds).

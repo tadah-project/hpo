@@ -18,6 +18,8 @@
 #              `default`; may appear without a base default)
 #   values     enum type only: the accepted tokens, first = conventional order
 #   kinds      subset of ["serial", "pt", "pa"] the key applies to
+#   auto_kinds subset of `kinds` that accept AUTO (accepts_auto keys only;
+#              absent = every kind of the key)
 #   group      budget|temperature|steps|ladder|swaps|init|stopping (docs/caps grouping)
 #   rank       importance order within the group (1 = most important; docs/caps order)
 #   doc        one or two sentences: what the key sets (docs key tables,
@@ -108,9 +110,12 @@ rank = 3
 doc = "The number of proposals of the CLASSIC kernel at each temperature step."
 long_doc = "The default of TADAH:ANNEAL is AUTO: MAXEVAL spread evenly over the cooling schedule, which hpo_run.log reports."
 accepts_auto = 0.0
+auto_kinds = ["serial"]
 min = 1
 # serial default is AUTO (derived in the driver from MAXEVAL and the
-# schedule length; hard error when neither CHAIN_LENGTH nor MAXEVAL is set)
+# schedule length; hard error when neither CHAIN_LENGTH nor MAXEVAL is set).
+# Only the serial driver derives it: ANNEAL_PA refuses AUTO (its 0 sentinel
+# would give every temperature step 0 evaluations).
 
 [[key]]
 name = "NS"
@@ -133,6 +138,7 @@ rank = 5
 doc = "Corana kernel: the number of step adjustments at each temperature step."
 long_doc = "The default of TADAH:ANNEAL is AUTO: a number that follows from MAXEVAL, at most the larger of 100 and 5n for n dimensions."
 accepts_auto = 0.0
+auto_kinds = ["serial"]
 min = 1
 range_note = "(Corana variant)"
 

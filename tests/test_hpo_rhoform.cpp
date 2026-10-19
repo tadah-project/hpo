@@ -1025,6 +1025,64 @@ TEST_CASE("HPO_Host: NONNEG/MONOTONE candidates outside the box are not "
   }
 }
 
+/* A point outside the OPTIM box is not trained, so it gets no DUMP archive,
+ * whichever drain writes its row: the drain of a full queue (QFLUSH 1) and
+ * the drain at the end of the run (QFLUSH 1000, flush_remaining), as the
+ * drain after a gap skip, which writes rows with the same writer. The
+ * evaluation inside the box gets its archive, with the potential.
+ * Pins: with QFLUSH 1, pots/pot_1.tadah of the out-of-box point is absent
+ * and pots/pot_2.tadah holds the potential.
+ * Before the fix: with QFLUSH 1000 the end-of-run drain wrote
+ * pots/pot_1.tadah, an archive of the header alone (no potential): the
+ * check of the out-of-box point was in the drain of a full queue only. */
+TEST_CASE("HPO_Host: a point outside the OPTIM box gets no DUMP archive, "
+          "whichever drain writes its row",
+          "[rhoform_e2e][dump_e2e][.]") {
+  PeriodicTable::initialize();
+  ScratchDir sd("tadah_dump_oob_");
+  const fs::path val_db  = sd.dir / "val.db";
+  const fs::path val_cfg = sd.dir / "config.val";
+  write_ta_db(val_db);
+  { std::ofstream os(val_cfg); os << "DBFILE " << val_db.string() << "\n"; }
+  for (const char* qflush : {"1", "1000"}) {
+    CAPTURE(qflush);
+    Journal j;
+    Host::reset_globals_for_test();
+    std::error_code ec;
+    fs::remove_all("pots", ec);
+    fs::remove("best_pot.tadah", ec);
+    const fs::path hpo_cfg = sd.dir / "config.hpo";
+    {
+      std::ofstream os(hpo_cfg);
+      os << "OPTIMIZER\nLIB DLIB\nALGO BFGS\nMAXEVAL 1\nENDOPTIMIZER\n"
+         << "LOSS L2\nPC_EMAE 0 1\nFAILSCORE 1e9\nQFLUSH " << qflush
+         << "\nDUMP 1 pots\nOPTIM AMPGRIDMB (3) 0 0.5\n";
+    }
+    Context ctx = make_ream_ctx("NONNEG", "0.5 0.3 0.0");
+    ctx.add("HPOTARGET", hpo_cfg.string());
+    HPOTargets trg(ctx, hpo_cfg.string());
+    REQUIRE_NOTHROW(validate_hpo_setup(ctx, trg, false, true));
+    /* the run creates the DUMP directory before its first evaluation;
+     * parsing the target file creates nothing */
+    trg.create_archive_directories();
+    {
+      Host host(ctx, trg, val_cfg.string());
+      ParamVec p(1);
+      p(0) = -1e-6;                 /* outside the box [0, 0.5]: eval 1 */
+      REQUIRE_NOTHROW(host(p));
+      p(0) = 0.25;                  /* inside it: eval 2 */
+      REQUIRE_NOTHROW(host(p));
+      host.flush_remaining();
+    }
+    (void)j.finish();
+    CHECK(table_rows("params.tadah").size() == 2u);
+    CHECK_FALSE(fs::exists("pots/pot_1.tadah"));
+    REQUIRE(fs::exists("pots/pot_2.tadah"));
+    CHECK(file_amplitude("pots/pot_2.tadah", 2) == 0.25);
+    Host::reset_globals_for_test();
+  }
+}
+
 TEST_CASE("HPO_Host: the all-weights-fixed probe rethrows DensityFormError",
           "[rhoform_e2e][.]") {
   PeriodicTable::initialize();

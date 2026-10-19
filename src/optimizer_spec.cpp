@@ -57,7 +57,8 @@ static void print_anneal_family_caps(std::ostream& os, unsigned kind_mask)
                     head << " (default "
                          << k->enum_values[static_cast<std::size_t>(def)]
                          << ")";
-            } else if (has && k->accepts_auto && def == k->auto_value) {
+            } else if (has && k->accepts_auto &&
+                       (k->auto_kinds & kind_mask) && def == k->auto_value) {
                 /* 1.5.0: print the TOKEN the user has to type. These keys
                  * carry their AUTO sentinel as the numeric default, so the
                  * raw value would advertise "(default -1)" for a key that
@@ -70,11 +71,14 @@ static void print_anneal_family_caps(std::ostream& os, unsigned kind_mask)
             } else {
                 head << " (default auto)";
             }
+            /* AUTO only for the kinds that take it (auto_kinds). */
+            const bool takes_auto =
+                k->accepts_auto && (k->auto_kinds & kind_mask);
             if (k->type != reg::AnnealKeyType::Enum &&
-                (k->accepts_auto || k->accepts_off)) {
+                (takes_auto || k->accepts_off)) {
                 head << " [accepts ";
-                if (k->accepts_auto) head << "AUTO";
-                if (k->accepts_auto && k->accepts_off) head << "/";
+                if (takes_auto) head << "AUTO";
+                if (takes_auto && k->accepts_off) head << "/";
                 if (k->accepts_off) head << "OFF";
                 head << "]";
             }

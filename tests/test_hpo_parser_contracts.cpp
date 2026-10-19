@@ -35,6 +35,7 @@
 //     build_run_policy still wraps the remaining strategies in
 //     RestartPolicy when RESTART is set.
 
+#include "tadah_test_skip.hpp"  // before catch2/catch.hpp
 #include "catch2/catch.hpp"
 
 #include <tadah/core/context.h>
@@ -71,6 +72,11 @@ namespace {
 
 namespace fs = std::filesystem;
 
+/* A directory created at unique_temp_path(@p ext), as the operating system
+ * names it (symbolic links in the temporary directory's path resolved):
+ * the archive-directory messages print physical paths. */
+fs::path physical_temp_dir(const std::string& ext);
+
 /* Unique per process and per call: ctest runs the cases of this file as
  * concurrent processes. Removed on scope exit. */
 fs::path unique_temp_path(const std::string& ext)
@@ -81,6 +87,13 @@ fs::path unique_temp_path(const std::string& ext)
             std::to_string(counter++) + "_" +
             std::to_string(std::chrono::steady_clock::now()
                                .time_since_epoch().count()) + ext);
+}
+
+fs::path physical_temp_dir(const std::string& ext)
+{
+    const fs::path dir = unique_temp_path(ext);
+    fs::create_directories(dir);
+    return fs::canonical(dir);
 }
 
 struct TempFile {
@@ -1019,6 +1032,13 @@ TEST_CASE("Strict numbers: QFLUSH, DIGITS, OUTPUT and BOUTPUT are integers "
     CHECK(parse_config(root_home("OUTPUT").config("7")).outputEvery == 7u);
 }
 
+/* Pins also: parsing creates no directory. The archive directory is the
+ * run's output: the run creates it once every startup check passed, before
+ * its first evaluation (hpo_run(); test_hpo_host_e2e's DUMP and BDUMP cases
+ * create it as the run does, and write into one only a target file names),
+ * and `tadah hpo --check` (test_hpo_check.cpp) leaves the working
+ * directory as it is.
+ * Before the change: the parse created the directory. */
 TEST_CASE("Strict numbers: DUMP and BDUMP take a cadence and a directory",
           "[HPO][hpo_targets][strict_numbers]")
 {
@@ -1048,8 +1068,377 @@ TEST_CASE("Strict numbers: DUMP and BDUMP take a cadence and a directory",
         CHECK_FALSE(fs::exists(dir));
         const auto trg = parse_config(h.config("5 " + dir.string()));
         CHECK((key == "DUMP" ? trg.dumpPotEvery : trg.dumpBestPotEvery) == 5u);
-        CHECK(fs::exists(dir));
+        CHECK((key == "DUMP" ? trg.dumpPotDir : trg.dumpBestPotDir) ==
+              dir.string());
+        CHECK_FALSE(fs::exists(dir));
         fs::remove_all(dir);
+    }
+}
+
+/* Pins: the directory of a DUMP or BDUMP line is checked once the target
+ * file is read (for `tadah hpo --check` and the run alike), the error at
+ * its line, and the check creates nothing: a directory in a directory that
+ * does not exist ("DUMP directory '<root>/missing/pots' cannot be created:
+ * the directory '<root>/missing' does not exist (tadah hpo creates only the
+ * last directory of the path)"), a path that is a file ("... '<root>/a_file'
+ * exists and is not a directory"), a directory in a file ("... cannot be
+ * created: '<root>/a_file' is not a directory") and a symbolic link to a
+ * path that does not exist ("... '<root>/dangling' is a symbolic link to
+ * '<root>/nowhere', which does not exist") are refused, at the line; an
+ * existing directory, a new one in an existing directory, the same written
+ * with a trailing '/', and a relative one in the working directory are
+ * accepted, and none is created. A trailing '/' or '/.' is taken as mkdir
+ * takes it: "<dangling>/" is refused as the link, "<root>/pots/." with pots
+ * missing is refused ("... cannot be resolved: it walks '.' in
+ * '<root>/pots', which does not exist"), "<root>/fresh/" is accepted and
+ * created by the run.
+ * Before the trailing-separator rule: "<dangling>/" and "<root>/pots/."
+ * were accepted (the run then failed creating them).
+ * Before the check: the parse accepted the first three (the run stopped
+ * when it created the directory, after it had loaded the data, or wrote no
+ * archive into the file): the refusal checks fail.
+ * Before the symbolic-link check: the parse accepted the dangling link,
+ * and the run stopped when it created the directory ("could not be
+ * created: File exists"): its refusal check fails. */
+TEST_CASE("DUMP and BDUMP refuse a directory the run cannot create, at "
+          "their line, and create nothing",
+          "[HPO][hpo_targets][archive_directories]")
+{
+    const fs::path root = physical_temp_dir("_archive");
+    struct RemoveDir {
+        fs::path p;
+        ~RemoveDir() { std::error_code ec; fs::remove_all(p, ec); }
+    } cleanup{root};
+    const fs::path file = root / "a_file";
+    std::ofstream(file) << "not a directory\n";
+    for (const std::string key : {"DUMP", "BDUMP"}) {
+        INFO(key);
+        const auto h = root_home(key);
+        const std::string what = key + " directory '";
+        const fs::path missing = root / "missing" / "pots";
+        CHECK_THAT(parse_error(h.config("5 " + missing.string())),
+                   Catch::StartsWith(
+                       h.at() + what + missing.string() +
+                       "' cannot be created: the directory '" +
+                       (root / "missing").string() +
+                       "' does not exist (tadah hpo creates only the last "
+                       "directory of the path)"));
+        CHECK_THAT(parse_error(h.config("5 " + file.string())),
+                   Catch::StartsWith(h.at() + what + file.string() +
+                                     "' exists and is not a directory"));
+        const fs::path in_file = file / "pots";
+        CHECK_THAT(parse_error(h.config("5 " + in_file.string())),
+                   Catch::StartsWith(h.at() + what + in_file.string() +
+                                     "' cannot be created: '" +
+                                     file.string() +
+                                     "' is not a directory"));
+        CHECK_FALSE(fs::exists(root / "missing"));
+        const fs::path dangling = root / "dangling";
+        if (!fs::is_symlink(dangling))
+            fs::create_symlink(root / "nowhere", dangling);
+        CHECK_THAT(parse_error(h.config("5 " + dangling.string())),
+                   Catch::StartsWith(h.at() + what + dangling.string() +
+                                     "' is a symbolic link to '" +
+                                     (root / "nowhere").string() +
+                                     "', which does not exist"));
+        CHECK_FALSE(fs::exists(root / "nowhere"));
+        /* A trailing '/' or '/.' as mkdir takes it: "<dangling>/" is the
+         * link itself (refused as above), "<root>/pots/." walks '.' in a
+         * directory that does not exist (mkdir fails), "<root>/fresh/" is
+         * the directory fresh (accepted, created by the run). */
+        CHECK_THAT(parse_error(h.config("5 " + dangling.string() + "/")),
+                   Catch::StartsWith(h.at() + what + dangling.string() +
+                                     "/' is a symbolic link to '" +
+                                     (root / "nowhere").string() +
+                                     "', which does not exist"));
+        const std::string dot = (root / "pots").string() + "/.";
+        CHECK_THAT(parse_error(h.config("5 " + dot)),
+                   Catch::StartsWith(h.at() + what + dot +
+                                     "' cannot be resolved: it walks '.' in '" +
+                                     (root / "pots").string() +
+                                     "', which does not exist"));
+        {
+            const std::string fresh = (root / "fresh").string() + "/";
+            const auto trg = parse_config(h.config("5 " + fresh));
+            CHECK_FALSE(fs::exists(root / "fresh"));
+            trg.create_archive_directories();
+            CHECK(fs::is_directory(root / "fresh"));
+            fs::remove_all(root / "fresh");
+        }
+        CHECK_FALSE(fs::exists(root / "pots"));
+
+        const auto existing = parse_config(h.config("5 " + root.string()));
+        CHECK((key == "DUMP" ? existing.dumpPotDir
+                             : existing.dumpBestPotDir) == root.string());
+        for (const std::string dir :
+             {(root / "new").string(), (root / "new").string() + "/",
+              std::string("tadah_no_such_archive")}) {
+            INFO("directory " << dir);
+            const auto trg = parse_config(h.config("5 " + dir));
+            CHECK((key == "DUMP" ? trg.dumpPotDir : trg.dumpBestPotDir) ==
+                  dir);
+            CHECK_FALSE(fs::exists(dir));
+        }
+    }
+}
+
+/* Pins: the DUMP and BDUMP directories are checked together: one inside
+ * the other's new directory is accepted, whatever the order of the lines,
+ * and HPOTargets::create_archive_directories() creates the outer one
+ * first:
+ *   - "DUMP 5 <root>/archive" then "BDUMP 5 <root>/archive/best";
+ *   - "BDUMP 5 <root>/archive/best" then "DUMP 5 <root>/archive";
+ *   - "BDUMP 5 <root>/archive" then "DUMP 5 <root>/archive/all";
+ * each parses, creates nothing, and create_archive_directories() then
+ * creates both. A directory two levels inside the other's ("BDUMP 5
+ * <root>/archive/x/best") is refused at its line ("... cannot be created:
+ * the directory '<root>/archive/x' does not exist ..."), and so is an outer
+ * directory that cannot be created (DUMP in <root>/missing): the error is
+ * at the line of that directory's key, the inner one being accepted; and
+ * so is an inner directory whose path walks through a missing directory
+ * with '..' ("BDUMP 5 <root>/archive/x/../best"), which mkdir cannot
+ * create although the path names <root>/archive/best once normalised
+ * (accepted before the '..' rule).
+ * Before the change: each line was checked alone, so the inner directory
+ * was refused when the outer one did not exist yet ("the directory
+ * '<root>/archive' does not exist"); 1.5.0 created the DUMP directory at
+ * its line and accepted the first layout only. */
+TEST_CASE("DUMP and BDUMP: a directory inside the other's is accepted in "
+          "either order and created after it",
+          "[HPO][hpo_targets][archive_directories]")
+{
+    const fs::path root = physical_temp_dir("_archive_nested");
+    struct RemoveDir {
+        fs::path p;
+        ~RemoveDir() { std::error_code ec; fs::remove_all(p, ec); }
+    } cleanup{root};
+    const fs::path archive = root / "archive";
+    struct Layout {
+        const char* name;
+        std::string first, second;   // the two lines, in file order
+        fs::path dump, bdump;        // the directories they name
+    };
+    const std::vector<Layout> layouts = {
+        {"DUMP outer, first", "DUMP 5 " + archive.string(),
+         "BDUMP 5 " + (archive / "best").string(), archive, archive / "best"},
+        {"DUMP outer, second", "BDUMP 5 " + (archive / "best").string(),
+         "DUMP 5 " + archive.string(), archive, archive / "best"},
+        {"BDUMP outer, first", "BDUMP 5 " + archive.string(),
+         "DUMP 5 " + (archive / "all").string(), archive / "all", archive},
+    };
+    for (const Layout& l : layouts) {
+        INFO(l.name);
+        const auto trg =
+            parse_config(kOptimizer + l.first + "\n" + l.second + "\n");
+        CHECK(trg.dumpPotDir == l.dump.string());
+        CHECK(trg.dumpBestPotDir == l.bdump.string());
+        CHECK_FALSE(fs::exists(archive));
+        trg.create_archive_directories();
+        CHECK(fs::is_directory(l.dump));
+        CHECK(fs::is_directory(l.bdump));
+        fs::remove_all(archive);
+    }
+
+    const std::size_t line = static_cast<std::size_t>(
+        std::count(kOptimizer.begin(), kOptimizer.end(), '\n')) + 2;
+    const std::string at = "Error on line " + std::to_string(line) + ": ";
+    CHECK_THAT(parse_error(kOptimizer + "DUMP 5 " + archive.string() +
+                           "\nBDUMP 5 " + (archive / "x" / "best").string() +
+                           "\n"),
+               Catch::StartsWith(at + "BDUMP directory '" +
+                                 (archive / "x" / "best").string() +
+                                 "' cannot be created: the directory '" +
+                                 (archive / "x").string() +
+                                 "' does not exist"));
+    const fs::path missing = root / "missing" / "archive";
+    CHECK_THAT(parse_error(kOptimizer + "BDUMP 5 " +
+                           (missing / "best").string() + "\nDUMP 5 " +
+                           missing.string() + "\n"),
+               Catch::StartsWith(at + "DUMP directory '" + missing.string() +
+                                 "' cannot be created: the directory '" +
+                                 (root / "missing").string() +
+                                 "' does not exist"));
+    CHECK_FALSE(fs::exists(archive));
+    CHECK_FALSE(fs::exists(root / "missing"));
+
+    /* '..' walks the directories the operating system finds: "BDUMP 5
+     * <root>/archive/x/../best" with "DUMP 5 <root>/archive" is refused at
+     * the BDUMP line, as mkdir cannot walk '..' out of '<root>/archive/x',
+     * which does not exist ("... cannot be resolved: it walks '..' out of
+     * '<root>/archive/x', which does not exist"). */
+    const std::string through = (archive / "x" / ".." / "best").string();
+    CHECK_THAT(parse_error(kOptimizer + "DUMP 5 " + archive.string() +
+                           "\nBDUMP 5 " + through + "\n"),
+               Catch::StartsWith(at + "BDUMP directory '" + through +
+                                 "' cannot be resolved: it walks '..' out of '" +
+                                 (archive / "x").string() +
+                                 "', which does not exist"));
+    CHECK_FALSE(fs::exists(archive));
+
+    /* A link followed by '..' leads where the link's target is: with lnk a
+     * link to <root>/elsewhere/deep, "DUMP 5 <root>/lnk/../archive" is
+     * <root>/elsewhere/archive, so "BDUMP 5 <root>/archive/best" is refused
+     * at its line (the directory '<root>/archive' does not exist); and a
+     * DUMP directory reached through a link into a directory that does not
+     * exist (lnk2 -> <root>/missing2) is refused naming that directory. */
+    fs::create_directories(root / "elsewhere" / "deep");
+    fs::create_symlink(root / "elsewhere" / "deep", root / "lnk");
+    CHECK_THAT(parse_error(kOptimizer + "DUMP 5 " +
+                           (root / "lnk" / ".." / "archive").string() +
+                           "\nBDUMP 5 " + (archive / "best").string() + "\n"),
+               Catch::StartsWith(at + "BDUMP directory '" +
+                                 (archive / "best").string() +
+                                 "' cannot be created: the directory '" +
+                                 archive.string() + "' does not exist"));
+    fs::create_symlink(root / "missing2", root / "lnk2");
+    const std::size_t line9 = line - 1;
+    CHECK_THAT(parse_error(kOptimizer + "DUMP 5 " +
+                           (root / "lnk2" / "pots").string() + "\n"),
+               Catch::StartsWith("Error on line " + std::to_string(line9) +
+                                 ": DUMP directory '" +
+                                 (root / "lnk2" / "pots").string() +
+                                 "' cannot be created: the directory '" +
+                                 (root / "missing2").string() +
+                                 "' does not exist"));
+    CHECK_FALSE(fs::exists(root / "elsewhere" / "archive"));
+    CHECK_FALSE(fs::exists(root / "missing2"));
+
+    /* The creation order follows the resolved paths: lnk3 a link to
+     * <root>/archive, which does not exist yet, "BDUMP 5 <root>/archive"
+     * with "DUMP 5 <root>/lnk3/all", in either order: accepted, nothing
+     * created, and create_archive_directories() creates <root>/archive
+     * first, then <root>/archive/all through the link (in the order of the
+     * lines as written, DUMP first, mkdir of lnk3/all fails). */
+    fs::create_symlink(archive, root / "lnk3");
+    for (const bool bdump_first : {true, false}) {
+        INFO("BDUMP line first: " << bdump_first);
+        const std::string bdump = "BDUMP 5 " + archive.string() + "\n";
+        const std::string dump =
+            "DUMP 5 " + (root / "lnk3" / "all").string() + "\n";
+        const auto trg = parse_config(
+            kOptimizer + (bdump_first ? bdump + dump : dump + bdump));
+        CHECK_FALSE(fs::exists(archive));
+        trg.create_archive_directories();
+        CHECK(fs::is_directory(archive / "all"));
+        fs::remove_all(archive);
+    }
+
+    /* '.' in the other line's directory, which the run creates first, is
+     * taken in that directory: "DUMP 5 <root>/archive" with "BDUMP 5
+     * <root>/archive/." (the same directory) or "BDUMP 5
+     * <root>/archive/./best", in either order: accepted, nothing created,
+     * and create_archive_directories() creates both (archive, then
+     * archive/best). Before: refused at the BDUMP line ("it walks '.' in
+     * '<root>/archive', which does not exist"). */
+    for (const std::string inner : {archive.string() + "/.",
+                                    archive.string() + "/./best"}) {
+        for (const bool dump_first : {true, false}) {
+            INFO("BDUMP 5 " << inner << ", DUMP line first: " << dump_first);
+            const std::string dump = "DUMP 5 " + archive.string() + "\n";
+            const std::string bdump = "BDUMP 5 " + inner + "\n";
+            const auto trg = parse_config(
+                kOptimizer + (dump_first ? dump + bdump : bdump + dump));
+            CHECK_FALSE(fs::exists(archive));
+            trg.create_archive_directories();
+            CHECK(fs::is_directory(archive));
+            if (inner.size() > archive.string().size() + 2)
+                CHECK(fs::is_directory(archive / "best"));
+            fs::remove_all(archive);
+        }
+    }
+
+    /* "BDUMP 5 <root>/best/." with "DUMP 5 <root>/best/pots": the BDUMP
+     * line walks '.' in <root>/best, which does not exist (mkdir fails),
+     * and is refused at its line. */
+    {
+        const std::string best_dot = (root / "best").string() + "/.";
+        CHECK_THAT(parse_error(kOptimizer + "BDUMP 5 " + best_dot +
+                               "\nDUMP 5 " + (root / "best" / "pots").string() +
+                               "\n"),
+                   Catch::StartsWith("Error on line " +
+                                     std::to_string(line - 1) +
+                                     ": BDUMP directory '" + best_dot +
+                                     "' cannot be resolved: it walks '.' in '" +
+                                     (root / "best").string() +
+                                     "', which does not exist"));
+        CHECK_FALSE(fs::exists(root / "best"));
+    }
+
+    /* "DUMP 5 ../archive" with "BDUMP 5 ../archive/best", relative to a
+     * working directory <root>/work, in either order: accepted, and both
+     * created, the outer first. */
+    fs::create_directories(root / "work");
+    struct Cwd {
+        fs::path old = fs::current_path();
+        ~Cwd() { std::error_code ec; fs::current_path(old, ec); }
+    } restore;
+    fs::current_path(root / "work");
+    for (const bool dump_first : {true, false}) {
+        INFO("DUMP line first: " << dump_first);
+        const std::string dump = "DUMP 5 ../archive\n";
+        const std::string bdump = "BDUMP 5 ../archive/best\n";
+        const auto trg = parse_config(kOptimizer + (dump_first ? dump + bdump
+                                                               : bdump + dump));
+        CHECK_FALSE(fs::exists(archive));
+        trg.create_archive_directories();
+        CHECK(fs::is_directory(archive / "best"));
+        fs::remove_all(archive);
+    }
+}
+
+/* Pins: the directory of a DUMP or BDUMP line must be one the run can
+ * write into: an existing directory without write permission ("DUMP
+ * directory '<root>/ro' is not writable") and a new one in such a
+ * directory ("... '<root>/ro/pots' cannot be created: the directory
+ * '<root>/ro' is not writable") are refused at the line.
+ * A directory under one without any permission (mode 000) cannot be
+ * resolved: "... cannot be resolved: '<root>/locked/pots' cannot be read:
+ * Permission denied" (it was reported as a file type).
+ * Before the check: both were accepted, and the run wrote no archive (each
+ * one a WARNING in the journal) or stopped when it created the directory.
+ * Skipped as root, whose writes no permission stops. */
+TEST_CASE("DUMP and BDUMP refuse a directory the run cannot write into",
+          "[HPO][hpo_targets][archive_directories]")
+{
+    if (::geteuid() == 0)
+        TADAH_SKIP("running as root: file permissions are not enforced");
+    const fs::path root = physical_temp_dir("_archive_ro");
+    const fs::path ro = root / "ro";
+    fs::create_directories(ro);
+    struct RemoveDir {
+        fs::path p, ro;
+        ~RemoveDir()
+        {
+            std::error_code ec;
+            fs::permissions(ro, fs::perms::owner_all, ec);
+            fs::remove_all(p, ec);
+        }
+    } cleanup{root, ro};
+    fs::permissions(ro, fs::perms::owner_read | fs::perms::owner_exec);
+    const fs::path locked = root / "locked";
+    fs::create_directories(locked);
+    struct Unlock {
+        fs::path p;
+        ~Unlock() { std::error_code ec; fs::permissions(p, fs::perms::owner_all, ec); }
+    } unlock{locked};
+    fs::permissions(locked, fs::perms::none);
+    for (const std::string key : {"DUMP", "BDUMP"}) {
+        INFO(key);
+        const auto h = root_home(key);
+        CHECK_THAT(parse_error(h.config("5 " + (locked / "pots").string())),
+                   Catch::StartsWith(h.at() + key + " directory '" +
+                                     (locked / "pots").string() +
+                                     "' cannot be resolved: '" +
+                                     (locked / "pots").string() +
+                                     "' cannot be read: Permission denied"));
+        CHECK_THAT(parse_error(h.config("5 " + ro.string())),
+                   Catch::StartsWith(h.at() + key + " directory '" +
+                                     ro.string() + "' is not writable"));
+        CHECK_THAT(parse_error(h.config("5 " + (ro / "pots").string())),
+                   Catch::StartsWith(h.at() + key + " directory '" +
+                                     (ro / "pots").string() +
+                                     "' cannot be created: the directory '" +
+                                     ro.string() + "' is not writable"));
     }
 }
 
@@ -1736,6 +2125,72 @@ TEST_CASE("tadah refit: SEED in an OPTIMIZER block is rejected with the "
                                  "MAXEVAL 100 ENDOPTIMIZER") == "");
 }
 
+/* A tadah refit stage sets each key once, as a target file does: a key
+ * given twice in an OPTIMIZER block, in its INNER block, or as MAXEVAL and
+ * its alias MAXITER, is refused, naming the block and the key as written
+ * ("REFINE: MAXEVAL is set twice in the OPTIMIZER block (as MAXEVAL and as
+ * MAXITER, its alias); each key is given once"; "REFINE: MAXITER is set
+ * twice ..."), and so are a second OPTIMIZER block in a stage, a second
+ * INNER block in an OPTIMIZER block and a stage key given twice (ENABLED,
+ * MAX_ADD). A PARAM of another name is no repeat.
+ * Before the fix: the later value replaced the first without a word (a
+ * second OPTIMIZER block replaced the first's settings). */
+TEST_CASE("tadah refit: a key set twice in a stage is refused",
+          "[HPO][refit][strict_numbers]")
+{
+    const std::string once = "; each key is given once";
+    CHECK(refit_error("REFINE", "OPTIMIZER LIB CERES ALGO LM MAXEVAL 5 "
+                                "MAXEVAL 9 ENDOPTIMIZER") ==
+          "REFINE: MAXEVAL is set twice in the OPTIMIZER block" + once);
+    CHECK(refit_error("REFINE", "OPTIMIZER LIB CERES ALGO LM MAXEVAL 5 "
+                                "MAXITER 9 ENDOPTIMIZER") ==
+          "REFINE: MAXEVAL is set twice in the OPTIMIZER block (as MAXEVAL "
+          "and as MAXITER, its alias)" + once);
+    /* the key as written: MAXITER twice is no MAXEVAL (it said "MAXEVAL
+     * is set twice"); mixed spellings in the order written */
+    CHECK(refit_error("REFINE", "OPTIMIZER LIB CERES ALGO LM MAXITER 5 "
+                                "MAXITER 9 ENDOPTIMIZER") ==
+          "REFINE: MAXITER is set twice in the OPTIMIZER block" + once);
+    CHECK(refit_error("FUSE", "OPTIMIZER LIB CERES ALGO DOGLEG MAXITER 5 "
+                              "MAXITER 9 ENDOPTIMIZER") ==
+          "FUSE: MAXITER is set twice in the OPTIMIZER block" + once);
+    CHECK(refit_error("REFINE", "OPTIMIZER LIB CERES ALGO LM MAXITER 5 "
+                                "MAXEVAL 9 ENDOPTIMIZER") ==
+          "REFINE: MAXEVAL is set twice in the OPTIMIZER block (as MAXITER, "
+          "its alias, and as MAXEVAL)" + once);
+    CHECK(refit_error("FUSE", "OPTIMIZER LIB CERES ALGO DOGLEG GTOL 1e-6 "
+                              "GTOL 1e-8 ENDOPTIMIZER") ==
+          "FUSE: GTOL is set twice in the OPTIMIZER block" + once);
+    /* a second INNER block (it replaced the first) */
+    CHECK(refit_error("EXPLORE", "OPTIMIZER LIB NLOPT ALGO GN_MLSL_LDS "
+                                 "MAXEVAL 100 INNER LIB NLOPT ALGO LN_SBPLX "
+                                 "MAXEVAL 5 ENDINNER INNER LIB NLOPT "
+                                 "ALGO LN_BOBYQA MAXEVAL 7 ENDINNER "
+                                 "ENDOPTIMIZER") ==
+          "EXPLORE: the INNER block is given twice; an OPTIMIZER block takes "
+          "one INNER block");
+    CHECK(refit_error("EXPLORE", "OPTIMIZER LIB NLOPT ALGO GN_MLSL_LDS "
+                                 "MAXEVAL 100 INNER LIB NLOPT ALGO LN_SBPLX "
+                                 "MAXEVAL 5 MAXEVAL 6 ENDINNER "
+                                 "ENDOPTIMIZER") ==
+          "EXPLORE INNER: MAXEVAL is set twice in the INNER block" + once);
+    CHECK(refit_error("REFINE", "OPTIMIZER LIB CERES ALGO LM ENDOPTIMIZER "
+                                "OPTIMIZER LIB CERES ALGO DOGLEG "
+                                "ENDOPTIMIZER") ==
+          "REFINE: the OPTIMIZER block is given twice; a stage takes one "
+          "OPTIMIZER block");
+    CHECK(refit_error("REFINE", "ENABLED true ENABLED false") ==
+          "REFINE: ENABLED is set twice" + once);
+    CHECK(refit_error("EXPLORE", "MAX_ADD 2 MAX_ADD 3 OPTIMIZER LIB NLOPT "
+                                 "ALGO GN_MLSL_LDS MAXEVAL 100 "
+                                 "ENDOPTIMIZER") ==
+          "EXPLORE: MAX_ADD is set twice" + once);
+    /* the same key in the OPTIMIZER and the INNER block: two optimisers */
+    CHECK(refit_error("EXPLORE", "OPTIMIZER LIB NLOPT ALGO GN_MLSL_LDS "
+                                 "MAXEVAL 100 INNER LIB NLOPT ALGO LN_SBPLX "
+                                 "MAXEVAL 5 ENDINNER ENDOPTIMIZER") == "");
+}
+
 TEST_CASE("tadah refit: OPTIMIZER block numbers are strict",
           "[HPO][refit][strict_numbers]")
 {
@@ -1823,7 +2278,9 @@ TEST_CASE("tadah refit: OPTIMIZER block numbers are strict",
                                  "ENDOPTIMIZER") == "");
     CHECK(refit_error("REFINE", "OPTIMIZER LIB CERES ALGO LM MAXEVAL 1 "
                                 "ENDOPTIMIZER") == "");
-    CHECK(refit_error("REFINE", "OPTIMIZER LIB CERES ALGO LM MAXEVAL 1000 "
+    /* MAXEVAL and its alias MAXITER are one key, given once (a block with
+     * both is refused: the case "a key set twice in a stage"). */
+    CHECK(refit_error("REFINE", "OPTIMIZER LIB CERES ALGO LM "
                                 "FTOL_REL 1e-14 GTOL 1e-14 MAXITER 50 "
                                 "ENDOPTIMIZER") == "");
 }
@@ -2484,8 +2941,10 @@ TEST_CASE("tadah refit: a stage OPTIMIZER block rejects the keys the stage "
                                  "MAXEVAL 100 INNER LIB NLOPT ALGO LN_SBPLX "
                                  "MAXEVAL 50 FTOL_REL 1e-7 XTOL_REL 1e-6 "
                                  "ENDINNER ENDOPTIMIZER") == "");
-    CHECK(refit_error("REFINE", "OPTIMIZER LIB CERES ALGO LM MAXEVAL 1000 "
-                                "MAXITER 900 FTOL_REL 1e-14 GTOL 1e-14 "
+    /* MAXEVAL or its alias MAXITER, one of them (a block with both is
+     * refused: the case "a key set twice in a stage"). */
+    CHECK(refit_error("REFINE", "OPTIMIZER LIB CERES ALGO LM MAXITER 900 "
+                                "FTOL_REL 1e-14 GTOL 1e-14 "
                                 "ENDOPTIMIZER") == "");
     CHECK(refit_error("FUSE", "OPTIMIZER LIB CERES ALGO DOGLEG MAXITER 2000 "
                               "FTOL_REL 1e-14 ENDOPTIMIZER") == "");

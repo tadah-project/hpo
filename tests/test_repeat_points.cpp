@@ -537,7 +537,8 @@ OptimizerSpec bfgs_spec(std::vector<double> low, std::vector<double> high,
 /* 1 - u on [0, 1]: the loss falls towards the upper bound, where the
  * search starts. With `noisy`, a point asked for again gives a loss one ulp
  * above its last one each time -- what the warm-started relaxation of a
- * PC_LAMMPS --hotvar does to example 09's bound (~1e-13 relative), with a
+ * PC_LAMMPS --hotvar does to the RCUT2B bound of the search of
+ * data/ta/target_files/init_warm.hpo (~1e-13 relative), with a
  * host that says its evaluations can differ. */
 struct Slope {
     std::vector<Vec> asked;
@@ -584,7 +585,7 @@ std::string run_bfgs(const OptimizerSpec& sp, Host& host)
  * evaluations, 3 of them repeats, FTOL_ABS; with the rising loss it failed
  * its decrease test at every re-evaluation of the bound and evaluated it
  * until MAXEVAL: 30 evaluations, 27 of them at u = 1, "DLIB:BFGS: MAXEVAL
- * reached" (example 09: 28 of 30). */
+ * reached" (the search of data/ta/target_files/init_warm.hpo: 28 of 30). */
 TEST_CASE("Repeated points: DLIB:BFGS runs no line search that cannot move "
           "the point", "[HPO][repeat_points][dlib_bfgs]")
 {

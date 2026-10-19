@@ -218,11 +218,30 @@ void parse_init(const std::vector<std::string> &tok, RefitConfig &cfg) {
   }
 }
 
+// A stage sets each of its keys once, and takes one OPTIMIZER block, as a
+// target file does: a second one would replace the first's value.
+void stage_key_once(std::vector<std::string> &given, const std::string &key,
+                    const char *stage) {
+  if (std::find(given.begin(), given.end(), key) == given.end()) {
+    given.push_back(key);
+    return;
+  }
+  if (key == "OPTIMIZER")
+    throw std::runtime_error(std::string(stage) +
+                             ": the OPTIMIZER block is given twice; a stage "
+                             "takes one OPTIMIZER block");
+  throw std::runtime_error(std::string(stage) + ": " + key +
+                           " is set twice; each key is given once");
+}
+
 void parse_explore(const std::vector<std::string> &tok, RefitConfig &cfg,
                    SeenKeys &seen) {
   size_t i = 0;
+  std::vector<std::string> given;
   while (i < tok.size()) {
     const std::string u = up(tok[i]);
+    if (u == "MAX_ADD" || u == "ENABLED" || u == "OPTIMIZER")
+      stage_key_once(given, u, "EXPLORE");
     if (u == "MAX_ADD") {
       // 1 value (all functions) or 3 values (phi rho F). Pull the run of
       // numeric operands (stops at the next keyword, e.g. OPTIMIZER). Each
@@ -295,8 +314,10 @@ void parse_ceres_stage(const std::vector<std::string> &tok, OptimizerSpec &opt,
                        SeenKeys &seen) {
   const char *stage = keys.stage;
   size_t i = 0;
+  std::vector<std::string> given;
   while (i < tok.size()) {
     const std::string u = up(tok[i]);
+    if (u == "OPTIMIZER" || u == "ENABLED") stage_key_once(given, u, stage);
     if (u == "OPTIMIZER") {
       read_optimizer_block(tok, i, opt, ceres_extra,
                            stage_key_check(keys, &seen), stage);

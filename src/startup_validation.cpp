@@ -753,6 +753,20 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
         else warn(m);
         continue;
       }
+      /* A search over the cutoff tries cutoffs down to the OPTIM low
+       * bound: below the centre a candidate keeps the inner shoulder only.
+       * A hard cutoff rejects such a candidate per candidate (the bump
+       * gate); a smooth one evaluates it, so say so. */
+      if (!hard && rcut_strict < rcut &&
+          mu[i] > rcut_strict + models::bump_rcut_tol(rcut_strict))
+        warn(ckey + " bump " + core::to_string(i + 1) + " centre " +
+             core::to_string(mu[i]) + " lies beyond the OPTIM " + rkey +
+             " low bound " + core::to_string(rcut_strict) + ": a candidate "
+             "whose " + rkey + " is below the centre keeps only the bump's "
+             "inner shoulder (pathological); with the OPTIM " + rkey +
+             " low bound above " + core::to_string(mu[i]) + ", or the "
+             "centre below " + core::to_string(rcut_strict) + ", no "
+             "candidate does.");
       if (!hard || reach <= rcut + tol) continue;
       gate_errors.push_back(
           ckey + " bump " + core::to_string(i + 1) + " (centre " +

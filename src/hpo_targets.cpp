@@ -23,13 +23,24 @@
 
 #include <algorithm>
 #include <cmath>
+#include <deque>
+#include <filesystem>
 #include <iomanip>
+#include <iostream>
+#include <map>
+#include <set>
 #include <optional>
 #include <random>
 #include <fstream>
 #include <sstream>
 #include <stdexcept>
+#include <system_error>
 #include <unordered_map>
+#include <unistd.h>   // access(): the archive directories
+#include <fcntl.h>    // open(): the output files
+#include <sys/stat.h> // stat(): the output files
+#include <cerrno>
+#include <cstring>
 
 namespace tadah {
 namespace hpo {
@@ -230,7 +241,7 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn,
     }
   }
 
-  models::D_mJoin::expand_grids(context);
+  left_out_ = models::D_mJoin::expand_grids(context);
 
   /* RHOFORM (the DM_REAM density form) is mandatory and has no default:
    * read it before the OPTIM lines (non-negative AMPGRIDMB boxes) and the
@@ -248,9 +259,9 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn,
    * One SearchSpace from the OPTIM lines (real boxes + per-line shape
    * tags), OPTIM_SCALE and LOG_HP; bound to the outer spec and, below,
    * to every sub-spec. spec.low/high are the INTERNAL bounds. */
-  /* Env override TADAH_OPTIM_SCALE=AUTO|NONE (harness A/B of the
-   * coordinate system; the reference-suite gate runs every example both
-   * ways). Read here because the space is built in this constructor. */
+  /* Env override TADAH_OPTIM_SCALE=AUTO|NONE (an A/B of the coordinate
+   * system without editing the target file). Read here because the space
+   * is built in this constructor. */
   if (const char* e = std::getenv("TADAH_OPTIM_SCALE")) {
     std::string v = e;
     for (auto& ch : v) ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
@@ -720,12 +731,11 @@ void HPOTargets::read(const std::string& fn)
     OptimizerSpec*   inner_parent  = nullptr;  // outer spec of an INNER block
 
     /* STRATEGY keys that belong to one TYPE (strategy_rules.h), checked
-     * when the STRATEGY block ends: TYPE may come after them. So are the
-     * EXPLORE and REFINE blocks, which need TYPE PRESTAGE before them and
-     * still at the end of the block. */
+     * when the STRATEGY block ends: TYPE may come after them. The EXPLORE
+     * and REFINE blocks need TYPE PRESTAGE before them, checked when they
+     * open; TYPE is set once, so it stays. */
     struct TypeKeySeen { std::string key; std::size_t line; std::string text; };
     std::vector<TypeKeySeen> type_keys;
-    std::vector<TypeKeySeen> prestage_blocks;
     bool strategy_type_given = false;
     /* The line of the STRATEGY block (0 before it): there is one. A second
      * block reopened the first and could change the TYPE its keys had been
@@ -733,6 +743,25 @@ void HPOTargets::read(const std::string& fn)
     std::size_t strategy_line = 0;
     /* The line of the OPTIMIZER block (0 before it): there is one. */
     std::size_t optimizer_line = 0;
+    /* The line of each PC_EMAE, PC_ErRMSE, PC_ERSQ and PC_SRMSE line: one
+     * of each (PC_ERMSE and PC_FRMSE: ValidationMetricTargets::add). */
+    std::map<std::string, std::size_t> metric_lines;
+    /* Where each key was set, per thing it configures (an optimiser, the
+     * starting points of one, the NOISE, RESTART or STRATEGY settings, the
+     * search space, the run for a top-level key): the line, the block and
+     * the block around it. A key is set once for what it configures --
+     * OPTIMIZER, STRATEGY and REFINE configure the STRATEGY-level
+     * optimiser, the INIT blocks inside OPTIMIZER, STRATEGY and REFINE its
+     * starting points, a repeated block continues the first -- so a second
+     * line, which would replace the first's value, is refused. A STEP <KEY>
+     * override is set once for its key and indices, and layers over the
+     * block-wide STEP and over overrides of other indices. METHOD lines add
+     * to their chain, and FAILSCORE, LOSS and PC_SCRIPT_TIMEOUT apply to the
+     * PC_LAMMPS lines after them: none of them is set this way. */
+    struct AttrSet { std::size_t line; Block block; Block parent; };
+    std::map<std::pair<const void*, std::string>, AttrSet> attr_set;
+    /* What a top-level key configures: the run. */
+    static const char run_settings = 0;
 
     /* The block the open INNER block sits in: an INNER block opens only
      * inside STRATEGY, EXPLORE or REFINE. */
@@ -808,8 +837,7 @@ void HPOTargets::read(const std::string& fn)
         EarlierLineError(std::size_t l, std::string t, const std::string& what)
             : std::runtime_error(what), line(l), text(std::move(t)) {}
     };
-    /* The keys of one TYPE, and the EXPLORE and REFINE blocks, must match
-     * the TYPE the block ends with. */
+    /* The keys of one TYPE must match the TYPE of the block. */
     auto check_type_keys = [&]() {
         for (const auto& k : type_keys) {
             try {
@@ -820,14 +848,6 @@ void HPOTargets::read(const std::string& fn)
             }
         }
         type_keys.clear();
-        for (const auto& b : prestage_blocks) {
-            try {
-                require_prestage_block(b.key, spec.strategy_type);
-            } catch (const std::exception& e) {
-                throw EarlierLineError(b.line, b.text, e.what());
-            }
-        }
-        prestage_blocks.clear();
     };
 
     auto strip_comment = [](std::string& s){
@@ -836,6 +856,69 @@ void HPOTargets::read(const std::string& fn)
     auto rtrim = [](std::string& s){
         s.erase(std::find_if(s.rbegin(), s.rend(),
                  [](int c){return !std::isspace(c);} ).base(), s.end());
+    };
+
+    /* Records that `attr` of `target` is set at this line, or refuses the
+     * line when an earlier one set it; `what` names what two blocks of
+     * different types that set it both configure. */
+    auto set_once = [&](const void* target, const std::string& attr,
+                        const char* what) {
+        const Block parent = open_blocks.size() >= 2
+                                 ? open_blocks[open_blocks.size() - 2].id
+                                 : ROOT;
+        const auto [it, fresh] = attr_set.emplace(
+            std::make_pair(target, attr), AttrSet{nline, block, parent});
+        if (fresh) return;
+        const AttrSet& first = it->second;
+        if (block == ROOT)
+            throw std::runtime_error(
+                attr + " is set twice (first on line " +
+                std::to_string(first.line) + "); each key is given once");
+        if (first.block == block && first.parent == parent)
+            throw std::runtime_error(
+                attr + " is set twice in the " + block_name(block) +
+                " block (first on line " + std::to_string(first.line) +
+                "); each key is given once");
+        /* Blocks of one type inside two blocks (the INIT blocks inside
+         * OPTIMIZER and inside STRATEGY) are named by the block around
+         * them. */
+        const bool by_parent = first.block == block;
+        const auto where = [&](Block b, Block around) {
+            return std::string("the ") + block_name(b) + " block" +
+                   (by_parent ? std::string(" inside ") + block_name(around)
+                              : std::string());
+        };
+        throw std::runtime_error(
+            attr + " is set on line " + std::to_string(first.line) + " in " +
+            where(first.block, first.parent) + " and again here in " +
+            where(block, parent) + "; both blocks configure the same " +
+            what + ", so each key is given once");
+    };
+
+    /* FAILSCORE, LOSS and PC_SCRIPT_TIMEOUT (MAXTIME): each PC_LAMMPS and
+     * PC_FAILPROBE line takes the value given above it, and the run-wide
+     * uses (the ceiling of every loss, the validation metrics' loss, the
+     * PROCESS worker deadline) the last one. A second line is read only
+     * after such a line has taken the first: otherwise it would replace
+     * it without effect on any line. The line and spelling of the value
+     * set, and whether a line has taken it. */
+    struct LineSetting { std::size_t line; std::string spelling; bool taken; };
+    std::map<std::string, LineSetting> line_settings;
+    auto set_for_lines = [&](const std::string& key) {
+        const std::string name = key == "MAXTIME" ? "PC_SCRIPT_TIMEOUT" : key;
+        const auto it = line_settings.find(name);
+        if (it != line_settings.end() && !it->second.taken)
+            throw std::runtime_error(
+                key + " is set twice (first on line " +
+                std::to_string(it->second.line) +
+                (it->second.spelling != key ? ", as " + it->second.spelling
+                                            : std::string()) +
+                ") and no PC_LAMMPS or PC_FAILPROBE line between takes the "
+                "first; each key is given once");
+        line_settings[name] = {nline, key, false};
+    };
+    auto lines_take_settings = [&]() {
+        for (auto& [name, setting] : line_settings) setting.taken = true;
     };
 
     while (std::getline(ifs,line))
@@ -997,7 +1080,6 @@ void HPOTargets::read(const std::string& fn)
                 require_key_alone(iss, key);
                 if (!spec.prestage)
                     spec.prestage = std::make_unique<OptimizerSpec>();
-                prestage_blocks.push_back({key, nline, line});
                 open_block(EXPLORE_BLK);
                 refresh_active_opt();
                 continue;
@@ -1019,7 +1101,6 @@ void HPOTargets::read(const std::string& fn)
                         "REFINE block is only valid with TYPE PRESTAGE "
                         "(declare TYPE before REFINE)");
                 require_key_alone(iss, key);
-                prestage_blocks.push_back({key, nline, line});
                 open_block(REFINE_BLK);
                 refresh_active_opt();
                 continue;
@@ -1101,7 +1182,35 @@ void HPOTargets::read(const std::string& fn)
 
             /* Common opt-attribute keys (LIB/ALGO/MAXEVAL/...) accepted in
              * any block where active_opt is set. */
+            /* The attribute a line of an optimiser sets: its key; PARAM
+             * <name> for a PARAM line; none for a STEP <KEY> override, which
+             * refines the block-wide STEP of some dimensions. */
+            std::string attr = key;
+            if (key == "PARAM" || key == "STEP") {
+                std::istringstream peek(line);
+                std::string k0, first;
+                peek >> k0 >> first;
+                if (key == "PARAM") attr = "PARAM " + first;
+                else if (!first.empty() && !is_number_shaped(first)) attr.clear();
+            }
             if (active_opt && dispatch_opt_attr(key, iss, *active_opt)) {
+                /* A STEP <KEY> override: once for its key and indices
+                 * ("WATOM(1)" and "WATOM (1)" are one). */
+                if (attr.empty() && key == "STEP" &&
+                    !active_opt->step_overrides.empty()) {
+                    const StepOverride& ov = active_opt->step_overrides.back();
+                    std::set<std::size_t> idx(ov.indices.begin(),
+                                              ov.indices.end());
+                    attr = "STEP " + ov.key;
+                    if (!idx.empty()) {
+                        std::string list;
+                        for (const std::size_t i : idx)
+                            list += (list.empty() ? "" : ",") +
+                                    std::to_string(i);
+                        attr += "(" + list + ")";
+                    }
+                }
+                if (!attr.empty()) set_once(active_opt, attr, "optimiser");
                 /* Strict arity. dispatch_opt_attr() reads exactly the value
                  * tokens its key defines, so anything still on the line is a
                  * typo, a stray word, or a value for a key that does not take
@@ -1121,16 +1230,22 @@ void HPOTargets::read(const std::string& fn)
 
             /* INIT / RESTART block keys */
             if (block == INIT_BLK || block == RESTART_BLK) {
-                if (active_init && dispatch_init_attr(key, iss, *active_init, nline, line))
+                if (active_init && dispatch_init_attr(key, iss, *active_init, nline, line)) {
+                    /* METHOD (and its alias STRATEGY) adds to the chain */
+                    if (key != "METHOD" && key != "STRATEGY")
+                        set_once(active_init, key, "starting points");
                     continue;
+                }
                 if (block == RESTART_BLK) {
                     if (key=="AFTER_STAGNATION") {
                         spec.restart.after_stagnation =
                             parse_uint(single_value(iss, key), key);
+                        set_once(&spec.restart, key, "restarts");
                         continue;
                     }
                     if (key=="MAX") {
                         spec.restart.max = parse_uint(single_value(iss, key), key);
+                        set_once(&spec.restart, key, "restarts");
                         continue;
                     }
                 }
@@ -1146,6 +1261,7 @@ void HPOTargets::read(const std::string& fn)
                     iss >> v;
                     expect_end(iss, "AUTO takes a single value");
                     spec.noise.autodetect = v.empty() ? true : parse_bool(v, "NOISE.AUTO");
+                    set_once(&spec.noise, key, "noise settings");
                     continue;
                 }
                 if (key=="CALIBRATION") {
@@ -1153,6 +1269,7 @@ void HPOTargets::read(const std::string& fn)
                     if (v == 1)
                         throw std::runtime_error("NOISE.CALIBRATION must be 0 (off) or >= 2");
                     spec.noise.calibration_n = v;
+                    set_once(&spec.noise, key, "noise settings");
                     continue;
                 }
                 throw std::runtime_error("unknown key '" + key + "' inside NOISE "
@@ -1174,13 +1291,7 @@ void HPOTargets::read(const std::string& fn)
                             "LOG_HP must be a finite ratio >= 1 (a dimension is "
                             "log-scaled when high/low >= LOG_HP and low > 0), "
                             "got '" + tok + "'");
-                    if (spec.log_threshold) {
-                        std::ostringstream oss;
-                        oss << "LOG_HP given more than once; the last value ("
-                            << v << ") wins";
-                        std::cerr << "[HPO] " << oss.str() << "\n";
-                        HPOLog::instance().warning(oss.str());
-                    }
+                    set_once(&spec.log_threshold, key, "search space");
                     spec.log_threshold = v;
                     continue;
                 }
@@ -1198,6 +1309,7 @@ void HPOTargets::read(const std::string& fn)
                     else if (t=="MULTISTART") spec.strategy_type = StrategyType::MULTISTART;
                     else if (t=="PRESTAGE")   spec.strategy_type = StrategyType::PRESTAGE;
                     else throw std::runtime_error("STRATEGY TYPE must be PLAIN, MULTISTART, or PRESTAGE (got '" + t + "')");
+                    set_once(&spec.strategy_type, key, "strategy");
                     strategy_type_given = true;
                     continue;
                 }
@@ -1208,10 +1320,12 @@ void HPOTargets::read(const std::string& fn)
                 /* MULTISTART knobs. */
                 if (key=="N_STARTS") {
                     spec.multistart.n_starts = parse_uint(single_value(iss, key), key, 1);
+                    set_once(&spec.strategy_type, key, "strategy");
                     continue;
                 }
                 if (key=="PARALLEL") {
                     spec.multistart.parallel = parse_uint(single_value(iss, key), key, 1);
+                    set_once(&spec.strategy_type, key, "strategy");
                     continue;
                 }
                 if (key=="BUDGET_PER_START") {
@@ -1220,11 +1334,13 @@ void HPOTargets::read(const std::string& fn)
                     spec.multistart.budget_per_start =
                         parse_uint(single_value(iss, key), key, 1,
                                    std::numeric_limits<int>::max());
+                    set_once(&spec.strategy_type, key, "strategy");
                     continue;
                 }
                 /* PRESTAGE knob. */
                 if (key=="TOPK") {
                     spec.stage_topk = parse_uint(single_value(iss, key), key, 1);
+                    set_once(&spec.strategy_type, key, "strategy");
                     continue;
                 }
                 throw std::runtime_error("unknown key '" + key + "' inside STRATEGY block");
@@ -1251,6 +1367,20 @@ void HPOTargets::read(const std::string& fn)
                 throw std::runtime_error("unknown key '" + key + "' in this block");
             }
 
+            /* A top-level key that takes one value is set once: a second
+             * line would replace the first's value. FAILSCORE, LOSS and
+             * PC_SCRIPT_TIMEOUT (MAXTIME) are set again only after a
+             * PC_LAMMPS or PC_FAILPROBE line has taken them
+             * (set_for_lines); the metric and gate keys refuse a repeat
+             * themselves. */
+            {
+                static const std::set<std::string> once = {
+                    "QFLUSH", "OUTPUT", "BOUTPUT", "DIGITS", "DUMP",
+                    "BDUMP", "FAILSCORE_GRADING", "BUMPGATE", "PC_ISOLATION",
+                    "PC_WORKER_TIMEOUT"};
+                if (once.count(key)) set_once(&run_settings, key, "run");
+            }
+
             /* ==================  global (ROOT) section  =========== */
 
             /* optimizer-independent settings ----------------------- *
@@ -1265,6 +1395,7 @@ void HPOTargets::read(const std::string& fn)
              * to FAILSCORE. Negative losses (negative-weight --varloss
              * terms) stay usable under any positive FAILSCORE. */
             if (key=="FAILSCORE") {
+                set_for_lines(key);
                 FAIL_SCORE = parse_positive(single_value(iss, key), key,
                                             "finite number");
             }
@@ -1273,13 +1404,15 @@ void HPOTargets::read(const std::string& fn)
              * LAMMPS `timer timeout` after each clear. MAXTIME is
              * the legacy alias, kept so existing .hpo configs keep parsing.
              * NOTE: the OPTIMIZER-block MAXTIME (whole-run stop) is a DIFFERENT
-             * setting parsed in optimizer_block.cpp -- do not conflate. If both
-             * spellings appear here, the later line wins (each overwrites
-             * MAX_TIME); hpo.cpp warns when both were given. */
+             * setting parsed in optimizer_block.cpp -- do not conflate. The
+             * two spellings are one key (set_for_lines); with a PC_LAMMPS
+             * line between, the later line is the run-wide value, and
+             * hpo.cpp warns when both spellings were given. */
             else if (key=="PC_SCRIPT_TIMEOUT" || key=="MAXTIME") {
                 /* A LAMMPS time spec that is off, unlimited or positive:
                  * it becomes `timer timeout <spec>`, and its seconds size
                  * the PROCESS worker deadline. */
+                set_for_lines(key);
                 MAX_TIME = single_value(iss, key);
                 MAX_TIME_seconds = parse_script_timeout(MAX_TIME, key);
                 MAX_TIME_key = key;
@@ -1357,6 +1490,7 @@ void HPOTargets::read(const std::string& fn)
                 for (const auto& t : keep) { cmd2 += ' '; cmd2 += t; }
                 LS.emplace_back(cmd2, MAX_TIME, FAIL_SCORE, globalLoss,
                                 /*failprobe=*/true);
+                lines_take_settings();
                 LammpsSim& probe = LS.back();
                 if (!probe.n_varloss.empty() || !probe.i_varloss.empty())
                     throw std::runtime_error(
@@ -1398,22 +1532,31 @@ void HPOTargets::read(const std::string& fn)
                     parse_uint(single_value(iss, key), key, 1, 15));
             }
             else if (key=="DUMP" || key=="BDUMP") {
-                /* <cadence> <directory>: the directory is created only once
-                 * the whole line is valid. */
+                /* <cadence> <directory>. The directory is the run's
+                 * output: the two are checked together once the file is
+                 * read (check_archive_directories), each error at its
+                 * line, for the run and for `tadah hpo --check` alike, and
+                 * created by the run just before its first evaluation
+                 * (create_archive_directories); parsing creates nothing. */
                 std::string every, dir;
                 if (!(iss >> every >> dir))
                     throw std::runtime_error(
                         key + " requires a cadence and a directory");
                 expect_end(iss, key + " takes a cadence and a directory");
                 const std::size_t n = parse_uint(every, key + " cadence", 1);
-                if (key == "DUMP") { dumpPotEvery = n; dumpPotDir = dir; }
-                else { dumpBestPotEvery = n; dumpBestPotDir = dir; }
-                handle_directory_creation(dir);
+                if (key == "DUMP") {
+                    dumpPotEvery = n; dumpPotDir = dir;
+                    dumpPotLine = {nline, line};
+                } else {
+                    dumpBestPotEvery = n; dumpBestPotDir = dir;
+                    dumpBestPotLine = {nline, line};
+                }
             }
 
             /* loss -------------------------------------------------- */
             else if (key=="LOSS")
             {
+                set_for_lines(key);
                 /* LOSS <type> [<param>]. The optional parameter (HUBER
                  * delta, TUKEY c) is validated and defaulted by
                  * LossFunction::resolve_params -- the same path the
@@ -1456,6 +1599,7 @@ void HPOTargets::read(const std::string& fn)
             {
                 std::string cmd; std::getline(iss,cmd);
                 LS.emplace_back(cmd, MAX_TIME, FAIL_SCORE, globalLoss);
+                lines_take_settings();
             }
 
             /* Typed observables ------------------------------------
@@ -1521,6 +1665,14 @@ void HPOTargets::read(const std::string& fn)
                     if (key == "PC_ERMSE") use_ermse = true;
                     else use_frmse = true;
                 }
+                else if (const auto [first, fresh] =
+                             metric_lines.emplace(key, nline);
+                         !fresh)
+                    /* A second line would replace the first's target,
+                     * weight and caps. */
+                    throw std::runtime_error(
+                        key + ": repeated declaration (first declared on "
+                        "line " + std::to_string(first->second) + ")");
                 else if (key=="PC_EMAE")   { emae=tgt;   w_emae=wgt;   use_emae=true;   skip_emae=caps; }
                 else if (key=="PC_ErRMSE") { errmse=tgt; w_errmse=wgt; use_errmse=true; skip_errmse=caps; }
                 else if (key=="PC_ERSQ")   { ersq=tgt;   w_ersq=wgt;   use_ersq=true;   skip_ersq=caps; }
@@ -1579,6 +1731,10 @@ void HPOTargets::read(const std::string& fn)
                 g.key + " line.", g.text));
         }
     }
+
+    /* The DUMP and BDUMP directories, together: one may be inside the
+     * other's new directory, whatever the order of their lines. */
+    check_archive_directories();
 
     /* A file without an OPTIMIZER block names no optimiser. */
     require_driver(spec, DriverPhase::Run);
@@ -1703,15 +1859,39 @@ void HPOTargets::read(const std::string& fn)
         }
     }
 
+    /* The seed of a PRESTAGE exploration that sets none. A run's random
+     * numbers come from the SEEDs written in its target file: the
+     * refinement's starts (SEED + i) and every RESTART round (SEED + r*S,
+     * the exploration's SEED + r) derive theirs from them. An exploration
+     * whose optimiser reads SEED and that has no seed of its own -- no
+     * SEED and, for NLopt, no INIT block SEED (nlopt_seed_from_init) --
+     * takes the STRATEGY-level SEED, so a run with SEED in its OPTIMIZER
+     * or STRATEGY block repeats its exploration as it repeats its
+     * refinement. The refinement draws streams of its own key
+     * (phase_stream_seed, seed_stream.h), so the two phases do not share
+     * random numbers. An exploration whose optimiser reads no SEED
+     * (DLIB:GFS) takes none. The journal names the exploration's seed and
+     * where it comes from (seed_from_strategy). */
+    if (spec.prestage && spec.seed && !spec.prestage->seed &&
+        !spec.prestage->nlopt_seed_from_init()) {
+        const OptimizerCaps* caps =
+            find_optimizer_caps(spec.prestage->lib, spec.prestage->algo);
+        if (caps && caps->reads_seed) {
+            spec.prestage->seed = spec.seed;
+            spec.prestage->seed_from_strategy = true;
+        }
+    }
+
     /* PC_LAMMPS: no gradients.
      *
      * The HPO-side analytical-gradient wiring for PC_LAMMPS (the
      * IFT-adjoint chain) is not engaged. PC_LAMMPS configs must
-     * use gradient-free optimisers -- NLOPT GN_* / LN_*, TADAH built-ins
-     * (RANDOM/GRID/ANNEAL). The single accepted gradient-based exception
-     * is DLIB:BFGS, which performs its own per-theta-per-iter finite-
-     * difference dtheta inside dlib::find_min and never asks the host
-     * for a full gradient vector.
+     * use gradient-free optimisers -- every registered optimiser whose run
+     * takes no gradient (searches_without_gradient(), strategy_rules.h).
+     * The single accepted gradient-based optimiser is DLIB:BFGS, which
+     * takes the central-difference gradient of the loss
+     * (GradientProvider, GRAD_STRATEGY NUMERICAL), as an NLopt LD_*
+     * algorithm would.
      *
      * A block is refused when it asks the host for gradients
      * (obtains_gradients), not for the D of its name: NLopt's MLSL and
@@ -1760,10 +1940,11 @@ void HPOTargets::read(const std::string& fn)
                   "INNER search is a local NLopt algorithm: name a "
                   "derivative-free one in the INNER block (" +
                       nlopt_inner_searches_without_gradient() + ")."
-                : " PC_LAMMPS requires a gradient-free optimiser (NLOPT "
-                  "GN_*/LN_*, TADAH RANDOM/GRID/ANNEAL). The only "
-                  "gradient-based exception is DLIB:BFGS (uses "
-                  "per-theta-per-iter dtheta, not a full gradient).";
+                : " PC_LAMMPS requires a gradient-free optimiser (" +
+                      searches_without_gradient() + ") or DLIB:BFGS, the "
+                      "one gradient-based optimiser it accepts; an NLopt "
+                      "MLSL or AUGLAG algorithm is accepted with a "
+                      "derivative-free INNER block.";
             if (optimizer_caps(sp).accepts_inner) {
                 /* An MLSL or AUGLAG that takes a gradient for its local
                  * search: an INNER block's is refused at that block. */
@@ -1837,21 +2018,451 @@ double HPOTargets::parse_pc_worker_timeout(const std::string& token,
   return v;
 }
 
-void HPOTargets::handle_directory_creation(const std::string& directory) {
-  try {
-    if (!fs::exists(directory)) {
-      if (fs::create_directory(directory)) {
-        std::cout << "Directory created: " << directory << std::endl;
-      } else {
-        std::cerr << "Failed to create directory: " << directory << std::endl;
-      }
-    } else {
-      std::cout << "Directory already exists: " << directory << std::endl;
-    }
-  } catch (const std::exception& e) {
-    throw std::runtime_error("Error in handle_directory_creation: "
-                             + std::string(e.what()));
+namespace {
+/* Whether the process can create entries in the directory @p dir: write
+ * and search permission (access(2), the real user's). */
+bool writable_directory(const fs::path& dir) {
+  return ::access(dir.c_str(), W_OK | X_OK) == 0;
+}
+
+/* A path as the operating system finds it when the run opens or creates
+ * it (resolve_physically). */
+struct PhysicalPath {
+  fs::path path;               // absolute, without a link, '.' or '..'
+  bool exists = false;         // something exists at path
+  bool through_links = false;  // a symbolic link was followed to reach it
+  bool names_directory = false;  // it ends in '/', '/.' or '/..' (as given,
+                                 // or as a link target spliced in at its
+                                 // end): only a directory has such a name
+  fs::path own_link;           // the target the path's own link stores, its
+                               // trailing '/' and '.' set aside (empty: the
+                               // path names no link)
+};
+
+/* @p given as the operating system resolves it to open or create it: from
+ * the root, one component after the other, every symbolic link followed --
+ * the one the path ends with too, to a file not yet created -- and '.' and
+ * '..' taken in the directory reached so far. Throws, with the reason
+ * alone, where the system cannot resolve it: more than 40 links, the
+ * system's limit ("too many levels of symbolic links"), '.' or '..' in a
+ * directory that does not exist or is no directory, and a component it
+ * cannot read ("'<path>' cannot be read: Permission denied").
+ * @p will_exist (absolute and resolved; empty: none) is a directory that
+ * does not exist yet and that the run creates first, the other archive
+ * line's: it is taken as an existing directory ('.' and '..' in it, as the
+ * system takes them once it exists), and what lies below it as missing.
+ * (fs::weakly_canonical takes the part of a path that does not exist
+ * lexically, and stops at a link to a file not yet created.) */
+PhysicalPath resolve_physically(const std::string& given,
+                                const fs::path& will_exist = fs::path()) {
+  std::error_code ec;
+  const fs::path abs = fs::absolute(fs::path(given), ec);
+  if (ec) throw std::runtime_error(ec.message());
+  PhysicalPath out;
+  /* The path's own link: its last named component, its trailing '/' and
+   * '.' set aside ("lnk/" names the link lnk, as mkdir takes it). */
+  {
+    fs::path last = abs;
+    while (last.has_parent_path() && last != last.root_path() &&
+           (last.filename().empty() || last.filename() == "."))
+      last = last.parent_path();
+    std::error_code lec;
+    if (fs::is_symlink(fs::symlink_status(last, lec)))
+      out.own_link = fs::read_symlink(last, lec);
   }
+  std::deque<fs::path> todo;
+  for (const fs::path& c : abs.relative_path()) todo.push_back(c);
+  fs::path cur = abs.root_path();
+  /* The first component on the way that does not exist, or is no
+   * directory though more follow (empty: none); below it the path is
+   * taken as written. */
+  fs::path stop;
+  bool stop_exists = false;
+  int links = 0;
+  /* Whether the components taken last were '', '.' or '..': the path then
+   * names a directory. */
+  bool trailing = false;
+  const auto missing = [&] {
+    return std::string(stop_exists && cur == stop ? "is not a directory"
+                                                  : "does not exist");
+  };
+  while (!todo.empty()) {
+    const fs::path c = todo.front();
+    todo.pop_front();
+    if (c.empty()) {
+      trailing = true;
+      continue;
+    }
+    if (c == ".") {
+      if (!stop.empty())
+        throw std::runtime_error("it walks '.' in '" + cur.string() +
+                                 "', which " + missing());
+      trailing = true;
+      continue;
+    }
+    if (c == "..") {
+      if (!stop.empty())
+        throw std::runtime_error("it walks '..' out of '" + cur.string() +
+                                 "', which " + missing());
+      cur = cur.parent_path();
+      trailing = true;
+      continue;
+    }
+    trailing = false;
+    const fs::path next = cur / c;
+    if (!stop.empty()) {
+      cur = next;
+      continue;
+    }
+    const fs::file_status ls = fs::symlink_status(next, ec);
+    if (ec && ls.type() != fs::file_type::not_found)
+      throw std::runtime_error("'" + next.string() +
+                               "' cannot be read: " + ec.message());
+    if (fs::is_symlink(ls)) {
+      if (++links > 40)
+        throw std::runtime_error("too many levels of symbolic links");
+      const fs::path target = fs::read_symlink(next, ec);
+      if (ec)
+        throw std::runtime_error("'" + next.string() +
+                                 "' cannot be read: " + ec.message());
+      out.through_links = true;
+      if (target.is_absolute()) cur = target.root_path();
+      std::deque<fs::path> parts;
+      for (const fs::path& t : target.relative_path()) parts.push_back(t);
+      todo.insert(todo.begin(), parts.begin(), parts.end());
+      continue;
+    }
+    if (ls.type() == fs::file_type::not_found) {
+      if (!will_exist.empty() && next == will_exist) {
+        cur = next;  // there once the run has created it
+        continue;
+      }
+      stop = next;
+      stop_exists = false;
+    } else if (!fs::is_directory(ls) &&
+               std::any_of(todo.begin(), todo.end(), [](const fs::path& t) {
+                 return !t.empty() && t != ".";
+               })) {
+      stop = next;
+      stop_exists = true;
+    }
+    cur = next;
+  }
+  out.path = cur;
+  out.exists = stop.empty();
+  out.names_directory = trailing;
+  return out;
+}
+
+/* @p dir resolved (resolve_physically, with @p will_exist), or nullopt
+ * when it cannot be. */
+std::optional<PhysicalPath> resolved_or_none(
+    const std::string& dir, const fs::path& will_exist = fs::path()) {
+  try {
+    return resolve_physically(dir, will_exist);
+  } catch (const std::exception&) {
+    return std::nullopt;
+  }
+}
+
+/* The directory of the archive line @p dir as the run finds it before it
+ * creates any: its resolved path when the run creates it (it does not
+ * exist, and the path names no link), else empty. */
+fs::path created_by_the_run(const std::string& dir) {
+  const auto r = resolved_or_none(dir);
+  return r && !r->exists && r->own_link.empty() ? r->path : fs::path();
+}
+}  // namespace
+
+void HPOTargets::create_archive_directories() const {
+  const bool dump = dumpPotEvery != std::numeric_limits<size_t>::max();
+  const bool bdump = dumpBestPotEvery != std::numeric_limits<size_t>::max();
+  /* The DUMP directory first, unless the system puts it inside the BDUMP
+   * directory. */
+  bool bdump_first = false;
+  if (dump && bdump) {
+    const fs::path b = created_by_the_run(dumpBestPotDir);
+    const auto d = resolved_or_none(dumpPotDir, b);
+    /* The DUMP directory is the BDUMP one ("archive/.") or inside it. */
+    bdump_first =
+        !b.empty() && d && (d->path == b || d->path.parent_path() == b);
+  }
+  if (bdump_first) create_archive_directory("BDUMP", dumpBestPotDir);
+  if (dump) create_archive_directory("DUMP", dumpPotDir);
+  if (bdump && !bdump_first) create_archive_directory("BDUMP", dumpBestPotDir);
+}
+
+void HPOTargets::check_archive_directories() const {
+  struct Archive {
+    const char* key;
+    const std::string& dir;
+    bool active;
+    const ArchiveLine& line;
+  };
+  const Archive a[2] = {
+      {"DUMP", dumpPotDir,
+       dumpPotEvery != std::numeric_limits<size_t>::max(), dumpPotLine},
+      {"BDUMP", dumpBestPotDir,
+       dumpBestPotEvery != std::numeric_limits<size_t>::max(),
+       dumpBestPotLine}};
+  /* In the order of their lines, so that the first line in error is the
+   * one named. */
+  const int first = a[1].line.number < a[0].line.number ? 1 : 0;
+  for (int k : {first, 1 - first}) {
+    const Archive& self = a[k];
+    const Archive& other = a[1 - k];
+    if (!self.active) continue;
+    /* The other line's directory, where the system puts it, when the run
+     * creates it: one inside it is created after it. Whether the run can
+     * create it is checked at its own line. */
+    const fs::path created_first =
+        other.active ? created_by_the_run(other.dir) : fs::path();
+    try {
+      check_archive_directory(self.key, self.dir, created_first);
+    } catch (const std::exception& e) {
+      throw std::runtime_error(
+          config_line_error(self.line.number, e.what(), self.line.text));
+    }
+  }
+}
+
+void HPOTargets::check_archive_directory(const std::string& key,
+                                         const std::string& dir,
+                                         const fs::path& created_first) {
+  const std::string what = key + " directory '" + dir + "'";
+  PhysicalPath r;
+  try {
+    r = resolve_physically(dir, created_first);
+  } catch (const std::exception& e) {
+    throw std::runtime_error(what + " cannot be resolved: " + e.what());
+  }
+  /* The other line's directory itself ("archive/."), which the run
+   * creates first. */
+  if (!created_first.empty() && r.path == created_first) return;
+  std::error_code ec;
+  if (r.exists) {
+    const fs::file_status st = fs::status(r.path, ec);
+    if (ec)
+      throw std::runtime_error(what + " cannot be read: " + ec.message());
+    if (!fs::is_directory(st))
+      throw std::runtime_error(what + " exists and is not a directory");
+    if (!writable_directory(r.path))
+      throw std::runtime_error(what + " is not writable");
+    return;
+  }
+  /* mkdir does not follow a link the path itself names: a link to a
+   * directory that does not exist stops it. */
+  if (!r.own_link.empty())
+    throw std::runtime_error(what + " is a symbolic link to '" +
+                             r.own_link.string() + "', which does not exist");
+  /* A missing directory: the run creates the last directory of the path,
+   * in the directory the system puts it in -- after the other archive
+   * line's directory, when that is it. */
+  const fs::path parent = r.path.parent_path();
+  if (!created_first.empty() && parent == created_first) return;
+  const std::string cannot = what + " cannot be created: ";
+  const fs::file_status ps = fs::status(parent, ec);
+  if (ps.type() == fs::file_type::not_found)
+    throw std::runtime_error(cannot + "the directory '" + parent.string() +
+                             "' does not exist (tadah hpo creates only the "
+                             "last directory of the path)");
+  if (ec)
+    throw std::runtime_error(cannot + "'" + parent.string() +
+                             "' cannot be read: " + ec.message());
+  if (!fs::is_directory(ps))
+    throw std::runtime_error(cannot + "'" + parent.string() +
+                             "' is not a directory");
+  if (!writable_directory(parent))
+    throw std::runtime_error(cannot + "the directory '" + parent.string() +
+                             "' is not writable");
+}
+
+namespace {
+/* The working directory, for the messages on the run's output files. */
+std::string working_directory() {
+  std::error_code ec;
+  const fs::path cwd = fs::current_path(ec);
+  return ec ? std::string(".") : cwd.string();
+}
+
+/* What the run does with an output file in the working directory. */
+enum class OutputUse {
+  Rewritten,  // opens it to write, once (the journal, a search-space file)
+  Reopened,   // opens it to write, again for each row (a result file)
+  Locked,     // opens it to write and locks it (the lock of a best potential)
+  Replaced    // replaces or removes the name (a best potential)
+};
+
+/* Whether the run can open the existing file @p file as it does -- to
+ * write, and to read too (@p read_too: a lock) --: 0, or the errno of the
+ * failure. Links are followed as the open follows them. A directory is
+ * refused (EISDIR), and so is a socket, which the run's open cannot open
+ * (ENXIO). A named pipe is not opened -- opening and closing its write end
+ * would end the stream of its reader --, and its permission is checked
+ * instead (faccessat with the effective ids): the run's own open of it
+ * waits for its reader. A regular file, and a character or block device,
+ * are opened as the run opens them, without creating or truncating them,
+ * without waiting and without taking a controlling terminal, and closed:
+ * nothing is written. */
+int open_as_the_run(const std::string& file, bool read_too) {
+  struct stat st;
+  if (::stat(file.c_str(), &st) != 0) return errno;
+  if (S_ISDIR(st.st_mode)) return EISDIR;
+  if (S_ISSOCK(st.st_mode)) return ENXIO;
+  if (S_ISFIFO(st.st_mode)) {
+    const int mode = read_too ? (R_OK | W_OK) : W_OK;
+    return ::faccessat(AT_FDCWD, file.c_str(), mode, AT_EACCESS) == 0 ? 0
+                                                                       : errno;
+  }
+  const int fd = ::open(file.c_str(),
+                        (read_too ? O_RDWR : (O_WRONLY | O_APPEND)) |
+                            O_NONBLOCK | O_NOCTTY | O_CLOEXEC);
+  if (fd < 0) return errno;
+  ::close(fd);
+  return 0;
+}
+
+/* Throws when the run cannot write the output file @p file of the working
+ * directory as @p use says (@p locked: the best potential a lock is of).
+ * A file the run writes through (Rewritten, Reopened, Locked) that exists
+ * is opened as the run opens it (open_as_the_run): the system decides,
+ * following every link, and the refusal is the open's own error ("...
+ * cannot be opened: Permission denied (tadah hpo rewrites it)"); a file
+ * the run reopens for each row (Reopened) cannot be a named pipe. One that does not
+ * exist is checked where the system would create it
+ * (resolve_physically): a name that ends in '/' or '/.' cannot be a file,
+ * and the file must be in a directory that exists and the run can write
+ * into (the run creates the file, no directory). A file the run replaces
+ * (Replaced) is checked by its own name: a symbolic link there is
+ * replaced, not followed, and only a directory of that name stops the
+ * run. */
+void check_output_file(const std::string& file, OutputUse use,
+                       const std::string& locked = std::string()) {
+  const std::string where =
+      "'" + file + "' in the working directory '" + working_directory() + "'";
+  std::error_code ec;
+  if (use == OutputUse::Replaced) {
+    const fs::file_status ls = fs::symlink_status(file, ec);
+    if (ec && ls.type() != fs::file_type::not_found)
+      throw std::runtime_error(where + " cannot be read: " + ec.message());
+    if (fs::is_directory(ls))
+      throw std::runtime_error(where + " is a directory: tadah hpo writes a "
+                               "file of that name");
+    return;
+  }
+  const std::string purpose = use == OutputUse::Locked
+                                  ? "tadah hpo opens it to lock " + locked
+                                  : std::string("tadah hpo rewrites it");
+  /* A file the run reopens for each row cannot be a pipe: the reader gets
+   * the end of the file when the run closes it, and the next open waits
+   * for a reader for ever. */
+  if (use == OutputUse::Reopened) {
+    struct stat st;
+    if (::stat(file.c_str(), &st) == 0 && S_ISFIFO(st.st_mode))
+      throw std::runtime_error(where + " is a named pipe: tadah hpo reopens "
+                               "the file for each row it writes, and a pipe "
+                               "would block it");
+  }
+  const int err = open_as_the_run(file, use == OutputUse::Locked);
+  if (err == 0) return;
+  if (err != ENOENT)
+    throw std::runtime_error(where + " cannot be opened: " +
+                             std::strerror(err) + " (" + purpose + ")");
+  /* Nothing to open: where the system would create the file. */
+  PhysicalPath r;
+  try {
+    r = resolve_physically(file);
+  } catch (const std::exception& e) {
+    throw std::runtime_error(where + " cannot be resolved: " + e.what());
+  }
+  const std::string subject =
+      r.through_links
+          ? where + " is a symbolic link to '" + r.path.string() + "', which"
+          : where;
+  const std::string cannot = subject + " cannot be created: ";
+  if (r.names_directory)
+    throw std::runtime_error(cannot +
+                             "a file name cannot end in '/' or '/.'");
+  if (r.exists)
+    throw std::runtime_error(where + " cannot be opened: " +
+                             std::strerror(err) + " (" + purpose + ")");
+  const fs::path dir = r.path.parent_path();
+  const fs::file_status ds = fs::status(dir, ec);
+  if (ds.type() == fs::file_type::not_found)
+    throw std::runtime_error(cannot + "the directory '" + dir.string() +
+                             "' does not exist");
+  if (ec)
+    throw std::runtime_error(cannot + "'" + dir.string() +
+                             "' cannot be read: " + ec.message());
+  if (!fs::is_directory(ds))
+    throw std::runtime_error(cannot + "'" + dir.string() +
+                             "' is not a directory");
+  if (!writable_directory(dir))
+    throw std::runtime_error(cannot + "the directory '" + dir.string() +
+                             "' is not writable");
+}
+}  // namespace
+
+HPOTargets::OutputNames HPOTargets::output_names() {
+  const std::string r = hpo_rank_suffix();
+  return {"loss.tadah" + r,      "outvar.tadah" + r,
+          "params.tadah" + r,    "stats.tadah" + r,
+          "best_loss.tadah" + r, "best_outvar.tadah" + r,
+          "best_params.tadah" + r, "best_stats.tadah" + r,
+          "best_pot.tadah",      "best_pot.tadah" + r};
+}
+
+bool HPOTargets::writes_search_space_file() const {
+  return static_cast<bool>(space_);
+}
+
+bool HPOTargets::writes_resolved_optim_file() const {
+  if (!space_) return false;
+  for (std::size_t i = 0; i < space_->dim(); ++i)
+    if (space_->at(i).origin != BoxOrigin::Explicit) return true;
+  return false;
+}
+
+void HPOTargets::check_run_outputs(const std::string& journal) {
+  std::error_code ec;
+  if (!fs::is_directory(fs::status(".", ec)) || !writable_directory("."))
+    throw std::runtime_error(
+        "the working directory '" + working_directory() +
+        "' is not writable: tadah hpo writes its journal (hpo_run.log), its "
+        "result files and best_pot.tadah there");
+  check_output_file(journal, OutputUse::Rewritten);
+  const OutputNames n = output_names();
+  for (const std::string* f :
+       {&n.loss, &n.outvar, &n.params, &n.stats, &n.bestLoss, &n.bestOutvar,
+        &n.bestParams, &n.bestStats})
+    check_output_file(*f, OutputUse::Reopened);
+  for (const std::string* f : {&n.canonicalBestPot, &n.localBestPot}) {
+    check_output_file(*f, OutputUse::Replaced);
+    check_output_file(*f + ".lock", OutputUse::Locked, *f);
+  }
+}
+
+void HPOTargets::check_search_space_files() const {
+  if (writes_search_space_file())
+    check_output_file(kSearchSpaceFile, OutputUse::Rewritten);
+  if (writes_resolved_optim_file())
+    check_output_file(kResolvedOptimFile, OutputUse::Rewritten);
+}
+
+void HPOTargets::create_archive_directory(const std::string& key,
+                                          const std::string& dir) {
+  std::error_code ec;
+  if (fs::create_directory(dir, ec)) {
+    std::cout << "Directory created: " << dir << std::endl;
+    return;
+  }
+  if (!ec && fs::is_directory(dir, ec)) {
+    std::cout << "Directory already exists: " << dir << std::endl;
+    return;
+  }
+  throw std::runtime_error(
+      key + " directory '" + dir + "' could not be created: " +
+      (ec ? ec.message() : std::string("it exists and is not a directory")));
 }
 
 /* Positive-only OPTIM keys, from the same table the refit hpotarget writer
@@ -2065,7 +2676,7 @@ void HPOTargets::write_search_space_files(const std::string& dir) const {
       width[c] = header[c].size();
       for (const auto& r : rows) width[c] = std::max(width[c], r[c].size());
     }
-    std::ofstream tsv(dir + "/hpo_search_space.tsv");
+    std::ofstream tsv(dir + "/" + kSearchSpaceFile);
     tsv <<
       "# tadah hpo search space -- one row per optimised dimension, in optimiser order\n"
       "# (the same order as the params.tadah columns and the journal tables).\n"
@@ -2096,11 +2707,8 @@ void HPOTargets::write_search_space_files(const std::string& dir) const {
     emit(header);
     for (const auto& r : rows) emit(r);
   }
-  bool any_auto = false;
-  for (std::size_t i = 0; i < ss.dim(); ++i)
-    if (ss.at(i).origin != BoxOrigin::Explicit) any_auto = true;
-  if (!any_auto) return;
-  std::ofstream hpo(dir + "/hpo_optim_resolved.hpo");
+  if (!writes_resolved_optim_file()) return;
+  std::ofstream hpo(dir + "/" + kResolvedOptimFile);
   hpo << "# Resolved OPTIM block (explicit bounds for every searched dimension).\n"
          "# Written by tadah hpo because at least one box was derived by an AUTO rule;\n"
          "# paste these lines in place of the AUTO lines to pin exactly this search space.\n";
@@ -2333,6 +2941,18 @@ void HPOTargets::process_optim_config(std::istringstream& iss,
       rule.geometric = named ? binding->positive && !named_amp : optim_key_positive_only(k);
       rule.factor    = rule.geometric ? 2.0 : 0.5;
     }
+    /* FLOOR and GROUP_FLOOR bound the half-width of the linear rule; the
+     * geometric box [x0/f, x0*f] has none, so they would be ignored. */
+    if (rule.geometric && floor_set)
+      throw std::runtime_error(
+          "OPTIM " + k + ": FLOOR and GROUP_FLOOR set the smallest "
+          "half-width of an AUTO FRAC box; " +
+          (mode_set ? std::string("AUTO RATIO makes the geometric box "
+                                  "[x0/f, x0*f], which they do not change, "
+                                  "so they are given with FRAC <p> only")
+                    : "the AUTO box of " + k + " is geometric by default "
+                      "(RATIO 2), which they do not change, so they are "
+                      "given with FRAC <p> only"));
     /* Non-negative amplitudes: NNLS fits put amplitudes at exactly 0, so a
      * linear rule without a floor gets the refit writer's group floor
      * (1e-3 max|x0| of the line) and the box [0, d] for a zero seed. */
@@ -2421,7 +3041,39 @@ void HPOTargets::process_optim_config(std::istringstream& iss,
     }
     try {
       size_t i = ui_offset(omap.config, ui);
-      if (i>=s) throw std::runtime_error("Out of bound index: " + core::to_string(ui));
+      if (i>=s) {
+        std::string why;
+        /* Values of a potential its descriptors do not read were left out
+         * (D_mJoin::expand_grids): the indices address the values kept. */
+        for (const auto& lo : left_out_) {
+          if (lo.key != k) continue;
+          std::vector<std::string> out, rest = lo.kept;
+          for (const auto& v : lo.given) {
+            const auto it = std::find(rest.begin(), rest.end(), v);
+            if (it != rest.end()) rest.erase(it);
+            else out.push_back(v);
+          }
+          why = " (" + k + " has " + core::to_string(lo.kept.size()) +
+                (lo.kept.size() == 1 ? " value" : " values") +
+                ": of the potential's " + k + " " + core::join(lo.given) +
+                ", the descriptors do not read " + core::join(out) +
+                (out.size() == 1 ? ", which was" : ", which were") +
+                " left out, and OPTIM indices address the values kept, " +
+                core::join(lo.kept);
+          if (ui >= 1 && ui <= lo.given.size()) {
+            const std::string& v = lo.given[ui - 1];
+            const auto it = std::find(lo.kept.begin(), lo.kept.end(), v);
+            if (it != lo.kept.end())
+              why += "; the potential's value at index " + core::to_string(ui) +
+                     ", " + v + ", is index " +
+                     core::to_string(static_cast<std::size_t>(
+                         it - lo.kept.begin()) + 1);
+          }
+          why += ")";
+        }
+        throw std::runtime_error("Out of bound index: " + core::to_string(ui) +
+                                 why);
+      }
       /* One OPTIM line per index: a second box for an index would replace
        * the first without a word. Lines of one key that select other
        * indices add to it (in any case, the key being upper-cased). */

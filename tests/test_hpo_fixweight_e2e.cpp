@@ -1429,8 +1429,8 @@ TEST_CASE("seed anchor: tadah hpo WARM + MAXEVAL 1 reproduces the seed file",
 
 /* NLopt BOBYQA/COBYLA/PRAXIS round the start point before evaluating it
  * (a few ulp off u0; see kSeedAnchorUlps): the seed-anchor window still
- * evaluates -- and writes -- the WARM seed bit for bit. The seed is
- * example 17's FIXWEIGHT (2-11) in explicit [-300, 300] boxes on an
+ * evaluates -- and writes -- the WARM seed bit for bit. The search is
+ * OPTIM FIXWEIGHT (2-11) in explicit [-300, 300] boxes on an
  * 11-weight D2_BP model; DUMP keeps the
  * first evaluation's potential (PRAXIS makes a second one even at
  * MAXEVAL 1). Needs TADAH_BINARY (the tadah_cli entries of
@@ -1788,6 +1788,54 @@ TEST_CASE("durable best: a persistent failure fails the run",
     CHECK(n >= 1);
     CHECK(data_rows(sd.dir / "loss.tadah") == n);
     CHECK_FALSE(fs::exists(sd.dir / "best_pot.tadah"));
+    /* The run ends with an error, and the lock file it cannot take (every
+     * later lock open fails) stays: the journal says so, a WARNING. */
+    CHECK(fs::exists(sd.dir / "best_pot.tadah.lock"));
+    CHECK(line_with(journal, "the lock file of the best potential stays")
+              .find("WARNING") != std::string::npos);
+}
+
+/* At the end of a run the lock files of the best potential go. One that
+ * cannot be removed ("durable.lock_unlink" fails) is a WARNING in the
+ * journal, which names it, and the run ends as it would: exit status 0 and
+ * its optimiser's status. A run whose lock file goes leaves none.
+ * Before the fix: the WARNING was written after the journal had closed,
+ * so nothing reported the lock file that stayed. */
+TEST_CASE("durable best: a lock file that cannot be removed is a journal "
+          "WARNING", "[durable_e2e][failure_handling][.]")
+{
+    {
+        ScratchDir sd;
+        write_durable_fixture(sd.dir);
+        const ChildRun r = run_self(
+            "[.durable_e2e_child]", sd.dir,
+            {"TADAH_HPO_TEST_IO_FAULT=durable.lock_unlink,EIO,count=always",
+             kShortBackoff, "TADAH_TEST_DURABLE_E2E_EXPECT=ok"});
+        INFO(r.output);
+        REQUIRE(WIFEXITED(r.status));
+        REQUIRE(WEXITSTATUS(r.status) == 0);
+        REQUIRE(r.output.find("All tests passed") != std::string::npos);
+        const std::string journal = read_text(sd.dir / "hpo_run.log");
+        INFO(journal);
+        const std::string warning =
+            line_with(journal, "the lock file of the best potential stays");
+        CHECK_THAT(warning, Catch::Contains("WARNING") &&
+                                Catch::Contains("best_pot.tadah.lock"));
+        CHECK(line_with(journal, "Optimiser status").find("FAILED") ==
+              std::string::npos);
+        CHECK(fs::exists(sd.dir / "best_pot.tadah.lock"));
+    }
+    {
+        ScratchDir sd;
+        write_durable_fixture(sd.dir);
+        const ChildRun r = run_self("[.durable_e2e_child]", sd.dir,
+                                    {"TADAH_TEST_DURABLE_E2E_EXPECT=ok"});
+        INFO(r.output);
+        REQUIRE(WIFEXITED(r.status));
+        REQUIRE(WEXITSTATUS(r.status) == 0);
+        CHECK(fs::exists(sd.dir / "best_pot.tadah"));
+        CHECK_FALSE(fs::exists(sd.dir / "best_pot.tadah.lock"));
+    }
 }
 
 /* The fresh-run reset of best_pot.tadah, before the first evaluation, is
@@ -2124,6 +2172,8 @@ TEST_CASE("durable best: a blip right after SIGINT still saves the best",
     CHECK(line_with(journal, "Best potential saved").find(": best_pot.tadah") !=
           std::string::npos);
     CHECK(contains(read_text(sd.dir / "best_pot.tadah"), "# HPO_SOURCE_EVAL 1"));
+    /* a run a signal ends leaves no lock file */
+    CHECK_FALSE(fs::exists(sd.dir / "best_pot.tadah.lock"));
     const std::size_t n = total_evaluations(journal);
     CHECK(n >= 1);
     CHECK(data_rows(sd.dir / "loss.tadah") == n);

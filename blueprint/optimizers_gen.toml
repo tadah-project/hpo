@@ -2020,12 +2020,12 @@ Options for TADAH:ANNEAL_PA
         Selects the proposal kernel: ON takes Corana's adaptive steps, one coordinate at a time with a step for each dimension; OFF takes the CLASSIC kernel, which moves every coordinate at once.
      PARAM STEP_FRAC (default 0.1)
         The first proposal scale of each dimension, as a fraction of the width of its OPTIM box.
-     PARAM CHAIN_LENGTH (default 50) [accepts AUTO]
+     PARAM CHAIN_LENGTH (default 50)
         The number of proposals of the CLASSIC kernel at each temperature step.
         The default of TADAH:ANNEAL is AUTO: MAXEVAL spread evenly over the cooling schedule, which hpo_run.log reports.
      PARAM NS (default 20)
         Corana kernel: the number of cycles through the dimensions between two adjustments of the steps. Under TADAH:ANNEAL_PT, the number of sweeps between two adjustments of the steps of a slot.
-     PARAM NT (default 5) [accepts AUTO]
+     PARAM NT (default 5)
         Corana kernel: the number of step adjustments at each temperature step.
         The default of TADAH:ANNEAL is AUTO: a number that follows from MAXEVAL, at most the larger of 100 and 5n for n dimensions.
      PARAM CORANA_C (default 2)

@@ -166,7 +166,6 @@ TEST_CASE("STEP override grammar: STEP <KEY>[(indices)] <frac>",
     STEP 0.1
     STEP WATOM(1) 0.05
     STEP WATOM 0.2
-    STEP WATOM (1) 0.3
   ENDSTRATEGY
 ENDOPTIMIZER
 )");
@@ -174,17 +173,31 @@ ENDOPTIMIZER
   tadah::hpo::HPOTargets trg(ctx, in.path.string());
   REQUIRE(trg.spec.step.has_value());
   CHECK(*trg.spec.step == Approx(0.1));
-  REQUIRE(trg.spec.step_overrides.size() == 3);
+  REQUIRE(trg.spec.step_overrides.size() == 2);
   CHECK(trg.spec.step_overrides[0].key == "WATOM");
   REQUIRE(trg.spec.step_overrides[0].indices.size() == 1);
   CHECK(trg.spec.step_overrides[0].indices[0] == 1);
   CHECK(trg.spec.step_overrides[0].frac == Approx(0.05));
   CHECK(trg.spec.step_overrides[1].indices.empty());
   CHECK(trg.spec.step_overrides[1].frac == Approx(0.2));
-  /* "KEY (i)" with a space before the parenthesis is the same form */
-  REQUIRE(trg.spec.step_overrides[2].indices.size() == 1);
-  CHECK(trg.spec.step_overrides[2].indices[0] == 1);
-  CHECK(trg.spec.step_overrides[2].frac == Approx(0.3));
+  /* "KEY (i)" with a space before the parenthesis is the same form (in a
+   * file of its own: an override of index 1 again is refused as a
+   * repeat) */
+  ScopedTempFile spaced(std::string(kOptim) + R"(OPTIMIZER
+  STRATEGY
+    TYPE PLAIN
+    LIB NLOPT
+    ALGO LN_SBPLX
+    MAXEVAL 5
+    STEP WATOM (1) 0.3
+  ENDSTRATEGY
+ENDOPTIMIZER
+)");
+  tadah::hpo::HPOTargets trg2(ctx, spaced.path.string());
+  REQUIRE(trg2.spec.step_overrides.size() == 1);
+  REQUIRE(trg2.spec.step_overrides[0].indices.size() == 1);
+  CHECK(trg2.spec.step_overrides[0].indices[0] == 1);
+  CHECK(trg2.spec.step_overrides[0].frac == Approx(0.3));
 }
 
 TEST_CASE("STEP with a non-numeric value is a parse error",
@@ -511,6 +524,66 @@ ENDOPTIMIZER
     REQUIRE(trg.spec.prestage->inner);
     CHECK(trg.spec.prestage->inner->space == trg.spec.space);
     CHECK(trg.spec.prestage->inner->low.size() == 1);
+  }
+}
+
+/* FLOOR and GROUP_FLOOR set the smallest half-width of an AUTO FRAC box; a
+ * geometric box [x0/f, x0*f] has none, so they are refused with AUTO RATIO
+ * and with the geometric rule a positive-only key takes by default (SGRID2B:
+ * RATIO 2), naming the line's key and what to write instead ("OPTIM WATOM:
+ * FLOOR and GROUP_FLOOR set the smallest half-width of an AUTO FRAC box;
+ * AUTO RATIO makes the geometric box [x0/f, x0*f], which they do not
+ * change, so they are given with FRAC <p> only"). FRAC with FLOOR stays
+ * accepted (the case above).
+ * Before the fix: the floors were accepted and ignored ('AUTO RATIO 2
+ * FLOOR 5' gave the box [0.5, 2] of RATIO 2 alone). */
+TEST_CASE("OPTIM AUTO RATIO refuses FLOOR and GROUP_FLOOR",
+          "[HPO][scale][parser][autobox]")
+{
+  const std::string block =
+      "OPTIMIZER\nLIB DLIB\nALGO BFGS\nMAXEVAL 5\nENDOPTIMIZER\n";
+  for (const std::string floor : {"FLOOR 5", "GROUP_FLOOR 0.5"}) {
+    INFO(floor);
+    {
+      ScopedTempFile in("OPTIM WATOM (1) AUTO RATIO 2 " + floor + "\n" + block);
+      auto ctx = watom_ctx();
+      REQUIRE_THROWS_WITH(
+          tadah::hpo::HPOTargets(ctx, in.path.string()),
+          Catch::Contains("OPTIM WATOM: FLOOR and GROUP_FLOOR set the "
+                          "smallest half-width of an AUTO FRAC box; AUTO "
+                          "RATIO makes the geometric box [x0/f, x0*f], "
+                          "which they do not change, so they are given with "
+                          "FRAC <p> only"));
+    }
+    {
+      /* the floor before RATIO, and a shape tag after it */
+      ScopedTempFile in("OPTIM WATOM (1) AUTO " + floor + " RATIO 2 LOG\n" + block);
+      auto ctx = watom_ctx();
+      REQUIRE_THROWS_WITH(tadah::hpo::HPOTargets(ctx, in.path.string()),
+                          Catch::Contains("which they do not change"));
+    }
+    {
+      /* SGRID2B is positive-only: its AUTO box is geometric by default */
+      ScopedTempFile in("OPTIM SGRID2B (1) AUTO " + floor + "\n" + block);
+      auto ctx = watom_ctx();
+      ctx.add("SGRID2B", "1.5 2.0");
+      REQUIRE_THROWS_WITH(
+          tadah::hpo::HPOTargets(ctx, in.path.string()),
+          Catch::Contains("OPTIM SGRID2B: FLOOR and GROUP_FLOOR set the "
+                          "smallest half-width of an AUTO FRAC box; the "
+                          "AUTO box of SGRID2B is geometric by default "
+                          "(RATIO 2), which they do not change, so they are "
+                          "given with FRAC <p> only"));
+    }
+  }
+  {
+    /* FRAC on a positive-only key takes them */
+    ScopedTempFile in("OPTIM SGRID2B (1) AUTO FRAC 0.1 FLOOR 0.5\n" + block);
+    auto ctx = watom_ctx();
+    ctx.add("SGRID2B", "1.5 2.0");
+    tadah::hpo::HPOTargets trg(ctx, in.path.string());
+    CHECK(trg.spec.space->at(0).lo == Approx(1.0));
+    CHECK(trg.spec.space->at(0).hi == Approx(2.0));
   }
 }
 

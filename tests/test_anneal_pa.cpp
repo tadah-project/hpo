@@ -548,6 +548,48 @@ TEST_CASE("ANNEAL_PA: Corana banner and step diagnostics expose bounds",
     CHECK(log.find("V_cap=") != std::string::npos);
 }
 
+/* INIT_MODE JITTER AUTO <tolerance> in ANNEAL_PA draws each walker's start
+ * uniformly within the proposal scale of each dimension (the CLASSIC
+ * sigma, the Corana initial V): ANNEAL_PA calibrates nothing, so the
+ * tolerance is unused, and the banner says so ("INIT_MODE=JITTER AUTO
+ * (uniform bound; sigma=proposal sigma per dim, not calibrated: tolerance
+ * 0.05 unused)").
+ * Before the fix: "(uniform bound; sigma=AUTO per dim, tol=0.05)", which
+ * names a calibration ANNEAL_PA does not run. */
+TEST_CASE("ANNEAL_PA: the INIT_MODE JITTER AUTO banner names the scale the "
+          "draw uses", "[HPO][anneal_pa][log]")
+{
+    using namespace tadah::hpo;
+    for (const bool corana : {false, true}) {
+        INFO("CORANA " << corana);
+        auto sp = make_pa_spec({-1.0, -1.0}, {1.0, 1.0});
+        set_seed_point(sp, {0.2, -0.2});
+        sp.seed = 71;
+        sp.num_threads = 2;
+        sp.pop = 16;
+        sp.stop.maxeval = 160;
+        sp.param["T_HOT"] = 1.0;
+        sp.param_raw["INIT_MODE"] = "JITTER";
+        sp.param_tokens["INIT_MODE"] = {"JITTER", "AUTO", "0.05"};
+        if (corana) {
+            sp.param_raw["CORANA"] = "ON";
+            sp.param["NS"] = 1.0;
+            sp.param["NT"] = 1.0;
+        }
+        LoggedRun lr;
+        MtStubHost stub{ [&](const Vec& x){ return x(0) * x(0) + x(1) * x(1); }, {}, {} };
+        run_anneal_pa_impl<Vec>(sp, stub);
+        const std::string log = lr.read();
+        INFO(log);
+        CHECK(log.find(std::string("INIT_MODE=JITTER AUTO (uniform bound; "
+                                   "sigma=") +
+                       (corana ? "initial V" : "proposal sigma") +
+                       " per dim, not calibrated: tolerance 0.05 unused)") !=
+              std::string::npos);
+        CHECK(log.find("sigma=AUTO") == std::string::npos);
+    }
+}
+
 TEST_CASE("ANNEAL_PA: validation errors", "[HPO][anneal_pa][validation]")
 {
     using namespace tadah::hpo;

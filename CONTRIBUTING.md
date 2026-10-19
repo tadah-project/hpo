@@ -49,8 +49,7 @@ build directory.
 |---|---|
 | `include/tadah/hpo/` | Public headers (drivers, init strategies, run policies, loss terms). |
 | `src/`               | Implementation translation units. |
-| `tests/`             | Unit and integration tests. |
-| `examples/`          | Worked-through `config.hpo` reference suite (see `run_reference_suite.sh`). |
+| `tests/`             | Unit and integration tests; `tests/data/` holds their data (`tests/data/ta`: the Ta training and validation configurations, datasets, LAMMPS scripts and target files). |
 | `blueprint/`         | Registry files for the documentation (see `blueprint/README.md`). |
 
 ## The target-file registry
@@ -84,15 +83,3 @@ with the change that alters it.
   and `blueprint/optimizers_gen.toml` (CTest
   `hpo_optimizer_registry_sync`): `blueprint/README.md` says what each is
   generated from and how to regenerate it.
-- The `reference_fingerprint.json` of each example, which
-  `examples/tools/generate_fingerprint.py` writes from a run of the example
-  and its entry in `examples/tools/tolerance_overrides.json` (CTest
-  `hpo_example_fingerprint_overrides_sync` fails when a fingerprint's
-  fields from that file differ from it). After a change to the file, the
-  example is run again (see `examples/README.md`) and its fingerprint is
-  regenerated:
-
-  ```bash
-  python3 examples/tools/generate_fingerprint.py examples/<example> \
-      --overrides examples/tools/tolerance_overrides.json
-  ```

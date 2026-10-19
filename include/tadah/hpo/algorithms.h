@@ -176,7 +176,7 @@ template<typename Vec, typename Runner>
       std::ostringstream oss;
       oss << "GRID search: " << steps << " points in each dimension "
           << "(PARAM GRID_POINTS; spacing = width/" << (steps - 1) << "), "
-          << dim << " dimensions.";
+          << dim << (dim == 1 ? " dimension." : " dimensions.");
       std::cout << "[HPO] " << oss.str() << "\n";
       HPOLog::instance().info(oss.str());
     }
@@ -193,7 +193,9 @@ template<typename Vec, typename Runner>
       oss << "GRID: MAXEVAL " << budget << " < ";
       if (nodes == kMax) oss << "more than " << kMax;
       else               oss << total;
-      oss << " grid points (" << (with_init ? "the INIT point, then " : "");
+      /* The INIT point is evaluated first and is no grid point. */
+      oss << (with_init ? " evaluations (the INIT point, then "
+                        : " grid points (");
       if (nodes == kMax) oss << "more than " << kMax;
       else               oss << nodes;
       oss << " = " << steps << "^" << dim << " grid nodes); evaluating the "
@@ -233,11 +235,19 @@ template<typename Vec, typename Runner>
         if(++idx[d] < steps) break; else idx[d]=0;
     }
 
+    /* "5 of 28 evaluations (the INIT point and 27 grid points)": the INIT
+     * point is evaluated first and is no grid point. */
+    const auto count = [&](std::uint64_t n) {
+        return n == kMax ? "more than " + std::to_string(kMax)
+                         : std::to_string(n);
+    };
     std::ostringstream points;
-    points << done << " of ";
-    if (nodes == kMax) points << "more than " << kMax;
-    else               points << total;
-    points << " grid points";
+    points << done << " of " << count(total);
+    if (with_init)
+      points << " evaluations (the INIT point and " << count(nodes)
+             << " grid points)";
+    else
+      points << " grid points";
     if (stop != Stop::None) {
       report_end("TADAH:GRID", sampling_detail::end_reason(stop),
                  points.str());
@@ -245,8 +255,10 @@ template<typename Vec, typename Runner>
       /* The sweep ended before the grid did: MAXEVAL cut it short. */
       report_end("TADAH:GRID", EndReason::MaxEval, points.str());
     } else {
-      const std::string msg = "TADAH:GRID finished: all " +
-                              std::to_string(total) + " grid points evaluated";
+      const std::string msg =
+          std::string("TADAH:GRID finished: ") +
+          (with_init ? "the INIT point and " : "") + "all " +
+          std::to_string(nodes) + " grid points evaluated";
       std::cout << "[HPO] " << msg << "\n";
       HPOLog::instance().info(msg);
       record_end("TADAH:GRID", EndReason::GridDone);

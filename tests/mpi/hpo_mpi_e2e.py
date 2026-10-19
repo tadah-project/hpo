@@ -2,8 +2,9 @@
 """Multi-rank `tadah hpo` end to end (a TADAH_HPO_MPI build).
 
 Runs the built `tadah` under the MPI launcher of the MPI it links
-(MPIEXEC_EXECUTABLE), on 1 and on 2 ranks, in a scratch copy of
-HPO/examples/common and of example 27's DM_REAM seed, and checks one case:
+(MPIEXEC_EXECUTABLE), on 1 and on 2 ranks, in a scratch copy of the Ta
+test set's common/ and of its DM_REAM seed, ta2_refit_seed.tadah (HPO's
+tests/data/ta, --data), and checks one case:
 
   restart_refusal   ANNEAL_PT with an active RESTART block.
                     Pins: on 2 ranks the launch fails on every rank before
@@ -19,7 +20,8 @@ HPO/examples/common and of example 27's DM_REAM seed, and checks one case:
   gradient_refusal  The finite-difference counters: the finite differences
                     run only in gradient-based searches, which a multi-rank
                     launch refuses, so no multi-rank run can count them.
-                    Pins: example 01 (DLIB BFGS, numerical gradients) on 2
+                    Pins: target_files/dlib_bfgs.hpo (DLIB BFGS, numerical
+                    gradients; its ENDOPTIMIZER is on line 14) on 2
                     ranks fails on every rank before any evaluation
                     ("multi-rank HPO supports only STRATEGY TYPE PLAIN with
                     LIB TADAH and ALGO ANNEAL_PT or ANNEAL_PA; got DLIB:BFGS
@@ -27,7 +29,7 @@ HPO/examples/common and of example 27's DM_REAM seed, and checks one case:
                     DIAGNOSTICS count one-sided differences ("One-sided
                     differences : N", N > 0).
                     Before the fix: passes as well (a pin).
-  eamfast           The LAMMPS fast kernels on several ranks: example 27's
+  eamfast           The LAMMPS fast kernels on several ranks: the
                     D2_Knot5 + DM_REAM seed (EAMFAST is on by default) under
                     ANNEAL_PT (SEED 77), PC_LAMMPS with -log lmp.log and the
                     Ecoh target 8.15, not the seed's 8.10: the seed scores
@@ -84,8 +86,32 @@ HPO/examples/common and of example 27's DM_REAM seed, and checks one case:
                     checks held for any 2-rank run in which rank 0
                     evaluated it and never read rank 1's report.
 
+  output_refusal    A startup check that one rank fails alone: the files a
+                    run writes into the working directory carry the rank
+                    suffix on several ranks, so rank 1 can be refused what
+                    rank 0 is not. On 2 ranks, with loss.tadah.r1, and then
+                    best_pot.tadah.r1.lock, made read-only before the
+                    launch (the eamfast configuration).
+                    Pins: the launch fails on every rank, with exit status
+                    1, within 20 s (the exit handshake waits 30 s for a
+                    rank that is blocked, then aborts the job); its output
+                    has rank 1's refusal ("'loss.tadah.r1' in the working
+                    directory '<dir>' cannot be opened: Permission denied
+                    (tadah hpo rewrites it)", "'best_pot.tadah.r1.lock' ...
+                    cannot be opened: Permission denied (tadah hpo opens it
+                    to lock best_pot.tadah.r1)") and rank
+                    0's ("the check of the output files failed on another
+                    MPI rank"), and no "aborting the job"; no journal
+                    (hpo_run.log.r0, hpo_run.log.r1) and no result file of
+                    rank 0 is written, and the read-only file is as it was.
+                    Skipped as root, whose writes no permission stops.
+                    Before the change: rank 1 stopped alone, rank 0 loaded
+                    its data and waited in a collective until the exit
+                    handshake aborted the job (with the ranks' agreement
+                    replaced by the local flag the case fails).
+
 Exit status 0 when the case passes, 1 when it fails, 77 (Skipped) when the
-build has no `tadah` executable. TADAH_PC_ISOLATION is removed from the
+build has no `tadah` executable or the case cannot run. TADAH_PC_ISOLATION is removed from the
 runs' environment: the MPI build has PC_ISOLATION THREAD only, and an
 inherited PROCESS would refuse every run.
 """
@@ -98,6 +124,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import time
 
 SKIP = 77
 
@@ -128,7 +155,8 @@ RESTART = """    RESTART
     ENDRESTART
 """
 
-ECOH_27 = ("PC_LAMMPS --script ../common/lammps/Ecoh.in --hotvar hot_a0 2.5 "
+# The seed's own Ecoh line (its target 8.10).
+ECOH_SEED = ("PC_LAMMPS --script ../common/lammps/Ecoh.in --hotvar hot_a0 2.5 "
            "4.5 3.304 --varloss Ecoh 8.10 800 -log lmp.log -screen none\n")
 
 # The searches' Ecoh line: the seed potential has Ecoh 8.10 (loss 2.8e-8 at
@@ -147,6 +175,10 @@ class Failure(Exception):
     pass
 
 
+class Skip(Exception):
+    pass
+
+
 def check(cond, what):
     if not cond:
         raise Failure(what)
@@ -159,24 +191,27 @@ class Runner:
         self.preflags = shlex.split(args.preflags or "")
         self.postflags = shlex.split(args.postflags or "")
         self.tadah = args.tadah
-        self.examples = pathlib.Path(args.examples).resolve()
+        self.data = pathlib.Path(args.data).resolve()
         self.root = pathlib.Path(args.workdir).resolve() / args.case
         if self.root.exists():
             shutil.rmtree(self.root)
         self.root.mkdir(parents=True)
-        shutil.copytree(self.examples / "common", self.root / "common")
-        shutil.copy(self.examples / "27_dm_ream_embf0" / "ta2_refit_seed.tadah",
+        shutil.copytree(self.data / "common", self.root / "common")
+        shutil.copy(self.data / "ta2_refit_seed.tadah",
                     self.root / "ta2_refit_seed.tadah")
         self.env = dict(os.environ)
         self.env.pop("TADAH_PC_ISOLATION", None)
         self.env["OMP_NUM_THREADS"] = "1"
 
-    def run(self, name, nranks, config, tadah_args):
+    def run(self, name, nranks, config, tadah_args, prepare=None):
         """Run `tadah hpo` in <root>/<name>_n<nranks>; returns the run
-        directory and the completed process."""
+        directory and the completed process. @p prepare, when given, is
+        called with the run directory before the launch."""
         d = self.root / f"{name}_n{nranks}"
         d.mkdir()
         (d / "config.hpo").write_text(config)
+        if prepare:
+            prepare(d)
         cmd = ([self.mpiexec, self.np_flag, str(nranks)] + self.preflags +
                [self.tadah] + self.postflags +
                ["hpo", "--hpotarget", "config.hpo"] + tadah_args)
@@ -298,7 +333,7 @@ def check_refused(d, p, nranks, line, message):
 
 
 def case_restart_refusal(r):
-    config = PT_HEAD.format(seed=77, restart=RESTART) + ECOH_27 + \
+    config = PT_HEAD.format(seed=77, restart=RESTART) + ECOH_SEED + \
         "\nOPTIM CEMBFUNC (1) -2.19 -2.15\n" + TAIL
     args = ["-c", "../ta2_refit_seed.tadah"]
     d, p = r.run("restart", 2, config, args)
@@ -313,7 +348,7 @@ def case_restart_refusal(r):
 
 
 def case_gradient_refusal(r):
-    config = (r.examples / "01_minimal" / "config.hpo").read_text()
+    config = (r.data / "target_files" / "dlib_bfgs.hpo").read_text()
     args = ["--validation", "../common/config.val",
             "-c", "../common/config.tadah"]
     d, p = r.run("bfgs", 2, config, args)
@@ -450,7 +485,42 @@ def case_rhogates(r):
               "run")
 
 
+def case_output_refusal(r):
+    if os.geteuid() == 0:
+        raise Skip("running as root: file permissions are not enforced")
+    config = PT_HEAD.format(seed=77, restart="") + ECOH_SEARCH + \
+        "\nOPTIM CEMBFUNC (1) -2.19 -2.15\n" + TAIL
+    args = ["-c", "../ta2_refit_seed.tadah"]
+    for name, file, says in (
+            ("loss_r1", "loss.tadah.r1",
+             "cannot be opened: Permission denied (tadah hpo rewrites it)"),
+            ("lock_r1", "best_pot.tadah.r1.lock",
+             "cannot be opened: Permission denied (tadah hpo opens it to "
+             "lock best_pot.tadah.r1)")):
+        def prepare(d, file=file):
+            (d / file).write_text("kept\n")
+            (d / file).chmod(0o444)
+        start = time.monotonic()
+        d, p = r.run(name, 2, config, args, prepare=prepare)
+        elapsed = time.monotonic() - start
+        out = p.stdout + p.stderr
+        check(p.returncode == 1,
+              f"{d.name}: exit status {p.returncode}, expected 1 (refused)")
+        refusal = f"'{file}' in the working directory '{d}' {says}"
+        check(refusal in out, f"{d.name}: the output lacks '{refusal}'")
+        other = "the check of the output files failed on another MPI rank"
+        check(other in out, f"{d.name}: the output lacks '{other}'")
+        check("aborting the job" not in out,
+              f"{d.name}: the exit handshake aborted the job")
+        check(elapsed < 20, f"{d.name}: the launch took {elapsed:.1f} s")
+        for f in ("hpo_run.log.r0", "hpo_run.log.r1", "loss.tadah.r0"):
+            check(not (d / f).exists(), f"{d.name}: {f} was written")
+        check((d / file).read_text() == "kept\n",
+              f"{d.name}: {file} was changed")
+
+
 CASES = {
+    "output_refusal": case_output_refusal,
     "restart_refusal": case_restart_refusal,
     "gradient_refusal": case_gradient_refusal,
     "eamfast": case_eamfast,
@@ -466,7 +536,8 @@ def main():
     ap.add_argument("--preflags", default="")
     ap.add_argument("--postflags", default="")
     ap.add_argument("--tadah", default="")
-    ap.add_argument("--examples", required=True)
+    ap.add_argument("--data", required=True,
+                    help="the Ta test set, HPO/tests/data/ta")
     ap.add_argument("--workdir", required=True)
     args = ap.parse_args()
     if not args.tadah:
@@ -474,6 +545,9 @@ def main():
         return SKIP
     try:
         CASES[args.case](Runner(args))
+    except Skip as e:
+        print(f"TADAH-SKIP: {e}")
+        return SKIP
     except (Failure, subprocess.TimeoutExpired) as e:
         print(f"FAILED ({args.case}): {e}", file=sys.stderr)
         return 1

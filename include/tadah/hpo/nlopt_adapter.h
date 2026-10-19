@@ -223,8 +223,10 @@ inline bool withheld_reaches_stopval(double f, const OptimizerSpec& sp)
  * NLopt's stochastic algorithms (CRS, MLSL, ISRES, ESCH, PRAXIS, ...)
  * draw from an internal RNG seeded only by `nlopt::srand`; the C library
  * `srand()` does NOT propagate. The block's SEED seeds it -- the
- * per-start SEED + i of MULTISTART and the PRESTAGE refinement, and the
- * seeds RESTART derives, arrive here as sp.seed. The INIT block's SEED,
+ * per-start SEED + i of MULTISTART and the PRESTAGE refinement, the
+ * STRATEGY-level SEED a PRESTAGE exploration without one takes
+ * (OptimizerSpec::seed_from_strategy), and the seeds RESTART derives,
+ * arrive here as sp.seed. The INIT block's SEED,
  * which draws the block's INIT points, seeds NLopt only when the block has
  * no SEED (OptimizerSpec::nlopt_seed_from_init(); MULTISTART and RESTART
  * offset it as they offset SEED, and it arrives here so offset). NLopt
