@@ -1738,11 +1738,12 @@ TEST_CASE("tadah refit: SEED in an OPTIMIZER block is rejected with the "
 
 /* A tadah refit stage sets each key once, as a target file does: a key
  * given twice in an OPTIMIZER block, in its INNER block, or as MAXEVAL and
- * its alias MAXITER, is refused, naming the block ("REFINE: MAXEVAL is set
- * twice in the OPTIMIZER block (as MAXEVAL and as MAXITER, its alias); each
- * key is given once"), and so are a second OPTIMIZER block in a stage and a
- * stage key given twice (ENABLED, MAX_ADD). A PARAM of another name is no
- * repeat.
+ * its alias MAXITER, is refused, naming the block and the key as written
+ * ("REFINE: MAXEVAL is set twice in the OPTIMIZER block (as MAXEVAL and as
+ * MAXITER, its alias); each key is given once"; "REFINE: MAXITER is set
+ * twice ..."), and so are a second OPTIMIZER block in a stage, a second
+ * INNER block in an OPTIMIZER block and a stage key given twice (ENABLED,
+ * MAX_ADD). A PARAM of another name is no repeat.
  * Before the fix: the later value replaced the first without a word (a
  * second OPTIMIZER block replaced the first's settings). */
 TEST_CASE("tadah refit: a key set twice in a stage is refused",
@@ -1756,9 +1757,29 @@ TEST_CASE("tadah refit: a key set twice in a stage is refused",
                                 "MAXITER 9 ENDOPTIMIZER") ==
           "REFINE: MAXEVAL is set twice in the OPTIMIZER block (as MAXEVAL "
           "and as MAXITER, its alias)" + once);
+    /* the key as written: MAXITER twice is no MAXEVAL (it said "MAXEVAL
+     * is set twice"); mixed spellings in the order written */
+    CHECK(refit_error("REFINE", "OPTIMIZER LIB CERES ALGO LM MAXITER 5 "
+                                "MAXITER 9 ENDOPTIMIZER") ==
+          "REFINE: MAXITER is set twice in the OPTIMIZER block" + once);
+    CHECK(refit_error("FUSE", "OPTIMIZER LIB CERES ALGO DOGLEG MAXITER 5 "
+                              "MAXITER 9 ENDOPTIMIZER") ==
+          "FUSE: MAXITER is set twice in the OPTIMIZER block" + once);
+    CHECK(refit_error("REFINE", "OPTIMIZER LIB CERES ALGO LM MAXITER 5 "
+                                "MAXEVAL 9 ENDOPTIMIZER") ==
+          "REFINE: MAXEVAL is set twice in the OPTIMIZER block (as MAXITER, "
+          "its alias, and as MAXEVAL)" + once);
     CHECK(refit_error("FUSE", "OPTIMIZER LIB CERES ALGO DOGLEG GTOL 1e-6 "
                               "GTOL 1e-8 ENDOPTIMIZER") ==
           "FUSE: GTOL is set twice in the OPTIMIZER block" + once);
+    /* a second INNER block (it replaced the first) */
+    CHECK(refit_error("EXPLORE", "OPTIMIZER LIB NLOPT ALGO GN_MLSL_LDS "
+                                 "MAXEVAL 100 INNER LIB NLOPT ALGO LN_SBPLX "
+                                 "MAXEVAL 5 ENDINNER INNER LIB NLOPT "
+                                 "ALGO LN_BOBYQA MAXEVAL 7 ENDINNER "
+                                 "ENDOPTIMIZER") ==
+          "EXPLORE: the INNER block is given twice; an OPTIMIZER block takes "
+          "one INNER block");
     CHECK(refit_error("EXPLORE", "OPTIMIZER LIB NLOPT ALGO GN_MLSL_LDS "
                                  "MAXEVAL 100 INNER LIB NLOPT ALGO LN_SBPLX "
                                  "MAXEVAL 5 MAXEVAL 6 ENDINNER "
