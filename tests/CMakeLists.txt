@@ -324,6 +324,68 @@ set_tests_properties(hpo_optimizer_registry_sync PROPERTIES
     LABELS "docs"
     TIMEOUT 60)
 
+# The target-file registry: blueprint/hpotarget.toml and the part files its
+# meta.parts lists describe every block, key, option and PARAM key of the
+# target file, for the documentation (blueprint/README.md, "The
+# target-file registry"). Four checks keep it equal to the parser:
+#  - hpo_hpotarget_registry_python: the loader, hpotarget_registry.py, on
+#    synthetic registries (tests/test_hpotarget_registry.py);
+#  - hpo_hpotarget_registry_check: the registry files pass the loader's
+#    checks (unknown fields, duplicate ids, references, placeholders,
+#    wrappers);
+#  - hpo_hpotarget_registry_coverage: every name the parser's sources
+#    recognise has a registry entry and every registry name is one they
+#    recognise (tests/check_hpotarget_coverage.py, its docstring lists what
+#    the extraction cannot see); hpo_hpotarget_coverage_tool tests the
+#    extraction itself (tests/test_check_hpotarget_coverage.py);
+#  - the Catch2 cases "hpotarget registry ..."
+#    (test_hpotarget_registry_conformance.cpp): every example of the
+#    registry is accepted by the parser and every invalid line refused with
+#    exactly its message; one case per file (tags [hpotarget_main],
+#    [hpotarget_optimizer], [hpotarget_lines], [hpotarget_params]).
+#    hpo_hpotarget_registry_conformance runs them all under the label docs
+#    (tag [hpotarget_registry]); --warn NoTests: a tag that matches no test
+#    case fails instead of passing.
+# Before the registry: the check, the coverage and the conformance cases
+# fail, the files do not exist.
+cmake_path(SET _hpo_blueprint_dir NORMALIZE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../blueprint")
+target_compile_definitions(test_hpo PRIVATE
+    "TADAH_HPO_BLUEPRINT_DIR=\"${_hpo_blueprint_dir}\"")
+add_test(NAME hpo_hpotarget_registry_python
+    COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/test_hpotarget_registry.py)
+set_tests_properties(hpo_hpotarget_registry_python PROPERTIES
+    LABELS "docs"
+    TIMEOUT 60
+    FAIL_REGULAR_EXPRESSION "\nRan 0 tests ")
+add_test(NAME hpo_hpotarget_registry_check
+    COMMAND ${Python3_EXECUTABLE}
+        ${_hpo_blueprint_dir}/hpotarget_registry.py --check)
+set_tests_properties(hpo_hpotarget_registry_check PROPERTIES
+    LABELS "docs"
+    TIMEOUT 60)
+cmake_path(SET _hpo_source_root NORMALIZE "${CMAKE_CURRENT_SOURCE_DIR}/..")
+add_test(NAME hpo_hpotarget_registry_coverage
+    COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/check_hpotarget_coverage.py
+        ${_hpo_source_root})
+set_tests_properties(hpo_hpotarget_registry_coverage PROPERTIES
+    LABELS "docs"
+    TIMEOUT 60)
+add_test(NAME hpo_hpotarget_coverage_tool
+    COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/test_check_hpotarget_coverage.py)
+set_tests_properties(hpo_hpotarget_coverage_tool PROPERTIES
+    LABELS "docs"
+    TIMEOUT 60
+    FAIL_REGULAR_EXPRESSION "\nRan 0 tests ")
+add_test(NAME hpo_hpotarget_registry_conformance
+    COMMAND test_hpo "[hpotarget_registry]" --warn NoTests)
+set_tests_properties(hpo_hpotarget_registry_conformance PROPERTIES
+    LABELS "docs"
+    TIMEOUT 120)
+
 # Fingerprint drift gate: the fields of each example's
 # reference_fingerprint.json that come from tools/tolerance_overrides.json
 # (tolerances, accepted statuses, journal checks, the rationale) must equal
