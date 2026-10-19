@@ -62,8 +62,12 @@ written by hand. Tests compare them with the parser: each example is
 accepted, each invalid line is refused with exactly its message, and every
 name the parser's sources recognise has an entry. A change to what the
 parser accepts, or to one of its messages, therefore changes the registry
-in the same commit. `blueprint/README.md` ("The target-file registry")
-describes the files and the checks, which run with:
+in the same commit. A new optimiser needs its description in
+`blueprint/optimizers_doc.toml`, which the check requires, and a new key of
+`blueprint/anneal_keys.toml` an example in the examples of the annealers'
+`PARAM` policy (`blueprint/hpotarget_params.toml`), without which the
+documentation build stops. `blueprint/README.md` ("The target-file
+registry") describes the files and the checks, which run with:
 
 ```bash
 python3 blueprint/hpotarget_registry.py --check
