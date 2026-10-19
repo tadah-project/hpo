@@ -13,11 +13,21 @@
 
 namespace tadah::hpo {
 
+struct OptimizerCaps;
+
+/* What a registered backend is, its row of the table after the ALGO name:
+ * global or local; the local search it runs (MLSL, AUGLAG: NLopt's default
+ * one, or an INNER block), else gradient-based or derivative-free; then
+ * whether it needs a stop and whether it ignores the OPTIM box ("global,
+ * derivative-free, needs a stop"). */
+std::string optimiser_row_text(const OptimizerCaps& c);
+
 /* The table of the optimisers: a short preface, then for each library
  * (optimizer_libraries(), sorted) a "LIB <lib>" line and one row per
  * registered backend, sorted, with what it is -- global or local,
  * gradient-based or derivative-free (MLSL and AUGLAG: the local search they
- * run), whether it needs a stop or ignores the OPTIM box; then the refused
+ * run), whether it needs a stop or ignores the OPTIM box
+ * (optimiser_row_text); then the refused
  * backends and how to see one. `lib` not empty: that library's section
  * alone. */
 void print_optimiser_table(std::ostream& out, const std::string& lib = "");

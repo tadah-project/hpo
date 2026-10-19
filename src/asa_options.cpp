@@ -55,7 +55,7 @@ const Desc kDescs[] = {
   {"Number_Cost_Samples", Kind::Count, false, kNaN, kNaN, "5",
    ">0: initial cost temp from mean |cost|; <-1: from a deviation sample"},
   {"Temperature_Ratio_Scale", Kind::Real, false, 0, kNaN, "1e-5",
-   "primary annealing-rate knob: m = -log(TRS)"},
+   "the main control of the annealing rate: m = -log(TRS)"},
   {"Cost_Parameter_Scale_Ratio", Kind::Real, false, 0, kNaN, "1.0",
    "cost temperature schedule scale relative to parameters"},
   {"Temperature_Anneal_Scale", Kind::Real, false, 0, kNaN, "100.0",
@@ -79,10 +79,10 @@ const Desc kDescs[] = {
   {"Delta_X", Kind::Real, false, 0, kNaN, "0.001",
    "finite-difference step for tangents; 0 disables tangents"},
   {"User_Tangents", Kind::Bool, false, 0, 1, "0",
-   "unsupported here: the HPO host has no analytic tangents (1 = error)"},
+   "unsupported: tadah hpo has no analytic tangents (1 = error)"},
   {"Curvature_0", Kind::Count, false, -1, 1, "1",
-   "1 = skip curvature array (TADAH default; upstream 0 costs O(dim^2) "
-   "exit evals), 0 = full curvature at exit, -1 = periodic"},
+   "1 = skip curvature array (Tadah!'s default; ASA's own default 0 costs "
+   "O(dim^2) exit evals), 0 = full curvature at exit, -1 = periodic"},
   /* gated groups */
   {"User_Quench_Cost_Scale", Kind::Real, false, 0, kNaN, "1.0",
    "cost-temperature quench exponent Q (>1 quenches; proof-safe)"},
@@ -97,7 +97,8 @@ const Desc kDescs[] = {
   {"Multi_Number", Kind::Count, false, 1, kNaN, "1",
    "track the best N distinct minima (reported in the journal)"},
   {"Multi_Specify", Kind::Bool, false, 0, 1, "1",
-   "1 = strict < for new minima (TADAH default; template 0 uses <=)"},
+   "1 = strict < for new minima (Tadah!'s default); 0 = <=, as in ASA's "
+   "example options"},
   {"Multi_Grid", Kind::Real, true, 0, kNaN, "0.0",
    "per-dim distinctness grid for MULTI_MIN (0 -> EPS_DOUBLE)"},
   {"Queue_Size", Kind::Count, false, 0, kNaN, "0",
@@ -113,7 +114,7 @@ const Desc kDescs[] = {
    "block between 1 and this cap, so it can shrink below Gener_Block"},
   {"Gener_Mov_Avr", Kind::Count, false, 0, kNaN, "3",
    "moving-average window of the adaptive block resizing; 0 = no "
-   "resizing: every block holds Gener_Block states (TADAH-PATCH 7)"},
+   "resizing: every block holds Gener_Block states"},
 };
 
 /* Upstream option names deliberately not exposed: tailored errors. */
