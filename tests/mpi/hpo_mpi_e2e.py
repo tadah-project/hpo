@@ -86,8 +86,31 @@ tests/data/ta, --data), and checks one case:
                     checks held for any 2-rank run in which rank 0
                     evaluated it and never read rank 1's report.
 
+  output_refusal    A startup check that one rank fails alone: the files a
+                    run writes into the working directory carry the rank
+                    suffix on several ranks, so rank 1 can be refused what
+                    rank 0 is not. On 2 ranks, with loss.tadah.r1, and then
+                    best_pot.tadah.r1.lock, made read-only before the
+                    launch (the eamfast configuration).
+                    Pins: the launch fails on every rank, with exit status
+                    1, within 20 s (the exit handshake waits 30 s for a
+                    rank that is blocked, then aborts the job); its output
+                    has rank 1's refusal ("'loss.tadah.r1' in the working
+                    directory '<dir>' is not writable: tadah hpo rewrites
+                    it", "'best_pot.tadah.r1.lock' ... is not writable:
+                    tadah hpo opens it to lock best_pot.tadah.r1") and rank
+                    0's ("the check of the output files failed on another
+                    MPI rank"), and no "aborting the job"; no journal
+                    (hpo_run.log.r0, hpo_run.log.r1) and no result file of
+                    rank 0 is written, and the read-only file is as it was.
+                    Skipped as root, whose writes no permission stops.
+                    Before the change: rank 1 stopped alone, rank 0 loaded
+                    its data and waited in a collective until the exit
+                    handshake aborted the job (with the ranks' agreement
+                    replaced by the local flag the case fails).
+
 Exit status 0 when the case passes, 1 when it fails, 77 (Skipped) when the
-build has no `tadah` executable. TADAH_PC_ISOLATION is removed from the
+build has no `tadah` executable or the case cannot run. TADAH_PC_ISOLATION is removed from the
 runs' environment: the MPI build has PC_ISOLATION THREAD only, and an
 inherited PROCESS would refuse every run.
 """
@@ -100,6 +123,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import time
 
 SKIP = 77
 
@@ -150,6 +174,10 @@ class Failure(Exception):
     pass
 
 
+class Skip(Exception):
+    pass
+
+
 def check(cond, what):
     if not cond:
         raise Failure(what)
@@ -174,12 +202,15 @@ class Runner:
         self.env.pop("TADAH_PC_ISOLATION", None)
         self.env["OMP_NUM_THREADS"] = "1"
 
-    def run(self, name, nranks, config, tadah_args):
+    def run(self, name, nranks, config, tadah_args, prepare=None):
         """Run `tadah hpo` in <root>/<name>_n<nranks>; returns the run
-        directory and the completed process."""
+        directory and the completed process. @p prepare, when given, is
+        called with the run directory before the launch."""
         d = self.root / f"{name}_n{nranks}"
         d.mkdir()
         (d / "config.hpo").write_text(config)
+        if prepare:
+            prepare(d)
         cmd = ([self.mpiexec, self.np_flag, str(nranks)] + self.preflags +
                [self.tadah] + self.postflags +
                ["hpo", "--hpotarget", "config.hpo"] + tadah_args)
@@ -453,7 +484,41 @@ def case_rhogates(r):
               "run")
 
 
+def case_output_refusal(r):
+    if os.geteuid() == 0:
+        raise Skip("running as root: file permissions are not enforced")
+    config = PT_HEAD.format(seed=77, restart="") + ECOH_SEARCH + \
+        "\nOPTIM CEMBFUNC (1) -2.19 -2.15\n" + TAIL
+    args = ["-c", "../ta2_refit_seed.tadah"]
+    for name, file, says in (
+            ("loss_r1", "loss.tadah.r1",
+             "is not writable: tadah hpo rewrites it"),
+            ("lock_r1", "best_pot.tadah.r1.lock",
+             "is not writable: tadah hpo opens it to lock best_pot.tadah.r1")):
+        def prepare(d, file=file):
+            (d / file).write_text("kept\n")
+            (d / file).chmod(0o444)
+        start = time.monotonic()
+        d, p = r.run(name, 2, config, args, prepare=prepare)
+        elapsed = time.monotonic() - start
+        out = p.stdout + p.stderr
+        check(p.returncode == 1,
+              f"{d.name}: exit status {p.returncode}, expected 1 (refused)")
+        refusal = f"'{file}' in the working directory '{d}' {says}"
+        check(refusal in out, f"{d.name}: the output lacks '{refusal}'")
+        other = "the check of the output files failed on another MPI rank"
+        check(other in out, f"{d.name}: the output lacks '{other}'")
+        check("aborting the job" not in out,
+              f"{d.name}: the exit handshake aborted the job")
+        check(elapsed < 20, f"{d.name}: the launch took {elapsed:.1f} s")
+        for f in ("hpo_run.log.r0", "hpo_run.log.r1", "loss.tadah.r0"):
+            check(not (d / f).exists(), f"{d.name}: {f} was written")
+        check((d / file).read_text() == "kept\n",
+              f"{d.name}: {file} was changed")
+
+
 CASES = {
+    "output_refusal": case_output_refusal,
     "restart_refusal": case_restart_refusal,
     "gradient_refusal": case_gradient_refusal,
     "eamfast": case_eamfast,
@@ -478,6 +543,9 @@ def main():
         return SKIP
     try:
         CASES[args.case](Runner(args))
+    except Skip as e:
+        print(f"TADAH-SKIP: {e}")
+        return SKIP
     except (Failure, subprocess.TimeoutExpired) as e:
         print(f"FAILED ({args.case}): {e}", file=sys.stderr)
         return 1

@@ -193,12 +193,13 @@ void write_inputs(const std::string& hpo_text)
     std::ofstream("config.hpo") << hpo_text;
 }
 
-/* Every entry under `dir`, relative to it. */
+/* Every entry under `dir`, relative to it (lexically: a symbolic link in
+ * a loop is listed, not followed). */
 std::set<std::string> entries(const fs::path& dir)
 {
     std::set<std::string> out;
     for (const auto& e : fs::recursive_directory_iterator(dir))
-        out.insert(fs::relative(e.path(), dir).string());
+        out.insert(e.path().lexically_relative(dir).string());
     return out;
 }
 
@@ -963,19 +964,33 @@ TEST_CASE("hpo --check: an output file the run cannot write stops the "
     }
 }
 
-/* Pins: a directory named best_pot.tadah, and a result file that is a
- * symbolic link into a directory that does not exist, stop the check and
- * the run with one message, before the journal: "'best_pot.tadah' in the
- * working directory '<dir>' is a directory: tadah hpo writes a file of
- * that name", "'loss.tadah' ... is a symbolic link to 'nowhere/loss',
- * whose directory 'nowhere' does not exist". A symbolic link loss.tadah
- * to a file not yet created in a directory that exists (out/loss) is
- * accepted: the check passes, and the run creates out/loss through it and
- * writes its rows there. A best_pot.tadah with owner read permission alone
- * is accepted: the run replaces it (its first line is no longer "old").
- * Before the change: the directory was refused after the journal was
- * opened; both symbolic links were refused as "not writable: tadah hpo
- * rewrites it" (the first is accepted in v1-dev, which follows the link). */
+/* Pins: the files the run writes through (here loss.tadah) are checked
+ * where the operating system puts them, every symbolic link followed, and
+ * best_pot.tadah, which the run replaces, by its own name:
+ *   - a directory named best_pot.tadah stops the check and the run with
+ *     one message, before the journal: "'best_pot.tadah' in the working
+ *     directory '<dir>' is a directory: tadah hpo writes a file of that
+ *     name";
+ *   - loss.tadah a symbolic link into a directory that does not exist
+ *     (nowhere/loss), directly or through a second link (chain ->
+ *     nowhere/loss), stops both: "'loss.tadah' in the working directory
+ *     '<dir>' is a symbolic link to '<dir>/nowhere/loss', which cannot be
+ *     created: the directory '<dir>/nowhere' does not exist";
+ *   - loss.tadah in a loop of links (loss.tadah -> loop -> loss.tadah)
+ *     stops both: "... cannot be resolved: too many levels of symbolic
+ *     links";
+ *   - loss.tadah a link to a file not yet created in a directory that
+ *     exists, directly (out/loss) or through a second link (chain ->
+ *     out/loss), is accepted: the run creates out/loss through the links
+ *     and writes its rows there;
+ *   - best_pot.tadah with owner read permission alone, a link into a
+ *     directory that does not exist and a link to a directory are
+ *     accepted: the run replaces the name with a regular file (no longer
+ *     "old"; the link's target is left as it was).
+ * Before the change: a chain was followed one link only (accepted into a
+ * missing directory: the run lost every row of loss.tadah), a loop was
+ * refused as not writable, and best_pot.tadah was checked through its link
+ * (both links refused, though the run replaces them). */
 TEST_CASE("hpo --check: best_pot.tadah as a directory and the symbolic "
           "links of the output files",
           "[HPO][hpo_check]")
@@ -995,31 +1010,77 @@ TEST_CASE("hpo --check: best_pot.tadah as a directory and the symbolic "
         CHECK(entries(sd.dir) == before);
     }
     {
-        INFO("loss.tadah links into a directory that does not exist");
-        ScratchDir sd("dangling_result");
+        for (const bool chain : {false, true}) {
+            INFO("loss.tadah links into a directory that does not exist"
+                 << (chain ? ", through a second link" : ""));
+            ScratchDir sd("dangling_result");
+            write_inputs(kOptimizer + kRootLines);
+            if (chain) {
+                fs::create_symlink("nowhere/loss", "chain");
+                fs::create_symlink("chain", "loss.tadah");
+            } else {
+                fs::create_symlink("nowhere/loss", "loss.tadah");
+            }
+            const auto before = entries(sd.dir);
+            const auto [check_error, run_error] = check_and_run_errors();
+            INFO("run: " << run_error << "\ncheck: " << check_error);
+            const std::string cwd = fs::current_path().string();
+            CHECK(run_error == in_working_directory("loss.tadah") +
+                                   "is a symbolic link to '" + cwd +
+                                   "/nowhere/loss', which cannot be created: "
+                                   "the directory '" + cwd +
+                                   "/nowhere' does not exist");
+            CHECK(check_error == run_error);
+            CHECK(entries(sd.dir) == before);
+        }
+    }
+    {
+        INFO("loss.tadah in a loop of links");
+        ScratchDir sd("loop_result");
         write_inputs(kOptimizer + kRootLines);
-        fs::create_symlink("nowhere/loss", "loss.tadah");
+        fs::create_symlink("loss.tadah", "loop");
+        fs::create_symlink("loop", "loss.tadah");
         const auto before = entries(sd.dir);
         const auto [check_error, run_error] = check_and_run_errors();
         INFO("run: " << run_error << "\ncheck: " << check_error);
         CHECK(run_error == in_working_directory("loss.tadah") +
-                               "is a symbolic link to 'nowhere/loss', whose "
-                               "directory 'nowhere' does not exist");
+                               "cannot be resolved: too many levels of "
+                               "symbolic links");
         CHECK(check_error == run_error);
         CHECK(entries(sd.dir) == before);
     }
-    {
-        INFO("loss.tadah links to a file not yet created");
+    for (const bool chain : {false, true}) {
+        INFO("loss.tadah links to a file not yet created"
+             << (chain ? ", through a second link" : ""));
         ScratchDir sd("link_result");
         write_inputs(kOptimizer + kRootLines);
         fs::create_directories("out");
-        fs::create_symlink("out/loss", "loss.tadah");
+        if (chain) {
+            fs::create_symlink("out/loss", "chain");
+            fs::create_symlink("chain", "loss.tadah");
+        } else {
+            fs::create_symlink("out/loss", "loss.tadah");
+        }
         const auto [check_error, run_error] = check_and_run_errors();
         INFO("run: " << run_error << "\ncheck: " << check_error);
         CHECK(check_error.empty());
         CHECK(run_error.empty());
         REQUIRE(fs::exists("out/loss"));
         CHECK(fs::file_size("out/loss") > 0u);
+    }
+    for (const char* target : {"nowhere/best", "a_directory"}) {
+        INFO("best_pot.tadah links to " << target);
+        ScratchDir sd("link_best");
+        write_inputs(kOptimizer + kRootLines);
+        fs::create_directories("a_directory");
+        fs::create_symlink(target, "best_pot.tadah");
+        const auto [check_error, run_error] = check_and_run_errors();
+        INFO("run: " << run_error << "\ncheck: " << check_error);
+        CHECK(check_error.empty());
+        CHECK(run_error.empty());
+        CHECK(fs::is_regular_file(fs::symlink_status("best_pot.tadah")));
+        CHECK(fs::is_empty("a_directory"));
+        CHECK_FALSE(fs::exists("nowhere"));
     }
     {
         INFO("best_pot.tadah with owner read permission alone");

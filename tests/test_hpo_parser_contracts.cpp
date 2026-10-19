@@ -1221,18 +1221,68 @@ TEST_CASE("DUMP and BDUMP: a directory inside the other's is accepted in "
     CHECK_FALSE(fs::exists(archive));
     CHECK_FALSE(fs::exists(root / "missing"));
 
-    /* A parent written with '..' is the directory mkdir walks through, not
-     * the one the path names once normalised: "BDUMP 5 <root>/archive/x/../
-     * best" with "DUMP 5 <root>/archive" is refused at the BDUMP line, as
-     * '<root>/archive/x' does not exist. */
+    /* '..' walks the directories the operating system finds: "BDUMP 5
+     * <root>/archive/x/../best" with "DUMP 5 <root>/archive" is refused at
+     * the BDUMP line, as mkdir cannot walk '..' out of '<root>/archive/x',
+     * which does not exist ("... cannot be resolved: it walks '..' out of
+     * '<root>/archive/x', which does not exist"). */
     const std::string through = (archive / "x" / ".." / "best").string();
     CHECK_THAT(parse_error(kOptimizer + "DUMP 5 " + archive.string() +
                            "\nBDUMP 5 " + through + "\n"),
                Catch::StartsWith(at + "BDUMP directory '" + through +
-                                 "' cannot be created: the directory '" +
-                                 (archive / "x" / "..").string() +
-                                 "' does not exist"));
+                                 "' cannot be resolved: it walks '..' out of '" +
+                                 (archive / "x").string() +
+                                 "', which does not exist"));
     CHECK_FALSE(fs::exists(archive));
+
+    /* A link followed by '..' leads where the link's target is: with lnk a
+     * link to <root>/elsewhere/deep, "DUMP 5 <root>/lnk/../archive" is
+     * <root>/elsewhere/archive, so "BDUMP 5 <root>/archive/best" is refused
+     * at its line (the directory '<root>/archive' does not exist); and a
+     * DUMP directory reached through a link into a directory that does not
+     * exist (lnk2 -> <root>/missing2) is refused naming that directory. */
+    fs::create_directories(root / "elsewhere" / "deep");
+    fs::create_symlink(root / "elsewhere" / "deep", root / "lnk");
+    CHECK_THAT(parse_error(kOptimizer + "DUMP 5 " +
+                           (root / "lnk" / ".." / "archive").string() +
+                           "\nBDUMP 5 " + (archive / "best").string() + "\n"),
+               Catch::StartsWith(at + "BDUMP directory '" +
+                                 (archive / "best").string() +
+                                 "' cannot be created: the directory '" +
+                                 archive.string() + "' does not exist"));
+    fs::create_symlink(root / "missing2", root / "lnk2");
+    const std::size_t line9 = line - 1;
+    CHECK_THAT(parse_error(kOptimizer + "DUMP 5 " +
+                           (root / "lnk2" / "pots").string() + "\n"),
+               Catch::StartsWith("Error on line " + std::to_string(line9) +
+                                 ": DUMP directory '" +
+                                 (root / "lnk2" / "pots").string() +
+                                 "' cannot be created: the directory '" +
+                                 (root / "missing2").string() +
+                                 "' does not exist"));
+    CHECK_FALSE(fs::exists(root / "elsewhere" / "archive"));
+    CHECK_FALSE(fs::exists(root / "missing2"));
+
+    /* "DUMP 5 ../archive" with "BDUMP 5 ../archive/best", relative to a
+     * working directory <root>/work, in either order: accepted, and both
+     * created, the outer first. */
+    fs::create_directories(root / "work");
+    struct Cwd {
+        fs::path old = fs::current_path();
+        ~Cwd() { std::error_code ec; fs::current_path(old, ec); }
+    } restore;
+    fs::current_path(root / "work");
+    for (const bool dump_first : {true, false}) {
+        INFO("DUMP line first: " << dump_first);
+        const std::string dump = "DUMP 5 ../archive\n";
+        const std::string bdump = "BDUMP 5 ../archive/best\n";
+        const auto trg = parse_config(kOptimizer + (dump_first ? dump + bdump
+                                                               : bdump + dump));
+        CHECK_FALSE(fs::exists(archive));
+        trg.create_archive_directories();
+        CHECK(fs::is_directory(archive / "best"));
+        fs::remove_all(archive);
+    }
 }
 
 /* Pins: the directory of a DUMP or BDUMP line must be one the run can
