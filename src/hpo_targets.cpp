@@ -1312,19 +1312,24 @@ void HPOTargets::read(const std::string& fn)
             }
             else if (key=="DUMP" || key=="BDUMP") {
                 /* <cadence> <directory>. The directory is the run's
-                 * output: checked here, at its line, for the run and for
-                 * `tadah hpo --check` alike, and created by the run once
-                 * every startup check passed (create_archive_directories);
-                 * parsing creates nothing. */
+                 * output: the two are checked together once the file is
+                 * read (check_archive_directories), each error at its
+                 * line, for the run and for `tadah hpo --check` alike, and
+                 * created by the run just before its first evaluation
+                 * (create_archive_directories); parsing creates nothing. */
                 std::string every, dir;
                 if (!(iss >> every >> dir))
                     throw std::runtime_error(
                         key + " requires a cadence and a directory");
                 expect_end(iss, key + " takes a cadence and a directory");
                 const std::size_t n = parse_uint(every, key + " cadence", 1);
-                check_archive_directory(key, dir);
-                if (key == "DUMP") { dumpPotEvery = n; dumpPotDir = dir; }
-                else { dumpBestPotEvery = n; dumpBestPotDir = dir; }
+                if (key == "DUMP") {
+                    dumpPotEvery = n; dumpPotDir = dir;
+                    dumpPotLine = {nline, line};
+                } else {
+                    dumpBestPotEvery = n; dumpBestPotDir = dir;
+                    dumpBestPotLine = {nline, line};
+                }
             }
 
             /* loss -------------------------------------------------- */
@@ -1491,6 +1496,10 @@ void HPOTargets::read(const std::string& fn)
                 g.key + " line.", g.text));
         }
     }
+
+    /* The DUMP and BDUMP directories, together: one may be inside the
+     * other's new directory, whatever the order of their lines. */
+    check_archive_directories();
 
     if (block == INNER_BLK)
         require_inner_driver(*active_opt, inner_enclosing());
@@ -1751,23 +1760,87 @@ double HPOTargets::parse_pc_worker_timeout(const std::string& token,
   return v;
 }
 
-void HPOTargets::create_archive_directories() const {
-  if (dumpPotEvery != std::numeric_limits<size_t>::max())
-    create_archive_directory("DUMP", dumpPotDir);
-  if (dumpBestPotEvery != std::numeric_limits<size_t>::max())
-    create_archive_directory("BDUMP", dumpBestPotDir);
-}
-
 namespace {
 /* Whether the process can create entries in the directory @p dir: write
  * and search permission (access(2), the real user's). */
 bool writable_directory(const fs::path& dir) {
   return ::access(dir.c_str(), W_OK | X_OK) == 0;
 }
+
+/* @p dir as one absolute path, for comparing two directories: "archive",
+ * "./archive/" and "<cwd>/archive" are the same. */
+fs::path archive_path(const fs::path& dir) {
+  fs::path p = fs::absolute(dir).lexically_normal();
+  if (!p.has_filename() && p.has_parent_path()) p = p.parent_path();
+  return p;
+}
+
+/* Whether nothing exists at @p dir, not even a symbolic link. */
+bool nothing_at(const fs::path& dir) {
+  std::error_code ec;
+  return fs::symlink_status(dir, ec).type() == fs::file_type::not_found;
+}
+
+/* The directory a new archive directory @p dir is created in ("pots/" is
+ * "pots", whose parent is the working directory, "."). */
+fs::path parent_of_new(const fs::path& dir) {
+  fs::path last = dir;
+  if (!last.has_filename()) last = last.parent_path();
+  fs::path parent = last.parent_path();
+  return parent.empty() ? fs::path(".") : parent;
+}
 }  // namespace
 
+void HPOTargets::create_archive_directories() const {
+  const bool dump = dumpPotEvery != std::numeric_limits<size_t>::max();
+  const bool bdump = dumpBestPotEvery != std::numeric_limits<size_t>::max();
+  /* The DUMP directory first, unless it is inside the BDUMP directory. */
+  const bool bdump_first =
+      dump && bdump &&
+      archive_path(parent_of_new(dumpPotDir)) == archive_path(dumpBestPotDir);
+  if (bdump_first) create_archive_directory("BDUMP", dumpBestPotDir);
+  if (dump) create_archive_directory("DUMP", dumpPotDir);
+  if (bdump && !bdump_first) create_archive_directory("BDUMP", dumpBestPotDir);
+}
+
+void HPOTargets::check_archive_directories() const {
+  struct Archive {
+    const char* key;
+    const std::string& dir;
+    bool active;
+    const ArchiveLine& line;
+  };
+  const Archive a[2] = {
+      {"DUMP", dumpPotDir,
+       dumpPotEvery != std::numeric_limits<size_t>::max(), dumpPotLine},
+      {"BDUMP", dumpBestPotDir,
+       dumpBestPotEvery != std::numeric_limits<size_t>::max(),
+       dumpBestPotLine}};
+  /* In the order of their lines, so that the first line in error is the
+   * one named. */
+  const int first = a[1].line.number < a[0].line.number ? 1 : 0;
+  for (int k : {first, 1 - first}) {
+    const Archive& self = a[k];
+    const Archive& other = a[1 - k];
+    if (!self.active) continue;
+    /* The other line's directory, when the run creates it: one inside it
+     * is created after it. Whether the run can create it is checked at its
+     * own line. */
+    const fs::path created_first =
+        other.active && nothing_at(other.dir) ? archive_path(other.dir)
+                                              : fs::path();
+    try {
+      check_archive_directory(self.key, self.dir, created_first);
+    } catch (const std::exception& e) {
+      throw std::runtime_error(
+          config_line_error(self.line.number, e.what(), self.line.text));
+    }
+  }
+}
+
 void HPOTargets::check_archive_directory(const std::string& key,
-                                         const std::string& dir) {
+                                         const std::string& dir,
+                                         const fs::path& created_first) {
   const std::string what = key + " directory '" + dir + "'";
   const fs::path path(dir);
   std::error_code ec;
@@ -1781,13 +1854,23 @@ void HPOTargets::check_archive_directory(const std::string& key,
       throw std::runtime_error(what + " is not writable");
     return;
   }
+  /* Something is there that status() cannot follow: a symbolic link to a
+   * path that does not exist, which the run cannot create a directory
+   * over. */
+  if (!nothing_at(path)) {
+    std::error_code lec;
+    const fs::path target = fs::read_symlink(path, lec);
+    if (!lec)
+      throw std::runtime_error(what + " is a symbolic link to '" +
+                               target.string() + "', which does not exist");
+    throw std::runtime_error(what + " cannot be read");
+  }
   /* A new directory: the run creates the last directory of the path, in
-   * its parent ("pots/" is "pots", whose parent is the working
-   * directory). */
-  fs::path last = path;
-  if (!last.has_filename()) last = last.parent_path();
-  fs::path parent = last.parent_path();
-  if (parent.empty()) parent = ".";
+   * its parent -- or after the other archive line's new directory, when
+   * that is its parent. */
+  const fs::path parent = parent_of_new(path);
+  if (!created_first.empty() && archive_path(parent) == created_first)
+    return;
   const std::string cannot = what + " cannot be created: ";
   const fs::file_status ps = fs::status(parent, ec);
   if (ps.type() == fs::file_type::not_found)
@@ -1803,6 +1886,56 @@ void HPOTargets::check_archive_directory(const std::string& key,
   if (!writable_directory(parent))
     throw std::runtime_error(cannot + "the directory '" + parent.string() +
                              "' is not writable");
+}
+
+namespace {
+/* The working directory, for the messages on the run's output files. */
+std::string working_directory() {
+  std::error_code ec;
+  const fs::path cwd = fs::current_path(ec);
+  return ec ? std::string(".") : cwd.string();
+}
+
+/* Throws when the output file @p file of the run, in the working
+ * directory, exists and the run cannot write it (@p rewritten: the run
+ * opens it to write; else it only replaces or removes it, and it must not
+ * be a directory). */
+void check_output_file(const std::string& file, bool rewritten) {
+  std::error_code ec;
+  const fs::file_status st = fs::symlink_status(file, ec);
+  if (st.type() == fs::file_type::not_found) return;
+  const std::string where =
+      "'" + file + "' in the working directory '" + working_directory() + "'";
+  if (fs::is_directory(fs::status(file, ec)))
+    throw std::runtime_error(where + " is a directory: tadah hpo writes a "
+                             "file of that name");
+  if (rewritten && ::access(file.c_str(), W_OK) != 0)
+    throw std::runtime_error(where + " is not writable: tadah hpo rewrites "
+                             "it");
+}
+}  // namespace
+
+void HPOTargets::check_working_directory(const std::string& journal) {
+  std::error_code ec;
+  if (!fs::is_directory(fs::status(".", ec)) || !writable_directory("."))
+    throw std::runtime_error(
+        "the working directory '" + working_directory() +
+        "' is not writable: tadah hpo writes its journal (hpo_run.log), its "
+        "result files and best_pot.tadah there");
+  check_output_file(journal, true);
+}
+
+void HPOTargets::check_output_files() const {
+  for (const std::string* f :
+       {&lossFile, &outvarFile, &paramsFile, &statsFile, &bestLossFile,
+        &bestOutvarFile, &bestParamsFile, &bestStatsFile})
+    check_output_file(*f, true);
+  check_output_file(kSearchSpaceFile, true);
+  check_output_file(kResolvedOptimFile, true);
+  for (const std::string* f : {&canonicalBestPotFile, &localBestPotFile}) {
+    check_output_file(*f, false);
+    check_output_file(*f + ".lock", true);
+  }
 }
 
 void HPOTargets::create_archive_directory(const std::string& key,
@@ -2032,7 +2165,7 @@ void HPOTargets::write_search_space_files(const std::string& dir) const {
       width[c] = header[c].size();
       for (const auto& r : rows) width[c] = std::max(width[c], r[c].size());
     }
-    std::ofstream tsv(dir + "/hpo_search_space.tsv");
+    std::ofstream tsv(dir + "/" + kSearchSpaceFile);
     tsv <<
       "# tadah hpo search space -- one row per optimised dimension, in optimiser order\n"
       "# (the same order as the params.tadah columns and the journal tables).\n"
@@ -2067,7 +2200,7 @@ void HPOTargets::write_search_space_files(const std::string& dir) const {
   for (std::size_t i = 0; i < ss.dim(); ++i)
     if (ss.at(i).origin != BoxOrigin::Explicit) any_auto = true;
   if (!any_auto) return;
-  std::ofstream hpo(dir + "/hpo_optim_resolved.hpo");
+  std::ofstream hpo(dir + "/" + kResolvedOptimFile);
   hpo << "# Resolved OPTIM block (explicit bounds for every searched dimension).\n"
          "# Written by tadah hpo because at least one box was derived by an AUTO rule;\n"
          "# paste these lines in place of the AUTO lines to pin exactly this search space.\n";

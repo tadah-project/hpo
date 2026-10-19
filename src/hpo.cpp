@@ -278,6 +278,30 @@ public:
 };
 }  // namespace
 
+namespace {
+
+/* HPOTargets::create_archive_directories() on every rank of the run (each
+ * creates them; one that exists is kept): an error on any rank is every
+ * rank's (one collective, as in HPO_Host::prepare_best_publication), so no
+ * rank waits for a peer that stopped. */
+void create_archive_directories_on_every_rank(const HPOTargets& trg)
+{
+    std::string local_error;
+    try {
+        trg.create_archive_directories();
+    } catch (const std::exception& e) {
+        local_error = e.what();
+    }
+    if (hpo_allreduce_max(local_error.empty() ? 0 : 1)) {
+        if (local_error.empty())
+            local_error = "the DUMP or BDUMP directory could not be created "
+                          "on another MPI rank";
+        throw std::runtime_error(local_error);
+    }
+}
+
+}  // namespace
+
 int hpo_run(core::Context& ctx)
 {
     return hpo_run(ctx, nullptr);
@@ -305,6 +329,9 @@ int hpo_run(core::Context& ctx, const mlip::KeyProvenance* provenance)
     const FitSwitchSources fit_sources = fit_switch_sources(ctx, provenance);
 
     auto& log = HPOLog::instance();
+    /* Rank-suffixed on MPI ranks > 0 (no-op otherwise) so multi-rank runs
+     * sharing one working directory keep separate journals. */
+    const std::string journal = "hpo_run.log" + hpo_rank_suffix();
     if (check) {
         /* A check writes no file, so it keeps no journal: the journal
          * lines of the startup go nowhere but its WARNING and HINT lines,
@@ -313,6 +340,9 @@ int hpo_run(core::Context& ctx, const mlip::KeyProvenance* provenance)
          * startup) is closed first, so that none of them goes into it. */
         log.begin_without_journal();
         try {
+            /* The first check of the run, which cannot write a journal into
+             * a working directory it cannot write into. */
+            HPOTargets::check_working_directory(journal);
             return hpo_run_from_startup(ctx, log, fit_sources, provenance,
                                         RunMode::Check);
         } catch (...) {
@@ -327,6 +357,11 @@ int hpo_run(core::Context& ctx, const mlip::KeyProvenance* provenance)
         }
     }
 
+    /* The run writes its journal, result files and best_pot.tadah into the
+     * working directory: one it cannot write into stops it here, before
+     * the journal (which it could not open), as it stops a check. */
+    HPOTargets::check_working_directory(journal);
+
     /* -- Open run journal first -------------------------------------
      * This must precede HPOTargets construction so that diagnostics
      * emitted while parsing OPTIMIZER, OPTIM, and INIT_STRATEGY blocks
@@ -339,10 +374,7 @@ int hpo_run(core::Context& ctx, const mlip::KeyProvenance* provenance)
         try { version = core::BlueprintParser::getBlueprintTadah().version; }
         catch (...) {}
         std::string cwd = std::filesystem::current_path().string();
-        /* Rank-suffixed on MPI ranks > 0 (no-op otherwise) so multi-rank
-         * runs sharing one working directory keep separate journals. */
-        log.open("hpo_run.log" + hpo_rank_suffix(), version, cwd,
-                 static_cast<int>(getpid()));
+        log.open(journal, version, cwd, static_cast<int>(getpid()));
         log.set_rank_scope(hpo_rank(), hpo_size());
     }
 
@@ -453,6 +485,10 @@ int hpo_run_from_startup(core::Context& ctx, HPOLog& log,
      * run writes) is taken from ctx before anything inserts a default; the
      * provenance leaves out the blueprint defaults no one wrote. */
     HPOTargets trg(ctx, ctx.get<std::string>("HPOTARGET"), provenance);
+    /* The result files, the search-space files and best_pot.tadah's lock
+     * in the working directory: an existing one the run cannot write stops
+     * it here, before any data is loaded, as it stops a check. */
+    trg.check_output_files();
 
     /* This is more than a dispatch convenience: HPO_Host's live best/HOT
      * state is intentionally rank-local while best_pot.tadah is the global
@@ -909,11 +945,6 @@ int hpo_run_from_startup(core::Context& ctx, HPOLog& log,
         return EXIT_SUCCESS;
     }
 
-    /* Every startup check passed: the DUMP and BDUMP directories, checked
-     * at their lines, are created now, before the first evaluation, so a
-     * run that stops at startup creates none. */
-    trg.create_archive_directories();
-
     /* The stagnation threshold and top-K tracking are process-wide statics
      * that each policy arms inside run() (RESTART, PRESTAGE). A policy that
      * ended by an exception in an earlier run in this process can leave
@@ -945,6 +976,11 @@ int hpo_run_from_startup(core::Context& ctx, HPOLog& log,
              * collective and end "FAILED -- best-potential persistence:
              * <cause>" like any other persistence failure. */
             host.prepare_best_publication();
+            /* best_pot.tadah prepared (its lock taken): the DUMP and BDUMP
+             * directories, checked when the target file was read, are
+             * created now, just before the first evaluation, so a run that
+             * stops before creates none. */
+            create_archive_directories_on_every_rank(trg);
             run_noise_calibration(sp, host, log);
             log.start_progress();
             std::cout << "[HPO] " << sp.lib << ":" << sp.algo

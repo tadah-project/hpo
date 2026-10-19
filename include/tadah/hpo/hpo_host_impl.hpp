@@ -1434,7 +1434,7 @@ HPO_Host<P,R>::HPO_Host(core::Context master_ctx,
 
     /* The outputs of a run: the headers of its result files. A host of
      * `tadah hpo --check` writes none. The run creates its archive
-     * directories once every startup check passed
+     * directories after prepare_best_publication()
      * (HPOTargets::create_archive_directories). */
     if (purpose_ == HostPurpose::Run) {
         init_loss   (trg_.lossFile);

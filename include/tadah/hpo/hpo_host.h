@@ -212,7 +212,7 @@ struct EvalResult
  *          params.tadah, ...). The DUMP and BDUMP archive directories are
  *          the caller's to create before the first evaluation
  *          (HPOTargets::create_archive_directories; hpo_run() creates them
- *          once every startup check passed).
+ *          after prepare_best_publication()).
  *   Check  the startup checks of `tadah hpo --check` (hpo_run with CHECK
  *          true): the constructor loads and checks the data as for a run,
  *          and writes no file and creates no directory. Such a host

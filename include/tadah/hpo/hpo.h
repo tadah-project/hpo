@@ -33,9 +33,11 @@ struct OptimizerSpec;
  *
  * With CHECK true in the context (`tadah hpo --check`, CHECK true in a
  * TASK hpo section) it makes the startup checks of the run alone, in the
- * run's order -- the training configuration, the target file (its DUMP
- * and BDUMP directories included) and its LAMMPS scripts,
- * validate_hpo_setup(), PC_ISOLATION and THREADS, the training and
+ * run's order -- the working directory, which must take the journal, the
+ * result files and best_pot.tadah, the training configuration, the target
+ * file (its DUMP and BDUMP directories included) and its LAMMPS scripts,
+ * the result files that exist, validate_hpo_setup(), PC_ISOLATION and
+ * THREADS, the training and
  * validation datasets (loaded as the run loads them), HEALTH_LOG, the
  * pre-flight audit and the STRATEGY TYPE and RESTART settings -- then
  * writes the summary of write_check_summary() (check_summary.h) to
@@ -48,11 +50,13 @@ struct OptimizerSpec;
  * it, after those WARNING and HINT lines on standard error. CHECK is taken
  * out of the context (the run's too, CHECK false); a potential has no
  * CHECK line (Tadah.MLIP's training_record_keys()) and no parse stores a
- * potential's (Tadah.CORE's run_setting_keys()).
+ * potential's (Tadah.CORE's run_setting_keys()). A check starts no
+ * PC_ISOLATION PROCESS worker and takes no lock of best_pot.tadah: the run
+ * does both after the check's last step, and stops if either fails.
  *
- * A run creates its DUMP and BDUMP directories once every startup check
- * passed, before its first evaluation: a run that stops at startup creates
- * none. */
+ * A run creates its DUMP and BDUMP directories, the one inside the other's
+ * after it, once it has prepared best_pot.tadah (its lock taken), just
+ * before its first evaluation: a run that stops before creates none. */
 int hpo_run(core::Context&);
 /* The same, with where the context's keys came from (the command line, the
  * configuration file, the defaults): the journal's POTENTIAL SETUP names

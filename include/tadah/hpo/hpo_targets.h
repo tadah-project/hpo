@@ -76,12 +76,24 @@ private:
     std::vector<std::string> parse_optim_line(std::istringstream& iss);
     /* Throws when the run cannot create the archive directory @p dir of
      * the line @p key (DUMP, BDUMP) or write into it, and creates nothing:
-     * a path that exists must be a directory the run can write into; one
-     * that does not, a new directory in an existing directory the run can
-     * write into (the run creates the last directory of the path only). The
-     * parse checks each DUMP and BDUMP line with it, at the line. */
+     * a path that exists must be a directory the run can write into (a
+     * symbolic link to a path that does not exist is refused); one that
+     * does not, a new directory in an existing directory the run can write
+     * into, or in @p created_first (an absolute path; empty: none), the
+     * other archive line's new directory, which the run creates first (the
+     * run creates the last directory of the path only). */
     static void check_archive_directory(const std::string& key,
-                                        const std::string& dir);
+                                        const std::string& dir,
+                                        const std::filesystem::path& created_first);
+    /* The DUMP and BDUMP directories, checked together once the target
+     * file is read (check_archive_directory), in the order of their lines,
+     * each error at its line: one inside the other's new directory is
+     * accepted, whatever the order of the lines. */
+    void check_archive_directories() const;
+    /* The line of the last DUMP and BDUMP line (number 0: none), for the
+     * errors of check_archive_directories(). */
+    struct ArchiveLine { std::size_t number = 0; std::string text; };
+    ArchiveLine dumpPotLine, dumpBestPotLine;
     /* Creates the archive directory @p dir of the line @p key, which
      * check_archive_directory() accepted (one that exists is kept; each is
      * named on standard output). */
@@ -182,12 +194,33 @@ public:
      * OPTIM box was derived by an AUTO rule) into `dir`. */
     void write_search_space_files(const std::string& dir) const;
     /* Creates the archive directories of the DUMP and BDUMP lines (one
-     * that exists is kept; each is named on standard output). The parse
-     * checks each at its line and creates nothing; hpo_run() calls this
-     * once every startup check of the run passed, before its first
-     * evaluation, so a run that stops at startup creates none, and `tadah
-     * hpo --check` leaves the working directory as it is. */
+     * that exists is kept; each is named on standard output), the one
+     * inside the other's after it. The parse checks them and creates
+     * nothing; hpo_run() calls this once it has prepared best_pot.tadah
+     * (its lock taken), just before its first evaluation, so a run that
+     * stops before creates none, and `tadah hpo --check` leaves the
+     * working directory as it is. */
     void create_archive_directories() const;
+
+    /* The names of the search-space files a run writes into the working
+     * directory (write_search_space_files). */
+    static constexpr const char* kSearchSpaceFile = "hpo_search_space.tsv";
+    static constexpr const char* kResolvedOptimFile = "hpo_optim_resolved.hpo";
+
+    /* Throws when the run cannot write its output files into the working
+     * directory, and creates nothing (`tadah hpo --check` and the run
+     * alike, before any data is loaded):
+     *   - check_working_directory(journal): the working directory must be
+     *     a directory the run can write into ("the working directory
+     *     '<dir>' is not writable: tadah hpo writes its journal
+     *     (hpo_run.log), its result files and best_pot.tadah there"), and
+     *     the journal @p journal, when it exists, a file the run can write;
+     *   - check_output_files(): the result files (loss.tadah, ...), the
+     *     search-space files and the lock of best_pot.tadah, when they
+     *     exist, files the run can write; best_pot.tadah, when it exists,
+     *     no directory. */
+    static void check_working_directory(const std::string& journal);
+    void check_output_files() const;
 
     /* Typed observables (Tier 1 / Tier 2 of the PC_OBSERVABLE redesign).
      * Each entry is a polymorphic Observable* -- concrete subclasses live in
