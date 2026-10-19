@@ -1323,6 +1323,30 @@ TEST_CASE("DUMP and BDUMP: a directory inside the other's is accepted in "
         fs::remove_all(archive);
     }
 
+    /* '.' in the other line's directory, which the run creates first, is
+     * taken in that directory: "DUMP 5 <root>/archive" with "BDUMP 5
+     * <root>/archive/." (the same directory) or "BDUMP 5
+     * <root>/archive/./best", in either order: accepted, nothing created,
+     * and create_archive_directories() creates both (archive, then
+     * archive/best). Before: refused at the BDUMP line ("it walks '.' in
+     * '<root>/archive', which does not exist"). */
+    for (const std::string inner : {archive.string() + "/.",
+                                    archive.string() + "/./best"}) {
+        for (const bool dump_first : {true, false}) {
+            INFO("BDUMP 5 " << inner << ", DUMP line first: " << dump_first);
+            const std::string dump = "DUMP 5 " + archive.string() + "\n";
+            const std::string bdump = "BDUMP 5 " + inner + "\n";
+            const auto trg = parse_config(
+                kOptimizer + (dump_first ? dump + bdump : bdump + dump));
+            CHECK_FALSE(fs::exists(archive));
+            trg.create_archive_directories();
+            CHECK(fs::is_directory(archive));
+            if (inner.size() > archive.string().size() + 2)
+                CHECK(fs::is_directory(archive / "best"));
+            fs::remove_all(archive);
+        }
+    }
+
     /* "BDUMP 5 <root>/best/." with "DUMP 5 <root>/best/pots": the BDUMP
      * line walks '.' in <root>/best, which does not exist (mkdir fails),
      * and is refused at its line. */

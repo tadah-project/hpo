@@ -38,7 +38,10 @@
 #include <omp.h>
 #endif
 
+#include <atomic>
 #include <chrono>
+#include <csignal>
+#include <cstdio>
 #include <cstdlib>
 #include <exception>
 #include <filesystem>
@@ -50,6 +53,10 @@
 #include <sstream>
 #include <string>
 #include <system_error>
+#include <thread>
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <sys/wait.h>
 #include <unistd.h>
 #include <utility>
 #include <vector>
@@ -1216,4 +1223,97 @@ TEST_CASE("hpo --check: the ranks agree on a startup step one rank fails",
     }
     CHECK(thrown == "loss.tadah is not writable");
     CHECK_NOTHROW(tadah::hpo::run_on_every_rank(what, [] {}));
+}
+
+/* Pins: an output file that is a named pipe is not opened by the check,
+ * which would end the stream of its reader, and the run writes into it as
+ * into a file: with hpo_run.log a FIFO and a reader waiting on it (a
+ * thread of this process), a child process (this test binary, the hidden
+ * case below) makes the check, then the run, of a valid setup; both
+ * return 0, and the reader receives the run's journal ("Run Journal"), not
+ * an end of file at the check. A regression that hangs is ended after
+ * 120 s and fails.
+ * Before the change: the check opened and closed the FIFO's write end, so
+ * the reader got an end of file and left, and the run's own open of the
+ * journal could not complete (the run was refused, or blocked). */
+TEST_CASE("hpo --check: a named pipe as hpo_run.log is not opened by the "
+          "check, and the run writes its journal into it",
+          "[HPO][hpo_check]")
+{
+    ScratchDir sd("fifo_journal");
+    write_inputs(kOptimizer + kRootLines);
+    REQUIRE(::mkfifo("hpo_run.log", 0600) == 0);
+    std::string journal;
+    std::atomic<bool> read_done{false};
+    std::thread reader([&] {
+        std::ifstream in("hpo_run.log");  // waits for a writer
+        std::ostringstream text;
+        text << in.rdbuf();
+        journal = text.str();
+        read_done = true;
+    });
+    const fs::path out = sd.dir / "child.out";
+    std::cout.flush();
+    std::fflush(nullptr);
+    const pid_t child = ::fork();
+    REQUIRE(child >= 0);
+    if (child == 0) {
+        std::FILE* f = std::freopen(out.c_str(), "w", stdout);
+        (void)f;
+        ::dup2(::fileno(stdout), 2);
+        ::execl("/proc/self/exe", "test_hpo", "[.hpo_check_fifo_child]",
+                static_cast<char*>(nullptr));
+        ::_exit(127);
+    }
+    int status = 0;
+    bool finished = false;
+    const auto deadline =
+        std::chrono::steady_clock::now() + std::chrono::seconds(120);
+    while (std::chrono::steady_clock::now() < deadline) {
+        if (::waitpid(child, &status, WNOHANG) == child) {
+            finished = true;
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+    if (!finished) {
+        ::kill(child, SIGKILL);
+        ::waitpid(child, &status, 0);
+    }
+    if (!read_done) {
+        /* End the reader's wait: a writer that closes at once. */
+        const int fd = ::open("hpo_run.log", O_WRONLY | O_NONBLOCK);
+        if (fd >= 0) ::close(fd);
+    }
+    reader.join();
+    std::ifstream child_out(out);
+    std::ostringstream child_text;
+    child_text << child_out.rdbuf();
+    INFO("child:\n" << child_text.str() << "\njournal:\n" << journal);
+    CHECK(finished);
+    CHECK(WIFEXITED(status));
+    CHECK(WEXITSTATUS(status) == 0);
+    CHECK(contains(journal, "Run Journal"));
+}
+
+/* The child of the case above: in the working directory it inherits, the
+ * check and then the run of the setup there; each must return 0. */
+TEST_CASE("hpo --check: the check and the run of a setup whose journal is a "
+          "named pipe", "[.hpo_check_fifo_child]")
+{
+    fresh_process_state();
+    {
+        tadah::core::Context ctx =
+            make_ta_context("train.db", "config.hpo", "config.val");
+        ctx.add("CHECK", "true");
+        CaptureCout quiet;
+        REQUIRE(tadah::hpo::hpo_run(ctx) == 0);
+    }
+    fresh_process_state();
+    {
+        tadah::core::Context ctx =
+            make_ta_context("train.db", "config.hpo", "config.val");
+        CaptureCout quiet;
+        REQUIRE(tadah::hpo::hpo_run(ctx) == 0);
+    }
 }
