@@ -83,8 +83,10 @@ private:
      * itself (mkdir does not follow it), and must be in a directory that
      * exists and the run can write into, or in @p created_first (resolved
      * likewise; empty: none), the other archive line's directory, which
-     * the run creates first (the run creates the last directory of the
-     * path only). */
+     * the run creates first and which the path is resolved through as a
+     * directory that exists ("archive/." is that directory, "archive/./
+     * best" a directory in it); the run creates the last directory of the
+     * path only. */
     static void check_archive_directory(const std::string& key,
                                         const std::string& dir,
                                         const std::filesystem::path& created_first);

@@ -36,6 +36,7 @@
 #include <unordered_map>
 #include <unistd.h>   // access(): the archive directories
 #include <fcntl.h>    // open(): the output files
+#include <sys/stat.h> // stat(): the output files
 #include <cerrno>
 #include <cstring>
 
@@ -1886,9 +1887,14 @@ struct PhysicalPath {
  * system's limit ("too many levels of symbolic links"), '.' or '..' in a
  * directory that does not exist or is no directory, and a component it
  * cannot read ("'<path>' cannot be read: Permission denied").
+ * @p will_exist (absolute and resolved; empty: none) is a directory that
+ * does not exist yet and that the run creates first, the other archive
+ * line's: it is taken as an existing directory ('.' and '..' in it, as the
+ * system takes them once it exists), and what lies below it as missing.
  * (fs::weakly_canonical takes the part of a path that does not exist
  * lexically, and stops at a link to a file not yet created.) */
-PhysicalPath resolve_physically(const std::string& given) {
+PhysicalPath resolve_physically(const std::string& given,
+                                const fs::path& will_exist = fs::path()) {
   std::error_code ec;
   const fs::path abs = fs::absolute(fs::path(given), ec);
   if (ec) throw std::runtime_error(ec.message());
@@ -1967,6 +1973,10 @@ PhysicalPath resolve_physically(const std::string& given) {
       continue;
     }
     if (ls.type() == fs::file_type::not_found) {
+      if (!will_exist.empty() && next == will_exist) {
+        cur = next;  // there once the run has created it
+        continue;
+      }
       stop = next;
       stop_exists = false;
     } else if (!fs::is_directory(ls) &&
@@ -1984,13 +1994,23 @@ PhysicalPath resolve_physically(const std::string& given) {
   return out;
 }
 
-/* @p dir resolved (resolve_physically), or nullopt when it cannot be. */
-std::optional<PhysicalPath> resolved_or_none(const std::string& dir) {
+/* @p dir resolved (resolve_physically, with @p will_exist), or nullopt
+ * when it cannot be. */
+std::optional<PhysicalPath> resolved_or_none(
+    const std::string& dir, const fs::path& will_exist = fs::path()) {
   try {
-    return resolve_physically(dir);
+    return resolve_physically(dir, will_exist);
   } catch (const std::exception&) {
     return std::nullopt;
   }
+}
+
+/* The directory of the archive line @p dir as the run finds it before it
+ * creates any: its resolved path when the run creates it (it does not
+ * exist, and the path names no link), else empty. */
+fs::path created_by_the_run(const std::string& dir) {
+  const auto r = resolved_or_none(dir);
+  return r && !r->exists && r->own_link.empty() ? r->path : fs::path();
 }
 }  // namespace
 
@@ -2001,9 +2021,11 @@ void HPOTargets::create_archive_directories() const {
    * directory. */
   bool bdump_first = false;
   if (dump && bdump) {
-    const auto d = resolved_or_none(dumpPotDir);
-    const auto b = resolved_or_none(dumpBestPotDir);
-    bdump_first = d && b && d->path.parent_path() == b->path;
+    const fs::path b = created_by_the_run(dumpBestPotDir);
+    const auto d = resolved_or_none(dumpPotDir, b);
+    /* The DUMP directory is the BDUMP one ("archive/.") or inside it. */
+    bdump_first =
+        !b.empty() && d && (d->path == b || d->path.parent_path() == b);
   }
   if (bdump_first) create_archive_directory("BDUMP", dumpBestPotDir);
   if (dump) create_archive_directory("DUMP", dumpPotDir);
@@ -2033,11 +2055,8 @@ void HPOTargets::check_archive_directories() const {
     /* The other line's directory, where the system puts it, when the run
      * creates it: one inside it is created after it. Whether the run can
      * create it is checked at its own line. */
-    fs::path created_first;
-    if (other.active) {
-      const auto o = resolved_or_none(other.dir);
-      if (o && !o->exists && o->own_link.empty()) created_first = o->path;
-    }
+    const fs::path created_first =
+        other.active ? created_by_the_run(other.dir) : fs::path();
     try {
       check_archive_directory(self.key, self.dir, created_first);
     } catch (const std::exception& e) {
@@ -2053,10 +2072,13 @@ void HPOTargets::check_archive_directory(const std::string& key,
   const std::string what = key + " directory '" + dir + "'";
   PhysicalPath r;
   try {
-    r = resolve_physically(dir);
+    r = resolve_physically(dir, created_first);
   } catch (const std::exception& e) {
     throw std::runtime_error(what + " cannot be resolved: " + e.what());
   }
+  /* The other line's directory itself ("archive/."), which the run
+   * creates first. */
+  if (!created_first.empty() && r.path == created_first) return;
   std::error_code ec;
   if (r.exists) {
     const fs::file_status st = fs::status(r.path, ec);
@@ -2110,11 +2132,23 @@ enum class OutputUse {
   Replaced    // replaces or removes the name (a best potential)
 };
 
-/* Opens the existing file @p file as the run opens it -- to write, and to
- * read too (@p read_too: a lock) -- without creating or truncating it
- * (and without waiting on a FIFO), then closes it: 0, or the open's
- * errno. */
+/* Whether the run can open the existing file @p file as it does -- to
+ * write, and to read too (@p read_too: a lock) --: 0, or the errno of the
+ * failure. A regular file is opened so, without creating or truncating
+ * it, and closed; a directory is refused (EISDIR). A named pipe, socket or
+ * device is not opened -- opening and closing a FIFO's write end would end
+ * the stream of its reader --, and its permission is checked instead
+ * (faccessat with the effective ids): the run's own open of it waits for
+ * its reader as it would. Links are followed as the open follows them. */
 int open_as_the_run(const std::string& file, bool read_too) {
+  struct stat st;
+  if (::stat(file.c_str(), &st) != 0) return errno;
+  if (S_ISDIR(st.st_mode)) return EISDIR;
+  if (!S_ISREG(st.st_mode)) {
+    const int mode = read_too ? (R_OK | W_OK) : W_OK;
+    return ::faccessat(AT_FDCWD, file.c_str(), mode, AT_EACCESS) == 0 ? 0
+                                                                       : errno;
+  }
   const int fd = ::open(file.c_str(),
                         (read_too ? O_RDWR : (O_WRONLY | O_APPEND)) |
                             O_NONBLOCK | O_NOCTTY | O_CLOEXEC);
