@@ -679,8 +679,9 @@ TEST_CASE("hpotarget block structure: an optimiser key set twice for one "
  * the line of the first ("SEED is set twice in the INIT block (first on
  * line 7); each key is given once"): in one block, in a repeated block, and
  * in the INIT blocks inside OPTIMIZER and inside STRATEGY, which both set
- * the starting points of the STRATEGY-level optimiser. METHOD lines in two
- * INIT blocks add to one chain (the case above).
+ * the starting points of the STRATEGY-level optimiser; LOG_HP, which the
+ * OPTIMIZER and STRATEGY blocks take, once for the search space. METHOD
+ * lines in two INIT blocks add to one chain (the case above).
  * Before the fix: the later line replaced the first's value without a
  * word. */
 TEST_CASE("hpotarget block structure: a key of an INIT, NOISE, RESTART or "
@@ -768,6 +769,19 @@ TEST_CASE("hpotarget block structure: a key of an INIT, NOISE, RESTART or "
                                         "  ENDSTRATEGY", "ENDOPTIMIZER"}) ==
               at_line(7, "N_STARTS is set twice in the STRATEGY block (first "
                          "on line 6)" + once, "    N_STARTS 3"));
+    }
+    SECTION("LOG_HP, a search-space key of the OPTIMIZER and STRATEGY "
+            "blocks") {
+        /* It warned 'LOG_HP given more than once; the last value (...)
+         * wins'. */
+        CHECK(parse_error(kRoot + Lines{"OPTIMIZER", "  LOG_HP 10",
+                                        "  STRATEGY", "    LOG_HP 100",
+                                        "    LIB DLIB", "    ALGO BFGS",
+                                        "  ENDSTRATEGY", "ENDOPTIMIZER"}) ==
+              at_line(6, "LOG_HP is set on line 4 in the OPTIMIZER block and "
+                         "again here in the STRATEGY block; both blocks "
+                         "configure the same search space, so each key is "
+                         "given once", "    LOG_HP 100"));
     }
 }
 
