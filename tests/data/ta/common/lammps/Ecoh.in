@@ -34,8 +34,7 @@ run 0
 
 # Capture E_iso exactly. An internal-style variable holds the double
 # itself; ${name} and v_name of an equal-style variable carry only 15
-# significant digits (hpo.rst: "Precision of values passed to and read
-# from LAMMPS"). Eiso stays equal-style: HPO reads it (--outvar Eiso).
+# significant digits. Eiso stays equal-style: HPO reads it (--outvar Eiso).
 variable Eiso_i internal $(c_eatoms)
 variable Eiso equal v_Eiso_i
 
@@ -71,8 +70,8 @@ minimize 1e-12 1e-12 500 500
 unfix 1
 variable eq_ok equal ternary($(fmax) < 0.1, 1, 0)
 
-# Redefine hot_a0 to the relaxed lattice so HPO's get_variable() reads
-# back the converged value (not the seed it injected before the run).
+# hot_a0 is redefined to the relaxed lattice so that HPO's get_variable()
+# reads back the converged value (not the seed it injected before the run).
 # HPO injects hotvars as equal-style, so this is a same-style overwrite
 # that LAMMPS accepts without a prior `variable delete`.
 variable hot_a0 equal lx/4.0

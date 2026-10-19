@@ -26,7 +26,9 @@ WATOM 1.0
 OALGO  1 1e-13
 BIAS false
 
-# Pin two of the 14 linear coefficients; the i-th FIXWEIGHT value pins
-# the weight named by the i-th FIXINDEX entry.
+# Two of the 14 linear coefficients are pinned and the other twelve are
+# fitted: the mixed fit in which fixweight_mixed.hpo searches one pinned
+# weight. The i-th FIXWEIGHT value pins the weight named by the i-th
+# FIXINDEX entry.
 FIXINDEX  13,14
 FIXWEIGHT 0.0 0.0

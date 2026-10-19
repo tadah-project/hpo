@@ -7,10 +7,10 @@ OPTIMIZER
     ALGO ASA
     MAXEVAL 200
     SEED 1234
-    PARAM Limit_Generated 200          # align ASA's own budget with MAXEVAL
-    PARAM Temperature_Ratio_Scale 1e-4 # slower annealing suits a 200-eval demo
+    PARAM Limit_Generated 200          # ASA's own budget, equal to MAXEVAL
+    PARAM Temperature_Ratio_Scale 1e-4 # slower annealing suits 200 evaluations
     PARAM Acceptance_Frequency_Modulus 20  # journal progress cadence
-    PARAM Curvature_0 1                # skip the O(dim^2) exit curvature sweep
+    PARAM Curvature_0 1                # saves the O(dim^2) exit curvature sweep
   ENDSTRATEGY
 ENDOPTIMIZER
 

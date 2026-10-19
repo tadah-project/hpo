@@ -1,16 +1,17 @@
 # failprobe.in — minimiser-free sanity scalar S for bcc metal.
-# Contract: NEVER minimize/box-relax/run>0; define S even on the
-# weirdest potential; keep it O(ms); no label/jump loops (rule 4) —
-# the three volumes are unrolled. `variable X equal $( ... )`
-# captures the value IMMEDIATELY, and equal-style redefinition
-# replaces the old value, so the captures stay fresh in the cached
-# instance on every evaluation.
+# The script never minimises, relaxes the box or runs dynamics (run 0
+# only), so it takes milliseconds, and it defines S even for the weirdest
+# potential. The three volumes are written out one after another, each
+# capture under a name of its own. `variable X equal $( ... )` captures
+# the value at once, and an equal-style redefinition replaces the old
+# value, so the captures stay fresh in the cached LAMMPS instance on
+# every evaluation.
 
 # -- E(V) monotonicity: 2-atom bcc cells at 0.90/1.00/1.10 a0 -----
 # (a0 = 3.30 reference lattice constant, baked into the lattice
 #  commands below)
-clear                    # scripts run in a CACHED LAMMPS instance:
-                         # always start with clear (variables survive)
+clear                    # scripts run in a CACHED LAMMPS instance, so
+                         # each cell starts with clear (variables survive)
 units metal
 dimension 3
 boundary p p p
@@ -62,8 +63,8 @@ variable h_comp equal $(ternary(v_e_m10<v_e_0, v_e_0-v_e_m10, 0.0))
 variable h_exp  equal $(ternary(v_e_p10<v_e_0, v_e_0-v_e_p10, 0.0))
 
 # -- force sanity: rattle a cell DETERMINISTICALLY (fixed seed) and
-# hinge on absurd forces. Do NOT probe fmax on the ideal lattice --
-# there it is zero by symmetry for ANY potential, sick or sane.
+# hinge on absurd forces. fmax is not probed on the ideal lattice: there
+# it is zero by symmetry for ANY potential, sick or sane.
 clear
 units metal
 boundary p p p

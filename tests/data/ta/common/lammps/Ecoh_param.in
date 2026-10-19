@@ -30,8 +30,7 @@ run 0
 
 # Capture E_iso exactly. An internal-style variable holds the double
 # itself; ${name} and v_name of an equal-style variable carry only 15
-# significant digits (hpo.rst: "Precision of values passed to and read
-# from LAMMPS"). Eiso stays equal-style: HPO reads it (--outvar Eiso).
+# significant digits. Eiso stays equal-style: HPO reads it (--outvar Eiso).
 variable Eiso_i internal $(c_eatoms)
 variable Eiso equal v_Eiso_i
 
@@ -67,7 +66,7 @@ minimize 1e-12 1e-12 500 500
 unfix 1
 variable eq_ok equal ternary($(fmax) < 0.1, 1, 0)
 
-# Update the hotvar: relaxed lattice constant = lx / nx.
+# hot_a0 becomes the relaxed lattice constant, lx / nx, which HPO reads back.
 variable hot_a0 equal lx/${nx}
 
 # Exact captures and one formula over them: every variable HPO reads

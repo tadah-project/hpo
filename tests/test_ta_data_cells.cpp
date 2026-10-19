@@ -15,8 +15,7 @@
 // Structures 14-25 of elastic.tadahdb (the sheared cells) were written by
 // the OUTCAR reader before MLIP c6d457c, which stored the lattice vectors as
 // columns: read as rows, atom 1 is off the body centre by 0.005-0.01 and
-// the shell sums are 0.19-0.38 A, while their DFT forces are 0 (audit
-// cell-convention 2026-09-30, core-2 / lammps-hpo-md-1).
+// the shell sums are 0.19-0.38 A, while their DFT forces are 0.
 //
 // The expectations are independent of the code under test: the fractional
 // coordinates come from the reciprocal vectors (a_j x a_k)/V written out
