@@ -2368,6 +2368,18 @@ void HPOTargets::process_optim_config(std::istringstream& iss,
       rule.geometric = named ? binding->positive && !named_amp : optim_key_positive_only(k);
       rule.factor    = rule.geometric ? 2.0 : 0.5;
     }
+    /* FLOOR and GROUP_FLOOR bound the half-width of the linear rule; the
+     * geometric box [x0/f, x0*f] has none, so they would be ignored. */
+    if (rule.geometric && floor_set)
+      throw std::runtime_error(
+          "OPTIM " + k + ": FLOOR and GROUP_FLOOR set the smallest "
+          "half-width of an AUTO FRAC box; " +
+          (mode_set ? std::string("AUTO RATIO makes the geometric box "
+                                  "[x0/f, x0*f], which they do not change: "
+                                  "use FRAC <p> with them, or drop them")
+                    : "the AUTO box of " + k + " is geometric by default "
+                      "(RATIO 2), which they do not change: add FRAC <p> "
+                      "to use them, or drop them"));
     /* Non-negative amplitudes: NNLS fits put amplitudes at exactly 0, so a
      * linear rule without a floor gets the refit writer's group floor
      * (1e-3 max|x0| of the line) and the box [0, d] for a zero seed. */
