@@ -304,10 +304,16 @@ template<class HostT>
      * unaffected -- it feeds the INIT chain, whose points are consumed
      * below.) */
     if (sp.seed) {
+      /* A PRESTAGE refinement's SEED that the exploration took seeds it:
+       * the journal names it as the exploration's (EXPLORE SEED). */
       const std::string msg =
-          "DLIB:GFS (find_min_global, MaxLIPO+TR) is deterministic; "
-          "SEED has no effect on the search. Randomise via the INIT "
-          "block (e.g. METHOD RANDOM K with SEED) instead.";
+          sp.seed_seeds_exploration
+              ? "DLIB:GFS (find_min_global, MaxLIPO+TR) is deterministic; "
+                "SEED has no effect on the refinement: it seeds the "
+                "exploration (EXPLORE SEED " + std::to_string(*sp.seed) + ")."
+              : "DLIB:GFS (find_min_global, MaxLIPO+TR) is deterministic; "
+                "SEED has no effect on the search. Randomise via the INIT "
+                "block (e.g. METHOD RANDOM K with SEED) instead.";
       std::cerr << "[HPO] " << msg << "\n";
       HPOLog::instance().warning(msg);
     }

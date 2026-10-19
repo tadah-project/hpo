@@ -58,6 +58,8 @@ OptimizerSpec prestage_refinement_spec(
     const OptimizerSpec& spec, std::vector<std::vector<double>> candidates)
 {
     OptimizerSpec refine = spec;
+    refine.seed_seeds_exploration =
+        spec.prestage && spec.prestage->seed_from_strategy;
     refine.prestage.reset();          // the refinement does not explore again
     refine.optim_init = std::move(candidates);
     /* Streams of its own: with the exploration's optimiser it drew the

@@ -244,6 +244,7 @@ struct OptimizerSpec {
           vector_storage(o.vector_storage), pop(o.pop),
           num_threads(o.num_threads), seed(o.seed),
           seed_from_strategy(o.seed_from_strategy),
+          seed_seeds_exploration(o.seed_seeds_exploration),
           stream_phase(o.stream_phase), step(o.step),
           step_overrides(o.step_overrides),
           grad_strategy(o.grad_strategy),
@@ -312,6 +313,10 @@ struct OptimizerSpec {
      * takes it (HPOTargets::read), as the refinement's starts and the
      * RESTART rounds derive theirs from it. The journal says so. */
     bool seed_from_strategy = false;
+    /* A PRESTAGE refinement (prestage_refinement_spec) whose SEED the
+     * exploration took (its seed_from_strategy): an optimiser that reads
+     * no SEED says that it seeds the exploration. */
+    bool seed_seeds_exploration = false;
     /* The phase this optimiser runs in, for its random streams
      * (phase_stream_seed, seed_stream.h): Refinement in the specs
      * prestage_refinement_spec builds (and their MULTISTART starts),
