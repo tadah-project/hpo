@@ -453,6 +453,50 @@ class Registry(unittest.TestCase):
         self.edit("hpotarget.toml", "got '0'\"", "got '{tok}'\"")
         self.assertIn("error: holds the placeholder {tok}", self.errors())
 
+    def test_lammps_variable_is_not_a_placeholder(self):
+        # ${name} is a LAMMPS variable reference: in a message, an example
+        # or an error it is written as it is; {name} alone is a placeholder.
+        self.edit("hpotarget.toml", "got '0'\"",
+                  "got '0' (timer timeout ${maxtime})\"")
+        self.edit("hpotarget.toml", "takes no further value here",
+                  "(timer timeout ${maxtime}) takes no further value here")
+        reg = self.load()
+        self.assertIn("${maxtime}", reg.keys[0].invalid[0].error)
+        self.assertIn("${maxtime}", reg.groups["OPTIMIZER"].leftover_msg)
+        self.edit("hpotarget.toml", "(timer timeout ${maxtime}) takes",
+                  "(timer timeout {maxtime}) takes")
+        self.assertIn("leftover_msg: placeholder {maxtime} is not one of "
+                      "key, tok", self.errors())
+
+    def test_key_checks(self):
+        self.edit("hpotarget.toml", 'default = { literal = "1e6" }',
+                  'default = { literal = "1e6" }\n'
+                  'checks = [{ msg = "{key} needs a score", '
+                  'doc = "No value follows the key." }]')
+        fs = next(k for k in self.load().keys if k.name == "FAILSCORE")
+        self.assertEqual(fs.checks, [hr.Check("{key} needs a score",
+                                              "No value follows the key.")])
+        self.edit("hpotarget.toml", '"{key} needs a score"',
+                  '"{kye} needs a score"')
+        self.assertIn("ROOT.FAILSCORE.checks[0]: msg: placeholder {kye}",
+                      self.errors())
+
+    def test_param_policy_quirk(self):
+        self.files["part_b.toml"] += textwrap.dedent('''
+            [[param_policy]]
+            id = "PARAM.TADAH:GRID"
+            optimizers = ["TADAH:GRID"]
+            doc = "GRID_POINTS is its only PARAM key."
+            quirk = "A word value is accepted and has no effect."
+            ''')
+        reg = self.load()
+        self.assertEqual(reg.param_policies[0].quirk,
+                         "A word value is accepted and has no effect.")
+        self.edit("part_b.toml", "A word value is accepted",
+                  "Your word value is accepted")
+        self.assertIn("PARAM.TADAH:GRID: quirk: 'Your' addresses the reader",
+                      self.errors())
+
     def test_wrapper_has_one_slot_line(self):
         self.edit("part_a.toml", "INNER\n{line}\n", "INNER {line}\n")
         self.assertIn("a wrapper has one slot", self.errors())
