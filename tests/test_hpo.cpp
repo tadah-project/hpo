@@ -89,13 +89,25 @@ TEST_CASE("ANNEAL capability help exposes corrected public contracts",
 
     /* The key listings are generated from the registry
      * (blueprint/anneal_keys.toml), so these checks pin the emitter
-     * format and a few registry facts, not hand-written prose. */
+     * format and a few registry facts, not hand-written prose.
+     * The help is text for a user: the keys a family does not read are
+     * "refused" ("Dead knobs are hard errors" before the help was
+     * rewritten), ANNEAL_PA "accepts and does not use" the INIT_JITTER
+     * calibration keys of ANNEAL_PT ("Accepted as an inactive setting by
+     * the current ANNEAL_PA driver"), and no key's help gives history
+     * (INIT_JITTER_LADDER OFF was "(pre-1.5.0 behaviour)"); the help says
+     * what a key does, not what the reader is to do ("Adapts ...", not
+     * "Adapt ..."; POPULATION is read by TADAH:ANNEAL_PA, not "use
+     * TADAH:ANNEAL_PA"): these checks fail on the text before that
+     * rewrite. */
     const std::string serial = capture("ANNEAL");
     CHECK(serial.find("PARAM T_INIT") != std::string::npos);
     CHECK(serial.find("PARAM CHAIN_LENGTH (default auto)")
           != std::string::npos);
     CHECK(serial.find("PARAM RT (default 0.85)") != std::string::npos);
-    CHECK(serial.find("Dead knobs are hard errors: STEP")
+    CHECK(serial.find("Keys it does not read are refused: STEP")
+          != std::string::npos);
+    CHECK(serial.find("POPULATION, which TADAH:ANNEAL_PA reads")
           != std::string::npos);
 
     const std::string pt = capture("ANNEAL_PT");
@@ -105,12 +117,33 @@ TEST_CASE("ANNEAL capability help exposes corrected public contracts",
     CHECK(pt.find("best-stall") != std::string::npos);
     CHECK(pt.find("With REPLICAS fixed") != std::string::npos);
     CHECK(pt.find("PARAM RT") == std::string::npos);
+    CHECK(pt.find("OFF = every slot uses the same sigma.")
+          != std::string::npos);
+    CHECK(pt.find("pre-1.5.0") == std::string::npos);
+    for (const char* doc :
+         {"Adapts interior ladder temperatures",
+          "Freezes ladder adaptation once",
+          "ANNEAL_PT INIT_MODE JITTER AUTO measures at most",
+          "ANNEAL_PT INIT_MODE JITTER AUTO re-probes at most",
+          "Scales each slot's initial jitter"}) {
+        INFO(doc);
+        CHECK(pt.find(doc) != std::string::npos);
+    }
 
     const std::string pa = capture("ANNEAL_PA");
     CHECK(pa.find("all-fail skips") != std::string::npos);
     CHECK(pa.find("POPULATION <R> population size") != std::string::npos);
     CHECK(pa.find("PARAM INIT_MODE <JITTER|UNIFORM> (default JITTER)")
           != std::string::npos);
+    /* INIT_JITTER_MAX, _PROBES, _MAXEVAL, _MAXTIME_FRAC, _SAMPLE and
+     * _AUDIT, each listed once */
+    std::size_t unused = 0;
+    for (auto at = pa.find("ANNEAL_PA accepts it and does not use it.");
+         at != std::string::npos;
+         at = pa.find("ANNEAL_PA accepts it and does not use it.", at + 1))
+        ++unused;
+    CHECK(unused == 6u);
+    CHECK(pa.find("driver") == std::string::npos);
 }
 
 TEST_CASE("HPO placeholder — see comments above for planned tests", "[HPO]")
@@ -504,8 +537,8 @@ TEST_CASE("HPO parser accepts ROOT-level keys after ENDOPTIMIZER",
      * guard had become `if (block == OUTER) { fall through }` (matching
      * only the OPTIMIZER scope), so once `ENDOPTIMIZER` set
      * `block = ROOT`, every subsequent ROOT-level key hit the catch-all
-     * throw before reaching its handler. Real-world configs (every
-     * config.hpo under examples/) failed to
+     * throw before reaching its handler. Real-world target files (every
+     * one with a top-level key after its OPTIMIZER block) failed to
      * parse with `Error on line N: unknown key 'LOSS' in this block`.
      *
      * This test exercises the most common ROOT-level keys to ensure
@@ -775,8 +808,9 @@ TEST_CASE("CERES:LBFGS, WOLFE and NLCG are refused at their block's line: "
             tadah::hpo::HPOTargets(ctx, input.path.string()),
             Catch::Contains("CERES:" + algo + " is refused: Ceres' "
                             "GradientProblemSolver has no bounds") &&
-                Catch::Contains("Use NLOPT:LD_LBFGS (L-BFGS within the box) "
-                                "or DLIB:BFGS, or CERES:STEEPEST_DESCENT"));
+                Catch::Contains("The recommended replacements are "
+                                "NLOPT:LD_LBFGS (L-BFGS within the box), "
+                                "DLIB:BFGS and CERES:STEEPEST_DESCENT"));
         CHECK_THROWS_WITH(tadah::hpo::optimizer_caps("CERES", algo),
                           Catch::StartsWith("CERES:" + algo + " is refused: "));
     }
@@ -902,16 +936,19 @@ TEST_CASE("CERES NLLS family is refused by the caps registry",
      * typo, unknown) are not refused.
      * Before the fix: the reason named "CERES:LBFGS, CERES:WOLFE,
      * CERES:NLCG or CERES:STEEPEST_DESCENT", three solvers refused since
-     * (their Wolfe line search stalls at a point outside the OPTIM box). */
+     * (their Wolfe line search stalls at a point outside the OPTIM box).
+     * The reason names the command, tadah hpo ("HPO" before the help was
+     * rewritten for a user). */
     for (const std::string algo : {"LEVENBERG_MARQUARDT", "DOGLEG", "SUBSPACE_DOGLEG"}) {
         INFO(algo);
         CHECK_THROWS_WITH(tadah::hpo::optimizer_caps("CERES", algo),
                           Catch::StartsWith("CERES:" + algo + " is refused: ") &&
-                          Catch::Contains("Use CERES:STEEPEST_DESCENT, Ceres' "
+                          Catch::Contains("The recommended replacements are "
+                                          "CERES:STEEPEST_DESCENT, Ceres' "
                                           "line-search solver of a scalar loss "
-                                          "that HPO runs, or a bound-constrained "
-                                          "gradient search: NLOPT:LD_LBFGS or "
-                                          "DLIB:BFGS"));
+                                          "that tadah hpo runs, and the "
+                                          "bound-constrained gradient searches "
+                                          "NLOPT:LD_LBFGS and DLIB:BFGS"));
         CHECK_THROWS_WITH(tadah::hpo::reject_refused_backend("CERES", algo,
                                                              "the EXPLORE block"),
                           Catch::StartsWith("the EXPLORE block: CERES:" + algo +
@@ -1372,7 +1409,8 @@ TEST_CASE("GradientProvider Hybrid takes finite differences on every "
      * FIXINDEX, ...), a candidate rejected before training, a PC_LAMMPS
      * chain that failed. HYBRID skipped the finite differences there and
      * returned g = 0, so DLIB:BFGS ended COMPLETED at its start after two
-     * evaluations (example 01 without PC_LAMMPS, GRAD_STRATEGY HYBRID).
+     * evaluations (data/ta/target_files/dlib_bfgs.hpo without its
+     * PC_LAMMPS line, GRAD_STRATEGY HYBRID).
      * The fix: difference every parameter, as the host's journal line
      * already said it would. */
     auto agf = [](const DlibVec& x, DlibVec& g, std::vector<int>& nfd) -> bool {

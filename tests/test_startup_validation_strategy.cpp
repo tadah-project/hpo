@@ -526,9 +526,11 @@ TEST_CASE("startup validation: a phase without LIB or ALGO is rejected by "
                                         "not set"));
     }
     SECTION("an OPTIMIZER block that is never closed") {
+        /* Refused as open, at its OPTIMIZER line (line 3), before what it
+         * sets is checked: its ENDOPTIMIZER line checks the optimiser. */
         const auto msg = parse_error(kRoot + "OPTIMIZER\n  MAXEVAL 5\n");
-        CHECK_THAT(msg, Catch::Contains("names no optimiser: LIB and ALGO are "
-                                        "not set"));
+        CHECK(msg == "Error on line 3: OPTIMIZER block not closed with "
+                     "ENDOPTIMIZER\nLine: OPTIMIZER");
     }
     SECTION("a spec built outside the parser gets the same text from the "
             "policies") {
@@ -611,10 +613,13 @@ TEST_CASE("startup validation: an INNER block without LIB or ALGO is "
         }
     }
     SECTION("an INNER block that is never closed, at the end of the file") {
+        /* Refused as open, at its INNER line (line 9), the innermost of
+         * the open blocks, before what it sets is checked: its ENDINNER
+         * line checks the optimiser. */
         const auto msg = parse_error(head + "    TYPE PLAIN\n" + mlsl +
                                      "    INNER\n      LIB NLOPT\n");
-        CHECK_THAT(msg, Catch::Contains("the INNER block inside STRATEGY names "
-                                        "no optimiser: ALGO is not set"));
+        CHECK(msg == "Error on line 9: INNER block not closed with ENDINNER\n"
+                     "Line:     INNER");
     }
     SECTION("an INNER block that names LIB and ALGO passes") {
         CHECK(parse_error(head + "    TYPE PLAIN\n" + mlsl +
@@ -753,13 +758,17 @@ TEST_CASE("startup validation: a second STRATEGY block is rejected at its "
                                      "4)") &&
                    Catch::EndsWith("Line:   STRATEGY"));
     }
-    SECTION("in a second OPTIMIZER block") {
+    SECTION("in a second OPTIMIZER block, which is refused first") {
+        /* The second OPTIMIZER block (line 11) is refused at its own line,
+         * before its STRATEGY block (line 12) is read: there is one
+         * OPTIMIZER block (test_hpotarget_block_structure.cpp). */
         const auto twice = parse_error(
             kRoot + "OPTIMIZER\n  STRATEGY\n" + first + "  ENDSTRATEGY\n"
             "ENDOPTIMIZER\nOPTIMIZER\n  STRATEGY\n    TYPE PLAIN\n"
             "  ENDSTRATEGY\nENDOPTIMIZER\n");
-        CHECK_THAT(twice, Catch::StartsWith("Error on line 12: STRATEGY block "
-                                            "given more than once"));
+        CHECK(twice == "Error on line 11: OPTIMIZER block given more than "
+                       "once (the first opens on line 3); write every "
+                       "optimiser setting in one block\nLine: OPTIMIZER");
     }
 }
 
@@ -1104,9 +1113,9 @@ TEST_CASE("startup validation: NLOPT:LN_NEWUOA_BOUND is refused at the line "
      * MULTISTART, the PRESTAGE refinement; ENDSTRATEGY and ENDREFINE check
      * no optimiser), ENDEXPLORE for the PRESTAGE exploration, ENDINNER for
      * an INNER block (under G_MLSL_LDS and LN_AUGLAG, inside STRATEGY,
-     * EXPLORE and REFINE), and the end of the file for an OPTIMIZER block
-     * never closed -- naming the phase, as the other messages of these
-     * blocks do, with the caps registry's reason and replacement. A spec
+     * EXPLORE and REFINE) -- naming the phase, as the other messages of
+     * these blocks do, with the caps registry's reason and replacement (an
+     * OPTIMIZER block never closed is refused as open). A spec
      * built outside the parser gets the refusal from validate_backend() (no
      * phase), validate_run_policy() and the MULTISTART policy (the
      * STRATEGY-level optimiser), validate_phase_backends() and
@@ -1179,14 +1188,16 @@ TEST_CASE("startup validation: NLOPT:LN_NEWUOA_BOUND is refused at the line "
         CHECK_THAT(parse_error(c.config),
                    Catch::StartsWith("Error on line " + std::to_string(c.line) +
                                      ": " + c.phase + ": " + refused) &&
-                   Catch::Contains("Use NLOPT:LN_BOBYQA") &&
+                   Catch::Contains("The recommended replacement is "
+                                   "NLOPT:LN_BOBYQA") &&
                    Catch::EndsWith("\nLine: " + c.closing));
     }
-    /* An OPTIMIZER block the file never closes: at the end of the file,
-     * with no line, as its missing LIB or ALGO. */
-    CHECK_THAT(parse_error(kRoot + "OPTIMIZER\n  LIB NLOPT\n"
-                                   "  ALGO LN_NEWUOA_BOUND\n  MAXEVAL 5\n"),
-               Catch::StartsWith(top + ": " + refused));
+    /* An OPTIMIZER block the file never closes is refused as open, at its
+     * OPTIMIZER line, before its optimiser is checked. */
+    CHECK(parse_error(kRoot + "OPTIMIZER\n  LIB NLOPT\n"
+                              "  ALGO LN_NEWUOA_BOUND\n  MAXEVAL 5\n") ==
+          "Error on line 3: OPTIMIZER block not closed with ENDOPTIMIZER\n"
+          "Line: OPTIMIZER");
 
     /* A spec built outside the parser. */
     const auto bound = [](const std::string& algo, std::uint64_t maxeval) {
@@ -1205,7 +1216,8 @@ TEST_CASE("startup validation: NLOPT:LN_NEWUOA_BOUND is refused at the line "
                                                 tadah::hpo::RestartStop::Off);
                }),
                Catch::StartsWith(refused) &&
-               Catch::Contains("Use NLOPT:LN_BOBYQA"));
+               Catch::Contains("The recommended replacement is "
+                               "NLOPT:LN_BOBYQA"));
     CHECK_THAT(error_of([&] { tadah::hpo::validate_run_policy(sp); }),
                Catch::StartsWith(top + ": " + refused));
     sp.strategy_type = StrategyType::MULTISTART;
@@ -1279,13 +1291,15 @@ TEST_CASE("startup validation: NLOPT:LN_NEWUOA, the Ceres least-squares "
     const std::string newuoa =
         "NLOPT:LN_NEWUOA is refused: NLopt 2.10 runs LN_NEWUOA without the "
         "OPTIM box";
-    const std::string bobyqa = "Use NLOPT:LN_BOBYQA";
+    const std::string bobyqa =
+        "The recommended replacement is NLOPT:LN_BOBYQA";
     /* the NLLS refusal named "Use CERES:LBFGS, CERES:WOLFE, CERES:NLCG or
-     * CERES:STEEPEST_DESCENT" before the fix (three of them refused since) */
+     * CERES:STEEPEST_DESCENT" before the fix (three of them refused since),
+     * and "HPO" for the command before the help was rewritten for a user */
     const std::string ceres_use =
-        "Use CERES:STEEPEST_DESCENT, Ceres' line-search solver of a scalar "
-        "loss that HPO runs, or a bound-constrained gradient search: "
-        "NLOPT:LD_LBFGS or DLIB:BFGS";
+        "The recommended replacements are CERES:STEEPEST_DESCENT, Ceres' "
+        "line-search solver of a scalar loss that tadah hpo runs, and the "
+        "bound-constrained gradient searches NLOPT:LD_LBFGS and DLIB:BFGS";
     const std::string explain = "; `tadah explain ALGO` lists the optimisers";
     const std::string top = "the STRATEGY-level optimiser";
     struct Case {
@@ -1573,7 +1587,8 @@ TEST_CASE("startup validation: NLOPT:LN_NEWUOA_BOUND is refused by hpo_run "
     CHECK_THAT(err, Catch::StartsWith("Error on line 8: the STRATEGY-level "
                                       "optimiser: NLOPT:LN_NEWUOA_BOUND is "
                                       "refused: ") &&
-                    Catch::Contains("Use NLOPT:LN_BOBYQA"));
+                    Catch::Contains("The recommended replacement is "
+                                    "NLOPT:LN_BOBYQA"));
 }
 
 /* ======================================================================
@@ -2184,10 +2199,12 @@ const std::string kNoTolerance =
     "; set MAXEVAL, MAXTIME or STOPVAL (it honours no tolerance)";
 /* GD_STOGO ignores NLopt's forced stop: once HPO has to end it, only
  * NLopt's own MAXEVAL ends it promptly (MAXTIME after the rest of its
- * time). */
+ * time). The note names the command, tadah hpo ("HPO" before the help was
+ * rewritten for a user). */
 const std::string kStogoNote =
     "NLopt's StoGO has no convergence test of its own and ignores NLopt's "
-    "forced stop, by which HPO ends a search (on a signal, an error, the "
+    "forced stop, by which tadah hpo ends a search (on a signal, an error, "
+    "the "
     "RESTART stagnation stop, or a loss at or below STOPVAL that NLopt was "
     "not given): it then calls on, each call refused, and only NLopt's own "
     "evaluation count ends it promptly (MAXTIME only once the rest of its "
@@ -2688,8 +2705,8 @@ TEST_CASE("startup validation: NLopt rejects a tolerance, POPULATION or "
                                              inner_bobyqa),
                              top + "NLOPT:" + algo + " does not support " +
                                  key + " with an INNER block: AUGLAG ends "
-                                 "when its INNER search ends (HPO sets no "
-                                 "constraint) and tests the block's "
+                                 "when its INNER search ends (tadah hpo sets "
+                                 "no constraint) and tests the block's "
                                  "tolerances only to name that ending, and "
                                  "NLopt passes them to no INNER search; set "
                                  "it in the INNER block, whose local search "

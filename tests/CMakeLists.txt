@@ -21,29 +21,16 @@ target_compile_definitions(test_hpo PRIVATE CATCH_CONFIG_ENABLE_BENCHMARKING)
 target_compile_definitions(test_hpo PRIVATE
     "TADAH_BENCH_DEFAULT_POT=\"${CMAKE_CURRENT_SOURCE_DIR}/data/bench_ta.tadah\"")
 
-# Worked examples (HPO/examples). test_examples_parse.cpp gives every
-# examples/*/config.hpo a test case of its own: the list is generated here,
-# and CONFIGURE_DEPENDS re-globs the directory on every build, so a new
-# example is picked up (and fails until examples/tools/parse_guard.manifest
-# names what it needs). The PC_OBSERVABLE gradient tests
-# (test_hpo_host_e2e.cpp) train on the examples' shared Ta data.
-cmake_path(SET _hpo_examples_dir NORMALIZE
-    "${CMAKE_CURRENT_SOURCE_DIR}/../examples")
-file(GLOB _hpo_example_configs CONFIGURE_DEPENDS
-    "${_hpo_examples_dir}/*/config.hpo")
-list(SORT _hpo_example_configs)
-set(_hpo_example_cases "")
-foreach(_cfg IN LISTS _hpo_example_configs)
-    cmake_path(GET _cfg PARENT_PATH _dir)
-    cmake_path(GET _dir FILENAME _name)
-    string(APPEND _hpo_example_cases "TADAH_EXAMPLE_PARSE_CASE(\"${_name}\")\n")
-endforeach()
-file(CONFIGURE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/examples_parse_cases.inc"
-     CONTENT "${_hpo_example_cases}" @ONLY)
-target_include_directories(test_hpo PRIVATE
-    "${CMAKE_CURRENT_BINARY_DIR}/generated")
+# The Ta test set, data/ta: in common/ the shared training and validation
+# configurations, the two VASP-derived datasets (common/data/README.md gives
+# their provenance) and the LAMMPS scripts; a DM_REAM seed potential,
+# ta2_refit_seed.tadah; and in target_files/ the target files that
+# test_ta_target_files.cpp parses, one test case each. The data tests
+# (test_ta_data_cells.cpp, test_shipped_data_stress_sign.cpp), the
+# PC_OBSERVABLE gradient tests (test_hpo_host_e2e.cpp), the multi-rank
+# cases (mpi/hpo_mpi_e2e.py) and scripts/run_mpi_smoke.sh use it too.
 target_compile_definitions(test_hpo PRIVATE
-    "TADAH_HPO_EXAMPLES_DIR=\"${_hpo_examples_dir}\"")
+    "TADAH_HPO_TA_DATA_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/data/ta\"")
 
 include(Catch)
 catch_discover_tests(test_hpo)
@@ -207,7 +194,8 @@ if(TADAH_HPO_MPI)
 endif()
 set(_hpo_tadah_cli_cases seed_anchor_warm seed_anchor_nlopt durable_exit
                          pc_readback pc_lammps_local_search pc_lammps_verbose
-                         kernel_line_once kernel_line_two_runs)
+                         kernel_line_once kernel_line_two_runs
+                         pc_deadline_line)
 foreach(_case IN LISTS _hpo_tadah_cli_cases)
     add_test(NAME hpo_tadah_cli_${_case}
         COMMAND test_hpo "[.tadah_cli_${_case}]" --warn NoTests)
@@ -302,46 +290,27 @@ set_tests_properties(hpo_anneal_registry_sync PROPERTIES
     LABELS "anneal"
     TIMEOUT 30)
 
-# Fingerprint drift gate: the fields of each example's
-# reference_fingerprint.json that come from tools/tolerance_overrides.json
-# (tolerances, accepted statuses, journal checks, the rationale) must equal
-# that file, so an overrides edit cannot leave a fingerprint behind.
-# Regenerate with tools/generate_fingerprint.py <example> --overrides ...
-add_test(NAME hpo_example_fingerprint_overrides_sync
-    COMMAND ${Python3_EXECUTABLE}
-        ${CMAKE_CURRENT_SOURCE_DIR}/../examples/tools/generate_fingerprint.py
-        ${CMAKE_CURRENT_SOURCE_DIR}/../examples
-        --overrides ${CMAKE_CURRENT_SOURCE_DIR}/../examples/tools/tolerance_overrides.json
-        --check)
-set_tests_properties(hpo_example_fingerprint_overrides_sync PROPERTIES
-    LABELS "examples"
-    TIMEOUT 30)
-# The generator's and the gate's handling of the overrides, on a synthetic
-# run (examples/tools/test_generate_fingerprint.py).
-add_test(NAME hpo_example_fingerprint_tool
-    COMMAND ${Python3_EXECUTABLE}
-        ${CMAKE_CURRENT_SOURCE_DIR}/../examples/tools/test_generate_fingerprint.py)
-set_tests_properties(hpo_example_fingerprint_tool PROPERTIES
-    LABELS "examples"
-    TIMEOUT 30)
-# The comparator's failure-count guards (NaN/Inf clampings, evaluations
-# that threw) on a synthetic run (examples/tools/test_compare_fingerprint.py).
-add_test(NAME hpo_example_fingerprint_compare
-    COMMAND ${Python3_EXECUTABLE}
-        ${CMAKE_CURRENT_SOURCE_DIR}/../examples/tools/test_compare_fingerprint.py)
-set_tests_properties(hpo_example_fingerprint_compare PROPERTIES
-    LABELS "examples"
-    TIMEOUT 30)
-# The status the example scripts print (examples/common/journal_status.sh,
-# sourced by common/run.sh, run_all.sh and the run.sh of 16, 17 and 27):
-# the whole "Optimiser status" value, colons included
-# (examples/tools/test_journal_status.py; it needs bash).
-add_test(NAME hpo_example_journal_status
-    COMMAND ${Python3_EXECUTABLE}
-        ${CMAKE_CURRENT_SOURCE_DIR}/../examples/tools/test_journal_status.py)
-set_tests_properties(hpo_example_journal_status PROPERTIES
-    LABELS "examples"
-    TIMEOUT 30)
+# The optimiser registry, written for the documentation, which is built
+# without C++: blueprint/optimizers_gen.toml, checked in, holds every
+# LIB:ALGO of the caps registry (registered or refused) with its
+# capabilities, its row of `tadah explain ALGO` and its `tadah explain
+# LIB:ALGO` text, written by tools/hpo_registry_export.cpp.
+# hpo_optimizer_registry_sync fails when the file differs from what the code
+# produces, naming the command that regenerates it (blueprint/README.md).
+# Before the fix: fails, the file does not exist.
+cmake_path(SET _hpo_optimizers_gen NORMALIZE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../blueprint/optimizers_gen.toml")
+add_executable(hpo_registry_export tools/hpo_registry_export.cpp)
+target_link_libraries(hpo_registry_export PRIVATE tadah.core tadah.hpo)
+add_custom_target(hpo_regenerate_optimizer_registry
+    COMMAND hpo_registry_export --write ${_hpo_optimizers_gen}
+    COMMENT "Writing ${_hpo_optimizers_gen}"
+    VERBATIM)
+add_test(NAME hpo_optimizer_registry_sync
+    COMMAND hpo_registry_export --check ${_hpo_optimizers_gen})
+set_tests_properties(hpo_optimizer_registry_sync PROPERTIES
+    LABELS "docs"
+    TIMEOUT 60)
 
 # Boost drift gate: every Boost header HPO includes must be in the Boost
 # Tadah vendors (MLIP's external/boost, on HPO's include path through
@@ -495,7 +464,7 @@ if(TADAH_HPO_MPI)
                 "--preflags=${_mpi_preflags}"
                 "--postflags=${_mpi_postflags}"
                 "--tadah=$<$<TARGET_EXISTS:tadah>:$<TARGET_FILE:tadah>>"
-                --examples=${CMAKE_CURRENT_SOURCE_DIR}/../examples
+                --data=${CMAKE_CURRENT_SOURCE_DIR}/data/ta
                 --workdir=${CMAKE_CURRENT_BINARY_DIR}/hpo_mpi_e2e)
         set_tests_properties(hpo_mpi_e2e_${_case} PROPERTIES
             LABELS "mpi;e2e"

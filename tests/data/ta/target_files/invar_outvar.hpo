@@ -1,0 +1,29 @@
+# A PC_LAMMPS line continued with \ that passes --invar values and reads
+# --outvar values (../common/lammps/Ecoh_param.in).
+
+OPTIMIZER
+  STRATEGY
+    TYPE PLAIN
+    LIB DLIB
+    ALGO BFGS
+    MAXEVAL 30
+  ENDSTRATEGY
+ENDOPTIMIZER
+
+LOSS L2
+FAILSCORE 1e16
+PC_ERMSE 0 0.0001
+
+# The --invar values set the size of Ecoh_param.in's supercell (5 x 5 x 5,
+# where Ecoh.in builds a fixed 4 x 4 x 4); --outvar Eiso and Ebulk are
+# recorded for each evaluation without a loss term.
+PC_LAMMPS --script ../common/lammps/Ecoh_param.in \
+          --invar nx 5 --invar ny 5 --invar nz 5 \
+          --hotvar hot_a0 2.5 4.5 3.302 \
+          --outvar Eiso --outvar Ebulk \
+          --varloss Ecoh 8.10 800
+
+OPTIM RCUT2B (1) 4.0 6.0
+
+OUTPUT 1
+BOUTPUT 1

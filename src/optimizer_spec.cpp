@@ -144,10 +144,12 @@ static void print_tadah_caps(std::ostream& os, const std::string& algo)
             "   * Stops: MAXEVAL / MAXTIME / STOPVAL; FTOL_REL/FTOL_ABS (> 0) arm the\n"
             "     Corana eps-NEPS plateau; T < T_MIN ends a schedule (REANNEAL\n"
             "     restarts from the best until the budget runs out).\n"
-            "   * SEED <int>  RNG seed (default: random_device). THREADS <n> sizes the\n"
-            "     shared per-eval fan-out pool (the chain itself is serial).\n"
-            "   * Dead knobs are hard errors: STEP, XTOL_*, VECTOR_ARR, GRAD_STRATEGY,\n"
-            "     unknown PARAM keys; POPULATION -> use TADAH:ANNEAL_PA.\n";
+            "   * SEED <int>  seed of the random numbers (default: one drawn from\n"
+            "     the system's random source). THREADS <n> sizes the shared\n"
+            "     per-eval fan-out pool (the chain itself is serial).\n"
+            "   * Keys it does not read are refused: STEP, XTOL_*, VECTOR_ARR,\n"
+            "     GRAD_STRATEGY, unknown PARAM keys, and\n"
+            "     POPULATION, which TADAH:ANNEAL_PA reads.\n";
         print_anneal_family_caps(os, tadah::hpo::anneal_registry::KIND_SERIAL);
     }
     else if(algo=="ANNEAL_PT")
@@ -165,7 +167,7 @@ static void print_tadah_caps(std::ostream& os, const std::string& algo)
             "     windows). One of them is required: the ladder keeps its\n"
             "     temperatures, so no schedule ends a run. Cooling schedules\n"
             "     belong to serial ANNEAL: RT/T_MIN are rejected here.\n"
-            "   * THREADS <n>  shared worker-pool width (replica evals + pc_lammps\n"
+            "   * THREADS <n>  shared worker-pool width (replica evals + PC_LAMMPS\n"
             "     fan-out + MLIP train/predict); also the REPLICAS default.\n"
             "   * Diagnostics: per-pair swap tables + step reports every SWAP_WINDOW\n"
             "     epochs; ladder updates in hpo_temperature_ladder.tsv; calibrated\n"
@@ -198,7 +200,7 @@ static void print_tadah_caps(std::ostream& os, const std::string& algo)
 static void print_dlib_caps(std::ostream& os, const std::string& algo)
 {
     if(algo=="GFS") {
-        os<<"   * dlib find_min_global (MaxLIPO+TR); every INIT point seeds it.\n"
+        os<<"   * dlib's global optimiser, MaxLIPO+TR; every INIT point seeds it.\n"
             "     No PARAM.\n"
             "   * FTOL_ABS     (dlib's solver epsilon, default 1e-3; it ends no\n"
             "                   run). FTOL_REL/XTOL_REL/XTOL_ABS are rejected.\n";
@@ -230,8 +232,9 @@ static void print_nlopt_caps(std::ostream& os,const std::string& algo)
     if (a==NLOPT_NUM_ALGORITHMS) { os<<"   * (unknown)\n"; return; }
 
     print_stops(os, "NLOPT", algo);
-    os<<"   * PARAM <name> <value> - any nlopt::opt::set_param key\n";
-    if (algo[0]=='G')        os<<"   * global optimizer\n";
+    os<<"   * PARAM <name> <value>  passed to NLopt as its algorithm parameter\n"
+        "     of that name\n";
+    if (algo[0]=='G')        os<<"   * global optimiser\n";
     if (algo[1]=='N') os<<"   * derivative-free\n";
     /* Initial-step policy from the registry (single source of truth). */
     try {
@@ -275,7 +278,8 @@ static void print_nlopt_caps(std::ostream& os,const std::string& algo)
     } catch (const std::exception&) { /* unregistered: nothing to add */ }
 }
 
-static void print_ceres_caps(std::ostream& os, const std::string& algo)
+static void print_ceres_caps(std::ostream& os, const std::string& algo,
+                             [[maybe_unused]] BuildNotes notes)
 {
     const OptimizerCaps* c = find_optimizer_caps("CERES", algo);
     if (!c) { os << "   * (unknown CERES algo; registered: "
@@ -284,8 +288,9 @@ static void print_ceres_caps(std::ostream& os, const std::string& algo)
     os << "   * Ceres' GradientProblemSolver: " << what << "; local, "
           "gradient-based (GRAD_STRATEGY NUMERICAL by default)\n";
 #ifndef TADAH_USE_CERES
-    os << "   * this build has no Ceres (TADAH_ENABLE_CERES OFF): a run is "
-          "refused\n";
+    if (notes == BuildNotes::Include)
+        os << "   * this build has no Ceres (TADAH_ENABLE_CERES OFF): a run "
+              "is refused\n";
 #endif
     print_stops(os, "CERES", algo);
     os << "   * PARAM tol_gradinf <double>  (gradient tolerance, the largest "
@@ -304,7 +309,7 @@ static void print_asa_caps(std::ostream& os, const std::string& algo)
 {
     if (algo != "ASA") { os << "   * (the ASA library has one algorithm: ALGO ASA)\n"; return; }
     os << "   * Adaptive Simulated Annealing (Lester Ingber, ASA-30.53,\n"
-          "     vendored under external/asa, BSD-3-Clause)\n"
+          "     BSD-3-Clause; its source is part of Tadah!)\n"
           "   * single-instance: one ASA run per process at a time\n"
           "   * stops: MAXEVAL / MAXTIME / STOPVAL plus ASA's own\n"
           "     Limit_* and plateau options below; FTOL/XTOL rejected\n"
@@ -329,7 +334,7 @@ std::optional<OptimizerSpec> tadah::hpo::anchor_seed_points(const OptimizerSpec&
 }
 
 void OptimizerSpec::print_caps(std::ostream& os, const std::string& lib,
-                               const std::string& algo)
+                               const std::string& algo, BuildNotes notes)
 {
     os<<"Options for "<<lib<<":"<<algo<<"\n";
     /* A backend the caps registry refuses (optimizer_caps.h), of any
@@ -343,8 +348,14 @@ void OptimizerSpec::print_caps(std::ostream& os, const std::string& lib,
     else if (lib=="DLIB")  print_dlib_caps (os,algo);
     else if (lib=="NLOPT") print_nlopt_caps(os,algo);
     else if (lib=="ASA")   print_asa_caps  (os,algo);
-    else if (lib=="CERES") print_ceres_caps(os,algo);
+    else if (lib=="CERES") print_ceres_caps(os,algo,notes);
     else os<<"   * (no info)\n";
+}
+
+void OptimizerSpec::print_caps(std::ostream& os, const std::string& lib,
+                               const std::string& algo)
+{
+    print_caps(os, lib, algo, BuildNotes::Include);
 }
 
 void OptimizerSpec::print_caps(const std::string& lib,
@@ -362,8 +373,9 @@ std::string upper_ascii(std::string s)
     return s;
 }
 
-/* What a backend is, for its row of the table. */
-std::string row_text(const OptimizerCaps& c)
+}  // namespace
+
+std::string tadah::hpo::optimiser_row_text(const OptimizerCaps& c)
 {
     std::string t = c.is_global ? "global" : "local";
     if (c.accepts_inner)
@@ -378,8 +390,6 @@ std::string row_text(const OptimizerCaps& c)
     if (c.ignores_bounds) t += ", ignores the OPTIM box";
     return t;
 }
-
-}  // namespace
 
 void tadah::hpo::print_optimiser_table(std::ostream& out, const std::string& lib)
 {
@@ -404,7 +414,7 @@ void tadah::hpo::print_optimiser_table(std::ostream& out, const std::string& lib
                   });
         for (const auto* c : rows)
             out << "  " << std::left << std::setw(static_cast<int>(width + 2))
-                << c->algo << row_text(*c) << "\n";
+                << c->algo << optimiser_row_text(*c) << "\n";
 #ifndef TADAH_USE_CERES
         if (l == "CERES")
             out << "  (this build has no Ceres, TADAH_ENABLE_CERES OFF: a run "

@@ -20,10 +20,8 @@ The user-facing surface is one config file (`config.hpo`) read by
 - **loss terms** (`PC_ERMSE`, `PC_FRMSE`, `PC_LAMMPS`, …),
 - and an **`OPTIM` search space**.
 
-For the full grammar, parallelism / performance notes, and worked
-examples, see the
-[HPO documentation](https://tadah.readthedocs.io/v1-dev/) and the
-[`examples/`](examples/) directory.
+For the full grammar and the parallelism / performance notes, see the
+[HPO documentation](https://tadah.readthedocs.io/v1-dev/).
 
 ## You don't need to use this directly
 

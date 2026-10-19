@@ -95,11 +95,11 @@ using Registry = std::unordered_map<CapsKey, OptimizerCaps, CapsKeyHash>;
  * phase interpolates that value with a cubic and shrinks the step to a
  * vanishing fraction of the trial (a fraction of order |slope x step| /
  * (FAILSCORE - loss)): measured with CERES:LBFGS, WOLFE and NLCG alike,
- *   - OPTIM RCUT2B [4, 6], CGRID2B (2) [0.1, 2] on the HPO examples'
- *   common Ta model, FAILSCORE 1e16, MAXEVAL 25: the first trial left the
- *   box, the search took a step of 0 and ended "Parameter tolerance
- *   reached" at its start after 16 evaluations (loss 13.84); it had
- *   evaluated 20 of its 25 points outside the box before, ending at
+ *   - OPTIM RCUT2B [4, 6], CGRID2B (2) [0.1, 2] on the shared Ta model of
+ *   the tests (tests/data/ta/common), FAILSCORE 1e16, MAXEVAL 25: the first
+ *   trial left the box, the search took a step of 0 and ended "Parameter
+ *   tolerance reached" at its start after 16 evaluations (loss 13.84); it
+ *   had evaluated 20 of its 25 points outside the box before, ending at
  *   MAXEVAL with RCUT2B 11.2;
  *   - the straddle fixture of test_hpo_termination.cpp, FAILSCORE 1e9,
  *   FAILSCORE_GRADING ON, from CGRID2B[2] = 1.4: after two trials outside
@@ -125,12 +125,13 @@ struct Refusal {
     const char* reason;
 };
 constexpr const char* kCeresLeastSquares =
-    "HPO does not run Ceres' least-squares Solver (LEVENBERG_MARQUARDT, "
+    "tadah hpo does not run Ceres' least-squares Solver (LEVENBERG_MARQUARDT, "
     "DOGLEG, SUBSPACE_DOGLEG): it minimises a sum of squared residuals with "
-    "their derivatives, and HPO gives an optimiser one scalar loss, over "
-    "which these methods degenerate. Use CERES:STEEPEST_DESCENT, Ceres' "
-    "line-search solver of a scalar loss that HPO runs, or a bound-"
-    "constrained gradient search: NLOPT:LD_LBFGS or DLIB:BFGS";
+    "their derivatives, and tadah hpo gives an optimiser one scalar loss, "
+    "over which these methods degenerate. The recommended replacements are "
+    "CERES:STEEPEST_DESCENT, Ceres' line-search solver of a scalar loss "
+    "that tadah hpo runs, and the bound-constrained gradient searches "
+    "NLOPT:LD_LBFGS and DLIB:BFGS";
 constexpr const char* kCeresWolfe =
     "Ceres' GradientProblemSolver has no bounds, and a point it proposes "
     "outside the OPTIM box is not evaluated: it is scored as a failure "
@@ -138,36 +139,38 @@ constexpr const char* kCeresWolfe =
     "above every usable loss. Ceres' Wolfe line search interpolates that "
     "value and shrinks its step to almost nothing (a 2-D run stopped at its "
     "start after 16 evaluations, 'Parameter tolerance reached' with a step "
-    "of 0; a 1-D run moved by 2.5e-7 per iteration until MAXEVAL). Use "
-    "NLOPT:LD_LBFGS (L-BFGS within the box) or DLIB:BFGS, or "
-    "CERES:STEEPEST_DESCENT, whose Armijo line search steps back from such "
-    "a point";
+    "of 0; a 1-D run moved by 2.5e-7 per iteration until MAXEVAL). The "
+    "recommended replacements are NLOPT:LD_LBFGS (L-BFGS within the box), "
+    "DLIB:BFGS and CERES:STEEPEST_DESCENT, whose Armijo line search steps "
+    "back from such a point";
 constexpr Refusal kRefused[] = {
     {"NLOPT", "LN_NEWUOA_BOUND",
      "NLopt 2.10 plans each LN_NEWUOA_BOUND step with a nested LD_MMA run "
-     "that has no time limit and sees no stop request, and once a "
-     "non-finite value reaches its model each step takes about 10-60 s "
-     "without evaluating the loss: after every stop HPO makes through the "
-     "objective (a signal, a RESTART stagnation stop, an error that ends "
-     "the run) from a run's (2n+1)-th evaluation on, the last of NEWUOA's "
-     "starting points for n OPTIM dimensions, as the objective then "
-     "returns HUGE_VAL, NLopt's convention for a forced stop, and when the "
-     "loss barely changes over the trust region; Ctrl-C, SIGTERM, MAXTIME "
-     "and RESTART wait that long. Use NLOPT:LN_BOBYQA, Powell's "
+     "that has no time limit and sees no stop request. Once a non-finite "
+     "value reaches its model, each step takes about 10-60 s without "
+     "evaluating the loss. Such a value reaches it after every stop tadah "
+     "hpo makes through the objective (a signal, a RESTART stagnation "
+     "stop, an error that ends the run) from a run's (2n+1)-th evaluation "
+     "on, the last of NEWUOA's starting points for n OPTIM dimensions, as "
+     "the objective then returns HUGE_VAL, NLopt's convention for a forced "
+     "stop. It reaches it too when the loss barely changes over the trust "
+     "region. Ctrl-C, SIGTERM, MAXTIME and RESTART wait that long. The "
+     "recommended replacement is NLOPT:LN_BOBYQA, Powell's "
      "bound-constrained successor of NEWUOA (its STEP rescales each "
      "dimension instead of setting one radius)"},
     {"NLOPT", "LN_NEWUOA",
-     "NLopt 2.10 runs LN_NEWUOA without the OPTIM box (optimize.c calls "
-     "NEWUOA with lb = ub = NULL), so its evaluations leave the box and the "
-     "best potential can lie outside the bounds the configuration sets (a "
-     "2-D run made 20 of its 25 evaluations outside the box, and its best was "
-     "one of them); it also needs two OPTIM dimensions or more. Use NLOPT:LN_BOBYQA, "
-     "Powell's bound-constrained successor of NEWUOA (its STEP rescales each "
-     "dimension instead of setting one radius)"},
+     "NLopt 2.10 runs LN_NEWUOA without the OPTIM box: it passes NEWUOA no "
+     "bounds, so its evaluations leave the box and the best potential can "
+     "lie outside the bounds the configuration sets (a 2-D run made 20 of "
+     "its 25 evaluations outside the box, and its best was one of them). It "
+     "also needs two OPTIM dimensions or more. The recommended replacement "
+     "is NLOPT:LN_BOBYQA, Powell's bound-constrained successor of NEWUOA "
+     "(its STEP rescales each dimension instead of setting one radius)"},
     {"NLOPT", "NLOPT_LD_LBFGS_NOCEDAL",
-     "NLopt 2.10 does not implement it (NLopt names it, but its optimiser "
-     "rejects it as an invalid argument, so every run of it failed once "
-     "its setup was done). Use NLOPT:LD_LBFGS, NLopt's L-BFGS"},
+     "NLopt 2.10 does not implement it: NLopt names it, but its optimiser "
+     "rejects it as an invalid argument, so a run of it would fail once its "
+     "setup was done. The recommended replacement is NLOPT:LD_LBFGS, "
+     "NLopt's L-BFGS"},
     {"CERES", "LBFGS", kCeresWolfe},
     {"CERES", "WOLFE", kCeresWolfe},
     {"CERES", "NLCG", kCeresWolfe},
@@ -455,7 +458,8 @@ Registry build_registry()
                 c.ignores_forced_stop = true;
                 c.stop_note =
                     "NLopt's StoGO has no convergence test of its own and "
-                    "ignores NLopt's forced stop, by which HPO ends a search "
+                    "ignores NLopt's forced stop, by which tadah hpo ends a "
+                    "search "
                     "(on a signal, an error, the RESTART stagnation stop, or "
                     "a loss at or below STOPVAL that NLopt was not given): it "
                     "then calls on, each call refused, and only NLopt's own "
@@ -496,7 +500,7 @@ Registry build_registry()
                 "the block's tolerances to no INNER search";
         else if (auglag)
             c.untested_tolerance_note =
-                "AUGLAG ends when its INNER search ends (HPO sets no "
+                "AUGLAG ends when its INNER search ends (tadah hpo sets no "
                 "constraint) and tests the block's tolerances only to name "
                 "that ending, and NLopt passes them to no INNER search";
         else if (no_tolerance_test)

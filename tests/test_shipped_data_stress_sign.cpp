@@ -1,8 +1,8 @@
 // test_shipped_data_stress_sign.cpp
 //
-// The stress sign and the energy of the two VASP-derived datasets the HPO
-// worked examples train and validate on (examples/common/data, found through
-// TADAH_HPO_EXAMPLES_DIR, as in test_example_data_cells.cpp).
+// The stress sign and the energy of the two VASP-derived Ta datasets the
+// HPO tests train and validate on (tests/data/ta/common/data, found through
+// TADAH_HPO_TA_DATA_DIR, as in test_ta_data_cells.cpp).
 //
 // A Tadah dataset stores the Cauchy stress, positive under tension, in
 // eV/A^3: sigma = (1/V) dE/d(strain), what the model predicts. Its
@@ -54,10 +54,10 @@ namespace fs = std::filesystem;
 using tadah::mlip::Structure;
 using tadah::mlip::StructureDB;
 
-StructureDB load_example_data(const std::string& file)
+StructureDB load_ta_data(const std::string& file)
 {
     const fs::path path =
-        fs::path(TADAH_HPO_EXAMPLES_DIR) / "common" / "data" / file;
+        fs::path(TADAH_HPO_TA_DATA_DIR) / "common" / "data" / file;
     INFO("dataset " << path.string());
     REQUIRE(fs::exists(path));
     StructureDB stdb;
@@ -118,11 +118,11 @@ double central_derivative(double xm, double x0, double xp,
  * all 111 points disagree in sign (a = 2.63, the first interior point:
  * stored tr/3 = +3.27668 eV/A^3 while dE/dV = -3.2873 eV/A^3 < 0, a
  * compressed cell). */
-TEST_CASE("HPO example data: eos_bcc.tadahdb stores the Cauchy stress, "
-          "tr(sigma)/3 = dE/dV", "[hpo][example_data][stress_convention]")
+TEST_CASE("HPO Ta test data: eos_bcc.tadahdb stores the Cauchy stress, "
+          "tr(sigma)/3 = dE/dV", "[hpo][ta_data][stress_convention]")
 {
     tadah::core::PeriodicTable::initialize();
-    const StructureDB stdb = load_example_data("eos_bcc.tadahdb");
+    const StructureDB stdb = load_ta_data("eos_bcc.tadahdb");
     REQUIRE(stdb.size() == 138);
 
     struct Point {
@@ -195,12 +195,12 @@ TEST_CASE("HPO example data: eos_bcc.tadahdb stores the Cauchy stress, "
  * Before the fix: every comparison has the opposite sign, e.g. xx +1%:
  * (1/V0) dE/d(eps) = +0.014985 against stored sigma_xx = -0.015967 eV/A^3;
  * xy +1%: +0.004389 against stored sigma_xy = -0.004669 eV/A^3. */
-TEST_CASE("HPO example data: elastic.tadahdb stores the Cauchy stress, "
+TEST_CASE("HPO Ta test data: elastic.tadahdb stores the Cauchy stress, "
           "(1/V0) dE/d(strain) = sigma for the uniaxial and shear cells",
-          "[hpo][example_data][stress_convention]")
+          "[hpo][ta_data][stress_convention]")
 {
     tadah::core::PeriodicTable::initialize();
-    const StructureDB stdb = load_example_data("elastic.tadahdb");
+    const StructureDB stdb = load_ta_data("elastic.tadahdb");
     REQUIRE(stdb.size() == 29);
 
     /* The reference: the one force-free cubic cell (structures 26-29, the
@@ -283,9 +283,9 @@ TEST_CASE("HPO example data: elastic.tadahdb stores the Cauchy stress, "
  * rounding and far below the smallest F - E_wo here (1.16e-4 eV).
  * Before the fix: the files store E_wo + 3.69807734 eV/atom, e.g. a = 2.87:
  * -10.70456007 instead of -10.71035596 (F - E_wo = -5.8 meV/structure). */
-TEST_CASE("HPO example data: eos_bcc.tadahdb and elastic.tadahdb store the "
+TEST_CASE("HPO Ta test data: eos_bcc.tadahdb and elastic.tadahdb store the "
           "free energy F + 3.69807734 eV/atom",
-          "[hpo][example_data][stress_convention]")
+          "[hpo][ta_data][stress_convention]")
 {
     tadah::core::PeriodicTable::initialize();
 
@@ -325,7 +325,7 @@ TEST_CASE("HPO example data: eos_bcc.tadahdb and elastic.tadahdb store the "
     std::map<std::string, StructureDB> files;
     for (const Expected& x : expected)
         if (!files.count(x.file))
-            files.emplace(x.file, load_example_data(x.file));
+            files.emplace(x.file, load_ta_data(x.file));
 
     std::size_t n_checked = 0;
     for (const Expected& x : expected) {

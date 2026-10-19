@@ -1,0 +1,34 @@
+# ../common/config.tadah with weights 13 and 14 pinned at 0 (FIXINDEX,
+# FIXWEIGHT): the training configuration of fixweight_mixed.hpo.
+
+DBFILE ../common/data/elastic.tadahdb
+DBFILE ../common/data/eos_bcc.tadahdb
+
+INIT2B true
+MODEL M_BLR BF_Linear
+TYPE2B D2_Blip 7 7 Ta Ta
+RCTYPE2B Cut_Poly
+SGRID2B  LIN 7 1 1.2
+CGRID2B  LIN 7 0.1 3.0
+RCUT2B 5.6
+
+INITMB true
+TYPEMB DM_mBlipEnv 0 1 1 7 7 Ta Ta
+RCUTENV 5.0
+RCTYPEMB Cut_Poly
+RCUTMB 5.6
+SGRIDMB     0.2
+CGRIDMB     0.0
+SEMBFUNC  1 1 1 1 1 1 1
+CEMBFUNC  1 2 3 4 5 6 7
+
+WATOM 1.0
+OALGO  1 1e-13
+BIAS false
+
+# Two of the 14 linear coefficients are pinned and the other twelve are
+# fitted: the mixed fit in which fixweight_mixed.hpo searches one pinned
+# weight. The i-th FIXWEIGHT value pins the weight named by the i-th
+# FIXINDEX entry.
+FIXINDEX  13,14
+FIXWEIGHT 0.0 0.0

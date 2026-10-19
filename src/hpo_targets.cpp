@@ -252,9 +252,9 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn,
    * One SearchSpace from the OPTIM lines (real boxes + per-line shape
    * tags), OPTIM_SCALE and LOG_HP; bound to the outer spec and, below,
    * to every sub-spec. spec.low/high are the INTERNAL bounds. */
-  /* Env override TADAH_OPTIM_SCALE=AUTO|NONE (harness A/B of the
-   * coordinate system; the reference-suite gate runs every example both
-   * ways). Read here because the space is built in this constructor. */
+  /* Env override TADAH_OPTIM_SCALE=AUTO|NONE (an A/B of the coordinate
+   * system without editing the target file). Read here because the space
+   * is built in this constructor. */
   if (const char* e = std::getenv("TADAH_OPTIM_SCALE")) {
     std::string v = e;
     for (auto& ch : v) ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
@@ -682,11 +682,43 @@ void HPOTargets::read(const std::string& fn)
      *           +-- REFINE      REFINE ... ENDREFINE      (only with TYPE PRESTAGE; the OUTER spec)
      *           |   +-- INNER       INNER ... ENDINNER
      *           +-- INNER       INNER ... ENDINNER       (inner sub-optimiser of the STRATEGY-level LIB/ALGO)
-     *           +-- RESTART     RESTART ... ENDRESTART   (decorator; populates spec.restart) */
+     *           +-- RESTART     RESTART ... ENDRESTART   (decorator; populates spec.restart)
+     *
+     * There is one OPTIMIZER block, at the top level. An END line closes
+     * the innermost open block, and the file ends with every block closed.
+     * Each other form is refused at its line: a second OPTIMIZER block
+     * would reopen the first and replace the settings both give, an
+     * OPTIMIZER line inside a block would go back to the OPTIMIZER level,
+     * an ENDOPTIMIZER inside another block would close the OPTIMIZER block
+     * around it, and a block left open would be read as complete. A line
+     * that opens or closes a block holds its key alone: a word after it
+     * would be dropped (`OPTIMIZER LIB NLOPT`). */
     enum Block { ROOT, OUTER, INIT_BLK, NOISE_BLK, STRATEGY_BLK,
                  EXPLORE_BLK, REFINE_BLK, INNER_BLK, RESTART_BLK };
+    /* The name of each block type: NAME opens it, ENDNAME closes it. */
+    struct BlockName { Block id; const char* name; };
+    static constexpr BlockName kBlockNames[] = {
+        {OUTER, "OPTIMIZER"},       {INIT_BLK, "INIT"},
+        {NOISE_BLK, "NOISE"},       {STRATEGY_BLK, "STRATEGY"},
+        {EXPLORE_BLK, "EXPLORE"},   {REFINE_BLK, "REFINE"},
+        {INNER_BLK, "INNER"},       {RESTART_BLK, "RESTART"}};
+    auto block_name = [](Block b) -> std::string {
+        for (const auto& bn : kBlockNames)
+            if (bn.id == b) return bn.name;
+        return "";
+    };
+    /* The block an END line closes (STRATEGY_BLK for ENDSTRATEGY), ROOT
+     * for any other key. */
+    auto block_ended_by = [](const std::string& key) -> Block {
+        for (const auto& bn : kBlockNames)
+            if (key == std::string("END") + bn.name) return bn.id;
+        return ROOT;
+    };
+    /* The open blocks, outermost first, each with the line that opens it
+     * and its text. `block` is the innermost, ROOT when none is open. */
+    struct OpenBlock { Block id; std::size_t line; std::string text; };
+    std::vector<OpenBlock> open_blocks;
     Block            block      = ROOT;
-    Block            prev_inner = ROOT;       // restored on ENDINNER
     OptimizerSpec*   active_opt    = nullptr;  // recipient of LIB/ALGO/...
     InitStrategySpec* active_init  = nullptr;  // recipient of STRATEGY/K_TOTAL/...
     OptimizerSpec*   inner_parent  = nullptr;  // outer spec of an INNER block
@@ -703,12 +735,17 @@ void HPOTargets::read(const std::string& fn)
      * block reopened the first and could change the TYPE its keys had been
      * checked against. */
     std::size_t strategy_line = 0;
+    /* The line of the OPTIMIZER block (0 before it): there is one. */
+    std::size_t optimizer_line = 0;
 
     /* The block the open INNER block sits in: an INNER block opens only
      * inside STRATEGY, EXPLORE or REFINE. */
     auto inner_enclosing = [&]() -> std::string {
-        return prev_inner == STRATEGY_BLK ? "STRATEGY" :
-               prev_inner == EXPLORE_BLK  ? "EXPLORE"  : "REFINE";
+        const Block around = open_blocks.size() >= 2
+                                 ? open_blocks[open_blocks.size() - 2].id
+                                 : ROOT;
+        return around == STRATEGY_BLK ? "STRATEGY" :
+               around == EXPLORE_BLK  ? "EXPLORE"  : "REFINE";
     };
 
     /* Helper: re-derive active_opt for a non-INNER block. */
@@ -733,6 +770,30 @@ void HPOTargets::read(const std::string& fn)
 
     std::string line;
     size_t      nline = 0;
+    /* Opens a block of type `b` at the line being read; closes the
+     * innermost open block. */
+    auto open_block = [&](Block b) {
+        open_blocks.push_back({b, nline, line});
+        block = b;
+    };
+    auto close_block = [&]() {
+        open_blocks.pop_back();
+        block = open_blocks.empty() ? ROOT : open_blocks.back().id;
+    };
+    /* The line that opens or closes a block holds its key alone; `rest`
+     * stands after the key. */
+    auto require_key_alone = [&](std::istringstream& rest,
+                                 const std::string& key) {
+        std::string extra;
+        if (!(rest >> extra)) return;
+        if (const Block ends = block_ended_by(key); ends != ROOT)
+            throw std::runtime_error(
+                key + " closes the " + block_name(ends) + " block and takes "
+                "no value (unexpected '" + extra + "')");
+        throw std::runtime_error(
+            key + " opens a block and takes no value (unexpected '" + extra +
+            "'); write each key on its own line inside the block");
+    };
     /* The density gate lines, for the arming rule at the end of the file
      * (an OPTIM line that arms a gate may follow it). */
     struct GateLine { const char* key; std::size_t line; std::string text; };
@@ -804,7 +865,41 @@ void HPOTargets::read(const std::string& fn)
         try {
             /* ============== block delimiters ====================== */
 
-            if (key=="OPTIMIZER")    { block=OUTER; refresh_active_opt(); continue; }
+            /* An END line closes the innermost open block. */
+            if (const Block ends = block_ended_by(key); ends != ROOT) {
+                if (open_blocks.empty())
+                    throw std::runtime_error(key + " without matching " +
+                                             block_name(ends));
+                const OpenBlock& in = open_blocks.back();
+                if (in.id != ends)
+                    throw std::runtime_error(
+                        key + " does not close the innermost open block, "
+                        "the " + block_name(in.id) + " block opened on line " +
+                        std::to_string(in.line) + " (END" +
+                        block_name(in.id) + " closes it)");
+                require_key_alone(iss, key);
+            }
+
+            if (key=="OPTIMIZER") {
+                if (!open_blocks.empty()) {
+                    const OpenBlock& in = open_blocks.back();
+                    throw std::runtime_error(
+                        "OPTIMIZER block must appear at the top level of the "
+                        "file (it is inside the " + block_name(in.id) +
+                        " block opened on line " + std::to_string(in.line) +
+                        ")");
+                }
+                if (optimizer_line != 0)
+                    throw std::runtime_error(
+                        "OPTIMIZER block given more than once (the first opens "
+                        "on line " + std::to_string(optimizer_line) + "); "
+                        "write every optimiser setting in one block");
+                require_key_alone(iss, key);
+                optimizer_line = nline;
+                open_block(OUTER);
+                refresh_active_opt();
+                continue;
+            }
             if (key=="ENDOPTIMIZER") {
                 /* The STRATEGY-level optimiser is complete here: a short-form
                  * LIB/ALGO may follow the STRATEGY block. Its startup
@@ -812,7 +907,7 @@ void HPOTargets::read(const std::string& fn)
                 spec.block_line = nline;
                 spec.block_line_text = line;
                 require_driver(spec, DriverPhase::Run);
-                block=ROOT;  active_opt=nullptr;  continue;
+                close_block();  active_opt=nullptr;  continue;
             }
 
             if (key=="INIT") {
@@ -823,6 +918,7 @@ void HPOTargets::read(const std::string& fn)
                 /* INIT populates the active OptimizerSpec's init_strategy_spec. */
                 if (!active_opt)
                     throw std::runtime_error("INIT block requires an active OptimizerSpec");
+                require_key_alone(iss, key);
                 active_init = &active_opt->init_strategy_spec;
                 /* The block's line: its first INIT block when it has two
                  * (they make one chain). */
@@ -834,15 +930,12 @@ void HPOTargets::read(const std::string& fn)
                  * dispatch_opt_attr; restored on ENDINIT. */
                 inner_parent = active_opt;     // reuse field for stash
                 active_opt   = nullptr;
-                prev_inner   = block;
-                block = INIT_BLK;
+                open_block(INIT_BLK);
                 continue;
             }
             if (key=="ENDINIT") {
-                if (block != INIT_BLK)
-                    throw std::runtime_error("ENDINIT without matching INIT");
                 active_init = nullptr;
-                block = prev_inner;
+                close_block();
                 active_opt = inner_parent;
                 inner_parent = nullptr;
                 continue;
@@ -851,13 +944,16 @@ void HPOTargets::read(const std::string& fn)
             if (key=="NOISE") {
                 if (block != OUTER)
                     throw std::runtime_error("NOISE block must appear inside OPTIMIZER (OUTER level)");
-                block = NOISE_BLK;
+                require_key_alone(iss, key);
+                /* A NOISE block takes AUTO and CALIBRATION only: no
+                 * optimiser receives its lines, so an optimiser key there
+                 * is refused as unknown. */
+                open_block(NOISE_BLK);
+                refresh_active_opt();
                 continue;
             }
             if (key=="ENDNOISE") {
-                if (block != NOISE_BLK)
-                    throw std::runtime_error("ENDNOISE without matching NOISE");
-                block = OUTER;
+                close_block();
                 refresh_active_opt();
                 continue;
             }
@@ -882,16 +978,15 @@ void HPOTargets::read(const std::string& fn)
                         "STRATEGY block given more than once (the first opens "
                         "on line " + std::to_string(strategy_line) + "); write "
                         "every STRATEGY key in one block");
+                require_key_alone(iss, key);
                 strategy_line = nline;
-                block = STRATEGY_BLK;
+                open_block(STRATEGY_BLK);
                 refresh_active_opt();
                 continue;
             }
             if (key=="ENDSTRATEGY") {
-                if (block != STRATEGY_BLK)
-                    throw std::runtime_error("ENDSTRATEGY without matching STRATEGY");
                 check_type_keys();
-                block = OUTER;
+                close_block();
                 refresh_active_opt();
                 continue;
             }
@@ -903,20 +998,19 @@ void HPOTargets::read(const std::string& fn)
                     throw std::runtime_error(
                         "EXPLORE block is only valid with TYPE PRESTAGE "
                         "(declare TYPE before EXPLORE)");
+                require_key_alone(iss, key);
                 if (!spec.prestage)
                     spec.prestage = std::make_unique<OptimizerSpec>();
                 prestage_blocks.push_back({key, nline, line});
-                block = EXPLORE_BLK;
+                open_block(EXPLORE_BLK);
                 refresh_active_opt();
                 continue;
             }
             if (key=="ENDEXPLORE") {
-                if (block != EXPLORE_BLK)
-                    throw std::runtime_error("ENDEXPLORE without matching EXPLORE");
                 spec.prestage->block_line = nline;
                 spec.prestage->block_line_text = line;
                 require_driver(*spec.prestage, DriverPhase::Explore);
-                block = STRATEGY_BLK;
+                close_block();
                 refresh_active_opt();
                 continue;
             }
@@ -928,15 +1022,14 @@ void HPOTargets::read(const std::string& fn)
                     throw std::runtime_error(
                         "REFINE block is only valid with TYPE PRESTAGE "
                         "(declare TYPE before REFINE)");
+                require_key_alone(iss, key);
                 prestage_blocks.push_back({key, nline, line});
-                block = REFINE_BLK;
+                open_block(REFINE_BLK);
                 refresh_active_opt();
                 continue;
             }
             if (key=="ENDREFINE") {
-                if (block != REFINE_BLK)
-                    throw std::runtime_error("ENDREFINE without matching REFINE");
-                block = STRATEGY_BLK;
+                close_block();
                 refresh_active_opt();
                 continue;
             }
@@ -950,22 +1043,20 @@ void HPOTargets::read(const std::string& fn)
                     throw std::runtime_error("INNER block has no parent OptimizerSpec");
                 if (active_opt->inner)
                     throw std::runtime_error("INNER block specified more than once in this scope");
+                require_key_alone(iss, key);
                 active_opt->inner = std::make_unique<OptimizerSpec>();
                 inner_parent = active_opt;
                 active_opt = active_opt->inner.get();
-                prev_inner = block;
-                block = INNER_BLK;
+                open_block(INNER_BLK);
                 continue;
             }
             if (key=="ENDINNER") {
-                if (block != INNER_BLK)
-                    throw std::runtime_error("ENDINNER without matching INNER");
                 /* The INNER optimiser is complete here, like an EXPLORE
                  * block's at ENDEXPLORE. */
                 active_opt->block_line = nline;
                 active_opt->block_line_text = line;
                 require_inner_driver(*active_opt, inner_enclosing());
-                block = prev_inner;
+                close_block();
                 inner_parent = nullptr;
                 refresh_active_opt();
                 continue;
@@ -974,6 +1065,7 @@ void HPOTargets::read(const std::string& fn)
             if (key=="RESTART") {
                 if (block != STRATEGY_BLK)
                     throw std::runtime_error("RESTART block must appear inside STRATEGY");
+                require_key_alone(iss, key);
                 active_init = &spec.restart.init_strategy;
                 if (spec.restart.line == 0) {
                     spec.restart.line = nline;
@@ -984,15 +1076,12 @@ void HPOTargets::read(const std::string& fn)
                  * STRATEGY lines falls back to a single CONFIG point. */
                 inner_parent = active_opt;
                 active_opt   = nullptr;
-                prev_inner   = block;
-                block = RESTART_BLK;
+                open_block(RESTART_BLK);
                 continue;
             }
             if (key=="ENDRESTART") {
-                if (block != RESTART_BLK)
-                    throw std::runtime_error("ENDRESTART without matching RESTART");
                 active_init = nullptr;
-                block = prev_inner;
+                close_block();
                 active_opt = inner_parent;
                 inner_parent = nullptr;
                 continue;
@@ -1070,7 +1159,9 @@ void HPOTargets::read(const std::string& fn)
                     spec.noise.calibration_n = v;
                     continue;
                 }
-                throw std::runtime_error("unknown key '" + key + "' inside NOISE block");
+                throw std::runtime_error("unknown key '" + key + "' inside NOISE "
+                                         "block (only AUTO and CALIBRATION are "
+                                         "valid)");
             }
 
             /* LOG_HP is a property of the search space (one transform for
@@ -1460,12 +1551,16 @@ void HPOTargets::read(const std::string& fn)
         }
     }
 
-    /* A block the file never closes, or no OPTIMIZER block at all: the end
-     * of the file is where these are known. */
-    try {
-        check_type_keys();
-    } catch (const EarlierLineError& e) {
-        throw std::runtime_error(at_line(e.line, e.what(), e.text));
+    /* A block the file leaves open: at the line that opens it, the
+     * innermost first. Each block is closed past this point, and its END
+     * line has checked what it sets (check_type_keys, require_driver,
+     * require_inner_driver). */
+    if (!open_blocks.empty()) {
+        const OpenBlock& in = open_blocks.back();
+        throw std::runtime_error(at_line(in.line,
+            block_name(in.id) + " block not closed with END" +
+                block_name(in.id),
+            in.text));
     }
     /* A density gate that no OPTIM line arms cannot act: no dimension of
      * the search changes rho(r) or its window, so every candidate has the
@@ -1501,10 +1596,8 @@ void HPOTargets::read(const std::string& fn)
      * other's new directory, whatever the order of their lines. */
     check_archive_directories();
 
-    if (block == INNER_BLK)
-        require_inner_driver(*active_opt, inner_enclosing());
+    /* A file without an OPTIMIZER block names no optimiser. */
     require_driver(spec, DriverPhase::Run);
-    if (spec.prestage) require_driver(*spec.prestage, DriverPhase::Explore);
 
     /* Post-parse validation: PC_OBSERVABLE and PC_LAMMPS are mutually
      * exclusive paths in the experimental MVP. The typed-observable

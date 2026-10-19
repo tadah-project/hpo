@@ -98,8 +98,8 @@ NLopt level, the repro below, built against this build's `libnlopt.a` (NLopt 2.1
 
 `LN_COBYLA`, `LN_SBPLX`, `LN_NELDERMEAD` and `LN_PRAXIS` in case F: 0.00 s each.
 
-`tadah hpo` built before the refusal, on the shared example data (`examples/common`, the `-c` of the
-examples), `OPTIM RCUT2B (1) 4.0 6.0`, `OPTIM SGRIDMB (1) 0.1 0.4`, `MAXEVAL 300`, a `RESTART` block with
+`tadah hpo` built before the refusal, on the Ta test data (`tests/data/ta/common`, its `config.tadah`
+as the `-c`), `OPTIM RCUT2B (1) 4.0 6.0`, `OPTIM SGRIDMB (1) 0.1 0.4`, `MAXEVAL 300`, a `RESTART` block with
 `AFTER_STAGNATION 20` and `MAX 2`: each of the three `StagnationStop fired` journal lines was followed by
 20-21 s without an evaluation before the next `RESTART` (or the end), and the run took 60.8 s for 99
 evaluations. With `LN_BOBYQA` the same configuration took 0.57 s for 169 evaluations (it converged,
