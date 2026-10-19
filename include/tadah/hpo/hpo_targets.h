@@ -75,13 +75,16 @@ private:
     size_t ui_offset(std::vector<std::string> &tokens, size_t ui);
     std::vector<std::string> parse_optim_line(std::istringstream& iss);
     /* Throws when the run cannot create the archive directory @p dir of
-     * the line @p key (DUMP, BDUMP) or write into it, and creates nothing:
-     * a path that exists must be a directory the run can write into (a
-     * symbolic link to a path that does not exist is refused); one that
-     * does not, a new directory in an existing directory the run can write
-     * into, or in @p created_first (an absolute path; empty: none), the
-     * other archive line's new directory, which the run creates first (the
-     * run creates the last directory of the path only). */
+     * the line @p key (DUMP, BDUMP) or write into it, and creates nothing.
+     * The path is taken where the operating system puts it (every symbolic
+     * link followed, '..' taken from the directory reached; one the system
+     * cannot resolve is refused): one that exists must be a directory the
+     * run can write into; one that does not must not be a symbolic link
+     * itself (mkdir does not follow it), and must be in a directory that
+     * exists and the run can write into, or in @p created_first (resolved
+     * likewise; empty: none), the other archive line's directory, which
+     * the run creates first (the run creates the last directory of the
+     * path only). */
     static void check_archive_directory(const std::string& key,
                                         const std::string& dir,
                                         const std::filesystem::path& created_first);
@@ -237,16 +240,22 @@ public:
      *     files, when they exist, files the run can write ("'loss.tadah'
      *     in the working directory '<dir>' is not writable: tadah hpo
      *     rewrites it"), and so the lock of each best potential ("...
-     *     tadah hpo opens it to lock best_pot.tadah"); a best potential,
+     *     tadah hpo opens it to lock best_pot.tadah", the lock's own
+     *     potential); a best potential,
      *     which the run replaces, no directory ("... is a directory: tadah
      *     hpo writes a file of that name");
      *   - check_search_space_files(), once the target file is read: the
      *     search-space files the run writes (writes_search_space_file(),
      *     writes_resolved_optim_file()), as the result files.
-     * A file that is a symbolic link is checked through it: to a file not
-     * yet created, the directory it names must be a directory the run can
-     * write into ("... is a symbolic link to 'x/loss', whose directory 'x'
-     * does not exist"). */
+     * A file the run writes through (the journal, a result file, a lock)
+     * is checked where the operating system puts it, every symbolic link
+     * followed: one that exists must be a regular file the run can write,
+     * one that does not must be in a directory that exists and the run can
+     * write into ("'loss.tadah' ... is a symbolic link to '<dir>/x/loss',
+     * which cannot be created: the directory '<dir>/x' does not exist");
+     * a path the system cannot resolve (a loop of links) is refused. A
+     * best potential, which the run replaces, is checked by its own name:
+     * a link there is replaced by the file, not followed. */
     static void check_run_outputs(const std::string& journal);
     void check_search_space_files() const;
 
