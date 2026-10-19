@@ -164,11 +164,23 @@ inline int end_without_usable_loss(HPOLog& log)
 /* `Host` provides `void flush_remaining(bool retry_io) const`, `bool
  * has_usable_loss() const` and the exception type `Host::StagnationStop`
  * (HPO_Host<Vec, Runner>). Returns the exit status of the run (see above);
- * errors are rethrown after the trailer. */
+ * errors are rethrown after the trailer. `before_trailer`, when given, runs
+ * once on every ending, after the run's collective and the final drain and
+ * before the trailer closes the journal: what it reports reaches the
+ * journal (the removal of the best potential's lock files,
+ * HPO_Host::finish_best_publication). */
 template<class Host>
 int drive_run(const std::function<void()>& body, const Host& host,
-              HPOLog& log)
+              HPOLog& log,
+              const std::function<void()>& before_trailer = {})
 {
+    bool trailer_ready = false;
+    auto ready_trailer = [&]() {
+        if (trailer_ready) return;
+        trailer_ready = true;
+        if (before_trailer) before_trailer();
+    };
+
     /* Drain in a failure path without replacing the exception in flight;
      * a failed drain is reported in the journal. retry_io=false after a
      * best-potential persistence failure: the storage has just failed for
@@ -206,6 +218,7 @@ int drive_run(const std::function<void()>& body, const Host& host,
         log.warning("Best-potential persistence failed: " + cause);
         log.record_best_persistence_failure();
         drain(/*retry_io=*/false);
+        ready_trailer();
         log.finish("FAILED -- best-potential persistence: " + cause);
     };
 
@@ -247,6 +260,7 @@ int drive_run(const std::function<void()>& body, const Host& host,
             : core::SignalHandler::reason();
         log.warning("Shutdown requested: " + why);
         drain(/*retry_io=*/true);
+        ready_trailer();
         log.finish("SHUTDOWN (" + why + ")");
         return shutdown_exit_status(signo);
     } catch (const typename Host::StagnationStop&) {
@@ -258,8 +272,11 @@ int drive_run(const std::function<void()>& body, const Host& host,
         log.warning("stagnation stop reached the run driver: no RESTART "
                     "policy acted on it, so the run ends here");
         drain(/*retry_io=*/true);
-        if (!usable)
+        if (!usable) {
+            ready_trailer();
             return detail::end_without_usable_loss(log);
+        }
+        ready_trailer();
         log.finish("STOPPED -- stagnation (no new best within the "
                    "stagnation window)");
         return 0;
@@ -276,23 +293,28 @@ int drive_run(const std::function<void()>& body, const Host& host,
         agree_on_usable_loss();
         log.warning(std::string("Optimiser threw: ") + e.what());
         drain(/*retry_io=*/true);
+        ready_trailer();
         log.finish(std::string("FAILED -- ") + e.what());
         throw;
     } catch (...) {
         agree_on_usable_loss();
         log.warning("Optimiser threw a non-standard exception");
         drain(/*retry_io=*/true);
+        ready_trailer();
         log.finish("FAILED -- non-standard exception");
         throw;
     }
 
-    if (!usable_anywhere)
+    if (!usable_anywhere) {
+        ready_trailer();
         return detail::end_without_usable_loss(log);
+    }
 
     /* The status recorded by the optimiser run that ended the run (e.g.
      * NLopt's MAXEVAL_REACHED, "DLIB:BFGS: FTOL_ABS reached"; under
      * MULTISTART the last good start's, under PRESTAGE the refinement's),
      * or the RESTART one when its MAX restarts were used up. */
+    ready_trailer();
     log.finish(log.status());
     return 0;
 }

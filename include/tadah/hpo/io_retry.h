@@ -258,7 +258,7 @@ auto retry(const BackoffPolicy& policy, Op&& op, Classify&& classify,
  * makes each injected failure take MS milliseconds, modelling a call that
  * fails slowly. Sites:
  *   durable.{lock_open,lock_acquire,read_open,read,temp_create,write,fsync,
- *            close,rename,dir_open,dir_fsync,unlink}
+ *            close,rename,dir_open,dir_fsync,unlink,lock_unlink}
  *   writer.{open,append,truncate,archive}
  * ------------------------------------------------------------------------- */
 struct FaultTable;

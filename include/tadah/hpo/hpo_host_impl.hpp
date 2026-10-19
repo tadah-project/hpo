@@ -1084,16 +1084,19 @@ void HPO_Host<P,R>::prepare_best_publication() const {
 
 template<class P,class R>
 void HPO_Host<P,R>::finish_best_publication() const noexcept {
-    const auto remove = [](const std::string& path) {
+    const auto report = [](const std::string& msg) {
+        HPOLog& log = HPOLog::instance();
+        if (log.is_open()) log.warning(msg);
+        else std::cerr << "[HPO] WARNING: " << msg << std::endl;
+    };
+    const auto remove = [&](const std::string& path) {
         try {
             durable_best::remove_lock_file(path);
         } catch (const std::exception& e) {
-            HPOLog::instance().warning(
-                std::string("the lock file of the best potential stays: ") +
-                e.what());
+            report(std::string("the lock file of the best potential stays: ") +
+                   e.what());
         } catch (...) {
-            HPOLog::instance().warning(
-                "the lock file of the best potential stays: unknown error");
+            report("the lock file of the best potential stays: unknown error");
         }
     };
     if (hpo_rank() == 0) remove(trg_.canonicalBestPotFile);
