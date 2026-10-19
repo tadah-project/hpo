@@ -301,6 +301,10 @@ std::string nlopt_inner_searches_without_gradient()
 std::string searches_without_gradient()
 {
     const auto caps = filter_optimizer_caps([](const OptimizerCaps& c) {
+        /* An MLSL or AUGLAG without a default local optimiser is refused
+         * without an INNER block (require_inner_backend): it does not run
+         * as written. */
+        if (c.accepts_inner && !c.default_inner) return false;
         OptimizerSpec sp;
         sp.lib = c.lib;
         sp.algo = c.algo;

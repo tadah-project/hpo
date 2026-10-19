@@ -1900,7 +1900,9 @@ void HPOTargets::read(const std::string& fn)
                       nlopt_inner_searches_without_gradient() + ")."
                 : " PC_LAMMPS requires a gradient-free optimiser (" +
                       searches_without_gradient() + ") or DLIB:BFGS, the "
-                      "one gradient-based optimiser it accepts.";
+                      "one gradient-based optimiser it accepts; an NLopt "
+                      "MLSL or AUGLAG algorithm is accepted with a "
+                      "derivative-free INNER block.";
             if (optimizer_caps(sp).accepts_inner) {
                 /* An MLSL or AUGLAG that takes a gradient for its local
                  * search: an INNER block's is refused at that block. */
