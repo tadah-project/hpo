@@ -300,6 +300,9 @@ TEST_CASE("startup validation: a model without weights is refused before the "
     Context c = make_model_ctx();
     c.remove("TYPE2B");
     c.add("TYPE2B", "D2_Dummy H H");
+    /* D2_Dummy reads no grid: a configuration with one is refused */
+    c.remove("CGRID2B");
+    c.remove("SGRID2B");
     c.add("DBFILE", "dummy.db");
     return c;
   };
