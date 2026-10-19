@@ -5,8 +5,7 @@
  * single source of truth for:
  *   - HPOTargets::read(): require_driver() when an OPTIMIZER or EXPLORE
  *     block ends, require_inner_driver() when an INNER block ends, and
- *     require_strategy_key() and require_prestage_block() when a STRATEGY
- *     block ends;
+ *     require_strategy_key() when a STRATEGY block ends;
  *   - validate_hpo_setup(): validate_run_policy(), at startup, before the
  *     host is built or any data is loaded;
  *   - MultiStartPolicy::validate() and StagedPolicy::validate(), which the
@@ -188,12 +187,6 @@ void reject_refused_backends(const OptimizerSpec& spec);
 bool is_strategy_type_key(const std::string& key);
 void require_strategy_key(const std::string& key, StrategyType type,
                           bool type_given);
-
-/* The EXPLORE and REFINE blocks configure the phases of TYPE PRESTAGE,
- * which must be declared before them; a later TYPE line of the same
- * STRATEGY block could still change it. Throws unless `type`, the TYPE the
- * block ends with, is PRESTAGE. `block` is "EXPLORE" or "REFINE". */
-void require_prestage_block(const std::string& block, StrategyType type);
 
 /* "PLAIN", "MULTISTART" or "PRESTAGE". */
 const char* strategy_type_name(StrategyType type);

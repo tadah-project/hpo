@@ -450,13 +450,4 @@ void require_strategy_key(const std::string& key, StrategyType type,
         " or remove " + key);
 }
 
-void require_prestage_block(const std::string& block, StrategyType type)
-{
-    if (type == StrategyType::PRESTAGE) return;
-    throw std::runtime_error(
-        block + " block is only valid with TYPE PRESTAGE, but the STRATEGY "
-        "block ends with TYPE " + strategy_type_name(type) + " (the last TYPE "
-        "line decides); set TYPE PRESTAGE or remove the " + block + " block");
-}
-
 }  // namespace tadah::hpo

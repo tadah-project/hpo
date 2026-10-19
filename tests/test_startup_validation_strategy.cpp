@@ -28,8 +28,8 @@
 //  - a STRATEGY key that has no effect under the block's TYPE (N_STARTS,
 //    PARALLEL and BUDGET_PER_START outside MULTISTART, TOPK outside
 //    PRESTAGE), at the key's own line, whether TYPE comes before or after
-//    the key; likewise an EXPLORE or REFINE block the block's last TYPE
-//    line takes out of PRESTAGE;
+//    the key; an EXPLORE or REFINE block before TYPE PRESTAGE, and a
+//    second TYPE line (TYPE is set once);
 //  - a second STRATEGY block, which could change the TYPE the first one
 //    was checked against.
 //

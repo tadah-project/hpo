@@ -722,12 +722,11 @@ void HPOTargets::read(const std::string& fn)
     OptimizerSpec*   inner_parent  = nullptr;  // outer spec of an INNER block
 
     /* STRATEGY keys that belong to one TYPE (strategy_rules.h), checked
-     * when the STRATEGY block ends: TYPE may come after them. So are the
-     * EXPLORE and REFINE blocks, which need TYPE PRESTAGE before them and
-     * still at the end of the block. */
+     * when the STRATEGY block ends: TYPE may come after them. The EXPLORE
+     * and REFINE blocks need TYPE PRESTAGE before them, checked when they
+     * open; TYPE is set once, so it stays. */
     struct TypeKeySeen { std::string key; std::size_t line; std::string text; };
     std::vector<TypeKeySeen> type_keys;
-    std::vector<TypeKeySeen> prestage_blocks;
     bool strategy_type_given = false;
     /* The line of the STRATEGY block (0 before it): there is one. A second
      * block reopened the first and could change the TYPE its keys had been
@@ -829,8 +828,7 @@ void HPOTargets::read(const std::string& fn)
         EarlierLineError(std::size_t l, std::string t, const std::string& what)
             : std::runtime_error(what), line(l), text(std::move(t)) {}
     };
-    /* The keys of one TYPE, and the EXPLORE and REFINE blocks, must match
-     * the TYPE the block ends with. */
+    /* The keys of one TYPE must match the TYPE of the block. */
     auto check_type_keys = [&]() {
         for (const auto& k : type_keys) {
             try {
@@ -841,14 +839,6 @@ void HPOTargets::read(const std::string& fn)
             }
         }
         type_keys.clear();
-        for (const auto& b : prestage_blocks) {
-            try {
-                require_prestage_block(b.key, spec.strategy_type);
-            } catch (const std::exception& e) {
-                throw EarlierLineError(b.line, b.text, e.what());
-            }
-        }
-        prestage_blocks.clear();
     };
 
     auto strip_comment = [](std::string& s){
@@ -1055,7 +1045,6 @@ void HPOTargets::read(const std::string& fn)
                 require_key_alone(iss, key);
                 if (!spec.prestage)
                     spec.prestage = std::make_unique<OptimizerSpec>();
-                prestage_blocks.push_back({key, nline, line});
                 open_block(EXPLORE_BLK);
                 refresh_active_opt();
                 continue;
@@ -1077,7 +1066,6 @@ void HPOTargets::read(const std::string& fn)
                         "REFINE block is only valid with TYPE PRESTAGE "
                         "(declare TYPE before REFINE)");
                 require_key_alone(iss, key);
-                prestage_blocks.push_back({key, nline, line});
                 open_block(REFINE_BLK);
                 refresh_active_opt();
                 continue;
