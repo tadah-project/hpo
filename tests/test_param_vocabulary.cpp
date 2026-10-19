@@ -227,3 +227,64 @@ TEST_CASE("vocabulary: the help text advertises the TOKEN, not the sentinel",
     CHECK(me_line.find("(default AUTO)") != std::string::npos);
     CHECK(me_line.find("(default 0)") == std::string::npos);
 }
+
+/* AUTO of CHAIN_LENGTH and NT is the serial TADAH:ANNEAL's: it derives the
+ * value from MAXEVAL and the cooling schedule. TADAH:ANNEAL_PA has static
+ * defaults for both (50 and 5) and no such derivation, so it refuses AUTO,
+ * naming the key and the optimiser that takes it; the serial TADAH:ANNEAL
+ * accepts it as before, and the help text offers AUTO for the serial
+ * optimiser only.
+ * Before the fix: TADAH:ANNEAL_PA accepted AUTO and resolved it to the
+ * registry's internal 0, so every temperature step had 0 evaluations: a
+ * run planned '~18446744073709551615 temperature step(s)' and stopped after
+ * its initialisation ('MAXEVAL exhausted after 36 host eval(s) (0
+ * temperature step(s))' with MAXEVAL 200). */
+TEST_CASE("vocabulary: CHAIN_LENGTH AUTO and NT AUTO are the serial "
+          "TADAH:ANNEAL's", "[HPO][anneal_core][registry][vocabulary]")
+{
+    SECTION("TADAH:ANNEAL_PA refuses them") {
+        for (const char* key : {"CHAIN_LENGTH", "NT"}) {
+            for (const char* tok : {"AUTO", "auto"}) {
+                INFO(key << " " << tok);
+                auto sp = spec_for(anneal::AlgoKind::PA);
+                sp.param_raw[key] = tok;
+                if (std::string(key) == "NT") sp.param_raw["CORANA"] = "ON";
+                REQUIRE_THROWS_WITH(
+                    anneal::Knobs::parse(sp, anneal::AlgoKind::PA),
+                    Catch::Contains(
+                        std::string("TADAH:ANNEAL_PA: PARAM ") + key +
+                        " must be a number (got '" + tok + "'; AUTO is "
+                        "accepted by TADAH:ANNEAL only)"));
+            }
+        }
+    }
+    SECTION("the serial TADAH:ANNEAL accepts them") {
+        auto sp = spec_for(anneal::AlgoKind::Serial);
+        sp.param_raw["CHAIN_LENGTH"] = "AUTO";
+        CHECK_NOTHROW(anneal::Knobs::parse(sp, anneal::AlgoKind::Serial));
+        auto corana = spec_for(anneal::AlgoKind::Serial);
+        corana.param_raw["CORANA"] = "ON";
+        corana.param_raw["NT"] = "AUTO";
+        CHECK_NOTHROW(anneal::Knobs::parse(corana, anneal::AlgoKind::Serial));
+    }
+    SECTION("the help text offers AUTO for the serial optimiser only") {
+        const auto line_of = [](const char* algo, const std::string& key) {
+            std::ostringstream captured;
+            auto* old = std::cout.rdbuf(captured.rdbuf());
+            tadah::hpo::OptimizerSpec::print_caps("TADAH", algo);
+            std::cout.rdbuf(old);
+            const std::string text = captured.str();
+            const auto at = text.find("PARAM " + key + " ");
+            REQUIRE(at != std::string::npos);
+            return text.substr(at, text.find('\n', at) - at);
+        };
+        for (const std::string key : {"CHAIN_LENGTH", "NT"}) {
+            INFO(key);
+            CHECK(line_of("ANNEAL", key).find("[accepts AUTO]") !=
+                  std::string::npos);
+            const std::string pa = line_of("ANNEAL_PA", key);
+            INFO(pa);
+            CHECK(pa.find("AUTO") == std::string::npos);
+        }
+    }
+}
