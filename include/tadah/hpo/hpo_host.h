@@ -305,6 +305,13 @@ public:
      * (reset_best_state_for_fresh_run). MPI ranks coordinate before any
      * evaluation can publish. */
     void prepare_best_publication() const;
+    /* The end of best-potential publication: removes the lock files of
+     * best_pot.tadah (rank 0) and of the rank-local mirror
+     * (durable_best::remove_lock_file). Called after drive_run(), whose
+     * collective every rank has passed by then, so no rank publishes any
+     * more; whatever the run's ending. A lock file that cannot be removed
+     * is a journal WARNING: the run's result does not depend on it. */
+    void finish_best_publication() const noexcept;
 
     /** Why two evaluations of one point can give different losses in
      *  this run (HPOTargets::repeat_reuse_blocker), or "" when every

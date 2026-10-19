@@ -816,6 +816,14 @@ int hpo_run_journaled(core::Context& ctx, HPOLog& log,
      * that ended the whole run (under MULTISTART the last start, under
      * PRESTAGE the refinement), or RestartPolicy's when its MAX restarts
      * were used up. */
+    /* After drive_run() every rank has passed the run's collective, so no
+     * rank publishes the best potential any more: its lock files go,
+     * whatever the ending (the guard runs when drive_run returns or
+     * rethrows). */
+    struct BestPublicationEnd {
+        const HPO_Host<V,R>& host;
+        ~BestPublicationEnd() { host.finish_best_publication(); }
+    } best_publication_end{host};
     const int status = drive_run(
         [&]() {
             /* Bind best-potential publication to this run. HPO runs are not

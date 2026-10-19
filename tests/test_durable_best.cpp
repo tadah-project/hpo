@@ -181,6 +181,35 @@ TEST_CASE("best HOT batches cannot be rolled back by an older improvement",
     ws::clear();
 }
 
+/* remove_lock_file removes the lock file every publication creates, keeps
+ * the best potential, accepts an absent lock file, and a later publication
+ * creates the lock file again and publishes. A failed unlink is a SysError
+ * naming the lock file ("durable.lock_unlink"). */
+TEST_CASE("durable best: the lock file goes at the end of a run",
+          "[durable_best]")
+{
+    using namespace tadah::hpo::durable_best;
+    Scratch scratch;
+    const auto target = scratch.path / "best_pot.tadah";
+    const auto lock = scratch.path / "best_pot.tadah.lock";
+    const Key first{2.0, 0, 0, 1};
+    REQUIRE(publish_if_better(target.string(), first, payload(first, "FIRST")));
+    REQUIRE(fs::exists(lock));
+
+    remove_lock_file(target.string());
+    CHECK_FALSE(fs::exists(lock));
+    CHECK(slurp(target).find("FIRST") != std::string::npos);
+    CHECK_NOTHROW(remove_lock_file(target.string()));   /* already gone */
+    CHECK_FALSE(fs::exists(lock));
+
+    const Key better{1.0, 0, 0, 2};
+    REQUIRE(publish_if_better(target.string(), better, payload(better, "BETTER")));
+    CHECK(fs::exists(lock));
+    CHECK(slurp(target).find("BETTER") != std::string::npos);
+
+    CHECK_THROWS_AS(remove_lock_file(""), Error);
+}
+
 TEST_CASE("fresh-run reset discards an unrelated incumbent",
           "[durable_best]")
 {
