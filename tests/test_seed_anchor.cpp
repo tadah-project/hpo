@@ -278,8 +278,9 @@ TEST_CASE("seed anchors: every adapter's first evaluation is the seed bitwise",
 #endif
 }
 
-/* Example 17's FIXWEIGHT (2-11) seed in explicit [-300, 300] boxes. With
- * no STEP, NLopt's default initial steps differ per dimension, so BOBYQA
+/* A pinned-weight seed searched as OPTIM FIXWEIGHT (2-11) in explicit
+ * [-300, 300] boxes. With no STEP, NLopt's default initial steps differ
+ * per dimension, so BOBYQA
  * and COBYLA rescale the start (u -> (u/s)*s) and PRAXIS maps it through
  * atanh/tanh: their first evaluation is a few ulp off u0 in some
  * dimension (FIXWEIGHT(8) for BOBYQA/COBYLA, FIXWEIGHT(2) -- whose plain

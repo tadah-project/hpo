@@ -537,8 +537,8 @@ TEST_CASE("HPO parser accepts ROOT-level keys after ENDOPTIMIZER",
      * guard had become `if (block == OUTER) { fall through }` (matching
      * only the OPTIMIZER scope), so once `ENDOPTIMIZER` set
      * `block = ROOT`, every subsequent ROOT-level key hit the catch-all
-     * throw before reaching its handler. Real-world configs (every
-     * config.hpo under examples/) failed to
+     * throw before reaching its handler. Real-world target files (every
+     * one with a top-level key after its OPTIMIZER block) failed to
      * parse with `Error on line N: unknown key 'LOSS' in this block`.
      *
      * This test exercises the most common ROOT-level keys to ensure
@@ -1409,7 +1409,8 @@ TEST_CASE("GradientProvider Hybrid takes finite differences on every "
      * FIXINDEX, ...), a candidate rejected before training, a PC_LAMMPS
      * chain that failed. HYBRID skipped the finite differences there and
      * returned g = 0, so DLIB:BFGS ended COMPLETED at its start after two
-     * evaluations (example 01 without PC_LAMMPS, GRAD_STRATEGY HYBRID).
+     * evaluations (data/ta/target_files/dlib_bfgs.hpo without its
+     * PC_LAMMPS line, GRAD_STRATEGY HYBRID).
      * The fix: difference every parameter, as the host's journal line
      * already said it would. */
     auto agf = [](const DlibVec& x, DlibVec& g, std::vector<int>& nfd) -> bool {

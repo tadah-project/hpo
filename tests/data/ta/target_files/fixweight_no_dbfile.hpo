@@ -1,0 +1,24 @@
+# OPTIM FIXWEIGHT on pinned weights, without a training DBFILE and
+# without --validation: the parse case removes DBFILE from
+# ../common/config.tadah and pins its 14 weights (FIXINDEX 1-14).
+
+OPTIMIZER
+  STRATEGY
+    TYPE PLAIN
+    LIB NLOPT
+    ALGO LN_BOBYQA
+    MAXEVAL 40
+  ENDSTRATEGY
+ENDOPTIMIZER
+
+LOSS L2
+FAILSCORE 1e16
+PC_LAMMPS --script ../common/lammps/Ecoh.in --hotvar hot_a0 2.5 4.5 3.302 --varloss Ecoh 8.10 800
+
+# Three of the pinned weights (indices 2-4) are search parameters, so the
+# parse resolves an indexed FIXWEIGHT range; the other eleven keep the
+# values FIXWEIGHT pins them at.
+OPTIM FIXWEIGHT (2-4) -300.0 300.0
+
+OUTPUT 1
+BOUTPUT 1

@@ -1,0 +1,21 @@
+# OPTIM FIXWEIGHT on a weight that fixweight_mixed.tadah pins (FIXINDEX
+# 13,14); the other weights are fitted.
+
+OPTIMIZER
+  STRATEGY
+    TYPE PLAIN
+    LIB NLOPT
+    ALGO LN_BOBYQA
+    MAXEVAL 30
+  ENDSTRATEGY
+ENDOPTIMIZER
+
+LOSS L2
+FAILSCORE 1e16
+PC_ERMSE 0 0.0001
+PC_LAMMPS --script ../common/lammps/Ecoh.in --hotvar hot_a0 2.5 4.5 3.302 --varloss Ecoh 8.10 800
+
+OPTIM FIXWEIGHT (14) -50.0 50.0
+
+OUTPUT 1
+BOUTPUT 1

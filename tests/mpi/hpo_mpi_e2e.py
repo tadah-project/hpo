@@ -2,8 +2,9 @@
 """Multi-rank `tadah hpo` end to end (a TADAH_HPO_MPI build).
 
 Runs the built `tadah` under the MPI launcher of the MPI it links
-(MPIEXEC_EXECUTABLE), on 1 and on 2 ranks, in a scratch copy of
-HPO/examples/common and of example 27's DM_REAM seed, and checks one case:
+(MPIEXEC_EXECUTABLE), on 1 and on 2 ranks, in a scratch copy of the Ta
+test set's common/ and of its DM_REAM seed, ta2_refit_seed.tadah (HPO's
+tests/data/ta, --data), and checks one case:
 
   restart_refusal   ANNEAL_PT with an active RESTART block.
                     Pins: on 2 ranks the launch fails on every rank before
@@ -19,7 +20,8 @@ HPO/examples/common and of example 27's DM_REAM seed, and checks one case:
   gradient_refusal  The finite-difference counters: the finite differences
                     run only in gradient-based searches, which a multi-rank
                     launch refuses, so no multi-rank run can count them.
-                    Pins: example 01 (DLIB BFGS, numerical gradients) on 2
+                    Pins: target_files/dlib_bfgs.hpo (DLIB BFGS, numerical
+                    gradients; its ENDOPTIMIZER is on line 14) on 2
                     ranks fails on every rank before any evaluation
                     ("multi-rank HPO supports only STRATEGY TYPE PLAIN with
                     LIB TADAH and ALGO ANNEAL_PT or ANNEAL_PA; got DLIB:BFGS
@@ -27,7 +29,7 @@ HPO/examples/common and of example 27's DM_REAM seed, and checks one case:
                     DIAGNOSTICS count one-sided differences ("One-sided
                     differences : N", N > 0).
                     Before the fix: passes as well (a pin).
-  eamfast           The LAMMPS fast kernels on several ranks: example 27's
+  eamfast           The LAMMPS fast kernels on several ranks: the
                     D2_Knot5 + DM_REAM seed (EAMFAST is on by default) under
                     ANNEAL_PT (SEED 77), PC_LAMMPS with -log lmp.log and the
                     Ecoh target 8.15, not the seed's 8.10: the seed scores
@@ -128,7 +130,8 @@ RESTART = """    RESTART
     ENDRESTART
 """
 
-ECOH_27 = ("PC_LAMMPS --script ../common/lammps/Ecoh.in --hotvar hot_a0 2.5 "
+# The seed's own Ecoh line (its target 8.10).
+ECOH_SEED = ("PC_LAMMPS --script ../common/lammps/Ecoh.in --hotvar hot_a0 2.5 "
            "4.5 3.304 --varloss Ecoh 8.10 800 -log lmp.log -screen none\n")
 
 # The searches' Ecoh line: the seed potential has Ecoh 8.10 (loss 2.8e-8 at
@@ -159,13 +162,13 @@ class Runner:
         self.preflags = shlex.split(args.preflags or "")
         self.postflags = shlex.split(args.postflags or "")
         self.tadah = args.tadah
-        self.examples = pathlib.Path(args.examples).resolve()
+        self.data = pathlib.Path(args.data).resolve()
         self.root = pathlib.Path(args.workdir).resolve() / args.case
         if self.root.exists():
             shutil.rmtree(self.root)
         self.root.mkdir(parents=True)
-        shutil.copytree(self.examples / "common", self.root / "common")
-        shutil.copy(self.examples / "27_dm_ream_embf0" / "ta2_refit_seed.tadah",
+        shutil.copytree(self.data / "common", self.root / "common")
+        shutil.copy(self.data / "ta2_refit_seed.tadah",
                     self.root / "ta2_refit_seed.tadah")
         self.env = dict(os.environ)
         self.env.pop("TADAH_PC_ISOLATION", None)
@@ -298,7 +301,7 @@ def check_refused(d, p, nranks, line, message):
 
 
 def case_restart_refusal(r):
-    config = PT_HEAD.format(seed=77, restart=RESTART) + ECOH_27 + \
+    config = PT_HEAD.format(seed=77, restart=RESTART) + ECOH_SEED + \
         "\nOPTIM CEMBFUNC (1) -2.19 -2.15\n" + TAIL
     args = ["-c", "../ta2_refit_seed.tadah"]
     d, p = r.run("restart", 2, config, args)
@@ -313,7 +316,7 @@ def case_restart_refusal(r):
 
 
 def case_gradient_refusal(r):
-    config = (r.examples / "01_minimal" / "config.hpo").read_text()
+    config = (r.data / "target_files" / "dlib_bfgs.hpo").read_text()
     args = ["--validation", "../common/config.val",
             "-c", "../common/config.tadah"]
     d, p = r.run("bfgs", 2, config, args)
@@ -466,7 +469,8 @@ def main():
     ap.add_argument("--preflags", default="")
     ap.add_argument("--postflags", default="")
     ap.add_argument("--tadah", default="")
-    ap.add_argument("--examples", required=True)
+    ap.add_argument("--data", required=True,
+                    help="the Ta test set, HPO/tests/data/ta")
     ap.add_argument("--workdir", required=True)
     args = ap.parse_args()
     if not args.tadah:

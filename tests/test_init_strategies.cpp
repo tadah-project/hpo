@@ -336,8 +336,7 @@ TEST_CASE("SobolInitStrategy: the first points are the Sobol sequence's",
     /* Pins the Sobol points (Boost's boost::random::sobol, Joe-Kuo
      * direction numbers, the zero point skipped) in the unit cube, SEED 0:
      * exact binary fractions, so equality is exact. They must not change
-     * with the Boost the build uses (example 08's fingerprint depends on
-     * them). */
+     * with the Boost the build uses (every SOBOL start depends on them). */
     using namespace tadah::hpo;
     auto sp = make_synthetic_spec({0.0, 0.0, 0.0}, {1.0, 1.0, 1.0});
     StubTargets st;

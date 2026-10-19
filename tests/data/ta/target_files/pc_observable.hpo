@@ -1,0 +1,22 @@
+# PC_OBSERVABLE cohesive_energy in place of PC_LAMMPS, under DLIB:BFGS
+# without GRAD_STRATEGY; pc_observable.tadah sets OALGO 4 and LAMBDA for
+# the analytical gradient.
+
+OPTIMIZER
+  STRATEGY
+    TYPE PLAIN
+    LIB DLIB
+    ALGO BFGS
+    MAXEVAL 30
+  ENDSTRATEGY
+ENDOPTIMIZER
+
+LOSS L2
+FAILSCORE 1e16
+PC_ERMSE 0 0.0001
+PC_OBSERVABLE cohesive_energy --species Ta --target 8.10 --weight 800 --hotvar a0 2.5 4.5 3.302 --maxiter 500 --maxeval 500 --etol 1e-12
+
+OPTIM RCUT2B (1) 4.0 6.0
+
+OUTPUT 1
+BOUTPUT 1

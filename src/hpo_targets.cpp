@@ -248,9 +248,9 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn,
    * One SearchSpace from the OPTIM lines (real boxes + per-line shape
    * tags), OPTIM_SCALE and LOG_HP; bound to the outer spec and, below,
    * to every sub-spec. spec.low/high are the INTERNAL bounds. */
-  /* Env override TADAH_OPTIM_SCALE=AUTO|NONE (harness A/B of the
-   * coordinate system; the reference-suite gate runs every example both
-   * ways). Read here because the space is built in this constructor. */
+  /* Env override TADAH_OPTIM_SCALE=AUTO|NONE (an A/B of the coordinate
+   * system without editing the target file). Read here because the space
+   * is built in this constructor. */
   if (const char* e = std::getenv("TADAH_OPTIM_SCALE")) {
     std::string v = e;
     for (auto& ch : v) ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
