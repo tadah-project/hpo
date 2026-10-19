@@ -887,6 +887,38 @@ TEST_CASE("hpotarget block structure: FAILSCORE, LOSS or PC_SCRIPT_TIMEOUT "
     fs::remove(script, ec);
 }
 
+/* A potential's values its descriptors do not read are left out of it for
+ * the run (D_mJoin::expand_grids): a single descriptor keeps its largest
+ * RCUT2B value, its cutoff, so OPTIM indices address the values kept. An
+ * index past them is refused saying so, naming the values left out and
+ * the index the kept value has: a 1.5.0 target file's 'OPTIM RCUT2B (2)'
+ * on 'RCUT2B 4 6' searched the cutoff 6, which is index 1.
+ * Before the fix: 'OPTIM RCUT2B (2): Out of bound index: 2', without why. */
+TEST_CASE("hpotarget: an OPTIM index past the values kept of a potential "
+          "says why", "[hpotarget][potential]")
+{
+    PeriodicTable::initialize();
+    Context ctx = make_minimal_ctx();
+    ctx.remove("RCUT2B");
+    ctx.add("RCUT2B", "4 6");
+    ctx.add("WEIGHTS", "0.1 0.2");
+    ScopedTempFile tf(Lines{"OPTIM RCUT2B (2) 5.5 6.5", "PC_ERMSE 0 1",
+                            "OPTIMIZER", "  LIB NLOPT", "  ALGO LN_SBPLX",
+                            "  MAXEVAL 3", "ENDOPTIMIZER"});
+    std::string what;
+    try {
+        HPOTargets trg(ctx, tf.path.string());
+    } catch (const std::exception& e) {
+        what = e.what();
+    }
+    CHECK_THAT(what, Catch::Contains(
+                         "OPTIM RCUT2B (2): Out of bound index: 2 (RCUT2B has "
+                         "1 value: of the potential's RCUT2B 4 6, the "
+                         "descriptors do not read 4, which was left out, and "
+                         "OPTIM indices address the values kept, 6; the "
+                         "potential's value at index 2, 6, is index 1)"));
+}
+
 /* The grids of a single DM_Poly line whose channel function reads SEMBFUNC
  * are expanded before the OPTIM lines are read: OPTIM CGRIDMB (2) of
  * 'CGRIDMB LIN 3 2 4.5' starts at the second centre, 3.25.
