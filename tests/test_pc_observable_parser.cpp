@@ -776,7 +776,9 @@ TEST_CASE("HPOTargets names, for an INNER block under PC_LAMMPS, the "
             CHECK_THAT(got, Catch::Contains(name));
         CHECK_THAT(got, Catch::Contains(
                             "TADAH:RANDOM) or DLIB:BFGS, the one "
-                            "gradient-based optimiser it accepts."));
+                            "gradient-based optimiser it accepts; an NLopt "
+                            "MLSL or AUGLAG algorithm is accepted with a "
+                            "derivative-free INNER block."));
         /* The advice, after the refused optimiser's name. */
         const auto at = got.find("PC_LAMMPS requires");
         REQUIRE(at != std::string::npos);
@@ -813,6 +815,40 @@ TEST_CASE("HPOTargets names, for an INNER block under PC_LAMMPS, the "
                             "PC_LAMMPS requires"));
         CHECK_THAT(got, Catch::EndsWith("\nLine:     ENDEXPLORE"));
         check_other(got);
+    }
+    /* Every optimiser the advice names runs with PC_LAMMPS as written, in
+     * a STRATEGY block of its own: accepted by the parser and at startup
+     * (validate_run_policy). Before the fix the advice named NLOPT:AUGLAG,
+     * AUGLAG_EQ, G_MLSL and G_MLSL_LDS, which are refused without an INNER
+     * block ("needs an INNER block: NLopt has no default local optimiser
+     * for it"). */
+    {
+        const std::string got = error(
+            "OPTIMIZER\n  STRATEGY\n    LIB NLOPT\n    ALGO LD_LBFGS\n"
+            "    MAXEVAL 1\n  ENDSTRATEGY\nENDOPTIMIZER\nLOSS L2\n" +
+                pc_lammps,
+            false);
+        const std::string open = "gradient-free optimiser (";
+        const auto from = got.find(open);
+        const auto to = got.find(") or DLIB:BFGS");
+        REQUIRE(from != std::string::npos);
+        REQUIRE(to != std::string::npos);
+        std::istringstream names(got.substr(from + open.size(),
+                                            to - from - open.size()));
+        std::size_t n = 0;
+        for (std::string name; std::getline(names >> std::ws, name, ',');) {
+            ++n;
+            const auto colon = name.find(':');
+            REQUIRE(colon != std::string::npos);
+            INFO(name);
+            const std::string body =
+                "OPTIMIZER\n  STRATEGY\n    TYPE PLAIN\n    LIB " +
+                name.substr(0, colon) + "\n    ALGO " +
+                name.substr(colon + 1) + "\n    MAXEVAL 4\n  ENDSTRATEGY\n"
+                "ENDOPTIMIZER\nLOSS L2\n" + pc_lammps;
+            CHECK(error(body, true) == "");
+        }
+        CHECK(n > 10);
     }
     /* What the advice names is accepted with PC_LAMMPS (pins). */
     for (const std::string& lib_algo :
