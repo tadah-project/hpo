@@ -1153,7 +1153,11 @@ TEST_CASE("DUMP and BDUMP refuse a directory the run cannot create, at "
  * <root>/archive/x/best") is refused at its line ("... cannot be created:
  * the directory '<root>/archive/x' does not exist ..."), and so is an outer
  * directory that cannot be created (DUMP in <root>/missing): the error is
- * at the line of that directory's key, the inner one being accepted.
+ * at the line of that directory's key, the inner one being accepted; and
+ * so is an inner directory whose path walks through a missing directory
+ * with '..' ("BDUMP 5 <root>/archive/x/../best"), which mkdir cannot
+ * create although the path names <root>/archive/best once normalised
+ * (accepted before the '..' rule).
  * Before the change: each line was checked alone, so the inner directory
  * was refused when the outer one did not exist yet ("the directory
  * '<root>/archive' does not exist"); 1.5.0 created the DUMP directory at
@@ -1216,6 +1220,19 @@ TEST_CASE("DUMP and BDUMP: a directory inside the other's is accepted in "
                                  "' does not exist"));
     CHECK_FALSE(fs::exists(archive));
     CHECK_FALSE(fs::exists(root / "missing"));
+
+    /* A parent written with '..' is the directory mkdir walks through, not
+     * the one the path names once normalised: "BDUMP 5 <root>/archive/x/../
+     * best" with "DUMP 5 <root>/archive" is refused at the BDUMP line, as
+     * '<root>/archive/x' does not exist. */
+    const std::string through = (archive / "x" / ".." / "best").string();
+    CHECK_THAT(parse_error(kOptimizer + "DUMP 5 " + archive.string() +
+                           "\nBDUMP 5 " + through + "\n"),
+               Catch::StartsWith(at + "BDUMP directory '" + through +
+                                 "' cannot be created: the directory '" +
+                                 (archive / "x" / "..").string() +
+                                 "' does not exist"));
+    CHECK_FALSE(fs::exists(archive));
 }
 
 /* Pins: the directory of a DUMP or BDUMP line must be one the run can

@@ -50,6 +50,7 @@
 #include <string>
 #include <system_error>
 #include <unistd.h>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -863,5 +864,222 @@ TEST_CASE("hpo --check: a DUMP directory inside the BDUMP directory, or the "
         REQUIRE(fs::is_directory(l.bdump));
         CHECK(count_prefixed(l.dump, "pot_") >= 1u);
         CHECK(count_prefixed(l.bdump, "best_pot_") >= 1u);
+    }
+}
+
+namespace {
+
+/* Owner read permission alone for the file @p path. */
+void read_only_file(const fs::path& path)
+{
+    fs::permissions(path, fs::perms::owner_read);
+}
+
+/* What the check and the run of the setup in the working directory throw
+ * ("" when one returns), in that order; each starts as a new process
+ * would. @p edit changes the training configuration of both. */
+std::pair<std::string, std::string> check_and_run_errors(
+    const std::function<void(tadah::core::Context&)>& edit = {})
+{
+    std::pair<std::string, std::string> errors;
+    fresh_process_state();
+    {
+        tadah::core::Context ctx =
+            make_ta_context("train.db", "config.hpo", "config.val");
+        if (edit) edit(ctx);
+        ctx.add("CHECK", "true");
+        errors.first = error_of([&] { return tadah::hpo::hpo_run(ctx); });
+    }
+    fresh_process_state();
+    {
+        tadah::core::Context ctx =
+            make_ta_context("train.db", "config.hpo", "config.val");
+        if (edit) edit(ctx);
+        errors.second = error_of([&] { return tadah::hpo::hpo_run(ctx); });
+    }
+    return errors;
+}
+
+/* "'<file>' in the working directory '<cwd>' " */
+std::string in_working_directory(const std::string& file)
+{
+    return "'" + file + "' in the working directory '" +
+           fs::current_path().string() + "' ";
+}
+
+}  // namespace
+
+/* Pins: an existing output file of the run that the run cannot write --
+ * loss.tadah, hpo_run.log and best_pot.tadah.lock with owner read
+ * permission alone -- stops the check and the run with one message,
+ * before the journal and before any data is loaded: "'loss.tadah' in the
+ * working directory '<dir>' is not writable: tadah hpo rewrites it" (the
+ * same for hpo_run.log), "'best_pot.tadah.lock' ... is not writable: tadah
+ * hpo opens it to lock best_pot.tadah"; the run writes no hpo_run.log (the
+ * one that exists keeps its line) and no search-space file, and the
+ * working directory is as it was.
+ * Before the change: the result files and the lock were checked after the
+ * journal was opened (the run wrote hpo_run.log, its error in it), and the
+ * lock's message said "tadah hpo rewrites it". Before the output files were
+ * checked at all: the check passed, and the run lost the rows of loss.tadah
+ * or stopped at the lock. Skipped as root, whose writes no permission
+ * stops. */
+TEST_CASE("hpo --check: an output file the run cannot write stops the "
+          "check and the run alike, before the journal",
+          "[HPO][hpo_check]")
+{
+    if (::geteuid() == 0)
+        TADAH_SKIP("running as root: file permissions are not enforced");
+    struct Case {
+        const char* file;
+        const char* says;
+    };
+    const std::vector<Case> cases = {
+        {"loss.tadah", "is not writable: tadah hpo rewrites it"},
+        {"hpo_run.log", "is not writable: tadah hpo rewrites it"},
+        {"best_pot.tadah.lock",
+         "is not writable: tadah hpo opens it to lock best_pot.tadah"},
+    };
+    for (const Case& c : cases) {
+        INFO("file: " << c.file);
+        ScratchDir sd("read_only_output");
+        write_inputs(kOptimizer + kRootLines);
+        std::ofstream(c.file) << "kept\n";
+        read_only_file(c.file);
+        const auto before = entries(sd.dir);
+        const auto [check_error, run_error] = check_and_run_errors();
+        INFO("run: " << run_error << "\ncheck: " << check_error);
+        CHECK(run_error == in_working_directory(c.file) + c.says);
+        CHECK(check_error == run_error);
+        CHECK(entries(sd.dir) == before);
+        CHECK_FALSE(fs::exists("hpo_search_space.tsv"));
+        std::ifstream in(c.file);
+        std::string line;
+        std::getline(in, line);
+        CHECK(line == "kept");
+        if (std::string(c.file) != "hpo_run.log")
+            CHECK_FALSE(fs::exists("hpo_run.log"));
+    }
+}
+
+/* Pins: a directory named best_pot.tadah, and a result file that is a
+ * symbolic link into a directory that does not exist, stop the check and
+ * the run with one message, before the journal: "'best_pot.tadah' in the
+ * working directory '<dir>' is a directory: tadah hpo writes a file of
+ * that name", "'loss.tadah' ... is a symbolic link to 'nowhere/loss',
+ * whose directory 'nowhere' does not exist". A symbolic link loss.tadah
+ * to a file not yet created in a directory that exists (out/loss) is
+ * accepted: the check passes, and the run creates out/loss through it and
+ * writes its rows there. A best_pot.tadah with owner read permission alone
+ * is accepted: the run replaces it (its first line is no longer "old").
+ * Before the change: the directory was refused after the journal was
+ * opened; both symbolic links were refused as "not writable: tadah hpo
+ * rewrites it" (the first is accepted in v1-dev, which follows the link). */
+TEST_CASE("hpo --check: best_pot.tadah as a directory and the symbolic "
+          "links of the output files",
+          "[HPO][hpo_check]")
+{
+    {
+        INFO("best_pot.tadah is a directory");
+        ScratchDir sd("best_pot_directory");
+        write_inputs(kOptimizer + kRootLines);
+        fs::create_directories("best_pot.tadah");
+        const auto before = entries(sd.dir);
+        const auto [check_error, run_error] = check_and_run_errors();
+        INFO("run: " << run_error << "\ncheck: " << check_error);
+        CHECK(run_error == in_working_directory("best_pot.tadah") +
+                               "is a directory: tadah hpo writes a file of "
+                               "that name");
+        CHECK(check_error == run_error);
+        CHECK(entries(sd.dir) == before);
+    }
+    {
+        INFO("loss.tadah links into a directory that does not exist");
+        ScratchDir sd("dangling_result");
+        write_inputs(kOptimizer + kRootLines);
+        fs::create_symlink("nowhere/loss", "loss.tadah");
+        const auto before = entries(sd.dir);
+        const auto [check_error, run_error] = check_and_run_errors();
+        INFO("run: " << run_error << "\ncheck: " << check_error);
+        CHECK(run_error == in_working_directory("loss.tadah") +
+                               "is a symbolic link to 'nowhere/loss', whose "
+                               "directory 'nowhere' does not exist");
+        CHECK(check_error == run_error);
+        CHECK(entries(sd.dir) == before);
+    }
+    {
+        INFO("loss.tadah links to a file not yet created");
+        ScratchDir sd("link_result");
+        write_inputs(kOptimizer + kRootLines);
+        fs::create_directories("out");
+        fs::create_symlink("out/loss", "loss.tadah");
+        const auto [check_error, run_error] = check_and_run_errors();
+        INFO("run: " << run_error << "\ncheck: " << check_error);
+        CHECK(check_error.empty());
+        CHECK(run_error.empty());
+        REQUIRE(fs::exists("out/loss"));
+        CHECK(fs::file_size("out/loss") > 0u);
+    }
+    {
+        INFO("best_pot.tadah with owner read permission alone");
+        ScratchDir sd("read_only_best");
+        write_inputs(kOptimizer + kRootLines);
+        std::ofstream("best_pot.tadah") << "old\n";
+        read_only_file("best_pot.tadah");
+        const auto [check_error, run_error] = check_and_run_errors();
+        INFO("run: " << run_error << "\ncheck: " << check_error);
+        CHECK(check_error.empty());
+        CHECK(run_error.empty());
+        std::ifstream in("best_pot.tadah");
+        std::string line;
+        std::getline(in, line);
+        CHECK(line != "old");
+    }
+}
+
+/* Pins: hpo_optim_resolved.hpo, which the run writes only when a box of
+ * the search space comes from an AUTO rule, is checked only then: with
+ * explicit boxes alone a read-only one (owner read permission) is
+ * accepted -- the check passes, the run returns 0 and leaves it as it was
+ * ("# stale") --, and with an AUTO box (OPTIM SGRID2B (2) AUTO) the check
+ * and the run refuse it with one message, "'hpo_optim_resolved.hpo' in the
+ * working directory '<dir>' is not writable: tadah hpo rewrites it".
+ * Before the change: it was refused whatever the boxes (v1-dev ran with
+ * explicit boxes and left it alone). Skipped as root, whose writes no
+ * permission stops. */
+TEST_CASE("hpo --check: hpo_optim_resolved.hpo is checked only when a box "
+          "comes from an AUTO rule",
+          "[HPO][hpo_check]")
+{
+    if (::geteuid() == 0)
+        TADAH_SKIP("running as root: file permissions are not enforced");
+    {
+        INFO("explicit boxes");
+        ScratchDir sd("resolved_explicit");
+        write_inputs(kOptimizer + kRootLines);
+        std::ofstream("hpo_optim_resolved.hpo") << "# stale\n";
+        read_only_file("hpo_optim_resolved.hpo");
+        const auto [check_error, run_error] = check_and_run_errors();
+        INFO("run: " << run_error << "\ncheck: " << check_error);
+        CHECK(check_error.empty());
+        CHECK(run_error.empty());
+        std::ifstream in("hpo_optim_resolved.hpo");
+        std::string line;
+        std::getline(in, line);
+        CHECK(line == "# stale");
+    }
+    {
+        INFO("an AUTO box");
+        ScratchDir sd("resolved_auto");
+        write_inputs(kOptimizer +
+                     "LOSS L2\nFAILSCORE 1e9\nPC_ERMSE 0 1\n"
+                     "OPTIM CGRID2B (1) 0.1 0.9\nOPTIM SGRID2B (2) AUTO\n");
+        std::ofstream("hpo_optim_resolved.hpo") << "# stale\n";
+        read_only_file("hpo_optim_resolved.hpo");
+        const auto [check_error, run_error] = check_and_run_errors();
+        INFO("run: " << run_error << "\ncheck: " << check_error);
+        CHECK(run_error == in_working_directory("hpo_optim_resolved.hpo") +
+                               "is not writable: tadah hpo rewrites it");
+        CHECK(check_error == run_error);
     }
 }
