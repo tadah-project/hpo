@@ -294,8 +294,10 @@ messages the parser holds for the block that no file reaches), `requires`
 line as the reference shows it, `MAXEVAL <n>`); `args` (optional);
 `repeat` (`last_wins`, `warn_last_wins`: last wins with a warning, `error`:
 refused with `repeat_msg`, `add`: each line adds an entry); `repeat_msg`;
-`repeat_doc` (optional: the repeat rule as the reference shows it, for a
-key whose forms repeat differently, such as `STEP`);
+`repeat_doc` (optional: the repeat rule as the reference shows it, where
+`repeat` alone does not say it: a key whose forms repeat differently, such
+as `STEP`, a key set once for what several blocks configure, such as
+`MAXEVAL`, or a key given again only after another line, such as `LOSS`);
 `misplaced_msg` (optional: the refusal of the key in a block where it is not
 valid, when the parser has one of its own); `default` (optional:
 `{ literal = "..." }`, the value as a file writes it, or
