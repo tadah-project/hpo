@@ -22,7 +22,8 @@ id = "ROOT.PC_EMAE"
 name = "PC_EMAE"
 blocks = ["ROOT"]
 synopsis = "PC_EMAE <target> <weight> [--skip-above <cap>] [--skip-rel <ratio>]"
-repeat = "last_wins"
+repeat = "error"
+repeat_msg = "PC_EMAE: repeated declaration (first declared on line {first_line})"
 doc = """\
 A loss term on the energy MAE of the validation datasets, in meV/atom: \
 the LOSS function of the metric averaged over the datasets, its target \
@@ -30,8 +31,7 @@ and its weight."""
 long_doc = """\
 The term needs a validation configuration (--validation). The weight is \
 a number >= 0; with a weight of 0 the term adds no loss, and --skip-above \
-and --skip-rel still apply to the metric. A second PC_EMAE line replaces \
-the first."""
+and --skip-rel still apply to the metric."""
 
 [[key.args]]
 name = "target"
@@ -92,12 +92,21 @@ text = "PC_EMAE 5 1"
 error = "unknown key 'PC_EMAE' in this block"
 doc = "A metric line is a top-level key."
 
+[[key.invalid]]
+wrap = "root"
+at = 2
+text = '''
+PC_EMAE 5 1
+PC_EMAE 4 1'''
+error = "PC_EMAE: repeated declaration (first declared on line 1)"
+
 [[key]]
 id = "ROOT.PC_ERMSE"
 name = "PC_ERMSE"
 blocks = ["ROOT"]
 synopsis = "PC_ERMSE [(<indices>)] <target> <weight> [--skip-above <cap>] [--skip-rel <ratio>]"
 repeat = "add"
+repeat_doc = "A line without indices is given once, and not with indexed lines; each indexed line adds the datasets it lists, each dataset once."
 doc = """\
 A loss term on the energy RMSE of the validation datasets, in meV/atom. \
 Without an index list the term is the LOSS function of the metric \
@@ -165,7 +174,7 @@ PC_ERMSE (2-3) 4 0.5 --skip-above 40'''
 [[key.invalid]]
 wrap = "end"
 text = "PC_ERMSE 2 1"
-error = "PC_ERMSE: repeated global declaration or mixed global/indexed forms"
+error = "PC_ERMSE: repeated declaration (first declared on line 2)"
 
 [[key.invalid]]
 wrap = "end"
@@ -220,14 +229,15 @@ id = "ROOT.PC_ErRMSE"
 name = "PC_ErRMSE"
 blocks = ["ROOT"]
 synopsis = "PC_ErRMSE <target> <weight> [--skip-above <cap>] [--skip-rel <ratio>]"
-repeat = "last_wins"
+repeat = "error"
+repeat_msg = "PC_ErRMSE: repeated declaration (first declared on line {first_line})"
 doc = """\
 A loss term on the relative energy RMSE of the validation datasets, in \
 per mille: the LOSS function of the metric averaged over the datasets, \
 its target and its weight."""
 long_doc = """\
 The term needs a validation configuration (--validation). The weight is \
-a number >= 0. A second PC_ErRMSE line replaces the first."""
+a number >= 0."""
 
 [[key.args]]
 name = "target"
@@ -257,19 +267,28 @@ wrap = "root"
 text = "PC_ErRMSE 10 x"
 error = "PC_ErRMSE <weight> must be a finite number, got 'x'"
 
+[[key.invalid]]
+wrap = "root"
+at = 2
+text = '''
+PC_ErRMSE 5 1
+PC_ErRMSE 4 1'''
+error = "PC_ErRMSE: repeated declaration (first declared on line 1)"
+
 [[key]]
 id = "ROOT.PC_ERSQ"
 name = "PC_ERSQ"
 blocks = ["ROOT"]
 synopsis = "PC_ERSQ <target> <weight> [--skip-above <cap>] [--skip-rel <ratio>]"
-repeat = "last_wins"
+repeat = "error"
+repeat_msg = "PC_ERSQ: repeated declaration (first declared on line {first_line})"
 doc = """\
 A loss term on the coefficient of determination (R squared) of the \
 energies of the validation datasets: the LOSS function of the metric \
 averaged over the datasets, its target and its weight."""
 long_doc = """\
 The term needs a validation configuration (--validation). The weight is \
-a number >= 0. A second PC_ERSQ line replaces the first."""
+a number >= 0."""
 
 [[key.args]]
 name = "target"
@@ -299,19 +318,28 @@ wrap = "root"
 text = "PC_ERSQ 1"
 error = "PC_ERSQ requires <target> <weight>"
 
+[[key.invalid]]
+wrap = "root"
+at = 2
+text = '''
+PC_ERSQ 5 1
+PC_ERSQ 4 1'''
+error = "PC_ERSQ: repeated declaration (first declared on line 1)"
+
 [[key]]
 id = "ROOT.PC_SRMSE"
 name = "PC_SRMSE"
 blocks = ["ROOT"]
 synopsis = "PC_SRMSE <target> <weight> [--skip-above <cap>] [--skip-rel <ratio>]"
-repeat = "last_wins"
+repeat = "error"
+repeat_msg = "PC_SRMSE: repeated declaration (first declared on line {first_line})"
 doc = """\
 A loss term on the stress RMSE of the validation datasets, in eV/Å^3: the \
 LOSS function of the metric averaged over the datasets, its target and \
 its weight."""
 long_doc = """\
 The term needs a validation configuration (--validation). The weight is \
-a number >= 0. A second PC_SRMSE line replaces the first. A dataset whose \
+a number >= 0. A dataset whose \
 structures all have stress weight 0 is not measured: the average leaves \
 it out, and hpo_run.log names it."""
 
@@ -350,12 +378,21 @@ wrap = "root"
 text = "PC_SRMSE 0.001 -2"
 error = "PC_SRMSE <weight> must be a number >= 0, got '-2'"
 
+[[key.invalid]]
+wrap = "root"
+at = 2
+text = '''
+PC_SRMSE 5 1
+PC_SRMSE 4 1'''
+error = "PC_SRMSE: repeated declaration (first declared on line 1)"
+
 [[key]]
 id = "ROOT.PC_FRMSE"
 name = "PC_FRMSE"
 blocks = ["ROOT"]
 synopsis = "PC_FRMSE [(<indices>)] <target> <weight> [--skip-above <cap>] [--skip-rel <ratio>]"
 repeat = "add"
+repeat_doc = "A line without indices is given once, and not with indexed lines; each indexed line adds the datasets it lists, each dataset once."
 doc = """\
 A loss term on the force RMSE of the validation datasets, in eV/Å. \
 Without an index list the term is the LOSS function of the metric \
@@ -442,7 +479,7 @@ at = 2
 text = '''
 PC_FRMSE 0.1 1
 PC_FRMSE 0.2 1'''
-error = "PC_FRMSE: repeated global declaration or mixed global/indexed forms"
+error = "PC_FRMSE: repeated declaration (first declared on line 1)"
 
 [[key.invalid]]
 wrap = "root"
@@ -450,7 +487,7 @@ at = 2
 text = '''
 PC_FRMSE (1) 0.1 1
 PC_FRMSE 0.2 1'''
-error = "PC_FRMSE: repeated global declaration or mixed global/indexed forms"
+error = "PC_FRMSE: cannot mix global and indexed forms"
 
 [[key.invalid]]
 wrap = "root"
@@ -1939,7 +1976,9 @@ id = "ROOT.LOSS"
 name = "LOSS"
 blocks = ["ROOT"]
 synopsis = "LOSS <function> [<param>]"
-repeat = "last_wins"
+repeat = "error"
+repeat_msg = "LOSS is set twice (first on line {first_line}) and no PC_LAMMPS or PC_FAILPROBE line between takes the first; each key is given once"
+repeat_doc = "Again only after a PC_LAMMPS or PC_FAILPROBE line, which takes the value given above it; a second line with no such line between is refused."
 default = { literal = "L2" }
 doc = """\
 The loss function of the validation metric terms (PC_EMAE, PC_ERMSE and \
@@ -1995,6 +2034,14 @@ error = "loss TUKEY takes at most 1 parameter (got 2)"
 wrap = "optimizer"
 text = "LOSS L1"
 error = "unknown key 'LOSS' in this block"
+
+[[key.invalid]]
+wrap = "root"
+at = 2
+text = '''
+LOSS L1
+LOSS L2'''
+error = "LOSS is set twice (first on line 1) and no PC_LAMMPS or PC_FAILPROBE line between takes the first; each key is given once"
 
 [[loss_function]]
 id = "LOSS.L1"
@@ -2224,8 +2271,13 @@ msg = "OPTIM {key} ({index}) is not a valid search target: value {index} of {key
 doc = "The selected value is an integer in every format of the key; {list} names the formats."
 
 [[optim.checks]]
-msg = "OPTIM {key} ({index}): Out of bound index: {index}"
-doc = "The key has fewer numeric values than the index."
+msg = "OPTIM {key} ({index}): Out of bound index: {index}{note}"
+doc = """\
+The key has fewer numeric values than the index. {note} is empty, or, \
+when the potential given with -c holds values its descriptors do not \
+read, which the run leaves out, says in parentheses which values were \
+left out and that the indices address the values kept, and, when the \
+potential's value at the given index is kept, its index among them."""
 
 [[optim.checks]]
 msg = "OPTIM {key} ({index}): the index is already selected by the OPTIM {key} line on line {line} (OPTIM keys are case-insensitive); give each index one OPTIM line"
@@ -2707,7 +2759,7 @@ lines = ["OPTIM.AUTO"]
 synopsis = "FLOOR <a>"
 repeat = "last_wins"
 default = { literal = "0" }
-doc = "The smallest half-width a >= 0 of a FRAC box."
+doc = "The smallest half-width a >= 0 of a FRAC box. A geometric box, given by RATIO or the default of a key whose values stay positive, refuses it."
 
 [[line_option.args]]
 name = "a"
@@ -2716,6 +2768,14 @@ kind = "number"
 [[line_option.checks]]
 msg = "OPTIM {key}: AUTO FLOOR must be >= 0"
 doc = "a is negative."
+
+[[line_option.checks]]
+msg = "OPTIM {key}: FLOOR and GROUP_FLOOR set the smallest half-width of an AUTO FRAC box; AUTO RATIO makes the geometric box [x0/f, x0*f], which they do not change, so they are given with FRAC <p> only"
+doc = "The line gives RATIO."
+
+[[line_option.checks]]
+msg = "OPTIM {key}: FLOOR and GROUP_FLOOR set the smallest half-width of an AUTO FRAC box; the AUTO box of {key} is geometric by default (RATIO 2), which they do not change, so they are given with FRAC <p> only"
+doc = "The line gives neither RATIO nor FRAC, and the AUTO box of the key is RATIO 2 by default."
 
 [[line_option.examples]]
 wrap = "root"
@@ -2726,6 +2786,17 @@ wrap = "root"
 text = "OPTIM CGRID2B (2) AUTO FLOOR -1"
 error = "OPTIM CGRID2B: AUTO FLOOR must be >= 0"
 
+[[line_option.invalid]]
+wrap = "root"
+text = "OPTIM CGRID2B (2) AUTO RATIO 2 FLOOR 0.3"
+error = "OPTIM CGRID2B: FLOOR and GROUP_FLOOR set the smallest half-width of an AUTO FRAC box; AUTO RATIO makes the geometric box [x0/f, x0*f], which they do not change, so they are given with FRAC <p> only"
+
+[[line_option.invalid]]
+wrap = "root"
+doc = "SGRID2B, whose values stay positive, has the geometric box RATIO 2 by default."
+text = "OPTIM SGRID2B (1) AUTO FLOOR 0.1"
+error = "OPTIM SGRID2B: FLOOR and GROUP_FLOOR set the smallest half-width of an AUTO FRAC box; the AUTO box of SGRID2B is geometric by default (RATIO 2), which they do not change, so they are given with FRAC <p> only"
+
 [[line_option]]
 id = "OPTIM.AUTO.GROUP_FLOOR"
 option = "GROUP_FLOOR"
@@ -2733,7 +2804,7 @@ lines = ["OPTIM.AUTO"]
 synopsis = "GROUP_FLOOR <r>"
 repeat = "last_wins"
 default = { text = "0; 1e-3 for a non-negative amplitude under FRAC without FLOOR" }
-doc = "The smallest half-width of a FRAC box relative to the largest |x0| of the line, r >= 0."
+doc = "The smallest half-width of a FRAC box relative to the largest |x0| of the line, r >= 0. A geometric box, given by RATIO or the default of a key whose values stay positive, refuses it."
 
 [[line_option.args]]
 name = "r"
@@ -2742,6 +2813,14 @@ kind = "number"
 [[line_option.checks]]
 msg = "OPTIM {key}: AUTO GROUP_FLOOR must be >= 0"
 doc = "r is negative."
+
+[[line_option.checks]]
+msg = "OPTIM {key}: FLOOR and GROUP_FLOOR set the smallest half-width of an AUTO FRAC box; AUTO RATIO makes the geometric box [x0/f, x0*f], which they do not change, so they are given with FRAC <p> only"
+doc = "The line gives RATIO."
+
+[[line_option.checks]]
+msg = "OPTIM {key}: FLOOR and GROUP_FLOOR set the smallest half-width of an AUTO FRAC box; the AUTO box of {key} is geometric by default (RATIO 2), which they do not change, so they are given with FRAC <p> only"
+doc = "The line gives neither RATIO nor FRAC, and the AUTO box of the key is RATIO 2 by default."
 
 [[line_option.examples]]
 wrap = "none"
@@ -2760,6 +2839,11 @@ ENDOPTIMIZER'''
 wrap = "root"
 text = "OPTIM CGRID2B (2) AUTO GROUP_FLOOR -1"
 error = "OPTIM CGRID2B: AUTO GROUP_FLOOR must be >= 0"
+
+[[line_option.invalid]]
+wrap = "root"
+text = "OPTIM CGRID2B (1-2) AUTO RATIO 1.5 GROUP_FLOOR 0.1"
+error = "OPTIM CGRID2B: FLOOR and GROUP_FLOOR set the smallest half-width of an AUTO FRAC box; AUTO RATIO makes the geometric box [x0/f, x0*f], which they do not change, so they are given with FRAC <p> only"
 
 # ---------------------------------------------- the shape tags --------
 
@@ -3229,6 +3313,58 @@ ENDOPTIMIZER'''
 error = "OPTIM RCUT2B (1) is not a valid search target: D2_EAM takes the cutoff 5 of its setfl file 'lines_ta.eam.alloy' (SETFL) and refuses another value, so every candidate but the -c value would fail; leave RCUT2B (1) out of OPTIM."
 
 [[rule]]
+id = "RULE.settings_taken_by_lines"
+title = "FAILSCORE, LOSS and PC_SCRIPT_TIMEOUT repeat only after a PC_LAMMPS line"
+check = "parse"
+keys = ["ROOT.FAILSCORE", "ROOT.LOSS", "ROOT.PC_SCRIPT_TIMEOUT", "ROOT.MAXTIME", "ROOT.PC_LAMMPS", "ROOT.PC_FAILPROBE"]
+msg = "{key} is set twice (first on line {first_line}{note}) and no PC_LAMMPS or PC_FAILPROBE line between takes the first; each key is given once"
+doc = """\
+Each PC_LAMMPS and PC_FAILPROBE line takes the FAILSCORE, LOSS and \
+PC_SCRIPT_TIMEOUT given above it, and the run-wide uses take the last \
+line. A second line of one of these keys is refused unless such a line \
+between takes the first."""
+msg_doc = """\
+The message names the key as the second line writes it and the line of \
+the first; when the first wrote the other name of the script limit, \
+MAXTIME or PC_SCRIPT_TIMEOUT, that name follows the line number."""
+quirk = """\
+MAXTIME and PC_SCRIPT_TIMEOUT are one key: a line of either name after a \
+line of the other is a second line."""
+
+[[rule.examples]]
+wrap = "none"
+doc = "Each PC_LAMMPS line takes the LOSS above it: L1 for the first, L2 for the second and for the validation metric."
+text = '''
+OPTIM CGRID2B (1) 0.5 1.5
+LOSS L1
+PC_LAMMPS --script lines_pc.in --varloss E 1 1
+LOSS L2
+PC_LAMMPS --script lines_pc.in --varloss S 0 1
+PC_ERMSE 0 1
+OPTIMIZER
+LIB NLOPT
+ALGO LN_SBPLX
+MAXEVAL 10
+ENDOPTIMIZER'''
+
+[[rule.invalid]]
+wrap = "root"
+at = 2
+text = '''
+FAILSCORE 1e9
+FAILSCORE 1e10'''
+error = "FAILSCORE is set twice (first on line 1) and no PC_LAMMPS or PC_FAILPROBE line between takes the first; each key is given once"
+
+[[rule.invalid]]
+wrap = "root"
+at = 2
+doc = "The two names of the script limit, with no PC_LAMMPS line between."
+text = '''
+PC_SCRIPT_TIMEOUT 10:00
+MAXTIME 5:00'''
+error = "MAXTIME is set twice (first on line 1, as PC_SCRIPT_TIMEOUT) and no PC_LAMMPS or PC_FAILPROBE line between takes the first; each key is given once"
+
+[[rule]]
 id = "RULE.PC_OBSERVABLE_excludes_PC_LAMMPS"
 title = "PC_OBSERVABLE lines and PC_LAMMPS lines are not combined"
 check = "parse"
@@ -3354,13 +3490,14 @@ title = """\
 With PC_LAMMPS every optimiser runs without gradients, or is DLIB:BFGS"""
 check = "parse"
 keys = ["ROOT.PC_LAMMPS", "OPTIMIZER.ALGO"]
-msg = "--hpotarget defines PC_LAMMPS but {block} optimiser {lib}:{algo} is gradient-based. PC_LAMMPS requires a gradient-free optimiser (NLOPT GN_*/LN_*, TADAH RANDOM/GRID/ANNEAL). The only gradient-based exception is DLIB:BFGS (uses per-theta-per-iter dtheta, not a full gradient)."
+msg = "--hpotarget defines PC_LAMMPS but {block} optimiser {lib}:{algo} is gradient-based. PC_LAMMPS requires a gradient-free optimiser ({list}) or DLIB:BFGS, the one gradient-based optimiser it accepts; an NLopt MLSL or AUGLAG algorithm is accepted with a derivative-free INNER block."
 doc = """\
 With a PC_LAMMPS or PC_FAILPROBE line, every optimiser of the file runs \
 without gradients; DLIB:BFGS is accepted. The refusal names the END line \
 of the block."""
 msg_doc = """\
-The message names the block, OPTIMIZER or EXPLORE, and its optimiser."""
+The message names the block, OPTIMIZER or EXPLORE, and its optimiser, and \
+lists the optimisers that run without gradients as a block names them."""
 
 [[rule.examples]]
 wrap = "none"
@@ -3384,7 +3521,7 @@ LIB NLOPT
 ALGO LD_LBFGS
 MAXEVAL 10
 ENDOPTIMIZER'''
-error = "--hpotarget defines PC_LAMMPS but OPTIMIZER's optimiser NLOPT:LD_LBFGS is gradient-based. PC_LAMMPS requires a gradient-free optimiser (NLOPT GN_*/LN_*, TADAH RANDOM/GRID/ANNEAL). The only gradient-based exception is DLIB:BFGS (uses per-theta-per-iter dtheta, not a full gradient)."
+error = "--hpotarget defines PC_LAMMPS but OPTIMIZER's optimiser NLOPT:LD_LBFGS is gradient-based. PC_LAMMPS requires a gradient-free optimiser (ASA:ASA, DLIB:GFS, NLOPT:GN_AGS, NLOPT:GN_CRS2_LM, NLOPT:GN_DIRECT, NLOPT:GN_DIRECT_L, NLOPT:GN_DIRECT_L_NOSCAL, NLOPT:GN_DIRECT_L_RAND, NLOPT:GN_DIRECT_L_RAND_NOSCAL, NLOPT:GN_DIRECT_NOSCAL, NLOPT:GN_ESCH, NLOPT:GN_ISRES, NLOPT:GN_MLSL, NLOPT:GN_MLSL_LDS, NLOPT:GN_ORIG_DIRECT, NLOPT:GN_ORIG_DIRECT_L, NLOPT:LN_AUGLAG, NLOPT:LN_AUGLAG_EQ, NLOPT:LN_BOBYQA, NLOPT:LN_COBYLA, NLOPT:LN_NELDERMEAD, NLOPT:LN_PRAXIS, NLOPT:LN_SBPLX, TADAH:ANNEAL, TADAH:ANNEAL_PA, TADAH:ANNEAL_PT, TADAH:GRID, TADAH:RANDOM) or DLIB:BFGS, the one gradient-based optimiser it accepts; an NLopt MLSL or AUGLAG algorithm is accepted with a derivative-free INNER block."
 
 [[rule.invalid]]
 wrap = "none"
@@ -3406,7 +3543,7 @@ MAXEVAL 5
 ENDEXPLORE
 ENDSTRATEGY
 ENDOPTIMIZER'''
-error = "--hpotarget defines PC_LAMMPS but EXPLORE's optimiser NLOPT:LD_LBFGS is gradient-based. PC_LAMMPS requires a gradient-free optimiser (NLOPT GN_*/LN_*, TADAH RANDOM/GRID/ANNEAL). The only gradient-based exception is DLIB:BFGS (uses per-theta-per-iter dtheta, not a full gradient)."
+error = "--hpotarget defines PC_LAMMPS but EXPLORE's optimiser NLOPT:LD_LBFGS is gradient-based. PC_LAMMPS requires a gradient-free optimiser (ASA:ASA, DLIB:GFS, NLOPT:GN_AGS, NLOPT:GN_CRS2_LM, NLOPT:GN_DIRECT, NLOPT:GN_DIRECT_L, NLOPT:GN_DIRECT_L_NOSCAL, NLOPT:GN_DIRECT_L_RAND, NLOPT:GN_DIRECT_L_RAND_NOSCAL, NLOPT:GN_DIRECT_NOSCAL, NLOPT:GN_ESCH, NLOPT:GN_ISRES, NLOPT:GN_MLSL, NLOPT:GN_MLSL_LDS, NLOPT:GN_ORIG_DIRECT, NLOPT:GN_ORIG_DIRECT_L, NLOPT:LN_AUGLAG, NLOPT:LN_AUGLAG_EQ, NLOPT:LN_BOBYQA, NLOPT:LN_COBYLA, NLOPT:LN_NELDERMEAD, NLOPT:LN_PRAXIS, NLOPT:LN_SBPLX, TADAH:ANNEAL, TADAH:ANNEAL_PA, TADAH:ANNEAL_PT, TADAH:GRID, TADAH:RANDOM) or DLIB:BFGS, the one gradient-based optimiser it accepts; an NLopt MLSL or AUGLAG algorithm is accepted with a derivative-free INNER block."
 
 [[rule]]
 id = "RULE.PC_LAMMPS_local_optimiser"
@@ -3414,14 +3551,15 @@ title = """\
 With PC_LAMMPS an MLSL or AUGLAG search has a derivative-free local search"""
 check = "parse"
 keys = ["ROOT.PC_LAMMPS", "BLOCK.INNER"]
-msg = "--hpotarget defines PC_LAMMPS but {block} optimiser {lib}:{algo} takes a gradient: NLopt's MLSL and AUGLAG take one for their local search, and NLopt's default local optimiser, {name}, is gradient-based; an INNER block with a derivative-free one takes none. PC_LAMMPS requires a gradient-free optimiser (NLOPT GN_*/LN_*, TADAH RANDOM/GRID/ANNEAL). The only gradient-based exception is DLIB:BFGS (uses per-theta-per-iter dtheta, not a full gradient)."
+msg = "--hpotarget defines PC_LAMMPS but {block} optimiser {lib}:{algo} takes a gradient: NLopt's MLSL and AUGLAG take one for their local search, and NLopt's default local optimiser, {name}, is gradient-based; an INNER block with a derivative-free one takes none. PC_LAMMPS requires a gradient-free optimiser ({list}) or DLIB:BFGS, the one gradient-based optimiser it accepts; an NLopt MLSL or AUGLAG algorithm is accepted with a derivative-free INNER block."
 doc = """\
 With a PC_LAMMPS or PC_FAILPROBE line, an NLopt MLSL or AUGLAG without an \
 INNER block is refused when NLopt's default local optimiser takes \
 gradients. The refusal names the END line of the block."""
 msg_doc = """\
 The message names the block, OPTIMIZER or EXPLORE, its optimiser and the \
-default local optimiser."""
+default local optimiser, and lists the optimisers that run without \
+gradients as a block names them."""
 
 [[rule.invalid]]
 wrap = "none"
@@ -3434,7 +3572,7 @@ LIB NLOPT
 ALGO GD_MLSL
 MAXEVAL 10
 ENDOPTIMIZER'''
-error = "--hpotarget defines PC_LAMMPS but OPTIMIZER's optimiser NLOPT:GD_MLSL takes a gradient: NLopt's MLSL and AUGLAG take one for their local search, and NLopt's default local optimiser, NLOPT:LD_MMA, is gradient-based; an INNER block with a derivative-free one takes none. PC_LAMMPS requires a gradient-free optimiser (NLOPT GN_*/LN_*, TADAH RANDOM/GRID/ANNEAL). The only gradient-based exception is DLIB:BFGS (uses per-theta-per-iter dtheta, not a full gradient)."
+error = "--hpotarget defines PC_LAMMPS but OPTIMIZER's optimiser NLOPT:GD_MLSL takes a gradient: NLopt's MLSL and AUGLAG take one for their local search, and NLopt's default local optimiser, NLOPT:LD_MMA, is gradient-based; an INNER block with a derivative-free one takes none. PC_LAMMPS requires a gradient-free optimiser (ASA:ASA, DLIB:GFS, NLOPT:GN_AGS, NLOPT:GN_CRS2_LM, NLOPT:GN_DIRECT, NLOPT:GN_DIRECT_L, NLOPT:GN_DIRECT_L_NOSCAL, NLOPT:GN_DIRECT_L_RAND, NLOPT:GN_DIRECT_L_RAND_NOSCAL, NLOPT:GN_DIRECT_NOSCAL, NLOPT:GN_ESCH, NLOPT:GN_ISRES, NLOPT:GN_MLSL, NLOPT:GN_MLSL_LDS, NLOPT:GN_ORIG_DIRECT, NLOPT:GN_ORIG_DIRECT_L, NLOPT:LN_AUGLAG, NLOPT:LN_AUGLAG_EQ, NLOPT:LN_BOBYQA, NLOPT:LN_COBYLA, NLOPT:LN_NELDERMEAD, NLOPT:LN_PRAXIS, NLOPT:LN_SBPLX, TADAH:ANNEAL, TADAH:ANNEAL_PA, TADAH:ANNEAL_PT, TADAH:GRID, TADAH:RANDOM) or DLIB:BFGS, the one gradient-based optimiser it accepts; an NLopt MLSL or AUGLAG algorithm is accepted with a derivative-free INNER block."
 
 [[rule]]
 id = "RULE.PC_LAMMPS_INNER_local_optimiser"

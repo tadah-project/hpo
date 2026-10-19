@@ -309,6 +309,8 @@ invalid = [
   { wrap = "params_anneal", check = "startup", at = "ENDOPTIMIZER", text = "PARAM SWEEPS 2", error = "the STRATEGY-level optimiser: TADAH:ANNEAL: PARAM SWEEPS belongs to TADAH:ANNEAL_PA" },
   { wrap = "params_anneal_pt", check = "startup", at = "ENDOPTIMIZER", text = "PARAM REANNEAL 0", error = "the STRATEGY-level optimiser: TADAH:ANNEAL_PT: PARAM REANNEAL belongs to the serial TADAH:ANNEAL" },
   { wrap = "params_anneal", check = "startup", at = "ENDOPTIMIZER", text = "PARAM INIT_JITTER_MAX 0.2", error = "the STRATEGY-level optimiser: TADAH:ANNEAL: PARAM INIT_JITTER_MAX belongs to the parallel drivers TADAH:ANNEAL_PT/TADAH:ANNEAL_PA" },
+  { wrap = "params_anneal_pa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM CHAIN_LENGTH AUTO", doc = "AUTO derives CHAIN_LENGTH from MAXEVAL in TADAH:ANNEAL only.", error = "the STRATEGY-level optimiser: TADAH:ANNEAL_PA: PARAM CHAIN_LENGTH must be a number (got 'AUTO'; AUTO is accepted by TADAH:ANNEAL only)" },
+  { wrap = "params_anneal_pa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM CORANA ON\nPARAM NT AUTO", doc = "AUTO derives NT from MAXEVAL in TADAH:ANNEAL only.", error = "the STRATEGY-level optimiser: TADAH:ANNEAL_PA: PARAM NT must be a number (got 'AUTO'; AUTO is accepted by TADAH:ANNEAL only)" },
 ]
 examples = [
   { wrap = "params_anneal", text = "PARAM STEP_FRAC 0.2", doc = "A first proposal scale of a fifth of the width of each box." },
@@ -369,8 +371,9 @@ The number of grid points in each dimension, a whole number of at least 2: \
 the points divide the OPTIM range into n - 1 equal steps."""
 long_doc = """\
 The grid has n to the power of the number of dimensions points, evaluated \
-in order after the starting point; a MAXEVAL below their number evaluates \
-the first MAXEVAL of them."""
+in order after the starting point. MAXEVAL counts the starting point too: \
+a MAXEVAL below the number of evaluations stops the sweep after that \
+many."""
 checks = [
   { msg = "{phase}: TADAH:GRID PARAM GRID_POINTS must be an integer >= 2 (got {value}; a 1-point grid divides by zero)", doc = "For a number below 2, with a fraction or above 4294967295, written with six decimals." },
   { msg = "{phase}: TADAH:GRID PARAM GRID_POINTS must be an integer >= 2 (got '{value}')", doc = "For a word." },

@@ -221,8 +221,8 @@ leftover_msg = "{key} takes no further value here (unexpected '{tok}')"
 
 [[group.OPTIMIZER.invalid]]
 wrap = "strategy"
-text = "LIB NLOPT TADAH"
-error = "LIB takes no further value here (unexpected 'TADAH')"
+text = "SEED 1 2"
+error = "SEED takes no further value here (unexpected '2')"
 
 # -------------------------------------------------------------- blocks ----
 
@@ -238,7 +238,8 @@ doc = """\
 The search: its optimiser, its starting points, the noise calibration and \
 the strategy. A target file has one OPTIMIZER block. The keys of the \
 optimiser are written inside its STRATEGY block or directly inside \
-OPTIMIZER; both set the same optimiser."""
+OPTIMIZER; both set the same optimiser, so each key is given in one of \
+them."""
 
 [[block.close_checks]]
 msg = "the OPTIMIZER block names no optimiser: {missing}; set LIB and ALGO in its STRATEGY block (or directly inside OPTIMIZER)"
@@ -347,17 +348,29 @@ ENDOPTIMIZER'''
 error = "STRATEGY TYPE PRESTAGE names no refinement optimiser: LIB and ALGO are not set; set LIB and ALGO in the STRATEGY block or in a REFINE block"
 
 [[block.invalid]]
-wrap = "optimizer"
+wrap = "none"
 at = "ENDOPTIMIZER"
-text = "ALGO LN_NOPE"
+text = '''
+OPTIM CGRID2B (1) 0.5 1.5
+PC_ERMSE 0 1
+OPTIMIZER
+LIB NLOPT
+ALGO LN_NOPE
+MAXEVAL 10
+ENDOPTIMIZER'''
 error = "the STRATEGY-level optimiser: unknown optimiser NLOPT:LN_NOPE: LIB NLOPT has no ALGO LN_NOPE; `tadah explain ALGO` lists the optimisers"
 
 [[block.invalid]]
-wrap = "optimizer"
+wrap = "none"
 at = "ENDOPTIMIZER"
 text = '''
+OPTIM CGRID2B (1) 0.5 1.5
+PC_ERMSE 0 1
+OPTIMIZER
 LIB CERES
-ALGO DOGLEG'''
+ALGO DOGLEG
+MAXEVAL 10
+ENDOPTIMIZER'''
 error = "the STRATEGY-level optimiser: CERES:DOGLEG is refused: tadah hpo does not run Ceres' least-squares solver (LEVENBERG_MARQUARDT, DOGLEG, SUBSPACE_DOGLEG): it minimises a sum of squared residuals with their derivatives, and tadah hpo gives an optimiser one scalar loss, over which these methods degenerate. The recommended replacements are CERES:STEEPEST_DESCENT, Ceres' line-search solver of a scalar loss that tadah hpo runs, and the bound-constrained gradient searches NLOPT:LD_LBFGS and DLIB:BFGS"
 
 [[block]]
@@ -439,12 +452,13 @@ unreachable_msgs = ["INIT block requires an active OptimizerSpec"]
 quirk = """\
 An INIT block inside OPTIMIZER, STRATEGY or REFINE sets the starting \
 points of the one STRATEGY-level optimiser: the METHOD lines of these \
-blocks make one chain, in the order of the file."""
+blocks make one chain, in the order of the file, and each other key is \
+given in one of them."""
 doc = """\
 The starting points of the optimiser of the block around it: a chain of \
 METHOD lines, each adding points. A second INIT block in the same block \
-continues the first. Inside an INIT block a STRATEGY line is read as a \
-METHOD line."""
+continues the first, and a key other than METHOD set in both is refused. \
+Inside an INIT block a STRATEGY line is read as a METHOD line."""
 
 [[block.examples]]
 wrap = "strategy"
@@ -502,7 +516,7 @@ unknown_first = true
 doc = """\
 The noise calibration of the finite-difference gradient of the \
 STRATEGY-level optimiser. No optimiser receives its lines. A second NOISE \
-block continues the first."""
+block continues the first, and a key set in both is refused."""
 
 [[block.examples]]
 wrap = "optimizer"
@@ -531,17 +545,11 @@ unknown_msg = "unknown key '{key}' inside EXPLORE block"
 doc = """\
 The exploration of STRATEGY TYPE PRESTAGE: an optimiser of its own, whose \
 best candidates (TOPK) the refinement starts from. A second EXPLORE block \
-continues the first."""
+continues the first, and a key set in both is refused."""
 
 [[block.requires]]
 msg = "EXPLORE block is only valid with TYPE PRESTAGE (declare TYPE before EXPLORE)"
 doc = "At the EXPLORE line: the STRATEGY block has TYPE PRESTAGE before it."
-
-[[block.requires]]
-msg = "EXPLORE block is only valid with TYPE PRESTAGE, but the STRATEGY block ends with TYPE {type} (the last TYPE line decides); set TYPE PRESTAGE or remove the EXPLORE block"
-doc = """\
-At ENDSTRATEGY, reported at the EXPLORE line: the STRATEGY block still has \
-TYPE PRESTAGE where it ends."""
 
 [[block.close_checks]]
 msg = "the EXPLORE block names no optimiser: {missing}; set LIB and ALGO inside the EXPLORE block (the exploration phase of STRATEGY TYPE PRESTAGE)"
@@ -582,7 +590,8 @@ error = "unknown key 'TOPK' inside EXPLORE block"
 
 [[block.invalid]]
 wrap = "strategy"
-at = 2
+at = 7
+doc = "A TYPE line after the EXPLORE block is a second TYPE line."
 text = '''
 TYPE PRESTAGE
 EXPLORE
@@ -591,7 +600,7 @@ ALGO RANDOM
 MAXEVAL 5
 ENDEXPLORE
 TYPE PLAIN'''
-error = "EXPLORE block is only valid with TYPE PRESTAGE, but the STRATEGY block ends with TYPE PLAIN (the last TYPE line decides); set TYPE PRESTAGE or remove the EXPLORE block"
+error = "TYPE is set twice in the STRATEGY block (first on line 8); each key is given once"
 
 [[block.invalid]]
 wrap = "strategy"
@@ -604,9 +613,24 @@ ENDEXPLORE'''
 error = "the EXPLORE block names no optimiser: LIB and ALGO are not set; set LIB and ALGO inside the EXPLORE block (the exploration phase of STRATEGY TYPE PRESTAGE)"
 
 [[block.invalid]]
-wrap = "explore"
+wrap = "none"
 at = "ENDEXPLORE"
-text = "ALGO NOPE"
+text = '''
+OPTIM CGRID2B (1) 0.5 1.5
+PC_ERMSE 0 1
+OPTIMIZER
+STRATEGY
+TYPE PRESTAGE
+LIB NLOPT
+ALGO LN_SBPLX
+MAXEVAL 10
+EXPLORE
+LIB TADAH
+ALGO NOPE
+MAXEVAL 5
+ENDEXPLORE
+ENDSTRATEGY
+ENDOPTIMIZER'''
 error = "the EXPLORE block: unknown optimiser TADAH:NOPE: LIB TADAH has no ALGO NOPE; `tadah explain ALGO` lists the optimisers"
 
 [[block]]
@@ -618,28 +642,25 @@ misplaced_msg = "REFINE block must appear inside STRATEGY"
 unknown_msg = "unknown key '{key}' inside REFINE block"
 quirk = """\
 The REFINE block sets the STRATEGY-level optimiser, as the STRATEGY block \
-does: a key given in both takes the later value, an INIT block in either \
-adds to the same chain, and an INNER block in each is refused as given \
-twice."""
+does: a key given in both is refused, an INIT block in either adds to the \
+same chain, and an INNER block in each is refused as given twice."""
 doc = """\
 The refinement of STRATEGY TYPE PRESTAGE, started from the best candidates \
 of the exploration. Without a REFINE block the STRATEGY-level optimiser \
-refines. A second REFINE block continues the first."""
+refines. A second REFINE block continues the first, and a key set in both \
+is refused."""
 
 [[block.requires]]
 msg = "REFINE block is only valid with TYPE PRESTAGE (declare TYPE before REFINE)"
 doc = "At the REFINE line: the STRATEGY block has TYPE PRESTAGE before it."
 
-[[block.requires]]
-msg = "REFINE block is only valid with TYPE PRESTAGE, but the STRATEGY block ends with TYPE {type} (the last TYPE line decides); set TYPE PRESTAGE or remove the REFINE block"
-doc = """\
-At ENDSTRATEGY, reported at the REFINE line: the STRATEGY block still has \
-TYPE PRESTAGE where it ends. An EXPLORE block before it is reported \
-first."""
-
 [[block.examples]]
-wrap = "strategy"
+wrap = "none"
 text = '''
+OPTIM CGRID2B (1) 0.5 1.5
+PC_ERMSE 0 1
+OPTIMIZER
+STRATEGY
 TYPE PRESTAGE
 EXPLORE
 LIB TADAH
@@ -647,8 +668,12 @@ ALGO RANDOM
 MAXEVAL 5
 ENDEXPLORE
 REFINE
+LIB NLOPT
+ALGO LN_BOBYQA
 MAXEVAL 8
-ENDREFINE'''
+ENDREFINE
+ENDSTRATEGY
+ENDOPTIMIZER'''
 
 [[block.invalid]]
 wrap = "strategy"
@@ -667,7 +692,8 @@ error = "unknown key 'TYPE' inside REFINE block"
 
 [[block.invalid]]
 wrap = "strategy"
-at = 2
+at = 9
+doc = "A TYPE line after the REFINE block is a second TYPE line."
 text = '''
 TYPE PRESTAGE
 REFINE
@@ -678,7 +704,7 @@ ALGO RANDOM
 MAXEVAL 5
 ENDEXPLORE
 TYPE MULTISTART'''
-error = "REFINE block is only valid with TYPE PRESTAGE, but the STRATEGY block ends with TYPE MULTISTART (the last TYPE line decides); set TYPE PRESTAGE or remove the REFINE block"
+error = "TYPE is set twice in the STRATEGY block (first on line 8); each key is given once"
 
 [[block.invalid]]
 wrap = "strategy"
@@ -796,9 +822,22 @@ ENDINNER'''
 error = "the INNER block inside STRATEGY names no optimiser: LIB and ALGO are not set; set LIB and ALGO inside the INNER block (the local optimiser that NLopt's MLSL and AUGLAG run)"
 
 [[block.invalid]]
-wrap = "inner"
+wrap = "none"
 at = "ENDINNER"
-text = "ALGO LN_NOPE"
+text = '''
+OPTIM CGRID2B (1) 0.5 1.5
+PC_ERMSE 0 1
+OPTIMIZER
+STRATEGY
+LIB NLOPT
+ALGO LN_AUGLAG
+MAXEVAL 10
+INNER
+LIB NLOPT
+ALGO LN_NOPE
+ENDINNER
+ENDSTRATEGY
+ENDOPTIMIZER'''
 error = "the INNER block inside STRATEGY: unknown optimiser NLOPT:LN_NOPE: LIB NLOPT has no ALGO LN_NOPE; `tadah explain ALGO` lists the optimisers"
 
 [[block]]
@@ -853,7 +892,9 @@ name = "FAILSCORE"
 blocks = ["ROOT"]
 synopsis = "FAILSCORE <loss>"
 args = [ { name = "loss", kind = "positive", what = "{key}", noun = "finite number" } ]
-repeat = "last_wins"
+repeat = "error"
+repeat_msg = "FAILSCORE is set twice (first on line {first_line}) and no PC_LAMMPS or PC_FAILPROBE line between takes the first; each key is given once"
+repeat_doc = "Again only after a PC_LAMMPS or PC_FAILPROBE line, which takes the value given above it; a second line with no such line between is refused."
 default = { text = "the largest finite double, 1.7976931348623157e308" }
 doc = """\
 The loss of a failed evaluation under FAILSCORE_GRADING OFF, and the \
@@ -908,13 +949,23 @@ wrap = "strategy"
 text = "FAILSCORE 1e9"
 error = "unknown key 'FAILSCORE' inside STRATEGY block"
 
+[[key.invalid]]
+wrap = "root"
+at = 2
+text = '''
+FAILSCORE 1e9
+FAILSCORE 1e10'''
+error = "FAILSCORE is set twice (first on line 1) and no PC_LAMMPS or PC_FAILPROBE line between takes the first; each key is given once"
+
 [[key]]
 id = "ROOT.PC_SCRIPT_TIMEOUT"
 name = "PC_SCRIPT_TIMEOUT"
 blocks = ["ROOT"]
 synopsis = "PC_SCRIPT_TIMEOUT <time>"
 args = [ { name = "time", kind = "timespec", what = "{key}", doc = "off, unlimited, or a positive time [[HH:]MM:]SS." } ]
-repeat = "last_wins"
+repeat = "error"
+repeat_msg = "PC_SCRIPT_TIMEOUT is set twice (first on line {first_line}) and no PC_LAMMPS or PC_FAILPROBE line between takes the first; each key is given once"
+repeat_doc = "Again only after a PC_LAMMPS or PC_FAILPROBE line, which takes the value given above it; a second line with no such line between is refused. PC_SCRIPT_TIMEOUT and MAXTIME are one key."
 default = { literal = "off" }
 doc = """\
 The wall-clock limit of each PC_LAMMPS and PC_FAILPROBE script, a LAMMPS \
@@ -929,7 +980,8 @@ task, max(3t, t + 120 s), unless PC_WORKER_TIMEOUT sets one. MAXTIME is \
 another name for this key."""
 quirk = """\
 A PC_LAMMPS or PC_FAILPROBE line takes the limit of the lines above it: \
-a PC_SCRIPT_TIMEOUT line below it does not change that line's limit."""
+a PC_SCRIPT_TIMEOUT line below it does not change that line's limit, \
+while the deadline of a worker task takes the last line."""
 
 [[key.examples]]
 wrap = "root"
@@ -975,22 +1027,34 @@ wrap = "root"
 text = "PC_SCRIPT_TIMEOUT 10 20"
 error = "PC_SCRIPT_TIMEOUT takes a single value (unexpected '20')"
 
+[[key.invalid]]
+wrap = "root"
+at = 2
+text = '''
+PC_SCRIPT_TIMEOUT 600
+PC_SCRIPT_TIMEOUT 300'''
+error = "PC_SCRIPT_TIMEOUT is set twice (first on line 1) and no PC_LAMMPS or PC_FAILPROBE line between takes the first; each key is given once"
+
 [[key]]
 id = "ROOT.MAXTIME"
 name = "MAXTIME"
 blocks = ["ROOT"]
 synopsis = "MAXTIME <time>"
 args = [ { name = "time", kind = "timespec", what = "{key}", doc = "off, unlimited, or a positive time [[HH:]MM:]SS." } ]
-repeat = "last_wins"
+repeat = "error"
+repeat_msg = "MAXTIME is set twice (first on line {first_line}) and no PC_LAMMPS or PC_FAILPROBE line between takes the first; each key is given once"
+repeat_doc = "Again only after a PC_LAMMPS or PC_FAILPROBE line, which takes the value given above it; a second line with no such line between is refused. MAXTIME and PC_SCRIPT_TIMEOUT are one key."
 alias_of = "ROOT.PC_SCRIPT_TIMEOUT"
 default = { literal = "off" }
 doc = """\
 Another name for PC_SCRIPT_TIMEOUT, the wall-clock limit of each \
 PC_LAMMPS and PC_FAILPROBE script."""
 long_doc = """\
-When both names are given, the later line wins and hpo_run.log has a \
-warning; with MAXTIME alone, hpo_run.log names PC_SCRIPT_TIMEOUT as the \
-preferred name."""
+The two names are one key: a second line, of either name, comes only \
+after a PC_LAMMPS or PC_FAILPROBE line that takes the first. When both \
+names are given, \
+hpo_run.log has a warning; with MAXTIME alone, it names PC_SCRIPT_TIMEOUT \
+as the preferred name."""
 quirk = """\
 MAXTIME at the top level is the script limit PC_SCRIPT_TIMEOUT, while \
 MAXTIME inside OPTIMIZER, STRATEGY, EXPLORE, REFINE or INNER is a time \
@@ -999,13 +1063,6 @@ limit of the search: the same word names two settings."""
 [[key.examples]]
 wrap = "root"
 text = "MAXTIME 10:00"
-
-[[key.examples]]
-wrap = "root"
-doc = "Both names: the later line, PC_SCRIPT_TIMEOUT, sets the limit."
-text = '''
-MAXTIME 10:00
-PC_SCRIPT_TIMEOUT 5:00'''
 
 [[key.invalid]]
 wrap = "root"
@@ -1017,13 +1074,31 @@ wrap = "root"
 text = "MAXTIME 1h"
 error = "MAXTIME must be 'off', 'unlimited' or a time [[HH:]MM:]SS, got '1h'"
 
+[[key.invalid]]
+wrap = "root"
+at = 2
+text = '''
+MAXTIME 10:00
+MAXTIME 5:00'''
+error = "MAXTIME is set twice (first on line 1) and no PC_LAMMPS or PC_FAILPROBE line between takes the first; each key is given once"
+
+[[key.invalid]]
+wrap = "root"
+at = 2
+doc = "Both names, with no PC_LAMMPS line between."
+text = '''
+MAXTIME 10:00
+PC_SCRIPT_TIMEOUT 5:00'''
+error = "PC_SCRIPT_TIMEOUT is set twice (first on line 1, as MAXTIME) and no PC_LAMMPS or PC_FAILPROBE line between takes the first; each key is given once"
+
 [[key]]
 id = "ROOT.PC_ISOLATION"
 name = "PC_ISOLATION"
 blocks = ["ROOT"]
 synopsis = "PC_ISOLATION THREAD | PROCESS"
 args = [ { name = "mode", kind = "word", words = ["THREAD", "PROCESS"], msg = "PC_ISOLATION must be THREAD or PROCESS, got '{tok}'" } ]
-repeat = "last_wins"
+repeat = "error"
+repeat_msg = "PC_ISOLATION is set twice (first on line {first_line}); each key is given once"
 default = { text = "PROCESS; THREAD in the MPI build of tadah" }
 env = "TADAH_PC_ISOLATION"
 doc = """\
@@ -1055,13 +1130,22 @@ wrap = "root"
 text = "PC_ISOLATION"
 error = "PC_ISOLATION requires a value"
 
+[[key.invalid]]
+wrap = "root"
+at = 2
+text = '''
+PC_ISOLATION THREAD
+PC_ISOLATION THREAD'''
+error = "PC_ISOLATION is set twice (first on line 1); each key is given once"
+
 [[key]]
 id = "ROOT.PC_WORKER_TIMEOUT"
 name = "PC_WORKER_TIMEOUT"
 blocks = ["ROOT"]
 synopsis = "PC_WORKER_TIMEOUT <seconds>"
 args = [ { name = "seconds", kind = "number", min = 0, msg = "PC_WORKER_TIMEOUT must be a finite number of seconds >= 0 (0 derives the deadline from each script's timeout), got '{tok}'{underflow}" } ]
-repeat = "last_wins"
+repeat = "error"
+repeat_msg = "PC_WORKER_TIMEOUT is set twice (first on line {first_line}); each key is given once"
 default = { literal = "0" }
 env = "TADAH_PC_WORKER_TIMEOUT"
 doc = """\
@@ -1095,13 +1179,22 @@ wrap = "root"
 text = "PC_WORKER_TIMEOUT 1e16"
 error = "PC_WORKER_TIMEOUT is too large for the worker deadline, got '1e16' (it is kept in 64-bit milliseconds: at most about 9.2e15 s)"
 
+[[key.invalid]]
+wrap = "root"
+at = 2
+text = '''
+PC_WORKER_TIMEOUT 600
+PC_WORKER_TIMEOUT 60'''
+error = "PC_WORKER_TIMEOUT is set twice (first on line 1); each key is given once"
+
 [[key]]
 id = "ROOT.FAILSCORE_GRADING"
 name = "FAILSCORE_GRADING"
 blocks = ["ROOT"]
 synopsis = "FAILSCORE_GRADING ON | OFF"
 args = [ { name = "mode", kind = "word", words = ["ON", "OFF"], msg = "FAILSCORE_GRADING must be ON or OFF, got '{tok}'" } ]
-repeat = "last_wins"
+repeat = "error"
+repeat_msg = "FAILSCORE_GRADING is set twice (first on line {first_line}); each key is given once"
 default = { literal = "OFF" }
 env = "TADAH_FAILSCORE_GRADING"
 doc = """\
@@ -1143,13 +1236,23 @@ FAILSCORE 1e301
 FAILSCORE_GRADING ON'''
 error = "FAILSCORE_GRADING ON requires a finite positive FAILSCORE (e.g. `FAILSCORE 1e9`); the default DBL_MAX sentinel cannot be banded."
 
+[[key.invalid]]
+wrap = "root"
+at = 3
+text = '''
+FAILSCORE 1e9
+FAILSCORE_GRADING ON
+FAILSCORE_GRADING ON'''
+error = "FAILSCORE_GRADING is set twice (first on line 2); each key is given once"
+
 [[key]]
 id = "ROOT.BUMPGATE"
 name = "BUMPGATE"
 blocks = ["ROOT"]
 synopsis = "BUMPGATE CANDIDATE | STRICT"
 args = [ { name = "mode", kind = "word", words = ["CANDIDATE", "STRICT"], msg = "BUMPGATE must be CANDIDATE or STRICT, got '{tok}'" } ]
-repeat = "last_wins"
+repeat = "error"
+repeat_msg = "BUMPGATE is set twice (first on line {first_line}); each key is given once"
 default = { literal = "CANDIDATE" }
 env = "TADAH_BUMPGATE"
 doc = """\
@@ -1171,6 +1274,14 @@ text = "BUMPGATE STRICT"
 wrap = "root"
 text = "BUMPGATE strict"
 error = "BUMPGATE must be CANDIDATE or STRICT, got 'strict'"
+
+[[key.invalid]]
+wrap = "root"
+at = 2
+text = '''
+BUMPGATE STRICT
+BUMPGATE CANDIDATE'''
+error = "BUMPGATE is set twice (first on line 1); each key is given once"
 
 [[key]]
 id = "ROOT.RHOGATE"
@@ -1422,7 +1533,8 @@ name = "QFLUSH"
 blocks = ["ROOT"]
 synopsis = "QFLUSH <n>"
 args = [ { name = "n", kind = "integer", min = 0, what = "{key}" } ]
-repeat = "last_wins"
+repeat = "error"
+repeat_msg = "QFLUSH is set twice (first on line {first_line}); each key is given once"
 default = { literal = "10" }
 doc = """\
 The number of evaluation results held in memory before their rows are \
@@ -1442,13 +1554,22 @@ wrap = "root"
 text = "QFLUSH 1.5"
 error = "QFLUSH must be an integer >= 0, got '1.5'"
 
+[[key.invalid]]
+wrap = "root"
+at = 2
+text = '''
+QFLUSH 10
+QFLUSH 100'''
+error = "QFLUSH is set twice (first on line 1); each key is given once"
+
 [[key]]
 id = "ROOT.OUTPUT"
 name = "OUTPUT"
 blocks = ["ROOT"]
 synopsis = "OUTPUT <n>"
 args = [ { name = "n", kind = "integer", min = 1, what = "{key}", msg = "OUTPUT must be an integer >= 1, got '{tok}' (it is a cadence: write every Nth evaluation; to write as little as possible, use a large value such as OUTPUT 1000000)" } ]
-repeat = "last_wins"
+repeat = "error"
+repeat_msg = "OUTPUT is set twice (first on line {first_line}); each key is given once"
 default = { literal = "1" }
 doc = """\
 The cadence of the per-evaluation output files: a row is written for \
@@ -1463,13 +1584,22 @@ wrap = "root"
 text = "OUTPUT 0"
 error = "OUTPUT must be an integer >= 1, got '0' (it is a cadence: write every Nth evaluation; to write as little as possible, use a large value such as OUTPUT 1000000)"
 
+[[key.invalid]]
+wrap = "root"
+at = 2
+text = '''
+OUTPUT 1
+OUTPUT 10'''
+error = "OUTPUT is set twice (first on line 1); each key is given once"
+
 [[key]]
 id = "ROOT.BOUTPUT"
 name = "BOUTPUT"
 blocks = ["ROOT"]
 synopsis = "BOUTPUT <n>"
 args = [ { name = "n", kind = "integer", min = 1, what = "{key}", msg = "BOUTPUT must be an integer >= 1, got '{tok}' (it is a cadence: write every Nth new best)" } ]
-repeat = "last_wins"
+repeat = "error"
+repeat_msg = "BOUTPUT is set twice (first on line {first_line}); each key is given once"
 default = { literal = "1" }
 doc = """\
 The cadence of the best-loss output files: a row is written every nth \
@@ -1484,13 +1614,22 @@ wrap = "root"
 text = "BOUTPUT 0"
 error = "BOUTPUT must be an integer >= 1, got '0' (it is a cadence: write every Nth new best)"
 
+[[key.invalid]]
+wrap = "root"
+at = 2
+text = '''
+BOUTPUT 1
+BOUTPUT 5'''
+error = "BOUTPUT is set twice (first on line 1); each key is given once"
+
 [[key]]
 id = "ROOT.DIGITS"
 name = "DIGITS"
 blocks = ["ROOT"]
 synopsis = "DIGITS <n>"
 args = [ { name = "n", kind = "integer", min = 1, max = 15, what = "{key}" } ]
-repeat = "last_wins"
+repeat = "error"
+repeat_msg = "DIGITS is set twice (first on line {first_line}); each key is given once"
 default = { literal = "6" }
 doc = """\
 The number of decimal digits of the numbers the output files write in \
@@ -1510,6 +1649,14 @@ wrap = "root"
 text = "DIGITS 0"
 error = "DIGITS must be an integer from 1 to 15, got '0'"
 
+[[key.invalid]]
+wrap = "root"
+at = 2
+text = '''
+DIGITS 6
+DIGITS 10'''
+error = "DIGITS is set twice (first on line 1); each key is given once"
+
 [[key]]
 id = "ROOT.DUMP"
 name = "DUMP"
@@ -1518,32 +1665,48 @@ synopsis = "DUMP <n> <directory>"
 checks = [
   { msg = "{key} requires a cadence and a directory", doc = "Fewer than two values follow the key." },
   { msg = "{key} takes a cadence and a directory (unexpected '{tok}')", doc = "A value follows the directory." },
-  { msg = "Error in handle_directory_creation: {why}", doc = "The directory does not exist and cannot be created, such as a directory whose parent does not exist; {why} is the message of the file system." },
+  { msg = "{key} directory '{name}' exists and is not a directory", doc = "Once the file is read, at the line: the path exists and is no directory." },
+  { msg = "{key} directory '{name}' is not writable", doc = "Once the file is read, at the line: the directory exists, and the run cannot create a file in it." },
+  { msg = "{key} directory '{name}' is a symbolic link to '{file}', which does not exist", doc = "Once the file is read, at the line: the path is a symbolic link to a directory that does not exist, which the run does not create; {file} is the target of the link." },
+  { msg = "{key} directory '{name}' cannot be created: the directory '{parent}' does not exist (tadah hpo creates only the last directory of the path)", doc = "Once the file is read, at the line: the directory that would hold it does not exist; {parent} is its absolute path." },
+  { msg = "{key} directory '{name}' cannot be created: '{parent}' is not a directory", doc = "Once the file is read, at the line: the path that would hold the directory is no directory." },
+  { msg = "{key} directory '{name}' cannot be created: the directory '{parent}' is not writable", doc = "Once the file is read, at the line: the run cannot create a directory in the directory that would hold it." },
+  { msg = "{key} directory '{name}' cannot be read: {why}", doc = "Once the file is read, at the line: the state of the directory cannot be read; {why} is the message of the file system." },
+  { msg = "{key} directory '{name}' cannot be resolved: {why}", doc = "Once the file is read, at the line: the path cannot be followed to a directory, as with '.' or '..' in a directory that does not exist, a directory on the way that cannot be read, or more than 40 symbolic links; {why} says which." },
 ]
 args = [
   { name = "n", kind = "integer", min = 1, what = "{key} cadence" },
-  { name = "directory", kind = "name", doc = "A directory, created when it does not exist; its parent exists." },
+  { name = "directory", kind = "name", doc = "A directory the run can write into: one that exists, or one the run creates in a directory that exists." },
 ]
-repeat = "last_wins"
+repeat = "error"
+repeat_msg = "DUMP is set twice (first on line {first_line}); each key is given once"
 default = { text = "no potential of an evaluation is written" }
 doc = """\
 Writes the potential of every nth evaluation to <directory>/pot_<i>.tadah, \
 where i is the number of the evaluation."""
 long_doc = """\
-The line creates the directory, but not a missing parent directory; an \
-existing directory is used as it is. A point outside the OPTIM box is not \
-evaluated, and its potential is not written. A candidate refused before \
-it is trained, or whose training fails, is written as a file with the \
-comment header only."""
-quirk = """\
-The directory is created when the line is read, before the rest of the \
-file is checked: a file refused at a later line leaves it behind. An \
-existing path is accepted whatever it is: with a regular file of that \
-name the line is accepted, and no potential is written."""
+The directory is checked once the file is read, and the run creates it \
+right before its first evaluation: a run that stops before then, and \
+tadah hpo --check, create no directory. The run creates only the last \
+directory of the path, in a directory that exists and can be written \
+into, or in the directory of the BDUMP line, which it creates first; a \
+symbolic link to a directory that does not exist is refused. The path is \
+followed as the operating system follows it, symbolic links and '..' \
+included. A point outside the \
+OPTIM box is not evaluated, and its potential is not written. A candidate \
+refused before it is trained, or whose training fails, is written as a \
+file with the comment header only."""
 
 [[key.examples]]
 wrap = "root"
 text = "DUMP 100 pots"
+
+[[key.examples]]
+wrap = "root"
+doc = "The BDUMP directory inside the DUMP directory, which the run creates first."
+text = '''
+DUMP 1 archive
+BDUMP 1 archive/best'''
 
 [[key.invalid]]
 wrap = "root"
@@ -1567,9 +1730,23 @@ error = "DUMP takes a cadence and a directory (unexpected 'extra')"
 
 [[key.invalid]]
 wrap = "root"
-doc = "The parent directory, missing, does not exist."
-text = "DUMP 10 missing/pots"
-error = "Error in handle_directory_creation: filesystem error: cannot create directory: No such file or directory [missing/pots]"
+doc = "A path that exists and is no directory."
+text = "DUMP 1 /dev/null"
+error = "DUMP directory '/dev/null' exists and is not a directory"
+
+[[key.invalid]]
+wrap = "root"
+doc = "A directory to create in a path that is no directory."
+text = "DUMP 1 /dev/null/pots"
+error = "DUMP directory '/dev/null/pots' cannot be created: '/dev/null' is not a directory"
+
+[[key.invalid]]
+wrap = "root"
+at = 2
+text = '''
+DUMP 100 pots
+DUMP 10 pots'''
+error = "DUMP is set twice (first on line 1); each key is given once"
 
 [[key]]
 id = "ROOT.BDUMP"
@@ -1579,29 +1756,45 @@ synopsis = "BDUMP <n> <directory>"
 checks = [
   { msg = "{key} requires a cadence and a directory", doc = "Fewer than two values follow the key." },
   { msg = "{key} takes a cadence and a directory (unexpected '{tok}')", doc = "A value follows the directory." },
-  { msg = "Error in handle_directory_creation: {why}", doc = "The directory does not exist and cannot be created, such as a directory whose parent does not exist; {why} is the message of the file system." },
+  { msg = "{key} directory '{name}' exists and is not a directory", doc = "Once the file is read, at the line: the path exists and is no directory." },
+  { msg = "{key} directory '{name}' is not writable", doc = "Once the file is read, at the line: the directory exists, and the run cannot create a file in it." },
+  { msg = "{key} directory '{name}' is a symbolic link to '{file}', which does not exist", doc = "Once the file is read, at the line: the path is a symbolic link to a directory that does not exist, which the run does not create; {file} is the target of the link." },
+  { msg = "{key} directory '{name}' cannot be created: the directory '{parent}' does not exist (tadah hpo creates only the last directory of the path)", doc = "Once the file is read, at the line: the directory that would hold it does not exist; {parent} is its absolute path." },
+  { msg = "{key} directory '{name}' cannot be created: '{parent}' is not a directory", doc = "Once the file is read, at the line: the path that would hold the directory is no directory." },
+  { msg = "{key} directory '{name}' cannot be created: the directory '{parent}' is not writable", doc = "Once the file is read, at the line: the run cannot create a directory in the directory that would hold it." },
+  { msg = "{key} directory '{name}' cannot be read: {why}", doc = "Once the file is read, at the line: the state of the directory cannot be read; {why} is the message of the file system." },
+  { msg = "{key} directory '{name}' cannot be resolved: {why}", doc = "Once the file is read, at the line: the path cannot be followed to a directory, as with '.' or '..' in a directory that does not exist, a directory on the way that cannot be read, or more than 40 symbolic links; {why} says which." },
 ]
 args = [
   { name = "n", kind = "integer", min = 1, what = "{key} cadence" },
-  { name = "directory", kind = "name", doc = "A directory, created when it does not exist; its parent exists." },
+  { name = "directory", kind = "name", doc = "A directory the run can write into: one that exists, or one the run creates in a directory that exists." },
 ]
-repeat = "last_wins"
+repeat = "error"
+repeat_msg = "BDUMP is set twice (first on line {first_line}); each key is given once"
 default = { text = "no potential of a best evaluation is written" }
 doc = """\
 Writes the potential every nth time the best loss improves to \
 <directory>/best_pot_<i>.tadah, where i counts the improvements."""
 long_doc = """\
-The line creates the directory, but not a missing parent directory; an \
-existing directory is used as it is."""
-quirk = """\
-The directory is created when the line is read, before the rest of the \
-file is checked: a file refused at a later line leaves it behind. An \
-existing path is accepted whatever it is: with a regular file of that \
-name the line is accepted, and no potential is written."""
+The directory is checked once the file is read, and the run creates it \
+right before its first evaluation: a run that stops before then, and \
+tadah hpo --check, create no directory. The run creates only the last \
+directory of the path, in a directory that exists and can be written \
+into, or in the directory of the DUMP line, which it creates first; a \
+symbolic link to a directory that does not exist is refused. The path is \
+followed as the operating system follows it, symbolic links and '..' \
+included."""
 
 [[key.examples]]
 wrap = "root"
 text = "BDUMP 1 best_pots"
+
+[[key.examples]]
+wrap = "root"
+doc = "The DUMP directory inside the BDUMP directory, given first: the run creates the BDUMP directory first."
+text = '''
+DUMP 1 archive/all
+BDUMP 1 archive'''
 
 [[key.invalid]]
 wrap = "root"
@@ -1615,9 +1808,23 @@ error = "BDUMP cadence must be an integer >= 1, got '0'"
 
 [[key.invalid]]
 wrap = "root"
-doc = "The parent directory, missing, does not exist."
-text = "BDUMP 1 missing/best_pots"
-error = "Error in handle_directory_creation: filesystem error: cannot create directory: No such file or directory [missing/best_pots]"
+doc = "A path that exists and is no directory."
+text = "BDUMP 1 /dev/null"
+error = "BDUMP directory '/dev/null' exists and is not a directory"
+
+[[key.invalid]]
+wrap = "root"
+doc = "A directory to create in a path that is no directory."
+text = "BDUMP 1 /dev/null/best_pots"
+error = "BDUMP directory '/dev/null/best_pots' cannot be created: '/dev/null' is not a directory"
+
+[[key.invalid]]
+wrap = "root"
+at = 2
+text = '''
+BDUMP 1 best_pots
+BDUMP 2 best_pots'''
+error = "BDUMP is set twice (first on line 1); each key is given once"
 
 [[key]]
 id = "ROOT.OPTIM_SCALE"
