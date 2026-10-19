@@ -3,6 +3,8 @@
 #include <tadah/hpo/optimizer_spec.h>
 #include <tadah/hpo/loss_function.h>
 #include <tadah/hpo/hpo_host.h>
+#include <tadah/hpo/search_space.h>
+#include <tadah/core/number_format.h>
 #include <tadah/core/periodic_table.h>
 #include <tadah/mlip/training_record.h>
 
@@ -324,9 +326,12 @@ void PotHeaderWriter::write_optim_section(std::ostream& os,
             }
             return joined;
         };
+        /* A setting as written: the shortest text that reads back as the
+         * value ("GRID_POINTS=11", "STEP_FRAC=0.15"). */
         for (const auto& kvp : sp.param)
             params.emplace_back(kvp.first,
-                                rendered(kvp.first, fmt_double(kvp.second)));
+                                rendered(kvp.first,
+                                         core::format_roundtrip(kvp.second)));
         for (const auto& kvp : sp.param_raw)
             params.emplace_back(kvp.first, rendered(kvp.first, kvp.second));
         std::sort(params.begin(), params.end(),
@@ -354,9 +359,14 @@ void PotHeaderWriter::write_optim_section(std::ostream& os,
             if (static_cast<int>(lbl_trunc.size()) > LBL_W - 1)
                 lbl_trunc = lbl_trunc.substr(0, LBL_W - 2) + "*";
 
+            /* The real bounds, the box of the OPTIM line, as the journal's
+             * "real bounds" column: sp.low/high are the optimiser's
+             * internal box (the unit box under OPTIM_SCALE AUTO). */
+            const bool real = sp.space && idx < sp.space->dim();
+            const double lo = real ? sp.space->at(idx).lo : sp.low[idx];
+            const double hi = real ? sp.space->at(idx).hi : sp.high[idx];
             std::ostringstream bnd;
-            bnd << "[" << fmt_double(sp.low[idx], 3)
-                << ", " << fmt_double(sp.high[idx], 3) << "]";
+            bnd << "[" << fmt_double(lo, 3) << ", " << fmt_double(hi, 3) << "]";
             if (sp.space && idx < sp.space->dim() && sp.space->is_nonlinear(idx))
                 bnd << "(" << sp.space->describe_dim(idx) << ")";
             else if (idx < sp.log_scaled.size() && sp.log_scaled[idx])

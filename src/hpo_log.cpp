@@ -13,6 +13,7 @@
 #include <tadah/hpo/startup_validation.h>
 #include <tadah/core/context.h>
 #include <tadah/core/blueprint_parser.h>
+#include <tadah/core/number_format.h>
 #include <tadah/core/periodic_table.h>
 #include <tadah/mlip/load_transforms.h>
 #include <tadah/models/descriptors/dm/embf0.h>
@@ -694,9 +695,12 @@ void HPOLog::write_optimizer_section(const OptimizerSpec&            sp,
             }
             return joined;
         };
+        /* A setting as written: the shortest text that reads back as the
+         * value ("GRID_POINTS : 11", not "1.1000e+01"). */
         for (const auto& kvp : sp.param)
             params.emplace_back(kvp.first,
-                                rendered(kvp.first, fmt_double(kvp.second)));
+                                rendered(kvp.first,
+                                         core::format_roundtrip(kvp.second)));
         for (const auto& kvp : sp.param_raw)
             params.emplace_back(kvp.first, rendered(kvp.first, kvp.second));
         std::sort(params.begin(), params.end(),
