@@ -220,6 +220,14 @@ struct StepOverride {
     double                   frac = 0.0;
 };
 
+/* BuildNotes -- whether the ALGO help (OptimizerSpec::print_caps) says
+ * what this build lacks. Include, as `tadah explain` prints it: in a build
+ * without Ceres (TADAH_ENABLE_CERES OFF) the help of CERES:STEEPEST_DESCENT
+ * says that a run of it is refused. Omit leaves such lines out, so the
+ * text is the same in every build: the exported optimiser registry
+ * (blueprint/optimizers_gen.toml, tests/tools/hpo_registry_export.cpp). */
+enum class BuildNotes { Include, Omit };
+
 /* ---------------- Optimizer description --------------------------- */
 struct OptimizerSpec {
     OptimizerSpec() = default;
@@ -559,7 +567,10 @@ struct OptimizerSpec {
      * refused backend's REFUSED reason; otherwise the backend's stops (the
      * caps registry), PARAM keys and STEP use. `tadah explain <LIB>:<ALGO>`
      * prints it (explain_optimiser, optimizer_help.h). The overload without
-     * a stream writes to std::cout. */
+     * a stream writes to std::cout; the two without `notes` print the
+     * BuildNotes::Include text. */
+    static void print_caps(std::ostream& os, const std::string& lib,
+                           const std::string& algo, BuildNotes notes);
     static void print_caps(std::ostream& os, const std::string& lib,
                            const std::string& algo);
     static void print_caps(const std::string& lib,

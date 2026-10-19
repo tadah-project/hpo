@@ -302,6 +302,28 @@ set_tests_properties(hpo_anneal_registry_sync PROPERTIES
     LABELS "anneal"
     TIMEOUT 30)
 
+# The optimiser registry, written for the documentation, which is built
+# without C++: blueprint/optimizers_gen.toml, checked in, holds every
+# LIB:ALGO of the caps registry (registered or refused) with its
+# capabilities, its row of `tadah explain ALGO` and its `tadah explain
+# LIB:ALGO` text, written by tools/hpo_registry_export.cpp.
+# hpo_optimizer_registry_sync fails when the file differs from what the code
+# produces, naming the command that regenerates it (blueprint/README.md).
+# Before the fix: fails, the file does not exist.
+cmake_path(SET _hpo_optimizers_gen NORMALIZE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../blueprint/optimizers_gen.toml")
+add_executable(hpo_registry_export tools/hpo_registry_export.cpp)
+target_link_libraries(hpo_registry_export PRIVATE tadah.core tadah.hpo)
+add_custom_target(hpo_regenerate_optimizer_registry
+    COMMAND hpo_registry_export --write ${_hpo_optimizers_gen}
+    COMMENT "Writing ${_hpo_optimizers_gen}"
+    VERBATIM)
+add_test(NAME hpo_optimizer_registry_sync
+    COMMAND hpo_registry_export --check ${_hpo_optimizers_gen})
+set_tests_properties(hpo_optimizer_registry_sync PROPERTIES
+    LABELS "docs"
+    TIMEOUT 60)
+
 # Fingerprint drift gate: the fields of each example's
 # reference_fingerprint.json that come from tools/tolerance_overrides.json
 # (tolerances, accepted statuses, journal checks, the rationale) must equal
