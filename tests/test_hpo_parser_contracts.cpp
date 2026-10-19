@@ -1868,7 +1868,9 @@ TEST_CASE("tadah refit: OPTIMIZER block numbers are strict",
                                  "ENDOPTIMIZER") == "");
     CHECK(refit_error("REFINE", "OPTIMIZER LIB CERES ALGO LM MAXEVAL 1 "
                                 "ENDOPTIMIZER") == "");
-    CHECK(refit_error("REFINE", "OPTIMIZER LIB CERES ALGO LM MAXEVAL 1000 "
+    /* MAXEVAL and its alias MAXITER are one key, given once (a block with
+     * both is refused: the case "a key set twice in a stage"). */
+    CHECK(refit_error("REFINE", "OPTIMIZER LIB CERES ALGO LM "
                                 "FTOL_REL 1e-14 GTOL 1e-14 MAXITER 50 "
                                 "ENDOPTIMIZER") == "");
 }
@@ -2529,8 +2531,10 @@ TEST_CASE("tadah refit: a stage OPTIMIZER block rejects the keys the stage "
                                  "MAXEVAL 100 INNER LIB NLOPT ALGO LN_SBPLX "
                                  "MAXEVAL 50 FTOL_REL 1e-7 XTOL_REL 1e-6 "
                                  "ENDINNER ENDOPTIMIZER") == "");
-    CHECK(refit_error("REFINE", "OPTIMIZER LIB CERES ALGO LM MAXEVAL 1000 "
-                                "MAXITER 900 FTOL_REL 1e-14 GTOL 1e-14 "
+    /* MAXEVAL or its alias MAXITER, one of them (a block with both is
+     * refused: the case "a key set twice in a stage"). */
+    CHECK(refit_error("REFINE", "OPTIMIZER LIB CERES ALGO LM MAXITER 900 "
+                                "FTOL_REL 1e-14 GTOL 1e-14 "
                                 "ENDOPTIMIZER") == "");
     CHECK(refit_error("FUSE", "OPTIMIZER LIB CERES ALGO DOGLEG MAXITER 2000 "
                               "FTOL_REL 1e-14 ENDOPTIMIZER") == "");
