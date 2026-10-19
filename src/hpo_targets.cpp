@@ -24,6 +24,7 @@
 #include <algorithm>
 #include <cmath>
 #include <iomanip>
+#include <map>
 #include <optional>
 #include <random>
 #include <fstream>
@@ -733,6 +734,9 @@ void HPOTargets::read(const std::string& fn)
     std::size_t strategy_line = 0;
     /* The line of the OPTIMIZER block (0 before it): there is one. */
     std::size_t optimizer_line = 0;
+    /* The line of each PC_EMAE, PC_ErRMSE, PC_ERSQ and PC_SRMSE line: one
+     * of each (PC_ERMSE and PC_FRMSE: ValidationMetricTargets::add). */
+    std::map<std::string, std::size_t> metric_lines;
 
     /* The block the open INNER block sits in: an INNER block opens only
      * inside STRATEGY, EXPLORE or REFINE. */
@@ -1521,6 +1525,14 @@ void HPOTargets::read(const std::string& fn)
                     if (key == "PC_ERMSE") use_ermse = true;
                     else use_frmse = true;
                 }
+                else if (const auto [first, fresh] =
+                             metric_lines.emplace(key, nline);
+                         !fresh)
+                    /* A second line would replace the first's target,
+                     * weight and caps. */
+                    throw std::runtime_error(
+                        key + ": repeated declaration (first declared on "
+                        "line " + std::to_string(first->second) + ")");
                 else if (key=="PC_EMAE")   { emae=tgt;   w_emae=wgt;   use_emae=true;   skip_emae=caps; }
                 else if (key=="PC_ErRMSE") { errmse=tgt; w_errmse=wgt; use_errmse=true; skip_errmse=caps; }
                 else if (key=="PC_ERSQ")   { ersq=tgt;   w_ersq=wgt;   use_ersq=true;   skip_ersq=caps; }
