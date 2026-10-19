@@ -193,6 +193,7 @@ wrap = "strategy"
 text = "MAXTIME 3600"
 
 [[key.examples]]
+doc = "Half a second: the time is a number."
 wrap = "strategy"
 text = "MAXTIME 0.5"
 
@@ -253,6 +254,7 @@ wrap = "strategy"
 text = "STOPVAL 0.001"
 
 [[key.examples]]
+doc = "A negative target loss."
 wrap = "strategy"
 text = "STOPVAL -5"
 
@@ -594,8 +596,13 @@ id = "OPTIMIZER.STEP"
 name = "STEP"
 group = "OPTIMIZER"
 synopsis = "STEP <fraction> | STEP <KEY>[(<indices>)] <fraction>"
-args = [ { name = "step", kind = "tokens", doc = "A fraction, or an OPTIM key with an optional index list in parentheses and a fraction." } ]
+args = [
+  { name = "KEY", kind = "name", optional = true, doc = "An OPTIM key, in upper case: the fraction applies to its search parameters only." },
+  { name = "indices", kind = "indices", optional = true, doc = "The values of the key the fraction applies to, right after the key or after a blank." },
+  { name = "fraction", kind = "number", min = 0, min_open = true, max = 0.5, doc = "The first step as a fraction of the width of the box." },
+]
 repeat = "last_wins"
+repeat_doc = "A later line with a fraction alone replaces the fraction of every search parameter. Each line with a key adds an override; of two overrides of one search parameter the later line wins."
 default = { text = "Not set: the optimiser chooses its first step." }
 doc = """\
 The first step of the optimiser, as a fraction of the width of each OPTIM \
@@ -628,14 +635,17 @@ wrap = "strategy"
 text = "STEP 0.1"
 
 [[key.examples]]
+doc = "0.2 for the first value of CGRID2B only."
 wrap = "strategy"
 text = "STEP CGRID2B(1) 0.2"
 
 [[key.examples]]
+doc = "The same, with a blank before the index list."
 wrap = "strategy"
 text = "STEP CGRID2B (1) 0.2"
 
 [[key.examples]]
+doc = "0.1 for every search parameter, and 0.25 for those of CGRID2B."
 wrap = "strategy"
 text = '''
 STEP 0.1
@@ -755,7 +765,7 @@ error = "TADAH:RANDOM (PRESTAGE) does not use STEP; uniform sampling in the OPTI
 wrap = "opt_asa"
 at = "ENDOPTIMIZER"
 text = "STEP 0.1"
-error = "ASA:ASA (OUTER) does not use STEP; the generating distribution width is driven by the per-dim temperatures (Initial_Parameter_Temperature, Temperature_Ratio_Scale)"
+error = "ASA:ASA (OUTER) does not use STEP; the width of the generating distribution follows the parameter temperature of each dimension (Initial_Parameter_Temperature, Temperature_Ratio_Scale)"
 
 [[key]]
 id = "OPTIMIZER.SEED"
@@ -767,15 +777,16 @@ repeat = "last_wins"
 default = { text = "Not set: each run takes a seed of its own, so two runs differ." }
 doc = """\
 The seed of the random numbers of the optimiser, for a reproducible \
-search. An optimiser that draws no random numbers is refused at startup \
-with it, unless the optimiser list says it only warns."""
+search. An optimiser that does not read SEED refuses it when tadah hpo \
+starts, or only warns where the optimiser list says so; that list shows \
+which optimisers read it."""
 long_doc = """\
 Under STRATEGY TYPE MULTISTART start i runs with SEED + i. An INNER block \
 refuses SEED: NLopt draws its local search from the random numbers of the \
 enclosing run. SEED inside an INIT or RESTART block is another key, the \
 seed of the starting points."""
 checks = [
-  { msg = "{phase}: {lib}:{algo} does not use SEED: it draws no random numbers; remove it", doc = "At startup, at the END line of the block: an optimiser that draws no random numbers and does not only warn." },
+  { msg = "{phase}: {lib}:{algo} does not use SEED: it draws no random numbers; remove it", doc = "At startup, at the END line of the block: an optimiser that does not read SEED and does not only warn." },
   { msg = "{phase}: {lib}:{algo} does not support SEED", doc = "At startup, at the END line of the block: DLIB:BFGS or CERES:STEEPEST_DESCENT." },
 ]
 
@@ -784,6 +795,7 @@ wrap = "strategy"
 text = "SEED 42"
 
 [[key.examples]]
+doc = "The largest seed, 2^64 - 1."
 wrap = "strategy"
 text = "SEED 18446744073709551615"
 
@@ -959,6 +971,7 @@ wrap = "opt_lbfgs"
 text = "GRAD_STRATEGY NUMERICAL"
 
 [[key.examples]]
+doc = "Analytical derivatives where they exist, finite differences elsewhere."
 wrap = "opt_lbfgs"
 text = "GRAD_STRATEGY HYBRID"
 
@@ -1017,7 +1030,10 @@ id = "OPTIMIZER.PARAM"
 name = "PARAM"
 group = "OPTIMIZER"
 synopsis = "PARAM <name> <value> | PARAM INIT_MODE UNIFORM | JITTER [<fraction> | AUTO <tolerance>]"
-args = [ { name = "parameter", kind = "tokens", doc = "A PARAM key and its value; INIT_MODE takes the forms of the synopsis." } ]
+args = [
+  { name = "name", kind = "name", doc = "A PARAM key of the optimiser." },
+  { name = "value", kind = "tokens", doc = "Its value; INIT_MODE takes the forms of the synopsis." },
+]
 repeat = "add"
 doc = """\
 Sets one PARAM key of the optimiser: an algorithm parameter, by name, with \
@@ -1045,18 +1061,22 @@ wrap = "opt_lbfgs"
 text = "PARAM fd_step 1e-4"
 
 [[key.examples]]
+doc = "A PARAM key with a word for its value."
 wrap = "opt_lbfgs"
 text = "PARAM fd_kernel inhouse"
 
 [[key.examples]]
+doc = "INIT_MODE of an annealer: the other walkers start at points drawn from the OPTIM box."
 wrap = "opt_anneal_pa"
 text = "PARAM INIT_MODE UNIFORM"
 
 [[key.examples]]
+doc = "INIT_MODE JITTER with a fraction of the width of each box."
 wrap = "opt_anneal_pa"
 text = "PARAM INIT_MODE JITTER 0.1"
 
 [[key.examples]]
+doc = "INIT_MODE JITTER AUTO with its tolerance."
 wrap = "opt_anneal_pa"
 text = "PARAM INIT_MODE JITTER AUTO 0.05"
 
@@ -1128,7 +1148,7 @@ id = "OPTIMIZER.LOG_HP"
 name = "LOG_HP"
 blocks = ["OPTIMIZER", "STRATEGY"]
 synopsis = "LOG_HP <ratio>"
-args = [ { name = "ratio", kind = "number", what = "{key}", msg = "LOG_HP must be a finite ratio >= 1 (a dimension is log-scaled when high/low >= LOG_HP and low > 0), got '{tok}'" } ]
+args = [ { name = "ratio", kind = "number", min = 1, what = "{key}", msg = "LOG_HP must be a finite ratio >= 1 (a dimension is log-scaled when high/low >= LOG_HP and low > 0), got '{tok}'" } ]
 repeat = "warn_last_wins"
 misplaced_msg = "LOG_HP is a search-space property; declare it once at the OPTIMIZER or STRATEGY level, not inside a stage, INNER or INIT block"
 default = { text = "Not set: no search parameter is log-scaled by its ratio." }
@@ -1151,6 +1171,7 @@ wrap = "strategy"
 text = "LOG_HP 10"
 
 [[key.examples]]
+doc = "In the OPTIMIZER block, with the ratio 1: every box whose lower end is above 0 is log-scaled."
 wrap = "optimizer"
 text = "LOG_HP 1"
 
@@ -1245,6 +1266,7 @@ wrap = "strategy"
 text = "TYPE PLAIN"
 
 [[key.examples]]
+doc = "A search from several starting points."
 wrap = "strategy"
 text = "TYPE MULTISTART"
 
@@ -1531,7 +1553,7 @@ blocks = ["INIT", "RESTART"]
 synopsis = "METHOD <method> [<value>]"
 args = [
   { name = "method", kind = "name", msg = "Unknown INIT_STRATEGY method: {tok}", doc = "CONFIG, RANDOM, LHS, SOBOL or WARM (the INIT methods)." },
-  { name = "values", kind = "tokens", optional = true, doc = "The values of the method: none for CONFIG, K for RANDOM, LHS and SOBOL, a file for WARM." },
+  { name = "value", kind = "tokens", optional = true, doc = "The value of the method: none for CONFIG, K for RANDOM, LHS and SOBOL, a file for WARM." },
 ]
 repeat = "add"
 default = { text = "No METHOD line: one starting point, the values of the training configuration, as METHOD CONFIG." }
@@ -1555,6 +1577,7 @@ wrap = "init"
 text = "METHOD RANDOM 4"
 
 [[key.examples]]
+doc = "A chain of three methods: the values of the training configuration, 3 Latin hypercube points and 2 Sobol points."
 wrap = "init"
 text = '''
 METHOD CONFIG
@@ -1567,6 +1590,7 @@ doc = "STRATEGY inside an INIT block is a METHOD line."
 text = "STRATEGY RANDOM 2"
 
 [[key.examples]]
+doc = "In a RESTART block, the METHOD lines draw the starting points of each restart."
 wrap = "restart"
 text = '''
 AFTER_STAGNATION 20
@@ -1903,7 +1927,7 @@ id = "NOISE.AUTO"
 name = "AUTO"
 blocks = ["NOISE"]
 synopsis = "AUTO [<bool>]"
-args = [ { name = "on", kind = "bool", optional = true, what = "NOISE.AUTO" } ]
+args = [ { name = "bool", kind = "bool", optional = true, what = "NOISE.AUTO" } ]
 repeat = "last_wins"
 default = { literal = "false" }
 doc = """\
@@ -1923,10 +1947,12 @@ wrap = "noise"
 text = "AUTO"
 
 [[key.examples]]
+doc = "The same, with the boolean written."
 wrap = "noise"
 text = "AUTO true"
 
 [[key.examples]]
+doc = "Switched off."
 wrap = "noise"
 text = "AUTO OFF"
 
@@ -1979,6 +2005,7 @@ wrap = "noise"
 text = "CALIBRATION 5"
 
 [[key.examples]]
+doc = "0 switches the calibration off."
 wrap = "noise"
 text = "CALIBRATION 0"
 
@@ -2063,13 +2090,18 @@ error = "MAX must be an integer >= 0, got 'x'"
 
 [[rule]]
 id = "RULE.inner_block_required"
+title = """\
+An MLSL or AUGLAG form without a default local optimiser has an INNER \
+block"""
 check = "startup"
 keys = ["BLOCK.INNER", "OPTIMIZER.ALGO"]
 msg = "{name} needs an INNER block ({phase}): NLopt has no default local optimiser for it; add INNER ... ENDINNER with LIB NLOPT and a local ALGO such as LN_BOBYQA, or use one of {list}, which run {default} without one"
 doc = """\
 An NLopt MLSL or AUGLAG algorithm for which NLopt has no default local \
-optimiser has an INNER block. {list} names those that have one, and \
-{default} their local optimisers."""
+optimiser has an INNER block."""
+msg_doc = """\
+The message lists the MLSL and AUGLAG forms that have a default local \
+optimiser, and those optimisers."""
 
 [[rule.invalid]]
 wrap = "strategy"
@@ -2080,6 +2112,7 @@ error = "NLOPT:G_MLSL_LDS needs an INNER block (the STRATEGY-level optimiser): N
 
 [[rule]]
 id = "RULE.inner_block_not_accepted"
+title = "Only an MLSL or AUGLAG algorithm has an INNER block"
 check = "startup"
 keys = ["BLOCK.INNER", "OPTIMIZER.ALGO"]
 msg = "{name} does not accept an INNER sub-optimiser (the INNER block of {phase}): only NLopt's MLSL and AUGLAG algorithms run a local search inside their run ({list}); remove the INNER block or pick one of them"
@@ -2098,6 +2131,7 @@ error = "NLOPT:LN_SBPLX does not accept an INNER sub-optimiser (the INNER block 
 
 [[rule]]
 id = "RULE.inner_not_nlopt"
+title = "The optimiser of an INNER block is an NLopt algorithm"
 check = "startup"
 keys = ["BLOCK.INNER", "OPTIMIZER.LIB"]
 msg = "the INNER block of {phase} names {lib}:{algo}, but {name} runs its INNER search with NLopt: set LIB NLOPT and an NLopt ALGO (such as LN_BOBYQA) inside the INNER block"
@@ -2114,6 +2148,7 @@ error = "the INNER block of the STRATEGY-level optimiser names TADAH:RANDOM, but
 
 [[rule]]
 id = "RULE.inner_needs_own_inner"
+title = "The optimiser of an INNER block needs no INNER block of its own"
 check = "startup"
 keys = ["BLOCK.INNER", "OPTIMIZER.ALGO"]
 msg = "the INNER block of {phase} names {lib}:{algo}, which needs an INNER block of its own; INNER blocks do not nest: pick a local algorithm such as LN_BOBYQA"
@@ -2128,14 +2163,19 @@ error = "the INNER block of the STRATEGY-level optimiser names NLOPT:G_MLSL_LDS,
 
 [[rule]]
 id = "RULE.inner_global_search"
+title = "The optimiser of an INNER block is a local search"
 check = "startup"
 keys = ["BLOCK.INNER", "OPTIMIZER.ALGO"]
 msg = "the INNER block of {phase}: {name} cannot run {lib}:{algo} as its INNER search: an INNER search is a local search, which {name} starts at {text}, and {what}. Use a local NLopt algorithm in the INNER block, which starts at the point it is given ({list}), or run {lib}:{algo} as the exploration (EXPLORE block) or once, as STRATEGY TYPE PLAIN."
 doc = """\
-The INNER block names a local algorithm. {text} is "the points it samples \
-in the OPTIM box" for a global enclosing optimiser and "its own starting \
-point" for a local one; {what} says that the INNER algorithm is a global \
-optimiser, and where it starts when that is not the point it is given."""
+The INNER block names a local algorithm, which starts at the point it is \
+given."""
+msg_doc = """\
+The message says where the enclosing optimiser starts the INNER search: at \
+the points it samples in the OPTIM box for a global optimiser, at its own \
+starting point for a local one. It then says that the INNER algorithm is a \
+global optimiser, or where it starts when that is not the point it is \
+given."""
 
 [[rule.invalid]]
 wrap = "inner"
@@ -2146,15 +2186,19 @@ error = "the INNER block of the STRATEGY-level optimiser: NLOPT:LN_AUGLAG cannot
 
 [[rule]]
 id = "RULE.local_search_needs_stop"
+title = """\
+The default local search of MLSL or AUGLAG has a stop when it needs one"""
 check = "startup"
 keys = ["OPTIMIZER.ALGO", "OPTIMIZER.MAXEVAL", "BLOCK.INNER"]
 msg = "{phase}: the local search of {name} (NLopt's default {lib}:{algo}, as the block has no INNER block) needs a stop: {why}; set {list} in the {name} block, which NLopt hands on to it{note}"
 doc = """\
 An NLopt MLSL or AUGLAG without an INNER block runs NLopt's default local \
-optimiser {lib}:{algo}; when that optimiser needs a stop (the optimiser \
-list says which do), the block sets one, which NLopt hands on to it. The \
-refusal names the END line of the block; {why} says why the local search \
-needs a stop, and {list} names the stops it honours."""
+optimiser; when that optimiser needs a stop (the optimiser list says which \
+do), the block sets one, which NLopt hands on to it. The refusal names the \
+END line of the block."""
+msg_doc = """\
+The message names the default local optimiser, says why it needs a stop \
+and lists the stops it honours."""
 
 [[rule.examples]]
 wrap = "none"
@@ -2182,15 +2226,17 @@ error = "the STRATEGY-level optimiser: the local search of NLOPT:LD_AUGLAG (NLop
 
 [[rule]]
 id = "RULE.inner_search_needs_stop"
+title = "An INNER search that needs a stop has one"
 check = "startup"
 keys = ["BLOCK.INNER", "OPTIMIZER.ALGO", "OPTIMIZER.MAXEVAL"]
 msg = "{phase}: the INNER search of {name} ({lib}:{algo}) needs a stop: {why}; set {list} in the INNER block, or {keys} in the {name} block, which NLopt hands on to it{note}"
 doc = """\
-An INNER block whose optimiser needs a stop (the optimiser list says \
-which do) sets one, or the enclosing block does, which NLopt hands on to \
-the INNER search. The refusal names the END line of the enclosing block; \
-{why} says why the INNER search needs a stop, {list} names the stops it \
-honours and {keys} those of the enclosing block that NLopt hands on."""
+An INNER block whose optimiser needs a stop (the optimiser list says which \
+do) sets one, or the enclosing block does, which NLopt hands on to the \
+INNER search. The refusal names the END line of the enclosing block."""
+msg_doc = """\
+The message says why the INNER search needs a stop, lists the stops it \
+honours and the keys of the enclosing block that NLopt hands on."""
 
 [[rule.invalid]]
 wrap = "none"
@@ -2215,6 +2261,7 @@ error = "the STRATEGY-level optimiser: the INNER search of NLOPT:LD_AUGLAG (NLOP
 
 [[rule]]
 id = "RULE.search_dimensions_required"
+title = "An NLopt, Dlib or Ceres optimiser needs an OPTIM line"
 check = "startup"
 keys = ["ROOT.OPTIM", "OPTIMIZER.LIB"]
 msg = "{phase}: {lib}:{algo} cannot optimise a zero-dimensional search space (there is no OPTIM line; the failure would only surface once the optimiser starts). Add at least one OPTIM line, or use a TADAH-native optimiser, which evaluates the INIT start point once."
@@ -2249,6 +2296,7 @@ error = "the STRATEGY-level optimiser: NLOPT:LN_SBPLX cannot optimise a zero-dim
 
 [[rule]]
 id = "RULE.asa_search_dimensions"
+title = "ASA:ASA needs an OPTIM line"
 check = "startup"
 keys = ["ROOT.OPTIM", "OPTIMIZER.LIB"]
 msg = "{phase}: ASA:ASA requires at least one OPTIM dimension"
@@ -2271,6 +2319,8 @@ error = "the STRATEGY-level optimiser: ASA:ASA requires at least one OPTIM dimen
 
 [[rule]]
 id = "RULE.multi_rank_optimiser"
+title = """\
+A run on several MPI ranks uses ANNEAL_PT or ANNEAL_PA under TYPE PLAIN"""
 check = "startup"
 keys = ["STRATEGY.TYPE", "OPTIMIZER.LIB", "OPTIMIZER.ALGO"]
 msg = "multi-rank HPO supports only STRATEGY TYPE PLAIN with LIB TADAH and ALGO ANNEAL_PT or ANNEAL_PA; got {lib}:{algo} on {count} ranks"
@@ -2278,10 +2328,12 @@ doc = """\
 A run on more than one MPI rank, in the MPI build of tadah, has STRATEGY \
 TYPE PLAIN and the optimiser TADAH:ANNEAL_PT or TADAH:ANNEAL_PA. The \
 refusal comes when the run starts, before any evaluation, at the \
-ENDOPTIMIZER line; {count} is the number of ranks."""
+ENDOPTIMIZER line."""
+msg_doc = "The message gives the optimiser and the number of ranks."
 
 [[rule]]
 id = "RULE.multi_rank_restart"
+title = "A run on several MPI ranks has no RESTART block"
 check = "startup"
 keys = ["BLOCK.RESTART", "RESTART.AFTER_STAGNATION", "RESTART.MAX"]
 msg = "multi-rank HPO does not support RESTART (AFTER_STAGNATION {value}, MAX {max} on {count} ranks): stagnation is tracked per rank; run on one rank or remove RESTART"
@@ -2292,14 +2344,19 @@ line, after that of the optimiser."""
 
 [[rule]]
 id = "RULE.multi_rank_population"
+title = """\
+On several MPI ranks there are as many replicas or walkers as ranks"""
 check = "startup"
 keys = ["OPTIMIZER.POPULATION", "OPTIMIZER.ALGO"]
 msg = "TADAH:{algo}: {key} ({value}) must be >= the MPI world size ({count})"
 doc = """\
 On more than one MPI rank, TADAH:ANNEAL_PT has at least as many replicas \
-(PARAM REPLICAS, {key} REPLICAS) and TADAH:ANNEAL_PA at least as many \
-walkers ({key} POPULATION) as there are ranks. The refusal comes when the \
-search starts, without a line."""
+(PARAM REPLICAS) and TADAH:ANNEAL_PA at least as many walkers (POPULATION) \
+as there are ranks. The refusal comes when the search starts, without a \
+line."""
+msg_doc = """\
+The message names the key, REPLICAS or POPULATION, its value and the \
+number of ranks."""
 
 # ============================================================== wrappers ==
 # The wrappers of this file: complete target files with one slot line,

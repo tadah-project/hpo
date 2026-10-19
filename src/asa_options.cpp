@@ -59,13 +59,13 @@ const Desc kDescs[] = {
   {"Cost_Parameter_Scale_Ratio", Kind::Real, false, 0, kNaN, "1.0",
    "cost temperature schedule scale relative to parameters"},
   {"Temperature_Anneal_Scale", Kind::Real, false, 0, kNaN, "100.0",
-   "n = log(TAS); keep > dim for large problems"},
+   "n = log(TAS); above the number of dimensions for large problems"},
   {"Include_Integer_Parameters", Kind::Bool, false, 0, 1, "0",
-   "include INTEGER-typed dims in derivative/reanneal calculations"},
+   "include the INTEGER-typed dimensions in the derivative and reannealing calculations"},
   {"User_Initial_Parameters", Kind::Bool, false, 0, 1, "auto",
    "1 = start from the INIT seed; auto-set from the INIT block"},
   {"Sequential_Parameters", Kind::Count, false, kNaN, kNaN, "-1",
-   "start cyclic per-dim generation at this index; any negative = off"},
+   "start the cyclic generation of one dimension at a time at this index; any negative = off"},
   {"Initial_Parameter_Temperature", Kind::Real, false, 0, kNaN, "1.0",
    "initial parameter temperature (must be > 0)"},
   {"Acceptance_Frequency_Modulus", Kind::Count, false, 0, kNaN, "100",
@@ -75,36 +75,37 @@ const Desc kDescs[] = {
   {"Reanneal_Cost", Kind::Count, false, kNaN, kNaN, "1",
    "0 = off, 1 = default, >1 / <-1 = deviation-sample variants (-1 invalid)"},
   {"Reanneal_Parameters", Kind::Bool, false, 0, 1, "1",
-   "adapt per-dim temperatures to tangent sensitivities"},
+   "adapt the temperature of each dimension to its tangent sensitivity"},
   {"Delta_X", Kind::Real, false, 0, kNaN, "0.001",
    "finite-difference step for tangents; 0 disables tangents"},
   {"User_Tangents", Kind::Bool, false, 0, 1, "0",
    "unsupported: tadah hpo has no analytic tangents (1 = error)"},
   {"Curvature_0", Kind::Count, false, -1, 1, "1",
    "1 = skip curvature array (Tadah!'s default; ASA's own default 0 costs "
-   "O(dim^2) exit evals), 0 = full curvature at exit, -1 = periodic"},
+   "about n^2 evaluations at the exit, n the dimensions), 0 = full curvature "
+   "at exit, -1 = periodic"},
   /* gated groups */
   {"User_Quench_Cost_Scale", Kind::Real, false, 0, kNaN, "1.0",
    "cost-temperature quench exponent Q (>1 quenches; proof-safe)"},
   {"User_Quench_Param_Scale", Kind::Real, true, 0, kNaN, "1.0",
-   "per-dim quench exponent Q_i (>1 voids the sampling proof)"},
+   "quench exponent Q_i of each dimension (>1 voids the sampling proof)"},
   {"User_Temperature_Ratio", Kind::Real, true, 0, kNaN, "1.0",
-   "per-dim multiplier of -log(Temperature_Ratio_Scale)"},
+   "multiplier of -log(Temperature_Ratio_Scale) of each dimension"},
   {"User_Delta_Parameter", Kind::Real, true, 0, kNaN, "Delta_X",
-   "per-dim finite-difference step (defaults to Delta_X)"},
+   "finite-difference step of each dimension (defaults to Delta_X)"},
   {"User_Parameter_Temperature", Kind::Real, true, 0, kNaN, "IPT",
-   "per-dim initial temperature (defaults to Initial_Parameter_Temperature)"},
+   "initial temperature of each dimension (defaults to Initial_Parameter_Temperature)"},
   {"Multi_Number", Kind::Count, false, 1, kNaN, "1",
    "track the best N distinct minima (reported in the journal)"},
   {"Multi_Specify", Kind::Bool, false, 0, 1, "1",
    "1 = strict < for new minima (Tadah!'s default); 0 = <=, as in ASA's "
    "example options"},
   {"Multi_Grid", Kind::Real, true, 0, kNaN, "0.0",
-   "per-dim distinctness grid for MULTI_MIN (0 -> EPS_DOUBLE)"},
+   "distinctness grid of each dimension for MULTI_MIN (0 -> EPS_DOUBLE)"},
   {"Queue_Size", Kind::Count, false, 0, kNaN, "0",
    "FIFO eval-cache size; 0 = cache off"},
   {"Queue_Resolution", Kind::Real, true, 0, kNaN, "0.0",
-   "per-dim cache-hit resolution"},
+   "cache-hit resolution of each dimension"},
   {"Gener_Block", Kind::Count, false, 1, kNaN, "1",
    "initial generated-state block size; 1 (with Gener_Block_Max 1) = "
    "canonical serial sampling, >1 evaluates the block concurrently "
@@ -247,9 +248,10 @@ AsaOptions parse_asa_options(const OptimizerSpec& sp, std::size_t dim)
             "block parallelism is PARAM Gener_Block)");
     if (sp.step)
         throw std::runtime_error(
-            "ASA:ASA does not accept STEP: the generating distribution "
-            "width is driven by the per-dim temperatures "
-            "(Initial_Parameter_Temperature, Temperature_Ratio_Scale)");
+            "ASA:ASA does not accept STEP: the width of the generating "
+            "distribution follows the parameter temperature of each "
+            "dimension (Initial_Parameter_Temperature, "
+            "Temperature_Ratio_Scale)");
     if (sp.grad_strategy)
         throw std::runtime_error(
             "ASA:ASA does not accept GRAD_STRATEGY (derivative-free; "
@@ -486,7 +488,7 @@ void announce_asa_options(const AsaOptions& o)
         HPOLog::instance().hint(
             "ASA: Queue_Size > 0 with Queue_Resolution 0 caches only "
             "near-exact revisits; set PARAM Queue_Resolution to the "
-            "per-dim scale below which two points are 'the same'");
+            "scale of each dimension below which two points are 'the same'");
 }
 
 const char* asa_exit_name(int exit_status)

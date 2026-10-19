@@ -52,6 +52,7 @@ wrap = "root"
 text = "PC_EMAE 5 1"
 
 [[key.examples]]
+doc = "With both options that skip the rest of an evaluation whose metric is too large."
 wrap = "root"
 text = "PC_EMAE 5 1 --skip-above 50 --skip-rel 3"
 
@@ -429,6 +430,7 @@ wrap = "root"
 text = "PC_FRMSE 0.1 1"
 
 [[key.examples]]
+doc = "A target and a weight per dataset: 0.1 and 1 for datasets 1 and 3, 0.2 and 0.5 for dataset 2."
 wrap = "root"
 text = '''
 PC_FRMSE (1,3) 0.1 1
@@ -579,9 +581,18 @@ LOSS of the lines read before it, for the defaults of its --failscore, \
 not change them."""
 
 [[key.args]]
-name = "options"
+name = "option"
 kind = "tokens"
-doc = "The options of the line and the LAMMPS command-line options."
+optional = true
+repeat = true
+doc = "An option of the line, which starts with --, with its values."
+
+[[key.args]]
+name = "LAMMPS option"
+kind = "tokens"
+optional = true
+repeat = true
+doc = "A LAMMPS command-line option, which starts with a single -, with the values that follow it."
 
 [[key.checks]]
 msg = "{option} maxtime: the variable maxtime is reserved for the script timeout HPO injects (timer timeout ${maxtime}); set --maxtime on this line or PC_SCRIPT_TIMEOUT instead"
@@ -802,6 +813,7 @@ wrap = "root"
 text = "PC_LAMMPS --script lines_pc.in --varloss E -5.0 1.0 --varloss S 0 -0.5 L1"
 
 [[line_option.examples]]
+doc = "A loss function of its own for this term, TUKEY with the parameter 2, in lower case."
 wrap = "root"
 text = "PC_LAMMPS --script lines_pc.in --varloss E -5.0 1.0 tukey 2"
 
@@ -1016,6 +1028,7 @@ wrap = "root"
 text = "PC_LAMMPS --script lines_pc.in --varloss E -5.0 1.0 --maxtime 1:30"
 
 [[line_option.examples]]
+doc = "No limit for the script of this line."
 wrap = "root"
 text = "PC_LAMMPS --script lines_pc.in --varloss E -5.0 1.0 --maxtime off"
 
@@ -1240,15 +1253,25 @@ A token after --gate or --s0 is its value whatever it is, and a second \
 --gate or --s0 on the line replaces the first."""
 
 [[key.args]]
-name = "options"
+name = "option"
 kind = "tokens"
-doc = "The options of the line and the LAMMPS command-line options."
+optional = true
+repeat = true
+doc = "An option of the line, which starts with --, with its values."
+
+[[key.args]]
+name = "LAMMPS option"
+kind = "tokens"
+optional = true
+repeat = true
+doc = "A LAMMPS command-line option, which starts with a single -, with the values that follow it."
 
 [[key.examples]]
 wrap = "root"
 text = "PC_FAILPROBE --script lines_pc.in --outvar S"
 
 [[key.examples]]
+doc = "With the probe value that stops the other scripts, its scale and the value that marks a failed probe."
 wrap = "root"
 text = "PC_FAILPROBE --script lines_pc.in --outvar S --gate 3 --s0 2 --failscore 10"
 
@@ -1393,9 +1416,10 @@ msg = "PC_OBSERVABLE: unknown observable kind '{tok}'"
 doc = "The observable, the word of a form PC_OBSERVABLE.<kind>."
 
 [[key.args]]
-name = "options"
+name = "option"
 kind = "tokens"
-doc = "The options of the kind."
+repeat = true
+doc = "An option of the kind, with its values."
 
 [[key.examples]]
 wrap = "root"
@@ -1861,7 +1885,7 @@ error = "PC_OBSERVABLE cohesive_energy: '--fmax-converged' requires a value"
 id = "PC_OBSERVABLE.cohesive_energy.--unconverged"
 option = "--unconverged"
 lines = ["PC_OBSERVABLE.cohesive_energy"]
-synopsis = "--unconverged const <value> | --unconverged force-scaled <slope>"
+synopsis = "--unconverged const <value> | --unconverged force-scaled <value>"
 repeat = "last_wins"
 default = { literal = "const 100" }
 doc = """\
@@ -1882,12 +1906,14 @@ msg = "PC_OBSERVABLE cohesive_energy: --unconverged kind must be 'const' or 'for
 name = "value"
 kind = "number"
 msg = "PC_OBSERVABLE: flag '--unconverged {kind}' expected a finite number, got '{tok}'{underflow}"
+doc = "The value of const, in eV/atom, or the slope of force-scaled."
 
 [[line_option.examples]]
 wrap = "root"
 text = "PC_OBSERVABLE cohesive_energy --species H --target 2.0 --weight 1 --hotvar a0 1.5 2.5 --unconverged const 50"
 
 [[line_option.examples]]
+doc = "The target plus 10 times the largest force at the end of the relaxation."
 wrap = "root"
 text = "PC_OBSERVABLE cohesive_energy --species H --target 2.0 --weight 1 --hotvar a0 1.5 2.5 --unconverged force-scaled 10"
 
@@ -1936,6 +1962,7 @@ wrap = "root"
 text = "LOSS HUBER 20"
 
 [[key.examples]]
+doc = "A loss function without a parameter, in lower case."
 wrap = "root"
 text = "LOSS log_cosh"
 
@@ -2086,7 +2113,7 @@ The key, the AUTO option names and the shape tags are read in any case \
 matched as written."""
 
 [[key.args]]
-name = "key"
+name = "KEY"
 kind = "name"
 doc = "A key of the training configuration, or the path of a DM_Embed parameter."
 
@@ -2095,15 +2122,21 @@ name = "indices"
 kind = "indices"
 
 [[key.args]]
-name = "box"
-kind = "tokens"
-doc = "<low> <high>, or AUTO and its options; then an optional shape tag."
+name = "low"
+kind = "number"
+doc = "The lower end of the box; in the AUTO form, AUTO and its options in place of both ends."
+
+[[key.args]]
+name = "high"
+kind = "number"
+doc = "The upper end of the box, above the lower end."
 
 [[key.examples]]
 wrap = "root"
 text = "OPTIM CGRID2B (2) 1.5 2.5"
 
 [[key.examples]]
+doc = "The key and the shape tag in lower case."
 wrap = "root"
 text = "OPTIM cgrid2b (2) 1.5 2.5 log"
 
@@ -2232,6 +2265,7 @@ doc = "A key with a dot names a parameter of a DM_Embed component."
 text = "OPTIM H.DENSITY.CENTRES (1) 0.5 1.5"
 
 [[optim.examples]]
+doc = "A DM_Embed path in lower case, upper-cased as the key is, and an index range."
 wrap = "root"
 context = "lines_dm_embed"
 text = "OPTIM h.density.eta (1-2) AUTO"
@@ -2401,6 +2435,7 @@ wrap = "root"
 text = "OPTIM CGRID2B (2) 1.5 2.5"
 
 [[form.examples]]
+doc = "Two values in one box, with the ASINH shape of scale 0.1."
 wrap = "root"
 text = "OPTIM SGRID2B (1-2) -0.5 1.5 ASINH 0.1"
 
@@ -2444,8 +2479,8 @@ A box around the value x0 of the configuration for every value the \
 indices select: [x0/f, x0*f] under RATIO, x0 +/- d under FRAC, with \
 d = max(p|x0|, a, r max|x0|) and the maximum over the values of the line."""
 long_doc = """\
-Without RATIO or FRAC the rule is RATIO 2 for the keys of \
-positive_only (SGRID2B, SGRIDMB, SEMBFUNC) and for a positive DM_Embed \
+Without RATIO or FRAC the rule is RATIO 2 for the keys whose values stay \
+positive (SGRID2B, SGRIDMB, SEMBFUNC) and for a positive DM_Embed \
 parameter other than an amplitude, and FRAC 0.5 for the others. The \
 non-negative amplitudes (AMPGRIDMB under RHOFORM NONNEG or MONOTONE, a \
 DM_Embed density with non-negative amplitudes) keep a FRAC box at or \
@@ -2487,6 +2522,7 @@ wrap = "root"
 text = "OPTIM SGRID2B (1,2) AUTO"
 
 [[form.examples]]
+doc = "FRAC 0.2 and the LOG shape, in lower case."
 wrap = "root"
 text = "OPTIM CGRID2B (2) auto frac 0.2 log"
 
@@ -2536,7 +2572,7 @@ lines = ["OPTIM.AUTO"]
 synopsis = "RATIO <f>"
 repeat = "error"
 repeat_msg = "OPTIM {key}: RATIO and FRAC are mutually exclusive"
-default = { text = "RATIO 2 for the keys of positive_only and a positive DM_Embed parameter other than an amplitude; FRAC 0.5 otherwise" }
+default = { text = "RATIO 2 for SGRID2B, SGRIDMB and SEMBFUNC, whose values stay positive, and for a positive DM_Embed parameter other than an amplitude; FRAC 0.5 otherwise" }
 doc = "The geometric box [x0/f, x0*f] (mirrored for x0 < 0), for a factor f > 1."
 quirk = "A second RATIO on the line is refused with the message for RATIO beside FRAC."
 
@@ -3103,15 +3139,18 @@ error = "OPTIM RCUTMB: the potential has no RCUTMB key: its many-body term is DM
 
 [[rule]]
 id = "RULE.OPTIM_MPARAMS"
+title = "OPTIM MPARAMS searches a continuous value of the model function"
 check = "startup"
 keys = ["ROOT.OPTIM"]
 msg = "OPTIM MPARAMS ({index}) is not a valid search target: {why}"
 doc = """\
 OPTIM MPARAMS searches a value that the model function of the training \
 configuration reads, a continuous one: MPARAMS (i) is the i-th MPARAMS \
-value. The refusal comes at startup and names no line; {why} says that \
-the function reads no MPARAMS, that it reads fewer than {index}, or that \
-the value is an integer, such as the degree of Kern_Polynomial."""
+value. The refusal comes at startup and names no line."""
+msg_doc = """\
+The message says that the function reads no MPARAMS, that it reads fewer \
+values than the index, or that the value is an integer, such as the degree \
+of Kern_Polynomial."""
 
 [[rule.examples]]
 wrap = "root"
@@ -3144,14 +3183,15 @@ error = "OPTIM MPARAMS (1) is not a valid search target: MPARAMS (1) of Kern_Pol
 
 [[rule]]
 id = "RULE.OPTIM_MPARAMS_positive"
+title = "A positive MPARAMS value has an OPTIM box above 0"
 check = "startup"
 keys = ["ROOT.OPTIM"]
 msg = "OPTIM MPARAMS ({index}): the box [{low}, {high}] of {name}'s {key} must be positive ({key} > 0)."
 doc = """\
-An MPARAMS value that the model function needs above 0, such as the \
-width sigma of Kern_RBF, has an OPTIM box above 0; {name} is the function \
-and {key} the name of its value. The refusal comes at startup and names \
-no line."""
+An MPARAMS value that the model function needs above 0, such as the width \
+sigma of Kern_RBF, has an OPTIM box above 0. The refusal comes at startup \
+and names no line."""
+msg_doc = "The message names the function and its value."
 
 [[rule.invalid]]
 wrap = "root"
@@ -3163,14 +3203,15 @@ error = "OPTIM MPARAMS (1): the box [0, 2] of Kern_RBF's sigma must be positive 
 
 [[rule]]
 id = "RULE.OPTIM_file_cutoff"
+title = "OPTIM does not search a cutoff that a setfl file sets"
 check = "startup"
 keys = ["ROOT.OPTIM"]
 msg = "OPTIM {key} ({index}) is not a valid search target: {why} and refuses another value, so every candidate but the -c value would fail; leave {key} ({index}) out of OPTIM."
 doc = """\
 A D2_EAM or DM_EAM descriptor, alone or in a D2_mJoin or DM_mJoin, takes \
 its cutoff RCUT2B or RCUTMB from its setfl file (SETFL), and OPTIM does \
-not search that cutoff. The refusal comes at startup and names no line; \
-{why} names the descriptor, the cutoff and the file."""
+not search that cutoff. The refusal comes at startup and names no line."""
+msg_doc = "The message names the descriptor, the cutoff and the file."
 
 [[rule.invalid]]
 wrap = "none"
@@ -3189,13 +3230,15 @@ error = "OPTIM RCUT2B (1) is not a valid search target: D2_EAM takes the cutoff 
 
 [[rule]]
 id = "RULE.PC_OBSERVABLE_excludes_PC_LAMMPS"
+title = "PC_OBSERVABLE lines and PC_LAMMPS lines are not combined"
 check = "parse"
 keys = ["ROOT.PC_OBSERVABLE", "ROOT.PC_LAMMPS"]
-msg = "--hpotarget defines both PC_OBSERVABLE ({count} entries) and PC_LAMMPS ({count} entries); these paths are mutually exclusive in the current MVP. Remove one set of lines and rerun."
+msg = "--hpotarget defines both PC_OBSERVABLE ({count} entries) and PC_LAMMPS ({count} entries); PC_OBSERVABLE and PC_LAMMPS lines are mutually exclusive. Remove one set of lines and rerun."
 doc = """\
-A target file has PC_OBSERVABLE lines or PC_LAMMPS and PC_FAILPROBE \
-lines, not both. The refusal comes after the whole file is read and \
-names no line; each {count} is the number of lines of its key."""
+A target file has PC_OBSERVABLE lines or PC_LAMMPS and PC_FAILPROBE lines, \
+not both. The refusal comes after the whole file is read and names no \
+line."""
+msg_doc = "The message gives the number of lines of each key."
 
 [[rule.invalid]]
 wrap = "root"
@@ -3203,17 +3246,18 @@ at = "none"
 text = '''
 PC_OBSERVABLE cohesive_energy --species H --target 2 --weight 1 --hotvar a0 1.5 2.5
 PC_LAMMPS --script lines_pc.in --varloss E 1 1'''
-error = "--hpotarget defines both PC_OBSERVABLE (1 entries) and PC_LAMMPS (1 entries); these paths are mutually exclusive in the current MVP. Remove one set of lines and rerun."
+error = "--hpotarget defines both PC_OBSERVABLE (1 entries) and PC_LAMMPS (1 entries); PC_OBSERVABLE and PC_LAMMPS lines are mutually exclusive. Remove one set of lines and rerun."
 
 [[rule]]
 id = "RULE.PC_LAMMPS_hotvar_unique"
+title = "A --hotvar name is declared by one PC_LAMMPS line"
 check = "parse"
 keys = ["ROOT.PC_LAMMPS", "PC_LAMMPS.--hotvar"]
 msg = "PC_LAMMPS: --hotvar name '{name}' is declared by two different scripts ('{script}' and '{script}'). Hot-var names must be unique across scripts: the per-iter hot value is keyed by name only, so sharing a name makes the injected value order-dependent. Rename one of them."
 doc = """\
-A --hotvar name is declared by one PC_LAMMPS line. The refusal comes \
-after the whole file is read and names no line; the two {script} are \
-the scripts of the two lines."""
+A --hotvar name is declared by one PC_LAMMPS line. The refusal comes after \
+the whole file is read and names no line."""
+msg_doc = "The message names the scripts of the two lines."
 quirk = """\
 Two lines that run the same script are two declarations too: the \
 message then names that script twice."""
@@ -3243,14 +3287,15 @@ error = "PC_LAMMPS: --hotvar name 'a' is declared by two different scripts ('lin
 
 [[rule]]
 id = "RULE.PC_OBSERVABLE_GRAD_STRATEGY"
+title = "PC_OBSERVABLE refuses GRAD_STRATEGY NUMERICAL"
 check = "parse"
 keys = ["ROOT.PC_OBSERVABLE", "OPTIMIZER.GRAD_STRATEGY"]
 msg = "--hpotarget defines PC_OBSERVABLE but {block} GRAD_STRATEGY=NUMERICAL is set. PC_OBSERVABLE is built for the analytical gradient: use GRAD_STRATEGY ANALYTICAL (an unset GRAD_STRATEGY resolves to it in a block that obtains gradients; it needs the settings of the analytical gradient, such as OALGO 4 with a fixed LAMBDA >= 0, and startup names a missing one) or GRAD_STRATEGY HYBRID, which uses finite differences where the analytical gradient is unavailable."
 doc = """\
-With a PC_OBSERVABLE line, GRAD_STRATEGY NUMERICAL is refused, and a \
-block that obtains gradients without a GRAD_STRATEGY line takes \
-ANALYTICAL. The refusal names the END line of the block; {block} is \
-OPTIMIZER's or EXPLORE's."""
+With a PC_OBSERVABLE line, GRAD_STRATEGY NUMERICAL is refused, and a block \
+that obtains gradients without a GRAD_STRATEGY line takes ANALYTICAL. The \
+refusal names the END line of the block."""
+msg_doc = "The message names the block, OPTIMIZER or EXPLORE."
 
 [[rule.examples]]
 wrap = "none"
@@ -3280,13 +3325,14 @@ error = "--hpotarget defines PC_OBSERVABLE but OPTIMIZER's GRAD_STRATEGY=NUMERIC
 
 [[rule]]
 id = "RULE.PC_LAMMPS_GRAD_STRATEGY"
+title = "PC_LAMMPS refuses a GRAD_STRATEGY line"
 check = "parse"
 keys = ["ROOT.PC_LAMMPS", "OPTIMIZER.GRAD_STRATEGY"]
 msg = "--hpotarget defines PC_LAMMPS but {block} GRAD_STRATEGY is set. PC_LAMMPS does not support analytical/numerical/hybrid gradients. Drop the GRAD_STRATEGY line."
 doc = """\
-With a PC_LAMMPS or PC_FAILPROBE line, no block has a GRAD_STRATEGY \
-line. The refusal names the END line of the block; {block} is \
-OPTIMIZER's or EXPLORE's."""
+With a PC_LAMMPS or PC_FAILPROBE line, no block has a GRAD_STRATEGY line. \
+The refusal names the END line of the block."""
+msg_doc = "The message names the block, OPTIMIZER or EXPLORE."
 
 [[rule.invalid]]
 wrap = "none"
@@ -3304,13 +3350,17 @@ error = "--hpotarget defines PC_LAMMPS but OPTIMIZER's GRAD_STRATEGY is set. PC_
 
 [[rule]]
 id = "RULE.PC_LAMMPS_gradient_free"
+title = """\
+With PC_LAMMPS every optimiser runs without gradients, or is DLIB:BFGS"""
 check = "parse"
 keys = ["ROOT.PC_LAMMPS", "OPTIMIZER.ALGO"]
 msg = "--hpotarget defines PC_LAMMPS but {block} optimiser {lib}:{algo} is gradient-based. PC_LAMMPS requires a gradient-free optimiser (NLOPT GN_*/LN_*, TADAH RANDOM/GRID/ANNEAL). The only gradient-based exception is DLIB:BFGS (uses per-theta-per-iter dtheta, not a full gradient)."
 doc = """\
 With a PC_LAMMPS or PC_FAILPROBE line, every optimiser of the file runs \
-without gradients; DLIB:BFGS is accepted. The refusal names the END \
-line of the block; {block} is OPTIMIZER's or EXPLORE's."""
+without gradients; DLIB:BFGS is accepted. The refusal names the END line \
+of the block."""
+msg_doc = """\
+The message names the block, OPTIMIZER or EXPLORE, and its optimiser."""
 
 [[rule.examples]]
 wrap = "none"
@@ -3360,14 +3410,18 @@ error = "--hpotarget defines PC_LAMMPS but EXPLORE's optimiser NLOPT:LD_LBFGS is
 
 [[rule]]
 id = "RULE.PC_LAMMPS_local_optimiser"
+title = """\
+With PC_LAMMPS an MLSL or AUGLAG search has a derivative-free local search"""
 check = "parse"
 keys = ["ROOT.PC_LAMMPS", "BLOCK.INNER"]
 msg = "--hpotarget defines PC_LAMMPS but {block} optimiser {lib}:{algo} takes a gradient: NLopt's MLSL and AUGLAG take one for their local search, and NLopt's default local optimiser, {name}, is gradient-based; an INNER block with a derivative-free one takes none. PC_LAMMPS requires a gradient-free optimiser (NLOPT GN_*/LN_*, TADAH RANDOM/GRID/ANNEAL). The only gradient-based exception is DLIB:BFGS (uses per-theta-per-iter dtheta, not a full gradient)."
 doc = """\
-With a PC_LAMMPS or PC_FAILPROBE line, an NLopt MLSL or AUGLAG without \
-an INNER block is refused when the default local optimiser {name} of \
-NLopt takes gradients. The refusal names the END line of the block; \
-{block} is OPTIMIZER's or EXPLORE's."""
+With a PC_LAMMPS or PC_FAILPROBE line, an NLopt MLSL or AUGLAG without an \
+INNER block is refused when NLopt's default local optimiser takes \
+gradients. The refusal names the END line of the block."""
+msg_doc = """\
+The message names the block, OPTIMIZER or EXPLORE, its optimiser and the \
+default local optimiser."""
 
 [[rule.invalid]]
 wrap = "none"
@@ -3384,15 +3438,19 @@ error = "--hpotarget defines PC_LAMMPS but OPTIMIZER's optimiser NLOPT:GD_MLSL t
 
 [[rule]]
 id = "RULE.PC_LAMMPS_INNER_local_optimiser"
+title = """\
+With PC_LAMMPS an INNER MLSL or AUGLAG has no gradient-based local search"""
 check = "parse"
 keys = ["ROOT.PC_LAMMPS", "BLOCK.INNER"]
 msg = "--hpotarget defines PC_LAMMPS but {block} optimiser {lib}:{algo} takes a gradient: NLopt's MLSL and AUGLAG take one for their local search, and NLopt's default local optimiser, {name}, is gradient-based. PC_LAMMPS requires a gradient-free optimiser, and an INNER search is a local NLopt algorithm: name a derivative-free one in the INNER block ({list})."
 doc = """\
-With a PC_LAMMPS or PC_FAILPROBE line, an INNER block that names an \
-NLopt MLSL or AUGLAG is refused when the default local optimiser {name} \
-of NLopt takes gradients; {list} names the local NLopt algorithms without \
-gradients. The refusal names the ENDINNER line; {block} is INNER's or \
-EXPLORE INNER's."""
+With a PC_LAMMPS or PC_FAILPROBE line, an INNER block that names an NLopt \
+MLSL or AUGLAG is refused when NLopt's default local optimiser takes \
+gradients. The refusal names the ENDINNER line."""
+msg_doc = """\
+The message names the block, INNER, or EXPLORE INNER for the INNER block \
+inside EXPLORE, its optimiser, the default local optimiser and the local \
+NLopt algorithms without gradients."""
 
 [[rule.invalid]]
 wrap = "none"
@@ -3415,13 +3473,18 @@ error = "--hpotarget defines PC_LAMMPS but INNER's optimiser NLOPT:LD_AUGLAG tak
 
 [[rule]]
 id = "RULE.PC_LAMMPS_INNER_gradient_free"
+title = """\
+With PC_LAMMPS an INNER block names a derivative-free local algorithm"""
 check = "parse"
 keys = ["ROOT.PC_LAMMPS", "BLOCK.INNER"]
 msg = "--hpotarget defines PC_LAMMPS but {block} optimiser {lib}:{algo} is gradient-based. PC_LAMMPS requires a gradient-free optimiser, and an INNER search is a local NLopt algorithm: name a derivative-free one in the INNER block ({list})."
 doc = """\
-With a PC_LAMMPS or PC_FAILPROBE line, an INNER block names a local \
-NLopt algorithm without gradients; {list} names them. The refusal names \
-the ENDINNER line; {block} is INNER's or EXPLORE INNER's."""
+With a PC_LAMMPS or PC_FAILPROBE line, an INNER block names a local NLopt \
+algorithm without gradients. The refusal names the ENDINNER line."""
+msg_doc = """\
+The message names the block, INNER, or EXPLORE INNER for the INNER block \
+inside EXPLORE, its optimiser and the local NLopt algorithms without \
+gradients."""
 
 [[rule.examples]]
 wrap = "none"
@@ -3461,6 +3524,7 @@ error = "--hpotarget defines PC_LAMMPS but INNER's optimiser NLOPT:LD_LBFGS is g
 
 [[rule]]
 id = "RULE.loss_source_required"
+title = "A target file has a loss term"
 check = "startup"
 keys = ["ROOT.PC_EMAE", "ROOT.PC_ERMSE", "ROOT.PC_ErRMSE", "ROOT.PC_ERSQ",
         "ROOT.PC_SRMSE", "ROOT.PC_FRMSE",
@@ -3506,6 +3570,7 @@ error = "No loss source: declare at least one of PC_EMAE/PC_ERMSE/PC_ErRMSE/PC_E
 
 [[rule]]
 id = "RULE.metric_needs_validation"
+title = "A validation metric needs a validation configuration"
 check = "startup"
 keys = ["ROOT.PC_EMAE", "ROOT.PC_ERMSE", "ROOT.PC_ErRMSE", "ROOT.PC_ERSQ",
         "ROOT.PC_SRMSE", "ROOT.PC_FRMSE"]
@@ -3813,7 +3878,52 @@ OALGO 4
 LAMBDA 1e-3
 """
 
+# ====================================================== LAMMPS script ===
+# What the LAMMPS script of a PC_LAMMPS or PC_FAILPROBE line provides. The
+# fixture is the script the reference page shows; the Catch2 case
+# "hpotarget registry: the LAMMPS script of [lammps_script] ..." runs it as
+# two evaluations of one line run it, and the conformance case reads the
+# line of the example.
+
+[lammps_script]
+doc = """\
+The script of a PC_LAMMPS or PC_FAILPROBE line takes the candidate \
+potential of the evaluation with `pair_style tadah` and `pair_coeff * * \
+EXTERN <element> ...`, one element per atom type. A script without such a \
+pair_coeff line runs without the candidate potential."""
+long_doc = """\
+Each evaluation runs the whole script in the LAMMPS instance of an earlier \
+evaluation of the line, so the script starts with clear, which removes the \
+atoms and settings and keeps the variables. The variables that --varloss, \
+--outvar and --failvar name are equal-style variables of the script; \
+--invar and --hotvar define variables for it, and the variable maxtime \
+holds the script timeout."""
+fixture = "lines_contract"
+
+[[lammps_script.examples]]
+wrap = "root"
+text = "PC_LAMMPS --script lines_contract.in --varloss E -8.1 1"
+
 # ============================================================ fixtures ===
+
+[fixture.lines_contract]
+path = "lines_contract.in"
+doc = "The energy per atom E of bcc Ta at a lattice constant of 3.3 Å, in eV."
+text = """
+clear
+units           metal
+atom_style      atomic
+boundary        p p p
+lattice         bcc 3.3
+region          box block 0 1 0 1 0 1
+create_box      1 box
+create_atoms    1 box
+mass            1 180.95
+pair_style      tadah
+pair_coeff      * * EXTERN Ta
+run             0
+variable        E equal $(pe/atoms)
+"""
 
 [fixture.lines_script]
 path = "lines_pc.in"

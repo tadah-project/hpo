@@ -34,7 +34,7 @@ untested_tolerance_note = ""
 step_use = "rejected"
 step_use_text = "rejected (no initial-step concept)"
 step_consumed = false
-step_note = "the generating distribution width is driven by the per-dim temperatures (Initial_Parameter_Temperature, Temperature_Ratio_Scale)"
+step_note = "the width of the generating distribution follows the parameter temperature of each dimension (Initial_Parameter_Temperature, Temperature_Ratio_Scale)"
 starts_at_x0 = true
 start_note = ""
 random_draws = "not_recorded"
@@ -50,7 +50,7 @@ Options for ASA:ASA
    * SEED seeds the proposal stream; INIT seed auto-sets
      User_Initial_Parameters
    * PARAM keys use the original ASA option spellings
-     (case-sensitive); per-dim options accept Name[i]
+     (case-sensitive); an option of each dimension accepts Name[i]
   PARAM Limit_Acceptances  (default 10000)  max accepted states; 0 = no limit
   PARAM Limit_Generated  (default 99999)  max generated states; 0 = no limit
   PARAM Limit_Invalid_Generated_States  (default 1000)  invalid-state budget; 0 = exit ASAP, -1 = bypass test
@@ -60,28 +60,28 @@ Options for ASA:ASA
   PARAM Number_Cost_Samples  (default 5)  >0: initial cost temp from mean |cost|; <-1: from a deviation sample
   PARAM Temperature_Ratio_Scale  (default 1e-5)  the main control of the annealing rate: m = -log(TRS)
   PARAM Cost_Parameter_Scale_Ratio  (default 1.0)  cost temperature schedule scale relative to parameters
-  PARAM Temperature_Anneal_Scale  (default 100.0)  n = log(TAS); keep > dim for large problems
-  PARAM Include_Integer_Parameters  (default 0)  include INTEGER-typed dims in derivative/reanneal calculations
+  PARAM Temperature_Anneal_Scale  (default 100.0)  n = log(TAS); above the number of dimensions for large problems
+  PARAM Include_Integer_Parameters  (default 0)  include the INTEGER-typed dimensions in the derivative and reannealing calculations
   PARAM User_Initial_Parameters  (default auto)  1 = start from the INIT seed; auto-set from the INIT block
-  PARAM Sequential_Parameters  (default -1)  start cyclic per-dim generation at this index; any negative = off
+  PARAM Sequential_Parameters  (default -1)  start the cyclic generation of one dimension at a time at this index; any negative = off
   PARAM Initial_Parameter_Temperature  (default 1.0)  initial parameter temperature (must be > 0)
   PARAM Acceptance_Frequency_Modulus  (default 100)  periodic-test cadence in accepted states; 0 = off
   PARAM Generated_Frequency_Modulus  (default 10000)  periodic-test cadence in generated states; 0 = off
   PARAM Reanneal_Cost  (default 1)  0 = off, 1 = default, >1 / <-1 = deviation-sample variants (-1 invalid)
-  PARAM Reanneal_Parameters  (default 1)  adapt per-dim temperatures to tangent sensitivities
+  PARAM Reanneal_Parameters  (default 1)  adapt the temperature of each dimension to its tangent sensitivity
   PARAM Delta_X  (default 0.001)  finite-difference step for tangents; 0 disables tangents
   PARAM User_Tangents  (default 0)  unsupported: tadah hpo has no analytic tangents (1 = error)
-  PARAM Curvature_0  (default 1)  1 = skip curvature array (Tadah!'s default; ASA's own default 0 costs O(dim^2) exit evals), 0 = full curvature at exit, -1 = periodic
+  PARAM Curvature_0  (default 1)  1 = skip curvature array (Tadah!'s default; ASA's own default 0 costs about n^2 evaluations at the exit, n the dimensions), 0 = full curvature at exit, -1 = periodic
   PARAM User_Quench_Cost_Scale  (default 1.0)  cost-temperature quench exponent Q (>1 quenches; proof-safe)
-  PARAM User_Quench_Param_Scale[/i]  (default 1.0)  per-dim quench exponent Q_i (>1 voids the sampling proof)
-  PARAM User_Temperature_Ratio[/i]  (default 1.0)  per-dim multiplier of -log(Temperature_Ratio_Scale)
-  PARAM User_Delta_Parameter[/i]  (default Delta_X)  per-dim finite-difference step (defaults to Delta_X)
-  PARAM User_Parameter_Temperature[/i]  (default IPT)  per-dim initial temperature (defaults to Initial_Parameter_Temperature)
+  PARAM User_Quench_Param_Scale[/i]  (default 1.0)  quench exponent Q_i of each dimension (>1 voids the sampling proof)
+  PARAM User_Temperature_Ratio[/i]  (default 1.0)  multiplier of -log(Temperature_Ratio_Scale) of each dimension
+  PARAM User_Delta_Parameter[/i]  (default Delta_X)  finite-difference step of each dimension (defaults to Delta_X)
+  PARAM User_Parameter_Temperature[/i]  (default IPT)  initial temperature of each dimension (defaults to Initial_Parameter_Temperature)
   PARAM Multi_Number  (default 1)  track the best N distinct minima (reported in the journal)
   PARAM Multi_Specify  (default 1)  1 = strict < for new minima (Tadah!'s default); 0 = <=, as in ASA's example options
-  PARAM Multi_Grid[/i]  (default 0.0)  per-dim distinctness grid for MULTI_MIN (0 -> EPS_DOUBLE)
+  PARAM Multi_Grid[/i]  (default 0.0)  distinctness grid of each dimension for MULTI_MIN (0 -> EPS_DOUBLE)
   PARAM Queue_Size  (default 0)  FIFO eval-cache size; 0 = cache off
-  PARAM Queue_Resolution[/i]  (default 0.0)  per-dim cache-hit resolution
+  PARAM Queue_Resolution[/i]  (default 0.0)  cache-hit resolution of each dimension
   PARAM Gener_Block  (default 1)  initial generated-state block size; 1 (with Gener_Block_Max 1) = canonical serial sampling, >1 evaluates the block concurrently (THREADS-wide) and changes sampling
   PARAM Gener_Block_Max  (default Gener_Block)  block-size cap (buffers sized once); the adaptive resizing keeps the block between 1 and this cap, so it can shrink below Gener_Block
   PARAM Gener_Mov_Avr  (default 3)  moving-average window of the adaptive block resizing; 0 = no resizing: every block holds Gener_Block states
@@ -91,40 +91,40 @@ Options for ASA:ASA
 lib = "CERES"
 algo = "DOGLEG"
 status = "refused"
-reason = "tadah hpo does not run Ceres' least-squares Solver (LEVENBERG_MARQUARDT, DOGLEG, SUBSPACE_DOGLEG): it minimises a sum of squared residuals with their derivatives, and tadah hpo gives an optimiser one scalar loss, over which these methods degenerate. The recommended replacements are CERES:STEEPEST_DESCENT, Ceres' line-search solver of a scalar loss that tadah hpo runs, and the bound-constrained gradient searches NLOPT:LD_LBFGS and DLIB:BFGS"
+reason = "tadah hpo does not run Ceres' least-squares solver (LEVENBERG_MARQUARDT, DOGLEG, SUBSPACE_DOGLEG): it minimises a sum of squared residuals with their derivatives, and tadah hpo gives an optimiser one scalar loss, over which these methods degenerate. The recommended replacements are CERES:STEEPEST_DESCENT, Ceres' line-search solver of a scalar loss that tadah hpo runs, and the bound-constrained gradient searches NLOPT:LD_LBFGS and DLIB:BFGS"
 explain_text = """
 Options for CERES:DOGLEG
-   * REFUSED: tadah hpo does not run Ceres' least-squares Solver (LEVENBERG_MARQUARDT, DOGLEG, SUBSPACE_DOGLEG): it minimises a sum of squared residuals with their derivatives, and tadah hpo gives an optimiser one scalar loss, over which these methods degenerate. The recommended replacements are CERES:STEEPEST_DESCENT, Ceres' line-search solver of a scalar loss that tadah hpo runs, and the bound-constrained gradient searches NLOPT:LD_LBFGS and DLIB:BFGS
+   * REFUSED: tadah hpo does not run Ceres' least-squares solver (LEVENBERG_MARQUARDT, DOGLEG, SUBSPACE_DOGLEG): it minimises a sum of squared residuals with their derivatives, and tadah hpo gives an optimiser one scalar loss, over which these methods degenerate. The recommended replacements are CERES:STEEPEST_DESCENT, Ceres' line-search solver of a scalar loss that tadah hpo runs, and the bound-constrained gradient searches NLOPT:LD_LBFGS and DLIB:BFGS
 """
 
 [[optimizer]]
 lib = "CERES"
 algo = "LBFGS"
 status = "refused"
-reason = "Ceres' GradientProblemSolver has no bounds, and a point it proposes outside the OPTIM box is not evaluated: it is scored as a failure graded by its distance to the box, in [0.99975, 1) x FAILSCORE, far above every usable loss. Ceres' Wolfe line search interpolates that value and shrinks its step to almost nothing (a 2-D run stopped at its start after 16 evaluations, 'Parameter tolerance reached' with a step of 0; a 1-D run moved by 2.5e-7 per iteration until MAXEVAL). The recommended replacements are NLOPT:LD_LBFGS (L-BFGS within the box), DLIB:BFGS and CERES:STEEPEST_DESCENT, whose Armijo line search steps back from such a point"
+reason = "Ceres' line-search solver has no bounds, and a point it proposes outside the OPTIM box is not evaluated: it is scored as a failure graded by its distance to the box, in [0.99975, 1) x FAILSCORE, far above every usable loss. Ceres' Wolfe line search interpolates that value and shrinks its step to almost nothing (a 2-D run stopped at its start after 16 evaluations, 'Parameter tolerance reached' with a step of 0; a 1-D run moved by 2.5e-7 per iteration until MAXEVAL). The recommended replacements are NLOPT:LD_LBFGS (L-BFGS within the box), DLIB:BFGS and CERES:STEEPEST_DESCENT, whose Armijo line search steps back from such a point"
 explain_text = """
 Options for CERES:LBFGS
-   * REFUSED: Ceres' GradientProblemSolver has no bounds, and a point it proposes outside the OPTIM box is not evaluated: it is scored as a failure graded by its distance to the box, in [0.99975, 1) x FAILSCORE, far above every usable loss. Ceres' Wolfe line search interpolates that value and shrinks its step to almost nothing (a 2-D run stopped at its start after 16 evaluations, 'Parameter tolerance reached' with a step of 0; a 1-D run moved by 2.5e-7 per iteration until MAXEVAL). The recommended replacements are NLOPT:LD_LBFGS (L-BFGS within the box), DLIB:BFGS and CERES:STEEPEST_DESCENT, whose Armijo line search steps back from such a point
+   * REFUSED: Ceres' line-search solver has no bounds, and a point it proposes outside the OPTIM box is not evaluated: it is scored as a failure graded by its distance to the box, in [0.99975, 1) x FAILSCORE, far above every usable loss. Ceres' Wolfe line search interpolates that value and shrinks its step to almost nothing (a 2-D run stopped at its start after 16 evaluations, 'Parameter tolerance reached' with a step of 0; a 1-D run moved by 2.5e-7 per iteration until MAXEVAL). The recommended replacements are NLOPT:LD_LBFGS (L-BFGS within the box), DLIB:BFGS and CERES:STEEPEST_DESCENT, whose Armijo line search steps back from such a point
 """
 
 [[optimizer]]
 lib = "CERES"
 algo = "LEVENBERG_MARQUARDT"
 status = "refused"
-reason = "tadah hpo does not run Ceres' least-squares Solver (LEVENBERG_MARQUARDT, DOGLEG, SUBSPACE_DOGLEG): it minimises a sum of squared residuals with their derivatives, and tadah hpo gives an optimiser one scalar loss, over which these methods degenerate. The recommended replacements are CERES:STEEPEST_DESCENT, Ceres' line-search solver of a scalar loss that tadah hpo runs, and the bound-constrained gradient searches NLOPT:LD_LBFGS and DLIB:BFGS"
+reason = "tadah hpo does not run Ceres' least-squares solver (LEVENBERG_MARQUARDT, DOGLEG, SUBSPACE_DOGLEG): it minimises a sum of squared residuals with their derivatives, and tadah hpo gives an optimiser one scalar loss, over which these methods degenerate. The recommended replacements are CERES:STEEPEST_DESCENT, Ceres' line-search solver of a scalar loss that tadah hpo runs, and the bound-constrained gradient searches NLOPT:LD_LBFGS and DLIB:BFGS"
 explain_text = """
 Options for CERES:LEVENBERG_MARQUARDT
-   * REFUSED: tadah hpo does not run Ceres' least-squares Solver (LEVENBERG_MARQUARDT, DOGLEG, SUBSPACE_DOGLEG): it minimises a sum of squared residuals with their derivatives, and tadah hpo gives an optimiser one scalar loss, over which these methods degenerate. The recommended replacements are CERES:STEEPEST_DESCENT, Ceres' line-search solver of a scalar loss that tadah hpo runs, and the bound-constrained gradient searches NLOPT:LD_LBFGS and DLIB:BFGS
+   * REFUSED: tadah hpo does not run Ceres' least-squares solver (LEVENBERG_MARQUARDT, DOGLEG, SUBSPACE_DOGLEG): it minimises a sum of squared residuals with their derivatives, and tadah hpo gives an optimiser one scalar loss, over which these methods degenerate. The recommended replacements are CERES:STEEPEST_DESCENT, Ceres' line-search solver of a scalar loss that tadah hpo runs, and the bound-constrained gradient searches NLOPT:LD_LBFGS and DLIB:BFGS
 """
 
 [[optimizer]]
 lib = "CERES"
 algo = "NLCG"
 status = "refused"
-reason = "Ceres' GradientProblemSolver has no bounds, and a point it proposes outside the OPTIM box is not evaluated: it is scored as a failure graded by its distance to the box, in [0.99975, 1) x FAILSCORE, far above every usable loss. Ceres' Wolfe line search interpolates that value and shrinks its step to almost nothing (a 2-D run stopped at its start after 16 evaluations, 'Parameter tolerance reached' with a step of 0; a 1-D run moved by 2.5e-7 per iteration until MAXEVAL). The recommended replacements are NLOPT:LD_LBFGS (L-BFGS within the box), DLIB:BFGS and CERES:STEEPEST_DESCENT, whose Armijo line search steps back from such a point"
+reason = "Ceres' line-search solver has no bounds, and a point it proposes outside the OPTIM box is not evaluated: it is scored as a failure graded by its distance to the box, in [0.99975, 1) x FAILSCORE, far above every usable loss. Ceres' Wolfe line search interpolates that value and shrinks its step to almost nothing (a 2-D run stopped at its start after 16 evaluations, 'Parameter tolerance reached' with a step of 0; a 1-D run moved by 2.5e-7 per iteration until MAXEVAL). The recommended replacements are NLOPT:LD_LBFGS (L-BFGS within the box), DLIB:BFGS and CERES:STEEPEST_DESCENT, whose Armijo line search steps back from such a point"
 explain_text = """
 Options for CERES:NLCG
-   * REFUSED: Ceres' GradientProblemSolver has no bounds, and a point it proposes outside the OPTIM box is not evaluated: it is scored as a failure graded by its distance to the box, in [0.99975, 1) x FAILSCORE, far above every usable loss. Ceres' Wolfe line search interpolates that value and shrinks its step to almost nothing (a 2-D run stopped at its start after 16 evaluations, 'Parameter tolerance reached' with a step of 0; a 1-D run moved by 2.5e-7 per iteration until MAXEVAL). The recommended replacements are NLOPT:LD_LBFGS (L-BFGS within the box), DLIB:BFGS and CERES:STEEPEST_DESCENT, whose Armijo line search steps back from such a point
+   * REFUSED: Ceres' line-search solver has no bounds, and a point it proposes outside the OPTIM box is not evaluated: it is scored as a failure graded by its distance to the box, in [0.99975, 1) x FAILSCORE, far above every usable loss. Ceres' Wolfe line search interpolates that value and shrinks its step to almost nothing (a 2-D run stopped at its start after 16 evaluations, 'Parameter tolerance reached' with a step of 0; a 1-D run moved by 2.5e-7 per iteration until MAXEVAL). The recommended replacements are NLOPT:LD_LBFGS (L-BFGS within the box), DLIB:BFGS and CERES:STEEPEST_DESCENT, whose Armijo line search steps back from such a point
 """
 
 [[optimizer]]
@@ -153,37 +153,37 @@ starts_at_x0 = true
 start_note = ""
 random_draws = "not_recorded"
 ignores_bounds = true
-bounds_note = "ignores the OPTIM box: Ceres' GradientProblemSolver has no bounds, so its line searches can propose points outside the box (a LOG dimension stays positive, a linear one is unbounded). Such a point is not evaluated: it is scored as a failure graded by its distance to the box, whose slope points away from the box, so a descent step leads back into it; it counts against MAXEVAL and it is never the best; the first is reported with a WARNING and DIAGNOSTICS counts them all. DLIB:BFGS and the NLopt LD_* algorithms keep to the box"
+bounds_note = "ignores the OPTIM box: Ceres' line-search solver has no bounds, so its line searches can propose points outside the box (a LOG dimension stays positive, a linear one is unbounded). Such a point is not evaluated: it is scored as a failure graded by its distance to the box, whose slope points away from the box, so a descent step leads back into it; it counts against MAXEVAL and it is never the best; the first is reported with a WARNING and the DIAGNOSTICS section of hpo_run.log counts them all. DLIB:BFGS and the NLopt LD_* algorithms keep to the box"
 explain_text = """
 Options for CERES:STEEPEST_DESCENT
-   * Ceres' GradientProblemSolver: steepest descent, Armijo line search; local, gradient-based (GRAD_STRATEGY NUMERICAL by default)
+   * Ceres' line-search solver: steepest descent, Armijo line search; local, gradient-based (GRAD_STRATEGY NUMERICAL by default)
    * Stops that end a run: MAXEVAL, FTOL_REL, XTOL_REL
    * PARAM tol_gradinf <double>  (gradient tolerance, the largest component, default 1e-10)
    * PARAM max_iter <int>        (Ceres' max_num_iterations, 0 to 2147483647; MAXEVAL counts the evaluations)
    * PARAM max_ls_iter <int>     (line-search step-size iterations, 1 to 2147483647)
    * PARAM fd_step, fd_kernel, diff_method  (the finite differences of the gradient)
    * STEP is rejected: Ceres chooses the initial line-search step itself; remove STEP (PARAM max_ls_iter caps the line-search iterations)
-   * WARNING: ignores the OPTIM box: Ceres' GradientProblemSolver has no bounds, so its line searches can propose points outside the box (a LOG dimension stays positive, a linear one is unbounded). Such a point is not evaluated: it is scored as a failure graded by its distance to the box, whose slope points away from the box, so a descent step leads back into it; it counts against MAXEVAL and it is never the best; the first is reported with a WARNING and DIAGNOSTICS counts them all. DLIB:BFGS and the NLopt LD_* algorithms keep to the box
+   * WARNING: ignores the OPTIM box: Ceres' line-search solver has no bounds, so its line searches can propose points outside the box (a LOG dimension stays positive, a linear one is unbounded). Such a point is not evaluated: it is scored as a failure graded by its distance to the box, whose slope points away from the box, so a descent step leads back into it; it counts against MAXEVAL and it is never the best; the first is reported with a WARNING and the DIAGNOSTICS section of hpo_run.log counts them all. DLIB:BFGS and the NLopt LD_* algorithms keep to the box
 """
 
 [[optimizer]]
 lib = "CERES"
 algo = "SUBSPACE_DOGLEG"
 status = "refused"
-reason = "tadah hpo does not run Ceres' least-squares Solver (LEVENBERG_MARQUARDT, DOGLEG, SUBSPACE_DOGLEG): it minimises a sum of squared residuals with their derivatives, and tadah hpo gives an optimiser one scalar loss, over which these methods degenerate. The recommended replacements are CERES:STEEPEST_DESCENT, Ceres' line-search solver of a scalar loss that tadah hpo runs, and the bound-constrained gradient searches NLOPT:LD_LBFGS and DLIB:BFGS"
+reason = "tadah hpo does not run Ceres' least-squares solver (LEVENBERG_MARQUARDT, DOGLEG, SUBSPACE_DOGLEG): it minimises a sum of squared residuals with their derivatives, and tadah hpo gives an optimiser one scalar loss, over which these methods degenerate. The recommended replacements are CERES:STEEPEST_DESCENT, Ceres' line-search solver of a scalar loss that tadah hpo runs, and the bound-constrained gradient searches NLOPT:LD_LBFGS and DLIB:BFGS"
 explain_text = """
 Options for CERES:SUBSPACE_DOGLEG
-   * REFUSED: tadah hpo does not run Ceres' least-squares Solver (LEVENBERG_MARQUARDT, DOGLEG, SUBSPACE_DOGLEG): it minimises a sum of squared residuals with their derivatives, and tadah hpo gives an optimiser one scalar loss, over which these methods degenerate. The recommended replacements are CERES:STEEPEST_DESCENT, Ceres' line-search solver of a scalar loss that tadah hpo runs, and the bound-constrained gradient searches NLOPT:LD_LBFGS and DLIB:BFGS
+   * REFUSED: tadah hpo does not run Ceres' least-squares solver (LEVENBERG_MARQUARDT, DOGLEG, SUBSPACE_DOGLEG): it minimises a sum of squared residuals with their derivatives, and tadah hpo gives an optimiser one scalar loss, over which these methods degenerate. The recommended replacements are CERES:STEEPEST_DESCENT, Ceres' line-search solver of a scalar loss that tadah hpo runs, and the bound-constrained gradient searches NLOPT:LD_LBFGS and DLIB:BFGS
 """
 
 [[optimizer]]
 lib = "CERES"
 algo = "WOLFE"
 status = "refused"
-reason = "Ceres' GradientProblemSolver has no bounds, and a point it proposes outside the OPTIM box is not evaluated: it is scored as a failure graded by its distance to the box, in [0.99975, 1) x FAILSCORE, far above every usable loss. Ceres' Wolfe line search interpolates that value and shrinks its step to almost nothing (a 2-D run stopped at its start after 16 evaluations, 'Parameter tolerance reached' with a step of 0; a 1-D run moved by 2.5e-7 per iteration until MAXEVAL). The recommended replacements are NLOPT:LD_LBFGS (L-BFGS within the box), DLIB:BFGS and CERES:STEEPEST_DESCENT, whose Armijo line search steps back from such a point"
+reason = "Ceres' line-search solver has no bounds, and a point it proposes outside the OPTIM box is not evaluated: it is scored as a failure graded by its distance to the box, in [0.99975, 1) x FAILSCORE, far above every usable loss. Ceres' Wolfe line search interpolates that value and shrinks its step to almost nothing (a 2-D run stopped at its start after 16 evaluations, 'Parameter tolerance reached' with a step of 0; a 1-D run moved by 2.5e-7 per iteration until MAXEVAL). The recommended replacements are NLOPT:LD_LBFGS (L-BFGS within the box), DLIB:BFGS and CERES:STEEPEST_DESCENT, whose Armijo line search steps back from such a point"
 explain_text = """
 Options for CERES:WOLFE
-   * REFUSED: Ceres' GradientProblemSolver has no bounds, and a point it proposes outside the OPTIM box is not evaluated: it is scored as a failure graded by its distance to the box, in [0.99975, 1) x FAILSCORE, far above every usable loss. Ceres' Wolfe line search interpolates that value and shrinks its step to almost nothing (a 2-D run stopped at its start after 16 evaluations, 'Parameter tolerance reached' with a step of 0; a 1-D run moved by 2.5e-7 per iteration until MAXEVAL). The recommended replacements are NLOPT:LD_LBFGS (L-BFGS within the box), DLIB:BFGS and CERES:STEEPEST_DESCENT, whose Armijo line search steps back from such a point
+   * REFUSED: Ceres' line-search solver has no bounds, and a point it proposes outside the OPTIM box is not evaluated: it is scored as a failure graded by its distance to the box, in [0.99975, 1) x FAILSCORE, far above every usable loss. Ceres' Wolfe line search interpolates that value and shrinks its step to almost nothing (a 2-D run stopped at its start after 16 evaluations, 'Parameter tolerance reached' with a step of 0; a 1-D run moved by 2.5e-7 per iteration until MAXEVAL). The recommended replacements are NLOPT:LD_LBFGS (L-BFGS within the box), DLIB:BFGS and CERES:STEEPEST_DESCENT, whose Armijo line search steps back from such a point
 """
 
 [[optimizer]]
@@ -207,7 +207,7 @@ untested_tolerance_note = ""
 step_use = "rejected"
 step_use_text = "rejected (no initial-step concept)"
 step_consumed = false
-step_note = "the line search starts from -grad; the finite-difference step is PARAM fd_step"
+step_note = "the line search starts along the negative gradient; PARAM fd_step sets the finite-difference step"
 starts_at_x0 = true
 start_note = ""
 random_draws = "not_recorded"
@@ -288,9 +288,9 @@ ignores_forced_stop = false
 tolerance_note = ""
 untested_tolerance_note = "AUGLAG ends when its INNER search ends (tadah hpo sets no constraint) and tests the block's tolerances only to name that ending, and NLopt passes them to no INNER search"
 step_use = "forwarded_to_inner"
-step_use_text = "forwarded to the INNER optimiser"
+step_use_text = "passed to the optimiser of the INNER block"
 step_consumed = true
-step_note = "forwarded to the INNER local optimiser (an OUTER STEP overrides an INNER STEP)"
+step_note = "passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block"
 starts_at_x0 = true
 start_note = ""
 random_draws = "not_recorded"
@@ -301,8 +301,8 @@ Options for NLOPT:AUGLAG
    * Stops that end a run: MAXEVAL, MAXTIME, STOPVAL, FTOL_REL, FTOL_ABS, XTOL_REL, XTOL_ABS
    * PARAM <name> <value>  passed to NLopt as its algorithm parameter
      of that name
-   * STEP <double>  initial step; consumption: forwarded to the INNER optimiser
-     forwarded to the INNER local optimiser (an OUTER STEP overrides an INNER STEP)
+   * STEP <double>  initial step; consumption: passed to the optimiser of the INNER block
+     passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block
    * INNER ... ENDINNER: the local search it runs, from its own starting
      point: LIB NLOPT and a local ALGO; a global one (`tadah explain ALGO`
      marks each) is refused, and so is one that needs an INNER block of its
@@ -329,9 +329,9 @@ ignores_forced_stop = false
 tolerance_note = ""
 untested_tolerance_note = "AUGLAG ends when its INNER search ends (tadah hpo sets no constraint) and tests the block's tolerances only to name that ending, and NLopt passes them to no INNER search"
 step_use = "forwarded_to_inner"
-step_use_text = "forwarded to the INNER optimiser"
+step_use_text = "passed to the optimiser of the INNER block"
 step_consumed = true
-step_note = "forwarded to the INNER local optimiser (an OUTER STEP overrides an INNER STEP)"
+step_note = "passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block"
 starts_at_x0 = true
 start_note = ""
 random_draws = "not_recorded"
@@ -342,8 +342,8 @@ Options for NLOPT:AUGLAG_EQ
    * Stops that end a run: MAXEVAL, MAXTIME, STOPVAL, FTOL_REL, FTOL_ABS, XTOL_REL, XTOL_ABS
    * PARAM <name> <value>  passed to NLopt as its algorithm parameter
      of that name
-   * STEP <double>  initial step; consumption: forwarded to the INNER optimiser
-     forwarded to the INNER local optimiser (an OUTER STEP overrides an INNER STEP)
+   * STEP <double>  initial step; consumption: passed to the optimiser of the INNER block
+     passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block
    * INNER ... ENDINNER: the local search it runs, from its own starting
      point: LIB NLOPT and a local ALGO; a global one (`tadah explain ALGO`
      marks each) is refused, and so is one that needs an INNER block of its
@@ -370,9 +370,9 @@ ignores_forced_stop = false
 tolerance_note = ""
 untested_tolerance_note = "MLSL's multistart loop tests no tolerance, and NLopt passes the block's tolerances to no INNER search"
 step_use = "forwarded_to_inner"
-step_use_text = "forwarded to the INNER optimiser"
+step_use_text = "passed to the optimiser of the INNER block"
 step_consumed = true
-step_note = "forwarded to the INNER local optimiser (an OUTER STEP overrides an INNER STEP)"
+step_note = "passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block"
 starts_at_x0 = true
 start_note = ""
 random_draws = "not_recorded"
@@ -385,8 +385,8 @@ Options for NLOPT:GD_MLSL
    * PARAM <name> <value>  passed to NLopt as its algorithm parameter
      of that name
    * global optimiser
-   * STEP <double>  initial step; consumption: forwarded to the INNER optimiser
-     forwarded to the INNER local optimiser (an OUTER STEP overrides an INNER STEP)
+   * STEP <double>  initial step; consumption: passed to the optimiser of the INNER block
+     passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block
    * INNER ... ENDINNER: the local search it runs, from the points it
      samples in the OPTIM box: LIB NLOPT and a local ALGO; a global one
      (`tadah explain ALGO` marks each) is refused, and so is one that needs
@@ -412,9 +412,9 @@ ignores_forced_stop = false
 tolerance_note = ""
 untested_tolerance_note = "MLSL's multistart loop tests no tolerance, and NLopt passes the block's tolerances to no INNER search"
 step_use = "forwarded_to_inner"
-step_use_text = "forwarded to the INNER optimiser"
+step_use_text = "passed to the optimiser of the INNER block"
 step_consumed = true
-step_note = "forwarded to the INNER local optimiser (an OUTER STEP overrides an INNER STEP)"
+step_note = "passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block"
 starts_at_x0 = true
 start_note = ""
 random_draws = "not_recorded"
@@ -427,8 +427,8 @@ Options for NLOPT:GD_MLSL_LDS
    * PARAM <name> <value>  passed to NLopt as its algorithm parameter
      of that name
    * global optimiser
-   * STEP <double>  initial step; consumption: forwarded to the INNER optimiser
-     forwarded to the INNER local optimiser (an OUTER STEP overrides an INNER STEP)
+   * STEP <double>  initial step; consumption: passed to the optimiser of the INNER block
+     passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block
    * INNER ... ENDINNER: the local search it runs, from the points it
      samples in the OPTIM box: LIB NLOPT and a local ALGO; a global one
      (`tadah explain ALGO` marks each) is refused, and so is one that needs
@@ -914,9 +914,9 @@ ignores_forced_stop = false
 tolerance_note = ""
 untested_tolerance_note = "MLSL's multistart loop tests no tolerance, and NLopt passes the block's tolerances to no INNER search"
 step_use = "forwarded_to_inner"
-step_use_text = "forwarded to the INNER optimiser"
+step_use_text = "passed to the optimiser of the INNER block"
 step_consumed = true
-step_note = "forwarded to the INNER local optimiser (an OUTER STEP overrides an INNER STEP)"
+step_note = "passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block"
 starts_at_x0 = true
 start_note = ""
 random_draws = "not_recorded"
@@ -930,8 +930,8 @@ Options for NLOPT:GN_MLSL
      of that name
    * global optimiser
    * derivative-free
-   * STEP <double>  initial step; consumption: forwarded to the INNER optimiser
-     forwarded to the INNER local optimiser (an OUTER STEP overrides an INNER STEP)
+   * STEP <double>  initial step; consumption: passed to the optimiser of the INNER block
+     passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block
    * INNER ... ENDINNER: the local search it runs, from the points it
      samples in the OPTIM box: LIB NLOPT and a local ALGO; a global one
      (`tadah explain ALGO` marks each) is refused, and so is one that needs
@@ -958,9 +958,9 @@ ignores_forced_stop = false
 tolerance_note = ""
 untested_tolerance_note = "MLSL's multistart loop tests no tolerance, and NLopt passes the block's tolerances to no INNER search"
 step_use = "forwarded_to_inner"
-step_use_text = "forwarded to the INNER optimiser"
+step_use_text = "passed to the optimiser of the INNER block"
 step_consumed = true
-step_note = "forwarded to the INNER local optimiser (an OUTER STEP overrides an INNER STEP)"
+step_note = "passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block"
 starts_at_x0 = true
 start_note = ""
 random_draws = "not_recorded"
@@ -974,8 +974,8 @@ Options for NLOPT:GN_MLSL_LDS
      of that name
    * global optimiser
    * derivative-free
-   * STEP <double>  initial step; consumption: forwarded to the INNER optimiser
-     forwarded to the INNER local optimiser (an OUTER STEP overrides an INNER STEP)
+   * STEP <double>  initial step; consumption: passed to the optimiser of the INNER block
+     passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block
    * INNER ... ENDINNER: the local search it runs, from the points it
      samples in the OPTIM box: LIB NLOPT and a local ALGO; a global one
      (`tadah explain ALGO` marks each) is refused, and so is one that needs
@@ -1076,9 +1076,9 @@ ignores_forced_stop = false
 tolerance_note = ""
 untested_tolerance_note = "MLSL's multistart loop tests no tolerance, and NLopt passes the block's tolerances to no INNER search"
 step_use = "forwarded_to_inner"
-step_use_text = "forwarded to the INNER optimiser"
+step_use_text = "passed to the optimiser of the INNER block"
 step_consumed = true
-step_note = "forwarded to the INNER local optimiser (an OUTER STEP overrides an INNER STEP)"
+step_note = "passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block"
 starts_at_x0 = true
 start_note = ""
 random_draws = "not_recorded"
@@ -1091,8 +1091,8 @@ Options for NLOPT:G_MLSL
    * PARAM <name> <value>  passed to NLopt as its algorithm parameter
      of that name
    * global optimiser
-   * STEP <double>  initial step; consumption: forwarded to the INNER optimiser
-     forwarded to the INNER local optimiser (an OUTER STEP overrides an INNER STEP)
+   * STEP <double>  initial step; consumption: passed to the optimiser of the INNER block
+     passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block
    * INNER ... ENDINNER: the local search it runs, from the points it
      samples in the OPTIM box: LIB NLOPT and a local ALGO; a global one
      (`tadah explain ALGO` marks each) is refused, and so is one that needs
@@ -1119,9 +1119,9 @@ ignores_forced_stop = false
 tolerance_note = ""
 untested_tolerance_note = "MLSL's multistart loop tests no tolerance, and NLopt passes the block's tolerances to no INNER search"
 step_use = "forwarded_to_inner"
-step_use_text = "forwarded to the INNER optimiser"
+step_use_text = "passed to the optimiser of the INNER block"
 step_consumed = true
-step_note = "forwarded to the INNER local optimiser (an OUTER STEP overrides an INNER STEP)"
+step_note = "passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block"
 starts_at_x0 = true
 start_note = ""
 random_draws = "not_recorded"
@@ -1134,8 +1134,8 @@ Options for NLOPT:G_MLSL_LDS
    * PARAM <name> <value>  passed to NLopt as its algorithm parameter
      of that name
    * global optimiser
-   * STEP <double>  initial step; consumption: forwarded to the INNER optimiser
-     forwarded to the INNER local optimiser (an OUTER STEP overrides an INNER STEP)
+   * STEP <double>  initial step; consumption: passed to the optimiser of the INNER block
+     passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block
    * INNER ... ENDINNER: the local search it runs, from the points it
      samples in the OPTIM box: LIB NLOPT and a local ALGO; a global one
      (`tadah explain ALGO` marks each) is refused, and so is one that needs
@@ -1162,9 +1162,9 @@ ignores_forced_stop = false
 tolerance_note = ""
 untested_tolerance_note = "AUGLAG ends when its INNER search ends (tadah hpo sets no constraint) and tests the block's tolerances only to name that ending, and NLopt passes them to no INNER search"
 step_use = "forwarded_to_inner"
-step_use_text = "forwarded to the INNER optimiser"
+step_use_text = "passed to the optimiser of the INNER block"
 step_consumed = true
-step_note = "forwarded to the INNER local optimiser (an OUTER STEP overrides an INNER STEP)"
+step_note = "passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block"
 starts_at_x0 = true
 start_note = ""
 random_draws = "not_recorded"
@@ -1175,8 +1175,8 @@ Options for NLOPT:LD_AUGLAG
    * Stops that end a run: MAXEVAL, MAXTIME, STOPVAL, FTOL_REL, FTOL_ABS, XTOL_REL, XTOL_ABS
    * PARAM <name> <value>  passed to NLopt as its algorithm parameter
      of that name
-   * STEP <double>  initial step; consumption: forwarded to the INNER optimiser
-     forwarded to the INNER local optimiser (an OUTER STEP overrides an INNER STEP)
+   * STEP <double>  initial step; consumption: passed to the optimiser of the INNER block
+     passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block
    * INNER ... ENDINNER: the local search it runs, from its own starting
      point: LIB NLOPT and a local ALGO; a global one (`tadah explain ALGO`
      marks each) is refused, and so is one that needs an INNER block of its
@@ -1202,9 +1202,9 @@ ignores_forced_stop = false
 tolerance_note = ""
 untested_tolerance_note = "AUGLAG ends when its INNER search ends (tadah hpo sets no constraint) and tests the block's tolerances only to name that ending, and NLopt passes them to no INNER search"
 step_use = "forwarded_to_inner"
-step_use_text = "forwarded to the INNER optimiser"
+step_use_text = "passed to the optimiser of the INNER block"
 step_consumed = true
-step_note = "forwarded to the INNER local optimiser (an OUTER STEP overrides an INNER STEP)"
+step_note = "passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block"
 starts_at_x0 = true
 start_note = ""
 random_draws = "not_recorded"
@@ -1215,8 +1215,8 @@ Options for NLOPT:LD_AUGLAG_EQ
    * Stops that end a run: MAXEVAL, MAXTIME, STOPVAL, FTOL_REL, FTOL_ABS, XTOL_REL, XTOL_ABS
    * PARAM <name> <value>  passed to NLopt as its algorithm parameter
      of that name
-   * STEP <double>  initial step; consumption: forwarded to the INNER optimiser
-     forwarded to the INNER local optimiser (an OUTER STEP overrides an INNER STEP)
+   * STEP <double>  initial step; consumption: passed to the optimiser of the INNER block
+     passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block
    * INNER ... ENDINNER: the local search it runs, from its own starting
      point: LIB NLOPT and a local ALGO; a global one (`tadah explain ALGO`
      marks each) is refused, and so is one that needs an INNER block of its
@@ -1242,9 +1242,9 @@ ignores_forced_stop = false
 tolerance_note = ""
 untested_tolerance_note = ""
 step_use = "trust_half_width"
-step_use_text = "per-dim trust-region half-width"
+step_use_text = "one per dimension: the first trust-region half-width"
 step_consumed = true
-step_note = "per-dim initial trust-region half-width (default 0.5*width)"
+step_note = "the first trust-region half-width in each dimension; without STEP it is half the width of the OPTIM box"
 starts_at_x0 = true
 start_note = ""
 random_draws = "not_recorded"
@@ -1256,8 +1256,8 @@ Options for NLOPT:LD_CCSAQ
      One of them is required (a tolerance above 0), or an active RESTART: without a tolerance it has no convergence test and runs until it is interrupted.
    * PARAM <name> <value>  passed to NLopt as its algorithm parameter
      of that name
-   * STEP <double>  initial step; consumption: per-dim trust-region half-width
-     per-dim initial trust-region half-width (default 0.5*width)
+   * STEP <double>  initial step; consumption: one per dimension: the first trust-region half-width
+     the first trust-region half-width in each dimension; without STEP it is half the width of the OPTIM box
 """
 
 [[optimizer]]
@@ -1314,9 +1314,9 @@ ignores_forced_stop = false
 tolerance_note = ""
 untested_tolerance_note = ""
 step_use = "trust_half_width"
-step_use_text = "per-dim trust-region half-width"
+step_use_text = "one per dimension: the first trust-region half-width"
 step_consumed = true
-step_note = "per-dim initial trust-region half-width (default 0.5*width)"
+step_note = "the first trust-region half-width in each dimension; without STEP it is half the width of the OPTIM box"
 starts_at_x0 = true
 start_note = ""
 random_draws = "not_recorded"
@@ -1328,8 +1328,8 @@ Options for NLOPT:LD_MMA
      One of them is required (a tolerance above 0), or an active RESTART: without a tolerance it has no convergence test and runs until it is interrupted.
    * PARAM <name> <value>  passed to NLopt as its algorithm parameter
      of that name
-   * STEP <double>  initial step; consumption: per-dim trust-region half-width
-     per-dim initial trust-region half-width (default 0.5*width)
+   * STEP <double>  initial step; consumption: one per dimension: the first trust-region half-width
+     the first trust-region half-width in each dimension; without STEP it is half the width of the OPTIM box
 """
 
 [[optimizer]]
@@ -1597,9 +1597,9 @@ ignores_forced_stop = false
 tolerance_note = ""
 untested_tolerance_note = "AUGLAG ends when its INNER search ends (tadah hpo sets no constraint) and tests the block's tolerances only to name that ending, and NLopt passes them to no INNER search"
 step_use = "forwarded_to_inner"
-step_use_text = "forwarded to the INNER optimiser"
+step_use_text = "passed to the optimiser of the INNER block"
 step_consumed = true
-step_note = "forwarded to the INNER local optimiser (an OUTER STEP overrides an INNER STEP)"
+step_note = "passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block"
 starts_at_x0 = true
 start_note = ""
 random_draws = "not_recorded"
@@ -1611,8 +1611,8 @@ Options for NLOPT:LN_AUGLAG
    * PARAM <name> <value>  passed to NLopt as its algorithm parameter
      of that name
    * derivative-free
-   * STEP <double>  initial step; consumption: forwarded to the INNER optimiser
-     forwarded to the INNER local optimiser (an OUTER STEP overrides an INNER STEP)
+   * STEP <double>  initial step; consumption: passed to the optimiser of the INNER block
+     passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block
    * INNER ... ENDINNER: the local search it runs, from its own starting
      point: LIB NLOPT and a local ALGO; a global one (`tadah explain ALGO`
      marks each) is refused, and so is one that needs an INNER block of its
@@ -1638,9 +1638,9 @@ ignores_forced_stop = false
 tolerance_note = ""
 untested_tolerance_note = "AUGLAG ends when its INNER search ends (tadah hpo sets no constraint) and tests the block's tolerances only to name that ending, and NLopt passes them to no INNER search"
 step_use = "forwarded_to_inner"
-step_use_text = "forwarded to the INNER optimiser"
+step_use_text = "passed to the optimiser of the INNER block"
 step_consumed = true
-step_note = "forwarded to the INNER local optimiser (an OUTER STEP overrides an INNER STEP)"
+step_note = "passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block"
 starts_at_x0 = true
 start_note = ""
 random_draws = "not_recorded"
@@ -1652,8 +1652,8 @@ Options for NLOPT:LN_AUGLAG_EQ
    * PARAM <name> <value>  passed to NLopt as its algorithm parameter
      of that name
    * derivative-free
-   * STEP <double>  initial step; consumption: forwarded to the INNER optimiser
-     forwarded to the INNER local optimiser (an OUTER STEP overrides an INNER STEP)
+   * STEP <double>  initial step; consumption: passed to the optimiser of the INNER block
+     passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block
    * INNER ... ENDINNER: the local search it runs, from its own starting
      point: LIB NLOPT and a local ALGO; a global one (`tadah explain ALGO`
      marks each) is refused, and so is one that needs an INNER block of its
@@ -1679,9 +1679,9 @@ ignores_forced_stop = false
 tolerance_note = ""
 untested_tolerance_note = ""
 step_use = "per_dim_rescale"
-step_use_text = "per-dim vector -> coordinate rescaling"
+step_use_text = "one per dimension: rescaling of the coordinates"
 step_consumed = true
-step_note = "coordinates rescaled by the step vector (rhobeg = step in every dim after rescaling); rhoend = XTOL_REL*rhobeg, floored by XTOL_ABS"
+step_note = "STEP rescales the coordinates, so that the first trust-region radius is STEP in each dimension; the last radius is XTOL_REL times the first, and not below XTOL_ABS"
 starts_at_x0 = true
 start_note = ""
 random_draws = "not_recorded"
@@ -1693,8 +1693,8 @@ Options for NLOPT:LN_BOBYQA
    * PARAM <name> <value>  passed to NLopt as its algorithm parameter
      of that name
    * derivative-free
-   * STEP <double>  initial step; consumption: per-dim vector -> coordinate rescaling
-     coordinates rescaled by the step vector (rhobeg = step in every dim after rescaling); rhoend = XTOL_REL*rhobeg, floored by XTOL_ABS
+   * STEP <double>  initial step; consumption: one per dimension: rescaling of the coordinates
+     STEP rescales the coordinates, so that the first trust-region radius is STEP in each dimension; the last radius is XTOL_REL times the first, and not below XTOL_ABS
 """
 
 [[optimizer]]
@@ -1716,9 +1716,9 @@ ignores_forced_stop = false
 tolerance_note = ""
 untested_tolerance_note = ""
 step_use = "per_dim_rescale"
-step_use_text = "per-dim vector -> coordinate rescaling"
+step_use_text = "one per dimension: rescaling of the coordinates"
 step_consumed = true
-step_note = "coordinates rescaled by the step vector (rhobeg = step in every dim after rescaling); rhoend = XTOL_REL*rhobeg, floored by XTOL_ABS"
+step_note = "STEP rescales the coordinates, so that the first trust-region radius is STEP in each dimension; the last radius is XTOL_REL times the first, and not below XTOL_ABS"
 starts_at_x0 = true
 start_note = ""
 random_draws = "not_recorded"
@@ -1730,8 +1730,8 @@ Options for NLOPT:LN_COBYLA
    * PARAM <name> <value>  passed to NLopt as its algorithm parameter
      of that name
    * derivative-free
-   * STEP <double>  initial step; consumption: per-dim vector -> coordinate rescaling
-     coordinates rescaled by the step vector (rhobeg = step in every dim after rescaling); rhoend = XTOL_REL*rhobeg, floored by XTOL_ABS
+   * STEP <double>  initial step; consumption: one per dimension: rescaling of the coordinates
+     STEP rescales the coordinates, so that the first trust-region radius is STEP in each dimension; the last radius is XTOL_REL times the first, and not below XTOL_ABS
 """
 
 [[optimizer]]
@@ -1753,9 +1753,9 @@ ignores_forced_stop = false
 tolerance_note = ""
 untested_tolerance_note = ""
 step_use = "per_dim_vector"
-step_use_text = "per-dim vector, raw simplex edges"
+step_use_text = "one per dimension: the edges of the first simplex"
 step_consumed = true
-step_note = "per-dim first simplex edges; no coordinate rescaling; later step scale is one L1 progress ratio in [0.1,10] applied to every dim; the per-dim x-stop guard is |x|-relative (use XTOL_ABS)"
+step_note = "the first simplex has an edge of STEP in each dimension, and the coordinates are not rescaled; the later steps of every dimension change by one progress ratio between 0.1 and 10. The stop on a small step is relative to |x| in each dimension; XTOL_ABS adds an absolute one"
 starts_at_x0 = true
 start_note = ""
 random_draws = "not_recorded"
@@ -1767,8 +1767,8 @@ Options for NLOPT:LN_NELDERMEAD
    * PARAM <name> <value>  passed to NLopt as its algorithm parameter
      of that name
    * derivative-free
-   * STEP <double>  initial step; consumption: per-dim vector, raw simplex edges
-     per-dim first simplex edges; no coordinate rescaling; later step scale is one L1 progress ratio in [0.1,10] applied to every dim; the per-dim x-stop guard is |x|-relative (use XTOL_ABS)
+   * STEP <double>  initial step; consumption: one per dimension: the edges of the first simplex
+     the first simplex has an edge of STEP in each dimension, and the coordinates are not rescaled; the later steps of every dimension change by one progress ratio between 0.1 and 10. The stop on a small step is relative to |x| in each dimension; XTOL_ABS adds an absolute one
 """
 
 [[optimizer]]
@@ -1810,9 +1810,9 @@ ignores_forced_stop = false
 tolerance_note = ""
 untested_tolerance_note = ""
 step_use = "min_collapsed"
-step_use_text = "collapsed to min over dims of |step|"
+step_use_text = "one radius: the smallest STEP of the dimensions"
 step_consumed = true
-step_note = "uses one radius = min over dims of |step|"
+step_note = "one radius for every dimension, the smallest STEP of the dimensions"
 starts_at_x0 = true
 start_note = ""
 random_draws = "not_recorded"
@@ -1824,8 +1824,8 @@ Options for NLOPT:LN_PRAXIS
    * PARAM <name> <value>  passed to NLopt as its algorithm parameter
      of that name
    * derivative-free
-   * STEP <double>  initial step; consumption: collapsed to min over dims of |step|
-     uses one radius = min over dims of |step|
+   * STEP <double>  initial step; consumption: one radius: the smallest STEP of the dimensions
+     one radius for every dimension, the smallest STEP of the dimensions
 """
 
 [[optimizer]]
@@ -1847,9 +1847,9 @@ ignores_forced_stop = false
 tolerance_note = ""
 untested_tolerance_note = ""
 step_use = "per_dim_vector"
-step_use_text = "per-dim vector, raw simplex edges"
+step_use_text = "one per dimension: the edges of the first simplex"
 step_consumed = true
-step_note = "per-dim first simplex edges; no coordinate rescaling; later step scale is one L1 progress ratio in [0.1,10] applied to every dim; the per-dim x-stop guard is |x|-relative (use XTOL_ABS)"
+step_note = "the first simplex has an edge of STEP in each dimension, and the coordinates are not rescaled; the later steps of every dimension change by one progress ratio between 0.1 and 10. The stop on a small step is relative to |x| in each dimension; XTOL_ABS adds an absolute one"
 starts_at_x0 = true
 start_note = ""
 random_draws = "not_recorded"
@@ -1861,8 +1861,8 @@ Options for NLOPT:LN_SBPLX
    * PARAM <name> <value>  passed to NLopt as its algorithm parameter
      of that name
    * derivative-free
-   * STEP <double>  initial step; consumption: per-dim vector, raw simplex edges
-     per-dim first simplex edges; no coordinate rescaling; later step scale is one L1 progress ratio in [0.1,10] applied to every dim; the per-dim x-stop guard is |x|-relative (use XTOL_ABS)
+   * STEP <double>  initial step; consumption: one per dimension: the edges of the first simplex
+     the first simplex has an edge of STEP in each dimension, and the coordinates are not rescaled; the later steps of every dimension change by one progress ratio between 0.1 and 10. The stop on a small step is relative to |x| in each dimension; XTOL_ABS adds an absolute one
 """
 
 [[optimizer]]
@@ -1894,7 +1894,7 @@ ignores_forced_stop = false
 tolerance_note = ""
 untested_tolerance_note = ""
 step_use = "width_fraction"
-step_use_text = "family-owned width fraction (PARAM STEP_FRAC)"
+step_use_text = "a fraction of the width (PARAM STEP_FRAC)"
 step_consumed = false
 step_note = "set PARAM STEP_FRAC (and PARAM STEP_MODE for ANNEAL_PT) instead"
 starts_at_x0 = true
@@ -1921,41 +1921,44 @@ Options for TADAH:ANNEAL
      POPULATION, which TADAH:ANNEAL_PA reads.
    * temperature:
      PARAM T_INIT (default auto)
-        Starting temperature of the cooling schedule; when set, the T0 calibration probes are skipped.
+        The starting temperature of the cooling schedule. Without it, the search calibrates the starting temperature with probes (T0_PROBES, T0_ACCEPT).
      PARAM T_MIN (default auto)
-        Stop temperature of the cooling schedule; unset derives T0 * 1e-6.
+        The temperature at which the cooling schedule ends; without it, 1e-6 times the starting temperature.
      PARAM RT (default 0.85)
-        Geometric cooling ratio per temperature rung (Corana 1987 r_T = 0.85). ANNEAL_PT uses a ladder with fixed endpoints and optional interior adaptation; it rejects RT.
+        The ratio of two successive temperatures of the geometric cooling schedule, above 0 and below 1.
      PARAM T0_PROBES (default 20)
-        Local probes used by the automatic T0 calibration.
+        The number of probes near the starting point with which the search calibrates its starting temperature.
      PARAM T0_ACCEPT (default 0.05)
-        Target initial uphill-acceptance probability: T0 = median(uphill dE) / ln(1/T0_ACCEPT).
+        The probability with which the calibrated starting temperature accepts a step up in loss: the temperature is the median rise of the loss over the probes divided by ln(1/T0_ACCEPT).
      PARAM REANNEAL (default 1)
-        When the schedule cools below T_MIN with budget left, restart from the best point at a raised temperature.
+        ON restarts from the best point at a higher temperature when the schedule cools below T_MIN with evaluations left.
      PARAM REANNEAL_SCALE (default 0.25)
-        Start temperature of re-anneal cycle n, as a fraction: T_start = T0 * REANNEAL_SCALE^n.
+        The starting temperature of the n-th reannealing, as a fraction: the starting temperature times REANNEAL_SCALE to the power n.
    * steps:
      PARAM CORANA (default 0)
-        Kernel selection: ON uses Corana per-dimension adaptive steps; OFF uses whole-vector CLASSIC proposals.
+        Selects the proposal kernel: ON takes Corana's adaptive steps, one coordinate at a time with a step for each dimension; OFF takes the CLASSIC kernel, which moves every coordinate at once.
      PARAM STEP_FRAC (default 0.1)
-        Initial proposal scale per dimension as a fraction of the OPTIM interval width.
+        The first proposal scale of each dimension, as a fraction of the width of its OPTIM box.
      PARAM CHAIN_LENGTH (default auto) [accepts AUTO]
-        CLASSIC kernel: whole-vector proposals per temperature rung. Serial default AUTO: the MAXEVAL budget spread evenly over the cooling schedule (written to the journal).
+        The number of proposals of the CLASSIC kernel at each temperature step.
+        The default of TADAH:ANNEAL is AUTO: MAXEVAL spread evenly over the cooling schedule, which hpo_run.log reports.
      PARAM NS (default 20)
-        Corana kernel: step-variation cycles per step adjustment (Corana 1987 NS = 20). ANNEAL_PT: sweeps between per-slot step adjustments.
+        Corana kernel: the number of cycles through the dimensions between two adjustments of the steps. Under TADAH:ANNEAL_PT, the number of sweeps between two adjustments of the steps of a slot.
      PARAM NT (default auto) [accepts AUTO]
-        Corana kernel: step-adjustment cycles per temperature rung. Serial default AUTO: budget-derived, capped at the Corana 1987 value max(100, 5n).
+        Corana kernel: the number of step adjustments at each temperature step.
+        The default of TADAH:ANNEAL is AUTO: a number that follows from MAXEVAL, at most the larger of 100 and 5n for n dimensions.
      PARAM CORANA_C (default 2)
-        Corana kernel: step-adjustment gain in the 0.4/0.6 acceptance-ratio rule (Corana 1987 c = 2).
+        Corana kernel: the gain of the step adjustment, which lengthens the step of a dimension whose acceptance ratio is above 0.6 and shortens one below 0.4.
      PARAM V_FLOOR_FRAC (default 0.001)
-        Corana kernel: lower clamp on the per-dimension step as a fraction of the OPTIM interval width.
+        Corana kernel: the smallest step of each dimension, as a fraction of the width of its OPTIM box.
      PARAM BOUNDARY_MODE <REFLECT|REDRAW> (default REFLECT)
-        Out-of-box proposal handling: REFLECT = exact mirror fold; REDRAW = resample the offending coordinate.
+        What a proposal outside the OPTIM box becomes: REFLECT folds it back into the box as a mirror does; REDRAW draws each coordinate outside the box again.
      PARAM RESET_TO_BEST (default auto)
-        Snap the chain back to the best-so-far point after each cooling step (PT: coldest slot only, after each epoch).
+        ON moves the chain back to the best point so far after each cooling step; under TADAH:ANNEAL_PT it moves the coldest slot after each epoch.
    * stopping:
      PARAM NEPS (default 4)
-        FTOL stopping history. ANNEAL compares the current rung-end loss with this many previous rung-end losses and the running best. ANNEAL_PA applies that rule to the current population minimum after each temperature step. ANNEAL_PT counts consecutive diagnostics windows without a significant global-best improvement. Requires an active FTOL_REL or FTOL_ABS to affect stopping.
+        The length of the history of the FTOL_REL and FTOL_ABS stop, which has an effect only with one of them.
+        TADAH:ANNEAL compares the loss at the end of a temperature step with the losses at the end of this many earlier steps and with the best loss; TADAH:ANNEAL_PA applies the same rule to the lowest loss of the population after each temperature step; TADAH:ANNEAL_PT counts the successive diagnostics windows without a significant improvement of the best loss.
 """
 
 [[optimizer]]
@@ -1977,7 +1980,7 @@ ignores_forced_stop = false
 tolerance_note = ""
 untested_tolerance_note = ""
 step_use = "width_fraction"
-step_use_text = "family-owned width fraction (PARAM STEP_FRAC)"
+step_use_text = "a fraction of the width (PARAM STEP_FRAC)"
 step_consumed = false
 step_note = "set PARAM STEP_FRAC (and PARAM STEP_MODE for ANNEAL_PT) instead"
 starts_at_x0 = true
@@ -2001,56 +2004,62 @@ Options for TADAH:ANNEAL_PA
      culled, finite field (feasible fraction), population best.
    * temperature:
      PARAM T_HOT (default auto)
-        Hottest ladder temperature (PT) / starting temperature (PA); when set, the T0 calibration probes are skipped.
+        The hottest temperature of the ladder of TADAH:ANNEAL_PT, and the starting temperature of TADAH:ANNEAL_PA. Without it, the search calibrates it with probes (T0_PROBES, T0_ACCEPT).
      PARAM T_MIN (default auto)
-        Stop temperature of the cooling schedule; unset derives T0 * 1e-6.
+        The temperature at which the cooling schedule ends; without it, 1e-6 times the starting temperature.
      PARAM RT (default 0.9)
-        Geometric cooling ratio per temperature rung (Corana 1987 r_T = 0.85). ANNEAL_PT uses a ladder with fixed endpoints and optional interior adaptation; it rejects RT.
+        The ratio of two successive temperatures of the geometric cooling schedule, above 0 and below 1.
      PARAM T0_PROBES (default 20)
-        Local probes used by the automatic T0 calibration.
+        The number of probes near the starting point with which the search calibrates its starting temperature.
      PARAM T0_ACCEPT (default 0.05)
-        Target initial uphill-acceptance probability: T0 = median(uphill dE) / ln(1/T0_ACCEPT).
+        The probability with which the calibrated starting temperature accepts a step up in loss: the temperature is the median rise of the loss over the probes divided by ln(1/T0_ACCEPT).
      PARAM ESS_TARGET (default 0.5) [accepts OFF]
-        Adaptive temperature-step target for the effective sample size; OFF selects the geometric RT schedule.
+        The effective sample size that each temperature step of TADAH:ANNEAL_PA keeps, as a fraction of the population: it sets the size of the step. OFF cools on the geometric schedule of RT.
    * steps:
      PARAM CORANA (default 0)
-        Kernel selection: ON uses Corana per-dimension adaptive steps; OFF uses whole-vector CLASSIC proposals.
+        Selects the proposal kernel: ON takes Corana's adaptive steps, one coordinate at a time with a step for each dimension; OFF takes the CLASSIC kernel, which moves every coordinate at once.
      PARAM STEP_FRAC (default 0.1)
-        Initial proposal scale per dimension as a fraction of the OPTIM interval width.
+        The first proposal scale of each dimension, as a fraction of the width of its OPTIM box.
      PARAM CHAIN_LENGTH (default 50) [accepts AUTO]
-        CLASSIC kernel: whole-vector proposals per temperature rung. Serial default AUTO: the MAXEVAL budget spread evenly over the cooling schedule (written to the journal).
+        The number of proposals of the CLASSIC kernel at each temperature step.
+        The default of TADAH:ANNEAL is AUTO: MAXEVAL spread evenly over the cooling schedule, which hpo_run.log reports.
      PARAM NS (default 20)
-        Corana kernel: step-variation cycles per step adjustment (Corana 1987 NS = 20). ANNEAL_PT: sweeps between per-slot step adjustments.
+        Corana kernel: the number of cycles through the dimensions between two adjustments of the steps. Under TADAH:ANNEAL_PT, the number of sweeps between two adjustments of the steps of a slot.
      PARAM NT (default 5) [accepts AUTO]
-        Corana kernel: step-adjustment cycles per temperature rung. Serial default AUTO: budget-derived, capped at the Corana 1987 value max(100, 5n).
+        Corana kernel: the number of step adjustments at each temperature step.
+        The default of TADAH:ANNEAL is AUTO: a number that follows from MAXEVAL, at most the larger of 100 and 5n for n dimensions.
      PARAM CORANA_C (default 2)
-        Corana kernel: step-adjustment gain in the 0.4/0.6 acceptance-ratio rule (Corana 1987 c = 2).
+        Corana kernel: the gain of the step adjustment, which lengthens the step of a dimension whose acceptance ratio is above 0.6 and shortens one below 0.4.
      PARAM V_FLOOR_FRAC (default 0.001)
-        Corana kernel: lower clamp on the per-dimension step as a fraction of the OPTIM interval width.
+        Corana kernel: the smallest step of each dimension, as a fraction of the width of its OPTIM box.
      PARAM BOUNDARY_MODE <REFLECT|REDRAW> (default REFLECT)
-        Out-of-box proposal handling: REFLECT = exact mirror fold; REDRAW = resample the offending coordinate.
+        What a proposal outside the OPTIM box becomes: REFLECT folds it back into the box as a mirror does; REDRAW draws each coordinate outside the box again.
      PARAM RESET_TO_BEST (default auto)
-        Snap the chain back to the best-so-far point after each cooling step (PT: coldest slot only, after each epoch).
+        ON moves the chain back to the best point so far after each cooling step; under TADAH:ANNEAL_PT it moves the coldest slot after each epoch.
      PARAM SWEEPS (default 1)
-        Rungs per walker per temperature step.
+        The number of rounds each walker of TADAH:ANNEAL_PA runs at each temperature: a round is CHAIN_LENGTH proposals of the CLASSIC kernel, or NT step adjustments of the Corana kernel.
    * init:
      PARAM INIT_MODE <JITTER|UNIFORM> (default JITTER)
-        Slot 1 starts at the seed. Other slots: JITTER uses Gaussian displacements with the initial proposal scales; JITTER <fraction> uses uniform displacements on +/-fraction*width; UNIFORM draws from the OPTIM box. ANNEAL_PT JITTER AUTO <p> measures per-dimension uniform bounds against a seed-relative loss band, then applies INIT_JITTER_LADDER scaling. ANNEAL_PA JITTER AUTO <p> uses the initial proposal scales as uniform bounds; p and the calibration controls are inactive. INIT_JITTER_LADDER also scales the other PT JITTER forms.
+        How the replicas or walkers start: the first at the starting point of the search; JITTER moves the others away from it, UNIFORM draws them from the OPTIM box.
+        JITTER alone draws Gaussian displacements with the first proposal scales, and JITTER <fraction> uniform displacements of up to the fraction times the width of each box. Under TADAH:ANNEAL_PT, JITTER AUTO <p> measures the bounds of the uniform displacements of each dimension against a band of the loss relative to that of the starting point, and scales them by INIT_JITTER_LADDER, which scales the other JITTER forms too. Under TADAH:ANNEAL_PA, JITTER AUTO <p> takes the first proposal scales as the bounds, and p and the calibration keys have no effect.
      PARAM INIT_JITTER_MAX (default 0.5)
-        ANNEAL_PT INIT_MODE JITTER AUTO: cap on the measured sigma as a fraction of the OPTIM interval; also the screen probe point. ANNEAL_PA accepts it and does not use it.
+        Under INIT_MODE JITTER AUTO of TADAH:ANNEAL_PT, the largest measured displacement, as a fraction of the width of the OPTIM box, where the first probe lies too. TADAH:ANNEAL_PA accepts it and does not use it.
      PARAM INIT_JITTER_PROBES (default 8)
-        ANNEAL_PT INIT_MODE JITTER AUTO: maximum objective probes per dimension, split between the two sides. ANNEAL_PA accepts it and does not use it.
+        Under INIT_MODE JITTER AUTO of TADAH:ANNEAL_PT, the largest number of probes of the loss in each dimension, split between its two sides. TADAH:ANNEAL_PA accepts it and does not use it.
      PARAM INIT_JITTER_MAXEVAL (default AUTO) [accepts AUTO]
-        ANNEAL_PT INIT_MODE JITTER AUTO: hard cap on calibration probes. AUTO resolves to measured_dimensions * INIT_JITTER_PROBES + min(INIT_JITTER_AUDIT, measured_dimensions), where INIT_JITTER_SAMPLE limits the measured dimensions. These probes are outside MAXEVAL. ANNEAL_PA accepts it and does not use it.
+        Under INIT_MODE JITTER AUTO of TADAH:ANNEAL_PT, the largest number of calibration probes, which MAXEVAL does not count. TADAH:ANNEAL_PA accepts it and does not use it.
+        AUTO takes the number of measured dimensions times INIT_JITTER_PROBES, plus the smaller of INIT_JITTER_AUDIT and the number of measured dimensions; INIT_JITTER_SAMPLE limits the measured dimensions.
      PARAM INIT_JITTER_MAXTIME_FRAC (default 0.25)
-        ANNEAL_PT INIT_MODE JITTER AUTO: share of the search's MAXTIME available to calibration when MAXTIME is set. INIT_JITTER_MAXEVAL separately caps the calibration probes, which use their own budget. ANNEAL_PA accepts it and does not use it.
+        Under INIT_MODE JITTER AUTO of TADAH:ANNEAL_PT, the share of the MAXTIME of the search that the calibration may take, when MAXTIME is set; INIT_JITTER_MAXEVAL caps its probes, which have a budget of their own. TADAH:ANNEAL_PA accepts it and does not use it.
      PARAM INIT_JITTER_SAMPLE (default 0)
-        ANNEAL_PT INIT_MODE JITTER AUTO measures at most this many dimensions, chosen round-robin across parameter families; the rest inherit their family's median sigma/width and are flagged `inferred`. 0 = measure every dimension. ANNEAL_PA accepts it and does not use it.
+        Under INIT_MODE JITTER AUTO of TADAH:ANNEAL_PT, the largest number of dimensions measured, taken in turn from the families of parameters; 0 measures every dimension. TADAH:ANNEAL_PA accepts it and does not use it.
+        A dimension that is not measured takes the median displacement of its family, as a fraction of the width, and hpo_run.log marks it inferred.
      PARAM INIT_JITTER_AUDIT (default 32)
-        ANNEAL_PT INIT_MODE JITTER AUTO re-probes at most this many measured dimensions at sigma/2 to detect a loss that is non-monotone in displacement. The audit assesses the sampled displacements. 0 = no audit. ANNEAL_PA accepts it and does not use it.
+        Under INIT_MODE JITTER AUTO of TADAH:ANNEAL_PT, the largest number of measured dimensions probed again at half their displacement, to check the measured displacements for a loss that does not grow with the displacement; 0 checks none. TADAH:ANNEAL_PA accepts it and does not use it.
    * stopping:
      PARAM NEPS (default 4)
-        FTOL stopping history. ANNEAL compares the current rung-end loss with this many previous rung-end losses and the running best. ANNEAL_PA applies that rule to the current population minimum after each temperature step. ANNEAL_PT counts consecutive diagnostics windows without a significant global-best improvement. Requires an active FTOL_REL or FTOL_ABS to affect stopping.
+        The length of the history of the FTOL_REL and FTOL_ABS stop, which has an effect only with one of them.
+        TADAH:ANNEAL compares the loss at the end of a temperature step with the losses at the end of this many earlier steps and with the best loss; TADAH:ANNEAL_PA applies the same rule to the lowest loss of the population after each temperature step; TADAH:ANNEAL_PT counts the successive diagnostics windows without a significant improvement of the best loss.
 """
 
 [[optimizer]]
@@ -2072,7 +2081,7 @@ ignores_forced_stop = false
 tolerance_note = ""
 untested_tolerance_note = ""
 step_use = "width_fraction"
-step_use_text = "family-owned width fraction (PARAM STEP_FRAC)"
+step_use_text = "a fraction of the width (PARAM STEP_FRAC)"
 step_consumed = false
 step_note = "set PARAM STEP_FRAC (and PARAM STEP_MODE for ANNEAL_PT) instead"
 starts_at_x0 = true
@@ -2085,11 +2094,12 @@ Options for TADAH:ANNEAL_PT
    * Parallel tempering (replica exchange): K replicas on a static
      (optionally self-adapting) log temperature ladder, slot 1 coldest.
      A replica runs ONE sweep per epoch (CLASSIC: one whole-vector
-     proposal; CORANA: dim single-coordinate moves), then adjacent pairs
-     attempt a state swap every SWAP_EVERY epochs with deterministic
-     even/odd (DEO) pairing. With REPLICAS fixed, a deterministic
-     objective, and no timing-dependent stop, the same SEED gives the
-     same evaluated set for any THREADS.
+     proposal; CORANA: one single-coordinate move per dimension),
+     then adjacent pairs attempt a state swap every SWAP_EVERY
+     epochs with deterministic even/odd (DEO) pairing.
+     With REPLICAS fixed, a deterministic objective, and no
+     timing-dependent stop, the same SEED gives the same evaluated
+     set for any THREADS.
    * Stops: MAXEVAL / MAXTIME / STOPVAL; FTOL_REL/FTOL_ABS (> 0) arm the
      best-stall stop (global best unimproved over NEPS diagnostics
      windows). One of them is required: the ladder keeps its
@@ -2105,78 +2115,83 @@ Options for TADAH:ANNEAL_PT
      hpo_corana_acceptance.tsv (per SLOT/temperature, not per walker).
    * temperature:
      PARAM T_HOT (default auto)
-        Hottest ladder temperature (PT) / starting temperature (PA); when set, the T0 calibration probes are skipped.
+        The hottest temperature of the ladder of TADAH:ANNEAL_PT, and the starting temperature of TADAH:ANNEAL_PA. Without it, the search calibrates it with probes (T0_PROBES, T0_ACCEPT).
      PARAM T0_PROBES (default 20)
-        Local probes used by the automatic T0 calibration.
+        The number of probes near the starting point with which the search calibrates its starting temperature.
      PARAM T0_ACCEPT (default 0.05)
-        Target initial uphill-acceptance probability: T0 = median(uphill dE) / ln(1/T0_ACCEPT).
+        The probability with which the calibrated starting temperature accepts a step up in loss: the temperature is the median rise of the loss over the probes divided by ln(1/T0_ACCEPT).
      PARAM T_COLD (default auto)
-        Coldest ladder slot temperature; unset derives T_HOT / LADDER_SPAN.
+        The coldest temperature of the ladder; without it, T_HOT divided by LADDER_SPAN.
    * ladder:
      PARAM REPLICAS (default AUTO) [accepts AUTO]
-        Number of ladder slots K. AUTO resolves to max(THREADS, 2).
+        The number of replicas, one for each temperature of the ladder; AUTO takes the larger of THREADS and 2.
      PARAM LADDER_SPAN (default 1000)
-        Ratio T_HOT / T_COLD used to derive an omitted T_COLD.
+        The ratio of T_HOT to T_COLD from which an omitted T_COLD follows.
      PARAM LADDER_POWER (default 1)
-        Shape of the initial log-temperature ladder: position_k = (k/(K-1))^power; 1.0 = geometric (equal pair acceptance for scale-family energies).
+        The shape of the first ladder: of K slots, slot k lies at the fraction (k/(K-1))^LADDER_POWER of the span of the logarithm of the temperature. 1 gives a geometric ladder.
      PARAM LADDER_ADAPT (default 0)
-        Adapts interior ladder temperatures toward equal pair swap acceptance (endpoints fixed; Kone-Kofke ~23% motivates equalisation).
+        ON adapts the inner temperatures of the ladder towards the same swap acceptance for every pair of neighbours; the hottest and the coldest temperature stay. It needs 3 replicas or more.
      PARAM LADDER_ADAPT_EVERY (default 20)
-        Swap attempts per pair required before each ladder update.
+        The number of swap attempts of each pair before each update of the ladder.
      PARAM LADDER_ADAPT_GAIN (default 1)
-        Initial stochastic-approximation gain of the ladder update.
+        The first gain of the update of the ladder, a stochastic approximation.
      PARAM LADDER_ADAPT_DECAY (default 0.6)
-        Diminishing-gain exponent: effective gain = GAIN * update^(-DECAY) (valid stochastic-approximation range (0.5, 1]).
+        The exponent with which the gain of the ladder update falls: the gain of update u is LADDER_ADAPT_GAIN times u to the power -LADDER_ADAPT_DECAY.
      PARAM LADDER_MIN_GAP (default 0.1)
-        Floor on every interior log-gap as a fraction of the mean gap; 0 disables the floor.
+        The smallest gap between neighbouring temperatures of the ladder, in their logarithm, as a fraction of the mean gap; 0 sets no smallest gap.
      PARAM LADDER_FREEZE (default 1)
-        Freezes ladder adaptation once per-pair acceptances are statistically indistinguishable from equalised.
+        ON stops the adaptation of the ladder once the swap acceptances of the pairs cannot be told apart statistically from equal ones.
    * swaps:
      PARAM SWAP_EVERY (default 1)
-        Epochs between exchange rounds (1 = every epoch; frequent DEO swapping is optimal when swaps are eval-free, Syed et al. 2022).
+        The number of epochs between two rounds of swap attempts; 1 attempts swaps in every epoch.
      PARAM SWAP_WINDOW (default 20) [accepts OFF]
-        Epochs per swap-diagnostics window (windowed tables, step reports, epoch summary cadence); OFF = cumulative tables only.
+        The number of epochs of a window of the swap diagnostics in hpo_run.log: the tables of a window, the reports of the steps and the summaries of the epochs. OFF writes cumulative tables only.
    * steps:
      PARAM CORANA (default 0)
-        Kernel selection: ON uses Corana per-dimension adaptive steps; OFF uses whole-vector CLASSIC proposals.
+        Selects the proposal kernel: ON takes Corana's adaptive steps, one coordinate at a time with a step for each dimension; OFF takes the CLASSIC kernel, which moves every coordinate at once.
      PARAM STEP_FRAC (default 0.1)
-        Initial proposal scale per dimension as a fraction of the OPTIM interval width.
+        The first proposal scale of each dimension, as a fraction of the width of its OPTIM box.
      PARAM NS (default 20)
-        Corana kernel: step-variation cycles per step adjustment (Corana 1987 NS = 20). ANNEAL_PT: sweeps between per-slot step adjustments.
+        Corana kernel: the number of cycles through the dimensions between two adjustments of the steps. Under TADAH:ANNEAL_PT, the number of sweeps between two adjustments of the steps of a slot.
      PARAM CORANA_C (default 2)
-        Corana kernel: step-adjustment gain in the 0.4/0.6 acceptance-ratio rule (Corana 1987 c = 2).
+        Corana kernel: the gain of the step adjustment, which lengthens the step of a dimension whose acceptance ratio is above 0.6 and shortens one below 0.4.
      PARAM V_FLOOR_FRAC (default 0.001)
-        Corana kernel: lower clamp on the per-dimension step as a fraction of the OPTIM interval width.
+        Corana kernel: the smallest step of each dimension, as a fraction of the width of its OPTIM box.
      PARAM BOUNDARY_MODE <REFLECT|REDRAW> (default REFLECT)
-        Out-of-box proposal handling: REFLECT = exact mirror fold; REDRAW = resample the offending coordinate.
+        What a proposal outside the OPTIM box becomes: REFLECT folds it back into the box as a mirror does; REDRAW draws each coordinate outside the box again.
      PARAM RESET_TO_BEST (default auto)
-        Snap the chain back to the best-so-far point after each cooling step (PT: coldest slot only, after each epoch).
+        ON moves the chain back to the best point so far after each cooling step; under TADAH:ANNEAL_PT it moves the coldest slot after each epoch.
      PARAM STEP_MODE <FIXED|FROZEN|ADAPTIVE> (default FROZEN)
-        CLASSIC step policy: FIXED = STEP_FRAC profile; FROZEN = calibrate per-slot scales, then freeze; ADAPTIVE = calibrate, then keep adapting (diagonal Robust Adaptive Metropolis).
+        How the CLASSIC kernel sets its steps: FIXED keeps the scales STEP_FRAC gives; FROZEN calibrates the scales of each slot, then keeps them; ADAPTIVE calibrates them and keeps adapting them, a diagonal form of robust adaptive Metropolis.
      PARAM STEP_WARMUP_SWEEPS (default 12)
-        Minimum calibration attempts per coordinate during the step warm-up (the maximum is twice this).
+        The smallest number of calibration attempts of each coordinate in the warm-up of the steps; the largest is twice this number.
      PARAM STEP_TRUST_FACTOR (default 64) [accepts OFF]
-        Clamp adapted step scales to [baseline/f, baseline*f] around the calibrated baseline; OFF disables the clamp (STEP_MODE ADAPTIVE).
+        Under STEP_MODE ADAPTIVE, keeps each adapted scale between the calibrated scale divided by this factor and multiplied by it; OFF sets no bound.
    * init:
      PARAM INIT_MODE <JITTER|UNIFORM> (default JITTER)
-        Slot 1 starts at the seed. Other slots: JITTER uses Gaussian displacements with the initial proposal scales; JITTER <fraction> uses uniform displacements on +/-fraction*width; UNIFORM draws from the OPTIM box. ANNEAL_PT JITTER AUTO <p> measures per-dimension uniform bounds against a seed-relative loss band, then applies INIT_JITTER_LADDER scaling. ANNEAL_PA JITTER AUTO <p> uses the initial proposal scales as uniform bounds; p and the calibration controls are inactive. INIT_JITTER_LADDER also scales the other PT JITTER forms.
+        How the replicas or walkers start: the first at the starting point of the search; JITTER moves the others away from it, UNIFORM draws them from the OPTIM box.
+        JITTER alone draws Gaussian displacements with the first proposal scales, and JITTER <fraction> uniform displacements of up to the fraction times the width of each box. Under TADAH:ANNEAL_PT, JITTER AUTO <p> measures the bounds of the uniform displacements of each dimension against a band of the loss relative to that of the starting point, and scales them by INIT_JITTER_LADDER, which scales the other JITTER forms too. Under TADAH:ANNEAL_PA, JITTER AUTO <p> takes the first proposal scales as the bounds, and p and the calibration keys have no effect.
      PARAM INIT_JITTER_MAX (default 0.5)
-        ANNEAL_PT INIT_MODE JITTER AUTO: cap on the measured sigma as a fraction of the OPTIM interval; also the screen probe point. ANNEAL_PA accepts it and does not use it.
+        Under INIT_MODE JITTER AUTO of TADAH:ANNEAL_PT, the largest measured displacement, as a fraction of the width of the OPTIM box, where the first probe lies too. TADAH:ANNEAL_PA accepts it and does not use it.
      PARAM INIT_JITTER_PROBES (default 8)
-        ANNEAL_PT INIT_MODE JITTER AUTO: maximum objective probes per dimension, split between the two sides. ANNEAL_PA accepts it and does not use it.
+        Under INIT_MODE JITTER AUTO of TADAH:ANNEAL_PT, the largest number of probes of the loss in each dimension, split between its two sides. TADAH:ANNEAL_PA accepts it and does not use it.
      PARAM INIT_JITTER_MAXEVAL (default AUTO) [accepts AUTO]
-        ANNEAL_PT INIT_MODE JITTER AUTO: hard cap on calibration probes. AUTO resolves to measured_dimensions * INIT_JITTER_PROBES + min(INIT_JITTER_AUDIT, measured_dimensions), where INIT_JITTER_SAMPLE limits the measured dimensions. These probes are outside MAXEVAL. ANNEAL_PA accepts it and does not use it.
+        Under INIT_MODE JITTER AUTO of TADAH:ANNEAL_PT, the largest number of calibration probes, which MAXEVAL does not count. TADAH:ANNEAL_PA accepts it and does not use it.
+        AUTO takes the number of measured dimensions times INIT_JITTER_PROBES, plus the smaller of INIT_JITTER_AUDIT and the number of measured dimensions; INIT_JITTER_SAMPLE limits the measured dimensions.
      PARAM INIT_JITTER_MAXTIME_FRAC (default 0.25)
-        ANNEAL_PT INIT_MODE JITTER AUTO: share of the search's MAXTIME available to calibration when MAXTIME is set. INIT_JITTER_MAXEVAL separately caps the calibration probes, which use their own budget. ANNEAL_PA accepts it and does not use it.
+        Under INIT_MODE JITTER AUTO of TADAH:ANNEAL_PT, the share of the MAXTIME of the search that the calibration may take, when MAXTIME is set; INIT_JITTER_MAXEVAL caps its probes, which have a budget of their own. TADAH:ANNEAL_PA accepts it and does not use it.
      PARAM INIT_JITTER_SAMPLE (default 0)
-        ANNEAL_PT INIT_MODE JITTER AUTO measures at most this many dimensions, chosen round-robin across parameter families; the rest inherit their family's median sigma/width and are flagged `inferred`. 0 = measure every dimension. ANNEAL_PA accepts it and does not use it.
+        Under INIT_MODE JITTER AUTO of TADAH:ANNEAL_PT, the largest number of dimensions measured, taken in turn from the families of parameters; 0 measures every dimension. TADAH:ANNEAL_PA accepts it and does not use it.
+        A dimension that is not measured takes the median displacement of its family, as a fraction of the width, and hpo_run.log marks it inferred.
      PARAM INIT_JITTER_AUDIT (default 32)
-        ANNEAL_PT INIT_MODE JITTER AUTO re-probes at most this many measured dimensions at sigma/2 to detect a loss that is non-monotone in displacement. The audit assesses the sampled displacements. 0 = no audit. ANNEAL_PA accepts it and does not use it.
+        Under INIT_MODE JITTER AUTO of TADAH:ANNEAL_PT, the largest number of measured dimensions probed again at half their displacement, to check the measured displacements for a loss that does not grow with the displacement; 0 checks none. TADAH:ANNEAL_PA accepts it and does not use it.
      PARAM INIT_JITTER_LADDER (default AUTO) [accepts AUTO/OFF]
-        Scales each slot's initial jitter by (T_k/T_HOT)^gamma, so cold slots start near the seed and hot ones explore. AUTO = gamma 0.5, the equipartition law (the equilibrium coordinate spread about a locally quadratic minimum goes as sqrt(T)), floored at the resolvable coordinate scale to keep displacements representable. OFF = every slot uses the same sigma. A number in (0,4] sets gamma directly. Applies to every INIT_MODE JITTER variant, including AUTO.
+        Scales the first displacement of each replica of TADAH:ANNEAL_PT by (T_k/T_HOT)^gamma, so that cold replicas start near the starting point and hot ones farther away. AUTO takes gamma 0.5, OFF gives every replica the same displacement, and a number above 0 and up to 4 is gamma.
+        AUTO follows the equipartition law: about a quadratic minimum, the spread of a coordinate at equilibrium grows as the square root of the temperature; its displacements are at least the smallest change of a coordinate that the number format resolves. The scaling applies to every JITTER form of INIT_MODE, AUTO included.
    * stopping:
      PARAM NEPS (default 4)
-        FTOL stopping history. ANNEAL compares the current rung-end loss with this many previous rung-end losses and the running best. ANNEAL_PA applies that rule to the current population minimum after each temperature step. ANNEAL_PT counts consecutive diagnostics windows without a significant global-best improvement. Requires an active FTOL_REL or FTOL_ABS to affect stopping.
+        The length of the history of the FTOL_REL and FTOL_ABS stop, which has an effect only with one of them.
+        TADAH:ANNEAL compares the loss at the end of a temperature step with the losses at the end of this many earlier steps and with the best loss; TADAH:ANNEAL_PA applies the same rule to the lowest loss of the population after each temperature step; TADAH:ANNEAL_PT counts the successive diagnostics windows without a significant improvement of the best loss.
 """
 
 [[optimizer]]
@@ -2209,8 +2224,9 @@ bounds_note = ""
 explain_text = """
 Options for TADAH:GRID
    * PARAM GRID_POINTS <int>  (default 20 points per dimension;
-     spacing = width/(n-1); total cost = n^dim). STEP and any other
-     PARAM are rejected. The INIT point, then the grid in order.
+     spacing = width/(n-1); total cost = n^d in d dimensions).
+     STEP and any other PARAM are rejected. The INIT point, then
+     the grid in order.
    * Stops that end a run: MAXEVAL, MAXTIME, STOPVAL
 """
 

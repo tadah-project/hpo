@@ -21,7 +21,11 @@ library only), checks them strictly and returns a Registry of dataclasses:
   - every {name} placeholder of a message is one that message may hold,
     and no example, error or wrapper text holds one by mistake;
   - every wrapper is a file with exactly one slot line, {line};
-  - no documentation text addresses the reader.
+  - no documentation text addresses the reader or holds a placeholder,
+    every example after the first of an entry has a doc (the caption the
+    reference pages show), and a rule has a title;
+  - the optimiser descriptions (meta.optimizer_docs) describe every library
+    and every registered optimiser of the optimiser list, and nothing else.
 
 With parts= naming a subset of meta.parts (the command's --part), the
 files not loaded can hold what a reference names: such references are
@@ -140,6 +144,8 @@ class Arg:
     repeat: bool = False
     min: int | float | str | None = None
     max: int | float | str | None = None
+    min_open: bool = False      # min itself is refused: a value above min
+    integral: bool = False      # a number with no fractional part
     words: list[str] = field(default_factory=list)
     refused_words: dict[str, str] = field(default_factory=dict)
     what: str = ""
@@ -187,6 +193,7 @@ class Meta:
     parts: list[str]
     anneal_keys: str
     optimizers: str
+    optimizer_docs: str
 
 
 @dataclass
@@ -237,6 +244,7 @@ class Key:
     blocks: list[str] = field(default_factory=list)
     args: list[Arg] = field(default_factory=list)
     repeat_msg: str = ""
+    repeat_doc: str = ""
     misplaced_msg: str = ""
     default: Default | None = None
     long_doc: str = ""
@@ -305,9 +313,11 @@ class Removed:
 class Rule:
     id: str
     part: str
+    title: str
     doc: str
     check: str
     msg: str = ""
+    msg_doc: str = ""     # what the message holds, said in words
     keys: list[str] = field(default_factory=list)
     quirk: str = ""
     examples: list[Case] = field(default_factory=list)
@@ -449,6 +459,14 @@ class Fixture:
 
 
 @dataclass
+class OptimizerDocs:
+    """The descriptions of meta.optimizer_docs: a sentence or two per
+    library (LIB) and per registered optimiser (LIB:ALGO)."""
+    libraries: dict[str, str]
+    optimizers: dict[str, str]
+
+
+@dataclass
 class Registry:
     directory: pathlib.Path
     files: list[str]
@@ -476,11 +494,15 @@ class Registry:
     wrappers: dict[str, Wrapper]
     contexts: dict[str, TrainingContext]
     fixtures: dict[str, Fixture]
+    lammps_script: Section | None = None
+    abbreviations: dict[str, str] = field(default_factory=dict)
+    optimizer_docs: OptimizerDocs | None = None
     notes: list[str] = field(default_factory=list)
 
     def entries(self) -> Iterator[Any]:
         """Every entry that has an id, in file order per kind."""
-        for s in (self.lexing, self.reading, self.structure, self.optim):
+        for s in (self.lexing, self.reading, self.structure, self.optim,
+                  self.lammps_script):
             if s is not None:
                 yield s
         yield from self.groups.values()
@@ -588,6 +610,7 @@ CHECK_FIELDS = {"msg": ("str", R), "doc": ("str", R)}
 ARG_FIELDS = {"name": ("str", R), "kind": ("str", R),
               "optional": ("bool", O), "repeat": ("bool", O),
               "min": ("number|str", O), "max": ("number|str", O),
+              "min_open": ("bool", O), "integral": ("bool", O),
               "words": ("list[str]", O), "refused_words": ("dict[str,str]", O),
               "what": ("str", O), "msg": ("str", O), "noun": ("str", O),
               "default": ("any", O), "doc": ("str", O)}
@@ -596,7 +619,7 @@ DOC_FIELDS = {"examples": ("cases", O), "invalid": ("invalid", O)}
 SCHEMA: dict[str, dict[str, tuple[str, bool]]] = {
     "meta": {"version": ("int", R), "api": ("int", R),
              "parts": ("list[str]", R), "anneal_keys": ("str", R),
-             "optimizers": ("str", R)},
+             "optimizers": ("str", R), "optimizer_docs": ("str", R)},
     "lexing": dict(DOC_FIELDS, doc=("str", R), comment=("str", R),
                    continuation=("str", R), key_case=("str", R),
                    error_frame=("str", R), unfinished_msg=("str", R),
@@ -621,6 +644,8 @@ SCHEMA: dict[str, dict[str, tuple[str, bool]]] = {
     "optim": dict(DOC_FIELDS, doc=("str", R), synopsis=("list[str]", R),
                   positive_only=("list[str]", O),
                   auto_excluded_prefix=("str", O), checks=("checks", O)),
+    "lammps_script": dict(DOC_FIELDS, doc=("str", R), long_doc=("str", O),
+                          fixture=("str", R)),
     "group": dict(DOC_FIELDS, blocks=("list[str]", R),
                   leftover_msg=("str", R), doc=("str", R)),
     "block": dict(DOC_FIELDS, name=("str", R), end=("str", R),
@@ -634,7 +659,8 @@ SCHEMA: dict[str, dict[str, tuple[str, bool]]] = {
     "key": dict(DOC_FIELDS, id=("str", R), name=("str", R),
                 group=("str", O), blocks=("list[str]", O),
                 synopsis=("str", R), args=("args", O), repeat=("str", R),
-                repeat_msg=("str", O), misplaced_msg=("str", O),
+                repeat_msg=("str", O), repeat_doc=("str", O),
+                misplaced_msg=("str", O),
                 default=("default", O), doc=("str", R), long_doc=("str", O),
                 alias_of=("str", O), refused=("str", O), quirk=("str", O),
                 env=("str", O), checks=("checks", O)),
@@ -651,8 +677,9 @@ SCHEMA: dict[str, dict[str, tuple[str, bool]]] = {
                  quirk=("str", O), checks=("checks", O)),
     "removed": dict(DOC_FIELDS, name=("str", R), hint=("str", R),
                     doc=("str", O)),
-    "rule": dict(DOC_FIELDS, id=("str", R), doc=("str", R),
-                 check=("str", R), msg=("str", O), keys=("list[str]", O),
+    "rule": dict(DOC_FIELDS, id=("str", R), title=("str", R),
+                 doc=("str", R), check=("str", R), msg=("str", O),
+                 msg_doc=("str", O), keys=("list[str]", O),
                  quirk=("str", O)),
     "env": dict(DOC_FIELDS, name=("str", R), key=("str", R),
                 doc=("str", R), values=("list[str]", O), msg=("str", O)),
@@ -687,13 +714,20 @@ SCHEMA: dict[str, dict[str, tuple[str, bool]]] = {
     "fixture": {"path": ("str", R), "text": ("str", R), "doc": ("str", O)},
 }
 # Top-level tables: where each may be written and its TOML shape.
-MAIN_ONLY = {"meta", "lexing", "reading", "structure", "group", "block"}
-SINGLE = {"meta", "lexing", "reading", "structure", "optim"}
+MAIN_ONLY = {"meta", "lexing", "reading", "structure", "group", "block",
+             "abbreviations"}
+SINGLE = {"meta", "lexing", "reading", "structure", "optim",
+          "lammps_script"}
+# [abbreviations]: a table of abbreviation = what it stands for.
+WORD_TABLES = {"abbreviations"}
 NAMED = {"group", "wrapper", "context", "fixture"}
 ARRAYS = {"block", "key", "line_option", "form", "removed", "rule", "env",
           "loss_function", "strategy_type", "init_method", "optim_target",
           "param", "param_excluded", "param_policy"}
-DOC_TEXT_FIELDS = {"doc", "long_doc", "quirk", "condition"}
+DOC_TEXT_FIELDS = {"doc", "long_doc", "quirk", "condition", "title",
+                   "repeat_doc", "msg_doc"}
+ABBREVIATION_RE = re.compile(r"^[A-Za-z][A-Za-z0-9+\-]*$")
+TITLE_WIDTH = 80
 
 
 # -------------------------------------------------------------- loader ----
@@ -788,6 +822,7 @@ class _Loader:
                 for fld in ("text", "error"):
                     if fld in c:
                         self.no_placeholders(w, fld, c[fld])
+                self.doc_text(w, "doc", c.get("doc", ""))
                 got.append(Case(owner=owner, part=part, kind=kind, index=i,
                                 wrap=c.get("wrap", ""), text=c.get("text", ""),
                                 check=check, context=c.get("context"),
@@ -816,6 +851,10 @@ class _Loader:
                 if isinstance(v, str) and v not in INT_LIMITS:
                     self.err(w, f"{lim} '{v}' is not a number or one of "
                                 f"{', '.join(INT_LIMITS)}")
+            if a.get("min_open") and "min" not in a:
+                self.err(w, "min_open needs a min")
+            if "integral" in a and kind != "number":
+                self.err(w, "integral belongs to an argument of kind number")
             if ("words" in a or "refused_words" in a) and kind != "word":
                 self.err(w, "words belong to an argument of kind word")
             if kind == "word" and not a.get("words"):
@@ -828,7 +867,7 @@ class _Loader:
             for word, msg in a.get("refused_words", {}).items():
                 self.placeholders(w, f"refused_words.{word}", msg,
                                   PLACEHOLDERS)
-            self.voice(w, "doc", a.get("doc", ""))
+            self.doc_text(w, "doc", a.get("doc", ""))
             out.append(Arg(**a))
         return out
 
@@ -840,6 +879,8 @@ class _Loader:
             if not c:
                 continue
             self.placeholders(w, "msg", c.get("msg", ""), PLACEHOLDERS)
+            # A check's doc says when its message comes and what the
+            # message's placeholders hold, so it may name them.
             self.voice(w, "doc", c.get("doc", ""))
             out.append(Check(**c))
         return out
@@ -854,7 +895,7 @@ class _Loader:
             self.err(where, "default is { literal = \"...\" } or "
                             "{ text = \"...\" }")
             return None
-        self.voice(where, "default.text", d.get("text", ""))
+        self.doc_text(where, "default.text", d.get("text", ""))
         return Default(**d)
 
     # ---- text checks -------------------------------------------------------
@@ -876,12 +917,22 @@ class _Loader:
             self.err(where, f"{fld}: '{m.group(0)}' addresses the reader; "
                             "documentation text is impersonal")
 
+    def doc_text(self, where: str, fld: str, text: str) -> None:
+        """Documentation text: impersonal, and without the placeholders of
+        a message (the reference pages show it before the message it may
+        describe)."""
+        self.voice(where, fld, text)
+        for name in PLACEHOLDER.findall(text):
+            self.err(where, f"{fld}: holds the placeholder {{{name}}}; "
+                            "documentation text says in words what a "
+                            "message holds")
+
     def message_fields(self, where: str, kind: str, f: dict) -> None:
         for name, value in f.items():
             if not isinstance(value, str):
                 continue
             if name in DOC_TEXT_FIELDS:
-                self.voice(where, name, value)
+                self.doc_text(where, name, value)
             if not (name == "msg" or name.endswith("_msg")
                     or name in ("error_frame", "underflow_note")):
                 continue
@@ -942,9 +993,18 @@ class _Loader:
         acc: dict[str, Any] = {k: [] for k in ARRAYS}
         acc.update({k: {} for k in NAMED})
         singles: dict[str, tuple[str, dict]] = {}
+        words: dict[str, dict] = {}
         for part, doc in docs:
             for top, value in doc.items():
                 where = f"{part} [{top}]"
+                if top in WORD_TABLES:
+                    if part != MAIN_FILE:
+                        self.err(where, f"belongs in {MAIN_FILE}")
+                    elif not isinstance(value, dict):
+                        self.err(where, "is not a table")
+                    else:
+                        words[top] = value
+                    continue
                 if top not in SCHEMA or top.startswith("_"):
                     self.err(where, "unknown table (the registry has "
                                     f"{', '.join(sorted(SCHEMA))})")
@@ -981,7 +1041,8 @@ class _Loader:
                 self.err(MAIN_FILE, f"[{top}] is missing")
         if self.errors:
             raise RegistryError(self.errors)
-        return self.build(meta_f, singles, acc, full, [d[0] for d in docs])
+        return self.build(meta_f, singles, acc, full, [d[0] for d in docs],
+                          words)
 
     # ---- building ----------------------------------------------------------
     def section(self, top: str, part: str, t: dict) -> Section:
@@ -998,13 +1059,17 @@ class _Loader:
         return Section(id=ident, part=part, fields=extra,
                        doc=f.get("doc", ""), examples=ex, invalid=inv)
 
-    def build(self, meta_f, singles, acc, full, files) -> Registry:
+    def build(self, meta_f, singles, acc, full, files, words) -> Registry:
         meta = Meta(**meta_f)
         lexing = self.section("lexing", *singles["lexing"])
         reading = self.section("reading", *singles["reading"])
         structure = self.section("structure", *singles["structure"])
         optim = (self.section("optim", *singles["optim"])
                  if "optim" in singles else None)
+        lammps_script = (self.section("lammps_script",
+                                      *singles["lammps_script"])
+                         if "lammps_script" in singles else None)
+        abbreviations = self.abbreviations(words.get("abbreviations", {}))
         order = structure.fields.get("check_order", [])
         if order != CHECK_STAGES:
             self.err(f"{MAIN_FILE} [structure]",
@@ -1162,7 +1227,14 @@ class _Loader:
             strategy_types=strategy_types, init_methods=init_methods,
             optim_targets=optim_targets, params=params,
             param_excluded=param_excluded, param_policies=param_policies,
-            wrappers=wrappers, contexts=contexts, fixtures=fixtures)
+            wrappers=wrappers, contexts=contexts, fixtures=fixtures,
+            lammps_script=lammps_script, abbreviations=abbreviations)
+        if lammps_script is not None:
+            name = lammps_script.fields.get("fixture", "")
+            if name not in fixtures:
+                self.err(f"{lammps_script.part} [lammps_script]",
+                         f"fixture '{name}' is not a [fixture.*] table")
+        reg.optimizer_docs = self.optimizer_docs(reg)
         self.check_entries(reg)
         self.check_references(reg)
         self.check_cases(reg)
@@ -1170,6 +1242,61 @@ class _Loader:
         if self.errors:
             raise RegistryError(self.errors)
         return reg
+
+    def abbreviations(self, table: dict) -> dict[str, str]:
+        where = f"{MAIN_FILE} [abbreviations]"
+        out = {}
+        for word, text in table.items():
+            if not ABBREVIATION_RE.match(word):
+                self.err(where, f"abbreviation '{word}' is not one word")
+            if not isinstance(text, str) or not text.strip():
+                self.err(where, f"abbreviation '{word}' is not spelled out "
+                                "as text")
+                continue
+            self.doc_text(where, word, text)
+            out[word] = text
+        return out
+
+    def optimizer_docs(self, reg: Registry) -> OptimizerDocs | None:
+        """The descriptions of meta.optimizer_docs, checked against the
+        optimiser list: one per library and per registered optimiser."""
+        name = reg.meta.optimizer_docs
+        if not (self.dir / name).exists():
+            self.err(name, "file not found")
+            return None
+        data = self.read(name)
+        docs = OptimizerDocs(libraries={}, optimizers={})
+        for top, value in data.items():
+            if top not in ("library", "optimizer") or not isinstance(value,
+                                                                     dict):
+                self.err(f"{name} [{top}]", "unknown table (the file has "
+                                             "[library.<LIB>] and "
+                                             "[optimizer.<LIB:ALGO>])")
+                continue
+            target = docs.libraries if top == "library" else docs.optimizers
+            for key, t in value.items():
+                where = f"{name} [{top}.{key}]"
+                f = self.fields(where, "_described", t)
+                if "doc" in f:
+                    self.doc_text(where, "doc", f["doc"])
+                    target[key] = f["doc"]
+        registered = self.optimiser_names(reg)
+        if registered is None:
+            return docs
+        libraries = {o.split(":")[0] for o in registered}
+        for key in docs.optimizers:
+            if key not in registered:
+                self.err(f"{name} [optimizer.{key}]", "is not a registered "
+                         f"optimiser of {reg.meta.optimizers}")
+        for key in docs.libraries:
+            if key not in libraries:
+                self.err(f"{name} [library.{key}]", "is not a library of "
+                         f"{reg.meta.optimizers}")
+        for key in sorted(registered - set(docs.optimizers)):
+            self.err(name, f"{key}, a registered optimiser, has no doc")
+        for key in sorted(libraries - set(docs.libraries)):
+            self.err(name, f"the library {key} has no doc")
+        return docs
 
     # ---- cross-entry checks ------------------------------------------------
     def check_entries(self, reg: Registry) -> None:
@@ -1249,6 +1376,12 @@ class _Loader:
             if r.check not in CHECKS:
                 self.err(r._where, f"check '{r.check}' is not parse or "  # type: ignore[attr-defined]
                                    "startup")
+            if r.title.rstrip().endswith("."):
+                self.err(r._where, "title: a title is a phrase without a "  # type: ignore[attr-defined]
+                                   "full stop at its end")
+            if len(r.title) > TITLE_WIDTH:
+                self.err(r._where, f"title: longer than {TITLE_WIDTH} "  # type: ignore[attr-defined]
+                                   "characters")
 
     def resolve(self, where: str, ref: str, known: set[str], what: str) -> None:
         if ref in known:
@@ -1353,6 +1486,9 @@ class _Loader:
                 self.context_ref(where, c.part, c.context, reg)
             if c.kind == "example" and c.wrap != "none" and "{line}" in c.text:
                 self.err(where, "text holds the slot {line}")
+            if c.kind == "example" and c.index > 0 and not c.doc.strip():
+                self.err(where, "an example after the first of an entry has "
+                                "a doc")
 
 
 # Sub-table schemas, kept out of the top-level list.
@@ -1361,6 +1497,7 @@ SCHEMA["_invalid"] = INVALID_FIELDS
 SCHEMA["_check"] = CHECK_FIELDS
 SCHEMA["_arg"] = ARG_FIELDS
 SCHEMA["_refuse"] = {"key": ("str", R), "why": ("str", R)}
+SCHEMA["_described"] = {"doc": ("str", R)}
 SCHEMA["_param"] = {"name": ("str", R), "default": ("number|str", R),
                     "gt": ("number|str", O), "doc": ("str", O)}
 

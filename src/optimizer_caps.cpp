@@ -125,7 +125,7 @@ struct Refusal {
     const char* reason;
 };
 constexpr const char* kCeresLeastSquares =
-    "tadah hpo does not run Ceres' least-squares Solver (LEVENBERG_MARQUARDT, "
+    "tadah hpo does not run Ceres' least-squares solver (LEVENBERG_MARQUARDT, "
     "DOGLEG, SUBSPACE_DOGLEG): it minimises a sum of squared residuals with "
     "their derivatives, and tadah hpo gives an optimiser one scalar loss, "
     "over which these methods degenerate. The recommended replacements are "
@@ -133,7 +133,7 @@ constexpr const char* kCeresLeastSquares =
     "that tadah hpo runs, and the bound-constrained gradient searches "
     "NLOPT:LD_LBFGS and DLIB:BFGS";
 constexpr const char* kCeresWolfe =
-    "Ceres' GradientProblemSolver has no bounds, and a point it proposes "
+    "Ceres' line-search solver has no bounds, and a point it proposes "
     "outside the OPTIM box is not evaluated: it is scored as a failure "
     "graded by its distance to the box, in [0.99975, 1) x FAILSCORE, far "
     "above every usable loss. Ceres' Wolfe line search interpolates that "
@@ -297,8 +297,9 @@ Registry build_registry()
         /* No ftol/xtol: ASA's own plateau stops are PARAM Cost_Precision
          * + Maximum_Cost_Repeat and Accepted_To_Generated_Ratio. */
         c.step_use  = StepUse::Rejected;
-        c.step_note = "the generating distribution width is driven by the per-dim "
-                      "temperatures (Initial_Parameter_Temperature, Temperature_Ratio_Scale)";
+        c.step_note = "the width of the generating distribution follows the parameter "
+                      "temperature of each dimension (Initial_Parameter_Temperature, "
+                      "Temperature_Ratio_Scale)";
         add(r, c);
     }
 
@@ -336,7 +337,8 @@ Registry build_registry()
         c.supports_maxeval   = true;
         c.supports_ftol_abs  = true;     // objective_delta_stop_strategy
         c.step_use  = StepUse::Rejected;
-        c.step_note = "the line search starts from -grad; the finite-difference step is PARAM fd_step";
+        c.step_note = "the line search starts along the negative gradient; PARAM fd_step "
+                      "sets the finite-difference step";
         add(r, c);
     }
 
@@ -360,16 +362,16 @@ Registry build_registry()
             c.step_note          = "Ceres chooses the initial line-search step itself; remove "
                                    "STEP (PARAM max_ls_iter caps the line-search iterations)";
             c.ignores_bounds     = true;
-            c.bounds_note        = "ignores the OPTIM box: Ceres' GradientProblemSolver has no "
+            c.bounds_note        = "ignores the OPTIM box: Ceres' line-search solver has no "
                                    "bounds, so its line searches can propose points outside "
                                    "the box (a LOG dimension stays positive, a linear one is "
                                    "unbounded). Such a point is not evaluated: it is scored as "
                                    "a failure graded by its distance to the box, whose slope "
                                    "points away from the box, so a descent step leads back "
                                    "into it; it counts against MAXEVAL and it is never the "
-                                   "best; the first is reported with a WARNING and DIAGNOSTICS "
-                                   "counts them all. DLIB:BFGS and the NLopt LD_* algorithms "
-                                   "keep to the box";
+                                   "best; the first is reported with a WARNING and the "
+                                   "DIAGNOSTICS section of hpo_run.log counts them all. "
+                                   "DLIB:BFGS and the NLopt LD_* algorithms keep to the box";
             add(r, c);
         }
     }
@@ -564,23 +566,28 @@ Registry build_registry()
         auto has = [&](const char* sub) { return s.find(sub) != std::string::npos; };
         if (has("SBPLX") || has("NELDERMEAD")) {
             c.step_use  = StepUse::PerDimVector;
-            c.step_note = "per-dim first simplex edges; no coordinate rescaling; later "
-                          "step scale is one L1 progress ratio in [0.1,10] applied to "
-                          "every dim; the per-dim x-stop guard is |x|-relative (use XTOL_ABS)";
+            c.step_note = "the first simplex has an edge of STEP in each dimension, and "
+                          "the coordinates are not rescaled; the later steps of every "
+                          "dimension change by one progress ratio between 0.1 and 10. "
+                          "The stop on a small step is relative to |x| in each "
+                          "dimension; XTOL_ABS adds an absolute one";
         } else if (has("BOBYQA") || has("COBYLA")) {
             c.step_use  = StepUse::PerDimRescale;
-            c.step_note = "coordinates rescaled by the step vector (rhobeg = step in every "
-                          "dim after rescaling); rhoend = XTOL_REL*rhobeg, floored by XTOL_ABS";
+            c.step_note = "STEP rescales the coordinates, so that the first trust-region "
+                          "radius is STEP in each dimension; the last radius is XTOL_REL "
+                          "times the first, and not below XTOL_ABS";
         } else if (has("NEWUOA") || has("PRAXIS")) {
             c.step_use  = StepUse::MinCollapsed;
-            c.step_note = "uses one radius = min over dims of |step|";
+            c.step_note = "one radius for every dimension, the smallest STEP of the "
+                          "dimensions";
         } else if (has("MMA") || has("CCSAQ")) {
             c.step_use  = StepUse::TrustHalfWidth;
-            c.step_note = "per-dim initial trust-region half-width (default 0.5*width)";
+            c.step_note = "the first trust-region half-width in each dimension; without "
+                          "STEP it is half the width of the OPTIM box";
         } else if (has("MLSL") || has("AUGLAG")) {
             c.step_use  = StepUse::ForwardedToInner;
-            c.step_note = "forwarded to the INNER local optimiser (an OUTER STEP overrides "
-                          "an INNER STEP)";
+            c.step_note = "passed to the local optimiser of the INNER block; a STEP of the "
+                          "enclosing block replaces the STEP of the INNER block";
         } else {
             c.step_use  = StepUse::Ignored;
             c.step_note = "this algorithm never reads an initial step (population, "
@@ -608,13 +615,13 @@ const char* step_use_name(StepUse u)
     switch (u) {
         case StepUse::Rejected:         return "rejected (no initial-step concept)";
         case StepUse::Ignored:          return "ignored by the algorithm (rejected)";
-        case StepUse::PerDimVector:     return "per-dim vector, raw simplex edges";
-        case StepUse::PerDimRescale:    return "per-dim vector -> coordinate rescaling";
-        case StepUse::MinCollapsed:     return "collapsed to min over dims of |step|";
-        case StepUse::TrustHalfWidth:   return "per-dim trust-region half-width";
-        case StepUse::ForwardedToInner: return "forwarded to the INNER optimiser";
+        case StepUse::PerDimVector:     return "one per dimension: the edges of the first simplex";
+        case StepUse::PerDimRescale:    return "one per dimension: rescaling of the coordinates";
+        case StepUse::MinCollapsed:     return "one radius: the smallest STEP of the dimensions";
+        case StepUse::TrustHalfWidth:   return "one per dimension: the first trust-region half-width";
+        case StepUse::ForwardedToInner: return "passed to the optimiser of the INNER block";
         case StepUse::GridCount:        return "grid point count (use PARAM GRID_POINTS)";
-        case StepUse::WidthFraction:    return "family-owned width fraction (PARAM STEP_FRAC)";
+        case StepUse::WidthFraction:    return "a fraction of the width (PARAM STEP_FRAC)";
     }
     return "?";
 }

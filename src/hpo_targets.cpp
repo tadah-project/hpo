@@ -645,8 +645,8 @@ static bool reject_old_keyword(const std::string& key)
         {"INIT_STRATEGY",               "moved into `INIT { METHOD <method> ... } ENDINIT` block."},
         {"INIT_K",                      "renamed to K_TOTAL inside an INIT block."},
         {"INIT_SEED",                   "renamed to SEED inside an INIT block."},
-        {"INIT_INCLUDE_CONFIG",         "removed. The in-config point is now included only when you list `METHOD CONFIG` explicitly inside the INIT block; omit it to leave the in-config point out."},
-        {"INCLUDE_CONFIG",              "removed. The in-config point is now included only when you list `METHOD CONFIG` explicitly inside the INIT block; omit it to leave the in-config point out."},
+        {"INIT_INCLUDE_CONFIG",         "removed. The values of the training configuration for the search parameters are a starting point only when the INIT block has a `METHOD CONFIG` line."},
+        {"INCLUDE_CONFIG",              "removed. The values of the training configuration for the search parameters are a starting point only when the INIT block has a `METHOD CONFIG` line."},
         {"NOISE_AUTO",                  "moved into `NOISE { AUTO true|false } ENDNOISE` block."},
         {"NOISE_CALIBRATION",           "moved into `NOISE { CALIBRATION N } ENDNOISE` block."},
         /* TOPK is now legal inside STRATEGY (TYPE PRESTAGE) -- don't reject it
@@ -1596,8 +1596,8 @@ void HPOTargets::read(const std::string& fn)
             core::to_string(observables.size()) +
             " entries) and PC_LAMMPS (" +
             core::to_string(LS.size()) +
-            " entries); these paths are mutually exclusive in the "
-            "current MVP. Remove one set of lines and rerun.");
+            " entries); PC_OBSERVABLE and PC_LAMMPS lines are mutually "
+            "exclusive. Remove one set of lines and rerun.");
     }
 
     /* Reject the same --hotvar NAME declared by two DISTINCT PC_LAMMPS

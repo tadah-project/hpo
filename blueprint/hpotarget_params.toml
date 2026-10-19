@@ -311,9 +311,49 @@ invalid = [
   { wrap = "params_anneal", check = "startup", at = "ENDOPTIMIZER", text = "PARAM INIT_JITTER_MAX 0.2", error = "the STRATEGY-level optimiser: TADAH:ANNEAL: PARAM INIT_JITTER_MAX belongs to the parallel drivers TADAH:ANNEAL_PT/TADAH:ANNEAL_PA" },
 ]
 examples = [
-  { wrap = "params_anneal", text = "PARAM STEP_FRAC 0.2" },
-  { wrap = "params_anneal_pt", text = "PARAM REPLICAS 4" },
-  { wrap = "params_anneal_pa", text = "PARAM SWEEPS 2" },
+  { wrap = "params_anneal", text = "PARAM STEP_FRAC 0.2", doc = "A first proposal scale of a fifth of the width of each box." },
+  { wrap = "params_anneal", text = "PARAM CORANA ON", doc = "Corana's adaptive steps." },
+  { wrap = "params_anneal", text = "PARAM CHAIN_LENGTH 50", doc = "50 proposals at each temperature step." },
+  { wrap = "params_anneal", text = "PARAM CORANA ON\nPARAM NS 10", doc = "Corana's kernel, with 10 cycles through the dimensions between two step adjustments." },
+  { wrap = "params_anneal", text = "PARAM CORANA ON\nPARAM NT 5", doc = "5 step adjustments at each temperature step." },
+  { wrap = "params_anneal", text = "PARAM CORANA ON\nPARAM CORANA_C 1", doc = "A step adjustment of gain 1." },
+  { wrap = "params_anneal", text = "PARAM CORANA ON\nPARAM V_FLOOR_FRAC 1e-4", doc = "No step below 1e-4 times the width of its box." },
+  { wrap = "params_anneal", text = "PARAM BOUNDARY_MODE REDRAW", doc = "A coordinate outside the box is drawn again." },
+  { wrap = "params_anneal", text = "PARAM RESET_TO_BEST ON", doc = "Back to the best point after each cooling step." },
+  { wrap = "params_anneal", text = "PARAM T_INIT 0.5", doc = "The starting temperature 0.5, without a calibration." },
+  { wrap = "params_anneal_pt", text = "PARAM T_HOT 2", doc = "The hottest temperature of the ladder, 2, without a calibration." },
+  { wrap = "params_anneal", text = "PARAM T_MIN 1e-5", doc = "The schedule ends at the temperature 1e-5." },
+  { wrap = "params_anneal", text = "PARAM RT 0.9", doc = "Each temperature is 0.9 times the one before." },
+  { wrap = "params_anneal", text = "PARAM T0_PROBES 40", doc = "40 probes for the calibration of the starting temperature." },
+  { wrap = "params_anneal", text = "PARAM T0_ACCEPT 0.2", doc = "A starting temperature that accepts a step up in loss with the probability 0.2." },
+  { wrap = "params_anneal", text = "FTOL_REL 1e-4\nPARAM NEPS 6", doc = "A history of 6 for the FTOL_REL stop." },
+  { wrap = "params_anneal", text = "PARAM REANNEAL OFF", doc = "No reannealing: the search ends at T_MIN." },
+  { wrap = "params_anneal", text = "PARAM REANNEAL_SCALE 0.5", doc = "The n-th reannealing starts at 0.5 to the power n times the starting temperature." },
+  { wrap = "params_anneal_pt", text = "PARAM REPLICAS 4", doc = "Four replicas." },
+  { wrap = "params_anneal_pt", text = "PARAM T_HOT 2\nPARAM T_COLD 0.01", doc = "A ladder from 0.01 to 2." },
+  { wrap = "params_anneal_pt", text = "PARAM LADDER_SPAN 100", doc = "T_COLD is T_HOT divided by 100." },
+  { wrap = "params_anneal_pt", text = "PARAM LADDER_POWER 2", doc = "A first ladder that is not geometric." },
+  { wrap = "params_anneal_pt", text = "PARAM REPLICAS 4\nPARAM LADDER_ADAPT ON", doc = "A ladder that adapts." },
+  { wrap = "params_anneal_pt", text = "PARAM REPLICAS 4\nPARAM LADDER_ADAPT ON\nPARAM LADDER_ADAPT_EVERY 40", doc = "An update of the ladder after 40 swap attempts of each pair." },
+  { wrap = "params_anneal_pt", text = "PARAM REPLICAS 4\nPARAM LADDER_ADAPT ON\nPARAM LADDER_ADAPT_GAIN 0.5", doc = "A first gain of 0.5." },
+  { wrap = "params_anneal_pt", text = "PARAM REPLICAS 4\nPARAM LADDER_ADAPT ON\nPARAM LADDER_ADAPT_DECAY 0.8", doc = "A gain that falls as the number of updates to the power -0.8." },
+  { wrap = "params_anneal_pt", text = "PARAM REPLICAS 4\nPARAM LADDER_ADAPT ON\nPARAM LADDER_MIN_GAP 0.2", doc = "No gap below a fifth of the mean gap." },
+  { wrap = "params_anneal_pt", text = "PARAM REPLICAS 4\nPARAM LADDER_ADAPT ON\nPARAM LADDER_FREEZE OFF", doc = "A ladder that keeps adapting." },
+  { wrap = "params_anneal_pt", text = "PARAM SWAP_EVERY 2", doc = "Swap attempts in every second epoch." },
+  { wrap = "params_anneal_pt", text = "PARAM SWAP_WINDOW OFF", doc = "Cumulative swap tables only." },
+  { wrap = "params_anneal_pt", text = "PARAM STEP_MODE ADAPTIVE", doc = "Steps that keep adapting." },
+  { wrap = "params_anneal_pt", text = "PARAM STEP_WARMUP_SWEEPS 24", doc = "At least 24 calibration attempts of each coordinate." },
+  { wrap = "params_anneal_pt", text = "PARAM STEP_MODE ADAPTIVE\nPARAM STEP_TRUST_FACTOR 16", doc = "Adapted scales within a factor of 16 of the calibrated ones." },
+  { wrap = "params_anneal_pt", text = "PARAM INIT_MODE UNIFORM", doc = "The replicas but the first start at points drawn from the box." },
+  { wrap = "params_anneal_pt", text = "PARAM INIT_MODE JITTER AUTO 0.05\nPARAM INIT_JITTER_MAX 0.25", doc = "Measured displacements of at most a quarter of the width of a box." },
+  { wrap = "params_anneal_pt", text = "PARAM INIT_MODE JITTER AUTO 0.05\nPARAM INIT_JITTER_PROBES 4", doc = "At most 4 probes in each dimension." },
+  { wrap = "params_anneal_pt", text = "PARAM INIT_MODE JITTER AUTO 0.05\nPARAM INIT_JITTER_MAXEVAL 100", doc = "At most 100 calibration probes." },
+  { wrap = "params_anneal_pt", text = "PARAM INIT_MODE JITTER AUTO 0.05\nPARAM INIT_JITTER_SAMPLE 8", doc = "At most 8 measured dimensions." },
+  { wrap = "params_anneal_pt", text = "PARAM INIT_MODE JITTER AUTO 0.05\nPARAM INIT_JITTER_AUDIT 0", doc = "No dimension probed again." },
+  { wrap = "params_anneal_pt", text = "PARAM INIT_JITTER_LADDER 1", doc = "Displacements in proportion to the temperature of each replica." },
+  { wrap = "params_anneal_pt", text = "MAXTIME 600\nPARAM INIT_MODE JITTER AUTO 0.05\nPARAM INIT_JITTER_MAXTIME_FRAC 0.1", doc = "At most a tenth of MAXTIME for the calibration." },
+  { wrap = "params_anneal_pa", text = "PARAM SWEEPS 2", doc = "Two rounds of each walker at each temperature." },
+  { wrap = "params_anneal_pa", text = "PARAM ESS_TARGET 0.7", doc = "An effective sample size of 0.7 times the population after each temperature step." },
 ]
 
 # ------------------------------------------------------------- TADAH:GRID ----
@@ -322,7 +362,7 @@ examples = [
 id = "PARAM.TADAH:GRID.GRID_POINTS"
 name = "GRID_POINTS"
 optimizers = ["TADAH:GRID"]
-args = [{ name = "n", kind = "number", min = 2, max = "UINT_MAX" }]
+args = [{ name = "n", kind = "number", min = 2, max = "UINT_MAX", integral = true }]
 default = { literal = "20" }
 doc = """\
 The number of grid points in each dimension, a whole number of at least 2: \
@@ -350,7 +390,7 @@ invalid = [
 id = "PARAM.DLIB:BFGS.tol_gradinf"
 name = "tol_gradinf"
 optimizers = ["DLIB:BFGS"]
-args = [{ name = "tolerance", kind = "number" }]
+args = [{ name = "tolerance", kind = "number", min = 0, min_open = true }]
 default = { text = "not set: the FTOL_ABS test ends the search, with 1e-7 when FTOL_ABS is not set" }
 doc = """\
 The search ends once the L2 norm of the gradient falls below this value, \
@@ -373,7 +413,7 @@ invalid = [
 id = "PARAM.CERES.tol_gradinf"
 name = "tol_gradinf"
 optimizers = ["CERES:STEEPEST_DESCENT"]
-args = [{ name = "tolerance", kind = "number" }]
+args = [{ name = "tolerance", kind = "number", min = 0, min_open = true }]
 default = { literal = "1e-10" }
 doc = """\
 Ceres' gradient tolerance: the search ends once the largest component of \
@@ -392,7 +432,7 @@ invalid = [
 id = "PARAM.CERES.max_iter"
 name = "max_iter"
 optimizers = ["CERES:STEEPEST_DESCENT"]
-args = [{ name = "n", kind = "number", min = 0, max = "INT_MAX" }]
+args = [{ name = "n", kind = "number", min = 0, max = "INT_MAX", integral = true }]
 default = { text = "1073741823 iterations, so that MAXEVAL ends the search" }
 doc = """\
 Ceres' max_num_iterations, the largest number of iterations, a whole \
@@ -402,7 +442,7 @@ checks = [
 ]
 examples = [
   { wrap = "params_ceres", text = "PARAM max_iter 50" },
-  { wrap = "params_ceres", text = "PARAM max_iter 0" },
+  { wrap = "params_ceres", text = "PARAM max_iter 0", doc = "0 evaluates the start and ends the search." },
 ]
 invalid = [
   { wrap = "params_ceres", check = "startup", at = "ENDOPTIMIZER", text = "PARAM max_iter 2.5", error = "the STRATEGY-level optimiser: CERES:STEEPEST_DESCENT requires PARAM max_iter to be an integer from 0 to 2147483647 (Ceres' max_num_iterations), got 2.5" },
@@ -413,7 +453,7 @@ invalid = [
 id = "PARAM.CERES.max_ls_iter"
 name = "max_ls_iter"
 optimizers = ["CERES:STEEPEST_DESCENT"]
-args = [{ name = "n", kind = "number", min = 1, max = "INT_MAX" }]
+args = [{ name = "n", kind = "number", min = 1, max = "INT_MAX", integral = true }]
 default = { text = "Ceres' default, 20" }
 doc = """\
 Ceres' max_num_line_search_step_size_iterations, the largest number of \
@@ -437,7 +477,7 @@ invalid = [
 id = "PARAM.FD.fd_step"
 name = "fd_step"
 optimizers = ["*"]
-args = [{ name = "step", kind = "number" }]
+args = [{ name = "step", kind = "number", min = 0, min_open = true }]
 default = { literal = "1e-6" }
 doc = """\
 The step of the finite differences of the gradient, above 0. It is read by \
@@ -464,8 +504,8 @@ checks = [
 ]
 examples = [
   { wrap = "params_lbfgs", text = "PARAM fd_step 1e-4" },
-  { wrap = "params_bfgs", text = "PARAM fd_step 1e-5" },
-  { wrap = "params_ceres", text = "PARAM fd_step 1e-5" },
+  { wrap = "params_bfgs", text = "PARAM fd_step 1e-5", doc = "The step of DLIB:BFGS." },
+  { wrap = "params_ceres", text = "PARAM fd_step 1e-5", doc = "The step of CERES:STEEPEST_DESCENT." },
 ]
 invalid = [
   { wrap = "params_lbfgs", check = "startup", at = "ENDOPTIMIZER", text = "PARAM fd_step 0", error = "the STRATEGY-level optimiser NLOPT:LD_LBFGS: PARAM fd_step must be a positive finite number (got 0)" },
@@ -501,7 +541,7 @@ checks = [
 ]
 examples = [
   { wrap = "params_lbfgs", text = "PARAM fd_kernel ceres" },
-  { wrap = "params_bfgs", text = "PARAM fd_kernel INHOUSE" },
+  { wrap = "params_bfgs", text = "PARAM fd_kernel INHOUSE", doc = "The word in upper case, for DLIB:BFGS." },
 ]
 invalid = [
   { wrap = "params_lbfgs", check = "startup", at = "ENDOPTIMIZER", text = "PARAM fd_kernel Ceres", error = "the STRATEGY-level optimiser NLOPT:LD_LBFGS: PARAM fd_kernel must be inhouse or ceres (got 'Ceres')" },
@@ -513,7 +553,7 @@ invalid = [
 id = "PARAM.FD.diff_method"
 name = "diff_method"
 optimizers = ["*"]
-args = [{ name = "scheme", kind = "number" }]
+args = [{ name = "scheme", kind = "number", min = 0, max = 1, integral = true }]
 default = { literal = "0" }
 doc = """\
 The scheme of the finite differences: 0 takes central differences, 1 \
@@ -530,7 +570,7 @@ checks = [
 ]
 examples = [
   { wrap = "params_lbfgs", text = "PARAM diff_method 1" },
-  { wrap = "params_ceres", text = "PARAM diff_method 0" },
+  { wrap = "params_ceres", text = "PARAM diff_method 0", doc = "Central differences, for CERES:STEEPEST_DESCENT." },
 ]
 invalid = [
   { wrap = "params_lbfgs", check = "startup", at = "ENDOPTIMIZER", text = "PARAM diff_method 2", error = "the STRATEGY-level optimiser NLOPT:LD_LBFGS: PARAM diff_method 2 (RIDDERS) is refused: Ridders' extrapolation ignored PARAM fd_step, started from a step of 0.32 x max(|u|, 1) -- outside most OPTIM boxes -- and took up to 20 evaluations per parameter; use diff_method 0 (CENTRAL, the default) or 1 (FORWARD)" },
@@ -547,7 +587,7 @@ invalid = [
 id = "PARAM.ASA:ASA.Limit_Acceptances"
 name = "Limit_Acceptances"
 optimizers = ["ASA:ASA"]
-args = [{ name = "value", kind = "number", min = 0 }]
+args = [{ name = "value", kind = "number", min = 0, integral = true }]
 default = { literal = "10000" }
 doc = """\
 The largest number of accepted states of the search; 0 sets no limit."""
@@ -567,7 +607,7 @@ invalid = [
 id = "PARAM.ASA:ASA.Limit_Generated"
 name = "Limit_Generated"
 optimizers = ["ASA:ASA"]
-args = [{ name = "value", kind = "number", min = 0 }]
+args = [{ name = "value", kind = "number", min = 0, integral = true }]
 default = { literal = "99999" }
 doc = """\
 The largest number of generated states of the search; 0 sets no limit."""
@@ -587,7 +627,7 @@ invalid = [
 id = "PARAM.ASA:ASA.Limit_Invalid_Generated_States"
 name = "Limit_Invalid_Generated_States"
 optimizers = ["ASA:ASA"]
-args = [{ name = "value", kind = "number", min = -1 }]
+args = [{ name = "value", kind = "number", min = -1, integral = true }]
 default = { literal = "1000" }
 doc = """\
 The number of invalid generated states the search tolerates; 0 ends it \
@@ -608,7 +648,7 @@ invalid = [
 id = "PARAM.ASA:ASA.Accepted_To_Generated_Ratio"
 name = "Accepted_To_Generated_Ratio"
 optimizers = ["ASA:ASA"]
-args = [{ name = "value", kind = "number", min = 0 }]
+args = [{ name = "value", kind = "number", min = 0, min_open = true }]
 default = { literal = "1e-6" }
 doc = """\
 The smallest ratio of accepted to generated states before the \
@@ -629,7 +669,7 @@ invalid = [
 id = "PARAM.ASA:ASA.Cost_Precision"
 name = "Cost_Precision"
 optimizers = ["ASA:ASA"]
-args = [{ name = "value", kind = "number", min = 0 }]
+args = [{ name = "value", kind = "number", min = 0, min_open = true }]
 default = { literal = "1e-18" }
 doc = """\
 The change of the best loss below which the plateau test counts a \
@@ -650,7 +690,7 @@ invalid = [
 id = "PARAM.ASA:ASA.Maximum_Cost_Repeat"
 name = "Maximum_Cost_Repeat"
 optimizers = ["ASA:ASA"]
-args = [{ name = "value", kind = "number", min = 0 }]
+args = [{ name = "value", kind = "number", min = 0, integral = true }]
 default = { literal = "5" }
 doc = """\
 The number of consecutive plateau cycles that ends the search \
@@ -671,7 +711,7 @@ invalid = [
 id = "PARAM.ASA:ASA.Number_Cost_Samples"
 name = "Number_Cost_Samples"
 optimizers = ["ASA:ASA"]
-args = [{ name = "value", kind = "number" }]
+args = [{ name = "value", kind = "number", integral = true }]
 default = { literal = "5" }
 doc = """\
 The sample of the initial cost temperature: a positive value takes the \
@@ -693,7 +733,7 @@ invalid = [
 id = "PARAM.ASA:ASA.Temperature_Ratio_Scale"
 name = "Temperature_Ratio_Scale"
 optimizers = ["ASA:ASA"]
-args = [{ name = "value", kind = "number", min = 0 }]
+args = [{ name = "value", kind = "number", min = 0, min_open = true }]
 default = { literal = "1e-5" }
 doc = """\
 The main control of the annealing rate, m = \
@@ -714,7 +754,7 @@ invalid = [
 id = "PARAM.ASA:ASA.Cost_Parameter_Scale_Ratio"
 name = "Cost_Parameter_Scale_Ratio"
 optimizers = ["ASA:ASA"]
-args = [{ name = "value", kind = "number", min = 0 }]
+args = [{ name = "value", kind = "number", min = 0, min_open = true }]
 default = { literal = "1.0" }
 doc = """\
 The scale of the cost-temperature schedule relative to the parameter \
@@ -735,7 +775,7 @@ invalid = [
 id = "PARAM.ASA:ASA.Temperature_Anneal_Scale"
 name = "Temperature_Anneal_Scale"
 optimizers = ["ASA:ASA"]
-args = [{ name = "value", kind = "number", min = 0 }]
+args = [{ name = "value", kind = "number", min = 0, min_open = true }]
 default = { literal = "100.0" }
 doc = """\
 The annealing time scale, n = log(Temperature_Anneal_Scale); above 0."""
@@ -755,7 +795,7 @@ invalid = [
 id = "PARAM.ASA:ASA.Include_Integer_Parameters"
 name = "Include_Integer_Parameters"
 optimizers = ["ASA:ASA"]
-args = [{ name = "value", kind = "number", min = 0, max = 1 }]
+args = [{ name = "value", kind = "number", min = 0, max = 1, integral = true }]
 default = { literal = "0" }
 doc = """\
 1 includes the integer dimensions in the derivative and reannealing \
@@ -778,7 +818,7 @@ invalid = [
 id = "PARAM.ASA:ASA.User_Initial_Parameters"
 name = "User_Initial_Parameters"
 optimizers = ["ASA:ASA"]
-args = [{ name = "value", kind = "number", min = 0, max = 1 }]
+args = [{ name = "value", kind = "number", min = 0, max = 1, integral = true }]
 default = { text = "1 when the search has a starting point (from its INIT block, or from the training configuration without one), else 0" }
 doc = """\
 1 starts ASA from the first starting point of the search, 0 from a point \
@@ -807,7 +847,7 @@ invalid = [
 id = "PARAM.ASA:ASA.Sequential_Parameters"
 name = "Sequential_Parameters"
 optimizers = ["ASA:ASA"]
-args = [{ name = "value", kind = "number" }]
+args = [{ name = "value", kind = "number", integral = true }]
 default = { literal = "-1" }
 doc = """\
 The dimension, counted from 0, at which ASA starts generating one \
@@ -831,7 +871,7 @@ invalid = [
 id = "PARAM.ASA:ASA.Initial_Parameter_Temperature"
 name = "Initial_Parameter_Temperature"
 optimizers = ["ASA:ASA"]
-args = [{ name = "value", kind = "number", min = 0 }]
+args = [{ name = "value", kind = "number", min = 0, min_open = true }]
 default = { literal = "1.0" }
 doc = "The initial temperature of every dimension; above 0."
 checks = [
@@ -850,7 +890,7 @@ invalid = [
 id = "PARAM.ASA:ASA.Acceptance_Frequency_Modulus"
 name = "Acceptance_Frequency_Modulus"
 optimizers = ["ASA:ASA"]
-args = [{ name = "value", kind = "number", min = 0 }]
+args = [{ name = "value", kind = "number", min = 0, integral = true }]
 default = { literal = "100" }
 doc = """\
 The number of accepted states between the periodic tests; 0 switches \
@@ -871,7 +911,7 @@ invalid = [
 id = "PARAM.ASA:ASA.Generated_Frequency_Modulus"
 name = "Generated_Frequency_Modulus"
 optimizers = ["ASA:ASA"]
-args = [{ name = "value", kind = "number", min = 0 }]
+args = [{ name = "value", kind = "number", min = 0, integral = true }]
 default = { literal = "10000" }
 doc = """\
 The number of generated states between the periodic tests; 0 switches \
@@ -892,7 +932,7 @@ invalid = [
 id = "PARAM.ASA:ASA.Reanneal_Cost"
 name = "Reanneal_Cost"
 optimizers = ["ASA:ASA"]
-args = [{ name = "value", kind = "number" }]
+args = [{ name = "value", kind = "number", integral = true }]
 default = { literal = "1" }
 doc = """\
 The reannealing of the cost temperature: 0 switches it off, 1 is the \
@@ -914,7 +954,7 @@ invalid = [
 id = "PARAM.ASA:ASA.Reanneal_Parameters"
 name = "Reanneal_Parameters"
 optimizers = ["ASA:ASA"]
-args = [{ name = "value", kind = "number", min = 0, max = 1 }]
+args = [{ name = "value", kind = "number", min = 0, max = 1, integral = true }]
 default = { literal = "1" }
 doc = """\
 1 adapts the temperature of each dimension to its tangent sensitivity; 0 \
@@ -964,7 +1004,7 @@ invalid = [
 id = "PARAM.ASA:ASA.User_Tangents"
 name = "User_Tangents"
 optimizers = ["ASA:ASA"]
-args = [{ name = "value", kind = "number", min = 0, max = 1 }]
+args = [{ name = "value", kind = "number", min = 0, max = 1, integral = true }]
 default = { literal = "0" }
 doc = """\
 Only 0 is accepted: tadah hpo provides no analytic tangents, and the \
@@ -989,7 +1029,7 @@ invalid = [
 id = "PARAM.ASA:ASA.Curvature_0"
 name = "Curvature_0"
 optimizers = ["ASA:ASA"]
-args = [{ name = "value", kind = "number", min = -1, max = 1 }]
+args = [{ name = "value", kind = "number", min = -1, max = 1, integral = true }]
 default = { literal = "1" }
 doc = """\
 1 skips the curvature calculation, 0 calculates the full curvature when \
@@ -1016,7 +1056,7 @@ invalid = [
 id = "PARAM.ASA:ASA.User_Quench_Cost_Scale"
 name = "User_Quench_Cost_Scale"
 optimizers = ["ASA:ASA"]
-args = [{ name = "value", kind = "number", min = 0 }]
+args = [{ name = "value", kind = "number", min = 0, min_open = true }]
 default = { literal = "1.0" }
 doc = """\
 The quench exponent of the cost temperature; a value above 1 quenches. \
@@ -1038,7 +1078,7 @@ id = "PARAM.ASA:ASA.User_Quench_Param_Scale"
 name = "User_Quench_Param_Scale"
 optimizers = ["ASA:ASA"]
 indexed = true
-args = [{ name = "value", kind = "number", min = 0 }]
+args = [{ name = "value", kind = "number", min = 0, min_open = true }]
 default = { literal = "1.0" }
 doc = """\
 The quench exponent of each dimension; a value above 1 quenches and \
@@ -1049,7 +1089,7 @@ checks = [
 ]
 examples = [
   { wrap = "params_asa", text = "PARAM User_Quench_Param_Scale 1.5" },
-  { wrap = "params_asa", text = "PARAM User_Quench_Param_Scale[1] 1.5" },
+  { wrap = "params_asa", text = "PARAM User_Quench_Param_Scale[1] 1.5", doc = "The value of the first dimension only." },
 ]
 invalid = [
   { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM User_Quench_Param_Scale -1", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM User_Quench_Param_Scale must be >= 0.000000" },
@@ -1062,7 +1102,7 @@ id = "PARAM.ASA:ASA.User_Temperature_Ratio"
 name = "User_Temperature_Ratio"
 optimizers = ["ASA:ASA"]
 indexed = true
-args = [{ name = "value", kind = "number", min = 0 }]
+args = [{ name = "value", kind = "number", min = 0, min_open = true }]
 default = { literal = "1.0" }
 doc = """\
 A per-dimension multiplier of -log(Temperature_Ratio_Scale); above 0."""
@@ -1072,7 +1112,7 @@ checks = [
 ]
 examples = [
   { wrap = "params_asa", text = "PARAM User_Temperature_Ratio 2" },
-  { wrap = "params_asa", text = "PARAM User_Temperature_Ratio[1] 2" },
+  { wrap = "params_asa", text = "PARAM User_Temperature_Ratio[1] 2", doc = "The value of the first dimension only." },
 ]
 invalid = [
   { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM User_Temperature_Ratio -1", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM User_Temperature_Ratio must be >= 0.000000" },
@@ -1085,7 +1125,7 @@ id = "PARAM.ASA:ASA.User_Delta_Parameter"
 name = "User_Delta_Parameter"
 optimizers = ["ASA:ASA"]
 indexed = true
-args = [{ name = "value", kind = "number", min = 0 }]
+args = [{ name = "value", kind = "number", min = 0, min_open = true }]
 default = { text = "the value of Delta_X" }
 doc = """\
 The finite-difference step of the tangents in each dimension; above 0."""
@@ -1102,7 +1142,7 @@ checks = [
 ]
 examples = [
   { wrap = "params_asa", text = "PARAM User_Delta_Parameter 1e-4" },
-  { wrap = "params_asa", text = "PARAM User_Delta_Parameter[1] 1e-4" },
+  { wrap = "params_asa", text = "PARAM User_Delta_Parameter[1] 1e-4", doc = "The value of the first dimension only." },
 ]
 invalid = [
   { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM User_Delta_Parameter -1", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM User_Delta_Parameter must be >= 0.000000" },
@@ -1116,7 +1156,7 @@ id = "PARAM.ASA:ASA.User_Parameter_Temperature"
 name = "User_Parameter_Temperature"
 optimizers = ["ASA:ASA"]
 indexed = true
-args = [{ name = "value", kind = "number", min = 0 }]
+args = [{ name = "value", kind = "number", min = 0, min_open = true }]
 default = { text = "the value of Initial_Parameter_Temperature" }
 doc = "The initial temperature of each dimension; above 0."
 checks = [
@@ -1125,7 +1165,7 @@ checks = [
 ]
 examples = [
   { wrap = "params_asa", text = "PARAM User_Parameter_Temperature 0.5" },
-  { wrap = "params_asa", text = "PARAM User_Parameter_Temperature[1] 0.5" },
+  { wrap = "params_asa", text = "PARAM User_Parameter_Temperature[1] 0.5", doc = "The value of the first dimension only." },
 ]
 invalid = [
   { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM User_Parameter_Temperature -1", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM User_Parameter_Temperature must be >= 0.000000" },
@@ -1137,7 +1177,7 @@ invalid = [
 id = "PARAM.ASA:ASA.Multi_Number"
 name = "Multi_Number"
 optimizers = ["ASA:ASA"]
-args = [{ name = "value", kind = "number", min = 1 }]
+args = [{ name = "value", kind = "number", min = 1, integral = true }]
 default = { literal = "1" }
 doc = """\
 The number of best distinct minima ASA keeps; the journal reports them."""
@@ -1157,7 +1197,7 @@ invalid = [
 id = "PARAM.ASA:ASA.Multi_Specify"
 name = "Multi_Specify"
 optimizers = ["ASA:ASA"]
-args = [{ name = "value", kind = "number", min = 0, max = 1 }]
+args = [{ name = "value", kind = "number", min = 0, max = 1, integral = true }]
 default = { literal = "1" }
 doc = """\
 1 keeps a minimum only when its loss is strictly lower, 0 also when it \
@@ -1191,7 +1231,7 @@ checks = [
 ]
 examples = [
   { wrap = "params_asa", text = "PARAM Multi_Grid 0.01" },
-  { wrap = "params_asa", text = "PARAM Multi_Grid[1] 0.01" },
+  { wrap = "params_asa", text = "PARAM Multi_Grid[1] 0.01", doc = "The value of the first dimension only." },
 ]
 invalid = [
   { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Multi_Grid -1", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Multi_Grid must be >= 0.000000" },
@@ -1201,7 +1241,7 @@ invalid = [
 id = "PARAM.ASA:ASA.Queue_Size"
 name = "Queue_Size"
 optimizers = ["ASA:ASA"]
-args = [{ name = "value", kind = "number", min = 0 }]
+args = [{ name = "value", kind = "number", min = 0, integral = true }]
 default = { literal = "0" }
 doc = """\
 The number of evaluations ASA keeps in its cache, first in, first out; 0 \
@@ -1233,7 +1273,7 @@ checks = [
 ]
 examples = [
   { wrap = "params_asa", text = "PARAM Queue_Resolution 1e-3" },
-  { wrap = "params_asa", text = "PARAM Queue_Resolution[1] 1e-3" },
+  { wrap = "params_asa", text = "PARAM Queue_Resolution[1] 1e-3", doc = "The value of the first dimension only." },
 ]
 invalid = [
   { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Queue_Resolution -1", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Queue_Resolution must be >= 0.000000" },
@@ -1243,7 +1283,7 @@ invalid = [
 id = "PARAM.ASA:ASA.Gener_Block"
 name = "Gener_Block"
 optimizers = ["ASA:ASA"]
-args = [{ name = "value", kind = "number", min = 1 }]
+args = [{ name = "value", kind = "number", min = 1, integral = true }]
 default = { literal = "1" }
 doc = """\
 The initial number of states generated in one block; with more than one, \
@@ -1265,7 +1305,7 @@ invalid = [
 id = "PARAM.ASA:ASA.Gener_Block_Max"
 name = "Gener_Block_Max"
 optimizers = ["ASA:ASA"]
-args = [{ name = "value", kind = "number", min = 1 }]
+args = [{ name = "value", kind = "number", min = 1, integral = true }]
 default = { text = "the value of Gener_Block" }
 doc = """\
 The largest block size, not below Gener_Block; the adaptive resizing \
@@ -1288,7 +1328,7 @@ invalid = [
 id = "PARAM.ASA:ASA.Gener_Mov_Avr"
 name = "Gener_Mov_Avr"
 optimizers = ["ASA:ASA"]
-args = [{ name = "value", kind = "number", min = 0 }]
+args = [{ name = "value", kind = "number", min = 0, integral = true }]
 default = { literal = "3" }
 doc = """\
 The moving-average window of the adaptive block resizing; 0 switches the \

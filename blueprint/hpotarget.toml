@@ -26,6 +26,32 @@ parts = ["hpotarget_optimizer.toml", "hpotarget_lines.toml",
          "hpotarget_params.toml"]
 anneal_keys = "anneal_keys.toml"
 optimizers = "optimizers_gen.toml"
+optimizer_docs = "optimizers_doc.toml"
+
+# What the abbreviations of the registry's text stand for. The reference
+# pages spell each out at its first use on a page.
+[abbreviations]
+ASA = "Adaptive Simulated Annealing"
+AUGLAG = "augmented Lagrangian"
+BFGS = "Broyden-Fletcher-Goldfarb-Shanno"
+BOBYQA = "bound optimisation by quadratic approximation"
+CCSAQ = "conservative convex separable approximation with quadratic terms"
+COBYLA = "constrained optimisation by linear approximation"
+DEO = "deterministic even/odd"
+DIRECT = "dividing rectangles"
+ISRES = "improved stochastic ranking evolution strategy"
+L-BFGS = "low-storage Broyden-Fletcher-Goldfarb-Shanno"
+LDS = "low-discrepancy sequence"
+LHS = "Latin hypercube sampling"
+MAE = "mean absolute error"
+MLSL = "multi-level single-linkage"
+MMA = "method of moving asymptotes"
+MPI = "Message Passing Interface"
+NEWUOA = "Powell's new unconstrained optimisation algorithm"
+PRAXIS = "principal axis method"
+SBPLX = "Subplex"
+SLSQP = "sequential least-squares quadratic programming"
+StoGO = "stochastic global optimisation"
 
 # ------------------------------------------------------------- lexing ----
 
@@ -53,6 +79,7 @@ wrap = "root"
 text = "FAILSCORE 1e6   # the comment ends the line"
 
 [[lexing.examples]]
+doc = "A line that ends with a backslash continues on the next one."
 wrap = "root"
 text = '''
 FAILSCORE \
@@ -331,7 +358,7 @@ at = "ENDOPTIMIZER"
 text = '''
 LIB CERES
 ALGO DOGLEG'''
-error = "the STRATEGY-level optimiser: CERES:DOGLEG is refused: tadah hpo does not run Ceres' least-squares Solver (LEVENBERG_MARQUARDT, DOGLEG, SUBSPACE_DOGLEG): it minimises a sum of squared residuals with their derivatives, and tadah hpo gives an optimiser one scalar loss, over which these methods degenerate. The recommended replacements are CERES:STEEPEST_DESCENT, Ceres' line-search solver of a scalar loss that tadah hpo runs, and the bound-constrained gradient searches NLOPT:LD_LBFGS and DLIB:BFGS"
+error = "the STRATEGY-level optimiser: CERES:DOGLEG is refused: tadah hpo does not run Ceres' least-squares solver (LEVENBERG_MARQUARDT, DOGLEG, SUBSPACE_DOGLEG): it minimises a sum of squared residuals with their derivatives, and tadah hpo gives an optimiser one scalar loss, over which these methods degenerate. The recommended replacements are CERES:STEEPEST_DESCENT, Ceres' line-search solver of a scalar loss that tadah hpo runs, and the bound-constrained gradient searches NLOPT:LD_LBFGS and DLIB:BFGS"
 
 [[block]]
 name = "STRATEGY"
@@ -423,17 +450,21 @@ METHOD line."""
 wrap = "strategy"
 text = '''
 INIT
+METHOD LHS 4
 ENDINIT'''
 
 [[block.examples]]
 wrap = "none"
+doc = "Two INIT blocks of one block make one chain: the values of the training configuration, then 3 Latin hypercube points."
 text = '''
 OPTIM CGRID2B (1) 0.5 1.5
 PC_ERMSE 0 1
 OPTIMIZER
 INIT
+METHOD CONFIG
 ENDINIT
 INIT
+METHOD LHS 3
 ENDINIT
 LIB NLOPT
 ALGO LN_SBPLX
@@ -477,6 +508,7 @@ block continues the first."""
 wrap = "optimizer"
 text = '''
 NOISE
+CALIBRATION 5
 ENDNOISE'''
 
 [[block.invalid]]
@@ -789,6 +821,9 @@ rank refuses an active RESTART block."""
 wrap = "strategy"
 text = '''
 RESTART
+AFTER_STAGNATION 20
+MAX 3
+METHOD RANDOM 2
 ENDRESTART'''
 
 [[block.invalid]]
@@ -901,10 +936,12 @@ wrap = "root"
 text = "PC_SCRIPT_TIMEOUT 1:30:00"
 
 [[key.examples]]
+doc = "A time in seconds."
 wrap = "root"
 text = "PC_SCRIPT_TIMEOUT 600"
 
 [[key.examples]]
+doc = "No limit."
 wrap = "root"
 text = "PC_SCRIPT_TIMEOUT unlimited"
 
@@ -1141,8 +1178,7 @@ name = "RHOGATE"
 blocks = ["ROOT"]
 synopsis = "RHOGATE <tol> [R_LO <r>] [NPTS <n>] [SEED ERROR | WARN]"
 args = [
-  { name = "tol", kind = "number", min = 0, what = "RHOGATE tol", msg = "RHOGATE tol must be >= 0, got '{tok}'", doc = "The tolerance, a fraction of the largest density." },
-  { name = "options", kind = "tokens", optional = true, doc = "R_LO, NPTS and SEED, each followed by its value, in any order and each at most once." },
+  { name = "tol", kind = "number", min = 0, what = "RHOGATE tol", msg = "RHOGATE tol must be >= 0, got '{tok}'", doc = "The tolerance, a fraction of the largest density. R_LO, NPTS and SEED follow it, each with its value, in any order and each at most once." },
 ]
 repeat = "error"
 repeat_msg = "RHOGATE given more than once"
@@ -1177,6 +1213,7 @@ wrap = "main_ream"
 text = "RHOGATE 1e-5"
 
 [[key.examples]]
+doc = "Every option: a tolerance of 0, the window from 1.7168 Å, 2001 grid points, and a warning for a starting point that fails the condition."
 wrap = "main_ream"
 text = "RHOGATE 0 R_LO 1.7168 NPTS 2001 SEED WARN"
 
@@ -1277,8 +1314,7 @@ args = [
   { name = "lattice", kind = "word", words = ["bcc", "fcc", "hcp"], msg = "RHOBARGATE lattice must be bcc, fcc or hcp, got '{tok}'" },
   { name = "a0", kind = "number", what = "RHOBARGATE a0", doc = "The lattice constant in Å, above 0; for hcp the in-plane one." },
   { name = "f_lo", kind = "number", what = "RHOBARGATE f_lo", doc = "The smallest lattice constant, as a fraction of a0, above 0 and below f_hi. The largest RCUTMB a candidate can have lies within 20 lattice constants of the smallest lattice, f_lo a0." },
-  { name = "f_hi", kind = "number", what = "RHOBARGATE f_hi", doc = "The largest lattice constant, as a fraction of a0." },
-  { name = "options", kind = "tokens", optional = true, doc = "NPTS and SEED, each followed by its value, in any order and each at most once." },
+  { name = "f_hi", kind = "number", what = "RHOBARGATE f_hi", doc = "The largest lattice constant, as a fraction of a0. NPTS and SEED follow it, each with its value, in any order and each at most once." },
 ]
 repeat = "error"
 repeat_msg = "RHOBARGATE given more than once"
@@ -1606,6 +1642,7 @@ wrap = "root"
 text = "OPTIM_SCALE NONE"
 
 [[key.examples]]
+doc = "The word in lower case."
 wrap = "root"
 text = "OPTIM_SCALE auto"
 
@@ -1944,21 +1981,21 @@ error = "'INIT_SEED' was removed from the grammar: renamed to SEED inside an INI
 
 [[removed]]
 name = "INIT_INCLUDE_CONFIG"
-hint = "removed. The in-config point is now included only when you list `METHOD CONFIG` explicitly inside the INIT block; omit it to leave the in-config point out."
+hint = "removed. The values of the training configuration for the search parameters are a starting point only when the INIT block has a `METHOD CONFIG` line."
 
 [[removed.invalid]]
 wrap = "init"
 text = "INIT_INCLUDE_CONFIG true"
-error = "'INIT_INCLUDE_CONFIG' was removed from the grammar: removed. The in-config point is now included only when you list `METHOD CONFIG` explicitly inside the INIT block; omit it to leave the in-config point out."
+error = "'INIT_INCLUDE_CONFIG' was removed from the grammar: removed. The values of the training configuration for the search parameters are a starting point only when the INIT block has a `METHOD CONFIG` line."
 
 [[removed]]
 name = "INCLUDE_CONFIG"
-hint = "removed. The in-config point is now included only when you list `METHOD CONFIG` explicitly inside the INIT block; omit it to leave the in-config point out."
+hint = "removed. The values of the training configuration for the search parameters are a starting point only when the INIT block has a `METHOD CONFIG` line."
 
 [[removed.invalid]]
 wrap = "init"
 text = "INCLUDE_CONFIG true"
-error = "'INCLUDE_CONFIG' was removed from the grammar: removed. The in-config point is now included only when you list `METHOD CONFIG` explicitly inside the INIT block; omit it to leave the in-config point out."
+error = "'INCLUDE_CONFIG' was removed from the grammar: removed. The values of the training configuration for the search parameters are a starting point only when the INIT block has a `METHOD CONFIG` line."
 
 [[removed]]
 name = "NOISE_AUTO"
@@ -1982,6 +2019,7 @@ error = "'NOISE_CALIBRATION' was removed from the grammar: moved into `NOISE { C
 
 [[rule]]
 id = "RULE.density_key_arming"
+title = "RHOGATE and RHOBARGATE need a search of the density"
 check = "parse"
 msg = "{key} cannot act: no OPTIM line searches a key that changes the DM_REAM density or its window ({keys}), so every candidate has the -c density and its one verdict (OPTIM WATOM only scales the density; the verdict does not change). Add an OPTIM line on {keys}, or remove the {key} line."
 keys = ["ROOT.RHOGATE", "ROOT.RHOBARGATE", "ROOT.OPTIM"]
@@ -2025,6 +2063,7 @@ and an empty value is refused."""
 [[env.examples]]
 wrap = "root"
 env = { TADAH_OPTIM_SCALE = "none" }
+doc = "The run uses OPTIM_SCALE NONE: the variable replaces the line of the file."
 text = "OPTIM_SCALE AUTO"
 
 [[env.invalid]]
