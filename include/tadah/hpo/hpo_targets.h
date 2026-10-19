@@ -237,25 +237,27 @@ public:
      *     ("the working directory '<dir>' is not writable: tadah hpo
      *     writes its journal (hpo_run.log), its result files and
      *     best_pot.tadah there"); the journal @p journal and the result
-     *     files, when they exist, files the run can write ("'loss.tadah'
-     *     in the working directory '<dir>' is not writable: tadah hpo
-     *     rewrites it"), and so the lock of each best potential ("...
-     *     tadah hpo opens it to lock best_pot.tadah", the lock's own
-     *     potential); a best potential,
-     *     which the run replaces, no directory ("... is a directory: tadah
-     *     hpo writes a file of that name");
+     *     files, when they exist, files the run can open to write, and the
+     *     lock of each best potential one it can open to read and write,
+     *     opened as the run opens them without creating or truncating
+     *     them, the refusal being the open's own error ("'loss.tadah' in
+     *     the working directory '<dir>' cannot be opened: Permission
+     *     denied (tadah hpo rewrites it)", "... (tadah hpo opens it to
+     *     lock best_pot.tadah)", the lock's own potential); a best
+     *     potential, which the run replaces, no directory ("... is a
+     *     directory: tadah hpo writes a file of that name");
      *   - check_search_space_files(), once the target file is read: the
      *     search-space files the run writes (writes_search_space_file(),
      *     writes_resolved_optim_file()), as the result files.
-     * A file the run writes through (the journal, a result file, a lock)
-     * is checked where the operating system puts it, every symbolic link
-     * followed: one that exists must be a regular file the run can write,
-     * one that does not must be in a directory that exists and the run can
-     * write into ("'loss.tadah' ... is a symbolic link to '<dir>/x/loss',
-     * which cannot be created: the directory '<dir>/x' does not exist");
-     * a path the system cannot resolve (a loop of links) is refused. A
-     * best potential, which the run replaces, is checked by its own name:
-     * a link there is replaced by the file, not followed. */
+     * A file the run writes through that does not exist is checked where
+     * the operating system would create it, every symbolic link followed:
+     * a name that ends in '/' or '/.' cannot be a file, and the file must
+     * be in a directory that exists and the run can write into
+     * ("'loss.tadah' ... is a symbolic link to '<dir>/x/loss', which cannot
+     * be created: the directory '<dir>/x' does not exist"); a path the
+     * system cannot resolve is refused. A best potential, which the run
+     * replaces, is checked by its own name: a link there is replaced by
+     * the file, not followed. */
     static void check_run_outputs(const std::string& journal);
     void check_search_space_files() const;
 

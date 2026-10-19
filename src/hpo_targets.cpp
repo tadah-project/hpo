@@ -35,6 +35,9 @@
 #include <system_error>
 #include <unordered_map>
 #include <unistd.h>   // access(): the archive directories
+#include <fcntl.h>    // open(): the output files
+#include <cerrno>
+#include <cstring>
 
 namespace tadah {
 namespace hpo {
@@ -1867,26 +1870,40 @@ struct PhysicalPath {
   fs::path path;               // absolute, without a link, '.' or '..'
   bool exists = false;         // something exists at path
   bool through_links = false;  // a symbolic link was followed to reach it
-  fs::path own_link;           // the target the path's own link stores
-                               // (empty: the path names no link)
+  bool names_directory = false;  // it ends in '/', '/.' or '/..' (as given,
+                                 // or as a link target spliced in at its
+                                 // end): only a directory has such a name
+  fs::path own_link;           // the target the path's own link stores, its
+                               // trailing '/' and '.' set aside (empty: the
+                               // path names no link)
 };
 
 /* @p given as the operating system resolves it to open or create it: from
  * the root, one component after the other, every symbolic link followed --
- * the one the path ends with too, to a file not yet created -- and '..'
- * taken from the directory reached so far. Throws, with the reason alone,
- * where the system cannot resolve it: more than 40 links, the system's
- * limit ("too many levels of symbolic links"), or '..' out of a directory
- * that does not exist or is no directory. (fs::weakly_canonical takes the
- * part of a path that does not exist lexically, and stops at a link to a
- * file not yet created.) */
+ * the one the path ends with too, to a file not yet created -- and '.' and
+ * '..' taken in the directory reached so far. Throws, with the reason
+ * alone, where the system cannot resolve it: more than 40 links, the
+ * system's limit ("too many levels of symbolic links"), '.' or '..' in a
+ * directory that does not exist or is no directory, and a component it
+ * cannot read ("'<path>' cannot be read: Permission denied").
+ * (fs::weakly_canonical takes the part of a path that does not exist
+ * lexically, and stops at a link to a file not yet created.) */
 PhysicalPath resolve_physically(const std::string& given) {
   std::error_code ec;
   const fs::path abs = fs::absolute(fs::path(given), ec);
   if (ec) throw std::runtime_error(ec.message());
   PhysicalPath out;
-  if (fs::is_symlink(fs::symlink_status(abs, ec)))
-    out.own_link = fs::read_symlink(abs, ec);
+  /* The path's own link: its last named component, its trailing '/' and
+   * '.' set aside ("lnk/" names the link lnk, as mkdir takes it). */
+  {
+    fs::path last = abs;
+    while (last.has_parent_path() && last != last.root_path() &&
+           (last.filename().empty() || last.filename() == "."))
+      last = last.parent_path();
+    std::error_code lec;
+    if (fs::is_symlink(fs::symlink_status(last, lec)))
+      out.own_link = fs::read_symlink(last, lec);
+  }
   std::deque<fs::path> todo;
   for (const fs::path& c : abs.relative_path()) todo.push_back(c);
   fs::path cur = abs.root_path();
@@ -1896,25 +1913,45 @@ PhysicalPath resolve_physically(const std::string& given) {
   fs::path stop;
   bool stop_exists = false;
   int links = 0;
+  /* Whether the components taken last were '', '.' or '..': the path then
+   * names a directory. */
+  bool trailing = false;
+  const auto missing = [&] {
+    return std::string(stop_exists && cur == stop ? "is not a directory"
+                                                  : "does not exist");
+  };
   while (!todo.empty()) {
     const fs::path c = todo.front();
     todo.pop_front();
-    if (c.empty() || c == ".") continue;
-    if (c == "..") {
-      if (!stop.empty())
-        throw std::runtime_error(
-            "it walks '..' out of '" + cur.string() + "', which " +
-            (stop_exists && cur == stop ? "is not a directory"
-                                        : "does not exist"));
-      cur = cur.parent_path();
+    if (c.empty()) {
+      trailing = true;
       continue;
     }
+    if (c == ".") {
+      if (!stop.empty())
+        throw std::runtime_error("it walks '.' in '" + cur.string() +
+                                 "', which " + missing());
+      trailing = true;
+      continue;
+    }
+    if (c == "..") {
+      if (!stop.empty())
+        throw std::runtime_error("it walks '..' out of '" + cur.string() +
+                                 "', which " + missing());
+      cur = cur.parent_path();
+      trailing = true;
+      continue;
+    }
+    trailing = false;
     const fs::path next = cur / c;
     if (!stop.empty()) {
       cur = next;
       continue;
     }
     const fs::file_status ls = fs::symlink_status(next, ec);
+    if (ec && ls.type() != fs::file_type::not_found)
+      throw std::runtime_error("'" + next.string() +
+                               "' cannot be read: " + ec.message());
     if (fs::is_symlink(ls)) {
       if (++links > 40)
         throw std::runtime_error("too many levels of symbolic links");
@@ -1943,6 +1980,7 @@ PhysicalPath resolve_physically(const std::string& given) {
   }
   out.path = cur;
   out.exists = stop.empty();
+  out.names_directory = trailing;
   return out;
 }
 
@@ -2021,7 +2059,10 @@ void HPOTargets::check_archive_directory(const std::string& key,
   }
   std::error_code ec;
   if (r.exists) {
-    if (!fs::is_directory(fs::status(r.path, ec)))
+    const fs::file_status st = fs::status(r.path, ec);
+    if (ec)
+      throw std::runtime_error(what + " cannot be read: " + ec.message());
+    if (!fs::is_directory(st))
       throw std::runtime_error(what + " exists and is not a directory");
     if (!writable_directory(r.path))
       throw std::runtime_error(what + " is not writable");
@@ -2043,6 +2084,9 @@ void HPOTargets::check_archive_directory(const std::string& key,
     throw std::runtime_error(cannot + "the directory '" + parent.string() +
                              "' does not exist (tadah hpo creates only the "
                              "last directory of the path)");
+  if (ec)
+    throw std::runtime_error(cannot + "'" + parent.string() +
+                             "' cannot be read: " + ec.message());
   if (!fs::is_directory(ps))
     throw std::runtime_error(cannot + "'" + parent.string() +
                              "' is not a directory");
@@ -2066,26 +2110,55 @@ enum class OutputUse {
   Replaced    // replaces or removes the name (a best potential)
 };
 
+/* Opens the existing file @p file as the run opens it -- to write, and to
+ * read too (@p read_too: a lock) -- without creating or truncating it
+ * (and without waiting on a FIFO), then closes it: 0, or the open's
+ * errno. */
+int open_as_the_run(const std::string& file, bool read_too) {
+  const int fd = ::open(file.c_str(),
+                        (read_too ? O_RDWR : (O_WRONLY | O_APPEND)) |
+                            O_NONBLOCK | O_NOCTTY | O_CLOEXEC);
+  if (fd < 0) return errno;
+  ::close(fd);
+  return 0;
+}
+
 /* Throws when the run cannot write the output file @p file of the working
  * directory as @p use says (@p locked: the best potential a lock is of).
- * A file the run writes through (Rewritten, Locked) is checked where the
- * system puts it (resolve_physically, every link followed): one that
- * exists must be a regular file the run can write, and one that does not
- * must be in a directory the run can write into (the run creates the file,
- * no directory). A file the run replaces (Replaced) is checked by its own
- * name: a symbolic link there is replaced, not followed, and only a
- * directory of that name stops the run. */
+ * A file the run writes through (Rewritten, Locked) that exists is opened
+ * as the run opens it (open_as_the_run): the system decides, following
+ * every link, and the refusal is the open's own error ("... cannot be
+ * opened: Permission denied (tadah hpo rewrites it)"). One that does not
+ * exist is checked where the system would create it
+ * (resolve_physically): a name that ends in '/' or '/.' cannot be a file,
+ * and the file must be in a directory that exists and the run can write
+ * into (the run creates the file, no directory). A file the run replaces
+ * (Replaced) is checked by its own name: a symbolic link there is
+ * replaced, not followed, and only a directory of that name stops the
+ * run. */
 void check_output_file(const std::string& file, OutputUse use,
                        const std::string& locked = std::string()) {
   const std::string where =
       "'" + file + "' in the working directory '" + working_directory() + "'";
-  const std::string a_file = " tadah hpo writes a file of that name";
   std::error_code ec;
   if (use == OutputUse::Replaced) {
-    if (fs::is_directory(fs::symlink_status(file, ec)))
-      throw std::runtime_error(where + " is a directory:" + a_file);
+    const fs::file_status ls = fs::symlink_status(file, ec);
+    if (ec && ls.type() != fs::file_type::not_found)
+      throw std::runtime_error(where + " cannot be read: " + ec.message());
+    if (fs::is_directory(ls))
+      throw std::runtime_error(where + " is a directory: tadah hpo writes a "
+                               "file of that name");
     return;
   }
+  const std::string purpose = use == OutputUse::Locked
+                                  ? "tadah hpo opens it to lock " + locked
+                                  : std::string("tadah hpo rewrites it");
+  const int err = open_as_the_run(file, use == OutputUse::Locked);
+  if (err == 0) return;
+  if (err != ENOENT)
+    throw std::runtime_error(where + " cannot be opened: " +
+                             std::strerror(err) + " (" + purpose + ")");
+  /* Nothing to open: where the system would create the file. */
   PhysicalPath r;
   try {
     r = resolve_physically(file);
@@ -2096,25 +2169,21 @@ void check_output_file(const std::string& file, OutputUse use,
       r.through_links
           ? where + " is a symbolic link to '" + r.path.string() + "', which"
           : where;
-  if (r.exists) {
-    const fs::file_status st = fs::status(r.path, ec);
-    if (fs::is_directory(st))
-      throw std::runtime_error(subject + " is a directory:" + a_file);
-    if (!fs::is_regular_file(st))
-      throw std::runtime_error(subject + " is not a regular file:" + a_file);
-    if (::access(r.path.c_str(), W_OK) != 0)
-      throw std::runtime_error(
-          subject + " is not writable: " +
-          (use == OutputUse::Locked ? "tadah hpo opens it to lock " + locked
-                                    : std::string("tadah hpo rewrites it")));
-    return;
-  }
-  const fs::path dir = r.path.parent_path();
   const std::string cannot = subject + " cannot be created: ";
+  if (r.names_directory)
+    throw std::runtime_error(cannot +
+                             "a file name cannot end in '/' or '/.'");
+  if (r.exists)
+    throw std::runtime_error(where + " cannot be opened: " +
+                             std::strerror(err) + " (" + purpose + ")");
+  const fs::path dir = r.path.parent_path();
   const fs::file_status ds = fs::status(dir, ec);
   if (ds.type() == fs::file_type::not_found)
     throw std::runtime_error(cannot + "the directory '" + dir.string() +
                              "' does not exist");
+  if (ec)
+    throw std::runtime_error(cannot + "'" + dir.string() +
+                             "' cannot be read: " + ec.message());
   if (!fs::is_directory(ds))
     throw std::runtime_error(cannot + "'" + dir.string() +
                              "' is not a directory");
