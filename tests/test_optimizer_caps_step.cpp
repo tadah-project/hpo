@@ -397,7 +397,7 @@ TEST_CASE("OptimizerCaps: the ALGO help describes the CERES drivers",
         CHECK_THAT(caps_help("CERES", algo),
                    Catch::StartsWith(std::string("Options for CERES:") + algo +
                                      "\n   * REFUSED: Ceres' "
-                                     "GradientProblemSolver has no bounds"));
+                                     "line-search solver has no bounds"));
     }
     for (const char* algo : {"STEEPEST_DESCENT"}) {
         INFO(algo);
@@ -406,7 +406,8 @@ TEST_CASE("OptimizerCaps: the ALGO help describes the CERES drivers",
         const std::string a = algo;
         CHECK_THAT(help,
                    Catch::StartsWith("Options for CERES:" + a + "\n") &&
-                   Catch::Contains("Ceres' GradientProblemSolver") &&
+                   Catch::Contains("Ceres' line-search solver: steepest "
+                                   "descent, Armijo line search") &&
                    Catch::Contains("   * Stops that end a run: MAXEVAL, "
                                    "FTOL_REL, XTOL_REL\n") &&
                    Catch::Contains("PARAM tol_gradinf") &&

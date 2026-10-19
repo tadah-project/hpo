@@ -28,6 +28,10 @@ api = 1
 parts = ["part_a.toml", "part_b.toml"]
 anneal_keys = "anneal_keys.toml"
 optimizers = "optimizers_gen.toml"
+optimizer_docs = "optimizers_doc.toml"
+
+[abbreviations]
+MLSL = "multi-level single-linkage"
 
 [lexing]
 doc = "Lines are read one by one."
@@ -191,9 +195,18 @@ params = [{ name = "delta", default = 50.0, gt = 0.0 }]
 
 [[rule]]
 id = "RULE.FAILSCORE_with_GRID"
+title = "A rule between two entries"
 doc = "A rule between two entries."
 check = "startup"
 keys = ["ROOT.FAILSCORE", "PARAM.TADAH:GRID.GRID_POINTS"]
+'''
+
+OPTIMIZER_DOCS = '''
+[library.TADAH]
+doc = "The optimisers of Tadah! itself."
+
+[optimizer."TADAH:GRID"]
+doc = "A search of the points of a regular grid."
 '''
 
 OPTIMIZERS = '''
@@ -218,7 +231,8 @@ class Registry(unittest.TestCase):
         self.dir = pathlib.Path(self._tmp.name)
         self.files = {"hpotarget.toml": MAIN, "part_a.toml": PART_A,
                       "part_b.toml": PART_B,
-                      "optimizers_gen.toml": OPTIMIZERS}
+                      "optimizers_gen.toml": OPTIMIZERS,
+                      "optimizers_doc.toml": OPTIMIZER_DOCS}
 
     def tearDown(self):
         self._tmp.cleanup()
@@ -538,6 +552,161 @@ class Registry(unittest.TestCase):
         self.edit("part_b.toml", 'doc = "Points per dimension."',
                   'doc = "Set your points per dimension."')
         self.assertIn("'your' addresses the reader", self.errors())
+
+    # ---- the text of the reference pages -------------------------------------
+    def test_rule_has_a_title(self):
+        # Pins: a rule has a title, the phrase the reference pages show as
+        # its heading and as the text of a link to it: no full stop at its
+        # end, at most 80 characters.
+        # Before the fix: title is an unknown field of a rule.
+        reg = self.load()
+        self.assertEqual(reg.rules[0].title, "A rule between two entries")
+        self.edit("part_b.toml", 'title = "A rule between two entries"',
+                  'title = "A rule between two entries."')
+        self.assertIn("RULE.FAILSCORE_with_GRID: title: a title is a phrase "
+                      "without a full stop at its end", self.errors())
+        self.edit("part_b.toml", 'title = "A rule between two entries."',
+                  'title = "' + "x" * 81 + '"')
+        self.assertIn("RULE.FAILSCORE_with_GRID: title: longer than 80 "
+                      "characters", self.errors())
+        self.edit("part_b.toml", 'title = "' + "x" * 81 + '"\n', "")
+        self.assertIn("required field 'title' is missing", self.errors())
+
+    def test_documentation_text_holds_no_placeholder(self):
+        # Pins: {name} marks a value in a message only. Documentation text
+        # (doc, long_doc, quirk, condition, title, a rule's msg_doc, the doc
+        # of an argument or a case, a default's text) says in words what
+        # the message holds; ${name}, a LAMMPS variable, is text. A check's
+        # doc, which says what its message holds, may name them.
+        # Before the fix: a placeholder in documentation text passed.
+        self.edit("hpotarget.toml", 'default = { literal = "1e6" }',
+                  'default = { literal = "1e6" }\n'
+                  'checks = [{ msg = "{key} needs {what}", '
+                  'doc = "{what} names the value." }]')
+        self.edit("part_b.toml", 'doc = "A rule between two entries."',
+                  'doc = "{list} names the entries."\n'
+                  'msg_doc = "The {keys} of the message."')
+        self.edit("part_b.toml", 'doc = "Points per dimension."',
+                  'doc = "Points per dimension, {n} of them."')
+        self.edit("part_a.toml", 'text = "SEED 1"',
+                  'text = "SEED 1"\ndoc = "Refused with {why}."')
+        self.edit("hpotarget.toml", 'doc = "The search."',
+                  'doc = "The search; ${maxtime} is text."')
+        e = self.errors()
+        self.assertIn("RULE.FAILSCORE_with_GRID: doc: holds the placeholder "
+                      "{list}; documentation text says in words what a "
+                      "message holds", e)
+        self.assertIn("PARAM.TADAH:GRID.GRID_POINTS: doc: holds the "
+                      "placeholder {n}", e)
+        self.assertIn("invalid[0]: doc: holds the placeholder {why}", e)
+        self.assertIn("RULE.FAILSCORE_with_GRID: msg_doc: holds the "
+                      "placeholder {keys}", e)
+        self.assertNotIn("maxtime", e)
+        self.assertNotIn("checks[0]: doc", e)
+
+    def test_exclusive_minimum_and_integral_number(self):
+        # Pins: min_open = true leaves min out of the range (a value above
+        # min), integral = true takes whole numbers only; min_open needs a
+        # min, integral an argument of kind number.
+        # Before the fix: both are unknown fields of an argument.
+        self.edit("part_b.toml", 'kind = "integer", min = 2 }',
+                  'kind = "number", min = 2, min_open = true, '
+                  'integral = true }')
+        a = self.load().params[0].args[0]
+        self.assertEqual((a.min, a.min_open, a.integral), (2, True, True))
+        self.edit("part_b.toml", 'min = 2, min_open', 'min_open')
+        self.assertIn("min_open needs a min", self.errors())
+        self.edit("part_b.toml", 'kind = "number", min_open = true',
+                  'kind = "integer", min = 2')
+        self.assertIn("integral belongs to an argument of kind number",
+                      self.errors())
+
+    def test_an_example_after_the_first_has_a_doc(self):
+        # Pins: the reference pages show an example's doc as the caption of
+        # its code; the first example of an entry may go without one, each
+        # later one says what it shows.
+        # Before the fix: a second example without a doc passed.
+        self.files["hpotarget.toml"] += textwrap.dedent('''
+            [[key.examples]]
+            wrap = "root"
+            text = "FAILSCORE 20"
+            ''')
+        self.assertIn("ROOT.FAILSCORE example 1: an example after the first "
+                      "of an entry has a doc", self.errors())
+        self.files["hpotarget.toml"] += 'doc = "A larger score."\n'
+        self.assertEqual(self.load().keys[0].examples[1].doc,
+                         "A larger score.")
+
+    def test_repeat_doc(self):
+        # Pins: repeat_doc, when a key has it, is the repeat rule as the
+        # reference shows it, for a key whose forms repeat differently.
+        # Before the fix: repeat_doc is an unknown field of a key.
+        self.edit("part_a.toml", 'repeat = "last_wins"\ndoc = "The library',
+                  'repeat = "last_wins"\nrepeat_doc = "A later line '
+                  'replaces the library."\ndoc = "The library')
+        lib = next(k for k in self.load().keys if k.name == "LIB")
+        self.assertEqual(lib.repeat_doc, "A later line replaces the library.")
+
+    def test_lammps_script_section(self):
+        # Pins: [lammps_script] says what a LAMMPS script of a PC_LAMMPS
+        # line provides; its fixture is the script the tests run. It is
+        # the entry LAMMPS_SCRIPT.
+        # Before the fix: lammps_script is an unknown table.
+        self.files["part_b.toml"] += textwrap.dedent('''
+            [lammps_script]
+            doc = "A script takes the candidate potential."
+            fixture = "script_b"
+
+            [fixture.script_b]
+            path = "b.in"
+            doc = "A script."
+            text = "pair_style tadah\\npair_coeff * * EXTERN H\\n"
+            ''')
+        reg = self.load()
+        self.assertEqual(reg.lammps_script.id, "LAMMPS_SCRIPT")
+        self.assertEqual(reg.lammps_script.fields["fixture"], "script_b")
+        self.assertIs(reg.by_id()["LAMMPS_SCRIPT"], reg.lammps_script)
+        self.edit("part_b.toml", 'fixture = "script_b"',
+                  'fixture = "script_c"')
+        self.assertIn("[lammps_script]: fixture 'script_c' is not a "
+                      "[fixture.*] table", self.errors())
+
+    def test_optimizer_docs(self):
+        # Pins: the file meta.optimizer_docs names describes every library
+        # and every registered LIB:ALGO of the optimiser list; a name that
+        # is no library or registered optimiser is an error, and its text
+        # is impersonal.
+        # Before the fix: optimizer_docs is an unknown field of [meta].
+        reg = self.load()
+        self.assertEqual(reg.optimizer_docs.optimizers,
+                         {"TADAH:GRID": "A search of the points of a "
+                                        "regular grid."})
+        self.assertEqual(reg.optimizer_docs.libraries,
+                         {"TADAH": "The optimisers of Tadah! itself."})
+        self.files["optimizers_doc.toml"] = OPTIMIZER_DOCS.replace(
+            '[optimizer."TADAH:GRID"]', '[optimizer."TADAH:NOPE"]').replace(
+            "[library.TADAH]", "[library.NONE]").replace(
+            "of Tadah! itself", "you run")
+        e = self.errors()
+        self.assertIn("optimizers_doc.toml: TADAH:GRID, a registered "
+                      "optimiser, has no doc", e)
+        self.assertIn("optimizers_doc.toml [optimizer.TADAH:NOPE]: is not a "
+                      "registered optimiser of optimizers_gen.toml", e)
+        self.assertIn("optimizers_doc.toml: the library TADAH has no doc", e)
+        self.assertIn("optimizers_doc.toml [library.NONE]: is not a library "
+                      "of optimizers_gen.toml", e)
+        self.assertIn("'you' addresses the reader", e)
+
+    def test_abbreviations(self):
+        # Pins: [abbreviations] spells out the abbreviations of the
+        # registry's text, for the reference pages to write out at their
+        # first use on a page.
+        # Before the fix: abbreviations is an unknown table.
+        self.assertEqual(self.load().abbreviations,
+                         {"MLSL": "multi-level single-linkage"})
+        self.edit("hpotarget.toml", 'MLSL = "multi',
+                  '"ML SL" = "multi')
+        self.assertIn("abbreviation 'ML SL' is not one word", self.errors())
 
     # ---- the command ---------------------------------------------------------
     def test_check_command(self):

@@ -8454,7 +8454,7 @@ TEST_CASE("Finite differences: a search on the upper bound evaluates nothing "
                  * box */
                 CHECK(count_of(journal, "CERES:STEEPEST_DESCENT (OUTER): "
                                         "ignores the OPTIM box: Ceres' "
-                                        "GradientProblemSolver has no "
+                                        "line-search solver has no "
                                         "bounds") == 1u);
                 CHECK(count_of(journal, "lies outside its OPTIM box [1, 2]: "
                                         "it is not evaluated") == 1u);
