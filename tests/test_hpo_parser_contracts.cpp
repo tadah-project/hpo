@@ -2125,6 +2125,72 @@ TEST_CASE("tadah refit: SEED in an OPTIMIZER block is rejected with the "
                                  "MAXEVAL 100 ENDOPTIMIZER") == "");
 }
 
+/* A tadah refit stage sets each key once, as a target file does: a key
+ * given twice in an OPTIMIZER block, in its INNER block, or as MAXEVAL and
+ * its alias MAXITER, is refused, naming the block and the key as written
+ * ("REFINE: MAXEVAL is set twice in the OPTIMIZER block (as MAXEVAL and as
+ * MAXITER, its alias); each key is given once"; "REFINE: MAXITER is set
+ * twice ..."), and so are a second OPTIMIZER block in a stage, a second
+ * INNER block in an OPTIMIZER block and a stage key given twice (ENABLED,
+ * MAX_ADD). A PARAM of another name is no repeat.
+ * Before the fix: the later value replaced the first without a word (a
+ * second OPTIMIZER block replaced the first's settings). */
+TEST_CASE("tadah refit: a key set twice in a stage is refused",
+          "[HPO][refit][strict_numbers]")
+{
+    const std::string once = "; each key is given once";
+    CHECK(refit_error("REFINE", "OPTIMIZER LIB CERES ALGO LM MAXEVAL 5 "
+                                "MAXEVAL 9 ENDOPTIMIZER") ==
+          "REFINE: MAXEVAL is set twice in the OPTIMIZER block" + once);
+    CHECK(refit_error("REFINE", "OPTIMIZER LIB CERES ALGO LM MAXEVAL 5 "
+                                "MAXITER 9 ENDOPTIMIZER") ==
+          "REFINE: MAXEVAL is set twice in the OPTIMIZER block (as MAXEVAL "
+          "and as MAXITER, its alias)" + once);
+    /* the key as written: MAXITER twice is no MAXEVAL (it said "MAXEVAL
+     * is set twice"); mixed spellings in the order written */
+    CHECK(refit_error("REFINE", "OPTIMIZER LIB CERES ALGO LM MAXITER 5 "
+                                "MAXITER 9 ENDOPTIMIZER") ==
+          "REFINE: MAXITER is set twice in the OPTIMIZER block" + once);
+    CHECK(refit_error("FUSE", "OPTIMIZER LIB CERES ALGO DOGLEG MAXITER 5 "
+                              "MAXITER 9 ENDOPTIMIZER") ==
+          "FUSE: MAXITER is set twice in the OPTIMIZER block" + once);
+    CHECK(refit_error("REFINE", "OPTIMIZER LIB CERES ALGO LM MAXITER 5 "
+                                "MAXEVAL 9 ENDOPTIMIZER") ==
+          "REFINE: MAXEVAL is set twice in the OPTIMIZER block (as MAXITER, "
+          "its alias, and as MAXEVAL)" + once);
+    CHECK(refit_error("FUSE", "OPTIMIZER LIB CERES ALGO DOGLEG GTOL 1e-6 "
+                              "GTOL 1e-8 ENDOPTIMIZER") ==
+          "FUSE: GTOL is set twice in the OPTIMIZER block" + once);
+    /* a second INNER block (it replaced the first) */
+    CHECK(refit_error("EXPLORE", "OPTIMIZER LIB NLOPT ALGO GN_MLSL_LDS "
+                                 "MAXEVAL 100 INNER LIB NLOPT ALGO LN_SBPLX "
+                                 "MAXEVAL 5 ENDINNER INNER LIB NLOPT "
+                                 "ALGO LN_BOBYQA MAXEVAL 7 ENDINNER "
+                                 "ENDOPTIMIZER") ==
+          "EXPLORE: the INNER block is given twice; an OPTIMIZER block takes "
+          "one INNER block");
+    CHECK(refit_error("EXPLORE", "OPTIMIZER LIB NLOPT ALGO GN_MLSL_LDS "
+                                 "MAXEVAL 100 INNER LIB NLOPT ALGO LN_SBPLX "
+                                 "MAXEVAL 5 MAXEVAL 6 ENDINNER "
+                                 "ENDOPTIMIZER") ==
+          "EXPLORE INNER: MAXEVAL is set twice in the INNER block" + once);
+    CHECK(refit_error("REFINE", "OPTIMIZER LIB CERES ALGO LM ENDOPTIMIZER "
+                                "OPTIMIZER LIB CERES ALGO DOGLEG "
+                                "ENDOPTIMIZER") ==
+          "REFINE: the OPTIMIZER block is given twice; a stage takes one "
+          "OPTIMIZER block");
+    CHECK(refit_error("REFINE", "ENABLED true ENABLED false") ==
+          "REFINE: ENABLED is set twice" + once);
+    CHECK(refit_error("EXPLORE", "MAX_ADD 2 MAX_ADD 3 OPTIMIZER LIB NLOPT "
+                                 "ALGO GN_MLSL_LDS MAXEVAL 100 "
+                                 "ENDOPTIMIZER") ==
+          "EXPLORE: MAX_ADD is set twice" + once);
+    /* the same key in the OPTIMIZER and the INNER block: two optimisers */
+    CHECK(refit_error("EXPLORE", "OPTIMIZER LIB NLOPT ALGO GN_MLSL_LDS "
+                                 "MAXEVAL 100 INNER LIB NLOPT ALGO LN_SBPLX "
+                                 "MAXEVAL 5 ENDINNER ENDOPTIMIZER") == "");
+}
+
 TEST_CASE("tadah refit: OPTIMIZER block numbers are strict",
           "[HPO][refit][strict_numbers]")
 {
@@ -2212,7 +2278,9 @@ TEST_CASE("tadah refit: OPTIMIZER block numbers are strict",
                                  "ENDOPTIMIZER") == "");
     CHECK(refit_error("REFINE", "OPTIMIZER LIB CERES ALGO LM MAXEVAL 1 "
                                 "ENDOPTIMIZER") == "");
-    CHECK(refit_error("REFINE", "OPTIMIZER LIB CERES ALGO LM MAXEVAL 1000 "
+    /* MAXEVAL and its alias MAXITER are one key, given once (a block with
+     * both is refused: the case "a key set twice in a stage"). */
+    CHECK(refit_error("REFINE", "OPTIMIZER LIB CERES ALGO LM "
                                 "FTOL_REL 1e-14 GTOL 1e-14 MAXITER 50 "
                                 "ENDOPTIMIZER") == "");
 }
@@ -2873,8 +2941,10 @@ TEST_CASE("tadah refit: a stage OPTIMIZER block rejects the keys the stage "
                                  "MAXEVAL 100 INNER LIB NLOPT ALGO LN_SBPLX "
                                  "MAXEVAL 50 FTOL_REL 1e-7 XTOL_REL 1e-6 "
                                  "ENDINNER ENDOPTIMIZER") == "");
-    CHECK(refit_error("REFINE", "OPTIMIZER LIB CERES ALGO LM MAXEVAL 1000 "
-                                "MAXITER 900 FTOL_REL 1e-14 GTOL 1e-14 "
+    /* MAXEVAL or its alias MAXITER, one of them (a block with both is
+     * refused: the case "a key set twice in a stage"). */
+    CHECK(refit_error("REFINE", "OPTIMIZER LIB CERES ALGO LM MAXITER 900 "
+                                "FTOL_REL 1e-14 GTOL 1e-14 "
                                 "ENDOPTIMIZER") == "");
     CHECK(refit_error("FUSE", "OPTIMIZER LIB CERES ALGO DOGLEG MAXITER 2000 "
                               "FTOL_REL 1e-14 ENDOPTIMIZER") == "");

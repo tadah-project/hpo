@@ -18,6 +18,8 @@
 #              `default`; may appear without a base default)
 #   values     enum type only: the accepted tokens, first = conventional order
 #   kinds      subset of ["serial", "pt", "pa"] the key applies to
+#   auto_kinds subset of `kinds` that accept AUTO (accepts_auto keys only;
+#              absent = every kind of the key)
 #   group      budget|temperature|steps|ladder|swaps|init|stopping (docs/caps grouping)
 #   rank       importance order within the group (1 = most important; docs/caps order)
 #   doc        one-line description (docs key tables + CLI caps)
@@ -101,9 +103,12 @@ group = "steps"
 rank = 3
 doc = "CLASSIC kernel: whole-vector proposals per temperature rung. Serial default AUTO: the MAXEVAL budget spread evenly over the cooling schedule (written to the journal)."
 accepts_auto = 0.0
+auto_kinds = ["serial"]
 min = 1
 # serial default is AUTO (derived in the driver from MAXEVAL and the
-# schedule length; hard error when neither CHAIN_LENGTH nor MAXEVAL is set)
+# schedule length; hard error when neither CHAIN_LENGTH nor MAXEVAL is set).
+# Only the serial driver derives it: ANNEAL_PA refuses AUTO (its 0 sentinel
+# would give every temperature step 0 evaluations).
 
 [[key]]
 name = "NS"
@@ -125,6 +130,7 @@ group = "steps"
 rank = 5
 doc = "Corana kernel: step-adjustment cycles per temperature rung. Serial default AUTO: budget-derived, capped at the Corana 1987 value max(100, 5n)."
 accepts_auto = 0.0
+auto_kinds = ["serial"]
 min = 1
 range_note = "(Corana variant)"
 

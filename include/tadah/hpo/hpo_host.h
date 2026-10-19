@@ -321,6 +321,15 @@ public:
      * (reset_best_state_for_fresh_run). MPI ranks coordinate before any
      * evaluation can publish. */
     void prepare_best_publication() const;
+    /* The end of best-potential publication: removes the lock files of
+     * best_pot.tadah (rank 0) and of the rank-local mirror
+     * (durable_best::remove_lock_file). drive_run() calls it after its
+     * collective, which every rank has passed by then, so no rank publishes
+     * any more, and before the trailer, whatever the run's ending. A lock
+     * file that cannot be removed is a WARNING in the journal (on standard
+     * error when the journal is not open): the run's result does not
+     * depend on it. */
+    void finish_best_publication() const noexcept;
 
     /** Why two evaluations of one point can give different losses in
      *  this run (HPOTargets::repeat_reuse_blocker), or "" when every
@@ -682,6 +691,15 @@ private:
     /* Archive (DUMP/BDUMP) writer: whole file or nothing, retried. */
     static void write_archive(WriterFiles& wf, const std::string& path,
                               const std::string& bytes);             // io_mtx_ held
+    /* One result's rows of the per-eval and best logs (OUTPUT, BOUTPUT),
+     * staged in `wf`, and its BDUMP and DUMP archives: the writer of every
+     * drain -- a full queue, the drain after a gap skip and the drain at
+     * the end of the run -- so they write the same files. A point outside
+     * the OPTIM box gets no DUMP archive: it is not trained, and no
+     * potential outside the box is written (box_penalty.h). */
+    static void write_result(WriterFiles& wf, const Result& e,
+                             const HPOTargets& trg, std::size_t n_val,
+                             std::size_t cw, int prec);              // io_mtx_ held
     static void submit_result(Result&&, const HPOTargets& trg_,
                               const core::Context& master_ctx,
                               const core::Context& val_ctx,

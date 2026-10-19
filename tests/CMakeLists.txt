@@ -95,7 +95,8 @@ endforeach()
 #   rhoform_e2e    test_hpo_rhoform.cpp: RHOFORM through hpo_run (an invalid
 #                  density form stops the run; a NONNEG/MONOTONE amplitude
 #                  below 0, outside its box, is not evaluated,
-#                  [rhoform_projection_e2e], one of its cases)
+#                  [rhoform_projection_e2e], one of its cases, and gets
+#                  no DUMP archive, [dump_e2e])
 #   rhogate_e2e    test_rho_gates.cpp: RHOGATE rejects before training
 #   rhobargate_e2e test_rho_gates.cpp: RHOBARGATE rejects before training
 #   bumpgate_e2e   test_bump_support_gate.cpp: BUMPGATE rejects before

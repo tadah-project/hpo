@@ -989,7 +989,12 @@ int hpo_run_from_startup(core::Context& ctx, HPOLog& log,
                       << "   dim=" << sp.low.size() << "\n";
             policy->run(sp, host);
         },
-        host, log);
+        host, log,
+        /* After the run's collective every rank has passed it, so no rank
+         * publishes the best potential any more: its lock files go,
+         * whatever the ending, before the trailer, so that a lock file that
+         * stays is a WARNING in the journal. */
+        [&]() { host.finish_best_publication(); });
 
     /* The run's pools stop when `pools` goes, here or on any exception
      * above (RunPools): the PROCESS worker processes get their SHUTDOWN

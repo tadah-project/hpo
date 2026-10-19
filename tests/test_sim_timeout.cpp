@@ -227,12 +227,30 @@ TEST_CASE("PC_SCRIPT_TIMEOUT and legacy MAXTIME set an identical value",
     REQUIRE(ta.MAX_TIME == tb.MAX_TIME);   // downstream timer injection identical
 }
 
-TEST_CASE("both timeout keys: later line wins, both flags set",
+/* MAXTIME and PC_SCRIPT_TIMEOUT are one key: set again only after a
+ * PC_LAMMPS line has taken the first value, else refused naming the first
+ * (it was: the later line replaced the first). With a PC_LAMMPS line
+ * between, that line keeps the first value and the later line is the
+ * run-wide value; both flags are set. */
+TEST_CASE("both timeout keys: one key, set again after a PC_LAMMPS line "
+          "takes the first",
           "[lammps_sim][timeout][config]") {
-    ScopedTempFile cfg(std::string(MIN_OPT) + "MAXTIME 7\nPC_SCRIPT_TIMEOUT 5\n");
     tadah::core::Context ctx;
+    ScopedTempFile twice(std::string(MIN_OPT) +
+                         "MAXTIME 7\nPC_SCRIPT_TIMEOUT 5\n");
+    REQUIRE_THROWS_WITH(
+        tadah::hpo::HPOTargets(ctx, twice.path.string()),
+        Catch::Contains("Error on line 6: PC_SCRIPT_TIMEOUT is set twice "
+                        "(first on line 5, as MAXTIME) and no PC_LAMMPS or "
+                        "PC_FAILPROBE line between takes the first"));
+    ScopedTempFile script(SIMPLE_BODY);
+    ScopedTempFile cfg(std::string(MIN_OPT) + "MAXTIME 7\nPC_LAMMPS --script " +
+                       script.path.string() +
+                       " --varloss foo 0.0 1.0\nPC_SCRIPT_TIMEOUT 5\n");
     tadah::hpo::HPOTargets trg(ctx, cfg.path.string());
-    REQUIRE(trg.MAX_TIME == "5");          // later line wins
+    REQUIRE(trg.LS.size() == 1);
+    REQUIRE(trg.LS[0].maxtime == "7");     // the line takes the first
+    REQUIRE(trg.MAX_TIME == "5");          // the run-wide value: the later
     REQUIRE(trg.MAX_TIME_seen_new);
     REQUIRE(trg.MAX_TIME_seen_legacy);
     REQUIRE(trg.MAX_TIME_key == "PC_SCRIPT_TIMEOUT");

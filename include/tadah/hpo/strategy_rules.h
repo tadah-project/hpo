@@ -5,8 +5,7 @@
  * single source of truth for:
  *   - HPOTargets::read(): require_driver() when an OPTIMIZER or EXPLORE
  *     block ends, require_inner_driver() when an INNER block ends, and
- *     require_strategy_key() and require_prestage_block() when a STRATEGY
- *     block ends;
+ *     require_strategy_key() when a STRATEGY block ends;
  *   - validate_hpo_setup(): validate_run_policy(), at startup, before the
  *     host is built or any data is loaded;
  *   - MultiStartPolicy::validate() and StagedPolicy::validate(), which the
@@ -109,6 +108,16 @@ bool runs_from_each_start(const OptimizerCaps& caps);
  * gradient-based one. */
 std::string nlopt_inner_searches_without_gradient();
 
+/* Every registered optimiser that runs without an INNER block and takes
+ * no gradient (obtains_gradients() of the optimiser with no INNER block),
+ * sorted, from the registry: "ASA:ASA, DLIB:GFS, NLOPT:..., TADAH:RANDOM".
+ * NLopt's MLSL and AUGLAG algorithms without a default local optimiser
+ * (AUGLAG, AUGLAG_EQ, G_MLSL, G_MLSL_LDS) are left out: they need an INNER
+ * block. The optimisers a block can name as written in a run with
+ * PC_LAMMPS, which takes no gradient, besides DLIB:BFGS: HPOTargets::read()
+ * names them when it refuses a gradient-based one. */
+std::string searches_without_gradient();
+
 /* STRATEGY TYPE MULTISTART: `spec` names an optimiser, and one that
  * runs_from_each_start() accepts, for any N_STARTS. A multi-seed backend
  * (OptimizerCaps::accepts_multi_seed: DLIB:GFS) runs every start in one
@@ -178,12 +187,6 @@ void reject_refused_backends(const OptimizerSpec& spec);
 bool is_strategy_type_key(const std::string& key);
 void require_strategy_key(const std::string& key, StrategyType type,
                           bool type_given);
-
-/* The EXPLORE and REFINE blocks configure the phases of TYPE PRESTAGE,
- * which must be declared before them; a later TYPE line of the same
- * STRATEGY block could still change it. Throws unless `type`, the TYPE the
- * block ends with, is PRESTAGE. `block` is "EXPLORE" or "REFINE". */
-void require_prestage_block(const std::string& block, StrategyType type);
 
 /* "PLAIN", "MULTISTART" or "PRESTAGE". */
 const char* strategy_type_name(StrategyType type);

@@ -1086,6 +1086,28 @@ void HPO_Host<P,R>::prepare_best_publication() const {
     warmstart::reset_for_fresh_run();
 }
 
+template<class P,class R>
+void HPO_Host<P,R>::finish_best_publication() const noexcept {
+    const auto report = [](const std::string& msg) {
+        HPOLog& log = HPOLog::instance();
+        if (log.is_open()) log.warning(msg);
+        else std::cerr << "[HPO] WARNING: " << msg << std::endl;
+    };
+    const auto remove = [&](const std::string& path) {
+        try {
+            durable_best::remove_lock_file(path);
+        } catch (const std::exception& e) {
+            report(std::string("the lock file of the best potential stays: ") +
+                   e.what());
+        } catch (...) {
+            report("the lock file of the best potential stays: unknown error");
+        }
+    };
+    if (hpo_rank() == 0) remove(trg_.canonicalBestPotFile);
+    if (trg_.localBestPotFile != trg_.canonicalBestPotFile)
+        remove(trg_.localBestPotFile);
+}
+
 template<class P, class R>
 thread_local tadah::mlip::memory::MLIPWorkspaceManager
 HPO_Host<P,R>::tls_ws_{};
@@ -3882,6 +3904,55 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
     }
 }
 
+/* ---------- one result's rows and archives ------------------------------ */
+template<class P,class R>
+void HPO_Host<P,R>::write_result(WriterFiles& wf, const Result& e,
+                                 const HPOTargets& trg, std::size_t n_val,
+                                 std::size_t cw, int prec)
+{
+    /* ---- print standard logs ------------------------------------ */
+    if(e.iter % trg.outputEvery == 0){
+        print_loss_line  (wf.loss.stage() , e.iter, e, trg, n_val, cw, prec);
+        print_outvar_line(wf.outv.stage() , e.iter, e, trg, cw, prec);
+        print_params_line(wf.par.stage()  , e.iter, e,      cw, prec);
+        print_stats_line (wf.stats.stage(), e.iter, e, trg, n_val, cw, prec);
+    }
+
+    /* ---- new best logs ------------------------------------------ */
+    if(e.is_best) {
+        if(e.best_iter % trg.bestOutputEvery == 0) {
+            print_loss_line  (wf.best.stage()      , e.best_iter, e, trg, n_val, cw, prec);
+            print_outvar_line(wf.best_outv.stage() , e.best_iter, e, trg, cw, prec);
+            print_params_line(wf.best_par.stage()  , e.best_iter, e,      cw, prec);
+            print_stats_line (wf.best_stats.stage(), e.best_iter, e, trg, n_val, cw, prec);
+        }
+
+        /* archive best_pot_N.tadah ---------------------------------- */
+        if(e.best_iter % trg.dumpBestPotEvery == 0){
+            std::ostringstream bpa;
+            PotHeaderWriter::write_best_archive_header(bpa, e, trg, cw, prec);
+            PotHeaderWriter::write_candidate_hot(bpa, e);
+            PotHeaderWriter::write_potential_body(bpa, e.pot_ctx, trg.training_record, trg.pot_digits);
+            write_archive(wf, std::string(trg.dumpBestPotDir)
+                + "/best_pot_" + std::to_string(e.best_iter) + ".tadah"
+                + trg.potArchiveSuffix, bpa.str());
+        }
+    }
+
+    /* ---- archive ANY pot every ---------------------------------- */
+    /* Not a point outside the OPTIM box: it was not evaluated, and no
+     * potential outside the box is written (box_penalty.h). */
+    if(!e.out_of_box && e.iter % trg.dumpPotEvery == 0){
+        std::ostringstream pa;
+        PotHeaderWriter::write_archive_header(pa, e, cw, prec);
+        PotHeaderWriter::write_candidate_hot(pa, e);
+        PotHeaderWriter::write_potential_body(pa, e.pot_ctx, trg.training_record, trg.pot_digits);
+        write_archive(wf, std::string(trg.dumpPotDir)
+            + "/pot_" + std::to_string(e.iter) + ".tadah"
+            + trg.potArchiveSuffix, pa.str());
+    }
+}
+
 /* ---------- opportunistic writer helper ------------------------------ */
   template<class P,class R>
 void HPO_Host<P,R>::submit_result(Result&& res, const HPOTargets& trg,
@@ -3961,14 +4032,6 @@ void HPO_Host<P,R>::submit_result(Result&& res, const HPOTargets& trg,
          * transient error within one budget for the whole drain. */
         WriterFiles& wf = writer_files(trg);
         wf.begin_drain();
-        std::ostream& loss_f       = wf.loss.stage();
-        std::ostream& outv_f       = wf.outv.stage();
-        std::ostream& par_f        = wf.par.stage();
-        std::ostream& stats_f      = wf.stats.stage();
-        std::ostream& best_f       = wf.best.stage();
-        std::ostream& best_outv_f  = wf.best_outv.stage();
-        std::ostream& best_par_f   = wf.best_par.stage();
-        std::ostream& best_stats_f = wf.best_stats.stage();
 
         std::size_t _written = 0;
         std::size_t _last_iter_processed = 0;
@@ -3983,54 +4046,7 @@ void HPO_Host<P,R>::submit_result(Result&& res, const HPOTargets& trg,
             try {
                 const auto& e = io_buf_[next_flush_];
 
-        /* ---- print standard logs ------------------------------------ */
-        if(next_flush_ % trg.outputEvery == 0){
-            print_loss_line  (loss_f , e.iter, e, trg, n_val, cw, prec);
-            print_outvar_line(outv_f , e.iter, e, trg, cw, prec);
-            print_params_line(par_f  , e.iter, e,      cw, prec);
-            print_stats_line (stats_f, e.iter, e, trg, n_val, cw, prec);
-        }
-
-        /* ---- new best logs ------------------------------------------ */
-        if(e.is_best) {
-          if(e.best_iter % trg.bestOutputEvery == 0) {
-            print_loss_line  (best_f      , e.best_iter, e, trg, n_val, cw, prec);
-            print_outvar_line(best_outv_f , e.best_iter, e, trg, cw, prec);
-            print_params_line(best_par_f  , e.best_iter, e,      cw, prec);
-            print_stats_line (best_stats_f, e.best_iter, e, trg, n_val, cw, prec);
-          }
-
-          /* archive best_pot_N.tadah ---------------------------------- */
-          if(e.best_iter % trg.dumpBestPotEvery == 0){
-            std::ostringstream bpa;
-
-            PotHeaderWriter::write_best_archive_header(
-                bpa, e, trg, cw, prec);
-
-            PotHeaderWriter::write_candidate_hot(bpa, e);
-
-            PotHeaderWriter::write_potential_body(bpa, e.pot_ctx, trg.training_record, trg.pot_digits);
-            write_archive(wf, std::string(trg.dumpBestPotDir)
-                +"/best_pot_" + std::to_string(e.best_iter) + ".tadah"
-                + trg.potArchiveSuffix, bpa.str());
-          }
-        }
-
-        /* ---- archive ANY pot every ---------------------------------- */
-        /* Not a point outside the OPTIM box: it was not evaluated, and no
-         * potential outside the box is written (box_penalty.h). */
-        if(!e.out_of_box && e.iter % trg.dumpPotEvery == 0){
-            std::ostringstream pa;
-
-            PotHeaderWriter::write_archive_header(pa, e, cw, prec);
-
-            PotHeaderWriter::write_candidate_hot(pa, e);
-
-            PotHeaderWriter::write_potential_body(pa, e.pot_ctx, trg.training_record, trg.pot_digits);
-            write_archive(wf, std::string(trg.dumpPotDir)
-                +"/pot_"+std::to_string(e.iter)+".tadah"
-                + trg.potArchiveSuffix, pa.str());
-        }
+                write_result(wf, e, trg, n_val, cw, prec);
 
                 io_buf_.erase(next_flush_++);
                 ++_written;
@@ -4139,39 +4155,8 @@ void HPO_Host<P,R>::submit_result(Result&& res, const HPOTargets& trg,
                     /* Re-enter the drain loop to process the now-available iters. */
                     while (io_buf_.count(next_flush_)) {
                         try {
-                            const auto& e = io_buf_[next_flush_];
-                            if (next_flush_ % trg.outputEvery == 0) {
-                                print_loss_line  (loss_f , e.iter, e, trg, n_val, cw, prec);
-                                print_outvar_line(outv_f , e.iter, e, trg, cw, prec);
-                                print_params_line(par_f  , e.iter, e,      cw, prec);
-                                print_stats_line (stats_f, e.iter, e, trg, n_val, cw, prec);
-                            }
-                            if (e.is_best) {
-                                if (e.best_iter % trg.bestOutputEvery == 0) {
-                                    print_loss_line  (best_f      , e.best_iter, e, trg, n_val, cw, prec);
-                                    print_outvar_line(best_outv_f , e.best_iter, e, trg, cw, prec);
-                                    print_params_line(best_par_f  , e.best_iter, e,      cw, prec);
-                                    print_stats_line (best_stats_f, e.best_iter, e, trg, n_val, cw, prec);
-                                }
-                                if (e.best_iter % trg.dumpBestPotEvery == 0) {
-                                    std::ostringstream bpa;
-                                    PotHeaderWriter::write_best_archive_header(bpa, e, trg, cw, prec);
-                                    PotHeaderWriter::write_candidate_hot(bpa, e);
-                                    PotHeaderWriter::write_potential_body(bpa, e.pot_ctx, trg.training_record, trg.pot_digits);
-                                    write_archive(wf, std::string(trg.dumpBestPotDir)
-                                        +"/best_pot_" + std::to_string(e.best_iter) + ".tadah"
-                                        + trg.potArchiveSuffix, bpa.str());
-                                }
-                            }
-                            if (e.iter % trg.dumpPotEvery == 0) {
-                                std::ostringstream pa;
-                                PotHeaderWriter::write_archive_header(pa, e, cw, prec);
-                                PotHeaderWriter::write_candidate_hot(pa, e);
-                                PotHeaderWriter::write_potential_body(pa, e.pot_ctx, trg.training_record, trg.pot_digits);
-                                write_archive(wf, std::string(trg.dumpPotDir)
-                                    +"/pot_"+std::to_string(e.iter)+".tadah"
-                                    + trg.potArchiveSuffix, pa.str());
-                            }
+                            write_result(wf, io_buf_[next_flush_], trg,
+                                         n_val, cw, prec);
                             io_buf_.erase(next_flush_++);
                             ++_written;
                         } catch (const std::exception& ex) {
@@ -4700,57 +4685,8 @@ void HPO_Host<P,R>::flush_remaining(bool retry_io) const
     // (with retries, one budget for the whole drain) after the loop.
     WriterFiles& wf = writer_files(trg_);
     wf.begin_drain(/*no_retry=*/!retry_io);
-    std::ostream& loss_f       = wf.loss.stage();
-    std::ostream& outv_f       = wf.outv.stage();
-    std::ostream& par_f        = wf.par.stage();
-    std::ostream& stats_f      = wf.stats.stage();
-    std::ostream& best_f       = wf.best.stage();
-    std::ostream& best_outv_f  = wf.best_outv.stage();
-    std::ostream& best_par_f   = wf.best_par.stage();
-    std::ostream& best_stats_f = wf.best_stats.stage();
-
     auto write_row = [&](const Result& e) {
-        if(e.iter % trg_.outputEvery == 0){
-            print_loss_line  (loss_f , e.iter, e, trg_, n_val_datasets_, cw_, prec_);
-            print_outvar_line(outv_f , e.iter, e, trg_, cw_, prec_);
-            print_params_line(par_f  , e.iter, e,       cw_, prec_);
-            print_stats_line (stats_f, e.iter, e, trg_, n_val_datasets_, cw_, prec_);
-        }
-        if(e.is_best && e.best_iter % trg_.bestOutputEvery == 0) {
-            print_loss_line  (best_f      , e.best_iter, e, trg_, n_val_datasets_, cw_, prec_);
-            print_outvar_line(best_outv_f , e.best_iter, e, trg_, cw_, prec_);
-            print_params_line(best_par_f  , e.best_iter, e,       cw_, prec_);
-            print_stats_line (best_stats_f, e.best_iter, e, trg_, n_val_datasets_, cw_, prec_);
-        }
-
-        if(e.is_best) {
-            if(e.best_iter % trg_.dumpBestPotEvery == 0){
-                std::ostringstream bpa;
-
-                PotHeaderWriter::write_best_archive_header(
-                    bpa, e, trg_, cw_, prec_);
-
-                PotHeaderWriter::write_candidate_hot(bpa, e);
-
-                PotHeaderWriter::write_potential_body(bpa, e.pot_ctx, trg_.training_record, trg_.pot_digits);
-                write_archive(wf, std::string(trg_.dumpBestPotDir)
-                    + "/best_pot_" + std::to_string(e.best_iter) + ".tadah"
-                    + trg_.potArchiveSuffix, bpa.str());
-            }
-        }
-
-        if(e.iter % trg_.dumpPotEvery == 0){
-            std::ostringstream pa;
-
-            PotHeaderWriter::write_archive_header(pa, e, cw_, prec_);
-
-            PotHeaderWriter::write_candidate_hot(pa, e);
-
-            PotHeaderWriter::write_potential_body(pa, e.pot_ctx, trg_.training_record, trg_.pot_digits);
-            write_archive(wf, std::string(trg_.dumpPotDir)
-                + "/pot_" + std::to_string(e.iter) + ".tadah"
-                + trg_.potArchiveSuffix, pa.str());
-        }
+        write_result(wf, e, trg_, n_val_datasets_, cw_, prec_);
     };
 
     /* In iteration order; rows stranded behind a missing iteration are

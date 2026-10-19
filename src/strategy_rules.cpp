@@ -298,6 +298,21 @@ std::string nlopt_inner_searches_without_gradient()
     return format_caps_list(caps, caps.size());
 }
 
+std::string searches_without_gradient()
+{
+    const auto caps = filter_optimizer_caps([](const OptimizerCaps& c) {
+        /* An MLSL or AUGLAG without a default local optimiser is refused
+         * without an INNER block (require_inner_backend): it does not run
+         * as written. */
+        if (c.accepts_inner && !c.default_inner) return false;
+        OptimizerSpec sp;
+        sp.lib = c.lib;
+        sp.algo = c.algo;
+        return !obtains_gradients(sp);
+    });
+    return format_caps_list(caps, caps.size());
+}
+
 void require_multistart_backend(const OptimizerSpec& spec)
 {
     require_driver(spec, DriverPhase::Run);
@@ -433,15 +448,6 @@ void require_strategy_key(const std::string& key, StrategyType type,
         (type_given ? "" : " (the default when the block has no TYPE line)") +
         ": " + k->effect + ", so it would have no effect; set TYPE " + home +
         " or remove " + key);
-}
-
-void require_prestage_block(const std::string& block, StrategyType type)
-{
-    if (type == StrategyType::PRESTAGE) return;
-    throw std::runtime_error(
-        block + " block is only valid with TYPE PRESTAGE, but the STRATEGY "
-        "block ends with TYPE " + strategy_type_name(type) + " (the last TYPE "
-        "line decides); set TYPE PRESTAGE or remove the " + block + " block");
 }
 
 }  // namespace tadah::hpo

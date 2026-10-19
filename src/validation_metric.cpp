@@ -35,7 +35,10 @@ void ValidationMetricTargets::add(const std::vector<std::size_t>& indices,
         if (cap && (!metric_value_is_finite(*cap) || *cap <= 0))
             throw std::runtime_error(key_ + " skip thresholds must be finite and positive");
     if (indices.empty()) {
-        if (enabled()) throw std::runtime_error(key_ + ": repeated global declaration or mixed global/indexed forms");
+        if (global_)
+            throw std::runtime_error(key_ + ": repeated declaration (first declared on line "
+                + std::to_string(global_->line) + ")");
+        if (enabled()) throw std::runtime_error(key_ + ": cannot mix global and indexed forms");
         global_ = a;
     } else {
         if (global_) throw std::runtime_error(key_ + ": cannot mix global and indexed forms");

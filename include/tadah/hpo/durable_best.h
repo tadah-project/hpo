@@ -121,6 +121,16 @@ std::optional<Key> read_key_file(const std::string& path, const Options& opt);
 void reset_for_fresh_run(const std::string& path);
 void reset_for_fresh_run(const std::string& path, const Options& opt);
 
+/** Remove the lock file of `path` (`path` + ".lock"), which every call above
+ * creates and locks, at the end of a run. The lock is taken first, so a
+ * publication that still holds it completes before the file goes; call it
+ * only once no process publishes to `path` any more (after the run's last
+ * collective), since a process that opened the old file would lock another
+ * file than one that creates a new one. An absent lock file is not an
+ * error. Throws SysError ("durable.lock_unlink") when the file cannot be
+ * removed. */
+void remove_lock_file(const std::string& path);
+
 /** Publish payload at path only when key beats the current file's key.
  * Legacy files without machine metadata are replaced. Returns true when a
  * rename was committed, false when an equal-or-better file already existed.

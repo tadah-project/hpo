@@ -19,6 +19,7 @@
 #include "rhoform_test_support.h"
 
 #include <tadah/core/context.h>
+#include <tadah/core/logger.h>
 #include <tadah/core/periodic_table.h>
 #include <tadah/hpo/bump_support_gate.h>
 #include <tadah/hpo/hpo_targets.h>
@@ -27,6 +28,8 @@
 #include <chrono>
 #include <cmath>
 #include <filesystem>
+#include <iostream>
+#include <sstream>
 #include <limits>
 #include <fstream>
 #include <stdexcept>
@@ -279,5 +282,58 @@ TEST_CASE("BUMPGATE: grids that cannot be read are an error, not a skipped "
     ctx.storage_update("RCUT2B", {"5.0", "x"});
     CHECK_THROWS_WITH(bg::derive_binding_rcut(ctx, trg, "2B"),
                       Catch::Contains("RCUT2B"));
+  }
+}
+
+/* A bump centre beyond the cutoff only keeps its inner shoulder, which
+ * startup warns about for the configuration's cutoff (smooth cutoff; a hard
+ * one is an error). With OPTIM RCUT2B the search tries cutoffs down to the
+ * box's low bound: a centre beyond that low bound is warned about too,
+ * naming the bump, its centre and the low bound ("CGRID2B bump 1 centre 4
+ * lies beyond the OPTIM RCUT2B low bound 3.5: ..."), and a centre below it
+ * is not.
+ * Before the fix: the check read the configuration's RCUT2B (5) only, so
+ * nothing warned. */
+TEST_CASE("a bump centre beyond the low bound of an OPTIM RCUT2B box is "
+          "warned about at startup", "[HPO][startup][bump_width]") {
+  tadah::core::PeriodicTable::initialize();
+  const auto warnings = [](const std::string& target) {
+    WidthTempFile tf(target);
+    Context ctx = blip_ctx("2.0 1.0", "Cut_Cos");
+    HPOTargets trg(ctx, tf.path.string());
+    std::ostringstream captured;
+    auto& logger = tadah::core::Logger::instance();
+    const auto level = logger.getLogLevel();
+    logger.setLogLevel(tadah::core::LogLevel::WARNING);
+    auto* old = std::cout.rdbuf(captured.rdbuf());
+    try {
+      tadah::hpo::validate_hpo_setup(ctx, trg, true, true);
+    } catch (...) {
+      std::cout.rdbuf(old);
+      logger.setLogLevel(level);
+      throw;
+    }
+    std::cout.rdbuf(old);
+    logger.setLogLevel(level);
+    return captured.str();
+  };
+  const std::string tail = std::string("PC_ERMSE 0 1\n") + kWidthOptimizer;
+  {
+    const std::string w = warnings("OPTIM RCUT2B (1) 3.5 6.0\n" + tail);
+    INFO(w);
+    CHECK_THAT(w, Catch::Contains(
+                      "CGRID2B bump 1 centre 4 lies beyond the OPTIM RCUT2B "
+                      "low bound 3.5: a candidate whose RCUT2B is below the "
+                      "centre keeps only the bump's inner shoulder "
+                      "(pathological); with the OPTIM RCUT2B low bound "
+                      "above 4, or the centre below 3.5, no candidate "
+                      "does."));
+    CHECK(w.find("CGRID2B bump 2") == std::string::npos);
+  }
+  {
+    /* every centre below the low bound: no such warning */
+    const std::string w = warnings("OPTIM RCUT2B (1) 4.5 6.0\n" + tail);
+    INFO(w);
+    CHECK(w.find("lies beyond") == std::string::npos);
   }
 }

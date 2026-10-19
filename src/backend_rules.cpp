@@ -17,6 +17,7 @@
 #include <cstring>
 #include <limits>
 #include <optional>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -361,6 +362,15 @@ void validate_dlib_gfs_spec(const OptimizerSpec& spec, RestartStop restart)
 {
     reject_unknown_params(spec, {});
     reject_unread_attributes(spec, optimizer_caps(spec), SpecRole::Phase);
+    /* FTOL_ABS is dlib's solver epsilon (find_min_global), which dlib
+     * requires to be >= 0: refused here, at startup, not by dlib once the
+     * training data are read. */
+    if (spec.stop.ftol_abs && !(*spec.stop.ftol_abs >= 0.0)) {
+        std::ostringstream oss;
+        oss << "DLIB:GFS: FTOL_ABS is the accuracy of dlib's solver and must "
+               "be >= 0 (got " << *spec.stop.ftol_abs << ")";
+        throw std::runtime_error(oss.str());
+    }
     require_stop(spec, restart);
 }
 

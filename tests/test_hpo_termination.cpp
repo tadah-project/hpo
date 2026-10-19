@@ -4008,6 +4008,79 @@ TEST_CASE("RESTART: a SEED no METHOD of the chain draws from is reported at "
                !Catch::Contains(unused));
 }
 
+/* best_pot.tadah.lock, the file the publications of the best potential
+ * lock (durable_best.h), goes when the run ends: no rank publishes after
+ * the run's last collective. A run that ends normally leaves
+ * best_pot.tadah and no lock file, and so does a second run in the same
+ * process and directory.
+ * Before the fix: an empty best_pot.tadah.lock stayed in the directory
+ * after every run. */
+TEST_CASE("Termination: a run leaves no best_pot.tadah.lock",
+          "[HPO][termination][durable_best]")
+{
+    TaRun run(plain_block("    TYPE PLAIN\n    LIB TADAH\n    ALGO RANDOM\n"
+                          "    MAXEVAL 3\n    SEED 1\n"));
+    for (int pass = 0; pass < 2; ++pass) {
+        INFO("run " << pass + 1);
+        int status = -1;
+        REQUIRE_NOTHROW(status = tadah::hpo::hpo_run(run.ctx));
+        CHECK(status == 0);
+        CHECK(fs::exists("best_pot.tadah"));
+        CHECK_FALSE(fs::exists("best_pot.tadah.lock"));
+    }
+}
+
+/* A PRESTAGE run with SEED 7 in its STRATEGY block whose GN_CRS2_LM
+ * exploration (MAXEVAL 20) has no SEED of its own: the exploration takes
+ * the STRATEGY-level SEED, so two runs evaluate the same points, the points
+ * of the run with SEED 7 in its EXPLORE block too, and the journal names
+ * the exploration's seed and where it comes from ("EXPLORE SEED      : 7
+ * (the STRATEGY-level SEED)"; "EXPLORE SEED      : 7" when the EXPLORE
+ * block sets it). The TADAH:RANDOM refinement (MAXEVAL 3) draws from the
+ * SEED's refinement streams in both runs.
+ * Before the fix: the exploration had no seed, so CRS2 drew its population
+ * from NLopt's generator unseeded (its time seed, or the state an earlier
+ * run left), the two runs differed and the journal named no exploration
+ * seed. */
+TEST_CASE("Termination: a PRESTAGE run seeded at the STRATEGY level "
+          "repeats its exploration", "[HPO][termination][prestage][seed]")
+{
+    const auto prestage = [](const std::string& explore_seed) {
+        return plain_block(
+            "    TYPE PRESTAGE\n    LIB TADAH\n    ALGO RANDOM\n"
+            "    MAXEVAL 3\n    SEED 7\n    TOPK 1\n"
+            "    EXPLORE\n      LIB NLOPT\n      ALGO GN_CRS2_LM\n"
+            "      MAXEVAL 20\n" + explore_seed + "    ENDEXPLORE\n");
+    };
+    struct Run {
+        std::vector<Point> pts;
+        std::string journal;
+    };
+    const auto run = [](const std::string& optimizer) {
+        Run out;
+        TaRun r(optimizer);
+        int status = -1;
+        REQUIRE_NOTHROW(status = tadah::hpo::hpo_run(r.ctx));
+        CHECK(status == 0);
+        out.journal = read_file("hpo_run.log");
+        out.pts = evaluated_points();
+        return out;
+    };
+    const Run a = run(prestage(""));
+    const Run b = run(prestage(""));
+    const Run own = run(prestage("      SEED 7\n"));
+    INFO("journal:\n" << a.journal);
+    REQUIRE(a.pts.size() >= 20u);
+    CHECK(a.journal.find("    EXPLORE SEED      : 7 (the STRATEGY-level "
+                         "SEED)\n") != std::string::npos);
+    CHECK(own.journal.find("    EXPLORE SEED      : 7\n") !=
+          std::string::npos);
+    CHECK(evals_between(a.pts, 1, 20) == evals_between(b.pts, 1, 20));
+    CHECK(evals_between(a.pts, 1, 20) == evals_between(own.pts, 1, 20));
+    CHECK(a.pts == b.pts);
+    CHECK(a.pts == own.pts);
+}
+
 TEST_CASE("Termination: a restarted seeded exploration draws a new "
           "population", "[HPO][termination][restart][seed]")
 {
@@ -5732,6 +5805,45 @@ TEST_CASE("Termination: the journal writes a PRESTAGE block without MAXEVAL "
  * evaluate the whole grid. Without MAXEVAL it still does.
  * ==================================================================== */
 
+/* The GRID messages count what they count: the banner names "1
+ * dimension" for one OPTIM dimension (and "3 dimensions" for three), and
+ * the end of the whole sweep names the INIT point apart from the grid
+ * points ("TADAH:GRID finished: the INIT point and all 3 grid points
+ * evaluated"): the INIT point is evaluated first and is no grid point.
+ * The cases below pin the MAXEVAL, STOPVAL and MAXTIME forms ("after 5 of
+ * 28 evaluations (the INIT point and 27 grid points)").
+ * Before the fix: "1 dimensions." and "all 4 grid points evaluated" (the
+ * INIT point counted as a grid point), and "after 5 of 28 grid points". */
+TEST_CASE("Termination: the TADAH:GRID messages count dimensions and grid "
+          "points", "[HPO][termination][grid]")
+{
+    const std::string one_dim =
+        "LOSS L2\nFAILSCORE 1e9\nQFLUSH 1000\nDIGITS 15\nPC_ERMSE 0 1\n"
+        "OPTIM CGRID2B (1) 0.1 0.9\n";
+    TaRun run(plain_block("    TYPE PLAIN\n    LIB TADAH\n    ALGO GRID\n"
+                          "    PARAM GRID_POINTS 3\n"),
+              one_dim);
+    int status = -1;
+    REQUIRE_NOTHROW(status = tadah::hpo::hpo_run(run.ctx));
+    CHECK(status == 0);
+    CHECK(evaluated_points().size() == 4u);
+    const std::string journal = read_file("hpo_run.log");
+    INFO(journal);
+    CHECK_THAT(journal, Catch::Contains(
+                            "GRID search: 3 points in each dimension (PARAM "
+                            "GRID_POINTS; spacing = width/2), 1 dimension.\n"));
+    CHECK_THAT(journal, Catch::Contains("TADAH:GRID finished: the INIT point "
+                                        "and all 3 grid points evaluated"));
+    CHECK(journal.find("1 dimensions") == std::string::npos);
+
+    TaRun three(plain_block("    TYPE PLAIN\n    LIB TADAH\n    ALGO GRID\n"
+                            "    PARAM GRID_POINTS 2\n"));
+    REQUIRE_NOTHROW(status = tadah::hpo::hpo_run(three.ctx));
+    CHECK(status == 0);
+    CHECK_THAT(read_file("hpo_run.log"),
+               Catch::Contains("spacing = width/1), 3 dimensions.\n"));
+}
+
 TEST_CASE("Termination: TADAH:GRID stops after MAXEVAL points in grid order",
           "[HPO][termination][stop_criteria][grid]")
 {
@@ -5766,15 +5878,17 @@ TEST_CASE("Termination: TADAH:GRID stops after MAXEVAL points in grid order",
         CHECK(pts == evals_between(full, 1, 5));
         const std::string journal = read_file("hpo_run.log");
         CHECK_THAT(journal,
-                   Catch::Contains("GRID: MAXEVAL 5 < 28 grid points") &&
+                   Catch::Contains("GRID: MAXEVAL 5 < 28 evaluations (the "
+                                   "INIT point, then 27 = 3^3 grid nodes)") &&
                    Catch::Contains("evaluating the first 5 in grid order"));
         /* The journal says which stop ended the sweep, and it is the
          * run's status.
          * Pins: "TADAH:GRID: MAXEVAL reached" (here and below). Before the
          * fix: COMPLETED for a spent MAXEVAL or the whole grid. */
         CHECK_THAT(journal, Catch::Contains("TADAH:GRID stopped: MAXEVAL "
-                                            "reached after 5 of 28 grid "
-                                            "points"));
+                                            "reached after 5 of 28 "
+                                            "evaluations (the INIT point "
+                                            "and 27 grid points)"));
         CHECK(journal_status(journal) == "TADAH:GRID: MAXEVAL reached");
     }
     SECTION("MAXEVAL 1: the INIT point only") {
@@ -5786,8 +5900,9 @@ TEST_CASE("Termination: TADAH:GRID stops after MAXEVAL points in grid order",
         CHECK(pts == evals_between(full, 1, 1));
         const std::string journal = read_file("hpo_run.log");
         CHECK_THAT(journal, Catch::Contains("TADAH:GRID stopped: MAXEVAL "
-                                            "reached after 1 of 28 grid "
-                                            "points"));
+                                            "reached after 1 of 28 "
+                                            "evaluations (the INIT point "
+                                            "and 27 grid points)"));
         CHECK(journal_status(journal) == "TADAH:GRID: MAXEVAL reached");
     }
     SECTION("MAXEVAL at or above the grid size: the whole grid, no note") {
@@ -5800,8 +5915,9 @@ TEST_CASE("Termination: TADAH:GRID stops after MAXEVAL points in grid order",
             CHECK(evaluated_points() == full);
             const std::string journal = read_file("hpo_run.log");
             CHECK(journal.find("GRID: MAXEVAL") == std::string::npos);
-            CHECK_THAT(journal, Catch::Contains("TADAH:GRID finished: all 28 "
-                                                "grid points evaluated"));
+            CHECK_THAT(journal, Catch::Contains("TADAH:GRID finished: the "
+                                                "INIT point and all 27 grid "
+                                                "points evaluated"));
             /* Pins: the whole grid is the status "TADAH:GRID: all grid
              * points evaluated". */
             CHECK(journal_status(journal) ==
@@ -6039,7 +6155,8 @@ TEST_CASE("Termination: TADAH:GRID stops at the first loss at or below "
     const std::string journal = read_file("hpo_run.log");
     CHECK_THAT(journal, Catch::Contains(
                             "TADAH:GRID stopped: STOPVAL reached after " +
-                            std::to_string(stop.eval) + " of 28 grid points"));
+                            std::to_string(stop.eval) + " of 28 evaluations "
+                            "(the INIT point and 27 grid points)"));
     CHECK(journal_status(journal) == "TADAH:GRID: STOPVAL reached");
 }
 
@@ -6057,7 +6174,8 @@ TEST_CASE("Termination: TADAH:GRID stops once MAXTIME has passed",
     const std::string journal = read_file("hpo_run.log");
     CHECK_THAT(journal, Catch::Contains("TADAH:GRID stopped: MAXTIME exceeded "
                                         "after ") &&
-                        Catch::Contains(" of 1000001 grid points"));
+                        Catch::Contains(" of 1000001 evaluations (the INIT "
+                                        "point and 1000000 grid points)"));
     CHECK(journal_status(journal) == "TADAH:GRID: MAXTIME exceeded");
     CHECK(data_rows("loss.tadah").size() < 1000001u);
 }
@@ -6134,8 +6252,9 @@ TEST_CASE("Termination: the journal says how a run without stop criteria "
                                "convergence test, a finite schedule or "
                                "limits of its own)") &&
                !Catch::Contains("may run indefinitely"));
-    CHECK_THAT(journal, Catch::Contains("TADAH:GRID finished: all 9 grid "
-                                        "points evaluated"));
+    CHECK_THAT(journal, Catch::Contains("TADAH:GRID finished: the INIT "
+                                        "point and all 8 grid points "
+                                        "evaluated"));
 }
 
 /* ======================================================================
@@ -6159,9 +6278,10 @@ TEST_CASE("Termination: TADAH:RANDOM and TADAH:GRID report MAXEVAL when "
              {"TADAH:GRID",
               "    TYPE PLAIN\n    LIB TADAH\n    ALGO GRID\n"
               "    PARAM GRID_POINTS 2\n",
-              "TADAH:GRID stopped: MAXEVAL reached after 1 of 9 grid points",
-              "TADAH:GRID stopped: MAXTIME exceeded after 1 of 9 grid "
-              "points"}}) {
+              "TADAH:GRID stopped: MAXEVAL reached after 1 of 9 evaluations "
+              "(the INIT point and 8 grid points)",
+              "TADAH:GRID stopped: MAXTIME exceeded after 1 of 9 evaluations "
+              "(the INIT point and 8 grid points)"}}) {
         INFO(c.what);
         {
             TaRun run(plain_block(c.body + "    MAXEVAL 1\n"

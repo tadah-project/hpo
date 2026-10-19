@@ -7,6 +7,7 @@
 #include <cctype>
 #include <cstdint>
 #include <limits>
+#include <map>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -302,6 +303,13 @@ void read_block_until(const std::vector<std::string> &tok, std::size_t &pos,
                       const ExtraAttrFn &extra, const KeyCheckFn &check,
                       bool allow_inner, const std::string &where) {
   const char *block = allow_inner ? "OPTIMIZER" : "INNER";
+  /* Each key is set once for this block's optimiser, as in a target file
+   * (HPOTargets::read): the attribute a key sets -> the spelling it was
+   * first set with. MAXITER is MAXEVAL's alias (the refit's Ceres stages),
+   * PARAM <name> is one attribute per name, and a STEP <KEY> override
+   * layers over the block-wide STEP (the refit takes no STEP: its stage
+   * check refuses it). An OPTIMIZER block takes one INNER block. */
+  std::map<std::string, std::string> set_as;
   while (pos < tok.size()) {
     const std::string u = up(tok[pos]);
     if (u == endTok) {
@@ -315,6 +323,10 @@ void read_block_until(const std::vector<std::string> &tok, std::size_t &pos,
       throw in_block(where, e.what());
     }
     if (allow_inner && u == "INNER") {
+      // One INNER block: a second one would replace the first.
+      if (spec.inner)
+        throw in_block(where, "the INNER block is given twice; an OPTIMIZER "
+                              "block takes one INNER block");
       ++pos;  // consume INNER
       spec.inner = std::make_unique<OptimizerSpec>();
       read_block_until(tok, pos, "ENDINNER", *spec.inner, extra, check,
@@ -347,6 +359,28 @@ void read_block_until(const std::vector<std::string> &tok, std::size_t &pos,
     if (iss.fail())
       throw in_block(where, "bad value for '" + key + "' in the " +
                                 std::string(block) + " block");
+    {
+      const std::string first = pos + 1 < tok.size() ? tok[pos + 1] : "";
+      std::string attr = ukey == "MAXITER" ? std::string("MAXEVAL") : ukey;
+      if (ukey == "PARAM") attr = "PARAM " + first;
+      const bool step_override = ukey == "STEP" && !is_number_shaped(first);
+      if (!step_override) {
+        const auto [it, fresh] = set_as.emplace(attr, ukey);
+        if (!fresh) {
+          // The key as written; MAXEVAL and its alias MAXITER in the order
+          // written.
+          const bool alias = it->second != ukey;
+          const std::string spellings =
+              !alias ? ""
+              : it->second == "MAXEVAL"
+                  ? " (as MAXEVAL and as MAXITER, its alias)"
+                  : " (as MAXITER, its alias, and as MAXEVAL)";
+          throw in_block(where, (alias ? attr : ukey) + " is set twice in "
+                                    "the " + std::string(block) + " block" +
+                                    spellings + "; each key is given once");
+        }
+      }
+    }
     std::size_t before = tok.size() - pos;  // key + everything after it
     std::size_t remaining = 0;
     std::string t;

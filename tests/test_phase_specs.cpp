@@ -217,6 +217,83 @@ TEST_CASE("phase specs: the PRESTAGE refinement starts from the candidates",
     CHECK(refine.lib == "DLIB");
 }
 
+/* A PRESTAGE exploration whose optimiser reads SEED and that has no seed of
+ * its own takes the STRATEGY-level SEED, as the refinement's starts and the
+ * RESTART rounds derive theirs from it (the refinement draws streams of its
+ * own key, phase_stream_seed, so the two phases never share numbers). Its
+ * own seeds come first: the EXPLORE block's SEED and, for NLopt, its INIT
+ * block's SEED. An exploration whose optimiser reads no SEED (DLIB:GFS)
+ * takes none, and without a STRATEGY-level SEED the exploration has none.
+ * Before the fix: the exploration never had a seed it did not set itself,
+ * so a run with SEED in its OPTIMIZER or STRATEGY block drew the
+ * exploration from NLopt's time seed (random_device for TADAH:RANDOM and
+ * the annealers) and did not repeat. */
+TEST_CASE("phase specs: a PRESTAGE exploration without a SEED takes the "
+          "STRATEGY-level SEED", "[HPO][phase_specs][prestage][seed]")
+{
+    const auto prestage = [](const std::string& strategy_seed,
+                             const std::string& explore) {
+        return parse_spec(
+            "OPTIMIZER\nSTRATEGY\nTYPE PRESTAGE\nLIB NLOPT\nALGO LN_BOBYQA\n"
+            "MAXEVAL 20\n" + strategy_seed + "EXPLORE\n" + explore +
+            "ENDEXPLORE\nENDSTRATEGY\nENDOPTIMIZER\n");
+    };
+    const std::string crs2 = "LIB NLOPT\nALGO GN_CRS2_LM\nMAXEVAL 20\n";
+    SECTION("an NLopt exploration takes it") {
+        const OptimizerSpec s = prestage("SEED 7\n", crs2);
+        REQUIRE(s.prestage);
+        CHECK(s.seed == std::optional<std::uint64_t>(7));
+        CHECK(s.prestage->seed == std::optional<std::uint64_t>(7));
+        /* the refinement keeps the SEED */
+        const OptimizerSpec refine =
+            tadah::hpo::prestage_refinement_spec(s, {{1.0}});
+        CHECK(refine.seed == std::optional<std::uint64_t>(7));
+    }
+    SECTION("SEED in the OPTIMIZER block, outside STRATEGY") {
+        const OptimizerSpec s = parse_spec(
+            "OPTIMIZER\nSEED 9\nSTRATEGY\nTYPE PRESTAGE\nLIB NLOPT\n"
+            "ALGO LN_BOBYQA\nMAXEVAL 20\nEXPLORE\n" + crs2 +
+            "ENDEXPLORE\nENDSTRATEGY\nENDOPTIMIZER\n");
+        REQUIRE(s.prestage);
+        CHECK(s.prestage->seed == std::optional<std::uint64_t>(9));
+    }
+    SECTION("TADAH:RANDOM and TADAH:ANNEAL explorations take it") {
+        for (const std::string algo : {"RANDOM", "ANNEAL"}) {
+            INFO(algo);
+            const OptimizerSpec s = prestage(
+                "SEED 7\n", "LIB TADAH\nALGO " + algo + "\nMAXEVAL 20\n");
+            REQUIRE(s.prestage);
+            CHECK(s.prestage->seed == std::optional<std::uint64_t>(7));
+        }
+    }
+    SECTION("the EXPLORE block's SEED comes first") {
+        const OptimizerSpec s = prestage("SEED 7\n", crs2 + "SEED 3\n");
+        REQUIRE(s.prestage);
+        CHECK(s.prestage->seed == std::optional<std::uint64_t>(3));
+    }
+    SECTION("an NLopt exploration seeded by its INIT block keeps that seed") {
+        const OptimizerSpec s = prestage(
+            "SEED 7\n",
+            crs2 + "INIT\nMETHOD RANDOM 2\nSEED 5\nENDINIT\n");
+        REQUIRE(s.prestage);
+        CHECK_FALSE(s.prestage->seed);
+        CHECK(s.prestage->init_strategy_spec.seed ==
+              std::optional<std::uint64_t>(5));
+        CHECK(s.prestage->nlopt_seed_from_init());
+    }
+    SECTION("an exploration whose optimiser reads no SEED takes none") {
+        const OptimizerSpec s = prestage(
+            "SEED 7\n", "LIB DLIB\nALGO GFS\nMAXEVAL 20\n");
+        REQUIRE(s.prestage);
+        CHECK_FALSE(s.prestage->seed);
+    }
+    SECTION("without a STRATEGY-level SEED the exploration has none") {
+        const OptimizerSpec s = prestage("", crs2);
+        REQUIRE(s.prestage);
+        CHECK_FALSE(s.prestage->seed);
+    }
+}
+
 TEST_CASE("phase specs: every phase of each STRATEGY TYPE",
           "[HPO][phase_specs]")
 {
@@ -299,6 +376,42 @@ TEST_CASE("phase specs: every phase of each STRATEGY TYPE",
         CHECK(phases[1].spec.stop.maxeval == std::optional<std::uint64_t>(20));
         CHECK(phases[1].spec.optim_init.size() == 1u);
     }
+}
+
+/* DLIB:GFS reads FTOL_ABS as the accuracy of dlib's solver, which dlib
+ * requires to be >= 0: a negative one is refused at startup, naming the
+ * phase and the value ("the STRATEGY-level optimiser: DLIB:GFS: FTOL_ABS is
+ * the accuracy of dlib's solver and must be >= 0 (got -0.001)"), and 0 is
+ * accepted.
+ * Before the fix: startup accepted it, and the search failed inside dlib
+ * after the training data had been read ("Failing expression was 0 <=
+ * eps"). */
+TEST_CASE("backend rules: DLIB:GFS refuses a negative FTOL_ABS at startup",
+          "[HPO][backend_rules]")
+{
+    auto s = local_spec(1);
+    s.lib = "DLIB";
+    s.algo = "GFS";
+    s.stop.maxeval = 10;
+    s.stop.ftol_abs = -1e-3;
+    CHECK(error_of(s) == "DLIB:GFS: FTOL_ABS is the accuracy of dlib's "
+                         "solver and must be >= 0 (got -0.001)");
+    s.stop.ftol_abs = 0.0;
+    CHECK(error_of(s) == "");
+
+    const OptimizerSpec parsed = parse_spec(
+        "OPTIMIZER\nLIB DLIB\nALGO GFS\nMAXEVAL 10\nFTOL_ABS -1e-3\n"
+        "ENDOPTIMIZER\n");
+    std::string what;
+    try {
+        tadah::hpo::validate_phase_backends(parsed);
+    } catch (const std::exception& e) {
+        what = e.what();
+    }
+    CHECK_THAT(what, Catch::Contains(
+                         "the STRATEGY-level optimiser: DLIB:GFS: FTOL_ABS is "
+                         "the accuracy of dlib's solver and must be >= 0 "
+                         "(got -0.001)"));
 }
 
 /* CERES:STEEPEST_DESCENT stands in for CERES:LBFGS, refused since (a pin).

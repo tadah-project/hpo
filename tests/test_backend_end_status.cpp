@@ -32,6 +32,7 @@
 #include <tadah/hpo/dlib_adapter.h>
 #include <tadah/hpo/hpo_log.h>
 #include <tadah/hpo/optimizer_spec.h>
+#include <tadah/hpo/phase_specs.h>
 
 #include <dlib/matrix.h>
 
@@ -438,6 +439,51 @@ TEST_CASE("End status: DLIB:GFS records a spent MAXEVAL",
     CHECK(lr.read().find("DLIB:GFS stopped: MAXEVAL reached after 6 "
                          "evaluation(s)") != std::string::npos);
     CHECK(lr.status() == "DLIB:GFS: MAXEVAL reached");
+}
+
+/* DLIB:GFS is deterministic: a SEED of its spec has no effect on its
+ * search, which it says once. A PRESTAGE refinement's SEED that also seeds
+ * the exploration (an exploration without a seed of its own takes the
+ * STRATEGY-level one) is said to: "SEED has no effect on the refinement: it
+ * seeds the exploration (EXPLORE SEED 7)".
+ * Before the fix: the refinement said "SEED has no effect on the search.
+ * Randomise via the INIT block (e.g. METHOD RANDOM K with SEED) instead.",
+ * while the journal named the same SEED as the exploration's. */
+TEST_CASE("End status: DLIB:GFS says what its SEED does",
+          "[HPO][stop_status][gfs][seed]")
+{
+    auto sp = make_spec("DLIB", "GFS", {-1.0, -1.0}, {1.0, 1.0}, {0.5, -0.3});
+    sp.stop.maxeval = 3;
+    sp.num_threads = 1;
+    sp.seed = 7;
+    {
+        LoggedRun lr;
+        StubHost host{bowl};
+        tadah::hpo::run_dlib_global_impl(sp, host);
+        CHECK_THAT(lr.read(), Catch::Contains(
+                                  "SEED has no effect on the search. "
+                                  "Randomise via the INIT block"));
+    }
+    OptimizerSpec outer = sp;
+    outer.strategy_type = tadah::hpo::StrategyType::PRESTAGE;
+    outer.prestage = std::make_unique<OptimizerSpec>(
+        make_spec("TADAH", "RANDOM", {-1.0, -1.0}, {1.0, 1.0}, {0.5, -0.3}));
+    outer.prestage->seed = 7;
+    outer.prestage->seed_from_strategy = true;
+    const OptimizerSpec refine =
+        tadah::hpo::prestage_refinement_spec(outer, {{0.5, -0.3}});
+    {
+        LoggedRun lr;
+        StubHost host{bowl};
+        tadah::hpo::run_dlib_global_impl(refine, host);
+        const std::string journal = lr.read();
+        CHECK_THAT(journal, Catch::Contains(
+                                "DLIB:GFS (find_min_global, MaxLIPO+TR) is "
+                                "deterministic; SEED has no effect on the "
+                                "refinement: it seeds the exploration "
+                                "(EXPLORE SEED 7)."));
+        CHECK_THAT(journal, !Catch::Contains("Randomise via the INIT block"));
+    }
 }
 
 /* dlib takes its run time as a count of nanoseconds, which holds about

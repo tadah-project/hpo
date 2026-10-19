@@ -2017,11 +2017,11 @@ Options for TADAH:ANNEAL_PA
         Kernel selection: ON uses Corana per-dimension adaptive steps; OFF uses whole-vector CLASSIC proposals.
      PARAM STEP_FRAC (default 0.1)
         Initial proposal scale per dimension as a fraction of the OPTIM interval width.
-     PARAM CHAIN_LENGTH (default 50) [accepts AUTO]
+     PARAM CHAIN_LENGTH (default 50)
         CLASSIC kernel: whole-vector proposals per temperature rung. Serial default AUTO: the MAXEVAL budget spread evenly over the cooling schedule (written to the journal).
      PARAM NS (default 20)
         Corana kernel: step-variation cycles per step adjustment (Corana 1987 NS = 20). ANNEAL_PT: sweeps between per-slot step adjustments.
-     PARAM NT (default 5) [accepts AUTO]
+     PARAM NT (default 5)
         Corana kernel: step-adjustment cycles per temperature rung. Serial default AUTO: budget-derived, capped at the Corana 1987 value max(100, 5n).
      PARAM CORANA_C (default 2)
         Corana kernel: step-adjustment gain in the 0.4/0.6 acceptance-ratio rule (Corana 1987 c = 2).

@@ -27,6 +27,8 @@
 #include <filesystem>
 #include <iomanip>
 #include <iostream>
+#include <map>
+#include <set>
 #include <optional>
 #include <random>
 #include <fstream>
@@ -239,7 +241,7 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn,
     }
   }
 
-  models::D_mJoin::expand_grids(context);
+  left_out_ = models::D_mJoin::expand_grids(context);
 
   /* RHOFORM (the DM_REAM density form) is mandatory and has no default:
    * read it before the OPTIM lines (non-negative AMPGRIDMB boxes) and the
@@ -729,12 +731,11 @@ void HPOTargets::read(const std::string& fn)
     OptimizerSpec*   inner_parent  = nullptr;  // outer spec of an INNER block
 
     /* STRATEGY keys that belong to one TYPE (strategy_rules.h), checked
-     * when the STRATEGY block ends: TYPE may come after them. So are the
-     * EXPLORE and REFINE blocks, which need TYPE PRESTAGE before them and
-     * still at the end of the block. */
+     * when the STRATEGY block ends: TYPE may come after them. The EXPLORE
+     * and REFINE blocks need TYPE PRESTAGE before them, checked when they
+     * open; TYPE is set once, so it stays. */
     struct TypeKeySeen { std::string key; std::size_t line; std::string text; };
     std::vector<TypeKeySeen> type_keys;
-    std::vector<TypeKeySeen> prestage_blocks;
     bool strategy_type_given = false;
     /* The line of the STRATEGY block (0 before it): there is one. A second
      * block reopened the first and could change the TYPE its keys had been
@@ -742,6 +743,25 @@ void HPOTargets::read(const std::string& fn)
     std::size_t strategy_line = 0;
     /* The line of the OPTIMIZER block (0 before it): there is one. */
     std::size_t optimizer_line = 0;
+    /* The line of each PC_EMAE, PC_ErRMSE, PC_ERSQ and PC_SRMSE line: one
+     * of each (PC_ERMSE and PC_FRMSE: ValidationMetricTargets::add). */
+    std::map<std::string, std::size_t> metric_lines;
+    /* Where each key was set, per thing it configures (an optimiser, the
+     * starting points of one, the NOISE, RESTART or STRATEGY settings, the
+     * search space, the run for a top-level key): the line, the block and
+     * the block around it. A key is set once for what it configures --
+     * OPTIMIZER, STRATEGY and REFINE configure the STRATEGY-level
+     * optimiser, the INIT blocks inside OPTIMIZER, STRATEGY and REFINE its
+     * starting points, a repeated block continues the first -- so a second
+     * line, which would replace the first's value, is refused. A STEP <KEY>
+     * override is set once for its key and indices, and layers over the
+     * block-wide STEP and over overrides of other indices. METHOD lines add
+     * to their chain, and FAILSCORE, LOSS and PC_SCRIPT_TIMEOUT apply to the
+     * PC_LAMMPS lines after them: none of them is set this way. */
+    struct AttrSet { std::size_t line; Block block; Block parent; };
+    std::map<std::pair<const void*, std::string>, AttrSet> attr_set;
+    /* What a top-level key configures: the run. */
+    static const char run_settings = 0;
 
     /* The block the open INNER block sits in: an INNER block opens only
      * inside STRATEGY, EXPLORE or REFINE. */
@@ -817,8 +837,7 @@ void HPOTargets::read(const std::string& fn)
         EarlierLineError(std::size_t l, std::string t, const std::string& what)
             : std::runtime_error(what), line(l), text(std::move(t)) {}
     };
-    /* The keys of one TYPE, and the EXPLORE and REFINE blocks, must match
-     * the TYPE the block ends with. */
+    /* The keys of one TYPE must match the TYPE of the block. */
     auto check_type_keys = [&]() {
         for (const auto& k : type_keys) {
             try {
@@ -829,14 +848,6 @@ void HPOTargets::read(const std::string& fn)
             }
         }
         type_keys.clear();
-        for (const auto& b : prestage_blocks) {
-            try {
-                require_prestage_block(b.key, spec.strategy_type);
-            } catch (const std::exception& e) {
-                throw EarlierLineError(b.line, b.text, e.what());
-            }
-        }
-        prestage_blocks.clear();
     };
 
     auto strip_comment = [](std::string& s){
@@ -845,6 +856,69 @@ void HPOTargets::read(const std::string& fn)
     auto rtrim = [](std::string& s){
         s.erase(std::find_if(s.rbegin(), s.rend(),
                  [](int c){return !std::isspace(c);} ).base(), s.end());
+    };
+
+    /* Records that `attr` of `target` is set at this line, or refuses the
+     * line when an earlier one set it; `what` names what two blocks of
+     * different types that set it both configure. */
+    auto set_once = [&](const void* target, const std::string& attr,
+                        const char* what) {
+        const Block parent = open_blocks.size() >= 2
+                                 ? open_blocks[open_blocks.size() - 2].id
+                                 : ROOT;
+        const auto [it, fresh] = attr_set.emplace(
+            std::make_pair(target, attr), AttrSet{nline, block, parent});
+        if (fresh) return;
+        const AttrSet& first = it->second;
+        if (block == ROOT)
+            throw std::runtime_error(
+                attr + " is set twice (first on line " +
+                std::to_string(first.line) + "); each key is given once");
+        if (first.block == block && first.parent == parent)
+            throw std::runtime_error(
+                attr + " is set twice in the " + block_name(block) +
+                " block (first on line " + std::to_string(first.line) +
+                "); each key is given once");
+        /* Blocks of one type inside two blocks (the INIT blocks inside
+         * OPTIMIZER and inside STRATEGY) are named by the block around
+         * them. */
+        const bool by_parent = first.block == block;
+        const auto where = [&](Block b, Block around) {
+            return std::string("the ") + block_name(b) + " block" +
+                   (by_parent ? std::string(" inside ") + block_name(around)
+                              : std::string());
+        };
+        throw std::runtime_error(
+            attr + " is set on line " + std::to_string(first.line) + " in " +
+            where(first.block, first.parent) + " and again here in " +
+            where(block, parent) + "; both blocks configure the same " +
+            what + ", so each key is given once");
+    };
+
+    /* FAILSCORE, LOSS and PC_SCRIPT_TIMEOUT (MAXTIME): each PC_LAMMPS and
+     * PC_FAILPROBE line takes the value given above it, and the run-wide
+     * uses (the ceiling of every loss, the validation metrics' loss, the
+     * PROCESS worker deadline) the last one. A second line is read only
+     * after such a line has taken the first: otherwise it would replace
+     * it without effect on any line. The line and spelling of the value
+     * set, and whether a line has taken it. */
+    struct LineSetting { std::size_t line; std::string spelling; bool taken; };
+    std::map<std::string, LineSetting> line_settings;
+    auto set_for_lines = [&](const std::string& key) {
+        const std::string name = key == "MAXTIME" ? "PC_SCRIPT_TIMEOUT" : key;
+        const auto it = line_settings.find(name);
+        if (it != line_settings.end() && !it->second.taken)
+            throw std::runtime_error(
+                key + " is set twice (first on line " +
+                std::to_string(it->second.line) +
+                (it->second.spelling != key ? ", as " + it->second.spelling
+                                            : std::string()) +
+                ") and no PC_LAMMPS or PC_FAILPROBE line between takes the "
+                "first; each key is given once");
+        line_settings[name] = {nline, key, false};
+    };
+    auto lines_take_settings = [&]() {
+        for (auto& [name, setting] : line_settings) setting.taken = true;
     };
 
     while (std::getline(ifs,line))
@@ -1006,7 +1080,6 @@ void HPOTargets::read(const std::string& fn)
                 require_key_alone(iss, key);
                 if (!spec.prestage)
                     spec.prestage = std::make_unique<OptimizerSpec>();
-                prestage_blocks.push_back({key, nline, line});
                 open_block(EXPLORE_BLK);
                 refresh_active_opt();
                 continue;
@@ -1028,7 +1101,6 @@ void HPOTargets::read(const std::string& fn)
                         "REFINE block is only valid with TYPE PRESTAGE "
                         "(declare TYPE before REFINE)");
                 require_key_alone(iss, key);
-                prestage_blocks.push_back({key, nline, line});
                 open_block(REFINE_BLK);
                 refresh_active_opt();
                 continue;
@@ -1110,7 +1182,35 @@ void HPOTargets::read(const std::string& fn)
 
             /* Common opt-attribute keys (LIB/ALGO/MAXEVAL/...) accepted in
              * any block where active_opt is set. */
+            /* The attribute a line of an optimiser sets: its key; PARAM
+             * <name> for a PARAM line; none for a STEP <KEY> override, which
+             * refines the block-wide STEP of some dimensions. */
+            std::string attr = key;
+            if (key == "PARAM" || key == "STEP") {
+                std::istringstream peek(line);
+                std::string k0, first;
+                peek >> k0 >> first;
+                if (key == "PARAM") attr = "PARAM " + first;
+                else if (!first.empty() && !is_number_shaped(first)) attr.clear();
+            }
             if (active_opt && dispatch_opt_attr(key, iss, *active_opt)) {
+                /* A STEP <KEY> override: once for its key and indices
+                 * ("WATOM(1)" and "WATOM (1)" are one). */
+                if (attr.empty() && key == "STEP" &&
+                    !active_opt->step_overrides.empty()) {
+                    const StepOverride& ov = active_opt->step_overrides.back();
+                    std::set<std::size_t> idx(ov.indices.begin(),
+                                              ov.indices.end());
+                    attr = "STEP " + ov.key;
+                    if (!idx.empty()) {
+                        std::string list;
+                        for (const std::size_t i : idx)
+                            list += (list.empty() ? "" : ",") +
+                                    std::to_string(i);
+                        attr += "(" + list + ")";
+                    }
+                }
+                if (!attr.empty()) set_once(active_opt, attr, "optimiser");
                 /* Strict arity. dispatch_opt_attr() reads exactly the value
                  * tokens its key defines, so anything still on the line is a
                  * typo, a stray word, or a value for a key that does not take
@@ -1130,16 +1230,22 @@ void HPOTargets::read(const std::string& fn)
 
             /* INIT / RESTART block keys */
             if (block == INIT_BLK || block == RESTART_BLK) {
-                if (active_init && dispatch_init_attr(key, iss, *active_init, nline, line))
+                if (active_init && dispatch_init_attr(key, iss, *active_init, nline, line)) {
+                    /* METHOD (and its alias STRATEGY) adds to the chain */
+                    if (key != "METHOD" && key != "STRATEGY")
+                        set_once(active_init, key, "starting points");
                     continue;
+                }
                 if (block == RESTART_BLK) {
                     if (key=="AFTER_STAGNATION") {
                         spec.restart.after_stagnation =
                             parse_uint(single_value(iss, key), key);
+                        set_once(&spec.restart, key, "restarts");
                         continue;
                     }
                     if (key=="MAX") {
                         spec.restart.max = parse_uint(single_value(iss, key), key);
+                        set_once(&spec.restart, key, "restarts");
                         continue;
                     }
                 }
@@ -1155,6 +1261,7 @@ void HPOTargets::read(const std::string& fn)
                     iss >> v;
                     expect_end(iss, "AUTO takes a single value");
                     spec.noise.autodetect = v.empty() ? true : parse_bool(v, "NOISE.AUTO");
+                    set_once(&spec.noise, key, "noise settings");
                     continue;
                 }
                 if (key=="CALIBRATION") {
@@ -1162,6 +1269,7 @@ void HPOTargets::read(const std::string& fn)
                     if (v == 1)
                         throw std::runtime_error("NOISE.CALIBRATION must be 0 (off) or >= 2");
                     spec.noise.calibration_n = v;
+                    set_once(&spec.noise, key, "noise settings");
                     continue;
                 }
                 throw std::runtime_error("unknown key '" + key + "' inside NOISE "
@@ -1183,13 +1291,7 @@ void HPOTargets::read(const std::string& fn)
                             "LOG_HP must be a finite ratio >= 1 (a dimension is "
                             "log-scaled when high/low >= LOG_HP and low > 0), "
                             "got '" + tok + "'");
-                    if (spec.log_threshold) {
-                        std::ostringstream oss;
-                        oss << "LOG_HP given more than once; the last value ("
-                            << v << ") wins";
-                        std::cerr << "[HPO] " << oss.str() << "\n";
-                        HPOLog::instance().warning(oss.str());
-                    }
+                    set_once(&spec.log_threshold, key, "search space");
                     spec.log_threshold = v;
                     continue;
                 }
@@ -1207,6 +1309,7 @@ void HPOTargets::read(const std::string& fn)
                     else if (t=="MULTISTART") spec.strategy_type = StrategyType::MULTISTART;
                     else if (t=="PRESTAGE")   spec.strategy_type = StrategyType::PRESTAGE;
                     else throw std::runtime_error("STRATEGY TYPE must be PLAIN, MULTISTART, or PRESTAGE (got '" + t + "')");
+                    set_once(&spec.strategy_type, key, "strategy");
                     strategy_type_given = true;
                     continue;
                 }
@@ -1217,10 +1320,12 @@ void HPOTargets::read(const std::string& fn)
                 /* MULTISTART knobs. */
                 if (key=="N_STARTS") {
                     spec.multistart.n_starts = parse_uint(single_value(iss, key), key, 1);
+                    set_once(&spec.strategy_type, key, "strategy");
                     continue;
                 }
                 if (key=="PARALLEL") {
                     spec.multistart.parallel = parse_uint(single_value(iss, key), key, 1);
+                    set_once(&spec.strategy_type, key, "strategy");
                     continue;
                 }
                 if (key=="BUDGET_PER_START") {
@@ -1229,11 +1334,13 @@ void HPOTargets::read(const std::string& fn)
                     spec.multistart.budget_per_start =
                         parse_uint(single_value(iss, key), key, 1,
                                    std::numeric_limits<int>::max());
+                    set_once(&spec.strategy_type, key, "strategy");
                     continue;
                 }
                 /* PRESTAGE knob. */
                 if (key=="TOPK") {
                     spec.stage_topk = parse_uint(single_value(iss, key), key, 1);
+                    set_once(&spec.strategy_type, key, "strategy");
                     continue;
                 }
                 throw std::runtime_error("unknown key '" + key + "' inside STRATEGY block");
@@ -1260,6 +1367,20 @@ void HPOTargets::read(const std::string& fn)
                 throw std::runtime_error("unknown key '" + key + "' in this block");
             }
 
+            /* A top-level key that takes one value is set once: a second
+             * line would replace the first's value. FAILSCORE, LOSS and
+             * PC_SCRIPT_TIMEOUT (MAXTIME) are set again only after a
+             * PC_LAMMPS or PC_FAILPROBE line has taken them
+             * (set_for_lines); the metric and gate keys refuse a repeat
+             * themselves. */
+            {
+                static const std::set<std::string> once = {
+                    "QFLUSH", "OUTPUT", "BOUTPUT", "DIGITS", "DUMP",
+                    "BDUMP", "FAILSCORE_GRADING", "BUMPGATE", "PC_ISOLATION",
+                    "PC_WORKER_TIMEOUT"};
+                if (once.count(key)) set_once(&run_settings, key, "run");
+            }
+
             /* ==================  global (ROOT) section  =========== */
 
             /* optimizer-independent settings ----------------------- *
@@ -1274,6 +1395,7 @@ void HPOTargets::read(const std::string& fn)
              * to FAILSCORE. Negative losses (negative-weight --varloss
              * terms) stay usable under any positive FAILSCORE. */
             if (key=="FAILSCORE") {
+                set_for_lines(key);
                 FAIL_SCORE = parse_positive(single_value(iss, key), key,
                                             "finite number");
             }
@@ -1282,13 +1404,15 @@ void HPOTargets::read(const std::string& fn)
              * LAMMPS `timer timeout` after each clear. MAXTIME is
              * the legacy alias, kept so existing .hpo configs keep parsing.
              * NOTE: the OPTIMIZER-block MAXTIME (whole-run stop) is a DIFFERENT
-             * setting parsed in optimizer_block.cpp -- do not conflate. If both
-             * spellings appear here, the later line wins (each overwrites
-             * MAX_TIME); hpo.cpp warns when both were given. */
+             * setting parsed in optimizer_block.cpp -- do not conflate. The
+             * two spellings are one key (set_for_lines); with a PC_LAMMPS
+             * line between, the later line is the run-wide value, and
+             * hpo.cpp warns when both spellings were given. */
             else if (key=="PC_SCRIPT_TIMEOUT" || key=="MAXTIME") {
                 /* A LAMMPS time spec that is off, unlimited or positive:
                  * it becomes `timer timeout <spec>`, and its seconds size
                  * the PROCESS worker deadline. */
+                set_for_lines(key);
                 MAX_TIME = single_value(iss, key);
                 MAX_TIME_seconds = parse_script_timeout(MAX_TIME, key);
                 MAX_TIME_key = key;
@@ -1366,6 +1490,7 @@ void HPOTargets::read(const std::string& fn)
                 for (const auto& t : keep) { cmd2 += ' '; cmd2 += t; }
                 LS.emplace_back(cmd2, MAX_TIME, FAIL_SCORE, globalLoss,
                                 /*failprobe=*/true);
+                lines_take_settings();
                 LammpsSim& probe = LS.back();
                 if (!probe.n_varloss.empty() || !probe.i_varloss.empty())
                     throw std::runtime_error(
@@ -1431,6 +1556,7 @@ void HPOTargets::read(const std::string& fn)
             /* loss -------------------------------------------------- */
             else if (key=="LOSS")
             {
+                set_for_lines(key);
                 /* LOSS <type> [<param>]. The optional parameter (HUBER
                  * delta, TUKEY c) is validated and defaulted by
                  * LossFunction::resolve_params -- the same path the
@@ -1473,6 +1599,7 @@ void HPOTargets::read(const std::string& fn)
             {
                 std::string cmd; std::getline(iss,cmd);
                 LS.emplace_back(cmd, MAX_TIME, FAIL_SCORE, globalLoss);
+                lines_take_settings();
             }
 
             /* Typed observables ------------------------------------
@@ -1538,6 +1665,14 @@ void HPOTargets::read(const std::string& fn)
                     if (key == "PC_ERMSE") use_ermse = true;
                     else use_frmse = true;
                 }
+                else if (const auto [first, fresh] =
+                             metric_lines.emplace(key, nline);
+                         !fresh)
+                    /* A second line would replace the first's target,
+                     * weight and caps. */
+                    throw std::runtime_error(
+                        key + ": repeated declaration (first declared on "
+                        "line " + std::to_string(first->second) + ")");
                 else if (key=="PC_EMAE")   { emae=tgt;   w_emae=wgt;   use_emae=true;   skip_emae=caps; }
                 else if (key=="PC_ErRMSE") { errmse=tgt; w_errmse=wgt; use_errmse=true; skip_errmse=caps; }
                 else if (key=="PC_ERSQ")   { ersq=tgt;   w_ersq=wgt;   use_ersq=true;   skip_ersq=caps; }
@@ -1724,15 +1859,39 @@ void HPOTargets::read(const std::string& fn)
         }
     }
 
+    /* The seed of a PRESTAGE exploration that sets none. A run's random
+     * numbers come from the SEEDs written in its target file: the
+     * refinement's starts (SEED + i) and every RESTART round (SEED + r*S,
+     * the exploration's SEED + r) derive theirs from them. An exploration
+     * whose optimiser reads SEED and that has no seed of its own -- no
+     * SEED and, for NLopt, no INIT block SEED (nlopt_seed_from_init) --
+     * takes the STRATEGY-level SEED, so a run with SEED in its OPTIMIZER
+     * or STRATEGY block repeats its exploration as it repeats its
+     * refinement. The refinement draws streams of its own key
+     * (phase_stream_seed, seed_stream.h), so the two phases do not share
+     * random numbers. An exploration whose optimiser reads no SEED
+     * (DLIB:GFS) takes none. The journal names the exploration's seed and
+     * where it comes from (seed_from_strategy). */
+    if (spec.prestage && spec.seed && !spec.prestage->seed &&
+        !spec.prestage->nlopt_seed_from_init()) {
+        const OptimizerCaps* caps =
+            find_optimizer_caps(spec.prestage->lib, spec.prestage->algo);
+        if (caps && caps->reads_seed) {
+            spec.prestage->seed = spec.seed;
+            spec.prestage->seed_from_strategy = true;
+        }
+    }
+
     /* PC_LAMMPS: no gradients.
      *
      * The HPO-side analytical-gradient wiring for PC_LAMMPS (the
      * IFT-adjoint chain) is not engaged. PC_LAMMPS configs must
-     * use gradient-free optimisers -- NLOPT GN_* / LN_*, TADAH built-ins
-     * (RANDOM/GRID/ANNEAL). The single accepted gradient-based exception
-     * is DLIB:BFGS, which performs its own per-theta-per-iter finite-
-     * difference dtheta inside dlib::find_min and never asks the host
-     * for a full gradient vector.
+     * use gradient-free optimisers -- every registered optimiser whose run
+     * takes no gradient (searches_without_gradient(), strategy_rules.h).
+     * The single accepted gradient-based optimiser is DLIB:BFGS, which
+     * takes the central-difference gradient of the loss
+     * (GradientProvider, GRAD_STRATEGY NUMERICAL), as an NLopt LD_*
+     * algorithm would.
      *
      * A block is refused when it asks the host for gradients
      * (obtains_gradients), not for the D of its name: NLopt's MLSL and
@@ -1781,10 +1940,11 @@ void HPOTargets::read(const std::string& fn)
                   "INNER search is a local NLopt algorithm: name a "
                   "derivative-free one in the INNER block (" +
                       nlopt_inner_searches_without_gradient() + ")."
-                : " PC_LAMMPS requires a gradient-free optimiser (NLOPT "
-                  "GN_*/LN_*, TADAH RANDOM/GRID/ANNEAL). The only "
-                  "gradient-based exception is DLIB:BFGS (uses "
-                  "per-theta-per-iter dtheta, not a full gradient).";
+                : " PC_LAMMPS requires a gradient-free optimiser (" +
+                      searches_without_gradient() + ") or DLIB:BFGS, the "
+                      "one gradient-based optimiser it accepts; an NLopt "
+                      "MLSL or AUGLAG algorithm is accepted with a "
+                      "derivative-free INNER block.";
             if (optimizer_caps(sp).accepts_inner) {
                 /* An MLSL or AUGLAG that takes a gradient for its local
                  * search: an INNER block's is refused at that block. */
@@ -2781,6 +2941,18 @@ void HPOTargets::process_optim_config(std::istringstream& iss,
       rule.geometric = named ? binding->positive && !named_amp : optim_key_positive_only(k);
       rule.factor    = rule.geometric ? 2.0 : 0.5;
     }
+    /* FLOOR and GROUP_FLOOR bound the half-width of the linear rule; the
+     * geometric box [x0/f, x0*f] has none, so they would be ignored. */
+    if (rule.geometric && floor_set)
+      throw std::runtime_error(
+          "OPTIM " + k + ": FLOOR and GROUP_FLOOR set the smallest "
+          "half-width of an AUTO FRAC box; " +
+          (mode_set ? std::string("AUTO RATIO makes the geometric box "
+                                  "[x0/f, x0*f], which they do not change, "
+                                  "so they are given with FRAC <p> only")
+                    : "the AUTO box of " + k + " is geometric by default "
+                      "(RATIO 2), which they do not change, so they are "
+                      "given with FRAC <p> only"));
     /* Non-negative amplitudes: NNLS fits put amplitudes at exactly 0, so a
      * linear rule without a floor gets the refit writer's group floor
      * (1e-3 max|x0| of the line) and the box [0, d] for a zero seed. */
@@ -2869,7 +3041,39 @@ void HPOTargets::process_optim_config(std::istringstream& iss,
     }
     try {
       size_t i = ui_offset(omap.config, ui);
-      if (i>=s) throw std::runtime_error("Out of bound index: " + core::to_string(ui));
+      if (i>=s) {
+        std::string why;
+        /* Values of a potential its descriptors do not read were left out
+         * (D_mJoin::expand_grids): the indices address the values kept. */
+        for (const auto& lo : left_out_) {
+          if (lo.key != k) continue;
+          std::vector<std::string> out, rest = lo.kept;
+          for (const auto& v : lo.given) {
+            const auto it = std::find(rest.begin(), rest.end(), v);
+            if (it != rest.end()) rest.erase(it);
+            else out.push_back(v);
+          }
+          why = " (" + k + " has " + core::to_string(lo.kept.size()) +
+                (lo.kept.size() == 1 ? " value" : " values") +
+                ": of the potential's " + k + " " + core::join(lo.given) +
+                ", the descriptors do not read " + core::join(out) +
+                (out.size() == 1 ? ", which was" : ", which were") +
+                " left out, and OPTIM indices address the values kept, " +
+                core::join(lo.kept);
+          if (ui >= 1 && ui <= lo.given.size()) {
+            const std::string& v = lo.given[ui - 1];
+            const auto it = std::find(lo.kept.begin(), lo.kept.end(), v);
+            if (it != lo.kept.end())
+              why += "; the potential's value at index " + core::to_string(ui) +
+                     ", " + v + ", is index " +
+                     core::to_string(static_cast<std::size_t>(
+                         it - lo.kept.begin()) + 1);
+          }
+          why += ")";
+        }
+        throw std::runtime_error("Out of bound index: " + core::to_string(ui) +
+                                 why);
+      }
       /* One OPTIM line per index: a second box for an index would replace
        * the first without a word. Lines of one key that select other
        * indices add to it (in any case, the key being upper-cased). */

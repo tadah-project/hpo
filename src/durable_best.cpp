@@ -109,6 +109,12 @@ int sys_unlink(const char* path)
     return ::unlink(path);
 }
 
+int sys_unlink_lock(const char* path)
+{
+    if (const int e = io::consume_fault("durable.lock_unlink")) { errno = e; return -1; }
+    return ::unlink(path);
+}
+
 class Fd {
 public:
     explicit Fd(int fd = -1) noexcept : fd_(fd) {}
@@ -442,6 +448,19 @@ void reset_for_fresh_run(const std::string& path, const Options& opt)
         unlinked = true;
         fsync_dir(parent_dir(path));
     });
+}
+
+void remove_lock_file(const std::string& path)
+{
+    if (path.empty()) throw Error("durable-best path is empty");
+    const std::string lock = path + ".lock";
+    std::lock_guard<std::mutex> thread_lock(process_mutex());
+    /* Held while the file goes: a publication that still holds it ends
+     * first. */
+    RecordLock process_lock(lock);
+    if (sys_unlink_lock(lock.c_str()) < 0 && errno != ENOENT)
+        throw_sys("cannot remove durable-best lock", "durable.lock_unlink",
+                  lock, errno);
 }
 
 std::optional<Key> parse_key(const std::string& payload)

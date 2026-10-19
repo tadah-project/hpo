@@ -13,6 +13,7 @@
 #include <tadah/hpo/startup_validation.h>
 #include <tadah/core/context.h>
 #include <tadah/core/blueprint_parser.h>
+#include <tadah/core/number_format.h>
 #include <tadah/core/periodic_table.h>
 #include <tadah/mlip/load_transforms.h>
 #include <tadah/models/descriptors/dm/embf0.h>
@@ -720,9 +721,12 @@ void HPOLog::write_optimizer_section(const OptimizerSpec&            sp,
             }
             return joined;
         };
+        /* A setting as written: the shortest text that reads back as the
+         * value ("GRID_POINTS : 11", not "1.1000e+01"). */
         for (const auto& kvp : sp.param)
             params.emplace_back(kvp.first,
-                                rendered(kvp.first, fmt_double(kvp.second)));
+                                rendered(kvp.first,
+                                         core::format_roundtrip(kvp.second)));
         for (const auto& kvp : sp.param_raw)
             params.emplace_back(kvp.first, rendered(kvp.first, kvp.second));
         std::sort(params.begin(), params.end(),
@@ -839,6 +843,18 @@ void HPOLog::write_optimizer_section(const OptimizerSpec&            sp,
             if (obtains_gradients(ps))
                 f_ << "    EXPLORE GRAD_STRATEGY: " << grad_strategy_text(ps)
                    << "\n";
+            /* The exploration's seed: its SEED (or the STRATEGY-level
+             * SEED it takes without one, HPOTargets::read) or, for NLopt
+             * without either, its INIT block's SEED. */
+            if (ps.seed)
+                f_ << "    EXPLORE SEED      : " << *ps.seed
+                   << (ps.seed_from_strategy
+                           ? " (the STRATEGY-level SEED)" : "")
+                   << "\n";
+            else if (ps.nlopt_seed_from_init())
+                f_ << "    EXPLORE SEED      : "
+                   << *ps.init_strategy_spec.seed
+                   << " (the EXPLORE INIT block's SEED)\n";
             /* An EXPLORE without a METHOD chain of its own starts from the
              * OUTER's INIT points (share_init_with_nested_phases). */
             if (ps.init_strategy_spec.chain.empty())
