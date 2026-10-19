@@ -665,6 +665,15 @@ private:
     /* Archive (DUMP/BDUMP) writer: whole file or nothing, retried. */
     static void write_archive(WriterFiles& wf, const std::string& path,
                               const std::string& bytes);             // io_mtx_ held
+    /* One result's rows of the per-eval and best logs (OUTPUT, BOUTPUT),
+     * staged in `wf`, and its BDUMP and DUMP archives: the writer of every
+     * drain -- a full queue, the drain after a gap skip and the drain at
+     * the end of the run -- so they write the same files. A point outside
+     * the OPTIM box gets no DUMP archive: it is not trained, and no
+     * potential outside the box is written (box_penalty.h). */
+    static void write_result(WriterFiles& wf, const Result& e,
+                             const HPOTargets& trg, std::size_t n_val,
+                             std::size_t cw, int prec);              // io_mtx_ held
     static void submit_result(Result&&, const HPOTargets& trg_,
                               const core::Context& master_ctx,
                               const core::Context& val_ctx,
