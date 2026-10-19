@@ -7,5 +7,5 @@ stage `OPTIMIZER` blocks accept `STEP` / `LOG_HP` / `OPTIM_SCALE` syntactically 
 
 **Proposal:** build a `SearchSpace` from `theta_box`, express the two tuned fractions as
 `StepOverride`s (`STEP CGRID 0.12`, `STEP SGRID …`) and call `make_step_plan`; then honour a
-user `STEP` in refit stages. The tuned numerics must be reproduced first (fingerprint the refit
-demos before switching).
+user `STEP` in refit stages. The tuned numerics must be reproduced first (the results of the refit
+demos are recorded before switching).

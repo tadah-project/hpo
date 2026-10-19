@@ -94,7 +94,8 @@ fails when a line of one of them does not end in CRLF, and
    follows a new best adds a 0 and the average
    can truncate to 0 -- `{1, 1, 0} / 3` at the first test of a run at the
    default options (6 of 30 seeds on the HPO termination-test fixture;
-   the HPO examples' data with `OPTIM RCUT2B (1)` and `SGRIDMB (1)`,
+   the Ta data of `tests/data/ta/common`, before its re-conversion of
+   2026-10-01, with `OPTIM RCUT2B (1)` and `SGRIDMB (1)`,
    `SEED 1`). With `Gener_Block` 0 the block-generation loop generates
    and evaluates nothing, and its exit conditions cannot change without
    an evaluation: serial `asa()` spun for ever without calling the cost
