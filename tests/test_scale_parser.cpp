@@ -166,7 +166,6 @@ TEST_CASE("STEP override grammar: STEP <KEY>[(indices)] <frac>",
     STEP 0.1
     STEP WATOM(1) 0.05
     STEP WATOM 0.2
-    STEP WATOM (1) 0.3
   ENDSTRATEGY
 ENDOPTIMIZER
 )");
@@ -174,17 +173,31 @@ ENDOPTIMIZER
   tadah::hpo::HPOTargets trg(ctx, in.path.string());
   REQUIRE(trg.spec.step.has_value());
   CHECK(*trg.spec.step == Approx(0.1));
-  REQUIRE(trg.spec.step_overrides.size() == 3);
+  REQUIRE(trg.spec.step_overrides.size() == 2);
   CHECK(trg.spec.step_overrides[0].key == "WATOM");
   REQUIRE(trg.spec.step_overrides[0].indices.size() == 1);
   CHECK(trg.spec.step_overrides[0].indices[0] == 1);
   CHECK(trg.spec.step_overrides[0].frac == Approx(0.05));
   CHECK(trg.spec.step_overrides[1].indices.empty());
   CHECK(trg.spec.step_overrides[1].frac == Approx(0.2));
-  /* "KEY (i)" with a space before the parenthesis is the same form */
-  REQUIRE(trg.spec.step_overrides[2].indices.size() == 1);
-  CHECK(trg.spec.step_overrides[2].indices[0] == 1);
-  CHECK(trg.spec.step_overrides[2].frac == Approx(0.3));
+  /* "KEY (i)" with a space before the parenthesis is the same form (in a
+   * file of its own: an override of index 1 again is refused as a
+   * repeat) */
+  ScopedTempFile spaced(std::string(kOptim) + R"(OPTIMIZER
+  STRATEGY
+    TYPE PLAIN
+    LIB NLOPT
+    ALGO LN_SBPLX
+    MAXEVAL 5
+    STEP WATOM (1) 0.3
+  ENDSTRATEGY
+ENDOPTIMIZER
+)");
+  tadah::hpo::HPOTargets trg2(ctx, spaced.path.string());
+  REQUIRE(trg2.spec.step_overrides.size() == 1);
+  REQUIRE(trg2.spec.step_overrides[0].indices.size() == 1);
+  CHECK(trg2.spec.step_overrides[0].indices[0] == 1);
+  CHECK(trg2.spec.step_overrides[0].frac == Approx(0.3));
 }
 
 TEST_CASE("STEP with a non-numeric value is a parse error",

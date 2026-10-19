@@ -102,6 +102,39 @@ TEST_CASE("A repeated PC_EMAE, PC_ErRMSE, PC_ERSQ or PC_SRMSE line is "
     CHECK(t.w_srmse == 4);
 }
 
+/* A second global PC_ERMSE or PC_FRMSE line is refused at its line, naming
+ * the line of the first, as a repeated PC_EMAE is ("Error on line 7:
+ * PC_ERMSE: repeated declaration (first declared on line 6)"); a global
+ * line with indexed ones, in either order, is refused as a mix of the two
+ * forms. Lines with other indices are read.
+ * Before the fix: "PC_ERMSE: repeated global declaration or mixed
+ * global/indexed forms", without the first line. */
+TEST_CASE("A repeated global PC_ERMSE or PC_FRMSE line is refused naming "
+          "the first", "[pc_dataset][parser]") {
+    for (const auto* metric : {"PC_ERMSE", "PC_FRMSE"}) {
+        const std::string key = metric;
+        INFO(key);
+        tadah::core::Context ctx;
+        ConfigFile twice(key + " 0 1\n" + key + " 0 2\n");
+        CHECK_THROWS_WITH(HPOTargets(ctx, twice.path.string()),
+                          Catch::Matchers::StartsWith(
+                              "Error on line 7: " + key +
+                              ": repeated declaration (first declared on "
+                              "line 6)"));
+        for (const std::string body :
+             {key + " (1) 0 1\n" + key + " 0 2\n",
+              key + " 0 1\n" + key + " (1) 0 2\n"}) {
+            ConfigFile mixed(body);
+            CHECK_THROWS_WITH(HPOTargets(ctx, mixed.path.string()),
+                              Catch::Matchers::StartsWith(
+                                  "Error on line 7: " + key +
+                                  ": cannot mix global and indexed forms"));
+        }
+        ConfigFile indexed(key + " (1) 0 1\n" + key + " (2) 0 2\n");
+        CHECK_NOTHROW(HPOTargets(ctx, indexed.path.string()));
+    }
+}
+
 TEST_CASE("PC dataset coverage errors name the missing dataset and metric", "[pc_dataset][parser]") {
     for (const auto* key : {"PC_ERMSE", "PC_FRMSE"}) {
         ConfigFile f(std::string(key) + " (1,3) 0 1\n");

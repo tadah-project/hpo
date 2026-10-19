@@ -31,9 +31,12 @@
 // -- an optimiser key (LIB, ALGO, MAXEVAL, SEED, PARAM <name>, ...) for its
 // optimiser (OPTIMIZER, STRATEGY and REFINE configure the STRATEGY-level
 // one), an INIT key for the starting points of its optimiser, a NOISE,
-// RESTART or STRATEGY key for the run. A later line replaced the first's
-// value without a word. METHOD lines add to their chain and STEP <KEY>
-// overrides layer over the block-wide STEP: neither is a repeat.
+// RESTART or STRATEGY key for the run, and a top-level key that takes one
+// value (QFLUSH, OUTPUT, DUMP, ...). A later line replaced the first's
+// value without a word. METHOD lines add to their chain, STEP <KEY>
+// overrides of other indices layer over the block-wide STEP and over each
+// other, and FAILSCORE, LOSS and PC_SCRIPT_TIMEOUT apply to the PC_LAMMPS
+// lines after them: none of them is a repeat.
 // A NOISE block takes AUTO and CALIBRATION: an optimiser key inside it is
 // refused at its line, as every other key (it set the optimiser of the
 // OPTIMIZER block around it).
@@ -704,6 +707,8 @@ TEST_CASE("hpotarget block structure: a key of an INIT, NOISE, RESTART or "
                                         "ENDOPTIMIZER"}) ==
               at_line(10, "K_TOTAL is set twice in the INIT block (first on "
                           "line 7)" + once, "    K_TOTAL 3"));
+        /* two INIT blocks inside two blocks: both named (it said "set
+         * twice in the INIT block", as for one block) */
         CHECK(parse_error(kRoot + Lines{"OPTIMIZER", "  INIT",
                                         "    WARM_ON_MISMATCH warn",
                                         "  ENDINIT", "  STRATEGY",
@@ -712,9 +717,27 @@ TEST_CASE("hpotarget block structure: a key of an INIT, NOISE, RESTART or "
                                         "      WARM_ON_MISMATCH error",
                                         "    ENDINIT", "  ENDSTRATEGY",
                                         "ENDOPTIMIZER"}) ==
-              at_line(11, "WARM_ON_MISMATCH is set twice in the INIT block "
-                          "(first on line 5)" + once,
+              at_line(11, "WARM_ON_MISMATCH is set on line 5 in the INIT "
+                          "block inside OPTIMIZER and again here in the INIT "
+                          "block inside STRATEGY; both blocks configure the "
+                          "same starting points, so each key is given once",
                       "      WARM_ON_MISMATCH error"));
+        /* the INIT block inside REFINE sets the same starting points */
+        CHECK(parse_error(kRoot + Lines{"OPTIMIZER", "  INIT",
+                                        "    SEED 4", "  ENDINIT",
+                                        "  STRATEGY", "    TYPE PRESTAGE",
+                                        "    LIB DLIB", "    ALGO BFGS",
+                                        "    EXPLORE", "      LIB DLIB",
+                                        "      ALGO GFS", "      MAXEVAL 4",
+                                        "    ENDEXPLORE", "    REFINE",
+                                        "      INIT", "        SEED 5",
+                                        "      ENDINIT", "    ENDREFINE",
+                                        "  ENDSTRATEGY", "ENDOPTIMIZER"}) ==
+              at_line(18, "SEED is set on line 5 in the INIT block inside "
+                          "OPTIMIZER and again here in the INIT block inside "
+                          "REFINE; both blocks configure the same starting "
+                          "points, so each key is given once",
+                      "        SEED 5"));
     }
     SECTION("NOISE") {
         CHECK(parse_error(kRoot + Lines{"OPTIMIZER", "  LIB DLIB",
@@ -783,6 +806,77 @@ TEST_CASE("hpotarget block structure: a key of an INIT, NOISE, RESTART or "
                          "configure the same search space, so each key is "
                          "given once", "    LOG_HP 100"));
     }
+}
+
+/* Fixes: a top-level key that takes one value is set once, as a key of a
+ * block is: QFLUSH, OUTPUT, BOUTPUT, DIGITS, DUMP, BDUMP,
+ * FAILSCORE_GRADING, BUMPGATE, PC_ISOLATION and PC_WORKER_TIMEOUT. A second
+ * line is refused at its line, naming the first ("QFLUSH is set twice
+ * (first on line 3); each key is given once"). FAILSCORE, LOSS and
+ * PC_SCRIPT_TIMEOUT (MAXTIME) apply to the PC_LAMMPS lines after them, so a
+ * later line is read.
+ * Before the fix: the later line replaced the first without a word. */
+TEST_CASE("hpotarget block structure: a top-level key that takes one value "
+          "set twice is refused at the second line",
+          "[hpotarget][block_structure]")
+{
+    const fs::path dir = fs::temp_directory_path() / unique_name("tadah_hbs_d");
+    fs::create_directories(dir);   // DUMP and BDUMP create their directory
+    struct Case { std::string key, first, second; };
+    for (const auto& c : std::vector<Case>{
+             {"QFLUSH", "4", "8"}, {"OUTPUT", "2", "3"},
+             {"BOUTPUT", "2", "3"}, {"DIGITS", "6", "7"},
+             {"DUMP", "1 " + (dir / "a").string(), "2 " + (dir / "b").string()},
+             {"BDUMP", "1 " + (dir / "c").string(), "2 " + (dir / "d").string()},
+             {"FAILSCORE_GRADING", "ON", "OFF"},
+             {"BUMPGATE", "STRICT", "CANDIDATE"},
+             {"PC_ISOLATION", "THREAD", "THREAD"},
+             {"PC_WORKER_TIMEOUT", "60", "70"}}) {
+        INFO(c.key);
+        const std::string second = c.key + " " + c.second;
+        CHECK(parse_error(kRoot + Lines{c.key + " " + c.first, "OPTIMIZER",
+                                        "  LIB DLIB", "  ALGO BFGS",
+                                        "ENDOPTIMIZER", second}) ==
+              at_line(8, c.key + " is set twice (first on line 3); each key "
+                             "is given once", second));
+    }
+    std::error_code ec;
+    fs::remove_all(dir, ec);
+    /* the keys the PC_LAMMPS lines after them take */
+    CHECK(parse_error(kRoot + Lines{"FAILSCORE 1e9", "LOSS L2",
+                                    "PC_SCRIPT_TIMEOUT 60", "FAILSCORE 1e8",
+                                    "LOSS L1", "PC_SCRIPT_TIMEOUT 90",
+                                    "OPTIMIZER", "  LIB DLIB",
+                                    "  ALGO BFGS", "ENDOPTIMIZER"}) == "");
+}
+
+/* Fixes: a STEP <KEY> override is set once for its key and indices: an
+ * identical one is refused at its line, naming the first ("STEP WATOM(1)
+ * is set twice in the STRATEGY block (first on line 8); each key is given
+ * once"; "WATOM(1)" and "WATOM (1)" are one override). An override of
+ * other or no indices layers over it, and the block-wide STEP under both.
+ * Before the fix: the later override replaced the first without a word. */
+TEST_CASE("hpotarget block structure: a STEP <KEY> override given twice for "
+          "the same indices is refused at the second line",
+          "[hpotarget][block_structure][step]")
+{
+    const Lines head = kRoot + Lines{"OPTIMIZER", "  STRATEGY",
+                                     "    LIB NLOPT", "    ALGO LN_SBPLX",
+                                     "    MAXEVAL 9"};   // lines 3-7
+    const Lines tail = {"  ENDSTRATEGY", "ENDOPTIMIZER"};
+    CHECK(parse_error(head + Lines{"    STEP WATOM(1) 0.05",
+                                   "    STEP WATOM (1) 0.3"} + tail) ==
+          at_line(9, "STEP WATOM(1) is set twice in the STRATEGY block "
+                     "(first on line 8); each key is given once",
+                  "    STEP WATOM (1) 0.3"));
+    CHECK(parse_error(head + Lines{"    STEP WATOM 0.2", "    STEP WATOM 0.3"} +
+                      tail) ==
+          at_line(9, "STEP WATOM is set twice in the STRATEGY block (first "
+                     "on line 8); each key is given once",
+                  "    STEP WATOM 0.3"));
+    /* layering: the block-wide STEP, all indices of WATOM, then index 1 */
+    CHECK(parse_error(head + Lines{"    STEP 0.1", "    STEP WATOM 0.2",
+                                   "    STEP WATOM(1) 0.05"} + tail) == "");
 }
 
 TEST_CASE("hpotarget block structure: an optimiser key inside a NOISE block "
