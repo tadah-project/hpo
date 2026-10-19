@@ -1790,6 +1790,49 @@ TEST_CASE("durable best: a persistent failure fails the run",
     CHECK_FALSE(fs::exists(sd.dir / "best_pot.tadah"));
 }
 
+/* At the end of a run the lock files of the best potential go. One that
+ * cannot be removed ("durable.lock_unlink" fails) is a WARNING in the
+ * journal, which names it, and the run ends as it would: exit status 0 and
+ * its optimiser's status. A run whose lock file goes leaves none.
+ * Before the fix: the WARNING was written after the journal had closed,
+ * so nothing reported the lock file that stayed. */
+TEST_CASE("durable best: a lock file that cannot be removed is a journal "
+          "WARNING", "[durable_e2e][failure_handling][.]")
+{
+    {
+        ScratchDir sd;
+        write_durable_fixture(sd.dir);
+        const ChildRun r = run_self(
+            "[.durable_e2e_child]", sd.dir,
+            {"TADAH_HPO_TEST_IO_FAULT=durable.lock_unlink,EIO,count=always",
+             kShortBackoff, "TADAH_TEST_DURABLE_E2E_EXPECT=ok"});
+        INFO(r.output);
+        REQUIRE(WIFEXITED(r.status));
+        REQUIRE(WEXITSTATUS(r.status) == 0);
+        REQUIRE(r.output.find("All tests passed") != std::string::npos);
+        const std::string journal = read_text(sd.dir / "hpo_run.log");
+        INFO(journal);
+        const std::string warning =
+            line_with(journal, "the lock file of the best potential stays");
+        CHECK_THAT(warning, Catch::Contains("WARNING") &&
+                                Catch::Contains("best_pot.tadah.lock"));
+        CHECK(line_with(journal, "Optimiser status").find("FAILED") ==
+              std::string::npos);
+        CHECK(fs::exists(sd.dir / "best_pot.tadah.lock"));
+    }
+    {
+        ScratchDir sd;
+        write_durable_fixture(sd.dir);
+        const ChildRun r = run_self("[.durable_e2e_child]", sd.dir,
+                                    {"TADAH_TEST_DURABLE_E2E_EXPECT=ok"});
+        INFO(r.output);
+        REQUIRE(WIFEXITED(r.status));
+        REQUIRE(WEXITSTATUS(r.status) == 0);
+        CHECK(fs::exists(sd.dir / "best_pot.tadah"));
+        CHECK_FALSE(fs::exists(sd.dir / "best_pot.tadah.lock"));
+    }
+}
+
 /* The fresh-run reset of best_pot.tadah, before the first evaluation, is
  * a publication like any other: when its lock cannot be taken the run fails
  * the same way. It used to be a startup error: the journal ended with an
