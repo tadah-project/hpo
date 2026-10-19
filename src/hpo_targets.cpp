@@ -1874,6 +1874,13 @@ bool nothing_at(const fs::path& dir) {
   return fs::symlink_status(dir, ec).type() == fs::file_type::not_found;
 }
 
+/* Whether the path @p p has a '..' component. */
+bool walks_up(const fs::path& p) {
+  for (const fs::path& part : p)
+    if (part == "..") return true;
+  return false;
+}
+
 /* The directory a new archive directory @p dir is created in ("pots/" is
  * "pots", whose parent is the working directory, "."). */
 fs::path parent_of_new(const fs::path& dir) {
@@ -1961,8 +1968,11 @@ void HPOTargets::check_archive_directory(const std::string& key,
   /* A new directory: the run creates the last directory of the path, in
    * its parent -- or after the other archive line's new directory, when
    * that is its parent. */
+  /* A parent written with '..' is the directory mkdir walks through, which
+   * the other line does not create: such a parent is checked as it is. */
   const fs::path parent = parent_of_new(path);
-  if (!created_first.empty() && archive_path(parent) == created_first)
+  if (!created_first.empty() && !walks_up(parent) &&
+      archive_path(parent) == created_first)
     return;
   const std::string cannot = what + " cannot be created: ";
   const fs::file_status ps = fs::status(parent, ec);
@@ -1989,46 +1999,104 @@ std::string working_directory() {
   return ec ? std::string(".") : cwd.string();
 }
 
-/* Throws when the output file @p file of the run, in the working
- * directory, exists and the run cannot write it (@p rewritten: the run
- * opens it to write; else it only replaces or removes it, and it must not
- * be a directory). */
-void check_output_file(const std::string& file, bool rewritten) {
+/* What the run does with an output file in the working directory. */
+enum class OutputUse {
+  Rewritten,  // opens it to write (the journal, a result file)
+  Locked,     // opens it to write and locks it (the lock of a best potential)
+  Replaced    // replaces or removes it (a best potential)
+};
+
+/* Throws when the run cannot write the output file @p file in the working
+ * directory as @p use says: one that exists must not be a directory, and,
+ * unless the run replaces it, must be writable; a symbolic link to a file
+ * not yet created must name a directory the run can write into. */
+void check_output_file(const std::string& file, OutputUse use) {
   std::error_code ec;
-  const fs::file_status st = fs::symlink_status(file, ec);
-  if (st.type() == fs::file_type::not_found) return;
+  const fs::file_status lst = fs::symlink_status(file, ec);
+  if (lst.type() == fs::file_type::not_found) return;
   const std::string where =
       "'" + file + "' in the working directory '" + working_directory() + "'";
-  if (fs::is_directory(fs::status(file, ec)))
+  const fs::file_status st = fs::status(file, ec);
+  if (st.type() == fs::file_type::not_found) {
+    /* A symbolic link to a file not yet created: the run creates it
+     * through the link, in the directory the link names. */
+    std::error_code lec;
+    const fs::path target = fs::read_symlink(file, lec);
+    if (lec)
+      throw std::runtime_error(where + " cannot be read: " + lec.message());
+    fs::path full = target.is_absolute()
+                        ? target
+                        : fs::path(file).parent_path() / target;
+    fs::path dir = full.parent_path();
+    if (dir.empty()) dir = ".";
+    const std::string link = where + " is a symbolic link to '" +
+                             target.string() + "', whose directory '" +
+                             dir.string() + "'";
+    const fs::file_status ds = fs::status(dir, ec);
+    if (ds.type() == fs::file_type::not_found)
+      throw std::runtime_error(link + " does not exist");
+    if (!fs::is_directory(ds))
+      throw std::runtime_error(link + " is not a directory");
+    if (use != OutputUse::Replaced && !writable_directory(dir))
+      throw std::runtime_error(link + " is not writable");
+    return;
+  }
+  if (fs::is_directory(st))
     throw std::runtime_error(where + " is a directory: tadah hpo writes a "
                              "file of that name");
-  if (rewritten && ::access(file.c_str(), W_OK) != 0)
-    throw std::runtime_error(where + " is not writable: tadah hpo rewrites "
-                             "it");
+  if (use == OutputUse::Replaced || ::access(file.c_str(), W_OK) == 0)
+    return;
+  throw std::runtime_error(
+      where + " is not writable: " +
+      (use == OutputUse::Locked ? "tadah hpo opens it to lock best_pot.tadah"
+                                : "tadah hpo rewrites it"));
 }
 }  // namespace
 
-void HPOTargets::check_working_directory(const std::string& journal) {
+HPOTargets::OutputNames HPOTargets::output_names() {
+  const std::string r = hpo_rank_suffix();
+  return {"loss.tadah" + r,      "outvar.tadah" + r,
+          "params.tadah" + r,    "stats.tadah" + r,
+          "best_loss.tadah" + r, "best_outvar.tadah" + r,
+          "best_params.tadah" + r, "best_stats.tadah" + r,
+          "best_pot.tadah",      "best_pot.tadah" + r};
+}
+
+bool HPOTargets::writes_search_space_file() const {
+  return static_cast<bool>(space_);
+}
+
+bool HPOTargets::writes_resolved_optim_file() const {
+  if (!space_) return false;
+  for (std::size_t i = 0; i < space_->dim(); ++i)
+    if (space_->at(i).origin != BoxOrigin::Explicit) return true;
+  return false;
+}
+
+void HPOTargets::check_run_outputs(const std::string& journal) {
   std::error_code ec;
   if (!fs::is_directory(fs::status(".", ec)) || !writable_directory("."))
     throw std::runtime_error(
         "the working directory '" + working_directory() +
         "' is not writable: tadah hpo writes its journal (hpo_run.log), its "
         "result files and best_pot.tadah there");
-  check_output_file(journal, true);
+  check_output_file(journal, OutputUse::Rewritten);
+  const OutputNames n = output_names();
+  for (const std::string* f :
+       {&n.loss, &n.outvar, &n.params, &n.stats, &n.bestLoss, &n.bestOutvar,
+        &n.bestParams, &n.bestStats})
+    check_output_file(*f, OutputUse::Rewritten);
+  for (const std::string* f : {&n.canonicalBestPot, &n.localBestPot}) {
+    check_output_file(*f, OutputUse::Replaced);
+    check_output_file(*f + ".lock", OutputUse::Locked);
+  }
 }
 
-void HPOTargets::check_output_files() const {
-  for (const std::string* f :
-       {&lossFile, &outvarFile, &paramsFile, &statsFile, &bestLossFile,
-        &bestOutvarFile, &bestParamsFile, &bestStatsFile})
-    check_output_file(*f, true);
-  check_output_file(kSearchSpaceFile, true);
-  check_output_file(kResolvedOptimFile, true);
-  for (const std::string* f : {&canonicalBestPotFile, &localBestPotFile}) {
-    check_output_file(*f, false);
-    check_output_file(*f + ".lock", true);
-  }
+void HPOTargets::check_search_space_files() const {
+  if (writes_search_space_file())
+    check_output_file(kSearchSpaceFile, OutputUse::Rewritten);
+  if (writes_resolved_optim_file())
+    check_output_file(kResolvedOptimFile, OutputUse::Rewritten);
 }
 
 void HPOTargets::create_archive_directory(const std::string& key,
@@ -2289,10 +2357,7 @@ void HPOTargets::write_search_space_files(const std::string& dir) const {
     emit(header);
     for (const auto& r : rows) emit(r);
   }
-  bool any_auto = false;
-  for (std::size_t i = 0; i < ss.dim(); ++i)
-    if (ss.at(i).origin != BoxOrigin::Explicit) any_auto = true;
-  if (!any_auto) return;
+  if (!writes_resolved_optim_file()) return;
   std::ofstream hpo(dir + "/" + kResolvedOptimFile);
   hpo << "# Resolved OPTIM block (explicit bounds for every searched dimension).\n"
          "# Written by tadah hpo because at least one box was derived by an AUTO rule;\n"

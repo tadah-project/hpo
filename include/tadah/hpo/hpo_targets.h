@@ -207,20 +207,48 @@ public:
     static constexpr const char* kSearchSpaceFile = "hpo_search_space.tsv";
     static constexpr const char* kResolvedOptimFile = "hpo_optim_resolved.hpo";
 
-    /* Throws when the run cannot write its output files into the working
-     * directory, and creates nothing (`tadah hpo --check` and the run
+    /* The names of the files a run writes into the working directory:
+     * the result files and the local best potential carry the rank suffix
+     * (hpo_rank_suffix()), best_pot.tadah, the canonical best potential,
+     * none. The members below (lossFile, ...) hold them;
+     * check_run_outputs() checks them before the run has read its target
+     * file. */
+    struct OutputNames {
+        std::string loss, outvar, params, stats;
+        std::string bestLoss, bestOutvar, bestParams, bestStats;
+        std::string canonicalBestPot, localBestPot;
+    };
+    static OutputNames output_names();
+
+    /* Whether the run writes the search-space files: hpo_search_space.tsv
+     * when the target file has a search space, hpo_optim_resolved.hpo when
+     * a box of it comes from an AUTO rule (write_search_space_files). */
+    bool writes_search_space_file() const;
+    bool writes_resolved_optim_file() const;
+
+    /* Throw when the run cannot write its output files into the working
+     * directory, and create nothing (`tadah hpo --check` and the run
      * alike, before any data is loaded):
-     *   - check_working_directory(journal): the working directory must be
-     *     a directory the run can write into ("the working directory
-     *     '<dir>' is not writable: tadah hpo writes its journal
-     *     (hpo_run.log), its result files and best_pot.tadah there"), and
-     *     the journal @p journal, when it exists, a file the run can write;
-     *   - check_output_files(): the result files (loss.tadah, ...), the
-     *     search-space files and the lock of best_pot.tadah, when they
-     *     exist, files the run can write; best_pot.tadah, when it exists,
-     *     no directory. */
-    static void check_working_directory(const std::string& journal);
-    void check_output_files() const;
+     *   - check_run_outputs(journal), before the run opens its journal: the
+     *     working directory must be a directory the run can write into
+     *     ("the working directory '<dir>' is not writable: tadah hpo
+     *     writes its journal (hpo_run.log), its result files and
+     *     best_pot.tadah there"); the journal @p journal and the result
+     *     files, when they exist, files the run can write ("'loss.tadah'
+     *     in the working directory '<dir>' is not writable: tadah hpo
+     *     rewrites it"), and so the lock of each best potential ("...
+     *     tadah hpo opens it to lock best_pot.tadah"); a best potential,
+     *     which the run replaces, no directory ("... is a directory: tadah
+     *     hpo writes a file of that name");
+     *   - check_search_space_files(), once the target file is read: the
+     *     search-space files the run writes (writes_search_space_file(),
+     *     writes_resolved_optim_file()), as the result files.
+     * A file that is a symbolic link is checked through it: to a file not
+     * yet created, the directory it names must be a directory the run can
+     * write into ("... is a symbolic link to 'x/loss', whose directory 'x'
+     * does not exist"). */
+    static void check_run_outputs(const std::string& journal);
+    void check_search_space_files() const;
 
     /* Typed observables (Tier 1 / Tier 2 of the PC_OBSERVABLE redesign).
      * Each entry is a polymorphic Observable* -- concrete subclasses live in
@@ -379,19 +407,18 @@ public:
      * multi-rank runs sharing one working directory never clobber each
      * other. The unsuffixed namespace is reserved for canonical shared
      * artifacts; the suffix is empty in non-MPI builds and 1-rank runs. */
-    const std::string lossFile       = "loss.tadah"        + hpo_rank_suffix();
-    const std::string outvarFile     = "outvar.tadah"      + hpo_rank_suffix();
-    const std::string paramsFile     = "params.tadah"      + hpo_rank_suffix();
-    const std::string statsFile      = "stats.tadah"       + hpo_rank_suffix();
-    const std::string bestLossFile    = "best_loss.tadah"   + hpo_rank_suffix();
-    const std::string bestOutvarFile  = "best_outvar.tadah" + hpo_rank_suffix();
-    const std::string bestParamsFile  = "best_params.tadah" + hpo_rank_suffix();
-    const std::string bestStatsFile   = "best_stats.tadah"  + hpo_rank_suffix();
+    const std::string lossFile       = output_names().loss;
+    const std::string outvarFile     = output_names().outvar;
+    const std::string paramsFile     = output_names().params;
+    const std::string statsFile      = output_names().stats;
+    const std::string bestLossFile    = output_names().bestLoss;
+    const std::string bestOutvarFile  = output_names().bestOutvar;
+    const std::string bestParamsFile  = output_names().bestParams;
+    const std::string bestStatsFile   = output_names().bestStats;
     /* best_pot.tadah is canonical across ranks. Multi-rank runs also keep an
      * explicit local file for every rank, including best_pot.tadah.r0. */
-    const std::string canonicalBestPotFile = "best_pot.tadah";
-    const std::string localBestPotFile =
-        std::string("best_pot.tadah") + hpo_rank_suffix();
+    const std::string canonicalBestPotFile = output_names().canonicalBestPot;
+    const std::string localBestPotFile = output_names().localBestPot;
     /* Prevent rank-local archive ordinals from truncating one shared file. */
     const std::string potArchiveSuffix = hpo_rank_suffix();
     LossFunction globalLoss;

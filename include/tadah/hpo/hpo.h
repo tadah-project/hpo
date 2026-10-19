@@ -33,11 +33,13 @@ struct OptimizerSpec;
  *
  * With CHECK true in the context (`tadah hpo --check`, CHECK true in a
  * TASK hpo section) it makes the startup checks of the run alone, in the
- * run's order -- the working directory, which must take the journal, the
- * result files and best_pot.tadah, the training configuration, the target
- * file (its DUMP and BDUMP directories included) and its LAMMPS scripts,
- * the result files that exist, validate_hpo_setup(), PC_ISOLATION and
- * THREADS, the training and
+ * run's order -- the working directory and the journal, result files,
+ * best potentials and locks the run writes there
+ * (HPOTargets::check_run_outputs, before a run opens its journal), the
+ * training configuration, the target file (its DUMP and BDUMP directories
+ * included) and its LAMMPS scripts, the search-space files the run writes
+ * (HPOTargets::check_search_space_files), validate_hpo_setup(),
+ * PC_ISOLATION and THREADS, the training and
  * validation datasets (loaded as the run loads them), HEALTH_LOG, the
  * pre-flight audit and the STRATEGY TYPE and RESTART settings -- then
  * writes the summary of write_check_summary() (check_summary.h) to
