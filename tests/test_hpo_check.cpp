@@ -28,6 +28,7 @@
 #include <tadah/hpo/hpo.h>
 #include <tadah/hpo/hpo_host.h>
 #include <tadah/hpo/hpo_log.h>
+#include <tadah/hpo/hpo_mpi.h>
 #include <tadah/hpo/io_retry.h>
 #include <tadah/hpo/runners.h>
 
@@ -1082,4 +1083,40 @@ TEST_CASE("hpo --check: hpo_optim_resolved.hpo is checked only when a box "
                                "is not writable: tadah hpo rewrites it");
         CHECK(check_error == run_error);
     }
+}
+
+/* Pins the agreement of the ranks on a startup step that one rank can fail
+ * alone (its rank-suffixed hpo_run.log.r1, loss.tadah.r1 or
+ * best_pot.tadah.r1.lock): agreed_startup_error(), the error each rank
+ * throws once the ranks' failure flags are combined, is the rank's own
+ * error where the step failed on it, "the check of the output files failed
+ * on another MPI rank" where it failed on another rank alone, and "" (no
+ * error) where it failed on no rank; run_on_every_rank() of a step that
+ * throws throws its message (a serial run is one rank), and of a step that
+ * does not, nothing. What the agreement prevents -- a rank waiting in a
+ * later collective for a peer that stopped -- needs the MPI build
+ * (TADAH_HPO_MPI) and several ranks.
+ * Before the change: the steps had no agreement; neither function existed
+ * (the case does not compile). */
+TEST_CASE("hpo --check: the ranks agree on a startup step one rank fails",
+          "[HPO][hpo_check][mpi_agreement]")
+{
+    using tadah::hpo::agreed_startup_error;
+    const std::string what = "the check of the output files";
+    CHECK(agreed_startup_error("loss.tadah.r1 is not writable", true, what) ==
+          "loss.tadah.r1 is not writable");
+    CHECK(agreed_startup_error("", true, what) ==
+          "the check of the output files failed on another MPI rank");
+    CHECK(agreed_startup_error("", false, what).empty());
+
+    std::string thrown;
+    try {
+        tadah::hpo::run_on_every_rank(what, [] {
+            throw std::runtime_error("loss.tadah is not writable");
+        });
+    } catch (const std::exception& e) {
+        thrown = e.what();
+    }
+    CHECK(thrown == "loss.tadah is not writable");
+    CHECK_NOTHROW(tadah::hpo::run_on_every_rank(what, [] {}));
 }
