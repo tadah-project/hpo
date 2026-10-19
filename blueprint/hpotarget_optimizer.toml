@@ -149,18 +149,29 @@ default = { text = "No evaluation limit: an optimiser that needs a stop is refus
 doc = """\
 The evaluation budget of the optimiser of the block. Under STRATEGY TYPE \
 MULTISTART, and in a PRESTAGE refinement from more than one candidate, the \
-starts share it."""
+starts share it, unless the optimiser runs every start in one run, as \
+DLIB:GFS does."""
 long_doc = """\
 Each start receives MAXEVAL divided by the number of starts, rounded up; \
 under MULTISTART, BUDGET_PER_START sets the budget of each start instead. \
-The EXPLORE block of STRATEGY TYPE PRESTAGE has a MAXEVAL of its own. An \
-optimiser without a convergence test or a finite schedule of its own, such \
-as TADAH:RANDOM, needs MAXEVAL, another stop it reads or an active RESTART \
-block; the optimiser list names its stops. NLOPT:GD_STOGO and \
-NLOPT:GD_STOGO_RAND need MAXEVAL itself: MAXTIME, STOPVAL and a RESTART \
-block do not count as their stop. The local search of an NLopt MLSL or \
-AUGLAG that needs a stop takes one from its block, which NLopt hands on, \
-or from its INNER block."""
+An optimiser that takes several starting points in one run, such as \
+DLIB:GFS, runs once with all of them and the whole MAXEVAL. The EXPLORE \
+block of STRATEGY TYPE PRESTAGE has a MAXEVAL of its own. Under an active \
+RESTART block each round runs with the whole MAXEVAL, so a run can make up \
+to (MAX + 1) times MAXEVAL evaluations. An optimiser without a convergence \
+test or a finite schedule of its own, such as TADAH:RANDOM, needs MAXEVAL, \
+another stop it reads or an active RESTART block; the optimiser list names \
+its stops. TADAH:ANNEAL without MAXEVAL needs PARAM CHAIN_LENGTH, or PARAM \
+NT under PARAM CORANA ON, which it otherwise derives from MAXEVAL. \
+NLOPT:GD_STOGO and NLOPT:GD_STOGO_RAND need MAXEVAL itself: MAXTIME, \
+STOPVAL and a RESTART block do not count as their stop. The local search \
+of an NLopt MLSL or AUGLAG that needs a stop takes one from its block, \
+which NLopt hands on, or from its INNER block."""
+checks = [
+  { msg = "{phase}: {lib}:{algo} needs a stop: {why}; set {list}", doc = "At startup, at the END line of its optimiser: an optimiser without a convergence test or a finite schedule of its own, and none of its stops; {why} says why it needs one, {list} names the stops it honours." },
+  { msg = "{phase}: TADAH:ANNEAL: CHAIN_LENGTH AUTO needs MAXEVAL to derive the per-rung budget; set PARAM CHAIN_LENGTH explicitly (e.g. for MAXTIME- or STOPVAL-driven runs)", doc = "At startup, at the END line of its optimiser: TADAH:ANNEAL without MAXEVAL and without PARAM CHAIN_LENGTH." },
+  { msg = "{phase}: TADAH:ANNEAL: NT AUTO needs MAXEVAL to derive the per-rung budget; set PARAM NT explicitly (e.g. for MAXTIME- or STOPVAL-driven runs)", doc = "At startup, at the END line of its optimiser: TADAH:ANNEAL under PARAM CORANA ON without MAXEVAL and without PARAM NT." },
+]
 
 [[key.examples]]
 wrap = "none"
@@ -244,6 +255,41 @@ wrap = "strategy"
 text = "MAXEVAL 20"
 error = "MAXEVAL is set twice in the STRATEGY block (first on line 7); each key is given once"
 
+[[key.invalid]]
+wrap = "none"
+check = "startup"
+at = "ENDOPTIMIZER"
+doc = "TADAH:ANNEAL with MAXTIME and neither MAXEVAL nor PARAM CHAIN_LENGTH."
+text = '''
+OPTIM CGRID2B (1) 0.5 1.5
+PC_ERMSE 0 1
+OPTIMIZER
+STRATEGY
+LIB TADAH
+ALGO ANNEAL
+MAXTIME 60
+ENDSTRATEGY
+ENDOPTIMIZER'''
+error = "the STRATEGY-level optimiser: TADAH:ANNEAL: CHAIN_LENGTH AUTO needs MAXEVAL to derive the per-rung budget; set PARAM CHAIN_LENGTH explicitly (e.g. for MAXTIME- or STOPVAL-driven runs)"
+
+[[key.invalid]]
+wrap = "none"
+check = "startup"
+at = "ENDOPTIMIZER"
+doc = "TADAH:ANNEAL under PARAM CORANA ON with MAXTIME and neither MAXEVAL nor PARAM NT."
+text = '''
+OPTIM CGRID2B (1) 0.5 1.5
+PC_ERMSE 0 1
+OPTIMIZER
+STRATEGY
+LIB TADAH
+ALGO ANNEAL
+MAXTIME 60
+PARAM CORANA ON
+ENDSTRATEGY
+ENDOPTIMIZER'''
+error = "the STRATEGY-level optimiser: TADAH:ANNEAL: NT AUTO needs MAXEVAL to derive the per-rung budget; set PARAM NT explicitly (e.g. for MAXTIME- or STOPVAL-driven runs)"
+
 [[key]]
 id = "OPTIMIZER.MAXTIME"
 name = "MAXTIME"
@@ -264,7 +310,7 @@ time. Only the optimisers that read it take it (the optimiser list names \
 the stops of each): DLIB:BFGS and CERES:STEEPEST_DESCENT refuse it at \
 startup, at the END line of the block."""
 checks = [
-  { msg = "{phase}: {lib}:{algo} does not support MAXTIME", doc = "At startup, at the END line of the block: DLIB:BFGS or CERES:STEEPEST_DESCENT." },
+  { msg = "{phase}: {lib}:{algo} does not support MAXTIME", doc = "At startup, at the END line of its optimiser: DLIB:BFGS or CERES:STEEPEST_DESCENT." },
 ]
 
 [[key.examples]]
@@ -335,7 +381,7 @@ DLIB:BFGS and CERES:STEEPEST_DESCENT refuse it at startup, at the END \
 line of the block. An INNER block refuses STOPVAL: NLopt's MLSL and \
 AUGLAG stop their local search at the STOPVAL of the enclosing block."""
 checks = [
-  { msg = "{phase}: {lib}:{algo} does not support STOPVAL", doc = "At startup, at the END line of the block: DLIB:BFGS or CERES:STEEPEST_DESCENT." },
+  { msg = "{phase}: {lib}:{algo} does not support STOPVAL", doc = "At startup, at the END line of its optimiser: DLIB:BFGS or CERES:STEEPEST_DESCENT." },
 ]
 
 [[key.examples]]
@@ -388,7 +434,7 @@ args = [ { name = "tolerance", kind = "number", what = "{key}" } ]
 repeat = "error"
 repeat_msg = "FTOL_REL is set twice in the {block} block (first on line {first_line}); each key is given once"
 repeat_doc = "Once for each optimiser: a second line is refused, in the same block, in a second block of that type, or in another of OPTIMIZER, STRATEGY and REFINE, which set the same optimiser."
-default = { text = "Not set: no tolerance; CERES:STEEPEST_DESCENT uses 1e-6, and the local search of an NLopt MLSL 1e-15 when it has no other tolerance." }
+default = { text = "Not set: no tolerance; CERES:STEEPEST_DESCENT uses 1e-6, and the local search of an NLopt MLSL 1e-15 when it has no other tolerance.", unchecked = "NLopt applies its own tolerances to the local search of an MLSL; tadah hpo does not set them." }
 doc = """\
 The relative tolerance on the loss: the search stops when an iteration \
 changes the loss by less than this fraction of it."""
@@ -403,11 +449,12 @@ value at startup. The local search of an NLopt MLSL that has none of \
 FTOL_REL, FTOL_ABS and XTOL_REL above 0, in a block without XTOL_ABS \
 above 0, runs with NLopt's FTOL_REL 1e-15 and XTOL_REL 1e-7."""
 checks = [
-  { msg = "{phase}: {lib}:{algo} does not support FTOL_REL with an INNER block: {why}; set it in the INNER block, whose local search tests it", doc = "At startup, at the END line of the block: an NLopt MLSL or AUGLAG with an INNER block; {why} says how the INNER search ends the run." },
-  { msg = "{phase}: CERES:{algo} requires FTOL_REL >= 0 (Ceres' function_tolerance), got {value}", doc = "At startup, at the END line of the block." },
-  { msg = "{phase}: DLIB:BFGS does not support FTOL_REL; use FTOL_ABS", doc = "At startup, at the END line of the block." },
-  { msg = "{phase}: ASA:ASA does not implement FTOL_REL/FTOL_ABS; use ASA's own stops: PARAM Cost_Precision + Maximum_Cost_Repeat (plateau) or Accepted_To_Generated_Ratio", doc = "At startup, at the END line of the block." },
-  { msg = "{phase}: TADAH:{algo}: FTOL_REL must be finite and non-negative", doc = "At startup, at the END line of the block: an annealer, with a value below 0." },
+  { msg = "{phase}: {lib}:{algo} does not support FTOL_REL with an INNER block: {why}; set it in the INNER block, whose local search tests it", doc = "At startup, at the END line of its optimiser: an NLopt MLSL or AUGLAG with an INNER block; {why} says how the INNER search ends the run." },
+  { msg = "{phase}: CERES:{algo} requires FTOL_REL >= 0 (Ceres' function_tolerance), got {value}", doc = "At startup, at the END line of its optimiser." },
+  { msg = "{phase}: DLIB:BFGS does not support FTOL_REL; use FTOL_ABS", doc = "At startup, at the END line of its optimiser." },
+  { msg = "{phase}: ASA:ASA does not implement FTOL_REL/FTOL_ABS; use ASA's own stops: PARAM Cost_Precision + Maximum_Cost_Repeat (plateau) or Accepted_To_Generated_Ratio", doc = "At startup, at the END line of its optimiser." },
+  { msg = "{phase}: TADAH:{algo}: FTOL_REL must be finite and non-negative", doc = "At startup, at the END line of its optimiser: an annealer, with a value below 0." },
+  { msg = "{phase}: {lib}:{algo} does not support FTOL_REL{note}", doc = "At startup, at the END line of its optimiser: an optimiser that does not test FTOL_REL; {note} says why and names the stops it honours." },
 ]
 
 [[key.examples]]
@@ -506,7 +553,7 @@ args = [ { name = "tolerance", kind = "number", what = "{key}" } ]
 repeat = "error"
 repeat_msg = "FTOL_ABS is set twice in the {block} block (first on line {first_line}); each key is given once"
 repeat_doc = "Once for each optimiser: a second line is refused, in the same block, in a second block of that type, or in another of OPTIMIZER, STRATEGY and REFINE, which set the same optimiser."
-default = { text = "Not set: no tolerance; DLIB:BFGS uses 1e-7, and DLIB:GFS solves to a precision of 1e-3." }
+default = { text = "Not set: no tolerance; DLIB:BFGS uses 1e-7, and DLIB:GFS solves to a precision of 1e-3.", unchecked = "The DLIB searches take these values when they start; no setting of the target file holds them." }
 doc = """\
 The absolute tolerance on the loss: the search stops when an iteration \
 changes the loss by less than this value."""
@@ -520,10 +567,12 @@ optimiser, which tests it; with an INNER block the block refuses it, and \
 the INNER block takes it. NLopt takes a value of 0 or below as no \
 tolerance; the annealers refuse a negative value at startup."""
 checks = [
-  { msg = "{phase}: CERES:{algo} uses relative tolerance; use FTOL_REL (mapped to function_tolerance) instead of FTOL_ABS", doc = "At startup, at the END line of the block." },
-  { msg = "{phase}: ASA:ASA does not implement FTOL_REL/FTOL_ABS; use ASA's own stops: PARAM Cost_Precision + Maximum_Cost_Repeat (plateau) or Accepted_To_Generated_Ratio", doc = "At startup, at the END line of the block." },
-  { msg = "{phase}: TADAH:{algo}: FTOL_ABS must be finite and non-negative", doc = "At startup, at the END line of the block: an annealer, with a value below 0." },
-  { msg = "{phase}: DLIB:GFS: FTOL_ABS is the accuracy of dlib's solver and must be >= 0 (got {value})", doc = "At startup, at the END line of the block: DLIB:GFS, with a value below 0." },
+  { msg = "{phase}: CERES:{algo} uses relative tolerance; use FTOL_REL (mapped to function_tolerance) instead of FTOL_ABS", doc = "At startup, at the END line of its optimiser." },
+  { msg = "{phase}: ASA:ASA does not implement FTOL_REL/FTOL_ABS; use ASA's own stops: PARAM Cost_Precision + Maximum_Cost_Repeat (plateau) or Accepted_To_Generated_Ratio", doc = "At startup, at the END line of its optimiser." },
+  { msg = "{phase}: TADAH:{algo}: FTOL_ABS must be finite and non-negative", doc = "At startup, at the END line of its optimiser: an annealer, with a value below 0." },
+  { msg = "{phase}: DLIB:GFS: FTOL_ABS is the accuracy of dlib's solver and must be >= 0 (got {value})", doc = "At startup, at the END line of its optimiser: DLIB:GFS, with a value below 0." },
+  { msg = "{phase}: {lib}:{algo} does not support FTOL_ABS{note}", doc = "At startup, at the END line of its optimiser: an optimiser that does not test FTOL_ABS; {note} says why and names the stops it honours." },
+  { msg = "{phase}: {lib}:{algo} does not support FTOL_ABS with an INNER block: {why}; set it in the INNER block, whose local search tests it", doc = "At startup, at the END line of its optimiser: an NLopt MLSL or AUGLAG with an INNER block; {why} says how the INNER search ends the run." },
 ]
 
 [[key.examples]]
@@ -566,6 +615,49 @@ FTOL_ABS 1e-4
 FTOL_ABS 1e-6'''
 error = "FTOL_ABS is set twice in the STRATEGY block (first on line 8); each key is given once"
 
+[[key.invalid]]
+wrap = "opt_asa"
+check = "startup"
+at = "ENDOPTIMIZER"
+text = "FTOL_ABS 1e-6"
+error = "the STRATEGY-level optimiser: ASA:ASA does not implement FTOL_REL/FTOL_ABS; use ASA's own stops: PARAM Cost_Precision + Maximum_Cost_Repeat (plateau) or Accepted_To_Generated_Ratio"
+
+[[key.invalid]]
+wrap = "opt_anneal"
+check = "startup"
+at = "ENDOPTIMIZER"
+text = "FTOL_ABS -1"
+error = "the STRATEGY-level optimiser: TADAH:ANNEAL: FTOL_ABS must be finite and non-negative"
+
+[[key.invalid]]
+wrap = "opt_grid"
+check = "startup"
+at = "ENDOPTIMIZER"
+text = "FTOL_ABS 1e-3"
+error = "the STRATEGY-level optimiser: TADAH:GRID does not support FTOL_ABS: the grid search has no convergence test to apply it to; stop it with MAXEVAL, MAXTIME or STOPVAL"
+
+[[key.invalid]]
+wrap = "none"
+check = "startup"
+at = "ENDOPTIMIZER"
+doc = "FTOL_ABS in the block of an AUGLAG with an INNER block."
+text = '''
+OPTIM CGRID2B (1) 0.5 1.5
+PC_ERMSE 0 1
+OPTIMIZER
+STRATEGY
+LIB NLOPT
+ALGO LN_AUGLAG
+MAXEVAL 10
+FTOL_ABS 1e-4
+INNER
+LIB NLOPT
+ALGO LN_BOBYQA
+ENDINNER
+ENDSTRATEGY
+ENDOPTIMIZER'''
+error = "the STRATEGY-level optimiser: NLOPT:LN_AUGLAG does not support FTOL_ABS with an INNER block: AUGLAG ends when its INNER search ends (tadah hpo sets no constraint) and tests the block's tolerances only to name that ending, and NLopt passes them to no INNER search; set it in the INNER block, whose local search tests it"
+
 [[key]]
 id = "OPTIMIZER.XTOL_REL"
 name = "XTOL_REL"
@@ -575,7 +667,7 @@ args = [ { name = "tolerance", kind = "number", what = "{key}" } ]
 repeat = "error"
 repeat_msg = "XTOL_REL is set twice in the {block} block (first on line {first_line}); each key is given once"
 repeat_doc = "Once for each optimiser: a second line is refused, in the same block, in a second block of that type, or in another of OPTIMIZER, STRATEGY and REFINE, which set the same optimiser."
-default = { text = "Not set: no tolerance; CERES:STEEPEST_DESCENT uses 1e-8, and the local search of an NLopt MLSL 1e-7 when it has no other tolerance." }
+default = { text = "Not set: no tolerance; CERES:STEEPEST_DESCENT uses 1e-8, and the local search of an NLopt MLSL 1e-7 when it has no other tolerance.", unchecked = "NLopt applies its own tolerances to the local search of an MLSL; tadah hpo does not set them." }
 doc = """\
 The relative tolerance on the search parameters: the search stops when an \
 iteration moves them by less than this fraction."""
@@ -590,10 +682,12 @@ The local search of an NLopt MLSL that has none of FTOL_REL, FTOL_ABS and \
 XTOL_REL above 0, in a block without XTOL_ABS above 0, runs with NLopt's \
 FTOL_REL 1e-15 and XTOL_REL 1e-7."""
 checks = [
-  { msg = "{phase}: CERES:{algo} requires XTOL_REL >= 0 (Ceres' parameter_tolerance), got {value}", doc = "At startup, at the END line of the block." },
-  { msg = "{phase}: DLIB:BFGS does not support XTOL_REL", doc = "At startup, at the END line of the block." },
-  { msg = "{phase}: ASA:ASA does not implement XTOL_REL/XTOL_ABS", doc = "At startup, at the END line of the block." },
-  { msg = "{phase}: TADAH:{algo} does not implement XTOL_REL/XTOL_ABS (no x-space convergence test); remove them or use FTOL_REL/FTOL_ABS (eps-NEPS plateau stop)", doc = "At startup, at the END line of the block: an annealer." },
+  { msg = "{phase}: CERES:{algo} requires XTOL_REL >= 0 (Ceres' parameter_tolerance), got {value}", doc = "At startup, at the END line of its optimiser." },
+  { msg = "{phase}: DLIB:BFGS does not support XTOL_REL", doc = "At startup, at the END line of its optimiser." },
+  { msg = "{phase}: ASA:ASA does not implement XTOL_REL/XTOL_ABS", doc = "At startup, at the END line of its optimiser." },
+  { msg = "{phase}: TADAH:{algo} does not implement XTOL_REL/XTOL_ABS (no x-space convergence test); remove them or use FTOL_REL/FTOL_ABS (eps-NEPS plateau stop)", doc = "At startup, at the END line of its optimiser: an annealer." },
+  { msg = "{phase}: {lib}:{algo} does not support XTOL_REL{note}", doc = "At startup, at the END line of its optimiser: an optimiser that does not test XTOL_REL; {note} says why and names the stops it honours." },
+  { msg = "{phase}: {lib}:{algo} does not support XTOL_REL with an INNER block: {why}; set it in the INNER block, whose local search tests it", doc = "At startup, at the END line of its optimiser: an NLopt MLSL or AUGLAG with an INNER block; {why} says how the INNER search ends the run." },
 ]
 
 [[key.examples]]
@@ -627,6 +721,42 @@ XTOL_REL 1e-4
 XTOL_REL 1e-6'''
 error = "XTOL_REL is set twice in the STRATEGY block (first on line 8); each key is given once"
 
+[[key.invalid]]
+wrap = "opt_ceres"
+check = "startup"
+at = "ENDOPTIMIZER"
+text = "XTOL_REL -1"
+error = "the STRATEGY-level optimiser: CERES:STEEPEST_DESCENT requires XTOL_REL >= 0 (Ceres' parameter_tolerance), got -1"
+
+[[key.invalid]]
+wrap = "opt_asa"
+check = "startup"
+at = "ENDOPTIMIZER"
+text = "XTOL_REL 1e-4"
+error = "the STRATEGY-level optimiser: ASA:ASA does not implement XTOL_REL/XTOL_ABS"
+
+[[key.invalid]]
+wrap = "none"
+check = "startup"
+at = "ENDOPTIMIZER"
+doc = "XTOL_REL in the block of an AUGLAG with an INNER block."
+text = '''
+OPTIM CGRID2B (1) 0.5 1.5
+PC_ERMSE 0 1
+OPTIMIZER
+STRATEGY
+LIB NLOPT
+ALGO LN_AUGLAG
+MAXEVAL 10
+XTOL_REL 1e-4
+INNER
+LIB NLOPT
+ALGO LN_BOBYQA
+ENDINNER
+ENDSTRATEGY
+ENDOPTIMIZER'''
+error = "the STRATEGY-level optimiser: NLOPT:LN_AUGLAG does not support XTOL_REL with an INNER block: AUGLAG ends when its INNER search ends (tadah hpo sets no constraint) and tests the block's tolerances only to name that ending, and NLopt passes them to no INNER search; set it in the INNER block, whose local search tests it"
+
 [[key]]
 id = "OPTIMIZER.XTOL_ABS"
 name = "XTOL_ABS"
@@ -648,10 +778,12 @@ optimiser, which tests it; with an INNER block the block refuses it, and \
 the INNER block takes it. NLopt takes a value of 0 or below as no \
 tolerance."""
 checks = [
-  { msg = "{phase}: CERES:{algo} uses relative tolerance; use XTOL_REL (mapped to parameter_tolerance) instead of XTOL_ABS", doc = "At startup, at the END line of the block." },
-  { msg = "{phase}: DLIB:BFGS does not support XTOL_ABS", doc = "At startup, at the END line of the block." },
-  { msg = "{phase}: ASA:ASA does not implement XTOL_REL/XTOL_ABS", doc = "At startup, at the END line of the block." },
-  { msg = "{phase}: TADAH:{algo} does not implement XTOL_REL/XTOL_ABS (no x-space convergence test); remove them or use FTOL_REL/FTOL_ABS (eps-NEPS plateau stop)", doc = "At startup, at the END line of the block: an annealer." },
+  { msg = "{phase}: CERES:{algo} uses relative tolerance; use XTOL_REL (mapped to parameter_tolerance) instead of XTOL_ABS", doc = "At startup, at the END line of its optimiser." },
+  { msg = "{phase}: DLIB:BFGS does not support XTOL_ABS", doc = "At startup, at the END line of its optimiser." },
+  { msg = "{phase}: ASA:ASA does not implement XTOL_REL/XTOL_ABS", doc = "At startup, at the END line of its optimiser." },
+  { msg = "{phase}: TADAH:{algo} does not implement XTOL_REL/XTOL_ABS (no x-space convergence test); remove them or use FTOL_REL/FTOL_ABS (eps-NEPS plateau stop)", doc = "At startup, at the END line of its optimiser: an annealer." },
+  { msg = "{phase}: {lib}:{algo} does not support XTOL_ABS{note}", doc = "At startup, at the END line of its optimiser: an optimiser that does not test XTOL_ABS; {note} says why and names the stops it honours." },
+  { msg = "{phase}: {lib}:{algo} does not support XTOL_ABS with an INNER block: {why}; set it in the INNER block, whose local search tests it", doc = "At startup, at the END line of its optimiser: an NLopt MLSL or AUGLAG with an INNER block; {why} says how the INNER search ends the run." },
 ]
 
 [[key.examples]]
@@ -678,6 +810,56 @@ XTOL_ABS 1e-4
 XTOL_ABS 1e-6'''
 error = "XTOL_ABS is set twice in the STRATEGY block (first on line 8); each key is given once"
 
+[[key.invalid]]
+wrap = "opt_bfgs"
+check = "startup"
+at = "ENDOPTIMIZER"
+text = "XTOL_ABS 1e-4"
+error = "the STRATEGY-level optimiser: DLIB:BFGS does not support XTOL_ABS"
+
+[[key.invalid]]
+wrap = "opt_asa"
+check = "startup"
+at = "ENDOPTIMIZER"
+text = "XTOL_ABS 1e-4"
+error = "the STRATEGY-level optimiser: ASA:ASA does not implement XTOL_REL/XTOL_ABS"
+
+[[key.invalid]]
+wrap = "opt_anneal"
+check = "startup"
+at = "ENDOPTIMIZER"
+text = "XTOL_ABS 1e-4"
+error = "the STRATEGY-level optimiser: TADAH:ANNEAL does not implement XTOL_REL/XTOL_ABS (no x-space convergence test); remove them or use FTOL_REL/FTOL_ABS (eps-NEPS plateau stop)"
+
+[[key.invalid]]
+wrap = "opt_grid"
+check = "startup"
+at = "ENDOPTIMIZER"
+text = "XTOL_ABS 1e-4"
+error = "the STRATEGY-level optimiser: TADAH:GRID does not support XTOL_ABS: the grid search has no convergence test to apply it to; stop it with MAXEVAL, MAXTIME or STOPVAL"
+
+[[key.invalid]]
+wrap = "none"
+check = "startup"
+at = "ENDOPTIMIZER"
+doc = "XTOL_ABS in the block of an AUGLAG with an INNER block."
+text = '''
+OPTIM CGRID2B (1) 0.5 1.5
+PC_ERMSE 0 1
+OPTIMIZER
+STRATEGY
+LIB NLOPT
+ALGO LN_AUGLAG
+MAXEVAL 10
+XTOL_ABS 1e-4
+INNER
+LIB NLOPT
+ALGO LN_BOBYQA
+ENDINNER
+ENDSTRATEGY
+ENDOPTIMIZER'''
+error = "the STRATEGY-level optimiser: NLOPT:LN_AUGLAG does not support XTOL_ABS with an INNER block: AUGLAG ends when its INNER search ends (tadah hpo sets no constraint) and tests the block's tolerances only to name that ending, and NLopt passes them to no INNER search; set it in the INNER block, whose local search tests it"
+
 [[key]]
 id = "OPTIMIZER.POPULATION"
 name = "POPULATION"
@@ -687,7 +869,7 @@ args = [ { name = "n", kind = "integer", min = 0, max = "UINT_MAX", what = "{key
 repeat = "error"
 repeat_msg = "POPULATION is set twice in the {block} block (first on line {first_line}); each key is given once"
 repeat_doc = "Once for each optimiser: a second line is refused, in the same block, in a second block of that type, or in another of OPTIMIZER, STRATEGY and REFINE, which set the same optimiser."
-default = { text = "Not set: TADAH:ANNEAL_PA takes max(4 THREADS, 16) walkers, and an NLopt optimiser chooses its own population, as for 0." }
+default = { text = "Not set: TADAH:ANNEAL_PA takes max(4 THREADS, 16) walkers, and an NLopt optimiser chooses its own population, as for 0.", unchecked = "TADAH:ANNEAL_PA counts its walkers when it starts; no setting of the target file holds the number." }
 doc = """\
 The population of an optimiser that keeps one, such as NLOPT:GN_CRS2_LM or \
 the walkers of TADAH:ANNEAL_PA, or the number of points NLopt's MLSL \
@@ -697,11 +879,12 @@ Only the optimisers that read it take it (the optimiser list names them); \
 another optimiser is refused at startup with this key. TADAH:ANNEAL_PA \
 takes at least 8 walkers; for NLopt, 0 is its own default."""
 checks = [
-  { msg = "{phase}: TADAH:ANNEAL_PA: POPULATION must be >= 8", doc = "At startup, at the END line of the block: TADAH:ANNEAL_PA with a value below 8." },
-  { msg = "{phase}: TADAH:{algo} does not use POPULATION; use TADAH:ANNEAL_PA", doc = "At startup, at the END line of the block: TADAH:ANNEAL or TADAH:ANNEAL_PT." },
-  { msg = "{phase}: DLIB:BFGS does not support POPULATION", doc = "At startup, at the END line of the block." },
-  { msg = "{phase}: CERES:{algo} does not support POPULATION", doc = "At startup, at the END line of the block." },
-  { msg = "{phase}: ASA:ASA does not accept POPULATION (single-chain optimizer; block parallelism is PARAM Gener_Block)", doc = "At startup, at the END line of the block." },
+  { msg = "{phase}: TADAH:ANNEAL_PA: POPULATION must be >= 8", doc = "At startup, at the END line of its optimiser: TADAH:ANNEAL_PA with a value below 8." },
+  { msg = "{phase}: TADAH:{algo} does not use POPULATION; use TADAH:ANNEAL_PA", doc = "At startup, at the END line of its optimiser: TADAH:ANNEAL or TADAH:ANNEAL_PT." },
+  { msg = "{phase}: DLIB:BFGS does not support POPULATION", doc = "At startup, at the END line of its optimiser." },
+  { msg = "{phase}: CERES:{algo} does not support POPULATION", doc = "At startup, at the END line of its optimiser." },
+  { msg = "{phase}: ASA:ASA does not accept POPULATION (single-chain optimizer; block parallelism is PARAM Gener_Block)", doc = "At startup, at the END line of its optimiser." },
+  { msg = "{phase}: {lib}:{algo} does not use POPULATION; remove it (it is read by {list})", doc = "At startup, at the END line of its optimiser: an optimiser that keeps no population; {list} names those that do." },
 ]
 
 [[key.examples]]
@@ -756,6 +939,20 @@ POPULATION 20
 POPULATION 30'''
 error = "POPULATION is set twice in the STRATEGY block (first on line 8); each key is given once"
 
+[[key.invalid]]
+wrap = "opt_bfgs"
+check = "startup"
+at = "ENDOPTIMIZER"
+text = "POPULATION 10"
+error = "the STRATEGY-level optimiser: DLIB:BFGS does not support POPULATION"
+
+[[key.invalid]]
+wrap = "opt_ceres"
+check = "startup"
+at = "ENDOPTIMIZER"
+text = "POPULATION 10"
+error = "the STRATEGY-level optimiser: CERES:STEEPEST_DESCENT does not support POPULATION"
+
 [[key]]
 id = "OPTIMIZER.STEP"
 name = "STEP"
@@ -764,37 +961,49 @@ synopsis = "STEP <fraction> | STEP <KEY>[(<indices>)] <fraction>"
 args = [
   { name = "KEY", kind = "name", optional = true, doc = "An OPTIM key, in upper case: the fraction applies to its search parameters only." },
   { name = "indices", kind = "indices", optional = true, doc = "The values of the key the fraction applies to, right after the key or after a blank." },
-  { name = "fraction", kind = "number", min = 0, min_open = true, max = 0.5, doc = "The first step as a fraction of the width of the box." },
+  { name = "fraction", kind = "number", min = 0, min_open = true, max = 0.5, doc = "The first step as a fraction of the width of the box in the coordinates of the search." },
 ]
 repeat = "error"
 repeat_msg = "STEP is set twice in the {block} block (first on line {first_line}); each key is given once"
 repeat_doc = "A line with a fraction alone is given once for each optimiser, as a key of the optimiser group is. Each line with a key adds an override, given once for its key and its indices; of two overrides of one search parameter the later line wins."
 default = { text = "Not set: the optimiser chooses its first step." }
 doc = """\
-The first step of the optimiser, as a fraction of the width of each OPTIM \
-box, in (0, 0.5]. With an OPTIM key, and optionally its indices, the \
-fraction applies to those search parameters only."""
+The first step of the optimiser as a fraction, in (0, 0.5], of the width \
+of each OPTIM box in the coordinates of the search. With an OPTIM key, and \
+optionally its indices, the fraction applies to those search parameters \
+only."""
 long_doc = """\
-A first value shaped like a number is the fraction of every search \
-parameter, given once for each optimiser. Each line with a key adds an \
-override for the search parameters of that key, all of them or those of \
-the index list, written KEY(1,3-5) or KEY (1,3-5), without a blank inside \
-the parentheses; one key and index list is given once, KEY(1) and KEY (1) \
-being one. The key is matched as written against the OPTIM keys, which \
-are upper case. Of two overrides of one search parameter the later line \
-wins. Without a fraction for every search parameter, the overrides \
+The coordinates of the search are the logarithm of the value for a \
+log-scaled box (LOG, or LOG_HP), and asinh(x/c) for an ASINH box. A first \
+value shaped like a number is the fraction of every search parameter, \
+given once for each optimiser. Each line with a key adds an override for \
+the search parameters of that key: all of them, or those of the index \
+list. The list is written KEY(1,3-5) or KEY (1,3-5), without a blank \
+inside the parentheses. One key and index list is given once, KEY(1) and \
+KEY (1) being one. The key is matched as written against the OPTIM keys, \
+which are upper case. Of two overrides of one search parameter the later \
+line wins. Without a fraction for every search parameter, the overrides \
 must cover each of them. The fraction and the keys are checked once the \
 whole file is read. A refusal names the ENDOPTIMIZER line, or the \
 ENDEXPLORE or ENDINNER line for the optimiser of that block; an optimiser \
-that does not use STEP is refused there too. An NLopt MLSL or AUGLAG \
-hands its STEP to its local search: a STEP in its block replaces the \
-STEP of its INNER block, and hpo_run.log has a warning."""
+that does not use STEP is refused there too. An NLopt MLSL or AUGLAG hands \
+its STEP to its local search: a STEP in its block replaces the STEP of its \
+INNER block, and hpo_run.log has a warning."""
 quirk = """\
 The key of an override is matched as written, while an OPTIM line reads \
 its key in any case: STEP cgrid2b refers to no OPTIM key. The index list \
 of an override takes no blank, while that of an OPTIM line does."""
 checks = [
-  { msg = "{lib}:{algo} ({phase}) does not use STEP; {why}", doc = "Once the whole file is read, at the END line of the block: an optimiser that does not use STEP; {phase} is OUTER, INNER, PRESTAGE or PRESTAGE.INNER, and {why} says what sets its first step instead." },
+  { msg = "{lib}:{algo} ({phase}) does not use STEP; {why}", doc = "Once the whole file is read, at the END line of its optimiser: an optimiser that does not use STEP; {phase} is OUTER, INNER, PRESTAGE or PRESTAGE.INNER, and {why} says what sets its first step instead." },
+  { msg = "STEP override '{text}': expected KEY(indices) <frac>", doc = "At the line: an index list without its closing parenthesis, or text after it." },
+  { msg = "STEP override '{text}': empty index list", doc = "At the line: an empty index list." },
+  { msg = "STEP override '{text}': bad index list ({why})", doc = "At the line: an index list the OPTIM grammar refuses, or an index 0." },
+  { msg = "STEP override names OPTIM key '{key}' which is not optimised (no OPTIM line for it)", doc = "Once the whole file is read, at the END line of its optimiser: a key no OPTIM line searches, matched as written." },
+  { msg = "STEP {key}({index}): index {index} is not an OPTIM'd index of {key}", doc = "Once the whole file is read, at the END line of its optimiser: an index no OPTIM line of the key selects." },
+  { msg = "STEP overrides cover only some dimensions and no block-wide STEP is set; add `STEP <frac>` or override every OPTIM'd dimension", doc = "At startup, at the END line of its optimiser: overrides without a block-wide STEP that leave a search parameter without a fraction." },
+  { msg = "{lib}:{algo} ({phase}): STEP must be > 0 and finite (got {value})", doc = "Once the whole file is read, at the END line of its optimiser: a fraction of 0 or below." },
+  { msg = "{lib}:{algo} ({phase}): STEP must be a fraction of the OPTIM width in (0, 0.5] (got {value}); values above 0.5 cannot satisfy BOBYQA's width >= 2*step rule and exceed NLopt's own 0.25 default", doc = "Once the whole file is read, at the END line of its optimiser: a fraction above 0.5." },
+  { msg = "STEP {key} is set twice in the {block} block (first on line {first_line}); each key is given once", doc = "At the line: an override given twice for one key and index list; {key} is the key with its index list." },
 ]
 
 [[key.examples]]
@@ -951,6 +1160,24 @@ STEP CGRID2B(1) 0.1
 STEP CGRID2B (1) 0.2'''
 error = "STEP CGRID2B(1) is set twice in the STRATEGY block (first on line 8); each key is given once"
 
+[[key.invalid]]
+wrap = "none"
+at = "ENDOPTIMIZER"
+doc = "An override of CGRID2B (1) leaves CGRID2B (2) without a fraction."
+text = '''
+OPTIM CGRID2B (1) 0.5 1.5
+OPTIM CGRID2B (2) 1.5 2.5
+PC_ERMSE 0 1
+OPTIMIZER
+STRATEGY
+LIB NLOPT
+ALGO LN_SBPLX
+MAXEVAL 10
+STEP CGRID2B(1) 0.2
+ENDSTRATEGY
+ENDOPTIMIZER'''
+error = "STEP overrides cover only some dimensions and no block-wide STEP is set; add `STEP <frac>` or override every OPTIM'd dimension"
+
 [[key]]
 id = "OPTIMIZER.SEED"
 name = "SEED"
@@ -968,15 +1195,21 @@ starts, or only warns where the optimiser list says so; that list shows \
 which optimisers read it."""
 long_doc = """\
 Under STRATEGY TYPE MULTISTART start i runs with SEED + i. Under STRATEGY \
-TYPE PRESTAGE an EXPLORE block without a seed of its own (no SEED, and \
-for NLopt no SEED in its INIT block) whose optimiser reads SEED takes the \
-STRATEGY-level SEED, and the refinement draws random numbers of its own. \
-An INNER block refuses SEED: NLopt draws its local search from the random \
-numbers of the enclosing run. SEED inside an INIT or RESTART block is \
-another key, the seed of the starting points."""
+TYPE PRESTAGE an EXPLORE block whose optimiser reads SEED, and that has no \
+seed of its own, takes the STRATEGY-level SEED. A SEED line, and for NLopt \
+a SEED in its INIT block, is a seed of its own; the refinement draws \
+random numbers of its own. Restart r of an active RESTART block runs the \
+optimiser with SEED + r times the number of starts (N_STARTS under \
+MULTISTART, TOPK under PRESTAGE, 1 under PLAIN), and the EXPLORE block \
+with its SEED + r. An INNER block refuses SEED: NLopt draws its local \
+search from the random numbers of the enclosing run. SEED inside an INIT \
+or RESTART block is another key, the seed of the starting points."""
+quirk = """\
+DLIB:GFS, which does not read SEED, warns only when its search starts: \
+tadah hpo --check does not show the warning."""
 checks = [
-  { msg = "{phase}: {lib}:{algo} does not use SEED: it draws no random numbers; remove it", doc = "At startup, at the END line of the block: an optimiser that does not read SEED and does not only warn." },
-  { msg = "{phase}: {lib}:{algo} does not support SEED", doc = "At startup, at the END line of the block: DLIB:BFGS or CERES:STEEPEST_DESCENT." },
+  { msg = "{phase}: {lib}:{algo} does not use SEED: it draws no random numbers; remove it", doc = "At startup, at the END line of its optimiser: an optimiser that does not read SEED and does not only warn." },
+  { msg = "{phase}: {lib}:{algo} does not support SEED", doc = "At startup, at the END line of its optimiser: DLIB:BFGS or CERES:STEEPEST_DESCENT." },
 ]
 
 [[key.examples]]
@@ -1067,11 +1300,11 @@ long_doc = """\
 Only the optimisers that read it take it (the optimiser list names them); \
 another optimiser is refused at startup with this key."""
 checks = [
-  { msg = "{phase}: {lib}:{algo} does not use VECTOR_ARR; remove it (it is read by {list})", doc = "At startup, at the END line of the block: an NLopt, TADAH:RANDOM, TADAH:GRID or DLIB:GFS optimiser that does not read it." },
-  { msg = "{phase}: DLIB:BFGS does not support VECTOR_ARR; use ALGO GFS or an NLopt L-BFGS variant instead", doc = "At startup, at the END line of the block." },
-  { msg = "{phase}: CERES:{algo} does not support VECTOR_ARR; use DLIB:GFS or an NLopt global algorithm", doc = "At startup, at the END line of the block." },
-  { msg = "{phase}: ASA:ASA does not accept VECTOR_ARR", doc = "At startup, at the END line of the block." },
-  { msg = "{phase}: TADAH:{algo} does not use VECTOR_ARR; remove it", doc = "At startup, at the END line of the block: an annealer." },
+  { msg = "{phase}: {lib}:{algo} does not use VECTOR_ARR; remove it (it is read by {list})", doc = "At startup, at the END line of its optimiser: an NLopt, TADAH:RANDOM, TADAH:GRID or DLIB:GFS optimiser that does not read it." },
+  { msg = "{phase}: DLIB:BFGS does not support VECTOR_ARR; use ALGO GFS or an NLopt L-BFGS variant instead", doc = "At startup, at the END line of its optimiser." },
+  { msg = "{phase}: CERES:{algo} does not support VECTOR_ARR; use DLIB:GFS or an NLopt global algorithm", doc = "At startup, at the END line of its optimiser." },
+  { msg = "{phase}: ASA:ASA does not accept VECTOR_ARR", doc = "At startup, at the END line of its optimiser." },
+  { msg = "{phase}: TADAH:{algo} does not use VECTOR_ARR; remove it", doc = "At startup, at the END line of its optimiser: an annealer." },
 ]
 
 [[key.examples]]
@@ -1112,6 +1345,20 @@ VECTOR_ARR 5
 VECTOR_ARR 6'''
 error = "VECTOR_ARR is set twice in the STRATEGY block (first on line 8); each key is given once"
 
+[[key.invalid]]
+wrap = "opt_ceres"
+check = "startup"
+at = "ENDOPTIMIZER"
+text = "VECTOR_ARR 5"
+error = "the STRATEGY-level optimiser: CERES:STEEPEST_DESCENT does not support VECTOR_ARR; use DLIB:GFS or an NLopt global algorithm"
+
+[[key.invalid]]
+wrap = "opt_anneal"
+check = "startup"
+at = "ENDOPTIMIZER"
+text = "VECTOR_ARR 5"
+error = "the STRATEGY-level optimiser: TADAH:ANNEAL does not use VECTOR_ARR; remove it"
+
 [[key]]
 id = "OPTIMIZER.THREADS"
 name = "THREADS"
@@ -1134,7 +1381,7 @@ quirk = """\
 THREADS in an INNER block, or in an EXPLORE block whose optimiser is not \
 one of those that read it, is accepted and has no effect."""
 checks = [
-  { msg = "{phase}: CERES:{algo} does not support THREADS (host evaluation is single-threaded inside one optimizer step)", doc = "At startup, at the END line of the block." },
+  { msg = "{phase}: CERES:{algo} does not support THREADS (host evaluation is single-threaded inside one optimizer step)", doc = "At startup, at the END line of its optimiser." },
 ]
 
 [[key.examples]]
@@ -1181,17 +1428,19 @@ that takes no gradient is refused at startup with GRAD_STRATEGY; an NLopt \
 MLSL or AUGLAG takes gradients only when its local search does. An INNER \
 block refuses GRAD_STRATEGY: the enclosing block's GRAD_STRATEGY gives the \
 gradient of its local search. ANALYTICAL, written or taken for \
-PC_OBSERVABLE, needs the settings of the analytical gradient: training \
-data (a DBFILE), no FIXINDEX, STRESS false, NORM false, OALGO 4, a fixed \
-LAMBDA >= 0, the basis BF_Linear or Kern_Linear, no PC_SRMSE line, and no \
-PC_OBSERVABLE line with --loss MAPE or RMSLE or with --unconverged \
-force-scaled; startup refuses a setup without them. A search parameter \
-without an analytical derivative passes startup, and stops an ANALYTICAL \
-run at its first gradient."""
+PC_OBSERVABLE, needs the settings of the analytical gradient, and startup \
+refuses a setup without them. In the training configuration these are a \
+DBFILE, no FIXINDEX, STRESS false, NORM false, OALGO 4, a fixed LAMBDA >= \
+0 and the basis BF_Linear or Kern_Linear. In the target file they are no \
+PC_SRMSE line, and no PC_OBSERVABLE line with --loss MAPE or RMSLE or with \
+--unconverged force-scaled. A search parameter without an analytical \
+derivative passes startup, and stops an ANALYTICAL run at its first \
+gradient."""
 checks = [
-  { msg = "{block} block: GRAD_STRATEGY ANALYTICAL{note} needs the analytical gradient of the loss, which this setup cannot form: {why}. Change that setting, or set GRAD_STRATEGY HYBRID to use finite differences where no analytical gradient is available.", doc = "At startup, at the END line of the block: {block} is OPTIMIZER or EXPLORE, {note} is \" (resolved for PC_OBSERVABLE: the block sets no GRAD_STRATEGY)\" when the block takes ANALYTICAL for PC_OBSERVABLE, and {why} names the first setting the analytical gradient does not cover." },
-  { msg = "{phase}: ASA:ASA does not accept GRAD_STRATEGY (derivative-free; reanneal tangents use PARAM Delta_X finite differences)", doc = "At startup, at the END line of the block." },
-  { msg = "{phase}: TADAH:{algo} is derivative-free and does not use GRAD_STRATEGY; remove it", doc = "At startup, at the END line of the block: an annealer." },
+  { msg = "{block} block: GRAD_STRATEGY ANALYTICAL{note} needs the analytical gradient of the loss, which this setup cannot form: {why}. Change that setting, or set GRAD_STRATEGY HYBRID to use finite differences where no analytical gradient is available.", doc = "At startup, at the END line of its optimiser; {block} is OPTIMIZER or EXPLORE, and {why} names the first setting the analytical gradient does not cover. {note} is \" (resolved for PC_OBSERVABLE: the block sets no GRAD_STRATEGY)\" when the block takes ANALYTICAL for PC_OBSERVABLE." },
+  { msg = "{phase}: ASA:ASA does not accept GRAD_STRATEGY (derivative-free; reanneal tangents use PARAM Delta_X finite differences)", doc = "At startup, at the END line of its optimiser." },
+  { msg = "{phase}: TADAH:{algo} is derivative-free and does not use GRAD_STRATEGY; remove it", doc = "At startup, at the END line of its optimiser: an annealer." },
+  { msg = "{phase} {lib}:{algo}: GRAD_STRATEGY never takes effect: {lib}:{algo} takes no gradient{note}; remove it.", doc = "At startup, at the END line of its optimiser: an optimiser that obtains no gradient; {note} says why, for an NLopt MLSL or AUGLAG." },
 ]
 quirk = """\
 GRAD_STRATEGY without a value is refused with the message about its \
@@ -1296,6 +1545,10 @@ The line reads these extra values whatever the case of the name and of \
 JITTER and AUTO, while the annealers take the name INIT_MODE and the words \
 JITTER and UNIFORM as written, and AUTO in any case. Which PARAM keys an \
 optimiser takes, and their ranges, are checked at startup."""
+checks = [
+  { msg = "PARAM requires a name and a value", doc = "At the line: PARAM without a name, or a name without a value." },
+  { msg = "PARAM {key} is set twice in the {block} block (first on line {first_line}); each key is given once", doc = "At the line: one PARAM name given twice for one optimiser; {key} is the name." },
+]
 
 [[key.examples]]
 wrap = "opt_lbfgs"
@@ -1363,6 +1616,7 @@ at = "ENDOPTIMIZER"
 doc = "The annealer takes the name INIT_MODE as written."
 text = "PARAM init_mode JITTER 0.1"
 error = "the STRATEGY-level optimiser: TADAH:ANNEAL_PA: unknown PARAM 'init_mode'; accepted keys: CORANA STEP_FRAC CHAIN_LENGTH NS NT CORANA_C V_FLOOR_FRAC BOUNDARY_MODE RESET_TO_BEST T_HOT T_MIN RT T0_PROBES T0_ACCEPT NEPS INIT_MODE INIT_JITTER_MAX INIT_JITTER_PROBES INIT_JITTER_MAXEVAL INIT_JITTER_SAMPLE INIT_JITTER_AUDIT INIT_JITTER_MAXTIME_FRAC SWEEPS ESS_TARGET "
+msg_of = "PARAM.TADAH:ANNEAL"
 
 [[key.invalid]]
 wrap = "opt_anneal_pa"
@@ -1371,6 +1625,7 @@ at = "ENDOPTIMIZER"
 doc = "The annealer takes the word JITTER as written."
 text = "PARAM INIT_MODE jitter auto 0.05"
 error = "the STRATEGY-level optimiser: TADAH:ANNEAL_PA: PARAM INIT_MODE must be one of: JITTER UNIFORM (got 'jitter')"
+msg_of = "PARAM.TADAH:ANNEAL"
 
 [[key.invalid]]
 wrap = "opt_anneal_pa"
@@ -1500,6 +1755,7 @@ LOG_HP 2
 ENDSTRATEGY
 ENDOPTIMIZER'''
 error = "LOG_HP is set on line 4 in the OPTIMIZER block and again here in the STRATEGY block; both blocks configure the same search space, so each key is given once"
+msg_of = "RULE.set_once_for_optimiser"
 
 # ======================================================== STRATEGY keys ==
 
@@ -1687,11 +1943,15 @@ repeat_msg = "TOPK is set twice in the STRATEGY block (first on line {first_line
 default = { literal = "1" }
 doc = """\
 The number of best candidates of the PRESTAGE exploration that the \
-refinement starts from: it runs its optimiser once from each."""
+refinement starts from: it runs its optimiser once from each, or once from \
+all of them for an optimiser that takes several starting points in one \
+run."""
 long_doc = """\
 Above 1, the refinement optimiser must be one that runs from each start, \
-as under STRATEGY TYPE MULTISTART; the refinement shares its MAXEVAL among \
-the candidates."""
+as under STRATEGY TYPE MULTISTART, or one that takes several starting \
+points in one run, such as DLIB:GFS. The refinement shares its MAXEVAL \
+among the candidates, while DLIB:GFS runs once with all of them and the \
+whole MAXEVAL."""
 
 [[key.examples]]
 wrap = "opt_prestage"
@@ -1915,6 +2175,9 @@ quirk = """\
 The messages about a METHOD line name it INIT METHOD, or INIT.METHOD, \
 inside a RESTART block too, and the message about an unknown method names \
 it an INIT_STRATEGY method."""
+checks = [
+  { msg = "{key} requires a method name", doc = "At the line: METHOD, or its other name STRATEGY, without a method." },
+]
 
 [[key.examples]]
 wrap = "init"
@@ -1969,8 +2232,12 @@ synopsis = "K_TOTAL <n>"
 args = [ { name = "n", kind = "integer", min = 0, max = "UINT64_MAX", what = "{key}" } ]
 repeat = "error"
 repeat_msg = "K_TOTAL is set twice in the {block} block (first on line {first_line}); each key is given once"
-repeat_doc = "Once for each set of starting points: a second line is refused, in the same block, in a second block of that type, or in another INIT block inside OPTIMIZER, STRATEGY or REFINE, which set the starting points of one optimiser."
-default = { text = "The sum of the K of the METHOD lines, 1 for CONFIG and WARM." }
+repeat_doc = """\
+Once for each set of starting points. A second line is refused in the same \
+block, in a second block of that type, or in another INIT block inside \
+OPTIMIZER, STRATEGY or REFINE, which set the starting points of one \
+optimiser."""
+default = { text = "The sum of the K of the METHOD lines, 1 for CONFIG and WARM.", unchecked = "The numbers count starting points; they are no setting." }
 doc = """\
 The number of starting points of the chain of the block: a chain of \
 several METHOD lines stops at K_TOTAL points. 0 sets no limit."""
@@ -2014,7 +2281,11 @@ synopsis = "SEED <n>"
 args = [ { name = "n", kind = "integer", min = 0, max = "UINT64_MAX", what = "{key}" } ]
 repeat = "error"
 repeat_msg = "SEED is set twice in the {block} block (first on line {first_line}); each key is given once"
-repeat_doc = "Once for each set of starting points: a second line is refused, in the same block, in a second block of that type, or in another INIT block inside OPTIMIZER, STRATEGY or REFINE, which set the starting points of one optimiser."
+repeat_doc = """\
+Once for each set of starting points. A second line is refused in the same \
+block, in a second block of that type, or in another INIT block inside \
+OPTIMIZER, STRATEGY or REFINE, which set the starting points of one \
+optimiser."""
 default = { text = "Not set: each run takes a seed of its own, so the drawn points differ between runs." }
 doc = """\
 The seed of the RANDOM, LHS and SOBOL lines of the block. An NLopt \
@@ -2051,7 +2322,11 @@ synopsis = "WARM_ON_MISMATCH warn | error | skip"
 args = [ { name = "policy", kind = "word", words = ["warn", "error", "skip"], msg = "WARM_ON_MISMATCH must be one of: warn, error, skip" } ]
 repeat = "error"
 repeat_msg = "WARM_ON_MISMATCH is set twice in the {block} block (first on line {first_line}); each key is given once"
-repeat_doc = "Once for each set of starting points: a second line is refused, in the same block, in a second block of that type, or in another INIT block inside OPTIMIZER, STRATEGY or REFINE, which set the starting points of one optimiser."
+repeat_doc = """\
+Once for each set of starting points. A second line is refused in the same \
+block, in a second block of that type, or in another INIT block inside \
+OPTIMIZER, STRATEGY or REFINE, which set the starting points of one \
+optimiser."""
 default = { literal = "warn" }
 doc = """\
 How the WARM lines of the block treat a seed file that lacks a search \
@@ -2090,6 +2365,7 @@ text = '''
 METHOD WARM opt_seed_outside.tadah
 WARM_ON_MISMATCH error'''
 error = "WARM: 1 parameter(s) from opt_seed_outside.tadah clamped into OPTIM bounds -- the seed point is NOT the one on disk: dim[1] 3 -> 1.5 (bounds [0.5, 1.5])"
+msg_of = "METHOD.WARM"
 
 [[key.invalid]]
 wrap = "init"
@@ -2097,6 +2373,7 @@ text = '''
 METHOD WARM opt_seed_other.tadah
 WARM_ON_MISMATCH error'''
 error = "WARM: 1 parameter(s) not found in opt_seed_other.tadah: CGRID2B[1]"
+msg_of = "METHOD.WARM"
 
 [[key.invalid]]
 wrap = "init"
@@ -2220,6 +2497,11 @@ METHOD SOBOL 300000000000000
 SEED 65535'''
 error = "INIT METHOD SOBOL: block 65535 of 300000000000000 points lies beyond the end of the Sobol sequence (2^64 - 1 points); lower K (or K_TOTAL)"
 
+[[init_method.invalid]]
+wrap = "init"
+text = "METHOD SOBOL 8 9"
+error = "INIT METHOD SOBOL expects exactly one arg: K"
+
 [[init_method]]
 id = "METHOD.WARM"
 name = "WARM"
@@ -2228,6 +2510,10 @@ doc = """\
 One starting point read from a potential file: the values of the search \
 parameters it holds. WARM_ON_MISMATCH says what happens when a value is \
 missing or outside its OPTIM box."""
+untested = [
+  { msg = "WARM: parse failure in seed file '{file}': {why}", why = "Comes when the run draws its starting points, after it reads its data, which no case does." },
+  { msg = "WARM seed {file} {text}, but this run evaluates RHOFORM {type} (from -c) and takes the OPTIM density parameters ({keys}) from the seed: density parameters are meaningful only in the form they were fitted in. {hint}", why = "Needs a WARM seed of a DM_REAM potential, and comes when the run draws its starting points, after it reads its data." },
+]
 
 [[init_method.checks]]
 msg = "INIT METHOD WARM expects exactly one arg: <pot_file>"
@@ -2317,6 +2603,9 @@ gradients is refused at startup with AUTO true, and so is a block that \
 also sets PARAM fd_step. Like a PARAM fd_step, the derived step gives \
 every point of every OPTIM box a stencil inside the box, or startup \
 refuses it."""
+checks = [
+  { msg = "{phase} {lib}:{algo}: NOISE AUTO has no effect: {why}; remove AUTO from the NOISE block.", doc = "At startup, at the ENDOPTIMIZER line: the STRATEGY-level optimiser measures no slopes with finite differences; {why} says why." },
+]
 
 [[key.examples]]
 wrap = "noise"
@@ -2373,7 +2662,7 @@ id = "NOISE.CALIBRATION"
 name = "CALIBRATION"
 blocks = ["NOISE"]
 synopsis = "CALIBRATION <n>"
-args = [ { name = "n", kind = "integer", min = 0, max = "UINT64_MAX", what = "{key}", msg = "NOISE.CALIBRATION must be 0 (off) or >= 2" } ]
+args = [ { name = "n", kind = "integer", min = 0, max = "UINT64_MAX", what = "{key}" } ]
 repeat = "error"
 repeat_msg = "CALIBRATION is set twice in the NOISE block (first on line {first_line}); each key is given once"
 default = { literal = "0" }
@@ -2384,6 +2673,9 @@ refused."""
 long_doc = """\
 The N evaluations are written to the output files like any other, and do \
 not count towards MAXEVAL."""
+checks = [
+  { msg = "NOISE.CALIBRATION must be 0 (off) or >= 2", doc = "A value of 1." },
+]
 
 [[key.examples]]
 wrap = "noise"
@@ -2473,7 +2765,7 @@ The largest number of restarts of the search. Once they are used, the \
 next stagnation ends the search."""
 long_doc = """\
 The RESTART block takes effect only when AFTER_STAGNATION and MAX are both \
-above 0."""
+above 0. Each round runs with the whole MAXEVAL of the optimiser."""
 
 [[key.examples]]
 wrap = "restart"
@@ -2496,8 +2788,9 @@ error = "MAX is set twice in the RESTART block (first on line 9); each key is gi
 
 # ========================================================== INNER rules ==
 # The startup rules of an INNER block: the optimiser of the block around it
-# runs its INNER search with NLopt. Each refusal names the ENDINNER line,
-# or the END line of the enclosing block when it has no INNER block.
+# runs its INNER search with NLopt. Each refusal names the ENDINNER line or
+# the END line of the optimiser around the INNER search (ENDOPTIMIZER, or
+# ENDEXPLORE inside EXPLORE); each rule says which.
 
 [[rule]]
 id = "RULE.inner_block_required"
@@ -2654,7 +2947,8 @@ doc = """\
 An NLopt MLSL or AUGLAG without an INNER block runs NLopt's default local \
 optimiser; when that optimiser needs a stop (the optimiser list says which \
 do), the block sets one, which NLopt hands on to it. The refusal names the \
-END line of the block."""
+END line of its optimiser (ENDOPTIMIZER, or ENDEXPLORE for the EXPLORE \
+block)."""
 msg_doc = """\
 The message names the default local optimiser, says why it needs a stop \
 and lists the stops it honours."""
@@ -2692,7 +2986,9 @@ msg = "{phase}: the INNER search of {name} ({lib}:{algo}) needs a stop: {why}; s
 doc = """\
 An INNER block whose optimiser needs a stop (the optimiser list says which \
 do) sets one, or the enclosing block does, which NLopt hands on to the \
-INNER search. The refusal names the END line of the enclosing block."""
+INNER search. The refusal names the END line of the optimiser that runs \
+the INNER search: ENDOPTIMIZER for an INNER block inside STRATEGY or \
+REFINE, ENDEXPLORE for one inside EXPLORE."""
 msg_doc = """\
 The message says why the INNER search needs a stop, lists the stops it \
 honours and the keys of the enclosing block that NLopt hands on."""
@@ -2789,6 +3085,9 @@ TYPE PLAIN and the optimiser TADAH:ANNEAL_PT or TADAH:ANNEAL_PA. The \
 refusal comes when the run starts, before any evaluation, at the \
 ENDOPTIMIZER line."""
 msg_doc = "The message gives the optimiser and the number of ranks."
+untested = [
+  { msg = "multi-rank HPO supports only STRATEGY TYPE PLAIN with LIB TADAH and ALGO ANNEAL_PT or ANNEAL_PA; got {lib}:{algo} on {count} ranks", why = "A run on more than one MPI rank, in the MPI build." },
+]
 
 [[rule]]
 id = "RULE.multi_rank_restart"
@@ -2800,6 +3099,9 @@ doc = """\
 A run on more than one MPI rank has no active RESTART block. The refusal \
 comes when the run starts, before any evaluation, at the ENDOPTIMIZER \
 line, after that of the optimiser."""
+untested = [
+  { msg = "multi-rank HPO does not support RESTART (AFTER_STAGNATION {value}, MAX {max} on {count} ranks): stagnation is tracked per rank; run on one rank or remove RESTART", why = "A run on more than one MPI rank, in the MPI build." },
+]
 
 [[rule]]
 id = "RULE.multi_rank_population"
@@ -2816,6 +3118,9 @@ line."""
 msg_doc = """\
 The message names the key, REPLICAS or POPULATION, its value and the \
 number of ranks."""
+untested = [
+  { msg = "TADAH:{algo}: {key} ({value}) must be >= the MPI world size ({count})", why = "A run on more than one MPI rank, in the MPI build." },
+]
 
 # ========================================================== set once ==
 # A key is set once for what it configures. OPTIMIZER, STRATEGY and REFINE
@@ -2958,6 +3263,8 @@ error = "SEED is set on line 5 in the INIT block inside OPTIMIZER and again here
 # left empty.
 
 [wrapper.opt_lbfgs]
+block = "STRATEGY"
+optimizer = "NLOPT:LD_LBFGS"
 doc = "The slot is inside the STRATEGY block of an NLOPT:LD_LBFGS search, a gradient search, after its optimiser keys."
 text = """
 OPTIM CGRID2B (1) 0.5 1.5
@@ -2973,6 +3280,8 @@ ENDOPTIMIZER
 """
 
 [wrapper.opt_crs]
+block = "STRATEGY"
+optimizer = "NLOPT:GN_CRS2_LM"
 doc = "The slot is inside the STRATEGY block of an NLOPT:GN_CRS2_LM search, which keeps a population, after its optimiser keys."
 text = """
 OPTIM CGRID2B (1) 0.5 1.5
@@ -2988,6 +3297,8 @@ ENDOPTIMIZER
 """
 
 [wrapper.opt_anneal_pa]
+block = "STRATEGY"
+optimizer = "TADAH:ANNEAL_PA"
 doc = "The slot is inside the STRATEGY block of a TADAH:ANNEAL_PA search, after its optimiser keys."
 text = """
 OPTIM CGRID2B (1) 0.5 1.5
@@ -3003,6 +3314,8 @@ ENDOPTIMIZER
 """
 
 [wrapper.opt_multistart]
+block = "STRATEGY"
+optimizer = "NLOPT:LN_SBPLX"
 doc = "The slot is inside the STRATEGY block of STRATEGY TYPE MULTISTART with NLOPT:LN_SBPLX, after its optimiser keys."
 text = """
 OPTIM CGRID2B (1) 0.5 1.5
@@ -3019,6 +3332,8 @@ ENDOPTIMIZER
 """
 
 [wrapper.opt_prestage]
+block = "STRATEGY"
+optimizer = "NLOPT:LN_SBPLX"
 doc = "The slot is inside the STRATEGY block of STRATEGY TYPE PRESTAGE, after its EXPLORE block; NLOPT:LN_SBPLX refines."
 text = """
 OPTIM CGRID2B (1) 0.5 1.5
@@ -3040,6 +3355,8 @@ ENDOPTIMIZER
 """
 
 [wrapper.opt_grid]
+block = "STRATEGY"
+optimizer = "TADAH:GRID"
 doc = "The slot is inside the STRATEGY block of a TADAH:GRID search, after its optimiser keys."
 text = """
 OPTIM CGRID2B (1) 0.5 1.5
@@ -3055,6 +3372,8 @@ ENDOPTIMIZER
 """
 
 [wrapper.opt_anneal]
+block = "STRATEGY"
+optimizer = "TADAH:ANNEAL"
 doc = "The slot is inside the STRATEGY block of a TADAH:ANNEAL search, after its optimiser keys."
 text = """
 OPTIM CGRID2B (1) 0.5 1.5
@@ -3070,6 +3389,8 @@ ENDOPTIMIZER
 """
 
 [wrapper.opt_bfgs]
+block = "STRATEGY"
+optimizer = "DLIB:BFGS"
 doc = "The slot is inside the STRATEGY block of a DLIB:BFGS search, after its optimiser keys."
 text = """
 OPTIM CGRID2B (1) 0.5 1.5
@@ -3085,6 +3406,8 @@ ENDOPTIMIZER
 """
 
 [wrapper.opt_ceres]
+block = "STRATEGY"
+optimizer = "CERES:STEEPEST_DESCENT"
 doc = "The slot is inside the STRATEGY block of a CERES:STEEPEST_DESCENT search, after its optimiser keys."
 text = """
 OPTIM CGRID2B (1) 0.5 1.5
@@ -3100,6 +3423,8 @@ ENDOPTIMIZER
 """
 
 [wrapper.opt_asa]
+block = "STRATEGY"
+optimizer = "ASA:ASA"
 doc = "The slot is inside the STRATEGY block of an ASA:ASA search, after its optimiser keys."
 text = """
 OPTIM CGRID2B (1) 0.5 1.5

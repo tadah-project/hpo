@@ -29,9 +29,15 @@ A loss term on the energy MAE of the validation datasets, in meV/atom: \
 the LOSS function of the metric averaged over the datasets, its target \
 and its weight."""
 long_doc = """\
-The term needs a validation configuration (--validation). The weight is \
-a number >= 0; with a weight of 0 the term adds no loss, and --skip-above \
-and --skip-rel still apply to the metric."""
+The term needs a validation configuration (--validation). The weight is a \
+number >= 0. With a weight of 0 the term is 0 but still counts in the mean \
+of the terms of an evaluation, and --skip-above and --skip-rel still apply \
+to the metric."""
+checks = [
+  { msg = "{key} requires <target> <weight>", doc = "At the line: fewer than two values follow the key and its index list." },
+  { msg = "{key}: unknown flag '{tok}'", doc = "At the line: a token after the weight that is no option of the metric lines." },
+  { msg = "{key}: indexed targets are supported only for PC_ERMSE and PC_FRMSE", doc = "At the line: an index list, which only PC_ERMSE and PC_FRMSE take." },
+]
 
 [[key.args]]
 name = "target"
@@ -45,7 +51,7 @@ kind = "number"
 min = 0
 what = "{key} <weight>"
 msg = "{key} <weight> must be a number >= 0, got '{tok}'"
-doc = "The weight of the term in the loss."
+doc = "The weight of the term. The loss of an evaluation is the mean of its terms, so a term of weight 0 adds 0 and still counts in the mean."
 
 [[key.examples]]
 wrap = "root"
@@ -119,6 +125,9 @@ from 1. A file has either one line without indices or indexed lines \
 that give each dataset one target and weight; when the run starts, \
 every dataset needs one, and no index may exceed the number of \
 datasets. The weight is a number >= 0."""
+untested = [
+  { msg = "{key} requires validation DBFILE entries", why = "Needs a validation configuration without DBFILE; in tadah hpo --check the training configuration of a case is also its validation configuration, and its own checks come first." },
+]
 
 [[key.args]]
 name = "indices"
@@ -138,7 +147,7 @@ kind = "number"
 min = 0
 what = "{key} <weight>"
 msg = "{key} <weight> must be a number >= 0, got '{tok}'"
-doc = "The weight of the term in the loss."
+doc = "The weight of the term. The loss of an evaluation is the mean of its terms, so a term of weight 0 adds 0 and still counts in the mean."
 
 [[key.checks]]
 msg = "{key} requires validation DBFILE entries"
@@ -160,6 +169,37 @@ When the run starts, without a line: the indexed lines give some \
 datasets no target and weight; {list} has one line for each, \
 "  dataset <i> (<file>)"."""
 
+[[key.checks]]
+msg = "{key} requires <target> <weight>"
+doc = "At the line: fewer than two values follow the key and its index list."
+
+[[key.checks]]
+msg = "{key}: unknown flag '{tok}'"
+doc = "At the line: a token after the weight that is no option of the metric lines."
+
+[[key.checks]]
+msg = "{key}: repeated declaration (first declared on line {first_line})"
+doc = "At the line: a second line without an index list."
+
+[[key.checks]]
+msg = "{key}: cannot mix global and indexed forms"
+doc = "At the line: a line with an index list and a line without one."
+
+[[key.checks]]
+msg = "{key}: duplicate assignment for dataset {index} (first declared on line {first_line})"
+doc = "At the line: an index an earlier line of the key lists."
+
+[[key.checks]]
+msg = "{key}: validation indices start at 1"
+doc = "At the line: an index 0."
+
+[[key.checks]]
+msg = "Invalid index number '{tok}'"
+doc = "At the line: an entry of the index list that is no whole number."
+
+[[key.checks]]
+msg = "Descending index range '{tok}'"
+doc = "At the line: a range a-b of the index list with b below a."
 [[key.examples]]
 wrap = "lines_metric"
 text = "PC_ERMSE 2 1"
@@ -203,26 +243,60 @@ error = "Invalid index number 'a'"
 wrap = "lines_metric"
 text = "PC_ERMSE (1 2 1"
 error = "Unmatched opening parenthesis in index selector"
+msg_of = "OPTIM"
 
 [[key.invalid]]
 wrap = "lines_metric"
 text = "PC_ERMSE () 2 1"
 error = "Empty index selector"
+msg_of = "OPTIM"
 
 [[key.invalid]]
 wrap = "lines_metric"
 text = "PC_ERMSE ((1) 2 1"
 error = "Nested parentheses in index selector"
+msg_of = "OPTIM"
 
 [[key.invalid]]
 wrap = "lines_metric"
 text = "PC_ERMSE (1)2 1"
 error = "Expected whitespace after (indices)"
+msg_of = "OPTIM"
 
 [[key.invalid]]
 wrap = "lines_metric"
 text = "PC_ERMSE (1) 2"
 error = "PC_ERMSE requires <target> <weight>"
+
+[[key.invalid]]
+wrap = "lines_metric"
+text = "PC_ERMSE 2 1 --skip 3"
+error = "PC_ERMSE: unknown flag '--skip'"
+
+[[key.invalid]]
+wrap = "lines_metric"
+text = "PC_ERMSE (2-1) 2 1"
+error = "Descending index range '2-1'"
+
+[[key.invalid]]
+wrap = "lines_metric"
+text = "PC_ERMSE 2 -1"
+error = "PC_ERMSE <weight> must be a number >= 0, got '-1'"
+
+[[key.invalid]]
+wrap = "lines_metric"
+check = "check"
+context = "lines_two_datasets"
+at = "none"
+text = "PC_ERMSE (1) 2 1"
+error = "PC_ERMSE: missing target and weight for:\n  dataset 2 (dummy2.db)"
+
+[[key.invalid]]
+wrap = "lines_metric"
+check = "check"
+at = "none"
+text = "PC_ERMSE (1-4) 2 1"
+error = "PC_ERMSE: dataset 4 on line 1 is outside validation DBFILE range 1-1"
 
 [[key]]
 id = "ROOT.PC_ErRMSE"
@@ -238,6 +312,11 @@ its target and its weight."""
 long_doc = """\
 The term needs a validation configuration (--validation). The weight is \
 a number >= 0."""
+checks = [
+  { msg = "{key} requires <target> <weight>", doc = "At the line: fewer than two values follow the key and its index list." },
+  { msg = "{key}: unknown flag '{tok}'", doc = "At the line: a token after the weight that is no option of the metric lines." },
+  { msg = "{key}: indexed targets are supported only for PC_ERMSE and PC_FRMSE", doc = "At the line: an index list, which only PC_ERMSE and PC_FRMSE take." },
+]
 
 [[key.args]]
 name = "target"
@@ -251,7 +330,7 @@ kind = "number"
 min = 0
 what = "{key} <weight>"
 msg = "{key} <weight> must be a number >= 0, got '{tok}'"
-doc = "The weight of the term in the loss."
+doc = "The weight of the term. The loss of an evaluation is the mean of its terms, so a term of weight 0 adds 0 and still counts in the mean."
 
 [[key.examples]]
 wrap = "root"
@@ -275,6 +354,21 @@ PC_ErRMSE 5 1
 PC_ErRMSE 4 1'''
 error = "PC_ErRMSE: repeated declaration (first declared on line 1)"
 
+[[key.invalid]]
+wrap = "root"
+text = "PC_ErRMSE 10"
+error = "PC_ErRMSE requires <target> <weight>"
+
+[[key.invalid]]
+wrap = "root"
+text = "PC_ErRMSE 10 1 --skip 3"
+error = "PC_ErRMSE: unknown flag '--skip'"
+
+[[key.invalid]]
+wrap = "root"
+text = "PC_ErRMSE 10 -1"
+error = "PC_ErRMSE <weight> must be a number >= 0, got '-1'"
+
 [[key]]
 id = "ROOT.PC_ERSQ"
 name = "PC_ERSQ"
@@ -289,6 +383,11 @@ averaged over the datasets, its target and its weight."""
 long_doc = """\
 The term needs a validation configuration (--validation). The weight is \
 a number >= 0."""
+checks = [
+  { msg = "{key} requires <target> <weight>", doc = "At the line: fewer than two values follow the key and its index list." },
+  { msg = "{key}: unknown flag '{tok}'", doc = "At the line: a token after the weight that is no option of the metric lines." },
+  { msg = "{key}: indexed targets are supported only for PC_ERMSE and PC_FRMSE", doc = "At the line: an index list, which only PC_ERMSE and PC_FRMSE take." },
+]
 
 [[key.args]]
 name = "target"
@@ -302,7 +401,7 @@ kind = "number"
 min = 0
 what = "{key} <weight>"
 msg = "{key} <weight> must be a number >= 0, got '{tok}'"
-doc = "The weight of the term in the loss."
+doc = "The weight of the term. The loss of an evaluation is the mean of its terms, so a term of weight 0 adds 0 and still counts in the mean."
 
 [[key.examples]]
 wrap = "root"
@@ -326,6 +425,16 @@ PC_ERSQ 5 1
 PC_ERSQ 4 1'''
 error = "PC_ERSQ: repeated declaration (first declared on line 1)"
 
+[[key.invalid]]
+wrap = "root"
+text = "PC_ERSQ 1 1 --skip 3"
+error = "PC_ERSQ: unknown flag '--skip'"
+
+[[key.invalid]]
+wrap = "root"
+text = "PC_ERSQ 1 -1"
+error = "PC_ERSQ <weight> must be a number >= 0, got '-1'"
+
 [[key]]
 id = "ROOT.PC_SRMSE"
 name = "PC_SRMSE"
@@ -342,6 +451,9 @@ The term needs a validation configuration (--validation). The weight is \
 a number >= 0. A dataset whose \
 structures all have stress weight 0 is not measured: the average leaves \
 it out, and hpo_run.log names it."""
+untested = [
+  { msg = "tadah hpo: PC_SRMSE on the validation set: no dataset has a stress tensor ({list}): every structure has stress weight 0 (sweight), so the stress metrics have nothing to measure", why = "Comes once the validation data are read, which no case does." },
+]
 
 [[key.args]]
 name = "target"
@@ -355,7 +467,7 @@ kind = "number"
 min = 0
 what = "{key} <weight>"
 msg = "{key} <weight> must be a number >= 0, got '{tok}'"
-doc = "The weight of the term in the loss."
+doc = "The weight of the term. The loss of an evaluation is the mean of its terms, so a term of weight 0 adds 0 and still counts in the mean."
 
 [[key.checks]]
 msg = "tadah hpo: PC_SRMSE on the validation set: no dataset has a stress tensor ({list}): every structure has stress weight 0 (sweight), so the stress metrics have nothing to measure"
@@ -364,6 +476,17 @@ When the run starts, once the validation data are read, without a line: \
 no validation structure has a stress tensor to measure; {list} names the \
 files."""
 
+[[key.checks]]
+msg = "{key} requires <target> <weight>"
+doc = "At the line: fewer than two values follow the key and its index list."
+
+[[key.checks]]
+msg = "{key}: unknown flag '{tok}'"
+doc = "At the line: a token after the weight that is no option of the metric lines."
+
+[[key.checks]]
+msg = "{key}: indexed targets are supported only for PC_ERMSE and PC_FRMSE"
+doc = "At the line: an index list, which only PC_ERMSE and PC_FRMSE take."
 [[key.examples]]
 wrap = "root"
 text = "PC_SRMSE 0.001 1"
@@ -385,6 +508,16 @@ text = '''
 PC_SRMSE 5 1
 PC_SRMSE 4 1'''
 error = "PC_SRMSE: repeated declaration (first declared on line 1)"
+
+[[key.invalid]]
+wrap = "root"
+text = "PC_SRMSE 0.001"
+error = "PC_SRMSE requires <target> <weight>"
+
+[[key.invalid]]
+wrap = "root"
+text = "PC_SRMSE 0.001 1 --skip 3"
+error = "PC_SRMSE: unknown flag '--skip'"
 
 [[key]]
 id = "ROOT.PC_FRMSE"
@@ -408,6 +541,11 @@ datasets. The weight is a number >= 0. A dataset whose structures all \
 have force weight 0 is not measured: the average leaves it out, and \
 hpo_run.log names it; an indexed line that gives it a weight above 0 is \
 refused."""
+untested = [
+  { msg = "{key} requires validation DBFILE entries", why = "Needs a validation configuration without DBFILE; in tadah hpo --check the training configuration of a case is also its validation configuration, and its own checks come first." },
+  { msg = "tadah hpo: PC_FRMSE on the validation set: no dataset has a structure with forces ({list}): every structure has force weight 0 (fweight), so the force metrics have nothing to measure", why = "Comes once the validation data are read, which no case does." },
+  { msg = "tadah hpo: PC_FRMSE ({index}) gives weight {value} to validation dataset {index} ({file}), which has no structure with forces: every one has force weight 0 (fweight). Give it weight 0, or remove the file from the validation set", why = "Comes once the validation data are read, which no case does." },
+]
 
 [[key.args]]
 name = "indices"
@@ -427,7 +565,7 @@ kind = "number"
 min = 0
 what = "{key} <weight>"
 msg = "{key} <weight> must be a number >= 0, got '{tok}'"
-doc = "The weight of the term in the loss."
+doc = "The weight of the term. The loss of an evaluation is the mean of its terms, so a term of weight 0 adds 0 and still counts in the mean."
 
 [[key.checks]]
 msg = "{key} requires validation DBFILE entries"
@@ -462,6 +600,37 @@ When the run starts, once the validation data are read, without a line: \
 an indexed line gives a weight above 0 to a dataset whose structures all \
 have force weight 0."""
 
+[[key.checks]]
+msg = "{key} requires <target> <weight>"
+doc = "At the line: fewer than two values follow the key and its index list."
+
+[[key.checks]]
+msg = "{key}: unknown flag '{tok}'"
+doc = "At the line: a token after the weight that is no option of the metric lines."
+
+[[key.checks]]
+msg = "{key}: repeated declaration (first declared on line {first_line})"
+doc = "At the line: a second line without an index list."
+
+[[key.checks]]
+msg = "{key}: cannot mix global and indexed forms"
+doc = "At the line: a line with an index list and a line without one."
+
+[[key.checks]]
+msg = "{key}: duplicate assignment for dataset {index} (first declared on line {first_line})"
+doc = "At the line: an index an earlier line of the key lists."
+
+[[key.checks]]
+msg = "{key}: validation indices start at 1"
+doc = "At the line: an index 0."
+
+[[key.checks]]
+msg = "Invalid index number '{tok}'"
+doc = "At the line: an entry of the index list that is no whole number."
+
+[[key.checks]]
+msg = "Descending index range '{tok}'"
+doc = "At the line: a range a-b of the index list with b below a."
 [[key.examples]]
 wrap = "root"
 text = "PC_FRMSE 0.1 1"
@@ -493,6 +662,54 @@ error = "PC_FRMSE: cannot mix global and indexed forms"
 wrap = "root"
 text = "PC_FRMSE (2-1) 0.1 1"
 error = "Descending index range '2-1'"
+
+[[key.invalid]]
+wrap = "root"
+text = "PC_FRMSE 0.1"
+error = "PC_FRMSE requires <target> <weight>"
+
+[[key.invalid]]
+wrap = "root"
+text = "PC_FRMSE 0.1 1 --skip 3"
+error = "PC_FRMSE: unknown flag '--skip'"
+
+[[key.invalid]]
+wrap = "root"
+at = 2
+text = '''
+PC_FRMSE (1,2) 0.1 1
+PC_FRMSE (2) 0.2 1'''
+error = "PC_FRMSE: duplicate assignment for dataset 2 (first declared on line 1)"
+
+[[key.invalid]]
+wrap = "root"
+text = "PC_FRMSE (0) 0.1 1"
+error = "PC_FRMSE: validation indices start at 1"
+
+[[key.invalid]]
+wrap = "root"
+text = "PC_FRMSE (a) 0.1 1"
+error = "Invalid index number 'a'"
+
+[[key.invalid]]
+wrap = "root"
+text = "PC_FRMSE 0.1 -1"
+error = "PC_FRMSE <weight> must be a number >= 0, got '-1'"
+
+[[key.invalid]]
+wrap = "lines_metric"
+check = "check"
+context = "lines_two_datasets"
+at = "none"
+text = "PC_FRMSE (1) 0.1 1"
+error = "PC_FRMSE: missing target and weight for:\n  dataset 2 (dummy2.db)"
+
+[[key.invalid]]
+wrap = "lines_metric"
+check = "check"
+at = "none"
+text = "PC_FRMSE (1-4) 0.1 1"
+error = "PC_FRMSE: dataset 4 on line 1 is outside validation DBFILE range 1-1"
 
 # ------------------------------------------------ the metric options ----
 
@@ -601,21 +818,27 @@ variable of the script with a target."""
 long_doc = """\
 The line takes the options of this page, which start with --, and LAMMPS \
 command-line options, which start with a single - and go to LAMMPS with \
-the values that follow them. A token that is neither an option nor a \
-value of one is refused. The scripts run with -screen none and -log none \
-unless the line gives -screen or -log. When the line is read, the script \
-is read with the files its include commands name, every --varloss, \
---outvar and --failvar variable must be an equal-style variable of it, \
-and LAMMPS starts once with the line's command-line options: an option \
-LAMMPS refuses is an error at the line, with the LAMMPS message. A script \
-or include file that does not exist is an error naming its absolute path. \
-The variable maxtime is reserved for the script timeout: neither --invar \
-nor the LAMMPS option -var (-v) may set it."""
+the values that follow them. A token that is neither an option nor a value \
+of one is refused. The scripts run with -screen none and -log none unless \
+the line gives -screen or -log. When the line is read, the script is read \
+with the files its include commands name, and every --varloss, --outvar \
+and --failvar variable must be an equal-style variable of it. LAMMPS then \
+starts once with the line's command-line options, and an option LAMMPS \
+refuses is an error at the line, with the LAMMPS message. A script or \
+include file that does not exist is an error naming its absolute path. The \
+variable maxtime is reserved for the script timeout: neither --invar nor \
+the LAMMPS option -var (-v) may set it."""
 quirk = """\
 The line takes the FAILSCORE, the PC_SCRIPT_TIMEOUT (or MAXTIME) and the \
 LOSS of the lines read before it, for the defaults of its --failscore, \
---maxtime and --varloss loss function: those lines written after it do \
-not change them."""
+--maxtime and --varloss loss function: those lines written after it do not \
+change them. The short forms -sc and -l of -screen and -log are not \
+recognised: the line still gets -screen none or -log none, which replaces \
+them."""
+untested = [
+  { msg = "Circular include detected at: {file}", why = "The message names the absolute path of the script, which differs from run to run." },
+  { msg = "Missing file name in include statement ({file})", why = "The message names the absolute path of the script, which differs from run to run." },
+]
 
 [[key.args]]
 name = "option"
@@ -666,6 +889,25 @@ LAMMPS refuses a command-line option of the line, such as a misspelt \
 one; {key} is PC_LAMMPS or PC_FAILPROBE, and {why} the message of LAMMPS, \
 or "no reason given"."""
 
+[[key.checks]]
+msg = "LammpsSim object must have a script specified.\n"
+doc = "At the line: no --script option."
+
+[[key.checks]]
+msg = "LammpsSim: --varloss variable is not defined.\n"
+doc = "At the line: a --varloss without the name of its variable."
+
+[[key.checks]]
+msg = "PC_LAMMPS validation failed for script '{script}'.\nTadah requires every --varloss/--outvar/--failvar variable to be defined in the LAMMPS script (or included files)\nas an *equal-style* variable:\n  variable <name> equal ...\n\nProblems found:\n{list}"
+doc = "At the line: a --varloss, --outvar or --failvar variable that the script and the files it includes do not define as an equal-style variable; {list} has a line for each."
+
+[[key.checks]]
+msg = "unexpected '{tok}': a PC_LAMMPS token is an option or a value of one (HPO options start with --, LAMMPS command-line options with -)"
+doc = "At the line: a token that is neither an option nor a value of one."
+
+[[key.checks]]
+msg = "{key}: unknown option '{option}'{note}: HPO's options are {list}; LAMMPS command-line options start with a single '-'"
+doc = "At the line: an option that starts with -- and is none of the line's; {note} names the option meant, or the other line it belongs to."
 [[key.examples]]
 wrap = "root"
 text = "PC_LAMMPS --script lines_pc.in --varloss E -5.0 1.0"
@@ -822,6 +1064,7 @@ what = "--varloss {name} <target>"
 name = "weight"
 kind = "number"
 what = "--varloss {name} <weight>"
+doc = "The weight of the term. The loss of an evaluation is the mean of its terms, so a term of weight 0 adds 0 and still counts in the mean."
 
 [[line_option.args]]
 name = "loss"
@@ -883,6 +1126,7 @@ error = "--varloss E <weight> must be a finite number, got 'x'"
 wrap = "root"
 text = "PC_LAMMPS --script lines_pc.in --varloss E 1 1 FOO"
 error = "LossFunction::from_string: unknown type 'FOO'"
+msg_of = "ROOT.LOSS"
 
 [[line_option.invalid]]
 wrap = "root"
@@ -893,11 +1137,13 @@ error = "--varloss E HUBER parameter must be a finite number, got 'x'"
 wrap = "root"
 text = "PC_LAMMPS --script lines_pc.in --varloss E 1 1 HUBER 0"
 error = "loss HUBER parameter (delta) must be finite and > 0 (got 0); omit it to use the default 50"
+msg_of = "ROOT.LOSS"
 
 [[line_option.invalid]]
 wrap = "root"
 text = "PC_LAMMPS --script lines_pc.in --varloss E 1 1 L2 3"
 error = "loss L2 takes no parameter (got 1)"
+msg_of = "ROOT.LOSS"
 
 [[line_option]]
 id = "PC_LAMMPS.--invar"
@@ -926,6 +1172,9 @@ doc = "Fewer than two tokens follow the option."
 msg = "--invar maxtime: the variable maxtime is reserved for the script timeout HPO injects (timer timeout ${maxtime}); set --maxtime on this line or PC_SCRIPT_TIMEOUT instead"
 doc = "The variable is maxtime."
 
+[[line_option.checks]]
+msg = "--invar takes <name> <value> (unexpected '{tok}')"
+doc = "At the line: a token after the value that is no option."
 [[line_option.examples]]
 wrap = "root"
 text = "PC_LAMMPS --script lines_pc.in --varloss E -5.0 1.0 --invar a 1 --invar b 2"
@@ -1101,9 +1350,10 @@ lines = ["PC_LAMMPS"]
 synopsis = "--hotvar <name> <min> <max> [<initial>]"
 repeat = "add"
 doc = """\
-A LAMMPS variable that the script computes and that the other scripts \
-read: the script runs before the scripts without --hotvar, and its value \
-of <name> goes to them as the variable <name>."""
+A LAMMPS variable that the script computes and that other scripts read. A \
+script that reads <name> (${<name>} or v_<name>) runs after this one and \
+receives its value as the variable <name>; the other scripts run alongside \
+it."""
 long_doc = """\
 A value outside [<min>, <max>] fails the evaluation. The script itself \
 receives <name> too: the last value inside the range, else <initial>, \
@@ -1142,6 +1392,9 @@ doc = "The name starts with - and is not a number."
 msg = "--hotvar {name}: <max> must exceed <min>"
 doc = "<max> is not greater than <min>."
 
+[[line_option.checks]]
+msg = "--hotvar takes <name> <min> <max> [<initial>] (unexpected '{tok}')"
+doc = "At the line: a token after the initial value that is no option."
 [[line_option.examples]]
 wrap = "root"
 text = "PC_LAMMPS --script lines_pc.in --varloss E -5.0 1.0 --hotvar a 1 2 --hotvar b -1 1 0"
@@ -1184,13 +1437,17 @@ synopsis = "--failvar <name> [<scale>]"
 repeat = "add"
 default = { text = "scale 1" }
 doc = """\
-An equal-style LAMMPS variable that measures how badly the script failed: \
-0 means the script succeeded, a value > 0 marks it failed, and the \
-evaluation scores a failure."""
+An equal-style LAMMPS variable that measures how badly the script failed, \
+under FAILSCORE_GRADING ON: 0 means the script succeeded, and a value > 0 \
+marks it failed, so the evaluation scores a failure."""
 long_doc = """\
 Under FAILSCORE_GRADING ON, <scale> times the value grades the failure \
 loss; the values of several --failvar options of one line add up. The \
 variables of a failed script do not enter the loss."""
+quirk = """\
+Under FAILSCORE_GRADING OFF, the default, a value > 0 does not fail the \
+script, and no warning says so: the variable needs only to be a finite \
+number."""
 
 [[line_option.args]]
 name = "name"
@@ -1211,6 +1468,9 @@ doc = "The option ends the line without its name."
 msg = "--failvar: <name> must be a non-empty identifier"
 doc = "The name starts with - and is not a number."
 
+[[line_option.checks]]
+msg = "--failvar takes <name> [<scale>] (unexpected '{tok}')"
+doc = "At the line: a token after the scale that is no option."
 [[line_option.examples]]
 wrap = "root"
 text = "PC_LAMMPS --script lines_pc.in --varloss E -5.0 1.0 --failvar V 0.5"
@@ -1247,6 +1507,7 @@ as an *equal-style* variable:
 Problems found:
   - W requested by --failvar but not defined
 """
+msg_of = "ROOT.PC_LAMMPS"
 
 [[line_option]]
 id = "PC_LAMMPS.--ncpu"
@@ -1257,6 +1518,9 @@ refused = """\
 The scripts of the PC_LAMMPS lines run in parallel as THREADS and \
 PC_ISOLATION set; a line has no rank count of its own."""
 doc = "Refused: THREADS and PC_ISOLATION set the parallelism of the scripts."
+checks = [
+  { msg = "--ncpu was removed in 1.6.0 (legacy MPI build); parallelism over PC_LAMMPS scripts is THREADS / PC_ISOLATION. Delete --ncpu from this line.", doc = "At the line, wherever the option appears." },
+]
 
 [[line_option.invalid]]
 wrap = "root"
@@ -1288,6 +1552,14 @@ LAMMPS started, as for a PC_LAMMPS line, with the same refusals."""
 quirk = """\
 A token after --gate or --s0 is its value whatever it is, and a second \
 --gate or --s0 on the line replaces the first."""
+checks = [
+  { msg = "LammpsSim object must have a script specified.\n", doc = "At the line: no --script option." },
+  { msg = "PC_FAILPROBE requires --outvar <S> (the sanity scalar)", doc = "At the line: no --outvar option." },
+  { msg = "PC_FAILPROBE must not declare --varloss (it grades failures; it must not shape the feasible objective)", doc = "At the line: a --varloss option." },
+  { msg = "PC_FAILPROBE must not declare --hotvar/--failvar", doc = "At the line: a --hotvar or --failvar option." },
+  { msg = "{key}: unknown option '{option}'{note}: HPO's options are {list}; LAMMPS command-line options start with a single '-'", doc = "At the line: an option that starts with -- and is none of the line's; {note} names the option meant, or the other line it belongs to." },
+  { msg = "{key}: LAMMPS cannot start with this line's command-line options: {why}", doc = "At the line: LAMMPS refuses a command-line option of the line; {why} is the message of LAMMPS." },
+]
 
 [[key.args]]
 name = "option"
@@ -1354,6 +1626,7 @@ error = "LammpsSim object must have a script specified.\n"
 wrap = "root"
 text = "PC_FAILPROBE --script /missing/probe.in --outvar S"
 error = "LAMMPS include file not found: /missing/probe.in"
+msg_of = "ROOT.PC_LAMMPS"
 
 [[key.invalid]]
 wrap = "root"
@@ -1445,6 +1718,9 @@ long_doc = """\
 cohesive_energy provides the analytical gradient of its term, except \
 for the value of --unconverged force-scaled. A file has PC_OBSERVABLE \
 lines or PC_LAMMPS lines, not both."""
+checks = [
+  { msg = "PC_OBSERVABLE: empty line", doc = "At the line: no observable kind follows the key." },
+]
 
 [[key.args]]
 name = "kind"
@@ -1486,8 +1762,15 @@ Each evaluation builds a bcc supercell with the lattice constant a0, \
 relaxes it at zero pressure with tadah's own relaxer and compares the \
 cohesive energy with the target through the loss function. The next \
 evaluation starts its relaxation from the lattice constant this one \
-relaxed to. A relaxation that does not converge reports the value that \
---unconverged sets."""
+relaxed to. A relaxation whose a0 ends outside the --hotvar window fails \
+the term, and with it the evaluation. A relaxation that does not converge \
+reports the value that --unconverged sets."""
+quirk = """\
+The lattice constant the next relaxation starts from is one value for the \
+run. Under TADAH:ANNEAL_PT or TADAH:ANNEAL_PA with THREADS above 1, \
+evaluations that run at the same time share it without a lock, so a \
+relaxation can start from, and be judged against, the value of another \
+evaluation."""
 
 [[form.checks]]
 msg = "PC_OBSERVABLE cohesive_energy: --species is required"
@@ -1546,6 +1829,16 @@ wrap = "root"
 text = "PC_OBSERVABLE cohesive_energy --species H --target 2 --weight 1 --hotvar a0 1.5 2.5 --bogus"
 error = "PC_OBSERVABLE cohesive_energy: unknown flag '--bogus'"
 
+[[form.invalid]]
+wrap = "root"
+text = "PC_OBSERVABLE cohesive_energy --species H --target -1 --weight 1 --hotvar a0 2.0 3.0 --etol"
+error = "PC_OBSERVABLE cohesive_energy: '--etol' requires a value"
+
+[[form.invalid]]
+wrap = "root"
+text = "PC_OBSERVABLE cohesive_energy --species H --target -1 --weight 1 --hotvar a0 2.0 3.0 --etol x"
+error = "PC_OBSERVABLE: flag '--etol' expected a finite number, got 'x'"
+
 [[line_option]]
 id = "PC_OBSERVABLE.cohesive_energy.--species"
 option = "--species"
@@ -1553,6 +1846,10 @@ lines = ["PC_OBSERVABLE.cohesive_energy"]
 synopsis = "--species <element>"
 repeat = "last_wins"
 doc = "The chemical element of the crystal. The line requires it."
+quirk = """\
+The element is not checked. A name that is no element fails every \
+evaluation when it runs, and an element the potential does not hold gives \
+a constant term, with no message."""
 
 [[line_option.args]]
 name = "element"
@@ -1595,7 +1892,10 @@ option = "--weight"
 lines = ["PC_OBSERVABLE.cohesive_energy"]
 synopsis = "--weight <w>"
 repeat = "last_wins"
-doc = "The weight of the term in the loss, a number >= 0. The line requires it."
+doc = """\
+The weight of the term, a number >= 0; the line requires it. The loss of \
+an evaluation is the mean of its terms, so a term of weight 0 adds 0 and \
+still counts in the mean."""
 
 [[line_option.args]]
 name = "w"
@@ -1616,6 +1916,11 @@ wrap = "root"
 text = "PC_OBSERVABLE cohesive_energy --species H --target 2.0 --weight -1 --hotvar a0 1.5 2.5"
 error = "CohesiveEnergyObservable: weight must be >= 0"
 
+[[line_option.invalid]]
+wrap = "root"
+text = "PC_OBSERVABLE cohesive_energy --species H --target -1 --weight x --hotvar a0 2.0 3.0"
+error = "PC_OBSERVABLE: flag '--weight' expected a finite number, got 'x'"
+
 [[line_option]]
 id = "PC_OBSERVABLE.cohesive_energy.--hotvar"
 option = "--hotvar"
@@ -1624,8 +1929,10 @@ synopsis = "--hotvar a0 <lo> <hi> [<init>]"
 repeat = "last_wins"
 default = { text = "<init>: the midpoint of [<lo>, <hi>]" }
 doc = """\
-The lattice constant a0, in Å: the range [<lo>, <hi>] it is kept in and \
-the value the first relaxation starts from. The line requires it."""
+The lattice constant a0, in Å: the window [<lo>, <hi>] of the relaxed \
+value, and the value the first relaxation starts from. A relaxation whose \
+a0 ends outside the window fails the term, and with it the evaluation; the \
+line requires the option."""
 quirk = "An <init> outside [<lo>, <hi>] is moved to the nearer end of the range without a message."
 
 [[line_option.args]]
@@ -1684,13 +1991,18 @@ wrap = "root"
 text = "PC_OBSERVABLE cohesive_energy --species H --target 2 --weight 1 --hotvar a0 2.5 1.5"
 error = "CohesiveEnergyObservable: a0_max must be > a0_min"
 
+[[line_option.invalid]]
+wrap = "root"
+text = "PC_OBSERVABLE cohesive_energy --species H --target -1 --weight 1 --hotvar a0 2.0 x"
+error = "PC_OBSERVABLE: flag '--hotvar a0 hi' expected a finite number, got 'x'"
+
 [[line_option]]
 id = "PC_OBSERVABLE.cohesive_energy.--lattice"
 option = "--lattice"
 lines = ["PC_OBSERVABLE.cohesive_energy"]
 synopsis = "--lattice bcc"
 repeat = "last_wins"
-default = { literal = "bcc" }
+default = { text = "bcc, the only lattice the term takes" }
 doc = "The crystal lattice; bcc is the one lattice."
 
 [[line_option.args]]
@@ -1778,11 +2090,13 @@ text = "PC_OBSERVABLE cohesive_energy --species H --target 2.0 --weight 1 --hotv
 wrap = "root"
 text = "PC_OBSERVABLE cohesive_energy --species H --target 2 --weight 1 --hotvar a0 1.5 2.5 --loss foo"
 error = "LossFunction::from_string: unknown type 'foo'"
+msg_of = "ROOT.LOSS"
 
 [[line_option.invalid]]
 wrap = "root"
 text = "PC_OBSERVABLE cohesive_energy --species H --target 2 --weight 1 --hotvar a0 1.5 2.5 --loss HUBER 20"
 error = "PC_OBSERVABLE cohesive_energy: unknown flag '20'"
+msg_of = "PC_OBSERVABLE.cohesive_energy"
 
 [[line_option]]
 id = "PC_OBSERVABLE.cohesive_energy.--maxiter"
@@ -1903,6 +2217,9 @@ default = { literal = "0.1" }
 doc = """\
 The largest force, in eV/Å, at the end of a relaxation that counts as \
 converged; above it the observable reports the --unconverged value."""
+quirk = """\
+The relaxation itself ends when the largest force falls below 0.1 eV/Å, so \
+a value above 0.1 loosens the test only when --etol ends the relaxation."""
 
 [[line_option.args]]
 name = "fmax"
@@ -1917,6 +2234,11 @@ text = "PC_OBSERVABLE cohesive_energy --species H --target 2.0 --weight 1 --hotv
 wrap = "root"
 text = "PC_OBSERVABLE cohesive_energy --species H --target 2 --weight 1 --hotvar a0 1.5 2.5 --fmax-converged"
 error = "PC_OBSERVABLE cohesive_energy: '--fmax-converged' requires a value"
+
+[[line_option.invalid]]
+wrap = "root"
+text = "PC_OBSERVABLE cohesive_energy --species H --target -1 --weight 1 --hotvar a0 2.0 3.0 --fmax-converged x"
+error = "PC_OBSERVABLE: flag '--fmax-converged' expected a finite number, got 'x'"
 
 [[line_option]]
 id = "PC_OBSERVABLE.cohesive_energy.--unconverged"
@@ -1991,6 +2313,14 @@ quirk = """\
 A PC_LAMMPS line takes the LOSS of the lines read before it as the \
 default of its --varloss terms, while the metric terms take the last \
 LOSS line wherever it is."""
+checks = [
+  { msg = "LOSS requires a loss type", doc = "At the line: no loss function follows the key." },
+  { msg = "LossFunction::from_string: unknown type '{tok}'", doc = "At the line: a name that is no loss function, in any case." },
+  { msg = "LOSS {name}: parameter '{tok}' is not a number{underflow}", doc = "At the line: a parameter that is no number of the number grammar." },
+  { msg = "loss {name} takes no parameter (got {count})", doc = "At the line: a parameter of a loss function that takes none; {count} is the number given." },
+  { msg = "loss {name} takes at most {max} parameter (got {count})", doc = "At the line: more parameters than the loss function takes." },
+  { msg = "loss {name} parameter ({key}) must be finite and > 0 (got {value}); omit it to use the default {default}", doc = "At the line: a parameter of HUBER or TUKEY that is 0, negative or not finite; {key} is delta or c." },
+]
 
 [[key.args]]
 name = "function"
@@ -2102,13 +2432,15 @@ text = "LOSS HUBER"
 wrap = "root"
 text = "LOSS HUBER 0"
 error = "loss HUBER parameter (delta) must be finite and > 0 (got 0); omit it to use the default 50"
+msg_of = "ROOT.LOSS"
 
 [[loss_function]]
 id = "LOSS.RMSLE"
 name = "RMSLE"
 doc = """\
 The weight times the squared difference of ln(measured + 1e-12) and \
-ln(target + 1e-12)."""
+ln(target + 1e-12). A measured value or a target at or below -1e-12 fails \
+the evaluation, and the startup checks do not refuse such a target."""
 
 [[loss_function.examples]]
 wrap = "root"
@@ -2135,6 +2467,7 @@ text = "LOSS TUKEY 2"
 wrap = "root"
 text = "LOSS TUKEY -1"
 error = "loss TUKEY parameter (c) must be finite and > 0 (got -1); omit it to use the default 4.685"
+msg_of = "ROOT.LOSS"
 
 # ============================================================= OPTIM ====
 
@@ -2197,13 +2530,15 @@ doc = """\
 An OPTIM line selects values of a key of the training configuration with \
 an index list and searches each in a box. The indices count the numeric \
 values of the key from 1; for FIXWEIGHT they name model weights, those \
-FIXINDEX lists. The index list is one or more entries separated by \
-commas, each an index n, a range a-b or a range with a stride a-b:s, \
-without a repeated index; blanks inside the parentheses are allowed. A \
-key with a dot names a parameter of a DM_Embed component (a DESCRIPTOR \
-block), such as H.DENSITY.CENTRES. The key is upper-cased, and each \
-value of a key is selected by one line. Every number is a finite number \
-of the number grammar."""
+FIXINDEX lists."""
+long_doc = """\
+The index list is one or more entries separated by commas, each an index \
+n, a range a-b or a range with a stride a-b:s, without a repeated index; \
+blanks inside the parentheses are allowed. A key with a dot names a \
+parameter of a DM_Embed component (a DESCRIPTOR block), such as \
+H.DENSITY.CENTRES. The key is upper-cased, and each value of a key is \
+selected by one line. Every number is a finite number of the number \
+grammar."""
 synopsis = [
   "OPTIM <KEY> (<indices>) <low> <high> [LIN | LOG | ASINH <c>]",
   "OPTIM <KEY> (<indices>) AUTO [RATIO <f> | FRAC <p>] [FLOOR <a>] [GROUP_FLOOR <r>] [LIN | LOG | ASINH <c>]",
@@ -2221,7 +2556,7 @@ doc = "No index list in parentheses follows the key."
 
 [[optim.checks]]
 msg = "Unmatched opening parenthesis in index selector"
-doc = "The index list has no closing parenthesis, or nothing follows it."
+doc = "The index list has no closing parenthesis."
 
 [[optim.checks]]
 msg = "Nested parentheses in index selector"
@@ -2273,11 +2608,11 @@ doc = "The selected value is an integer in every format of the key; {list} names
 [[optim.checks]]
 msg = "OPTIM {key} ({index}): Out of bound index: {index}{note}"
 doc = """\
-The key has fewer numeric values than the index. {note} is empty, or, \
-when the potential given with -c holds values its descriptors do not \
-read, which the run leaves out, says in parentheses which values were \
-left out and that the indices address the values kept, and, when the \
-potential's value at the given index is kept, its index among them."""
+The key has fewer numeric values than the index. {note} is empty when the \
+potential given with -c holds only values its descriptors read. Otherwise \
+the run leaves the other values out, and {note} says in parentheses which, \
+that the indices address the values kept, and the index among them of the \
+value at the given index when it is kept."""
 
 [[optim.checks]]
 msg = "OPTIM {key} ({index}): the index is already selected by the OPTIM {key} line on line {line} (OPTIM keys are case-insensitive); give each index one OPTIM line"
@@ -2286,11 +2621,12 @@ doc = "An earlier OPTIM line of the key selects the value."
 [[optim.checks]]
 msg = "OPTIM {key} ({index}): OPTIM {key} ({index}): the low bound {low} is not > 0, but {what} requires {value}; use a low bound > 0"
 doc = """\
-A box of a value that must be positive reaches 0: a width of a radial \
-bump basis (SGRID2B of D2_Blip and D2_Blip5, SGRIDMB of a Blip or Blip5 \
-density), WATOM under RHOFORM NONNEG or MONOTONE, SGRIDMB under \
-MONOTONE (and under NONNEG for the Gaussian basis), or a positive \
-DM_Embed parameter. {what} names the rule and {value} what it requires."""
+A box of a value that must be positive reaches 0; {what} names the rule \
+and {value} what it requires. The values are a width of a radial bump \
+basis (SGRID2B of D2_Blip and D2_Blip5, SGRIDMB of a Blip or Blip5 \
+density) and a positive DM_Embed parameter. So are WATOM under RHOFORM \
+NONNEG or MONOTONE, and SGRIDMB under MONOTONE and, for the Gaussian \
+basis, under NONNEG."""
 
 [[optim.checks]]
 msg = "OPTIM {key} ({index}): OPTIM {key} ({index}): the low bound {low} is negative, but {what} requires {value}; use a low bound >= 0 (0 is allowed) or AUTO"
@@ -2299,6 +2635,9 @@ A box of a non-negative value reaches below 0: AMPGRIDMB under RHOFORM \
 NONNEG or MONOTONE, or the amplitudes of a DM_Embed density with \
 non-negative amplitudes."""
 
+[[optim.checks]]
+msg = "OPTIM FIXWEIGHT requires FIXINDEX in the training configuration (FIXINDEX names which model weights the FIXWEIGHT values pin)."
+doc = "At the line: OPTIM FIXWEIGHT with a training configuration without FIXINDEX."
 [[optim.examples]]
 wrap = "root"
 text = "OPTIM CGRID2B (2) 1.5 2.5"
@@ -2336,21 +2675,25 @@ error = "Expected (indices)"
 wrap = "root"
 text = "OPTIM CGRID2B (2 1.5 2.5"
 error = "Unmatched opening parenthesis in index selector"
+msg_of = "OPTIM"
 
 [[optim.invalid]]
 wrap = "root"
 text = "OPTIM CGRID2B ((2) 1.5 2.5"
 error = "Nested parentheses in index selector"
+msg_of = "OPTIM"
 
 [[optim.invalid]]
 wrap = "root"
 text = "OPTIM CGRID2B ( ) 1.5 2.5"
 error = "Empty index selector"
+msg_of = "OPTIM"
 
 [[optim.invalid]]
 wrap = "root"
 text = "OPTIM CGRID2B (2)1.5 2.5"
 error = "Expected whitespace after (indices)"
+msg_of = "OPTIM"
 
 [[optim.invalid]]
 wrap = "root"
@@ -2482,6 +2825,9 @@ The box, in the coordinate of its shape tag, is empty or not finite; the \
 message has no line frame. {name} is the key, with [<index>] for a key \
 of more than one value."""
 
+[[form.checks]]
+msg = "OPTIM {name}: LOG scale requires low > 0 (got {low}); use ASINH <c> for sign-crossing ranges"
+doc = "Once the file is read: a LOG box whose lower bound is 0 or below."
 [[form.examples]]
 wrap = "root"
 text = "OPTIM CGRID2B (2) 1.5 2.5"
@@ -2521,6 +2867,18 @@ wrap = "root"
 text = "OPTIM CGRID2B (2) 2.5 1.5"
 error = "Error: Highbound must be greater than lowbound: 2.5>=1.5\n"
 
+[[form.invalid]]
+wrap = "root"
+at = "none"
+text = "OPTIM CGRID2B (2) 0 3 LOG"
+error = "OPTIM CGRID2B[2]: LOG scale requires low > 0 (got 0); use ASINH <c> for sign-crossing ranges"
+
+[[form.invalid]]
+wrap = "root"
+at = "none"
+text = "OPTIM CGRID2B (2) 1 1e300 ASINH 1e-300"
+error = "OPTIM CGRID2B[2]: transformed bounds are degenerate (ASINH: [691.469, inf])"
+
 [[form]]
 id = "OPTIM.AUTO"
 line = "OPTIM"
@@ -2540,6 +2898,10 @@ above 0, and take GROUP_FLOOR 1e-3 when the line sets neither FLOOR nor \
 GROUP_FLOOR. A cutoff key (a key that starts with RCUT) takes no AUTO \
 box. hpo_optim_resolved.hpo records the boxes as explicit lines. The \
 option names are read in any case."""
+quirk = """\
+An unknown word followed by a token that is no number gets the message \
+that AUTO <WORD> must be a finite number, not the message about an \
+unexpected option."""
 
 [[form.args]]
 name = "indices"
@@ -2551,11 +2913,14 @@ doc = "An option ends the line without its value."
 
 [[form.checks]]
 msg = "OPTIM {key}: AUTO {option} must be a finite number (got '{tok}'){underflow}"
-doc = "The value of an option is not a number; {option} is the option upper-cased."
+doc = """\
+The value of an option, or the token after a word that is no option, is \
+not a number; {option} is the word upper-cased."""
 
 [[form.checks]]
 msg = "OPTIM {key}: unexpected AUTO option '{tok}' -- the grammar is OPTIM <KEY> (indices) <low> <high> [LIN | LOG | ASINH <c>] or OPTIM <KEY> (indices) AUTO [RATIO <f> | FRAC <p>] [FLOOR <a>] [GROUP_FLOOR <r>] [LIN | LOG | ASINH <c>]"
-doc = "A token followed by a number is not an AUTO option."
+doc = """\
+A word followed by a number is not an AUTO option."""
 
 [[form.checks]]
 msg = "OPTIM {key}: AUTO boxes are not allowed on cutoff keys (the neighbour list is sized from an explicit high bound); give explicit bounds"
@@ -2614,6 +2979,12 @@ wrap = "root"
 context = "lines_ream"
 text = "OPTIM AMPGRIDMB (2) AUTO FRAC 2 LOG"
 error = "OPTIM AMPGRIDMB (2): OPTIM AMPGRIDMB (2): AUTO box [0, 0.9] is not positive but the dim is tagged LOG; use RATIO (geometric) or drop the tag"
+
+[[form.invalid]]
+wrap = "root"
+doc = "An unknown word followed by a token that is no number."
+text = "OPTIM CGRID2B (2) AUTO BOGUS x"
+error = "OPTIM CGRID2B: AUTO BOGUS must be a finite number (got 'x')"
 
 # ---------------------------------------------- the AUTO options ------
 
@@ -2758,7 +3129,7 @@ option = "FLOOR"
 lines = ["OPTIM.AUTO"]
 synopsis = "FLOOR <a>"
 repeat = "last_wins"
-default = { literal = "0" }
+default = { text = "0", unchecked = "The parser applies the floor when it makes the box; the box does not keep it." }
 doc = "The smallest half-width a >= 0 of a FRAC box. A geometric box, given by RATIO or the default of a key whose values stay positive, refuses it."
 
 [[line_option.args]]
@@ -2803,7 +3174,7 @@ option = "GROUP_FLOOR"
 lines = ["OPTIM.AUTO"]
 synopsis = "GROUP_FLOOR <r>"
 repeat = "last_wins"
-default = { text = "0; 1e-3 for a non-negative amplitude under FRAC without FLOOR" }
+default = { text = "0; 1e-3 for a non-negative amplitude under FRAC without FLOOR", unchecked = "The parser applies the floor when it makes the box; the box does not keep it." }
 doc = "The smallest half-width of a FRAC box relative to the largest |x0| of the line, r >= 0. A geometric box, given by RATIO or the default of a key whose values stay positive, refuses it."
 
 [[line_option.args]]
@@ -2845,6 +3216,11 @@ wrap = "root"
 text = "OPTIM CGRID2B (1-2) AUTO RATIO 1.5 GROUP_FLOOR 0.1"
 error = "OPTIM CGRID2B: FLOOR and GROUP_FLOOR set the smallest half-width of an AUTO FRAC box; AUTO RATIO makes the geometric box [x0/f, x0*f], which they do not change, so they are given with FRAC <p> only"
 
+[[line_option.invalid]]
+wrap = "root"
+text = "OPTIM SGRID2B (1) AUTO GROUP_FLOOR 0.1"
+error = "OPTIM SGRID2B: FLOOR and GROUP_FLOOR set the smallest half-width of an AUTO FRAC box; the AUTO box of SGRID2B is geometric by default (RATIO 2), which they do not change, so they are given with FRAC <p> only"
+
 # ---------------------------------------------- the shape tags --------
 
 [[line_option]]
@@ -2852,20 +3228,37 @@ id = "OPTIM.LIN"
 option = "LIN"
 lines = ["OPTIM"]
 synopsis = "LIN"
-repeat = "last_wins"
+repeat = "error"
+repeat_msg = "OPTIM {key}: unexpected token(s) '{text}' -- the grammar is OPTIM <KEY> (indices) <low> <high> [LIN | LOG | ASINH <c>] or OPTIM <KEY> (indices) AUTO [RATIO <f> | FRAC <p>] [FLOOR <a>] [GROUP_FLOOR <r>] [LIN | LOG | ASINH <c>]"
 default = { text = "LIN, unless LOG_HP log-scales the box" }
 doc = "The optimiser searches the value itself; the tag is the last token of the line."
+quirk = """\
+LOG_HP log-scales a box tagged LIN as it does an untagged one: the tag \
+does not keep the box linear."""
 
 [[line_option.examples]]
 wrap = "root"
 text = "OPTIM CGRID2B (2) 1.5 2.5 LIN"
+
+[[line_option.invalid]]
+wrap = "root"
+text = "OPTIM CGRID2B (2) 1.5 2.5 LIN LIN"
+error = "OPTIM CGRID2B: unexpected token(s) '1.5 2.5 LIN' -- the grammar is OPTIM <KEY> (indices) <low> <high> [LIN | LOG | ASINH <c>] or OPTIM <KEY> (indices) AUTO [RATIO <f> | FRAC <p>] [FLOOR <a>] [GROUP_FLOOR <r>] [LIN | LOG | ASINH <c>]"
+
+[[line_option.invalid]]
+wrap = "root"
+doc = "On an AUTO box the first of two tags is read as an AUTO option."
+msg_of = "OPTIM.AUTO"
+text = "OPTIM CGRID2B (2) AUTO LIN LOG"
+error = "OPTIM CGRID2B: AUTO option 'LIN' needs a value -- the grammar is OPTIM <KEY> (indices) <low> <high> [LIN | LOG | ASINH <c>] or OPTIM <KEY> (indices) AUTO [RATIO <f> | FRAC <p>] [FLOOR <a>] [GROUP_FLOOR <r>] [LIN | LOG | ASINH <c>]"
 
 [[line_option]]
 id = "OPTIM.LOG"
 option = "LOG"
 lines = ["OPTIM"]
 synopsis = "LOG"
-repeat = "last_wins"
+repeat = "error"
+repeat_msg = "OPTIM {key}: unexpected token(s) '{text}' -- the grammar is OPTIM <KEY> (indices) <low> <high> [LIN | LOG | ASINH <c>] or OPTIM <KEY> (indices) AUTO [RATIO <f> | FRAC <p>] [FLOOR <a>] [GROUP_FLOOR <r>] [LIN | LOG | ASINH <c>]"
 doc = "The optimiser searches the logarithm of the value; the box is above 0."
 
 [[line_option.checks]]
@@ -2884,12 +3277,19 @@ at = "none"
 text = "OPTIM CGRID2B (2) 0 2.5 LOG"
 error = "OPTIM CGRID2B[2]: LOG scale requires low > 0 (got 0); use ASINH <c> for sign-crossing ranges"
 
+[[line_option.invalid]]
+wrap = "root"
+doc = "Two tags: the first is left over."
+text = "OPTIM CGRID2B (2) 1.5 2.5 LIN LOG"
+error = "OPTIM CGRID2B: unexpected token(s) '1.5 2.5 LIN' -- the grammar is OPTIM <KEY> (indices) <low> <high> [LIN | LOG | ASINH <c>] or OPTIM <KEY> (indices) AUTO [RATIO <f> | FRAC <p>] [FLOOR <a>] [GROUP_FLOOR <r>] [LIN | LOG | ASINH <c>]"
+
 [[line_option]]
 id = "OPTIM.ASINH"
 option = "ASINH"
 lines = ["OPTIM"]
 synopsis = "ASINH <c>"
-repeat = "last_wins"
+repeat = "error"
+repeat_msg = "OPTIM {key}: unexpected token(s) '{text}' -- the grammar is OPTIM <KEY> (indices) <low> <high> [LIN | LOG | ASINH <c>] or OPTIM <KEY> (indices) AUTO [RATIO <f> | FRAC <p>] [FLOOR <a>] [GROUP_FLOOR <r>] [LIN | LOG | ASINH <c>]"
 doc = """\
 The optimiser searches asinh(x/c), for a box that crosses 0: linear \
 within about c of 0 and logarithmic beyond; c > 0."""
@@ -2925,6 +3325,11 @@ error = "OPTIM CGRID2B: ASINH <c> must be a finite number (got 'x')"
 wrap = "root"
 text = "OPTIM CGRID2B (2) 1 2.5 ASINH -1"
 error = "OPTIM CGRID2B: ASINH requires a positive linear scale c (got -1)"
+
+[[line_option.invalid]]
+wrap = "root"
+text = "OPTIM CGRID2B (2) -1 2.5 ASINH 0.5 ASINH 1"
+error = "OPTIM CGRID2B: unexpected token(s) '-1 2.5 ASINH 0.5' -- the grammar is OPTIM <KEY> (indices) <low> <high> [LIN | LOG | ASINH <c>] or OPTIM <KEY> (indices) AUTO [RATIO <f> | FRAC <p>] [FLOOR <a>] [GROUP_FLOOR <r>] [LIN | LOG | ASINH <c>]"
 
 # ------------------------------------------ the refused OPTIM keys ----
 
@@ -2978,11 +3383,13 @@ wrap = "root"
 context = "lines_fixweight_alone"
 text = "OPTIM FIXWEIGHT (1) 0 2"
 error = "OPTIM FIXWEIGHT requires FIXINDEX in the training configuration (FIXINDEX names which model weights the FIXWEIGHT values pin)."
+msg_of = "OPTIM"
 
 [[optim_target.invalid]]
 wrap = "root"
 text = "OPTIM FIXWEIGHT (1) 0 2"
 error = "Key not found in the Context object: FIXWEIGHT"
+msg_of = "OPTIM"
 doc = "A configuration without FIXWEIGHT."
 
 [[optim_target]]
@@ -3320,9 +3727,10 @@ keys = ["ROOT.FAILSCORE", "ROOT.LOSS", "ROOT.PC_SCRIPT_TIMEOUT", "ROOT.MAXTIME",
 msg = "{key} is set twice (first on line {first_line}{note}) and no PC_LAMMPS or PC_FAILPROBE line between takes the first; each key is given once"
 doc = """\
 Each PC_LAMMPS and PC_FAILPROBE line takes the FAILSCORE, LOSS and \
-PC_SCRIPT_TIMEOUT given above it, and the run-wide uses take the last \
-line. A second line of one of these keys is refused unless such a line \
-between takes the first."""
+PC_SCRIPT_TIMEOUT above it; a second line of these keys needs such a line \
+between. The rest of the run takes the last line: the metric terms its \
+LOSS, a failed evaluation its FAILSCORE, and the hpo_run.log summary its \
+PC_SCRIPT_TIMEOUT."""
 msg_doc = """\
 The message names the key as the second line writes it and the line of \
 the first; when the first wrote the other name of the script limit, \
@@ -3374,6 +3782,9 @@ doc = """\
 A target file has PC_OBSERVABLE lines or PC_LAMMPS and PC_FAILPROBE lines, \
 not both. The refusal comes after the whole file is read and names no \
 line."""
+quirk = """\
+The message counts a PC_FAILPROBE line as a PC_LAMMPS entry, and names \
+PC_LAMMPS when the file has PC_FAILPROBE lines only."""
 msg_doc = "The message gives the number of lines of each key."
 
 [[rule.invalid]]
@@ -3382,6 +3793,15 @@ at = "none"
 text = '''
 PC_OBSERVABLE cohesive_energy --species H --target 2 --weight 1 --hotvar a0 1.5 2.5
 PC_LAMMPS --script lines_pc.in --varloss E 1 1'''
+error = "--hpotarget defines both PC_OBSERVABLE (1 entries) and PC_LAMMPS (1 entries); PC_OBSERVABLE and PC_LAMMPS lines are mutually exclusive. Remove one set of lines and rerun."
+
+[[rule.invalid]]
+wrap = "root"
+at = "none"
+doc = "A PC_FAILPROBE line, and no PC_LAMMPS line: the message counts it as a PC_LAMMPS entry."
+text = '''
+PC_FAILPROBE --script lines_pc.in --outvar S
+PC_OBSERVABLE cohesive_energy --species H --target 2 --weight 1 --hotvar a0 1.5 2.5'''
 error = "--hpotarget defines both PC_OBSERVABLE (1 entries) and PC_LAMMPS (1 entries); PC_OBSERVABLE and PC_LAMMPS lines are mutually exclusive. Remove one set of lines and rerun."
 
 [[rule]]
@@ -3729,6 +4149,7 @@ error = "PC_EMAE/PC_ERMSE/PC_ErRMSE/PC_ERSQ/PC_FRMSE/PC_SRMSE target validation-
 # ============================================== wrappers and contexts ====
 
 [wrapper.lines_metric]
+block = "ROOT"
 doc = """\
 The slot is the first line, at the top level; the loss term of the file \
 is PC_EMAE, so a PC_ERMSE line in the slot is the first of its key."""
@@ -3743,6 +4164,25 @@ ALGO LN_SBPLX
 MAXEVAL 10
 ENDSTRATEGY
 ENDOPTIMIZER
+"""
+
+[context.lines_two_datasets]
+doc = "The default training configuration with two datasets, which tadah hpo --check also takes as the validation configuration."
+config = """
+ATOM H
+WATOM 1.0
+DBFILE dummy.db dummy2.db
+INIT2B true
+INITMB false
+TYPE2B D2_BP 2 2 H H
+CGRID2B 1.0 2.0
+SGRID2B 0.5 1.0
+RCTYPE2B Cut_Cos
+RCUT2B 5.0
+VERBOSE 0
+MODEL M_BLR BF_Linear
+OALGO 4
+LAMBDA 1e-3
 """
 
 [context.lines_no_validation]

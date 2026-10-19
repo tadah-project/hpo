@@ -30,13 +30,13 @@ search within bounds."""
 doc = """\
 NLopt, a library of local and global optimisation algorithms. The first \
 letters of an algorithm's name give its kind: G global, L local; N \
-derivative-free, D gradient-based; a G_ algorithm and the AUGLAG forms run \
-a local search of another algorithm."""
+derivative-free, D gradient-based; the MLSL and AUGLAG forms run a local \
+search of another algorithm."""
 
 [library.TADAH]
 doc = """\
-The optimisers of Tadah! itself: a grid, uniform random sampling and three \
-forms of simulated annealing."""
+The optimisers of Tadah! itself: a grid, uniform random sampling, two \
+forms of simulated annealing and parallel tempering."""
 
 # ------------------------------------------------------------- optimisers ---
 
@@ -135,11 +135,13 @@ length when it divides a rectangle."""
 
 [optimizer."NLOPT:GN_DIRECT_L_RAND_NOSCAL"]
 doc = """\
-GN_DIRECT_L_RAND without rescaling the OPTIM box to a cube."""
+Named as GN_DIRECT_L_RAND without rescaling the OPTIM box to a cube; NLopt \
+2.10 runs it as GN_DIRECT_L_NOSCAL, which draws no random numbers."""
 
 [optimizer."NLOPT:GN_DIRECT_NOSCAL"]
 doc = """\
-DIRECT without rescaling the OPTIM box to a cube."""
+Named as DIRECT without rescaling the OPTIM box to a cube; NLopt 2.10 runs \
+it as GN_DIRECT_L_NOSCAL, the deterministic DIRECT-L without rescaling."""
 
 [optimizer."NLOPT:GN_ESCH"]
 doc = """\
@@ -223,12 +225,13 @@ step."""
 [optimizer."NLOPT:LD_TNEWTON"]
 doc = """\
 A truncated Newton method: each step solves the Newton equations \
-approximately, by conjugate gradients; VECTOR_ARR sets its storage."""
+approximately, by conjugate gradients. tadah hpo takes VECTOR_ARR for it, \
+but NLopt reads the storage only in the PRECOND forms."""
 
 [optimizer."NLOPT:LD_TNEWTON_PRECOND"]
 doc = """\
 LD_TNEWTON with a preconditioner, a low-storage BFGS estimate of the \
-Hessian."""
+Hessian, whose storage VECTOR_ARR sets."""
 
 [optimizer."NLOPT:LD_TNEWTON_PRECOND_RESTART"]
 doc = """\
@@ -295,21 +298,26 @@ geometric schedule; PARAM CORANA ON selects Corana's adaptive steps."""
 
 [optimizer."TADAH:ANNEAL_PA"]
 doc = """\
-Population annealing: a population of walkers cools from T_HOT to T_MIN; \
-after each temperature step the walkers are reweighted and resampled, and \
-each then runs SWEEPS steps."""
+Population annealing: a population of walkers cools from T_HOT to T_MIN. \
+After each temperature step the walkers are reweighted and resampled, and \
+each then runs SWEEPS rounds of CHAIN_LENGTH proposals, or of Corana steps \
+under PARAM CORANA ON."""
 
 [optimizer."TADAH:ANNEAL_PT"]
 doc = """\
-Parallel tempering (replica exchange): replicas run at the fixed \
-temperatures of a ladder, and neighbouring replicas swap their states."""
+Parallel tempering (replica exchange): replicas run at the temperatures of \
+a ladder, fixed unless LADDER_ADAPT is ON, and neighbouring replicas swap \
+their states."""
 
 [optimizer."TADAH:GRID"]
 doc = """\
 A grid search: the points of a regular grid over the OPTIM box, \
-GRID_POINTS in each dimension, in order."""
+GRID_POINTS in each dimension, in order. The steps are equal in the \
+coordinates of the search: in the value for LIN, its logarithm for LOG and \
+asinh(x/c) for ASINH."""
 
 [optimizer."TADAH:RANDOM"]
 doc = """\
 Uniform random search: points drawn from a uniform distribution over the \
-OPTIM box."""
+OPTIM box in the coordinates of the search, so uniform in the logarithm of \
+a LOG box."""
