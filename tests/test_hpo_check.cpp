@@ -9,14 +9,18 @@
 // created included. The WARNING and HINT lines the run writes to its
 // journal at startup are in the summary. CHECK is an instruction to
 // hpo_run(), not a key of the model: hpo_run() takes it out of the context,
-// so a run with CHECK false writes potentials without a CHECK line. A run
-// creates its DUMP and BDUMP directories once every startup check passed:
-// one that stops at startup creates none.
+// so a run with CHECK false writes potentials without a CHECK line or a
+// CHECK line in their training record. Both check, creating nothing, that
+// the run can write its journal, result files and best_pot.tadah into the
+// working directory. A run creates its DUMP and BDUMP directories, the one
+// inside the other's after it, once it has prepared best_pot.tadah, just
+// before its first evaluation: one that stops before creates none.
 //
 // The fixture is the no-LAMMPS D2_BP Ta setup of test_hpo_termination.cpp
 // (a four-atom training structure, one validation dataset, PC_ERMSE), so a
 // run costs milliseconds and the whole hpo_run() stack runs in-process.
 
+#include "tadah_test_skip.hpp"  // before catch2/catch.hpp
 #include "catch2/catch.hpp"
 
 #include <tadah/core/context.h>
@@ -24,6 +28,7 @@
 #include <tadah/hpo/hpo.h>
 #include <tadah/hpo/hpo_host.h>
 #include <tadah/hpo/hpo_log.h>
+#include <tadah/hpo/io_retry.h>
 #include <tadah/hpo/runners.h>
 
 #include <dlib/matrix.h>
@@ -44,6 +49,7 @@
 #include <sstream>
 #include <string>
 #include <system_error>
+#include <unistd.h>
 #include <vector>
 
 namespace {
@@ -351,7 +357,8 @@ TEST_CASE("hpo --check: a valid setup passes, with a summary, no evaluation "
  * PC_ERMSE without a validation configuration (validate_hpo_setup), a
  * training dataset that does not exist (loaded when the run builds its
  * evaluation host), a DUMP or a BDUMP directory in a directory that does
- * not exist, and a DUMP directory that is a file, hpo_run() with CHECK
+ * not exist, a DUMP directory that is a file, and one that is a symbolic
+ * link to no file, hpo_run() with CHECK
  * true throws the message hpo_run() without it throws, and writes no file
  * (the run writes its journal, which the check does not open). The check
  * runs first and the run after it, in the same directory: a message can
@@ -363,7 +370,9 @@ TEST_CASE("hpo --check: a valid setup passes, with a summary, no evaluation "
  * it, and the messages differ.
  * Before the DUMP and BDUMP directories were checked at their line: the
  * check passed such a setup (no message), and the run stopped when it
- * created the directory, after it had loaded the data (with a sidecar). */
+ * created the directory, after it had loaded the data (with a sidecar).
+ * Before the symbolic-link check: the check passed the dangling link, and
+ * the run stopped when it created the directory ("File exists"). */
 TEST_CASE("hpo --check: a startup error is the run's, and no file is "
           "written",
           "[HPO][hpo_check]")
@@ -375,6 +384,7 @@ TEST_CASE("hpo --check: a startup error is the run's, and no file is "
         bool validation;
         const char* says;  // a part of the run's message
         bool before_data;  // the run stops before it loads the data
+        const char* dangling = nullptr;  // a symbolic link to no file
     };
     const std::vector<Case> cases = {
         {"unknown key", kOptimizer + kRootLines + "NOSUCHKEY 1\n",
@@ -396,6 +406,9 @@ TEST_CASE("hpo --check: a startup error is the run's, and no file is "
         {"DUMP directory that is a file",
          kOptimizer + kRootLines + "DUMP 1 config.val\n", "train.db", true,
          "config.val", true},
+        {"DUMP directory that is a dangling symbolic link",
+         kOptimizer + kRootLines + "DUMP 1 dangling\n", "train.db", true,
+         "dangling", true, "dangling"},
     };
     for (const Case& c : cases) {
         INFO("case: " << c.name);
@@ -403,6 +416,7 @@ TEST_CASE("hpo --check: a startup error is the run's, and no file is "
         fresh_process_state();
         ScratchDir sd("error");
         write_inputs(c.hpo);
+        if (c.dangling) fs::create_symlink("nowhere", c.dangling);
         const auto before = entries(sd.dir);
         {
             tadah::core::Context ctx = make_ta_context(
@@ -584,7 +598,11 @@ TEST_CASE("hpo --check writes nothing into a journal an earlier run left "
 
 /* Pins: hpo_run() with CHECK false runs (status 0, a best_pot.tadah), and
  * no potential it writes -- best_pot.tadah, the DUMP and BDUMP archives --
- * has a CHECK line: CHECK is not a key of the model.
+ * has a CHECK line: CHECK is not a key of the model; nor does its training
+ * record list CHECK ("# CHECK false"): hpo_run() takes CHECK out of the
+ * context before the record is taken (the record of a tadah train
+ * potential lists the CHECK line of its configuration, which tadah train
+ * does not read).
  * Before the feature: CHECK is no configuration key; the context refuses
  * it. */
 TEST_CASE("hpo --check: a run with CHECK false writes no CHECK line into "
@@ -615,13 +633,15 @@ TEST_CASE("hpo --check: a run with CHECK false writes no CHECK line into "
         INFO(p.string());
         std::ifstream in(p);
         std::string line;
-        bool has_check = false;
+        bool has_check = false, records_check = false;
         while (std::getline(in, line)) {
             std::istringstream ls(line);
             std::string key;
             if ((ls >> key) && key == "CHECK") has_check = true;
+            if (line.rfind("# CHECK", 0) == 0) records_check = true;
         }
         CHECK_FALSE(has_check);
+        CHECK_FALSE(records_check);
     }
 }
 
@@ -664,4 +684,184 @@ TEST_CASE("hpo --check: the startup warnings before an error are written "
     CHECK(contains(err, "\n  WARNING  THREADS not set: the pc_lammps "
                         "fan-out and MLIP train/predict run on a SINGLE "
                         "worker."));
+}
+
+namespace {
+
+/* The permissions of @p dir at read and search alone while it lives (the
+ * owner's), restored to the owner's all after. */
+struct ReadOnlyDir {
+    fs::path dir;
+    explicit ReadOnlyDir(fs::path d) : dir(std::move(d))
+    {
+        fs::permissions(dir, fs::perms::owner_read | fs::perms::owner_exec);
+    }
+    ~ReadOnlyDir()
+    {
+        std::error_code ec;
+        fs::permissions(dir, fs::perms::owner_all, ec);
+    }
+    ReadOnlyDir(const ReadOnlyDir&) = delete;
+    ReadOnlyDir& operator=(const ReadOnlyDir&) = delete;
+};
+
+/* The names of the entries of @p dir whose name starts with @p prefix. */
+std::size_t count_prefixed(const fs::path& dir, const std::string& prefix)
+{
+    std::size_t n = 0;
+    for (const auto& e : fs::directory_iterator(dir))
+        if (e.path().filename().string().rfind(prefix, 0) == 0) ++n;
+    return n;
+}
+
+}  // namespace
+
+/* Pins: a working directory the run cannot write into (read and search
+ * permission only) stops the check and the run with one message, before
+ * the journal and before any data is loaded: "the working directory
+ * '<dir>' is not writable: tadah hpo writes its journal (hpo_run.log), its
+ * result files and best_pot.tadah there", and nothing is created -- no
+ * file in the working directory, and no DUMP directory elsewhere (the
+ * target file names one in a writable directory).
+ * Before the change: the check passed (status 0), and the run stopped at
+ * the lock of best_pot.tadah ("cannot open durable-best lock
+ * 'best_pot.tadah.lock': Permission denied") after it had created its
+ * DUMP directory. Skipped as root, whose writes no permission stops. */
+TEST_CASE("hpo --check: a working directory the run cannot write into "
+          "stops the check and the run alike",
+          "[HPO][hpo_check]")
+{
+    if (::geteuid() == 0)
+        TADAH_SKIP("running as root: file permissions are not enforced");
+    fresh_process_state();
+    ScratchDir sd("read_only");
+    const fs::path elsewhere = sd.dir / "elsewhere";
+    fs::create_directories(elsewhere);
+    const fs::path work = sd.dir / "work";
+    fs::create_directories(work);
+    fs::current_path(work);
+    write_inputs(kOptimizer + kRootLines + "DUMP 1 " +
+                 (elsewhere / "pots").string() + "\n");
+    const auto before = entries(sd.dir);
+    std::string check_error, run_error;
+    {
+        const ReadOnlyDir ro(work);
+        {
+            tadah::core::Context ctx =
+                make_ta_context("train.db", "config.hpo", "config.val");
+            ctx.add("CHECK", "true");
+            check_error = error_of([&] { return tadah::hpo::hpo_run(ctx); });
+        }
+        fresh_process_state();
+        {
+            tadah::core::Context ctx =
+                make_ta_context("train.db", "config.hpo", "config.val");
+            run_error = error_of([&] { return tadah::hpo::hpo_run(ctx); });
+        }
+    }
+    fs::current_path(sd.dir);
+    INFO("run: " << run_error << "\ncheck: " << check_error);
+    CHECK(contains(run_error, "the working directory '" +
+                                  fs::canonical(work).string() +
+                                  "' is not writable: tadah hpo writes its "
+                                  "journal (hpo_run.log), its result files "
+                                  "and best_pot.tadah there"));
+    CHECK(check_error == run_error);
+    CHECK(entries(sd.dir) == before);
+    CHECK_FALSE(fs::exists(elsewhere / "pots"));
+}
+
+/* Pins: the run creates its DUMP and BDUMP directories once it has prepared
+ * best_pot.tadah (its lock taken), just before its first evaluation: a run
+ * whose lock cannot be opened (an injected EACCES at durable.lock_open, a
+ * local filesystem) stops with that error ("cannot open durable-best lock
+ * 'best_pot.tadah.lock'") and leaves neither pots/ nor best_pots/ behind.
+ * Before the change: the run created both directories before it prepared
+ * best_pot.tadah, and left them behind. */
+TEST_CASE("hpo --check: a run that stops at the lock of best_pot.tadah "
+          "creates no DUMP or BDUMP directory",
+          "[HPO][hpo_check]")
+{
+    fresh_process_state();
+    ScratchDir sd("lock_stop");
+    write_inputs(kOptimizer + kRootLines);
+    std::string run_error;
+    {
+        tadah::hpo::io::testing::ScopedNetworkFs local(false);
+        tadah::hpo::io::testing::ScopedFaults faults(
+            "durable.lock_open,EACCES,always");
+        tadah::core::Context ctx =
+            make_ta_context("train.db", "config.hpo", "config.val");
+        run_error = error_of([&] { return tadah::hpo::hpo_run(ctx); });
+    }
+    INFO("run: " << run_error);
+    CHECK(contains(run_error, "durable-best lock"));
+    CHECK(fs::exists("hpo_run.log"));
+    CHECK_FALSE(fs::exists("pots"));
+    CHECK_FALSE(fs::exists("best_pots"));
+}
+
+/* Pins: a DUMP directory inside the BDUMP directory, or the reverse, is
+ * accepted by the check and by the run, in either order of the lines, and
+ * the run creates the outer directory first and writes into both: for
+ * "DUMP 1 archive" with "BDUMP 1 archive/best", and for "BDUMP 1 archive"
+ * before "DUMP 1 archive/all", the check returns 0 and creates nothing, and
+ * the run returns 0 with archives pot_<n>.tadah in the DUMP directory and
+ * best_pot_<n>.tadah in the BDUMP directory.
+ * Before the change: the inner directory's line was refused ("the
+ * directory 'archive' does not exist"), by the check and the run alike. */
+TEST_CASE("hpo --check: a DUMP directory inside the BDUMP directory, or the "
+          "reverse, is accepted and written into",
+          "[HPO][hpo_check]")
+{
+    struct Layout {
+        const char* name;
+        std::string lines;
+        const char* dump;
+        const char* bdump;
+    };
+    const std::vector<Layout> layouts = {
+        {"DUMP outer", "DUMP 1 archive\nBDUMP 1 archive/best\n", "archive",
+         "archive/best"},
+        {"BDUMP outer, first", "BDUMP 1 archive\nDUMP 1 archive/all\n",
+         "archive/all", "archive"},
+    };
+    for (const Layout& l : layouts) {
+        INFO(l.name);
+        fresh_process_state();
+        ScratchDir sd("nested");
+        write_inputs(kOptimizer +
+                     "LOSS L2\nFAILSCORE 1e9\nPC_ERMSE 0 1\n"
+                     "OPTIM CGRID2B (1) 0.1 0.9\n" + l.lines);
+        const auto before = entries(sd.dir);
+        std::string check_error;
+        {
+            tadah::core::Context ctx =
+                make_ta_context("train.db", "config.hpo", "config.val");
+            ctx.add("CHECK", "true");
+            check_error = error_of([&] { return tadah::hpo::hpo_run(ctx); });
+        }
+        INFO("check: " << check_error);
+        CHECK(check_error.empty());
+        CHECK(entries(sd.dir) == before);
+        fresh_process_state();
+        tadah::core::Context ctx =
+            make_ta_context("train.db", "config.hpo", "config.val");
+        int status = -1;
+        std::string run_error;
+        {
+            CaptureCout quiet;
+            try {
+                status = tadah::hpo::hpo_run(ctx);
+            } catch (const std::exception& e) {
+                run_error = e.what();
+            }
+        }
+        INFO("run: " << run_error);
+        REQUIRE(status == 0);
+        REQUIRE(fs::is_directory(l.dump));
+        REQUIRE(fs::is_directory(l.bdump));
+        CHECK(count_prefixed(l.dump, "pot_") >= 1u);
+        CHECK(count_prefixed(l.bdump, "best_pot_") >= 1u);
+    }
 }

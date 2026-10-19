@@ -1063,20 +1063,25 @@ TEST_CASE("Strict numbers: DUMP and BDUMP take a cadence and a directory",
     }
 }
 
-/* Pins: the directory of a DUMP or BDUMP line is checked at its line, as
- * the target file is read (for `tadah hpo --check` and the run alike),
- * and the check creates nothing: a directory in a directory that does not
- * exist ("DUMP directory '<root>/missing/pots' cannot be created: the
- * directory '<root>/missing' does not exist (tadah hpo creates only the
+/* Pins: the directory of a DUMP or BDUMP line is checked once the target
+ * file is read (for `tadah hpo --check` and the run alike), the error at
+ * its line, and the check creates nothing: a directory in a directory that
+ * does not exist ("DUMP directory '<root>/missing/pots' cannot be created:
+ * the directory '<root>/missing' does not exist (tadah hpo creates only the
  * last directory of the path)"), a path that is a file ("... '<root>/a_file'
- * exists and is not a directory") and a directory in a file ("... cannot be
- * created: '<root>/a_file' is not a directory") are refused, at the line;
- * an existing directory, a new one in an existing directory, the same
- * written with a trailing '/', and a relative one in the working directory
- * are accepted, and none is created.
- * Before the check: the parse accepted the three (the run stopped when it
- * created the directory, after it had loaded the data, or wrote no archive
- * into the file): the refusal checks fail. */
+ * exists and is not a directory"), a directory in a file ("... cannot be
+ * created: '<root>/a_file' is not a directory") and a symbolic link to a
+ * path that does not exist ("... '<root>/dangling' is a symbolic link to
+ * '<root>/nowhere', which does not exist") are refused, at the line; an
+ * existing directory, a new one in an existing directory, the same written
+ * with a trailing '/', and a relative one in the working directory are
+ * accepted, and none is created.
+ * Before the check: the parse accepted the first three (the run stopped
+ * when it created the directory, after it had loaded the data, or wrote no
+ * archive into the file): the refusal checks fail.
+ * Before the symbolic-link check: the parse accepted the dangling link,
+ * and the run stopped when it created the directory ("could not be
+ * created: File exists"): its refusal check fails. */
 TEST_CASE("DUMP and BDUMP refuse a directory the run cannot create, at "
           "their line, and create nothing",
           "[HPO][hpo_targets][archive_directories]")
@@ -1111,6 +1116,15 @@ TEST_CASE("DUMP and BDUMP refuse a directory the run cannot create, at "
                                      file.string() +
                                      "' is not a directory"));
         CHECK_FALSE(fs::exists(root / "missing"));
+        const fs::path dangling = root / "dangling";
+        if (!fs::is_symlink(dangling))
+            fs::create_symlink(root / "nowhere", dangling);
+        CHECK_THAT(parse_error(h.config("5 " + dangling.string())),
+                   Catch::StartsWith(h.at() + what + dangling.string() +
+                                     "' is a symbolic link to '" +
+                                     (root / "nowhere").string() +
+                                     "', which does not exist"));
+        CHECK_FALSE(fs::exists(root / "nowhere"));
 
         const auto existing = parse_config(h.config("5 " + root.string()));
         CHECK((key == "DUMP" ? existing.dumpPotDir
@@ -1125,6 +1139,83 @@ TEST_CASE("DUMP and BDUMP refuse a directory the run cannot create, at "
             CHECK_FALSE(fs::exists(dir));
         }
     }
+}
+
+/* Pins: the DUMP and BDUMP directories are checked together: one inside
+ * the other's new directory is accepted, whatever the order of the lines,
+ * and HPOTargets::create_archive_directories() creates the outer one
+ * first:
+ *   - "DUMP 5 <root>/archive" then "BDUMP 5 <root>/archive/best";
+ *   - "BDUMP 5 <root>/archive/best" then "DUMP 5 <root>/archive";
+ *   - "BDUMP 5 <root>/archive" then "DUMP 5 <root>/archive/all";
+ * each parses, creates nothing, and create_archive_directories() then
+ * creates both. A directory two levels inside the other's ("BDUMP 5
+ * <root>/archive/x/best") is refused at its line ("... cannot be created:
+ * the directory '<root>/archive/x' does not exist ..."), and so is an outer
+ * directory that cannot be created (DUMP in <root>/missing): the error is
+ * at the line of that directory's key, the inner one being accepted.
+ * Before the change: each line was checked alone, so the inner directory
+ * was refused when the outer one did not exist yet ("the directory
+ * '<root>/archive' does not exist"); 1.5.0 created the DUMP directory at
+ * its line and accepted the first layout only. */
+TEST_CASE("DUMP and BDUMP: a directory inside the other's is accepted in "
+          "either order and created after it",
+          "[HPO][hpo_targets][archive_directories]")
+{
+    const fs::path root = unique_temp_path("_archive_nested");
+    fs::create_directories(root);
+    struct RemoveDir {
+        fs::path p;
+        ~RemoveDir() { std::error_code ec; fs::remove_all(p, ec); }
+    } cleanup{root};
+    const fs::path archive = root / "archive";
+    struct Layout {
+        const char* name;
+        std::string first, second;   // the two lines, in file order
+        fs::path dump, bdump;        // the directories they name
+    };
+    const std::vector<Layout> layouts = {
+        {"DUMP outer, first", "DUMP 5 " + archive.string(),
+         "BDUMP 5 " + (archive / "best").string(), archive, archive / "best"},
+        {"DUMP outer, second", "BDUMP 5 " + (archive / "best").string(),
+         "DUMP 5 " + archive.string(), archive, archive / "best"},
+        {"BDUMP outer, first", "BDUMP 5 " + archive.string(),
+         "DUMP 5 " + (archive / "all").string(), archive / "all", archive},
+    };
+    for (const Layout& l : layouts) {
+        INFO(l.name);
+        const auto trg =
+            parse_config(kOptimizer + l.first + "\n" + l.second + "\n");
+        CHECK(trg.dumpPotDir == l.dump.string());
+        CHECK(trg.dumpBestPotDir == l.bdump.string());
+        CHECK_FALSE(fs::exists(archive));
+        trg.create_archive_directories();
+        CHECK(fs::is_directory(l.dump));
+        CHECK(fs::is_directory(l.bdump));
+        fs::remove_all(archive);
+    }
+
+    const std::size_t line = static_cast<std::size_t>(
+        std::count(kOptimizer.begin(), kOptimizer.end(), '\n')) + 2;
+    const std::string at = "Error on line " + std::to_string(line) + ": ";
+    CHECK_THAT(parse_error(kOptimizer + "DUMP 5 " + archive.string() +
+                           "\nBDUMP 5 " + (archive / "x" / "best").string() +
+                           "\n"),
+               Catch::StartsWith(at + "BDUMP directory '" +
+                                 (archive / "x" / "best").string() +
+                                 "' cannot be created: the directory '" +
+                                 (archive / "x").string() +
+                                 "' does not exist"));
+    const fs::path missing = root / "missing" / "archive";
+    CHECK_THAT(parse_error(kOptimizer + "BDUMP 5 " +
+                           (missing / "best").string() + "\nDUMP 5 " +
+                           missing.string() + "\n"),
+               Catch::StartsWith(at + "DUMP directory '" + missing.string() +
+                                 "' cannot be created: the directory '" +
+                                 (root / "missing").string() +
+                                 "' does not exist"));
+    CHECK_FALSE(fs::exists(archive));
+    CHECK_FALSE(fs::exists(root / "missing"));
 }
 
 /* Pins: the directory of a DUMP or BDUMP line must be one the run can
