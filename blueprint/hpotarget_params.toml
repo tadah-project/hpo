@@ -449,12 +449,18 @@ search is gradient-based) under GRAD_STRATEGY NUMERICAL, the default, or \
 HYBRID. PARAM fd_kernel says how the step is applied. Without the key, the \
 AUTO of a NOISE block derives the step from the size of the search space. \
 An INNER block refuses the key: its search takes the gradient of the \
-enclosing block."""
+enclosing block. No finite-difference point is evaluated outside the \
+OPTIM box, and the step is not shrunk: at startup every point of every \
+box has a stencil inside the box, or the step is refused. Under \
+OPTIM_SCALE AUTO that holds up to fd_step 1/3 for central differences and \
+1/2 for forward ones with fd_kernel inhouse, and up to 1/2 and 1 with \
+fd_kernel ceres; under NONE the limit depends on each box."""
 checks = [
   { msg = "{phase} {lib}:{algo}: PARAM fd_step must be a positive finite number (got {value})", doc = "For a number of 0 or below, written with up to ten significant digits, or a word, written in quotes." },
   { msg = "{phase} {lib}:{algo}: PARAM fd_step never takes effect: {why}; remove it.", doc = "In a search that takes no finite-difference gradients; with more keys of the finite differences, the message names them all." },
   { msg = "{phase} {lib}:{algo}: PARAM fd_step never takes effect: an INNER search takes the gradient of the block it runs in, with that block's finite-difference settings; set it in the enclosing block.", doc = "In an INNER block." },
   { msg = "{phase} {lib}:{algo}: NOISE AUTO has no effect: PARAM fd_step {value} is set; remove one of them.", doc = "When the OPTIMIZER block also has a NOISE block with AUTO." },
+  { msg = "{phase} {lib}:{algo}: {value} does not fit these OPTIM boxes: no finite-difference point is evaluated outside the box, and next to a bound the {why} inside it; the step is not shrunk:{list}\n  {note}.", doc = "The step does not give every point of a box a stencil inside it. {value} is PARAM fd_step <v>, the default fd_step <v>, or fd_step <v>, derived by the NOISE block's AUTO from the box diagonal; {why} says how many steps the stencil takes; {list} has a line for each such box, with the largest fd_step that fits it; {note} says what to change." },
 ]
 examples = [
   { wrap = "params_lbfgs", text = "PARAM fd_step 1e-4" },
@@ -465,6 +471,7 @@ invalid = [
   { wrap = "params_lbfgs", check = "startup", at = "ENDOPTIMIZER", text = "PARAM fd_step 0", error = "the STRATEGY-level optimiser NLOPT:LD_LBFGS: PARAM fd_step must be a positive finite number (got 0)" },
   { wrap = "params_lbfgs", check = "startup", at = "ENDOPTIMIZER", text = "PARAM fd_step small", error = "the STRATEGY-level optimiser NLOPT:LD_LBFGS: PARAM fd_step must be a positive finite number (got 'small')" },
   { wrap = "params_lbfgs", text = "PARAM fd_step 1e999", error = "PARAM fd_step must be a finite number, got '1e999'", doc = "Refused when the file is read, as any PARAM value shaped like a number that is not finite." },
+  { wrap = "params_lbfgs", check = "startup", at = "ENDOPTIMIZER", text = "PARAM fd_step 0.34", error = "the STRATEGY-level optimiser NLOPT:LD_LBFGS: PARAM fd_step 0.34 does not fit these OPTIM boxes: no finite-difference point is evaluated outside the box, and next to a bound the CENTRAL stencil turns one-sided and needs two steps of h = 0.34 of each box width (in-house rule) inside it; the step is not shrunk:\n  - CGRID2B[1]: OPTIM box [0.5, 1.5] (internal [0, 1]); no stencil fits at CGRID2B[1] = 0.83; fd_step up to 0.333333 fits it\n  Set PARAM fd_step to at most 0.333333.", doc = "Above 1/3 under OPTIM_SCALE AUTO, central differences and fd_kernel inhouse." },
   { wrap = "strategy", check = "startup", at = "ENDOPTIMIZER", text = "PARAM fd_step 1e-3", error = "the STRATEGY-level optimiser NLOPT:LN_SBPLX: PARAM fd_step never takes effect: NLOPT:LN_SBPLX takes no gradient; remove it." },
   { wrap = "params_lbfgs", check = "startup", at = "ENDOPTIMIZER", text = "GRAD_STRATEGY ANALYTICAL\nPARAM fd_step 1e-3", error = "the STRATEGY-level optimiser NLOPT:LD_LBFGS: PARAM fd_step never takes effect: GRAD_STRATEGY ANALYTICAL takes no finite differences; remove it." },
   { wrap = "strategy", check = "startup", at = "ENDOPTIMIZER", text = "PARAM fd_step 1e-3\nPARAM diff_method 1", error = "the STRATEGY-level optimiser NLOPT:LN_SBPLX: PARAM fd_step and diff_method never take effect: NLOPT:LN_SBPLX takes no gradient; remove them." },
@@ -934,14 +941,23 @@ args = [{ name = "value", kind = "number", min = 0 }]
 default = { literal = "0.001" }
 doc = """\
 The finite-difference step of the tangents; 0 switches the tangents off."""
+long_doc = """\
+ASA's finite-difference probes stay inside the OPTIM box, whatever \
+Reanneal_Parameters is: at startup a Delta whose probes leave the box of \
+a dimension is refused. Under OPTIM_SCALE AUTO that holds up to 1, and up \
+to 0.5 when Curvature_0 is 0 or -1; under NONE the limit depends on each \
+box."""
 checks = [
   { msg = "{phase}: ASA:ASA: PARAM {key} must be >= {min}", doc = "For a value below 0, written with six decimals." },
+  { msg = "{phase} ASA:ASA: ASA's finite-difference probes -- the reannealing and exit tangents at (1 + Delta) x, or (1 - Delta) x when that lies outside the box{note} -- would be evaluated outside the OPTIM box of these dimensions:{list}\n  Lower the Delta{why}.", doc = "At startup: a probe falls outside the OPTIM box of a dimension. {note} adds the probes of the exit curvature when Curvature_0 is 0 or -1; {list} has a line for each such dimension, with the largest Delta that fits it; {why} adds, under OPTIM_SCALE NONE, the limits of OPTIM_SCALE AUTO." },
 ]
 examples = [
   { wrap = "params_asa", text = "PARAM Delta_X 1e-4" },
 ]
 invalid = [
   { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Delta_X -1", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Delta_X must be >= 0.000000" },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Delta_X 1.5", error = "the STRATEGY-level optimiser ASA:ASA: ASA's finite-difference probes -- the reannealing and exit tangents at (1 + Delta) x, or (1 - Delta) x when that lies outside the box -- would be evaluated outside the OPTIM box of these dimensions:\n  - CGRID2B[1]: OPTIM box [0.5, 1.5] (internal [0, 1]), PARAM Delta_X 1.5: a probe of CGRID2B[1] = 1.2 lies outside the box; Delta_X up to 1 fits it\n  Lower the Delta.", doc = "Above 1 under OPTIM_SCALE AUTO." },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Curvature_0 0\nPARAM Delta_X 0.6", error = "the STRATEGY-level optimiser ASA:ASA: ASA's finite-difference probes -- the reannealing and exit tangents at (1 + Delta) x, or (1 - Delta) x when that lies outside the box, and the exit curvature at x +- Delta |x|, or x -+ Delta |x| and x -+ 2 Delta |x| next to a bound (Curvature_0 0) -- would be evaluated outside the OPTIM box of these dimensions:\n  - CGRID2B[1]: OPTIM box [0.5, 1.5] (internal [0, 1]), PARAM Delta_X 0.6: a probe of CGRID2B[1] = 1.3125 lies outside the box; Delta_X up to 0.5 fits it\n  Lower the Delta.", doc = "Above 0.5 under OPTIM_SCALE AUTO with Curvature_0 0." },
 ]
 
 [[param]]
@@ -1073,9 +1089,16 @@ args = [{ name = "value", kind = "number", min = 0 }]
 default = { text = "the value of Delta_X" }
 doc = """\
 The finite-difference step of the tangents in each dimension; above 0."""
+long_doc = """\
+ASA's finite-difference probes stay inside the OPTIM box, whatever \
+Reanneal_Parameters is: at startup a Delta whose probes leave the box of \
+a dimension is refused. Under OPTIM_SCALE AUTO that holds up to 1, and up \
+to 0.5 when Curvature_0 is 0 or -1; under NONE the limit depends on each \
+box."""
 checks = [
   { msg = "{phase}: ASA:ASA: PARAM {key} must be >= {min}", doc = "For a value below 0, written with six decimals." },
   { msg = "{phase}: ASA:ASA: PARAM {key} must be > 0", doc = "For 0, as the value of every dimension or of one." },
+  { msg = "{phase} ASA:ASA: ASA's finite-difference probes -- the reannealing and exit tangents at (1 + Delta) x, or (1 - Delta) x when that lies outside the box{note} -- would be evaluated outside the OPTIM box of these dimensions:{list}\n  Lower the Delta{why}.", doc = "At startup: a probe falls outside the OPTIM box of a dimension. {note} adds the probes of the exit curvature when Curvature_0 is 0 or -1; {list} has a line for each such dimension, with the largest Delta that fits it; {why} adds, under OPTIM_SCALE NONE, the limits of OPTIM_SCALE AUTO." },
 ]
 examples = [
   { wrap = "params_asa", text = "PARAM User_Delta_Parameter 1e-4" },
@@ -1085,6 +1108,7 @@ invalid = [
   { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM User_Delta_Parameter -1", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM User_Delta_Parameter must be >= 0.000000" },
   { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM User_Delta_Parameter 0", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM User_Delta_Parameter must be > 0" },
   { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM User_Delta_Parameter[1] 0", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM User_Delta_Parameter[1] must be > 0" },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM User_Delta_Parameter[1] 1.5", error = "the STRATEGY-level optimiser ASA:ASA: ASA's finite-difference probes -- the reannealing and exit tangents at (1 + Delta) x, or (1 - Delta) x when that lies outside the box -- would be evaluated outside the OPTIM box of these dimensions:\n  - CGRID2B[1]: OPTIM box [0.5, 1.5] (internal [0, 1]), PARAM User_Delta_Parameter[1] 1.5: a probe of CGRID2B[1] = 1.2 lies outside the box; User_Delta_Parameter[1] up to 1 fits it\n  Lower the Delta.", doc = "Above 1 under OPTIM_SCALE AUTO." },
 ]
 
 [[param]]

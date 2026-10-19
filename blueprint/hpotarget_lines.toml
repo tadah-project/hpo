@@ -130,6 +130,26 @@ what = "{key} <weight>"
 msg = "{key} <weight> must be a number >= 0, got '{tok}'"
 doc = "The weight of the term in the loss."
 
+[[key.checks]]
+msg = "{key} requires validation DBFILE entries"
+doc = """\
+When the run starts, before the validation data are read, without a \
+line: the validation configuration has no DBFILE."""
+
+[[key.checks]]
+msg = "{key}: dataset {index} on line {line} is outside validation DBFILE range 1-{count}"
+doc = """\
+When the run starts, without a line: the largest index of the indexed \
+lines, {index} on line {line}, exceeds the number of DBFILE entries of \
+the validation configuration, {count}."""
+
+[[key.checks]]
+msg = "{key}: missing target and weight for:{list}"
+doc = """\
+When the run starts, without a line: the indexed lines give some \
+datasets no target and weight; {list} has one line for each, \
+"  dataset <i> (<file>)"."""
+
 [[key.examples]]
 wrap = "lines_metric"
 text = "PC_ERMSE 2 1"
@@ -290,7 +310,9 @@ LOSS function of the metric averaged over the datasets, its target and \
 its weight."""
 long_doc = """\
 The term needs a validation configuration (--validation). The weight is \
-a number >= 0. A second PC_SRMSE line replaces the first."""
+a number >= 0. A second PC_SRMSE line replaces the first. A dataset whose \
+structures all have stress weight 0 is not measured: the average leaves \
+it out, and hpo_run.log names it."""
 
 [[key.args]]
 name = "target"
@@ -305,6 +327,13 @@ min = 0
 what = "{key} <weight>"
 msg = "{key} <weight> must be a number >= 0, got '{tok}'"
 doc = "The weight of the term in the loss."
+
+[[key.checks]]
+msg = "tadah hpo: PC_SRMSE on the validation set: no dataset has a stress tensor ({list}): every structure has stress weight 0 (sweight), so the stress metrics have nothing to measure"
+doc = """\
+When the run starts, once the validation data are read, without a line: \
+no validation structure has a stress tensor to measure; {list} names the \
+files."""
 
 [[key.examples]]
 wrap = "root"
@@ -337,7 +366,10 @@ The indices count the DBFILE entries of the validation configuration \
 from 1. A file has either one line without indices or indexed lines \
 that give each dataset one target and weight; when the run starts, \
 every dataset needs one, and no index may exceed the number of \
-datasets. The weight is a number >= 0."""
+datasets. The weight is a number >= 0. A dataset whose structures all \
+have force weight 0 is not measured: the average leaves it out, and \
+hpo_run.log names it; an indexed line that gives it a weight above 0 is \
+refused."""
 
 [[key.args]]
 name = "indices"
@@ -358,6 +390,39 @@ min = 0
 what = "{key} <weight>"
 msg = "{key} <weight> must be a number >= 0, got '{tok}'"
 doc = "The weight of the term in the loss."
+
+[[key.checks]]
+msg = "{key} requires validation DBFILE entries"
+doc = """\
+When the run starts, before the validation data are read, without a \
+line: the validation configuration has no DBFILE."""
+
+[[key.checks]]
+msg = "{key}: dataset {index} on line {line} is outside validation DBFILE range 1-{count}"
+doc = """\
+When the run starts, without a line: the largest index of the indexed \
+lines, {index} on line {line}, exceeds the number of DBFILE entries of \
+the validation configuration, {count}."""
+
+[[key.checks]]
+msg = "{key}: missing target and weight for:{list}"
+doc = """\
+When the run starts, without a line: the indexed lines give some \
+datasets no target and weight; {list} has one line for each, \
+"  dataset <i> (<file>)"."""
+
+[[key.checks]]
+msg = "tadah hpo: PC_FRMSE on the validation set: no dataset has a structure with forces ({list}): every structure has force weight 0 (fweight), so the force metrics have nothing to measure"
+doc = """\
+When the run starts, once the validation data are read, without a line: \
+no validation structure has forces to measure; {list} names the files."""
+
+[[key.checks]]
+msg = "tadah hpo: PC_FRMSE ({index}) gives weight {value} to validation dataset {index} ({file}), which has no structure with forces: every one has force weight 0 (fweight). Give it weight 0, or remove the file from the validation set"
+doc = """\
+When the run starts, once the validation data are read, without a line: \
+an indexed line gives a weight above 0 to a dataset whose structures all \
+have force weight 0."""
 
 [[key.examples]]
 wrap = "root"
@@ -498,14 +563,15 @@ long_doc = """\
 The line takes the options of this page, which start with --, and LAMMPS \
 command-line options, which start with a single - and go to LAMMPS with \
 the values that follow them. A token that is neither an option nor a \
-value of one is refused. When the line is read, the script is read with \
-the files its include commands name, every --varloss, --outvar and \
---failvar variable must be an equal-style variable of it, and LAMMPS \
-starts once with the line's command-line options: an option LAMMPS \
-refuses is an error at the line, with the LAMMPS message. A script file \
-that does not exist is an error naming its absolute path. The variable \
-maxtime is reserved for the script timeout: neither --invar nor the \
-LAMMPS option -var (-v) may set it."""
+value of one is refused. The scripts run with -screen none and -log none \
+unless the line gives -screen or -log. When the line is read, the script \
+is read with the files its include commands name, every --varloss, \
+--outvar and --failvar variable must be an equal-style variable of it, \
+and LAMMPS starts once with the line's command-line options: an option \
+LAMMPS refuses is an error at the line, with the LAMMPS message. A script \
+or include file that does not exist is an error naming its absolute path. \
+The variable maxtime is reserved for the script timeout: neither --invar \
+nor the LAMMPS option -var (-v) may set it."""
 quirk = """\
 The line takes the FAILSCORE, the PC_SCRIPT_TIMEOUT (or MAXTIME) and the \
 LOSS of the lines read before it, for the defaults of its --failscore, \
@@ -520,6 +586,37 @@ doc = "The options of the line and the LAMMPS command-line options."
 [[key.checks]]
 msg = "{option} maxtime: the variable maxtime is reserved for the script timeout HPO injects (timer timeout ${maxtime}); set --maxtime on this line or PC_SCRIPT_TIMEOUT instead"
 doc = "The LAMMPS command-line option -var, or -v, sets the variable maxtime; {option} is the option as written."
+
+[[key.checks]]
+msg = "LAMMPS include file not found: {file}"
+doc = """\
+The script, or a file an include command of it names, does not exist; \
+{file} is its absolute path. A relative path of an include command is \
+taken against the directory of the including file, that of the script \
+against the working directory."""
+
+[[key.checks]]
+msg = "Circular include detected at: {file}"
+doc = """\
+A file includes itself, directly or through other files; {file} is its \
+absolute path."""
+
+[[key.checks]]
+msg = "Missing file name in include statement ({file})"
+doc = """\
+An include command of the file {file}, by its absolute path, has no file \
+name after it."""
+
+[[key.checks]]
+msg = "LammpsSim: script_lines is empty.\n"
+doc = "The script, with its include files, has no command: every line is blank or a comment."
+
+[[key.checks]]
+msg = "{key}: LAMMPS cannot start with this line's command-line options: {why}"
+doc = """\
+LAMMPS refuses a command-line option of the line, such as a misspelt \
+one; {key} is PC_LAMMPS or PC_FAILPROBE, and {why} the message of LAMMPS, \
+or "no reason given"."""
 
 [[key.examples]]
 wrap = "root"
@@ -583,6 +680,24 @@ error = "-var maxtime: the variable maxtime is reserved for the script timeout H
 wrap = "root"
 text = "PC_LAMMPS --script lines_pc.in --varloss E 1 1 -v maxtime 5"
 error = "-v maxtime: the variable maxtime is reserved for the script timeout HPO injects (timer timeout ${maxtime}); set --maxtime on this line or PC_SCRIPT_TIMEOUT instead"
+
+[[key.invalid]]
+wrap = "root"
+doc = "A script path that does not exist."
+text = "PC_LAMMPS --script /missing/run.in --varloss E 1 1"
+error = "LAMMPS include file not found: /missing/run.in"
+
+[[key.invalid]]
+wrap = "root"
+doc = "A script with comments only."
+text = "PC_LAMMPS --script lines_empty.in --varloss E 1 1"
+error = "LammpsSim: script_lines is empty.\n"
+
+[[key.invalid]]
+wrap = "root"
+doc = "-sff, a misspelt LAMMPS option."
+text = "PC_LAMMPS --script lines_pc.in --varloss E 1 1 -sff 3"
+error = "PC_LAMMPS: LAMMPS cannot start with this line's command-line options: ERROR: Invalid command-line argument: -sff (src/lammps.cpp:490)"
 
 [[key.invalid]]
 wrap = "root"
@@ -862,6 +977,16 @@ wrap = "root"
 text = "PC_FAILPROBE --script lines_pc.in --outvar S --failscore 0"
 error = "PC_FAILPROBE --failscore must be a positive finite number, got '0'"
 
+[[line_option.invalid]]
+wrap = "root"
+text = "PC_LAMMPS --script lines_pc.in --varloss E 1 1 --failscore 3 7"
+error = "--failscore takes a single value (unexpected '7')"
+
+[[line_option.invalid]]
+wrap = "root"
+text = "PC_FAILPROBE --script lines_pc.in --outvar S --failscore 3 7"
+error = "--failscore takes a single value (unexpected '7')"
+
 [[line_option]]
 id = "PC_LAMMPS.--maxtime"
 option = "--maxtime"
@@ -1057,6 +1182,11 @@ error = "--failvar V <scale> must be a positive number, got '0'"
 
 [[line_option.invalid]]
 wrap = "root"
+text = "PC_LAMMPS --script lines_pc.in --varloss E 1 1 --failvar V 0.5 7"
+error = "--failvar takes <name> [<scale>] (unexpected '7')"
+
+[[line_option.invalid]]
+wrap = "root"
 text = "PC_LAMMPS --script lines_pc.in --varloss E 1 1 --failvar W"
 error = """\
 PC_LAMMPS validation failed for script 'lines_pc.in'.
@@ -1103,7 +1233,8 @@ The line takes the options of a PC_LAMMPS line except --varloss, \
 --failscore is a positive number: a probe value at or above it marks \
 the probe as failed, and a failed probe grades the evaluation as the \
 least sound. The rules that relate PC_LAMMPS lines to the optimiser \
-apply to a file with a PC_FAILPROBE line too."""
+apply to a file with a PC_FAILPROBE line too. The script is read, and \
+LAMMPS started, as for a PC_LAMMPS line, with the same refusals."""
 quirk = """\
 A token after --gate or --s0 is its value whatever it is, and a second \
 --gate or --s0 on the line replaces the first."""
@@ -1158,6 +1289,16 @@ error = "PC_FAILPROBE: unknown option '--hotvars': HPO's options are --script, -
 wrap = "root"
 text = "PC_FAILPROBE --outvar S"
 error = "LammpsSim object must have a script specified.\n"
+
+[[key.invalid]]
+wrap = "root"
+text = "PC_FAILPROBE --script /missing/probe.in --outvar S"
+error = "LAMMPS include file not found: /missing/probe.in"
+
+[[key.invalid]]
+wrap = "root"
+text = "PC_FAILPROBE --script lines_pc.in --outvar S -sff 3"
+error = "PC_FAILPROBE: LAMMPS cannot start with this line's command-line options: ERROR: Invalid command-line argument: -sff (src/lammps.cpp:490)"
 
 [[line_option]]
 id = "PC_FAILPROBE.--gate"
@@ -1639,7 +1780,7 @@ lines = ["PC_OBSERVABLE.cohesive_energy"]
 synopsis = "--max-wall-time <seconds>"
 repeat = "last_wins"
 default = { literal = "0" }
-doc = "The wall-clock limit of one relaxation in seconds; 0 sets no limit."
+doc = "The wall-clock limit of one relaxation in seconds; a value of 0 or below sets no limit."
 
 [[line_option.args]]
 name = "seconds"
@@ -1649,6 +1790,11 @@ msg = "PC_OBSERVABLE: flag '--max-wall-time' expected a finite number, got '{tok
 [[line_option.examples]]
 wrap = "root"
 text = "PC_OBSERVABLE cohesive_energy --species H --target 2.0 --weight 1 --hotvar a0 1.5 2.5 --max-wall-time 1"
+
+[[line_option.examples]]
+wrap = "root"
+doc = "A negative value, as 0, sets no limit."
+text = "PC_OBSERVABLE cohesive_energy --species H --target 2.0 --weight 1 --hotvar a0 1.5 2.5 --max-wall-time -5"
 
 [[line_option.invalid]]
 wrap = "root"
@@ -1664,7 +1810,8 @@ repeat = "last_wins"
 default = { literal = "0" }
 doc = """\
 The energy tolerance of the relaxation, as the first value of the LAMMPS \
-minimize command; 0 leaves the forces alone to decide convergence."""
+minimize command; a value of 0 or below leaves the forces alone to decide \
+convergence."""
 
 [[line_option.args]]
 name = "tol"
@@ -1674,6 +1821,11 @@ msg = "PC_OBSERVABLE: flag '--etol' expected a finite number, got '{tok}'{underf
 [[line_option.examples]]
 wrap = "root"
 text = "PC_OBSERVABLE cohesive_energy --species H --target 2.0 --weight 1 --hotvar a0 1.5 2.5 --etol 1e-15"
+
+[[line_option.examples]]
+wrap = "root"
+doc = "A negative value, as 0, sets no energy tolerance."
+text = "PC_OBSERVABLE cohesive_energy --species H --target 2.0 --weight 1 --hotvar a0 1.5 2.5 --etol -1"
 
 [[line_option.invalid]]
 wrap = "root"
@@ -1925,7 +2077,9 @@ that AUTO derives from the value of the configuration."""
 long_doc = """\
 Each value of a key is selected by one OPTIM line; several lines of one \
 key select different values. Some keys are refused as search \
-parameters, such as the structure keys of the potential."""
+parameters, such as the structure keys of the potential. A file without \
+an OPTIM line runs with a TADAH optimiser only: NLOPT, DLIB, CERES and \
+ASA refuse it at startup."""
 quirk = """\
 The key, the AUTO option names and the shape tags are read in any case \
 (OPTIM cgrid2b (1) 1 2 log), while every other key of the target file is \
@@ -2948,6 +3102,92 @@ error = "OPTIM RCUTMB: the potential has no RCUTMB key: its many-body term is DM
 # ============================================================= rules ====
 
 [[rule]]
+id = "RULE.OPTIM_MPARAMS"
+check = "startup"
+keys = ["ROOT.OPTIM"]
+msg = "OPTIM MPARAMS ({index}) is not a valid search target: {why}"
+doc = """\
+OPTIM MPARAMS searches a value that the model function of the training \
+configuration reads, a continuous one: MPARAMS (i) is the i-th MPARAMS \
+value. The refusal comes at startup and names no line; {why} says that \
+the function reads no MPARAMS, that it reads fewer than {index}, or that \
+the value is an integer, such as the degree of Kern_Polynomial."""
+
+[[rule.examples]]
+wrap = "root"
+context = "lines_rbf"
+text = "OPTIM MPARAMS (1) 0.5 2"
+
+[[rule.invalid]]
+wrap = "root"
+check = "startup"
+context = "lines_mparams"
+at = "none"
+text = "OPTIM MPARAMS (1) 0.5 1.5"
+error = "OPTIM MPARAMS (1) is not a valid search target: BF_Linear reads no MPARAMS, so every evaluation would train the same model."
+
+[[rule.invalid]]
+wrap = "root"
+check = "startup"
+context = "lines_rbf"
+at = "none"
+text = "OPTIM MPARAMS (2) 0.5 1.5"
+error = "OPTIM MPARAMS (2) is not a valid search target: Kern_RBF reads 1 MPARAMS value (sigma), so MPARAMS (2) changes nothing."
+
+[[rule.invalid]]
+wrap = "root"
+check = "startup"
+context = "lines_poly"
+at = "none"
+text = "OPTIM MPARAMS (1) 1 3"
+error = "OPTIM MPARAMS (1) is not a valid search target: MPARAMS (1) of Kern_Polynomial is its d, an integer, a discrete value rather than a continuous parameter; set it in the -c potential/configuration."
+
+[[rule]]
+id = "RULE.OPTIM_MPARAMS_positive"
+check = "startup"
+keys = ["ROOT.OPTIM"]
+msg = "OPTIM MPARAMS ({index}): the box [{low}, {high}] of {name}'s {key} must be positive ({key} > 0)."
+doc = """\
+An MPARAMS value that the model function needs above 0, such as the \
+width sigma of Kern_RBF, has an OPTIM box above 0; {name} is the function \
+and {key} the name of its value. The refusal comes at startup and names \
+no line."""
+
+[[rule.invalid]]
+wrap = "root"
+check = "startup"
+context = "lines_rbf"
+at = "none"
+text = "OPTIM MPARAMS (1) 0 2"
+error = "OPTIM MPARAMS (1): the box [0, 2] of Kern_RBF's sigma must be positive (sigma > 0)."
+
+[[rule]]
+id = "RULE.OPTIM_file_cutoff"
+check = "startup"
+keys = ["ROOT.OPTIM"]
+msg = "OPTIM {key} ({index}) is not a valid search target: {why} and refuses another value, so every candidate but the -c value would fail; leave {key} ({index}) out of OPTIM."
+doc = """\
+A D2_EAM or DM_EAM descriptor, alone or in a D2_mJoin or DM_mJoin, takes \
+its cutoff RCUT2B or RCUTMB from its setfl file (SETFL), and OPTIM does \
+not search that cutoff. The refusal comes at startup and names no line; \
+{why} names the descriptor, the cutoff and the file."""
+
+[[rule.invalid]]
+wrap = "none"
+check = "startup"
+context = "lines_setfl"
+at = "none"
+text = '''
+OPTIM RCUT2B (1) 4.5 5.5
+PC_ERMSE 0 1
+OPTIMIZER
+LIB NLOPT
+ALGO LN_SBPLX
+MAXEVAL 10
+ENDOPTIMIZER'''
+error = "OPTIM RCUT2B (1) is not a valid search target: D2_EAM takes the cutoff 5 of its setfl file 'lines_ta.eam.alloy' (SETFL) and refuses another value, so every candidate but the -c value would fail; leave RCUT2B (1) out of OPTIM."
+
+[[rule]]
 id = "RULE.PC_OBSERVABLE_excludes_PC_LAMMPS"
 check = "parse"
 keys = ["ROOT.PC_OBSERVABLE", "ROOT.PC_LAMMPS"]
@@ -3126,7 +3366,8 @@ msg = "--hpotarget defines PC_LAMMPS but {block} optimiser {lib}:{algo} takes a 
 doc = """\
 With a PC_LAMMPS or PC_FAILPROBE line, an NLopt MLSL or AUGLAG without \
 an INNER block is refused when the default local optimiser {name} of \
-NLopt takes gradients. The refusal names the END line of the block."""
+NLopt takes gradients. The refusal names the END line of the block; \
+{block} is OPTIMIZER's or EXPLORE's."""
 
 [[rule.invalid]]
 wrap = "none"
@@ -3140,6 +3381,37 @@ ALGO GD_MLSL
 MAXEVAL 10
 ENDOPTIMIZER'''
 error = "--hpotarget defines PC_LAMMPS but OPTIMIZER's optimiser NLOPT:GD_MLSL takes a gradient: NLopt's MLSL and AUGLAG take one for their local search, and NLopt's default local optimiser, NLOPT:LD_MMA, is gradient-based; an INNER block with a derivative-free one takes none. PC_LAMMPS requires a gradient-free optimiser (NLOPT GN_*/LN_*, TADAH RANDOM/GRID/ANNEAL). The only gradient-based exception is DLIB:BFGS (uses per-theta-per-iter dtheta, not a full gradient)."
+
+[[rule]]
+id = "RULE.PC_LAMMPS_INNER_local_optimiser"
+check = "parse"
+keys = ["ROOT.PC_LAMMPS", "BLOCK.INNER"]
+msg = "--hpotarget defines PC_LAMMPS but {block} optimiser {lib}:{algo} takes a gradient: NLopt's MLSL and AUGLAG take one for their local search, and NLopt's default local optimiser, {name}, is gradient-based. PC_LAMMPS requires a gradient-free optimiser, and an INNER search is a local NLopt algorithm: name a derivative-free one in the INNER block ({list})."
+doc = """\
+With a PC_LAMMPS or PC_FAILPROBE line, an INNER block that names an \
+NLopt MLSL or AUGLAG is refused when the default local optimiser {name} \
+of NLopt takes gradients; {list} names the local NLopt algorithms without \
+gradients. The refusal names the ENDINNER line; {block} is INNER's or \
+EXPLORE INNER's."""
+
+[[rule.invalid]]
+wrap = "none"
+at = "ENDINNER"
+text = '''
+OPTIM CGRID2B (1) 0.5 1.5
+PC_LAMMPS --script lines_pc.in --varloss E 1 1
+OPTIMIZER
+STRATEGY
+LIB NLOPT
+ALGO LN_AUGLAG
+MAXEVAL 10
+INNER
+LIB NLOPT
+ALGO LD_AUGLAG
+ENDINNER
+ENDSTRATEGY
+ENDOPTIMIZER'''
+error = "--hpotarget defines PC_LAMMPS but INNER's optimiser NLOPT:LD_AUGLAG takes a gradient: NLopt's MLSL and AUGLAG take one for their local search, and NLopt's default local optimiser, NLOPT:LD_MMA, is gradient-based. PC_LAMMPS requires a gradient-free optimiser, and an INNER search is a local NLopt algorithm: name a derivative-free one in the INNER block (NLOPT:LN_AUGLAG, NLOPT:LN_AUGLAG_EQ, NLOPT:LN_BOBYQA, NLOPT:LN_COBYLA, NLOPT:LN_NELDERMEAD, NLOPT:LN_PRAXIS, NLOPT:LN_SBPLX)."
 
 [[rule]]
 id = "RULE.PC_LAMMPS_INNER_gradient_free"
@@ -3461,6 +3733,86 @@ LAMBDA 1e-3
 VERBOSE 0
 """
 
+[context.lines_mparams]
+doc = "The default training configuration with an MPARAMS value, which its BF_Linear basis does not read."
+config = """
+ATOM H
+WATOM 1.0
+DBFILE dummy.db
+INIT2B true
+INITMB false
+TYPE2B D2_BP 2 2 H H
+CGRID2B 1.0 2.0
+SGRID2B 0.5 1.0
+RCTYPE2B Cut_Cos
+RCUT2B 5.0
+VERBOSE 0
+MODEL M_BLR BF_Linear
+MPARAMS 1.0
+OALGO 4
+LAMBDA 1e-3
+"""
+
+[context.lines_rbf]
+doc = "The default training configuration with the kernel model M_KRR Kern_RBF, with 10 basis vectors, whose width sigma is MPARAMS 1.0; a second MPARAMS value, 2.0, is not read."
+config = """
+ATOM H
+WATOM 1.0
+DBFILE dummy.db
+INIT2B true
+INITMB false
+TYPE2B D2_BP 2 2 H H
+CGRID2B 1.0 2.0
+SGRID2B 0.5 1.0
+RCTYPE2B Cut_Cos
+RCUT2B 5.0
+VERBOSE 0
+MODEL M_KRR Kern_RBF
+SBASIS 10
+MPARAMS 1.0 2.0
+OALGO 4
+LAMBDA 1e-3
+"""
+
+[context.lines_poly]
+doc = "The default training configuration with the kernel model M_KRR Kern_Polynomial with 10 basis vectors: degree 2, gamma 1 and c 0 (MPARAMS 2 1.0 0.0)."
+config = """
+ATOM H
+WATOM 1.0
+DBFILE dummy.db
+INIT2B true
+INITMB false
+TYPE2B D2_BP 2 2 H H
+CGRID2B 1.0 2.0
+SGRID2B 0.5 1.0
+RCTYPE2B Cut_Cos
+RCUT2B 5.0
+VERBOSE 0
+MODEL M_KRR Kern_Polynomial
+SBASIS 10
+MPARAMS 2 1.0 0.0
+OALGO 4
+LAMBDA 1e-3
+"""
+
+[context.lines_setfl]
+doc = "A Ta potential whose two-body term D2_EAM takes its cutoff, 5, from the setfl file lines_ta.eam.alloy."
+config = """
+ATOM Ta
+WATOM 1.0
+DBFILE dummy.db
+SETFL lines_ta.eam.alloy
+INIT2B true
+TYPE2B D2_EAM 0 Ta Ta
+RCUT2B 5.0
+RCTYPE2B Cut_Cos
+INITMB false
+VERBOSE 0
+MODEL M_BLR BF_Linear
+OALGO 4
+LAMBDA 1e-3
+"""
+
 # ============================================================ fixtures ===
 
 [fixture.lines_script]
@@ -3473,9 +3825,58 @@ variable V equal 0.0
 variable T string abc
 """
 
+[fixture.lines_empty]
+path = "lines_empty.in"
+doc = "A LAMMPS script with comments only."
+text = """
+# no command
+"""
+
 [fixture.lines_script2]
 path = "lines_pc2.in"
 doc = "A second LAMMPS script, with the equal-style variable E2."
 text = """
 variable E2 equal 2.0
+"""
+
+[fixture.lines_setfl]
+path = "lines_ta.eam.alloy"
+doc = "A one-element (Ta) setfl file with the cutoff 5: F(rho) = -sqrt(rho), rho(r) = (1 - r/5)^2, r phi(r) = r (1 - r/5)^3, in 10-point tables."
+text = """
+# synthetic Ta setfl
+# 2
+# 3
+1 Ta
+10 5.55555555556 10 0.555555555556 5
+73 180.95 3.304 bcc
+-0
+-2.35702260396
+-3.33333333333
+-4.08248290464
+-4.71404520791
+-5.27046276695
+-5.7735026919
+-6.23609564462
+-6.66666666667
+-7.07106781187
+1
+0.79012345679
+0.604938271605
+0.444444444444
+0.308641975309
+0.197530864198
+0.111111111111
+0.0493827160494
+0.0123456790123
+0
+0
+0.390184423106
+0.522786160646
+0.493827160494
+0.38103947569
+0.243865264441
+0.123456790123
+0.0426764212772
+0.00609663161103
+0
 """

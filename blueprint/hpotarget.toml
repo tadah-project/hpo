@@ -35,8 +35,9 @@ A target file is read line by line. Everything from # to the end of a line \
 is a comment, and trailing blanks are removed; a line left empty is \
 skipped. A line that ends with \\ continues on the next line, and the two \
 are joined without a separator. The first word of a line is its key, \
-matched as written: key names are upper case. Each error names the line it \
-is about: for a continued line, its last line and the joined text."""
+matched as written, as this reference writes it: in upper case, and \
+PC_ErRMSE with its two lower-case letters. Each error names the line it is \
+about: for a continued line, its last line and the joined text."""
 comment = "#"
 continuation = "\\"
 key_case = "exact"
@@ -683,7 +684,9 @@ doc = """\
 The local search that NLopt's MLSL and AUGLAG run inside the run of the \
 block around it. It takes the keys of the optimiser group except SEED, \
 GRAD_STRATEGY and STOPVAL, which the enclosing block sets. One INNER \
-block per block."""
+block per block. Under an MLSL, an INNER search with none of FTOL_REL, \
+FTOL_ABS and XTOL_REL above 0 runs with NLopt's FTOL_REL 1e-15 and \
+XTOL_REL 1e-7."""
 
 [[block.close_checks]]
 msg = "the INNER block inside {enclosing} names no optimiser: {missing}; set LIB and ALGO inside the INNER block (the local optimiser that NLopt's MLSL and AUGLAG run)"
@@ -779,7 +782,8 @@ doc = """\
 The stagnation restart of the STRATEGY-level optimiser: when to restart, \
 how often, and the chain of METHOD lines that draws the points of each \
 restart. A second RESTART block continues the first. Inside a RESTART \
-block a STRATEGY line is read as a METHOD line."""
+block a STRATEGY line is read as a METHOD line. A run on more than one MPI \
+rank refuses an active RESTART block."""
 
 [[block.examples]]
 wrap = "strategy"
@@ -883,7 +887,8 @@ time spec: off, unlimited or a positive [[HH:]MM:]SS. A script that \
 reaches it stops, and its simulation counts as failed."""
 long_doc = """\
 The limit is set in each script as LAMMPS `timer timeout` after every \
-clear; the --maxtime option of a line sets that line's own. Under \
+clear; the --maxtime option of a line sets that line's own. A script with \
+a timer command of its own gets no limit. Under \
 PC_ISOLATION PROCESS a script limit t also sets the deadline of a worker \
 task, max(3t, t + 120 s), unless PC_WORKER_TIMEOUT sets one. MAXTIME is \
 another name for this key."""
@@ -990,11 +995,17 @@ worker processes, one per worker of the pool, and THREAD runs them inside \
 the tadah process."""
 long_doc = """\
 Under PROCESS each worker process has its own LAMMPS library state, and a \
-task that passes its deadline (PC_WORKER_TIMEOUT) is stopped. The MPI \
-build refuses PROCESS when the file or TADAH_PC_ISOLATION sets it."""
+task that passes its deadline (PC_WORKER_TIMEOUT) is stopped. PROCESS is \
+the supported mode of the serial build: there THREAD is deprecated, and \
+hpo_run.log has a warning when the run uses it. The MPI build refuses \
+PROCESS when the file or TADAH_PC_ISOLATION sets it."""
+checks = [
+  { msg = "PC_ISOLATION PROCESS is not supported in the MPI build (TADAH_HPO_MPI): the worker processes cannot initialize MPI. Use the serial build, or PC_ISOLATION THREAD.", doc = "When the run starts, in the MPI build of tadah: the file or TADAH_PC_ISOLATION sets PROCESS. The message names no line." },
+]
 
 [[key.examples]]
 wrap = "root"
+doc = "In the serial build, hpo_run.log has a warning that THREAD is deprecated."
 text = "PC_ISOLATION THREAD"
 
 [[key.invalid]]
@@ -1136,20 +1147,29 @@ args = [
 repeat = "error"
 repeat_msg = "RHOGATE given more than once"
 doc = """\
-The sign condition of a DM_REAM density under RHOFORM SIGNED: a candidate \
-whose pair density rho(r) falls below -tol times its largest value on \
-[R_LO, RCUTMB] is refused before it is trained, as a failed evaluation."""
+The sign condition of a many-body density under the SIGNED form: a \
+candidate whose pair density rho(r) falls below -tol times its largest \
+value on [R_LO, RCUTMB] is refused before it is trained, as a failed \
+evaluation."""
 long_doc = """\
-The training configuration has a bare DM_REAM many-body term under \
-RHOFORM SIGNED (checked at startup), and an OPTIM line on a density key \
-arms RHOGATE. At startup each starting point of the INIT chain is checked \
-as a candidate; SEED says what a failing one does."""
+The many-body term of the training configuration is a bare DM_REAM term \
+or a single DM_Embed component; a DM_mJoin or several components are \
+refused at startup. Its density form, RHOFORM for DM_REAM or the FORM of \
+the component, is SIGNED, and every density pair weight (WATOM) can be \
+above 0 (both checked at startup). An OPTIM line on a density key arms \
+RHOGATE. At startup each starting point of the INIT chain is checked as a \
+candidate; SEED says what a failing one does."""
 quirk = """\
 The options R_LO, NPTS and SEED and the values ERROR and WARN are read \
 in any case (npts, seed warn), while every key is matched as written."""
 checks = [
   { msg = "RHOGATE: the tolerance is missing; expected RHOGATE <tol> [R_LO <r>] [NPTS <n>] [SEED ERROR|WARN]", doc = "The line has no value." },
   { msg = "RHOGATE: unexpected token '{tok}'; expected RHOGATE <tol> [R_LO <r>] [NPTS <n>] [SEED ERROR|WARN]", doc = "A word after the tolerance, in the place of an option, is not R_LO, NPTS or SEED." },
+  { msg = "{keys} evaluate the density of a bare DM_REAM many-body term, but {why}. Remove the {keys} line(s).", doc = "At startup, without a line: the many-body term is neither a bare DM_REAM term nor a single DM_Embed component. {keys} is RHOGATE, RHOBARGATE, or RHOGATE and RHOBARGATE; {why} is \"this configuration has no DM_REAM many-body term (INITMB true and TYPEMB DM_REAM)\", or names the many-body term of a DM_mJoin." },
+  { msg = "RHOGATE: RHOFORM {form}: the form guarantees rho >= 0 by construction, so the rho(r) sign gate applies to RHOFORM SIGNED only. Remove the RHOGATE line (RHOBARGATE works under every form).", doc = "At startup, without a line: the density form is NONNEG or MONOTONE." },
+  { msg = "{keys}: the many-body cutoff RCUTMB is not set.", doc = "At startup, without a line: the smallest RCUTMB a candidate can have is not a number above 0." },
+  { msg = "{keys}: {why} on every candidate (WATOM is not OPTIM'd, or its OPTIM box does not reach above 0): every evaluation would be rejected, under SEED ERROR or WARN. The density gates need every density pair weight > 0: set WATOM > 0 (under RHOFORM SIGNED the sign of rho belongs in the AMPGRIDMB amplitudes), or remove the {keys} line(s).", doc = "At startup, without a line: a density pair weight is not above 0 with WATOM at the upper end of its OPTIM box, or at its value in the training configuration when no OPTIM line searches it; {why} names the weight, \"a density pair weight W = <w> (WATOM) is not finite and > 0\"." },
+  { msg = "RHOGATE: seed {name} fails the rho(r) sign gate: {why}. Repair the seed's density (for a WARM seed, its OPTIM'd density values: the rest comes from the -c potential) with tadah refit --edit, relax the gate, or add SEED WARN to evaluate it as a rejected start.", doc = "At startup, without a line, under SEED ERROR: a starting point of the INIT chain fails the condition; {name} names it, and {why} gives the smallest and largest density on the window. Under SEED WARN hpo_run.log has a warning instead, and the run goes on." },
 ]
 
 [[key.examples]]
@@ -1159,6 +1179,20 @@ text = "RHOGATE 1e-5"
 [[key.examples]]
 wrap = "main_ream"
 text = "RHOGATE 0 R_LO 1.7168 NPTS 2001 SEED WARN"
+
+[[key.examples]]
+wrap = "none"
+context = "main_dm_embed"
+doc = "A single DM_Embed component under FORM SIGNED; the OPTIM line on its density amplitudes arms RHOGATE."
+text = '''
+RHOGATE 1e-5
+OPTIM H.DENSITY.AMPLITUDES (2) 0.1 1
+PC_ERMSE 0 1
+OPTIMIZER
+LIB NLOPT
+ALGO LN_SBPLX
+MAXEVAL 10
+ENDOPTIMIZER'''
 
 [[key.invalid]]
 wrap = "root"
@@ -1188,6 +1222,52 @@ RHOGATE 1e-5
 RHOGATE 1e-6'''
 error = "RHOGATE given more than once"
 
+[[key.invalid]]
+wrap = "none"
+check = "startup"
+context = "main_ream_nonneg"
+at = "none"
+doc = "The density form NONNEG keeps rho(r) at or above 0."
+text = '''
+RHOGATE 1e-5
+OPTIM AMPGRIDMB (3) 0 0.5
+PC_ERMSE 0 1
+OPTIMIZER
+LIB NLOPT
+ALGO LN_SBPLX
+MAXEVAL 10
+ENDOPTIMIZER'''
+error = "RHOGATE: RHOFORM NONNEG: the form guarantees rho >= 0 by construction, so the rho(r) sign gate applies to RHOFORM SIGNED only. Remove the RHOGATE line (RHOBARGATE works under every form)."
+
+[[key.invalid]]
+wrap = "root"
+check = "startup"
+context = "main_ead"
+at = "none"
+doc = "A configuration whose many-body term is not DM_REAM."
+text = '''
+RHOGATE 1e-5
+OPTIM CGRIDMB (1) 2 3'''
+error = "RHOGATE evaluate the density of a bare DM_REAM many-body term, but this configuration has no DM_REAM many-body term (INITMB true and TYPEMB DM_REAM). Remove the RHOGATE line(s)."
+
+[[key.invalid]]
+wrap = "main_ream"
+check = "startup"
+context = "main_ream_watom0"
+at = "none"
+doc = "WATOM 0, not searched: no candidate has a density pair weight above 0."
+text = "RHOGATE 1e-5"
+error = "RHOGATE: a density pair weight W = 0 (WATOM) is not finite and > 0 on every candidate (WATOM is not OPTIM'd, or its OPTIM box does not reach above 0): every evaluation would be rejected, under SEED ERROR or WARN. The density gates need every density pair weight > 0: set WATOM > 0 (under RHOFORM SIGNED the sign of rho belongs in the AMPGRIDMB amplitudes), or remove the RHOGATE line(s)."
+
+[[key.invalid]]
+wrap = "main_ream"
+check = "startup"
+context = "main_ream_negative"
+at = "none"
+doc = "The start point, the training configuration, has a density that falls below 0."
+text = "RHOGATE 1e-5"
+error = "RHOGATE: seed -c pot (INIT CONFIG) fails the rho(r) sign gate: rho_min -4.9965e-01 at r 2.7990 A, rho_max 2.9956e-01, rel -1.6680e+00 < -tol = -1.0000e-05 on [0.8250, 5.5000] A (20001 points), v = 1.8694e+00. Repair the seed's density (for a WARM seed, its OPTIM'd density values: the rest comes from the -c potential) with tadah refit --edit, relax the gate, or add SEED WARN to evaluate it as a rejected start."
+
 [[key]]
 id = "ROOT.RHOBARGATE"
 name = "RHOBARGATE"
@@ -1195,31 +1275,41 @@ blocks = ["ROOT"]
 synopsis = "RHOBARGATE bcc | fcc | hcp <a0> <f_lo> <f_hi> [NPTS <n>] [SEED ERROR | WARN]"
 args = [
   { name = "lattice", kind = "word", words = ["bcc", "fcc", "hcp"], msg = "RHOBARGATE lattice must be bcc, fcc or hcp, got '{tok}'" },
-  { name = "a0", kind = "number", what = "RHOBARGATE a0", msg = "RHOBARGATE a0 must be > 0, got '{tok}'", doc = "The lattice constant in Å; for hcp the in-plane one." },
-  { name = "f_lo", kind = "number", what = "RHOBARGATE f_lo", doc = "The smallest lattice constant, as a fraction of a0." },
-  { name = "f_hi", kind = "number", what = "RHOBARGATE f_hi", msg = "RHOBARGATE needs 0 < f_lo < f_hi, got f_lo '{low}', f_hi '{high}'", doc = "The largest lattice constant, as a fraction of a0." },
+  { name = "a0", kind = "number", what = "RHOBARGATE a0", doc = "The lattice constant in Å, above 0; for hcp the in-plane one." },
+  { name = "f_lo", kind = "number", what = "RHOBARGATE f_lo", doc = "The smallest lattice constant, as a fraction of a0, above 0 and below f_hi. The largest RCUTMB a candidate can have lies within 20 lattice constants of the smallest lattice, f_lo a0." },
+  { name = "f_hi", kind = "number", what = "RHOBARGATE f_hi", doc = "The largest lattice constant, as a fraction of a0." },
   { name = "options", kind = "tokens", optional = true, doc = "NPTS and SEED, each followed by its value, in any order and each at most once." },
 ]
 repeat = "error"
 repeat_msg = "RHOBARGATE given more than once"
 doc = """\
-The lattice condition of a DM_REAM density: a candidate whose monatomic \
-lattice density rhobar(a) does not decrease strictly for a from f_lo a0 \
-to f_hi a0 is refused before it is trained, as a failed evaluation."""
+The lattice condition of a many-body density: a candidate whose \
+monatomic lattice density rhobar(a) does not decrease strictly for a from \
+f_lo a0 to f_hi a0 is refused before it is trained, as a failed \
+evaluation."""
 long_doc = """\
-RHOBARGATE applies under every RHOFORM. The training configuration has a \
-bare DM_REAM many-body term, and the first shell of the lattice at f_hi a0 \
-lies inside the smallest RCUTMB a candidate can have (both checked at \
-startup). An OPTIM line on a density key arms RHOBARGATE, and hcp takes \
-the ideal c/a. At startup each starting point of the INIT chain is \
-checked as a candidate; SEED says what a failing one does."""
+RHOBARGATE applies under every density form. The many-body term of the \
+training configuration is a bare DM_REAM term or a single DM_Embed \
+component; a DM_mJoin or several components are refused at startup. At \
+startup, too, every density pair weight (WATOM) can be above 0, the first \
+shell of the lattice at f_hi a0 lies inside the smallest RCUTMB a \
+candidate can have, and the largest RCUTMB a candidate can have lies \
+within 20 lattice constants of the smallest lattice, f_lo a0. An OPTIM \
+line on a density key arms RHOBARGATE, and hcp takes the ideal c/a. At \
+startup each starting point of the INIT chain is checked as a candidate; \
+SEED says what a failing one does."""
 quirk = """\
 The lattice, the options NPTS and SEED and the values ERROR and WARN are \
 read in any case (BCC, npts, seed warn), while every key is matched as \
 written."""
 checks = [
   { msg = "RHOBARGATE: the lattice, a0, f_lo and f_hi are required; expected RHOBARGATE <bcc|fcc|hcp> <a0> <f_lo> <f_hi> [NPTS <n>] [SEED ERROR|WARN]", doc = "Fewer than four values follow the key." },
+  { msg = "RHOBARGATE a0 must be > 0, got '{tok}'", doc = "Once a0, f_lo and f_hi are read as numbers: a0 is 0 or below." },
+  { msg = "RHOBARGATE needs 0 < f_lo < f_hi, got f_lo '{low}', f_hi '{high}'", doc = "Once a0, f_lo and f_hi are read as numbers and a0 is above 0: f_lo is 0 or below, or not below f_hi." },
   { msg = "RHOBARGATE: unexpected token '{tok}'; expected RHOBARGATE <bcc|fcc|hcp> <a0> <f_lo> <f_hi> [NPTS <n>] [SEED ERROR|WARN]", doc = "A word after f_hi, in the place of an option, is not NPTS or SEED." },
+  { msg = "{keys} evaluate the density of a bare DM_REAM many-body term, but {why}. Remove the {keys} line(s).", doc = "At startup, without a line: as for RHOGATE." },
+  { msg = "RHOBARGATE: f_lo = {low} puts the largest reachable RCUTMB, {max} A, at {value} lattice constants of the smallest lattice (a = f_lo a0 = {min} A); the limit is 20. f_lo and f_hi are fractions of a0 (0.75 scans down to 25 % compression): raise f_lo.", doc = "At startup, without a line: the largest RCUTMB a candidate can have, {max}, is more than 20 lattice constants of the smallest lattice, {min}." },
+  { msg = "RHOBARGATE: seed {name} fails the lattice rhobar(a) gate: {why}. Repair the seed's density (for a WARM seed, its OPTIM'd density values: the rest comes from the -c potential) with tadah refit --edit, relax the gate, or add SEED WARN to evaluate it as a rejected start.", doc = "At startup, without a line, under SEED ERROR: a starting point of the INIT chain fails the condition; {name} names it. Under SEED WARN hpo_run.log has a warning instead, and the run goes on." },
   { msg = "RHOBARGATE: the first {name} shell at a = f_hi a0 = {high} A lies at r = {value} A, beyond the smallest cutoff a candidate can have, RCUTMB = {max} A{note}: rhobar(a) would lose its nearest neighbours. Lower f_hi or a0, or raise RCUTMB.", doc = "At startup: the nearest neighbours of the lattice {name} at f_hi a0, {high}, lie at {value}, beyond the smallest RCUTMB a candidate can have, {max}; {note} is \" (the largest CGRIDMB knot over its OPTIM box)\" when that knot sets it." },
 ]
 
@@ -1251,6 +1341,19 @@ error = "RHOBARGATE a0 must be > 0, got '0'"
 wrap = "root"
 text = "RHOBARGATE bcc 3.3 x 1.1"
 error = "RHOBARGATE f_lo must be a finite number, got 'x'"
+
+[[key.invalid]]
+wrap = "root"
+doc = "a0, f_lo and f_hi are read as numbers before a0 is checked."
+text = "RHOBARGATE bcc 0 x 1.1"
+error = "RHOBARGATE f_lo must be a finite number, got 'x'"
+
+[[key.invalid]]
+wrap = "main_ream"
+check = "startup"
+at = "none"
+text = "RHOBARGATE bcc 3.304 0.05 1.05"
+error = "RHOBARGATE: f_lo = 0.05 puts the largest reachable RCUTMB, 5.5000 A, at 33.29297821 lattice constants of the smallest lattice (a = f_lo a0 = 0.1652 A); the limit is 20. f_lo and f_hi are fractions of a0 (0.75 scans down to 25 % compression): raise f_lo."
 
 [[key.invalid]]
 wrap = "root"
@@ -1379,10 +1482,11 @@ synopsis = "DUMP <n> <directory>"
 checks = [
   { msg = "{key} requires a cadence and a directory", doc = "Fewer than two values follow the key." },
   { msg = "{key} takes a cadence and a directory (unexpected '{tok}')", doc = "A value follows the directory." },
+  { msg = "Error in handle_directory_creation: {why}", doc = "The directory does not exist and cannot be created, such as a directory whose parent does not exist; {why} is the message of the file system." },
 ]
 args = [
   { name = "n", kind = "integer", min = 1, what = "{key} cadence" },
-  { name = "directory", kind = "name", doc = "A directory whose parent exists." },
+  { name = "directory", kind = "name", doc = "A directory, created when it does not exist; its parent exists." },
 ]
 repeat = "last_wins"
 default = { text = "no potential of an evaluation is written" }
@@ -1390,11 +1494,16 @@ doc = """\
 Writes the potential of every nth evaluation to <directory>/pot_<i>.tadah, \
 where i is the number of the evaluation."""
 long_doc = """\
-A point outside the OPTIM box is not evaluated, and its potential is not \
-written."""
+The line creates the directory, but not a missing parent directory; an \
+existing directory is used as it is. A point outside the OPTIM box is not \
+evaluated, and its potential is not written. A candidate refused before \
+it is trained, or whose training fails, is written as a file with the \
+comment header only."""
 quirk = """\
 The directory is created when the line is read, before the rest of the \
-file is checked: a file refused at a later line leaves it behind."""
+file is checked: a file refused at a later line leaves it behind. An \
+existing path is accepted whatever it is: with a regular file of that \
+name the line is accepted, and no potential is written."""
 
 [[key.examples]]
 wrap = "root"
@@ -1420,6 +1529,12 @@ wrap = "root"
 text = "DUMP 10 pots extra"
 error = "DUMP takes a cadence and a directory (unexpected 'extra')"
 
+[[key.invalid]]
+wrap = "root"
+doc = "The parent directory, missing, does not exist."
+text = "DUMP 10 missing/pots"
+error = "Error in handle_directory_creation: filesystem error: cannot create directory: No such file or directory [missing/pots]"
+
 [[key]]
 id = "ROOT.BDUMP"
 name = "BDUMP"
@@ -1428,19 +1543,25 @@ synopsis = "BDUMP <n> <directory>"
 checks = [
   { msg = "{key} requires a cadence and a directory", doc = "Fewer than two values follow the key." },
   { msg = "{key} takes a cadence and a directory (unexpected '{tok}')", doc = "A value follows the directory." },
+  { msg = "Error in handle_directory_creation: {why}", doc = "The directory does not exist and cannot be created, such as a directory whose parent does not exist; {why} is the message of the file system." },
 ]
 args = [
   { name = "n", kind = "integer", min = 1, what = "{key} cadence" },
-  { name = "directory", kind = "name", doc = "A directory whose parent exists." },
+  { name = "directory", kind = "name", doc = "A directory, created when it does not exist; its parent exists." },
 ]
 repeat = "last_wins"
 default = { text = "no potential of a best evaluation is written" }
 doc = """\
 Writes the potential every nth time the best loss improves to \
 <directory>/best_pot_<i>.tadah, where i counts the improvements."""
+long_doc = """\
+The line creates the directory, but not a missing parent directory; an \
+existing directory is used as it is."""
 quirk = """\
 The directory is created when the line is read, before the rest of the \
-file is checked: a file refused at a later line leaves it behind."""
+file is checked: a file refused at a later line leaves it behind. An \
+existing path is accepted whatever it is: with a regular file of that \
+name the line is accepted, and no potential is written."""
 
 [[key.examples]]
 wrap = "root"
@@ -1456,6 +1577,12 @@ wrap = "root"
 text = "BDUMP 0 best_pots"
 error = "BDUMP cadence must be an integer >= 1, got '0'"
 
+[[key.invalid]]
+wrap = "root"
+doc = "The parent directory, missing, does not exist."
+text = "BDUMP 1 missing/best_pots"
+error = "Error in handle_directory_creation: filesystem error: cannot create directory: No such file or directory [missing/best_pots]"
+
 [[key]]
 id = "ROOT.OPTIM_SCALE"
 name = "OPTIM_SCALE"
@@ -1468,8 +1595,8 @@ default = { literal = "AUTO" }
 env = "TADAH_OPTIM_SCALE"
 doc = """\
 The coordinates the optimiser works in: AUTO maps every OPTIM dimension \
-to [0, 1], and NONE leaves each in its OPTIM units, the natural logarithm \
-of the value for a LOG dimension."""
+to [0, 1], and NONE leaves each in its OPTIM units: the value for LIN, \
+its natural logarithm for LOG and asinh(x/c) for ASINH <c>."""
 quirk = """\
 The value is read in any case (auto, None), and its refusal quotes it in \
 upper case, while every key is matched as written."""
@@ -2199,4 +2326,160 @@ VERBOSE 0
 MODEL M_BLR BF_Linear
 OALGO 4
 LAMBDA 1e-3
+"""
+
+[context.main_ream_nonneg]
+doc = """\
+The configuration main_ream under RHOFORM NONNEG, with the same \
+non-negative amplitudes."""
+config = """
+ATOM Ta
+WATOM 1.0
+DBFILE dummy.db
+INIT2B true
+INITMB true
+TYPE2B D2_Blip5 4 4 Ta Ta
+CGRID2B 2.5 3.2 3.9 4.5
+SGRID2B 3.0 3.0 3.0 3.0
+TYPEMB DM_REAM 3 3 3 3 5 5 0 0 Ta Ta
+CGRIDMB 2.8 3.6 4.4
+SGRIDMB 3.0 3.0 3.0
+AMPGRIDMB 0.5 0.3 0.1
+RHOFORM NONNEG
+CEMBFUNC -0.2 0.3 0.8 1.3 1.8
+SEMBFUNC 2.0 2.0 2.0 2.0 2.0
+RCTYPE2B Cut_Dummy
+RCTYPEMB Cut_Dummy
+RCUT2B 5.5
+RCUTMB 5.5
+VERBOSE 0
+MODEL M_BLR BF_Linear
+OALGO 4
+LAMBDA 1e-3
+"""
+
+[context.main_ream_watom0]
+doc = "The configuration main_ream with the density pair weight WATOM 0."
+config = """
+ATOM Ta
+WATOM 0.0
+DBFILE dummy.db
+INIT2B true
+INITMB true
+TYPE2B D2_Blip5 4 4 Ta Ta
+CGRID2B 2.5 3.2 3.9 4.5
+SGRID2B 3.0 3.0 3.0 3.0
+TYPEMB DM_REAM 3 3 3 3 5 5 0 0 Ta Ta
+CGRIDMB 2.8 3.6 4.4
+SGRIDMB 3.0 3.0 3.0
+AMPGRIDMB 0.5 0.3 0.1
+RHOFORM SIGNED
+CEMBFUNC -0.2 0.3 0.8 1.3 1.8
+SEMBFUNC 2.0 2.0 2.0 2.0 2.0
+RCTYPE2B Cut_Dummy
+RCTYPEMB Cut_Dummy
+RCUT2B 5.5
+RCUTMB 5.5
+VERBOSE 0
+MODEL M_BLR BF_Linear
+OALGO 4
+LAMBDA 1e-3
+"""
+
+[context.main_ream_negative]
+doc = """\
+The configuration main_ream with a negative first amplitude, \
+AMPGRIDMB -0.5 0.3 0.1, whose density falls below 0."""
+config = """
+ATOM Ta
+WATOM 1.0
+DBFILE dummy.db
+INIT2B true
+INITMB true
+TYPE2B D2_Blip5 4 4 Ta Ta
+CGRID2B 2.5 3.2 3.9 4.5
+SGRID2B 3.0 3.0 3.0 3.0
+TYPEMB DM_REAM 3 3 3 3 5 5 0 0 Ta Ta
+CGRIDMB 2.8 3.6 4.4
+SGRIDMB 3.0 3.0 3.0
+AMPGRIDMB -0.5 0.3 0.1
+RHOFORM SIGNED
+CEMBFUNC -0.2 0.3 0.8 1.3 1.8
+SEMBFUNC 2.0 2.0 2.0 2.0 2.0
+RCTYPE2B Cut_Dummy
+RCTYPEMB Cut_Dummy
+RCUT2B 5.5
+RCUTMB 5.5
+VERBOSE 0
+MODEL M_BLR BF_Linear
+OALGO 4
+LAMBDA 1e-3
+"""
+
+[context.main_ead]
+doc = """\
+A one-species model whose many-body term is not DM_REAM: the two-body \
+term of the default configuration and a DM_EAD many-body term."""
+config = """
+ATOM H
+WATOM 1.0
+DBFILE dummy.db
+INIT2B true
+TYPE2B D2_BP 2 2 H H
+CGRID2B 1.0 2.0
+SGRID2B 0.5 1.0
+RCTYPE2B Cut_Cos
+RCUT2B 5.0
+INITMB true
+TYPEMB DM_EAD 1 2 2 H H
+CGRIDMB 2.6 3.6
+SGRIDMB 1.0 1.1
+RCTYPEMB Cut_Cos
+RCUTMB 5.0
+VERBOSE 0
+MODEL M_BLR BF_Linear
+OALGO 4
+LAMBDA 1e-3
+"""
+
+[context.main_dm_embed]
+doc = """\
+A one-species potential with the two-body term of the default \
+configuration and one DM_Embed many-body component h: a Blip5 density \
+under FORM SIGNED with positive amplitudes, and a Gaussian embedding."""
+config = """
+ATOM H
+WATOM 1
+VERBOSE 0
+DBFILE dummy.db
+INIT2B true
+INITMB true
+TYPE2B D2_BP 2 2 H H
+CGRID2B 1.0 2.0
+SGRID2B 0.5 1.0
+RCTYPE2B Cut_Cos
+RCUT2B 5.0
+MODEL M_BLR BF_Linear
+LAMBDA 1e-3
+OALGO 4
+DESCRIPTOR h DM_Embed
+PAIRS H H
+DENSITY
+BASIS Blip5
+FORM SIGNED
+CENTRES 1 2
+ETA 1 1
+AMPLITUDES 1 0.5
+CUTOFF
+TYPE Cut_Poly
+RADIUS 3
+ENDCUTOFF
+ENDDENSITY
+EMBEDDING
+BASIS Gaussian
+CENTRES 0 0.5 1
+ETA 2 2 2
+REFERENCE ZERO
+ENDEMBEDDING
+ENDDESCRIPTOR
 """
