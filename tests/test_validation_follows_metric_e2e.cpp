@@ -36,7 +36,9 @@
 // measured (nan, left out of the average), and a run is refused at startup
 // when no dataset has the data or an indexed weight above 0 targets such a
 // dataset (cases 2a, 2b and 4a). Before that fix they were measured like
-// any other structure.
+// any other structure. The energy metrics (PC_ERMSE, PC_EMAE, PC_ErRMSE,
+// PC_ERSQ) leave out the structures stored with energy weight 0 (eweight)
+// in the same way (cases 2c and 4b).
 //
 // What a validation prediction used is read from the host's test hook
 // HPO_Host::last_validation_switches_for_test(). It is detected at compile
@@ -1447,6 +1449,160 @@ TEST_CASE("valmetric e2e: a validation dataset whose structures all have "
     }
 }
 
+/* Case 2c. Pins: the energy metrics (PC_ERMSE, PC_EMAE, PC_ErRMSE,
+ * PC_ERSQ) leave out the validation structures stored with energy weight 0
+ * (eweight), which have no energy of its own (tadah data convert stores a
+ * placeholder); a dataset in which every structure has eweight 0 is not
+ * measured, as for the force and stress metrics (case 2b). On the fixed
+ * potential of case 2, two datasets: the cells of validation_cells()
+ * (eweight 1), and two cells of eweight 0 whose placeholder energies are
+ * 1000 eV/atom:
+ *   - global metrics: the evaluation's loss is finite; X[2] is nan and
+ *     X[avg] is X[1], bit for bit, for each of ERMSE, EMAE, ErRMSE and
+ *     ERSQ; ERMSE[1] equals the RMSE of predict_with() on dataset 1 to
+ *     1e-12, and with PC_ERMSE alone (weight 1, L2) the loss is its
+ *     square;
+ *   - indexed PC_ERMSE: weight 0 on the dataset without an energy runs
+ *     (ERMSE[2] and L(ERMSE)[2] nan), a weight above 0 on it is refused at
+ *     startup, naming PC_ERMSE, the file and the energy weight;
+ *   - a run in which no dataset has an energy is refused at startup by each
+ *     energy metric, naming it, the file and the energy weight.
+ * Before the fix: the averages ran over every dataset, so the nan of the
+ * dataset without an energy made each X[avg] and the loss nan: every
+ * evaluation was clamped to FAILSCORE (and hpo_run wrote no best
+ * potential); no run was refused. */
+TEST_CASE("valmetric e2e: the energy metrics leave out a validation "
+          "dataset whose structures all have energy weight 0",
+          "[valmetric_e2e][.]")
+{
+    PeriodicTable::initialize();
+    ScratchDir sd;
+    const fs::path val_db  = sd.dir / "val.db";
+    const fs::path noe_db  = sd.dir / "val_noenergy.db";
+    const fs::path val_cfg = sd.dir / "config.val";
+    const fs::path hpo_cfg = sd.dir / "config.hpo";
+    std::vector<Structure> noe = {bcc_cell(13, 3.00, 2.6),
+                                  bcc_cell(14, 3.30, 1.2)};
+    for (Structure& st : noe) {
+        st.eweight = 0.0;
+        st.energy = 1000.0 * static_cast<double>(st.natoms());
+    }
+    write_db(noe_db, noe);
+    write_db(val_db, validation_cells());
+
+    /* The fixture: the weights as the host reads them. */
+    {
+        const StructureDB db = read_db(noe_db);
+        REQUIRE(db.size() == 2u);
+        for (std::size_t i = 0; i < db.size(); ++i) CHECK(db(i).eweight == 0.0);
+    }
+
+    auto write_val = [&](bool with_energy) {
+        std::ofstream os(val_cfg);
+        if (with_energy) os << "DBFILE " << val_db.string() << "\n";
+        os << "DBFILE " << noe_db.string() << "\n";
+    };
+    auto write_target = [&](const std::string& metrics) {
+        std::ofstream(hpo_cfg) << target_head(kDerivativeFree) << metrics
+                               << "OPTIM FIXWEIGHT (1) -1.0 1.0\n";
+    };
+    ParamVec p(1);
+    p(0) = kPinned[0];
+
+    /* The reference ERMSE of dataset 1. */
+    const StructureDB vdb = read_db(val_db);
+    const double ermse1 =
+        ermse_mev(vdb, predict_with(pinned_potential(), vdb, false, false));
+    CAPTURE(ermse1);
+    REQUIRE(ermse1 > 0.0);
+
+    SECTION("global PC_ERMSE, PC_EMAE, PC_ErRMSE and PC_ERSQ") {
+        write_val(true);
+        /* PC_ERSQ of weight 1e-6: the fixed potential is far from the
+         * data (ERMSE about 6000 meV/atom, R^2 about -7e6), and a weight of
+         * 1 would put the loss above FAILSCORE. */
+        write_target("PC_ERMSE 0 1\nPC_EMAE 0 1\nPC_ErRMSE 0 1\n"
+                     "PC_ERSQ 1 0.000001\n");
+        const EvalOutcome e = evaluate_once(pinned_context(val_cfg, hpo_cfg),
+                                            hpo_cfg, val_cfg, p, false, 0u, 4u);
+        require_real_loss(e.loss);
+        for (const char* m : {"ERMSE", "EMAE", "ErRMSE", "ERSQ"}) {
+            const std::string metric = m;
+            const double v1 = column(e.stats, metric + "[1]");
+            const double v2 = column(e.stats, metric + "[2]");
+            const double avg = column(e.stats, metric + "[avg]");
+            CAPTURE(metric, v1, v2, avg);
+            CHECK(std::isfinite(v1));
+            CHECK(is_nan_bits(v2));
+            CHECK(same_bits(avg, v1));
+        }
+        CHECK(column(e.stats, "ERMSE[1]") ==
+              Approx(ermse1).epsilon(1e-12).margin(1e-9));
+        const double ersq = column(e.stats, "ERSQ[avg]");
+        CHECK(e.loss == Approx((column(e.stats, "ERMSE[avg]") *
+                                    column(e.stats, "ERMSE[avg]") +
+                                column(e.stats, "EMAE[avg]") *
+                                    column(e.stats, "EMAE[avg]") +
+                                column(e.stats, "ErRMSE[avg]") *
+                                    column(e.stats, "ErRMSE[avg]") +
+                                1e-6 * (ersq - 1.0) * (ersq - 1.0)) /
+                               4.0)
+                            .epsilon(1e-12));
+    }
+    SECTION("PC_ERMSE alone: the loss is the measured dataset's") {
+        write_val(true);
+        write_target("PC_ERMSE 0 1\n");
+        const EvalOutcome e = evaluate_once(pinned_context(val_cfg, hpo_cfg),
+                                            hpo_cfg, val_cfg, p, false, 0u, 4u);
+        require_real_loss(e.loss);
+        CHECK(e.loss == Approx(ermse1 * ermse1).epsilon(1e-11));
+    }
+    SECTION("indexed PC_ERMSE, weight 0 on the dataset without an energy") {
+        write_val(true);
+        write_target("PC_ERMSE (1) 0 1\nPC_ERMSE (2) 0 0\n");
+        const RunStart r = start_pinned_run(val_cfg, hpo_cfg);
+        INFO("hpo_run() " << (r.threw ? "threw: " + r.what
+                                      : "returned " + std::to_string(r.status)));
+        CHECK_FALSE(r.threw);
+        REQUIRE(r.status == 0);
+        const auto rows = stats_rows((sd.dir / "stats.tadah").string());
+        REQUIRE_FALSE(rows.empty());
+        CHECK(is_nan_bits(column(rows.front(), "ERMSE[2]")));
+        CHECK(column(rows.front(), "ERMSE[1]") ==
+              Approx(ermse1).epsilon(1e-12).margin(1e-9));
+        const auto losses = stats_rows((sd.dir / "loss.tadah").string());
+        REQUIRE_FALSE(losses.empty());
+        CHECK(is_nan_bits(column(losses.front(), "L(ERMSE)[2]")));
+        CHECK(fs::exists(sd.dir / "best_pot.tadah"));
+    }
+    SECTION("indexed PC_ERMSE, weight 0.5 on the dataset without an energy") {
+        write_val(true);
+        write_target("PC_ERMSE (1) 0 1\nPC_ERMSE (2) 0 0.5\n");
+        const RunStart r = start_pinned_run(val_cfg, hpo_cfg);
+        INFO(r.what);
+        CHECK(r.threw);
+        CHECK(r.runtime_error);
+        CHECK(contains(r.what, "PC_ERMSE (2)"));
+        CHECK(contains(r.what, noe_db.string()));
+        CHECK(contains(r.what, "energy weight 0"));
+    }
+    for (const char* metric : {"PC_ERMSE", "PC_EMAE", "PC_ErRMSE", "PC_ERSQ"}) {
+        DYNAMIC_SECTION(metric << " and no dataset with an energy") {
+            write_val(false);
+            write_target(std::string(metric) + " 0 1\n");
+            const RunStart r = start_pinned_run(val_cfg, hpo_cfg);
+            INFO(r.what);
+            CHECK(r.threw);
+            CHECK(r.runtime_error);
+            CHECK(contains(r.what, metric));
+            CHECK(contains(r.what, noe_db.string()));
+            CHECK(contains(r.what, "energy weight 0"));
+            const fs::path stats = sd.dir / "stats.tadah";
+            if (fs::exists(stats)) CHECK(stats_rows(stats.string()).empty());
+        }
+    }
+}
+
 /* Case 3. MODEL M_KRR Kern_Linear 1 (FORCE and STRESS both written in the
  * configuration), fitted with STRESS true and validated with PC_ERMSE +
  * PC_SRMSE, and fitted with FORCE true and validated with PC_ERMSE +
@@ -1787,6 +1943,119 @@ TEST_CASE("valmetric e2e: the analytical gradient of PC_FRMSE averages the "
         CHECK(is_nan_bits(f2));
         CHECK(same_bits(favg, f1));
         REQUIRE(favg * favg > 1e-6 * ermse * ermse);
+    }
+    CHECK(needs_fd.empty());
+    double gmax = 0.0;
+    for (double d : richardson) gmax = std::max(gmax, std::fabs(d));
+    CAPTURE(gmax);
+    REQUIRE(gmax > 0.0);
+    for (long i = 0; i < 2; ++i) {
+        const double fd = richardson[static_cast<std::size_t>(i)];
+        CAPTURE(kTrainedLabels[static_cast<std::size_t>(i)], g(i), fd);
+        CHECK(std::isfinite(g(i)));
+        CHECK(g(i) == Approx(fd).epsilon(1e-5).margin(1e-5 * gmax));
+    }
+}
+
+/* Case 4b. Pins: the analytical gradient of the energy metrics whose second
+ * validation dataset is not measured (every structure with energy weight
+ * 0, placeholder energies of 1000 eV/atom) equals the
+ * Richardson-extrapolated central difference of the host loss, as in case
+ * 4a (ANALYTICAL, FORCE false; global PC_ERMSE, PC_EMAE, PC_ErRMSE and
+ * PC_ERSQ): the averages and their derivatives run over the measured
+ * dataset only (the slope of dataset 1 is L'(ERMSE[avg]) / 1, not / 2).
+ * ERMSE[2] is nan and ERMSE[avg] is ERMSE[1], and the journal names the
+ * dataset as not measured.
+ * Before the fix: the loss was nan at every point (the averages ran over
+ * both datasets), clamped to FAILSCORE. */
+TEST_CASE("valmetric e2e: the analytical gradient of the energy metrics "
+          "averages the measured datasets", "[valmetric_e2e][.]")
+{
+    PeriodicTable::initialize();
+    ScratchDir sd;
+    const fs::path train_db = sd.dir / "train.db";
+    const fs::path val_db   = sd.dir / "val.db";
+    const fs::path noe_db   = sd.dir / "val_noenergy.db";
+    const fs::path val_cfg  = sd.dir / "config.val";
+    const fs::path hpo_cfg  = sd.dir / "config.hpo";
+    write_db(train_db, training_cells());
+    write_db(val_db, validation_cells());
+    {
+        std::vector<Structure> noe = {bcc_cell(17, 3.12, 0.9),
+                                      bcc_cell(18, 3.24, 2.2)};
+        for (Structure& st : noe) {
+            st.eweight = 0.0;
+            st.energy = 1000.0 * static_cast<double>(st.natoms());
+        }
+        write_db(noe_db, noe);
+    }
+    std::ofstream(val_cfg) << "DBFILE " << val_db.string() << "\n"
+                           << "DBFILE " << noe_db.string() << "\n";
+    std::ofstream(hpo_cfg) << target_head(gradient_block("ANALYTICAL"))
+                           << "PC_ERMSE 0 1\nPC_EMAE 0 1\nPC_ErRMSE 0 1\n"
+                              "PC_ERSQ 1 1\n"
+                           << kTrainedOptim;
+
+    Host::reset_globals_for_test();
+    Context ctx = trained_context(kBLR, FitSwitches{false, false}, train_db,
+                                  val_cfg, hpo_cfg);
+    JournalFile j;
+    HPOTargets trg(ctx, hpo_cfg.string());
+    REQUIRE(trg.use_ermse);
+    REQUIRE_NOTHROW(validate_hpo_setup(ctx, trg, true, true));
+
+    const ParamVec p = trained_point();
+    const double h = 1e-3;
+    ParamVec g;
+    std::vector<int> needs_fd;
+    std::vector<double> richardson(2, 0.0);
+    {
+        std::unique_ptr<Host> host;
+        REQUIRE_NOTHROW(host = std::make_unique<Host>(ctx, trg, val_cfg.string()));
+        REQUIRE(host->val_size() == 4u);
+        double f0 = 0.0;
+        REQUIRE_NOTHROW(f0 = (*host)(p));
+        require_real_loss(f0);
+        bool ok = false;
+        REQUIRE_NOTHROW(ok = host->analytical_gradient(p, g, needs_fd));
+        REQUIRE(ok);
+        REQUIRE(g.size() == 2);
+        auto central = [&](long i, double step) {
+            ParamVec up = p, down = p;
+            up(i) += step;
+            down(i) -= step;
+            double fu = 0.0, fd = 0.0;
+            REQUIRE_NOTHROW(fu = (*host)(up));
+            REQUIRE_NOTHROW(fd = (*host)(down));
+            require_real_loss(fu);
+            require_real_loss(fd);
+            return (fu - fd) / (2.0 * step);
+        };
+        for (long i = 0; i < 2; ++i) {
+            const double d2h = central(i, 2.0 * h);
+            const double dh  = central(i, h);
+            richardson[static_cast<std::size_t>(i)] = (4.0 * dh - d2h) / 3.0;
+        }
+        host->flush_remaining();
+    }
+    const std::string journal = j.finish();
+    Host::reset_globals_for_test();
+    {
+        /* The journal names the dataset that is not measured. */
+        INFO(journal);
+        CHECK(contains(journal, noe_db.string()));
+        CHECK(contains(journal, "not measured"));
+    }
+
+    {
+        const auto rows = stats_rows(trg.statsFile);
+        REQUIRE_FALSE(rows.empty());
+        const double e1 = column(rows.front(), "ERMSE[1]");
+        const double e2 = column(rows.front(), "ERMSE[2]");
+        const double eavg = column(rows.front(), "ERMSE[avg]");
+        CAPTURE(e1, e2, eavg);
+        CHECK(is_nan_bits(e2));
+        CHECK(same_bits(eavg, e1));
     }
     CHECK(needs_fd.empty());
     double gmax = 0.0;
