@@ -6746,9 +6746,13 @@ TEST_CASE("No usable loss: a TADAH:RANDOM run whose every evaluation fails "
 TEST_CASE("No usable loss: evaluations that throw count as unusable losses",
           "[HPO][termination][no_usable_loss]")
 {
-    /* OALGO 3 cannot exclude the bias from the regularisation: with BIAS
-     * true and LAMBDA != 0 every training throws, and the host records
-     * each evaluation as FAILSCORE. The journal used to follow "100.0% of
+    /* OALGO 2 (QR) with LAMBDA 0 refuses a design matrix with fewer
+     * non-zero data rows than weights: the one training structure, energy
+     * only, gives one row for the two weights of D2_BP 2, so every training
+     * throws, and the host records each evaluation as FAILSCORE. (The
+     * startup checks read no descriptors and do not refuse it; OALGO 3
+     * with BIAS true and LAMBDA != 0, which every fit refuses too, is
+     * refused when the run starts.) The journal used to follow "100.0% of
      * evaluations produced a non-finite loss" with "[ok] Every evaluation
      * produced a usable loss".
      * Pins also: DIAGNOSTICS counts the six evaluations under
@@ -6762,8 +6766,8 @@ TEST_CASE("No usable loss: evaluations that throw count as unusable losses",
      * case asserted the non-finite wording (it pinned the defect). */
     TaRun run(plain_block("    TYPE PLAIN\n    LIB TADAH\n    ALGO RANDOM\n"
                           "    MAXEVAL 6\n    SEED 3\n"));
-    run.ctx.storage_update("OALGO", {"3"});
-    run.ctx.storage_update("BIAS", {"true"});
+    run.ctx.storage_update("OALGO", {"2"});
+    run.ctx.storage_update("LAMBDA", {"0"});
     int status = -1;
     REQUIRE_NOTHROW(status = run_within(run, std::chrono::seconds(120),
                                         "a TADAH:RANDOM run whose "
