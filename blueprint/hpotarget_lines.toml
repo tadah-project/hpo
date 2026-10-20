@@ -4476,6 +4476,7 @@ penalty in each fit, so it is refused with OPTIM LAMBDA, at the line."""
 [[rule.examples]]
 wrap = "root"
 context = "lines_oalgo"
+doc = "The training configuration has LAMBDA 1e-3, the starting point of the search."
 text = "OPTIM LAMBDA (1) 1e-6 1e-2 LOG"
 
 [[rule.invalid]]
@@ -4600,6 +4601,7 @@ what implementation 1 does with it and how implementation 2 fits."""
 [[rule.examples]]
 wrap = "root"
 context = "lines_krr2"
+doc = "Under implementation 2 (MODEL M_KRR Kern_Linear 2), OPTIM LAMBDA searches the penalty of its solve."
 text = "OPTIM LAMBDA (1) 1e-6 1e-2 LOG"
 
 [[rule.invalid]]
