@@ -3648,20 +3648,18 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
      * publication (fsync + rename, or a transient-I/O backoff of up to
      * 30 s). The lock was also where the stagnation check below waited for
      * an in-flight publication to store iter_at_last_best_; that wait now
-     * happens only on the path that would throw StagnationStop: until as
-     * many decisions have finished as had been counted (best_pubs_) when
-     * the check began -- holding the lock or queued for it. They finish in
-     * lock order, which is not FIFO, so one overtaken at the lock by a
-     * decision counted later can still be missed (rare; see
-     * detail::throw_if_stagnated). */
+     * happens only on the path that would throw StagnationStop: until every
+     * decision counted (best_pubs_) before the check began has ended --
+     * computing its table, queued for the lock or holding it -- whatever
+     * the order in which they end (detail::throw_if_stagnated). */
     if (may_become_best(r.loss, g_best_.load(std::memory_order_acquire)))
     {
       /* The decision is counted first, then computes the balance table of
        * this evaluation's fit, then waits for the lock, and is done while
        * still holding it, or, when the table throws, under the lock all the
        * same: a stagnation check that would fire and began after the count
-       * waits until as many decisions are done (detail::throw_if_stagnated),
-       * whatever stage this one is at. */
+       * waits until this decision has ended (detail::throw_if_stagnated),
+       * whatever stage it is at. */
       detail::BestDecision best_decision(best_pubs_, best_mtx_);
       /* The table, for best_pot.tadah: one O(n p^2) pass, made before
        * best_mtx_ is taken (other chains' decisions do not wait for it) and
@@ -3749,9 +3747,9 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
     /* Stagnation check -- throw to short-circuit the optimiser loop. The
      * surrounding RestartPolicy catches StagnationStop and decides
      * whether to restart from a fresh init. A check that would fire first
-     * waits until as many new-best decisions have finished as were in
-     * progress when it began (this evaluation may have skipped the lock
-     * above) and checks again. */
+     * waits until every new-best decision counted before it began has
+     * ended (this evaluation may have skipped the lock above) and checks
+     * again. */
     {
       const std::size_t threshold =
           stagnation_threshold_.load(std::memory_order_relaxed);
