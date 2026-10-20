@@ -37,16 +37,28 @@ repeat    A key whose repeat is error, last_wins or warn_last_wins: its
           A rule `add` is not generated: a line that adds may still be
           refused twice with the same value (two OPTIM lines of one
           index), which the entry's own cases show.
-ranges    A key or line option with one argument of kind integer, number
-          or positive and a min or max: the line of its first example
-          with the value min, max (accepted, unless min_open) and the
-          values past them (refused at that line, with the argument's msg,
-          or [reading]'s integer_msg, integer_range_msg or positive_msg,
-          filled). Catches a changed min, max, min_open or kind.
+ranges    A key, INIT method, PARAM key or line option with one argument
+          of kind integer, number or positive and a min or max: the line
+          of each of its examples (of the first, for a line option) with
+          the value min, max (accepted, unless min_open) and the values
+          past them (refused at that line, with the argument's msg, or
+          [reading]'s integer_msg, integer_range_msg or positive_msg,
+          filled). The max runs as its example does, through the startup
+          checks unless the example says parse, so a value the parser
+          takes and the run cannot use (a count of starting points drawn
+          when the file is read) fails; the other values are read only.
+          A PARAM value, which the startup checks read, runs through them
+          at every value and is refused at parse or at startup with a
+          message of its entry or of [reading]. Catches a changed min,
+          max, min_open or kind, and a max the run refuses.
 words     A word argument at a fixed place of its line: each word of
           `words`, put into the line of the first example, is accepted;
           each of `refused_words` is refused with its message. Catches a
-          word added to or left out of `words`.
+          word added to `words` that the parser refuses, and a refused
+          word it accepts. A word left out of `words` is caught by
+          hpotarget_registry.py --check, which requires each word to be
+          shown by an example and the word each example writes at the
+          argument's place to be one of `words`.
 params    A [[param]] whose optimisers are named (not *): its first
           example runs in each wrapper whose `optimizer` is one of them
           (accepted when tadah hpo starts), and in each wrapper of an
@@ -86,7 +98,11 @@ What it cannot see
   check reports a case the parser refuses for another reason at another
   line as a failure, so such a case is visible, not silent);
 - the range of an argument that is not the only value of its line or
-  option, and words of an argument after an optional or repeated one;
+  option, of a [[form]] argument and of a loss parameter; words of an
+  argument after an optional or repeated one; a word the parser reads
+  that is left out of `words` together with every example that shows it;
+- a value the startup checks refuse in some files only: the max of a
+  range runs in the files of its examples, and its min is read only;
 - PARAM keys read by every optimiser (`optimizers = ["*"]`), and the
   PARAM keys of the annealers (anneal_keys.toml has its own check);
 - the options of a form (OPTIM AUTO, PC_OBSERVABLE cohesive_energy) on
@@ -170,11 +186,13 @@ def write_cases(path: pathlib.Path, cases: list[dict]) -> None:
 @dataclass
 class Gen:
     """A generated case: the runner's case and what to make of its
-    result (a failure text, or None)."""
+    result (a failure text, or None). Cases of one `group` pass when one
+    of them passes."""
     check: str
     label: str
     case: dict
     judge: Callable[[dict], str | None]
+    group: str | None = None
 
 
 @dataclass
@@ -196,13 +214,13 @@ class Generator:
 
     def add(self, check: str, label: str, file: str, context: str,
             mode: str, judge: Callable[[dict], str | None],
-            env: dict | None = None) -> None:
+            env: dict | None = None, group: str | None = None) -> None:
         case = {"id": f"{check}:{len(self.cases)}:{label}", "mode": mode,
                 "file": file, "fixtures": self.fixtures(),
                 **self.context(context)}
         if env:
             case["env"] = env
-        self.cases.append(Gen(check, label, case, judge))
+        self.cases.append(Gen(check, label, case, judge, group))
 
     def frame_what(self, error: str, line: int) -> str | None:
         """The {what} of `error` when it is framed at `line`, else None."""
@@ -415,7 +433,8 @@ class Generator:
                 out.append((self.fmt(lo), True))
                 out.append((self.fmt(lo - step), False))
         if hi is not None:
-            out.append((self.fmt(hi), True))
+            if (self.fmt(hi), True) not in out:     # a range of one value
+                out.append((self.fmt(hi), True))
             out.append((self.fmt(hi + step), False))
         return out
 
@@ -447,34 +466,92 @@ class Generator:
         return [hr.template_regex(t, fill) for k, t in rd.items()
                 if isinstance(t, str) and k.endswith("_msg")] + own
 
+    @staticmethod
+    def ranged(a, required: bool = True) -> bool:
+        """An argument the ranges check takes: a number with a limit, or a
+        positive number; with `required`, one the line must give once."""
+        if required and (a.optional or a.repeat):
+            return False
+        return a.kind in ("integer", "number", "positive") and \
+            (a.min is not None or a.max is not None or a.kind == "positive")
+
+    def distinct(self, cases):
+        """The examples of an entry whose files differ."""
+        seen, out = set(), []
+        for c in cases:
+            key = (c.wrap, c.text, c.context)
+            if key not in seen:
+                seen.add(key)
+                out.append(c)
+        return out
+
+    @staticmethod
+    def label(eid: str, value: str, i: int) -> str:
+        return f"{eid} {value}" + (f" (example {i})" if i else "")
+
     def gen_ranges(self) -> None:
         hr, reg = self.hr, self.reg
         for k in reg.keys:
-            if not k.examples or len(k.args) != 1:
+            if len(k.args) != 1 or not self.ranged(k.args[0]):
                 continue
             a = k.args[0]
-            if a.kind not in ("integer", "number", "positive") or \
-                    a.optional or a.repeat or \
-                    (a.min is None and a.max is None and
-                     a.kind != "positive"):
+            for i, c in enumerate(self.distinct(k.examples)):
+                found = hr.key_line(reg, c, k.name)
+                if found is None:
+                    continue
+                comp, ln, _ = found
+                for value, ok in self.range_values(a):
+                    file = self.replace_line(comp.file, ln, f"{k.name} {value}")
+                    self.add_range(self.label(k.id, value, i), file,
+                                   comp.context, ln.first, ok,
+                                   self.range_message(a, k.name, value, k),
+                                   k.id, self.mode_of(c, a, value, ok))
+        # INIT methods: METHOD <name> <value>.
+        for m in reg.init_methods:
+            if len(m.args) != 1 or not self.ranged(m.args[0]):
                 continue
-            found = hr.key_line(reg, k.examples[0], k.name)
-            if found is None:
+            a = m.args[0]
+            for i, c in enumerate(self.distinct(m.examples)):
+                got = self.line_of(c, lambda t, m=m: len(t) == 3 and
+                                   t[1] == m.name)
+                if got is None:
+                    continue
+                comp, ln, toks = got
+                for value, ok in self.range_values(a):
+                    file = self.replace_line(
+                        comp.file, ln, " ".join(toks[:2] + [value]))
+                    self.add_range(self.label(m.id, value, i), file,
+                                   comp.context, ln.first, ok,
+                                   self.range_message(a, toks[0], value, m),
+                                   m.id, self.mode_of(c, a, value, ok))
+        # PARAM keys: PARAM <name> <value>, whose values the startup checks
+        # read, so every case is judged when tadah hpo starts.
+        for prm in reg.params:
+            if len(prm.args) != 1 or not self.ranged(prm.args[0]):
                 continue
-            comp, ln, _ = found
-            for value, ok in self.range_values(a):
-                file = self.replace_line(comp.file, ln, f"{k.name} {value}")
-                self.add_range(f"{k.id} {value}", file, comp.context,
-                               ln.first, ok, self.range_message(
-                                   a, k.name, value, k), k.id)
+            a = prm.args[0]
+            for i, c in enumerate(self.distinct(prm.examples)):
+                got = self.line_of(c, lambda t, prm=prm: len(t) == 3 and
+                                   t[1].split("[")[0] == prm.name)
+                if got is None:
+                    continue
+                comp, ln, toks = got
+                rxs = [hr.template_regex(t) for _, t, _ in
+                       hr.entry_templates(prm)] + \
+                    [hr.template_regex(t) for k, t in
+                     reg.reading.fields.items()
+                     if isinstance(t, str) and k.endswith("_msg")]
+                for value, ok in self.range_values(a):
+                    file = self.replace_line(
+                        comp.file, ln, " ".join(toks[:2] + [value]))
+                    self.add_param_range(self.label(prm.id, value, i), file,
+                                         comp.context, ok, rxs, prm.id,
+                                         f"{prm.id} {value}")
         for o in reg.line_options:
-            if not o.examples or len(o.args) != 1 or o.refused:
+            if not o.examples or len(o.args) != 1 or o.refused or \
+                    not self.ranged(o.args[0], required=False):
                 continue
             a = o.args[0]
-            if a.kind not in ("integer", "number", "positive") or \
-                    (a.min is None and a.max is None and
-                     a.kind != "positive"):
-                continue
             got = self.option_in_example(o)
             if got is None:
                 continue
@@ -487,14 +564,37 @@ class Generator:
                 self.add_range(f"{o.id} {value}", file, comp.context,
                                ln.first, ok,
                                self.range_message(a, toks[0], value, o),
-                               o.id)
+                               o.id, self.mode_of(o.examples[0], a, value,
+                                                  ok))
 
-    def add_range(self, label, file, context, line, ok, rxs, eid):
+    def line_of(self, c, match):
+        """The first line of the case `c`, from its slot on, whose tokens
+        `match` takes: the composed file, the line and its tokens."""
+        hr = self.hr
+        comp = hr.compose(self.reg, c.wrap, c.text, c.context)
+        for ln in hr.logical_lines(comp.file):
+            toks = ln.text.split()
+            if ln.first >= comp.slot and match(toks):
+                return comp, ln, toks
+        return None
+
+    def mode_of(self, c, a, value: str, ok: bool) -> str:
+        """How a range case is run: the largest value of a range at the
+        check of its example (startup unless the example says parse), so
+        that a value the parser takes and the run cannot use fails; the
+        others are read only, as the value is judged at its line."""
+        hi = self.limit(a.max)
+        if ok and hi is not None and value == self.fmt(hi):
+            return c.check
+        return "parse"
+
+    def add_range(self, label, file, context, line, ok, rxs, eid,
+                  mode="parse"):
         def judge(res):
-            err = res["parse_error"]
+            err = res["parse_error"] or res["startup_error"]
             what = self.frame_what(err, line) if err else None
             if ok:
-                if what is not None:
+                if err:
                     return f"{label}: a value in the range of {eid} is " \
                            f"refused: {err}"
                 return None
@@ -505,7 +605,41 @@ class Generator:
                 return (f"{label}: refused with a message the registry "
                         f"does not give for the argument: {what}")
             return None
-        self.add("ranges", label, file, context, "parse", judge)
+        self.add("ranges", label, file, context, mode, judge)
+
+    def frame_any(self, error: str) -> str | None:
+        """The {what} of `error` when it is framed at any line, else
+        None."""
+        frame = self.reg.lexing.fields["error_frame"]
+        pre = frame.split("{line}")[0]
+        m = re.match(re.escape(pre) + r"(\d+)", error)
+        return self.frame_what(error, int(m.group(1))) if m else None
+
+    def add_param_range(self, label, file, context, ok, rxs, eid, group):
+        """A PARAM value at or past a limit: the startup checks read it, so
+        a value in the range starts in the file of one example of the
+        entry at least (ASA's User_Initial_Parameters 0 only where the
+        search has no starting point, 1 only where it has one), and one
+        past it is refused in each, at parse or at startup, with a message
+        of the entry or of [reading]."""
+        def judge(res):
+            err = res["parse_error"] or res["startup_error"]
+            if ok:
+                if err:
+                    return f"{label}: a value in the range of {eid} is " \
+                           f"refused: {err}"
+                return None
+            if not err:
+                return (f"{label}: a value past the range of {eid} is not "
+                        f"refused: tadah hpo starts")
+            what = self.frame_any(err)
+            if not any(r.match(what if what is not None else err)
+                       for r in rxs):
+                return (f"{label}: refused with a message the registry "
+                        f"does not give for the argument: {err}")
+            return None
+        self.add("ranges", label, file, context, "startup", judge,
+                 group=group if ok else None)
 
     # ---- words --------------------------------------------------------
     def gen_words(self) -> None:
@@ -513,7 +647,7 @@ class Generator:
         for k in reg.keys:
             if not k.examples:
                 continue
-            for pos, a in self.word_positions(k.args):
+            for pos, a in hr.word_positions(k.args):
                 found = hr.key_line(reg, k.examples[0], k.name)
                 if found is None:
                     continue
@@ -525,7 +659,7 @@ class Generator:
         for o in reg.line_options:
             if not o.examples or o.refused:
                 continue
-            for pos, a in self.word_positions(o.args):
+            for pos, a in hr.word_positions(o.args):
                 got = self.option_in_example(o)
                 if got is None:
                     continue
@@ -533,20 +667,6 @@ class Generator:
                 if pos >= n:
                     continue
                 self.add_words(o.id, a, comp, ln, toks, j + 1 + pos)
-
-    @staticmethod
-    def word_positions(args):
-        """(token position after the key or option, argument) for each word
-        argument whose place is fixed (every argument before it is one
-        required token)."""
-        out = []
-        for i, a in enumerate(args):
-            if a.kind == "word":
-                out.append((i, a))
-            if a.optional or a.repeat or a.kind in ("tokens", "loss",
-                                                    "indices"):
-                break
-        return out
 
     def add_words(self, eid, a, comp, ln, toks, at):
         hr = self.hr
@@ -785,6 +905,29 @@ class Generator:
             return a.split() == b.split()
 
 
+def judge_all(g: Generator, by_id: dict[str, dict]
+              ) -> tuple[list[str], dict[str, int]]:
+    """The problems of the generator and of each case's result, and the
+    number of cases of each check. A group passes when one of its cases
+    does, and fails with the problem of its first case otherwise."""
+    problems = list(g.problems)
+    counts: dict[str, int] = {}
+    groups: dict[str, list[str | None]] = {}
+    for c in g.cases:
+        counts[c.check] = counts.get(c.check, 0) + 1
+        res = by_id.get(c.case["id"])
+        why = f"{c.label}: no result" if res is None else c.judge(res)
+        why = f"{c.check}: {why}" if why else None
+        if c.group is not None:
+            groups.setdefault(c.group, []).append(why)
+        elif why:
+            problems.append(why)
+    for whys in groups.values():
+        if all(whys):
+            problems.append(whys[0])
+    return problems, counts
+
+
 def run(runner: pathlib.Path, registry: pathlib.Path, only: str | None,
         keep: pathlib.Path | None) -> int:
     sys.path.insert(0, str(registry))
@@ -815,18 +958,7 @@ def run(runner: pathlib.Path, registry: pathlib.Path, only: str | None,
                   f"({proc.returncode})")
             return 1
         results = json.loads(results_file.read_text())
-    by_id = {r["id"]: r for r in results}
-    problems = list(g.problems)
-    counts: dict[str, int] = {}
-    for c in g.cases:
-        counts[c.check] = counts.get(c.check, 0) + 1
-        res = by_id.get(c.case["id"])
-        if res is None:
-            problems.append(f"{c.check}: {c.label}: no result")
-            continue
-        why = c.judge(res)
-        if why:
-            problems.append(f"{c.check}: {why}")
+    problems, counts = judge_all(g, {r["id"]: r for r in results})
     if only in (None, "defaults"):
         problems += g.judge_defaults()
     for p in problems:

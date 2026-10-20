@@ -176,6 +176,11 @@ args = [{ name = "library", kind = "word", words = ["NLOPT", "TADAH"] }]
 wrap = "optimizer"
 text = "LIB TADAH"
 
+[[key.examples]]
+wrap = "optimizer"
+text = "LIB NLOPT"
+doc = "The other library."
+
 [[key.invalid]]
 wrap = "optimizer"
 text = "LIB NLOPT TADAH"
@@ -332,15 +337,15 @@ class Registry(unittest.TestCase):
     def test_cases_take_their_defaults_and_their_file(self):
         reg = self.load()
         cases = reg.cases()
-        self.assertEqual(len(cases), 9)
+        self.assertEqual(len(cases), 10)
         ex = next(c for c in cases if c.kind == "example")
         self.assertEqual((ex.owner, ex.part, ex.check, ex.at),
                          ("ROOT.FAILSCORE", "hpotarget.toml", "startup", 1))
         inv = [c for c in cases if c.kind == "invalid"]
         self.assertTrue(all(c.check == "parse" for c in inv))
         self.assertEqual([c.owner for c in reg.cases("part_a.toml")],
-                         ["OPTIMIZER.LIB", "OPTIMIZER.LIB", "OPTIMIZER.SEED",
-                          "OPTIMIZER.SEED"])
+                         ["OPTIMIZER.LIB", "OPTIMIZER.LIB", "OPTIMIZER.LIB",
+                          "OPTIMIZER.SEED", "OPTIMIZER.SEED"])
 
     def test_vocabularies(self):
         reg = self.load()
@@ -393,6 +398,37 @@ class Registry(unittest.TestCase):
         self.edit("part_a.toml", ', words = ["NLOPT", "TADAH"]', "")
         self.assertIn("an argument of kind word lists its words",
                       self.errors())
+
+    def test_an_example_writes_one_of_the_words(self):
+        # Guard: the word an example writes at the place of a word
+        # argument is one of its words, compared in any case; a word left
+        # out of `words` while an example shows it fails (a mutation of
+        # the registry's BUMPGATE, words = ["CANDIDATE"] with an example of
+        # BUMPGATE STRICT, passed every check of the registry).
+        self.edit("part_a.toml", 'words = ["NLOPT", "TADAH"]',
+                  'words = ["TADAH"]')
+        self.assertIn("OPTIMIZER.LIB: part_a.toml OPTIMIZER.LIB example 1 "
+                      "writes NLOPT where the argument <library> takes one "
+                      "of its words (TADAH)", self.errors())
+        self.edit("part_a.toml", 'words = ["TADAH"]',
+                  'words = ["NLOPT", "TADAH"]')
+        self.edit("part_a.toml", 'text = "LIB TADAH"', 'text = "LIB tadah"')
+        self.assertEqual(self.load().keys[1].examples[0].text, "LIB tadah")
+
+    def test_each_word_is_shown_by_an_example(self):
+        # Guard: each word of a word argument is shown by an example, so a
+        # word left out of `words` is caught through it; the lines of a
+        # wrapper are not an example's (the root wrapper has LIB NLOPT
+        # after its slot), and a partial load does not see every example.
+        self.edit("part_a.toml", '[[key.examples]]\nwrap = "optimizer"\n'
+                                 'text = "LIB NLOPT"\n'
+                                 'doc = "The other library."\n', "")
+        self.assertIn("OPTIMIZER.LIB: no example shows the word NLOPT of "
+                      "the argument <library>: add an example that writes "
+                      "it", self.errors())
+        partial = self.load(parts=["part_a.toml"], resolve=False)
+        self.assertFalse(partial.full)
+        self.assertIn("OPTIMIZER.LIB", {k.id for k in partial.keys})
 
     def test_duplicate_id_across_files(self):
         self.edit("part_b.toml", 'id = "LOSS.HUBER"\nname = "HUBER"',

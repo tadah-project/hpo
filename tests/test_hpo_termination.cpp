@@ -5456,6 +5456,47 @@ TEST_CASE("Termination: SIGINT during NOISE_CALIBRATION",
         });
 }
 
+namespace {
+
+/* The peak virtual memory of this process so far, in kB (VmPeak of
+ * /proc/self/status), or -1 when it cannot be read. */
+long vm_peak_kb()
+{
+    std::ifstream in("/proc/self/status");
+    std::string line;
+    while (std::getline(in, line))
+        if (line.rfind("VmPeak:", 0) == 0)
+            return std::stol(line.substr(7));
+    return -1;
+}
+
+}  // namespace
+
+TEST_CASE("Termination: SIGINT during a NOISE_CALIBRATION of 2147483647 "
+          "evaluations, which keeps the losses of the evaluations made only",
+          "[.shutdown_noise_max]")
+{
+    /* NOISE CALIBRATION takes up to 2147483647 evaluations, as MAXEVAL
+     * does. Before the fix the calibration reserved room for all N losses
+     * before its first evaluation, 16 GiB for this N: the run stopped
+     * with "vector::reserve" where that much memory was not available,
+     * and took it otherwise (VmPeak rose by 16 GiB). */
+    const long before = vm_peak_kb();
+    REQUIRE(before > 0);
+    signal_case(
+        "OPTIMIZER\n"
+        "  NOISE\n    CALIBRATION 2147483647\n  ENDNOISE\n"
+        "  STRATEGY\n" + kBfgsLong + "  ENDSTRATEGY\n"
+        "ENDOPTIMIZER\n", SIGINT, "SIGINT", 130, 1, [&] {
+            const std::string journal = read_file("hpo_run.log");
+            CHECK(journal.find("NOISE_CALIBRATION: running 2147483647 evals")
+                  != std::string::npos);
+            const long grew = vm_peak_kb() - before;
+            INFO("VmPeak grew by " << grew << " kB");
+            CHECK(grew < 4L * 1024 * 1024);
+        });
+}
+
 /* ======================================================================
  * drive_run(): every ending flushes the queued results and writes one
  * trailer. The body evaluates known points through a real HPO_Host

@@ -766,6 +766,31 @@ def key_line(reg: "Registry", c: Case, name: str
     return None
 
 
+def word_positions(args: list[Arg]) -> list[tuple[int, Arg]]:
+    """(token position after the key or option, argument) for each word
+    argument whose place is fixed: every argument before it is one required
+    token."""
+    out = []
+    for i, a in enumerate(args):
+        if a.kind == "word":
+            out.append((i, a))
+        if a.optional or a.repeat or a.kind in ("tokens", "loss", "indices"):
+            break
+    return out
+
+
+def word_of(token: str, words: list[str]) -> str | None:
+    """The word of `words` that `token` writes: the word itself, or the one
+    word it matches in any case. An example is accepted by the parser (the
+    conformance test runs it), so a token in another case is a word the
+    parser reads in any case; comparing in any case can only miss a word
+    left out of `words` when another word differs from it in case alone."""
+    if token in words:
+        return token
+    folded = [w for w in words if w.casefold() == token.casefold()]
+    return folded[0] if len(folded) == 1 else None
+
+
 PLACEHOLDER_ANY = "(?s:.*?)"
 
 
@@ -1542,6 +1567,7 @@ class _Loader:
         self.check_references(reg)
         self.check_cases(reg)
         self.check_harness(reg)
+        self.check_words(reg)
         reg.notes = self.notes
         if self.errors:
             raise RegistryError(self.errors)
@@ -1911,6 +1937,93 @@ class _Loader:
                 self.err(e.id, f"{f}: no invalid case shows the message "
                                f"'{t[:90]}': add one, or list it in "
                                "untested with the reason")
+
+    def check_words(self, reg: Registry) -> None:
+        """The word of an example at the place of a word argument is one of
+        its words, and, in a full load, each word is shown by an example:
+        so a word left out of `words` fails while an example shows it, and
+        the parser's own words are compared through the examples, which the
+        conformance test runs. Every example of the registry counts, its
+        own lines, not those of its wrapper: a line of a key in one of its
+        blocks, a line that holds an option on one of its lines (an option
+        word in any case)."""
+        keys = []
+        for k in reg.keys:
+            if k.refused:
+                continue
+            for pos, a in word_positions(k.args):
+                keys.append((k, pos, a))
+        options = []
+        for o in reg.line_options:
+            if o.refused:
+                continue
+            for pos, a in word_positions(o.args):
+                options.append((o, pos, a))
+        if not keys and not options:
+            return
+        forms = {f.id: f for f in reg.forms}
+        shown: dict[tuple[str, int], set[str]] = {}
+
+        def allowed(k: Key) -> set[str]:
+            if k.group in reg.groups:
+                return {b for b in reg.groups[k.group].blocks
+                        if k.name not in {r.key for r in
+                                          reg.block(b).refuse}}
+            return set(k.blocks)
+
+        def on_line(o: LineOption, toks: list[str]) -> bool:
+            for name in o.lines:
+                f = forms.get(name)
+                if f is None:
+                    if toks[0] == name:
+                        return True
+                elif toks[0] == f.line and (
+                        not f.word or f.word.casefold() in
+                        {t.casefold() for t in toks[1:]}):
+                    return True
+            return False
+
+        def see(e: Any, pos: int, a: Arg, tok: str, c: Case) -> None:
+            word = word_of(tok, a.words)
+            if word is None:
+                self.err(e.id, f"{c.part} {c.owner} example {c.index} "
+                               f"writes {tok} where the argument <{a.name}> "
+                               f"takes one of its words "
+                               f"({', '.join(a.words)})")
+            else:
+                shown.setdefault((e.id, pos), set()).add(word)
+
+        for c in reg.cases():
+            if c.kind != "example" or \
+                    (c.wrap != "none" and c.wrap not in reg.wrappers):
+                continue
+            comp = compose(reg, c.wrap, c.text, c.context)
+            last = comp.slot + len(c.text.strip("\n").split("\n")) - 1
+            for ln, block in line_blocks(reg, comp.file):
+                if ln.first < comp.slot or ln.last > last:
+                    continue
+                toks = ln.text.split()
+                for k, pos, a in keys:
+                    if toks[0] == k.name and block in allowed(k) and \
+                            len(toks) > 1 + pos:
+                        see(k, pos, a, toks[1 + pos], c)
+                up = [t if t.startswith("--") else t.upper() for t in toks]
+                for o, pos, a in options:
+                    if o.option not in up[1:] or not on_line(o, toks):
+                        continue
+                    j = up.index(o.option, 1)
+                    if len(toks) > j + 1 + pos:
+                        see(o, pos, a, toks[j + 1 + pos], c)
+        if not self.full:
+            return
+        for e, pos, a in keys + options:
+            missing = [w for w in a.words
+                       if w not in shown.get((e.id, pos), set())]
+            if missing:
+                self.err(e.id, f"no example shows the word"
+                               f"{'s' if len(missing) > 1 else ''} "
+                               f"{', '.join(missing)} of the argument "
+                               f"<{a.name}>: add an example that writes it")
 
     def check_cases(self, reg: Registry) -> None:
         for c in reg.cases():

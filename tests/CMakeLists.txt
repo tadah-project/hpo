@@ -67,7 +67,7 @@ set_tests_properties(hpo_corana1987_protocol PROPERTIES
 set(_hpo_shutdown_cases
     dlib sigterm sigusr2 nlopt multistart prestage gfs anneal_pt anneal_pa
     anneal_pa_threads asa asa_block asa_periodic asa_sampling noise
-    no_usable_loss bfgs_not_run)
+    noise_max no_usable_loss bfgs_not_run)
 if(TADAH_ENABLE_CERES)
     list(APPEND _hpo_shutdown_cases ceres)
 endif()

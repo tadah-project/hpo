@@ -1460,7 +1460,10 @@ TEST_CASE("Strict numbers: STRATEGY N_STARTS, PARALLEL, BUDGET_PER_START and "
 
     const auto topk = strategy_home("TOPK", "PRESTAGE", "DLIB", "BFGS",
                                     "EXPLORE\nLIB DLIB\nALGO GFS\nENDEXPLORE\n");
-    check_uint_key(topk, "an integer >= 1", {"3", "1"}, {"0"});
+    /* TOPK is a count of starting points, at most 1000000
+     * (init_strategy.h, kMaxStartingPoints); it was read up to 2^64 - 1. */
+    check_uint_key(topk, "an integer from 1 to 1000000",
+                   {"3", "1", "1000000"}, {"0", "1000001"});
     CHECK(parse_config(topk.config("3")).spec.stage_topk == 3u);
 }
 
@@ -1486,7 +1489,10 @@ TEST_CASE("Strict numbers: RESTART AFTER_STAGNATION and MAX are integers >= 0",
 TEST_CASE("Strict numbers: INIT K_TOTAL, SEED and the METHOD K",
           "[HPO][hpo_targets][strict_numbers]")
 {
-    check_uint_key(init_home("K_TOTAL"), "an integer >= 0", {"4", "0"}, {});
+    /* K_TOTAL and K are counts of starting points, at most 1000000
+     * (kMaxStartingPoints); they were read up to 2^64 - 1. */
+    check_uint_key(init_home("K_TOTAL"), "an integer from 0 to 1000000",
+                   {"4", "0", "1000000"}, {"1000001"});
     check_uint_key(init_home("SEED"), "an integer >= 0",
                    {"11", "0", "18446744073709551615"},
                    {"18446744073709551616"});
@@ -1504,6 +1510,7 @@ TEST_CASE("Strict numbers: INIT K_TOTAL, SEED and the METHOD K",
         CHECK(parse_error(h.config("3")) == "");
         const bool random = method == "RANDOM";
         std::vector<std::string> rejected = kNotUnsigned;
+        rejected.push_back("1000001");
         if (random)
             CHECK(parse_error(h.config("0")) == "");
         else
@@ -1512,9 +1519,9 @@ TEST_CASE("Strict numbers: INIT K_TOTAL, SEED and the METHOD K",
             INFO("K '" << tok << "'");
             CHECK_THAT(parse_error(h.config(tok)),
                        Catch::StartsWith(h.at() + "INIT METHOD " + method +
-                                         " K must be an integer >= " +
-                                         (random ? "0" : "1") + ", got '" +
-                                         tok + "'"));
+                                         " K must be an integer from " +
+                                         (random ? "0" : "1") +
+                                         " to 1000000, got '" + tok + "'"));
         }
         CHECK_THAT(parse_error(h.config("")),
                    Catch::StartsWith(h.at() + "INIT METHOD " + method +
@@ -1529,7 +1536,10 @@ TEST_CASE("Strict numbers: NOISE CALIBRATION and LOG_HP",
           "[HPO][hpo_targets][strict_numbers]")
 {
     const auto cal = noise_home("CALIBRATION");
-    check_uint_key(cal, "an integer >= 0", {"5", "0", "2"}, {});
+    /* N evaluations, at most the int budget MAXEVAL is; it was read up
+     * to 2^64 - 1. */
+    check_uint_key(cal, "an integer from 0 to 2147483647",
+                   {"5", "0", "2", "2147483647"}, {"2147483648"});
     CHECK_THAT(parse_error(cal.config("1")),
                Catch::StartsWith(cal.at() + "NOISE.CALIBRATION must be 0 (off) "
                                  "or >= 2"));
