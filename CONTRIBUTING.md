@@ -62,9 +62,12 @@ accepted, each invalid line is refused with exactly its message, each
 message of the registry has an invalid line or a stated reason, and every
 name the parser's sources recognise has an entry. Cases generated from the
 entries also compare the blocks of each key, its repeat rule, the ranges
-and words of its arguments, the `PARAM` keys of each optimiser, the options
-of each line and the defaults. A change to what the parser accepts, or to
-one of its messages, therefore changes the registry in the same commit. A new optimiser needs its description in
+and words of its arguments, the ranges of the `INIT` methods and `PARAM`
+keys (the largest value through the startup checks of `tadah hpo`), the
+`PARAM` keys of each optimiser, the options of each line and the defaults,
+and each word of an argument is shown by an example. A change to what the
+parser accepts, or to one of its messages, therefore changes the registry in
+the same commit. A new optimiser needs its description in
 `blueprint/optimizers_doc.toml`, which the check requires, and a new key of
 `blueprint/anneal_keys.toml` an example in the examples of the annealers'
 `PARAM` policy (`blueprint/hpotarget_params.toml`), without which the

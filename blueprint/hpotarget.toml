@@ -63,9 +63,10 @@ written."""
 long_doc = """\
 Trailing blanks are removed, and a line left empty is skipped. A line that \
 ends with \\ continues on the next line, and the two are joined without a \
-separator. Keys are written as this reference writes them: in upper case, \
-and PC_ErRMSE with its lower-case r. Each error names the line it is \
-about: for a continued line, its last line and the joined text."""
+separator. A file whose last line ends with \\ is refused. Keys are \
+written as this reference writes them: in upper case, and PC_ErRMSE with \
+its lower-case r. Each error names the line it is about: for a continued \
+line, its last line and the joined text."""
 comment = "#"
 continuation = "\\"
 key_case = "exact"
@@ -148,7 +149,10 @@ are top-level keys. A line that opens or closes a block holds its key \
 alone."""
 long_doc = """\
 A block opens only where its parents allow, an END line closes the \
-innermost open block, and every block is closed before the file ends."""
+innermost open block, and every block is closed before the file ends. An \
+END line without an open block, or one that names another block than the \
+innermost, is refused. An unknown key is refused, at the top level and in \
+every block."""
 check_order = ["block_lines", "removed", "inner_refusal", "group_keys",
                "init_restart_keys", "noise_keys", "log_hp", "strategy_keys",
                "block_unknown", "root_keys"]

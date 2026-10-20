@@ -3721,7 +3721,7 @@ error = "OPTIM RCUT2B (1) is not a valid search target: D2_EAM takes the cutoff 
 
 [[rule]]
 id = "RULE.settings_taken_by_lines"
-title = "FAILSCORE, LOSS and PC_SCRIPT_TIMEOUT repeat only after a PC_LAMMPS line"
+title = "FAILSCORE, LOSS and PC_SCRIPT_TIMEOUT repeat after PC_LAMMPS or PC_FAILPROBE"
 check = "parse"
 keys = ["ROOT.FAILSCORE", "ROOT.LOSS", "ROOT.PC_SCRIPT_TIMEOUT", "ROOT.MAXTIME", "ROOT.PC_LAMMPS", "ROOT.PC_FAILPROBE"]
 msg = "{key} is set twice (first on line {first_line}{note}) and no PC_LAMMPS or PC_FAILPROBE line between takes the first; each key is given once"
