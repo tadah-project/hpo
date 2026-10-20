@@ -40,7 +40,7 @@ checks = [
   { msg = "tadah hpo: {keys} on the validation set: no dataset has a structure with an energy ({list}): every structure has energy priority 0 (eweight), so the energy metrics have nothing to measure", doc = "When the run starts, once the validation data are read, without a line: no validation structure has an energy to measure; {keys} names the energy metrics of the file, {list} the files." },
   { msg = "{key} requires <target> <weight>", doc = "At the line: fewer than two values follow the key and its index list." },
   { msg = "{key}: unknown flag '{tok}'", doc = "At the line: a token after the weight that is no option of the metric lines." },
-  { msg = "{key}: indexed targets are supported only for PC_ERMSE, PC_FRMSE and PC_SRMSE_GPA", doc = "At the line: an index list, which only PC_ERMSE and PC_FRMSE take." },
+  { msg = "{key}: indexed targets are supported only for PC_ERMSE, PC_FRMSE and PC_SRMSE_GPA", doc = "At the line: an index list, which only PC_ERMSE, PC_FRMSE and PC_SRMSE_GPA take." },
 ]
 
 [[key.args]]
@@ -391,7 +391,7 @@ checks = [
   { msg = "tadah hpo: {keys} on the validation set: no dataset has a structure with an energy ({list}): every structure has energy priority 0 (eweight), so the energy metrics have nothing to measure", doc = "When the run starts, once the validation data are read, without a line: no validation structure has an energy to measure; {keys} names the energy metrics of the file, {list} the files." },
   { msg = "{key} requires <target> <weight>", doc = "At the line: fewer than two values follow the key and its index list." },
   { msg = "{key}: unknown flag '{tok}'", doc = "At the line: a token after the weight that is no option of the metric lines." },
-  { msg = "{key}: indexed targets are supported only for PC_ERMSE, PC_FRMSE and PC_SRMSE_GPA", doc = "At the line: an index list, which only PC_ERMSE and PC_FRMSE take." },
+  { msg = "{key}: indexed targets are supported only for PC_ERMSE, PC_FRMSE and PC_SRMSE_GPA", doc = "At the line: an index list, which only PC_ERMSE, PC_FRMSE and PC_SRMSE_GPA take." },
 ]
 
 [[key.args]]
@@ -483,7 +483,7 @@ checks = [
   { msg = "tadah hpo: {keys} on the validation set: no dataset has a structure with an energy ({list}): every structure has energy priority 0 (eweight), so the energy metrics have nothing to measure", doc = "When the run starts, once the validation data are read, without a line: no validation structure has an energy to measure; {keys} names the energy metrics of the file, {list} the files." },
   { msg = "{key} requires <target> <weight>", doc = "At the line: fewer than two values follow the key and its index list." },
   { msg = "{key}: unknown flag '{tok}'", doc = "At the line: a token after the weight that is no option of the metric lines." },
-  { msg = "{key}: indexed targets are supported only for PC_ERMSE, PC_FRMSE and PC_SRMSE_GPA", doc = "At the line: an index list, which only PC_ERMSE and PC_FRMSE take." },
+  { msg = "{key}: indexed targets are supported only for PC_ERMSE, PC_FRMSE and PC_SRMSE_GPA", doc = "At the line: an index list, which only PC_ERMSE, PC_FRMSE and PC_SRMSE_GPA take." },
 ]
 
 [[key.args]]
