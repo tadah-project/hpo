@@ -573,7 +573,8 @@ static bool dispatch_init_attr(const std::string& key,
         return true;
     }
     if (key=="K_TOTAL") {
-        a.k_total = parse_uint(single_value(iss, key), key);
+        a.k_total = parse_uint(single_value(iss, key), key, 0,
+                               kMaxStartingPoints);
         return true;
     }
     if (key=="SEED") {
@@ -1265,7 +1266,11 @@ void HPOTargets::read(const std::string& fn)
                     continue;
                 }
                 if (key=="CALIBRATION") {
-                    const std::size_t v = parse_uint(single_value(iss, key), key);
+                    /* N evaluations, at most the int budget MAXEVAL is
+                     * (optimizer_block.cpp). */
+                    const std::size_t v = parse_uint(
+                        single_value(iss, key), key, 0,
+                        std::numeric_limits<int>::max());
                     if (v == 1)
                         throw std::runtime_error("NOISE.CALIBRATION must be 0 (off) or >= 2");
                     spec.noise.calibration_n = v;
@@ -1337,9 +1342,11 @@ void HPOTargets::read(const std::string& fn)
                     set_once(&spec.strategy_type, key, "strategy");
                     continue;
                 }
-                /* PRESTAGE knob. */
+                /* PRESTAGE knob: the candidates the refinement starts
+                 * from, a set of starting points (init_strategy.h). */
                 if (key=="TOPK") {
-                    spec.stage_topk = parse_uint(single_value(iss, key), key, 1);
+                    spec.stage_topk = parse_uint(single_value(iss, key), key, 1,
+                                                 kMaxStartingPoints);
                     set_once(&spec.strategy_type, key, "strategy");
                     continue;
                 }

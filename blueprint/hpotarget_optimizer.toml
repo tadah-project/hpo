@@ -1464,6 +1464,11 @@ doc = "Analytical derivatives where they exist, finite differences elsewhere."
 wrap = "opt_lbfgs"
 text = "GRAD_STRATEGY HYBRID"
 
+[[key.examples]]
+doc = "Analytical derivatives only; the training configuration of the example has the settings they need."
+wrap = "opt_lbfgs"
+text = "GRAD_STRATEGY ANALYTICAL"
+
 [[key.invalid]]
 wrap = "opt_lbfgs"
 text = "GRAD_STRATEGY numerical"
@@ -1937,7 +1942,7 @@ id = "STRATEGY.TOPK"
 name = "TOPK"
 blocks = ["STRATEGY"]
 synopsis = "TOPK <n>"
-args = [ { name = "n", kind = "integer", min = 1, max = "UINT64_MAX", what = "{key}" } ]
+args = [ { name = "n", kind = "integer", min = 1, max = 1000000, what = "{key}" } ]
 repeat = "error"
 repeat_msg = "TOPK is set twice in the STRATEGY block (first on line {first_line}); each key is given once"
 default = { literal = "1" }
@@ -1960,7 +1965,7 @@ text = "TOPK 3"
 [[key.invalid]]
 wrap = "opt_prestage"
 text = "TOPK 0"
-error = "TOPK must be an integer >= 1, got '0'"
+error = "TOPK must be an integer from 1 to 1000000, got '0'"
 
 [[key.invalid]]
 wrap = "opt_multistart"
@@ -2229,7 +2234,7 @@ id = "INIT.K_TOTAL"
 name = "K_TOTAL"
 blocks = ["INIT", "RESTART"]
 synopsis = "K_TOTAL <n>"
-args = [ { name = "n", kind = "integer", min = 0, max = "UINT64_MAX", what = "{key}" } ]
+args = [ { name = "n", kind = "integer", min = 0, max = 1000000, what = "{key}" } ]
 repeat = "error"
 repeat_msg = "K_TOTAL is set twice in the {block} block (first on line {first_line}); each key is given once"
 repeat_doc = """\
@@ -2254,10 +2259,17 @@ METHOD CONFIG
 METHOD RANDOM 5
 K_TOTAL 3'''
 
+[[key.examples]]
+doc = "With a single METHOD line K_TOTAL replaces its K: eight points are drawn."
+wrap = "init"
+text = '''
+METHOD RANDOM 2
+K_TOTAL 8'''
+
 [[key.invalid]]
 wrap = "init"
 text = "K_TOTAL x"
-error = "K_TOTAL must be an integer >= 0, got 'x'"
+error = "K_TOTAL must be an integer from 0 to 1000000, got 'x'"
 
 [[key.invalid]]
 wrap = "init"
@@ -2342,6 +2354,11 @@ wrap = "init"
 text = "WARM_ON_MISMATCH error"
 
 [[key.examples]]
+doc = "The default, written out."
+wrap = "init"
+text = "WARM_ON_MISMATCH warn"
+
+[[key.examples]]
 wrap = "init"
 doc = "The seed holds a value outside the box: it is dropped."
 text = '''
@@ -2408,7 +2425,7 @@ error = "INIT METHOD CONFIG takes no arguments"
 [[init_method]]
 id = "METHOD.RANDOM"
 name = "RANDOM"
-args = [ { name = "K", kind = "integer", min = 0, max = "UINT64_MAX", what = "INIT METHOD RANDOM K" } ]
+args = [ { name = "K", kind = "integer", min = 0, max = 1000000, what = "INIT METHOD RANDOM K" } ]
 doc = """\
 K starting points drawn uniformly in the OPTIM boxes, in the coordinates \
 of the search (a log-scaled search parameter is drawn in its logarithm)."""
@@ -2434,12 +2451,12 @@ error = "INIT METHOD RANDOM expects exactly one arg: K"
 [[init_method.invalid]]
 wrap = "init"
 text = "METHOD RANDOM -1"
-error = "INIT METHOD RANDOM K must be an integer >= 0, got '-1'"
+error = "INIT METHOD RANDOM K must be an integer from 0 to 1000000, got '-1'"
 
 [[init_method]]
 id = "METHOD.LHS"
 name = "LHS"
-args = [ { name = "K", kind = "integer", min = 1, max = "UINT64_MAX", what = "INIT METHOD LHS K" } ]
+args = [ { name = "K", kind = "integer", min = 1, max = 1000000, what = "INIT METHOD LHS K" } ]
 doc = """\
 K starting points of a Latin hypercube: each search parameter has one \
 point in each of K equal slices of its box."""
@@ -2455,7 +2472,7 @@ text = "METHOD LHS 4"
 [[init_method.invalid]]
 wrap = "init"
 text = "METHOD LHS 0"
-error = "INIT METHOD LHS K must be an integer >= 1, got '0'"
+error = "INIT METHOD LHS K must be an integer from 1 to 1000000, got '0'"
 
 [[init_method.invalid]]
 wrap = "init"
@@ -2465,7 +2482,7 @@ error = "INIT METHOD LHS expects exactly one arg: K"
 [[init_method]]
 id = "METHOD.SOBOL"
 name = "SOBOL"
-args = [ { name = "K", kind = "integer", min = 1, max = "UINT64_MAX", what = "INIT METHOD SOBOL K" } ]
+args = [ { name = "K", kind = "integer", min = 1, max = 1000000, what = "INIT METHOD SOBOL K" } ]
 doc = """\
 K consecutive points of the Sobol sequence. The seed of the block selects \
 which K points: seeds that differ in their lowest 16 bits draw disjoint \
@@ -2475,12 +2492,6 @@ points."""
 msg = "INIT METHOD SOBOL expects exactly one arg: K"
 doc = "At the METHOD line: SOBOL takes one value."
 
-[[init_method.checks]]
-msg = "INIT METHOD SOBOL: block {index} of {count} points lies beyond the end of the Sobol sequence (2^64 - 1 points); lower K (or K_TOTAL)"
-doc = """\
-When the points are drawn: block {index}, the lowest 16 bits of the seed, \
-of {count} points ends inside the sequence."""
-
 [[init_method.examples]]
 wrap = "init"
 text = "METHOD SOBOL 8"
@@ -2488,14 +2499,12 @@ text = "METHOD SOBOL 8"
 [[init_method.invalid]]
 wrap = "init"
 text = "METHOD SOBOL 0"
-error = "INIT METHOD SOBOL K must be an integer >= 1, got '0'"
+error = "INIT METHOD SOBOL K must be an integer from 1 to 1000000, got '0'"
 
 [[init_method.invalid]]
 wrap = "init"
-text = '''
-METHOD SOBOL 300000000000000
-SEED 65535'''
-error = "INIT METHOD SOBOL: block 65535 of 300000000000000 points lies beyond the end of the Sobol sequence (2^64 - 1 points); lower K (or K_TOTAL)"
+text = "METHOD SOBOL 1000001"
+error = "INIT METHOD SOBOL K must be an integer from 1 to 1000000, got '1000001'"
 
 [[init_method.invalid]]
 wrap = "init"
@@ -2662,7 +2671,7 @@ id = "NOISE.CALIBRATION"
 name = "CALIBRATION"
 blocks = ["NOISE"]
 synopsis = "CALIBRATION <n>"
-args = [ { name = "n", kind = "integer", min = 0, max = "UINT64_MAX", what = "{key}" } ]
+args = [ { name = "n", kind = "integer", min = 0, max = "INT_MAX", what = "{key}" } ]
 repeat = "error"
 repeat_msg = "CALIBRATION is set twice in the NOISE block (first on line {first_line}); each key is given once"
 default = { literal = "0" }
@@ -2694,7 +2703,7 @@ error = "NOISE.CALIBRATION must be 0 (off) or >= 2"
 [[key.invalid]]
 wrap = "noise"
 text = "CALIBRATION -2"
-error = "CALIBRATION must be an integer >= 0, got '-2'"
+error = "CALIBRATION must be an integer from 0 to 2147483647, got '-2'"
 
 [[key.invalid]]
 wrap = "noise"

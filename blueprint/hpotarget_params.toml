@@ -193,6 +193,13 @@ ENDSTRATEGY
 ENDOPTIMIZER
 """
 
+[fixture.params_seed_outside]
+path = "params_seed_outside.tadah"
+doc = "A seed with CGRID2B (1) = 3.0, outside the box [0.5, 1.5] of the wrappers."
+text = """
+CGRID2B 3.0 2.0
+"""
+
 # ---------------------------------------------------- policies ----
 # What each optimiser does with a PARAM key that no [[param]] entry below
 # names for it.
@@ -888,15 +895,42 @@ checks = [
 ]
 examples = [
   { wrap = "params_asa", text = "PARAM User_Initial_Parameters 1" },
+  { wrap = "none", text = """
+OPTIM CGRID2B (1) 0.5 1.5
+PC_ERMSE 0 1
+OPTIMIZER
+INIT
+METHOD WARM params_seed_outside.tadah
+WARM_ON_MISMATCH skip
+ENDINIT
+STRATEGY
+LIB ASA
+ALGO ASA
+MAXEVAL 10
+PARAM User_Initial_Parameters 0
+ENDSTRATEGY
+ENDOPTIMIZER""", doc = "The search has no starting point, as the seed of its only WARM line is dropped: ASA draws its first point." },
 ]
 invalid = [
   { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM User_Initial_Parameters 0", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM User_Initial_Parameters 0 contradicts the INIT block: remove the INIT seed to start from an ASA-generated random point, or drop the PARAM", doc = "The search starts from the training configuration, as the file has no INIT block." },
+  { wrap = "none", check = "startup", at = "ENDOPTIMIZER", text = """
+OPTIM CGRID2B (1) 0.5 1.5
+PC_ERMSE 0 1
+OPTIMIZER
+INIT
+METHOD WARM params_seed_outside.tadah
+WARM_ON_MISMATCH skip
+ENDINIT
+STRATEGY
+LIB ASA
+ALGO ASA
+MAXEVAL 10
+PARAM User_Initial_Parameters 1
+ENDSTRATEGY
+ENDOPTIMIZER""", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM User_Initial_Parameters 1 requires an INIT seed (none resolved)", doc = "The search has no starting point, as the seed of its only WARM line is dropped." },
   { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM User_Initial_Parameters 1.5", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM User_Initial_Parameters must be an integer value" },
   { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM User_Initial_Parameters -1", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM User_Initial_Parameters must be >= 0.000000" },
   { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM User_Initial_Parameters 2", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM User_Initial_Parameters must be <= 1.000000" },
-]
-untested = [
-  { msg = "{phase}: ASA:ASA: PARAM User_Initial_Parameters 1 requires an INIT seed (none resolved)", why = "Every search has a starting point (the values of the training configuration without an INIT block), so no case lacks one." },
 ]
 
 [[param]]
@@ -1062,7 +1096,7 @@ invalid = [
 id = "PARAM.ASA:ASA.User_Tangents"
 name = "User_Tangents"
 optimizers = ["ASA:ASA"]
-args = [{ name = "value", kind = "number", min = 0, max = 1, integral = true }]
+args = [{ name = "value", kind = "number", min = 0, max = 0, integral = true }]
 default = { literal = "0" }
 doc = """\
 Only 0 is accepted: tadah hpo provides no analytic tangents, and the \

@@ -30,6 +30,7 @@
 #include <fstream>
 #include <iostream>
 #include <limits>
+#include <map>
 #include <numeric>
 #include <optional>
 #include <random>
@@ -208,7 +209,13 @@ public:
         const std::uint64_t kk = k;   // >= 1
         constexpr std::uint64_t kMax = std::numeric_limits<std::uint64_t>::max();
         /* The block, points block*k ... block*k + k - 1, must lie within the
-         * sequence: neither the product nor the end may wrap. */
+         * sequence: neither the product nor the end may wrap. A K or K_TOTAL
+         * of the target file is at most kMaxStartingPoints, so every block a
+         * seed selects lies within it; a caller that asks for more points
+         * meets the check below. */
+        static_assert(kMaxStartingPoints <= kMax / 0x10000u,
+                      "block 65535 of kMaxStartingPoints points must end "
+                      "within the Sobol sequence");
         if (block > kMax / kk || kk > kMax - block * kk)
             throw std::runtime_error(
                 "INIT METHOD SOBOL: block " + std::to_string(block) + " of " +
@@ -596,6 +603,7 @@ public:
     {
         std::vector<std::vector<double>> out;
         origins.clear();
+        KeptPoints kept(ctx.spec);
         std::uint64_t base_seed = ctx.seed;
         for (const auto& s : children_) {
             InitContext sub{ctx.spec, ctx.targets, base_seed, ctx.run_context,
@@ -603,7 +611,7 @@ public:
             std::vector<InitOrigin> sub_origins;
             auto pts = s->generate_tagged(sub, s->default_k(), sub_origins);
             for (std::size_t i = 0; i < pts.size(); ++i) {
-                if (!duplicate(out, pts[i], ctx.spec)) {
+                if (kept.keep(pts[i])) {
                     out.push_back(std::move(pts[i]));
                     origins.push_back(sub_origins[i]);
                 }
@@ -625,24 +633,52 @@ public:
         return s;
     }
 private:
-    static bool duplicate(const std::vector<std::vector<double>>& haystack,
-                          const std::vector<double>& p,
-                          const OptimizerSpec& sp)
-    {
-        const double tol = 1.0e-12;
-        /* compare in INTERNAL space so log/lin dims share a meaningful
-         * tolerance. */
-        const std::vector<double> pi = sp.in(p);
-        for (const auto& q : haystack) {
-            if (q.size() != p.size()) continue;
-            const std::vector<double> qi = sp.in(q);
-            bool eq = true;
-            for (std::size_t d = 0; d < p.size() && eq; ++d)
-                if (std::abs(pi[d] - qi[d]) > tol) eq = false;
-            if (eq) return true;
+    /* The points a chain keeps, in the coordinates of the search (INTERNAL
+     * space, so log and linear dimensions share one tolerance). A point
+     * duplicates a kept one of its size when every coordinate differs by
+     * at most kTol; the kept points are ordered by their first coordinate,
+     * so a point is compared only with those whose first coordinate lies
+     * near its own, not with every point kept (a chain of two METHOD lines
+     * of kMaxStartingPoints points each compared about 10^12 pairs). */
+    class KeptPoints {
+    public:
+        explicit KeptPoints(const OptimizerSpec& sp) : sp_(sp) {}
+
+        /* True, and `p` is kept, when no kept point duplicates it. */
+        bool keep(const std::vector<double>& p)
+        {
+            std::vector<double> pi = sp_.in(p);
+            if (pi.empty()) {           // a point of no search parameter
+                if (kept_empty_) return false;
+                kept_empty_ = true;
+                return true;
+            }
+            /* The window is twice the tolerance wide on each side, so that
+             * rounding of x -+ kTol leaves out no point the test below
+             * calls a duplicate. */
+            const double x = pi.front();
+            for (auto it = by_first_.lower_bound(x - 2.0 * kTol);
+                 it != by_first_.end() && it->first <= x + 2.0 * kTol; ++it) {
+                const std::vector<double>& q = internal_[it->second];
+                if (q.size() != pi.size()) continue;
+                bool eq = true;
+                for (std::size_t d = 0; d < pi.size() && eq; ++d)
+                    if (std::abs(pi[d] - q[d]) > kTol) eq = false;
+                if (eq) return false;
+            }
+            by_first_.emplace(x, internal_.size());
+            internal_.push_back(std::move(pi));
+            return true;
         }
-        return false;
-    }
+
+    private:
+        static constexpr double kTol = 1.0e-12;
+        const OptimizerSpec& sp_;
+        std::multimap<double, std::size_t> by_first_;  // first coord -> index
+        std::vector<std::vector<double>> internal_;
+        bool kept_empty_ = false;
+    };
+
     std::vector<std::unique_ptr<InitStrategy>> children_;
 };
 
@@ -694,12 +730,14 @@ private:
 std::unique_ptr<InitStrategy>
 make_one(const InitStrategySpec::Entry& e, const std::string& warm_policy)
 {
-    /* K: a whole integer (strict_parse.h), >= 0 for RANDOM and >= 1 for
-     * LHS and SOBOL, which draw at least one point (their constructors
-     * check it too); stoul read "3x" as 3 and "-1" as 2^64-1. */
+    /* K: a whole integer (strict_parse.h), from 0 for RANDOM and from 1
+     * for LHS and SOBOL, which draw at least one point (their constructors
+     * check it too), to kMaxStartingPoints, the points a block can hold;
+     * stoul read "3x" as 3 and "-1" as 2^64-1. */
     auto parse_k = [&](const std::string& s,
                        std::uint64_t min) -> std::size_t {
-        return parse_uint(s, "INIT METHOD " + e.method + " K", min);
+        return parse_uint(s, "INIT METHOD " + e.method + " K", min,
+                          kMaxStartingPoints);
     };
 
     if (e.method == "CONFIG") {

@@ -1203,6 +1203,11 @@ wrap = "root"
 doc = "In the serial build, hpo_run.log has a warning that THREAD is deprecated."
 text = "PC_ISOLATION THREAD"
 
+[[key.examples]]
+wrap = "root"
+doc = "The default of the serial build, written out."
+text = "PC_ISOLATION PROCESS"
+
 [[key.invalid]]
 wrap = "root"
 text = "PC_ISOLATION process"
@@ -1300,6 +1305,11 @@ wrap = "root"
 text = '''
 FAILSCORE 1e9
 FAILSCORE_GRADING ON'''
+
+[[key.examples]]
+wrap = "root"
+doc = "The default, written out: a failed evaluation scores FAILSCORE."
+text = "FAILSCORE_GRADING OFF"
 
 [[key.invalid]]
 wrap = "root"
@@ -1646,6 +1656,11 @@ text = "RHOBARGATE bcc 3.304 0.95 1.05"
 wrap = "main_ream"
 text = "RHOBARGATE BCC 3.304 0.9 1.1 npts 501 seed warn"
 doc = "Under SEED WARN a starting point that fails is reported, and the run goes on."
+
+[[key.examples]]
+wrap = "main_ream"
+text = "RHOBARGATE hcp 2.86 0.95 1.05"
+doc = "An hcp lattice with the ideal c/a, whose nearest neighbours lie at a."
 
 [[key.invalid]]
 wrap = "root"
@@ -2202,6 +2217,11 @@ trained."""
 wrap = "main_ream"
 text = "RHOGATE 1e-5 SEED WARN"
 
+[[line_option.examples]]
+wrap = "main_ream"
+doc = "The default, written out."
+text = "RHOGATE 1e-5 SEED ERROR"
+
 [[line_option.invalid]]
 wrap = "root"
 text = "RHOGATE 1e-5 SEED IGNORE"
@@ -2273,6 +2293,11 @@ trained."""
 [[line_option.examples]]
 wrap = "main_ream"
 text = "RHOBARGATE bcc 3.304 0.9 1.1 SEED WARN"
+
+[[line_option.examples]]
+wrap = "main_ream"
+doc = "The default, written out."
+text = "RHOBARGATE bcc 3.304 0.95 1.05 SEED ERROR"
 
 [[line_option.invalid]]
 wrap = "root"
