@@ -2653,7 +2653,8 @@ std::string HPOTargets::optim_retired_key_error(const std::string& key) {
   static const char* const retired[] = {"EWEIGHT",      "FWEIGHT",
                                         "SWEIGHT",      "WDBFILE_AUTO",
                                         "EWEIGHT_TEMP", "UNCERTAINTY",
-                                        "WCOV",         "WNOISE"};
+                                        "WCOV",         "WNOISE",
+                                        "ERROR"};
   const std::string k = core::to_upper(key);
   for (const char* r : retired) {
     if (k != r) continue;
