@@ -32,8 +32,12 @@ long_doc = """\
 The term needs a validation configuration (--validation). The weight is a \
 number >= 0. With a weight of 0 the term is 0 but still counts in the mean \
 of the terms of an evaluation, and --skip-above and --skip-rel still apply \
-to the metric."""
+to the metric. A structure with energy weight 0 (eweight) is left out of \
+the metric. A dataset whose structures all have energy weight 0 is not \
+measured: the average leaves it out, and hpo_run.log names it. A run in \
+which no validation dataset has an energy is refused."""
 checks = [
+  { msg = "tadah hpo: {keys} on the validation set: no dataset has a structure with an energy ({list}): every structure has energy weight 0 (eweight), so the energy metrics have nothing to measure", doc = "When the run starts, once the validation data are read, without a line: no validation structure has an energy to measure; {keys} names the energy metrics of the file, {list} the files." },
   { msg = "{key} requires <target> <weight>", doc = "At the line: fewer than two values follow the key and its index list." },
   { msg = "{key}: unknown flag '{tok}'", doc = "At the line: a token after the weight that is no option of the metric lines." },
   { msg = "{key}: indexed targets are supported only for PC_ERMSE and PC_FRMSE", doc = "At the line: an index list, which only PC_ERMSE and PC_FRMSE take." },
@@ -99,6 +103,22 @@ error = "unknown key 'PC_EMAE' in this block"
 doc = "A metric line is a top-level key."
 
 [[key.invalid]]
+wrap = "none"
+check = "check"
+context = "lines_val_no_energy"
+at = "none"
+doc = "The validation dataset has energy weight 0 in every structure."
+text = '''
+PC_EMAE 5 1
+OPTIM CGRID2B (1) 0.5 1.5
+OPTIMIZER
+LIB NLOPT
+ALGO LN_SBPLX
+MAXEVAL 10
+ENDOPTIMIZER'''
+error = "tadah hpo: PC_EMAE on the validation set: no dataset has a structure with an energy (lines_no_energy.db): every structure has energy weight 0 (eweight), so the energy metrics have nothing to measure"
+
+[[key.invalid]]
 wrap = "root"
 at = 2
 text = '''
@@ -124,7 +144,11 @@ The indices count the DBFILE entries of the validation configuration \
 from 1. A file has either one line without indices or indexed lines \
 that give each dataset one target and weight; when the run starts, \
 every dataset needs one, and no index may exceed the number of \
-datasets. The weight is a number >= 0."""
+datasets. The weight is a number >= 0. A structure with energy weight 0 \
+(eweight) is left out of the metric. A dataset whose structures all have \
+energy weight 0 is not measured: the average leaves it out, and \
+hpo_run.log names it; an indexed line that gives it a weight above 0 is \
+refused. A run in which no validation dataset has an energy is refused."""
 untested = [
   { msg = "{key} requires validation DBFILE entries", why = "Needs a validation configuration without DBFILE; in tadah hpo --check the training configuration of a case is also its validation configuration, and its own checks come first." },
 ]
@@ -168,6 +192,20 @@ doc = """\
 When the run starts, without a line: the indexed lines give some \
 datasets no target and weight; {list} has one line for each, \
 "  dataset <i> (<file>)"."""
+
+[[key.checks]]
+msg = "tadah hpo: {keys} on the validation set: no dataset has a structure with an energy ({list}): every structure has energy weight 0 (eweight), so the energy metrics have nothing to measure"
+doc = """\
+When the run starts, once the validation data are read, without a line: \
+no validation structure has an energy to measure; {keys} names the energy \
+metrics of the file, {list} the files."""
+
+[[key.checks]]
+msg = "tadah hpo: PC_ERMSE ({index}) gives weight {value} to validation dataset {index} ({file}), which has no structure with an energy: every one has energy weight 0 (eweight). Only weight 0 is accepted for it (or the validation set without the file)"
+doc = """\
+When the run starts, once the validation data are read, without a line: \
+an indexed line gives a weight above 0 to a dataset whose structures all \
+have energy weight 0."""
 
 [[key.checks]]
 msg = "{key} requires <target> <weight>"
@@ -298,6 +336,39 @@ at = "none"
 text = "PC_ERMSE (1-4) 2 1"
 error = "PC_ERMSE: dataset 4 on line 1 is outside validation DBFILE range 1-1"
 
+[[key.invalid]]
+wrap = "none"
+check = "check"
+context = "lines_val_no_energy"
+at = "none"
+doc = "The validation dataset has energy weight 0 in every structure."
+text = '''
+PC_ERMSE 2 1
+OPTIM CGRID2B (1) 0.5 1.5
+OPTIMIZER
+LIB NLOPT
+ALGO LN_SBPLX
+MAXEVAL 10
+ENDOPTIMIZER'''
+error = "tadah hpo: PC_ERMSE on the validation set: no dataset has a structure with an energy (lines_no_energy.db): every structure has energy weight 0 (eweight), so the energy metrics have nothing to measure"
+
+[[key.invalid]]
+wrap = "none"
+check = "check"
+context = "lines_val_energy_none"
+at = "none"
+doc = "The second validation dataset has energy weight 0 in every structure, and an indexed line gives it a weight above 0."
+text = '''
+PC_ERMSE (1) 2 1
+PC_ERMSE (2) 2 0.5
+OPTIM CGRID2B (1) 0.5 1.5
+OPTIMIZER
+LIB NLOPT
+ALGO LN_SBPLX
+MAXEVAL 10
+ENDOPTIMIZER'''
+error = "tadah hpo: PC_ERMSE (2) gives weight 0.5 to validation dataset 2 (lines_no_energy.db), which has no structure with an energy: every one has energy weight 0 (eweight). Only weight 0 is accepted for it (or the validation set without the file)"
+
 [[key]]
 id = "ROOT.PC_ErRMSE"
 name = "PC_ErRMSE"
@@ -311,8 +382,13 @@ per mille: the LOSS function of the metric averaged over the datasets, \
 its target and its weight."""
 long_doc = """\
 The term needs a validation configuration (--validation). The weight is \
-a number >= 0."""
+a number >= 0. A structure with energy \
+weight 0 (eweight) is left out of the metric. A dataset whose structures \
+all have energy weight 0 is not measured: the average leaves it out, and \
+hpo_run.log names it. A run in which no validation dataset has an energy \
+is refused."""
 checks = [
+  { msg = "tadah hpo: {keys} on the validation set: no dataset has a structure with an energy ({list}): every structure has energy weight 0 (eweight), so the energy metrics have nothing to measure", doc = "When the run starts, once the validation data are read, without a line: no validation structure has an energy to measure; {keys} names the energy metrics of the file, {list} the files." },
   { msg = "{key} requires <target> <weight>", doc = "At the line: fewer than two values follow the key and its index list." },
   { msg = "{key}: unknown flag '{tok}'", doc = "At the line: a token after the weight that is no option of the metric lines." },
   { msg = "{key}: indexed targets are supported only for PC_ERMSE and PC_FRMSE", doc = "At the line: an index list, which only PC_ERMSE and PC_FRMSE take." },
@@ -369,6 +445,22 @@ wrap = "root"
 text = "PC_ErRMSE 10 -1"
 error = "PC_ErRMSE <weight> must be a number >= 0, got '-1'"
 
+[[key.invalid]]
+wrap = "none"
+check = "check"
+context = "lines_val_no_energy"
+at = "none"
+doc = "The validation dataset has energy weight 0 in every structure."
+text = '''
+PC_ErRMSE 10 1
+OPTIM CGRID2B (1) 0.5 1.5
+OPTIMIZER
+LIB NLOPT
+ALGO LN_SBPLX
+MAXEVAL 10
+ENDOPTIMIZER'''
+error = "tadah hpo: PC_ErRMSE on the validation set: no dataset has a structure with an energy (lines_no_energy.db): every structure has energy weight 0 (eweight), so the energy metrics have nothing to measure"
+
 [[key]]
 id = "ROOT.PC_ERSQ"
 name = "PC_ERSQ"
@@ -382,8 +474,13 @@ energies of the validation datasets: the LOSS function of the metric \
 averaged over the datasets, its target and its weight."""
 long_doc = """\
 The term needs a validation configuration (--validation). The weight is \
-a number >= 0."""
+a number >= 0. A structure with energy \
+weight 0 (eweight) is left out of the metric. A dataset whose structures \
+all have energy weight 0 is not measured: the average leaves it out, and \
+hpo_run.log names it. A run in which no validation dataset has an energy \
+is refused."""
 checks = [
+  { msg = "tadah hpo: {keys} on the validation set: no dataset has a structure with an energy ({list}): every structure has energy weight 0 (eweight), so the energy metrics have nothing to measure", doc = "When the run starts, once the validation data are read, without a line: no validation structure has an energy to measure; {keys} names the energy metrics of the file, {list} the files." },
   { msg = "{key} requires <target> <weight>", doc = "At the line: fewer than two values follow the key and its index list." },
   { msg = "{key}: unknown flag '{tok}'", doc = "At the line: a token after the weight that is no option of the metric lines." },
   { msg = "{key}: indexed targets are supported only for PC_ERMSE and PC_FRMSE", doc = "At the line: an index list, which only PC_ERMSE and PC_FRMSE take." },
@@ -435,6 +532,22 @@ wrap = "root"
 text = "PC_ERSQ 1 -1"
 error = "PC_ERSQ <weight> must be a number >= 0, got '-1'"
 
+[[key.invalid]]
+wrap = "none"
+check = "check"
+context = "lines_val_no_energy"
+at = "none"
+doc = "The validation dataset has energy weight 0 in every structure."
+text = '''
+PC_ERSQ 1 1
+OPTIM CGRID2B (1) 0.5 1.5
+OPTIMIZER
+LIB NLOPT
+ALGO LN_SBPLX
+MAXEVAL 10
+ENDOPTIMIZER'''
+error = "tadah hpo: PC_ERSQ on the validation set: no dataset has a structure with an energy (lines_no_energy.db): every structure has energy weight 0 (eweight), so the energy metrics have nothing to measure"
+
 [[key]]
 id = "ROOT.PC_SRMSE"
 name = "PC_SRMSE"
@@ -450,10 +563,8 @@ long_doc = """\
 The term needs a validation configuration (--validation). The weight is \
 a number >= 0. A dataset whose \
 structures all have stress weight 0 is not measured: the average leaves \
-it out, and hpo_run.log names it."""
-untested = [
-  { msg = "tadah hpo: PC_SRMSE on the validation set: no dataset has a stress tensor ({list}): every structure has stress weight 0 (sweight), so the stress metrics have nothing to measure", why = "Comes once the validation data are read, which no case does." },
-]
+it out, and hpo_run.log names it. A run in which no validation dataset has \
+a stress tensor is refused."""
 
 [[key.args]]
 name = "target"
@@ -519,6 +630,22 @@ wrap = "root"
 text = "PC_SRMSE 0.001 1 --skip 3"
 error = "PC_SRMSE: unknown flag '--skip'"
 
+[[key.invalid]]
+wrap = "none"
+check = "check"
+context = "lines_val_no_stress"
+at = "none"
+doc = "The validation dataset has stress weight 0 in every structure."
+text = '''
+PC_SRMSE 0.001 1
+OPTIM CGRID2B (1) 0.5 1.5
+OPTIMIZER
+LIB NLOPT
+ALGO LN_SBPLX
+MAXEVAL 10
+ENDOPTIMIZER'''
+error = "tadah hpo: PC_SRMSE on the validation set: no dataset has a stress tensor (lines_no_stress.db): every structure has stress weight 0 (sweight), so the stress metrics have nothing to measure"
+
 [[key]]
 id = "ROOT.PC_FRMSE"
 name = "PC_FRMSE"
@@ -540,11 +667,9 @@ every dataset needs one, and no index may exceed the number of \
 datasets. The weight is a number >= 0. A dataset whose structures all \
 have force weight 0 is not measured: the average leaves it out, and \
 hpo_run.log names it; an indexed line that gives it a weight above 0 is \
-refused."""
+refused. A run in which no validation dataset has forces is refused."""
 untested = [
   { msg = "{key} requires validation DBFILE entries", why = "Needs a validation configuration without DBFILE; in tadah hpo --check the training configuration of a case is also its validation configuration, and its own checks come first." },
-  { msg = "tadah hpo: PC_FRMSE on the validation set: no dataset has a structure with forces ({list}): every structure has force weight 0 (fweight), so the force metrics have nothing to measure", why = "Comes once the validation data are read, which no case does." },
-  { msg = "tadah hpo: PC_FRMSE ({index}) gives weight {value} to validation dataset {index} ({file}), which has no structure with forces: every one has force weight 0 (fweight). Give it weight 0, or remove the file from the validation set", why = "Comes once the validation data are read, which no case does." },
 ]
 
 [[key.args]]
@@ -594,7 +719,7 @@ When the run starts, once the validation data are read, without a line: \
 no validation structure has forces to measure; {list} names the files."""
 
 [[key.checks]]
-msg = "tadah hpo: PC_FRMSE ({index}) gives weight {value} to validation dataset {index} ({file}), which has no structure with forces: every one has force weight 0 (fweight). Give it weight 0, or remove the file from the validation set"
+msg = "tadah hpo: PC_FRMSE ({index}) gives weight {value} to validation dataset {index} ({file}), which has no structure with forces: every one has force weight 0 (fweight). Only weight 0 is accepted for it (or the validation set without the file)"
 doc = """\
 When the run starts, once the validation data are read, without a line: \
 an indexed line gives a weight above 0 to a dataset whose structures all \
@@ -804,6 +929,39 @@ text = "PC_EMAE 5 1 --skip-rel 2 --skip-rel 3"
 error = "PC_EMAE: repeated --skip-rel"
 
 # ====================================================== PC_LAMMPS =======
+
+[[key.invalid]]
+wrap = "none"
+check = "check"
+context = "lines_val_no_forces"
+at = "none"
+doc = "The validation dataset has force weight 0 in every structure."
+text = '''
+PC_FRMSE 0.1 1
+OPTIM CGRID2B (1) 0.5 1.5
+OPTIMIZER
+LIB NLOPT
+ALGO LN_SBPLX
+MAXEVAL 10
+ENDOPTIMIZER'''
+error = "tadah hpo: PC_FRMSE on the validation set: no dataset has a structure with forces (lines_no_forces.db): every structure has force weight 0 (fweight), so the force metrics have nothing to measure"
+
+[[key.invalid]]
+wrap = "none"
+check = "check"
+context = "lines_val_forces_none"
+at = "none"
+doc = "The second validation dataset has force weight 0 in every structure, and an indexed line gives it a weight above 0."
+text = '''
+PC_FRMSE (1) 0.1 1
+PC_FRMSE (2) 0.1 0.5
+OPTIM CGRID2B (1) 0.5 1.5
+OPTIMIZER
+LIB NLOPT
+ALGO LN_SBPLX
+MAXEVAL 10
+ENDOPTIMIZER'''
+error = "tadah hpo: PC_FRMSE (2) gives weight 0.5 to validation dataset 2 (lines_no_forces.db), which has no structure with forces: every one has force weight 0 (fweight). Only weight 0 is accepted for it (or the validation set without the file)"
 
 [[key]]
 id = "ROOT.PC_LAMMPS"
@@ -4205,6 +4363,101 @@ OALGO 4
 LAMBDA 1e-3
 """
 
+[context.lines_val_no_energy]
+doc = "The default training configuration with the dataset lines_no_energy.db, which tadah hpo --check also takes as the validation configuration."
+config = """
+ATOM H
+WATOM 1.0
+DBFILE lines_no_energy.db
+INIT2B true
+INITMB false
+TYPE2B D2_BP 2 2 H H
+CGRID2B 1.0 2.0
+SGRID2B 0.5 1.0
+RCTYPE2B Cut_Cos
+RCUT2B 5.0
+VERBOSE 0
+MODEL M_BLR BF_Linear
+OALGO 4
+LAMBDA 1e-3
+"""
+
+[context.lines_val_energy_none]
+doc = "The default training configuration with the datasets lines_weighted.db and lines_no_energy.db, which tadah hpo --check also takes as the validation configuration."
+config = """
+ATOM H
+WATOM 1.0
+DBFILE lines_weighted.db lines_no_energy.db
+INIT2B true
+INITMB false
+TYPE2B D2_BP 2 2 H H
+CGRID2B 1.0 2.0
+SGRID2B 0.5 1.0
+RCTYPE2B Cut_Cos
+RCUT2B 5.0
+VERBOSE 0
+MODEL M_BLR BF_Linear
+OALGO 4
+LAMBDA 1e-3
+"""
+
+[context.lines_val_no_forces]
+doc = "The default training configuration with the dataset lines_no_forces.db, which tadah hpo --check also takes as the validation configuration."
+config = """
+ATOM H
+WATOM 1.0
+DBFILE lines_no_forces.db
+INIT2B true
+INITMB false
+TYPE2B D2_BP 2 2 H H
+CGRID2B 1.0 2.0
+SGRID2B 0.5 1.0
+RCTYPE2B Cut_Cos
+RCUT2B 5.0
+VERBOSE 0
+MODEL M_BLR BF_Linear
+OALGO 4
+LAMBDA 1e-3
+"""
+
+[context.lines_val_forces_none]
+doc = "The default training configuration with the datasets lines_weighted.db and lines_no_forces.db, which tadah hpo --check also takes as the validation configuration."
+config = """
+ATOM H
+WATOM 1.0
+DBFILE lines_weighted.db lines_no_forces.db
+INIT2B true
+INITMB false
+TYPE2B D2_BP 2 2 H H
+CGRID2B 1.0 2.0
+SGRID2B 0.5 1.0
+RCTYPE2B Cut_Cos
+RCUT2B 5.0
+VERBOSE 0
+MODEL M_BLR BF_Linear
+OALGO 4
+LAMBDA 1e-3
+"""
+
+[context.lines_val_no_stress]
+doc = "The default training configuration with the dataset lines_no_stress.db, which tadah hpo --check also takes as the validation configuration."
+config = """
+ATOM H
+WATOM 1.0
+DBFILE lines_no_stress.db
+INIT2B true
+INITMB false
+TYPE2B D2_BP 2 2 H H
+CGRID2B 1.0 2.0
+SGRID2B 0.5 1.0
+RCTYPE2B Cut_Cos
+RCUT2B 5.0
+VERBOSE 0
+MODEL M_BLR BF_Linear
+OALGO 4
+LAMBDA 1e-3
+"""
+
 [context.lines_fixweight]
 doc = "The default training configuration with model weight 2 fixed (FIXINDEX 2, FIXWEIGHT 0.5)."
 config = """
@@ -4525,6 +4778,122 @@ path = "lines_pc2.in"
 doc = "A second LAMMPS script, with the equal-style variable E2."
 text = """
 variable E2 equal 2.0
+"""
+
+[fixture.lines_weighted]
+path = "lines_weighted.db"
+doc = "Two H2 cells with an energy, forces and a stress tensor: every weight 1."
+text = """
+H2 at 0.8 A
+1 1 1
+-1.2 0
+6 0 0
+0 6 0
+0 0 6
+0.01 0 0
+0 0.01 0
+0 0 0.01
+H 0 0 0 0.1 0 0
+H 0.8 0 0 -0.1 0 0
+
+H2 at 1.0 A
+1 1 1
+-1.3 0
+6 0 0
+0 6 0
+0 0 6
+0.01 0 0
+0 0.01 0
+0 0 0.01
+H 0 0 0 0.1 0 0
+H 1.0 0 0 -0.1 0 0
+"""
+
+[fixture.lines_no_energy]
+path = "lines_no_energy.db"
+doc = "The two H2 cells of lines_weighted.db with energy weight 0 (eweight)."
+text = """
+H2 at 0.8 A
+0 1 1
+-1.2 0
+6 0 0
+0 6 0
+0 0 6
+0.01 0 0
+0 0.01 0
+0 0 0.01
+H 0 0 0 0.1 0 0
+H 0.8 0 0 -0.1 0 0
+
+H2 at 1.0 A
+0 1 1
+-1.3 0
+6 0 0
+0 6 0
+0 0 6
+0.01 0 0
+0 0.01 0
+0 0 0.01
+H 0 0 0 0.1 0 0
+H 1.0 0 0 -0.1 0 0
+"""
+
+[fixture.lines_no_forces]
+path = "lines_no_forces.db"
+doc = "The two H2 cells of lines_weighted.db with force weight 0 (fweight)."
+text = """
+H2 at 0.8 A
+1 0 1
+-1.2 0
+6 0 0
+0 6 0
+0 0 6
+0.01 0 0
+0 0.01 0
+0 0 0.01
+H 0 0 0 0.1 0 0
+H 0.8 0 0 -0.1 0 0
+
+H2 at 1.0 A
+1 0 1
+-1.3 0
+6 0 0
+0 6 0
+0 0 6
+0.01 0 0
+0 0.01 0
+0 0 0.01
+H 0 0 0 0.1 0 0
+H 1.0 0 0 -0.1 0 0
+"""
+
+[fixture.lines_no_stress]
+path = "lines_no_stress.db"
+doc = "The two H2 cells of lines_weighted.db with stress weight 0 (sweight)."
+text = """
+H2 at 0.8 A
+1 1 0
+-1.2 0
+6 0 0
+0 6 0
+0 0 6
+0.01 0 0
+0 0.01 0
+0 0 0.01
+H 0 0 0 0.1 0 0
+H 0.8 0 0 -0.1 0 0
+
+H2 at 1.0 A
+1 1 0
+-1.3 0
+6 0 0
+0 6 0
+0 0 6
+0.01 0 0
+0 0.01 0
+0 0 0.01
+H 0 0 0 0.1 0 0
+H 1.0 0 0 -0.1 0 0
 """
 
 [fixture.lines_setfl]
