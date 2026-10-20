@@ -844,6 +844,6 @@ TEST_CASE("Every retired key of the blueprint is refused as an OPTIM target",
               "OPTIM " + key + " is not a valid search target: " +
                   tadah::core::retired_key_text(key, info));
     }
-    CHECK(n == 5);
+    CHECK(n == 8);
     CHECK(HPOTargets::optim_retired_key_error("ESIGMA").empty());
 }
