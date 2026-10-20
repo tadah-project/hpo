@@ -748,12 +748,16 @@ const std::string kRecordOpen =
 const std::string kRecordEnd = "# --- end of training record ---";
 
 /* The training record of the potential text @p text: its lines without
- * their leading "# ", whether its opening and end lines were found, and
- * the indices of the end line and of the first key line after it. */
+ * their leading "# " -- those of the keys (lines), then the fit balance
+ * table, from its "Fit balance:" line on (balance), which best_pot.tadah
+ * ends its record with and the DUMP and BDUMP archives do not have --,
+ * whether its opening and end lines were found, and the indices of the end
+ * line and of the first key line after it. */
 struct PotRecord {
     bool opened = false, closed = false;
     std::size_t end_at = 0, first_key = 0;
     std::vector<std::string> lines;
+    std::vector<std::string> balance;
 };
 PotRecord pot_record(const std::string& text) {
     PotRecord r;
@@ -775,9 +779,26 @@ PotRecord pot_record(const std::string& text) {
             r.end_at = n;
             continue;
         }
-        r.lines.push_back(l.rfind("# ", 0) == 0 ? l.substr(2) : l);
+        const std::string line = l.rfind("# ", 0) == 0 ? l.substr(2) : l;
+        if (!r.balance.empty() || line.rfind("Fit balance:", 0) == 0)
+            r.balance.push_back(line);
+        else
+            r.lines.push_back(line);
     }
     return r;
+}
+
+/* Whether @p balance is a fit balance table of one quantity in one
+ * dataset: its first line "Fit balance: LAMBDA ...", the line of its error
+ * scale, the column header, the row of the quantity over every dataset and
+ * the prior's row (MLIP fit_balance_lines). */
+bool one_row_balance_table(const std::vector<std::string>& balance) {
+    return balance.size() == 5 &&
+           balance[0].rfind("Fit balance: LAMBDA ", 0) == 0 &&
+           balance[1].rfind("  error scales: ", 0) == 0 &&
+           balance[2].rfind("  quantity  dataset", 0) == 0 &&
+           balance[3].find(" all ") != std::string::npos &&
+           balance[4].rfind("  prior", 0) == 0;
 }
 
 /* The tokens of each key line of the potential text @p text (comment
@@ -811,7 +832,11 @@ std::map<std::string, std::vector<std::string>> key_lines(const std::string& tex
  * <config.val>", "HPOTARGET <config.hpo>", "VERBOSE 0", "AUDIT off",
  * "HEALTH_LOG off" (the context's values, in that order; the HPOTargets
  * here is built without the KeyProvenance of a command line, so every
- * stored key counts). The DATA section of best_pot.tadah's header gives the
+ * stored key counts), and best_pot.tadah's record ends with the balance
+ * table of the evaluation's fit (its first line, the energies' error
+ * scale, the column header, the energies' row and the prior's row), which
+ * the archives do not have. The
+ * DATA section of best_pot.tadah's header gives the
  * training dataset's statistics without its path: the one line of each
  * file that names train.db is the record's DBFILE line.
  * Before the fix: no file had a training record (config.hpo and
@@ -902,40 +927,22 @@ TEST_CASE("The potentials of an evaluation keep the inputs of the run in "
             CHECK(lines.count(key) == 0u);
         }
         /* The training record: the lines between its opening and end
-         * lines, right above the first key line. */
-        std::vector<std::string> record;
-        bool opened = false, closed = false;
-        std::size_t end_at = 0, first_key = 0;
-        {
-            std::istringstream in(text);
-            std::size_t n = 0;
-            for (std::string l; std::getline(in, l); ++n) {
-                if (!opened) {
-                    opened = l == kRecordOpen;
-                    continue;
-                }
-                if (closed) {
-                    std::istringstream ls(l);
-                    std::string key;
-                    if ((ls >> key) && key[0] != '#') { first_key = n; break; }
-                    continue;
-                }
-                if (l == kRecordEnd) {
-                    closed = true;
-                    end_at = n;
-                    continue;
-                }
-                record.push_back(l.rfind("# ", 0) == 0 ? l.substr(2) : l);
-            }
-        }
-        REQUIRE(opened);
-        REQUIRE(closed);
-        CHECK(first_key == end_at + 1);
-        CHECK(record == std::vector<std::string>{
-                            "DBFILE " + train.string(),
-                            "VALIDATION " + val.string(),
-                            "HPOTARGET " + hpo.string(), "VERBOSE 0",
-                            "AUDIT off", "HEALTH_LOG off"});
+         * lines, right above the first key line; best_pot.tadah's ends with
+         * the balance table of the evaluation's fit, the archives' do
+         * not. */
+        const PotRecord r = pot_record(text);
+        REQUIRE(r.opened);
+        REQUIRE(r.closed);
+        CHECK(r.first_key == r.end_at + 1);
+        CHECK(r.lines == std::vector<std::string>{
+                             "DBFILE " + train.string(),
+                             "VALIDATION " + val.string(),
+                             "HPOTARGET " + hpo.string(), "VERBOSE 0",
+                             "AUDIT off", "HEALTH_LOG off"});
+        if (f == files.front())
+            CHECK(one_row_balance_table(r.balance));
+        else
+            CHECK(r.balance.empty());
         /* train.db is named by the record only (best_pot.tadah's DATA
          * section gives its statistics without the path). */
         {
@@ -968,7 +975,9 @@ TEST_CASE("The potentials of an evaluation keep the inputs of the run in "
  * no key line of the five, the record "DBFILE <train.db>", "EFILTER -1 1",
  * "FFILTER 100", "ESHIFT_DBATOM true", "ZERO_COM_FORCE true", "WDBFILE 1",
  * "VALIDATION <config.val>", "HPOTARGET <config.hpo>", "VERBOSE 0" (the
- * context's values, the order of the record), and the ESHIFT key line that
+ * context's values, the order of the record; best_pot.tadah's then ends
+ * with the balance table of the evaluation's fit, the archives' not), and
+ * the ESHIFT key line that
  * ESHIFT_DBATOM resolved on the training data (one value, not 0), the
  * model's energy reference. (The retired WDBFILE_AUTO and EWEIGHT_TEMP,
  * which this case had too, are refused by a fit.)
@@ -1045,6 +1054,10 @@ TEST_CASE("The potentials of an evaluation keep the keys that prepared the "
                              "ZERO_COM_FORCE true", "WDBFILE 1",
                              "VALIDATION " + val.string(),
                              "HPOTARGET " + hpo.string(), "VERBOSE 0"});
+        if (f == files.front())
+            CHECK(one_row_balance_table(r.balance));
+        else
+            CHECK(r.balance.empty());
         REQUIRE(lines.count("ESHIFT") == 1u);
         REQUIRE(lines.at("ESHIFT").size() == 1u);
         CHECK(std::stod(lines.at("ESHIFT").front()) != 0.0);
