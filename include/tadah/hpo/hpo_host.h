@@ -200,6 +200,13 @@ struct EvalResult
 
     ParamVec                               params;
 
+    /* The balance table of this evaluation's fit (mlip::fit_balance_lines:
+     * the table, or "Fit balance: none (...)"), computed from the fit the
+     * thread's trainer holds when the evaluation may become the new best,
+     * before best_mtx_ is taken; empty otherwise. persist_durable_best
+     * appends it to the training record of best_pot.tadah. */
+    std::vector<std::string>               balance;
+
     bool                                   is_best         = false;
     bool                                   was_nan_clamped = false;
     // bool                                   run_lammps = false;   // option for the future?
@@ -585,6 +592,11 @@ private:
      * journals the failure, sets `journalled` and throws
      * durable_best::Error. */
     void persist_durable_best(const Result&, bool& journalled) const;
+    /* The lines of the balance table of the fit the thread's trainer @p host
+     * holds (mlip::fit_balance_lines of host.model->fit_balance(), one
+     * O(n p^2) pass), or of none: a run without training data, or whose
+     * FIXINDEX pins every coefficient, fits none. */
+    std::vector<std::string> balance_of_fit(const mlip::Trainer& host) const;
     static void note_failed_publication(const Result&, const durable_best::Error&,
                                         std::optional<std::size_t> failed_before);
     /* Retry policy of every durable_best call: durable_best::default_backoff()
