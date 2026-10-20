@@ -99,7 +99,9 @@ TEST_CASE("ANNEAL capability help exposes corrected public contracts",
      * what a key does, not what the reader is to do ("Adapts ...", not
      * "Adapt ..."; POPULATION is read by TADAH:ANNEAL_PA, not "use
      * TADAH:ANNEAL_PA"): these checks fail on the text before that
-     * rewrite. */
+     * rewrite. The key texts are in full words, without shorthand
+     * ("OFF = every slot uses the same sigma", "ANNEAL_PT INIT_MODE JITTER
+     * AUTO measures at most ..." before the reference rendered them). */
     const std::string serial = capture("ANNEAL");
     CHECK(serial.find("PARAM T_INIT") != std::string::npos);
     CHECK(serial.find("PARAM CHAIN_LENGTH (default auto)")
@@ -117,15 +119,15 @@ TEST_CASE("ANNEAL capability help exposes corrected public contracts",
     CHECK(pt.find("best-stall") != std::string::npos);
     CHECK(pt.find("With REPLICAS fixed") != std::string::npos);
     CHECK(pt.find("PARAM RT") == std::string::npos);
-    CHECK(pt.find("OFF = every slot uses the same sigma.")
+    CHECK(pt.find("OFF gives every replica the same displacement")
           != std::string::npos);
     CHECK(pt.find("pre-1.5.0") == std::string::npos);
     for (const char* doc :
-         {"Adapts interior ladder temperatures",
-          "Freezes ladder adaptation once",
-          "ANNEAL_PT INIT_MODE JITTER AUTO measures at most",
-          "ANNEAL_PT INIT_MODE JITTER AUTO re-probes at most",
-          "Scales each slot's initial jitter"}) {
+         {"ON adapts the inner temperatures of the ladder",
+          "ON stops the adaptation of the ladder once",
+          "the largest number of dimensions measured",
+          "the largest number of measured dimensions probed again",
+          "Scales the first displacement of each replica"}) {
         INFO(doc);
         CHECK(pt.find(doc) != std::string::npos);
     }
@@ -445,10 +447,13 @@ ENDOPTIMIZER
 TEST_CASE("HPO INCLUDE_CONFIG keyword is rejected with a helpful message",
           "[HPO][optim][init_strategy]")
 {
-    /* INCLUDE_CONFIG was removed: the in-config point is now included
-     * only when the user lists `METHOD CONFIG` explicitly. The old
-     * keyword must fail with a message pointing at METHOD CONFIG (the
-     * canonical INIT keyword) rather than a generic "unknown key" error. */
+    /* INCLUDE_CONFIG was removed: the in-config point is included only
+     * when the INIT block lists `METHOD CONFIG`. The old keyword fails with
+     * a message pointing at METHOD CONFIG (the canonical INIT keyword)
+     * rather than a generic "unknown key" error.
+     * Pins: the message states the rule without history or reader address
+     * ("is now included only when you list ...; omit it ...").
+     * Before the fix: it said "now", "you" and "omit it". */
     ScopedTempFile input(R"(OPTIMIZER
 INIT
   INCLUDE_CONFIG false
@@ -471,6 +476,12 @@ ENDOPTIMIZER
     }
     CHECK(caught);
     CHECK(msg.find("METHOD CONFIG") != std::string::npos);
+    CHECK_THAT(msg, Catch::Contains(
+        "'INCLUDE_CONFIG' was removed from the grammar: removed. The values "
+        "of the training configuration for the search parameters are a "
+        "starting point only when the INIT block has a `METHOD CONFIG` "
+        "line."));
+    CHECK_THAT(msg, !Catch::Contains(" now ") && !Catch::Contains("you"));
 }
 
 TEST_CASE("HPO WARM_ON_MISMATCH rejects invalid values",
@@ -794,7 +805,7 @@ TEST_CASE("CERES:LBFGS, WOLFE and NLCG are refused at their block's line: "
      * and Ceres' Wolfe line search
      * shrinks its step to nothing at that score (optimizer_caps.cpp).
      * Pins: the block naming CERES:LBFGS, WOLFE or NLCG is refused at its
-     * closing line, "CERES:<ALGO> is refused: Ceres' GradientProblemSolver
+     * closing line, "CERES:<ALGO> is refused: Ceres' line-search solver
      * has no bounds, ...", naming NLOPT:LD_LBFGS, DLIB:BFGS and
      * CERES:STEEPEST_DESCENT; the lookup gives the same text.
      * Before the fix: all three parsed and ran (and evaluated their points
@@ -807,7 +818,7 @@ TEST_CASE("CERES:LBFGS, WOLFE and NLCG are refused at their block's line: "
         CHECK_THROWS_WITH(
             tadah::hpo::HPOTargets(ctx, input.path.string()),
             Catch::Contains("CERES:" + algo + " is refused: Ceres' "
-                            "GradientProblemSolver has no bounds") &&
+                            "line-search solver has no bounds") &&
                 Catch::Contains("The recommended replacements are "
                                 "NLOPT:LD_LBFGS (L-BFGS within the box), "
                                 "DLIB:BFGS and CERES:STEEPEST_DESCENT"));

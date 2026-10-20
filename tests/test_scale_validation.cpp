@@ -99,7 +99,7 @@ TEST_CASE("scale_validation: STEP is rejected on every non-consuming backend",
         {"NLOPT", "LD_LBFGS",   "never reads an initial step"},
         {"TADAH", "ANNEAL",     "STEP_FRAC"},
         {"TADAH", "ANNEAL_PT",  "STEP_FRAC"},
-        {"ASA",   "ASA",        "temperatures"},
+        {"ASA",   "ASA",        "parameter temperature"},
         {"DLIB",  "BFGS",       "fd_step"},
         /* was CERES:LBFGS, refused since; before the fix the case passes
          * as well (a pin) */
@@ -202,14 +202,15 @@ TEST_CASE("scale_validation: bounds-ignoring backends warn at startup",
         REQUIRE_NOTHROW(validate_optimizer_scaling(ce, where));
     const std::string ceres =
         "CERES:STEEPEST_DESCENT (OUTER): ignores the OPTIM box: Ceres' "
-        "GradientProblemSolver has no bounds, so its line searches can "
+        "line-search solver has no bounds, so its line searches can "
         "propose points outside the box (a LOG dimension stays positive, a "
         "linear one is unbounded). Such a point is not evaluated: it is "
         "scored as a failure graded by its distance to the box, whose slope "
         "points away from the box, so a descent step leads back into it; it "
         "counts against MAXEVAL and it is never the best; the first is "
-        "reported with a WARNING and DIAGNOSTICS counts them all. DLIB:BFGS "
-        "and the NLopt LD_* algorithms keep to the box";
+        "reported with a WARNING and the DIAGNOSTICS section of hpo_run.log "
+        "counts them all. DLIB:BFGS and the NLopt LD_* algorithms keep to the "
+        "box";
     CHECK(count_of(j.text(), ceres) == 1u);
     CHECK(count_of(j.text(), "ignores the OPTIM box") == 1u);
 }

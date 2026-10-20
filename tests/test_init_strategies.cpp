@@ -8,6 +8,8 @@
 
 #include "catch2/catch.hpp"
 
+#include "finish_within.h"
+
 #include <tadah/core/context.h>
 #include <tadah/hpo/hpo_log.h>
 #include <tadah/hpo/hpo_targets.h>
@@ -405,21 +407,29 @@ TEST_CASE("SobolInitStrategy: SOBOL 1 still draws the point its seed "
     }
 }
 
-TEST_CASE("SobolInitStrategy: a block past the end of the Sobol sequence is "
-          "an error", "[HPO][init_strategy][sobol][seed]")
+TEST_CASE("SobolInitStrategy: a K above 1000000 is refused before a block "
+          "is drawn, and a block past the end of the Sobol sequence is an "
+          "error", "[HPO][init_strategy][sobol][seed]")
 {
     /* Block s of K points starts at point s*K; that product, and the end
-     * of the block, must stay within the 64-bit sequence. With K = 2^62,
+     * of the block, must stay within the 64-bit sequence. A METHOD line's
+     * K is at most 1000000, so every block a seed selects (s < 65536)
+     * lies within it; before the fix K = 2^62 was read and refused only
+     * when the block was drawn. A caller that asks the strategy for more
+     * points (k_total) still meets the block check: with 2^62 points,
      * seeds 4 and 65535 fail the product (s*K wraps); seed 3 passes it
      * (3 * 2^62 fits) and fails the end, which would lie at 2^64. */
     using namespace tadah::hpo;
     auto sp = make_synthetic_spec({0.0, 0.0}, {1.0, 1.0});
     StubTargets st;
     const std::size_t huge = std::size_t{1} << 62;
+    CHECK_THROWS_WITH(sobol_draw(sp, *st.trg, huge, 3),
+                      "INIT METHOD SOBOL K must be an integer from 1 to "
+                      "1000000, got '" + std::to_string(huge) + "'");
     for (const std::uint64_t seed : {3u, 4u, 65535u}) {
         INFO("seed " << seed);
         CHECK_THROWS_WITH(
-            sobol_draw(sp, *st.trg, huge, seed),
+            sobol_draw(sp, *st.trg, 1, seed, huge),
             Catch::StartsWith("INIT METHOD SOBOL: block " +
                               std::to_string(seed) + " of " +
                               std::to_string(huge) +
@@ -1706,3 +1716,168 @@ TEST_CASE("HPOLog::finish writes '(no status recorded)' when no status was "
  * HPO_Host's API; we cover RunPolicy semantics end-to-end via the
  * integration matrix (Increment 8) instead. The parser tests above
  * already verify the knobs that drive build_run_policy(). */
+
+namespace {
+
+/* The error HPOTargets gives a target file of one search parameter
+ * (CGRID2B, 1 value) whose OPTIMIZER block holds `block`, or "" when it
+ * reads the file, with the number of starting points it resolved. */
+struct CountRead {
+    std::string error;
+    std::size_t points = 0;
+    std::size_t topk = 0;
+    std::size_t calibration = 0;
+};
+
+CountRead read_counts(const std::string& block)
+{
+    StrategyTempFile cfg("OPTIM CGRID2B (1) 0 10\nOPTIMIZER\n" + block +
+                         "ENDOPTIMIZER\n");
+    tadah::core::Context ctx;
+    ctx.add("CGRID2B", std::vector<double>{1.0});
+    CountRead r;
+    try {
+        tadah::hpo::HPOTargets trg(ctx, cfg.path.string());
+        r.points = trg.spec.optim_init.size();
+        r.topk = trg.spec.stage_topk;
+        r.calibration = trg.spec.noise.calibration_n;
+    } catch (const std::exception& e) {
+        r.error = e.what();
+    }
+    return r;
+}
+
+const std::string kSbplx =
+    "STRATEGY\nLIB NLOPT\nALGO LN_SBPLX\nMAXEVAL 10\nENDSTRATEGY\n";
+
+std::string init_block(const std::string& lines)
+{
+    return "INIT\n" + lines + "ENDINIT\n" + kSbplx;
+}
+
+std::string prestage_block(const std::string& topk)
+{
+    return "STRATEGY\nTYPE PRESTAGE\nLIB NLOPT\nALGO LN_SBPLX\nMAXEVAL 10\n"
+           "TOPK " + topk + "\nEXPLORE\nLIB TADAH\nALGO RANDOM\nMAXEVAL 5\n"
+           "ENDEXPLORE\nENDSTRATEGY\n";
+}
+
+std::string restart_block(const std::string& lines)
+{
+    return "STRATEGY\nLIB NLOPT\nALGO LN_SBPLX\nMAXEVAL 10\nRESTART\n"
+           "AFTER_STAGNATION 2\nMAX 1\n" + lines + "ENDRESTART\nENDSTRATEGY\n";
+}
+
+}  // namespace
+
+TEST_CASE("The starting points of a METHOD line, K_TOTAL and TOPK are at "
+          "most 1000000, and NOISE CALIBRATION at most 2147483647 "
+          "evaluations: a larger value is refused at its line",
+          "[HPO][init_strategy][limits]")
+{
+    /* The points of an INIT or RESTART block are drawn when the target
+     * file is read and held in memory, and each is a start of a search;
+     * a PRESTAGE refinement starts from TOPK candidates. Before the fix
+     * every count was read up to 18446744073709551615, and a large one
+     * stopped tadah hpo with "vector::reserve" or "cannot create
+     * std::vector larger than max_size()", and NOISE CALIBRATION when the
+     * run started; the values below were read, and the K ones drew
+     * 1000001 points. */
+    struct Refused { std::string block, error; };
+    const std::vector<Refused> refused = {
+        {init_block("METHOD RANDOM 1000001\n"),
+         "Error on line 4: INIT METHOD RANDOM K must be an integer from 0 "
+         "to 1000000, got '1000001'\nLine: METHOD RANDOM 1000001"},
+        {init_block("METHOD LHS 1000001\n"),
+         "Error on line 4: INIT METHOD LHS K must be an integer from 1 to "
+         "1000000, got '1000001'\nLine: METHOD LHS 1000001"},
+        {init_block("METHOD SOBOL 1000001\n"),
+         "Error on line 4: INIT METHOD SOBOL K must be an integer from 1 to "
+         "1000000, got '1000001'\nLine: METHOD SOBOL 1000001"},
+        {init_block("METHOD RANDOM 2\nK_TOTAL 1000001\n"),
+         "Error on line 5: K_TOTAL must be an integer from 0 to 1000000, "
+         "got '1000001'\nLine: K_TOTAL 1000001"},
+        {restart_block("METHOD RANDOM 1000001\n"),
+         "Error on line 10: INIT METHOD RANDOM K must be an integer from 0 "
+         "to 1000000, got '1000001'\nLine: METHOD RANDOM 1000001"},
+        {restart_block("K_TOTAL 1000001\n"),
+         "Error on line 10: K_TOTAL must be an integer from 0 to 1000000, "
+         "got '1000001'\nLine: K_TOTAL 1000001"},
+        {prestage_block("1000001"),
+         "Error on line 8: TOPK must be an integer from 1 to 1000000, got "
+         "'1000001'\nLine: TOPK 1000001"},
+        {"NOISE\nCALIBRATION 2147483648\nENDNOISE\n" + kSbplx,
+         "Error on line 4: CALIBRATION must be an integer from 0 to "
+         "2147483647, got '2147483648'\nLine: CALIBRATION 2147483648"},
+    };
+    for (const auto& r : refused) {
+        INFO(r.block);
+        CHECK(read_counts(r.block).error == r.error);
+    }
+}
+
+TEST_CASE("A count of starting points at its limit, 1000000, draws that many "
+          "points, and the last SOBOL block lies within the sequence",
+          "[HPO][init_strategy][limits]")
+{
+    /* With a single METHOD line K_TOTAL replaces its K. SOBOL with seed
+     * 65535 draws block 65535, the last a seed selects: points
+     * 65535 * 1000000 ... 65536 * 1000000 - 1 of the sequence. */
+    for (const std::string& lines :
+         {std::string("METHOD RANDOM 1000000\n"),
+          std::string("METHOD LHS 1000000\n"),
+          std::string("METHOD SOBOL 1000000\nSEED 65535\n"),
+          std::string("METHOD RANDOM 2\nK_TOTAL 1000000\n")}) {
+        INFO(lines);
+        const CountRead r = read_counts(init_block(lines));
+        CHECK(r.error.empty());
+        CHECK(r.points == 1000000u);
+    }
+    const CountRead topk = read_counts(prestage_block("1000000"));
+    CHECK(topk.error.empty());
+    CHECK(topk.topk == 1000000u);
+    const CountRead cal =
+        read_counts("NOISE\nCALIBRATION 2147483647\nENDNOISE\n" + kSbplx);
+    CHECK(cal.error.empty());
+    CHECK(cal.calibration == 2147483647u);
+}
+
+TEST_CASE("ChainStrategy: a chain of the largest RANDOM and LHS draws drops "
+          "repeated points without comparing every pair",
+          "[HPO][init_strategy][chain]")
+{
+    /* A chain drops a point equal to an earlier one (within 1e-12 in the
+     * coordinates of the search). Before the fix each point was compared
+     * with every point kept, each comparison mapping both to those
+     * coordinates: two METHOD lines of 1000000 points, which the parser
+     * takes, did not finish in hours. */
+    using namespace tadah::hpo;
+    auto sp = make_synthetic_spec({0.0, 0.0}, {1.0, 1.0});
+    StubTargets st;
+    InitStrategySpec ispec;
+    ispec.chain.push_back({"RANDOM", {"1000000"}});
+    ispec.chain.push_back({"LHS", {"1000000"}});
+    std::size_t drawn = 0;
+    hpo_test::finish_within(std::chrono::seconds(120),
+                            "a chain of RANDOM 1000000 and LHS 1000000",
+                            [&] {
+        auto strat = build_init_strategy(ispec);
+        InitContext ic{sp, *st.trg, 17};
+        drawn = strat->generate(ic, 0).size();
+    });
+    CHECK(drawn == 2000000u);
+
+    /* The same file named twice gives one point; a RANDOM line after it
+     * adds its points. */
+    StrategyTempFile pot("# comment-only warm file\n");
+    InitStrategySpec twice;
+    twice.chain.push_back({"WARM", {pot.path.string()}});
+    twice.chain.push_back({"WARM", {pot.path.string()}});
+    twice.chain.push_back({"RANDOM", {"3"}});
+    twice.warm_on_mismatch = "warn";
+    auto strat = build_init_strategy(twice);
+    InitContext ic{sp, *st.trg, 5};
+    const auto pts = strat->generate(ic, 0);
+    REQUIRE(pts.size() == 4u);
+    CHECK(pts.front().empty());
+}

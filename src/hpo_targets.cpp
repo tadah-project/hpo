@@ -573,7 +573,8 @@ static bool dispatch_init_attr(const std::string& key,
         return true;
     }
     if (key=="K_TOTAL") {
-        a.k_total = parse_uint(single_value(iss, key), key);
+        a.k_total = parse_uint(single_value(iss, key), key, 0,
+                               kMaxStartingPoints);
         return true;
     }
     if (key=="SEED") {
@@ -656,8 +657,8 @@ static bool reject_old_keyword(const std::string& key)
         {"INIT_STRATEGY",               "moved into `INIT { METHOD <method> ... } ENDINIT` block."},
         {"INIT_K",                      "renamed to K_TOTAL inside an INIT block."},
         {"INIT_SEED",                   "renamed to SEED inside an INIT block."},
-        {"INIT_INCLUDE_CONFIG",         "removed. The in-config point is now included only when you list `METHOD CONFIG` explicitly inside the INIT block; omit it to leave the in-config point out."},
-        {"INCLUDE_CONFIG",              "removed. The in-config point is now included only when you list `METHOD CONFIG` explicitly inside the INIT block; omit it to leave the in-config point out."},
+        {"INIT_INCLUDE_CONFIG",         "removed. The values of the training configuration for the search parameters are a starting point only when the INIT block has a `METHOD CONFIG` line."},
+        {"INCLUDE_CONFIG",              "removed. The values of the training configuration for the search parameters are a starting point only when the INIT block has a `METHOD CONFIG` line."},
         {"NOISE_AUTO",                  "moved into `NOISE { AUTO true|false } ENDNOISE` block."},
         {"NOISE_CALIBRATION",           "moved into `NOISE { CALIBRATION N } ENDNOISE` block."},
         /* TOPK is now legal inside STRATEGY (TYPE PRESTAGE) -- don't reject it
@@ -1265,7 +1266,11 @@ void HPOTargets::read(const std::string& fn)
                     continue;
                 }
                 if (key=="CALIBRATION") {
-                    const std::size_t v = parse_uint(single_value(iss, key), key);
+                    /* N evaluations, at most the int budget MAXEVAL is
+                     * (optimizer_block.cpp). */
+                    const std::size_t v = parse_uint(
+                        single_value(iss, key), key, 0,
+                        std::numeric_limits<int>::max());
                     if (v == 1)
                         throw std::runtime_error("NOISE.CALIBRATION must be 0 (off) or >= 2");
                     spec.noise.calibration_n = v;
@@ -1337,9 +1342,11 @@ void HPOTargets::read(const std::string& fn)
                     set_once(&spec.strategy_type, key, "strategy");
                     continue;
                 }
-                /* PRESTAGE knob. */
+                /* PRESTAGE knob: the candidates the refinement starts
+                 * from, a set of starting points (init_strategy.h). */
                 if (key=="TOPK") {
-                    spec.stage_topk = parse_uint(single_value(iss, key), key, 1);
+                    spec.stage_topk = parse_uint(single_value(iss, key), key, 1,
+                                                 kMaxStartingPoints);
                     set_once(&spec.strategy_type, key, "strategy");
                     continue;
                 }
@@ -1752,8 +1759,8 @@ void HPOTargets::read(const std::string& fn)
             core::to_string(observables.size()) +
             " entries) and PC_LAMMPS (" +
             core::to_string(LS.size()) +
-            " entries); these paths are mutually exclusive in the "
-            "current MVP. Remove one set of lines and rerun.");
+            " entries); PC_OBSERVABLE and PC_LAMMPS lines are mutually "
+            "exclusive. Remove one set of lines and rerun.");
     }
 
     /* Reject the same --hotvar NAME declared by two DISTINCT PC_LAMMPS

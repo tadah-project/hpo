@@ -498,14 +498,18 @@ TEST_CASE("HPOTargets rejects PC_OBSERVABLE and PC_LAMMPS side by side",
         "PC_LAMMPS --script " + script_path.string() +
         " --varloss xyz 1.0 100 --outvar xyz\n");
 
-    /* 2026-05-13 directive: PC_OBSERVABLE is mutually exclusive with
-     * PC_LAMMPS. The post-parse validation in HPOTargets::read fires
-     * a clear runtime_error mentioning both counts. */
+    /* PC_OBSERVABLE is mutually exclusive with PC_LAMMPS. The post-parse
+     * validation in HPOTargets::read fires a clear runtime_error mentioning
+     * both counts.
+     * Pins: the message states the rule, without a development state.
+     * Before the fix: "... these paths are mutually exclusive in the
+     * current MVP. ...". */
     CHECK_THROWS_WITH(
         tadah::hpo::HPOTargets(ctx, cfg.string()),
-        Catch::Matchers::Contains("PC_OBSERVABLE")
-        && Catch::Matchers::Contains("PC_LAMMPS")
-        && Catch::Matchers::Contains("mutually exclusive"));
+        Catch::Matchers::Contains(
+            "--hpotarget defines both PC_OBSERVABLE (1 entries) and "
+            "PC_LAMMPS (1 entries); PC_OBSERVABLE and PC_LAMMPS lines are "
+            "mutually exclusive. Remove one set of lines and rerun."));
 
     std::filesystem::remove(cfg);
     std::filesystem::remove(script_path);
