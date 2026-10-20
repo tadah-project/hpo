@@ -461,22 +461,16 @@ std::vector<double> stored_values(const tadah::core::Context& c,
 }
 
 /* Pins: an evaluation whose FIXINDEX pins every weight, with training data
- * and OALGO 3, has the covariance of an all-pinned fit, as `tadah train`
- * writes it (M_Train::pinned_covariance): its potential has WCOV, 5 x 5
- * zeros after N = 5, and WNOISE E, the mean squared residual of the pinned
- * weights over the 2 training energies, bit for bit those of a Trainer that
- * trains the same configuration with the candidate's weights pinned; the
- * evaluation trains (the design matrix of the 2 training structures is
- * built: the fast path, which computes no covariance, is not taken under
- * OALGO 3), and under OALGO 4 the fast path still skips it.
- * Before the fix: the fast path provisioned the weights and cleared the
- * covariance, so best_pot.tadah had neither WCOV nor WNOISE, and `tadah
- * predict --error` refused it naming "weights set from FIXWEIGHT without a
- * fit (tadah hpo with every weight pinned and no training data)", though
- * the run had training data; a non-linear M_KRR kernel, which trains,
- * wrote both. */
-TEST_CASE("fixweight all-fixed with DBFILE under OALGO 3: the covariance of "
-          "an all-pinned fit", "[fixweight_e2e][.]")
+ * and OALGO 3, takes the fast path, as under OALGO 4: the weights are the
+ * candidate's (provisioned from FIXWEIGHT, 1e-12), the design matrix of the
+ * 2 training structures is not built, and the evaluation's potential has
+ * no WCOV and no WNOISE.
+ * Before the fix: OALGO 3 left the fast path, so that the evaluation
+ * trained and its potential had the weight covariance of an all-pinned fit
+ * (WCOV of zeros and WNOISE E): the design matrix of the 2 training
+ * structures was built. */
+TEST_CASE("fixweight all-fixed with DBFILE under OALGO 3: the fast path, as "
+          "under OALGO 4", "[fixweight_e2e][.]")
 {
     tadah::core::PeriodicTable::initialize();
     Host::reset_globals_for_test();
@@ -491,8 +485,6 @@ TEST_CASE("fixweight all-fixed with DBFILE under OALGO 3: the covariance of "
     { std::ofstream os(val_cfg); os << "DBFILE " << val_db.string() << "\n"; }
 
     tadah::core::Context ctx = make_ta_base_context(hpo_cfg);
-    ctx.remove("OALGO");
-    ctx.add("OALGO", 3);
     const std::size_t K = tadah::hpo::derive_weight_count(ctx);
     REQUIRE(K == 5);
     ctx.add("DBFILE", train_db.string());
@@ -506,62 +498,35 @@ TEST_CASE("fixweight all-fixed with DBFILE under OALGO 3: the covariance of "
            << "LOSS L2\nPC_EMAE 0 1\n"
            << "OPTIM FIXWEIGHT (1-" << K << ") -1.0 1.0\n";
     }
-
-    tadah::hpo::HPOTargets trg(ctx, hpo_cfg.string());
-    REQUIRE_NOTHROW(tadah::hpo::validate_hpo_setup(ctx, trg, true, true));
-    Host host(ctx, trg, val_cfg.string());
     ParamVec p(static_cast<long>(K));
     std::vector<double> candidate;
     for (std::size_t k = 0; k < K; ++k) {
         p(static_cast<long>(k)) = 0.05 * static_cast<double>(k + 1);
         candidate.push_back(p(static_cast<long>(k)));
     }
-    {
-        ParallelLoopProbe probe;
-        REQUIRE_NOTHROW(host(p));
-        CHECK(probe.loops_of(2) == 1u);   // the training structures' build
-    }
-    const auto* tr = Host::tls_trainer_for_test();
-    REQUIRE(tr != nullptr);
-    REQUIRE(tr->model->is_trained());
-    const tadah::core::Context pot = tr->model->get_param_file();
-    INFO("the evaluation's potential: WCOV " << stored_values(pot, "WCOV").size()
-         << " values, WNOISE " << (pot.has_stored("WNOISE") ? "" : "absent"));
-    CHECK(tr->model->has_covariance());
-    const std::vector<double> wcov = stored_values(pot, "WCOV");
-    REQUIRE(wcov.size() == K * K + 1);
-    CHECK(wcov[0] == static_cast<double>(K));
-    for (std::size_t i = 1; i < wcov.size(); ++i) CHECK(wcov[i] == 0.0);
-    REQUIRE(pot.has_stored("WNOISE"));
-    const std::vector<double> w = stored_values(pot, "WEIGHTS");
-    REQUIRE(w.size() == K);
-    for (std::size_t k = 0; k < K; ++k)
-        CHECK(w[k] == Approx(candidate[k]).epsilon(1e-12));
-
-    /* tadah train's fit of the same configuration with the candidate's
-     * weights pinned. */
-    tadah::core::Context fit = ctx;
-    fit.remove("FIXWEIGHT");
-    for (const double v : candidate) fit.add("FIXWEIGHT", v);
-    tadah::mlip::memory::MLIPWorkspaceManager ws;
-    tadah::mlip::Trainer ref(fit, ws);
-    tadah::mlip::StructureDB stdb(ref.context);
-    ref.train(stdb);
-    const tadah::core::Context ref_pot = ref.get_param_file();
-    CHECK(stored_values(pot, "WCOV") == stored_values(ref_pot, "WCOV"));
-    CHECK(*pot.stored_value("WNOISE", 0) == *ref_pot.stored_value("WNOISE", 0));
-    CHECK(*pot.stored_value("WNOISE", 1) == *ref_pot.stored_value("WNOISE", 1));
-
-    /* OALGO 4 computes no covariance: the fast path stays. */
-    {
-        tadah::core::Context fast = ctx;
-        fast.remove("OALGO");
-        fast.add("OALGO", 4);
-        tadah::hpo::HPOTargets fast_trg(fast, hpo_cfg.string());
-        Host fast_host(fast, fast_trg, val_cfg.string());
-        ParallelLoopProbe probe;
-        REQUIRE_NOTHROW(fast_host(p));
-        CHECK(probe.loops_of(2) == 0u);
+    for (const int oalgo : {3, 4}) {
+        DYNAMIC_SECTION("OALGO " << oalgo) {
+            tadah::core::Context c = ctx;
+            c.remove("OALGO");
+            c.add("OALGO", oalgo);
+            tadah::hpo::HPOTargets trg(c, hpo_cfg.string());
+            REQUIRE_NOTHROW(tadah::hpo::validate_hpo_setup(c, trg, true, true));
+            Host host(c, trg, val_cfg.string());
+            {
+                ParallelLoopProbe probe;
+                REQUIRE_NOTHROW(host(p));
+                CHECK(probe.loops_of(2) == 0u);   // no training build
+            }
+            const auto* tr = Host::tls_trainer_for_test();
+            REQUIRE(tr != nullptr);
+            const tadah::core::Context pot = tr->model->get_param_file();
+            CHECK_FALSE(pot.has_stored("WCOV"));
+            CHECK_FALSE(pot.has_stored("WNOISE"));
+            const std::vector<double> w = stored_values(pot, "WEIGHTS");
+            REQUIRE(w.size() == K);
+            for (std::size_t k = 0; k < K; ++k)
+                CHECK(w[k] == Approx(candidate[k]).epsilon(1e-12));
+        }
     }
     Host::reset_globals_for_test();
 }
