@@ -4175,6 +4175,42 @@ text = "OPTIM EWEIGHT_TEMP (1) 0.5 2"
 error = "OPTIM EWEIGHT_TEMP is not a valid search target: EWEIGHT_TEMP is a retired key: EWEIGHT_TEMP T multiplied the energy priority of each structure by exp(-(E/N - E_min)/(kB T)), which reads energy above the lowest as heat: compressed or strained structures, high in energy but cold, got almost no priority. Replaced by: the priorities of the data: WDBFILE for each dataset, and the eweight of each structure in its data file. No key converts it. WDBFILE gives each dataset its priority, and the eweight of a structure in its data file the priority of its energy."
 
 [[optim_target]]
+id = "OPTIM.TARGET.UNCERTAINTY"
+key = "UNCERTAINTY"
+status = "refused"
+msg = "OPTIM UNCERTAINTY is not a valid search target: UNCERTAINTY is a retired key: tadah train --uncertainty wrote the standard deviations of the coefficients of the fit (weights.tadah). Uncertainty output is not part of Tadah! 1.6.0: its error bars were not calibrated (they were too narrow for many structures). Replaced by: nothing in Tadah! 1.6.0. Deleting the option, or the UNCERTAINTY line, converts it: the fit and its coefficients are unaffected."
+doc = "UNCERTAINTY is a retired key; uncertainty output is not part of Tadah! 1.6.0."
+
+[[optim_target.invalid]]
+wrap = "root"
+text = "OPTIM UNCERTAINTY (1) 0.5 2"
+error = "OPTIM UNCERTAINTY is not a valid search target: UNCERTAINTY is a retired key: tadah train --uncertainty wrote the standard deviations of the coefficients of the fit (weights.tadah). Uncertainty output is not part of Tadah! 1.6.0: its error bars were not calibrated (they were too narrow for many structures). Replaced by: nothing in Tadah! 1.6.0. Deleting the option, or the UNCERTAINTY line, converts it: the fit and its coefficients are unaffected."
+
+[[optim_target]]
+id = "OPTIM.TARGET.WCOV"
+key = "WCOV"
+status = "refused"
+msg = "OPTIM WCOV is not a valid search target: WCOV is a retired key: WCOV held the covariance of the WEIGHTS of an OALGO 3 fit, for the uncertainty output of tadah predict --error and tadah properties pairwise --error. Uncertainty output is not part of Tadah! 1.6.0: its error bars were not calibrated (they were too narrow for many structures). Replaced by: nothing in Tadah! 1.6.0. Deleting the line converts it: no prediction reads it, and the fit is unaffected."
+doc = "WCOV is a retired key; uncertainty output is not part of Tadah! 1.6.0."
+
+[[optim_target.invalid]]
+wrap = "root"
+text = "OPTIM WCOV (1) 0.5 2"
+error = "OPTIM WCOV is not a valid search target: WCOV is a retired key: WCOV held the covariance of the WEIGHTS of an OALGO 3 fit, for the uncertainty output of tadah predict --error and tadah properties pairwise --error. Uncertainty output is not part of Tadah! 1.6.0: its error bars were not calibrated (they were too narrow for many structures). Replaced by: nothing in Tadah! 1.6.0. Deleting the line converts it: no prediction reads it, and the fit is unaffected."
+
+[[optim_target]]
+id = "OPTIM.TARGET.WNOISE"
+key = "WNOISE"
+status = "refused"
+msg = "OPTIM WNOISE is not a valid search target: WNOISE is a retired key: WNOISE held the noise variance of each quantity of an OALGO 3 fit, for the uncertainty output of tadah predict --error and tadah properties pairwise --error. Uncertainty output is not part of Tadah! 1.6.0: its error bars were not calibrated (they were too narrow for many structures). Replaced by: nothing in Tadah! 1.6.0. Deleting the line converts it: no prediction reads it, and the fit is unaffected."
+doc = "WNOISE is a retired key; uncertainty output is not part of Tadah! 1.6.0."
+
+[[optim_target.invalid]]
+wrap = "root"
+text = "OPTIM WNOISE (1) 0.5 2"
+error = "OPTIM WNOISE is not a valid search target: WNOISE is a retired key: WNOISE held the noise variance of each quantity of an OALGO 3 fit, for the uncertainty output of tadah predict --error and tadah properties pairwise --error. Uncertainty output is not part of Tadah! 1.6.0: its error bars were not calibrated (they were too narrow for many structures). Replaced by: nothing in Tadah! 1.6.0. Deleting the line converts it: no prediction reads it, and the fit is unaffected."
+
+[[optim_target]]
 id = "OPTIM.TARGET.LAMBDA"
 key = "LAMBDA"
 status = "special"

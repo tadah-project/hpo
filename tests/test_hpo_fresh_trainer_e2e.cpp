@@ -9,8 +9,7 @@
 // row weights of the fit and the kernel's MPARAMS were not
 // applied after a thread's first evaluation (while every potential
 // recorded the candidate's values), OALGO 3 appended a SIGMA per fit to
-// the reused context (the weight covariance is now WCOV and WNOISE, which
-// the potential gets from the model), an M_KRR -c potential with WEIGHTS could not be
+// the reused context, an M_KRR -c potential with WEIGHTS could not be
 // trained at the first evaluation, and a second host on the same thread
 // (a second `TASK hpo` of a task file) evaluated the first host's model.
 //
@@ -462,17 +461,17 @@ TEST_CASE("Each evaluation builds the kernel of its MPARAMS",
 }
 
 /* Pins: OALGO 3 with OPTIM LAMBDA (1), three evaluations of one host on
- * one thread (LAMBDA 1e-4, 1e-3, 1e-2): each potential holds one weight
- * covariance, WCOV of 3*3+1 = 10 values and a WNOISE, equal (1e-12
- * relative) to those of an independent Trainer of its candidate, and no
- * SIGMA.
- * Before the fix (WCOV and WNOISE): the potentials had SIGMA (10 values,
- * the transposed and unscaled matrix; this case checked it) and no WCOV.
- * Before fix/hpo-trainer-reuse: 10, 20 and 30 values of SIGMA: each fit
- * appended its SIGMA to the reused context (best_pot.tadah then carried
- * several, and `tadah predict --error` on it read past its covariance
- * matrix). */
-TEST_CASE("Each OALGO 3 evaluation writes the SIGMA of its own fit",
+ * one thread (LAMBDA 1e-4, 1e-3, 1e-2): each potential holds the WEIGHTS of
+ * an independent Trainer of its candidate (1e-12 relative), and no SIGMA,
+ * WCOV or WNOISE.
+ * Before uncertainty output left Tadah! 1.6.0: each potential held the
+ * WCOV and WNOISE of its fit (this case pinned them against the
+ * reference). Before WCOV and WNOISE: the potentials had SIGMA (10 values,
+ * the transposed and unscaled matrix). Before fix/hpo-trainer-reuse: 10,
+ * 20 and 30 values of SIGMA: each fit appended its SIGMA to the reused
+ * context (best_pot.tadah then carried several, and `tadah predict
+ * --error` on it read past its covariance matrix). */
+TEST_CASE("Each OALGO 3 evaluation writes the weights of its own fit",
           "[trainer_e2e][.]") {
     PeriodicTable::initialize();
     Host::reset_globals_for_test();
@@ -490,18 +489,16 @@ TEST_CASE("Each OALGO 3 evaluation writes the SIGMA of its own fit",
         CHECK(loss < kFailScore);
         const Context pot = slot_potential();
         const Reference ref = reference_fit(ctx, f.hpo_cfg, p);
-        CHECK_FALSE(pot.has_stored("SIGMA"));
-        REQUIRE(ref.pot.size("WCOV") == 10);
-        REQUIRE(pot.size("WCOV") == 10);
-        std::vector<double> s(10), rs(10);
-        Context(pot).get("WCOV", s);
-        Context(ref.pot).get("WCOV", rs);
-        CHECK(rel_diff(s, rs) < 1e-12);
-        REQUIRE(ref.pot.size("WNOISE") == pot.size("WNOISE"));
-        REQUIRE(pot.size("WNOISE") >= 2);
-        for (size_t k = 1; k < pot.size("WNOISE"); k += 2)
-            CHECK(rel_diff({pot.get<double>("WNOISE", k)},
-                           {ref.pot.get<double>("WNOISE", k)}) < 1e-12);
+        for (const char *key : {"SIGMA", "WCOV", "WNOISE"}) {
+            INFO(key);
+            CHECK_FALSE(pot.has_stored(key));
+        }
+        REQUIRE(ref.pot.size("WEIGHTS") == 3);
+        REQUIRE(pot.size("WEIGHTS") == 3);
+        std::vector<double> w(3), rw(3);
+        Context(pot).get("WEIGHTS", w);
+        Context(ref.pot).get("WEIGHTS", rw);
+        CHECK(rel_diff(w, rw) < 1e-12);
     }
     Host::reset_globals_for_test();
 }

@@ -161,7 +161,8 @@ public:
      * message, "" for another key. */
     static std::string optim_switch_key_error(const std::string& key);
     /** OPTIM of a retired key (EWEIGHT, FWEIGHT, SWEIGHT, WDBFILE_AUTO,
-     * EWEIGHT_TEMP: the blueprint's retired state) is refused with why it
+     * EWEIGHT_TEMP, UNCERTAINTY, WCOV, WNOISE: the blueprint's retired
+     * state) is refused with why it
      * was retired, what replaces it and its conversion
      * (core::retired_key_text). Returns the error message, "" for another
      * key. */

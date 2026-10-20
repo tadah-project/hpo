@@ -241,7 +241,6 @@ RawEmbeddingF0 derive_raw_embedding_f0(const core::Context &train_ctx) {
 bool fixindex_pins_every_weight(const core::Context &ctx) {
   if (!ctx.contains("FIXINDEX")) return false;
   if (ctx.contains("NORM") && ctx.get<bool>("NORM")) return false;
-  if (ctx.has_stored("OALGO") && ctx.get<int>("OALGO") == 3) return false;
   const std::size_t K = derive_weight_count(ctx);
   return K > 0 &&
          tadah::mlip::classify_weight_source(ctx, K) ==

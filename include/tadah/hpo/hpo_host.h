@@ -472,9 +472,8 @@ private:
     /* FIXINDEX covers every model weight (the refit coefficient-search
      * workload): the LS solve is vacuous, so the per-eval train stage
      * provisions the weights directly and skips the design-matrix
-     * build -- except under OALGO 3, whose all-pinned fit computes the
-     * covariance and noise the potential records, and for a non-linear
-     * M_KRR kernel, whose basis the fit draws. Computed once in the ctor. */
+     * build -- except for a non-linear M_KRR kernel, whose basis the fit
+     * draws. Computed once in the ctor. */
     bool                         all_weights_fixed_ = false;
     /* EMBF0 journal: a DM_REAM model linear in the raw descriptor
      * (BF_Linear / Kern_Linear; NORM irrelevant), so sum_m w_m g_m(0) of the

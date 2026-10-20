@@ -7,9 +7,9 @@
 # docs/source/quickstart/pot.tadah at Tadah.MLIP commit c91e8ef (2026-10-07)
 # (sha256 of its lines: 463e8ec88408c009b845d51e6f3d88bbcc123b60cddd64a3
 # ec3e73092cbbe6cf), without its lines of the keys EWEIGHT, FWEIGHT,
-# SWEIGHT and WDBFILE_AUTO, which Tadah! 1.6.0 retired and no load of a
-# potential reads (sha256 of the lines below: 4dffbf7b2b7d352a39dfa92bf4f1
-# 9b47a6431033f322d8bb5e271006c5edd77d). `tadah train -c config.train`
+# SWEIGHT, UNCERTAINTY and WDBFILE_AUTO, which Tadah! 1.6.0 retired and no
+# load of a potential reads (sha256 of the lines below: ed8687207ff3da1ef965
+# 8d2e7b593a6fc0b7a9a1e13d6a8c81f0c528913cc20a). `tadah train -c config.train`
 # wrote it in that directory: D2_Blip (4 functions, RCUT2B 5.3) +
 # DM_mBlipEnv (5 embedding functions, RCUTMB 5.0), Cut_Cos, M_KRR
 # Kern_Linear, 9 weights, fitted to the energies and stresses of the Quick
@@ -50,7 +50,6 @@ SGRIDMB           8
 STRESS            true
 TYPE2B            D2_Blip   4   4   Ta   Ta
 TYPEMB            DM_mBlipEnv   0   1   1   5   5   Ta   Ta
-UNCERTAINTY       false
 WATOM             0.308999999999999997
 WEIGHTS           133.357774127816555   -123.755171524655708   -10.4804763244958963   -18.0240635733812411   -6.3685917658913116   4.13446130558423164   -8.25236089850869803   3.95181987589451467   -6.04877887227442557
 ZERO_COM_FORCE    false
