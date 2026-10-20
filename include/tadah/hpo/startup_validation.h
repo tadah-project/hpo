@@ -120,14 +120,17 @@ bool fixindex_pins_every_weight(const core::Context &ctx);
  *     (asa_probe_box_error);
  *   - FIXINDEX/FIXWEIGHT pairing: lone key, size mismatch, out-of-bounds
  *     index (via mlip::classify_weight_source);
+ *   - an M_KRR implementation other than 1 and 2
+ *     (mlip::require_krr_implementation), with the fit's message, whether
+ *     or not the evaluations fit: it is part of the potential's MODEL line;
  *   - when an evaluation fits the model (training data, and not
- *     fixindex_pins_every_weight): an M_KRR implementation other than 1
- *     and 2 (mlip::require_krr_implementation), a LAMBDA the fit refuses
+ *     fixindex_pins_every_weight): a LAMBDA the fit refuses
  *     (mlip::require_fit_lambda: a negative value other than -1, a second
  *     value, -1 under an OALGO other than 3 or under M_KRR implementation
- *     2), and under M_KRR implementation 2 OPTIM of EWEIGHT, FWEIGHT,
- *     SWEIGHT or WDBFILE (mlip::krr_implementation2_ignores), each with
- *     the fit's message;
+ *     2), OALGO 3 with a LAMBDA other than 0 and an intercept column the
+ *     fit fits (mlip::require_oalgo3_intercepts), and under M_KRR
+ *     implementation 2 OPTIM of EWEIGHT, FWEIGHT or SWEIGHT
+ *     (mlip::krr_implementation2_ignores), each with the fit's message;
  *   - OPTIM of a key applied once when the run starts
  *     (HPOTargets::optim_startup_only_key_error, also at its line);
  *   - a training DBFILE lists each dataset once

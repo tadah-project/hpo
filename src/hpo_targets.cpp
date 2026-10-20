@@ -2576,18 +2576,17 @@ std::string HPOTargets::optim_internal_key_error(const std::string& key) {
 }
 
 std::string HPOTargets::optim_startup_only_key_error(const std::string& key) {
-  static const char* const once[] = {"LSCALE",  "ESHIFT",  "ESHIFT_ATOM",
-                                     "ESHIFT_DBATOM", "EFILTER", "FFILTER",
-                                     "ZERO_COM_FORCE"};
+  static const char* const once[] = {
+      "LSCALE",  "ESHIFT",         "ESHIFT_ATOM", "ESHIFT_DBATOM",
+      "EFILTER", "FFILTER",        "ZERO_COM_FORCE", "WDBFILE",
+      "WDBFILE_AUTO", "EWEIGHT_TEMP"};
   const std::string k = core::to_upper(key);
   for (const char* o : once)
     if (k == o)
       return "OPTIM " + k + " is not a valid search target: " + k +
              " prepares the data and is applied once, when the run starts "
-             "and reads them (LSCALE, ESHIFT, ESHIFT_ATOM, ESHIFT_DBATOM, "
-             "EFILTER, FFILTER and ZERO_COM_FORCE prepare the data), so no "
-             "evaluation would take a candidate value of it: its value is "
-             "the training configuration's.";
+             "and reads them, so no evaluation would take a candidate value "
+             "of it: its value is the training configuration's.";
   return "";
 }
 

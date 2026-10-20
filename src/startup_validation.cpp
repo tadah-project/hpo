@@ -595,24 +595,39 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
     (void)tadah::mlip::classify_weight_source(train_ctx, K);
 
   /* --- the settings of the fit every evaluation makes ------------------
+   * The implementation of M_KRR is part of the MODEL line of the potential,
+   * which every best_pot.tadah carries: one other than 1 and 2 is refused,
+   * with the fit's message, whether or not the evaluations fit.
    * An evaluation fits the model when the run has training data and
    * FIXINDEX does not pin every weight (fixindex_pins_every_weight; the
-   * host provisions the pinned weights otherwise). Such a fit refuses an
-   * M_KRR implementation other than 1 and 2, a LAMBDA that requests
-   * nothing (a negative value other than -1, a second value), LAMBDA -1
-   * under an OALGO other than 3 or under M_KRR implementation 2: each
-   * evaluation would refuse it and score FAILSCORE, so it is refused here,
-   * with the fit's message. So is OPTIM of a weight that M_KRR
-   * implementation 2 ignores (every candidate other than 1 would be
-   * refused); its other refusals depend on the training data, and
-   * HPO_Host makes them once it has read them. A run whose evaluations fit
-   * nothing reads none of these. */
+   * host provisions the pinned weights otherwise). Such a fit refuses a
+   * LAMBDA that requests nothing (a negative value other than -1, a second
+   * value), LAMBDA -1 under an OALGO other than 3 or under M_KRR
+   * implementation 2, and OALGO 3 with a LAMBDA other than 0 when it has
+   * an intercept column it fits (BIAS true): each evaluation would refuse
+   * it and score FAILSCORE, so it is refused here, with the fit's message.
+   * So is OPTIM of a weight that M_KRR implementation 2 ignores (every
+   * candidate other than 1 would be refused); its other refusals depend on
+   * the training data, and HPO_Host makes them once it has read them. A
+   * run whose evaluations fit nothing reads none of these. */
+  tadah::mlip::require_krr_implementation(train_ctx);
   if (has_train_db && !fixindex_pins_every_weight(train_ctx)) {
-    tadah::mlip::require_krr_implementation(train_ctx);
     tadah::mlip::require_fit_lambda(train_ctx);
+    /* The intercept columns are the model function's, so the function is
+     * built as an evaluation builds it (probe_model() above checked that
+     * it builds); only for a setup the rule can refuse. */
+    if (core::n_intercept_columns(train_ctx) > 0 &&
+        !tadah::mlip::is_krr_implementation_2(train_ctx) &&
+        train_ctx.get<int>("OALGO", 0) == 3 &&
+        train_ctx.get<double>("LAMBDA", 0) != 0.0) {
+      core::Context c = train_ctx;
+      tadah::mlip::memory::MLIPWorkspaceManager ws;
+      tadah::mlip::Trainer probe(c, ws);
+      tadah::mlip::require_oalgo3_intercepts(probe.context, *probe.fb);
+    }
     if (tadah::mlip::is_krr_implementation_2(train_ctx)) {
       const std::string kernel = train_ctx.get<std::string>("MODEL", 1);
-      for (const char *key : {"EWEIGHT", "FWEIGHT", "SWEIGHT", "WDBFILE"}) {
+      for (const char *key : {"EWEIGHT", "FWEIGHT", "SWEIGHT"}) {
         const auto it = trg.optimap.find(key);
         if (it == trg.optimap.end()) continue;
         if (std::none_of(it->second.opt.begin(), it->second.opt.end(),
@@ -620,8 +635,7 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
           continue;
         const std::string k = key;
         throw std::runtime_error(tadah::mlip::krr_implementation2_ignores(
-            kernel, "OPTIM " + k, "applies it",
-            k == "WDBFILE" ? "without WDBFILE" : "with " + k + " 1"));
+            kernel, "OPTIM " + k, "applies it", "with " + k + " 1"));
       }
     }
   }

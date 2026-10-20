@@ -836,6 +836,39 @@ at = "none"
 text = "PC_FRMSE (1-4) 0.1 1"
 error = "PC_FRMSE: dataset 4 on line 1 is outside validation DBFILE range 1-1"
 
+[[key.invalid]]
+wrap = "none"
+check = "check"
+context = "lines_val_no_forces"
+at = "none"
+doc = "The validation dataset has force weight 0 in every structure."
+text = '''
+PC_FRMSE 0.1 1
+OPTIM CGRID2B (1) 0.5 1.5
+OPTIMIZER
+LIB NLOPT
+ALGO LN_SBPLX
+MAXEVAL 10
+ENDOPTIMIZER'''
+error = "tadah hpo: PC_FRMSE on the validation set: no dataset has a structure with forces (lines_no_forces.db): every structure has force weight 0 (fweight), so the force metrics have nothing to measure"
+
+[[key.invalid]]
+wrap = "none"
+check = "check"
+context = "lines_val_forces_none"
+at = "none"
+doc = "The second validation dataset has force weight 0 in every structure, and an indexed line gives it a weight above 0."
+text = '''
+PC_FRMSE (1) 0.1 1
+PC_FRMSE (2) 0.1 0.5
+OPTIM CGRID2B (1) 0.5 1.5
+OPTIMIZER
+LIB NLOPT
+ALGO LN_SBPLX
+MAXEVAL 10
+ENDOPTIMIZER'''
+error = "tadah hpo: PC_FRMSE (2) gives weight 0.5 to validation dataset 2 (lines_no_forces.db), which has no structure with forces: every one has force weight 0 (fweight). A weight of 0 for this dataset is accepted, and so is a validation configuration without this file."
+
 # ------------------------------------------------ the metric options ----
 
 [[line_option]]
@@ -929,39 +962,6 @@ text = "PC_EMAE 5 1 --skip-rel 2 --skip-rel 3"
 error = "PC_EMAE: repeated --skip-rel"
 
 # ====================================================== PC_LAMMPS =======
-
-[[key.invalid]]
-wrap = "none"
-check = "check"
-context = "lines_val_no_forces"
-at = "none"
-doc = "The validation dataset has force weight 0 in every structure."
-text = '''
-PC_FRMSE 0.1 1
-OPTIM CGRID2B (1) 0.5 1.5
-OPTIMIZER
-LIB NLOPT
-ALGO LN_SBPLX
-MAXEVAL 10
-ENDOPTIMIZER'''
-error = "tadah hpo: PC_FRMSE on the validation set: no dataset has a structure with forces (lines_no_forces.db): every structure has force weight 0 (fweight), so the force metrics have nothing to measure"
-
-[[key.invalid]]
-wrap = "none"
-check = "check"
-context = "lines_val_forces_none"
-at = "none"
-doc = "The second validation dataset has force weight 0 in every structure, and an indexed line gives it a weight above 0."
-text = '''
-PC_FRMSE (1) 0.1 1
-PC_FRMSE (2) 0.1 0.5
-OPTIM CGRID2B (1) 0.5 1.5
-OPTIMIZER
-LIB NLOPT
-ALGO LN_SBPLX
-MAXEVAL 10
-ENDOPTIMIZER'''
-error = "tadah hpo: PC_FRMSE (2) gives weight 0.5 to validation dataset 2 (lines_no_forces.db), which has no structure with forces: every one has force weight 0 (fweight). A weight of 0 for this dataset is accepted, and so is a validation configuration without this file."
 
 [[key]]
 id = "ROOT.PC_LAMMPS"

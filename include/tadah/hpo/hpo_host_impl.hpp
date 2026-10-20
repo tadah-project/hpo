@@ -1389,9 +1389,9 @@ HPO_Host<P,R>::HPO_Host(core::Context master_ctx,
                         throw std::runtime_error(std::string("tadah hpo: ") + key
                             + " (" + std::to_string(d + 1) + ") gives weight " + w.str()
                             + " to " + name(d) + ", which has no structure with " + data
-                            + ": every one has " + weight + ". Only weight 0 is "
-                            "accepted for it (or the validation set without the "
-                            "file)");
+                            + ": every one has " + weight + ". A weight of 0 for "
+                            "this dataset is accepted, and so is a validation "
+                            "configuration without this file.");
                     }
             };
             const bool energy_metric = trg_.use_emae || trg_.use_ermse

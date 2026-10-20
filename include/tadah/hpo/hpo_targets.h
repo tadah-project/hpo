@@ -166,8 +166,9 @@ public:
     static std::string optim_internal_key_error(const std::string& key);
     /** OPTIM on a key applied once, when the run starts and reads its data
      * (LSCALE, ESHIFT, ESHIFT_ATOM, ESHIFT_DBATOM, EFILTER, FFILTER,
-     * ZERO_COM_FORCE: mlip::apply_load_transforms on the training and
-     * validation data) is refused: no evaluation would take a candidate
+     * ZERO_COM_FORCE, WDBFILE, WDBFILE_AUTO, EWEIGHT_TEMP:
+     * mlip::apply_load_transforms on the training and validation data) is
+     * refused, whatever the model: no evaluation would take a candidate
      * value of it. Compared case-insensitively. Returns the error message,
      * "" for another key. */
     static std::string optim_startup_only_key_error(const std::string& key);

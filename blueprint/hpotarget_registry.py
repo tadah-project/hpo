@@ -13,6 +13,9 @@ library only), checks them strictly and returns a Registry of dataclasses:
 
   - every table and field is one the schema below knows, with the type it
     declares, and every required field is there;
+  - every table of an entry ([[key.invalid]], ...) follows its entry, before
+    a table of another kind (TOML gives it to the last entry above it,
+    wherever it sits);
   - every id is unique, across all the files;
   - every reference resolves: a block's parents, a key's group or blocks,
     a block alias, an INNER refusal, a strategy type's keys, the lines of
@@ -651,6 +654,61 @@ class Registry:
         raise KeyError(f"unknown vocabulary {name!r}")
 
 
+# ------------------------------------------------------ file layout ----
+# A table header at the start of a line: [name] or [[name]].
+TABLE_HEADER = re.compile(r"^\s*(\[\[?)\s*([A-Za-z0-9_.\"-]+)\s*\]\]?\s*(#.*)?$")
+
+
+def table_layout(text: str) -> list[str]:
+    """The tables of an entry that do not follow it: TOML gives a table
+    [[X.Y]] (or [X.Y...]) to the last [[X]] above it, wherever it sits, so
+    one placed after a table of another kind belongs to an entry a reader
+    of the file does not see it in, and a [[X]] added between would take it
+    over. Each such table is a problem naming its line, the entry and the
+    table it follows. Lines inside a multi-line string are not headers."""
+    problems: list[str] = []
+    arrays: dict[str, int] = {}   # [[X]] -> the line of the last one
+    last: tuple[str, int] | None = None   # the last table of another kind
+    in_string: str | None = None
+    for no, line in enumerate(text.splitlines(), 1):
+        if in_string is None:
+            m = TABLE_HEADER.match(line)
+            if m:
+                name = m.group(2)
+                first = name.split(".")[0]
+                header = f"{m.group(1)}{name}{']]' if m.group(1) == '[[' else ']'}"
+                if m.group(1) == "[[" and "." not in name:
+                    arrays[first] = no
+                    last = (header, no)
+                elif first in arrays and "." in name:
+                    if last is not None and last[0] != f"[[{first}]]" and \
+                            last[1] > arrays[first]:
+                        problems.append(
+                            f"line {no}: {header} belongs to the [[{first}]] "
+                            f"entry of line {arrays[first]}, but follows "
+                            f"{last[0]} (line {last[1]}); the tables of an "
+                            f"entry follow it, before the next entry")
+                else:
+                    last = (header, no)
+                continue
+        # Track the multi-line strings that open and close on this line.
+        i = 0
+        while True:
+            if in_string is None:
+                found = [(line.find(q, i), q) for q in ('"""', "'''")]
+                found = [(k, q) for k, q in found if k >= 0]
+                if not found:
+                    break
+                k, q = min(found)
+                in_string, i = q, k + 3
+            else:
+                k = line.find(in_string, i)
+                if k < 0:
+                    break
+                in_string, i = None, k + 3
+    return problems
+
+
 # ------------------------------------------------- target-file helpers ----
 # The target file as the parser reads it, for the checks below and for
 # tests/check_hpotarget_generated.py: a case put into its wrapper, its
@@ -1279,12 +1337,16 @@ class _Loader:
         path = self.dir / name
         try:
             with open(path, "rb") as fh:
-                return tomllib.load(fh)
+                data = tomllib.load(fh)
         except FileNotFoundError:
             self.err(name, "file not found")
+            return {}
         except tomllib.TOMLDecodeError as e:
             self.err(name, f"not TOML: {e}")
-        return {}
+            return {}
+        for problem in table_layout(path.read_text(encoding="utf-8")):
+            self.err(name, problem)
+        return data
 
     def run(self) -> Registry:
         main = self.read(MAIN_FILE)
