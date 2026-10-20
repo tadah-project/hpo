@@ -464,7 +464,7 @@ TEST_CASE("Each evaluation builds the kernel of its MPARAMS",
  * one thread (LAMBDA 1e-4, 1e-3, 1e-2): each potential holds the WEIGHTS of
  * an independent Trainer of its candidate (1e-12 relative), and no SIGMA,
  * WCOV or WNOISE.
- * Before uncertainty output left Tadah! 1.6.0: each potential held the
+ * Before uncertainty output was removed: each potential held the
  * WCOV and WNOISE of its fit (this case pinned them against the
  * reference). Before WCOV and WNOISE: the potentials had SIGMA (10 values,
  * the transposed and unscaled matrix). Before fix/hpo-trainer-reuse: 10,

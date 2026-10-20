@@ -4184,7 +4184,7 @@ doc = "UNCERTAINTY is a retired key; uncertainty output is not part of Tadah! 1.
 [[optim_target.invalid]]
 wrap = "root"
 text = "OPTIM UNCERTAINTY (1) 0.5 2"
-error = "OPTIM UNCERTAINTY is not a valid search target: UNCERTAINTY is a retired key: tadah train --uncertainty wrote weights.tadah, each coefficient of the fit beside a diagonal entry of SIGMA. Uncertainty output is not part of Tadah! 1.6.0: the errors of Tadah! 1.0.0 to 1.5.0 were not standard deviations, and no calibrated estimate replaces them. Replaced by: nothing in Tadah! 1.6.0. Deleting the option, or the UNCERTAINTY line, converts it: the fit and its coefficients are unaffected."
+error = "OPTIM UNCERTAINTY is not a valid search target: UNCERTAINTY is a retired key: tadah train --uncertainty wrote weights.tadah, each coefficient of the fit beside a diagonal entry of SIGMA. Uncertainty output is removed: the errors of Tadah! 1.0.0 to 1.5.0 were not standard deviations, and no calibrated estimate replaces them. Replaced by: nothing. Deleting the option, or the UNCERTAINTY line, converts it: the fit and its coefficients are unaffected."
 
 [[optim_target]]
 id = "OPTIM.TARGET.WCOV"
@@ -4196,7 +4196,7 @@ doc = "WCOV is a retired key; uncertainty output is not part of Tadah! 1.6.0."
 [[optim_target.invalid]]
 wrap = "root"
 text = "OPTIM WCOV (1) 0.5 2"
-error = "OPTIM WCOV is not a valid search target: WCOV is a retired key: WCOV held the covariance of the WEIGHTS of an OALGO 3 fit, for the uncertainty output of tadah predict --error and tadah properties pairwise --error. Uncertainty output is not part of Tadah! 1.6.0: the errors of Tadah! 1.0.0 to 1.5.0 were not standard deviations, and no calibrated estimate replaces them. Replaced by: nothing in Tadah! 1.6.0. Deleting the line converts it: no prediction reads it, and the fit is unaffected."
+error = "OPTIM WCOV is not a valid search target: WCOV is a retired key: WCOV held the covariance of the WEIGHTS of an OALGO 3 fit, for the uncertainty output of tadah predict --error and tadah properties pairwise --error. Uncertainty output is removed: the errors of Tadah! 1.0.0 to 1.5.0 were not standard deviations, and no calibrated estimate replaces them. Replaced by: nothing. Deleting the line converts it: no prediction reads it, and the fit is unaffected."
 
 [[optim_target]]
 id = "OPTIM.TARGET.WNOISE"
@@ -4208,7 +4208,7 @@ doc = "WNOISE is a retired key; uncertainty output is not part of Tadah! 1.6.0."
 [[optim_target.invalid]]
 wrap = "root"
 text = "OPTIM WNOISE (1) 0.5 2"
-error = "OPTIM WNOISE is not a valid search target: WNOISE is a retired key: WNOISE held the noise variance of each quantity of an OALGO 3 fit, for the uncertainty output of tadah predict --error and tadah properties pairwise --error. Uncertainty output is not part of Tadah! 1.6.0: the errors of Tadah! 1.0.0 to 1.5.0 were not standard deviations, and no calibrated estimate replaces them. Replaced by: nothing in Tadah! 1.6.0. Deleting the line converts it: no prediction reads it, and the fit is unaffected."
+error = "OPTIM WNOISE is not a valid search target: WNOISE is a retired key: WNOISE held the noise variance of each quantity of an OALGO 3 fit, for the uncertainty output of tadah predict --error and tadah properties pairwise --error. Uncertainty output is removed: the errors of Tadah! 1.0.0 to 1.5.0 were not standard deviations, and no calibrated estimate replaces them. Replaced by: nothing. Deleting the line converts it: no prediction reads it, and the fit is unaffected."
 
 [[optim_target]]
 id = "OPTIM.TARGET.ERROR"
@@ -4220,7 +4220,7 @@ doc = "ERROR is a retired key; uncertainty output is not part of Tadah! 1.6.0."
 [[optim_target.invalid]]
 wrap = "root"
 text = "OPTIM ERROR (1) 0.5 2"
-error = "OPTIM ERROR is not a valid search target: ERROR is a retired key: ERROR, the key of --error, asked tadah predict and tadah properties pairwise for errors computed from SIGMA. Uncertainty output is not part of Tadah! 1.6.0: the errors of Tadah! 1.0.0 to 1.5.0 were not standard deviations, and no calibrated estimate replaces them. Replaced by: nothing in Tadah! 1.6.0. Deleting the line converts it: no command reads it, and the fit is unaffected."
+error = "OPTIM ERROR is not a valid search target: ERROR is a retired key: ERROR, the key of --error, asked tadah predict and tadah properties pairwise for errors computed from SIGMA. Uncertainty output is removed: the errors of Tadah! 1.0.0 to 1.5.0 were not standard deviations, and no calibrated estimate replaces them. Replaced by: nothing. Deleting the line converts it: no command reads it, and the fit is unaffected."
 
 [[optim_target]]
 id = "OPTIM.TARGET.LAMBDA"
