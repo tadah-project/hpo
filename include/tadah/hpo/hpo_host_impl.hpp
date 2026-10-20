@@ -3037,9 +3037,10 @@ std::vector<std::string> HPO_Host<P,R>::balance_of_fit(
         return mlip::fit_balance_lines(mlip::no_fit_balance(
             "the run has no training data: the coefficients are those of "
             "FIXWEIGHT"));
+    /* The rule of tadah train (MLIP fit_balance): a fit of no free
+     * coefficient has none, saying so. */
     if (all_weights_fixed_)
-        return mlip::fit_balance_lines(mlip::no_fit_balance(
-            "FIXINDEX pins every coefficient: none was fitted"));
+        return mlip::fit_balance_lines(mlip::all_pinned_fit_balance());
     return mlip::fit_balance_lines(host.model->fit_balance());
 }
 
@@ -3655,20 +3656,21 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
      * detail::throw_if_stagnated). */
     if (may_become_best(r.loss, g_best_.load(std::memory_order_acquire)))
     {
-      /* The balance table of this evaluation's fit, for best_pot.tadah:
-       * one O(n p^2) pass, made before best_mtx_ is taken (other chains'
-       * decisions do not wait for it) and only for a usable loss that may
-       * be the new best -- never for every evaluation. `host` still holds
-       * this evaluation's fit: nothing since the training refits this
-       * thread's trainer. */
+      /* The decision is counted first, then computes the balance table of
+       * this evaluation's fit, then waits for the lock, and is done while
+       * still holding it, or, when the table throws, under the lock all the
+       * same: a stagnation check that would fire and began after the count
+       * waits until as many decisions are done (detail::throw_if_stagnated),
+       * whatever stage this one is at. */
+      detail::BestDecision best_decision(best_pubs_, best_mtx_);
+      /* The table, for best_pot.tadah: one O(n p^2) pass, made before
+       * best_mtx_ is taken (other chains' decisions do not wait for it) and
+       * only for a usable loss that may be the new best, not for the other
+       * evaluations. `host` still holds this evaluation's fit: nothing
+       * since the training refits this thread's trainer. */
       if (loss_is_feasible(r.loss, trg_.FAIL_SCORE))
         r.balance = balance_of_fit(host);
-      /* Counted before waiting for the lock and done while still holding
-       * it: a stagnation check that would fire and began after the count
-       * waits until as many decisions are done (detail::throw_if_stagnated). */
-      best_pubs_.started.fetch_add(1);
-      std::lock_guard<std::mutex> best_lock(best_mtx_);
-      detail::PublicationDone best_pub_done(best_pubs_);
+      best_decision.lock();
       const durable_best::Key key{
           r.loss, r.source_rank, r.chain_id, r.iter};
       const double cur = g_best_.load(std::memory_order_relaxed);

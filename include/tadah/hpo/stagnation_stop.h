@@ -16,32 +16,48 @@ namespace tadah::hpo {
 namespace detail {
 
 /** New-best decisions in progress. An evaluation whose loss may become the
- *  new best counts itself in `started` BEFORE it waits for the host's best
- *  mutex; a PublicationDone declared after that lock -- so it runs while the
- *  mutex is still held -- counts it in `done` and wakes the waiters of
- *  throw_if_stagnated. Under the mutex the decision publishes the best
- *  potential (fsync + rename, or a transient-I/O backoff) and records the
- *  eval number of a new best. `done` counts decisions in the order they
- *  take the mutex, which is not the order they were counted in `started`
- *  (std::mutex is not FIFO). */
+ *  new best counts itself in `started` when it makes the decision
+ *  (BestDecision), BEFORE what it does ahead of the host's best mutex (the
+ *  balance table of its fit) and before it waits for the mutex; it counts
+ *  itself in `done` under the mutex when the decision ends, and wakes the
+ *  waiters of throw_if_stagnated. Under the mutex the decision publishes
+ *  the best potential (fsync + rename, or a transient-I/O backoff) and
+ *  records the eval number of a new best. `done` counts decisions in the
+ *  order they take the mutex, which is not the order they were counted in
+ *  `started` (std::mutex is not FIFO). */
 struct BestPublications {
   std::atomic<std::size_t> started{0};
   std::atomic<std::size_t> done{0};   // written under the best mutex only
   std::condition_variable  cv;
 };
 
-class PublicationDone {
+/** One new-best decision, from its count to its end: counted in
+ *  `started` on construction; lock() takes the best mutex; the destructor
+ *  counts it in `done` under the mutex -- taking it if the decision ended
+ *  before lock(), as when what it did ahead of the mutex threw -- and wakes
+ *  the waiters, so a decision that ends by an exception never leaves a
+ *  stagnation check waiting. */
+class BestDecision {
 public:
-  explicit PublicationDone(BestPublications& p) noexcept : p_(p) {}
-  ~PublicationDone()
+  BestDecision(BestPublications& p, std::mutex& best_mtx)
+      : p_(p), lock_(best_mtx, std::defer_lock)
   {
+    p_.started.fetch_add(1);
+  }
+  /** Takes the best mutex, held until the decision ends. */
+  void lock() { lock_.lock(); }
+  ~BestDecision()
+  {
+    if (!lock_.owns_lock()) lock_.lock();
     p_.done.fetch_add(1);
+    lock_.unlock();
     p_.cv.notify_all();   // without a waiter: no system call
   }
-  PublicationDone(const PublicationDone&) = delete;
-  PublicationDone& operator=(const PublicationDone&) = delete;
+  BestDecision(const BestDecision&) = delete;
+  BestDecision& operator=(const BestDecision&) = delete;
 private:
   BestPublications& p_;
+  std::unique_lock<std::mutex> lock_;
 };
 
 /** The stagnation check of evaluation `iter`: throws StagnationStop when

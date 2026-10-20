@@ -183,7 +183,9 @@ FitSwitchSources fit_switch_sources(const core::Context& ctx,
  * best_pot.tadah, where the evaluation that published it stored the table
  * of its fit: what the file holds is what is printed, whichever evaluation
  * or rank published it last. Nothing for a run that wrote no best
- * potential; a WARNING when the file cannot be read or has no table. */
+ * potential; a WARNING when the file cannot be read or has no table. The
+ * legend of the columns follows a table, not a none line (which a long
+ * reason wraps to several lines). */
 void print_best_fit_balance(const HPOTargets& trg)
 {
     if (hpo_rank() != 0) return;
@@ -193,8 +195,13 @@ void print_best_fit_balance(const HPOTargets& trg)
     std::error_code ec;
     if (!std::filesystem::exists(path, ec)) return;
     std::vector<std::string> lines;
+    bool computed = false;  // a table, not none: the legend follows it
     try {
-        lines = mlip::fit_balance_record_lines(mlip::read_training_record(path));
+        const mlip::TrainingRecord record = mlip::read_training_record(path);
+        lines = mlip::fit_balance_record_lines(record);
+        const std::optional<mlip::FitBalance> table =
+            mlip::read_fit_balance(record);
+        computed = table && table->computed();
     } catch (const std::exception& e) {
         core::Logger::instance().log(
             core::LogLevel::WARNING,
@@ -211,7 +218,7 @@ void print_best_fit_balance(const HPOTargets& trg)
     }
     std::cout << "[HPO] " << path << ":\n";
     mlip::print_fit_balance(std::cout, lines,
-                            lines.size() > 1 && mlip::first_fit_balance_legend());
+                            computed && mlip::first_fit_balance_legend());
 }
 
 /* What hpo_run() does with its context: a run, or the startup checks of a
