@@ -636,8 +636,9 @@ TEST_CASE("tadah hpo refuses at startup error scales every fit refuses",
 
 /* Pins: a training configuration with retired key lines, its own or of a
  * file it includes with CONFIG, is refused when tadah hpo starts, by the
- * run and by --check alike, naming each line and its conversion; the run
- * writes no evaluation.
+ * run and by --check alike, naming each line and its conversion (FWEIGHT
+ * of the energy fit, FORCE false, converted by deleting the line); the
+ * run writes no evaluation.
  * Before the fix: the run started and every evaluation refused it, and the
  * run ended without a potential ("no evaluation produced a usable
  * loss"). */
@@ -664,7 +665,9 @@ TEST_CASE("tadah hpo refuses a configuration with retired keys when it "
                        Contains("tadah hpo: the configuration has keys "
                                 "retired in Tadah! 1.6.0") &&
                            Contains("EWEIGHT 1.0 (line 18 of outer.train)") &&
-                           Contains("FWEIGHT 100 (line 1 of inner.train)"));
+                           Contains("FWEIGHT 100 (line 1 of inner.train; "
+                                    "FORCE false here: converted by "
+                                    "deleting the line)"));
             CHECK(read_file("loss.tadah").find("\n1 ") == std::string::npos);
         }
     }
