@@ -164,14 +164,14 @@ public:
      * configuration sets them (an evaluation could not write a candidate
      * into one). Returns the error message, "" for another key. */
     static std::string optim_internal_key_error(const std::string& key);
-    /* OPTIM on a key applied once, when the run starts and reads its data
+    /** OPTIM on a key applied once, when the run starts and reads its data
      * (LSCALE, ESHIFT, ESHIFT_ATOM, ESHIFT_DBATOM, EFILTER, FFILTER,
      * ZERO_COM_FORCE: mlip::apply_load_transforms on the training and
      * validation data) is refused: no evaluation would take a candidate
      * value of it. Compared case-insensitively. Returns the error message,
      * "" for another key. */
     static std::string optim_startup_only_key_error(const std::string& key);
-    /* The low bound of an OPTIM box on a key of the fit that a fit refuses
+    /** The low bound of an OPTIM box on a key of the fit that a fit refuses
      * below 0 (EWEIGHT, FWEIGHT, SWEIGHT: a weight is a number >= 0;
      * LAMBDA: a negative value other than -1 is refused, and -1, which
      * requests the evidence approximation, is no value of a box): the
