@@ -313,6 +313,14 @@ EXTRACTION: list[Rule] = [
          tables=[(r"\bstructure\s*\[\]", "first", ("optim_target",))],
          unread_ok={"k == e": "a key of the table, which is read as a "
                               "table"}),
+    Rule("the OPTIM keys applied once at startup", "src/hpo_targets.cpp",
+         r"^std::string HPOTargets::optim_startup_only_key_error\(",
+         tables=[(r"\bonce\s*\[\]", "all", ("optim_target",))],
+         unread_ok={"k == o": "a key of the table, which is read as a "
+                              "table"}),
+    Rule("the OPTIM keys of the fit", "src/hpo_targets.cpp",
+         r"^std::string HPOTargets::optim_fit_key_nonnegative\(",
+         operands={"k": ("optim_target",)}),
     Rule("the OPTIM discrete index", "src/hpo_targets.cpp",
          r"^std::string HPOTargets::optim_discrete_index_error\(",
          operands={"core::to_upper(key)": ("optim_target",)}),

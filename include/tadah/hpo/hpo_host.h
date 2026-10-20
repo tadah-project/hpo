@@ -488,6 +488,18 @@ private:
      * tensor is not; PC_FRMSE keeps its own in trg_.frmse_targets). Empty:
      * every dataset. */
     std::vector<bool>            val_measured_srmse_;
+    /* The validation datasets the energy metrics (PC_EMAE, PC_ERMSE,
+     * PC_ErRMSE, PC_ERSQ) measure: a dataset without an energy (every
+     * structure with eweight 0) is not; PC_ERMSE keeps the same in
+     * trg_.ermse_targets. Empty: every dataset. */
+    std::vector<bool>            val_measured_energy_;
+    /* The notes of the fits of the run said in the journal, each kind
+     * once per run (first_fit_note): an evidence approximation stopped at
+     * its iteration limit, and one refused (EvidenceApproximationError). */
+    mutable std::mutex               fit_notes_mtx_;
+    mutable std::vector<std::string> fit_notes_said_;
+    /* True the first time @p kind is noted in this run. */
+    bool first_fit_note(const std::string& kind) const;
     std::shared_ptr<MetricSkipTracker> metric_skip_tracker_ = std::make_shared<MetricSkipTracker>();
     /* Knot-family channels (D2_Knot5 / DM_REAM knot bcode): RCUT2B/RCUTMB
      * are DERIVED from the largest knot — re-derived on every evaluation in

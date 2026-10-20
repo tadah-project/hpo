@@ -1050,6 +1050,33 @@ error = "GRID_POINTS must be at least 2"
         self.files["part_b.toml"] += "\n[[param\n"
         self.assertIn("part_b.toml: not TOML", self.errors())
 
+    def test_a_table_of_an_entry_sits_inside_it(self):
+        # TOML gives a [[param.invalid]] table to the last [[param]] above
+        # it, also after a [[loss_function]] and a [[rule]]: such a case
+        # sits where a reader of the entry does not see it, and a [[param]]
+        # added between would take it over. The loader refuses it, naming
+        # the line, the entry and the table it follows.
+        self.files["part_b.toml"] += (
+            '\n[[param.invalid]]\nwrap = "optimizer"\nat = "ENDOPTIMIZER"\n'
+            'text = "PARAM GRID_POINTS 0"\n'
+            'error = "GRID_POINTS must be at least 2"\n')
+        self.write()
+        lines = (self.dir / "part_b.toml").read_text().splitlines()
+        at = lines.index("[[param.invalid]]", lines.index("[[rule]]")) + 1
+        rule = lines.index("[[rule]]") + 1
+        param = lines.index("[[param]]") + 1
+        self.assertIn(f"part_b.toml: line {at}: [[param.invalid]] belongs to "
+                      f"the [[param]] entry of line {param}, but follows "
+                      f"[[rule]] (line {rule}); the tables of an entry follow "
+                      f"it, before the next entry", self.errors())
+        # Inside its entry, the same table is accepted.
+        self.files["part_b.toml"] = PART_B.replace(
+            '[[param.examples]]',
+            '[[param.invalid]]\nwrap = "optimizer"\nat = "ENDOPTIMIZER"\n'
+            'text = "PARAM GRID_POINTS 0"\n'
+            'error = "GRID_POINTS must be at least 2"\n\n[[param.examples]]', 1)
+        self.load()
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -16,6 +16,7 @@
 #include <tadah/hpo/hpo_log.h>
 #include <tadah/hpo/optimizer_caps.h>
 #include <tadah/hpo/rho_gates.h>
+#include <tadah/mlip/data_weights.h>
 #include <tadah/mlip/intercepts.h>
 #include <tadah/mlip/trainer.h>
 #include <tadah/mlip/training_datasets.h>
@@ -236,6 +237,17 @@ RawEmbeddingF0 derive_raw_embedding_f0(const core::Context &train_ctx) {
   return out;
 }
 
+bool fixindex_pins_every_weight(const core::Context &ctx) {
+  if (!ctx.contains("FIXINDEX")) return false;
+  if (ctx.contains("NORM") && ctx.get<bool>("NORM")) return false;
+  if (ctx.has_stored("OALGO") && ctx.get<int>("OALGO") == 3) return false;
+  const std::size_t K = derive_weight_count(ctx);
+  return K > 0 &&
+         tadah::mlip::classify_weight_source(ctx, K) ==
+             tadah::mlip::WeightSource::AllFixedData &&
+         !tadah::mlip::basis_drawn_from_training_data(ctx);
+}
+
 void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
                         bool has_train_db, bool has_validation) {
   /* --- the training datasets, as tadah train reads them ----------------
@@ -267,7 +279,8 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
         "the potential; set it in the -c potential/configuration.");
   }
   for (const auto &kv : trg.optimap) {
-    const std::string e = HPOTargets::optim_structure_key_error(kv.first);
+    std::string e = HPOTargets::optim_structure_key_error(kv.first);
+    if (e.empty()) e = HPOTargets::optim_startup_only_key_error(kv.first);
     if (!e.empty()) throw std::runtime_error(e);
   }
   /* An invalid stored EMBF0 value fails here, not at the first evaluation.
@@ -580,6 +593,72 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
    * ("The descriptor size is 0"). */
   if (has_fw || has_fi || !has_train_db)
     (void)tadah::mlip::classify_weight_source(train_ctx, K);
+
+  /* --- the settings of the fit every evaluation makes ------------------
+   * The implementation of M_KRR is part of the MODEL line of the potential,
+   * which every best_pot.tadah carries: one other than 1 and 2 is refused,
+   * with the fit's message, whether or not the evaluations fit.
+   * An evaluation fits the model when the run has training data and
+   * FIXINDEX does not pin every weight (fixindex_pins_every_weight; the
+   * host provisions the pinned weights otherwise). Such a fit refuses a
+   * LAMBDA that requests nothing (a negative value other than -1, a second
+   * value), LAMBDA -1 under an OALGO other than 3 or under M_KRR
+   * implementation 2, and OALGO 3 with a LAMBDA other than 0 when it has
+   * an intercept column it fits (BIAS true): each evaluation would refuse
+   * it and score FAILSCORE, so it is refused here, with the fit's message
+   * (and OPTIM LAMBDA under OALGO 3 with such a column).
+   * So is OPTIM of a weight that M_KRR implementation 2 ignores (every
+   * candidate other than 1 would be refused); its other refusals depend on
+   * the training data, and HPO_Host makes them once it has read them. A
+   * run whose evaluations fit nothing reads none of these. */
+  tadah::mlip::require_krr_implementation(train_ctx);
+  if (has_train_db && !fixindex_pins_every_weight(train_ctx)) {
+    tadah::mlip::require_fit_lambda(train_ctx);
+    /* OALGO 3 refuses a LAMBDA other than 0 when the fit has an intercept
+     * column FIXINDEX does not pin: the configuration's LAMBDA, with the
+     * fit's message, and OPTIM LAMBDA, whose every candidate but 0 would
+     * be refused. The intercept columns are the model function's, so the
+     * function is built as an evaluation builds it (probe_model() above
+     * checked that it builds); only for a setup the rule can refuse. */
+    const auto lambda_it = trg.optimap.find("LAMBDA");
+    const bool optim_lambda =
+        lambda_it != trg.optimap.end() &&
+        std::any_of(lambda_it->second.opt.begin(),
+                    lambda_it->second.opt.end(), [](bool b) { return b; });
+    if (core::n_intercept_columns(train_ctx) > 0 &&
+        !tadah::mlip::is_krr_implementation_2(train_ctx) &&
+        train_ctx.get<int>("OALGO", 0) == 3 &&
+        (train_ctx.get<double>("LAMBDA", 0) != 0.0 || optim_lambda)) {
+      core::Context c = train_ctx;
+      tadah::mlip::memory::MLIPWorkspaceManager ws;
+      tadah::mlip::Trainer probe(c, ws);
+      tadah::mlip::require_oalgo3_intercepts(probe.context, *probe.fb);
+      const std::size_t n =
+          tadah::mlip::fitted_intercept_columns(probe.context, *probe.fb)
+              .size();
+      if (optim_lambda && n > 0)
+        throw std::runtime_error(
+            "OPTIM LAMBDA: OALGO 3 penalises every weight alike, and the fit "
+            "has " + std::to_string(n) + " intercept column(s) (BIAS true "
+            "with ATOM), which a ridge penalty leaves out, so every fit "
+            "refuses a LAMBDA other than 0: each candidate of the box but 0 "
+            "would fail its evaluation. OALGO 1, 2 or 4 fits a positive "
+            "LAMBDA with the intercepts unpenalised.");
+    }
+    if (tadah::mlip::is_krr_implementation_2(train_ctx)) {
+      const std::string kernel = train_ctx.get<std::string>("MODEL", 1);
+      for (const char *key : {"EWEIGHT", "FWEIGHT", "SWEIGHT"}) {
+        const auto it = trg.optimap.find(key);
+        if (it == trg.optimap.end()) continue;
+        if (std::none_of(it->second.opt.begin(), it->second.opt.end(),
+                         [](bool b) { return b; }))
+          continue;
+        const std::string k = key;
+        throw std::runtime_error(tadah::mlip::krr_implementation2_ignores(
+            kernel, "OPTIM " + k, "applies it", "with " + k + " 1"));
+      }
+    }
+  }
 
   /* --- GRAD_STRATEGY ANALYTICAL needs the analytical gradient ----------
    * ANALYTICAL -- written out, or resolved from an unset GRAD_STRATEGY for

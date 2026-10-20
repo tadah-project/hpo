@@ -164,6 +164,20 @@ public:
      * configuration sets them (an evaluation could not write a candidate
      * into one). Returns the error message, "" for another key. */
     static std::string optim_internal_key_error(const std::string& key);
+    /** OPTIM on a key applied once, when the run starts and reads its data
+     * (LSCALE, ESHIFT, ESHIFT_ATOM, ESHIFT_DBATOM, EFILTER, FFILTER,
+     * ZERO_COM_FORCE, WDBFILE, WDBFILE_AUTO, EWEIGHT_TEMP:
+     * mlip::apply_load_transforms on the training and validation data) is
+     * refused, whatever the model: no evaluation would take a candidate
+     * value of it. Compared case-insensitively. Returns the error message,
+     * "" for another key. */
+    static std::string optim_startup_only_key_error(const std::string& key);
+    /** The low bound of an OPTIM box on a key of the fit that a fit refuses
+     * below 0 (EWEIGHT, FWEIGHT, SWEIGHT: a weight is a number >= 0;
+     * LAMBDA: a negative value other than -1 is refused, and -1, which
+     * requests the evidence approximation, is no value of a box): the
+     * reason in words, "" for another key. */
+    static std::string optim_fit_key_nonnegative(const std::string& key);
     /* OPTIM on a legacy many-body key (CGRIDMB, SGRIDMB, AMPGRIDMB,
      * CEMBFUNC, SEMBFUNC, RCUTMB) that @p ctx does not store, while its
      * many-body term is DM_Embed components (DESCRIPTOR blocks): refused

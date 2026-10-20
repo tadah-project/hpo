@@ -32,8 +32,12 @@ long_doc = """\
 The term needs a validation configuration (--validation). The weight is a \
 number >= 0. With a weight of 0 the term is 0 but still counts in the mean \
 of the terms of an evaluation, and --skip-above and --skip-rel still apply \
-to the metric."""
+to the metric. A structure with energy weight 0 (eweight) is left out of \
+the metric. A dataset whose structures all have energy weight 0 is not \
+measured: the average leaves it out, and hpo_run.log names it. A run in \
+which no validation dataset has an energy is refused."""
 checks = [
+  { msg = "tadah hpo: {keys} on the validation set: no dataset has a structure with an energy ({list}): every structure has energy weight 0 (eweight), so the energy metrics have nothing to measure", doc = "When the run starts, once the validation data are read, without a line: no validation structure has an energy to measure; {keys} names the energy metrics of the file, {list} the files." },
   { msg = "{key} requires <target> <weight>", doc = "At the line: fewer than two values follow the key and its index list." },
   { msg = "{key}: unknown flag '{tok}'", doc = "At the line: a token after the weight that is no option of the metric lines." },
   { msg = "{key}: indexed targets are supported only for PC_ERMSE and PC_FRMSE", doc = "At the line: an index list, which only PC_ERMSE and PC_FRMSE take." },
@@ -99,6 +103,22 @@ error = "unknown key 'PC_EMAE' in this block"
 doc = "A metric line is a top-level key."
 
 [[key.invalid]]
+wrap = "none"
+check = "check"
+context = "lines_val_no_energy"
+at = "none"
+doc = "The validation dataset has energy weight 0 in every structure."
+text = '''
+PC_EMAE 5 1
+OPTIM CGRID2B (1) 0.5 1.5
+OPTIMIZER
+LIB NLOPT
+ALGO LN_SBPLX
+MAXEVAL 10
+ENDOPTIMIZER'''
+error = "tadah hpo: PC_EMAE on the validation set: no dataset has a structure with an energy (lines_no_energy.db): every structure has energy weight 0 (eweight), so the energy metrics have nothing to measure"
+
+[[key.invalid]]
 wrap = "root"
 at = 2
 text = '''
@@ -124,7 +144,11 @@ The indices count the DBFILE entries of the validation configuration \
 from 1. A file has either one line without indices or indexed lines \
 that give each dataset one target and weight; when the run starts, \
 every dataset needs one, and no index may exceed the number of \
-datasets. The weight is a number >= 0."""
+datasets. The weight is a number >= 0. A structure with energy weight 0 \
+(eweight) is left out of the metric. A dataset whose structures all have \
+energy weight 0 is not measured: the average leaves it out, and \
+hpo_run.log names it; an indexed line that gives it a weight above 0 is \
+refused. A run in which no validation dataset has an energy is refused."""
 untested = [
   { msg = "{key} requires validation DBFILE entries", why = "Needs a validation configuration without DBFILE; in tadah hpo --check the training configuration of a case is also its validation configuration, and its own checks come first." },
 ]
@@ -168,6 +192,20 @@ doc = """\
 When the run starts, without a line: the indexed lines give some \
 datasets no target and weight; {list} has one line for each, \
 "  dataset <i> (<file>)"."""
+
+[[key.checks]]
+msg = "tadah hpo: {keys} on the validation set: no dataset has a structure with an energy ({list}): every structure has energy weight 0 (eweight), so the energy metrics have nothing to measure"
+doc = """\
+When the run starts, once the validation data are read, without a line: \
+no validation structure has an energy to measure; {keys} names the energy \
+metrics of the file, {list} the files."""
+
+[[key.checks]]
+msg = "tadah hpo: PC_ERMSE ({index}) gives weight {value} to validation dataset {index} ({file}), which has no structure with an energy: every one has energy weight 0 (eweight). A weight of 0 for this dataset is accepted, and so is a validation configuration without this file."
+doc = """\
+When the run starts, once the validation data are read, without a line: \
+an indexed line gives a weight above 0 to a dataset whose structures all \
+have energy weight 0."""
 
 [[key.checks]]
 msg = "{key} requires <target> <weight>"
@@ -298,6 +336,39 @@ at = "none"
 text = "PC_ERMSE (1-4) 2 1"
 error = "PC_ERMSE: dataset 4 on line 1 is outside validation DBFILE range 1-1"
 
+[[key.invalid]]
+wrap = "none"
+check = "check"
+context = "lines_val_no_energy"
+at = "none"
+doc = "The validation dataset has energy weight 0 in every structure."
+text = '''
+PC_ERMSE 2 1
+OPTIM CGRID2B (1) 0.5 1.5
+OPTIMIZER
+LIB NLOPT
+ALGO LN_SBPLX
+MAXEVAL 10
+ENDOPTIMIZER'''
+error = "tadah hpo: PC_ERMSE on the validation set: no dataset has a structure with an energy (lines_no_energy.db): every structure has energy weight 0 (eweight), so the energy metrics have nothing to measure"
+
+[[key.invalid]]
+wrap = "none"
+check = "check"
+context = "lines_val_energy_none"
+at = "none"
+doc = "The second validation dataset has energy weight 0 in every structure, and an indexed line gives it a weight above 0."
+text = '''
+PC_ERMSE (1) 2 1
+PC_ERMSE (2) 2 0.5
+OPTIM CGRID2B (1) 0.5 1.5
+OPTIMIZER
+LIB NLOPT
+ALGO LN_SBPLX
+MAXEVAL 10
+ENDOPTIMIZER'''
+error = "tadah hpo: PC_ERMSE (2) gives weight 0.5 to validation dataset 2 (lines_no_energy.db), which has no structure with an energy: every one has energy weight 0 (eweight). A weight of 0 for this dataset is accepted, and so is a validation configuration without this file."
+
 [[key]]
 id = "ROOT.PC_ErRMSE"
 name = "PC_ErRMSE"
@@ -311,8 +382,13 @@ per mille: the LOSS function of the metric averaged over the datasets, \
 its target and its weight."""
 long_doc = """\
 The term needs a validation configuration (--validation). The weight is \
-a number >= 0."""
+a number >= 0. A structure with energy \
+weight 0 (eweight) is left out of the metric. A dataset whose structures \
+all have energy weight 0 is not measured: the average leaves it out, and \
+hpo_run.log names it. A run in which no validation dataset has an energy \
+is refused."""
 checks = [
+  { msg = "tadah hpo: {keys} on the validation set: no dataset has a structure with an energy ({list}): every structure has energy weight 0 (eweight), so the energy metrics have nothing to measure", doc = "When the run starts, once the validation data are read, without a line: no validation structure has an energy to measure; {keys} names the energy metrics of the file, {list} the files." },
   { msg = "{key} requires <target> <weight>", doc = "At the line: fewer than two values follow the key and its index list." },
   { msg = "{key}: unknown flag '{tok}'", doc = "At the line: a token after the weight that is no option of the metric lines." },
   { msg = "{key}: indexed targets are supported only for PC_ERMSE and PC_FRMSE", doc = "At the line: an index list, which only PC_ERMSE and PC_FRMSE take." },
@@ -369,6 +445,22 @@ wrap = "root"
 text = "PC_ErRMSE 10 -1"
 error = "PC_ErRMSE <weight> must be a number >= 0, got '-1'"
 
+[[key.invalid]]
+wrap = "none"
+check = "check"
+context = "lines_val_no_energy"
+at = "none"
+doc = "The validation dataset has energy weight 0 in every structure."
+text = '''
+PC_ErRMSE 10 1
+OPTIM CGRID2B (1) 0.5 1.5
+OPTIMIZER
+LIB NLOPT
+ALGO LN_SBPLX
+MAXEVAL 10
+ENDOPTIMIZER'''
+error = "tadah hpo: PC_ErRMSE on the validation set: no dataset has a structure with an energy (lines_no_energy.db): every structure has energy weight 0 (eweight), so the energy metrics have nothing to measure"
+
 [[key]]
 id = "ROOT.PC_ERSQ"
 name = "PC_ERSQ"
@@ -382,8 +474,13 @@ energies of the validation datasets: the LOSS function of the metric \
 averaged over the datasets, its target and its weight."""
 long_doc = """\
 The term needs a validation configuration (--validation). The weight is \
-a number >= 0."""
+a number >= 0. A structure with energy \
+weight 0 (eweight) is left out of the metric. A dataset whose structures \
+all have energy weight 0 is not measured: the average leaves it out, and \
+hpo_run.log names it. A run in which no validation dataset has an energy \
+is refused."""
 checks = [
+  { msg = "tadah hpo: {keys} on the validation set: no dataset has a structure with an energy ({list}): every structure has energy weight 0 (eweight), so the energy metrics have nothing to measure", doc = "When the run starts, once the validation data are read, without a line: no validation structure has an energy to measure; {keys} names the energy metrics of the file, {list} the files." },
   { msg = "{key} requires <target> <weight>", doc = "At the line: fewer than two values follow the key and its index list." },
   { msg = "{key}: unknown flag '{tok}'", doc = "At the line: a token after the weight that is no option of the metric lines." },
   { msg = "{key}: indexed targets are supported only for PC_ERMSE and PC_FRMSE", doc = "At the line: an index list, which only PC_ERMSE and PC_FRMSE take." },
@@ -435,6 +532,22 @@ wrap = "root"
 text = "PC_ERSQ 1 -1"
 error = "PC_ERSQ <weight> must be a number >= 0, got '-1'"
 
+[[key.invalid]]
+wrap = "none"
+check = "check"
+context = "lines_val_no_energy"
+at = "none"
+doc = "The validation dataset has energy weight 0 in every structure."
+text = '''
+PC_ERSQ 1 1
+OPTIM CGRID2B (1) 0.5 1.5
+OPTIMIZER
+LIB NLOPT
+ALGO LN_SBPLX
+MAXEVAL 10
+ENDOPTIMIZER'''
+error = "tadah hpo: PC_ERSQ on the validation set: no dataset has a structure with an energy (lines_no_energy.db): every structure has energy weight 0 (eweight), so the energy metrics have nothing to measure"
+
 [[key]]
 id = "ROOT.PC_SRMSE"
 name = "PC_SRMSE"
@@ -450,10 +563,8 @@ long_doc = """\
 The term needs a validation configuration (--validation). The weight is \
 a number >= 0. A dataset whose \
 structures all have stress weight 0 is not measured: the average leaves \
-it out, and hpo_run.log names it."""
-untested = [
-  { msg = "tadah hpo: PC_SRMSE on the validation set: no dataset has a stress tensor ({list}): every structure has stress weight 0 (sweight), so the stress metrics have nothing to measure", why = "Comes once the validation data are read, which no case does." },
-]
+it out, and hpo_run.log names it. A run in which no validation dataset has \
+a stress tensor is refused."""
 
 [[key.args]]
 name = "target"
@@ -519,6 +630,22 @@ wrap = "root"
 text = "PC_SRMSE 0.001 1 --skip 3"
 error = "PC_SRMSE: unknown flag '--skip'"
 
+[[key.invalid]]
+wrap = "none"
+check = "check"
+context = "lines_val_no_stress"
+at = "none"
+doc = "The validation dataset has stress weight 0 in every structure."
+text = '''
+PC_SRMSE 0.001 1
+OPTIM CGRID2B (1) 0.5 1.5
+OPTIMIZER
+LIB NLOPT
+ALGO LN_SBPLX
+MAXEVAL 10
+ENDOPTIMIZER'''
+error = "tadah hpo: PC_SRMSE on the validation set: no dataset has a stress tensor (lines_no_stress.db): every structure has stress weight 0 (sweight), so the stress metrics have nothing to measure"
+
 [[key]]
 id = "ROOT.PC_FRMSE"
 name = "PC_FRMSE"
@@ -540,11 +667,9 @@ every dataset needs one, and no index may exceed the number of \
 datasets. The weight is a number >= 0. A dataset whose structures all \
 have force weight 0 is not measured: the average leaves it out, and \
 hpo_run.log names it; an indexed line that gives it a weight above 0 is \
-refused."""
+refused. A run in which no validation dataset has forces is refused."""
 untested = [
   { msg = "{key} requires validation DBFILE entries", why = "Needs a validation configuration without DBFILE; in tadah hpo --check the training configuration of a case is also its validation configuration, and its own checks come first." },
-  { msg = "tadah hpo: PC_FRMSE on the validation set: no dataset has a structure with forces ({list}): every structure has force weight 0 (fweight), so the force metrics have nothing to measure", why = "Comes once the validation data are read, which no case does." },
-  { msg = "tadah hpo: PC_FRMSE ({index}) gives weight {value} to validation dataset {index} ({file}), which has no structure with forces: every one has force weight 0 (fweight). Give it weight 0, or remove the file from the validation set", why = "Comes once the validation data are read, which no case does." },
 ]
 
 [[key.args]]
@@ -594,7 +719,7 @@ When the run starts, once the validation data are read, without a line: \
 no validation structure has forces to measure; {list} names the files."""
 
 [[key.checks]]
-msg = "tadah hpo: PC_FRMSE ({index}) gives weight {value} to validation dataset {index} ({file}), which has no structure with forces: every one has force weight 0 (fweight). Give it weight 0, or remove the file from the validation set"
+msg = "tadah hpo: PC_FRMSE ({index}) gives weight {value} to validation dataset {index} ({file}), which has no structure with forces: every one has force weight 0 (fweight). A weight of 0 for this dataset is accepted, and so is a validation configuration without this file."
 doc = """\
 When the run starts, once the validation data are read, without a line: \
 an indexed line gives a weight above 0 to a dataset whose structures all \
@@ -710,6 +835,39 @@ check = "check"
 at = "none"
 text = "PC_FRMSE (1-4) 0.1 1"
 error = "PC_FRMSE: dataset 4 on line 1 is outside validation DBFILE range 1-1"
+
+[[key.invalid]]
+wrap = "none"
+check = "check"
+context = "lines_val_no_forces"
+at = "none"
+doc = "The validation dataset has force weight 0 in every structure."
+text = '''
+PC_FRMSE 0.1 1
+OPTIM CGRID2B (1) 0.5 1.5
+OPTIMIZER
+LIB NLOPT
+ALGO LN_SBPLX
+MAXEVAL 10
+ENDOPTIMIZER'''
+error = "tadah hpo: PC_FRMSE on the validation set: no dataset has a structure with forces (lines_no_forces.db): every structure has force weight 0 (fweight), so the force metrics have nothing to measure"
+
+[[key.invalid]]
+wrap = "none"
+check = "check"
+context = "lines_val_forces_none"
+at = "none"
+doc = "The second validation dataset has force weight 0 in every structure, and an indexed line gives it a weight above 0."
+text = '''
+PC_FRMSE (1) 0.1 1
+PC_FRMSE (2) 0.1 0.5
+OPTIM CGRID2B (1) 0.5 1.5
+OPTIMIZER
+LIB NLOPT
+ALGO LN_SBPLX
+MAXEVAL 10
+ENDOPTIMIZER'''
+error = "tadah hpo: PC_FRMSE (2) gives weight 0.5 to validation dataset 2 (lines_no_forces.db), which has no structure with forces: every one has force weight 0 (fweight). A weight of 0 for this dataset is accepted, and so is a validation configuration without this file."
 
 # ------------------------------------------------ the metric options ----
 
@@ -3626,6 +3784,203 @@ context = "lines_dm_embed"
 text = "OPTIM RCUTMB (1) 0 2"
 error = "OPTIM RCUTMB: the potential has no RCUTMB key: its many-body term is DM_Embed component(s) (DESCRIPTOR blocks), whose density parameter is the named path H.DENSITY.CUTOFF.RADIUS; write OPTIM <path> (indices) <low> <high> (the starter target of tadah refit names the paths; a target written for a DM_REAM potential names the legacy keys)."
 
+[[optim_target]]
+id = "OPTIM.TARGET.LSCALE"
+key = "LSCALE"
+status = "refused"
+msg = "OPTIM LSCALE is not a valid search target: LSCALE prepares the data and is applied once, when the run starts and reads them, so no evaluation would take a candidate value of it: its value is the training configuration's."
+doc = "LSCALE rescales the lengths of the training and validation data once, when the run starts."
+
+[[optim_target.invalid]]
+wrap = "root"
+text = "OPTIM LSCALE (1) 0.5 2"
+error = "OPTIM LSCALE is not a valid search target: LSCALE prepares the data and is applied once, when the run starts and reads them, so no evaluation would take a candidate value of it: its value is the training configuration's."
+
+[[optim_target]]
+id = "OPTIM.TARGET.ESHIFT"
+key = "ESHIFT"
+status = "refused"
+msg = "OPTIM ESHIFT is not a valid search target: ESHIFT prepares the data and is applied once, when the run starts and reads them, so no evaluation would take a candidate value of it: its value is the training configuration's."
+doc = "ESHIFT shifts the energies of the data once, when the run starts."
+
+[[optim_target.invalid]]
+wrap = "root"
+text = "OPTIM ESHIFT (1) 0.5 2"
+error = "OPTIM ESHIFT is not a valid search target: ESHIFT prepares the data and is applied once, when the run starts and reads them, so no evaluation would take a candidate value of it: its value is the training configuration's."
+
+[[optim_target]]
+id = "OPTIM.TARGET.ESHIFT_ATOM"
+key = "ESHIFT_ATOM"
+status = "refused"
+msg = "OPTIM ESHIFT_ATOM is not a valid search target: ESHIFT_ATOM prepares the data and is applied once, when the run starts and reads them, so no evaluation would take a candidate value of it: its value is the training configuration's."
+doc = "ESHIFT_ATOM derives the energy shifts from the isolated-atom structures of the training data once, when the run starts."
+
+[[optim_target.invalid]]
+wrap = "root"
+text = "OPTIM ESHIFT_ATOM (1) 0.5 2"
+error = "OPTIM ESHIFT_ATOM is not a valid search target: ESHIFT_ATOM prepares the data and is applied once, when the run starts and reads them, so no evaluation would take a candidate value of it: its value is the training configuration's."
+
+[[optim_target]]
+id = "OPTIM.TARGET.ESHIFT_DBATOM"
+key = "ESHIFT_DBATOM"
+status = "refused"
+msg = "OPTIM ESHIFT_DBATOM is not a valid search target: ESHIFT_DBATOM prepares the data and is applied once, when the run starts and reads them, so no evaluation would take a candidate value of it: its value is the training configuration's."
+doc = "ESHIFT_DBATOM derives the energy shifts from a fit to the energies of the training data once, when the run starts."
+
+[[optim_target.invalid]]
+wrap = "root"
+text = "OPTIM ESHIFT_DBATOM (1) 0.5 2"
+error = "OPTIM ESHIFT_DBATOM is not a valid search target: ESHIFT_DBATOM prepares the data and is applied once, when the run starts and reads them, so no evaluation would take a candidate value of it: its value is the training configuration's."
+
+[[optim_target]]
+id = "OPTIM.TARGET.EFILTER"
+key = "EFILTER"
+status = "refused"
+msg = "OPTIM EFILTER is not a valid search target: EFILTER prepares the data and is applied once, when the run starts and reads them, so no evaluation would take a candidate value of it: its value is the training configuration's."
+doc = "EFILTER drops the training structures whose energy per atom is outside its window once, when the run starts."
+
+[[optim_target.invalid]]
+wrap = "root"
+text = "OPTIM EFILTER (1) 0.5 2"
+error = "OPTIM EFILTER is not a valid search target: EFILTER prepares the data and is applied once, when the run starts and reads them, so no evaluation would take a candidate value of it: its value is the training configuration's."
+
+[[optim_target]]
+id = "OPTIM.TARGET.FFILTER"
+key = "FFILTER"
+status = "refused"
+msg = "OPTIM FFILTER is not a valid search target: FFILTER prepares the data and is applied once, when the run starts and reads them, so no evaluation would take a candidate value of it: its value is the training configuration's."
+doc = "FFILTER drops the training structures with a force above its limit once, when the run starts."
+
+[[optim_target.invalid]]
+wrap = "root"
+text = "OPTIM FFILTER (1) 0.5 2"
+error = "OPTIM FFILTER is not a valid search target: FFILTER prepares the data and is applied once, when the run starts and reads them, so no evaluation would take a candidate value of it: its value is the training configuration's."
+
+[[optim_target]]
+id = "OPTIM.TARGET.ZERO_COM_FORCE"
+key = "ZERO_COM_FORCE"
+status = "refused"
+msg = "OPTIM ZERO_COM_FORCE is not a valid search target: ZERO_COM_FORCE prepares the data and is applied once, when the run starts and reads them, so no evaluation would take a candidate value of it: its value is the training configuration's."
+doc = "ZERO_COM_FORCE removes the net force of each training structure once, when the run starts."
+
+[[optim_target.invalid]]
+wrap = "root"
+text = "OPTIM ZERO_COM_FORCE (1) 0.5 2"
+error = "OPTIM ZERO_COM_FORCE is not a valid search target: ZERO_COM_FORCE prepares the data and is applied once, when the run starts and reads them, so no evaluation would take a candidate value of it: its value is the training configuration's."
+
+[[optim_target]]
+id = "OPTIM.TARGET.WDBFILE"
+key = "WDBFILE"
+status = "refused"
+msg = "OPTIM WDBFILE is not a valid search target: WDBFILE prepares the data and is applied once, when the run starts and reads them, so no evaluation would take a candidate value of it: its value is the training configuration's."
+doc = "WDBFILE multiplies the weights of the structures of each training dataset once, when the run starts."
+
+[[optim_target.invalid]]
+wrap = "root"
+context = "lines_wdbfile"
+text = "OPTIM WDBFILE (1) 0.5 2"
+error = "OPTIM WDBFILE is not a valid search target: WDBFILE prepares the data and is applied once, when the run starts and reads them, so no evaluation would take a candidate value of it: its value is the training configuration's."
+
+[[optim_target]]
+id = "OPTIM.TARGET.WDBFILE_AUTO"
+key = "WDBFILE_AUTO"
+status = "refused"
+msg = "OPTIM WDBFILE_AUTO is not a valid search target: WDBFILE_AUTO prepares the data and is applied once, when the run starts and reads them, so no evaluation would take a candidate value of it: its value is the training configuration's."
+doc = "WDBFILE_AUTO scales the weights of each training dataset by its number of structures once, when the run starts."
+
+[[optim_target.invalid]]
+wrap = "root"
+context = "lines_wdbfile"
+text = "OPTIM WDBFILE_AUTO (1) 0 1"
+error = "OPTIM WDBFILE_AUTO is not a valid search target: WDBFILE_AUTO prepares the data and is applied once, when the run starts and reads them, so no evaluation would take a candidate value of it: its value is the training configuration's."
+
+[[optim_target]]
+id = "OPTIM.TARGET.EWEIGHT_TEMP"
+key = "EWEIGHT_TEMP"
+status = "refused"
+msg = "OPTIM EWEIGHT_TEMP is not a valid search target: EWEIGHT_TEMP prepares the data and is applied once, when the run starts and reads them, so no evaluation would take a candidate value of it: its value is the training configuration's."
+doc = "EWEIGHT_TEMP reweights the energies of the training structures by their energy per atom once, when the run starts."
+
+[[optim_target.invalid]]
+wrap = "root"
+context = "lines_wdbfile"
+text = "OPTIM EWEIGHT_TEMP (1) 100 1000"
+error = "OPTIM EWEIGHT_TEMP is not a valid search target: EWEIGHT_TEMP prepares the data and is applied once, when the run starts and reads them, so no evaluation would take a candidate value of it: its value is the training configuration's."
+
+[[optim_target]]
+id = "OPTIM.TARGET.EWEIGHT"
+key = "EWEIGHT"
+status = "special"
+condition = "The low bound of the box, explicit or made by AUTO, is below 0."
+msg = "OPTIM EWEIGHT ({index}): the low bound {low} is negative, but EWEIGHT is a weight, a number >= 0, and every fit refuses a negative one, so the low bound of its box is >= 0"
+doc = "OPTIM EWEIGHT searches the weight of the energies of the fit, a number >= 0."
+
+[[optim_target.examples]]
+wrap = "root"
+text = "OPTIM EWEIGHT (1) 0 2"
+
+[[optim_target.invalid]]
+wrap = "root"
+text = "OPTIM EWEIGHT (1) -0.5 2"
+error = "OPTIM EWEIGHT (1): the low bound -0.5 is negative, but EWEIGHT is a weight, a number >= 0, and every fit refuses a negative one, so the low bound of its box is >= 0"
+
+[[optim_target.invalid]]
+wrap = "root"
+doc = "AUTO FRAC 3 makes the box [-2, 4] around the value 1."
+text = "OPTIM EWEIGHT (1) AUTO FRAC 3"
+error = "OPTIM EWEIGHT (1): the low bound -2 is negative, but EWEIGHT is a weight, a number >= 0, and every fit refuses a negative one, so the low bound of its box is >= 0"
+
+[[optim_target]]
+id = "OPTIM.TARGET.FWEIGHT"
+key = "FWEIGHT"
+status = "special"
+condition = "The low bound of the box, explicit or made by AUTO, is below 0."
+msg = "OPTIM FWEIGHT ({index}): the low bound {low} is negative, but FWEIGHT is a weight, a number >= 0, and every fit refuses a negative one, so the low bound of its box is >= 0"
+doc = "OPTIM FWEIGHT searches the weight of the forces of the fit, a number >= 0."
+
+[[optim_target.examples]]
+wrap = "root"
+text = "OPTIM FWEIGHT (1) 0 2"
+
+[[optim_target.invalid]]
+wrap = "root"
+text = "OPTIM FWEIGHT (1) -0.5 2"
+error = "OPTIM FWEIGHT (1): the low bound -0.5 is negative, but FWEIGHT is a weight, a number >= 0, and every fit refuses a negative one, so the low bound of its box is >= 0"
+
+[[optim_target]]
+id = "OPTIM.TARGET.SWEIGHT"
+key = "SWEIGHT"
+status = "special"
+condition = "The low bound of the box, explicit or made by AUTO, is below 0."
+msg = "OPTIM SWEIGHT ({index}): the low bound {low} is negative, but SWEIGHT is a weight, a number >= 0, and every fit refuses a negative one, so the low bound of its box is >= 0"
+doc = "OPTIM SWEIGHT searches the weight of the stresses of the fit, a number >= 0."
+
+[[optim_target.examples]]
+wrap = "root"
+text = "OPTIM SWEIGHT (1) 0 2"
+
+[[optim_target.invalid]]
+wrap = "root"
+text = "OPTIM SWEIGHT (1) -0.5 2"
+error = "OPTIM SWEIGHT (1): the low bound -0.5 is negative, but SWEIGHT is a weight, a number >= 0, and every fit refuses a negative one, so the low bound of its box is >= 0"
+
+[[optim_target]]
+id = "OPTIM.TARGET.LAMBDA"
+key = "LAMBDA"
+status = "special"
+condition = "The low bound of the box, explicit or made by AUTO, is below 0."
+msg = "OPTIM LAMBDA ({index}): the low bound {low} is negative, but LAMBDA is the ridge penalty, a number >= 0: every fit refuses a negative value other than -1, and -1, which requests the evidence approximation, is no value of a box, so the low bound of its box is >= 0"
+doc = "OPTIM LAMBDA searches the ridge penalty of the fit, a number >= 0."
+
+[[optim_target.examples]]
+wrap = "root"
+text = "OPTIM LAMBDA (1) 1e-6 1e-2 LOG"
+
+[[optim_target.invalid]]
+wrap = "root"
+text = "OPTIM LAMBDA (1) -0.5 2"
+error = "OPTIM LAMBDA (1): the low bound -0.5 is negative, but LAMBDA is the ridge penalty, a number >= 0: every fit refuses a negative value other than -1, and -1, which requests the evidence approximation, is no value of a box, so the low bound of its box is >= 0"
+
 # ============================================================= rules ====
 
 [[rule]]
@@ -4146,6 +4501,254 @@ at = "none"
 text = "PC_EMAE 5 1"
 error = "PC_EMAE/PC_ERMSE/PC_ErRMSE/PC_ERSQ/PC_FRMSE/PC_SRMSE target validation-set errors but no --validation file was given."
 
+[[rule]]
+id = "RULE.OPTIM_LAMBDA_evidence"
+title = "OPTIM LAMBDA starts from a LAMBDA of 0 or above"
+check = "parse"
+keys = ["ROOT.OPTIM", "OPTIM.TARGET.LAMBDA"]
+msg = "OPTIM LAMBDA: the training configuration has LAMBDA -1, which requests the evidence approximation: each fit then finds the penalty itself, and OPTIM LAMBDA would replace it with the values of the box. LAMBDA >= 0 in the training configuration is the starting point of a search of LAMBDA; without OPTIM LAMBDA the evidence approximation finds it in every evaluation."
+doc = """\
+OPTIM LAMBDA searches a fixed ridge penalty. LAMBDA -1 in the training \
+configuration requests the evidence approximation, which finds the \
+penalty in each fit, so it is refused with OPTIM LAMBDA, at the line."""
+
+[[rule.examples]]
+wrap = "root"
+context = "lines_oalgo"
+doc = "The training configuration has LAMBDA 1e-3, the starting point of the search."
+text = "OPTIM LAMBDA (1) 1e-6 1e-2 LOG"
+
+[[rule.invalid]]
+wrap = "root"
+context = "lines_lambda_evidence"
+text = "OPTIM LAMBDA (1) 1e-6 1e-2"
+error = "OPTIM LAMBDA: the training configuration has LAMBDA -1, which requests the evidence approximation: each fit then finds the penalty itself, and OPTIM LAMBDA would replace it with the values of the box. LAMBDA >= 0 in the training configuration is the starting point of a search of LAMBDA; without OPTIM LAMBDA the evidence approximation finds it in every evaluation."
+
+[[rule]]
+id = "RULE.fit_LAMBDA_negative"
+title = "LAMBDA of the training configuration is not negative, -1 aside"
+check = "startup"
+msg = "{text}: only LAMBDA -1 requests the evidence approximation, which OALGO 3 runs; another negative value requests nothing. LAMBDA 0 fits without a penalty, and a positive LAMBDA is the ridge penalty."
+doc = """\
+Every fit refuses a negative LAMBDA other than -1, so tadah hpo refuses it \
+when the run starts, without a line, if its evaluations fit the model: \
+with training data, unless FIXINDEX pins every weight."""
+msg_doc = "The message starts with the LAMBDA line of the training configuration."
+
+[[rule.invalid]]
+wrap = "root"
+check = "startup"
+context = "lines_lambda_negative"
+at = "none"
+text = "PC_EMAE 5 1"
+error = "LAMBDA -2: only LAMBDA -1 requests the evidence approximation, which OALGO 3 runs; another negative value requests nothing. LAMBDA 0 fits without a penalty, and a positive LAMBDA is the ridge penalty."
+
+[[rule]]
+id = "RULE.fit_LAMBDA_one_value"
+title = "LAMBDA of the training configuration has one value"
+check = "startup"
+msg = "{text}: LAMBDA takes one value, the ridge penalty (0 for none, -1 for the evidence approximation of OALGO 3); a second value is not read. The rank threshold of OALGO 1 and 3 is OALGO's second value (OALGO 1 {value}, OALGO 3 {value})."
+doc = """\
+Every fit refuses a second LAMBDA value, so tadah hpo refuses it when the \
+run starts, without a line, if its evaluations fit the model: with \
+training data, unless FIXINDEX pins every weight."""
+msg_doc = "The message starts with the LAMBDA line and gives its second value as the rank threshold."
+
+[[rule.invalid]]
+wrap = "root"
+check = "startup"
+context = "lines_lambda_two_values"
+at = "none"
+text = "PC_EMAE 5 1"
+error = "LAMBDA 0 1e-12: LAMBDA takes one value, the ridge penalty (0 for none, -1 for the evidence approximation of OALGO 3); a second value is not read. The rank threshold of OALGO 1 and 3 is OALGO's second value (OALGO 1 1e-12, OALGO 3 1e-12)."
+
+[[rule]]
+id = "RULE.fit_LAMBDA_evidence_OALGO"
+title = "LAMBDA -1 of the training configuration runs with OALGO 3"
+check = "startup"
+msg = "LAMBDA -1 requests the evidence approximation, which only OALGO 3 (the SVD solve) runs; the configuration has OALGO {value} (LAMBDA >= 0 fits with any OALGO)."
+doc = """\
+Only OALGO 3 runs the evidence approximation that LAMBDA -1 requests, so \
+tadah hpo refuses LAMBDA -1 with another OALGO when the run starts, \
+without a line, if its evaluations fit the model."""
+msg_doc = "The message names the OALGO of the training configuration."
+
+[[rule.invalid]]
+wrap = "root"
+check = "startup"
+context = "lines_lambda_evidence_oalgo4"
+at = "none"
+text = "PC_EMAE 5 1"
+error = "LAMBDA -1 requests the evidence approximation, which only OALGO 3 (the SVD solve) runs; the configuration has OALGO 4 (LAMBDA >= 0 fits with any OALGO)."
+
+[[rule]]
+id = "RULE.fit_OALGO3_intercepts"
+title = "OALGO 3 fits an intercept column with LAMBDA 0"
+check = "startup"
+msg = "OALGO=3 (SVD with uniform ridge) does not support intercept exclusion from regularisation. The model has {count} intercept column(s) (BIAS=true with ATOM) and LAMBDA != 0: use OALGO=1, 2 or 4 instead."
+doc = """\
+OALGO 3 penalises every weight alike, and a ridge penalty leaves the \
+intercept columns out (BIAS true), so a fit with an intercept column that \
+FIXINDEX does not pin refuses OALGO 3 with a positive LAMBDA; tadah hpo \
+refuses it when the run starts, without a line, if its evaluations fit \
+the model."""
+msg_doc = "The message gives the number of intercept columns the fit has."
+
+[[rule.invalid]]
+wrap = "root"
+check = "startup"
+context = "lines_oalgo3_bias"
+at = "none"
+text = "PC_EMAE 5 1"
+error = "OALGO=3 (SVD with uniform ridge) does not support intercept exclusion from regularisation. The model has 1 intercept column(s) (BIAS=true with ATOM) and LAMBDA != 0: use OALGO=1, 2 or 4 instead."
+
+[[rule]]
+id = "RULE.fit_OALGO3_intercepts_evidence"
+title = "The evidence approximation fits no intercept column"
+check = "startup"
+msg = "LAMBDA -1 requests the evidence approximation, which only OALGO 3 runs; OALGO 3 penalises every weight alike, and the model has {count} intercept column(s) (BIAS true with ATOM), which a ridge penalty leaves out. The evidence approximation needs BIAS false, or every intercept weight pinned with FIXINDEX and FIXWEIGHT. With BIAS true, LAMBDA 0 fits with any OALGO, and LAMBDA > 0 with OALGO 1, 2 or 4."
+doc = """\
+LAMBDA -1 runs the evidence approximation under OALGO 3, which penalises \
+every weight alike, so a fit with an intercept column that FIXINDEX does \
+not pin refuses it; tadah hpo refuses it when the run starts, without a \
+line, if its evaluations fit the model."""
+msg_doc = "The message gives the number of intercept columns the fit has and what fits with BIAS true."
+
+[[rule.invalid]]
+wrap = "root"
+check = "startup"
+context = "lines_oalgo3_bias_evidence"
+at = "none"
+text = "PC_EMAE 5 1"
+error = "LAMBDA -1 requests the evidence approximation, which only OALGO 3 runs; OALGO 3 penalises every weight alike, and the model has 1 intercept column(s) (BIAS true with ATOM), which a ridge penalty leaves out. The evidence approximation needs BIAS false, or every intercept weight pinned with FIXINDEX and FIXWEIGHT. With BIAS true, LAMBDA 0 fits with any OALGO, and LAMBDA > 0 with OALGO 1, 2 or 4."
+
+[[rule]]
+id = "RULE.optim_LAMBDA_OALGO3_intercepts"
+title = "OPTIM LAMBDA under OALGO 3 needs no intercept column"
+check = "startup"
+keys = ["ROOT.OPTIM"]
+msg = "OPTIM LAMBDA: OALGO 3 penalises every weight alike, and the fit has {count} intercept column(s) (BIAS true with ATOM), which a ridge penalty leaves out, so every fit refuses a LAMBDA other than 0: each candidate of the box but 0 would fail its evaluation. OALGO 1, 2 or 4 fits a positive LAMBDA with the intercepts unpenalised."
+doc = """\
+Under OALGO 3 a fit with an intercept column that FIXINDEX does not pin \
+refuses a LAMBDA other than 0, so tadah hpo refuses OPTIM LAMBDA when the \
+run starts, without a line, if its evaluations fit the model."""
+msg_doc = "The message gives the number of intercept columns the fit has."
+
+[[rule.invalid]]
+wrap = "root"
+check = "startup"
+context = "lines_oalgo3_bias_lambda0"
+at = "none"
+text = "OPTIM LAMBDA (1) 0 1e-2"
+error = "OPTIM LAMBDA: OALGO 3 penalises every weight alike, and the fit has 1 intercept column(s) (BIAS true with ATOM), which a ridge penalty leaves out, so every fit refuses a LAMBDA other than 0: each candidate of the box but 0 would fail its evaluation. OALGO 1, 2 or 4 fits a positive LAMBDA with the intercepts unpenalised."
+
+[[rule]]
+id = "RULE.fit_krr_implementation"
+title = "An M_KRR model is implementation 1 or 2"
+check = "startup"
+msg = "{text}: M_KRR has implementation 1, which fits the energies, forces and stresses of the structures, and implementation 2, which fits the energies per atom of whole structures (the third value of MODEL, 1 when it is left out); {value} is neither."
+doc = """\
+The third value of MODEL M_KRR selects implementation 1 or 2; tadah hpo \
+refuses another when the run starts, without a line, also when FIXINDEX \
+pins every weight: the MODEL line is the potential's."""
+msg_doc = "The message starts with the MODEL line and names its third value."
+
+[[rule.invalid]]
+wrap = "root"
+check = "startup"
+context = "lines_krr_implementation3"
+at = "none"
+text = "PC_EMAE 5 1"
+error = "MODEL M_KRR Kern_Linear 3: M_KRR has implementation 1, which fits the energies, forces and stresses of the structures, and implementation 2, which fits the energies per atom of whole structures (the third value of MODEL, 1 when it is left out); 3 is neither."
+
+[[rule.invalid]]
+wrap = "root"
+check = "startup"
+context = "lines_krr_implementation3_pinned"
+at = "none"
+doc = "FIXINDEX pins every weight and the run has no training data."
+text = "PC_EMAE 5 1"
+error = "MODEL M_KRR Kern_Linear 3: M_KRR has implementation 1, which fits the energies, forces and stresses of the structures, and implementation 2, which fits the energies per atom of whole structures (the third value of MODEL, 1 when it is left out); 3 is neither."
+
+[[rule]]
+id = "RULE.fit_krr_implementation2_LAMBDA"
+title = "M_KRR implementation 2 has a LAMBDA of 0 or above"
+check = "startup"
+msg = "MODEL M_KRR {name} 2 cannot use LAMBDA -1: implementation 2 solves (K + LAMBDA I) w = t with a fixed LAMBDA and does not run the evidence approximation. Implementation 1 (MODEL M_KRR {name} 1) with OALGO 3 runs it; LAMBDA >= 0 fits with either."
+doc = """\
+M_KRR implementation 2 fits with a fixed LAMBDA; tadah hpo refuses LAMBDA \
+-1 with it when the run starts, without a line, if its evaluations fit \
+the model."""
+msg_doc = "The message names the kernel of MODEL."
+
+[[rule.invalid]]
+wrap = "root"
+check = "startup"
+context = "lines_krr2_evidence"
+at = "none"
+text = "PC_EMAE 5 1"
+error = "MODEL M_KRR Kern_Linear 2 cannot use LAMBDA -1: implementation 2 solves (K + LAMBDA I) w = t with a fixed LAMBDA and does not run the evidence approximation. Implementation 1 (MODEL M_KRR Kern_Linear 1) with OALGO 3 runs it; LAMBDA >= 0 fits with either."
+
+[[rule]]
+id = "RULE.fit_krr_implementation2_ignores"
+title = "M_KRR implementation 2 fits without forces, stresses or weights"
+check = "startup"
+keys = ["ROOT.OPTIM"]
+msg = "MODEL M_KRR {name} 2 fits the energies per atom of whole structures, without forces, stresses or weights: {what} would be ignored. Implementation 1 (MODEL M_KRR {name} 1) {why}; implementation 2 fits {text}."
+doc = """\
+M_KRR implementation 2 fits the energies per atom of whole structures. \
+When the run starts, without a line, tadah hpo refuses OPTIM of EWEIGHT, \
+FWEIGHT or SWEIGHT with it, and, once it has read the training \
+data, FORCE true, STRESS true, EWEIGHT, FWEIGHT or SWEIGHT other than 1, a \
+WDBFILE value other than 1, WDBFILE_AUTO other than 0, EWEIGHT_TEMP and a \
+training structure whose eweight is not 1."""
+msg_doc = """\
+The message names the kernel of MODEL, what implementation 2 would ignore \
+(an OPTIM line, a key with its values, or a structure with its eweight), \
+what implementation 1 does with it and how implementation 2 fits."""
+
+[[rule.examples]]
+wrap = "root"
+context = "lines_krr2"
+doc = "Under implementation 2 (MODEL M_KRR Kern_Linear 2), OPTIM LAMBDA searches the penalty of its solve."
+text = "OPTIM LAMBDA (1) 1e-6 1e-2 LOG"
+
+[[rule.invalid]]
+wrap = "root"
+check = "startup"
+context = "lines_krr2"
+at = "none"
+text = "OPTIM EWEIGHT (1) 0.5 2"
+error = "MODEL M_KRR Kern_Linear 2 fits the energies per atom of whole structures, without forces, stresses or weights: OPTIM EWEIGHT would be ignored. Implementation 1 (MODEL M_KRR Kern_Linear 1) applies it; implementation 2 fits with EWEIGHT 1."
+
+[[rule.invalid]]
+wrap = "root"
+check = "check"
+context = "lines_krr2_no_energy"
+at = "none"
+doc = "The training structures have energy weight 0."
+text = "PC_FRMSE 0.1 1"
+error = "MODEL M_KRR Kern_Linear 2 fits the energies per atom of whole structures, without forces, stresses or weights: eweight 0 of structure 1 of 2 ('H2 at 0.8 A') of dataset 1 (lines_no_energy.db) would be ignored. Implementation 1 (MODEL M_KRR Kern_Linear 1) weights each structure's energy (and leaves out one of eweight 0); implementation 2 fits when every structure has eweight 1."
+
+[[rule]]
+id = "RULE.fit_weights"
+title = "EWEIGHT, FWEIGHT and SWEIGHT are numbers of 0 or above"
+check = "startup"
+msg = "{key} {value}: a weight is a finite number >= 0 (0 leaves the {what} of every structure out of the fit); no weights were fitted."
+doc = """\
+Every fit refuses a negative EWEIGHT, FWEIGHT or SWEIGHT; tadah hpo \
+refuses one when the run starts and has read the training data, without \
+a line, if its evaluations fit the model."""
+msg_doc = "The message names the key, its value and what the weight weights."
+
+[[rule.invalid]]
+wrap = "root"
+check = "check"
+context = "lines_negative_eweight"
+at = "none"
+text = "PC_EMAE 5 1"
+error = "EWEIGHT -1: a weight is a finite number >= 0 (0 leaves the energy of every structure out of the fit); no weights were fitted."
+
 # ============================================== wrappers and contexts ====
 
 [wrapper.lines_metric]
@@ -4203,6 +4806,379 @@ VERBOSE 0
 MODEL M_BLR BF_Linear
 OALGO 4
 LAMBDA 1e-3
+"""
+
+[context.lines_val_no_energy]
+doc = "The default training configuration with the dataset lines_no_energy.db, which tadah hpo --check also takes as the validation configuration."
+config = """
+ATOM H
+WATOM 1.0
+DBFILE lines_no_energy.db
+INIT2B true
+INITMB false
+TYPE2B D2_BP 2 2 H H
+CGRID2B 1.0 2.0
+SGRID2B 0.5 1.0
+RCTYPE2B Cut_Cos
+RCUT2B 5.0
+VERBOSE 0
+MODEL M_BLR BF_Linear
+OALGO 4
+LAMBDA 1e-3
+"""
+
+[context.lines_val_energy_none]
+doc = "The default training configuration with the datasets lines_weighted.db and lines_no_energy.db, which tadah hpo --check also takes as the validation configuration."
+config = """
+ATOM H
+WATOM 1.0
+DBFILE lines_weighted.db lines_no_energy.db
+INIT2B true
+INITMB false
+TYPE2B D2_BP 2 2 H H
+CGRID2B 1.0 2.0
+SGRID2B 0.5 1.0
+RCTYPE2B Cut_Cos
+RCUT2B 5.0
+VERBOSE 0
+MODEL M_BLR BF_Linear
+OALGO 4
+LAMBDA 1e-3
+"""
+
+[context.lines_val_no_forces]
+doc = "The default training configuration with the dataset lines_no_forces.db, which tadah hpo --check also takes as the validation configuration."
+config = """
+ATOM H
+WATOM 1.0
+DBFILE lines_no_forces.db
+INIT2B true
+INITMB false
+TYPE2B D2_BP 2 2 H H
+CGRID2B 1.0 2.0
+SGRID2B 0.5 1.0
+RCTYPE2B Cut_Cos
+RCUT2B 5.0
+VERBOSE 0
+MODEL M_BLR BF_Linear
+OALGO 4
+LAMBDA 1e-3
+"""
+
+[context.lines_val_forces_none]
+doc = "The default training configuration with the datasets lines_weighted.db and lines_no_forces.db, which tadah hpo --check also takes as the validation configuration."
+config = """
+ATOM H
+WATOM 1.0
+DBFILE lines_weighted.db lines_no_forces.db
+INIT2B true
+INITMB false
+TYPE2B D2_BP 2 2 H H
+CGRID2B 1.0 2.0
+SGRID2B 0.5 1.0
+RCTYPE2B Cut_Cos
+RCUT2B 5.0
+VERBOSE 0
+MODEL M_BLR BF_Linear
+OALGO 4
+LAMBDA 1e-3
+"""
+
+[context.lines_val_no_stress]
+doc = "The default training configuration with the dataset lines_no_stress.db, which tadah hpo --check also takes as the validation configuration."
+config = """
+ATOM H
+WATOM 1.0
+DBFILE lines_no_stress.db
+INIT2B true
+INITMB false
+TYPE2B D2_BP 2 2 H H
+CGRID2B 1.0 2.0
+SGRID2B 0.5 1.0
+RCTYPE2B Cut_Cos
+RCUT2B 5.0
+VERBOSE 0
+MODEL M_BLR BF_Linear
+OALGO 4
+LAMBDA 1e-3
+"""
+
+[context.lines_lambda_evidence]
+doc = "The default training configuration with LAMBDA -1, the evidence approximation, and OALGO 3."
+config = """
+ATOM H
+WATOM 1.0
+DBFILE dummy.db
+INIT2B true
+INITMB false
+TYPE2B D2_BP 2 2 H H
+CGRID2B 1.0 2.0
+SGRID2B 0.5 1.0
+RCTYPE2B Cut_Cos
+RCUT2B 5.0
+VERBOSE 0
+MODEL M_BLR BF_Linear
+OALGO 3
+LAMBDA -1
+"""
+
+[context.lines_lambda_negative]
+doc = "The default training configuration with LAMBDA -2."
+config = """
+ATOM H
+WATOM 1.0
+DBFILE dummy.db
+INIT2B true
+INITMB false
+TYPE2B D2_BP 2 2 H H
+CGRID2B 1.0 2.0
+SGRID2B 0.5 1.0
+RCTYPE2B Cut_Cos
+RCUT2B 5.0
+VERBOSE 0
+MODEL M_BLR BF_Linear
+OALGO 4
+LAMBDA -2
+"""
+
+[context.lines_lambda_two_values]
+doc = "The default training configuration with two LAMBDA values (LAMBDA 0 1e-12)."
+config = """
+ATOM H
+WATOM 1.0
+DBFILE dummy.db
+INIT2B true
+INITMB false
+TYPE2B D2_BP 2 2 H H
+CGRID2B 1.0 2.0
+SGRID2B 0.5 1.0
+RCTYPE2B Cut_Cos
+RCUT2B 5.0
+VERBOSE 0
+MODEL M_BLR BF_Linear
+OALGO 4
+LAMBDA 0 1e-12
+"""
+
+[context.lines_lambda_evidence_oalgo4]
+doc = "The default training configuration with LAMBDA -1 and OALGO 4."
+config = """
+ATOM H
+WATOM 1.0
+DBFILE dummy.db
+INIT2B true
+INITMB false
+TYPE2B D2_BP 2 2 H H
+CGRID2B 1.0 2.0
+SGRID2B 0.5 1.0
+RCTYPE2B Cut_Cos
+RCUT2B 5.0
+VERBOSE 0
+MODEL M_BLR BF_Linear
+OALGO 4
+LAMBDA -1
+"""
+
+[context.lines_krr_implementation3]
+doc = "The default training configuration with MODEL M_KRR Kern_Linear 3."
+config = """
+ATOM H
+WATOM 1.0
+DBFILE dummy.db
+INIT2B true
+INITMB false
+TYPE2B D2_BP 2 2 H H
+CGRID2B 1.0 2.0
+SGRID2B 0.5 1.0
+RCTYPE2B Cut_Cos
+RCUT2B 5.0
+VERBOSE 0
+MODEL M_KRR Kern_Linear 3
+OALGO 4
+LAMBDA 1e-3
+"""
+
+[context.lines_krr_implementation3_pinned]
+doc = "The default training configuration with MODEL M_KRR Kern_Linear 3, both weights fixed (FIXINDEX 1-2) and no training data."
+has_train_db = false
+config = """
+ATOM H
+WATOM 1.0
+INIT2B true
+INITMB false
+TYPE2B D2_BP 2 2 H H
+CGRID2B 1.0 2.0
+SGRID2B 0.5 1.0
+RCTYPE2B Cut_Cos
+RCUT2B 5.0
+VERBOSE 0
+MODEL M_KRR Kern_Linear 3
+OALGO 4
+LAMBDA 1e-3
+FIXINDEX 1-2
+FIXWEIGHT 0.1 0.2
+"""
+
+[context.lines_oalgo3_bias]
+doc = "The default training configuration with BIAS true, OALGO 3 and LAMBDA 1e-3."
+config = """
+ATOM H
+WATOM 1.0
+DBFILE dummy.db
+INIT2B true
+INITMB false
+TYPE2B D2_BP 2 2 H H
+CGRID2B 1.0 2.0
+SGRID2B 0.5 1.0
+RCTYPE2B Cut_Cos
+RCUT2B 5.0
+VERBOSE 0
+MODEL M_BLR BF_Linear
+BIAS true
+OALGO 3
+LAMBDA 1e-3
+"""
+
+[context.lines_oalgo3_bias_lambda0]
+doc = "The default training configuration with BIAS true, OALGO 3 and LAMBDA 0."
+config = """
+ATOM H
+WATOM 1.0
+DBFILE dummy.db
+INIT2B true
+INITMB false
+TYPE2B D2_BP 2 2 H H
+CGRID2B 1.0 2.0
+SGRID2B 0.5 1.0
+RCTYPE2B Cut_Cos
+RCUT2B 5.0
+VERBOSE 0
+MODEL M_BLR BF_Linear
+BIAS true
+OALGO 3
+LAMBDA 0
+"""
+
+[context.lines_oalgo3_bias_evidence]
+doc = "The default training configuration with BIAS true, OALGO 3 and LAMBDA -1, the evidence approximation."
+config = """
+ATOM H
+WATOM 1.0
+DBFILE dummy.db
+INIT2B true
+INITMB false
+TYPE2B D2_BP 2 2 H H
+CGRID2B 1.0 2.0
+SGRID2B 0.5 1.0
+RCTYPE2B Cut_Cos
+RCUT2B 5.0
+VERBOSE 0
+MODEL M_BLR BF_Linear
+BIAS true
+OALGO 3
+LAMBDA -1
+"""
+
+[context.lines_wdbfile]
+doc = "The default training configuration with WDBFILE 1, WDBFILE_AUTO 0 and EWEIGHT_TEMP 300."
+config = """
+ATOM H
+WATOM 1.0
+DBFILE dummy.db
+INIT2B true
+INITMB false
+TYPE2B D2_BP 2 2 H H
+CGRID2B 1.0 2.0
+SGRID2B 0.5 1.0
+RCTYPE2B Cut_Cos
+RCUT2B 5.0
+VERBOSE 0
+MODEL M_BLR BF_Linear
+OALGO 4
+LAMBDA 1e-3
+WDBFILE 1
+WDBFILE_AUTO 0
+EWEIGHT_TEMP 300
+"""
+
+[context.lines_krr2]
+doc = "The default training configuration with M_KRR implementation 2 (MODEL M_KRR Kern_Linear 2, SBASIS 2)."
+config = """
+ATOM H
+WATOM 1.0
+DBFILE dummy.db
+INIT2B true
+INITMB false
+TYPE2B D2_BP 2 2 H H
+CGRID2B 1.0 2.0
+SGRID2B 0.5 1.0
+RCTYPE2B Cut_Cos
+RCUT2B 5.0
+VERBOSE 0
+MODEL M_KRR Kern_Linear 2
+OALGO 4
+LAMBDA 1e-3
+SBASIS 2
+"""
+
+[context.lines_krr2_evidence]
+doc = "The training configuration of lines_krr2 with LAMBDA -1."
+config = """
+ATOM H
+WATOM 1.0
+DBFILE dummy.db
+INIT2B true
+INITMB false
+TYPE2B D2_BP 2 2 H H
+CGRID2B 1.0 2.0
+SGRID2B 0.5 1.0
+RCTYPE2B Cut_Cos
+RCUT2B 5.0
+VERBOSE 0
+MODEL M_KRR Kern_Linear 2
+OALGO 3
+LAMBDA -1
+SBASIS 2
+"""
+
+[context.lines_krr2_no_energy]
+doc = "The training configuration of lines_krr2 with the dataset lines_no_energy.db, which tadah hpo --check also takes as the validation configuration."
+config = """
+ATOM H
+WATOM 1.0
+DBFILE lines_no_energy.db
+INIT2B true
+INITMB false
+TYPE2B D2_BP 2 2 H H
+CGRID2B 1.0 2.0
+SGRID2B 0.5 1.0
+RCTYPE2B Cut_Cos
+RCUT2B 5.0
+VERBOSE 0
+MODEL M_KRR Kern_Linear 2
+OALGO 4
+LAMBDA 1e-3
+SBASIS 2
+"""
+
+[context.lines_negative_eweight]
+doc = "The default training configuration with EWEIGHT -1 and the dataset lines_weighted.db, which tadah hpo --check also takes as the validation configuration."
+config = """
+ATOM H
+WATOM 1.0
+DBFILE lines_weighted.db
+INIT2B true
+INITMB false
+TYPE2B D2_BP 2 2 H H
+CGRID2B 1.0 2.0
+SGRID2B 0.5 1.0
+RCTYPE2B Cut_Cos
+RCUT2B 5.0
+VERBOSE 0
+MODEL M_BLR BF_Linear
+OALGO 4
+LAMBDA 1e-3
+EWEIGHT -1
 """
 
 [context.lines_fixweight]
@@ -4525,6 +5501,122 @@ path = "lines_pc2.in"
 doc = "A second LAMMPS script, with the equal-style variable E2."
 text = """
 variable E2 equal 2.0
+"""
+
+[fixture.lines_weighted]
+path = "lines_weighted.db"
+doc = "Two H2 cells with an energy, forces and a stress tensor: every weight 1."
+text = """
+H2 at 0.8 A
+1 1 1
+-1.2 0
+6 0 0
+0 6 0
+0 0 6
+0.01 0 0
+0 0.01 0
+0 0 0.01
+H 0 0 0 0.1 0 0
+H 0.8 0 0 -0.1 0 0
+
+H2 at 1.0 A
+1 1 1
+-1.3 0
+6 0 0
+0 6 0
+0 0 6
+0.01 0 0
+0 0.01 0
+0 0 0.01
+H 0 0 0 0.1 0 0
+H 1.0 0 0 -0.1 0 0
+"""
+
+[fixture.lines_no_energy]
+path = "lines_no_energy.db"
+doc = "The two H2 cells of lines_weighted.db with energy weight 0 (eweight)."
+text = """
+H2 at 0.8 A
+0 1 1
+-1.2 0
+6 0 0
+0 6 0
+0 0 6
+0.01 0 0
+0 0.01 0
+0 0 0.01
+H 0 0 0 0.1 0 0
+H 0.8 0 0 -0.1 0 0
+
+H2 at 1.0 A
+0 1 1
+-1.3 0
+6 0 0
+0 6 0
+0 0 6
+0.01 0 0
+0 0.01 0
+0 0 0.01
+H 0 0 0 0.1 0 0
+H 1.0 0 0 -0.1 0 0
+"""
+
+[fixture.lines_no_forces]
+path = "lines_no_forces.db"
+doc = "The two H2 cells of lines_weighted.db with force weight 0 (fweight)."
+text = """
+H2 at 0.8 A
+1 0 1
+-1.2 0
+6 0 0
+0 6 0
+0 0 6
+0.01 0 0
+0 0.01 0
+0 0 0.01
+H 0 0 0 0.1 0 0
+H 0.8 0 0 -0.1 0 0
+
+H2 at 1.0 A
+1 0 1
+-1.3 0
+6 0 0
+0 6 0
+0 0 6
+0.01 0 0
+0 0.01 0
+0 0 0.01
+H 0 0 0 0.1 0 0
+H 1.0 0 0 -0.1 0 0
+"""
+
+[fixture.lines_no_stress]
+path = "lines_no_stress.db"
+doc = "The two H2 cells of lines_weighted.db with stress weight 0 (sweight)."
+text = """
+H2 at 0.8 A
+1 1 0
+-1.2 0
+6 0 0
+0 6 0
+0 0 6
+0.01 0 0
+0 0.01 0
+0 0 0.01
+H 0 0 0 0.1 0 0
+H 0.8 0 0 -0.1 0 0
+
+H2 at 1.0 A
+1 1 0
+-1.3 0
+6 0 0
+0 6 0
+0 0 6
+0.01 0 0
+0 0.01 0
+0 0 0.01
+H 0 0 0 0.1 0 0
+H 1.0 0 0 -0.1 0 0
 """
 
 [fixture.lines_setfl]

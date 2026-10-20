@@ -188,8 +188,9 @@ struct DLossDThetaPlan {
     /** Trained weight vector (length factor->n). */
     const tadah::core::t_type*               weights = nullptr;
 
-    /** Augmented training Phi (snapshot from dm.getPhi() after train).
-     *  Flat row-major (n_aug_rows x factor.n). */
+    /** Augmented training Phi, rebuilt from the training data after the
+     *  fit with the fit's row factors (compute_analytical_gradient_from_
+     *  trainer). Flat row-major (n_aug_rows x factor.n). */
     const double*                            phi_train_aug = nullptr;
     const double*                            t_train_aug   = nullptr;
     std::size_t                              n_aug_rows    = 0;
@@ -922,12 +923,15 @@ compute_analytical_gradient_from_trainer(
     if (!analytical_gradient_blocker(ctx, trg, train_stdb.size() > 0).empty())
         return fall_back_all_fd();
 
-    /* Rebuild phi_train_aug from train_stdb + dc.calc rather than
-     * reading host.dm.getPhi(). Trainer::dm is *not* populated by
-     * Trainer::train (that builds M_BLR's private internal desmat,
-     * which is inaccessible from here). The cost is one extra
-     * dc.calc(train_stdb) pass per gradient call -- same cost as the
-     * predict() pass in operator(), and amortised over all theta partials.
+    /* The design matrix of the fit is built inside the model (M_BLR and
+     * M_KRR each fit a matrix of their own, which the Trainer does not
+     * hold), so phi_train_aug is rebuilt here from train_stdb and dc.calc,
+     * with the row factors the fit applies (DesignMatrix): sqrt(eweight x
+     * EWEIGHT) on a structure's energy row, sqrt(fweight x FWEIGHT) on its
+     * force rows; the derivative rows below take the same factors. The
+     * cost is one extra dc.calc(train_stdb) pass per gradient call -- same
+     * cost as the predict() pass in operator(), and amortised over all
+     * theta partials.
      *
      * Layout matches DesignMatrix's per-struct interleaved post-scale
      * output:
@@ -1186,15 +1190,27 @@ compute_analytical_gradient_from_trainer(
     {
         mlip::Analytics a(val_stdb, pred_val);
         std::size_t lc = 0;
-        if (trg.use_emae)   { plan.metrics.emae   = a.calc_e_mae().mean()   * 1000.0; ++lc; }
+        /* The energy metrics average over the datasets with an energy (a
+         * dataset whose structures all have eweight 0 is not measured: nan,
+         * slope 0), as HPO_Host::fill_validation and the partials of
+         * analytics_grad do; PC_ERMSE's slopes count them through
+         * trg.ermse_targets.measured(), which the host sets to the same. */
+        const std::vector<bool> measured_e =
+            mlip::measured_datasets(val_stdb, mlip::MetricQuantity::Energy);
+        auto energy_mean = [&](const core::t_type& v) {
+            return mlip::measured_mean(v, measured_e);
+        };
+        if (trg.use_emae)   { plan.metrics.emae   = energy_mean(a.calc_e_mae())   * 1000.0; ++lc; }
         if (trg.use_ermse) {
             const auto v = a.calc_e_rmse();
-            plan.metrics.ermse = v.mean() * 1000.0;
+            const auto& measured = trg.ermse_targets.measured();
+            plan.metrics.ermse = (measured.empty() ? v.mean()
+                                                   : mlip::measured_mean(v, measured)) * 1000.0;
             for (std::size_t i = 0; i < v.size(); ++i) plan.metrics.v_ermse.push_back(v[i] * 1000.0);
             ++lc;
         }
-        if (trg.use_errmse) { plan.metrics.errmse = a.calc_e_rrmse().mean() * 1000.0; ++lc; }
-        if (trg.use_ersq)   { plan.metrics.ersq   = a.calc_e_r_sq().mean()  * 1.0;    ++lc; }
+        if (trg.use_errmse) { plan.metrics.errmse = energy_mean(a.calc_e_rrmse()) * 1000.0; ++lc; }
+        if (trg.use_ersq)   { plan.metrics.ersq   = energy_mean(a.calc_e_r_sq())  * 1.0;    ++lc; }
         if (trg.use_frmse) {
             const auto v = a.calc_f_rmse();
             /* The average over the measured datasets (a dataset without
