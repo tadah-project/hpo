@@ -486,24 +486,36 @@ TEST_CASE("An OPTIM box of LAMBDA below 0 is refused at its line",
     }
 }
 
-/* Under M_KRR implementation 2, OPTIM ESIGMA, FSIGMA, SSIGMA and WDBFILE
- * are refused by the startup checks with the text of the fit's refusal
+/* Under M_KRR implementation 2, OPTIM FSIGMA, SSIGMA and WDBFILE are
+ * refused by the startup checks with the text of the fit's refusal
  * (krr_implementation2_ignores); under implementation 1 (FSIGMA with FORCE
- * true, SSIGMA with STRESS true) they pass.
+ * true, SSIGMA with STRESS true) they pass. OPTIM ESIGMA, which the solve
+ * of implementation 2 applies, passes with LAMBDA 1e-3 and is refused with
+ * LAMBDA 0 as the error scale of the only quantity of the fit.
  * Before the fix: the startup checks passed them, and every evaluation
  * fitted without the candidate (OPTIM WDBFILE was refused at its line as a
- * key applied once when the run starts). */
+ * key applied once when the run starts); then OPTIM ESIGMA was refused as
+ * a key implementation 2 ignores ("with ESIGMA 1, the default"). */
 TEST_CASE("Under M_KRR implementation 2, OPTIM of an error scale or of "
           "WDBFILE is refused at startup",
           "[HPO][fit_settings_startup][krr]") {
     tadah::core::PeriodicTable::initialize();
+    SECTION("ESIGMA") {
+        const std::string line = "OPTIM ESIGMA (1) 0.05 2\n";
+        Context c = krr2_ctx();
+        set_key(c, "LAMBDA", "1e-3");
+        CHECK(startup_error(c, target(line)).empty());
+        set_key(c, "LAMBDA", "0");
+        CHECK_THAT(startup_error(c, target(line)),
+                   Contains("OPTIM ESIGMA: the energies are the only "
+                            "quantity of the fit and LAMBDA is 0"));
+    }
     struct Case {
         const char* key;
         const char* instead;
         const char* on;  // the switch implementation 1 needs, or nullptr
     };
-    for (const Case& k : {Case{"ESIGMA", "with ESIGMA 1, the default", nullptr},
-                          Case{"FSIGMA", "with FSIGMA 0.1 0, the default", "FORCE"},
+    for (const Case& k : {Case{"FSIGMA", "with FSIGMA 0.1 0, the default", "FORCE"},
                           Case{"SSIGMA", "with SSIGMA 0.5 0, the default", "STRESS"},
                           Case{"WDBFILE", "without WDBFILE", nullptr}}) {
         DYNAMIC_SECTION(k.key) {

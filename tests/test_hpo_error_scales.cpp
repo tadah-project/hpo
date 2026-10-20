@@ -452,9 +452,13 @@ TEST_CASE("tadah hpo refuses OPTIM of the error scale of the only quantity "
 /* Pins: with every error scale of the fit searched (ESIGMA and FSIGMA (1)
  * of an energy and force fit, FSIGMA b 0) and LAMBDA 0, the startup gives
  * a WARNING that one direction of the search changes nothing; with OPTIM
- * LAMBDA and ESIGMA of an energy fit too; none when one error scale is
- * fixed and LAMBDA is not searched.
- * Before the fix: no WARNING. */
+ * LAMBDA and ESIGMA of an energy fit too, which names the invariance of
+ * the sum a fit minimises: the error scales times c with LAMBDA divided by
+ * c^2 give the same fit (sum p (r / (c sigma))^2 + (LAMBDA / c^2) |w|^2 is
+ * the sum of sigma and LAMBDA divided by c^2); none when one error scale
+ * is fixed and LAMBDA is not searched.
+ * Before the fix: no WARNING; then a WARNING that said "with LAMBDA times
+ * c^2", the opposite. */
 TEST_CASE("tadah hpo warns when every error scale of the fit is searched",
           "[HPO][error_scales][startup]") {
     tadah::core::PeriodicTable::initialize();
@@ -479,7 +483,90 @@ TEST_CASE("tadah hpo warns when every error scale of the fit is searched",
                         &err)
               .empty());
     CHECK(count_of(err, warning) == 1);
-    CHECK_THAT(err, Contains("OPTIM LAMBDA"));
+    CHECK_THAT(err, Contains("OPTIM LAMBDA") &&
+                        Contains("the error scales times c with LAMBDA "
+                                 "divided by c^2 give the same fit"));
+}
+
+/* Pins: OPTIM WDBFILE of a run with one training dataset is refused when
+ * the run starts with LAMBDA 0 or -1 (not searched): the dataset's value
+ * multiplies the priority of every row of the fit alike, which changes no
+ * coefficient (the WDBFILE counterpart of the error scale of the only
+ * quantity). With LAMBDA 1e-3, or with two training datasets, it passes.
+ * Before the fix: it passed, and every candidate gave the same fit (a run
+ * of WDBFILE 1, 1.375, 0.625 and 1.1875 had one loss). */
+TEST_CASE("tadah hpo refuses OPTIM WDBFILE of the only training dataset "
+          "with LAMBDA 0 or -1",
+          "[HPO][error_scales][startup][wdbfile]") {
+    tadah::core::PeriodicTable::initialize();
+    const std::string line = "OPTIM WDBFILE (1) 0.5 2\n";
+    for (const auto& [lambda, oalgo] :
+         std::vector<std::pair<std::string, std::string>>{{"0", "4"},
+                                                           {"-1", "3"}}) {
+        DYNAMIC_SECTION("LAMBDA " << lambda) {
+            Context c = model_ctx();
+            set_key(c, "LAMBDA", lambda);
+            set_key(c, "OALGO", oalgo);
+            set_key(c, "WDBFILE", "1");
+            CHECK(startup_error(c, target(line)) ==
+                  "OPTIM WDBFILE: the run has one training dataset and "
+                  "LAMBDA is " + lambda + ": its WDBFILE value multiplies "
+                  "the priority of every row of the fit alike, which "
+                  "changes no coefficient, so every candidate would give "
+                  "the same fit. With a LAMBDA > 0 the priority weighs the "
+                  "data against the penalty, and with more training "
+                  "datasets, the dataset against the others.");
+            Context two = c;
+            set_key(two, "DBFILE", "a.db b.db");
+            set_key(two, "WDBFILE", "1 1");
+            CHECK(startup_error(two, target(line)).empty());
+        }
+    }
+    SECTION("LAMBDA 1e-3 (a pin)") {
+        Context c = model_ctx();
+        set_key(c, "WDBFILE", "1");
+        CHECK(startup_error(c, target(line)).empty());
+    }
+}
+
+/* Pins: with the WDBFILE value of every training dataset searched (two
+ * datasets, WDBFILE (1) and (2)) and LAMBDA 0, the startup gives a WARNING
+ * that one direction of the search changes nothing (every priority times c
+ * gives the same fit); with OPTIM LAMBDA and the one dataset's WDBFILE,
+ * the WARNING names the invariance: the WDBFILE values times c with LAMBDA
+ * times c give the same fit; none when one dataset's value is fixed.
+ * Before the fix: no WARNING. */
+TEST_CASE("tadah hpo warns when the WDBFILE of every training dataset is "
+          "searched",
+          "[HPO][error_scales][startup][wdbfile]") {
+    tadah::core::PeriodicTable::initialize();
+    const std::string warning =
+        "the WDBFILE value of every training dataset is searched";
+    Context c = model_ctx();
+    set_key(c, "LAMBDA", "0");
+    set_key(c, "DBFILE", "a.db b.db");
+    set_key(c, "WDBFILE", "1 1");
+    std::string err;
+    CHECK(startup_error(c, target("OPTIM WDBFILE (1) 0.5 2\n"
+                                  "OPTIM WDBFILE (2) 0.5 2\n"),
+                        &err)
+              .empty());
+    CHECK(count_of(err, warning) == 1);
+    CHECK_THAT(err, Contains("WDBFILE (1), WDBFILE (2)") &&
+                        Contains("LAMBDA is 0"));
+    CHECK(startup_error(c, target("OPTIM WDBFILE (1) 0.5 2\n"), &err)
+              .empty());
+    CHECK(count_of(err, warning) == 0);
+    Context one = model_ctx();
+    set_key(one, "WDBFILE", "1");
+    CHECK(startup_error(one, target("OPTIM WDBFILE (1) 0.5 2\n"
+                                    "OPTIM LAMBDA (1) 1e-6 1e-2\n"),
+                        &err)
+              .empty());
+    CHECK(count_of(err, warning) == 1);
+    CHECK_THAT(err, Contains("OPTIM LAMBDA") &&
+                        Contains("the WDBFILE values times c with LAMBDA "
+                                 "times c give the same fit"));
 }
 
 /* Pins: GRAD_STRATEGY ANALYTICAL with OPTIM ESIGMA is refused when the run
@@ -502,6 +589,31 @@ TEST_CASE("GRAD_STRATEGY ANALYTICAL refuses OPTIM of an error scale",
                         "differentiate") &&
                    Contains("GRAD_STRATEGY HYBRID"));
     CHECK(startup_error(model_ctx(), target(line, optimizer("HYBRID"))).empty());
+}
+
+/* Pins: GRAD_STRATEGY ANALYTICAL with OPTIM WDBFILE, a priority of the fit
+ * that each evaluation applies, is refused when the run starts, naming
+ * WDBFILE and HYBRID; HYBRID passes.
+ * Before the fix: the run started, and its first gradient stopped it ("no
+ * analytical gradient for 1 parameter at this point"). */
+TEST_CASE("GRAD_STRATEGY ANALYTICAL refuses OPTIM WDBFILE",
+          "[HPO][error_scales][startup][wdbfile]") {
+    tadah::core::PeriodicTable::initialize();
+    const std::string line = "OPTIM WDBFILE (1) 0.5 2\n";
+    auto optimizer = [](const char* strategy) {
+        return std::string("OPTIMIZER\nLIB DLIB\nALGO BFGS\nMAXEVAL 5\n"
+                           "GRAD_STRATEGY ") + strategy + "\nENDOPTIMIZER\n";
+    };
+    Context c = model_ctx();
+    set_key(c, "WDBFILE", "1");
+    CHECK_THAT(startup_error(c, target(line, optimizer("ANALYTICAL"))),
+               Contains("GRAD_STRATEGY ANALYTICAL needs the analytical "
+                        "gradient of the loss, which this setup cannot "
+                        "form: OPTIM WDBFILE searches a priority of the "
+                        "fit, which the analytical gradient does not "
+                        "differentiate") &&
+                   Contains("GRAD_STRATEGY HYBRID"));
+    CHECK(startup_error(c, target(line, optimizer("HYBRID"))).empty());
 }
 
 /* Pins: error scales that every fit refuses are refused when the run
@@ -619,6 +731,41 @@ TEST_CASE("A WARM seed with retired keys is read with one notice",
     REQUIRE(trg->spec.optim_init.size() == 1);
     REQUIRE(trg->spec.optim_init.front().size() == 1);
     CHECK(trg->spec.optim_init.front()[0] == 1.2);
+}
+
+/* Pins: a WARM seed without a line of a searched error scale (a potential
+ * of an earlier version has no FSIGMA line) does not have its value:
+ * OPTIM FSIGMA (1) is a parameter not found in the seed, which
+ * WARM_ON_MISMATCH handles (error: the target file is refused naming it);
+ * a seed with an FSIGMA line gives its value (0.2).
+ * Before the fix: the seed's FSIGMA read as the blueprint default, 0.1,
+ * and WARM said it loaded every parameter. */
+TEST_CASE("A WARM seed without the line of a searched key does not have "
+          "its value",
+          "[HPO][error_scales][warm]") {
+    tadah::core::PeriodicTable::initialize();
+    auto text = [](const std::string& seed) {
+        return "OPTIM CGRID2B (1) 0.5 1.5\nOPTIM FSIGMA (1) 0.05 0.5\n"
+               "PC_ERMSE 0 1\nOPTIMIZER\nINIT\n  METHOD WARM " + seed +
+               "\n  WARM_ON_MISMATCH error\nENDINIT\nLIB NLOPT\n"
+               "ALGO LN_SBPLX\nMAXEVAL 3\nENDOPTIMIZER\n";
+    };
+    Context c = model_ctx();
+    set_key(c, "FORCE", "true");
+    TempFile old_seed("CGRID2B 1.2 1.9\nFWEIGHT 100\nSGRID2B 0.5 1.0\n",
+                      ".tadah");
+    CHECK_THAT(parse_error(c, text(old_seed.path.string())),
+               Contains("WARM: 1 parameter(s) not found in " +
+                        old_seed.path.string()) &&
+                   Contains("FSIGMA"));
+    TempFile seed("CGRID2B 1.2 1.9\nFSIGMA 0.2 0\nSGRID2B 0.5 1.0\n",
+                  ".tadah");
+    TempFile tf(text(seed.path.string()), ".hpo");
+    HPOTargets trg(c, tf.path.string());
+    REQUIRE(trg.spec.optim_init.size() == 1);
+    REQUIRE(trg.spec.optim_init.front().size() == 2);
+    CHECK(trg.spec.optim_init.front()[0] == 1.2);
+    CHECK(trg.spec.optim_init.front()[1] == 0.2);
 }
 
 /* Pins: PC_SRMSE is refused at its line, with the conversion to
