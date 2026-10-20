@@ -605,7 +605,8 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
    * value), LAMBDA -1 under an OALGO other than 3 or under M_KRR
    * implementation 2, and OALGO 3 with a LAMBDA other than 0 when it has
    * an intercept column it fits (BIAS true): each evaluation would refuse
-   * it and score FAILSCORE, so it is refused here, with the fit's message.
+   * it and score FAILSCORE, so it is refused here, with the fit's message
+   * (and OPTIM LAMBDA under OALGO 3 with such a column).
    * So is OPTIM of a weight that M_KRR implementation 2 ignores (every
    * candidate other than 1 would be refused); its other refusals depend on
    * the training data, and HPO_Host makes them once it has read them. A
@@ -613,17 +614,36 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
   tadah::mlip::require_krr_implementation(train_ctx);
   if (has_train_db && !fixindex_pins_every_weight(train_ctx)) {
     tadah::mlip::require_fit_lambda(train_ctx);
-    /* The intercept columns are the model function's, so the function is
-     * built as an evaluation builds it (probe_model() above checked that
-     * it builds); only for a setup the rule can refuse. */
+    /* OALGO 3 refuses a LAMBDA other than 0 when the fit has an intercept
+     * column FIXINDEX does not pin: the configuration's LAMBDA, with the
+     * fit's message, and OPTIM LAMBDA, whose every candidate but 0 would
+     * be refused. The intercept columns are the model function's, so the
+     * function is built as an evaluation builds it (probe_model() above
+     * checked that it builds); only for a setup the rule can refuse. */
+    const auto lambda_it = trg.optimap.find("LAMBDA");
+    const bool optim_lambda =
+        lambda_it != trg.optimap.end() &&
+        std::any_of(lambda_it->second.opt.begin(),
+                    lambda_it->second.opt.end(), [](bool b) { return b; });
     if (core::n_intercept_columns(train_ctx) > 0 &&
         !tadah::mlip::is_krr_implementation_2(train_ctx) &&
         train_ctx.get<int>("OALGO", 0) == 3 &&
-        train_ctx.get<double>("LAMBDA", 0) != 0.0) {
+        (train_ctx.get<double>("LAMBDA", 0) != 0.0 || optim_lambda)) {
       core::Context c = train_ctx;
       tadah::mlip::memory::MLIPWorkspaceManager ws;
       tadah::mlip::Trainer probe(c, ws);
       tadah::mlip::require_oalgo3_intercepts(probe.context, *probe.fb);
+      const std::size_t n =
+          tadah::mlip::fitted_intercept_columns(probe.context, *probe.fb)
+              .size();
+      if (optim_lambda && n > 0)
+        throw std::runtime_error(
+            "OPTIM LAMBDA: OALGO 3 penalises every weight alike, and the fit "
+            "has " + std::to_string(n) + " intercept column(s) (BIAS true "
+            "with ATOM), which a ridge penalty leaves out, so every fit "
+            "refuses a LAMBDA other than 0: each candidate of the box but 0 "
+            "would fail its evaluation. OALGO 1, 2 or 4 fits a positive "
+            "LAMBDA with the intercepts unpenalised.");
     }
     if (tadah::mlip::is_krr_implementation_2(train_ctx)) {
       const std::string kernel = train_ctx.get<std::string>("MODEL", 1);

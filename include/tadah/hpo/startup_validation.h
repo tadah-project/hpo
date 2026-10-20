@@ -128,7 +128,8 @@ bool fixindex_pins_every_weight(const core::Context &ctx);
  *     (mlip::require_fit_lambda: a negative value other than -1, a second
  *     value, -1 under an OALGO other than 3 or under M_KRR implementation
  *     2), OALGO 3 with a LAMBDA other than 0 and an intercept column the
- *     fit fits (mlip::require_oalgo3_intercepts), and under M_KRR
+ *     fit fits (mlip::require_oalgo3_intercepts; OPTIM LAMBDA too, every
+ *     candidate but 0 of which the fit would refuse), and under M_KRR
  *     implementation 2 OPTIM of EWEIGHT, FWEIGHT or SWEIGHT
  *     (mlip::krr_implementation2_ignores), each with the fit's message;
  *   - OPTIM of a key applied once when the run starts
