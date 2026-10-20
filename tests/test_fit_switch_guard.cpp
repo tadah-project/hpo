@@ -4,7 +4,7 @@
 // (include/tadah/hpo/fit_switch_guard.h; branch fix/pc-frmse-force-off).
 //
 // HPO validation predicts what its metrics measure: forces whenever
-// PC_FRMSE is set, stresses whenever PC_SRMSE is set, and only then,
+// PC_FRMSE is set, stresses whenever PC_SRMSE_GPA is set, and only then,
 // whatever FORCE/STRESS training fitted. validation_switches(trg) is that
 // rule, {trg.use_frmse, trg.use_srmse}. ScopedFitSwitches sets FORCE and/or
 // STRESS on a context for one scope (a switch given as nullopt is left
@@ -370,7 +370,7 @@ TEST_CASE("ScopedFitSwitches: a switch given as nullopt is left alone",
 
 /* Pins: validation_switches(trg) is {use_frmse, use_srmse} for all four
  * metric combinations, parsed from an hpotarget (PC_ERMSE always, PC_FRMSE
- * and/or PC_SRMSE), and the training FORCE/STRESS of the -c context (both
+ * and/or PC_SRMSE_GPA), and the training FORCE/STRESS of the -c context (both
  * true, both false) do not enter it: a force and stress fit validated on
  * PC_ERMSE alone predicts neither forces nor stresses.
  * Holds before the fix (validation_switches() already exists). Fails if
@@ -378,7 +378,7 @@ TEST_CASE("ScopedFitSwitches: a switch given as nullopt is left alone",
  * FORCE, use_srmse || STRESS}: the PC_ERMSE-only and single-metric rows
  * with FORCE/STRESS true), or mixes up the two flags. */
 TEST_CASE("validation_switches: FORCE and STRESS follow PC_FRMSE and "
-          "PC_SRMSE, not the training switches", "[fit_switches][unit]")
+          "PC_SRMSE_GPA, not the training switches", "[fit_switches][unit]")
 {
     tadah::core::PeriodicTable::initialize();
     TempDir td;
@@ -397,7 +397,7 @@ TEST_CASE("validation_switches: FORCE and STRESS follow PC_FRMSE and "
                           "OPTIM WATOM (1) 0.1 5.0\n"
                           "PC_ERMSE 0 1\n";
                     if (use_f) os << "PC_FRMSE 0 1\n";
-                    if (use_s) os << "PC_SRMSE 0 1\n";
+                    if (use_s) os << "PC_SRMSE_GPA 0 1\n";
                     REQUIRE(os.good());
                 }
                 Context ctx = targets_context(fit);

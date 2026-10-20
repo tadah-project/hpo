@@ -115,9 +115,11 @@ Context make_knot_ctx(double first_knot = 5.0, double stale_rcut2b = -1.0) {
     c.add("DIMER",    "false");
     c.add("FORCE",    "false");
     c.add("STRESS",   "false");
-    c.add("EWEIGHT",  1.0);
-    c.add("FWEIGHT",  1.0);
-    c.add("SWEIGHT",  1.0);
+    c.add("ESIGMA", 1.0);
+    c.add("FSIGMA", 0.1);
+    c.add("FSIGMA", 0.0);
+    c.add("SSIGMA", 0.5);
+    c.add("SSIGMA", 0.0);
     c.add("BIAS",     "false");
     c.add("NORM",     "false");
     c.add("VERBOSE",  0);

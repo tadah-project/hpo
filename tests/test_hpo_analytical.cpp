@@ -42,6 +42,7 @@
 
 #include <Eigen/Dense>
 #include <tadah/mlip/analytics/analytics_grad.h>
+#include <tadah/mlip/row_weights.h>
 #include <tadah/mlip/atom.h>
 #include <tadah/mlip/structure_db.h>
 
@@ -342,41 +343,46 @@ TEST_CASE("analytics_grad::frmse partial matches FD",
     }
 }
 
-TEST_CASE("analytics_grad::srmse partial matches FD",
+/* The stress RMSE of PC_SRMSE_GPA: the nine entries of each residual
+ * tensor, in GPa (1 GPa = kGPaInEvPerA3 eV/A^3); a partial in GPa per
+ * eV/A^3 is 1/kGPaInEvPerA3 times one of the eV/A^3 metric, and so is the
+ * tolerance of the comparison. The cells (0, STRESS, 0), xx, and (0,
+ * STRESS, 1), xy, whose perturbation moves both of its entries. */
+TEST_CASE("analytics_grad::srmse_gpa partial matches FD",
           "[MLIP][analytics_grad][parity]")
 {
     StructureDB truth = make_truth();
     StructureDB pred  = make_pred(0.0, 0.0, 0.05);
+    const double c = 1.0 / tadah::mlip::kGPaInEvPerA3;
 
     auto compute_srmse = [&](const StructureDB& p) {
         std::size_t N_S = 0;
         double s = 0.0;
         for (std::size_t i = 0; i < truth.size(); ++i) {
             for (std::size_t x = 0; x < 3; ++x) {
-                for (std::size_t y = x; y < 3; ++y) {
+                for (std::size_t y = 0; y < 3; ++y) {
                     const double d = truth(i).stress(x, y) - p(i).stress(x, y);
                     s += d * d; ++N_S;
                 }
             }
         }
-        return std::sqrt(s / static_cast<double>(N_S));
+        return c * std::sqrt(s / static_cast<double>(N_S));
     };
 
-    // FD the (0, STRESS, 0) cell — that is xx for structure 0.
-    {
+    for (std::size_t cell : {0u, 1u}) {
         const double h = 1e-5;
-        StructureDB p_plus  = pred;  perturb_pred_cell(p_plus,  0, PredCellKind::STRESS, 0,  h);
-        StructureDB p_minus = pred;  perturb_pred_cell(p_minus, 0, PredCellKind::STRESS, 0, -h);
+        StructureDB p_plus  = pred;  perturb_pred_cell(p_plus,  0, PredCellKind::STRESS, cell,  h);
+        StructureDB p_minus = pred;  perturb_pred_cell(p_minus, 0, PredCellKind::STRESS, cell, -h);
         const double fd = (compute_srmse(p_plus) - compute_srmse(p_minus)) / (2.0 * h);
 
         double a_partial = 0.0;
-        tadah::mlip::analytics_grad::srmse(truth, pred, /*scale=*/1.0,
+        tadah::mlip::analytics_grad::srmse_gpa(truth, pred, /*scale=*/1.0,
             [&](std::size_t i, PredCellKind kind, std::size_t comp, double v) {
-                if (i == 0 && kind == PredCellKind::STRESS && comp == 0) a_partial = v;
+                if (i == 0 && kind == PredCellKind::STRESS && comp == cell) a_partial = v;
             });
 
-        INFO("srmse [0,S,0] analytical=" << a_partial << " FD=" << fd);
-        CHECK(std::abs(a_partial - fd) < 1e-7);
+        INFO("srmse_gpa [0,S," << cell << "] analytical=" << a_partial << " FD=" << fd);
+        CHECK(std::abs(a_partial - fd) < 1e-7 * c);
     }
 }
 
@@ -545,6 +551,8 @@ double compute_frmse_multiseg(const StructureDB& truth, const StructureDB& pred)
     return acc / static_cast<double>(S);
 }
 
+/* The mean over the datasets of the stress RMSE of the nine entries of
+ * each tensor, in GPa (PC_SRMSE_GPA). */
 double compute_srmse_multiseg(const StructureDB& truth, const StructureDB& pred) {
     const std::size_t S = truth.dbidx.size() - 1;
     double acc = 0.0;
@@ -555,14 +563,16 @@ double compute_srmse_multiseg(const StructureDB& truth, const StructureDB& pred)
         std::size_t N_S = 0;
         for (std::size_t i = lo; i < hi; ++i) {
             for (std::size_t x = 0; x < 3; ++x) {
-                for (std::size_t y = x; y < 3; ++y) {
+                for (std::size_t y = 0; y < 3; ++y) {
                     const double d = truth(i).stress(x, y) - pred(i).stress(x, y);
                     sumsq += d * d;
                     ++N_S;
                 }
             }
         }
-        if (N_S > 0) acc += std::sqrt(sumsq / static_cast<double>(N_S));
+        if (N_S > 0)
+            acc += std::sqrt(sumsq / static_cast<double>(N_S)) /
+                   tadah::mlip::kGPaInEvPerA3;
     }
     return acc / static_cast<double>(S);
 }
@@ -693,7 +703,7 @@ TEST_CASE("analytics_grad::frmse multi-segment parity vs FD",
     }
 }
 
-TEST_CASE("analytics_grad::srmse multi-segment parity vs FD",
+TEST_CASE("analytics_grad::srmse_gpa multi-segment parity vs FD",
           "[MLIP][analytics_grad][parity][multiseg]")
 {
     StructureDB truth = make_truth_multiseg();
@@ -713,13 +723,14 @@ TEST_CASE("analytics_grad::srmse multi-segment parity vs FD",
                          - compute_srmse_multiseg(truth, p_minus)) / (2.0 * h);
 
         double a_partial = 0.0;
-        tadah::mlip::analytics_grad::srmse(truth, pred, /*scale=*/1.0,
+        tadah::mlip::analytics_grad::srmse_gpa(truth, pred, /*scale=*/1.0,
             [&](std::size_t ii, PredCellKind kind, std::size_t cc, double v) {
                 if (ii == pr.i && kind == PredCellKind::STRESS && cc == pr.comp) a_partial = v;
             });
-        INFO("srmse multiseg i=" << pr.i << " comp=" << pr.comp
+        INFO("srmse_gpa multiseg i=" << pr.i << " comp=" << pr.comp
              << " a=" << a_partial << " fd=" << fd);
-        CHECK(std::abs(a_partial - fd) < 1e-7);
+        // GPa per eV/A^3: the tolerance of the eV/A^3 metric in its units
+        CHECK(std::abs(a_partial - fd) < 1e-7 / tadah::mlip::kGPaInEvPerA3);
     }
 }
 
@@ -1630,9 +1641,11 @@ Context make_minimal_trainer_context(const std::vector<double>& cgrid,
     /* Output controls */
     c.add("FORCE",    "false");
     c.add("STRESS",   "false");
-    c.add("EWEIGHT",  1.0);
-    c.add("FWEIGHT",  1.0);
-    c.add("SWEIGHT",  1.0);
+    c.add("ESIGMA", 1.0);
+    c.add("FSIGMA", 0.1);
+    c.add("FSIGMA", 0.0);
+    c.add("SSIGMA", 0.5);
+    c.add("SSIGMA", 0.0);
     c.add("BIAS",     "false");
     c.add("NORM",     "false");
     c.add("VERBOSE",  0);
@@ -3018,9 +3031,11 @@ Context make_composite_blip_context(const std::vector<double>& cgrid_2b,
     c.add("DIMER",    "false");
     c.add("FORCE",    "false");
     c.add("STRESS",   "false");
-    c.add("EWEIGHT",  1.0);
-    c.add("FWEIGHT",  1.0);
-    c.add("SWEIGHT",  1.0);
+    c.add("ESIGMA", 1.0);
+    c.add("FSIGMA", 0.1);
+    c.add("FSIGMA", 0.0);
+    c.add("SSIGMA", 0.5);
+    c.add("SSIGMA", 0.0);
     c.add("BIAS",     "false");
     c.add("NORM",     "false");
     c.add("VERBOSE",  0);
@@ -3258,9 +3273,11 @@ Context make_composite_mblip_force_context(const std::vector<double>& cgrid_2b,
     c.add("DIMER",    "false");
     c.add("FORCE",    "true");
     c.add("STRESS",   "false");
-    c.add("EWEIGHT",  1.0);
-    c.add("FWEIGHT",  1.0);
-    c.add("SWEIGHT",  1.0);
+    c.add("ESIGMA", 1.0);
+    c.add("FSIGMA", 0.1);
+    c.add("FSIGMA", 0.0);
+    c.add("SSIGMA", 0.5);
+    c.add("SSIGMA", 0.0);
     c.add("BIAS",     "false");
     c.add("NORM",     "false");
     c.add("VERBOSE",  0);
@@ -3471,9 +3488,11 @@ Context make_composite_mblip_force_context_with_watom(
     c.add("DIMER",    "false");
     c.add("FORCE",    "true");
     c.add("STRESS",   "false");
-    c.add("EWEIGHT",  1.0);
-    c.add("FWEIGHT",  1.0);
-    c.add("SWEIGHT",  1.0);
+    c.add("ESIGMA", 1.0);
+    c.add("FSIGMA", 0.1);
+    c.add("FSIGMA", 0.0);
+    c.add("SSIGMA", 0.5);
+    c.add("SSIGMA", 0.0);
     c.add("BIAS",     "false");
     c.add("NORM",     "false");
     c.add("VERBOSE",  0);
@@ -3847,9 +3866,11 @@ Context make_mjoin_blip_context(const std::vector<double>& cg,
     for (double v : sg) c.add("SGRIDMB", v);
     c.add("FORCE", "false");
     c.add("STRESS", "false");
-    c.add("EWEIGHT", 1.0);
-    c.add("FWEIGHT", 1.0);
-    c.add("SWEIGHT", 1.0);
+    c.add("ESIGMA", 1.0);
+    c.add("FSIGMA", 0.1);
+    c.add("FSIGMA", 0.0);
+    c.add("SSIGMA", 0.5);
+    c.add("SSIGMA", 0.0);
     c.add("BIAS", "false");
     c.add("NORM", "false");
     c.add("VERBOSE", 0);
@@ -4023,16 +4044,18 @@ Structure make_bcc_h_cell(std::size_t n, double a, std::size_t s) {
 /* Guard: the analytical gradient of the validation loss (PC_ERMSE and
  * PC_FRMSE, LOSS L2) with respect to CGRID2B (1) and SGRID2B (2) equals the
  * central difference of the loss on a training set of cells of 2, 3, 16 and
- * 54 atoms, with per-structure energy and force weights other than 1
- * (eweight 0.5, 2, 1.3, 0.7; fweight 1.5, 0.4, 2, 0.9) and EWEIGHT 1.7,
- * FWEIGHT 0.6, FORCE true. The gradient rebuilds the weighted design
- * matrix in two places (the rows of the fit, and their derivatives),
- * each with the row factors sqrt(eweight EWEIGHT) and sqrt(fweight
- * FWEIGHT) of the fit; a factor that differs from the fit's in either
- * place, or that depends on the size of a cell, makes the two disagree.
- * It passes before and after the change (a guard); a run with the energy
- * row factor of the derivative rows, or the force row factor of the fit's
- * rows, replaced by 1 fails it. */
+ * 54 atoms in two datasets, with per-structure energy and force priorities
+ * other than 1 (eweight 0.5, 2, 1.3, 0.7; fweight 1.5, 0.4, 2, 0.9), WDBFILE
+ * 1.3 0.6, ESIGMA 0.7, FSIGMA 0.3 0.4 (a relative part: each structure's
+ * force error scale reads its own forces) and FORCE true, under ENORM ATOM
+ * and SQRT. The gradient rebuilds the weighted design matrix in two places
+ * (the rows of the fit, and their derivatives), each with the row factors
+ * of the fit (mlip::RowWeights); a factor that differs from the fit's in
+ * either place makes the two disagree. It is a guard (it passes for any
+ * consistent pair); a run with the energy row factor of the derivative
+ * rows, or the force row factor of the fit's rows, replaced by 1 fails it.
+ * Before the fix: the gradient threw at each call ("EWEIGHT is a retired
+ * key"), reading the global weights of the fit's rows. */
 TEST_CASE("compute_analytical_gradient_from_trainer matches FD on cells of "
           "2 to 54 atoms with weights other than 1",
           "[HPO][analytical_gradient][live_trainer][parity][row_factors]")
@@ -4049,7 +4072,7 @@ TEST_CASE("compute_analytical_gradient_from_trainer matches FD on cells of "
     train.structures.push_back(make_bcc_h_cell(2, 2.05, 2));     // 16 atoms
     train.structures.push_back(make_bcc_h_cell(3, 1.95, 3));     // 54 atoms
     train.structures[1].energy = -1.4;
-    train.dbidx = {0, train.structures.size()};
+    train.dbidx = {0, 2, train.structures.size()};
     const double ew[4] = {0.5, 2.0, 1.3, 0.7};
     const double fw[4] = {1.5, 0.4, 2.0, 0.9};
     for (std::size_t s = 0; s < train.size(); ++s) {
@@ -4068,13 +4091,19 @@ TEST_CASE("compute_analytical_gradient_from_trainer matches FD on cells of "
     REQUIRE(train(0).natoms() == 2);
     REQUIRE(train(3).natoms() == 54);
 
+    const char* enorm = GENERATE("ATOM", "SQRT");
+    INFO("ENORM " << enorm);
     auto context_at = [&](const std::vector<double>& cg,
                           const std::vector<double>& sg) {
         Context c = make_minimal_trainer_context_force(cg, sg, rcut);
-        c.remove("EWEIGHT");
-        c.add("EWEIGHT", 1.7);
-        c.remove("FWEIGHT");
-        c.add("FWEIGHT", 0.6);
+        c.remove("ESIGMA");
+        c.add("ESIGMA", 0.7);
+        c.remove("FSIGMA");
+        c.add("FSIGMA", 0.3);
+        c.add("FSIGMA", 0.4);
+        c.add("ENORM", enorm);
+        c.add("WDBFILE", 1.3);
+        c.add("WDBFILE", 0.6);
         return c;
     };
 

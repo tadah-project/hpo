@@ -6,7 +6,7 @@
 // rewrite only the OPTIM keys of its context for the next ones
 // (Trainer::reinit), so whatever the model, the kernel or the design
 // matrix read when they were built kept the first evaluation's value: the
-// EWEIGHT/FWEIGHT/SWEIGHT row weights and the kernel's MPARAMS were not
+// row weights of the fit and the kernel's MPARAMS were not
 // applied after a thread's first evaluation (while every potential
 // recorded the candidate's values), OALGO 3 appended a SIGMA per fit to
 // the reused context (the weight covariance is now WCOV and WNOISE, which
@@ -66,6 +66,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <sstream>
 #include <string>
 #include <system_error>
 #include <thread>
@@ -229,9 +230,11 @@ Context master_context(const std::vector<std::string>& model,
     c.add("DIMER",    "false 0 false");
     c.add("FORCE",    force ? "true" : "false");
     c.add("STRESS",   stress ? "true" : "false");
-    c.add("EWEIGHT",  1.0);
-    c.add("FWEIGHT",  1.0);
-    c.add("SWEIGHT",  1.0);
+    c.add("ESIGMA", 1.0);
+    c.add("FSIGMA", 0.1);
+    c.add("FSIGMA", 0.0);
+    c.add("SSIGMA", 0.5);
+    c.add("SSIGMA", 0.0);
     c.add("BIAS",     "false");
     c.add("NORM",     "false");
     c.add("VERBOSE",  0);
@@ -306,16 +309,17 @@ struct HostRun {
 
 }  // namespace
 
-/* Pins: with FORCE and STRESS true and OPTIM EWEIGHT (1), FWEIGHT (1) and
- * SWEIGHT (1), each of three evaluations of one host on one thread, at
- * (1, 1, 1), (5, 300, 0.2) and (0.3, 20, 700), trains weights equal to
+/* Pins: with FORCE and STRESS true and OPTIM ESIGMA (1), FSIGMA (1) and
+ * SSIGMA (1), each of three evaluations of one host on one thread, at
+ * (1, 0.1, 0.5), (5, 0.02, 3) and (0.3, 0.5, 0.1), trains weights equal to
  * those of an independent Trainer of its own candidate (1e-12 relative),
  * for M_BLR BF_Linear and M_KRR Kern_Linear; the three weight vectors
- * differ (the row weights change the fit).
- * Before the fix: evaluations 2 and 3 trained the weights of evaluation 1
- * (the design matrix of the reused Trainer kept the row weights it was
- * built with), and the potential recorded the candidate's weights keys. */
-TEST_CASE("Each evaluation applies its EWEIGHT, FWEIGHT and SWEIGHT",
+ * differ (the error scales change the fit).
+ * Before the fix (of the evaluations' trainers): evaluations 2 and 3
+ * trained the weights of evaluation 1 (the design matrix of the reused
+ * Trainer kept the row weights it was built with), and the potential
+ * recorded the candidate's keys. */
+TEST_CASE("Each evaluation applies its ESIGMA, FSIGMA and SSIGMA",
           "[trainer_e2e][.]") {
     PeriodicTable::initialize();
     for (const auto* model : {&kBLR, &kKRR}) {
@@ -324,15 +328,15 @@ TEST_CASE("Each evaluation applies its EWEIGHT, FWEIGHT and SWEIGHT",
             ScratchDir sd;
             DataFiles f(sd.dir);
             f.write_target("PC_ERMSE 0 1\n"
-                           "OPTIM EWEIGHT (1) 0.1 10\n"
-                           "OPTIM FWEIGHT (1) 0.1 1000\n"
-                           "OPTIM SWEIGHT (1) 0.1 1000\n");
+                           "OPTIM ESIGMA (1) 0.1 10\n"
+                           "OPTIM FSIGMA (1) 0.01 1\n"
+                           "OPTIM SSIGMA (1) 0.05 5\n");
             Context ctx = master_context(*model, f, true, true);
             HostRun run(ctx, f);
             std::vector<std::vector<double>> seen;
-            for (const ParamVec& p : {point({1.0, 1.0, 1.0}),
-                                      point({5.0, 300.0, 0.2}),
-                                      point({0.3, 20.0, 700.0})}) {
+            for (const ParamVec& p : {point({1.0, 0.1, 0.5}),
+                                      point({5.0, 0.02, 3.0}),
+                                      point({0.3, 0.5, 0.1})}) {
                 INFO("candidate " << p(0) << " " << p(1) << " " << p(2));
                 double loss = 0.0;
                 REQUIRE_NOTHROW(loss = run.host(p));
@@ -348,6 +352,68 @@ TEST_CASE("Each evaluation applies its EWEIGHT, FWEIGHT and SWEIGHT",
             Host::reset_globals_for_test();
         }
     }
+}
+
+/* Pins: with two training datasets (cells 1-3 and 4-5), WDBFILE 1 1 and
+ * OPTIM WDBFILE (2), each of three evaluations of one host on one thread,
+ * at WDBFILE[2] 1, 5 and 0.3, trains weights equal to those of an
+ * independent Trainer of its own candidate (1e-12 relative); the three
+ * weight vectors differ (the priority of the second dataset changes the
+ * fit), and the training record of best_pot.tadah lists the WDBFILE of the
+ * evaluation of the lowest loss, which is also its potential.
+ * Before the fix: OPTIM WDBFILE was refused at its line (WDBFILE was
+ * applied once to the data, when the run started, so every evaluation had
+ * the same fit). */
+TEST_CASE("Each evaluation applies its WDBFILE",
+          "[trainer_e2e][.]") {
+    PeriodicTable::initialize();
+    Host::reset_globals_for_test();
+    ScratchDir sd;
+    DataFiles f(sd.dir);
+    write_db(sd.dir / "train1.db", {bcc_cell(1, 2.95, 0.3),
+                                    bcc_cell(2, 3.05, 0.9),
+                                    bcc_cell(3, 3.15, 1.4)});
+    write_db(sd.dir / "train2.db", {bcc_cell(4, 3.25, 2.2),
+                                    bcc_cell(5, 3.35, 2.9)});
+    f.write_target("PC_ERMSE 0 1\nOPTIM WDBFILE (2) 0.1 10\n");
+    Context ctx = master_context(kBLR, f, true, false);
+    ctx.remove("DBFILE");
+    ctx.add("DBFILE", (sd.dir / "train1.db").string());
+    ctx.add("DBFILE", (sd.dir / "train2.db").string());
+    ctx.add("WDBFILE", "1 1");
+    HostRun run(ctx, f);
+    std::vector<std::vector<double>> seen;
+    std::vector<double> losses;
+    const std::vector<double> values = {1.0, 5.0, 0.3};
+    for (double v : values) {
+        INFO("WDBFILE[2] " << v);
+        const ParamVec p = point({v});
+        double loss = 0.0;
+        REQUIRE_NOTHROW(loss = run.host(p));
+        CHECK(loss < kFailScore);
+        const std::vector<double> w = slot_weights();
+        const Reference ref = reference_fit(ctx, f.hpo_cfg, p);
+        CHECK(rel_diff(w, ref.weights) < 1e-12);
+        seen.push_back(w);
+        losses.push_back(loss);
+    }
+    CHECK(rel_diff(seen[0], seen[1]) > 1e-6);
+    CHECK(rel_diff(seen[1], seen[2]) > 1e-6);
+    const std::size_t best = static_cast<std::size_t>(
+        std::min_element(losses.begin(), losses.end()) - losses.begin());
+    std::ifstream in("best_pot.tadah");
+    REQUIRE(in.good());
+    std::vector<double> record;
+    for (std::string line; std::getline(in, line);) {
+        if (line.rfind("# WDBFILE ", 0) != 0) continue;
+        std::istringstream ls(line.substr(10));
+        for (double x; ls >> x;) record.push_back(x);
+    }
+    INFO("best evaluation " << best + 1);
+    REQUIRE(record.size() == 2);
+    CHECK(record[0] == 1.0);
+    CHECK(record[1] == values[best]);
+    Host::reset_globals_for_test();
 }
 
 /* Pins: M_KRR Kern_RBF (SBASIS 4) with OPTIM MPARAMS (1), evaluated at
@@ -440,15 +506,15 @@ TEST_CASE("Each OALGO 3 evaluation writes the SIGMA of its own fit",
     Host::reset_globals_for_test();
 }
 
-/* Pins: two hosts on one thread, A (LAMBDA 1e-4, FWEIGHT 1) and then B
- * (LAMBDA 1e-1, FWEIGHT 100; neither searched), both FORCE true with OPTIM
+/* Pins: two hosts on one thread, A (LAMBDA 1e-4, FSIGMA 1) and then B
+ * (LAMBDA 1e-1, FSIGMA 0.1; neither searched), both FORCE true with OPTIM
  * CGRID2B (3), PC_ERMSE and PC_FRMSE, each evaluated once at CGRID2B[3] =
  * 3.95 (as two `TASK hpo` blocks of one task file run): B's loss is, bit
  * for bit, the loss B gives on a thread that evaluated nothing before, and
- * B's model was trained with B's LAMBDA and FWEIGHT.
+ * B's model was trained with B's LAMBDA and FSIGMA.
  * Before the fix: B evaluated A's model (the thread's Trainer of A with
  * B's CGRID2B): its loss was A's and its context held LAMBDA 1e-4 and
- * FWEIGHT 1. */
+ * A's error scale. */
 TEST_CASE("A second host on a thread evaluates its own configuration",
           "[trainer_e2e][.]") {
     PeriodicTable::initialize();
@@ -457,9 +523,10 @@ TEST_CASE("A second host on a thread evaluates its own configuration",
     f.write_target("PC_ERMSE 0 1\nPC_FRMSE 0 1\nOPTIM CGRID2B (3) 3.7 4.3\n");
     Context a = master_context(kBLR, f, true, false);
     set_key(a, "LAMBDA", "1e-4");
+    set_key(a, "FSIGMA", "1");
     Context b = master_context(kBLR, f, true, false);
     set_key(b, "LAMBDA", "1e-1");
-    set_key(b, "FWEIGHT", "100");
+    set_key(b, "FSIGMA", "0.1");
     const ParamVec p = point({3.95});
 
     double b_alone = 0.0;
@@ -485,7 +552,7 @@ TEST_CASE("A second host on a thread evaluates its own configuration",
         const auto* tr = Host::tls_trainer_for_test();
         REQUIRE(tr != nullptr);
         CHECK(tr->context.stored_value("LAMBDA").value_or("") == "1e-1");
-        CHECK(tr->context.stored_value("FWEIGHT").value_or("") == "100");
+        CHECK(tr->context.stored_value("FSIGMA").value_or("") == "0.1");
     }
     INFO("A " << loss_a << ", B after A " << loss_b << ", B alone " << b_alone);
     CHECK(same_bits(loss_b, b_alone));

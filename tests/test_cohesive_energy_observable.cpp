@@ -87,9 +87,11 @@ Context make_ta_context(double rcut, const std::vector<double>& cgrid,
     c.add("DIMER",    "false");
     c.add("FORCE",    "true");
     c.add("STRESS",   "false");
-    c.add("EWEIGHT",  1.0);
-    c.add("FWEIGHT",  1.0);
-    c.add("SWEIGHT",  1.0);
+    c.add("ESIGMA", 1.0);
+    c.add("FSIGMA", 0.1);
+    c.add("FSIGMA", 0.0);
+    c.add("SSIGMA", 0.5);
+    c.add("SSIGMA", 0.0);
     c.add("BIAS",     "false");
     c.add("NORM",     "false");
     c.add("VERBOSE",  0);

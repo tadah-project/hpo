@@ -94,9 +94,11 @@ Context make_model_ctx() {
   c.add("DIMER", "false");
   c.add("FORCE", "false");
   c.add("STRESS", "false");
-  c.add("EWEIGHT", 1.0);
-  c.add("FWEIGHT", 1.0);
-  c.add("SWEIGHT", 1.0);
+  c.add("ESIGMA", 1.0);
+  c.add("FSIGMA", 0.1);
+  c.add("FSIGMA", 0.0);
+  c.add("SSIGMA", 0.5);
+  c.add("SSIGMA", 0.0);
   c.add("BIAS", "false");
   c.add("NORM", "false");
   c.add("VERBOSE", 0);
@@ -589,7 +591,7 @@ TEST_CASE("startup validation: valid setups pass", "[startup_validation]") {
  * fit analytically. That needs training data with every weight fitted, the
  * Cholesky normal equations (OALGO 4) with a fixed ridge LAMBDA >= 0, raw
  * features (NORM false), a linear basis (BF_Linear or Kern_Linear) and no
- * stress rows (STRESS false, no PC_SRMSE). PC_FRMSE does not need FORCE
+ * stress rows (STRESS false, no PC_SRMSE_GPA). PC_FRMSE does not need FORCE
  * true: FORCE decides only what training fits, and the validation force
  * rows of the gradient are formed whenever PC_FRMSE is set. A setup
  * without the settings used to pass startup and stop at the first gradient
@@ -682,10 +684,10 @@ TEST_CASE("startup validation: GRAD_STRATEGY ANALYTICAL needs the settings "
                Catch::Contains("BF_Polynomial2") &&
                Catch::Contains("BF_Linear"));
   }
-  SECTION("PC_SRMSE") {
+  SECTION("PC_SRMSE_GPA") {
     Context ctx = good_ctx();
-    CHECK_THAT(rejected(ctx, target(analytical, "PC_SRMSE 0 1\n")),
-               Catch::Contains("PC_SRMSE"));
+    CHECK_THAT(rejected(ctx, target(analytical, "PC_SRMSE_GPA 0 1\n")),
+               Catch::Contains("PC_SRMSE_GPA is set"));
   }
   /* A behaviour change, not a weakening: this SECTION used to assert that
    * ANALYTICAL + PC_FRMSE + FORCE false is refused with "PC_FRMSE needs
@@ -1216,9 +1218,11 @@ Context make_ream_model_ctx() {
   c.add("DIMER", "false");
   c.add("FORCE", "false");
   c.add("STRESS", "false");
-  c.add("EWEIGHT", 1.0);
-  c.add("FWEIGHT", 1.0);
-  c.add("SWEIGHT", 1.0);
+  c.add("ESIGMA", 1.0);
+  c.add("FSIGMA", 0.1);
+  c.add("FSIGMA", 0.0);
+  c.add("SSIGMA", 0.5);
+  c.add("SSIGMA", 0.0);
   c.add("BIAS", "false");
   c.add("NORM", "false");
   c.add("LAMBDA", 0);

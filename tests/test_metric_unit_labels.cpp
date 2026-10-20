@@ -1,14 +1,15 @@
 // test_metric_unit_labels.cpp
 //
 // The units HPO prints for the relative energy RMSE (PC_ErRMSE) and the
-// stress RMSE (PC_SRMSE) (branch fix/pc-frmse-force-off).
+// stress RMSE (PC_SRMSE_GPA).
 //
 //   * ErRMSE is sqrt(mean(((E_ref - E_pred) / E_ref)^2)) x 1000
 //     (Analytics::calc_e_rrmse, scaled by HPO_Host::fill_validation): a
 //     dimensionless ratio in per mille, not an energy. It is labelled
 //     "per mille".
-//   * SRMSE is the raw stress difference (Analytics::calc_s_rmse, scaled by
-//     1): it is in the dataset's unit, eV/A^3. It is labelled "eV/A^3".
+//   * SRMSE is the root mean square of the nine entries of each residual
+//     stress tensor (Analytics::calc_s_rmse_gpa, scaled by 1), in GPa (the
+//     data hold eV/A^3). It is labelled "GPa".
 //
 // Every place that prints the two metrics is covered:
 //   1. hpo_run.log LOSS FUNCTION rows   (HPOLog::write_loss_section);
@@ -26,12 +27,14 @@
 //
 // Only the ErRMSE / SRMSE rows are asserted on, and only by substrings: an
 // ErRMSE row contains "per mille" and not "meV"; an SRMSE row contains
-// "eV/A^3" and not "GPa". Column spacing is not pinned. Each place must
+// "GPa" and not "eV/A^3". Column spacing is not pinned. Each place must
 // print at least one such row, so a renamed or dropped row fails instead of
 // passing vacuously.
 //
-// Before the fix every one of these places printed ErRMSE as meV/atom
-// (meV/at) and SRMSE as GPa, so every case below fails on both metrics.
+// Before the fix (of the ErRMSE labels) every one of these places printed
+// ErRMSE as meV/atom (meV/at); before the stress metric of the nine
+// entries in GPa, SRMSE (PC_SRMSE_GPA) was the RMSE of six entries in eV/A^3,
+// and every place labelled it so.
 //
 // The fast cases are [metric_units]; the host case is hidden
 // [valmetric_e2e][.] and runs in the CTest entry hpo_valmetric_e2e:
@@ -178,15 +181,15 @@ void check_errmse_rows(const std::vector<std::string>& rows,
     }
 }
 
-/* Rows that print an SRMSE value or target: in eV/A^3, never GPa. */
+/* Rows that print an SRMSE value or target: in GPa, never eV/A^3. */
 void check_srmse_rows(const std::vector<std::string>& rows,
                       const std::string& where, const std::string& context) {
     INFO(where << ":\n" << context);
     REQUIRE_FALSE(rows.empty());
     for (const std::string& row : rows) {
         INFO("SRMSE row: " << row);
-        CHECK_THAT(row, Contains("eV/A^3"));
-        CHECK_THAT(row, !Contains("GPa"));
+        CHECK_THAT(row, Contains("GPa"));
+        CHECK_THAT(row, !Contains("eV/A^3"));
     }
 }
 
@@ -209,7 +212,7 @@ std::string metric_field(const std::string& line, const std::string& name) {
 }
 
 /* ---------------------------------------------------------------------------
- * An hpotarget with every validation metric, PC_ErRMSE and PC_SRMSE among
+ * An hpotarget with every validation metric, PC_ErRMSE and PC_SRMSE_GPA among
  * them, on a context with one OPTIM key (the setup of
  * test_hpo_pot_digits.cpp).
  * ------------------------------------------------------------------------- */
@@ -231,7 +234,7 @@ const char* kAllMetricsTarget =
     "PC_ERMSE 0 1\n"
     "PC_ErRMSE 0.5 1\n"
     "PC_FRMSE 0 1\n"
-    "PC_SRMSE 0.01 2\n";
+    "PC_SRMSE_GPA 1.6 2\n";
 
 /* An evaluation result with every metric set, two validation datasets
  * (so the per-dataset RESULT rows are written too). */
@@ -244,12 +247,12 @@ tadah::hpo::EvalResult<ParamVec> all_metrics_result() {
     r.ermse = 2.0;   r.ermseLoss = 4.0;
     r.errmse = 0.06; r.errmseLoss = 0.0036;
     r.frmse = 0.1;   r.frmseLoss = 0.01;
-    r.srmse = 0.019; r.srmseLoss = 0.000361;
+    r.srmse = 3.0;   r.srmseLoss = 3.92;
     r.v_emae   = {1.4, 1.6};     r.v_emaeLoss   = {1.96, 2.56};
     r.v_ermse  = {1.9, 2.1};     r.v_ermseLoss  = {3.61, 4.41};
     r.v_errmse = {0.05, 0.07};   r.v_errmseLoss = {0.0025, 0.0049};
     r.v_frmse  = {0.09, 0.11};   r.v_frmseLoss  = {0.0081, 0.0121};
-    r.v_srmse  = {0.018, 0.020}; r.v_srmseLoss  = {0.000324, 0.0004};
+    r.v_srmse  = {2.9, 3.1};     r.v_srmseLoss  = {3.38, 4.5};
     r.params.set_size(1);
     r.params(0) = 1.0;
     return r;
@@ -343,9 +346,11 @@ Context pinned_context(const fs::path& val_cfg, const fs::path& hpo_cfg) {
     c.add("DIMER",    "false");
     c.add("FORCE",    "false");
     c.add("STRESS",   "false");
-    c.add("EWEIGHT",  1.0);
-    c.add("FWEIGHT",  1.0);
-    c.add("SWEIGHT",  1.0);
+    c.add("ESIGMA", 1.0);
+    c.add("FSIGMA", 0.1);
+    c.add("FSIGMA", 0.0);
+    c.add("SSIGMA", 0.5);
+    c.add("SSIGMA", 0.0);
     c.add("BIAS",     "false");
     c.add("NORM",     "false");
     c.add("VERBOSE",  0);
@@ -413,13 +418,13 @@ std::string lower(std::string s) {
 
 }  // namespace
 
-/* Place 1. HPOLog::write_loss_section with PC_ErRMSE and PC_SRMSE (and the
- * other metrics) set: the "ErRMSE" row of LOSS FUNCTION is in per mille,
- * the "SRMSE" row in eV/A^3.
- * Before the fix: "ErRMSE (meV/atom)" and "SRMSE  (GPa)" (hpo_log.cpp
- * write_loss_section), so every CHECK on both rows fails. */
+/* Place 1. HPOLog::write_loss_section with PC_ErRMSE and PC_SRMSE_GPA (and
+ * the other metrics) set: the "ErRMSE" row of LOSS FUNCTION is in per
+ * mille, the "SRMSE" row in GPa.
+ * Before the fix: "SRMSE  (eV/A^3)" (hpo_log.cpp write_loss_section; and,
+ * before the fix of the ErRMSE labels, "ErRMSE (meV/atom)"). */
 TEST_CASE("metric units: the journal LOSS FUNCTION labels ErRMSE per mille "
-          "and SRMSE eV per cubic Angstrom", "[metric_units]")
+          "and SRMSE GPa", "[metric_units]")
 {
     JournalFile j;
     ScopedTextFile target(".hpo", kAllMetricsTarget);
@@ -438,13 +443,12 @@ TEST_CASE("metric units: the journal LOSS FUNCTION labels ErRMSE per mille "
 }
 
 /* Place 2. The BEST progress line HPOLog::log_new_best writes with every
- * metric: its "ErRMSE=" field is in per mille, its "SRMSE=" field in
- * eV/A^3 (fields compared, not the whole line, which also holds
- * EMAE/ERMSE in meV/at).
- * Before the fix: "ErRMSE=0.06 meV/at" and "SRMSE=0.019 GPa" (hpo_log.cpp
- * log_new_best). */
+ * metric: its "ErRMSE=" field is in per mille, its "SRMSE=" field in GPa
+ * (fields compared, not the whole line, which also holds EMAE/ERMSE in
+ * meV/at).
+ * Before the fix: "SRMSE=3.000 eV/A^3" (hpo_log.cpp log_new_best). */
 TEST_CASE("metric units: the journal BEST line labels ErRMSE per mille and "
-          "SRMSE eV per cubic Angstrom", "[metric_units]")
+          "SRMSE GPa", "[metric_units]")
 {
     JournalFile j;
     HPOLog::instance().log_new_best(1, 2.0,
@@ -452,7 +456,7 @@ TEST_CASE("metric units: the journal BEST line labels ErRMSE per mille and "
                                     2.0,   true,    // ERMSE  (meV/atom)
                                     0.06,  true,    // ErRMSE (per mille)
                                     0.1,   true,    // FRMSE  (eV/A)
-                                    0.019, true,    // SRMSE  (eV/A^3)
+                                    3.0,   true,    // SRMSE  (GPa)
                                     12.0);
     const std::string journal = j.finish();
     INFO(journal);
@@ -473,15 +477,14 @@ TEST_CASE("metric units: the journal BEST line labels ErRMSE per mille and "
 }
 
 /* Place 3. The RESULT section HPOLog::finish writes after a best with every
- * metric: "Best ErRMSE" is in per mille, "Best SRMSE" in eV/A^3.
- * Before the fix: "Best ErRMSE ... meV/atom" and "Best SRMSE ... GPa"
- * (hpo_log.cpp finish). */
+ * metric: "Best ErRMSE" is in per mille, "Best SRMSE" in GPa.
+ * Before the fix: "Best SRMSE ... eV/A^3" (hpo_log.cpp finish). */
 TEST_CASE("metric units: the journal RESULT labels Best ErRMSE per mille and "
-          "Best SRMSE eV per cubic Angstrom", "[metric_units]")
+          "Best SRMSE GPa", "[metric_units]")
 {
     JournalFile j;
     HPOLog::instance().log_new_best(1, 2.0, 1.5, true, 2.0, true, 0.06, true,
-                                    0.1, true, 0.019, true, 12.0);
+                                    0.1, true, 3.0, true, 12.0);
     const std::string journal = j.finish();
 
     const std::string result = block(journal, "-- RESULT", "\n-- ");
@@ -499,10 +502,10 @@ TEST_CASE("metric units: the journal RESULT labels Best ErRMSE per mille and "
 /* Place 4a. The best_pot.tadah header (PotHeaderWriter::write_best_header):
  * the LOSS FUNCTION rows (pot_header_writer.cpp write_loss_section) and the
  * RESULT table rows -- per dataset and average -- (pot_header_writer_impl.hpp
- * write_result_table) of ErRMSE are in per mille, those of SRMSE in eV/A^3.
- * Before the fix: "ErRMSE (meV/at)" and "SRMSE  (GPa)" in both sections. */
+ * write_result_table) of ErRMSE are in per mille, those of SRMSE in GPa.
+ * Before the fix: "SRMSE  (eV/A^3)" in both sections. */
 TEST_CASE("metric units: the best_pot.tadah header labels ErRMSE per mille "
-          "and SRMSE eV per cubic Angstrom", "[metric_units]")
+          "and SRMSE GPa", "[metric_units]")
 {
     ScopedTextFile target(".hpo", kAllMetricsTarget);
     Context ctx = watom_ctx();
@@ -546,10 +549,10 @@ TEST_CASE("metric units: the best_pot.tadah header labels ErRMSE per mille "
 
 /* Place 4b. The best_pot_N.tadah archive header
  * (PotHeaderWriter::write_best_archive_header), whose RESULT table is the
- * same write_result_table: ErRMSE rows in per mille, SRMSE rows in eV/A^3.
- * Before the fix: "ErRMSE (meV/at)[...]" and "SRMSE  (GPa)[...]". */
+ * same write_result_table: ErRMSE rows in per mille, SRMSE rows in GPa.
+ * Before the fix: "SRMSE  (eV/A^3)[...]". */
 TEST_CASE("metric units: the best_pot archive header labels ErRMSE per "
-          "mille and SRMSE eV per cubic Angstrom", "[metric_units]")
+          "mille and SRMSE GPa", "[metric_units]")
 {
     ScopedTextFile target(".hpo", kAllMetricsTarget);
     Context ctx = watom_ctx();
@@ -575,12 +578,12 @@ TEST_CASE("metric units: the best_pot archive header labels ErRMSE per "
  * evaluated once with a cap (1e-12) no candidate can meet, on one metric at
  * a time (the checks stop at the first metric that rejects, so a second
  * capped metric would never be reported): the ErRMSE rejection is in per
- * mille, the SRMSE rejection in eV/A^3. The line must name the metric
+ * mille, the SRMSE rejection in GPa. The line must name the metric
  * (case-insensitively), so the rejection read is the one asked for.
- * Before the fix: "eRRMSE=<v> meV/at" and "srmse=<v> GPa"
- * (hpo_host_impl.hpp operator(), check_metric). */
+ * Before the fix: "srmse=<v> eV/A^3" (hpo_host_impl.hpp operator(),
+ * check_metric). */
 TEST_CASE("valmetric e2e: the --skip-above rejection gives ErRMSE in per "
-          "mille and SRMSE in eV per cubic Angstrom", "[valmetric_e2e][.]")
+          "mille and SRMSE in GPa", "[valmetric_e2e][.]")
 {
     SECTION("PC_ErRMSE --skip-above") {
         const std::string journal =
@@ -591,13 +594,13 @@ TEST_CASE("valmetric e2e: the --skip-above rejection gives ErRMSE in per "
             CHECK_THAT(lower(row), Contains("errmse="));
         check_errmse_rows(rows, "--skip-above rejection (PC_ErRMSE)", journal);
     }
-    SECTION("PC_SRMSE --skip-above") {
+    SECTION("PC_SRMSE_GPA --skip-above") {
         const std::string journal =
-            skip_above_journal("PC_SRMSE 0 1 --skip-above 1e-12");
+            skip_above_journal("PC_SRMSE_GPA 0 1 --skip-above 1e-12");
         INFO(journal);
         const auto rows = lines_with(journal, "skipping downstream");
         for (const auto& row : rows)
             CHECK_THAT(lower(row), Contains("srmse="));
-        check_srmse_rows(rows, "--skip-above rejection (PC_SRMSE)", journal);
+        check_srmse_rows(rows, "--skip-above rejection (PC_SRMSE_GPA)", journal);
     }
 }

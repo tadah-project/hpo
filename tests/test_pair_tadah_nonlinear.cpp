@@ -139,9 +139,11 @@ Context make_context(const ModelSpec& m, bool bias = false) {
     c.add("DIMER", "false");
     c.add("FORCE", "true");
     c.add("STRESS", "true");
-    c.add("EWEIGHT", 1.0);
-    c.add("FWEIGHT", 1.0);
-    c.add("SWEIGHT", 1.0);
+    c.add("ESIGMA", 1.0);
+    c.add("FSIGMA", 0.1);
+    c.add("FSIGMA", 0.0);
+    c.add("SSIGMA", 0.5);
+    c.add("SSIGMA", 0.0);
     c.add("BIAS", bias ? "true" : "false");
     c.add("NORM", m.norm ? "true" : "false");
     c.add("VERBOSE", 0);

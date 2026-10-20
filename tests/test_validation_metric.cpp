@@ -50,7 +50,7 @@ TEST_CASE("PC dataset selectors resolve independently in validation order", "[pc
 }
 
 TEST_CASE("PC dataset declarations reject ambiguous or invalid input", "[pc_dataset][parser]") {
-    for (const auto* metric : {"PC_ERMSE", "PC_FRMSE"}) {
+    for (const auto* metric : {"PC_ERMSE", "PC_FRMSE", "PC_SRMSE_GPA"}) {
         const std::string key = metric;
         for (const auto& body : std::vector<std::string>{
             "", "0", "(1) 0", "() 0 1", "(1, ) 0 1", "(1x,2) 0 1",
@@ -70,18 +70,18 @@ TEST_CASE("PC dataset declarations reject ambiguous or invalid input", "[pc_data
     ConfigFile unsupported("PC_EMAE (1) 0 1\n");
     tadah::core::Context ctx;
     CHECK_THROWS_WITH(HPOTargets(ctx, unsupported.path.string()),
-                     Catch::Matchers::Contains("only for PC_ERMSE and PC_FRMSE"));
+                     Catch::Matchers::Contains("only for PC_ERMSE, PC_FRMSE and PC_SRMSE_GPA"));
 }
 
-/* A repeated top-level PC_EMAE, PC_ErRMSE, PC_ERSQ or PC_SRMSE line is
- * refused at its line, naming the line of the first, as a repeated
- * PC_ERMSE or PC_FRMSE line is ("Error on line 7: PC_EMAE: repeated
- * declaration (first declared on line 6)"); a line of each metric once is
- * read. Before the fix: the later line replaced the first without a word
- * (the last target, weight and caps won). */
-TEST_CASE("A repeated PC_EMAE, PC_ErRMSE, PC_ERSQ or PC_SRMSE line is "
-          "refused", "[pc_dataset][parser]") {
-    for (const auto* metric : {"PC_EMAE", "PC_ErRMSE", "PC_ERSQ", "PC_SRMSE"}) {
+/* A repeated top-level PC_EMAE, PC_ErRMSE or PC_ERSQ line is refused at
+ * its line, naming the line of the first, as a repeated PC_ERMSE, PC_FRMSE
+ * or PC_SRMSE_GPA line is ("Error on line 7: PC_EMAE: repeated declaration
+ * (first declared on line 6)"); a line of each metric once is read. Before
+ * the fix: the later line replaced the first without a word (the last
+ * target, weight and caps won). */
+TEST_CASE("A repeated PC_EMAE, PC_ErRMSE or PC_ERSQ line is refused",
+          "[pc_dataset][parser]") {
+    for (const auto* metric : {"PC_EMAE", "PC_ErRMSE", "PC_ERSQ"}) {
         const std::string key = metric;
         INFO(key);
         ConfigFile f(key + " 0 1\n" + key + " 0 2 --skip-above 5\n");
@@ -92,18 +92,20 @@ TEST_CASE("A repeated PC_EMAE, PC_ErRMSE, PC_ERSQ or PC_SRMSE line is "
                               ": repeated declaration (first declared on "
                               "line 6)"));
     }
-    ConfigFile once("PC_EMAE 0 1\nPC_ErRMSE 0 2\nPC_ERSQ 0 3\nPC_SRMSE 0 4\n");
+    ConfigFile once("PC_EMAE 0 1\nPC_ErRMSE 0 2\nPC_ERSQ 0 3\nPC_SRMSE_GPA 0 4\n");
     tadah::core::Context ctx;
     HPOTargets t(ctx, once.path.string());
     CHECK(t.use_emae);
     CHECK(t.w_emae == 1);
     CHECK(t.w_errmse == 2);
     CHECK(t.w_ersq == 3);
-    CHECK(t.w_srmse == 4);
+    CHECK(t.use_srmse);
+    CHECK(t.srmse_targets.global().weight == 4);
 }
 
-/* A second global PC_ERMSE or PC_FRMSE line is refused at its line, naming
- * the line of the first, as a repeated PC_EMAE is ("Error on line 7:
+/* A second global PC_ERMSE, PC_FRMSE or PC_SRMSE_GPA line is refused at its
+ * line, naming the line of the first, as a repeated PC_EMAE is ("Error on
+ * line 7:
  * PC_ERMSE: repeated declaration (first declared on line 6)"); a global
  * line with indexed ones, in either order, is refused as a mix of the two
  * forms. Lines with other indices are read.
@@ -111,7 +113,7 @@ TEST_CASE("A repeated PC_EMAE, PC_ErRMSE, PC_ERSQ or PC_SRMSE line is "
  * global/indexed forms", without the first line. */
 TEST_CASE("A repeated global PC_ERMSE or PC_FRMSE line is refused naming "
           "the first", "[pc_dataset][parser]") {
-    for (const auto* metric : {"PC_ERMSE", "PC_FRMSE"}) {
+    for (const auto* metric : {"PC_ERMSE", "PC_FRMSE", "PC_SRMSE_GPA"}) {
         const std::string key = metric;
         INFO(key);
         tadah::core::Context ctx;
@@ -136,7 +138,7 @@ TEST_CASE("A repeated global PC_ERMSE or PC_FRMSE line is refused naming "
 }
 
 TEST_CASE("PC dataset coverage errors name the missing dataset and metric", "[pc_dataset][parser]") {
-    for (const auto* key : {"PC_ERMSE", "PC_FRMSE"}) {
+    for (const auto* key : {"PC_ERMSE", "PC_FRMSE", "PC_SRMSE_GPA"}) {
         ConfigFile f(std::string(key) + " (1,3) 0 1\n");
         tadah::core::Context ctx;
         HPOTargets t(ctx, f.path.string());

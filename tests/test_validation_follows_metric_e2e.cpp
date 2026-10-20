@@ -6,7 +6,7 @@
 //     default, or set by `tadah hpo -F/-S` -- decide only what training
 //     fits, exactly as in `tadah train`.
 //   * HPO validation predicts forces whenever PC_FRMSE is set and stresses
-//     whenever PC_SRMSE is set (and only then), whatever FORCE/STRESS the
+//     whenever PC_SRMSE_GPA is set (and only then), whatever FORCE/STRESS the
 //     potential was fitted with. best_pot.tadah keeps the TRAINING
 //     FORCE/STRESS -- for MODEL M_KRR too, whose get_param_file() keeps
 //     them as M_BLR's does -- and the trainer's own context is left as it
@@ -16,13 +16,13 @@
 // (HPO_Host::operator(), `pot = host.model->get_param_file()`), so:
 //   - FORCE false (written or by default) + PC_FRMSE read past an empty
 //     force vector in Analytics::calc_f_rmse: SIGSEGV;
-//   - STRESS false + PC_SRMSE compared the reference stresses with the
+//   - STRESS false + PC_SRMSE_GPA compared the reference stresses with the
 //     zero-initialised prediction: SRMSE == RMS(reference), the same for
 //     every candidate, and a --skip-above cap could reject them all;
 //   - MODEL M_KRR, whose get_param_file() dropped FORCE and STRESS, did both
 //     even when it was fitted with FORCE/STRESS true, and its
 //     best_pot.tadah stated neither (so FORCE false on a retrain);
-//   - FORCE/STRESS true without PC_FRMSE/PC_SRMSE predicted forces and
+//   - FORCE/STRESS true without PC_FRMSE/PC_SRMSE_GPA predicted forces and
 //     stresses no metric read;
 //   - GRAD_STRATEGY ANALYTICAL was refused at startup ("PC_FRMSE needs
 //     FORCE true") and HYBRID crashed like the first item;
@@ -30,14 +30,14 @@
 //     measured.
 //
 // Weight 0 (branch fix/weight0-metrics): PC_FRMSE leaves
-// out the validation structures stored with force weight 0 (fweight) and
-// PC_SRMSE those stored with stress weight 0 (sweight), per dataset; a
+// out the validation structures stored with force priority 0 (fweight) and
+// PC_SRMSE_GPA those stored with stress priority 0 (sweight), per dataset; a
 // validation dataset in which every structure has that weight 0 is not
 // measured (nan, left out of the average), and a run is refused at startup
 // when no dataset has the data or an indexed weight above 0 targets such a
 // dataset (cases 2a, 2b and 4a). Before that fix they were measured like
 // any other structure. The energy metrics (PC_ERMSE, PC_EMAE, PC_ErRMSE,
-// PC_ERSQ) leave out the structures stored with energy weight 0 (eweight)
+// PC_ERSQ) leave out the structures stored with energy priority 0 (eweight)
 // in the same way (cases 2c and 4b).
 //
 // What a validation prediction used is read from the host's test hook
@@ -76,6 +76,7 @@
 #include <tadah/hpo/rcut_derivation.h>
 #include <tadah/hpo/runners.h>
 #include <tadah/hpo/startup_validation.h>
+#include <tadah/mlip/row_weights.h>
 #include <tadah/mlip/atom.h>
 #include <tadah/mlip/descriptors_calc.h>
 #include <tadah/mlip/design_matrix/functions/dm_function_base.h>
@@ -363,9 +364,11 @@ Context potential_context(const std::vector<std::string>& model,
     c.add("DIMER",    "false");
     if (sw.force)  c.add("FORCE",  *sw.force  ? "true" : "false");
     if (sw.stress) c.add("STRESS", *sw.stress ? "true" : "false");
-    c.add("EWEIGHT",  1.0);
-    c.add("FWEIGHT",  1.0);
-    c.add("SWEIGHT",  1.0);
+    c.add("ESIGMA", 1.0);
+    c.add("FSIGMA", 0.1);
+    c.add("FSIGMA", 0.0);
+    c.add("SSIGMA", 0.5);
+    c.add("SSIGMA", 0.0);
     c.add("BIAS",     "false");
     c.add("NORM",     "false");
     c.add("VERBOSE",  0);
@@ -515,19 +518,22 @@ double frmse_of(const StructureDB& ref, const StructureDB& pred) {
     return std::sqrt(s / static_cast<double>(n));
 }
 
-/* Stress RMSE over the six independent components (x <= y) of every
- * structure, as PC_SRMSE measures it. */
+/* eV/A^3 -> GPa (the data hold eV/A^3). */
+constexpr double kGPa = 1.0 / tadah::mlip::kGPaInEvPerA3;
+
+/* Stress RMSE over the nine entries of every stress tensor, in GPa, as
+ * PC_SRMSE_GPA measures it. */
 double srmse_of(const StructureDB& ref, const StructureDB& pred) {
     double s = 0.0;
     std::size_t n = 0;
     for (std::size_t i = 0; i < ref.size(); ++i)
         for (int x = 0; x < 3; ++x)
-            for (int y = x; y < 3; ++y) {
+            for (int y = 0; y < 3; ++y) {
                 const double d = ref(i).stress(x, y) - pred(i).stress(x, y);
                 s += d * d;
                 ++n;
             }
-    return std::sqrt(s / static_cast<double>(n));
+    return kGPa * std::sqrt(s / static_cast<double>(n));
 }
 
 /* frmse_of() over the structures of @p ref stored with a nonzero force
@@ -553,7 +559,7 @@ double frmse_over_weighted(const StructureDB& ref, const StructureDB& pred) {
 }
 
 /* srmse_of() over the structures of @p ref stored with a nonzero stress
- * weight only: a structure with sweight 0 is left out as PC_SRMSE leaves
+ * weight only: a structure with sweight 0 is left out as PC_SRMSE_GPA leaves
  * it out. @p ref is one dataset (one DBFILE), with at least one such
  * structure. */
 double srmse_over_weighted(const StructureDB& ref, const StructureDB& pred) {
@@ -562,14 +568,14 @@ double srmse_over_weighted(const StructureDB& ref, const StructureDB& pred) {
     for (std::size_t i = 0; i < ref.size(); ++i) {
         if (ref(i).sweight == 0.0) continue;
         for (int x = 0; x < 3; ++x)
-            for (int y = x; y < 3; ++y) {
+            for (int y = 0; y < 3; ++y) {
                 const double d = ref(i).stress(x, y) - pred(i).stress(x, y);
                 s += d * d;
                 ++n;
             }
     }
     REQUIRE(n > 0u);
-    return std::sqrt(s / static_cast<double>(n));
+    return kGPa * std::sqrt(s / static_cast<double>(n));
 }
 
 /* The mean of per-dataset values (one per DBFILE of the --validation
@@ -581,8 +587,10 @@ double mean_over_datasets(const std::vector<double>& per_dataset) {
     return s / static_cast<double>(per_dataset.size());
 }
 
-/* RMS of the six independent stress components of @p db: the SRMSE of a
- * zero prediction, the value PC_SRMSE reported before the fix. */
+/* RMS of the six independent stress components of @p db, in eV/A^3: the
+ * scale of its stresses (a zero prediction's stress RMSE, the value that
+ * was reported for STRESS false before the fix, up to the unit and the
+ * count of entries). */
 double rms_stress(const StructureDB& db) {
     double s = 0.0;
     std::size_t n = 0;
@@ -885,7 +893,7 @@ std::string entry_value(const std::string& text, const std::string& key) {
  * bitwise those of an independent Trainer fitted with that FORCE (which a
  * FORCE-true fit would not give). The validation prediction used FORCE
  * true and STRESS false (the test hook): no stresses, even where training
- * fitted them, since no PC_SRMSE reads them.
+ * fitted them, since no PC_SRMSE_GPA reads them.
  * Before the fix: SIGSEGV in Analytics::calc_f_rmse (validation predicted
  * no forces because the training FORCE is false). Before the host had
  * last_validation_switches_for_test(), the hook check failed. */
@@ -944,7 +952,7 @@ TEST_CASE("valmetric e2e: an energy-only fit is validated on forces when "
                         .epsilon(1e-12));
 
     /* Validation predicted forces (PC_FRMSE) and no stresses (no
-     * PC_SRMSE), whatever training fitted. */
+     * PC_SRMSE_GPA), whatever training fitted. */
     check_validation_switches(e.validation_switches, /*force=*/true,
                               /*stress=*/false);
 
@@ -987,9 +995,12 @@ TEST_CASE("valmetric e2e: an energy-only fit is validated on forces when "
  * weight pinned by FIXINDEX/FIXWEIGHT) with FORCE and STRESS false
  * written. The validation references are the potential's own prediction
  * (predict_with, before the run) plus delta * (+-1) on every force
- * component and/or delta_s * (+-1) on every independent stress component,
- * so the exact FRMSE is delta and the exact SRMSE is delta_s.
- *   - FRMSE == delta (0.01 eV/A) and SRMSE == delta_s to 1e-10 relative:
+ * component and/or delta_s * (+-1) on every independent stress component
+ * (eV/A^3, both entries of an off-diagonal one), so the exact FRMSE is
+ * delta and the exact SRMSE is delta_s in GPa (every one of the nine
+ * entries of each tensor is off by delta_s).
+ *   - FRMSE == delta (0.01 eV/A) and SRMSE == delta_s (GPa) to 1e-10
+ *     relative:
  *     the references are written with 18 significant digits, so
  *     ref - pred = delta +- ulp(|pred|), a relative error ulp(|pred|) /
  *     delta: below 1e-12 for forces under 10 eV/A against delta = 0.01,
@@ -997,10 +1008,10 @@ TEST_CASE("valmetric e2e: an energy-only fit is validated on forces when "
  *     of it);
  *   - both also equal predict_with() on best_pot.tadah to 1e-12;
  *   - delta_s is 1% of the RMS of the predicted stresses, so RMS(reference)
- *     >> delta_s, and 'PC_SRMSE 0 1 --skip-above 10 delta_s' accepts the
+ *     >> delta_s, and 'PC_SRMSE_GPA 0 1 --skip-above 10 delta_s' (GPa) accepts the
  *     candidate;
  *   - the validation prediction used FORCE = PC_FRMSE set and STRESS =
- *     PC_SRMSE set (the test hook).
+ *     PC_SRMSE_GPA set (the test hook).
  * The stress-only SECTION runs first, so that before the fix the group
  * failed there without a crash.
  * Before the fix: SRMSE == RMS(reference) (~100 delta_s), above the skip
@@ -1012,13 +1023,13 @@ TEST_CASE("valmetric e2e: pinned weights are validated on forces and "
 {
     PeriodicTable::initialize();
     bool use_f = false, use_s = false;
-    SECTION("PC_SRMSE with STRESS false") {
+    SECTION("PC_SRMSE_GPA with STRESS false") {
         use_s = true;
     }
     SECTION("PC_FRMSE with FORCE false") {
         use_f = true;
     }
-    SECTION("PC_FRMSE and PC_SRMSE with FORCE and STRESS false") {
+    SECTION("PC_FRMSE and PC_SRMSE_GPA with FORCE and STRESS false") {
         use_f = true;
         use_s = true;
     }
@@ -1070,8 +1081,8 @@ TEST_CASE("valmetric e2e: pinned weights are validated on forces and "
         os << target_head(kDerivativeFree);
         if (use_f) os << "PC_FRMSE 0 1\n";
         if (use_s)
-            os << "PC_SRMSE 0 1 --skip-above " << std::setprecision(17)
-               << 10.0 * delta_s << "\n";
+            os << "PC_SRMSE_GPA 0 1 --skip-above " << std::setprecision(17)
+               << 10.0 * delta_s * kGPa << "\n";
         os << "OPTIM FIXWEIGHT (1) -1.0 1.0\n";
     }
 
@@ -1118,14 +1129,14 @@ TEST_CASE("valmetric e2e: pinned weights are validated on forces and "
     if (use_s) {
         const double rms_ref = rms_stress(vdb);
         const double srmse = srmse_of(vdb, pred);
-        const double reported = column(e.stats, "SRMSE[avg]");
+        const double reported = column(e.stats, "SRMSE_GPA[avg]");
         CAPTURE(rms_ref, srmse, reported, delta_s);
         REQUIRE(rms_ref > 50.0 * delta_s);
-        CHECK(srmse == Approx(delta_s).epsilon(1e-10));
-        CHECK(reported == Approx(delta_s).epsilon(1e-10));
+        CHECK(srmse == Approx(delta_s * kGPa).epsilon(1e-10));
+        CHECK(reported == Approx(delta_s * kGPa).epsilon(1e-10));
         CHECK(reported == Approx(srmse).epsilon(1e-12));
-        CHECK(reported < 10.0 * delta_s);   // under the --skip-above cap
-        expected_loss += delta_s * delta_s;
+        CHECK(reported < 10.0 * delta_s * kGPa);   // under the --skip-above cap
+        expected_loss += delta_s * kGPa * delta_s * kGPa;
         ++n_terms;
     }
     CHECK(e.loss == Approx(expected_loss / n_terms).epsilon(1e-10));
@@ -1145,19 +1156,19 @@ TEST_CASE("valmetric e2e: pinned weights are validated on forces and "
         CHECK(same_bits(e.live_weights[k], kPinned[k]));
 }
 
-/* Case 2a. Pins: PC_FRMSE and PC_SRMSE leave out, per dataset, the
+/* Case 2a. Pins: PC_FRMSE and PC_SRMSE_GPA leave out, per dataset, the
  * validation structures stored with weight 0. The fixed potential of case
  * 2 (no training DBFILE, every weight pinned, FORCE and STRESS false
  * written), whose prediction is predict_with() on pinned_potential(), is
- * validated with PC_ERMSE + PC_FRMSE + PC_SRMSE on two datasets of three
+ * validated with PC_ERMSE + PC_FRMSE + PC_SRMSE_GPA on two datasets of three
  * cells. One cell of each, never the first (the last of dataset 1, at the
  * dataset boundary; the middle one of dataset 2), is stored with fweight 0
  * and sweight 0 and garbage references: every force component 50 eV/A and
  * every stress entry 5 eV/A^3. The other cells keep their references and
  * weight 1; eweight is 1 throughout.
- *   - FRMSE[d] and SRMSE[d] (stats.tadah) equal the RMSEs over the cells of
+ *   - FRMSE[d] and SRMSE_GPA[d] (stats.tadah) equal the RMSEs over the cells of
  *     weight 1 of dataset d (frmse_over_weighted, srmse_over_weighted), and
- *     FRMSE[avg] and SRMSE[avg] their mean over the datasets, to 1e-12
+ *     FRMSE[avg] and SRMSE_GPA[avg] their mean over the datasets, to 1e-12
  *     relative (the same arithmetic on the same weights, as in case 1). The
  *     garbage moves each all-cells RMSE (frmse_of, srmse_of) by more than 1
  *     (eV/A, eV/A^3; hence 5 eV/A^3 rather than a realistic stress), so a
@@ -1168,8 +1179,8 @@ TEST_CASE("valmetric e2e: pinned weights are validated on forces and "
  *   - the evaluation used the pinned weights, and validation predicted
  *     forces and stresses (the test hook).
  * Before the fix: the cells of weight 0 were measured, so FRMSE[d] and
- * SRMSE[d] were the all-cells values, off by more than 1. */
-TEST_CASE("valmetric e2e: PC_FRMSE and PC_SRMSE leave out validation "
+ * SRMSE_GPA[d] were the all-cells values, off by more than 1. */
+TEST_CASE("valmetric e2e: PC_FRMSE and PC_SRMSE_GPA leave out validation "
           "structures with weight 0", "[valmetric_e2e][.]")
 {
     PeriodicTable::initialize();
@@ -1207,7 +1218,7 @@ TEST_CASE("valmetric e2e: PC_FRMSE and PC_SRMSE leave out validation "
     }
     std::ofstream(hpo_cfg) << target_head(kDerivativeFree)
                            << "PC_ERMSE 0 0.0001\nPC_FRMSE 0 1\n"
-                              "PC_SRMSE 0 1\n"
+                              "PC_SRMSE_GPA 0 1\n"
                            << "OPTIM FIXWEIGHT (1) -1.0 1.0\n";
 
     /* FIXWEIGHT (1) evaluated at its pinned value: the weights are
@@ -1248,7 +1259,7 @@ TEST_CASE("valmetric e2e: PC_FRMSE and PC_SRMSE leave out validation "
     for (std::size_t d = 0; d < val_dbs.size(); ++d) {
         const std::string n = "[" + std::to_string(d + 1) + "]";
         const double f_reported = column(e.stats, "FRMSE" + n);
-        const double s_reported = column(e.stats, "SRMSE" + n);
+        const double s_reported = column(e.stats, "SRMSE_GPA" + n);
         CAPTURE(d, frmse[d], frmse_all[d], f_reported, srmse[d],
                 srmse_all[d], s_reported);
         /* The fixture: the garbage would move both metrics by more than
@@ -1269,7 +1280,7 @@ TEST_CASE("valmetric e2e: PC_FRMSE and PC_SRMSE leave out validation "
     CHECK(column(e.stats, "ERMSE[avg]") ==
           Approx(e_avg).epsilon(1e-12).margin(1e-9));
     CHECK(column(e.stats, "FRMSE[avg]") == Approx(f_avg).epsilon(1e-12));
-    CHECK(column(e.stats, "SRMSE[avg]") == Approx(s_avg).epsilon(1e-12));
+    CHECK(column(e.stats, "SRMSE_GPA[avg]") == Approx(s_avg).epsilon(1e-12));
     /* L2: the mean of 1e-4 ERMSE^2, FRMSE^2 and SRMSE^2. */
     CHECK(e.loss == Approx((1e-4 * e_avg * e_avg + f_avg * f_avg +
                             s_avg * s_avg) / 3.0)
@@ -1277,25 +1288,25 @@ TEST_CASE("valmetric e2e: PC_FRMSE and PC_SRMSE leave out validation "
 }
 
 /* Case 2b. Pins: a validation dataset in which every
- * structure has force weight 0 has no PC_FRMSE ("not measured"), and one
- * in which every structure has stress weight 0 no PC_SRMSE. On the fixed
+ * structure has force priority 0 has no PC_FRMSE ("not measured"), and one
+ * in which every structure has stress priority 0 no PC_SRMSE_GPA. On the fixed
  * potential of case 2, through hpo_run():
  *   - a run in which no dataset has the data is refused at startup: a
  *     std::runtime_error naming the metric, the DBFILE as the --validation
- *     file gives it and the weight ("force weight 0" / "stress weight 0"),
+ *     file gives it and the weight ("force priority 0" / "stress priority 0"),
  *     before any evaluation (stats.tadah has no row);
- *   - with a global PC_FRMSE (and PC_SRMSE), the second of two datasets
+ *   - with a global PC_FRMSE (and PC_SRMSE_GPA), the second of two datasets
  *     without forces is not measured: the run returns 0, FRMSE[2] is nan
  *     and FRMSE[avg] is FRMSE[1], bit for bit, while both datasets have a
- *     stress (SRMSE[2] finite);
- *   - with a global PC_SRMSE of weight 0 and the second dataset without a
- *     stress tensor, SRMSE[2] and its loss term L(SRMSE)[2] (loss.tadah)
+ *     stress (SRMSE_GPA[2] finite);
+ *   - with a global PC_SRMSE_GPA of weight 0 and the second dataset without a
+ *     stress tensor, SRMSE_GPA[2] and its loss term L(SRMSE_GPA)[2] (loss.tadah)
  *     are nan, not the loss of nan (0 at weight 0);
  *   - with indexed PC_FRMSE, weight 0 on that dataset runs the same, and a
  *     weight above 0 on it is refused at startup, naming the metric, the
  *     dataset and the force weight;
- *   - a weight no metric reads refuses nothing: with PC_SRMSE alone and
- *     force weight 0 everywhere, or PC_FRMSE alone and stress weight 0
+ *   - a weight no metric reads refuses nothing: with PC_SRMSE_GPA alone and
+ *     force priority 0 everywhere, or PC_FRMSE alone and stress priority 0
  *     everywhere, the run measures its metric (finite and positive).
  * Before the fix: every dataset without the data was refused at startup
  * (the three run SECTIONs failed); before that, no dataset was refused and
@@ -1310,33 +1321,33 @@ TEST_CASE("valmetric e2e: a validation dataset whose structures all have "
     std::string refused_by, weight_named; // empty: the run starts
     std::string measured;                 // the column a started run fills
     bool second_unmeasured = false;       // FRMSE[2] nan, FRMSE[avg] = FRMSE[1]
-    bool second_unmeasured_s = false;     // SRMSE[2] and L(SRMSE)[2] nan
+    bool second_unmeasured_s = false;     // SRMSE_GPA[2] and L(SRMSE_GPA)[2] nan
     SECTION("PC_FRMSE and no dataset with forces") {
         metrics = "PC_FRMSE 0 1\n";
         zero_f = true;
         refused_by = "PC_FRMSE";
-        weight_named = "force weight 0";
+        weight_named = "force priority 0";
     }
-    SECTION("PC_SRMSE and no dataset with a stress tensor") {
-        metrics = "PC_SRMSE 0 1\n";
+    SECTION("PC_SRMSE_GPA and no dataset with a stress tensor") {
+        metrics = "PC_SRMSE_GPA 0 1\n";
         zero_s = true;
-        refused_by = "PC_SRMSE";
-        weight_named = "stress weight 0";
+        refused_by = "PC_SRMSE_GPA";
+        weight_named = "stress priority 0";
     }
-    SECTION("global PC_FRMSE and PC_SRMSE, the second of two datasets "
+    SECTION("global PC_FRMSE and PC_SRMSE_GPA, the second of two datasets "
             "without forces") {
-        metrics = "PC_FRMSE 0 1\nPC_SRMSE 0 1\n";
+        metrics = "PC_FRMSE 0 1\nPC_SRMSE_GPA 0 1\n";
         zero_f = true;
         weighted_first = true;
-        measured = "SRMSE[2]";
+        measured = "SRMSE_GPA[2]";
         second_unmeasured = true;
     }
-    SECTION("global PC_SRMSE of weight 0, the second of two datasets without "
+    SECTION("global PC_SRMSE_GPA of weight 0, the second of two datasets without "
             "a stress tensor") {
-        metrics = "PC_ERMSE 0 1\nPC_SRMSE 0 0\n";
+        metrics = "PC_ERMSE 0 1\nPC_SRMSE_GPA 0 0\n";
         zero_s = true;
         weighted_first = true;
-        measured = "SRMSE[1]";
+        measured = "SRMSE_GPA[1]";
         second_unmeasured_s = true;
     }
     SECTION("indexed PC_FRMSE, weight 0 on the dataset without forces") {
@@ -1351,14 +1362,14 @@ TEST_CASE("valmetric e2e: a validation dataset whose structures all have "
         zero_f = true;
         weighted_first = true;
         refused_by = "PC_FRMSE";
-        weight_named = "force weight 0";
+        weight_named = "force priority 0";
     }
-    SECTION("PC_SRMSE alone and every structure with force weight 0") {
-        metrics = "PC_SRMSE 0 1\n";
+    SECTION("PC_SRMSE_GPA alone and every structure with force priority 0") {
+        metrics = "PC_SRMSE_GPA 0 1\n";
         zero_f = true;
-        measured = "SRMSE[avg]";
+        measured = "SRMSE_GPA[avg]";
     }
-    SECTION("PC_FRMSE alone and every structure with stress weight 0") {
+    SECTION("PC_FRMSE alone and every structure with stress priority 0") {
         metrics = "PC_FRMSE 0 1\n";
         zero_s = true;
         measured = "FRMSE[avg]";
@@ -1427,14 +1438,14 @@ TEST_CASE("valmetric e2e: a validation dataset whose structures all have "
     if (second_unmeasured_s) {
         /* Its loss term is nan too (not loss(nan): 0 at weight 0), in
          * loss.tadah as in stats.tadah. */
-        const double s2 = column(rows.front(), "SRMSE[2]");
-        const double savg = column(rows.front(), "SRMSE[avg]");
+        const double s2 = column(rows.front(), "SRMSE_GPA[2]");
+        const double savg = column(rows.front(), "SRMSE_GPA[avg]");
         CAPTURE(s2, savg);
         CHECK(is_nan_bits(s2));
-        CHECK(same_bits(savg, column(rows.front(), "SRMSE[1]")));
+        CHECK(same_bits(savg, column(rows.front(), "SRMSE_GPA[1]")));
         const auto losses = stats_rows((sd.dir / "loss.tadah").string());
         REQUIRE_FALSE(losses.empty());
-        const double l2 = column(losses.front(), "L(SRMSE)[2]");
+        const double l2 = column(losses.front(), "L(SRMSE_GPA)[2]");
         CAPTURE(l2);
         CHECK(is_nan_bits(l2));
     }
@@ -1450,7 +1461,7 @@ TEST_CASE("valmetric e2e: a validation dataset whose structures all have "
 }
 
 /* Case 2c. Pins: the energy metrics (PC_ERMSE, PC_EMAE, PC_ErRMSE,
- * PC_ERSQ) leave out the validation structures stored with energy weight 0
+ * PC_ERSQ) leave out the validation structures stored with energy priority 0
  * (eweight), which have no energy of their own (the energy line the
  * dataset format needs holds a placeholder); a dataset in which every
  * structure has eweight 0 is not
@@ -1473,7 +1484,7 @@ TEST_CASE("valmetric e2e: a validation dataset whose structures all have "
  * evaluation was clamped to FAILSCORE (and hpo_run wrote no best
  * potential); no run was refused. */
 TEST_CASE("valmetric e2e: the energy metrics leave out a validation "
-          "dataset whose structures all have energy weight 0",
+          "dataset whose structures all have energy priority 0",
           "[valmetric_e2e][.]")
 {
     PeriodicTable::initialize();
@@ -1585,7 +1596,7 @@ TEST_CASE("valmetric e2e: the energy metrics leave out a validation "
         CHECK(r.runtime_error);
         CHECK(contains(r.what, "PC_ERMSE (2)"));
         CHECK(contains(r.what, noe_db.string()));
-        CHECK(contains(r.what, "energy weight 0"));
+        CHECK(contains(r.what, "energy priority 0"));
     }
     for (const char* metric : {"PC_ERMSE", "PC_EMAE", "PC_ErRMSE", "PC_ERSQ"}) {
         DYNAMIC_SECTION(metric << " and no dataset with an energy") {
@@ -1597,7 +1608,7 @@ TEST_CASE("valmetric e2e: the energy metrics leave out a validation "
             CHECK(r.runtime_error);
             CHECK(contains(r.what, metric));
             CHECK(contains(r.what, noe_db.string()));
-            CHECK(contains(r.what, "energy weight 0"));
+            CHECK(contains(r.what, "energy priority 0"));
             const fs::path stats = sd.dir / "stats.tadah";
             if (fs::exists(stats)) CHECK(stats_rows(stats.string()).empty());
         }
@@ -1606,7 +1617,7 @@ TEST_CASE("valmetric e2e: the energy metrics leave out a validation "
 
 /* Case 3. MODEL M_KRR Kern_Linear 1 (FORCE and STRESS both written in the
  * configuration), fitted with STRESS true and validated with PC_ERMSE +
- * PC_SRMSE, and fitted with FORCE true and validated with PC_ERMSE +
+ * PC_SRMSE_GPA, and fitted with FORCE true and validated with PC_ERMSE +
  * PC_FRMSE:
  *   - ERMSE, SRMSE / FRMSE and the loss equal those of predict_with() on
  *     the evaluation's best_pot.tadah to 1e-12 relative (as in case 1). The
@@ -1632,7 +1643,7 @@ TEST_CASE("valmetric e2e: MODEL M_KRR Kern_Linear validates the forces "
     PeriodicTable::initialize();
     FitSwitches sw;
     bool use_f = false, use_s = false;
-    SECTION("STRESS true and PC_SRMSE") {
+    SECTION("STRESS true and PC_SRMSE_GPA") {
         sw = FitSwitches{false, true};
         use_s = true;
     }
@@ -1654,7 +1665,7 @@ TEST_CASE("valmetric e2e: MODEL M_KRR Kern_Linear validates the forces "
         std::ofstream os(hpo_cfg);
         os << target_head(kDerivativeFree) << "PC_ERMSE 0 0.0001\n";
         if (use_f) os << "PC_FRMSE 0 1\n";
-        if (use_s) os << "PC_SRMSE 0 1\n";
+        if (use_s) os << "PC_SRMSE_GPA 0 1\n";
         os << kTrainedOptim;
     }
 
@@ -1688,10 +1699,12 @@ TEST_CASE("valmetric e2e: MODEL M_KRR Kern_Linear validates the forces "
     }
     if (use_s) {
         const double srmse = srmse_of(vdb, pred);
-        const double rms_ref = rms_stress(vdb);
+        StructureDB zero = vdb;  // a zero prediction's stress RMSE
+        for (std::size_t i = 0; i < zero.size(); ++i) zero(i).stress.set_zero();
+        const double rms_ref = srmse_of(vdb, zero);
         CAPTURE(srmse, rms_ref);
         REQUIRE(std::fabs(srmse - rms_ref) > 1e-3 * rms_ref);
-        CHECK(column(e.stats, "SRMSE[avg]") == Approx(srmse).epsilon(1e-12));
+        CHECK(column(e.stats, "SRMSE_GPA[avg]") == Approx(srmse).epsilon(1e-12));
         expected_loss += srmse * srmse;
     }
     CHECK(e.loss == Approx(expected_loss / 2.0).epsilon(1e-12));
@@ -1844,7 +1857,7 @@ TEST_CASE("valmetric e2e: the analytical gradient covers PC_FRMSE with "
 }
 
 /* Case 4a. Pins: the analytical gradient of a global PC_FRMSE whose second
- * validation dataset is not measured (every structure with force weight 0,
+ * validation dataset is not measured (every structure with force priority 0,
  * forces far from any prediction) equals the Richardson-extrapolated
  * central difference of the host loss, as in case 4 (ANALYTICAL, FORCE
  * false, PC_ERMSE weight 1e-6): the average and its derivative run over the
@@ -2077,7 +2090,7 @@ TEST_CASE("valmetric e2e: the analytical gradient of the energy metrics "
  *     yes/no; its source is "(source not recorded)" for a key the context
  *     holds and "(default)" for one it does not;
  *   - "Validation predicts": "energies" plus "forces (PC_FRMSE)" and/or
- *     "stresses (PC_SRMSE)" exactly when those metrics are set, or "no
+ *     "stresses (PC_SRMSE_GPA)" exactly when those metrics are set, or "no
  *     validation set".
  * Key phrases only (substrings), never whole lines. The SECTION with no
  * FORCE key and PC_FRMSE runs last, because before the fix it crashed.
@@ -2101,9 +2114,9 @@ TEST_CASE("valmetric e2e: the journal states what training fits and what "
         stress_source = "(default)";
         predicts_forces = true;
     }
-    SECTION("FORCE and STRESS false written and PC_SRMSE") {
+    SECTION("FORCE and STRESS false written and PC_SRMSE_GPA") {
         sw = FitSwitches{false, false};
-        metrics = "PC_ERMSE 0 0.0001\nPC_SRMSE 0 1\n";
+        metrics = "PC_ERMSE 0 0.0001\nPC_SRMSE_GPA 0 1\n";
         force_yes_no = "no";
         force_source = "(source not recorded)";
         stress_yes_no = "no";
@@ -2176,7 +2189,7 @@ TEST_CASE("valmetric e2e: the journal states what training fits and what "
     }
     CHECK(contains(predicts, "energies"));
     CHECK(contains(predicts, "forces (PC_FRMSE)") == predicts_forces);
-    CHECK(contains(predicts, "stresses (PC_SRMSE)") == predicts_stresses);
+    CHECK(contains(predicts, "stresses (PC_SRMSE_GPA)") == predicts_stresses);
     CHECK_FALSE(contains(predicts, "no validation set"));
 
     const std::string fit_f = entry_value(setup, "Fit forces (FORCE)");
@@ -2192,10 +2205,10 @@ TEST_CASE("valmetric e2e: the journal states what training fits and what "
 
 /* Case 6. A fit of forces and stresses (MODEL M_BLR BF_Linear, FORCE true
  * and STRESS true written) validated on energies alone (PC_ERMSE only):
- * validation predicts neither forces nor stresses -- PC_FRMSE and PC_SRMSE
+ * validation predicts neither forces nor stresses -- PC_FRMSE and PC_SRMSE_GPA
  * decide, and only they -- while training is unchanged. Two evaluations of
  * the same fit at the same candidate, each by a fresh host:
- *   - a control with PC_ERMSE + PC_FRMSE + PC_SRMSE: the test hook reports
+ *   - a control with PC_ERMSE + PC_FRMSE + PC_SRMSE_GPA: the test hook reports
  *     FORCE true / STRESS true, so the value read after the energy-only
  *     evaluation is that evaluation's own;
  *   - PC_ERMSE only: the hook reports FORCE false / STRESS false. The loss
@@ -2240,9 +2253,9 @@ TEST_CASE("valmetric e2e: a force and stress fit validated on energies alone "
     };
 
     /* The control: every metric, so validation predicts everything. */
-    const Run all = run("PC_ERMSE 0 0.0001\nPC_FRMSE 0 1\nPC_SRMSE 0 1\n");
+    const Run all = run("PC_ERMSE 0 0.0001\nPC_FRMSE 0 1\nPC_SRMSE_GPA 0 1\n");
     {
-        INFO("control: PC_ERMSE + PC_FRMSE + PC_SRMSE");
+        INFO("control: PC_ERMSE + PC_FRMSE + PC_SRMSE_GPA");
         require_real_loss(all.e.loss);
         check_validation_switches(all.e.validation_switches, /*force=*/true,
                                   /*stress=*/true);
