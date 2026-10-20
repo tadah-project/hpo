@@ -448,10 +448,9 @@ TEST_CASE("run_start_guarded: a lost best ends a stagnated or failed start's "
  * so the stagnation check could read iter_at_last_best_ while an earlier
  * evaluation's new best was still being decided -- publishing under the
  * mutex, or queued for it -- and stop an improving run. The check that
- * would fire now waits until as many decisions have finished as were in
- * progress when it began (they finish in lock order, which is not FIFO; see
- * detail::throw_if_stagnated). A decision is a detail::BestDecision,
- * counted when it is made and done when it ends. */
+ * would fire now waits until every decision counted before it began has
+ * ended (see detail::throw_if_stagnated). A decision is a
+ * detail::BestDecision, counted when it is made and done when it ends. */
 TEST_CASE("stagnation check waits for new-best decisions in progress",
           "[HPO][restart][failure_handling]")
 {
@@ -611,6 +610,70 @@ TEST_CASE("stagnation check waits for a new-best decision computing its "
         CHECK(pubs.done.load() == pubs.started.load());
         CHECK(pubs.started.load() == 2u);
     }
+}
+
+/* Pins: a stagnation check waits for every new-best decision counted
+ * before it began, not for as many decisions as were counted then.
+ * Decision D1 (eval 10, the new best) is counted and computes its table
+ * ahead of the best mutex; the check of eval 20 (AFTER_STAGNATION 15, the
+ * last new best at eval 0) would fire and waits; decision D2, counted after
+ * the check began, takes the mutex and ends at once, with no table and no
+ * new best (an infeasible loss before the first feasible best). D1 records
+ * its new best only after D2 has ended. The check must see it: no stop, and
+ * eval 10 the last new best. Whatever the scheduling (D2 counted before or
+ * after the check began), the check waits for D1.
+ * Before the fix: the check woke when as many decisions had ended as had
+ * been counted when it began (D2's end), and threw StagnationStop while D1
+ * was still computing its table. */
+TEST_CASE("stagnation check waits for the decisions counted before it, "
+          "not for as many", "[HPO][restart][failure_handling]")
+{
+    using tadah::hpo::detail::BestDecision;
+    using tadah::hpo::detail::BestPublications;
+    using tadah::hpo::detail::throw_if_stagnated;
+    std::mutex best_mtx;
+    BestPublications pubs;
+    std::atomic<std::size_t> last{0};
+    const std::atomic<std::size_t> none{0};
+    const std::size_t window = 15;
+    const auto bounded = [](const std::function<bool()>& ready) {
+        const auto give_up =
+            std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        while (!ready() && std::chrono::steady_clock::now() < give_up)
+            std::this_thread::yield();
+    };
+
+    std::atomic<bool> d1_counted{false}, checking{false}, threw{false};
+    std::thread d1([&] {
+        BestDecision d(pubs, best_mtx);
+        d1_counted.store(true);
+        /* The table: until D2 has ended (bounded), then a little longer. */
+        bounded([&] { return pubs.done.load() >= 1; });
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        d.lock();
+        last.store(10, std::memory_order_relaxed);
+    });
+    bounded([&] { return d1_counted.load(); });
+    std::thread check([&] {
+        checking.store(true);
+        try {
+            throw_if_stagnated(20, window, last, none, best_mtx, pubs);
+        } catch (const StagnationStop&) {
+            threw.store(true);
+        }
+    });
+    bounded([&] { return checking.load(); });
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));  // it waits
+    {
+        BestDecision d2(pubs, best_mtx);   // counted after the check began
+        d2.lock();
+    }
+    d1.join();
+    check.join();
+    CHECK_FALSE(threw.load());
+    CHECK(last.load() == 10);
+    CHECK(pubs.started.load() == 2u);
+    CHECK(pubs.done.load() == 2u);
 }
 
 /* Pins: the stagnation window counts the calls a search answered from its
