@@ -7,32 +7,38 @@
 //
 //  - LAMBDA of the training configuration: a negative value other than -1,
 //    a second value, -1 under an OALGO other than 3, and -1 under M_KRR
-//    implementation 2, with the message of the fit; an M_KRR
-//    implementation other than 1 and 2, with the message of the fit. A
-//    run whose
-//    evaluations fit nothing (no training data, FIXINDEX pinning every
-//    weight) reads no LAMBDA, and is not refused for it.
+//    implementation 2, with the message of the fit; OALGO 3 with a LAMBDA
+//    other than 0 and an intercept column the fit fits (BIAS true), with
+//    the message of the fit. A run whose evaluations fit nothing (no
+//    training data, FIXINDEX pinning every weight) reads no LAMBDA, and is
+//    not refused for it.
+//  - An M_KRR implementation other than 1 and 2, with the message of the
+//    fit, whether or not the evaluations fit: the implementation is part of
+//    the MODEL line of the potential.
 //  - An OPTIM box of EWEIGHT, FWEIGHT, SWEIGHT or LAMBDA that reaches below
 //    0, at its line: a fit refuses a negative weight and a negative LAMBDA
 //    other than -1, and -1 (the evidence approximation) is no value of a
 //    box. OPTIM LAMBDA when the training configuration has LAMBDA -1, at
 //    its line: the search would replace the evidence approximation.
-//  - Under M_KRR implementation 2, OPTIM of EWEIGHT, FWEIGHT, SWEIGHT or
-//    WDBFILE, which its solve ignores, with the message of the fit (MLIP
+//  - Under M_KRR implementation 2, OPTIM of EWEIGHT, FWEIGHT or SWEIGHT,
+//    which its solve ignores, with the message of the fit (MLIP
 //    krr_implementation2_ignores); the settings and the training data it
 //    ignores (MLIP refuse_what_krr_implementation2_ignores), and a weight
 //    that is not a finite number >= 0 (MLIP require_valid_weights), once
 //    the training data are read (tadah hpo --check reads them too).
 //  - OPTIM of a key applied once when the run starts (LSCALE, ESHIFT,
-//    ESHIFT_ATOM, ESHIFT_DBATOM, EFILTER, FFILTER, ZERO_COM_FORCE), at its
-//    line: no evaluation would take a candidate value of it.
+//    ESHIFT_ATOM, ESHIFT_DBATOM, EFILTER, FFILTER, ZERO_COM_FORCE, WDBFILE,
+//    WDBFILE_AUTO, EWEIGHT_TEMP), at its line, whatever the model: no
+//    evaluation would take a candidate value of it.
 //
 // The evidence approximation (LAMBDA -1, OALGO 3) of a fit that stops at
 // its iteration limit, or that cannot estimate the prior and the noise
 // from the targets of a candidate, is said once per run in the journal,
 // hpo_run.log, and not on standard output for each evaluation; a candidate
 // whose evidence approximation is refused fails (FAILSCORE, a failed
-// evaluation), without the WARNING of an evaluation that threw.
+// evaluation), without the WARNING of an evaluation that threw. Its
+// iterations are INFO lines of the Logger (VERBOSE 2), not standard output
+// at VERBOSE 1.
 //
 // The model is a one-species (H) D2_BP pair term with BF_Linear (two
 // weights); the data are H2 cells.
@@ -343,9 +349,14 @@ TEST_CASE("tadah hpo refuses at startup a LAMBDA that every fit refuses",
 }
 
 /* MODEL M_KRR Kern_Linear 3 is refused by the startup checks with the
- * message of the fit, naming both implementations.
+ * message of the fit, naming both implementations, also when FIXINDEX
+ * pins every weight, with or without training data: the evaluations then
+ * fit nothing, but the implementation is part of the MODEL line that
+ * best_pot.tadah carries (tadah train refuses it with or without pins).
  * Before the fix: the startup checks passed it; each evaluation refused it
- * with 'This KRR implementation does exist: 3'. */
+ * with 'This KRR implementation does exist: 3'. With FIXINDEX pinning
+ * every weight the startup checks passed it after that fix too, and the
+ * run published a best_pot.tadah with MODEL M_KRR Kern_Linear 3. */
 TEST_CASE("tadah hpo refuses at startup an M_KRR implementation other than "
           "1 and 2",
           "[HPO][fit_settings_startup][krr]") {
@@ -355,6 +366,55 @@ TEST_CASE("tadah hpo refuses at startup an M_KRR implementation other than "
     const std::string fit = fit_refusal(c);
     REQUIRE_THAT(fit, Contains("MODEL M_KRR Kern_Linear 3"));
     CHECK(startup_error(c, target()) == fit);
+    for (const bool db : {true, false}) {
+        DYNAMIC_SECTION("FIXINDEX pins both weights, "
+                        << (db ? "with" : "without") << " training data") {
+            Context p = c;
+            p.add("FIXINDEX", "1-2");
+            p.add("FIXWEIGHT", "0.1 0.2");
+            CHECK(startup_error(p, target(), db) == fit);
+        }
+    }
+}
+
+/* OALGO 3 penalises every weight alike, so a fit with an intercept column
+ * (BIAS true, ATOM H: weight 1) refuses a LAMBDA other than 0; the startup
+ * checks refuse it with the message of the fit, for LAMBDA -1 (the
+ * evidence approximation) and 1e-3. FIXINDEX pinning the intercept weight,
+ * and LAMBDA 0, pass, and so does the fit (pins).
+ * Before the fix: the startup checks passed it; each evaluation refused it
+ * ('eval-thread caught throw ... OALGO=3 (SVD with uniform ridge) does not
+ * support intercept exclusion ...') and the run ended without a
+ * potential. */
+TEST_CASE("tadah hpo refuses at startup OALGO 3 with a LAMBDA other than 0 "
+          "and an intercept column",
+          "[HPO][fit_settings_startup][lambda]") {
+    tadah::core::PeriodicTable::initialize();
+    auto bias = [](const char* lambda) {
+        Context c = model_ctx();
+        set_key(c, "BIAS", "true");
+        set_key(c, "OALGO", "3");
+        set_key(c, "LAMBDA", lambda);
+        return c;
+    };
+    for (const char* lambda : {"-1", "1e-3"}) {
+        DYNAMIC_SECTION("LAMBDA " << lambda) {
+            const Context c = bias(lambda);
+            const std::string fit = fit_refusal(c);
+            REQUIRE_THAT(fit, Contains("1 intercept column(s)"));
+            CHECK(startup_error(c, target()) == fit);
+            Context pinned = bias(lambda);
+            pinned.add("FIXINDEX", "1");
+            pinned.add("FIXWEIGHT", "-0.5");
+            CHECK(fit_refusal(pinned).empty());
+            CHECK(startup_error(pinned, target()).empty());
+        }
+    }
+    SECTION("LAMBDA 0 (a pin)") {
+        const Context c = bias("0");
+        CHECK(fit_refusal(c).empty());
+        CHECK(startup_error(c, target()).empty());
+    }
 }
 
 /* An OPTIM box of EWEIGHT, FWEIGHT, SWEIGHT or LAMBDA whose low bound is
@@ -401,11 +461,12 @@ TEST_CASE("An OPTIM box of a fit weight or of LAMBDA below 0 is refused at "
     }
 }
 
-/* Under M_KRR implementation 2, OPTIM EWEIGHT, FWEIGHT, SWEIGHT and WDBFILE
- * are refused by the startup checks with the text of the fit's refusal
- * (krr_implementation2_ignores); under implementation 1 they pass.
- * Before the fix: the startup checks passed them; every candidate other
- * than 1 was refused by its evaluation. */
+/* Under M_KRR implementation 2, OPTIM EWEIGHT, FWEIGHT and SWEIGHT are
+ * refused by the startup checks with the text of the fit's refusal
+ * (krr_implementation2_ignores); under implementation 1 they pass. (OPTIM
+ * WDBFILE is refused at its line under every model: the case below.)
+ * Before the fix: the startup checks passed them, and every evaluation
+ * fitted without the candidate. */
 TEST_CASE("Under M_KRR implementation 2, OPTIM of a weight is refused at "
           "startup",
           "[HPO][fit_settings_startup][krr]") {
@@ -416,53 +477,72 @@ TEST_CASE("Under M_KRR implementation 2, OPTIM of a weight is refused at "
     };
     for (const Case& k : {Case{"EWEIGHT", "with EWEIGHT 1"},
                           Case{"FWEIGHT", "with FWEIGHT 1"},
-                          Case{"SWEIGHT", "with SWEIGHT 1"},
-                          Case{"WDBFILE", "without WDBFILE"}}) {
+                          Case{"SWEIGHT", "with SWEIGHT 1"}}) {
         DYNAMIC_SECTION(k.key) {
             const std::string line =
                 std::string("OPTIM ") + k.key + " (1) 0.5 2\n";
             Context c = krr2_ctx();
-            if (std::string(k.key) == "WDBFILE") c.add("WDBFILE", 1.0);
             CHECK(startup_error(c, target(line)) ==
                   tadah::mlip::krr_implementation2_ignores(
                       "Kern_Linear", std::string("OPTIM ") + k.key,
                       "applies it", k.instead));
             Context c1 = model_ctx();
             set_key(c1, "MODEL", "M_KRR Kern_Linear 1");
-            if (std::string(k.key) == "WDBFILE") c1.add("WDBFILE", 1.0);
             CHECK(startup_error(c1, target(line)).empty());
         }
     }
 }
 
-/* OPTIM of LSCALE, ESHIFT, ESHIFT_ATOM, ESHIFT_DBATOM, EFILTER, FFILTER
- * and ZERO_COM_FORCE is refused at its line, naming the key and that it is
- * applied once, when the run starts.
+/* OPTIM of LSCALE, ESHIFT, ESHIFT_ATOM, ESHIFT_DBATOM, EFILTER, FFILTER,
+ * ZERO_COM_FORCE, WDBFILE, WDBFILE_AUTO and EWEIGHT_TEMP is refused at its
+ * line, naming the key and that it is applied once, when the run starts,
+ * under M_BLR and under M_KRR implementations 1 and 2.
  * Before the fix: OPTIM LSCALE, ESHIFT, EFILTER and FFILTER were accepted,
  * and every evaluation trained on the data as they were prepared at
  * startup, whatever the candidate value; the others were refused with
- * another message, or as keys the configuration does not hold. */
+ * another message, or as keys the configuration does not hold. OPTIM
+ * WDBFILE, WDBFILE_AUTO and EWEIGHT_TEMP were accepted under M_BLR and
+ * M_KRR implementation 1 the same way, and OPTIM WDBFILE under
+ * implementation 2 was refused at startup as a key that implementation 1
+ * applies. */
 TEST_CASE("OPTIM of a key applied once at startup is refused at its line",
           "[HPO][fit_settings_startup][optim]") {
     tadah::core::PeriodicTable::initialize();
-    Context c = model_ctx();
-    c.add("LSCALE", 1.0);
-    c.add("ESHIFT", -0.5);
-    c.add("ESHIFT_ATOM", "false");
-    c.add("ESHIFT_DBATOM", "false");
-    c.add("EFILTER", "-10 10");
-    c.add("FFILTER", 10.0);
-    c.add("ZERO_COM_FORCE", "false");
-    for (const char* key : {"LSCALE", "ESHIFT", "ESHIFT_ATOM",
-                            "ESHIFT_DBATOM", "EFILTER", "FFILTER",
-                            "ZERO_COM_FORCE"}) {
-        DYNAMIC_SECTION(key) {
-            const std::string k = key;
-            CHECK_THAT(parse_error(c, target("OPTIM " + k + " (1) 0.5 2\n")),
-                       Contains("Error on line 1") &&
-                           Contains("OPTIM " + k + " is not a valid search "
-                                    "target") &&
-                           Contains("applied once, when the run starts"));
+    auto with_keys = [](Context c) {
+        c.add("LSCALE", 1.0);
+        c.add("ESHIFT", -0.5);
+        c.add("ESHIFT_ATOM", "false");
+        c.add("ESHIFT_DBATOM", "false");
+        c.add("EFILTER", "-10 10");
+        c.add("FFILTER", 10.0);
+        c.add("ZERO_COM_FORCE", "false");
+        c.add("WDBFILE", 1.0);
+        c.add("WDBFILE_AUTO", 0.5);
+        c.add("EWEIGHT_TEMP", 300.0);
+        return c;
+    };
+    Context krr1 = model_ctx();
+    set_key(krr1, "MODEL", "M_KRR Kern_Linear 1");
+    const std::pair<const char*, Context> models[] = {
+        {"M_BLR", with_keys(model_ctx())},
+        {"M_KRR implementation 1", with_keys(krr1)},
+        {"M_KRR implementation 2", with_keys(krr2_ctx())}};
+    for (const auto& m : models) {
+        for (const char* key : {"LSCALE", "ESHIFT", "ESHIFT_ATOM",
+                                "ESHIFT_DBATOM", "EFILTER", "FFILTER",
+                                "ZERO_COM_FORCE", "WDBFILE", "WDBFILE_AUTO",
+                                "EWEIGHT_TEMP"}) {
+            DYNAMIC_SECTION(m.first << ", " << key) {
+                const std::string k = key;
+                const std::string line = "OPTIM " + k + " (1) 0.5 2\n";
+                const std::string said = parse_error(m.second, target(line));
+                CHECK_THAT(said,
+                           Contains("Error on line 1") &&
+                               Contains("OPTIM " + k + " is not a valid "
+                                        "search target") &&
+                               Contains("applied once, when the run starts"));
+                CHECK(startup_error(m.second, target(line)) == said);
+            }
         }
     }
 }
@@ -528,10 +608,13 @@ TEST_CASE("tadah hpo refuses at startup the training data a fit refuses",
  * and beta are not finite): each evaluation fails as a candidate, scores
  * FAILSCORE and counts as a failed evaluation, not one that threw, and the
  * journal gives the refusal once.
+ * The evidence approximation of each evaluation writes nothing on standard
+ * output (VERBOSE 1): its iterations are INFO lines of the Logger.
  * Before the fix: each evaluation printed the WARNING on standard output
  * (3 of 3) and the journal had none; each refused evaluation was journalled as an
  * evaluation that threw ('eval-thread caught throw'), once per
- * evaluation. */
+ * evaluation; and each evaluation printed 'Max number of steps reached: 41'
+ * on standard output (3 of 3), after its table of iterations. */
 TEST_CASE("The evidence approximation of tadah hpo is said once per run in "
           "the journal",
           "[HPO][fit_settings_startup][ea]") {
@@ -554,6 +637,8 @@ TEST_CASE("The evidence approximation of tadah hpo is said once per run in "
         CHECK(count_of(journal, "stopped at its iteration limit") == 1);
         CHECK(count_of(journal, "once per run") == 1);
         CHECK(count_of(out, "stopped at its iteration limit") == 0);
+        CHECK(count_of(out, "Max number of steps reached") == 0);
+        CHECK(count_of(out, "del alpha") == 0);
     }
     SECTION("refused: targets all zero") {
         ScratchDir sd;
