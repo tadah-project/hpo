@@ -789,15 +789,16 @@ PotRecord pot_record(const std::string& text) {
 }
 
 /* Whether @p balance is a fit balance table of one quantity in one
- * dataset: its first line "Fit balance: LAMBDA ...", the column header, the
- * row of the quantity over every dataset and the prior's row (MLIP
- * fit_balance_lines). */
+ * dataset: its first line "Fit balance: LAMBDA ...", the line of its error
+ * scale, the column header, the row of the quantity over every dataset and
+ * the prior's row (MLIP fit_balance_lines). */
 bool one_row_balance_table(const std::vector<std::string>& balance) {
-    return balance.size() == 4 &&
+    return balance.size() == 5 &&
            balance[0].rfind("Fit balance: LAMBDA ", 0) == 0 &&
-           balance[1].rfind("  quantity  dataset", 0) == 0 &&
-           balance[2].find(" all ") != std::string::npos &&
-           balance[3].rfind("  prior", 0) == 0;
+           balance[1].rfind("  error scales: ", 0) == 0 &&
+           balance[2].rfind("  quantity  dataset", 0) == 0 &&
+           balance[3].find(" all ") != std::string::npos &&
+           balance[4].rfind("  prior", 0) == 0;
 }
 
 /* The tokens of each key line of the potential text @p text (comment
@@ -832,8 +833,9 @@ std::map<std::string, std::vector<std::string>> key_lines(const std::string& tex
  * "HEALTH_LOG off" (the context's values, in that order; the HPOTargets
  * here is built without the KeyProvenance of a command line, so every
  * stored key counts), and best_pot.tadah's record ends with the balance
- * table of the evaluation's fit (its first line, the column header, the
- * energies' row and the prior's row), which the archives do not have. The
+ * table of the evaluation's fit (its first line, the energies' error
+ * scale, the column header, the energies' row and the prior's row), which
+ * the archives do not have. The
  * DATA section of best_pot.tadah's header gives the
  * training dataset's statistics without its path: the one line of each
  * file that names train.db is the record's DBFILE line.

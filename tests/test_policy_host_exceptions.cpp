@@ -450,12 +450,13 @@ TEST_CASE("run_start_guarded: a lost best ends a stagnated or failed start's "
  * mutex, or queued for it -- and stop an improving run. The check that
  * would fire now waits until as many decisions have finished as were in
  * progress when it began (they finish in lock order, which is not FIFO; see
- * detail::throw_if_stagnated). */
+ * detail::throw_if_stagnated). A decision is a detail::BestDecision,
+ * counted when it is made and done when it ends. */
 TEST_CASE("stagnation check waits for new-best decisions in progress",
           "[HPO][restart][failure_handling]")
 {
+    using tadah::hpo::detail::BestDecision;
     using tadah::hpo::detail::BestPublications;
-    using tadah::hpo::detail::PublicationDone;
     using tadah::hpo::detail::throw_if_stagnated;
     std::mutex best_mtx;
     BestPublications pubs;
@@ -468,10 +469,9 @@ TEST_CASE("stagnation check waits for new-best decisions in progress",
      * its eval number (0: it was not a new best after all). */
     auto decision = [&](std::chrono::milliseconds queued,
                         std::chrono::milliseconds hold, std::size_t new_best) {
-        pubs.started.fetch_add(1);
+        BestDecision d(pubs, best_mtx);        // counted
         std::this_thread::sleep_for(queued);   // waiting for the lock
-        std::lock_guard<std::mutex> g(best_mtx);
-        PublicationDone done(pubs);
+        d.lock();
         std::this_thread::sleep_for(hold);
         if (new_best) last.store(new_best, std::memory_order_relaxed);
     };
@@ -492,9 +492,8 @@ TEST_CASE("stagnation check waits for new-best decisions in progress",
     {
         std::atomic<bool> checking{false};
         std::thread publisher([&] {
-            pubs.started.fetch_add(1);
-            std::lock_guard<std::mutex> g(best_mtx);
-            PublicationDone done(pubs);
+            BestDecision d(pubs, best_mtx);
+            d.lock();
             const auto give_up =
                 std::chrono::steady_clock::now() + std::chrono::seconds(5);
             while (!checking.load() && std::chrono::steady_clock::now() < give_up)
@@ -539,6 +538,79 @@ TEST_CASE("stagnation check waits for new-best decisions in progress",
                     StagnationStop);
     CHECK_NOTHROW(throw_if_stagnated(12, window, last, none, best_mtx, pubs));
     CHECK(pubs.done.load() == pubs.started.load());
+}
+
+/* Pins: a new-best decision (detail::BestDecision) is counted when it is
+ * made, before the work it does ahead of the best mutex -- the balance
+ * table of the evaluation's fit, one O(n p^2) pass -- so a stagnation check
+ * that would fire while that work runs waits for the decision (eval 12, the
+ * window from eval 4, while eval 9's table is computed: no stop, and eval
+ * 9 is the last new best once it is done); and a decision whose work ahead
+ * of the mutex throws is done all the same, under the mutex: the check
+ * waiting for it is woken (no deadlock) and fires, as no new best came.
+ * Before the fix: HPO_Host::operator() computed the table before it counted
+ * the decision, so such a check fired while a new best was on its way
+ * (BestDecision did not exist: the test does not compile). */
+TEST_CASE("stagnation check waits for a new-best decision computing its "
+          "table", "[HPO][restart][failure_handling]")
+{
+    using tadah::hpo::detail::BestDecision;
+    using tadah::hpo::detail::BestPublications;
+    using tadah::hpo::detail::throw_if_stagnated;
+    std::mutex best_mtx;
+    BestPublications pubs;
+    std::atomic<std::size_t> last{4};
+    const std::atomic<std::size_t> none{0};
+    const std::size_t window = 4;
+
+    {
+        std::atomic<bool> counted{false}, checking{false};
+        std::thread evaluation([&] {
+            BestDecision d(pubs, best_mtx);
+            counted.store(true);
+            /* The table: until the check has begun (bounded), then a
+             * little longer, so the check overlaps it whatever the
+             * scheduling. */
+            const auto give_up =
+                std::chrono::steady_clock::now() + std::chrono::seconds(5);
+            while (!checking.load() && std::chrono::steady_clock::now() < give_up)
+                std::this_thread::yield();
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            d.lock();
+            last.store(9, std::memory_order_relaxed);
+        });
+        while (!counted.load()) std::this_thread::yield();
+        checking.store(true);
+        CHECK_NOTHROW(throw_if_stagnated(12, window, last, none, best_mtx, pubs));
+        CHECK(last.load() == 9);
+        evaluation.join();
+        CHECK(pubs.done.load() == pubs.started.load());
+    }
+
+    {
+        std::atomic<bool> counted{false}, checking{false};
+        std::thread evaluation([&] {
+            try {
+                BestDecision d(pubs, best_mtx);
+                counted.store(true);
+                const auto give_up =
+                    std::chrono::steady_clock::now() + std::chrono::seconds(5);
+                while (!checking.load() &&
+                       std::chrono::steady_clock::now() < give_up)
+                    std::this_thread::yield();
+                std::this_thread::sleep_for(std::chrono::milliseconds(50));
+                throw std::runtime_error("the table failed");
+            } catch (const std::runtime_error&) {
+            }
+        });
+        while (!counted.load()) std::this_thread::yield();
+        checking.store(true);
+        CHECK_THROWS_AS(throw_if_stagnated(20, window, last, none, best_mtx, pubs),
+                        StagnationStop);
+        evaluation.join();
+        CHECK(pubs.done.load() == pubs.started.load());
+        CHECK(pubs.started.load() == 2u);
+    }
 }
 
 /* Pins: the stagnation window counts the calls a search answered from its
