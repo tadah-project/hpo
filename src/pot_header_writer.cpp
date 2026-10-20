@@ -251,21 +251,6 @@ void PotHeaderWriter::write_load_transforms_section(
         kv(os, "Outlier filter", s.str());
     }
 
-    if (!r.wdbfile_applied.empty()) {
-        std::ostringstream s;
-        for (std::size_t i = 0; i < r.wdbfile_applied.size(); ++i) {
-            if (i) s << " ";
-            s << fmt_double(r.wdbfile_applied[i], 3);
-        }
-        kv(os, "Per-dataset weights", s.str());
-    }
-
-    if (r.eweight_temp > 0.0) {
-        std::ostringstream s;
-        s << r.eweight_temp << " K";
-        kv(os, "Boltzmann eweight T", s.str());
-    }
-
     if (r.zero_com_force)
         kv(os, "Zero COM force", "applied");
 

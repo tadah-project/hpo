@@ -1231,21 +1231,6 @@ void HPOLog::write_load_transforms_section(const mlip::LoadTransformReport& r,
     if (val_filter_active)
         kv("Outlier filter (validation)", fmt_filter(vr, n_val_loaded));
 
-    if (!r.wdbfile_applied.empty()) {
-        std::ostringstream s;
-        for (std::size_t i = 0; i < r.wdbfile_applied.size(); ++i) {
-            if (i) s << " ";
-            s << std::scientific << std::setprecision(3) << r.wdbfile_applied[i];
-        }
-        kv("Per-dataset weights", s.str());
-    }
-
-    if (r.eweight_temp > 0.0) {
-        std::ostringstream s;
-        s << r.eweight_temp << " K";
-        kv("Boltzmann eweight (T)", s.str());
-    }
-
     if (r.zero_com_force)
         kv("Zero COM force", "applied");
 
