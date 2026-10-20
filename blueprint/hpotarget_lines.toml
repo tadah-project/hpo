@@ -4884,7 +4884,7 @@ error = "MODEL M_KRR Kern_Linear 3: M_KRR has implementation 1, which fits the e
 id = "RULE.fit_krr_implementation2_LAMBDA"
 title = "M_KRR implementation 2 has a LAMBDA of 0 or above"
 check = "startup"
-msg = "MODEL M_KRR {name} 2 cannot use LAMBDA -1: implementation 2 solves (K + LAMBDA I) w = t with a fixed LAMBDA and does not run the evidence approximation. Implementation 1 (MODEL M_KRR {name} 1) with OALGO 3 runs it; LAMBDA >= 0 fits with either."
+msg = "MODEL M_KRR {name} 2 cannot use LAMBDA -1: implementation 2 solves (K + LAMBDA sigma^2 I) w = t, sigma = ESIGMA in eV, with a fixed LAMBDA and does not run the evidence approximation. Implementation 1 (MODEL M_KRR {name} 1) with OALGO 3 runs it; LAMBDA >= 0 fits with either."
 doc = """\
 M_KRR implementation 2 fits with a fixed LAMBDA; tadah hpo refuses LAMBDA \
 -1 with it when the run starts, without a line, if its evaluations fit \
@@ -4897,7 +4897,7 @@ check = "startup"
 context = "lines_krr2_evidence"
 at = "none"
 text = "PC_EMAE 5 1"
-error = "MODEL M_KRR Kern_Linear 2 cannot use LAMBDA -1: implementation 2 solves (K + LAMBDA I) w = t with a fixed LAMBDA and does not run the evidence approximation. Implementation 1 (MODEL M_KRR Kern_Linear 1) with OALGO 3 runs it; LAMBDA >= 0 fits with either."
+error = "MODEL M_KRR Kern_Linear 2 cannot use LAMBDA -1: implementation 2 solves (K + LAMBDA sigma^2 I) w = t, sigma = ESIGMA in eV, with a fixed LAMBDA and does not run the evidence approximation. Implementation 1 (MODEL M_KRR Kern_Linear 1) with OALGO 3 runs it; LAMBDA >= 0 fits with either."
 
 [[rule]]
 id = "RULE.optim_relative_error_scale"
