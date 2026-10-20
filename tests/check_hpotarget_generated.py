@@ -48,9 +48,12 @@ ranges    A key, INIT method, PARAM key or line option with one argument
           takes and the run cannot use (a count of starting points drawn
           when the file is read) fails; the other values are read only.
           A PARAM value, which the startup checks read, runs through them
-          at every value and is refused at parse or at startup with a
-          message of its entry or of [reading]. Catches a changed min,
-          max, min_open or kind, and a max the run refuses.
+          at every value: in the range it starts in the file of one of the
+          entry's examples at least (ASA's User_Initial_Parameters 0 only
+          in a search without a starting point), and past it it is
+          refused in each, at parse or at startup, with a message of its
+          entry or of [reading]. Catches a changed min, max, min_open or
+          kind, and a max the run refuses.
 words     A word argument at a fixed place of its line: each word of
           `words`, put into the line of the first example, is accepted;
           each of `refused_words` is refused with its message. Catches a
