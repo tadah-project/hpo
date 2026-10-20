@@ -1,6 +1,8 @@
 #pragma once
 #include <tadah/hpo/hpo_host.h>
+#include <tadah/core/blueprint_parser.h>
 #include <tadah/core/core_user_config_parser.h>
+#include <tadah/core/retired_keys.h>
 #include <tadah/hpo/probe_phase.h>
 #include <tadah/hpo/column_titles.h>
 #include <tadah/hpo/log_index.h>
@@ -312,8 +314,8 @@ void HPO_Host<P,R>::init_loss(const std::string& fn) const
   }
   if (trg_.use_srmse) {
     for (std::size_t i = 1; i <= n_val_datasets_; ++i)
-      f << std::setw(cw_) << ("L(SRMSE)[" + std::to_string(i) + "]");
-    f << std::setw(cw_) << "L(SRMSE)[avg]";
+      f << std::setw(cw_) << ("L(SRMSE_GPA)[" + std::to_string(i) + "]");
+    f << std::setw(cw_) << "L(SRMSE_GPA)[avg]";
   }
 
   std::set<std::string> seen_loss;   /* keep truncated titles distinct */
@@ -357,7 +359,7 @@ void HPO_Host<P,R>::init_outvar(const std::string& fn) const
   if (trg_.use_frmse)
     f << std::setw(cw_) << "FRMSE";
   if (trg_.use_srmse)
-    f << std::setw(cw_) << "SRMSE";
+    f << std::setw(cw_) << "SRMSE_GPA";
 
   std::set<std::string> seen_outvar;
   for (const auto &lsim : trg_.LS) {
@@ -424,7 +426,7 @@ void HPO_Host<P,R>::init_stats(const std::string& fn) const
   if (trg_.use_errmse) write_header("ErRMSE");
   if (trg_.use_ersq)   write_header("ERSQ");
   if (trg_.use_frmse)  write_header("FRMSE");
-  if (trg_.use_srmse)  write_header("SRMSE");
+  if (trg_.use_srmse)  write_header("SRMSE_GPA");
   f << std::endl;
   /* Say so when there is nothing to say. With no training/validation
    * database no per-structure metric is active, so this file used to be a
@@ -1240,17 +1242,35 @@ HPO_Host<P,R>::HPO_Host(core::Context master_ctx,
     if (has_validation_) {
         /* FORCE and STRESS say what training fits; validation predicts what
          * its metrics measure. In this file they would have no effect, so
-         * they are refused at their line. */
+         * they are refused at their line, and so are the error scales of
+         * the fit, ENORM and ENERGY (they set the fit, row_weights.h) and
+         * every retired key (with its conversion). */
         core::CoreUserConfigParser val_parser;
-        val_parser.refuse_keys({
+        std::map<std::string, std::string> refused = {
             {"FORCE", "the validation set is not fitted; it is validated on "
                       "forces whenever the hpotarget sets PC_FRMSE, and FORCE "
                       "in the training configuration (or -F) decides whether "
                       "training fits forces"},
             {"STRESS", "the validation set is not fitted; it is validated on "
-                       "stresses whenever the hpotarget sets PC_SRMSE, and "
+                       "stresses whenever the hpotarget sets PC_SRMSE_GPA, and "
                        "STRESS in the training configuration (or -S) decides "
-                       "whether training fits stresses"}});
+                       "whether training fits stresses"},
+            {"ENERGY", "the validation set is not fitted; ENERGY in the "
+                       "training configuration decides whether training fits "
+                       "energies, and the energy metrics of the hpotarget "
+                       "what validation measures"},
+            {"ENORM", "the validation set is not fitted; ENORM, how the fit "
+                      "normalises the residual of an energy, is set in the "
+                      "training configuration"}};
+        for (const char* k : {"ESIGMA", "FSIGMA", "SSIGMA"})
+            refused[k] = std::string("the validation set is not fitted; ") +
+                         k + ", an error scale of the fit, is set in the "
+                         "training configuration";
+        for (const auto& [k, info] : core::BlueprintParser::getKeysMapRef())
+            if (info.isRetired())
+                refused[k] = "the validation set is not fitted, and " +
+                             core::retired_key_text(k, info);
+        val_parser.refuse_keys(std::move(refused));
         val_ctx = core::Context(val_parser.parse(val_cfg));
         /* Each entry is a dataset: one listed twice would count twice in
          * every validation metric. Refused before any of them is read. */
@@ -1266,20 +1286,23 @@ HPO_Host<P,R>::HPO_Host(core::Context master_ctx,
         train_stdb_.add(master_ctx_);
 
         /* Apply load-time transforms once on host (LSCALE, ESHIFT,
-         * EFILTER/FFILTER, WDBFILE/WDBFILE_AUTO, EWEIGHT_TEMP,
-         * ZERO_COM_FORCE) before any neighbour finding so descriptors see
-         * the transformed dataset. The report is stored for later:
-         * pot.tadah header generation and stamping LSCALE/ESHIFT into
-         * each best_pot.tadah. */
+         * EFILTER/FFILTER, ZERO_COM_FORCE) before any neighbour finding so
+         * descriptors see the transformed dataset. The priorities of the
+         * data (each structure's eweight, fweight and sweight, and the
+         * WDBFILE value of its dataset) apply in each fit
+         * (mlip::RowWeights), so a candidate's WDBFILE does. The report is
+         * stored for later: pot.tadah header generation and stamping
+         * LSCALE/ESHIFT into each best_pot.tadah. */
         report_ = mlip::apply_load_transforms(train_stdb_, master_ctx_);
 
         /* What every fit would refuse in these data, refused once here
          * (the transforms above prepared them as each fit reads them): a
-         * weight that is not a finite number >= 0 (require_valid_weights:
-         * each structure's, and EWEIGHT, FWEIGHT and SWEIGHT), and what
-         * M_KRR implementation 2 would ignore (FORCE, STRESS, the weights
-         * of the configuration, a structure whose eweight is not 1).
-         * validate_hpo_setup refused the settings that need no data. An
+         * priority that is not a finite number >= 0 (require_valid_weights:
+         * each structure's, and the WDBFILE values, one per dataset), and
+         * what M_KRR implementation 2 would ignore (FORCE, STRESS, the
+         * error scales and priorities of the configuration, a structure
+         * whose eweight is not 1). validate_hpo_setup refused the settings
+         * that need no data (and OPTIM WDBFILE boxes that are not > 0). An
          * evaluation that provisions FIXWEIGHT fits nothing. */
         if (!fixindex_pins_every_weight(master_ctx_)) {
             mlip::require_valid_weights(train_stdb_, master_ctx_);
@@ -1288,13 +1311,19 @@ HPO_Host<P,R>::HPO_Host(core::Context master_ctx,
                                                               train_stdb_);
         }
 
-        /* BIAS true: the energy-weighted compositions must determine the
-         * intercepts of the model's function. They do not change between
-         * evaluations, so refuse such data at startup, not in every fit (a
-         * non-linear kernel's intercepts are those of the intercept vectors
-         * every basis draw starts with; M_KRR implementation 2 is not
-         * checked). The function is built as an evaluation builds it (the
-         * Trainer reads no WEIGHTS or BASIS of a -c potential). */
+        /* BIAS true: the compositions of the structures whose energies the
+         * fit observes (an energy priority, eweight times WDBFILE, above 0)
+         * must determine the intercepts of the model's function. Every fit
+         * checks it (mlip::require_intercepts_determined), so each
+         * evaluation does for its candidate; which structures those are is
+         * the same for every candidate (a searched WDBFILE value is > 0:
+         * OPTIM WDBFILE boxes are positive, validate_hpo_setup), so such
+         * data are refused here, when the run starts, rather than in every
+         * evaluation (a non-linear kernel's intercepts are those of the
+         * intercept vectors every basis draw starts with; M_KRR
+         * implementation 2 is not checked). The function is built as an
+         * evaluation builds it (the Trainer reads no WEIGHTS or BASIS of a
+         * -c potential). */
         if (core::n_intercept_columns(master_ctx_) > 0) {
             core::Context c = master_ctx_;
             mlip::memory::MLIPWorkspaceManager ws;
@@ -1306,8 +1335,9 @@ HPO_Host<P,R>::HPO_Host(core::Context master_ctx,
 
     /* Apply LSCALE/ESHIFT to validation, and also forward EFILTER/FFILTER if
      * the user declared them in the --validation file itself. Training-only
-     * knobs (filters from master_ctx_, WDBFILE, EWEIGHT_TEMP, ZERO_COM_FORCE)
-     * must NOT touch validation references. Use the resolved values from
+     * knobs (filters from master_ctx_, ZERO_COM_FORCE) must NOT touch
+     * validation references (and WDBFILE, a priority of the fit, applies in
+     * the fit only). Use the resolved values from
      * report_ so ESHIFT_ATOM / ESHIFT_DBATOM derivations on the training set
      * propagate consistently. Without training data report_ is empty, so
      * explicit ESHIFT values from the potential config are forwarded
@@ -1352,12 +1382,12 @@ HPO_Host<P,R>::HPO_Host(core::Context master_ctx,
                     throw std::runtime_error("Empty validation dataset " + std::to_string(i + 1)
                         + " (" + val_ctx.get<std::string>("DBFILE", i) + ") after loading/filtering");
         }
-        /* The energy metrics leave out structures with energy weight 0,
-         * PC_FRMSE those with force weight 0, PC_SRMSE those with stress
-         * weight 0; a dataset of only such structures is not measured (nan,
-         * left out of the average). A run in which no dataset is measured,
-         * or in which an indexed PC_ERMSE or PC_FRMSE weights a dataset that
-         * is not, is refused here. */
+        /* The energy metrics leave out structures with energy priority 0,
+         * PC_FRMSE those with force priority 0, PC_SRMSE_GPA those with
+         * stress priority 0; a dataset of only such structures is not
+         * measured (nan, left out of the average). A run in which no
+         * dataset is measured, or in which an indexed PC_ERMSE, PC_FRMSE or
+         * PC_SRMSE_GPA weights a dataset that is not, is refused here. */
         {
             std::vector<std::string> files;
             if (val_ctx.contains("DBFILE")) files = val_ctx("DBFILE");
@@ -1422,10 +1452,10 @@ HPO_Host<P,R>::HPO_Host(core::Context master_ctx,
                     mlip::measured_datasets(val_stdb_, mlip::MetricQuantity::Energy);
                 if (trg_.use_ermse) {
                     refuse_indexed(trg_.ermse_targets, val_measured_energy_, "PC_ERMSE",
-                                   "an energy", "energy weight 0 (eweight)");
+                                   "an energy", "energy priority 0 (eweight)");
                     trg_.ermse_targets.set_measured(val_measured_energy_);
                 }
-                note(key.c_str(), val_measured_energy_, "an energy", "energy weight",
+                note(key.c_str(), val_measured_energy_, "an energy", "energy priority",
                      listed(columns).c_str());
             }
             if (trg_.use_frmse) {
@@ -1434,17 +1464,20 @@ HPO_Host<P,R>::HPO_Host(core::Context master_ctx,
                 const std::vector<bool> m =
                     mlip::measured_datasets(val_stdb_, mlip::MetricQuantity::Forces);
                 refuse_indexed(trg_.frmse_targets, m, "PC_FRMSE", "forces",
-                               "force weight 0 (fweight)");
+                               "force priority 0 (fweight)");
                 trg_.frmse_targets.set_measured(m);
-                note("PC_FRMSE", m, "forces", "force weight", "FRMSE[avg]");
+                note("PC_FRMSE", m, "forces", "force priority", "FRMSE[avg]");
             }
             if (trg_.use_srmse) {
                 mlip::require_metric_structures(val_stdb_, mlip::MetricQuantity::Stress,
-                    "tadah hpo: PC_SRMSE on the validation set", files);
-                val_measured_srmse_ =
+                    "tadah hpo: PC_SRMSE_GPA on the validation set", files);
+                const std::vector<bool> m =
                     mlip::measured_datasets(val_stdb_, mlip::MetricQuantity::Stress);
-                note("PC_SRMSE", val_measured_srmse_, "a stress tensor", "stress weight",
-                     "SRMSE[avg]");
+                refuse_indexed(trg_.srmse_targets, m, "PC_SRMSE_GPA",
+                               "a stress tensor", "stress priority 0 (sweight)");
+                trg_.srmse_targets.set_measured(m);
+                note("PC_SRMSE_GPA", m, "a stress tensor", "stress priority",
+                     "SRMSE_GPA[avg]");
             }
         }
         nnf_.calc(val_stdb_, rcutmax);
@@ -1755,8 +1788,9 @@ void HPO_Host<P,R>::fill_validation(Result& r,
                              val_measured_energy_);
     if(trg_.use_frmse)  fill(r.frmse,  r.v_frmse,  a.calc_f_rmse(),     1.0,
                              trg_.frmse_targets.measured());
-    if(trg_.use_srmse)  fill(r.srmse,  r.v_srmse,  a.calc_s_rmse(),     1.0,
-                             val_measured_srmse_);
+    /* PC_SRMSE_GPA: the nine entries of each stress tensor, in GPa. */
+    if(trg_.use_srmse)  fill(r.srmse,  r.v_srmse,  a.calc_s_rmse_gpa(), 1.0,
+                             trg_.srmse_targets.measured());
 }
 
 /* ----------  helper: run LAMMPS (serial + OpenMP) ---------------------
@@ -2642,8 +2676,11 @@ void HPO_Host<P,R>::fit_loss(Result& r) const
     r.loss_sum += r.frmseLoss;
     ++r.loss_count;
   }
-  if (trg_.use_srmse)  add_global(r.srmseLoss,  r.srmse,  trg_.srmse,  trg_.w_srmse,  r.v_srmseLoss,  r.v_srmse,
-                                  val_measured_srmse_);
+  if (trg_.use_srmse) {
+    r.srmseLoss = trg_.srmse_targets.loss(trg_.globalLoss, r.srmse, r.v_srmse, r.v_srmseLoss);
+    r.loss_sum += r.srmseLoss;
+    ++r.loss_count;
+  }
 
   /* No validation term is a failure substitute: a metric that is not
    * finite makes the mean non-finite, a NaN clamp of the whole eval. */
@@ -2900,7 +2937,7 @@ void HPO_Host<P,R>::persist_durable_best(const Result& r, bool& journalled) cons
         PotHeaderWriter::write_candidate_hot(payload, r);
         /* NUMERIC significant digits (default 18: exact); never writes
          * NUMERIC itself. The header lines above keep their own formats. */
-        PotHeaderWriter::write_potential_body(payload, r.pot_ctx, trg_.training_record, trg_.pot_digits);
+        PotHeaderWriter::write_potential_body(payload, r.pot_ctx, trg_.record_of(r.pot_ctx), trg_.pot_digits);
         if (!payload.good())
             throw durable_best::Error("failed to render best-potential payload");
 
@@ -3326,7 +3363,8 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
         /* Every evaluation trains a Trainer built from its own candidate
          * context ctx (master_ctx_ plus p): whatever the descriptors, the
          * basis function or kernel, the model and its design matrix read
-         * when they are built (EWEIGHT/FWEIGHT/SWEIGHT, MPARAMS, ...) is
+         * when they are built (the error scales and priorities of the
+         * fit's rows, MPARAMS, ...) is
          * this candidate's, and nothing an earlier fit wrote into a context
          * (ALPHA/BETA of LAMBDA -1; the weight covariance is the model's,
          * WCOV and WNOISE in its potential) or an earlier host configured
@@ -3440,17 +3478,18 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
      * same context from the snapshot. The key lines of a potential file are
      * the model's settings and its fit: every file the host writes from it
      * (best_pot.tadah, the durable best, the BDUMP and DUMP archives)
-     * leaves out the keys of mlip::training_record_keys and has the run's
-     * values of them in its training record, trg_.training_record, a
-     * comment block (PotHeaderWriter::write_potential_body;
-     * get_param_file() leaves out DBFILE). */
+     * leaves out the keys of mlip::training_record_keys and has their
+     * values in its training record, a comment block: the run's
+     * (trg_.training_record), with this candidate's values of a searched
+     * one (trg_.record_of(pot): OPTIM WDBFILE) (PotHeaderWriter::
+     * write_potential_body; get_param_file() leaves out DBFILE). */
     if (has_validation_) {
         /* The one-time lists cover the model cutoff; the descriptors filter
          * pairs by their own cutoffs. */
         const mlip::StructureDB& val_db = val_stdb_;
         /* What validation predicts follows its metrics, not what training
          * fitted: forces whenever PC_FRMSE is set, stresses whenever
-         * PC_SRMSE is set (validation_switches()). The model's predict reads
+         * PC_SRMSE_GPA is set (validation_switches()). The model's predict reads
          * the switches from vctx, the descriptor calculator from the
          * trainer's context; both get the same values. `pot` keeps the
          * training ones: it becomes best_pot.tadah and the LAMMPS context. */
@@ -3515,7 +3554,7 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
           check_metric("eRRMSE", trg_.use_errmse, r.errmse, trg_.skip_errmse, "per mille") ||
           check_metric("ersq", trg_.use_ersq, r.ersq, trg_.skip_ersq, "") ||
           check_targets("frmse", trg_.use_frmse, r.frmse, r.v_frmse, trg_.frmse_targets, "eV/A") ||
-          check_metric("srmse", trg_.use_srmse, r.srmse, trg_.skip_srmse, "eV/A^3");
+          check_targets("srmse", trg_.use_srmse, r.srmse, r.v_srmse, trg_.srmse_targets, "GPa");
       if (skip_bad_pot) {
         if (trg_.FAILSCORE_GRADING) {
           /* Band D graded by how far past the cap the metric landed --
@@ -3754,7 +3793,8 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
             if (trg_.use_ersq   && r.ersqLoss   > 0) comps.push_back({std::string("ErSQ_global"),   r.ersqLoss});
             add_dataset_metric(trg_.use_frmse, trg_.frmse_targets, "FRMSE",
                                r.frmseLoss, r.v_frmseLoss);
-            if (trg_.use_srmse  && r.srmseLoss  > 0) comps.push_back({std::string("SRMSE_global"),  r.srmseLoss});
+            add_dataset_metric(trg_.use_srmse, trg_.srmse_targets, "SRMSE_GPA",
+                               r.srmseLoss, r.v_srmseLoss);
             for (std::size_t i = 0; i < trg_.LS.size() && i < r.v_loss.size(); ++i) {
                 const auto& lsim = trg_.LS[i];
                 for (std::size_t k = 0; k < lsim.i_varloss.size(); ++k) {
@@ -4078,7 +4118,7 @@ void HPO_Host<P,R>::write_result(WriterFiles& wf, const Result& e,
             std::ostringstream bpa;
             PotHeaderWriter::write_best_archive_header(bpa, e, trg, cw, prec);
             PotHeaderWriter::write_candidate_hot(bpa, e);
-            PotHeaderWriter::write_potential_body(bpa, e.pot_ctx, trg.training_record, trg.pot_digits);
+            PotHeaderWriter::write_potential_body(bpa, e.pot_ctx, trg.record_of(e.pot_ctx), trg.pot_digits);
             write_archive(wf, std::string(trg.dumpBestPotDir)
                 + "/best_pot_" + std::to_string(e.best_iter) + ".tadah"
                 + trg.potArchiveSuffix, bpa.str());
@@ -4092,7 +4132,7 @@ void HPO_Host<P,R>::write_result(WriterFiles& wf, const Result& e,
         std::ostringstream pa;
         PotHeaderWriter::write_archive_header(pa, e, cw, prec);
         PotHeaderWriter::write_candidate_hot(pa, e);
-        PotHeaderWriter::write_potential_body(pa, e.pot_ctx, trg.training_record, trg.pot_digits);
+        PotHeaderWriter::write_potential_body(pa, e.pot_ctx, trg.record_of(e.pot_ctx), trg.pot_digits);
         write_archive(wf, std::string(trg.dumpPotDir)
             + "/pot_" + std::to_string(e.iter) + ".tadah"
             + trg.potArchiveSuffix, pa.str());
@@ -4362,8 +4402,8 @@ void HPO_Host<P,R>::submit_result(Result&& res, const HPOTargets& trg,
  *
  * Strategy: on-demand factor reconstruction. The training matrix is
  * rebuilt from the training data with the fit's row factors
- * (sqrt(eweight x EWEIGHT) on energy rows, sqrt(fweight x FWEIGHT) on
- * force rows), with the sqrt(lambda)*I_no_bias augmentation block; the
+ * (mlip::RowWeights: sqrt(priority)/error scale on the energy and force
+ * rows), with the sqrt(lambda)*I_no_bias augmentation block; the
  * Cholesky factor is built with the dloss_dtheta::detail helpers, and
  * assemble_dphi_train_energy_rows runs twice per theta (once each over train_stdb_ and val_stdb_) to populate
  * `per_theta`. compute_dloss_dtheta runs the metric chain rule. Indices
@@ -4373,7 +4413,7 @@ void HPO_Host<P,R>::submit_result(Result&& res, const HPOTargets& trg,
  * The settings the gradient covers (every parameter goes to finite
  * differences otherwise) are stated once, in analytical_gradient_blocker()
  * (analytical_gate.h): training data with every weight fitted, STRESS
- * false and no PC_SRMSE, NORM false, OALGO 4 with a fixed LAMBDA >= 0, and
+ * false and no PC_SRMSE_GPA, NORM false, OALGO 4 with a fixed LAMBDA >= 0, and
  * a BF_Linear or Kern_Linear basis; FORCE may be either, and PC_FRMSE is
  * covered whatever FORCE is.
  *

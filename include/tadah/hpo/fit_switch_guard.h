@@ -7,7 +7,7 @@
  * reads them from the trainer's context (force/stress descriptor parts),
  * M_Tadah_Base::predict from the context it is given (forces, stress). HPO
  * validation predicts what its metrics measure instead: forces whenever
- * PC_FRMSE is set, stresses whenever PC_SRMSE is set, whatever training
+ * PC_FRMSE is set, stresses whenever PC_SRMSE_GPA is set, whatever training
  * fitted. ScopedFitSwitches sets the switches for the validation prediction
  * and restores the trainer's own afterwards; validation_switches() is the
  * one rule for both call sites (HPO_Host::operator() and the analytical

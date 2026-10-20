@@ -45,7 +45,7 @@ std::string analytical_gradient_blocker(const core::Context& ctx,
                    " (it needs MODEL ... BF_Linear or Kern_Linear)";
     }
     if (trg.use_srmse)
-        return "PC_SRMSE is set (stress metrics are not differentiated)";
+        return "PC_SRMSE_GPA is set (stress metrics are not differentiated)";
     return {};
 }
 

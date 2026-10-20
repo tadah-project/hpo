@@ -18,6 +18,7 @@
 #include <tadah/core/blueprint_parser.h>
 #include <tadah/core/blueprint_validator.h>
 #include <tadah/core/registry.h>
+#include <tadah/core/retired_keys.h>
 #include <tadah/core/number_format.h>
 #include <tadah/hpo/loss_function.h>
 
@@ -661,6 +662,7 @@ static bool reject_old_keyword(const std::string& key)
         {"INCLUDE_CONFIG",              "removed. The values of the training configuration for the search parameters are a starting point only when the INIT block has a `METHOD CONFIG` line."},
         {"NOISE_AUTO",                  "moved into `NOISE { AUTO true|false } ENDNOISE` block."},
         {"NOISE_CALIBRATION",           "moved into `NOISE { CALIBRATION N } ENDNOISE` block."},
+        {"PC_SRMSE",                    "replaced by PC_SRMSE_GPA, the root mean square of the nine entries of each residual stress tensor in GPa (PC_SRMSE was that of the six entries x <= y in eV/A^3). PC_SRMSE_GPA of a residual is 160.2 times its PC_SRMSE when the six entries have equal mean squares, 130.8 times for a residual on the diagonal only (a pressure) and 185.0 times for a shear residual only: a target or --skip-above cap of PC_SRMSE times 160.2 is about that of PC_SRMSE_GPA, and a weight under LOSS L2 divided by about 25 670 (160.2 squared)."},
         /* TOPK is now legal inside STRATEGY (TYPE PRESTAGE) -- don't reject it
          * unconditionally; the STRATEGY block dispatch handles it. */
     };
@@ -744,8 +746,8 @@ void HPOTargets::read(const std::string& fn)
     std::size_t strategy_line = 0;
     /* The line of the OPTIMIZER block (0 before it): there is one. */
     std::size_t optimizer_line = 0;
-    /* The line of each PC_EMAE, PC_ErRMSE, PC_ERSQ and PC_SRMSE line: one
-     * of each (PC_ERMSE and PC_FRMSE: ValidationMetricTargets::add). */
+    /* The line of each PC_EMAE, PC_ErRMSE and PC_ERSQ line: one of each
+     * (PC_ERMSE, PC_FRMSE and PC_SRMSE_GPA: ValidationMetricTargets::add). */
     std::map<std::string, std::size_t> metric_lines;
     /* Where each key was set, per thing it configures (an optimiser, the
      * starting points of one, the NOISE, RESTART or STRATEGY settings, the
@@ -1635,15 +1637,17 @@ void HPOTargets::read(const std::string& fn)
                   || key=="PC_ERMSE"
                   || key=="PC_ErRMSE"
                   || key=="PC_ERSQ"
-                  || key=="PC_SRMSE"
+                  || key=="PC_SRMSE_GPA"
                   || key=="PC_FRMSE")
             {
-                const bool dataset_metric = key == "PC_ERMSE" || key == "PC_FRMSE";
+                const bool dataset_metric = key == "PC_ERMSE" ||
+                                            key == "PC_FRMSE" ||
+                                            key == "PC_SRMSE_GPA";
                 std::vector<std::size_t> indices;
                 iss >> std::ws;
                 if (iss.peek() == '(') {
                     if (!dataset_metric)
-                        throw std::runtime_error(key + ": indexed targets are supported only for PC_ERMSE and PC_FRMSE");
+                        throw std::runtime_error(key + ": indexed targets are supported only for PC_ERMSE, PC_FRMSE and PC_SRMSE_GPA");
                     indices = core::parse_indices_strict(read_index_selector(iss));
                 }
                 std::string target_token, weight_token;
@@ -1667,10 +1671,13 @@ void HPOTargets::read(const std::string& fn)
                     cap = value;
                 }
                 if (dataset_metric) {
-                    auto& targets = key == "PC_ERMSE" ? ermse_targets : frmse_targets;
+                    auto& targets = key == "PC_ERMSE" ? ermse_targets
+                                  : key == "PC_FRMSE" ? frmse_targets
+                                                      : srmse_targets;
                     targets.add(indices, {tgt, wgt, caps, nline});
                     if (key == "PC_ERMSE") use_ermse = true;
-                    else use_frmse = true;
+                    else if (key == "PC_FRMSE") use_frmse = true;
+                    else use_srmse = true;
                 }
                 else if (const auto [first, fresh] =
                              metric_lines.emplace(key, nline);
@@ -1683,7 +1690,6 @@ void HPOTargets::read(const std::string& fn)
                 else if (key=="PC_EMAE")   { emae=tgt;   w_emae=wgt;   use_emae=true;   skip_emae=caps; }
                 else if (key=="PC_ErRMSE") { errmse=tgt; w_errmse=wgt; use_errmse=true; skip_errmse=caps; }
                 else if (key=="PC_ERSQ")   { ersq=tgt;   w_ersq=wgt;   use_ersq=true;   skip_ersq=caps; }
-                else if (key=="PC_SRMSE")  { srmse=tgt;  w_srmse=wgt;  use_srmse=true;  skip_srmse=caps; }
             }
             else
                 throw std::runtime_error("unknown key \""+key+"\"");
@@ -2003,10 +2009,10 @@ std::string HPOTargets::repeat_reuse_blocker() const {
                           "value so far, which a later evaluation can lower";
   if (ermse_targets.has_relative_cap()) return "PC_ERMSE" + rel;
   if (frmse_targets.has_relative_cap()) return "PC_FRMSE" + rel;
+  if (srmse_targets.has_relative_cap()) return "PC_SRMSE_GPA" + rel;
   if (use_emae && skip_emae.rel_above) return "PC_EMAE" + rel;
   if (use_errmse && skip_errmse.rel_above) return "PC_ErRMSE" + rel;
   if (use_ersq && skip_ersq.rel_above) return "PC_ERSQ" + rel;
-  if (use_srmse && skip_srmse.rel_above) return "PC_SRMSE" + rel;
   return "";
 }
 
@@ -2577,9 +2583,8 @@ std::string HPOTargets::optim_internal_key_error(const std::string& key) {
 
 std::string HPOTargets::optim_startup_only_key_error(const std::string& key) {
   static const char* const once[] = {
-      "LSCALE",  "ESHIFT",         "ESHIFT_ATOM", "ESHIFT_DBATOM",
-      "EFILTER", "FFILTER",        "ZERO_COM_FORCE", "WDBFILE",
-      "WDBFILE_AUTO", "EWEIGHT_TEMP"};
+      "LSCALE",  "ESHIFT",  "ESHIFT_ATOM",   "ESHIFT_DBATOM",
+      "EFILTER", "FFILTER", "ZERO_COM_FORCE"};
   const std::string k = core::to_upper(key);
   for (const char* o : once)
     if (k == o)
@@ -2590,16 +2595,93 @@ std::string HPOTargets::optim_startup_only_key_error(const std::string& key) {
   return "";
 }
 
-std::string HPOTargets::optim_fit_key_nonnegative(const std::string& key) {
+std::optional<HPOTargets::FitValueRule> HPOTargets::optim_fit_value_rule(
+    const std::string& key, std::size_t index) {
   const std::string k = core::to_upper(key);
-  if (k == "EWEIGHT" || k == "FWEIGHT" || k == "SWEIGHT")
-    return k + " is a weight, a number >= 0, and every fit refuses a "
-               "negative one";
   if (k == "LAMBDA")
-    return "LAMBDA is the ridge penalty, a number >= 0: every fit refuses "
-           "a negative value other than -1, and -1, which requests the "
-           "evidence approximation, is no value of a box";
+    return FitValueRule{false,
+                        "LAMBDA is the ridge penalty, a number >= 0: every "
+                        "fit refuses a negative value other than -1, and "
+                        "-1, which requests the evidence approximation, is "
+                        "no value of a box"};
+  if (k == "ESIGMA")
+    return FitValueRule{true,
+                        "ESIGMA is the energy error scale, a number > 0 "
+                        "(meV/atom), and every fit refuses another"};
+  if (k == "WDBFILE")
+    return FitValueRule{true,
+                        "a searched WDBFILE value is the priority of a "
+                        "dataset in the fit, a number > 0 (WDBFILE 0 in the "
+                        "training configuration leaves a dataset out of the "
+                        "fit)"};
+  if (k == "FSIGMA" || k == "SSIGMA") {
+    const bool force = k == "FSIGMA";
+    if (index == 1)
+      return FitValueRule{
+          true, "the absolute part a of " + k + " is the " +
+                    (force ? std::string("force") : std::string("stress")) +
+                    " error scale of a structure whose " +
+                    (force ? "forces are zero, a number > 0 (eV/A)"
+                           : "stresses are zero, a number > 0 (GPa)") +
+                    ", and every fit refuses another"};
+    if (index == 2)
+      return FitValueRule{false, "the relative part b of " + k +
+                                     " is a number >= 0, and every fit "
+                                     "refuses a negative one"};
+  }
+  return std::nullopt;
+}
+
+std::string HPOTargets::optim_switch_key_error(const std::string& key) {
+  const std::string k = core::to_upper(key);
+  if (k == "ENORM")
+    return "OPTIM ENORM is not a valid search target: ENORM (ATOM|SQRT) "
+           "chooses how the residual of an energy is normalised, a choice "
+           "rather than a continuous parameter; set it in the -c "
+           "configuration.";
+  if (k == "ENERGY")
+    return "OPTIM ENERGY is not a valid search target: ENERGY (true|false) "
+           "says whether the fit has the energies, a switch rather than a "
+           "continuous parameter; set it in the -c configuration.";
   return "";
+}
+
+std::string HPOTargets::optim_retired_key_error(const std::string& key) {
+  /* The keys the blueprint marks retired (BlueprintKey::isRetired: the
+   * reason, the replacement and the conversion of each are its text); a
+   * test holds this list to the blueprint's. */
+  static const char* const retired[] = {"EWEIGHT", "FWEIGHT", "SWEIGHT",
+                                        "WDBFILE_AUTO", "EWEIGHT_TEMP"};
+  const std::string k = core::to_upper(key);
+  for (const char* r : retired) {
+    if (k != r) continue;
+    const auto& info = core::BlueprintParser::getKeysMapRef().at(k);
+    if (!info.isRetired())
+      throw std::logic_error("OPTIM " + k + ": the blueprint does not mark "
+                             "the key retired");
+    return "OPTIM " + k + " is not a valid search target: " +
+           core::retired_key_text(k, info);
+  }
+  return "";
+}
+
+mlip::TrainingRecord HPOTargets::record_of(const core::Context& pot) const {
+  mlip::TrainingRecord r = training_record;
+  for (std::string& line : r.lines) {
+    std::istringstream ls(line);
+    std::string key;
+    ls >> key;
+    const auto o = optimap.find(core::to_upper(key));
+    if (o == optimap.end() ||
+        std::none_of(o->second.opt.begin(), o->second.opt.end(),
+                     [](bool b) { return b; }))
+      continue;
+    if (!pot.has_stored(key)) continue;
+    line = key;
+    for (std::size_t n = 0; const auto t = pot.stored_value(key, n); ++n)
+      line += " " + *t;
+  }
+  return r;
 }
 
 std::string HPOTargets::optim_integer_index_error(
@@ -2824,6 +2906,12 @@ void HPOTargets::process_optim_config(std::istringstream& iss,
    * blueprint default into the run context. */
   if (const std::string e = optim_internal_key_error(k); !e.empty())
     throw std::runtime_error(e);
+  /* A retired key (the context refuses to read one) and a choice or a
+   * switch of the fit, before context.size(k). */
+  if (const std::string e = optim_retired_key_error(k); !e.empty())
+    throw std::runtime_error(e);
+  if (const std::string e = optim_switch_key_error(k); !e.empty())
+    throw std::runtime_error(e);
   /* A key applied once, when the run starts and reads its data. */
   if (const std::string e = optim_startup_only_key_error(k); !e.empty())
     throw std::runtime_error(e);
@@ -2939,10 +3027,10 @@ void HPOTargets::process_optim_config(std::istringstream& iss,
   double low = 0.0, high = 0.0;
   struct AutoRule { bool geometric = false; double factor = 0.0; double floor = 0.0; double group_floor = 0.0; } rule;
   bool floor_set = false;   // FLOOR or GROUP_FLOOR given
+  bool mode_set = false;    // RATIO or FRAC given
   if (auto_box) {
     tokens.erase(tokens.begin());
     take_tag(tokens);
-    bool mode_set = false;
     for (std::size_t t = 0; t < tokens.size(); t += 2) {
       const std::string opt = upper(tokens[t]);
       if (t + 1 >= tokens.size())
@@ -2979,15 +3067,34 @@ void HPOTargets::process_optim_config(std::istringstream& iss,
       rule.factor    = rule.geometric ? 2.0 : 0.5;
     }
     /* FLOOR and GROUP_FLOOR bound the half-width of the linear rule; the
-     * geometric box [x0/f, x0*f] has none, so they would be ignored. */
-    if (rule.geometric && floor_set)
+     * geometric box [x0/f, x0*f] has none, so they would be ignored. A
+     * value the fit takes only > 0 (ESIGMA, FSIGMA (1), SSIGMA (1),
+     * WDBFILE: optim_fit_value_rule) has a geometric box by default, the
+     * relative part FSIGMA (2) or SSIGMA (2) a linear one: the default is
+     * that of each index of the line. */
+    std::string geometric_default;  // the key (and index) of such a box
+    if (mode_set) {
+      if (rule.geometric) geometric_default = k;
+    } else if (rule.geometric) {
+      geometric_default = k;
+    } else if (!named) {
+      for (const std::size_t ui : user_indices) {
+        const auto v = optim_fit_value_rule(k, ui);
+        if (!v || !v->strict) continue;
+        geometric_default =
+            (k == "FSIGMA" || k == "SSIGMA") ? k + " (" + core::to_string(ui) + ")"
+                                             : k;
+        break;
+      }
+    }
+    if (!geometric_default.empty() && floor_set)
       throw std::runtime_error(
-          "OPTIM " + k + ": FLOOR and GROUP_FLOOR set the smallest "
+          "OPTIM " + geometric_default + ": FLOOR and GROUP_FLOOR set the smallest "
           "half-width of an AUTO FRAC box; " +
           (mode_set ? std::string("AUTO RATIO makes the geometric box "
                                   "[x0/f, x0*f], which they do not change, "
                                   "so they are given with FRAC <p> only")
-                    : "the AUTO box of " + k + " is geometric by default "
+                    : "the AUTO box of " + geometric_default + " is geometric by default "
                       "(RATIO 2), which they do not change, so they are "
                       "given with FRAC <p> only"));
     /* Non-negative amplitudes: NNLS fits put amplitudes at exactly 0, so a
@@ -3122,6 +3229,13 @@ void HPOTargets::process_optim_config(std::istringstream& iss,
           }
           why += ")";
         }
+        /* FSIGMA and SSIGMA of one value: the relative part b is index 2,
+         * which the configuration holds once it gives both values. */
+        if (why.empty() && (k == "FSIGMA" || k == "SSIGMA") && ui == 2 &&
+            s == 1)
+          why = " (the training configuration gives " + k + " one value, "
+                "its absolute part a; its relative part b, index 2, is "
+                "searched when it gives both, " + k + " <a> <b>)";
         throw std::runtime_error("Out of bound index: " + core::to_string(ui) +
                                  why);
       }
@@ -3135,6 +3249,16 @@ void HPOTargets::process_optim_config(std::istringstream& iss,
             " (OPTIM keys are case-insensitive); give each index one OPTIM "
             "line");
       double lo_i = low, hi_i = high;
+      /* What the fit takes of this value (> 0, >= 0), whose box keeps to
+       * it: the AUTO box of a value > 0 is geometric unless RATIO or FRAC
+       * says otherwise, that of a value >= 0 linear and clamped at 0. */
+      const std::optional<FitValueRule> value_rule =
+          named ? std::nullopt : optim_fit_value_rule(k, ui);
+      const bool geometric =
+          mode_set ? rule.geometric
+                   : rule.geometric || (value_rule && value_rule->strict);
+      const double factor =
+          mode_set ? rule.factor : (geometric ? 2.0 : 0.5);
       if (auto_box) {
         if (!core::is_number(omap.config[i]))
           throw std::runtime_error("OPTIM " + k + " (" + core::to_string(ui) +
@@ -3145,15 +3269,15 @@ void HPOTargets::process_optim_config(std::istringstream& iss,
           throw std::runtime_error("OPTIM " + k + " (" + core::to_string(ui) +
                                    "): the seed " + omap.config[i] + " is negative, but " +
                                    form_name + " requires every AMPGRIDMB amplitude >= 0");
-        if (rule.geometric) {
+        if (geometric) {
           if (!(x0 != 0.0))
             throw std::runtime_error("OPTIM " + k + " (" + core::to_string(ui) +
                                      "): AUTO RATIO needs a non-zero seed; use FRAC + FLOOR");
-          const double a = x0 / rule.factor, b = x0 * rule.factor;
+          const double a = x0 / factor, b = x0 * factor;
           lo_i = std::min(a, b); hi_i = std::max(a, b);
           omap.origin[i] = BoxOrigin::AutoGeometric;
         } else {
-          const double d = std::max({rule.factor * std::fabs(x0), rule.floor,
+          const double d = std::max({factor * std::fabs(x0), rule.floor,
                                      rule.group_floor * group_max});
           if (!(d > 0.0) && nonneg_amp && !floor_set)
             throw std::runtime_error("OPTIM " + k + " (" + core::to_string(ui) +
@@ -3174,7 +3298,8 @@ void HPOTargets::process_optim_config(std::istringstream& iss,
           omap.origin[i] = BoxOrigin::AutoLinear;
           /* non-negative amplitudes: lo = max(0, x0 - d), before the LOG
            * check below (a LOG box cannot start at 0) */
-          if (nonneg_amp) {
+          if (nonneg_amp || (value_rule && !value_rule->strict &&
+                             k != "LAMBDA")) {
             if (lo_i < 0.0) lo_i = 0.0;
             omap.origin[i] = BoxOrigin::AutoLinearNonneg;
           }
@@ -3185,13 +3310,18 @@ void HPOTargets::process_optim_config(std::istringstream& iss,
                                    core::to_string(hi_i) + "] is not positive but the dim is "
                                    "tagged LOG; use RATIO (geometric) or drop the tag");
       }
-      /* A key of the fit a fit refuses below 0 (optim_fit_key_nonnegative):
-       * every candidate below 0 would be refused by its evaluation. */
-      if (const std::string why = optim_fit_key_nonnegative(k);
-          !why.empty() && lo_i < 0.0)
+      /* A value of the fit a fit refuses at or below 0, or below 0
+       * (optim_fit_value_rule): every such candidate would be refused by
+       * its evaluation. */
+      if (value_rule && value_rule->strict && !(lo_i > 0.0))
         throw std::runtime_error("the low bound " +
                                  core::format_roundtrip(lo_i) +
-                                 " is negative, but " + why +
+                                 " is not > 0, but " + value_rule->why +
+                                 ", so the low bound of its box is > 0");
+      if (value_rule && !value_rule->strict && lo_i < 0.0)
+        throw std::runtime_error("the low bound " +
+                                 core::format_roundtrip(lo_i) +
+                                 " is negative, but " + value_rule->why +
                                  ", so the low bound of its box is >= 0");
       if (low_rule && !low_rule->admits(lo_i))
         throw std::runtime_error("OPTIM " + k + " (" + core::to_string(ui) +

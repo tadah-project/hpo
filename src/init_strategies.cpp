@@ -18,6 +18,9 @@
 #include <tadah/hpo/warmstart_cache.h>
 #include <tadah/models/descriptors/dm/embed_spec.h>
 #include <tadah/core/context.h>
+#include <tadah/core/blueprint_parser.h>
+#include <tadah/core/retired_keys.h>
+#include <tadah/core/key_notice.h>
 #include <tadah/core/core_user_config_parser.h>
 #include <tadah/core/utils.h>
 #include <tadah/core/number_format.h>
@@ -295,7 +298,14 @@ public:
         bool structured=false;
         std::string line;
         std::size_t hot_loaded = 0;
+        /* The lines of retired keys (a potential of an earlier version has
+         * EWEIGHT, FWEIGHT, SWEIGHT, WDBFILE_AUTO): not read, and named in
+         * one notice for the seed, as every load of a potential names
+         * them (core::retired_keys_notice). */
+        std::vector<core::RetiredKeyLine> retired;
+        std::size_t line_no = 0;
         while (std::getline(in, line)) {
+            ++line_no;
             const auto first = line.find_first_not_of(" \t");
             if (first == std::string::npos) continue;
             if (line[first] == '#') {
@@ -303,10 +313,24 @@ public:
                 continue;
             }
             std::istringstream header(line);std::string key;header>>key;
-            structured=structured || core::to_upper(key)=="DESCRIPTOR";
+            const std::string upper_key = core::to_upper(key);
+            const auto& keys = core::BlueprintParser::getKeysMapRef();
+            if (const auto k = keys.find(upper_key);
+                k != keys.end() && k->second.isRetired()) {
+                std::vector<std::string> values;
+                for (std::string v; header >> v;) values.push_back(v);
+                const auto last = line.find_last_not_of(" \t\r");
+                retired.push_back(core::RetiredKeyLine{
+                    upper_key, file_, line_no, std::move(values),
+                    line.substr(first, last - first + 1)});
+                continue;
+            }
+            structured=structured || upper_key=="DESCRIPTOR";
             buf.insert(buf.end(), line.begin(), line.end());
             buf.push_back('\n');
         }
+        if (!retired.empty())
+            core::report_key_notice(core::retired_keys_notice(retired));
         if (hot_loaded > 0) {
             std::ostringstream oss;
             oss << "WARM: primed warmstart cache with " << hot_loaded

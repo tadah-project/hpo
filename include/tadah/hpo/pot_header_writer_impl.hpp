@@ -68,7 +68,7 @@ void PotHeaderWriter::write_result_table(std::ostream& os,
     metric_row("ErRMSE (per mille)",  trg.use_errmse, e.errmse, e.errmseLoss, e.v_errmse, e.v_errmseLoss);
     metric_row("ERSQ",             trg.use_ersq,   e.ersq,   e.ersqLoss,   e.v_ersq,   e.v_ersqLoss);
     metric_row("FRMSE  (eV/A)",    trg.use_frmse,  e.frmse,  e.frmseLoss,  e.v_frmse,  e.v_frmseLoss);
-    metric_row("SRMSE  (eV/A^3)",  trg.use_srmse,  e.srmse,  e.srmseLoss,  e.v_srmse,  e.v_srmseLoss);
+    metric_row("SRMSE  (GPa)",     trg.use_srmse,  e.srmse,  e.srmseLoss,  e.v_srmse,  e.v_srmseLoss);
 
     /* LAMMPS outvar + loss table */
     if (!trg.LS.empty() && !e.v_outvar.empty()) {

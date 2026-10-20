@@ -201,7 +201,7 @@ public:
         std::string stress_source;
         bool        has_validation = false;
         bool        val_forces = false;    // PC_FRMSE
-        bool        val_stresses = false;  // PC_SRMSE
+        bool        val_stresses = false;  // PC_SRMSE_GPA
     };
 
     /** The rows "Fit forces (FORCE)", "Fit stresses (STRESS)" and
@@ -210,8 +210,8 @@ public:
     void write_fit_switches(const FitSwitchReport& report);
 
     /** LOAD TRANSFORMS section -- emitted once at host construction summarising
-     *  what load-time transforms (LSCALE, ESHIFT, EFILTER, FFILTER, WDBFILE,
-     *  EWEIGHT_TEMP, ZERO_COM_FORCE, equilibrium-volume) were applied to the
+     *  what load-time transforms (LSCALE, ESHIFT, EFILTER, FFILTER,
+     *  ZERO_COM_FORCE, equilibrium-volume) were applied to the
      *  training set. The validation report is summarised on a single line
      *  (validation receives only LSCALE / resolved ESHIFT, plus EFILTER /
      *  FFILTER if declared in the --validation file) so the validation-set
