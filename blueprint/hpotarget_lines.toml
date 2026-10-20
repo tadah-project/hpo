@@ -4130,37 +4130,37 @@ error = "OPTIM EWEIGHT is not a valid search target: EWEIGHT is a retired key: E
 id = "OPTIM.TARGET.FWEIGHT"
 key = "FWEIGHT"
 status = "refused"
-msg = "OPTIM FWEIGHT is not a valid search target: FWEIGHT is a retired key: FWEIGHT multiplied the squared residual of each force component, a number without a unit an accuracy could be read in. Replaced by: FSIGMA, the force error scale in eV/Å (FORCE false for FWEIGHT 0). FSIGMA = 1/sqrt(FWEIGHT) eV/Å gives the same fit. FWEIGHT 0 (no forces in the fit) is FORCE false."
+msg = "OPTIM FWEIGHT is not a valid search target: FWEIGHT is a retired key: FWEIGHT multiplied the squared residual of each force component, a number without a unit an accuracy could be read in. Replaced by: FSIGMA, the force error scale in eV/Å (FORCE false for FWEIGHT 0). FSIGMA = 1/sqrt(FWEIGHT) eV/Å gives the same fit. With FORCE false, deleting the line converts it (FSIGMA keeps its default). FWEIGHT 0 (no forces in the fit) is FORCE false."
 doc = "FWEIGHT is a retired key; OPTIM FSIGMA searches the force error scale."
 
 [[optim_target.invalid]]
 wrap = "root"
 text = "OPTIM FWEIGHT (1) 0.5 2"
-error = "OPTIM FWEIGHT is not a valid search target: FWEIGHT is a retired key: FWEIGHT multiplied the squared residual of each force component, a number without a unit an accuracy could be read in. Replaced by: FSIGMA, the force error scale in eV/Å (FORCE false for FWEIGHT 0). FSIGMA = 1/sqrt(FWEIGHT) eV/Å gives the same fit. FWEIGHT 0 (no forces in the fit) is FORCE false."
+error = "OPTIM FWEIGHT is not a valid search target: FWEIGHT is a retired key: FWEIGHT multiplied the squared residual of each force component, a number without a unit an accuracy could be read in. Replaced by: FSIGMA, the force error scale in eV/Å (FORCE false for FWEIGHT 0). FSIGMA = 1/sqrt(FWEIGHT) eV/Å gives the same fit. With FORCE false, deleting the line converts it (FSIGMA keeps its default). FWEIGHT 0 (no forces in the fit) is FORCE false."
 
 [[optim_target]]
 id = "OPTIM.TARGET.SWEIGHT"
 key = "SWEIGHT"
 status = "refused"
-msg = "OPTIM SWEIGHT is not a valid search target: SWEIGHT is a retired key: SWEIGHT multiplied the squared residual of each of the six stress entries xx, xy, xz, yy, yz and zz, in eV/Å^3, so a shear cost depended on the orientation of the cell. Replaced by: SSIGMA, the stress error scale in GPa (STRESS false for SWEIGHT 0). SSIGMA = 160.2/sqrt(SWEIGHT) GPa gives the diagonal entries (xx, yy, zz) the same weight; a fit counts each off-diagonal entry twice (the nine entries of the tensor), so the conversion is exact for the diagonal only. SWEIGHT 0 (no stresses in the fit) is STRESS false."
+msg = "OPTIM SWEIGHT is not a valid search target: SWEIGHT is a retired key: SWEIGHT multiplied the squared residual of each of the six stress entries xx, xy, xz, yy, yz and zz, in eV/Å^3, so a shear cost depended on the orientation of the cell. Replaced by: SSIGMA, the stress error scale in GPa (STRESS false for SWEIGHT 0). SSIGMA = 160.2/sqrt(SWEIGHT) GPa gives the diagonal entries (xx, yy, zz) the same weight; a fit counts each off-diagonal entry twice (the nine entries of the tensor), so the conversion is exact for the diagonal only. With STRESS false, deleting the line converts it (SSIGMA keeps its default). SWEIGHT 0 (no stresses in the fit) is STRESS false."
 doc = "SWEIGHT is a retired key; OPTIM SSIGMA searches the stress error scale."
 
 [[optim_target.invalid]]
 wrap = "root"
 text = "OPTIM SWEIGHT (1) 0.5 2"
-error = "OPTIM SWEIGHT is not a valid search target: SWEIGHT is a retired key: SWEIGHT multiplied the squared residual of each of the six stress entries xx, xy, xz, yy, yz and zz, in eV/Å^3, so a shear cost depended on the orientation of the cell. Replaced by: SSIGMA, the stress error scale in GPa (STRESS false for SWEIGHT 0). SSIGMA = 160.2/sqrt(SWEIGHT) GPa gives the diagonal entries (xx, yy, zz) the same weight; a fit counts each off-diagonal entry twice (the nine entries of the tensor), so the conversion is exact for the diagonal only. SWEIGHT 0 (no stresses in the fit) is STRESS false."
+error = "OPTIM SWEIGHT is not a valid search target: SWEIGHT is a retired key: SWEIGHT multiplied the squared residual of each of the six stress entries xx, xy, xz, yy, yz and zz, in eV/Å^3, so a shear cost depended on the orientation of the cell. Replaced by: SSIGMA, the stress error scale in GPa (STRESS false for SWEIGHT 0). SSIGMA = 160.2/sqrt(SWEIGHT) GPa gives the diagonal entries (xx, yy, zz) the same weight; a fit counts each off-diagonal entry twice (the nine entries of the tensor), so the conversion is exact for the diagonal only. With STRESS false, deleting the line converts it (SSIGMA keeps its default). SWEIGHT 0 (no stresses in the fit) is STRESS false."
 
 [[optim_target]]
 id = "OPTIM.TARGET.WDBFILE_AUTO"
 key = "WDBFILE_AUTO"
 status = "refused"
-msg = "OPTIM WDBFILE_AUTO is not a valid search target: WDBFILE_AUTO is a retired key: WDBFILE_AUTO a multiplied the priorities of each dataset by n_d^-a, n_d its number of structures, so a weight of the fit depended on how many structures each dataset had. Replaced by: WDBFILE, a priority for each dataset. WDBFILE with the values n_d^-a, one per dataset, n_d the number of structures of dataset d after EFILTER and FFILTER, gives the same fit; WDBFILE_AUTO 0 is no WDBFILE."
+msg = "OPTIM WDBFILE_AUTO is not a valid search target: WDBFILE_AUTO is a retired key: WDBFILE_AUTO a multiplied the priorities of each dataset by n_d^-a, n_d its number of structures, so a weight of the fit depended on how many structures each dataset had. Replaced by: WDBFILE, a priority for each dataset. Each WDBFILE value (1 for every dataset without WDBFILE) multiplied by n_d^-a, n_d the number of structures of dataset d after EFILTER and FFILTER, gives the same fit. For WDBFILE_AUTO 0, deleting the line converts it (WDBFILE as it is)."
 doc = "WDBFILE_AUTO is a retired key; OPTIM WDBFILE searches the priority of each dataset."
 
 [[optim_target.invalid]]
 wrap = "root"
 text = "OPTIM WDBFILE_AUTO (1) 0.5 2"
-error = "OPTIM WDBFILE_AUTO is not a valid search target: WDBFILE_AUTO is a retired key: WDBFILE_AUTO a multiplied the priorities of each dataset by n_d^-a, n_d its number of structures, so a weight of the fit depended on how many structures each dataset had. Replaced by: WDBFILE, a priority for each dataset. WDBFILE with the values n_d^-a, one per dataset, n_d the number of structures of dataset d after EFILTER and FFILTER, gives the same fit; WDBFILE_AUTO 0 is no WDBFILE."
+error = "OPTIM WDBFILE_AUTO is not a valid search target: WDBFILE_AUTO is a retired key: WDBFILE_AUTO a multiplied the priorities of each dataset by n_d^-a, n_d its number of structures, so a weight of the fit depended on how many structures each dataset had. Replaced by: WDBFILE, a priority for each dataset. Each WDBFILE value (1 for every dataset without WDBFILE) multiplied by n_d^-a, n_d the number of structures of dataset d after EFILTER and FFILTER, gives the same fit. For WDBFILE_AUTO 0, deleting the line converts it (WDBFILE as it is)."
 
 [[optim_target]]
 id = "OPTIM.TARGET.EWEIGHT_TEMP"
