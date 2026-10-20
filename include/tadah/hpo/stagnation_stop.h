@@ -26,9 +26,9 @@ namespace detail {
  *  order they take the mutex, which is not the order they were counted in
  *  `started` (std::mutex is not FIFO). */
 struct BestPublications {
-  std::atomic<std::size_t> started{0};
-  std::atomic<std::size_t> done{0};   // written under the best mutex only
-  std::condition_variable  cv;
+  std::atomic<std::size_t> started{0};  ///< decisions counted
+  std::atomic<std::size_t> done{0};     ///< decisions ended (under the mutex)
+  std::condition_variable  cv;          ///< wakes throw_if_stagnated
 };
 
 /** One new-best decision, from its count to its end: counted in
@@ -39,6 +39,8 @@ struct BestPublications {
  *  stagnation check waiting. */
 class BestDecision {
 public:
+  /** Counts the decision in @p p's `started`; @p best_mtx is the host's
+   *  best mutex, which lock() takes. */
   BestDecision(BestPublications& p, std::mutex& best_mtx)
       : p_(p), lock_(best_mtx, std::defer_lock)
   {
