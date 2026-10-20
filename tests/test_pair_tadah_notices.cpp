@@ -11,7 +11,9 @@
 // loads such a potential, so every LAMMPS instance's log.lammps has it,
 // also when the process loaded it before (core::IgnoredKeyNoticeCapture
 // receives a key once per capture, whatever the process reported). And a
-// potential with the covariance of an OALGO 3 fit (WCOV, WNOISE) loads.
+// potential with the retired keys WCOV and WNOISE (the covariance of an
+// OALGO 3 fit a development build of Tadah! 1.6.0 wrote) loads, with one
+// warning of retired keys per pair_coeff.
 //
 // The potential is the D2_LJ pair potential of Tadah.LAMMPS'
 // tests_data/pots/ta_lj_cutcos.tadah.
@@ -191,21 +193,30 @@ TEST_CASE("pair_coeff writes the notice to the log.lammps of every LAMMPS "
   }
 }
 
-/* Pins: pair_coeff loads a potential with the weight covariance of an
- * OALGO 3 fit (WCOV, WNOISE) and computes with it the energy of the
- * potential without them (bit for bit); log.lammps has no WARNING about
- * either key.
- * Before the fix: pair_coeff failed ("Invalid key: WCOV"). */
-TEST_CASE("pair_coeff loads a potential with WCOV and WNOISE",
-          "[pair_tadah][weight_covariance]") {
+/* Pins: pair_coeff loads a potential with the retired keys WCOV and
+ * WNOISE (the covariance of an OALGO 3 fit, written by a development build
+ * of Tadah! 1.6.0) and computes with it the energy of the potential without
+ * them (bit for bit); log.lammps has one WARNING that lists both, "Retired
+ * keys WCOV (line 15 of <file>) and WNOISE (line 16 of <file>) are
+ * ignored", and none naming either otherwise; the potential without them
+ * gives no such WARNING.
+ * Before the fix: log.lammps had no WARNING (the keys were read as the
+ * covariance of the potential). */
+TEST_CASE("pair_coeff loads a potential with WCOV and WNOISE, with one "
+          "warning of retired keys",
+          "[pair_tadah][uncertainty]") {
   const Run plain = run_with_potential("", "plain");
   REQUIRE(plain.ok);
+  CHECK(lines_with(plain.log, {"WARNING", "Retired key"}).empty());
   const Run r = run_with_potential(
       "WCOV     2     0.5 0.1 0.1 0.25\nWNOISE     E 0.04     F 0.0025\n",
       "wcov");
   INFO("log.lammps:\n" << r.log);
   REQUIRE(r.ok);
   CHECK(r.pe == plain.pe);
-  CHECK(lines_with(r.log, {"WARNING", "WCOV"}).empty());
-  CHECK(lines_with(r.log, {"WARNING", "WNOISE"}).empty());
+  CHECK(lines_with(r.log, {"WARNING", "Retired keys WCOV (line 15 of ",
+                           ") and WNOISE (line 16 of ", ") are ignored"})
+            .size() == 1);
+  CHECK(lines_with(r.log, {"WARNING", "WCOV"}).size() == 1);
+  CHECK(lines_with(r.log, {"WARNING", "WNOISE"}).size() == 1);
 }
