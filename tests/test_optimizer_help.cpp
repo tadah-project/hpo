@@ -94,6 +94,16 @@ std::vector<std::string> user_text_faults(const std::string& text)
         "([^A-Za-z]|$)");
     if (std::regex_search(text, m, reader))
         faults.push_back("addresses the reader: " + m.str(2));
+    /* Developer shorthand and the names of a library's classes: the text
+     * says "in each dimension", "the first trust-region radius", "the
+     * enclosing block", "Ceres' line-search solver". */
+    static const std::regex shorthand(
+        "per-dim([^A-Za-z]|$)|(^|[^A-Za-z])dims?([^A-Za-z]|$)|rhobeg|rhoend|"
+        "(^|[^A-Za-z_])OUTER([^A-Za-z_]|$)|GradientProblemSolver|"
+        "(^|[^A-Za-z])Solver([^A-Za-z]|$)|-grad([^A-Za-z]|$)|"
+        "DIAGNOSTICS counts");
+    if (std::regex_search(text, m, shorthand))
+        faults.push_back("developer shorthand: " + m.str());
     /* -ize and -yze, except the words of size */
     static const std::regex word("[A-Za-z_]+");
     static const std::regex american(
@@ -381,7 +391,12 @@ TEST_CASE("print_caps: BuildNotes::Omit leaves out the lines that depend on "
  * refusal's reason names the recommended replacement of the optimiser
  * instead of telling the reader what to use ("Use NLOPT:LN_BOBYQA, ...");
  * British spelling in prose ("global optimiser", "equalisation", "written
- * to the journal"); key names as the program reads them.
+ * to the journal"); key names as the program reads them; no developer
+ * shorthand ("per-dim", "min over dims", "rhobeg", "an OUTER STEP",
+ * "-grad") and no class of a library ("Ceres' GradientProblemSolver").
+ * Before the shorthand was banned: fails on the STEP notes of the NLopt
+ * simplex, trust-region, PRAXIS, MMA, MLSL and AUGLAG forms, of DLIB:BFGS
+ * and ASA:ASA, their STEP use, and the Ceres texts.
  * Before the fix: fails on the help of ASA:ASA (external/asa, TADAH-PATCH
  * 7, "knob", "HPO host"), TADAH:ANNEAL (random_device, "Dead knobs"),
  * TADAH:ANNEAL_PT ("equalization", "pre-1.5.0"), the twenty global NLopt
@@ -438,4 +453,15 @@ TEST_CASE("explain_optimiser: the ALGO help and the optimiser registry are "
     CHECK(user_text_faults("the primary knob").size() == 1u);
     CHECK(user_text_faults("Your run: set it if you like").size() == 1u);
     CHECK(user_text_faults("the weight and the outer search").empty());
+    CHECK(user_text_faults("per-dim edges").size() == 1u);
+    CHECK(user_text_faults("min over dims of |step|").size() == 1u);
+    CHECK(user_text_faults("rhoend = XTOL_REL*rhobeg").size() == 1u);
+    CHECK(user_text_faults("an OUTER STEP overrides it").size() == 1u);
+    CHECK(user_text_faults("Ceres' GradientProblemSolver").size() == 1u);
+    CHECK(user_text_faults("Ceres' least-squares Solver").size() == 1u);
+    CHECK(user_text_faults("it starts from -grad").size() == 1u);
+    CHECK(user_text_faults("DIAGNOSTICS counts them").size() == 1u);
+    CHECK(user_text_faults("the per-dimension steps of OUTER_X; the "
+                           "DIAGNOSTICS section of hpo_run.log counts "
+                           "them").empty());
 }

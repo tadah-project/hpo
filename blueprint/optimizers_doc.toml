@@ -1,0 +1,323 @@
+# What each optimiser of the optimiser list is, for the documentation: one
+# description per library ([library.<LIB>]) and per registered optimiser
+# ([optimizer."<LIB:ALGO>"]), one or two sentences each, in the impersonal
+# voice. The reference page of the optimisers shows it first in the entry,
+# before the capabilities that optimizers_gen.toml gives.
+#
+# hpotarget.toml names this file (meta.optimizer_docs); hpotarget_registry.py
+# checks that it describes every library and every registered optimiser of
+# optimizers_gen.toml, and nothing else. A new optimiser of the registry
+# therefore needs its description here before the check passes.
+
+# ------------------------------------------------------------- libraries ----
+
+[library.ASA]
+doc = """\
+Adaptive Simulated Annealing, Lester Ingber's simulated annealing with a \
+temperature for each dimension; its source is part of Tadah!."""
+
+[library.CERES]
+doc = """\
+Ceres Solver, a library of minimisation methods; tadah hpo runs its \
+line-search solver of one scalar loss."""
+
+[library.DLIB]
+doc = """\
+Dlib, a C++ library with a global search of its own and a quasi-Newton \
+search within bounds."""
+
+[library.NLOPT]
+doc = """\
+NLopt, a library of local and global optimisation algorithms. The first \
+letters of an algorithm's name give its kind: G global, L local; N \
+derivative-free, D gradient-based; the MLSL and AUGLAG forms run a local \
+search of another algorithm."""
+
+[library.TADAH]
+doc = """\
+The optimisers of Tadah! itself: a grid, uniform random sampling, two \
+forms of simulated annealing and parallel tempering."""
+
+# ------------------------------------------------------------- optimisers ---
+
+[optimizer."ASA:ASA"]
+doc = """\
+Adaptive Simulated Annealing: each trial point is drawn from a distribution \
+whose width follows a temperature of each dimension, accepted or refused by \
+a temperature of the loss, and the temperatures fall on a schedule that the \
+search adapts (reannealing)."""
+
+[optimizer."CERES:STEEPEST_DESCENT"]
+doc = """\
+Steepest descent in Ceres' line-search solver: each step goes along the \
+negative gradient, with an Armijo line search."""
+
+[optimizer."DLIB:BFGS"]
+doc = """\
+A Broyden-Fletcher-Goldfarb-Shanno (BFGS) quasi-Newton search within the \
+OPTIM box: each step follows an estimate of the inverse Hessian built from \
+the gradients of the earlier steps."""
+
+[optimizer."DLIB:GFS"]
+doc = """\
+Dlib's global search, MaxLIPO+TR: it chooses the next point from a lower \
+bound of the loss that a Lipschitz constant fitted to the evaluated points \
+gives (MaxLIPO), and alternates with a trust-region (TR) search around the \
+best point."""
+
+[optimizer."NLOPT:AUGLAG"]
+doc = """\
+The augmented Lagrangian method: it runs a local search, the optimiser of \
+its INNER block, on the loss with its constraints added as penalties. \
+tadah hpo sets no constraint, so the search ends when that local search \
+ends."""
+
+[optimizer."NLOPT:AUGLAG_EQ"]
+doc = """\
+The augmented Lagrangian method that adds only the equality constraints as \
+penalties; tadah hpo sets no constraint, so it runs the local search of its \
+INNER block once, as AUGLAG does."""
+
+[optimizer."NLOPT:GD_MLSL"]
+doc = """\
+Multi-level single-linkage (MLSL): a global search that starts local \
+searches from random points of the OPTIM box, with a clustering rule that \
+avoids searching one local minimum twice; this form takes gradients, and its local search is \
+LD_MMA without an INNER block."""
+
+[optimizer."NLOPT:GD_MLSL_LDS"]
+doc = """\
+MLSL with the points of a low-discrepancy (Sobol) sequence instead of \
+random ones; this form takes gradients, and its local search is LD_MMA \
+without an INNER block."""
+
+[optimizer."NLOPT:GD_STOGO"]
+doc = """\
+StoGO: a global branch-and-bound search that divides the OPTIM box into \
+smaller boxes and searches each with a gradient-based local search (a form \
+of BFGS)."""
+
+[optimizer."NLOPT:GD_STOGO_RAND"]
+doc = """\
+StoGO with random trial points in its boxes; POPULATION sets their \
+number."""
+
+[optimizer."NLOPT:GN_AGS"]
+doc = """\
+AGS: a deterministic global search that maps the OPTIM box onto a \
+space-filling curve and searches along that curve."""
+
+[optimizer."NLOPT:GN_CRS2_LM"]
+doc = """\
+Controlled random search with local mutation (CRS2-LM): it starts from a \
+random population of points of the OPTIM box and replaces its worst point \
+with trial points built from the others."""
+
+[optimizer."NLOPT:GN_DIRECT"]
+doc = """\
+DIRECT (dividing rectangles): a deterministic global search that divides \
+the OPTIM box into rectangles, evaluates the centre of each, and divides \
+first the rectangles that may hold a lower loss."""
+
+[optimizer."NLOPT:GN_DIRECT_L"]
+doc = """\
+DIRECT-L, the locally biased form of DIRECT, which divides fewer rectangles \
+at a time."""
+
+[optimizer."NLOPT:GN_DIRECT_L_NOSCAL"]
+doc = """\
+DIRECT-L without rescaling the OPTIM box to a cube."""
+
+[optimizer."NLOPT:GN_DIRECT_L_RAND"]
+doc = """\
+DIRECT-L that draws a random number to choose between sides of equal \
+length when it divides a rectangle."""
+
+[optimizer."NLOPT:GN_DIRECT_L_RAND_NOSCAL"]
+doc = """\
+Named as GN_DIRECT_L_RAND without rescaling the OPTIM box to a cube; NLopt \
+2.10 runs it as GN_DIRECT_L_NOSCAL, which draws no random numbers."""
+
+[optimizer."NLOPT:GN_DIRECT_NOSCAL"]
+doc = """\
+Named as DIRECT without rescaling the OPTIM box to a cube; NLopt 2.10 runs \
+it as GN_DIRECT_L_NOSCAL, the deterministic DIRECT-L without rescaling."""
+
+[optimizer."NLOPT:GN_ESCH"]
+doc = """\
+ESCH, an evolutionary algorithm: a population of points of the OPTIM box \
+evolves by mutation and recombination."""
+
+[optimizer."NLOPT:GN_ISRES"]
+doc = """\
+Improved stochastic ranking evolution strategy (ISRES): an evolution \
+strategy whose population of points of the OPTIM box mutates, and is \
+ranked by loss, in each generation."""
+
+[optimizer."NLOPT:GN_MLSL"]
+doc = """\
+Multi-level single-linkage (MLSL): a global search that starts local \
+searches from random points of the OPTIM box, with a clustering rule that \
+avoids searching one local minimum twice; this form is derivative-free, and its local search \
+is LN_COBYLA without an INNER block."""
+
+[optimizer."NLOPT:GN_MLSL_LDS"]
+doc = """\
+MLSL with the points of a low-discrepancy (Sobol) sequence instead of \
+random ones; this form is derivative-free, and its local search is \
+LN_COBYLA without an INNER block."""
+
+[optimizer."NLOPT:GN_ORIG_DIRECT"]
+doc = """\
+DIRECT in its original implementation, by Gablonsky."""
+
+[optimizer."NLOPT:GN_ORIG_DIRECT_L"]
+doc = """\
+DIRECT-L in its original implementation, by Gablonsky."""
+
+[optimizer."NLOPT:G_MLSL"]
+doc = """\
+Multi-level single-linkage (MLSL) whose local search is the optimiser of \
+its INNER block, which it requires: it starts that search from random \
+points of the OPTIM box, with a clustering rule that avoids searching one \
+local minimum twice."""
+
+[optimizer."NLOPT:G_MLSL_LDS"]
+doc = """\
+G_MLSL with the points of a low-discrepancy (Sobol) sequence instead of \
+random ones."""
+
+[optimizer."NLOPT:LD_AUGLAG"]
+doc = """\
+The augmented Lagrangian method with gradients: it runs a local search on \
+the loss with its constraints added as penalties, LD_MMA without an INNER \
+block. tadah hpo sets no constraint, so the search ends when that local \
+search ends."""
+
+[optimizer."NLOPT:LD_AUGLAG_EQ"]
+doc = """\
+LD_AUGLAG that adds only the equality constraints as penalties; tadah hpo \
+sets no constraint, so it runs as LD_AUGLAG does."""
+
+[optimizer."NLOPT:LD_CCSAQ"]
+doc = """\
+Conservative convex separable approximation with quadratic terms (CCSAQ, \
+after Svanberg): each step minimises a convex model of the loss within a \
+trust region."""
+
+[optimizer."NLOPT:LD_LBFGS"]
+doc = """\
+Low-storage BFGS (L-BFGS): a quasi-Newton search that estimates the inverse \
+Hessian from the gradients of the last steps; VECTOR_ARR sets how many it \
+keeps."""
+
+[optimizer."NLOPT:LD_MMA"]
+doc = """\
+The method of moving asymptotes (MMA, after Svanberg): each step minimises \
+a convex separable model of the loss within a trust region."""
+
+[optimizer."NLOPT:LD_SLSQP"]
+doc = """\
+Sequential least-squares quadratic programming (SLSQP, after Kraft): a \
+quasi-Newton search that minimises a quadratic model of the loss at each \
+step."""
+
+[optimizer."NLOPT:LD_TNEWTON"]
+doc = """\
+A truncated Newton method: each step solves the Newton equations \
+approximately, by conjugate gradients. tadah hpo takes VECTOR_ARR for it, \
+but NLopt reads the storage only in the PRECOND forms."""
+
+[optimizer."NLOPT:LD_TNEWTON_PRECOND"]
+doc = """\
+LD_TNEWTON with a preconditioner, a low-storage BFGS estimate of the \
+Hessian, whose storage VECTOR_ARR sets."""
+
+[optimizer."NLOPT:LD_TNEWTON_PRECOND_RESTART"]
+doc = """\
+LD_TNEWTON_PRECOND that restarts along the steepest descent."""
+
+[optimizer."NLOPT:LD_TNEWTON_RESTART"]
+doc = """\
+LD_TNEWTON that restarts along the steepest descent."""
+
+[optimizer."NLOPT:LD_VAR1"]
+doc = """\
+A shifted limited-memory variable-metric method (after Vlček and Lukšan) \
+with a rank-1 update; VECTOR_ARR sets its storage."""
+
+[optimizer."NLOPT:LD_VAR2"]
+doc = """\
+A shifted limited-memory variable-metric method (after Vlček and Lukšan) \
+with a rank-2 update; VECTOR_ARR sets its storage."""
+
+[optimizer."NLOPT:LN_AUGLAG"]
+doc = """\
+The augmented Lagrangian method without gradients: it runs a local search \
+on the loss with its constraints added as penalties, LN_COBYLA without an \
+INNER block. tadah hpo sets no constraint, so the search ends when that \
+local search ends."""
+
+[optimizer."NLOPT:LN_AUGLAG_EQ"]
+doc = """\
+LN_AUGLAG that adds only the equality constraints as penalties; tadah hpo \
+sets no constraint, so it runs as LN_AUGLAG does."""
+
+[optimizer."NLOPT:LN_BOBYQA"]
+doc = """\
+Bound optimisation by quadratic approximation (BOBYQA, after Powell): a \
+trust-region search that fits a quadratic model of the loss to its \
+evaluations, within the OPTIM box."""
+
+[optimizer."NLOPT:LN_COBYLA"]
+doc = """\
+Constrained optimisation by linear approximation (COBYLA, after Powell): a \
+trust-region search with a linear model of the loss."""
+
+[optimizer."NLOPT:LN_NELDERMEAD"]
+doc = """\
+The Nelder-Mead simplex method: a simplex of one point more than the \
+dimensions moves towards a lower loss by reflection, expansion and \
+contraction."""
+
+[optimizer."NLOPT:LN_PRAXIS"]
+doc = """\
+PRAXIS (principal axis method, after Brent): a search along a set of \
+conjugate directions that it updates, without gradients."""
+
+[optimizer."NLOPT:LN_SBPLX"]
+doc = """\
+Subplex (SBPLX, after Rowan): the Nelder-Mead simplex method applied to \
+subspaces of the OPTIM dimensions in turn."""
+
+[optimizer."TADAH:ANNEAL"]
+doc = """\
+Serial simulated annealing: one chain proposes points and accepts a higher \
+loss with a probability that falls with the temperature, which drops on a \
+geometric schedule; PARAM CORANA ON selects Corana's adaptive steps."""
+
+[optimizer."TADAH:ANNEAL_PA"]
+doc = """\
+Population annealing: a population of walkers cools from T_HOT to T_MIN. \
+After each temperature step the walkers are reweighted and resampled, and \
+each then runs SWEEPS rounds of CHAIN_LENGTH proposals, or of Corana steps \
+under PARAM CORANA ON."""
+
+[optimizer."TADAH:ANNEAL_PT"]
+doc = """\
+Parallel tempering (replica exchange): replicas run at the temperatures of \
+a ladder, fixed unless LADDER_ADAPT is ON, and neighbouring replicas swap \
+their states."""
+
+[optimizer."TADAH:GRID"]
+doc = """\
+A grid search: the points of a regular grid over the OPTIM box, \
+GRID_POINTS in each dimension, in order. The steps are equal in the \
+coordinates of the search: in the value for LIN, its logarithm for LOG and \
+asinh(x/c) for ASINH."""
+
+[optimizer."TADAH:RANDOM"]
+doc = """\
+Uniform random search: points drawn from a uniform distribution over the \
+OPTIM box in the coordinates of the search, so uniform in the logarithm of \
+a LOG box."""

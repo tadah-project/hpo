@@ -84,6 +84,8 @@ static void print_anneal_family_caps(std::ostream& os, unsigned kind_mask)
             }
             os << "     " << head.str() << "\n"
                << "        " << k->doc << "\n";
+            if (k->long_doc)
+                os << "        " << k->long_doc << "\n";
         }
     }
 }
@@ -133,8 +135,9 @@ static void print_tadah_caps(std::ostream& os, const std::string& algo)
         print_stops(os, "TADAH", algo);
     } else if(algo=="GRID") {
         os<<"   * PARAM GRID_POINTS <int>  (default 20 points per dimension;\n"
-            "     spacing = width/(n-1); total cost = n^dim). STEP and any other\n"
-            "     PARAM are rejected. The INIT point, then the grid in order.\n";
+            "     spacing = width/(n-1); total cost = n^d in d dimensions).\n"
+            "     STEP and any other PARAM are rejected. The INIT point, then\n"
+            "     the grid in order.\n";
         print_stops(os, "TADAH", algo);
     }
     else if(algo=="ANNEAL")
@@ -161,11 +164,12 @@ static void print_tadah_caps(std::ostream& os, const std::string& algo)
         os<<"   * Parallel tempering (replica exchange): K replicas on a static\n"
             "     (optionally self-adapting) log temperature ladder, slot 1 coldest.\n"
             "     A replica runs ONE sweep per epoch (CLASSIC: one whole-vector\n"
-            "     proposal; CORANA: dim single-coordinate moves), then adjacent pairs\n"
-            "     attempt a state swap every SWAP_EVERY epochs with deterministic\n"
-            "     even/odd (DEO) pairing. With REPLICAS fixed, a deterministic\n"
-            "     objective, and no timing-dependent stop, the same SEED gives the\n"
-            "     same evaluated set for any THREADS.\n"
+            "     proposal; CORANA: one single-coordinate move per dimension),\n"
+            "     then adjacent pairs attempt a state swap every SWAP_EVERY\n"
+            "     epochs with deterministic even/odd (DEO) pairing.\n"
+            "     With REPLICAS fixed, a deterministic objective, and no\n"
+            "     timing-dependent stop, the same SEED gives the same evaluated\n"
+            "     set for any THREADS.\n"
             "   * Stops: MAXEVAL / MAXTIME / STOPVAL; FTOL_REL/FTOL_ABS (> 0) arm the\n"
             "     best-stall stop (global best unimproved over NEPS diagnostics\n"
             "     windows). One of them is required: the ladder keeps its\n"
@@ -289,7 +293,7 @@ static void print_ceres_caps(std::ostream& os, const std::string& algo,
     if (!c) { os << "   * (unknown CERES algo; registered: "
                     "STEEPEST_DESCENT)\n"; return; }
     const char* what = "steepest descent, Armijo line search";
-    os << "   * Ceres' GradientProblemSolver: " << what << "; local, "
+    os << "   * Ceres' line-search solver: " << what << "; local, "
           "gradient-based (GRAD_STRATEGY NUMERICAL by default)\n";
 #ifndef TADAH_USE_CERES
     if (notes == BuildNotes::Include)
@@ -320,7 +324,7 @@ static void print_asa_caps(std::ostream& os, const std::string& algo)
           "   * SEED seeds the proposal stream; INIT seed auto-sets\n"
           "     User_Initial_Parameters\n"
           "   * PARAM keys use the original ASA option spellings\n"
-          "     (case-sensitive); per-dim options accept Name[i]\n";
+          "     (case-sensitive); an option of each dimension accepts Name[i]\n";
     print_asa_param_table(os);
 }
 

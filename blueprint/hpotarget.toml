@@ -1,0 +1,3056 @@
+# The target-file registry: every line, block and key of the target file
+# (`tadah hpo --hpotarget`), with its syntax, values, defaults, ranges and
+# refusals, as the parser reads them.
+#
+# This file holds the frame of the registry: how a file is read ([lexing],
+# [reading], [structure]), the optimiser group, the eight blocks, the
+# top-level keys that hpotarget_lines.toml does not hold (with the options
+# of RHOGATE and RHOBARGATE), the removed keywords, the cross-key rules, the
+# environment overrides, the example wrappers and the training
+# configurations of the examples. The part files that meta.parts lists hold
+# the rest.
+# hpotarget_registry.py loads and checks all of them; blueprint/README.md
+# ("The target-file registry") describes every table and field, and the
+# tests that compare the registry with the parser.
+#
+# Every message is the parser's own text, copied from the code. A message
+# with {name} placeholders is a template: the parser puts the value there.
+# The `examples` and `invalid` entries are target-file lines; the
+# conformance test puts each into its wrapper and requires the parser to
+# accept the example and to refuse the invalid line with exactly its error.
+
+[meta]
+version = 1
+api = 1
+parts = ["hpotarget_optimizer.toml", "hpotarget_lines.toml",
+         "hpotarget_params.toml"]
+anneal_keys = "anneal_keys.toml"
+optimizers = "optimizers_gen.toml"
+optimizer_docs = "optimizers_doc.toml"
+
+# What the abbreviations of the registry's text stand for. The reference
+# pages spell each out at its first use on a page.
+[abbreviations]
+ASA = "Adaptive Simulated Annealing"
+AUGLAG = "augmented Lagrangian"
+BFGS = "Broyden-Fletcher-Goldfarb-Shanno"
+BOBYQA = "bound optimisation by quadratic approximation"
+CCSAQ = "conservative convex separable approximation with quadratic terms"
+COBYLA = "constrained optimisation by linear approximation"
+DEO = "deterministic even/odd"
+DIRECT = "dividing rectangles"
+ISRES = "improved stochastic ranking evolution strategy"
+L-BFGS = "low-storage Broyden-Fletcher-Goldfarb-Shanno"
+LDS = "low-discrepancy sequence"
+LHS = "Latin hypercube sampling"
+MAE = "mean absolute error"
+MLSL = "multi-level single-linkage"
+MMA = "method of moving asymptotes"
+MPI = "Message Passing Interface"
+NEWUOA = "Powell's new unconstrained optimisation algorithm"
+PRAXIS = "principal axis method"
+SBPLX = "Subplex"
+SLSQP = "sequential least-squares quadratic programming"
+StoGO = "stochastic global optimisation"
+
+# ------------------------------------------------------------- lexing ----
+
+[lexing]
+doc = """\
+A target file is read line by line, and everything from # to the end of a \
+line is a comment. The first word of a line is its key, matched as \
+written."""
+long_doc = """\
+Trailing blanks are removed, and a line left empty is skipped. A line that \
+ends with \\ continues on the next line, and the two are joined without a \
+separator. A file whose last line ends with \\ is refused. Keys are \
+written as this reference writes them: in upper case, and PC_ErRMSE with \
+its lower-case r. Each error names the line it is about: for a continued \
+line, its last line and the joined text."""
+comment = "#"
+continuation = "\\"
+key_case = "exact"
+error_frame = "Error on line {line}: {what}\nLine: {text}"
+unfinished_msg = "unfinished line {line}"
+missing_file_msg = "HPO file {file} not found"
+bool_true = ["true", "1", "yes", "on"]
+bool_false = ["false", "0", "no", "off"]
+timespec_words = ["off", "unlimited"]
+untested = [
+  { msg = "HPO file {file} not found", why = "The file of every case exists; tadah hpo gives the message when --hpotarget names a file that does not." },
+]
+
+[[lexing.examples]]
+wrap = "root"
+text = "FAILSCORE 1e6   # the comment ends the line"
+
+[[lexing.examples]]
+doc = "A line that ends with a backslash continues on the next one."
+wrap = "root"
+text = '''
+FAILSCORE \
+1e6'''
+
+[[lexing.invalid]]
+wrap = "strategy"
+text = "maxeval 5"
+error = "unknown key 'maxeval' inside STRATEGY block"
+
+[[lexing.invalid]]
+wrap = "none"
+at = "none"
+text = '''
+OPTIM CGRID2B (1) 0.5 1.5
+PC_ERMSE 0 1
+OPTIMIZER
+LIB NLOPT
+ALGO LN_SBPLX
+MAXEVAL 10
+ENDOPTIMIZER
+FAILSCORE \'''
+error = "unfinished line 8"
+
+# ------------------------------------------------------------ reading ----
+# The value readers every key shares. The `args` of a key name the reader
+# (`kind`) and the words of its message (`what`, `min`, `max`, `noun`).
+
+[reading]
+doc = """\
+A number is one whole token in the decimal syntax, and a finite double. An \
+integer is decimal digits only, without a sign."""
+long_doc = """\
+The decimal syntax is an optional sign, digits with at most one decimal \
+point, and an optional exponent (5, -0.5, .5, 5., +1e-3, 2.5E+07). A \
+number is 0 or not below the smallest normal double in magnitude; \
+hexadecimal, inf and nan are refused. A boolean is one of true, 1, yes, \
+on, false, 0, no, off, in any case."""
+integer_msg = "{what} must be an integer >= {min}, got '{tok}'"
+integer_range_msg = "{what} must be an integer from {min} to {max}, got '{tok}'"
+note_msg = " ({note})"
+finite_msg = "{what} must be a finite number, got '{tok}'{underflow}"
+positive_msg = "{what} must be a positive {noun}, got '{tok}'{underflow}"
+underflow_note = " (too small: its magnitude is below the smallest normal double, 2.2250738585072014e-308)"
+requires_value_msg = "{key} requires a value"
+single_value_msg = "{key} takes a single value (unexpected '{tok}')"
+bool_msg = "{what}: expected boolean (true/false/1/0/yes/no/on/off), got '{tok}'"
+timespec_msg = "{what} must be 'off', 'unlimited' or a time [[HH:]MM:]SS, got '{tok}'{underflow}"
+script_timeout_msg = "{what} must be a positive time, 'off' or 'unlimited' (a limit <= 0 stops every script), got '{tok}'"
+script_timeout_large_msg = "{what} is too large for the worker deadline, got '{tok}' (the PC_ISOLATION PROCESS deadline max(3t, t + 120 s) is kept in 64-bit milliseconds: t must stay below about 3.07e15 s)"
+untested = [
+  { msg = " ({note})", why = "A part of other messages, which their cases show." },
+]
+
+# ---------------------------------------------------------- structure ----
+
+[structure]
+doc = """\
+A block is the lines from NAME to ENDNAME, and keys outside every block \
+are top-level keys. A line that opens or closes a block holds its key \
+alone."""
+long_doc = """\
+A block opens only where its parents allow, an END line closes the \
+innermost open block, and every block is closed before the file ends. An \
+END line without an open block, or one that names another block than the \
+innermost, is refused. An unknown key is refused, at the top level and in \
+every block."""
+check_order = ["block_lines", "removed", "inner_refusal", "group_keys",
+               "init_restart_keys", "noise_keys", "log_hp", "strategy_keys",
+               "block_unknown", "root_keys"]
+end_without_open_msg = "{end} without matching {name}"
+end_mismatch_msg = "{end} does not close the innermost open block, the {open} block opened on line {open_line} (END{open} closes it)"
+end_takes_no_value_msg = "{end} closes the {name} block and takes no value (unexpected '{tok}')"
+open_takes_no_value_msg = "{name} opens a block and takes no value (unexpected '{tok}'); write each key on its own line inside the block"
+unclosed_msg = "{name} block not closed with {end}"
+unknown_root_msg = "unknown key \"{key}\""
+removed_msg = "'{key}' was removed from the grammar: {hint}"
+
+[[structure.invalid]]
+wrap = "root"
+text = "FOO 1"
+error = "unknown key \"FOO\""
+
+[[structure.invalid]]
+wrap = "end"
+text = "ENDSTRATEGY"
+error = "ENDSTRATEGY without matching STRATEGY"
+
+[[structure.invalid]]
+wrap = "end"
+text = "ENDOPTIMIZER"
+error = "ENDOPTIMIZER without matching OPTIMIZER"
+
+[[structure.invalid]]
+wrap = "strategy"
+text = "ENDOPTIMIZER"
+error = "ENDOPTIMIZER does not close the innermost open block, the STRATEGY block opened on line 4 (ENDSTRATEGY closes it)"
+
+[[structure.invalid]]
+wrap = "init"
+text = "ENDSTRATEGY"
+error = "ENDSTRATEGY does not close the innermost open block, the INIT block opened on line 4 (ENDINIT closes it)"
+
+[[structure.invalid]]
+wrap = "optimizer"
+text = "NOISE AUTO"
+error = "NOISE opens a block and takes no value (unexpected 'AUTO'); write each key on its own line inside the block"
+
+[[structure.invalid]]
+wrap = "noise"
+text = "ENDNOISE AUTO"
+error = "ENDNOISE closes the NOISE block and takes no value (unexpected 'AUTO')"
+
+[[structure.invalid]]
+wrap = "none"
+at = 3
+text = '''
+OPTIM CGRID2B (1) 0.5 1.5
+PC_ERMSE 0 1
+OPTIMIZER
+STRATEGY
+LIB NLOPT
+ALGO LN_SBPLX
+MAXEVAL 10
+ENDSTRATEGY'''
+error = "OPTIMIZER block not closed with ENDOPTIMIZER"
+
+[[structure.invalid]]
+wrap = "none"
+at = 4
+text = '''
+OPTIM CGRID2B (1) 0.5 1.5
+PC_ERMSE 0 1
+OPTIMIZER
+STRATEGY
+LIB NLOPT
+ALGO LN_SBPLX
+MAXEVAL 10'''
+error = "STRATEGY block not closed with ENDSTRATEGY"
+
+# -------------------------------------------------------------- groups ----
+
+[group.OPTIMIZER]
+doc = """\
+The keys of an optimiser: its LIB and ALGO, its stops and its settings. \
+They are valid in each block that configures an optimiser."""
+long_doc = """\
+A refusal of a key of the group when tadah hpo starts names the END line \
+of its optimiser. That is ENDOPTIMIZER for the STRATEGY-level optimiser, \
+whose keys are written in OPTIMIZER, STRATEGY or REFINE, and ENDEXPLORE \
+for the optimiser of the EXPLORE block."""
+blocks = ["OPTIMIZER", "STRATEGY", "EXPLORE", "REFINE", "INNER"]
+leftover_msg = "{key} takes no further value here (unexpected '{tok}')"
+
+[[group.OPTIMIZER.invalid]]
+wrap = "strategy"
+text = "SEED 1 2"
+error = "SEED takes no further value here (unexpected '2')"
+
+# -------------------------------------------------------------- blocks ----
+
+[[block]]
+name = "OPTIMIZER"
+end = "ENDOPTIMIZER"
+parents = ["ROOT"]
+repeat = "error"
+repeat_msg = "OPTIMIZER block given more than once (the first opens on line {first_line}); write every optimiser setting in one block"
+misplaced_msg = "OPTIMIZER block must appear at the top level of the file (it is inside the {parent} block opened on line {parent_line})"
+unknown_msg = "unknown key '{key}' in this block"
+doc = """\
+The search: its optimiser, its starting points, the noise settings and the \
+strategy. A target file has one OPTIMIZER block."""
+long_doc = """\
+The keys of the optimiser are written inside its STRATEGY block or \
+directly inside OPTIMIZER; both set the same optimiser, so each key is \
+given in one of them."""
+
+[[block.close_checks]]
+msg = "the OPTIMIZER block names no optimiser: {missing}; set LIB and ALGO in its STRATEGY block (or directly inside OPTIMIZER)"
+doc = """\
+At ENDOPTIMIZER, and at the end of a file without an OPTIMIZER block (that \
+refusal names no line), under STRATEGY TYPE PLAIN. {missing} is "LIB and \
+ALGO are not set", "LIB is not set" or "ALGO is not set"."""
+
+[[block.close_checks]]
+msg = "STRATEGY TYPE MULTISTART names no optimiser to run from each start: {missing}; set LIB and ALGO in the STRATEGY block"
+doc = "At ENDOPTIMIZER, under STRATEGY TYPE MULTISTART."
+
+[[block.close_checks]]
+msg = "STRATEGY TYPE PRESTAGE names no refinement optimiser: {missing}; set LIB and ALGO in the STRATEGY block or in a REFINE block"
+doc = "At ENDOPTIMIZER, under STRATEGY TYPE PRESTAGE."
+
+[[block.close_checks]]
+msg = "{phase}: unknown optimiser {lib}:{algo}: {why}; `tadah explain ALGO` lists the optimisers"
+doc = """\
+At ENDOPTIMIZER: LIB and ALGO name an optimiser of the optimiser list. \
+{phase} is "the STRATEGY-level optimiser", or "the PRESTAGE refinement" \
+under STRATEGY TYPE PRESTAGE."""
+
+[[block.close_checks]]
+msg = "{phase}: {lib}:{algo} is refused: {why}"
+doc = "At ENDOPTIMIZER: an optimiser the optimiser list refuses, with its reason."
+
+[[block.examples]]
+wrap = "none"
+text = '''
+OPTIM CGRID2B (1) 0.5 1.5
+PC_ERMSE 0 1
+OPTIMIZER
+LIB NLOPT
+ALGO LN_SBPLX
+MAXEVAL 10
+ENDOPTIMIZER'''
+
+[[block.invalid]]
+wrap = "end"
+text = "OPTIMIZER"
+error = "OPTIMIZER block given more than once (the first opens on line 3); write every optimiser setting in one block"
+
+[[block.invalid]]
+wrap = "strategy"
+text = "OPTIMIZER"
+error = "OPTIMIZER block must appear at the top level of the file (it is inside the STRATEGY block opened on line 4)"
+
+[[block.invalid]]
+wrap = "optimizer"
+text = "TYPE PLAIN"
+error = "unknown key 'TYPE' in this block"
+
+[[block.invalid]]
+wrap = "none"
+at = 3
+text = '''
+OPTIM CGRID2B (1) 0.5 1.5
+PC_ERMSE 0 1
+OPTIMIZER LIB NLOPT
+ALGO LN_SBPLX
+ENDOPTIMIZER'''
+error = "OPTIMIZER opens a block and takes no value (unexpected 'LIB'); write each key on its own line inside the block"
+
+[[block.invalid]]
+wrap = "none"
+at = "ENDOPTIMIZER"
+text = '''
+OPTIM CGRID2B (1) 0.5 1.5
+PC_ERMSE 0 1
+OPTIMIZER
+MAXEVAL 10
+ENDOPTIMIZER'''
+error = "the OPTIMIZER block names no optimiser: LIB and ALGO are not set; set LIB and ALGO in its STRATEGY block (or directly inside OPTIMIZER)"
+
+[[block.invalid]]
+wrap = "none"
+at = "ENDOPTIMIZER"
+text = '''
+OPTIM CGRID2B (1) 0.5 1.5
+PC_ERMSE 0 1
+OPTIMIZER
+STRATEGY
+TYPE MULTISTART
+LIB NLOPT
+ENDSTRATEGY
+ENDOPTIMIZER'''
+error = "STRATEGY TYPE MULTISTART names no optimiser to run from each start: ALGO is not set; set LIB and ALGO in the STRATEGY block"
+
+[[block.invalid]]
+wrap = "none"
+at = "ENDOPTIMIZER"
+text = '''
+OPTIM CGRID2B (1) 0.5 1.5
+PC_ERMSE 0 1
+OPTIMIZER
+STRATEGY
+TYPE PRESTAGE
+EXPLORE
+LIB TADAH
+ALGO RANDOM
+MAXEVAL 5
+ENDEXPLORE
+ENDSTRATEGY
+ENDOPTIMIZER'''
+error = "STRATEGY TYPE PRESTAGE names no refinement optimiser: LIB and ALGO are not set; set LIB and ALGO in the STRATEGY block or in a REFINE block"
+
+[[block.invalid]]
+wrap = "none"
+at = "ENDOPTIMIZER"
+text = '''
+OPTIM CGRID2B (1) 0.5 1.5
+PC_ERMSE 0 1
+OPTIMIZER
+LIB NLOPT
+ALGO LN_NOPE
+MAXEVAL 10
+ENDOPTIMIZER'''
+error = "the STRATEGY-level optimiser: unknown optimiser NLOPT:LN_NOPE: LIB NLOPT has no ALGO LN_NOPE; `tadah explain ALGO` lists the optimisers"
+
+[[block.invalid]]
+wrap = "none"
+at = "ENDOPTIMIZER"
+text = '''
+OPTIM CGRID2B (1) 0.5 1.5
+PC_ERMSE 0 1
+OPTIMIZER
+LIB CERES
+ALGO DOGLEG
+MAXEVAL 10
+ENDOPTIMIZER'''
+error = "the STRATEGY-level optimiser: CERES:DOGLEG is refused: tadah hpo does not run Ceres' least-squares solver (LEVENBERG_MARQUARDT, DOGLEG, SUBSPACE_DOGLEG): it minimises a sum of squared residuals with their derivatives, and tadah hpo gives an optimiser one scalar loss, over which these methods degenerate. The recommended replacements are CERES:STEEPEST_DESCENT, Ceres' line-search solver of a scalar loss that tadah hpo runs, and the bound-constrained gradient searches NLOPT:LD_LBFGS and DLIB:BFGS"
+
+[[block]]
+name = "STRATEGY"
+end = "ENDSTRATEGY"
+parents = ["OPTIMIZER"]
+repeat = "error"
+repeat_msg = "STRATEGY block given more than once (the first opens on line {first_line}); write every STRATEGY key in one block"
+misplaced_msg = "STRATEGY block must appear inside OPTIMIZER (OUTER level)"
+unknown_msg = "unknown key '{key}' inside STRATEGY block"
+doc = """\
+How the search runs its optimiser: once (TYPE PLAIN), from several \
+starting points (MULTISTART), or as an exploration followed by a \
+refinement (PRESTAGE). Without a STRATEGY block the search is PLAIN."""
+long_doc = """\
+Its optimiser keys set the STRATEGY-level optimiser."""
+
+[[block.close_checks]]
+msg = "{key} is not accepted with STRATEGY TYPE {type}{note}: {effect}, so it would have no effect; set TYPE {home} or remove {key}"
+doc = """\
+At ENDSTRATEGY, reported at the line of the key: a key of one TYPE (the \
+STRATEGY types) is checked against the TYPE the block ends with, so TYPE \
+may follow it. {note} is " (the default when the block has no TYPE line)" \
+when the block has no TYPE line, and empty otherwise."""
+
+[[block.examples]]
+wrap = "optimizer"
+text = '''
+STRATEGY
+TYPE PLAIN
+ENDSTRATEGY'''
+
+[[block.invalid]]
+wrap = "root"
+text = "STRATEGY"
+error = "STRATEGY block must appear inside OPTIMIZER (OUTER level)"
+
+[[block.invalid]]
+wrap = "explore"
+text = "STRATEGY"
+error = "STRATEGY block must appear inside OPTIMIZER (OUTER level)"
+
+[[block.invalid]]
+wrap = "none"
+at = 9
+text = '''
+OPTIM CGRID2B (1) 0.5 1.5
+PC_ERMSE 0 1
+OPTIMIZER
+STRATEGY
+LIB NLOPT
+ALGO LN_SBPLX
+MAXEVAL 10
+ENDSTRATEGY
+STRATEGY
+ENDSTRATEGY
+ENDOPTIMIZER'''
+error = "STRATEGY block given more than once (the first opens on line 4); write every STRATEGY key in one block"
+
+[[block.invalid]]
+wrap = "strategy"
+text = "AFTER_STAGNATION 3"
+error = "unknown key 'AFTER_STAGNATION' inside STRATEGY block"
+
+[[block.invalid]]
+wrap = "strategy"
+text = "N_STARTS 4"
+error = "N_STARTS is not accepted with STRATEGY TYPE PLAIN (the default when the block has no TYPE line): only TYPE MULTISTART runs N_STARTS starts, so it would have no effect; set TYPE MULTISTART or remove N_STARTS"
+
+[[block]]
+name = "INIT"
+end = "ENDINIT"
+parents = ["OPTIMIZER", "STRATEGY", "EXPLORE", "REFINE"]
+repeat = "merge"
+misplaced_msg = "INIT block must appear inside OPTIMIZER, STRATEGY, EXPLORE, or REFINE"
+unknown_msg = "unknown key '{key}' inside INIT block"
+unknown_first = true
+aliases = { STRATEGY = "INIT.METHOD" }
+unreachable_msgs = ["INIT block requires an active OptimizerSpec"]
+quirk = """\
+An INIT block inside OPTIMIZER, STRATEGY or REFINE sets the starting \
+points of the one STRATEGY-level optimiser. The METHOD lines of these \
+blocks make one chain, in the order of the file, and each other key is \
+given in one of them."""
+doc = """\
+The starting points of the optimiser of the block around it: a chain of \
+METHOD lines, each adding points. Inside an INIT block a STRATEGY line is \
+read as a METHOD line."""
+long_doc = """\
+A second INIT block in the same block continues the first, and a key other \
+than METHOD set in both is refused."""
+
+[[block.examples]]
+wrap = "strategy"
+text = '''
+INIT
+METHOD LHS 4
+ENDINIT'''
+
+[[block.examples]]
+wrap = "none"
+doc = "Two INIT blocks of one block make one chain: the values of the training configuration, then 3 Latin hypercube points."
+text = '''
+OPTIM CGRID2B (1) 0.5 1.5
+PC_ERMSE 0 1
+OPTIMIZER
+INIT
+METHOD CONFIG
+ENDINIT
+INIT
+METHOD LHS 3
+ENDINIT
+LIB NLOPT
+ALGO LN_SBPLX
+MAXEVAL 10
+ENDOPTIMIZER'''
+
+[[block.invalid]]
+wrap = "root"
+text = "INIT"
+error = "INIT block must appear inside OPTIMIZER, STRATEGY, EXPLORE, or REFINE"
+
+[[block.invalid]]
+wrap = "inner"
+text = "INIT"
+error = "INIT block must appear inside OPTIMIZER, STRATEGY, EXPLORE, or REFINE"
+
+[[block.invalid]]
+wrap = "init"
+text = "LIB NLOPT"
+error = "unknown key 'LIB' inside INIT block"
+
+[[block.invalid]]
+wrap = "init"
+text = "LOG_HP 10"
+error = "unknown key 'LOG_HP' inside INIT block"
+
+[[block]]
+name = "NOISE"
+end = "ENDNOISE"
+parents = ["OPTIMIZER"]
+repeat = "merge"
+misplaced_msg = "NOISE block must appear inside OPTIMIZER (OUTER level)"
+unknown_msg = "unknown key '{key}' inside NOISE block (only AUTO and CALIBRATION are valid)"
+unknown_first = true
+doc = """\
+The noise settings of the STRATEGY-level optimiser: AUTO derives the \
+finite-difference step from the OPTIM boxes, and CALIBRATION measures the \
+noise of the loss at the first starting point before the search. No \
+optimiser receives its lines."""
+long_doc = """\
+A second NOISE block continues the first, and a key set in both is \
+refused."""
+
+[[block.examples]]
+wrap = "optimizer"
+text = '''
+NOISE
+CALIBRATION 5
+ENDNOISE'''
+
+[[block.invalid]]
+wrap = "strategy"
+text = "NOISE"
+error = "NOISE block must appear inside OPTIMIZER (OUTER level)"
+
+[[block.invalid]]
+wrap = "noise"
+text = "MAXEVAL 5"
+error = "unknown key 'MAXEVAL' inside NOISE block (only AUTO and CALIBRATION are valid)"
+
+[[block]]
+name = "EXPLORE"
+end = "ENDEXPLORE"
+parents = ["STRATEGY"]
+repeat = "merge"
+misplaced_msg = "EXPLORE block must appear inside STRATEGY"
+unknown_msg = "unknown key '{key}' inside EXPLORE block"
+doc = """\
+The exploration of STRATEGY TYPE PRESTAGE: an optimiser of its own, whose \
+best candidates (TOPK) the refinement starts from. A second EXPLORE block \
+continues the first, and a key set in both is refused."""
+
+[[block.requires]]
+msg = "EXPLORE block is only valid with TYPE PRESTAGE (declare TYPE before EXPLORE)"
+doc = "At the EXPLORE line: the STRATEGY block has TYPE PRESTAGE before it."
+
+[[block.close_checks]]
+msg = "the EXPLORE block names no optimiser: {missing}; set LIB and ALGO inside the EXPLORE block (the exploration phase of STRATEGY TYPE PRESTAGE)"
+doc = "At ENDEXPLORE: the exploration has LIB and ALGO."
+
+[[block.close_checks]]
+msg = "the EXPLORE block: unknown optimiser {lib}:{algo}: {why}; `tadah explain ALGO` lists the optimisers"
+doc = "At ENDEXPLORE: LIB and ALGO name an optimiser of the optimiser list."
+
+[[block.close_checks]]
+msg = "the EXPLORE block: {lib}:{algo} is refused: {why}"
+doc = "At ENDEXPLORE: an optimiser the optimiser list refuses, with its reason."
+
+[[block.examples]]
+wrap = "strategy"
+text = '''
+TYPE PRESTAGE
+EXPLORE
+LIB TADAH
+ALGO RANDOM
+MAXEVAL 5
+ENDEXPLORE'''
+
+[[block.invalid]]
+wrap = "strategy"
+text = "EXPLORE"
+error = "EXPLORE block is only valid with TYPE PRESTAGE (declare TYPE before EXPLORE)"
+
+[[block.invalid]]
+wrap = "optimizer"
+text = "EXPLORE"
+error = "EXPLORE block must appear inside STRATEGY"
+
+[[block.invalid]]
+wrap = "explore"
+text = "TOPK 2"
+error = "unknown key 'TOPK' inside EXPLORE block"
+
+[[block.invalid]]
+wrap = "strategy"
+at = 7
+doc = "A TYPE line after the EXPLORE block is a second TYPE line."
+text = '''
+TYPE PRESTAGE
+EXPLORE
+LIB TADAH
+ALGO RANDOM
+MAXEVAL 5
+ENDEXPLORE
+TYPE PLAIN'''
+error = "TYPE is set twice in the STRATEGY block (first on line 8); each key is given once"
+msg_of = "STRATEGY.TYPE"
+
+[[block.invalid]]
+wrap = "strategy"
+at = "ENDEXPLORE"
+text = '''
+TYPE PRESTAGE
+EXPLORE
+MAXEVAL 5
+ENDEXPLORE'''
+error = "the EXPLORE block names no optimiser: LIB and ALGO are not set; set LIB and ALGO inside the EXPLORE block (the exploration phase of STRATEGY TYPE PRESTAGE)"
+
+[[block.invalid]]
+wrap = "none"
+at = "ENDEXPLORE"
+text = '''
+OPTIM CGRID2B (1) 0.5 1.5
+PC_ERMSE 0 1
+OPTIMIZER
+STRATEGY
+TYPE PRESTAGE
+LIB NLOPT
+ALGO LN_SBPLX
+MAXEVAL 10
+EXPLORE
+LIB TADAH
+ALGO NOPE
+MAXEVAL 5
+ENDEXPLORE
+ENDSTRATEGY
+ENDOPTIMIZER'''
+error = "the EXPLORE block: unknown optimiser TADAH:NOPE: LIB TADAH has no ALGO NOPE; `tadah explain ALGO` lists the optimisers"
+
+[[block.invalid]]
+wrap = "none"
+at = "ENDEXPLORE"
+doc = "An optimiser of the exploration that the optimiser list refuses."
+text = '''
+OPTIM CGRID2B (1) 0.5 1.5
+PC_ERMSE 0 1
+OPTIMIZER
+STRATEGY
+TYPE PRESTAGE
+LIB NLOPT
+ALGO LN_SBPLX
+MAXEVAL 10
+EXPLORE
+LIB CERES
+ALGO DOGLEG
+MAXEVAL 5
+ENDEXPLORE
+ENDSTRATEGY
+ENDOPTIMIZER'''
+error = "the EXPLORE block: CERES:DOGLEG is refused: tadah hpo does not run Ceres' least-squares solver (LEVENBERG_MARQUARDT, DOGLEG, SUBSPACE_DOGLEG): it minimises a sum of squared residuals with their derivatives, and tadah hpo gives an optimiser one scalar loss, over which these methods degenerate. The recommended replacements are CERES:STEEPEST_DESCENT, Ceres' line-search solver of a scalar loss that tadah hpo runs, and the bound-constrained gradient searches NLOPT:LD_LBFGS and DLIB:BFGS"
+
+[[block]]
+name = "REFINE"
+end = "ENDREFINE"
+parents = ["STRATEGY"]
+repeat = "merge"
+misplaced_msg = "REFINE block must appear inside STRATEGY"
+unknown_msg = "unknown key '{key}' inside REFINE block"
+quirk = """\
+The REFINE block sets the STRATEGY-level optimiser, as the STRATEGY block \
+does. A key given in both is refused, an INIT block in either adds to the \
+same chain, and an INNER block in each is refused as given twice."""
+doc = """\
+The refinement of STRATEGY TYPE PRESTAGE, started from the best candidates \
+of the exploration. Without a REFINE block the STRATEGY-level optimiser \
+refines."""
+long_doc = """\
+A second REFINE block continues the first, and a key set in both is \
+refused."""
+
+[[block.requires]]
+msg = "REFINE block is only valid with TYPE PRESTAGE (declare TYPE before REFINE)"
+doc = "At the REFINE line: the STRATEGY block has TYPE PRESTAGE before it."
+
+[[block.examples]]
+wrap = "none"
+text = '''
+OPTIM CGRID2B (1) 0.5 1.5
+PC_ERMSE 0 1
+OPTIMIZER
+STRATEGY
+TYPE PRESTAGE
+EXPLORE
+LIB TADAH
+ALGO RANDOM
+MAXEVAL 5
+ENDEXPLORE
+REFINE
+LIB NLOPT
+ALGO LN_BOBYQA
+MAXEVAL 8
+ENDREFINE
+ENDSTRATEGY
+ENDOPTIMIZER'''
+
+[[block.invalid]]
+wrap = "strategy"
+text = "REFINE"
+error = "REFINE block is only valid with TYPE PRESTAGE (declare TYPE before REFINE)"
+
+[[block.invalid]]
+wrap = "optimizer"
+text = "REFINE"
+error = "REFINE block must appear inside STRATEGY"
+
+[[block.invalid]]
+wrap = "refine"
+text = "TYPE PLAIN"
+error = "unknown key 'TYPE' inside REFINE block"
+
+[[block.invalid]]
+wrap = "strategy"
+at = 9
+doc = "A TYPE line after the REFINE block is a second TYPE line."
+text = '''
+TYPE PRESTAGE
+REFINE
+ENDREFINE
+EXPLORE
+LIB TADAH
+ALGO RANDOM
+MAXEVAL 5
+ENDEXPLORE
+TYPE MULTISTART'''
+error = "TYPE is set twice in the STRATEGY block (first on line 8); each key is given once"
+msg_of = "STRATEGY.TYPE"
+
+[[block.invalid]]
+wrap = "strategy"
+at = 11
+text = '''
+TYPE PRESTAGE
+INNER
+LIB NLOPT
+ALGO LN_BOBYQA
+ENDINNER
+EXPLORE
+LIB TADAH
+ALGO RANDOM
+ENDEXPLORE
+REFINE
+INNER'''
+error = "INNER block specified more than once in this scope"
+
+[[block]]
+name = "INNER"
+end = "ENDINNER"
+parents = ["STRATEGY", "EXPLORE", "REFINE"]
+repeat = "error_per_parent"
+repeat_msg = "INNER block specified more than once in this scope"
+misplaced_msg = "INNER block must appear inside STRATEGY, EXPLORE, or REFINE (it configures the MLSL/AUGLAG inner local sub-optimiser)"
+unknown_msg = "unknown key '{key}' inside INNER block (only {keys} are valid)"
+refuse_msg = "{key} is not accepted inside an INNER block: {why}; set {key} on the enclosing {enclosing} block"
+refuse = [
+  { key = "SEED", why = "NLopt draws the INNER search from the enclosing run's random stream" },
+  { key = "GRAD_STRATEGY", why = "the enclosing block's GRAD_STRATEGY applies to its local search" },
+  { key = "STOPVAL", why = "NLopt's MLSL and AUGLAG replace the INNER search's STOPVAL with the enclosing block's" },
+]
+unreachable_msgs = ["INNER block has no parent OptimizerSpec"]
+doc = """\
+The local search that NLopt's MLSL and AUGLAG run inside the run of the \
+block around it. There is one INNER block for each optimiser: the STRATEGY \
+and REFINE blocks share one, and so do two EXPLORE blocks."""
+long_doc = """\
+It takes the keys of the optimiser group except SEED, GRAD_STRATEGY and \
+STOPVAL, which the enclosing block sets. Under an MLSL, an INNER search \
+with none of FTOL_REL, FTOL_ABS and XTOL_REL above 0 runs with NLopt's \
+FTOL_REL 1e-15 and XTOL_REL 1e-7."""
+quirk = """\
+The rule is one INNER block for each optimiser, not for each enclosing \
+block: an INNER block in REFINE after one in STRATEGY is refused as given \
+twice, and so is one in a second EXPLORE block."""
+
+[[block.close_checks]]
+msg = "the INNER block inside {enclosing} names no optimiser: {missing}; set LIB and ALGO inside the INNER block (the local optimiser that NLopt's MLSL and AUGLAG run)"
+doc = "At ENDINNER: the INNER search has LIB and ALGO. {enclosing} is STRATEGY, EXPLORE or REFINE."
+
+[[block.close_checks]]
+msg = "the INNER block inside {enclosing}: unknown optimiser {lib}:{algo}: {why}; `tadah explain ALGO` lists the optimisers"
+doc = "At ENDINNER, with LIB NLOPT: ALGO names an NLopt algorithm of the optimiser list."
+
+[[block.close_checks]]
+msg = "the INNER block inside {enclosing}: {lib}:{algo} is refused: {why}"
+doc = "At ENDINNER, with LIB NLOPT: an NLopt algorithm the optimiser list refuses."
+
+[[block.examples]]
+wrap = "none"
+doc = "An INNER block sets the local search of an MLSL or AUGLAG algorithm."
+text = '''
+OPTIM CGRID2B (1) 0.5 1.5
+PC_ERMSE 0 1
+OPTIMIZER
+STRATEGY
+LIB NLOPT
+ALGO LN_AUGLAG
+MAXEVAL 10
+INNER
+LIB NLOPT
+ALGO LN_BOBYQA
+ENDINNER
+ENDSTRATEGY
+ENDOPTIMIZER'''
+
+[[block.invalid]]
+wrap = "optimizer"
+text = "INNER"
+error = "INNER block must appear inside STRATEGY, EXPLORE, or REFINE (it configures the MLSL/AUGLAG inner local sub-optimiser)"
+
+[[block.invalid]]
+wrap = "strategy"
+at = 5
+text = '''
+INNER
+LIB NLOPT
+ALGO LN_BOBYQA
+ENDINNER
+INNER'''
+error = "INNER block specified more than once in this scope"
+
+[[block.invalid]]
+wrap = "inner"
+text = "SEED 1"
+error = "SEED is not accepted inside an INNER block: NLopt draws the INNER search from the enclosing run's random stream; set SEED on the enclosing STRATEGY block"
+
+[[block.invalid]]
+wrap = "inner"
+text = "GRAD_STRATEGY NUMERICAL"
+error = "GRAD_STRATEGY is not accepted inside an INNER block: the enclosing block's GRAD_STRATEGY applies to its local search; set GRAD_STRATEGY on the enclosing STRATEGY block"
+
+[[block.invalid]]
+wrap = "inner"
+text = "STOPVAL 0"
+error = "STOPVAL is not accepted inside an INNER block: NLopt's MLSL and AUGLAG replace the INNER search's STOPVAL with the enclosing block's; set STOPVAL on the enclosing STRATEGY block"
+
+[[block.invalid]]
+wrap = "inner"
+text = "TYPE PLAIN"
+error = "unknown key 'TYPE' inside INNER block (only LIB/ALGO/MAXEVAL/MAXTIME/FTOL_REL/FTOL_ABS/XTOL_REL/XTOL_ABS/POPULATION/STEP/VECTOR_ARR/THREADS/PARAM are valid)"
+
+[[block.invalid]]
+wrap = "strategy"
+at = "ENDINNER"
+text = '''
+INNER
+MAXEVAL 5
+ENDINNER'''
+error = "the INNER block inside STRATEGY names no optimiser: LIB and ALGO are not set; set LIB and ALGO inside the INNER block (the local optimiser that NLopt's MLSL and AUGLAG run)"
+
+[[block.invalid]]
+wrap = "none"
+at = "ENDINNER"
+text = '''
+OPTIM CGRID2B (1) 0.5 1.5
+PC_ERMSE 0 1
+OPTIMIZER
+STRATEGY
+LIB NLOPT
+ALGO LN_AUGLAG
+MAXEVAL 10
+INNER
+LIB NLOPT
+ALGO LN_NOPE
+ENDINNER
+ENDSTRATEGY
+ENDOPTIMIZER'''
+error = "the INNER block inside STRATEGY: unknown optimiser NLOPT:LN_NOPE: LIB NLOPT has no ALGO LN_NOPE; `tadah explain ALGO` lists the optimisers"
+
+[[block.invalid]]
+wrap = "none"
+at = "ENDINNER"
+doc = "An INNER optimiser that the optimiser list refuses."
+text = '''
+OPTIM CGRID2B (1) 0.5 1.5
+PC_ERMSE 0 1
+OPTIMIZER
+STRATEGY
+LIB NLOPT
+ALGO LN_AUGLAG
+MAXEVAL 10
+INNER
+LIB NLOPT
+ALGO LN_NEWUOA
+ENDINNER
+ENDSTRATEGY
+ENDOPTIMIZER'''
+error = "the INNER block inside STRATEGY: NLOPT:LN_NEWUOA is refused: NLopt 2.10 runs LN_NEWUOA without the OPTIM box: it passes NEWUOA no bounds, so its evaluations leave the box and the best potential can lie outside the bounds the configuration sets (a 2-D run made 20 of its 25 evaluations outside the box, and its best was one of them). It also needs two OPTIM dimensions or more. The recommended replacement is NLOPT:LN_BOBYQA, Powell's bound-constrained successor of NEWUOA (its STEP rescales each dimension instead of setting one radius)"
+
+[[block]]
+name = "RESTART"
+end = "ENDRESTART"
+parents = ["STRATEGY"]
+repeat = "merge"
+misplaced_msg = "RESTART block must appear inside STRATEGY"
+unknown_msg = "unknown key '{key}' inside RESTART block"
+unknown_first = true
+aliases = { STRATEGY = "INIT.METHOD" }
+doc = """\
+The stagnation restart of the STRATEGY-level optimiser: when to restart, \
+how often, and the chain of METHOD lines that draws the points of each \
+restart. A run on more than one MPI rank refuses an active RESTART block."""
+long_doc = """\
+A second RESTART block continues the first. Inside a RESTART block a \
+STRATEGY line is read as a METHOD line."""
+
+[[block.examples]]
+wrap = "strategy"
+text = '''
+RESTART
+AFTER_STAGNATION 20
+MAX 3
+METHOD RANDOM 2
+ENDRESTART'''
+
+[[block.invalid]]
+wrap = "optimizer"
+text = "RESTART"
+error = "RESTART block must appear inside STRATEGY"
+
+[[block.invalid]]
+wrap = "explore"
+text = "RESTART"
+error = "RESTART block must appear inside STRATEGY"
+
+[[block.invalid]]
+wrap = "restart"
+text = "LIB NLOPT"
+error = "unknown key 'LIB' inside RESTART block"
+
+# ----------------------------------------------------- top-level keys ----
+# The top-level keys of this file: the failure loss, the PC_LAMMPS script
+# limits, the output files, the density conditions of a DM_REAM potential
+# and the coordinates of the search. Inside a block each of them is an
+# unknown key of that block.
+
+[[key]]
+id = "ROOT.FAILSCORE"
+name = "FAILSCORE"
+blocks = ["ROOT"]
+synopsis = "FAILSCORE <loss>"
+args = [ { name = "loss", kind = "positive", what = "{key}", noun = "finite number" } ]
+repeat = "error"
+repeat_msg = "FAILSCORE is set twice (first on line {first_line}) and no PC_LAMMPS or PC_FAILPROBE line between takes the first; each key is given once"
+repeat_doc = "Again only after a PC_LAMMPS or PC_FAILPROBE line, which takes the value given above it; a second line with no such line between is refused."
+default = { text = "the largest finite double, 1.7976931348623157e308" }
+doc = """\
+The loss of a failed evaluation under FAILSCORE_GRADING OFF, and the \
+largest loss an evaluation can have: a larger loss is lowered to it. A \
+loss at or above 0.999 FAILSCORE counts as a failure."""
+long_doc = """\
+A PC_LAMMPS line without --failscore gives its variables this value when \
+its simulation fails, and a PC_FAILPROBE line takes it as its --failscore. \
+FAILSCORE_GRADING ON needs a FAILSCORE below 1e300."""
+quirk = """\
+A PC_LAMMPS or PC_FAILPROBE line takes the FAILSCORE of the lines above \
+it: a FAILSCORE line below it leaves that line's failure value as it was. \
+The loss of a failed evaluation is the value of the last FAILSCORE line."""
+
+[[key.examples]]
+wrap = "root"
+text = "FAILSCORE 1e9"
+
+[[key.invalid]]
+wrap = "root"
+text = "FAILSCORE 0"
+error = "FAILSCORE must be a positive finite number, got '0'"
+
+[[key.invalid]]
+wrap = "root"
+text = "FAILSCORE inf"
+error = "FAILSCORE must be a positive finite number, got 'inf'"
+
+[[key.invalid]]
+wrap = "root"
+text = "FAILSCORE 1e-320"
+error = "FAILSCORE must be a positive finite number, got '1e-320' (too small: its magnitude is below the smallest normal double, 2.2250738585072014e-308)"
+
+[[key.invalid]]
+wrap = "root"
+text = "FAILSCORE"
+error = "FAILSCORE requires a value"
+
+[[key.invalid]]
+wrap = "root"
+text = "FAILSCORE 1e9 1e10"
+error = "FAILSCORE takes a single value (unexpected '1e10')"
+
+[[key.invalid]]
+wrap = "optimizer"
+text = "FAILSCORE 1e9"
+error = "unknown key 'FAILSCORE' in this block"
+
+[[key.invalid]]
+wrap = "strategy"
+text = "FAILSCORE 1e9"
+error = "unknown key 'FAILSCORE' inside STRATEGY block"
+
+[[key.invalid]]
+wrap = "root"
+at = 2
+text = '''
+FAILSCORE 1e9
+FAILSCORE 1e10'''
+error = "FAILSCORE is set twice (first on line 1) and no PC_LAMMPS or PC_FAILPROBE line between takes the first; each key is given once"
+
+[[key]]
+id = "ROOT.PC_SCRIPT_TIMEOUT"
+name = "PC_SCRIPT_TIMEOUT"
+blocks = ["ROOT"]
+synopsis = "PC_SCRIPT_TIMEOUT <time>"
+args = [ { name = "time", kind = "timespec", what = "{key}", doc = "off, unlimited, or a positive time [[HH:]MM:]SS." } ]
+repeat = "error"
+repeat_msg = "PC_SCRIPT_TIMEOUT is set twice (first on line {first_line}) and no PC_LAMMPS or PC_FAILPROBE line between takes the first; each key is given once"
+repeat_doc = "Again only after a PC_LAMMPS or PC_FAILPROBE line, which takes the value given above it; a second line with no such line between is refused. PC_SCRIPT_TIMEOUT and MAXTIME are one key."
+default = { literal = "off" }
+doc = """\
+The wall-clock limit of each section of a PC_LAMMPS and PC_FAILPROBE \
+script: the lines up to the first clear, and those after each clear. A \
+section that reaches it stops the script, and its simulation counts as \
+failed."""
+long_doc = """\
+The limit is set in each script as LAMMPS `timer timeout` at its start and \
+after every clear, so each section has the whole limit; the --maxtime \
+option of a line sets that line's own. A script with a timer command of \
+its own gets no limit. Under PC_ISOLATION PROCESS a script limit t also \
+sets the deadline of a worker task, max(3t, t + 120 s), unless \
+PC_WORKER_TIMEOUT sets one. MAXTIME is another name for this key."""
+quirk = """\
+A PC_LAMMPS or PC_FAILPROBE line takes the limit of the lines above it: a \
+PC_SCRIPT_TIMEOUT line below it changes neither that line's limit nor the \
+deadline of its worker tasks. The deadline in the summary of hpo_run.log \
+is that of the last line."""
+
+[[key.examples]]
+wrap = "root"
+text = "PC_SCRIPT_TIMEOUT 1:30:00"
+
+[[key.examples]]
+doc = "A time in seconds."
+wrap = "root"
+text = "PC_SCRIPT_TIMEOUT 600"
+
+[[key.examples]]
+doc = "No limit."
+wrap = "root"
+text = "PC_SCRIPT_TIMEOUT unlimited"
+
+[[key.invalid]]
+wrap = "root"
+text = "PC_SCRIPT_TIMEOUT 0"
+error = "PC_SCRIPT_TIMEOUT must be a positive time, 'off' or 'unlimited' (a limit <= 0 stops every script), got '0'"
+
+[[key.invalid]]
+wrap = "root"
+text = "PC_SCRIPT_TIMEOUT OFF"
+error = "PC_SCRIPT_TIMEOUT must be 'off', 'unlimited' or a time [[HH:]MM:]SS, got 'OFF'"
+
+[[key.invalid]]
+wrap = "root"
+text = "PC_SCRIPT_TIMEOUT 1:2:3:4"
+error = "PC_SCRIPT_TIMEOUT must be 'off', 'unlimited' or a time [[HH:]MM:]SS, got '1:2:3:4'"
+
+[[key.invalid]]
+wrap = "root"
+text = "PC_SCRIPT_TIMEOUT 1e-320"
+error = "PC_SCRIPT_TIMEOUT must be 'off', 'unlimited' or a time [[HH:]MM:]SS, got '1e-320' (too small: its magnitude is below the smallest normal double, 2.2250738585072014e-308)"
+
+[[key.invalid]]
+wrap = "root"
+text = "PC_SCRIPT_TIMEOUT 1e16"
+error = "PC_SCRIPT_TIMEOUT is too large for the worker deadline, got '1e16' (the PC_ISOLATION PROCESS deadline max(3t, t + 120 s) is kept in 64-bit milliseconds: t must stay below about 3.07e15 s)"
+
+[[key.invalid]]
+wrap = "root"
+text = "PC_SCRIPT_TIMEOUT 10 20"
+error = "PC_SCRIPT_TIMEOUT takes a single value (unexpected '20')"
+
+[[key.invalid]]
+wrap = "root"
+at = 2
+text = '''
+PC_SCRIPT_TIMEOUT 600
+PC_SCRIPT_TIMEOUT 300'''
+error = "PC_SCRIPT_TIMEOUT is set twice (first on line 1) and no PC_LAMMPS or PC_FAILPROBE line between takes the first; each key is given once"
+
+[[key]]
+id = "ROOT.MAXTIME"
+name = "MAXTIME"
+blocks = ["ROOT"]
+synopsis = "MAXTIME <time>"
+args = [ { name = "time", kind = "timespec", what = "{key}", doc = "off, unlimited, or a positive time [[HH:]MM:]SS." } ]
+repeat = "error"
+repeat_msg = "MAXTIME is set twice (first on line {first_line}) and no PC_LAMMPS or PC_FAILPROBE line between takes the first; each key is given once"
+repeat_doc = "Again only after a PC_LAMMPS or PC_FAILPROBE line, which takes the value given above it; a second line with no such line between is refused. MAXTIME and PC_SCRIPT_TIMEOUT are one key."
+alias_of = "ROOT.PC_SCRIPT_TIMEOUT"
+default = { literal = "off" }
+doc = """\
+Another name for PC_SCRIPT_TIMEOUT, the wall-clock limit of each section \
+of a PC_LAMMPS and PC_FAILPROBE script."""
+long_doc = """\
+The two names are one key: a second line, of either name, comes only \
+after a PC_LAMMPS or PC_FAILPROBE line that takes the first. When both \
+names are given, \
+hpo_run.log has a warning; with MAXTIME alone, it names PC_SCRIPT_TIMEOUT \
+as the preferred name."""
+quirk = """\
+MAXTIME at the top level is the script limit PC_SCRIPT_TIMEOUT, while \
+MAXTIME inside OPTIMIZER, STRATEGY, EXPLORE, REFINE or INNER is a time \
+limit of the search: the same word names two settings."""
+
+[[key.examples]]
+wrap = "root"
+text = "MAXTIME 10:00"
+
+[[key.invalid]]
+wrap = "root"
+text = "MAXTIME 0"
+error = "MAXTIME must be a positive time, 'off' or 'unlimited' (a limit <= 0 stops every script), got '0'"
+
+[[key.invalid]]
+wrap = "root"
+text = "MAXTIME 1h"
+error = "MAXTIME must be 'off', 'unlimited' or a time [[HH:]MM:]SS, got '1h'"
+
+[[key.invalid]]
+wrap = "root"
+at = 2
+text = '''
+MAXTIME 10:00
+MAXTIME 5:00'''
+error = "MAXTIME is set twice (first on line 1) and no PC_LAMMPS or PC_FAILPROBE line between takes the first; each key is given once"
+
+[[key.invalid]]
+wrap = "root"
+at = 2
+doc = "Both names, with no PC_LAMMPS line between."
+text = '''
+MAXTIME 10:00
+PC_SCRIPT_TIMEOUT 5:00'''
+error = "PC_SCRIPT_TIMEOUT is set twice (first on line 1, as MAXTIME) and no PC_LAMMPS or PC_FAILPROBE line between takes the first; each key is given once"
+msg_of = "RULE.settings_taken_by_lines"
+
+[[key]]
+id = "ROOT.PC_ISOLATION"
+name = "PC_ISOLATION"
+blocks = ["ROOT"]
+synopsis = "PC_ISOLATION THREAD | PROCESS"
+args = [ { name = "mode", kind = "word", words = ["THREAD", "PROCESS"], msg = "PC_ISOLATION must be THREAD or PROCESS, got '{tok}'" } ]
+repeat = "error"
+repeat_msg = "PC_ISOLATION is set twice (first on line {first_line}); each key is given once"
+default = { text = "PROCESS; THREAD in the MPI build of tadah" }
+env = "TADAH_PC_ISOLATION"
+doc = """\
+Where the PC_LAMMPS and PC_FAILPROBE scripts run: PROCESS runs them in \
+worker processes, one per worker of the pool, and THREAD runs them inside \
+the tadah process."""
+long_doc = """\
+Under PROCESS each worker process has its own LAMMPS library state, and a \
+task that passes its deadline (PC_WORKER_TIMEOUT) is stopped. PROCESS is \
+the supported mode of the serial build: there THREAD is deprecated, and \
+hpo_run.log has a warning when the run uses it. The MPI build refuses \
+PROCESS when the file or TADAH_PC_ISOLATION sets it."""
+checks = [
+  { msg = "PC_ISOLATION PROCESS is not supported in the MPI build (TADAH_HPO_MPI): the worker processes cannot initialize MPI. Use the serial build, or PC_ISOLATION THREAD.", doc = "When the run starts, in the MPI build of tadah: the file or TADAH_PC_ISOLATION sets PROCESS. The message names no line." },
+]
+untested = [
+  { msg = "PC_ISOLATION PROCESS is not supported in the MPI build (TADAH_HPO_MPI): the worker processes cannot initialize MPI. Use the serial build, or PC_ISOLATION THREAD.", why = "The MPI build only; the cases run in the serial build." },
+]
+
+[[key.examples]]
+wrap = "root"
+doc = "In the serial build, hpo_run.log has a warning that THREAD is deprecated."
+text = "PC_ISOLATION THREAD"
+
+[[key.examples]]
+wrap = "root"
+doc = "The default of the serial build, written out."
+text = "PC_ISOLATION PROCESS"
+
+[[key.invalid]]
+wrap = "root"
+text = "PC_ISOLATION process"
+error = "PC_ISOLATION must be THREAD or PROCESS, got 'process'"
+
+[[key.invalid]]
+wrap = "root"
+text = "PC_ISOLATION"
+error = "PC_ISOLATION requires a value"
+
+[[key.invalid]]
+wrap = "root"
+at = 2
+text = '''
+PC_ISOLATION THREAD
+PC_ISOLATION THREAD'''
+error = "PC_ISOLATION is set twice (first on line 1); each key is given once"
+
+[[key]]
+id = "ROOT.PC_WORKER_TIMEOUT"
+name = "PC_WORKER_TIMEOUT"
+blocks = ["ROOT"]
+synopsis = "PC_WORKER_TIMEOUT <seconds>"
+args = [ { name = "seconds", kind = "number", min = 0, msg = "PC_WORKER_TIMEOUT must be a finite number of seconds >= 0 (0 derives the deadline from each script's timeout), got '{tok}'{underflow}" } ]
+repeat = "error"
+repeat_msg = "PC_WORKER_TIMEOUT is set twice (first on line {first_line}); each key is given once"
+default = { literal = "0" }
+env = "TADAH_PC_WORKER_TIMEOUT"
+doc = """\
+The deadline, in seconds, of one script task under PC_ISOLATION PROCESS: \
+a worker process that passes it is stopped, and the task fails. 0 \
+derives it from the script limit t as max(3t, t + 120 s), and without a \
+script limit there is no deadline."""
+long_doc = """\
+The deadline is kept in 64-bit milliseconds, so a value above about \
+9.2e15 s is refused. Under PC_ISOLATION THREAD the key has no effect."""
+checks = [
+  { msg = "PC_WORKER_TIMEOUT is too large for the worker deadline, got '{tok}' (it is kept in 64-bit milliseconds: at most about 9.2e15 s)", doc = "The value is above about 9.2e15 s." },
+]
+
+[[key.examples]]
+wrap = "root"
+text = "PC_WORKER_TIMEOUT 600"
+
+[[key.invalid]]
+wrap = "root"
+text = "PC_WORKER_TIMEOUT -1"
+error = "PC_WORKER_TIMEOUT must be a finite number of seconds >= 0 (0 derives the deadline from each script's timeout), got '-1'"
+
+[[key.invalid]]
+wrap = "root"
+text = "PC_WORKER_TIMEOUT 1e-320"
+error = "PC_WORKER_TIMEOUT must be a finite number of seconds >= 0 (0 derives the deadline from each script's timeout), got '1e-320' (too small: its magnitude is below the smallest normal double, 2.2250738585072014e-308)"
+
+[[key.invalid]]
+wrap = "root"
+text = "PC_WORKER_TIMEOUT 1e16"
+error = "PC_WORKER_TIMEOUT is too large for the worker deadline, got '1e16' (it is kept in 64-bit milliseconds: at most about 9.2e15 s)"
+
+[[key.invalid]]
+wrap = "root"
+at = 2
+text = '''
+PC_WORKER_TIMEOUT 600
+PC_WORKER_TIMEOUT 60'''
+error = "PC_WORKER_TIMEOUT is set twice (first on line 1); each key is given once"
+
+[[key]]
+id = "ROOT.FAILSCORE_GRADING"
+name = "FAILSCORE_GRADING"
+blocks = ["ROOT"]
+synopsis = "FAILSCORE_GRADING ON | OFF"
+args = [ { name = "mode", kind = "word", words = ["ON", "OFF"], msg = "FAILSCORE_GRADING must be ON or OFF, got '{tok}'" } ]
+repeat = "error"
+repeat_msg = "FAILSCORE_GRADING is set twice (first on line {first_line}); each key is given once"
+default = { literal = "OFF" }
+env = "TADAH_FAILSCORE_GRADING"
+doc = """\
+ON gives a failed evaluation a loss in [0.999 FAILSCORE, FAILSCORE) that \
+grows with the size of the failure, so the optimiser can move towards \
+candidates that do not fail; OFF gives it FAILSCORE."""
+long_doc = """\
+ON needs a FAILSCORE line with a value below 1e300 (checked at startup). A \
+PC_FAILPROBE line grades failures, and its --gate ends an evaluation, \
+under ON only; so does a --failvar value above 0. A point outside the \
+OPTIM boxes, which a CERES optimiser can propose, is not evaluated. Under \
+ON and OFF alike its loss lies in [0.99975 FAILSCORE, FAILSCORE) and grows \
+with its distance from the boxes."""
+checks = [
+  { msg = "FAILSCORE_GRADING ON requires a finite positive FAILSCORE (e.g. `FAILSCORE 1e9`); the default DBL_MAX sentinel cannot be banded.", doc = "At startup, under ON: FAILSCORE is 1e300 or more, as it is without a FAILSCORE line." },
+]
+
+[[key.examples]]
+wrap = "root"
+text = '''
+FAILSCORE 1e9
+FAILSCORE_GRADING ON'''
+
+[[key.examples]]
+wrap = "root"
+doc = "The default, written out: a failed evaluation scores FAILSCORE."
+text = "FAILSCORE_GRADING OFF"
+
+[[key.invalid]]
+wrap = "root"
+text = "FAILSCORE_GRADING on"
+error = "FAILSCORE_GRADING must be ON or OFF, got 'on'"
+
+[[key.invalid]]
+wrap = "root"
+check = "startup"
+at = "none"
+text = "FAILSCORE_GRADING ON"
+error = "FAILSCORE_GRADING ON requires a finite positive FAILSCORE (e.g. `FAILSCORE 1e9`); the default DBL_MAX sentinel cannot be banded."
+
+[[key.invalid]]
+wrap = "root"
+check = "startup"
+at = "none"
+text = '''
+FAILSCORE 1e301
+FAILSCORE_GRADING ON'''
+error = "FAILSCORE_GRADING ON requires a finite positive FAILSCORE (e.g. `FAILSCORE 1e9`); the default DBL_MAX sentinel cannot be banded."
+
+[[key.invalid]]
+wrap = "root"
+at = 3
+text = '''
+FAILSCORE 1e9
+FAILSCORE_GRADING ON
+FAILSCORE_GRADING ON'''
+error = "FAILSCORE_GRADING is set twice (first on line 2); each key is given once"
+
+[[key]]
+id = "ROOT.BUMPGATE"
+name = "BUMPGATE"
+blocks = ["ROOT"]
+synopsis = "BUMPGATE CANDIDATE | STRICT"
+args = [ { name = "mode", kind = "word", words = ["CANDIDATE", "STRICT"], msg = "BUMPGATE must be CANDIDATE or STRICT, got '{tok}'" } ]
+repeat = "error"
+repeat_msg = "BUMPGATE is set twice (first on line {first_line}); each key is given once"
+default = { literal = "CANDIDATE" }
+env = "TADAH_BUMPGATE"
+doc = """\
+How a bump basis on a channel with a discontinuous cutoff, such as \
+Cut_Dummy, is kept inside that cutoff over the OPTIM boxes. CANDIDATE \
+refuses each candidate with a bump past the cutoff before it is trained, \
+and STRICT refuses at startup a box whose worst corner puts a bump past \
+it."""
+long_doc = """\
+Under CANDIDATE the startup checks refuse only a box with no valid point. \
+In both modes they refuse a training configuration with a bump past its \
+cutoff."""
+checks = [
+  { msg = "bump-support gate: with a hard (Cut_Dummy) cutoff every compact bump must vanish at or before RCUT (c + w/eta <= RCUT) — a truncated overhang is an energy/force STEP at the cutoff. Violations:{list}\n  To search longer range, raise RCUT2B/RCUTMB in the config (the potential stays smooth: bumps still vanish at their own support edge).", doc = "At startup, without a line: a bump basis under a Cut_Dummy cutoff has a bump past the cutoff, and {list} names each. In both modes a bump of the training configuration is refused. Under STRICT an OPTIM box whose worst corner puts a bump past the cutoff is refused, and under CANDIDATE a box with no point that keeps the bump inside it." },
+]
+
+[[key.examples]]
+wrap = "root"
+text = "BUMPGATE STRICT"
+
+[[key.invalid]]
+wrap = "root"
+text = "BUMPGATE strict"
+error = "BUMPGATE must be CANDIDATE or STRICT, got 'strict'"
+
+[[key.invalid]]
+wrap = "root"
+at = 2
+text = '''
+BUMPGATE STRICT
+BUMPGATE CANDIDATE'''
+error = "BUMPGATE is set twice (first on line 1); each key is given once"
+
+[[key.examples]]
+wrap = "main_ream"
+doc = "CANDIDATE accepts the box that STRICT refuses: each candidate whose bump 4 reaches past RCUT2B is refused before it is trained."
+text = '''
+BUMPGATE CANDIDATE
+OPTIM CGRID2B (4) 4.0 5.0'''
+
+[[key.invalid]]
+wrap = "main_ream"
+check = "startup"
+at = "none"
+doc = "Under STRICT: the worst corner of the box of bump 4 reaches past RCUT2B."
+text = '''
+BUMPGATE STRICT
+OPTIM CGRID2B (4) 4.0 5.0'''
+error = "bump-support gate: with a hard (Cut_Dummy) cutoff every compact bump must vanish at or before RCUT (c + w/eta <= RCUT) — a truncated overhang is an energy/force STEP at the cutoff. Violations:\n  - the OPTIM bounds let bump 4 of CGRID2B reach 6, past RCUT2B = 5.5 — need the OPTIM SGRID2B (4) low bound >= w/(RCUT2B - c_hi) = 6 (currently 3).\n  To search longer range, raise RCUT2B/RCUTMB in the config (the potential stays smooth: bumps still vanish at their own support edge)."
+
+[[key.invalid]]
+wrap = "main_ream"
+check = "startup"
+at = "none"
+doc = "Under CANDIDATE, the default: no point of the box keeps bump 4 inside RCUT2B."
+text = "OPTIM CGRID2B (4) 5.4 5.5"
+error = "bump-support gate: with a hard (Cut_Dummy) cutoff every compact bump must vanish at or before RCUT (c + w/eta <= RCUT) — a truncated overhang is an energy/force STEP at the cutoff. Violations:\n  - no feasible point for bump 4 of CGRID2B: even its most favorable corner (centre 5.4, eta 3) reaches 6.4, past RCUT2B = 5.5 — need the OPTIM SGRID2B (4) high bound >= w/(RCUT2B - c_lo) = 30, a lower CGRID2B low bound, or a larger RCUT2B.\n  To search longer range, raise RCUT2B/RCUTMB in the config (the potential stays smooth: bumps still vanish at their own support edge)."
+
+[[key.invalid]]
+wrap = "main_ream"
+check = "startup"
+at = "none"
+doc = "Under STRICT: the box of the centre of bump 4 reaches RCUT2B."
+text = '''
+BUMPGATE STRICT
+OPTIM CGRID2B (4) 5.4 5.5'''
+error = "bump-support gate: with a hard (Cut_Dummy) cutoff every compact bump must vanish at or before RCUT (c + w/eta <= RCUT) — a truncated overhang is an energy/force STEP at the cutoff. Violations:\n  - the OPTIM bounds let bump 4 of CGRID2B reach 6.5, past RCUT2B = 5.5 — impossible while the OPTIM CGRID2B (4) high bound 5.5 >= 5.5: lower the CGRID2B high bound below RCUT2B first.\n  To search longer range, raise RCUT2B/RCUTMB in the config (the potential stays smooth: bumps still vanish at their own support edge)."
+
+[[key]]
+id = "ROOT.RHOGATE"
+name = "RHOGATE"
+blocks = ["ROOT"]
+synopsis = "RHOGATE <tol> [R_LO <r>] [NPTS <n>] [SEED ERROR | WARN]"
+args = [
+  { name = "tol", kind = "number", min = 0, what = "RHOGATE tol", msg = "RHOGATE tol must be >= 0, got '{tok}'", doc = "The tolerance, a fraction of the largest density. R_LO, NPTS and SEED follow it, each with its value, in any order and each at most once." },
+]
+repeat = "error"
+repeat_msg = "RHOGATE given more than once"
+doc = """\
+The sign condition of a many-body density under the SIGNED form: a \
+candidate whose pair density rho(r) falls below -tol times its largest \
+value on [R_LO, RCUTMB] is refused before it is trained, as a failed \
+evaluation."""
+long_doc = """\
+The many-body term of the training configuration is a bare DM_REAM term or \
+a single DM_Embed component; a DM_mJoin or several components are refused \
+at startup. Its density form, RHOFORM for DM_REAM or the FORM of the \
+component, is SIGNED, and every density pair weight (WATOM) can be above 0 \
+(both checked at startup). An OPTIM line on a density key arms RHOGATE. At \
+startup the CONFIG and WARM starting points of the INIT and RESTART chains \
+are checked as candidates, and SEED says what a failing one does. A \
+training configuration that is no such starting point and fails has a \
+warning instead; RANDOM, LHS and SOBOL points are checked when they are \
+evaluated."""
+quirk = """\
+The options R_LO, NPTS and SEED and the values ERROR and WARN are read \
+in any case (npts, seed warn), while every key is matched as written."""
+checks = [
+  { msg = "RHOGATE: the tolerance is missing; expected RHOGATE <tol> [R_LO <r>] [NPTS <n>] [SEED ERROR|WARN]", doc = "The line has no value." },
+  { msg = "RHOGATE: unexpected token '{tok}'; expected RHOGATE <tol> [R_LO <r>] [NPTS <n>] [SEED ERROR|WARN]", doc = "A word after the tolerance, in the place of an option, is not R_LO, NPTS or SEED." },
+  { msg = "{keys} evaluate the density of a bare DM_REAM many-body term, but {why}. Remove the {keys} line(s).", doc = "At startup, without a line: the many-body term is neither a bare DM_REAM term nor a single DM_Embed component. {keys} is RHOGATE, RHOBARGATE, or both joined by and. {why} says \"this configuration has no DM_REAM many-body term (INITMB true and TYPEMB DM_REAM)\", or names the many-body term of a DM_mJoin." },
+  { msg = "RHOGATE: RHOFORM {form}: the form guarantees rho >= 0 by construction, so the rho(r) sign gate applies to RHOFORM SIGNED only. Remove the RHOGATE line (RHOBARGATE works under every form).", doc = "At startup, without a line: the density form is NONNEG or MONOTONE." },
+  { msg = "{keys}: the many-body cutoff RCUTMB is not set.", doc = "At startup, without a line: the smallest RCUTMB a candidate can have is not a number above 0." },
+  { msg = "{keys}: {why} on every candidate (WATOM is not OPTIM'd, or its OPTIM box does not reach above 0): every evaluation would be rejected, under SEED ERROR or WARN. The density gates need every density pair weight > 0: set WATOM > 0 (under RHOFORM SIGNED the sign of rho belongs in the AMPGRIDMB amplitudes), or remove the {keys} line(s).", doc = "At startup, without a line: a density pair weight is not above 0 with WATOM at the upper end of its OPTIM box, or at its value in the training configuration when no OPTIM line searches it. {why} names the weight: \"a density pair weight W = <w> (WATOM) is not finite and > 0\"." },
+  { msg = "RHOGATE: seed {name} fails the rho(r) sign gate: {why}. Repair the seed's density (for a WARM seed, its OPTIM'd density values: the rest comes from the -c potential) with tadah refit --edit, relax the gate, or add SEED WARN to evaluate it as a rejected start.", doc = "At startup, without a line, under SEED ERROR: a CONFIG or WARM starting point of the INIT or RESTART chain fails the condition; {name} names it, and {why} gives the smallest and largest density on the window. Under SEED WARN hpo_run.log has a warning instead, and the run goes on." },
+]
+untested = [
+  { msg = "{keys}: the many-body cutoff RCUTMB is not set.", why = "Needs a DM_REAM term without RCUTMB, which the training configuration refuses first." },
+]
+
+[[key.examples]]
+wrap = "main_ream"
+text = "RHOGATE 1e-5"
+
+[[key.examples]]
+doc = "Every option: a tolerance of 0, the window from 1.7168 Å, 2001 grid points, and a warning for a starting point that fails the condition."
+wrap = "main_ream"
+text = "RHOGATE 0 R_LO 1.7168 NPTS 2001 SEED WARN"
+
+[[key.examples]]
+wrap = "none"
+context = "main_dm_embed"
+doc = "A single DM_Embed component under FORM SIGNED; the OPTIM line on its density amplitudes arms RHOGATE."
+text = '''
+RHOGATE 1e-5
+OPTIM H.DENSITY.AMPLITUDES (2) 0.1 1
+PC_ERMSE 0 1
+OPTIMIZER
+LIB NLOPT
+ALGO LN_SBPLX
+MAXEVAL 10
+ENDOPTIMIZER'''
+
+[[key.invalid]]
+wrap = "root"
+text = "RHOGATE"
+error = "RHOGATE: the tolerance is missing; expected RHOGATE <tol> [R_LO <r>] [NPTS <n>] [SEED ERROR|WARN]"
+
+[[key.invalid]]
+wrap = "root"
+text = "RHOGATE -1e-5"
+error = "RHOGATE tol must be >= 0, got '-1e-5'"
+
+[[key.invalid]]
+wrap = "root"
+text = "RHOGATE nan"
+error = "RHOGATE tol must be a finite number, got 'nan'"
+
+[[key.invalid]]
+wrap = "root"
+text = "RHOGATE 1e-5 7"
+error = "RHOGATE: unexpected token '7'; expected RHOGATE <tol> [R_LO <r>] [NPTS <n>] [SEED ERROR|WARN]"
+
+[[key.invalid]]
+wrap = "root"
+at = 2
+text = '''
+RHOGATE 1e-5
+RHOGATE 1e-6'''
+error = "RHOGATE given more than once"
+
+[[key.invalid]]
+wrap = "none"
+check = "startup"
+context = "main_ream_nonneg"
+at = "none"
+doc = "The density form NONNEG keeps rho(r) at or above 0."
+text = '''
+RHOGATE 1e-5
+OPTIM AMPGRIDMB (3) 0 0.5
+PC_ERMSE 0 1
+OPTIMIZER
+LIB NLOPT
+ALGO LN_SBPLX
+MAXEVAL 10
+ENDOPTIMIZER'''
+error = "RHOGATE: RHOFORM NONNEG: the form guarantees rho >= 0 by construction, so the rho(r) sign gate applies to RHOFORM SIGNED only. Remove the RHOGATE line (RHOBARGATE works under every form)."
+
+[[key.invalid]]
+wrap = "root"
+check = "startup"
+context = "main_ead"
+at = "none"
+doc = "A configuration whose many-body term is not DM_REAM."
+text = '''
+RHOGATE 1e-5
+OPTIM CGRIDMB (1) 2 3'''
+error = "RHOGATE evaluate the density of a bare DM_REAM many-body term, but this configuration has no DM_REAM many-body term (INITMB true and TYPEMB DM_REAM). Remove the RHOGATE line(s)."
+
+[[key.invalid]]
+wrap = "main_ream"
+check = "startup"
+context = "main_ream_watom0"
+at = "none"
+doc = "WATOM 0, not searched: no candidate has a density pair weight above 0."
+text = "RHOGATE 1e-5"
+error = "RHOGATE: a density pair weight W = 0 (WATOM) is not finite and > 0 on every candidate (WATOM is not OPTIM'd, or its OPTIM box does not reach above 0): every evaluation would be rejected, under SEED ERROR or WARN. The density gates need every density pair weight > 0: set WATOM > 0 (under RHOFORM SIGNED the sign of rho belongs in the AMPGRIDMB amplitudes), or remove the RHOGATE line(s)."
+
+[[key.invalid]]
+wrap = "main_ream"
+check = "startup"
+context = "main_ream_negative"
+at = "none"
+doc = "The starting point, the training configuration, has a density that falls below 0."
+text = "RHOGATE 1e-5"
+error = "RHOGATE: seed -c pot (INIT CONFIG) fails the rho(r) sign gate: rho_min -4.9965e-01 at r 2.7990 A, rho_max 2.9956e-01, rel -1.6680e+00 < -tol = -1.0000e-05 on [0.8250, 5.5000] A (20001 points), v = 1.8694e+00. Repair the seed's density (for a WARM seed, its OPTIM'd density values: the rest comes from the -c potential) with tadah refit --edit, relax the gate, or add SEED WARN to evaluate it as a rejected start."
+
+[[key.examples]]
+wrap = "none"
+context = "main_ream_negative"
+doc = "The LHS starting points are checked when they are evaluated. The training configuration fails the condition but is no INIT starting point, so it has a warning."
+text = '''
+RHOGATE 1e-5
+OPTIM AMPGRIDMB (3) -0.5 0.5
+PC_ERMSE 0 1
+OPTIMIZER
+STRATEGY
+LIB NLOPT
+ALGO LN_SBPLX
+MAXEVAL 10
+INIT
+METHOD LHS 3
+ENDINIT
+ENDSTRATEGY
+ENDOPTIMIZER'''
+
+[[key.invalid]]
+wrap = "none"
+check = "startup"
+context = "main_ream_negative"
+at = "none"
+doc = "The CONFIG starting point of the RESTART chain, the training configuration, fails the condition."
+text = '''
+RHOGATE 1e-5
+OPTIM AMPGRIDMB (3) -0.5 0.5
+PC_ERMSE 0 1
+OPTIMIZER
+STRATEGY
+LIB NLOPT
+ALGO LN_SBPLX
+MAXEVAL 10
+INIT
+METHOD LHS 3
+ENDINIT
+RESTART
+AFTER_STAGNATION 5
+MAX 1
+METHOD CONFIG
+ENDRESTART
+ENDSTRATEGY
+ENDOPTIMIZER'''
+error = "RHOGATE: seed -c pot (RESTART CONFIG) fails the rho(r) sign gate: rho_min -4.9965e-01 at r 2.7990 A, rho_max 2.9956e-01, rel -1.6680e+00 < -tol = -1.0000e-05 on [0.8250, 5.5000] A (20001 points), v = 1.8694e+00. Repair the seed's density (for a WARM seed, its OPTIM'd density values: the rest comes from the -c potential) with tadah refit --edit, relax the gate, or add SEED WARN to evaluate it as a rejected start."
+
+[[key]]
+id = "ROOT.RHOBARGATE"
+name = "RHOBARGATE"
+blocks = ["ROOT"]
+synopsis = "RHOBARGATE bcc | fcc | hcp <a0> <f_lo> <f_hi> [NPTS <n>] [SEED ERROR | WARN]"
+args = [
+  { name = "lattice", kind = "word", words = ["bcc", "fcc", "hcp"], msg = "RHOBARGATE lattice must be bcc, fcc or hcp, got '{tok}'" },
+  { name = "a0", kind = "number", what = "RHOBARGATE a0", doc = "The lattice constant in Å, above 0; for hcp the in-plane one." },
+  { name = "f_lo", kind = "number", what = "RHOBARGATE f_lo", doc = "The smallest lattice constant, as a fraction of a0, above 0 and below f_hi. The largest RCUTMB a candidate can have lies within 20 lattice constants of the smallest lattice, f_lo a0." },
+  { name = "f_hi", kind = "number", what = "RHOBARGATE f_hi", doc = "The largest lattice constant, as a fraction of a0. NPTS and SEED follow it, each with its value, in any order and each at most once." },
+]
+repeat = "error"
+repeat_msg = "RHOBARGATE given more than once"
+doc = """\
+The lattice condition of a many-body density: a candidate whose \
+monatomic lattice density rhobar(a) does not decrease strictly for a from \
+f_lo a0 to f_hi a0 is refused before it is trained, as a failed \
+evaluation."""
+long_doc = """\
+RHOBARGATE applies under every density form. The many-body term of the \
+training configuration is a bare DM_REAM term or a single DM_Embed \
+component; a DM_mJoin or several components are refused at startup. At \
+startup, too, every density pair weight (WATOM) can be above 0, and the \
+first shell of the lattice at f_hi a0 lies inside the smallest RCUTMB a \
+candidate can have. The largest RCUTMB a candidate can have lies within 20 \
+lattice constants of the smallest lattice, f_lo a0. An OPTIM line on a \
+density key arms RHOBARGATE, and hcp takes the ideal c/a. At startup the \
+CONFIG and WARM starting points of the INIT and RESTART chains are checked \
+as candidates, and SEED says what a failing one does. A training \
+configuration that is no such starting point and fails has a warning \
+instead; RANDOM, LHS and SOBOL points are checked when they are evaluated."""
+quirk = """\
+The lattice, the options NPTS and SEED and the values ERROR and WARN are \
+read in any case (BCC, npts, seed warn), while every key is matched as \
+written."""
+checks = [
+  { msg = "RHOBARGATE: the lattice, a0, f_lo and f_hi are required; expected RHOBARGATE <bcc|fcc|hcp> <a0> <f_lo> <f_hi> [NPTS <n>] [SEED ERROR|WARN]", doc = "Fewer than four values follow the key." },
+  { msg = "RHOBARGATE a0 must be > 0, got '{tok}'", doc = "Once a0, f_lo and f_hi are read as numbers: a0 is 0 or below." },
+  { msg = "RHOBARGATE needs 0 < f_lo < f_hi, got f_lo '{low}', f_hi '{high}'", doc = "Once a0, f_lo and f_hi are read as numbers and a0 is above 0: f_lo is 0 or below, or not below f_hi." },
+  { msg = "RHOBARGATE: unexpected token '{tok}'; expected RHOBARGATE <bcc|fcc|hcp> <a0> <f_lo> <f_hi> [NPTS <n>] [SEED ERROR|WARN]", doc = "A word after f_hi, in the place of an option, is not NPTS or SEED." },
+  { msg = "{keys} evaluate the density of a bare DM_REAM many-body term, but {why}. Remove the {keys} line(s).", doc = "At startup, without a line: as for RHOGATE." },
+  { msg = "RHOBARGATE: f_lo = {low} puts the largest reachable RCUTMB, {max} A, at {value} lattice constants of the smallest lattice (a = f_lo a0 = {min} A); the limit is 20. f_lo and f_hi are fractions of a0 (0.75 scans down to 25 % compression): raise f_lo.", doc = "At startup, without a line: the largest RCUTMB a candidate can have, {max}, is more than 20 lattice constants of the smallest lattice, {min}." },
+  { msg = "RHOBARGATE: seed {name} fails the lattice rhobar(a) gate: {why}. Repair the seed's density (for a WARM seed, its OPTIM'd density values: the rest comes from the -c potential) with tadah refit --edit, relax the gate, or add SEED WARN to evaluate it as a rejected start.", doc = "At startup, without a line, under SEED ERROR: a CONFIG or WARM starting point of the INIT or RESTART chain fails the condition; {name} names it. Under SEED WARN hpo_run.log has a warning instead, and the run goes on." },
+  { msg = "RHOBARGATE: the first {name} shell at a = f_hi a0 = {high} A lies at r = {value} A, beyond the smallest cutoff a candidate can have, RCUTMB = {max} A{note}: rhobar(a) would lose its nearest neighbours. Lower f_hi or a0, or raise RCUTMB.", doc = "At startup: the nearest neighbours of the lattice {name} at f_hi a0, {high}, lie at {value}, beyond the smallest RCUTMB a candidate can have, {max}; {note} is \" (the largest CGRIDMB knot over its OPTIM box)\" when that knot sets it." },
+]
+
+[[key.examples]]
+wrap = "main_ream"
+text = "RHOBARGATE bcc 3.304 0.95 1.05"
+
+[[key.examples]]
+wrap = "main_ream"
+text = "RHOBARGATE BCC 3.304 0.9 1.1 npts 501 seed warn"
+doc = "Under SEED WARN a starting point that fails is reported, and the run goes on."
+
+[[key.examples]]
+wrap = "main_ream"
+text = "RHOBARGATE hcp 2.86 0.95 1.05"
+doc = "An hcp lattice with the ideal c/a, whose nearest neighbours lie at a."
+
+[[key.invalid]]
+wrap = "root"
+text = "RHOBARGATE bcc 3.3 0.9"
+error = "RHOBARGATE: the lattice, a0, f_lo and f_hi are required; expected RHOBARGATE <bcc|fcc|hcp> <a0> <f_lo> <f_hi> [NPTS <n>] [SEED ERROR|WARN]"
+
+[[key.invalid]]
+wrap = "root"
+text = "RHOBARGATE sc 3.3 0.9 1.1"
+error = "RHOBARGATE lattice must be bcc, fcc or hcp, got 'sc'"
+
+[[key.invalid]]
+wrap = "root"
+text = "RHOBARGATE bcc 0 0.9 1.1"
+error = "RHOBARGATE a0 must be > 0, got '0'"
+
+[[key.invalid]]
+wrap = "root"
+text = "RHOBARGATE bcc 3.3 x 1.1"
+error = "RHOBARGATE f_lo must be a finite number, got 'x'"
+
+[[key.invalid]]
+wrap = "root"
+doc = "a0, f_lo and f_hi are read as numbers before a0 is checked."
+text = "RHOBARGATE bcc 0 x 1.1"
+error = "RHOBARGATE f_lo must be a finite number, got 'x'"
+
+[[key.invalid]]
+wrap = "main_ream"
+check = "startup"
+at = "none"
+text = "RHOBARGATE bcc 3.304 0.05 1.05"
+error = "RHOBARGATE: f_lo = 0.05 puts the largest reachable RCUTMB, 5.5000 A, at 33.29297821 lattice constants of the smallest lattice (a = f_lo a0 = 0.1652 A); the limit is 20. f_lo and f_hi are fractions of a0 (0.75 scans down to 25 % compression): raise f_lo."
+
+[[key.invalid]]
+wrap = "root"
+text = "RHOBARGATE bcc 3.3 1.1 0.9"
+error = "RHOBARGATE needs 0 < f_lo < f_hi, got f_lo '1.1', f_hi '0.9'"
+
+[[key.invalid]]
+wrap = "root"
+text = "RHOBARGATE bcc 3.3 0.9 1.1 R_LO 1"
+error = "RHOBARGATE: unexpected token 'R_LO'; expected RHOBARGATE <bcc|fcc|hcp> <a0> <f_lo> <f_hi> [NPTS <n>] [SEED ERROR|WARN]"
+
+[[key.invalid]]
+wrap = "root"
+at = 2
+text = '''
+RHOBARGATE bcc 3.3 0.9 1.1
+RHOBARGATE fcc 4.2 0.9 1.1'''
+error = "RHOBARGATE given more than once"
+
+[[key.invalid]]
+wrap = "main_ream"
+check = "startup"
+at = "none"
+text = "RHOBARGATE bcc 3.304 0.9 2.0"
+error = "RHOBARGATE: the first bcc shell at a = f_hi a0 = 6.6080 A lies at r = 5.7227 A, beyond the smallest cutoff a candidate can have, RCUTMB = 5.5000 A: rhobar(a) would lose its nearest neighbours. Lower f_hi or a0, or raise RCUTMB."
+
+[[key.invalid]]
+wrap = "root"
+check = "startup"
+context = "main_ead"
+at = "none"
+text = '''
+OPTIM RCUTMB (1) 4 6
+RHOBARGATE bcc 3.3 0.9 1.1'''
+error = "RHOBARGATE evaluate the density of a bare DM_REAM many-body term, but this configuration has no DM_REAM many-body term (INITMB true and TYPEMB DM_REAM). Remove the RHOBARGATE line(s)."
+
+[[key]]
+id = "ROOT.QFLUSH"
+name = "QFLUSH"
+blocks = ["ROOT"]
+synopsis = "QFLUSH <n>"
+args = [ { name = "n", kind = "integer", min = 0, what = "{key}" } ]
+repeat = "error"
+repeat_msg = "QFLUSH is set twice (first on line {first_line}); each key is given once"
+default = { literal = "10" }
+doc = """\
+The number of evaluation results held in memory before their rows are \
+written to the output files; 0 and 1 write after each evaluation."""
+
+[[key.examples]]
+wrap = "root"
+text = "QFLUSH 100"
+
+[[key.invalid]]
+wrap = "root"
+text = "QFLUSH -1"
+error = "QFLUSH must be an integer >= 0, got '-1'"
+
+[[key.invalid]]
+wrap = "root"
+text = "QFLUSH 1.5"
+error = "QFLUSH must be an integer >= 0, got '1.5'"
+
+[[key.invalid]]
+wrap = "root"
+at = 2
+text = '''
+QFLUSH 10
+QFLUSH 100'''
+error = "QFLUSH is set twice (first on line 1); each key is given once"
+
+[[key]]
+id = "ROOT.OUTPUT"
+name = "OUTPUT"
+blocks = ["ROOT"]
+synopsis = "OUTPUT <n>"
+args = [ { name = "n", kind = "integer", min = 1, what = "{key}", msg = "OUTPUT must be an integer >= 1, got '{tok}' (it is a cadence: write every Nth evaluation; to write as little as possible, use a large value such as OUTPUT 1000000)" } ]
+repeat = "error"
+repeat_msg = "OUTPUT is set twice (first on line {first_line}); each key is given once"
+default = { literal = "1" }
+doc = """\
+The cadence of the per-evaluation output files: a row is written for \
+every nth evaluation."""
+
+[[key.examples]]
+wrap = "root"
+text = "OUTPUT 10"
+
+[[key.invalid]]
+wrap = "root"
+text = "OUTPUT 0"
+error = "OUTPUT must be an integer >= 1, got '0' (it is a cadence: write every Nth evaluation; to write as little as possible, use a large value such as OUTPUT 1000000)"
+
+[[key.invalid]]
+wrap = "root"
+at = 2
+text = '''
+OUTPUT 1
+OUTPUT 10'''
+error = "OUTPUT is set twice (first on line 1); each key is given once"
+
+[[key]]
+id = "ROOT.BOUTPUT"
+name = "BOUTPUT"
+blocks = ["ROOT"]
+synopsis = "BOUTPUT <n>"
+args = [ { name = "n", kind = "integer", min = 1, what = "{key}", msg = "BOUTPUT must be an integer >= 1, got '{tok}' (it is a cadence: write every Nth new best)" } ]
+repeat = "error"
+repeat_msg = "BOUTPUT is set twice (first on line {first_line}); each key is given once"
+default = { literal = "1" }
+doc = """\
+The cadence of the best-loss output files: a row is written every nth \
+time the best loss improves."""
+
+[[key.examples]]
+wrap = "root"
+text = "BOUTPUT 5"
+
+[[key.invalid]]
+wrap = "root"
+text = "BOUTPUT 0"
+error = "BOUTPUT must be an integer >= 1, got '0' (it is a cadence: write every Nth new best)"
+
+[[key.invalid]]
+wrap = "root"
+at = 2
+text = '''
+BOUTPUT 1
+BOUTPUT 5'''
+error = "BOUTPUT is set twice (first on line 1); each key is given once"
+
+[[key]]
+id = "ROOT.DIGITS"
+name = "DIGITS"
+blocks = ["ROOT"]
+synopsis = "DIGITS <n>"
+args = [ { name = "n", kind = "integer", min = 1, max = 15, what = "{key}" } ]
+repeat = "error"
+repeat_msg = "DIGITS is set twice (first on line {first_line}); each key is given once"
+default = { literal = "6" }
+doc = """\
+The number of decimal digits of the numbers the output files write in \
+scientific notation."""
+
+[[key.examples]]
+wrap = "root"
+text = "DIGITS 10"
+
+[[key.invalid]]
+wrap = "root"
+text = "DIGITS 16"
+error = "DIGITS must be an integer from 1 to 15, got '16'"
+
+[[key.invalid]]
+wrap = "root"
+text = "DIGITS 0"
+error = "DIGITS must be an integer from 1 to 15, got '0'"
+
+[[key.invalid]]
+wrap = "root"
+at = 2
+text = '''
+DIGITS 6
+DIGITS 10'''
+error = "DIGITS is set twice (first on line 1); each key is given once"
+
+[[key]]
+id = "ROOT.DUMP"
+name = "DUMP"
+blocks = ["ROOT"]
+synopsis = "DUMP <n> <directory>"
+checks = [
+  { msg = "{key} requires a cadence and a directory", doc = "Fewer than two values follow the key." },
+  { msg = "{key} takes a cadence and a directory (unexpected '{tok}')", doc = "A value follows the directory." },
+  { msg = "{key} directory '{name}' exists and is not a directory", doc = "Once the file is read, at the line: the path exists and is no directory." },
+  { msg = "{key} directory '{name}' is not writable", doc = "Once the file is read, at the line: the directory exists, and the run cannot create a file in it." },
+  { msg = "{key} directory '{name}' is a symbolic link to '{file}', which does not exist", doc = "Once the file is read, at the line: the path is a symbolic link to a directory that does not exist, which the run does not create; {file} is the target of the link." },
+  { msg = "{key} directory '{name}' cannot be created: the directory '{parent}' does not exist (tadah hpo creates only the last directory of the path)", doc = "Once the file is read, at the line: the directory that would hold it does not exist; {parent} is its absolute path." },
+  { msg = "{key} directory '{name}' cannot be created: '{parent}' is not a directory", doc = "Once the file is read, at the line: the path that would hold the directory is no directory." },
+  { msg = "{key} directory '{name}' cannot be created: the directory '{parent}' is not writable", doc = "Once the file is read, at the line: the run cannot create a directory in the directory that would hold it." },
+  { msg = "{key} directory '{name}' cannot be read: {why}", doc = "Once the file is read, at the line: the state of the directory cannot be read; {why} is the message of the file system." },
+  { msg = "{key} directory '{name}' cannot be resolved: {why}", doc = "Once the file is read, at the line: the path cannot be followed to a directory, and {why} says why. Examples are '.' or '..' in a directory that does not exist, a directory on the way that cannot be read, and more than 40 symbolic links." },
+]
+args = [
+  { name = "n", kind = "integer", min = 1, what = "{key} cadence" },
+  { name = "directory", kind = "name", doc = "A directory the run can write into: one that exists, or one the run creates in a directory that exists." },
+]
+repeat = "error"
+repeat_msg = "DUMP is set twice (first on line {first_line}); each key is given once"
+default = { text = "no potential of an evaluation is written" }
+doc = """\
+Writes the potential of every nth evaluation to <directory>/pot_<i>.tadah, \
+where i is the number of the evaluation."""
+long_doc = """\
+The directory is checked once the file is read, and the run creates it \
+right before its first evaluation: a run that stops before then, and tadah \
+hpo --check, create no directory. The run creates only the last directory \
+of the path. Its parent is a directory that exists and can be written \
+into, or the directory of the BDUMP line, which the run creates first. A \
+symbolic link to a directory that does not exist is refused. The path is \
+followed as the operating system follows it, symbolic links and '..' \
+included. A point outside the OPTIM box is not evaluated, and its \
+potential is not written. A candidate refused before it is trained, or \
+whose training fails, is written as a file with the comment header only."""
+untested = [
+  { msg = "{key} directory '{name}' is not writable", why = "Needs a directory without write or read permission, which a run with the rights of root does not have." },
+  { msg = "{key} directory '{name}' is a symbolic link to '{file}', which does not exist", why = "Needs a symbolic link, which a case cannot write." },
+  { msg = "{key} directory '{name}' cannot be created: the directory '{parent}' does not exist (tadah hpo creates only the last directory of the path)", why = "The message names an absolute path in the working directory of the run, which differs from run to run." },
+  { msg = "{key} directory '{name}' cannot be created: the directory '{parent}' is not writable", why = "Needs a directory without write or read permission, which a run with the rights of root does not have." },
+  { msg = "{key} directory '{name}' cannot be read: {why}", why = "Needs a directory without write or read permission, which a run with the rights of root does not have." },
+]
+
+[[key.examples]]
+wrap = "root"
+text = "DUMP 100 pots"
+
+[[key.examples]]
+wrap = "root"
+doc = "The BDUMP directory inside the DUMP directory, which the run creates first."
+text = '''
+DUMP 1 archive
+BDUMP 1 archive/best'''
+
+[[key.invalid]]
+wrap = "root"
+text = "DUMP 100"
+error = "DUMP requires a cadence and a directory"
+
+[[key.invalid]]
+wrap = "root"
+text = "DUMP pots 100"
+error = "DUMP cadence must be an integer >= 1, got 'pots'"
+
+[[key.invalid]]
+wrap = "root"
+text = "DUMP 0 pots"
+error = "DUMP cadence must be an integer >= 1, got '0'"
+
+[[key.invalid]]
+wrap = "root"
+text = "DUMP 10 pots extra"
+error = "DUMP takes a cadence and a directory (unexpected 'extra')"
+
+[[key.invalid]]
+wrap = "root"
+doc = "A path that exists and is no directory."
+text = "DUMP 1 /dev/null"
+error = "DUMP directory '/dev/null' exists and is not a directory"
+
+[[key.invalid]]
+wrap = "root"
+doc = "A directory to create in a path that is no directory."
+text = "DUMP 1 /dev/null/pots"
+error = "DUMP directory '/dev/null/pots' cannot be created: '/dev/null' is not a directory"
+
+[[key.invalid]]
+wrap = "root"
+at = 2
+text = '''
+DUMP 100 pots
+DUMP 10 pots'''
+error = "DUMP is set twice (first on line 1); each key is given once"
+
+[[key.invalid]]
+wrap = "root"
+doc = "A '.' in a path that is no directory."
+text = "DUMP 1 /dev/null/./pots"
+error = "DUMP directory '/dev/null/./pots' cannot be resolved: it walks '.' in '/dev/null', which is not a directory"
+
+[[key]]
+id = "ROOT.BDUMP"
+name = "BDUMP"
+blocks = ["ROOT"]
+synopsis = "BDUMP <n> <directory>"
+checks = [
+  { msg = "{key} requires a cadence and a directory", doc = "Fewer than two values follow the key." },
+  { msg = "{key} takes a cadence and a directory (unexpected '{tok}')", doc = "A value follows the directory." },
+  { msg = "{key} directory '{name}' exists and is not a directory", doc = "Once the file is read, at the line: the path exists and is no directory." },
+  { msg = "{key} directory '{name}' is not writable", doc = "Once the file is read, at the line: the directory exists, and the run cannot create a file in it." },
+  { msg = "{key} directory '{name}' is a symbolic link to '{file}', which does not exist", doc = "Once the file is read, at the line: the path is a symbolic link to a directory that does not exist, which the run does not create; {file} is the target of the link." },
+  { msg = "{key} directory '{name}' cannot be created: the directory '{parent}' does not exist (tadah hpo creates only the last directory of the path)", doc = "Once the file is read, at the line: the directory that would hold it does not exist; {parent} is its absolute path." },
+  { msg = "{key} directory '{name}' cannot be created: '{parent}' is not a directory", doc = "Once the file is read, at the line: the path that would hold the directory is no directory." },
+  { msg = "{key} directory '{name}' cannot be created: the directory '{parent}' is not writable", doc = "Once the file is read, at the line: the run cannot create a directory in the directory that would hold it." },
+  { msg = "{key} directory '{name}' cannot be read: {why}", doc = "Once the file is read, at the line: the state of the directory cannot be read; {why} is the message of the file system." },
+  { msg = "{key} directory '{name}' cannot be resolved: {why}", doc = "Once the file is read, at the line: the path cannot be followed to a directory, and {why} says why. Examples are '.' or '..' in a directory that does not exist, a directory on the way that cannot be read, and more than 40 symbolic links." },
+]
+args = [
+  { name = "n", kind = "integer", min = 1, what = "{key} cadence" },
+  { name = "directory", kind = "name", doc = "A directory the run can write into: one that exists, or one the run creates in a directory that exists." },
+]
+repeat = "error"
+repeat_msg = "BDUMP is set twice (first on line {first_line}); each key is given once"
+default = { text = "no potential of a best evaluation is written" }
+doc = """\
+Writes the potential every nth time the best loss improves to \
+<directory>/best_pot_<i>.tadah, where i counts the improvements."""
+long_doc = """\
+The directory is checked once the file is read, and the run creates it \
+right before its first evaluation: a run that stops before then, and tadah \
+hpo --check, create no directory. The run creates only the last directory \
+of the path. Its parent is a directory that exists and can be written \
+into, or the directory of the DUMP line, which the run creates first. A \
+symbolic link to a directory that does not exist is refused. The path is \
+followed as the operating system follows it, symbolic links and '..' \
+included."""
+untested = [
+  { msg = "{key} directory '{name}' is not writable", why = "Needs a directory without write or read permission, which a run with the rights of root does not have." },
+  { msg = "{key} directory '{name}' is a symbolic link to '{file}', which does not exist", why = "Needs a symbolic link, which a case cannot write." },
+  { msg = "{key} directory '{name}' cannot be created: the directory '{parent}' does not exist (tadah hpo creates only the last directory of the path)", why = "The message names an absolute path in the working directory of the run, which differs from run to run." },
+  { msg = "{key} directory '{name}' cannot be created: the directory '{parent}' is not writable", why = "Needs a directory without write or read permission, which a run with the rights of root does not have." },
+  { msg = "{key} directory '{name}' cannot be read: {why}", why = "Needs a directory without write or read permission, which a run with the rights of root does not have." },
+]
+
+[[key.examples]]
+wrap = "root"
+text = "BDUMP 1 best_pots"
+
+[[key.examples]]
+wrap = "root"
+doc = "The DUMP directory inside the BDUMP directory, given first: the run creates the BDUMP directory first."
+text = '''
+DUMP 1 archive/all
+BDUMP 1 archive'''
+
+[[key.invalid]]
+wrap = "root"
+text = "BDUMP"
+error = "BDUMP requires a cadence and a directory"
+
+[[key.invalid]]
+wrap = "root"
+text = "BDUMP 0 best_pots"
+error = "BDUMP cadence must be an integer >= 1, got '0'"
+
+[[key.invalid]]
+wrap = "root"
+doc = "A path that exists and is no directory."
+text = "BDUMP 1 /dev/null"
+error = "BDUMP directory '/dev/null' exists and is not a directory"
+
+[[key.invalid]]
+wrap = "root"
+doc = "A directory to create in a path that is no directory."
+text = "BDUMP 1 /dev/null/best_pots"
+error = "BDUMP directory '/dev/null/best_pots' cannot be created: '/dev/null' is not a directory"
+
+[[key.invalid]]
+wrap = "root"
+at = 2
+text = '''
+BDUMP 1 best_pots
+BDUMP 2 best_pots'''
+error = "BDUMP is set twice (first on line 1); each key is given once"
+
+[[key.invalid]]
+wrap = "root"
+text = "BDUMP 1 best_pots extra"
+error = "BDUMP takes a cadence and a directory (unexpected 'extra')"
+
+[[key.invalid]]
+wrap = "root"
+doc = "A '.' in a path that is no directory."
+text = "BDUMP 1 /dev/null/./best"
+error = "BDUMP directory '/dev/null/./best' cannot be resolved: it walks '.' in '/dev/null', which is not a directory"
+
+[[key]]
+id = "ROOT.OPTIM_SCALE"
+name = "OPTIM_SCALE"
+blocks = ["ROOT"]
+synopsis = "OPTIM_SCALE AUTO | NONE"
+args = [ { name = "mode", kind = "word", words = ["AUTO", "NONE"], msg = "OPTIM_SCALE must be AUTO (every OPTIM dimension is mapped to the unit box [0,1]) or NONE (optimisers work in raw OPTIM units; ln for LOG dims) -- got '{tok}'" } ]
+repeat = "error"
+repeat_msg = "OPTIM_SCALE given more than once"
+default = { literal = "AUTO" }
+env = "TADAH_OPTIM_SCALE"
+doc = """\
+The coordinates the optimiser works in: AUTO maps every OPTIM dimension \
+to [0, 1], and NONE leaves each in its OPTIM units: the value for LIN, \
+its natural logarithm for LOG and asinh(x/c) for ASINH <c>."""
+quirk = """\
+The value is read in any case (auto, None), and its refusal quotes it in \
+upper case, while every key is matched as written."""
+
+[[key.examples]]
+wrap = "root"
+text = "OPTIM_SCALE NONE"
+
+[[key.examples]]
+doc = "The word in lower case."
+wrap = "root"
+text = "OPTIM_SCALE auto"
+
+[[key.invalid]]
+wrap = "root"
+text = "OPTIM_SCALE unit"
+error = "OPTIM_SCALE must be AUTO (every OPTIM dimension is mapped to the unit box [0,1]) or NONE (optimisers work in raw OPTIM units; ln for LOG dims) -- got 'UNIT'"
+
+[[key.invalid]]
+wrap = "root"
+at = 2
+text = '''
+OPTIM_SCALE AUTO
+OPTIM_SCALE NONE'''
+error = "OPTIM_SCALE given more than once"
+
+[[key.invalid]]
+wrap = "root"
+text = "OPTIM_SCALE"
+error = "OPTIM_SCALE requires a value"
+
+# ------------------------------------- RHOGATE and RHOBARGATE options ----
+# RHOGATE and RHOBARGATE take their options as word-value pairs after
+# their values. NPTS has another range and default on each line, so each
+# line has its own entries.
+
+[[line_option]]
+id = "RHOGATE.R_LO"
+option = "R_LO"
+lines = ["RHOGATE"]
+synopsis = "R_LO <r>"
+args = [ { name = "r", kind = "number", min = 0, what = "RHOGATE R_LO", msg = "RHOGATE R_LO must be >= 0, got '{tok}'" } ]
+repeat = "error"
+repeat_msg = "RHOGATE: R_LO given more than once; expected RHOGATE <tol> [R_LO <r>] [NPTS <n>] [SEED ERROR|WARN]"
+default = { text = "0.15 RCUTMB of each candidate", unchecked = "RHOGATE takes the window of each candidate from its RCUTMB when it checks it; no setting holds it." }
+checks = [
+  { msg = "RHOGATE: R_LO needs a value; expected RHOGATE <tol> [R_LO <r>] [NPTS <n>] [SEED ERROR|WARN]", doc = "R_LO is the last word of the line." },
+  { msg = "RHOGATE R_LO {value} A must lie below the smallest cutoff a candidate can have, RCUTMB = {max} A{note}: the window [R_LO, RCUTMB] would be empty. Lower R_LO.", doc = "At startup: R_LO is not below the smallest RCUTMB a candidate can have, {max}; {note} is \" (the largest CGRIDMB knot over its OPTIM box)\" when that knot sets it." },
+]
+doc = """\
+The lower end, in Å, of the window [R_LO, RCUTMB] on which RHOGATE checks \
+rho(r); it lies below the smallest RCUTMB a candidate can have."""
+
+[[line_option.examples]]
+wrap = "main_ream"
+text = "RHOGATE 1e-5 R_LO 2.0"
+
+[[line_option.invalid]]
+wrap = "root"
+text = "RHOGATE 1e-5 R_LO -1"
+error = "RHOGATE R_LO must be >= 0, got '-1'"
+
+[[line_option.invalid]]
+wrap = "root"
+text = "RHOGATE 1e-5 R_LO 0x1p-1"
+error = "RHOGATE R_LO must be a finite number, got '0x1p-1'"
+
+[[line_option.invalid]]
+wrap = "root"
+text = "RHOGATE 1e-5 R_LO"
+error = "RHOGATE: R_LO needs a value; expected RHOGATE <tol> [R_LO <r>] [NPTS <n>] [SEED ERROR|WARN]"
+
+[[line_option.invalid]]
+wrap = "root"
+text = "RHOGATE 1e-5 R_LO 1 r_lo 2"
+error = "RHOGATE: R_LO given more than once; expected RHOGATE <tol> [R_LO <r>] [NPTS <n>] [SEED ERROR|WARN]"
+
+[[line_option.invalid]]
+wrap = "main_ream"
+check = "startup"
+at = "none"
+text = "RHOGATE 1e-5 R_LO 6"
+error = "RHOGATE R_LO 6 A must lie below the smallest cutoff a candidate can have, RCUTMB = 5.5000 A: the window [R_LO, RCUTMB] would be empty. Lower R_LO."
+
+[[line_option]]
+id = "RHOGATE.NPTS"
+option = "NPTS"
+lines = ["RHOGATE"]
+synopsis = "NPTS <n>"
+args = [ { name = "n", kind = "integer", min = 2, max = 10000000, what = "RHOGATE NPTS" } ]
+repeat = "error"
+repeat_msg = "RHOGATE: NPTS given more than once; expected RHOGATE <tol> [R_LO <r>] [NPTS <n>] [SEED ERROR|WARN]"
+default = { literal = "20001" }
+checks = [
+  { msg = "RHOGATE: NPTS needs a value; expected RHOGATE <tol> [R_LO <r>] [NPTS <n>] [SEED ERROR|WARN]", doc = "NPTS is the last word of the line." },
+]
+doc = "The number of grid points of the window on which RHOGATE checks rho(r)."
+
+[[line_option.examples]]
+wrap = "main_ream"
+text = "RHOGATE 1e-5 NPTS 5001"
+
+[[line_option.invalid]]
+wrap = "root"
+text = "RHOGATE 1e-5 NPTS 1"
+error = "RHOGATE NPTS must be an integer from 2 to 10000000, got '1'"
+
+[[line_option.invalid]]
+wrap = "root"
+text = "RHOGATE 1e-5 NPTS 2e3"
+error = "RHOGATE NPTS must be an integer from 2 to 10000000, got '2e3'"
+
+[[line_option.invalid]]
+wrap = "root"
+text = "RHOGATE 1e-5 NPTS"
+error = "RHOGATE: NPTS needs a value; expected RHOGATE <tol> [R_LO <r>] [NPTS <n>] [SEED ERROR|WARN]"
+
+[[line_option.invalid]]
+wrap = "root"
+text = "RHOGATE 1e-5 NPTS 100 npts 200"
+error = "RHOGATE: NPTS given more than once; expected RHOGATE <tol> [R_LO <r>] [NPTS <n>] [SEED ERROR|WARN]"
+
+[[line_option]]
+id = "RHOGATE.SEED"
+option = "SEED"
+lines = ["RHOGATE"]
+synopsis = "SEED ERROR | WARN"
+args = [ { name = "mode", kind = "word", words = ["ERROR", "WARN"], msg = "RHOGATE SEED must be ERROR or WARN, got '{tok}'" } ]
+repeat = "error"
+repeat_msg = "RHOGATE: SEED given more than once; expected RHOGATE <tol> [R_LO <r>] [NPTS <n>] [SEED ERROR|WARN]"
+default = { literal = "ERROR" }
+checks = [
+  { msg = "RHOGATE: SEED needs a value; expected RHOGATE <tol> [R_LO <r>] [NPTS <n>] [SEED ERROR|WARN]", doc = "SEED is the last word of the line." },
+]
+doc = """\
+What a CONFIG or WARM starting point of the INIT or RESTART chain that \
+fails RHOGATE does at startup. ERROR refuses the run; WARN reports it, and \
+the run goes on and refuses an evaluation at that point before it is \
+trained."""
+
+[[line_option.examples]]
+wrap = "main_ream"
+text = "RHOGATE 1e-5 SEED WARN"
+
+[[line_option.examples]]
+wrap = "main_ream"
+doc = "The default, written out."
+text = "RHOGATE 1e-5 SEED ERROR"
+
+[[line_option.invalid]]
+wrap = "root"
+text = "RHOGATE 1e-5 SEED IGNORE"
+error = "RHOGATE SEED must be ERROR or WARN, got 'IGNORE'"
+
+[[line_option.invalid]]
+wrap = "root"
+text = "RHOGATE 1e-5 SEED"
+error = "RHOGATE: SEED needs a value; expected RHOGATE <tol> [R_LO <r>] [NPTS <n>] [SEED ERROR|WARN]"
+
+[[line_option.invalid]]
+wrap = "main_ream"
+text = "RHOGATE 1e-5 SEED WARN SEED ERROR"
+error = "RHOGATE: SEED given more than once; expected RHOGATE <tol> [R_LO <r>] [NPTS <n>] [SEED ERROR|WARN]"
+
+[[line_option]]
+id = "RHOBARGATE.NPTS"
+option = "NPTS"
+lines = ["RHOBARGATE"]
+synopsis = "NPTS <n>"
+args = [ { name = "n", kind = "integer", min = 3, max = 10000000, what = "RHOBARGATE NPTS" } ]
+repeat = "error"
+repeat_msg = "RHOBARGATE: NPTS given more than once; expected RHOBARGATE <bcc|fcc|hcp> <a0> <f_lo> <f_hi> [NPTS <n>] [SEED ERROR|WARN]"
+default = { literal = "1001" }
+checks = [
+  { msg = "RHOBARGATE: NPTS needs a value; expected RHOBARGATE <bcc|fcc|hcp> <a0> <f_lo> <f_hi> [NPTS <n>] [SEED ERROR|WARN]", doc = "NPTS is the last word of the line." },
+]
+doc = """\
+The number of lattice constants, evenly spaced from f_lo a0 to f_hi a0, \
+at which RHOBARGATE evaluates rhobar(a)."""
+
+[[line_option.examples]]
+wrap = "main_ream"
+text = "RHOBARGATE fcc 4.2 0.9 1.1 NPTS 3"
+
+[[line_option.invalid]]
+wrap = "root"
+text = "RHOBARGATE bcc 3.3 0.9 1.1 NPTS 2"
+error = "RHOBARGATE NPTS must be an integer from 3 to 10000000, got '2'"
+
+[[line_option.invalid]]
+wrap = "root"
+text = "RHOBARGATE bcc 3.3 0.9 1.1 NPTS"
+error = "RHOBARGATE: NPTS needs a value; expected RHOBARGATE <bcc|fcc|hcp> <a0> <f_lo> <f_hi> [NPTS <n>] [SEED ERROR|WARN]"
+
+[[line_option.invalid]]
+wrap = "main_ream"
+text = "RHOBARGATE bcc 3.3 0.9 1.1 NPTS 100 NPTS 200"
+error = "RHOBARGATE: NPTS given more than once; expected RHOBARGATE <bcc|fcc|hcp> <a0> <f_lo> <f_hi> [NPTS <n>] [SEED ERROR|WARN]"
+
+[[line_option]]
+id = "RHOBARGATE.SEED"
+option = "SEED"
+lines = ["RHOBARGATE"]
+synopsis = "SEED ERROR | WARN"
+args = [ { name = "mode", kind = "word", words = ["ERROR", "WARN"], msg = "RHOBARGATE SEED must be ERROR or WARN, got '{tok}'" } ]
+repeat = "error"
+repeat_msg = "RHOBARGATE: SEED given more than once; expected RHOBARGATE <bcc|fcc|hcp> <a0> <f_lo> <f_hi> [NPTS <n>] [SEED ERROR|WARN]"
+default = { literal = "ERROR" }
+checks = [
+  { msg = "RHOBARGATE: SEED needs a value; expected RHOBARGATE <bcc|fcc|hcp> <a0> <f_lo> <f_hi> [NPTS <n>] [SEED ERROR|WARN]", doc = "SEED is the last word of the line." },
+]
+doc = """\
+What a CONFIG or WARM starting point of the INIT or RESTART chain that \
+fails RHOBARGATE does at startup. ERROR refuses the run; WARN reports it, \
+and the run goes on and refuses an evaluation at that point before it is \
+trained."""
+
+[[line_option.examples]]
+wrap = "main_ream"
+text = "RHOBARGATE bcc 3.304 0.9 1.1 SEED WARN"
+
+[[line_option.examples]]
+wrap = "main_ream"
+doc = "The default, written out."
+text = "RHOBARGATE bcc 3.304 0.95 1.05 SEED ERROR"
+
+[[line_option.invalid]]
+wrap = "root"
+text = "RHOBARGATE bcc 3.3 0.9 1.1 SEED warn seed error"
+error = "RHOBARGATE: SEED given more than once; expected RHOBARGATE <bcc|fcc|hcp> <a0> <f_lo> <f_hi> [NPTS <n>] [SEED ERROR|WARN]"
+
+[[line_option.invalid]]
+wrap = "main_ream"
+check = "startup"
+at = "none"
+text = "RHOBARGATE bcc 3.304 0.9 1.1 SEED ERROR"
+error = "RHOBARGATE: seed -c pot (INIT CONFIG) fails the lattice rhobar(a) gate: rhobar rises at 208 of 1000 steps on bcc (a0 3.304 A, a/a0 [0.9, 1.1], 1001 points), first at a/a0 = 0.9000, v = 2.9237e-02. Repair the seed's density (for a WARM seed, its OPTIM'd density values: the rest comes from the -c potential) with tadah refit --edit, relax the gate, or add SEED WARN to evaluate it as a rejected start."
+msg_of = "ROOT.RHOBARGATE"
+
+[[line_option.invalid]]
+wrap = "main_ream"
+text = "RHOBARGATE bcc 3.3 0.9 1.1 SEED"
+error = "RHOBARGATE: SEED needs a value; expected RHOBARGATE <bcc|fcc|hcp> <a0> <f_lo> <f_hi> [NPTS <n>] [SEED ERROR|WARN]"
+
+[[line_option.invalid]]
+wrap = "main_ream"
+text = "RHOBARGATE bcc 3.3 0.9 1.1 SEED MAYBE"
+error = "RHOBARGATE SEED must be ERROR or WARN, got 'MAYBE'"
+
+# ------------------------------------------------------- removed keys ----
+# A removed keyword is refused in every block with its hint, before the
+# keys of the block are looked up.
+
+[[removed]]
+name = "LOCAL"
+hint = "renamed to INNER (the MLSL/AUGLAG inner sub-optimizer block)."
+
+[[removed.invalid]]
+wrap = "strategy"
+text = "LOCAL"
+error = "'LOCAL' was removed from the grammar: renamed to INNER (the MLSL/AUGLAG inner sub-optimizer block)."
+
+[[removed]]
+name = "ENDLOCAL"
+hint = "renamed to ENDINNER."
+
+[[removed.invalid]]
+wrap = "inner"
+text = "ENDLOCAL"
+error = "'ENDLOCAL' was removed from the grammar: renamed to ENDINNER."
+
+[[removed]]
+name = "PRESTAGE"
+hint = "replaced by `STRATEGY { TYPE PRESTAGE EXPLORE { ... } [REFINE { ... }] }` (REFINE is optional; without it the STRATEGY-level LIB/ALGO refines)."
+
+[[removed.invalid]]
+wrap = "optimizer"
+text = "PRESTAGE"
+error = "'PRESTAGE' was removed from the grammar: replaced by `STRATEGY { TYPE PRESTAGE EXPLORE { ... } [REFINE { ... }] }` (REFINE is optional; without it the STRATEGY-level LIB/ALGO refines)."
+
+[[removed]]
+name = "ENDPRESTAGE"
+hint = "replaced by ENDEXPLORE / ENDREFINE / ENDSTRATEGY (see STRATEGY block)."
+
+[[removed.invalid]]
+wrap = "explore"
+text = "ENDPRESTAGE"
+error = "'ENDPRESTAGE' was removed from the grammar: replaced by ENDEXPLORE / ENDREFINE / ENDSTRATEGY (see STRATEGY block)."
+
+[[removed]]
+name = "MULTISTART"
+hint = "moved into `STRATEGY { TYPE MULTISTART N_STARTS N }`."
+
+[[removed.invalid]]
+wrap = "strategy"
+text = "MULTISTART 4"
+error = "'MULTISTART' was removed from the grammar: moved into `STRATEGY { TYPE MULTISTART N_STARTS N }`."
+
+[[removed]]
+name = "MULTISTART_PARALLEL"
+hint = "moved into `STRATEGY { TYPE MULTISTART PARALLEL N }`."
+
+[[removed.invalid]]
+wrap = "strategy"
+text = "MULTISTART_PARALLEL 2"
+error = "'MULTISTART_PARALLEL' was removed from the grammar: moved into `STRATEGY { TYPE MULTISTART PARALLEL N }`."
+
+[[removed]]
+name = "MULTISTART_BUDGET_PER_START"
+hint = "moved into `STRATEGY { TYPE MULTISTART BUDGET_PER_START N }`."
+
+[[removed.invalid]]
+wrap = "strategy"
+text = "MULTISTART_BUDGET_PER_START 50"
+error = "'MULTISTART_BUDGET_PER_START' was removed from the grammar: moved into `STRATEGY { TYPE MULTISTART BUDGET_PER_START N }`."
+
+[[removed]]
+name = "STAGE_GLOBAL"
+hint = "removed. Use `STRATEGY { TYPE PRESTAGE ... }` for staged-global runs."
+
+[[removed.invalid]]
+wrap = "strategy"
+text = "STAGE_GLOBAL"
+error = "'STAGE_GLOBAL' was removed from the grammar: removed. Use `STRATEGY { TYPE PRESTAGE ... }` for staged-global runs."
+
+[[removed]]
+name = "RESTART_AFTER_STAGNATION"
+hint = "moved into `STRATEGY { RESTART { AFTER_STAGNATION N } ENDRESTART }`."
+
+[[removed.invalid]]
+wrap = "strategy"
+text = "RESTART_AFTER_STAGNATION 20"
+error = "'RESTART_AFTER_STAGNATION' was removed from the grammar: moved into `STRATEGY { RESTART { AFTER_STAGNATION N } ENDRESTART }`."
+
+[[removed]]
+name = "RESTART_MAX"
+hint = "moved into `STRATEGY { RESTART { MAX N } ENDRESTART }`."
+
+[[removed.invalid]]
+wrap = "strategy"
+text = "RESTART_MAX 3"
+error = "'RESTART_MAX' was removed from the grammar: moved into `STRATEGY { RESTART { MAX N } ENDRESTART }`."
+
+[[removed]]
+name = "RESTART_INIT_STRATEGY"
+hint = "moved into `RESTART { METHOD <method> ... }` (re-uses INIT-block grammar)."
+
+[[removed.invalid]]
+wrap = "restart"
+text = "RESTART_INIT_STRATEGY RANDOM"
+error = "'RESTART_INIT_STRATEGY' was removed from the grammar: moved into `RESTART { METHOD <method> ... }` (re-uses INIT-block grammar)."
+
+[[removed]]
+name = "INIT_STRATEGY"
+hint = "moved into `INIT { METHOD <method> ... } ENDINIT` block."
+
+[[removed.invalid]]
+wrap = "optimizer"
+text = "INIT_STRATEGY RANDOM"
+error = "'INIT_STRATEGY' was removed from the grammar: moved into `INIT { METHOD <method> ... } ENDINIT` block."
+
+[[removed]]
+name = "INIT_K"
+hint = "renamed to K_TOTAL inside an INIT block."
+
+[[removed.invalid]]
+wrap = "init"
+text = "INIT_K 4"
+error = "'INIT_K' was removed from the grammar: renamed to K_TOTAL inside an INIT block."
+
+[[removed]]
+name = "INIT_SEED"
+hint = "renamed to SEED inside an INIT block."
+
+[[removed.invalid]]
+wrap = "init"
+text = "INIT_SEED 1"
+error = "'INIT_SEED' was removed from the grammar: renamed to SEED inside an INIT block."
+
+[[removed]]
+name = "INIT_INCLUDE_CONFIG"
+hint = "removed. The values of the training configuration for the search parameters are a starting point only when the INIT block has a `METHOD CONFIG` line."
+
+[[removed.invalid]]
+wrap = "init"
+text = "INIT_INCLUDE_CONFIG true"
+error = "'INIT_INCLUDE_CONFIG' was removed from the grammar: removed. The values of the training configuration for the search parameters are a starting point only when the INIT block has a `METHOD CONFIG` line."
+
+[[removed]]
+name = "INCLUDE_CONFIG"
+hint = "removed. The values of the training configuration for the search parameters are a starting point only when the INIT block has a `METHOD CONFIG` line."
+
+[[removed.invalid]]
+wrap = "init"
+text = "INCLUDE_CONFIG true"
+error = "'INCLUDE_CONFIG' was removed from the grammar: removed. The values of the training configuration for the search parameters are a starting point only when the INIT block has a `METHOD CONFIG` line."
+
+[[removed]]
+name = "NOISE_AUTO"
+hint = "moved into `NOISE { AUTO true|false } ENDNOISE` block."
+
+[[removed.invalid]]
+wrap = "root"
+text = "NOISE_AUTO true"
+error = "'NOISE_AUTO' was removed from the grammar: moved into `NOISE { AUTO true|false } ENDNOISE` block."
+
+[[removed]]
+name = "NOISE_CALIBRATION"
+hint = "moved into `NOISE { CALIBRATION N } ENDNOISE` block."
+
+[[removed.invalid]]
+wrap = "noise"
+text = "NOISE_CALIBRATION 5"
+error = "'NOISE_CALIBRATION' was removed from the grammar: moved into `NOISE { CALIBRATION N } ENDNOISE` block."
+
+# ---------------------------------------------------- cross-key rules ----
+
+[[rule]]
+id = "RULE.density_key_arming"
+title = "RHOGATE and RHOBARGATE need a search of the density"
+check = "parse"
+msg = "{key} cannot act: no OPTIM line searches a key that changes the DM_REAM density or its window ({keys}), so every candidate has the -c density and its one verdict (OPTIM WATOM only scales the density; the verdict does not change). Add an OPTIM line on {keys}, or remove the {key} line."
+keys = ["ROOT.RHOGATE", "ROOT.RHOBARGATE", "ROOT.OPTIM"]
+doc = """\
+A file with RHOGATE or RHOBARGATE searches a key that changes the DM_REAM \
+density or its window: AMPGRIDMB, CGRIDMB, SGRIDMB or RCUTMB, or a DENSITY \
+key of a DM_Embed component. An OPTIM line anywhere in the file counts; \
+without one the file is refused at its first RHOGATE or RHOBARGATE line."""
+
+[[rule.examples]]
+wrap = "main_ream"
+doc = "The OPTIM line on AMPGRIDMB below the RHOGATE line arms it."
+text = "RHOGATE 1e-5"
+
+[[rule.invalid]]
+wrap = "root"
+text = "RHOGATE 1e-5"
+error = "RHOGATE cannot act: no OPTIM line searches a key that changes the DM_REAM density or its window (AMPGRIDMB, CGRIDMB, SGRIDMB or RCUTMB), so every candidate has the -c density and its one verdict (OPTIM WATOM only scales the density; the verdict does not change). Add an OPTIM line on AMPGRIDMB, CGRIDMB, SGRIDMB or RCUTMB, or remove the RHOGATE line."
+
+[[rule.invalid]]
+wrap = "root"
+text = '''
+RHOBARGATE bcc 3.3 0.9 1.1
+RHOGATE 1e-5'''
+error = "RHOBARGATE cannot act: no OPTIM line searches a key that changes the DM_REAM density or its window (AMPGRIDMB, CGRIDMB, SGRIDMB or RCUTMB), so every candidate has the -c density and its one verdict (OPTIM WATOM only scales the density; the verdict does not change). Add an OPTIM line on AMPGRIDMB, CGRIDMB, SGRIDMB or RCUTMB, or remove the RHOBARGATE line."
+
+# ---------------------------------------------- environment overrides ----
+# A variable that is set and not empty replaces the key of the target
+# file when the run starts. TADAH_OPTIM_SCALE is read with the target
+# file, and an empty TADAH_OPTIM_SCALE is refused.
+
+[[env]]
+name = "TADAH_OPTIM_SCALE"
+key = "ROOT.OPTIM_SCALE"
+values = ["AUTO", "NONE"]
+msg = "TADAH_OPTIM_SCALE must be AUTO or NONE (got '{tok}')"
+doc = """\
+Replaces OPTIM_SCALE of the target file. The value is read in any case, \
+and an empty value is refused."""
+
+[[env.examples]]
+wrap = "root"
+env = { TADAH_OPTIM_SCALE = "none" }
+doc = "The run uses OPTIM_SCALE NONE: the variable replaces the line of the file."
+text = "OPTIM_SCALE AUTO"
+
+[[env.invalid]]
+wrap = "root"
+env = { TADAH_OPTIM_SCALE = "unit" }
+at = "none"
+text = "OPTIM_SCALE AUTO"
+error = "TADAH_OPTIM_SCALE must be AUTO or NONE (got 'unit')"
+
+[[env.invalid]]
+wrap = "root"
+env = { TADAH_OPTIM_SCALE = "" }
+at = "none"
+text = "OPTIM_SCALE AUTO"
+error = "TADAH_OPTIM_SCALE must be AUTO or NONE (got '')"
+
+[[env]]
+name = "TADAH_FAILSCORE_GRADING"
+key = "ROOT.FAILSCORE_GRADING"
+values = ["ON", "OFF"]
+msg = "TADAH_FAILSCORE_GRADING must be ON or OFF"
+doc = """\
+Replaces FAILSCORE_GRADING of the target file when it is set and not \
+empty; the value is ON or OFF, in upper case."""
+
+[[env.invalid]]
+wrap = "root"
+check = "check"
+env = { TADAH_FAILSCORE_GRADING = "MAYBE" }
+at = "none"
+text = ""
+error = "TADAH_FAILSCORE_GRADING must be ON or OFF"
+
+[[env]]
+name = "TADAH_BUMPGATE"
+key = "ROOT.BUMPGATE"
+values = ["CANDIDATE", "STRICT"]
+msg = "TADAH_BUMPGATE must be CANDIDATE or STRICT"
+doc = """\
+Replaces BUMPGATE of the target file when it is set and not empty; the \
+value is CANDIDATE or STRICT, in upper case."""
+
+[[env.invalid]]
+wrap = "root"
+check = "check"
+env = { TADAH_BUMPGATE = "MAYBE" }
+at = "none"
+text = ""
+error = "TADAH_BUMPGATE must be CANDIDATE or STRICT"
+
+[[env]]
+name = "TADAH_PC_ISOLATION"
+key = "ROOT.PC_ISOLATION"
+values = ["THREAD", "PROCESS"]
+msg = "PC_ISOLATION must be THREAD or PROCESS, got '{tok}'"
+doc = """\
+Replaces PC_ISOLATION of the target file when it is set and not empty; \
+the value is THREAD or PROCESS, in upper case, and its refusal names \
+PC_ISOLATION."""
+
+[[env.invalid]]
+wrap = "root"
+check = "check"
+env = { TADAH_PC_ISOLATION = "process" }
+at = "none"
+text = ""
+error = "PC_ISOLATION must be THREAD or PROCESS, got 'process'"
+
+[[env]]
+name = "TADAH_PC_WORKER_TIMEOUT"
+key = "ROOT.PC_WORKER_TIMEOUT"
+msg = "TADAH_PC_WORKER_TIMEOUT must be a finite number of seconds >= 0 (0 derives the deadline from each script's timeout), got '{tok}'{underflow}"
+doc = """\
+Replaces PC_WORKER_TIMEOUT of the target file when it is set and not \
+empty, with the same values."""
+checks = [
+  { msg = "TADAH_PC_WORKER_TIMEOUT is too large for the worker deadline, got '{tok}' (it is kept in 64-bit milliseconds: at most about 9.2e15 s)", doc = "When the run starts: a value above about 9.2e15 s." },
+]
+
+[[env.invalid]]
+wrap = "root"
+check = "check"
+env = { TADAH_PC_WORKER_TIMEOUT = "-1" }
+at = "none"
+text = ""
+error = "TADAH_PC_WORKER_TIMEOUT must be a finite number of seconds >= 0 (0 derives the deadline from each script's timeout), got '-1'"
+
+[[env.invalid]]
+wrap = "root"
+check = "check"
+env = { TADAH_PC_WORKER_TIMEOUT = "1e16" }
+at = "none"
+text = ""
+error = "TADAH_PC_WORKER_TIMEOUT is too large for the worker deadline, got '1e16' (it is kept in 64-bit milliseconds: at most about 9.2e15 s)"
+
+# ------------------------------------------------------------ wrappers ----
+# A wrapper is a complete target file with one slot line, {line}. The
+# conformance test puts the text of an example in the slot; with the slot
+# left empty the file is accepted by the parser and the startup checks.
+# wrap = "none" takes the text of an example as the whole file.
+
+[wrapper.root]
+block = "ROOT"
+doc = "The slot is the first line, at the top level."
+text = """
+{line}
+OPTIM CGRID2B (1) 0.5 1.5
+PC_ERMSE 0 1
+OPTIMIZER
+STRATEGY
+LIB NLOPT
+ALGO LN_SBPLX
+MAXEVAL 10
+ENDSTRATEGY
+ENDOPTIMIZER
+"""
+
+[wrapper.end]
+block = "ROOT"
+doc = "The slot is the last line, at the top level after the OPTIMIZER block."
+text = """
+OPTIM CGRID2B (1) 0.5 1.5
+PC_ERMSE 0 1
+OPTIMIZER
+STRATEGY
+LIB NLOPT
+ALGO LN_SBPLX
+MAXEVAL 10
+ENDSTRATEGY
+ENDOPTIMIZER
+{line}
+"""
+
+[wrapper.optimizer]
+block = "OPTIMIZER"
+doc = "The slot is inside the OPTIMIZER block, after its optimiser keys; the file has no STRATEGY block."
+text = """
+OPTIM CGRID2B (1) 0.5 1.5
+PC_ERMSE 0 1
+OPTIMIZER
+LIB NLOPT
+ALGO LN_SBPLX
+MAXEVAL 10
+{line}
+ENDOPTIMIZER
+"""
+
+[wrapper.strategy]
+block = "STRATEGY"
+optimizer = "NLOPT:LN_SBPLX"
+doc = "The slot is inside the STRATEGY block, after its optimiser keys."
+text = """
+OPTIM CGRID2B (1) 0.5 1.5
+PC_ERMSE 0 1
+OPTIMIZER
+STRATEGY
+LIB NLOPT
+ALGO LN_SBPLX
+MAXEVAL 10
+{line}
+ENDSTRATEGY
+ENDOPTIMIZER
+"""
+
+[wrapper.init]
+block = "INIT"
+doc = "The slot is inside an INIT block of the OPTIMIZER block."
+text = """
+OPTIM CGRID2B (1) 0.5 1.5
+PC_ERMSE 0 1
+OPTIMIZER
+INIT
+{line}
+ENDINIT
+STRATEGY
+LIB NLOPT
+ALGO LN_SBPLX
+MAXEVAL 10
+ENDSTRATEGY
+ENDOPTIMIZER
+"""
+
+[wrapper.noise]
+block = "NOISE"
+doc = "The slot is inside a NOISE block; the optimiser takes finite-difference gradients (NLOPT:LD_LBFGS)."
+text = """
+OPTIM CGRID2B (1) 0.5 1.5
+PC_ERMSE 0 1
+OPTIMIZER
+NOISE
+{line}
+ENDNOISE
+STRATEGY
+LIB NLOPT
+ALGO LD_LBFGS
+MAXEVAL 10
+ENDSTRATEGY
+ENDOPTIMIZER
+"""
+
+[wrapper.restart]
+block = "RESTART"
+doc = "The slot is inside a RESTART block of the STRATEGY block."
+text = """
+OPTIM CGRID2B (1) 0.5 1.5
+PC_ERMSE 0 1
+OPTIMIZER
+STRATEGY
+LIB NLOPT
+ALGO LN_SBPLX
+MAXEVAL 10
+RESTART
+{line}
+ENDRESTART
+ENDSTRATEGY
+ENDOPTIMIZER
+"""
+
+[wrapper.explore]
+block = "EXPLORE"
+doc = "The slot is inside the EXPLORE block of STRATEGY TYPE PRESTAGE, after its optimiser keys."
+text = """
+OPTIM CGRID2B (1) 0.5 1.5
+PC_ERMSE 0 1
+OPTIMIZER
+STRATEGY
+TYPE PRESTAGE
+LIB NLOPT
+ALGO LN_SBPLX
+MAXEVAL 10
+EXPLORE
+LIB TADAH
+ALGO RANDOM
+MAXEVAL 5
+{line}
+ENDEXPLORE
+ENDSTRATEGY
+ENDOPTIMIZER
+"""
+
+[wrapper.refine]
+block = "REFINE"
+doc = "The slot is inside the REFINE block of STRATEGY TYPE PRESTAGE, after its optimiser keys."
+text = """
+OPTIM CGRID2B (1) 0.5 1.5
+PC_ERMSE 0 1
+OPTIMIZER
+STRATEGY
+TYPE PRESTAGE
+EXPLORE
+LIB TADAH
+ALGO RANDOM
+MAXEVAL 5
+ENDEXPLORE
+REFINE
+LIB NLOPT
+ALGO LN_SBPLX
+MAXEVAL 10
+{line}
+ENDREFINE
+ENDSTRATEGY
+ENDOPTIMIZER
+"""
+
+[wrapper.inner]
+block = "INNER"
+doc = "The slot is inside the INNER block of an NLOPT:LN_AUGLAG search, after its optimiser keys."
+text = """
+OPTIM CGRID2B (1) 0.5 1.5
+PC_ERMSE 0 1
+OPTIMIZER
+STRATEGY
+LIB NLOPT
+ALGO LN_AUGLAG
+MAXEVAL 10
+INNER
+LIB NLOPT
+ALGO LN_BOBYQA
+MAXEVAL 5
+{line}
+ENDINNER
+ENDSTRATEGY
+ENDOPTIMIZER
+"""
+
+[wrapper.main_ream]
+block = "ROOT"
+doc = """\
+The slot is the first line, at the top level, of a search of a DM_REAM \
+potential whose OPTIM line on AMPGRIDMB arms RHOGATE and RHOBARGATE."""
+context = "main_ream"
+text = """
+{line}
+OPTIM AMPGRIDMB (3) -0.5 0.5
+PC_ERMSE 0 1
+OPTIMIZER
+STRATEGY
+LIB NLOPT
+ALGO LN_SBPLX
+MAXEVAL 10
+ENDSTRATEGY
+ENDOPTIMIZER
+"""
+
+# ------------------------------------------------------------ contexts ----
+# The training configuration (-c) of a conformance case, as the
+# configuration parser reads it. A wrapper or an example names one with
+# `context`; "default" otherwise.
+
+[context.default]
+doc = "A one-species two-body model that builds without data: H, D2_BP, M_BLR."
+config = """
+ATOM H
+WATOM 1.0
+DBFILE dummy.db
+INIT2B true
+INITMB false
+TYPE2B D2_BP 2 2 H H
+CGRID2B 1.0 2.0
+SGRID2B 0.5 1.0
+RCTYPE2B Cut_Cos
+RCUT2B 5.0
+VERBOSE 0
+MODEL M_BLR BF_Linear
+OALGO 4
+LAMBDA 1e-3
+"""
+
+[context.main_ream]
+doc = """\
+A one-species Ta model with a bare DM_REAM many-body term under RHOFORM \
+SIGNED that builds without data: D2_Blip5, DM_REAM, M_BLR."""
+config = """
+ATOM Ta
+WATOM 1.0
+DBFILE dummy.db
+INIT2B true
+INITMB true
+TYPE2B D2_Blip5 4 4 Ta Ta
+CGRID2B 2.5 3.2 3.9 4.5
+SGRID2B 3.0 3.0 3.0 3.0
+TYPEMB DM_REAM 3 3 3 3 5 5 0 0 Ta Ta
+CGRIDMB 2.8 3.6 4.4
+SGRIDMB 3.0 3.0 3.0
+AMPGRIDMB 0.5 0.3 0.1
+RHOFORM SIGNED
+CEMBFUNC -0.2 0.3 0.8 1.3 1.8
+SEMBFUNC 2.0 2.0 2.0 2.0 2.0
+RCTYPE2B Cut_Dummy
+RCTYPEMB Cut_Dummy
+RCUT2B 5.5
+RCUTMB 5.5
+VERBOSE 0
+MODEL M_BLR BF_Linear
+OALGO 4
+LAMBDA 1e-3
+"""
+
+[context.main_ream_nonneg]
+doc = """\
+The configuration main_ream under RHOFORM NONNEG, with the same \
+non-negative amplitudes."""
+config = """
+ATOM Ta
+WATOM 1.0
+DBFILE dummy.db
+INIT2B true
+INITMB true
+TYPE2B D2_Blip5 4 4 Ta Ta
+CGRID2B 2.5 3.2 3.9 4.5
+SGRID2B 3.0 3.0 3.0 3.0
+TYPEMB DM_REAM 3 3 3 3 5 5 0 0 Ta Ta
+CGRIDMB 2.8 3.6 4.4
+SGRIDMB 3.0 3.0 3.0
+AMPGRIDMB 0.5 0.3 0.1
+RHOFORM NONNEG
+CEMBFUNC -0.2 0.3 0.8 1.3 1.8
+SEMBFUNC 2.0 2.0 2.0 2.0 2.0
+RCTYPE2B Cut_Dummy
+RCTYPEMB Cut_Dummy
+RCUT2B 5.5
+RCUTMB 5.5
+VERBOSE 0
+MODEL M_BLR BF_Linear
+OALGO 4
+LAMBDA 1e-3
+"""
+
+[context.main_ream_watom0]
+doc = "The configuration main_ream with the density pair weight WATOM 0."
+config = """
+ATOM Ta
+WATOM 0.0
+DBFILE dummy.db
+INIT2B true
+INITMB true
+TYPE2B D2_Blip5 4 4 Ta Ta
+CGRID2B 2.5 3.2 3.9 4.5
+SGRID2B 3.0 3.0 3.0 3.0
+TYPEMB DM_REAM 3 3 3 3 5 5 0 0 Ta Ta
+CGRIDMB 2.8 3.6 4.4
+SGRIDMB 3.0 3.0 3.0
+AMPGRIDMB 0.5 0.3 0.1
+RHOFORM SIGNED
+CEMBFUNC -0.2 0.3 0.8 1.3 1.8
+SEMBFUNC 2.0 2.0 2.0 2.0 2.0
+RCTYPE2B Cut_Dummy
+RCTYPEMB Cut_Dummy
+RCUT2B 5.5
+RCUTMB 5.5
+VERBOSE 0
+MODEL M_BLR BF_Linear
+OALGO 4
+LAMBDA 1e-3
+"""
+
+[context.main_ream_negative]
+doc = """\
+The configuration main_ream with a negative first amplitude, \
+AMPGRIDMB -0.5 0.3 0.1, whose density falls below 0."""
+config = """
+ATOM Ta
+WATOM 1.0
+DBFILE dummy.db
+INIT2B true
+INITMB true
+TYPE2B D2_Blip5 4 4 Ta Ta
+CGRID2B 2.5 3.2 3.9 4.5
+SGRID2B 3.0 3.0 3.0 3.0
+TYPEMB DM_REAM 3 3 3 3 5 5 0 0 Ta Ta
+CGRIDMB 2.8 3.6 4.4
+SGRIDMB 3.0 3.0 3.0
+AMPGRIDMB -0.5 0.3 0.1
+RHOFORM SIGNED
+CEMBFUNC -0.2 0.3 0.8 1.3 1.8
+SEMBFUNC 2.0 2.0 2.0 2.0 2.0
+RCTYPE2B Cut_Dummy
+RCTYPEMB Cut_Dummy
+RCUT2B 5.5
+RCUTMB 5.5
+VERBOSE 0
+MODEL M_BLR BF_Linear
+OALGO 4
+LAMBDA 1e-3
+"""
+
+[context.main_ead]
+doc = """\
+A one-species model whose many-body term is not DM_REAM: the two-body \
+term of the default configuration and a DM_EAD many-body term."""
+config = """
+ATOM H
+WATOM 1.0
+DBFILE dummy.db
+INIT2B true
+TYPE2B D2_BP 2 2 H H
+CGRID2B 1.0 2.0
+SGRID2B 0.5 1.0
+RCTYPE2B Cut_Cos
+RCUT2B 5.0
+INITMB true
+TYPEMB DM_EAD 1 2 2 H H
+CGRIDMB 2.6 3.6
+SGRIDMB 1.0 1.1
+RCTYPEMB Cut_Cos
+RCUTMB 5.0
+VERBOSE 0
+MODEL M_BLR BF_Linear
+OALGO 4
+LAMBDA 1e-3
+"""
+
+[context.main_dm_embed]
+doc = """\
+A one-species potential with the two-body term of the default \
+configuration and one DM_Embed many-body component h: a Blip5 density \
+under FORM SIGNED with positive amplitudes, and a Gaussian embedding."""
+config = """
+ATOM H
+WATOM 1
+VERBOSE 0
+DBFILE dummy.db
+INIT2B true
+INITMB true
+TYPE2B D2_BP 2 2 H H
+CGRID2B 1.0 2.0
+SGRID2B 0.5 1.0
+RCTYPE2B Cut_Cos
+RCUT2B 5.0
+MODEL M_BLR BF_Linear
+LAMBDA 1e-3
+OALGO 4
+DESCRIPTOR h DM_Embed
+PAIRS H H
+DENSITY
+BASIS Blip5
+FORM SIGNED
+CENTRES 1 2
+ETA 1 1
+AMPLITUDES 1 0.5
+CUTOFF
+TYPE Cut_Poly
+RADIUS 3
+ENDCUTOFF
+ENDDENSITY
+EMBEDDING
+BASIS Gaussian
+CENTRES 0 0.5 1
+ETA 2 2 2
+REFERENCE ZERO
+ENDEMBEDDING
+ENDDESCRIPTOR
+"""

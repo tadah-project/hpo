@@ -34,8 +34,9 @@ build directory.
   versions.
 - LAPACK / BLAS at link time (provided by the build environment).
 - Python 3.11 or later for the tests (`BUILD_TESTING`): the registry drift
-  gate `hpo_anneal_registry_sync` reads TOML with `tomllib`, and the
-  configure step refuses an older interpreter
+  gate `hpo_anneal_registry_sync` and the checks of the target-file
+  registry read TOML with `tomllib`, and the configure step refuses an
+  older interpreter
   (`cmake/hpo_test_python.cmake`).
 - A LAMMPS library built with [Tadah!LAMMPS](https://git.ecdf.ed.ac.uk/tadah/tadah.lammps)
   is needed at link time only when building HPO against the
@@ -50,6 +51,33 @@ build directory.
 | `src/`               | Implementation translation units. |
 | `tests/`             | Unit and integration tests; `tests/data/` holds their data (`tests/data/ta`: the Ta training and validation configurations, datasets, LAMMPS scripts and target files). |
 | `blueprint/`         | Registry files for the documentation (see `blueprint/README.md`). |
+
+## The target-file registry
+
+`blueprint/hpotarget.toml` and its part files describe the target file of
+`tadah hpo` (`--hpotarget`) as the parser reads it: every block, key,
+option and `PARAM` key, with the parser's own messages. The files are
+written by hand. Tests compare them with the parser: each example is
+accepted, each invalid line is refused with exactly its message, each
+message of the registry has an invalid line or a stated reason, and every
+name the parser's sources recognise has an entry. Cases generated from the
+entries also compare the blocks of each key, its repeat rule, the ranges
+and words of its arguments, the ranges of the `INIT` methods and `PARAM`
+keys (the largest value through the startup checks of `tadah hpo`), the
+`PARAM` keys of each optimiser, the options of each line and the defaults,
+and each word of an argument is shown by an example. A change to what the
+parser accepts, or to one of its messages, therefore changes the registry in
+the same commit. A new optimiser needs its description in
+`blueprint/optimizers_doc.toml`, which the check requires, and a new key of
+`blueprint/anneal_keys.toml` an example in the examples of the annealers'
+`PARAM` policy (`blueprint/hpotarget_params.toml`), without which the
+documentation build stops. `blueprint/README.md` ("The target-file
+registry") describes the files and the checks, which run with:
+
+```bash
+python3 blueprint/hpotarget_registry.py --check
+ctest --test-dir <build directory> -R hpotarget --output-on-failure
+```
 
 ## Generated files
 

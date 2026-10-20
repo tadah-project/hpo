@@ -638,7 +638,7 @@ TEST_CASE("RHOFORM NONNEG/MONOTONE: no projection WARNING when an optimiser "
 #endif
   PeriodicTable::initialize();
   const std::string kNotEvaluated =
-      "ignores the OPTIM box: Ceres' GradientProblemSolver has no bounds, so "
+      "ignores the OPTIM box: Ceres' line-search solver has no bounds, so "
       "its line searches can propose points outside the box";
   SECTION("an ignores_bounds optimiser") {
     const std::string txt = box_warning_journal(

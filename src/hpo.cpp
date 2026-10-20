@@ -121,8 +121,9 @@ void run_noise_calibration(const OptimizerSpec& sp, const HPO_Host<V,R>& host,
     for (long i = 0; i < seed_vec.size(); ++i)
         seed_vec(i) = seed_real[static_cast<std::size_t>(i)];
 
+    /* The losses of the evaluations made: N is up to INT_MAX, and room
+     * for all of them (16 GiB) is not taken before the first. */
     std::vector<double> losses;
-    losses.reserve(N);
     for (std::size_t i = 0; i < N; ++i)
         losses.push_back(host(seed_vec));
 

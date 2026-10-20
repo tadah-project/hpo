@@ -33,6 +33,7 @@ RULE_TYPES = {"requires_flag", "conflicts_flag", "unused_when_set",
 
 KEY_FIELDS = {"name", "type", "default", "default_serial", "default_pt",
               "default_pa", "values", "kinds", "group", "rank", "doc",
+              "long_doc", "range_doc",
               "min", "max", "min_open", "max_open", "range_msg", "range_note",
               "report_value", "custom_range", "accepts_auto", "auto_kinds",
               "accepts_off"}
@@ -246,6 +247,7 @@ def emit(data: dict) -> str:
     out("  const char* group;")
     out("  int rank;                // importance order within the group")
     out("  const char* doc;")
+    out("  const char* long_doc;     // detail after doc; nullptr = none")
     out("  // Per-kind defaults (absent = presence-tested or run-time AUTO).")
     out("  bool has_def_serial, has_def_pt, has_def_pa;")
     out("  double def_serial, def_pt, def_pa;   // enum defaults = value index")
@@ -301,7 +303,9 @@ def emit(data: dict) -> str:
         else:
             enum_vals, enum_count = "nullptr", "0"
         out(f"  {{{cstr(key['name'])}, {TYPES[key['type']]}, {kinds},")
+        long_doc = cstr(key["long_doc"]) if key.get("long_doc") else "nullptr"
         out(f"   {cstr(key['group'])}, {key['rank']}, {cstr(key['doc'])},")
+        out(f"   {long_doc},")
         out(f"   {bool_lit(has['serial'])}, {bool_lit(has['pt'])}, "
             f"{bool_lit(has['pa'])}, {val['serial']}, {val['pt']}, {val['pa']},")
         out(f"   {bool_lit(has_min)}, {bool_lit(bool(key.get('min_open')))}, "

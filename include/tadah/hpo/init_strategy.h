@@ -21,6 +21,7 @@
 
 #include <tadah/hpo/optimizer_spec.h>   // InitStrategySpec::Entry
 
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -33,6 +34,13 @@ namespace tadah::core { class Context; }
 namespace tadah::hpo {
 
 class HPOTargets;        // forward-declared -- full type pulled in by .cpp
+
+/* The most starting points one count of the target file asks for: the K of
+ * a METHOD line, K_TOTAL (INIT and RESTART blocks) and STRATEGY TOPK, the
+ * candidates a PRESTAGE refinement starts from. The points of a block are
+ * drawn when the file is read and held in memory, and each is a start of a
+ * search; HPOTargets::read() refuses a larger count at its line. */
+inline constexpr std::size_t kMaxStartingPoints = 1000000;
 
 /* Which block's chain draws the points (InitContext::stream): an INIT
  * block (the run's, a PRESTAGE phase's) or a RESTART round. The random
@@ -114,9 +122,10 @@ std::vector<double> config_point_from_targets(const HPOTargets& trg);
 std::unique_ptr<InitStrategy> build_init_strategy(const struct InitStrategySpec& ispec);
 
 /* Checks one chain entry the way build_init_strategy() instantiates it:
- * a known METHOD, its arity, and K a whole integer, >= 0 for RANDOM and
- * >= 1 for LHS/SOBOL. HPOTargets::read() calls it at the METHOD line, so
- * the error names that line. Throws std::runtime_error. */
+ * a known METHOD, its arity, and K a whole integer, from 0 for RANDOM and
+ * from 1 for LHS/SOBOL, to kMaxStartingPoints. HPOTargets::read() calls it
+ * at the METHOD line, so the error names that line. Throws
+ * std::runtime_error. */
 void validate_init_entry(const InitStrategySpec::Entry& e);
 
 }  // namespace tadah::hpo
