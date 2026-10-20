@@ -424,6 +424,12 @@ public:
                   auto binding=models::embed_binding(loaded,kv.first);
                   for(double v:binding.values) loaded_vec.push_back(core::format_roundtrip(v));
                 } else {
+                  /* A key the seed has no line of is missing: reading it
+                   * would give its blueprint default (Context::size
+                   * inserts it), not a value of the seed -- e.g. the error
+                   * scales of a potential of an earlier version. */
+                  if (!loaded.has_stored(kv.first))
+                    throw std::out_of_range(kv.first);
                   std::size_t n = loaded.size(kv.first);
                   loaded_vec.resize(n);
                   loaded.get<std::vector<std::string>>(kv.first, loaded_vec);

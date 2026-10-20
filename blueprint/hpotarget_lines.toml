@@ -4930,17 +4930,18 @@ error = "OPTIM SSIGMA (2): the low bound -0.1 is negative, but the relative part
 
 [[rule]]
 id = "RULE.fit_krr_implementation2_ignores"
-title = "M_KRR implementation 2 fits without forces, stresses, error scales or priorities"
+title = "M_KRR implementation 2 fits without forces, stresses or priorities"
 check = "startup"
 keys = ["ROOT.OPTIM"]
-msg = "MODEL M_KRR {name} 2 fits the energies per atom of whole structures, without forces, stresses, error scales or priorities: {what} would be ignored. Implementation 1 (MODEL M_KRR {name} 1) {why}; implementation 2 fits {text}."
+msg = "MODEL M_KRR {name} 2 fits the energies per atom of whole structures over ESIGMA, without forces, stresses or priorities: {what} would be ignored. Implementation 1 (MODEL M_KRR {name} 1) {why}; implementation 2 fits {text}."
 doc = """\
-M_KRR implementation 2 fits the energies per atom of whole structures. \
-When the run starts, without a line, tadah hpo refuses OPTIM of ESIGMA, \
-FSIGMA, SSIGMA or WDBFILE with it, and, once it has read the training \
-data, FORCE true, STRESS true, ENERGY false, ENORM SQRT, an ESIGMA, \
-FSIGMA or SSIGMA other than its default, a WDBFILE value other than 1 and \
-a training structure whose eweight is not 1."""
+M_KRR implementation 2 fits the energies per atom of whole structures, \
+their residuals over ESIGMA, which OPTIM ESIGMA may search. When the run \
+starts, without a line, tadah hpo refuses OPTIM of FSIGMA, SSIGMA or \
+WDBFILE with it, and, once it has read the training data, FORCE true, \
+STRESS true, ENERGY false, ENORM SQRT, an FSIGMA or SSIGMA other than its \
+default, a WDBFILE value other than 1 and a training structure whose \
+eweight is not 1."""
 msg_doc = """\
 The message names the kernel of MODEL, what implementation 2 would ignore \
 (an OPTIM line, a key with its values, or a structure with its eweight), \
@@ -4952,13 +4953,19 @@ context = "lines_krr2"
 doc = "Under implementation 2 (MODEL M_KRR Kern_Linear 2), OPTIM LAMBDA searches the penalty of its solve."
 text = "OPTIM LAMBDA (1) 1e-6 1e-2 LOG"
 
+[[rule.examples]]
+wrap = "root"
+context = "lines_krr2"
+doc = "Under implementation 2 with LAMBDA 1e-3, OPTIM ESIGMA searches the error scale of the energies, which the penalty weighs against."
+text = "OPTIM ESIGMA (1) 0.5 2"
+
 [[rule.invalid]]
 wrap = "root"
 check = "startup"
-context = "lines_krr2"
+context = "lines_krr2_wdbfile"
 at = "none"
-text = "OPTIM ESIGMA (1) 0.5 2"
-error = "MODEL M_KRR Kern_Linear 2 fits the energies per atom of whole structures, without forces, stresses, error scales or priorities: OPTIM ESIGMA would be ignored. Implementation 1 (MODEL M_KRR Kern_Linear 1) applies it; implementation 2 fits with ESIGMA 1, the default."
+text = "OPTIM WDBFILE (1) 0.5 2"
+error = "MODEL M_KRR Kern_Linear 2 fits the energies per atom of whole structures over ESIGMA, without forces, stresses or priorities: OPTIM WDBFILE would be ignored. Implementation 1 (MODEL M_KRR Kern_Linear 1) applies it; implementation 2 fits without WDBFILE."
 
 [[rule.invalid]]
 wrap = "root"
@@ -4967,7 +4974,7 @@ context = "lines_krr2_no_energy"
 at = "none"
 doc = "The training structures have energy priority 0."
 text = "PC_FRMSE 0.1 1"
-error = "MODEL M_KRR Kern_Linear 2 fits the energies per atom of whole structures, without forces, stresses, error scales or priorities: eweight 0 of structure 1 of 2 ('H2 at 0.8 A') of dataset 1 (lines_no_energy.db) would be ignored. Implementation 1 (MODEL M_KRR Kern_Linear 1) gives each structure's energy its priority (and leaves out one of eweight 0); implementation 2 fits when every structure has eweight 1."
+error = "MODEL M_KRR Kern_Linear 2 fits the energies per atom of whole structures over ESIGMA, without forces, stresses or priorities: eweight 0 of structure 1 of 2 ('H2 at 0.8 A') of dataset 1 (lines_no_energy.db) would be ignored. Implementation 1 (MODEL M_KRR Kern_Linear 1) gives each structure's energy its priority (and leaves out one of eweight 0); implementation 2 fits when every structure has eweight 1."
 
 [[rule]]
 id = "RULE.fit_error_scales"
@@ -5031,7 +5038,7 @@ msg_doc = """\
 The message names the key, the quantity, the LAMBDA and the other \
 quantities. The error scale of the only quantity is ESIGMA, or the \
 absolute part of FSIGMA or SSIGMA with no relative part set or searched: \
-all error scales times c fit as LAMBDA divided by c^2."""
+every error scale times c fits as LAMBDA times c^2."""
 
 [[rule.examples]]
 wrap = "root"
@@ -5045,6 +5052,34 @@ context = "lines_lambda0"
 at = "none"
 text = "OPTIM ESIGMA (1) 0.5 2"
 error = "OPTIM ESIGMA: the energies are the only quantity of the fit and LAMBDA is 0: the error scale of the only quantity scales every row of the fit alike, which changes no coefficient, so every candidate would give the same fit. With a LAMBDA > 0 the error scale weighs the data against the penalty, and with forces or stresses in the fit, the energies against them."
+
+[[rule]]
+id = "RULE.optim_wdbfile_one_dataset"
+title = "OPTIM WDBFILE of the only training dataset with LAMBDA 0 or -1"
+check = "startup"
+keys = ["OPTIM.TARGET.WDBFILE", "OPTIM.TARGET.LAMBDA"]
+msg = "OPTIM WDBFILE: the run has one training dataset and LAMBDA is {value}: its WDBFILE value multiplies the priority of every row of the fit alike, which changes no coefficient, so every candidate would give the same fit. With a LAMBDA > 0 the priority weighs the data against the penalty, and with more training datasets, the dataset against the others."
+doc = """\
+With one training dataset and LAMBDA 0 or -1, which OPTIM does not \
+search, tadah hpo refuses OPTIM WDBFILE when the run starts, without a \
+line. When the WDBFILE value of every training dataset is searched with \
+LAMBDA 0 or -1, or with OPTIM LAMBDA, hpo_run.log has a warning instead: \
+every priority times c fits as LAMBDA divided by c."""
+msg_doc = "The message names the LAMBDA."
+
+[[rule.examples]]
+wrap = "root"
+context = "lines_wdbfile"
+doc = "With LAMBDA 1e-3, the priority of the dataset weighs its data against the penalty."
+text = "OPTIM WDBFILE (1) 0.5 2"
+
+[[rule.invalid]]
+wrap = "root"
+check = "startup"
+context = "lines_wdbfile_lambda0"
+at = "none"
+text = "OPTIM WDBFILE (1) 0.5 2"
+error = "OPTIM WDBFILE: the run has one training dataset and LAMBDA is 0: its WDBFILE value multiplies the priority of every row of the fit alike, which changes no coefficient, so every candidate would give the same fit. With a LAMBDA > 0 the priority weighs the data against the penalty, and with more training datasets, the dataset against the others."
 
 [[rule]]
 id = "RULE.optim_error_scale_no_fit"
@@ -5435,6 +5470,26 @@ LAMBDA 1e-3
 WDBFILE 1
 """
 
+[context.lines_wdbfile_lambda0]
+doc = "The default training configuration with WDBFILE 1 and LAMBDA 0."
+config = """
+ATOM H
+WATOM 1.0
+DBFILE dummy.db
+INIT2B true
+INITMB false
+TYPE2B D2_BP 2 2 H H
+CGRID2B 1.0 2.0
+SGRID2B 0.5 1.0
+RCTYPE2B Cut_Cos
+RCUT2B 5.0
+VERBOSE 0
+MODEL M_BLR BF_Linear
+OALGO 4
+LAMBDA 0
+WDBFILE 1
+"""
+
 [context.lines_force]
 doc = "The default training configuration with FORCE true."
 config = """
@@ -5576,6 +5631,27 @@ MODEL M_KRR Kern_Linear 2
 OALGO 4
 LAMBDA 1e-3
 SBASIS 2
+"""
+
+[context.lines_krr2_wdbfile]
+doc = "The training configuration of lines_krr2 with WDBFILE 1."
+config = """
+ATOM H
+WATOM 1.0
+DBFILE dummy.db
+INIT2B true
+INITMB false
+TYPE2B D2_BP 2 2 H H
+CGRID2B 1.0 2.0
+SGRID2B 0.5 1.0
+RCTYPE2B Cut_Cos
+RCUT2B 5.0
+VERBOSE 0
+MODEL M_KRR Kern_Linear 2
+OALGO 4
+LAMBDA 1e-3
+SBASIS 2
+WDBFILE 1
 """
 
 [context.lines_krr2_evidence]
