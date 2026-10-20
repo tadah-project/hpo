@@ -1451,8 +1451,9 @@ TEST_CASE("valmetric e2e: a validation dataset whose structures all have "
 
 /* Case 2c. Pins: the energy metrics (PC_ERMSE, PC_EMAE, PC_ErRMSE,
  * PC_ERSQ) leave out the validation structures stored with energy weight 0
- * (eweight), which have no energy of its own (tadah data convert stores a
- * placeholder); a dataset in which every structure has eweight 0 is not
+ * (eweight), which have no energy of their own (the energy line the
+ * dataset format needs holds a placeholder); a dataset in which every
+ * structure has eweight 0 is not
  * measured, as for the force and stress metrics (case 2b). On the fixed
  * potential of case 2, two datasets: the cells of validation_cells()
  * (eweight 1), and two cells of eweight 0 whose placeholder energies are
