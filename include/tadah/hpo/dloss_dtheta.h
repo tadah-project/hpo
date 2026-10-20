@@ -1186,15 +1186,27 @@ compute_analytical_gradient_from_trainer(
     {
         mlip::Analytics a(val_stdb, pred_val);
         std::size_t lc = 0;
-        if (trg.use_emae)   { plan.metrics.emae   = a.calc_e_mae().mean()   * 1000.0; ++lc; }
+        /* The energy metrics average over the datasets with an energy (a
+         * dataset whose structures all have eweight 0 is not measured: nan,
+         * slope 0), as HPO_Host::fill_validation and the partials of
+         * analytics_grad do; PC_ERMSE's slopes count them through
+         * trg.ermse_targets.measured(), which the host sets to the same. */
+        const std::vector<bool> measured_e =
+            mlip::measured_datasets(val_stdb, mlip::MetricQuantity::Energy);
+        auto energy_mean = [&](const core::t_type& v) {
+            return mlip::measured_mean(v, measured_e);
+        };
+        if (trg.use_emae)   { plan.metrics.emae   = energy_mean(a.calc_e_mae())   * 1000.0; ++lc; }
         if (trg.use_ermse) {
             const auto v = a.calc_e_rmse();
-            plan.metrics.ermse = v.mean() * 1000.0;
+            const auto& measured = trg.ermse_targets.measured();
+            plan.metrics.ermse = (measured.empty() ? v.mean()
+                                                   : mlip::measured_mean(v, measured)) * 1000.0;
             for (std::size_t i = 0; i < v.size(); ++i) plan.metrics.v_ermse.push_back(v[i] * 1000.0);
             ++lc;
         }
-        if (trg.use_errmse) { plan.metrics.errmse = a.calc_e_rrmse().mean() * 1000.0; ++lc; }
-        if (trg.use_ersq)   { plan.metrics.ersq   = a.calc_e_r_sq().mean()  * 1.0;    ++lc; }
+        if (trg.use_errmse) { plan.metrics.errmse = energy_mean(a.calc_e_rrmse()) * 1000.0; ++lc; }
+        if (trg.use_ersq)   { plan.metrics.ersq   = energy_mean(a.calc_e_r_sq())  * 1.0;    ++lc; }
         if (trg.use_frmse) {
             const auto v = a.calc_f_rmse();
             /* The average over the measured datasets (a dataset without

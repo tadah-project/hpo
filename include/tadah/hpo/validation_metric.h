@@ -55,9 +55,9 @@ public:
                                const std::vector<double>& measured) const;
     // Consistent configuration descriptions for journal and pot headers.
     std::vector<std::string> descriptions() const;
-    /** The datasets the metric measures: one without data
-     *  for it (every structure with force weight 0, for PC_FRMSE) is not
-     *  measured; its value is nan, its loss term and slope are 0, and a
+    /** The datasets the metric measures: one without data for it (every
+     *  structure with energy weight 0, for PC_ERMSE; with force weight 0,
+     *  for PC_FRMSE) is not measured; its value is nan, its loss term and slope are 0, and a
      *  global target is the loss of the average over the measured
      *  datasets. Empty (the default): every dataset. */
     void set_measured(std::vector<bool> measured);

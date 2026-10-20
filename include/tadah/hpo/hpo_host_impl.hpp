@@ -1333,11 +1333,12 @@ HPO_Host<P,R>::HPO_Host(core::Context master_ctx,
                     throw std::runtime_error("Empty validation dataset " + std::to_string(i + 1)
                         + " (" + val_ctx.get<std::string>("DBFILE", i) + ") after loading/filtering");
         }
-        /* PC_FRMSE leaves out structures with force weight 0, PC_SRMSE those
-         * with stress weight 0; a dataset of only such structures is not
-         * measured (nan, left out of the average). A run in
-         * which no dataset is measured, or in which an indexed PC_FRMSE
-         * weights a dataset that is not, is refused here. */
+        /* The energy metrics leave out structures with energy weight 0,
+         * PC_FRMSE those with force weight 0, PC_SRMSE those with stress
+         * weight 0; a dataset of only such structures is not measured (nan,
+         * left out of the average). A run in which no dataset is measured,
+         * or in which an indexed PC_ERMSE or PC_FRMSE weights a dataset that
+         * is not, is refused here. */
         {
             std::vector<std::string> files;
             if (val_ctx.contains("DBFILE")) files = val_ctx("DBFILE");
@@ -1356,22 +1357,65 @@ HPO_Host<P,R>::HPO_Host(core::Context master_ctx,
                         HPOLog::instance().info(msg);  // the journal names it too
                     }
             };
+            /* An indexed metric that gives a weight above 0 to a dataset it
+             * does not measure would weight nothing. */
+            auto refuse_indexed = [&](const ValidationMetricTargets& t,
+                                      const std::vector<bool>& m, const char* key,
+                                      const char* data, const char* weight) {
+                if (!t.indexed()) return;
+                for (std::size_t d = 0; d < m.size(); ++d)
+                    if (!m[d] && t.datasets()[d].weight > 0) {
+                        std::ostringstream w;
+                        w << t.datasets()[d].weight;
+                        throw std::runtime_error(std::string("tadah hpo: ") + key
+                            + " (" + std::to_string(d + 1) + ") gives weight " + w.str()
+                            + " to " + name(d) + ", which has no structure with " + data
+                            + ": every one has " + weight + ". Only weight 0 is "
+                            "accepted for it (or the validation set without the "
+                            "file)");
+                    }
+            };
+            const bool energy_metric = trg_.use_emae || trg_.use_ermse
+                                       || trg_.use_errmse || trg_.use_ersq;
+            if (energy_metric) {
+                /* The energy metrics of the run and their [avg] columns, in
+                 * the order of stats.tadah. */
+                std::vector<std::string> keys, columns;
+                auto add = [&](bool used, const char* key, const char* column) {
+                    if (!used) return;
+                    keys.push_back(key);
+                    columns.push_back(column);
+                };
+                add(trg_.use_emae, "PC_EMAE", "EMAE[avg]");
+                add(trg_.use_ermse, "PC_ERMSE", "ERMSE[avg]");
+                add(trg_.use_errmse, "PC_ErRMSE", "ErRMSE[avg]");
+                add(trg_.use_ersq, "PC_ERSQ", "ERSQ[avg]");
+                auto listed = [](const std::vector<std::string>& v) {
+                    std::string out;
+                    for (std::size_t i = 0; i < v.size(); ++i)
+                        out += (i == 0 ? "" : i + 1 == v.size() ? " and " : ", ") + v[i];
+                    return out;
+                };
+                const std::string key = listed(keys);
+                mlip::require_metric_structures(val_stdb_, mlip::MetricQuantity::Energy,
+                    "tadah hpo: " + key + " on the validation set", files);
+                val_measured_energy_ =
+                    mlip::measured_datasets(val_stdb_, mlip::MetricQuantity::Energy);
+                if (trg_.use_ermse) {
+                    refuse_indexed(trg_.ermse_targets, val_measured_energy_, "PC_ERMSE",
+                                   "an energy", "energy weight 0 (eweight)");
+                    trg_.ermse_targets.set_measured(val_measured_energy_);
+                }
+                note(key.c_str(), val_measured_energy_, "an energy", "energy weight",
+                     listed(columns).c_str());
+            }
             if (trg_.use_frmse) {
                 mlip::require_metric_structures(val_stdb_, mlip::MetricQuantity::Forces,
                     "tadah hpo: PC_FRMSE on the validation set", files);
                 const std::vector<bool> m =
                     mlip::measured_datasets(val_stdb_, mlip::MetricQuantity::Forces);
-                if (trg_.frmse_targets.indexed())
-                    for (std::size_t d = 0; d < m.size(); ++d)
-                        if (!m[d] && trg_.frmse_targets.datasets()[d].weight > 0) {
-                            std::ostringstream w;
-                            w << trg_.frmse_targets.datasets()[d].weight;
-                            throw std::runtime_error("tadah hpo: PC_FRMSE ("
-                                + std::to_string(d + 1) + ") gives weight " + w.str() + " to "
-                                + name(d) + ", which has no structure with forces: every "
-                                "one has force weight 0 (fweight). Give it weight 0, or "
-                                "remove the file from the validation set");
-                        }
+                refuse_indexed(trg_.frmse_targets, m, "PC_FRMSE", "forces",
+                               "force weight 0 (fweight)");
                 trg_.frmse_targets.set_measured(m);
                 note("PC_FRMSE", m, "forces", "force weight", "FRMSE[avg]");
             }
@@ -1667,8 +1711,8 @@ template<class P, class R>
 void HPO_Host<P,R>::fill_validation(Result& r,
                                     const mlip::Analytics& a) const
 {
-    /* @p measured: the datasets a force or stress metric measures (empty:
-     * every one); the average runs over them. */
+    /* @p measured: the datasets the metric measures (empty: every one);
+     * the average runs over them. */
     auto fill = [](double& avg, std::vector<double>& per_ds,
                    const core::t_type& v, double scale,
                    const std::vector<bool>& measured = {})
@@ -1678,10 +1722,14 @@ void HPO_Host<P,R>::fill_validation(Result& r,
         for (std::size_t i = 0; i < v.size(); ++i)
             per_ds[i] = v[i] * scale;
     };
-    if(trg_.use_emae)   fill(r.emae,   r.v_emae,   a.calc_e_mae(),   1000.0);
-    if(trg_.use_ermse)  fill(r.ermse,  r.v_ermse,  a.calc_e_rmse(),  1000.0);
-    if(trg_.use_errmse) fill(r.errmse, r.v_errmse, a.calc_e_rrmse(), 1000.0);
-    if(trg_.use_ersq)   fill(r.ersq,   r.v_ersq,   a.calc_e_r_sq(),     1.0);
+    if(trg_.use_emae)   fill(r.emae,   r.v_emae,   a.calc_e_mae(),   1000.0,
+                             val_measured_energy_);
+    if(trg_.use_ermse)  fill(r.ermse,  r.v_ermse,  a.calc_e_rmse(),  1000.0,
+                             trg_.ermse_targets.measured());
+    if(trg_.use_errmse) fill(r.errmse, r.v_errmse, a.calc_e_rrmse(), 1000.0,
+                             val_measured_energy_);
+    if(trg_.use_ersq)   fill(r.ersq,   r.v_ersq,   a.calc_e_r_sq(),     1.0,
+                             val_measured_energy_);
     if(trg_.use_frmse)  fill(r.frmse,  r.v_frmse,  a.calc_f_rmse(),     1.0,
                              trg_.frmse_targets.measured());
     if(trg_.use_srmse)  fill(r.srmse,  r.v_srmse,  a.calc_s_rmse(),     1.0,
@@ -2555,14 +2603,17 @@ void HPO_Host<P,R>::fit_loss(Result& r) const
                       ? trg_.globalLoss.loss(v_y[i], ref, w)
                       : std::numeric_limits<double>::quiet_NaN();
   };
-  if (trg_.use_emae)   add_global(r.emaeLoss,   r.emae,   trg_.emae,   trg_.w_emae,   r.v_emaeLoss,   r.v_emae);
+  if (trg_.use_emae)   add_global(r.emaeLoss,   r.emae,   trg_.emae,   trg_.w_emae,   r.v_emaeLoss,   r.v_emae,
+                                  val_measured_energy_);
   if (trg_.use_ermse) {
     r.ermseLoss = trg_.ermse_targets.loss(trg_.globalLoss, r.ermse, r.v_ermse, r.v_ermseLoss);
     r.loss_sum += r.ermseLoss;
     ++r.loss_count;
   }
-  if (trg_.use_errmse) add_global(r.errmseLoss, r.errmse, trg_.errmse, trg_.w_errmse, r.v_errmseLoss, r.v_errmse);
-  if (trg_.use_ersq)   add_global(r.ersqLoss,   r.ersq,   trg_.ersq,   trg_.w_ersq,   r.v_ersqLoss,   r.v_ersq);
+  if (trg_.use_errmse) add_global(r.errmseLoss, r.errmse, trg_.errmse, trg_.w_errmse, r.v_errmseLoss, r.v_errmse,
+                                  val_measured_energy_);
+  if (trg_.use_ersq)   add_global(r.ersqLoss,   r.ersq,   trg_.ersq,   trg_.w_ersq,   r.v_ersqLoss,   r.v_ersq,
+                                  val_measured_energy_);
   if (trg_.use_frmse) {
     r.frmseLoss = trg_.frmse_targets.loss(trg_.globalLoss, r.frmse, r.v_frmse, r.v_frmseLoss);
     r.loss_sum += r.frmseLoss;
