@@ -3784,6 +3784,164 @@ context = "lines_dm_embed"
 text = "OPTIM RCUTMB (1) 0 2"
 error = "OPTIM RCUTMB: the potential has no RCUTMB key: its many-body term is DM_Embed component(s) (DESCRIPTOR blocks), whose density parameter is the named path H.DENSITY.CUTOFF.RADIUS; write OPTIM <path> (indices) <low> <high> (the starter target of tadah refit names the paths; a target written for a DM_REAM potential names the legacy keys)."
 
+[[optim_target]]
+id = "OPTIM.TARGET.LSCALE"
+key = "LSCALE"
+status = "refused"
+msg = "OPTIM LSCALE is not a valid search target: LSCALE prepares the data and is applied once, when the run starts and reads them (LSCALE, ESHIFT, ESHIFT_ATOM, ESHIFT_DBATOM, EFILTER, FFILTER and ZERO_COM_FORCE prepare the data), so no evaluation would take a candidate value of it: its value is the training configuration's."
+doc = "LSCALE rescales the lengths of the training and validation data once, when the run starts."
+
+[[optim_target.invalid]]
+wrap = "root"
+text = "OPTIM LSCALE (1) 0.5 2"
+error = "OPTIM LSCALE is not a valid search target: LSCALE prepares the data and is applied once, when the run starts and reads them (LSCALE, ESHIFT, ESHIFT_ATOM, ESHIFT_DBATOM, EFILTER, FFILTER and ZERO_COM_FORCE prepare the data), so no evaluation would take a candidate value of it: its value is the training configuration's."
+
+[[optim_target]]
+id = "OPTIM.TARGET.ESHIFT"
+key = "ESHIFT"
+status = "refused"
+msg = "OPTIM ESHIFT is not a valid search target: ESHIFT prepares the data and is applied once, when the run starts and reads them (LSCALE, ESHIFT, ESHIFT_ATOM, ESHIFT_DBATOM, EFILTER, FFILTER and ZERO_COM_FORCE prepare the data), so no evaluation would take a candidate value of it: its value is the training configuration's."
+doc = "ESHIFT shifts the energies of the data once, when the run starts."
+
+[[optim_target.invalid]]
+wrap = "root"
+text = "OPTIM ESHIFT (1) 0.5 2"
+error = "OPTIM ESHIFT is not a valid search target: ESHIFT prepares the data and is applied once, when the run starts and reads them (LSCALE, ESHIFT, ESHIFT_ATOM, ESHIFT_DBATOM, EFILTER, FFILTER and ZERO_COM_FORCE prepare the data), so no evaluation would take a candidate value of it: its value is the training configuration's."
+
+[[optim_target]]
+id = "OPTIM.TARGET.ESHIFT_ATOM"
+key = "ESHIFT_ATOM"
+status = "refused"
+msg = "OPTIM ESHIFT_ATOM is not a valid search target: ESHIFT_ATOM prepares the data and is applied once, when the run starts and reads them (LSCALE, ESHIFT, ESHIFT_ATOM, ESHIFT_DBATOM, EFILTER, FFILTER and ZERO_COM_FORCE prepare the data), so no evaluation would take a candidate value of it: its value is the training configuration's."
+doc = "ESHIFT_ATOM derives the energy shifts from the isolated-atom structures of the training data once, when the run starts."
+
+[[optim_target.invalid]]
+wrap = "root"
+text = "OPTIM ESHIFT_ATOM (1) 0.5 2"
+error = "OPTIM ESHIFT_ATOM is not a valid search target: ESHIFT_ATOM prepares the data and is applied once, when the run starts and reads them (LSCALE, ESHIFT, ESHIFT_ATOM, ESHIFT_DBATOM, EFILTER, FFILTER and ZERO_COM_FORCE prepare the data), so no evaluation would take a candidate value of it: its value is the training configuration's."
+
+[[optim_target]]
+id = "OPTIM.TARGET.ESHIFT_DBATOM"
+key = "ESHIFT_DBATOM"
+status = "refused"
+msg = "OPTIM ESHIFT_DBATOM is not a valid search target: ESHIFT_DBATOM prepares the data and is applied once, when the run starts and reads them (LSCALE, ESHIFT, ESHIFT_ATOM, ESHIFT_DBATOM, EFILTER, FFILTER and ZERO_COM_FORCE prepare the data), so no evaluation would take a candidate value of it: its value is the training configuration's."
+doc = "ESHIFT_DBATOM derives the energy shifts from a fit to the energies of the training data once, when the run starts."
+
+[[optim_target.invalid]]
+wrap = "root"
+text = "OPTIM ESHIFT_DBATOM (1) 0.5 2"
+error = "OPTIM ESHIFT_DBATOM is not a valid search target: ESHIFT_DBATOM prepares the data and is applied once, when the run starts and reads them (LSCALE, ESHIFT, ESHIFT_ATOM, ESHIFT_DBATOM, EFILTER, FFILTER and ZERO_COM_FORCE prepare the data), so no evaluation would take a candidate value of it: its value is the training configuration's."
+
+[[optim_target]]
+id = "OPTIM.TARGET.EFILTER"
+key = "EFILTER"
+status = "refused"
+msg = "OPTIM EFILTER is not a valid search target: EFILTER prepares the data and is applied once, when the run starts and reads them (LSCALE, ESHIFT, ESHIFT_ATOM, ESHIFT_DBATOM, EFILTER, FFILTER and ZERO_COM_FORCE prepare the data), so no evaluation would take a candidate value of it: its value is the training configuration's."
+doc = "EFILTER drops the training structures whose energy per atom is outside its window once, when the run starts."
+
+[[optim_target.invalid]]
+wrap = "root"
+text = "OPTIM EFILTER (1) 0.5 2"
+error = "OPTIM EFILTER is not a valid search target: EFILTER prepares the data and is applied once, when the run starts and reads them (LSCALE, ESHIFT, ESHIFT_ATOM, ESHIFT_DBATOM, EFILTER, FFILTER and ZERO_COM_FORCE prepare the data), so no evaluation would take a candidate value of it: its value is the training configuration's."
+
+[[optim_target]]
+id = "OPTIM.TARGET.FFILTER"
+key = "FFILTER"
+status = "refused"
+msg = "OPTIM FFILTER is not a valid search target: FFILTER prepares the data and is applied once, when the run starts and reads them (LSCALE, ESHIFT, ESHIFT_ATOM, ESHIFT_DBATOM, EFILTER, FFILTER and ZERO_COM_FORCE prepare the data), so no evaluation would take a candidate value of it: its value is the training configuration's."
+doc = "FFILTER drops the training structures with a force above its limit once, when the run starts."
+
+[[optim_target.invalid]]
+wrap = "root"
+text = "OPTIM FFILTER (1) 0.5 2"
+error = "OPTIM FFILTER is not a valid search target: FFILTER prepares the data and is applied once, when the run starts and reads them (LSCALE, ESHIFT, ESHIFT_ATOM, ESHIFT_DBATOM, EFILTER, FFILTER and ZERO_COM_FORCE prepare the data), so no evaluation would take a candidate value of it: its value is the training configuration's."
+
+[[optim_target]]
+id = "OPTIM.TARGET.ZERO_COM_FORCE"
+key = "ZERO_COM_FORCE"
+status = "refused"
+msg = "OPTIM ZERO_COM_FORCE is not a valid search target: ZERO_COM_FORCE prepares the data and is applied once, when the run starts and reads them (LSCALE, ESHIFT, ESHIFT_ATOM, ESHIFT_DBATOM, EFILTER, FFILTER and ZERO_COM_FORCE prepare the data), so no evaluation would take a candidate value of it: its value is the training configuration's."
+doc = "ZERO_COM_FORCE removes the net force of each training structure once, when the run starts."
+
+[[optim_target.invalid]]
+wrap = "root"
+text = "OPTIM ZERO_COM_FORCE (1) 0.5 2"
+error = "OPTIM ZERO_COM_FORCE is not a valid search target: ZERO_COM_FORCE prepares the data and is applied once, when the run starts and reads them (LSCALE, ESHIFT, ESHIFT_ATOM, ESHIFT_DBATOM, EFILTER, FFILTER and ZERO_COM_FORCE prepare the data), so no evaluation would take a candidate value of it: its value is the training configuration's."
+
+[[optim_target]]
+id = "OPTIM.TARGET.EWEIGHT"
+key = "EWEIGHT"
+status = "special"
+condition = "The low bound of the box, explicit or made by AUTO, is below 0."
+msg = "OPTIM EWEIGHT ({index}): the low bound {low} is negative, but EWEIGHT is a weight, a number >= 0, and every fit refuses a negative one, so the low bound of its box is >= 0"
+doc = "OPTIM EWEIGHT searches the weight of the energies of the fit, a number >= 0."
+
+[[optim_target.examples]]
+wrap = "root"
+text = "OPTIM EWEIGHT (1) 0 2"
+
+[[optim_target.invalid]]
+wrap = "root"
+text = "OPTIM EWEIGHT (1) -0.5 2"
+error = "OPTIM EWEIGHT (1): the low bound -0.5 is negative, but EWEIGHT is a weight, a number >= 0, and every fit refuses a negative one, so the low bound of its box is >= 0"
+
+[[optim_target.invalid]]
+wrap = "root"
+doc = "AUTO FRAC 3 makes the box [-2, 4] around the value 1."
+text = "OPTIM EWEIGHT (1) AUTO FRAC 3"
+error = "OPTIM EWEIGHT (1): the low bound -2 is negative, but EWEIGHT is a weight, a number >= 0, and every fit refuses a negative one, so the low bound of its box is >= 0"
+
+[[optim_target]]
+id = "OPTIM.TARGET.FWEIGHT"
+key = "FWEIGHT"
+status = "special"
+condition = "The low bound of the box, explicit or made by AUTO, is below 0."
+msg = "OPTIM FWEIGHT ({index}): the low bound {low} is negative, but FWEIGHT is a weight, a number >= 0, and every fit refuses a negative one, so the low bound of its box is >= 0"
+doc = "OPTIM FWEIGHT searches the weight of the forces of the fit, a number >= 0."
+
+[[optim_target.examples]]
+wrap = "root"
+text = "OPTIM FWEIGHT (1) 0 2"
+
+[[optim_target.invalid]]
+wrap = "root"
+text = "OPTIM FWEIGHT (1) -0.5 2"
+error = "OPTIM FWEIGHT (1): the low bound -0.5 is negative, but FWEIGHT is a weight, a number >= 0, and every fit refuses a negative one, so the low bound of its box is >= 0"
+
+[[optim_target]]
+id = "OPTIM.TARGET.SWEIGHT"
+key = "SWEIGHT"
+status = "special"
+condition = "The low bound of the box, explicit or made by AUTO, is below 0."
+msg = "OPTIM SWEIGHT ({index}): the low bound {low} is negative, but SWEIGHT is a weight, a number >= 0, and every fit refuses a negative one, so the low bound of its box is >= 0"
+doc = "OPTIM SWEIGHT searches the weight of the stresses of the fit, a number >= 0."
+
+[[optim_target.examples]]
+wrap = "root"
+text = "OPTIM SWEIGHT (1) 0 2"
+
+[[optim_target.invalid]]
+wrap = "root"
+text = "OPTIM SWEIGHT (1) -0.5 2"
+error = "OPTIM SWEIGHT (1): the low bound -0.5 is negative, but SWEIGHT is a weight, a number >= 0, and every fit refuses a negative one, so the low bound of its box is >= 0"
+
+[[optim_target]]
+id = "OPTIM.TARGET.LAMBDA"
+key = "LAMBDA"
+status = "special"
+condition = "The low bound of the box, explicit or made by AUTO, is below 0."
+msg = "OPTIM LAMBDA ({index}): the low bound {low} is negative, but LAMBDA is the ridge penalty, a number >= 0: every fit refuses a negative value other than -1, and -1, which requests the evidence approximation, is no value of a box, so the low bound of its box is >= 0"
+doc = "OPTIM LAMBDA searches the ridge penalty of the fit, a number >= 0."
+
+[[optim_target.examples]]
+wrap = "root"
+text = "OPTIM LAMBDA (1) 1e-6 1e-2 LOG"
+
+[[optim_target.invalid]]
+wrap = "root"
+text = "OPTIM LAMBDA (1) -0.5 2"
+error = "OPTIM LAMBDA (1): the low bound -0.5 is negative, but LAMBDA is the ridge penalty, a number >= 0: every fit refuses a negative value other than -1, and -1, which requests the evidence approximation, is no value of a box, so the low bound of its box is >= 0"
+
 # ============================================================= rules ====
 
 [[rule]]
@@ -4304,6 +4462,182 @@ at = "none"
 text = "PC_EMAE 5 1"
 error = "PC_EMAE/PC_ERMSE/PC_ErRMSE/PC_ERSQ/PC_FRMSE/PC_SRMSE target validation-set errors but no --validation file was given."
 
+[[rule]]
+id = "RULE.OPTIM_LAMBDA_evidence"
+title = "OPTIM LAMBDA starts from a LAMBDA of 0 or above"
+check = "parse"
+keys = ["ROOT.OPTIM", "OPTIM.TARGET.LAMBDA"]
+msg = "OPTIM LAMBDA: the training configuration has LAMBDA -1, which requests the evidence approximation: each fit then finds the penalty itself, and OPTIM LAMBDA would replace it with the values of the box. LAMBDA >= 0 in the training configuration is the starting point of a search of LAMBDA; without OPTIM LAMBDA the evidence approximation finds it in every evaluation."
+doc = """\
+OPTIM LAMBDA searches a fixed ridge penalty. LAMBDA -1 in the training \
+configuration requests the evidence approximation, which finds the \
+penalty in each fit, so it is refused with OPTIM LAMBDA, at the line."""
+
+[[rule.examples]]
+wrap = "root"
+context = "lines_oalgo"
+text = "OPTIM LAMBDA (1) 1e-6 1e-2 LOG"
+
+[[rule.invalid]]
+wrap = "root"
+context = "lines_lambda_evidence"
+text = "OPTIM LAMBDA (1) 1e-6 1e-2"
+error = "OPTIM LAMBDA: the training configuration has LAMBDA -1, which requests the evidence approximation: each fit then finds the penalty itself, and OPTIM LAMBDA would replace it with the values of the box. LAMBDA >= 0 in the training configuration is the starting point of a search of LAMBDA; without OPTIM LAMBDA the evidence approximation finds it in every evaluation."
+
+[[rule]]
+id = "RULE.fit_LAMBDA_negative"
+title = "LAMBDA of the training configuration is not negative, -1 aside"
+check = "startup"
+msg = "{text}: only LAMBDA -1 requests the evidence approximation, which OALGO 3 runs; another negative value requests nothing. LAMBDA 0 fits without a penalty, and a positive LAMBDA is the ridge penalty."
+doc = """\
+Every fit refuses a negative LAMBDA other than -1, so tadah hpo refuses it \
+when the run starts, without a line, if its evaluations fit the model: \
+with training data, unless FIXINDEX pins every weight."""
+msg_doc = "The message starts with the LAMBDA line of the training configuration."
+
+[[rule.invalid]]
+wrap = "root"
+check = "startup"
+context = "lines_lambda_negative"
+at = "none"
+text = "PC_EMAE 5 1"
+error = "LAMBDA -2: only LAMBDA -1 requests the evidence approximation, which OALGO 3 runs; another negative value requests nothing. LAMBDA 0 fits without a penalty, and a positive LAMBDA is the ridge penalty."
+
+[[rule]]
+id = "RULE.fit_LAMBDA_one_value"
+title = "LAMBDA of the training configuration has one value"
+check = "startup"
+msg = "{text}: LAMBDA takes one value, the ridge penalty (0 for none, -1 for the evidence approximation of OALGO 3); a second value is not read. The rank threshold of OALGO 1 and 3 is OALGO's second value (OALGO 1 {value}, OALGO 3 {value})."
+doc = """\
+Every fit refuses a second LAMBDA value, so tadah hpo refuses it when the \
+run starts, without a line, if its evaluations fit the model: with \
+training data, unless FIXINDEX pins every weight."""
+msg_doc = "The message starts with the LAMBDA line and gives its second value as the rank threshold."
+
+[[rule.invalid]]
+wrap = "root"
+check = "startup"
+context = "lines_lambda_two_values"
+at = "none"
+text = "PC_EMAE 5 1"
+error = "LAMBDA 0 1e-12: LAMBDA takes one value, the ridge penalty (0 for none, -1 for the evidence approximation of OALGO 3); a second value is not read. The rank threshold of OALGO 1 and 3 is OALGO's second value (OALGO 1 1e-12, OALGO 3 1e-12)."
+
+[[rule]]
+id = "RULE.fit_LAMBDA_evidence_OALGO"
+title = "LAMBDA -1 of the training configuration runs with OALGO 3"
+check = "startup"
+msg = "LAMBDA -1 requests the evidence approximation, which only OALGO 3 (the SVD solve) runs; the configuration has OALGO {value} (LAMBDA >= 0 fits with any OALGO)."
+doc = """\
+Only OALGO 3 runs the evidence approximation that LAMBDA -1 requests, so \
+tadah hpo refuses LAMBDA -1 with another OALGO when the run starts, \
+without a line, if its evaluations fit the model."""
+msg_doc = "The message names the OALGO of the training configuration."
+
+[[rule.invalid]]
+wrap = "root"
+check = "startup"
+context = "lines_lambda_evidence_oalgo4"
+at = "none"
+text = "PC_EMAE 5 1"
+error = "LAMBDA -1 requests the evidence approximation, which only OALGO 3 (the SVD solve) runs; the configuration has OALGO 4 (LAMBDA >= 0 fits with any OALGO)."
+
+[[rule]]
+id = "RULE.fit_krr_implementation"
+title = "An M_KRR model is implementation 1 or 2"
+check = "startup"
+msg = "{text}: M_KRR has implementation 1, which fits the energies, forces and stresses of the structures, and implementation 2, which fits the energies per atom of whole structures (the third value of MODEL, 1 when it is left out); {value} is neither."
+doc = """\
+The third value of MODEL M_KRR selects implementation 1 or 2; tadah hpo \
+refuses another when the run starts, without a line, if its evaluations \
+fit the model."""
+msg_doc = "The message starts with the MODEL line and names its third value."
+
+[[rule.invalid]]
+wrap = "root"
+check = "startup"
+context = "lines_krr_implementation3"
+at = "none"
+text = "PC_EMAE 5 1"
+error = "MODEL M_KRR Kern_Linear 3: M_KRR has implementation 1, which fits the energies, forces and stresses of the structures, and implementation 2, which fits the energies per atom of whole structures (the third value of MODEL, 1 when it is left out); 3 is neither."
+
+[[rule]]
+id = "RULE.fit_krr_implementation2_LAMBDA"
+title = "M_KRR implementation 2 has a LAMBDA of 0 or above"
+check = "startup"
+msg = "MODEL M_KRR {name} 2 cannot use LAMBDA -1: implementation 2 solves (K + LAMBDA I) w = t with a fixed LAMBDA and does not run the evidence approximation. Implementation 1 (MODEL M_KRR {name} 1) with OALGO 3 runs it; LAMBDA >= 0 fits with either."
+doc = """\
+M_KRR implementation 2 fits with a fixed LAMBDA; tadah hpo refuses LAMBDA \
+-1 with it when the run starts, without a line, if its evaluations fit \
+the model."""
+msg_doc = "The message names the kernel of MODEL."
+
+[[rule.invalid]]
+wrap = "root"
+check = "startup"
+context = "lines_krr2_evidence"
+at = "none"
+text = "PC_EMAE 5 1"
+error = "MODEL M_KRR Kern_Linear 2 cannot use LAMBDA -1: implementation 2 solves (K + LAMBDA I) w = t with a fixed LAMBDA and does not run the evidence approximation. Implementation 1 (MODEL M_KRR Kern_Linear 1) with OALGO 3 runs it; LAMBDA >= 0 fits with either."
+
+[[rule]]
+id = "RULE.fit_krr_implementation2_ignores"
+title = "M_KRR implementation 2 fits without forces, stresses or weights"
+check = "startup"
+keys = ["ROOT.OPTIM"]
+msg = "MODEL M_KRR {name} 2 fits the energies per atom of whole structures, without forces, stresses or weights: {what} would be ignored. Implementation 1 (MODEL M_KRR {name} 1) {why}; implementation 2 fits {text}."
+doc = """\
+M_KRR implementation 2 fits the energies per atom of whole structures. \
+When the run starts, without a line, tadah hpo refuses OPTIM of EWEIGHT, \
+FWEIGHT, SWEIGHT or WDBFILE with it, and, once it has read the training \
+data, FORCE true, STRESS true, EWEIGHT, FWEIGHT or SWEIGHT other than 1, a \
+WDBFILE value other than 1, WDBFILE_AUTO other than 0, EWEIGHT_TEMP and a \
+training structure whose eweight is not 1."""
+msg_doc = """\
+The message names the kernel of MODEL, what implementation 2 would ignore \
+(an OPTIM line, a key with its values, or a structure with its eweight), \
+what implementation 1 does with it and how implementation 2 fits."""
+
+[[rule.examples]]
+wrap = "root"
+context = "lines_krr2"
+text = "OPTIM LAMBDA (1) 1e-6 1e-2 LOG"
+
+[[rule.invalid]]
+wrap = "root"
+check = "startup"
+context = "lines_krr2"
+at = "none"
+text = "OPTIM EWEIGHT (1) 0.5 2"
+error = "MODEL M_KRR Kern_Linear 2 fits the energies per atom of whole structures, without forces, stresses or weights: OPTIM EWEIGHT would be ignored. Implementation 1 (MODEL M_KRR Kern_Linear 1) applies it; implementation 2 fits with EWEIGHT 1."
+
+[[rule.invalid]]
+wrap = "root"
+check = "check"
+context = "lines_krr2_no_energy"
+at = "none"
+doc = "The training structures have energy weight 0."
+text = "PC_FRMSE 0.1 1"
+error = "MODEL M_KRR Kern_Linear 2 fits the energies per atom of whole structures, without forces, stresses or weights: eweight 0 of structure 1 of 2 ('H2 at 0.8 A') of dataset 1 (lines_no_energy.db) would be ignored. Implementation 1 (MODEL M_KRR Kern_Linear 1) weights each structure's energy (and leaves out one of eweight 0); implementation 2 fits when every structure has eweight 1."
+
+[[rule]]
+id = "RULE.fit_weights"
+title = "EWEIGHT, FWEIGHT and SWEIGHT are numbers of 0 or above"
+check = "startup"
+msg = "{key} {value}: a weight is a finite number >= 0 (0 leaves the {what} of every structure out of the fit); no weights were fitted."
+doc = """\
+Every fit refuses a negative EWEIGHT, FWEIGHT or SWEIGHT; tadah hpo \
+refuses one when the run starts and has read the training data, without \
+a line, if its evaluations fit the model."""
+msg_doc = "The message names the key, its value and what the weight weights."
+
+[[rule.invalid]]
+wrap = "root"
+check = "check"
+context = "lines_negative_eweight"
+at = "none"
+text = "PC_EMAE 5 1"
+error = "EWEIGHT -1: a weight is a finite number >= 0 (0 leaves the energy of every structure out of the fit); no weights were fitted."
+
 # ============================================== wrappers and contexts ====
 
 [wrapper.lines_metric]
@@ -4456,6 +4790,181 @@ VERBOSE 0
 MODEL M_BLR BF_Linear
 OALGO 4
 LAMBDA 1e-3
+"""
+
+[context.lines_lambda_evidence]
+doc = "The default training configuration with LAMBDA -1, the evidence approximation, and OALGO 3."
+config = """
+ATOM H
+WATOM 1.0
+DBFILE dummy.db
+INIT2B true
+INITMB false
+TYPE2B D2_BP 2 2 H H
+CGRID2B 1.0 2.0
+SGRID2B 0.5 1.0
+RCTYPE2B Cut_Cos
+RCUT2B 5.0
+VERBOSE 0
+MODEL M_BLR BF_Linear
+OALGO 3
+LAMBDA -1
+"""
+
+[context.lines_lambda_negative]
+doc = "The default training configuration with LAMBDA -2."
+config = """
+ATOM H
+WATOM 1.0
+DBFILE dummy.db
+INIT2B true
+INITMB false
+TYPE2B D2_BP 2 2 H H
+CGRID2B 1.0 2.0
+SGRID2B 0.5 1.0
+RCTYPE2B Cut_Cos
+RCUT2B 5.0
+VERBOSE 0
+MODEL M_BLR BF_Linear
+OALGO 4
+LAMBDA -2
+"""
+
+[context.lines_lambda_two_values]
+doc = "The default training configuration with two LAMBDA values (LAMBDA 0 1e-12)."
+config = """
+ATOM H
+WATOM 1.0
+DBFILE dummy.db
+INIT2B true
+INITMB false
+TYPE2B D2_BP 2 2 H H
+CGRID2B 1.0 2.0
+SGRID2B 0.5 1.0
+RCTYPE2B Cut_Cos
+RCUT2B 5.0
+VERBOSE 0
+MODEL M_BLR BF_Linear
+OALGO 4
+LAMBDA 0 1e-12
+"""
+
+[context.lines_lambda_evidence_oalgo4]
+doc = "The default training configuration with LAMBDA -1 and OALGO 4."
+config = """
+ATOM H
+WATOM 1.0
+DBFILE dummy.db
+INIT2B true
+INITMB false
+TYPE2B D2_BP 2 2 H H
+CGRID2B 1.0 2.0
+SGRID2B 0.5 1.0
+RCTYPE2B Cut_Cos
+RCUT2B 5.0
+VERBOSE 0
+MODEL M_BLR BF_Linear
+OALGO 4
+LAMBDA -1
+"""
+
+[context.lines_krr_implementation3]
+doc = "The default training configuration with MODEL M_KRR Kern_Linear 3."
+config = """
+ATOM H
+WATOM 1.0
+DBFILE dummy.db
+INIT2B true
+INITMB false
+TYPE2B D2_BP 2 2 H H
+CGRID2B 1.0 2.0
+SGRID2B 0.5 1.0
+RCTYPE2B Cut_Cos
+RCUT2B 5.0
+VERBOSE 0
+MODEL M_KRR Kern_Linear 3
+OALGO 4
+LAMBDA 1e-3
+"""
+
+[context.lines_krr2]
+doc = "The default training configuration with M_KRR implementation 2 (MODEL M_KRR Kern_Linear 2, SBASIS 2)."
+config = """
+ATOM H
+WATOM 1.0
+DBFILE dummy.db
+INIT2B true
+INITMB false
+TYPE2B D2_BP 2 2 H H
+CGRID2B 1.0 2.0
+SGRID2B 0.5 1.0
+RCTYPE2B Cut_Cos
+RCUT2B 5.0
+VERBOSE 0
+MODEL M_KRR Kern_Linear 2
+OALGO 4
+LAMBDA 1e-3
+SBASIS 2
+"""
+
+[context.lines_krr2_evidence]
+doc = "The training configuration of lines_krr2 with LAMBDA -1."
+config = """
+ATOM H
+WATOM 1.0
+DBFILE dummy.db
+INIT2B true
+INITMB false
+TYPE2B D2_BP 2 2 H H
+CGRID2B 1.0 2.0
+SGRID2B 0.5 1.0
+RCTYPE2B Cut_Cos
+RCUT2B 5.0
+VERBOSE 0
+MODEL M_KRR Kern_Linear 2
+OALGO 3
+LAMBDA -1
+SBASIS 2
+"""
+
+[context.lines_krr2_no_energy]
+doc = "The training configuration of lines_krr2 with the dataset lines_no_energy.db, which tadah hpo --check also takes as the validation configuration."
+config = """
+ATOM H
+WATOM 1.0
+DBFILE lines_no_energy.db
+INIT2B true
+INITMB false
+TYPE2B D2_BP 2 2 H H
+CGRID2B 1.0 2.0
+SGRID2B 0.5 1.0
+RCTYPE2B Cut_Cos
+RCUT2B 5.0
+VERBOSE 0
+MODEL M_KRR Kern_Linear 2
+OALGO 4
+LAMBDA 1e-3
+SBASIS 2
+"""
+
+[context.lines_negative_eweight]
+doc = "The default training configuration with EWEIGHT -1 and the dataset lines_weighted.db, which tadah hpo --check also takes as the validation configuration."
+config = """
+ATOM H
+WATOM 1.0
+DBFILE lines_weighted.db
+INIT2B true
+INITMB false
+TYPE2B D2_BP 2 2 H H
+CGRID2B 1.0 2.0
+SGRID2B 0.5 1.0
+RCTYPE2B Cut_Cos
+RCUT2B 5.0
+VERBOSE 0
+MODEL M_BLR BF_Linear
+OALGO 4
+LAMBDA 1e-3
+EWEIGHT -1
 """
 
 [context.lines_fixweight]

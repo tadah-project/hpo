@@ -350,8 +350,9 @@ TEST_CASE("fixweight mixed mode: LS + pinned + OPTIM'd weights",
  * 1): no design matrix is built; a host whose last weight is fitted (FIXINDEX
  * 1-(K-1)) runs one such loop per evaluation, so the probe sees a build.
  * Before the fix: passes as well (a pin: the fast path already skipped the
- * build). The check it replaces, CHECK(tr->dm.layout().blocks.empty()),
- * held for every evaluation: Trainer::dm is never built. */
+ * build). The check it replaces, that the layout of a design matrix the
+ * Trainer kept was empty, held for every evaluation: the Trainer built
+ * none (the models fit a design matrix of their own). */
 TEST_CASE("fixweight all-fixed with DBFILE: DM-skip fast path",
           "[fixweight_e2e][.]")
 {
@@ -619,8 +620,8 @@ struct HealthHost {
  *  - a least-squares fit with the bias pinned at 0 (FIXINDEX 1, OPTIM
  *    FIXWEIGHT (1) at 0): block 0 is warned, the fitted block 1 not.
  * Before the fix: no evaluation was recorded (the host read the layout of
- * Trainer::dm, which nothing builds, and skipped the empty layout): every
- * count is 0. */
+ * a design matrix the Trainer kept and nothing built, and skipped the
+ * empty layout): every count is 0. */
 TEST_CASE("health monitor: every evaluation's weights are checked by the "
           "blocks of the model's column layout", "[fixweight_e2e][.]")
 {

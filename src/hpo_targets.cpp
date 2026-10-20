@@ -2575,6 +2575,34 @@ std::string HPOTargets::optim_internal_key_error(const std::string& key) {
          "value of it).";
 }
 
+std::string HPOTargets::optim_startup_only_key_error(const std::string& key) {
+  static const char* const once[] = {"LSCALE",  "ESHIFT",  "ESHIFT_ATOM",
+                                     "ESHIFT_DBATOM", "EFILTER", "FFILTER",
+                                     "ZERO_COM_FORCE"};
+  const std::string k = core::to_upper(key);
+  for (const char* o : once)
+    if (k == o)
+      return "OPTIM " + k + " is not a valid search target: " + k +
+             " prepares the data and is applied once, when the run starts "
+             "and reads them (LSCALE, ESHIFT, ESHIFT_ATOM, ESHIFT_DBATOM, "
+             "EFILTER, FFILTER and ZERO_COM_FORCE prepare the data), so no "
+             "evaluation would take a candidate value of it: its value is "
+             "the training configuration's.";
+  return "";
+}
+
+std::string HPOTargets::optim_fit_key_nonnegative(const std::string& key) {
+  const std::string k = core::to_upper(key);
+  if (k == "EWEIGHT" || k == "FWEIGHT" || k == "SWEIGHT")
+    return k + " is a weight, a number >= 0, and every fit refuses a "
+               "negative one";
+  if (k == "LAMBDA")
+    return "LAMBDA is the ridge penalty, a number >= 0: every fit refuses "
+           "a negative value other than -1, and -1, which requests the "
+           "evidence approximation, is no value of a box";
+  return "";
+}
+
 std::string HPOTargets::optim_integer_index_error(
     const std::string& key, const std::vector<std::string>& config,
     std::size_t pos, std::size_t index) {
@@ -2797,6 +2825,9 @@ void HPOTargets::process_optim_config(std::istringstream& iss,
    * blueprint default into the run context. */
   if (const std::string e = optim_internal_key_error(k); !e.empty())
     throw std::runtime_error(e);
+  /* A key applied once, when the run starts and reads its data. */
+  if (const std::string e = optim_startup_only_key_error(k); !e.empty())
+    throw std::runtime_error(e);
   /* A legacy many-body key of a DM_Embed potential, before context.size(k),
    * which refuses an absent key without naming the component path. */
   if (const std::string e = optim_component_key_error(context, k); !e.empty())
@@ -3013,6 +3044,20 @@ void HPOTargets::process_optim_config(std::istringstream& iss,
     for(double v:binding->values) omap.config.push_back(core::format_roundtrip(v));
   } else context.get<std::vector<std::string>>(k, omap.config);
 
+  /* LAMBDA -1 requests the evidence approximation, which finds the penalty
+   * in each fit: a searched LAMBDA would replace it, and the starting
+   * point -1 is no value of a box. */
+  if (k == "LAMBDA" && !omap.config.empty() &&
+      core::is_number(omap.config[0]) &&
+      core::to_double(omap.config[0]) == -1.0)
+    throw std::runtime_error(
+        "OPTIM LAMBDA: the training configuration has LAMBDA -1, which "
+        "requests the evidence approximation: each fit then finds the "
+        "penalty itself, and OPTIM LAMBDA would replace it with the values "
+        "of the box. LAMBDA >= 0 in the training configuration is the "
+        "starting point of a search of LAMBDA; without OPTIM LAMBDA the "
+        "evidence approximation finds it in every evaluation.");
+
   /* AUTO: the group floor is r * max|x0| over the indices of THIS line. */
   double group_max = 0.0;
   if (auto_box) {
@@ -3141,6 +3186,14 @@ void HPOTargets::process_optim_config(std::istringstream& iss,
                                    core::to_string(hi_i) + "] is not positive but the dim is "
                                    "tagged LOG; use RATIO (geometric) or drop the tag");
       }
+      /* A key of the fit a fit refuses below 0 (optim_fit_key_nonnegative):
+       * every candidate below 0 would be refused by its evaluation. */
+      if (const std::string why = optim_fit_key_nonnegative(k);
+          !why.empty() && lo_i < 0.0)
+        throw std::runtime_error("the low bound " +
+                                 core::format_roundtrip(lo_i) +
+                                 " is negative, but " + why +
+                                 ", so the low bound of its box is >= 0");
       if (low_rule && !low_rule->admits(lo_i))
         throw std::runtime_error("OPTIM " + k + " (" + core::to_string(ui) +
                                  "): the low bound " + core::to_string(lo_i) +

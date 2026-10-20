@@ -188,8 +188,9 @@ struct DLossDThetaPlan {
     /** Trained weight vector (length factor->n). */
     const tadah::core::t_type*               weights = nullptr;
 
-    /** Augmented training Phi (snapshot from dm.getPhi() after train).
-     *  Flat row-major (n_aug_rows x factor.n). */
+    /** Augmented training Phi, rebuilt from the training data after the
+     *  fit with the fit's row factors (compute_analytical_gradient_from_
+     *  trainer). Flat row-major (n_aug_rows x factor.n). */
     const double*                            phi_train_aug = nullptr;
     const double*                            t_train_aug   = nullptr;
     std::size_t                              n_aug_rows    = 0;
@@ -922,12 +923,15 @@ compute_analytical_gradient_from_trainer(
     if (!analytical_gradient_blocker(ctx, trg, train_stdb.size() > 0).empty())
         return fall_back_all_fd();
 
-    /* Rebuild phi_train_aug from train_stdb + dc.calc rather than
-     * reading host.dm.getPhi(). Trainer::dm is *not* populated by
-     * Trainer::train (that builds M_BLR's private internal desmat,
-     * which is inaccessible from here). The cost is one extra
-     * dc.calc(train_stdb) pass per gradient call -- same cost as the
-     * predict() pass in operator(), and amortised over all theta partials.
+    /* The design matrix of the fit is built inside the model (M_BLR and
+     * M_KRR each fit a matrix of their own, which the Trainer does not
+     * hold), so phi_train_aug is rebuilt here from train_stdb and dc.calc,
+     * with the row factors the fit applies (DesignMatrix): sqrt(eweight x
+     * EWEIGHT) on a structure's energy row, sqrt(fweight x FWEIGHT) on its
+     * force rows; the derivative rows below take the same factors. The
+     * cost is one extra dc.calc(train_stdb) pass per gradient call -- same
+     * cost as the predict() pass in operator(), and amortised over all
+     * theta partials.
      *
      * Layout matches DesignMatrix's per-struct interleaved post-scale
      * output:

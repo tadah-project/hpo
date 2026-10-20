@@ -51,6 +51,16 @@ struct RawEmbeddingF0 {
  *  configuration error); every other failure is Kind::NotApplicable. */
 RawEmbeddingF0 derive_raw_embedding_f0(const core::Context &train_ctx);
 
+/** Whether FIXINDEX of @p ctx pins every model weight in a way that an
+ *  evaluation with training data provisions instead of fitting
+ *  (HPO_Host's fast path): FIXINDEX covers every weight
+ *  (mlip::classify_weight_source gives AllFixedData), NORM is false, OALGO
+ *  is not 3 (whose fit gives the pinned weights a covariance) and the
+ *  model draws no basis vectors from the training data (a non-linear
+ *  M_KRR kernel). An evaluation of a run with training data fits the
+ *  model otherwise; one without training data never does. */
+bool fixindex_pins_every_weight(const core::Context &ctx);
+
 /** Fail-fast validation of the HPO setup, run once after HPOTargets
  *  parsing and before HPO_Host construction. Throws std::runtime_error
  *  with an actionable message on the first violated rule:
@@ -110,6 +120,16 @@ RawEmbeddingF0 derive_raw_embedding_f0(const core::Context &train_ctx);
  *     (asa_probe_box_error);
  *   - FIXINDEX/FIXWEIGHT pairing: lone key, size mismatch, out-of-bounds
  *     index (via mlip::classify_weight_source);
+ *   - when an evaluation fits the model (training data, and not
+ *     fixindex_pins_every_weight): an M_KRR implementation other than 1
+ *     and 2 (mlip::require_krr_implementation), a LAMBDA the fit refuses
+ *     (mlip::require_fit_lambda: a negative value other than -1, a second
+ *     value, -1 under an OALGO other than 3 or under M_KRR implementation
+ *     2), and under M_KRR implementation 2 OPTIM of EWEIGHT, FWEIGHT,
+ *     SWEIGHT or WDBFILE (mlip::krr_implementation2_ignores), each with
+ *     the fit's message;
+ *   - OPTIM of a key applied once when the run starts
+ *     (HPOTargets::optim_startup_only_key_error, also at its line);
  *   - a training DBFILE lists each dataset once
  *     (mlip::require_distinct_training_datasets);
  *   - no training DBFILE: FIXINDEX must cover every model weight;

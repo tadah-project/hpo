@@ -29,7 +29,11 @@
 #include <tadah/models/descriptors/dm/rhoform.h>
 #include <tadah/tadah.lammps/lammps_tadah.h>
 #include <tadah/mlip/analytics/dphi_dtheta_walk.h>
+#include <tadah/mlip/data_weights.h>
 #include <tadah/mlip/intercepts.h>
+#include <tadah/mlip/weight_provisioning.h>
+#include <tadah/models/evidence_approximation_error.h>
+#include <tadah/models/fit_warnings.h>
 #include <cstdio>
 #include <cstring>
 #include <fstream>
@@ -1269,6 +1273,21 @@ HPO_Host<P,R>::HPO_Host(core::Context master_ctx,
          * each best_pot.tadah. */
         report_ = mlip::apply_load_transforms(train_stdb_, master_ctx_);
 
+        /* What every fit would refuse in these data, refused once here
+         * (the transforms above prepared them as each fit reads them): a
+         * weight that is not a finite number >= 0 (require_valid_weights:
+         * each structure's, and EWEIGHT, FWEIGHT and SWEIGHT), and what
+         * M_KRR implementation 2 would ignore (FORCE, STRESS, the weights
+         * of the configuration, a structure whose eweight is not 1).
+         * validate_hpo_setup refused the settings that need no data. An
+         * evaluation that provisions FIXWEIGHT fits nothing. */
+        if (!fixindex_pins_every_weight(master_ctx_)) {
+            mlip::require_valid_weights(train_stdb_, master_ctx_);
+            if (mlip::is_krr_implementation_2(master_ctx_))
+                mlip::refuse_what_krr_implementation2_ignores(master_ctx_,
+                                                              train_stdb_);
+        }
+
         /* BIAS true: the energy-weighted compositions must determine the
          * intercepts of the model's function. They do not change between
          * evaluations, so refuse such data at startup, not in every fit (a
@@ -1456,15 +1475,8 @@ HPO_Host<P,R>::HPO_Host(core::Context master_ctx,
      * them: provisioning computes neither, and its potential had no WCOV
      * or WNOISE, so predict --error refused it as one fitted without
      * training data. */
-    if (has_train_data_ && master_ctx_.contains("FIXINDEX")
-        && !(master_ctx_.contains("NORM") && master_ctx_.get<bool>("NORM"))
-        && !(master_ctx_.has_stored("OALGO")
-             && master_ctx_.get<int>("OALGO") == 3)) {
-        const std::size_t K = derive_weight_count(master_ctx_);
-        all_weights_fixed_ =
-            K > 0 && mlip::classify_weight_source(master_ctx_, K)
-                         == mlip::WeightSource::AllFixedData
-                  && !mlip::basis_drawn_from_training_data(master_ctx_);
+    if (has_train_data_) {
+        all_weights_fixed_ = fixindex_pins_every_weight(master_ctx_);
         if (all_weights_fixed_) {
             core::Logger::instance().log(
                 tadah::core::LogLevel::INFO,
@@ -1707,6 +1719,17 @@ std::string HPO_Host<P,R>::bound_hints(const P& p) const
 }
 
 /* ----------  helper: fill validation metrics -------------------------- */
+template<class P, class R>
+bool HPO_Host<P,R>::first_fit_note(const std::string& kind) const
+{
+    std::lock_guard<std::mutex> lg(fit_notes_mtx_);
+    if (std::find(fit_notes_said_.begin(), fit_notes_said_.end(), kind) !=
+        fit_notes_said_.end())
+        return false;
+    fit_notes_said_.push_back(kind);
+    return true;
+}
+
 template<class P, class R>
 void HPO_Host<P,R>::fill_validation(Result& r,
                                     const mlip::Analytics& a) const
@@ -3203,6 +3226,54 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
         return save_loss;
     };
 
+    /* A candidate whose fit is refused for its own targets and design
+     * matrix (an evidence approximation that cannot estimate the prior and
+     * the noise, models::EvidenceApproximationError): a failed evaluation,
+     * graded at the top of band D (a sick potential without a measure), or
+     * FAILSCORE, with the bookkeeping of a completed evaluation. The
+     * journal gives the refusal once per run, naming the first evaluation;
+     * every such evaluation counts as failed, none as one that threw. */
+    auto fail_fit = [&](const std::string& what) -> double {
+        r.fail.band = std::max(r.fail.band, static_cast<int>(FailBand::D));
+        r.fail.vD = std::numeric_limits<double>::infinity();
+        r.loss = trg_.FAILSCORE_GRADING
+                     ? graded_eval_loss(r.fail, trg_.FAIL_SCORE,
+                                        trg_.failprobe_s0)
+                     : trg_.FAIL_SCORE;
+        if (first_fit_note("evidence approximation refused"))
+            HPOLog::instance().warning(
+                "eval " + std::to_string(r.iter) + ": " + what +
+                " The candidate fails (its evaluation scores FAILSCORE). "
+                "This is said once per run: a later candidate refused for "
+                "the same reason fails without a WARNING.");
+        tls_trainer_theta_stale_ = true;
+        tls_untrained_why_ = "its fit was refused (" + what +
+                             "): it has no fit to differentiate";
+        tls_analytical_failure_why_.clear();
+        {
+          const std::size_t threshold =
+              stagnation_threshold_.load(std::memory_order_relaxed);
+          if (threshold > 0 && !probe::active())
+            detail::throw_if_stagnated(r.iter, threshold, iter_at_last_best_,
+                                       reused_since_best_, best_mtx_,
+                                       best_pubs_);
+        }
+        r.wall_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::high_resolution_clock::now() - t0);
+        const std::size_t save_iter = r.iter;
+        const double save_loss = r.loss;
+        const double save_wall_ms = static_cast<double>(r.wall_ms.count());
+        const int save_fail_band = r.fail.band;
+        submit_result(std::move(r), trg_, master_ctx_, val_ctx_,
+                      train_stdb_, val_stdb_, param_labels_, report_,
+                      n_val_datasets_, cw_, prec_);
+        auto& log = HPOLog::instance();
+        log.record_eval(save_iter, save_wall_ms, EvalLoss::Failed);
+        _census.done = true;   /* counted here, with the measured wall */
+        log.record_fail_band(save_fail_band);
+        return save_loss;
+    };
+
     /* Bump-support per-candidate gate (BUMPGATE CANDIDATE): an infeasible
      * (c, eta[, rcut]) combination would be a hard-truncated bump -- an
      * energy/force STEP at the cutoff -- so it is rejected before any
@@ -3241,6 +3312,7 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
 
     t_train_start = std::chrono::high_resolution_clock::now();
     /* train ------------------------------------------------------------ */
+    std::string fit_refusal;   // an EvidenceApproximationError of the fit
     stage_watchdog::enter(r.iter, "train");
     /* From here until training succeeds the trainer slot does not describe
      * a trained theta = p. If anything below throws, the next
@@ -3282,7 +3354,27 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
                 core::format_roundtrip(nn_list_cutoff_) + " A), which "
                 "cover every cutoff inside the OPTIM box");
         if (has_train_data_ && !all_weights_fixed_) {
-            cache.trainer->train(train_stdb_);
+            /* The WARNINGs of the fit (an evidence approximation stopped
+             * at its iteration limit) are said once per run in the
+             * journal, not once per evaluation; an evidence approximation
+             * refused for this candidate's targets fails the candidate
+             * (fail_fit), after the block. */
+            models::FitWarningCollector fit_warnings;
+            try {
+                cache.trainer->train(train_stdb_);
+            } catch (const models::EvidenceApproximationError& e) {
+                fit_refusal = e.what();
+            }
+            for (const models::FitWarning& w : fit_warnings.warnings()) {
+                if (w.kind != models::FitWarningKind::EvidenceApproximationLimit)
+                    continue;
+                if (first_fit_note("evidence approximation limit"))
+                    HPOLog::instance().warning(
+                        "eval " + std::to_string(r.iter) + ": " + w.text +
+                        " This WARNING is said once per run: a later "
+                        "evaluation whose evidence approximation stops at "
+                        "its limit has none.");
+            }
         } else {
             /* No training DBFILE, or FIXINDEX pins every weight: the LS
              * solve is absent/vacuous, so scatter the FIXWEIGHT values
@@ -3290,6 +3382,10 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
              * live values) and skip the design-matrix build. */
             cache.trainer->provision_fixed_weights();
         }
+    }
+    if (!fit_refusal.empty()) {
+        stage_watchdog::leave(r.iter, "train", _stage_log);
+        return fail_fit(fit_refusal);
     }
     mlip::Trainer& host = *tls_trainer_cache_.trainer;
     /* Training succeeded: the trainer slot reflects theta = p again. */
@@ -3305,9 +3401,8 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
      * the descriptor layout, which DesignMatrix::build gives the matrix
      * M_BLR and M_KRR fit (bias, D2 and DM blocks for a linear function;
      * one block over all columns for a non-linear one, a kernel's over
-     * its basis vectors). It used to read Trainer::dm, which nothing
-     * builds -- the models fit their own design matrix -- so no
-     * evaluation was recorded. Off by default (singleton starts in
+     * its basis vectors; the Trainer holds no design matrix, the models
+     * fit their own). Off by default (singleton starts in
      * HealthLogMode::Off; hpo_run() flips it to summary unless
      * HEALTH_LOG=off). The aggregation cost is negligible against the
      * train+predict path that brackets it. */
@@ -4262,18 +4357,15 @@ void HPO_Host<P,R>::submit_result(Result&& res, const HPOTargets& trg,
  * Wires the IFT chain rule end-to-end against the live trainer slot.
  * The optimizer's cost-then-gradient call sequence guarantees that
  * operator()(x) ran immediately before us at the same x, leaving:
- *   - tls_trainer_cache_.trainer (this host's: slot_is_mine()) with
- *     `dm.getPhi()`/`dm.getT()` reflecting
- *     the augmented training matrix at theta = x (data rows scaled by
- *     sqrt(eweight*eweightglob); augmentation block zero -- train works
- *     on a copy and writes sqrt(lambda)*I_no_bias into that copy).
- *   - model->get_weights() holding W*(x).
+ *   - tls_trainer_cache_.trainer (this host's: slot_is_mine()) fitted at
+ *     theta = x, its model->get_weights() holding W*(x).
  *
- * Strategy: on-demand factor reconstruction (locked decision, see
- * project memory). Read live Phi/T/W, reassemble the
- * sqrt(lambda)*I_no_bias augmentation block, build the Cholesky factor
- * via dloss_dtheta::detail helpers, then call assemble_dphi_train_energy_rows
- * twice per theta (once each over train_stdb_ and val_stdb_) to populate
+ * Strategy: on-demand factor reconstruction. The training matrix is
+ * rebuilt from the training data with the fit's row factors
+ * (sqrt(eweight x EWEIGHT) on energy rows, sqrt(fweight x FWEIGHT) on
+ * force rows), with the sqrt(lambda)*I_no_bias augmentation block; the
+ * Cholesky factor is built with the dloss_dtheta::detail helpers, and
+ * assemble_dphi_train_energy_rows runs twice per theta (once each over train_stdb_ and val_stdb_) to populate
  * `per_theta`. compute_dloss_dtheta runs the metric chain rule. Indices
  * the descriptor walker can't supply analytically (registry returns
  * false) end up in `needs_fd` for HYBRID's masked-FD pass.

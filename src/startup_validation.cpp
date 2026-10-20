@@ -16,6 +16,7 @@
 #include <tadah/hpo/hpo_log.h>
 #include <tadah/hpo/optimizer_caps.h>
 #include <tadah/hpo/rho_gates.h>
+#include <tadah/mlip/data_weights.h>
 #include <tadah/mlip/intercepts.h>
 #include <tadah/mlip/trainer.h>
 #include <tadah/mlip/training_datasets.h>
@@ -236,6 +237,17 @@ RawEmbeddingF0 derive_raw_embedding_f0(const core::Context &train_ctx) {
   return out;
 }
 
+bool fixindex_pins_every_weight(const core::Context &ctx) {
+  if (!ctx.contains("FIXINDEX")) return false;
+  if (ctx.contains("NORM") && ctx.get<bool>("NORM")) return false;
+  if (ctx.has_stored("OALGO") && ctx.get<int>("OALGO") == 3) return false;
+  const std::size_t K = derive_weight_count(ctx);
+  return K > 0 &&
+         tadah::mlip::classify_weight_source(ctx, K) ==
+             tadah::mlip::WeightSource::AllFixedData &&
+         !tadah::mlip::basis_drawn_from_training_data(ctx);
+}
+
 void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
                         bool has_train_db, bool has_validation) {
   /* --- the training datasets, as tadah train reads them ----------------
@@ -267,7 +279,8 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
         "the potential; set it in the -c potential/configuration.");
   }
   for (const auto &kv : trg.optimap) {
-    const std::string e = HPOTargets::optim_structure_key_error(kv.first);
+    std::string e = HPOTargets::optim_structure_key_error(kv.first);
+    if (e.empty()) e = HPOTargets::optim_startup_only_key_error(kv.first);
     if (!e.empty()) throw std::runtime_error(e);
   }
   /* An invalid stored EMBF0 value fails here, not at the first evaluation.
@@ -580,6 +593,38 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
    * ("The descriptor size is 0"). */
   if (has_fw || has_fi || !has_train_db)
     (void)tadah::mlip::classify_weight_source(train_ctx, K);
+
+  /* --- the settings of the fit every evaluation makes ------------------
+   * An evaluation fits the model when the run has training data and
+   * FIXINDEX does not pin every weight (fixindex_pins_every_weight; the
+   * host provisions the pinned weights otherwise). Such a fit refuses an
+   * M_KRR implementation other than 1 and 2, a LAMBDA that requests
+   * nothing (a negative value other than -1, a second value), LAMBDA -1
+   * under an OALGO other than 3 or under M_KRR implementation 2: each
+   * evaluation would refuse it and score FAILSCORE, so it is refused here,
+   * with the fit's message. So is OPTIM of a weight that M_KRR
+   * implementation 2 ignores (every candidate other than 1 would be
+   * refused); its other refusals depend on the training data, and
+   * HPO_Host makes them once it has read them. A run whose evaluations fit
+   * nothing reads none of these. */
+  if (has_train_db && !fixindex_pins_every_weight(train_ctx)) {
+    tadah::mlip::require_krr_implementation(train_ctx);
+    tadah::mlip::require_fit_lambda(train_ctx);
+    if (tadah::mlip::is_krr_implementation_2(train_ctx)) {
+      const std::string kernel = train_ctx.get<std::string>("MODEL", 1);
+      for (const char *key : {"EWEIGHT", "FWEIGHT", "SWEIGHT", "WDBFILE"}) {
+        const auto it = trg.optimap.find(key);
+        if (it == trg.optimap.end()) continue;
+        if (std::none_of(it->second.opt.begin(), it->second.opt.end(),
+                         [](bool b) { return b; }))
+          continue;
+        const std::string k = key;
+        throw std::runtime_error(tadah::mlip::krr_implementation2_ignores(
+            kernel, "OPTIM " + k, "applies it",
+            k == "WDBFILE" ? "without WDBFILE" : "with " + k + " 1"));
+      }
+    }
+  }
 
   /* --- GRAD_STRATEGY ANALYTICAL needs the analytical gradient ----------
    * ANALYTICAL -- written out, or resolved from an unset GRAD_STRATEGY for
