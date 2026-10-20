@@ -162,8 +162,7 @@ void write_loss(std::ostream& out, const HPOTargets& trg)
     if (trg.use_ersq)
         rows.emplace_back("PC_ERSQ", target_weight(trg.ersq, trg.w_ersq));
     add_metric_rows(rows, "PC_FRMSE", trg.frmse_targets);
-    if (trg.use_srmse)
-        rows.emplace_back("PC_SRMSE", target_weight(trg.srmse, trg.w_srmse));
+    add_metric_rows(rows, "PC_SRMSE_GPA", trg.srmse_targets);
     for (const auto& sim : trg.LS)
         for (std::size_t i = 0; i < sim.n_varloss.size(); ++i)
             rows.emplace_back("PC_LAMMPS " + sim.script + ": " +

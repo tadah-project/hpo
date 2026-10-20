@@ -4,14 +4,17 @@
 # ctest -L bench). TADAH_BENCH_POT names another one.
 #
 # Provenance: the lines below are Tadah.MLIP's Quick Start potential,
-# docs/source/quickstart/pot.tadah at Tadah.MLIP commit c91e8ef (2026-10-07),
-# byte for byte (sha256 of those lines: 463e8ec88408c009b845d51e6f3d88bb
-# cc123b60cddd64a3ec3e73092cbbe6cf). `tadah train -c config.train` wrote it
-# in that directory: D2_Blip (4 functions, RCUT2B 5.3) + DM_mBlipEnv (5
-# embedding functions, RCUTMB 5.0), Cut_Cos, M_KRR Kern_Linear, 9 weights,
-# fitted to the energies and stresses of the Quick Start's db.train (500
-# bcc Ta MD snapshots). Tadah.MLIP's tadah_quickstart_reproduces_pot checks that
-# training reproduces it there; this copy is kept as it is.
+# docs/source/quickstart/pot.tadah at Tadah.MLIP commit c91e8ef (2026-10-07)
+# (sha256 of its lines: 463e8ec88408c009b845d51e6f3d88bbcc123b60cddd64a3
+# ec3e73092cbbe6cf), without its lines of the keys EWEIGHT, FWEIGHT,
+# SWEIGHT and WDBFILE_AUTO, which Tadah! 1.6.0 retired and no load of a
+# potential reads (sha256 of the lines below: 4dffbf7b2b7d352a39dfa92bf4f1
+# 9b47a6431033f322d8bb5e271006c5edd77d). `tadah train -c config.train`
+# wrote it in that directory: D2_Blip (4 functions, RCUT2B 5.3) +
+# DM_mBlipEnv (5 embedding functions, RCUTMB 5.0), Cut_Cos, M_KRR
+# Kern_Linear, 9 weights, fitted to the energies and stresses of the Quick
+# Start's db.train (500 bcc Ta MD snapshots) by the fit of that commit;
+# the copy keeps those weights.
 #
 # Why this one: the cases need a linear model (pair_style tadah's adjoint
 # capture), no EAM fast path, at least 4 weights (the lattice cases require
@@ -28,9 +31,7 @@ CGRIDMB           2.87999999999999989
 DIMER             false   0   false
 ESHIFT_ATOM       false
 ESHIFT_DBATOM     false
-EWEIGHT           1
 FORCE             false
-FWEIGHT           1
 INIT2B            true
 INITMB            true
 LAMBDA            9.99999999999999955e-08
@@ -47,12 +48,10 @@ SEMBFUNC          2   2   2   2   2
 SGRID2B           0.100000000000000033   0.21544346900318842   0.464158883361277919   0.999999999999999889
 SGRIDMB           8
 STRESS            true
-SWEIGHT           1
 TYPE2B            D2_Blip   4   4   Ta   Ta
 TYPEMB            DM_mBlipEnv   0   1   1   5   5   Ta   Ta
 UNCERTAINTY       false
 WATOM             0.308999999999999997
-WDBFILE_AUTO      0
 WEIGHTS           133.357774127816555   -123.755171524655708   -10.4804763244958963   -18.0240635733812411   -6.3685917658913116   4.13446130558423164   -8.25236089850869803   3.95181987589451467   -6.04877887227442557
 ZERO_COM_FORCE    false
 

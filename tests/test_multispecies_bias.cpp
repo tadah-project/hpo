@@ -100,7 +100,7 @@ std::vector<std::string> nbta_lines(bool mb, bool bias = true) {
       "NORM false", "DIMER false 0 false", "EAMFAST false", "INIT2B true",
       "TYPE2B D2_BP 3 3 * *", "CGRID2B 2.4 3.1 3.9", "SGRID2B 1.0 1.2 0.9",
       "RCTYPE2B Cut_Cos", "RCUT2B 5.0", "FORCE false", "STRESS false",
-      "EWEIGHT 1.0", "FWEIGHT 1.0", "SWEIGHT 1.0", "LAMBDA 0", "OALGO 1",
+      "LAMBDA 0", "OALGO 1",
       "VERBOSE 0", "MODEL M_BLR BF_Linear"};
   if (mb) {
     for (const char *s : {"INITMB true", "TYPEMB DM_EAD 1 2 2 * *",

@@ -36,8 +36,6 @@ const char *kPairPotential =
     "ATOM     Ta\n"
     "BIAS     false\n"
     "DIMER     false     0     false\n"
-    "EWEIGHT     1.0\n"
-    "FWEIGHT     1.0\n"
     "INIT2B     true\n"
     "INITMB     false\n"
     "LAMBDA     0\n"
@@ -46,7 +44,6 @@ const char *kPairPotential =
     "OALGO     3\n"
     "RCTYPE2B     Cut_Cos\n"
     "RCUT2B     6.5\n"
-    "SWEIGHT     1.0\n"
     "TYPE2B     D2_LJ     Ta     Ta\n"
     "WATOM     73\n"
     "WEIGHTS     14.204213349318765225     2604.396965191186154698\n";

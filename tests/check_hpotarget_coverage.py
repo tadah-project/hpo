@@ -238,7 +238,7 @@ IGNORE_INIT_MODE = ("the INIT_MODE grammar of the annealers' PARAM keys "
                     "(anneal_keys.toml)")
 METRIC_OPTIONS = ("line_option:PC_EMAE", "line_option:PC_ERMSE",
                   "line_option:PC_ErRMSE", "line_option:PC_ERSQ",
-                  "line_option:PC_SRMSE", "line_option:PC_FRMSE")
+                  "line_option:PC_SRMSE_GPA", "line_option:PC_FRMSE")
 
 
 def pc_line_option_of(element: str) -> tuple[str, ...]:
@@ -318,9 +318,17 @@ EXTRACTION: list[Rule] = [
          tables=[(r"\bonce\s*\[\]", "all", ("optim_target",))],
          unread_ok={"k == o": "a key of the table, which is read as a "
                               "table"}),
-    Rule("the OPTIM keys of the fit", "src/hpo_targets.cpp",
-         r"^std::string HPOTargets::optim_fit_key_nonnegative\(",
+    Rule("the OPTIM values of the fit", "src/hpo_targets.cpp",
+         r"^std::optional<HPOTargets::FitValueRule> HPOTargets::optim_fit_value_rule\(",
          operands={"k": ("optim_target",)}),
+    Rule("the OPTIM choices and switches of the fit", "src/hpo_targets.cpp",
+         r"^std::string HPOTargets::optim_switch_key_error\(",
+         operands={"k": ("optim_target",)}),
+    Rule("the OPTIM retired keys", "src/hpo_targets.cpp",
+         r"^std::string HPOTargets::optim_retired_key_error\(",
+         tables=[(r"\bretired\s*\[\]", "all", ("optim_target",))],
+         unread_ok={"k != r": "a key of the table, which is read as a "
+                              "table"}),
     Rule("the OPTIM discrete index", "src/hpo_targets.cpp",
          r"^std::string HPOTargets::optim_discrete_index_error\(",
          operands={"core::to_upper(key)": ("optim_target",)}),

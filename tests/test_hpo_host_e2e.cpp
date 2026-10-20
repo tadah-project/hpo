@@ -165,9 +165,14 @@ tadah::core::Context make_ta_master_context(
 
     c.add("FORCE",    "false");
     c.add("STRESS",   "false");
-    c.add("EWEIGHT",  1.0);
-    c.add("FWEIGHT",  1.0);
-    c.add("SWEIGHT",  1.0);
+    /* ESIGMA 250 meV/atom: the energy row of a 4-atom cell of
+     * write_minimal_ta_dbfile keeps the factor 1 (1/(4 x 0.25 eV)),
+     * so the fits are those the cases were written for. */
+    c.add("ESIGMA", 250.0);
+    c.add("FSIGMA", 0.1);
+    c.add("FSIGMA", 0.0);
+    c.add("SSIGMA", 0.5);
+    c.add("SSIGMA", 0.0);
 
     c.add("BIAS",     "false");
     c.add("NORM",     "false");
@@ -958,16 +963,16 @@ TEST_CASE("The potentials of an evaluation keep the inputs of the run in "
  * evaluation writes -- best_pot.tadah, the BDUMP archive and the DUMP
  * archive -- keep the keys that prepared the training data in their
  * training record, not as key lines: with EFILTER -1 1, FFILTER 100,
- * ESHIFT_DBATOM true, EWEIGHT_TEMP 300, ZERO_COM_FORCE true, WDBFILE 1 and
- * WDBFILE_AUTO 0.5 in the -c context (they keep the one training structure:
- * E/N is -0.00025 eV), each file has no key line of the seven, the record
- * "DBFILE <train.db>", "EFILTER -1 1", "FFILTER 100", "ESHIFT_DBATOM true",
- * "EWEIGHT_TEMP 300", "ZERO_COM_FORCE true", "WDBFILE 1", "WDBFILE_AUTO
- * 0.5", "VALIDATION <config.val>", "HPOTARGET <config.hpo>", "VERBOSE 0"
- * (the context's values, the order of the record), and the ESHIFT key line
- * that ESHIFT_DBATOM resolved on the training data (one value, not 0), the
- * model's energy reference.
- * Before the fix: the seven were key lines of every file, and the record
+ * ESHIFT_DBATOM true, ZERO_COM_FORCE true and WDBFILE 1 in the -c context
+ * (they keep the one training structure: E/N is -0.00025 eV), each file has
+ * no key line of the five, the record "DBFILE <train.db>", "EFILTER -1 1",
+ * "FFILTER 100", "ESHIFT_DBATOM true", "ZERO_COM_FORCE true", "WDBFILE 1",
+ * "VALIDATION <config.val>", "HPOTARGET <config.hpo>", "VERBOSE 0" (the
+ * context's values, the order of the record), and the ESHIFT key line that
+ * ESHIFT_DBATOM resolved on the training data (one value, not 0), the
+ * model's energy reference. (The retired WDBFILE_AUTO and EWEIGHT_TEMP,
+ * which this case had too, are refused by a fit.)
+ * Before the fix: they were key lines of every file, and the record
  * listed DBFILE, VALIDATION, HPOTARGET and VERBOSE alone; the opening line
  * read "# --- training record (not read by tadah) ---", so REQUIRE(opened)
  * stops the case. */
@@ -989,9 +994,8 @@ TEST_CASE("The potentials of an evaluation keep the keys that prepared the "
     auto ctx = make_ta_master_context(train, hpo, val);
     const std::vector<std::pair<std::string, std::string>> dataset_keys = {
         {"EFILTER", "-1 1"},        {"FFILTER", "100"},
-        {"ESHIFT_DBATOM", "true"},  {"EWEIGHT_TEMP", "300"},
-        {"ZERO_COM_FORCE", "true"}, {"WDBFILE", "1"},
-        {"WDBFILE_AUTO", "0.5"}};
+        {"ESHIFT_DBATOM", "true"},  {"ZERO_COM_FORCE", "true"},
+        {"WDBFILE", "1"}};
     for (const auto& [key, values] : dataset_keys) {
         std::istringstream vs(values);
         for (std::string v; vs >> v;) ctx.add(key, v);
@@ -1038,8 +1042,7 @@ TEST_CASE("The potentials of an evaluation keep the keys that prepared the "
         CHECK(r.lines == std::vector<std::string>{
                              "DBFILE " + train.string(), "EFILTER -1 1",
                              "FFILTER 100", "ESHIFT_DBATOM true",
-                             "EWEIGHT_TEMP 300", "ZERO_COM_FORCE true",
-                             "WDBFILE 1", "WDBFILE_AUTO 0.5",
+                             "ZERO_COM_FORCE true", "WDBFILE 1",
                              "VALIDATION " + val.string(),
                              "HPOTARGET " + hpo.string(), "VERBOSE 0"});
         REQUIRE(lines.count("ESHIFT") == 1u);
@@ -1050,7 +1053,7 @@ TEST_CASE("The potentials of an evaluation keep the keys that prepared the "
 
 /* FORCE and STRESS decide only what training fits (the -c configuration,
  * or -F/-S); validation predicts forces whenever PC_FRMSE is set and
- * stresses whenever PC_SRMSE is set. A FORCE or STRESS key in the
+ * stresses whenever PC_SRMSE_GPA is set. A FORCE or STRESS key in the
  * --validation file therefore has no role: the host refuses it at its line
  * (through CoreUserConfigParser::refuse_keys), naming the key, the line and
  * the file, instead of ignoring it. The host is only constructed: nothing

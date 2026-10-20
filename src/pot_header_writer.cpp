@@ -251,21 +251,6 @@ void PotHeaderWriter::write_load_transforms_section(
         kv(os, "Outlier filter", s.str());
     }
 
-    if (!r.wdbfile_applied.empty()) {
-        std::ostringstream s;
-        for (std::size_t i = 0; i < r.wdbfile_applied.size(); ++i) {
-            if (i) s << " ";
-            s << fmt_double(r.wdbfile_applied[i], 3);
-        }
-        kv(os, "Per-dataset weights", s.str());
-    }
-
-    if (r.eweight_temp > 0.0) {
-        std::ostringstream s;
-        s << r.eweight_temp << " K";
-        kv(os, "Boltzmann eweight T", s.str());
-    }
-
     if (r.zero_com_force)
         kv(os, "Zero COM force", "applied");
 
@@ -414,13 +399,13 @@ void PotHeaderWriter::write_loss_section(std::ostream& os,
     metric("EMAE   (meV/at)",  trg.use_emae,   trg.emae,   trg.w_emae);
     metric("ErRMSE (per mille)",  trg.use_errmse, trg.errmse, trg.w_errmse);
     metric("ERSQ",             trg.use_ersq,   trg.ersq,   trg.w_ersq);
-    metric("SRMSE  (eV/A^3)",  trg.use_srmse,  trg.srmse,  trg.w_srmse);
 
     auto dataset_metric = [&](const std::string& name, const ValidationMetricTargets& targets) {
         for (const auto& description : targets.descriptions()) kv(os, name, description);
     };
     dataset_metric("ERMSE (meV/at)", trg.ermse_targets);
     dataset_metric("FRMSE (eV/A)", trg.frmse_targets);
+    dataset_metric("SRMSE (GPa)", trg.srmse_targets);
 
     /* LAMMPS simulation losses */
     if (!trg.LS.empty()) {

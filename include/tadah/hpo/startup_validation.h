@@ -65,6 +65,15 @@ bool fixindex_pins_every_weight(const core::Context &ctx);
  *  parsing and before HPO_Host construction. Throws std::runtime_error
  *  with an actionable message on the first violated rule:
  *
+ *   - the settings of the fit every evaluation would refuse
+ *     (mlip::require_fit_settings, with "tadah hpo"): a retired key of the
+ *     training configuration (with its conversion), an error scale that is
+ *     not a number > 0 (a relative part >= 0), one other than its default
+ *     for a quantity the fit does not have, ENERGY, FORCE and STRESS all
+ *     false;
+ *   - OPTIM of a retired key (with its conversion) and of ENORM or ENERGY
+ *     (HPOTargets::optim_retired_key_error, optim_switch_key_error, also at
+ *     their line);
  *   - OPTIM WEIGHTS is rejected (silent no-op: LS overwrites weights);
  *   - OPTIM EMBF0 is rejected (a discrete property of the potential), and
  *     a stored EMBF0 of a DM_REAM configuration must be ZERO or FREE;
@@ -130,8 +139,18 @@ bool fixindex_pins_every_weight(const core::Context &ctx);
  *     2), OALGO 3 with a LAMBDA other than 0 and an intercept column the
  *     fit fits (mlip::require_oalgo3_intercepts; OPTIM LAMBDA too, every
  *     candidate but 0 of which the fit would refuse), and under M_KRR
- *     implementation 2 OPTIM of EWEIGHT, FWEIGHT or SWEIGHT
+ *     implementation 2 OPTIM of ESIGMA, FSIGMA, SSIGMA or WDBFILE
  *     (mlip::krr_implementation2_ignores), each with the fit's message;
+ *     OPTIM of the error scale of a quantity the fit does not have (ENERGY,
+ *     FORCE or STRESS false), and of the error scale of the only quantity
+ *     of the fit (its absolute part, with no relative part searched or
+ *     set) with LAMBDA 0 or -1: every candidate would give the same fit; a
+ *     WARNING when every error scale of the fit is searched with LAMBDA 0
+ *     or -1, or with OPTIM LAMBDA (one direction of the search changes
+ *     nothing);
+ *   - when the evaluations fit no coefficient (no training data, or
+ *     FIXINDEX pins every weight): OPTIM of ESIGMA, FSIGMA, SSIGMA or
+ *     WDBFILE;
  *   - OPTIM of a key applied once when the run starts
  *     (HPOTargets::optim_startup_only_key_error, also at its line);
  *   - a training DBFILE lists each dataset once
@@ -148,7 +167,8 @@ bool fixindex_pins_every_weight(const core::Context &ctx);
  *     its enclosing block's gradients) needs a setup the analytical
  *     gradient covers and loss terms with an analytical derivative
  *     (analytical_gradient_blocker, analytical_loss_term_blocker,
- *     analytical_gate.h);
+ *     analytical_gate.h), and no OPTIM of an error scale, which it does
+ *     not differentiate;
  *   - FAILSCORE_GRADING ON needs a finite FAILSCORE that leaves room for
  *     the four grading bands.
  */

@@ -2492,6 +2492,16 @@ wrap = "noise"
 text = "NOISE_CALIBRATION 5"
 error = "'NOISE_CALIBRATION' was removed from the grammar: moved into `NOISE { CALIBRATION N } ENDNOISE` block."
 
+[[removed]]
+name = "PC_SRMSE"
+hint = "replaced by PC_SRMSE_GPA, the root mean square of the nine entries of each residual stress tensor in GPa (PC_SRMSE was that of the six entries x <= y in eV/A^3). PC_SRMSE_GPA of a residual is 160.2 times its PC_SRMSE when the six entries have equal mean squares, 130.8 times for a residual on the diagonal only (a pressure) and 185.0 times for a shear residual only: a target or --skip-above cap of PC_SRMSE times 160.2 is about that of PC_SRMSE_GPA, and a weight under LOSS L2 divided by about 25 670 (160.2 squared)."
+doc = "The stress metric of the nine entries of the tensor in GPa, PC_SRMSE_GPA, replaces the metric of six entries in eV/A^3."
+
+[[removed.invalid]]
+wrap = "root"
+text = "PC_SRMSE 0.001 1"
+error = "'PC_SRMSE' was removed from the grammar: replaced by PC_SRMSE_GPA, the root mean square of the nine entries of each residual stress tensor in GPa (PC_SRMSE was that of the six entries x <= y in eV/A^3). PC_SRMSE_GPA of a residual is 160.2 times its PC_SRMSE when the six entries have equal mean squares, 130.8 times for a residual on the diagonal only (a pressure) and 185.0 times for a shear residual only: a target or --skip-above cap of PC_SRMSE times 160.2 is about that of PC_SRMSE_GPA, and a weight under LOSS L2 divided by about 25 670 (160.2 squared)."
+
 # ---------------------------------------------------- cross-key rules ----
 
 [[rule]]

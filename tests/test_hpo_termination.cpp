@@ -166,9 +166,13 @@ tadah::core::Context make_ta_context(const fs::path& dbfile,
     c.add("DIMER",    "false");
     c.add("FORCE",    "false");
     c.add("STRESS",   "false");
-    c.add("EWEIGHT",  1.0);
-    c.add("FWEIGHT",  1.0);
-    c.add("SWEIGHT",  1.0);
+    /* The energy error scale of EWEIGHT 1 for the 4-atom
+     * Ta cells these fits train on: an energy row factor 1. */
+    c.add("ESIGMA", 250.0);
+    c.add("FSIGMA", 0.1);
+    c.add("FSIGMA", 0.0);
+    c.add("SSIGMA", 0.5);
+    c.add("SSIGMA", 0.0);
     c.add("BIAS",     "false");
     c.add("NORM",     "false");
     c.add("VERBOSE",  0);

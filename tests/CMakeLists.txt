@@ -107,11 +107,11 @@ endforeach()
 #                  every cutoff of the OPTIM box, and a candidate cutoff
 #                  beyond the box is not evaluated
 #   valmetric_e2e  test_validation_follows_metric_e2e.cpp: validation
-#                  predicts forces/stresses when PC_FRMSE/PC_SRMSE ask,
+#                  predicts forces/stresses when PC_FRMSE/PC_SRMSE_GPA ask,
 #                  whatever FORCE/STRESS training used, and leaves out the
-#                  structures stored with force/stress weight 0; and
+#                  structures stored with force/stress priority 0; and
 #                  test_metric_unit_labels.cpp: the --skip-above message
-#                  gives ErRMSE and SRMSE in their units
+#                  gives ErRMSE and SRMSE (GPa) in their units
 #   pc_readback_e2e test_hpo_pc_readback_e2e.cpp: a LAMMPS error while a
 #                  PC_LAMMPS variable is read back fails the evaluation
 #                  (--varloss, --hotvar) or is NaN (a diagnostic --outvar)

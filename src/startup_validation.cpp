@@ -18,6 +18,7 @@
 #include <tadah/hpo/rho_gates.h>
 #include <tadah/mlip/data_weights.h>
 #include <tadah/mlip/intercepts.h>
+#include <tadah/mlip/row_weights.h>
 #include <tadah/mlip/trainer.h>
 #include <tadah/mlip/training_datasets.h>
 #include <tadah/mlip/weight_provisioning.h>
@@ -248,8 +249,189 @@ bool fixindex_pins_every_weight(const core::Context &ctx) {
          !tadah::mlip::basis_drawn_from_training_data(ctx);
 }
 
+namespace {
+
+/* Whether an OPTIM line of @p trg searches index @p index (1-based; 0:
+ * any) of @p key. */
+bool optim_searches(const HPOTargets &trg, const std::string &key,
+                    std::size_t index = 0) {
+  const auto it = trg.optimap.find(key);
+  if (it == trg.optimap.end()) return false;
+  const auto &opt = it->second.opt;
+  if (index == 0) return std::any_of(opt.begin(), opt.end(),
+                                     [](bool b) { return b; });
+  return index <= opt.size() && opt[index - 1];
+}
+
+/* The OPTIM dimensions of the error scales of @p trg ("ESIGMA", "FSIGMA
+ * (1)", ...), in the order ESIGMA, FSIGMA, SSIGMA. */
+std::vector<std::string> searched_error_scales(const HPOTargets &trg) {
+  std::vector<std::string> out;
+  if (optim_searches(trg, "ESIGMA")) out.push_back("ESIGMA");
+  for (const char *key : {"FSIGMA", "SSIGMA"})
+    for (std::size_t i : {1u, 2u})
+      if (optim_searches(trg, key, i))
+        out.push_back(std::string(key) + " (" + std::to_string(i) + ")");
+  return out;
+}
+
+/* Why GRAD_STRATEGY ANALYTICAL cannot form the gradient of a search of an
+ * error scale or of a dataset priority (the analytical gradient
+ * differentiates the fit with respect to the parameters of the descriptors
+ * and of FIXWEIGHT, not its row factors), "" without one. */
+std::string error_scale_search_blocker(const HPOTargets &trg) {
+  for (const char *key : {"ESIGMA", "FSIGMA", "SSIGMA"})
+    if (optim_searches(trg, key))
+      return std::string("OPTIM ") + key + " searches an error scale of "
+             "the fit, which the analytical gradient does not "
+             "differentiate";
+  if (optim_searches(trg, "WDBFILE"))
+    return "OPTIM WDBFILE searches a priority of the fit, which the "
+           "analytical gradient does not differentiate";
+  return "";
+}
+
+/* The OPTIM dimensions of WDBFILE of @p trg ("WDBFILE (1)", ...), and
+ * whether they are the value of every one of the @p n_datasets training
+ * datasets. */
+std::vector<std::string> searched_wdbfile(const HPOTargets &trg,
+                                          std::size_t n_datasets,
+                                          bool &every) {
+  std::vector<std::string> out;
+  every = n_datasets > 0;
+  for (std::size_t i = 1; i <= n_datasets; ++i) {
+    if (optim_searches(trg, "WDBFILE", i))
+      out.push_back("WDBFILE (" + std::to_string(i) + ")");
+    else
+      every = false;
+  }
+  return out;
+}
+
+/* An OPTIM line of an error scale or of WDBFILE that cannot change the
+ * fit is refused, and every error scale of the fit searched with LAMBDA 0
+ * or -1, or with OPTIM LAMBDA, gets a WARNING, as does the WDBFILE of
+ * every training dataset (row_weights.h: the fit minimises sum p (r /
+ * sigma)^2 + LAMBDA |w|^2, so every error scale times c fits as LAMBDA
+ * times c^2, and every priority times c as LAMBDA divided by c):
+ *  - the error scale of a quantity the fit does not have (ENERGY, FORCE or
+ *    STRESS false): it would change nothing;
+ *  - the error scale of the only quantity of the fit (its absolute part
+ *    alone with no relative part, FSIGMA b 0) with LAMBDA 0 or -1: it
+ *    scales every row alike, which changes no coefficient (the evidence
+ *    approximation absorbs it into its beta);
+ *  - WDBFILE of a run with one training dataset with LAMBDA 0 or -1: its
+ *    value multiplies the priority of every row alike, likewise.
+ * For a run whose evaluations fit the model. */
+void require_error_scale_search_changes_the_fit(core::Context &ctx,
+                                                const HPOTargets &trg) {
+  struct Quantity {
+    const char *key, *sw, *what, *others;
+  };
+  const Quantity quantities[3] = {
+      {"ESIGMA", "ENERGY", "energies", "forces or stresses"},
+      {"FSIGMA", "FORCE", "forces", "energies or stresses"},
+      {"SSIGMA", "STRESS", "stresses", "energies or forces"}};
+  std::vector<const Quantity *> on;
+  for (const Quantity &q : quantities) {
+    const bool has = ctx.get<bool>(q.sw);
+    if (has) on.push_back(&q);
+    if (!has && optim_searches(trg, q.key))
+      throw std::runtime_error(
+          std::string("OPTIM ") + q.key + ": " + q.sw + " is false: the fit "
+          "has no " + q.what + ", so " + q.key + " would change nothing and "
+          "every candidate would give the same fit. " + q.sw + " true fits "
+          "the " + q.what + ".");
+  }
+  /* Whether the search can multiply the error scale of @p q by any factor:
+   * ESIGMA, or the absolute part a of FSIGMA or SSIGMA with its relative
+   * part searched too or 0. */
+  auto scales = [&](const Quantity &q) {
+    const std::string key = q.key;
+    if (key == "ESIGMA") return optim_searches(trg, key);
+    if (!optim_searches(trg, key, 1)) return false;
+    return optim_searches(trg, key, 2) ||
+           (ctx.size(key) < 2 || ctx.get<double>(key, 1) == 0.0);
+  };
+  const bool optim_lambda = optim_searches(trg, "LAMBDA");
+  const double lambda = ctx.get<double>("LAMBDA", 0);
+  const bool lambda_scale_free = !optim_lambda && (lambda == 0.0 || lambda == -1.0);
+  const std::string lambda_text = core::format_roundtrip(lambda);
+  if (on.size() == 1 && lambda_scale_free && scales(*on.front()) &&
+      !(std::string(on.front()->key) != "ESIGMA" &&
+        optim_searches(trg, on.front()->key, 2))) {
+    const Quantity &q = *on.front();
+    throw std::runtime_error(
+        std::string("OPTIM ") + q.key + ": the " + q.what + " are the only "
+        "quantity of the fit and LAMBDA is " + lambda_text + ": the error "
+        "scale of the only quantity scales every row of the fit alike, "
+        "which changes no coefficient, so every candidate would give the "
+        "same fit. With a LAMBDA > 0 the error scale weighs the data "
+        "against the penalty, and with " + q.others + " in the fit, the " +
+        q.what + " against them.");
+  }
+  const std::size_t n_datasets =
+      ctx.has_stored("DBFILE") ? ctx.size("DBFILE") : 0;
+  if (n_datasets == 1 && lambda_scale_free && optim_searches(trg, "WDBFILE"))
+    throw std::runtime_error(
+        "OPTIM WDBFILE: the run has one training dataset and LAMBDA is " +
+        lambda_text + ": its WDBFILE value multiplies the priority of every "
+        "row of the fit alike, which changes no coefficient, so every "
+        "candidate would give the same fit. With a LAMBDA > 0 the priority "
+        "weighs the data against the penalty, and with more training "
+        "datasets, the dataset against the others.");
+  if (!(lambda_scale_free || optim_lambda)) return;
+  auto warn = [&](const std::string &w) {
+    std::cerr << "[HPO] WARNING: " << w << "\n";
+    HPOLog::instance().warning(w);
+  };
+  const std::string tail =
+      ", so one direction of the search changes nothing; with one of them "
+      "fixed the search covers the same fits.";
+  bool every_wdbfile = false;
+  const std::vector<std::string> wdbfile =
+      searched_wdbfile(trg, n_datasets, every_wdbfile);
+  if (every_wdbfile) {
+    std::string dims;
+    for (const std::string &d : wdbfile) dims += (dims.empty() ? "" : ", ") + d;
+    warn("OPTIM: the WDBFILE value of every training dataset is searched (" +
+         dims + ") " +
+         (optim_lambda
+              ? std::string("and so is LAMBDA (OPTIM LAMBDA): the WDBFILE "
+                            "values times c with LAMBDA times c give the "
+                            "same fit")
+              : "and LAMBDA is " + lambda_text + ": the same factor on all "
+                "of them gives the same fit") +
+         tail);
+  }
+  if (on.empty()) return;
+  for (const Quantity *q : on)
+    if (!scales(*q)) return;
+  std::string dims;
+  for (const std::string &d : searched_error_scales(trg))
+    dims += (dims.empty() ? "" : ", ") + d;
+  warn("OPTIM: every error scale of the fit is searched (" + dims + ") " +
+       (optim_lambda
+            ? std::string("and so is LAMBDA (OPTIM LAMBDA): the error scales "
+                          "times c with LAMBDA divided by c^2 give the same "
+                          "fit")
+            : "and LAMBDA is " + lambda_text + ": the same factor on all of "
+              "them gives the same fit") +
+       tail);
+}
+
+}  // namespace
+
 void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
                         bool has_train_db, bool has_validation) {
+  /* --- the settings of the fit, as every fit refuses them --------------
+   * A retired key (with its conversion), an error scale that is not a
+   * number > 0 (a relative part >= 0), one other than its default for a
+   * quantity the fit does not have, and ENERGY, FORCE and STRESS all
+   * false (mlip::require_fit_settings): every evaluation would refuse
+   * them. */
+  tadah::mlip::require_fit_settings(train_ctx, "tadah hpo");
+
   /* --- the training datasets, as tadah train reads them ----------------
    * A DBFILE listing one file twice would have every evaluation fit its
    * structures twice. */
@@ -280,6 +462,8 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
   }
   for (const auto &kv : trg.optimap) {
     std::string e = HPOTargets::optim_structure_key_error(kv.first);
+    if (e.empty()) e = HPOTargets::optim_retired_key_error(kv.first);
+    if (e.empty()) e = HPOTargets::optim_switch_key_error(kv.first);
     if (e.empty()) e = HPOTargets::optim_startup_only_key_error(kv.first);
     if (!e.empty()) throw std::runtime_error(e);
   }
@@ -483,12 +667,12 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
   if (!has_val_metrics && trg.observables.empty() && trg.LS.empty()) {
     throw std::runtime_error(
         "No loss source: declare at least one of PC_EMAE/PC_ERMSE/"
-        "PC_ErRMSE/PC_ERSQ/PC_FRMSE/PC_SRMSE (requires --validation), "
+        "PC_ErRMSE/PC_ERSQ/PC_FRMSE/PC_SRMSE_GPA (requires --validation), "
         "PC_OBSERVABLE, or PC_LAMMPS in the hpotarget file.");
   }
   if (has_val_metrics && !has_validation) {
     throw std::runtime_error(
-        "PC_EMAE/PC_ERMSE/PC_ErRMSE/PC_ERSQ/PC_FRMSE/PC_SRMSE target "
+        "PC_EMAE/PC_ERMSE/PC_ErRMSE/PC_ERSQ/PC_FRMSE/PC_SRMSE_GPA target "
         "validation-set errors but no --validation file was given.");
   }
 
@@ -607,8 +791,9 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
    * an intercept column it fits (BIAS true): each evaluation would refuse
    * it and score FAILSCORE, so it is refused here, with the fit's message
    * (and OPTIM LAMBDA under OALGO 3 with such a column).
-   * So is OPTIM of a weight that M_KRR implementation 2 ignores (every
-   * candidate other than 1 would be refused); its other refusals depend on
+   * So is OPTIM of a key that M_KRR implementation 2 ignores (FSIGMA,
+   * SSIGMA, WDBFILE: every candidate other than the default would be
+   * refused; its solve applies ESIGMA); its other refusals depend on
    * the training data, and HPO_Host makes them once it has read them. A
    * run whose evaluations fit nothing reads none of these. */
   tadah::mlip::require_krr_implementation(train_ctx);
@@ -647,17 +832,29 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
     }
     if (tadah::mlip::is_krr_implementation_2(train_ctx)) {
       const std::string kernel = train_ctx.get<std::string>("MODEL", 1);
-      for (const char *key : {"EWEIGHT", "FWEIGHT", "SWEIGHT"}) {
-        const auto it = trg.optimap.find(key);
-        if (it == trg.optimap.end()) continue;
-        if (std::none_of(it->second.opt.begin(), it->second.opt.end(),
-                         [](bool b) { return b; }))
-          continue;
-        const std::string k = key;
+      struct Ignored { const char *key, *instead; };
+      for (const Ignored &k :
+           {Ignored{"FSIGMA", "with FSIGMA 0.1 0, the default"},
+            Ignored{"SSIGMA", "with SSIGMA 0.5 0, the default"},
+            Ignored{"WDBFILE", "without WDBFILE"}}) {
+        if (!optim_searches(trg, k.key)) continue;
         throw std::runtime_error(tadah::mlip::krr_implementation2_ignores(
-            kernel, "OPTIM " + k, "applies it", "with " + k + " 1"));
+            kernel, std::string("OPTIM ") + k.key, "applies it", k.instead));
       }
     }
+    require_error_scale_search_changes_the_fit(train_ctx, trg);
+  } else {
+    /* The evaluations fit no coefficient: an error scale or a priority of
+     * the fit changes nothing. */
+    for (const char *key : {"ESIGMA", "FSIGMA", "SSIGMA", "WDBFILE"})
+      if (optim_searches(trg, key))
+        throw std::runtime_error(
+            std::string("OPTIM ") + key + ": the evaluations of this run "
+            "fit no coefficient (" +
+            (has_train_db ? "FIXINDEX pins every weight"
+                          : "there is no training DBFILE") +
+            "), so " + key + " would change nothing and every candidate "
+            "would give the same potential.");
   }
 
   /* --- GRAD_STRATEGY ANALYTICAL needs the analytical gradient ----------
@@ -687,6 +884,7 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
       if (!checked) {
         why = analytical_gradient_blocker(train_ctx, trg, has_train_db);
         if (why.empty()) why = analytical_loss_term_blocker(trg);
+        if (why.empty()) why = error_scale_search_blocker(trg);
         checked = true;
       }
       if (why.empty()) break;

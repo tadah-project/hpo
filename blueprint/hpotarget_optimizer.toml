@@ -1432,10 +1432,11 @@ PC_OBSERVABLE, needs the settings of the analytical gradient, and startup \
 refuses a setup without them. In the training configuration these are a \
 DBFILE, no FIXINDEX, STRESS false, NORM false, OALGO 4, a fixed LAMBDA >= \
 0 and the basis BF_Linear or Kern_Linear. In the target file they are no \
-PC_SRMSE line, and no PC_OBSERVABLE line with --loss MAPE or RMSLE or with \
---unconverged force-scaled. A search parameter without an analytical \
-derivative passes startup, and stops an ANALYTICAL run at its first \
-gradient."""
+PC_SRMSE_GPA line, no PC_OBSERVABLE line with --loss MAPE or RMSLE or with \
+--unconverged force-scaled, and no OPTIM line of an error scale of the fit \
+(ESIGMA, FSIGMA, SSIGMA), which the analytical gradient does not \
+differentiate. Another search parameter without an analytical derivative \
+passes startup, and stops an ANALYTICAL run at its first gradient."""
 checks = [
   { msg = "{block} block: GRAD_STRATEGY ANALYTICAL{note} needs the analytical gradient of the loss, which this setup cannot form: {why}. Change that setting, or set GRAD_STRATEGY HYBRID to use finite differences where no analytical gradient is available.", doc = "At startup, at the END line of its optimiser; {block} is OPTIMIZER or EXPLORE, and {why} names the first setting the analytical gradient does not cover. {note} is \" (resolved for PC_OBSERVABLE: the block sets no GRAD_STRATEGY)\" when the block takes ANALYTICAL for PC_OBSERVABLE." },
   { msg = "{phase}: ASA:ASA does not accept GRAD_STRATEGY (derivative-free; reanneal tangents use PARAM Delta_X finite differences)", doc = "At startup, at the END line of its optimiser." },
@@ -1504,6 +1505,43 @@ at = "ENDOPTIMIZER"
 doc = "OALGO 1: the analytical gradient differentiates OALGO 4 only."
 text = "GRAD_STRATEGY ANALYTICAL"
 error = "OPTIMIZER block: GRAD_STRATEGY ANALYTICAL needs the analytical gradient of the loss, which this setup cannot form: OALGO is 1 (it needs OALGO 4, the Cholesky normal equations). Change that setting, or set GRAD_STRATEGY HYBRID to use finite differences where no analytical gradient is available."
+
+[[key.invalid]]
+wrap = "none"
+check = "startup"
+at = "ENDOPTIMIZER"
+doc = "OPTIM ESIGMA: the analytical gradient does not differentiate an error scale of the fit."
+text = '''
+OPTIM ESIGMA (1) 0.5 2
+PC_ERMSE 0 1
+OPTIMIZER
+STRATEGY
+LIB NLOPT
+ALGO LD_LBFGS
+MAXEVAL 10
+GRAD_STRATEGY ANALYTICAL
+ENDSTRATEGY
+ENDOPTIMIZER'''
+error = "OPTIMIZER block: GRAD_STRATEGY ANALYTICAL needs the analytical gradient of the loss, which this setup cannot form: OPTIM ESIGMA searches an error scale of the fit, which the analytical gradient does not differentiate. Change that setting, or set GRAD_STRATEGY HYBRID to use finite differences where no analytical gradient is available."
+
+[[key.invalid]]
+wrap = "none"
+check = "startup"
+context = "opt_wdbfile"
+at = "ENDOPTIMIZER"
+doc = "OPTIM WDBFILE: the analytical gradient does not differentiate a priority of the fit."
+text = '''
+OPTIM WDBFILE (1) 0.5 2
+PC_ERMSE 0 1
+OPTIMIZER
+STRATEGY
+LIB NLOPT
+ALGO LD_LBFGS
+MAXEVAL 10
+GRAD_STRATEGY ANALYTICAL
+ENDSTRATEGY
+ENDOPTIMIZER'''
+error = "OPTIMIZER block: GRAD_STRATEGY ANALYTICAL needs the analytical gradient of the loss, which this setup cannot form: OPTIM WDBFILE searches a priority of the fit, which the analytical gradient does not differentiate. Change that setting, or set GRAD_STRATEGY HYBRID to use finite differences where no analytical gradient is available."
 
 [[key.invalid]]
 wrap = "opt_asa"
@@ -2518,7 +2556,8 @@ args = [ { name = "file", kind = "name", doc = "A potential file, such as a best
 doc = """\
 One starting point read from a potential file: the values of the search \
 parameters it holds. WARM_ON_MISMATCH says what happens when a value is \
-missing or outside its OPTIM box."""
+missing or outside its OPTIM box; a key the file has no line of is \
+missing, whatever its default."""
 untested = [
   { msg = "WARM: parse failure in seed file '{file}': {why}", why = "Comes when the run draws its starting points, after it reads its data, which no case does." },
   { msg = "WARM seed {file} {text}, but this run evaluates RHOFORM {type} (from -c) and takes the OPTIM density parameters ({keys}) from the seed: density parameters are meaningful only in the form they were fitted in. {hint}", why = "Needs a WARM seed of a DM_REAM potential, and comes when the run draws its starting points, after it reads its data." },
@@ -3467,6 +3506,26 @@ VERBOSE 0
 MODEL M_BLR BF_Linear
 OALGO 1
 LAMBDA 1e-3
+"""
+
+[context.opt_wdbfile]
+doc = "The default training configuration with WDBFILE 1."
+config = """
+ATOM H
+WATOM 1.0
+DBFILE dummy.db
+INIT2B true
+INITMB false
+TYPE2B D2_BP 2 2 H H
+CGRID2B 1.0 2.0
+SGRID2B 0.5 1.0
+RCTYPE2B Cut_Cos
+RCUT2B 5.0
+VERBOSE 0
+MODEL M_BLR BF_Linear
+OALGO 4
+LAMBDA 1e-3
+WDBFILE 1
 """
 
 # ============================================================== fixtures ==

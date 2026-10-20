@@ -80,12 +80,13 @@ public:
      *  The potential below the header (every file above)
      * ------------------------------------------------------------------ */
     /** Writes the potential @p pot, the context of an evaluation, after its
-     * header: the run's training record @p record (HPOTargets::
-     * training_record), the comment block right above the key lines, then
+     * header: the training record @p record of the evaluation (HPOTargets::
+     * record_of: the run's, with the evaluation's values of a searched
+     * key), the comment block right above the key lines, then
      * pot.write_potential(os, sig_digits) of a copy without the keys of
      * mlip::training_record_keys (DBFILE, the keys that prepared the
      * training data -- EFILTER, FFILTER, ESHIFT_ATOM, ESHIFT_DBATOM,
-     * EWEIGHT_TEMP, ZERO_COM_FORCE, WDBFILE, WDBFILE_AUTO --, VALIDATION,
+     * ZERO_COM_FORCE --, WDBFILE, VALIDATION,
      * HPOTARGET, UNCERTAINTY, VERBOSE, NUMERIC, OUTFILE, AUDIT,
      * AUDIT_SAMPLE, HEALTH_LOG): mlip::write_potential_with_record. Every
      * other key is written (the resolved ESHIFT and LSCALE among them). The

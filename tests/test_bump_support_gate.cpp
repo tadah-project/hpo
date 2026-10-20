@@ -294,9 +294,11 @@ TEST_CASE("HPO_Host per-candidate bump gate: graded reject before training",
   ctx.add("DIMER", "false");
   ctx.add("FORCE", "false");
   ctx.add("STRESS", "false");
-  ctx.add("EWEIGHT", 1.0);
-  ctx.add("FWEIGHT", 1.0);
-  ctx.add("SWEIGHT", 1.0);
+  ctx.add("ESIGMA", 1.0);
+  ctx.add("FSIGMA", 0.1);
+  ctx.add("FSIGMA", 0.0);
+  ctx.add("SSIGMA", 0.5);
+  ctx.add("SSIGMA", 0.0);
   ctx.add("BIAS", "false");
   ctx.add("NORM", "false");
   ctx.add("VERBOSE", 0);

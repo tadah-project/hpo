@@ -60,6 +60,7 @@
 #include <tadah/mlip/analytics/analytics_grad.h>
 #include <tadah/mlip/analytics/dphi_dtheta_walk.h>
 #include <tadah/mlip/detail/nn_guard.h>
+#include <tadah/mlip/row_weights.h>
 #include <tadah/mlip/structure_db.h>
 #include <tadah/mlip/trainer.h>
 #include <tadah/models/dc_selector.h>
@@ -502,9 +503,10 @@ val_cell_to_row(const tadah::mlip::StructureDB&         truth_val,
         return (*force_row_start_for_struct)[struct_idx] + comp;
     }
     throw std::runtime_error(
-        "compute_dloss_dtheta: STRESS cells are not yet supported by the "
-        "analytical path; disable use_srmse for the analytical strategy or "
-        "fall back to GRAD_STRATEGY=NUMERICAL.");
+        "compute_dloss_dtheta: STRESS cells are not supported by the "
+        "analytical path (PC_SRMSE_GPA: stress rows have a position factor "
+        "in the Phi row); GRAD_STRATEGY NUMERICAL or HYBRID takes finite "
+        "differences.");
 }
 
 /* Orchestrator entry point.
@@ -725,9 +727,11 @@ inline bool compute_dloss_dtheta(const DLossDThetaPlan& plan,
             tadah::mlip::analytics_grad::frmse_per_dataset(truth, pred, 1.0,
                                                           dataset_chain(slopes));
         }
-        /* use_srmse remains deferred -- analytics_grad::srmse emits STRESS
-         * cells which val_cell_to_row rejects (stress requires positions
-         * in the Phi row). */
+        /* PC_SRMSE_GPA (use_srmse) has no analytical chain here --
+         * analytics_grad::srmse_gpa emits STRESS cells, which
+         * val_cell_to_row rejects (a stress row has a position factor in
+         * the Phi row); analytical_gradient_blocker sends such a setup to
+         * finite differences. */
     }
 
     /* Normalise by loss_count to match r.loss = r.loss_sum / loss_count. */
@@ -905,7 +909,7 @@ compute_analytical_gradient_from_trainer(
     /* The settings the analytical gradient covers (analytical_gate.h, the
      * rule validate_hpo_setup applies to GRAD_STRATEGY ANALYTICAL):
      *   - training data with every weight fitted;
-     *   - STRESS false, no PC_SRMSE: stress rows (a position factor
+     *   - STRESS false, no PC_SRMSE_GPA: stress rows (a position factor
      *     (ri[x] - rj[x]) in the Phi row) are not covered;
      *     FORCE=true is supported on the train side, and
      *     PC_FRMSE on the validation side whatever FORCE is;
@@ -926,9 +930,10 @@ compute_analytical_gradient_from_trainer(
     /* The design matrix of the fit is built inside the model (M_BLR and
      * M_KRR each fit a matrix of their own, which the Trainer does not
      * hold), so phi_train_aug is rebuilt here from train_stdb and dc.calc,
-     * with the row factors the fit applies (DesignMatrix): sqrt(eweight x
-     * EWEIGHT) on a structure's energy row, sqrt(fweight x FWEIGHT) on its
-     * force rows; the derivative rows below take the same factors. The
+     * with the row factors the fit applies, which mlip::RowWeights gives
+     * DesignMatrix and this function alike (row_weights.h: sqrt(p)/sigma,
+     * the priority p and the error scale sigma of the row, the energy's
+     * N^q ESIGMA); the derivative rows below take the same factors. The
      * cost is one extra dc.calc(train_stdb) pass per gradient call -- same
      * cost as the predict() pass in operator(), and amortised over all
      * theta partials.
@@ -956,8 +961,10 @@ compute_analytical_gradient_from_trainer(
             "descriptor has " + std::to_string(n_cols) + " entries, the "
             "trainer's DSIZE is " +
             std::to_string(ctx.template get<std::size_t>("DSIZE")));
-    const double      eweightglob = ctx.template get<double>("EWEIGHT");
-    const double      fweightglob = ctx.template get<double>("FWEIGHT");
+    /* The row factors of the fit (the error scales and priorities of the
+     * trainer's context, the WDBFILE value of each dataset of
+     * train_stdb). */
+    const mlip::RowWeights row_weights(ctx, train_stdb);
 
     std::vector<std::size_t> energy_row_for_struct(train_stdb.size(), 0);
     std::vector<std::size_t> force_row_start_for_struct(train_stdb.size(), 0);
@@ -996,8 +1003,8 @@ compute_analytical_gradient_from_trainer(
             const auto&        st = train_stdb(s);
             mlip::StDescriptors std_d = host.dc.calc(st);
 
-            /* Energy row: sum atoms' aed, scaled by sqrt(eweight*eweightglob). */
-            const double w_e = std::sqrt(st.eweight * eweightglob);
+            /* Energy row: sum atoms' aed, scaled by its row factor. */
+            const double w_e = row_weights.energy_factor(s);
             const std::size_t e_off = energy_row_for_struct[s] * n_cols;
             for (std::size_t a = 0; a < std_d.naed(); ++a) {
                 const tadah::core::aed_type& aed = std_d.get_aed(a);
@@ -1014,7 +1021,7 @@ compute_analytical_gradient_from_trainer(
                  * where fij = st_d.fd[a][jj], fji = st_d.fd[j][aa]. Both
                  * sides were already axis-expanded by dc.calc when
                  * FORCE=true (descriptors_calc.hpp:226-238). */
-                const double w_f = std::sqrt(st.fweight * fweightglob);
+                const double w_f = row_weights.force_factor(s);
                 const std::size_t f_start = force_row_start_for_struct[s];
                 for (std::size_t a = 0; a < st.natoms(); ++a) {
                     for (std::size_t jj = 0; jj < std_d.fd[a].size(); ++jj) {
@@ -1362,7 +1369,7 @@ compute_analytical_gradient_from_trainer(
             const bool ok_f_train = pr_train.second;
 
             /* Val-side: same cached walker on val_stdb with dm_cache_val.
-             * No weight scaling (val Phi has no eweight/fweight factors --
+             * No row factors (val Phi has no priorities or error scales --
              * they only weigh the training fit). force_row_start_for_struct_val
              * is consumed only when use_frmse_val is true. */
             const auto pr_val = disable_dm_cache
@@ -1402,9 +1409,9 @@ compute_analytical_gradient_from_trainer(
             if (!ok_train || !ok_val) continue;     /* -> needs_fd */
 
             /* Copy energy scratch rows into dphi_train_buf at the energy
-             * row offsets and scale by w_e. */
+             * row offsets and scale by w_e, the row factor of the fit. */
             for (std::size_t s = 0; s < train_stdb.size(); ++s) {
-                const double w_e = std::sqrt(train_stdb(s).eweight * eweightglob);
+                const double w_e = row_weights.energy_factor(s);
                 const std::size_t src_off = s * n_cols;
                 const std::size_t dst_off = energy_row_for_struct[s] * n_cols;
                 for (std::size_t c = 0; c < n_cols; ++c)
@@ -1413,7 +1420,7 @@ compute_analytical_gradient_from_trainer(
             if (use_force) {
                 /* Scale force rows by w_f. */
                 for (std::size_t s = 0; s < train_stdb.size(); ++s) {
-                    const double w_f = std::sqrt(train_stdb(s).fweight * fweightglob);
+                    const double w_f = row_weights.force_factor(s);
                     const std::size_t f_start = force_row_start_for_struct[s];
                     for (std::size_t a = 0; a < train_stdb(s).natoms(); ++a) {
                         for (std::size_t k = 0; k < 3; ++k) {

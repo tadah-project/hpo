@@ -5,6 +5,7 @@
 #include <tadah/hpo/run_policy.h>
 #include <tadah/hpo/run_driver.h>
 #include <tadah/mlip/key_provenance.h>
+#include <tadah/core/retired_keys.h>
 #include <tadah/mlip/training_record.h>  // ignore_configuration_potential_lines
 #include <tadah/hpo/hpo.h>
 #include <tadah/hpo/phase_specs.h>   // with_block_line
@@ -473,6 +474,13 @@ int hpo_run_from_startup(core::Context& ctx, HPOLog& log,
             log.warning(ignored);
         }
     }
+    /* A configuration with a line of a retired key (its own, or of a file
+     * it includes with CONFIG: the parse recorded them) is refused with the
+     * conversion of each, before the target file is read: every fit of the
+     * run would refuse it (core::require_no_retired_keys, which
+     * validate_hpo_setup applies again through mlip::require_fit_settings
+     * for a caller that skips this). */
+    core::require_no_retired_keys(ctx, "tadah hpo");
     /* The hpotarget file is the run's own: --hpotarget (tadah hpo -c
      * requires it) or an HPOTARGET line of the task file. A TASK hpo
      * section whose only HPOTARGET line was that of the potential it

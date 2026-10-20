@@ -143,6 +143,29 @@ public:
     /* Positive-only OPTIM keys (geometric AUTO boxes by default), from the
      * refit hpotarget writer's key table. */
     static bool optim_key_positive_only(const std::string& key);
+    /** What the fit requires of a searched value of index @p index
+     * (1-based) of @p key (case-insensitive), which the low bound of its
+     * box must meet: a value > 0 (strict) for ESIGMA, the absolute parts
+     * FSIGMA (1) and SSIGMA (1) and every WDBFILE value (an AUTO box of
+     * them is geometric by default, RATIO 2), a value >= 0 for the
+     * relative parts FSIGMA (2) and SSIGMA (2) (an AUTO box of them is
+     * linear and clamped at 0) and for LAMBDA; nullopt for another key. */
+    struct FitValueRule {
+        bool strict;      ///< > 0; else >= 0
+        std::string why;  ///< the reason, in words
+    };
+    static std::optional<FitValueRule> optim_fit_value_rule(
+        const std::string& key, std::size_t index);
+    /** OPTIM of a choice or a switch of the fit (ENORM ATOM|SQRT, ENERGY
+     * true|false) is refused: no continuous value. Returns the error
+     * message, "" for another key. */
+    static std::string optim_switch_key_error(const std::string& key);
+    /** OPTIM of a retired key (EWEIGHT, FWEIGHT, SWEIGHT, WDBFILE_AUTO,
+     * EWEIGHT_TEMP: the blueprint's retired state) is refused with why it
+     * was retired, what replaces it and its conversion
+     * (core::retired_key_text). Returns the error message, "" for another
+     * key. */
+    static std::string optim_retired_key_error(const std::string& key);
     /* OPTIM on structure data is refused: the density form (RHOFORM), the
      * descriptor types (TYPE2B, TYPEMB), the cutoff classes (RCTYPE2B,
      * RCTYPEMB), the knot-degree lists (KDEG2B, KDEGMB, KDEGEMB), the
@@ -166,18 +189,12 @@ public:
     static std::string optim_internal_key_error(const std::string& key);
     /** OPTIM on a key applied once, when the run starts and reads its data
      * (LSCALE, ESHIFT, ESHIFT_ATOM, ESHIFT_DBATOM, EFILTER, FFILTER,
-     * ZERO_COM_FORCE, WDBFILE, WDBFILE_AUTO, EWEIGHT_TEMP:
-     * mlip::apply_load_transforms on the training and validation data) is
-     * refused, whatever the model: no evaluation would take a candidate
-     * value of it. Compared case-insensitively. Returns the error message,
-     * "" for another key. */
+     * ZERO_COM_FORCE: mlip::apply_load_transforms on the training and
+     * validation data) is refused, whatever the model: no evaluation would
+     * take a candidate value of it. (WDBFILE, the priority of each dataset,
+     * applies in each fit: mlip::RowWeights.) Compared case-insensitively.
+     * Returns the error message, "" for another key. */
     static std::string optim_startup_only_key_error(const std::string& key);
-    /** The low bound of an OPTIM box on a key of the fit that a fit refuses
-     * below 0 (EWEIGHT, FWEIGHT, SWEIGHT: a weight is a number >= 0;
-     * LAMBDA: a negative value other than -1 is refused, and -1, which
-     * requests the evidence approximation, is no value of a box): the
-     * reason in words, "" for another key. */
-    static std::string optim_fit_key_nonnegative(const std::string& key);
     /* OPTIM on a legacy many-body key (CGRIDMB, SGRIDMB, AMPGRIDMB,
      * CEMBFUNC, SEMBFUNC, RCUTMB) that @p ctx does not store, while its
      * many-body term is DM_Embed components (DESCRIPTOR blocks): refused
@@ -416,16 +433,21 @@ public:
      * pot_digits_explicit is true iff the configuration carried NUMERIC. */
     int    pot_digits = core::kPotDigitsDefault;
     bool   pot_digits_explicit = false;
-    /* The training record of every potential file HPO writes (the same
-     * files): the keys a potential does not use (DBFILE, WDBFILE,
-     * VALIDATION, HPOTARGET, VERBOSE, ...: mlip::training_record_keys) as
-     * the run's
-     * configuration and command line gave them, taken first thing in the
-     * constructor, before anything inserts a default; with the
-     * constructor's provenance, the blueprint defaults no one wrote are
-     * left out. A comment block above the key lines, which no loader of a
-     * potential reads. */
+    /* The training record of the run (the potential files HPO writes take
+     * theirs from it, record_of()): the keys a potential does not use
+     * (DBFILE, WDBFILE, VALIDATION, HPOTARGET, VERBOSE, ...:
+     * mlip::training_record_keys) as the run's configuration and command
+     * line gave them, taken first thing in the constructor, before
+     * anything inserts a default; with the constructor's provenance, the
+     * blueprint defaults no one wrote are left out. A comment block above
+     * the key lines, which no loader of a potential reads. */
     mlip::TrainingRecord training_record;
+    /** The training record of the potential an evaluation wrote, whose
+     * context is @p pot (the model's potential, built from the candidate's
+     * context): training_record with the line of each searched key of the
+     * record (OPTIM WDBFILE) holding the values @p pot stores -- the
+     * candidate's, with which the evaluation fitted. */
+    mlip::TrainingRecord record_of(const core::Context& pot) const;
     size_t outputEvery = 1;
     /* Cadence over NEW BESTS (not over evaluations): best_*.tadah rows are
      * written every Nth improvement, keyed by best_iter. Was parsed as a
@@ -464,29 +486,31 @@ public:
     double w_emae = 0, w_errmse = 0, w_ersq = 0;
     ValidationMetricTargets ermse_targets{"PC_ERMSE"};
     ValidationMetricTargets frmse_targets{"PC_FRMSE"};
+    /* PC_SRMSE_GPA: the stress RMSE of the nine entries of each tensor, in
+     * GPa (mlip::Analytics::calc_s_rmse_gpa). */
+    ValidationMetricTargets srmse_targets{"PC_SRMSE_GPA"};
     void resolve_validation_targets(const std::vector<std::string>& files) {
         ermse_targets.resolve(files);
         frmse_targets.resolve(files);
+        srmse_targets.resolve(files);
     }
     bool use_srmse = false;
-    double srmse;
-    double w_srmse;
     bool use_frmse = false;
 
     /* Bad-pot pre-LAMMPS skip thresholds, parsed from PC_* flags
      *   PC_ERMSE  <target> <weight> [--skip-above <cap_meV>] [--skip-rel <ratio>]
-     * (and analogous for EMAE / FRMSE / SRMSE / ErRMSE / ERSQ).
+     * (and analogous for EMAE / FRMSE / SRMSE_GPA / ErRMSE / ERSQ).
      *
      * abs_above: skip the LAMMPS phase when the metric exceeds <cap>
-     *            (cap is in meV/atom for energy metrics, raw units for
-     *            force/stress; the same units the metric reports).
+     *            (cap is in meV/atom for energy metrics, eV/A for forces
+     *            and GPa for stresses; the units the metric reports).
      * rel_above: skip when the metric exceeds rel_above * best_seen_so_far.
      *            Only fires when a finite best has been observed.
      *
      * Replaces the legacy env vars TADAH_HPO_BAD_POT_ERMSE_MEV /
      * TADAH_HPO_BAD_POT_ERMSE_REL. Defaults are nullopt = no skip. */
     using SkipCaps = MetricSkipCaps;
-    SkipCaps skip_emae, skip_errmse, skip_ersq, skip_srmse;
+    SkipCaps skip_emae, skip_errmse, skip_ersq;
 
     /** Why two evaluations of one point can give different losses in this
      *  run, or "" when every evaluation is a function of its point -- the

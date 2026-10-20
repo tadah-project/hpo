@@ -484,10 +484,6 @@ private:
     /* --validation is optional when the loss has other sources
      * (PC_OBSERVABLE / PC_LAMMPS); validated in validate_hpo_setup(). */
     bool                         has_validation_ = true;
-    /* The validation datasets PC_SRMSE measures (a dataset without a stress
-     * tensor is not; PC_FRMSE keeps its own in trg_.frmse_targets). Empty:
-     * every dataset. */
-    std::vector<bool>            val_measured_srmse_;
     /* The validation datasets the energy metrics (PC_EMAE, PC_ERMSE,
      * PC_ErRMSE, PC_ERSQ) measure: a dataset without an energy (every
      * structure with eweight 0) is not; PC_ERMSE keeps the same in
