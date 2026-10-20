@@ -16,11 +16,12 @@
 //    FSIGMA other than its default with FORCE false); OPTIM of the error
 //    scale of a quantity the fit does not have; OPTIM of the error scale of
 //    the only quantity of the fit, which scales every row alike, with
-//    LAMBDA 0 or -1 (every candidate fits alike); GRAD_STRATEGY ANALYTICAL
-//    with OPTIM of an error scale (no analytical derivative; HYBRID takes
-//    finite differences for it). A WARNING when every error scale of the
-//    fit is searched with LAMBDA 0 or -1, or with OPTIM LAMBDA: one
-//    direction of the search then changes nothing;
+//    LAMBDA 0 or -1 (every candidate fits alike); OPTIM of an error scale
+//    or of WDBFILE when no evaluation fits (FIXINDEX pins every weight);
+//    GRAD_STRATEGY ANALYTICAL with OPTIM of an error scale (no analytical
+//    derivative; HYBRID takes finite differences for it). A WARNING when
+//    every error scale of the fit is searched with LAMBDA 0 or -1, or with
+//    OPTIM LAMBDA: one direction of the search then changes nothing;
 //  - the validation configuration (--validation) refuses the error scales,
 //    ENORM, ENERGY and the retired keys at their line: the validation set is
 //    not fitted;
@@ -35,10 +36,12 @@
 
 #include "catch2/catch.hpp"
 
+#include <tadah/core/blueprint_parser.h>
 #include <tadah/core/context.h>
 #include <tadah/core/core_user_config_parser.h>
 #include <tadah/core/key_notice.h>
 #include <tadah/core/periodic_table.h>
+#include <tadah/core/retired_keys.h>
 #include <tadah/hpo/hpo.h>
 #include <tadah/hpo/hpo_host.h>
 #include <tadah/hpo/hpo_log.h>
@@ -643,4 +646,54 @@ TEST_CASE("PC_SRMSE is replaced by PC_SRMSE_GPA",
     REQUIRE(trg.srmse_targets.datasets().size() == 2);
     CHECK(trg.srmse_targets.datasets()[0].weight == 4.0);
     CHECK(trg.srmse_targets.datasets()[1].target == 1.0);
+}
+
+/* Pins: OPTIM of an error scale or of WDBFILE in a run whose evaluations
+ * fit no coefficient (FIXINDEX pins both weights) is refused when the run
+ * starts: it would change nothing; with a fit it passes.
+ * Before the fix: it passed, and every candidate gave the same potential. */
+TEST_CASE("tadah hpo refuses OPTIM of an error scale when no evaluation "
+          "fits",
+          "[HPO][error_scales][startup]") {
+    tadah::core::PeriodicTable::initialize();
+    Context pinned = model_ctx();
+    set_key(pinned, "FIXINDEX", "1-2");
+    set_key(pinned, "FIXWEIGHT", "0.1 0.2");
+    set_key(pinned, "WDBFILE", "1");
+    for (const char* key : {"ESIGMA", "WDBFILE"}) {
+        DYNAMIC_SECTION(key) {
+            const std::string k = key;
+            const std::string line = "OPTIM " + k + " (1) 0.5 2\n";
+            CHECK(startup_error(pinned, target(line)) ==
+                  "OPTIM " + k + ": the evaluations of this run fit no "
+                  "coefficient (FIXINDEX pins every weight), so " + k +
+                  " would change nothing and every candidate would give "
+                  "the same potential.");
+            Context fitted = model_ctx();
+            set_key(fitted, "WDBFILE", "1");
+            CHECK(startup_error(fitted, target(line)).empty());
+        }
+    }
+}
+
+/* A guard: every key the blueprint marks retired is refused as an OPTIM
+ * target with its conversion (HPOTargets::optim_retired_key_error lists
+ * them for the registry's coverage check), so a key retired later cannot
+ * be searched without a refusal. It passes as long as the list holds the
+ * blueprint's retired keys; with one left out it fails. */
+TEST_CASE("Every retired key of the blueprint is refused as an OPTIM target",
+          "[HPO][error_scales][retired]") {
+    tadah::core::PeriodicTable::initialize();
+    std::size_t n = 0;
+    for (const auto& [key, info] :
+         tadah::core::BlueprintParser::getKeysMapRef()) {
+        if (!info.isRetired()) continue;
+        ++n;
+        INFO(key);
+        CHECK(HPOTargets::optim_retired_key_error(key) ==
+              "OPTIM " + key + " is not a valid search target: " +
+                  tadah::core::retired_key_text(key, info));
+    }
+    CHECK(n == 5);
+    CHECK(HPOTargets::optim_retired_key_error("ESIGMA").empty());
 }
