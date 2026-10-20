@@ -137,7 +137,10 @@ tadah::core::Context make_ta_base_context(const fs::path& hpo_cfg)
     c.add("DIMER",    "false");
     c.add("FORCE",    "false");
     c.add("STRESS",   "false");
-    c.add("ESIGMA", 1.0);
+    /* ESIGMA 250 meV/atom: the energy row of a 4-atom cell of
+     * write_minimal_ta_dbfile keeps the factor 1 (1/(4 x 0.25 eV)),
+     * so the fits are those the cases were written for. */
+    c.add("ESIGMA", 250.0);
     c.add("FSIGMA", 0.1);
     c.add("FSIGMA", 0.0);
     c.add("SSIGMA", 0.5);

@@ -1641,7 +1641,9 @@ Context make_minimal_trainer_context(const std::vector<double>& cgrid,
     /* Output controls */
     c.add("FORCE",    "false");
     c.add("STRESS",   "false");
-    c.add("ESIGMA", 1.0);
+    /* The energy error scale of EWEIGHT 1 for the 3-atom
+     * H3 cells these fits train on: an energy row factor 1. */
+    c.add("ESIGMA", 1000.0 / 3.0);
     c.add("FSIGMA", 0.1);
     c.add("FSIGMA", 0.0);
     c.add("SSIGMA", 0.5);
@@ -2023,6 +2025,10 @@ Context make_minimal_trainer_context_force(
     Context c = make_minimal_trainer_context(cgrid, sgrid, rcut);
     c.remove("FORCE");
     c.add("FORCE", "true");
+    /* The force error scale of FWEIGHT 1: every force row factor 1. */
+    c.remove("FSIGMA");
+    c.add("FSIGMA", 1.0);
+    c.add("FSIGMA", 0.0);
     return c;
 }
 
@@ -3031,7 +3037,9 @@ Context make_composite_blip_context(const std::vector<double>& cgrid_2b,
     c.add("DIMER",    "false");
     c.add("FORCE",    "false");
     c.add("STRESS",   "false");
-    c.add("ESIGMA", 1.0);
+    /* The energy error scale of EWEIGHT 1 for the 3-atom
+     * H3 cells these fits train on: an energy row factor 1. */
+    c.add("ESIGMA", 1000.0 / 3.0);
     c.add("FSIGMA", 0.1);
     c.add("FSIGMA", 0.0);
     c.add("SSIGMA", 0.5);
@@ -3273,8 +3281,10 @@ Context make_composite_mblip_force_context(const std::vector<double>& cgrid_2b,
     c.add("DIMER",    "false");
     c.add("FORCE",    "true");
     c.add("STRESS",   "false");
-    c.add("ESIGMA", 1.0);
-    c.add("FSIGMA", 0.1);
+    /* The error scales of EWEIGHT 1 and FWEIGHT 1 for the 3-atom
+     * H3 cells these fits train on: every row factor 1. */
+    c.add("ESIGMA", 1000.0 / 3.0);
+    c.add("FSIGMA", 1.0);
     c.add("FSIGMA", 0.0);
     c.add("SSIGMA", 0.5);
     c.add("SSIGMA", 0.0);
@@ -3488,8 +3498,10 @@ Context make_composite_mblip_force_context_with_watom(
     c.add("DIMER",    "false");
     c.add("FORCE",    "true");
     c.add("STRESS",   "false");
-    c.add("ESIGMA", 1.0);
-    c.add("FSIGMA", 0.1);
+    /* The error scales of EWEIGHT 1 and FWEIGHT 1 for the 3-atom
+     * H3 cells these fits train on: every row factor 1. */
+    c.add("ESIGMA", 1000.0 / 3.0);
+    c.add("FSIGMA", 1.0);
     c.add("FSIGMA", 0.0);
     c.add("SSIGMA", 0.5);
     c.add("SSIGMA", 0.0);
@@ -3866,7 +3878,9 @@ Context make_mjoin_blip_context(const std::vector<double>& cg,
     for (double v : sg) c.add("SGRIDMB", v);
     c.add("FORCE", "false");
     c.add("STRESS", "false");
-    c.add("ESIGMA", 1.0);
+    /* The energy error scale of EWEIGHT 1 for the 3-atom
+     * H3 cells these fits train on: an energy row factor 1. */
+    c.add("ESIGMA", 1000.0 / 3.0);
     c.add("FSIGMA", 0.1);
     c.add("FSIGMA", 0.0);
     c.add("SSIGMA", 0.5);
