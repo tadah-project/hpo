@@ -4623,6 +4623,26 @@ text = "PC_EMAE 5 1"
 error = "LAMBDA -1 requests the evidence approximation, which only OALGO 3 runs; OALGO 3 penalises every weight alike, and the model has 1 intercept column(s) (BIAS true with ATOM), which a ridge penalty leaves out. The evidence approximation needs BIAS false, or every intercept weight pinned with FIXINDEX and FIXWEIGHT. With BIAS true, LAMBDA 0 fits with any OALGO, and LAMBDA > 0 with OALGO 1, 2 or 4."
 
 [[rule]]
+id = "RULE.optim_LAMBDA_OALGO3_intercepts"
+title = "OPTIM LAMBDA under OALGO 3 needs no intercept column"
+check = "startup"
+keys = ["ROOT.OPTIM"]
+msg = "OPTIM LAMBDA: OALGO 3 penalises every weight alike, and the fit has {count} intercept column(s) (BIAS true with ATOM), which a ridge penalty leaves out, so every fit refuses a LAMBDA other than 0: each candidate of the box but 0 would fail its evaluation. OALGO 1, 2 or 4 fits a positive LAMBDA with the intercepts unpenalised."
+doc = """\
+Under OALGO 3 a fit with an intercept column that FIXINDEX does not pin \
+refuses a LAMBDA other than 0, so tadah hpo refuses OPTIM LAMBDA when the \
+run starts, without a line, if its evaluations fit the model."""
+msg_doc = "The message gives the number of intercept columns the fit has."
+
+[[rule.invalid]]
+wrap = "root"
+check = "startup"
+context = "lines_oalgo3_bias_lambda0"
+at = "none"
+text = "OPTIM LAMBDA (1) 0 1e-2"
+error = "OPTIM LAMBDA: OALGO 3 penalises every weight alike, and the fit has 1 intercept column(s) (BIAS true with ATOM), which a ridge penalty leaves out, so every fit refuses a LAMBDA other than 0: each candidate of the box but 0 would fail its evaluation. OALGO 1, 2 or 4 fits a positive LAMBDA with the intercepts unpenalised."
+
+[[rule]]
 id = "RULE.fit_krr_implementation"
 title = "An M_KRR model is implementation 1 or 2"
 check = "startup"
@@ -5017,6 +5037,26 @@ MODEL M_BLR BF_Linear
 BIAS true
 OALGO 3
 LAMBDA 1e-3
+"""
+
+[context.lines_oalgo3_bias_lambda0]
+doc = "The default training configuration with BIAS true, OALGO 3 and LAMBDA 0."
+config = """
+ATOM H
+WATOM 1.0
+DBFILE dummy.db
+INIT2B true
+INITMB false
+TYPE2B D2_BP 2 2 H H
+CGRID2B 1.0 2.0
+SGRID2B 0.5 1.0
+RCTYPE2B Cut_Cos
+RCUT2B 5.0
+VERBOSE 0
+MODEL M_BLR BF_Linear
+BIAS true
+OALGO 3
+LAMBDA 0
 """
 
 [context.lines_oalgo3_bias_evidence]

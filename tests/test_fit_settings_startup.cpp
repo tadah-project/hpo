@@ -415,6 +415,30 @@ TEST_CASE("tadah hpo refuses at startup OALGO 3 with a LAMBDA other than 0 "
         CHECK(fit_refusal(c).empty());
         CHECK(startup_error(c, target()).empty());
     }
+    /* OPTIM LAMBDA with LAMBDA 0: every candidate of the box but 0 would
+     * be refused by its fit, so the search is refused at startup, naming
+     * the intercept columns; with the intercept pinned, or under OALGO 1,
+     * it passes (pins).
+     * Before the fix: the startup checks passed it, and each evaluation of
+     * a candidate above 0 refused it. */
+    SECTION("OPTIM LAMBDA with LAMBDA 0") {
+        const std::string line = "OPTIM LAMBDA (1) 0 1e-2\n";
+        const Context c = bias("0");
+        CHECK(startup_error(c, target(line)) ==
+              "OPTIM LAMBDA: OALGO 3 penalises every weight alike, and the "
+              "fit has 1 intercept column(s) (BIAS true with ATOM), which a "
+              "ridge penalty leaves out, so every fit refuses a LAMBDA other "
+              "than 0: each candidate of the box but 0 would fail its "
+              "evaluation. OALGO 1, 2 or 4 fits a positive LAMBDA with the "
+              "intercepts unpenalised.");
+        Context pinned = bias("0");
+        pinned.add("FIXINDEX", "1");
+        pinned.add("FIXWEIGHT", "-0.5");
+        CHECK(startup_error(pinned, target(line)).empty());
+        Context o1 = bias("0");
+        set_key(o1, "OALGO", "1");
+        CHECK(startup_error(o1, target(line)).empty());
+    }
 }
 
 /* An OPTIM box of EWEIGHT, FWEIGHT, SWEIGHT or LAMBDA whose low bound is
