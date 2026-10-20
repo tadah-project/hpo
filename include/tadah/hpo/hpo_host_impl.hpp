@@ -32,6 +32,7 @@
 #include <tadah/tadah.lammps/lammps_tadah.h>
 #include <tadah/mlip/analytics/dphi_dtheta_walk.h>
 #include <tadah/mlip/data_weights.h>
+#include <tadah/mlip/fit_balance.h>
 #include <tadah/mlip/intercepts.h>
 #include <tadah/mlip/weight_provisioning.h>
 #include <tadah/models/evidence_approximation_error.h>
@@ -2935,9 +2936,20 @@ void HPO_Host<P,R>::persist_durable_best(const Result& r, bool& journalled) cons
             payload, r, trg_, master_ctx_, val_ctx_, train_ref, val_stdb_,
             param_labels_, report_, cw_, prec_);
         PotHeaderWriter::write_candidate_hot(payload, r);
+        /* The record of the candidate (its values of a searched key) ends
+         * with the balance table of its fit, which operator() computed
+         * before it took best_mtx_. The DUMP and BDUMP archives have none. */
+        mlip::TrainingRecord record = trg_.record_of(r.pot_ctx);
+        if (r.balance.empty())
+            throw std::logic_error(
+                "internal error: eval " + std::to_string(r.iter) +
+                " reached the publication of the best potential without the "
+                "balance table of its fit");
+        record.lines.insert(record.lines.end(), r.balance.begin(),
+                            r.balance.end());
         /* NUMERIC significant digits (default 18: exact); never writes
          * NUMERIC itself. The header lines above keep their own formats. */
-        PotHeaderWriter::write_potential_body(payload, r.pot_ctx, trg_.record_of(r.pot_ctx), trg_.pot_digits);
+        PotHeaderWriter::write_potential_body(payload, r.pot_ctx, record, trg_.pot_digits);
         if (!payload.good())
             throw durable_best::Error("failed to render best-potential payload");
 
@@ -3015,6 +3027,21 @@ void HPO_Host<P,R>::persist_durable_best(const Result& r, bool& journalled) cons
         journalled = true;
         throw err;
     }
+}
+
+template<class P, class R>
+std::vector<std::string> HPO_Host<P,R>::balance_of_fit(
+    const mlip::Trainer& host) const
+{
+    if (!has_train_data_)
+        return mlip::fit_balance_lines(mlip::no_fit_balance(
+            "the run has no training data: the coefficients are those of "
+            "FIXWEIGHT"));
+    /* The rule of tadah train (MLIP fit_balance): a fit of no free
+     * coefficient has none, saying so. */
+    if (all_weights_fixed_)
+        return mlip::fit_balance_lines(mlip::all_pinned_fit_balance());
+    return mlip::fit_balance_lines(host.model->fit_balance());
 }
 
 /* A completed candidate could not be persisted. Trip the latch (the first
@@ -3621,20 +3648,27 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
      * publication (fsync + rename, or a transient-I/O backoff of up to
      * 30 s). The lock was also where the stagnation check below waited for
      * an in-flight publication to store iter_at_last_best_; that wait now
-     * happens only on the path that would throw StagnationStop: until as
-     * many decisions have finished as had been counted (best_pubs_) when
-     * the check began -- holding the lock or queued for it. They finish in
-     * lock order, which is not FIFO, so one overtaken at the lock by a
-     * decision counted later can still be missed (rare; see
-     * detail::throw_if_stagnated). */
+     * happens only on the path that would throw StagnationStop: until every
+     * decision counted (best_pubs_) before the check began has ended --
+     * computing its table, queued for the lock or holding it -- whatever
+     * the order in which they end (detail::throw_if_stagnated). */
     if (may_become_best(r.loss, g_best_.load(std::memory_order_acquire)))
     {
-      /* Counted before waiting for the lock and done while still holding
-       * it: a stagnation check that would fire and began after the count
-       * waits until as many decisions are done (detail::throw_if_stagnated). */
-      best_pubs_.started.fetch_add(1);
-      std::lock_guard<std::mutex> best_lock(best_mtx_);
-      detail::PublicationDone best_pub_done(best_pubs_);
+      /* The decision is counted first, then computes the balance table of
+       * this evaluation's fit, then waits for the lock, and is done while
+       * still holding it, or, when the table throws, under the lock all the
+       * same: a stagnation check that would fire and began after the count
+       * waits until this decision has ended (detail::throw_if_stagnated),
+       * whatever stage it is at. */
+      detail::BestDecision best_decision(best_pubs_, best_mtx_);
+      /* The table, for best_pot.tadah: one O(n p^2) pass, made before
+       * best_mtx_ is taken (other chains' decisions do not wait for it) and
+       * only for a usable loss that may be the new best, not for the other
+       * evaluations. `host` still holds this evaluation's fit: nothing
+       * since the training refits this thread's trainer. */
+      if (loss_is_feasible(r.loss, trg_.FAIL_SCORE))
+        r.balance = balance_of_fit(host);
+      best_decision.lock();
       const durable_best::Key key{
           r.loss, r.source_rank, r.chain_id, r.iter};
       const double cur = g_best_.load(std::memory_order_relaxed);
@@ -3713,9 +3747,9 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
     /* Stagnation check -- throw to short-circuit the optimiser loop. The
      * surrounding RestartPolicy catches StagnationStop and decides
      * whether to restart from a fresh init. A check that would fire first
-     * waits until as many new-best decisions have finished as were in
-     * progress when it began (this evaluation may have skipped the lock
-     * above) and checks again. */
+     * waits until every new-best decision counted before it began has
+     * ended (this evaluation may have skipped the lock above) and checks
+     * again. */
     {
       const std::size_t threshold =
           stagnation_threshold_.load(std::memory_order_relaxed);

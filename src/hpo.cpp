@@ -7,6 +7,7 @@
 #include <tadah/mlip/key_provenance.h>
 #include <tadah/core/retired_keys.h>
 #include <tadah/mlip/training_record.h>  // ignore_configuration_potential_lines
+#include <tadah/mlip/fit_balance.h>
 #include <tadah/hpo/hpo.h>
 #include <tadah/hpo/phase_specs.h>   // with_block_line
 #include <tadah/hpo/hpo_log.h>
@@ -175,6 +176,49 @@ FitSwitchSources fit_switch_sources(const core::Context& ctx,
         return "source not recorded";
     };
     return {source("FORCE"), source("STRESS")};
+}
+
+/* The balance table of the best potential, printed once at the end of a
+ * run (on MPI rank 0, at VERBOSE 1 and above) from the training record of
+ * best_pot.tadah, where the evaluation that published it stored the table
+ * of its fit: what the file holds is what is printed, whichever evaluation
+ * or rank published it last. Nothing for a run that wrote no best
+ * potential; a WARNING when the file cannot be read or has no table. The
+ * legend of the columns follows a table, not a none line (which a long
+ * reason wraps to several lines). */
+void print_best_fit_balance(const HPOTargets& trg)
+{
+    if (hpo_rank() != 0) return;
+    if (core::Logger::instance().getLogLevel() < core::LogLevel::WARNING)
+        return;
+    const std::string& path = trg.canonicalBestPotFile;
+    std::error_code ec;
+    if (!std::filesystem::exists(path, ec)) return;
+    std::vector<std::string> lines;
+    bool computed = false;  // a table, not none: the legend follows it
+    try {
+        const mlip::TrainingRecord record = mlip::read_training_record(path);
+        lines = mlip::fit_balance_record_lines(record);
+        const std::optional<mlip::FitBalance> table =
+            mlip::read_fit_balance(record);
+        computed = table && table->computed();
+    } catch (const std::exception& e) {
+        core::Logger::instance().log(
+            core::LogLevel::WARNING,
+            "tadah hpo: the fit balance table of " + path +
+                " cannot be read: " + e.what());
+        return;
+    }
+    if (lines.empty()) {
+        core::Logger::instance().log(
+            core::LogLevel::WARNING,
+            "tadah hpo: " + path + " has no fit balance table in its "
+            "training record");
+        return;
+    }
+    std::cout << "[HPO] " << path << ":\n";
+    mlip::print_fit_balance(std::cout, lines,
+                            computed && mlip::first_fit_balance_legend());
 }
 
 /* What hpo_run() does with its context: a run, or the startup checks of a
@@ -1004,6 +1048,11 @@ int hpo_run_from_startup(core::Context& ctx, HPOLog& log,
          * whatever the ending, before the trailer, so that a lock file that
          * stays is a WARNING in the journal. */
         [&]() { host.finish_best_publication(); });
+
+    /* The table of the best potential, once, after the trailer: never per
+     * evaluation. A run that ends by an error throws above and prints
+     * none. */
+    print_best_fit_balance(trg);
 
     /* The run's pools stop when `pools` goes, here or on any exception
      * above (RunPools): the PROCESS worker processes get their SHUTDOWN
