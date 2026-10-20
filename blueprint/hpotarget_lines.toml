@@ -4154,25 +4154,25 @@ error = "OPTIM SWEIGHT is not a valid search target: SWEIGHT is a retired key: S
 id = "OPTIM.TARGET.WDBFILE_AUTO"
 key = "WDBFILE_AUTO"
 status = "refused"
-msg = "OPTIM WDBFILE_AUTO is not a valid search target: WDBFILE_AUTO is a retired key: WDBFILE_AUTO a multiplied the priorities of each dataset by n_d^-a, n_d its number of structures, so a weight of the fit depended on how many structures each dataset had. Replaced by: WDBFILE, a priority for each dataset. Each WDBFILE value (1 for every dataset without WDBFILE) multiplied by n_d^-a, n_d the number of structures of dataset d after EFILTER and FFILTER, gives the same fit. For WDBFILE_AUTO 0, deleting the line converts it (WDBFILE as it is)."
+msg = "OPTIM WDBFILE_AUTO is not a valid search target: WDBFILE_AUTO is a retired key: WDBFILE_AUTO a multiplied the priorities of each dataset by n_d^-a, n_d its number of structures, so a priority in the fit depended on how many structures each dataset had. Replaced by: WDBFILE, a priority for each dataset. Each WDBFILE value (1 for every dataset without WDBFILE) multiplied by n_d^-a, n_d the number of structures of dataset d after EFILTER and FFILTER, gives the same fit. For WDBFILE_AUTO 0, deleting the line converts it (WDBFILE as it is)."
 doc = "WDBFILE_AUTO is a retired key; OPTIM WDBFILE searches the priority of each dataset."
 
 [[optim_target.invalid]]
 wrap = "root"
 text = "OPTIM WDBFILE_AUTO (1) 0.5 2"
-error = "OPTIM WDBFILE_AUTO is not a valid search target: WDBFILE_AUTO is a retired key: WDBFILE_AUTO a multiplied the priorities of each dataset by n_d^-a, n_d its number of structures, so a weight of the fit depended on how many structures each dataset had. Replaced by: WDBFILE, a priority for each dataset. Each WDBFILE value (1 for every dataset without WDBFILE) multiplied by n_d^-a, n_d the number of structures of dataset d after EFILTER and FFILTER, gives the same fit. For WDBFILE_AUTO 0, deleting the line converts it (WDBFILE as it is)."
+error = "OPTIM WDBFILE_AUTO is not a valid search target: WDBFILE_AUTO is a retired key: WDBFILE_AUTO a multiplied the priorities of each dataset by n_d^-a, n_d its number of structures, so a priority in the fit depended on how many structures each dataset had. Replaced by: WDBFILE, a priority for each dataset. Each WDBFILE value (1 for every dataset without WDBFILE) multiplied by n_d^-a, n_d the number of structures of dataset d after EFILTER and FFILTER, gives the same fit. For WDBFILE_AUTO 0, deleting the line converts it (WDBFILE as it is)."
 
 [[optim_target]]
 id = "OPTIM.TARGET.EWEIGHT_TEMP"
 key = "EWEIGHT_TEMP"
 status = "refused"
-msg = "OPTIM EWEIGHT_TEMP is not a valid search target: EWEIGHT_TEMP is a retired key: EWEIGHT_TEMP T multiplied the energy priority of each structure by exp(-(E/N - E_min)/(kB T)), which reads energy above the lowest as heat: compressed or strained structures, high in energy but cold, got almost no weight. Replaced by: the priorities of the data: WDBFILE for each dataset, and the eweight of each structure in its data file. No key converts it. WDBFILE gives each dataset its priority, and the eweight of a structure in its data file the priority of its energy."
+msg = "OPTIM EWEIGHT_TEMP is not a valid search target: EWEIGHT_TEMP is a retired key: EWEIGHT_TEMP T multiplied the energy priority of each structure by exp(-(E/N - E_min)/(kB T)), which reads energy above the lowest as heat: compressed or strained structures, high in energy but cold, got almost no priority. Replaced by: the priorities of the data: WDBFILE for each dataset, and the eweight of each structure in its data file. No key converts it. WDBFILE gives each dataset its priority, and the eweight of a structure in its data file the priority of its energy."
 doc = "EWEIGHT_TEMP is a retired key; OPTIM WDBFILE searches the priority of each dataset."
 
 [[optim_target.invalid]]
 wrap = "root"
 text = "OPTIM EWEIGHT_TEMP (1) 0.5 2"
-error = "OPTIM EWEIGHT_TEMP is not a valid search target: EWEIGHT_TEMP is a retired key: EWEIGHT_TEMP T multiplied the energy priority of each structure by exp(-(E/N - E_min)/(kB T)), which reads energy above the lowest as heat: compressed or strained structures, high in energy but cold, got almost no weight. Replaced by: the priorities of the data: WDBFILE for each dataset, and the eweight of each structure in its data file. No key converts it. WDBFILE gives each dataset its priority, and the eweight of a structure in its data file the priority of its energy."
+error = "OPTIM EWEIGHT_TEMP is not a valid search target: EWEIGHT_TEMP is a retired key: EWEIGHT_TEMP T multiplied the energy priority of each structure by exp(-(E/N - E_min)/(kB T)), which reads energy above the lowest as heat: compressed or strained structures, high in energy but cold, got almost no priority. Replaced by: the priorities of the data: WDBFILE for each dataset, and the eweight of each structure in its data file. No key converts it. WDBFILE gives each dataset its priority, and the eweight of a structure in its data file the priority of its energy."
 
 [[optim_target]]
 id = "OPTIM.TARGET.LAMBDA"
