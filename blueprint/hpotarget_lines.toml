@@ -4009,7 +4009,7 @@ id = "OPTIM.TARGET.ESIGMA"
 key = "ESIGMA"
 status = "special"
 condition = "The low bound of the box, explicit or made by AUTO, is not above 0."
-msg = "OPTIM ESIGMA ({index}): the low bound {low} is not > 0, but ESIGMA is the energy error scale, a number > 0 (meV/atom), and every fit refuses another, so the low bound of its box is > 0"
+msg = "OPTIM ESIGMA ({index}): the low bound {low} is not > 0, but ESIGMA is the energy error scale, a number > 0 (meV/atom, or meV per sqrt(atom) under ENORM SQRT), and every fit refuses another, so the low bound of its box is > 0"
 doc = """\
 OPTIM ESIGMA searches the energy error scale of the fit, a number > 0, in \
 every evaluation; its AUTO box is geometric (RATIO 2)."""
@@ -4021,13 +4021,13 @@ text = "OPTIM ESIGMA (1) AUTO"
 [[optim_target.invalid]]
 wrap = "root"
 text = "OPTIM ESIGMA (1) 0 2"
-error = "OPTIM ESIGMA (1): the low bound 0 is not > 0, but ESIGMA is the energy error scale, a number > 0 (meV/atom), and every fit refuses another, so the low bound of its box is > 0"
+error = "OPTIM ESIGMA (1): the low bound 0 is not > 0, but ESIGMA is the energy error scale, a number > 0 (meV/atom, or meV per sqrt(atom) under ENORM SQRT), and every fit refuses another, so the low bound of its box is > 0"
 
 [[optim_target.invalid]]
 wrap = "root"
 doc = "AUTO FRAC 3 makes the box [-2, 4] around the value 1."
 text = "OPTIM ESIGMA (1) AUTO FRAC 3"
-error = "OPTIM ESIGMA (1): the low bound -2 is not > 0, but ESIGMA is the energy error scale, a number > 0 (meV/atom), and every fit refuses another, so the low bound of its box is > 0"
+error = "OPTIM ESIGMA (1): the low bound -2 is not > 0, but ESIGMA is the energy error scale, a number > 0 (meV/atom, or meV per sqrt(atom) under ENORM SQRT), and every fit refuses another, so the low bound of its box is > 0"
 
 [[optim_target]]
 id = "OPTIM.TARGET.FSIGMA"
@@ -5132,7 +5132,7 @@ error = "MODEL M_KRR Kern_Linear 2 fits the energies per atom of whole structure
 id = "RULE.fit_error_scales"
 title = "The error scales of the fit are numbers above 0"
 check = "startup"
-msg = "tadah hpo: ESIGMA {value}: the energy error scale is a number > 0 (meV/atom, the error of the energy per atom that costs as much as a force off by FSIGMA); no coefficients were fitted."
+msg = "tadah hpo: ESIGMA {value}: the energy error scale is a number > 0 ({what} that costs as much as a force off by FSIGMA); no coefficients were fitted."
 doc = """\
 Every fit refuses an ESIGMA, or an absolute part of FSIGMA or SSIGMA, that \
 is not a number > 0, a relative part below 0, an error scale other than \
@@ -5140,7 +5140,7 @@ its default for a quantity the fit does not have (ENERGY, FORCE or STRESS \
 false), ENERGY, FORCE and STRESS all false, and a key that Tadah! 1.6.0 \
 retired (with its conversion); tadah hpo refuses each when the run starts, \
 without a line, with the message of the fit."""
-msg_doc = "The message names the value of ESIGMA."
+msg_doc = "The message names the value of ESIGMA and its unit by ENORM: meV/atom, the error of the energy per atom, or under ENORM SQRT meV per sqrt(atom), the error of the energy over the square root of its number of atoms."
 
 [[rule.invalid]]
 wrap = "root"

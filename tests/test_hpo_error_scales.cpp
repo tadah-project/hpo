@@ -263,7 +263,8 @@ TEST_CASE("OPTIM of an error scale or of WDBFILE searches values > 0",
     struct Case { const char* key; const char* why; };
     for (const Case& k :
          {Case{"ESIGMA", "ESIGMA is the energy error scale, a number > 0 "
-                         "(meV/atom), and every fit refuses another"},
+                         "(meV/atom, or meV per sqrt(atom) under ENORM "
+                         "SQRT), and every fit refuses another"},
           Case{"FSIGMA", "the absolute part a of FSIGMA is the force error "
                          "scale of a structure whose forces are zero, a "
                          "number > 0 (eV/A), and every fit refuses another"},
