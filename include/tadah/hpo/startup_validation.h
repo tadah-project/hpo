@@ -54,9 +54,8 @@ RawEmbeddingF0 derive_raw_embedding_f0(const core::Context &train_ctx);
 /** Whether FIXINDEX of @p ctx pins every model weight in a way that an
  *  evaluation with training data provisions instead of fitting
  *  (HPO_Host's fast path): FIXINDEX covers every weight
- *  (mlip::classify_weight_source gives AllFixedData), NORM is false, OALGO
- *  is not 3 (whose fit gives the pinned weights a covariance) and the
- *  model draws no basis vectors from the training data (a non-linear
+ *  (mlip::classify_weight_source gives AllFixedData), NORM is false and
+ *  the model draws no basis vectors from the training data (a non-linear
  *  M_KRR kernel). An evaluation of a run with training data fits the
  *  model otherwise; one without training data never does. */
 bool fixindex_pins_every_weight(const core::Context &ctx);

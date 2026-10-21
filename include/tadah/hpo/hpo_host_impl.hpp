@@ -1502,13 +1502,7 @@ HPO_Host<P,R>::HPO_Host(core::Context master_ctx,
      * pins that do not classify, would fail every evaluation: the error
      * (validate_hpo_setup's, which runs first in hpo_run) propagates.
      * A non-linear M_KRR kernel always trains: its basis vectors, which its
-     * weights belong to, are drawn from the training data. So does OALGO 3,
-     * whose fit gives every weight a covariance -- zero rows and columns for
-     * the pinned ones -- and the noise of the pinned weights' residuals on
-     * the training data (M_Train::pinned_covariance), as tadah train writes
-     * them: provisioning computes neither, and its potential had no WCOV
-     * or WNOISE, so predict --error refused it as one fitted without
-     * training data. */
+     * weights belong to, are drawn from the training data. */
     if (has_train_data_) {
         all_weights_fixed_ = fixindex_pins_every_weight(master_ctx_);
         if (all_weights_fixed_) {
@@ -3393,9 +3387,8 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
          * when they are built (the error scales and priorities of the
          * fit's rows, MPARAMS, ...) is
          * this candidate's, and nothing an earlier fit wrote into a context
-         * (ALPHA/BETA of LAMBDA -1; the weight covariance is the model's,
-         * WCOV and WNOISE in its potential) or an earlier host configured
-         * is carried over. Building one costs far less than the fit (a few
+         * (ALPHA/BETA of LAMBDA -1) or an earlier host configured is
+         * carried over. Building one costs far less than the fit (a few
          * hundredths of a millisecond for analytic descriptors; a setfl
          * file is parsed once per contents, models::shared_setfl). */
         auto& cache = tls_trainer_cache_;

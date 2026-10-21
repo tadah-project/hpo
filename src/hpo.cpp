@@ -506,9 +506,9 @@ int hpo_run_from_startup(core::Context& ctx, HPOLog& log,
      * them as key lines: a 1.5.x best_pot.tadah has HPOTARGET, VERBOSE and
      * NUMERIC, and VALIDATION when its run had a validation file) are not
      * read for this run: TaskFactory's parse skipped them and the WARNING names
-     * those this run reads (no UNCERTAINTY, no OUTFILE); a ctx without a
-     * provenance is taken as one file and the dataset keys and UNCERTAINTY
-     * are removed here (no parse stores a potential's run settings), before
+     * those this run reads (no OUTFILE); a ctx without a provenance is
+     * taken as one file and the dataset keys are removed here (no parse
+     * stores a potential's run settings), before
      * the record is taken, which then lists the run's own settings. */
     {
         const std::string ignored =

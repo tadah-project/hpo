@@ -2650,8 +2650,11 @@ std::string HPOTargets::optim_retired_key_error(const std::string& key) {
   /* The keys the blueprint marks retired (BlueprintKey::isRetired: the
    * reason, the replacement and the conversion of each are its text); a
    * test holds this list to the blueprint's. */
-  static const char* const retired[] = {"EWEIGHT", "FWEIGHT", "SWEIGHT",
-                                        "WDBFILE_AUTO", "EWEIGHT_TEMP"};
+  static const char* const retired[] = {"EWEIGHT",      "FWEIGHT",
+                                        "SWEIGHT",      "WDBFILE_AUTO",
+                                        "EWEIGHT_TEMP", "UNCERTAINTY",
+                                        "WCOV",         "WNOISE",
+                                        "ERROR"};
   const std::string k = core::to_upper(key);
   for (const char* r : retired) {
     if (k != r) continue;

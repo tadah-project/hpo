@@ -76,7 +76,6 @@ std::string lj_potential(double scale)
            "RCTYPE2B     Cut_Dummy\n"
            "RCUT2B     6.5\n"
            "TYPE2B     D2_LJ     Ta     Ta\n"
-           "UNCERTAINTY     false\n"
            "WATOM     73\n"
            "WEIGHTS     " + w.str() + "\n";
 }

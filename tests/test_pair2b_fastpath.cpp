@@ -159,7 +159,6 @@ const char* TA_LJ_BODY =
     "RCTYPE2B     Cut_Dummy\n"
     "RCUT2B     6.5\n"
     "TYPE2B     D2_LJ     Ta     Ta\n"
-    "UNCERTAINTY     false\n"
     "WATOM     73\n"
     "WEIGHTS     14.204213349318765225     2604.396965191186154698\n";
 

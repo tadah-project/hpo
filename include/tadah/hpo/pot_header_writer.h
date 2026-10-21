@@ -87,7 +87,7 @@ public:
      * mlip::training_record_keys (DBFILE, the keys that prepared the
      * training data -- EFILTER, FFILTER, ESHIFT_ATOM, ESHIFT_DBATOM,
      * ZERO_COM_FORCE --, WDBFILE, VALIDATION,
-     * HPOTARGET, UNCERTAINTY, VERBOSE, NUMERIC, OUTFILE, AUDIT,
+     * HPOTARGET, VERBOSE, NUMERIC, OUTFILE, AUDIT,
      * AUDIT_SAMPLE, HEALTH_LOG): mlip::write_potential_with_record. Every
      * other key is written (the resolved ESHIFT and LSCALE among them). The
      * context itself keeps them, so the PC_LAMMPS potential built from it is

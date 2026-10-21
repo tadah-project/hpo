@@ -830,7 +830,10 @@ TEST_CASE("tadah hpo refuses OPTIM of an error scale when no evaluation "
  * target with its conversion (HPOTargets::optim_retired_key_error lists
  * them for the registry's coverage check), so a key retired later cannot
  * be searched without a refusal. It passes as long as the list holds the
- * blueprint's retired keys; with one left out it fails. */
+ * blueprint's retired keys; with one left out it fails (ERROR, the key of
+ * --error of tadah predict, retired with the other keys of uncertainty
+ * output: before the fix the list had no ERROR, and OPTIM ERROR got no
+ * retired key's refusal). */
 TEST_CASE("Every retired key of the blueprint is refused as an OPTIM target",
           "[HPO][error_scales][retired]") {
     tadah::core::PeriodicTable::initialize();
@@ -844,6 +847,6 @@ TEST_CASE("Every retired key of the blueprint is refused as an OPTIM target",
               "OPTIM " + key + " is not a valid search target: " +
                   tadah::core::retired_key_text(key, info));
     }
-    CHECK(n == 5);
+    CHECK(n == 9);
     CHECK(HPOTargets::optim_retired_key_error("ESIGMA").empty());
 }
