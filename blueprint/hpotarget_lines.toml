@@ -4843,7 +4843,7 @@ error = "LAMBDA -1 requests the evidence approximation, which only OALGO 3 (the 
 id = "RULE.fit_OALGO1_threshold"
 title = "OALGO 1 of the training configuration has a rank threshold DGELSD reads"
 check = "startup"
-msg = "{text}: the rank threshold M of OALGO 1 (DGELSD), its second value, is a number 0 < M < 1 (a singular value at most M times the largest is left out of the coefficients) or below 0 for the machine precision of LAPACK, 2^-53 (OALGO 1 -1); DGELSD takes the machine precision for an M of 0, of 1 or more, or not a finite number."
+msg = "{text}: the rank threshold M of OALGO 1 (DGELSD), its second value, is a number 0 < M < 1 (a singular value at most M times the largest is left out of the coefficients) or below 0 for the machine precision of LAPACK, 2^-53 (OALGO 1 -1); DGELSD takes the machine precision for an M of 0 or of 1 or more."
 doc = """\
 Every fit refuses a rank threshold of OALGO 1 that DGELSD replaces by the \
 machine precision, so tadah hpo refuses it when the run starts, without a \
@@ -4856,7 +4856,7 @@ check = "startup"
 context = "lines_oalgo1_threshold_one"
 at = "none"
 text = "PC_EMAE 5 1"
-error = "OALGO 1 1: the rank threshold M of OALGO 1 (DGELSD), its second value, is a number 0 < M < 1 (a singular value at most M times the largest is left out of the coefficients) or below 0 for the machine precision of LAPACK, 2^-53 (OALGO 1 -1); DGELSD takes the machine precision for an M of 0, of 1 or more, or not a finite number."
+error = "OALGO 1 1: the rank threshold M of OALGO 1 (DGELSD), its second value, is a number 0 < M < 1 (a singular value at most M times the largest is left out of the coefficients) or below 0 for the machine precision of LAPACK, 2^-53 (OALGO 1 -1); DGELSD takes the machine precision for an M of 0 or of 1 or more."
 
 [[rule]]
 id = "RULE.fit_OALGO3_threshold"
