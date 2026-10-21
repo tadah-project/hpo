@@ -4190,25 +4190,25 @@ error = "OPTIM UNCERTAINTY is not a valid search target: UNCERTAINTY is a retire
 id = "OPTIM.TARGET.WCOV"
 key = "WCOV"
 status = "refused"
-msg = "OPTIM WCOV is not a valid search target: WCOV is a retired key: WCOV held the covariance of the WEIGHTS of an OALGO 3 fit, for the uncertainty output of tadah predict --error and tadah properties pairwise --error. Uncertainty output is removed: the errors of Tadah! 1.0.0 to 1.5.0 were not standard deviations, and no calibrated estimate replaces them. Replaced by: nothing. Deleting the line converts it: no prediction reads it, and the fit is unaffected."
-doc = "WCOV is a retired key; uncertainty output is removed."
+msg = "OPTIM WCOV is not a valid search target: WCOV is a retired key: No release of Tadah! wrote or read WCOV, and Tadah! 1.6.0 has no uncertainty output: the errors of Tadah! 1.0.0 to 1.5.0 were not standard deviations, and no calibrated estimate replaces them. Replaced by: nothing. Deleting the line converts it: no prediction reads it, and the fit is unaffected."
+doc = "WCOV is a retired key, which no release wrote."
 
 [[optim_target.invalid]]
 wrap = "root"
 text = "OPTIM WCOV (1) 0.5 2"
-error = "OPTIM WCOV is not a valid search target: WCOV is a retired key: WCOV held the covariance of the WEIGHTS of an OALGO 3 fit, for the uncertainty output of tadah predict --error and tadah properties pairwise --error. Uncertainty output is removed: the errors of Tadah! 1.0.0 to 1.5.0 were not standard deviations, and no calibrated estimate replaces them. Replaced by: nothing. Deleting the line converts it: no prediction reads it, and the fit is unaffected."
+error = "OPTIM WCOV is not a valid search target: WCOV is a retired key: No release of Tadah! wrote or read WCOV, and Tadah! 1.6.0 has no uncertainty output: the errors of Tadah! 1.0.0 to 1.5.0 were not standard deviations, and no calibrated estimate replaces them. Replaced by: nothing. Deleting the line converts it: no prediction reads it, and the fit is unaffected."
 
 [[optim_target]]
 id = "OPTIM.TARGET.WNOISE"
 key = "WNOISE"
 status = "refused"
-msg = "OPTIM WNOISE is not a valid search target: WNOISE is a retired key: WNOISE held the noise variance of each quantity of an OALGO 3 fit, for the uncertainty output of tadah predict --error and tadah properties pairwise --error. Uncertainty output is removed: the errors of Tadah! 1.0.0 to 1.5.0 were not standard deviations, and no calibrated estimate replaces them. Replaced by: nothing. Deleting the line converts it: no prediction reads it, and the fit is unaffected."
-doc = "WNOISE is a retired key; uncertainty output is removed."
+msg = "OPTIM WNOISE is not a valid search target: WNOISE is a retired key: No release of Tadah! wrote or read WNOISE, and Tadah! 1.6.0 has no uncertainty output: the errors of Tadah! 1.0.0 to 1.5.0 were not standard deviations, and no calibrated estimate replaces them. Replaced by: nothing. Deleting the line converts it: no prediction reads it, and the fit is unaffected."
+doc = "WNOISE is a retired key, which no release wrote."
 
 [[optim_target.invalid]]
 wrap = "root"
 text = "OPTIM WNOISE (1) 0.5 2"
-error = "OPTIM WNOISE is not a valid search target: WNOISE is a retired key: WNOISE held the noise variance of each quantity of an OALGO 3 fit, for the uncertainty output of tadah predict --error and tadah properties pairwise --error. Uncertainty output is removed: the errors of Tadah! 1.0.0 to 1.5.0 were not standard deviations, and no calibrated estimate replaces them. Replaced by: nothing. Deleting the line converts it: no prediction reads it, and the fit is unaffected."
+error = "OPTIM WNOISE is not a valid search target: WNOISE is a retired key: No release of Tadah! wrote or read WNOISE, and Tadah! 1.6.0 has no uncertainty output: the errors of Tadah! 1.0.0 to 1.5.0 were not standard deviations, and no calibrated estimate replaces them. Replaced by: nothing. Deleting the line converts it: no prediction reads it, and the fit is unaffected."
 
 [[optim_target]]
 id = "OPTIM.TARGET.ERROR"
