@@ -113,8 +113,9 @@ jobs, so the seconds are indicative):
   15 s (n = 2), 21 s (n = 8) and 59 s (n = 32);
 - `tadah hpo`, the two OPTIM dimensions above, a smooth loss: Ctrl-C at about evaluation 70 of a run that
   otherwise takes 0.9 s was honoured 10.2 s later (`LN_BOBYQA`: 0.007 s);
-- `tadah hpo` on an energy-only fit searching `FWEIGHT` and `SWEIGHT` (a flat loss) with `MAXEVAL 400` and
-  no `XTOL`: 300 evaluations in 5 s, then 20 evaluations in 590 s; `MAXTIME 20` ended after 31 s, and
+- `tadah hpo` on a flat loss (an energy-only fit searching `FWEIGHT` and `SWEIGHT`, two parameters it did not
+  depend on; both are retired keys of Tadah! 1.6.0, which refuses such a search) with `MAXEVAL 400` and no
+  `XTOL`: 300 evaluations in 5 s, then 20 evaluations in 590 s; `MAXTIME 20` ended after 31 s, and
   `MAXTIME 15` after 40.5 s;
 - a survey of 720 bounded cases without `XTOL` (12 objectives, n = 2-6): 57 stalled with
   `LN_NEWUOA_BOUND`, none with `LN_BOBYQA` or `LN_NEWUOA`. With `XTOL_REL 1e-8` none stalled, but some runs
