@@ -4840,6 +4840,110 @@ text = "PC_EMAE 5 1"
 error = "LAMBDA -1 requests the evidence approximation, which only OALGO 3 (the SVD solve) runs; the configuration has OALGO 4 (LAMBDA >= 0 fits with any OALGO)."
 
 [[rule]]
+id = "RULE.fit_OALGO1_threshold"
+title = "OALGO 1 of the training configuration has a rank threshold DGELSD reads"
+check = "startup"
+msg = "{text}: the rank threshold M of OALGO 1 (DGELSD), its second value, is a number 0 < M < 1 (a singular value at most M times the largest is left out of the coefficients) or below 0 for the machine precision of LAPACK, 2^-53 (OALGO 1 -1); DGELSD takes the machine precision for an M of 0, of 1 or more, or not a finite number."
+doc = """\
+Every fit refuses a rank threshold of OALGO 1 that DGELSD replaces by the \
+machine precision, so tadah hpo refuses it when the run starts, without a \
+line, if its evaluations fit the model."""
+msg_doc = "The message starts with the OALGO line of the training configuration."
+
+[[rule.invalid]]
+wrap = "root"
+check = "startup"
+context = "lines_oalgo1_threshold_one"
+at = "none"
+text = "PC_EMAE 5 1"
+error = "OALGO 1 1: the rank threshold M of OALGO 1 (DGELSD), its second value, is a number 0 < M < 1 (a singular value at most M times the largest is left out of the coefficients) or below 0 for the machine precision of LAPACK, 2^-53 (OALGO 1 -1); DGELSD takes the machine precision for an M of 0, of 1 or more, or not a finite number."
+
+[[rule]]
+id = "RULE.fit_OALGO3_threshold"
+title = "OALGO 3 of the training configuration has a rank threshold below 1"
+check = "startup"
+msg = "{text}: the rank threshold M of OALGO 3, its second value, is a number 0 < M < 1 (a singular value at most M times the largest is left out of the coefficients) or 0 or below (only a singular value of 0 is left out); an M of 1 or more leaves out every singular direction, every coefficient 0."
+doc = """\
+Every fit refuses a rank threshold of OALGO 3 that leaves out every \
+singular direction, so tadah hpo refuses it when the run starts, without \
+a line, if its evaluations fit the model."""
+msg_doc = "The message starts with the OALGO line of the training configuration."
+
+[[rule.invalid]]
+wrap = "root"
+check = "startup"
+context = "lines_oalgo3_threshold_one"
+at = "none"
+text = "PC_EMAE 5 1"
+error = "OALGO 3 1: the rank threshold M of OALGO 3, its second value, is a number 0 < M < 1 (a singular value at most M times the largest is left out of the coefficients) or 0 or below (only a singular value of 0 is left out); an M of 1 or more leaves out every singular direction, every coefficient 0."
+
+[[rule]]
+id = "RULE.fit_OALGO_one_value"
+title = "OALGO 2 and 4 of the training configuration have one value"
+check = "startup"
+msg = "{text}: {name} takes one value: it keeps every direction and has no rank threshold, the second value of OALGO 1 and 3."
+doc = """\
+Every fit refuses a second value of OALGO 2 and 4, which no solve reads, \
+so tadah hpo refuses it when the run starts, without a line, if its \
+evaluations fit the model."""
+msg_doc = "The message starts with the OALGO line of the training configuration and names its solve."
+
+[[rule.invalid]]
+wrap = "root"
+check = "startup"
+context = "lines_oalgo4_two_values"
+at = "none"
+text = "PC_EMAE 5 1"
+error = "OALGO 4 1e-8: OALGO 4 (normal equations, Cholesky) takes one value: it keeps every direction and has no rank threshold, the second value of OALGO 1 and 3."
+
+[[rule]]
+id = "RULE.fit_OALGO_option"
+title = "OALGO of the training configuration is 1, 2, 3 or 4"
+check = "startup"
+msg = "OALGO {value}: OALGO is 1 (DGELSD), 2 (DGELS, QR), 3 (the SVD solve) or 4 (normal equations, Cholesky)."
+doc = """\
+Every fit refuses another OALGO, so tadah hpo refuses it when the run \
+starts, without a line, if its evaluations fit the model."""
+msg_doc = "The message gives the first value of the OALGO line."
+
+[[rule.invalid]]
+wrap = "root"
+check = "startup"
+context = "lines_oalgo_option_five"
+at = "none"
+text = "PC_EMAE 5 1"
+error = "OALGO 5: OALGO is 1 (DGELSD), 2 (DGELS, QR), 3 (the SVD solve) or 4 (normal equations, Cholesky)."
+
+[[rule]]
+id = "RULE.OPTIM_OALGO_threshold_box"
+title = "OPTIM OALGO (2) searches a rank threshold inside (0, 1)"
+check = "parse"
+keys = ["ROOT.OPTIM", "OPTIM.TARGET.OALGO"]
+msg = "OPTIM OALGO (2): the box [{low}, {high}] is not inside (0, 1), but the second value of OALGO is the rank threshold M of OALGO 1 and 3, which only a value 0 < M < 1 sets: every M below 0 is the machine precision under OALGO 1, every M of 0 or below leaves out only a singular value of 0 under OALGO 3, and a fit refuses an M of 1 or more, so the box of a search is inside (0, 1)"
+doc = """\
+OPTIM OALGO (2) searches the rank threshold of OALGO 1 and 3. A box that \
+reaches 0 or below, or 1 or above, is refused at the line."""
+msg_doc = "The message gives the low and the high bound of the box."
+
+[[rule.examples]]
+wrap = "root"
+context = "lines_oalgo"
+doc = "The training configuration has OALGO 3 1e-8, inside the box."
+text = "OPTIM OALGO (2) 1e-12 0.001 LOG"
+
+[[rule.invalid]]
+wrap = "root"
+context = "lines_oalgo"
+text = "OPTIM OALGO (2) 0 0.5"
+error = "OPTIM OALGO (2): the box [0, 0.5] is not inside (0, 1), but the second value of OALGO is the rank threshold M of OALGO 1 and 3, which only a value 0 < M < 1 sets: every M below 0 is the machine precision under OALGO 1, every M of 0 or below leaves out only a singular value of 0 under OALGO 3, and a fit refuses an M of 1 or more, so the box of a search is inside (0, 1)"
+
+[[rule.invalid]]
+wrap = "root"
+context = "lines_oalgo"
+text = "OPTIM OALGO (2) 0.001 2"
+error = "OPTIM OALGO (2): the box [0.001, 2] is not inside (0, 1), but the second value of OALGO is the rank threshold M of OALGO 1 and 3, which only a value 0 < M < 1 sets: every M below 0 is the machine precision under OALGO 1, every M of 0 or below leaves out only a singular value of 0 under OALGO 3, and a fit refuses an M of 1 or more, so the box of a search is inside (0, 1)"
+
+[[rule]]
 id = "RULE.fit_OALGO3_intercepts"
 title = "OALGO 3 fits an intercept column with LAMBDA 0"
 check = "startup"
@@ -5377,6 +5481,82 @@ VERBOSE 0
 MODEL M_BLR BF_Linear
 OALGO 4
 LAMBDA 0 1e-12
+"""
+
+[context.lines_oalgo1_threshold_one]
+doc = "The default training configuration with OALGO 1 1."
+config = """
+ATOM H
+WATOM 1.0
+DBFILE dummy.db
+INIT2B true
+INITMB false
+TYPE2B D2_BP 2 2 H H
+CGRID2B 1.0 2.0
+SGRID2B 0.5 1.0
+RCTYPE2B Cut_Cos
+RCUT2B 5.0
+VERBOSE 0
+MODEL M_BLR BF_Linear
+OALGO 1 1
+LAMBDA 1e-3
+"""
+
+[context.lines_oalgo3_threshold_one]
+doc = "The default training configuration with OALGO 3 1."
+config = """
+ATOM H
+WATOM 1.0
+DBFILE dummy.db
+INIT2B true
+INITMB false
+TYPE2B D2_BP 2 2 H H
+CGRID2B 1.0 2.0
+SGRID2B 0.5 1.0
+RCTYPE2B Cut_Cos
+RCUT2B 5.0
+VERBOSE 0
+MODEL M_BLR BF_Linear
+OALGO 3 1
+LAMBDA 1e-3
+"""
+
+[context.lines_oalgo4_two_values]
+doc = "The default training configuration with OALGO 4 1e-8."
+config = """
+ATOM H
+WATOM 1.0
+DBFILE dummy.db
+INIT2B true
+INITMB false
+TYPE2B D2_BP 2 2 H H
+CGRID2B 1.0 2.0
+SGRID2B 0.5 1.0
+RCTYPE2B Cut_Cos
+RCUT2B 5.0
+VERBOSE 0
+MODEL M_BLR BF_Linear
+OALGO 4 1e-8
+LAMBDA 1e-3
+"""
+
+[context.lines_oalgo_option_five]
+doc = "The default training configuration with OALGO 5."
+config = """
+ATOM H
+WATOM 1.0
+DBFILE dummy.db
+INIT2B true
+INITMB false
+TYPE2B D2_BP 2 2 H H
+CGRID2B 1.0 2.0
+SGRID2B 0.5 1.0
+RCTYPE2B Cut_Cos
+RCUT2B 5.0
+VERBOSE 0
+MODEL M_BLR BF_Linear
+OALGO 5
+LAMBDA 1e-3
 """
 
 [context.lines_lambda_evidence_oalgo4]
