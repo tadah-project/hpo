@@ -450,9 +450,10 @@ struct Outcome {
 
 /* What hpo_run with CHECK true (`tadah hpo --check`) throws for the file
  * of `comp`, "" when it returns: an invalid case with check = "check"
- * shows a refusal the run makes before it reads its data (the training
- * configuration is also its validation configuration, whose data the
- * check never reaches). */
+ * shows a refusal the run makes before it reads its data (the validation
+ * configuration has the DBFILE lines of the training configuration, whose
+ * data the check never reaches: a validation configuration holds DBFILE,
+ * EFILTER and FFILTER). */
 std::string run_check(const Registry& reg, const Composed& comp,
                       const std::map<std::string, std::string>& env)
 {
@@ -474,7 +475,12 @@ std::string run_check(const Registry& reg, const Composed& comp,
     }
     {
         std::ofstream os("config.val");
-        os << ctx_it->second.config;
+        std::istringstream lines(ctx_it->second.config);
+        for (std::string line; std::getline(lines, line);) {
+            std::istringstream words(line);
+            std::string key;
+            if (words >> key && key == "DBFILE") os << line << "\n";
+        }
     }
     ScopedEnv scoped(env);
     std::istringstream config(ctx_it->second.config);
