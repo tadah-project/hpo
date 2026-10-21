@@ -1434,8 +1434,8 @@ DBFILE, no FIXINDEX, STRESS false, NORM false, OALGO 4, a fixed LAMBDA >= \
 0 and the basis BF_Linear or Kern_Linear. In the target file they are no \
 PC_SRMSE_GPA line, no PC_OBSERVABLE line with --loss MAPE or RMSLE or with \
 --unconverged force-scaled, and no OPTIM line of an error scale of the fit \
-(ESIGMA, FSIGMA, SSIGMA), which the analytical gradient does not \
-differentiate. Another search parameter without an analytical derivative \
+(ESIGMA, FSIGMA, SSIGMA) or of WDBFILE, a priority of the fit, which the \
+analytical gradient does not differentiate. Another search parameter without an analytical derivative \
 passes startup, and stops an ANALYTICAL run at its first gradient."""
 checks = [
   { msg = "{block} block: GRAD_STRATEGY ANALYTICAL{note} needs the analytical gradient of the loss, which this setup cannot form: {why}. Change that setting, or set GRAD_STRATEGY HYBRID to use finite differences where no analytical gradient is available.", doc = "At startup, at the END line of its optimiser; {block} is OPTIMIZER or EXPLORE, and {why} names the first setting the analytical gradient does not cover. {note} is \" (resolved for PC_OBSERVABLE: the block sets no GRAD_STRATEGY)\" when the block takes ANALYTICAL for PC_OBSERVABLE." },
