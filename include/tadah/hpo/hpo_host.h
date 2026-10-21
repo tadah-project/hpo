@@ -803,8 +803,14 @@ private:
 
     /* formatting -- derived from outputDigits (set in constructor) */
     int          prec_;           // digits after decimal in scientific notation
-    std::size_t  cw_;             // column_width(prec_) (column_titles.h)
-    std::size_t  max_title_len_;  // column_title_budget(prec_) = cw_-4: L(VAR) always >=1 space gap; same truncation as VAR
+    std::size_t  cw_;             // column_width(prec_) (column_titles.h), widened to metric_column_width()
+    std::size_t  max_title_len_;  // column_title_budget(prec_): L(VAR) always >=1 space gap; same truncation as VAR
+
+    /* The width of a value column that holds every title of the run's
+     * metrics (L(SRMSE_GPA)[avg], ERMSE[12], TOTAL_LOSS/N, ...) with a
+     * blank before it, never below column_width(prec_). Known once the
+     * validation datasets are (n_val_datasets_). */
+    std::size_t metric_column_width() const;
 
     /* line printers ------------------------------------ */
     void init_loss   (const std::string& fn) const;

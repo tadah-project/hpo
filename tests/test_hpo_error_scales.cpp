@@ -263,7 +263,8 @@ TEST_CASE("OPTIM of an error scale or of WDBFILE searches values > 0",
     struct Case { const char* key; const char* why; };
     for (const Case& k :
          {Case{"ESIGMA", "ESIGMA is the energy error scale, a number > 0 "
-                         "(meV/atom), and every fit refuses another"},
+                         "(meV/atom, or meV per sqrt(atom) under ENORM "
+                         "SQRT), and every fit refuses another"},
           Case{"FSIGMA", "the absolute part a of FSIGMA is the force error "
                          "scale of a structure whose forces are zero, a "
                          "number > 0 (eV/A), and every fit refuses another"},
@@ -698,6 +699,50 @@ TEST_CASE("The validation configuration refuses the error scales and the "
                 key == "WDBFILE_AUTO" || key == "EWEIGHT_TEMP")
                 CHECK_THAT(err, Contains(key + " is a retired key: "));
         }
+    }
+}
+
+/* Pins: the validation configuration holds DBFILE, EFILTER and FFILTER
+ * (and CONFIG): tadah hpo, and tadah hpo --check, refuse every other key
+ * at its line, WDBFILE (a priority of the fit) with its own reason and the
+ * keys of the model, of its fit and of the run with one reason; the three
+ * keys it reads pass the startup checks.
+ * Before the fix: WDBFILE, LAMBDA, OALGO, RCUT2B and VERBOSE were accepted
+ * and had no effect. */
+TEST_CASE("The validation configuration holds DBFILE, EFILTER and FFILTER "
+          "only",
+          "[HPO][error_scales][validation]") {
+    ScratchDir sd;
+    for (const bool check : {true, false}) {
+        for (const char* line : {"WDBFILE 0", "WDBFILE 2", "LAMBDA 1e-3",
+                                 "OALGO 3", "RCUT2B 4.0", "VERBOSE 2"}) {
+            DYNAMIC_SECTION((check ? "--check, " : "the run, ") << line) {
+                const std::string l = line;
+                const std::string key = l.substr(0, l.find(' '));
+                const std::string err = run_error(
+                    model_ctx(), target(), check, "DBFILE val.db\n" + l + "\n");
+                const std::string why =
+                    key == "WDBFILE"
+                        ? "the validation set is not fitted; WDBFILE, the "
+                          "priority of each training dataset in the fit, is "
+                          "set in the training configuration, and a "
+                          "validation structure without a label has "
+                          "eweight, fweight or sweight 0 in its data file"
+                        : "the validation configuration holds DBFILE, "
+                          "EFILTER and FFILTER (and CONFIG), the validation "
+                          "datasets and their filters; the training "
+                          "configuration sets the model, its fit and the "
+                          "run";
+                CHECK(err == "Key " + key + " on line 2 of config.val is not "
+                             "accepted here: " + why);
+            }
+        }
+    }
+    SECTION("DBFILE, EFILTER and FFILTER pass the startup checks") {
+        const std::string err =
+            run_error(model_ctx(), target(), true,
+                      "DBFILE val.db\nEFILTER -2 0\nFFILTER 100\n");
+        CHECK(err.empty());
     }
 }
 

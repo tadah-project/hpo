@@ -1512,6 +1512,117 @@ TEST_CASE("PC_OBSERVABLE columns past k = 99 keep their index when DIGITS "
     Host::reset_globals_for_test();
 }
 
+/* ---------------------------------------------------------------------
+ * The titles of the metric columns.
+ *
+ * Every title of loss.tadah, outvar.tadah and stats.tadah (and their
+ * best_ files) is written whole, with at least one blank before it, at
+ * every DIGITS and with the default (no DIGITS line), so that splitting a
+ * header on blanks gives one title per value. The longest of them,
+ * L(SRMSE_GPA)[avg], has 17 characters.
+ * ------------------------------------------------------------------- */
+namespace {
+
+/* The fields of the first line of @p file that is not a header or a
+ * comment. */
+std::vector<std::string> first_row_fields(const std::string& file)
+{
+    std::ifstream in(file);
+    std::vector<std::string> fields;
+    for (std::string line; std::getline(in, line);) {
+        if (line.empty() || line[0] == '#') continue;
+        std::istringstream is(line);
+        for (std::string f; is >> f;) fields.push_back(f);
+        break;
+    }
+    return fields;
+}
+
+/* A target of PC_ERMSE, PC_FRMSE and PC_SRMSE_GPA, with a DIGITS line
+ * unless @p digits is 0. */
+void write_metric_target(const fs::path& hpo, int digits)
+{
+    std::ofstream os(hpo);
+    os << "OPTIMIZER\nLIB NLOPT\nALGO LN_SBPLX\nMAXEVAL 1\nENDOPTIMIZER\n"
+       << "LOSS L2\nFAILSCORE 1e8\n";
+    if (digits > 0) os << "DIGITS " << digits << "\n";
+    os << "PC_ERMSE 0 1\nPC_FRMSE 0 1\nPC_SRMSE_GPA 0 1\n"
+       << "OPTIM CGRID2B (1) 0.0 4.0\n";
+}
+
+}  // namespace
+
+/* Pins: with PC_ERMSE, PC_FRMSE and PC_SRMSE_GPA and two validation
+ * datasets, the headers split on blanks into the titles L(ERMSE)[1] ...
+ * L(SRMSE_GPA)[avg], TOTAL_LOSS/N (loss), ERMSE, FRMSE, SRMSE_GPA
+ * (outvar) and ERMSE[1] ... SRMSE_GPA[avg] (stats), at DIGITS 1 to 15 and
+ * the default; with the default, the first row of each file has one value
+ * per title.
+ * Before the fix: at a column width of 15 (DIGITS 6 or less) the loss
+ * titles L(SRMSE_GPA)[1], [2] and [avg] ran together (9 titles for 12
+ * values) and stats.tadah cut them to SRMSE_GPA[*, SRMSE_GPA~2 and
+ * SRMSE_GPA~3. */
+TEST_CASE("Every metric column title is whole and keeps a blank before it "
+          "at every DIGITS",
+          "[HPO][host][column_titles]")
+{
+    tadah::core::PeriodicTable::initialize();
+    DatasetHostGuard guard;
+    const std::vector<std::string> metrics = {"ERMSE", "FRMSE", "SRMSE_GPA"};
+    std::vector<std::string> want_loss = {"#ITERATION", "SLOT"};
+    std::vector<std::string> want_stats = {"#ITERATION", "SLOT"};
+    std::vector<std::string> want_outvar = {"#ITERATION", "IT-TIME/ms",
+                                            "SLOT"};
+    for (const std::string& m : metrics) {
+        for (const char* i : {"[1]", "[2]", "[avg]"}) {
+            want_loss.push_back("L(" + m + ")" + i);
+            want_stats.push_back(m + i);
+        }
+        want_outvar.push_back(m);
+    }
+    want_loss.push_back("TOTAL_LOSS/N");
+
+    for (int digits = 0; digits <= 15; ++digits) {
+        INFO("DIGITS " << (digits == 0 ? std::string("default")
+                                       : std::to_string(digits)));
+        ScratchDir sd;
+        const auto train = sd.dir / "train.db", hpo = sd.dir / "config.hpo";
+        const auto val_cfg = sd.dir / "config.val";
+        const auto val1 = sd.dir / "val1.db", val2 = sd.dir / "val2.db";
+        write_minimal_ta_dbfile(train, 0);
+        write_minimal_ta_dbfile(val1, 0.07);
+        write_minimal_ta_dbfile(val2, 0.05, -0.002);
+        std::ofstream(val_cfg) << "DBFILE " << val1.string() << "\n"
+                               << "DBFILE " << val2.string() << "\n";
+        write_metric_target(hpo, digits);
+        auto ctx = make_ta_master_context(train, hpo, val_cfg);
+        tadah::hpo::HPOTargets trg(ctx, hpo.string());
+        Host host(ctx, trg, val_cfg.string());
+        REQUIRE(host.val_size() == 2u);
+
+        CHECK(header_columns(trg.lossFile) == want_loss);
+        CHECK(header_columns(trg.bestLossFile) == want_loss);
+        CHECK(header_columns(trg.statsFile) == want_stats);
+        CHECK(header_columns(trg.bestStatsFile) == want_stats);
+        CHECK(header_columns(trg.outvarFile) == want_outvar);
+        CHECK(header_columns(trg.bestOutvarFile) == want_outvar);
+        if (digits != 0) continue;
+
+        host.prepare_best_publication();
+        ParamVec p(1);
+        p(0) = 0.5;
+        REQUIRE_NOTHROW(host(p));
+        host.flush_remaining();
+        for (const std::string* file :
+             {&trg.lossFile, &trg.statsFile, &trg.outvarFile}) {
+            INFO(*file << ": " << first_line(*file));
+            CHECK(first_row_fields(*file).size() ==
+                  header_columns(*file).size());
+        }
+    }
+    Host::reset_globals_for_test();
+}
+
 TEST_CASE("The journal names the k-th PC_OBSERVABLE cohesive_energy[k], "
           "1-based, in the loss section and the new-best breakdown",
           "[HPO][host][pc_observable][observable_labels]")

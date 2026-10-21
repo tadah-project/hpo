@@ -405,21 +405,39 @@ void HPO_Host<P,R>::init_params(const std::string& fn) const
 }
 
 template<class P,class R>
+std::size_t HPO_Host<P,R>::metric_column_width() const
+{
+  /* The loss titles L(NAME)[i] and L(NAME)[avg] are the longest of each
+   * metric (its stats titles NAME[i] and outvar title NAME are shorter). */
+  const std::string last = "[" + std::to_string(n_val_datasets_) + "]";
+  std::size_t longest = std::string("TOTAL_LOSS/N").size();
+  auto metric = [&](bool on, const std::string& name) {
+    if (!on) return;
+    for (const std::string& idx : {last, std::string("[avg]")})
+      longest = std::max(longest, ("L(" + name + ")" + idx).size());
+  };
+  metric(trg_.use_emae, "EMAE");
+  metric(trg_.use_ermse, "ERMSE");
+  metric(trg_.use_errmse, "ErRMSE");
+  metric(trg_.use_ersq, "ERSQ");
+  metric(trg_.use_frmse, "FRMSE");
+  metric(trg_.use_srmse, "SRMSE_GPA");
+  return std::max(column_width(prec_), longest + 1);
+}
+
+template<class P,class R>
 void HPO_Host<P,R>::init_stats(const std::string& fn) const
 {
   std::ofstream f(fn);
   f << std::left << std::setw(iter_cw_) << "#ITERATION" << std::right;
   f << std::setw(slot_cw_) << "SLOT";
 
-  std::set<std::string> seen_stats;
+  /* The titles of the metrics are distinct and fit their column
+   * (metric_column_width()): written whole. */
   auto write_header = [&](const std::string& label) {
     for (std::size_t i = 1; i <= n_val_datasets_; ++i)
-      f << std::setw(cw_)
-        << header_detail::unique_label(label + "[" + std::to_string(i) + "]",
-                                       max_title_len_, seen_stats);
-    f << std::setw(cw_)
-      << header_detail::unique_label(label + "[avg]", max_title_len_,
-                                     seen_stats);
+      f << std::setw(cw_) << (label + "[" + std::to_string(i) + "]");
+    f << std::setw(cw_) << (label + "[avg]");
   };
 
   if (trg_.use_emae)   write_header("EMAE");
@@ -1241,11 +1259,15 @@ HPO_Host<P,R>::HPO_Host(core::Context master_ctx,
     /* validation set (optional: PC_OBSERVABLE/PC_LAMMPS-only runs) ------- */
     core::Context val_ctx;
     if (has_validation_) {
-        /* FORCE and STRESS say what training fits; validation predicts what
-         * its metrics measure. In this file they would have no effect, so
-         * they are refused at their line, and so are the error scales of
-         * the fit, ENORM and ENERGY (they set the fit, row_weights.h) and
-         * every retired key (with its conversion). */
+        /* The validation configuration holds DBFILE (the validation
+         * datasets), EFILTER and FFILTER (their filters,
+         * forward_val_filters) and CONFIG includes; the run reads nothing
+         * else of it, so every other key is refused at its line. FORCE and
+         * STRESS say what training fits (validation predicts what its
+         * metrics measure); the error scales of the fit, ENORM, ENERGY and
+         * WDBFILE set the fit (row_weights.h); each has its own reason, as
+         * every retired key (with its conversion); the keys of the model,
+         * of its fit and of the run share one. */
         core::CoreUserConfigParser val_parser;
         std::map<std::string, std::string> refused = {
             {"FORCE", "the validation set is not fitted; it is validated on "
@@ -1267,10 +1289,25 @@ HPO_Host<P,R>::HPO_Host(core::Context master_ctx,
             refused[k] = std::string("the validation set is not fitted; ") +
                          k + ", an error scale of the fit, is set in the "
                          "training configuration";
-        for (const auto& [k, info] : core::BlueprintParser::getKeysMapRef())
+        refused["WDBFILE"] =
+            "the validation set is not fitted; WDBFILE, the priority of each "
+            "training dataset in the fit, is set in the training "
+            "configuration, and a validation structure without a label has "
+            "eweight, fweight or sweight 0 in its data file";
+        for (const auto& [k, info] : core::BlueprintParser::getKeysMapRef()) {
+            const std::string key = core::to_upper(k);
             if (info.isRetired())
-                refused[k] = "the validation set is not fitted, and " +
-                             core::retired_key_text(k, info);
+                refused[key] = "the validation set is not fitted, and " +
+                               core::retired_key_text(k, info);
+            else if (key != "DBFILE" && key != "EFILTER" &&
+                     key != "FFILTER" && key != "CONFIG" &&
+                     !refused.count(key))
+                refused[key] =
+                    "the validation configuration holds DBFILE, EFILTER and "
+                    "FFILTER (and CONFIG), the validation datasets and their "
+                    "filters; the training configuration sets the model, its "
+                    "fit and the run";
+        }
         val_parser.refuse_keys(std::move(refused));
         val_ctx = core::Context(val_parser.parse(val_cfg));
         /* Each entry is a dataset: one listed twice would count twice in
@@ -1542,6 +1579,9 @@ HPO_Host<P,R>::HPO_Host(core::Context master_ctx,
      * `tadah hpo --check` writes none. The run creates its archive
      * directories after prepare_best_publication()
      * (HPOTargets::create_archive_directories). */
+    /* Every value column holds the longest title of the run's metrics
+     * and a blank, so no title is cut or runs into the one before it. */
+    cw_ = metric_column_width();
     if (purpose_ == HostPurpose::Run) {
         init_loss   (trg_.lossFile);
         init_outvar (trg_.outvarFile);
