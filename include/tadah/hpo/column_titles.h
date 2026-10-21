@@ -13,7 +13,9 @@
 
 namespace tadah::hpo {
 
-/* The narrowest value column: it holds L(ErRMSE)[avg] (14) and a space. */
+/* The narrowest value column: it holds L(ErRMSE)[avg] (14) and a space.
+ * A run widens its columns to its longest metric title and a space
+ * (HPO_Host::metric_column_width: L(SRMSE_GPA)[avg] has 17). */
 inline constexpr std::size_t min_column_width = 15;
 
 /* The width of a value column at DIGITS `digits`, the digits after the

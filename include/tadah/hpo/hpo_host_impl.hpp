@@ -405,21 +405,39 @@ void HPO_Host<P,R>::init_params(const std::string& fn) const
 }
 
 template<class P,class R>
+std::size_t HPO_Host<P,R>::metric_column_width() const
+{
+  /* The loss titles L(NAME)[i] and L(NAME)[avg] are the longest of each
+   * metric (its stats titles NAME[i] and outvar title NAME are shorter). */
+  const std::string last = "[" + std::to_string(n_val_datasets_) + "]";
+  std::size_t longest = std::string("TOTAL_LOSS/N").size();
+  auto metric = [&](bool on, const std::string& name) {
+    if (!on) return;
+    for (const std::string& idx : {last, std::string("[avg]")})
+      longest = std::max(longest, ("L(" + name + ")" + idx).size());
+  };
+  metric(trg_.use_emae, "EMAE");
+  metric(trg_.use_ermse, "ERMSE");
+  metric(trg_.use_errmse, "ErRMSE");
+  metric(trg_.use_ersq, "ERSQ");
+  metric(trg_.use_frmse, "FRMSE");
+  metric(trg_.use_srmse, "SRMSE_GPA");
+  return std::max(column_width(prec_), longest + 1);
+}
+
+template<class P,class R>
 void HPO_Host<P,R>::init_stats(const std::string& fn) const
 {
   std::ofstream f(fn);
   f << std::left << std::setw(iter_cw_) << "#ITERATION" << std::right;
   f << std::setw(slot_cw_) << "SLOT";
 
-  std::set<std::string> seen_stats;
+  /* The titles of the metrics are distinct and fit their column
+   * (metric_column_width()): written whole. */
   auto write_header = [&](const std::string& label) {
     for (std::size_t i = 1; i <= n_val_datasets_; ++i)
-      f << std::setw(cw_)
-        << header_detail::unique_label(label + "[" + std::to_string(i) + "]",
-                                       max_title_len_, seen_stats);
-    f << std::setw(cw_)
-      << header_detail::unique_label(label + "[avg]", max_title_len_,
-                                     seen_stats);
+      f << std::setw(cw_) << (label + "[" + std::to_string(i) + "]");
+    f << std::setw(cw_) << (label + "[avg]");
   };
 
   if (trg_.use_emae)   write_header("EMAE");
@@ -1542,6 +1560,9 @@ HPO_Host<P,R>::HPO_Host(core::Context master_ctx,
      * `tadah hpo --check` writes none. The run creates its archive
      * directories after prepare_best_publication()
      * (HPOTargets::create_archive_directories). */
+    /* Every value column holds the longest title of the run's metrics
+     * and a blank, so no title is cut or runs into the one before it. */
+    cw_ = metric_column_width();
     if (purpose_ == HostPurpose::Run) {
         init_loss   (trg_.lossFile);
         init_outvar (trg_.outvarFile);
