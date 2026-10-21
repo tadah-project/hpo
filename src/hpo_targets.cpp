@@ -2607,7 +2607,8 @@ std::optional<HPOTargets::FitValueRule> HPOTargets::optim_fit_value_rule(
   if (k == "ESIGMA")
     return FitValueRule{true,
                         "ESIGMA is the energy error scale, a number > 0 "
-                        "(meV/atom), and every fit refuses another"};
+                        "(meV/atom, or meV per sqrt(atom) under ENORM "
+                        "SQRT), and every fit refuses another"};
   if (k == "WDBFILE")
     return FitValueRule{true,
                         "a searched WDBFILE value is the priority of a "
