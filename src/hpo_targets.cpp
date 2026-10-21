@@ -3326,6 +3326,20 @@ void HPOTargets::process_optim_config(std::istringstream& iss,
                                  core::format_roundtrip(lo_i) +
                                  " is negative, but " + value_rule->why +
                                  ", so the low bound of its box is >= 0");
+      /* OALGO's second value, the rank threshold M of OALGO 1 and 3: only
+       * 0 < M < 1 sets a threshold (below 0 OALGO 1 takes the machine
+       * precision, at 0 or below OALGO 3 leaves out only a singular value
+       * of 0, whatever M), and a fit refuses 1 or more. */
+      if (!named && k == "OALGO" && ui == 2 && !(lo_i > 0.0 && hi_i < 1.0))
+        throw std::runtime_error(
+            "the box [" + core::format_roundtrip(lo_i) + ", " +
+            core::format_roundtrip(hi_i) +
+            "] is not inside (0, 1), but the second value of OALGO is the "
+            "rank threshold M of OALGO 1 and 3, which only a value 0 < M < "
+            "1 sets: every M below 0 is the machine precision under OALGO "
+            "1, every M of 0 or below leaves out only a singular value of 0 "
+            "under OALGO 3, and a fit refuses an M of 1 or more, so the box "
+            "of a search is inside (0, 1)");
       if (low_rule && !low_rule->admits(lo_i))
         throw std::runtime_error("OPTIM " + k + " (" + core::to_string(ui) +
                                  "): the low bound " + core::to_string(lo_i) +
