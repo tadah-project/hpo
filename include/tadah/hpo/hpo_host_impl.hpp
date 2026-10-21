@@ -1259,11 +1259,15 @@ HPO_Host<P,R>::HPO_Host(core::Context master_ctx,
     /* validation set (optional: PC_OBSERVABLE/PC_LAMMPS-only runs) ------- */
     core::Context val_ctx;
     if (has_validation_) {
-        /* FORCE and STRESS say what training fits; validation predicts what
-         * its metrics measure. In this file they would have no effect, so
-         * they are refused at their line, and so are the error scales of
-         * the fit, ENORM and ENERGY (they set the fit, row_weights.h) and
-         * every retired key (with its conversion). */
+        /* The validation configuration holds DBFILE (the validation
+         * datasets), EFILTER and FFILTER (their filters,
+         * forward_val_filters) and CONFIG includes; the run reads nothing
+         * else of it, so every other key is refused at its line. FORCE and
+         * STRESS say what training fits (validation predicts what its
+         * metrics measure); the error scales of the fit, ENORM, ENERGY and
+         * WDBFILE set the fit (row_weights.h); each has its own reason, as
+         * every retired key (with its conversion); the keys of the model,
+         * of its fit and of the run share one. */
         core::CoreUserConfigParser val_parser;
         std::map<std::string, std::string> refused = {
             {"FORCE", "the validation set is not fitted; it is validated on "
@@ -1285,10 +1289,25 @@ HPO_Host<P,R>::HPO_Host(core::Context master_ctx,
             refused[k] = std::string("the validation set is not fitted; ") +
                          k + ", an error scale of the fit, is set in the "
                          "training configuration";
-        for (const auto& [k, info] : core::BlueprintParser::getKeysMapRef())
+        refused["WDBFILE"] =
+            "the validation set is not fitted; WDBFILE, the priority of each "
+            "training dataset in the fit, is set in the training "
+            "configuration, and a validation structure without a label has "
+            "eweight, fweight or sweight 0 in its data file";
+        for (const auto& [k, info] : core::BlueprintParser::getKeysMapRef()) {
+            const std::string key = core::to_upper(k);
             if (info.isRetired())
-                refused[k] = "the validation set is not fitted, and " +
-                             core::retired_key_text(k, info);
+                refused[key] = "the validation set is not fitted, and " +
+                               core::retired_key_text(k, info);
+            else if (key != "DBFILE" && key != "EFILTER" &&
+                     key != "FFILTER" && key != "CONFIG" &&
+                     !refused.count(key))
+                refused[key] =
+                    "the validation configuration holds DBFILE, EFILTER and "
+                    "FFILTER (and CONFIG), the validation datasets and their "
+                    "filters; the training configuration sets the model, its "
+                    "fit and the run";
+        }
         val_parser.refuse_keys(std::move(refused));
         val_ctx = core::Context(val_parser.parse(val_cfg));
         /* Each entry is a dataset: one listed twice would count twice in
