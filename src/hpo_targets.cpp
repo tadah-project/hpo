@@ -762,6 +762,11 @@ void HPOTargets::read(const std::string& fn)
     std::size_t type_line = 0;
     std::string type_text;
     bool n_starts_given = false;
+    /* The last ENDRESTART line and its text (0 before one): a RESTART
+     * block -- the RESTART blocks of the STRATEGY block make one -- needs
+     * AFTER_STAGNATION and MAX, checked when the STRATEGY block ends. */
+    std::size_t endrestart_line = 0;
+    std::string endrestart_text;
     /* The line of the STRATEGY block (0 before it): there is one. A second
      * block reopened the first and could change the TYPE its keys had been
      * checked against. */
@@ -1099,6 +1104,24 @@ void HPOTargets::read(const std::string& fn)
                         "STRATEGY TYPE MULTISTART needs N_STARTS 2 or more: "
                         "without N_STARTS it runs one start, which is "
                         "STRATEGY TYPE PLAIN");
+                /* A restart comes after AFTER_STAGNATION evaluations without
+                 * a new best, at most MAX times: a block without one of them
+                 * would restart nothing (0 is refused at its line). */
+                if (endrestart_line != 0 && !spec.restart.active()) {
+                    const bool no_after = spec.restart.after_stagnation == 0;
+                    const bool no_max = spec.restart.max == 0;
+                    const std::string missing =
+                        no_after && no_max
+                            ? "no AFTER_STAGNATION line and no MAX line"
+                        : no_after ? "no AFTER_STAGNATION line"
+                                   : "no MAX line";
+                    throw EarlierLineError(
+                        endrestart_line, endrestart_text,
+                        "the RESTART block never restarts the search: a "
+                        "restart needs AFTER_STAGNATION and MAX, and the block "
+                        "has " + missing + "; a search without restarts has "
+                        "no RESTART block");
+                }
                 close_block();
                 refresh_active_opt();
                 continue;
@@ -1191,6 +1214,8 @@ void HPOTargets::read(const std::string& fn)
                 continue;
             }
             if (key=="ENDRESTART") {
+                endrestart_line = nline;
+                endrestart_text = line;
                 active_init = nullptr;
                 close_block();
                 active_opt = inner_parent;
@@ -1271,14 +1296,23 @@ void HPOTargets::read(const std::string& fn)
                     continue;
                 }
                 if (block == RESTART_BLK) {
+                    /* Each 1 or more: 0 restarts nothing. */
+                    const char* const kNoRestart =
+                        "0 never restarts the search; a search without "
+                        "restarts has no RESTART block";
                     if (key=="AFTER_STAGNATION") {
-                        spec.restart.after_stagnation =
-                            parse_uint(single_value(iss, key), key);
+                        spec.restart.after_stagnation = parse_uint(
+                            single_value(iss, key), key, 1,
+                            std::numeric_limits<std::uint64_t>::max(),
+                            kNoRestart);
                         set_once(&spec.restart, key, "restarts");
                         continue;
                     }
                     if (key=="MAX") {
-                        spec.restart.max = parse_uint(single_value(iss, key), key);
+                        spec.restart.max = parse_uint(
+                            single_value(iss, key), key, 1,
+                            std::numeric_limits<std::uint64_t>::max(),
+                            kNoRestart);
                         set_once(&spec.restart, key, "restarts");
                         continue;
                     }
