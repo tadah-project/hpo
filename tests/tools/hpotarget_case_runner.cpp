@@ -281,9 +281,6 @@ Values defaults_of(const HPOTargets& trg)
     add("INIT.WARM_ON_MISMATCH", sp.init_strategy_spec.warm_on_mismatch);
     add("NOISE.AUTO", sp.noise.autodetect ? "true" : "false");
     add("NOISE.CALIBRATION", std::to_string(sp.noise.calibration_n));
-    add("RESTART.AFTER_STAGNATION",
-        std::to_string(sp.restart.after_stagnation));
-    add("RESTART.MAX", std::to_string(sp.restart.max));
 
     /* The AUTO boxes the file holds: the factor of a geometric box,
      * high/x0, and the fraction of a linear one, (high - x0)/|x0|. */

@@ -279,8 +279,8 @@ std::string method_lines_warning(const std::string& algo, int line = 10)
  * INNER search NLOPT:GN_DIRECT_L from the point it is given, and
  * NLOPT:GN_DIRECT_L does not start ..."); a PRESTAGE exploration on
  * GN_DIRECT_L gets the exploration's text (RESTART on line 15). No warning:
- * LN_SBPLX and GN_CRS2_LM, which start at their point, and an inactive
- * RESTART (MAX 0). The gradient searches (StoGO), the RAND forms in two
+ * LN_SBPLX and GN_CRS2_LM, which start at their point (a RESTART of MAX
+ * 0 is refused at its line). The gradient searches (StoGO), the RAND forms in two
  * dimensions and the METHOD lines of a RESTART block are the next case's.
  * Before the fix: none of these warnings was given (a RESTART run: round 1
  * asked for round 0's points, answered from the record, without a word at
@@ -408,16 +408,16 @@ TEST_CASE("startup validation: RESTART on a search that does not start at "
                   "is given.") == 1);
     }
 
-    SECTION("no warning: a search that starts at its point, an inactive "
-            "RESTART")
+    SECTION("no warning: a search that starts at its point")
     {
+        /* An inactive RESTART (MAX 0), the other leg of this section, is
+         * refused at its MAX line (the case "startup validation: a RESTART
+         * block that never restarts the search is refused"). */
         for (const char* algo : {"LN_SBPLX", "GN_CRS2_LM"}) {
             INFO("NLOPT:" << algo);
             const Startup s = startup(plain_restart(algo));
             CHECK(count_of(s.journal, "the RESTART block on line") == 0);
         }
-        const Startup off = startup(plain_restart("GN_DIRECT_L", kRoot, "0"));
-        CHECK(count_of(off.journal, "the RESTART block on line") == 0);
     }
 }
 

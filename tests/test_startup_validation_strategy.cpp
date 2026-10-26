@@ -767,6 +767,62 @@ TEST_CASE("startup validation: STRATEGY TYPE MULTISTART needs N_STARTS 2 or "
     CHECK(trg.spec.multistart.n_starts == 2u);
 }
 
+/* Pins: a RESTART block restarts the search after AFTER_STAGNATION
+ * evaluations without a new best, at most MAX times, so it needs both, each
+ * 1 or more. AFTER_STAGNATION 0 and MAX 0 are refused at their line ("MAX
+ * must be an integer >= 1, got '0' (0 never restarts the search; a search
+ * without restarts has no RESTART block)"); a block without one of them,
+ * or with METHOD lines only, is refused when the STRATEGY block ends, at
+ * the last ENDRESTART line ("the RESTART block never restarts the search:
+ * a restart needs AFTER_STAGNATION and MAX, and the block has no MAX line;
+ * a search without restarts has no RESTART block"). Two RESTART blocks,
+ * which make one, may give one key each.
+ * Before the fix: each of these blocks was accepted and restarted nothing
+ * (RestartSpec::active() false), without a word. */
+TEST_CASE("startup validation: a RESTART block that never restarts the "
+          "search is refused", "[startup_validation][strategy][restart]")
+{
+    /* LIB on line 5, RESTART on line 8. */
+    const auto with = [](const std::string& blocks) {
+        return strategy_config("    LIB NLOPT\n    ALGO LN_SBPLX\n"
+                               "    MAXEVAL 20\n" + blocks);
+    };
+    const std::string none =
+        "; a search without restarts has no RESTART block";
+    const auto missing = [&](const std::string& what, std::size_t line) {
+        return "Error on line " + std::to_string(line) +
+               ": the RESTART block never restarts the search: a restart "
+               "needs AFTER_STAGNATION and MAX, and the block has " + what +
+               none + "\nLine:     ENDRESTART";
+    };
+    CHECK(parse_error(with("    RESTART\n      AFTER_STAGNATION 5\n"
+                           "    ENDRESTART\n")) ==
+          missing("no MAX line", 10));
+    CHECK(parse_error(with("    RESTART\n      MAX 2\n    ENDRESTART\n")) ==
+          missing("no AFTER_STAGNATION line", 10));
+    CHECK(parse_error(with("    RESTART\n      METHOD RANDOM 2\n"
+                           "    ENDRESTART\n")) ==
+          missing("no AFTER_STAGNATION line and no MAX line", 10));
+    for (const std::string key : {"AFTER_STAGNATION", "MAX"}) {
+        const std::string other =
+            key == "MAX" ? "AFTER_STAGNATION 5" : "MAX 2";
+        CHECK(parse_error(with("    RESTART\n      " + key + " 0\n      " +
+                               other + "\n    ENDRESTART\n")) ==
+              "Error on line 9: " + key + " must be an integer >= 1, got '0' "
+              "(0 never restarts the search" + none + ")\nLine:       " +
+                  key + " 0");
+    }
+    /* Two blocks make one: AFTER_STAGNATION in the first, MAX in the
+     * second. */
+    PeriodicTable::initialize();
+    ScopedTempFile ok(with("    RESTART\n      AFTER_STAGNATION 5\n"
+                           "    ENDRESTART\n    RESTART\n      MAX 2\n"
+                           "    ENDRESTART\n"));
+    Context ctx = make_minimal_ctx();
+    HPOTargets trg(ctx, ok.path.string());
+    CHECK(trg.spec.restart.active());
+}
+
 TEST_CASE("startup validation: a TYPE line after an EXPLORE or REFINE "
           "block is refused as a second TYPE line",
           "[startup_validation][strategy][knobs][prestage]")
@@ -2348,17 +2404,10 @@ TEST_CASE("startup validation: a backend with no convergence test and no "
                          top + "TADAH:ANNEAL_PT needs a stop: ",
                          "; set MAXEVAL, MAXTIME, STOPVAL or a positive "
                          "tolerance it honours (FTOL_REL, FTOL_ABS)"});
-    /* A RESTART that is not active (MAX 0, or no AFTER_STAGNATION) arms no
-     * stagnation stop. */
-    for (const std::string& restart :
-         {std::string("      AFTER_STAGNATION 60\n      MAX 0\n"),
-          std::string("      MAX 2\n")})
-        cases.push_back({"NLOPT:GN_DIRECT_L under an inactive RESTART",
-                         nlopt("GN_DIRECT_L", "    RESTART\n" + restart +
-                                                  "      METHOD RANDOM 1\n"
-                                                  "    ENDRESTART\n"),
-                         top + "NLOPT:GN_DIRECT_L needs a stop: ",
-                         kAnyTolerance + kDirectXtol});
+    /* A RESTART that is not active (MAX 0, or no AFTER_STAGNATION), which
+     * armed no stagnation stop, is refused when the file is read (the
+     * case "startup validation: a RESTART block that never restarts the
+     * search is refused"); its legs left this case. */
     for (const std::string algo : {"GN_ESCH", "GN_AGS"})
         cases.push_back({"NLOPT:" + algo + " without a stop", nlopt(algo, ""),
                          top + "NLOPT:" + algo + " needs a stop: ",

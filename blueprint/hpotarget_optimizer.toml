@@ -2223,10 +2223,7 @@ text = "STRATEGY RANDOM 2"
 [[key.examples]]
 doc = "In a RESTART block, the METHOD lines draw the starting points of each restart."
 wrap = "restart"
-text = '''
-AFTER_STAGNATION 20
-MAX 3
-METHOD RANDOM 2'''
+text = "METHOD RANDOM 2"
 
 [[key.invalid]]
 wrap = "init"
@@ -2740,10 +2737,9 @@ id = "RESTART.AFTER_STAGNATION"
 name = "AFTER_STAGNATION"
 blocks = ["RESTART"]
 synopsis = "AFTER_STAGNATION <n>"
-args = [ { name = "n", kind = "integer", min = 0, max = "UINT64_MAX", what = "{key}" } ]
+args = [ { name = "n", kind = "integer", min = 1, max = "UINT64_MAX", what = "{key}", msg = "AFTER_STAGNATION must be an integer >= 1, got '{tok}' (0 never restarts the search; a search without restarts has no RESTART block)" } ]
 repeat = "error"
 repeat_msg = "AFTER_STAGNATION is set twice in the RESTART block (first on line {first_line}); each key is given once"
-default = { literal = "0" }
 doc = """\
 The number of evaluations without a better loss after which the search \
 restarts from the starting points that the METHOD lines of the RESTART \
@@ -2757,27 +2753,42 @@ A RESTART block with AFTER_STAGNATION or MAX left at 0 has no effect, \
 without a warning."""
 
 [[key.examples]]
-wrap = "restart"
+wrap = "strategy"
 text = '''
+RESTART
 AFTER_STAGNATION 20
-MAX 3'''
+MAX 3
+ENDRESTART'''
 
 [[key.invalid]]
-wrap = "restart"
-text = "AFTER_STAGNATION -1"
-error = "AFTER_STAGNATION must be an integer >= 0, got '-1'"
+wrap = "strategy"
+at = 2
+text = '''
+RESTART
+AFTER_STAGNATION 0
+MAX 3
+ENDRESTART'''
+error = "AFTER_STAGNATION must be an integer >= 1, got '0' (0 never restarts the search; a search without restarts has no RESTART block)"
 
 [[key.invalid]]
-wrap = "restart"
-text = "AFTER_STAGNATION 20 3"
+wrap = "strategy"
+at = 2
+text = '''
+RESTART
+AFTER_STAGNATION 20 3
+MAX 3
+ENDRESTART'''
 error = "AFTER_STAGNATION takes a single value (unexpected '3')"
 
 [[key.invalid]]
-wrap = "restart"
-at = 2
+wrap = "strategy"
+at = 3
 text = '''
+RESTART
 AFTER_STAGNATION 5
-AFTER_STAGNATION 6'''
+AFTER_STAGNATION 6
+MAX 3
+ENDRESTART'''
 error = "AFTER_STAGNATION is set twice in the RESTART block (first on line 9); each key is given once"
 
 [[key]]
@@ -2785,10 +2796,9 @@ id = "RESTART.MAX"
 name = "MAX"
 blocks = ["RESTART"]
 synopsis = "MAX <n>"
-args = [ { name = "n", kind = "integer", min = 0, max = "UINT64_MAX", what = "{key}" } ]
+args = [ { name = "n", kind = "integer", min = 1, max = "UINT64_MAX", what = "{key}", msg = "MAX must be an integer >= 1, got '{tok}' (0 never restarts the search; a search without restarts has no RESTART block)" } ]
 repeat = "error"
 repeat_msg = "MAX is set twice in the RESTART block (first on line {first_line}); each key is given once"
-default = { literal = "0" }
 doc = """\
 The largest number of restarts of the search. Once they are used, the \
 next stagnation ends the search."""
@@ -2797,22 +2807,42 @@ The RESTART block takes effect only when AFTER_STAGNATION and MAX are both \
 above 0. Each round runs with the whole MAXEVAL of the optimiser."""
 
 [[key.examples]]
-wrap = "restart"
+wrap = "strategy"
 text = '''
+RESTART
 MAX 2
-AFTER_STAGNATION 50'''
+AFTER_STAGNATION 50
+ENDRESTART'''
 
 [[key.invalid]]
-wrap = "restart"
-text = "MAX x"
-error = "MAX must be an integer >= 0, got 'x'"
-
-[[key.invalid]]
-wrap = "restart"
+wrap = "strategy"
 at = 2
 text = '''
+RESTART
+MAX x
+AFTER_STAGNATION 50
+ENDRESTART'''
+error = "MAX must be an integer >= 1, got 'x' (0 never restarts the search; a search without restarts has no RESTART block)"
+
+[[key.invalid]]
+wrap = "strategy"
+at = 2
+text = '''
+RESTART
+MAX 0
+AFTER_STAGNATION 50
+ENDRESTART'''
+error = "MAX must be an integer >= 1, got '0' (0 never restarts the search; a search without restarts has no RESTART block)"
+
+[[key.invalid]]
+wrap = "strategy"
+at = 3
+text = '''
+RESTART
 MAX 2
-MAX 3'''
+MAX 3
+AFTER_STAGNATION 50
+ENDRESTART'''
 error = "MAX is set twice in the RESTART block (first on line 9); each key is given once"
 
 # ========================================================== INNER rules ==

@@ -4028,10 +4028,10 @@ TEST_CASE("RESTART: a SEED no METHOD of the chain draws from is reported at "
                !Catch::Contains(unused));
     CHECK_THAT(startup_stderr("      METHOD CONFIG\n"),
                !Catch::Contains(unused));
-    /* An inactive RESTART block (AFTER_STAGNATION 0) draws no restart
-     * points at all, so its SEED is not reported. */
-    CHECK_THAT(startup_stderr("      METHOD CONFIG\n      SEED 42\n", "0"),
-               !Catch::Contains(unused));
+    /* An inactive RESTART block (AFTER_STAGNATION 0), whose SEED was not
+     * reported (it drew no restart points), is refused at its
+     * AFTER_STAGNATION line ("startup validation: a RESTART block that
+     * never restarts the search is refused"). */
 }
 
 /* best_pot.tadah.lock, the file the publications of the best potential

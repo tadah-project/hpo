@@ -854,12 +854,19 @@ KeyHome strategy_home(const std::string& key, const std::string& type,
             tail + "ENDSTRATEGY\nENDOPTIMIZER\n"};
 }
 
+/* A RESTART block restarts the search: it needs AFTER_STAGNATION and MAX,
+ * given after the key's line (one block took a single key before the case
+ * "startup validation: a RESTART block that never restarts the search is
+ * refused"). */
 KeyHome restart_home(const std::string& key)
 {
+    const std::string keys =
+        std::string(key == "AFTER_STAGNATION" ? "" : "AFTER_STAGNATION 3\n") +
+        (key == "MAX" ? "" : "MAX 2\n");
     return {key,
             "OPTIMIZER\nSTRATEGY\nTYPE PLAIN\nLIB NLOPT\nALGO LN_SBPLX\n"
             "MAXEVAL 5\nRESTART\n",
-            "ENDRESTART\nENDSTRATEGY\nENDOPTIMIZER\n"};
+            keys + "ENDRESTART\nENDSTRATEGY\nENDOPTIMIZER\n"};
 }
 
 const std::string kStrategyBlock =
@@ -1478,12 +1485,13 @@ TEST_CASE("Strict numbers: STRATEGY N_STARTS is an integer >= 2, "
     CHECK(parse_config(topk.config("3")).spec.stage_topk == 3u);
 }
 
-TEST_CASE("Strict numbers: RESTART AFTER_STAGNATION and MAX are integers >= 0",
+TEST_CASE("Strict numbers: RESTART AFTER_STAGNATION and MAX are integers >= 1",
           "[HPO][hpo_targets][strict_numbers]")
 {
-    check_uint_key(restart_home("AFTER_STAGNATION"), "an integer >= 0",
-                   {"10", "0"}, {});
-    check_uint_key(restart_home("MAX"), "an integer >= 0", {"2", "0"}, {});
+    /* 0 never restarts the search: it was accepted (an integer >= 0). */
+    check_uint_key(restart_home("AFTER_STAGNATION"), "an integer >= 1",
+                   {"10", "1"}, {"0"});
+    check_uint_key(restart_home("MAX"), "an integer >= 1", {"2", "1"}, {"0"});
     const auto trg = parse_config(restart_home("MAX").config("2"));
     CHECK(trg.spec.restart.max == 2u);
 
