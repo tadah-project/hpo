@@ -1321,7 +1321,7 @@ wrap = "strategy"
 check = "startup"
 at = "ENDOPTIMIZER"
 text = "VECTOR_ARR 10"
-error = "the STRATEGY-level optimiser: NLOPT:LN_SBPLX does not use VECTOR_ARR; remove it (it is read by NLOPT:LD_LBFGS, NLOPT:LD_TNEWTON, NLOPT:LD_TNEWTON_PRECOND, NLOPT:LD_TNEWTON_PRECOND_RESTART, NLOPT:LD_TNEWTON_RESTART, NLOPT:LD_VAR1, NLOPT:LD_VAR2)"
+error = "the STRATEGY-level optimiser: NLOPT:LN_SBPLX does not use VECTOR_ARR; remove it (it is read by NLOPT:LD_LBFGS, NLOPT:LD_TNEWTON_PRECOND, NLOPT:LD_TNEWTON_PRECOND_RESTART, NLOPT:LD_VAR1, NLOPT:LD_VAR2)"
 
 [[key.invalid]]
 wrap = "opt_bfgs"

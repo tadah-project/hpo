@@ -1000,6 +1000,39 @@ TEST_CASE("startup validation: an optimiser refuses a PARAM key it does not "
           "unknown PARAM 'tolg' (it takes none)");
 }
 
+/* Pins: VECTOR_ARR, the vector storage of NLopt's Luksan algorithms, is
+ * read by LD_LBFGS, LD_VAR1/2 and the preconditioned LD_TNEWTON forms
+ * (pnet.c reads it only with a preconditioner, mos2 > 1, which optimize.c
+ * gives LD_TNEWTON_PRECOND and LD_TNEWTON_PRECOND_RESTART): LD_TNEWTON and
+ * LD_TNEWTON_RESTART refuse it at startup, as LN_SBPLX does ("NLOPT:
+ * LD_TNEWTON does not use VECTOR_ARR; remove it (it is read by
+ * NLOPT:LD_LBFGS, NLOPT:LD_TNEWTON_PRECOND, ...)"); LD_TNEWTON_PRECOND
+ * reads it.
+ * Before the fix: LD_TNEWTON and LD_TNEWTON_RESTART accepted VECTOR_ARR,
+ * which NLopt does not read for them. */
+TEST_CASE("startup validation: VECTOR_ARR is refused for LD_TNEWTON and "
+          "LD_TNEWTON_RESTART", "[startup_validation][vector_arr]")
+{
+    const auto lbfgs_like = [](const std::string& algo) {
+        return strategy_config("    LIB NLOPT\n    ALGO " + algo +
+                               "\n    MAXEVAL 20\n    VECTOR_ARR 5\n");
+    };
+    for (const std::string algo : {"LD_TNEWTON", "LD_TNEWTON_RESTART"}) {
+        INFO("NLOPT:" << algo);
+        CHECK(judge(lbfgs_like(algo)).startup ==
+              "the STRATEGY-level optimiser: NLOPT:" + algo +
+                  " does not use VECTOR_ARR; remove it (it is read by "
+                  "NLOPT:LD_LBFGS, NLOPT:LD_TNEWTON_PRECOND, "
+                  "NLOPT:LD_TNEWTON_PRECOND_RESTART, NLOPT:LD_VAR1, "
+                  "NLOPT:LD_VAR2)");
+    }
+    for (const std::string algo :
+         {"LD_TNEWTON_PRECOND", "LD_TNEWTON_PRECOND_RESTART", "LD_LBFGS"}) {
+        INFO("NLOPT:" << algo);
+        CHECK(judge(lbfgs_like(algo)).startup == "");
+    }
+}
+
 TEST_CASE("startup validation: a TYPE line after an EXPLORE or REFINE "
           "block is refused as a second TYPE line",
           "[startup_validation][strategy][knobs][prestage]")
@@ -2561,15 +2594,16 @@ const std::string kDirectXtol =
  * backend that does not lists them (sorted): ANNEAL_PA's walkers, and
  * NLopt's stochastic population (POP() in nlopt 2.10's optimize.c: CRS2,
  * ISRES, ESCH, the six MLSL forms, GD_STOGO_RAND) and the Luksan
- * algorithms' vector storage (LD_LBFGS, LD_VAR1/2, LD_TNEWTON*). */
+ * algorithms' vector storage (LD_LBFGS, LD_VAR1/2 and the preconditioned
+ * LD_TNEWTON forms: pnet.c reads it only for them, so LD_TNEWTON and
+ * LD_TNEWTON_RESTART, which this list named, refuse it). */
 const std::string kPopulationReaders =
     "NLOPT:GD_MLSL, NLOPT:GD_MLSL_LDS, NLOPT:GD_STOGO_RAND, NLOPT:GN_CRS2_LM, "
     "NLOPT:GN_ESCH, NLOPT:GN_ISRES, NLOPT:GN_MLSL, NLOPT:GN_MLSL_LDS, "
     "NLOPT:G_MLSL, NLOPT:G_MLSL_LDS, TADAH:ANNEAL_PA";
 const std::string kVectorStorageReaders =
-    "NLOPT:LD_LBFGS, NLOPT:LD_TNEWTON, NLOPT:LD_TNEWTON_PRECOND, "
-    "NLOPT:LD_TNEWTON_PRECOND_RESTART, NLOPT:LD_TNEWTON_RESTART, "
-    "NLOPT:LD_VAR1, NLOPT:LD_VAR2";
+    "NLOPT:LD_LBFGS, NLOPT:LD_TNEWTON_PRECOND, "
+    "NLOPT:LD_TNEWTON_PRECOND_RESTART, NLOPT:LD_VAR1, NLOPT:LD_VAR2";
 
 }  // namespace
 
