@@ -104,7 +104,9 @@ TEST_CASE("ANNEAL capability help exposes corrected public contracts",
      * AUTO measures at most ..." before the reference rendered them). */
     const std::string serial = capture("ANNEAL");
     CHECK(serial.find("PARAM T_INIT") != std::string::npos);
-    CHECK(serial.find("PARAM CHAIN_LENGTH (default auto)")
+    /* The default in words of the registry (default_doc), with the token
+     * the key takes ("(default auto)" before it). */
+    CHECK(serial.find("PARAM CHAIN_LENGTH (default: AUTO, from MAXEVAL)")
           != std::string::npos);
     CHECK(serial.find("PARAM RT (default 0.85)") != std::string::npos);
     CHECK(serial.find("Keys it does not read are refused: STEP")
