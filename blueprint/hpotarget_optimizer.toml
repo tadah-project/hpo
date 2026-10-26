@@ -1899,45 +1899,6 @@ N_STARTS 3'''
 error = "N_STARTS is set twice in the STRATEGY block (first on line 9); each key is given once"
 
 [[key]]
-id = "STRATEGY.PARALLEL"
-name = "PARALLEL"
-blocks = ["STRATEGY"]
-synopsis = "PARALLEL <n>"
-args = [ { name = "n", kind = "integer", min = 1, max = "UINT64_MAX", what = "{key}" } ]
-repeat = "error"
-repeat_msg = "PARALLEL is set twice in the STRATEGY block (first on line {first_line}); each key is given once"
-default = { literal = "1" }
-doc = """\
-The number of MULTISTART starts to run at the same time. The starts run \
-one after another whatever its value."""
-quirk = """\
-PARALLEL is read and checked, but the starts of STRATEGY TYPE MULTISTART \
-run one after another. A value above 1 only adds a warning to the journal \
-when the starts begin."""
-
-[[key.examples]]
-wrap = "opt_multistart"
-text = "PARALLEL 2"
-
-[[key.invalid]]
-wrap = "opt_multistart"
-text = "PARALLEL 0"
-error = "PARALLEL must be an integer >= 1, got '0'"
-
-[[key.invalid]]
-wrap = "strategy"
-text = "PARALLEL 2"
-error = "PARALLEL is not accepted with STRATEGY TYPE PLAIN (the default when the block has no TYPE line): only TYPE MULTISTART has starts to run in parallel, so it would have no effect; set TYPE MULTISTART or remove PARALLEL"
-
-[[key.invalid]]
-wrap = "opt_multistart"
-at = 2
-text = '''
-PARALLEL 1
-PARALLEL 2'''
-error = "PARALLEL is set twice in the STRATEGY block (first on line 9); each key is given once"
-
-[[key]]
 id = "STRATEGY.BUDGET_PER_START"
 name = "BUDGET_PER_START"
 blocks = ["STRATEGY"]
@@ -2034,7 +1995,7 @@ text = "TYPE PLAIN"
 [[strategy_type]]
 id = "STRATEGY.TYPE.MULTISTART"
 name = "MULTISTART"
-keys = ["STRATEGY.N_STARTS", "STRATEGY.PARALLEL", "STRATEGY.BUDGET_PER_START"]
+keys = ["STRATEGY.N_STARTS", "STRATEGY.BUDGET_PER_START"]
 doc = """\
 The STRATEGY-level optimiser runs once from each of the first N_STARTS \
 starting points of its INIT block, SEED + i for start i. An optimiser \

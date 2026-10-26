@@ -25,9 +25,9 @@
 //  - a phase without LIB or ALGO (the STRATEGY-level optimiser, the
 //    PRESTAGE refinement, an EXPLORE block, an INNER block), naming the
 //    block;
-//  - a STRATEGY key that has no effect under the block's TYPE (N_STARTS,
-//    PARALLEL and BUDGET_PER_START outside MULTISTART, TOPK outside
-//    PRESTAGE), at the key's own line, whether TYPE comes before or after
+//  - a STRATEGY key that has no effect under the block's TYPE (N_STARTS
+//    and BUDGET_PER_START outside MULTISTART, TOPK outside PRESTAGE), at
+//    the key's own line, whether TYPE comes before or after
 //    the key; an EXPLORE or REFINE block before TYPE PRESTAGE, and a
 //    second TYPE line (TYPE is set once);
 //  - a second STRATEGY block, which could change the TYPE the first one
@@ -640,7 +640,6 @@ TEST_CASE("startup validation: a STRATEGY key of another TYPE is rejected at "
     };
     for (const auto& c : std::vector<Case>{
              {"    TYPE PLAIN\n", "N_STARTS 3", "TYPE PLAIN", "TYPE MULTISTART"},
-             {"    TYPE PLAIN\n", "PARALLEL 2", "TYPE PLAIN", "TYPE MULTISTART"},
              {"    TYPE PLAIN\n", "BUDGET_PER_START 10", "TYPE PLAIN",
               "TYPE MULTISTART"},
              {"    TYPE MULTISTART\n", "TOPK 3", "TYPE MULTISTART",
@@ -663,14 +662,6 @@ TEST_CASE("startup validation: a STRATEGY key of another TYPE is rejected at "
                    Catch::EndsWith("Line:     " + c.knob));
     }
 
-    SECTION("PARALLEL under TYPE PRESTAGE") {
-        const auto msg = parse_error(strategy_config(
-            "    TYPE PRESTAGE\n    LIB DLIB\n    ALGO BFGS\n    PARALLEL 2\n" +
-            kExploreGfs));
-        CHECK_THAT(msg, Catch::StartsWith("Error on line 8: PARALLEL is not "
-                                          "accepted with STRATEGY TYPE "
-                                          "PRESTAGE"));
-    }
     SECTION("TYPE written after the key decides") {
         PeriodicTable::initialize();
         ScopedTempFile tf(strategy_config(
@@ -697,6 +688,48 @@ TEST_CASE("startup validation: a STRATEGY key of another TYPE is rejected at "
                                           "in the STRATEGY block (first on "
                                           "line 5); each key is given once"));
     }
+}
+
+/* Pins: PARALLEL, in a STRATEGY block of any TYPE and with any value (1
+ * included), is refused at its line as a removed key whose message names
+ * THREADS: "'PARALLEL' was removed from the grammar: the starts of
+ * STRATEGY TYPE MULTISTART run one after another; THREADS sets the number
+ * of workers that run the work of the evaluations (the LAMMPS scripts and
+ * the training and prediction of the potential)." MULTISTART_PARALLEL, the
+ * key of Tadah! 1.4, is refused with the same reason, and its message no
+ * longer points to `TYPE MULTISTART PARALLEL N`.
+ * Before the fix: PARALLEL 2 under TYPE MULTISTART was accepted (the run
+ * warned "MULTISTART PARALLEL > 1 not yet implemented; running starts
+ * sequentially" and ran the starts one after another); PARALLEL under
+ * another TYPE was refused as a key of TYPE MULTISTART; MULTISTART_PARALLEL
+ * pointed to "`STRATEGY { TYPE MULTISTART PARALLEL N }`". */
+TEST_CASE("startup validation: STRATEGY PARALLEL is refused at its line, "
+          "naming THREADS", "[startup_validation][strategy][knobs]")
+{
+    const std::string reason =
+        "the starts of STRATEGY TYPE MULTISTART run one after another; "
+        "THREADS sets the number of workers that run the work of the "
+        "evaluations (the LAMMPS scripts and the training and prediction "
+        "of the potential).";
+    for (const std::string value : {"2", "1"}) {
+        for (const std::string type : {"MULTISTART", "PLAIN", "PRESTAGE"}) {
+            INFO("TYPE " << type << ", PARALLEL " << value);
+            const std::string extra =
+                type == "MULTISTART" ? "    N_STARTS 2\n"
+                : type == "PRESTAGE" ? kExploreGfs
+                                     : std::string();
+            /* TYPE on line 5, PARALLEL on line 6. */
+            const auto msg = parse_error(strategy_config(
+                "    TYPE " + type + "\n    PARALLEL " + value +
+                "\n    LIB DLIB\n    ALGO BFGS\n    MAXEVAL 20\n" + extra));
+            CHECK(msg == "Error on line 6: 'PARALLEL' was removed from the "
+                         "grammar: " + reason + "\nLine:     PARALLEL " + value);
+        }
+    }
+    const auto old = parse_error(strategy_config(
+        "    MULTISTART_PARALLEL 2\n    LIB DLIB\n    ALGO BFGS\n"));
+    CHECK(old == "Error on line 5: 'MULTISTART_PARALLEL' was removed from the "
+                 "grammar: " + reason + "\nLine:     MULTISTART_PARALLEL 2");
 }
 
 TEST_CASE("startup validation: a TYPE line after an EXPLORE or REFINE "

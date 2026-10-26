@@ -865,16 +865,17 @@ STRATEGY
   ALGO BFGS
   MAXEVAL 50
   N_STARTS 4
-  PARALLEL 2
   BUDGET_PER_START 12
 ENDSTRATEGY
 ENDOPTIMIZER
 )");
+    /* PARALLEL is refused ("startup validation: STRATEGY PARALLEL is
+     * refused at its line, naming THREADS"); this case read PARALLEL 2
+     * as multistart.parallel == 2. */
     tadah::core::Context ctx;
     tadah::hpo::HPOTargets trg(ctx, cfg.path.string());
     const auto& cfg_run = trg.spec;
     CHECK(cfg_run.multistart.n_starts == 4);
-    CHECK(cfg_run.multistart.parallel == 2);
     REQUIRE(cfg_run.multistart.budget_per_start.has_value());
     CHECK(*cfg_run.multistart.budget_per_start == 12);
 }

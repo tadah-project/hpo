@@ -2377,12 +2377,26 @@ error = "'MULTISTART' was removed from the grammar: moved into `STRATEGY { TYPE 
 
 [[removed]]
 name = "MULTISTART_PARALLEL"
-hint = "moved into `STRATEGY { TYPE MULTISTART PARALLEL N }`."
+hint = "the starts of STRATEGY TYPE MULTISTART run one after another; THREADS sets the number of workers that run the work of the evaluations (the LAMMPS scripts and the training and prediction of the potential)."
 
 [[removed.invalid]]
 wrap = "strategy"
 text = "MULTISTART_PARALLEL 2"
-error = "'MULTISTART_PARALLEL' was removed from the grammar: moved into `STRATEGY { TYPE MULTISTART PARALLEL N }`."
+error = "'MULTISTART_PARALLEL' was removed from the grammar: the starts of STRATEGY TYPE MULTISTART run one after another; THREADS sets the number of workers that run the work of the evaluations (the LAMMPS scripts and the training and prediction of the potential)."
+
+[[removed]]
+name = "PARALLEL"
+hint = "the starts of STRATEGY TYPE MULTISTART run one after another; THREADS sets the number of workers that run the work of the evaluations (the LAMMPS scripts and the training and prediction of the potential)."
+
+[[removed.invalid]]
+wrap = "strategy"
+text = "PARALLEL 2"
+error = "'PARALLEL' was removed from the grammar: the starts of STRATEGY TYPE MULTISTART run one after another; THREADS sets the number of workers that run the work of the evaluations (the LAMMPS scripts and the training and prediction of the potential)."
+
+[[removed.invalid]]
+wrap = "strategy"
+text = "PARALLEL 1"
+error = "'PARALLEL' was removed from the grammar: the starts of STRATEGY TYPE MULTISTART run one after another; THREADS sets the number of workers that run the work of the evaluations (the LAMMPS scripts and the training and prediction of the potential)."
 
 [[removed]]
 name = "MULTISTART_BUDGET_PER_START"

@@ -1442,13 +1442,14 @@ TEST_CASE("DUMP and BDUMP refuse a directory the run cannot write into",
     }
 }
 
-TEST_CASE("Strict numbers: STRATEGY N_STARTS, PARALLEL, BUDGET_PER_START and "
-          "TOPK are integers >= 1", "[HPO][hpo_targets][strict_numbers]")
+TEST_CASE("Strict numbers: STRATEGY N_STARTS, BUDGET_PER_START and TOPK are "
+          "integers >= 1", "[HPO][hpo_targets][strict_numbers]")
 {
-    for (const std::string key : {"N_STARTS", "PARALLEL"}) {
-        const auto h = strategy_home(key, "MULTISTART", "DLIB", "BFGS");
-        check_uint_key(h, "an integer >= 1", {"4", "1"}, {"0"});
-    }
+    /* PARALLEL, which this case read as an integer >= 1, is refused
+     * ("startup validation: STRATEGY PARALLEL is refused at its line,
+     * naming THREADS"). */
+    check_uint_key(strategy_home("N_STARTS", "MULTISTART", "DLIB", "BFGS"),
+                   "an integer >= 1", {"4", "1"}, {"0"});
     /* BUDGET_PER_START becomes each start's MAXEVAL: the same int budget. */
     check_uint_key(strategy_home("BUDGET_PER_START", "MULTISTART", "DLIB",
                                  "BFGS"),
