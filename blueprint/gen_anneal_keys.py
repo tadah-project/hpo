@@ -36,7 +36,8 @@ KEY_FIELDS = {"name", "type", "default", "default_serial", "default_pt",
               "long_doc", "range_doc",
               "min", "max", "min_open", "max_open", "range_msg", "range_note",
               "report_value", "custom_range", "accepts_auto", "auto_kinds",
-              "accepts_off"}
+              "accepts_off", "default_doc", "default_doc_serial",
+              "default_doc_pt", "default_doc_pa"}
 RULE_FIELDS = {"type", "key", "flag", "other", "kind", "enum_key", "value", "msg"}
 RENAMED_FIELDS = {"old", "kinds", "msg"}
 
@@ -157,6 +158,15 @@ def load(toml_path: pathlib.Path) -> dict:
         for kind in KIND_ORDER:
             if f"default_{kind}" in key and kind not in key["kinds"]:
                 fail(f"key {key['name']}: default_{kind} but not a {kind} key")
+            if f"default_doc_{kind}" in key and kind not in key["kinds"]:
+                fail(f"key {key['name']}: default_doc_{kind} but not a "
+                     f"{kind} key")
+        # The default in words of each kind: override > base > absent.
+        key["_def_doc"] = {}
+        for kind in key["kinds"]:
+            text = key.get(f"default_doc_{kind}", key.get("default_doc"))
+            if text is not None:
+                key["_def_doc"][kind] = text
         key["_range_msg"] = build_range_msg(key)
 
     by_name = {k["name"]: k for k in data.get("key", [])}
@@ -187,6 +197,23 @@ def load(toml_path: pathlib.Path) -> dict:
         elif rule["type"] == "kind_reject":
             if rule.get("kind") not in KINDS:
                 fail(f"rule on {rule['key']}: bad kind {rule.get('kind')!r}")
+
+    # Every kind that takes a key states its default: a value (default,
+    # default_<kind>) or words (default_doc, default_doc_<kind>), which the
+    # help (`tadah explain`) and the documentation print. A kind that
+    # refuses the key (a kind_reject rule) lists it nowhere.
+    refused = {(r["key"], r["kind"]) for r in data.get("rule", [])
+               if r["type"] == "kind_reject"}
+    for key in data.get("key", []):
+        for kind in key["kinds"]:
+            if (key["name"], kind) in refused:
+                if kind in key["_def"] or kind in key["_def_doc"]:
+                    fail(f"key {key['name']}: a default for {kind}, which "
+                         "refuses the key")
+                continue
+            if kind not in key["_def"] and kind not in key["_def_doc"]:
+                fail(f"key {key['name']}: no default and no default_doc "
+                     f"for {kind}")
 
     for ren in data.get("renamed", []):
         extra = set(ren) - RENAMED_FIELDS
@@ -264,6 +291,11 @@ def emit(data: dict) -> str:
     out("  bool accepts_auto, accepts_off;")
     out("  double auto_value, off_value;")
     out("  unsigned auto_kinds;     // KIND_* bitmask of the kinds that accept AUTO")
+    out("  // The default in words of each kind (default_doc): a rule rather")
+    out("  // than a value, or nullptr when the kind has a value default.")
+    out("  const char* def_doc_serial;")
+    out("  const char* def_doc_pt;")
+    out("  const char* def_doc_pa;")
     out("};")
     out("")
     out("struct AnnealKeyRule {")
@@ -320,7 +352,10 @@ def emit(data: dict) -> str:
         auto_kinds = (" | ".join(KINDS[k] for k in key.get("auto_kinds", key["kinds"]))
                       if has_auto else "0u")
         out(f"   {bool_lit(has_auto)}, {bool_lit(has_off)}, {auto_v}, {off_v},")
-        out(f"   {auto_kinds}}},")
+        def_doc = {k: cstr(key["_def_doc"][k]) if k in key["_def_doc"]
+                   else "nullptr" for k in KIND_ORDER}
+        out(f"   {auto_kinds},")
+        out(f"   {def_doc['serial']}, {def_doc['pt']}, {def_doc['pa']}}},")
     out("};")
     out("")
     rule_cpp = {"requires_flag": "RequiresFlag", "conflicts_flag": "ConflictsFlag",

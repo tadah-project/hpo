@@ -1831,9 +1831,9 @@ Options for TADAH:ANNEAL
      GRAD_STRATEGY, unknown PARAM keys, and
      POPULATION, which TADAH:ANNEAL_PA reads.
    * temperature:
-     PARAM T_INIT (default auto)
+     PARAM T_INIT (default: calibrated with probes)
         The starting temperature of the cooling schedule. Without it, the search calibrates the starting temperature with probes (T0_PROBES, T0_ACCEPT).
-     PARAM T_MIN (default auto)
+     PARAM T_MIN (default: 1e-6 times the starting temperature)
         The temperature at which the cooling schedule ends; without it, 1e-6 times the starting temperature.
      PARAM RT (default 0.85)
         The ratio of two successive temperatures of the geometric cooling schedule, above 0 and below 1.
@@ -1841,21 +1841,21 @@ Options for TADAH:ANNEAL
         The number of probes near the starting point with which the search calibrates its starting temperature.
      PARAM T0_ACCEPT (default 0.05)
         The probability with which the calibrated starting temperature accepts a step up in loss: the temperature is the median rise of the loss over the probes divided by ln(1/T0_ACCEPT).
-     PARAM REANNEAL (default 1)
+     PARAM REANNEAL (default ON)
         ON restarts from the best point at a higher temperature when the schedule cools below T_MIN with evaluations left.
      PARAM REANNEAL_SCALE (default 0.25)
         The starting temperature of the n-th reannealing, as a fraction: the starting temperature times REANNEAL_SCALE to the power n.
    * steps:
-     PARAM CORANA (default 0)
+     PARAM CORANA (default OFF)
         Selects the proposal kernel: ON takes Corana's adaptive steps, one coordinate at a time with a step for each dimension; OFF takes the CLASSIC kernel, which moves every coordinate at once.
      PARAM STEP_FRAC (default 0.1)
         The first proposal scale of each dimension, as a fraction of the width of its OPTIM box.
-     PARAM CHAIN_LENGTH (default auto) [accepts AUTO]
+     PARAM CHAIN_LENGTH (default: AUTO, from MAXEVAL) [accepts AUTO]
         The number of proposals of the CLASSIC kernel at each temperature step.
         The default of TADAH:ANNEAL is AUTO: MAXEVAL spread evenly over the cooling schedule, which hpo_run.log reports.
      PARAM NS (default 20)
         Corana kernel: the number of cycles through the dimensions between two adjustments of the steps. Under TADAH:ANNEAL_PT, the number of sweeps between two adjustments of the steps of a slot.
-     PARAM NT (default auto) [accepts AUTO]
+     PARAM NT (default: AUTO, from MAXEVAL) [accepts AUTO]
         Corana kernel: the number of step adjustments at each temperature step.
         The default of TADAH:ANNEAL is AUTO: a number that follows from MAXEVAL, at most the larger of 100 and 5n for n dimensions.
      PARAM CORANA_C (default 2)
@@ -1864,7 +1864,7 @@ Options for TADAH:ANNEAL
         Corana kernel: the smallest step of each dimension, as a fraction of the width of its OPTIM box.
      PARAM BOUNDARY_MODE <REFLECT|REDRAW> (default REFLECT)
         What a proposal outside the OPTIM box becomes: REFLECT folds it back into the box as a mirror does; REDRAW draws each coordinate outside the box again.
-     PARAM RESET_TO_BEST (default auto)
+     PARAM RESET_TO_BEST (default: OFF; ON with CORANA ON)
         ON moves the chain back to the best point so far after each cooling step; under TADAH:ANNEAL_PT it moves the coldest slot after each epoch.
    * stopping:
      PARAM NEPS (default 4)
@@ -1914,9 +1914,9 @@ Options for TADAH:ANNEAL_PA
      on resample). Per-step journal line: T, ESS, unique parents,
      culled, finite field (feasible fraction), population best.
    * temperature:
-     PARAM T_HOT (default auto)
+     PARAM T_HOT (default: calibrated with probes)
         The hottest temperature of the ladder of TADAH:ANNEAL_PT, and the starting temperature of TADAH:ANNEAL_PA. Without it, the search calibrates it with probes (T0_PROBES, T0_ACCEPT).
-     PARAM T_MIN (default auto)
+     PARAM T_MIN (default: 1e-6 times the starting temperature)
         The temperature at which the cooling schedule ends; without it, 1e-6 times the starting temperature.
      PARAM RT (default 0.9)
         The ratio of two successive temperatures of the geometric cooling schedule, above 0 and below 1.
@@ -1927,7 +1927,7 @@ Options for TADAH:ANNEAL_PA
      PARAM ESS_TARGET (default 0.5) [accepts OFF]
         The effective sample size that each temperature step of TADAH:ANNEAL_PA keeps, as a fraction of the population: it sets the size of the step. OFF cools on the geometric schedule of RT.
    * steps:
-     PARAM CORANA (default 0)
+     PARAM CORANA (default OFF)
         Selects the proposal kernel: ON takes Corana's adaptive steps, one coordinate at a time with a step for each dimension; OFF takes the CLASSIC kernel, which moves every coordinate at once.
      PARAM STEP_FRAC (default 0.1)
         The first proposal scale of each dimension, as a fraction of the width of its OPTIM box.
@@ -1945,8 +1945,6 @@ Options for TADAH:ANNEAL_PA
         Corana kernel: the smallest step of each dimension, as a fraction of the width of its OPTIM box.
      PARAM BOUNDARY_MODE <REFLECT|REDRAW> (default REFLECT)
         What a proposal outside the OPTIM box becomes: REFLECT folds it back into the box as a mirror does; REDRAW draws each coordinate outside the box again.
-     PARAM RESET_TO_BEST (default auto)
-        ON moves the chain back to the best point so far after each cooling step; under TADAH:ANNEAL_PT it moves the coldest slot after each epoch.
      PARAM SWEEPS (default 1)
         The number of rounds each walker of TADAH:ANNEAL_PA runs at each temperature: a round is CHAIN_LENGTH proposals of the CLASSIC kernel, or NT step adjustments of the Corana kernel.
    * init:
@@ -2011,22 +2009,22 @@ Options for TADAH:ANNEAL_PT
      slot in the journal and written in full to
      hpo_corana_acceptance.tsv (per SLOT/temperature, not per walker).
    * temperature:
-     PARAM T_HOT (default auto)
+     PARAM T_HOT (default: calibrated with probes)
         The hottest temperature of the ladder of TADAH:ANNEAL_PT, and the starting temperature of TADAH:ANNEAL_PA. Without it, the search calibrates it with probes (T0_PROBES, T0_ACCEPT).
      PARAM T0_PROBES (default 20)
         The number of probes near the starting point with which the search calibrates its starting temperature.
      PARAM T0_ACCEPT (default 0.05)
         The probability with which the calibrated starting temperature accepts a step up in loss: the temperature is the median rise of the loss over the probes divided by ln(1/T0_ACCEPT).
-     PARAM T_COLD (default auto)
+     PARAM T_COLD (default: T_HOT divided by LADDER_SPAN)
         The coldest temperature of the ladder; without it, T_HOT divided by LADDER_SPAN.
    * ladder:
-     PARAM REPLICAS (default AUTO) [accepts AUTO]
+     PARAM REPLICAS (default: AUTO, the larger of THREADS and 2) [accepts AUTO]
         The number of replicas, one for each temperature of the ladder; AUTO takes the larger of THREADS and 2.
      PARAM LADDER_SPAN (default 1000)
         The ratio of T_HOT to T_COLD from which an omitted T_COLD follows.
      PARAM LADDER_POWER (default 1)
         The shape of the first ladder: of K slots, slot k lies at the fraction (k/(K-1))^LADDER_POWER of the span of the logarithm of the temperature. 1 gives a geometric ladder.
-     PARAM LADDER_ADAPT (default 0)
+     PARAM LADDER_ADAPT (default OFF)
         ON adapts the inner temperatures of the ladder towards the same swap acceptance for every pair of neighbours; the hottest and the coldest temperature stay. It needs 3 replicas or more.
      PARAM LADDER_ADAPT_EVERY (default 20)
         The number of swap attempts of each pair before each update of the ladder.
@@ -2036,7 +2034,7 @@ Options for TADAH:ANNEAL_PT
         The exponent with which the gain of the ladder update falls: the gain of update u is LADDER_ADAPT_GAIN times u to the power -LADDER_ADAPT_DECAY.
      PARAM LADDER_MIN_GAP (default 0.1)
         The smallest gap between neighbouring temperatures of the ladder, in their logarithm, as a fraction of the mean gap; 0 sets no smallest gap.
-     PARAM LADDER_FREEZE (default 1)
+     PARAM LADDER_FREEZE (default ON)
         ON stops the adaptation of the ladder once the swap acceptances of the pairs cannot be told apart statistically from equal ones.
    * swaps:
      PARAM SWAP_EVERY (default 1)
@@ -2044,7 +2042,7 @@ Options for TADAH:ANNEAL_PT
      PARAM SWAP_WINDOW (default 20) [accepts OFF]
         The number of epochs of a window of the swap diagnostics in hpo_run.log: the tables of a window, the reports of the steps and the summaries of the epochs. OFF writes cumulative tables only.
    * steps:
-     PARAM CORANA (default 0)
+     PARAM CORANA (default OFF)
         Selects the proposal kernel: ON takes Corana's adaptive steps, one coordinate at a time with a step for each dimension; OFF takes the CLASSIC kernel, which moves every coordinate at once.
      PARAM STEP_FRAC (default 0.1)
         The first proposal scale of each dimension, as a fraction of the width of its OPTIM box.
@@ -2056,7 +2054,7 @@ Options for TADAH:ANNEAL_PT
         Corana kernel: the smallest step of each dimension, as a fraction of the width of its OPTIM box.
      PARAM BOUNDARY_MODE <REFLECT|REDRAW> (default REFLECT)
         What a proposal outside the OPTIM box becomes: REFLECT folds it back into the box as a mirror does; REDRAW draws each coordinate outside the box again.
-     PARAM RESET_TO_BEST (default auto)
+     PARAM RESET_TO_BEST (default: OFF)
         ON moves the chain back to the best point so far after each cooling step; under TADAH:ANNEAL_PT it moves the coldest slot after each epoch.
      PARAM STEP_MODE <FIXED|FROZEN|ADAPTIVE> (default FROZEN)
         How the CLASSIC kernel sets its steps: FIXED keeps the scales STEP_FRAC gives; FROZEN calibrates the scales of each slot, then keeps them; ADAPTIVE calibrates them and keeps adapting them, a diagonal form of robust adaptive Metropolis.

@@ -18,17 +18,27 @@ using namespace tadah::hpo;
 /* ANNEAL-family key listing, generated from the registry
  * (blueprint/anneal_keys.toml -> anneal_keys_gen.h): names, defaults,
  * enum tokens, grouping, and importance order all come from the same
- * tables Knobs::parse validates against, so this text cannot drift. */
+ * tables Knobs::parse validates against, so this text cannot drift. A key
+ * the family refuses (a KindReject rule) is not listed, and each default
+ * is a value the family takes or the default_doc of the key in words. */
 static void print_anneal_family_caps(std::ostream& os, unsigned kind_mask)
 {
     namespace reg = tadah::hpo::anneal_registry;
     static const char* const group_order[] = {
         "budget", "temperature", "ladder", "swaps", "steps", "init",
         "stopping"};
+    const auto refused = [&](const reg::AnnealKeyInfo& k) {
+        for (const auto& r : reg::kRules)
+            if (r.type == reg::AnnealRuleType::KindReject &&
+                std::string_view(r.key) == k.name && (r.kind_mask & kind_mask))
+                return true;
+        return false;
+    };
     for (const char* group : group_order) {
         std::vector<const reg::AnnealKeyInfo*> keys;
         for (const auto& k : reg::kKeys)
-            if ((k.kinds & kind_mask) && std::string_view(group) == k.group)
+            if ((k.kinds & kind_mask) && std::string_view(group) == k.group &&
+                !refused(k))
                 keys.push_back(&k);
         if (keys.empty()) continue;
         std::sort(keys.begin(), keys.end(),
@@ -39,12 +49,16 @@ static void print_anneal_family_caps(std::ostream& os, unsigned kind_mask)
         for (const auto* k : keys) {
             bool has = false;
             double def = 0.0;
+            const char* def_doc = nullptr;
             if (kind_mask == reg::KIND_SERIAL) {
                 has = k->has_def_serial; def = k->def_serial;
+                def_doc = k->def_doc_serial;
             } else if (kind_mask == reg::KIND_PT) {
                 has = k->has_def_pt; def = k->def_pt;
+                def_doc = k->def_doc_pt;
             } else {
                 has = k->has_def_pa; def = k->def_pa;
+                def_doc = k->def_doc_pa;
             }
             std::ostringstream head;
             head << "PARAM " << k->name;
@@ -57,6 +71,12 @@ static void print_anneal_family_caps(std::ostream& os, unsigned kind_mask)
                     head << " (default "
                          << k->enum_values[static_cast<std::size_t>(def)]
                          << ")";
+            } else if (def_doc) {
+                /* A rule rather than a value (a calibration, AUTO with
+                 * what it takes): the registry's words. */
+                head << " (default: " << def_doc << ")";
+            } else if (k->type == reg::AnnealKeyType::Bool) {
+                head << (def != 0.0 ? " (default ON)" : " (default OFF)");
             } else if (has && k->accepts_auto &&
                        (k->auto_kinds & kind_mask) && def == k->auto_value) {
                 /* 1.5.0: print the TOKEN the user has to type. These keys
@@ -66,10 +86,10 @@ static void print_anneal_family_caps(std::ostream& os, unsigned kind_mask)
                 head << " (default AUTO)";
             } else if (has && k->accepts_off && def == k->off_value) {
                 head << " (default OFF)";
-            } else if (has) {
-                head << " (default " << def << ")";
             } else {
-                head << " (default auto)";
+                /* gen_anneal_keys.py gives every kind that takes the key a
+                 * default or a default_doc. */
+                head << " (default " << def << ")";
             }
             /* AUTO only for the kinds that take it (auto_kinds). */
             const bool takes_auto =

@@ -16,6 +16,12 @@
 #              and for keys whose default is derived at run time (AUTO)
 #   default_serial / default_pt / default_pa   per-kind defaults (override
 #              `default`; may appear without a base default)
+#   default_doc  the default in words, for a kind without a value default
+#              (a calibration, a rule of other keys) or with an AUTO one;
+#              key names and tokens in upper case. default_doc_serial /
+#              default_doc_pt / default_doc_pa override it for one kind.
+#              Every kind of a key has a default or a default_doc, except a
+#              kind that refuses the key (kind_reject), which has neither
 #   values     enum type only: the accepted tokens, first = conventional order
 #   kinds      subset of ["serial", "pt", "pa"] the key applies to
 #   auto_kinds subset of `kinds` that accept AUTO (accepts_auto keys only;
@@ -105,6 +111,7 @@ name = "CHAIN_LENGTH"
 type = "count"
 default_pa = "50"
 kinds = ["serial", "pa"]
+default_doc_serial = "AUTO, from MAXEVAL"
 group = "steps"
 rank = 3
 doc = "The number of proposals of the CLASSIC kernel at each temperature step."
@@ -133,6 +140,7 @@ name = "NT"
 type = "count"
 default_pa = "5"
 kinds = ["serial", "pa"]
+default_doc_serial = "AUTO, from MAXEVAL"
 group = "steps"
 rank = 5
 doc = "Corana kernel: the number of step adjustments at each temperature step."
@@ -179,18 +187,21 @@ doc = "What a proposal outside the OPTIM box becomes: REFLECT folds it back into
 name = "RESET_TO_BEST"
 type = "bool"
 kinds = ["serial", "pt", "pa"]
+default_doc_serial = "OFF; ON with CORANA ON"
+default_doc_pt = "OFF"
 group = "steps"
 rank = 9
 doc = "ON moves the chain back to the best point so far after each cooling step; under TADAH:ANNEAL_PT it moves the coldest slot after each epoch."
 # default is dynamic: 1 under serial CORANA (Corana 1987 returns to the
 # optimum on each temperature drop), else 0; PA rejects the key via the
 # kind_reject rule below, so it stays visible to all kinds for the
-# specific error message.
+# specific error message (the help and the documentation leave it out).
 
 [[key]]
 name = "T_INIT"
 type = "float"
 kinds = ["serial"]
+default_doc = "calibrated with probes"
 group = "temperature"
 rank = 1
 doc = "The starting temperature of the cooling schedule. Without it, the search calibrates the starting temperature with probes (T0_PROBES, T0_ACCEPT)."
@@ -201,6 +212,7 @@ min_open = true
 name = "T_HOT"
 type = "float"
 kinds = ["pt", "pa"]
+default_doc = "calibrated with probes"
 group = "temperature"
 rank = 1
 doc = "The hottest temperature of the ladder of TADAH:ANNEAL_PT, and the starting temperature of TADAH:ANNEAL_PA. Without it, the search calibrates it with probes (T0_PROBES, T0_ACCEPT)."
@@ -211,6 +223,7 @@ min_open = true
 name = "T_MIN"
 type = "float"
 kinds = ["serial", "pa"]
+default_doc = "1e-6 times the starting temperature"
 group = "temperature"
 rank = 2
 doc = "The temperature at which the cooling schedule ends; without it, 1e-6 times the starting temperature."
@@ -298,6 +311,7 @@ name = "REPLICAS"
 type = "count"
 default = "0"
 kinds = ["pt"]
+default_doc = "AUTO, the larger of THREADS and 2"
 group = "ladder"
 rank = 1
 doc = "The number of replicas, one for each temperature of the ladder; AUTO takes the larger of THREADS and 2."
@@ -309,6 +323,7 @@ range_doc = "an integer >= 2, or AUTO"
 name = "T_COLD"
 type = "float"
 kinds = ["pt"]
+default_doc = "T_HOT divided by LADDER_SPAN"
 group = "temperature"
 rank = 8
 doc = "The coldest temperature of the ladder; without it, T_HOT divided by LADDER_SPAN."
