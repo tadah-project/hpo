@@ -322,7 +322,9 @@ void reject_unread_attributes(const OptimizerSpec& spec,
                 return c.reads_vector_storage;
             }) +
             ")");
-    if (spec.seed && !caps.reads_seed && !caps.warns_unread_seed)
+    /* A PRESTAGE refinement's SEED that the exploration took seeds the
+     * exploration (OptimizerSpec::seed_seeds_exploration). */
+    if (spec.seed && !caps.reads_seed && !spec.seed_seeds_exploration)
         throw std::runtime_error(backend_name(spec) +
                                  " does not use SEED: it draws no random "
                                  "numbers; remove it");

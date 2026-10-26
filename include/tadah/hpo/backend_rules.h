@@ -102,8 +102,9 @@ enum class SpecRole { Phase, Inner };
  *     NLopt hands on to it");
  *   - POPULATION, VECTOR_ARR or SEED it does not read (reads_population,
  *     reads_vector_storage, reads_seed): "NLOPT:LN_BOBYQA does not use
- *     POPULATION; remove it (it is read by ...)". DLIB:GFS's SEED is
- *     reported with a warning when it runs (warns_unread_seed). */
+ *     POPULATION; remove it (it is read by ...)". A PRESTAGE refinement's
+ *     SEED that its exploration takes is accepted: it seeds the
+ *     exploration (OptimizerSpec::seed_seeds_exploration). */
 
 /* TADAH:RANDOM: no PARAM, no attribute it never reads (the tolerances,
  * POPULATION, VECTOR_ARR), and require_stop() (MAXEVAL, MAXTIME or

@@ -352,10 +352,8 @@ Registry build_registry()
         c.reads_ftol_abs_as_setting = true;
         c.untested_tolerance_note =
             "dlib's global search has no convergence test to apply it to";
-        /* find_min_global (MaxLIPO+TR) is deterministic and does not read
-         * SEED; configurations that set it predate the check, so
-         * run_dlib_global() warns instead of refusing it. */
-        c.warns_unread_seed = true;
+        /* find_min_global (MaxLIPO+TR) is deterministic: SEED is refused
+         * (reads_seed false), unless it seeds a PRESTAGE exploration. */
         c.step_use  = StepUse::Rejected;
         c.step_note = "MaxLIPO+TR sizes its own trust region from the samples; remove STEP";
         add(r, c);

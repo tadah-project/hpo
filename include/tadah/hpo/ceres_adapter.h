@@ -174,7 +174,7 @@ inline void validate_ceres_common_(const OptimizerSpec& sp,
         throw std::runtime_error("CERES:" + algo + " does not support POPULATION");
     /* GradientProblemSolver draws no random numbers; DLIB:BFGS refuses SEED
      * likewise. */
-    if (sp.seed)
+    if (sp.seed && !sp.seed_seeds_exploration)
         throw std::runtime_error("CERES:" + algo + " does not support SEED");
     if (sp.num_threads)
         throw std::runtime_error("CERES:" + algo + " does not support THREADS "

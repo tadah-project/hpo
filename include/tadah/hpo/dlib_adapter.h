@@ -98,7 +98,9 @@ inline void validate_dlib_bfgs_spec(const OptimizerSpec& sp)
         "DLIB:BFGS does not support VECTOR_ARR; use ALGO GFS or an NLopt L-BFGS variant instead");
   if (sp.pop)
     throw std::runtime_error("DLIB:BFGS does not support POPULATION");
-  if (sp.seed)
+  /* A PRESTAGE refinement's SEED that the exploration took seeds the
+   * exploration (OptimizerSpec::seed_seeds_exploration). */
+  if (sp.seed && !sp.seed_seeds_exploration)
     throw std::runtime_error("DLIB:BFGS does not support SEED");
   /* THREADS sizes the shared fan-out pool (pc_lammps + MLIP
    * train/predict), not any DLIB-internal parallelism -- BFGS itself runs ONE
@@ -308,24 +310,17 @@ template<class HostT>
     validate_dlib_gfs_spec(sp, restart);
     const auto t0 = std::chrono::steady_clock::now();
 
-    /* find_min_global (MaxLIPO+TR) is a deterministic algorithm; a
-     * SEED on this spec is never consulted. DLIB:BFGS rejects SEED
-     * outright, but GFS configs with SEED already exist in the wild,
-     * so warn instead of throwing (OptimizerCaps::warns_unread_seed, which
-     * keeps validate_dlib_gfs_spec from refusing it). (INIT-block SEED is
-     * unaffected -- it feeds the INIT chain, whose points are consumed
-     * below.) */
-    if (sp.seed) {
-      /* A PRESTAGE refinement's SEED that the exploration took seeds it:
-       * the journal names it as the exploration's (EXPLORE SEED). */
+    /* find_min_global (MaxLIPO+TR) is a deterministic algorithm; a SEED
+     * on this spec is refused (validate_dlib_gfs_spec), unless it is a
+     * PRESTAGE refinement's SEED that the exploration took, which seeds
+     * the exploration: the journal names it as the exploration's (EXPLORE
+     * SEED). (INIT-block SEED is unaffected -- it feeds the INIT chain,
+     * whose points are consumed below.) */
+    if (sp.seed && sp.seed_seeds_exploration) {
       const std::string msg =
-          sp.seed_seeds_exploration
-              ? "DLIB:GFS (find_min_global, MaxLIPO+TR) is deterministic; "
-                "SEED has no effect on the refinement: it seeds the "
-                "exploration (EXPLORE SEED " + std::to_string(*sp.seed) + ")."
-              : "DLIB:GFS (find_min_global, MaxLIPO+TR) is deterministic; "
-                "SEED has no effect on the search. Randomise via the INIT "
-                "block (e.g. METHOD RANDOM K with SEED) instead.";
+          "DLIB:GFS (find_min_global, MaxLIPO+TR) is deterministic; SEED has "
+          "no effect on the refinement: it seeds the exploration (EXPLORE "
+          "SEED " + std::to_string(*sp.seed) + ").";
       std::cerr << "[HPO] " << msg << "\n";
       HPOLog::instance().warning(msg);
     }
