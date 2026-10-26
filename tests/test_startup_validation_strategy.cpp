@@ -1040,12 +1040,18 @@ TEST_CASE("startup validation: VECTOR_ARR is refused for LD_TNEWTON and "
  * DLIB:GFS whose exploration has a SEED of its own. A PRESTAGE refinement's
  * SEED that the exploration takes (an exploration that reads SEED and has
  * none of its own) seeds the exploration, and is accepted, on DLIB:GFS and
- * on every refinement optimiser that reads no SEED (DLIB:BFGS, TADAH:GRID);
- * with an exploration SEED of its own the refinement's SEED is refused.
+ * on every refinement optimiser that reads no SEED (DLIB:BFGS, TADAH:GRID,
+ * CERES:STEEPEST_DESCENT); with an exploration SEED of its own the
+ * refinement's SEED is refused ("the PRESTAGE refinement:
+ * CERES:STEEPEST_DESCENT does not support SEED"). A build without Ceres
+ * refuses the CERES refinement as it refuses every LIB CERES
+ * (hpo_test::ceres_expect).
  * Before the fix: DLIB:GFS's SEED was accepted at startup (tadah hpo
  * --check said nothing), and the search warned when it started that SEED
- * had no effect on it; DLIB:BFGS and TADAH:GRID refused the refinement's
- * SEED that seeded the exploration. */
+ * had no effect on it; DLIB:BFGS, TADAH:GRID and CERES:STEEPEST_DESCENT
+ * refused the refinement's SEED that seeded the exploration ("the PRESTAGE
+ * refinement: CERES:STEEPEST_DESCENT does not support SEED" for the file
+ * that the CERES leg accepts). */
 TEST_CASE("startup validation: DLIB:GFS refuses a SEED, unless it seeds the "
           "exploration of a PRESTAGE that it refines",
           "[startup_validation][gfs][seed]")
@@ -1082,6 +1088,14 @@ TEST_CASE("startup validation: DLIB:GFS refuses a SEED, unless it seeds the "
     CHECK(judge(refine("TADAH", "GRID", "      SEED 3\n")).startup ==
           "the PRESTAGE refinement: TADAH:GRID does not use SEED: it draws "
           "no random numbers; remove it");
+    const std::string refinement = "the PRESTAGE refinement: ";
+    CHECK(judge(refine("CERES", "STEEPEST_DESCENT", "")).startup ==
+          hpo_test::ceres_expect("", refinement));
+    CHECK(judge(refine("CERES", "STEEPEST_DESCENT", "      SEED 3\n"))
+              .startup ==
+          hpo_test::ceres_expect(
+              refinement + "CERES:STEEPEST_DESCENT does not support SEED",
+              refinement));
     CHECK(judge(strategy_config(
               "    TYPE PRESTAGE\n    LIB NLOPT\n    ALGO LN_BOBYQA\n"
               "    MAXEVAL 10\n    EXPLORE\n      LIB DLIB\n"
