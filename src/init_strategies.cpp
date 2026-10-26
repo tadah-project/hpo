@@ -107,9 +107,11 @@ public:
     explicit RandomInitStrategy(std::size_t k) : k_(k) {}
 
     std::vector<std::vector<double>>
-    generate(const InitContext& ctx, std::size_t k_override) const override
+    generate(const InitContext& ctx, std::size_t k_cap) const override
     {
-        const std::size_t k = k_override > 0 ? k_override : k_;
+        /* K_TOTAL caps the K points (up to k_cap of them: the first ones
+         * of the same draw). */
+        const std::size_t k = k_cap > 0 ? std::min(k_cap, k_) : k_;
         const std::size_t dim = ctx.spec.low.size();
 
         std::mt19937_64 rng = method_generator(ctx);
@@ -140,9 +142,12 @@ public:
     }
 
     std::vector<std::vector<double>>
-    generate(const InitContext& ctx, std::size_t k_override) const override
+    generate(const InitContext& ctx, std::size_t k_cap) const override
     {
-        const std::size_t k = k_override > 0 ? k_override : k_;
+        /* The Latin hypercube of K points, of which K_TOTAL keeps the first
+         * (up to k_cap of them). */
+        const std::size_t k = k_;
+        const std::size_t n = k_cap > 0 ? std::min(k_cap, k_) : k_;
         const std::size_t dim = ctx.spec.low.size();
 
         std::mt19937_64 rng = method_generator(ctx);
@@ -157,9 +162,9 @@ public:
         }
 
         std::vector<std::vector<double>> out;
-        out.reserve(k);
+        out.reserve(n);
         const double inv_k = 1.0 / static_cast<double>(k);
-        for (std::size_t i = 0; i < k; ++i) {
+        for (std::size_t i = 0; i < n; ++i) {
             std::vector<double> u(dim);
             for (std::size_t d = 0; d < dim; ++d) {
                 u[d] = (static_cast<double>(perms[d][i]) + jitter(rng)) * inv_k;
@@ -184,16 +189,19 @@ public:
     }
 
     std::vector<std::vector<double>>
-    generate(const InitContext& ctx, std::size_t k_override) const override
+    generate(const InitContext& ctx, std::size_t k_cap) const override
     {
-        const std::size_t k = k_override > 0 ? k_override : k_;
+        /* The block of K points, of which K_TOTAL keeps the first (up to
+         * k_cap of them). */
+        const std::size_t k = k_;
+        const std::size_t n = k_cap > 0 ? std::min(k_cap, k_) : k_;
         const std::size_t dim = ctx.spec.low.size();
 
         if (dim == 0) {
             /* Sobol with dim=0 is meaningless; emulate the strategy by
-             * returning k zero-dimensional points (the chain de-dup
+             * returning n zero-dimensional points (the chain de-dup
              * step in ChainStrategy will collapse them). */
-            return std::vector<std::vector<double>>(k);
+            return std::vector<std::vector<double>>(n);
         }
 
         boost::random::sobol engine(static_cast<unsigned>(dim));
@@ -211,19 +219,13 @@ public:
         const std::uint64_t block = ctx.seed & 0xFFFFu;
         const std::uint64_t kk = k;   // >= 1
         constexpr std::uint64_t kMax = std::numeric_limits<std::uint64_t>::max();
-        /* The block, points block*k ... block*k + k - 1, must lie within the
-         * sequence: neither the product nor the end may wrap. A K or K_TOTAL
-         * of the target file is at most kMaxStartingPoints, so every block a
-         * seed selects lies within it; a caller that asks for more points
-         * meets the check below. */
+        /* The block, points block*k ... block*k + k - 1, lies within the
+         * sequence: K is at most kMaxStartingPoints (make_one), and a block
+         * holds K points whatever k_cap asks for, so neither the product
+         * nor the end wraps. */
         static_assert(kMaxStartingPoints <= kMax / 0x10000u,
                       "block 65535 of kMaxStartingPoints points must end "
                       "within the Sobol sequence");
-        if (block > kMax / kk || kk > kMax - block * kk)
-            throw std::runtime_error(
-                "INIT METHOD SOBOL: block " + std::to_string(block) + " of " +
-                std::to_string(k) + " points lies beyond the end of the Sobol "
-                "sequence (2^64 - 1 points); lower K (or K_TOTAL)");
         /* Position the engine at point `first` (the Gray-code state of that
          * index): the same point discard(first * dim) reaches, without the
          * product with the dimension. */
@@ -234,8 +236,8 @@ public:
         const double range = sobol_max - sobol_min + 1.0;
 
         std::vector<std::vector<double>> out;
-        out.reserve(k);
-        for (std::size_t i = 0; i < k; ++i) {
+        out.reserve(n);
+        for (std::size_t i = 0; i < n; ++i) {
             std::vector<double> u(dim);
             for (std::size_t d = 0; d < dim; ++d) {
                 /* Sobol returns integer-typed quasi-random output spanning
@@ -760,10 +762,10 @@ private:
 std::unique_ptr<InitStrategy>
 make_one(const InitStrategySpec::Entry& e, const std::string& warm_policy)
 {
-    /* K: a whole integer (strict_parse.h), from 0 for RANDOM and from 1
-     * for LHS and SOBOL, which draw at least one point (their constructors
-     * check it too), to kMaxStartingPoints, the points a block can hold;
-     * stoul read "3x" as 3 and "-1" as 2^64-1. */
+    /* K: a whole integer (strict_parse.h) from 1 -- each method draws at
+     * least one point (LHS and SOBOL check it in their constructors too;
+     * RANDOM 0 drew none) -- to kMaxStartingPoints, the points a block can
+     * hold; stoul read "3x" as 3 and "-1" as 2^64-1. */
     auto parse_k = [&](const std::string& s,
                        std::uint64_t min) -> std::size_t {
         return parse_uint(s, "INIT METHOD " + e.method + " K", min,
@@ -778,7 +780,7 @@ make_one(const InitStrategySpec::Entry& e, const std::string& warm_policy)
     if (e.method == "RANDOM") {
         if (e.args.size() != 1)
             throw std::runtime_error("INIT METHOD RANDOM expects exactly one arg: K");
-        return std::make_unique<RandomInitStrategy>(parse_k(e.args[0], 0));
+        return std::make_unique<RandomInitStrategy>(parse_k(e.args[0], 1));
     }
     if (e.method == "LHS") {
         if (e.args.size() != 1)

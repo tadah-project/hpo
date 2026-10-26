@@ -36,10 +36,11 @@ namespace tadah::hpo {
 class HPOTargets;        // forward-declared -- full type pulled in by .cpp
 
 /* The most starting points one count of the target file asks for: the K of
- * a METHOD line, K_TOTAL (INIT and RESTART blocks) and STRATEGY TOPK, the
- * candidates a PRESTAGE refinement starts from. The points of a block are
- * drawn when the file is read and held in memory, and each is a start of a
- * search; HPOTargets::read() refuses a larger count at its line. */
+ * a METHOD line and STRATEGY TOPK, the candidates a PRESTAGE refinement
+ * starts from (K_TOTAL caps the points of the METHOD lines of its block, so
+ * it asks for none of its own). The points of a block are drawn when the
+ * file is read and held in memory, and each is a start of a search;
+ * HPOTargets::read() refuses a larger count at its line. */
 inline constexpr std::size_t kMaxStartingPoints = 1000000;
 
 /* Which block's chain draws the points (InitContext::stream): an INIT
@@ -67,9 +68,10 @@ class InitStrategy {
 public:
     virtual ~InitStrategy() = default;
 
-    /** Produce up to k starting points. A strategy may return fewer
-     *  (e.g. CONFIG always returns 1). The caller is responsible for
-     *  truncating / padding to its budget. */
+    /** Produce up to k starting points, the first of those the strategy
+     *  gives (K_TOTAL: a cap, k = 0 for none): RANDOM, LHS and SOBOL draw
+     *  their K points and return the first min(K, k), CONFIG and WARM one
+     *  point, a chain its children's points until it has k. */
     virtual std::vector<std::vector<double>>
     generate(const InitContext& ctx, std::size_t k) const = 0;
 
@@ -122,8 +124,8 @@ std::vector<double> config_point_from_targets(const HPOTargets& trg);
 std::unique_ptr<InitStrategy> build_init_strategy(const struct InitStrategySpec& ispec);
 
 /* Checks one chain entry the way build_init_strategy() instantiates it:
- * a known METHOD, its arity, and K a whole integer, from 0 for RANDOM and
- * from 1 for LHS/SOBOL, to kMaxStartingPoints. HPOTargets::read() calls it
+ * a known METHOD, its arity, and K a whole integer from 1 to
+ * kMaxStartingPoints. HPOTargets::read() calls it
  * at the METHOD line, so the error names that line. Throws
  * std::runtime_error. */
 void validate_init_entry(const InitStrategySpec::Entry& e);

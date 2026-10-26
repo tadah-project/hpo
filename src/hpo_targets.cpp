@@ -580,8 +580,9 @@ static bool dispatch_init_attr(const std::string& key,
         return true;
     }
     if (key=="K_TOTAL") {
-        a.k_total = parse_uint(single_value(iss, key), key, 0,
-                               kMaxStartingPoints);
+        /* A cap of the points the METHOD lines give: 1 or more, and below
+         * their number, checked when the file is read (HPOTargets::read). */
+        a.k_total = parse_uint(single_value(iss, key), key, 1);
         return true;
     }
     if (key=="SEED") {
@@ -767,6 +768,11 @@ void HPOTargets::read(const std::string& fn)
      * AFTER_STAGNATION and MAX, checked when the STRATEGY block ends. */
     std::size_t endrestart_line = 0;
     std::string endrestart_text;
+    /* The K_TOTAL line of each set of starting points (an INIT chain, the
+     * RESTART chain) and its text: whether it caps anything is known once
+     * every block that adds to the chain has been read. */
+    std::map<const InitStrategySpec*, std::pair<std::size_t, std::string>>
+        k_total_lines;
     /* The line of the STRATEGY block (0 before it): there is one. A second
      * block reopened the first and could change the TYPE its keys had been
      * checked against. */
@@ -1293,6 +1299,8 @@ void HPOTargets::read(const std::string& fn)
                     /* METHOD (and its alias STRATEGY) adds to the chain */
                     if (key != "METHOD" && key != "STRATEGY")
                         set_once(active_init, key, "starting points");
+                    if (key == "K_TOTAL")
+                        k_total_lines[active_init] = {nline, line};
                     continue;
                 }
                 if (block == RESTART_BLK) {
@@ -1783,6 +1791,45 @@ void HPOTargets::read(const std::string& fn)
                 block_name(in.id),
             in.text));
     }
+    /* K_TOTAL caps the starting points the METHOD lines of its chain give,
+     * at most the chain's default_k() (the K of RANDOM, LHS and SOBOL, one
+     * point of CONFIG and of WARM, which gives at most one; without a
+     * METHOD line the CONFIG point): one at or above their number caps
+     * nothing. The INIT blocks of one optimiser make one chain, and so do
+     * the RESTART blocks. */
+    std::vector<std::pair<std::pair<std::size_t, std::string>,
+                          const InitStrategySpec*>> k_totals;
+    for (const auto& [init, at] : k_total_lines) k_totals.push_back({at, init});
+    std::sort(k_totals.begin(), k_totals.end(),
+              [](const auto& a, const auto& b) {
+                  return a.first.first < b.first.first;
+              });
+    for (const auto& [at, init] : k_totals) {
+        if (!init->k_total) continue;
+        const std::size_t points = build_init_strategy(*init)->default_k();
+        std::string list;
+        for (const auto& e : init->chain) {
+            list += (list.empty() ? "" : ", ") + e.method;
+            for (const auto& a : e.args) list += " " + a;
+        }
+        const std::size_t cap = *init->k_total;
+        const std::string head =
+            "K_TOTAL " + std::to_string(cap) + " caps nothing: ";
+        const std::string keeps =
+            ", and K_TOTAL keeps the first K_TOTAL starting points";
+        if (init->chain.empty())
+            throw std::runtime_error(at_line(at.first,
+                head + "a block without a METHOD line gives one starting "
+                "point (the CONFIG point)" + keeps, at.second));
+        if (cap >= points)
+            throw std::runtime_error(at_line(at.first,
+                head + "the METHOD lines of the block give at most " +
+                    std::to_string(points) +
+                    (points == 1 ? " starting point (" : " starting points (") +
+                    list + ")" + keeps,
+                at.second));
+    }
+
     /* A density gate that no OPTIM line arms cannot act: no dimension of
      * the search changes rho(r) or its window, so every candidate has the
      * -c density and its one verdict (OPTIM WATOM only scales the density,
