@@ -5142,8 +5142,8 @@ default (OALGO 1, with no second value or 1e-8)."""
 msg_doc = """\
 The message names the kernel of MODEL, what implementation 2 would ignore \
 (OPTIM OALGO, or the OALGO line with its values) and how implementation 2 \
-fits: without OPTIM OALGO, or with OALGO 1, the default, or without an \
-OALGO line."""
+fits: without OPTIM OALGO, or without an OALGO line or with the default \
+written out, OALGO 1 or OALGO 1 1e-8."""
 
 [[rule.invalid]]
 wrap = "root"
