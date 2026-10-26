@@ -1305,8 +1305,7 @@ bounds_note = ""
 explain_text = """
 Options for NLOPT:LD_LBFGS
    * Stops that end a run: MAXEVAL, MAXTIME, STOPVAL, FTOL_REL, FTOL_ABS, XTOL_REL, XTOL_ABS
-   * PARAM <name> <value>  NLopt's parameters of this algorithm:
-     tolg
+   * PARAM <name> <value>  NLopt's parameters of this algorithm: tolg
    * STEP is rejected: this algorithm never reads an initial step (population, branch-and-bound, or line-search method); remove STEP
 """
 
@@ -1416,8 +1415,7 @@ bounds_note = ""
 explain_text = """
 Options for NLOPT:LD_TNEWTON
    * Stops that end a run: MAXEVAL, MAXTIME, STOPVAL, FTOL_REL, FTOL_ABS, XTOL_REL, XTOL_ABS
-   * PARAM <name> <value>  NLopt's parameters of this algorithm:
-     tolg
+   * PARAM <name> <value>  NLopt's parameters of this algorithm: tolg
    * STEP is rejected: this algorithm never reads an initial step (population, branch-and-bound, or line-search method); remove STEP
 """
 
@@ -1452,8 +1450,7 @@ bounds_note = ""
 explain_text = """
 Options for NLOPT:LD_TNEWTON_PRECOND
    * Stops that end a run: MAXEVAL, MAXTIME, STOPVAL, FTOL_REL, FTOL_ABS, XTOL_REL, XTOL_ABS
-   * PARAM <name> <value>  NLopt's parameters of this algorithm:
-     tolg
+   * PARAM <name> <value>  NLopt's parameters of this algorithm: tolg
    * STEP is rejected: this algorithm never reads an initial step (population, branch-and-bound, or line-search method); remove STEP
 """
 
@@ -1488,8 +1485,7 @@ bounds_note = ""
 explain_text = """
 Options for NLOPT:LD_TNEWTON_PRECOND_RESTART
    * Stops that end a run: MAXEVAL, MAXTIME, STOPVAL, FTOL_REL, FTOL_ABS, XTOL_REL, XTOL_ABS
-   * PARAM <name> <value>  NLopt's parameters of this algorithm:
-     tolg
+   * PARAM <name> <value>  NLopt's parameters of this algorithm: tolg
    * STEP is rejected: this algorithm never reads an initial step (population, branch-and-bound, or line-search method); remove STEP
 """
 
@@ -1524,8 +1520,7 @@ bounds_note = ""
 explain_text = """
 Options for NLOPT:LD_TNEWTON_RESTART
    * Stops that end a run: MAXEVAL, MAXTIME, STOPVAL, FTOL_REL, FTOL_ABS, XTOL_REL, XTOL_ABS
-   * PARAM <name> <value>  NLopt's parameters of this algorithm:
-     tolg
+   * PARAM <name> <value>  NLopt's parameters of this algorithm: tolg
    * STEP is rejected: this algorithm never reads an initial step (population, branch-and-bound, or line-search method); remove STEP
 """
 
@@ -1560,8 +1555,7 @@ bounds_note = ""
 explain_text = """
 Options for NLOPT:LD_VAR1
    * Stops that end a run: MAXEVAL, MAXTIME, STOPVAL, FTOL_REL, FTOL_ABS, XTOL_REL, XTOL_ABS
-   * PARAM <name> <value>  NLopt's parameters of this algorithm:
-     tolg
+   * PARAM <name> <value>  NLopt's parameters of this algorithm: tolg
    * STEP is rejected: this algorithm never reads an initial step (population, branch-and-bound, or line-search method); remove STEP
 """
 
@@ -1596,8 +1590,7 @@ bounds_note = ""
 explain_text = """
 Options for NLOPT:LD_VAR2
    * Stops that end a run: MAXEVAL, MAXTIME, STOPVAL, FTOL_REL, FTOL_ABS, XTOL_REL, XTOL_ABS
-   * PARAM <name> <value>  NLopt's parameters of this algorithm:
-     tolg
+   * PARAM <name> <value>  NLopt's parameters of this algorithm: tolg
    * STEP is rejected: this algorithm never reads an initial step (population, branch-and-bound, or line-search method); remove STEP
 """
 
@@ -1845,8 +1838,7 @@ bounds_note = ""
 explain_text = """
 Options for NLOPT:LN_PRAXIS
    * Stops that end a run: MAXEVAL, MAXTIME, STOPVAL, FTOL_REL, FTOL_ABS, XTOL_REL, XTOL_ABS
-   * PARAM <name> <value>  NLopt's parameters of this algorithm:
-     t0_tol
+   * PARAM <name> <value>  NLopt's parameters of this algorithm: t0_tol
    * derivative-free
    * STEP <double>  initial step; consumption: one radius: the smallest STEP of the dimensions
      one radius for every dimension, the smallest STEP of the dimensions

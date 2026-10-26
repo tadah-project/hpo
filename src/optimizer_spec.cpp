@@ -246,9 +246,11 @@ static void print_nlopt_caps(std::ostream& os,const std::string& algo)
         if (c->algorithm_params.empty()) {
             os<<"   * PARAM: NLopt reads no parameter of this algorithm\n";
         } else {
-            os<<"   * PARAM <name> <value>  NLopt's parameters of this algorithm:";
-            /* The names on lines of up to 72 characters. */
-            std::size_t width = 72;
+            const std::string head =
+                "   * PARAM <name> <value>  NLopt's parameters of this algorithm:";
+            os << head;
+            /* The names after it, on lines of up to 72 characters. */
+            std::size_t width = head.size();
             for (std::size_t i = 0; i < c->algorithm_params.size(); ++i) {
                 const std::string& p = c->algorithm_params[i];
                 const std::string item = p + (i + 1 < c->algorithm_params.size()
