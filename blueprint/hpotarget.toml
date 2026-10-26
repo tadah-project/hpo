@@ -2601,18 +2601,17 @@ at = "none"
 text = "OPTIM_SCALE AUTO"
 error = "TADAH_OPTIM_SCALE must be AUTO or NONE (got 'unit')"
 
-[[env.invalid]]
+[[env.examples]]
 wrap = "root"
 env = { TADAH_OPTIM_SCALE = "" }
-at = "none"
+doc = "An empty value is ignored: the run uses the OPTIM_SCALE AUTO of the file."
 text = "OPTIM_SCALE AUTO"
-error = "TADAH_OPTIM_SCALE must be AUTO or NONE (got '')"
 
 [[env]]
 name = "TADAH_FAILSCORE_GRADING"
 key = "ROOT.FAILSCORE_GRADING"
 values = ["ON", "OFF"]
-msg = "TADAH_FAILSCORE_GRADING must be ON or OFF"
+msg = "TADAH_FAILSCORE_GRADING must be ON or OFF (got '{tok}')"
 doc = """\
 Replaces FAILSCORE_GRADING of the target file when it is set and not \
 empty; the value is ON or OFF, in upper case."""
@@ -2623,13 +2622,13 @@ check = "check"
 env = { TADAH_FAILSCORE_GRADING = "MAYBE" }
 at = "none"
 text = ""
-error = "TADAH_FAILSCORE_GRADING must be ON or OFF"
+error = "TADAH_FAILSCORE_GRADING must be ON or OFF (got 'MAYBE')"
 
 [[env]]
 name = "TADAH_BUMPGATE"
 key = "ROOT.BUMPGATE"
 values = ["CANDIDATE", "STRICT"]
-msg = "TADAH_BUMPGATE must be CANDIDATE or STRICT"
+msg = "TADAH_BUMPGATE must be CANDIDATE or STRICT (got '{tok}')"
 doc = """\
 Replaces BUMPGATE of the target file when it is set and not empty; the \
 value is CANDIDATE or STRICT, in upper case."""
@@ -2640,13 +2639,13 @@ check = "check"
 env = { TADAH_BUMPGATE = "MAYBE" }
 at = "none"
 text = ""
-error = "TADAH_BUMPGATE must be CANDIDATE or STRICT"
+error = "TADAH_BUMPGATE must be CANDIDATE or STRICT (got 'MAYBE')"
 
 [[env]]
 name = "TADAH_PC_ISOLATION"
 key = "ROOT.PC_ISOLATION"
 values = ["THREAD", "PROCESS"]
-msg = "PC_ISOLATION must be THREAD or PROCESS, got '{tok}'"
+msg = "TADAH_PC_ISOLATION must be THREAD or PROCESS (got '{tok}')"
 doc = """\
 Replaces PC_ISOLATION of the target file when it is set and not empty; \
 the value is THREAD or PROCESS, in upper case, and its refusal names \
@@ -2658,7 +2657,7 @@ check = "check"
 env = { TADAH_PC_ISOLATION = "process" }
 at = "none"
 text = ""
-error = "PC_ISOLATION must be THREAD or PROCESS, got 'process'"
+error = "TADAH_PC_ISOLATION must be THREAD or PROCESS (got 'process')"
 
 [[env]]
 name = "TADAH_PC_WORKER_TIMEOUT"

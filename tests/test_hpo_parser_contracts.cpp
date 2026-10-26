@@ -1589,6 +1589,50 @@ TEST_CASE("OPTIM: an explicit LIN tag keeps a dimension linear under LOG_HP",
     fs::remove_all(dir, ec);
 }
 
+/* Pins: an empty TADAH_OPTIM_SCALE is ignored, as an empty value of the
+ * other environment overrides is (the shell's way of clearing a
+ * variable): the file's OPTIM_SCALE NONE stands; a value other than AUTO
+ * or NONE is refused naming the variable and quoting the value
+ * ("TADAH_OPTIM_SCALE must be AUTO or NONE (got 'unit')"), and NONE in
+ * any case replaces the file's OPTIM_SCALE AUTO.
+ * Before the fix: the empty value was refused ("TADAH_OPTIM_SCALE must be
+ * AUTO or NONE (got '')"). */
+TEST_CASE("Environment: an empty TADAH_OPTIM_SCALE is ignored",
+          "[HPO][hpo_targets][env]")
+{
+    struct Env {
+        explicit Env(const char* value) { ::setenv(kName, value, 1); }
+        ~Env() { ::unsetenv(kName); }
+        const char* kName = "TADAH_OPTIM_SCALE";
+    };
+    const auto read = [](const std::string& scale) {
+        TempFile cfg("OPTIM WATOM (1) 0.5 5.0\nPC_ERMSE 0 1\nOPTIM_SCALE " +
+                     scale + "\nOPTIMIZER\nSTRATEGY\nLIB NLOPT\n"
+                     "ALGO LN_SBPLX\nMAXEVAL 5\nENDSTRATEGY\nENDOPTIMIZER\n");
+        tadah::core::Context ctx;
+        ctx.add("WATOM", 1.0);
+        return std::make_unique<tadah::hpo::HPOTargets>(ctx, cfg.path.string());
+    };
+    {
+        Env e("");
+        CHECK_FALSE(read("NONE")->space()->normalised());
+    }
+    {
+        Env e("unit");
+        try {
+            (void)read("NONE");
+            FAIL("TADAH_OPTIM_SCALE unit was accepted");
+        } catch (const std::exception& ex) {
+            CHECK(std::string(ex.what()) ==
+                  "TADAH_OPTIM_SCALE must be AUTO or NONE (got 'unit')");
+        }
+    }
+    {
+        Env e("none");
+        CHECK_FALSE(read("AUTO")->space()->normalised());
+    }
+}
+
 TEST_CASE("Strict numbers: NOISE CALIBRATION and LOG_HP",
           "[HPO][hpo_targets][strict_numbers]")
 {
