@@ -277,7 +277,6 @@ Values defaults_of(const HPOTargets& trg)
     add("OPTIMIZER.GRAD_STRATEGY",
         grad_strategy_name(sp.grad_strategy.value_or(GradStrategy::Numerical)));
     add("STRATEGY.TYPE", strategy_type_name(sp.strategy_type));
-    add("STRATEGY.N_STARTS", std::to_string(sp.multistart.n_starts));
     add("STRATEGY.TOPK", std::to_string(sp.stage_topk));
     add("INIT.WARM_ON_MISMATCH", sp.init_strategy_spec.warm_on_mismatch);
     add("NOISE.AUTO", sp.noise.autodetect ? "true" : "false");

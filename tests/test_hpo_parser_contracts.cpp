@@ -598,7 +598,11 @@ TEST_CASE("STRATEGY TYPE BASINS and BASINSV2 are rejected with the "
         {"PRESTAGE", StrategyType::PRESTAGE}};
     for (const auto& [name, type] : accepted) {
         INFO("TYPE " << name);
-        TempFile cfg(strategy_block(name, "  LIB NLOPT\n  ALGO LN_BOBYQA\n"));
+        /* TYPE MULTISTART needs N_STARTS 2 or more (it ran one start
+         * without N_STARTS). */
+        TempFile cfg(strategy_block(
+            name, std::string(name == "MULTISTART" ? "  N_STARTS 2\n" : "") +
+                      "  LIB NLOPT\n  ALGO LN_BOBYQA\n"));
         tadah::core::Context ctx;
         tadah::hpo::HPOTargets trg(ctx, cfg.path.string());
         CHECK(trg.spec.strategy_type == type);
@@ -764,8 +768,11 @@ TEST_CASE("build_run_policy wraps PLAIN/MULTISTART/PRESTAGE in RestartPolicy "
         "  ENDEXPLORE\n";
     for (const std::string t : {"PLAIN", "MULTISTART", "PRESTAGE"}) {
         INFO("TYPE " << t);
+        /* TYPE MULTISTART needs N_STARTS 2 or more (it ran one start
+         * without N_STARTS). */
         const std::string common = "  LIB NLOPT\n  ALGO LN_SBPLX\n  MAXEVAL 50\n" +
-            std::string(t == "PRESTAGE" ? explore : "");
+            std::string(t == "PRESTAGE" ? explore : "") +
+            std::string(t == "MULTISTART" ? "  N_STARTS 2\n" : "");
         {
             TempFile cfg(strategy_block(t, common + restart));
             tadah::core::Context ctx;
@@ -1442,17 +1449,20 @@ TEST_CASE("DUMP and BDUMP refuse a directory the run cannot write into",
     }
 }
 
-TEST_CASE("Strict numbers: STRATEGY N_STARTS, BUDGET_PER_START and TOPK are "
-          "integers >= 1", "[HPO][hpo_targets][strict_numbers]")
+TEST_CASE("Strict numbers: STRATEGY N_STARTS is an integer >= 2, "
+          "BUDGET_PER_START and TOPK integers >= 1",
+          "[HPO][hpo_targets][strict_numbers]")
 {
     /* PARALLEL, which this case read as an integer >= 1, is refused
      * ("startup validation: STRATEGY PARALLEL is refused at its line,
      * naming THREADS"). */
+    /* N_STARTS 1 is one start, which is TYPE PLAIN: N_STARTS is an integer
+     * >= 2 (it was >= 1, and N_STARTS 1 ran one start). */
     check_uint_key(strategy_home("N_STARTS", "MULTISTART", "DLIB", "BFGS"),
-                   "an integer >= 1", {"4", "1"}, {"0"});
+                   "an integer >= 2", {"4", "2"}, {"0", "1"});
     /* BUDGET_PER_START becomes each start's MAXEVAL: the same int budget. */
     check_uint_key(strategy_home("BUDGET_PER_START", "MULTISTART", "DLIB",
-                                 "BFGS"),
+                                 "BFGS", "N_STARTS 2\n"),
                    "an integer from 1 to 2147483647", {"4", "1", "2147483647"},
                    {"0", "2147483648", "4294967299"});
     const auto ms = parse_config(

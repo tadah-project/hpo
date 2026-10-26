@@ -1819,15 +1819,26 @@ long_doc = """\
 The keys of one TYPE (N_STARTS, PARALLEL, BUDGET_PER_START, TOPK) are \
 checked against it when the block ends, so TYPE may follow them; the \
 EXPLORE and REFINE blocks need TYPE PRESTAGE before them."""
+checks = [
+  { msg = "STRATEGY TYPE MULTISTART needs N_STARTS 2 or more: without N_STARTS it runs one start, which is STRATEGY TYPE PLAIN", doc = "When the STRATEGY block ends, at the TYPE line: TYPE MULTISTART without an N_STARTS line." },
+]
 
 [[key.examples]]
+doc = "A search from several starting points; TYPE may follow the keys of its TYPE."
+wrap = "strategy"
+text = '''
+N_STARTS 3
+TYPE MULTISTART'''
+
+[[key.examples]]
+doc = "One run of the optimiser, as without a TYPE line."
 wrap = "strategy"
 text = "TYPE PLAIN"
 
-[[key.examples]]
-doc = "A search from several starting points."
+[[key.invalid]]
 wrap = "strategy"
 text = "TYPE MULTISTART"
+error = "STRATEGY TYPE MULTISTART needs N_STARTS 2 or more: without N_STARTS it runs one start, which is STRATEGY TYPE PLAIN"
 
 [[key.invalid]]
 wrap = "strategy"
@@ -1857,10 +1868,9 @@ id = "STRATEGY.N_STARTS"
 name = "N_STARTS"
 blocks = ["STRATEGY"]
 synopsis = "N_STARTS <n>"
-args = [ { name = "n", kind = "integer", min = 1, max = "UINT64_MAX", what = "{key}" } ]
+args = [ { name = "n", kind = "integer", min = 2, max = "UINT64_MAX", what = "{key}", msg = "N_STARTS must be an integer >= 2, got '{tok}' (one start is STRATEGY TYPE PLAIN)" } ]
 repeat = "error"
 repeat_msg = "N_STARTS is set twice in the STRATEGY block (first on line {first_line}); each key is given once"
-default = { literal = "1" }
 doc = """\
 The number of starts of STRATEGY TYPE MULTISTART: the optimiser runs once \
 from each of the first N_STARTS starting points of the INIT block."""
@@ -1870,8 +1880,10 @@ with a warning. Another TYPE refuses N_STARTS when the STRATEGY block \
 ends."""
 
 [[key.examples]]
-wrap = "opt_multistart"
-text = "N_STARTS 4"
+wrap = "strategy"
+text = '''
+TYPE MULTISTART
+N_STARTS 4'''
 
 [[key.examples]]
 wrap = "strategy"
@@ -1881,9 +1893,12 @@ N_STARTS 3
 TYPE MULTISTART'''
 
 [[key.invalid]]
-wrap = "opt_multistart"
-text = "N_STARTS 0"
-error = "N_STARTS must be an integer >= 1, got '0'"
+wrap = "strategy"
+at = 2
+text = '''
+TYPE MULTISTART
+N_STARTS 1'''
+error = "N_STARTS must be an integer >= 2, got '1' (one start is STRATEGY TYPE PLAIN)"
 
 [[key.invalid]]
 wrap = "opt_prestage"
@@ -1891,9 +1906,10 @@ text = "N_STARTS 4"
 error = "N_STARTS is not accepted with STRATEGY TYPE PRESTAGE: only TYPE MULTISTART runs N_STARTS starts, so it would have no effect; set TYPE MULTISTART or remove N_STARTS"
 
 [[key.invalid]]
-wrap = "opt_multistart"
-at = 2
+wrap = "strategy"
+at = 3
 text = '''
+TYPE MULTISTART
 N_STARTS 2
 N_STARTS 3'''
 error = "N_STARTS is set twice in the STRATEGY block (first on line 9); each key is given once"
@@ -1934,7 +1950,7 @@ at = 2
 text = '''
 BUDGET_PER_START 5
 BUDGET_PER_START 6'''
-error = "BUDGET_PER_START is set twice in the STRATEGY block (first on line 9); each key is given once"
+error = "BUDGET_PER_START is set twice in the STRATEGY block (first on line 10); each key is given once"
 
 [[key]]
 id = "STRATEGY.TOPK"
@@ -2013,8 +2029,10 @@ At startup, at the ENDOPTIMIZER line: the optimiser is a local one or \
 takes several starting points; {list} names them."""
 
 [[strategy_type.examples]]
-wrap = "opt_multistart"
-text = "N_STARTS 2"
+wrap = "strategy"
+text = '''
+TYPE MULTISTART
+N_STARTS 2'''
 
 [[strategy_type.examples]]
 wrap = "none"
@@ -2046,6 +2064,7 @@ PC_ERMSE 0 1
 OPTIMIZER
 STRATEGY
 TYPE MULTISTART
+N_STARTS 2
 LIB DLIB
 ALGO GFS
 MAXEVAL 10
@@ -2064,6 +2083,7 @@ PC_ERMSE 0 1
 OPTIMIZER
 STRATEGY
 TYPE MULTISTART
+N_STARTS 2
 LIB NLOPT
 ALGO GN_DIRECT_L
 MAXEVAL 10
@@ -3332,6 +3352,7 @@ PC_ERMSE 0 1
 OPTIMIZER
 STRATEGY
 TYPE MULTISTART
+N_STARTS 2
 LIB NLOPT
 ALGO LN_SBPLX
 MAXEVAL 10

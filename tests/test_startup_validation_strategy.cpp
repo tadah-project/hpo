@@ -386,7 +386,10 @@ TEST_CASE("startup validation: MULTISTART rejects a single-seed global "
     SECTION("single-seed globals are rejected with the policy's text") {
         struct Case { std::string lib, algo, n_starts, extra; };
         for (const auto& c : std::vector<Case>{
-                 {"NLOPT", "GN_DIRECT", "1", ""},
+                 /* N_STARTS 4: N_STARTS 1 is refused at its line (the case
+                  * "STRATEGY TYPE MULTISTART needs N_STARTS 2 or more"); this
+                  * leg had N_STARTS 1. */
+                 {"NLOPT", "GN_DIRECT", "4", ""},
                  {"NLOPT", "G_MLSL_LDS", "2",
                   "    INNER\n      LIB NLOPT\n      ALGO LN_BOBYQA\n"
                   "      MAXEVAL 5\n    ENDINNER\n"},
@@ -730,6 +733,38 @@ TEST_CASE("startup validation: STRATEGY PARALLEL is refused at its line, "
         "    MULTISTART_PARALLEL 2\n    LIB DLIB\n    ALGO BFGS\n"));
     CHECK(old == "Error on line 5: 'MULTISTART_PARALLEL' was removed from the "
                  "grammar: " + reason + "\nLine:     MULTISTART_PARALLEL 2");
+}
+
+/* Pins: STRATEGY TYPE MULTISTART needs N_STARTS 2 or more. Without an
+ * N_STARTS line the block is refused when it ends, at the TYPE line:
+ * "STRATEGY TYPE MULTISTART needs N_STARTS 2 or more: without N_STARTS it
+ * runs one start, which is STRATEGY TYPE PLAIN"; N_STARTS 1 (and 0) is
+ * refused at its line: "N_STARTS must be an integer >= 2, got '1' (one
+ * start is STRATEGY TYPE PLAIN)". N_STARTS 2 is read.
+ * Before the fix: TYPE MULTISTART without N_STARTS, and with N_STARTS 1,
+ * ran one start (N_STARTS 1 by default); N_STARTS 0 was refused as "an
+ * integer >= 1". */
+TEST_CASE("startup validation: STRATEGY TYPE MULTISTART needs N_STARTS 2 or "
+          "more", "[startup_validation][strategy][knobs]")
+{
+    const std::string backend = "    LIB DLIB\n    ALGO BFGS\n";
+    /* TYPE on line 5. */
+    CHECK(parse_error(strategy_config("    TYPE MULTISTART\n" + backend)) ==
+          "Error on line 5: STRATEGY TYPE MULTISTART needs N_STARTS 2 or "
+          "more: without N_STARTS it runs one start, which is STRATEGY TYPE "
+          "PLAIN\nLine:     TYPE MULTISTART");
+    for (const std::string n : {"1", "0"})
+        CHECK(parse_error(strategy_config("    TYPE MULTISTART\n    N_STARTS " +
+                                          n + "\n" + backend)) ==
+              "Error on line 6: N_STARTS must be an integer >= 2, got '" + n +
+                  "' (one start is STRATEGY TYPE PLAIN)\nLine:     N_STARTS " +
+                  n);
+    PeriodicTable::initialize();
+    ScopedTempFile ok(strategy_config("    TYPE MULTISTART\n    N_STARTS 2\n" +
+                                      backend));
+    Context ctx = make_minimal_ctx();
+    HPOTargets trg(ctx, ok.path.string());
+    CHECK(trg.spec.multistart.n_starts == 2u);
 }
 
 TEST_CASE("startup validation: a TYPE line after an EXPLORE or REFINE "

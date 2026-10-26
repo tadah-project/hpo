@@ -3905,6 +3905,27 @@ TEST_CASE("Termination: MULTISTART gives each start of an NLopt search "
                        "(INIT seed=8)\n") != std::string::npos);
 }
 
+/* Pins: a MULTISTART of N_STARTS 2 whose INIT chain gives one starting
+ * point (no INIT block: the CONFIG point) runs one start and journals
+ * "MULTISTART: running 1 start", after the WARNING that names the one
+ * starting point.
+ * Before the fix: the line read "MULTISTART: running 1 starts
+ * (parallel=1)". */
+TEST_CASE("Termination: MULTISTART with one starting point journals that it "
+          "runs 1 start", "[HPO][termination][multistart]")
+{
+    TaRun run("OPTIMIZER\n  STRATEGY\n    TYPE MULTISTART\n    N_STARTS 2\n"
+              "    LIB NLOPT\n    ALGO LN_SBPLX\n    MAXEVAL 3\n"
+              "  ENDSTRATEGY\nENDOPTIMIZER\n");
+    int status = -1;
+    REQUIRE_NOTHROW(status = tadah::hpo::hpo_run(run.ctx));
+    CHECK(status == 0);
+    const std::string journal = read_file("hpo_run.log");
+    INFO(journal);
+    CHECK(journal.find("MULTISTART: running 1 start\n") != std::string::npos);
+    CHECK(journal.find("1 starts") == std::string::npos);
+}
+
 /* Pins: what the RESTART rounds of NLopt's StoGO evaluate, as the startup
  * WARNING says (PLAIN, 3 OPTIM dimensions, MAXEVAL 60, STRATEGY SEED 11,
  * RESTART AFTER_STAGNATION 4, MAX 1, METHOD RANDOM 1, SEED 5): round 1
