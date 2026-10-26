@@ -67,6 +67,9 @@ private:
         /* Per-token shape tag from the OPTIM line ([LIN | LOG | ASINH c]);
          * default LIN. Consumed when the SearchSpace is built. */
         std::vector<DimTransform> scale;
+        /* Whether the OPTIM line wrote the shape tag (LIN too): LOG_HP
+         * leaves a tagged box as written (DimSpec::tagged). */
+        std::vector<bool> tagged;
         /* How each box was obtained (explicit bounds or an AUTO rule). */
         std::vector<BoxOrigin> origin;
 

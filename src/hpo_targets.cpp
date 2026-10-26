@@ -216,6 +216,7 @@ void HPOTargets::Opti::resize(size_t s) {
   line.resize(s, 0);
   config.resize(s);
   scale.resize(s);
+  tagged.resize(s, false);
   origin.resize(s, BoxOrigin::Explicit);
   lowbound.resize(s, 0);
   highbound.resize(s, 0);
@@ -2863,6 +2864,7 @@ SearchSpace HPOTargets::build_search_space() const {
       d.lo = o.lowbound[i];
       d.hi = o.highbound[i];
       d.tf = i < o.scale.size() ? o.scale[i] : DimTransform{};
+      d.tagged = i < o.tagged.size() && o.tagged[i];
       d.origin = i < o.origin.size() ? o.origin[i] : BoxOrigin::Explicit;
       if (numeric) {
         try { d.x0 = core::to_double(o.config[i]); } catch (const std::exception&) {}
@@ -2954,6 +2956,9 @@ void HPOTargets::write_search_space_files(const std::string& dir) const {
     const DimSpec& d = ss.at(i);
     hpo << "OPTIM " << d.key << " (" << (d.user_index ? d.user_index : 1) << ") "
         << core::format_roundtrip(d.lo) << " " << core::format_roundtrip(d.hi);
+    /* A tagged LIN line keeps its tag: untagged, LOG_HP could log-scale
+     * the box pasted back. */
+    if (d.tf.kind == ScaleKind::Linear && d.tagged) hpo << " LIN";
     if (d.tf.kind == ScaleKind::Log)   hpo << " LOG";
     if (d.tf.kind == ScaleKind::Asinh) hpo << " ASINH " << core::format_roundtrip(d.tf.c);
     hpo << "   # " << box_origin_name(d.origin) << '\n';
@@ -3086,6 +3091,7 @@ void HPOTargets::process_optim_config(std::istringstream& iss,
    * Cutoff keys (RCUT*) are excluded: the neighbour list is sized from
    * explicit high bounds. */
   DimTransform tf;
+  bool tag_written = false;   // the line writes LIN, LOG or ASINH <c>
   auto upper = [](std::string t) {
     for (auto& ch : t) ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
     return t;
@@ -3109,12 +3115,16 @@ void HPOTargets::process_optim_config(std::istringstream& iss,
         throw std::runtime_error("OPTIM " + k + ": ASINH requires a positive "
                                  "linear scale c (got " + toks.back() + ")");
       toks.pop_back(); toks.pop_back();
+      tag_written = true;
       return;
     }
     if (!toks.empty()) {
       const std::string tag = upper(toks.back());
-      if (tag == "LIN")      { tf.kind = ScaleKind::Linear; toks.pop_back(); }
-      else if (tag == "LOG") { tf.kind = ScaleKind::Log;    toks.pop_back(); }
+      if (tag == "LIN") {
+        tf.kind = ScaleKind::Linear; toks.pop_back(); tag_written = true;
+      } else if (tag == "LOG") {
+        tf.kind = ScaleKind::Log; toks.pop_back(); tag_written = true;
+      }
       else if (tag == "ASINH")
         throw std::runtime_error("OPTIM " + k + ": ASINH needs one argument <c> "
                                  "(the linear scale)");
@@ -3469,6 +3479,7 @@ void HPOTargets::process_optim_config(std::istringstream& iss,
       omap.highbound[i] = hi_i;
       omap.lowbound[i] = lo_i;
       omap.scale[i] = tf;
+      omap.tagged[i] = tag_written;
     } catch (const std::exception& e) {
       throw std::runtime_error("OPTIM " + k + " (" +
                                core::to_string(typed_indices[j]) + "): " +

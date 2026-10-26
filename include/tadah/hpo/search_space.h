@@ -164,13 +164,17 @@ struct DimSpec {
     double       lo = 0.0, hi = 0.0;          // REAL bounds
     DimTransform tf;                          // shape
     bool         auto_log = false;            // shape chosen by the LOG_HP rule
+    bool         tagged = false;              // the OPTIM line writes its shape
+                                              // (LIN, LOG or ASINH): LOG_HP
+                                              // leaves it as written
     BoxOrigin    origin = BoxOrigin::Explicit;
     double       x0 = std::numeric_limits<double>::quiet_NaN();  // CONFIG seed, NaN if unknown
     bool         is_int = false;
 };
 
 /* Search-space policy parsed from the config:
- *   log_ratio  -- LOG_HP: untagged dims with lo > 0 and hi/lo >= ratio get LOG
+ *   log_ratio  -- LOG_HP: untagged dims (DimSpec::tagged false) with lo > 0
+ *                 and hi/lo >= ratio get LOG
  *   normalise  -- OPTIM_SCALE AUTO (true) | NONE (false). The struct
  *   default is NONE for hand-built specs (analyse_logscale shim);
  *   HPOTargets defaults to AUTO. */

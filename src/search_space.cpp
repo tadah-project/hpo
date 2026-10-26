@@ -74,8 +74,10 @@ SearchSpace SearchSpace::build(std::vector<DimSpec> dims, const ScalePolicy& pol
                 << d.lo << ", " << d.hi << "])";
             throw std::runtime_error(oss.str());
         }
-        /* LOG_HP rule on untagged dims (an explicit tag always wins). */
-        if (d.tf.kind == ScaleKind::Linear && !d.auto_log && policy.log_ratio &&
+        /* LOG_HP rule on untagged dims: a written tag, LIN included, always
+         * wins (DimSpec::tagged). */
+        if (d.tf.kind == ScaleKind::Linear && !d.tagged && !d.auto_log &&
+            policy.log_ratio &&
             d.lo > 0.0 && d.hi / d.lo >= *policy.log_ratio) {
             d.tf.kind = ScaleKind::Log;
             d.auto_log = true;
