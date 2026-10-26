@@ -239,23 +239,27 @@ struct PcIsolation {
 };
 
 /* The run's PC_ISOLATION settings, with every check of them: an override
- * that is not a number (TADAH_PC_WORKER_TIMEOUT), a mode that is neither
- * THREAD nor PROCESS, and, in the MPI build, a PROCESS that was asked for
- * (the default PROCESS is THREAD there) throw. */
+ * that is not a number (TADAH_PC_WORKER_TIMEOUT), a TADAH_PC_ISOLATION that
+ * is neither THREAD nor PROCESS, and, in the MPI build, a PROCESS that was
+ * asked for (the default PROCESS is THREAD there) throw. */
 PcIsolation resolve_pc_isolation(const HPOTargets& trg, HPOLog& log)
 {
     PcIsolation pc{trg.PC_ISOLATION, trg.PC_ISOLATION_set,
                    trg.PC_WORKER_TIMEOUT};
-    if (const char* e = std::getenv("TADAH_PC_ISOLATION")) {
-        if (*e) { pc.mode = e; pc.explicit_mode = true; }
+    /* The PC_ISOLATION line of the file is checked when it is read. */
+    if (const char* e = std::getenv("TADAH_PC_ISOLATION"); e && *e) {
+        const std::string v(e);
+        if (v != "THREAD" && v != "PROCESS")
+            throw std::runtime_error(
+                "TADAH_PC_ISOLATION must be THREAD or PROCESS (got '" + v +
+                "')");
+        pc.mode = v;
+        pc.explicit_mode = true;
     }
     if (const char* e = std::getenv("TADAH_PC_WORKER_TIMEOUT")) {
         if (*e) pc.worker_timeout = HPOTargets::parse_pc_worker_timeout(
                     e, "TADAH_PC_WORKER_TIMEOUT");
     }
-    if (pc.mode != "THREAD" && pc.mode != "PROCESS")
-        throw std::runtime_error(
-            "PC_ISOLATION must be THREAD or PROCESS, got '" + pc.mode + "'");
 #ifdef TADAH_HPO_MPI
     if (pc.mode == "PROCESS") {
         /* A fork+exec'd child of an MPI parent must never touch MPI
@@ -571,7 +575,8 @@ int hpo_run_from_startup(core::Context& ctx, HPOLog& log,
             if (v == "ON")       trg.set_failscore_grading(true);
             else if (v == "OFF") trg.set_failscore_grading(false);
             else throw std::runtime_error(
-                    "TADAH_FAILSCORE_GRADING must be ON or OFF");
+                    "TADAH_FAILSCORE_GRADING must be ON or OFF (got '" + v +
+                    "')");
         }
     }
     if (trg.FAILSCORE_GRADING) {
@@ -612,7 +617,8 @@ int hpo_run_from_startup(core::Context& ctx, HPOLog& log,
             if (v == "STRICT")         trg.BUMPGATE_STRICT = true;
             else if (v == "CANDIDATE") trg.BUMPGATE_STRICT = false;
             else throw std::runtime_error(
-                    "TADAH_BUMPGATE must be CANDIDATE or STRICT");
+                    "TADAH_BUMPGATE must be CANDIDATE or STRICT (got '" + v +
+                    "')");
         }
     }
     if (trg.BUMPGATE_STRICT)

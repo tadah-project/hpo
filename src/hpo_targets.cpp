@@ -265,8 +265,9 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn,
    * to every sub-spec. spec.low/high are the INTERNAL bounds. */
   /* Env override TADAH_OPTIM_SCALE=AUTO|NONE (an A/B of the coordinate
    * system without editing the target file). Read here because the space
-   * is built in this constructor. */
-  if (const char* e = std::getenv("TADAH_OPTIM_SCALE")) {
+   * is built in this constructor. An empty value is ignored, as an empty
+   * value of the other overrides is (the shell's way of clearing it). */
+  if (const char* e = std::getenv("TADAH_OPTIM_SCALE"); e && *e) {
     std::string v = e;
     for (auto& ch : v) ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
     if      (v == "AUTO") scale_policy_.normalise = true;
