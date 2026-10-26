@@ -765,7 +765,8 @@ inline Knobs Knobs::parse(const OptimizerSpec& sp, AlgoKind kind)
    *     INIT_MODE UNIFORM
    *     INIT_MODE JITTER                 sigma = STEP_FRAC * width
    *     INIT_MODE JITTER <frac>          sigma = <frac> * width
-   *     INIT_MODE JITTER AUTO <p>        sigma measured per dimension
+   *     INIT_MODE JITTER AUTO <p>        sigma measured per dimension (PT)
+   *     INIT_MODE JITTER AUTO            sigma = the proposal scale (PA)
    * The registry owns the mode token; the extras are a small grammar the
    * table cannot express, so they are parsed here and every rejection is a
    * hard error rather than a silently ignored word. */
@@ -792,15 +793,26 @@ inline Knobs Knobs::parse(const OptimizerSpec& sp, AlgoKind kind)
                                number_underflow_note(t));
     };
     if (anneal_upper(toks[1]) == "AUTO") {
-      if (toks.size() < 3)
-        throw std::runtime_error(
-            ctx + ": PARAM INIT_MODE JITTER AUTO needs a relative loss "
-                  "tolerance, e.g. `PARAM INIT_MODE JITTER AUTO 0.05`");
       kb.init_jitter_mode = Knobs::JitterMode::Auto;
-      kb.init_jitter_tol  = as_number(toks[2], "AUTO tolerance");
-      if (!(kb.init_jitter_tol > 0.0))
-        throw std::runtime_error(
-            ctx + ": PARAM INIT_MODE JITTER AUTO tolerance must be > 0");
+      /* ANNEAL_PA measures no displacement: its JITTER AUTO bounds are the
+       * first proposal scales (make_jitter_sigma), with no tolerance. */
+      if (kind == AlgoKind::PA) {
+        if (toks.size() > 2)
+          throw std::runtime_error(
+              ctx + ": PARAM INIT_MODE JITTER AUTO takes no tolerance (got '" +
+              toks[2] + "'): TADAH:ANNEAL_PA measures no displacement and "
+              "takes the first proposal scales as the bounds; "
+              "TADAH:ANNEAL_PT measures them against the tolerance");
+      } else {
+        if (toks.size() < 3)
+          throw std::runtime_error(
+              ctx + ": PARAM INIT_MODE JITTER AUTO needs a relative loss "
+                    "tolerance, e.g. `PARAM INIT_MODE JITTER AUTO 0.05`");
+        kb.init_jitter_tol  = as_number(toks[2], "AUTO tolerance");
+        if (!(kb.init_jitter_tol > 0.0))
+          throw std::runtime_error(
+              ctx + ": PARAM INIT_MODE JITTER AUTO tolerance must be > 0");
+      }
     } else {
       kb.init_jitter_mode = Knobs::JitterMode::Fixed;
       kb.init_jitter_frac = as_number(toks[1], "fraction");

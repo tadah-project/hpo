@@ -268,12 +268,11 @@ template<typename Vec, typename HostT>
             break;
           case anneal::Knobs::JitterMode::Auto:
             /* make_jitter_sigma: the proposal scale of each dimension.
-             * ANNEAL_PA runs no jitter calibration (ANNEAL_PT does), so
-             * the tolerance of JITTER AUTO is unused. */
+             * ANNEAL_PA runs no jitter calibration (ANNEAL_PT does), and
+             * its JITTER AUTO takes no tolerance. */
             oss << " AUTO (uniform bound; sigma="
                 << (kb.corana ? "initial V" : "proposal sigma")
-                << " per dim, not calibrated: tolerance "
-                << kb.init_jitter_tol << " unused)";
+                << " per dim, not calibrated)";
             break;
         }
       }

@@ -1953,20 +1953,6 @@ Options for TADAH:ANNEAL_PA
      PARAM INIT_MODE <JITTER|UNIFORM> (default JITTER)
         How the replicas or walkers start: the first at the starting point of the search; JITTER moves the others away from it, UNIFORM draws them from the OPTIM box.
         JITTER alone draws Gaussian displacements with the first proposal scales, and JITTER <fraction> uniform displacements of up to the fraction times the width of each box. Under TADAH:ANNEAL_PT, JITTER AUTO <p> measures the bounds of the uniform displacements of each dimension against a band of the loss relative to that of the starting point, and scales them by INIT_JITTER_LADDER, which scales the other JITTER forms too. Under TADAH:ANNEAL_PA, JITTER AUTO <p> takes the first proposal scales as the bounds, and p and the calibration keys have no effect.
-     PARAM INIT_JITTER_MAX (default 0.5)
-        Under INIT_MODE JITTER AUTO of TADAH:ANNEAL_PT, the largest measured displacement, as a fraction of the width of the OPTIM box, where the first probe lies too. TADAH:ANNEAL_PA accepts it and does not use it.
-     PARAM INIT_JITTER_PROBES (default 8)
-        Under INIT_MODE JITTER AUTO of TADAH:ANNEAL_PT, the largest number of probes of the loss in each dimension, split between its two sides. TADAH:ANNEAL_PA accepts it and does not use it.
-     PARAM INIT_JITTER_MAXEVAL (default AUTO) [accepts AUTO]
-        Under INIT_MODE JITTER AUTO of TADAH:ANNEAL_PT, the largest number of calibration probes, which MAXEVAL does not count. TADAH:ANNEAL_PA accepts it and does not use it.
-        AUTO takes the number of measured dimensions times INIT_JITTER_PROBES, plus the smaller of INIT_JITTER_AUDIT and the number of measured dimensions; INIT_JITTER_SAMPLE limits the measured dimensions.
-     PARAM INIT_JITTER_MAXTIME_FRAC (default 0.25)
-        Under INIT_MODE JITTER AUTO of TADAH:ANNEAL_PT, the share of the MAXTIME of the search that the calibration may take, when MAXTIME is set; INIT_JITTER_MAXEVAL caps its probes, which have a budget of their own. TADAH:ANNEAL_PA accepts it and does not use it.
-     PARAM INIT_JITTER_SAMPLE (default 0)
-        Under INIT_MODE JITTER AUTO of TADAH:ANNEAL_PT, the largest number of dimensions measured, taken in turn from the families of parameters; 0 measures every dimension. TADAH:ANNEAL_PA accepts it and does not use it.
-        A dimension that is not measured takes the median displacement of its family, as a fraction of the width, and hpo_run.log marks it inferred.
-     PARAM INIT_JITTER_AUDIT (default 32)
-        Under INIT_MODE JITTER AUTO of TADAH:ANNEAL_PT, the largest number of measured dimensions probed again at half their displacement, to check the measured displacements for a loss that does not grow with the displacement; 0 checks none. TADAH:ANNEAL_PA accepts it and does not use it.
    * stopping:
      PARAM NEPS (default 4)
         The length of the history of the FTOL_REL and FTOL_ABS stop, which has an effect only with one of them.
