@@ -202,14 +202,12 @@ id = "PARAM.NLOPT"
 optimizers = ["NLOPT"]
 msg = "{phase}: NLOPT:{algo}: unknown PARAM '{key}' (it takes {keys})"
 doc = """\
-An NLopt algorithm takes a PARAM of any name: a number is passed to NLopt \
-as the algorithm parameter of that name, which the algorithm reads when it \
-knows the name (tolg of LD_LBFGS, magic_eps of the GN_DIRECT algorithms). \
-A name the algorithm does not read has no effect."""
-quirk = """\
-A word value is accepted and has no effect: no algorithm receives it. \
-Only the finite-difference keys fd_step, fd_kernel and diff_method check \
-theirs."""
+An NLopt algorithm takes, with a number, the PARAM keys NLopt reads for it \
+(the optimiser list names them: tolg of LD_LBFGS, magic_eps of the \
+GN_DIRECT algorithms), which tadah hpo passes to NLopt, and the \
+finite-difference keys fd_step, fd_kernel and diff_method. Any other \
+name, and a word given to a key NLopt reads, are refused when tadah hpo \
+starts."""
 checks = [
   { msg = "{phase}: NLOPT:{algo}: PARAM {key} takes a number (got '{value}')", doc = "At startup, at the END line of its optimiser: a word given to a PARAM key the algorithm reads." },
 ]
@@ -258,12 +256,8 @@ optimizers = ["DLIB:BFGS"]
 msg = "{phase}: DLIB:BFGS does not support PARAM {key}; supported PARAM keys are fd_step, fd_kernel, diff_method and tol_gradinf"
 doc = """\
 DLIB:BFGS takes the PARAM keys fd_step, fd_kernel, diff_method and \
-tol_gradinf: a number given to any other name is refused when tadah hpo \
-starts."""
-quirk = """\
-A word value is accepted and has no effect, under tol_gradinf as under a \
-name DLIB:BFGS does not take; only the finite-difference keys fd_step, \
-fd_kernel and diff_method check theirs."""
+tol_gradinf: any other name, and a word given to tol_gradinf, are refused \
+when tadah hpo starts."""
 checks = [
   { msg = "{phase}: DLIB:BFGS: PARAM {key} takes a number (got '{value}')", doc = "At startup, at the END line of its optimiser: a word given to tol_gradinf." },
 ]
@@ -279,12 +273,8 @@ optimizers = ["CERES:STEEPEST_DESCENT"]
 msg = "{phase}: CERES:{algo} does not support PARAM {key}; supported: fd_step, fd_kernel, diff_method, tol_gradinf, max_iter, max_ls_iter"
 doc = """\
 A CERES algorithm takes the PARAM keys fd_step, fd_kernel, diff_method, \
-tol_gradinf, max_iter and max_ls_iter: a number given to any other name is \
-refused when tadah hpo starts."""
-quirk = """\
-A word value is accepted and has no effect, under tol_gradinf, max_iter \
-and max_ls_iter as under a name CERES does not take; only the \
-finite-difference keys fd_step, fd_kernel and diff_method check theirs."""
+tol_gradinf, max_iter and max_ls_iter: any other name, and a word given to \
+tol_gradinf, max_iter or max_ls_iter, are refused when tadah hpo starts."""
 checks = [
   { msg = "{phase}: CERES:{algo}: PARAM {key} takes a number (got '{value}')", doc = "At startup, at the END line of its optimiser: a word given to tol_gradinf, max_iter or max_ls_iter." },
 ]
@@ -301,11 +291,8 @@ msg = "{phase}: ASA:ASA: unknown PARAM '{key}'. Accepted keys: {keys}"
 doc = """\
 ASA:ASA takes its options as PARAM keys, named as ASA names them and \
 matched with case; a per-dimension key also takes the form Name[i], which \
-sets dimension i (from 1) whatever the order of the lines. A number given \
-to any other name is refused when tadah hpo starts."""
-quirk = """\
-A word value is accepted and has no effect, under an option of ASA:ASA as \
-under any other name."""
+sets dimension i (from 1) whatever the order of the lines. Any other \
+name, and a word given to an option, are refused when tadah hpo starts."""
 invalid = [
   { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Cooling_Rate 0.9", error = "the STRATEGY-level optimiser: ASA:ASA: unknown PARAM 'Cooling_Rate'. Accepted keys: Limit_Acceptances Limit_Generated Limit_Invalid_Generated_States Accepted_To_Generated_Ratio Cost_Precision Maximum_Cost_Repeat Number_Cost_Samples Temperature_Ratio_Scale Cost_Parameter_Scale_Ratio Temperature_Anneal_Scale Sequential_Parameters Initial_Parameter_Temperature Acceptance_Frequency_Modulus Generated_Frequency_Modulus Reanneal_Cost Reanneal_Parameters Delta_X User_Tangents Curvature_0 User_Quench_Cost_Scale User_Quench_Param_Scale User_Temperature_Ratio User_Delta_Parameter User_Parameter_Temperature Multi_Number Multi_Specify Multi_Grid Queue_Size Queue_Resolution Gener_Block Gener_Block_Max Gener_Mov_Avr" },
   { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM limit_acceptances 500", error = "the STRATEGY-level optimiser: ASA:ASA: unknown PARAM 'limit_acceptances'. Did you mean 'Limit_Acceptances'? ASA option names are case-sensitive.", doc = "A name that differs from an option in case only." },
@@ -446,8 +433,9 @@ optimizers = ["DLIB:BFGS"]
 args = [{ name = "tolerance", kind = "number", min = 0, min_open = true }]
 default = { text = "not set: the FTOL_ABS test ends the search, with 1e-7 when FTOL_ABS is not set", unchecked = "DLIB:BFGS takes the value when it starts; no setting of the target file holds it." }
 doc = """\
-The search ends once the L2 norm of the gradient falls below this value, \
-above 0. It replaces the FTOL_ABS test, and the two are not set together."""
+The search ends once the largest component of the gradient, in absolute \
+value, falls below this value, above 0, as under CERES. It replaces the \
+FTOL_ABS test, and the two are not set together."""
 checks = [
   { msg = "{phase}: DLIB:BFGS requires PARAM tol_gradinf > 0", doc = "For a value of 0 or below." },
   { msg = "{phase}: DLIB:BFGS accepts either FTOL_ABS or PARAM tol_gradinf, but not both", doc = "When the block also sets FTOL_ABS." },

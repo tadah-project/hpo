@@ -3502,10 +3502,7 @@ synopsis = "LIN"
 repeat = "error"
 repeat_msg = "OPTIM {key}: unexpected token(s) '{text}' -- the grammar is OPTIM <KEY> (indices) <low> <high> [LIN | LOG | ASINH <c>] or OPTIM <KEY> (indices) AUTO [RATIO <f> | FRAC <p>] [FLOOR <a>] [GROUP_FLOOR <r>] [LIN | LOG | ASINH <c>]"
 default = { text = "LIN, unless LOG_HP log-scales the box" }
-doc = "The optimiser searches the value itself; the tag is the last token of the line."
-quirk = """\
-LOG_HP log-scales a box tagged LIN as it does an untagged one: the tag \
-does not keep the box linear."""
+doc = "The optimiser searches the value itself, under LOG_HP too; the tag is the last token of the line."
 
 [[line_option.examples]]
 wrap = "root"

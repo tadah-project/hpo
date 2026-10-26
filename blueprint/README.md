@@ -19,7 +19,10 @@ entry fails when a file and the code differ.
 The `PARAM` keys of the `TADAH:ANNEAL` family: names, types, defaults,
 ranges and help text (`doc`, one or two sentences; `long_doc`, the detail;
 `range_doc`, in words, the range of a key whose range the code checks by
-hand). It is the source: `gen_anneal_keys.py --header` writes
+hand; `default_doc`, in words, a default that is no value, such as a
+calibration). Every annealer that takes a key has a default or a
+`default_doc` for it, except one that refuses the key (a `kind_reject`
+rule), which the help and the documentation leave out. It is the source: `gen_anneal_keys.py --header` writes
 `include/tadah/hpo/anneal_keys_gen.h` from it, and
 `hpo_anneal_registry_sync` (`gen_anneal_keys.py --check`) fails when the
 checked-in header differs. The example of each key is in the `PARAM` policy
@@ -91,9 +94,11 @@ A registered optimiser has these fields (an empty string means none):
 - `accepts_multi_seed`: one run takes more than one starting point.
 - `reads`: the attributes a run reads besides its stops, sorted, from
   `FTOL_ABS` (read as a setting, not a stop), `POPULATION`, `SEED`,
-  `VECTOR_ARR`.
-- `warns_unread_seed`: a run does not read `SEED`, and a `SEED` gets a
-  warning, not a refusal.
+  `THREADS` (the `THREADS` of an `EXPLORE` block), `VECTOR_ARR`.
+- `algorithm_params`: the `PARAM` keys NLopt reads for the algorithm, in
+  NLopt's order; empty for an algorithm that reads none and for another
+  library. A `PARAM` key of an NLopt algorithm that is neither one of them
+  nor a finite-difference key is refused.
 - `stops`: the stop criteria that end a run, in the order `MAXEVAL`,
   `MAXTIME`, `STOPVAL`, `FTOL_REL`, `FTOL_ABS`, `XTOL_REL`, `XTOL_ABS`.
 - `needs_stop`, `stop_note`: a run has no convergence test and no finite

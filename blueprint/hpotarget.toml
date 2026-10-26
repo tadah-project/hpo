@@ -2576,8 +2576,8 @@ error = "RHOBARGATE cannot act: no OPTIM line searches a key that changes the DM
 
 # ---------------------------------------------- environment overrides ----
 # A variable that is set and not empty replaces the key of the target
-# file when the run starts. TADAH_OPTIM_SCALE is read with the target
-# file, and an empty TADAH_OPTIM_SCALE is refused.
+# file when the run starts; an empty one is ignored. TADAH_OPTIM_SCALE is
+# read with the target file.
 
 [[env]]
 name = "TADAH_OPTIM_SCALE"
@@ -2585,8 +2585,8 @@ key = "ROOT.OPTIM_SCALE"
 values = ["AUTO", "NONE"]
 msg = "TADAH_OPTIM_SCALE must be AUTO or NONE (got '{tok}')"
 doc = """\
-Replaces OPTIM_SCALE of the target file. The value is read in any case, \
-and an empty value is refused."""
+Replaces OPTIM_SCALE of the target file when it is set and not empty; \
+the value is AUTO or NONE, read in any case."""
 
 [[env.examples]]
 wrap = "root"
@@ -2648,8 +2648,7 @@ values = ["THREAD", "PROCESS"]
 msg = "TADAH_PC_ISOLATION must be THREAD or PROCESS (got '{tok}')"
 doc = """\
 Replaces PC_ISOLATION of the target file when it is set and not empty; \
-the value is THREAD or PROCESS, in upper case, and its refusal names \
-PC_ISOLATION."""
+the value is THREAD or PROCESS, in upper case."""
 
 [[env.invalid]]
 wrap = "root"

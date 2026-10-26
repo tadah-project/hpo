@@ -1191,25 +1191,23 @@ default = { text = "Not set: each run takes a seed of its own, so two runs diffe
 doc = """\
 The seed of the random numbers of the optimiser, for a reproducible \
 search. An optimiser that does not read SEED refuses it when tadah hpo \
-starts, or only warns where the optimiser list says so; that list shows \
-which optimisers read it."""
+starts; the optimiser list shows which optimisers read it."""
 long_doc = """\
 Under STRATEGY TYPE MULTISTART start i runs with SEED + i. Under STRATEGY \
 TYPE PRESTAGE an EXPLORE block whose optimiser reads SEED, and that has no \
 seed of its own, takes the STRATEGY-level SEED. A SEED line, and for NLopt \
 a SEED in its INIT block, is a seed of its own; the refinement draws \
-random numbers of its own. Restart r of an active RESTART block runs the \
+random numbers of its own. A refinement whose optimiser reads no SEED \
+(DLIB:GFS, DLIB:BFGS, TADAH:GRID) takes a SEED that the EXPLORE block \
+takes, and refuses one when the EXPLORE block has a seed of its own. Restart r of an active RESTART block runs the \
 optimiser with SEED + r times the number of starts (N_STARTS under \
 MULTISTART, TOPK under PRESTAGE, 1 under PLAIN), and the EXPLORE block \
 with its SEED + r. An INNER block refuses SEED: NLopt draws its local \
 search from the random numbers of the enclosing run. SEED inside an INIT \
 or RESTART block is another key, the seed of the starting points."""
-quirk = """\
-DLIB:GFS, which does not read SEED, warns only when its search starts: \
-tadah hpo --check does not show the warning."""
 checks = [
-  { msg = "{phase}: {lib}:{algo} does not use SEED: it draws no random numbers; remove it", doc = "At startup, at the END line of its optimiser: an optimiser that does not read SEED and does not only warn." },
-  { msg = "{phase}: {lib}:{algo} does not support SEED", doc = "At startup, at the END line of its optimiser: DLIB:BFGS or CERES:STEEPEST_DESCENT." },
+  { msg = "{phase}: {lib}:{algo} does not use SEED: it draws no random numbers; remove it", doc = "At startup, at the END line of its optimiser: an optimiser that does not read SEED, unless the SEED is that of a PRESTAGE refinement, which the EXPLORE block takes." },
+  { msg = "{phase}: {lib}:{algo} does not support SEED", doc = "At startup, at the END line of its optimiser: DLIB:BFGS or CERES:STEEPEST_DESCENT, unless the SEED is that of a PRESTAGE refinement, which the EXPLORE block takes." },
 ]
 
 [[key.examples]]
@@ -1393,10 +1391,9 @@ long_doc = """\
 The value of the STRATEGY-level optimiser sizes the workers of the run; \
 OMP_NUM_THREADS does not change their number. DLIB:GFS, ASA:ASA, \
 TADAH:ANNEAL_PT and TADAH:ANNEAL_PA also read the THREADS of their own \
-block, and CERES:STEEPEST_DESCENT refuses THREADS at startup."""
-quirk = """\
-THREADS in an INNER block, or in an EXPLORE block whose optimiser is not \
-one of those that read it, is accepted and has no effect."""
+EXPLORE block. An INNER block refuses THREADS at startup, and so do an \
+EXPLORE block whose optimiser is none of these and \
+CERES:STEEPEST_DESCENT."""
 checks = [
   { msg = "{phase}: CERES:{algo} does not support THREADS (host evaluation is single-threaded inside one optimizer step)", doc = "At startup, at the END line of its optimiser." },
   { msg = "{phase}: {lib}:{algo} does not use THREADS in an INNER block: the THREADS of the STRATEGY-level optimiser sets the workers of the run; remove it", doc = "At startup, at the ENDINNER line." },
@@ -1735,17 +1732,17 @@ misplaced_msg = "LOG_HP is a search-space property; declare it once at the OPTIM
 default = { text = "Not set: no search parameter is log-scaled by its ratio." }
 doc = """\
 Log-scales each search parameter whose OPTIM box has low > 0 and high/low \
->= LOG_HP, unless its OPTIM line is tagged LOG or ASINH. It holds for the \
-whole search space, every optimiser of the run included."""
+>= LOG_HP, unless its OPTIM line has a shape tag: LIN keeps the box \
+linear, LOG and ASINH set its shape. It holds for the whole search space, \
+every optimiser of the run included."""
 long_doc = """\
 The ratio is a finite number >= 1. LOG_HP is written once, inside \
 OPTIMIZER or inside STRATEGY; a second line, in either block, is \
 refused. The EXPLORE, REFINE and INNER blocks refuse it, as \
 does the top level; inside INIT, RESTART and NOISE it is an unknown key."""
 quirk = """\
-An OPTIM line tagged LIN is log-scaled too when its box qualifies: the LIN \
-tag does not keep it linear. At the top level LOG_HP is refused with the \
-message about blocks, not as an unknown key."""
+At the top level LOG_HP is refused with the message about blocks, not as \
+an unknown key."""
 
 [[key.examples]]
 wrap = "strategy"
@@ -1849,7 +1846,7 @@ How the search runs the STRATEGY-level optimiser: once (PLAIN), from \
 several starting points (MULTISTART), or as an exploration followed by a \
 refinement (PRESTAGE)."""
 long_doc = """\
-The keys of one TYPE (N_STARTS, PARALLEL, BUDGET_PER_START, TOPK) are \
+The keys of one TYPE (N_STARTS, BUDGET_PER_START, TOPK) are \
 checked against it when the block ends, so TYPE may follow them; the \
 EXPLORE and REFINE blocks need TYPE PRESTAGE before them."""
 checks = [
@@ -1908,9 +1905,10 @@ doc = """\
 The number of starts of STRATEGY TYPE MULTISTART: the optimiser runs once \
 from each of the first N_STARTS starting points of the INIT block."""
 long_doc = """\
-With fewer starting points than N_STARTS, it runs once from each of them, \
-with a warning. Another TYPE refuses N_STARTS when the STRATEGY block \
-ends."""
+N_STARTS is 2 or more, and TYPE MULTISTART needs it: one start is TYPE \
+PLAIN. With fewer starting points than N_STARTS, the optimiser runs once \
+from each of them, with a warning. Another TYPE refuses N_STARTS when the \
+STRATEGY block ends."""
 
 [[key.examples]]
 wrap = "strategy"
@@ -2293,10 +2291,14 @@ OPTIMIZER, STRATEGY or REFINE, which set the starting points of one \
 optimiser."""
 default = { text = "The sum of the K of the METHOD lines, 1 for CONFIG and WARM.", unchecked = "The numbers count starting points; they are no setting." }
 doc = """\
-The number of starting points of the chain of the block: a chain of \
-several METHOD lines stops at K_TOTAL points. 0 sets no limit."""
+The largest number of starting points of the block: the chain of its \
+METHOD lines keeps its first K_TOTAL points, a single METHOD line \
+included."""
 long_doc = """\
-In a RESTART block it is the number of points of each restart."""
+K_TOTAL is 1 or more. One at or above the number of points the METHOD \
+lines give caps nothing and is refused when the file is read; a WARM \
+line counts as one point. In a RESTART block it is the number of points \
+of each restart."""
 checks = [
   { msg = "K_TOTAL {value} caps nothing: the METHOD lines of the block give at most {count} starting points ({list}), and K_TOTAL keeps the first K_TOTAL starting points", doc = "When the file is read, at the K_TOTAL line: a K_TOTAL at or above the starting points the METHOD lines give, K of a RANDOM, LHS or SOBOL line and 1 of a CONFIG or WARM line; {list} names the lines. The INIT blocks of one optimiser make one chain, and so do the RESTART blocks." },
   { msg = "K_TOTAL {value} caps nothing: the METHOD lines of the block give at most 1 starting point ({list}), and K_TOTAL keeps the first K_TOTAL starting points", doc = "When the file is read, at the K_TOTAL line: METHOD lines that give one starting point, a CONFIG or a WARM line." },
@@ -2810,11 +2812,9 @@ restarts from the starting points that the METHOD lines of the RESTART \
 block draw."""
 long_doc = """\
 A restart runs the whole STRATEGY TYPE again. Without a METHOD line it \
-starts from the values of the training configuration. The RESTART block \
-takes effect only when AFTER_STAGNATION and MAX are both above 0."""
-quirk = """\
-A RESTART block with AFTER_STAGNATION or MAX left at 0 has no effect, \
-without a warning."""
+starts from the values of the training configuration. A RESTART block \
+needs AFTER_STAGNATION and MAX, each 1 or more: a block without one of \
+them is refused when the STRATEGY block ends."""
 
 [[key.examples]]
 wrap = "strategy"
@@ -2867,8 +2867,8 @@ doc = """\
 The largest number of restarts of the search. Once they are used, the \
 next stagnation ends the search."""
 long_doc = """\
-The RESTART block takes effect only when AFTER_STAGNATION and MAX are both \
-above 0. Each round runs with the whole MAXEVAL of the optimiser."""
+A RESTART block needs MAX and AFTER_STAGNATION, each 1 or more. Each \
+round runs with the whole MAXEVAL of the optimiser."""
 
 [[key.examples]]
 wrap = "strategy"
