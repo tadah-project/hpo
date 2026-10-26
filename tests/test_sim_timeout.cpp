@@ -196,7 +196,9 @@ run 500000000
 namespace {
 const char* MIN_OPT = "OPTIMIZER\nLIB NLOPT\nALGO LN_SBPLX\nENDOPTIMIZER\n";
 /* A PC_LAMMPS line of the script @p script: it takes the PC_SCRIPT_TIMEOUT
- * above it (one that no line after it takes is refused). */
+ * above it (one that no line after it takes is refused). The cases had no
+ * such line, and DLIB:BFGS, which a PC_LAMMPS line refuses. Before the fix:
+ * they pass as well (a pin: the limit a line takes is unchanged). */
 std::string pc_line(const ScopedTempFile& script) {
     return "PC_LAMMPS --script " + script.path.string() +
            " --varloss foo 0.0 1.0\n";

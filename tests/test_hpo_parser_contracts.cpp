@@ -109,7 +109,8 @@ struct TempFile {
 };
 
 /* A gradient-free optimiser: PC_LAMMPS and PC_FAILPROBE lines refuse a
- * gradient-based one, DLIB:BFGS among them (it was DLIB:BFGS). */
+ * gradient-based one, DLIB:BFGS among them (it was DLIB:BFGS). Before the
+ * fix: the cases pass as well (a pin). */
 const std::string kOptimizer =
     "OPTIMIZER\n"
     "STRATEGY\n"
@@ -153,7 +154,7 @@ TEST_CASE("LOSS HUBER/TUKEY without a parameter use the shared defaults",
 {
     {
         /* (A metric line reads the LOSS line: one that no line reads is
-         * refused.) */
+         * refused. Before the fix: passes as well, a pin.) */
         auto trg = parse_root("LOSS HUBER\nPC_ERMSE 0 1\n");
         CHECK(trg.globalLoss.type() == LossFunction::Type::HUBER);
         CHECK(trg.globalLoss.params() ==
@@ -841,7 +842,8 @@ struct KeyHome {
 KeyHome root_home(const std::string& key) { return {key, kOptimizer, ""}; }
 
 /* PC_SCRIPT_TIMEOUT or MAXTIME at the top level, with a PC_LAMMPS line after
- * it that takes it (one that no line after it takes is refused). */
+ * it that takes it (one that no line after it takes is refused). Before the
+ * fix: the cases pass as well (a pin; they had no PC_LAMMPS line). */
 KeyHome timeout_home(const std::string& key);
 
 /* A key of the STRATEGY block, after TYPE/LIB/ALGO (line 6). */
