@@ -879,6 +879,127 @@ TEST_CASE("startup validation: THREADS in an INNER block or in an EXPLORE "
               .startup == "");
 }
 
+/* Pins: an NLopt algorithm takes the PARAM keys NLopt 2.10 reads for it
+ * (optimize.c): magic_eps for the DIRECT forms; magic_eps, magic_eps_abs,
+ * sigma_reltol and fglobal_reltol for the original DIRECT; t0_tol for
+ * LN_PRAXIS; tolg for LD_LBFGS, LD_VAR1/2 and the LD_TNEWTON forms;
+ * inner_maxeval, verbosity, rho_init, dual_algorithm and dual_ftol_rel,
+ * dual_ftol_abs, dual_xtol_rel, dual_xtol_abs, dual_maxeval for LD_MMA and
+ * LD_CCSAQ; none for any other. Any other name is refused at startup for
+ * every phase, the EXPLORE and INNER blocks included ("NLOPT:LN_SBPLX:
+ * unknown PARAM 'nosuchparam' (it takes none)"), and so is a word where a
+ * number is read ("NLOPT:LD_MMA: PARAM verbosity takes a number (got
+ * 'loud')"). DLIB:BFGS, CERES and ASA:ASA refuse a word as they refuse a
+ * number: under a name they do not take with their unknown-key message,
+ * under one of their keys with "PARAM <name> takes a number (got
+ * '<word>')". The finite-difference keys keep their own checks (fd_kernel
+ * takes a word). The ALGO help names the keys of an NLopt algorithm.
+ * Before the fix: every NLopt PARAM name was accepted and passed to NLopt,
+ * which ignored a name the algorithm does not read, and a word was
+ * accepted and passed to nothing, as under the PARAM keys of DLIB:BFGS,
+ * CERES and ASA:ASA and under a name they do not take. */
+TEST_CASE("startup validation: an optimiser refuses a PARAM key it does not "
+          "read and a word where it reads a number",
+          "[startup_validation][param_vocabulary]")
+{
+    const auto plain = [](const std::string& lib, const std::string& algo,
+                          const std::string& extra) {
+        return strategy_config("    LIB " + lib + "\n    ALGO " + algo +
+                               "\n    MAXEVAL 20\n" + extra);
+    };
+    const std::string top = "the STRATEGY-level optimiser: ";
+    struct Case { std::string lib, algo, param, error; };
+    const std::vector<Case> cases = {
+        {"NLOPT", "LN_SBPLX", "nosuchparam 7",
+         top + "NLOPT:LN_SBPLX: unknown PARAM 'nosuchparam' (it takes none)"},
+        {"NLOPT", "LN_SBPLX", "magic_eps 1e-4",
+         top + "NLOPT:LN_SBPLX: unknown PARAM 'magic_eps' (it takes none)"},
+        {"NLOPT", "LN_SBPLX", "verbosity loud",
+         top + "NLOPT:LN_SBPLX: unknown PARAM 'verbosity' (it takes none)"},
+        {"NLOPT", "LD_LBFGS", "magic_eps 1e-4",
+         top + "NLOPT:LD_LBFGS: unknown PARAM 'magic_eps' (it takes tolg)"},
+        {"NLOPT", "LD_MMA", "verbosity loud",
+         top + "NLOPT:LD_MMA: PARAM verbosity takes a number (got 'loud')"},
+        {"NLOPT", "LD_LBFGS", "tolg tight",
+         top + "NLOPT:LD_LBFGS: PARAM tolg takes a number (got 'tight')"},
+        {"DLIB", "BFGS", "tol_gradinf tight",
+         top + "DLIB:BFGS: PARAM tol_gradinf takes a number (got 'tight')"},
+        {"DLIB", "BFGS", "bogus word",
+         top + "DLIB:BFGS does not support PARAM bogus; supported PARAM keys "
+               "are fd_step, fd_kernel, diff_method and tol_gradinf"},
+        {"ASA", "ASA", "Limit_Acceptances many",
+         top + "ASA:ASA: PARAM Limit_Acceptances takes a number (got "
+               "'many')"},
+    };
+    for (const auto& c : cases) {
+        INFO(c.lib << ":" << c.algo << " PARAM " << c.param);
+        CHECK(judge(plain(c.lib, c.algo, "    PARAM " + c.param + "\n"))
+                  .startup == c.error);
+    }
+    const auto asa = judge(plain("ASA", "ASA", "    PARAM Bogus_Option word\n"));
+    CHECK_THAT(asa.startup,
+               Catch::StartsWith(top + "ASA:ASA: unknown PARAM 'Bogus_Option'. "
+                                       "Accepted keys:"));
+    CHECK(judge(plain("CERES", "STEEPEST_DESCENT",
+                      "    PARAM max_iter many\n")).startup ==
+          hpo_test::ceres_expect(
+              top + "CERES:STEEPEST_DESCENT: PARAM max_iter takes a number "
+                    "(got 'many')", top));
+    CHECK(judge(plain("CERES", "STEEPEST_DESCENT",
+                      "    PARAM max_lbfgs_rank many\n")).startup ==
+          hpo_test::ceres_expect(
+              top + "CERES:STEEPEST_DESCENT does not support PARAM "
+                    "max_lbfgs_rank; supported: fd_step, fd_kernel, "
+                    "diff_method, tol_gradinf, max_iter, max_ls_iter", top));
+
+    /* The keys each algorithm reads are accepted. */
+    for (const auto& [algo, param] :
+         std::vector<std::pair<std::string, std::string>>{
+             {"GN_DIRECT_L", "magic_eps 1e-4"},
+             {"GN_ORIG_DIRECT", "sigma_reltol 0.1"},
+             {"LN_PRAXIS", "t0_tol 0.01"},
+             {"LD_LBFGS", "tolg 1e-8"},
+             {"LD_TNEWTON_PRECOND", "tolg 1e-8"},
+             {"LD_MMA", "inner_maxeval 5"},
+             {"LD_CCSAQ", "dual_ftol_rel 1e-10"}}) {
+        INFO("NLOPT:" << algo << " PARAM " << param);
+        CHECK(judge(plain("NLOPT", algo, "    PARAM " + param + "\n"))
+                  .startup == "");
+    }
+    CHECK(judge(plain("DLIB", "BFGS", "    PARAM fd_kernel ceres\n")).startup ==
+          "");
+
+    /* The ALGO help (tadah explain) names them. */
+    const auto help = [](const std::string& algo) {
+        std::ostringstream os;
+        OptimizerSpec::print_caps(os, "NLOPT", algo);
+        return os.str();
+    };
+    CHECK_THAT(help("LD_LBFGS"),
+               Catch::Contains("   * PARAM <name> <value>  NLopt's parameters "
+                               "of this algorithm: tolg\n"));
+    CHECK_THAT(help("LN_SBPLX"),
+               Catch::Contains("   * PARAM: NLopt reads no parameter of this "
+                               "algorithm\n"));
+
+    /* Every phase: the exploration and an INNER block. */
+    CHECK(judge(strategy_config(
+              "    TYPE PRESTAGE\n    LIB NLOPT\n    ALGO LN_BOBYQA\n"
+              "    MAXEVAL 10\n    EXPLORE\n      LIB NLOPT\n"
+              "      ALGO GN_CRS2_LM\n      MAXEVAL 12\n"
+              "      PARAM tolg 1e-8\n    ENDEXPLORE\n"))
+              .startup ==
+          "the PRESTAGE exploration (EXPLORE block): NLOPT:GN_CRS2_LM: "
+          "unknown PARAM 'tolg' (it takes none)");
+    CHECK(judge(strategy_config(
+              "    LIB NLOPT\n    ALGO G_MLSL_LDS\n    MAXEVAL 20\n"
+              "    INNER\n      LIB NLOPT\n      ALGO LN_BOBYQA\n"
+              "      MAXEVAL 5\n      PARAM tolg 1e-8\n    ENDINNER\n"))
+              .startup ==
+          "the INNER block of the STRATEGY-level optimiser: NLOPT:LN_BOBYQA: "
+          "unknown PARAM 'tolg' (it takes none)");
+}
+
 TEST_CASE("startup validation: a TYPE line after an EXPLORE or REFINE "
           "block is refused as a second TYPE line",
           "[startup_validation][strategy][knobs][prestage]")
