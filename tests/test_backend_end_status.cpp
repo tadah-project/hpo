@@ -843,9 +843,11 @@ TEST_CASE("End status: the head of a Ceres message names its ending without "
 
 /* Pins: the ALGO help says what each DLIB:BFGS stop tests: FTOL_ABS the
  * change of the loss from one iteration to the next, PARAM tol_gradinf the
- * L2 norm of the gradient (dlib's gradient_norm_stop_strategy tests
- * length(g)).
- * Before the fix: "gradient-inf-norm stop", which is not what dlib tests. */
+ * largest component of the gradient, as CERES's gradient_tolerance.
+ * Before the fix: "gradient-inf-norm stop" while dlib's
+ * gradient_norm_stop_strategy tested the L2 norm, length(g), and then "the
+ * L2 norm of the gradient", until tol_gradinf tested the largest
+ * component. */
 TEST_CASE("End status: the DLIB:BFGS help says what its stops test",
           "[HPO][stop_status][caps]")
 {
@@ -857,8 +859,10 @@ TEST_CASE("End status: the DLIB:BFGS help says what its stops test",
     CHECK(s.find("   * FTOL_ABS     (objective-delta stop, default 1e-7: the "
                  "loss\n                   changed by less from one iteration "
                  "to the next)\n") != std::string::npos);
-    CHECK(s.find("   * PARAM tol_gradinf <double>  (stop once the L2 norm of "
-                 "the gradient\n                   falls below it; alternative "
-                 "to FTOL_ABS)\n") != std::string::npos);
+    CHECK(s.find("   * PARAM tol_gradinf <double>  (stop once the largest "
+                 "component of the\n                   gradient falls below "
+                 "it, as CERES's; alternative to FTOL_ABS)\n") !=
+          std::string::npos);
     CHECK(s.find("inf-norm") == std::string::npos);
+    CHECK(s.find("L2 norm") == std::string::npos);
 }

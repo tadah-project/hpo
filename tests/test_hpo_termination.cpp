@@ -6481,9 +6481,10 @@ TEST_CASE("Termination: the RESTART stagnation stop ends a search that has "
  *   PARAM tol_gradinf 1e6 -- 1 + 2 x 3 = 7 evaluations (the loss at the
  *     start and its gradient's stencil, which takes that loss as its
  *     centre), the stop line "DLIB:BFGS stopped: tol_gradinf reached after
- *     7 evaluation(s): the L2 norm of the gradient fell below PARAM
- *     tol_gradinf = 1e+06" and the status "DLIB:BFGS: tol_gradinf
- *     reached".
+ *     7 evaluation(s): the largest component of the gradient fell below
+ *     PARAM tol_gradinf = 1e+06" ("the L2 norm of the gradient" until
+ *     tol_gradinf tested the largest component) and the status "DLIB:BFGS:
+ *     tol_gradinf reached".
  * Before the fix: the same evaluations, no stop line for a convergence
  * test, and the trailer COMPLETED in every case. */
 TEST_CASE("Termination: DLIB:BFGS records why it ended",
@@ -6513,8 +6514,8 @@ TEST_CASE("Termination: DLIB:BFGS records why it ended",
               "    MAXEVAL 200\n    PARAM tol_gradinf 1e6\n", 7u,
               "DLIB:BFGS: tol_gradinf reached",
               "DLIB:BFGS stopped: tol_gradinf reached after 7 "
-              "evaluation(s): the L2 norm of the gradient fell below PARAM "
-              "tol_gradinf = 1e+06"}}) {
+              "evaluation(s): the largest component of the gradient fell "
+              "below PARAM tol_gradinf = 1e+06"}}) {
         DYNAMIC_SECTION(c.what) {
             TaRun run(plain_block(bfgs + c.lines));
             int status = -1;

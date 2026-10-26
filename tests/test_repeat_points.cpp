@@ -41,6 +41,7 @@
 
 #include <unistd.h>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <csignal>
@@ -1115,6 +1116,59 @@ TEST_CASE("Repeated points: DLIB:BFGS ends a search held in dlib's gap of "
     }
     SECTION("FTOL_ABS 0") {
         check(dlib::objective_delta_stop_strategy(0.0));
+    }
+}
+
+/* Pins: PARAM tol_gradinf of DLIB:BFGS tests the largest component of the
+ * gradient, as CERES's gradient_tolerance does: on the plane 3 A + 4 B
+ * (gradient (3, 4): largest component 4, L2 norm 5) from (0.5, 0.5), a
+ * tol_gradinf of 4.5 holds at the start, and the search ends after the
+ * loss and its 4-point stencil, "DLIB:BFGS stopped: tol_gradinf reached
+ * after 5 evaluation(s): the largest component of the gradient fell below
+ * PARAM tol_gradinf = 4.5"; a tol_gradinf of 3.5 does not, and the search
+ * goes to the corner (0, 0).
+ * Before the fix: the test took the L2 norm (dlib's
+ * gradient_norm_stop_strategy), 5, so 4.5 did not end the search either. */
+TEST_CASE("DLIB:BFGS: PARAM tol_gradinf tests the largest component of the "
+          "gradient", "[HPO][repeat_points][dlib_bfgs][stop_status]")
+{
+    struct PlaneHost {
+        std::vector<Vec> asked;
+        double operator()(const Vec& x) {
+            asked.push_back(x);
+            return 3.0 * x(0) + 4.0 * x(1);
+        }
+        std::string repeat_reuse_blocker() const { return ""; }
+        std::size_t g_iter_value() const { return asked.size(); }
+    };
+    {
+        PlaneHost host;
+        auto sp = bfgs_spec({0.0, 0.0}, {1.0, 1.0}, {0.5, 0.5});
+        sp.stop.maxeval = 50;
+        sp.param["tol_gradinf"] = 4.5;
+        const std::string journal =
+            run_bfgs_within(sp, host, "DLIB:BFGS on the plane, 4.5");
+        CHECK(host.asked.size() == 5u);
+        CHECK(status_of(journal) == "DLIB:BFGS: tol_gradinf reached");
+        CHECK(journal.find("DLIB:BFGS stopped: tol_gradinf reached after 5 "
+                           "evaluation(s): the largest component of the "
+                           "gradient fell below PARAM tol_gradinf = 4.5") !=
+              std::string::npos);
+    }
+    {
+        PlaneHost host;
+        auto sp = bfgs_spec({0.0, 0.0}, {1.0, 1.0}, {0.5, 0.5});
+        sp.stop.maxeval = 50;
+        sp.param["tol_gradinf"] = 3.5;
+        const std::string journal =
+            run_bfgs_within(sp, host, "DLIB:BFGS on the plane, 3.5");
+        REQUIRE_FALSE(host.asked.empty());
+        CHECK(host.asked.size() > 5u);
+        CHECK(status_of(journal) != "DLIB:BFGS: tol_gradinf reached");
+        CHECK(std::any_of(host.asked.begin(), host.asked.end(),
+                          [](const Vec& x) {
+                              return x(0) == 0.0 && x(1) == 0.0;
+                          }));
     }
 }
 
