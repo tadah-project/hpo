@@ -1899,14 +1899,24 @@ TEST_CASE("A count of starting points at its limit, 1000000, draws that many "
  * lines (CONFIG and WARM give one point each): "K_TOTAL 3 caps nothing: the
  * METHOD lines of the block give at most 3 starting points (CONFIG, RANDOM
  * 2), and K_TOTAL keeps the first K_TOTAL starting points"; a block without
- * a METHOD line gives one, the CONFIG point. The INIT blocks inside
- * OPTIMIZER and STRATEGY make one chain, counted together, and so do two
- * RESTART blocks. K_TOTAL 0 and METHOD RANDOM 0, which gave no cap and no
- * point, are refused at their line, as LHS 0 and SOBOL 0 are. K_TOTAL 3
- * of CONFIG and RANDOM 4 keeps 3 points.
+ * a METHOD line gives one, the CONFIG point. An INIT block inside EXPLORE
+ * without a METHOD line gives the exploration the starting points of the
+ * INIT blocks inside OPTIMIZER, STRATEGY and REFINE (METHOD RANDOM 5 here),
+ * which its K_TOTAL does not cap: "K_TOTAL 2 caps nothing: an INIT block
+ * inside EXPLORE without a METHOD line gives the exploration the starting
+ * points of the INIT blocks inside OPTIMIZER, STRATEGY and REFINE (the
+ * CONFIG point without one), and K_TOTAL caps only the points of the
+ * block's own METHOD lines". The INIT blocks inside OPTIMIZER and
+ * STRATEGY make one chain, counted together, and so do two RESTART blocks.
+ * K_TOTAL 0 and METHOD RANDOM 0, which gave no cap and no point, are
+ * refused at their line, as LHS 0 and SOBOL 0 are. K_TOTAL 3 of CONFIG and
+ * RANDOM 4 keeps 3 points.
  * Before the fix: each of these files was read; K_TOTAL replaced the K of
  * a lone METHOD line (METHOD RANDOM 3 with K_TOTAL 7 drew 7 points), K_TOTAL
- * 0 set no cap, and RANDOM 0 drew no point. */
+ * 0 set no cap, and RANDOM 0 drew no point. Before the fix of the EXPLORE
+ * case, its refusal gave the reason of a block that starts from the CONFIG
+ * point ("... a block without a METHOD line gives one starting point (the
+ * CONFIG point) ..."; the text fails). */
 TEST_CASE("K_TOTAL that caps nothing, K_TOTAL 0 and METHOD RANDOM 0 are "
           "refused at their line", "[HPO][init_strategy][k_total]")
 {
@@ -1930,6 +1940,15 @@ TEST_CASE("K_TOTAL that caps nothing, K_TOTAL 0 and METHOD RANDOM 0 are "
          "Error on line 4: K_TOTAL 2 caps nothing: a block without a METHOD "
          "line gives one starting point (the CONFIG point)" + keeps +
              "\nLine: K_TOTAL 2"},
+        {"INIT\nMETHOD RANDOM 5\nSEED 2\nENDINIT\nSTRATEGY\nTYPE PRESTAGE\n"
+         "LIB NLOPT\nALGO LN_SBPLX\nMAXEVAL 10\nTOPK 2\nEXPLORE\nLIB TADAH\n"
+         "ALGO RANDOM\nMAXEVAL 5\nINIT\nK_TOTAL 2\nENDINIT\nENDEXPLORE\n"
+         "ENDSTRATEGY\n",
+         "Error on line 18: K_TOTAL 2 caps nothing: an INIT block inside "
+         "EXPLORE without a METHOD line gives the exploration the starting "
+         "points of the INIT blocks inside OPTIMIZER, STRATEGY and REFINE "
+         "(the CONFIG point without one), and K_TOTAL caps only the points "
+         "of the block's own METHOD lines\nLine: K_TOTAL 2"},
         {restart_block("METHOD LHS 2\nK_TOTAL 2\n"),
          "Error on line 11: K_TOTAL 2 caps nothing: the METHOD lines of the "
          "block give at most 2 starting points (LHS 2)" + keeps +
