@@ -755,8 +755,8 @@ private:
      * what reads the evaluation afterwards on the same thread
      * (analytical_gradient, obs_loss, tls_trainer_for_test). `host` is the
      * generation_ of the HPO_Host whose evaluation built it: a slot of
-     * another host (an earlier run on this thread, e.g. the first TASK hpo
-     * of a task file) is never read as this host's. */
+     * another host (an earlier run on this thread, e.g. an earlier
+     * hpo_run() of a program) is never read as this host's. */
     struct TrainerDeleter {
         void operator()(mlip::Trainer* p) const noexcept { if (p) p->~Trainer(); }
     };

@@ -2,8 +2,9 @@
 /*
  * check_summary.h -- what `tadah hpo --check` prints.
  *
- * hpo_run() with CHECK true (`tadah hpo --check`, CHECK true in a TASK hpo
- * section) makes every startup check of the run and, when they pass,
+ * hpo_run() with CHECK true (`tadah hpo --check`, CHECK true in a
+ * configuration file without WEIGHTS) makes every startup check of the run
+ * and, when they pass,
  * writes this summary to standard output:
  *
  *   tadah hpo --check: config.hpo passed the startup checks, with 1 warning.

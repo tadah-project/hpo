@@ -2329,8 +2329,9 @@ TEST_CASE("Two runs in one process: a run that fails after starting its "
 /* Pins: every run gets a worker pool of its own THREADS and stops it when
  * it ends: two runs in one process, THREADS 2 then 3, each journal says
  * "ScriptExecutor: <its THREADS> workers = THREADS" once, and after each
- * run MLIP has no parallel backend installed (a later task of the process,
- * tadah train after TASK hpo, runs its kernels on OpenMP again).
+ * run MLIP has no parallel backend installed (a later caller in the
+ * process, a training after hpo_run(), runs its kernels on OpenMP
+ * again).
  * Before the fix: the backend stayed installed after the run (the journal
  * lines were right: they printed the THREADS asked for, while the pool kept
  * the first run's 2 workers -- test_script_executor.cpp's
@@ -9480,7 +9481,6 @@ TEST_CASE("hpo_run without HPOTARGET is refused, naming where the run's own "
           "goes",
           "[hpo][startup][run_settings]")
 {
-    using tadah::mlip::KeyOrigin;
     using tadah::mlip::KeyProvenance;
     const std::string none_given =
         "tadah hpo: no HPOTARGET: name the hpotarget file with --hpotarget, "
@@ -9493,18 +9493,14 @@ TEST_CASE("hpo_run without HPOTARGET is refused, naming where the run's own "
     struct Leg {
         const char* name;
         bool with_provenance;
-        KeyOrigin::Kind kind;
         const char* file;
         std::vector<tadah::core::SkippedKeyLine> skipped;
         std::string message;
     };
     const std::vector<Leg> legs = {
-        {"no provenance", false, KeyOrigin::Kind::ConfigFile, "", {},
-         none_given},
-        {"-c config.tadah", true, KeyOrigin::Kind::ConfigFile, "config.tadah",
-         {}, none_given},
-        {"-c old.tadah", true, KeyOrigin::Kind::ConfigFile, "old.tadah",
-         {old_line}, none_given + not_read},
+        {"no provenance", false, "", {}, none_given},
+        {"-c config.tadah", true, "config.tadah", {}, none_given},
+        {"-c old.tadah", true, "old.tadah", {old_line}, none_given + not_read},
     };
     for (const Leg& leg : legs) {
         INFO(leg.name);
@@ -9512,7 +9508,7 @@ TEST_CASE("hpo_run without HPOTARGET is refused, naming where the run's own "
             "    TYPE PLAIN\n    LIB TADAH\n    ALGO RANDOM\n    MAXEVAL 1\n"));
         run.ctx.remove("HPOTARGET");
         const KeyProvenance provenance(tadah::core::Context(), run.ctx,
-                                       leg.file, leg.kind, {}, leg.skipped);
+                                       leg.file, {}, leg.skipped);
         std::string what;
         try {
             (void)tadah::hpo::hpo_run(run.ctx, leg.with_provenance

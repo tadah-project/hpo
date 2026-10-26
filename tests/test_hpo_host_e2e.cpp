@@ -1335,8 +1335,8 @@ TEST_CASE("A second run in the same process restarts the best comparator "
  * snapshot is empty.
  * Before the fix: chain 0 read 3.31 and chain 3 read 7.0, the first run's
  * values (the run boundary reset only the best-HOT snapshot), so the
- * second run of a task file with two TASK hpo blocks started its
- * relaxations where the first run's last evaluation ended. */
+ * second run in one process started its relaxations where the first run's
+ * last evaluation ended. */
 TEST_CASE("A second run in the same process starts its --hotvar values from "
           "their declared start or the WARM seed",
           "[HPO][host][warmstart]")

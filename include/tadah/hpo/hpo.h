@@ -32,7 +32,8 @@ struct OptimizerSpec;
  * after an "ERROR startup: ..." journal line. See run_driver.h.
  *
  * With CHECK true in the context (`tadah hpo --check`, CHECK true in a
- * TASK hpo section) it makes the startup checks of the run alone, in the
+ * configuration file without WEIGHTS) it makes the startup checks of the
+ * run alone, in the
  * run's order -- the working directory and the journal, result files,
  * best potentials and locks the run writes there
  * (HPOTargets::check_run_outputs, before a run opens its journal), the
