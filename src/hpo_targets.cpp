@@ -3393,10 +3393,8 @@ void HPOTargets::process_optim_config(std::istringstream& iss,
       const double factor =
           mode_set ? rule.factor : (geometric ? 2.0 : 0.5);
       if (auto_box) {
-        if (!core::is_number(omap.config[i]))
-          throw std::runtime_error("OPTIM " + k + " (" + core::to_string(ui) +
-                                   "): AUTO needs a numeric CONFIG seed (got '" +
-                                   omap.config[i] + "')");
+        /* A number: ui_offset gives the position of the ui-th number of
+         * the key (ui >= 1, index 0 refused by the selector). */
         const double x0 = core::to_double(omap.config[i]);
         if (nonneg_amp && x0 < 0.0)
           throw std::runtime_error("OPTIM " + k + " (" + core::to_string(ui) +

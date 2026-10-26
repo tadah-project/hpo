@@ -343,11 +343,7 @@ AsaOptions parse_asa_options(const OptimizerSpec& sp, std::size_t dim)
             o.reanneal_cost = (int)v;
         }
         else if (n == "Reanneal_Parameters")     o.reanneal_parameters = (int)v;
-        else if (n == "Delta_X") {
-            if (v < 0.0) throw std::runtime_error(
-                "ASA:ASA: PARAM Delta_X must be >= 0 (0 disables tangents)");
-            o.delta_x = v;
-        }
+        else if (n == "Delta_X")                 o.delta_x = v;  // >= 0: kDescs
         else if (n == "User_Tangents") {
             if (v != 0.0) throw std::runtime_error(
                 "ASA:ASA: PARAM User_Tangents 1 is unsupported: the HPO "
