@@ -9159,8 +9159,10 @@ TEST_CASE("PRESTAGE: an exploration whose every call the run's record "
  * search's first: every search makes at least one evaluation, as the TADAH
  * drivers (they read MAXTIME after an evaluation), NLopt and DLIB:GFS's
  * INIT points do. MAXTIME 1e-9 has passed before any search starts.
- * Pins: with MAXTIME 1e-9, a PLAIN DLIB:GFS without an INIT point (INIT
- * METHOD RANDOM 0) and a PLAIN ASA each make one evaluation and end with
+ * Pins: with MAXTIME 1e-9, a PLAIN DLIB:GFS without an INIT point (an
+ * INIT block whose WARM seed WARM_ON_MISMATCH skip drops, its value
+ * outside the OPTIM box; the case used METHOD RANDOM 0 until a K of 0 was
+ * refused) and a PLAIN ASA each make one evaluation and end with
  * status 0 ("DLIB:GFS stopped: MAXTIME exceeded after 1 evaluation(s)",
  * "ASA stopped: MAXTIME exceeded after 1 host eval(s)", the run's status
  * their MAXTIME stop); a PRESTAGE (TADAH:RANDOM, MAXEVAL 2) whose
@@ -9181,10 +9183,19 @@ TEST_CASE("MAXTIME: a search makes its first evaluation when MAXTIME has "
         std::string stopped;    // its journal line
         std::string status;     // the run's status under PLAIN
     };
+    /* A WARM seed whose CGRID2B (1), 5, lies outside the box [0.1, 0.9]:
+     * WARM_ON_MISMATCH skip drops it, and the chain gives no point. */
+    ScratchDir seeds;
+    const fs::path outside = seeds.dir / "outside.tadah";
+    {
+        std::ofstream out(outside);
+        out << "CGRID2B 5.0 1.5\nSGRID2B 1.0 5.0\n";
+    }
     const std::vector<Case> cases = {
         {"DLIB:GFS without an INIT point",
          "LIB DLIB\nALGO GFS\nMAXTIME 1e-9\n",
-         "INIT\nMETHOD RANDOM 0\nSEED 4\nENDINIT\n",
+         "INIT\nMETHOD WARM " + outside.string() +
+             "\nWARM_ON_MISMATCH skip\nENDINIT\n",
          "DLIB:GFS stopped: MAXTIME exceeded after 1 evaluation(s)",
          "DLIB:GFS: MAXTIME exceeded"},
         {"ASA", "LIB ASA\nALGO ASA\nMAXTIME 1e-9\nSEED 3\n", "",

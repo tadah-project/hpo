@@ -1447,10 +1447,12 @@ TEST_CASE("HPO log file records init/run-policy summary",
      * sub-sections introduced by the diagnostics patch. We do not run
      * a full optimisation here — only check the writer output. */
     using namespace tadah::hpo;
+    /* K_TOTAL 3 caps the 4 SOBOL points (K_TOTAL 4, which this case gave
+     * until a K_TOTAL that caps nothing was refused, is refused). */
     StrategyTempFile cfg(R"(OPTIMIZER
 INIT
   STRATEGY SOBOL 4
-  K_TOTAL 4
+  K_TOTAL 3
 ENDINIT
 NOISE
   AUTO
@@ -1485,7 +1487,7 @@ ENDOPTIMIZER
     CHECK(body.find("SOBOL 4") != std::string::npos);
     /* The INIT block's K_TOTAL under its name (it read "INIT_K", the
      * retired key the parser refuses). */
-    CHECK(journal_block(body, "Init strategy:").find("K_TOTAL           : 4") !=
+    CHECK(journal_block(body, "Init strategy:").find("K_TOTAL           : 3") !=
           std::string::npos);
     CHECK(body.find("INIT_K") == std::string::npos);
     CHECK(body.find("Run policy:") != std::string::npos);
@@ -1508,9 +1510,15 @@ TEST_CASE("The journal's run policy lists the RESTART block's METHOD chain, "
      * Before the fix: the RESTART block printed only its METHOD chain, and
      * no "RESTART init strategy:" line at all without one, so SEED 77,
      * K_TOTAL 2 and WARM_ON_MISMATCH error appeared nowhere; the INIT
-     * block's SEED read "INIT_SEED : 9" (the retired key name). */
-    std::string method;
-    SECTION("with a METHOD chain") { method = "    METHOD LHS 3\n"; }
+     * block's SEED read "INIT_SEED : 9" (the retired key name).
+     * A block without a METHOD line gives one point, which a K_TOTAL caps
+     * nothing of: that section has no K_TOTAL line (it had K_TOTAL 2 until
+     * such a K_TOTAL was refused) and the journal none. */
+    std::string method, k_total;
+    SECTION("with a METHOD chain") {
+        method = "    METHOD LHS 3\n";
+        k_total = "    K_TOTAL 2\n";
+    }
     SECTION("without a METHOD line") {}
     StrategyTempFile cfg(R"(OPTIMIZER
 INIT
@@ -1525,8 +1533,7 @@ STRATEGY
   RESTART
     AFTER_STAGNATION 3
     MAX 1
-)" + method + R"(    K_TOTAL 2
-    SEED 77
+)" + method + k_total + R"(    SEED 77
     WARM_ON_MISMATCH error
   ENDRESTART
 ENDSTRATEGY
@@ -1542,7 +1549,10 @@ ENDOPTIMIZER
         CHECK(restart.find("(default -- CONFIG only)") != std::string::npos);
     else
         CHECK(restart.find("[1] LHS 3") != std::string::npos);
-    CHECK(restart.find("K_TOTAL           : 2") != std::string::npos);
+    if (method.empty())
+        CHECK(restart.find("K_TOTAL") == std::string::npos);
+    else
+        CHECK(restart.find("K_TOTAL           : 2") != std::string::npos);
     CHECK(restart.find("SEED              : 77") != std::string::npos);
     CHECK(restart.find("WARM_ON_MISMATCH  : error") != std::string::npos);
     const std::string init = journal_block(journal, "Init strategy:");

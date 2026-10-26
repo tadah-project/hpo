@@ -2439,13 +2439,15 @@ TEST_CASE("RESULT distinguishes the last saved best from the unsaved one",
  * with persistently failing storage took 231 s to end FAILED instead of
  * about one 30 s budget. After the failure (durable_best::FailLatch) those
  * candidates get a single attempt without backoff. Default backoff policy
- * (30 s budget), so this case takes about half a minute. */
+ * (30 s budget), so this case takes about half a minute. DLIB:GFS draws
+ * no random numbers and refuses SEED (the run gave SEED 1234 until it
+ * did). */
 TEST_CASE("durable best: later candidates get a single attempt after a fatal failure",
           "[durable_e2e][failure_handling][.]")
 {
     ScratchDir sd;
     write_policy_fixture(sd.dir,
-        "OPTIMIZER\nLIB DLIB\nALGO GFS\nMAXEVAL 400\nTHREADS 8\nSEED 1234\n"
+        "OPTIMIZER\nLIB DLIB\nALGO GFS\nMAXEVAL 400\nTHREADS 8\n"
         "ENDOPTIMIZER\n");
     /* skip=3: the fresh-run reset and the first two publications take the
      * lock; every later publication fails with EBUSY. */
@@ -2707,12 +2709,13 @@ saved_best_lines(const std::vector<std::string>& lines)
  * its two forms (the completion order decides which); without one, the
  * last best saved before the failure, which RESULT names as the last
  * saved best, the best being the unsaved candidate. `recovered` is set to
- * whether a candidate was saved after the failure. */
+ * whether a candidate was saved after the failure. DLIB:GFS draws no
+ * random numbers and refuses SEED (the run gave SEED 1234 until it did). */
 void check_storage_failure_ending(const std::string& fault, bool& recovered)
 {
     ScratchDir sd;
     write_policy_fixture(sd.dir,
-        "OPTIMIZER\nLIB DLIB\nALGO GFS\nMAXEVAL 400\nTHREADS 4\nSEED 1234\n"
+        "OPTIMIZER\nLIB DLIB\nALGO GFS\nMAXEVAL 400\nTHREADS 4\n"
         "ENDOPTIMIZER\n");
     const ChildRun r = run_self("[.durable_e2e_child]", sd.dir,
                                 {"TADAH_HPO_TEST_IO_FAULT=" + fault,
