@@ -2,8 +2,8 @@
  * Parse cases over the target files of tests/data/ta/target_files: each
  * file parses against its training configuration, has its validation
  * targets resolved against its validation configuration, and passes the
- * startup validation (validate_hpo_setup()), as `tadah hpo` reads it before
- * the first evaluation. Every file is a test case of its own. The coverage
+ * startup validation (validate_hpo_setup()), the rules `tadah hpo` and
+ * `tadah hpo --check` apply to the configuration before the data are read. Every file is a test case of its own. The coverage
  * case fails when a target file of that directory has no case, when a case
  * has no file, and when another file there is no case's training or
  * validation configuration.
@@ -87,10 +87,13 @@ ParseCase parse_case(const std::string& name)
     } else if (name == "fixweight_no_dbfile") {
         /* The shared model's 14 weights pinned, no training data, no
          * validation: the loss is the LAMMPS cohesive energy alone. The
-         * values of the pinned weights do not matter to the parse. */
+         * values of the pinned weights do not matter to the parse. Without
+         * a training DBFILE, ATOM declares the element set, which the
+         * startup rules require (no data gives it). */
         c.validation.clear();
         c.drop = {"DBFILE"};
-        c.add = {{"FIXINDEX", {"1-14"}},
+        c.add = {{"ATOM", {"Ta"}},
+                 {"FIXINDEX", {"1-14"}},
                  {"FIXWEIGHT", std::vector<std::string>(14, "0")}};
     } else if (name == "dm_ream_embf0") {
         /* The DM_REAM seed pins every weight and has no DBFILE. */
@@ -180,6 +183,42 @@ void check_target_file(const std::string& name)
     }
 TADAH_TA_TARGET_FILES(TADAH_TA_TARGET_FILE_CASE)
 #undef TADAH_TA_TARGET_FILE_CASE
+
+/* Pins: the startup rules (validate_hpo_setup()) refuse a training
+ * configuration without a training DBFILE and without ATOM, which declares
+ * the element set no data gives: the fixweight_no_dbfile case without its
+ * ATOM line is refused with "No training DBFILE: the ATOM key is required
+ * ...", as `tadah hpo` and `tadah hpo --check` refuse it, and the case
+ * with it passes (above).
+ * Before the fix: validate_hpo_setup() accepted it (the rule was in
+ * HPOEngine::run alone, which the parse case does not reach), and this
+ * parse case passed without ATOM, which no run accepts. */
+TEST_CASE("HPO target files: without a training DBFILE the startup rules "
+          "require ATOM",
+          "[HPO][target_files]")
+{
+    tadah::core::PeriodicTable::initialize();
+    ParseCase c = parse_case("fixweight_no_dbfile");
+    ScratchCopy tree("fixweight_no_dbfile_no_atom");
+    tadah::core::Context ctx(
+        tadah::core::CoreUserConfigParser().parse(c.training));
+    for (const auto& key : c.drop) ctx.remove(key);
+    for (const auto& [key, values] : c.add)
+        if (key != "ATOM")
+            for (const auto& value : values) ctx.add(key, value);
+    REQUIRE_FALSE(ctx.has_stored("DBFILE"));
+    REQUIRE_FALSE(ctx.has_stored("ATOM"));
+    tadah::hpo::HPOTargets trg(ctx, "fixweight_no_dbfile.hpo");
+    std::string what;
+    try {
+        tadah::hpo::validate_hpo_setup(ctx, trg, false, false);
+    } catch (const std::exception& e) {
+        what = e.what();
+    }
+    INFO(what);
+    CHECK(what.find("No training DBFILE: the ATOM key is required") !=
+          std::string::npos);
+}
 
 TEST_CASE("HPO target files: every file of tests/data/ta/target_files is a "
           "parse case or the training or validation configuration of one",

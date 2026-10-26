@@ -169,9 +169,14 @@ Context model_ctx() {
     return c;
 }
 
+/* The model of model_ctx() under M_KRR implementation 2, with OALGO 1, the
+ * default: implementation 2 reads no OALGO and refuses another (the OALGO
+ * 4 of model_ctx() had no effect on it; before that refusal every case of
+ * this context passes with OALGO 1 as well, a pin). */
 Context krr2_ctx() {
     Context c = model_ctx();
     set_key(c, "MODEL", "M_KRR Kern_Linear 2");
+    set_key(c, "OALGO", "1");
     c.add("SBASIS", 2);
     return c;
 }
@@ -322,7 +327,7 @@ TEST_CASE("tadah hpo refuses at startup a LAMBDA that every fit refuses",
         {"-1", "1", false, true},       {"-1", "2", false, true},
         {"-1", "4", false, true},       {"-1", "1", true, true},
         {"-0.5", "1", true, true},      {"-1", "3", false, false},
-        {"0", "1", false, false},       {"1e-3", "4", true, false}};
+        {"0", "1", false, false},       {"1e-3", "1", true, false}};
     for (const Case& k : cases) {
         DYNAMIC_SECTION("LAMBDA " << k.lambda << ", OALGO " << k.oalgo
                                   << (k.krr2 ? ", M_KRR implementation 2"
