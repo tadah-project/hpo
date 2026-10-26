@@ -541,6 +541,33 @@ TEST_CASE("Under M_KRR implementation 2, OPTIM of an error scale or of "
     }
 }
 
+/* Under M_KRR implementation 2, whose Cholesky solve reads no OALGO, OPTIM
+ * OALGO (2) (the rank threshold M of OALGO 1 1e-8) is refused by the
+ * startup checks: "MODEL M_KRR Kern_Linear 2 solves (K + LAMBDA sigma^2 I)
+ * w = t by Cholesky and reads no OALGO: OPTIM OALGO would be ignored.
+ * Implementation 1 (MODEL M_KRR Kern_Linear 1) solves with OALGO;
+ * implementation 2 fits without OPTIM OALGO."; under implementation 1 the
+ * same search passes.
+ * Before the fix: the startup checks and tadah hpo --check passed it, and
+ * every evaluation but that of the default M refused its candidate (the
+ * fit's refusal of an OALGO other than the default), scoring FAILSCORE:
+ * the run spent its evaluations and ended with the seed. */
+TEST_CASE("Under M_KRR implementation 2, OPTIM OALGO is refused at startup",
+          "[HPO][fit_settings_startup][krr]") {
+    tadah::core::PeriodicTable::initialize();
+    const std::string line = "OPTIM OALGO (2) 1e-9 1e-7\n";
+    Context c = krr2_ctx();
+    set_key(c, "OALGO", "1 1e-8");
+    CHECK(startup_error(c, target(line)) ==
+          "MODEL M_KRR Kern_Linear 2 solves (K + LAMBDA sigma^2 I) w = t by "
+          "Cholesky and reads no OALGO: OPTIM OALGO would be ignored. "
+          "Implementation 1 (MODEL M_KRR Kern_Linear 1) solves with OALGO; "
+          "implementation 2 fits without OPTIM OALGO.");
+    Context c1 = c;
+    set_key(c1, "MODEL", "M_KRR Kern_Linear 1");
+    CHECK(startup_error(c1, target(line)).empty());
+}
+
 /* OPTIM of LSCALE, ESHIFT, ESHIFT_ATOM, ESHIFT_DBATOM, EFILTER, FFILTER
  * and ZERO_COM_FORCE is refused at its line, naming the key and that it is
  * applied once, when the run starts, under M_BLR and under M_KRR
