@@ -1809,7 +1809,10 @@ void HPOTargets::read(const std::string& fn)
      * point of CONFIG and of WARM, which gives at most one; without a
      * METHOD line the CONFIG point): one at or above their number caps
      * nothing. The INIT blocks of one optimiser make one chain, and so do
-     * the RESTART blocks. */
+     * the RESTART blocks. An EXPLORE chain without a METHOD line is not
+     * resolved: the exploration takes the points of the STRATEGY-level
+     * chain (share_init_with_nested_phases), which its K_TOTAL does not
+     * cap. */
     std::vector<std::pair<std::pair<std::size_t, std::string>,
                           const InitStrategySpec*>> k_totals;
     for (const auto& [init, at] : k_total_lines) k_totals.push_back({at, init});
@@ -1830,6 +1833,15 @@ void HPOTargets::read(const std::string& fn)
             "K_TOTAL " + std::to_string(cap) + " caps nothing: ";
         const std::string keeps =
             ", and K_TOTAL keeps the first K_TOTAL starting points";
+        const bool explore =
+            spec.prestage && init == &spec.prestage->init_strategy_spec;
+        if (init->chain.empty() && explore)
+            throw std::runtime_error(at_line(at.first,
+                head + "an INIT block inside EXPLORE without a METHOD line "
+                "gives the exploration the starting points of the INIT "
+                "blocks inside OPTIMIZER, STRATEGY and REFINE (the CONFIG "
+                "point without one), and K_TOTAL caps only the points of the "
+                "block's own METHOD lines", at.second));
         if (init->chain.empty())
             throw std::runtime_error(at_line(at.first,
                 head + "a block without a METHOD line gives one starting "
