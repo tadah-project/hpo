@@ -220,8 +220,8 @@ Options for DLIB:BFGS
    * PARAM fd_step <double>      (finite-difference step, default 1e-6)
    * PARAM fd_kernel inhouse|ceres (the step rule)
    * PARAM diff_method 0|1       (CENTRAL, default, or FORWARD)
-   * PARAM tol_gradinf <double>  (stop once the L2 norm of the gradient
-                   falls below it; alternative to FTOL_ABS)
+   * PARAM tol_gradinf <double>  (stop once the largest component of the
+                   gradient falls below it, as CERES's; alternative to FTOL_ABS)
    * a point that no step can move (each coordinate at a bound its
                    gradient points out of, or a step below its
                    rounding), or whose line search from the farthest

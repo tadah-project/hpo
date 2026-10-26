@@ -1111,6 +1111,24 @@ std::string revisit_detail(const OptimizerSpec& sp, const Vec& from,
          ", where it had stood with the same loss and gradient";
 }
 
+/** The stop test of PARAM tol_gradinf: the search ends once the largest
+ *  component of the gradient, in absolute value, is below `tol` -- the
+ *  max-norm CERES's gradient_tolerance tests. dlib's
+ *  gradient_norm_stop_strategy tests the L2 norm, length(g), which for n
+ *  components can be up to sqrt(n) times the largest: the same
+ *  tol_gradinf ended DLIB:BFGS later than CERES. The stop strategy
+ *  interface of dlib's optimisers (should_continue_search). */
+class GradientMaxStop {
+public:
+  explicit GradientMaxStop(double tol) : tol_(tol) {}
+  template <class T>
+  bool should_continue_search(const T&, double, const T& g) {
+    return !(dlib::max(dlib::abs(g)) < tol_);
+  }
+private:
+  double tol_;
+};
+
 }  // namespace detail
 
 /* DLIB:BFGS on any host with `double operator()(const Vec&)` (real-space
@@ -1248,10 +1266,10 @@ template<class Vec,class Runner,class HostT>
 
     if (const auto tol_gradinf = detail::dlib_param(sp, "tol_gradinf")) {
       std::ostringstream test;
-      test << "the L2 norm of the gradient fell below PARAM tol_gradinf = "
-           << *tol_gradinf;
+      test << "the largest component of the gradient fell below PARAM "
+              "tol_gradinf = " << *tol_gradinf;
       run_with_eval_cap(bfgs_search_strategy(),
-                        gradient_norm_stop_strategy(*tol_gradinf),
+                        detail::GradientMaxStop(*tol_gradinf),
                         EndReason::GradTol, test.str());
       return;
     }
