@@ -1283,6 +1283,23 @@ SEED 1
 SEED 2'''
 error = "SEED is set twice in the STRATEGY block (first on line 8); each key is given once"
 
+[[key.invalid]]
+wrap = "none"
+check = "startup"
+at = "ENDOPTIMIZER"
+text = '''
+OPTIM CGRID2B (1) 0.5 1.5
+PC_ERMSE 0 1
+OPTIMIZER
+STRATEGY
+LIB DLIB
+ALGO GFS
+MAXEVAL 10
+SEED 5
+ENDSTRATEGY
+ENDOPTIMIZER'''
+error = "the STRATEGY-level optimiser: DLIB:GFS does not use SEED: it draws no random numbers; remove it"
+
 [[key]]
 id = "OPTIMIZER.VECTOR_ARR"
 name = "VECTOR_ARR"

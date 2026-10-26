@@ -1033,6 +1033,63 @@ TEST_CASE("startup validation: VECTOR_ARR is refused for LD_TNEWTON and "
     }
 }
 
+/* Pins: DLIB:GFS draws no random numbers, so a SEED it would run with is
+ * refused at startup, as TADAH:GRID's is ("DLIB:GFS does not use SEED: it
+ * draws no random numbers; remove it"): a STRATEGY-level SEED, an EXPLORE
+ * block's SEED, and the STRATEGY-level SEED of a PRESTAGE refinement on
+ * DLIB:GFS whose exploration has a SEED of its own. A PRESTAGE refinement's
+ * SEED that the exploration takes (an exploration that reads SEED and has
+ * none of its own) seeds the exploration, and is accepted, on DLIB:GFS and
+ * on every refinement optimiser that reads no SEED (DLIB:BFGS, TADAH:GRID);
+ * with an exploration SEED of its own the refinement's SEED is refused.
+ * Before the fix: DLIB:GFS's SEED was accepted at startup (tadah hpo
+ * --check said nothing), and the search warned when it started that SEED
+ * had no effect on it; DLIB:BFGS and TADAH:GRID refused the refinement's
+ * SEED that seeded the exploration. */
+TEST_CASE("startup validation: DLIB:GFS refuses a SEED, unless it seeds the "
+          "exploration of a PRESTAGE that it refines",
+          "[startup_validation][gfs][seed]")
+{
+    const std::string unread =
+        "DLIB:GFS does not use SEED: it draws no random numbers; remove it";
+    CHECK(judge(strategy_config("    LIB DLIB\n    ALGO GFS\n    MAXEVAL 20\n"
+                                "    SEED 5\n")).startup ==
+          "the STRATEGY-level optimiser: " + unread);
+    const auto prestage = [](const std::string& refine,
+                             const std::string& explore) {
+        return strategy_config(
+            "    TYPE PRESTAGE\n    LIB DLIB\n    ALGO GFS\n"
+            "    MAXEVAL 10\n" + refine + "    EXPLORE\n      LIB NLOPT\n"
+            "      ALGO GN_CRS2_LM\n      MAXEVAL 12\n" + explore +
+            "    ENDEXPLORE\n");
+    };
+    CHECK(judge(prestage("    SEED 7\n", "")).startup == "");
+    CHECK(judge(prestage("    SEED 7\n", "      SEED 3\n")).startup ==
+          "the PRESTAGE refinement: " + unread);
+    /* The refinement optimisers that read no SEED of their own. */
+    const auto refine = [](const std::string& lib, const std::string& algo,
+                           const std::string& explore) {
+        return strategy_config(
+            "    TYPE PRESTAGE\n    LIB " + lib + "\n    ALGO " + algo +
+            "\n    MAXEVAL 10\n    SEED 7\n    EXPLORE\n      LIB NLOPT\n"
+            "      ALGO GN_CRS2_LM\n      MAXEVAL 12\n" + explore +
+            "    ENDEXPLORE\n");
+    };
+    CHECK(judge(refine("DLIB", "BFGS", "")).startup == "");
+    CHECK(judge(refine("TADAH", "GRID", "")).startup == "");
+    CHECK(judge(refine("DLIB", "BFGS", "      SEED 3\n")).startup ==
+          "the PRESTAGE refinement: DLIB:BFGS does not support SEED");
+    CHECK(judge(refine("TADAH", "GRID", "      SEED 3\n")).startup ==
+          "the PRESTAGE refinement: TADAH:GRID does not use SEED: it draws "
+          "no random numbers; remove it");
+    CHECK(judge(strategy_config(
+              "    TYPE PRESTAGE\n    LIB NLOPT\n    ALGO LN_BOBYQA\n"
+              "    MAXEVAL 10\n    EXPLORE\n      LIB DLIB\n"
+              "      ALGO GFS\n      MAXEVAL 12\n      SEED 3\n"
+              "    ENDEXPLORE\n")).startup ==
+          "the PRESTAGE exploration (EXPLORE block): " + unread);
+}
+
 TEST_CASE("startup validation: a TYPE line after an EXPLORE or REFINE "
           "block is refused as a second TYPE line",
           "[startup_validation][strategy][knobs][prestage]")
@@ -2979,18 +3036,22 @@ TEST_CASE("startup validation: TADAH:RANDOM/GRID and DLIB:GFS reject what "
     unread.push_back({"GRID SEED", grid + "    SEED 7\n",
                       top + "TADAH:GRID does not use SEED: it draws no random "
                             "numbers; remove it"});
+    /* DLIB:GFS's SEED, which find_min_global does not read either, is
+     * refused as TADAH:GRID's is (it was accepted at startup and reported
+     * with a warning when the run started). */
+    unread.push_back({"GFS SEED", gfs + "    SEED 7\n",
+                      top + "DLIB:GFS does not use SEED: it draws no random "
+                            "numbers; remove it"});
     for (const auto& c : unread) {
         INFO(c.what << "\n" << c.body);
         CHECK(judge(strategy_config(c.body)).startup == c.message);
     }
-    /* The stops they honour, RANDOM's SEED, and DLIB:GFS's SEED, which
-     * find_min_global does not read either: it is reported with a warning
-     * when the run starts (existing configurations set it), not refused. */
+    /* The stops they honour and RANDOM's SEED. */
     for (const std::string& body : std::vector<std::string>{
              random + "    MAXTIME 60\n    STOPVAL 0.1\n",
              grid + "    MAXTIME 60\n    STOPVAL 0.1\n",
              gfs + "    MAXTIME 60\n    STOPVAL 0.1\n    FTOL_ABS 1e-3\n",
-             random + "    SEED 7\n", gfs + "    SEED 7\n"}) {
+             random + "    SEED 7\n"}) {
         INFO(body);
         CHECK(judge(strategy_config(body)).startup == "");
     }
