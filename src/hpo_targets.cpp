@@ -462,20 +462,31 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn,
         registered && search_ignoring_start(spec).has_value();
     if (spec.optim_init.size() > 1 && !multi_seed_consumer && !ignores_start) {
       /* The strategies consume them (MULTISTART needs N_STARTS 2 or more,
-       * PRESTAGE an EXPLORE block), so this is a PLAIN search: the
-       * advice names what uses several starting points, the optimisers
-       * from the live caps registry. */
+       * PRESTAGE an EXPLORE block), so this is a PLAIN search. The advice
+       * names only what takes the points with this optimiser: MULTISTART
+       * when it runs the optimiser from each point (runs_from_each_start,
+       * the rule of require_multistart_backend, which refuses a global
+       * optimiser that takes one starting point), and an optimiser that
+       * takes several in one run, from the live caps registry, alone or as
+       * the PRESTAGE exploration, which is given these points; a
+       * single-start exploration would take the first only. */
       auto multi_seed = filter_optimizer_caps(
           [](const OptimizerCaps& c) { return c.accepts_multi_seed; });
       const std::size_t n = spec.optim_init.size();
+      const std::string name = spec.lib + ":" + spec.algo;
+      const std::string takes_all =
+          "optimiser that takes several starting points in one run (" +
+          format_caps_list(multi_seed) + ") takes them all, also as the "
+          "exploration of STRATEGY TYPE PRESTAGE.";
       std::ostringstream oss;
-      oss << "INIT chain produced " << n << " starting points but "
-          << spec.lib << ":" << spec.algo << " starts from the first only; "
-          << "the other " << (n - 1) << (n == 2 ? " is" : " are")
-          << " not used. STRATEGY TYPE MULTISTART with N_STARTS " << n
-          << " or TYPE PRESTAGE uses them, and so does an optimiser that "
-             "takes several starting points in one run ("
-          << format_caps_list(multi_seed) << ").";
+      oss << "INIT chain produced " << n << " starting points but " << name
+          << " starts from the first only; the other " << (n - 1)
+          << (n == 2 ? " is" : " are") << " not used. ";
+      if (runs_from_each_start(optimizer_caps(spec)))
+        oss << "STRATEGY TYPE MULTISTART with N_STARTS " << n << " starts "
+            << name << " from each of them, and an " << takes_all;
+      else
+        oss << "An " << takes_all;
       std::cerr << "[HPO] WARNING: " << oss.str() << "\n";
       HPOLog::instance().warning(oss.str());
     }
