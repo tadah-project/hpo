@@ -836,49 +836,80 @@ TEST_CASE("startup validation: an INIT block on a search that does not "
     }
 }
 
-/* Pins: a PLAIN search of NLOPT:LN_BOBYQA, which takes one starting point,
- * with an INIT block of METHOD LHS 3: the read-time WARNING, on standard
- * error and in the journal, counts starting points and advises what uses
- * them: "INIT chain produced 3 starting points but NLOPT:LN_BOBYQA starts
- * from the first only; the other 2 are not used. STRATEGY TYPE MULTISTART
- * with N_STARTS 3 or TYPE PRESTAGE uses them, and so does an optimiser
- * that takes several starting points in one run (DLIB:GFS)." It says
- * nothing of seeds. A MULTISTART with N_STARTS 3 from the same INIT block
- * gets no such WARNING.
- * Before the fix: standard error alone said "INIT chain produced 3 seeds
- * but NLOPT:LN_BOBYQA consumes only the first; 2 seed(s) will be
- * discarded. Use STRATEGY TYPE MULTISTART (N_STARTS >= 2) or TYPE
- * PRESTAGE, or pick a multi-seed backend (DLIB:GFS) to use them.", the
- * journal had no WARNING, and the same text advised TYPE MULTISTART to a
- * MULTISTART of one start (N_STARTS left at 1). */
+/* Pins: a PLAIN search with an INIT block of METHOD LHS 3, whose optimiser
+ * takes one starting point: the read-time WARNING, on standard error and in
+ * the journal, counts starting points and names only what takes them for
+ * that optimiser. For NLOPT:LN_BOBYQA, a local optimiser that STRATEGY TYPE
+ * MULTISTART runs from each point: "INIT chain produced 3 starting points
+ * but NLOPT:LN_BOBYQA starts from the first only; the other 2 are not used.
+ * STRATEGY TYPE MULTISTART with N_STARTS 3 starts NLOPT:LN_BOBYQA from each
+ * of them, and an optimiser that takes several starting points in one run
+ * (DLIB:GFS) takes them all, also as the exploration of STRATEGY TYPE
+ * PRESTAGE." For a global optimiser that keeps its starting point and that
+ * MULTISTART refuses (NLOPT:GN_CRS2_LM, ASA:ASA, TADAH:ANNEAL): "... the
+ * other 2 are not used. An optimiser that takes several starting points in
+ * one run (DLIB:GFS) takes them all, also as the exploration of STRATEGY
+ * TYPE PRESTAGE.", which names no MULTISTART; the same file under TYPE
+ * MULTISTART with N_STARTS 3 is refused ("STRATEGY TYPE MULTISTART cannot
+ * run ..."), while the LN_BOBYQA one gets no such WARNING. No WARNING says
+ * anything of seeds.
+ * Before the fix: every optimiser was advised "STRATEGY TYPE MULTISTART
+ * with N_STARTS 3 or TYPE PRESTAGE uses them, and so does an optimiser that
+ * takes several starting points in one run (DLIB:GFS).": TYPE MULTISTART,
+ * which refuses the three global optimisers, and TYPE PRESTAGE, whose
+ * exploration takes only the first point unless its optimiser takes
+ * several (the texts fail). */
 TEST_CASE("startup validation: the INIT points a PLAIN search does not use "
           "are warned about in the journal", "[startup][init][start_point]")
 {
     const std::string lhs =
         "  INIT\n    METHOD LHS 3\n    SEED 7\n  ENDINIT\n";
-    const auto run = [&](const std::string& strategy) {
+    const auto run = [&](const std::string& strategy, const std::string& lib,
+                         const std::string& algo) {
         return kRoot + "OPTIMIZER\n" + lhs + "  STRATEGY\n" + strategy +
-               "    LIB NLOPT\n    ALGO LN_BOBYQA\n    MAXEVAL 20\n"
-               "  ENDSTRATEGY\nENDOPTIMIZER\n";
+               "    LIB " + lib + "\n    ALGO " + algo +
+               "\n    MAXEVAL 20\n  ENDSTRATEGY\nENDOPTIMIZER\n";
     };
-    const std::string w =
-        "INIT chain produced 3 starting points but NLOPT:LN_BOBYQA starts "
-        "from the first only; the other 2 are not used. STRATEGY TYPE "
-        "MULTISTART with N_STARTS 3 or TYPE PRESTAGE uses them, and so does "
-        "an optimiser that takes several starting points in one run "
-        "(DLIB:GFS).";
+    const std::string head =
+        "INIT chain produced 3 starting points but ";
+    const std::string unused =
+        " starts from the first only; the other 2 are not used. ";
+    const std::string takes_all =
+        "optimiser that takes several starting points in one run (DLIB:GFS) "
+        "takes them all, also as the exploration of STRATEGY TYPE PRESTAGE.";
     {
-        const Startup s = startup(run("    TYPE PLAIN\n"));
+        const std::string w =
+            head + "NLOPT:LN_BOBYQA" + unused + "STRATEGY TYPE MULTISTART "
+            "with N_STARTS 3 starts NLOPT:LN_BOBYQA from each of them, and an " +
+            takes_all;
+        const Startup s =
+            startup(run("    TYPE PLAIN\n", "NLOPT", "LN_BOBYQA"));
         INFO("journal:\n" << s.journal << "\nstderr:\n" << s.err);
         CHECK(count_of(s.err, "[HPO] WARNING: " + w + "\n") == 1);
         CHECK(count_of(s.journal, w) == 1);
         CHECK(count_of(s.err, "seed(s)") == 0);
     }
     {
-        const Startup s =
-            startup(run("    TYPE MULTISTART\n    N_STARTS 3\n"));
+        const Startup s = startup(
+            run("    TYPE MULTISTART\n    N_STARTS 3\n", "NLOPT", "LN_BOBYQA"));
         INFO("journal:\n" << s.journal << "\nstderr:\n" << s.err);
         CHECK(count_of(s.err, "starts from the first only") == 0);
         CHECK(count_of(s.journal, "starts from the first only") == 0);
+    }
+    for (const auto& [lib, algo] :
+         std::vector<std::pair<std::string, std::string>>{
+             {"NLOPT", "GN_CRS2_LM"}, {"ASA", "ASA"}, {"TADAH", "ANNEAL"}}) {
+        const std::string name = lib + ":" + algo;
+        INFO(name);
+        const std::string w = head + name + unused + "An " + takes_all;
+        const Startup s = startup(run("    TYPE PLAIN\n", lib, algo));
+        INFO("journal:\n" << s.journal << "\nstderr:\n" << s.err);
+        CHECK(count_of(s.err, "[HPO] WARNING: " + w + "\n") == 1);
+        CHECK(count_of(s.journal, w) == 1);
+        CHECK(count_of(s.err, "MULTISTART") == 0);
+        CHECK(count_of(s.journal, "MULTISTART") == 0);
+        CHECK_THROWS_WITH(
+            startup(run("    TYPE MULTISTART\n    N_STARTS 3\n", lib, algo)),
+            Catch::Contains("STRATEGY TYPE MULTISTART cannot run " + name));
     }
 }
