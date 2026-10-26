@@ -74,6 +74,31 @@ std::vector<std::string> split_lammps_words(const std::string& line)
     return out;
 }
 
+/* Whether the LAMMPS command `command` (one logical command of a script)
+ * is `quit`, or an `if` that runs one: the commands of an if are its
+ * quoted words after `then`, after the condition of each `elif` and after
+ * `else` (LAMMPS' if: `if <boolean> then <t1> <t2> ... elif <boolean> <f1>
+ * ... else <e1> ...`), each checked as a command in its turn. A quit in the
+ * text of another command (print "quit") is none. Commands are matched as
+ * LAMMPS matches them, in their case. */
+bool command_quits(const std::string& command)
+{
+    const auto words = split_lammps_words(trim_ascii(command));
+    if (words.empty()) return false;
+    if (words[0] == "quit") return true;
+    if (words[0] != "if") return false;
+    /* words[1] is the condition; from "then" on, commands, except the
+     * condition right after each "elif". */
+    bool after_elif = false;
+    for (std::size_t k = 2; k < words.size(); ++k) {
+        if (words[k] == "then" || words[k] == "else") continue;
+        if (words[k] == "elif") { after_elif = true; continue; }
+        if (after_elif) { after_elif = false; continue; }
+        if (command_quits(words[k])) return true;
+    }
+    return false;
+}
+
 std::optional<std::string>
 try_get_variable_value(const LammpsRunner::LMPPtr& lmp,
                        const std::string& name)
@@ -413,9 +438,33 @@ void LammpsSim::parse_tokens() {
           "--maxtime on this line or PC_SCRIPT_TIMEOUT instead");
   };
 
+  /* An option that takes one value is given once: a second would replace
+   * the first's value (the later --script ran, the earlier was dropped).
+   * --varloss, --invar, --outvar, --hotvar and --failvar add an entry
+   * each; a variable is declared (defined) once on a line. */
+  std::unordered_set<std::string> once_seen;
+  auto once = [&](const std::string& option) {
+    if (!once_seen.insert(option).second)
+      throw std::runtime_error(option + " is given twice on this line; each "
+                               "option is given once");
+  };
+  /* A LAMMPS variable the line defines on LAMMPS' command line (--invar,
+   * -var, -v), once. */
+  auto define_variable = [&](const std::string& option,
+                             const std::string& name) {
+    for (const auto& v : line_variables)
+      if (v.name == name)
+        throw std::runtime_error(
+            option + " " + name + ": the variable " + name + " is defined "
+            "twice on this line (first by " + v.option + " " + name +
+            "); each variable is defined once");
+    line_variables.push_back({name, option});
+  };
+
   size_t i = 0;
   while (i < tokens.size()) {
     if (tokens[i] == "--script") { // LAMMPS script file
+      once("--script");
       if (i + 1 < tokens.size()) {
         script = tokens[++i];
         i++;
@@ -437,6 +486,7 @@ void LammpsSim::parse_tokens() {
 
       if(j>=tokens.size() || is_flag(tokens[j]))
         throw std::runtime_error("--varloss "+vname+": missing <target>");
+      const std::string tgt_tok = tokens[j];
       const double tgt = parse_finite(tokens[j++], "--varloss "+vname+" <target>");
 
       if(j>=tokens.size() || is_flag(tokens[j]))
@@ -456,7 +506,15 @@ void LammpsSim::parse_tokens() {
           pars.push_back(parse_finite(tokens[j++],
                                       "--varloss "+vname+" "+tname+" parameter"));
         myLoss = tadah::LossFunction(t, pars);
+      } else {
+        reads_default_loss = true;
       }
+      /* A target the loss function cannot measure (MAPE 0, RMSLE at or
+       * below -1e-12) is refused here: every evaluation would score the
+       * term the same (MAPE) or fail it (RMSLE). */
+      if (const std::string why = myLoss.target_refusal(tgt); !why.empty())
+        throw std::runtime_error("--varloss " + vname + " " + tgt_tok +
+                                 ": " + why);
 
       /* store ----------------------------------------------------------- */
       if (std::find(n_outvar.begin(), n_outvar.end(), vname) == n_outvar.end()) {
@@ -477,6 +535,7 @@ void LammpsSim::parse_tokens() {
     else if (tokens[i] == "--invar") {
       if (i + 2 < tokens.size()) {
         reject_reserved("--invar", tokens[i + 1]);
+        define_variable("--invar", tokens[i + 1]);
         invar.push_back("-var");
         invar.push_back(tokens[++i].c_str());
         invar.push_back(tokens[++i].c_str());
@@ -500,6 +559,7 @@ void LammpsSim::parse_tokens() {
       }
     }
     else if (tokens[i] == "--failscore") {
+      once("--failscore");
       if (i + 1 < tokens.size()) {
         /* PC_LAMMPS: the value substituted for this line's variables when
          * its simulation fails; it goes through the loss against the
@@ -522,6 +582,7 @@ void LammpsSim::parse_tokens() {
       }
     }
     else if (tokens[i] == "--maxtime") {
+      once("--maxtime");
       if (i + 1 < tokens.size()) {
         maxtime = tokens[++i];
         (void)parse_script_timeout(maxtime, "--maxtime");
@@ -541,6 +602,11 @@ void LammpsSim::parse_tokens() {
       hv.name = tokens[j++];
       if (hv.name.empty() || is_flag(hv.name))
         throw std::runtime_error("--hotvar: <name> must be a non-empty identifier");
+      for (const auto& other : hotvars)
+        if (other.name == hv.name)
+          throw std::runtime_error("--hotvar " + hv.name + " is declared "
+                                   "twice on this line; each variable is "
+                                   "declared once");
       hv.min = parse_finite(tokens[j++], "--hotvar " + hv.name + " <min>");
       hv.max = parse_finite(tokens[j++], "--hotvar " + hv.name + " <max>");
       if (!(hv.max > hv.min))
@@ -569,11 +635,17 @@ void LammpsSim::parse_tokens() {
       fv.name = tokens[j++];
       if (fv.name.empty() || is_flag(fv.name))
         throw std::runtime_error("--failvar: <name> must be a non-empty identifier");
+      for (const auto& other : failvars)
+        if (other.name == fv.name)
+          throw std::runtime_error("--failvar " + fv.name + " is declared "
+                                   "twice on this line; each variable is "
+                                   "declared once");
       /* Optional <scale>: a token that is not an option is it, and must be
        * a number -- it used to be passed on to LAMMPS when it was not. */
       if (j < tokens.size() && !is_flag(tokens[j])) {
         fv.scale = parse_positive(tokens[j++],
                                   "--failvar " + fv.name + " <scale>");
+        fv.scale_given = true;
       }
       failvars.push_back(std::move(fv));
       i = j;
@@ -596,10 +668,19 @@ void LammpsSim::parse_tokens() {
     }
     else if (is_option_token(tokens[i])) {
       /* A LAMMPS command-line option: it and the values that follow it go
-       * to LAMMPS. -var (-v) maxtime is reserved. */
-      if ((tokens[i] == "-var" || tokens[i] == "-v") && i + 1 < tokens.size())
+       * to LAMMPS. -var (-v) maxtime is reserved. -sc and -l are LAMMPS'
+       * short spellings of -screen and -log: they go as the long ones, which
+       * HPO looks for before it adds "-screen none" and "-log none" (a
+       * second -log after the line's would replace it). */
+      if ((tokens[i] == "-var" || tokens[i] == "-v") && i + 1 < tokens.size()) {
         reject_reserved(tokens[i], tokens[i + 1]);
-      invar.push_back(tokens[i++]);
+        define_variable(tokens[i], tokens[i + 1]);
+      }
+      const std::string option = tokens[i] == "-sc" ? "-screen"
+                               : tokens[i] == "-l"  ? "-log"
+                                                    : tokens[i];
+      invar.push_back(option);
+      ++i;
       hpo_values.clear();
       lammps_values = true;
     }
@@ -617,6 +698,20 @@ void LammpsSim::parse_tokens() {
           "options with -)");
     }
   }
+
+  /* A --hotvar is injected into the line's own script as `variable <name>
+   * equal <value>` before it runs; LAMMPS refuses that for a variable the
+   * line's command line defines (an index-style variable), and every
+   * evaluation would fail. */
+  for (const auto& hv : hotvars)
+    for (const auto& v : line_variables)
+      if (v.name == hv.name)
+        throw std::runtime_error(
+            "--hotvar " + hv.name + ": the variable " + hv.name +
+            " is defined on this line by " + v.option + " " + v.name +
+            " too; a --hotvar variable is injected as `variable " + hv.name +
+            " equal <value>`, which LAMMPS refuses for a variable of another "
+            "style");
 }
 
 
@@ -794,6 +889,20 @@ void LammpsSim::prep_script_lines()
   if (!cmd.empty() &&
       cmd.find_first_not_of(" \t\n") != std::string::npos)
     script_lines.push_back(cmd);
+
+  /* LAMMPS' quit ends the process (Error::done: MPI_Finalize and exit()):
+   * under PC_ISOLATION THREAD tadah hpo itself, which crashed on it, under
+   * PROCESS the worker, whose evaluations failed with a closed channel.
+   * The script ends at its last line. Refused here, as written (one a
+   * variable spells cannot be seen until it runs). */
+  for (std::size_t li = 0; li < script_lines.size(); ++li)
+    if (command_quits(script_lines[li]))
+      throw std::runtime_error(
+          std::string(is_failprobe ? "PC_FAILPROBE" : "PC_LAMMPS") +
+          ": the script " + script + " has a quit command (logical command #" +
+          std::to_string(li + 1) + " in expanded script: " +
+          trim_ascii(script_lines[li]) + "): quit ends the process that runs "
+          "the script (tadah hpo itself under PC_ISOLATION THREAD)");
 
   /* Per-sim wall-clock enforcement. LAMMPS's native `timer timeout` is the
    * only mechanism that stops a running minimize cleanly (checked every
@@ -1262,6 +1371,32 @@ std::string LammpsSim::expand_includes(const fs::path &file)
 {
     std::unordered_set<std::string> recursion_guard;
     return expand_includes_rec(file, recursion_guard);
+}
+
+bool script_reads_variable(const std::vector<std::string>& lines,
+                           const std::string& name)
+{
+    if (name.empty()) return false;
+    auto word_char = [](char c) {
+        return std::isalnum(static_cast<unsigned char>(c)) || c == '_';
+    };
+    const std::string brace = "${" + name + "}";
+    const std::string v = "v_" + name;
+    for (const auto& l : lines) {
+        if (l.find(brace) != std::string::npos) return true;
+        for (auto p = l.find(v); p != std::string::npos; p = l.find(v, p + 1)) {
+            const std::size_t e = p + v.size();
+            if ((p == 0 || !word_char(l[p - 1])) &&
+                (e == l.size() || !word_char(l[e])))
+                return true;
+        }
+        /* $x: a one-character name follows the $ directly. */
+        if (name.size() == 1)
+            for (auto p = l.find('$'); p != std::string::npos;
+                 p = l.find('$', p + 1))
+                if (p + 1 < l.size() && l[p + 1] == name[0]) return true;
+    }
+    return false;
 }
 
 std::string hotvar_reject_what(const LammpsSim::HotVarDecl& hv, double v)

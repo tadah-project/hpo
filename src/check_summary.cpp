@@ -77,6 +77,14 @@ std::string target_weight(double target, double weight)
     return "target " + num(target) + ", weight " + num(weight);
 }
 
+/* ", loss <NAME> [<parameter>]": the loss function of a term. */
+std::string loss_text(const LossFunction& fn)
+{
+    std::string out = ", loss " + LossFunction::to_string(fn.type());
+    for (double p : fn.params()) out += " " + num(p);
+    return out;
+}
+
 void write_search_space(std::ostream& out, const HPOTargets& trg)
 {
     const SearchSpacePtr space = trg.space();
@@ -130,12 +138,13 @@ void write_optimiser(std::ostream& out, const OptimizerSpec& sp)
  * validation dataset for indexed ones. */
 void add_metric_rows(std::vector<std::pair<std::string, std::string>>& rows,
                      const std::string& key,
-                     const ValidationMetricTargets& targets)
+                     const ValidationMetricTargets& targets,
+                     const std::string& loss)
 {
     if (!targets.enabled()) return;
     if (!targets.indexed()) {
         const auto& a = targets.global();
-        rows.emplace_back(key, target_weight(a.target, a.weight));
+        rows.emplace_back(key, target_weight(a.target, a.weight) + loss);
         return;
     }
     const auto& datasets = targets.datasets();
@@ -144,36 +153,43 @@ void add_metric_rows(std::vector<std::pair<std::string, std::string>>& rows,
         rows.emplace_back(key + " (" + std::to_string(i + 1) + ")" +
                               (i < files.size() ? " " + files[i] : ""),
                           target_weight(datasets[i].target,
-                                        datasets[i].weight));
+                                        datasets[i].weight) + loss);
 }
 
+/* Every term with its target, weight and loss function: the metric lines
+ * take the last LOSS line's, a --varloss term its own or its line's (the
+ * LOSS above the line), a PC_OBSERVABLE term its --loss or the LOSS above
+ * its line. */
 void write_loss(std::ostream& out, const HPOTargets& trg)
 {
-    out << "Loss terms: LOSS "
-        << LossFunction::to_string(trg.globalLoss.type());
-    for (double p : trg.globalLoss.params()) out << " " << num(p);
-    out << "\n";
+    out << "Loss terms:\n";
+    const std::string metric_loss = loss_text(trg.globalLoss);
     std::vector<std::pair<std::string, std::string>> rows;
     if (trg.use_emae)
-        rows.emplace_back("PC_EMAE", target_weight(trg.emae, trg.w_emae));
-    add_metric_rows(rows, "PC_ERMSE", trg.ermse_targets);
+        rows.emplace_back("PC_EMAE",
+                          target_weight(trg.emae, trg.w_emae) + metric_loss);
+    add_metric_rows(rows, "PC_ERMSE", trg.ermse_targets, metric_loss);
     if (trg.use_errmse)
-        rows.emplace_back("PC_ErRMSE", target_weight(trg.errmse, trg.w_errmse));
+        rows.emplace_back("PC_ErRMSE", target_weight(trg.errmse, trg.w_errmse) +
+                                           metric_loss);
     if (trg.use_ersq)
-        rows.emplace_back("PC_ERSQ", target_weight(trg.ersq, trg.w_ersq));
-    add_metric_rows(rows, "PC_FRMSE", trg.frmse_targets);
-    add_metric_rows(rows, "PC_SRMSE_GPA", trg.srmse_targets);
+        rows.emplace_back("PC_ERSQ",
+                          target_weight(trg.ersq, trg.w_ersq) + metric_loss);
+    add_metric_rows(rows, "PC_FRMSE", trg.frmse_targets, metric_loss);
+    add_metric_rows(rows, "PC_SRMSE_GPA", trg.srmse_targets, metric_loss);
     for (const auto& sim : trg.LS)
         for (std::size_t i = 0; i < sim.n_varloss.size(); ++i)
             rows.emplace_back("PC_LAMMPS " + sim.script + ": " +
                                   sim.n_varloss[i],
                               target_weight(sim.t_varloss[i],
-                                            sim.w_varloss[i]));
+                                            sim.w_varloss[i]) +
+                                  loss_text(sim.lossFn[i]));
     for (std::size_t k = 0; k < trg.observables.size(); ++k)
         if (const auto& obs = trg.observables[k])
             rows.emplace_back("PC_OBSERVABLE " +
                                   observable_journal_label(*obs, k + 1),
-                              target_weight(obs->target(), obs->weight()));
+                              target_weight(obs->target(), obs->weight()) +
+                                  loss_text(obs->lossfn()));
     /* The labels differ in length too much to align: each row as
      * "<term>  <target, weight>". */
     for (const auto& r : rows)

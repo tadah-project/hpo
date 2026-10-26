@@ -74,6 +74,8 @@
 #include <tadah/hpo/optimizer_spec.h>
 #include <tadah/hpo/pc_fail_grading.h>   // loss_is_feasible
 
+#include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -115,16 +117,23 @@ public:
     }
 
     /** Records the usable loss `loss` of evaluation `eval` of `x`; it
-     *  replaces an earlier evaluation of `x`. */
-    void record(const Vec& x, double loss, std::optional<std::size_t> eval)
+     *  replaces an earlier evaluation of `x`, which it returns (none for a
+     *  point not recorded before), so that the caller can compare the two
+     *  losses (HPO_Host: note_repeat_loss). */
+    std::optional<RecordedEval<Vec>> record(const Vec& x, double loss,
+                                            std::optional<std::size_t> eval)
     {
         const auto k = key(x);
-        if (!k) return;
+        if (!k) return std::nullopt;
         std::lock_guard<std::mutex> lock(mtx_);
-        RecordedEval<Vec>& e = entries_[*k];
+        const auto [it, fresh] = entries_.try_emplace(*k);
+        std::optional<RecordedEval<Vec>> earlier;
+        if (!fresh) earlier = it->second;
+        RecordedEval<Vec>& e = it->second;
         e.loss = loss;
         e.eval = eval;
         e.point = x;
+        return earlier;
     }
 
     /** Forgets every evaluation (a new run). */
@@ -155,6 +164,16 @@ private:
     mutable std::mutex mtx_;
     std::map<std::vector<std::uint64_t>, RecordedEval<Vec>> entries_;
 };
+
+/** Whether two usable losses of one point differ: by more than 1e-9 of the
+ *  larger magnitude (the losses of a point that is a function of its
+ *  evaluation agree to the bit; a relaxation that starts elsewhere moves
+ *  them by far more). */
+inline bool repeat_losses_differ(double earlier, double later)
+{
+    const double scale = std::max(std::abs(earlier), std::abs(later));
+    return std::abs(later - earlier) > 1e-9 * scale;
+}
 
 namespace detail {
 

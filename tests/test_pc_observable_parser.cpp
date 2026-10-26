@@ -101,7 +101,7 @@ TEST_CASE("parse_pc_observable_line: cohesive_energy with all required flags",
 
     auto* cohs = dynamic_cast<tadah::hpo::CohesiveEnergyObservable*>(obs.get());
     REQUIRE(cohs != nullptr);
-    CHECK(std::abs(cohs->current_a0() - 3.3036) < 1e-12);
+    CHECK(std::abs(cohs->start_a0() - 3.3036) < 1e-12);
 }
 
 TEST_CASE("parse_pc_observable_line: cohesive_energy hotvar without init seeds midpoint",
@@ -115,7 +115,7 @@ TEST_CASE("parse_pc_observable_line: cohesive_energy hotvar without init seeds m
 
     auto* cohs = dynamic_cast<tadah::hpo::CohesiveEnergyObservable*>(obs.get());
     REQUIRE(cohs != nullptr);
-    CHECK(std::abs(cohs->current_a0() - 0.5 * (2.7 + 3.9)) < 1e-12);
+    CHECK(std::abs(cohs->start_a0() - 0.5 * (2.7 + 3.9)) < 1e-12);
 }
 
 TEST_CASE("parse_pc_observable_line: --supercell sets nx/ny/nz",

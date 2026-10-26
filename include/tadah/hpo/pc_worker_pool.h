@@ -218,7 +218,12 @@ private:
   };
 
   void spawn_locked(Channel& ch, int slot);         /* fork+exec + HELLO   */
-  void kill_reap_locked(Channel& ch, int slot, const char* why);
+  /* The task a channel's worker ran when it died, for the journal line:
+   * a worker that exited on its own during a task was ended by its script
+   * (LAMMPS' quit calls exit()). */
+  struct TaskOf { std::string script; std::uint64_t iter = 0; };
+  void kill_reap_locked(Channel& ch, int slot, const char* why,
+                        const TaskOf* task = nullptr);
 
   int width_;
   double worker_timeout_s_;

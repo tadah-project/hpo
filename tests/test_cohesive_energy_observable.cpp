@@ -228,13 +228,13 @@ TEST_CASE("CohesiveEnergyObservable seeds hot-var correctly",
     /* No explicit initial → midpoint. */
     {
         CohesiveEnergyObservable obs(cfg);
-        CHECK(std::abs(obs.current_a0() - 3.3) < 1e-12);
+        CHECK(std::abs(obs.start_a0() - 3.3) < 1e-12);
     }
     /* Explicit initial inside bounds. */
     {
         auto c = cfg; c.a0_initial = 3.50;
         CohesiveEnergyObservable obs(c);
-        CHECK(std::abs(obs.current_a0() - 3.50) < 1e-12);
+        CHECK(std::abs(obs.start_a0() - 3.50) < 1e-12);
     }
     /* Pins: an initial outside the window is refused (the parser refuses
      * the line).
@@ -330,11 +330,11 @@ TEST_CASE("CohesiveEnergyObservable updates hot-var after relaxation",
     cfg.a0_min = 2.7;
     cfg.a0_max = 3.9;
     cfg.a0_initial = 3.10;        /* start away from any plausible minimum */
-    cfg.relax_atom_ftol = 1.0e-2;
+    cfg.eq_fmax_threshold = 1.0e-2;
     cfg.relax_maxiter = 500;
 
     CohesiveEnergyObservable obs(cfg);
-    const double a0_before = obs.current_a0();
+    const double a0_before = obs.start_a0();
     ObservableEvalResult r = obs.evaluate(*host.model, host.dc, host.context);
 
     REQUIRE(r.hotvar_updated_value.has_value());
@@ -348,7 +348,7 @@ TEST_CASE("CohesiveEnergyObservable updates hot-var after relaxation",
      * keeps the relaxed a0 per chain).
      * Before the fix: the observable kept the relaxed a0 as its own start
      * (current_a0() was the relaxed value), one value for every chain. */
-    CHECK(obs.current_a0() == a0_before);
+    CHECK(obs.start_a0() == a0_before);
     /* Hot-var didn't escape the bounds. */
     CHECK(*r.hotvar_updated_value >= cfg.a0_min);
     CHECK(*r.hotvar_updated_value <= cfg.a0_max);
@@ -362,11 +362,14 @@ TEST_CASE("CohesiveEnergyObservable updates hot-var after relaxation",
  * a perfect bcc lattice felt spurious forces (the relaxation stalls on
  * them) and E_coh was computed from misplaced images.
  *
- * relax_etol and a lenient eq_fmax_threshold make the observable report the
- * E_coh it computes for the bulk the relaxation ends at, whether it stops on
- * the force criterion (exact lists: every atomic force ~1e-15 on a perfect
- * lattice) or stalls on an energy plateau (misplaced images); that value
- * must be the relaxed bulk's energy. */
+ * relax_etol makes the observable report the E_coh it computes for the bulk
+ * the relaxation ends at, whether it stops on the force criterion (exact
+ * lists: every atomic force ~1e-15 on a perfect lattice, the strain force
+ * below the eq_fmax_threshold of 1e-4) or on the energy criterion; that
+ * value must be the relaxed bulk's energy. (The relaxation stopped at a
+ * force tolerance of its own, 1e-4, while a lenient eq_fmax_threshold,
+ * 1e3, judged it; one value, the --fmax-converged tolerance, does
+ * both.) */
 TEST_CASE("CohesiveEnergyObservable: relaxed E_coh equals a fresh "
           "neighbour-list evaluation of the relaxed bulk",
           "[hpo][observable][cohesive_energy][nn]")
@@ -387,26 +390,27 @@ TEST_CASE("CohesiveEnergyObservable: relaxed E_coh equals a fresh "
     cfg.a0_min = 2.7;
     cfg.a0_max = 3.9;
     cfg.a0_initial = 3.27;           /* about 2% below the model's minimum */
-    cfg.relax_atom_ftol = 1.0e-4;    /* the strain must converge: several Iso steps */
+    cfg.eq_fmax_threshold = 1.0e-4;  /* the strain must converge: several Iso steps */
     cfg.relax_etol = 1.0e-12;
     cfg.relax_maxiter = 500;
-    cfg.eq_fmax_threshold = 1.0e3;
 
     CohesiveEnergyObservable obs(cfg);
     const ObservableEvalResult r = obs.evaluate(*host.model, host.dc, host.context);
 
-    INFO("a0 " << *cfg.a0_initial << " -> " << obs.current_a0()
+    REQUIRE(r.hotvar_updated_value.has_value());
+    const double relaxed_a0 = *r.hotvar_updated_value;
+    INFO("a0 " << *cfg.a0_initial << " -> " << relaxed_a0
          << ", E_coh " << r.value);
     /* Precondition: the relaxation changed the cell (accepted Iso steps
      * after the list was built), so the cached list's cell is not the
      * relaxed one. Each Iso step changes the scale by at most 0.1%. */
-    REQUIRE(std::abs(obs.current_a0() / *cfg.a0_initial - 1.0) > 5.0e-3);
+    REQUIRE(std::abs(relaxed_a0 / *cfg.a0_initial - 1.0) > 5.0e-3);
     /* The observable's own value, not the unconverged penalty. */
     REQUIRE_FALSE(r.value_is_constant);
     REQUIRE(std::isfinite(r.value));
     REQUIRE(r.energy_terms.size() == 2u);
     REQUIRE(r.energy_terms[0].structure.cell(0, 0) ==
-            Approx(2.0 * obs.current_a0()).epsilon(1e-12));
+            Approx(2.0 * relaxed_a0).epsilon(1e-12));
 
     const double ecoh = fresh_ecoh(host, r);
     INFO("fresh-list E_coh " << ecoh);
@@ -415,8 +419,9 @@ TEST_CASE("CohesiveEnergyObservable: relaxed E_coh equals a fresh "
 
 /* A guard, expected to pass before and after the exact-image fix: the E_coh
  * of the 2-atom bcc cell (--supercell 1 1 1) equals that of 4 4 4 at the
- * same a0, without relaxation (relax_maxiter 0; a relax_atom_ftol no
- * pressure reaches, so the iteration-0 check accepts the cell as it is).
+ * same a0, without relaxation (relax_maxiter 0; an eq_fmax_threshold, the
+ * --fmax-converged force tolerance, that no pressure reaches, so the
+ * iteration-0 check accepts the cell as it is).
  * At rcut 6 and a0 3.3 (rcut/a0 = 1.82) a list built at the model's cutoff
  * would miss images of the 2-atom cell before the fix, but the relaxer
  * builds its list at rcut + skin (2 A), wide enough that no pair inside
@@ -443,7 +448,7 @@ TEST_CASE("CohesiveEnergyObservable: supercell 1 1 1 and 4 4 4 give the "
         cfg.a0_max = 3.9;
         cfg.a0_initial = 3.3;
         cfg.relax_maxiter = 0;
-        cfg.relax_atom_ftol = 1.0e6;
+        cfg.eq_fmax_threshold = 1.0e6;
         CohesiveEnergyObservable obs(cfg);
         const ObservableEvalResult r =
             obs.evaluate(*host.model, host.dc, host.context);
@@ -453,7 +458,8 @@ TEST_CASE("CohesiveEnergyObservable: supercell 1 1 1 and 4 4 4 give the "
         REQUIRE(r.energy_terms.size() == 2u);
         REQUIRE(r.energy_terms[0].structure.natoms() ==
                 static_cast<std::size_t>(2 * n * n * n));
-        CHECK(obs.current_a0() == 3.3);   /* not relaxed */
+        REQUIRE(r.hotvar_updated_value.has_value());
+        CHECK(*r.hotvar_updated_value == 3.3);   /* not relaxed */
         return r.value;
     };
 
@@ -463,13 +469,14 @@ TEST_CASE("CohesiveEnergyObservable: supercell 1 1 1 and 4 4 4 give the "
     CHECK(std::abs(e1 - e4) <= 1.0e-10 * std::max(1.0, std::abs(e4)));
 }
 
-/* Pins: the hot-var a0 that an evaluation hands on (current_a0() and
- * hotvar_updated_value) is the a0 it started from times the Iso
+/* Pins: the hot-var a0 that an evaluation hands on (hotvar_updated_value)
+ * is the a0 it started from times the Iso
  * relaxation's scale factor (NativeRelaxer::Result::scale_factor), the
  * quantity the early-reject predicate already uses, and not the relaxed
  * cell(0,0) divided by nx. An evaluation that does not move the cell
- * (relax_maxiter 0 and a relax_atom_ftol that no force reaches, so the
- * iteration-0 check accepts the cell with scale factor 1) therefore hands
+ * (relax_maxiter 0 and an eq_fmax_threshold, the --fmax-converged force
+ * tolerance, that no force reaches, so the iteration-0 check accepts the
+ * cell with scale factor 1) therefore hands
  * on its a0 bit for bit, whatever the supercell.
  *
  * a0 = 3.3 (0x1.a666666666666p+1) with --supercell 3 3 3: replicate()
@@ -481,8 +488,9 @@ TEST_CASE("CohesiveEnergyObservable: supercell 1 1 1 and 4 4 4 give the "
  * The expected values are written as literals, not computed here, so the
  * test does no arithmetic that -ffast-math could rewrite.
  *
- * Before the fix: new_a0 was bulk.cell(0,0) / nx, so current_a0() and
- * hotvar_updated_value were 3.2999999999999994 (0x1.a666666666665p+1)
+ * Before the fix: new_a0 was bulk.cell(0,0) / nx, so the observable's a0
+ * (which it kept then) and hotvar_updated_value were 3.2999999999999994
+ * (0x1.a666666666665p+1)
  * instead of 3.3 (0x1.a666666666666p+1). */
 TEST_CASE("CohesiveEnergyObservable: an evaluation that does not move the "
           "cell hands on its a0 bit for bit with --supercell 3 3 3",
@@ -505,10 +513,10 @@ TEST_CASE("CohesiveEnergyObservable: an evaluation that does not move the "
     cfg.a0_max = 3.9;
     cfg.a0_initial = 3.3;
     cfg.relax_maxiter = 0;
-    cfg.relax_atom_ftol = 1.0e6;
+    cfg.eq_fmax_threshold = 1.0e6;
 
     CohesiveEnergyObservable obs(cfg);
-    REQUIRE(obs.current_a0() == 0x1.a666666666666p+1);   /* 3.3 */
+    REQUIRE(obs.start_a0() == 0x1.a666666666666p+1);   /* 3.3 */
     const ObservableEvalResult r =
         obs.evaluate(*host.model, host.dc, host.context);
 
@@ -523,10 +531,8 @@ TEST_CASE("CohesiveEnergyObservable: an evaluation that does not move the "
     REQUIRE(bulk.cell(0, 0) == 0x1.3ccccccccccccp+3);
 
     REQUIRE(r.hotvar_updated_value.has_value());
-    INFO("current_a0 " << std::hexfloat << obs.current_a0()
-         << ", hotvar_updated_value " << *r.hotvar_updated_value
+    INFO("hotvar_updated_value " << std::hexfloat << *r.hotvar_updated_value
          << ", expected 0x1.a666666666666p+1 (3.3)");
-    CHECK(obs.current_a0() == 0x1.a666666666666p+1);
     CHECK(*r.hotvar_updated_value == 0x1.a666666666666p+1);
 }
 

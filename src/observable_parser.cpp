@@ -1,11 +1,13 @@
 #include <tadah/hpo/observables/observable_parser.h>
 
 #include <tadah/core/number_format.h>
+#include <tadah/core/periodic_table.h>
 
 #include <tadah/hpo/loss_function.h>
 #include <tadah/hpo/observables/cohesive_energy.h>
 #include <tadah/hpo/strict_parse.h>         // parse_number, parse_uint
 
+#include <algorithm>
 #include <cstdint>
 #include <limits>
 #include <optional>
@@ -53,16 +55,20 @@ int parse_int(const std::string& s, const std::string& flag, int min) {
 }
 
 std::unique_ptr<Observable>
-parse_cohesive_energy(const std::vector<std::string>& tokens, std::size_t start)
+parse_cohesive_energy(const std::vector<std::string>& tokens, std::size_t start,
+                      const tadah::LossFunction& default_loss)
 {
     CohesiveEnergyObservable::Config cfg;
     /* Defaults. */
     cfg.nx = cfg.ny = cfg.nz = 4;
-    /* Loss defaults to L2 (LossFunction's own default). */
+    /* The loss function of the LOSS line read above the line, as for a
+     * --varloss term (it was L2 whatever LOSS said); --loss replaces it. */
+    cfg.lossfn = default_loss;
 
     bool seen_species = false, seen_target = false, seen_weight = false;
     bool seen_hotvar  = false;
     std::string lattice = "bcc";
+    std::string target_tok, hotvar_lo_tok, hotvar_hi_tok, hotvar_init_tok;
 
     auto need_value = [&](std::size_t& i, const std::string& flag) -> const std::string& {
         if (i + 1 >= tokens.size())
@@ -70,50 +76,89 @@ parse_cohesive_energy(const std::vector<std::string>& tokens, std::size_t start)
                                      + "' requires a value");
         return tokens[++i];
     };
+    /* Each option is given once: a second would replace the first's
+     * values. */
+    std::vector<std::string> seen;
+    auto once = [&](const std::string& flag) {
+        if (std::find(seen.begin(), seen.end(), flag) != seen.end())
+            throw std::runtime_error(
+                "PC_OBSERVABLE cohesive_energy: " + flag + " is given twice "
+                "on this line; each option is given once");
+        seen.push_back(flag);
+    };
 
     for (std::size_t i = start; i < tokens.size(); ++i) {
         const std::string& t = tokens[i];
         if (t == "--species") {
+            once(t);
             cfg.species = need_value(i, t);
+            /* An element symbol, in its case ("Ta"): every evaluation
+             * failed on another word ("Unknown symbol: Xx"). Whether the
+             * potential has the element is a startup check
+             * (validate_hpo_setup). */
+            tadah::core::PeriodicTable::initialize();
+            try {
+                (void)tadah::core::PeriodicTable::find_by_symbol(cfg.species);
+            } catch (const std::exception&) {
+                throw std::runtime_error(
+                    "PC_OBSERVABLE cohesive_energy: --species " + cfg.species +
+                    " is not the symbol of an element");
+            }
             seen_species = true;
         } else if (t == "--target") {
-            cfg.target = parse_double(need_value(i, t), t);
+            once(t);
+            target_tok = need_value(i, t);
+            cfg.target = parse_double(target_tok, t);
             seen_target = true;
         } else if (t == "--weight") {
+            once(t);
             cfg.weight = parse_double(need_value(i, t), t);
             seen_weight = true;
         } else if (t == "--lattice") {
+            once(t);
             lattice = need_value(i, t);
             if (lattice != "bcc")
                 throw std::runtime_error(
                     "PC_OBSERVABLE cohesive_energy: lattice='" + lattice
                     + "' not supported in MVP (only bcc).");
         } else if (t == "--supercell") {
+            once(t);
             /* At least one cell along each axis. */
             cfg.nx = parse_int(need_value(i, t), "--supercell nx", 1);
             cfg.ny = parse_int(need_value(i, t), "--supercell ny", 1);
             cfg.nz = parse_int(need_value(i, t), "--supercell nz", 1);
         } else if (t == "--hotvar") {
+            once(t);
             /* --hotvar a0 <lo> <hi> [<init>] */
             const std::string& name = need_value(i, t);
             if (name != "a0")
                 throw std::runtime_error(
                     "PC_OBSERVABLE cohesive_energy: only --hotvar a0 is "
                     "supported in MVP (got '" + name + "').");
-            cfg.a0_min = parse_double(need_value(i, "--hotvar a0 <lo>"),
-                                       "--hotvar a0 lo");
-            cfg.a0_max = parse_double(need_value(i, "--hotvar a0 <hi>"),
-                                       "--hotvar a0 hi");
+            hotvar_lo_tok = need_value(i, "--hotvar a0 <lo>");
+            cfg.a0_min = parse_double(hotvar_lo_tok, "--hotvar a0 lo");
+            hotvar_hi_tok = need_value(i, "--hotvar a0 <hi>");
+            cfg.a0_max = parse_double(hotvar_hi_tok, "--hotvar a0 hi");
             /* Optional initial; peek next token. */
             if (i + 1 < tokens.size() && tokens[i + 1].substr(0, 2) != "--") {
-                cfg.a0_initial = parse_double(tokens[++i], "--hotvar a0 init");
+                hotvar_init_tok = tokens[++i];
+                cfg.a0_initial = parse_double(hotvar_init_tok, "--hotvar a0 init");
             }
             seen_hotvar = true;
         } else if (t == "--loss") {
+            once(t);
+            /* --loss <name> [<parameter>]: the parameter of HUBER (delta)
+             * and TUKEY (c), as LOSS and --varloss take it
+             * (LossFunction::resolve_params). */
             const std::string& kind = need_value(i, t);
-            cfg.lossfn = tadah::LossFunction(
-                tadah::LossFunction::from_string(kind));
+            const auto type = tadah::LossFunction::from_string(kind);
+            std::vector<double> params;
+            while (i + 1 < tokens.size() && tokens[i + 1].substr(0, 2) != "--")
+                params.push_back(
+                    parse_double(tokens[++i], "--loss " + kind + " parameter"));
+            cfg.lossfn = tadah::LossFunction(type, params);
         } else if (t == "--maxiter") {
+            once(t);
             /* Caps NativeRelaxer iterations. Default is 5000 (deep
              * convergence). On randomly-initialised potentials, the
              * energy surface is often non-physical and the relaxer
@@ -123,6 +168,7 @@ parse_cohesive_energy(const std::vector<std::string>& tokens, std::size_t start)
             cfg.relax_maxiter = static_cast<std::size_t>(
                 parse_int(need_value(i, t), "--maxiter", 0));
         } else if (t == "--max-wall-time") {
+            once(t);
             /* Per-relax wall-time cap (seconds). PC_OBSERVABLE's
              * analogue of LAMMPS's MAXTIME (per-eval subprocess kill).
              * With NN caching, a pathological theta can burn maxeval=5000
@@ -130,6 +176,7 @@ parse_cohesive_energy(const std::vector<std::string>& tokens, std::size_t start)
             cfg.relax_max_wall_time_s =
                 parse_double(need_value(i, t), "--max-wall-time");
         } else if (t == "--etol") {
+            once(t);
             /* LAMMPS-style energy convergence tolerance, mirrors 1st
              * positional arg of `minimize etol ftol maxiter maxeval`.
              * Production runs use 1e-15 to match Ecoh_fast.in. Default
@@ -137,6 +184,7 @@ parse_cohesive_energy(const std::vector<std::string>& tokens, std::size_t start)
             cfg.relax_etol =
                 parse_double(need_value(i, t), "--etol");
         } else if (t == "--maxeval") {
+            once(t);
             /* LAMMPS-style total energy/force-eval cap. Mirrors the
              * 4th positional arg of LAMMPS `minimize etol ftol maxiter
              * maxeval`. Critical for HPO: without it, a pathological theta
@@ -145,12 +193,20 @@ parse_cohesive_energy(const std::vector<std::string>& tokens, std::size_t start)
             cfg.relax_maxeval = static_cast<std::size_t>(
                 parse_int(need_value(i, t), "--maxeval", 0));
         } else if (t == "--fmax-converged") {
-            /* eq_ok threshold (matches Ecoh_fast.in's
-             * `ternary($(fmax) < 0.1, 1, 0)`). If post-relax fmax
-             * exceeds this, return the --unconverged value as Ecoh. */
-            cfg.eq_fmax_threshold =
-                parse_double(need_value(i, t), "--fmax-converged");
+            once(t);
+            /* The force tolerance of the relaxation and its eq_ok test
+             * (matches Ecoh_fast.in's `ternary($(fmax) < 0.1, 1, 0)`): the
+             * relaxation stops when the largest force falls below it, and
+             * one that ends above it returns the --unconverged value as
+             * Ecoh. Positive: no relaxation reaches a tolerance of 0. */
+            const std::string& v = need_value(i, t);
+            cfg.eq_fmax_threshold = parse_double(v, "--fmax-converged");
+            if (!(cfg.eq_fmax_threshold > 0.0))
+                throw std::runtime_error(
+                    "PC_OBSERVABLE cohesive_energy: --fmax-converged must be "
+                    "> 0 (got " + v + ")");
         } else if (t == "--unconverged") {
+            once(t);
             /* Strategy + value for unconverged relax outcomes. Syntax:
              *   --unconverged const        <V>     # res.value = V
              *   --unconverged force-scaled <slope> # res.value = target + slope.fmax
@@ -191,13 +247,31 @@ parse_cohesive_energy(const std::vector<std::string>& tokens, std::size_t start)
         throw std::runtime_error(
             "PC_OBSERVABLE cohesive_energy: --hotvar a0 <lo> <hi> [<init>] "
             "is required");
+    /* The start of a chain's first relaxation lies in the window its
+     * relaxed a0 must stay in; it was moved onto the nearer bound without
+     * a word. */
+    if (cfg.a0_initial && (*cfg.a0_initial < cfg.a0_min ||
+                           *cfg.a0_initial > cfg.a0_max) &&
+        cfg.a0_max > cfg.a0_min)
+        throw std::runtime_error(
+            "PC_OBSERVABLE cohesive_energy: --hotvar a0 <init> " +
+            hotvar_init_tok + " is outside its window [" + hotvar_lo_tok +
+            ", " + hotvar_hi_tok + "]");
+    /* A target the loss function cannot measure (MAPE 0, RMSLE at or
+     * below -1e-12): every evaluation would score the term the same, or
+     * fail it. */
+    if (const std::string why = cfg.lossfn.target_refusal(cfg.target);
+        !why.empty())
+        throw std::runtime_error(
+            "PC_OBSERVABLE cohesive_energy --target " + target_tok + ": " + why);
 
     return std::make_unique<CohesiveEnergyObservable>(std::move(cfg));
 }
 
 }  // anonymous namespace
 
-std::unique_ptr<Observable> parse_pc_observable_line(const std::string& cmd)
+std::unique_ptr<Observable> parse_pc_observable_line(
+    const std::string& cmd, const tadah::LossFunction& default_loss)
 {
     auto tokens = ws_tokens(cmd);
     if (tokens.empty())
@@ -205,7 +279,7 @@ std::unique_ptr<Observable> parse_pc_observable_line(const std::string& cmd)
 
     const std::string& kind = tokens[0];
     if (kind == "cohesive_energy") {
-        return parse_cohesive_energy(tokens, /*start=*/1);
+        return parse_cohesive_energy(tokens, /*start=*/1, default_loss);
     }
     /* Future observable kinds dispatch here:
      *   if (kind == "lattice_param")        return parse_lattice_param(...);

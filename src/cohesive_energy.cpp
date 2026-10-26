@@ -28,12 +28,16 @@ CohesiveEnergyObservable(Config cfg)
         throw std::invalid_argument("CohesiveEnergyObservable: a0_max must be > a0_min");
     if (cfg_.weight < 0.0)
         throw std::invalid_argument("CohesiveEnergyObservable: weight must be >= 0");
-
-    /* Seed hot-var: explicit initial value if given, else midpoint of bounds. */
-    a0_current_ = cfg_.a0_initial.value_or(0.5 * (cfg_.a0_min + cfg_.a0_max));
-    /* Clamp to bounds in case caller's initial was out of range. */
-    if (a0_current_ < cfg_.a0_min) a0_current_ = cfg_.a0_min;
-    if (a0_current_ > cfg_.a0_max) a0_current_ = cfg_.a0_max;
+    /* The start of a chain's relaxation lies in the window its relaxed a0
+     * must stay in (the parser refuses one outside at its line); it was
+     * moved onto the nearer bound without a word. */
+    if (cfg_.a0_initial &&
+        !(*cfg_.a0_initial >= cfg_.a0_min && *cfg_.a0_initial <= cfg_.a0_max))
+        throw std::invalid_argument(
+            "CohesiveEnergyObservable: a0_initial must lie in [a0_min, a0_max]");
+    if (!(cfg_.eq_fmax_threshold > 0.0))
+        throw std::invalid_argument(
+            "CohesiveEnergyObservable: eq_fmax_threshold must be > 0");
 }
 
 std::string CohesiveEnergyObservable::analytical_gradient_gap() const
@@ -55,6 +59,15 @@ evaluate(tadah::mlip::M_Tadah_Base& model,
          tadah::mlip::DC_Base& dc,
          const tadah::core::Context& ctx)
 {
+    return evaluate(model, dc, ctx, std::nullopt);
+}
+
+ObservableEvalResult CohesiveEnergyObservable::
+evaluate(tadah::mlip::M_Tadah_Base& model,
+         tadah::mlip::DC_Base& dc,
+         const tadah::core::Context& ctx,
+         std::optional<double> start)
+{
     using tadah::mlip::Structure;
     using tadah::mlip::StDescriptors;
     using tadah::mlip::NNFinder;
@@ -71,25 +84,35 @@ evaluate(tadah::mlip::M_Tadah_Base& model,
      * flag -- observable code stays oblivious to the trainer's training
      * FORCE setting. */
 
-    /* PRECONDITION on warmstart: a0_current_ must lie within
-     * [a0_min, a0_max]. Without this clamp, the relaxer can drive a0
-     * outside the user-declared range over successive HPO evals (each
-     * eval updates a0_current_ <- new_a0 unconditionally). A drifted
-     * tiny a0 (e.g., 0.5 Ang) produces a supercell whose NN search
-     * builds ~10^4 neighbours per atom and stalls fpredict for tens
-     * of seconds inside the analytical force loop. Mirrors PC_LAMMPS's
-     * hot_a0 rejection policy. */
-    a0_current_ = std::clamp(a0_current_, cfg_.a0_min, cfg_.a0_max);
+    /* The a0 this relaxation starts from: the one the previous evaluation
+     * of the chain handed on, or the declared start. It lies in [a0_min,
+     * a0_max]: the start is checked when the line is read, and an
+     * evaluation hands on no a0 outside the window (it rejects the
+     * relaxation and hands on its own start instead). A drifted tiny a0
+     * (e.g., 0.5 Ang) would give a supercell whose NN search builds ~10^4
+     * neighbours per atom and stalls fpredict for tens of seconds inside
+     * the analytical force loop. */
+    const double a0_start = start.value_or(start_a0());
+    if (!(a0_start >= cfg_.a0_min && a0_start <= cfg_.a0_max)) {
+        std::ostringstream why;
+        why << "CohesiveEnergyObservable: the start a0 = " << a0_start
+            << " lies outside the --hotvar window [" << cfg_.a0_min << ", "
+            << cfg_.a0_max << "]";
+        throw std::logic_error(why.str());
+    }
 
-    /* 1. Build bulk supercell at current hot-var a0. */
-    Structure bulk = cells::bcc(cfg_.species, a0_current_);
+    /* 1. Build bulk supercell at the start a0. */
+    Structure bulk = cells::bcc(cfg_.species, a0_start);
     StructureTransformation::replicate(bulk, cfg_.nx, cfg_.ny, cfg_.nz);
 
     /* 2. Iso-relax bulk under P = 0. */
     NativeRelaxer::Options relax_opts;
     relax_opts.box_mode = NativeRelaxer::Options::Iso;
     relax_opts.pressure = 0.0;
-    relax_opts.ftol     = cfg_.relax_atom_ftol;
+    /* --fmax-converged: the tolerance the relaxation stops at is the one
+     * its result is judged by (it stopped at a fixed 0.1, so a larger
+     * value changed nothing and a smaller one only rejected relaxations). */
+    relax_opts.ftol     = cfg_.eq_fmax_threshold;
     relax_opts.etol     = cfg_.relax_etol;
     relax_opts.max_wall_time_s = cfg_.relax_max_wall_time_s;
     relax_opts.maxiter  = cfg_.relax_maxiter;
@@ -115,7 +138,7 @@ evaluate(tadah::mlip::M_Tadah_Base& model,
     {
         const double a0_lo = cfg_.a0_min;
         const double a0_hi = cfg_.a0_max;
-        const double a0_cur = a0_current_;
+        const double a0_cur = a0_start;
         relax_opts.early_reject =
             [a0_lo, a0_hi, a0_cur](const tadah::mlip::EarlyState& s) {
                 const double a = a0_cur * s.scale_total;
@@ -130,20 +153,20 @@ evaluate(tadah::mlip::M_Tadah_Base& model,
      * (cell(0,0)/nx was one ulp off for nx = 3 and wrong for a cell whose
      * first row is not a0 x nx along x). The early-reject predicate above
      * uses the same quantity. */
-    const double new_a0 = a0_current_ * rr.scale_factor;
+    const double new_a0 = a0_start * rr.scale_factor;
 
     /* Reject if the relax drove a0 outside the user-declared hot-var
      * range. Mirrors PC_LAMMPS's `rejecting (hot_a0=... outside [..])`
      * policy -- the optimiser sees NaN -> FAIL_SCORE component and
-     * walks away from this theta. Keep a0_current_ at the *clamped*
-     * pre-relax value so subsequent evals don't inherit a wild
-     * warmstart that would re-stall NN search at the cell-build step. */
+     * walks away from this theta. Hand on the start, inside the window,
+     * so the chain's next evaluation does not inherit a wild warm start
+     * that would re-stall NN search at the cell-build step. */
     if (!(new_a0 >= cfg_.a0_min && new_a0 <= cfg_.a0_max)) {
         ObservableEvalResult res;
         res.value = std::numeric_limits<double>::quiet_NaN();
         res.needs_adjoint = false;
         res.box_dofs = 0;
-        res.hotvar_updated_value = a0_current_;  /* unchanged */
+        res.hotvar_updated_value = a0_start;  /* unchanged */
         std::ostringstream why;
         why << "the relaxed lattice parameter a0 = " << new_a0
             << " is outside its --hotvar window [" << cfg_.a0_min << ", "
@@ -152,11 +175,11 @@ evaluate(tadah::mlip::M_Tadah_Base& model,
         return res;
     }
 
-    /* eq_ok-style convergence gate (matches Ecoh_fast.in). With
-     * relax_atom_ftol=0.1 the relaxer's internal `converged` flag
-     * fires exactly when (atom fmax, strain force normalised) both
-     * fall below LAMMPS's 0.1 eV/Ang eq_ok threshold, so we can use
-     * `!rr.converged` as the canonical unconverged signal. Returns
+    /* eq_ok-style convergence gate (matches Ecoh_fast.in). The relaxer
+     * stops at eq_fmax_threshold (--fmax-converged), so its internal
+     * `converged` flag fires exactly when (atom fmax, strain force
+     * normalised) both fall below it, and `!rr.converged` is the
+     * canonical unconverged signal. Returns
      * the --unconverged value (--unconverged const 100 by default,
      * matches the `Ecoh = ternary(v_eq_ok, v_Ecoh_raw, 100.0)` fallback,
      * or --unconverged force-scaled's target + slope x fmax). */
@@ -188,7 +211,6 @@ evaluate(tadah::mlip::M_Tadah_Base& model,
         res.needs_adjoint = false;
         res.box_dofs = 0;
         res.hotvar_updated_value = new_a0;  /* still update warmstart */
-        a0_current_ = new_a0;
         /* A value that is not finite: the term fails, and says why, naming
          * the strategy that gave it. The parser reads only finite numbers,
          * so a parsed --unconverged const value is finite; a force-scaled
@@ -260,10 +282,8 @@ evaluate(tadah::mlip::M_Tadah_Base& model,
                        static_cast<double>(N);
     }
 
-    /* 6. Update hot-var for next eval (warm start). */
-    a0_current_ = new_a0;
-
-    /* 7. Assemble result. needs_adjoint = false (dE_coh/dx = 0 at minimum).
+    /* 6. Assemble result (new_a0: the warm start of the chain's next
+     *    evaluation). needs_adjoint = false (dE_coh/dx = 0 at minimum).
      *    E_coh = -E_bulk/N + E_iso: the host differentiates both energies
      *    with respect to the descriptor parameters at fixed W. */
     ObservableEvalResult res;

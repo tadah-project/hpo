@@ -55,8 +55,10 @@ struct ObservableEvalResult {
      *  Populated only when `box_dofs > 0` and `needs_adjoint=true`. */
     tadah::core::t_type dg_de;
 
-    /** Updated hot-var value to write back to the WarmStart cache.
-     *  Set only for observables that maintain warm-start state. */
+    /** The value the next evaluation of the chain starts from (the warm
+     *  start, Observable::warm_start_name): the host keeps it per chain in
+     *  the warm-start cache (warmstart_cache.h). Set only by observables
+     *  with a warm start. */
     std::optional<double> hotvar_updated_value;
 
     /** One model energy the value is linear in (closed-form path). */
@@ -143,12 +145,38 @@ public:
         return "it does not say that it keeps no state between evaluations";
     }
 
+    /** The elements the observable's structures are made of (its
+     *  --species), which the potential must have: the startup checks
+     *  refuse one it has not (validate_hpo_setup). */
+    virtual std::vector<std::string> elements() const { return {}; }
+
+    /** The name of the value an evaluation hands on to the next evaluation
+     *  of its chain (ObservableEvalResult::hotvar_updated_value), "" for an
+     *  observable that hands on none. The host keeps it per chain
+     *  (HPO_Host::obs_loss): every chain of a parallel annealer starts
+     *  from its own previous evaluation, whatever another chain did. */
+    virtual std::string warm_start_name() const { return {}; }
+
     /** Evaluate observable value + W-derivative + (optional) adjoint
-     *  rhs at the current model weights. */
+     *  rhs at the current model weights, from the observable's declared
+     *  start. */
     virtual ObservableEvalResult evaluate(
         tadah::mlip::M_Tadah_Base& model,
         tadah::mlip::DC_Base& dc,
         const tadah::core::Context& ctx) = 0;
+
+    /** evaluate() from @p start, the value the previous evaluation of the
+     *  chain handed on (nullopt: the declared start). An observable with a
+     *  warm start overrides it; one without has none to start from. */
+    virtual ObservableEvalResult evaluate(
+        tadah::mlip::M_Tadah_Base& model,
+        tadah::mlip::DC_Base& dc,
+        const tadah::core::Context& ctx,
+        std::optional<double> start)
+    {
+        (void)start;
+        return evaluate(model, dc, ctx);
+    }
 
     /** Target value the optimiser drives toward. */
     virtual double target() const = 0;

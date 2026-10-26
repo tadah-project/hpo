@@ -18,9 +18,10 @@ bool loss_has_derivative_wrt_observed(const tadah::LossFunction& fn)
         case Type::HUBER:
         case Type::TUKEY:
             return true;
-        /* Non-residual: MAPE depends on |y|, RMSLE on log(y); the
-         * "negate loss_prime" trick doesn't hold. These could be
-         * hand-coded; for now the observable is routed to FD. */
+        /* Not a function of v - t alone: MAPE divides by |t|, RMSLE
+         * takes log(v) and log(t), so dL/dv is not -dL/dt and the
+         * "negate loss_prime" step does not hold; such a term is routed
+         * to finite differences. */
         case Type::MAPE:
         case Type::RMSLE:
             return false;

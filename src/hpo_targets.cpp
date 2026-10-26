@@ -748,7 +748,7 @@ void HPOTargets::read(const std::string& fn)
     std::size_t optimizer_line = 0;
     /* The line of each PC_EMAE, PC_ErRMSE and PC_ERSQ line: one of each
      * (PC_ERMSE, PC_FRMSE and PC_SRMSE_GPA: ValidationMetricTargets::add). */
-    std::map<std::string, std::size_t> metric_lines;
+    std::map<std::string, std::pair<std::size_t, std::string>> metric_lines;
     /* Where each key was set, per thing it configures (an optimiser, the
      * starting points of one, the NOISE, RESTART or STRATEGY settings, the
      * search space, the run for a top-level key): the line, the block and
@@ -898,16 +898,23 @@ void HPOTargets::read(const std::string& fn)
             what + ", so each key is given once");
     };
 
-    /* FAILSCORE, LOSS and PC_SCRIPT_TIMEOUT (MAXTIME): each PC_LAMMPS and
-     * PC_FAILPROBE line takes the value given above it, and the run-wide
-     * uses (the ceiling of every loss, the validation metrics' loss, the
-     * PROCESS worker deadline) the last one. A second line is read only
-     * after such a line has taken the first: otherwise it would replace
-     * it without effect on any line. The line and spelling of the value
-     * set, and whether a line has taken it. */
-    struct LineSetting { std::size_t line; std::string spelling; bool taken; };
+    /* FAILSCORE, LOSS and PC_SCRIPT_TIMEOUT (MAXTIME): each line that
+     * reads one takes the value given above it -- a PC_LAMMPS line all
+     * three, a PC_FAILPROBE line FAILSCORE and PC_SCRIPT_TIMEOUT, a
+     * PC_OBSERVABLE line LOSS -- and the run-wide uses (the ceiling of
+     * every loss, the validation metrics' loss) the last FAILSCORE and
+     * LOSS. A second line is read only after such a line has taken the
+     * first: otherwise it would replace it without effect on any line. A
+     * PC_SCRIPT_TIMEOUT, or a LOSS in a file without a metric line, that
+     * no line after it takes is refused at the end of the file: it would
+     * have no effect. The line, its text and spelling, and whether a line
+     * has taken it. */
+    struct LineSetting {
+        std::size_t line; std::string text; std::string spelling; bool taken;
+    };
     std::map<std::string, LineSetting> line_settings;
-    auto set_for_lines = [&](const std::string& key) {
+    /* @p takers: the lines that take the key. */
+    auto set_for_lines = [&](const std::string& key, const char* takers) {
         const std::string name = key == "MAXTIME" ? "PC_SCRIPT_TIMEOUT" : key;
         const auto it = line_settings.find(name);
         if (it != line_settings.end() && !it->second.taken)
@@ -916,13 +923,19 @@ void HPOTargets::read(const std::string& fn)
                 std::to_string(it->second.line) +
                 (it->second.spelling != key ? ", as " + it->second.spelling
                                             : std::string()) +
-                ") and no PC_LAMMPS or PC_FAILPROBE line between takes the "
-                "first; each key is given once");
-        line_settings[name] = {nline, key, false};
+                ") and no " + takers +
+                " line between takes the first; each key is given once");
+        line_settings[name] = {nline, line, key, false};
     };
-    auto lines_take_settings = [&]() {
-        for (auto& [name, setting] : line_settings) setting.taken = true;
+    auto lines_take_settings = [&](std::initializer_list<const char*> names) {
+        for (const char* name : names)
+            if (const auto it = line_settings.find(name);
+                it != line_settings.end())
+                it->second.taken = true;
     };
+    /* The line of the last LOSS line (0: none), which the metric lines
+     * take. */
+    std::size_t loss_line = 0;
 
     while (std::getline(ifs,line))
     {
@@ -1404,7 +1417,7 @@ void HPOTargets::read(const std::string& fn)
              * to FAILSCORE. Negative losses (negative-weight --varloss
              * terms) stay usable under any positive FAILSCORE. */
             if (key=="FAILSCORE") {
-                set_for_lines(key);
+                set_for_lines(key, "PC_LAMMPS or PC_FAILPROBE");
                 FAIL_SCORE = parse_positive(single_value(iss, key), key,
                                             "finite number");
             }
@@ -1421,7 +1434,7 @@ void HPOTargets::read(const std::string& fn)
                 /* A LAMMPS time spec that is off, unlimited or positive:
                  * it becomes `timer timeout <spec>`, and its seconds size
                  * the PROCESS worker deadline. */
-                set_for_lines(key);
+                set_for_lines(key, "PC_LAMMPS or PC_FAILPROBE");
                 MAX_TIME = single_value(iss, key);
                 MAX_TIME_seconds = parse_script_timeout(MAX_TIME, key);
                 MAX_TIME_key = key;
@@ -1482,12 +1495,22 @@ void HPOTargets::read(const std::string& fn)
                 std::istringstream ts(cmd);
                 std::vector<std::string> toks, keep;
                 { std::string t; while (ts>>t) toks.push_back(t); }
+                bool gate_seen = false;
                 for (std::size_t i2 = 0; i2 < toks.size(); ++i2) {
                     if (toks[i2]=="--gate" || toks[i2]=="--s0") {
+                        const std::string what = "PC_FAILPROBE " + toks[i2];
+                        /* Each is given once: a second replaced the
+                         * first's value. */
+                        bool& seen = toks[i2]=="--gate" ? gate_seen
+                                                        : failprobe_s0_given;
+                        if (seen)
+                            throw std::runtime_error(
+                                what + " is given twice on this line; each "
+                                "option is given once");
+                        seen = true;
                         if (i2+1 >= toks.size())
                             throw std::runtime_error("PC_FAILPROBE " + toks[i2]
                                                      + " requires a value");
-                        const std::string what = "PC_FAILPROBE " + toks[i2];
                         if (toks[i2]=="--gate")
                             failprobe_gate = parse_finite(toks[i2+1], what);
                         else
@@ -1499,7 +1522,9 @@ void HPOTargets::read(const std::string& fn)
                 for (const auto& t : keep) { cmd2 += ' '; cmd2 += t; }
                 LS.emplace_back(cmd2, MAX_TIME, FAIL_SCORE, globalLoss,
                                 /*failprobe=*/true);
-                lines_take_settings();
+                LS.back().line = nline;
+                LS.back().line_text = line;
+                lines_take_settings({"FAILSCORE", "PC_SCRIPT_TIMEOUT"});
                 LammpsSim& probe = LS.back();
                 if (!probe.n_varloss.empty() || !probe.i_varloss.empty())
                     throw std::runtime_error(
@@ -1565,7 +1590,7 @@ void HPOTargets::read(const std::string& fn)
             /* loss -------------------------------------------------- */
             else if (key=="LOSS")
             {
-                set_for_lines(key);
+                set_for_lines(key, "PC_LAMMPS or PC_OBSERVABLE");
                 /* LOSS <type> [<param>]. The optional parameter (HUBER
                  * delta, TUKEY c) is validated and defaulted by
                  * LossFunction::resolve_params -- the same path the
@@ -1585,6 +1610,7 @@ void HPOTargets::read(const std::string& fn)
                 }
                 auto id = tadah::LossFunction::from_string(type);
                 globalLoss = tadah::LossFunction(id,params);
+                loss_line = nline;
             }
 
             /* optimisation variables --------------------------------*/
@@ -1608,7 +1634,9 @@ void HPOTargets::read(const std::string& fn)
             {
                 std::string cmd; std::getline(iss,cmd);
                 LS.emplace_back(cmd, MAX_TIME, FAIL_SCORE, globalLoss);
-                lines_take_settings();
+                LS.back().line = nline;
+                LS.back().line_text = line;
+                lines_take_settings({"FAILSCORE", "LOSS", "PC_SCRIPT_TIMEOUT"});
             }
 
             /* Typed observables ------------------------------------
@@ -1620,8 +1648,12 @@ void HPOTargets::read(const std::string& fn)
              * without touching this file. */
             else if (key=="PC_OBSERVABLE")
             {
+                /* Its loss function is that of the LOSS line above it
+                 * unless it gives --loss, as for a --varloss term. */
                 std::string cmd; std::getline(iss, cmd);
-                observables.push_back(parse_pc_observable_line(cmd));
+                observables.push_back(parse_pc_observable_line(cmd, globalLoss));
+                observable_lines.push_back({nline, line});
+                lines_take_settings({"LOSS"});
             }
 
             /* per-metric weight lines ------------------------------
@@ -1674,19 +1706,19 @@ void HPOTargets::read(const std::string& fn)
                     auto& targets = key == "PC_ERMSE" ? ermse_targets
                                   : key == "PC_FRMSE" ? frmse_targets
                                                       : srmse_targets;
-                    targets.add(indices, {tgt, wgt, caps, nline});
+                    targets.add(indices, {tgt, wgt, caps, nline, line});
                     if (key == "PC_ERMSE") use_ermse = true;
                     else if (key == "PC_FRMSE") use_frmse = true;
                     else use_srmse = true;
                 }
                 else if (const auto [first, fresh] =
-                             metric_lines.emplace(key, nline);
+                             metric_lines.emplace(key, std::make_pair(nline, line));
                          !fresh)
                     /* A second line would replace the first's target,
                      * weight and caps. */
                     throw std::runtime_error(
                         key + ": repeated declaration (first declared on "
-                        "line " + std::to_string(first->second) + ")");
+                        "line " + std::to_string(first->second.first) + ")");
                 else if (key=="PC_EMAE")   { emae=tgt;   w_emae=wgt;   use_emae=true;   skip_emae=caps; }
                 else if (key=="PC_ErRMSE") { errmse=tgt; w_errmse=wgt; use_errmse=true; skip_errmse=caps; }
                 else if (key=="PC_ERSQ")   { ersq=tgt;   w_ersq=wgt;   use_ersq=true;   skip_ersq=caps; }
@@ -1714,6 +1746,81 @@ void HPOTargets::read(const std::string& fn)
             block_name(in.id) + " block not closed with END" +
                 block_name(in.id),
             in.text));
+    }
+
+    /* A PC_SCRIPT_TIMEOUT (MAXTIME) that no PC_LAMMPS or PC_FAILPROBE line
+     * after it takes, and a LOSS that no PC_LAMMPS or PC_OBSERVABLE line
+     * after it takes in a file without a metric line, would have no
+     * effect (set_for_lines); refused at its line. A FAILSCORE is the
+     * ceiling of every loss as well. */
+    {
+        const bool has_metric_lines = use_emae || use_ermse || use_errmse ||
+                                      use_ersq || use_frmse || use_srmse;
+        if (const auto it = line_settings.find("PC_SCRIPT_TIMEOUT");
+            it != line_settings.end() && !it->second.taken)
+            throw std::runtime_error(at_line(it->second.line,
+                it->second.spelling + " sets the script timeout of the "
+                "PC_LAMMPS and PC_FAILPROBE lines after it, and no such line "
+                "follows it; it would have no effect",
+                it->second.text));
+        if (const auto it = line_settings.find("LOSS");
+            it != line_settings.end() && !it->second.taken &&
+            !has_metric_lines)
+            throw std::runtime_error(at_line(it->second.line,
+                "LOSS sets the loss function of the PC_LAMMPS and "
+                "PC_OBSERVABLE lines after it and of the metric lines "
+                "(PC_EMAE, PC_ERMSE, PC_ErRMSE, PC_ERSQ, PC_FRMSE, "
+                "PC_SRMSE_GPA), and the file has no metric line and no such "
+                "line after it; it would have no effect",
+                it->second.text));
+    }
+
+    /* A target the loss function of the metric lines -- the last LOSS line
+     * -- cannot measure (MAPE 0, RMSLE at or below -1e-12): every
+     * evaluation would score the term the same (MAPE: |m - 0| / |0|), or
+     * fail it (RMSLE: ln of a negative number). Refused at the metric's
+     * line, the first in the file; the LOSS line may follow it. */
+    {
+        struct MetricTarget {
+            std::size_t line; std::string text; std::string what; double target;
+        };
+        std::vector<MetricTarget> targets;
+        auto add_metric = [&](bool used, const char* key, double target) {
+            if (!used) return;
+            const auto it = metric_lines.find(key);
+            if (it != metric_lines.end())
+                targets.push_back({it->second.first, it->second.second, key,
+                                   target});
+        };
+        add_metric(use_emae, "PC_EMAE", emae);
+        add_metric(use_errmse, "PC_ErRMSE", errmse);
+        add_metric(use_ersq, "PC_ERSQ", ersq);
+        auto add_dataset_metric = [&](const ValidationMetricTargets& t,
+                                      const char* key) {
+            if (const auto& g = t.global_assignment())
+                targets.push_back({g->line, g->text, key, g->target});
+            for (const auto& [index, a] : t.indexed_assignments())
+                targets.push_back({a.line, a.text,
+                                   std::string(key) + " (" +
+                                       std::to_string(index) + ")",
+                                   a.target});
+        };
+        add_dataset_metric(ermse_targets, "PC_ERMSE");
+        add_dataset_metric(frmse_targets, "PC_FRMSE");
+        add_dataset_metric(srmse_targets, "PC_SRMSE_GPA");
+        std::stable_sort(targets.begin(), targets.end(),
+                         [](const MetricTarget& a, const MetricTarget& b) {
+                             return a.line < b.line;
+                         });
+        for (const auto& t : targets) {
+            const std::string why = globalLoss.target_refusal(t.target);
+            if (why.empty()) continue;
+            std::ostringstream what;
+            what << t.what << " " << t.target << ": the metric lines take the "
+                 << "loss function of the last LOSS line (line " << loss_line
+                 << "): " << why;
+            throw std::runtime_error(at_line(t.line, what.str(), t.text));
+        }
     }
     /* A density gate that no OPTIM line arms cannot act: no dimension of
      * the search changes rho(r) or its window, so every candidate has the
@@ -1767,6 +1874,37 @@ void HPOTargets::read(const std::string& fn)
             core::to_string(LS.size()) +
             " entries); PC_OBSERVABLE and PC_LAMMPS lines are mutually "
             "exclusive. Remove one set of lines and rerun.");
+    }
+
+    /* A LAMMPS variable a line without a --hotvar defines on LAMMPS'
+     * command line (--invar, -var, -v), which its script reads and which
+     * another line declares with --hotvar: the run injects that line's
+     * value into this script as `variable <name> equal <value>` (a cold
+     * script is injected the hot values it reads, script_reads_variable,
+     * the test the run makes), and LAMMPS refuses it for a variable of
+     * another style, so every evaluation would fail. Refused at the line
+     * that defines it. (A --hotvar defined on its own line is refused by
+     * LammpsSim.) */
+    for (const auto& cold : LS) {
+        if (cold.is_failprobe || !cold.hotvars.empty()) continue;
+        for (const auto& v : cold.line_variables)
+            for (const auto& hot : LS) {
+                if (&hot == &cold) continue;
+                for (const auto& hv : hot.hotvars) {
+                    if (hv.name != v.name ||
+                        !script_reads_variable(cold.script_lines, v.name))
+                        continue;
+                    throw std::runtime_error(at_line(cold.line,
+                        "PC_LAMMPS: the script " + cold.script + " reads " +
+                        v.name + ", the --hotvar of line " +
+                        std::to_string(hot.line) + ", and this line defines " +
+                        v.name + " (" + v.option + " " + v.name +
+                        "): the run injects `variable " + v.name +
+                        " equal <value>` into the script, which LAMMPS "
+                        "refuses for a variable of another style",
+                        cold.line_text));
+                }
+            }
     }
 
     /* Reject the same --hotvar NAME declared by two DISTINCT PC_LAMMPS
@@ -1901,10 +2039,10 @@ void HPOTargets::read(const std::string& fn)
      * IFT-adjoint chain) is not engaged. PC_LAMMPS configs must
      * use gradient-free optimisers -- every registered optimiser whose run
      * takes no gradient (searches_without_gradient(), strategy_rules.h).
-     * The single accepted gradient-based optimiser is DLIB:BFGS, which
-     * takes the central-difference gradient of the loss
-     * (GradientProvider, GRAD_STRATEGY NUMERICAL), as an NLopt LD_*
-     * algorithm would.
+     * DLIB:BFGS is refused as every gradient-based optimiser is: it takes
+     * the central-difference gradient of the loss (GradientProvider,
+     * GRAD_STRATEGY NUMERICAL), as an NLopt LD_* algorithm would, across
+     * the relaxations of the scripts.
      *
      * A block is refused when it asks the host for gradients
      * (obtains_gradients), not for the D of its name: NLopt's MLSL and
@@ -1939,9 +2077,6 @@ void HPOTargets::read(const std::string& fn)
             /* read() has required LIB and ALGO of every block by now, the
              * EXPLORE and INNER blocks included (require_driver,
              * require_inner_driver). */
-            const bool dlib_bfgs_exception =
-                (sp.lib == "DLIB" && sp.algo == "BFGS");
-            if (dlib_bfgs_exception) return;
             /* An INNER block of another LIB than NLopt is refused at startup
              * as not NLopt (require_inner_backend), whatever it names; its
              * enclosing MLSL or AUGLAG has no local search to ask about. */
@@ -1954,10 +2089,9 @@ void HPOTargets::read(const std::string& fn)
                   "derivative-free one in the INNER block (" +
                       nlopt_inner_searches_without_gradient() + ")."
                 : " PC_LAMMPS requires a gradient-free optimiser (" +
-                      searches_without_gradient() + ") or DLIB:BFGS, the "
-                      "one gradient-based optimiser it accepts; an NLopt "
-                      "MLSL or AUGLAG algorithm is accepted with a "
-                      "derivative-free INNER block.";
+                      searches_without_gradient() + "); an NLopt MLSL or "
+                      "AUGLAG algorithm is accepted with a derivative-free "
+                      "INNER block.";
             if (optimizer_caps(sp).accepts_inner) {
                 /* An MLSL or AUGLAG that takes a gradient for its local
                  * search: an INNER block's is refused at that block. */
@@ -3031,6 +3165,7 @@ void HPOTargets::process_optim_config(std::istringstream& iss,
   double low = 0.0, high = 0.0;
   struct AutoRule { bool geometric = false; double factor = 0.0; double floor = 0.0; double group_floor = 0.0; } rule;
   bool floor_set = false;   // FLOOR or GROUP_FLOOR given
+  bool floor_seen = false, group_floor_seen = false;
   bool mode_set = false;    // RATIO or FRAC given
   if (auto_box) {
     tokens.erase(tokens.begin());
@@ -3049,13 +3184,15 @@ void HPOTargets::process_optim_config(std::istringstream& iss,
         if (mode_set) throw std::runtime_error("OPTIM " + k + ": RATIO and FRAC are mutually exclusive");
         if (!(v >= 0.0)) throw std::runtime_error("OPTIM " + k + ": AUTO FRAC must be >= 0 (got " + tokens[t + 1] + "); FRAC 0 with FLOOR/GROUP_FLOOR gives a constant absolute half-width");
         rule.geometric = false; rule.factor = v; mode_set = true;
-      } else if (opt == "FLOOR") {
-        if (v < 0.0) throw std::runtime_error("OPTIM " + k + ": AUTO FLOOR must be >= 0");
-        rule.floor = v;
-        floor_set = true;
-      } else if (opt == "GROUP_FLOOR") {
-        if (v < 0.0) throw std::runtime_error("OPTIM " + k + ": AUTO GROUP_FLOOR must be >= 0");
-        rule.group_floor = v;
+      } else if (opt == "FLOOR" || opt == "GROUP_FLOOR") {
+        /* Each is given once: a second replaced the first's value. */
+        bool& seen = opt == "FLOOR" ? floor_seen : group_floor_seen;
+        if (seen)
+          throw std::runtime_error("OPTIM " + k + ": AUTO " + opt + " is given "
+                                   "twice on this line; each option is given once");
+        seen = true;
+        if (v < 0.0) throw std::runtime_error("OPTIM " + k + ": AUTO " + opt + " must be >= 0");
+        (opt == "FLOOR" ? rule.floor : rule.group_floor) = v;
         floor_set = true;
       } else {
         throw std::runtime_error("OPTIM " + k + ": unexpected AUTO option '" +

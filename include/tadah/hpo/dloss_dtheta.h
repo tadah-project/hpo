@@ -667,7 +667,7 @@ inline bool compute_dloss_dtheta(const DLossDThetaPlan& plan,
         const long flat_l = static_cast<long>(flat);
 
         // HPO evaluates loss(measured, target, weight); differentiate its
-        // first argument, including the measured-value denominator of MAPE.
+        // first argument (MAPE divides by the target, a constant here).
         auto dl_dmeasured = [&](double measured, double target, double w) {
             return trg.globalLoss.loss_prime_observed(measured, target, w);
         };

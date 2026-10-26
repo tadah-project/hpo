@@ -248,7 +248,8 @@ void PcWorkerPool::spawn_locked(Channel& ch, int slot) {
   }
 }
 
-void PcWorkerPool::kill_reap_locked(Channel& ch, int slot, const char* why) {
+void PcWorkerPool::kill_reap_locked(Channel& ch, int slot, const char* why,
+                                    const TaskOf* task) {
   const pid_t dead_pid = ch.pid;
   int st = 0;
   std::string status = "(not reaped)";
@@ -256,7 +257,17 @@ void PcWorkerPool::kill_reap_locked(Channel& ch, int slot, const char* why) {
     ::kill(ch.pid, SIGKILL);
     pid_t r;
     do { r = ::waitpid(ch.pid, &st, 0); } while (r < 0 && errno == EINTR);
-    if (r == ch.pid) status = decode_wait_status(st);
+    if (r == ch.pid) {
+      status = decode_wait_status(st);
+      /* A worker that exited, not killed, during its task: its script
+       * ended the process (LAMMPS' quit calls exit(); a quit written in a
+       * script is refused when its line is read, one a variable spells is
+       * not). */
+      if (task && WIFEXITED(st))
+        status += "; the script " + task->script + " of evaluation " +
+                  std::to_string(task->iter) + " ended the worker process (a "
+                  "quit command, or another command that ends the process)";
+    }
   }
   if (ch.fd >= 0) ::close(ch.fd);
   ch.fd = -1;
@@ -394,7 +405,14 @@ PcTaskResult PcWorkerPool::execute(int slot, std::uint32_t script_idx,
       return synthetic_fail("worker task deadline expired");
     }
   } catch (const std::exception& e) {
-    kill_reap_locked(ch, slot, (std::string("RESULT recv failed: ") + e.what()).c_str());
+    TaskOf task;
+    task.iter = iter;
+    if (static_cast<std::size_t>(slot) < specs_.size() &&
+        script_idx < specs_[static_cast<std::size_t>(slot)].size())
+      task.script = specs_[static_cast<std::size_t>(slot)][script_idx].script;
+    kill_reap_locked(ch, slot,
+                     (std::string("RESULT recv failed: ") + e.what()).c_str(),
+                     task.script.empty() ? nullptr : &task);
     return synthetic_fail(e.what());
   }
 

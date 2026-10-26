@@ -29,6 +29,7 @@ struct ValidationMetricAssignment {
     double weight = 0.0;
     MetricSkipCaps caps;
     std::size_t line = 0;
+    std::string text;   ///< the line of the target file, for its refusals
 };
 
 /** One global target or a complete, disjoint set of one-based assignments.
@@ -45,6 +46,13 @@ public:
     void resolve(const std::vector<std::string>& files);
     const ValidationMetricAssignment& global() const;
     const std::vector<ValidationMetricAssignment>& datasets() const;
+    /** The assignments as the lines gave them, before resolve(): the
+     *  global one, if any, and the indexed ones by their one-based index
+     *  (the startup checks of their targets, HPOTargets). */
+    const std::optional<ValidationMetricAssignment>& global_assignment() const
+    { return global_; }
+    const std::map<std::size_t, ValidationMetricAssignment>&
+    indexed_assignments() const { return indexed_; }
     const std::vector<std::string>& files() const { return files_; }
     // Returns one contribution; per_dataset contains unaveraged losses.
     double loss(const LossFunction& fn, double average,
