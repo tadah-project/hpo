@@ -306,13 +306,23 @@ public:
 
     const std::size_t actual_k = plan.starts;
     if (actual_k < k_) {
-      HPOLog::instance().warning(
-          "MULTISTART N_STARTS " + std::to_string(k_) + " requested but the "
-          "resolved INIT chain produced only " +
-          std::to_string(spec.optim_init.size()) +
-          " starting point(s); running " + std::to_string(actual_k) +
-          " start(s). Add INIT points (e.g. METHOD LHS/RANDOM/SOBOL "
-          "with K >= " + std::to_string(k_) + ") or lower N_STARTS.");
+      /* The advice names settings the parser takes: N_STARTS is 2 or more
+       * (one start is STRATEGY TYPE PLAIN), so a lower N_STARTS is named
+       * only for two starts or more. */
+      const std::string k = std::to_string(k_);
+      const std::string got = std::to_string(actual_k);
+      std::string msg =
+          "MULTISTART N_STARTS " + k + " requested but the resolved INIT "
+          "chain produced only " + got +
+          (actual_k == 1 ? " starting point; running 1 start, which is "
+                           "STRATEGY TYPE PLAIN."
+                         : " starting points; running " + got + " starts.") +
+          " A chain of " + k + " or more starting points (METHOD LHS " + k +
+          ", RANDOM " + k + " or SOBOL " + k + ") runs " + k + " starts";
+      if (actual_k >= 2)
+        msg += ", and N_STARTS " + got + " asks for the " + got +
+               " that run";
+      HPOLog::instance().warning(msg + ".");
     }
     HPOLog::instance().info(
         "MULTISTART: running " + std::to_string(actual_k) +
