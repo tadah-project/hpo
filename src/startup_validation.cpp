@@ -808,10 +808,11 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
    * it and score FAILSCORE, so it is refused here, with the fit's message
    * (and OPTIM LAMBDA under OALGO 3 with such a column).
    * So is OPTIM of a key that M_KRR implementation 2 ignores (FSIGMA,
-   * SSIGMA, WDBFILE: every candidate other than the default would be
-   * refused; its solve applies ESIGMA); its other refusals depend on
-   * the training data, and HPO_Host makes them once it has read them. A
-   * run whose evaluations fit nothing reads none of these. */
+   * SSIGMA, WDBFILE, and OALGO, which its Cholesky solve does not read:
+   * every candidate other than the default would be refused; its solve
+   * applies ESIGMA); its other refusals depend on the training data, and
+   * HPO_Host makes them once it has read them. A run whose evaluations
+   * fit nothing reads none of these. */
   tadah::mlip::require_krr_implementation(train_ctx);
   if (has_train_db && !fixindex_pins_every_weight(train_ctx)) {
     tadah::mlip::require_fit_lambda(train_ctx);
@@ -857,6 +858,11 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
         throw std::runtime_error(tadah::mlip::krr_implementation2_ignores(
             kernel, std::string("OPTIM ") + k.key, "applies it", k.instead));
       }
+      // Its Cholesky solve reads no OALGO: every candidate of OPTIM OALGO
+      // but the default would be refused.
+      if (optim_searches(trg, "OALGO"))
+        throw std::runtime_error(tadah::mlip::krr_implementation2_reads_no_oalgo(
+            kernel, "OPTIM OALGO", "without OPTIM OALGO"));
     }
     require_error_scale_search_changes_the_fit(train_ctx, trg);
   } else {
