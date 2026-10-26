@@ -61,6 +61,7 @@
 #include <fstream>
 #include <limits>
 #include <map>
+#include <iterator>
 #include <memory>
 #include <sstream>
 #include <string>
@@ -1550,6 +1551,42 @@ TEST_CASE("Strict numbers: INIT K_TOTAL, SEED and the METHOD K",
                    Catch::StartsWith(h.at() + "INIT METHOD " + method +
                                      " expects exactly one arg: K"));
     }
+}
+
+/* Pins: a shape tag written on an OPTIM line wins over LOG_HP: under
+ * LOG_HP 2, "OPTIM WATOM (1) 0.5 5.0 LIN" stays linear ("LIN") while the
+ * same box untagged is log-scaled ("LOG (auto)"), and so does an AUTO box
+ * tagged LIN (WATOM seed 1, AUTO FRAC 0.5: [0.5, 1.5], ratio 3), whose line
+ * in hpo_optim_resolved.hpo keeps the tag ("OPTIM WATOM (1) 0.5 1.5 LIN"),
+ * so pasted back under LOG_HP it gives the same search space.
+ * Before the fix: the LIN tag set the shape an untagged line has, so LOG_HP
+ * log-scaled both ("LOG (auto)"), and the resolved line held no tag. */
+TEST_CASE("OPTIM: an explicit LIN tag keeps a dimension linear under LOG_HP",
+          "[HPO][hpo_targets][log_hp]")
+{
+    const auto space_of = [](const std::string& optim) {
+        TempFile cfg(optim + "\nPC_ERMSE 0 1\nOPTIMIZER\nSTRATEGY\n"
+                     "LIB NLOPT\nALGO LN_SBPLX\nMAXEVAL 5\nLOG_HP 2\n"
+                     "ENDSTRATEGY\nENDOPTIMIZER\n");
+        tadah::core::Context ctx;
+        ctx.add("WATOM", 1.0);
+        return std::make_unique<tadah::hpo::HPOTargets>(ctx, cfg.path.string());
+    };
+    CHECK(space_of("OPTIM WATOM (1) 0.5 5.0 LIN")->space()->describe_dim(0) ==
+          "LIN");
+    CHECK(space_of("OPTIM WATOM (1) 0.5 5.0")->space()->describe_dim(0) ==
+          "LOG (auto)");
+    const auto tagged = space_of("OPTIM WATOM (1) AUTO FRAC 0.5 LIN");
+    CHECK(tagged->space()->describe_dim(0) == "LIN");
+    const fs::path dir = physical_temp_dir("");
+    tagged->write_search_space_files(dir.string());
+    std::ifstream in(dir / "hpo_optim_resolved.hpo");
+    REQUIRE(in.good());
+    std::string text((std::istreambuf_iterator<char>(in)),
+                     std::istreambuf_iterator<char>());
+    CHECK_THAT(text, Catch::Contains("OPTIM WATOM (1) 0.5 1.5 LIN   # "));
+    std::error_code ec;
+    fs::remove_all(dir, ec);
 }
 
 TEST_CASE("Strict numbers: NOISE CALIBRATION and LOG_HP",
