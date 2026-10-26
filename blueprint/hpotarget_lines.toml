@@ -5160,7 +5160,7 @@ context = "lines_krr2_oalgo4"
 at = "none"
 doc = "The training configuration has OALGO 4."
 text = "PC_EMAE 5 1"
-error = "MODEL M_KRR Kern_Linear 2 solves (K + LAMBDA sigma^2 I) w = t by Cholesky and reads no OALGO: OALGO 4 would be ignored. Implementation 1 (MODEL M_KRR Kern_Linear 1) solves with OALGO; implementation 2 fits with OALGO 1, the default, or without an OALGO line."
+error = "MODEL M_KRR Kern_Linear 2 solves (K + LAMBDA sigma^2 I) w = t by Cholesky and reads no OALGO: OALGO 4 would be ignored. Implementation 1 (MODEL M_KRR Kern_Linear 1) solves with OALGO; implementation 2 fits without an OALGO line or with the default written out, OALGO 1 or OALGO 1 1e-8."
 
 [[rule]]
 id = "RULE.fit_error_scales"
