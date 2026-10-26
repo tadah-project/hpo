@@ -5092,8 +5092,9 @@ their residuals over ESIGMA, which OPTIM ESIGMA may search. When the run \
 starts, without a line, tadah hpo refuses OPTIM of FSIGMA, SSIGMA or \
 WDBFILE with it, and, once it has read the training data, FORCE true, \
 STRESS true, ENERGY false, ENORM SQRT, an FSIGMA or SSIGMA other than its \
-default, a WDBFILE value other than 1 and a training structure whose \
-eweight is not 1."""
+default, a WDBFILE value other than 1, an OALGO other than the default \
+(OALGO 1, with no second value or 1e-8), which its Cholesky solve does not \
+read, and a training structure whose eweight is not 1."""
 msg_doc = """\
 The message names the kernel of MODEL, what implementation 2 would ignore \
 (an OPTIM line, a key with its values, or a structure with its eweight), \
