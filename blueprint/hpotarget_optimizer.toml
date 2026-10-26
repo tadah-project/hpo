@@ -1382,6 +1382,8 @@ THREADS in an INNER block, or in an EXPLORE block whose optimiser is not \
 one of those that read it, is accepted and has no effect."""
 checks = [
   { msg = "{phase}: CERES:{algo} does not support THREADS (host evaluation is single-threaded inside one optimizer step)", doc = "At startup, at the END line of its optimiser." },
+  { msg = "{phase}: {lib}:{algo} does not use THREADS in an INNER block: the THREADS of the STRATEGY-level optimiser sets the workers of the run; remove it", doc = "At startup, at the ENDINNER line." },
+  { msg = "{phase}: {lib}:{algo} does not use THREADS: the THREADS of the STRATEGY-level optimiser sets the workers of the run, and the THREADS of an EXPLORE block is read by {list}; remove it", doc = "At startup, at the ENDEXPLORE line: an exploration whose optimiser reads no THREADS of its own; {list} names those that do." },
 ]
 
 [[key.examples]]
@@ -1407,6 +1409,20 @@ text = '''
 THREADS 1
 THREADS 1'''
 error = "THREADS is set twice in the STRATEGY block (first on line 8); each key is given once"
+
+[[key.invalid]]
+wrap = "inner"
+check = "startup"
+at = "ENDINNER"
+text = "THREADS 4"
+error = "the INNER block of the STRATEGY-level optimiser: NLOPT:LN_BOBYQA does not use THREADS in an INNER block: the THREADS of the STRATEGY-level optimiser sets the workers of the run; remove it"
+
+[[key.invalid]]
+wrap = "explore"
+check = "startup"
+at = "ENDEXPLORE"
+text = "THREADS 4"
+error = "the PRESTAGE exploration (EXPLORE block): TADAH:RANDOM does not use THREADS: the THREADS of the STRATEGY-level optimiser sets the workers of the run, and the THREADS of an EXPLORE block is read by ASA:ASA, DLIB:GFS, TADAH:ANNEAL_PA, TADAH:ANNEAL_PT; remove it"
 
 [[key]]
 id = "OPTIMIZER.GRAD_STRATEGY"

@@ -823,6 +823,62 @@ TEST_CASE("startup validation: a RESTART block that never restarts the "
     CHECK(trg.spec.restart.active());
 }
 
+/* Pins: THREADS of the STRATEGY-level optimiser sets the workers of the
+ * run; DLIB:GFS, ASA:ASA, TADAH:ANNEAL_PT and TADAH:ANNEAL_PA also read the
+ * THREADS of their own block. THREADS in an INNER block, and in an EXPLORE
+ * block whose optimiser is not one of those, is refused at startup at the
+ * line that closes its block: "the INNER block of the STRATEGY-level
+ * optimiser: NLOPT:LN_BOBYQA does not use THREADS in an INNER block: the
+ * THREADS of the STRATEGY-level optimiser sets the workers of the run;
+ * remove it"; "the PRESTAGE exploration (EXPLORE block): NLOPT:GN_CRS2_LM
+ * does not use THREADS: the THREADS of the STRATEGY-level optimiser sets
+ * the workers of the run, and the THREADS of an EXPLORE block is read by
+ * ASA:ASA, DLIB:GFS, TADAH:ANNEAL_PA, TADAH:ANNEAL_PT; remove it" (serial
+ * TADAH:ANNEAL too). An EXPLORE block of DLIB:GFS with THREADS 2, and the
+ * STRATEGY-level THREADS of every optimiser but CERES (which refuses it
+ * itself), are accepted.
+ * Before the fix: each of these files was accepted, and the THREADS of the
+ * INNER and EXPLORE blocks had no effect. */
+TEST_CASE("startup validation: THREADS in an INNER block or in an EXPLORE "
+          "block whose optimiser does not read it is refused",
+          "[startup_validation][strategy][threads]")
+{
+    const std::string unused =
+        " does not use THREADS: the THREADS of the STRATEGY-level optimiser "
+        "sets the workers of the run, and the THREADS of an EXPLORE block is "
+        "read by ASA:ASA, DLIB:GFS, TADAH:ANNEAL_PA, TADAH:ANNEAL_PT; remove "
+        "it";
+    {
+        const auto v = judge(strategy_config(
+            "    LIB NLOPT\n    ALGO G_MLSL_LDS\n    MAXEVAL 20\n"
+            "    INNER\n      LIB NLOPT\n      ALGO LN_BOBYQA\n"
+            "      MAXEVAL 5\n      THREADS 4\n    ENDINNER\n"));
+        CHECK(v.startup ==
+              "the INNER block of the STRATEGY-level optimiser: "
+              "NLOPT:LN_BOBYQA does not use THREADS in an INNER block: the "
+              "THREADS of the STRATEGY-level optimiser sets the workers of the "
+              "run; remove it");
+    }
+    const auto explore = [](const std::string& lib, const std::string& algo,
+                            const std::string& extra) {
+        return strategy_config(
+            "    TYPE PRESTAGE\n    LIB NLOPT\n    ALGO LN_BOBYQA\n"
+            "    MAXEVAL 10\n    EXPLORE\n      LIB " + lib + "\n      ALGO " +
+            algo + "\n      MAXEVAL 12\n" + extra +
+            "      THREADS 4\n    ENDEXPLORE\n");
+    };
+    CHECK(judge(explore("NLOPT", "GN_CRS2_LM", "")).startup ==
+          "the PRESTAGE exploration (EXPLORE block): NLOPT:GN_CRS2_LM" +
+              unused);
+    CHECK(judge(explore("TADAH", "ANNEAL", "")).startup ==
+          "the PRESTAGE exploration (EXPLORE block): TADAH:ANNEAL" + unused);
+    CHECK(judge(explore("DLIB", "GFS", "")).startup == "");
+    CHECK(judge(explore("TADAH", "ANNEAL_PT", "")).startup == "");
+    CHECK(judge(strategy_config("    LIB NLOPT\n    ALGO LN_SBPLX\n"
+                                "    MAXEVAL 20\n    THREADS 4\n"))
+              .startup == "");
+}
+
 TEST_CASE("startup validation: a TYPE line after an EXPLORE or REFINE "
           "block is refused as a second TYPE line",
           "[startup_validation][strategy][knobs][prestage]")
