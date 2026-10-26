@@ -2381,8 +2381,8 @@ TEST_CASE("tadah hpo: a PC_LAMMPS read-back or script error ends the same "
  * first run's first loss, bit for bit.
  * Before the fix: the second run started from the value the first run's
  * last evaluation handed on, lattice 3.40, so its loss was another (the
- * bit comparison fails); with a relaxing script, the second run of a task
- * file did not reproduce the same run made alone. */
+ * bit comparison fails); with a relaxing script, the second run in one
+ * process did not reproduce the same run made alone. */
 TEST_CASE("a second run in one process starts each --hotvar from its "
           "declared initial value", "[hotvar_e2e][.]") {
     tadah::core::PeriodicTable::initialize();
