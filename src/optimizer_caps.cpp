@@ -441,7 +441,8 @@ Registry build_registry()
      * Which attributes a run reads (optimize.c): the stochastic population
      * (POP()) CRS2, ISRES, ESCH, the MLSL forms and GD_STOGO_RAND; the
      * vector storage the Luksan algorithms LD_LBFGS, LD_VAR1/2 and
-     * LD_TNEWTON*; the random seed (nlopt::srand) is set for every one. */
+     * LD_TNEWTON_PRECOND*; the random seed (nlopt::srand) is set for every
+     * one. */
     for (int i = 0; i < NLOPT_NUM_ALGORITHMS; ++i) {
         const char* name = nlopt_algorithm_to_string(static_cast<nlopt_algorithm>(i));
         if (!name || !name[0]) continue;
@@ -547,8 +548,11 @@ Registry build_registry()
         c.reads_population = starts("GN_CRS2") || starts("GN_ISRES") ||
                              starts("GN_ESCH") || mlsl ||
                              s == "GD_STOGO_RAND";
+        /* pnet.c reads the vector storage only with a preconditioner
+         * (mos2 > 1), which optimize.c gives the two _PRECOND forms of
+         * LD_TNEWTON: LD_TNEWTON and LD_TNEWTON_RESTART read none. */
         c.reads_vector_storage = s == "LD_LBFGS" || starts("LD_VAR") ||
-                                 starts("LD_TNEWTON");
+                                 starts("LD_TNEWTON_PRECOND");
         c.reads_seed = true;
         /* Where the first call is (OptimizerCaps::starts_at_x0): StoGO,
          * DIRECT and AGS take x0 as their output only. */

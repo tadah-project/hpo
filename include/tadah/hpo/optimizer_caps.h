@@ -77,7 +77,11 @@ struct OptimizerCaps {
      *                        2.10's optimize.c): GN_CRS2_LM, GN_ISRES,
      *                        GN_ESCH, the six MLSL forms, GD_STOGO_RAND
      *   reads_vector_storage VECTOR_ARR: the Luksan algorithms of NLopt
-     *                        (optimize.c): LD_LBFGS, LD_VAR1/2, LD_TNEWTON*
+     *                        that read it (optimize.c, pnet.c): LD_LBFGS,
+     *                        LD_VAR1/2, LD_TNEWTON_PRECOND and
+     *                        LD_TNEWTON_PRECOND_RESTART (LD_TNEWTON and
+     *                        LD_TNEWTON_RESTART run without a preconditioner,
+     *                        which alone reads it)
      *   reads_seed           SEED: TADAH:RANDOM, the ANNEAL family, ASA and
      *                        NLopt (every NLopt algorithm: which of them draw
      *                        random numbers is not recorded)
