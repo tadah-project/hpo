@@ -34,6 +34,11 @@
 //     HPO_Host started with prepare_best_publication(): the second run
 //     starts each --hotvar from its declared initial value, not from the
 //     value the first run's last evaluation handed on.
+//   - [kernel_line_e2e] (hidden; CTest entry hpo_kernel_line_e2e, label
+//     e2e): two runs in one process, as a program's two hpo_run() calls on
+//     the context TaskFactory makes of `tadah hpo -c ... -v 1`, under
+//     PC_ISOLATION THREAD and PROCESS: each prints the settings line of its
+//     own -c model's kernel once.
 //   - [.tadah_cli_pc_readback] (CTest entry hpo_tadah_cli_pc_readback): the
 //     built tadah under PC_ISOLATION THREAD and PROCESS ends the same way,
 //     with the same rows and, under FAILSCORE_GRADING, the same graded
@@ -60,10 +65,12 @@
 //     PC_ISOLATION PROCESS (PC_WORKER_TIMEOUT, derived from
 //     PC_SCRIPT_TIMEOUT, or none) and of THREAD (n/a).
 
+#include "pc_process_workers.h"  // before catch2/catch.hpp
 #include "tadah_test_skip.hpp"  // before catch2/catch.hpp
 
 #include <tadah/core/context.h>
 #include <tadah/core/periodic_table.h>
+#include <tadah/hpo/hpo.h>
 #include <tadah/hpo/hpo_host.h>
 #include <tadah/hpo/hpo_log.h>
 #include <tadah/hpo/hpo_targets.h>
@@ -71,9 +78,13 @@
 #include <tadah/hpo/pc_fail_grading.h>
 #include <tadah/hpo/runners.h>
 #include <tadah/hpo/warmstart_cache.h>
+#include <tadah/mlip/itask_input.h>
+#include <tadah/mlip/task.h>
+#include <tadah/mlip/task_factory.h>
 
 #include <dlib/matrix.h>
 
+#include <fcntl.h>
 #include <unistd.h>
 #include <sys/wait.h>
 
@@ -86,11 +97,14 @@
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
+#include <iostream>
 #include <limits>
 #include <optional>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <system_error>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -2636,6 +2650,175 @@ TEST_CASE("tadah hpo: a kernel's settings line is printed once per run",
         CHECK(count_lines_with(dir / "tadah.stdout", "Kern_RBF |") == 1);
         CHECK(count_lines_with(dir / "tadah.stdout", line) == 1);
     }
+}
+
+namespace {
+
+/* What `tadah hpo -c <config> --hpotarget config.hpo --validation
+ * config.val -v 1` hands TaskFactory. */
+struct HpoCommandInput : tadah::mlip::ITaskInput {
+    std::string config;
+    explicit HpoCommandInput(std::string c) : config(std::move(c)) {}
+    std::string getTaskName() const override { return "HPO"; }
+    std::unordered_map<std::string, std::vector<std::string>>
+    getKeyValueData() const override {
+        return {{"config", {config}},
+                {"hpotarget", {"config.hpo"}},
+                {"validation", {"config.val"}},
+                {"verbose", {"1"}}};
+    }
+};
+
+/* TADAH_PC_ISOLATION unset while this lives (it overrides the
+ * configuration's PC_ISOLATION), as the case found it afterwards. */
+struct PcIsolationEnvUnset {
+    std::optional<std::string> saved;
+    PcIsolationEnvUnset() {
+        if (const char* e = std::getenv("TADAH_PC_ISOLATION")) saved = e;
+        ::unsetenv("TADAH_PC_ISOLATION");
+    }
+    ~PcIsolationEnvUnset() {
+        if (saved) ::setenv("TADAH_PC_ISOLATION", saved->c_str(), 1);
+        else       ::unsetenv("TADAH_PC_ISOLATION");
+    }
+};
+
+/* File descriptor 1 of this process into the file @p path while the object
+ * lives: the kernels' lines (std::cout), and whatever a PC_ISOLATION
+ * PROCESS worker, which inherits the descriptor, writes there. */
+struct StdoutToFile {
+    int saved = -1;
+    explicit StdoutToFile(const fs::path& path) {
+        const int fd = ::open(path.c_str(), O_WRONLY | O_CREAT | O_TRUNC,
+                              0644);
+        REQUIRE(fd >= 0);
+        std::cout.flush();
+        std::fflush(stdout);
+        saved = ::dup(1);
+        ::dup2(fd, 1);
+        ::close(fd);
+    }
+    ~StdoutToFile() {
+        std::cout.flush();
+        std::fflush(stdout);
+        ::dup2(saved, 1);
+        ::close(saved);
+    }
+    StdoutToFile(const StdoutToFile&) = delete;
+    StdoutToFile& operator=(const StdoutToFile&) = delete;
+};
+
+/* Two runs in one process under PC_ISOLATION @p mode, as a program that
+ * calls hpo_run() twice runs them, each with the context and provenance
+ * TaskFactory makes of `tadah hpo -c config.a` (then config.b)
+ * `--hpotarget config.hpo --validation config.val -v 1`, and the checks of
+ * "hpo_run: a second run in the process prints its own kernel's settings
+ * line once". */
+void check_kernel_line_of_each_run(const std::string& mode) {
+    tadah::core::PeriodicTable::initialize();
+    /* As a new process starts; the second run starts without a reset. */
+    HPOLog::instance().reset_for_test();
+    Host::reset_globals_for_test();
+    tadah::hpo::warmstart::clear();
+    PcIsolationEnvUnset env;
+    ScratchDir sd("tadah_kernel_line_runs_");
+    std::string keys_b = kTaKernelModelKeys;
+    const std::string mparams_a = "MPARAMS 1.0\n";
+    const auto at = keys_b.find(mparams_a);
+    REQUIRE(at != std::string::npos);
+    keys_b.replace(at, mparams_a.size(), "MPARAMS 2.0\n");
+    write_minimal_ta_dbfile(sd.dir / "train.db", 0.0);
+    write_minimal_ta_dbfile(sd.dir / "val.db", 0.07, -0.04);
+    std::ofstream(sd.dir / "config.val") << "DBFILE val.db\n";
+    std::ofstream(sd.dir / "config.a") << "DBFILE train.db\n"
+                                       << kTaKernelModelKeys;
+    std::ofstream(sd.dir / "config.b") << "DBFILE train.db\n" << keys_b;
+    std::ofstream(sd.dir / "readback.in")
+        << ta_script("3.301", "variable E equal pe\n");
+    std::ofstream(sd.dir / "config.hpo")
+        << "OPTIMIZER\n  STRATEGY\n    TYPE PLAIN\n    LIB TADAH\n"
+           "    ALGO RANDOM\n    MAXEVAL 4\n    SEED 1234\n  ENDSTRATEGY\n"
+           "ENDOPTIMIZER\nLOSS L2\nFAILSCORE 1e16\nPC_ERMSE 0 1\n"
+           "OPTIM CGRID2B (1) 0.0 4.0\n"
+           "PC_LAMMPS --script readback.in --varloss E 0 1\n"
+        << "PC_ISOLATION " << mode << "\n";
+
+    struct Run {
+        std::string config;
+        int status = -1;
+        std::string error, journal;
+    };
+    std::vector<Run> runs(2);
+    runs[0].config = "config.a";
+    runs[1].config = "config.b";
+    {
+        StdoutToFile capture(sd.dir / "runs.stdout");
+        for (Run& run : runs) {
+            try {
+                std::vector<tadah::mlip::Task> tasks =
+                    tadah::mlip::TaskFactory().createTasksFromInput(
+                        HpoCommandInput(run.config));
+                if (tasks.size() != 1)
+                    throw std::runtime_error(
+                        std::to_string(tasks.size()) + " tasks, not 1");
+                Context ctx = tasks.front().getContext();
+                run.status = tadah::hpo::hpo_run(
+                    ctx, tasks.front().getKeyProvenance());
+            } catch (const std::exception& e) {
+                run.error = e.what();
+            }
+            run.journal = read_text(sd.dir / "hpo_run.log");
+        }
+    }
+    for (const Run& run : runs) {
+        INFO("-c " << run.config << ", PC_ISOLATION " << mode);
+        INFO(run.journal);
+        CHECK(run.error == "");
+        CHECK(run.status == 0);
+        CHECK_THAT(run.journal, Catch::Contains("PC_ISOLATION: " + mode));
+        if (mode == "PROCESS") CHECK(process_workers(run.journal) >= 1);
+    }
+    const fs::path out = sd.dir / "runs.stdout";
+    INFO(read_text(out));
+    CHECK(count_lines_with(out, "Kern_RBF | sigma: 1 | gamma: 1") == 1);
+    CHECK(count_lines_with(out, "Kern_RBF | sigma: 2 | gamma: 0.25") == 1);
+    CHECK(count_lines_with(out, "Kern_RBF |") == 2);
+}
+
+}  // namespace
+
+/* Pins: two runs in one process, as a program that calls hpo_run() twice
+ * runs them, each print the settings line of their own -c model once. The
+ * context of each run is the one TaskFactory makes of `tadah hpo -c config.a`
+ * (then config.b) `--hpotarget config.hpo --validation config.val -v 1`:
+ * run A trains M_KRR Kern_RBF 1 from MPARAMS 1.0, run B from MPARAMS 2.0
+ * (kTaKernelModelKeys otherwise), each RANDOM MAXEVAL 4 with a PC_LAMMPS
+ * script, and nothing is reset between them. Under PC_ISOLATION THREAD (this
+ * case) and PROCESS (the next; Skipped in the MPI build, which has no
+ * workers): each run returns 0, its journal names the mode (under PROCESS
+ * with N >= 1 workers), and the standard output of the process, workers
+ * included, has "Kern_RBF | sigma: 1 | gamma: 1" exactly once, "Kern_RBF |
+ * sigma: 2 | gamma: 0.25" exactly once, and no other "Kern_RBF |" line.
+ * Before the fix: the line was printed by the first kernel of its kind in
+ * each process and by no later one: under THREAD run B printed none
+ * (sigma: 2 zero times, one line in all, run A's); under PROCESS a worker
+ * process of each run printed the line of its first potential once more
+ * (sigma: 1 twice, sigma: 2 once, 3 lines). In the released code each
+ * model built printed it, 9 lines per run. With hpo_run()'s scope made
+ * static, one scope for the life of the process, run B prints none again
+ * under both modes (sigma: 2 zero times). */
+TEST_CASE("hpo_run: a second run in the process prints its own kernel's "
+          "settings line once (PC_ISOLATION THREAD)",
+          "[kernel_line_e2e][.]") {
+    check_kernel_line_of_each_run("THREAD");
+}
+
+/* Pins: the case above under PC_ISOLATION PROCESS. */
+TEST_CASE("hpo_run: a second run in the process prints its own kernel's "
+          "settings line once (PC_ISOLATION PROCESS)",
+          "[kernel_line_e2e][.]") {
+    SKIP_WITHOUT_PC_PROCESS_WORKERS();
+    check_kernel_line_of_each_run("PROCESS");
 }
 
 namespace {
