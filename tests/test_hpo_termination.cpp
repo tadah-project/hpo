@@ -3907,10 +3907,16 @@ TEST_CASE("Termination: MULTISTART gives each start of an NLopt search "
 
 /* Pins: a MULTISTART of N_STARTS 2 whose INIT chain gives one starting
  * point (no INIT block: the CONFIG point) runs one start and journals
- * "MULTISTART: running 1 start", after the WARNING that names the one
- * starting point.
- * Before the fix: the line read "MULTISTART: running 1 starts
- * (parallel=1)". */
+ * "MULTISTART: running 1 start", after the WARNING that counts the one
+ * starting point and advises a setting the parser takes: "MULTISTART
+ * N_STARTS 2 requested but the resolved INIT chain produced only 1
+ * starting point; running 1 start, which is STRATEGY TYPE PLAIN. A chain
+ * of 2 or more starting points (METHOD LHS 2, RANDOM 2 or SOBOL 2) runs 2
+ * starts." It advises no lower N_STARTS, which would be N_STARTS 1, refused
+ * at its line ("one start is STRATEGY TYPE PLAIN").
+ * Before the fix: the WARNING ended "running 1 start(s). Add INIT points
+ * (e.g. METHOD LHS/RANDOM/SOBOL with K >= 2) or lower N_STARTS." (the text
+ * fails); the run line said "running 1 start" already. */
 TEST_CASE("Termination: MULTISTART with one starting point journals that it "
           "runs 1 start", "[HPO][termination][multistart]")
 {
@@ -3924,6 +3930,44 @@ TEST_CASE("Termination: MULTISTART with one starting point journals that it "
     INFO(journal);
     CHECK(journal.find("MULTISTART: running 1 start\n") != std::string::npos);
     CHECK(journal.find("1 starts") == std::string::npos);
+    CHECK(journal.find(
+              "MULTISTART N_STARTS 2 requested but the resolved INIT chain "
+              "produced only 1 starting point; running 1 start, which is "
+              "STRATEGY TYPE PLAIN. A chain of 2 or more starting points "
+              "(METHOD LHS 2, RANDOM 2 or SOBOL 2) runs 2 starts.\n") !=
+          std::string::npos);
+    CHECK(journal.find("lower N_STARTS") == std::string::npos);
+}
+
+/* Pins: a MULTISTART of N_STARTS 3 whose INIT chain gives two starting
+ * points (METHOD RANDOM 2) runs two starts and journals "MULTISTART:
+ * running 2 starts", after the WARNING that names the N_STARTS that runs
+ * them, which the parser takes: "MULTISTART N_STARTS 3 requested but the
+ * resolved INIT chain produced only 2 starting points; running 2 starts. A
+ * chain of 3 or more starting points (METHOD LHS 3, RANDOM 3 or SOBOL 3)
+ * runs 3 starts, and N_STARTS 2 asks for the 2 that run."
+ * Before the fix: the WARNING read "... produced only 2 starting point(s);
+ * running 2 start(s). Add INIT points (e.g. METHOD LHS/RANDOM/SOBOL with K
+ * >= 3) or lower N_STARTS." (the text fails). */
+TEST_CASE("Termination: MULTISTART with fewer starting points than N_STARTS "
+          "names the N_STARTS that runs them", "[HPO][termination][multistart]")
+{
+    TaRun run("OPTIMIZER\n  INIT\n    METHOD RANDOM 2\n    SEED 4\n"
+              "  ENDINIT\n  STRATEGY\n    TYPE MULTISTART\n    N_STARTS 3\n"
+              "    LIB NLOPT\n    ALGO LN_SBPLX\n    MAXEVAL 4\n"
+              "  ENDSTRATEGY\nENDOPTIMIZER\n");
+    int status = -1;
+    REQUIRE_NOTHROW(status = tadah::hpo::hpo_run(run.ctx));
+    CHECK(status == 0);
+    const std::string journal = read_file("hpo_run.log");
+    INFO(journal);
+    CHECK(journal.find("MULTISTART: running 2 starts\n") != std::string::npos);
+    CHECK(journal.find(
+              "MULTISTART N_STARTS 3 requested but the resolved INIT chain "
+              "produced only 2 starting points; running 2 starts. A chain of "
+              "3 or more starting points (METHOD LHS 3, RANDOM 3 or SOBOL 3) "
+              "runs 3 starts, and N_STARTS 2 asks for the 2 that run.\n") !=
+          std::string::npos);
 }
 
 /* Pins: what the RESTART rounds of NLopt's StoGO evaluate, as the startup
