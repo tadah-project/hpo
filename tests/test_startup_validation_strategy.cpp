@@ -1545,6 +1545,46 @@ TEST_CASE("startup validation: NLOPT:LN_NEWUOA_BOUND is refused at the line "
  * unknown optimiser is an error, at the line that closes their block.
  * ==================================================================== */
 
+/* Pins: NLOPT:GN_DIRECT_NOSCAL and GN_DIRECT_L_RAND_NOSCAL are refused,
+ * as LN_NEWUOA is, at the line that closes their block (ENDOPTIMIZER here):
+ * NLopt 2.10 picks the DIRECT variant by comparing the algorithm with
+ * GN_DIRECT and GN_DIRECT_L_RAND, which a _NOSCAL algorithm never equals, so
+ * both run GN_DIRECT_L_NOSCAL. The refusal names the algorithm of the
+ * variant and GN_DIRECT_L_NOSCAL. Neither is registered, so no list of
+ * optimisers offers it; GN_DIRECT_L_NOSCAL stays registered.
+ * Before the fix: both were accepted and ran as GN_DIRECT_L_NOSCAL (an
+ * 80-evaluation run of GN_DIRECT_NOSCAL wrote the params.tadah of
+ * GN_DIRECT_L_NOSCAL, not that of GN_DIRECT). */
+TEST_CASE("startup validation: NLOPT:GN_DIRECT_NOSCAL and "
+          "GN_DIRECT_L_RAND_NOSCAL, which NLopt runs as GN_DIRECT_L_NOSCAL, "
+          "are refused", "[startup_validation][strategy][backend][refused]")
+{
+    const std::string runs =
+        " as GN_DIRECT_L_NOSCAL: it picks the variant of DIRECT by comparing "
+        "the algorithm with GN_DIRECT and GN_DIRECT_L_RAND, which a _NOSCAL "
+        "algorithm never equals, so it runs the locally biased DIRECT-L";
+    const std::vector<std::pair<std::string, std::string>> cases = {
+        {"GN_DIRECT_NOSCAL",
+         "NLopt 2.10 runs GN_DIRECT_NOSCAL" + runs + ". The recommended "
+         "replacements are NLOPT:GN_DIRECT, the DIRECT it names, and "
+         "NLOPT:GN_DIRECT_L_NOSCAL, what it runs"},
+        {"GN_DIRECT_L_RAND_NOSCAL",
+         "NLopt 2.10 runs GN_DIRECT_L_RAND_NOSCAL" + runs + " without its "
+         "random choice between equally long sides of a box. The recommended "
+         "replacements are NLOPT:GN_DIRECT_L_RAND, the randomised DIRECT-L it "
+         "names, and NLOPT:GN_DIRECT_L_NOSCAL, what it runs"}};
+    for (const auto& [algo, reason] : cases) {
+        INFO("NLOPT:" << algo);
+        CHECK(parse_error(strategy_config("    LIB NLOPT\n    ALGO " + algo +
+                                          "\n    MAXEVAL 25\n")) ==
+              "Error on line 9: the STRATEGY-level optimiser: NLOPT:" + algo +
+                  " is refused: " + reason + "\nLine: ENDOPTIMIZER");
+        CHECK(tadah::hpo::find_optimizer_caps("NLOPT", algo) == nullptr);
+    }
+    CHECK(tadah::hpo::find_optimizer_caps("NLOPT", "GN_DIRECT_L_NOSCAL") !=
+          nullptr);
+}
+
 TEST_CASE("startup validation: NLOPT:LN_NEWUOA, the Ceres least-squares "
           "solvers and an unknown optimiser are refused at the line that "
           "closes their block",
@@ -2544,8 +2584,11 @@ TEST_CASE("startup validation: a backend with no convergence test and no "
     const std::string top = "the STRATEGY-level optimiser: ";
     std::vector<Case> cases;
     for (const std::string algo :
-         {"GN_DIRECT", "GN_DIRECT_L", "GN_DIRECT_L_RAND", "GN_DIRECT_NOSCAL",
-          "GN_DIRECT_L_NOSCAL", "GN_DIRECT_L_RAND_NOSCAL"})
+         /* GN_DIRECT_NOSCAL and GN_DIRECT_L_RAND_NOSCAL are refused (the
+          * case "... which NLopt runs as GN_DIRECT_L_NOSCAL, are
+          * refused"); they were in this list. */
+         {"GN_DIRECT", "GN_DIRECT_L", "GN_DIRECT_L_RAND",
+          "GN_DIRECT_L_NOSCAL"})
         cases.push_back({"NLOPT:" + algo + " without a stop", nlopt(algo, ""),
                          top + "NLOPT:" + algo + " needs a stop: ",
                          kAnyTolerance + kDirectXtol});
@@ -3997,10 +4040,10 @@ std::string global_inner_refusal(const std::string& phase,
 
 /* Pins: the PRESTAGE refinement on every registered backend whose first
  * call is not at the point it is given (OptimizerCaps::starts_at_x0 false:
- * the eleven NLopt algorithms GD_STOGO, GD_STOGO_RAND, GN_AGS, GN_DIRECT,
- * GN_DIRECT_L, GN_DIRECT_L_NOSCAL, GN_DIRECT_L_RAND,
- * GN_DIRECT_L_RAND_NOSCAL, GN_DIRECT_NOSCAL, GN_ORIG_DIRECT and
- * GN_ORIG_DIRECT_L), with TOPK 1 (the default) and TOPK 3, written at the
+ * the nine NLopt algorithms GD_STOGO, GD_STOGO_RAND, GN_AGS, GN_DIRECT,
+ * GN_DIRECT_L, GN_DIRECT_L_NOSCAL, GN_DIRECT_L_RAND, GN_ORIG_DIRECT and
+ * GN_ORIG_DIRECT_L; GN_DIRECT_NOSCAL and GN_DIRECT_L_RAND_NOSCAL, which
+ * were the eleventh and the tenth, are refused), with TOPK 1 (the default) and TOPK 3, written at the
  * STRATEGY level or in a REFINE block, is refused at startup, at the
  * ENDOPTIMIZER line, with "STRATEGY TYPE PRESTAGE cannot refine with
  * NLOPT:<ALGO>: it does not start at the point it is given (<where it
@@ -4115,9 +4158,7 @@ TEST_CASE("startup validation: a PRESTAGE refinement or MULTISTART whose "
                            "NLOPT:GD_STOGO", "NLOPT:GD_STOGO_RAND",
                            "NLOPT:GN_AGS", "NLOPT:GN_DIRECT",
                            "NLOPT:GN_DIRECT_L", "NLOPT:GN_DIRECT_L_NOSCAL",
-                           "NLOPT:GN_DIRECT_L_RAND",
-                           "NLOPT:GN_DIRECT_L_RAND_NOSCAL",
-                           "NLOPT:GN_DIRECT_NOSCAL", "NLOPT:GN_ORIG_DIRECT",
+                           "NLOPT:GN_DIRECT_L_RAND", "NLOPT:GN_ORIG_DIRECT",
                            "NLOPT:GN_ORIG_DIRECT_L"});
         for (const std::string& name : blind) {
             const std::string algo = name.substr(name.find(':') + 1);
@@ -4274,7 +4315,6 @@ TEST_CASE("startup validation: an INNER block that names a global optimiser "
                         "GD_MLSL", "GD_MLSL_LDS", "GD_STOGO", "GD_STOGO_RAND",
                         "GN_AGS", "GN_CRS2_LM", "GN_DIRECT", "GN_DIRECT_L",
                         "GN_DIRECT_L_NOSCAL", "GN_DIRECT_L_RAND",
-                        "GN_DIRECT_L_RAND_NOSCAL", "GN_DIRECT_NOSCAL",
                         "GN_ESCH", "GN_ISRES", "GN_MLSL", "GN_MLSL_LDS",
                         "GN_ORIG_DIRECT", "GN_ORIG_DIRECT_L"});
 

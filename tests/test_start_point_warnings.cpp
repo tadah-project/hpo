@@ -293,8 +293,9 @@ TEST_CASE("startup validation: RESTART on a search that does not start at "
     SECTION("each search that draws no random numbers")
     {
         for (const char* algo :
-             {"GN_DIRECT", "GN_DIRECT_L", "GN_DIRECT_NOSCAL",
-              "GN_DIRECT_L_NOSCAL", "GN_DIRECT_L_RAND_NOSCAL",
+             /* GN_DIRECT_NOSCAL and GN_DIRECT_L_RAND_NOSCAL are refused
+              * (they were in this list). */
+             {"GN_DIRECT", "GN_DIRECT_L", "GN_DIRECT_L_NOSCAL",
               "GN_ORIG_DIRECT", "GN_ORIG_DIRECT_L", "GN_AGS"}) {
             INFO("NLOPT:" << algo);
             const Startup s = startup(plain_restart(algo));

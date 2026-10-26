@@ -1243,10 +1243,11 @@ TEST_CASE("optimizer caps: starts_at_x0 marks the backends whose first call "
 {
     using tadah::hpo::optimizer_caps;
     for (const char* algo :
+         /* GN_DIRECT_NOSCAL and GN_DIRECT_L_RAND_NOSCAL, which NLopt runs
+          * as GN_DIRECT_L_NOSCAL, are refused (they were in this list). */
          {"GD_STOGO", "GD_STOGO_RAND", "GN_DIRECT", "GN_DIRECT_L",
-          "GN_DIRECT_L_RAND", "GN_DIRECT_NOSCAL", "GN_DIRECT_L_NOSCAL",
-          "GN_DIRECT_L_RAND_NOSCAL", "GN_ORIG_DIRECT", "GN_ORIG_DIRECT_L",
-          "GN_AGS"}) {
+          "GN_DIRECT_L_RAND", "GN_DIRECT_L_NOSCAL", "GN_ORIG_DIRECT",
+          "GN_ORIG_DIRECT_L", "GN_AGS"}) {
         INFO(algo);
         CHECK_FALSE(optimizer_caps("NLOPT", algo).starts_at_x0);
     }
