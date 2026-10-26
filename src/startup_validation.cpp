@@ -11,6 +11,7 @@
 #include <tadah/core/intercept_layout.h>
 #include <tadah/core/logger.h>
 #include <tadah/core/number_format.h>
+#include <tadah/core/periodic_table.h>
 #include <tadah/core/utils.h>
 #include <tadah/hpo/bump_support_gate.h>
 #include <tadah/hpo/hpo_log.h>
@@ -421,8 +422,24 @@ void require_error_scale_search_changes_the_fit(core::Context &ctx,
 
 }  // namespace
 
+std::set<core::Element> declared_element_set(const core::Context &train_ctx) {
+  if (!train_ctx.has_stored("ATOM"))
+    throw std::runtime_error(
+        "No training DBFILE: the ATOM key is required in the training "
+        "configuration to declare the element set (e.g. 'ATOM Ta'). " +
+        tadah::mlip::potential_has_no_datasets_advice());
+  std::set<core::Element> elements;
+  for (const auto &sym : train_ctx("ATOM"))
+    elements.insert(core::PeriodicTable::find_by_symbol(sym));
+  return elements;
+}
+
 void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
                         bool has_train_db, bool has_validation) {
+  /* --- the element set of a run without training data ------------------
+   * declared by ATOM, as HPOEngine::run reads it. */
+  if (!has_train_db) (void)declared_element_set(train_ctx);
+
   /* --- the settings of the fit, as every fit refuses them --------------
    * A retired key (with its conversion), an error scale that is not a
    * number > 0 (a relative part >= 0), one other than its default for a
