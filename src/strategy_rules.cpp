@@ -110,8 +110,6 @@ struct StrategyTypeKey {
 constexpr StrategyTypeKey kStrategyTypeKeys[] = {
     {"N_STARTS",         StrategyType::MULTISTART,
      "only TYPE MULTISTART runs N_STARTS starts"},
-    {"PARALLEL",         StrategyType::MULTISTART,
-     "only TYPE MULTISTART has starts to run in parallel"},
     {"BUDGET_PER_START", StrategyType::MULTISTART,
      "only TYPE MULTISTART has starts to budget"},
     {"TOPK",             StrategyType::PRESTAGE,

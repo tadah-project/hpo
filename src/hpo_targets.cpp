@@ -640,6 +640,15 @@ static std::string inner_attr_keys_joined(const char* sep)
 /* Helper: throw a "renamed to X" error for any old-grammar keyword.
  * Returns true if the key was a known-old keyword (caller should not
  * fall through to an "unknown key" error). */
+/* Why PARALLEL (and MULTISTART_PARALLEL, its form before the STRATEGY
+ * block) is refused: it asked for the starts of TYPE MULTISTART to run at
+ * the same time, and they run one after another; the workers of the run
+ * are THREADS. */
+static constexpr const char* kParallelRemoved =
+    "the starts of STRATEGY TYPE MULTISTART run one after another; THREADS "
+    "sets the number of workers that run the work of the evaluations (the "
+    "LAMMPS scripts and the training and prediction of the potential).";
+
 static bool reject_old_keyword(const std::string& key)
 {
     struct Rename { const char* old_; const char* hint; };
@@ -649,7 +658,8 @@ static bool reject_old_keyword(const std::string& key)
         {"PRESTAGE",                    "replaced by `STRATEGY { TYPE PRESTAGE EXPLORE { ... } [REFINE { ... }] }` (REFINE is optional; without it the STRATEGY-level LIB/ALGO refines)."},
         {"ENDPRESTAGE",                 "replaced by ENDEXPLORE / ENDREFINE / ENDSTRATEGY (see STRATEGY block)."},
         {"MULTISTART",                  "moved into `STRATEGY { TYPE MULTISTART N_STARTS N }`."},
-        {"MULTISTART_PARALLEL",         "moved into `STRATEGY { TYPE MULTISTART PARALLEL N }`."},
+        {"MULTISTART_PARALLEL",         kParallelRemoved},
+        {"PARALLEL",                    kParallelRemoved},
         {"MULTISTART_BUDGET_PER_START", "moved into `STRATEGY { TYPE MULTISTART BUDGET_PER_START N }`."},
         {"STAGE_GLOBAL",                "removed. Use `STRATEGY { TYPE PRESTAGE ... }` for staged-global runs."},
         {"RESTART_AFTER_STAGNATION",    "moved into `STRATEGY { RESTART { AFTER_STAGNATION N } ENDRESTART }`."},
@@ -1327,11 +1337,6 @@ void HPOTargets::read(const std::string& fn)
                 /* MULTISTART knobs. */
                 if (key=="N_STARTS") {
                     spec.multistart.n_starts = parse_uint(single_value(iss, key), key, 1);
-                    set_once(&spec.strategy_type, key, "strategy");
-                    continue;
-                }
-                if (key=="PARALLEL") {
-                    spec.multistart.parallel = parse_uint(single_value(iss, key), key, 1);
                     set_once(&spec.strategy_type, key, "strategy");
                     continue;
                 }

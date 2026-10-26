@@ -822,8 +822,7 @@ void HPOLog::write_optimizer_section(const OptimizerSpec&            sp,
             f_ << "    (TYPE PLAIN -- single-shot dispatch)\n";
         }
         if (is_multistart) {
-            f_ << "    MULTISTART        : N_STARTS=" << ms.n_starts
-               << "  (PARALLEL=" << ms.parallel << ")\n";
+            f_ << "    MULTISTART        : N_STARTS=" << ms.n_starts << "\n";
             if (ms.budget_per_start)
                 f_ << "    BUDGET_PER_START  : " << *ms.budget_per_start << "\n";
         }

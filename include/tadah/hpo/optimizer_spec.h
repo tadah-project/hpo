@@ -160,7 +160,6 @@ enum class StrategyType {
 /* MultiStartSpec -- knobs for `STRATEGY { TYPE MULTISTART }`. */
 struct MultiStartSpec {
     std::size_t n_starts = 1;                      // N_STARTS -- count
-    std::size_t parallel = 1;                      // PARALLEL -- concurrent runs
     std::optional<std::size_t> budget_per_start;   // BUDGET_PER_START override
 };
 

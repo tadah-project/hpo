@@ -179,8 +179,8 @@ void validate_run_policy(const OptimizerSpec& spec);
  * PRESTAGE refinement of TOPK > 1. */
 void reject_refused_backends(const OptimizerSpec& spec);
 
-/* STRATEGY keys that belong to one TYPE: N_STARTS, PARALLEL and
- * BUDGET_PER_START to MULTISTART, TOPK to PRESTAGE. Under another TYPE
+/* STRATEGY keys that belong to one TYPE: N_STARTS and BUDGET_PER_START to
+ * MULTISTART, TOPK to PRESTAGE. Under another TYPE
  * such a key has no effect, so require_strategy_key() throws, naming the
  * TYPE the key needs. `type_given` says whether the block had a TYPE line
  * (PLAIN is the default). Keys of no single TYPE are always accepted. */
