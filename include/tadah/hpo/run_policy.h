@@ -316,7 +316,7 @@ public:
     }
     HPOLog::instance().info(
         "MULTISTART: running " + std::to_string(actual_k) +
-        " starts");
+        (actual_k == 1 ? " start" : " starts"));
 
     /* Each start's MAXEVAL: BUDGET_PER_START, or the outer MAXEVAL split
      * over the starts (plan_multistart); without either the starts run

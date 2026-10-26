@@ -24,10 +24,12 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <deque>
 #include <filesystem>
 #include <iomanip>
 #include <iostream>
+#include <limits>
 #include <map>
 #include <set>
 #include <optional>
@@ -457,19 +459,23 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn,
     const bool ignores_start =
         registered && search_ignoring_start(spec).has_value();
     if (spec.optim_init.size() > 1 && !multi_seed_consumer && !ignores_start) {
-      /* Surface compatible options from the live caps registry rather
-       * than hard-coding LIB:ALGO names -- the registry is the single
-       * source of truth for who consumes >1 seed in one run. */
+      /* The strategies consume them (MULTISTART needs N_STARTS 2 or more,
+       * PRESTAGE an EXPLORE block), so this is a PLAIN search: the
+       * advice names what uses several starting points, the optimisers
+       * from the live caps registry. */
       auto multi_seed = filter_optimizer_caps(
           [](const OptimizerCaps& c) { return c.accepts_multi_seed; });
-      std::cerr << "[HPO] WARNING: INIT chain produced "
-                << spec.optim_init.size() << " seeds but " << spec.lib
-                << ":" << spec.algo << " consumes only the first; "
-                << (spec.optim_init.size() - 1)
-                << " seed(s) will be discarded. "
-                << "Use STRATEGY TYPE MULTISTART (N_STARTS >= 2) or TYPE "
-                   "PRESTAGE, or pick a multi-seed backend (" << format_caps_list(multi_seed)
-                << ") to use them.\n";
+      const std::size_t n = spec.optim_init.size();
+      std::ostringstream oss;
+      oss << "INIT chain produced " << n << " starting points but "
+          << spec.lib << ":" << spec.algo << " starts from the first only; "
+          << "the other " << (n - 1) << (n == 2 ? " is" : " are")
+          << " not used. STRATEGY TYPE MULTISTART with N_STARTS " << n
+          << " or TYPE PRESTAGE uses them, and so does an optimiser that "
+             "takes several starting points in one run ("
+          << format_caps_list(multi_seed) << ").";
+      std::cerr << "[HPO] WARNING: " << oss.str() << "\n";
+      HPOLog::instance().warning(oss.str());
     }
   }
 
@@ -750,6 +756,12 @@ void HPOTargets::read(const std::string& fn)
     struct TypeKeySeen { std::string key; std::size_t line; std::string text; };
     std::vector<TypeKeySeen> type_keys;
     bool strategy_type_given = false;
+    /* The TYPE line (its number and text) and whether the block has an
+     * N_STARTS line: TYPE MULTISTART needs N_STARTS 2 or more, checked
+     * when the block ends (N_STARTS may follow TYPE). */
+    std::size_t type_line = 0;
+    std::string type_text;
+    bool n_starts_given = false;
     /* The line of the STRATEGY block (0 before it): there is one. A second
      * block reopened the first and could change the TYPE its keys had been
      * checked against. */
@@ -1078,6 +1090,15 @@ void HPOTargets::read(const std::string& fn)
             }
             if (key=="ENDSTRATEGY") {
                 check_type_keys();
+                /* N_STARTS 1 is refused at its line; without N_STARTS a
+                 * MULTISTART would run one start, which is TYPE PLAIN. */
+                if (spec.strategy_type == StrategyType::MULTISTART &&
+                    !n_starts_given)
+                    throw EarlierLineError(
+                        type_line, type_text,
+                        "STRATEGY TYPE MULTISTART needs N_STARTS 2 or more: "
+                        "without N_STARTS it runs one start, which is "
+                        "STRATEGY TYPE PLAIN");
                 close_block();
                 refresh_active_opt();
                 continue;
@@ -1328,6 +1349,8 @@ void HPOTargets::read(const std::string& fn)
                     else throw std::runtime_error("STRATEGY TYPE must be PLAIN, MULTISTART, or PRESTAGE (got '" + t + "')");
                     set_once(&spec.strategy_type, key, "strategy");
                     strategy_type_given = true;
+                    type_line = nline;
+                    type_text = line;
                     continue;
                 }
                 /* The keys of one TYPE are checked against the block's TYPE
@@ -1336,8 +1359,14 @@ void HPOTargets::read(const std::string& fn)
                     type_keys.push_back({key, nline, line});
                 /* MULTISTART knobs. */
                 if (key=="N_STARTS") {
-                    spec.multistart.n_starts = parse_uint(single_value(iss, key), key, 1);
+                    /* One start is TYPE PLAIN: N_STARTS 1 would make a
+                     * MULTISTART that is one. */
+                    spec.multistart.n_starts = parse_uint(
+                        single_value(iss, key), key, 2,
+                        std::numeric_limits<std::uint64_t>::max(),
+                        "one start is STRATEGY TYPE PLAIN");
                     set_once(&spec.strategy_type, key, "strategy");
+                    n_starts_given = true;
                     continue;
                 }
                 if (key=="BUDGET_PER_START") {
