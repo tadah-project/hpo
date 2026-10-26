@@ -13,10 +13,10 @@
  *
  * K replicas run the shared annealing rung on a power-shaped log ladder
  * T_0 < T_1 < ... < T_{K-1} (journalled 1-based: slot 1 is coldest). It
- * is static by default;
- * optional adaptation moves interiors, and RT < 1 cools it each epoch. Every
- * SWAP_EVERY epochs, adjacent pairs attempt a state exchange with
- * Metropolis probability
+ * is static by default; optional adaptation (LADDER_ADAPT) moves the
+ * interior temperatures and keeps both endpoints. Every SWAP_EVERY
+ * epochs, adjacent pairs attempt a state exchange with Metropolis
+ * probability
  *
  *     p = min(1, exp((beta_i - beta_j) * (f_i - f_j)))     (i colder)
  *
@@ -28,7 +28,7 @@
  *
  * Execution: THREADS is the TOTAL width of the shared worker pool (the
  * per-rank CPU-core budget) that actually runs the pc_lammps fan-out and
- * MLIP train/predict; it no longer multiplies OMP_NUM_THREADS. A bounded
+ * MLIP train/predict; it does not multiply OMP_NUM_THREADS. A bounded
  * set of driver threads (min(THREADS, K)) steps the K replicas, but each
  * driver BLOCKS on the shared pool while its eval's scripts run, so the
  * real concurrency is THREADS and one replica's eval alone submits far
@@ -43,45 +43,26 @@
  * neighbour-list build, data-stats -- not this pool.)
  *
  * Ladder construction: T_HOT from PARAM T_HOT or the shared T0
- * calibration (T0_PACCEPT is assigned to the calibration delta at the hot end);
- * T_COLD from PARAM T_COLD or T_HOT / LADDER_SPAN. LADDER_POWER shapes
- * normalized log-temperature positions (1 = geometric). Optional
- * LADDER_ADAPT redistributes positive interior log gaps to equalize
- * adjacent-pair swap rates while preserving both endpoints. The commonly
- * cited 20-40% per-pair acceptance range is a starting heuristic, not a
- * workload-independent target: fixed endpoints and replica count control
- * the absolute rate. RT (default 1.0) < 1 additionally cools the WHOLE
- * ladder each epoch (PT -> SA hybrid); the run then ends when the hot
- * end crosses T_MIN.
+ * calibration (T0_PROBES probes, T0_ACCEPT the acceptance it targets at
+ * the hot end); T_COLD from PARAM T_COLD or T_HOT / LADDER_SPAN.
+ * LADDER_POWER shapes normalized log-temperature positions (1 =
+ * geometric). Optional LADDER_ADAPT redistributes positive interior log
+ * gaps to equalize adjacent-pair swap rates while preserving both
+ * endpoints. The commonly cited 20-40% per-pair acceptance range is a
+ * starting heuristic, not a workload-independent target: fixed endpoints
+ * and replica count control the absolute rate.
  *
- * PT-specific PARAMs (shared stepper knobs as in ANNEAL):
- *   REPLICAS     max(THREADS,2)  ladder size K (default: one replica per
- *                                core; set REPLICAS to decouple K from the
- *                                THREADS core budget)
- *   T_HOT        auto            hottest slot
- *   T_COLD       T_HOT/LADDER_SPAN  coldest slot
- *   LADDER_SPAN  1e3             T_HOT/T_COLD when T_COLD unset
- *   SWAP_EVERY   1               exchange attempt every N epochs
- *   SWAP_WINDOW  20              windowed per-pair swap-acceptance table
- *                                every N epochs (0 = cumulative only)
- *   LADDER_POWER 1.0             initial normalized log-ladder power
- *   LADDER_ADAPT 0               adapt interior temperatures in production
- *   LADDER_ADAPT_EVERY 20        attempts at every pair before an update
- *   LADDER_ADAPT_GAIN 1.0        initial stochastic gain in (0,1]
- *   LADDER_ADAPT_DECAY 0.6       diminishing-gain exponent in (0.5,1]
- *   LADDER_ADAPT_UPDATES 0       maximum updates (0 = ongoing)
- *   RT           1.0             ladder cooling per epoch ((0,1])
- *   STEP_AUTO    1               CLASSIC-only coordinate calibration;
- *                                explicit STEP disables it, 0 is legacy fixed
- *   STEP_AUTO_SWEEPS 12          minimum coordinate attempts (up to 2x)
- *   STEP_ADAPT_EVERY 0           production scalar+diagonal RAM apply cadence
- *                                per slot; 0 freezes after warm-up
- *   INIT_MODE    0               0: automatic CLASSIC starts every slot at
- *                                the valid warm seed; fixed/Corana use seed
- *                                plus Gaussian jitter in higher slots
- *                                1: chains>0 drawn uniformly in the box
- *   RESET_TO_BEST 0              when 1, snaps ONLY the coldest slot to
- *                                the global best after each epoch
+ * Keys: blueprint/anneal_keys.toml is the one list of the PARAM keys of
+ * ANNEAL_PT (the keys whose kinds hold "pt"), with their defaults, ranges
+ * and cross-key rules; anneal::Knobs::parse validates against it and
+ * `tadah explain TADAH:ANNEAL_PT` prints it. Its groups: temperature
+ * (T_HOT, T0_PROBES, T0_ACCEPT), ladder (REPLICAS, whose AUTO is the
+ * larger of THREADS and 2, T_COLD, LADDER_SPAN, LADDER_POWER and the
+ * LADDER_ADAPT family), swaps (SWAP_EVERY, SWAP_WINDOW), steps (the
+ * stepper keys shared with ANNEAL, STEP_MODE, STEP_WARMUP_SWEEPS,
+ * STEP_TRUST_FACTOR, RESET_TO_BEST, which moves only the coldest slot to
+ * the best point after each epoch), init (INIT_MODE and the INIT_JITTER
+ * keys) and stopping (NEPS).
  */
 #include <tadah/hpo/hpo_host.h>
 #include <tadah/hpo/hpo_mpi.h>
@@ -2797,10 +2778,9 @@ template<typename Vec, typename HostT>
     if (proceed) {
       std::vector<anneal::RungStats> rstats(n_local);
       std::uniform_real_distribution<double> udist(0.0, 1.0);
-      /* Planned total for the epoch=current/total display: min of the
-       * budget bound (all replicas rung in lockstep) and, in hybrid
-       * mode (RT < 1), the ladder's cooling bound on the hot end.
-       * 0 = unbounded (pure PT with no MAXEVAL) -> plain counter. */
+      /* Planned total for the epoch=current/total display: the budget
+       * bound (all replicas rung in lockstep). 0 = unbounded (no
+       * MAXEVAL) -> plain counter. */
       std::size_t planned_epochs = 0;
       /* Cooperative shutdown must not cost the run its own diagnostics.
        * HPO_Host::operator() throws ShutdownRequested at the next eval,
@@ -2899,9 +2879,9 @@ template<typename Vec, typename HostT>
         std::vector<double> f_start(n_local);
         for (std::size_t li = 0; li < n_local; ++li)
           f_start[li] = chains[li].f;
-        /* Ladder adaptation and RT cooling mutate T later in this
-         * same iteration; the epoch line must report the T this epoch's
-         * rungs actually RAN at. */
+        /* Ladder adaptation mutates T later in this same iteration; the
+         * epoch line must report the T this epoch's rungs actually RAN
+         * at. */
         const double epoch_T_cold = T[0];
         const double epoch_T_hot = T[K - 1];
 
