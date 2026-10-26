@@ -253,9 +253,11 @@ bool dispatch_opt_attr(const std::string &key, std::istringstream &iss,
       throw std::runtime_error("PARAM requires a name and a value");
     const std::string& raw = vals.front();
     /* Numeric values land in `param`; a word is kept verbatim in
-     * `param_raw` for families with enum-valued keys (numeric-only
-     * families reject raw entries with a hard error). The pre-registry
-     * parser silently stored 0.0 for a non-numeric value. A value shaped
+     * `param_raw` for families with enum-valued keys (the annealers,
+     * fd_kernel). The other families refuse a word: TADAH:RANDOM, GRID and
+     * DLIB:GFS take no PARAM, NLOPT, DLIB:BFGS, CERES and ASA:ASA take
+     * numbers only (the finite-difference keys judge theirs). The
+     * pre-registry parser silently stored 0.0 for a non-numeric value. A value shaped
      * like a number must be a finite one: `PARAM fd_step inf` failed only
      * when the optimiser ran, and `PARAM fd_step 5x` was kept as a word
      * that no backend read. */

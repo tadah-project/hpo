@@ -600,6 +600,24 @@ Registry build_registry()
         /* Every registered NLopt algorithm keeps to the box: LN_NEWUOA,
          * which NLopt runs without it, is refused (kRefused). */
 
+        /* The PARAM keys NLopt reads for the algorithm (OptimizerCaps::
+         * algorithm_params): the names optimize.c passes to
+         * nlopt_get_param in its case of the algorithm. */
+        if (starts("GN_DIRECT"))
+            c.algorithm_params = {"magic_eps"};
+        else if (starts("GN_ORIG_DIRECT"))
+            c.algorithm_params = {"magic_eps", "magic_eps_abs", "sigma_reltol",
+                                  "fglobal_reltol"};
+        else if (s == "LN_PRAXIS")
+            c.algorithm_params = {"t0_tol"};
+        else if (c.reads_vector_storage || starts("LD_TNEWTON"))
+            c.algorithm_params = {"tolg"};
+        else if (s == "LD_MMA" || s == "LD_CCSAQ")
+            c.algorithm_params = {"inner_maxeval", "verbosity", "rho_init",
+                                  "dual_algorithm", "dual_ftol_rel",
+                                  "dual_ftol_abs", "dual_xtol_rel",
+                                  "dual_xtol_abs", "dual_maxeval"};
+
         add(r, c);
     }
 

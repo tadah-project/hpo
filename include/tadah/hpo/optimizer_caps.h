@@ -101,6 +101,18 @@ struct OptimizerCaps {
     bool reads_threads             = false;
     bool warns_unread_seed         = false;
 
+    /* The PARAM keys NLopt reads for an NLopt algorithm, by name, beside
+     * the finite-difference keys of tadah hpo (fd_stencil.h): NLopt 2.10's
+     * optimize.c calls nlopt_get_param with these names (magic_eps for the
+     * DIRECT forms; magic_eps, magic_eps_abs, sigma_reltol and
+     * fglobal_reltol for the original DIRECT; t0_tol for LN_PRAXIS; tolg for
+     * the Luksan algorithms; the MMA keys for LD_MMA and LD_CCSAQ) and no
+     * other, and hands none to the local optimiser of MLSL or AUGLAG.
+     * validate_nlopt_spec() (backend_rules.h) refuses any other name, and a
+     * word given to one of them. Empty for every other backend, whose
+     * PARAM keys its own validator checks. */
+    std::vector<std::string> algorithm_params;
+
     /* Stop criteria: which fields of StopCriteria end the backend's run
      * when they are met. require_stop() (backend_rules.h) counts these as
      * the stops of a backend that needs one, a tolerance only above 0 (0

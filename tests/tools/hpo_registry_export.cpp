@@ -165,6 +165,8 @@ Table registered_entry(const OptimizerCaps& c)
     t.add("default_inner", c.default_inner);
     t.add("accepts_multi_seed", c.accepts_multi_seed);
     t.add("reads", reads(c));
+    t.add("algorithm_params", Strings(c.algorithm_params.begin(),
+                                      c.algorithm_params.end()));
     t.add("warns_unread_seed", c.warns_unread_seed);
     t.add("stops", stops(c));
     t.add("needs_stop", c.needs_stop);

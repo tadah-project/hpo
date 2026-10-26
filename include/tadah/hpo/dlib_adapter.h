@@ -128,12 +128,24 @@ inline void validate_dlib_bfgs_spec(const OptimizerSpec& sp)
    * them, and the gradient before its first evaluation (fd_settings_of,
    * fd_stencil.h), with the same message on every backend -- a number for
    * fd_kernel too, which this list refused as unsupported. */
-  for (const auto& kv : sp.param) {
-    if (is_fd_param(kv.first) || kv.first == "tol_gradinf") continue;
-    throw std::runtime_error(
-        "DLIB:BFGS does not support PARAM " + kv.first +
+  const auto unsupported = [](const std::string& key) {
+    return std::runtime_error(
+        "DLIB:BFGS does not support PARAM " + key +
         "; supported PARAM keys are fd_step, fd_kernel, diff_method and "
         "tol_gradinf");
+  };
+  for (const auto& kv : sp.param) {
+    if (is_fd_param(kv.first) || kv.first == "tol_gradinf") continue;
+    throw unsupported(kv.first);
+  }
+  /* A word (OptimizerSpec::param_raw): refused under a name DLIB:BFGS does
+   * not take as a number is, and under tol_gradinf, which takes a number;
+   * the finite-difference keys judge theirs (fd_kernel takes a word). */
+  for (const auto& kv : sp.param_raw) {
+    if (is_fd_param(kv.first)) continue;
+    if (kv.first != "tol_gradinf") throw unsupported(kv.first);
+    throw std::runtime_error("DLIB:BFGS: PARAM " + kv.first +
+                             " takes a number (got '" + kv.second + "')");
   }
 
 

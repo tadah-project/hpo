@@ -393,6 +393,16 @@ AsaOptions parse_asa_options(const OptimizerSpec& sp, std::size_t dim)
         else if (n == "Queue_Resolution")  o.queue_resolution.assign(dim, v);
     };
 
+    /* A word (OptimizerSpec::param_raw): refused under a name ASA does not
+     * take as a number is, and under one of its options, which take
+     * numbers. */
+    for (const auto& [key, word] : sp.param_raw) {
+        const auto [base, idx] = split_indexed(key);
+        (void)idx;
+        if (!find_desc(base)) unknown_key_error(key);
+        throw std::runtime_error("ASA:ASA: PARAM " + key +
+                                 " takes a number (got '" + word + "')");
+    }
     for (const auto& [key, val] : sp.param) {
         const auto [base, idx] = split_indexed(key);
         const Desc* d = find_desc(base);

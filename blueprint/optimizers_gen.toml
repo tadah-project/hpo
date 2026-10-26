@@ -24,6 +24,7 @@ accepts_inner = false
 default_inner = ""
 accepts_multi_seed = false
 reads = ["SEED", "THREADS"]
+algorithm_params = []
 warns_unread_seed = false
 stops = ["MAXEVAL", "MAXTIME", "STOPVAL"]
 needs_stop = false
@@ -138,6 +139,7 @@ accepts_inner = false
 default_inner = ""
 accepts_multi_seed = false
 reads = []
+algorithm_params = []
 warns_unread_seed = false
 stops = ["MAXEVAL", "FTOL_REL", "XTOL_REL"]
 needs_stop = false
@@ -197,6 +199,7 @@ accepts_inner = false
 default_inner = ""
 accepts_multi_seed = false
 reads = []
+algorithm_params = []
 warns_unread_seed = false
 stops = ["MAXEVAL", "FTOL_ABS"]
 needs_stop = false
@@ -243,6 +246,7 @@ accepts_inner = false
 default_inner = ""
 accepts_multi_seed = true
 reads = ["FTOL_ABS", "THREADS"]
+algorithm_params = []
 warns_unread_seed = true
 stops = ["MAXEVAL", "MAXTIME", "STOPVAL"]
 needs_stop = true
@@ -280,6 +284,7 @@ accepts_inner = true
 default_inner = ""
 accepts_multi_seed = false
 reads = ["SEED"]
+algorithm_params = []
 warns_unread_seed = false
 stops = ["MAXEVAL", "MAXTIME", "STOPVAL", "FTOL_REL", "FTOL_ABS", "XTOL_REL", "XTOL_ABS"]
 needs_stop = false
@@ -299,8 +304,7 @@ bounds_note = ""
 explain_text = """
 Options for NLOPT:AUGLAG
    * Stops that end a run: MAXEVAL, MAXTIME, STOPVAL, FTOL_REL, FTOL_ABS, XTOL_REL, XTOL_ABS
-   * PARAM <name> <value>  passed to NLopt as its algorithm parameter
-     of that name
+   * PARAM: NLopt reads no parameter of this algorithm
    * STEP <double>  initial step; consumption: passed to the optimiser of the INNER block
      passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block
    * INNER ... ENDINNER: the local search it runs, from its own starting
@@ -321,6 +325,7 @@ accepts_inner = true
 default_inner = ""
 accepts_multi_seed = false
 reads = ["SEED"]
+algorithm_params = []
 warns_unread_seed = false
 stops = ["MAXEVAL", "MAXTIME", "STOPVAL", "FTOL_REL", "FTOL_ABS", "XTOL_REL", "XTOL_ABS"]
 needs_stop = false
@@ -340,8 +345,7 @@ bounds_note = ""
 explain_text = """
 Options for NLOPT:AUGLAG_EQ
    * Stops that end a run: MAXEVAL, MAXTIME, STOPVAL, FTOL_REL, FTOL_ABS, XTOL_REL, XTOL_ABS
-   * PARAM <name> <value>  passed to NLopt as its algorithm parameter
-     of that name
+   * PARAM: NLopt reads no parameter of this algorithm
    * STEP <double>  initial step; consumption: passed to the optimiser of the INNER block
      passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block
    * INNER ... ENDINNER: the local search it runs, from its own starting
@@ -362,6 +366,7 @@ accepts_inner = true
 default_inner = "LD_MMA"
 accepts_multi_seed = false
 reads = ["POPULATION", "SEED"]
+algorithm_params = []
 warns_unread_seed = false
 stops = ["MAXEVAL", "MAXTIME", "STOPVAL"]
 needs_stop = true
@@ -382,8 +387,7 @@ explain_text = """
 Options for NLOPT:GD_MLSL
    * Stops that end a run: MAXEVAL, MAXTIME, STOPVAL
      One of them is required, or an active RESTART: MLSL's multistart loop has no convergence test (the tolerances reach only its local searches) and runs until it is interrupted.
-   * PARAM <name> <value>  passed to NLopt as its algorithm parameter
-     of that name
+   * PARAM: NLopt reads no parameter of this algorithm
    * global optimiser
    * STEP <double>  initial step; consumption: passed to the optimiser of the INNER block
      passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block
@@ -404,6 +408,7 @@ accepts_inner = true
 default_inner = "LD_MMA"
 accepts_multi_seed = false
 reads = ["POPULATION", "SEED"]
+algorithm_params = []
 warns_unread_seed = false
 stops = ["MAXEVAL", "MAXTIME", "STOPVAL"]
 needs_stop = true
@@ -424,8 +429,7 @@ explain_text = """
 Options for NLOPT:GD_MLSL_LDS
    * Stops that end a run: MAXEVAL, MAXTIME, STOPVAL
      One of them is required, or an active RESTART: MLSL's multistart loop has no convergence test (the tolerances reach only its local searches) and runs until it is interrupted.
-   * PARAM <name> <value>  passed to NLopt as its algorithm parameter
-     of that name
+   * PARAM: NLopt reads no parameter of this algorithm
    * global optimiser
    * STEP <double>  initial step; consumption: passed to the optimiser of the INNER block
      passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block
@@ -446,6 +450,7 @@ accepts_inner = false
 default_inner = ""
 accepts_multi_seed = false
 reads = ["SEED"]
+algorithm_params = []
 warns_unread_seed = false
 stops = ["MAXEVAL", "MAXTIME", "STOPVAL"]
 needs_stop = true
@@ -466,8 +471,7 @@ explain_text = """
 Options for NLOPT:GD_STOGO
    * Stops that end a run: MAXEVAL, MAXTIME, STOPVAL
      MAXEVAL is required (MAXTIME, STOPVAL and an active RESTART are not enough): NLopt's StoGO has no convergence test of its own and ignores NLopt's forced stop, by which tadah hpo ends a search (on a signal, an error, the RESTART stagnation stop, or a loss at or below STOPVAL that NLopt was not given): it then calls on, each call refused, and only NLopt's own evaluation count ends it promptly (MAXTIME only once the rest of its time has passed).
-   * PARAM <name> <value>  passed to NLopt as its algorithm parameter
-     of that name
+   * PARAM: NLopt reads no parameter of this algorithm
    * global optimiser
    * STEP is rejected: this algorithm never reads an initial step (population, branch-and-bound, or line-search method); remove STEP
 """
@@ -483,6 +487,7 @@ accepts_inner = false
 default_inner = ""
 accepts_multi_seed = false
 reads = ["POPULATION", "SEED"]
+algorithm_params = []
 warns_unread_seed = false
 stops = ["MAXEVAL", "MAXTIME", "STOPVAL"]
 needs_stop = true
@@ -503,8 +508,7 @@ explain_text = """
 Options for NLOPT:GD_STOGO_RAND
    * Stops that end a run: MAXEVAL, MAXTIME, STOPVAL
      MAXEVAL is required (MAXTIME, STOPVAL and an active RESTART are not enough): NLopt's StoGO has no convergence test of its own and ignores NLopt's forced stop, by which tadah hpo ends a search (on a signal, an error, the RESTART stagnation stop, or a loss at or below STOPVAL that NLopt was not given): it then calls on, each call refused, and only NLopt's own evaluation count ends it promptly (MAXTIME only once the rest of its time has passed).
-   * PARAM <name> <value>  passed to NLopt as its algorithm parameter
-     of that name
+   * PARAM: NLopt reads no parameter of this algorithm
    * global optimiser
    * STEP is rejected: this algorithm never reads an initial step (population, branch-and-bound, or line-search method); remove STEP
 """
@@ -520,6 +524,7 @@ accepts_inner = false
 default_inner = ""
 accepts_multi_seed = false
 reads = ["SEED"]
+algorithm_params = []
 warns_unread_seed = false
 stops = ["MAXEVAL", "MAXTIME", "STOPVAL"]
 needs_stop = true
@@ -540,8 +545,7 @@ explain_text = """
 Options for NLOPT:GN_AGS
    * Stops that end a run: MAXEVAL, MAXTIME, STOPVAL
      One of them is required, or an active RESTART: NLopt's global search has no convergence test of its own and runs until it is interrupted.
-   * PARAM <name> <value>  passed to NLopt as its algorithm parameter
-     of that name
+   * PARAM: NLopt reads no parameter of this algorithm
    * global optimiser
    * derivative-free
    * STEP is rejected: this algorithm never reads an initial step (population, branch-and-bound, or line-search method); remove STEP
@@ -558,6 +562,7 @@ accepts_inner = false
 default_inner = ""
 accepts_multi_seed = false
 reads = ["POPULATION", "SEED"]
+algorithm_params = []
 warns_unread_seed = false
 stops = ["MAXEVAL", "MAXTIME", "STOPVAL", "FTOL_REL", "FTOL_ABS", "XTOL_REL", "XTOL_ABS"]
 needs_stop = true
@@ -578,8 +583,7 @@ explain_text = """
 Options for NLOPT:GN_CRS2_LM
    * Stops that end a run: MAXEVAL, MAXTIME, STOPVAL, FTOL_REL, FTOL_ABS, XTOL_REL, XTOL_ABS
      One of them is required (a tolerance above 0), or an active RESTART: NLopt's global search has no convergence test of its own and runs until it is interrupted.
-   * PARAM <name> <value>  passed to NLopt as its algorithm parameter
-     of that name
+   * PARAM: NLopt reads no parameter of this algorithm
    * global optimiser
    * derivative-free
    * STEP is rejected: this algorithm never reads an initial step (population, branch-and-bound, or line-search method); remove STEP
@@ -596,6 +600,7 @@ accepts_inner = false
 default_inner = ""
 accepts_multi_seed = false
 reads = ["SEED"]
+algorithm_params = ["magic_eps"]
 warns_unread_seed = false
 stops = ["MAXEVAL", "MAXTIME", "STOPVAL", "FTOL_REL", "FTOL_ABS", "XTOL_REL", "XTOL_ABS"]
 needs_stop = true
@@ -617,8 +622,8 @@ Options for NLOPT:GN_DIRECT
    * Stops that end a run: MAXEVAL, MAXTIME, STOPVAL, FTOL_REL, FTOL_ABS, XTOL_REL, XTOL_ABS
      DIRECT's XTOL_REL and XTOL_ABS end it only once every rectangle is that small, after roughly (1/XTOL_REL)^n evaluations in n dimensions.
      One of them is required (a tolerance above 0), or an active RESTART: NLopt's global search has no convergence test of its own and runs until it is interrupted.
-   * PARAM <name> <value>  passed to NLopt as its algorithm parameter
-     of that name
+   * PARAM <name> <value>  NLopt's parameters of this algorithm:
+     magic_eps
    * global optimiser
    * derivative-free
    * STEP is rejected: this algorithm never reads an initial step (population, branch-and-bound, or line-search method); remove STEP
@@ -635,6 +640,7 @@ accepts_inner = false
 default_inner = ""
 accepts_multi_seed = false
 reads = ["SEED"]
+algorithm_params = ["magic_eps"]
 warns_unread_seed = false
 stops = ["MAXEVAL", "MAXTIME", "STOPVAL", "FTOL_REL", "FTOL_ABS", "XTOL_REL", "XTOL_ABS"]
 needs_stop = true
@@ -656,8 +662,8 @@ Options for NLOPT:GN_DIRECT_L
    * Stops that end a run: MAXEVAL, MAXTIME, STOPVAL, FTOL_REL, FTOL_ABS, XTOL_REL, XTOL_ABS
      DIRECT's XTOL_REL and XTOL_ABS end it only once every rectangle is that small, after roughly (1/XTOL_REL)^n evaluations in n dimensions.
      One of them is required (a tolerance above 0), or an active RESTART: NLopt's global search has no convergence test of its own and runs until it is interrupted.
-   * PARAM <name> <value>  passed to NLopt as its algorithm parameter
-     of that name
+   * PARAM <name> <value>  NLopt's parameters of this algorithm:
+     magic_eps
    * global optimiser
    * derivative-free
    * STEP is rejected: this algorithm never reads an initial step (population, branch-and-bound, or line-search method); remove STEP
@@ -674,6 +680,7 @@ accepts_inner = false
 default_inner = ""
 accepts_multi_seed = false
 reads = ["SEED"]
+algorithm_params = ["magic_eps"]
 warns_unread_seed = false
 stops = ["MAXEVAL", "MAXTIME", "STOPVAL", "FTOL_REL", "FTOL_ABS", "XTOL_REL", "XTOL_ABS"]
 needs_stop = true
@@ -695,8 +702,8 @@ Options for NLOPT:GN_DIRECT_L_NOSCAL
    * Stops that end a run: MAXEVAL, MAXTIME, STOPVAL, FTOL_REL, FTOL_ABS, XTOL_REL, XTOL_ABS
      DIRECT's XTOL_REL and XTOL_ABS end it only once every rectangle is that small, after roughly (1/XTOL_REL)^n evaluations in n dimensions.
      One of them is required (a tolerance above 0), or an active RESTART: NLopt's global search has no convergence test of its own and runs until it is interrupted.
-   * PARAM <name> <value>  passed to NLopt as its algorithm parameter
-     of that name
+   * PARAM <name> <value>  NLopt's parameters of this algorithm:
+     magic_eps
    * global optimiser
    * derivative-free
    * STEP is rejected: this algorithm never reads an initial step (population, branch-and-bound, or line-search method); remove STEP
@@ -713,6 +720,7 @@ accepts_inner = false
 default_inner = ""
 accepts_multi_seed = false
 reads = ["SEED"]
+algorithm_params = ["magic_eps"]
 warns_unread_seed = false
 stops = ["MAXEVAL", "MAXTIME", "STOPVAL", "FTOL_REL", "FTOL_ABS", "XTOL_REL", "XTOL_ABS"]
 needs_stop = true
@@ -734,8 +742,8 @@ Options for NLOPT:GN_DIRECT_L_RAND
    * Stops that end a run: MAXEVAL, MAXTIME, STOPVAL, FTOL_REL, FTOL_ABS, XTOL_REL, XTOL_ABS
      DIRECT's XTOL_REL and XTOL_ABS end it only once every rectangle is that small, after roughly (1/XTOL_REL)^n evaluations in n dimensions.
      One of them is required (a tolerance above 0), or an active RESTART: NLopt's global search has no convergence test of its own and runs until it is interrupted.
-   * PARAM <name> <value>  passed to NLopt as its algorithm parameter
-     of that name
+   * PARAM <name> <value>  NLopt's parameters of this algorithm:
+     magic_eps
    * global optimiser
    * derivative-free
    * STEP is rejected: this algorithm never reads an initial step (population, branch-and-bound, or line-search method); remove STEP
@@ -752,6 +760,7 @@ accepts_inner = false
 default_inner = ""
 accepts_multi_seed = false
 reads = ["SEED"]
+algorithm_params = ["magic_eps"]
 warns_unread_seed = false
 stops = ["MAXEVAL", "MAXTIME", "STOPVAL", "FTOL_REL", "FTOL_ABS", "XTOL_REL", "XTOL_ABS"]
 needs_stop = true
@@ -773,8 +782,8 @@ Options for NLOPT:GN_DIRECT_L_RAND_NOSCAL
    * Stops that end a run: MAXEVAL, MAXTIME, STOPVAL, FTOL_REL, FTOL_ABS, XTOL_REL, XTOL_ABS
      DIRECT's XTOL_REL and XTOL_ABS end it only once every rectangle is that small, after roughly (1/XTOL_REL)^n evaluations in n dimensions.
      One of them is required (a tolerance above 0), or an active RESTART: NLopt's global search has no convergence test of its own and runs until it is interrupted.
-   * PARAM <name> <value>  passed to NLopt as its algorithm parameter
-     of that name
+   * PARAM <name> <value>  NLopt's parameters of this algorithm:
+     magic_eps
    * global optimiser
    * derivative-free
    * STEP is rejected: this algorithm never reads an initial step (population, branch-and-bound, or line-search method); remove STEP
@@ -791,6 +800,7 @@ accepts_inner = false
 default_inner = ""
 accepts_multi_seed = false
 reads = ["SEED"]
+algorithm_params = ["magic_eps"]
 warns_unread_seed = false
 stops = ["MAXEVAL", "MAXTIME", "STOPVAL", "FTOL_REL", "FTOL_ABS", "XTOL_REL", "XTOL_ABS"]
 needs_stop = true
@@ -812,8 +822,8 @@ Options for NLOPT:GN_DIRECT_NOSCAL
    * Stops that end a run: MAXEVAL, MAXTIME, STOPVAL, FTOL_REL, FTOL_ABS, XTOL_REL, XTOL_ABS
      DIRECT's XTOL_REL and XTOL_ABS end it only once every rectangle is that small, after roughly (1/XTOL_REL)^n evaluations in n dimensions.
      One of them is required (a tolerance above 0), or an active RESTART: NLopt's global search has no convergence test of its own and runs until it is interrupted.
-   * PARAM <name> <value>  passed to NLopt as its algorithm parameter
-     of that name
+   * PARAM <name> <value>  NLopt's parameters of this algorithm:
+     magic_eps
    * global optimiser
    * derivative-free
    * STEP is rejected: this algorithm never reads an initial step (population, branch-and-bound, or line-search method); remove STEP
@@ -830,6 +840,7 @@ accepts_inner = false
 default_inner = ""
 accepts_multi_seed = false
 reads = ["POPULATION", "SEED"]
+algorithm_params = []
 warns_unread_seed = false
 stops = ["MAXEVAL", "MAXTIME", "STOPVAL"]
 needs_stop = true
@@ -850,8 +861,7 @@ explain_text = """
 Options for NLOPT:GN_ESCH
    * Stops that end a run: MAXEVAL, MAXTIME, STOPVAL
      One of them is required, or an active RESTART: NLopt's global search has no convergence test of its own and runs until it is interrupted.
-   * PARAM <name> <value>  passed to NLopt as its algorithm parameter
-     of that name
+   * PARAM: NLopt reads no parameter of this algorithm
    * global optimiser
    * derivative-free
    * STEP is rejected: this algorithm never reads an initial step (population, branch-and-bound, or line-search method); remove STEP
@@ -868,6 +878,7 @@ accepts_inner = false
 default_inner = ""
 accepts_multi_seed = false
 reads = ["POPULATION", "SEED"]
+algorithm_params = []
 warns_unread_seed = false
 stops = ["MAXEVAL", "MAXTIME", "STOPVAL", "FTOL_REL", "FTOL_ABS", "XTOL_REL", "XTOL_ABS"]
 needs_stop = true
@@ -888,8 +899,7 @@ explain_text = """
 Options for NLOPT:GN_ISRES
    * Stops that end a run: MAXEVAL, MAXTIME, STOPVAL, FTOL_REL, FTOL_ABS, XTOL_REL, XTOL_ABS
      One of them is required (a tolerance above 0), or an active RESTART: NLopt's global search has no convergence test of its own and runs until it is interrupted.
-   * PARAM <name> <value>  passed to NLopt as its algorithm parameter
-     of that name
+   * PARAM: NLopt reads no parameter of this algorithm
    * global optimiser
    * derivative-free
    * STEP is rejected: this algorithm never reads an initial step (population, branch-and-bound, or line-search method); remove STEP
@@ -906,6 +916,7 @@ accepts_inner = true
 default_inner = "LN_COBYLA"
 accepts_multi_seed = false
 reads = ["POPULATION", "SEED"]
+algorithm_params = []
 warns_unread_seed = false
 stops = ["MAXEVAL", "MAXTIME", "STOPVAL"]
 needs_stop = true
@@ -926,8 +937,7 @@ explain_text = """
 Options for NLOPT:GN_MLSL
    * Stops that end a run: MAXEVAL, MAXTIME, STOPVAL
      One of them is required, or an active RESTART: MLSL's multistart loop has no convergence test (the tolerances reach only its local searches) and runs until it is interrupted.
-   * PARAM <name> <value>  passed to NLopt as its algorithm parameter
-     of that name
+   * PARAM: NLopt reads no parameter of this algorithm
    * global optimiser
    * derivative-free
    * STEP <double>  initial step; consumption: passed to the optimiser of the INNER block
@@ -950,6 +960,7 @@ accepts_inner = true
 default_inner = "LN_COBYLA"
 accepts_multi_seed = false
 reads = ["POPULATION", "SEED"]
+algorithm_params = []
 warns_unread_seed = false
 stops = ["MAXEVAL", "MAXTIME", "STOPVAL"]
 needs_stop = true
@@ -970,8 +981,7 @@ explain_text = """
 Options for NLOPT:GN_MLSL_LDS
    * Stops that end a run: MAXEVAL, MAXTIME, STOPVAL
      One of them is required, or an active RESTART: MLSL's multistart loop has no convergence test (the tolerances reach only its local searches) and runs until it is interrupted.
-   * PARAM <name> <value>  passed to NLopt as its algorithm parameter
-     of that name
+   * PARAM: NLopt reads no parameter of this algorithm
    * global optimiser
    * derivative-free
    * STEP <double>  initial step; consumption: passed to the optimiser of the INNER block
@@ -994,6 +1004,7 @@ accepts_inner = false
 default_inner = ""
 accepts_multi_seed = false
 reads = ["SEED"]
+algorithm_params = ["magic_eps", "magic_eps_abs", "sigma_reltol", "fglobal_reltol"]
 warns_unread_seed = false
 stops = ["MAXEVAL", "MAXTIME", "STOPVAL", "XTOL_REL"]
 needs_stop = false
@@ -1013,8 +1024,8 @@ bounds_note = ""
 explain_text = """
 Options for NLOPT:GN_ORIG_DIRECT
    * Stops that end a run: MAXEVAL, MAXTIME, STOPVAL, XTOL_REL
-   * PARAM <name> <value>  passed to NLopt as its algorithm parameter
-     of that name
+   * PARAM <name> <value>  NLopt's parameters of this algorithm:
+     magic_eps, magic_eps_abs, sigma_reltol, fglobal_reltol
    * global optimiser
    * derivative-free
    * STEP is rejected: this algorithm never reads an initial step (population, branch-and-bound, or line-search method); remove STEP
@@ -1031,6 +1042,7 @@ accepts_inner = false
 default_inner = ""
 accepts_multi_seed = false
 reads = ["SEED"]
+algorithm_params = ["magic_eps", "magic_eps_abs", "sigma_reltol", "fglobal_reltol"]
 warns_unread_seed = false
 stops = ["MAXEVAL", "MAXTIME", "STOPVAL", "XTOL_REL"]
 needs_stop = false
@@ -1050,8 +1062,8 @@ bounds_note = ""
 explain_text = """
 Options for NLOPT:GN_ORIG_DIRECT_L
    * Stops that end a run: MAXEVAL, MAXTIME, STOPVAL, XTOL_REL
-   * PARAM <name> <value>  passed to NLopt as its algorithm parameter
-     of that name
+   * PARAM <name> <value>  NLopt's parameters of this algorithm:
+     magic_eps, magic_eps_abs, sigma_reltol, fglobal_reltol
    * global optimiser
    * derivative-free
    * STEP is rejected: this algorithm never reads an initial step (population, branch-and-bound, or line-search method); remove STEP
@@ -1068,6 +1080,7 @@ accepts_inner = true
 default_inner = ""
 accepts_multi_seed = false
 reads = ["POPULATION", "SEED"]
+algorithm_params = []
 warns_unread_seed = false
 stops = ["MAXEVAL", "MAXTIME", "STOPVAL"]
 needs_stop = true
@@ -1088,8 +1101,7 @@ explain_text = """
 Options for NLOPT:G_MLSL
    * Stops that end a run: MAXEVAL, MAXTIME, STOPVAL
      One of them is required, or an active RESTART: MLSL's multistart loop has no convergence test (the tolerances reach only its local searches) and runs until it is interrupted.
-   * PARAM <name> <value>  passed to NLopt as its algorithm parameter
-     of that name
+   * PARAM: NLopt reads no parameter of this algorithm
    * global optimiser
    * STEP <double>  initial step; consumption: passed to the optimiser of the INNER block
      passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block
@@ -1111,6 +1123,7 @@ accepts_inner = true
 default_inner = ""
 accepts_multi_seed = false
 reads = ["POPULATION", "SEED"]
+algorithm_params = []
 warns_unread_seed = false
 stops = ["MAXEVAL", "MAXTIME", "STOPVAL"]
 needs_stop = true
@@ -1131,8 +1144,7 @@ explain_text = """
 Options for NLOPT:G_MLSL_LDS
    * Stops that end a run: MAXEVAL, MAXTIME, STOPVAL
      One of them is required, or an active RESTART: MLSL's multistart loop has no convergence test (the tolerances reach only its local searches) and runs until it is interrupted.
-   * PARAM <name> <value>  passed to NLopt as its algorithm parameter
-     of that name
+   * PARAM: NLopt reads no parameter of this algorithm
    * global optimiser
    * STEP <double>  initial step; consumption: passed to the optimiser of the INNER block
      passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block
@@ -1154,6 +1166,7 @@ accepts_inner = true
 default_inner = "LD_MMA"
 accepts_multi_seed = false
 reads = ["SEED"]
+algorithm_params = []
 warns_unread_seed = false
 stops = ["MAXEVAL", "MAXTIME", "STOPVAL", "FTOL_REL", "FTOL_ABS", "XTOL_REL", "XTOL_ABS"]
 needs_stop = false
@@ -1173,8 +1186,7 @@ bounds_note = ""
 explain_text = """
 Options for NLOPT:LD_AUGLAG
    * Stops that end a run: MAXEVAL, MAXTIME, STOPVAL, FTOL_REL, FTOL_ABS, XTOL_REL, XTOL_ABS
-   * PARAM <name> <value>  passed to NLopt as its algorithm parameter
-     of that name
+   * PARAM: NLopt reads no parameter of this algorithm
    * STEP <double>  initial step; consumption: passed to the optimiser of the INNER block
      passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block
    * INNER ... ENDINNER: the local search it runs, from its own starting
@@ -1194,6 +1206,7 @@ accepts_inner = true
 default_inner = "LD_MMA"
 accepts_multi_seed = false
 reads = ["SEED"]
+algorithm_params = []
 warns_unread_seed = false
 stops = ["MAXEVAL", "MAXTIME", "STOPVAL", "FTOL_REL", "FTOL_ABS", "XTOL_REL", "XTOL_ABS"]
 needs_stop = false
@@ -1213,8 +1226,7 @@ bounds_note = ""
 explain_text = """
 Options for NLOPT:LD_AUGLAG_EQ
    * Stops that end a run: MAXEVAL, MAXTIME, STOPVAL, FTOL_REL, FTOL_ABS, XTOL_REL, XTOL_ABS
-   * PARAM <name> <value>  passed to NLopt as its algorithm parameter
-     of that name
+   * PARAM: NLopt reads no parameter of this algorithm
    * STEP <double>  initial step; consumption: passed to the optimiser of the INNER block
      passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block
    * INNER ... ENDINNER: the local search it runs, from its own starting
@@ -1234,6 +1246,7 @@ accepts_inner = false
 default_inner = ""
 accepts_multi_seed = false
 reads = ["SEED"]
+algorithm_params = ["inner_maxeval", "verbosity", "rho_init", "dual_algorithm", "dual_ftol_rel", "dual_ftol_abs", "dual_xtol_rel", "dual_xtol_abs", "dual_maxeval"]
 warns_unread_seed = false
 stops = ["MAXEVAL", "MAXTIME", "STOPVAL", "FTOL_REL", "FTOL_ABS", "XTOL_REL", "XTOL_ABS"]
 needs_stop = true
@@ -1254,8 +1267,9 @@ explain_text = """
 Options for NLOPT:LD_CCSAQ
    * Stops that end a run: MAXEVAL, MAXTIME, STOPVAL, FTOL_REL, FTOL_ABS, XTOL_REL, XTOL_ABS
      One of them is required (a tolerance above 0), or an active RESTART: without a tolerance it has no convergence test and runs until it is interrupted.
-   * PARAM <name> <value>  passed to NLopt as its algorithm parameter
-     of that name
+   * PARAM <name> <value>  NLopt's parameters of this algorithm:
+     inner_maxeval, verbosity, rho_init, dual_algorithm, dual_ftol_rel,
+     dual_ftol_abs, dual_xtol_rel, dual_xtol_abs, dual_maxeval
    * STEP <double>  initial step; consumption: one per dimension: the first trust-region half-width
      the first trust-region half-width in each dimension; without STEP it is half the width of the OPTIM box
 """
@@ -1271,6 +1285,7 @@ accepts_inner = false
 default_inner = ""
 accepts_multi_seed = false
 reads = ["SEED", "VECTOR_ARR"]
+algorithm_params = ["tolg"]
 warns_unread_seed = false
 stops = ["MAXEVAL", "MAXTIME", "STOPVAL", "FTOL_REL", "FTOL_ABS", "XTOL_REL", "XTOL_ABS"]
 needs_stop = false
@@ -1290,8 +1305,8 @@ bounds_note = ""
 explain_text = """
 Options for NLOPT:LD_LBFGS
    * Stops that end a run: MAXEVAL, MAXTIME, STOPVAL, FTOL_REL, FTOL_ABS, XTOL_REL, XTOL_ABS
-   * PARAM <name> <value>  passed to NLopt as its algorithm parameter
-     of that name
+   * PARAM <name> <value>  NLopt's parameters of this algorithm:
+     tolg
    * STEP is rejected: this algorithm never reads an initial step (population, branch-and-bound, or line-search method); remove STEP
 """
 
@@ -1306,6 +1321,7 @@ accepts_inner = false
 default_inner = ""
 accepts_multi_seed = false
 reads = ["SEED"]
+algorithm_params = ["inner_maxeval", "verbosity", "rho_init", "dual_algorithm", "dual_ftol_rel", "dual_ftol_abs", "dual_xtol_rel", "dual_xtol_abs", "dual_maxeval"]
 warns_unread_seed = false
 stops = ["MAXEVAL", "MAXTIME", "STOPVAL", "FTOL_REL", "FTOL_ABS", "XTOL_REL", "XTOL_ABS"]
 needs_stop = true
@@ -1326,8 +1342,9 @@ explain_text = """
 Options for NLOPT:LD_MMA
    * Stops that end a run: MAXEVAL, MAXTIME, STOPVAL, FTOL_REL, FTOL_ABS, XTOL_REL, XTOL_ABS
      One of them is required (a tolerance above 0), or an active RESTART: without a tolerance it has no convergence test and runs until it is interrupted.
-   * PARAM <name> <value>  passed to NLopt as its algorithm parameter
-     of that name
+   * PARAM <name> <value>  NLopt's parameters of this algorithm:
+     inner_maxeval, verbosity, rho_init, dual_algorithm, dual_ftol_rel,
+     dual_ftol_abs, dual_xtol_rel, dual_xtol_abs, dual_maxeval
    * STEP <double>  initial step; consumption: one per dimension: the first trust-region half-width
      the first trust-region half-width in each dimension; without STEP it is half the width of the OPTIM box
 """
@@ -1343,6 +1360,7 @@ accepts_inner = false
 default_inner = ""
 accepts_multi_seed = false
 reads = ["SEED"]
+algorithm_params = []
 warns_unread_seed = false
 stops = ["MAXEVAL", "MAXTIME", "STOPVAL", "FTOL_REL", "FTOL_ABS", "XTOL_REL", "XTOL_ABS"]
 needs_stop = true
@@ -1363,8 +1381,7 @@ explain_text = """
 Options for NLOPT:LD_SLSQP
    * Stops that end a run: MAXEVAL, MAXTIME, STOPVAL, FTOL_REL, FTOL_ABS, XTOL_REL, XTOL_ABS
      One of them is required (a tolerance above 0), or an active RESTART: without a tolerance it has no convergence test and runs until it is interrupted.
-   * PARAM <name> <value>  passed to NLopt as its algorithm parameter
-     of that name
+   * PARAM: NLopt reads no parameter of this algorithm
    * STEP is rejected: this algorithm never reads an initial step (population, branch-and-bound, or line-search method); remove STEP
 """
 
@@ -1379,6 +1396,7 @@ accepts_inner = false
 default_inner = ""
 accepts_multi_seed = false
 reads = ["SEED", "VECTOR_ARR"]
+algorithm_params = ["tolg"]
 warns_unread_seed = false
 stops = ["MAXEVAL", "MAXTIME", "STOPVAL", "FTOL_REL", "FTOL_ABS", "XTOL_REL", "XTOL_ABS"]
 needs_stop = false
@@ -1398,8 +1416,8 @@ bounds_note = ""
 explain_text = """
 Options for NLOPT:LD_TNEWTON
    * Stops that end a run: MAXEVAL, MAXTIME, STOPVAL, FTOL_REL, FTOL_ABS, XTOL_REL, XTOL_ABS
-   * PARAM <name> <value>  passed to NLopt as its algorithm parameter
-     of that name
+   * PARAM <name> <value>  NLopt's parameters of this algorithm:
+     tolg
    * STEP is rejected: this algorithm never reads an initial step (population, branch-and-bound, or line-search method); remove STEP
 """
 
@@ -1414,6 +1432,7 @@ accepts_inner = false
 default_inner = ""
 accepts_multi_seed = false
 reads = ["SEED", "VECTOR_ARR"]
+algorithm_params = ["tolg"]
 warns_unread_seed = false
 stops = ["MAXEVAL", "MAXTIME", "STOPVAL", "FTOL_REL", "FTOL_ABS", "XTOL_REL", "XTOL_ABS"]
 needs_stop = false
@@ -1433,8 +1452,8 @@ bounds_note = ""
 explain_text = """
 Options for NLOPT:LD_TNEWTON_PRECOND
    * Stops that end a run: MAXEVAL, MAXTIME, STOPVAL, FTOL_REL, FTOL_ABS, XTOL_REL, XTOL_ABS
-   * PARAM <name> <value>  passed to NLopt as its algorithm parameter
-     of that name
+   * PARAM <name> <value>  NLopt's parameters of this algorithm:
+     tolg
    * STEP is rejected: this algorithm never reads an initial step (population, branch-and-bound, or line-search method); remove STEP
 """
 
@@ -1449,6 +1468,7 @@ accepts_inner = false
 default_inner = ""
 accepts_multi_seed = false
 reads = ["SEED", "VECTOR_ARR"]
+algorithm_params = ["tolg"]
 warns_unread_seed = false
 stops = ["MAXEVAL", "MAXTIME", "STOPVAL", "FTOL_REL", "FTOL_ABS", "XTOL_REL", "XTOL_ABS"]
 needs_stop = false
@@ -1468,8 +1488,8 @@ bounds_note = ""
 explain_text = """
 Options for NLOPT:LD_TNEWTON_PRECOND_RESTART
    * Stops that end a run: MAXEVAL, MAXTIME, STOPVAL, FTOL_REL, FTOL_ABS, XTOL_REL, XTOL_ABS
-   * PARAM <name> <value>  passed to NLopt as its algorithm parameter
-     of that name
+   * PARAM <name> <value>  NLopt's parameters of this algorithm:
+     tolg
    * STEP is rejected: this algorithm never reads an initial step (population, branch-and-bound, or line-search method); remove STEP
 """
 
@@ -1484,6 +1504,7 @@ accepts_inner = false
 default_inner = ""
 accepts_multi_seed = false
 reads = ["SEED", "VECTOR_ARR"]
+algorithm_params = ["tolg"]
 warns_unread_seed = false
 stops = ["MAXEVAL", "MAXTIME", "STOPVAL", "FTOL_REL", "FTOL_ABS", "XTOL_REL", "XTOL_ABS"]
 needs_stop = false
@@ -1503,8 +1524,8 @@ bounds_note = ""
 explain_text = """
 Options for NLOPT:LD_TNEWTON_RESTART
    * Stops that end a run: MAXEVAL, MAXTIME, STOPVAL, FTOL_REL, FTOL_ABS, XTOL_REL, XTOL_ABS
-   * PARAM <name> <value>  passed to NLopt as its algorithm parameter
-     of that name
+   * PARAM <name> <value>  NLopt's parameters of this algorithm:
+     tolg
    * STEP is rejected: this algorithm never reads an initial step (population, branch-and-bound, or line-search method); remove STEP
 """
 
@@ -1519,6 +1540,7 @@ accepts_inner = false
 default_inner = ""
 accepts_multi_seed = false
 reads = ["SEED", "VECTOR_ARR"]
+algorithm_params = ["tolg"]
 warns_unread_seed = false
 stops = ["MAXEVAL", "MAXTIME", "STOPVAL", "FTOL_REL", "FTOL_ABS", "XTOL_REL", "XTOL_ABS"]
 needs_stop = false
@@ -1538,8 +1560,8 @@ bounds_note = ""
 explain_text = """
 Options for NLOPT:LD_VAR1
    * Stops that end a run: MAXEVAL, MAXTIME, STOPVAL, FTOL_REL, FTOL_ABS, XTOL_REL, XTOL_ABS
-   * PARAM <name> <value>  passed to NLopt as its algorithm parameter
-     of that name
+   * PARAM <name> <value>  NLopt's parameters of this algorithm:
+     tolg
    * STEP is rejected: this algorithm never reads an initial step (population, branch-and-bound, or line-search method); remove STEP
 """
 
@@ -1554,6 +1576,7 @@ accepts_inner = false
 default_inner = ""
 accepts_multi_seed = false
 reads = ["SEED", "VECTOR_ARR"]
+algorithm_params = ["tolg"]
 warns_unread_seed = false
 stops = ["MAXEVAL", "MAXTIME", "STOPVAL", "FTOL_REL", "FTOL_ABS", "XTOL_REL", "XTOL_ABS"]
 needs_stop = false
@@ -1573,8 +1596,8 @@ bounds_note = ""
 explain_text = """
 Options for NLOPT:LD_VAR2
    * Stops that end a run: MAXEVAL, MAXTIME, STOPVAL, FTOL_REL, FTOL_ABS, XTOL_REL, XTOL_ABS
-   * PARAM <name> <value>  passed to NLopt as its algorithm parameter
-     of that name
+   * PARAM <name> <value>  NLopt's parameters of this algorithm:
+     tolg
    * STEP is rejected: this algorithm never reads an initial step (population, branch-and-bound, or line-search method); remove STEP
 """
 
@@ -1589,6 +1612,7 @@ accepts_inner = true
 default_inner = "LN_COBYLA"
 accepts_multi_seed = false
 reads = ["SEED"]
+algorithm_params = []
 warns_unread_seed = false
 stops = ["MAXEVAL", "MAXTIME", "STOPVAL", "FTOL_REL", "FTOL_ABS", "XTOL_REL", "XTOL_ABS"]
 needs_stop = false
@@ -1608,8 +1632,7 @@ bounds_note = ""
 explain_text = """
 Options for NLOPT:LN_AUGLAG
    * Stops that end a run: MAXEVAL, MAXTIME, STOPVAL, FTOL_REL, FTOL_ABS, XTOL_REL, XTOL_ABS
-   * PARAM <name> <value>  passed to NLopt as its algorithm parameter
-     of that name
+   * PARAM: NLopt reads no parameter of this algorithm
    * derivative-free
    * STEP <double>  initial step; consumption: passed to the optimiser of the INNER block
      passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block
@@ -1630,6 +1653,7 @@ accepts_inner = true
 default_inner = "LN_COBYLA"
 accepts_multi_seed = false
 reads = ["SEED"]
+algorithm_params = []
 warns_unread_seed = false
 stops = ["MAXEVAL", "MAXTIME", "STOPVAL", "FTOL_REL", "FTOL_ABS", "XTOL_REL", "XTOL_ABS"]
 needs_stop = false
@@ -1649,8 +1673,7 @@ bounds_note = ""
 explain_text = """
 Options for NLOPT:LN_AUGLAG_EQ
    * Stops that end a run: MAXEVAL, MAXTIME, STOPVAL, FTOL_REL, FTOL_ABS, XTOL_REL, XTOL_ABS
-   * PARAM <name> <value>  passed to NLopt as its algorithm parameter
-     of that name
+   * PARAM: NLopt reads no parameter of this algorithm
    * derivative-free
    * STEP <double>  initial step; consumption: passed to the optimiser of the INNER block
      passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block
@@ -1671,6 +1694,7 @@ accepts_inner = false
 default_inner = ""
 accepts_multi_seed = false
 reads = ["SEED"]
+algorithm_params = []
 warns_unread_seed = false
 stops = ["MAXEVAL", "MAXTIME", "STOPVAL", "FTOL_REL", "FTOL_ABS", "XTOL_REL", "XTOL_ABS"]
 needs_stop = false
@@ -1690,8 +1714,7 @@ bounds_note = ""
 explain_text = """
 Options for NLOPT:LN_BOBYQA
    * Stops that end a run: MAXEVAL, MAXTIME, STOPVAL, FTOL_REL, FTOL_ABS, XTOL_REL, XTOL_ABS
-   * PARAM <name> <value>  passed to NLopt as its algorithm parameter
-     of that name
+   * PARAM: NLopt reads no parameter of this algorithm
    * derivative-free
    * STEP <double>  initial step; consumption: one per dimension: rescaling of the coordinates
      STEP rescales the coordinates, so that the first trust-region radius is STEP in each dimension; the last radius is XTOL_REL times the first, and not below XTOL_ABS
@@ -1708,6 +1731,7 @@ accepts_inner = false
 default_inner = ""
 accepts_multi_seed = false
 reads = ["SEED"]
+algorithm_params = []
 warns_unread_seed = false
 stops = ["MAXEVAL", "MAXTIME", "STOPVAL", "FTOL_REL", "FTOL_ABS", "XTOL_REL", "XTOL_ABS"]
 needs_stop = false
@@ -1727,8 +1751,7 @@ bounds_note = ""
 explain_text = """
 Options for NLOPT:LN_COBYLA
    * Stops that end a run: MAXEVAL, MAXTIME, STOPVAL, FTOL_REL, FTOL_ABS, XTOL_REL, XTOL_ABS
-   * PARAM <name> <value>  passed to NLopt as its algorithm parameter
-     of that name
+   * PARAM: NLopt reads no parameter of this algorithm
    * derivative-free
    * STEP <double>  initial step; consumption: one per dimension: rescaling of the coordinates
      STEP rescales the coordinates, so that the first trust-region radius is STEP in each dimension; the last radius is XTOL_REL times the first, and not below XTOL_ABS
@@ -1745,6 +1768,7 @@ accepts_inner = false
 default_inner = ""
 accepts_multi_seed = false
 reads = ["SEED"]
+algorithm_params = []
 warns_unread_seed = false
 stops = ["MAXEVAL", "MAXTIME", "STOPVAL", "FTOL_REL", "FTOL_ABS", "XTOL_REL", "XTOL_ABS"]
 needs_stop = false
@@ -1764,8 +1788,7 @@ bounds_note = ""
 explain_text = """
 Options for NLOPT:LN_NELDERMEAD
    * Stops that end a run: MAXEVAL, MAXTIME, STOPVAL, FTOL_REL, FTOL_ABS, XTOL_REL, XTOL_ABS
-   * PARAM <name> <value>  passed to NLopt as its algorithm parameter
-     of that name
+   * PARAM: NLopt reads no parameter of this algorithm
    * derivative-free
    * STEP <double>  initial step; consumption: one per dimension: the edges of the first simplex
      the first simplex has an edge of STEP in each dimension, and the coordinates are not rescaled; the later steps of every dimension change by one progress ratio between 0.1 and 10. The stop on a small step is relative to |x| in each dimension; XTOL_ABS adds an absolute one
@@ -1802,6 +1825,7 @@ accepts_inner = false
 default_inner = ""
 accepts_multi_seed = false
 reads = ["SEED"]
+algorithm_params = ["t0_tol"]
 warns_unread_seed = false
 stops = ["MAXEVAL", "MAXTIME", "STOPVAL", "FTOL_REL", "FTOL_ABS", "XTOL_REL", "XTOL_ABS"]
 needs_stop = false
@@ -1821,8 +1845,8 @@ bounds_note = ""
 explain_text = """
 Options for NLOPT:LN_PRAXIS
    * Stops that end a run: MAXEVAL, MAXTIME, STOPVAL, FTOL_REL, FTOL_ABS, XTOL_REL, XTOL_ABS
-   * PARAM <name> <value>  passed to NLopt as its algorithm parameter
-     of that name
+   * PARAM <name> <value>  NLopt's parameters of this algorithm:
+     t0_tol
    * derivative-free
    * STEP <double>  initial step; consumption: one radius: the smallest STEP of the dimensions
      one radius for every dimension, the smallest STEP of the dimensions
@@ -1839,6 +1863,7 @@ accepts_inner = false
 default_inner = ""
 accepts_multi_seed = false
 reads = ["SEED"]
+algorithm_params = []
 warns_unread_seed = false
 stops = ["MAXEVAL", "MAXTIME", "STOPVAL", "FTOL_REL", "FTOL_ABS", "XTOL_REL", "XTOL_ABS"]
 needs_stop = false
@@ -1858,8 +1883,7 @@ bounds_note = ""
 explain_text = """
 Options for NLOPT:LN_SBPLX
    * Stops that end a run: MAXEVAL, MAXTIME, STOPVAL, FTOL_REL, FTOL_ABS, XTOL_REL, XTOL_ABS
-   * PARAM <name> <value>  passed to NLopt as its algorithm parameter
-     of that name
+   * PARAM: NLopt reads no parameter of this algorithm
    * derivative-free
    * STEP <double>  initial step; consumption: one per dimension: the edges of the first simplex
      the first simplex has an edge of STEP in each dimension, and the coordinates are not rescaled; the later steps of every dimension change by one progress ratio between 0.1 and 10. The stop on a small step is relative to |x| in each dimension; XTOL_ABS adds an absolute one
@@ -1886,6 +1910,7 @@ accepts_inner = false
 default_inner = ""
 accepts_multi_seed = false
 reads = ["SEED"]
+algorithm_params = []
 warns_unread_seed = false
 stops = ["MAXEVAL", "MAXTIME", "STOPVAL", "FTOL_REL", "FTOL_ABS"]
 needs_stop = false
@@ -1972,6 +1997,7 @@ accepts_inner = false
 default_inner = ""
 accepts_multi_seed = false
 reads = ["POPULATION", "SEED", "THREADS"]
+algorithm_params = []
 warns_unread_seed = false
 stops = ["MAXEVAL", "MAXTIME", "STOPVAL", "FTOL_REL", "FTOL_ABS"]
 needs_stop = false
@@ -2073,6 +2099,7 @@ accepts_inner = false
 default_inner = ""
 accepts_multi_seed = false
 reads = ["SEED", "THREADS"]
+algorithm_params = []
 warns_unread_seed = false
 stops = ["MAXEVAL", "MAXTIME", "STOPVAL", "FTOL_REL", "FTOL_ABS"]
 needs_stop = true
@@ -2205,6 +2232,7 @@ accepts_inner = false
 default_inner = ""
 accepts_multi_seed = false
 reads = []
+algorithm_params = []
 warns_unread_seed = false
 stops = ["MAXEVAL", "MAXTIME", "STOPVAL"]
 needs_stop = false
@@ -2241,6 +2269,7 @@ accepts_inner = false
 default_inner = ""
 accepts_multi_seed = false
 reads = ["SEED"]
+algorithm_params = []
 warns_unread_seed = false
 stops = ["MAXEVAL", "MAXTIME", "STOPVAL"]
 needs_stop = true

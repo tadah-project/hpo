@@ -240,8 +240,29 @@ static void print_nlopt_caps(std::ostream& os,const std::string& algo)
     if (a==NLOPT_NUM_ALGORITHMS) { os<<"   * (unknown)\n"; return; }
 
     print_stops(os, "NLOPT", algo);
-    os<<"   * PARAM <name> <value>  passed to NLopt as its algorithm parameter\n"
-        "     of that name\n";
+    /* The PARAM keys NLopt reads for it (OptimizerCaps::algorithm_params);
+     * any other name is refused, the finite-difference keys aside. */
+    if (const OptimizerCaps* c = find_optimizer_caps("NLOPT", algo)) {
+        if (c->algorithm_params.empty()) {
+            os<<"   * PARAM: NLopt reads no parameter of this algorithm\n";
+        } else {
+            os<<"   * PARAM <name> <value>  NLopt's parameters of this algorithm:";
+            /* The names on lines of up to 72 characters. */
+            std::size_t width = 72;
+            for (std::size_t i = 0; i < c->algorithm_params.size(); ++i) {
+                const std::string& p = c->algorithm_params[i];
+                const std::string item = p + (i + 1 < c->algorithm_params.size()
+                                                  ? "," : "");
+                if (width + 1 + item.size() > 72) {
+                    os << "\n    ";
+                    width = 4;
+                }
+                os << " " << item;
+                width += 1 + item.size();
+            }
+            os << "\n";
+        }
+    }
     if (algo[0]=='G')        os<<"   * global optimiser\n";
     if (algo[1]=='N') os<<"   * derivative-free\n";
     /* Initial-step policy from the registry (single source of truth). */

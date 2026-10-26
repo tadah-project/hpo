@@ -156,23 +156,52 @@ bool has_stop(const OptimizerSpec& spec, const OptimizerCaps& caps,
 /* TADAH:RANDOM and DLIB:GFS read no PARAM, TADAH:GRID only GRID_POINTS
  * (validate_grid_spec): a PARAM they do not read, numeric or a word, is
  * refused with the list of those they take. */
+/* "<LIB:ALGO>: unknown PARAM '<key>' (it takes <takes>)", "none" for an
+ * empty `takes`. */
+[[noreturn]] void refuse_unknown_param(const OptimizerSpec& spec,
+                                       const std::string& key,
+                                       const std::vector<std::string>& takes)
+{
+    std::string takes_list;
+    for (const auto& k : takes) takes_list += (takes_list.empty() ? "" : ", ") + k;
+    if (takes_list.empty()) takes_list = "none";
+    throw std::runtime_error(backend_name(spec) + ": unknown PARAM '" + key +
+                             "' (it takes " + takes_list + ")");
+}
+
 void reject_unknown_params(const OptimizerSpec& spec,
                            const std::vector<std::string>& takes)
 {
     const auto known = [&](const std::string& k) {
         return std::find(takes.begin(), takes.end(), k) != takes.end();
     };
-    std::string takes_list;
-    for (const auto& k : takes) takes_list += (takes_list.empty() ? "" : ", ") + k;
-    if (takes_list.empty()) takes_list = "none";
-    const auto refuse = [&](const std::string& key) {
-        throw std::runtime_error(backend_name(spec) + ": unknown PARAM '" +
-                                 key + "' (it takes " + takes_list + ")");
+    for (const auto& kv : spec.param)
+        if (!known(kv.first)) refuse_unknown_param(spec, kv.first, takes);
+    for (const auto& kv : spec.param_raw)
+        if (!known(kv.first)) refuse_unknown_param(spec, kv.first, takes);
+}
+
+/* An NLopt algorithm reads the PARAM keys NLopt reads for it
+ * (OptimizerCaps::algorithm_params) and the finite-difference keys, which
+ * the startup checks of the finite differences judge (fd_stencil.h): any
+ * other name is refused, numeric or a word, and so is a word given to one
+ * of the algorithm's keys, which NLopt reads as a number. */
+void reject_unread_nlopt_params(const OptimizerSpec& spec,
+                                const OptimizerCaps& caps)
+{
+    const std::vector<std::string>& takes = caps.algorithm_params;
+    const auto own = [&](const std::string& k) {
+        return std::find(takes.begin(), takes.end(), k) != takes.end();
     };
     for (const auto& kv : spec.param)
-        if (!known(kv.first)) refuse(kv.first);
-    for (const auto& kv : spec.param_raw)
-        if (!known(kv.first)) refuse(kv.first);
+        if (!own(kv.first) && !is_fd_param(kv.first))
+            refuse_unknown_param(spec, kv.first, takes);
+    for (const auto& kv : spec.param_raw) {
+        if (is_fd_param(kv.first)) continue;
+        if (!own(kv.first)) refuse_unknown_param(spec, kv.first, takes);
+        throw std::runtime_error(backend_name(spec) + ": PARAM " + kv.first +
+                                 " takes a number (got '" + kv.second + "')");
+    }
 }
 
 /* Whether a run of `spec` tests a tolerance its caps mark with `supports`.
@@ -459,6 +488,7 @@ void validate_nlopt_spec(const OptimizerSpec& sp, RestartStop restart,
             "STOPVAL on the enclosing block");
     require_nlopt_maxeval(sp);
     if (sp.inner) require_nlopt_maxeval(*sp.inner);
+    reject_unread_nlopt_params(sp, optimizer_caps(sp));
     reject_unread_attributes(sp, optimizer_caps(sp), role);
     require_stop(sp, restart);
     require_inner_run_stop(sp, restart);
