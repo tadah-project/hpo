@@ -274,6 +274,63 @@ TEST_CASE("ASA options: defaults resolve to the canonical values",
     CHECK(parse_asa_options(sp, 2).user_initial_parameters == 1);
 }
 
+/* Pins: PARAM Include_Integer_Parameters and User_Initial_Parameters are
+ * refused as options tadah hpo does not take, with the reason: every OPTIM
+ * dimension takes real values, so no integer dimension is there to include
+ * ("ASA:ASA: unknown PARAM 'Include_Integer_Parameters'.
+ * 'Include_Integer_Parameters' is not available: every OPTIM dimension of
+ * tadah hpo takes real values, so ASA has no integer dimension to
+ * include"); the start of ASA is the first starting point of the INIT
+ * block, or the values of the training configuration without one, and
+ * METHOD RANDOM 1 draws a random one ("... 'User_Initial_Parameters' is not
+ * available: ASA starts at the first starting point of the INIT block (the
+ * values of the training configuration without one); METHOD RANDOM 1 in the
+ * INIT block draws a random start from its SEED"). Both values are refused,
+ * with and without a starting point; the list of accepted keys names
+ * neither.
+ * Before the fix: Include_Integer_Parameters 0 and 1 were accepted and had
+ * no effect; User_Initial_Parameters 1 was the default with an INIT point
+ * and refused without one, 0 refused with one ("... contradicts the INIT
+ * block: remove the INIT seed ...") and the default without. */
+TEST_CASE("ASA options: Include_Integer_Parameters and "
+          "User_Initial_Parameters are not available", "[HPO][asa][options]")
+{
+    const std::string integer =
+        "ASA:ASA: unknown PARAM 'Include_Integer_Parameters'. "
+        "'Include_Integer_Parameters' is not available: every OPTIM dimension "
+        "of tadah hpo takes real values, so ASA has no integer dimension to "
+        "include.";
+    const std::string initial =
+        "ASA:ASA: unknown PARAM 'User_Initial_Parameters'. "
+        "'User_Initial_Parameters' is not available: ASA starts at the first "
+        "starting point of the INIT block (the values of the training "
+        "configuration without one); METHOD RANDOM 1 in the INIT block draws "
+        "a random start from its SEED.";
+    for (const bool seeded : {false, true}) {
+        auto sp = make_asa_spec({0.0}, {1.0});
+        if (seeded) set_seed_point(sp, {0.5});
+        for (const double v : {0.0, 1.0}) {
+            INFO((seeded ? "a starting point" : "no starting point")
+                 << ", value " << v);
+            sp.param = {{"Include_Integer_Parameters", v}};
+            REQUIRE_THROWS_WITH(parse_asa_options(sp, 1), integer);
+            sp.param = {{"User_Initial_Parameters", v}};
+            REQUIRE_THROWS_WITH(parse_asa_options(sp, 1), initial);
+        }
+    }
+    auto sp = make_asa_spec({0.0}, {1.0});
+    sp.param = {{"Cooling_Rate", 0.9}};
+    try {
+        (void)parse_asa_options(sp, 1);
+        FAIL("Cooling_Rate was accepted");
+    } catch (const std::exception& e) {
+        const std::string msg = e.what();
+        CHECK(msg.find("Accepted keys:") != std::string::npos);
+        CHECK(msg.find("Include_Integer_Parameters") == std::string::npos);
+        CHECK(msg.find("User_Initial_Parameters") == std::string::npos);
+    }
+}
+
 TEST_CASE("ASA options: every documented key is accepted",
           "[HPO][asa][options]")
 {
@@ -287,8 +344,10 @@ TEST_CASE("ASA options: every documented key is accepted",
         {"Number_Cost_Samples", -2},  {"Temperature_Ratio_Scale", 1e-4},
         {"Cost_Parameter_Scale_Ratio", 2.0},
         {"Temperature_Anneal_Scale", 50},
-        {"Include_Integer_Parameters", 1},
-        {"User_Initial_Parameters", 1},
+        /* Include_Integer_Parameters and User_Initial_Parameters, which this
+         * list held, are refused (the case "ASA options:
+         * Include_Integer_Parameters and User_Initial_Parameters are not
+         * available"). */
         {"Sequential_Parameters", 0},
         {"Initial_Parameter_Temperature", 2.0},
         {"Acceptance_Frequency_Modulus", 10},
@@ -449,15 +508,6 @@ TEST_CASE("ASA options: rejections", "[HPO][asa][options]")
         sp.param = {{"Limit_Acceptances", 10.5}};
         REQUIRE_THROWS_WITH(parse_asa_options(sp, 1),
                             Catch::Contains("integer"));
-    }
-    SECTION("User_Initial_Parameters contradictions") {
-        sp.param = {{"User_Initial_Parameters", 1.0}};
-        REQUIRE_THROWS_WITH(parse_asa_options(sp, 1),
-                            Catch::Contains("INIT"));
-        set_seed_point(sp, {0.5});
-        sp.param = {{"User_Initial_Parameters", 0.0}};
-        REQUIRE_THROWS_WITH(parse_asa_options(sp, 1),
-                            Catch::Contains("INIT"));
     }
     SECTION("FTOL/XTOL point at ASA's own stops") {
         sp.param.clear();

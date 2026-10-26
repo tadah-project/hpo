@@ -193,13 +193,6 @@ ENDSTRATEGY
 ENDOPTIMIZER
 """
 
-[fixture.params_seed_outside]
-path = "params_seed_outside.tadah"
-doc = "A seed with CGRID2B (1) = 3.0, outside the box [0.5, 1.5] of the wrappers."
-text = """
-CGRID2B 3.0 2.0
-"""
-
 # ---------------------------------------------------- policies ----
 # What each optimiser does with a PARAM key that no [[param]] entry below
 # names for it.
@@ -314,9 +307,9 @@ quirk = """\
 A word value is accepted and has no effect, under an option of ASA:ASA as \
 under any other name."""
 invalid = [
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Cooling_Rate 0.9", error = "the STRATEGY-level optimiser: ASA:ASA: unknown PARAM 'Cooling_Rate'. Accepted keys: Limit_Acceptances Limit_Generated Limit_Invalid_Generated_States Accepted_To_Generated_Ratio Cost_Precision Maximum_Cost_Repeat Number_Cost_Samples Temperature_Ratio_Scale Cost_Parameter_Scale_Ratio Temperature_Anneal_Scale Include_Integer_Parameters User_Initial_Parameters Sequential_Parameters Initial_Parameter_Temperature Acceptance_Frequency_Modulus Generated_Frequency_Modulus Reanneal_Cost Reanneal_Parameters Delta_X User_Tangents Curvature_0 User_Quench_Cost_Scale User_Quench_Param_Scale User_Temperature_Ratio User_Delta_Parameter User_Parameter_Temperature Multi_Number Multi_Specify Multi_Grid Queue_Size Queue_Resolution Gener_Block Gener_Block_Max Gener_Mov_Avr" },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Cooling_Rate 0.9", error = "the STRATEGY-level optimiser: ASA:ASA: unknown PARAM 'Cooling_Rate'. Accepted keys: Limit_Acceptances Limit_Generated Limit_Invalid_Generated_States Accepted_To_Generated_Ratio Cost_Precision Maximum_Cost_Repeat Number_Cost_Samples Temperature_Ratio_Scale Cost_Parameter_Scale_Ratio Temperature_Anneal_Scale Sequential_Parameters Initial_Parameter_Temperature Acceptance_Frequency_Modulus Generated_Frequency_Modulus Reanneal_Cost Reanneal_Parameters Delta_X User_Tangents Curvature_0 User_Quench_Cost_Scale User_Quench_Param_Scale User_Temperature_Ratio User_Delta_Parameter User_Parameter_Temperature Multi_Number Multi_Specify Multi_Grid Queue_Size Queue_Resolution Gener_Block Gener_Block_Max Gener_Mov_Avr" },
   { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM limit_acceptances 500", error = "the STRATEGY-level optimiser: ASA:ASA: unknown PARAM 'limit_acceptances'. Did you mean 'Limit_Acceptances'? ASA option names are case-sensitive.", doc = "A name that differs from an option in case only." },
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM multi_grid[1] 0.01", error = "the STRATEGY-level optimiser: ASA:ASA: unknown PARAM 'multi_grid[1]'. Accepted keys: Limit_Acceptances Limit_Generated Limit_Invalid_Generated_States Accepted_To_Generated_Ratio Cost_Precision Maximum_Cost_Repeat Number_Cost_Samples Temperature_Ratio_Scale Cost_Parameter_Scale_Ratio Temperature_Anneal_Scale Include_Integer_Parameters User_Initial_Parameters Sequential_Parameters Initial_Parameter_Temperature Acceptance_Frequency_Modulus Generated_Frequency_Modulus Reanneal_Cost Reanneal_Parameters Delta_X User_Tangents Curvature_0 User_Quench_Cost_Scale User_Quench_Param_Scale User_Temperature_Ratio User_Delta_Parameter User_Parameter_Temperature Multi_Number Multi_Specify Multi_Grid Queue_Size Queue_Resolution Gener_Block Gener_Block_Max Gener_Mov_Avr", doc = "An indexed name that differs from an option in case only gets the list, not the hint." },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM multi_grid[1] 0.01", error = "the STRATEGY-level optimiser: ASA:ASA: unknown PARAM 'multi_grid[1]'. Accepted keys: Limit_Acceptances Limit_Generated Limit_Invalid_Generated_States Accepted_To_Generated_Ratio Cost_Precision Maximum_Cost_Repeat Number_Cost_Samples Temperature_Ratio_Scale Cost_Parameter_Scale_Ratio Temperature_Anneal_Scale Sequential_Parameters Initial_Parameter_Temperature Acceptance_Frequency_Modulus Generated_Frequency_Modulus Reanneal_Cost Reanneal_Parameters Delta_X User_Tangents Curvature_0 User_Quench_Cost_Scale User_Quench_Param_Scale User_Temperature_Ratio User_Delta_Parameter User_Parameter_Temperature Multi_Number Multi_Specify Multi_Grid Queue_Size Queue_Resolution Gener_Block Gener_Block_Max Gener_Mov_Avr", doc = "An indexed name that differs from an option in case only gets the list, not the hint." },
   { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Limit_Acceptances[1] 500", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Limit_Acceptances is a scalar option (indexed form not accepted)" },
   { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Multi_Grid[0] 0.01", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Multi_Grid[0] index 0 is not a dimension: per-dimension indices are 1-based and match the dim column of hpo_search_space.tsv. They were 0-based in Tadah 1.4 and earlier, so every old index shifts up by one ([0] is now [1])" },
   { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Multi_Grid[2] 0.01", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Multi_Grid[2] index out of range (dim=1, 1-based)" },
@@ -324,7 +317,7 @@ invalid = [
   { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Multi_Grid[x] 0.01", error = "the STRATEGY-level optimiser: ASA:ASA: malformed index in PARAM 'Multi_Grid[x]' (expected a positive integer)" },
   { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Multi_Grid[99999999999999999999] 0.01", error = "the STRATEGY-level optimiser: ASA:ASA: the index in PARAM 'Multi_Grid[99999999999999999999]' must be an integer from 0 to 9223372036854775807, got '99999999999999999999'" },
   { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Limit_Acceptances many", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Limit_Acceptances takes a number (got 'many')" },
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Cooling_Rate fast", error = "the STRATEGY-level optimiser: ASA:ASA: unknown PARAM 'Cooling_Rate'. Accepted keys: Limit_Acceptances Limit_Generated Limit_Invalid_Generated_States Accepted_To_Generated_Ratio Cost_Precision Maximum_Cost_Repeat Number_Cost_Samples Temperature_Ratio_Scale Cost_Parameter_Scale_Ratio Temperature_Anneal_Scale Include_Integer_Parameters User_Initial_Parameters Sequential_Parameters Initial_Parameter_Temperature Acceptance_Frequency_Modulus Generated_Frequency_Modulus Reanneal_Cost Reanneal_Parameters Delta_X User_Tangents Curvature_0 User_Quench_Cost_Scale User_Quench_Param_Scale User_Temperature_Ratio User_Delta_Parameter User_Parameter_Temperature Multi_Number Multi_Specify Multi_Grid Queue_Size Queue_Resolution Gener_Block Gener_Block_Max Gener_Mov_Avr", doc = "A word under a name ASA:ASA does not take." },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Cooling_Rate fast", error = "the STRATEGY-level optimiser: ASA:ASA: unknown PARAM 'Cooling_Rate'. Accepted keys: Limit_Acceptances Limit_Generated Limit_Invalid_Generated_States Accepted_To_Generated_Ratio Cost_Precision Maximum_Cost_Repeat Number_Cost_Samples Temperature_Ratio_Scale Cost_Parameter_Scale_Ratio Temperature_Anneal_Scale Sequential_Parameters Initial_Parameter_Temperature Acceptance_Frequency_Modulus Generated_Frequency_Modulus Reanneal_Cost Reanneal_Parameters Delta_X User_Tangents Curvature_0 User_Quench_Cost_Scale User_Quench_Param_Scale User_Temperature_Ratio User_Delta_Parameter User_Parameter_Temperature Multi_Number Multi_Specify Multi_Grid Queue_Size Queue_Resolution Gener_Block Gener_Block_Max Gener_Mov_Avr", doc = "A word under a name ASA:ASA does not take." },
 ]
 checks = [
   { msg = "{phase}: ASA:ASA: PARAM {key} takes a number (got '{value}')", doc = "At startup, at the END line of its optimiser: a word given to an option of ASA:ASA." },
@@ -859,90 +852,6 @@ invalid = [
 ]
 
 [[param]]
-id = "PARAM.ASA:ASA.Include_Integer_Parameters"
-name = "Include_Integer_Parameters"
-optimizers = ["ASA:ASA"]
-args = [{ name = "value", kind = "number", min = 0, max = 1, integral = true }]
-default = { literal = "0" }
-doc = """\
-Whether the derivative and reannealing calculations include the integer \
-dimensions: 1 includes them, 0 leaves them out."""
-quirk = """\
-No OPTIM dimension is an integer, so the key has no effect."""
-checks = [
-  { msg = "{phase}: ASA:ASA: PARAM {key} must be an integer value", doc = "For a value with a fraction." },
-  { msg = "{phase}: ASA:ASA: PARAM {key} must be >= {min}", doc = "For a value below 0, written with six decimals." },
-  { msg = "{phase}: ASA:ASA: PARAM {key} must be <= {max}", doc = "For a value above 1, written with six decimals." },
-]
-examples = [
-  { wrap = "params_asa", text = "PARAM Include_Integer_Parameters 1" },
-]
-invalid = [
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Include_Integer_Parameters 1.5", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Include_Integer_Parameters must be an integer value" },
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Include_Integer_Parameters -1", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Include_Integer_Parameters must be >= 0.000000" },
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Include_Integer_Parameters 2", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Include_Integer_Parameters must be <= 1.000000" },
-]
-
-[[param]]
-id = "PARAM.ASA:ASA.User_Initial_Parameters"
-name = "User_Initial_Parameters"
-optimizers = ["ASA:ASA"]
-args = [{ name = "value", kind = "number", min = 0, max = 1, integral = true }]
-default = { text = "1 when the search has a starting point (from its INIT block, or from the training configuration without one), else 0" }
-doc = """\
-1 starts ASA from the first starting point of the search, 0 from a point \
-ASA draws; a value that contradicts the starting points is refused."""
-quirk = """\
-Without an INIT block the search starts from the training configuration, \
-so 0 is refused there too, with a message that names the INIT block."""
-checks = [
-  { msg = "{phase}: ASA:ASA: PARAM {key} must be an integer value", doc = "For a value with a fraction." },
-  { msg = "{phase}: ASA:ASA: PARAM {key} must be >= {min}", doc = "For a value below 0, written with six decimals." },
-  { msg = "{phase}: ASA:ASA: PARAM {key} must be <= {max}", doc = "For a value above 1, written with six decimals." },
-  { msg = "{phase}: ASA:ASA: PARAM User_Initial_Parameters 0 contradicts the INIT block: remove the INIT seed to start from an ASA-generated random point, or drop the PARAM", doc = "For 0 when the search has a starting point." },
-  { msg = "{phase}: ASA:ASA: PARAM User_Initial_Parameters 1 requires an INIT seed (none resolved)", doc = "For 1 when the search has no starting point." },
-]
-examples = [
-  { wrap = "params_asa", text = "PARAM User_Initial_Parameters 1" },
-  { wrap = "none", text = """
-OPTIM CGRID2B (1) 0.5 1.5
-PC_ERMSE 0 1
-OPTIMIZER
-INIT
-METHOD WARM params_seed_outside.tadah
-WARM_ON_MISMATCH skip
-ENDINIT
-STRATEGY
-LIB ASA
-ALGO ASA
-MAXEVAL 10
-PARAM User_Initial_Parameters 0
-ENDSTRATEGY
-ENDOPTIMIZER""", doc = "The search has no starting point, as the seed of its only WARM line is dropped: ASA draws its first point." },
-]
-invalid = [
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM User_Initial_Parameters 0", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM User_Initial_Parameters 0 contradicts the INIT block: remove the INIT seed to start from an ASA-generated random point, or drop the PARAM", doc = "The search starts from the training configuration, as the file has no INIT block." },
-  { wrap = "none", check = "startup", at = "ENDOPTIMIZER", text = """
-OPTIM CGRID2B (1) 0.5 1.5
-PC_ERMSE 0 1
-OPTIMIZER
-INIT
-METHOD WARM params_seed_outside.tadah
-WARM_ON_MISMATCH skip
-ENDINIT
-STRATEGY
-LIB ASA
-ALGO ASA
-MAXEVAL 10
-PARAM User_Initial_Parameters 1
-ENDSTRATEGY
-ENDOPTIMIZER""", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM User_Initial_Parameters 1 requires an INIT seed (none resolved)", doc = "The search has no starting point, as the seed of its only WARM line is dropped." },
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM User_Initial_Parameters 1.5", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM User_Initial_Parameters must be an integer value" },
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM User_Initial_Parameters -1", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM User_Initial_Parameters must be >= 0.000000" },
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM User_Initial_Parameters 2", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM User_Initial_Parameters must be <= 1.000000" },
-]
-
-[[param]]
 id = "PARAM.ASA:ASA.Sequential_Parameters"
 name = "Sequential_Parameters"
 optimizers = ["ASA:ASA"]
@@ -1451,6 +1360,25 @@ invalid = [
 
 # --------------------------------------------- ASA options not available ----
 # ASA options tadah hpo does not take: each is refused with the reason.
+
+[[param_excluded]]
+id = "PARAM.ASA:ASA.Include_Integer_Parameters"
+name = "Include_Integer_Parameters"
+optimizers = ["ASA:ASA"]
+why = "every OPTIM dimension of tadah hpo takes real values, so ASA has no integer dimension to include."
+invalid = [
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Include_Integer_Parameters 1", error = "the STRATEGY-level optimiser: ASA:ASA: unknown PARAM 'Include_Integer_Parameters'. 'Include_Integer_Parameters' is not available: every OPTIM dimension of tadah hpo takes real values, so ASA has no integer dimension to include." },
+]
+
+[[param_excluded]]
+id = "PARAM.ASA:ASA.User_Initial_Parameters"
+name = "User_Initial_Parameters"
+optimizers = ["ASA:ASA"]
+why = "ASA starts at the first starting point of the INIT block (the values of the training configuration without one); METHOD RANDOM 1 in the INIT block draws a random start from its SEED."
+invalid = [
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM User_Initial_Parameters 1", error = "the STRATEGY-level optimiser: ASA:ASA: unknown PARAM 'User_Initial_Parameters'. 'User_Initial_Parameters' is not available: ASA starts at the first starting point of the INIT block (the values of the training configuration without one); METHOD RANDOM 1 in the INIT block draws a random start from its SEED." },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM User_Initial_Parameters 0", error = "the STRATEGY-level optimiser: ASA:ASA: unknown PARAM 'User_Initial_Parameters'. 'User_Initial_Parameters' is not available: ASA starts at the first starting point of the INIT block (the values of the training configuration without one); METHOD RANDOM 1 in the INIT block draws a random start from its SEED." },
+]
 
 [[param_excluded]]
 id = "PARAM.ASA:ASA.Coarse_Resolution"
