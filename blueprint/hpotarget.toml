@@ -975,8 +975,8 @@ blocks = ["ROOT"]
 synopsis = "FAILSCORE <loss>"
 args = [ { name = "loss", kind = "positive", what = "{key}", noun = "finite number" } ]
 repeat = "error"
-repeat_msg = "FAILSCORE is set twice (first on line {first_line}) and no PC_LAMMPS or PC_FAILPROBE line between takes the first; each key is given once"
-repeat_doc = "Again only after a PC_LAMMPS or PC_FAILPROBE line, which takes the value given above it; a second line with no such line between is refused."
+repeat_msg = "FAILSCORE is set twice (first on line {first_line}) and no line between reads the first (a PC_LAMMPS or PC_FAILPROBE line without --failscore); each key is given once"
+repeat_doc = "Again only after a line that reads the value given above it, a PC_LAMMPS or PC_FAILPROBE line without --failscore; a second line with no such line between is refused."
 default = { text = "the largest finite double, 1.7976931348623157e308" }
 doc = """\
 The loss of a failed evaluation under FAILSCORE_GRADING OFF, and the \
@@ -984,12 +984,14 @@ largest loss an evaluation can have: a larger loss is lowered to it. A \
 loss at or above 0.999 FAILSCORE counts as a failure."""
 long_doc = """\
 A PC_LAMMPS line without --failscore gives its variables this value when \
-its simulation fails, and a PC_FAILPROBE line takes it as its --failscore. \
-FAILSCORE_GRADING ON needs a FAILSCORE below 1e300."""
+its simulation fails, and a PC_FAILPROBE line without --failscore takes \
+it as its --failscore. FAILSCORE_GRADING ON needs a FAILSCORE below \
+1e300."""
 quirk = """\
-A PC_LAMMPS or PC_FAILPROBE line takes the FAILSCORE of the lines above \
-it: a FAILSCORE line below it leaves that line's failure value as it was. \
-The loss of a failed evaluation is the value of the last FAILSCORE line."""
+A PC_LAMMPS or PC_FAILPROBE line without --failscore takes the FAILSCORE \
+of the lines above it: a FAILSCORE line below it leaves that line's \
+failure value as it was. The loss of a failed evaluation is the value of \
+the last FAILSCORE line."""
 
 [[key.examples]]
 wrap = "root"
@@ -1036,7 +1038,18 @@ at = 2
 text = '''
 FAILSCORE 1e9
 FAILSCORE 1e10'''
-error = "FAILSCORE is set twice (first on line 1) and no PC_LAMMPS or PC_FAILPROBE line between takes the first; each key is given once"
+error = "FAILSCORE is set twice (first on line 1) and no line between reads the first (a PC_LAMMPS or PC_FAILPROBE line without --failscore); each key is given once"
+
+[[key.invalid]]
+wrap = "root"
+at = 3
+doc = "The PC_LAMMPS line between has a failure value of its own."
+text = '''
+FAILSCORE 1e9
+PC_LAMMPS --script main_pc.in --varloss E -5.0 1.0 --failscore 5
+FAILSCORE 1e10
+PC_LAMMPS --script main_pc.in --varloss E -5.0 1.0'''
+error = "FAILSCORE is set twice (first on line 1) and no line between reads the first (a PC_LAMMPS or PC_FAILPROBE line without --failscore); each key is given once"
 
 [[key]]
 id = "ROOT.PC_SCRIPT_TIMEOUT"
@@ -1045,8 +1058,8 @@ blocks = ["ROOT"]
 synopsis = "PC_SCRIPT_TIMEOUT <time>"
 args = [ { name = "time", kind = "timespec", what = "{key}", doc = "off, unlimited, or a positive time [[HH:]MM:]SS." } ]
 repeat = "error"
-repeat_msg = "PC_SCRIPT_TIMEOUT is set twice (first on line {first_line}) and no PC_LAMMPS or PC_FAILPROBE line between takes the first; each key is given once"
-repeat_doc = "Again only after a PC_LAMMPS or PC_FAILPROBE line, which takes the value given above it; a second line with no such line between is refused. PC_SCRIPT_TIMEOUT and MAXTIME are one key."
+repeat_msg = "PC_SCRIPT_TIMEOUT is set twice (first on line {first_line}) and no line between reads the first (a PC_LAMMPS or PC_FAILPROBE line without --maxtime); each key is given once"
+repeat_doc = "Again only after a line that reads the value given above it, a PC_LAMMPS or PC_FAILPROBE line without --maxtime; a second line with no such line between is refused. PC_SCRIPT_TIMEOUT and MAXTIME are one key."
 default = { literal = "off" }
 doc = """\
 The wall-clock limit of each section of a PC_LAMMPS and PC_FAILPROBE \
@@ -1059,16 +1072,17 @@ after every clear, so each section has the whole limit; the --maxtime \
 option of a line sets that line's own. A script with a timer command of \
 its own gets no limit. Under PC_ISOLATION PROCESS a script limit t also \
 sets the deadline of a worker task, max(3t, t + 120 s), unless \
-PC_WORKER_TIMEOUT sets one. MAXTIME is another name for this key. A \
-PC_LAMMPS or PC_FAILPROBE line takes the limit of the lines above it, and \
-a line of the key that no such line follows is refused."""
+PC_WORKER_TIMEOUT sets one: each line's own limit sizes the deadline of \
+its tasks. MAXTIME is another name for this key. A PC_LAMMPS or \
+PC_FAILPROBE line without --maxtime takes the limit of the lines above it, \
+and a line of the key that no such line follows is refused."""
 quirk = """\
 The deadline in the summary of hpo_run.log is that of the last line of \
 the key."""
 
 [[key.checks]]
-msg = "{key} sets the script timeout of the PC_LAMMPS and PC_FAILPROBE lines after it, and no such line follows it; it would have no effect"
-doc = "At the end of the file: no PC_LAMMPS or PC_FAILPROBE line follows the line; {key} is the name the line writes."
+msg = "{key} sets the script timeout of the PC_LAMMPS and PC_FAILPROBE lines after it that give no --maxtime, and no such line follows it; it would have no effect"
+doc = "At the end of the file: no PC_LAMMPS or PC_FAILPROBE line without --maxtime follows the line; {key} is the name the line writes."
 
 [[key.examples]]
 wrap = "root"
@@ -1094,7 +1108,7 @@ PC_LAMMPS --script main_pc.in --varloss E -5.0 1.0'''
 wrap = "root"
 doc = "No PC_LAMMPS or PC_FAILPROBE line follows the line."
 text = "PC_SCRIPT_TIMEOUT 600"
-error = "PC_SCRIPT_TIMEOUT sets the script timeout of the PC_LAMMPS and PC_FAILPROBE lines after it, and no such line follows it; it would have no effect"
+error = "PC_SCRIPT_TIMEOUT sets the script timeout of the PC_LAMMPS and PC_FAILPROBE lines after it that give no --maxtime, and no such line follows it; it would have no effect"
 
 [[key.invalid]]
 wrap = "root"
@@ -1103,7 +1117,15 @@ at = 2
 text = '''
 PC_LAMMPS --script main_pc.in --varloss E -5.0 1.0
 PC_SCRIPT_TIMEOUT 600'''
-error = "PC_SCRIPT_TIMEOUT sets the script timeout of the PC_LAMMPS and PC_FAILPROBE lines after it, and no such line follows it; it would have no effect"
+error = "PC_SCRIPT_TIMEOUT sets the script timeout of the PC_LAMMPS and PC_FAILPROBE lines after it that give no --maxtime, and no such line follows it; it would have no effect"
+
+[[key.invalid]]
+wrap = "root"
+doc = "The only PC_LAMMPS line after the line has a limit of its own."
+text = '''
+PC_SCRIPT_TIMEOUT 600
+PC_LAMMPS --script main_pc.in --varloss E -5.0 1.0 --maxtime 60'''
+error = "PC_SCRIPT_TIMEOUT sets the script timeout of the PC_LAMMPS and PC_FAILPROBE lines after it that give no --maxtime, and no such line follows it; it would have no effect"
 
 [[key.invalid]]
 wrap = "root"
@@ -1141,7 +1163,7 @@ at = 2
 text = '''
 PC_SCRIPT_TIMEOUT 600
 PC_SCRIPT_TIMEOUT 300'''
-error = "PC_SCRIPT_TIMEOUT is set twice (first on line 1) and no PC_LAMMPS or PC_FAILPROBE line between takes the first; each key is given once"
+error = "PC_SCRIPT_TIMEOUT is set twice (first on line 1) and no line between reads the first (a PC_LAMMPS or PC_FAILPROBE line without --maxtime); each key is given once"
 
 [[key]]
 id = "ROOT.MAXTIME"
@@ -1150,8 +1172,8 @@ blocks = ["ROOT"]
 synopsis = "MAXTIME <time>"
 args = [ { name = "time", kind = "timespec", what = "{key}", doc = "off, unlimited, or a positive time [[HH:]MM:]SS." } ]
 repeat = "error"
-repeat_msg = "MAXTIME is set twice (first on line {first_line}) and no PC_LAMMPS or PC_FAILPROBE line between takes the first; each key is given once"
-repeat_doc = "Again only after a PC_LAMMPS or PC_FAILPROBE line, which takes the value given above it; a second line with no such line between is refused. MAXTIME and PC_SCRIPT_TIMEOUT are one key."
+repeat_msg = "MAXTIME is set twice (first on line {first_line}) and no line between reads the first (a PC_LAMMPS or PC_FAILPROBE line without --maxtime); each key is given once"
+repeat_doc = "Again only after a line that reads the value given above it, a PC_LAMMPS or PC_FAILPROBE line without --maxtime; a second line with no such line between is refused. MAXTIME and PC_SCRIPT_TIMEOUT are one key."
 alias_of = "ROOT.PC_SCRIPT_TIMEOUT"
 default = { literal = "off" }
 doc = """\
@@ -1159,7 +1181,8 @@ Another name for PC_SCRIPT_TIMEOUT, the wall-clock limit of each section \
 of a PC_LAMMPS and PC_FAILPROBE script."""
 long_doc = """\
 The two names are one key: a second line, of either name, comes only \
-after a PC_LAMMPS or PC_FAILPROBE line that takes the first. When both \
+after a PC_LAMMPS or PC_FAILPROBE line without --maxtime, which reads the \
+first. When both \
 names are given, \
 hpo_run.log has a warning; with MAXTIME alone, it names PC_SCRIPT_TIMEOUT \
 as the preferred name."""
@@ -1169,8 +1192,8 @@ MAXTIME inside OPTIMIZER, STRATEGY, EXPLORE, REFINE or INNER is a time \
 limit of the search: the same word names two settings."""
 
 [[key.checks]]
-msg = "{key} sets the script timeout of the PC_LAMMPS and PC_FAILPROBE lines after it, and no such line follows it; it would have no effect"
-doc = "At the end of the file: no PC_LAMMPS or PC_FAILPROBE line follows the line; {key} is the name the line writes."
+msg = "{key} sets the script timeout of the PC_LAMMPS and PC_FAILPROBE lines after it that give no --maxtime, and no such line follows it; it would have no effect"
+doc = "At the end of the file: no PC_LAMMPS or PC_FAILPROBE line without --maxtime follows the line; {key} is the name the line writes."
 
 [[key.examples]]
 wrap = "root"
@@ -1182,7 +1205,7 @@ PC_LAMMPS --script main_pc.in --varloss E -5.0 1.0'''
 wrap = "root"
 doc = "No PC_LAMMPS or PC_FAILPROBE line follows the line."
 text = "MAXTIME 10:00"
-error = "MAXTIME sets the script timeout of the PC_LAMMPS and PC_FAILPROBE lines after it, and no such line follows it; it would have no effect"
+error = "MAXTIME sets the script timeout of the PC_LAMMPS and PC_FAILPROBE lines after it that give no --maxtime, and no such line follows it; it would have no effect"
 
 [[key.invalid]]
 wrap = "root"
@@ -1200,7 +1223,7 @@ at = 2
 text = '''
 MAXTIME 10:00
 MAXTIME 5:00'''
-error = "MAXTIME is set twice (first on line 1) and no PC_LAMMPS or PC_FAILPROBE line between takes the first; each key is given once"
+error = "MAXTIME is set twice (first on line 1) and no line between reads the first (a PC_LAMMPS or PC_FAILPROBE line without --maxtime); each key is given once"
 
 [[key.invalid]]
 wrap = "root"
@@ -1209,7 +1232,7 @@ doc = "Both names, with no PC_LAMMPS line between."
 text = '''
 MAXTIME 10:00
 PC_SCRIPT_TIMEOUT 5:00'''
-error = "PC_SCRIPT_TIMEOUT is set twice (first on line 1, as MAXTIME) and no PC_LAMMPS or PC_FAILPROBE line between takes the first; each key is given once"
+error = "PC_SCRIPT_TIMEOUT is set twice (first on line 1, as MAXTIME) and no line between reads the first (a PC_LAMMPS or PC_FAILPROBE line without --maxtime); each key is given once"
 msg_of = "RULE.settings_taken_by_lines"
 
 [[key]]

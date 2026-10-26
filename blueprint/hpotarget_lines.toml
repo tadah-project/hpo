@@ -1120,9 +1120,10 @@ variable maxtime is reserved for the script timeout: neither --invar nor \
 the LAMMPS option -var (-v) may set it. A script with a quit command, or \
 an if command that runs one, is refused: quit ends the process that runs \
 the script. A variable the line defines with --invar, -var or -v is no \
---hotvar of the line, nor of another line when the script reads it: the \
-run injects a --hotvar as an equal-style variable, which LAMMPS refuses \
-for a variable of another style."""
+--hotvar of the line, nor, on a line without --hotvar, of another line \
+when the script reads it: the run injects such a --hotvar into the script \
+as an equal-style variable, which LAMMPS refuses for a variable of another \
+style. A script with a --hotvar is injected its own hot values only."""
 quirk = """\
 The line takes the FAILSCORE, the PC_SCRIPT_TIMEOUT (or MAXTIME) and the \
 LOSS of the lines read before it, for the defaults of its --failscore, \
@@ -1609,7 +1610,7 @@ default = { text = "the FAILSCORE of the lines read before the line; the largest
 doc = """\
 The value the variables of the line take when its script fails. On a \
 PC_FAILPROBE line it is a positive number, and a probe value S at or \
-above it marks a failed probe."""
+above it marks a failed probe, which fails the evaluation."""
 long_doc = """\
 On a PC_LAMMPS line the value goes through the loss function like a \
 measured value, and the evaluation scores FAILSCORE all the same. Any \
@@ -1736,15 +1737,15 @@ synopsis = "--hotvar <name> <min> <max> [<initial>]"
 repeat = "add"
 doc = """\
 A LAMMPS variable that the script computes and that other scripts read. A \
-script that reads <name> (${<name>} or v_<name>) runs after this one and \
-receives its value as the variable <name>; the other scripts run alongside \
-it."""
+script without --hotvar that reads <name> (${<name>}, v_<name>, or \
+$<name> for a one-character name) runs after this one and receives its \
+value as the variable <name>; the other scripts run alongside it."""
 long_doc = """\
 A value outside [<min>, <max>] fails the evaluation. The script itself \
 receives <name> too: the last value inside the range, else <initial>, \
-else the midpoint of the range. A name is declared once, by one PC_LAMMPS \
-line, and that line defines no LAMMPS variable of the name (--invar, -var, \
--v)."""
+else the midpoint of the range. A script with a --hotvar receives no other \
+line's hot value. A name is declared once, by one PC_LAMMPS line, and that \
+line defines no LAMMPS variable of the name (--invar, -var, -v)."""
 
 [[line_option.args]]
 name = "name"
@@ -1851,12 +1852,12 @@ An equal-style LAMMPS variable that measures how badly the script failed: \
 0 means the script succeeded, and a value > 0 marks it failed, so the \
 evaluation fails."""
 long_doc = """\
-Under FAILSCORE_GRADING OFF the failed evaluation scores FAILSCORE, and \
-hpo_run.log has a WARNING naming the variable and its value; a <scale> is \
-refused there, as it only grades. Under FAILSCORE_GRADING ON, <scale> \
-times the value grades the failure loss; the values of several --failvar \
-options of one line add up. The variables of a failed script do not enter \
-the loss."""
+In both modes hpo_run.log has a WARNING naming the variable and its \
+value. Under FAILSCORE_GRADING OFF the failed evaluation scores \
+FAILSCORE, and a <scale> is refused, as it only grades. Under \
+FAILSCORE_GRADING ON, <scale> times the value grades the failure loss; \
+the values of several --failvar options of one line add up. The \
+variables of a failed script do not enter the loss."""
 
 [[line_option.args]]
 name = "name"
@@ -1984,9 +1985,11 @@ loss term."""
 long_doc = """\
 The line takes the options of a PC_LAMMPS line except --varloss, \
 --hotvar and --failvar, and the options --gate and --s0 of its own. Its \
---failscore is a positive number: a probe value at or above it marks \
-the probe as failed, and a failed probe grades the evaluation as the \
-least sound. The rules that relate PC_LAMMPS lines to the optimiser \
+--failscore is a positive number. A probe whose script fails, or whose S \
+is negative, not finite, or at or above its --failscore, has failed: the \
+evaluation fails, with the loss of the least sound evaluation under \
+FAILSCORE_GRADING ON and with FAILSCORE under OFF, and hpo_run.log has a \
+warning that gives S. The rules that relate PC_LAMMPS lines to the optimiser \
 apply to a file with a PC_FAILPROBE line too. The script is read, and \
 LAMMPS started, as for a PC_LAMMPS line, with the same refusals. The line \
 gives no loss term: a file needs another loss source."""
@@ -2233,10 +2236,13 @@ energy per atom of the crystal relaxed at zero pressure."""
 long_doc = """\
 Each evaluation builds a bcc supercell with the lattice constant a0, \
 relaxes it at zero pressure with tadah's own relaxer and compares the \
-cohesive energy with the target through the loss function. The next \
-evaluation of the same search starts its relaxation from the lattice \
-constant this one relaxed to; each replica of TADAH:ANNEAL_PT and each \
-walker of TADAH:ANNEAL_PA keeps its own. A relaxation whose a0 ends \
+cohesive energy with the target through the loss function. The \
+relaxation starts from the lattice constant the previous evaluation of \
+its sequence relaxed to: each replica of TADAH:ANNEAL_PT, each walker of \
+TADAH:ANNEAL_PA and each position in an ASA block has its own sequence, \
+and every other optimiser evaluates on the first one, so the lattice \
+constant carries over from one MULTISTART start, and from one PRESTAGE \
+phase, to the next. A relaxation whose a0 ends \
 outside the --hotvar window fails the term, and with it the evaluation. A \
 relaxation that does not converge reports the value that --unconverged \
 sets."""
@@ -2822,9 +2828,16 @@ repeat = "error"
 repeat_msg = "PC_OBSERVABLE cohesive_energy: --fmax-converged is given twice on this line; each option is given once"
 default = { literal = "0.1" }
 doc = """\
-The force tolerance of the relaxation, in eV/Å, a number > 0: the \
-relaxation stops when the largest force falls below it, and a relaxation \
-that ends with a larger force reports the --unconverged value."""
+The force tolerance of the relaxation, a number > 0: the relaxation stops \
+when the largest atomic force, in eV/Å, and the strain force of the cell \
+both fall below it."""
+long_doc = """\
+The strain force is |dE/dε| / (3V), for the isotropic strain ε of the \
+cell and its volume V; in the bcc cell the atomic forces vanish by \
+symmetry, so it decides. A relaxation that stops before both fall below the tolerance, at \
+--maxiter, --maxeval or --max-wall-time, reports the --unconverged value; \
+one that --etol stops counts as converged when its largest atomic force \
+is below the tolerance."""
 
 [[line_option.args]]
 name = "fmax"
@@ -2929,8 +2942,8 @@ name = "LOSS"
 blocks = ["ROOT"]
 synopsis = "LOSS <function> [<param>]"
 repeat = "error"
-repeat_msg = "LOSS is set twice (first on line {first_line}) and no PC_LAMMPS or PC_OBSERVABLE line between takes the first; each key is given once"
-repeat_doc = "Again only after a PC_LAMMPS or PC_OBSERVABLE line, which takes the value given above it; a second line with no such line between is refused."
+repeat_msg = "LOSS is set twice (first on line {first_line}) and no line between reads the first (a --varloss or PC_OBSERVABLE term that names no loss function); each key is given once"
+repeat_doc = "Again only after a line that reads the value given above it, a --varloss or PC_OBSERVABLE term that names no loss function; a second line with no such term between is refused."
 default = { literal = "L2" }
 doc = """\
 The loss function of the validation metric terms (PC_EMAE, PC_ERMSE and \
@@ -2939,8 +2952,8 @@ PC_OBSERVABLE line."""
 long_doc = """\
 The name is one of the loss functions below, in any case; HUBER \
 and TUKEY take an optional positive parameter. A file without a metric \
-line refuses a LOSS line that no PC_LAMMPS or PC_OBSERVABLE line follows: \
-it would have no effect. A target that the loss function of its term \
+line refuses a LOSS line that no --varloss or PC_OBSERVABLE term after it \
+reads, a term that names no loss function: it would have no effect. A target that the loss function of its term \
 cannot measure is refused at its line: 0 under MAPE, or one at or below \
 -1e-12 under RMSLE."""
 quirk = """\
@@ -2954,7 +2967,7 @@ checks = [
   { msg = "loss {name} takes no parameter (got {count})", doc = "At the line: a parameter of a loss function that takes none; {count} is the number given." },
   { msg = "loss {name} takes at most {max} parameter (got {count})", doc = "At the line: more parameters than the loss function takes." },
   { msg = "loss {name} parameter ({key}) must be finite and > 0 (got {value}); omit it to use the default {default}", doc = "At the line: a parameter of HUBER or TUKEY that is 0, negative or not finite; {key} is delta or c." },
-  { msg = "LOSS sets the loss function of the PC_LAMMPS and PC_OBSERVABLE lines after it and of the metric lines (PC_EMAE, PC_ERMSE, PC_ErRMSE, PC_ERSQ, PC_FRMSE, PC_SRMSE_GPA), and the file has no metric line and no such line after it; it would have no effect", doc = "At the line, at the end of the file: the file has no metric line, and no PC_LAMMPS or PC_OBSERVABLE line follows the LOSS line." },
+  { msg = "LOSS sets the loss function of the --varloss and PC_OBSERVABLE terms after it that name none, and of the metric lines (PC_EMAE, PC_ERMSE, PC_ErRMSE, PC_ERSQ, PC_FRMSE, PC_SRMSE_GPA), and the file has no metric line and no such term after it; it would have no effect", doc = "At the line, at the end of the file: the file has no metric line, and no --varloss or PC_OBSERVABLE term that names no loss function follows the LOSS line." },
   { msg = "{key} {value}: the metric lines take the loss function of the last LOSS line (line {line}): {why}", doc = "At a metric line, at the end of the file: the loss function of the last LOSS line cannot measure its target; {key} is the key, with the index of an indexed line, and {why} says why: MAPE divides by the target, which is 0, or RMSLE takes the logarithm of the target plus 1e-12, which is at or below -1e-12." },
 ]
 
@@ -3007,7 +3020,7 @@ at = 2
 text = '''
 LOSS L1
 LOSS L2'''
-error = "LOSS is set twice (first on line 1) and no PC_LAMMPS or PC_OBSERVABLE line between takes the first; each key is given once"
+error = "LOSS is set twice (first on line 1) and no line between reads the first (a --varloss or PC_OBSERVABLE term that names no loss function); each key is given once"
 
 [[key.invalid]]
 wrap = "none"
@@ -3022,7 +3035,22 @@ LIB NLOPT
 ALGO LN_SBPLX
 MAXEVAL 10
 ENDOPTIMIZER'''
-error = "LOSS sets the loss function of the PC_LAMMPS and PC_OBSERVABLE lines after it and of the metric lines (PC_EMAE, PC_ERMSE, PC_ErRMSE, PC_ERSQ, PC_FRMSE, PC_SRMSE_GPA), and the file has no metric line and no such line after it; it would have no effect"
+error = "LOSS sets the loss function of the --varloss and PC_OBSERVABLE terms after it that name none, and of the metric lines (PC_EMAE, PC_ERMSE, PC_ErRMSE, PC_ERSQ, PC_FRMSE, PC_SRMSE_GPA), and the file has no metric line and no such term after it; it would have no effect"
+
+[[key.invalid]]
+wrap = "none"
+at = 2
+doc = "No metric line, and the only term after the LOSS line names its loss function."
+text = '''
+OPTIM CGRID2B (1) 0.5 1.5
+LOSS HUBER 10
+PC_LAMMPS --script lines_pc.in --varloss E 1 1 L1
+OPTIMIZER
+LIB NLOPT
+ALGO LN_SBPLX
+MAXEVAL 10
+ENDOPTIMIZER'''
+error = "LOSS sets the loss function of the --varloss and PC_OBSERVABLE terms after it that name none, and of the metric lines (PC_EMAE, PC_ERMSE, PC_ErRMSE, PC_ERSQ, PC_FRMSE, PC_SRMSE_GPA), and the file has no metric line and no such term after it; it would have no effect"
 
 [[key.invalid]]
 wrap = "none"
@@ -4761,22 +4789,23 @@ error = "OPTIM RCUT2B (1) is not a valid search target: D2_EAM takes the cutoff 
 
 [[rule]]
 id = "RULE.settings_taken_by_lines"
-title = "FAILSCORE, LOSS and PC_SCRIPT_TIMEOUT repeat after a line that takes them"
+title = "FAILSCORE, LOSS and PC_SCRIPT_TIMEOUT repeat after a line that reads them"
 check = "parse"
 keys = ["ROOT.FAILSCORE", "ROOT.LOSS", "ROOT.PC_SCRIPT_TIMEOUT", "ROOT.MAXTIME", "ROOT.PC_LAMMPS", "ROOT.PC_FAILPROBE", "ROOT.PC_OBSERVABLE"]
-msg = "{key} is set twice (first on line {first_line}{note}) and no {list} line between takes the first; each key is given once"
+msg = "{key} is set twice (first on line {first_line}{note}) and no line between reads the first ({list}); each key is given once"
 doc = """\
-Each PC_LAMMPS line takes the FAILSCORE, LOSS and PC_SCRIPT_TIMEOUT above \
-it, a PC_FAILPROBE line the FAILSCORE and PC_SCRIPT_TIMEOUT, and a \
-PC_OBSERVABLE line the LOSS; a second line of one of these keys needs a \
-line that takes the first between. The rest of the run takes the last \
-line: the metric terms its LOSS, a failed evaluation its FAILSCORE, and \
-the hpo_run.log summary its PC_SCRIPT_TIMEOUT."""
+A second FAILSCORE, LOSS or PC_SCRIPT_TIMEOUT line needs a line between \
+that reads the first, one that uses its value: a PC_LAMMPS or \
+PC_FAILPROBE line without --failscore (--maxtime), or a --varloss or \
+PC_OBSERVABLE term that names no loss function. The rest of the run \
+takes the last line: the metric terms its LOSS, a failed evaluation its \
+FAILSCORE, and the hpo_run.log summary its PC_SCRIPT_TIMEOUT."""
 msg_doc = """\
 The message names the key as the second line writes it, the line of the \
-first and the lines that take the key: PC_LAMMPS or PC_FAILPROBE for \
-FAILSCORE and the script limit, PC_LAMMPS or PC_OBSERVABLE for LOSS. \
-When the first wrote the other name of the script limit, MAXTIME or \
+first and the lines that read the key: a PC_LAMMPS or PC_FAILPROBE line \
+without --failscore for FAILSCORE, one without --maxtime for the script \
+limit, a --varloss or PC_OBSERVABLE term that names no loss function for \
+LOSS. When the first wrote the other name of the script limit, MAXTIME or \
 PC_SCRIPT_TIMEOUT, that name follows the line number."""
 quirk = """\
 MAXTIME and PC_SCRIPT_TIMEOUT are one key: a line of either name after a \
@@ -4804,7 +4833,24 @@ at = 2
 text = '''
 FAILSCORE 1e9
 FAILSCORE 1e10'''
-error = "FAILSCORE is set twice (first on line 1) and no PC_LAMMPS or PC_FAILPROBE line between takes the first; each key is given once"
+error = "FAILSCORE is set twice (first on line 1) and no line between reads the first (a PC_LAMMPS or PC_FAILPROBE line without --failscore); each key is given once"
+
+[[rule.invalid]]
+wrap = "none"
+at = 4
+doc = "The PC_LAMMPS line between names the loss function of its term."
+text = '''
+OPTIM CGRID2B (1) 0.5 1.5
+LOSS L1
+PC_LAMMPS --script lines_pc.in --varloss E 1 1 L2
+LOSS HUBER 10
+PC_ERMSE 0 1
+OPTIMIZER
+LIB NLOPT
+ALGO LN_SBPLX
+MAXEVAL 10
+ENDOPTIMIZER'''
+error = "LOSS is set twice (first on line 2) and no line between reads the first (a --varloss or PC_OBSERVABLE term that names no loss function); each key is given once"
 
 [[rule.invalid]]
 wrap = "root"
@@ -4813,7 +4859,7 @@ doc = "The two names of the script limit, with no PC_LAMMPS line between."
 text = '''
 PC_SCRIPT_TIMEOUT 10:00
 MAXTIME 5:00'''
-error = "MAXTIME is set twice (first on line 1, as PC_SCRIPT_TIMEOUT) and no PC_LAMMPS or PC_FAILPROBE line between takes the first; each key is given once"
+error = "MAXTIME is set twice (first on line 1, as PC_SCRIPT_TIMEOUT) and no line between reads the first (a PC_LAMMPS or PC_FAILPROBE line without --maxtime); each key is given once"
 
 [[rule]]
 id = "RULE.PC_OBSERVABLE_excludes_PC_LAMMPS"

@@ -1432,8 +1432,7 @@ PC_OBSERVABLE, needs the settings of the analytical gradient, and startup \
 refuses a setup without them. In the training configuration these are a \
 DBFILE, no FIXINDEX, STRESS false, NORM false, OALGO 4, a fixed LAMBDA >= \
 0 and the basis BF_Linear or Kern_Linear. In the target file they are no \
-PC_SRMSE_GPA line, no PC_OBSERVABLE line whose loss function (its --loss, \
-or the LOSS above it) is MAPE or RMSLE or with --unconverged \
+PC_SRMSE_GPA line, no PC_OBSERVABLE line with --unconverged \
 force-scaled, and no OPTIM line of an error scale of the fit \
 (ESIGMA, FSIGMA, SSIGMA) or of WDBFILE, a priority of the fit, which the \
 analytical gradient does not differentiate. Another search parameter without an analytical derivative \
