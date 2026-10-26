@@ -422,11 +422,14 @@ TEST_CASE("HPO_Host::analytical_gradient end-to-end with one PC_LAMMPS "
     }
 
     {
+        /* A gradient-free optimiser: a PC_LAMMPS line refuses a
+         * gradient-based one, DLIB:BFGS among them (it was DLIB:BFGS). The
+         * case calls analytical_gradient directly. */
         std::ofstream os(hpo_cfg);
         os <<
             "OPTIMIZER\n"
-            "LIB DLIB\n"
-            "ALGO BFGS\n"
+            "LIB NLOPT\n"
+            "ALGO LN_SBPLX\n"
             "MAXEVAL 1\n"
             "ENDOPTIMIZER\n"
             "LOSS L2\n"

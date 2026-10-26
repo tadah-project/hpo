@@ -866,10 +866,15 @@ TEST_CASE("startup validation: GRAD_STRATEGY ANALYTICAL needs loss terms "
       const std::string line = kObservable + " --loss " + loss + "\n";
       for (const std::string& grad : {analytical, std::string()}) {
         INFO("GRAD_STRATEGY line: '" << grad << "'");
+        /* Pins: the reason names the loss function the term has, which
+         * its --loss sets or the LOSS line above it gives.
+         * Before the fix: it named the option ("uses --loss MAPE"), which
+         * a term that takes the LOSS line does not have. */
         CHECK_THAT(startup_error(ctx, target(grad, line)),
                    Catch::Contains("GRAD_STRATEGY ANALYTICAL") &&
                    Catch::Contains("cohesive_energy[1]") &&
-                   Catch::Contains(std::string("--loss ") + loss) &&
+                   Catch::Contains(std::string("uses the loss function ") +
+                                   loss + ", which has no derivative") &&
                    Catch::Contains("GRAD_STRATEGY HYBRID"));
       }
       CHECK(startup_error(ctx, target("GRAD_STRATEGY HYBRID\n", line)) == "");

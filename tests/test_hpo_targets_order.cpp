@@ -96,7 +96,7 @@ std::filesystem::path write_script(int n) {
 }
 
 std::string config_head() {
-    return "OPTIMIZER\nLIB DLIB\nALGO BFGS\nMAXEVAL 1\nENDOPTIMIZER\n"
+    return "OPTIMIZER\nLIB NLOPT\nALGO LN_SBPLX\nMAXEVAL 1\nENDOPTIMIZER\n"
            "LOSS L2\nFAILSCORE 1e6\n"
            "OPTIM WATOM (1) 0.1 5.0\n";
 }

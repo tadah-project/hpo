@@ -446,7 +446,7 @@ TEST_CASE("The parsed timeout seconds reach HPOTargets and LammpsSim",
 {
     TempFile script("clear\nrun 0\nvariable E equal 0.0\n", ".in");
     const std::string optimizer =
-        "OPTIMIZER\nLIB DLIB\nALGO BFGS\nMAXEVAL 1\nENDOPTIMIZER\n";
+        "OPTIMIZER\nLIB NLOPT\nALGO LN_SBPLX\nMAXEVAL 1\nENDOPTIMIZER\n";
     const std::string sim = "PC_LAMMPS --script " + script.path.string() +
                             " --varloss E 1.0 1.0";
     auto parse = [&](const std::string& root) {

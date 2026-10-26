@@ -94,7 +94,7 @@ std::filesystem::path write_script() {
 }
 
 std::string config_head() {
-    return "OPTIMIZER\nLIB DLIB\nALGO BFGS\nMAXEVAL 1\nENDOPTIMIZER\n"
+    return "OPTIMIZER\nLIB NLOPT\nALGO LN_SBPLX\nMAXEVAL 1\nENDOPTIMIZER\n"
            "LOSS L2\nFAILSCORE 1e6\n";
 }
 
@@ -237,7 +237,6 @@ TEST_CASE("FAILSCORE_GRADING: every optimiser spec carries it, through the "
                    "  ENDEXPLORE\n"
                    "ENDSTRATEGY\n"
                    "ENDOPTIMIZER\n"
-                   "LOSS L2\n"
                    "FAILSCORE 1e6\n") +
                grading;
     };

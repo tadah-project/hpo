@@ -108,12 +108,14 @@ struct TempFile {
     ~TempFile() { std::error_code ec; fs::remove_all(path, ec); }
 };
 
+/* A gradient-free optimiser: PC_LAMMPS and PC_FAILPROBE lines refuse a
+ * gradient-based one, DLIB:BFGS among them (it was DLIB:BFGS). */
 const std::string kOptimizer =
     "OPTIMIZER\n"
     "STRATEGY\n"
     "  TYPE PLAIN\n"
-    "  LIB DLIB\n"
-    "  ALGO BFGS\n"
+    "  LIB NLOPT\n"
+    "  ALGO LN_SBPLX\n"
     "  MAXEVAL 5\n"
     "ENDSTRATEGY\n"
     "ENDOPTIMIZER\n";
@@ -150,7 +152,9 @@ TEST_CASE("LOSS HUBER/TUKEY without a parameter use the shared defaults",
           "[HPO][hpo_targets][loss]")
 {
     {
-        auto trg = parse_root("LOSS HUBER\n");
+        /* (A metric line reads the LOSS line: one that no line reads is
+         * refused.) */
+        auto trg = parse_root("LOSS HUBER\nPC_ERMSE 0 1\n");
         CHECK(trg.globalLoss.type() == LossFunction::Type::HUBER);
         CHECK(trg.globalLoss.params() ==
               LossFunction::default_params(LossFunction::Type::HUBER));
@@ -161,7 +165,7 @@ TEST_CASE("LOSS HUBER/TUKEY without a parameter use the shared defaults",
         CHECK(trg.globalLoss.loss(1.0, 0.0) == Approx(0.5));
     }
     {
-        auto trg = parse_root("LOSS TUKEY\n");
+        auto trg = parse_root("LOSS TUKEY\nPC_ERMSE 0 1\n");
         CHECK(trg.globalLoss.params() ==
               LossFunction::default_params(LossFunction::Type::TUKEY));
         REQUIRE(trg.globalLoss.params().size() == 1);
@@ -173,13 +177,13 @@ TEST_CASE("LOSS HUBER/TUKEY without a parameter use the shared defaults",
 TEST_CASE("LOSS accepts an explicit positive parameter",
           "[HPO][hpo_targets][loss]")
 {
-    auto trg = parse_root("LOSS HUBER 2.5\n");
+    auto trg = parse_root("LOSS HUBER 2.5\nPC_ERMSE 0 1\n");
     REQUIRE(trg.globalLoss.params().size() == 1);
     CHECK(trg.globalLoss.params()[0] == 2.5);
     /* |r| = 4 > delta: linear branch delta*(|r| - delta/2). */
     CHECK(trg.globalLoss.loss(4.0, 0.0) == Approx(2.5 * (4.0 - 1.25)));
 
-    auto trg2 = parse_root("LOSS TUKEY 3\n");
+    auto trg2 = parse_root("LOSS TUKEY 3\nPC_ERMSE 0 1\n");
     CHECK(trg2.globalLoss.params() == std::vector<double>{3.0});
 }
 
@@ -835,6 +839,10 @@ struct KeyHome {
 };
 
 KeyHome root_home(const std::string& key) { return {key, kOptimizer, ""}; }
+
+/* PC_SCRIPT_TIMEOUT or MAXTIME at the top level, with a PC_LAMMPS line after
+ * it that takes it (one that no line after it takes is refused). */
+KeyHome timeout_home(const std::string& key);
 
 /* A key of the STRATEGY block, after TYPE/LIB/ALGO (line 6). */
 KeyHome strategy_home(const std::string& key, const std::string& type,
@@ -1693,7 +1701,7 @@ TEST_CASE("Strict numbers: PC_SCRIPT_TIMEOUT and MAXTIME are LAMMPS time "
           "specs", "[HPO][hpo_targets][strict_numbers][timeout]")
 {
     for (const std::string key : {"PC_SCRIPT_TIMEOUT", "MAXTIME"}) {
-        const auto h = root_home(key);
+        const auto h = timeout_home(key);
         INFO(key);
         for (const std::string v : {"00:05:00", "2:00:00", "1:30", "90", "0.5",
                                     "off", "unlimited"}) {
@@ -1791,6 +1799,14 @@ std::string lammps_sim_error(std::string cmd)
     return "";
 }
 
+KeyHome timeout_home(const std::string& key)
+{
+    static const TempFile script(kSimScript, ".in");
+    return {key, kOptimizer,
+            "PC_LAMMPS --script " + script.path.string() +
+                " --varloss E 1 1\n"};
+}
+
 }  // namespace
 
 TEST_CASE("Strict numbers: PC_LAMMPS option values",
@@ -1869,7 +1885,7 @@ TEST_CASE("Strict numbers: a script timeout must be positive, 'off' or "
         "0", "-0", "0.0", "-5", "0:00", "00:00:00", "-1:30", "0:-5"};
 
     for (const std::string key : {"PC_SCRIPT_TIMEOUT", "MAXTIME"}) {
-        const auto h = root_home(key);
+        const auto h = timeout_home(key);
         INFO(key);
         for (const auto& tok : not_positive) {
             INFO("rejected '" << tok << "'");
@@ -1915,7 +1931,7 @@ TEST_CASE("Strict numbers: a timeout whose worker deadline does not fit in "
      * behaviour); it is far beyond any meaningful limit (about 95 million
      * years for t), so it is an error at its line. */
     for (const std::string key : {"PC_SCRIPT_TIMEOUT", "MAXTIME"}) {
-        const auto h = root_home(key);
+        const auto h = timeout_home(key);
         INFO(key);
         CHECK(parse_error(h.config("3e15")) == "");
         for (const std::string tok : {"4e15", "1e300", "1e12:0:0"}) {

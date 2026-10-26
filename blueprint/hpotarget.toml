@@ -1066,19 +1066,44 @@ PC_SCRIPT_TIMEOUT line below it changes neither that line's limit nor the \
 deadline of its worker tasks. The deadline in the summary of hpo_run.log \
 is that of the last line."""
 
+[[key.checks]]
+msg = "{key} sets the script timeout of the PC_LAMMPS and PC_FAILPROBE lines after it, and no such line follows it; it would have no effect"
+doc = "At the end of the file: no PC_LAMMPS or PC_FAILPROBE line follows the line; {key} is the name the line writes."
+
 [[key.examples]]
 wrap = "root"
-text = "PC_SCRIPT_TIMEOUT 1:30:00"
+text = '''
+PC_SCRIPT_TIMEOUT 1:30:00
+PC_LAMMPS --script main_pc.in --varloss E -5.0 1.0'''
 
 [[key.examples]]
 doc = "A time in seconds."
 wrap = "root"
-text = "PC_SCRIPT_TIMEOUT 600"
+text = '''
+PC_SCRIPT_TIMEOUT 600
+PC_LAMMPS --script main_pc.in --varloss E -5.0 1.0'''
 
 [[key.examples]]
 doc = "No limit."
 wrap = "root"
-text = "PC_SCRIPT_TIMEOUT unlimited"
+text = '''
+PC_SCRIPT_TIMEOUT unlimited
+PC_LAMMPS --script main_pc.in --varloss E -5.0 1.0'''
+
+[[key.invalid]]
+wrap = "root"
+doc = "No PC_LAMMPS or PC_FAILPROBE line follows the line."
+text = "PC_SCRIPT_TIMEOUT 600"
+error = "PC_SCRIPT_TIMEOUT sets the script timeout of the PC_LAMMPS and PC_FAILPROBE lines after it, and no such line follows it; it would have no effect"
+
+[[key.invalid]]
+wrap = "root"
+doc = "The PC_LAMMPS line is above the line."
+at = 2
+text = '''
+PC_LAMMPS --script main_pc.in --varloss E -5.0 1.0
+PC_SCRIPT_TIMEOUT 600'''
+error = "PC_SCRIPT_TIMEOUT sets the script timeout of the PC_LAMMPS and PC_FAILPROBE lines after it, and no such line follows it; it would have no effect"
 
 [[key.invalid]]
 wrap = "root"
@@ -1143,9 +1168,21 @@ MAXTIME at the top level is the script limit PC_SCRIPT_TIMEOUT, while \
 MAXTIME inside OPTIMIZER, STRATEGY, EXPLORE, REFINE or INNER is a time \
 limit of the search: the same word names two settings."""
 
+[[key.checks]]
+msg = "{key} sets the script timeout of the PC_LAMMPS and PC_FAILPROBE lines after it, and no such line follows it; it would have no effect"
+doc = "At the end of the file: no PC_LAMMPS or PC_FAILPROBE line follows the line; {key} is the name the line writes."
+
 [[key.examples]]
 wrap = "root"
+text = '''
+MAXTIME 10:00
+PC_LAMMPS --script main_pc.in --varloss E -5.0 1.0'''
+
+[[key.invalid]]
+wrap = "root"
+doc = "No PC_LAMMPS or PC_FAILPROBE line follows the line."
 text = "MAXTIME 10:00"
+error = "MAXTIME sets the script timeout of the PC_LAMMPS and PC_FAILPROBE lines after it, and no such line follows it; it would have no effect"
 
 [[key.invalid]]
 wrap = "root"
@@ -2859,6 +2896,13 @@ ENDOPTIMIZER
 # The training configuration (-c) of a conformance case, as the
 # configuration parser reads it. A wrapper or an example names one with
 # `context`; "default" otherwise.
+
+[fixture.main_script]
+path = "main_pc.in"
+doc = "A LAMMPS script that defines the equal-style variable E, for a PC_LAMMPS line after a PC_SCRIPT_TIMEOUT line."
+text = """
+variable E equal 1.0
+"""
 
 [context.default]
 doc = "A one-species two-body model that builds without data: H, D2_BP, M_BLR."

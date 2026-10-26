@@ -875,10 +875,16 @@ TEST_CASE("hpotarget block structure: FAILSCORE, LOSS or PC_SCRIPT_TIMEOUT "
               "MAXTIME is set twice (first on line 3, as "
               "PC_SCRIPT_TIMEOUT)"}}) {
         INFO(c.second);
+        /* LOSS is taken by a PC_LAMMPS or PC_OBSERVABLE line, FAILSCORE and
+         * PC_SCRIPT_TIMEOUT by a PC_LAMMPS or PC_FAILPROBE line (every key
+         * by a PC_LAMMPS or PC_FAILPROBE line, as the message said). */
+        const std::string takers = c.first.rfind("LOSS", 0) == 0
+                                       ? "PC_LAMMPS or PC_OBSERVABLE"
+                                       : "PC_LAMMPS or PC_FAILPROBE";
         CHECK(parse_error(kRoot + Lines{c.first, c.second} + block) ==
-              at_line(4, c.message + " and no PC_LAMMPS or PC_FAILPROBE "
-                                     "line between takes the first; each "
-                                     "key is given once", c.second));
+              at_line(4, c.message + " and no " + takers +
+                             " line between takes the first; each key is "
+                             "given once", c.second));
         /* a PC_LAMMPS line between takes the first */
         CHECK(parse_error(kRoot + Lines{c.first, pc_lammps, c.second,
                                         pc_lammps} + block) == "");

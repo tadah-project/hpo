@@ -421,6 +421,48 @@ TEST_CASE("pc pool: a worker that dies inside its task is journalled with "
                "signal 9 (Killed); consecutive deaths: 1");
 }
 
+TEST_CASE("pc pool: a worker whose script ends its process is journalled "
+          "with the script and the evaluation", "[pc_pool][kill][hpolog]") {
+  SKIP_WITHOUT_PC_PROCESS_WORKERS();
+  /* A script can end the worker process that runs it: LAMMPS' quit
+   * command calls exit() (a quit written in the script is refused when the
+   * line is read; one a variable spells, `${q} 0`, is not). test_main.cpp's
+   * stand-in worker (TADAH_TEST_PC_WORKER_EXIT_IN_TASK=3) reads the first
+   * TASK and exits with status 3.
+   *
+   * Pins: that task comes back KILLED, and the journal line is exactly
+   * "pc-worker 1 (pid <its pid>) killed/died: RESULT recv failed: pcwire:
+   * peer closed (EOF); wait: exited 3; the script unit_test.in of
+   * evaluation 7 ended the worker process (a quit command, or another
+   * command that ends the process); consecutive deaths: 1".
+   *
+   * Before the fix: the line ended "; wait: exited 3; consecutive deaths:
+   * 1", without the script or the evaluation.
+   * Skipped in the MPI build (its stand-in does not run pc_worker_main, and
+   * the pool is code that build never runs). */
+  Journal journal;
+  ScopedEnv quit("TADAH_TEST_PC_WORKER_EXIT_IN_TASK", "3");
+  PcWorkerPool pool(1, specs_for(1, minimal_spec()), 0.0);
+  const pid_t child = pool.worker_pid(0);
+  REQUIRE(child > 0);
+  CHECK(pool.execute(0, 0, 7, invalid_pot_map(), {},
+                     /*script_timeout_s=*/std::nullopt).status ==
+        PcTaskStatus::KILLED);
+  pool.shutdown();
+
+  const std::string text = journal.text();
+  INFO(text);
+  const std::string head =
+      "pc-worker 1 (pid " + std::to_string(child) + ") killed/died: ";
+  const auto at = text.find(head);
+  REQUIRE(at != std::string::npos);
+  CHECK(text.substr(at, text.find('\n', at) - at) ==
+        head + "RESULT recv failed: pcwire: peer closed (EOF); wait: exited "
+               "3; the script unit_test.in of evaluation 7 ended the worker "
+               "process (a quit command, or another command that ends the "
+               "process); consecutive deaths: 1");
+}
+
 TEST_CASE("pc pool: a HELLO_ACK that names another pid fails the handshake",
           "[pc_pool]") {
   SKIP_WITHOUT_PC_PROCESS_WORKERS();
