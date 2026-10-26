@@ -7,7 +7,10 @@
 // journal and the warm-start cache are shared by the cases of a process.
 //
 //   - a failure signal fails its evaluation under FAILSCORE_GRADING OFF:
-//     a --failvar above 0, a PC_FAILPROBE S above --gate;
+//     a --failvar above 0, a PC_FAILPROBE S above --gate, and a probe
+//     value that is negative, not finite or at or above its --failscore
+//     (under ON as well); a --failvar above 0 is journalled in both modes;
+//   - a script without --hotvar that reads $a is injected the hot value a;
 //   - the a0 a PC_OBSERVABLE cohesive_energy relaxation starts from is
 //     that of the chain's own previous evaluation;
 //   - a point evaluated again that gives another loss is journalled and
@@ -35,6 +38,7 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <limits>
 #include <sstream>
 #include <string>
 #include <system_error>
@@ -291,6 +295,126 @@ TEST_CASE("a failure signal fails its evaluation under FAILSCORE_GRADING OFF",
                std::string::npos) == (std::string(gate) == "0.5"));
         Host::reset_globals_for_test();
     }
+}
+
+/* Pins: a PC_FAILPROBE value S that is no probe value -- negative, not
+ * finite, or at or above the line's --failscore (the FAILSCORE above it,
+ * 1e16, without the option) -- fails the evaluation, with --gate or
+ * without, as a probe whose script fails does: under FAILSCORE_GRADING
+ * OFF it scores FAILSCORE (1e16), under ON the top of band D, and the
+ * journal says "eval 1 FAILPROBE: S=<S> is not a probe value (one is at
+ * least 0 and below the line's --failscore, <fs>) -- the evaluation
+ * fails". A probe value below --gate does not (the case of S = 1 above).
+ * Before the fix: under OFF such a value neither failed the evaluation
+ * nor was journalled: every evaluation kept its usable loss (9 here);
+ * under ON it scored the top of band D, unjournalled. */
+TEST_CASE("a PC_FAILPROBE value that is no probe value fails its "
+          "evaluation", "[pc_lines_e2e][.]") {
+    tadah::core::PeriodicTable::initialize();
+    struct Case { std::string s, options, text; bool on; };
+    for (const Case& c : std::vector<Case>{
+             {"1e300*1e300", "", "S=inf is not a probe value (one is at least "
+              "0 and below the line's --failscore, 1e+16)", false},
+             {"1e300*1e300", " --gate 0.5", "S=inf", false},
+             {"-1", " --gate 2", "S=-1 is not a probe value", false},
+             {"1e20", " --gate 2", "S=1e+20 is not a probe value", false},
+             {"200", " --failscore 100 --gate 1000",
+              "S=200 is not a probe value (one is at least 0 and below the "
+              "line's --failscore, 100)", false},
+             {"1e300*1e300", "", "S=inf is not a probe value", true}}) {
+        INFO("S = " << c.s << c.options << (c.on ? ", grading ON" : ""));
+        Host::reset_globals_for_test();
+        ScratchDir sd("tadah_pc_lines_probe_");
+        std::ofstream(sd.dir / "probe.in")
+            << "variable S equal " << c.s << "\n";
+        std::ofstream(sd.dir / "e.in") << "variable E equal 3\n";
+        Journal j;
+        const auto losses = evaluate(
+            sd.dir, std::string(c.on ? "FAILSCORE_GRADING ON\n" : "") +
+                        "PC_LAMMPS --script " + (sd.dir / "e.in").string() +
+                        " --varloss E 0 1\nPC_FAILPROBE --script " +
+                        (sd.dir / "probe.in").string() + " --outvar S" +
+                        c.options + "\n",
+                    {2.5, 2.6});
+        const std::string journal = j.finish();
+        INFO(journal);
+        REQUIRE(losses.size() == 2u);
+        const double band_d_top = tadah::hpo::graded_failscore(
+            1e16, tadah::hpo::FailBand::D,
+            std::numeric_limits<double>::infinity(), 1.0);
+        for (const double l : losses) {
+            if (c.on) CHECK(bits(l) == bits(band_d_top));
+            else CHECK(l == 1e16);
+        }
+        CHECK_THAT(line_with(journal, "eval 1 FAILPROBE: "),
+                   Catch::Contains(c.text) &&
+                   Catch::Contains("-- the evaluation fails"));
+        CHECK_THAT(line_with(journal, "eval 2 FAILPROBE: "),
+                   Catch::Contains(c.text));
+        Host::reset_globals_for_test();
+    }
+}
+
+/* Pins: under FAILSCORE_GRADING ON a --failvar above 0 fails the
+ * evaluation with a graded loss (band B, measured by scale * value = 1)
+ * and is journalled as under OFF: "PC_LAMMPS --failvar above 0
+ * (<dir>/fail.in, occurrence 1): bad = 1: the simulation reports a
+ * failure, and its evaluation fails".
+ * Before the fix: passes as well (a pin: the line is written in both
+ * modes). */
+TEST_CASE("a --failvar above 0 is journalled under FAILSCORE_GRADING ON",
+          "[pc_lines_e2e][.]") {
+    tadah::core::PeriodicTable::initialize();
+    Host::reset_globals_for_test();
+    ScratchDir sd("tadah_pc_lines_failvar_on_");
+    std::ofstream(sd.dir / "fail.in")
+        << "variable E equal 3\nvariable bad equal 1\n";
+    Journal j;
+    const auto losses = evaluate(
+        sd.dir, "FAILSCORE_GRADING ON\nPC_LAMMPS --script " +
+                    (sd.dir / "fail.in").string() +
+                    " --varloss E 0 1 --failvar bad\n",
+                {2.5, 2.6});
+    const std::string journal = j.finish();
+    INFO(journal);
+    REQUIRE(losses.size() == 2u);
+    const double band_b =
+        tadah::hpo::graded_failscore(1e16, tadah::hpo::FailBand::B, 1.0, 1.0);
+    for (const double l : losses) CHECK(bits(l) == bits(band_b));
+    CHECK_THAT(line_with(journal, "fail.in, occurrence 1): bad = 1"),
+               Catch::Contains("WARNING") &&
+               Catch::Contains("PC_LAMMPS --failvar above 0 (") &&
+               Catch::EndsWith(": the simulation reports a failure, and its "
+                               "evaluation fails"));
+    Host::reset_globals_for_test();
+}
+
+/* Pins: a script without --hotvar that reads the hot value a as $a (a
+ * one-character name, which LAMMPS reads without braces) runs after the
+ * script whose --hotvar a it is and is injected its value: a = 3.5, so
+ * its E3 = $a+1 is 4.5, its target, and every term is 0.
+ * Before the fix: passes as well (a pin of the rule the run uses; the
+ * substring test the run used before did not count $a: the script ran
+ * with the hot script, without a, and failed every evaluation). */
+TEST_CASE("a script without --hotvar that reads $a is injected the hot "
+          "value", "[pc_lines_e2e][.]") {
+    tadah::core::PeriodicTable::initialize();
+    Host::reset_globals_for_test();
+    ScratchDir sd("tadah_pc_lines_dollar_");
+    std::ofstream(sd.dir / "hot.in")
+        << "variable a equal 3.5\nvariable E equal 0\n";
+    std::ofstream(sd.dir / "cold.in") << "variable E3 equal $a+1\n";
+    Journal j;
+    const auto losses = evaluate(
+        sd.dir, "PC_LAMMPS --script " + (sd.dir / "hot.in").string() +
+                    " --varloss E 0 1 --hotvar a 1 5 3\nPC_LAMMPS --script " +
+                    (sd.dir / "cold.in").string() + " --varloss E3 4.5 1\n",
+                {2.5, 2.6});
+    const std::string journal = j.finish();
+    INFO(journal);
+    REQUIRE(losses.size() == 2u);
+    for (const double l : losses) CHECK(l == 0.0);
+    Host::reset_globals_for_test();
 }
 
 /* Pins: the relaxation of a PC_OBSERVABLE cohesive_energy term starts from

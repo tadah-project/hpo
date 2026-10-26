@@ -243,11 +243,14 @@ TEST_CASE("PC_SCRIPT_TIMEOUT and legacy MAXTIME set an identical value",
 }
 
 /* MAXTIME and PC_SCRIPT_TIMEOUT are one key: set again only after a
- * PC_LAMMPS line has taken the first value, else refused naming the first
- * (it was: the later line replaced the first). With a PC_LAMMPS line
- * between, that line keeps the first value and the later line is the
- * run-wide value, which the PC_LAMMPS line after it takes; both flags are
- * set. (The case had no line after the later value, which no line read.) */
+ * PC_LAMMPS line has read the first value, else refused naming the first
+ * and the lines that read it, "(a PC_LAMMPS or PC_FAILPROBE line without
+ * --maxtime)" (it was: the later line replaced the first; then the
+ * message said "no PC_LAMMPS or PC_FAILPROBE line between takes the
+ * first"). With a PC_LAMMPS line between, that line keeps the first value
+ * and the later line is the run-wide value, which the PC_LAMMPS line after
+ * it takes; both flags are set. (The case had no line after the later
+ * value, which no line read.) */
 TEST_CASE("both timeout keys: one key, set again after a PC_LAMMPS line "
           "takes the first",
           "[lammps_sim][timeout][config]") {
@@ -257,8 +260,9 @@ TEST_CASE("both timeout keys: one key, set again after a PC_LAMMPS line "
     REQUIRE_THROWS_WITH(
         tadah::hpo::HPOTargets(ctx, twice.path.string()),
         Catch::Contains("Error on line 6: PC_SCRIPT_TIMEOUT is set twice "
-                        "(first on line 5, as MAXTIME) and no PC_LAMMPS or "
-                        "PC_FAILPROBE line between takes the first"));
+                        "(first on line 5, as MAXTIME) and no line between "
+                        "reads the first (a PC_LAMMPS or PC_FAILPROBE line "
+                        "without --maxtime)"));
     ScopedTempFile script(SIMPLE_BODY);
     ScopedTempFile cfg(std::string(MIN_OPT) + "MAXTIME 7\n" + pc_line(script) +
                        "PC_SCRIPT_TIMEOUT 5\n" + pc_line(script));

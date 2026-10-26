@@ -37,6 +37,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
+#include <cstring>
 #include <sstream>
 #include <stdexcept>
 
@@ -343,15 +345,52 @@ TEST_CASE("CohesiveEnergyObservable updates hot-var after relaxation",
          << "  Ecoh = " << r.value);
 
     /* Pins: a0 changed under relaxation (synthetic potential, but the
-     * relaxer's Iso DOF still moves it), and the observable keeps none of
-     * it: an evaluation from the start begins at 3.10 again (the host
-     * keeps the relaxed a0 per chain).
+     * relaxer's Iso DOF still moves it): the a0 handed on differs from the
+     * start 3.10 and stays inside the window, and the observable's start
+     * is still 3.10. The observable keeps none of it: with the relaxation
+     * capped at 2 iterations, where the start matters (from the a0 the
+     * first evaluation handed on, it ends at another a0), a second
+     * evaluation from the start gives the first one's value and a0, bit
+     * for bit (the host keeps the relaxed a0 per chain).
      * Before the fix: the observable kept the relaxed a0 as its own start
-     * (current_a0() was the relaxed value), one value for every chain. */
-    CHECK(obs.start_a0() == a0_before);
-    /* Hot-var didn't escape the bounds. */
+     * (current_a0() was the relaxed value), one value for every chain: the
+     * second evaluation started from the first one's a0 and ended at the
+     * a0 of the evaluation from it. (The converged relaxation alone could
+     * not tell: from its relaxed a0 it stops at once, at the same a0.) */
+    CHECK(*r.hotvar_updated_value != a0_before);
     CHECK(*r.hotvar_updated_value >= cfg.a0_min);
     CHECK(*r.hotvar_updated_value <= cfg.a0_max);
+    CHECK(obs.start_a0() == a0_before);
+
+    auto bits = [](double x) {
+        std::uint64_t b = 0;
+        std::memcpy(&b, &x, sizeof b);
+        return b;
+    };
+    CohesiveEnergyObservable::Config capped_cfg = cfg;
+    capped_cfg.relax_maxiter = 2;
+    CohesiveEnergyObservable capped(capped_cfg);
+    const ObservableEvalResult first =
+        capped.evaluate(*host.model, host.dc, host.context);
+    const ObservableEvalResult again =
+        capped.evaluate(*host.model, host.dc, host.context);
+    REQUIRE(first.hotvar_updated_value.has_value());
+    REQUIRE(again.hotvar_updated_value.has_value());
+    const ObservableEvalResult from_first = capped.evaluate(
+        *host.model, host.dc, host.context, first.hotvar_updated_value);
+    REQUIRE(from_first.hotvar_updated_value.has_value());
+    INFO(std::hexfloat << "first: value " << first.value << ", a0 "
+                       << *first.hotvar_updated_value << "; again: value "
+                       << again.value << ", a0 "
+                       << *again.hotvar_updated_value
+                       << "; from the first a0: a0 "
+                       << *from_first.hotvar_updated_value);
+    /* Precondition: the start of the capped relaxation changes its a0. */
+    REQUIRE(bits(*from_first.hotvar_updated_value) !=
+            bits(*first.hotvar_updated_value));
+    CHECK(bits(again.value) == bits(first.value));
+    CHECK(bits(*again.hotvar_updated_value) ==
+          bits(*first.hotvar_updated_value));
 }
 
 /* The relaxed bulk's neighbour list is the relaxer's cached one (built at

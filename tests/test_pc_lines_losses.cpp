@@ -9,8 +9,9 @@
 //   - a gradient-based optimiser, DLIB:BFGS included, is refused with a
 //     PC_LAMMPS or a PC_FAILPROBE line;
 //   - a file whose only PC line is PC_FAILPROBE has no loss source;
-//   - a LOSS or PC_SCRIPT_TIMEOUT (MAXTIME) line that no line after it
-//     reads is refused;
+//   - a LOSS, FAILSCORE or PC_SCRIPT_TIMEOUT (MAXTIME) line that no line
+//     after it reads is refused: a term that names its loss function, and
+//     a line with its own --failscore or --maxtime, read none;
 //   - an option that takes one value, given twice on one line, and a
 //     variable declared twice on one line, are refused;
 //   - a LAMMPS variable a line defines (--invar, -var, -v) that is also a
@@ -21,8 +22,8 @@
 //     is refused at its line; MAPE divides by the target;
 //   - a PC_OBSERVABLE term takes the loss function of the LOSS line above
 //     it, and --loss takes the parameter of HUBER and TUKEY; GRAD_STRATEGY
-//     ANALYTICAL judges that loss function; the --check summary gives the
-//     loss function of every term;
+//     ANALYTICAL accepts every loss function of such a term; the --check
+//     summary gives the loss function of every term;
 //   - PC_OBSERVABLE cohesive_energy refuses a --species that is no element
 //     (at its line) or one the potential lacks (at startup), and a
 //     --hotvar a0 start outside its window;
@@ -242,58 +243,110 @@ TEST_CASE("PC lines: a file whose only PC line is PC_FAILPROBE has no loss "
                         "PC_LAMMPS --script p.in --varloss E 1 1\n") == "");
 }
 
-/* Pins: a PC_SCRIPT_TIMEOUT (or MAXTIME) line with no PC_LAMMPS or
- * PC_FAILPROBE line after it, and a LOSS line with no PC_LAMMPS or
- * PC_OBSERVABLE line after it in a file without a metric line, are refused
- * at their line: nothing reads them. A LOSS line after the last PC line is
- * read by the metric lines, and a timeout before a PC_FAILPROBE line by
- * it. A PC_FAILPROBE line does not read LOSS: a second LOSS line with only
- * a PC_FAILPROBE line between is refused as set twice.
- * Before the fix: every file below was read (read_error ""), the trailing
- * lines without effect; a PC_FAILPROBE line took a LOSS line. */
-TEST_CASE("PC lines: a LOSS or PC_SCRIPT_TIMEOUT line that no line reads is "
-          "refused", "[HPO][pc_lines][line_settings]") {
+/* Pins: a line reads LOSS, FAILSCORE or PC_SCRIPT_TIMEOUT (MAXTIME) when it
+ * uses the value: a --varloss or PC_OBSERVABLE term that names no loss
+ * function reads LOSS, and a PC_LAMMPS or PC_FAILPROBE line without
+ * --failscore (--maxtime) reads FAILSCORE (the script timeout). A
+ * PC_SCRIPT_TIMEOUT (or MAXTIME) line that no line after it reads, and a
+ * LOSS line that no term after it reads in a file without a metric line,
+ * are refused at their line ("... it would have no effect"): one with no
+ * PC line after it, and one whose following lines all give their own
+ * value (--maxtime; a loss function on every --varloss, --loss on the
+ * PC_OBSERVABLE line). A second line of one of the three keys with no line
+ * between that reads the first is refused as set twice, naming the lines
+ * that read it; a line between with its own value does not read the
+ * first. A LOSS line after the last PC line is read by the metric lines, a
+ * timeout before a PC_FAILPROBE line by it, and a LOSS line before a
+ * PC_LAMMPS line one of whose terms names no loss function by that term.
+ * Before the fix: a line read the three keys whatever it gave: the files
+ * whose lines give their own values were read (read_error ""), and the
+ * messages said "the PC_LAMMPS and PC_FAILPROBE lines after it, and no
+ * such line follows it", "the PC_LAMMPS and PC_OBSERVABLE lines after it"
+ * and "no PC_LAMMPS or PC_OBSERVABLE line between takes the first". */
+TEST_CASE("PC lines: a LOSS, FAILSCORE or PC_SCRIPT_TIMEOUT line that no "
+          "line reads is refused", "[HPO][pc_lines][line_settings]") {
     tadah::core::PeriodicTable::initialize();
     Scratch s;
     s.write("p.in", kScript);
     const std::string lammps = "PC_LAMMPS --script p.in --varloss E 1 1\n";
+    const std::string obs =
+        "PC_OBSERVABLE cohesive_energy --species Ta --target 8.1 --weight 1 "
+        "--hotvar a0 2.5 4.5";
     for (const char* key : {"PC_SCRIPT_TIMEOUT", "MAXTIME"}) {
         INFO(key);
+        const std::string unread =
+            std::string(key) +
+            " sets the script timeout of the PC_LAMMPS and PC_FAILPROBE lines "
+            "after it that give no --maxtime, and no such line follows it; "
+            "it would have no effect";
         CHECK(read_error(kSbplx + lammps + key + " 5\n") ==
-              at_line(8, std::string(key) +
-                             " sets the script timeout of the PC_LAMMPS and "
-                             "PC_FAILPROBE lines after it, and no such line "
-                             "follows it; it would have no effect",
-                      std::string(key) + " 5"));
+              at_line(8, unread, std::string(key) + " 5"));
         CHECK(read_error(kSbplx + key + " 5\nPC_ERMSE 0 1\n") ==
-              at_line(7, std::string(key) +
-                             " sets the script timeout of the PC_LAMMPS and "
-                             "PC_FAILPROBE lines after it, and no such line "
-                             "follows it; it would have no effect",
-                      std::string(key) + " 5"));
+              at_line(7, unread, std::string(key) + " 5"));
+        CHECK(read_error(kSbplx + key +
+                         " 5\nPC_LAMMPS --script p.in --varloss E 1 1 "
+                         "--maxtime 10\n") ==
+              at_line(7, unread, std::string(key) + " 5"));
+        CHECK(read_error(kSbplx + key + " 5\nPC_ERMSE 0 1\nPC_FAILPROBE "
+                         "--script p.in --outvar S --maxtime 10\n") ==
+              at_line(7, unread, std::string(key) + " 5"));
         CHECK(read_error(kSbplx + "PC_ERMSE 0 1\n" + key +
                          " 5\nPC_FAILPROBE --script p.in --outvar S\n") ==
               "");
+        CHECK(read_error(kSbplx + key + " 5\nPC_LAMMPS --script p.in "
+                         "--varloss E 1 1 --maxtime 10\n" + key + " 7\n" +
+                         lammps) ==
+              at_line(9,
+                      std::string(key) + " is set twice (first on line 7) "
+                      "and no line between reads the first (a PC_LAMMPS or "
+                      "PC_FAILPROBE line without --maxtime); each key is "
+                      "given once",
+                      std::string(key) + " 7"));
     }
+    CHECK(read_error(kSbplx + "FAILSCORE 1e9\nPC_LAMMPS --script p.in "
+                     "--varloss E 1 1 --failscore 5\nFAILSCORE 1e10\n" +
+                     lammps) ==
+          at_line(9,
+                  "FAILSCORE is set twice (first on line 7) and no line "
+                  "between reads the first (a PC_LAMMPS or PC_FAILPROBE line "
+                  "without --failscore); each key is given once",
+                  "FAILSCORE 1e10"));
+    CHECK(read_error(kSbplx + "FAILSCORE 1e9\n" + lammps +
+                     "FAILSCORE 1e10\n" + lammps) == "");
     const std::string loss_unread =
-        "LOSS sets the loss function of the PC_LAMMPS and PC_OBSERVABLE "
-        "lines after it and of the metric lines (PC_EMAE, PC_ERMSE, "
-        "PC_ErRMSE, PC_ERSQ, PC_FRMSE, PC_SRMSE_GPA), and the file has no "
-        "metric line and no such line after it; it would have no effect";
+        "LOSS sets the loss function of the --varloss and PC_OBSERVABLE "
+        "terms after it that name none, and of the metric lines (PC_EMAE, "
+        "PC_ERMSE, PC_ErRMSE, PC_ERSQ, PC_FRMSE, PC_SRMSE_GPA), and the file "
+        "has no metric line and no such term after it; it would have no "
+        "effect";
     CHECK(read_error(kSbplx + "LOSS L1\n" + lammps + "LOSS HUBER\n") ==
           at_line(9, loss_unread, "LOSS HUBER"));
     CHECK(read_error(kSbplx + lammps +
                      "LOSS L1\nPC_FAILPROBE --script p.in --outvar S\n") ==
           at_line(8, loss_unread, "LOSS L1"));
+    CHECK(read_error(kSbplx + "LOSS HUBER 10\nPC_LAMMPS --script p.in "
+                     "--varloss E 8.1 800 L1\n") ==
+          at_line(7, loss_unread, "LOSS HUBER 10"));
+    CHECK(read_error(kSbplx + "LOSS MAPE\n" + obs + " --loss L2\n") ==
+          at_line(7, loss_unread, "LOSS MAPE"));
+    CHECK(read_error(kSbplx + "LOSS L1\n" + lammps + "LOSS HUBER 10\n"
+                     "PC_LAMMPS --script p.in --varloss E 8.1 800 L2\n") ==
+          at_line(9, loss_unread, "LOSS HUBER 10"));
     CHECK(read_error(kSbplx + "LOSS L1\n" + lammps +
                      "LOSS HUBER\nPC_ERMSE 0 1\n") == "");
+    CHECK(read_error(kSbplx + "LOSS L1\nPC_LAMMPS --script p.in --varloss E "
+                     "1 1 L2 --varloss E2 2 1\n") == "");
+    CHECK(read_error(kSbplx + "LOSS MAPE\n" + obs + "\n") == "");
+    const std::string loss_twice =
+        "LOSS is set twice (first on line 7) and no line between reads the "
+        "first (a --varloss or PC_OBSERVABLE term that names no loss "
+        "function); each key is given once";
     CHECK(read_error(kSbplx + "LOSS L1\nPC_FAILPROBE --script p.in "
                      "--outvar S\nLOSS L2\n" + lammps) ==
-          at_line(9,
-                  "LOSS is set twice (first on line 7) and no PC_LAMMPS or "
-                  "PC_OBSERVABLE line between takes the first; each key is "
-                  "given once",
-                  "LOSS L2"));
+          at_line(9, loss_twice, "LOSS L2"));
+    CHECK(read_error(kSbplx + "LOSS L1\nPC_LAMMPS --script p.in --varloss E "
+                     "1 1 L2\nLOSS HUBER\nPC_ERMSE 0 1\n") ==
+          at_line(9, loss_twice, "LOSS HUBER"));
 }
 
 /* Pins: an option of a PC_LAMMPS or PC_FAILPROBE line that takes one value
@@ -571,7 +624,9 @@ TEST_CASE("PC lines: MAPE divides by the target", "[HPO][pc_lines][loss_target]"
  * above it when the line gives no --loss (HUBER 10 here), as for a
  * --varloss term, and --loss <name> <parameter> takes the parameter of
  * HUBER and TUKEY; a LOSS line after it does not change it (L2, the LOSS
- * line, read by the metric line).
+ * line, read by the metric line). The metric line of the --loss HUBER 5
+ * case reads its LOSS L1 line, which the term, naming its own loss
+ * function, does not read.
  * Before the fix: the term was L2 whatever LOSS said, and "--loss HUBER 5"
  * was refused ("PC_OBSERVABLE cohesive_energy: unknown flag '5'"). */
 TEST_CASE("PC lines: a PC_OBSERVABLE term takes the LOSS line above it and a "
@@ -588,7 +643,7 @@ TEST_CASE("PC lines: a PC_OBSERVABLE term takes the LOSS line above it and a "
     };
     for (const Case& c : std::vector<Case>{
              {"LOSS HUBER 10\n" + obs + "\n", LossFunction::Type::HUBER, {10.0}},
-             {"LOSS L1\n" + obs + " --loss HUBER 5\n",
+             {"LOSS L1\nPC_ERMSE 0 1\n" + obs + " --loss HUBER 5\n",
               LossFunction::Type::HUBER, {5.0}},
              {obs + " --loss tukey 2\n", LossFunction::Type::TUKEY, {2.0}},
              {obs + "\nPC_ERMSE 0 1\nLOSS L1\n", LossFunction::Type::L2, {}}}) {
@@ -608,39 +663,32 @@ TEST_CASE("PC lines: a PC_OBSERVABLE term takes the LOSS line above it and a "
                    "finite and > 0 (got 0); omit it to use the default 50"));
 }
 
-/* Pins: GRAD_STRATEGY ANALYTICAL refuses a PC_OBSERVABLE term whose loss
- * function has no derivative with respect to the value, wherever the loss
- * function comes from: the LOSS line above the line (MAPE) or its own
- * --loss (RMSLE); the reason names the loss function, not an option the
- * line may not have.
- * Before the fix: the term took L2 whatever LOSS said, so a LOSS MAPE
- * line passed the check (no reason), and the reason of --loss RMSLE read
- * "uses --loss RMSLE". */
-TEST_CASE("PC lines: ANALYTICAL refuses a PC_OBSERVABLE term whose loss "
-          "function, from LOSS or --loss, has no derivative",
+/* Pins: GRAD_STRATEGY ANALYTICAL accepts a PC_OBSERVABLE term of every
+ * loss function, wherever it comes from: the LOSS line above the line
+ * (MAPE) or its own --loss (RMSLE), as a residual loss (HUBER): each has a
+ * derivative with respect to the value (MAPE w sign(m - t) / |t|, RMSLE
+ * 2 w (ln(m + 1e-12) - ln(t + 1e-12)) / (m + 1e-12)), the one the metric
+ * lines take.
+ * Before the fix: MAPE and RMSLE were refused, "the PC_OBSERVABLE term
+ * cohesive_energy[1] uses the loss function MAPE, which has no derivative
+ * with respect to the value" (RMSLE alike). */
+TEST_CASE("PC lines: ANALYTICAL accepts a PC_OBSERVABLE term of every loss "
+          "function, from LOSS or --loss",
           "[HPO][pc_lines][observable][loss]") {
     tadah::core::PeriodicTable::initialize();
     Scratch s;
     const std::string obs =
         "PC_OBSERVABLE cohesive_energy --species Ta --target 8.1 --weight 1 "
         "--hotvar a0 2.5 4.5";
-    struct Case { std::string lines, reason; };
-    for (const Case& c : std::vector<Case>{
-             {"LOSS MAPE\n" + obs + "\n",
-              "the PC_OBSERVABLE term cohesive_energy[1] uses the loss "
-              "function MAPE, which has no derivative with respect to the "
-              "value"},
-             {obs + " --loss RMSLE\n",
-              "the PC_OBSERVABLE term cohesive_energy[1] uses the loss "
-              "function RMSLE, which has no derivative with respect to the "
-              "value"},
-             {"LOSS HUBER 10\n" + obs + "\n", ""}}) {
-        INFO(c.lines);
-        std::ofstream("config.hpo") << kSbplx + c.lines;
+    for (const std::string& lines :
+         {"LOSS MAPE\n" + obs + "\n", obs + " --loss RMSLE\n",
+          "LOSS HUBER 10\n" + obs + "\n"}) {
+        INFO(lines);
+        std::ofstream("config.hpo") << kSbplx + lines;
         Context ctx = make_ctx();
         std::unique_ptr<HPOTargets> trg;
         REQUIRE_NOTHROW(trg = std::make_unique<HPOTargets>(ctx, "config.hpo"));
-        CHECK(analytical_loss_term_blocker(*trg) == c.reason);
+        CHECK(analytical_loss_term_blocker(*trg) == "");
     }
 }
 
@@ -679,10 +727,13 @@ TEST_CASE("PC lines: the --check summary gives the loss function of every "
  * so that the run would inject `variable x equal <value>` into it, which
  * LAMMPS refuses for a variable of another style. A script that reads
  * only v_xb (another name that starts with x) or does not read x is
- * accepted: it is not injected x.
- * Before the fix: every file was read (read_error ""), and every
+ * accepted: it is not injected x. So is a line with a --hotvar of its own
+ * (y) whose script reads x and which defines x: a script with a --hotvar
+ * is injected its own hot values only, and reads the x of its line.
+ * Before the fix: every refused file was read (read_error ""), and every
  * evaluation failed ("Cannot redefine variable x with a different
- * style"). */
+ * style"). The line with a --hotvar of its own passes as well (a pin of
+ * the rule the refusal follows). */
 TEST_CASE("PC lines: a variable a line defines is not a --hotvar the line's "
           "script is injected", "[HPO][pc_lines][hotvar]") {
     tadah::core::PeriodicTable::initialize();
@@ -693,6 +744,7 @@ TEST_CASE("PC lines: a variable a line defines is not a --hotvar the line's "
     s.write("readsxb.in", kScript + "variable xb equal 2\n"
                                     "variable F equal v_xb+1\n");
     s.write("none.in", kScript);
+    s.write("hotreads.in", kScript + "variable y equal ${x}+1\n");
     const std::string hot =
         "PC_LAMMPS --script hot.in --varloss E 1 1 --hotvar x 2.5 4.5\n";
     for (const char* opt : {"--invar", "-var", "-v"}) {
@@ -738,7 +790,46 @@ TEST_CASE("PC lines: a variable a line defines is not a --hotvar the line's "
                                      " x 3.3";
             CHECK(read_error(kSbplx + hot + cold + "\n") == "");
         }
+        const std::string own_hot =
+            std::string("PC_LAMMPS --script hotreads.in --varloss E 1 1 "
+                        "--hotvar y 2.5 4.5 ") + opt + " x 3.3";
+        CHECK(read_error(kSbplx + hot + own_hot + "\n") == "");
+        CHECK(read_error(kSbplx + own_hot + "\n" + hot) == "");
     }
+}
+
+/* Pins: script_reads_variable, which says whether a script reads a
+ * variable (the run injects a hot value into a script without --hotvar
+ * that reads it, and HPOTargets refuses a line that defines such a value):
+ * ${x}; $x for a one-character name, and $xy too (LAMMPS reads it as $x,
+ * then y); v_x as a whole word, also v_x[1]; in any line of the script.
+ * Not v_xb, xv_x, ${xb}, $ab for the name ab (LAMMPS reads $a, then b), a
+ * script without the name, nor an empty name.
+ * Before the fix: passes as well (a pin of the rule the run and the
+ * refusal use; the substring test the run used before counted v_xb and
+ * xv_x as x, and not $x). */
+TEST_CASE("PC lines: the variables a script reads",
+          "[HPO][pc_lines][hotvar]") {
+    using tadah::hpo::script_reads_variable;
+    auto reads = [](const std::string& line, const std::string& name) {
+        return script_reads_variable({line}, name);
+    };
+    CHECK(reads("variable F equal ${x}+1", "x"));
+    CHECK(reads("variable F equal $x+1", "x"));
+    CHECK(reads("variable F equal $xy", "x"));
+    CHECK(reads("variable F equal v_x+1", "x"));
+    CHECK(reads("variable F equal v_x[1]", "x"));
+    CHECK(reads("v_x", "x"));
+    CHECK(reads("variable F equal v_a0*2", "a0"));
+    CHECK(reads("print \"${a0}\"", "a0"));
+    CHECK(script_reads_variable({"variable E equal 1", "print $x"}, "x"));
+    CHECK_FALSE(reads("variable F equal v_xb+1", "x"));
+    CHECK_FALSE(reads("variable F equal xv_x", "x"));
+    CHECK_FALSE(reads("variable F equal ${xb}", "x"));
+    CHECK_FALSE(reads("variable F equal $ab", "ab"));
+    CHECK_FALSE(reads("variable F equal 1", "x"));
+    CHECK_FALSE(reads("variable F equal v_x", ""));
+    CHECK_FALSE(script_reads_variable({}, "x"));
 }
 
 /* Pins: a quit command in the script of a PC_LAMMPS or PC_FAILPROBE line,

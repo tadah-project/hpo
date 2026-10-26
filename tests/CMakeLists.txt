@@ -129,10 +129,14 @@ endforeach()
 #                  kernel once (PC_ISOLATION THREAD and PROCESS)
 #   pc_lines_e2e   test_hpo_pc_lines_e2e.cpp: a --failvar above 0 or a
 #                  PC_FAILPROBE S above --gate fails its evaluation under
-#                  FAILSCORE_GRADING OFF; a PC_OBSERVABLE relaxation starts
-#                  from the a0 of its own chain; a point evaluated again
-#                  with another loss is journalled and counted; PC_ERSQ is
-#                  refused for a validation dataset of equal energies
+#                  FAILSCORE_GRADING OFF, and a probe value that is no
+#                  probe value fails it in both modes; a --failvar above 0
+#                  is journalled under ON too; a script that reads $a is
+#                  injected the hot value a; a PC_OBSERVABLE relaxation
+#                  starts from the a0 of its own chain; a point evaluated
+#                  again with another loss is journalled and counted;
+#                  PC_ERSQ is refused for a validation dataset of equal
+#                  energies
 set(_hpo_e2e_groups fixweight_e2e durable_e2e embf0_e2e rcut_e2e
                     rhoform_e2e rhogate_e2e rhobargate_e2e bumpgate_e2e
                     nn_e2e valmetric_e2e pc_readback_e2e trainer_e2e
