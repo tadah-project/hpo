@@ -1,6 +1,8 @@
 # OPTIM FIXWEIGHT on pinned weights, without a training DBFILE and
 # without --validation: the parse case removes DBFILE from
-# ../common/config.tadah and pins its 14 weights (FIXINDEX 1-14).
+# ../common/config.tadah, declares the element set (ATOM Ta, which a
+# configuration without training data needs) and pins its 14 weights
+# (FIXINDEX 1-14).
 
 OPTIMIZER
   STRATEGY

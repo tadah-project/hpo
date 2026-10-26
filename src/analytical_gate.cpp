@@ -3,6 +3,7 @@
 #include <tadah/hpo/hpo_targets.h>
 #include <tadah/hpo/loss_function.h>
 #include <tadah/hpo/sims_grad.h>
+#include <tadah/mlip/weight_provisioning.h>
 
 #include <cmath>
 #include <limits>
@@ -24,6 +25,18 @@ std::string analytical_gradient_blocker(const core::Context& ctx,
         return "STRESS is true (stress rows are not differentiated)";
     if (ctx.get<bool>("NORM"))
         return "NORM is true (it works on raw features)";
+    /* It differentiates the least-squares fit of the training rows
+     * (M_BLR, M_KRR implementation 1); implementation 2 solves (K +
+     * LAMBDA sigma^2 I) w = t over its basis vectors instead, and reads no
+     * OALGO (its fit refuses one but the default). */
+    if (mlip::is_krr_implementation_2(ctx)) {
+        const std::string kernel = ctx.get<std::string>("MODEL", 1);
+        return "the model is MODEL M_KRR " + kernel + " 2, implementation "
+               "2 (it differentiates the least-squares fit of the training "
+               "rows, that of M_BLR and of MODEL M_KRR " + kernel + " 1, "
+               "implementation 1, with OALGO 4; implementation 2 solves (K "
+               "+ LAMBDA sigma^2 I) w = t over its basis vectors)";
+    }
     if (const int oalgo = ctx.get<int>("OALGO", 0); oalgo != 4)
         return "OALGO is " + std::to_string(oalgo) +
                " (it needs OALGO 4, the Cholesky normal equations)";

@@ -1431,7 +1431,10 @@ gradient of its local search. ANALYTICAL, written or taken for \
 PC_OBSERVABLE, needs the settings of the analytical gradient, and startup \
 refuses a setup without them. In the training configuration these are a \
 DBFILE, no FIXINDEX, STRESS false, NORM false, OALGO 4, a fixed LAMBDA >= \
-0 and the basis BF_Linear or Kern_Linear. In the target file they are no \
+0 and the model MODEL M_BLR BF_Linear or MODEL M_KRR Kern_Linear 1, whose \
+least-squares fit of the training rows the gradient differentiates \
+(implementation 2 of M_KRR solves over its basis vectors instead). In the \
+target file they are no \
 PC_SRMSE_GPA line, no PC_OBSERVABLE line with --unconverged \
 force-scaled, and no OPTIM line of an error scale of the fit \
 (ESIGMA, FSIGMA, SSIGMA) or of WDBFILE, a priority of the fit, which the \

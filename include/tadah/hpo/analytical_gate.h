@@ -29,7 +29,9 @@ class HPOTargets;
  * factor, so it needs training data (`has_train_db`) with every weight
  * fitted (no FIXINDEX), the normal equations (OALGO 4) with a fixed ridge
  * LAMBDA >= 0, raw features (NORM false), a linear basis (MODEL ...
- * BF_Linear or Kern_Linear) and no stress rows (STRESS false, no
+ * BF_Linear or Kern_Linear) of a model that fits the training rows (M_BLR,
+ * M_KRR implementation 1; M_KRR implementation 2 solves over its basis
+ * vectors and reads no OALGO) and no stress rows (STRESS false, no
  * PC_SRMSE_GPA). PC_FRMSE is covered whatever FORCE is: the validation
  * descriptors carry their force parts whenever it is set
  * (fit_switch_guard.h). Settings only: a parameter without a

@@ -236,16 +236,6 @@ struct FullHealthMonitor {
     }
 };
 
-/* "nan", "-nan", "inf" or "-inf": a value that is not finite, read from its
- * printed text. */
-bool prints_not_finite(double v) {
-    std::ostringstream os;
-    os << v;
-    const std::string t = os.str();
-    return t.find("nan") != std::string::npos ||
-           t.find("inf") != std::string::npos;
-}
-
 }  // namespace
 
 /* Case 2 (the mixed scenario, K=4 variant): weights 1..K-2 LS-fitted,
@@ -627,100 +617,113 @@ TEST_CASE("health monitor: every evaluation's weights are checked by the "
     }
 }
 
-/* Pins: a fit whose weights are not finite is reported: the intercept
- * pinned at 2e307 (FIXINDEX 1; its column counts the structure's 4 atoms)
- * leaves the residual target the four fitted weights solve for finite
- * (about -8e307) but so large that the weights of the OALGO 4 solve
- * overflow (the intercept 1e306 gives finite weights, the last about
- * -6e307, which grow with it; 5e306 and 4.4e307 overflow as 2e307 does):
- * the fitted weights print as nan/inf, and HEALTH_LOG full prints
- * "iter_health: eval <n> -- weights contain NaN/Inf entries (training
- * likely diverged)." for that evaluation, on standard output at WARNING.
- * Before the fix: nothing was printed (no evaluation was recorded).
- * Until fix/multispecies-bias merged, the case pinned the first D2_BP weight
- * at 1e308 (FIXINDEX 2) instead; the merged FIXINDEX ridge keeps that
- * residual finite (the fitted weights came out near -1e304), so the case
- * pinned the intercept at 1e308, whose share of the target overflows. Until
- * fix/input-robustness merged, it did: that residual target is -inf, which
- * LinearRegressor::train now refuses before the fit (the evaluation throws,
- * the case after the next), so the intercept is pinned where the target
- * stays finite and the fit overflows. */
-TEST_CASE("health monitor: a fit with weights that are not finite is "
-          "reported", "[fixweight_e2e][.]")
+/* The journal hpo_run.log of an evaluation of @p h at @p x, the loss, the
+ * Logger text the evaluation printed, the evaluations that threw and those
+ * whose loss was clamped (HPOLog). */
+struct JournaledEval {
+    double loss = 0.0;
+    std::string printed, journal;
+    std::size_t threw = 0, clamped = 0;
+};
+JournaledEval journaled_eval(HealthHost& h, const std::vector<double>& x) {
+    using tadah::hpo::HPOLog;
+    HPOLog& log = HPOLog::instance();
+    log.reset_for_test();
+    const fs::path journal = h.sd.dir / "hpo_run.log";
+    log.open(journal.string(), "test", h.sd.dir.string(), 0);
+    REQUIRE(log.is_open());
+    JournaledEval r;
+    {
+        LoggerCapture cap;
+        r.loss = h.eval(x);
+        r.printed = cap.text();
+    }
+    h.host->flush_remaining();
+    r.threw = log.n_threw();
+    r.clamped = log.n_nan();
+    log.finish("TEST");
+    log.reset_for_test();
+    std::ifstream in(journal);
+    std::ostringstream os;
+    os << in.rdbuf();
+    r.journal = os.str();
+    return r;
+}
+
+/* Pins: a fit whose coefficients would not be finite fails, refused after
+ * its solve, and records no weights: the intercept pinned at 2e307
+ * (FIXINDEX 1; its column counts the structure's 4 atoms) leaves the
+ * residual target the four fitted weights solve for finite (about -8e307)
+ * but so large that the weights of the OALGO 4 solve overflow, which
+ * LinearRegressor::train (Tadah.MODELS) refuses. The evaluation scores
+ * FAIL_SCORE, its trainer is not trained, the health monitor records no
+ * weights for it (no "iter_health" line), and hpo_run.log has "eval <n>:
+ * eval-thread caught throw, submitting FAIL_SCORE ..." with "OALGO 4: the
+ * solve gave coefficients that are not finite"; it counts one evaluation
+ * that threw and no NaN/Inf clamping.
+ * Before the fix (LinearRegressor::train refused no coefficients): the
+ * fitted weights were nan/inf, and the case pinned that HEALTH_LOG full
+ * printed "iter_health: eval <n> -- weights contain NaN/Inf entries
+ * (training likely diverged)." for the evaluation (the monitor's report of
+ * such weights: test_iter_health.cpp). */
+TEST_CASE("health monitor: a fit whose coefficients would not be finite "
+          "fails and records no weights", "[fixweight_e2e][.]")
 {
     FullHealthMonitor fm;
     HealthHost h("1,2", {2e307, 0.0}, "OPTIM FIXWEIGHT (2) -1.0 1.0");
-    std::string printed;
-    {
-        LoggerCapture cap;
-        h.eval({0.25});
-        printed = cap.text();
-    }
-    INFO(printed);
+    const JournaledEval r = journaled_eval(h, {0.25});
+    INFO(r.printed << "\n" << r.journal);
+    CHECK(r.loss == h.trg->FAIL_SCORE);
     const auto* tr = Host::tls_trainer_for_test();
     REQUIRE(tr != nullptr);
-    const auto& w = tr->model->get_weights();
-    REQUIRE(w.size() == 6u);
-    CHECK(w[0] == 2e307);
-    CHECK(w[1] == 0.25);
-    bool fitted_not_finite = false;
-    for (std::size_t k = 2; k < 6; ++k) fitted_not_finite |= prints_not_finite(w[k]);
-    REQUIRE(fitted_not_finite);
+    CHECK_FALSE(tr->model->is_trained());
+    CHECK(r.printed.find("iter_health") == std::string::npos);
     const std::string eval_no = std::to_string(Host::g_iter_value());
-    CHECK(printed.find("iter_health: eval " + eval_no +
-                       " -- weights contain NaN/Inf entries (training likely "
-                       "diverged).") != std::string::npos);
+    CHECK(r.journal.find("eval " + eval_no + ": eval-thread caught throw, "
+                         "submitting FAIL_SCORE to keep writer queue "
+                         "contiguous") != std::string::npos);
+    CHECK(r.journal.find("OALGO 4: the solve gave coefficients that are not "
+                         "finite") != std::string::npos);
+    CHECK(r.threw == 1u);
+    CHECK(r.clamped == 0u);
 }
 
-/* Pins: a fit whose D2_BP block is all NaN is reported as NaN/Inf weights
- * and not as a block of zero weights: the bias pinned at 2e307 (FIXINDEX 1,
- * BIAS true, OPTIM LAMBDA) leaves the residual target the five D2_BP
- * weights are fitted to finite but so large that the OALGO 4 solve
- * overflows (as in the previous case; until fix/input-robustness merged the
- * bias was pinned at 1e308, whose residual target is -inf, which
- * LinearRegressor::train now refuses before the fit: the next case), and
- * every one of them prints as nan/inf; HEALTH_LOG
- * full prints "iter_health: eval <n> -- weights contain NaN/Inf entries
- * (training likely diverged)." for that evaluation and no block warning
- * (no "max_abs", no "nz_fraction" in the text; every block count 0).
- * Before the fix: the NaN weights counted as exact zeros, so the evaluation
- * also printed "iter_health: eval <n> block[1/D2_BP] max_abs -- all weights
- * in this block are exactly zero -- the descriptor block contributed
- * nothing to the fit." (warning_count(1, "max_abs") 1), as `tadah hpo` did
- * with the default HEALTH_LOG summary. */
-TEST_CASE("health monitor: a fitted block of NaN weights is reported as "
-          "NaN/Inf weights, not as a block of zero weights",
-          "[fixweight_e2e][.]")
+/* Pins: a fit with a ridge penalty (OPTIM LAMBDA) whose coefficients would
+ * not be finite fails and records no weights, and no block of the layout
+ * is reported: the bias pinned at 2e307 (FIXINDEX 1, BIAS true) leaves the
+ * residual target the five D2_BP weights are fitted to finite but so large
+ * that the OALGO 4 solve overflows, which LinearRegressor::train refuses:
+ * the evaluation scores FAIL_SCORE, the trainer is not trained, hpo_run.log
+ * names the refusal ("OALGO 4: the solve gave coefficients that are not
+ * finite"), and HEALTH_LOG full prints no "iter_health" line, no
+ * "max_abs" and no "nz_fraction" (every block count 0).
+ * Before the fix (LinearRegressor::train refused no coefficients): every
+ * fitted weight was nan/inf, and the case pinned that the monitor reported
+ * them as NaN/Inf weights ("iter_health: eval <n> -- weights contain
+ * NaN/Inf entries ...") and not as a block of zero weights (the monitor's
+ * handling of such a block: test_iter_health.cpp). */
+TEST_CASE("health monitor: a ridge fit whose coefficients would not be "
+          "finite fails and reports no block", "[fixweight_e2e][.]")
 {
     FullHealthMonitor fm;
     HealthHost h("1", {2e307}, "OPTIM LAMBDA (1) 1e-4 1e-2");
-    std::string printed;
-    {
-        LoggerCapture cap;
-        h.eval({1e-3});
-        printed = cap.text();
-    }
-    INFO(printed);
+    const JournaledEval r = journaled_eval(h, {1e-3});
+    INFO(r.printed << "\n" << r.journal);
+    CHECK(r.loss == h.trg->FAIL_SCORE);
     const auto* tr = Host::tls_trainer_for_test();
     REQUIRE(tr != nullptr);
-    const auto& w = tr->model->get_weights();
-    REQUIRE(w.size() == 6u);
-    CHECK(w[0] == 2e307);
-    for (std::size_t k = 1; k < 6; ++k) {
-        CAPTURE(k, w[k]);
-        REQUIRE(prints_not_finite(w[k]));
-    }
-    const std::string eval_no = std::to_string(Host::g_iter_value());
-    CHECK(printed.find("iter_health: eval " + eval_no +
-                       " -- weights contain NaN/Inf entries (training likely "
-                       "diverged).") != std::string::npos);
-    CHECK(printed.find("max_abs") == std::string::npos);
-    CHECK(printed.find("nz_fraction") == std::string::npos);
+    CHECK_FALSE(tr->model->is_trained());
+    CHECK(r.journal.find("OALGO 4: the solve gave coefficients that are not "
+                         "finite") != std::string::npos);
+    CHECK(r.printed.find("iter_health") == std::string::npos);
+    CHECK(r.printed.find("max_abs") == std::string::npos);
+    CHECK(r.printed.find("nz_fraction") == std::string::npos);
     for (std::size_t b : {0u, 1u}) {
         CAPTURE(b);
         CHECK(fm.mon.warning_count(b, "max_abs") == 0u);
         CHECK(fm.mon.warning_count(b, "nz_fraction") == 0u);
     }
+    CHECK(r.threw == 1u);
 }
 
 /* Pins: a candidate whose residual target is not finite is an evaluation

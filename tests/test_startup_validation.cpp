@@ -1404,3 +1404,48 @@ TEST_CASE("derive_raw_embedding_f0: raw F(0) of the -c potential",
     CHECK_THAT(r.reason, Catch::Contains("DM_REAM"));
   }
 }
+
+/* Pins: GRAD_STRATEGY ANALYTICAL is refused at startup under M_KRR
+ * implementation 2 (MODEL M_KRR Kern_Linear 2, SBASIS 3), with OALGO 4 and
+ * with OALGO 1 alike, naming the model and implementation 1 and not OALGO:
+ * the analytical gradient differentiates the least-squares fit of the
+ * training rows (implementation 1, and M_BLR), not the Cholesky solve of
+ * implementation 2 over its basis vectors; MODEL M_KRR Kern_Linear 1 with
+ * OALGO 4 passes (a pin).
+ * Before the fix: implementation 2 with OALGO 4 passed (every gradient
+ * then differentiated a fit the run does not make), and with OALGO 1 the
+ * refusal said "OALGO is 1 (it needs OALGO 4, the Cholesky normal
+ * equations)", while the fit of implementation 2 refuses any OALGO but the
+ * default: each message sent the user to the other. */
+TEST_CASE("startup validation: GRAD_STRATEGY ANALYTICAL is refused under "
+          "M_KRR implementation 2",
+          "[startup_validation][grad_strategy][krr2]") {
+  PeriodicTable::initialize();
+  const std::string body =
+      "OPTIM WATOM (1) 0.1 5.0\nPC_ERMSE 0 1\nOPTIMIZER\nLIB DLIB\n"
+      "ALGO BFGS\nMAXEVAL 5\nGRAD_STRATEGY ANALYTICAL\nENDOPTIMIZER\n";
+  auto krr = [](int implementation, int oalgo) {
+    Context c = analytical_ready_ctx();
+    c.remove("MODEL");
+    c.add("MODEL", "M_KRR");
+    c.add("MODEL", "Kern_Linear");
+    c.add("MODEL", implementation);
+    c.remove("OALGO");
+    c.add("OALGO", oalgo);
+    c.add("SBASIS", 3);
+    return c;
+  };
+  for (int oalgo : {4, 1}) {
+    DYNAMIC_SECTION("implementation 2, OALGO " << oalgo) {
+      Context ctx = krr(2, oalgo);
+      const std::string what = startup_error(ctx, body);
+      INFO(what);
+      CHECK_THAT(what, Catch::Contains("GRAD_STRATEGY ANALYTICAL") &&
+                           Catch::Contains("MODEL M_KRR Kern_Linear 2") &&
+                           Catch::Contains("implementation 1") &&
+                           !Catch::Contains("OALGO is"));
+    }
+  }
+  Context ok = krr(1, 4);
+  CHECK(startup_error(ok, body) == "");
+}
