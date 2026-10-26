@@ -1059,12 +1059,12 @@ after every clear, so each section has the whole limit; the --maxtime \
 option of a line sets that line's own. A script with a timer command of \
 its own gets no limit. Under PC_ISOLATION PROCESS a script limit t also \
 sets the deadline of a worker task, max(3t, t + 120 s), unless \
-PC_WORKER_TIMEOUT sets one. MAXTIME is another name for this key."""
+PC_WORKER_TIMEOUT sets one. MAXTIME is another name for this key. A \
+PC_LAMMPS or PC_FAILPROBE line takes the limit of the lines above it, and \
+a line of the key that no such line follows is refused."""
 quirk = """\
-A PC_LAMMPS or PC_FAILPROBE line takes the limit of the lines above it: a \
-PC_SCRIPT_TIMEOUT line below it changes neither that line's limit nor the \
-deadline of its worker tasks. The deadline in the summary of hpo_run.log \
-is that of the last line."""
+The deadline in the summary of hpo_run.log is that of the last line of \
+the key."""
 
 [[key.checks]]
 msg = "{key} sets the script timeout of the PC_LAMMPS and PC_FAILPROBE lines after it, and no such line follows it; it would have no effect"
@@ -1332,8 +1332,10 @@ grows with the size of the failure, so the optimiser can move towards \
 candidates that do not fail; OFF gives it FAILSCORE."""
 long_doc = """\
 ON needs a FAILSCORE line with a value below 1e300 (checked at startup). A \
-PC_FAILPROBE line grades failures, and its --gate ends an evaluation, \
-under ON only; so does a --failvar value above 0. A point outside the \
+--failvar value above 0 and a PC_FAILPROBE probe value above --gate fail \
+the evaluation under ON and OFF alike: under ON with a graded loss, under \
+OFF with FAILSCORE. The settings that only grade a failure, PC_FAILPROBE \
+--s0 and a --failvar scale, are refused under OFF. A point outside the \
 OPTIM boxes, which a CERES optimiser can propose, is not evaluated. Under \
 ON and OFF alike its loss lies in [0.99975 FAILSCORE, FAILSCORE) and grows \
 with its distance from the boxes."""
