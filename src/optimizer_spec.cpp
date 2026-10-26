@@ -344,8 +344,8 @@ static void print_asa_caps(std::ostream& os, const std::string& algo)
           "   * single-instance: one ASA run per process at a time\n"
           "   * stops: MAXEVAL / MAXTIME / STOPVAL plus ASA's own\n"
           "     Limit_* and plateau options below; FTOL/XTOL rejected\n"
-          "   * SEED seeds the proposal stream; INIT seed auto-sets\n"
-          "     User_Initial_Parameters\n"
+          "   * SEED seeds the proposal stream; ASA starts at the first\n"
+          "     starting point of the INIT block\n"
           "   * PARAM keys use the original ASA option spellings\n"
           "     (case-sensitive); an option of each dimension accepts Name[i]\n";
     print_asa_param_table(os);

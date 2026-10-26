@@ -48,8 +48,8 @@ Options for ASA:ASA
    * single-instance: one ASA run per process at a time
    * stops: MAXEVAL / MAXTIME / STOPVAL plus ASA's own
      Limit_* and plateau options below; FTOL/XTOL rejected
-   * SEED seeds the proposal stream; INIT seed auto-sets
-     User_Initial_Parameters
+   * SEED seeds the proposal stream; ASA starts at the first
+     starting point of the INIT block
    * PARAM keys use the original ASA option spellings
      (case-sensitive); an option of each dimension accepts Name[i]
   PARAM Limit_Acceptances  (default 10000)  max accepted states; 0 = no limit
@@ -62,8 +62,6 @@ Options for ASA:ASA
   PARAM Temperature_Ratio_Scale  (default 1e-5)  the main control of the annealing rate: m = -log(TRS)
   PARAM Cost_Parameter_Scale_Ratio  (default 1.0)  cost temperature schedule scale relative to parameters
   PARAM Temperature_Anneal_Scale  (default 100.0)  n = log(TAS); above the number of dimensions for large problems
-  PARAM Include_Integer_Parameters  (default 0)  include the INTEGER-typed dimensions in the derivative and reannealing calculations
-  PARAM User_Initial_Parameters  (default auto)  1 = start from the INIT seed; auto-set from the INIT block
   PARAM Sequential_Parameters  (default -1)  start the cyclic generation of one dimension at a time at this index; any negative = off
   PARAM Initial_Parameter_Temperature  (default 1.0)  initial parameter temperature (must be > 0)
   PARAM Acceptance_Frequency_Modulus  (default 100)  periodic-test cadence in accepted states; 0 = off

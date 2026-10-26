@@ -60,10 +60,6 @@ const Desc kDescs[] = {
    "cost temperature schedule scale relative to parameters"},
   {"Temperature_Anneal_Scale", Kind::Real, false, 0, kNaN, "100.0",
    "n = log(TAS); above the number of dimensions for large problems"},
-  {"Include_Integer_Parameters", Kind::Bool, false, 0, 1, "0",
-   "include the INTEGER-typed dimensions in the derivative and reannealing calculations"},
-  {"User_Initial_Parameters", Kind::Bool, false, 0, 1, "auto",
-   "1 = start from the INIT seed; auto-set from the INIT block"},
   {"Sequential_Parameters", Kind::Count, false, kNaN, kNaN, "-1",
    "start the cyclic generation of one dimension at a time at this index; any negative = off"},
   {"Initial_Parameter_Temperature", Kind::Real, false, 0, kNaN, "1.0",
@@ -118,8 +114,18 @@ const Desc kDescs[] = {
    "resizing: every block holds Gener_Block states"},
 };
 
-/* Upstream option names deliberately not exposed: tailored errors. */
+/* Upstream option names deliberately not exposed: tailored errors. Two of
+ * them are set by tadah hpo: Include_Integer_Parameters 0 (no OPTIM
+ * dimension is an integer one) and User_Initial_Parameters from the
+ * starting points (parse_asa_options). */
 const std::map<std::string, const char*> kExcluded = {
+  {"Include_Integer_Parameters",
+   "every OPTIM dimension of tadah hpo takes real values, so ASA has no "
+   "integer dimension to include."},
+  {"User_Initial_Parameters",
+   "ASA starts at the first starting point of the INIT block (the values of "
+   "the training configuration without one); METHOD RANDOM 1 in the INIT "
+   "block draws a random start from its SEED."},
   {"Coarse_Resolution",
    "ASA_RESOLUTION is compiled out: the grid snap has no trajectory-"
    "neutral default. Use Queue_Resolution (ASA_QUEUE) for dedup."},
@@ -264,6 +270,8 @@ AsaOptions parse_asa_options(const OptimizerSpec& sp, std::size_t dim)
         throw std::runtime_error("ASA:ASA: MAXTIME must be > 0 seconds");
 
     AsaOptions o;
+    /* ASA starts at the first starting point; with none (a WARM seed the
+     * INIT block dropped) it draws its own. */
     o.user_initial_parameters = sp.optim_init.empty() ? 0 : 1;
     o.user_quench_param_scale.assign(dim, 1.0);
     o.user_temperature_ratio.assign(dim, 1.0);
@@ -272,7 +280,6 @@ AsaOptions parse_asa_options(const OptimizerSpec& sp, std::size_t dim)
 
     /* ---- two passes: scalars/unindexed fills, then [i] overrides --- */
     bool have_gener_block_max = false;
-    bool explicit_uip = false;
     std::vector<std::pair<std::string, double>> indexed;
 
     auto set_scalar = [&](const Desc& d, const std::string& key, double v) {
@@ -313,12 +320,6 @@ AsaOptions parse_asa_options(const OptimizerSpec& sp, std::size_t dim)
             if (!(v > 0.0)) throw std::runtime_error(
                 "ASA:ASA: PARAM Temperature_Anneal_Scale must be > 0");
             o.temperature_anneal_scale = v;
-        }
-        else if (n == "Include_Integer_Parameters")
-            o.include_integer_parameters = (int)v;
-        else if (n == "User_Initial_Parameters") {
-            explicit_uip = true;
-            o.user_initial_parameters = (int)v;
         }
         else if (n == "Sequential_Parameters") {
             if (v >= (double)dim) throw std::runtime_error(
@@ -467,17 +468,6 @@ AsaOptions parse_asa_options(const OptimizerSpec& sp, std::size_t dim)
     }
 
     /* ---- cross-checks ---------------------------------------------- */
-    if (explicit_uip && o.user_initial_parameters == 0 &&
-        !sp.optim_init.empty())
-        throw std::runtime_error(
-            "ASA:ASA: PARAM User_Initial_Parameters 0 contradicts the INIT "
-            "block: remove the INIT seed to start from an ASA-generated "
-            "random point, or drop the PARAM");
-    if (explicit_uip && o.user_initial_parameters == 1 &&
-        sp.optim_init.empty())
-        throw std::runtime_error(
-            "ASA:ASA: PARAM User_Initial_Parameters 1 requires an INIT "
-            "seed (none resolved)");
     if (!have_gener_block_max)
         o.gener_block_max = o.gener_block;
     if (o.gener_block_max < o.gener_block)
