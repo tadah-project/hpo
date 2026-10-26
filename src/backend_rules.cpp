@@ -299,6 +299,29 @@ void reject_unread_attributes(const OptimizerSpec& spec,
                                  "numbers; remove it");
 }
 
+/* THREADS of the STRATEGY-level optimiser sizes the run's workers; a
+ * phase of another block reads its own THREADS only when its optimiser
+ * does (OptimizerCaps::reads_threads): an INNER block never, an EXPLORE
+ * block for DLIB:GFS, ASA:ASA, TADAH:ANNEAL_PT and TADAH:ANNEAL_PA. */
+void reject_unread_threads(const PhaseSpec& phase)
+{
+    const OptimizerSpec& spec = phase.spec;
+    if (!spec.num_threads) return;
+    const std::string who = backend_name(spec);
+    const std::string run_workers =
+        "the THREADS of the STRATEGY-level optimiser sets the workers of the "
+        "run";
+    if (phase.inner)
+        throw std::runtime_error(who + " does not use THREADS in an INNER "
+                                 "block: " + run_workers + "; remove it");
+    if (phase.exploration && !optimizer_caps(spec).reads_threads)
+        throw std::runtime_error(
+            who + " does not use THREADS: " + run_workers + ", and the "
+            "THREADS of an EXPLORE block is read by " +
+            readers([](const OptimizerCaps& c) { return c.reads_threads; }) +
+            "; remove it");
+}
+
 }  // namespace
 
 RestartStop restart_stop_of(const OptimizerSpec& root)
@@ -513,6 +536,7 @@ void validate_phase_backends(const OptimizerSpec& root)
              * block's included; it was checked for the STRATEGY-level LIB
              * only, so an EXPLORE NLopt or DLIB:GFS failed in the run). */
             require_search_dimensions(phase.spec);
+            reject_unread_threads(phase);
             validate_backend(phase.spec, restart,
                              phase.inner ? SpecRole::Inner : SpecRole::Phase);
         } catch (const std::exception& e) {

@@ -248,6 +248,7 @@ Registry build_registry()
         OptimizerCaps c;
         c.lib = "TADAH";  c.algo = "ANNEAL_PT";
         c.is_global       = true;
+        c.reads_threads   = true;   /* its replicas, and the REPLICAS default */
         c.reads_seed      = true;   /* its replica ladder is PARAM REPLICAS;
                                        POPULATION is refused */
         c.supports_maxeval = true;
@@ -271,6 +272,7 @@ Registry build_registry()
         OptimizerCaps c;
         c.lib = "TADAH";  c.algo = "ANNEAL_PA";
         c.is_global       = true;
+        c.reads_threads    = true;  /* the walkers run concurrently */
         c.reads_population = true;  /* the walkers */
         c.reads_seed       = true;
         c.supports_maxeval = true;
@@ -290,6 +292,7 @@ Registry build_registry()
         OptimizerCaps c;
         c.lib = "ASA";  c.algo = "ASA";
         c.is_global       = true;
+        c.reads_threads   = true;   /* a block of generated states (Gener_Block) */
         c.reads_seed      = true;
         c.supports_maxeval = true;
         c.supports_maxtime = true;
@@ -308,6 +311,7 @@ Registry build_registry()
         OptimizerCaps c;
         c.lib = "DLIB";  c.algo = "GFS";
         c.is_global          = true;
+        c.reads_threads      = true;  /* find_min_global's evaluation pool */
         c.accepts_multi_seed = true;
         /* find_min_global ends when its call budget is spent (MAXEVAL),
          * its run time (MAXTIME) is up or its stop condition (STOPVAL)

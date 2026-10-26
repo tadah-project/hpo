@@ -131,6 +131,10 @@ struct PhaseSpec {
     std::string   name;
     OptimizerSpec spec;
     bool          inner = false;
+    /* The PRESTAGE exploration (its EXPLORE block): its THREADS is read only
+     * by an optimiser that reads the THREADS of its own block
+     * (OptimizerCaps::reads_threads). */
+    bool          exploration = false;
 };
 
 /* The phases the policy of `spec` (STRATEGY TYPE) runs, derived as the

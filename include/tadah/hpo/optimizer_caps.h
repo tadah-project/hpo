@@ -83,6 +83,14 @@ struct OptimizerCaps {
      *                        random numbers is not recorded)
      *   reads_ftol_abs_as_setting  FTOL_ABS as a setting, not a stop (no
      *                        supports_ftol_abs): DLIB:GFS's solver epsilon
+     *   reads_threads        the THREADS of its own block, beyond the
+     *                        STRATEGY-level THREADS that sizes the run's
+     *                        workers: DLIB:GFS (its evaluation pool), ASA:ASA
+     *                        (a block of generated states), TADAH:ANNEAL_PT
+     *                        (its replicas and the REPLICAS default) and
+     *                        TADAH:ANNEAL_PA (its walkers). validate_phase_
+     *                        backends() refuses THREADS in an EXPLORE block of
+     *                        another optimiser, and in an INNER block
      *   warns_unread_seed    SEED is not read, but configurations that set it
      *                        predate the check, so run_dlib_global() warns
      *                        instead of refusing it (DLIB:GFS) */
@@ -90,6 +98,7 @@ struct OptimizerCaps {
     bool reads_vector_storage      = false;
     bool reads_seed                = false;
     bool reads_ftol_abs_as_setting = false;
+    bool reads_threads             = false;
     bool warns_unread_seed         = false;
 
     /* Stop criteria: which fields of StopCriteria end the backend's run

@@ -124,6 +124,7 @@ Strings reads(const OptimizerCaps& c)
     if (c.reads_ftol_abs_as_setting) keys.push_back("FTOL_ABS");
     if (c.reads_population)          keys.push_back("POPULATION");
     if (c.reads_seed)                keys.push_back("SEED");
+    if (c.reads_threads)             keys.push_back("THREADS");
     if (c.reads_vector_storage)      keys.push_back("VECTOR_ARR");
     return keys;
 }
