@@ -133,16 +133,6 @@ doc = """\
 DIRECT-L that draws a random number to choose between sides of equal \
 length when it divides a rectangle."""
 
-[optimizer."NLOPT:GN_DIRECT_L_RAND_NOSCAL"]
-doc = """\
-Named as GN_DIRECT_L_RAND without rescaling the OPTIM box to a cube; NLopt \
-2.10 runs it as GN_DIRECT_L_NOSCAL, which draws no random numbers."""
-
-[optimizer."NLOPT:GN_DIRECT_NOSCAL"]
-doc = """\
-Named as DIRECT without rescaling the OPTIM box to a cube; NLopt 2.10 runs \
-it as GN_DIRECT_L_NOSCAL, the deterministic DIRECT-L without rescaling."""
-
 [optimizer."NLOPT:GN_ESCH"]
 doc = """\
 ESCH, an evolutionary algorithm: a population of points of the OPTIM box \

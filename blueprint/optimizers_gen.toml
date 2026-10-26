@@ -752,81 +752,21 @@ Options for NLOPT:GN_DIRECT_L_RAND
 [[optimizer]]
 lib = "NLOPT"
 algo = "GN_DIRECT_L_RAND_NOSCAL"
-status = "registered"
-row_text = "global, derivative-free, needs a stop"
-global = true
-gradient_based = false
-accepts_inner = false
-default_inner = ""
-accepts_multi_seed = false
-reads = ["SEED"]
-algorithm_params = ["magic_eps"]
-warns_unread_seed = false
-stops = ["MAXEVAL", "MAXTIME", "STOPVAL", "FTOL_REL", "FTOL_ABS", "XTOL_REL", "XTOL_ABS"]
-needs_stop = true
-stop_note = "NLopt's global search has no convergence test of its own and runs until it is interrupted"
-ignores_forced_stop = false
-tolerance_note = "DIRECT's XTOL_REL and XTOL_ABS end it only once every rectangle is that small, after roughly (1/XTOL_REL)^n evaluations in n dimensions"
-untested_tolerance_note = ""
-step_use = "ignored"
-step_use_text = "ignored by the algorithm (rejected)"
-step_consumed = false
-step_note = "this algorithm never reads an initial step (population, branch-and-bound, or line-search method); remove STEP"
-starts_at_x0 = false
-start_note = "DIRECT evaluates the centre of the OPTIM box first and then divides the whole box; NLopt never reads that point"
-random_draws = "never"
-ignores_bounds = false
-bounds_note = ""
+status = "refused"
+reason = "NLopt 2.10 runs GN_DIRECT_L_RAND_NOSCAL as GN_DIRECT_L_NOSCAL: it picks the variant of DIRECT by comparing the algorithm with GN_DIRECT and GN_DIRECT_L_RAND, which a _NOSCAL algorithm never equals, so it runs the locally biased DIRECT-L without its random choice between equally long sides of a box. The recommended replacements are NLOPT:GN_DIRECT_L_RAND, the randomised DIRECT-L it names, and NLOPT:GN_DIRECT_L_NOSCAL, what it runs"
 explain_text = """
 Options for NLOPT:GN_DIRECT_L_RAND_NOSCAL
-   * Stops that end a run: MAXEVAL, MAXTIME, STOPVAL, FTOL_REL, FTOL_ABS, XTOL_REL, XTOL_ABS
-     DIRECT's XTOL_REL and XTOL_ABS end it only once every rectangle is that small, after roughly (1/XTOL_REL)^n evaluations in n dimensions.
-     One of them is required (a tolerance above 0), or an active RESTART: NLopt's global search has no convergence test of its own and runs until it is interrupted.
-   * PARAM <name> <value>  NLopt's parameters of this algorithm:
-     magic_eps
-   * global optimiser
-   * derivative-free
-   * STEP is rejected: this algorithm never reads an initial step (population, branch-and-bound, or line-search method); remove STEP
+   * REFUSED: NLopt 2.10 runs GN_DIRECT_L_RAND_NOSCAL as GN_DIRECT_L_NOSCAL: it picks the variant of DIRECT by comparing the algorithm with GN_DIRECT and GN_DIRECT_L_RAND, which a _NOSCAL algorithm never equals, so it runs the locally biased DIRECT-L without its random choice between equally long sides of a box. The recommended replacements are NLOPT:GN_DIRECT_L_RAND, the randomised DIRECT-L it names, and NLOPT:GN_DIRECT_L_NOSCAL, what it runs
 """
 
 [[optimizer]]
 lib = "NLOPT"
 algo = "GN_DIRECT_NOSCAL"
-status = "registered"
-row_text = "global, derivative-free, needs a stop"
-global = true
-gradient_based = false
-accepts_inner = false
-default_inner = ""
-accepts_multi_seed = false
-reads = ["SEED"]
-algorithm_params = ["magic_eps"]
-warns_unread_seed = false
-stops = ["MAXEVAL", "MAXTIME", "STOPVAL", "FTOL_REL", "FTOL_ABS", "XTOL_REL", "XTOL_ABS"]
-needs_stop = true
-stop_note = "NLopt's global search has no convergence test of its own and runs until it is interrupted"
-ignores_forced_stop = false
-tolerance_note = "DIRECT's XTOL_REL and XTOL_ABS end it only once every rectangle is that small, after roughly (1/XTOL_REL)^n evaluations in n dimensions"
-untested_tolerance_note = ""
-step_use = "ignored"
-step_use_text = "ignored by the algorithm (rejected)"
-step_consumed = false
-step_note = "this algorithm never reads an initial step (population, branch-and-bound, or line-search method); remove STEP"
-starts_at_x0 = false
-start_note = "DIRECT evaluates the centre of the OPTIM box first and then divides the whole box; NLopt never reads that point"
-random_draws = "never"
-ignores_bounds = false
-bounds_note = ""
+status = "refused"
+reason = "NLopt 2.10 runs GN_DIRECT_NOSCAL as GN_DIRECT_L_NOSCAL: it picks the variant of DIRECT by comparing the algorithm with GN_DIRECT and GN_DIRECT_L_RAND, which a _NOSCAL algorithm never equals, so it runs the locally biased DIRECT-L. The recommended replacements are NLOPT:GN_DIRECT, the DIRECT it names, and NLOPT:GN_DIRECT_L_NOSCAL, what it runs"
 explain_text = """
 Options for NLOPT:GN_DIRECT_NOSCAL
-   * Stops that end a run: MAXEVAL, MAXTIME, STOPVAL, FTOL_REL, FTOL_ABS, XTOL_REL, XTOL_ABS
-     DIRECT's XTOL_REL and XTOL_ABS end it only once every rectangle is that small, after roughly (1/XTOL_REL)^n evaluations in n dimensions.
-     One of them is required (a tolerance above 0), or an active RESTART: NLopt's global search has no convergence test of its own and runs until it is interrupted.
-   * PARAM <name> <value>  NLopt's parameters of this algorithm:
-     magic_eps
-   * global optimiser
-   * derivative-free
-   * STEP is rejected: this algorithm never reads an initial step (population, branch-and-bound, or line-search method); remove STEP
+   * REFUSED: NLopt 2.10 runs GN_DIRECT_NOSCAL as GN_DIRECT_L_NOSCAL: it picks the variant of DIRECT by comparing the algorithm with GN_DIRECT and GN_DIRECT_L_RAND, which a _NOSCAL algorithm never equals, so it runs the locally biased DIRECT-L. The recommended replacements are NLOPT:GN_DIRECT, the DIRECT it names, and NLOPT:GN_DIRECT_L_NOSCAL, what it runs
 """
 
 [[optimizer]]

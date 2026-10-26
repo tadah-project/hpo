@@ -193,10 +193,10 @@ struct OptimizerCaps {
      * numbers, so that a run with other numbers asks for other points
      * (nlopt 2.10 sources):
      *   Never         GD_STOGO (stogo.cc: no random trial point), GN_DIRECT,
-     *                 GN_DIRECT_L and the three _NOSCAL forms (optimize.c
-     *                 runs GN_DIRECT_L_RAND_NOSCAL with GN_DIRECT_L_NOSCAL's
-     *                 cdirect settings), GN_ORIG_DIRECT and GN_ORIG_DIRECT_L
-     *                 (DIRect.c), GN_AGS (ags);
+     *                 GN_DIRECT_L and GN_DIRECT_L_NOSCAL (the other _NOSCAL
+     *                 forms, which optimize.c runs as it, are refused),
+     *                 GN_ORIG_DIRECT and GN_ORIG_DIRECT_L (DIRect.c), GN_AGS
+     *                 (ags);
      *   BetweenSides  GN_DIRECT_L_RAND: cdirect.c draws only to choose one of
      *                 several equally long sides of a box, which a box of
      *                 one dimension never has;
@@ -256,7 +256,8 @@ struct OptimizerCaps {
  * the library version HPO builds makes them unsafe to run, or they do not
  * solve the problem HPO poses, one scalar loss inside the OPTIM box (the
  * refusal table in optimizer_caps.cpp, each entry with its repro:
- * NLOPT:LN_NEWUOA_BOUND, LN_NEWUOA, NLOPT_LD_LBFGS_NOCEDAL, Ceres' Wolfe
+ * NLOPT:LN_NEWUOA_BOUND, LN_NEWUOA, NLOPT_LD_LBFGS_NOCEDAL, GN_DIRECT_NOSCAL
+ * and GN_DIRECT_L_RAND_NOSCAL (which NLopt runs as GN_DIRECT_L_NOSCAL), Ceres' Wolfe
  * line-search drivers CERES:LBFGS, WOLFE and NLCG, which stall at a point
  * outside the box scored by box_penalty.h, and Ceres' least-squares solvers
  * CERES:LEVENBERG_MARQUARDT, DOGLEG and SUBSPACE_DOGLEG). A refused backend is not registered, so

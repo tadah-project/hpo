@@ -88,6 +88,17 @@ using Registry = std::unordered_map<CapsKey, OptimizerCaps, CapsKeyHash>;
  * argument" once its setup was done. The repro is the unit test that
  * calls nlopt_optimize() with it (test_optimizer_caps_step.cpp).
  *
+ * NLOPT:GN_DIRECT_NOSCAL, GN_DIRECT_L_RAND_NOSCAL -- NLopt v2.10.0 picks the
+ * DIRECT variant (optimize.c, the which_alg argument of cdirect_unscaled)
+ * by comparing the algorithm with NLOPT_GN_DIRECT and NLOPT_GN_DIRECT_L_RAND,
+ * which a _NOSCAL algorithm never equals, so all three _NOSCAL forms run
+ * which_alg 13, GN_DIRECT_L_NOSCAL's: measured, an 80-evaluation run of
+ * GN_DIRECT_NOSCAL wrote the params.tadah of GN_DIRECT_L and
+ * GN_DIRECT_L_NOSCAL, GN_DIRECT another, and a 12-evaluation run of
+ * GN_DIRECT_L_RAND_NOSCAL that of GN_DIRECT_L_NOSCAL, GN_DIRECT_L_RAND
+ * another. A name that runs another algorithm is refused, naming the
+ * algorithm of its variant and GN_DIRECT_L_NOSCAL, which stays registered.
+ *
  * CERES:LBFGS, WOLFE, NLCG -- Ceres' GradientProblemSolver has no bounds, and
  * HPO does not evaluate a point outside the OPTIM box: it scores it as a
  * failure graded by its distance to the box (box_penalty.h), a loss in [0.99975, 1) x FAILSCORE, far above every
@@ -166,6 +177,21 @@ constexpr Refusal kRefused[] = {
      "also needs two OPTIM dimensions or more. The recommended replacement "
      "is NLOPT:LN_BOBYQA, Powell's bound-constrained successor of NEWUOA "
      "(its STEP rescales each dimension instead of setting one radius)"},
+    {"NLOPT", "GN_DIRECT_NOSCAL",
+     "NLopt 2.10 runs GN_DIRECT_NOSCAL as GN_DIRECT_L_NOSCAL: it picks the "
+     "variant of DIRECT by comparing the algorithm with GN_DIRECT and "
+     "GN_DIRECT_L_RAND, which a _NOSCAL algorithm never equals, so it runs "
+     "the locally biased DIRECT-L. The recommended replacements are "
+     "NLOPT:GN_DIRECT, the DIRECT it names, and NLOPT:GN_DIRECT_L_NOSCAL, "
+     "what it runs"},
+    {"NLOPT", "GN_DIRECT_L_RAND_NOSCAL",
+     "NLopt 2.10 runs GN_DIRECT_L_RAND_NOSCAL as GN_DIRECT_L_NOSCAL: it picks "
+     "the variant of DIRECT by comparing the algorithm with GN_DIRECT and "
+     "GN_DIRECT_L_RAND, which a _NOSCAL algorithm never equals, so it runs "
+     "the locally biased DIRECT-L without its random choice between equally "
+     "long sides of a box. The recommended replacements are "
+     "NLOPT:GN_DIRECT_L_RAND, the randomised DIRECT-L it names, and "
+     "NLOPT:GN_DIRECT_L_NOSCAL, what it runs"},
     {"NLOPT", "NLOPT_LD_LBFGS_NOCEDAL",
      "NLopt 2.10 does not implement it: NLopt names it, but its optimiser "
      "rejects it as an invalid argument, so a run of it would fail once its "
@@ -556,8 +582,8 @@ Registry build_registry()
          * GD_STOGO_RAND its POPULATION trial points (stogo.cc, POP(2n)),
          * the box centre first below POPULATION 2n + 1; GN_DIRECT_L_RAND
          * only between equally long sides (cdirect.c, which_div 2); the
-         * other StoGO and DIRECT forms and AGS none (optimize.c hands every
-         * _NOSCAL form which_alg 13, GN_DIRECT_L_NOSCAL's). */
+         * other StoGO and DIRECT forms and AGS none (GN_DIRECT_L_NOSCAL,
+         * the one _NOSCAL form registered, runs which_alg 13). */
         if (!c.starts_at_x0)
             c.random_draws =
                 s == "GD_STOGO_RAND" ? OptimizerCaps::RandomDraws::TrialPoints
