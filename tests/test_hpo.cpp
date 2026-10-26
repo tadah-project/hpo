@@ -92,9 +92,9 @@ TEST_CASE("ANNEAL capability help exposes corrected public contracts",
      * format and a few registry facts, not hand-written prose.
      * The help is text for a user: the keys a family does not read are
      * "refused" ("Dead knobs are hard errors" before the help was
-     * rewritten), ANNEAL_PA "accepts and does not use" the INIT_JITTER
-     * calibration keys of ANNEAL_PT ("Accepted as an inactive setting by
-     * the current ANNEAL_PA driver"), and no key's help gives history
+     * rewritten), ANNEAL_PA lists none of the INIT_JITTER calibration keys
+     * of ANNEAL_PT, which it refuses (it listed six, each "TADAH:ANNEAL_PA
+     * accepts it and does not use it"), and no key's help gives history
      * (INIT_JITTER_LADDER OFF was "(pre-1.5.0 behaviour)"); the help says
      * what a key does, not what the reader is to do ("Adapts ...", not
      * "Adapt ..."; POPULATION is read by TADAH:ANNEAL_PA, not "use
@@ -137,14 +137,8 @@ TEST_CASE("ANNEAL capability help exposes corrected public contracts",
     CHECK(pa.find("POPULATION <R> population size") != std::string::npos);
     CHECK(pa.find("PARAM INIT_MODE <JITTER|UNIFORM> (default JITTER)")
           != std::string::npos);
-    /* INIT_JITTER_MAX, _PROBES, _MAXEVAL, _MAXTIME_FRAC, _SAMPLE and
-     * _AUDIT, each listed once */
-    std::size_t unused = 0;
-    for (auto at = pa.find("ANNEAL_PA accepts it and does not use it.");
-         at != std::string::npos;
-         at = pa.find("ANNEAL_PA accepts it and does not use it.", at + 1))
-        ++unused;
-    CHECK(unused == 6u);
+    CHECK(pa.find("PARAM INIT_JITTER_") == std::string::npos);
+    CHECK(pa.find("does not use it") == std::string::npos);
     CHECK(pa.find("driver") == std::string::npos);
 }
 

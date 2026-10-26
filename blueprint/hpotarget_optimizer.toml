@@ -1646,9 +1646,9 @@ wrap = "opt_anneal_pa"
 text = "PARAM INIT_MODE JITTER 0.1"
 
 [[key.examples]]
-doc = "INIT_MODE JITTER AUTO with its tolerance."
+doc = "INIT_MODE JITTER AUTO of TADAH:ANNEAL_PA, which takes no tolerance."
 wrap = "opt_anneal_pa"
-text = "PARAM INIT_MODE JITTER AUTO 0.05"
+text = "PARAM INIT_MODE JITTER AUTO"
 
 [[key.invalid]]
 wrap = "strategy"
@@ -1691,7 +1691,7 @@ check = "startup"
 at = "ENDOPTIMIZER"
 doc = "The annealer takes the name INIT_MODE as written."
 text = "PARAM init_mode JITTER 0.1"
-error = "the STRATEGY-level optimiser: TADAH:ANNEAL_PA: unknown PARAM 'init_mode'; accepted keys: CORANA STEP_FRAC CHAIN_LENGTH NS NT CORANA_C V_FLOOR_FRAC BOUNDARY_MODE RESET_TO_BEST T_HOT T_MIN RT T0_PROBES T0_ACCEPT NEPS INIT_MODE INIT_JITTER_MAX INIT_JITTER_PROBES INIT_JITTER_MAXEVAL INIT_JITTER_SAMPLE INIT_JITTER_AUDIT INIT_JITTER_MAXTIME_FRAC SWEEPS ESS_TARGET "
+error = "the STRATEGY-level optimiser: TADAH:ANNEAL_PA: unknown PARAM 'init_mode'; accepted keys: CORANA STEP_FRAC CHAIN_LENGTH NS NT CORANA_C V_FLOOR_FRAC BOUNDARY_MODE RESET_TO_BEST T_HOT T_MIN RT T0_PROBES T0_ACCEPT NEPS INIT_MODE SWEEPS ESS_TARGET "
 msg_of = "PARAM.TADAH:ANNEAL"
 
 [[key.invalid]]
