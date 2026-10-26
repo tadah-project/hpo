@@ -2329,8 +2329,9 @@ TEST_CASE("Two runs in one process: a run that fails after starting its "
 /* Pins: every run gets a worker pool of its own THREADS and stops it when
  * it ends: two runs in one process, THREADS 2 then 3, each journal says
  * "ScriptExecutor: <its THREADS> workers = THREADS" once, and after each
- * run MLIP has no parallel backend installed (a later task of the process,
- * tadah train after TASK hpo, runs its kernels on OpenMP again).
+ * run MLIP has no parallel backend installed (a later caller in the
+ * process, a training after hpo_run(), runs its kernels on OpenMP
+ * again).
  * Before the fix: the backend stayed installed after the run (the journal
  * lines were right: they printed the THREADS asked for, while the pool kept
  * the first run's 2 workers -- test_script_executor.cpp's
@@ -9464,78 +9465,42 @@ TEST_CASE("PRESTAGE: an exploration whose every candidate the bump gate "
  *     configuration file (the provenance of `tadah hpo -c config.tadah`):
  *     "tadah hpo: no HPOTARGET: name the hpotarget file with --hpotarget,
  *     or with an HPOTARGET line in a configuration file without WEIGHTS.";
- *   - a TASK hpo section of the task file run.task (a run of a task file
- *     takes no command-line option): "tadah hpo: no HPOTARGET: name the
- *     hpotarget file with an HPOTARGET line in the TASK hpo section of the
- *     task file run.task, or above its first TASK line." -- no --hpotarget;
- *   - the same when the parse did not read the HPOTARGET line of old.tadah,
- *     a potential the section includes with CONFIG (a best_pot.tadah of an
- *     earlier version has one): the message adds "old.tadah is a potential
- *     (it has WEIGHTS): its HPOTARGET config.hpo line was a setting of the
- *     run that wrote it and is not read.";
- *   - the -c run of such a potential (the CLI requires --hpotarget there;
- *     a program can build the run): the first message and that sentence;
- *   - a TASK hpo section that is itself a potential (the skipped line is the
- *     task file's): "tadah hpo: no HPOTARGET: name the hpotarget file with
- *     an HPOTARGET line above the first TASK line of the task file run.task.
- *     The TASK hpo section of the task file run.task is a potential (it has
- *     WEIGHTS): its HPOTARGET config.hpo line was a setting of the run that
- *     wrote it and is not read." (its own HPOTARGET line is not read).
- * Before the fix: every run was refused "tadah hpo: no HPOTARGET: name the
- * hpotarget file with --hpotarget, or with an HPOTARGET line in the task
- * file (a potential's own HPOTARGET line names the target of the run that
- * wrote it and is not read).", whatever its input: the message checks fail.
- * (This case pinned that message, the review of fix/old-record-keys
- * corrected it: --hpotarget does not reach a run of a task file, and no
- * potential was involved.) Before the HPOTARGET check: Context::get threw
- * "Key not found in the Context object: HPOTARGET". */
+ *   - the -c run of old.tadah, a potential whose HPOTARGET line the parse
+ *     did not read (a best_pot.tadah of an earlier version has one; the CLI
+ *     requires --hpotarget there, a program can build the run): the first
+ *     message and "old.tadah is a potential (it has WEIGHTS): its HPOTARGET
+ *     config.hpo line was a setting of the run that wrote it and is not
+ *     read.".
+ * Before the fix: every run was refused with one message, whatever its
+ * input, which named no configuration file without WEIGHTS and no potential
+ * whose line was not read: the message checks fail. Before the HPOTARGET
+ * check: Context::get threw "Key not found in the Context object:
+ * HPOTARGET". (A pin: these legs pass before the removal of the task
+ * files as well.) */
 TEST_CASE("hpo_run without HPOTARGET is refused, naming where the run's own "
           "goes",
           "[hpo][startup][run_settings]")
 {
-    using tadah::mlip::KeyOrigin;
     using tadah::mlip::KeyProvenance;
     const std::string none_given =
         "tadah hpo: no HPOTARGET: name the hpotarget file with --hpotarget, "
         "or with an HPOTARGET line in a configuration file without WEIGHTS.";
-    const std::string in_section =
-        "tadah hpo: no HPOTARGET: name the hpotarget file with an HPOTARGET "
-        "line in the TASK hpo section of the task file run.task, or above "
-        "its first TASK line.";
     const std::string not_read =
         " old.tadah is a potential (it has WEIGHTS): its HPOTARGET config.hpo "
         "line was a setting of the run that wrote it and is not read.";
     const tadah::core::SkippedKeyLine old_line{"old.tadah", 12, "HPOTARGET",
                                                {"config.hpo"}};
-    const tadah::core::SkippedKeyLine own_line{"run.task", 4, "HPOTARGET",
-                                               {"config.hpo"}};
     struct Leg {
         const char* name;
         bool with_provenance;
-        KeyOrigin::Kind kind;
         const char* file;
         std::vector<tadah::core::SkippedKeyLine> skipped;
         std::string message;
     };
     const std::vector<Leg> legs = {
-        {"no provenance", false, KeyOrigin::Kind::ConfigFile, "", {},
-         none_given},
-        {"-c config.tadah", true, KeyOrigin::Kind::ConfigFile, "config.tadah",
-         {}, none_given},
-        {"a TASK hpo section", true, KeyOrigin::Kind::TaskFile, "run.task", {},
-         in_section},
-        {"a TASK hpo section that includes old.tadah", true,
-         KeyOrigin::Kind::TaskFile, "run.task", {old_line},
-         in_section + not_read},
-        {"-c old.tadah", true, KeyOrigin::Kind::ConfigFile, "old.tadah",
-         {old_line}, none_given + not_read},
-        {"a TASK hpo section with WEIGHTS", true, KeyOrigin::Kind::TaskFile,
-         "run.task", {own_line},
-         "tadah hpo: no HPOTARGET: name the hpotarget file with an HPOTARGET "
-         "line above the first TASK line of the task file run.task. The TASK "
-         "hpo section of the task file run.task is a potential (it has "
-         "WEIGHTS): its HPOTARGET config.hpo line was a setting of the run "
-         "that wrote it and is not read."},
+        {"no provenance", false, "", {}, none_given},
+        {"-c config.tadah", true, "config.tadah", {}, none_given},
+        {"-c old.tadah", true, "old.tadah", {old_line}, none_given + not_read},
     };
     for (const Leg& leg : legs) {
         INFO(leg.name);
@@ -9543,7 +9508,7 @@ TEST_CASE("hpo_run without HPOTARGET is refused, naming where the run's own "
             "    TYPE PLAIN\n    LIB TADAH\n    ALGO RANDOM\n    MAXEVAL 1\n"));
         run.ctx.remove("HPOTARGET");
         const KeyProvenance provenance(tadah::core::Context(), run.ctx,
-                                       leg.file, leg.kind, {}, leg.skipped);
+                                       leg.file, {}, leg.skipped);
         std::string what;
         try {
             (void)tadah::hpo::hpo_run(run.ctx, leg.with_provenance

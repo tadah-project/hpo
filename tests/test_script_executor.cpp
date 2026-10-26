@@ -150,8 +150,8 @@ TEST_CASE("ScriptExecutor needs at least one worker", "[script_executor]") {
  * Before the fix: the executor was a function-local static built at its
  * first use with the width stored then; a later init_script_executor only
  * stored a width nobody read, so the second "run" got 2 workers, not 3 (a
- * second TASK hpo ran on the first one's THREADS while its journal reported
- * its own). */
+ * second hpo_run() ran on the first one's THREADS while its journal
+ * reported its own). */
 TEST_CASE("init_script_executor gives the executor the width it asks for, "
           "also after an earlier one", "[script_executor]") {
   for (int width : {2, 3, 1}) {

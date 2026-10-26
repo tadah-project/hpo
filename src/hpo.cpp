@@ -283,7 +283,7 @@ PcIsolation resolve_pc_isolation(const HPOTargets& trg, HPOLog& log)
  * processes (pc_worker_pool_init, which the run calls once it knows the
  * mode). Built when the run sizes them; on every way out of hpo_run() -- a
  * return, a signal stop, an error, also one at startup once they are built
- * -- the destructor removes MLIP's backend (a later task of the process
+ * -- the destructor removes MLIP's backend (a later caller in the process
  * runs its kernels on OpenMP again), stops the worker processes and joins
  * the executor's workers, so the next run in the process builds its own.
  * A run that threw used to leave its worker processes up (the next run's
@@ -355,8 +355,8 @@ int hpo_run(core::Context& ctx)
 
 int hpo_run(core::Context& ctx, const mlip::KeyProvenance* provenance)
 {
-    /* CHECK (`tadah hpo --check`, CHECK true in a TASK hpo section or in a
-     * training configuration that is not a potential) tells this function
+    /* CHECK (`tadah hpo --check`, or CHECK true in a training
+     * configuration that is not a potential) tells this function
      * what to do; it is a setting of the run, no key of the model. It is
      * taken out of the context before anything copies it (a task's context
      * holds CHECK false by default): the run's training record does not
@@ -501,8 +501,8 @@ int hpo_run_from_startup(core::Context& ctx, HPOLog& log,
     warmstart::begin_run();
 
     /* A potential's lines of the keys of its training record but DBFILE (a
-     * -c seed with WEIGHTS, or a potential a configuration or TASK hpo
-     * section includes with CONFIG; a potential of an earlier version has
+     * -c seed with WEIGHTS, or a potential a configuration includes with
+     * CONFIG; a potential of an earlier version has
      * them as key lines: a 1.5.x best_pot.tadah has HPOTARGET, VERBOSE and
      * NUMERIC, and VALIDATION when its run had a validation file) are not
      * read for this run: TaskFactory's parse skipped them and the WARNING names
@@ -526,11 +526,10 @@ int hpo_run_from_startup(core::Context& ctx, HPOLog& log,
      * for a caller that skips this). */
     core::require_no_retired_keys(ctx, "tadah hpo");
     /* The hpotarget file is the run's own: --hpotarget (tadah hpo -c
-     * requires it) or an HPOTARGET line of the task file. A TASK hpo
-     * section whose only HPOTARGET line was that of the potential it
-     * includes has none: the refusal names where the run's own goes, by
-     * where its keys came from (a run of a task file takes no
-     * command-line option), and the potential's line that was not read. */
+     * requires it), or, for a context a program builds, an HPOTARGET line
+     * of its configuration. A configuration whose only HPOTARGET line was
+     * that of the potential it includes has none: the refusal names where
+     * the run's own goes and the potential's line that was not read. */
     if (!ctx.has_stored("HPOTARGET"))
         throw std::runtime_error(mlip::missing_run_setting(
             "hpo", "HPOTARGET", "the hpotarget file", provenance));

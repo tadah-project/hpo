@@ -162,7 +162,7 @@ void HPOLog::reset_for_test()
  * cadence and pin tallies, the milestones, the timing and fan-out
  * statistics, the EMBF0, density and occupancy reports and the per-run
  * notes. open() calls it for every run, so the journal of a second run in
- * one process (an embedding, a task file with two TASK hpo blocks) counts,
+ * one process (an embedding that calls hpo_run() twice) counts,
  * times and reports that run only; it reset the status, the start tally,
  * the reports, the notes and the FD counters alone, and the second
  * journal's totals, timings and best were both runs'. The rank scope is

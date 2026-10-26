@@ -11,7 +11,7 @@
 // recorded the candidate's values), OALGO 3 appended a SIGMA per fit to
 // the reused context, an M_KRR -c potential with WEIGHTS could not be
 // trained at the first evaluation, and a second host on the same thread
-// (a second `TASK hpo` of a task file) evaluated the first host's model.
+// (a second hpo_run() of a program) evaluated the first host's model.
 //
 // The reference of each case is an independent Trainer built from the
 // candidate context and trained on the data as the host prepares it
@@ -506,7 +506,7 @@ TEST_CASE("Each OALGO 3 evaluation writes the weights of its own fit",
 /* Pins: two hosts on one thread, A (LAMBDA 1e-4, FSIGMA 1) and then B
  * (LAMBDA 1e-1, FSIGMA 0.1; neither searched), both FORCE true with OPTIM
  * CGRID2B (3), PC_ERMSE and PC_FRMSE, each evaluated once at CGRID2B[3] =
- * 3.95 (as two `TASK hpo` blocks of one task file run): B's loss is, bit
+ * 3.95 (as a program that calls hpo_run() twice runs them): B's loss is, bit
  * for bit, the loss B gives on a thread that evaluated nothing before, and
  * B's model was trained with B's LAMBDA and FSIGMA.
  * Before the fix: B evaluated A's model (the thread's Trainer of A with

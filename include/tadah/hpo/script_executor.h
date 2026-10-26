@@ -199,8 +199,8 @@ private:
  * Each run has an executor of its own width (THREADS, the per-rank core
  * budget): hpo_run() builds it with init_script_executor(THREADS) before the
  * optimiser runs and stops it with shutdown_script_executor() however the run
- * ends (RunPools, hpo.cpp), so the next run of the process -- a task file's
- * second TASK hpo, an embedding's next hpo_run() -- runs on its own THREADS.
+ * ends (RunPools, hpo.cpp), so the next run of the process -- an
+ * embedding's next hpo_run() -- runs on its own THREADS.
  * Stopping joins the workers, and their thread-local state (the THREAD-mode
  * LAMMPS instances and potentials of PcSlotState, pc_task_exec.h) is
  * destroyed with them, each on its own thread, as it was at process exit.

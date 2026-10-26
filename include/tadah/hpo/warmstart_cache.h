@@ -272,7 +272,7 @@ inline void begin_run() {
  * converged to (chain_cache) and the best snapshot, keep WARM's static
  * fallback. A chain's first evaluation then reads warm_prime_map (WARM) or
  * nothing (its --hotvar initial value), as in a run of its own process: the
- * cache is keyed by (chain, script, name), so a second run of a task file
+ * cache is keyed by (chain, script, name), so a second run in the process
  * with the same script read the first run's last relaxed value instead.
  * HPO_Host::prepare_best_publication() calls it at the start of every run;
  * WARM primes warm_prime_map before (and begin_run() cleared it before
