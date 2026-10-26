@@ -2861,7 +2861,10 @@ SearchSpace HPOTargets::build_search_space() const {
       if (!fixidx.empty() && d.user_index >= 1 && d.user_index <= fixidx.size())
         d.user_index = fixidx[d.user_index - 1];
       d.label      = kv.first;
-      if (o.opt.size() > 1) d.label += "[" + std::to_string(d.user_index) + "]";
+      /* FIXWEIGHT's index is a model weight, which a FIXWEIGHT with one
+       * value names too. */
+      if (o.opt.size() > 1 || kv.first == "FIXWEIGHT")
+        d.label += "[" + std::to_string(d.user_index) + "]";
       d.lo = o.lowbound[i];
       d.hi = o.highbound[i];
       d.tf = i < o.scale.size() ? o.scale[i] : DimTransform{};
@@ -2920,7 +2923,7 @@ void HPOTargets::write_search_space_files(const std::string& dir) const {
       "# (the same order as the params.tadah columns and the journal tables).\n"
       "#   dim          1-based position in the parameter vector\n"
       "#   label        KEY[n]: n is the OPTIM index (1-based; for FIXWEIGHT the model weight\n"
-      "#                named in FIXINDEX); single-value keys carry no index\n"
+      "#                named in FIXINDEX); single-value keys other than FIXWEIGHT carry no index\n"
       "#   lo, hi       real bounds the optimiser may not leave\n"
       "#   origin       OPTIM = explicit bounds; AUTO FRAC / AUTO RATIO = derived from the seed;\n"
       "#                AUTO FRAC>=0 = AUTO FRAC with lo = max(0, x0 - d) (AMPGRIDMB under\n"

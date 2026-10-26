@@ -1562,7 +1562,7 @@ HPO_Host<P,R>::HPO_Host(core::Context master_ctx,
      * optimap traversal that orders the optimiser vector, so params.tadah
      * columns, the journal and hpo_search_space.tsv agree by construction.
      * KEY[n] with n the OPTIM index (1-based; the pinned model weight for
-     * FIXWEIGHT); single-value keys carry no index. */
+     * FIXWEIGHT); single-value keys other than FIXWEIGHT carry no index. */
     param_labels_ = trg_.spec.parameter_labels;
     {
         std::size_t n_opt = 0;
