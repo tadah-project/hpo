@@ -46,8 +46,9 @@ namespace tadah::hpo {
  *   The kernel reads the snapshot directly without re-negating.
  * - `LossFunction::loss_prime(v, t, w)` returns dL/dt (the second arg).
  *   `dL/dv = -loss_prime(v, t, w)` for residual-based losses (L1/L2/
- *   LOG_COSH/HUBER/TUKEY); MAPE/RMSLE are rejected (host falls back
- *   to FD for those theta).
+ *   LOG_COSH/HUBER/TUKEY); MAPE and RMSLE take
+ *   `LossFunction::loss_prime_observed(v, t, w)`, which is dL/dv for
+ *   every loss function.
  *
  * Box DOFs in `lambda` (entries past 3*nlocal) are ignored by the IFT
  * kernel: the AdjointSnapshot only carries atom-axis rows of dF/dW.
@@ -84,8 +85,8 @@ void apply_ift_chain_kernel(const Eigen::VectorXd& dg_dW,
  *
  *  Adds `(dL/dO) . dO_dW` into dL_dW. dL/dO is computed from the
  *  LossFunction via the dispatcher described above. Returns false
- *  on unsupported loss kinds (MAPE/RMSLE); caller routes that
- *  observable's theta to needs_fd.
+ *  on unsupported loss kinds (loss_has_derivative_wrt_observed); caller
+ *  routes that observable's theta to needs_fd.
  * ---------------------------------------------------------------- */
 bool apply_loss_fold(const LossFunction&    loss_fn,
                      double                 v_observed,
@@ -205,7 +206,8 @@ bool compute_sims_grad_for_script(const SimsGradScriptInput& input,
  *  Returns true iff every NON-FAILED script was handled analytically.
  *  Returns false (and pushes all caller-supplied theta indices into
  *  `needs_fd`) only on STRUCTURAL failures: unsupported loss kind
- *  (MAPE/RMSLE), observable-registry parser failure on the script's
+ *  (loss_has_derivative_wrt_observed), observable-registry parser failure
+ *  on the script's
  *  varloss expressions, or a script with observables whose input does not
  *  carry the direct theta term (direct_theta false: the term is unknown).
  *  The orchestrator then falls back to all-FD.
@@ -220,17 +222,18 @@ bool compute_sims_grad_dWchain(
     std::vector<int>&                       needs_fd_out);
 
 /* ---------------------------------------------------------------- *
- *  Whether loss_grad_wrt_observed differentiates `fn`: the residual
- *  losses (L1, L2, LOG_COSH, HUBER, TUKEY) yes, MAPE and RMSLE no. The
- *  startup rule of GRAD_STRATEGY ANALYTICAL (analytical_loss_term_blocker,
- *  analytical_gate.h) asks it of each PC_OBSERVABLE --loss.
+ *  Whether loss_grad_wrt_observed differentiates `fn`: every loss
+ *  function of LossFunction (L1, L2, LOG_COSH, HUBER, TUKEY, MAPE,
+ *  RMSLE). The startup rule of GRAD_STRATEGY ANALYTICAL
+ *  (analytical_loss_term_blocker, analytical_gate.h) asks it of the loss
+ *  function of each PC_OBSERVABLE term.
  * ---------------------------------------------------------------- */
 bool loss_has_derivative_wrt_observed(const LossFunction& fn);
 
 /* ---------------------------------------------------------------- *
- *  Convenience: dL/dv for the supported loss kinds.
- *  Public so tests and the LAMMPS-side adapter can re-use the same
- *  dispatcher without duplicating the sign-flip rule.
+ *  Convenience: dL/dv, LossFunction::loss_prime_observed, for the
+ *  supported loss kinds. Public so tests and the LAMMPS-side adapter can
+ *  re-use the same dispatcher.
  *  Returns false (and leaves out untouched) on unsupported losses
  *  (loss_has_derivative_wrt_observed).
  * ---------------------------------------------------------------- */
@@ -273,7 +276,8 @@ bool loss_grad_wrt_observed(const LossFunction& fn,
  *  Returns true iff every NON-FAILED, non-constant observable was handled
  *  analytically. Returns false (and pushes all caller-supplied theta
  *  indices into `needs_fd_out`) only on STRUCTURAL failures:
- *  unsupported loss kind (MAPE/RMSLE), needs_adjoint=true on the
+ *  unsupported loss kind (loss_has_derivative_wrt_observed),
+ *  needs_adjoint=true on the
  *  MVP path, or no dO/dW (a value with no analytical derivative, such as
  *  the force-scaled penalty of an unconverged relaxation). Matches
  *  compute_sims_grad_dWchain's contract.
@@ -285,8 +289,8 @@ struct ObservableGradInput {
     double          target  = 0.0;
     /** Loss weight for this observable. */
     double          weight  = 1.0;
-    /** Loss-function kind (L1/L2/HUBER/LOG_COSH/TUKEY supported;
-     *  MAPE/RMSLE rejected, observable routes to FD). */
+    /** Loss-function kind (every kind of LossFunction is supported:
+     *  loss_has_derivative_wrt_observed). */
     LossFunction    loss_fn{};
 
     /** dO/dW at current W (size = n_W). For cohesive_energy this is

@@ -898,41 +898,51 @@ void HPOTargets::read(const std::string& fn)
             what + ", so each key is given once");
     };
 
-    /* FAILSCORE, LOSS and PC_SCRIPT_TIMEOUT (MAXTIME): each line that
-     * reads one takes the value given above it -- a PC_LAMMPS line all
-     * three, a PC_FAILPROBE line FAILSCORE and PC_SCRIPT_TIMEOUT, a
-     * PC_OBSERVABLE line LOSS -- and the run-wide uses (the ceiling of
-     * every loss, the validation metrics' loss) the last FAILSCORE and
-     * LOSS. A second line is read only after such a line has taken the
-     * first: otherwise it would replace it without effect on any line. A
+    /* FAILSCORE, LOSS and PC_SCRIPT_TIMEOUT (MAXTIME): a line after one
+     * reads its value when it uses it -- a PC_LAMMPS or PC_FAILPROBE line
+     * without --failscore the FAILSCORE, one without --maxtime the
+     * PC_SCRIPT_TIMEOUT, a --varloss term or a PC_OBSERVABLE line that
+     * names no loss function the LOSS -- and the run-wide uses (the
+     * ceiling of every loss, the validation metrics' loss) the last
+     * FAILSCORE and LOSS. A second line is read only after a line has read
+     * the first: otherwise the first would have no effect on any line. A
      * PC_SCRIPT_TIMEOUT, or a LOSS in a file without a metric line, that
-     * no line after it takes is refused at the end of the file: it would
-     * have no effect. The line, its text and spelling, and whether a line
-     * has taken it. */
+     * no line after it reads is refused at the end of the file: it would
+     * have no effect. (A line that gives its own value does not read the
+     * one above it: such lines alone after a LOSS, FAILSCORE or
+     * PC_SCRIPT_TIMEOUT line left it without effect.) The line, its text
+     * and spelling, and whether a line has read it. */
     struct LineSetting {
-        std::size_t line; std::string text; std::string spelling; bool taken;
+        std::size_t line; std::string text; std::string spelling; bool read;
     };
     std::map<std::string, LineSetting> line_settings;
-    /* @p takers: the lines that take the key. */
-    auto set_for_lines = [&](const std::string& key, const char* takers) {
+    /* @p readers: the lines that read the key. */
+    auto set_for_lines = [&](const std::string& key, const char* readers) {
         const std::string name = key == "MAXTIME" ? "PC_SCRIPT_TIMEOUT" : key;
         const auto it = line_settings.find(name);
-        if (it != line_settings.end() && !it->second.taken)
+        if (it != line_settings.end() && !it->second.read)
             throw std::runtime_error(
                 key + " is set twice (first on line " +
                 std::to_string(it->second.line) +
                 (it->second.spelling != key ? ", as " + it->second.spelling
                                             : std::string()) +
-                ") and no " + takers +
-                " line between takes the first; each key is given once");
+                ") and no line between reads the first (" + readers +
+                "); each key is given once");
         line_settings[name] = {nline, line, key, false};
     };
-    auto lines_take_settings = [&](std::initializer_list<const char*> names) {
-        for (const char* name : names)
-            if (const auto it = line_settings.find(name);
-                it != line_settings.end())
-                it->second.taken = true;
+    /* The line read now uses the setting @p name when @p uses. */
+    auto line_reads_setting = [&](const char* name, bool uses) {
+        if (!uses) return;
+        if (const auto it = line_settings.find(name);
+            it != line_settings.end())
+            it->second.read = true;
     };
+    const char* const kFailscoreReaders =
+        "a PC_LAMMPS or PC_FAILPROBE line without --failscore";
+    const char* const kTimeoutReaders =
+        "a PC_LAMMPS or PC_FAILPROBE line without --maxtime";
+    const char* const kLossReaders =
+        "a --varloss or PC_OBSERVABLE term that names no loss function";
     /* The line of the last LOSS line (0: none), which the metric lines
      * take. */
     std::size_t loss_line = 0;
@@ -1391,10 +1401,9 @@ void HPOTargets::read(const std::string& fn)
 
             /* A top-level key that takes one value is set once: a second
              * line would replace the first's value. FAILSCORE, LOSS and
-             * PC_SCRIPT_TIMEOUT (MAXTIME) are set again only after a
-             * PC_LAMMPS or PC_FAILPROBE line has taken them
-             * (set_for_lines); the metric and gate keys refuse a repeat
-             * themselves. */
+             * PC_SCRIPT_TIMEOUT (MAXTIME) are set again only after a line
+             * has read them (set_for_lines); the metric and gate keys
+             * refuse a repeat themselves. */
             {
                 static const std::set<std::string> once = {
                     "QFLUSH", "OUTPUT", "BOUTPUT", "DIGITS", "DUMP",
@@ -1417,7 +1426,7 @@ void HPOTargets::read(const std::string& fn)
              * to FAILSCORE. Negative losses (negative-weight --varloss
              * terms) stay usable under any positive FAILSCORE. */
             if (key=="FAILSCORE") {
-                set_for_lines(key, "PC_LAMMPS or PC_FAILPROBE");
+                set_for_lines(key, kFailscoreReaders);
                 FAIL_SCORE = parse_positive(single_value(iss, key), key,
                                             "finite number");
             }
@@ -1427,14 +1436,16 @@ void HPOTargets::read(const std::string& fn)
              * the legacy alias, kept so existing .hpo configs keep parsing.
              * NOTE: the OPTIMIZER-block MAXTIME (whole-run stop) is a DIFFERENT
              * setting parsed in optimizer_block.cpp -- do not conflate. The
-             * two spellings are one key (set_for_lines); with a PC_LAMMPS
-             * line between, the later line is the run-wide value, and
-             * hpo.cpp warns when both spellings were given. */
+             * two spellings are one key (set_for_lines); with a line
+             * between that reads the first, the later line is the value
+             * the hpo_run.log summary gives, and hpo.cpp warns when both
+             * spellings were given. */
             else if (key=="PC_SCRIPT_TIMEOUT" || key=="MAXTIME") {
                 /* A LAMMPS time spec that is off, unlimited or positive:
                  * it becomes `timer timeout <spec>`, and its seconds size
-                 * the PROCESS worker deadline. */
-                set_for_lines(key, "PC_LAMMPS or PC_FAILPROBE");
+                 * the PROCESS worker deadline of the tasks of each line
+                 * that reads it. */
+                set_for_lines(key, kTimeoutReaders);
                 MAX_TIME = single_value(iss, key);
                 MAX_TIME_seconds = parse_script_timeout(MAX_TIME, key);
                 MAX_TIME_key = key;
@@ -1524,7 +1535,10 @@ void HPOTargets::read(const std::string& fn)
                                 /*failprobe=*/true);
                 LS.back().line = nline;
                 LS.back().line_text = line;
-                lines_take_settings({"FAILSCORE", "PC_SCRIPT_TIMEOUT"});
+                line_reads_setting("FAILSCORE",
+                                   LS.back().reads_default_failscore);
+                line_reads_setting("PC_SCRIPT_TIMEOUT",
+                                   LS.back().reads_default_maxtime);
                 LammpsSim& probe = LS.back();
                 if (!probe.n_varloss.empty() || !probe.i_varloss.empty())
                     throw std::runtime_error(
@@ -1590,7 +1604,7 @@ void HPOTargets::read(const std::string& fn)
             /* loss -------------------------------------------------- */
             else if (key=="LOSS")
             {
-                set_for_lines(key, "PC_LAMMPS or PC_OBSERVABLE");
+                set_for_lines(key, kLossReaders);
                 /* LOSS <type> [<param>]. The optional parameter (HUBER
                  * delta, TUKEY c) is validated and defaulted by
                  * LossFunction::resolve_params -- the same path the
@@ -1636,7 +1650,11 @@ void HPOTargets::read(const std::string& fn)
                 LS.emplace_back(cmd, MAX_TIME, FAIL_SCORE, globalLoss);
                 LS.back().line = nline;
                 LS.back().line_text = line;
-                lines_take_settings({"FAILSCORE", "LOSS", "PC_SCRIPT_TIMEOUT"});
+                line_reads_setting("FAILSCORE",
+                                   LS.back().reads_default_failscore);
+                line_reads_setting("LOSS", LS.back().reads_default_loss);
+                line_reads_setting("PC_SCRIPT_TIMEOUT",
+                                   LS.back().reads_default_maxtime);
             }
 
             /* Typed observables ------------------------------------
@@ -1653,7 +1671,8 @@ void HPOTargets::read(const std::string& fn)
                 std::string cmd; std::getline(iss, cmd);
                 observables.push_back(parse_pc_observable_line(cmd, globalLoss));
                 observable_lines.push_back({nline, line});
-                lines_take_settings({"LOSS"});
+                line_reads_setting("LOSS",
+                                   observables.back()->reads_default_loss());
             }
 
             /* per-metric weight lines ------------------------------
@@ -1749,29 +1768,31 @@ void HPOTargets::read(const std::string& fn)
     }
 
     /* A PC_SCRIPT_TIMEOUT (MAXTIME) that no PC_LAMMPS or PC_FAILPROBE line
-     * after it takes, and a LOSS that no PC_LAMMPS or PC_OBSERVABLE line
-     * after it takes in a file without a metric line, would have no
-     * effect (set_for_lines); refused at its line. A FAILSCORE is the
-     * ceiling of every loss as well. */
+     * without --maxtime after it reads, and a LOSS that no --varloss or
+     * PC_OBSERVABLE term without a loss function of its own after it reads
+     * in a file without a metric line, would have no effect
+     * (set_for_lines); refused at its line. A FAILSCORE is the ceiling of
+     * every loss as well. */
     {
         const bool has_metric_lines = use_emae || use_ermse || use_errmse ||
                                       use_ersq || use_frmse || use_srmse;
         if (const auto it = line_settings.find("PC_SCRIPT_TIMEOUT");
-            it != line_settings.end() && !it->second.taken)
+            it != line_settings.end() && !it->second.read)
             throw std::runtime_error(at_line(it->second.line,
                 it->second.spelling + " sets the script timeout of the "
-                "PC_LAMMPS and PC_FAILPROBE lines after it, and no such line "
-                "follows it; it would have no effect",
+                "PC_LAMMPS and PC_FAILPROBE lines after it that give no "
+                "--maxtime, and no such line follows it; it would have no "
+                "effect",
                 it->second.text));
         if (const auto it = line_settings.find("LOSS");
-            it != line_settings.end() && !it->second.taken &&
+            it != line_settings.end() && !it->second.read &&
             !has_metric_lines)
             throw std::runtime_error(at_line(it->second.line,
-                "LOSS sets the loss function of the PC_LAMMPS and "
-                "PC_OBSERVABLE lines after it and of the metric lines "
-                "(PC_EMAE, PC_ERMSE, PC_ErRMSE, PC_ERSQ, PC_FRMSE, "
-                "PC_SRMSE_GPA), and the file has no metric line and no such "
-                "line after it; it would have no effect",
+                "LOSS sets the loss function of the --varloss and "
+                "PC_OBSERVABLE terms after it that name none, and of the "
+                "metric lines (PC_EMAE, PC_ERMSE, PC_ErRMSE, PC_ERSQ, "
+                "PC_FRMSE, PC_SRMSE_GPA), and the file has no metric line and "
+                "no such term after it; it would have no effect",
                 it->second.text));
     }
 

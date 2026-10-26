@@ -52,6 +52,8 @@ public:
          * a0_max]; the midpoint if absent. */
         std::optional<double>      a0_initial;
         tadah::LossFunction        lossfn{tadah::LossFunction::Type::L2};
+        /* lossfn is the line's --loss, not the LOSS above the line. */
+        bool                       lossfn_given = false;
 
         /* Relaxer tuning knobs, set by the options of the line. */
         /* Energy convergence tolerance forwarded to NativeRelaxer::Options::etol.
@@ -147,6 +149,7 @@ public:
     double target() const override { return cfg_.target; }
     double weight() const override { return cfg_.weight; }
     const tadah::LossFunction& lossfn() const override { return cfg_.lossfn; }
+    bool reads_default_loss() const override { return !cfg_.lossfn_given; }
 
     /** The a0 a chain's first relaxation starts from: --hotvar a0 <init>,
      *  or the midpoint of the window. */

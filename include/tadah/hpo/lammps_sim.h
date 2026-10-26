@@ -158,10 +158,14 @@ class LammpsSim {
     };
     std::vector<LineVariable> line_variables;
 
-    /* Whether a --varloss term of the line takes the line's default loss
-     * function (the LOSS read above the line): one without a loss function
-     * of its own. */
+    /* Which of the settings read above the line it uses (HPOTargets: a
+     * LOSS, FAILSCORE or PC_SCRIPT_TIMEOUT line that no line after it uses
+     * is refused). The LOSS: a --varloss term of the line without a loss
+     * function of its own. The FAILSCORE: the line has no --failscore. The
+     * PC_SCRIPT_TIMEOUT: the line has no --maxtime. */
     bool reads_default_loss = false;
+    bool reads_default_failscore = true;
+    bool reads_default_maxtime = true;
 
     /* The line of the target file that holds this PC_LAMMPS or PC_FAILPROBE
      * line (its last physical line) and its text, for the refusals the

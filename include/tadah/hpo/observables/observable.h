@@ -186,6 +186,12 @@ public:
 
     /** Loss function (L1/L2/HUBER/...). */
     virtual const tadah::LossFunction& lossfn() const = 0;
+
+    /** Whether lossfn() is the default the parser hands the observable,
+     *  the loss function of the LOSS line above its line, rather than one
+     *  the line names (--loss): HPOTargets refuses a LOSS line that no
+     *  term after it reads. An observable that names none reads it. */
+    virtual bool reads_default_loss() const { return true; }
 };
 
 /* Names of the k-th PC_OBSERVABLE line, k its 1-based ordinal among the

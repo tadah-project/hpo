@@ -575,6 +575,7 @@ void LammpsSim::parse_tokens() {
             ? parse_positive(tokens[++i], "PC_FAILPROBE --failscore",
                              "finite number")
             : parse_finite(tokens[++i], "--failscore");
+        reads_default_failscore = false;
         i++;
         hpo_option_read("--failscore takes a single value");
       } else {
@@ -586,6 +587,7 @@ void LammpsSim::parse_tokens() {
       if (i + 1 < tokens.size()) {
         maxtime = tokens[++i];
         (void)parse_script_timeout(maxtime, "--maxtime");
+        reads_default_maxtime = false;
         i++;
         hpo_option_read("--maxtime takes a single value");
       } else {

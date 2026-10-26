@@ -157,6 +157,7 @@ parse_cohesive_energy(const std::vector<std::string>& tokens, std::size_t start,
                 params.push_back(
                     parse_double(tokens[++i], "--loss " + kind + " parameter"));
             cfg.lossfn = tadah::LossFunction(type, params);
+            cfg.lossfn_given = true;
         } else if (t == "--maxiter") {
             once(t);
             /* Caps NativeRelaxer iterations. Default is 5000 (deep

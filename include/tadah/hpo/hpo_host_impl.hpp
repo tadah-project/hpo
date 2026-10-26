@@ -1949,6 +1949,10 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
   /* A task that could not start (CREATE_FAIL): it does not abort the eval,
    * but the eval has a failed simulation all the same (r.sims_failed). */
   std::atomic<bool> create_failed{false};
+  /* The PC_FAILPROBE task failed (a failed run, or a variable it could not
+   * read back): its S slot holds the --failscore clamp, and the failure is
+   * journalled and the eval failed where the task's result is applied. */
+  std::atomic<bool> probe_task_failed{false};
   /* Separate run-local latch so the rate-limited "rejecting" warning fires at
    * most once per eval, decoupled from eval_aborted (a crashed script raises
    * eval_aborted without being a hot-var rejection). Replaces the global
@@ -2035,6 +2039,8 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
        * could not be rendered) is journalled as for the other failures. */
       journal_task_failure(tres.error_msg);
       create_failed.store(true, std::memory_order_relaxed);
+      if (lsim.is_failprobe)
+        probe_task_failed.store(true, std::memory_order_relaxed);
       if (fg_on) fail_state.record_infra();
       for (const auto& n : lsim.n_outvar) {
         (void)n;
@@ -2320,6 +2326,8 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
 
     if (fail) {
       eval_aborted.store(true, std::memory_order_relaxed);
+      if (lsim.is_failprobe)
+        probe_task_failed.store(true, std::memory_order_relaxed);
     }
 
     /* Hot-var validation + cache update. Only meaningful for hot
@@ -2548,10 +2556,11 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
       if (!r.v_outvar[i].empty()) {
         try { S = tadah::core::to_double(r.v_outvar[i].front()); } catch (...) {}
       }
-      /* S >= failscore means the probe task itself failed (its outvars
-       * were clamped to failscore strings) -- that is "probe garbage",
-       * not a huge-but-real S: fall through to the band-D branch below
-       * so a broken probe consistently reads as "potential sick". */
+      /* S >= failscore: the probe task itself failed (its outvars were
+       * clamped to failscore strings), or its script gave such a value --
+       * "probe garbage", not a huge-but-real S, as are a negative and a
+       * non-finite S: the branch below makes a broken probe consistently
+       * read as "potential sick". */
       if (failprobe_value_is_real(S, LS[i].failscore)) {
         fail_state.set_S(S);
         if (S > trg_.failprobe_gate) {
@@ -2578,10 +2587,38 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
                 + ")");
           }
         }
-      } else if (fg_on) {
-        /* The probe itself failed or produced garbage -- by design it cannot,
-         * so treat the potential as sick (band D, S unavailable = band top). */
-        fail_state.record(FailBand::D);
+      } else {
+        /* No probe value: the probe task failed (its S slot holds the
+         * --failscore clamp), or its script gave an S that is negative,
+         * not finite, or at or above --failscore. By design a probe cannot
+         * fail, so the potential is treated as sick: under ON band D, S
+         * unavailable = band top. Such an S is a failed probe, as a failed
+         * probe task is, and fails the eval in both modes as the gate
+         * does: everything still queued is cancelled, this eval's
+         * in-flight sims are SIGKILLed (PROCESS mode), and the journal
+         * says why. Under OFF this S was ignored (a value at or above
+         * --failscore, or inf, passed with the usable loss of the other
+         * scripts); under ON it graded the eval without a word, and the
+         * other scripts ran on. A failed probe task has been journalled
+         * and has failed the eval where its result was applied. */
+        if (fg_on) fail_state.record(FailBand::D);
+        if (!probe_task_failed.load(std::memory_order_relaxed)) {
+          eval_aborted.store(true, std::memory_order_relaxed);
+          if (pc_process_mode) pc_worker_pool().kill_matching(r.iter);
+          /* counted per run (HPOLog::count_in_run) */
+          const std::size_t n =
+              HPOLog::instance().count_in_run("FAILPROBE no probe value");
+          if (n <= 5 || (n & (n - 1)) == 0) {
+            HPOLog::instance().warning(
+                "eval " + std::to_string(r.iter) + " FAILPROBE: S="
+                + tadah::core::format_roundtrip(S)
+                + " is not a probe value (one is at least 0 and below the "
+                  "line's --failscore, "
+                + tadah::core::format_roundtrip(LS[i].failscore)
+                + ") -- the evaluation fails (total="
+                + std::to_string(n) + ")");
+          }
+        }
       }
       return;
     }
