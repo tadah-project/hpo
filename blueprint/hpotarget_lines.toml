@@ -5126,6 +5126,40 @@ text = "PC_FRMSE 0.1 1"
 error = "MODEL M_KRR Kern_Linear 2 fits the energies per atom of whole structures over ESIGMA, without forces, stresses or priorities: eweight 0 of structure 1 of 2 ('H2 at 0.8 A') of dataset 1 (lines_no_energy.db) would be ignored. Implementation 1 (MODEL M_KRR Kern_Linear 1) gives each structure's energy its priority (and leaves out one of eweight 0); implementation 2 fits when every structure has eweight 1."
 
 [[rule]]
+id = "RULE.fit_krr_implementation2_OALGO"
+title = "M_KRR implementation 2 reads no OALGO"
+check = "startup"
+keys = ["ROOT.OPTIM"]
+msg = "MODEL M_KRR {name} 2 solves (K + LAMBDA sigma^2 I) w = t by Cholesky and reads no OALGO: {what} would be ignored. Implementation 1 (MODEL M_KRR {name} 1) solves with OALGO; implementation 2 fits {text}."
+doc = """\
+M_KRR implementation 2 solves its system by Cholesky and reads no OALGO. \
+When the run starts, without a line, tadah hpo refuses OPTIM OALGO with \
+it, and, once it has read the training data, an OALGO other than the \
+default (OALGO 1, with no second value or 1e-8)."""
+msg_doc = """\
+The message names the kernel of MODEL, what implementation 2 would ignore \
+(OPTIM OALGO, or the OALGO line with its values) and how implementation 2 \
+fits: without OPTIM OALGO, or without an OALGO line or with the default \
+written out, OALGO 1 or OALGO 1 1e-8."""
+
+[[rule.invalid]]
+wrap = "root"
+check = "startup"
+context = "lines_krr2_rcond"
+at = "none"
+text = "OPTIM OALGO (2) 1e-9 1e-7"
+error = "MODEL M_KRR Kern_Linear 2 solves (K + LAMBDA sigma^2 I) w = t by Cholesky and reads no OALGO: OPTIM OALGO would be ignored. Implementation 1 (MODEL M_KRR Kern_Linear 1) solves with OALGO; implementation 2 fits without OPTIM OALGO."
+
+[[rule.invalid]]
+wrap = "root"
+check = "check"
+context = "lines_krr2_oalgo4"
+at = "none"
+doc = "The training configuration has OALGO 4."
+text = "PC_EMAE 5 1"
+error = "MODEL M_KRR Kern_Linear 2 solves (K + LAMBDA sigma^2 I) w = t by Cholesky and reads no OALGO: OALGO 4 would be ignored. Implementation 1 (MODEL M_KRR Kern_Linear 1) solves with OALGO; implementation 2 fits without an OALGO line or with the default written out, OALGO 1 or OALGO 1 1e-8."
+
+[[rule]]
 id = "RULE.fit_error_scales"
 title = "The error scales of the fit are numbers above 0"
 check = "startup"
@@ -5853,7 +5887,7 @@ RCTYPE2B Cut_Cos
 RCUT2B 5.0
 VERBOSE 0
 MODEL M_KRR Kern_Linear 2
-OALGO 4
+OALGO 1
 LAMBDA 1e-3
 SBASIS 2
 """
@@ -5873,7 +5907,7 @@ RCTYPE2B Cut_Cos
 RCUT2B 5.0
 VERBOSE 0
 MODEL M_KRR Kern_Linear 2
-OALGO 4
+OALGO 1
 LAMBDA 1e-3
 SBASIS 2
 WDBFILE 1
@@ -5905,6 +5939,46 @@ config = """
 ATOM H
 WATOM 1.0
 DBFILE lines_no_energy.db
+INIT2B true
+INITMB false
+TYPE2B D2_BP 2 2 H H
+CGRID2B 1.0 2.0
+SGRID2B 0.5 1.0
+RCTYPE2B Cut_Cos
+RCUT2B 5.0
+VERBOSE 0
+MODEL M_KRR Kern_Linear 2
+OALGO 1
+LAMBDA 1e-3
+SBASIS 2
+"""
+
+[context.lines_krr2_rcond]
+doc = "The training configuration of lines_krr2 with OALGO 1 1e-8, the default written out."
+config = """
+ATOM H
+WATOM 1.0
+DBFILE dummy.db
+INIT2B true
+INITMB false
+TYPE2B D2_BP 2 2 H H
+CGRID2B 1.0 2.0
+SGRID2B 0.5 1.0
+RCTYPE2B Cut_Cos
+RCUT2B 5.0
+VERBOSE 0
+MODEL M_KRR Kern_Linear 2
+OALGO 1 1e-8
+LAMBDA 1e-3
+SBASIS 2
+"""
+
+[context.lines_krr2_oalgo4]
+doc = "The training configuration of lines_krr2 with OALGO 4 and the dataset lines_weighted.db, which tadah hpo --check also takes as the validation configuration."
+config = """
+ATOM H
+WATOM 1.0
+DBFILE lines_weighted.db
 INIT2B true
 INITMB false
 TYPE2B D2_BP 2 2 H H

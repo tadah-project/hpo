@@ -11,6 +11,7 @@
 #include <tadah/core/intercept_layout.h>
 #include <tadah/core/logger.h>
 #include <tadah/core/number_format.h>
+#include <tadah/core/periodic_table.h>
 #include <tadah/core/utils.h>
 #include <tadah/hpo/bump_support_gate.h>
 #include <tadah/hpo/hpo_log.h>
@@ -421,8 +422,24 @@ void require_error_scale_search_changes_the_fit(core::Context &ctx,
 
 }  // namespace
 
+std::set<core::Element> declared_element_set(const core::Context &train_ctx) {
+  if (!train_ctx.has_stored("ATOM"))
+    throw std::runtime_error(
+        "No training DBFILE: the ATOM key is required in the training "
+        "configuration to declare the element set (e.g. 'ATOM Ta'). " +
+        tadah::mlip::potential_has_no_datasets_advice());
+  std::set<core::Element> elements;
+  for (const auto &sym : train_ctx("ATOM"))
+    elements.insert(core::PeriodicTable::find_by_symbol(sym));
+  return elements;
+}
+
 void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
                         bool has_train_db, bool has_validation) {
+  /* --- the element set of a run without training data ------------------
+   * declared by ATOM, as HPOEngine::run reads it. */
+  if (!has_train_db) (void)declared_element_set(train_ctx);
+
   /* --- the settings of the fit, as every fit refuses them --------------
    * A retired key (with its conversion), an error scale that is not a
    * number > 0 (a relative part >= 0), one other than its default for a
@@ -791,10 +808,11 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
    * it and score FAILSCORE, so it is refused here, with the fit's message
    * (and OPTIM LAMBDA under OALGO 3 with such a column).
    * So is OPTIM of a key that M_KRR implementation 2 ignores (FSIGMA,
-   * SSIGMA, WDBFILE: every candidate other than the default would be
-   * refused; its solve applies ESIGMA); its other refusals depend on
-   * the training data, and HPO_Host makes them once it has read them. A
-   * run whose evaluations fit nothing reads none of these. */
+   * SSIGMA, WDBFILE, and OALGO, which its Cholesky solve does not read:
+   * every candidate other than the default would be refused; its solve
+   * applies ESIGMA); its other refusals depend on the training data, and
+   * HPO_Host makes them once it has read them. A run whose evaluations
+   * fit nothing reads none of these. */
   tadah::mlip::require_krr_implementation(train_ctx);
   if (has_train_db && !fixindex_pins_every_weight(train_ctx)) {
     tadah::mlip::require_fit_lambda(train_ctx);
@@ -840,6 +858,11 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
         throw std::runtime_error(tadah::mlip::krr_implementation2_ignores(
             kernel, std::string("OPTIM ") + k.key, "applies it", k.instead));
       }
+      // Its Cholesky solve reads no OALGO: every candidate of OPTIM OALGO
+      // but the default would be refused.
+      if (optim_searches(trg, "OALGO"))
+        throw std::runtime_error(tadah::mlip::krr_implementation2_reads_no_oalgo(
+            kernel, "OPTIM OALGO", "without OPTIM OALGO"));
     }
     require_error_scale_search_changes_the_fit(train_ctx, trg);
   } else {

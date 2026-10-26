@@ -2,10 +2,12 @@
 #define TADAH_HPO_STARTUP_VALIDATION_H
 
 #include <tadah/core/context.h>
+#include <tadah/core/element.h>
 #include <tadah/hpo/hpo_targets.h>
 
 #include <cstddef>
 #include <limits>
+#include <set>
 #include <string>
 
 namespace tadah {
@@ -59,6 +61,17 @@ RawEmbeddingF0 derive_raw_embedding_f0(const core::Context &train_ctx);
  *  M_KRR kernel). An evaluation of a run with training data fits the
  *  model otherwise; one without training data never does. */
 bool fixindex_pins_every_weight(const core::Context &ctx);
+
+/** The element set of a run without a training DBFILE: the elements the
+ *  ATOM key of the training configuration declares, which no data gives
+ *  (a validation file is optional too). HPOEngine::run takes the element
+ *  set from it, and validate_hpo_setup() applies it, so that `tadah hpo
+ *  --check` and a program that validates a setup refuse what a run
+ *  refuses.
+ *  @throws std::runtime_error without ATOM: "No training DBFILE: the ATOM
+ *  key is required in the training configuration to declare the element
+ *  set (e.g. 'ATOM Ta'). ..." */
+std::set<core::Element> declared_element_set(const core::Context &train_ctx);
 
 /** Fail-fast validation of the HPO setup, run once after HPOTargets
  *  parsing and before HPO_Host construction. Throws std::runtime_error
