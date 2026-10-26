@@ -2250,7 +2250,7 @@ id = "INIT.K_TOTAL"
 name = "K_TOTAL"
 blocks = ["INIT", "RESTART"]
 synopsis = "K_TOTAL <n>"
-args = [ { name = "n", kind = "integer", min = 0, max = 1000000, what = "{key}" } ]
+args = [ { name = "n", kind = "integer", min = 1, what = "{key}" } ]
 repeat = "error"
 repeat_msg = "K_TOTAL is set twice in the {block} block (first on line {first_line}); each key is given once"
 repeat_doc = """\
@@ -2264,9 +2264,11 @@ The number of starting points of the chain of the block: a chain of \
 several METHOD lines stops at K_TOTAL points. 0 sets no limit."""
 long_doc = """\
 In a RESTART block it is the number of points of each restart."""
-quirk = """\
-With a single METHOD line of RANDOM, LHS or SOBOL, K_TOTAL replaces its K \
-and can draw more points than K."""
+checks = [
+  { msg = "K_TOTAL {value} caps nothing: the METHOD lines of the block give at most {count} starting points ({list}), and K_TOTAL keeps the first K_TOTAL starting points", doc = "When the file is read, at the K_TOTAL line: a K_TOTAL at or above the starting points the METHOD lines give, K of a RANDOM, LHS or SOBOL line and 1 of a CONFIG or WARM line; {list} names the lines. The INIT blocks of one optimiser make one chain, and so do the RESTART blocks." },
+  { msg = "K_TOTAL {value} caps nothing: the METHOD lines of the block give at most 1 starting point ({list}), and K_TOTAL keeps the first K_TOTAL starting points", doc = "When the file is read, at the K_TOTAL line: METHOD lines that give one starting point, a CONFIG or a WARM line." },
+  { msg = "K_TOTAL {value} caps nothing: a block without a METHOD line gives one starting point (the CONFIG point), and K_TOTAL keeps the first K_TOTAL starting points", doc = "When the file is read, at the K_TOTAL line: a block without a METHOD line." },
+]
 
 [[key.examples]]
 wrap = "init"
@@ -2276,16 +2278,45 @@ METHOD RANDOM 5
 K_TOTAL 3'''
 
 [[key.examples]]
-doc = "With a single METHOD line K_TOTAL replaces its K: eight points are drawn."
+doc = "A single METHOD line is capped too: the first three of its eight points are kept."
 wrap = "init"
 text = '''
-METHOD RANDOM 2
-K_TOTAL 8'''
+METHOD RANDOM 8
+K_TOTAL 3'''
 
 [[key.invalid]]
 wrap = "init"
 text = "K_TOTAL x"
-error = "K_TOTAL must be an integer from 0 to 1000000, got 'x'"
+error = "K_TOTAL must be an integer >= 1, got 'x'"
+
+[[key.invalid]]
+wrap = "init"
+text = '''
+METHOD RANDOM 2
+K_TOTAL 0'''
+at = 2
+error = "K_TOTAL must be an integer >= 1, got '0'"
+
+[[key.invalid]]
+wrap = "init"
+at = 2
+text = '''
+METHOD RANDOM 2
+K_TOTAL 8'''
+error = "K_TOTAL 8 caps nothing: the METHOD lines of the block give at most 2 starting points (RANDOM 2), and K_TOTAL keeps the first K_TOTAL starting points"
+
+[[key.invalid]]
+wrap = "init"
+at = 2
+text = '''
+METHOD CONFIG
+K_TOTAL 1'''
+error = "K_TOTAL 1 caps nothing: the METHOD lines of the block give at most 1 starting point (CONFIG), and K_TOTAL keeps the first K_TOTAL starting points"
+
+[[key.invalid]]
+wrap = "init"
+text = "K_TOTAL 1"
+error = "K_TOTAL 1 caps nothing: a block without a METHOD line gives one starting point (the CONFIG point), and K_TOTAL keeps the first K_TOTAL starting points"
 
 [[key.invalid]]
 wrap = "init"
@@ -2441,7 +2472,7 @@ error = "INIT METHOD CONFIG takes no arguments"
 [[init_method]]
 id = "METHOD.RANDOM"
 name = "RANDOM"
-args = [ { name = "K", kind = "integer", min = 0, max = 1000000, what = "INIT METHOD RANDOM K" } ]
+args = [ { name = "K", kind = "integer", min = 1, max = 1000000, what = "INIT METHOD RANDOM K" } ]
 doc = """\
 K starting points drawn uniformly in the OPTIM boxes, in the coordinates \
 of the search (a log-scaled search parameter is drawn in its logarithm)."""
@@ -2466,8 +2497,8 @@ error = "INIT METHOD RANDOM expects exactly one arg: K"
 
 [[init_method.invalid]]
 wrap = "init"
-text = "METHOD RANDOM -1"
-error = "INIT METHOD RANDOM K must be an integer from 0 to 1000000, got '-1'"
+text = "METHOD RANDOM 0"
+error = "INIT METHOD RANDOM K must be an integer from 1 to 1000000, got '0'"
 
 [[init_method]]
 id = "METHOD.LHS"

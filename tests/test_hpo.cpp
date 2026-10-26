@@ -416,7 +416,7 @@ TEST_CASE("HPO parses INIT block",
 INIT
   STRATEGY CONFIG
   STRATEGY RANDOM 4
-  K_TOTAL 5
+  K_TOTAL 4
   SEED 12345
   WARM_ON_MISMATCH skip
 ENDINIT
@@ -428,6 +428,9 @@ STRATEGY
 ENDSTRATEGY
 ENDOPTIMIZER
 )");
+    /* K_TOTAL 4 caps the 5 points of CONFIG and RANDOM 4 (K_TOTAL 5, which
+     * capped nothing, is refused: "K_TOTAL that caps nothing, K_TOTAL 0 and
+     * METHOD RANDOM 0 are refused at their line"). */
     tadah::core::Context ctx;
     tadah::hpo::HPOTargets trg(ctx, input.path.string());
 
@@ -438,7 +441,7 @@ ENDOPTIMIZER
     REQUIRE(isp.chain[1].args.size() == 1);
     CHECK(isp.chain[1].args[0] == "4");
     REQUIRE(isp.k_total.has_value());
-    CHECK(*isp.k_total == 5u);
+    CHECK(*isp.k_total == 4u);
     REQUIRE(isp.seed.has_value());
     CHECK(*isp.seed == 12345u);
     CHECK(isp.warm_on_mismatch == "skip");

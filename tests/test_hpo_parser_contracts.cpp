@@ -1508,10 +1508,15 @@ TEST_CASE("Strict numbers: RESTART AFTER_STAGNATION and MAX are integers >= 1",
 TEST_CASE("Strict numbers: INIT K_TOTAL, SEED and the METHOD K",
           "[HPO][hpo_targets][strict_numbers]")
 {
-    /* K_TOTAL and K are counts of starting points, at most 1000000
-     * (kMaxStartingPoints); they were read up to 2^64 - 1. */
-    check_uint_key(init_home("K_TOTAL"), "an integer from 0 to 1000000",
-                   {"4", "0", "1000000"}, {"1000001"});
+    /* K is a count of starting points, at most 1000000
+     * (kMaxStartingPoints); it was read up to 2^64 - 1. K_TOTAL caps the
+     * points of the METHOD lines (RANDOM 5 here), so it is 1 or more and a
+     * K_TOTAL of 5 or more caps nothing ("K_TOTAL that caps nothing, K_TOTAL
+     * 0 and METHOD RANDOM 0 are refused at their line"); it was an integer
+     * from 0 (no cap) to 1000000. */
+    check_uint_key(KeyHome{"K_TOTAL", "OPTIMIZER\nINIT\nMETHOD RANDOM 5\n",
+                           "ENDINIT\n" + kStrategyBlock + "ENDOPTIMIZER\n"},
+                   "an integer >= 1", {"4", "1"}, {"0"});
     check_uint_key(init_home("SEED"), "an integer >= 0",
                    {"11", "0", "18446744073709551615"},
                    {"18446744073709551616"});
@@ -1519,28 +1524,24 @@ TEST_CASE("Strict numbers: INIT K_TOTAL, SEED and the METHOD K",
               .spec.init_strategy_spec.seed ==
           std::optional<std::uint64_t>(18446744073709551615ull));
 
-    /* METHOD RANDOM|LHS|SOBOL <K>, checked at its own line (line 3). LHS
-     * and SOBOL draw at least one point: K 0 is out of their range, in the
-     * same message (it was "INIT METHOD LHS K must be > 0"). */
+    /* METHOD RANDOM|LHS|SOBOL <K>, checked at its own line (line 3). Each
+     * draws at least one point: K 0 is out of their range, in the same
+     * message (it was "INIT METHOD LHS K must be > 0", and RANDOM 0 drew no
+     * point). */
     for (const std::string method : {"RANDOM", "LHS", "SOBOL"}) {
         const KeyHome h{"METHOD " + method, "OPTIMIZER\nINIT\n",
                         "ENDINIT\n" + kStrategyBlock + "ENDOPTIMIZER\n"};
         INFO(h.key);
         CHECK(parse_error(h.config("3")) == "");
-        const bool random = method == "RANDOM";
         std::vector<std::string> rejected = kNotUnsigned;
         rejected.push_back("1000001");
-        if (random)
-            CHECK(parse_error(h.config("0")) == "");
-        else
-            rejected.push_back("0");
+        rejected.push_back("0");
         for (const auto& tok : rejected) {
             INFO("K '" << tok << "'");
             CHECK_THAT(parse_error(h.config(tok)),
                        Catch::StartsWith(h.at() + "INIT METHOD " + method +
-                                         " K must be an integer from " +
-                                         (random ? "0" : "1") +
-                                         " to 1000000, got '" + tok + "'"));
+                                         " K must be an integer from 1 to "
+                                         "1000000, got '" + tok + "'"));
         }
         CHECK_THAT(parse_error(h.config("")),
                    Catch::StartsWith(h.at() + "INIT METHOD " + method +

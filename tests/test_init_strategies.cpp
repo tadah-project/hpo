@@ -382,10 +382,13 @@ TEST_CASE("SobolInitStrategy: a seed selects a whole block of K points",
     for (const auto& p : a)
         CHECK(std::find(b.begin(), b.end(), p) == b.end());
 
-    /* The block is as long as the draw: K_TOTAL sets it for a lone SOBOL. */
-    const auto t = sobol_draw(sp, *st.trg, 2, 7, /*k_total=*/5);
-    REQUIRE(t.size() == 5u);
-    for (std::size_t i = 0; i < 5; ++i) CHECK(t[i] == seq[7 * 5 + i]);
+    /* K_TOTAL caps a lone SOBOL: K_TOTAL 2 of SOBOL 5 with seed 7 keeps
+     * the first 2 points of block 7 of 5. (K_TOTAL replaced the K of a lone
+     * method: SOBOL 2 with K_TOTAL 5 drew block 7 of 5, 5 points.) */
+    const auto t = sobol_draw(sp, *st.trg, 5, 7, /*k_total=*/2);
+    REQUIRE(t.size() == 2u);
+    for (std::size_t i = 0; i < 2; ++i) CHECK(t[i] == seq[7 * 5 + i]);
+    CHECK(sobol_draw(sp, *st.trg, 2, 7, /*k_total=*/5).size() == 2u);
 }
 
 TEST_CASE("SobolInitStrategy: SOBOL 1 still draws the point its seed "
@@ -408,17 +411,17 @@ TEST_CASE("SobolInitStrategy: SOBOL 1 still draws the point its seed "
 }
 
 TEST_CASE("SobolInitStrategy: a K above 1000000 is refused before a block "
-          "is drawn, and a block past the end of the Sobol sequence is an "
-          "error", "[HPO][init_strategy][sobol][seed]")
+          "is drawn", "[HPO][init_strategy][sobol][seed]")
 {
     /* Block s of K points starts at point s*K; that product, and the end
      * of the block, must stay within the 64-bit sequence. A METHOD line's
      * K is at most 1000000, so every block a seed selects (s < 65536)
      * lies within it; before the fix K = 2^62 was read and refused only
-     * when the block was drawn. A caller that asks the strategy for more
-     * points (k_total) still meets the block check: with 2^62 points,
-     * seeds 4 and 65535 fail the product (s*K wraps); seed 3 passes it
-     * (3 * 2^62 fits) and fails the end, which would lie at 2^64. */
+     * when the block was drawn. K_TOTAL caps the points of a block and
+     * draws none past it, so a request for 2^62 points draws the K of the
+     * block: the legs in which a caller asked SOBOL 1 for 2^62 points
+     * (k_total), a block of 2^62 points past the end of the sequence,
+     * left this case (K_TOTAL replaced the K of a lone METHOD line). */
     using namespace tadah::hpo;
     auto sp = make_synthetic_spec({0.0, 0.0}, {1.0, 1.0});
     StubTargets st;
@@ -428,13 +431,7 @@ TEST_CASE("SobolInitStrategy: a K above 1000000 is refused before a block "
                       "1000000, got '" + std::to_string(huge) + "'");
     for (const std::uint64_t seed : {3u, 4u, 65535u}) {
         INFO("seed " << seed);
-        CHECK_THROWS_WITH(
-            sobol_draw(sp, *st.trg, 1, seed, huge),
-            Catch::StartsWith("INIT METHOD SOBOL: block " +
-                              std::to_string(seed) + " of " +
-                              std::to_string(huge) +
-                              " points lies beyond the end of the Sobol "
-                              "sequence"));
+        CHECK(sobol_draw(sp, *st.trg, 1, seed, huge).size() == 1u);
     }
 }
 
@@ -488,6 +485,38 @@ TEST_CASE("ChainStrategy: INIT_K caps the total output",
     /* k_total = 4 → chain stops at 4 even though 5+5=10 are available */
     auto pts = strat->generate(ic, 4);
     CHECK(pts.size() == 4);
+}
+
+/* Pins: K_TOTAL caps the points of a chain, a lone METHOD line included:
+ * a lone RANDOM, LHS or SOBOL of K points asked for k draws its K points
+ * and returns the first min(K, k): RANDOM 3 asked for 7 returns 3; RANDOM
+ * 5 asked for 2 the first 2 of RANDOM 5; LHS 8 asked for 4 the first 4 of
+ * the LHS of 8 (not an LHS of 4); SOBOL 2 asked for 5 returns 2. k = 0
+ * sets no cap.
+ * Before the fix: k replaced K (RANDOM 3 asked for 7 drew 7 points, LHS
+ * 8 asked for 4 drew an LHS of 4, SOBOL 2 asked for 5 drew 5). */
+TEST_CASE("InitStrategy: K_TOTAL caps a lone RANDOM, LHS or SOBOL at its K",
+          "[HPO][init_strategy][k_total]")
+{
+    using namespace tadah::hpo;
+    auto sp = make_synthetic_spec({0.0, 0.0}, {1.0, 1.0});
+    StubTargets st;
+    InitContext ic{sp, *st.trg, 99};
+    const auto lone = [&](const std::string& method, const std::string& k) {
+        InitStrategySpec ispec;
+        ispec.chain.push_back({method, {k}});
+        return build_init_strategy(ispec);
+    };
+    CHECK(lone("RANDOM", "3")->generate(ic, 7).size() == 3u);
+    CHECK(lone("SOBOL", "2")->generate(ic, 5).size() == 2u);
+    for (const std::string method : {"RANDOM", "LHS", "SOBOL"}) {
+        INFO("METHOD " << method << " 8");
+        const auto all = lone(method, "8")->generate(ic, 0);
+        REQUIRE(all.size() == 8u);
+        const auto capped = lone(method, "8")->generate(ic, 4);
+        REQUIRE(capped.size() == 4u);
+        for (std::size_t i = 0; i < 4; ++i) CHECK(capped[i] == all[i]);
+    }
 }
 
 TEST_CASE("WarmInitStrategy: missing file throws regardless of policy",
@@ -1787,7 +1816,7 @@ TEST_CASE("The starting points of a METHOD line, K_TOTAL and TOPK are at "
     struct Refused { std::string block, error; };
     const std::vector<Refused> refused = {
         {init_block("METHOD RANDOM 1000001\n"),
-         "Error on line 4: INIT METHOD RANDOM K must be an integer from 0 "
+         "Error on line 4: INIT METHOD RANDOM K must be an integer from 1 "
          "to 1000000, got '1000001'\nLine: METHOD RANDOM 1000001"},
         {init_block("METHOD LHS 1000001\n"),
          "Error on line 4: INIT METHOD LHS K must be an integer from 1 to "
@@ -1795,15 +1824,21 @@ TEST_CASE("The starting points of a METHOD line, K_TOTAL and TOPK are at "
         {init_block("METHOD SOBOL 1000001\n"),
          "Error on line 4: INIT METHOD SOBOL K must be an integer from 1 to "
          "1000000, got '1000001'\nLine: METHOD SOBOL 1000001"},
+        /* K_TOTAL caps the points the METHOD lines give, so a K_TOTAL as
+         * large as their sum caps nothing (it was refused above 1000000,
+         * and replaced the K of a lone METHOD line). */
         {init_block("METHOD RANDOM 2\nK_TOTAL 1000001\n"),
-         "Error on line 5: K_TOTAL must be an integer from 0 to 1000000, "
-         "got '1000001'\nLine: K_TOTAL 1000001"},
+         "Error on line 5: K_TOTAL 1000001 caps nothing: the METHOD lines of "
+         "the block give at most 2 starting points (RANDOM 2), and K_TOTAL "
+         "keeps the first K_TOTAL starting points\nLine: K_TOTAL 1000001"},
         {restart_block("METHOD RANDOM 1000001\n"),
-         "Error on line 10: INIT METHOD RANDOM K must be an integer from 0 "
+         "Error on line 10: INIT METHOD RANDOM K must be an integer from 1 "
          "to 1000000, got '1000001'\nLine: METHOD RANDOM 1000001"},
         {restart_block("K_TOTAL 1000001\n"),
-         "Error on line 10: K_TOTAL must be an integer from 0 to 1000000, "
-         "got '1000001'\nLine: K_TOTAL 1000001"},
+         "Error on line 10: K_TOTAL 1000001 caps nothing: a block without a "
+         "METHOD line gives one starting point (the CONFIG point), and "
+         "K_TOTAL keeps the first K_TOTAL starting points\nLine: K_TOTAL "
+         "1000001"},
         {prestage_block("1000001"),
          "Error on line 8: TOPK must be an integer from 1 to 1000000, got "
          "'1000001'\nLine: TOPK 1000001"},
@@ -1821,19 +1856,24 @@ TEST_CASE("A count of starting points at its limit, 1000000, draws that many "
           "points, and the last SOBOL block lies within the sequence",
           "[HPO][init_strategy][limits]")
 {
-    /* With a single METHOD line K_TOTAL replaces its K. SOBOL with seed
-     * 65535 draws block 65535, the last a seed selects: points
-     * 65535 * 1000000 ... 65536 * 1000000 - 1 of the sequence. */
+    /* SOBOL with seed 65535 draws block 65535, the last a seed selects:
+     * points 65535 * 1000000 ... 65536 * 1000000 - 1 of the sequence.
+     * K_TOTAL caps the points (a leg drew 1000000 points from METHOD RANDOM
+     * 2 with K_TOTAL 1000000, which replaced its K): K_TOTAL 999999 keeps
+     * all but one of RANDOM 1000000. */
     for (const std::string& lines :
          {std::string("METHOD RANDOM 1000000\n"),
           std::string("METHOD LHS 1000000\n"),
-          std::string("METHOD SOBOL 1000000\nSEED 65535\n"),
-          std::string("METHOD RANDOM 2\nK_TOTAL 1000000\n")}) {
+          std::string("METHOD SOBOL 1000000\nSEED 65535\n")}) {
         INFO(lines);
         const CountRead r = read_counts(init_block(lines));
         CHECK(r.error.empty());
         CHECK(r.points == 1000000u);
     }
+    const CountRead capped =
+        read_counts(init_block("METHOD RANDOM 1000000\nK_TOTAL 999999\n"));
+    CHECK(capped.error.empty());
+    CHECK(capped.points == 999999u);
     const CountRead topk = read_counts(prestage_block("1000000"));
     CHECK(topk.error.empty());
     CHECK(topk.topk == 1000000u);
@@ -1841,6 +1881,82 @@ TEST_CASE("A count of starting points at its limit, 1000000, draws that many "
         read_counts("NOISE\nCALIBRATION 2147483647\nENDNOISE\n" + kSbplx);
     CHECK(cal.error.empty());
     CHECK(cal.calibration == 2147483647u);
+}
+
+/* Pins: K_TOTAL caps the starting points the METHOD lines of its block
+ * give, so a K_TOTAL at or above their number caps nothing and is refused
+ * when the file is read, at the K_TOTAL line, with the count and the METHOD
+ * lines (CONFIG and WARM give one point each): "K_TOTAL 3 caps nothing: the
+ * METHOD lines of the block give at most 3 starting points (CONFIG, RANDOM
+ * 2), and K_TOTAL keeps the first K_TOTAL starting points"; a block without
+ * a METHOD line gives one, the CONFIG point. The INIT blocks inside
+ * OPTIMIZER and STRATEGY make one chain, counted together, and so do two
+ * RESTART blocks. K_TOTAL 0 and METHOD RANDOM 0, which gave no cap and no
+ * point, are refused at their line, as LHS 0 and SOBOL 0 are. K_TOTAL 3
+ * of CONFIG and RANDOM 4 keeps 3 points.
+ * Before the fix: each of these files was read; K_TOTAL replaced the K of
+ * a lone METHOD line (METHOD RANDOM 3 with K_TOTAL 7 drew 7 points), K_TOTAL
+ * 0 set no cap, and RANDOM 0 drew no point. */
+TEST_CASE("K_TOTAL that caps nothing, K_TOTAL 0 and METHOD RANDOM 0 are "
+          "refused at their line", "[HPO][init_strategy][k_total]")
+{
+    const std::string keeps =
+        ", and K_TOTAL keeps the first K_TOTAL starting points";
+    struct Refused { std::string block, error; };
+    const std::vector<Refused> refused = {
+        {init_block("METHOD RANDOM 3\nK_TOTAL 7\n"),
+         "Error on line 5: K_TOTAL 7 caps nothing: the METHOD lines of the "
+         "block give at most 3 starting points (RANDOM 3)" + keeps +
+             "\nLine: K_TOTAL 7"},
+        {init_block("METHOD CONFIG\nMETHOD RANDOM 2\nK_TOTAL 3\n"),
+         "Error on line 6: K_TOTAL 3 caps nothing: the METHOD lines of the "
+         "block give at most 3 starting points (CONFIG, RANDOM 2)" + keeps +
+             "\nLine: K_TOTAL 3"},
+        {init_block("METHOD WARM no_such_seed.tadah\nK_TOTAL 1\n"),
+         "Error on line 5: K_TOTAL 1 caps nothing: the METHOD lines of the "
+         "block give at most 1 starting point (WARM no_such_seed.tadah)" +
+             keeps + "\nLine: K_TOTAL 1"},
+        {init_block("K_TOTAL 2\n"),
+         "Error on line 4: K_TOTAL 2 caps nothing: a block without a METHOD "
+         "line gives one starting point (the CONFIG point)" + keeps +
+             "\nLine: K_TOTAL 2"},
+        {restart_block("METHOD LHS 2\nK_TOTAL 2\n"),
+         "Error on line 11: K_TOTAL 2 caps nothing: the METHOD lines of the "
+         "block give at most 2 starting points (LHS 2)" + keeps +
+             "\nLine: K_TOTAL 2"},
+        {init_block("METHOD RANDOM 2\nK_TOTAL 0\n"),
+         "Error on line 5: K_TOTAL must be an integer >= 1, got '0'"
+         "\nLine: K_TOTAL 0"},
+        {init_block("METHOD RANDOM 0\n"),
+         "Error on line 4: INIT METHOD RANDOM K must be an integer from 1 to "
+         "1000000, got '0'\nLine: METHOD RANDOM 0"},
+        {restart_block("METHOD RANDOM 0\n"),
+         "Error on line 10: INIT METHOD RANDOM K must be an integer from 1 to "
+         "1000000, got '0'\nLine: METHOD RANDOM 0"},
+    };
+    for (const auto& r : refused) {
+        INFO(r.block);
+        CHECK(read_counts(r.block).error == r.error);
+    }
+    /* Lines 3-6 and 8-10: the OPTIMIZER-level and STRATEGY-level INIT
+     * blocks make one chain of 2 + 3 points, which K_TOTAL 4 caps. */
+    const CountRead two = read_counts(
+        "INIT\nMETHOD RANDOM 2\nK_TOTAL 4\nENDINIT\nSTRATEGY\nLIB NLOPT\n"
+        "ALGO LN_SBPLX\nMAXEVAL 10\nINIT\nMETHOD LHS 3\nENDINIT\n"
+        "ENDSTRATEGY\n");
+    CHECK(two.error.empty());
+    CHECK(two.points == 4u);
+    const CountRead three =
+        read_counts(init_block("METHOD CONFIG\nMETHOD RANDOM 4\nK_TOTAL 3\n"));
+    CHECK(three.error.empty());
+    CHECK(three.points == 3u);
+    /* Two RESTART blocks make one: K_TOTAL in the first, the METHOD lines
+     * in the second. */
+    CHECK(read_counts("STRATEGY\nLIB NLOPT\nALGO LN_SBPLX\nMAXEVAL 10\n"
+                      "RESTART\nAFTER_STAGNATION 2\nMAX 1\nK_TOTAL 3\n"
+                      "ENDRESTART\nRESTART\nMETHOD RANDOM 2\n"
+                      "METHOD LHS 2\nENDRESTART\nENDSTRATEGY\n")
+              .error.empty());
 }
 
 TEST_CASE("ChainStrategy: a chain of the largest RANDOM and LHS draws drops "
