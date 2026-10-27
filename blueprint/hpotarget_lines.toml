@@ -2256,9 +2256,9 @@ cohesive energy with the target through the loss function. Each \
 relaxation starts from the lattice constant at which the previous \
 relaxation of the same replica (TADAH:ANNEAL_PT), walker \
 (TADAH:ANNEAL_PA) or ASA trial-state slot (the n-th trial state of each \
-generated batch, see Gener_Block) ended; the first starts from the \
-start value of --hotvar. Every other optimiser hands the lattice constant \
-on from each evaluation to the next, across MULTISTART starts and \
+generated block of states, see Gener_Block) ended; the first starts from \
+the start value of --hotvar. Every other optimiser hands the lattice \
+constant on from each evaluation to the next, across MULTISTART starts and \
 PRESTAGE phases. A relaxation whose a0 ends outside the --hotvar window \
 fails the term, and with it the evaluation, and hands on the lattice \
 constant it started from. A relaxation that does not converge reports \

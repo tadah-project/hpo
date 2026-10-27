@@ -383,7 +383,7 @@ TADAH:ANNEAL_PT and TADAH:ANNEAL_PA end the search after the starting \
 points, the epoch, the temperature step or, in a run on one MPI rank, the \
 round of the step calibration in which a replica or walker reaches it: \
 the others complete their evaluations of it. ASA:ASA with \
-Gener_Block_Max above 1 ends it after the group of states in which it is \
+Gener_Block_Max above 1 ends it after the block of states in which it is \
 reached."""
 checks = [
   { msg = "{phase}: {lib}:{algo} does not support STOPVAL", doc = "At startup, at the END line of its optimiser: DLIB:BFGS or CERES:STEEPEST_DESCENT." },
