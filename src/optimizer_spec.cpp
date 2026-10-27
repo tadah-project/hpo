@@ -133,18 +133,19 @@ static void print_stops(std::ostream& os, const std::string& lib,
     os << "   * Stops that end a run: " << list << "\n";
     if (c->tolerance_note[0])
         os << "     " << c->tolerance_note << ".\n";
-    /* require_stop() (backend_rules.h): a tolerance counts above 0, and an
-     * active RESTART's stagnation stop counts too -- but for a backend that
+    /* require_stop() (backend_rules.h): a tolerance counts above 0, and the
+     * stagnation stop of a RESTART block counts too (every RESTART block
+     * the parser takes restarts the search) -- but for a backend that
      * ignores NLopt's forced stop, only MAXEVAL. */
     const bool tolerances = c->supports_ftol_rel || c->supports_ftol_abs ||
                             c->supports_xtol_rel || c->supports_xtol_abs;
     if (c->needs_stop && c->ignores_forced_stop)
-        os << "     MAXEVAL is required (MAXTIME, STOPVAL and an active "
-              "RESTART are not enough): " << c->stop_note << ".\n";
+        os << "     MAXEVAL is required (MAXTIME, STOPVAL and a RESTART "
+              "block are not enough): " << c->stop_note << ".\n";
     else if (c->needs_stop)
         os << "     One of them is required"
            << (tolerances ? " (a tolerance above 0)" : "")
-           << ", or an active RESTART: " << c->stop_note << ".\n";
+           << ", or a RESTART block: " << c->stop_note << ".\n";
 }
 
 /* One, easily extendable, registry ---------------------------------*/
