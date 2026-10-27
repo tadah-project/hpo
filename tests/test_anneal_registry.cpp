@@ -308,6 +308,52 @@ TEST_CASE("registry: non-numeric, unknown, and renamed PARAMs are hard "
     }
 }
 
+/* Pins: the refusal of an unknown PARAM lists, in registry order, the keys
+ * the annealer takes: the keys of its kind but those a kind_reject rule
+ * refuses for it, so TADAH:ANNEAL_PA does not list RESET_TO_BEST, which it
+ * refuses ("PARAM RESET_TO_BEST is not defined for population annealing"),
+ * and TADAH:ANNEAL_PT does.
+ * Before the fix: the list held every key of the kind, RESET_TO_BEST under
+ * TADAH:ANNEAL_PA included. */
+TEST_CASE("registry: the accepted keys of an unknown-key refusal leave out "
+          "a key the annealer refuses", "[HPO][anneal_core][registry]")
+{
+    for (const auto& [kind, mask] : kAllKinds) {
+        INFO("kind " << anneal::algo_name(kind));
+        auto sp = registry_base_spec(kind);
+        sp.param["NO_SUCH_KEY"] = 1.0;
+        std::string what;
+        try {
+            (void)anneal::Knobs::parse(sp, kind);
+        } catch (const std::exception& e) {
+            what = e.what();
+        }
+        const std::string head = "accepted keys: ";
+        const auto at = what.find(head);
+        REQUIRE(at != std::string::npos);
+        std::istringstream is(what.substr(at + head.size()));
+        std::vector<std::string> listed;
+        for (std::string k; is >> k;) listed.push_back(k);
+        std::vector<std::string> expected;
+        for (const auto& k : reg::kKeys) {
+            if (!(k.kinds & mask)) continue;
+            const bool refused = std::any_of(
+                std::begin(reg::kRules), std::end(reg::kRules),
+                [&](const reg::AnnealKeyRule& r) {
+                    return r.type == reg::AnnealRuleType::KindReject &&
+                           (r.kind_mask & mask) &&
+                           std::strcmp(r.key, k.name) == 0;
+                });
+            if (!refused) expected.push_back(k.name);
+        }
+        CHECK(listed == expected);
+        const bool lists_reset =
+            std::find(listed.begin(), listed.end(), "RESET_TO_BEST") !=
+            listed.end();
+        CHECK(lists_reset == (kind != anneal::AlgoKind::PA));
+    }
+}
+
 TEST_CASE("registry: defaults in the generated header match the parsed "
           "defaults", "[HPO][anneal_core][registry]")
 {

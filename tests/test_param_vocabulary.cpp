@@ -312,8 +312,10 @@ TEST_CASE("vocabulary: every printed default of an annealing key is a "
           "PARAM T_HOT (default: calibrated with probes)");
     CHECK(line_of(pt, "T_COLD") ==
           "PARAM T_COLD (default: T_HOT divided by LADDER_SPAN)");
+    /* A value default, OFF, as for every other ON/OFF key (it read
+     * "(default: OFF)", a default in words). */
     CHECK(line_of(pt, "RESET_TO_BEST") ==
-          "PARAM RESET_TO_BEST (default: OFF)");
+          "PARAM RESET_TO_BEST (default OFF)");
     CHECK(line_of(pt, "REPLICAS") ==
           "PARAM REPLICAS (default: AUTO, the larger of THREADS and 2) "
           "[accepts AUTO]");

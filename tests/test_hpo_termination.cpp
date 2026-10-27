@@ -3970,6 +3970,55 @@ TEST_CASE("Termination: MULTISTART with fewer starting points than N_STARTS "
           std::string::npos);
 }
 
+/* Pins: a MULTISTART whose INIT chain has fewer starting points than
+ * N_STARTS because K_TOTAL keeps fewer names that K_TOTAL in the WARNING,
+ * and the advice depends on the points of the METHOD lines (LHS 4, 3 and
+ * 3 here, K_TOTAL 2):
+ *  - more than N_STARTS 3: "... produced only 2 starting points (K_TOTAL
+ *    2); running 2 starts. With K_TOTAL 3, or without K_TOTAL, 3 starts
+ *    run, and N_STARTS 2 asks for the 2 that run.";
+ *  - as many as N_STARTS 3 (a K_TOTAL 3 would cap nothing, refused when
+ *    the file is read): "... Without K_TOTAL, 3 starts run, ...";
+ *  - fewer than N_STARTS 4: "... A chain of 4 or more starting points
+ *    (METHOD LHS 4, RANDOM 4 or SOBOL 4) without K_TOTAL runs 4 starts,
+ *    ...".
+ * Before the fix: the WARNING named no K_TOTAL and advised METHOD lines
+ * the block already had ("A chain of 3 or more starting points (METHOD LHS
+ * 3, RANDOM 3 or SOBOL 3) runs 3 starts" beside METHOD LHS 4; the text
+ * fails). */
+TEST_CASE("Termination: MULTISTART with fewer starting points than N_STARTS "
+          "because of K_TOTAL names K_TOTAL", "[HPO][termination][multistart]")
+{
+    struct Case { std::string lhs, n_starts, advice; };
+    const std::vector<Case> cases = {
+        {"4", "3", "With K_TOTAL 3, or without K_TOTAL, 3 starts run"},
+        {"3", "3", "Without K_TOTAL, 3 starts run"},
+        {"3", "4", "A chain of 4 or more starting points (METHOD LHS 4, "
+                   "RANDOM 4 or SOBOL 4) without K_TOTAL runs 4 starts"},
+    };
+    for (const auto& c : cases) {
+        INFO("METHOD LHS " << c.lhs << ", N_STARTS " << c.n_starts);
+        TaRun run("OPTIMIZER\n  INIT\n    METHOD LHS " + c.lhs +
+                  "\n    K_TOTAL 2\n    SEED 1\n  ENDINIT\n  STRATEGY\n"
+                  "    TYPE MULTISTART\n    N_STARTS " + c.n_starts +
+                  "\n    LIB NLOPT\n    ALGO LN_SBPLX\n    MAXEVAL 4\n"
+                  "  ENDSTRATEGY\nENDOPTIMIZER\n");
+        int status = -1;
+        REQUIRE_NOTHROW(status = tadah::hpo::hpo_run(run.ctx));
+        CHECK(status == 0);
+        const std::string journal = read_file("hpo_run.log");
+        INFO(journal);
+        CHECK(journal.find("MULTISTART: running 2 starts\n") !=
+              std::string::npos);
+        CHECK(journal.find(
+                  "MULTISTART N_STARTS " + c.n_starts + " requested but the "
+                  "resolved INIT chain produced only 2 starting points "
+                  "(K_TOTAL 2); running 2 starts. " + c.advice +
+                  ", and N_STARTS 2 asks for the 2 that run.\n") !=
+              std::string::npos);
+    }
+}
+
 /* Pins: what the RESTART rounds of NLopt's StoGO evaluate, as the startup
  * WARNING says (PLAIN, 3 OPTIM dimensions, MAXEVAL 60, STRATEGY SEED 11,
  * RESTART AFTER_STAGNATION 4, MAX 1, METHOD RANDOM 1, SEED 5): round 1

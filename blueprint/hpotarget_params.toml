@@ -216,7 +216,7 @@ examples = [
 ]
 invalid = [
   { wrap = "strategy", check = "startup", at = "ENDOPTIMIZER", text = "PARAM magic_eps 1e-4", error = "the STRATEGY-level optimiser: NLOPT:LN_SBPLX: unknown PARAM 'magic_eps' (it takes none)", doc = "LN_SBPLX reads no PARAM key; magic_eps is read by the DIRECT algorithms." },
-  { wrap = "params_lbfgs", check = "startup", at = "ENDOPTIMIZER", text = "PARAM magic_eps 1e-4", error = "the STRATEGY-level optimiser: NLOPT:LD_LBFGS: unknown PARAM 'magic_eps' (it takes tolg)" },
+  { wrap = "params_lbfgs", check = "startup", at = "ENDOPTIMIZER", text = "PARAM magic_eps 1e-4", error = "the STRATEGY-level optimiser: NLOPT:LD_LBFGS: unknown PARAM 'magic_eps' (it takes tolg, fd_step, fd_kernel and diff_method)" },
   { wrap = "params_lbfgs", check = "startup", at = "ENDOPTIMIZER", text = "PARAM tolg tight", error = "the STRATEGY-level optimiser: NLOPT:LD_LBFGS: PARAM tolg takes a number (got 'tight')" },
   { wrap = "inner", check = "startup", at = "ENDINNER", text = "PARAM tolg 1e-8", error = "the INNER block of the STRATEGY-level optimiser: NLOPT:LN_BOBYQA: unknown PARAM 'tolg' (it takes none)" },
 ]
@@ -329,7 +329,7 @@ annealer it belongs to."""
 invalid = [
   { wrap = "params_anneal", check = "startup", at = "ENDOPTIMIZER", text = "PARAM COOLING 0.9", error = "the STRATEGY-level optimiser: TADAH:ANNEAL: unknown PARAM 'COOLING'; accepted keys: CORANA STEP_FRAC CHAIN_LENGTH NS NT CORANA_C V_FLOOR_FRAC BOUNDARY_MODE RESET_TO_BEST T_INIT T_MIN RT T0_PROBES T0_ACCEPT NEPS REANNEAL REANNEAL_SCALE " },
   { wrap = "params_anneal_pt", check = "startup", at = "ENDOPTIMIZER", text = "PARAM COOLING 0.9", error = "the STRATEGY-level optimiser: TADAH:ANNEAL_PT: unknown PARAM 'COOLING'; accepted keys: CORANA STEP_FRAC NS CORANA_C V_FLOOR_FRAC BOUNDARY_MODE RESET_TO_BEST T_HOT T0_PROBES T0_ACCEPT NEPS REPLICAS T_COLD LADDER_SPAN LADDER_POWER LADDER_ADAPT LADDER_ADAPT_EVERY LADDER_ADAPT_GAIN LADDER_ADAPT_DECAY LADDER_MIN_GAP LADDER_FREEZE SWAP_EVERY SWAP_WINDOW STEP_MODE STEP_WARMUP_SWEEPS STEP_TRUST_FACTOR INIT_MODE INIT_JITTER_MAX INIT_JITTER_PROBES INIT_JITTER_MAXEVAL INIT_JITTER_SAMPLE INIT_JITTER_AUDIT INIT_JITTER_LADDER INIT_JITTER_MAXTIME_FRAC " },
-  { wrap = "params_anneal_pa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM COOLING 0.9", error = "the STRATEGY-level optimiser: TADAH:ANNEAL_PA: unknown PARAM 'COOLING'; accepted keys: CORANA STEP_FRAC CHAIN_LENGTH NS NT CORANA_C V_FLOOR_FRAC BOUNDARY_MODE RESET_TO_BEST T_HOT T_MIN RT T0_PROBES T0_ACCEPT NEPS INIT_MODE SWEEPS ESS_TARGET " },
+  { wrap = "params_anneal_pa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM COOLING 0.9", error = "the STRATEGY-level optimiser: TADAH:ANNEAL_PA: unknown PARAM 'COOLING'; accepted keys: CORANA STEP_FRAC CHAIN_LENGTH NS NT CORANA_C V_FLOOR_FRAC BOUNDARY_MODE T_HOT T_MIN RT T0_PROBES T0_ACCEPT NEPS INIT_MODE SWEEPS ESS_TARGET " },
   { wrap = "params_anneal", check = "startup", at = "ENDOPTIMIZER", text = "PARAM REPLICAS 4", error = "the STRATEGY-level optimiser: TADAH:ANNEAL: PARAM REPLICAS belongs to TADAH:ANNEAL_PT" },
   { wrap = "params_anneal", check = "startup", at = "ENDOPTIMIZER", text = "PARAM SWEEPS 2", error = "the STRATEGY-level optimiser: TADAH:ANNEAL: PARAM SWEEPS belongs to TADAH:ANNEAL_PA" },
   { wrap = "params_anneal_pt", check = "startup", at = "ENDOPTIMIZER", text = "PARAM REANNEAL 0", error = "the STRATEGY-level optimiser: TADAH:ANNEAL_PT: PARAM REANNEAL belongs to the serial TADAH:ANNEAL" },

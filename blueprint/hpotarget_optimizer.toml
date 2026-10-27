@@ -1209,6 +1209,7 @@ or RESTART block is another key, the seed of the starting points."""
 checks = [
   { msg = "{phase}: {lib}:{algo} does not use SEED: it draws no random numbers; remove it", doc = "At startup, at the END line of its optimiser: an optimiser that does not read SEED, unless the SEED is that of a PRESTAGE refinement, which the EXPLORE block takes." },
   { msg = "{phase}: {lib}:{algo} does not support SEED", doc = "At startup, at the END line of its optimiser: DLIB:BFGS or CERES:STEEPEST_DESCENT, unless the SEED is that of a PRESTAGE refinement, which the EXPLORE block takes." },
+  { msg = "{phase}: {lib}:{algo} does not use SEED: it draws no random numbers, and the exploration ({name}) {why}; remove it", doc = "At startup, at the END line of its optimiser: the SEED of a PRESTAGE refinement whose optimiser does not read SEED, when the EXPLORE block does not take it; {why} is 'has a SEED of its own' or 'reads none'." },
 ]
 
 [[key.examples]]
@@ -1266,6 +1267,29 @@ MAXEVAL 10
 SEED 1
 ENDOPTIMIZER'''
 error = "the STRATEGY-level optimiser: DLIB:BFGS does not support SEED"
+
+[[key.invalid]]
+wrap = "none"
+check = "startup"
+at = "ENDOPTIMIZER"
+doc = "The refinement's SEED: DLIB:BFGS draws no random numbers, and the exploration, TADAH:GRID, takes no SEED."
+text = '''
+OPTIM CGRID2B (1) 0.5 1.5
+PC_ERMSE 0 1
+OPTIMIZER
+STRATEGY
+TYPE PRESTAGE
+LIB DLIB
+ALGO BFGS
+MAXEVAL 10
+SEED 5
+EXPLORE
+LIB TADAH
+ALGO GRID
+ENDEXPLORE
+ENDSTRATEGY
+ENDOPTIMIZER'''
+error = "the PRESTAGE refinement: DLIB:BFGS does not use SEED: it draws no random numbers, and the exploration (TADAH:GRID) reads none; remove it"
 
 [[key.invalid]]
 wrap = "opt_grid"
@@ -1692,7 +1716,7 @@ check = "startup"
 at = "ENDOPTIMIZER"
 doc = "The annealer takes the name INIT_MODE as written."
 text = "PARAM init_mode JITTER 0.1"
-error = "the STRATEGY-level optimiser: TADAH:ANNEAL_PA: unknown PARAM 'init_mode'; accepted keys: CORANA STEP_FRAC CHAIN_LENGTH NS NT CORANA_C V_FLOOR_FRAC BOUNDARY_MODE RESET_TO_BEST T_HOT T_MIN RT T0_PROBES T0_ACCEPT NEPS INIT_MODE SWEEPS ESS_TARGET "
+error = "the STRATEGY-level optimiser: TADAH:ANNEAL_PA: unknown PARAM 'init_mode'; accepted keys: CORANA STEP_FRAC CHAIN_LENGTH NS NT CORANA_C V_FLOOR_FRAC BOUNDARY_MODE T_HOT T_MIN RT T0_PROBES T0_ACCEPT NEPS INIT_MODE SWEEPS ESS_TARGET "
 msg_of = "PARAM.TADAH:ANNEAL"
 
 [[key.invalid]]
@@ -1905,6 +1929,9 @@ synopsis = "N_STARTS <n>"
 args = [ { name = "n", kind = "integer", min = 2, max = "UINT64_MAX", what = "{key}", msg = "N_STARTS must be an integer >= 2, got '{tok}' (one start is STRATEGY TYPE PLAIN)" } ]
 repeat = "error"
 repeat_msg = "N_STARTS is set twice in the STRATEGY block (first on line {first_line}); each key is given once"
+checks = [
+  { msg = "N_STARTS must be an integer >= 2, got '{tok}'", doc = "When the file is read: a token that is no whole number, such as a word, a sign, a fraction or a number past the largest; the note about one start follows 0 and 1 only." },
+]
 doc = """\
 The number of starts of STRATEGY TYPE MULTISTART: the optimiser runs once \
 from each of the first N_STARTS starting points of the INIT block."""
@@ -1934,6 +1961,15 @@ text = '''
 TYPE MULTISTART
 N_STARTS 1'''
 error = "N_STARTS must be an integer >= 2, got '1' (one start is STRATEGY TYPE PLAIN)"
+
+[[key.invalid]]
+wrap = "strategy"
+at = 2
+doc = "A token that is no whole number does not get the note about one start."
+text = '''
+TYPE MULTISTART
+N_STARTS x'''
+error = "N_STARTS must be an integer >= 2, got 'x'"
 
 [[key.invalid]]
 wrap = "opt_prestage"
@@ -2307,8 +2343,8 @@ OPTIMIZER, STRATEGY and REFINE, which its K_TOTAL does not cap, so a \
 K_TOTAL there is refused too. In a RESTART block it caps the points of \
 each restart."""
 checks = [
-  { msg = "K_TOTAL {value} caps nothing: the METHOD lines of the block give at most {count} starting points ({list}), and K_TOTAL keeps the first K_TOTAL starting points", doc = "When the file is read, at the K_TOTAL line: a K_TOTAL at or above the starting points the METHOD lines give, K of a RANDOM, LHS or SOBOL line and 1 of a CONFIG or WARM line; {list} names the lines. The INIT blocks of one optimiser make one chain, and so do the RESTART blocks." },
-  { msg = "K_TOTAL {value} caps nothing: the METHOD lines of the block give at most 1 starting point ({list}), and K_TOTAL keeps the first K_TOTAL starting points", doc = "When the file is read, at the K_TOTAL line: METHOD lines that give one starting point, a CONFIG or a WARM line." },
+  { msg = "K_TOTAL {value} caps nothing: the METHOD lines of {parent} give at most {count} starting points ({list}), and K_TOTAL keeps the first K_TOTAL starting points", doc = "When the file is read, at the K_TOTAL line: a K_TOTAL at or above the starting points the METHOD lines of its chain give, K of a RANDOM, LHS or SOBOL line and 1 of a CONFIG or WARM line; {list} names the lines. {parent} names the blocks of the chain: the INIT blocks inside OPTIMIZER, STRATEGY and REFINE, the INIT blocks inside EXPLORE, or the RESTART blocks." },
+  { msg = "K_TOTAL {value} caps nothing: the METHOD lines of {parent} give at most 1 starting point ({list}), and K_TOTAL keeps the first K_TOTAL starting points", doc = "When the file is read, at the K_TOTAL line: METHOD lines that give one starting point, a CONFIG or a WARM line." },
   { msg = "K_TOTAL {value} caps nothing: a block without a METHOD line gives one starting point (the CONFIG point), and K_TOTAL keeps the first K_TOTAL starting points", doc = "When the file is read, at the K_TOTAL line: an INIT block inside OPTIMIZER, STRATEGY or REFINE, or a RESTART block, without a METHOD line." },
   { msg = "K_TOTAL {value} caps nothing: an INIT block inside EXPLORE without a METHOD line gives the exploration the starting points of the INIT blocks inside OPTIMIZER, STRATEGY and REFINE (the CONFIG point without one), and K_TOTAL caps only the points of the block's own METHOD lines", doc = "When the file is read, at the K_TOTAL line: an INIT block inside EXPLORE without a METHOD line." },
 ]
@@ -2346,7 +2382,7 @@ at = 2
 text = '''
 METHOD RANDOM 2
 K_TOTAL 8'''
-error = "K_TOTAL 8 caps nothing: the METHOD lines of the block give at most 2 starting points (RANDOM 2), and K_TOTAL keeps the first K_TOTAL starting points"
+error = "K_TOTAL 8 caps nothing: the METHOD lines of the INIT blocks inside OPTIMIZER, STRATEGY and REFINE give at most 2 starting points (RANDOM 2), and K_TOTAL keeps the first K_TOTAL starting points"
 
 [[key.invalid]]
 wrap = "init"
@@ -2354,7 +2390,16 @@ at = 2
 text = '''
 METHOD CONFIG
 K_TOTAL 1'''
-error = "K_TOTAL 1 caps nothing: the METHOD lines of the block give at most 1 starting point (CONFIG), and K_TOTAL keeps the first K_TOTAL starting points"
+error = "K_TOTAL 1 caps nothing: the METHOD lines of the INIT blocks inside OPTIMIZER, STRATEGY and REFINE give at most 1 starting point (CONFIG), and K_TOTAL keeps the first K_TOTAL starting points"
+
+[[key.invalid]]
+doc = "The RESTART blocks make a chain of their own."
+wrap = "restart"
+at = 2
+text = '''
+METHOD LHS 2
+K_TOTAL 2'''
+error = "K_TOTAL 2 caps nothing: the METHOD lines of the RESTART blocks give at most 2 starting points (LHS 2), and K_TOTAL keeps the first K_TOTAL starting points"
 
 [[key.invalid]]
 wrap = "init"
@@ -2824,6 +2869,9 @@ synopsis = "AFTER_STAGNATION <n>"
 args = [ { name = "n", kind = "integer", min = 1, max = "UINT64_MAX", what = "{key}", msg = "AFTER_STAGNATION must be an integer >= 1, got '{tok}' (0 never restarts the search; a search without restarts has no RESTART block)" } ]
 repeat = "error"
 repeat_msg = "AFTER_STAGNATION is set twice in the RESTART block (first on line {first_line}); each key is given once"
+checks = [
+  { msg = "AFTER_STAGNATION must be an integer >= 1, got '{tok}'", doc = "When the file is read: a token that is no whole number, such as a word, a sign, a fraction or a number past the largest; the note about 0 follows 0 only." },
+]
 doc = """\
 The number of evaluations without a better loss after which the search \
 restarts from the starting points that the METHOD lines of the RESTART \
@@ -2855,6 +2903,17 @@ error = "AFTER_STAGNATION must be an integer >= 1, got '0' (0 never restarts the
 [[key.invalid]]
 wrap = "strategy"
 at = 2
+doc = "A token that is no whole number does not get the note about 0."
+text = '''
+RESTART
+AFTER_STAGNATION 2.5
+MAX 3
+ENDRESTART'''
+error = "AFTER_STAGNATION must be an integer >= 1, got '2.5'"
+
+[[key.invalid]]
+wrap = "strategy"
+at = 2
 text = '''
 RESTART
 AFTER_STAGNATION 20 3
@@ -2881,6 +2940,9 @@ synopsis = "MAX <n>"
 args = [ { name = "n", kind = "integer", min = 1, max = "UINT64_MAX", what = "{key}", msg = "MAX must be an integer >= 1, got '{tok}' (0 never restarts the search; a search without restarts has no RESTART block)" } ]
 repeat = "error"
 repeat_msg = "MAX is set twice in the RESTART block (first on line {first_line}); each key is given once"
+checks = [
+  { msg = "MAX must be an integer >= 1, got '{tok}'", doc = "When the file is read: a token that is no whole number, such as a word, a sign, a fraction or a number past the largest; the note about 0 follows 0 only." },
+]
 doc = """\
 The largest number of restarts of the search. Once they are used, the \
 next stagnation ends the search."""
@@ -2904,7 +2966,7 @@ RESTART
 MAX x
 AFTER_STAGNATION 50
 ENDRESTART'''
-error = "MAX must be an integer >= 1, got 'x' (0 never restarts the search; a search without restarts has no RESTART block)"
+error = "MAX must be an integer >= 1, got 'x'"
 
 [[key.invalid]]
 wrap = "strategy"
