@@ -4296,68 +4296,80 @@ TEST_CASE("Termination: MULTISTART whose INIT chain draws one point twice "
           std::string::npos);
 }
 
-/* Pins: the WARNING of a RESTART round whose points are fewer than
- * N_STARTS names the RESTART round, not the INIT chain (MULTISTART N_STARTS
- * 3 from METHOD LHS 3, RESTART AFTER_STAGNATION 2, MAX 1):
- *  - a RESTART chain whose METHOD lines give fewer points than N_STARTS,
- *    which the startup check does not count (a round draws its own), gets
- *    the count and what gives N_STARTS starts, as the startup refusal of
- *    an INIT chain does: METHOD RANDOM 1, "MULTISTART N_STARTS 3: the
- *    RESTART round gave 1 starting point; running 1 start. The RESTART
- *    chain gives 1 (RANDOM 1); a chain of 3 or more starting points (METHOD
- *    LHS 3, RANDOM 3 or SOBOL 3) runs 3 starts."; METHOD LHS 5 with K_TOTAL
- *    2, "... The RESTART chain gives 2 (LHS 5, capped by K_TOTAL 2); with
- *    K_TOTAL 3, or without K_TOTAL, 3 starts run.";
+/* Pins: a MULTISTART (N_STARTS 3 from METHOD LHS 3) whose RESTART block
+ * (AFTER_STAGNATION 2, MAX 1) gives fewer starting points than N_STARTS:
+ *  - a RESTART chain whose METHOD lines give fewer points than N_STARTS is
+ *    refused at startup, at the RESTART line, before any evaluation (no
+ *    loss.tadah), naming the chain, its count and what gives N_STARTS
+ *    starts, as the refusal of an INIT chain does: METHOD RANDOM 1, "Error
+ *    on line 12: N_STARTS 3 needs 3 starting points in each RESTART round,
+ *    and the RESTART chain gives 1 (RANDOM 1); a chain of 3 or more
+ *    starting points (METHOD LHS 3, RANDOM 3 or SOBOL 3) runs 3 starts";
+ *    METHOD LHS 5 with K_TOTAL 2, "... gives 2 (LHS 5, capped by K_TOTAL
+ *    2); with K_TOTAL 3, or without K_TOTAL, 3 starts run";
  *  - a RESTART chain of N_STARTS points that gives fewer when drawn (a WARM
- *    seed that WARM_ON_MISMATCH skip drops, and METHOD RANDOM 2) gets the
- *    cause: "MULTISTART N_STARTS 3: the RESTART round gave 2 starting
- *    points when it was drawn (WARM_ON_MISMATCH skip drops a WARM point,
- *    and a point equal to another counts once); running 2 starts.".
- * No WARNING names the INIT chain, which gave its 3 points.
- * Before the fix: each WARNING said "MULTISTART N_STARTS 3 requested but
- * the resolved INIT chain produced only 1 starting point; ..." (2 for the
- * others), naming the INIT chain for a RESTART round. */
+ *    seed that WARM_ON_MISMATCH skip drops, and METHOD RANDOM 2) runs, and
+ *    the WARNING of its round names the RESTART round and the cause:
+ *    "MULTISTART N_STARTS 3: the RESTART round gave 2 starting points when
+ *    it was drawn (WARM_ON_MISMATCH skip drops a WARM point, and a point
+ *    equal to another counts once); running 2 starts.". No WARNING names
+ *    the INIT chain, which gave its 3 points.
+ * Before the fix: the first two ran, and their RESTART round gave the
+ * WARNING "MULTISTART N_STARTS 3: the RESTART round gave 1 starting point;
+ * running 1 start. The RESTART chain gives 1 (RANDOM 1); a chain of 3 or
+ * more starting points (METHOD LHS 3, RANDOM 3 or SOBOL 3) runs 3 starts."
+ * (2 and "with K_TOTAL 3, or without K_TOTAL, 3 starts run." for the
+ * other), which this case pinned; the third passes as well (a pin). */
 TEST_CASE("Termination: MULTISTART with a RESTART round of fewer starting "
           "points than N_STARTS names the RESTART round",
           "[HPO][termination][multistart][restart]")
 {
-    struct Case { std::string restart, warning; };
-    const std::vector<Case> cases = {
-        {"      METHOD RANDOM 1\n      SEED 5\n",
-         "MULTISTART N_STARTS 3: the RESTART round gave 1 starting point; "
-         "running 1 start. The RESTART chain gives 1 (RANDOM 1); a chain of "
-         "3 or more starting points (METHOD LHS 3, RANDOM 3 or SOBOL 3) runs "
-         "3 starts.\n"},
-        {"      METHOD LHS 5\n      K_TOTAL 2\n      SEED 5\n",
-         "MULTISTART N_STARTS 3: the RESTART round gave 2 starting points; "
-         "running 2 starts. The RESTART chain gives 2 (LHS 5, capped by "
-         "K_TOTAL 2); with K_TOTAL 3, or without K_TOTAL, 3 starts run.\n"},
-        {"      METHOD WARM dropped_seed.tadah\n      WARM_ON_MISMATCH skip\n"
-         "      METHOD RANDOM 2\n      SEED 5\n",
-         "MULTISTART N_STARTS 3: the RESTART round gave 2 starting points "
-         "when it was drawn (WARM_ON_MISMATCH skip drops a WARM point, and a "
-         "point equal to another counts once); running 2 starts.\n"},
+    const auto target = [](const std::string& restart) {
+        return "OPTIMIZER\n  INIT\n    METHOD LHS 3\n    SEED 3\n"
+               "  ENDINIT\n  STRATEGY\n    TYPE MULTISTART\n"
+               "    N_STARTS 3\n    LIB NLOPT\n    ALGO LN_SBPLX\n"
+               "    MAXEVAL 30\n    RESTART\n      AFTER_STAGNATION 2\n"
+               "      MAX 1\n" + restart + "    ENDRESTART\n"
+               "  ENDSTRATEGY\nENDOPTIMIZER\n";
     };
-    for (const auto& c : cases) {
+    struct Refused { std::string restart, chain; };
+    const std::vector<Refused> refused = {
+        {"      METHOD RANDOM 1\n      SEED 5\n",
+         "1 (RANDOM 1); a chain of 3 or more starting points (METHOD LHS 3, "
+         "RANDOM 3 or SOBOL 3) runs 3 starts"},
+        {"      METHOD LHS 5\n      K_TOTAL 2\n      SEED 5\n",
+         "2 (LHS 5, capped by K_TOTAL 2); with K_TOTAL 3, or without "
+         "K_TOTAL, 3 starts run"},
+    };
+    for (const auto& c : refused) {
         INFO(c.restart);
-        TaRun run("OPTIMIZER\n  INIT\n    METHOD LHS 3\n    SEED 3\n"
-                  "  ENDINIT\n  STRATEGY\n    TYPE MULTISTART\n"
-                  "    N_STARTS 3\n    LIB NLOPT\n    ALGO LN_SBPLX\n"
-                  "    MAXEVAL 30\n    RESTART\n      AFTER_STAGNATION 2\n"
-                  "      MAX 1\n" + c.restart + "    ENDRESTART\n"
-                  "  ENDSTRATEGY\nENDOPTIMIZER\n");
-        write_dropped_warm_seed();
-        int status = -1;
-        REQUIRE_NOTHROW(status = tadah::hpo::hpo_run(run.ctx));
-        CHECK(status == 0);
-        const std::string journal = read_file("hpo_run.log");
-        INFO(journal);
-        REQUIRE(journal.find("RESTART 1/1") != std::string::npos);
-        CHECK(journal.find(c.warning) != std::string::npos);
-        CHECK(journal.find("MULTISTART N_STARTS 3: the INIT chain") ==
-              std::string::npos);
-        CHECK(journal.find("resolved INIT chain") == std::string::npos);
+        TaRun run(target(c.restart));
+        CHECK_THROWS_WITH(
+            tadah::hpo::hpo_run(run.ctx),
+            "Error on line 12: N_STARTS 3 needs 3 starting points in each "
+            "RESTART round, and the RESTART chain gives " + c.chain +
+            "\nLine:     RESTART");
+        CHECK_FALSE(fs::exists("loss.tadah"));
     }
+
+    TaRun run(target("      METHOD WARM dropped_seed.tadah\n"
+                     "      WARM_ON_MISMATCH skip\n"
+                     "      METHOD RANDOM 2\n      SEED 5\n"));
+    write_dropped_warm_seed();
+    int status = -1;
+    REQUIRE_NOTHROW(status = tadah::hpo::hpo_run(run.ctx));
+    CHECK(status == 0);
+    const std::string journal = read_file("hpo_run.log");
+    INFO(journal);
+    REQUIRE(journal.find("RESTART 1/1") != std::string::npos);
+    CHECK(journal.find(
+              "MULTISTART N_STARTS 3: the RESTART round gave 2 starting "
+              "points when it was drawn (WARM_ON_MISMATCH skip drops a WARM "
+              "point, and a point equal to another counts once); running 2 "
+              "starts.\n") != std::string::npos);
+    CHECK(journal.find("MULTISTART N_STARTS 3: the INIT chain") ==
+          std::string::npos);
+    CHECK(journal.find("resolved INIT chain") == std::string::npos);
 }
 
 /* Pins: a MULTISTART whose K_TOTAL keeps fewer starting points than
@@ -7063,7 +7075,9 @@ TEST_CASE("Termination: DLIB:BFGS records why it ended",
  *               they recorded their end there);
  *   RESTART     PLAIN under an active RESTART (AFTER_STAGNATION 4, MAX 1):
  *               the backend's status, or RESTART's own once its restart is
- *               used.
+ *               used (TADAH:GRID is refused at startup under RESTART,
+ *               whose rounds would evaluate its first grid nodes again: it
+ *               was in the sweep until that refusal).
  * Pins: exit status 0 and a status that is neither empty, nor COMPLETED,
  * nor "(no status recorded)".
  * Before the fix: TADAH:RANDOM, TADAH:GRID, the ANNEAL family, DLIB:GFS,
@@ -7120,6 +7134,8 @@ void check_every_backend_records_its_end(const std::string& strategy)
         if (strategy == "MULTISTART" && c->is_global)
             continue;                      // refused at startup
         if (strategy == "PRESTAGE" && !c->starts_at_x0)
+            continue;                      // refused at startup
+        if (strategy == "RESTART" && c->lib == "TADAH" && c->algo == "GRID")
             continue;                      // refused at startup
         DYNAMIC_SECTION(c->lib << ":" << c->algo) {
             TaRun run(registry_block(*c, strategy));

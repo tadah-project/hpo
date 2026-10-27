@@ -50,6 +50,7 @@
 #include <fstream>
 #include <functional>
 #include <iostream>
+#include <iterator>
 #include <optional>
 #include <set>
 #include <sstream>
@@ -1602,4 +1603,277 @@ TEST_CASE("hpo --check: the critical-OPTIM audit judges a joined line by "
         "searches";
     CHECK(contains(out, "D2_BP.RCUT2B: RCUT2B(2)" + fixed));
     CHECK_FALSE(contains(out, "RCUT2B(1)" + fixed));
+}
+
+namespace {
+
+/* The training configuration of the fixture with a DM_Blip many-body term
+ * (TYPEMB DM_Blip 0 2 2 Ta Ta, CGRIDMB 2 3, SGRIDMB 1 1, Cut_Cos 5), whose
+ * analytical derivatives with respect to its parameters cover the energy
+ * rows only, and FORCE `force`. */
+tadah::core::Context with_dm_blip(tadah::core::Context c, bool force)
+{
+    for (const char* key : {"INITMB", "TYPEMB", "FORCE"}) c.remove(key);
+    c.add("INITMB", "true");
+    c.add("TYPEMB", "DM_Blip 0 2 2 Ta Ta");
+    c.add("CGRIDMB", "2.0 3.0");
+    c.add("SGRIDMB", "1.0 1.0");
+    c.add("FORCE", force ? "true" : "false");
+    return c;
+}
+
+/* The OPTIMIZER block of a gradient search of NLOPT:LD_LBFGS with
+ * GRAD_STRATEGY `strategy`. */
+std::string lbfgs_block(const std::string& strategy)
+{
+    return "OPTIMIZER\n  STRATEGY\n    TYPE PLAIN\n    LIB NLOPT\n"
+           "    ALGO LD_LBFGS\n    MAXEVAL 4\n    GRAD_STRATEGY " + strategy +
+           "\n  ENDSTRATEGY\nENDOPTIMIZER\n";
+}
+
+/* The rows of the result file `path` that are not its header ('#') or
+ * blank: one per evaluation. */
+std::size_t loss_rows(const fs::path& path)
+{
+    std::ifstream in(path);
+    std::size_t n = 0;
+    for (std::string l; std::getline(in, l);) {
+        const auto p = l.find_first_not_of(" \t");
+        if (p != std::string::npos && l[p] != '#') ++n;
+    }
+    return n;
+}
+
+/* The 1-based number of the first line of `text` that is `line`. */
+std::size_t line_number(const std::string& text, const std::string& line)
+{
+    std::istringstream in(text);
+    std::size_t n = 0;
+    for (std::string l; std::getline(in, l);) {
+        ++n;
+        if (l == line) return n;
+    }
+    return 0;
+}
+
+}  // namespace
+
+/* Pins: GRAD_STRATEGY ANALYTICAL needs an analytical derivative with
+ * respect to every search parameter, and a search parameter that the
+ * descriptors of the training configuration do not differentiate on the
+ * data -- the routing of the analytical gradient -- is refused by the check
+ * and by the run alike, before any evaluation, at the line that closes the
+ * OPTIMIZER block, naming each such OPTIM line and HYBRID:
+ *   - OPTIM LAMBDA (1) (D2_BP, FORCE false): "OPTIMIZER block: GRAD_STRATEGY
+ *     ANALYTICAL needs an analytical derivative with respect to every
+ *     search parameter, and the descriptors of the training configuration
+ *     give none for OPTIM LAMBDA (1) on line 4 of the target file (no
+ *     descriptor differentiates it). GRAD_STRATEGY HYBRID takes finite
+ *     differences for it.";
+ *   - OPTIM SGRIDMB (1) of DM_Blip, whose derivatives cover the energy rows
+ *     only, with FORCE true: "... (the descriptors differentiate it in the
+ *     energy rows only, and FORCE true gives the fit force rows) ...";
+ *   - the same with FORCE false and PC_FRMSE: "... and PC_FRMSE measures the
+ *     forces of the validation set) ...";
+ *   - OPTIM LAMBDA (1) and OPTIM SGRIDMB (1) with FORCE true: both, in the
+ *     order of their lines ("... for OPTIM LAMBDA (1) on line 4 of the
+ *     target file (...) or OPTIM SGRIDMB (1) on line 5 (...). ... for
+ *     them.").
+ * The run evaluates nothing: the process-wide evaluation counter is where
+ * it was, and loss.tadah, whose header the run writes when it has read the
+ * data, holds no row.
+ * Before the fix: the check passed each of these setups, and the run
+ * evaluated the start and ended at its first gradient, "GRAD_STRATEGY=
+ * ANALYTICAL: no analytical gradient for 1 parameter at this point
+ * (indices: [0]): ...". */
+TEST_CASE("hpo --check: GRAD_STRATEGY ANALYTICAL refuses a search parameter "
+          "without an analytical derivative before any evaluation, as the "
+          "run does",
+          "[HPO][hpo_check][analytical]")
+{
+    const std::string root = "LOSS L2\nFAILSCORE 1e9\nPC_ERMSE 0 1\n";
+    const std::string lambda = "OPTIM LAMBDA (1) 1e-8 1e-2 LOG\n";
+    const std::string sgridmb = "OPTIM SGRIDMB (1) 0.5 2.0\n";
+    const std::string head =
+        "OPTIMIZER block: GRAD_STRATEGY ANALYTICAL needs an analytical "
+        "derivative with respect to every search parameter, and the "
+        "descriptors of the training configuration give none for ";
+    const std::string no_descriptor = " (no descriptor differentiates it)";
+    const std::string energy_rows =
+        " (the descriptors differentiate it in the energy rows only, and ";
+    const std::string by_force = "FORCE true gives the fit force rows)";
+    const std::string by_frmse =
+        "PC_FRMSE measures the forces of the validation set)";
+    const std::string for_it =
+        ". GRAD_STRATEGY HYBRID takes finite differences for it.";
+    struct Case {
+        const char* name;
+        std::string hpo;
+        bool dm_blip, force;
+        std::string message;
+    };
+    const std::vector<Case> cases = {
+        {"OPTIM LAMBDA", root + lambda + lbfgs_block("ANALYTICAL"), false,
+         false,
+         head + "OPTIM LAMBDA (1) on line 4 of the target file" +
+             no_descriptor + for_it},
+        {"DM_Blip SGRIDMB with FORCE true",
+         root + sgridmb + lbfgs_block("ANALYTICAL"), true, true,
+         head + "OPTIM SGRIDMB (1) on line 4 of the target file" +
+             energy_rows + by_force + for_it},
+        {"DM_Blip SGRIDMB with PC_FRMSE",
+         root + "PC_FRMSE 0 1\n" + sgridmb + lbfgs_block("ANALYTICAL"), true,
+         false,
+         head + "OPTIM SGRIDMB (1) on line 5 of the target file" +
+             energy_rows + by_frmse + for_it},
+        {"OPTIM LAMBDA and DM_Blip SGRIDMB with FORCE true",
+         root + lambda + sgridmb + lbfgs_block("ANALYTICAL"), true, true,
+         head + "OPTIM LAMBDA (1) on line 4 of the target file" +
+             no_descriptor + " or OPTIM SGRIDMB (1) on line 5" + energy_rows +
+             by_force + ". GRAD_STRATEGY HYBRID takes finite differences "
+             "for them."},
+    };
+    for (const Case& c : cases) {
+        INFO("case: " << c.name << "\n" << c.hpo);
+        const std::string expected =
+            "Error on line " +
+            std::to_string(line_number(c.hpo, "ENDOPTIMIZER")) + ": " +
+            c.message + "\nLine: ENDOPTIMIZER";
+        const auto context = [&] {
+            tadah::core::Context ctx =
+                make_ta_context("train.db", "config.hpo", "config.val");
+            return c.dm_blip ? with_dm_blip(ctx, c.force) : ctx;
+        };
+        fresh_process_state();
+        ScratchDir sd("analytical");
+        write_inputs(c.hpo);
+        std::string check_error, run_error;
+        {
+            tadah::core::Context ctx = context();
+            ctx.add("CHECK", "true");
+            check_error = error_of([&] { return tadah::hpo::hpo_run(ctx); });
+        }
+        CHECK(check_error == expected);
+        fresh_process_state();
+        const std::size_t evaluations = Host::g_iter_value();
+        {
+            tadah::core::Context ctx = context();
+            run_error = error_of([&] { return tadah::hpo::hpo_run(ctx); });
+        }
+        CHECK(run_error == expected);
+        CHECK(Host::g_iter_value() == evaluations);
+        CHECK(loss_rows("loss.tadah") == 0u);
+    }
+}
+
+/* Pins: GRAD_STRATEGY ANALYTICAL takes a setup in which the descriptors of
+ * the training configuration differentiate every search parameter in the
+ * rows the fit and the validation have: OPTIM CGRID2B (1) of D2_BP, whose
+ * check passes and whose run evaluates its points with the analytical
+ * gradient and ends with status 0, its journal without "no analytical
+ * gradient"; OPTIM SGRIDMB (1) of DM_Blip with FORCE false and no PC_FRMSE
+ * (energy rows only, which DM_Blip differentiates), whose check passes. A
+ * search parameter without an analytical derivative passes under
+ * GRAD_STRATEGY HYBRID, which takes finite differences for it (OPTIM
+ * LAMBDA (1)).
+ * Before the fix: passes as well (a pin of the setups the refusal of a
+ * search parameter without an analytical derivative leaves alone). */
+TEST_CASE("hpo --check: GRAD_STRATEGY ANALYTICAL takes search parameters "
+          "the descriptors differentiate, and HYBRID takes any",
+          "[HPO][hpo_check][analytical]")
+{
+    const std::string root = "LOSS L2\nFAILSCORE 1e9\nPC_ERMSE 0 1\n";
+    struct Case {
+        const char* name;
+        std::string hpo;
+        bool dm_blip;
+        bool run;
+    };
+    const std::vector<Case> cases = {
+        {"D2_BP CGRID2B", root + "OPTIM CGRID2B (1) 0.1 0.9\n" +
+                              lbfgs_block("ANALYTICAL"),
+         false, true},
+        {"DM_Blip SGRIDMB with FORCE false",
+         root + "OPTIM SGRIDMB (1) 0.5 2.0\n" + lbfgs_block("ANALYTICAL"),
+         true, false},
+        {"OPTIM LAMBDA under HYBRID",
+         root + "OPTIM LAMBDA (1) 1e-8 1e-2 LOG\n" + lbfgs_block("HYBRID"),
+         false, false},
+    };
+    for (const Case& c : cases) {
+        INFO("case: " << c.name << "\n" << c.hpo);
+        const auto context = [&] {
+            tadah::core::Context ctx =
+                make_ta_context("train.db", "config.hpo", "config.val");
+            return c.dm_blip ? with_dm_blip(ctx, false) : ctx;
+        };
+        fresh_process_state();
+        ScratchDir sd("analytical_ok");
+        write_inputs(c.hpo);
+        {
+            tadah::core::Context ctx = context();
+            ctx.add("CHECK", "true");
+            CHECK(error_of([&] { return tadah::hpo::hpo_run(ctx); }) == "");
+        }
+        if (!c.run) continue;
+        fresh_process_state();
+        const std::size_t evaluations = Host::g_iter_value();
+        tadah::core::Context ctx = context();
+        int status = -1;
+        CHECK(error_of([&] {
+                  status = tadah::hpo::hpo_run(ctx);
+                  return status;
+              }) == "");
+        CHECK(status == 0);
+        CHECK(Host::g_iter_value() > evaluations);
+        std::ifstream in("hpo_run.log");
+        const std::string journal((std::istreambuf_iterator<char>(in)),
+                                  std::istreambuf_iterator<char>());
+        CHECK_FALSE(contains(journal, "no analytical gradient"));
+    }
+}
+
+/* Pins: a RESTART block on a TADAH:GRID search is refused by the check and
+ * by the run alike, before any evaluation, at the RESTART line (line 11),
+ * naming the grid search and why: "a RESTART round would run the grid
+ * search of the STRATEGY-level optimiser (TADAH:GRID) again from its first
+ * node: ...". The run evaluates nothing and writes no loss.tadah.
+ * Before the fix: the check passed, and the run evaluated the INIT point
+ * and the grid's first nodes in round 0, the same nodes again in each
+ * RESTART round, and never the rest of the grid (PARAM GRID_POINTS 3,
+ * RESTART AFTER_STAGNATION 2, MAX 2, METHOD RANDOM 1). */
+TEST_CASE("hpo --check: a RESTART block on TADAH:GRID is refused at its "
+          "line, as the run does",
+          "[HPO][hpo_check][restart][grid]")
+{
+    const std::string hpo =
+        "LOSS L2\nFAILSCORE 1e9\nPC_ERMSE 0 1\nOPTIM CGRID2B (1) 0.1 0.9\n"
+        "OPTIMIZER\n  STRATEGY\n    TYPE PLAIN\n    LIB TADAH\n"
+        "    ALGO GRID\n    PARAM GRID_POINTS 3\n    RESTART\n"
+        "      AFTER_STAGNATION 2\n      MAX 2\n      METHOD RANDOM 1\n"
+        "      SEED 13\n    ENDRESTART\n  ENDSTRATEGY\nENDOPTIMIZER\n";
+    const std::string expected =
+        "Error on line 11: a RESTART round would run the grid search of the "
+        "STRATEGY-level optimiser (TADAH:GRID) again from its first node: a "
+        "grid search evaluates its starting point and then the nodes of its "
+        "grid in one fixed order, so each round would evaluate again the "
+        "nodes the rounds before it evaluated and never reach the rest of "
+        "the grid; a grid search has no RESTART block (MAXEVAL bounds it)\n"
+        "Line:     RESTART";
+    fresh_process_state();
+    ScratchDir sd("grid_restart");
+    write_inputs(hpo);
+    {
+        tadah::core::Context ctx =
+            make_ta_context("train.db", "config.hpo", "config.val");
+        ctx.add("CHECK", "true");
+        CHECK(error_of([&] { return tadah::hpo::hpo_run(ctx); }) == expected);
+    }
+    fresh_process_state();
+    const std::size_t evaluations = Host::g_iter_value();
+    tadah::core::Context ctx =
+        make_ta_context("train.db", "config.hpo", "config.val");
+    CHECK(error_of([&] { return tadah::hpo::hpo_run(ctx); }) == expected);
+    CHECK(Host::g_iter_value() == evaluations);
+    CHECK_FALSE(fs::exists("loss.tadah"));
 }

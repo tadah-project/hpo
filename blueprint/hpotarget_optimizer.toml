@@ -1547,6 +1547,7 @@ passes startup, and stops an ANALYTICAL run at its first gradient."""
 checks = [
   { msg = "GRAD_STRATEGY takes one value: NUMERICAL, ANALYTICAL or HYBRID", doc = "At the line: the key ends the line without its value." },
   { msg = "{block} block: GRAD_STRATEGY ANALYTICAL{note} needs the analytical gradient of the loss, which this setup cannot form: {why}. Change that setting, or set GRAD_STRATEGY HYBRID to use finite differences where no analytical gradient is available.", doc = "At startup, at the END line of its optimiser; {block} is OPTIMIZER or EXPLORE, and {why} names the first setting the analytical gradient does not cover. {note} is \" (resolved for PC_OBSERVABLE: the block sets no GRAD_STRATEGY)\" when the block takes ANALYTICAL for PC_OBSERVABLE." },
+  { msg = "{block} block: GRAD_STRATEGY ANALYTICAL{note} needs an analytical derivative with respect to every search parameter, and the descriptors of the training configuration give none for {list}. GRAD_STRATEGY HYBRID takes finite differences for {what}.", doc = "At startup, once the data are read, at the END line of its optimiser: {list} names each OPTIM line whose search parameter the descriptors do not differentiate on the data in the rows the fit and the validation have, and why; {what} is it or them." },
   { msg = "{phase}: ASA:ASA does not accept GRAD_STRATEGY: it is gradient-free, and the reannealing takes its tangents by finite differences (PARAM Delta_X)", doc = "At startup, at the END line of its optimiser." },
   { msg = "{phase}: TADAH:{algo} does not use GRAD_STRATEGY: it is gradient-free", doc = "At startup, at the END line of its optimiser: an annealer." },
   { msg = "{phase} {lib}:{algo}: GRAD_STRATEGY never takes effect: {lib}:{algo} takes no gradient{note}; remove it.", doc = "At startup, at the END line of its optimiser: an optimiser that obtains no gradient; {note} says why, for an NLopt MLSL or AUGLAG." },
@@ -1644,6 +1645,25 @@ GRAD_STRATEGY ANALYTICAL
 ENDSTRATEGY
 ENDOPTIMIZER'''
 error = "OPTIMIZER block: GRAD_STRATEGY ANALYTICAL needs the analytical gradient of the loss, which this setup cannot form: OPTIM WDBFILE searches a priority of the fit, which the analytical gradient does not differentiate. Change that setting, or set GRAD_STRATEGY HYBRID to use finite differences where no analytical gradient is available."
+
+[[key.invalid]]
+wrap = "none"
+check = "check"
+context = "opt_h2"
+at = "ENDOPTIMIZER"
+doc = "OPTIM LAMBDA: no descriptor differentiates a setting of the fit."
+text = '''
+OPTIM LAMBDA (1) 1e-8 1e-2 LOG
+PC_ERMSE 0 1
+OPTIMIZER
+STRATEGY
+LIB NLOPT
+ALGO LD_LBFGS
+MAXEVAL 10
+GRAD_STRATEGY ANALYTICAL
+ENDSTRATEGY
+ENDOPTIMIZER'''
+error = "OPTIMIZER block: GRAD_STRATEGY ANALYTICAL needs an analytical derivative with respect to every search parameter, and the descriptors of the training configuration give none for OPTIM LAMBDA (1) on line 1 of the target file (no descriptor differentiates it). GRAD_STRATEGY HYBRID takes finite differences for it."
 
 [[key.invalid]]
 wrap = "opt_asa"
@@ -1977,6 +1997,7 @@ repeat_msg = "N_STARTS is set twice in the STRATEGY block (first on line {first_
 checks = [
   { msg = "N_STARTS must be an integer >= 2, got '{tok}'", doc = "When the file is read: a token that is no whole number, such as a word, a sign, a fraction or a number past the largest; the note about one start follows 0 and 1 only." },
   { msg = "N_STARTS {value} needs {value} starting points, and the INIT chain gives {count} ({list}); {hint}", doc = "At startup, at the N_STARTS line, after the checks of the optimiser MULTISTART runs: the INIT blocks inside OPTIMIZER and STRATEGY give fewer starting points than N_STARTS, counting the K of each RANDOM, LHS and SOBOL line, one point for the CONFIG lines and one for the WARM lines of each file, or the CONFIG point without a METHOD line, at most K_TOTAL. {count} reads \"at most n\" when the chain has a WARM line, whose point WARM_ON_MISMATCH skip may drop; {list} names the METHOD lines (\"the CONFIG point: the chain has no METHOD line\" without one), K_TOTAL and why repeated lines count once, and {hint} what gives N_STARTS starts." },
+  { msg = "N_STARTS {value} needs {value} starting points in each RESTART round, and the RESTART chain gives {count} ({list}); {hint}", doc = "At startup, at the RESTART line, after the count of the INIT chain: the METHOD lines of the RESTART block give fewer starting points than N_STARTS, counted as those of the INIT chain; {count}, {list} and {hint} as for the INIT chain." },
 ]
 doc = """\
 The number of starts of STRATEGY TYPE MULTISTART: the optimiser runs once \
@@ -2057,6 +2078,26 @@ K_TOTAL 2
 SEED 4
 ENDINIT'''
 error = "N_STARTS 4 needs 4 starting points, and the INIT chain gives 2 (LHS 6, capped by K_TOTAL 2); with K_TOTAL 4, or without K_TOTAL, 4 starts run, and N_STARTS 2 starts from each of the 2"
+
+[[key.invalid]]
+wrap = "strategy"
+check = "startup"
+at = "RESTART"
+doc = "Each RESTART round runs N_STARTS starts from the points of the RESTART chain."
+text = '''
+TYPE MULTISTART
+N_STARTS 2
+INIT
+METHOD LHS 2
+SEED 1
+ENDINIT
+RESTART
+AFTER_STAGNATION 20
+MAX 1
+METHOD RANDOM 1
+SEED 5
+ENDRESTART'''
+error = "N_STARTS 2 needs 2 starting points in each RESTART round, and the RESTART chain gives 1 (RANDOM 1); a chain of 2 or more starting points (METHOD LHS 2, RANDOM 2 or SOBOL 2) runs 2 starts"
 
 [[key.invalid]]
 wrap = "opt_prestage"
@@ -3749,6 +3790,40 @@ ENDSTRATEGY
 ENDOPTIMIZER
 """
 
+[[rule]]
+id = "RULE.restart_grid"
+title = "A RESTART block restarts no TADAH:GRID search"
+check = "startup"
+keys = ["BLOCK.RESTART", "OPTIMIZER.ALGO"]
+msg = "a RESTART round would run the grid search of {phase} (TADAH:GRID) again from its first node: a grid search evaluates its starting point and then the nodes of its grid in one fixed order, so each round would evaluate again the nodes the rounds before it evaluated and never reach the rest of the grid; a grid search has no RESTART block (MAXEVAL bounds it)"
+doc = """\
+A RESTART block is refused when a phase it restarts runs TADAH:GRID: a \
+RESTART round would evaluate the first nodes of the grid again, and the \
+run would never reach the rest of the grid."""
+msg_doc = "At startup, at the RESTART line; the message names the phase that runs TADAH:GRID."
+
+[[rule.invalid]]
+wrap = "none"
+check = "startup"
+at = "RESTART"
+text = '''
+OPTIM CGRID2B (1) 0.5 1.5
+PC_ERMSE 0 1
+OPTIMIZER
+STRATEGY
+LIB TADAH
+ALGO GRID
+PARAM GRID_POINTS 3
+RESTART
+AFTER_STAGNATION 2
+MAX 2
+METHOD RANDOM 1
+SEED 13
+ENDRESTART
+ENDSTRATEGY
+ENDOPTIMIZER'''
+error = "a RESTART round would run the grid search of the STRATEGY-level optimiser (TADAH:GRID) again from its first node: a grid search evaluates its starting point and then the nodes of its grid in one fixed order, so each round would evaluate again the nodes the rounds before it evaluated and never reach the rest of the grid; a grid search has no RESTART block (MAXEVAL bounds it)"
+
 # ============================================================== contexts ==
 
 [context.opt_oalgo1]
@@ -3790,6 +3865,25 @@ LAMBDA 1e-3
 WDBFILE 1
 """
 
+[context.opt_h2]
+doc = "The default training configuration with the dataset opt_h2.db, which tadah hpo --check also takes as the validation configuration."
+config = """
+ATOM H
+WATOM 1.0
+DBFILE opt_h2.db
+INIT2B true
+INITMB false
+TYPE2B D2_BP 2 2 H H
+CGRID2B 1.0 2.0
+SGRID2B 0.5 1.0
+RCTYPE2B Cut_Cos
+RCUT2B 5.0
+VERBOSE 0
+MODEL M_BLR BF_Linear
+OALGO 4
+LAMBDA 1e-3
+"""
+
 # ============================================================== fixtures ==
 # Seed files of the WARM examples, written next to the target file.
 
@@ -3812,4 +3906,33 @@ path = "opt_seed_other.tadah"
 doc = "A seed without CGRID2B."
 text = """
 RCUT2B 5.0
+"""
+
+[fixture.opt_h2]
+path = "opt_h2.db"
+doc = "Two H2 cells with an energy, forces and a stress tensor."
+text = """
+H2 at 0.8 A
+1 1 1
+-1.2 0
+6 0 0
+0 6 0
+0 0 6
+0.01 0 0
+0 0.01 0
+0 0 0.01
+H 0 0 0 0.1 0 0
+H 0.8 0 0 -0.1 0 0
+
+H2 at 1.0 A
+1 1 1
+-1.3 0
+6 0 0
+0 6 0
+0 0 6
+0.01 0 0
+0 0.01 0
+0 0 0.01
+H 0 0 0 0.1 0 0
+H 1.0 0 0 -0.1 0 0
 """

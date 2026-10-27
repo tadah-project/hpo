@@ -399,6 +399,12 @@ const std::string kRestart =
     "    RESTART\n      AFTER_STAGNATION 60\n      MAX 1\n"
     "      METHOD RANDOM 1\n      SEED 5\n    ENDRESTART\n";
 
+/* kRestart with a chain of two starting points, as a MULTISTART of
+ * N_STARTS 2 needs in each RESTART round. */
+const std::string kRestart2 =
+    "    RESTART\n      AFTER_STAGNATION 60\n      MAX 1\n"
+    "      METHOD RANDOM 2\n      SEED 5\n    ENDRESTART\n";
+
 std::string prestage_body(const std::string& lib, const std::string& algo,
                           const std::string& topk_line)
 {
@@ -872,7 +878,9 @@ TEST_CASE("startup validation: STRATEGY TYPE MULTISTART needs N_STARTS 2 or "
  * block inside OPTIMIZER with the RANDOM 1 of one inside STRATEGY, a chain
  * of a WARM line and RANDOM 1 under N_STARTS 2 (the WARM point may be
  * dropped when the run starts, which the run warns about), and a RESTART
- * block of fewer points than N_STARTS (a RESTART round draws its own).
+ * block of N_STARTS points (a RESTART round draws its own: one of fewer
+ * points is refused at its RESTART line, the next case; it was accepted
+ * here).
  * Before the fix: the parser refused these files when it read them
  * (HPOTargets::read), before the refusals of the optimiser at startup, and
  * accepted the chains of two CONFIG lines and of two WARM lines of one
@@ -980,7 +988,82 @@ TEST_CASE("startup validation: a MULTISTART whose INIT chain gives fewer "
     CHECK(refused("2", block("      METHOD WARM " + dropped.path.string() +
                              "\n      METHOD RANDOM 1\n      SEED 4\n"
                              "      WARM_ON_MISMATCH skip\n")) == "");
-    CHECK(refused("3", init_points("3") + kRestart) == "");
+    CHECK(refused("3", init_points("3") +
+                       "    RESTART\n      AFTER_STAGNATION 60\n      MAX 1\n"
+                       "      METHOD RANDOM 3\n      SEED 5\n"
+                       "    ENDRESTART\n") == "");
+}
+
+/* Pins: a MULTISTART whose RESTART chain gives fewer starting points than
+ * N_STARTS is refused at startup, at the RESTART line, as one whose INIT
+ * chain does: every RESTART round runs N_STARTS starts from the points of
+ * the RESTART chain, which is counted as an INIT chain is (chain_points).
+ * The message names the count, the METHOD lines and K_TOTAL, and what
+ * gives N_STARTS starts (RESTART on line 13, the INIT chain LHS 3):
+ *   - METHOD RANDOM 1, N_STARTS 3: "N_STARTS 3 needs 3 starting points in
+ *     each RESTART round, and the RESTART chain gives 1 (RANDOM 1); a chain
+ *     of 3 or more starting points (METHOD LHS 3, RANDOM 3 or SOBOL 3) runs
+ *     3 starts";
+ *   - a RESTART block without a METHOD line: "... gives 1 (the CONFIG
+ *     point: the chain has no METHOD line); ...";
+ *   - METHOD LHS 5 with K_TOTAL 2: "... gives 2 (LHS 5, capped by K_TOTAL
+ *     2); with K_TOTAL 3, or without K_TOTAL, 3 starts run";
+ *   - METHOD WARM <file>: "... gives at most 1 (WARM <file>); ...".
+ * Accepted: a RESTART chain of N_STARTS points (RANDOM 3), and one of a
+ * WARM line and RANDOM 2, at most 3 points, which the run warns about when
+ * a round draws fewer (WARM_ON_MISMATCH skip drops the WARM point). The
+ * INIT chain is refused first, at the N_STARTS line.
+ * Before the fix: each was accepted; a RESTART round ran fewer starts than
+ * N_STARTS, with a WARNING ("MULTISTART N_STARTS 3: the RESTART round gave
+ * 1 starting point; running 1 start. The RESTART chain gives 1 (RANDOM 1);
+ * ..."). */
+TEST_CASE("startup validation: a MULTISTART whose RESTART chain gives fewer "
+          "starting points than N_STARTS is refused at the RESTART line",
+          "[startup_validation][strategy][multistart][restart]")
+{
+    /* TYPE on line 5, N_STARTS on line 6, the INIT block on lines 9-12,
+     * RESTART on line 13. */
+    const auto refused = [](const std::string& init,
+                            const std::string& chain) {
+        return startup_refusal(strategy_config(
+            "    TYPE MULTISTART\n    N_STARTS 3\n    LIB DLIB\n"
+            "    ALGO BFGS\n" + init +
+            "    RESTART\n      AFTER_STAGNATION 60\n      MAX 1\n" +
+            chain + "    ENDRESTART\n"));
+    };
+    const std::string init = init_points("3");
+    const std::string head =
+        "Error on line 13: N_STARTS 3 needs 3 starting points in each "
+        "RESTART round, and the RESTART chain gives ";
+    const std::string more =
+        "a chain of 3 or more starting points (METHOD LHS 3, RANDOM 3 or "
+        "SOBOL 3) runs 3 starts";
+    const std::string line = "\nLine:     RESTART";
+    CHECK(refused(init, "      METHOD RANDOM 1\n      SEED 5\n") ==
+          head + "1 (RANDOM 1); " + more + line);
+    CHECK(refused(init, "") ==
+          head + "1 (the CONFIG point: the chain has no METHOD line); " +
+              more + line);
+    CHECK(refused(init, "      METHOD LHS 5\n      K_TOTAL 2\n"
+                        "      SEED 5\n") ==
+          head + "2 (LHS 5, capped by K_TOTAL 2); with K_TOTAL 3, or "
+                 "without K_TOTAL, 3 starts run" + line);
+    /* A seed with the OPTIM key WATOM. */
+    ScopedTempFile seed("WATOM 1.0\n");
+    const std::string warm = "WARM " + seed.path.string();
+    CHECK(refused(init, "      METHOD " + warm + "\n") ==
+          head + "at most 1 (" + warm + "); " + more + line);
+
+    /* Accepted. */
+    CHECK(refused(init, "      METHOD RANDOM 3\n      SEED 5\n") == "");
+    ScopedTempFile dropped("RCUT2B 5.0\n");
+    CHECK(refused(init, "      METHOD WARM " + dropped.path.string() +
+                        "\n      METHOD RANDOM 2\n      SEED 5\n"
+                        "      WARM_ON_MISMATCH skip\n") == "");
+    /* The INIT chain first. */
+    CHECK_THAT(refused("", "      METHOD RANDOM 1\n      SEED 5\n"),
+               Catch::StartsWith("Error on line 6: N_STARTS 3 needs 3 "
+                                 "starting points, and the INIT chain"));
 }
 
 /* Pins: a MULTISTART whose optimiser MULTISTART cannot run, or which an MPI
@@ -1117,6 +1200,60 @@ TEST_CASE("startup validation: a RESTART block that never restarts the "
     Context ctx = make_minimal_ctx();
     HPOTargets trg(ctx, ok.path.string());
     CHECK(trg.spec.restart.active());
+}
+
+/* Pins: a RESTART block is refused at startup, at its RESTART line, when a
+ * phase it restarts runs TADAH:GRID: a grid search evaluates its starting
+ * point and then the nodes of its grid in one fixed order, so a RESTART
+ * round would run it again from its first node. The message names the
+ * phase: "a RESTART round would run the grid search of the STRATEGY-level
+ * optimiser (TADAH:GRID) again from its first node: a grid search evaluates
+ * its starting point and then the nodes of its grid in one fixed order, so
+ * each round would evaluate again the nodes the rounds before it evaluated
+ * and never reach the rest of the grid; a grid search has no RESTART block
+ * (MAXEVAL bounds it)" (PLAIN), "... of the PRESTAGE exploration (EXPLORE
+ * block) (TADAH:GRID) ..." (an EXPLORE block of TADAH:GRID under
+ * PRESTAGE). Accepted: TADAH:GRID without a RESTART block, and a RESTART
+ * block on TADAH:RANDOM.
+ * Before the fix: both RESTART blocks were accepted; the rounds of the
+ * first evaluated the grid's first nodes again (the run's record does not
+ * answer TADAH:GRID) and never reached the rest of the grid. */
+TEST_CASE("startup validation: a RESTART block on a TADAH:GRID phase is "
+          "refused at the RESTART line",
+          "[startup_validation][strategy][restart][grid]")
+{
+    const std::string restart =
+        "    RESTART\n      AFTER_STAGNATION 2\n      MAX 2\n"
+        "      METHOD RANDOM 1\n      SEED 13\n    ENDRESTART\n";
+    const std::string grid =
+        "    LIB TADAH\n    ALGO GRID\n    PARAM GRID_POINTS 3\n";
+    const auto refusal = [](std::size_t line, const std::string& phase) {
+        return "Error on line " + std::to_string(line) +
+               ": a RESTART round would run the grid search of " + phase +
+               " (TADAH:GRID) again from its first node: a grid search "
+               "evaluates its starting point and then the nodes of its grid "
+               "in one fixed order, so each round would evaluate again the "
+               "nodes the rounds before it evaluated and never reach the "
+               "rest of the grid; a grid search has no RESTART block "
+               "(MAXEVAL bounds it)\nLine:     RESTART";
+    };
+    /* LIB on line 5, RESTART on line 8. */
+    CHECK(startup_refusal(strategy_config(grid + restart)) ==
+          refusal(8, "the STRATEGY-level optimiser"));
+    /* TYPE on line 5, the refinement on lines 6-8, EXPLORE on lines 9-13,
+     * RESTART on line 14. */
+    CHECK(startup_refusal(strategy_config(
+              "    TYPE PRESTAGE\n    LIB DLIB\n    ALGO BFGS\n"
+              "    MAXEVAL 20\n    EXPLORE\n      LIB TADAH\n"
+              "      ALGO GRID\n      PARAM GRID_POINTS 3\n"
+              "    ENDEXPLORE\n" + restart)) ==
+          refusal(14, "the PRESTAGE exploration (EXPLORE block)"));
+
+    /* Accepted. */
+    CHECK(startup_refusal(strategy_config(grid)) == "");
+    CHECK(startup_refusal(strategy_config(
+              "    LIB TADAH\n    ALGO RANDOM\n    MAXEVAL 20\n" +
+              restart)) == "");
 }
 
 /* Pins: THREADS of the STRATEGY-level optimiser sets the workers of the
@@ -3067,8 +3204,11 @@ TEST_CASE("startup validation: the backend checks reject no valid "
              "    TYPE PLAIN\n    LIB DLIB\n    ALGO GFS\n" + kRestart,
              "    TYPE PLAIN\n    LIB NLOPT\n    ALGO GN_MLSL_LDS\n" +
                  kRestart,
+             /* Its RESTART chain gives the N_STARTS points of a round (a
+              * chain of fewer is refused at its RESTART line; it was
+              * kRestart, of one point). */
              "    TYPE MULTISTART\n    LIB NLOPT\n    ALGO LD_MMA\n"
-             "    N_STARTS 2\n" + init_points("2") + kRestart,
+             "    N_STARTS 2\n" + init_points("2") + kRestart2,
              "    TYPE PRESTAGE\n    LIB DLIB\n    ALGO BFGS\n"
              "    MAXEVAL 20\n    EXPLORE\n      LIB NLOPT\n"
              "      ALGO GN_CRS2_LM\n    ENDEXPLORE\n" + kRestart,

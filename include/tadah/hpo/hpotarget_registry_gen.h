@@ -1117,6 +1117,7 @@ inline constexpr Arg OPTIMIZER_GRAD_STRATEGY_args[] = {
 inline constexpr std::string_view OPTIMIZER_GRAD_STRATEGY_checks[] = {
     "GRAD_STRATEGY takes one value: NUMERICAL, ANALYTICAL or HYBRID",
     "{block} block: GRAD_STRATEGY ANALYTICAL{note} needs the analytical gradient of the loss, which this setup cannot form: {why}. Change that setting, or set GRAD_STRATEGY HYBRID to use finite differences where no analytical gradient is available.",
+    "{block} block: GRAD_STRATEGY ANALYTICAL{note} needs an analytical derivative with respect to every search parameter, and the descriptors of the training configuration give none for {list}. GRAD_STRATEGY HYBRID takes finite differences for {what}.",
     "{phase}: ASA:ASA does not accept GRAD_STRATEGY: it is gradient-free, and the reannealing takes its tangents by finite differences (PARAM Delta_X)",
     "{phase}: TADAH:{algo} does not use GRAD_STRATEGY: it is gradient-free",
     "{phase} {lib}:{algo}: GRAD_STRATEGY never takes effect: {lib}:{algo} takes no gradient{note}; remove it.",
@@ -1166,6 +1167,7 @@ inline constexpr Arg STRATEGY_N_STARTS_args[] = {
 inline constexpr std::string_view STRATEGY_N_STARTS_checks[] = {
     "N_STARTS must be an integer >= 2, got '{tok}'",
     "N_STARTS {value} needs {value} starting points, and the INIT chain gives {count} ({list}); {hint}",
+    "N_STARTS {value} needs {value} starting points in each RESTART round, and the RESTART chain gives {count} ({list}); {hint}",
 };
 inline constexpr Arg STRATEGY_BUDGET_PER_START_args[] = {
     Arg{"n", ArgKind::Integer, false, false, Limit{true, "1", 1.0, true, 1ull},
@@ -2533,7 +2535,7 @@ inline constexpr Key kKeys[] = {
       Span<Arg>{detail::OPTIMIZER_GRAD_STRATEGY_args, 1}, Repeat::Error,
       "GRAD_STRATEGY is set twice in the {block} block (first on line {first_line}); each key is given once",
       "", true, "NUMERICAL", false, KeyId::OPTIMIZER_GRAD_STRATEGY, false, "",
-      Span<std::string_view>{detail::OPTIMIZER_GRAD_STRATEGY_checks, 5}},
+      Span<std::string_view>{detail::OPTIMIZER_GRAD_STRATEGY_checks, 6}},
   Key{KeyId::OPTIMIZER_PARAM, "OPTIMIZER.PARAM", "PARAM", "OPTIMIZER",
       block_bit(BlockId::OPTIMIZER) | block_bit(BlockId::STRATEGY) | block_bit(BlockId::EXPLORE) | block_bit(BlockId::REFINE) | block_bit(BlockId::INNER),
       Span<Arg>{detail::OPTIMIZER_PARAM_args, 2}, Repeat::Add, "", "", false,
@@ -2557,7 +2559,7 @@ inline constexpr Key kKeys[] = {
       Span<Arg>{detail::STRATEGY_N_STARTS_args, 1}, Repeat::Error,
       "N_STARTS is set twice in the STRATEGY block (first on line {first_line}); each key is given once",
       "", false, "", false, KeyId::STRATEGY_N_STARTS, false, "",
-      Span<std::string_view>{detail::STRATEGY_N_STARTS_checks, 2}},
+      Span<std::string_view>{detail::STRATEGY_N_STARTS_checks, 3}},
   Key{KeyId::STRATEGY_BUDGET_PER_START, "STRATEGY.BUDGET_PER_START",
       "BUDGET_PER_START", "", block_bit(BlockId::STRATEGY),
       Span<Arg>{detail::STRATEGY_BUDGET_PER_START_args, 1}, Repeat::Error,
@@ -2992,6 +2994,8 @@ inline constexpr Rule kRules[] = {
       "{key} is set on line {first_line} in the {open} block and again here in the {block} block; both blocks configure the same {what}, so each key is given once"},
   Rule{"RULE.set_once_for_starting_points", RuleCheck::Parse,
       "{key} is set on line {first_line} in the INIT block inside {parent} and again here in the INIT block inside {enclosing}; both blocks configure the same starting points, so each key is given once"},
+  Rule{"RULE.restart_grid", RuleCheck::Startup,
+      "a RESTART round would run the grid search of {phase} (TADAH:GRID) again from its first node: a grid search evaluates its starting point and then the nodes of its grid in one fixed order, so each round would evaluate again the nodes the rounds before it evaluated and never reach the rest of the grid; a grid search has no RESTART block (MAXEVAL bounds it)"},
   Rule{"RULE.OPTIM_MPARAMS", RuleCheck::Startup,
       "OPTIM MPARAMS ({index}) is not a valid search target: {why}"},
   Rule{"RULE.OPTIM_MPARAMS_positive", RuleCheck::Startup,
