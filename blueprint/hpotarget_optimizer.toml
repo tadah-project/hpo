@@ -2142,7 +2142,7 @@ msg = "STRATEGY TYPE MULTISTART cannot run {name}: it takes every INIT point in 
 doc = "At startup, at the ENDOPTIMIZER line: an optimiser that takes every INIT point in one run (DLIB:GFS)."
 
 [[strategy_type.checks]]
-msg = "STRATEGY TYPE MULTISTART cannot run {name}: it is a global optimiser that consumes a single starting point, so restarting it from each INIT point is rejected for any N_STARTS. Use a local optimiser ({list}), or STRATEGY TYPE PLAIN to run {name} once."
+msg = "STRATEGY TYPE MULTISTART cannot run {name}: it is a global optimiser that takes one starting point, so restarting it from each INIT point is rejected for any N_STARTS. Use a local optimiser ({list}), or STRATEGY TYPE PLAIN to run {name} once."
 doc = """\
 At startup, at the ENDOPTIMIZER line: a global optimiser that takes one \
 starting point; {list} names the local optimisers."""
@@ -2207,7 +2207,7 @@ ALGO GN_DIRECT_L
 MAXEVAL 10
 ENDSTRATEGY
 ENDOPTIMIZER'''
-error = "STRATEGY TYPE MULTISTART cannot run NLOPT:GN_DIRECT_L: it is a global optimiser that consumes a single starting point, so restarting it from each INIT point is rejected for any N_STARTS. Use a local optimiser (CERES:STEEPEST_DESCENT, DLIB:BFGS, NLOPT:AUGLAG, NLOPT:AUGLAG_EQ, NLOPT:LD_AUGLAG, NLOPT:LD_AUGLAG_EQ, ... (17 more)), or STRATEGY TYPE PLAIN to run NLOPT:GN_DIRECT_L once."
+error = "STRATEGY TYPE MULTISTART cannot run NLOPT:GN_DIRECT_L: it is a global optimiser that takes one starting point, so restarting it from each INIT point is rejected for any N_STARTS. Use a local optimiser (CERES:STEEPEST_DESCENT, DLIB:BFGS, NLOPT:AUGLAG, NLOPT:AUGLAG_EQ, NLOPT:LD_AUGLAG, NLOPT:LD_AUGLAG_EQ, ... (17 more)), or STRATEGY TYPE PLAIN to run NLOPT:GN_DIRECT_L once."
 
 [[strategy_type]]
 id = "STRATEGY.TYPE.PRESTAGE"
@@ -2229,7 +2229,7 @@ At startup, at the ENDOPTIMIZER line: the refinement optimiser starts at \
 the point it is given; {note} says where it starts instead."""
 
 [[strategy_type.checks]]
-msg = "STRATEGY TYPE PRESTAGE with TOPK {value} cannot refine with {name}: the refinement runs its optimiser once from each of the TOPK candidates the exploration forwards, and {name} is a global optimiser that consumes a single starting point. Use a local or multi-seed refinement optimiser ({list}), or TOPK 1 to refine the best candidate once."
+msg = "STRATEGY TYPE PRESTAGE with TOPK {value} cannot refine with {name}: the refinement runs its optimiser once from each of the TOPK candidates the exploration forwards, and {name} is a global optimiser that takes one starting point. Use a local or multi-seed refinement optimiser ({list}), or TOPK 1 to refine the best candidate once."
 doc = "At startup, at the ENDOPTIMIZER line, with TOPK above 1: the refinement optimiser runs from each candidate."
 
 [[strategy_type.examples]]
@@ -2286,7 +2286,7 @@ ENDEXPLORE
 TOPK 2
 ENDSTRATEGY
 ENDOPTIMIZER'''
-error = "STRATEGY TYPE PRESTAGE with TOPK 2 cannot refine with NLOPT:GN_CRS2_LM: the refinement runs its optimiser once from each of the TOPK candidates the exploration forwards, and NLOPT:GN_CRS2_LM is a global optimiser that consumes a single starting point. Use a local or multi-seed refinement optimiser (CERES:STEEPEST_DESCENT, DLIB:BFGS, DLIB:GFS, NLOPT:AUGLAG, NLOPT:AUGLAG_EQ, NLOPT:LD_AUGLAG, ... (18 more)), or TOPK 1 to refine the best candidate once."
+error = "STRATEGY TYPE PRESTAGE with TOPK 2 cannot refine with NLOPT:GN_CRS2_LM: the refinement runs its optimiser once from each of the TOPK candidates the exploration forwards, and NLOPT:GN_CRS2_LM is a global optimiser that takes one starting point. Use a local or multi-seed refinement optimiser (CERES:STEEPEST_DESCENT, DLIB:BFGS, DLIB:GFS, NLOPT:AUGLAG, NLOPT:AUGLAG_EQ, NLOPT:LD_AUGLAG, ... (18 more)), or TOPK 1 to refine the best candidate once."
 
 # ============================================================ INIT keys ==
 # Valid in INIT and RESTART blocks. Inside them a STRATEGY line is read as

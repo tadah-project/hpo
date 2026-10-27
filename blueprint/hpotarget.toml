@@ -1502,7 +1502,7 @@ check = "startup"
 at = "none"
 doc = "Under CANDIDATE, the default: no point of the box keeps bump 4 inside RCUT2B."
 text = "OPTIM CGRID2B (4) 5.4 5.5"
-error = "bump-support gate: with a hard (Cut_Dummy) cutoff every compact bump must vanish at or before RCUT (c + w/eta <= RCUT) — a truncated overhang is an energy/force STEP at the cutoff. Violations:\n  - no feasible point for bump 4 of CGRID2B: even its most favorable corner (centre 5.4, eta 3) reaches 6.4, past RCUT2B = 5.5 — need the OPTIM SGRID2B (4) high bound >= w/(RCUT2B - c_lo) = 30, a lower CGRID2B low bound, or a larger RCUT2B.\n  To search longer range, raise RCUT2B/RCUTMB in the config (the potential stays smooth: bumps still vanish at their own support edge)."
+error = "bump-support gate: with a hard (Cut_Dummy) cutoff every compact bump must vanish at or before RCUT (c + w/eta <= RCUT) — a truncated overhang is an energy/force STEP at the cutoff. Violations:\n  - no feasible point for bump 4 of CGRID2B: even its most favourable corner (centre 5.4, eta 3) reaches 6.4, past RCUT2B = 5.5 — need the OPTIM SGRID2B (4) high bound >= w/(RCUT2B - c_lo) = 30, a lower CGRID2B low bound, or a larger RCUT2B.\n  To search longer range, raise RCUT2B/RCUTMB in the config (the potential stays smooth: bumps still vanish at their own support edge)."
 
 [[key.invalid]]
 wrap = "main_ream"

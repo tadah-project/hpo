@@ -6,8 +6,7 @@
 // or any evaluation runs -- instead of the policy finding out once the run
 // (under PRESTAGE, the whole EXPLORE phase) is under way:
 //  - MULTISTART runs its optimiser from each INIT point, which a global
-//    optimiser that consumes a single starting point cannot do, for any
-//    N_STARTS;
+//    optimiser that takes one starting point cannot do, for any N_STARTS;
 //  - the PRESTAGE refinement does the same over the TOPK candidates, so a
 //    configured TOPK > 1 needs a refinement optimiser MULTISTART accepts;
 //  - the PRESTAGE refinement, and the INNER search of an AUGLAG under
@@ -395,8 +394,11 @@ std::string prestage_body(const std::string& lib, const std::string& algo,
  * (DLIB:BFGS, NLOPT:LN_SBPLX). DLIB:GFS, which takes every INIT point in
  * one run, is refused with a message of its own (the case "MULTISTART
  * refuses an optimiser that takes every INIT point in one run").
+ * The refusal says why in the words of the documentation: "it is a global
+ * optimiser that takes one starting point".
  * Before the fix: the alternatives were "a local or multi-seed optimiser",
- * DLIB:GFS among them (the check of the lead fails). */
+ * DLIB:GFS among them (the check of the lead fails); then the refusal said
+ * "consumes a single starting point". */
 TEST_CASE("startup validation: MULTISTART rejects a single-seed global "
           "optimiser for any N_STARTS",
           "[startup_validation][strategy][multistart]")
@@ -422,6 +424,8 @@ TEST_CASE("startup validation: MULTISTART rejects a single-seed global "
                        Catch::Contains("STRATEGY TYPE MULTISTART cannot run " +
                                        c.lib + ":" + c.algo + ":") &&
                        Catch::Contains("any N_STARTS") &&
+                       Catch::Contains(": it is a global optimiser that takes "
+                                       "one starting point, so ") &&
                        Catch::Contains("STRATEGY TYPE PLAIN to run " + c.lib +
                                        ":" + c.algo + " once"));
             CHECK(v.policy == v.startup);
@@ -442,6 +446,10 @@ TEST_CASE("startup validation: MULTISTART rejects a single-seed global "
     }
 }
 
+/* Pins: under PRESTAGE with TOPK > 1, a global refinement optimiser that
+ * takes one starting point is refused with a message of its own, which
+ * says "<LIB:ALGO> is a global optimiser that takes one starting point".
+ * Before the fix: it said "consumes a single starting point". */
 TEST_CASE("startup validation: PRESTAGE with TOPK > 1 rejects a single-seed "
           "global refinement with a message of its own",
           "[startup_validation][strategy][prestage]")
@@ -459,6 +467,9 @@ TEST_CASE("startup validation: PRESTAGE with TOPK > 1 rejects a single-seed "
                                        c.topk + " cannot refine with " +
                                        c.lib + ":" + c.algo + ":") &&
                        Catch::Contains("TOPK 1") &&
+                       Catch::Contains(c.lib + ":" + c.algo + " is a global "
+                                       "optimiser that takes one starting "
+                                       "point. ") &&
                        !Catch::Contains("TYPE MULTISTART"));
             CHECK(v.policy == v.startup);
             if (!v.startup.empty())

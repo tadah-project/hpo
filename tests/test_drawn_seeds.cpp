@@ -201,11 +201,17 @@ TEST_CASE("drawn seeds: an INIT block without SEED draws a seed once for the "
  * run, S (SEED S in the STRATEGY block draws the same numbers again)", and
  * the OPTIMISER section's "Random seed" is "S (drawn for the run)". The
  * same for the EXPLORE block of a PRESTAGE ("the EXPLORE block has no SEED,
- * and NLOPT:GN_ISRES draws ..."). No seed is drawn for an algorithm that
+ * and NLOPT:GN_ISRES draws ..."), and the lines name the block that holds
+ * the optimiser's ALGO line: in a file without a STRATEGY block, whose
+ * OPTIMIZER block holds LIB and ALGO, "the OPTIMIZER block has no SEED, ...
+ * (SEED S in the OPTIMIZER block draws the same numbers again)". No seed is
+ * drawn for an algorithm that
  * draws none (LN_BOBYQA), for a block with a SEED, or for a chain of
  * CONFIG and WARM points (no seed of the INIT block, no line).
  * Before the fix: NLopt took its own seed from the clock and the run named
- * none (OptimizerSpec::seed unset, no line). */
+ * none (OptimizerSpec::seed unset, no line); then a file without a STRATEGY
+ * block was told "the STRATEGY block has no SEED ... (SEED S in the
+ * STRATEGY block ...)", a block it does not have. */
 TEST_CASE("drawn seeds: an NLopt algorithm that draws random numbers without "
           "a SEED draws a seed once for the run and names it",
           "[HPO][nlopt][seed][drawn_seed]")
@@ -244,6 +250,25 @@ TEST_CASE("drawn seeds: an NLopt algorithm that draws random numbers without "
                        "random numbers, so it draws them with a seed drawn once "
                        "for the run, " + s + " (SEED " + s + " in the EXPLORE "
                        "block draws the same numbers again)") == 1);
+    }
+    {
+        /* No STRATEGY block: LIB and ALGO are in the OPTIMIZER block. */
+        const std::string plain =
+            "OPTIM CGRID2B (1) 0.5 1.5\nOPTIM CGRID2B (2) 1.6 2.5\n"
+            "OPTIMIZER\nLIB NLOPT\nALGO GN_CRS2_LM\nMAXEVAL 5\n"
+            "ENDOPTIMIZER\n";
+        const Read a = read_target(plain, ctx);
+        INFO("stdout:\n" << a.out << "\njournal:\n" << a.journal);
+        REQUIRE(a.trg->spec.seed.has_value());
+        const std::string s = std::to_string(*a.trg->spec.seed);
+        const std::string w =
+            "the OPTIMIZER block has no SEED, and NLOPT:GN_CRS2_LM draws "
+            "random numbers, so it draws them with a seed drawn once for the "
+            "run, " + s + " (SEED " + s + " in the OPTIMIZER block draws the "
+            "same numbers again)";
+        CHECK(count_of(a.journal, w) == 1);
+        CHECK(count_of(a.out, "[HPO] " + w + "\n") == 1);
+        CHECK(count_of(a.out, "STRATEGY block") == 0);
     }
     /* No seed drawn. */
     const fs::path seed_file =

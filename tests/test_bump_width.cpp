@@ -35,6 +35,7 @@
 #include <stdexcept>
 #include <string>
 #include <system_error>
+#include <tuple>
 #include <vector>
 
 namespace {
@@ -441,5 +442,49 @@ TEST_CASE("the widths of a D2_BP of a D2_mJoin line with a D2_Blip are held "
     CHECK(startup_error(joined_bp_ctx("-1.0 1.0", lone),
                         std::string("OPTIM WATOM (1) 0.5 2.0\n") + tail) ==
           "");
+  }
+}
+
+/* Pins: a refusal of one entry of an OPTIM line gives the key and the entry
+ * once, as "OPTIM <KEY> (<i>): <why>": a bump width box from 0 ("OPTIM
+ * SGRID2B (2): the low bound 0 is not > 0, but the D2_Blip pair basis
+ * ..."), an AUTO RATIO box of a seed 0 ("OPTIM CGRID2B (1): AUTO RATIO
+ * needs a non-zero seed; ..."), an AUTO FRAC 0 box ("OPTIM CGRID2B (2): AUTO
+ * FRAC gives a zero-width box ...") and an AUTO box tagged LOG that reaches
+ * below 0 ("OPTIM CGRID2B (2): AUTO box [-1.5, 7.5] is not positive ...").
+ * Before the fix: each said "OPTIM SGRID2B (2): OPTIM SGRID2B (2): ...",
+ * the line's own prefix and then the entry's. */
+TEST_CASE("a refusal of an OPTIM entry gives the key and the entry once",
+          "[HPO][optim][bump_width][message]") {
+  tadah::core::PeriodicTable::initialize();
+  const std::string tail = std::string("PC_ERMSE 0 1\n") + kWidthOptimizer;
+  const auto count_of = [](const std::string& text, const std::string& s) {
+    std::size_t n = 0;
+    for (auto p = text.find(s); p != std::string::npos;
+         p = text.find(s, p + s.size()))
+      ++n;
+    return n;
+  };
+  Context zero_seed = blip_ctx();
+  zero_seed.remove("CGRID2B");
+  zero_seed.add("CGRID2B", "0 3.0");
+  const std::vector<std::tuple<Context, std::string, std::string>> cases{
+      {blip_ctx(), "OPTIM SGRID2B (2) 0 3",
+       "OPTIM SGRID2B (2): the low bound 0 is not > 0, but the D2_Blip pair "
+       "basis requires every SGRID2B width > 0"},
+      {zero_seed, "OPTIM CGRID2B (1) AUTO RATIO 2",
+       "OPTIM CGRID2B (1): AUTO RATIO needs a non-zero seed; use FRAC + "
+       "FLOOR"},
+      {blip_ctx(), "OPTIM CGRID2B (2) AUTO FRAC 0",
+       "OPTIM CGRID2B (2): AUTO FRAC gives a zero-width box (seed 0 or FRAC "
+       "0); set FLOOR or GROUP_FLOOR"},
+      {blip_ctx(), "OPTIM CGRID2B (2) AUTO FRAC 1.5 LOG",
+       "OPTIM CGRID2B (2): AUTO box [-1.5, 7.5] is not positive but the dim "
+       "is tagged LOG"}};
+  for (const auto& [ctx, line, why] : cases) {
+    INFO(line);
+    const std::string e = parse_error(ctx, line + "\n" + tail);
+    CHECK_THAT(e, Catch::Contains(why));
+    CHECK(count_of(e, why.substr(0, why.find(':') + 1)) == 1u);
   }
 }

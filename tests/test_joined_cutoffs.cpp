@@ -132,10 +132,11 @@ Startup startup(Context& ctx, const std::string& target)
 
 /* Pins: at startup, the cutoff of a D2_Knot5 of a joined line is its
  * largest knot: RCUT2B "5.3 5" with knots 2.5 3.5 4.5 becomes "4.5 5" (the
- * D2_Blip's 5 is kept), with one WARNING naming the descriptor: "tadah hpo:
- * TYPE2B descriptor 1 (D2_Knot5): RCUT2B 5.3 is above the largest knot
- * (4.5): the knot basis vanishes at its largest knot, so the cutoff of a
- * D2_Knot5 line is 4.5, which the CGRID2B knot positions set."; on every
+ * D2_Blip's 5 is kept), with one WARNING naming the descriptor and the
+ * entry, as an OPTIM line numbers it: "tadah hpo: TYPE2B descriptor 1
+ * (D2_Knot5): RCUT2B (1) 5.3 is above the largest knot (4.5): the knot
+ * basis vanishes at its largest knot, so the cutoff of a D2_Knot5
+ * descriptor is 4.5, which the CGRID2B knot positions set."; on every
  * evaluation the same derivation follows a moved knot
  * (apply_knot_rcut_derivation: a largest knot of 4.8 gives RCUT2B "4.8 5");
  * the one-time neighbour list covers the largest knot an OPTIM box of the
@@ -145,7 +146,8 @@ Startup startup(Context& ctx, const std::string& target)
  * (derived_knot_rcut reads the line's first value, D2_mJoin): at startup
  * RCUT2B stays 5.3 and nothing is said; on an evaluation the knot's move
  * to 4.8 leaves RCUT2B 4.5; and nn_safe_rcutmax is RCUT2BMAX, 5.0 (the
- * D2_Blip's stated cutoff, the larger of RCUT2B 4.5 5.0), not 6.2. */
+ * D2_Blip's stated cutoff, the larger of RCUT2B 4.5 5.0), not 6.2; then
+ * the WARNING said "RCUT2B 5.3" and "the cutoff of a D2_Knot5 line". */
 TEST_CASE("joined cutoffs: the cutoff of a D2_Knot5 of a joined line is "
           "derived from its largest knot", "[HPO][join][knot]")
 {
@@ -158,10 +160,10 @@ TEST_CASE("joined cutoffs: the cutoff of a D2_Knot5 of a joined line is "
         CHECK(ctx.get<double>("RCUT2B", 0) == 4.5);
         CHECK(ctx.get<double>("RCUT2B", 1) == 5.0);
         const std::string w =
-            "tadah hpo: TYPE2B descriptor 1 (D2_Knot5): RCUT2B 5.3 is above "
-            "the largest knot (4.5): the knot basis vanishes at its largest "
-            "knot, so the cutoff of a D2_Knot5 line is 4.5, which the CGRID2B "
-            "knot positions set.";
+            "tadah hpo: TYPE2B descriptor 1 (D2_Knot5): RCUT2B (1) 5.3 is "
+            "above the largest knot (4.5): the knot basis vanishes at its "
+            "largest knot, so the cutoff of a D2_Knot5 descriptor is 4.5, "
+            "which the CGRID2B knot positions set.";
         CHECK(s.err.find("[HPO] WARNING: " + w) != std::string::npos);
         CHECK(s.journal.find(w) != std::string::npos);
     }

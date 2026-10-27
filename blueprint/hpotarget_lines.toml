@@ -3340,7 +3340,7 @@ msg = "OPTIM {key} ({index}): the index is already selected by the OPTIM {key} l
 doc = "An earlier OPTIM line of the key selects the value."
 
 [[optim.checks]]
-msg = "OPTIM {key} ({index}): OPTIM {key} ({index}): the low bound {low} is not > 0, but {what} requires {value}; use a low bound > 0"
+msg = "OPTIM {key} ({index}): the low bound {low} is not > 0, but {what} requires {value}; use a low bound > 0"
 doc = """\
 A box of a value that must be positive reaches 0; {what} names the rule \
 and {value} what it requires. The values are a width of a radial bump \
@@ -3350,7 +3350,7 @@ NONNEG or MONOTONE, and SGRIDMB under MONOTONE and, for the Gaussian \
 basis, under NONNEG."""
 
 [[optim.checks]]
-msg = "OPTIM {key} ({index}): OPTIM {key} ({index}): the low bound {low} is negative, but {what} requires {value}; use a low bound >= 0 (0 is allowed) or AUTO"
+msg = "OPTIM {key} ({index}): the low bound {low} is negative, but {what} requires {value}; use a low bound >= 0 (0 is allowed) or AUTO"
 doc = """\
 A box of a non-negative value reaches below 0: AMPGRIDMB under RHOFORM \
 NONNEG or MONOTONE, or the amplitudes of a DM_Embed density with \
@@ -3495,19 +3495,19 @@ error = "OPTIM CGRID2B (1): the index is already selected by the OPTIM CGRID2B l
 wrap = "root"
 context = "lines_blip"
 text = "OPTIM SGRID2B (1) 0 2"
-error = "OPTIM SGRID2B (1): OPTIM SGRID2B (1): the low bound 0 is not > 0, but the D2_Blip pair basis requires every SGRID2B width > 0 (a radial bump spans [c - w/s, c + w/s]; a width <= 0 has no support edge); use a low bound > 0"
+error = "OPTIM SGRID2B (1): the low bound 0 is not > 0, but the D2_Blip pair basis requires every SGRID2B width > 0 (a radial bump spans [c - w/s, c + w/s]; a width <= 0 has no support edge); use a low bound > 0"
 
 [[optim.invalid]]
 wrap = "root"
 context = "lines_ream"
 text = "OPTIM WATOM (1) 0 2"
-error = "OPTIM WATOM (1): OPTIM WATOM (1): the low bound 0 is not > 0, but RHOFORM NONNEG requires every density pair weight W > 0; use a low bound > 0"
+error = "OPTIM WATOM (1): the low bound 0 is not > 0, but RHOFORM NONNEG requires every density pair weight W > 0; use a low bound > 0"
 
 [[optim.invalid]]
 wrap = "root"
 context = "lines_ream"
 text = "OPTIM AMPGRIDMB (2) -0.1 0.5"
-error = "OPTIM AMPGRIDMB (2): OPTIM AMPGRIDMB (2): the low bound -0.1 is negative, but RHOFORM NONNEG requires every AMPGRIDMB amplitude >= 0; use a low bound >= 0 (0 is allowed) or AUTO"
+error = "OPTIM AMPGRIDMB (2): the low bound -0.1 is negative, but RHOFORM NONNEG requires every AMPGRIDMB amplitude >= 0; use a low bound >= 0 (0 is allowed) or AUTO"
 
 # ---------------------------------------------------- OPTIM forms ------
 
@@ -3648,11 +3648,11 @@ msg = "OPTIM {key}: AUTO boxes are not allowed on cutoff keys (the neighbour lis
 doc = "The key starts with RCUT."
 
 [[form.checks]]
-msg = "OPTIM {key} ({index}): OPTIM {key} ({index}): the seed {value} is negative, but {what} requires every AMPGRIDMB amplitude >= 0"
+msg = "OPTIM {key} ({index}): the seed {value} is negative, but {what} requires every AMPGRIDMB amplitude >= 0"
 doc = "A non-negative amplitude has a negative value in the configuration; {what} is the RHOFORM line."
 
 [[form.checks]]
-msg = "OPTIM {key} ({index}): OPTIM {key} ({index}): AUTO box [{low}, {high}] is not positive but the dim is tagged LOG; use RATIO (geometric) or drop the tag"
+msg = "OPTIM {key} ({index}): AUTO box [{low}, {high}] is not positive but the dim is tagged LOG; use RATIO (geometric) or drop the tag"
 doc = "The line has the shape tag LOG and the AUTO box reaches 0 or below."
 
 [[form.examples]]
@@ -3688,18 +3688,18 @@ error = "OPTIM RCUT2B: AUTO boxes are not allowed on cutoff keys (the neighbour 
 wrap = "root"
 context = "lines_ream"
 text = "OPTIM AMPGRIDMB (3) AUTO"
-error = "OPTIM AMPGRIDMB (3): OPTIM AMPGRIDMB (3): the seed -0.1 is negative, but RHOFORM NONNEG requires every AMPGRIDMB amplitude >= 0"
+error = "OPTIM AMPGRIDMB (3): the seed -0.1 is negative, but RHOFORM NONNEG requires every AMPGRIDMB amplitude >= 0"
 
 [[form.invalid]]
 wrap = "root"
 text = "OPTIM CGRID2B (2) AUTO FRAC 1.5 LOG"
-error = "OPTIM CGRID2B (2): OPTIM CGRID2B (2): AUTO box [-1, 5] is not positive but the dim is tagged LOG; use RATIO (geometric) or drop the tag"
+error = "OPTIM CGRID2B (2): AUTO box [-1, 5] is not positive but the dim is tagged LOG; use RATIO (geometric) or drop the tag"
 
 [[form.invalid]]
 wrap = "root"
 context = "lines_ream"
 text = "OPTIM AMPGRIDMB (2) AUTO FRAC 2 LOG"
-error = "OPTIM AMPGRIDMB (2): OPTIM AMPGRIDMB (2): AUTO box [0, 0.9] is not positive but the dim is tagged LOG; use RATIO (geometric) or drop the tag"
+error = "OPTIM AMPGRIDMB (2): AUTO box [0, 0.9] is not positive but the dim is tagged LOG; use RATIO (geometric) or drop the tag"
 
 [[form.invalid]]
 wrap = "root"
@@ -3729,7 +3729,7 @@ msg = "OPTIM {key}: AUTO RATIO must be > 1 (got {tok})"
 doc = "f is 1 or less."
 
 [[line_option.checks]]
-msg = "OPTIM {key} ({index}): OPTIM {key} ({index}): AUTO RATIO needs a non-zero seed; use FRAC + FLOOR"
+msg = "OPTIM {key} ({index}): AUTO RATIO needs a non-zero seed; use FRAC + FLOOR"
 doc = "A selected value is 0 in the configuration."
 
 [[line_option.checks]]
@@ -3754,7 +3754,7 @@ error = "OPTIM CGRID2B: RATIO and FRAC are mutually exclusive"
 wrap = "root"
 context = "lines_zero_seed"
 text = "OPTIM CGRID2B (1) AUTO RATIO 2"
-error = "OPTIM CGRID2B (1): OPTIM CGRID2B (1): AUTO RATIO needs a non-zero seed; use FRAC + FLOOR"
+error = "OPTIM CGRID2B (1): AUTO RATIO needs a non-zero seed; use FRAC + FLOOR"
 
 [[line_option.invalid]]
 wrap = "root"
@@ -3784,15 +3784,15 @@ msg = "OPTIM {key}: AUTO FRAC must be >= 0 (got {tok}); FRAC 0 with FLOOR/GROUP_
 doc = "p is negative."
 
 [[line_option.checks]]
-msg = "OPTIM {key} ({index}): OPTIM {key} ({index}): AUTO FRAC gives a zero-width box (seed 0 or FRAC 0); set FLOOR or GROUP_FLOOR"
+msg = "OPTIM {key} ({index}): AUTO FRAC gives a zero-width box (seed 0 or FRAC 0); set FLOOR or GROUP_FLOOR"
 doc = "d is 0."
 
 [[line_option.checks]]
-msg = "OPTIM {key} ({index}): OPTIM {key} ({index}): AUTO FRAC gives a zero-width box (seed 0 or FRAC 0); every seed on this line is 0, so GROUP_FLOOR has nothing to scale; set FLOOR"
+msg = "OPTIM {key} ({index}): AUTO FRAC gives a zero-width box (seed 0 or FRAC 0); every seed on this line is 0, so GROUP_FLOOR has nothing to scale; set FLOOR"
 doc = "d is 0 with a GROUP_FLOOR, every value of the line being 0."
 
 [[line_option.checks]]
-msg = "OPTIM {key} ({index}): OPTIM {key} ({index}): every seed on this line is 0, so the AUTO box has zero width (FRAC and the GROUP_FLOOR 1e-3 that {what} implies for AMPGRIDMB are relative to the seeds); set FLOOR <a> for the box [0, a], or give explicit bounds `OPTIM {key} ({index}) 0 <high>`"
+msg = "OPTIM {key} ({index}): every seed on this line is 0, so the AUTO box has zero width (FRAC and the GROUP_FLOOR 1e-3 that {what} implies for AMPGRIDMB are relative to the seeds); set FLOOR <a> for the box [0, a], or give explicit bounds `OPTIM {key} ({index}) 0 <high>`"
 doc = "The same for a non-negative amplitude without FLOOR or GROUP_FLOOR; {what} is the RHOFORM line."
 
 [[line_option.examples]]
@@ -3830,19 +3830,19 @@ error = "OPTIM CGRID2B: RATIO and FRAC are mutually exclusive"
 [[line_option.invalid]]
 wrap = "root"
 text = "OPTIM CGRID2B (2) AUTO FRAC 0"
-error = "OPTIM CGRID2B (2): OPTIM CGRID2B (2): AUTO FRAC gives a zero-width box (seed 0 or FRAC 0); set FLOOR or GROUP_FLOOR"
+error = "OPTIM CGRID2B (2): AUTO FRAC gives a zero-width box (seed 0 or FRAC 0); set FLOOR or GROUP_FLOOR"
 
 [[line_option.invalid]]
 wrap = "root"
 context = "lines_zero_seed"
 text = "OPTIM CGRID2B (1) AUTO GROUP_FLOOR 0.1"
-error = "OPTIM CGRID2B (1): OPTIM CGRID2B (1): AUTO FRAC gives a zero-width box (seed 0 or FRAC 0); every seed on this line is 0, so GROUP_FLOOR has nothing to scale; set FLOOR"
+error = "OPTIM CGRID2B (1): AUTO FRAC gives a zero-width box (seed 0 or FRAC 0); every seed on this line is 0, so GROUP_FLOOR has nothing to scale; set FLOOR"
 
 [[line_option.invalid]]
 wrap = "root"
 context = "lines_ream"
 text = "OPTIM AMPGRIDMB (1) AUTO"
-error = "OPTIM AMPGRIDMB (1): OPTIM AMPGRIDMB (1): every seed on this line is 0, so the AUTO box has zero width (FRAC and the GROUP_FLOOR 1e-3 that RHOFORM NONNEG implies for AMPGRIDMB are relative to the seeds); set FLOOR <a> for the box [0, a], or give explicit bounds `OPTIM AMPGRIDMB (1) 0 <high>`"
+error = "OPTIM AMPGRIDMB (1): every seed on this line is 0, so the AUTO box has zero width (FRAC and the GROUP_FLOOR 1e-3 that RHOFORM NONNEG implies for AMPGRIDMB are relative to the seeds); set FLOOR <a> for the box [0, a], or give explicit bounds `OPTIM AMPGRIDMB (1) 0 <high>`"
 
 [[line_option]]
 id = "OPTIM.AUTO.FLOOR"
