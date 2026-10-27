@@ -626,6 +626,60 @@ TEST_CASE("OPTIM on a cutoff the setfl file fixes is refused at startup",
   }
 }
 
+/* Pins: OPTIM WATOM is refused at startup when no descriptor of the
+ * training configuration reads WATOM (MODELS context_reads_watom), naming
+ * the line of the target file:
+ *   - TYPE2B D2_EAM, TYPEMB DM_EAM, and both (each with WATOM 1), with
+ *     `OPTIM WATOM (1) 0.5 2.0` on line 2: "OPTIM WATOM (line 2 of the
+ *     target file) is not a valid search target: no descriptor of the
+ *     training configuration reads WATOM (D2_EAM, DM_EAM, D2_Dummy and
+ *     DM_Dummy read none), and a fit refuses a WATOM other than 1 that no
+ *     descriptor reads, so every candidate other than 1 would fail its
+ *     evaluation.";
+ *   - TYPE2B D2_mJoin D2_BP ... D2_EAM ..., whose D2_BP reads WATOM: the
+ *     same OPTIM WATOM line is accepted.
+ * Before the fix: all accepted; every candidate other than 1 was refused by
+ * its fit (Tadah.MLIP require_no_unused_keys: "WATOM 0.77...: no descriptor
+ * of the configuration reads it"), FAILSCORE, and the run ended with exit
+ * status 0. */
+TEST_CASE("OPTIM WATOM is refused at startup when no descriptor reads WATOM",
+          "[HPO][optim][startup][eam][inert]") {
+  tadah::core::PeriodicTable::initialize();
+  TaSetfl setfl;
+  const std::string file = setfl.path.string();
+  const std::string refusal =
+      "OPTIM WATOM (line 2 of the target file) is not a valid search "
+      "target: no descriptor of the training configuration reads WATOM "
+      "(D2_EAM, DM_EAM, D2_Dummy and DM_Dummy read none), and a fit refuses "
+      "a WATOM other than 1 that no descriptor reads, so every candidate "
+      "other than 1 would fail its evaluation.";
+  Context both = eam_ctx(file, "D2_EAM 0 Ta Ta", "5.0", "Cut_Cos");
+  both.remove("INITMB");
+  both.add("INITMB", "true");
+  both.add("TYPEMB", "DM_EAM 0 Ta Ta");
+  both.add("RCUTMB", 5.0);
+  both.add("RCTYPEMB", "Cut_Cos");
+  const std::pair<const char*, Context> unread[] = {
+      {"D2_EAM", eam_ctx(file, "D2_EAM 0 Ta Ta", "5.0", "Cut_Cos")},
+      {"DM_EAM", eam_ctx(file, "", "", "", "DM_EAM 0 Ta Ta")},
+      {"D2_EAM + DM_EAM", both}};
+  for (const auto& [name, ctx] : unread) {
+    INFO(name);
+    const std::string msg =
+        startup_error(ctx, "LOSS L2\nOPTIM WATOM (1) 0.5 2.0");
+    INFO(msg);
+    CHECK(msg == refusal);
+  }
+  Context joined = eam_ctx(file, "D2_mJoin D2_BP 2 2 Ta Ta D2_EAM 0 Ta Ta",
+                           "4.5 5.0", "Cut_Cos Cut_Cos");
+  joined.add("CGRID2B", "2.6 3.3");
+  joined.add("SGRID2B", "1.0 1.0");
+  const std::string read_by_bp =
+      startup_error(joined, "LOSS L2\nOPTIM WATOM (1) 0.5 2.0");
+  INFO("D2_mJoin D2_BP + D2_EAM: " << read_by_bp);
+  CHECK(read_by_bp.empty());
+}
+
 /* Pins: OPTIM of a key the training configuration does not give is refused
  * at its line by HPOTargets, naming what OPTIM needs, and the Logger
  * writes no ERROR line about it:
