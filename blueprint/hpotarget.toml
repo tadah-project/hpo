@@ -946,10 +946,8 @@ restart. A run on more than one MPI rank refuses a RESTART block."""
 long_doc = """\
 A second RESTART block continues the first. Inside a RESTART block a \
 STRATEGY line is read as a METHOD line. Under STRATEGY TYPE MULTISTART \
-each RESTART round runs N_STARTS starts from the points of the METHOD \
-lines, which must give N_STARTS points or more. A RESTART block is \
-refused when a phase it restarts runs TADAH:GRID, whose rounds would \
-evaluate the first nodes of its grid again."""
+each RESTART round runs N_STARTS starts; N_STARTS says how the points of \
+the METHOD lines are counted."""
 
 [[block.close_checks]]
 msg = "the RESTART block never restarts the search: a restart needs AFTER_STAGNATION and MAX, and the block has {missing}; a search without restarts has no RESTART block"
