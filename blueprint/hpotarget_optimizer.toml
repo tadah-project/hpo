@@ -1545,7 +1545,14 @@ force-scaled, and no OPTIM line of an error scale of the fit \
 analytical gradient does not differentiate. Once the data are read, \
 startup also refuses a search parameter that the descriptors do not \
 differentiate in the rows of the run: the energy rows, the force rows of \
-the fit under FORCE true and the forces that PC_FRMSE measures."""
+the fit under FORCE true and the forces that PC_FRMSE measures. A \
+descriptor differentiates a parameter through the pairs of atoms whose \
+terms depend on it, at the values of the training configuration: the \
+training structures, and the validation structures when there are any, \
+need a pair within its cutoff of the species it pairs; Cut_PolyS and \
+Cut_CosS depend on RCUT2B and RCUTMB only for a pair within 1 Å of the \
+cutoff. WATOM, which a two-body and a many-body descriptor both read, \
+has force rows only when both differentiate it there."""
 checks = [
   { msg = "GRAD_STRATEGY takes one value: NUMERICAL, ANALYTICAL or HYBRID", doc = "At the line: the key ends the line without its value." },
   { msg = "{block} block: GRAD_STRATEGY ANALYTICAL{note} needs the analytical gradient of the loss, which this setup cannot form: {why}. Change that setting, or set GRAD_STRATEGY HYBRID to use finite differences where no analytical gradient is available.", doc = "At startup, at the END line of its optimiser; {block} is OPTIMIZER or EXPLORE, and {why} names the first setting the analytical gradient does not cover. {note} is \" (resolved for PC_OBSERVABLE: the block sets no GRAD_STRATEGY)\" when the block takes ANALYTICAL for PC_OBSERVABLE." },
@@ -2010,14 +2017,17 @@ PLAIN. The INIT blocks inside OPTIMIZER and STRATEGY must give N_STARTS \
 starting points or more; fewer are refused at startup, at the N_STARTS \
 line. Each RANDOM, LHS and SOBOL line gives its K points. The CONFIG \
 lines give one point, and so do the WARM lines of one file. A chain \
-without a METHOD line gives the CONFIG point. K_TOTAL caps the sum. \
-The METHOD lines of a RESTART block, counted alike, give the points of \
-each RESTART round: fewer than N_STARTS are refused at startup, at the \
-RESTART line. When a chain drawn gives fewer than N_STARTS points (a WARM \
-point dropped under WARM_ON_MISMATCH skip, a point equal to another), the \
-optimiser runs once from each, with a warning that names the cause. With more, the points after the first \
-N_STARTS are not evaluated, and a startup warning says so. Another TYPE \
-refuses N_STARTS when the STRATEGY block ends."""
+without a METHOD line gives the CONFIG point. K_TOTAL caps the sum. When \
+the INIT chain drawn gives fewer than N_STARTS points (a WARM point \
+dropped under WARM_ON_MISMATCH skip, a point equal to another), the \
+optimiser runs once from each, with a warning that names the cause. With \
+more, the points after the first N_STARTS are not evaluated, and a \
+startup warning says so. The METHOD lines of a RESTART block, counted \
+alike, give the points of each RESTART round: fewer than N_STARTS are \
+refused at startup, at the RESTART line. A RESTART round runs from the \
+first N_STARTS points of its chain, without a warning about the others, \
+and from each point of a chain drawn with fewer, with a warning. Another \
+TYPE refuses N_STARTS when the STRATEGY block ends."""
 
 [[key.examples]]
 wrap = "strategy"
