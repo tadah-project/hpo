@@ -153,12 +153,12 @@ inline constexpr AnnealKeyInfo kKeys[] = {
   {"RESET_TO_BEST", AnnealKeyType::Bool, KIND_SERIAL | KIND_PT | KIND_PA,
    "steps", 9, "ON moves the chain back to the best point so far after each cooling step; under TADAH:ANNEAL_PT it moves the coldest slot after each epoch.",
    nullptr,
-   false, false, false, 0.0, 0.0, 0.0,
+   false, true, false, 0.0, 0.0, 0.0,
    false, false, false, false, 0.0, 0.0,
    nullptr, false, nullptr, 0,
    false, false, 0.0, 0.0,
    0u,
-   "OFF; ON with CORANA ON", "OFF", nullptr},
+   "OFF; ON with CORANA ON", nullptr, nullptr},
   {"T_INIT", AnnealKeyType::Float, KIND_SERIAL,
    "temperature", 1, "The starting temperature of the cooling schedule. Without it, the search calibrates the starting temperature with probes (T0_PROBES, T0_ACCEPT).",
    nullptr,
@@ -529,6 +529,7 @@ inline constexpr double NT_PA = 5.0;
 inline constexpr double CORANA_C = 2.0;
 inline constexpr double V_FLOOR_FRAC = 0.001;
 inline constexpr double BOUNDARY_MODE = 0.0;
+inline constexpr double RESET_TO_BEST_PT = 0.0;
 inline constexpr double RT_SERIAL = 0.85;
 inline constexpr double RT_PA = 0.9;
 inline constexpr double T0_PROBES = 20.0;

@@ -1846,9 +1846,15 @@ void HPOTargets::read(const std::string& fn)
             throw std::runtime_error(at_line(at.first,
                 head + "a block without a METHOD line gives one starting "
                 "point (the CONFIG point)" + keeps, at.second));
+        /* The blocks of the chain, which a K_TOTAL in a block without a
+         * METHOD line caps too. */
+        const std::string blocks =
+            init == &spec.restart.init_strategy ? "the RESTART blocks"
+            : explore ? "the INIT blocks inside EXPLORE"
+                      : "the INIT blocks inside OPTIMIZER, STRATEGY and REFINE";
         if (cap >= points)
             throw std::runtime_error(at_line(at.first,
-                head + "the METHOD lines of the block give at most " +
+                head + "the METHOD lines of " + blocks + " give at most " +
                     std::to_string(points) +
                     (points == 1 ? " starting point (" : " starting points (") +
                     list + ")" + keeps,

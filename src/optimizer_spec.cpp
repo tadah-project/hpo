@@ -264,10 +264,10 @@ static void print_nlopt_caps(std::ostream& os,const std::string& algo)
      * any other name is refused, the finite-difference keys aside. */
     if (const OptimizerCaps* c = find_optimizer_caps("NLOPT", algo)) {
         if (c->algorithm_params.empty()) {
-            os<<"   * PARAM: NLopt reads no parameter of this algorithm\n";
+            os<<"   * PARAM: NLopt reads no PARAM key of this algorithm\n";
         } else {
             const std::string head =
-                "   * PARAM <name> <value>  NLopt's parameters of this algorithm:";
+                "   * PARAM <name> <value>  the PARAM keys NLopt reads for it:";
             os << head;
             /* The names after it, on lines of up to 72 characters. */
             std::size_t width = head.size();

@@ -492,9 +492,22 @@ inline Knobs Knobs::parse(const OptimizerSpec& sp, AlgoKind kind)
       throw std::runtime_error(
           ctx + ": PARAM " + name + " belongs to" + members);
     }
+    /* The keys this annealer takes: those of its kind but a key a
+     * kind_reject rule refuses for it (RESET_TO_BEST of ANNEAL_PA), which
+     * the help and the documentation leave out too. */
+    const auto refused = [&](const char* name) {
+      for (const auto& r : reg::kRules)
+        if (r.type == reg::AnnealRuleType::KindReject &&
+            (r.kind_mask & kind_mask) && std::string_view(r.key) == name)
+          return true;
+      return false;
+    };
     std::string keys;
     for (const auto& k : reg::kKeys)
-      if (k.kinds & kind_mask) { keys += k.name; keys += ' '; }
+      if ((k.kinds & kind_mask) && !refused(k.name)) {
+        keys += k.name;
+        keys += ' ';
+      }
     throw std::runtime_error(
         ctx + ": unknown PARAM '" + name + "'; accepted keys: " + keys);
   };

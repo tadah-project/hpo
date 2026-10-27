@@ -45,7 +45,9 @@ inline std::string config_line_error(std::size_t line, const std::string& what,
  * std::runtime_error:
  *     "<what> must be an integer >= <min>, got '<tok>'"         (max unbounded)
  *     "<what> must be an integer from <min> to <max>, got '<tok>'"
- * followed by " (<note>)" when `note` is not empty. */
+ * followed by " (<note>)" when `note` is not empty and `tok` is a whole
+ * number below `min`: the note says why such a number is refused, and a
+ * word, a sign, a fraction or a number above `max` gets the range alone. */
 std::uint64_t parse_uint(const std::string& tok, const std::string& what,
                          std::uint64_t min = 0,
                          std::uint64_t max =

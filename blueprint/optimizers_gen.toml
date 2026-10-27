@@ -297,7 +297,7 @@ bounds_note = ""
 explain_text = """
 Options for NLOPT:AUGLAG
    * Stops that end a run: MAXEVAL, MAXTIME, STOPVAL, FTOL_REL, FTOL_ABS, XTOL_REL, XTOL_ABS
-   * PARAM: NLopt reads no parameter of this algorithm
+   * PARAM: NLopt reads no PARAM key of this algorithm
    * STEP <double>  initial step; consumption: passed to the optimiser of the INNER block
      passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block
    * INNER ... ENDINNER: the local search it runs, from its own starting
@@ -337,7 +337,7 @@ bounds_note = ""
 explain_text = """
 Options for NLOPT:AUGLAG_EQ
    * Stops that end a run: MAXEVAL, MAXTIME, STOPVAL, FTOL_REL, FTOL_ABS, XTOL_REL, XTOL_ABS
-   * PARAM: NLopt reads no parameter of this algorithm
+   * PARAM: NLopt reads no PARAM key of this algorithm
    * STEP <double>  initial step; consumption: passed to the optimiser of the INNER block
      passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block
    * INNER ... ENDINNER: the local search it runs, from its own starting
@@ -378,7 +378,7 @@ explain_text = """
 Options for NLOPT:GD_MLSL
    * Stops that end a run: MAXEVAL, MAXTIME, STOPVAL
      One of them is required, or an active RESTART: MLSL's multistart loop has no convergence test (the tolerances reach only its local searches) and runs until it is interrupted.
-   * PARAM: NLopt reads no parameter of this algorithm
+   * PARAM: NLopt reads no PARAM key of this algorithm
    * global optimiser
    * STEP <double>  initial step; consumption: passed to the optimiser of the INNER block
      passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block
@@ -419,7 +419,7 @@ explain_text = """
 Options for NLOPT:GD_MLSL_LDS
    * Stops that end a run: MAXEVAL, MAXTIME, STOPVAL
      One of them is required, or an active RESTART: MLSL's multistart loop has no convergence test (the tolerances reach only its local searches) and runs until it is interrupted.
-   * PARAM: NLopt reads no parameter of this algorithm
+   * PARAM: NLopt reads no PARAM key of this algorithm
    * global optimiser
    * STEP <double>  initial step; consumption: passed to the optimiser of the INNER block
      passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block
@@ -460,7 +460,7 @@ explain_text = """
 Options for NLOPT:GD_STOGO
    * Stops that end a run: MAXEVAL, MAXTIME, STOPVAL
      MAXEVAL is required (MAXTIME, STOPVAL and an active RESTART are not enough): NLopt's StoGO has no convergence test of its own and ignores NLopt's forced stop, by which tadah hpo ends a search (on a signal, an error, the RESTART stagnation stop, or a loss at or below STOPVAL that NLopt was not given): it then calls on, each call refused, and only NLopt's own evaluation count ends it promptly (MAXTIME only once the rest of its time has passed).
-   * PARAM: NLopt reads no parameter of this algorithm
+   * PARAM: NLopt reads no PARAM key of this algorithm
    * global optimiser
    * STEP is rejected: this algorithm never reads an initial step (population, branch-and-bound, or line-search method); remove STEP
 """
@@ -496,7 +496,7 @@ explain_text = """
 Options for NLOPT:GD_STOGO_RAND
    * Stops that end a run: MAXEVAL, MAXTIME, STOPVAL
      MAXEVAL is required (MAXTIME, STOPVAL and an active RESTART are not enough): NLopt's StoGO has no convergence test of its own and ignores NLopt's forced stop, by which tadah hpo ends a search (on a signal, an error, the RESTART stagnation stop, or a loss at or below STOPVAL that NLopt was not given): it then calls on, each call refused, and only NLopt's own evaluation count ends it promptly (MAXTIME only once the rest of its time has passed).
-   * PARAM: NLopt reads no parameter of this algorithm
+   * PARAM: NLopt reads no PARAM key of this algorithm
    * global optimiser
    * STEP is rejected: this algorithm never reads an initial step (population, branch-and-bound, or line-search method); remove STEP
 """
@@ -532,7 +532,7 @@ explain_text = """
 Options for NLOPT:GN_AGS
    * Stops that end a run: MAXEVAL, MAXTIME, STOPVAL
      One of them is required, or an active RESTART: NLopt's global search has no convergence test of its own and runs until it is interrupted.
-   * PARAM: NLopt reads no parameter of this algorithm
+   * PARAM: NLopt reads no PARAM key of this algorithm
    * global optimiser
    * derivative-free
    * STEP is rejected: this algorithm never reads an initial step (population, branch-and-bound, or line-search method); remove STEP
@@ -569,7 +569,7 @@ explain_text = """
 Options for NLOPT:GN_CRS2_LM
    * Stops that end a run: MAXEVAL, MAXTIME, STOPVAL, FTOL_REL, FTOL_ABS, XTOL_REL, XTOL_ABS
      One of them is required (a tolerance above 0), or an active RESTART: NLopt's global search has no convergence test of its own and runs until it is interrupted.
-   * PARAM: NLopt reads no parameter of this algorithm
+   * PARAM: NLopt reads no PARAM key of this algorithm
    * global optimiser
    * derivative-free
    * STEP is rejected: this algorithm never reads an initial step (population, branch-and-bound, or line-search method); remove STEP
@@ -607,8 +607,7 @@ Options for NLOPT:GN_DIRECT
    * Stops that end a run: MAXEVAL, MAXTIME, STOPVAL, FTOL_REL, FTOL_ABS, XTOL_REL, XTOL_ABS
      DIRECT's XTOL_REL and XTOL_ABS end it only once every rectangle is that small, after roughly (1/XTOL_REL)^n evaluations in n dimensions.
      One of them is required (a tolerance above 0), or an active RESTART: NLopt's global search has no convergence test of its own and runs until it is interrupted.
-   * PARAM <name> <value>  NLopt's parameters of this algorithm:
-     magic_eps
+   * PARAM <name> <value>  the PARAM keys NLopt reads for it: magic_eps
    * global optimiser
    * derivative-free
    * STEP is rejected: this algorithm never reads an initial step (population, branch-and-bound, or line-search method); remove STEP
@@ -646,8 +645,7 @@ Options for NLOPT:GN_DIRECT_L
    * Stops that end a run: MAXEVAL, MAXTIME, STOPVAL, FTOL_REL, FTOL_ABS, XTOL_REL, XTOL_ABS
      DIRECT's XTOL_REL and XTOL_ABS end it only once every rectangle is that small, after roughly (1/XTOL_REL)^n evaluations in n dimensions.
      One of them is required (a tolerance above 0), or an active RESTART: NLopt's global search has no convergence test of its own and runs until it is interrupted.
-   * PARAM <name> <value>  NLopt's parameters of this algorithm:
-     magic_eps
+   * PARAM <name> <value>  the PARAM keys NLopt reads for it: magic_eps
    * global optimiser
    * derivative-free
    * STEP is rejected: this algorithm never reads an initial step (population, branch-and-bound, or line-search method); remove STEP
@@ -685,8 +683,7 @@ Options for NLOPT:GN_DIRECT_L_NOSCAL
    * Stops that end a run: MAXEVAL, MAXTIME, STOPVAL, FTOL_REL, FTOL_ABS, XTOL_REL, XTOL_ABS
      DIRECT's XTOL_REL and XTOL_ABS end it only once every rectangle is that small, after roughly (1/XTOL_REL)^n evaluations in n dimensions.
      One of them is required (a tolerance above 0), or an active RESTART: NLopt's global search has no convergence test of its own and runs until it is interrupted.
-   * PARAM <name> <value>  NLopt's parameters of this algorithm:
-     magic_eps
+   * PARAM <name> <value>  the PARAM keys NLopt reads for it: magic_eps
    * global optimiser
    * derivative-free
    * STEP is rejected: this algorithm never reads an initial step (population, branch-and-bound, or line-search method); remove STEP
@@ -724,8 +721,7 @@ Options for NLOPT:GN_DIRECT_L_RAND
    * Stops that end a run: MAXEVAL, MAXTIME, STOPVAL, FTOL_REL, FTOL_ABS, XTOL_REL, XTOL_ABS
      DIRECT's XTOL_REL and XTOL_ABS end it only once every rectangle is that small, after roughly (1/XTOL_REL)^n evaluations in n dimensions.
      One of them is required (a tolerance above 0), or an active RESTART: NLopt's global search has no convergence test of its own and runs until it is interrupted.
-   * PARAM <name> <value>  NLopt's parameters of this algorithm:
-     magic_eps
+   * PARAM <name> <value>  the PARAM keys NLopt reads for it: magic_eps
    * global optimiser
    * derivative-free
    * STEP is rejected: this algorithm never reads an initial step (population, branch-and-bound, or line-search method); remove STEP
@@ -782,7 +778,7 @@ explain_text = """
 Options for NLOPT:GN_ESCH
    * Stops that end a run: MAXEVAL, MAXTIME, STOPVAL
      One of them is required, or an active RESTART: NLopt's global search has no convergence test of its own and runs until it is interrupted.
-   * PARAM: NLopt reads no parameter of this algorithm
+   * PARAM: NLopt reads no PARAM key of this algorithm
    * global optimiser
    * derivative-free
    * STEP is rejected: this algorithm never reads an initial step (population, branch-and-bound, or line-search method); remove STEP
@@ -819,7 +815,7 @@ explain_text = """
 Options for NLOPT:GN_ISRES
    * Stops that end a run: MAXEVAL, MAXTIME, STOPVAL, FTOL_REL, FTOL_ABS, XTOL_REL, XTOL_ABS
      One of them is required (a tolerance above 0), or an active RESTART: NLopt's global search has no convergence test of its own and runs until it is interrupted.
-   * PARAM: NLopt reads no parameter of this algorithm
+   * PARAM: NLopt reads no PARAM key of this algorithm
    * global optimiser
    * derivative-free
    * STEP is rejected: this algorithm never reads an initial step (population, branch-and-bound, or line-search method); remove STEP
@@ -856,7 +852,7 @@ explain_text = """
 Options for NLOPT:GN_MLSL
    * Stops that end a run: MAXEVAL, MAXTIME, STOPVAL
      One of them is required, or an active RESTART: MLSL's multistart loop has no convergence test (the tolerances reach only its local searches) and runs until it is interrupted.
-   * PARAM: NLopt reads no parameter of this algorithm
+   * PARAM: NLopt reads no PARAM key of this algorithm
    * global optimiser
    * derivative-free
    * STEP <double>  initial step; consumption: passed to the optimiser of the INNER block
@@ -899,7 +895,7 @@ explain_text = """
 Options for NLOPT:GN_MLSL_LDS
    * Stops that end a run: MAXEVAL, MAXTIME, STOPVAL
      One of them is required, or an active RESTART: MLSL's multistart loop has no convergence test (the tolerances reach only its local searches) and runs until it is interrupted.
-   * PARAM: NLopt reads no parameter of this algorithm
+   * PARAM: NLopt reads no PARAM key of this algorithm
    * global optimiser
    * derivative-free
    * STEP <double>  initial step; consumption: passed to the optimiser of the INNER block
@@ -941,8 +937,8 @@ bounds_note = ""
 explain_text = """
 Options for NLOPT:GN_ORIG_DIRECT
    * Stops that end a run: MAXEVAL, MAXTIME, STOPVAL, XTOL_REL
-   * PARAM <name> <value>  NLopt's parameters of this algorithm:
-     magic_eps, magic_eps_abs, sigma_reltol, fglobal_reltol
+   * PARAM <name> <value>  the PARAM keys NLopt reads for it: magic_eps,
+     magic_eps_abs, sigma_reltol, fglobal_reltol
    * global optimiser
    * derivative-free
    * STEP is rejected: this algorithm never reads an initial step (population, branch-and-bound, or line-search method); remove STEP
@@ -978,8 +974,8 @@ bounds_note = ""
 explain_text = """
 Options for NLOPT:GN_ORIG_DIRECT_L
    * Stops that end a run: MAXEVAL, MAXTIME, STOPVAL, XTOL_REL
-   * PARAM <name> <value>  NLopt's parameters of this algorithm:
-     magic_eps, magic_eps_abs, sigma_reltol, fglobal_reltol
+   * PARAM <name> <value>  the PARAM keys NLopt reads for it: magic_eps,
+     magic_eps_abs, sigma_reltol, fglobal_reltol
    * global optimiser
    * derivative-free
    * STEP is rejected: this algorithm never reads an initial step (population, branch-and-bound, or line-search method); remove STEP
@@ -1016,7 +1012,7 @@ explain_text = """
 Options for NLOPT:G_MLSL
    * Stops that end a run: MAXEVAL, MAXTIME, STOPVAL
      One of them is required, or an active RESTART: MLSL's multistart loop has no convergence test (the tolerances reach only its local searches) and runs until it is interrupted.
-   * PARAM: NLopt reads no parameter of this algorithm
+   * PARAM: NLopt reads no PARAM key of this algorithm
    * global optimiser
    * STEP <double>  initial step; consumption: passed to the optimiser of the INNER block
      passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block
@@ -1058,7 +1054,7 @@ explain_text = """
 Options for NLOPT:G_MLSL_LDS
    * Stops that end a run: MAXEVAL, MAXTIME, STOPVAL
      One of them is required, or an active RESTART: MLSL's multistart loop has no convergence test (the tolerances reach only its local searches) and runs until it is interrupted.
-   * PARAM: NLopt reads no parameter of this algorithm
+   * PARAM: NLopt reads no PARAM key of this algorithm
    * global optimiser
    * STEP <double>  initial step; consumption: passed to the optimiser of the INNER block
      passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block
@@ -1099,7 +1095,7 @@ bounds_note = ""
 explain_text = """
 Options for NLOPT:LD_AUGLAG
    * Stops that end a run: MAXEVAL, MAXTIME, STOPVAL, FTOL_REL, FTOL_ABS, XTOL_REL, XTOL_ABS
-   * PARAM: NLopt reads no parameter of this algorithm
+   * PARAM: NLopt reads no PARAM key of this algorithm
    * STEP <double>  initial step; consumption: passed to the optimiser of the INNER block
      passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block
    * INNER ... ENDINNER: the local search it runs, from its own starting
@@ -1138,7 +1134,7 @@ bounds_note = ""
 explain_text = """
 Options for NLOPT:LD_AUGLAG_EQ
    * Stops that end a run: MAXEVAL, MAXTIME, STOPVAL, FTOL_REL, FTOL_ABS, XTOL_REL, XTOL_ABS
-   * PARAM: NLopt reads no parameter of this algorithm
+   * PARAM: NLopt reads no PARAM key of this algorithm
    * STEP <double>  initial step; consumption: passed to the optimiser of the INNER block
      passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block
    * INNER ... ENDINNER: the local search it runs, from its own starting
@@ -1178,7 +1174,7 @@ explain_text = """
 Options for NLOPT:LD_CCSAQ
    * Stops that end a run: MAXEVAL, MAXTIME, STOPVAL, FTOL_REL, FTOL_ABS, XTOL_REL, XTOL_ABS
      One of them is required (a tolerance above 0), or an active RESTART: without a tolerance it has no convergence test and runs until it is interrupted.
-   * PARAM <name> <value>  NLopt's parameters of this algorithm:
+   * PARAM <name> <value>  the PARAM keys NLopt reads for it:
      inner_maxeval, verbosity, rho_init, dual_algorithm, dual_ftol_rel,
      dual_ftol_abs, dual_xtol_rel, dual_xtol_abs, dual_maxeval
    * STEP <double>  initial step; consumption: one per dimension: the first trust-region half-width
@@ -1215,7 +1211,7 @@ bounds_note = ""
 explain_text = """
 Options for NLOPT:LD_LBFGS
    * Stops that end a run: MAXEVAL, MAXTIME, STOPVAL, FTOL_REL, FTOL_ABS, XTOL_REL, XTOL_ABS
-   * PARAM <name> <value>  NLopt's parameters of this algorithm: tolg
+   * PARAM <name> <value>  the PARAM keys NLopt reads for it: tolg
    * STEP is rejected: this algorithm never reads an initial step (population, branch-and-bound, or line-search method); remove STEP
 """
 
@@ -1250,7 +1246,7 @@ explain_text = """
 Options for NLOPT:LD_MMA
    * Stops that end a run: MAXEVAL, MAXTIME, STOPVAL, FTOL_REL, FTOL_ABS, XTOL_REL, XTOL_ABS
      One of them is required (a tolerance above 0), or an active RESTART: without a tolerance it has no convergence test and runs until it is interrupted.
-   * PARAM <name> <value>  NLopt's parameters of this algorithm:
+   * PARAM <name> <value>  the PARAM keys NLopt reads for it:
      inner_maxeval, verbosity, rho_init, dual_algorithm, dual_ftol_rel,
      dual_ftol_abs, dual_xtol_rel, dual_xtol_abs, dual_maxeval
    * STEP <double>  initial step; consumption: one per dimension: the first trust-region half-width
@@ -1288,7 +1284,7 @@ explain_text = """
 Options for NLOPT:LD_SLSQP
    * Stops that end a run: MAXEVAL, MAXTIME, STOPVAL, FTOL_REL, FTOL_ABS, XTOL_REL, XTOL_ABS
      One of them is required (a tolerance above 0), or an active RESTART: without a tolerance it has no convergence test and runs until it is interrupted.
-   * PARAM: NLopt reads no parameter of this algorithm
+   * PARAM: NLopt reads no PARAM key of this algorithm
    * STEP is rejected: this algorithm never reads an initial step (population, branch-and-bound, or line-search method); remove STEP
 """
 
@@ -1322,7 +1318,7 @@ bounds_note = ""
 explain_text = """
 Options for NLOPT:LD_TNEWTON
    * Stops that end a run: MAXEVAL, MAXTIME, STOPVAL, FTOL_REL, FTOL_ABS, XTOL_REL, XTOL_ABS
-   * PARAM <name> <value>  NLopt's parameters of this algorithm: tolg
+   * PARAM <name> <value>  the PARAM keys NLopt reads for it: tolg
    * STEP is rejected: this algorithm never reads an initial step (population, branch-and-bound, or line-search method); remove STEP
 """
 
@@ -1356,7 +1352,7 @@ bounds_note = ""
 explain_text = """
 Options for NLOPT:LD_TNEWTON_PRECOND
    * Stops that end a run: MAXEVAL, MAXTIME, STOPVAL, FTOL_REL, FTOL_ABS, XTOL_REL, XTOL_ABS
-   * PARAM <name> <value>  NLopt's parameters of this algorithm: tolg
+   * PARAM <name> <value>  the PARAM keys NLopt reads for it: tolg
    * STEP is rejected: this algorithm never reads an initial step (population, branch-and-bound, or line-search method); remove STEP
 """
 
@@ -1390,7 +1386,7 @@ bounds_note = ""
 explain_text = """
 Options for NLOPT:LD_TNEWTON_PRECOND_RESTART
    * Stops that end a run: MAXEVAL, MAXTIME, STOPVAL, FTOL_REL, FTOL_ABS, XTOL_REL, XTOL_ABS
-   * PARAM <name> <value>  NLopt's parameters of this algorithm: tolg
+   * PARAM <name> <value>  the PARAM keys NLopt reads for it: tolg
    * STEP is rejected: this algorithm never reads an initial step (population, branch-and-bound, or line-search method); remove STEP
 """
 
@@ -1424,7 +1420,7 @@ bounds_note = ""
 explain_text = """
 Options for NLOPT:LD_TNEWTON_RESTART
    * Stops that end a run: MAXEVAL, MAXTIME, STOPVAL, FTOL_REL, FTOL_ABS, XTOL_REL, XTOL_ABS
-   * PARAM <name> <value>  NLopt's parameters of this algorithm: tolg
+   * PARAM <name> <value>  the PARAM keys NLopt reads for it: tolg
    * STEP is rejected: this algorithm never reads an initial step (population, branch-and-bound, or line-search method); remove STEP
 """
 
@@ -1458,7 +1454,7 @@ bounds_note = ""
 explain_text = """
 Options for NLOPT:LD_VAR1
    * Stops that end a run: MAXEVAL, MAXTIME, STOPVAL, FTOL_REL, FTOL_ABS, XTOL_REL, XTOL_ABS
-   * PARAM <name> <value>  NLopt's parameters of this algorithm: tolg
+   * PARAM <name> <value>  the PARAM keys NLopt reads for it: tolg
    * STEP is rejected: this algorithm never reads an initial step (population, branch-and-bound, or line-search method); remove STEP
 """
 
@@ -1492,7 +1488,7 @@ bounds_note = ""
 explain_text = """
 Options for NLOPT:LD_VAR2
    * Stops that end a run: MAXEVAL, MAXTIME, STOPVAL, FTOL_REL, FTOL_ABS, XTOL_REL, XTOL_ABS
-   * PARAM <name> <value>  NLopt's parameters of this algorithm: tolg
+   * PARAM <name> <value>  the PARAM keys NLopt reads for it: tolg
    * STEP is rejected: this algorithm never reads an initial step (population, branch-and-bound, or line-search method); remove STEP
 """
 
@@ -1526,7 +1522,7 @@ bounds_note = ""
 explain_text = """
 Options for NLOPT:LN_AUGLAG
    * Stops that end a run: MAXEVAL, MAXTIME, STOPVAL, FTOL_REL, FTOL_ABS, XTOL_REL, XTOL_ABS
-   * PARAM: NLopt reads no parameter of this algorithm
+   * PARAM: NLopt reads no PARAM key of this algorithm
    * derivative-free
    * STEP <double>  initial step; consumption: passed to the optimiser of the INNER block
      passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block
@@ -1566,7 +1562,7 @@ bounds_note = ""
 explain_text = """
 Options for NLOPT:LN_AUGLAG_EQ
    * Stops that end a run: MAXEVAL, MAXTIME, STOPVAL, FTOL_REL, FTOL_ABS, XTOL_REL, XTOL_ABS
-   * PARAM: NLopt reads no parameter of this algorithm
+   * PARAM: NLopt reads no PARAM key of this algorithm
    * derivative-free
    * STEP <double>  initial step; consumption: passed to the optimiser of the INNER block
      passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block
@@ -1606,7 +1602,7 @@ bounds_note = ""
 explain_text = """
 Options for NLOPT:LN_BOBYQA
    * Stops that end a run: MAXEVAL, MAXTIME, STOPVAL, FTOL_REL, FTOL_ABS, XTOL_REL, XTOL_ABS
-   * PARAM: NLopt reads no parameter of this algorithm
+   * PARAM: NLopt reads no PARAM key of this algorithm
    * derivative-free
    * STEP <double>  initial step; consumption: one per dimension: rescaling of the coordinates
      STEP rescales the coordinates, so that the first trust-region radius is STEP in each dimension; the last radius is XTOL_REL times the first, and not below XTOL_ABS
@@ -1642,7 +1638,7 @@ bounds_note = ""
 explain_text = """
 Options for NLOPT:LN_COBYLA
    * Stops that end a run: MAXEVAL, MAXTIME, STOPVAL, FTOL_REL, FTOL_ABS, XTOL_REL, XTOL_ABS
-   * PARAM: NLopt reads no parameter of this algorithm
+   * PARAM: NLopt reads no PARAM key of this algorithm
    * derivative-free
    * STEP <double>  initial step; consumption: one per dimension: rescaling of the coordinates
      STEP rescales the coordinates, so that the first trust-region radius is STEP in each dimension; the last radius is XTOL_REL times the first, and not below XTOL_ABS
@@ -1678,7 +1674,7 @@ bounds_note = ""
 explain_text = """
 Options for NLOPT:LN_NELDERMEAD
    * Stops that end a run: MAXEVAL, MAXTIME, STOPVAL, FTOL_REL, FTOL_ABS, XTOL_REL, XTOL_ABS
-   * PARAM: NLopt reads no parameter of this algorithm
+   * PARAM: NLopt reads no PARAM key of this algorithm
    * derivative-free
    * STEP <double>  initial step; consumption: one per dimension: the edges of the first simplex
      the first simplex has an edge of STEP in each dimension, and the coordinates are not rescaled; the later steps of every dimension change by one progress ratio between 0.1 and 10. The stop on a small step is relative to |x| in each dimension; XTOL_ABS adds an absolute one
@@ -1734,7 +1730,7 @@ bounds_note = ""
 explain_text = """
 Options for NLOPT:LN_PRAXIS
    * Stops that end a run: MAXEVAL, MAXTIME, STOPVAL, FTOL_REL, FTOL_ABS, XTOL_REL, XTOL_ABS
-   * PARAM <name> <value>  NLopt's parameters of this algorithm: t0_tol
+   * PARAM <name> <value>  the PARAM keys NLopt reads for it: t0_tol
    * derivative-free
    * STEP <double>  initial step; consumption: one radius: the smallest STEP of the dimensions
      one radius for every dimension, the smallest STEP of the dimensions
@@ -1770,7 +1766,7 @@ bounds_note = ""
 explain_text = """
 Options for NLOPT:LN_SBPLX
    * Stops that end a run: MAXEVAL, MAXTIME, STOPVAL, FTOL_REL, FTOL_ABS, XTOL_REL, XTOL_ABS
-   * PARAM: NLopt reads no parameter of this algorithm
+   * PARAM: NLopt reads no PARAM key of this algorithm
    * derivative-free
    * STEP <double>  initial step; consumption: one per dimension: the edges of the first simplex
      the first simplex has an edge of STEP in each dimension, and the coordinates are not rescaled; the later steps of every dimension change by one progress ratio between 0.1 and 10. The stop on a small step is relative to |x| in each dimension; XTOL_ABS adds an absolute one
@@ -2054,7 +2050,7 @@ Options for TADAH:ANNEAL_PT
         Corana kernel: the smallest step of each dimension, as a fraction of the width of its OPTIM box.
      PARAM BOUNDARY_MODE <REFLECT|REDRAW> (default REFLECT)
         What a proposal outside the OPTIM box becomes: REFLECT folds it back into the box as a mirror does; REDRAW draws each coordinate outside the box again.
-     PARAM RESET_TO_BEST (default: OFF)
+     PARAM RESET_TO_BEST (default OFF)
         ON moves the chain back to the best point so far after each cooling step; under TADAH:ANNEAL_PT it moves the coldest slot after each epoch.
      PARAM STEP_MODE <FIXED|FROZEN|ADAPTIVE> (default FROZEN)
         How the CLASSIC kernel sets its steps: FIXED keeps the scales STEP_FRAC gives; FROZEN calibrates the scales of each slot, then keeps them; ADAPTIVE calibrates them and keeps adapting them, a diagonal form of robust adaptive Metropolis.

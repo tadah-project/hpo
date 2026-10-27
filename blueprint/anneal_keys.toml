@@ -188,14 +188,15 @@ name = "RESET_TO_BEST"
 type = "bool"
 kinds = ["serial", "pt", "pa"]
 default_doc_serial = "OFF; ON with CORANA ON"
-default_doc_pt = "OFF"
+default_pt = "0"
 group = "steps"
 rank = 9
 doc = "ON moves the chain back to the best point so far after each cooling step; under TADAH:ANNEAL_PT it moves the coldest slot after each epoch."
-# default is dynamic: 1 under serial CORANA (Corana 1987 returns to the
-# optimum on each temperature drop), else 0; PA rejects the key via the
-# kind_reject rule below, so it stays visible to all kinds for the
-# specific error message (the help and the documentation leave it out).
+# the serial default is dynamic: 1 under serial CORANA (Corana 1987 returns
+# to the optimum on each temperature drop), else 0; PT's is 0; PA rejects
+# the key via the kind_reject rule below, so it stays visible to all kinds
+# for the specific error message (the help and the documentation leave it
+# out).
 
 [[key]]
 name = "T_INIT"
