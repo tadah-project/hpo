@@ -108,6 +108,12 @@ std::string framed(std::size_t n, const std::string& what,
            text;
 }
 
+bool ends_with(const std::string& text, const std::string& tail)
+{
+    return text.size() >= tail.size() &&
+           text.compare(text.size() - tail.size(), tail.size(), tail) == 0;
+}
+
 const std::string kSpace = "OPTIM CGRID2B (1) 0.5 1.5\nOPTIM CGRID2B (2) 1.6 2.5\n";
 
 }  // namespace
@@ -225,8 +231,7 @@ TEST_CASE("key lines: a gradient beside a PC_LAMMPS line is refused at the "
         CHECK(got.rfind("Error on line 4: --hpotarget defines PC_LAMMPS on "
                         "line 11 but OPTIMIZER's optimiser NLOPT:LD_LBFGS is "
                         "gradient-based." + free_list, 0) == 0);
-        CHECK(got.size() >= 15);
-        CHECK(got.substr(got.size() - 15) == "\nLine: ALGO LD_LBFGS");
+        CHECK(ends_with(got, "\nLine: ALGO LD_LBFGS"));
     }
     {
         // EXPLORE on lines 6-10, its ALGO on line 8; PC_LAMMPS on line 17
@@ -240,7 +245,7 @@ TEST_CASE("key lines: a gradient beside a PC_LAMMPS line is refused at the "
         CHECK(got.rfind("Error on line 8: --hpotarget defines PC_LAMMPS on "
                         "line 17 but EXPLORE's optimiser NLOPT:LD_LBFGS is "
                         "gradient-based." + free_list, 0) == 0);
-        CHECK(got.substr(got.size() - 15) == "\nLine: ALGO LD_LBFGS");
+        CHECK(ends_with(got, "\nLine: ALGO LD_LBFGS"));
     }
     {
         // INNER on lines 6-9, its ALGO on line 8; PC_LAMMPS on line 15
@@ -256,7 +261,7 @@ TEST_CASE("key lines: a gradient beside a PC_LAMMPS line is refused at the "
                         "requires a gradient-free optimiser, and an INNER "
                         "search is a local NLopt algorithm: name a "
                         "derivative-free one in the INNER block (", 0) == 0);
-        CHECK(got.substr(got.size() - 15) == "\nLine: ALGO LD_LBFGS");
+        CHECK(ends_with(got, "\nLine: ALGO LD_LBFGS"));
     }
     {
         // GRAD_STRATEGY on line 5, PC_FAILPROBE on line 12
@@ -293,6 +298,5 @@ TEST_CASE("key lines: GRAD_STRATEGY NUMERICAL beside a PC_OBSERVABLE line is "
     INFO(got);
     CHECK(got.rfind("Error on line 5: --hpotarget defines PC_OBSERVABLE but "
                     "OPTIMIZER's GRAD_STRATEGY=NUMERICAL is set.", 0) == 0);
-    CHECK(got.size() >= 30);
-    CHECK(got.substr(got.size() - 30) == "\nLine: GRAD_STRATEGY NUMERICAL");
+    CHECK(ends_with(got, "\nLine: GRAD_STRATEGY NUMERICAL"));
 }
