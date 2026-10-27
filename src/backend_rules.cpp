@@ -446,8 +446,8 @@ unsigned validate_grid_spec(const OptimizerSpec& sp)
      * points and loop forever at the low corner, STEP 1 divided by zero. */
     if (sp.step)
         throw std::runtime_error(
-            "TADAH:GRID: STEP is not the grid resolution; use PARAM GRID_POINTS "
-            "<n> (integer >= 2, default 20 points per dimension)");
+            "TADAH:GRID: STEP is not the grid resolution; PARAM GRID_POINTS "
+            "<n> sets it (an integer >= 2, default 20 points per dimension)");
     unsigned steps = 20;
     /* The points of each dimension include both of its bounds (point j at
      * low + j (high - low) / (n - 1)), so a grid has 2 points or more. */

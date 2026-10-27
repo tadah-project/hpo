@@ -67,6 +67,7 @@
 #include <tadah/hpo/hpo_host.h>
 #include <tadah/hpo/hpo_mpi.h>
 #include <tadah/hpo/anneal_core.h>
+#include <tadah/hpo/count_text.h>
 #include <tadah/hpo/backend_rules.h>
 #include <tadah/hpo/anneal_jitter.h>
 #include <tadah/hpo/corana_census.h>
@@ -1210,9 +1211,9 @@ template<typename Vec, typename HostT>
 
     if (!sp.num_threads) {
       const std::string hint =
-          "ANNEAL_PT: THREADS not set -- running " + std::to_string(K) +
-          " replicas on 1 worker thread. Set THREADS <n> in the STRATEGY "
-          "block to evaluate replicas concurrently.";
+          "ANNEAL_PT: THREADS is not set, so the " + std::to_string(K) +
+          " replicas run on 1 worker thread; THREADS <n> in the STRATEGY "
+          "block evaluates up to n of them at a time";
       std::cout << "[HPO] " << hint << "\n";
       HPOLog::instance().warning(hint);
     }
@@ -2478,13 +2479,17 @@ template<typename Vec, typename HostT>
               static_cast<std::uint64_t>(K), per_slot);
           const std::string msg =
               "ANNEAL_PT: the step warm-up stopped at its budget, " +
-              std::to_string(warmup_budget) + " evaluations, a quarter of "
-              "MAXEVAL " + std::to_string(max_eval_global) + ": " +
-              std::to_string(status_interrupted) + " of " +
-              std::to_string(K * dim) + " coordinates did not finish (" +
+              count_text(warmup_budget, "evaluation", "evaluations") +
+              ", a quarter of MAXEVAL " + std::to_string(max_eval_global) +
+              ": " + std::to_string(status_interrupted) + " of the " +
+              std::to_string(K * dim) + " slot coordinates (" +
+              count_text(K, "slot", "slots") + " x " +
+              count_text(dim, "search parameter", "search parameters") +
+              ") did not finish (" +
               std::to_string(interrupted_untested) + " of them without a "
               "tested scale), and the pilot made " +
-              std::to_string(pilot_evaluations) + " evaluations. A complete "
+              count_text(pilot_evaluations, "evaluation", "evaluations") +
+              ". A complete "
               "warm-up takes up to about " + std::to_string(complete) +
               " evaluations, so the step scales, and a calibrated T_HOT, "
               "depend on MAXEVAL; STEP_MODE FIXED runs no warm-up, and an "

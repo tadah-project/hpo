@@ -85,7 +85,10 @@ private:
     };
 
     size_t ui_offset(std::vector<std::string> &tokens, size_t ui);
-    std::vector<std::string> parse_optim_line(std::istringstream& iss);
+    /* The (indices) and the tokens after them; @p what, "OPTIM <KEY>",
+     * names the line in a refusal. */
+    std::vector<std::string> parse_optim_line(std::istringstream& iss,
+                                              const std::string& what);
     /* Throws when the run cannot create the archive directory @p dir of
      * the line @p key (DUMP, BDUMP) or write into it, and creates nothing.
      * The path is taken where the operating system puts it (every symbolic

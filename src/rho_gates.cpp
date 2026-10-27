@@ -359,7 +359,8 @@ DensityGates build_density_gates(const core::Context &master,
           " lattice constants of the smallest lattice (a = f_lo a0 = " +
           gnum(t.spec.f_lo * t.spec.a0) + " A); the limit is " +
           gnum(kRhoBarMaxShellRadius) + ". f_lo and f_hi are fractions of "
-          "a0 (0.75 scans down to 25 % compression): raise f_lo.");
+          "a0 (0.75 scans down to 25 % compression), and a larger f_lo "
+          "puts that RCUTMB at fewer lattice constants.");
     t.shells = models::eam_lattice::shells(t.spec.lattice, dmax);
     t.f = models::ReamDensity::linspace(t.spec.f_lo, t.spec.f_hi, t.spec.npts);
     t.a.reserve(t.f.size());
@@ -651,10 +652,11 @@ void validate_density_gates(const core::Context &train_ctx,
     HPOLog::instance().warning(m);
   };
   const std::string repair =
-      " Repair the seed's density (for a WARM seed, its OPTIM'd density "
-      "values: the rest comes from the -c potential) with tadah refit "
-      "--edit, relax the gate, or add SEED WARN to evaluate it as a rejected "
-      "start.";
+      " A seed that fails is refused under SEED ERROR, the default, and is "
+      "evaluated as a rejected start under SEED WARN. tadah refit --edit "
+      "changes the density of a potential file; a WARM seed takes the values "
+      "of its search parameters from its file and the others from the "
+      "training configuration.";
   /* Whether the optimiser starts from a given seed is not known here (a
    * single-start backend consumes only the first of several). */
   const std::string seed_warn_note =

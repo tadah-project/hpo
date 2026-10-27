@@ -84,10 +84,9 @@ KeyCheckFn stage_key_check(const StageKeys &sk, SeenKeys *seen) {
     // instead.
     if (key == "SEED")
       throw std::runtime_error(
-          "SEED is not accepted in a tadah refit OPTIMIZER block: the "
-          "refit's random numbers come from REFIT_COMPACT_SEED: "
-          "REFIT_COMPACT_SEED in the training configuration seeds the "
-          "refit.");
+          "SEED is not accepted in a tadah refit OPTIMIZER block: "
+          "REFIT_COMPACT_SEED in the refit configuration seeds the refit's "
+          "random numbers");
     if (key == "FTOL_ABS" && std::string(sk.stage) != "EXPLORE")
       throw std::runtime_error(
           "FTOL_ABS is not supported — Ceres' function_tolerance is RELATIVE "
@@ -464,8 +463,7 @@ std::string stage_algo(const OptimizerSpec &s,
       if (!lib.empty())
         throw std::runtime_error(std::string(block) +
                                  ": LIB has no effect with ALGO " +
-                                 a.spelling + " (" + none_means +
-                                 "); remove LIB");
+                                 a.spelling + " (" + none_means + ")");
       return a.canonical;
     }
     if (lib.empty())
@@ -592,15 +590,15 @@ void reject_keys_not_read(const std::string &block, const OptimizerSpec &s,
                   : std::string();
     if (reads.empty())
       throw std::runtime_error(block + ": " + key + " has no effect with ALGO " +
-                               algo + " (" + off + mlsl + "); remove " + key);
+                               algo + " (" + off + mlsl + ")");
     if (key == "MAXITER")
       throw std::runtime_error(block + ": MAXITER counts Ceres iterations; "
                                "ALGO " + algo + " counts objective "
-                               "evaluations: write MAXEVAL");
+                               "evaluations, which MAXEVAL limits");
     if (key == "FTOL_REL" && has_key(reads, "FTOL_ABS"))
       throw std::runtime_error(block + ": FTOL_REL has no effect with ALGO " +
                                algo + ": dlib's L-BFGS stops on an absolute "
-                               "change of the objective; write FTOL_ABS");
+                               "change of the objective, which FTOL_ABS sets");
     if (key == "FTOL_ABS" && has_key(reads, "GTOL"))
       throw std::runtime_error(
           block + ": FTOL_ABS is not supported — Ceres' function_tolerance is "
@@ -608,7 +606,7 @@ void reject_keys_not_read(const std::string &block, const OptimizerSpec &s,
           "tolerance.");
     throw std::runtime_error(block + ": " + key + " has no effect with ALGO " +
                              algo + " (it reads " + reads_list(reads) + mlsl +
-                             "); remove " + key);
+                             ")");
   }
 }
 
@@ -619,8 +617,9 @@ void reject_disabled_with_optimizer(const char *stage, bool enabled,
   if (!enabled && has_opt)
     throw std::runtime_error(
         std::string(stage) + ": ENABLED false skips the stage, so its "
-        "OPTIMIZER block has no effect; ALGO NONE in the OPTIMIZER block "
-        "switches the stage off");
+        "OPTIMIZER block has no effect; ENABLED false without the block, or "
+        "ALGO NONE in the block without ENABLED false, switches the stage "
+        "off");
 }
 
 }  // namespace
@@ -637,8 +636,7 @@ std::string refit_explore_outer_algo(const OptimizerSpec &s) {
     if (algo == r.spelling)
       throw std::runtime_error(std::string("EXPLORE: ALGO ") + s.algo +
                                " is not run by tadah refit (" + r.what +
-                               "); its " + r.short_name + " is " + r.runs +
-                               ": set ALGO " + r.runs);
+                               "); its " + r.short_name + " is " + r.runs);
   return stage_algo(s, kExploreOuterAlgos, "EXPLORE", "EXPLORE outer",
                     kExploreOff,
                     "NLOPT GN_MLSL_LDS|GN_DIRECT_L|GN_CRS2_LM, DLIB GLOBAL, or "

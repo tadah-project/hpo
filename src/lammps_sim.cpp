@@ -434,7 +434,7 @@ void LammpsSim::parse_tokens() {
   std::string hpo_values;       /* "<option> takes ...", after its values */
   bool lammps_values = false;   /* after a LAMMPS option or its values */
   auto hpo_option_read = [&](const std::string& takes) {
-    hpo_values = takes;
+    hpo_values = key + " " + takes;
     lammps_values = false;
   };
   /* The variable maxtime carries the script timeout (the constructor
@@ -457,8 +457,8 @@ void LammpsSim::parse_tokens() {
   std::unordered_set<std::string> once_seen;
   auto once = [&](const std::string& option) {
     if (!once_seen.insert(option).second)
-      throw std::runtime_error(option + " is given twice on this line; each "
-                               "option is given once");
+      throw std::runtime_error(key + " " + option + " is given twice on "
+                               "this line; each option is given once");
   };
   /* A LAMMPS variable the line defines on LAMMPS' command line (--invar,
    * -var, -v), once. */
@@ -480,7 +480,7 @@ void LammpsSim::parse_tokens() {
       if (i + 1 < tokens.size()) {
         script = tokens[++i];
         i++;
-        hpo_option_read("--script takes a single value");
+        hpo_option_read("--script takes one value");
       } else {
         throw std::runtime_error(key + " --script takes one value, the LAMMPS "
                                  "script file");
@@ -494,16 +494,19 @@ void LammpsSim::parse_tokens() {
       std::size_t j=i+1;
 
       if(j>=tokens.size() || is_flag(tokens[j]))
-        throw std::runtime_error("--varloss: missing <name>");
+        throw std::runtime_error(key + " --varloss takes <name> <target> "
+                                 "<weight> (the name is missing)");
       std::string vname = tokens[j++];
 
       if(j>=tokens.size() || is_flag(tokens[j]))
-        throw std::runtime_error("--varloss "+vname+": missing <target>");
+        throw std::runtime_error(key + " --varloss takes <name> <target> "
+                                 "<weight> (" + vname + " has no target)");
       const std::string tgt_tok = tokens[j];
       const double tgt = parse_finite(tokens[j++], "--varloss "+vname+" <target>");
 
       if(j>=tokens.size() || is_flag(tokens[j]))
-        throw std::runtime_error("--varloss "+vname+": missing <weight>");
+        throw std::runtime_error(key + " --varloss takes <name> <target> "
+                                 "<weight> (" + vname + " has no weight)");
       /* Any finite weight; a negative one is accepted. */
       const double wgt = parse_finite(tokens[j++], "--varloss "+vname+" <weight>");
 
@@ -568,7 +571,7 @@ void LammpsSim::parse_tokens() {
           n_outvar.push_back(vname);
         }
         i++;
-        hpo_option_read("--outvar takes a single value");
+        hpo_option_read("--outvar takes one value");
       } else {
         throw std::runtime_error(key + " --outvar takes one value, the name of "
                                  "a LAMMPS variable");
@@ -593,7 +596,7 @@ void LammpsSim::parse_tokens() {
             : parse_finite(tokens[++i], "--failscore");
         reads_default_failscore = false;
         i++;
-        hpo_option_read("--failscore takes a single value");
+        hpo_option_read("--failscore takes one value");
       } else {
         throw std::runtime_error(key + " --failscore takes one value, a number");
       }
@@ -605,7 +608,7 @@ void LammpsSim::parse_tokens() {
         (void)parse_script_timeout(maxtime, "--maxtime");
         reads_default_maxtime = false;
         i++;
-        hpo_option_read("--maxtime takes a single value");
+        hpo_option_read("--maxtime takes one value");
       } else {
         throw std::runtime_error(key + " --maxtime takes one value, a time "
                                  "limit (off, unlimited or [[HH:]MM:]SS)");
@@ -685,7 +688,7 @@ void LammpsSim::parse_tokens() {
        * after it is named with this option. */
       const std::string option = tokens[i];
       i += 2;
-      hpo_option_read(option + " takes a single value");
+      hpo_option_read(option + " takes one value");
     }
     else if (tokens[i].rfind("--", 0) == 0) {
       /* None of HPO's options (line_options(): each that parse_tokens()

@@ -24,6 +24,7 @@
 #include <tadah/hpo/pc_fail_grading.h>   /* kFailBandFloor, loss_is_feasible */
 #include <tadah/hpo/seed_stream.h>       /* seed_stream, seed_streams         */
 #include <tadah/hpo/anneal_keys_gen.h>   /* generated key/rule registry      */
+#include <tadah/hpo/count_text.h>       /* count_text                       */
 #include <tadah/hpo/strict_parse.h>     /* parse_number                     */
 
 #include <algorithm>
@@ -576,8 +577,8 @@ inline Knobs Knobs::parse(const OptimizerSpec& sp, AlgoKind kind)
         ctx + " does not use GRAD_STRATEGY: it is gradient-free");
   if (sp.step)
     throw std::runtime_error(
-        ctx + " does not use STEP; set PARAM STEP_FRAC (and PARAM "
-        "STEP_MODE for ANNEAL_PT) instead");
+        ctx + " does not use STEP; PARAM STEP_FRAC sets its proposal steps "
+        "(and PARAM STEP_MODE for ANNEAL_PT)");
   /* THREADS is honoured by EVERY family under the shared-pool model:
    * it sizes the per-rank worker pool that runs the pc_lammps
    * fan-out + MLIP train/predict. Serial ANNEAL still drives ONE chain, but
@@ -2505,17 +2506,19 @@ T0Outcome calibrate_t0(const OptimizerSpec& sp, const Knobs& kb,
     std::ostringstream oss;
     oss << std::scientific << std::setprecision(3)
         << banner_ctx << ": T0=" << out.T0
-        << " from " << probes.size() << " probes";
+        << " from " << count_text(probes.size(), "probe", "probes");
     if (fallback) {
       oss << ", the fallback of the WARNING above";
     } else if (basis->uphill > 0) {
       oss << ": median rise of the loss " << basis->median << " over the "
-          << basis->uphill << " probes that raised it, T0 = median rise / "
+          << count_text(basis->uphill, "probe", "probes")
+          << " that raised it, T0 = median rise / "
           "ln(1/T0_ACCEPT) with T0_ACCEPT=" << kb.t0_accept;
     } else {
       oss << ": no probe raised the loss; median change of the loss "
-          << basis->median << " over the " << basis->finite
-          << " probes with a usable loss, T0 = median change / "
+          << basis->median << " over the "
+          << count_text(basis->finite, "probe", "probes")
+          << " with a usable loss, T0 = median change / "
           "ln(1/T0_ACCEPT) with T0_ACCEPT=" << kb.t0_accept;
     }
     if (basis)

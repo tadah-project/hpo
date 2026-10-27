@@ -966,8 +966,9 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
     if (!std::isfinite(trg.FAIL_SCORE) || trg.FAIL_SCORE >= 1.0e300 ||
         trg.FAIL_SCORE <= 0.0)
       throw std::runtime_error(
-          "FAILSCORE_GRADING ON requires a finite positive FAILSCORE (e.g. "
-          "`FAILSCORE 1e9`); the default DBL_MAX sentinel cannot be banded.");
+          "FAILSCORE_GRADING ON grades failures in bands below FAILSCORE, "
+          "which needs a FAILSCORE above 0 and below 1e300 (without a "
+          "FAILSCORE line, FAILSCORE is the largest double)");
     if (!graded_failscore_is_ordered(trg.FAIL_SCORE))
       throw std::runtime_error(
           "FAILSCORE_GRADING ON requires a FAILSCORE large enough to "

@@ -205,9 +205,11 @@ bool dispatch_opt_attr(const std::string &key, std::istringstream &iss,
   else if (key == "THREADS")
     a.num_threads = attr_threads(iss, key);
   else if (key == "GRAD_STRATEGY") {
-    /* A line without a value is refused as every key's ("GRAD_STRATEGY
-     * requires a value"). */
-    const std::string v = next_value(iss, key);
+    /* A line without a value is refused with the values the key takes. */
+    std::string v;
+    if (!(iss >> v))
+      throw std::runtime_error(
+          "GRAD_STRATEGY takes one value: NUMERICAL, ANALYTICAL or HYBRID");
     if (v == "NUMERICAL")
       a.grad_strategy = GradStrategy::Numerical;
     else if (v == "ANALYTICAL")

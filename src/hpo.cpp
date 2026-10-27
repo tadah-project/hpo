@@ -1,4 +1,5 @@
 #include <tadah/hpo/check_summary.h>
+#include <tadah/hpo/count_text.h>
 #include <tadah/hpo/hpo_host.h>
 #include <tadah/hpo/hpo_targets.h>
 #include <tadah/hpo/runners.h>
@@ -482,8 +483,11 @@ int hpo_run_from_startup(core::Context& ctx, HPOLog& log,
          * OMP_NUM_THREADS now controls only the residual OpenMP kernels
          * (neighbour-list build, data-stats); journal its width for the record. */
         const char* env_omp = std::getenv("OMP_NUM_THREADS");
-        log.info("OpenMP: at most " + std::to_string(omp_get_max_threads()) +
-                 " threads (OMP_NUM_THREADS=" +
+        log.info("OpenMP: at most " +
+                 count_text(static_cast<unsigned long long>(
+                                omp_get_max_threads()),
+                            "thread", "threads") +
+                 " (OMP_NUM_THREADS=" +
                  (env_omp && env_omp[0] ? std::string(env_omp) : "unset") +
                  "), for the OpenMP parts (neighbour lists, data "
                  "statistics), not for the LAMMPS scripts");
@@ -722,8 +726,10 @@ int hpo_run_from_startup(core::Context& ctx, HPOLog& log,
         }
 #endif
         if (!check)
-            log.info("THREADS: " + std::to_string(exec_width) + " workers run "
-                     "the work of the evaluations (the LAMMPS scripts and the "
+            log.info("THREADS: " +
+                     count_text(static_cast<unsigned long long>(exec_width),
+                                "worker runs", "workers run") +
+                     " the work of the evaluations (the LAMMPS scripts and the "
                      "training and prediction of the potential); "
                      "OMP_NUM_THREADS=" + std::to_string(omp_w) + " sets the "
                      "threads of the OpenMP parts only (neighbour lists, data "

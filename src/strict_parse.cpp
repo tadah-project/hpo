@@ -185,7 +185,7 @@ void expect_end(std::istringstream& iss, const std::string& what)
 std::string single_value(std::istringstream& iss, const std::string& key)
 {
     std::string tok = next_value(iss, key);
-    expect_end(iss, key + " takes a single value");
+    expect_end(iss, key + " takes one value");
     return tok;
 }
 

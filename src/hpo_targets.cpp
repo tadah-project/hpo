@@ -160,18 +160,25 @@ size_t HPOTargets::ui_offset(std::vector<std::string> &tokens, size_t ui) {
 
 namespace {
 // OPTIM and indexed PC lines share the same parenthesized selector grammar.
-std::string read_index_selector(std::istringstream& iss) {
+// @p what names the line in a refusal: "OPTIM <KEY>" or the metric key.
+std::string read_index_selector(std::istringstream& iss, const std::string& what) {
     iss >> std::ws;
-    if (iss.get() != '(') throw std::runtime_error("Expected (indices)");
+    if (iss.get() != '(')
+        throw std::runtime_error(what + ": the key is followed by its indices "
+                                 "in parentheses, such as " + what + " (1)");
     std::string indices;
     if (!std::getline(iss, indices, ')') || iss.eof())
-        throw std::runtime_error("Unmatched opening parenthesis in index selector");
+        throw std::runtime_error(what + ": the indices have no closing "
+                                 "parenthesis");
     if (indices.find('(') != std::string::npos)
-        throw std::runtime_error("Nested parentheses in index selector");
-    if (core::trim(indices).empty()) throw std::runtime_error("Empty index selector");
+        throw std::runtime_error(what + ": the indices hold another opening "
+                                 "parenthesis");
+    if (core::trim(indices).empty())
+        throw std::runtime_error(what + ": the parentheses hold no index");
     const int next = iss.peek();
     if (next != std::char_traits<char>::eof() && !std::isspace(static_cast<unsigned char>(next)))
-        throw std::runtime_error("Expected whitespace after (indices)");
+        throw std::runtime_error(what + ": a space follows the closing "
+                                 "parenthesis of the indices");
     return indices;
 }
 
@@ -198,13 +205,16 @@ std::string chain_methods(const InitStrategySpec& ispec) {
 }
 }
 
-std::vector<std::string> HPOTargets::parse_optim_line(std::istringstream& iss) {
-    const auto indices = read_index_selector(iss);
+std::vector<std::string> HPOTargets::parse_optim_line(std::istringstream& iss,
+                                                      const std::string& what) {
+    const auto indices = read_index_selector(iss, what);
     std::vector<std::string> elements;
     std::string token;
     while (iss >> token) {
         if (token.find_first_of("()") != std::string::npos)
-            throw std::runtime_error("Only one (indices) selector is accepted");
+            throw std::runtime_error(what + ": the line takes one list of "
+                                     "indices in parentheses (unexpected '" +
+                                     token + "')");
         elements.push_back(token);
     }
     elements.push_back(indices);
@@ -697,15 +707,15 @@ static bool reject_old_keyword(const std::string& key)
         {"MULTISTART_PARALLEL",         kParallelRemoved},
         {"PARALLEL",                    kParallelRemoved},
         {"MULTISTART_BUDGET_PER_START", "moved into `STRATEGY { TYPE MULTISTART BUDGET_PER_START N }`."},
-        {"STAGE_GLOBAL",                "removed: STRATEGY TYPE PRESTAGE runs an exploration and then a refinement."},
+        {"STAGE_GLOBAL",                "STRATEGY TYPE PRESTAGE runs an exploration and then a refinement."},
         {"RESTART_AFTER_STAGNATION",    "moved into `STRATEGY { RESTART { AFTER_STAGNATION N } ENDRESTART }`."},
         {"RESTART_MAX",                 "moved into `STRATEGY { RESTART { MAX N } ENDRESTART }`."},
         {"RESTART_INIT_STRATEGY",       "moved into `RESTART { METHOD <method> ... }` (re-uses INIT-block grammar)."},
         {"INIT_STRATEGY",               "moved into `INIT { METHOD <method> ... } ENDINIT` block."},
         {"INIT_K",                      "renamed to K_TOTAL inside an INIT block."},
         {"INIT_SEED",                   "renamed to SEED inside an INIT block."},
-        {"INIT_INCLUDE_CONFIG",         "removed. The values of the training configuration for the search parameters are a starting point only when the INIT block has a `METHOD CONFIG` line."},
-        {"INCLUDE_CONFIG",              "removed. The values of the training configuration for the search parameters are a starting point only when the INIT block has a `METHOD CONFIG` line."},
+        {"INIT_INCLUDE_CONFIG",         "the values of the training configuration for the search parameters are a starting point only when the INIT block has a `METHOD CONFIG` line."},
+        {"INCLUDE_CONFIG",              "the values of the training configuration for the search parameters are a starting point only when the INIT block has a `METHOD CONFIG` line."},
         {"NOISE_AUTO",                  "moved into `NOISE { AUTO true|false } ENDNOISE` block."},
         {"NOISE_CALIBRATION",           "moved into `NOISE { CALIBRATION N } ENDNOISE` block."},
         {"PC_SRMSE",                    "replaced by PC_SRMSE_GPA, the root mean square of the nine entries of each residual stress tensor in GPa (PC_SRMSE was that of the six entries x <= y in eV/A^3). PC_SRMSE_GPA of a residual is 160.2 times its PC_SRMSE when the six entries have equal mean squares, 130.8 times for a residual on the diagonal only (a pressure) and 185.0 times for a shear residual only: a target or --skip-above cap of PC_SRMSE times 160.2 is about that of PC_SRMSE_GPA, and a weight under LOSS L2 divided by about 25 670 (160.2 squared)."},
@@ -886,7 +896,7 @@ void HPOTargets::read(const std::string& fn)
                 "no value (unexpected '" + extra + "')");
         throw std::runtime_error(
             key + " opens a block and takes no value (unexpected '" + extra +
-            "'); write each key on its own line inside the block");
+            "'); each key stands on its own line inside the block");
     };
     /* A key the innermost open block does not take: a top-level key is
      * named as such, with the block that is still open; another key is
@@ -1096,7 +1106,7 @@ void HPOTargets::read(const std::string& fn)
                     throw std::runtime_error(
                         "OPTIMIZER block given more than once (the first opens "
                         "on line " + std::to_string(optimizer_line) + "); "
-                        "write every optimiser setting in one block");
+                        "one OPTIMIZER block holds every optimiser setting");
                 require_key_alone(iss, key);
                 optimizer_line = nline;
                 open_block(OUTER);
@@ -1146,7 +1156,7 @@ void HPOTargets::read(const std::string& fn)
 
             if (key=="NOISE") {
                 if (block != OUTER)
-                    throw std::runtime_error("NOISE block must appear inside OPTIMIZER (OUTER level)");
+                    throw std::runtime_error("NOISE block must appear directly inside OPTIMIZER");
                 require_key_alone(iss, key);
                 /* A NOISE block takes AUTO and CALIBRATION only: no
                  * optimiser receives its lines, so an optimiser key there
@@ -1175,12 +1185,12 @@ void HPOTargets::read(const std::string& fn)
                     /* fall through to error */
                 }
                 if (block != OUTER)
-                    throw std::runtime_error("STRATEGY block must appear inside OPTIMIZER (OUTER level)");
+                    throw std::runtime_error("STRATEGY block must appear directly inside OPTIMIZER");
                 if (strategy_line != 0)
                     throw std::runtime_error(
                         "STRATEGY block given more than once (the first opens "
-                        "on line " + std::to_string(strategy_line) + "); write "
-                        "every STRATEGY key in one block");
+                        "on line " + std::to_string(strategy_line) + "); one "
+                        "STRATEGY block holds every STRATEGY key");
                 require_key_alone(iss, key);
                 strategy_line = nline;
                 open_block(STRATEGY_BLK);
@@ -1272,9 +1282,11 @@ void HPOTargets::read(const std::string& fn)
                     throw std::logic_error("INNER block has no parent OptimizerSpec");
                 if (active_opt->inner)
                     throw std::runtime_error(
-                        "INNER block given twice in one block (the first on "
-                        "line " + std::to_string(inner_lines[active_opt]) +
-                        ")");
+                        "INNER block given twice for one optimiser (the "
+                        "first on line " +
+                        std::to_string(inner_lines[active_opt]) +
+                        "); STRATEGY and REFINE configure the same "
+                        "optimiser, and so do two EXPLORE blocks");
                 inner_lines[active_opt] = nline;
                 require_key_alone(iss, key);
                 active_opt->inner = std::make_unique<OptimizerSpec>();
@@ -1427,7 +1439,7 @@ void HPOTargets::read(const std::string& fn)
                     /* AUTO alone means AUTO true. */
                     std::string v;
                     iss >> v;
-                    expect_end(iss, "AUTO takes a single value");
+                    expect_end(iss, "AUTO takes one value");
                     spec.noise.autodetect = v.empty() ? true : parse_bool(v, "NOISE.AUTO");
                     set_once(&spec.noise, key, "noise settings");
                     continue;
@@ -1845,7 +1857,7 @@ void HPOTargets::read(const std::string& fn)
                 if (iss.peek() == '(') {
                     if (!dataset_metric)
                         throw std::runtime_error(key + ": indexed targets are supported only for PC_ERMSE, PC_FRMSE and PC_SRMSE_GPA");
-                    indices = core::parse_indices_strict(read_index_selector(iss));
+                    indices = core::parse_indices_strict(read_index_selector(iss, key));
                 }
                 std::string target_token, weight_token;
                 if (!(iss >> target_token >> weight_token))
@@ -2359,8 +2371,8 @@ void HPOTargets::read(const std::string& fn)
             const std::string requires_free = inner
                 ? " A PC_LAMMPS or PC_FAILPROBE line requires a "
                   "gradient-free optimiser, and an INNER search is a local "
-                  "NLopt algorithm: name a derivative-free one in the INNER "
-                  "block (" + nlopt_inner_searches_without_gradient() + ")."
+                  "NLopt algorithm; the INNER block takes a derivative-free "
+                  "one (" + nlopt_inner_searches_without_gradient() + ")."
                 : " A PC_LAMMPS or PC_FAILPROBE line requires a "
                   "gradient-free optimiser (" +
                       searches_without_gradient() + "); an NLopt MLSL or "
@@ -3394,7 +3406,7 @@ void HPOTargets::process_optim_config(std::istringstream& iss,
   size_t s = named?binding->values.size():context.size(k);
   omap.resize(s);
 
-  std::vector<std::string> tokens = parse_optim_line(iss);
+  std::vector<std::string> tokens = parse_optim_line(iss, "OPTIM " + k);
 
   /* At least the (indices) group plus one token (AUTO, or <low> <high>);
    * the exact grammar is checked below. */
@@ -3606,9 +3618,10 @@ void HPOTargets::process_optim_config(std::istringstream& iss,
       throw std::runtime_error(
           "OPTIM " + geometric_default + ": FLOOR and GROUP_FLOOR set the smallest "
           "half-width of an AUTO FRAC box; " +
-          (mode_set ? std::string("AUTO RATIO makes the geometric box "
-                                  "[seed/f, seed*f], which they do not change, "
-                                  "so they are given with FRAC <p> only")
+          (mode_set ? "AUTO RATIO " + factor_tok + " makes the geometric "
+                      "box [seed/" + factor_tok + ", seed*" + factor_tok +
+                      "], which they do not change, so they are given with "
+                      "FRAC <p> only"
                     : "the AUTO box of " + geometric_default + " is geometric by default "
                       "(RATIO 2), which they do not change, so they are "
                       "given with FRAC <p> only"));
