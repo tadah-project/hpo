@@ -1348,11 +1348,30 @@ The deadline is kept in 64-bit milliseconds, so a value above about \
 9.2e15 s is refused. Under PC_ISOLATION THREAD the key has no effect."""
 checks = [
   { msg = "PC_WORKER_TIMEOUT is too large for the worker deadline, got '{tok}' (it is kept in 64-bit milliseconds: at most about 9.2e15 s)", doc = "The value is above about 9.2e15 s." },
+  { msg = "PC_WORKER_TIMEOUT sets the deadline of a script task in a worker process (PC_ISOLATION PROCESS); under PC_ISOLATION THREAD, {why}, the scripts run inside the tadah process without a worker deadline, so it would have no effect", doc = "When the run starts, at the line, for any value: the run uses PC_ISOLATION THREAD; {why} says what sets it: its line, TADAH_PC_ISOLATION, or the MPI build of tadah, whose only mode it is." },
 ]
 
 [[key.examples]]
 wrap = "root"
 text = "PC_WORKER_TIMEOUT 600"
+
+[[key.invalid]]
+wrap = "root"
+check = "check"
+at = 2
+doc = "Under PC_ISOLATION THREAD the scripts run inside the tadah process, without a worker deadline."
+text = '''
+PC_ISOLATION THREAD
+PC_WORKER_TIMEOUT 600'''
+error = "PC_WORKER_TIMEOUT sets the deadline of a script task in a worker process (PC_ISOLATION PROCESS); under PC_ISOLATION THREAD, set on line 1, the scripts run inside the tadah process without a worker deadline, so it would have no effect"
+
+[[key.invalid]]
+wrap = "root"
+check = "check"
+env = { TADAH_PC_ISOLATION = "THREAD" }
+doc = "THREAD set by TADAH_PC_ISOLATION."
+text = "PC_WORKER_TIMEOUT 600"
+error = "PC_WORKER_TIMEOUT sets the deadline of a script task in a worker process (PC_ISOLATION PROCESS); under PC_ISOLATION THREAD, set by TADAH_PC_ISOLATION, the scripts run inside the tadah process without a worker deadline, so it would have no effect"
 
 [[key.invalid]]
 wrap = "root"
@@ -2735,6 +2754,7 @@ Replaces PC_WORKER_TIMEOUT of the target file when it is set and not \
 empty, with the same values."""
 checks = [
   { msg = "TADAH_PC_WORKER_TIMEOUT is too large for the worker deadline, got '{tok}' (it is kept in 64-bit milliseconds: at most about 9.2e15 s)", doc = "When the run starts: a value above about 9.2e15 s." },
+  { msg = "TADAH_PC_WORKER_TIMEOUT (got '{tok}') sets the deadline of a script task in a worker process (PC_ISOLATION PROCESS); under PC_ISOLATION THREAD, {why}, the scripts run inside the tadah process without a worker deadline, so it would have no effect", doc = "When the run starts, for any value: the run uses PC_ISOLATION THREAD; {why} says what sets it." },
 ]
 
 [[env.invalid]]
@@ -2752,6 +2772,14 @@ env = { TADAH_PC_WORKER_TIMEOUT = "1e16" }
 at = "none"
 text = ""
 error = "TADAH_PC_WORKER_TIMEOUT is too large for the worker deadline, got '1e16' (it is kept in 64-bit milliseconds: at most about 9.2e15 s)"
+
+[[env.invalid]]
+wrap = "root"
+check = "check"
+env = { TADAH_PC_WORKER_TIMEOUT = "600" }
+at = "none"
+text = "PC_ISOLATION THREAD"
+error = "TADAH_PC_WORKER_TIMEOUT (got '600') sets the deadline of a script task in a worker process (PC_ISOLATION PROCESS); under PC_ISOLATION THREAD, set on line 1, the scripts run inside the tadah process without a worker deadline, so it would have no effect"
 
 # ------------------------------------------------------------ wrappers ----
 # A wrapper is a complete target file with one slot line, {line}. The
