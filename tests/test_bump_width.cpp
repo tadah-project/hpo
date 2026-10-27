@@ -448,10 +448,12 @@ TEST_CASE("the widths of a D2_BP of a D2_mJoin line with a D2_Blip are held "
 /* Pins: a refusal of one entry of an OPTIM line gives the key and the entry
  * once, as "OPTIM <KEY> (<i>): <why>": a bump width box from 0 ("OPTIM
  * SGRID2B (2): the low bound 0 is not > 0, but the D2_Blip pair basis
- * ..."), an AUTO RATIO box of a seed 0 ("OPTIM CGRID2B (1): AUTO RATIO
- * needs a non-zero seed; ..."), an AUTO FRAC 0 box ("OPTIM CGRID2B (2): AUTO
- * FRAC gives a zero-width box ...") and an AUTO box tagged LOG that reaches
- * below 0 ("OPTIM CGRID2B (2): AUTO box [-1.5, 7.5] is not positive ...").
+ * ..."), an AUTO RATIO box of a seed 0 ("OPTIM CGRID2B (1): AUTO RATIO 2
+ * gives the box [seed/2, seed*2], which needs a seed other than 0, and the
+ * seed is 0; ..."), an AUTO FRAC 0 box ("OPTIM CGRID2B (2): AUTO FRAC gives
+ * a zero-width box (the seed 3 times FRAC 0 is 0); ...") and an AUTO box
+ * tagged LOG that reaches below 0 ("OPTIM CGRID2B (2): the line is tagged
+ * LOG, and the AUTO box [-1.5, 7.5] reaches 0 or below, ...").
  * Before the fix: each said "OPTIM SGRID2B (2): OPTIM SGRID2B (2): ...",
  * the line's own prefix and then the entry's. */
 TEST_CASE("a refusal of an OPTIM entry gives the key and the entry once",
@@ -473,14 +475,14 @@ TEST_CASE("a refusal of an OPTIM entry gives the key and the entry once",
        "OPTIM SGRID2B (2): the low bound 0 is not > 0, but the D2_Blip pair "
        "basis requires every SGRID2B width > 0"},
       {zero_seed, "OPTIM CGRID2B (1) AUTO RATIO 2",
-       "OPTIM CGRID2B (1): AUTO RATIO needs a non-zero seed; use FRAC + "
-       "FLOOR"},
+       "OPTIM CGRID2B (1): AUTO RATIO 2 gives the box [seed/2, seed*2], "
+       "which needs a seed other than 0, and the seed is 0"},
       {blip_ctx(), "OPTIM CGRID2B (2) AUTO FRAC 0",
-       "OPTIM CGRID2B (2): AUTO FRAC gives a zero-width box (seed 0 or FRAC "
-       "0); set FLOOR or GROUP_FLOOR"},
+       "OPTIM CGRID2B (2): AUTO FRAC gives a zero-width box (the seed 3 "
+       "times FRAC 0 is 0)"},
       {blip_ctx(), "OPTIM CGRID2B (2) AUTO FRAC 1.5 LOG",
-       "OPTIM CGRID2B (2): AUTO box [-1.5, 7.5] is not positive but the dim "
-       "is tagged LOG"}};
+       "OPTIM CGRID2B (2): the line is tagged LOG, and the AUTO box [-1.5, "
+       "7.5] reaches 0 or below"}};
   for (const auto& [ctx, line, why] : cases) {
     INFO(line);
     const std::string e = parse_error(ctx, line + "\n" + tail);

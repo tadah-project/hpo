@@ -119,12 +119,13 @@ const std::string kSpace = "OPTIM CGRID2B (1) 0.5 1.5\nOPTIM CGRID2B (2) 1.6 2.5
 }  // namespace
 
 /* Pins: DLIB:GFS, which does not use STEP, refused at the STEP line, whose
- * text the frame echoes: "Error on line 5: DLIB:GFS does not use STEP;
- * MaxLIPO+TR sizes its own trust region from the samples; remove STEP\n
- * Line: STEP 0.1" with STEP after ALGO (line 5), and on line 3 with STEP
- * before LIB and ALGO; a STEP <KEY> override (no block-wide STEP) on line 5
- * names that line ("Line: STEP CGRID2B 0.1"); with both, the first of them
- * in the file. The block is named by its line, so the message has no
+ * text the frame echoes: "Error on line 5: the STRATEGY-level optimiser:
+ * DLIB:GFS does not use STEP; MaxLIPO+TR sizes its own trust region from
+ * the samples\nLine: STEP 0.1" with STEP after ALGO (line 5), and on line 3
+ * with STEP before LIB and ALGO; a STEP <KEY> override (no block-wide STEP)
+ * on line 5 names that line ("Line: STEP CGRID2B 0.1"); with both, the
+ * first of them in the file. The message names the optimiser in words, as
+ * the other startup checks do ("the STRATEGY-level optimiser: "), not with
  * "(OUTER)".
  * Before the fix: every case named the ENDOPTIMIZER line ("Error on line
  * 8: DLIB:GFS (OUTER) does not use STEP; ...\nLine: ENDOPTIMIZER"). */
@@ -132,8 +133,8 @@ TEST_CASE("key lines: a STEP an optimiser does not use is refused at the "
           "STEP line", "[hpo][key_lines][step]")
 {
     const std::string what =
-        "DLIB:GFS does not use STEP; MaxLIPO+TR sizes its own trust region "
-        "from the samples; remove STEP";
+        "the STRATEGY-level optimiser: DLIB:GFS does not use STEP; "
+        "MaxLIPO+TR sizes its own trust region from the samples";
     const auto block = [](const std::string& before,
                           const std::string& after) {
         return "OPTIMIZER\nSTRATEGY\n" + before + "LIB DLIB\nALGO GFS\n" +
@@ -149,11 +150,12 @@ TEST_CASE("key lines: a STEP an optimiser does not use is refused at the "
           framed(3, what, "STEP CGRID2B(2) 0.2"));
 }
 
-/* Pins: the value of a STEP is refused at its line: "Error on line 5:
- * NLOPT:LN_SBPLX: STEP must be a fraction of the OPTIM width in (0, 0.5]
- * (got 0.7); ...\nLine: STEP 0.7" for the block-wide STEP, and the
- * override's own line for "NLOPT:LN_SBPLX STEP CGRID2B: STEP must be > 0
- * and finite (got -0.1)" (line 6, after a valid block-wide STEP on line 5);
+/* Pins: the value of a STEP is refused at its line: "Error on line 5: the
+ * STRATEGY-level optimiser: NLOPT:LN_SBPLX: STEP must be a fraction of the
+ * OPTIM width in (0, 0.5] (got 0.7); ...\nLine: STEP 0.7" for the
+ * block-wide STEP, and the override's own line for "the STRATEGY-level
+ * optimiser: NLOPT:LN_SBPLX STEP CGRID2B: STEP must be > 0 and finite (got
+ * -0.1)" (line 6, after a valid block-wide STEP on line 5);
  * an override that names a key without an OPTIM line ("STEP override names
  * OPTIM key 'RCUT2B' which is not optimised (no OPTIM line for it)") and an
  * index that is not searched ("STEP CGRID2B(3): index 3 is not an OPTIM'd
@@ -171,15 +173,16 @@ TEST_CASE("key lines: a STEP value or a STEP <KEY> override is refused at "
     };
     CHECK(refusal(block("STEP 0.7\n")) ==
           framed(5,
-                 "NLOPT:LN_SBPLX: STEP must be a fraction of the OPTIM width "
-                 "in (0, 0.5] (got 0.7); values above 0.5 cannot satisfy "
+                 "the STRATEGY-level optimiser: NLOPT:LN_SBPLX: STEP must be "
+                 "a fraction of the OPTIM width in (0, 0.5] (got 0.7); "
+                 "values above 0.5 cannot satisfy "
                  "BOBYQA's width >= 2*step rule and exceed NLopt's own 0.25 "
                  "default",
                  "STEP 0.7"));
     CHECK(refusal(block("STEP 0.1\nSTEP CGRID2B -0.1\n")) ==
           framed(6,
-                 "NLOPT:LN_SBPLX STEP CGRID2B: STEP must be > 0 and finite "
-                 "(got -0.1)",
+                 "the STRATEGY-level optimiser: NLOPT:LN_SBPLX STEP CGRID2B: "
+                 "STEP must be > 0 and finite (got -0.1)",
                  "STEP CGRID2B -0.1"));
     CHECK(refusal(block("STEP 0.1\nSTEP RCUT2B 0.2\n")) ==
           framed(6,
@@ -259,8 +262,8 @@ TEST_CASE("key lines: a gradient beside a PC_LAMMPS line is refused at the "
                         "line 15 but INNER's optimiser NLOPT:LD_LBFGS is "
                         "gradient-based. A PC_LAMMPS or PC_FAILPROBE line "
                         "requires a gradient-free optimiser, and an INNER "
-                        "search is a local NLopt algorithm: name a "
-                        "derivative-free one in the INNER block (", 0) == 0);
+                        "search is a local NLopt algorithm; the INNER block "
+                        "takes a derivative-free one (", 0) == 0);
         CHECK(ends_with(got, "\nLine: ALGO LD_LBFGS"));
     }
     {

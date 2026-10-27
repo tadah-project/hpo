@@ -2164,7 +2164,7 @@ ENDOPTIMIZER'''
 [[strategy_type.invalid]]
 wrap = "none"
 check = "startup"
-at = 12
+at = 11
 text = '''
 OPTIM CGRID2B (1) 0.5 1.5
 PC_ERMSE 0 1
