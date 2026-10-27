@@ -204,9 +204,12 @@ TEST_CASE("HPOTargets: PC_LAMMPS --ncpu is rejected with the removal hint",
             const std::string msg = e.what();
             CHECK_THAT(msg, Catch::Contains(
                 "Error on line " + std::to_string(bad_line) + ":"));
-            CHECK_THAT(msg, Catch::Contains(
-                "--ncpu was removed in 1.6.0 (legacy MPI build)"));
-            CHECK_THAT(msg, Catch::Contains("THREADS / PC_ISOLATION"));
+            /* It was "--ncpu was removed in 1.6.0 (legacy MPI build);
+             * parallelism over PC_LAMMPS scripts is THREADS /
+             * PC_ISOLATION. Delete --ncpu from this line." */
+            CHECK_THAT(msg, Catch::Contains("--ncpu: a removed option"));
+            CHECK_THAT(msg, Catch::Contains("THREADS sets the number of "
+                                            "workers"));
             CHECK_THAT(msg, Catch::Contains("Line: " + c.line));
         }
     }
@@ -244,36 +247,41 @@ TEST_CASE("HPOTargets: an unknown -- option on a PC_LAMMPS or PC_FAILPROBE "
     const std::string probe_options =
         "--script, --invar, --outvar, --failscore, --maxtime, --gate and "
         "--s0";
+    /* The message says what the line takes (it was "...: HPO's options
+     * are <list>; LAMMPS command-line options start with a single '-'",
+     * with "(did you mean '--hotvar'?)"). */
     const std::string lammps_note =
-        "; LAMMPS command-line options start with a single '-'";
+        ", and LAMMPS command-line options, which start with a single '-'";
 
     struct Case { std::string name, line, message; };
     const std::vector<Case> cases = {
         {"--hotvars on PC_LAMMPS",
          "PC_LAMMPS --script " + script.string() + " --varloss "
              + var_name(2) + " 1.0 1.0 --hotvars a0 1 2",
-         "PC_LAMMPS: unknown option '--hotvars' (did you mean '--hotvar'?): "
-         "HPO's options are " + hpo_options + lammps_note},
+         "PC_LAMMPS: unknown option '--hotvars' (closest option: "
+         "'--hotvar'): a PC_LAMMPS line takes the options " + hpo_options +
+             lammps_note},
         {"--varlos on PC_LAMMPS",
          "PC_LAMMPS --script " + script.string() + " --varlos "
              + var_name(2) + " 1 1",
-         "PC_LAMMPS: unknown option '--varlos' (did you mean '--varloss'?): "
-         "HPO's options are " + hpo_options + lammps_note},
+         "PC_LAMMPS: unknown option '--varlos' (closest option: "
+         "'--varloss'): a PC_LAMMPS line takes the options " + hpo_options +
+             lammps_note},
         {"--gate on PC_LAMMPS",
          "PC_LAMMPS --script " + script.string() + " --varloss "
              + var_name(2) + " 1.0 1.0 --gate 0.5",
-         "PC_LAMMPS: unknown option '--gate' (a PC_FAILPROBE option): HPO's "
-         "options are " + hpo_options + lammps_note},
+         "PC_LAMMPS: unknown option '--gate' (a PC_FAILPROBE option): a "
+         "PC_LAMMPS line takes the options " + hpo_options + lammps_note},
         {"--foo on PC_FAILPROBE",
          "PC_FAILPROBE --script " + script.string() + " --outvar "
              + var_name(2) + " --foo",
-         "PC_FAILPROBE: unknown option '--foo': HPO's options are " +
-             probe_options + lammps_note},
+         "PC_FAILPROBE: unknown option '--foo': a PC_FAILPROBE line takes "
+         "the options " + probe_options + lammps_note},
         {"--hotvars on PC_FAILPROBE",
          "PC_FAILPROBE --script " + script.string() + " --outvar "
              + var_name(2) + " --s0 0.5 --hotvars h 1 2",
-         "PC_FAILPROBE: unknown option '--hotvars': HPO's options are " +
-             probe_options + lammps_note},
+         "PC_FAILPROBE: unknown option '--hotvars': a PC_FAILPROBE line "
+         "takes the options " + probe_options + lammps_note},
     };
     for (const auto& c : cases) {
         INFO(c.name);

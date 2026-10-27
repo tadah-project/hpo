@@ -660,8 +660,9 @@ TEST_CASE("ANNEAL_PA: validation errors", "[HPO][anneal_pa][validation]")
                                   std::string(k) == "INIT_JITTER_MAXTIME_FRAC"
                               ? 0.25 : 4.0;
             REQUIRE_THROWS_WITH(run_anneal_pa_impl<Vec>(sp, stub),
+                                /* It was "... belongs to ...". */
                                 std::string("TADAH:ANNEAL_PA: PARAM ") + k +
-                                    " belongs to TADAH:ANNEAL_PT");
+                                    " is a key of TADAH:ANNEAL_PT");
         }
         auto sp = make_pa_spec({-1.0}, {1.0});
         set_seed_point(sp, {0.0});

@@ -305,8 +305,10 @@ ENDOPTIMIZER
     ctx.add("FIXWEIGHT", 0.4);
     ctx.add("FIXWEIGHT", 0.1);
 
+    /* Before the fix: "weight 3 is not pinned by FIXINDEX (4,1). ...". */
     REQUIRE_THROWS_WITH(tadah::hpo::HPOTargets(ctx, input.path.string()),
-                        Catch::Contains("not pinned by FIXINDEX"));
+                        Catch::Contains("OPTIM FIXWEIGHT (3): coefficient 3 "
+                                        "is not in FIXINDEX (4,1)"));
 }
 
 TEST_CASE("OPTIM FIXWEIGHT without FIXINDEX in the training config throws",
@@ -341,8 +343,12 @@ ENDOPTIMIZER
     tadah::core::Context ctx;
     ctx.add("WEIGHTS", 0.4);
 
+    /* Before the fix: "OPTIM WEIGHTS is not a valid search target: the
+     * linear WEIGHTS are re-fitted ... a silent no-op. ...". */
     REQUIRE_THROWS_WITH(tadah::hpo::HPOTargets(ctx, input.path.string()),
-                        Catch::Contains("not a valid search target"));
+                        Catch::Contains("OPTIM WEIGHTS: WEIGHTS holds the "
+                                        "coefficients each evaluation fits") &&
+                        Catch::Contains("OPTIM FIXWEIGHT (<coefficient>)"));
 }
 
 TEST_CASE("HPO parses standalone DLIB BFGS optimizer blocks",
@@ -1340,6 +1346,10 @@ TEST_CASE("GradientProvider Analytical with leftover needs_fd throws strict diag
                       Catch::Contains("no analytical gradient for 1 "
                                       "parameter") &&
                       Catch::Contains("a loss term") &&
+                      /* (it ended "... point. Use GRAD_STRATEGY=HYBRID to
+                       * fill these with finite differences.") */
+                      Catch::EndsWith("point; GRAD_STRATEGY HYBRID fills "
+                                      "these with finite differences.") &&
                       !Catch::Contains("dtheta_registry"));
 }
 

@@ -396,6 +396,52 @@ TEST_CASE("hpotarget block structure: a block the file leaves open is refused "
     }
 }
 
+/* Pins: a last line that ends with the continuation backslash is refused
+ * at that line, with its text joined so far and its final backslash, as
+ * "the line ends with \, which continues it on the next line, and the file
+ * has no next line", the frame naming the last physical line (a line whose
+ * continuation ends with a backslash too); a target file that cannot be
+ * opened is named with the path as given and --hpotarget.
+ * Before the fix: the first two give "unfinished line <n>" with no frame,
+ * and the missing file "HPO file <path> not found". */
+TEST_CASE("hpotarget block structure: a continued last line is refused at its "
+          "line, and a target file that cannot be opened names the path and "
+          "--hpotarget",
+          "[hpotarget][block_structure]")
+{
+    const std::string what =
+        "the line ends with \\, which continues it on the next line, and the "
+        "file has no next line";
+    SECTION("the last line ends with a backslash") {
+        CHECK(parse_error(kRoot + Lines{"OPTIMIZER", "  LIB DLIB",
+                                        "  ALGO BFGS", "ENDOPTIMIZER",
+                                        "FAILSCORE \\"}) ==
+              at_line(kRoot.size() + 5, what, "FAILSCORE \\"));
+    }
+    SECTION("a continued line whose last line ends with a backslash too") {
+        /* The frame names the last physical line of the logical line. */
+        CHECK(parse_error(kRoot + Lines{"OPTIMIZER", "  LIB DLIB",
+                                        "  ALGO BFGS", "ENDOPTIMIZER",
+                                        "FAILSCORE \\", "  \\"}) ==
+              at_line(kRoot.size() + 6, what, "FAILSCORE   \\"));
+    }
+    SECTION("a target file that cannot be opened") {
+        PeriodicTable::initialize();
+        Context ctx = make_minimal_ctx();
+        const std::string path =
+            (fs::temp_directory_path() / (unique_name("tadah_hbs_none_") +
+                                          ".hpo")).string();
+        std::string msg;
+        try {
+            HPOTargets trg(ctx, path);
+        } catch (const std::exception& e) {
+            msg = e.what();
+        }
+        CHECK(msg == "the target file " + path +
+                         " (--hpotarget) cannot be opened");
+    }
+}
+
 TEST_CASE("hpotarget block structure: a line that opens or closes a block "
           "holds its key alone, and anything after the key is refused at "
           "its line",
@@ -925,12 +971,15 @@ TEST_CASE("hpotarget: an OPTIM index past the values kept of a potential "
     } catch (const std::exception& e) {
         what = e.what();
     }
+    /* Before the fix: "OPTIM RCUT2B (2): Out of bound index: 2 (RCUT2B has 1
+     * value: of the potential's RCUT2B 4 6, ...". */
     CHECK_THAT(what, Catch::Contains(
-                         "OPTIM RCUT2B (2): Out of bound index: 2 (RCUT2B has "
-                         "1 value: of the potential's RCUT2B 4 6, the "
-                         "descriptors do not read 4, which was left out, and "
-                         "OPTIM indices address the values kept, 6; the "
-                         "potential's value at index 2, 6, is index 1)"));
+                         "OPTIM RCUT2B (2): RCUT2B has 1 value that the "
+                         "descriptors read, so the index of OPTIM RCUT2B is 1 "
+                         "(of the potential's RCUT2B 4 6, the descriptors do "
+                         "not read 4, which was left out, and OPTIM indices "
+                         "address the values kept, 6; the potential's value "
+                         "at index 2, 6, is index 1)"));
 }
 
 /* The grids of a single DM_Poly line whose channel function reads SEMBFUNC
@@ -1004,10 +1053,15 @@ TEST_CASE("hpotarget block structure: an optimiser key inside a NOISE block "
     const auto refused = [&](const std::string& text) {
         return parse_error(insert_after(noise.lines, noise.open, text));
     };
+    /* The message names the line the block opened on and its END line
+     * (it was "unknown key 'K' inside NOISE block (only AUTO and
+     * CALIBRATION are valid)"). */
     const auto unknown = [&](const std::string& key, const std::string& text) {
         return at_line(noise.open + 1,
-                       "unknown key '" + key + "' inside NOISE block (only "
-                       "AUTO and CALIBRATION are valid)",
+                       "unknown key '" + key + "' inside the NOISE block "
+                       "opened on line " + std::to_string(noise.open) +
+                       " (only AUTO and CALIBRATION are valid; ENDNOISE "
+                       "closes it)",
                        text);
     };
     SECTION("each optimiser key") {

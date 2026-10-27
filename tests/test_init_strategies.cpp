@@ -421,13 +421,15 @@ TEST_CASE("SobolInitStrategy: a K above 1000000 is refused before a block "
      * draws none past it, so a request for 2^62 points draws the K of the
      * block: the legs in which a caller asked SOBOL 1 for 2^62 points
      * (k_total), a block of 2^62 points past the end of the sequence,
-     * left this case (K_TOTAL replaced the K of a lone METHOD line). */
+     * left this case (K_TOTAL replaced the K of a lone METHOD line). The
+     * message names the line's key as written (it was "INIT METHOD SOBOL
+     * K must be ..."). */
     using namespace tadah::hpo;
     auto sp = make_synthetic_spec({0.0, 0.0}, {1.0, 1.0});
     StubTargets st;
     const std::size_t huge = std::size_t{1} << 62;
     CHECK_THROWS_WITH(sobol_draw(sp, *st.trg, huge, 3),
-                      "INIT METHOD SOBOL K must be an integer from 1 to "
+                      "METHOD SOBOL: K must be an integer from 1 to "
                       "1000000, got '" + std::to_string(huge) + "'");
     for (const std::uint64_t seed : {3u, 4u, 65535u}) {
         INFO("seed " << seed);
@@ -1822,17 +1824,18 @@ TEST_CASE("The starting points of a METHOD line, K_TOTAL and TOPK are at "
      * stopped tadah hpo with "vector::reserve" or "cannot create
      * std::vector larger than max_size()", and NOISE CALIBRATION when the
      * run started; the values below were read, and the K ones drew
-     * 1000001 points. */
+     * 1000001 points. The K messages name the line's key as written (they
+     * were "INIT METHOD RANDOM K must be ..."). */
     struct Refused { std::string block, error; };
     const std::vector<Refused> refused = {
         {init_block("METHOD RANDOM 1000001\n"),
-         "Error on line 4: INIT METHOD RANDOM K must be an integer from 1 "
+         "Error on line 4: METHOD RANDOM: K must be an integer from 1 "
          "to 1000000, got '1000001'\nLine: METHOD RANDOM 1000001"},
         {init_block("METHOD LHS 1000001\n"),
-         "Error on line 4: INIT METHOD LHS K must be an integer from 1 to "
+         "Error on line 4: METHOD LHS: K must be an integer from 1 to "
          "1000000, got '1000001'\nLine: METHOD LHS 1000001"},
         {init_block("METHOD SOBOL 1000001\n"),
-         "Error on line 4: INIT METHOD SOBOL K must be an integer from 1 to "
+         "Error on line 4: METHOD SOBOL: K must be an integer from 1 to "
          "1000000, got '1000001'\nLine: METHOD SOBOL 1000001"},
         /* K_TOTAL caps the points the METHOD lines give, so a K_TOTAL as
          * large as their sum caps nothing (it was refused above 1000000,
@@ -1843,7 +1846,7 @@ TEST_CASE("The starting points of a METHOD line, K_TOTAL and TOPK are at "
          "2 starting points (RANDOM 2), and K_TOTAL keeps the first K_TOTAL "
          "starting points\nLine: K_TOTAL 1000001"},
         {restart_block("METHOD RANDOM 1000001\n"),
-         "Error on line 10: INIT METHOD RANDOM K must be an integer from 1 "
+         "Error on line 10: METHOD RANDOM: K must be an integer from 1 "
          "to 1000000, got '1000001'\nLine: METHOD RANDOM 1000001"},
         {restart_block("K_TOTAL 1000001\n"),
          "Error on line 10: K_TOTAL 1000001 caps nothing: a block without a "
@@ -1983,10 +1986,10 @@ TEST_CASE("K_TOTAL that caps nothing, K_TOTAL 0 and METHOD RANDOM 0 are "
          "Error on line 5: K_TOTAL must be an integer >= 1, got '0'"
          "\nLine: K_TOTAL 0"},
         {init_block("METHOD RANDOM 0\n"),
-         "Error on line 4: INIT METHOD RANDOM K must be an integer from 1 to "
+         "Error on line 4: METHOD RANDOM: K must be an integer from 1 to "
          "1000000, got '0'\nLine: METHOD RANDOM 0"},
         {restart_block("METHOD RANDOM 0\n"),
-         "Error on line 10: INIT METHOD RANDOM K must be an integer from 1 to "
+         "Error on line 10: METHOD RANDOM: K must be an integer from 1 to "
          "1000000, got '0'\nLine: METHOD RANDOM 0"},
     };
     for (const auto& r : refused) {

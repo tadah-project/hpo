@@ -1252,6 +1252,12 @@ double expected_raw_f0() {
 
 }  // namespace
 
+/* The refusal of OPTIM EMBF0, at the line and in validate_hpo_setup. */
+constexpr const char* kEmbf0Refusal =
+    "OPTIM EMBF0: EMBF0 (ZERO or FREE) chooses the embedding reference of a "
+    "DM_REAM many-body term, a choice and not a number to search; the "
+    "training configuration sets it";
+
 TEST_CASE("startup validation: OPTIM EMBF0 is rejected",
           "[startup_validation][embf0]") {
   PeriodicTable::initialize();
@@ -1261,12 +1267,12 @@ TEST_CASE("startup validation: OPTIM EMBF0 is rejected",
       Context ctx = make_ream_model_ctx();
       ScopedTempFile tf(std::string("OPTIM ") + key + " (1) 0 1\n" +
                         "PC_ERMSE 0 1\n" + kOptimizerBlock);
-      /* The error names its line, like every hpotarget error. */
+      /* The error names its line, like every hpotarget error, and says
+       * what EMBF0 is (it was "OPTIM EMBF0 is not a valid search target:
+       * ... set it in the -c potential/configuration ..."). */
       REQUIRE_THROWS_WITH(HPOTargets(ctx, tf.path.string()),
-                          Catch::StartsWith("Error on line 1: ") &&
-                              Catch::Contains("OPTIM EMBF0 is not a valid "
-                                              "search target") &&
-                              Catch::Contains("-c potential/configuration"));
+                          "Error on line 1: " + std::string(kEmbf0Refusal) +
+                              "\nLine: OPTIM " + key + " (1) 0 1");
       /* The rejection comes before context.size(k): the default is not
        * materialised into the run context. */
       CHECK_FALSE(ctx.has_stored("EMBF0"));
@@ -1279,8 +1285,7 @@ TEST_CASE("startup validation: OPTIM EMBF0 is rejected",
     HPOTargets trg(ctx, tf.path.string());
     trg.optimap["EMBF0"];  // a search space assembled without the parser
     REQUIRE_THROWS_WITH(validate_hpo_setup(ctx, trg, true, true),
-                        Catch::Contains("OPTIM EMBF0 is not a valid "
-                                        "search target"));
+                        kEmbf0Refusal);
   }
   SECTION("a top-level EMBF0 line in the hpotarget is an unknown key") {
     Context ctx = make_ream_model_ctx();
@@ -1288,7 +1293,7 @@ TEST_CASE("startup validation: OPTIM EMBF0 is rejected",
                       std::string(kOptimizerBlock));
     REQUIRE_THROWS_WITH(HPOTargets(ctx, tf.path.string()),
                         Catch::StartsWith("Error on line 1: ") &&
-                            Catch::Contains("unknown key \"EMBF0\""));
+                            Catch::Contains("unknown key 'EMBF0'"));
   }
   SECTION("an invalid stored EMBF0 of a DM_REAM configuration fails fast") {
     Context ctx = make_ream_model_ctx();

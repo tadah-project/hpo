@@ -909,12 +909,15 @@ TEST_CASE("PC lines: a quit command in a PC_LAMMPS or PC_FAILPROBE script is "
               "if \"1 < 0\" then \"print a\" else 'quit 2'"}}) {
         INFO(c.line);
         s.write("q.in", kScript + c.line + "\n");
+        /* The command is counted in words (it was "(logical command #6
+         * in expanded script: <command>)"). */
+        const std::string where = "the script q.in has a quit command, "
+                                  "command 6 of the script with its include "
+                                  "files read in (" + c.command + ")";
         CHECK(sim_error("--script q.in --varloss E 1 1") ==
-              "PC_LAMMPS: the script q.in has a quit command (logical "
-              "command #6 in expanded script: " + c.command + ")" + quit_tail);
+              "PC_LAMMPS: " + where + quit_tail);
         CHECK(sim_error("--script q.in --outvar S", true) ==
-              "PC_FAILPROBE: the script q.in has a quit command (logical "
-              "command #6 in expanded script: " + c.command + ")" + quit_tail);
+              "PC_FAILPROBE: " + where + quit_tail);
     }
     s.write("ok.in", kScript + "print \"quit\"\n"
                                "if \"1 > 0\" then \"print quit\"\n");

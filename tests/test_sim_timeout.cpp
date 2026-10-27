@@ -188,10 +188,14 @@ run 500000000
 }
 
 /* ---------------------------------------------------------------------------
- * Config-keyword parse: PC_SCRIPT_TIMEOUT is the self-describing name for the
- * per-pc_script wall-clock limit; MAXTIME is the legacy alias. Both feed the
- * same MAX_TIME string; if both appear the later line wins. (The OPTIMIZER-
- * block MAXTIME is a different setting and is not exercised here.)
+ * Config-keyword parse: PC_SCRIPT_TIMEOUT is the per-script wall-clock limit
+ * and MAXTIME at the top level another name of it; each PC_LAMMPS line takes
+ * the value of the last line of the key above it. (The OPTIMIZER-block
+ * MAXTIME is a different setting and is not exercised here.) The cases check
+ * the limit of each line (LammpsSim::maxtime); they checked flags of which
+ * name was given, which the journal no longer reads (it names the line each
+ * limit comes from). Before the fix: they pass as well (pins of the limit
+ * each line takes).
  * ------------------------------------------------------------------------- */
 namespace {
 const char* MIN_OPT = "OPTIMIZER\nLIB NLOPT\nALGO LN_SBPLX\nENDOPTIMIZER\n";
@@ -213,9 +217,9 @@ TEST_CASE("PC_SCRIPT_TIMEOUT sets the per-script limit",
     tadah::core::Context ctx;
     tadah::hpo::HPOTargets trg(ctx, cfg.path.string());
     REQUIRE(trg.MAX_TIME == "5");
-    REQUIRE(trg.MAX_TIME_seen_new);
-    REQUIRE_FALSE(trg.MAX_TIME_seen_legacy);
-    REQUIRE(trg.MAX_TIME_key == "PC_SCRIPT_TIMEOUT");
+    REQUIRE(trg.LS.size() == 1);
+    REQUIRE(trg.LS[0].maxtime == "5");
+    REQUIRE(trg.LS[0].maxtime_seconds == 5.0);
 }
 
 TEST_CASE("legacy MAXTIME still sets the per-script limit (alias)",
@@ -225,9 +229,9 @@ TEST_CASE("legacy MAXTIME still sets the per-script limit (alias)",
     tadah::core::Context ctx;
     tadah::hpo::HPOTargets trg(ctx, cfg.path.string());
     REQUIRE(trg.MAX_TIME == "7");
-    REQUIRE(trg.MAX_TIME_seen_legacy);
-    REQUIRE_FALSE(trg.MAX_TIME_seen_new);
-    REQUIRE(trg.MAX_TIME_key == "MAXTIME");
+    REQUIRE(trg.LS.size() == 1);
+    REQUIRE(trg.LS[0].maxtime == "7");
+    REQUIRE(trg.LS[0].maxtime_seconds == 7.0);
 }
 
 TEST_CASE("PC_SCRIPT_TIMEOUT and legacy MAXTIME set an identical value",
@@ -248,9 +252,8 @@ TEST_CASE("PC_SCRIPT_TIMEOUT and legacy MAXTIME set an identical value",
  * --maxtime)" (it was: the later line replaced the first; then the
  * message said "no PC_LAMMPS or PC_FAILPROBE line between takes the
  * first"). With a PC_LAMMPS line between, that line keeps the first value
- * and the later line is the run-wide value, which the PC_LAMMPS line after
- * it takes; both flags are set. (The case had no line after the later
- * value, which no line read.) */
+ * and the PC_LAMMPS line after the later line takes the later value. (The
+ * case had no line after the later value, which no line read.) */
 TEST_CASE("both timeout keys: one key, set again after a PC_LAMMPS line "
           "takes the first",
           "[lammps_sim][timeout][config]") {
@@ -270,18 +273,13 @@ TEST_CASE("both timeout keys: one key, set again after a PC_LAMMPS line "
     REQUIRE(trg.LS.size() == 2);
     REQUIRE(trg.LS[0].maxtime == "7");     // the line takes the first
     REQUIRE(trg.LS[1].maxtime == "5");     // the line after takes the later
-    REQUIRE(trg.MAX_TIME == "5");          // the run-wide value: the later
-    REQUIRE(trg.MAX_TIME_seen_new);
-    REQUIRE(trg.MAX_TIME_seen_legacy);
-    REQUIRE(trg.MAX_TIME_key == "PC_SCRIPT_TIMEOUT");
+    REQUIRE(trg.MAX_TIME == "5");
 }
 
-TEST_CASE("no timeout key: defaults to off, no flags",
+TEST_CASE("no timeout key: defaults to off",
           "[lammps_sim][timeout][config]") {
     ScopedTempFile cfg(MIN_OPT);
     tadah::core::Context ctx;
     tadah::hpo::HPOTargets trg(ctx, cfg.path.string());
     REQUIRE(trg.MAX_TIME == "off");
-    REQUIRE_FALSE(trg.MAX_TIME_seen_new);
-    REQUIRE_FALSE(trg.MAX_TIME_seen_legacy);
 }

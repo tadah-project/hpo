@@ -494,8 +494,119 @@ TEST_CASE("ANNEAL_PT automatic steps learn a 12-decade diagonal and emit TSV",
     const std::string log = lr.read();
     CHECK(log.find("ANNEAL_PT[CLASSIC[FROZEN]]") != std::string::npos);
     CHECK(log.find("step calibration slot=1") != std::string::npos);
-    CHECK(log.find("production epoch/swap/flow statistics reset")
-          != std::string::npos);
+    /* It was "...; production epoch/swap/flow statistics reset". */
+    CHECK(log.find("the swap and flow statistics of the search start after "
+                   "it") != std::string::npos);
+}
+
+/* Pins: a step warm-up that stops at its budget, a quarter of MAXEVAL, is
+ * a WARNING in the journal that gives the budget, how many coordinates did
+ * not finish and what a complete warm-up takes: "ANNEAL_PT: the step
+ * warm-up stopped at its budget, 100 evaluations, a quarter of MAXEVAL
+ * 400: <n> of 6 coordinates did not finish (<m> of them without a tested
+ * scale), and the pilot made <p> evaluations. A complete warm-up takes up
+ * to about <c> evaluations, so the step scales, and a calibrated T_HOT,
+ * depend on MAXEVAL; STEP_MODE FIXED runs no warm-up, and an explicit
+ * PARAM T_HOT is not calibrated."
+ * Before the fix: an INFO line on rank 0, "ANNEAL_PT step warm-up reached
+ * the calibration budget (MAXEVAL/4 = 100 evals); unfinished coordinates
+ * continue at their best tested scales (see the calibration summary)": the
+ * checks fail. */
+TEST_CASE("ANNEAL_PT: a step warm-up that stops at its budget is a warning "
+          "that says what a complete one takes",
+          "[HPO][anneal_pt][step_auto]")
+{
+    using namespace tadah::hpo;
+    TempWorkingDirectory cwd;
+    LoggedRun lr;
+    auto sp = make_pt_spec({-1e-6, -1.0, -1e6}, {1e-6, 1.0, 1e6});
+    sp.param_raw.erase("STEP_MODE");
+    set_seed_point(sp, {0.0, 0.0, 0.0});
+    sp.seed = 91001;
+    sp.num_threads = 2;
+    sp.stop.maxeval = 400;
+    sp.param["REPLICAS"] = 2.0;
+    sp.param["T_HOT"] = 1.0;
+    sp.param["T_COLD"] = 0.1;
+    sp.param["STEP_FRAC"] = 0.1;
+    MtStubHost host{[](const Vec& x) {
+        const double a = x(0) / 1e-6;
+        const double b = x(1);
+        const double c = x(2) / 1e6;
+        return a * a + b * b + c * c;
+    }, {}, {}};
+    run_anneal_pt_impl<Vec>(sp, host);
+    const std::string log = lr.read();
+    INFO(log);
+    const std::string head = "ANNEAL_PT: the step warm-up stopped at its "
+                             "budget, 100 evaluations, a quarter of MAXEVAL "
+                             "400: ";
+    const auto at = log.find(head);
+    REQUIRE(at != std::string::npos);
+    const auto bol = log.rfind('\n', at);
+    CHECK(log.substr(bol + 1, at - bol - 1).find("WARNING") !=
+          std::string::npos);
+    CHECK(log.find(" of 6 coordinates did not finish (") != std::string::npos);
+    CHECK(log.find("A complete warm-up takes up to about ") !=
+          std::string::npos);
+    CHECK(log.find("evaluations, so the step scales, and a calibrated T_HOT, "
+                   "depend on MAXEVAL; STEP_MODE FIXED runs no warm-up, and "
+                   "an explicit PARAM T_HOT is not calibrated.") !=
+          std::string::npos);
+    CHECK(log.find("reached the calibration budget") == std::string::npos);
+}
+
+/* Pins: a ladder without a range, T_COLD not between 0 and T_HOT, is
+ * refused with the temperatures and where T_HOT comes from: for a T_COLD =
+ * T_HOT / LADDER_SPAN that is 0 in double precision, "TADAH:ANNEAL_PT:
+ * PARAM T_HOT=1.000e-300, and T_COLD = T_HOT / LADDER_SPAN = 0.000e+00 is
+ * not between 0 and T_HOT, so the ladder has no range" (an explicit T_COLD
+ * not below an explicit T_HOT is refused with the PARAM keys, "PARAM
+ * T_COLD must be < T_HOT"), and, for a calibrated T_HOT below an explicit
+ * T_COLD, "TADAH:ANNEAL_PT: the calibration gives
+ * T_HOT=<t>, not above PARAM T_COLD=1.000e+12, so the ladder has no range;
+ * a smaller T_COLD, or an explicit PARAM T_HOT (which skips this
+ * calibration), gives a valid ladder".
+ * Before the fix: "TADAH:ANNEAL_PT: resolved ladder is invalid
+ * (T_COLD=0.000000, T_HOT=0.000000); set PARAM T_COLD/T_HOT or LADDER_SPAN
+ * consistently", the temperatures printed with six decimals: the checks
+ * fail. */
+TEST_CASE("ANNEAL_PT: a ladder without a range names its temperatures and "
+          "where T_HOT comes from", "[HPO][anneal_pt][ladder]")
+{
+    using namespace tadah::hpo;
+    TempWorkingDirectory cwd;
+    LoggedRun lr;
+    MtStubHost host{[](const Vec& x) { return x(0) * x(0); }, {}, {}};
+    {
+        auto sp = make_pt_spec({-1.0}, {1.0});
+        set_seed_point(sp, {0.5});
+        sp.seed = 5;
+        sp.stop.maxeval = 40;
+        sp.param["REPLICAS"] = 2.0;
+        sp.param["T_HOT"] = 1e-300;
+        sp.param["LADDER_SPAN"] = 1e300;
+        CHECK_THROWS_WITH(run_anneal_pt_impl<Vec>(sp, host),
+                          "TADAH:ANNEAL_PT: PARAM T_HOT=1.000e-300, and T_COLD "
+                          "= T_HOT / LADDER_SPAN = 0.000e+00 is not between 0 "
+                          "and T_HOT, so the ladder has no range");
+    }
+    {
+        auto sp = make_pt_spec({-1.0}, {1.0});
+        set_seed_point(sp, {0.5});
+        sp.seed = 5;
+        sp.stop.maxeval = 40;
+        sp.param["REPLICAS"] = 2.0;
+        sp.param["T_COLD"] = 1e12;
+        CHECK_THROWS_WITH(
+            run_anneal_pt_impl<Vec>(sp, host),
+            Catch::StartsWith("TADAH:ANNEAL_PT: the calibration gives "
+                              "T_HOT=") &&
+                Catch::EndsWith(", not above PARAM T_COLD=1.000e+12, so the "
+                                "ladder has no range; a smaller T_COLD, or "
+                                "an explicit PARAM T_HOT (which skips this "
+                                "calibration), gives a valid ladder"));
+    }
 }
 
 TEST_CASE("ANNEAL_PT warm-up classifies a hypersensitive dim",
@@ -527,6 +638,17 @@ TEST_CASE("ANNEAL_PT warm-up classifies a hypersensitive dim",
     const std::string log = lr.read();
     CHECK(log.find("hypersensitive=1") != std::string::npos);
     CHECK(log.find("insensitive=0") != std::string::npos);
+    /* The HINT says what the classes mean for the search (it was "step
+     * warm-up sensitivity classification: 'insensitive' dims ... --
+     * consider dropping or fixing them; 'hypersensitive' dims ... --
+     * consider narrowing or log-scaling their OPTIM range"). */
+    CHECK(log.find("step warm-up: an 'insensitive' dimension (acceptance "
+                   "near 1 at every tested scale) does not change the loss "
+                   "over its OPTIM range, so fixing it at one value costs the "
+                   "search little; a 'hypersensitive' dimension (acceptance "
+                   "near 0 at every tested scale) rejects nearly every step, "
+                   "which a narrower or log-scaled OPTIM range avoids") !=
+          std::string::npos);
     const auto rows = read_step_scales();
     REQUIRE(rows.size() == 2);
     for (const auto& row : rows) {
@@ -2420,8 +2542,10 @@ TEST_CASE("ANNEAL_PT: validation errors", "[HPO][anneal_pt][validation]")
         set_seed_point(sp, {0.0});
         sp.stop.maxeval = 10;
         sp.param_raw["REANNEAL"] = "ON";
+        /* It was "... belongs to the serial TADAH:ANNEAL". */
         REQUIRE_THROWS_WITH(run_anneal_pt_impl<Vec>(sp, stub),
-                            Catch::Contains("belongs to the serial"));
+                            "TADAH:ANNEAL_PT: PARAM REANNEAL is a key of "
+                            "TADAH:ANNEAL");
     }
     SECTION("POPULATION rejected on PT") {
         auto sp = make_pt_spec({-1.0}, {1.0});

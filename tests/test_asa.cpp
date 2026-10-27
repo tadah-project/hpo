@@ -295,14 +295,15 @@ TEST_CASE("ASA options: defaults resolve to the canonical values",
 TEST_CASE("ASA options: Include_Integer_Parameters and "
           "User_Initial_Parameters are not available", "[HPO][asa][options]")
 {
+    /* A known option ASA:ASA does not take is named so (it was "ASA:ASA:
+     * unknown PARAM 'X'. 'X' is not available: ..."). */
     const std::string integer =
-        "ASA:ASA: unknown PARAM 'Include_Integer_Parameters'. "
-        "'Include_Integer_Parameters' is not available: every OPTIM dimension "
-        "of tadah hpo takes real values, so ASA has no integer dimension to "
-        "include.";
+        "ASA:ASA does not take the ASA option PARAM "
+        "Include_Integer_Parameters: every OPTIM dimension of tadah hpo "
+        "takes real values, so ASA has no integer dimension to include.";
     const std::string initial =
-        "ASA:ASA: unknown PARAM 'User_Initial_Parameters'. "
-        "'User_Initial_Parameters' is not available: ASA starts at the first "
+        "ASA:ASA does not take the ASA option PARAM User_Initial_Parameters: "
+        "ASA starts at the first "
         "starting point of the INIT block (the values of the training "
         "configuration without one); METHOD RANDOM 1 in the INIT block draws "
         "a random start from its SEED.";
@@ -325,7 +326,8 @@ TEST_CASE("ASA options: Include_Integer_Parameters and "
         FAIL("Cooling_Rate was accepted");
     } catch (const std::exception& e) {
         const std::string msg = e.what();
-        CHECK(msg.find("Accepted keys:") != std::string::npos);
+        /* It was ". Accepted keys:". */
+        CHECK(msg.find("; accepted keys: ") != std::string::npos);
         CHECK(msg.find("Include_Integer_Parameters") == std::string::npos);
         CHECK(msg.find("User_Initial_Parameters") == std::string::npos);
     }
@@ -425,15 +427,23 @@ TEST_CASE("ASA options: indexed per-dim grammar", "[HPO][asa][options]")
         CHECK(o.user_delta_parameter ==
               std::vector<double>{0.01, 0.01, 0.5});
     }
-    SECTION("index 0 is rejected and names the 1-based change") {
+    /* The messages say how the indices count (they were "... index 0 is
+     * not a dimension: per-dimension indices are 1-based ... ([0] is now
+     * [1])" and "... index out of range (dim=3, 1-based)"). */
+    SECTION("index 0 is rejected and says the indices count from 1") {
         sp.param = {{"User_Quench_Param_Scale[0]", 0.5}};
         REQUIRE_THROWS_WITH(parse_asa_options(sp, 3),
-                            Catch::Contains("1-based"));
+                            "ASA:ASA: PARAM User_Quench_Param_Scale[0]: index "
+                            "0 is no dimension: the indices count the "
+                            "dimensions of the search space from 1, as the "
+                            "dim column of hpo_search_space.tsv does");
     }
     SECTION("index out of range") {
         sp.param = {{"User_Quench_Param_Scale[4]", 0.5}};
         REQUIRE_THROWS_WITH(parse_asa_options(sp, 3),
-                            Catch::Contains("index out of range"));
+                            "ASA:ASA: PARAM User_Quench_Param_Scale[4]: index "
+                            "4 is above the number of dimensions of the "
+                            "search space, 3 (indices count from 1)");
     }
     SECTION("last dimension is addressable") {
         sp.param = {{"User_Quench_Param_Scale[3]", 0.5}};
@@ -477,8 +487,12 @@ TEST_CASE("ASA options: rejections", "[HPO][asa][options]")
     }
     SECTION("excluded upstream name gets a tailored message") {
         sp.param = {{"Coarse_Resolution", 0.1}};
+        /* It named the compile flag ASA_RESOLUTION. */
         REQUIRE_THROWS_WITH(parse_asa_options(sp, 1),
-                            Catch::Contains("ASA_RESOLUTION"));
+                            Catch::StartsWith("ASA:ASA does not take the ASA "
+                                              "option PARAM Coarse_Resolution: "
+                                              "it rounds each generated value "
+                                              "to a grid"));
     }
     SECTION("User_Tangents is unsupported") {
         sp.param = {{"User_Tangents", 1.0}};
@@ -1668,4 +1682,42 @@ TEST_CASE("ASA draws random numbers of its own and not the RANDOM method's for "
     const std::vector<std::vector<double>> method(g_raw_calls.begin(),
                                                   g_raw_calls.begin() + 10);
     CHECK(asa != method);
+}
+
+/* Pins: PARAM Queue_Size > 0 with Queue_Resolution 0 is a HINT that says
+ * what the queue then reuses and what Queue_Resolution gives: "ASA:
+ * Queue_Size > 0 with Queue_Resolution 0 reuses the loss of a point only
+ * when it is generated again exactly; PARAM Queue_Resolution gives the
+ * distance in each dimension below which two points count as the same".
+ * Before the fix: "ASA: Queue_Size > 0 with Queue_Resolution 0 caches only
+ * near-exact revisits; set PARAM Queue_Resolution to the scale of each
+ * dimension below which two points are 'the same'": the check fails. */
+TEST_CASE("ASA options: a queue without a resolution is a hint that says "
+          "what Queue_Resolution gives", "[HPO][asa][options]")
+{
+    using namespace tadah::hpo;
+    auto sp = make_asa_spec({0.0}, {1.0});
+    sp.param = {{"Queue_Size", 10.0}};
+    const AsaOptions o = parse_asa_options(sp, 1);
+    anneal_test::JournalCapture jc;
+    announce_asa_options(o);
+    CHECK(jc.read().find("ASA: Queue_Size > 0 with Queue_Resolution 0 reuses "
+                         "the loss of a point only when it is generated again "
+                         "exactly; PARAM Queue_Resolution gives the distance "
+                         "in each dimension below which two points count as "
+                         "the same") != std::string::npos);
+}
+
+/* Pins: a MAXTIME of 0 seconds on a spec built outside the parser is
+ * refused with its value: "ASA:ASA: MAXTIME must be > 0 seconds (got 0)".
+ * Before the fix: "ASA:ASA: MAXTIME must be > 0 seconds", without the
+ * value: the check fails. */
+TEST_CASE("ASA options: a MAXTIME of 0 is refused with its value",
+          "[HPO][asa][options]")
+{
+    using namespace tadah::hpo;
+    auto sp = make_asa_spec({0.0}, {1.0});
+    sp.stop.maxtime = 0.0;
+    REQUIRE_THROWS_WITH(parse_asa_options(sp, 1),
+                        "ASA:ASA: MAXTIME must be > 0 seconds (got 0)");
 }

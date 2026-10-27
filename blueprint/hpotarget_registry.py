@@ -69,13 +69,13 @@ PLACEHOLDERS = {
     "env", "file", "first_line", "flag", "form", "high", "hint", "home",
     "index", "indices", "key", "keys", "kind", "lib", "line", "list", "low",
     "max", "min", "missing", "name", "note", "noun", "open", "open_line",
-    "option", "parent", "parent_line", "phase", "script", "text", "tok",
-    "type", "underflow", "value", "var", "what", "why",
+    "option", "parent", "parent_line", "phase", "script", "seed", "text",
+    "tok", "type", "underflow", "value", "var", "what", "why", "width",
 }
 # Fields whose placeholders are fixed by the parser's frame.
 FIXED_PLACEHOLDERS = {
     ("lexing", "error_frame"): {"line", "what", "text"},
-    ("lexing", "unfinished_msg"): {"line"},
+    ("lexing", "unfinished_msg"): set(),
     ("lexing", "missing_file_msg"): {"file"},
     ("structure", "end_without_open_msg"): {"end", "name"},
     ("structure", "end_mismatch_msg"): {"end", "open", "open_line"},
@@ -83,11 +83,12 @@ FIXED_PLACEHOLDERS = {
     ("structure", "open_takes_no_value_msg"): {"name", "tok"},
     ("structure", "unclosed_msg"): {"name", "end"},
     ("structure", "unknown_root_msg"): {"key"},
+    ("structure", "root_key_in_block_msg"): {"key", "name", "open_line", "end"},
     ("structure", "removed_msg"): {"key", "hint"},
     ("group", "leftover_msg"): {"key", "tok"},
     ("block", "repeat_msg"): {"first_line"},
     ("block", "misplaced_msg"): {"parent", "parent_line"},
-    ("block", "unknown_msg"): {"key", "keys"},
+    ("block", "unknown_msg"): {"key", "keys", "open_line"},
     ("block", "refuse_msg"): {"key", "why", "enclosing"},
 }
 READING_PLACEHOLDERS = {"what", "min", "max", "tok", "note", "noun",
@@ -990,6 +991,7 @@ SCHEMA: dict[str, dict[str, tuple[str, bool]]] = {
                       end_takes_no_value_msg=("str", R),
                       open_takes_no_value_msg=("str", R),
                       unclosed_msg=("str", R), unknown_root_msg=("str", R),
+                      root_key_in_block_msg=("str", R),
                       removed_msg=("str", R)),
     "optim": dict(DOC_FIELDS, doc=("str", R), long_doc=("str", O),
                   synopsis=("list[str]", R),

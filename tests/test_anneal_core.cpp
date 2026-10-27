@@ -433,19 +433,44 @@ TEST_CASE("anneal::Knobs::parse defaults", "[HPO][anneal_core][knobs]")
     CHECK(kt.init_mode == anneal_enums::INIT_MODE::JITTER);
 }
 
+/* Pins: ANNEAL_PT's INIT_MODE JITTER AUTO without its tolerance is refused
+ * with an example written as a key line: "TADAH:ANNEAL_PT: PARAM INIT_MODE
+ * JITTER AUTO needs a relative loss tolerance, such as PARAM INIT_MODE
+ * JITTER AUTO 0.05".
+ * Before the fix: "..., e.g. `PARAM INIT_MODE JITTER AUTO 0.05`": the
+ * check fails. */
+TEST_CASE("anneal::Knobs::parse: ANNEAL_PT JITTER AUTO without a tolerance "
+          "names an example", "[HPO][anneal_core][knobs]")
+{
+    auto sp = bare_spec();
+    sp.param_raw["INIT_MODE"] = "JITTER";
+    sp.param_tokens["INIT_MODE"] = {"JITTER", "AUTO"};
+    REQUIRE_THROWS_WITH(anneal::Knobs::parse(sp, anneal::AlgoKind::PT),
+                        "TADAH:ANNEAL_PT: PARAM INIT_MODE JITTER AUTO needs a "
+                        "relative loss tolerance, such as PARAM INIT_MODE "
+                        "JITTER AUTO 0.05");
+}
+
 TEST_CASE("anneal::Knobs::parse serial AUTO lengths require MAXEVAL",
           "[HPO][anneal_core][knobs]")
 {
     auto sp = bare_spec();
     sp.stop.maxeval.reset();
+    /* It was "CHAIN_LENGTH AUTO needs MAXEVAL to derive the per-rung
+     * budget; set PARAM CHAIN_LENGTH explicitly (...)". */
     REQUIRE_THROWS_WITH(anneal::Knobs::parse(sp, anneal::AlgoKind::Serial),
-                        Catch::Contains("CHAIN_LENGTH AUTO needs MAXEVAL"));
+                        Catch::Contains("CHAIN_LENGTH AUTO spreads MAXEVAL "
+                                        "over the temperature steps, and this "
+                                        "search has no MAXEVAL"));
     sp.param["CHAIN_LENGTH"] = 10.0;
     REQUIRE_NOTHROW(anneal::Knobs::parse(sp, anneal::AlgoKind::Serial));
     sp.param.erase("CHAIN_LENGTH");
     sp.param_raw["CORANA"] = "ON";
+    /* It was "NT AUTO needs MAXEVAL to derive the per-rung budget; set
+     * PARAM NT explicitly (...)". */
     REQUIRE_THROWS_WITH(anneal::Knobs::parse(sp, anneal::AlgoKind::Serial),
-                        Catch::Contains("NT AUTO needs MAXEVAL"));
+                        Catch::Contains("NT AUTO follows from MAXEVAL, and "
+                                        "this search has no MAXEVAL"));
     sp.param["NT"] = 3.0;
     REQUIRE_NOTHROW(anneal::Knobs::parse(sp, anneal::AlgoKind::Serial));
 }

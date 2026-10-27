@@ -23,6 +23,8 @@
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
+#include <iostream>
+#include <sstream>
 #include <string>
 #include <system_error>
 #include <vector>
@@ -107,8 +109,8 @@ TEST_CASE("OPTIM weights is refused like OPTIM WEIGHTS",
                       std::string(kKeyRulesOptimizer));
   REQUIRE_THROWS_WITH(HPOTargets(ctx, tf.path.string()),
                       Catch::Contains("Error on line 1") &&
-                      Catch::Contains("OPTIM WEIGHTS is not a valid search "
-                                      "target"));
+                      Catch::Contains("OPTIM WEIGHTS: WEIGHTS holds the "
+                                      "coefficients each evaluation fits"));
 }
 
 TEST_CASE("OPTIM fixweight maps its indices through FIXINDEX",
@@ -432,7 +434,9 @@ TEST_CASE("OPTIM MPARAMS of the Kern_Polynomial degree is refused",
   INFO("message: " << msg);
   CHECK(has(msg, "OPTIM MPARAMS (1) is not a valid search target"));
   CHECK(has(msg, "Kern_Polynomial"));
-  CHECK(has(msg, "d, an integer"));
+  /* It ended "; set it in the -c potential/configuration." */
+  CHECK(has(msg, "d, an integer, a discrete value rather than a continuous "
+                 "parameter; the training configuration sets it."));
   CHECK(startup_error(c, "OPTIM MPARAMS (2) 0.1 1.0").empty());
   CHECK(startup_error(c, "OPTIM MPARAMS (3) 0.0 2.0").empty());
 }
@@ -585,9 +589,13 @@ TEST_CASE("OPTIM on a cutoff the setfl file fixes is refused at startup",
   tadah::core::PeriodicTable::initialize();
   TaSetfl setfl;
   const std::string file = setfl.path.string();
+  /* The message ends with what refusing another value does (it ended
+   * "...; leave RCUT2B (1) out of OPTIM."). */
+  const std::string fails = ", so every candidate but the value of the "
+                            "training configuration would fail.";
   const std::string fixed2b =
       "D2_EAM takes the cutoff 5 of its setfl file '" + file +
-      "' (SETFL) and refuses another value";
+      "' (SETFL) and refuses another value" + fails;
   {
     const std::string msg =
         startup_error(eam_ctx(file, "D2_EAM 0 Ta Ta", "5.0", "Cut_Cos"),
@@ -603,7 +611,7 @@ TEST_CASE("OPTIM on a cutoff the setfl file fixes is refused at startup",
     INFO(msg);
     CHECK(has(msg, "OPTIM RCUTMB (1) is not a valid search target: "
                    "DM_EAM takes the cutoff 5 of its setfl file '" + file +
-                   "' (SETFL) and refuses another value"));
+                   "' (SETFL) and refuses another value" + fails));
   }
   {
     Context c = eam_ctx(file, "D2_mJoin D2_BP 2 2 Ta Ta D2_EAM 0 Ta Ta",
@@ -615,5 +623,85 @@ TEST_CASE("OPTIM on a cutoff the setfl file fixes is refused at startup",
     CHECK(has(msg, "OPTIM RCUT2B (2) is not a valid search target: " +
                        fixed2b));
     CHECK(startup_error(c, "OPTIM RCUT2B (1) 4.0 5.0").empty());
+  }
+}
+
+/* Pins: OPTIM of a key the training configuration does not give is refused
+ * at its line by HPOTargets, naming what OPTIM needs, and the Logger
+ * writes no ERROR line about it:
+ *   - OPTIM FIXWEIGHT without FIXINDEX and FIXWEIGHT: "OPTIM FIXWEIGHT
+ *     requires FIXINDEX and FIXWEIGHT in the training configuration
+ *     (FIXINDEX names the coefficients the FIXWEIGHT values hold, and OPTIM
+ *     FIXWEIGHT searches those values).";
+ *   - with FIXINDEX and without FIXWEIGHT: "OPTIM FIXWEIGHT requires
+ *     FIXWEIGHT in the training configuration (the FIXWEIGHT values hold
+ *     the coefficients FIXINDEX names, and OPTIM FIXWEIGHT searches those
+ *     values).";
+ *   - OPTIM CGRIDMB of a configuration without many-body keys: "OPTIM
+ *     CGRIDMB: the training configuration has no CGRIDMB line, and OPTIM
+ *     CGRIDMB searches the values the training configuration gives";
+ *   - OPTIM of a word no key has (CGRIDMBX): "OPTIM CGRIDMBX: CGRIDMBX is
+ *     not a key of the training configuration (closest key: CGRIDMB)".
+ * Before the fix: the Logger wrote "ERROR: Context::size() -> Key not
+ * found: FIXWEIGHT" (and "Key not found: CGRIDMB", "Did you mean:
+ * CGRIDMB") to standard output, and the refusals were "Key not found in
+ * the Context object: FIXWEIGHT", "... CGRIDMB" and "Key not allowed:
+ * CGRIDMBX". */
+TEST_CASE("OPTIM of a key the training configuration does not give names "
+          "what OPTIM needs, with no Logger line",
+          "[HPO][optim][optim_structure_keys]") {
+  struct CoutCapture {
+    std::ostringstream text;
+    std::streambuf* old;
+    CoutCapture() : old(std::cout.rdbuf(text.rdbuf())) {}
+    ~CoutCapture() { std::cout.rdbuf(old); }
+  };
+  auto refusal = [](Context ctx, const std::string& line,
+                    std::string& out) {
+    KeyRulesTempFile tf(line + "\n" + kKeyRulesOptimizer);
+    CoutCapture cap;
+    std::string what;
+    try {
+      HPOTargets trg(ctx, tf.path.string());
+    } catch (const std::exception& e) {
+      what = e.what();
+    }
+    out = cap.text.str();
+    return what;
+  };
+  Context base;
+  base.add("WATOM", 1.0);
+  struct Case {
+    const char* fixindex;  // "" for none
+    const char* line;
+    const char* what;
+  };
+  const Case cases[] = {
+      {"", "OPTIM FIXWEIGHT (1) 0 2",
+       "OPTIM FIXWEIGHT requires FIXINDEX and FIXWEIGHT in the training "
+       "configuration (FIXINDEX names the coefficients the FIXWEIGHT values "
+       "hold, and OPTIM FIXWEIGHT searches those values)."},
+      {"2", "OPTIM FIXWEIGHT (2) 0 2",
+       "OPTIM FIXWEIGHT requires FIXWEIGHT in the training configuration (the "
+       "FIXWEIGHT values hold the coefficients FIXINDEX names, and OPTIM "
+       "FIXWEIGHT searches those values)."},
+      {"", "OPTIM CGRIDMB (1) 0 2",
+       "OPTIM CGRIDMB: the training configuration has no CGRIDMB line, and "
+       "OPTIM CGRIDMB searches the values the training configuration gives"},
+      {"", "OPTIM CGRIDMBX (1) 0 2",
+       "OPTIM CGRIDMBX: CGRIDMBX is not a key of the training configuration "
+       "(closest key: CGRIDMB)"},
+  };
+  for (const Case& c : cases) {
+    INFO(c.line << " FIXINDEX '" << c.fixindex << "'");
+    Context ctx = base;
+    if (*c.fixindex) ctx.add("FIXINDEX", c.fixindex);
+    std::string out;
+    const std::string what = refusal(ctx, c.line, out);
+    CHECK(what == std::string("Error on line 1: ") + c.what + "\nLine: " +
+                      c.line);
+    INFO("standard output: " << out);
+    CHECK(out.find("Context::size()") == std::string::npos);
+    CHECK(out.find("Did you mean") == std::string::npos);
   }
 }

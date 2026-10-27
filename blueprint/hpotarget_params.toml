@@ -288,32 +288,34 @@ invalid = [
 [[param_policy]]
 id = "PARAM.ASA:ASA"
 optimizers = ["ASA:ASA"]
-msg = "{phase}: ASA:ASA: unknown PARAM '{key}'. Accepted keys: {keys}"
+msg = "{phase}: ASA:ASA: unknown PARAM '{key}'; accepted keys: {keys}"
 doc = """\
 ASA:ASA takes its options as PARAM keys, named as ASA names them and \
 matched with case; a per-dimension key also takes the form Name[i], which \
 sets dimension i (from 1) whatever the order of the lines. Any other \
 name, and a word given to an option, are refused when tadah hpo starts."""
 invalid = [
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Cooling_Rate 0.9", error = "the STRATEGY-level optimiser: ASA:ASA: unknown PARAM 'Cooling_Rate'. Accepted keys: Limit_Acceptances Limit_Generated Limit_Invalid_Generated_States Accepted_To_Generated_Ratio Cost_Precision Maximum_Cost_Repeat Number_Cost_Samples Temperature_Ratio_Scale Cost_Parameter_Scale_Ratio Temperature_Anneal_Scale Sequential_Parameters Initial_Parameter_Temperature Acceptance_Frequency_Modulus Generated_Frequency_Modulus Reanneal_Cost Reanneal_Parameters Delta_X User_Tangents Curvature_0 User_Quench_Cost_Scale User_Quench_Param_Scale User_Temperature_Ratio User_Delta_Parameter User_Parameter_Temperature Multi_Number Multi_Specify Multi_Grid Queue_Size Queue_Resolution Gener_Block Gener_Block_Max Gener_Mov_Avr" },
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM limit_acceptances 500", error = "the STRATEGY-level optimiser: ASA:ASA: unknown PARAM 'limit_acceptances'. Did you mean 'Limit_Acceptances'? ASA option names are case-sensitive.", doc = "A name that differs from an option in case only." },
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM multi_grid[1] 0.01", error = "the STRATEGY-level optimiser: ASA:ASA: unknown PARAM 'multi_grid[1]'. Accepted keys: Limit_Acceptances Limit_Generated Limit_Invalid_Generated_States Accepted_To_Generated_Ratio Cost_Precision Maximum_Cost_Repeat Number_Cost_Samples Temperature_Ratio_Scale Cost_Parameter_Scale_Ratio Temperature_Anneal_Scale Sequential_Parameters Initial_Parameter_Temperature Acceptance_Frequency_Modulus Generated_Frequency_Modulus Reanneal_Cost Reanneal_Parameters Delta_X User_Tangents Curvature_0 User_Quench_Cost_Scale User_Quench_Param_Scale User_Temperature_Ratio User_Delta_Parameter User_Parameter_Temperature Multi_Number Multi_Specify Multi_Grid Queue_Size Queue_Resolution Gener_Block Gener_Block_Max Gener_Mov_Avr", doc = "An indexed name that differs from an option in case only gets the list, not the hint." },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Cooling_Rate 0.9", error = "the STRATEGY-level optimiser: ASA:ASA: unknown PARAM 'Cooling_Rate'; accepted keys: Limit_Acceptances Limit_Generated Limit_Invalid_Generated_States Accepted_To_Generated_Ratio Cost_Precision Maximum_Cost_Repeat Number_Cost_Samples Temperature_Ratio_Scale Cost_Parameter_Scale_Ratio Temperature_Anneal_Scale Sequential_Parameters Initial_Parameter_Temperature Acceptance_Frequency_Modulus Generated_Frequency_Modulus Reanneal_Cost Reanneal_Parameters Delta_X User_Tangents Curvature_0 User_Quench_Cost_Scale User_Quench_Param_Scale User_Temperature_Ratio User_Delta_Parameter User_Parameter_Temperature Multi_Number Multi_Specify Multi_Grid Queue_Size Queue_Resolution Gener_Block Gener_Block_Max Gener_Mov_Avr" },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM limit_acceptances 500", error = "the STRATEGY-level optimiser: ASA:ASA: unknown PARAM 'limit_acceptances': ASA option names are case-sensitive, and the option of that name is Limit_Acceptances", doc = "A name that differs from an option in case only." },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM multi_grid[1] 0.01", error = "the STRATEGY-level optimiser: ASA:ASA: unknown PARAM 'multi_grid[1]': ASA option names are case-sensitive, and the option of that name is Multi_Grid", doc = "An indexed name that differs from an option in case only gets the list, not the hint." },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM limit_weights 1", error = "the STRATEGY-level optimiser: ASA:ASA: unknown PARAM 'limit_weights': ASA option names are case-sensitive, and ASA:ASA does not take the ASA option Limit_Weights: it belongs to ASA's importance sampling, which the ASA of tadah hpo leaves out.", doc = "A name that differs only in case from an ASA option that tadah hpo does not take." },
   { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Limit_Acceptances[1] 500", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Limit_Acceptances is a scalar option (indexed form not accepted)" },
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Multi_Grid[0] 0.01", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Multi_Grid[0] index 0 is not a dimension: per-dimension indices are 1-based and match the dim column of hpo_search_space.tsv. They were 0-based in Tadah 1.4 and earlier, so every old index shifts up by one ([0] is now [1])" },
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Multi_Grid[2] 0.01", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Multi_Grid[2] index out of range (dim=1, 1-based)" },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Multi_Grid[0] 0.01", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Multi_Grid[0]: index 0 is no dimension: the indices count the dimensions of the search space from 1, as the dim column of hpo_search_space.tsv does" },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Multi_Grid[2] 0.01", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Multi_Grid[2]: index 2 is above the number of dimensions of the search space, 1 (indices count from 1)" },
   { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Multi_Grid[1 0.01", error = "the STRATEGY-level optimiser: ASA:ASA: malformed indexed PARAM 'Multi_Grid[1' (expected Name[<1-based index>])" },
   { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Multi_Grid[x] 0.01", error = "the STRATEGY-level optimiser: ASA:ASA: malformed index in PARAM 'Multi_Grid[x]' (expected a positive integer)" },
   { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Multi_Grid[99999999999999999999] 0.01", error = "the STRATEGY-level optimiser: ASA:ASA: the index in PARAM 'Multi_Grid[99999999999999999999]' must be an integer from 0 to 9223372036854775807, got '99999999999999999999'" },
   { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Limit_Acceptances many", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Limit_Acceptances takes a number (got 'many')" },
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Cooling_Rate fast", error = "the STRATEGY-level optimiser: ASA:ASA: unknown PARAM 'Cooling_Rate'. Accepted keys: Limit_Acceptances Limit_Generated Limit_Invalid_Generated_States Accepted_To_Generated_Ratio Cost_Precision Maximum_Cost_Repeat Number_Cost_Samples Temperature_Ratio_Scale Cost_Parameter_Scale_Ratio Temperature_Anneal_Scale Sequential_Parameters Initial_Parameter_Temperature Acceptance_Frequency_Modulus Generated_Frequency_Modulus Reanneal_Cost Reanneal_Parameters Delta_X User_Tangents Curvature_0 User_Quench_Cost_Scale User_Quench_Param_Scale User_Temperature_Ratio User_Delta_Parameter User_Parameter_Temperature Multi_Number Multi_Specify Multi_Grid Queue_Size Queue_Resolution Gener_Block Gener_Block_Max Gener_Mov_Avr", doc = "A word under a name ASA:ASA does not take." },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Cooling_Rate fast", error = "the STRATEGY-level optimiser: ASA:ASA: unknown PARAM 'Cooling_Rate'; accepted keys: Limit_Acceptances Limit_Generated Limit_Invalid_Generated_States Accepted_To_Generated_Ratio Cost_Precision Maximum_Cost_Repeat Number_Cost_Samples Temperature_Ratio_Scale Cost_Parameter_Scale_Ratio Temperature_Anneal_Scale Sequential_Parameters Initial_Parameter_Temperature Acceptance_Frequency_Modulus Generated_Frequency_Modulus Reanneal_Cost Reanneal_Parameters Delta_X User_Tangents Curvature_0 User_Quench_Cost_Scale User_Quench_Param_Scale User_Temperature_Ratio User_Delta_Parameter User_Parameter_Temperature Multi_Number Multi_Specify Multi_Grid Queue_Size Queue_Resolution Gener_Block Gener_Block_Max Gener_Mov_Avr", doc = "A word under a name ASA:ASA does not take." },
 ]
 checks = [
   { msg = "{phase}: ASA:ASA: PARAM {key} takes a number (got '{value}')", doc = "At startup, at the END line of its optimiser: a word given to an option of ASA:ASA." },
-  { msg = "{phase}: ASA:ASA: unknown PARAM '{key}'. '{key}' is not available: {why}", doc = "At startup, at the END line of its optimiser: an ASA option that tadah hpo does not take; {why} says why, and the option has an entry of its own." },
-  { msg = "{phase}: ASA:ASA: unknown PARAM '{key}'. Did you mean '{name}'? ASA option names are case-sensitive.", doc = "At startup, at the END line of its optimiser: a name that differs from an ASA option only in case; {name} is the option." },
+  { msg = "{phase}: ASA:ASA does not take the ASA option PARAM {name}: {why}", doc = "At startup, at the END line of its optimiser: an ASA option that tadah hpo does not take, with or without an index; {why} says why, and the option has an entry of its own." },
+  { msg = "{phase}: ASA:ASA: unknown PARAM '{key}': ASA option names are case-sensitive, and ASA:ASA does not take the ASA option {name}: {why}", doc = "At startup, at the END line of its optimiser: a name that differs only in case from an ASA option that tadah hpo does not take; {name} is the option." },
+  { msg = "{phase}: ASA:ASA: unknown PARAM '{key}': ASA option names are case-sensitive, and the option of that name is {name}", doc = "At startup, at the END line of its optimiser: a name that differs from an ASA option only in case, with or without an index; {name} is the option." },
   { msg = "{phase}: ASA:ASA: PARAM {key} is a scalar option (indexed form not accepted)", doc = "At startup, at the END line of its optimiser: an index on an option that has one value." },
-  { msg = "{phase}: ASA:ASA: PARAM {name} index 0 is not a dimension: {why}", doc = "At startup, at the END line of its optimiser: the index 0 on an option that takes one value for each dimension; {why} says how the indices count." },
-  { msg = "{phase}: ASA:ASA: PARAM {name} index out of range (dim={count}, 1-based)", doc = "At startup, at the END line of its optimiser: an index above the number of search parameters, {count}." },
+  { msg = "{phase}: ASA:ASA: PARAM {key}: index 0 is no dimension: the indices count the dimensions of the search space from 1, as the dim column of hpo_search_space.tsv does", doc = "At startup, at the END line of its optimiser: the index 0 on an option that takes one value for each dimension." },
+  { msg = "{phase}: ASA:ASA: PARAM {key}: index {index} is above the number of dimensions of the search space, {count} (indices count from 1)", doc = "At startup, at the END line of its optimiser: an index above the number of search parameters, {count}." },
   { msg = "{phase}: ASA:ASA: malformed indexed PARAM '{name}' (expected Name[<1-based index>])", doc = "At startup, at the END line of its optimiser: a name with an opening bracket and no closing one." },
   { msg = "{phase}: ASA:ASA: malformed index in PARAM '{name}' (expected a positive integer)", doc = "At startup, at the END line of its optimiser: an index that is no whole number." },
 ]
@@ -328,14 +330,14 @@ for the annealers it lists: any other name is refused when tadah hpo \
 starts, and a key of another annealer is refused with the name of the \
 annealer it belongs to."""
 invalid = [
-  { wrap = "params_anneal", check = "startup", at = "ENDOPTIMIZER", text = "PARAM COOLING 0.9", error = "the STRATEGY-level optimiser: TADAH:ANNEAL: unknown PARAM 'COOLING'; accepted keys: CORANA STEP_FRAC CHAIN_LENGTH NS NT CORANA_C V_FLOOR_FRAC BOUNDARY_MODE RESET_TO_BEST T_INIT T_MIN RT T0_PROBES T0_ACCEPT NEPS REANNEAL REANNEAL_SCALE " },
-  { wrap = "params_anneal_pt", check = "startup", at = "ENDOPTIMIZER", text = "PARAM COOLING 0.9", error = "the STRATEGY-level optimiser: TADAH:ANNEAL_PT: unknown PARAM 'COOLING'; accepted keys: CORANA STEP_FRAC NS CORANA_C V_FLOOR_FRAC BOUNDARY_MODE RESET_TO_BEST T_HOT T0_PROBES T0_ACCEPT NEPS REPLICAS T_COLD LADDER_SPAN LADDER_POWER LADDER_ADAPT LADDER_ADAPT_EVERY LADDER_ADAPT_GAIN LADDER_ADAPT_DECAY LADDER_MIN_GAP LADDER_FREEZE SWAP_EVERY SWAP_WINDOW STEP_MODE STEP_WARMUP_SWEEPS STEP_TRUST_FACTOR INIT_MODE INIT_JITTER_MAX INIT_JITTER_PROBES INIT_JITTER_MAXEVAL INIT_JITTER_SAMPLE INIT_JITTER_AUDIT INIT_JITTER_LADDER INIT_JITTER_MAXTIME_FRAC " },
-  { wrap = "params_anneal_pa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM COOLING 0.9", error = "the STRATEGY-level optimiser: TADAH:ANNEAL_PA: unknown PARAM 'COOLING'; accepted keys: CORANA STEP_FRAC CHAIN_LENGTH NS NT CORANA_C V_FLOOR_FRAC BOUNDARY_MODE T_HOT T_MIN RT T0_PROBES T0_ACCEPT NEPS INIT_MODE SWEEPS ESS_TARGET " },
-  { wrap = "params_anneal", check = "startup", at = "ENDOPTIMIZER", text = "PARAM REPLICAS 4", error = "the STRATEGY-level optimiser: TADAH:ANNEAL: PARAM REPLICAS belongs to TADAH:ANNEAL_PT" },
-  { wrap = "params_anneal", check = "startup", at = "ENDOPTIMIZER", text = "PARAM SWEEPS 2", error = "the STRATEGY-level optimiser: TADAH:ANNEAL: PARAM SWEEPS belongs to TADAH:ANNEAL_PA" },
-  { wrap = "params_anneal_pt", check = "startup", at = "ENDOPTIMIZER", text = "PARAM REANNEAL 0", error = "the STRATEGY-level optimiser: TADAH:ANNEAL_PT: PARAM REANNEAL belongs to the serial TADAH:ANNEAL" },
-  { wrap = "params_anneal", check = "startup", at = "ENDOPTIMIZER", text = "PARAM INIT_JITTER_MAX 0.2", error = "the STRATEGY-level optimiser: TADAH:ANNEAL: PARAM INIT_JITTER_MAX belongs to TADAH:ANNEAL_PT" },
-  { wrap = "params_anneal_pa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM INIT_MODE JITTER AUTO\nPARAM INIT_JITTER_MAX 0.2", doc = "TADAH:ANNEAL_PA measures no displacement: the keys of the measurement are those of TADAH:ANNEAL_PT.", error = "the STRATEGY-level optimiser: TADAH:ANNEAL_PA: PARAM INIT_JITTER_MAX belongs to TADAH:ANNEAL_PT" },
+  { wrap = "params_anneal", check = "startup", at = "ENDOPTIMIZER", text = "PARAM COOLING 0.9", error = "the STRATEGY-level optimiser: TADAH:ANNEAL: unknown PARAM 'COOLING'; accepted keys: CORANA STEP_FRAC CHAIN_LENGTH NS NT CORANA_C V_FLOOR_FRAC BOUNDARY_MODE RESET_TO_BEST T_INIT T_MIN RT T0_PROBES T0_ACCEPT NEPS REANNEAL REANNEAL_SCALE" },
+  { wrap = "params_anneal_pt", check = "startup", at = "ENDOPTIMIZER", text = "PARAM COOLING 0.9", error = "the STRATEGY-level optimiser: TADAH:ANNEAL_PT: unknown PARAM 'COOLING'; accepted keys: CORANA STEP_FRAC NS CORANA_C V_FLOOR_FRAC BOUNDARY_MODE RESET_TO_BEST T_HOT T0_PROBES T0_ACCEPT NEPS REPLICAS T_COLD LADDER_SPAN LADDER_POWER LADDER_ADAPT LADDER_ADAPT_EVERY LADDER_ADAPT_GAIN LADDER_ADAPT_DECAY LADDER_MIN_GAP LADDER_FREEZE SWAP_EVERY SWAP_WINDOW STEP_MODE STEP_WARMUP_SWEEPS STEP_TRUST_FACTOR INIT_MODE INIT_JITTER_MAX INIT_JITTER_PROBES INIT_JITTER_MAXEVAL INIT_JITTER_SAMPLE INIT_JITTER_AUDIT INIT_JITTER_LADDER INIT_JITTER_MAXTIME_FRAC" },
+  { wrap = "params_anneal_pa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM COOLING 0.9", error = "the STRATEGY-level optimiser: TADAH:ANNEAL_PA: unknown PARAM 'COOLING'; accepted keys: CORANA STEP_FRAC CHAIN_LENGTH NS NT CORANA_C V_FLOOR_FRAC BOUNDARY_MODE T_HOT T_MIN RT T0_PROBES T0_ACCEPT NEPS INIT_MODE SWEEPS ESS_TARGET" },
+  { wrap = "params_anneal", check = "startup", at = "ENDOPTIMIZER", text = "PARAM REPLICAS 4", error = "the STRATEGY-level optimiser: TADAH:ANNEAL: PARAM REPLICAS is a key of TADAH:ANNEAL_PT" },
+  { wrap = "params_anneal", check = "startup", at = "ENDOPTIMIZER", text = "PARAM SWEEPS 2", error = "the STRATEGY-level optimiser: TADAH:ANNEAL: PARAM SWEEPS is a key of TADAH:ANNEAL_PA" },
+  { wrap = "params_anneal_pt", check = "startup", at = "ENDOPTIMIZER", text = "PARAM REANNEAL 0", error = "the STRATEGY-level optimiser: TADAH:ANNEAL_PT: PARAM REANNEAL is a key of TADAH:ANNEAL" },
+  { wrap = "params_anneal", check = "startup", at = "ENDOPTIMIZER", text = "PARAM INIT_JITTER_MAX 0.2", error = "the STRATEGY-level optimiser: TADAH:ANNEAL: PARAM INIT_JITTER_MAX is a key of TADAH:ANNEAL_PT" },
+  { wrap = "params_anneal_pa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM INIT_MODE JITTER AUTO\nPARAM INIT_JITTER_MAX 0.2", doc = "TADAH:ANNEAL_PA measures no displacement: the keys of the measurement are those of TADAH:ANNEAL_PT.", error = "the STRATEGY-level optimiser: TADAH:ANNEAL_PA: PARAM INIT_JITTER_MAX is a key of TADAH:ANNEAL_PT" },
   { wrap = "params_anneal_pa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM INIT_MODE JITTER AUTO 0.05", doc = "TADAH:ANNEAL_PA takes JITTER AUTO without a tolerance.", error = "the STRATEGY-level optimiser: TADAH:ANNEAL_PA: PARAM INIT_MODE JITTER AUTO takes no tolerance (got '0.05'): TADAH:ANNEAL_PA measures no displacement and takes the first proposal scales as the bounds; TADAH:ANNEAL_PT measures them against the tolerance" },
   { wrap = "params_anneal_pa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM CHAIN_LENGTH AUTO", doc = "AUTO derives CHAIN_LENGTH from MAXEVAL in TADAH:ANNEAL only.", error = "the STRATEGY-level optimiser: TADAH:ANNEAL_PA: PARAM CHAIN_LENGTH must be a number (got 'AUTO'; AUTO is accepted by TADAH:ANNEAL only)" },
   { wrap = "params_anneal_pa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM CORANA ON\nPARAM NT AUTO", doc = "AUTO derives NT from MAXEVAL in TADAH:ANNEAL only.", error = "the STRATEGY-level optimiser: TADAH:ANNEAL_PA: PARAM NT must be a number (got 'AUTO'; AUTO is accepted by TADAH:ANNEAL only)" },
@@ -388,7 +390,7 @@ examples = [
 ]
 checks = [
   { msg = "{phase}: TADAH:ANNEAL_PA: PARAM INIT_MODE JITTER AUTO takes no tolerance (got '{tok}'): TADAH:ANNEAL_PA measures no displacement and takes the first proposal scales as the bounds; TADAH:ANNEAL_PT measures them against the tolerance", doc = "At startup, at the END line of its optimiser: a tolerance after INIT_MODE JITTER AUTO of TADAH:ANNEAL_PA." },
-  { msg = "{phase}: TADAH:{algo}: PARAM {key} belongs to {name}", doc = "At startup, at the END line of its optimiser: a PARAM key of the other annealers; {name} names those it belongs to." },
+  { msg = "{phase}: TADAH:{algo}: PARAM {key} is a key of {name}", doc = "At startup, at the END line of its optimiser: a PARAM key of the other annealers; {name} names those it belongs to." },
   { msg = "{phase}: TADAH:{algo}: PARAM {key} must be {what} (got '{tok}'{note})", doc = "At startup, at the END line of its optimiser: a value that is neither a number nor a word the key takes; {what} names what it takes, and {note} the annealers that take AUTO when this one does not." },
   { msg = "{phase}: TADAH:{algo}: PARAM {key} must be one of: {list} (got '{tok}')", doc = "At startup, at the END line of its optimiser: a word of a key that takes words, matched as written; {list} names them." },
 ]
@@ -412,17 +414,16 @@ in order after the starting point. MAXEVAL counts the starting point too: \
 a MAXEVAL below the number of evaluations stops the sweep after that \
 many."""
 checks = [
-  { msg = "{phase}: TADAH:GRID PARAM GRID_POINTS must be an integer >= 2 (got {value}; a 1-point grid divides by zero)", doc = "For a number below 2, with a fraction or above 4294967295, written with six decimals." },
-  { msg = "{phase}: TADAH:GRID PARAM GRID_POINTS must be an integer >= 2 (got '{value}')", doc = "For a word." },
+  { msg = "{phase}: TADAH:GRID: PARAM GRID_POINTS must be an integer from 2 to 4294967295, got '{value}' (the points of each dimension include both of its bounds)", doc = "For a number below 2, with a fraction or above 4294967295, written in its shortest form that reads back as the same number, or for a word, as written." },
 ]
 examples = [
   { wrap = "params_grid", text = "PARAM GRID_POINTS 5" },
   { wrap = "none", doc = "A LOG box: the three points of the grid are 0.1, 1 and 10, equal steps in the logarithm.", text = "OPTIM CGRID2B (1) 0.1 10 LOG\nPC_ERMSE 0 1\nOPTIMIZER\nSTRATEGY\nLIB TADAH\nALGO GRID\nMAXEVAL 10\nPARAM GRID_POINTS 3\nENDSTRATEGY\nENDOPTIMIZER" },
 ]
 invalid = [
-  { wrap = "params_grid", check = "startup", at = "ENDOPTIMIZER", text = "PARAM GRID_POINTS 1", error = "the STRATEGY-level optimiser: TADAH:GRID PARAM GRID_POINTS must be an integer >= 2 (got 1.000000; a 1-point grid divides by zero)" },
-  { wrap = "params_grid", check = "startup", at = "ENDOPTIMIZER", text = "PARAM GRID_POINTS 2.5", error = "the STRATEGY-level optimiser: TADAH:GRID PARAM GRID_POINTS must be an integer >= 2 (got 2.500000; a 1-point grid divides by zero)" },
-  { wrap = "params_grid", check = "startup", at = "ENDOPTIMIZER", text = "PARAM GRID_POINTS AUTO", error = "the STRATEGY-level optimiser: TADAH:GRID PARAM GRID_POINTS must be an integer >= 2 (got 'AUTO')" },
+  { wrap = "params_grid", check = "startup", at = "ENDOPTIMIZER", text = "PARAM GRID_POINTS 1", error = "the STRATEGY-level optimiser: TADAH:GRID: PARAM GRID_POINTS must be an integer from 2 to 4294967295, got '1' (the points of each dimension include both of its bounds)" },
+  { wrap = "params_grid", check = "startup", at = "ENDOPTIMIZER", text = "PARAM GRID_POINTS 2.5", error = "the STRATEGY-level optimiser: TADAH:GRID: PARAM GRID_POINTS must be an integer from 2 to 4294967295, got '2.5' (the points of each dimension include both of its bounds)" },
+  { wrap = "params_grid", check = "startup", at = "ENDOPTIMIZER", text = "PARAM GRID_POINTS AUTO", error = "the STRATEGY-level optimiser: TADAH:GRID: PARAM GRID_POINTS must be an integer from 2 to 4294967295, got 'AUTO' (the points of each dimension include both of its bounds)" },
 ]
 
 # -------------------------------------------------------------- DLIB:BFGS ----
@@ -608,7 +609,7 @@ with room, so that no point leaves the range. The key is read where PARAM \
 fd_step is read, and refused where it is refused."""
 checks = [
   { msg = "{phase} {lib}:{algo}: PARAM diff_method must be 0 (CENTRAL, the default) or 1 (FORWARD) (got {value})", doc = "For another number, written with up to ten significant digits, or a word, written in quotes." },
-  { msg = "{phase} {lib}:{algo}: PARAM diff_method 2 (RIDDERS) is refused: Ridders' extrapolation ignored PARAM fd_step, started from a step of 0.32 x max(|u|, 1) -- outside most OPTIM boxes -- and took up to 20 evaluations per parameter; use diff_method 0 (CENTRAL, the default) or 1 (FORWARD)", doc = "For 2." },
+  { msg = "{phase} {lib}:{algo}: PARAM diff_method 2 (RIDDERS) is refused: Ridders' extrapolation ignored PARAM fd_step, started from a step of 0.32 x max(|u|, 1) -- outside most OPTIM boxes -- and took up to 20 evaluations per parameter; diff_method 0 (CENTRAL, the default) and 1 (FORWARD) take PARAM fd_step", doc = "For 2." },
   { msg = "{phase} {lib}:{algo}: PARAM diff_method never takes effect: {why}; remove it.", doc = "In a search that takes no finite-difference gradients; with more keys of the finite differences, the message names them all." },
   { msg = "{phase} {lib}:{algo}: PARAM diff_method never takes effect: an INNER search takes the gradient of the block it runs in, with that block's finite-difference settings; set it in the enclosing block.", doc = "In an INNER block." },
 ]
@@ -617,7 +618,7 @@ examples = [
   { wrap = "params_ceres", text = "PARAM diff_method 0", doc = "Central differences, for CERES:STEEPEST_DESCENT." },
 ]
 invalid = [
-  { wrap = "params_lbfgs", check = "startup", at = "ENDOPTIMIZER", text = "PARAM diff_method 2", error = "the STRATEGY-level optimiser NLOPT:LD_LBFGS: PARAM diff_method 2 (RIDDERS) is refused: Ridders' extrapolation ignored PARAM fd_step, started from a step of 0.32 x max(|u|, 1) -- outside most OPTIM boxes -- and took up to 20 evaluations per parameter; use diff_method 0 (CENTRAL, the default) or 1 (FORWARD)" },
+  { wrap = "params_lbfgs", check = "startup", at = "ENDOPTIMIZER", text = "PARAM diff_method 2", error = "the STRATEGY-level optimiser NLOPT:LD_LBFGS: PARAM diff_method 2 (RIDDERS) is refused: Ridders' extrapolation ignored PARAM fd_step, started from a step of 0.32 x max(|u|, 1) -- outside most OPTIM boxes -- and took up to 20 evaluations per parameter; diff_method 0 (CENTRAL, the default) and 1 (FORWARD) take PARAM fd_step" },
   { wrap = "params_lbfgs", check = "startup", at = "ENDOPTIMIZER", text = "PARAM diff_method 0.5", error = "the STRATEGY-level optimiser NLOPT:LD_LBFGS: PARAM diff_method must be 0 (CENTRAL, the default) or 1 (FORWARD) (got 0.5)" },
   { wrap = "params_lbfgs", check = "startup", at = "ENDOPTIMIZER", text = "PARAM diff_method central", error = "the STRATEGY-level optimiser NLOPT:LD_LBFGS: PARAM diff_method must be 0 (CENTRAL, the default) or 1 (FORWARD) (got 'central')" },
   { wrap = "strategy", check = "startup", at = "ENDOPTIMIZER", text = "PARAM diff_method 1", error = "the STRATEGY-level optimiser NLOPT:LN_SBPLX: PARAM diff_method never takes effect: NLOPT:LN_SBPLX takes no gradient; remove it." },
@@ -637,15 +638,15 @@ default = { literal = "10000" }
 doc = """\
 The largest number of accepted states of the search; 0 sets no limit."""
 checks = [
-  { msg = "{phase}: ASA:ASA: PARAM {key} must be an integer value", doc = "For a value with a fraction." },
-  { msg = "{phase}: ASA:ASA: PARAM {key} must be >= {min}", doc = "For a value below 0, written with six decimals." },
+  { msg = "{phase}: ASA:ASA: PARAM {key} must be an integer (got {value})", doc = "For a value with a fraction." },
+  { msg = "{phase}: ASA:ASA: PARAM {key} must be >= {min} (got {value})", doc = "For a value below 0." },
 ]
 examples = [
   { wrap = "params_asa", text = "PARAM Limit_Acceptances 500" },
 ]
 invalid = [
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Limit_Acceptances 1.5", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Limit_Acceptances must be an integer value" },
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Limit_Acceptances -1", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Limit_Acceptances must be >= 0.000000" },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Limit_Acceptances 1.5", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Limit_Acceptances must be an integer (got 1.5)" },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Limit_Acceptances -1", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Limit_Acceptances must be >= 0 (got -1)" },
 ]
 
 [[param]]
@@ -657,15 +658,15 @@ default = { literal = "99999" }
 doc = """\
 The largest number of generated states of the search; 0 sets no limit."""
 checks = [
-  { msg = "{phase}: ASA:ASA: PARAM {key} must be an integer value", doc = "For a value with a fraction." },
-  { msg = "{phase}: ASA:ASA: PARAM {key} must be >= {min}", doc = "For a value below 0, written with six decimals." },
+  { msg = "{phase}: ASA:ASA: PARAM {key} must be an integer (got {value})", doc = "For a value with a fraction." },
+  { msg = "{phase}: ASA:ASA: PARAM {key} must be >= {min} (got {value})", doc = "For a value below 0." },
 ]
 examples = [
   { wrap = "params_asa", text = "PARAM Limit_Generated 2000" },
 ]
 invalid = [
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Limit_Generated 1.5", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Limit_Generated must be an integer value" },
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Limit_Generated -1", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Limit_Generated must be >= 0.000000" },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Limit_Generated 1.5", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Limit_Generated must be an integer (got 1.5)" },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Limit_Generated -1", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Limit_Generated must be >= 0 (got -1)" },
 ]
 
 [[param]]
@@ -679,15 +680,15 @@ The number of failed evaluations in a row (a loss that is not finite, or \
 at or above FAILSCORE) after which the search ends. 0 ends it at the \
 first, and -1 switches the test off."""
 checks = [
-  { msg = "{phase}: ASA:ASA: PARAM {key} must be an integer value", doc = "For a value with a fraction." },
-  { msg = "{phase}: ASA:ASA: PARAM {key} must be >= {min}", doc = "For a value below -1, written with six decimals." },
+  { msg = "{phase}: ASA:ASA: PARAM {key} must be an integer (got {value})", doc = "For a value with a fraction." },
+  { msg = "{phase}: ASA:ASA: PARAM {key} must be >= {min} (got {value})", doc = "For a value below -1." },
 ]
 examples = [
   { wrap = "params_asa", text = "PARAM Limit_Invalid_Generated_States -1" },
 ]
 invalid = [
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Limit_Invalid_Generated_States 1.5", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Limit_Invalid_Generated_States must be an integer value" },
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Limit_Invalid_Generated_States -2", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Limit_Invalid_Generated_States must be >= -1.000000" },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Limit_Invalid_Generated_States 1.5", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Limit_Invalid_Generated_States must be an integer (got 1.5)" },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Limit_Invalid_Generated_States -2", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Limit_Invalid_Generated_States must be >= -1 (got -2)" },
 ]
 
 [[param]]
@@ -700,15 +701,15 @@ doc = """\
 The ratio of accepted to generated states below which the periodic tests \
 and the reannealing run at once; above 0."""
 checks = [
-  { msg = "{phase}: ASA:ASA: PARAM {key} must be >= {min}", doc = "For a value below 0, written with six decimals." },
-  { msg = "{phase}: ASA:ASA: PARAM Accepted_To_Generated_Ratio must be > 0", doc = "For a value of 0." },
+  { msg = "{phase}: ASA:ASA: PARAM {key} must be >= {min} (got {value})", doc = "For a value below 0." },
+  { msg = "{phase}: ASA:ASA: PARAM Accepted_To_Generated_Ratio must be > 0 (got {value})", doc = "For a value of 0." },
 ]
 examples = [
   { wrap = "params_asa", text = "PARAM Accepted_To_Generated_Ratio 1e-4" },
 ]
 invalid = [
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Accepted_To_Generated_Ratio -1", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Accepted_To_Generated_Ratio must be >= 0.000000" },
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Accepted_To_Generated_Ratio 0", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Accepted_To_Generated_Ratio must be > 0" },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Accepted_To_Generated_Ratio -1", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Accepted_To_Generated_Ratio must be >= 0 (got -1)" },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Accepted_To_Generated_Ratio 0", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Accepted_To_Generated_Ratio must be > 0 (got 0)" },
 ]
 
 [[param]]
@@ -721,15 +722,15 @@ doc = """\
 The change of the best loss below which the plateau test counts a \
 repeat; above 0."""
 checks = [
-  { msg = "{phase}: ASA:ASA: PARAM {key} must be >= {min}", doc = "For a value below 0, written with six decimals." },
-  { msg = "{phase}: ASA:ASA: PARAM Cost_Precision must be > 0", doc = "For a value of 0." },
+  { msg = "{phase}: ASA:ASA: PARAM {key} must be >= {min} (got {value})", doc = "For a value below 0." },
+  { msg = "{phase}: ASA:ASA: PARAM Cost_Precision must be > 0 (got {value})", doc = "For a value of 0." },
 ]
 examples = [
   { wrap = "params_asa", text = "PARAM Cost_Precision 1e-12" },
 ]
 invalid = [
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Cost_Precision -1", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Cost_Precision must be >= 0.000000" },
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Cost_Precision 0", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Cost_Precision must be > 0" },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Cost_Precision -1", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Cost_Precision must be >= 0 (got -1)" },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Cost_Precision 0", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Cost_Precision must be > 0 (got 0)" },
 ]
 
 [[param]]
@@ -742,15 +743,15 @@ doc = """\
 The number of consecutive plateau cycles that ends the search \
 (COST_REPEATING); 0 switches the test off."""
 checks = [
-  { msg = "{phase}: ASA:ASA: PARAM {key} must be an integer value", doc = "For a value with a fraction." },
-  { msg = "{phase}: ASA:ASA: PARAM {key} must be >= {min}", doc = "For a value below 0, written with six decimals." },
+  { msg = "{phase}: ASA:ASA: PARAM {key} must be an integer (got {value})", doc = "For a value with a fraction." },
+  { msg = "{phase}: ASA:ASA: PARAM {key} must be >= {min} (got {value})", doc = "For a value below 0." },
 ]
 examples = [
   { wrap = "params_asa", text = "PARAM Maximum_Cost_Repeat 0" },
 ]
 invalid = [
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Maximum_Cost_Repeat 1.5", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Maximum_Cost_Repeat must be an integer value" },
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Maximum_Cost_Repeat -1", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Maximum_Cost_Repeat must be >= 0.000000" },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Maximum_Cost_Repeat 1.5", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Maximum_Cost_Repeat must be an integer (got 1.5)" },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Maximum_Cost_Repeat -1", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Maximum_Cost_Repeat must be >= 0 (got -1)" },
 ]
 
 [[param]]
@@ -764,14 +765,14 @@ The sample of the initial temperature of the loss: a positive value takes \
 the mean absolute loss of that many states, a value below -1 a deviation \
 sample."""
 checks = [
-  { msg = "{phase}: ASA:ASA: PARAM {key} must be an integer value", doc = "For a value with a fraction." },
+  { msg = "{phase}: ASA:ASA: PARAM {key} must be an integer (got {value})", doc = "For a value with a fraction." },
   { msg = "{phase}: ASA:ASA: PARAM Number_Cost_Samples must not be 0 or -1 (>0 = mean |cost| sample, <-1 = deviation sample)", doc = "For 0 and -1." },
 ]
 examples = [
   { wrap = "params_asa", text = "PARAM Number_Cost_Samples -5" },
 ]
 invalid = [
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Number_Cost_Samples 1.5", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Number_Cost_Samples must be an integer value" },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Number_Cost_Samples 1.5", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Number_Cost_Samples must be an integer (got 1.5)" },
   { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Number_Cost_Samples -1", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Number_Cost_Samples must not be 0 or -1 (>0 = mean |cost| sample, <-1 = deviation sample)" },
 ]
 
@@ -791,15 +792,15 @@ exp(-n/D). Here m = -ln(Temperature_Ratio_Scale), n = \
 ln(Temperature_Anneal_Scale), and User_Temperature_Ratio multiplies m for \
 each dimension."""
 checks = [
-  { msg = "{phase}: ASA:ASA: PARAM {key} must be >= {min}", doc = "For a value below 0, written with six decimals." },
-  { msg = "{phase}: ASA:ASA: PARAM Temperature_Ratio_Scale must be > 0", doc = "For a value of 0." },
+  { msg = "{phase}: ASA:ASA: PARAM {key} must be >= {min} (got {value})", doc = "For a value below 0." },
+  { msg = "{phase}: ASA:ASA: PARAM Temperature_Ratio_Scale must be > 0 (got {value})", doc = "For a value of 0." },
 ]
 examples = [
   { wrap = "params_asa", text = "PARAM Temperature_Ratio_Scale 1e-4" },
 ]
 invalid = [
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Temperature_Ratio_Scale -1", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Temperature_Ratio_Scale must be >= 0.000000" },
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Temperature_Ratio_Scale 0", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Temperature_Ratio_Scale must be > 0" },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Temperature_Ratio_Scale -1", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Temperature_Ratio_Scale must be >= 0 (got -1)" },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Temperature_Ratio_Scale 0", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Temperature_Ratio_Scale must be > 0 (got 0)" },
 ]
 
 [[param]]
@@ -812,15 +813,15 @@ doc = """\
 The scale of the schedule of the temperature of the loss relative to the \
 temperatures of the dimensions; above 0."""
 checks = [
-  { msg = "{phase}: ASA:ASA: PARAM {key} must be >= {min}", doc = "For a value below 0, written with six decimals." },
-  { msg = "{phase}: ASA:ASA: PARAM Cost_Parameter_Scale_Ratio must be > 0", doc = "For a value of 0." },
+  { msg = "{phase}: ASA:ASA: PARAM {key} must be >= {min} (got {value})", doc = "For a value below 0." },
+  { msg = "{phase}: ASA:ASA: PARAM Cost_Parameter_Scale_Ratio must be > 0 (got {value})", doc = "For a value of 0." },
 ]
 examples = [
   { wrap = "params_asa", text = "PARAM Cost_Parameter_Scale_Ratio 0.5" },
 ]
 invalid = [
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Cost_Parameter_Scale_Ratio -1", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Cost_Parameter_Scale_Ratio must be >= 0.000000" },
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Cost_Parameter_Scale_Ratio 0", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Cost_Parameter_Scale_Ratio must be > 0" },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Cost_Parameter_Scale_Ratio -1", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Cost_Parameter_Scale_Ratio must be >= 0 (got -1)" },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Cost_Parameter_Scale_Ratio 0", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Cost_Parameter_Scale_Ratio must be > 0 (got 0)" },
 ]
 
 [[param]]
@@ -833,15 +834,15 @@ doc = """\
 The annealing time scale, through n = ln(Temperature_Anneal_Scale) in the \
 schedule that Temperature_Ratio_Scale describes; above 0."""
 checks = [
-  { msg = "{phase}: ASA:ASA: PARAM {key} must be >= {min}", doc = "For a value below 0, written with six decimals." },
-  { msg = "{phase}: ASA:ASA: PARAM Temperature_Anneal_Scale must be > 0", doc = "For a value of 0." },
+  { msg = "{phase}: ASA:ASA: PARAM {key} must be >= {min} (got {value})", doc = "For a value below 0." },
+  { msg = "{phase}: ASA:ASA: PARAM Temperature_Anneal_Scale must be > 0 (got {value})", doc = "For a value of 0." },
 ]
 examples = [
   { wrap = "params_asa", text = "PARAM Temperature_Anneal_Scale 50" },
 ]
 invalid = [
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Temperature_Anneal_Scale -1", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Temperature_Anneal_Scale must be >= 0.000000" },
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Temperature_Anneal_Scale 0", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Temperature_Anneal_Scale must be > 0" },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Temperature_Anneal_Scale -1", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Temperature_Anneal_Scale must be >= 0 (got -1)" },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Temperature_Anneal_Scale 0", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Temperature_Anneal_Scale must be > 0 (got 0)" },
 ]
 
 [[param]]
@@ -857,14 +858,14 @@ quirk = """\
 The value counts the dimensions from 0, as ASA does, while the index of \
 a per-dimension PARAM key counts them from 1."""
 checks = [
-  { msg = "{phase}: ASA:ASA: PARAM {key} must be an integer value", doc = "For a value with a fraction." },
+  { msg = "{phase}: ASA:ASA: PARAM {key} must be an integer (got {value})", doc = "For a value with a fraction." },
   { msg = "{phase}: ASA:ASA: PARAM Sequential_Parameters must be < the number of OPTIM dimensions ({count})", doc = "For a value not below the number of OPTIM dimensions." },
 ]
 examples = [
   { wrap = "params_asa", text = "PARAM Sequential_Parameters 0" },
 ]
 invalid = [
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Sequential_Parameters 1.5", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Sequential_Parameters must be an integer value" },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Sequential_Parameters 1.5", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Sequential_Parameters must be an integer (got 1.5)" },
   { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Sequential_Parameters 1", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Sequential_Parameters must be < the number of OPTIM dimensions (1)" },
 ]
 
@@ -876,15 +877,15 @@ args = [{ name = "value", kind = "number", min = 0, min_open = true }]
 default = { literal = "1.0" }
 doc = "The initial temperature of every dimension; above 0."
 checks = [
-  { msg = "{phase}: ASA:ASA: PARAM {key} must be >= {min}", doc = "For a value below 0, written with six decimals." },
-  { msg = "{phase}: ASA:ASA: PARAM Initial_Parameter_Temperature must be > 0", doc = "For a value of 0." },
+  { msg = "{phase}: ASA:ASA: PARAM {key} must be >= {min} (got {value})", doc = "For a value below 0." },
+  { msg = "{phase}: ASA:ASA: PARAM Initial_Parameter_Temperature must be > 0 (got {value})", doc = "For a value of 0." },
 ]
 examples = [
   { wrap = "params_asa", text = "PARAM Initial_Parameter_Temperature 0.5" },
 ]
 invalid = [
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Initial_Parameter_Temperature -1", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Initial_Parameter_Temperature must be >= 0.000000" },
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Initial_Parameter_Temperature 0", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Initial_Parameter_Temperature must be > 0" },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Initial_Parameter_Temperature -1", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Initial_Parameter_Temperature must be >= 0 (got -1)" },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Initial_Parameter_Temperature 0", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Initial_Parameter_Temperature must be > 0 (got 0)" },
 ]
 
 [[param]]
@@ -897,15 +898,15 @@ doc = """\
 The number of accepted states between the periodic tests; 0 switches \
 them off."""
 checks = [
-  { msg = "{phase}: ASA:ASA: PARAM {key} must be an integer value", doc = "For a value with a fraction." },
-  { msg = "{phase}: ASA:ASA: PARAM {key} must be >= {min}", doc = "For a value below 0, written with six decimals." },
+  { msg = "{phase}: ASA:ASA: PARAM {key} must be an integer (got {value})", doc = "For a value with a fraction." },
+  { msg = "{phase}: ASA:ASA: PARAM {key} must be >= {min} (got {value})", doc = "For a value below 0." },
 ]
 examples = [
   { wrap = "params_asa", text = "PARAM Acceptance_Frequency_Modulus 50" },
 ]
 invalid = [
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Acceptance_Frequency_Modulus 1.5", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Acceptance_Frequency_Modulus must be an integer value" },
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Acceptance_Frequency_Modulus -1", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Acceptance_Frequency_Modulus must be >= 0.000000" },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Acceptance_Frequency_Modulus 1.5", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Acceptance_Frequency_Modulus must be an integer (got 1.5)" },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Acceptance_Frequency_Modulus -1", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Acceptance_Frequency_Modulus must be >= 0 (got -1)" },
 ]
 
 [[param]]
@@ -918,15 +919,15 @@ doc = """\
 The number of generated states between the periodic tests; 0 switches \
 them off."""
 checks = [
-  { msg = "{phase}: ASA:ASA: PARAM {key} must be an integer value", doc = "For a value with a fraction." },
-  { msg = "{phase}: ASA:ASA: PARAM {key} must be >= {min}", doc = "For a value below 0, written with six decimals." },
+  { msg = "{phase}: ASA:ASA: PARAM {key} must be an integer (got {value})", doc = "For a value with a fraction." },
+  { msg = "{phase}: ASA:ASA: PARAM {key} must be >= {min} (got {value})", doc = "For a value below 0." },
 ]
 examples = [
   { wrap = "params_asa", text = "PARAM Generated_Frequency_Modulus 500" },
 ]
 invalid = [
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Generated_Frequency_Modulus 1.5", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Generated_Frequency_Modulus must be an integer value" },
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Generated_Frequency_Modulus -1", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Generated_Frequency_Modulus must be >= 0.000000" },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Generated_Frequency_Modulus 1.5", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Generated_Frequency_Modulus must be an integer (got 1.5)" },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Generated_Frequency_Modulus -1", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Generated_Frequency_Modulus must be >= 0 (got -1)" },
 ]
 
 [[param]]
@@ -940,14 +941,14 @@ The reannealing of the temperature of the loss: 0 switches it off, 1 is \
 the default rule, and a value above 1 or below -1 selects a \
 deviation-sample variant."""
 checks = [
-  { msg = "{phase}: ASA:ASA: PARAM {key} must be an integer value", doc = "For a value with a fraction." },
+  { msg = "{phase}: ASA:ASA: PARAM {key} must be an integer (got {value})", doc = "For a value with a fraction." },
   { msg = "{phase}: ASA:ASA: PARAM Reanneal_Cost == -1 is invalid upstream (use 0 = off, 1 = default, >1 or <-1 = sample variants)", doc = "For -1." },
 ]
 examples = [
   { wrap = "params_asa", text = "PARAM Reanneal_Cost 0" },
 ]
 invalid = [
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Reanneal_Cost 1.5", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Reanneal_Cost must be an integer value" },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Reanneal_Cost 1.5", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Reanneal_Cost must be an integer (got 1.5)" },
   { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Reanneal_Cost -1", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Reanneal_Cost == -1 is invalid upstream (use 0 = off, 1 = default, >1 or <-1 = sample variants)" },
 ]
 
@@ -961,17 +962,17 @@ doc = """\
 1 adapts the temperature of each dimension to its tangent sensitivity; 0 \
 does not."""
 checks = [
-  { msg = "{phase}: ASA:ASA: PARAM {key} must be an integer value", doc = "For a value with a fraction." },
-  { msg = "{phase}: ASA:ASA: PARAM {key} must be >= {min}", doc = "For a value below 0, written with six decimals." },
-  { msg = "{phase}: ASA:ASA: PARAM {key} must be <= {max}", doc = "For a value above 1, written with six decimals." },
+  { msg = "{phase}: ASA:ASA: PARAM {key} must be an integer (got {value})", doc = "For a value with a fraction." },
+  { msg = "{phase}: ASA:ASA: PARAM {key} must be >= {min} (got {value})", doc = "For a value below 0." },
+  { msg = "{phase}: ASA:ASA: PARAM {key} must be <= {max} (got {value})", doc = "For a value above 1." },
 ]
 examples = [
   { wrap = "params_asa", text = "PARAM Reanneal_Parameters 0" },
 ]
 invalid = [
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Reanneal_Parameters 1.5", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Reanneal_Parameters must be an integer value" },
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Reanneal_Parameters -1", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Reanneal_Parameters must be >= 0.000000" },
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Reanneal_Parameters 2", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Reanneal_Parameters must be <= 1.000000" },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Reanneal_Parameters 1.5", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Reanneal_Parameters must be an integer (got 1.5)" },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Reanneal_Parameters -1", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Reanneal_Parameters must be >= 0 (got -1)" },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Reanneal_Parameters 2", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Reanneal_Parameters must be <= 1 (got 2)" },
 ]
 
 [[param]]
@@ -991,14 +992,14 @@ a dimension is refused. Under OPTIM_SCALE AUTO that holds up to 1, and up \
 to 0.5 when Curvature_0 is 0 or -1; under NONE the limit depends on each \
 box."""
 checks = [
-  { msg = "{phase}: ASA:ASA: PARAM {key} must be >= {min}", doc = "For a value below 0, written with six decimals." },
+  { msg = "{phase}: ASA:ASA: PARAM {key} must be >= {min} (got {value})", doc = "For a value below 0." },
   { msg = "{phase} ASA:ASA: ASA's finite-difference probes -- the reannealing and exit tangents at (1 + Delta) x, or (1 - Delta) x when that lies outside the box{note} -- would be evaluated outside the OPTIM box of these dimensions:{list}\n  Lower the Delta{why}.", doc = "At startup: a probe falls outside the OPTIM box of a dimension. {note} adds the probes of the exit curvature when Curvature_0 is 0 or -1, and {list} has a line for each such dimension, with the largest Delta that fits it. {why} adds, under OPTIM_SCALE NONE, the limits of OPTIM_SCALE AUTO." },
 ]
 examples = [
   { wrap = "params_asa", text = "PARAM Delta_X 1e-4" },
 ]
 invalid = [
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Delta_X -1", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Delta_X must be >= 0.000000" },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Delta_X -1", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Delta_X must be >= 0 (got -1)" },
   { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Delta_X 1.5", error = "the STRATEGY-level optimiser ASA:ASA: ASA's finite-difference probes -- the reannealing and exit tangents at (1 + Delta) x, or (1 - Delta) x when that lies outside the box -- would be evaluated outside the OPTIM box of these dimensions:\n  - CGRID2B[1]: OPTIM box [0.5, 1.5] (internal [0, 1]), PARAM Delta_X 1.5: a probe of CGRID2B[1] = 1.2 lies outside the box; Delta_X up to 1 fits it\n  Lower the Delta.", doc = "Above 1 under OPTIM_SCALE AUTO." },
   { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Curvature_0 0\nPARAM Delta_X 0.6", error = "the STRATEGY-level optimiser ASA:ASA: ASA's finite-difference probes -- the reannealing and exit tangents at (1 + Delta) x, or (1 - Delta) x when that lies outside the box, and the exit curvature at x +- Delta |x|, or x -+ Delta |x| and x -+ 2 Delta |x| next to a bound (Curvature_0 0) -- would be evaluated outside the OPTIM box of these dimensions:\n  - CGRID2B[1]: OPTIM box [0.5, 1.5] (internal [0, 1]), PARAM Delta_X 0.6: a probe of CGRID2B[1] = 1.3125 lies outside the box; Delta_X up to 0.5 fits it\n  Lower the Delta.", doc = "Above 0.5 under OPTIM_SCALE AUTO with Curvature_0 0." },
 ]
@@ -1013,19 +1014,19 @@ doc = """\
 Only 0 is accepted: tadah hpo provides no analytic tangents, and the \
 reannealing takes them by finite differences (Delta_X)."""
 checks = [
-  { msg = "{phase}: ASA:ASA: PARAM {key} must be an integer value", doc = "For a value with a fraction." },
-  { msg = "{phase}: ASA:ASA: PARAM {key} must be >= {min}", doc = "For a value below 0, written with six decimals." },
-  { msg = "{phase}: ASA:ASA: PARAM {key} must be <= {max}", doc = "For a value above 1, written with six decimals." },
-  { msg = "{phase}: ASA:ASA: PARAM User_Tangents 1 is unsupported: the HPO host cannot supply analytic tangents (reanneal uses Delta_X finite differences)", doc = "For 1." },
+  { msg = "{phase}: ASA:ASA: PARAM {key} must be an integer (got {value})", doc = "For a value with a fraction." },
+  { msg = "{phase}: ASA:ASA: PARAM {key} must be >= {min} (got {value})", doc = "For a value below 0." },
+  { msg = "{phase}: ASA:ASA: PARAM {key} must be <= {max} (got {value})", doc = "For a value above 1." },
+  { msg = "{phase}: ASA:ASA: PARAM User_Tangents takes 0 only: tadah hpo gives ASA no analytic tangents, and the reannealing takes them by finite differences (PARAM Delta_X)", doc = "For 1." },
 ]
 examples = [
   { wrap = "params_asa", text = "PARAM User_Tangents 0" },
 ]
 invalid = [
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM User_Tangents 1.5", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM User_Tangents must be an integer value" },
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM User_Tangents -1", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM User_Tangents must be >= 0.000000" },
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM User_Tangents 2", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM User_Tangents must be <= 1.000000" },
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM User_Tangents 1", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM User_Tangents 1 is unsupported: the HPO host cannot supply analytic tangents (reanneal uses Delta_X finite differences)" },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM User_Tangents 1.5", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM User_Tangents must be an integer (got 1.5)" },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM User_Tangents -1", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM User_Tangents must be >= 0 (got -1)" },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM User_Tangents 2", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM User_Tangents must be <= 1 (got 2)" },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM User_Tangents 1", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM User_Tangents takes 0 only: tadah hpo gives ASA no analytic tangents, and the reannealing takes them by finite differences (PARAM Delta_X)" },
 ]
 
 [[param]]
@@ -1042,17 +1043,17 @@ The full curvature costs a number of evaluations of the order of the \
 square of the number of dimensions. ASA's own default is 0; the default \
 of tadah hpo is 1."""
 checks = [
-  { msg = "{phase}: ASA:ASA: PARAM {key} must be an integer value", doc = "For a value with a fraction." },
-  { msg = "{phase}: ASA:ASA: PARAM {key} must be >= {min}", doc = "For a value below -1, written with six decimals." },
-  { msg = "{phase}: ASA:ASA: PARAM {key} must be <= {max}", doc = "For a value above 1, written with six decimals." },
+  { msg = "{phase}: ASA:ASA: PARAM {key} must be an integer (got {value})", doc = "For a value with a fraction." },
+  { msg = "{phase}: ASA:ASA: PARAM {key} must be >= {min} (got {value})", doc = "For a value below -1." },
+  { msg = "{phase}: ASA:ASA: PARAM {key} must be <= {max} (got {value})", doc = "For a value above 1." },
 ]
 examples = [
   { wrap = "params_asa", text = "PARAM Curvature_0 0" },
 ]
 invalid = [
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Curvature_0 1.5", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Curvature_0 must be an integer value" },
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Curvature_0 -2", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Curvature_0 must be >= -1.000000" },
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Curvature_0 2", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Curvature_0 must be <= 1.000000" },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Curvature_0 1.5", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Curvature_0 must be an integer (got 1.5)" },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Curvature_0 -2", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Curvature_0 must be >= -1 (got -2)" },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Curvature_0 2", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Curvature_0 must be <= 1 (got 2)" },
 ]
 
 [[param]]
@@ -1065,15 +1066,15 @@ doc = """\
 The quench exponent of the temperature of the loss; a value above 1 \
 quenches. Above 0."""
 checks = [
-  { msg = "{phase}: ASA:ASA: PARAM {key} must be >= {min}", doc = "For a value below 0, written with six decimals." },
-  { msg = "{phase}: ASA:ASA: PARAM User_Quench_Cost_Scale must be > 0", doc = "For a value of 0." },
+  { msg = "{phase}: ASA:ASA: PARAM {key} must be >= {min} (got {value})", doc = "For a value below 0." },
+  { msg = "{phase}: ASA:ASA: PARAM User_Quench_Cost_Scale must be > 0 (got {value})", doc = "For a value of 0." },
 ]
 examples = [
   { wrap = "params_asa", text = "PARAM User_Quench_Cost_Scale 2" },
 ]
 invalid = [
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM User_Quench_Cost_Scale -1", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM User_Quench_Cost_Scale must be >= 0.000000" },
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM User_Quench_Cost_Scale 0", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM User_Quench_Cost_Scale must be > 0" },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM User_Quench_Cost_Scale -1", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM User_Quench_Cost_Scale must be >= 0 (got -1)" },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM User_Quench_Cost_Scale 0", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM User_Quench_Cost_Scale must be > 0 (got 0)" },
 ]
 
 [[param]]
@@ -1087,17 +1088,17 @@ doc = """\
 The quench exponent of each dimension; a value above 1 quenches and \
 voids ASA's sampling proof. Above 0."""
 checks = [
-  { msg = "{phase}: ASA:ASA: PARAM {key} must be >= {min}", doc = "For a value below 0, written with six decimals." },
-  { msg = "{phase}: ASA:ASA: PARAM {key} must be > 0", doc = "For 0, as the value of every dimension or of one." },
+  { msg = "{phase}: ASA:ASA: PARAM {key} must be >= {min} (got {value})", doc = "For a value below 0." },
+  { msg = "{phase}: ASA:ASA: PARAM {key} must be > 0 (got {value})", doc = "For 0, as the value of every dimension or of one." },
 ]
 examples = [
   { wrap = "params_asa", text = "PARAM User_Quench_Param_Scale 1.5" },
   { wrap = "params_asa", text = "PARAM User_Quench_Param_Scale[1] 1.5", doc = "The value of the first dimension only." },
 ]
 invalid = [
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM User_Quench_Param_Scale -1", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM User_Quench_Param_Scale must be >= 0.000000" },
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM User_Quench_Param_Scale 0", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM User_Quench_Param_Scale must be > 0" },
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM User_Quench_Param_Scale[1] 0", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM User_Quench_Param_Scale[1] must be > 0" },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM User_Quench_Param_Scale -1", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM User_Quench_Param_Scale must be >= 0 (got -1)" },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM User_Quench_Param_Scale 0", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM User_Quench_Param_Scale must be > 0 (got 0)" },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM User_Quench_Param_Scale[1] 0", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM User_Quench_Param_Scale[1] must be > 0 (got 0)" },
 ]
 
 [[param]]
@@ -1111,17 +1112,17 @@ doc = """\
 A per-dimension multiplier of m = -ln(Temperature_Ratio_Scale) in the \
 schedule that Temperature_Ratio_Scale describes; above 0."""
 checks = [
-  { msg = "{phase}: ASA:ASA: PARAM {key} must be >= {min}", doc = "For a value below 0, written with six decimals." },
-  { msg = "{phase}: ASA:ASA: PARAM {key} must be > 0", doc = "For 0, as the value of every dimension or of one." },
+  { msg = "{phase}: ASA:ASA: PARAM {key} must be >= {min} (got {value})", doc = "For a value below 0." },
+  { msg = "{phase}: ASA:ASA: PARAM {key} must be > 0 (got {value})", doc = "For 0, as the value of every dimension or of one." },
 ]
 examples = [
   { wrap = "params_asa", text = "PARAM User_Temperature_Ratio 2" },
   { wrap = "params_asa", text = "PARAM User_Temperature_Ratio[1] 2", doc = "The value of the first dimension only." },
 ]
 invalid = [
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM User_Temperature_Ratio -1", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM User_Temperature_Ratio must be >= 0.000000" },
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM User_Temperature_Ratio 0", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM User_Temperature_Ratio must be > 0" },
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM User_Temperature_Ratio[1] 0", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM User_Temperature_Ratio[1] must be > 0" },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM User_Temperature_Ratio -1", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM User_Temperature_Ratio must be >= 0 (got -1)" },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM User_Temperature_Ratio 0", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM User_Temperature_Ratio must be > 0 (got 0)" },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM User_Temperature_Ratio[1] 0", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM User_Temperature_Ratio[1] must be > 0 (got 0)" },
 ]
 
 [[param]]
@@ -1140,8 +1141,8 @@ a dimension is refused. Under OPTIM_SCALE AUTO that holds up to 1, and up \
 to 0.5 when Curvature_0 is 0 or -1; under NONE the limit depends on each \
 box."""
 checks = [
-  { msg = "{phase}: ASA:ASA: PARAM {key} must be >= {min}", doc = "For a value below 0, written with six decimals." },
-  { msg = "{phase}: ASA:ASA: PARAM {key} must be > 0", doc = "For 0, as the value of every dimension or of one." },
+  { msg = "{phase}: ASA:ASA: PARAM {key} must be >= {min} (got {value})", doc = "For a value below 0." },
+  { msg = "{phase}: ASA:ASA: PARAM {key} must be > 0 (got {value})", doc = "For 0, as the value of every dimension or of one." },
   { msg = "{phase} ASA:ASA: ASA's finite-difference probes -- the reannealing and exit tangents at (1 + Delta) x, or (1 - Delta) x when that lies outside the box{note} -- would be evaluated outside the OPTIM box of these dimensions:{list}\n  Lower the Delta{why}.", doc = "At startup: a probe falls outside the OPTIM box of a dimension. {note} adds the probes of the exit curvature when Curvature_0 is 0 or -1, and {list} has a line for each such dimension, with the largest Delta that fits it. {why} adds, under OPTIM_SCALE NONE, the limits of OPTIM_SCALE AUTO." },
 ]
 examples = [
@@ -1149,9 +1150,9 @@ examples = [
   { wrap = "params_asa", text = "PARAM User_Delta_Parameter[1] 1e-4", doc = "The value of the first dimension only." },
 ]
 invalid = [
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM User_Delta_Parameter -1", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM User_Delta_Parameter must be >= 0.000000" },
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM User_Delta_Parameter 0", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM User_Delta_Parameter must be > 0" },
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM User_Delta_Parameter[1] 0", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM User_Delta_Parameter[1] must be > 0" },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM User_Delta_Parameter -1", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM User_Delta_Parameter must be >= 0 (got -1)" },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM User_Delta_Parameter 0", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM User_Delta_Parameter must be > 0 (got 0)" },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM User_Delta_Parameter[1] 0", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM User_Delta_Parameter[1] must be > 0 (got 0)" },
   { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM User_Delta_Parameter[1] 1.5", error = "the STRATEGY-level optimiser ASA:ASA: ASA's finite-difference probes -- the reannealing and exit tangents at (1 + Delta) x, or (1 - Delta) x when that lies outside the box -- would be evaluated outside the OPTIM box of these dimensions:\n  - CGRID2B[1]: OPTIM box [0.5, 1.5] (internal [0, 1]), PARAM User_Delta_Parameter[1] 1.5: a probe of CGRID2B[1] = 1.2 lies outside the box; User_Delta_Parameter[1] up to 1 fits it\n  Lower the Delta.", doc = "Above 1 under OPTIM_SCALE AUTO." },
 ]
 
@@ -1164,17 +1165,17 @@ args = [{ name = "value", kind = "number", min = 0, min_open = true }]
 default = { text = "the value of Initial_Parameter_Temperature" }
 doc = "The initial temperature of each dimension; above 0."
 checks = [
-  { msg = "{phase}: ASA:ASA: PARAM {key} must be >= {min}", doc = "For a value below 0, written with six decimals." },
-  { msg = "{phase}: ASA:ASA: PARAM {key} must be > 0", doc = "For 0, as the value of every dimension or of one." },
+  { msg = "{phase}: ASA:ASA: PARAM {key} must be >= {min} (got {value})", doc = "For a value below 0." },
+  { msg = "{phase}: ASA:ASA: PARAM {key} must be > 0 (got {value})", doc = "For 0, as the value of every dimension or of one." },
 ]
 examples = [
   { wrap = "params_asa", text = "PARAM User_Parameter_Temperature 0.5" },
   { wrap = "params_asa", text = "PARAM User_Parameter_Temperature[1] 0.5", doc = "The value of the first dimension only." },
 ]
 invalid = [
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM User_Parameter_Temperature -1", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM User_Parameter_Temperature must be >= 0.000000" },
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM User_Parameter_Temperature 0", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM User_Parameter_Temperature must be > 0" },
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM User_Parameter_Temperature[1] 0", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM User_Parameter_Temperature[1] must be > 0" },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM User_Parameter_Temperature -1", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM User_Parameter_Temperature must be >= 0 (got -1)" },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM User_Parameter_Temperature 0", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM User_Parameter_Temperature must be > 0 (got 0)" },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM User_Parameter_Temperature[1] 0", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM User_Parameter_Temperature[1] must be > 0 (got 0)" },
 ]
 
 [[param]]
@@ -1186,15 +1187,15 @@ default = { literal = "1" }
 doc = """\
 The number of best distinct minima ASA keeps; the journal reports them."""
 checks = [
-  { msg = "{phase}: ASA:ASA: PARAM {key} must be an integer value", doc = "For a value with a fraction." },
-  { msg = "{phase}: ASA:ASA: PARAM {key} must be >= {min}", doc = "For a value below 1, written with six decimals." },
+  { msg = "{phase}: ASA:ASA: PARAM {key} must be an integer (got {value})", doc = "For a value with a fraction." },
+  { msg = "{phase}: ASA:ASA: PARAM {key} must be >= {min} (got {value})", doc = "For a value below 1." },
 ]
 examples = [
   { wrap = "params_asa", text = "PARAM Multi_Number 3" },
 ]
 invalid = [
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Multi_Number 1.5", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Multi_Number must be an integer value" },
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Multi_Number 0", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Multi_Number must be >= 1.000000" },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Multi_Number 1.5", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Multi_Number must be an integer (got 1.5)" },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Multi_Number 0", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Multi_Number must be >= 1 (got 0)" },
 ]
 
 [[param]]
@@ -1207,17 +1208,17 @@ doc = """\
 1 keeps a minimum only when its loss is strictly lower, 0 also when it \
 is equal."""
 checks = [
-  { msg = "{phase}: ASA:ASA: PARAM {key} must be an integer value", doc = "For a value with a fraction." },
-  { msg = "{phase}: ASA:ASA: PARAM {key} must be >= {min}", doc = "For a value below 0, written with six decimals." },
-  { msg = "{phase}: ASA:ASA: PARAM {key} must be <= {max}", doc = "For a value above 1, written with six decimals." },
+  { msg = "{phase}: ASA:ASA: PARAM {key} must be an integer (got {value})", doc = "For a value with a fraction." },
+  { msg = "{phase}: ASA:ASA: PARAM {key} must be >= {min} (got {value})", doc = "For a value below 0." },
+  { msg = "{phase}: ASA:ASA: PARAM {key} must be <= {max} (got {value})", doc = "For a value above 1." },
 ]
 examples = [
   { wrap = "params_asa", text = "PARAM Multi_Specify 0" },
 ]
 invalid = [
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Multi_Specify 1.5", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Multi_Specify must be an integer value" },
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Multi_Specify -1", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Multi_Specify must be >= 0.000000" },
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Multi_Specify 2", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Multi_Specify must be <= 1.000000" },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Multi_Specify 1.5", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Multi_Specify must be an integer (got 1.5)" },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Multi_Specify -1", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Multi_Specify must be >= 0 (got -1)" },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Multi_Specify 2", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Multi_Specify must be <= 1 (got 2)" },
 ]
 
 [[param]]
@@ -1232,14 +1233,14 @@ The distance in each dimension below which two minima count as one, in the \
 coordinates of the search: a fraction of the width of the OPTIM box under \
 OPTIM_SCALE AUTO. 0 stands for the machine epsilon of a double."""
 checks = [
-  { msg = "{phase}: ASA:ASA: PARAM {key} must be >= {min}", doc = "For a value below 0, written with six decimals." },
+  { msg = "{phase}: ASA:ASA: PARAM {key} must be >= {min} (got {value})", doc = "For a value below 0." },
 ]
 examples = [
   { wrap = "params_asa", text = "PARAM Multi_Grid 0.01" },
   { wrap = "params_asa", text = "PARAM Multi_Grid[1] 0.01", doc = "The value of the first dimension only." },
 ]
 invalid = [
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Multi_Grid -1", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Multi_Grid must be >= 0.000000" },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Multi_Grid -1", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Multi_Grid must be >= 0 (got -1)" },
 ]
 
 [[param]]
@@ -1252,15 +1253,15 @@ doc = """\
 The number of evaluations ASA keeps in its cache, first in, first out; 0 \
 switches the cache off."""
 checks = [
-  { msg = "{phase}: ASA:ASA: PARAM {key} must be an integer value", doc = "For a value with a fraction." },
-  { msg = "{phase}: ASA:ASA: PARAM {key} must be >= {min}", doc = "For a value below 0, written with six decimals." },
+  { msg = "{phase}: ASA:ASA: PARAM {key} must be an integer (got {value})", doc = "For a value with a fraction." },
+  { msg = "{phase}: ASA:ASA: PARAM {key} must be >= {min} (got {value})", doc = "For a value below 0." },
 ]
 examples = [
   { wrap = "params_asa", text = "PARAM Queue_Size 100" },
 ]
 invalid = [
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Queue_Size 1.5", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Queue_Size must be an integer value" },
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Queue_Size -1", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Queue_Size must be >= 0.000000" },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Queue_Size 1.5", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Queue_Size must be an integer (got 1.5)" },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Queue_Size -1", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Queue_Size must be >= 0 (got -1)" },
 ]
 
 [[param]]
@@ -1275,14 +1276,14 @@ The distance in each dimension below which two points count as one for the \
 cache, in the coordinates of the search: a fraction of the width of the \
 OPTIM box under OPTIM_SCALE AUTO."""
 checks = [
-  { msg = "{phase}: ASA:ASA: PARAM {key} must be >= {min}", doc = "For a value below 0, written with six decimals." },
+  { msg = "{phase}: ASA:ASA: PARAM {key} must be >= {min} (got {value})", doc = "For a value below 0." },
 ]
 examples = [
   { wrap = "params_asa", text = "PARAM Queue_Resolution 1e-3" },
   { wrap = "params_asa", text = "PARAM Queue_Resolution[1] 1e-3", doc = "The value of the first dimension only." },
 ]
 invalid = [
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Queue_Resolution -1", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Queue_Resolution must be >= 0.000000" },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Queue_Resolution -1", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Queue_Resolution must be >= 0 (got -1)" },
 ]
 
 [[param]]
@@ -1296,15 +1297,15 @@ The initial number of states generated in one block; with more than one, \
 a block is evaluated concurrently on the THREADS workers, which changes \
 the sampling."""
 checks = [
-  { msg = "{phase}: ASA:ASA: PARAM {key} must be an integer value", doc = "For a value with a fraction." },
-  { msg = "{phase}: ASA:ASA: PARAM {key} must be >= {min}", doc = "For a value below 1, written with six decimals." },
+  { msg = "{phase}: ASA:ASA: PARAM {key} must be an integer (got {value})", doc = "For a value with a fraction." },
+  { msg = "{phase}: ASA:ASA: PARAM {key} must be >= {min} (got {value})", doc = "For a value below 1." },
 ]
 examples = [
   { wrap = "params_asa", text = "PARAM Gener_Block 2" },
 ]
 invalid = [
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Gener_Block 1.5", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Gener_Block must be an integer value" },
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Gener_Block 0", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Gener_Block must be >= 1.000000" },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Gener_Block 1.5", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Gener_Block must be an integer (got 1.5)" },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Gener_Block 0", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Gener_Block must be >= 1 (got 0)" },
 ]
 
 [[param]]
@@ -1317,16 +1318,16 @@ doc = """\
 The largest block size, not below Gener_Block; the adaptive resizing \
 keeps a block between 1 and this value."""
 checks = [
-  { msg = "{phase}: ASA:ASA: PARAM {key} must be an integer value", doc = "For a value with a fraction." },
-  { msg = "{phase}: ASA:ASA: PARAM {key} must be >= {min}", doc = "For a value below 1, written with six decimals." },
+  { msg = "{phase}: ASA:ASA: PARAM {key} must be an integer (got {value})", doc = "For a value with a fraction." },
+  { msg = "{phase}: ASA:ASA: PARAM {key} must be >= {min} (got {value})", doc = "For a value below 1." },
   { msg = "{phase}: ASA:ASA: PARAM Gener_Block_Max must be >= Gener_Block (buffers are sized once by the cap)", doc = "For a value below Gener_Block." },
 ]
 examples = [
   { wrap = "params_asa", text = "PARAM Gener_Block_Max 4" },
 ]
 invalid = [
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Gener_Block_Max 1.5", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Gener_Block_Max must be an integer value" },
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Gener_Block_Max 0", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Gener_Block_Max must be >= 1.000000" },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Gener_Block_Max 1.5", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Gener_Block_Max must be an integer (got 1.5)" },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Gener_Block_Max 0", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Gener_Block_Max must be >= 1 (got 0)" },
   { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Gener_Block 4\nPARAM Gener_Block_Max 2", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Gener_Block_Max must be >= Gener_Block (buffers are sized once by the cap)" },
 ]
 
@@ -1340,15 +1341,15 @@ doc = """\
 The moving-average window of the adaptive block resizing; 0 switches the \
 resizing off, and every block holds Gener_Block states."""
 checks = [
-  { msg = "{phase}: ASA:ASA: PARAM {key} must be an integer value", doc = "For a value with a fraction." },
-  { msg = "{phase}: ASA:ASA: PARAM {key} must be >= {min}", doc = "For a value below 0, written with six decimals." },
+  { msg = "{phase}: ASA:ASA: PARAM {key} must be an integer (got {value})", doc = "For a value with a fraction." },
+  { msg = "{phase}: ASA:ASA: PARAM {key} must be >= {min} (got {value})", doc = "For a value below 0." },
 ]
 examples = [
   { wrap = "params_asa", text = "PARAM Gener_Mov_Avr 0" },
 ]
 invalid = [
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Gener_Mov_Avr 1.5", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Gener_Mov_Avr must be an integer value" },
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Gener_Mov_Avr -1", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Gener_Mov_Avr must be >= 0.000000" },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Gener_Mov_Avr 1.5", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Gener_Mov_Avr must be an integer (got 1.5)" },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Gener_Mov_Avr -1", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Gener_Mov_Avr must be >= 0 (got -1)" },
 ]
 
 # --------------------------------------------- ASA options not available ----
@@ -1360,7 +1361,7 @@ name = "Include_Integer_Parameters"
 optimizers = ["ASA:ASA"]
 why = "every OPTIM dimension of tadah hpo takes real values, so ASA has no integer dimension to include."
 invalid = [
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Include_Integer_Parameters 1", error = "the STRATEGY-level optimiser: ASA:ASA: unknown PARAM 'Include_Integer_Parameters'. 'Include_Integer_Parameters' is not available: every OPTIM dimension of tadah hpo takes real values, so ASA has no integer dimension to include." },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Include_Integer_Parameters 1", error = "the STRATEGY-level optimiser: ASA:ASA does not take the ASA option PARAM Include_Integer_Parameters: every OPTIM dimension of tadah hpo takes real values, so ASA has no integer dimension to include." },
 ]
 
 [[param_excluded]]
@@ -1369,106 +1370,106 @@ name = "User_Initial_Parameters"
 optimizers = ["ASA:ASA"]
 why = "ASA starts at the first starting point of the INIT block (the values of the training configuration without one); METHOD RANDOM 1 in the INIT block draws a random start from its SEED."
 invalid = [
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM User_Initial_Parameters 1", error = "the STRATEGY-level optimiser: ASA:ASA: unknown PARAM 'User_Initial_Parameters'. 'User_Initial_Parameters' is not available: ASA starts at the first starting point of the INIT block (the values of the training configuration without one); METHOD RANDOM 1 in the INIT block draws a random start from its SEED." },
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM User_Initial_Parameters 0", error = "the STRATEGY-level optimiser: ASA:ASA: unknown PARAM 'User_Initial_Parameters'. 'User_Initial_Parameters' is not available: ASA starts at the first starting point of the INIT block (the values of the training configuration without one); METHOD RANDOM 1 in the INIT block draws a random start from its SEED." },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM User_Initial_Parameters 1", error = "the STRATEGY-level optimiser: ASA:ASA does not take the ASA option PARAM User_Initial_Parameters: ASA starts at the first starting point of the INIT block (the values of the training configuration without one); METHOD RANDOM 1 in the INIT block draws a random start from its SEED." },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM User_Initial_Parameters 0", error = "the STRATEGY-level optimiser: ASA:ASA does not take the ASA option PARAM User_Initial_Parameters: ASA starts at the first starting point of the INIT block (the values of the training configuration without one); METHOD RANDOM 1 in the INIT block draws a random start from its SEED." },
 ]
 
 [[param_excluded]]
 id = "PARAM.ASA:ASA.Coarse_Resolution"
 name = "Coarse_Resolution"
 optimizers = ["ASA:ASA"]
-why = "ASA_RESOLUTION is compiled out: the grid snap has no trajectory-neutral default. Use Queue_Resolution (ASA_QUEUE) for dedup."
+why = "it rounds each generated value to a grid of that width and makes ASA's queue compare points within it in place of Queue_Resolution; the ASA of tadah hpo leaves it out. PARAM Queue_Size with Queue_Resolution reuses the loss of a point within Queue_Resolution of one of the last Queue_Size points."
 invalid = [
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Coarse_Resolution 1", error = "the STRATEGY-level optimiser: ASA:ASA: unknown PARAM 'Coarse_Resolution'. 'Coarse_Resolution' is not available: ASA_RESOLUTION is compiled out: the grid snap has no trajectory-neutral default. Use Queue_Resolution (ASA_QUEUE) for dedup." },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Coarse_Resolution 1", error = "the STRATEGY-level optimiser: ASA:ASA does not take the ASA option PARAM Coarse_Resolution: it rounds each generated value to a grid of that width and makes ASA's queue compare points within it in place of Queue_Resolution; the ASA of tadah hpo leaves it out. PARAM Queue_Size with Queue_Resolution reuses the loss of a point within Queue_Resolution of one of the last Queue_Size points." },
 ]
 
 [[param_excluded]]
 id = "PARAM.ASA:ASA.User_Cost_Temperature"
 name = "User_Cost_Temperature"
 optimizers = ["ASA:ASA"]
-why = "USER_INITIAL_COST_TEMP is compiled out: it replaces the Number_Cost_Samples initial cost-temperature sampling (not trajectory-neutral)."
+why = "it gives the initial cost temperature in place of ASA's sampling of it over Number_Cost_Samples states, which tadah hpo runs (PARAM Number_Cost_Samples)."
 invalid = [
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM User_Cost_Temperature 1", error = "the STRATEGY-level optimiser: ASA:ASA: unknown PARAM 'User_Cost_Temperature'. 'User_Cost_Temperature' is not available: USER_INITIAL_COST_TEMP is compiled out: it replaces the Number_Cost_Samples initial cost-temperature sampling (not trajectory-neutral)." },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM User_Cost_Temperature 1", error = "the STRATEGY-level optimiser: ASA:ASA does not take the ASA option PARAM User_Cost_Temperature: it gives the initial cost temperature in place of ASA's sampling of it over Number_Cost_Samples states, which tadah hpo runs (PARAM Number_Cost_Samples)." },
 ]
 
 [[param_excluded]]
 id = "PARAM.ASA:ASA.Asa_Recursive_Level"
 name = "Asa_Recursive_Level"
 optimizers = ["ASA:ASA"]
-why = "recursive/self-optimizing ASA (SELF_OPTIMIZE) is not built."
+why = "it belongs to ASA's recursive optimisation of its own options, which the ASA of tadah hpo leaves out."
 invalid = [
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Asa_Recursive_Level 1", error = "the STRATEGY-level optimiser: ASA:ASA: unknown PARAM 'Asa_Recursive_Level'. 'Asa_Recursive_Level' is not available: recursive/self-optimizing ASA (SELF_OPTIMIZE) is not built." },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Asa_Recursive_Level 1", error = "the STRATEGY-level optimiser: ASA:ASA does not take the ASA option PARAM Asa_Recursive_Level: it belongs to ASA's recursive optimisation of its own options, which the ASA of tadah hpo leaves out." },
 ]
 
 [[param_excluded]]
 id = "PARAM.ASA:ASA.Asymp_Exp_Param"
 name = "Asymp_Exp_Param"
 optimizers = ["ASA:ASA"]
-why = "USER_ACCEPT_ASYMP_EXP is compiled out: it changes the acceptance law globally."
+why = "it is the parameter of an asymptotic form of the acceptance test (1 gives the Boltzmann test), which the ASA of tadah hpo leaves out: it accepts by the Boltzmann test."
 invalid = [
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Asymp_Exp_Param 1", error = "the STRATEGY-level optimiser: ASA:ASA: unknown PARAM 'Asymp_Exp_Param'. 'Asymp_Exp_Param' is not available: USER_ACCEPT_ASYMP_EXP is compiled out: it changes the acceptance law globally." },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Asymp_Exp_Param 1", error = "the STRATEGY-level optimiser: ASA:ASA does not take the ASA option PARAM Asymp_Exp_Param: it is the parameter of an asymptotic form of the acceptance test (1 gives the Boltzmann test), which the ASA of tadah hpo leaves out: it accepts by the Boltzmann test." },
 ]
 
 [[param_excluded]]
 id = "PARAM.ASA:ASA.Fit_Local"
 name = "Fit_Local"
 optimizers = ["ASA:ASA"]
-why = "FITLOC lives in ASA's un-vendored user module (asa_usr.c)."
+why = "it belongs to the local simplex fit that ASA's user module runs after the anneal, and tadah hpo does not include that module."
 invalid = [
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Fit_Local 1", error = "the STRATEGY-level optimiser: ASA:ASA: unknown PARAM 'Fit_Local'. 'Fit_Local' is not available: FITLOC lives in ASA's un-vendored user module (asa_usr.c)." },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Fit_Local 1", error = "the STRATEGY-level optimiser: ASA:ASA does not take the ASA option PARAM Fit_Local: it belongs to the local simplex fit that ASA's user module runs after the anneal, and tadah hpo does not include that module." },
 ]
 
 [[param_excluded]]
 id = "PARAM.ASA:ASA.Iter_Max"
 name = "Iter_Max"
 optimizers = ["ASA:ASA"]
-why = "FITLOC lives in ASA's un-vendored user module (asa_usr.c)."
+why = "it belongs to the local simplex fit that ASA's user module runs after the anneal, and tadah hpo does not include that module."
 invalid = [
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Iter_Max 1", error = "the STRATEGY-level optimiser: ASA:ASA: unknown PARAM 'Iter_Max'. 'Iter_Max' is not available: FITLOC lives in ASA's un-vendored user module (asa_usr.c)." },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Iter_Max 1", error = "the STRATEGY-level optimiser: ASA:ASA does not take the ASA option PARAM Iter_Max: it belongs to the local simplex fit that ASA's user module runs after the anneal, and tadah hpo does not include that module." },
 ]
 
 [[param_excluded]]
 id = "PARAM.ASA:ASA.Penalty"
 name = "Penalty"
 optimizers = ["ASA:ASA"]
-why = "FITLOC lives in ASA's un-vendored user module (asa_usr.c)."
+why = "it belongs to the local simplex fit that ASA's user module runs after the anneal, and tadah hpo does not include that module."
 invalid = [
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Penalty 1", error = "the STRATEGY-level optimiser: ASA:ASA: unknown PARAM 'Penalty'. 'Penalty' is not available: FITLOC lives in ASA's un-vendored user module (asa_usr.c)." },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Penalty 1", error = "the STRATEGY-level optimiser: ASA:ASA does not take the ASA option PARAM Penalty: it belongs to the local simplex fit that ASA's user module runs after the anneal, and tadah hpo does not include that module." },
 ]
 
 [[param_excluded]]
 id = "PARAM.ASA:ASA.NoOfSamples"
 name = "NoOfSamples"
 optimizers = ["ASA:ASA"]
-why = "ASA_FUZZY lives in ASA's un-vendored user module (asa_usr.c)."
+why = "it belongs to the fuzzy-logic tuning of ASA's options in ASA's user module, which tadah hpo does not include."
 invalid = [
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM NoOfSamples 1", error = "the STRATEGY-level optimiser: ASA:ASA: unknown PARAM 'NoOfSamples'. 'NoOfSamples' is not available: ASA_FUZZY lives in ASA's un-vendored user module (asa_usr.c)." },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM NoOfSamples 1", error = "the STRATEGY-level optimiser: ASA:ASA does not take the ASA option PARAM NoOfSamples: it belongs to the fuzzy-logic tuning of ASA's options in ASA's user module, which tadah hpo does not include." },
 ]
 
 [[param_excluded]]
 id = "PARAM.ASA:ASA.Random_Array_Dim"
 name = "Random_Array_Dim"
 optimizers = ["ASA:ASA"]
-why = "ASA_SAVE checkpointing is compiled out (HPO runs are not resumable)."
+why = "it belongs to ASA's saving of its state to resume a run, which the ASA of tadah hpo leaves out: tadah hpo does not resume a run."
 invalid = [
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Random_Array_Dim 1", error = "the STRATEGY-level optimiser: ASA:ASA: unknown PARAM 'Random_Array_Dim'. 'Random_Array_Dim' is not available: ASA_SAVE checkpointing is compiled out (HPO runs are not resumable)." },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Random_Array_Dim 1", error = "the STRATEGY-level optimiser: ASA:ASA does not take the ASA option PARAM Random_Array_Dim: it belongs to ASA's saving of its state to resume a run, which the ASA of tadah hpo leaves out: tadah hpo does not resume a run." },
 ]
 
 [[param_excluded]]
 id = "PARAM.ASA:ASA.Bias_Acceptance"
 name = "Bias_Acceptance"
 optimizers = ["ASA:ASA"]
-why = "ASA_SAMPLE (importance sampling) is not built."
+why = "it belongs to ASA's importance sampling, which the ASA of tadah hpo leaves out."
 invalid = [
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Bias_Acceptance 1", error = "the STRATEGY-level optimiser: ASA:ASA: unknown PARAM 'Bias_Acceptance'. 'Bias_Acceptance' is not available: ASA_SAMPLE (importance sampling) is not built." },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Bias_Acceptance 1", error = "the STRATEGY-level optimiser: ASA:ASA does not take the ASA option PARAM Bias_Acceptance: it belongs to ASA's importance sampling, which the ASA of tadah hpo leaves out." },
 ]
 
 [[param_excluded]]
 id = "PARAM.ASA:ASA.Limit_Weights"
 name = "Limit_Weights"
 optimizers = ["ASA:ASA"]
-why = "ASA_SAMPLE (importance sampling) is not built."
+why = "it belongs to ASA's importance sampling, which the ASA of tadah hpo leaves out."
 invalid = [
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Limit_Weights 1", error = "the STRATEGY-level optimiser: ASA:ASA: unknown PARAM 'Limit_Weights'. 'Limit_Weights' is not available: ASA_SAMPLE (importance sampling) is not built." },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Limit_Weights 1", error = "the STRATEGY-level optimiser: ASA:ASA does not take the ASA option PARAM Limit_Weights: it belongs to ASA's importance sampling, which the ASA of tadah hpo leaves out." },
 ]
 

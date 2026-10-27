@@ -267,6 +267,11 @@ class Generator:
         else:
             b = reg.block(place)
             out.append(hr.template_regex(b.unknown_msg, {"key": name}))
+            # A top-level key inside a block is named as one, with the
+            # block that is still open.
+            out.append(hr.template_regex(
+                reg.structure.fields["root_key_in_block_msg"],
+                {"key": name, "name": place, "end": b.end}))
             for r in b.refuse:
                 if r.key == name:
                     out.append(hr.template_regex(
