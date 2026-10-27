@@ -237,3 +237,61 @@ TEST_CASE("WARM of the run's own best_pot.tadah in a RESTART block is warned "
     CHECK(count_of(r.journal, w) == 1);
     CHECK(warnings_with(r.notes, w) == 1);
 }
+
+/* Pins: a RESTART block's METHOD WARM best_pot.tadah is warned about when
+ * best_pot.tadah is a symbolic link to the seed, other.tadah, and when the
+ * WARM path is a link to best_pot.tadah: each RESTART round opens the path
+ * again, and the run replaces the directory entry best_pot.tadah, link and
+ * all, with its best potential, so each round reads that ("... reads
+ * best_pot.tadah, the file this run writes its best potential to: ...
+ * each RESTART round starts from the best potential the run has written by
+ * then, not from the file's content at startup."). An INIT block's METHOD
+ * WARM best_pot.tadah, read once at startup, gives no warning for a
+ * best_pot.tadah that links to the seed: the run replaces the link, and the
+ * seed stays.
+ * Before the fix: the RESTART block with best_pot.tadah linking to the
+ * seed gave none (the WARM path was compared after its link was followed,
+ * as for an INIT block); the WARM link to best_pot.tadah was warned about
+ * as well (a pin of that case). */
+TEST_CASE("WARM of best_pot.tadah in a RESTART block is warned about when "
+          "best_pot.tadah is a link to the seed",
+          "[HPO][init_strategy][warm][best_pot][restart]")
+{
+    for (const bool warm_link : {false, true}) {
+        INFO((warm_link ? "WARM link.tadah -> best_pot.tadah"
+                        : "best_pot.tadah -> other.tadah"));
+        const ScratchCwd cwd;
+        write("other.tadah", "CGRID2B 1.25 2.25\n");
+        std::string warm = "best_pot.tadah";
+        if (warm_link) {
+            write("best_pot.tadah", "CGRID2B 1.25 2.25\n");
+            fs::create_symlink("best_pot.tadah", "link.tadah");
+            warm = "link.tadah";
+        } else {
+            fs::create_symlink("other.tadah", "best_pot.tadah");
+        }
+        const std::string target =
+            "OPTIM CGRID2B (1) 0.5 1.5\nOPTIM CGRID2B (2) 1.6 2.5\n"
+            "OPTIMIZER\nSTRATEGY\nLIB NLOPT\nALGO LN_SBPLX\nMAXEVAL 5\n"
+            "  RESTART\n    AFTER_STAGNATION 2\n    MAX 1\n"
+            "    METHOD WARM " + warm + "\n  ENDRESTART\nENDSTRATEGY\n"
+            "ENDOPTIMIZER\n";
+        const std::string w =
+            "the RESTART block on line 8: METHOD WARM " + warm + " (line 11) "
+            "reads best_pot.tadah, the file this run writes its best "
+            "potential to: the run removes it before its first evaluation, "
+            "so each RESTART round starts from the best potential the run "
+            "has written by then, not from the file's content at startup.";
+        const Read r = read_target(target);
+        INFO("journal:\n" << r.journal << "\nstderr:\n" << r.err);
+        CHECK(count_of(r.err, "[HPO] WARNING: " + w + "\n") == 1);
+        CHECK(count_of(r.journal, w) == 1);
+        CHECK(warnings_with(r.notes, w) == 1);
+        if (!warm_link) {
+            const Read i = read_target(init_warm("best_pot.tadah"));
+            INFO("INIT journal:\n" << i.journal);
+            CHECK(count_of(i.journal, "the file this run writes its best "
+                                      "potential to") == 0);
+        }
+    }
+}
