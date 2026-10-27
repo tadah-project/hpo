@@ -13,7 +13,9 @@
  * concurrently on an anneal::ReplicaPool sized by min(THREADS,
  * Gener_Block_Max); each evaluation's pc_lammps fan-out lands on the
  * shared ScriptExecutor as usual. Results are THREADS-invariant (ASA
- * sorts each block by cost before consuming it sequentially). */
+ * sorts each block by cost before consuming it sequentially), and so are
+ * the evaluation numbers and the bests: a block is a batch
+ * (eval_batch.h), numbered in block order and committed after it. */
 
 #include <tadah/hpo/optimizer_spec.h>
 

@@ -11,14 +11,17 @@
  *     mapping is stable, so per-worker thread_local caches see a fixed
  *     subset of chains and results are identical for ANY worker count
  *     (each chain draws only from its own RNG stream).
- *   - Exceptions (HPO_Host stagnation-stop, core::ShutdownRequested on
- *     SIGINT, anything else) are caught on the worker and stashed, an
- *     external stop flag is raised so sibling chains wind down at their
- *     next proposal, and the driver rethrows after the epoch barrier --
- *     preserving the RestartPolicy / signal-handler semantics that rely
- *     on exceptions propagating out of host(). When several workers
- *     throw, the stash keeps the one that decides how the run ends (an
- *     error before a signal stop before a stagnation stop, run_stop.h).
+ *   - Exceptions (core::ShutdownRequested on SIGINT, anything else) are
+ *     caught on the worker and stashed, an external stop flag is raised
+ *     so sibling chains wind down at their next proposal, and the driver
+ *     rethrows after the epoch barrier -- preserving the RestartPolicy /
+ *     signal-handler semantics that rely on exceptions propagating out of
+ *     host(). The commit of the epoch's evaluations (EvalBatch::commit,
+ *     eval_batch.h), after the barrier, adds its own -- HPO_Host's
+ *     stagnation stop, a failure to save best_pot.tadah -- with
+ *     offer_error. When several are stashed, the stash keeps the one that
+ *     decides how the run ends (an error before a signal stop before a
+ *     stagnation stop, run_stop.h).
  */
 #include <tadah/hpo/run_stop.h>
 
@@ -29,6 +32,7 @@
 #include <functional>
 #include <mutex>
 #include <thread>
+#include <utility>
 #include <vector>
 
 namespace tadah::hpo {
@@ -91,6 +95,15 @@ public:
    * clear it, for the ranks' agreement on how the epoch ended
    * (agree_on_rank_stop, run_stop.h). Driver thread, after run_epoch. */
   std::exception_ptr take_error() { return errors_.take(); }
+
+  /* Add an exception the driver met after run_epoch -- the commit of the
+   * epoch's evaluations (EvalBatch::commit, eval_batch.h) -- to the
+   * workers' stash, which keeps the one that decides how the run ends;
+   * null adds nothing. Driver thread, after run_epoch. */
+  void offer_error(std::exception_ptr e)
+  {
+    if (e) errors_.offer(std::move(e));
+  }
 
 private:
   void worker_loop(std::size_t id)

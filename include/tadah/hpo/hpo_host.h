@@ -7,8 +7,12 @@
  *  -  All data produced during one evaluation live in EvalResult, not in the
  *     functor object; operator() is therefore const and thread-safe.
  *  -  Ordinary result logs are forwarded to a single writer through a
- *     blocking moodycamel queue. New-best potentials are committed
- *     synchronously and atomically before operator() returns.
+ *     blocking moodycamel queue. What follows from a result -- a new-best
+ *     potential, committed synchronously and atomically, the rows, the
+ *     journal's census and the RESTART window -- is committed before
+ *     operator() returns, or, for an evaluation of a batch (eval_batch.h:
+ *     the evaluations a parallel optimiser runs at once), after the batch
+ *     has ended, in the order of the evaluation numbers.
  *  -  MPI code is protected by one global mutex so that threaded builds can
  *     still work.  Remove the mutex if you choose to forbid that mix.
  */
@@ -35,6 +39,7 @@
 #include <tadah/hpo/bump_support_gate.h>
 #include <tadah/hpo/dloss_dtheta.h>
 #include <tadah/hpo/durable_best.h>
+#include <tadah/hpo/eval_batch.h>
 #include <tadah/hpo/hpo_targets.h>
 #include <tadah/hpo/pc_fail_grading.h>
 #include <tadah/hpo/optimizer_spec.h>
@@ -209,6 +214,10 @@ struct EvalResult
 
     bool                                   is_best         = false;
     bool                                   was_nan_clamped = false;
+    /* A number without an evaluation: one a batch reserved for an
+     * evaluation that did not run (eval_batch.h). The writer goes on past
+     * it and writes nothing for it. */
+    bool                                   not_run         = false;
     // bool                                   run_lammps = false;   // option for the future?
     core::Context                          pot_ctx;
 };
@@ -613,6 +622,61 @@ private:
     durable_best::Options        dbopts_mirror_;
     durable_best::Options        dbopts_mirror_single_;
     mutable bool                 mirror_degraded_ = false;
+    /* An evaluation, ready for its commit (commit_evaluation): its result
+     * and what the commit records besides, taken while it ran on its own
+     * thread. */
+    struct Completed {
+        Result      r;
+        /* The census of its loss (HPOLog::record_eval) and its time. */
+        EvalLoss    kind    = EvalLoss::Failed;
+        double      wall_ms = 0.0;
+        /* A loss the evaluation computed: it may become the new best and
+         * the run's record of its point, and is a PRESTAGE candidate. A
+         * point outside the box, a candidate a gate or its fit refused, and
+         * an evaluation that threw are none. */
+        bool        computed = false;
+        /* It counts in the RESTART window when that window can close at
+         * it (an evaluation that threw does not close it). */
+        bool        check_stagnation = true;
+        /* probe::active() while it ran: a probe evaluation does not count
+         * in the RESTART window. */
+        bool        probe = false;
+        /* The journal's counts: its failure band, the gate that refused
+         * it, the fan-out of its PC_LAMMPS scripts. */
+        bool        record_band = false;
+        std::optional<GateKind> gate;
+        bool        record_fanout = false;
+        /* What a new best records that only the evaluation's thread has
+         * (its trainer, its candidate context), taken when its loss may
+         * make it the new best: the raw F(0) of the EMBF0 journal and the
+         * density summary. */
+        double      embf0_best = std::numeric_limits<double>::quiet_NaN();
+        std::optional<detail::DensitySummary> density;
+        /* The --skip-rel lowest values it found, which an evaluation of a
+         * batch commits with it (MetricSkipTracker::note_best). */
+        std::vector<std::pair<std::string, double>> skip_best;
+        /* The slot its journal lines name (HPOLog::set_eval_slot). */
+        HPOLog::EvalContext tag;
+        /* Outside a batch: its new-best decision, counted while it ran,
+         * before the balance table of its fit (detail::BestDecision). */
+        std::unique_ptr<detail::BestDecision> decision;
+    };
+    /* Commits @p c: the new-best decision (best_pot.tadah, the best_*
+     * rows, the HOT snapshot, the incumbent), the run's record of its
+     * point, the PRESTAGE candidates, the --skip-rel lowest values, its
+     * rows (submit_result), its journal lines (census, BEST) and the
+     * RESTART window, whose StagnationStop it throws last; a failure to
+     * save best_pot.tadah (durable_best::Error) is thrown once the rest is
+     * committed. */
+    void commit_evaluation(Completed&& c) const;
+    /* Commits @p c now, outside a batch, or parks its commit with
+     * @p batch, which commits it after the batch (eval_batch.h). Returns
+     * its loss. */
+    double finish_evaluation(Completed&& c, EvalBatch* batch) const;
+    /* The evaluation numbers a batch reserves (g_iter_). */
+    struct BatchNumbers;
+    static BatchNumbers batch_numbers_;
+
     /* PC_OBSERVABLE loss aggregation: evaluates every entry of
      * trg_.observables at the current trained model, populates
      * r.v_obs_value / r.v_obs_loss, and folds the per-observable loss
@@ -674,10 +738,11 @@ private:
      * iter_at_last_best_. */
     static std::atomic_size_t   reused_since_best_;
 
-    /* Once-per-event gate for the StagnationStop diagnostic. With OMP /
-     * concurrent eval threads, every thread that finishes its LAMMPS
-     * work after the threshold is crossed but before the policy resets
-     * iter_at_last_best_ throws StagnationStop in turn. Set on the first
+    /* Once-per-event gate for the StagnationStop diagnostic. Every
+     * evaluation committed after the threshold is crossed but before the
+     * policy resets iter_at_last_best_ throws StagnationStop in turn (the
+     * later evaluations of a batch, eval_batch.h; DLIB:GFS's concurrent
+     * evaluations). Set on the first
      * throw within an event window, cleared by reset_stagnation() (which
      * the surrounding policy calls when starting a new stage). */
     static std::atomic_bool     stagnation_warned_;

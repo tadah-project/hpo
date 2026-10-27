@@ -5,6 +5,7 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace tadah::hpo {
@@ -97,8 +98,21 @@ public:
         double excess = 0.0;
         std::size_t count = 0;
     };
-    std::optional<Trigger> check(const std::string& key, double value,
-                                 const MetricSkipCaps& caps);
+    /** Whether @p value of the metric @p key trips its caps: above the
+     *  --skip-above cap, or above the --skip-rel factor times the lowest
+     *  value of @p key that did not trip them. A value that does not trip
+     *  them and is below that lowest one becomes it -- or, with @p deferred,
+     *  is appended to it and becomes it only when note_best() gives it: an
+     *  evaluation of a batch (eval_batch.h) reads the lowest values of the
+     *  evaluations committed before the batch, never those of another
+     *  evaluation of the batch, so what it trips does not depend on the
+     *  order in which the evaluations of the batch run. */
+    std::optional<Trigger> check(
+        const std::string& key, double value, const MetricSkipCaps& caps,
+        std::vector<std::pair<std::string, double>>* deferred = nullptr);
+    /** The lowest value of @p key becomes @p value when it is lower: the
+     *  commit of a value that check() deferred. */
+    void note_best(const std::string& key, double value);
 private:
     std::mutex mutex_;
     std::map<std::string, double> best_;

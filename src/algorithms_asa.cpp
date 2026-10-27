@@ -21,6 +21,7 @@
 #include <tadah/hpo/seed_stream.h>
 #include <tadah/hpo/fd_stencil.h>
 #include <tadah/hpo/anneal_parallel.h>
+#include <tadah/hpo/eval_batch.h>
 #include <tadah/hpo/hpo_log.h>
 #include <tadah/hpo/hpo_mpi.h>
 #include <tadah/hpo/optimizer_spec.h>
@@ -132,6 +133,9 @@ struct AsaRunCtx {
 
     /* block-parallel pool (installed only when Gener_Block_Max > 1) */
     anneal::ReplicaPool* pool = nullptr;
+    /* The blocks the hook has evaluated (the journal names a block by its
+     * number). */
+    std::size_t blocks = 0;
 };
 
 bool cost_is_valid(const AsaRunCtx& c, double loss)
@@ -148,11 +152,19 @@ bool cost_is_valid(const AsaRunCtx& c, double loss)
  * path, which keeps results THREADS-invariant). Safe on pool workers.
  * Returns the cost; *valid_out is TRUE/FALSE. Invalid states are ASA's
  * own retry currency (they count toward
- * Limit_Invalid_Generated_States). */
-double eval_core(AsaRunCtx& c, const double* x, int* valid_out)
+ * Limit_Invalid_Generated_States); an invalid state's cost is the last
+ * valid cost (`sentinel`). The serial path takes it from, and records a
+ * valid cost in, last_valid_cost; a block (in_block) gives every state the
+ * last valid cost before the block and leaves the record to the hook,
+ * which updates it after the block in block order, so no state of a block
+ * reads another's. */
+double eval_core(AsaRunCtx& c, const double* x, int* valid_out,
+                 bool in_block = false, double block_sentinel = 0.0)
 {
     *valid_out = FALSE;
-    const double sentinel = c.last_valid_cost.load(std::memory_order_relaxed);
+    const double sentinel =
+        in_block ? block_sentinel
+                 : c.last_valid_cost.load(std::memory_order_relaxed);
     double loss;
     try {
         const std::vector<double> xv(x, x + c.dim);
@@ -173,7 +185,7 @@ double eval_core(AsaRunCtx& c, const double* x, int* valid_out)
     c.n_evals.fetch_add(1, std::memory_order_relaxed);
     if (!cost_is_valid(c, loss)) return sentinel;
     *valid_out = TRUE;
-    c.last_valid_cost.store(loss, std::memory_order_relaxed);
+    if (!in_block) c.last_valid_cost.store(loss, std::memory_order_relaxed);
     double prev = c.best_seen.load(std::memory_order_relaxed);
     while (loss < prev &&
            !c.best_seen.compare_exchange_weak(prev, loss)) {}
@@ -260,7 +272,9 @@ extern "C" double tadah_asa_rng(LONG_INT* /*seed*/)
 /* Block-parallel hook: runs on asa()'s thread, fans the fresh slots of
  * the generated block onto the ReplicaPool (static task->worker map =>
  * results are THREADS-invariant; ASA sorts the block by cost before
- * consuming it sequentially, so evaluation order never matters). */
+ * consuming it sequentially, so evaluation order never matters). The
+ * block is a batch (eval_batch.h): its evaluations are numbered in block
+ * order and committed after it. */
 extern "C" void tadah_asa_block_hook(tadah_asa_state_view* block,
                                      LONG_INT gener_block,
                                      double* /*lo*/, double* /*hi*/,
@@ -297,15 +311,27 @@ extern "C" void tadah_asa_block_hook(tadah_asa_state_view* block,
     }
 
     const double t_cost = tadah_asa_cost_temp;  /* NaN before 1st block */
+    std::vector<std::size_t> evals(n, 0);
+    for (std::size_t t = 0; t < n; ++t) evals[t] = may_run[t] ? 1 : 0;
+    EvalBatch batch("block " + std::to_string(++c->blocks) + " of ASA:ASA",
+                    evals);
+    const double sentinel = c->last_valid_cost.load(std::memory_order_relaxed);
     c->pool->run_epoch(n, [&](std::size_t t) {
         if (!may_run[t]) return;
         warmstart::current_chain() = t;
         HPOLog::set_eval_slot(static_cast<int>(t), n, t_cost, "Tcost");
+        EvalBatch::Slot in_batch(batch, t);
         int flag = FALSE;
-        const double cost = eval_core(*c, block[t].parameter, &flag);
+        const double cost = eval_core(*c, block[t].parameter, &flag,
+                                      /*in_block=*/true, sentinel);
         block[t].cost = cost;
         valid_par[t]  = flag;
     });
+    /* The last valid cost of the block, in block order. */
+    for (std::size_t t = 0; t < n; ++t)
+        if (may_run[t] && valid_par[t] == TRUE)
+            c->last_valid_cost.store(block[t].cost, std::memory_order_relaxed);
+    if (const std::exception_ptr e = batch.commit()) c->stash(e);
     try {
         c->pool->rethrow_if_error();
     } catch (...) {

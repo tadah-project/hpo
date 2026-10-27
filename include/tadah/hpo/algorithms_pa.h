@@ -25,7 +25,12 @@
  * where it belongs to the temperature slot). Each SLOT keeps its own
  * RNG stream, so copies of one parent placed in different slots
  * decorrelate deterministically and results are identical for any
- * THREADS.
+ * THREADS. The walkers' sweeps of a temperature step, and the
+ * population's starting points, are batches (eval_batch.h): numbered in
+ * slot order and committed after their last evaluation, so the evaluation
+ * numbers, the bests and the files are identical too; a walker that
+ * reaches STOPVAL ends its own sweeps and the search ends after the
+ * step.
  *
  * Execution: THREADS is the TOTAL width of the shared worker pool (the
  * per-rank CPU-core budget) running the pc_lammps fan-out + MLIP
@@ -54,6 +59,7 @@
 #include <tadah/hpo/hpo_mpi.h>
 #include <tadah/hpo/anneal_core.h>
 #include <tadah/hpo/anneal_parallel.h>
+#include <tadah/hpo/eval_batch.h>
 
 #include <algorithm>
 #include <atomic>
@@ -207,6 +213,10 @@ template<typename Vec, typename HostT>
 
     std::atomic<bool> stop_flag{false};
     anneal::StopCtx ctx{budget, stop_flag, time_exceeded, stopval};
+    /* The walkers of a temperature step are a batch (eval_batch.h): a
+     * walker that reaches STOPVAL ends its own sweeps, not the others',
+     * and the search ends after the step. */
+    ctx.stopval_stops_others = false;
 
     anneal::CoranaPlateau plateau(sp.stop, kb.neps, sp.failscore);
 
@@ -526,11 +536,24 @@ template<typename Vec, typename HostT>
           ? max_eval_global - spent_before_init : 0;
       const std::uint64_t init_admitted = std::min<std::uint64_t>(
           R > 0 ? static_cast<std::uint64_t>(R - 1) : 0, init_remaining);
+      /* One evaluation for each admitted walker but the seed's, numbered
+       * in slot order (eval_batch.h). A start that reaches STOPVAL does
+       * not keep the others from being evaluated: the search ends after
+       * them. */
+      std::vector<std::size_t> init_evals(n_local, 0);
+      for (std::size_t li = 0; li < n_local; ++li) {
+        const std::size_t gk = off_local + li;
+        if (!(rank == 0 && li == 0) && gk != 0 && gk <= init_admitted)
+          init_evals[li] = 1;
+      }
+      std::atomic<bool> init_stopval{false};
+      EvalBatch init_batch("the starting points of the walkers of "
+                           "TADAH:ANNEAL_PA", init_evals);
       pool.run_epoch(n_local, [&](std::size_t li) {
         const std::size_t gk = off_local + li;
         warmstart::current_chain() = gk;   /* global slot key */
-        if (rank == 0 && li == 0) return;   /* global slot 0 = seed */
-        if (gk == 0 || gk > init_admitted) return;
+        if (init_evals[li] == 0) return;   /* the seed, or not admitted */
+        EvalBatch::Slot in_batch(init_batch, li);
         auto& w = walkers[li];
         if (stop_flag.load(std::memory_order_relaxed)) return;
         if (!ctx.budget.try_reserve()) return;   /* f stays inf */
@@ -540,8 +563,9 @@ template<typename Vec, typename HostT>
         w.best_f = w.f;
         w.best_x = w.x;
         if (anneal::stopval_reached(w.f, stopval, sp.failscore))
-          stop_flag.store(true, std::memory_order_relaxed);
+          init_stopval.store(true, std::memory_order_relaxed);
       });
+      pool.offer_error(init_batch.commit());
       rethrow_pool_error("population initialization");
       for (auto& w : walkers) {
         if (w.best_f < l_best) { l_best = w.best_f; l_best_x = w.best_x; }
@@ -554,11 +578,11 @@ template<typename Vec, typename HostT>
         hpo_allreduce_minloc(gb, owner);
         if (gb < std::numeric_limits<double>::max())
           g_best = std::min(g_best, gb);
-        int code = (stopval && stop_flag.load(std::memory_order_relaxed) &&
+        int code = (stopval && init_stopval.load(std::memory_order_relaxed) &&
                     anneal::stopval_reached(g_best, stopval, sp.failscore)) ? 1 : 0;
         code = hpo_allreduce_max(code);
         if (code) { stop_reason = StopReason::StopVal; proceed = false; }
-      } else if (stopval && stop_flag.load(std::memory_order_relaxed) &&
+      } else if (stopval && init_stopval.load(std::memory_order_relaxed) &&
                  anneal::stopval_reached(g_best, stopval, sp.failscore)) {
         stop_reason = StopReason::StopVal;
         proceed = false;
@@ -586,9 +610,19 @@ template<typename Vec, typename HostT>
         for (std::size_t k = 0; k < R; ++k)
           allowance[k] = base + (k < rem ? 1 : 0);
       }
+      /* The step's evaluations: allowance[k] for walker k (its sweeps make
+       * them all unless the search stops during them), numbered in slot
+       * order and committed after the step (eval_batch.h). */
+      std::vector<std::size_t> step_evals(n_local, 0);
+      for (std::size_t li = 0; li < n_local; ++li)
+        step_evals[li] = static_cast<std::size_t>(allowance[off_local + li]);
+      EvalBatch step_batch("temperature step " + std::to_string(step_count) +
+                               " of TADAH:ANNEAL_PA",
+                           step_evals);
       pool.run_epoch(n_local, [&](std::size_t li) {
         const std::size_t k = off_local + li;
         warmstart::current_chain() = k;   /* global slot for warm-start key */
+        EvalBatch::Slot in_batch(step_batch, li);
         anneal::RungStats acc;
         for (std::size_t s = 0; s < kb.sweeps; ++s) {
           const std::uint64_t left_here =
@@ -604,6 +638,7 @@ template<typename Vec, typename HostT>
         }
         rstats[li] = acc;
       });
+      pool.offer_error(step_batch.commit());
       rethrow_pool_error("walker sweeps");
 
       /* Pinned-dim audit refresh: post-sweeps, PRE-resampling (marks
@@ -647,9 +682,7 @@ template<typename Vec, typename HostT>
       last_proposed = e_prop;
       last_accepted = e_acc;
       last_oob      = e_oob;
-      if (any_stopval || (stopval &&
-                          stop_flag.load(std::memory_order_relaxed) &&
-                          anneal::stopval_reached(g_best, stopval, sp.failscore))) {
+      if (any_stopval) {
         stop_reason = StopReason::StopVal; return false;
       }
       if (any_time) { stop_reason = StopReason::MaxTime; return false; }

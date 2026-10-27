@@ -573,6 +573,27 @@ public:
                               const char* t_label = "T");
     /** Stamp the calling thread's evals as T0-calibration probes. */
     static void set_eval_probe();
+    /** The calling thread's eval context, as the set_eval_* calls left it:
+     *  what an evaluation of a batch (eval_batch.h) takes with it to its
+     *  commit, which the driver's thread runs after the join. */
+    struct EvalContext {
+        int         slot    = kSlotNone;
+        std::size_t n_slots = 0;
+        double      T       = 0.0;
+        const char* T_label = "T";
+    };
+    static EvalContext eval_context();
+    /** Stamps the calling thread with @p ctx for the lifetime of the
+     *  object, then restores the context it had. */
+    class ScopedEvalContext {
+    public:
+        explicit ScopedEvalContext(const EvalContext& ctx);
+        ~ScopedEvalContext();
+        ScopedEvalContext(const ScopedEvalContext&) = delete;
+        ScopedEvalContext& operator=(const ScopedEvalContext&) = delete;
+    private:
+        EvalContext prev_;
+    };
     /** Clear the calling thread's eval context (bests become untagged). */
     static void clear_eval_context();
 

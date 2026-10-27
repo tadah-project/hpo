@@ -156,7 +156,8 @@ std::vector<std::string> ValidationMetricTargets::descriptions() const {
 }
 
 std::optional<MetricSkipTracker::Trigger> MetricSkipTracker::check(
-        const std::string& key, double value, const MetricSkipCaps& caps) {
+        const std::string& key, double value, const MetricSkipCaps& caps,
+        std::vector<std::pair<std::string, double>>* deferred) {
     if (!metric_value_is_finite(value)) return std::nullopt;
     std::lock_guard<std::mutex> lock(mutex_);
     auto [it, inserted] = best_.emplace(key, std::numeric_limits<double>::infinity());
@@ -169,7 +170,17 @@ std::optional<MetricSkipTracker::Trigger> MetricSkipTracker::check(
         const double excess = cap > 0 ? value / cap - 1 : std::numeric_limits<double>::max();
         return Trigger{abs, rel, best, excess, ++skips_};
     }
-    if (value < best) it->second = value;
+    if (value < best) {
+        if (deferred) deferred->emplace_back(key, value);
+        else it->second = value;
+    }
     return std::nullopt;
+}
+
+void MetricSkipTracker::note_best(const std::string& key, double value) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto [it, inserted] = best_.emplace(key, std::numeric_limits<double>::infinity());
+    (void)inserted;
+    if (value < it->second) it->second = value;
 }
 } // namespace tadah::hpo

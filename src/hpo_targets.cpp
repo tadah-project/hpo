@@ -450,19 +450,22 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn,
      * changed" is answerable from the log. */
     /* SEED inside the INIT block seeds the init-strategy chain -- and
      * NLopt only as a fallback, when the phase has no SEED of its own
-     * (make_nlopt); it does not seed any other optimiser. For the ANNEAL
-     * family (whose proposal stream falls back to random_device without
-     * an optimiser-level SEED) this is a classic footgun: the user "set a
-     * seed" yet gets a non-reproducible run. */
-    if (!s.seed && s.init_strategy_spec.seed &&
-        ((s.lib == "TADAH" && s.algo.rfind("ANNEAL", 0) == 0) ||
-         s.lib == "ASA")) {
+     * (make_nlopt); it does not seed any other optimiser. An optimiser
+     * that draws random numbers of its own (TADAH:RANDOM, the annealers,
+     * ASA) then draws them with a seed drawn once for the run
+     * (draw_optimiser_seed, below), which a user who set the INIT block's
+     * SEED may not expect: the WARNING names the block whose SEED the
+     * optimiser takes. */
+    if (!s.seed && s.init_strategy_spec.seed && s.lib != "NLOPT" &&
+        reads_seed(s)) {
       std::ostringstream oss;
-      oss << "INIT[" << where << "]: SEED inside the INIT block does not "
-             "seed " << s.lib << ":" << s.algo << " -- the annealer's "
-             "proposal stream falls back to random_device "
-             "(non-reproducible). "
-             "Set SEED at the OPTIMIZER/STRATEGY level as well.";
+      oss << "the SEED of the INIT block";
+      if (s.init_strategy_spec.line > 0)
+        oss << " on line " << s.init_strategy_spec.line;
+      oss << " draws the block's starting points only: " << s.lib << ":"
+          << s.algo << " draws its own random numbers with the SEED of the "
+          << s.key_lines.at("ALGO").block << " block, which has none, so "
+             "with a seed drawn once for the run";
       std::cerr << "[HPO] " << oss.str() << "\n";
       HPOLog::instance().warning(oss.str());
     }
@@ -541,20 +544,24 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn,
 
   resolve_init(spec, "OUTER");
 
-  /* An NLopt algorithm that draws random numbers (reads_seed) in a block
-   * without SEED, and without the SEED of its INIT block, which it would
-   * take (nlopt_seed_from_init), draws them with a seed the run draws once,
-   * kept as the block's SEED -- NLopt's own clock seed would leave the run
+  /* An optimiser that draws random numbers (reads_seed: TADAH:RANDOM,
+   * the annealers, ASA, an NLopt algorithm that draws them) in a block
+   * without SEED -- for NLopt, and without the SEED of its INIT block,
+   * which it would take (nlopt_seed_from_init) -- draws them with a seed
+   * the run draws once, kept as the block's SEED -- a seed of its own
+   * drawn when it starts (std::random_device for the annealers, ASA and
+   * TADAH:RANDOM, NLopt's own clock seed) would leave the run
    * unrepeatable -- and named with the SEED line that draws the same
-   * numbers again. After the INIT chains, whose drawn seed NLopt takes.
-   * The line names the block that holds the optimiser's ALGO line, where
-   * its SEED goes: the STRATEGY-level optimiser's keys may be written in
-   * OPTIMIZER, STRATEGY or REFINE, and a file may have no STRATEGY block;
-   * a parsed spec has an ALGO line (the parser refuses a block without
-   * one). */
-  const auto draw_nlopt_seed = [](OptimizerSpec& s) {
-    if (s.lib != "NLOPT" || s.seed || s.nlopt_seed_from_init() ||
-        !reads_seed(s))
+   * numbers again. MULTISTART's starts, the PRESTAGE refinement and the
+   * RESTART rounds derive their seeds from it as from a SEED line
+   * (OptimizerSpec::derive_restart_seeds). After the INIT chains, whose
+   * drawn seed NLopt takes. The line names the block that holds the
+   * optimiser's ALGO line, where its SEED goes: the STRATEGY-level
+   * optimiser's keys may be written in OPTIMIZER, STRATEGY or REFINE, and
+   * a file may have no STRATEGY block; a parsed spec has an ALGO line (the
+   * parser refuses a block without one). */
+  const auto draw_optimiser_seed = [](OptimizerSpec& s) {
+    if (s.seed || s.nlopt_seed_from_init() || !reads_seed(s))
       return;
     const std::string& block = s.key_lines.at("ALGO").block;
     const std::uint64_t seed = draw_run_seed();
@@ -585,8 +592,8 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn,
       resolve_init(*spec.prestage, "PRESTAGE");
     spec.share_init_with_nested_phases();
   }
-  draw_nlopt_seed(spec);
-  if (spec.prestage) draw_nlopt_seed(*spec.prestage);
+  draw_optimiser_seed(spec);
+  if (spec.prestage) draw_optimiser_seed(*spec.prestage);
 
   /* The RESTART block's SEED seeds the METHOD chain that draws each
    * restart's points (round r with SEED + r, RestartPolicy). Like an INIT

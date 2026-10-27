@@ -37,8 +37,14 @@
  * With REPLICAS fixed, a deterministic objective, and no timing-dependent
  * stop, the same SEED gives the same evaluated set for any THREADS (per-replica
  * RNG streams, driver-side swap coins keyed by epoch, deterministic
- * per-epoch budget slicing). Documented exceptions: MAXTIME truncation and
- * runs cut short by STOPVAL/exceptions are timing-dependent.
+ * per-epoch budget slicing), and the same evaluation numbers, bests and
+ * files: an epoch, the population's starting points and each round of
+ * the step calibration are batches (eval_batch.h), numbered in slot order
+ * and committed after their last evaluation. A replica that reaches
+ * STOPVAL ends its own sweep and the search ends after the epoch.
+ * Documented exceptions: MAXTIME truncation and a signal are
+ * timing-dependent (the evaluations of the batch that ran keep their
+ * numbers).
  * (OMP_NUM_THREADS independently drives the residual OpenMP kernels --
  * neighbour-list build, data-stats -- not this pool.)
  *
@@ -73,6 +79,7 @@
 #include <tadah/hpo/corana_census.h>
 #include <tadah/hpo/log_index.h>
 #include <tadah/hpo/anneal_parallel.h>
+#include <tadah/hpo/eval_batch.h>
 #include <tadah/hpo/warmstart_cache.h>   // current_chain() bridge
 #include <tadah/hpo/run_end.h>
 
@@ -667,51 +674,211 @@ inline double clamp_coordinate_scale(double scale, double x,
   return scale;
 }
 
-template<class Vec, class HostT>
-void coordinate_warmup(
-    anneal::ChainState<Vec>& c, double T, const OptimizerSpec& sp,
-    const anneal::Knobs& kb, HostT& host, anneal::StopCtx& ctx,
-    std::uint64_t allowance, SlotCalibration& out)
-{
-  constexpr double target = anneal::kTargetAcceptCoord;
-  constexpr double target_lo = target - 0.15;
-  constexpr double target_hi = target + 0.15;
+/* The coordinate warm-up of one slot, one evaluation at a time: what
+ * coordinate_warmup() does in one call, split so that the driver runs the
+ * slots in rounds of at most one evaluation each (eval_batch.h). The
+ * constructor is the call's entry, prepare() says whether the next step
+ * evaluates -- it ends the call (done) when the coordinates are finished or
+ * the call's allowance is spent --, step() makes that evaluation and the
+ * bookkeeping after it, and finish() is the call's end. prepare(), step()
+ * in turn until prepare() is false, then finish(), make the evaluations of
+ * one uninterrupted call, in the same order and with the same random
+ * numbers (the passes over the active coordinates, each shuffled, the
+ * normal draws of one distribution object for the whole call). */
+template<class Vec>
+class CoordinateWarmup {
+public:
+  CoordinateWarmup(anneal::ChainState<Vec>& c_in, double T_in,
+                   const OptimizerSpec& sp_in, const anneal::Knobs& kb_in,
+                   anneal::StopCtx& ctx_in, std::uint64_t allowance_in,
+                   SlotCalibration& out_in)
+      : c(c_in), T(T_in), sp(sp_in), kb(kb_in), ctx(ctx_in),
+        allowance(allowance_in), out(out_in), dim(sp_in.low.size()),
+        minimum(kb_in.step_warmup_sweeps),
+        maximum(anneal::saturating_add(minimum, minimum)),
+        batch_size(std::min<std::size_t>(4, minimum))
+  {
+    if (out.dims.empty()) out.dims.resize(dim);
+    out.stop = anneal::RungStop::Completed;
+    for (auto& dc : out.dims)
+      dc.status &= ~StepInterrupted;
+    active.reserve(dim);
+    for (std::size_t i = 0; i < dim; ++i) {
+      const auto& dc = out.dims[i];
+      if (!dc.finished && dc.attempts < maximum)
+        active.push_back(i);
+    }
+    proposed_at_entry = out.coordinate_proposed;
+  }
+
+  /* Whether the next step evaluates. False ends the call: every coordinate
+   * is finished, or the call's allowance is spent (out.stop Budget). A
+   * pass over the active coordinates starts (shuffled) here. */
+  bool prepare()
+  {
+    if (done) return false;
+    if (!pass_open) {
+      if (active.empty()) {
+        done = true;
+        return false;
+      }
+      std::shuffle(active.begin(), active.end(), out.rng);
+      next.clear();
+      next.reserve(active.size());
+      pos = 0;
+      pass_open = true;
+    }
+    if (out.coordinate_proposed - proposed_at_entry >= allowance) {
+      out.stop = anneal::RungStop::Budget;
+      done = true;
+    }
+    return !done;
+  }
+
+  /* The evaluation prepare() announced, unless a stop comes first (the
+   * budget, a stop of the driver, MAXTIME), and its bookkeeping; a STOPVAL
+   * ends the call. */
+  template<class HostT>
+  void step(HostT& host)
+  {
+    const std::size_t i = active[pos];
+    if (!ctx.budget.try_reserve()) {
+      out.stop = anneal::RungStop::Budget;
+      done = true;
+      return;
+    }
+    if (ctx.stop.load(std::memory_order_relaxed)) {
+      ctx.budget.release();
+      out.stop = anneal::RungStop::External;
+      done = true;
+      return;
+    }
+    if (ctx.time_exceeded()) {
+      ctx.budget.release();
+      out.stop = anneal::RungStop::Time;
+      done = true;
+      return;
+    }
+
+    Vec proposal = c.x;
+    auto draw = [&]() -> long double {
+      return static_cast<long double>(c.x(i)) +
+             static_cast<long double>(c.V[i]) * ndist(out.rng);
+    };
+    long double value = draw();
+    anneal::constrain_proposal(value, sp.low[i], sp.high[i],
+                               kb.boundary_mode, draw);
+    proposal(i) = static_cast<double>(value);
+    const double f_proposal = host(sp.out(proposal));
+    ++out.coordinate_proposed;
+    DimCalibration& dc = out.dims[i];
+    if (dc.batch_attempts == 0) dc.batch_scale = c.V[i];
+    ++dc.attempts;
+    const long double alpha = anneal::metropolis_probability(
+        c.f, f_proposal, T, sp.failscore);
+    ++dc.batch_attempts;
+    dc.batch_alpha_sum += alpha;
+    if (!anneal::loss_is_finite(f_proposal, sp.failscore)) {
+      ++dc.unusable;
+      ++dc.batch_unusable;
+    }
+    const bool accepted = anneal::metropolis_accept(
+        c.f, f_proposal, T, sp.failscore, [&] { return udist(out.rng); });
+    if (accepted) {
+      c.x = proposal;
+      c.f = f_proposal;
+      ++dc.accepted;
+      ++dc.batch_accepted;
+      ++out.coordinate_accepted;
+      if (!anneal::loss_is_rankable(c.best_f, sp.failscore) ||
+          c.f < c.best_f) {
+        c.best_f = c.f;
+        c.best_x = c.x;
+      }
+    }
+
+    if (dc.batch_attempts >= batch_size || dc.attempts >= maximum)
+      close_batch(i);
+
+    if (anneal::stopval_reached(c.f, ctx.stopval, sp.failscore)) {
+      ctx.reached_stopval();
+      out.stop = anneal::RungStop::StopVal;
+      done = true;
+      return;
+    }
+    if (!dc.finished && dc.attempts < maximum)
+      next.push_back(i);
+    if (++pos == active.size()) {
+      active.swap(next);
+      pass_open = false;
+    }
+  }
+
+  /* The end of the call: an interrupted coordinate continues at its best
+   * tested scale. */
+  void finish()
+  {
+    for (std::size_t i = 0; i < out.dims.size(); ++i) {
+      auto& dc = out.dims[i];
+      if (out.stop != anneal::RungStop::Completed &&
+          !dc.finished && dc.attempts < maximum) {
+        dc.status |= StepInterrupted;
+        /* An interruption can land between batches, leaving V[i] at
+         * the last PROBE scale -- possibly a /10 gross-miss backoff that
+         * was never scored -- rather than anything tested. Continue at the
+         * best tested scale instead, and keep the diagnostics column
+         * consistent with the kernel that will actually run. */
+        if (dc.have_best && dc.best_scale > 0.0) {
+          c.V[i] = dc.best_scale;
+          dc.coordinate_scale = dc.best_scale;
+        }
+      }
+    }
+  }
+
+private:
+  static constexpr double target = anneal::kTargetAcceptCoord;
+  static constexpr double target_lo = target - 0.15;
+  static constexpr double target_hi = target + 0.15;
   /* Gross-miss thresholds (also the sensitivity-classification
    * boundaries) and the bracket-acceptance factor: a two-sided bracket
    * with upper <= 4x lower puts the in-band scale within 2x of either
    * edge, each of which measured on the wrong side of the band. */
-  constexpr double gross_low_alpha = 0.01;
-  constexpr double gross_high_alpha = 0.9;
-  constexpr double bracket_ok_factor = 4.0;
-  const std::size_t dim = sp.low.size();
-  const std::size_t minimum = kb.step_warmup_sweeps;
-  const std::size_t maximum = anneal::saturating_add(minimum, minimum);
-  const std::size_t batch_size = std::min<std::size_t>(4, minimum);
-  if (out.dims.empty()) out.dims.resize(dim);
-  out.stop = anneal::RungStop::Completed;
-  for (auto& dc : out.dims)
-    dc.status &= ~StepInterrupted;
-  std::normal_distribution<double> ndist(0.0, 1.0);
-  std::uniform_real_distribution<double> udist(0.0, 1.0);
-  std::vector<std::size_t> active;
-  active.reserve(dim);
-  for (std::size_t i = 0; i < dim; ++i) {
-    const auto& dc = out.dims[i];
-    if (!dc.finished && dc.attempts < maximum)
-      active.push_back(i);
-  }
-  const std::size_t proposed_at_entry = out.coordinate_proposed;
+  static constexpr double gross_low_alpha = 0.01;
+  static constexpr double gross_high_alpha = 0.9;
+  static constexpr double bracket_ok_factor = 4.0;
 
-  auto select_batch = [&](DimCalibration& dc, double scale,
-                          std::size_t attempts, std::size_t accepted,
-                          double mean_alpha) {
+  anneal::ChainState<Vec>& c;
+  const double T;
+  const OptimizerSpec& sp;
+  const anneal::Knobs& kb;
+  anneal::StopCtx& ctx;
+  const std::uint64_t allowance;
+  SlotCalibration& out;
+  const std::size_t dim;
+  const std::size_t minimum;
+  const std::size_t maximum;
+  const std::size_t batch_size;
+  std::normal_distribution<double> ndist{0.0, 1.0};
+  std::uniform_real_distribution<double> udist{0.0, 1.0};
+  std::vector<std::size_t> active, next;
+  std::size_t pos = 0;
+  bool pass_open = false;
+  bool done = false;
+  std::size_t proposed_at_entry = 0;
+
+  void select_batch(DimCalibration& dc, double scale,
+                    std::size_t attempts, std::size_t accepted,
+                    double mean_alpha)
+  {
     dc.best_scale = scale;
     dc.validation_attempts = attempts;
     dc.validation_accepted = accepted;
     dc.validation_mean_alpha = mean_alpha;
-  };
+  }
 
-  auto close_batch = [&](std::size_t i) {
+  void close_batch(std::size_t i)
+  {
     DimCalibration& dc = out.dims[i];
     if (dc.batch_attempts == 0) return;
     const double scale = dc.batch_scale;
@@ -847,186 +1014,124 @@ void coordinate_warmup(
     dc.batch_accepted = 0;
     dc.batch_unusable = 0;
     dc.batch_alpha_sum = 0.0L;
-  };
-
-  while (!active.empty()) {
-    std::shuffle(active.begin(), active.end(), out.rng);
-    std::vector<std::size_t> next;
-    next.reserve(active.size());
-    for (std::size_t i : active) {
-      if (out.coordinate_proposed - proposed_at_entry >= allowance) {
-        out.stop = anneal::RungStop::Budget;
-        break;
-      }
-      if (!ctx.budget.try_reserve()) {
-        out.stop = anneal::RungStop::Budget;
-        break;
-      }
-      if (ctx.stop.load(std::memory_order_relaxed)) {
-        ctx.budget.release();
-        out.stop = anneal::RungStop::External;
-        break;
-      }
-      if (ctx.time_exceeded()) {
-        ctx.budget.release();
-        out.stop = anneal::RungStop::Time;
-        break;
-      }
-
-      Vec proposal = c.x;
-      auto draw = [&]() -> long double {
-        return static_cast<long double>(c.x(i)) +
-               static_cast<long double>(c.V[i]) * ndist(out.rng);
-      };
-      long double value = draw();
-      anneal::constrain_proposal(value, sp.low[i], sp.high[i],
-                                 kb.boundary_mode, draw);
-      proposal(i) = static_cast<double>(value);
-      const double f_proposal = host(sp.out(proposal));
-      ++out.coordinate_proposed;
-      DimCalibration& dc = out.dims[i];
-      if (dc.batch_attempts == 0) dc.batch_scale = c.V[i];
-      ++dc.attempts;
-      const long double alpha = anneal::metropolis_probability(
-          c.f, f_proposal, T, sp.failscore);
-      ++dc.batch_attempts;
-      dc.batch_alpha_sum += alpha;
-      if (!anneal::loss_is_finite(f_proposal, sp.failscore)) {
-        ++dc.unusable;
-        ++dc.batch_unusable;
-      }
-      const bool accepted = anneal::metropolis_accept(
-          c.f, f_proposal, T, sp.failscore, [&] { return udist(out.rng); });
-      if (accepted) {
-        c.x = proposal;
-        c.f = f_proposal;
-        ++dc.accepted;
-        ++dc.batch_accepted;
-        ++out.coordinate_accepted;
-        if (!anneal::loss_is_rankable(c.best_f, sp.failscore) ||
-            c.f < c.best_f) {
-          c.best_f = c.f;
-          c.best_x = c.x;
-        }
-      }
-
-      if (dc.batch_attempts >= batch_size || dc.attempts >= maximum)
-        close_batch(i);
-
-      if (anneal::stopval_reached(c.f, ctx.stopval, sp.failscore)) {
-        ctx.stop.store(true, std::memory_order_relaxed);
-        out.stop = anneal::RungStop::StopVal;
-        break;
-      }
-      if (!dc.finished && dc.attempts < maximum)
-        next.push_back(i);
-    }
-    if (out.stop != anneal::RungStop::Completed) break;
-    active.swap(next);
   }
+};
 
-  for (std::size_t i = 0; i < out.dims.size(); ++i) {
-    auto& dc = out.dims[i];
-    if (out.stop != anneal::RungStop::Completed &&
-        !dc.finished && dc.attempts < maximum) {
-      dc.status |= StepInterrupted;
-      /* An interruption can land between batches, leaving V[i] at
-       * the last PROBE scale -- possibly a /10 gross-miss backoff that
-       * was never scored -- rather than anything tested. Continue at the
-       * best tested scale instead, and keep the diagnostics column
-       * consistent with the kernel that will actually run. */
-      if (dc.have_best && dc.best_scale > 0.0) {
-        c.V[i] = dc.best_scale;
-        dc.coordinate_scale = dc.best_scale;
-      }
-    }
-  }
+/* One call of the coordinate warm-up of a slot, at most `allowance`
+ * evaluations (CoordinateWarmup, run to its end). */
+template<class Vec, class HostT>
+void coordinate_warmup(
+    anneal::ChainState<Vec>& c, double T, const OptimizerSpec& sp,
+    const anneal::Knobs& kb, HostT& host, anneal::StopCtx& ctx,
+    std::uint64_t allowance, SlotCalibration& out)
+{
+  CoordinateWarmup<Vec> call(c, T, sp, kb, ctx, allowance, out);
+  while (call.prepare()) call.step(host);
+  call.finish();
 }
 
-template<class Vec, class HostT>
-void full_vector_pilot(anneal::ChainState<Vec>& c, double T,
-                       const OptimizerSpec& sp, const anneal::Knobs& kb,
-                       HostT& host, anneal::StopCtx& ctx,
-                       std::uint64_t allowance, SlotCalibration& out)
-{
-  constexpr std::size_t window_size = 20;
-  constexpr std::size_t pilot_minimum = 100;
-  constexpr std::size_t pilot_maximum = 200;
-  constexpr double target = anneal::kTargetAcceptVector;
-  constexpr double target_lo = 0.15;
-  constexpr double target_hi = 0.35;
-  const std::size_t dim = sp.low.size();
-  if (out.pilot_base.empty()) {
-    const double inv_sqrt_dim = 1.0 / std::sqrt(static_cast<double>(dim));
-    out.pilot_base.resize(dim);
-    out.pilot_multiplier_min = 0.0;
-    out.pilot_multiplier_max = std::numeric_limits<double>::infinity();
-    for (std::size_t i = 0; i < dim; ++i) {
-      const double floor = anneal::resolvable_coordinate_scale(
-          c.x(i), sp.low[i], sp.high[i]);
-      out.pilot_base[i] = c.V[i] * inv_sqrt_dim;
-      /* A coordinate whose base has been raised TO the floor must not
-       * veto shrinkage for every other dimension.
-       *
-       * pilot_multiplier_min is a max over floor/base across all dims. When
-       * base was clamped up to floor, that ratio is exactly 1.0, so the
-       * global minimum multiplier becomes 1.0 and the clamp below turns
-       * every shrink into a no-op -- for ALL dims. The pilot can then only
-       * grow the step, will exhaust its 200 evaluations, and reports
-       * `unconverged` with no indication that a single numerically pinned
-       * coordinate disabled the search. Such a dim is already flagged
-       * StepNumericalFloor and already cannot shrink; excluding it from the
-       * global bound is what keeps the bound meaningful for the rest. */
-      bool at_floor = false;
-      if (!(out.pilot_base[i] >= floor)) {
-        out.pilot_base[i] = floor;
-        /* This is a PILOT-phase fact, so it belongs to pilot_status.
-         * It used to be ORed into dims[i].status, which is the COORDINATE
-         * phase's status column -- so a dim that converged cleanly in the
-         * coordinate phase was retroactively relabelled numerical-floor,
-         * and the coordinate status_floor tally counted pilot events.
-         * (Safe to move: coordinate_converged() reads dims[].status only
-         * during the coordinate phase, which has already finished here.) */
-        out.pilot_status |= StepNumericalFloor;
-        at_floor = true;
+/* The full-vector pilot of one slot, one evaluation at a time, as
+ * CoordinateWarmup is the coordinate warm-up: the constructor is the
+ * entry of a call of full_vector_pilot(), prepare() says whether the next
+ * step evaluates (false ends the call: the pilot is finished, or the
+ * call's allowance is spent), step() makes it, finish() is the call's
+ * end. */
+template<class Vec>
+class FullVectorPilot {
+public:
+  FullVectorPilot(anneal::ChainState<Vec>& c_in, double T_in,
+                  const OptimizerSpec& sp_in, const anneal::Knobs& kb_in,
+                  anneal::StopCtx& ctx_in, std::uint64_t allowance_in,
+                  SlotCalibration& out_in)
+      : c(c_in), T(T_in), sp(sp_in), kb(kb_in), ctx(ctx_in),
+        allowance(allowance_in), out(out_in), dim(sp_in.low.size())
+  {
+    if (out.pilot_base.empty()) {
+      const double inv_sqrt_dim = 1.0 / std::sqrt(static_cast<double>(dim));
+      out.pilot_base.resize(dim);
+      out.pilot_multiplier_min = 0.0;
+      out.pilot_multiplier_max = std::numeric_limits<double>::infinity();
+      for (std::size_t i = 0; i < dim; ++i) {
+        const double floor = anneal::resolvable_coordinate_scale(
+            c.x(i), sp.low[i], sp.high[i]);
+        out.pilot_base[i] = c.V[i] * inv_sqrt_dim;
+        /* A coordinate whose base has been raised TO the floor must not
+         * veto shrinkage for every other dimension.
+         *
+         * pilot_multiplier_min is a max over floor/base across all dims. When
+         * base was clamped up to floor, that ratio is exactly 1.0, so the
+         * global minimum multiplier becomes 1.0 and the clamp below turns
+         * every shrink into a no-op -- for ALL dims. The pilot can then only
+         * grow the step, will exhaust its 200 evaluations, and reports
+         * `unconverged` with no indication that a single numerically pinned
+         * coordinate disabled the search. Such a dim is already flagged
+         * StepNumericalFloor and already cannot shrink; excluding it from the
+         * global bound is what keeps the bound meaningful for the rest. */
+        bool at_floor = false;
+        if (!(out.pilot_base[i] >= floor)) {
+          out.pilot_base[i] = floor;
+          /* This is a PILOT-phase fact, so it belongs to pilot_status.
+           * It used to be ORed into dims[i].status, which is the COORDINATE
+           * phase's status column -- so a dim that converged cleanly in the
+           * coordinate phase was retroactively relabelled numerical-floor,
+           * and the coordinate status_floor tally counted pilot events.
+           * (Safe to move: coordinate_converged() reads dims[].status only
+           * during the coordinate phase, which has already finished here.) */
+          out.pilot_status |= StepNumericalFloor;
+          at_floor = true;
+        }
+        const double floor_ratio = floor / out.pilot_base[i];
+        const double cap_ratio =
+            (sp.high[i] - sp.low[i]) / out.pilot_base[i];
+        if (!at_floor)
+          out.pilot_multiplier_min =
+              std::max(out.pilot_multiplier_min, floor_ratio);
+        out.pilot_multiplier_max =
+            std::min(out.pilot_multiplier_max, cap_ratio);
       }
-      const double floor_ratio = floor / out.pilot_base[i];
-      const double cap_ratio =
-          (sp.high[i] - sp.low[i]) / out.pilot_base[i];
-      if (!at_floor)
-        out.pilot_multiplier_min =
-            std::max(out.pilot_multiplier_min, floor_ratio);
-      out.pilot_multiplier_max =
-          std::min(out.pilot_multiplier_max, cap_ratio);
+      out.pilot_multiplier = std::clamp(
+          1.0, out.pilot_multiplier_min, out.pilot_multiplier_max);
     }
-    out.pilot_multiplier = std::clamp(
-        1.0, out.pilot_multiplier_min, out.pilot_multiplier_max);
+
+    out.stop = anneal::RungStop::Completed;
+    out.pilot_status &= ~StepInterrupted;
+    for (auto& dc : out.dims) dc.status &= ~StepInterrupted;
+    proposed_at_entry = out.pilot_proposed;
   }
 
-  out.stop = anneal::RungStop::Completed;
-  out.pilot_status &= ~StepInterrupted;
-  for (auto& dc : out.dims) dc.status &= ~StepInterrupted;
-  const std::size_t proposed_at_entry = out.pilot_proposed;
-  std::normal_distribution<double> ndist(0.0, 1.0);
-  std::uniform_real_distribution<double> udist(0.0, 1.0);
-  while (!out.pilot_finished && out.pilot_proposed < pilot_maximum) {
+  bool prepare()
+  {
+    if (done) return false;
+    if (out.pilot_finished || out.pilot_proposed >= pilot_maximum) {
+      done = true;
+      return false;
+    }
     if (out.pilot_proposed - proposed_at_entry >= allowance) {
       out.stop = anneal::RungStop::Budget;
-      break;
+      done = true;
     }
+    return !done;
+  }
+
+  template<class HostT>
+  void step(HostT& host)
+  {
     if (!ctx.budget.try_reserve()) {
       out.stop = anneal::RungStop::Budget;
-      break;
+      done = true;
+      return;
     }
     if (ctx.stop.load(std::memory_order_relaxed)) {
       ctx.budget.release();
       out.stop = anneal::RungStop::External;
-      break;
+      done = true;
+      return;
     }
     if (ctx.time_exceeded()) {
       ctx.budget.release();
       out.stop = anneal::RungStop::Time;
-      break;
+      done = true;
+      return;
     }
 
     Vec proposal(dim);
@@ -1143,21 +1248,59 @@ void full_vector_pilot(anneal::ChainState<Vec>& c, double T,
       out.pilot_window_alpha_sum = 0.0L;
     }
     if (anneal::stopval_reached(c.f, ctx.stopval, sp.failscore)) {
-      ctx.stop.store(true, std::memory_order_relaxed);
+      ctx.reached_stopval();
       out.stop = anneal::RungStop::StopVal;
-      break;
+      done = true;
     }
   }
 
-  for (std::size_t i = 0; i < dim; ++i) {
-    c.V[i] = out.pilot_base[i] * out.pilot_multiplier;
+  /* The end of the call: the production step of every dimension from the
+   * pilot's multiplier; an interrupted pilot is marked. */
+  void finish()
+  {
+    for (std::size_t i = 0; i < dim; ++i) {
+      c.V[i] = out.pilot_base[i] * out.pilot_multiplier;
+      if (!out.pilot_finished && out.stop != anneal::RungStop::Completed)
+        out.dims[i].status |= StepInterrupted;
+    }
     if (!out.pilot_finished && out.stop != anneal::RungStop::Completed)
-      out.dims[i].status |= StepInterrupted;
+      out.pilot_status |= StepInterrupted;
   }
-  if (!out.pilot_finished && out.stop != anneal::RungStop::Completed)
-    out.pilot_status |= StepInterrupted;
-}
 
+private:
+  static constexpr std::size_t window_size = 20;
+  static constexpr std::size_t pilot_minimum = 100;
+  static constexpr std::size_t pilot_maximum = 200;
+  static constexpr double target = anneal::kTargetAcceptVector;
+  static constexpr double target_lo = 0.15;
+  static constexpr double target_hi = 0.35;
+
+  anneal::ChainState<Vec>& c;
+  const double T;
+  const OptimizerSpec& sp;
+  const anneal::Knobs& kb;
+  anneal::StopCtx& ctx;
+  const std::uint64_t allowance;
+  SlotCalibration& out;
+  const std::size_t dim;
+  std::normal_distribution<double> ndist{0.0, 1.0};
+  std::uniform_real_distribution<double> udist{0.0, 1.0};
+  bool done = false;
+  std::size_t proposed_at_entry = 0;
+};
+
+/* One call of the full-vector pilot of a slot, at most `allowance`
+ * evaluations (FullVectorPilot, run to its end). */
+template<class Vec, class HostT>
+void full_vector_pilot(anneal::ChainState<Vec>& c, double T,
+                       const OptimizerSpec& sp, const anneal::Knobs& kb,
+                       HostT& host, anneal::StopCtx& ctx,
+                       std::uint64_t allowance, SlotCalibration& out)
+{
+  FullVectorPilot<Vec> call(c, T, sp, kb, ctx, allowance, out);
+  while (call.prepare()) call.step(host);
+  call.finish();
+}
 }  // namespace pt_detail
 
 template<typename Vec, typename HostT>
@@ -1269,6 +1412,10 @@ template<typename Vec, typename HostT>
 
     std::atomic<bool> stop_flag{false};
     anneal::StopCtx ctx{budget, stop_flag, time_exceeded, stopval};
+    /* The replicas of an epoch (and of a round of the step calibration)
+     * are a batch (eval_batch.h): a replica that reaches STOPVAL ends its
+     * own sweep, not the others', and the search ends after the epoch. */
+    ctx.stopval_stops_others = false;
 
     /* Best-stall stop (PT analogue of the serial eps-NEPS plateau): the
      * run stops when the GLOBAL best has not improved by more than the
@@ -1884,14 +2031,26 @@ template<typename Vec, typename HostT>
           ? max_eval_global - spent_before_init : 0;
       const std::uint64_t init_admitted = std::min<std::uint64_t>(
           K > 0 ? static_cast<std::uint64_t>(K - 1) : 0, init_remaining);
+      /* One evaluation for each admitted slot but the seed's, numbered in
+       * slot order (eval_batch.h). A start that reaches STOPVAL does not
+       * keep the others from being evaluated: the search ends after them. */
+      std::vector<std::size_t> init_evals(n_local, 0);
+      for (std::size_t li = 0; li < n_local; ++li) {
+        const std::size_t gk = off_local + li;
+        if (!(rank == 0 && li == 0) && gk != 0 && gk <= init_admitted)
+          init_evals[li] = 1;
+      }
+      std::atomic<bool> init_stopval{false};
+      EvalBatch init_batch("the starting points of the replicas of "
+                           "TADAH:ANNEAL_PT", init_evals);
       pool.run_epoch(n_local, [&](std::size_t li) {
         /* key this chain's warm-start by its GLOBAL slot (off_local+li) so
          * results are independent of which worker runs it. */
         const std::size_t gk = off_local + li;
         warmstart::current_chain() = gk;
         HPOLog::set_eval_slot(static_cast<int>(gk), K, T[gk]);
-        if (rank == 0 && li == 0) return;   /* global slot 0 = seed */
-        if (gk == 0 || gk > init_admitted) return;
+        if (init_evals[li] == 0) return;   /* the seed, or not admitted */
+        EvalBatch::Slot in_batch(init_batch, li);
         auto& c = chains[li];
         if (stop_flag.load(std::memory_order_relaxed)) return;
         if (!ctx.budget.try_reserve()) return;   /* f stays inf */
@@ -1901,8 +2060,9 @@ template<typename Vec, typename HostT>
         c.best_f = c.f;
         c.best_x = c.x;
         if (anneal::stopval_reached(c.f, stopval, sp.failscore))
-          stop_flag.store(true, std::memory_order_relaxed);
+          init_stopval.store(true, std::memory_order_relaxed);
       });
+      pool.offer_error(init_batch.commit());
       rethrow_pool_error("population initialization");
 
       /* ---- what the jitter actually DID ----------------------------------
@@ -1966,11 +2126,11 @@ template<typename Vec, typename HostT>
         hpo_allreduce_minloc(gb, owner);
         if (gb < std::numeric_limits<double>::max())
           g_best = std::min(g_best, gb);
-        int code = (stopval && stop_flag.load(std::memory_order_relaxed) &&
+        int code = (stopval && init_stopval.load(std::memory_order_relaxed) &&
                     anneal::stopval_reached(g_best, stopval, sp.failscore)) ? 1 : 0;
         code = hpo_allreduce_max(code);
         if (code) { stop_reason = StopReason::StopVal; proceed = false; }
-      } else if (stopval && stop_flag.load(std::memory_order_relaxed) &&
+      } else if (stopval && init_stopval.load(std::memory_order_relaxed) &&
                  anneal::stopval_reached(g_best, stopval, sp.failscore)) {
         stop_reason = StopReason::StopVal;
         proceed = false;
@@ -2051,6 +2211,42 @@ template<typename Vec, typename HostT>
         return code;
       };
 
+      /* The calls of a calibration phase, one per slot, in rounds of at
+       * most one evaluation each: each round is a batch (eval_batch.h),
+       * whose evaluations are numbered in slot order and committed after
+       * it, so the phase's evaluations, numbers and bests do not depend on
+       * the timing of the slots. Each slot's call makes the evaluations of
+       * one uninterrupted call, in the same order. The rounds end when
+       * every call has ended, or when an evaluation threw (the phase then
+       * ends with that error, rethrow_pool_error). */
+      std::size_t calibration_round = 0;
+      auto run_rounds = [&](auto& calls, const char* phase) {
+        for (;;) {
+          std::vector<std::size_t> evals(n_local, 0);
+          bool any = false;
+          for (std::size_t li = 0; li < n_local; ++li)
+            if (calls[li]->prepare()) {
+              evals[li] = 1;
+              any = true;
+            }
+          if (!any) break;
+          EvalBatch round("round " + std::to_string(++calibration_round) +
+                              " of the " + phase + " of TADAH:ANNEAL_PT",
+                          evals);
+          pool.run_epoch(n_local, [&](std::size_t li) {
+            if (evals[li] == 0) return;
+            const std::size_t k = off_local + li;
+            warmstart::current_chain() = k;
+            HPOLog::set_eval_slot(static_cast<int>(k), K, T[k]);
+            EvalBatch::Slot in_batch(round, li);
+            calls[li]->step(host);
+          });
+          pool.offer_error(round.commit());
+          if (pool.has_error()) return;
+        }
+        for (auto& call : calls) call->finish();
+      };
+
       int warmup_code = 0;
       std::uint64_t after_coordinates = warmup_spent_begin;
       std::size_t extra_offset = 0;
@@ -2059,14 +2255,16 @@ template<typename Vec, typename HostT>
         const std::uint64_t before_coordinates = after_coordinates;
         const auto coordinate_allowance =
             phase_allowance(max_coordinate_attempts, extra_offset);
-        pool.run_epoch(n_local, [&](std::size_t li) {
-          const std::size_t k = off_local + li;
-          warmstart::current_chain() = k;
-          HPOLog::set_eval_slot(static_cast<int>(k), K, T[k]);
-          pt_detail::coordinate_warmup(
-              chains[li], T[k], sp, kb, host, ctx,
-              coordinate_allowance[k], step_calibration[li]);
-        });
+        {
+          std::vector<std::optional<pt_detail::CoordinateWarmup<Vec>>>
+              calls(n_local);
+          for (std::size_t li = 0; li < n_local; ++li) {
+            const std::size_t k = off_local + li;
+            calls[li].emplace(chains[li], T[k], sp, kb, ctx,
+                              coordinate_allowance[k], step_calibration[li]);
+          }
+          run_rounds(calls, "coordinate warm-up");
+        }
         rethrow_pool_error("automatic coordinate warm-up");
         warmup_code = phase_stop_code();
         after_coordinates = world > 1
@@ -2101,14 +2299,16 @@ template<typename Vec, typename HostT>
         for (;;) {
           const std::uint64_t before_pilot = after_pilot;
           const auto pilot_allowance = phase_allowance(200, extra_offset);
-          pool.run_epoch(n_local, [&](std::size_t li) {
-            const std::size_t k = off_local + li;
-            warmstart::current_chain() = k;
-            HPOLog::set_eval_slot(static_cast<int>(k), K, T[k]);
-            pt_detail::full_vector_pilot(
-                chains[li], T[k], sp, kb, host, ctx,
-                pilot_allowance[k], step_calibration[li]);
-          });
+          {
+            std::vector<std::optional<pt_detail::FullVectorPilot<Vec>>>
+                calls(n_local);
+            for (std::size_t li = 0; li < n_local; ++li) {
+              const std::size_t k = off_local + li;
+              calls[li].emplace(chains[li], T[k], sp, kb, ctx,
+                                pilot_allowance[k], step_calibration[li]);
+            }
+            run_rounds(calls, "full-vector pilot");
+          }
           rethrow_pool_error("automatic full-vector pilot");
           warmup_code = phase_stop_code();
           after_pilot = world > 1
@@ -2956,10 +3156,20 @@ template<typename Vec, typename HostT>
         const double epoch_T_cold = T[0];
         const double epoch_T_hot = T[K - 1];
 
+        /* The epoch's evaluations: allowance[k] for slot k (a sweep makes
+         * them all unless the search stops during it), numbered in slot
+         * order and committed after the epoch (eval_batch.h). */
+        std::vector<std::size_t> epoch_evals(n_local, 0);
+        for (std::size_t li = 0; li < n_local; ++li)
+          epoch_evals[li] = static_cast<std::size_t>(allowance[off_local + li]);
+        EvalBatch epoch_batch("epoch " + std::to_string(epoch_count + 1) +
+                                  " of TADAH:ANNEAL_PT",
+                              epoch_evals);
         pool.run_epoch(n_local, [&](std::size_t li) {
           const std::size_t k = off_local + li;
           warmstart::current_chain() = k;   /* global slot for warm-start key */
           HPOLog::set_eval_slot(static_cast<int>(k), K, T[k]);
+          EvalBatch::Slot in_batch(epoch_batch, li);
           rstats[li] = anneal::run_sweep(chains[li], T[k], sp, kb, host, ctx,
                                          allowance[k]);
           if (kb.observer) {
@@ -2970,6 +3180,7 @@ template<typename Vec, typename HostT>
                                      chains[li].f);
           }
         });
+        pool.offer_error(epoch_batch.commit());
         rethrow_pool_error("replica rung");
 
         std::size_t e_prop = 0, e_acc = 0, e_oob = 0;
