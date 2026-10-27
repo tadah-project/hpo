@@ -1338,10 +1338,13 @@ TEST_CASE("A second run in the same process restarts the best comparator "
     REQUIRE(second);
     CHECK(second->loss == worse_loss);
     CHECK(second->eval == g + 1);
+    /* improvement ordinal, its evaluation (EVAL), slot, CGRID2B[1]; before
+     * the fix there was no EVAL column (3 values) */
     const auto best_row = last_dataset_row(trg.bestParamsFile);
-    REQUIRE(best_row.size() == 3);   // improvement ordinal, slot, CGRID2B[1]
+    REQUIRE(best_row.size() == 4);
     CHECK(best_row[0] == 1.0);
-    CHECK(best_row[2] == Approx(worse(0)));
+    CHECK(best_row[1] == static_cast<double>(g + 1));
+    CHECK(best_row[3] == Approx(worse(0)));
 }
 
 /* Pins: prepare_best_publication(), which starts every run, forgets the
