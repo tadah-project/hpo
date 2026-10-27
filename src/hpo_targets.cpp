@@ -2085,15 +2085,25 @@ void HPOTargets::read(const std::string& fn)
      *
      * Also reject any explicit GRAD_STRATEGY={NUMERICAL,HYBRID,
      * ANALYTICAL} when PC_LAMMPS is present -- these tags only make
-     * sense with PC_OBSERVABLE. */
+     * sense with PC_OBSERVABLE.
+     *
+     * A PC_FAILPROBE line runs a LAMMPS script too (LS holds it), so the
+     * rules hold for a file whose only script line is the probe; the
+     * refusals name the line the file has, PC_LAMMPS when it has one. */
+    bool has_pc_lammps = false;
+    for (std::size_t i = 0; i < LS.size(); ++i)
+        if (static_cast<int>(i) != failprobe_idx)
+            has_pc_lammps = true;
+    const std::string script_line =
+        has_pc_lammps ? "PC_LAMMPS" : "PC_FAILPROBE";
     auto reject_pc_lammps_grad =
         [&](const OptimizerSpec& sp, const char* tag, bool inner) {
             if (sp.grad_strategy) {
                 throw std::runtime_error(with_block_line(sp,
-                    std::string("--hpotarget defines PC_LAMMPS but ") + tag
-                    + " GRAD_STRATEGY is set. PC_LAMMPS does not "
-                    "support analytical/numerical/hybrid gradients. "
-                    "Drop the GRAD_STRATEGY line."));
+                    "--hpotarget defines " + script_line + " but " + tag
+                    + " GRAD_STRATEGY is set. A PC_LAMMPS or PC_FAILPROBE "
+                    "line does not support analytical/numerical/hybrid "
+                    "gradients. Drop the GRAD_STRATEGY line."));
             }
             /* read() has required LIB and ALGO of every block by now, the
              * EXPLORE and INNER blocks included (require_driver,
@@ -2105,11 +2115,12 @@ void HPOTargets::read(const std::string& fn)
             if (sp.inner && sp.inner->lib != "NLOPT") return;
             if (!obtains_gradients(sp)) return;
             const std::string requires_free = inner
-                ? " PC_LAMMPS requires a gradient-free optimiser, and an "
-                  "INNER search is a local NLopt algorithm: name a "
-                  "derivative-free one in the INNER block (" +
-                      nlopt_inner_searches_without_gradient() + ")."
-                : " PC_LAMMPS requires a gradient-free optimiser (" +
+                ? " A PC_LAMMPS or PC_FAILPROBE line requires a "
+                  "gradient-free optimiser, and an INNER search is a local "
+                  "NLopt algorithm: name a derivative-free one in the INNER "
+                  "block (" + nlopt_inner_searches_without_gradient() + ")."
+                : " A PC_LAMMPS or PC_FAILPROBE line requires a "
+                  "gradient-free optimiser (" +
                       searches_without_gradient() + "); an NLopt MLSL or "
                       "AUGLAG algorithm is accepted with a derivative-free "
                       "INNER block.";
@@ -2120,7 +2131,7 @@ void HPOTargets::read(const std::string& fn)
                 /* obtains_gradients: there is a default local search. */
                 const OptimizerSpec local = inner_run_spec(sp).value();
                 throw std::runtime_error(with_block_line(sp,
-                    std::string("--hpotarget defines PC_LAMMPS but ") + tag
+                    "--hpotarget defines " + script_line + " but " + tag
                     + " optimiser " + sp.lib + ":" + sp.algo +
                     " takes a gradient: NLopt's MLSL and AUGLAG take one for "
                     "their local search, and NLopt's default local "
@@ -2133,7 +2144,7 @@ void HPOTargets::read(const std::string& fn)
                     requires_free));
             }
             throw std::runtime_error(with_block_line(sp,
-                std::string("--hpotarget defines PC_LAMMPS but ") + tag
+                "--hpotarget defines " + script_line + " but " + tag
                 + " optimiser " + sp.lib + ":" + sp.algo +
                 " is gradient-based." + requires_free));
         };

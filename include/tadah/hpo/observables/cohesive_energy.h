@@ -93,7 +93,9 @@ public:
          *                hard rejection without leaking NaN through
          *                downstream best-tracking.
          * - ForceScaled: res.value = target + unconverged_value .
-         *                final_fmax_atoms. Maps "how far from
+         *                fmax, the larger of the relaxer's
+         *                final_fmax_atoms and final_strain_force_norm
+         *                (the measure its ftol bounds). Maps "how far from
          *                convergence" linearly into the value; the
          *                optimiser sees a smooth gradient toward
          *                fmax -> 0 instead of a flat FAIL_SCORE plateau,
