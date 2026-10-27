@@ -37,6 +37,7 @@
 #include <numeric>
 #include <optional>
 #include <random>
+#include <set>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -844,6 +845,49 @@ build_init_strategy(const InitStrategySpec& ispec)
 
     if (kids.size() == 1) return std::move(kids.front());
     return std::make_unique<ChainStrategy>(std::move(kids));
+}
+
+ChainPoints chain_points(const InitStrategySpec& init)
+{
+    ChainPoints c;
+    c.k_total = init.k_total;
+    c.distinct = init.chain.empty() ? 1 : 0;
+    std::size_t config_lines = 0;
+    bool warm_repeated = false;
+    std::set<std::string> warm_files;
+    for (const auto& e : init.chain) {
+        c.lines += (c.lines.empty() ? "" : ", ") + e.method;
+        for (const auto& a : e.args) c.lines += " " + a;
+        if (e.method == "CONFIG") {
+            if (config_lines++ == 0) ++c.distinct;
+        } else if (e.method == "WARM") {
+            c.warm = true;
+            if (warm_files.insert(e.args.empty() ? std::string()
+                                                 : e.args.front()).second)
+                ++c.distinct;
+            else
+                warm_repeated = true;
+        } else {
+            c.distinct += make_one(e, init.warm_on_mismatch)->default_k();
+        }
+    }
+    c.warm_skip = c.warm && init.warm_on_mismatch == "skip";
+    c.points = c.k_total ? std::min(c.distinct, *c.k_total) : c.distinct;
+    if (config_lines > 1) c.notes = "the CONFIG lines give one point";
+    if (warm_repeated)
+        c.notes += (c.notes.empty() ? "" : ", and ") +
+                   std::string("the WARM lines of one file give one point");
+    return c;
+}
+
+std::string ChainPoints::from() const
+{
+    if (lines.empty())
+        return "the CONFIG point: the chain has no METHOD line";
+    return lines +
+           (k_total ? ", capped by K_TOTAL " + std::to_string(*k_total)
+                    : std::string()) +
+           (notes.empty() ? std::string() : "; " + notes);
 }
 
 }  // namespace tadah::hpo

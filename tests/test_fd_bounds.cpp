@@ -1680,10 +1680,12 @@ TEST_CASE("No usable gradient: a Ceres search that ends with FAILURE right "
      * the straddle cases that a zero gradient between two failures used to
      * make (test_hpo_termination.cpp, "No usable gradient: the straddle
      * searches that ended right after a rejection go on to MAXEVAL").
-     * Pins: 27 evaluations, the stop line "(the loss at X[1] = 1.000001376
+     * Pins: 27 evaluations, the stop line "(the loss at X[1] = 1.000000005
      * is 1.797693135e+308); Ceres ended right after it (FAILURE: Numerical
      * failure in line search", the status "STOPPED -- no usable gradient:
      * ...".
+     * Before Ceres was given a failed evaluation's loss scaled to at most
+     * 1e100: the stop line named X[1] = 1.000001376.
      * Before the fix: the case ran CERES:LBFGS, WOLFE and NLCG, refused
      * since (their Wolfe line search stalls at a point outside the OPTIM
      * box): from 1.6 they ended at 1.2 after 7 evaluations, and from 1.95
@@ -1700,7 +1702,7 @@ TEST_CASE("No usable gradient: a Ceres search that ends with FAILURE right "
             CHECK(count_of(j.text(),
                            std::string("CERES:") + algo + " stopped: " +
                                kNoUsableStencil +
-                               " (the loss at X[1] = 1.000001376 is "
+                               " (the loss at X[1] = 1.000000005 is "
                                "1.797693135e+308); Ceres ended right after it "
                                "(FAILURE: Numerical failure in line "
                                "search") == 1u);

@@ -1,5 +1,6 @@
 #include <tadah/hpo/backend_rules.h>
 
+#include <tadah/hpo/algorithms_asa.h>    // asa_cost_limit
 #include <tadah/hpo/anneal_core.h>
 #include <tadah/hpo/asa_options.h>
 #include <tadah/hpo/ceres_adapter.h>
@@ -7,6 +8,7 @@
 #include <tadah/hpo/fd_stencil.h>
 #include <tadah/hpo/hpo.h>              // should_run_noise_calibration
 #include <tadah/hpo/optimizer_caps.h>
+#include <tadah/hpo/pc_fail_grading.h>   // graded_failscore
 #include <tadah/hpo/phase_specs.h>
 #include <tadah/hpo/repeat_points.h>
 #include <tadah/hpo/strategy_rules.h>
@@ -522,6 +524,41 @@ void validate_asa_spec(const OptimizerSpec& sp)
         throw std::runtime_error(
             "ASA:ASA requires at least one OPTIM dimension");
     (void)parse_asa_options(sp, dim);
+    /* ASA takes a cost at or above asa_cost_limit() for an invalid state and
+     * draws another (algorithms_asa.cpp, cost_is_valid). A graded failure
+     * scores from 0.999 FAILSCORE up to its largest, band D's at saturation,
+     * just below FAILSCORE (pc_fail_grading.h): when that reaches the limit,
+     * ASA would take the graded failures at or above it for invalid states
+     * and not see their grading (from about 1.001 times the limit, every
+     * graded failure: the search would evaluate the points of
+     * FAILSCORE_GRADING OFF). */
+    const double limit = asa_cost_limit();
+    if (sp.failscore_grading && sp.failscore &&
+        graded_failscore(*sp.failscore, FailBand::D,
+                         std::numeric_limits<double>::infinity(),
+                         1.0) >= limit) {
+        const double fs = *sp.failscore;
+        const std::string value =
+            core::format_roundtrip(fs) +
+            (fs == std::numeric_limits<double>::max()
+                 ? ", the largest double, as without a FAILSCORE line"
+                 : "");
+        /* The limit is 1e18 rounded down to a double; FAILSCORE 1e18 keeps
+         * the largest graded failure below it. */
+        const std::string cap = core::format_sig(limit, 6);
+        /* The variable may set ON over a file that says OFF: named. */
+        const std::string mode =
+            sp.failscore_grading_by_env
+                ? "FAILSCORE_GRADING ON, set by TADAH_FAILSCORE_GRADING,"
+                : "FAILSCORE_GRADING ON";
+        throw std::runtime_error(
+            "ASA:ASA: under " + mode + " a failed evaluation scores "
+            "from 0.999 FAILSCORE to below FAILSCORE (" + value + "), and "
+            "ASA:ASA takes a cost of about " + cap + " or more for "
+            "an invalid state and draws another, so it would not see the "
+            "graded failures at or above that cost; a FAILSCORE of " + cap +
+            " or less keeps every graded failure below it");
+    }
 }
 
 void validate_backend(const OptimizerSpec& spec, RestartStop restart,

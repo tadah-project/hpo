@@ -961,7 +961,14 @@ TEST_CASE("WarmInitStrategy: EMBF0 of the seed vs the run's -c",
 TEST_CASE("HPO parses MULTISTART knobs",
           "[HPO][run_policy][multistart]")
 {
+    /* The INIT chain gives the 4 starting points N_STARTS 4 needs (a
+     * chain of fewer is refused at the N_STARTS line; this case had no
+     * INIT block, and the run started once, from the CONFIG point). */
     StrategyTempFile cfg(R"(OPTIMIZER
+INIT
+  METHOD LHS 4
+  SEED 1
+ENDINIT
 STRATEGY
   TYPE MULTISTART
   LIB DLIB
@@ -1522,7 +1529,10 @@ TEST_CASE("HPO log file records init/run-policy summary",
      * a full optimisation here — only check the writer output. */
     using namespace tadah::hpo;
     /* K_TOTAL 3 caps the 4 SOBOL points (K_TOTAL 4, which this case gave
-     * until a K_TOTAL that caps nothing was refused, is refused). */
+     * until a K_TOTAL that caps nothing was refused, is refused), and
+     * N_STARTS 3 starts from each of them (N_STARTS 4, which this case gave
+     * until a chain of fewer points than N_STARTS was refused, is
+     * refused). */
     StrategyTempFile cfg(R"(OPTIMIZER
 INIT
   STRATEGY SOBOL 4
@@ -1536,7 +1546,7 @@ STRATEGY
   LIB DLIB
   ALGO BFGS
   MAXEVAL 50
-  N_STARTS 4
+  N_STARTS 3
   BUDGET_PER_START 12
 ENDSTRATEGY
 ENDOPTIMIZER
@@ -1974,7 +1984,13 @@ TEST_CASE("A count of starting points at its limit, 1000000, draws that many "
  * chain, the INIT blocks inside EXPLORE another, the RESTART blocks a third
  * -- so a K_TOTAL at or above their number caps nothing and is refused when
  * the file is read, at the K_TOTAL line, with the blocks, the count and the
- * METHOD lines (CONFIG and WARM give one point each): "K_TOTAL 3 caps
+ * METHOD lines, counted as the startup check of N_STARTS counts them
+ * (chain_points): the K of each RANDOM, LHS and SOBOL line, one point for
+ * the CONFIG lines and one for the WARM lines of each file, as the chain
+ * keeps a point once: "K_TOTAL 1 caps nothing: ... give at most 1
+ * starting point (CONFIG, CONFIG; the CONFIG lines give one point) ...",
+ * "... give at most 3 starting points (WARM <file>, WARM <file>, RANDOM 2;
+ * the WARM lines of one file give one point) ..."; "K_TOTAL 3 caps
  * nothing: the METHOD lines of the INIT blocks inside OPTIMIZER, STRATEGY
  * and REFINE give at most 3 starting points (CONFIG, RANDOM 2), and K_TOTAL
  * keeps the first K_TOTAL starting points", "... the METHOD lines of the
@@ -1993,6 +2009,10 @@ TEST_CASE("A count of starting points at its limit, 1000000, draws that many "
  * K_TOTAL 0 and METHOD RANDOM 0, which gave no cap and no point, are
  * refused at their line, as LHS 0 and SOBOL 0 are. K_TOTAL 3 of CONFIG and
  * RANDOM 4 keeps 3 points.
+ * Before the CONFIG lines counted as one point: each CONFIG and WARM line
+ * counted as one, so K_TOTAL 1 of two CONFIG lines and K_TOTAL 3 of two
+ * WARM lines of one file and RANDOM 2 were read, and capped nothing (the
+ * two cases fail).
  * Before the fix: each of these files was read; K_TOTAL replaced the K of
  * a lone METHOD line (METHOD RANDOM 3 with K_TOTAL 7 drew 7 points), K_TOTAL
  * 0 set no cap, and RANDOM 0 drew no point. Before the fix of the EXPLORE
@@ -2023,6 +2043,19 @@ TEST_CASE("K_TOTAL that caps nothing, K_TOTAL 0 and METHOD RANDOM 0 are "
          "INIT blocks inside OPTIMIZER, STRATEGY and REFINE give at most 1 "
          "starting point (WARM no_such_seed.tadah)" +
              keeps + "\nLine: K_TOTAL 1"},
+        {init_block("METHOD CONFIG\nMETHOD CONFIG\nK_TOTAL 1\n"),
+         "Error on line 6: K_TOTAL 1 caps nothing: the METHOD lines of the "
+         "INIT blocks inside OPTIMIZER, STRATEGY and REFINE give at most 1 "
+         "starting point (CONFIG, CONFIG; the CONFIG lines give one point)" +
+             keeps + "\nLine: K_TOTAL 1"},
+        {init_block("METHOD WARM no_such_seed.tadah\n"
+                    "METHOD WARM no_such_seed.tadah\nMETHOD RANDOM 2\n"
+                    "K_TOTAL 3\n"),
+         "Error on line 7: K_TOTAL 3 caps nothing: the METHOD lines of the "
+         "INIT blocks inside OPTIMIZER, STRATEGY and REFINE give at most 3 "
+         "starting points (WARM no_such_seed.tadah, WARM no_such_seed.tadah, "
+         "RANDOM 2; the WARM lines of one file give one point)" +
+             keeps + "\nLine: K_TOTAL 3"},
         {init_block("K_TOTAL 2\n"),
          "Error on line 4: K_TOTAL 2 caps nothing: a block without a METHOD "
          "line gives one starting point (the CONFIG point)" + keeps +

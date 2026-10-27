@@ -103,6 +103,53 @@ TEST_CASE("A repeated PC_EMAE, PC_ErRMSE or PC_ERSQ line is refused",
     CHECK(t.srmse_targets.global().weight == 4);
 }
 
+/* Pins: PC_ERSQ refuses --skip-above and --skip-rel at its line: a cap
+ * rejects an evaluation whose metric is above it, and R^2 is better when
+ * higher, so the cap would reject the better fits ("Error on line 6:
+ * PC_ERSQ takes no --skip-above: a cap rejects an evaluation whose metric
+ * is above it, and a higher R^2 is a better fit, so the cap would reject
+ * the better fits"; with both options the first is named). The option is
+ * refused as soon as it is read, before its value: an option without its
+ * value, with a value that is no positive number, or given twice gets the
+ * same refusal, not a message about its value. The other metric lines
+ * keep their caps, and PC_ERSQ without a cap is read. A repeated PC_ERSQ
+ * line is refused as repeated whatever its options (the case above).
+ * Before the fix: the caps were read, and an evaluation with R^2 0.95
+ * under --skip-above 0.9 was rejected as a failure. Before the option was
+ * refused at its token: "PC_ERSQ --skip-above requires a positive number",
+ * "PC_ERSQ: repeated --skip-above", "PC_ERSQ --skip-rel must be a positive
+ * number, got '-1'" and "... got 'abc'" (the cases fail). */
+TEST_CASE("PC_ERSQ refuses --skip-above and --skip-rel at its line",
+          "[pc_dataset][parser]") {
+    const std::string why =
+        ": a cap rejects an evaluation whose metric is above it, and a higher "
+        "R^2 is a better fit, so the cap would reject the better fits";
+    for (const auto& [line, option] :
+         std::vector<std::pair<std::string, std::string>>{
+             {"PC_ERSQ 1 1 --skip-above 0.9", "--skip-above"},
+             {"PC_ERSQ 1 1 --skip-rel 2", "--skip-rel"},
+             {"PC_ERSQ 1 1 --skip-rel 2 --skip-above 0.9", "--skip-rel"},
+             {"PC_ERSQ 1 1 --skip-above", "--skip-above"},
+             {"PC_ERSQ 1 1 --skip-above 0.9 --skip-above 0.8", "--skip-above"},
+             {"PC_ERSQ 1 1 --skip-rel -1", "--skip-rel"},
+             {"PC_ERSQ 1 1 --skip-above abc", "--skip-above"}}) {
+        INFO(line);
+        ConfigFile f(line + "\n");
+        tadah::core::Context ctx;
+        CHECK_THROWS_WITH(HPOTargets(ctx, f.path.string()),
+                          "Error on line 6: PC_ERSQ takes no " + option + why +
+                              "\nLine: " + line);
+    }
+    ConfigFile ok("PC_ERSQ 1 1\nPC_ERMSE 0 1 --skip-above 5 --skip-rel 2\n"
+                  "PC_EMAE 0 1 --skip-above 5\n");
+    tadah::core::Context ctx;
+    HPOTargets t(ctx, ok.path.string());
+    CHECK(t.use_ersq);
+    CHECK_FALSE(t.skip_ersq.abs_above);
+    CHECK_FALSE(t.skip_ersq.rel_above);
+    CHECK(t.skip_emae.abs_above == 5);
+}
+
 /* A second global PC_ERMSE, PC_FRMSE or PC_SRMSE_GPA line is refused at its
  * line, naming the line of the first, as a repeated PC_EMAE is ("Error on
  * line 7:
