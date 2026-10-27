@@ -1131,7 +1131,8 @@ bool takes_one_point(const OptimizerSpec& phase)
  * one (given the points of its EXPLORE block's INIT block, else of the
  * OPTIMIZER-level one), a MULTISTART with fewer starts than points
  * (plan_multistart). The advice names what takes them all and is not the
- * TYPE in use. */
+ * TYPE in use. Under PRESTAGE, an OPTIMIZER-level INIT block beside the
+ * EXPLORE block's own gives only the refinement's fallback its points. */
 void unused_init_point_warnings(const OptimizerSpec& root,
                                 std::vector<std::string>& out)
 {
@@ -1176,6 +1177,33 @@ void unused_init_point_warnings(const OptimizerSpec& root,
         case StrategyType::PRESTAGE: {
             if (!root.prestage) return;
             const OptimizerSpec& explore = *root.prestage;
+            /* An OPTIMIZER-level INIT block beside the EXPLORE block's own:
+             * the exploration starts from the EXPLORE block's points
+             * (share_init_with_nested_phases), the refinement from the
+             * OPTIMIZER-level ones only when no evaluation of the
+             * exploration has a usable loss (StagedPolicy), and NOISE
+             * CALIBRATION evaluates the first of them. */
+            const InitStrategySpec& outer = root.init_strategy_spec;
+            const InitStrategySpec& inner = explore.init_strategy_spec;
+            if (!outer.chain.empty() && !inner.chain.empty() &&
+                !root.optim_init.empty()) {
+                const std::string calibration =
+                    should_run_noise_calibration(root.noise.calibration_n)
+                        ? " (NOISE CALIBRATION evaluates the first of them " +
+                              std::to_string(root.noise.calibration_n) +
+                              " times)"
+                        : std::string();
+                out.push_back(
+                    init_block_gives(outer, root.optim_init.size()) +
+                    ", and the PRESTAGE exploration (EXPLORE block) starts "
+                    "from those of its own INIT block" +
+                    (inner.line > 0 ? ", on line " + std::to_string(inner.line)
+                                    : std::string()) +
+                    ", so the search evaluates them only in the refinement, "
+                    "when no evaluation of the exploration has a usable loss" +
+                    calibration + ". Without an INIT block of its own, the "
+                    "exploration takes them.");
+            }
             const std::size_t n = explore.optim_init.size();
             if (n < 2 || !takes_one_point(explore)) return;
             /* The exploration's points: its EXPLORE block's INIT block, or
