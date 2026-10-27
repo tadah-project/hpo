@@ -573,14 +573,15 @@ int hpo_run_from_startup(core::Context& ctx, HPOLog& log,
      * validate_hpo_setup applies again through mlip::require_fit_settings
      * for a caller that skips this). */
     core::require_no_retired_keys(ctx, "tadah hpo");
-    /* The hpotarget file is the run's own: --hpotarget (tadah hpo -c
+    /* The target file is the run's own: --hpotarget (tadah hpo -c
      * requires it), or, for a context a program builds, an HPOTARGET line
      * of its configuration. A configuration whose only HPOTARGET line was
      * that of the potential it includes has none: the refusal names where
-     * the run's own goes and the potential's line that was not read. */
+     * the run's own goes and the potential's line that was not read, in
+     * the words of tadah analysis check_bounds. */
     if (!ctx.has_stored("HPOTARGET"))
         throw std::runtime_error(mlip::missing_run_setting(
-            "hpo", "HPOTARGET", "the hpotarget file", provenance));
+            "hpo", "HPOTARGET", "the target file", provenance));
 
     /* Its training_record (the comment block of every potential file the
      * run writes) is taken from ctx before anything inserts a default; the
