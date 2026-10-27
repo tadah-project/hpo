@@ -1014,10 +1014,14 @@ TEST_CASE("startup validation: a RESTART block that never restarts the "
  * the workers of the run, and the THREADS of an EXPLORE block is read by
  * ASA:ASA, DLIB:GFS, TADAH:ANNEAL_PA, TADAH:ANNEAL_PT; remove it" (serial
  * TADAH:ANNEAL too). An EXPLORE block of DLIB:GFS with THREADS 2, and the
- * STRATEGY-level THREADS of every optimiser but CERES (which refuses it
- * itself), are accepted.
+ * STRATEGY-level THREADS of every optimiser, CERES:STEEPEST_DESCENT
+ * included, are accepted (in a build without Ceres, LIB CERES is refused as
+ * not built).
  * Before the fix: each of these files was accepted, and the THREADS of the
- * INNER and EXPLORE blocks had no effect. */
+ * INNER and EXPLORE blocks had no effect. Before the fix of CERES: the
+ * STRATEGY-level THREADS of CERES:STEEPEST_DESCENT was refused, "the
+ * STRATEGY-level optimiser: CERES:STEEPEST_DESCENT does not support THREADS
+ * (host evaluation is single-threaded inside one optimizer step)". */
 TEST_CASE("startup validation: THREADS in an INNER block or in an EXPLORE "
           "block whose optimiser does not read it is refused",
           "[startup_validation][strategy][threads]")
@@ -1056,6 +1060,10 @@ TEST_CASE("startup validation: THREADS in an INNER block or in an EXPLORE "
     CHECK(judge(strategy_config("    LIB NLOPT\n    ALGO LN_SBPLX\n"
                                 "    MAXEVAL 20\n    THREADS 4\n"))
               .startup == "");
+    CHECK(judge(strategy_config("    LIB CERES\n    ALGO STEEPEST_DESCENT\n"
+                                "    MAXEVAL 20\n    THREADS 4\n"))
+              .startup ==
+          hpo_test::ceres_expect("", "the STRATEGY-level optimiser: "));
 }
 
 /* Pins: an NLopt algorithm takes the PARAM keys NLopt 2.10 reads for it

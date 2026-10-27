@@ -58,6 +58,7 @@
 #include <tadah/mlip/parallel.h>
 
 #include "anneal_test_support.h"
+#include "ceres_build.h"
 #include "finish_within.h"
 #include "rhoform_test_support.h"
 
@@ -2510,6 +2511,40 @@ TEST_CASE("Two runs in one process: each run's worker pool has the run's "
                                       "evaluations").size() == 1u);
         CHECK_FALSE(tadah::mlip::has_parallel_backend());
     }
+}
+
+/* Pins: CERES:STEEPEST_DESCENT takes the STRATEGY-level THREADS as every
+ * other optimiser does: THREADS 3 sizes the workers that run the work of
+ * its evaluations (the training and prediction of the potential; a
+ * gradient-based optimiser runs no PC_LAMMPS line, which the parser
+ * refuses beside it). The run returns 0, its journal says once "THREADS: 3
+ * workers run the work of the evaluations" (the width of the pool the run
+ * built), and loss.tadah records its evaluations. In a build without Ceres
+ * (TADAH_ENABLE_CERES OFF) the run is refused as every LIB CERES is
+ * (kCeresNotBuilt).
+ * Before the fix: the run was refused at startup, "the STRATEGY-level
+ * optimiser: CERES:STEEPEST_DESCENT does not support THREADS (host
+ * evaluation is single-threaded inside one optimizer step)". */
+TEST_CASE("CERES:STEEPEST_DESCENT runs the work of its evaluations on the "
+          "workers of the STRATEGY-level THREADS",
+          "[HPO][termination][threads][ceres]")
+{
+    TaRun run(plain_block("    TYPE PLAIN\n    LIB CERES\n"
+                          "    ALGO STEEPEST_DESCENT\n    MAXEVAL 20\n"
+                          "    THREADS 3\n"));
+#ifdef TADAH_USE_CERES
+    int status = -1;
+    REQUIRE_NOTHROW(status = tadah::hpo::hpo_run(run.ctx));
+    CHECK(status == 0);
+    const std::string journal = read_file("hpo_run.log");
+    INFO("journal:\n" << journal);
+    CHECK(lines_with(journal, "THREADS: 3 workers run the work of the "
+                              "evaluations").size() == 1u);
+    CHECK_FALSE(data_rows("loss.tadah").empty());
+#else
+    CHECK_THROWS_WITH(tadah::hpo::hpo_run(run.ctx),
+                      Catch::Contains(hpo_test::kCeresNotBuilt));
+#endif
 }
 
 /* Pins: a second run with a smaller THREADS under PC_ISOLATION PROCESS runs

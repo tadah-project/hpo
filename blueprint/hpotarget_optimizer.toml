@@ -1472,7 +1472,6 @@ STRATEGY-level THREADS. An INNER block refuses THREADS at startup, and so \
 do an EXPLORE block whose optimiser is none of these and \
 CERES:STEEPEST_DESCENT."""
 checks = [
-  { msg = "{phase}: CERES:{algo} does not support THREADS (host evaluation is single-threaded inside one optimizer step)", doc = "At startup, at the END line of its optimiser." },
   { msg = "{phase}: {lib}:{algo} does not use THREADS in an INNER block: the THREADS of the STRATEGY-level optimiser sets the workers of the run; remove it", doc = "At startup, at the ENDINNER line." },
   { msg = "{phase}: {lib}:{algo} does not use THREADS: the THREADS of the STRATEGY-level optimiser sets the workers of the run, and the THREADS of an EXPLORE block is read by {list}; remove it", doc = "At startup, at the ENDEXPLORE line: an exploration whose optimiser reads no THREADS of its own; {list} names those that do." },
 ]
@@ -1481,17 +1480,15 @@ checks = [
 wrap = "strategy"
 text = "THREADS 4"
 
+[[key.examples]]
+wrap = "opt_ceres"
+doc = "The workers of the run of a CERES:STEEPEST_DESCENT search, which run the training and prediction of each of its evaluations."
+text = "THREADS 2"
+
 [[key.invalid]]
 wrap = "strategy"
 text = "THREADS 0"
 error = "THREADS must be an integer from 1 to 2147483647, got '0'"
-
-[[key.invalid]]
-wrap = "opt_ceres"
-check = "startup"
-at = "ENDOPTIMIZER"
-text = "THREADS 2"
-error = "the STRATEGY-level optimiser: CERES:STEEPEST_DESCENT does not support THREADS (host evaluation is single-threaded inside one optimizer step)"
 
 [[key.invalid]]
 wrap = "strategy"
