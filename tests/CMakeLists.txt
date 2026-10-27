@@ -451,6 +451,28 @@ set_tests_properties(hpo_hpotarget_generator_tool PROPERTIES
     LABELS "docs"
     TIMEOUT 120
     FAIL_REGULAR_EXPRESSION "\nRan 0 tests ")
+# hpo_has_include_rebuild: a source that tests for headers with
+# __has_include, as test_hpotarget_registry_bindings.cpp tests for the
+# generated tables, is compiled again by the build when they appear, change
+# or go (has_include_rebuild/check_has_include_rebuild.cmake, on a
+# throw-away project, with hpo_depend_on_has_include() of
+# has_include_rebuild/has_include_depends.cmake). Before the fix: fails,
+# has_include_depends.cmake does not exist; a compiler's dependency file
+# records no header that __has_include did not find, so a build tree that
+# had compiled test_hpotarget_registry_bindings.cpp without the headers
+# kept that object after they appeared, and CTest kept its one case
+# "hpotarget generated tables: the generated headers exist", which fails.
+add_test(NAME hpo_has_include_rebuild
+    COMMAND ${CMAKE_COMMAND}
+        -DMODULE=${CMAKE_CURRENT_SOURCE_DIR}/has_include_rebuild/has_include_depends.cmake
+        "-DGENERATOR=${CMAKE_GENERATOR}"
+        -DMAKE_PROGRAM=${CMAKE_MAKE_PROGRAM}
+        -DCXX=${CMAKE_CXX_COMPILER}
+        -DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/has_include_rebuild
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/has_include_rebuild/check_has_include_rebuild.cmake)
+set_tests_properties(hpo_has_include_rebuild PROPERTIES
+    LABELS cmake
+    TIMEOUT 120)
 
 # Boost drift gate: every Boost header HPO includes must be in the Boost
 # Tadah vendors (MLIP's external/boost, on HPO's include path through
