@@ -521,6 +521,18 @@ error = "PC_ERSQ takes no --skip-rel: a cap rejects an evaluation whose metric i
 
 [[key.invalid]]
 wrap = "root"
+doc = "An option without its value is refused as the option, before its value is read."
+text = "PC_ERSQ 1 1 --skip-above"
+error = "PC_ERSQ takes no --skip-above: a cap rejects an evaluation whose metric is above it, and a higher R^2 is a better fit, so the cap would reject the better fits"
+
+[[key.invalid]]
+wrap = "root"
+doc = "An option given twice is refused as the option."
+text = "PC_ERSQ 1 1 --skip-above 0.9 --skip-above 0.8"
+error = "PC_ERSQ takes no --skip-above: a cap rejects an evaluation whose metric is above it, and a higher R^2 is a better fit, so the cap would reject the better fits"
+
+[[key.invalid]]
+wrap = "root"
 text = "PC_ERSQ (1) 1 1"
 error = "PC_ERSQ: indexed targets are supported only for PC_ERMSE, PC_FRMSE and PC_SRMSE_GPA"
 
