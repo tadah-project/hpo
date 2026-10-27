@@ -573,19 +573,22 @@ TEST_CASE("a failed PC_OBSERVABLE term's journal line says why: an evaluation "
 
 /* A cohesive_energy relaxation that does not converge (--maxeval 1, from a
  * compressed cell, a0 = 2.2 in the window [2, 5]) reports its --unconverged
- * value: the constant, or target + slope x fmax. When
- * that value is not finite the term fails, and the reason names the
- * strategy and its numbers. The parser reads only finite numbers, so a
- * const value is finite, and a force-scaled value is not finite when fmax
- * is not, or slope x fmax overflows (a slope near the largest double). The
+ * value: the constant, or the cohesive energy of the cell it ends at moved
+ * away from the target by slope x fmax. When that value is not finite the
+ * term fails, and the reason names the strategy and its numbers. The
+ * parser reads only finite numbers, so a const value is finite, and a
+ * force-scaled value is not finite when the cohesive energy or fmax is
+ * not, or slope x fmax overflows (a slope near the largest double). The
  * observable is built here with a slope of +inf, and a constant of NaN.
  * Pins: the reason is "the relaxation did not converge (maxeval reached)
- * and its --unconverged force-scaled value, target + slope x fmax = 8.1 +
- * inf x <fmax> = <v>, is not finite", and "... and its --unconverged const
- * value nan is not finite"; no reason names --unconverged-penalty, a flag
- * the parser refuses.
- * Before the fix: both ended "... and its --unconverged-penalty value is
- * <v>". */
+ * and its --unconverged force-scaled value, the cohesive energy of the
+ * cell it ends at moved away from the target by slope x fmax, <Ecoh> -
+ * inf x <fmax> = <v>, is not finite" (+ when Ecoh is at or above the
+ * target), and "... and its --unconverged const value nan is not finite";
+ * no reason names --unconverged-penalty, a flag the parser refuses.
+ * Before the fix: the force-scaled reason read "... value, target + slope
+ * x fmax = 8.1 + inf x <fmax> = <v>, is not finite": the value was the
+ * target plus slope x fmax, whatever the cohesive energy. */
 TEST_CASE("an unconverged cohesive_energy relaxation whose --unconverged value "
           "is not finite names its strategy", "[HPO][partial_failure][host]") {
     tadah::core::PeriodicTable::initialize();
@@ -599,9 +602,10 @@ TEST_CASE("an unconverged cohesive_energy relaxation whose --unconverged value "
         {Cfg::UnconvergedStrategy::ForceScaled,
          std::numeric_limits<double>::infinity(),
          std::regex(R"(the relaxation did not converge \(maxeval reached\) )"
-                    R"(and its --unconverged force-scaled value, target \+ )"
-                    R"(slope x fmax = 8\.1 \+ inf x [-+.0-9e]+ = -?(nan|inf), )"
-                    R"(is not finite)")},
+                    R"(and its --unconverged force-scaled value, the )"
+                    R"(cohesive energy of the cell it ends at moved away )"
+                    R"(from the target by slope x fmax, [-+.0-9e]+ [-+] )"
+                    R"(inf x [-+.0-9e]+ = -?(nan|inf), is not finite)")},
         {Cfg::UnconvergedStrategy::Const,
          std::numeric_limits<double>::quiet_NaN(),
          std::regex(R"(the relaxation did not converge \(maxeval reached\) )"

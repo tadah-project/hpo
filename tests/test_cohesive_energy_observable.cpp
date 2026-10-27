@@ -20,11 +20,14 @@
 //   6. --fmax-converged is the force tolerance of the atoms; --ptol, in
 //      GPa, the pressure tolerance of the cell: it loosens and tightens its
 //      relaxation.
-//   7. --unconverged force-scaled grows with the strain force of the cell
-//      at the end of a relaxation that does not converge.
+//   7. --unconverged force-scaled reports the cohesive energy of the cell
+//      a relaxation that does not converge ends at, moved away from the
+//      target by the slope times the strain force of the cell there.
 //   8. The relaxed value is that of the crystal at zero pressure: dO/dW is
 //      its derivative, and the value does not depend on the start a0 (the
-//      Ta potential data/ta/ta_md_blip.tadah against LAMMPS).
+//      Ta potential data/ta/ta_md_blip.tadah against LAMMPS, also at a
+//      --ptol far below the default, and the DM_REAM potential
+//      data/ta/ta2_refit_seed.tadah, whose energy is noisy).
 
 #include "catch2/catch.hpp"
 
@@ -56,6 +59,8 @@
 #include <string>
 #include <sstream>
 #include <stdexcept>
+#include <utility>
+#include <vector>
 
 namespace {
 
@@ -195,14 +200,14 @@ double pressure_of(tadah::mlip::M_Tadah_Base& model, tadah::mlip::DC_Base& dc,
            (3.0 * st.get_volume());
 }
 
-/* The Ta potential data/ta/ta_md_blip.tadah, loaded as tadah predict loads
- * a potential (its descriptors, DescriptorsCalc and the model of its MODEL
- * line). The file has FORCE true, which the relaxation's forces need. */
+/* A Ta potential of data/ta (ta_md_blip.tadah by default), loaded as
+ * tadah predict loads a potential (its descriptors, DescriptorsCalc and the
+ * model of its MODEL line), with FORCE true, which the relaxation's forces
+ * need (tadah hpo sets it for PC_OBSERVABLE). */
 class TaMdPotential {
 public:
-    TaMdPotential()
-        : ctx_(tadah::core::CoreUserConfigParser().parse(
-              std::string(TADAH_HPO_TA_DATA_DIR) + "/ta_md_blip.tadah")),
+    explicit TaMdPotential(const std::string& file = "ta_md_blip.tadah")
+        : ctx_(load(file)),
           dcs_(ctx_),
           dc_(ctx_, *dcs_.d2b, *dcs_.dmb, *dcs_.c2b, *dcs_.cmb),
           fb_(tadah::core::factory<tadah::mlip::DM_Function_Base,
@@ -218,12 +223,36 @@ public:
     const Context& context() const { return ctx_; }
 
 private:
+    static Context load(const std::string& file) {
+        Context c = tadah::core::CoreUserConfigParser().parse(
+            std::string(TADAH_HPO_TA_DATA_DIR) + "/" + file);
+        c.remove("FORCE");
+        c.add("FORCE", "true");
+        return c;
+    }
+
     Context ctx_;
     tadah::models::DC_Selector dcs_;
     tadah::mlip::DescriptorsCalc<> dc_;
     std::unique_ptr<tadah::mlip::DM_Function_Base> fb_;
     std::unique_ptr<tadah::mlip::M_Tadah_Base> model_;
 };
+
+/* The cohesive energy -(E_bulk - N E_iso) / N of the n x n x n bcc cell of
+ * lattice constant @p a0 and of the isolated atom of @p species, with
+ * neighbour lists built afresh at the cutoff of @p ctx. */
+double ecoh_at(tadah::mlip::M_Tadah_Base& model, tadah::mlip::DC_Base& dc,
+               const Context& ctx, const std::string& species, double a0,
+               int n) {
+    Structure bulk = tadah::mlip::cells::bcc(species, a0);
+    tadah::mlip::StructureTransformation::replicate(bulk, n, n, n);
+    Structure iso = tadah::mlip::cells::isolated_atom(species);
+    NNFinder().calc(bulk, ctx);
+    NNFinder().calc(iso, ctx);
+    const double N = static_cast<double>(bulk.natoms());
+    return -(model.epredict(dc.calc(bulk)) - N * model.epredict(dc.calc(iso))) /
+           N;
+}
 
 /* E_coh = -(E_bulk - N E_iso) / N of the observable's relaxed bulk and
  * isolated atom, with neighbour lists built afresh here at the model's
@@ -657,11 +686,18 @@ TEST_CASE("CohesiveEnergyObservable: an evaluation that does not move the "
  * on the same a0, bit for bit, away from 3.1: the atomic forces of the
  * bcc cell vanish by symmetry, so no force tolerance ends the relaxation
  * of its cell (expected change: the option bounded the pressure as well,
- * and these three a0 differed).
+ * and these three a0 differed). With --fmax-converged 1e-300, below the
+ * atomic forces the bcc cell has from rounding, no relaxation meets it:
+ * the term reports the --unconverged value (--maxiter 200 --maxeval 2000
+ * bound the relaxation that cannot converge).
  * Before the fix: --fmax-converged bounded the atomic forces and the
  * pressure |dE/deps| / (3V) alike: with 100, which the start's pressure
  * meets, the relaxation stopped at once and handed on 3.1 bit for bit;
- * 0.1 and 1e-4 ended at two other a0. */
+ * 0.1 and 1e-4 ended at two other a0. The 1e-300 check passes as well (a
+ * pin: the code compared --fmax-converged with the largest atomic force;
+ * without the check the case passed with the option dropped, the
+ * relaxer's ftol fixed at 0.1 and the comparison removed, where 1e-300
+ * gives the relaxed value). */
 TEST_CASE("CohesiveEnergyObservable: --fmax-converged is the force tolerance "
           "of the atoms",
           "[hpo][observable][cohesive_energy][fmax_converged]")
@@ -695,6 +731,16 @@ TEST_CASE("CohesiveEnergyObservable: --fmax-converged is the force tolerance "
     CHECK(standard != 3.1);
     CHECK(loose == standard);
     CHECK(tight == standard);
+
+    auto unreachable = tadah::hpo::parse_pc_observable_line(
+        "cohesive_energy --species Ta --target 8 --weight 1 "
+        "--supercell 2 2 2 --hotvar a0 2.7 3.9 3.1 --maxiter 200 "
+        "--maxeval 2000 --fmax-converged 1e-300");
+    const ObservableEvalResult r =
+        unreachable->evaluate(*host.model, host.dc, host.context);
+    INFO("--fmax-converged 1e-300: value " << r.value);
+    CHECK(r.value_is_constant);
+    CHECK(r.value == 100.0);
 }
 
 /* Pins: --ptol is the pressure tolerance of the relaxation of the cell, in
@@ -821,21 +867,23 @@ TEST_CASE("CohesiveEnergyObservable dO/dW matches W-FD of the relaxed value",
     INFO("largest difference / largest |dO/dW|: " << worst);
 }
 
-/* Pins: --unconverged force-scaled reports target + slope x the larger of
- * the largest atomic force and the strain force of the cell,
- * |dE/deps| / (3V), at the end of the relaxation: the measure the
- * relaxation stops at. In the bcc cell the atomic forces vanish by
- * symmetry, so the strain force decides: a relaxation from a0 = 3.1,
- * about 7% below the model's minimum, capped at one iteration (--maxiter
- * 1; the --unconverged const value shows that it does not converge),
- * reports target + slope x the strain force of the cell it ends at (its
- * relaxed a0), computed here by the relaxer's central difference, and the
- * excess over the target doubles with the slope.
- * Before the fix: the value was target + slope x the largest atomic force,
- * about 1e-15 in the bcc cell: the target, a loss of about 0, for every
- * relaxation that does not converge. */
-TEST_CASE("CohesiveEnergyObservable: --unconverged force-scaled grows with "
-          "the strain force of the cell",
+/* Pins: --unconverged force-scaled reports the cohesive energy of the cell
+ * the relaxation ends at, moved away from the target by slope x fmax, fmax
+ * the larger of the largest atomic force and the strain force of the
+ * cell, |dE/deps| / (3V), at the end (the measures the relaxation stops
+ * at). In the bcc cell the atomic forces vanish by symmetry, so the strain
+ * force decides. A relaxation from a0 = 3.1, about 7% below the model's
+ * minimum, capped at one iteration (--maxiter 1; the --unconverged const
+ * value shows that it does not converge), ends at a cell whose cohesive
+ * energy, computed here at the a0 it hands on, is below 8 and above 7:
+ * with --target 8 the value is that energy less slope x the strain force
+ * of the cell, computed here by the relaxer's central difference, with
+ * --target 7 that energy plus it, and the distance from the energy doubles
+ * with the slope (1000, 2000).
+ * Before the fix: the value was the target plus slope x fmax, whatever
+ * the cohesive energy of the cell (8 + 1000 x fmax with --target 8). */
+TEST_CASE("CohesiveEnergyObservable: --unconverged force-scaled moves the "
+          "cohesive energy of the final cell away from the target",
           "[hpo][observable][cohesive_energy][unconverged]")
 {
     PeriodicTable::initialize();
@@ -846,54 +894,122 @@ TEST_CASE("CohesiveEnergyObservable: --unconverged force-scaled grows with "
     auto train_db = make_parabola_train_db();
     host.train(train_db);
 
-    const std::string line =
-        "cohesive_energy --species Ta --target 8 --weight 1 "
-        "--supercell 2 2 2 --hotvar a0 2.7 3.9 3.1 --maxiter 1 ";
-    auto evaluate = [&](const std::string& unconverged) {
-        auto obs = tadah::hpo::parse_pc_observable_line(line + unconverged);
+    auto evaluate = [&](const std::string& target,
+                        const std::string& unconverged) {
+        auto obs = tadah::hpo::parse_pc_observable_line(
+            "cohesive_energy --species Ta --target " + target +
+            " --weight 1 --supercell 2 2 2 --hotvar a0 2.7 3.9 3.1 "
+            "--maxiter 1 " + unconverged);
         return obs->evaluate(*host.model, host.dc, host.context);
     };
 
     /* Precondition: the capped relaxation does not converge. */
-    const ObservableEvalResult constant = evaluate("--unconverged const 100");
+    const ObservableEvalResult constant =
+        evaluate("8", "--unconverged const 100");
     REQUIRE(constant.value_is_constant);
     REQUIRE(constant.value == 100.0);
+    REQUIRE(constant.hotvar_updated_value.has_value());
 
-    const ObservableEvalResult r = evaluate("--unconverged force-scaled 1000");
-    const ObservableEvalResult r2 = evaluate("--unconverged force-scaled 2000");
-    REQUIRE_FALSE(r.value_is_constant);
-    REQUIRE(r.hotvar_updated_value.has_value());
+    const ObservableEvalResult below =
+        evaluate("8", "--unconverged force-scaled 1000");
+    const ObservableEvalResult below2 =
+        evaluate("8", "--unconverged force-scaled 2000");
+    const ObservableEvalResult above =
+        evaluate("7", "--unconverged force-scaled 1000");
+    REQUIRE_FALSE(below.value_is_constant);
+    REQUIRE(below.hotvar_updated_value.has_value());
+    REQUIRE(*below.hotvar_updated_value == *constant.hotvar_updated_value);
 
-    /* The strain force of the cell the relaxation ends at: the 2x2x2 bcc
-     * cell of a0 = 3.1 scaled to the relaxed a0, by the relaxer's central
-     * difference (step 1e-5 in the strain). */
-    Structure start = tadah::mlip::cells::bcc("Ta", 3.1);
-    tadah::mlip::StructureTransformation::replicate(start, 2, 2, 2);
-    const double scale = *r.hotvar_updated_value / 3.1;
+    /* The cell the relaxation ends at: the 2x2x2 bcc cell of a0 = 3.1
+     * scaled to the a0 handed on; its cohesive energy and its strain force
+     * by the relaxer's central difference (step 1e-5 in the strain). */
+    const double a0_end = *below.hotvar_updated_value;
+    Structure end = tadah::mlip::cells::bcc("Ta", 3.1);
+    tadah::mlip::StructureTransformation::replicate(end, 2, 2, 2);
+    const double scale = a0_end / 3.1;
     REQUIRE(scale != 1.0);
-    auto energy = [&](double s) {
-        Structure x = start;
-        for (int i = 0; i < 3; ++i)
-            for (int j = 0; j < 3; ++j) x.cell(i, j) = s * start.cell(i, j);
-        for (auto& at : x.atoms)
-            for (int k = 0; k < 3; ++k) at.position[k] *= s;
-        x.nn.reset();
-        NNFinder().calc(x, host.context);
-        return host.model->epredict(host.dc.calc(x));
-    };
-    const double h = 1.0e-5;
-    Structure end = start;
     for (int i = 0; i < 3; ++i)
-        for (int j = 0; j < 3; ++j) end.cell(i, j) = scale * start.cell(i, j);
+        for (int j = 0; j < 3; ++j) end.cell(i, j) *= scale;
+    for (auto& at : end.atoms)
+        for (int k = 0; k < 3; ++k) at.position[k] *= scale;
     const double strain_force =
-        std::abs(energy(scale * (1.0 + h)) - energy(scale * (1.0 - h))) /
-        (2.0 * h) / (3.0 * end.get_volume());
-    INFO(std::setprecision(17) << "relaxed a0 " << *r.hotvar_updated_value
-         << ", strain force " << strain_force << " eV/A^3; value "
-         << r.value << " (slope 1000), " << r2.value << " (slope 2000)");
+        pressure_of(*host.model, host.dc, host.context, end);
+    const double ecoh =
+        ecoh_at(*host.model, host.dc, host.context, "Ta", a0_end, 2);
+    INFO(std::setprecision(17) << "a0 at the end " << a0_end
+         << ", cohesive energy " << ecoh << " eV/atom, strain force "
+         << strain_force << " eV/A^3; value " << below.value
+         << " (target 8, slope 1000), " << below2.value
+         << " (target 8, slope 2000), " << above.value
+         << " (target 7, slope 1000)");
     REQUIRE(strain_force > 1.0e-4);
-    CHECK(r.value == Approx(8.0 + 1000.0 * strain_force).epsilon(1e-6));
-    CHECK(r2.value - 8.0 == Approx(2.0 * (r.value - 8.0)).epsilon(1e-9));
+    REQUIRE(ecoh < 8.0);
+    REQUIRE(ecoh > 7.0);
+    CHECK(below.value == Approx(ecoh - 1000.0 * strain_force).epsilon(1e-6));
+    CHECK(above.value == Approx(ecoh + 1000.0 * strain_force).epsilon(1e-6));
+    CHECK(below2.value - ecoh ==
+          Approx(2.0 * (below.value - ecoh)).epsilon(1e-9));
+}
+
+/* Pins: a relaxation that stops near zero pressure without converging
+ * reports, under --unconverged force-scaled, about the cohesive energy of
+ * its cell, not about the target. With data/ta/ta_md_blip.tadah (8.126
+ * eV/atom relaxed) the 2-atom cell from a0 = 3.25, capped at --maxiter 17,
+ * does not converge (the --unconverged const value) and ends at a
+ * pressure between 1e-6 and 1e-2 eV/A^3 (3.1e-5). With --unconverged
+ * force-scaled 1000 the value is the cohesive energy of that cell,
+ * computed here at the a0 it hands on, plus 1000 x its strain force with
+ * --target 5, and less it with --target 11, each to 1e-6 eV/atom (the
+ * central differences here and in the relaxer, with lists built at other
+ * cutoffs, differ by about 1e-10 eV/A^3): the loss of the term is at
+ * least that of the cell's cohesive energy.
+ * Before the fix: the values were the target plus 1000 x fmax, 6.4987
+ * and 12.4987 (the relaxation then stopped at 1.5e-3 eV/A^3): with
+ * --target 5 a loss below that of the cell's 8.126 eV/atom; a relaxation
+ * stopped nearer zero pressure reported about the target itself. */
+TEST_CASE("CohesiveEnergyObservable: --unconverged force-scaled near zero "
+          "pressure reports about the cohesive energy of the cell",
+          "[hpo][observable][cohesive_energy][unconverged][ta_md]")
+{
+    PeriodicTable::initialize();
+    TaMdPotential pot;
+
+    auto evaluate = [&](const std::string& target,
+                        const std::string& unconverged) {
+        auto obs = tadah::hpo::parse_pc_observable_line(
+            "cohesive_energy --species Ta --target " + target +
+            " --weight 1 --supercell 1 1 1 --hotvar a0 3.1 3.5 3.25 "
+            "--maxiter 17 " + unconverged);
+        return obs->evaluate(pot.model(), pot.dc(), pot.context());
+    };
+    /* Precondition: the capped relaxation does not converge. */
+    const ObservableEvalResult constant =
+        evaluate("5", "--unconverged const 100");
+    REQUIRE(constant.value_is_constant);
+    REQUIRE(constant.hotvar_updated_value.has_value());
+
+    const ObservableEvalResult low =
+        evaluate("5", "--unconverged force-scaled 1000");
+    const ObservableEvalResult high =
+        evaluate("11", "--unconverged force-scaled 1000");
+    REQUIRE_FALSE(low.value_is_constant);
+    REQUIRE(low.hotvar_updated_value.has_value());
+    const double a0_end = *low.hotvar_updated_value;
+    REQUIRE(a0_end == *constant.hotvar_updated_value);
+
+    Structure end = tadah::mlip::cells::bcc("Ta", a0_end);
+    const double strain_force =
+        pressure_of(pot.model(), pot.dc(), pot.context(), end);
+    const double ecoh =
+        ecoh_at(pot.model(), pot.dc(), pot.context(), "Ta", a0_end, 1);
+    INFO(std::setprecision(17) << "a0 at the end " << a0_end
+         << ", cohesive energy " << ecoh << " eV/atom, strain force "
+         << strain_force << " eV/A^3; value " << low.value
+         << " (target 5), " << high.value << " (target 11)");
+    REQUIRE(strain_force > 1.0e-6);
+    REQUIRE(strain_force < 1.0e-2);
+    CHECK(std::abs(low.value - (ecoh + 1000.0 * strain_force)) <= 1.0e-6);
+    CHECK(std::abs(high.value - (ecoh - 1000.0 * strain_force)) <= 1.0e-6);
 }
 
 /* Pins: PC_OBSERVABLE cohesive_energy reports the cohesive energy of the
@@ -941,4 +1057,105 @@ TEST_CASE("CohesiveEnergyObservable: the relaxed cohesive energy does not "
         CHECK(std::abs(*r.hotvar_updated_value - lammps_a0) <= 1.0e-5);
         CHECK(p < 6.241509074e-7);
     }
+}
+
+/* Pins: --ptol reaches a tolerance whose energy is far below the rounding
+ * error of the energy. With data/ta/ta_md_blip.tadah and --ptol 1e-7 (GPa,
+ * 6.2e-10 eV/A^3, which leaves the energy about 3e-18 eV/atom above its
+ * minimum, while an ulp of the energy of the 4x4x4 cell is 2e-15 eV/atom),
+ * the starts 3.25, 3.32011 and 3.38 A of the 2-atom cell (--supercell 1 1 1)
+ * and the start 3.25 A of the default 4x4x4 cell each give the observable's
+ * own value, LAMMPS's 8.1263245850672 eV/atom to 1e-9, and hand on LAMMPS's
+ * lattice constant, 3.305677525578418 A, to 2e-9 A (the default --ptol,
+ * 1e-4 GPa, ends about 6e-8 A from it), at a pressure of the relaxed bulk,
+ * by a central difference of its energy, below 1e-7 GPa.
+ * Before the fix: the starts 3.25 and 3.38 of the 2-atom cell and 3.25 of
+ * the 4x4x4 cell reported the --unconverged value, 100 (3.32011 converged):
+ * the line search on the energy that moved the cell accepted steps that
+ * left it where it was until the 5000 evaluations of --maxeval ran out
+ * (about 45 s for the 4x4x4 cell). */
+TEST_CASE("CohesiveEnergyObservable: --ptol far below the default relaxes "
+          "the crystal to it",
+          "[hpo][observable][cohesive_energy][relax][ta_md][ptol]")
+{
+    PeriodicTable::initialize();
+    TaMdPotential pot;
+
+    const double lammps_ecoh = 8.1263245850672;
+    const double lammps_a0 = 3.305677525578418;
+    const double ptol = 1.0e-7 * 6.241509074e-3;  /* 1e-7 GPa in eV/A^3 */
+    const std::vector<std::pair<std::string, std::string>> cases = {
+        {"3.25", "1 1 1"}, {"3.32011", "1 1 1"}, {"3.38", "1 1 1"},
+        {"3.25", "4 4 4"}};
+    for (const auto& [start, supercell] : cases) {
+        auto obs = tadah::hpo::parse_pc_observable_line(
+            "cohesive_energy --species Ta --target 8.11398 --weight 2.5e5 "
+            "--hotvar a0 3.1 3.5 " + start + " --supercell " + supercell +
+            " --ptol 1e-7");
+        const ObservableEvalResult r =
+            obs->evaluate(pot.model(), pot.dc(), pot.context());
+        REQUIRE(r.hotvar_updated_value.has_value());
+        INFO(std::setprecision(17) << "start " << start << ", supercell "
+             << supercell << ": value " << r.value << ", a0 handed on "
+             << *r.hotvar_updated_value);
+        CHECK_FALSE(r.value_is_constant);
+        CHECK(std::abs(r.value - lammps_ecoh) <= 1.0e-9);
+        CHECK(std::abs(*r.hotvar_updated_value - lammps_a0) <= 2.0e-9);
+        if (r.energy_terms.size() == 2u) {
+            const double p = pressure_of(pot.model(), pot.dc(), pot.context(),
+                                         r.energy_terms[0].structure);
+            INFO(std::setprecision(17) << "pressure of the relaxed bulk " << p
+                 << " eV/A^3");
+            CHECK(p < ptol);
+        }
+    }
+}
+
+/* Pins: the relaxed cohesive energy does not depend on the start a0 for a
+ * potential whose energy is noisy. The energy of the 4x4x4 cell of the
+ * DM_REAM potential data/ta/ta2_refit_seed.tadah near its minimum changes
+ * by a few 1e-9 eV, up and down, between strains 1e-7 apart, more than
+ * the energy a pressure of 1e-4 GPa leaves above the minimum (about 4e-10
+ * eV in that cell); the central difference of the pressure resolves it
+ * (a few 1e-9 eV over 2e-5 x 3V is about 2e-8 eV/A^3). With every
+ * relaxation option at
+ * its default (--ptol 1e-4 GPa), the starts 3.14123, 3.29123, 3.304 and
+ * 3.25123 A each give the observable's own value, the four within 1e-9
+ * eV/atom of each other, at a pressure of the relaxed bulk, by a central
+ * difference of its energy, below 1e-4 GPa.
+ * Before the fix: 3.14123, 3.29123 and 3.304 reported the --unconverged
+ * value, 100: the line search on the energy that moved the cell failed,
+ * every trial step above the noisy energy, at a pressure just above
+ * --ptol (6.9e-7, 8.1e-7 and 1.8e-6 eV/A^3 against 6.2e-7). */
+TEST_CASE("CohesiveEnergyObservable: the relaxed cohesive energy of a "
+          "potential with a noisy energy does not depend on the start a0",
+          "[hpo][observable][cohesive_energy][relax][ream]")
+{
+    PeriodicTable::initialize();
+    TaMdPotential pot("ta2_refit_seed.tadah");
+
+    std::vector<double> values;
+    for (const char* start : {"3.14123", "3.29123", "3.304", "3.25123"}) {
+        auto obs = tadah::hpo::parse_pc_observable_line(
+            std::string("cohesive_energy --species Ta --target 8.1 "
+                        "--weight 800 --hotvar a0 3.1 3.5 ") + start);
+        const ObservableEvalResult r =
+            obs->evaluate(pot.model(), pot.dc(), pot.context());
+        REQUIRE(r.hotvar_updated_value.has_value());
+        INFO(std::setprecision(17) << "start " << start << ": value "
+             << r.value << ", a0 handed on " << *r.hotvar_updated_value);
+        CHECK_FALSE(r.value_is_constant);
+        if (r.energy_terms.size() == 2u) {
+            const double p = pressure_of(pot.model(), pot.dc(), pot.context(),
+                                         r.energy_terms[0].structure);
+            INFO(std::setprecision(17) << "pressure of the relaxed bulk " << p
+                 << " eV/A^3");
+            CHECK(p < 6.241509074e-7);
+            values.push_back(r.value);
+        }
+    }
+    REQUIRE(values.size() == 4u);
+    const auto [lo, hi] = std::minmax_element(values.begin(), values.end());
+    INFO(std::setprecision(17) << "values from " << *lo << " to " << *hi);
+    CHECK(*hi - *lo <= 1.0e-9);
 }

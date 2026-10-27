@@ -218,6 +218,29 @@ TEST_CASE("parse_pc_observable_line: --unconverged force-scaled accepts a slope"
         "--hotvar a0 2.7 3.9 --unconverged force-scaled 10.0"));
 }
 
+/* Pins: the slope of --unconverged force-scaled is a number >= 0: 0 is
+ * accepted, -1 refused with "PC_OBSERVABLE cohesive_energy: the slope of
+ * --unconverged force-scaled must be >= 0 (got -1)" (a negative slope
+ * would move the value of an unconverged relaxation towards the target,
+ * lowering its loss); a const value may be negative.
+ * Before the fix: -1 was accepted. */
+TEST_CASE("parse_pc_observable_line: --unconverged force-scaled takes a "
+          "slope >= 0",
+          "[hpo][pc_observable_parser][cohesive_energy][unconverged]")
+{
+    tadah::core::PeriodicTable::initialize();
+    const std::string line =
+        "cohesive_energy --species Ta --target 8.100 --weight 1000 "
+        "--hotvar a0 2.7 3.9 --unconverged ";
+    CHECK_NOTHROW(tadah::hpo::parse_pc_observable_line(line +
+                                                       "force-scaled 0"));
+    CHECK_NOTHROW(tadah::hpo::parse_pc_observable_line(line + "const -5"));
+    CHECK_THROWS_WITH(
+        tadah::hpo::parse_pc_observable_line(line + "force-scaled -1"),
+        "PC_OBSERVABLE cohesive_energy: the slope of --unconverged "
+        "force-scaled must be >= 0 (got -1)");
+}
+
 TEST_CASE("parse_pc_observable_line: --unconverged unknown kind throws",
           "[hpo][pc_observable_parser][cohesive_energy][unconverged][error]")
 {

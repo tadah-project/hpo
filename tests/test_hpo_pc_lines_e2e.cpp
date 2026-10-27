@@ -425,9 +425,9 @@ TEST_CASE("a script without --hotvar that reads $a is injected the hot "
  * of the first evaluation of x1 (from the declared start), the fourth
  * that of x1 after x2 (from the a0 of x2), which differs from it (the
  * start matters: each relaxation stops after --maxiter 2 iterations, at a
- * cell that depends on its start, and reports the target plus the
- * magnitude of the pressure of that cell in eV/A^3, --unconverged
- * force-scaled 1; a relaxation to --ptol, 1e-4
+ * cell that depends on its start, and reports the cohesive energy of that
+ * cell moved away from the target by the magnitude of its pressure in
+ * eV/A^3, --unconverged force-scaled 1; a relaxation to --ptol, 1e-4
  * GPa, gives the same loss from either start. The line had --maxiter 500
  * --maxeval 500 while the relaxation stopped at 0.1 eV/A^3, 16 GPa, at a
  * cell that depended on its start).

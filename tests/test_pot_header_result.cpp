@@ -256,8 +256,11 @@ TEST_CASE("best_pot.tadah header: LOSS FUNCTION and RESULT list the "
  * best_pot.tadah header and the best_pot_N archive header are checked.
  * Before the fix: the value and loss columns were 16 characters wide
  * whatever the precision, and at DIGITS 15 and 17 a number filled its
- * column: the row read "1.097730325762796e+013.012530048346911e+01", one
- * field (DIGITS 1 and 6 passed). */
+ * column: in the PC_LAMMPS section the ERMSE row read
+ * "1.097730325762796e+013.012530048346911e+01", one field, and so did the
+ * Ecoh row (DIGITS 1 and 6 passed there); the PC_OBSERVABLE section failed
+ * at DIGITS 1 already, its row missing (the header did not list the
+ * term). */
 TEST_CASE("best_pot.tadah header: RESULT rows keep the value and the loss "
           "apart at any DIGITS", "[pot_header]")
 {
