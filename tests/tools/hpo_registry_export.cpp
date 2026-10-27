@@ -117,6 +117,17 @@ const char* random_draws_token(OptimizerCaps::RandomDraws d)
     throw std::runtime_error("a RandomDraws without a token");
 }
 
+const char* seed_use_token(SeedUse u)
+{
+    switch (u) {
+        case SeedUse::Read:                return "read";
+        case SeedUse::ReadInTwoDimensions: return "two_dimensions";
+        case SeedUse::ThroughLocalSearch:  return "local_search";
+        case SeedUse::Refused:             return "refused";
+    }
+    throw std::runtime_error("a SeedUse without a token");
+}
+
 /* The attributes a run reads besides its stops, sorted. */
 Strings reads(const OptimizerCaps& c)
 {
@@ -165,6 +176,7 @@ Table registered_entry(const OptimizerCaps& c)
     t.add("default_inner", c.default_inner);
     t.add("accepts_multi_seed", c.accepts_multi_seed);
     t.add("reads", reads(c));
+    t.add("seed", seed_use_token(seed_use(c)));
     t.add("algorithm_params", Strings(c.algorithm_params.begin(),
                                       c.algorithm_params.end()));
     t.add("stops", stops(c));

@@ -57,12 +57,14 @@ extern "C" {
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 using tadah::hpo::AsaHostFn;
 using tadah::hpo::AsaOptions;
 using tadah::hpo::OptimizerSpec;
 using tadah::hpo::parse_asa_options;
+using tadah::hpo::print_asa_param_table;
 using tadah::hpo::run_asa_erased;
 
 namespace {
@@ -399,6 +401,36 @@ TEST_CASE("ASA options: Gener_Mov_Avr 0 switches the block resizing off",
     sp.param = {{"Gener_Mov_Avr", -1.0}};
     CHECK_THROWS_WITH(parse_asa_options(sp, 2),
                       Catch::Contains("Gener_Mov_Avr"));
+}
+
+/* Pins: the help rows of the two frequency moduli (`tadah explain ASA:ASA`)
+ * say when a periodic test runs: after each state, or each block of
+ * states, that brings the count of accepted (generated) states to a
+ * multiple of the modulus (asa.c, TADAH-PATCH 9 for blocks); other tests
+ * follow the other modulus and Accepted_To_Generated_Ratio, so the modulus
+ * is no number of states "between periodic tests".
+ * Before the fix: "accepted states between periodic tests (a block of
+ * states is followed by one when it reaches a multiple); 0 = off", whose
+ * "it" could be read as the block. */
+TEST_CASE("ASA options: the help of the frequency moduli says when a "
+          "periodic test runs", "[HPO][asa][options]")
+{
+    std::ostringstream os;
+    print_asa_param_table(os);
+    const std::string help = os.str();
+    for (const auto& [name, count] :
+         std::vector<std::pair<std::string, std::string>>{
+             {"Acceptance_Frequency_Modulus", "accepted"},
+             {"Generated_Frequency_Modulus", "generated"}}) {
+        const auto at = help.find("PARAM " + name + " ");
+        REQUIRE(at != std::string::npos);
+        const std::string row = help.substr(at, help.find('\n', at) - at);
+        INFO(row);
+        CHECK(row.find("a periodic test follows each state, or each block of "
+                       "states, that brings the count of " + count +
+                       " states to a multiple of this number; 0 = off") !=
+              std::string::npos);
+    }
 }
 
 TEST_CASE("ASA options: indexed per-dim grammar", "[HPO][asa][options]")

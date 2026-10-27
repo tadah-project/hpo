@@ -145,6 +145,54 @@ RhoBarGateSpec parse_rhobargate(std::istringstream& iss) {
   return s;
 }
 
+/* A seed the run draws once, where a block that draws random numbers has no
+ * SEED: 64 bits from std::random_device, two draws (as RestartPolicy draws
+ * the seed of its rounds). */
+std::uint64_t draw_run_seed()
+{
+  std::random_device rd;
+  const std::uint64_t hi = rd(), lo = rd();
+  return (hi << 32) ^ lo;
+}
+
+/* Whether the WARM seed file `warm` is the file `best` that a run writes
+ * its best potential to: the path `warm` leads to (symbolic links
+ * followed) is the directory entry `best` names in its directory, which
+ * the run removes and replaces (a link there is replaced, not the file it
+ * leads to). Paths are compared as the system resolves them, so
+ * best_pot.tadah, ./best_pot.tadah, its absolute path and a link to it are
+ * one. */
+bool names_best_pot_file(const std::string& warm, const std::string& best)
+{
+  std::error_code ec;
+  const fs::path w = fs::weakly_canonical(fs::path(warm), ec);
+  if (ec) return false;
+  const fs::path b(best);
+  const fs::path dir = b.has_parent_path() ? b.parent_path() : fs::path(".");
+  const fs::path d = fs::weakly_canonical(dir, ec);
+  if (ec) return false;
+  return w == d / b.filename();
+}
+
+/* Whether the WARM path `warm` names the directory entry `best` itself,
+ * a symbolic link there not followed: a RESTART round opens the path
+ * again, after the run has replaced that entry, link and all, with its
+ * best potential. */
+bool names_best_pot_entry(const std::string& warm, const std::string& best)
+{
+  const auto entry = [](const fs::path& p, std::error_code& ec) {
+    const fs::path dir =
+        p.has_parent_path() ? p.parent_path() : fs::path(".");
+    return fs::weakly_canonical(dir, ec) / p.filename();
+  };
+  std::error_code ec;
+  const fs::path w = entry(fs::path(warm), ec);
+  if (ec) return false;
+  const fs::path b = entry(fs::path(best), ec);
+  if (ec) return false;
+  return w == b;
+}
+
 }  // namespace
 
 size_t HPOTargets::ui_offset(std::vector<std::string> &tokens, size_t ui) {
@@ -359,6 +407,27 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn,
    * 0-dim points. (Bound inheritance must precede init resolution.) */
   bind_space_recursive();
 
+  /* The seed of a PRESTAGE exploration that sets none. A run's random
+   * numbers come from the SEEDs written in its target file: the
+   * refinement's starts (SEED + i) and every RESTART round (SEED + r*S,
+   * the exploration's SEED + r) derive theirs from them. An exploration
+   * whose optimiser reads SEED and that has no seed of its own -- no
+   * SEED and, for NLopt, no INIT block SEED (nlopt_seed_from_init) --
+   * takes the STRATEGY-level SEED, so a run with SEED in its OPTIMIZER
+   * or STRATEGY block repeats its exploration as it repeats its
+   * refinement. The refinement draws streams of its own key
+   * (phase_stream_seed, seed_stream.h), so the two phases do not share
+   * random numbers. An exploration whose run reads no SEED (DLIB:GFS, an
+   * NLopt algorithm that draws no random numbers: reads_seed,
+   * phase_specs.h, which needs the bound search space for
+   * GN_DIRECT_L_RAND) takes none. The journal names the exploration's
+   * seed and where it comes from (seed_from_strategy). */
+  if (spec.prestage && spec.seed && !spec.prestage->seed &&
+      !spec.prestage->nlopt_seed_from_init() && reads_seed(*spec.prestage)) {
+    spec.prestage->seed = spec.seed;
+    spec.prestage->seed_from_strategy = true;
+  }
+
   /* ---------- resolve INIT_STRATEGY chain into optim_init -----------
    *
    * Apply to OUTER and to the PRESTAGE exploration when its EXPLORE block
@@ -405,16 +474,39 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn,
             << ") contains no stochastic method, so the seed does not "
                "affect the starting point. Add METHOD RANDOM/LHS/SOBOL "
                "to randomise it.";
-        if (s.lib == "NLOPT" && !s.seed)
+        if (s.lib == "NLOPT" && !s.seed && reads_seed(s))
           oss << " (Without a SEED of its own, the NLopt optimiser still "
-                 "takes its random seed from it; only stochastic non-LDS "
-                 "NLopt algorithms read one.)";
+                 "takes its random seed from it.)";
         std::cerr << "[HPO] " << oss.str() << "\n";
         HPOLog::instance().warning(oss.str());
       }
     }
-    std::uint64_t seed = s.init_strategy_spec.seed.value_or(
-        static_cast<std::uint64_t>(std::random_device{}()));
+    /* A chain that draws its points without a SEED draws them with a seed
+     * the run draws once, kept as the block's SEED (and so, for NLopt
+     * without a SEED of its own, nlopt_seed_from_init, NLopt's) and named
+     * with the SEED line that draws the same points again. A chain of
+     * CONFIG and WARM points draws nothing and takes none. */
+    std::uint64_t seed = s.init_strategy_spec.seed.value_or(0);
+    if (!s.init_strategy_spec.seed &&
+        chain_draws_from_seed(s.init_strategy_spec)) {
+      seed = draw_run_seed();
+      s.init_strategy_spec.seed = seed;
+      s.init_strategy_spec.seed_drawn = true;
+      const std::string n = std::to_string(seed);
+      std::ostringstream oss;
+      oss << "the INIT block";
+      if (s.init_strategy_spec.line > 0)
+        oss << " on line " << s.init_strategy_spec.line;
+      oss << " has no SEED, so its starting points are drawn with a seed "
+             "drawn once for the run, " << n << " (SEED " << n
+          << " in the INIT block draws the same points again";
+      if (s.lib == "NLOPT" && !s.seed && reads_seed(s))
+        oss << "; " << s.lib << ":" << s.algo << ", without a SEED of its "
+               "own, takes its random numbers from the same seed";
+      oss << ")";
+      std::cout << "[HPO] " << oss.str() << "\n";
+      HPOLog::instance().info(oss.str());
+    }
     InitContext ictx{s, *this, seed, &context};
     std::size_t k = s.init_strategy_spec.k_total.value_or(strategy->default_k());
     /* with the provenance of every point (CONFIG, WARM <file>, RANDOM, LHS,
@@ -449,60 +541,39 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn,
 
   resolve_init(spec, "OUTER");
 
-  if (!spec.optim_init.empty()) {
-    /* Warn when the resolved OUTER chain produced more points than
-     * the OUTER optimiser will actually consume. Backends declare
-     * accepts_multi_seed=true in the caps registry when a single run
-     * ingests >1 seed; strategy decorators (MULTISTART/PRESTAGE) consume
-     * the chain too. Every other path drops everything past
-     * optim_init.front(). */
-    const bool strategy_consumes =
-        (spec.strategy_type == StrategyType::MULTISTART && spec.multistart.n_starts >= 2) ||
-        (spec.strategy_type == StrategyType::PRESTAGE && spec.prestage != nullptr);
-    const bool backend_consumes = optimizer_caps(spec).accepts_multi_seed;
-    const bool multi_seed_consumer = strategy_consumes || backend_consumes;
-    /* A search that does not start at the point it is given consumes none
-     * of them: validate_hpo_setup() says so about the INIT block
-     * (start_point_warnings, backend_rules.h). Asked only of registered
-     * backends: the startup checks refuse the others with their own
-     * message. */
-    const bool registered =
-        find_optimizer_caps(spec.lib, spec.algo) &&
-        (!spec.inner ||
-         find_optimizer_caps(spec.inner->lib, spec.inner->algo));
-    const bool ignores_start =
-        registered && search_ignoring_start(spec).has_value();
-    if (spec.optim_init.size() > 1 && !multi_seed_consumer && !ignores_start) {
-      /* The strategies consume them (MULTISTART needs N_STARTS 2 or more,
-       * PRESTAGE an EXPLORE block), so this is a PLAIN search. The advice
-       * names only what takes the points with this optimiser: MULTISTART
-       * when it runs the optimiser from each point (runs_from_each_start,
-       * the rule of require_multistart_backend, which refuses a global
-       * optimiser that takes one starting point), and an optimiser that
-       * takes several in one run, from the live caps registry, alone or as
-       * the PRESTAGE exploration, which is given these points; a
-       * single-start exploration would take the first only. */
-      auto multi_seed = filter_optimizer_caps(
-          [](const OptimizerCaps& c) { return c.accepts_multi_seed; });
-      const std::size_t n = spec.optim_init.size();
-      const std::string name = spec.lib + ":" + spec.algo;
-      const std::string takes_all =
-          "optimiser that takes several starting points in one run (" +
-          format_caps_list(multi_seed) + ") takes them all, also as the "
-          "exploration of STRATEGY TYPE PRESTAGE.";
-      std::ostringstream oss;
-      oss << "INIT chain produced " << n << " starting points but " << name
-          << " starts from the first only; the other " << (n - 1)
-          << (n == 2 ? " is" : " are") << " not used. ";
-      if (runs_from_each_start(optimizer_caps(spec)))
-        oss << "STRATEGY TYPE MULTISTART with N_STARTS " << n << " starts "
-            << name << " from each of them, and an " << takes_all;
-      else
-        oss << "An " << takes_all;
-      std::cerr << "[HPO] WARNING: " << oss.str() << "\n";
-      HPOLog::instance().warning(oss.str());
-    }
-  }
+  /* An NLopt algorithm that draws random numbers (reads_seed) in a block
+   * without SEED, and without the SEED of its INIT block, which it would
+   * take (nlopt_seed_from_init), draws them with a seed the run draws once,
+   * kept as the block's SEED -- NLopt's own clock seed would leave the run
+   * unrepeatable -- and named with the SEED line that draws the same
+   * numbers again. After the INIT chains, whose drawn seed NLopt takes.
+   * The line names the block that holds the optimiser's ALGO line, where
+   * its SEED goes: the STRATEGY-level optimiser's keys may be written in
+   * OPTIMIZER, STRATEGY or REFINE, and a file may have no STRATEGY block;
+   * a parsed spec has an ALGO line (the parser refuses a block without
+   * one). */
+  const auto draw_nlopt_seed = [](OptimizerSpec& s) {
+    if (s.lib != "NLOPT" || s.seed || s.nlopt_seed_from_init() ||
+        !reads_seed(s))
+      return;
+    const std::string& block = s.key_lines.at("ALGO").block;
+    const std::uint64_t seed = draw_run_seed();
+    s.seed = seed;
+    s.seed_drawn = true;
+    const std::string n = std::to_string(seed);
+    const std::string msg =
+        std::string("the ") + block + " block has no SEED, and " + s.lib +
+        ":" + s.algo + " draws random numbers, so it draws them with a seed "
+        "drawn once for the run, " + n + " (SEED " + n + " in the " + block +
+        " block draws the same numbers again)";
+    std::cout << "[HPO] " << msg << "\n";
+    HPOLog::instance().info(msg);
+  };
+
+  /* INIT points a phase does not evaluate -- more than a PLAIN search, a
+   * PRESTAGE exploration or the starts of a MULTISTART take -- are warned
+   * about at startup (start_point_warnings, backend_rules.h), once every
+   * chain is resolved. */
 
   if (spec.prestage) {
     /* If PRESTAGE has no explicit chain and no INIT_STRATEGY entries,
@@ -514,6 +585,8 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn,
       resolve_init(*spec.prestage, "PRESTAGE");
     spec.share_init_with_nested_phases();
   }
+  draw_nlopt_seed(spec);
+  if (spec.prestage) draw_nlopt_seed(*spec.prestage);
 
   /* The RESTART block's SEED seeds the METHOD chain that draws each
    * restart's points (round r with SEED + r, RestartPolicy). Like an INIT
@@ -553,6 +626,15 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn,
       spec.restart.seed_origins.push_back(origins[i]);
     }
   }
+
+  /* A WARM seed that is the file the run writes its best potential to:
+   * the run removes it before its first evaluation
+   * (HPO_Host::prepare_best_publication) and writes its best potential
+   * there, so the seed it held does not outlive the start of the run; a
+   * RESTART round, which reads its WARM file again, reads the run's best
+   * potential so far. A WARNING each, on stderr and in the journal (and
+   * so in the summary of tadah hpo --check). */
+  warn_warm_of_best_pot();
 
   /* Fail fast on the initial-step policy (registry-driven). Seeds vs
    * box and the width audit run in validate_hpo_setup(), with the other
@@ -1364,6 +1446,19 @@ void HPOTargets::read(const std::string& fn)
                 else if (!first.empty() && !is_number_shaped(first)) attr.clear();
             }
             if (active_opt && dispatch_opt_attr(key, iss, *active_opt)) {
+                /* The line of a key whose refusal is about it alone
+                 * (OptimizerSpec::key_lines, with_key_line); a STEP <KEY>
+                 * override keeps its own (StepOverride::line). */
+                if (attr.empty() && key == "STEP" &&
+                    !active_opt->step_overrides.empty()) {
+                    StepOverride& ov = active_opt->step_overrides.back();
+                    ov.line = nline;
+                    ov.line_text = line;
+                } else if (key == "LIB" || key == "ALGO" || key == "STEP" ||
+                           key == "GRAD_STRATEGY") {
+                    active_opt->key_lines[key] =
+                        KeyLine{nline, line, block_name(block)};
+                }
                 /* A STEP <KEY> override: once for its key and indices
                  * ("WATOM(1)" and "WATOM (1)" are one). */
                 if (attr.empty() && key == "STEP" &&
@@ -2219,14 +2314,15 @@ void HPOTargets::read(const std::string& fn)
      * the analytical gradient is unavailable (a parameter without a
      * registered derivative, a model setting the analytical gradient does
      * not cover), which it fills with finite differences. */
-    /* The refusals below name the line the refused block closes at
-     * (OptimizerSpec::block_line: ENDOPTIMIZER, ENDEXPLORE, ENDINNER), as
-     * the startup refusals of a block's settings do (with_block_line). */
+    /* The refusals below name the line of the key they refuse (the
+     * GRAD_STRATEGY or ALGO line of the block, OptimizerSpec::key_lines:
+     * with_key_line), or without it the line the block closes at
+     * (OptimizerSpec::block_line: ENDOPTIMIZER, ENDEXPLORE, ENDINNER). */
     auto reject_numerical_with_observable =
         [&](const OptimizerSpec& sp, const char* tag) {
             if (sp.grad_strategy
                 && *sp.grad_strategy == GradStrategy::Numerical) {
-                throw std::runtime_error(with_block_line(sp,
+                throw std::runtime_error(with_key_line(sp, "GRAD_STRATEGY",
                     std::string("--hpotarget defines PC_OBSERVABLE but ")
                     + tag + " GRAD_STRATEGY=NUMERICAL is set. PC_OBSERVABLE "
                     "is built for the analytical gradient: use GRAD_STRATEGY "
@@ -2285,28 +2381,9 @@ void HPOTargets::read(const std::string& fn)
         }
     }
 
-    /* The seed of a PRESTAGE exploration that sets none. A run's random
-     * numbers come from the SEEDs written in its target file: the
-     * refinement's starts (SEED + i) and every RESTART round (SEED + r*S,
-     * the exploration's SEED + r) derive theirs from them. An exploration
-     * whose optimiser reads SEED and that has no seed of its own -- no
-     * SEED and, for NLopt, no INIT block SEED (nlopt_seed_from_init) --
-     * takes the STRATEGY-level SEED, so a run with SEED in its OPTIMIZER
-     * or STRATEGY block repeats its exploration as it repeats its
-     * refinement. The refinement draws streams of its own key
-     * (phase_stream_seed, seed_stream.h), so the two phases do not share
-     * random numbers. An exploration whose optimiser reads no SEED
-     * (DLIB:GFS) takes none. The journal names the exploration's seed and
-     * where it comes from (seed_from_strategy). */
-    if (spec.prestage && spec.seed && !spec.prestage->seed &&
-        !spec.prestage->nlopt_seed_from_init()) {
-        const OptimizerCaps* caps =
-            find_optimizer_caps(spec.prestage->lib, spec.prestage->algo);
-        if (caps && caps->reads_seed) {
-            spec.prestage->seed = spec.seed;
-            spec.prestage->seed_from_strategy = true;
-        }
-    }
+    /* The seed of a PRESTAGE exploration that sets none is given once the
+     * search space is bound (HPOTargets::HPOTargets): whether its optimiser
+     * reads SEED can depend on its dimensions (reads_seed, phase_specs.h). */
 
     /* PC_LAMMPS: no gradients.
      *
@@ -2348,12 +2425,20 @@ void HPOTargets::read(const std::string& fn)
     for (std::size_t i = 0; i < LS.size(); ++i)
         if (static_cast<int>(i) != failprobe_idx)
             has_pc_lammps = true;
-    const std::string script_line =
-        has_pc_lammps ? "PC_LAMMPS" : "PC_FAILPROBE";
+    /* The script line a refusal names: the first PC_LAMMPS line, else the
+     * PC_FAILPROBE line, with its line number when the parser read it
+     * ("PC_LAMMPS on line 12"). */
+    std::string script_line = has_pc_lammps ? "PC_LAMMPS" : "PC_FAILPROBE";
+    for (std::size_t i = 0; i < LS.size(); ++i) {
+        if (has_pc_lammps == (static_cast<int>(i) == failprobe_idx)) continue;
+        if (LS[i].line > 0)
+            script_line += " on line " + std::to_string(LS[i].line);
+        break;
+    }
     auto reject_pc_lammps_grad =
         [&](const OptimizerSpec& sp, const char* tag, bool inner) {
             if (sp.grad_strategy) {
-                throw std::runtime_error(with_block_line(sp,
+                throw std::runtime_error(with_key_line(sp, "GRAD_STRATEGY",
                     "--hpotarget defines " + script_line + " but " + tag
                     + " GRAD_STRATEGY is set. A PC_LAMMPS or PC_FAILPROBE "
                     "line does not support analytical/numerical/hybrid "
@@ -2384,7 +2469,7 @@ void HPOTargets::read(const std::string& fn)
                 if (sp.inner) return;
                 /* obtains_gradients: there is a default local search. */
                 const OptimizerSpec local = inner_run_spec(sp).value();
-                throw std::runtime_error(with_block_line(sp,
+                throw std::runtime_error(with_key_line(sp, "ALGO",
                     "--hpotarget defines " + script_line + " but " + tag
                     + " optimiser " + sp.lib + ":" + sp.algo +
                     " takes a gradient: NLopt's MLSL and AUGLAG take one for "
@@ -2397,7 +2482,7 @@ void HPOTargets::read(const std::string& fn)
                                          "none.")) +
                     requires_free));
             }
-            throw std::runtime_error(with_block_line(sp,
+            throw std::runtime_error(with_key_line(sp, "ALGO",
                 "--hpotarget defines " + script_line + " but " + tag
                 + " optimiser " + sp.lib + ":" + sp.algo +
                 " is gradient-based." + requires_free));
@@ -2835,6 +2920,57 @@ void check_output_file(const std::string& file, OutputUse use,
                              "' is not writable");
 }
 }  // namespace
+
+void HPOTargets::warn_warm_of_best_pot() const {
+  struct Chain {
+    const InitStrategySpec* spec;
+    const char* block;
+    std::size_t line;
+    bool restart;
+  };
+  std::vector<Chain> chains = {
+      {&spec.init_strategy_spec, "INIT", spec.init_strategy_spec.line, false}};
+  if (spec.prestage)
+    chains.push_back({&spec.prestage->init_strategy_spec, "INIT",
+                      spec.prestage->init_strategy_spec.line, false});
+  if (spec.restart.active())
+    chains.push_back(
+        {&spec.restart.init_strategy, "RESTART", spec.restart.line, true});
+  const OutputNames names = output_names();
+  for (const Chain& c : chains) {
+    for (const auto& e : c.spec->chain) {
+      if (e.method != "WARM" || e.args.empty()) continue;
+      /* An INIT block reads its file once, at startup: the file the path
+       * leads to then. A RESTART round opens the path again: its entry,
+       * which the run replaces, counts too. */
+      std::string best;
+      for (const std::string* f : {&names.canonicalBestPot, &names.localBestPot})
+        if (names_best_pot_file(e.args[0], *f) ||
+            (c.restart && names_best_pot_entry(e.args[0], *f))) {
+          best = *f;
+          break;
+        }
+      if (best.empty()) continue;
+      std::string w = std::string("the ") + c.block + " block" +
+                      (c.line > 0 ? " on line " + std::to_string(c.line)
+                                  : std::string()) +
+                      ": METHOD WARM " + e.args[0] +
+                      (e.line > 0 ? " (line " + std::to_string(e.line) + ")"
+                                  : std::string()) +
+                      " reads " + best + ", the file this run writes its "
+                      "best potential to: the run removes it before its "
+                      "first evaluation";
+      w += c.restart
+               ? ", so each RESTART round starts from the best potential the "
+                 "run has written by then, not from the file's content at "
+                 "startup."
+               : " and writes its best potential there, so only a copy under "
+                 "another name keeps this seed.";
+      std::cerr << "[HPO] WARNING: " << w << "\n";
+      HPOLog::instance().warning(w);
+    }
+  }
+}
 
 HPOTargets::OutputNames HPOTargets::output_names() {
   const std::string r = hpo_rank_suffix();
@@ -3699,6 +3835,13 @@ void HPOTargets::process_optim_config(std::istringstream& iss,
    * (optim_fit_value_rule), the rank threshold of OALGO and the low-bound
    * rule of the key. A hint of a message names a box only when the line's
    * own checks take it. */
+  /* The low-bound rule of the index @p ui: on a D2_mJoin line, that of the
+   * descriptor whose entry it is (a D2_BP's width has none). */
+  auto entry_low_rule = [&](std::size_t ui) {
+    if (!named && low_rule)
+      return models::optim_low_bound_rule(k, context, ui - 1);
+    return low_rule;
+  };
   auto box_passes = [&](double lo_b, double hi_b, std::size_t ui) {
     const std::optional<FitValueRule> vr =
         named ? std::nullopt : optim_fit_value_rule(k, ui);
@@ -3706,7 +3849,8 @@ void HPOTargets::process_optim_config(std::istringstream& iss,
     if (vr && !vr->strict && lo_b < 0.0) return false;
     if (!named && k == "OALGO" && ui == 2 && !(lo_b > 0.0 && hi_b < 1.0))
       return false;
-    if (low_rule && !low_rule->admits(lo_b)) return false;
+    if (const auto r = entry_low_rule(ui); r && !r->admits(lo_b))
+      return false;
     return true;
   };
   /* An AUTO FRAC box of the value: clamped at 0 for a non-negative
@@ -3801,6 +3945,8 @@ void HPOTargets::process_optim_config(std::istringstream& iss,
           !e.empty())
         throw std::runtime_error(e);
     }
+    /* A refusal of this entry says why; the catch below names the entry
+     * once, "OPTIM <KEY> (<i>): <why>". */
     try {
       size_t i = ui_offset(omap.config, ui);
       if (i>=s) {
@@ -4037,26 +4183,29 @@ void HPOTargets::process_optim_config(std::istringstream& iss,
             "1, every M of 0 or below leaves out only a singular value of 0 "
             "under OALGO 3, and a fit refuses an M of 1 or more, so the box "
             "of a search is inside (0, 1)");
-      /* The low-bound rule of the key: an explicit low bound as written,
-       * an AUTO box with both ends (the line wrote neither). */
-      if (low_rule && !low_rule->admits(lo_i)) {
+      /* The low-bound rule of this entry (entry_low_rule: on a D2_mJoin
+       * line, that of the descriptor whose entry it is): an explicit low
+       * bound as written, an AUTO box with both ends (the line wrote
+       * neither). */
+      if (const auto entry_rule = entry_low_rule(ui);
+          entry_rule && !entry_rule->admits(lo_i)) {
         const std::string requires_ =
-            low_rule->by + " requires " + low_rule->requirement;
+            entry_rule->by + " requires " + entry_rule->requirement;
         if (auto_box)
           throw std::runtime_error(
               "the AUTO box [" + core::format_roundtrip(lo_i) + ", " +
               core::format_roundtrip(hi_i) + "] has the low bound " +
               core::format_roundtrip(lo_i) + ", which " +
-              (low_rule->strict ? "is not > 0" : "is negative") + ", but " +
+              (entry_rule->strict ? "is not > 0" : "is negative") + ", but " +
               requires_ + ", so the low bound of its box is " +
-              (low_rule->strict ? "> 0" : ">= 0"));
+              (entry_rule->strict ? "> 0" : ">= 0"));
         throw std::runtime_error(
             "the low bound " + low_tok +
-            (low_rule->strict ? " is not > 0" : " is negative") + ", but " +
+            (entry_rule->strict ? " is not > 0" : " is negative") + ", but " +
             requires_ + ", so the low bound of its box is " +
-            (low_rule->strict ? std::string("> 0")
-                              : std::string(">= 0 (its AUTO FRAC box, the "
-                                            "default, is clamped at 0)")));
+            (entry_rule->strict ? std::string("> 0")
+                                : std::string(">= 0 (its AUTO FRAC box, the "
+                                              "default, is clamped at 0)")));
       }
       omap.opt[i] = true;
       omap.line[i] = nline;

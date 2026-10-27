@@ -208,31 +208,32 @@ public:
 
         boost::random::sobol engine(static_cast<unsigned>(dim));
         /* Sobol is deterministic; a seed selects which points to draw. Seed
-         * s draws block b = s mod 65536 of k points: points b*k ... b*k +
-         * k - 1 of the sequence. Distinct blocks share no point, so the
+         * s draws block b = s mod 65536 of k points: the points of index
+         * (b + 1) k ... (b + 1) k + k - 1 of the sequence, whose point 0 is
+         * the low corner of the box. A block of k = 2^m points that starts
+         * at a multiple of 2^m is a net: each coordinate has one point in
+         * each 1/k of its range. Distinct blocks share no point, so the
          * seeds SEED + r of consecutive RESTART rounds, or an INIT block
          * and a RESTART block with the same SEED and K, draw disjoint
-         * points; with k = 1 seed s draws point s, as it always did. (A
-         * seed used to skip s mod 65536 points, so the seeds s and s + 1
-         * shared k - 1 of their k points.) The block index keeps the 16
-         * low bits of the seed, as the skip always did: a chain's later
-         * methods and a run without SEED receive a pseudo-random 64-bit
-         * seed. */
+         * points; no block holds the corner, and with k = 1 seed s draws
+         * point s + 1. The block index keeps the 16 low bits of the seed: a
+         * chain's later methods and a run without SEED receive a
+         * pseudo-random 64-bit seed. */
         const std::uint64_t block = ctx.seed & 0xFFFFu;
         const std::uint64_t kk = k;   // >= 1
         constexpr std::uint64_t kMax = std::numeric_limits<std::uint64_t>::max();
-        /* The block, points block*k ... block*k + k - 1, lies within the
-         * sequence: K is at most kMaxStartingPoints (make_one), and a block
-         * holds K points whatever k_cap asks for, so neither the product
-         * nor the end wraps. */
-        static_assert(kMaxStartingPoints <= kMax / 0x10000u,
+        /* The block, points (block + 1) k ... (block + 1) k + k - 1, lies
+         * within the sequence: K is at most kMaxStartingPoints (make_one),
+         * and a block holds K points whatever k_cap asks for, so neither
+         * the product nor the end wraps. */
+        static_assert(kMaxStartingPoints <= kMax / 0x10001u,
                       "block 65535 of kMaxStartingPoints points must end "
                       "within the Sobol sequence");
         /* Position the engine at point `first` (the Gray-code state of that
-         * index): the same point discard(first * dim) reaches, without the
-         * product with the dimension. */
-        const std::uint64_t first = block * kk;
-        if (first != 0) engine.seed(first);
+         * index): boost's seed(n) makes point n + 1 the next one drawn, and
+         * a new engine draws point 1 first (seed(0)). */
+        const std::uint64_t first = (block + 1) * kk;
+        engine.seed(first - 1);
         const auto sobol_max = static_cast<double>(engine.max());
         const auto sobol_min = static_cast<double>(engine.min());
         const double range = sobol_max - sobol_min + 1.0;

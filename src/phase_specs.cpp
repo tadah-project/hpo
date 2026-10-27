@@ -38,8 +38,15 @@ OptimizerSpec multistart_start_spec(const OptimizerSpec& spec,
                                     const MultiStartPlan& plan, std::size_t i)
 {
     OptimizerSpec sub = spec;                       // deep copy
-    if (i < spec.optim_init.size())
+    if (i < spec.optim_init.size()) {
         sub.optim_init = {spec.optim_init[i]};      // single start
+        /* Its origin (CONFIG, WARM, a sampled point), when the spec keeps
+         * them: an NLopt start that has to move warns for a user's seed. */
+        if (spec.optim_init_origin.size() == spec.optim_init.size())
+            sub.optim_init_origin = {spec.optim_init_origin[i]};
+        else
+            sub.optim_init_origin.clear();
+    }
     if (plan.per_start_maxeval) sub.stop.maxeval = *plan.per_start_maxeval;
     /* Decorrelate the starts: reusing one seed hands every start the same
      * proposal stream, so stochastic optimisers (ANNEAL) produce
@@ -62,6 +69,9 @@ OptimizerSpec prestage_refinement_spec(
         spec.prestage && spec.prestage->seed_from_strategy;
     refine.prestage.reset();          // the refinement does not explore again
     refine.optim_init = std::move(candidates);
+    /* Exploration candidates have no INIT origin: a search whose start
+     * moves gives an INFO line, not the WARNING of a user's own point. */
+    refine.optim_init_origin.clear();
     /* Streams of its own: with the exploration's optimiser it drew the
      * exploration's numbers for an equal seed (seed_stream.h). */
     refine.stream_phase = StreamPhase::Refinement;
@@ -72,6 +82,21 @@ std::string with_block_line(const OptimizerSpec& spec, const std::string& what)
 {
     if (spec.block_line == 0) return what;
     return config_line_error(spec.block_line, what, spec.block_line_text);
+}
+
+std::string with_line(const OptimizerSpec& spec, const KeyLine& line,
+                      const std::string& what)
+{
+    if (line.number == 0) return with_block_line(spec, what);
+    return config_line_error(line.number, what, line.text);
+}
+
+std::string with_key_line(const OptimizerSpec& spec, const std::string& key,
+                          const std::string& what)
+{
+    const auto it = spec.key_lines.find(key);
+    return with_line(spec, it != spec.key_lines.end() ? it->second : KeyLine{},
+                     what);
 }
 
 std::optional<OptimizerSpec> inner_run_spec(const OptimizerSpec& parent)
@@ -89,6 +114,7 @@ std::optional<OptimizerSpec> inner_run_spec(const OptimizerSpec& parent)
         run.algo = caps.default_inner;
         run.block_line = parent.block_line;
         run.block_line_text = parent.block_line_text;
+        run.key_lines = parent.key_lines;
         run.stop.ftol_rel = parent.stop.ftol_rel;
         run.stop.ftol_abs = parent.stop.ftol_abs;
         run.stop.xtol_rel = parent.stop.xtol_rel;
@@ -105,6 +131,45 @@ std::optional<OptimizerSpec> inner_run_spec(const OptimizerSpec& parent)
     run.stop.maxtime = tighter(run.stop.maxtime, parent.stop.maxtime);
     run.stop.stopval = parent.stop.stopval;
     return run;
+}
+
+namespace {
+/* GN_DIRECT_L_RAND in one OPTIM dimension: cdirect.c draws only to choose
+ * between equally long sides of a box (which_div 2), and a box of one
+ * dimension has one side. */
+bool direct_rand_in_one_dimension(const OptimizerSpec& spec)
+{
+    const OptimizerCaps* caps = find_optimizer_caps(spec.lib, spec.algo);
+    return caps && seed_use(*caps) == SeedUse::ReadInTwoDimensions &&
+           spec.low.size() == 1;
+}
+}  // namespace
+
+bool reads_seed(const OptimizerSpec& spec)
+{
+    const OptimizerCaps* caps = find_optimizer_caps(spec.lib, spec.algo);
+    if (!caps) return false;
+    switch (seed_use(*caps)) {
+        case SeedUse::Read:
+            return true;
+        case SeedUse::ReadInTwoDimensions:
+            return !direct_rand_in_one_dimension(spec);
+        case SeedUse::ThroughLocalSearch: {
+            const std::optional<OptimizerSpec> local = inner_run_spec(spec);
+            return local && reads_seed(*local);
+        }
+        case SeedUse::Refused:
+            return false;
+    }
+    return false;
+}
+
+std::string seed_unread_reason(const OptimizerSpec& spec)
+{
+    if (direct_rand_in_one_dimension(spec))
+        return "in one OPTIM dimension it draws no random numbers (it draws "
+               "them only to choose between equally long sides of a box)";
+    return "it draws no random numbers";
 }
 
 bool obtains_gradients(const OptimizerSpec& spec)

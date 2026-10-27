@@ -68,6 +68,20 @@ std::string error_at_block_end(const std::string& body,
   return "(no line reads " + keyword + ")";
 }
 
+/* The number of the first line of `body` that starts with `prefix` (leading
+ * blanks aside), as text: the line a refusal names for the script line of
+ * that key. */
+std::string line_starting(const std::string& body, const std::string& prefix) {
+  std::istringstream in(body);
+  std::string text;
+  for (std::size_t n = 1; std::getline(in, text); ++n) {
+    const auto p = text.find_first_not_of(' ');
+    if (p != std::string::npos && text.compare(p, prefix.size(), prefix) == 0)
+      return std::to_string(n);
+  }
+  return "(no line starts with " + prefix + ")";
+}
+
 std::filesystem::path write_temp_config(const std::string& body) {
     static int counter = 0;
     auto p = std::filesystem::temp_directory_path()
@@ -286,14 +300,15 @@ ENDOPTIMIZER
 LOSS L2
 PC_OBSERVABLE cohesive_energy --species Ta --target 8.100 --weight 1000 --hotvar a0 2.7 3.9 3.3036
 )");
-        /* At the line that closes the block (ENDOPTIMIZER, line 6). Before
-         * the fix: the message without a line. */
+        /* At the GRAD_STRATEGY line (line 5). Before the fix: the line
+         * that closes the block (ENDOPTIMIZER, line 6); before that, the
+         * message without a line. */
         CHECK_THROWS_WITH(
             tadah::hpo::HPOTargets(ctx, cfg.string()),
             Catch::Matchers::StartsWith(
-                "Error on line 6: --hpotarget defines PC_OBSERVABLE but "
+                "Error on line 5: --hpotarget defines PC_OBSERVABLE but "
                 "OPTIMIZER's GRAD_STRATEGY=NUMERICAL is set.")
-            && Catch::Matchers::EndsWith("\nLine: ENDOPTIMIZER"));
+            && Catch::Matchers::EndsWith("\nLine: GRAD_STRATEGY NUMERICAL"));
         std::filesystem::remove(cfg);
     }
 
@@ -545,9 +560,11 @@ TEST_CASE("HPOTargets rejects PC_OBSERVABLE and PC_LAMMPS side by side",
  *     requires a gradient-free optimiser ...");
  *   - refused as before: GN_MLSL_LDS with an INNER LD_LBFGS, at the INNER
  *     block ("... INNER's optimiser NLOPT:LD_LBFGS is gradient-based.").
- * Each refusal names the line that closes the block it refuses
- * (ENDOPTIMIZER, ENDINNER), as the parser's refusals do; the pins read the
- * message alone before that fix, which it was (no line).
+ * Each refusal names the ALGO line of the block it refuses and the line of
+ * the PC_LAMMPS line ("--hpotarget defines PC_LAMMPS on line 10 but ...");
+ * the pins named the line that closes the block (ENDOPTIMIZER, ENDINNER)
+ * and no PC_LAMMPS line before that fix, and read the message alone before
+ * the lines were named (no line).
  * Before the fix: the four with a derivative-free INNER block were refused
  * ("OPTIMIZER's optimiser NLOPT:GD_MLSL is gradient-based"), and the two
  * without one with that message, which does not say why. */
@@ -606,8 +623,10 @@ TEST_CASE("HPOTargets judges an MLSL or AUGLAG under PC_LAMMPS by its local "
         INFO(algo << " without an INNER block");
         CHECK_THAT(error(plain(algo, "")),
                    Catch::StartsWith(
-                       error_at_block_end(plain(algo, ""), "ENDOPTIMIZER") +
-                       "--hpotarget defines PC_LAMMPS but OPTIMIZER's "
+                       error_at_block_end(plain(algo, ""), "ALGO " + algo) +
+                       "--hpotarget defines PC_LAMMPS on line " +
+                       line_starting(plain(algo, ""), "PC_LAMMPS") +
+                       " but OPTIMIZER's "
                        "optimiser NLOPT:" + algo + " takes a gradient: "
                        "NLopt's MLSL and AUGLAG take one for their local "
                        "search, and NLopt's default local optimiser, "
@@ -621,12 +640,15 @@ TEST_CASE("HPOTargets judges an MLSL or AUGLAG under PC_LAMMPS by its local "
         CHECK_THAT(error(plain("GN_MLSL_LDS", "LD_LBFGS")),
                    Catch::StartsWith(
                        error_at_block_end(plain("GN_MLSL_LDS", "LD_LBFGS"),
-                                          "ENDINNER") +
-                       "--hpotarget defines PC_LAMMPS but INNER's optimiser "
+                                          "ALGO LD_LBFGS") +
+                       "--hpotarget defines PC_LAMMPS on line " +
+                       line_starting(plain("GN_MLSL_LDS", "LD_LBFGS"),
+                                     "PC_LAMMPS") +
+                       " but INNER's optimiser "
                        "NLOPT:LD_LBFGS is gradient-based. A PC_LAMMPS or "
                        "PC_FAILPROBE line requires a gradient-free "
                        "optimiser") &&
-                   Catch::EndsWith("\nLine:     ENDINNER"));
+                   Catch::EndsWith("\nLine:       ALGO LD_LBFGS"));
     }
     std::filesystem::remove(script_path);
 }
@@ -642,7 +664,9 @@ TEST_CASE("HPOTargets judges an MLSL or AUGLAG under PC_LAMMPS by its local "
  *   algorithm; the INNER block takes a derivative-free one (NLOPT:LN_AUGLAG, NLOPT:LN_AUGLAG_EQ, NLOPT:LN_BOBYQA,
  *   NLOPT:LN_COBYLA, NLOPT:LN_NELDERMEAD, NLOPT:LN_PRAXIS,
  *   NLOPT:LN_SBPLX)."
- * at the INNER block's ENDINNER line -- for the G_MLSL_LDS search of
+ * at the INNER block's ALGO line, naming the line of the PC_LAMMPS line
+ * ("--hpotarget defines PC_LAMMPS on line 13 but ..."; before the key
+ * lines: at its ENDINNER line, naming none) -- for the G_MLSL_LDS search of
  * data/ta/target_files/mlsl_inner.hpo with an
  * INNER LD_MMA, an INNER GD_STOGO (gradient-based and global), an INNER
  * CERES:LBFGS, and an EXPLORE block's INNER LD_LBFGS; an INNER LD_AUGLAG,
@@ -716,37 +740,45 @@ TEST_CASE("HPOTargets names, for an INNER block under PC_LAMMPS, the "
         "NLOPT:LN_COBYLA, NLOPT:LN_NELDERMEAD, NLOPT:LN_PRAXIS, "
         "NLOPT:LN_SBPLX).";
 
+    /* "--hpotarget defines PC_LAMMPS on line <n> but ", n the line of the
+     * PC_LAMMPS line of `body`. */
+    auto defines = [](const std::string& body) {
+        return "--hpotarget defines PC_LAMMPS on line " +
+               line_starting(body, "PC_LAMMPS") + " but ";
+    };
     struct Case { std::string what, body, message, line; };
     std::vector<Case> cases;
     for (const auto& [lib, algo] :
          std::vector<std::pair<std::string, std::string>>{
              {"NLOPT", "LD_MMA"}, {"NLOPT", "GD_STOGO"}})
         cases.push_back({"an INNER " + lib + ":" + algo, mlsl(lib, algo),
-                         "--hpotarget defines PC_LAMMPS but INNER's optimiser "
-                         + lib + ":" + algo + " is gradient-based." +
+                         defines(mlsl(lib, algo)) + "INNER's optimiser " +
+                             lib + ":" + algo + " is gradient-based." +
                              inner_advice,
-                         "    ENDINNER"});
+                         "      ALGO " + algo});
     cases.push_back({"an INNER NLOPT:LD_AUGLAG", mlsl("NLOPT", "LD_AUGLAG"),
-                     "--hpotarget defines PC_LAMMPS but INNER's optimiser "
+                     defines(mlsl("NLOPT", "LD_AUGLAG")) + "INNER's optimiser "
                      "NLOPT:LD_AUGLAG takes a gradient: NLopt's MLSL and "
                      "AUGLAG take one for their local search, and NLopt's "
                      "default local optimiser, NLOPT:LD_MMA, is "
                      "gradient-based." + inner_advice,
-                     "    ENDINNER"});
+                     "      ALGO LD_AUGLAG"});
+    const std::string explore_inner =
+        "OPTIMIZER\n  STRATEGY\n    TYPE PRESTAGE\n    LIB NLOPT\n"
+        "    ALGO LN_BOBYQA\n    MAXEVAL 1\n    EXPLORE\n      LIB NLOPT\n"
+        "      ALGO GN_MLSL_LDS\n      MAXEVAL 1\n      INNER\n"
+        "        LIB NLOPT\n        ALGO LD_LBFGS\n      ENDINNER\n"
+        "    ENDEXPLORE\n  ENDSTRATEGY\nENDOPTIMIZER\nLOSS L2\n" + pc_lammps;
     cases.push_back(
-        {"an EXPLORE block's INNER NLOPT:LD_LBFGS",
-         "OPTIMIZER\n  STRATEGY\n    TYPE PRESTAGE\n    LIB NLOPT\n"
-         "    ALGO LN_BOBYQA\n    MAXEVAL 1\n    EXPLORE\n      LIB NLOPT\n"
-         "      ALGO GN_MLSL_LDS\n      MAXEVAL 1\n      INNER\n"
-         "        LIB NLOPT\n        ALGO LD_LBFGS\n      ENDINNER\n"
-         "    ENDEXPLORE\n  ENDSTRATEGY\nENDOPTIMIZER\nLOSS L2\n" + pc_lammps,
-         "--hpotarget defines PC_LAMMPS but EXPLORE INNER's optimiser "
+        {"an EXPLORE block's INNER NLOPT:LD_LBFGS", explore_inner,
+         defines(explore_inner) + "EXPLORE INNER's optimiser "
          "NLOPT:LD_LBFGS is gradient-based." + inner_advice,
-         "      ENDINNER"});
+         "        ALGO LD_LBFGS"});
     for (const auto& c : cases) {
         INFO(c.what);
         const std::string got = error(c.body, false);
-        CHECK(got == error_at_block_end(c.body, "ENDINNER") + c.message +
+        const std::string key = c.line.substr(c.line.find_first_not_of(' '));
+        CHECK(got == error_at_block_end(c.body, key) + c.message +
                          "\nLine: " + c.line);
         CHECK_THAT(got, !(Catch::Contains("GN_*") || Catch::Contains("TADAH") ||
                           Catch::Contains("DLIB:BFGS")));
@@ -817,11 +849,13 @@ TEST_CASE("HPOTargets names, for an INNER block under PC_LAMMPS, the "
             "    MAXEVAL 1\n  ENDSTRATEGY\nENDOPTIMIZER\nLOSS L2\n" + pc_lammps;
         const std::string got = error(body, false);
         CHECK_THAT(got, Catch::StartsWith(
-                            error_at_block_end(body, "ENDOPTIMIZER") +
-                            "--hpotarget defines PC_LAMMPS but OPTIMIZER's "
+                            error_at_block_end(body, "ALGO LD_LBFGS") +
+                            "--hpotarget defines PC_LAMMPS on line " +
+                            line_starting(body, "PC_LAMMPS") +
+                            " but OPTIMIZER's "
                             "optimiser NLOPT:LD_LBFGS is gradient-based. "
                             "A PC_LAMMPS or PC_FAILPROBE line requires"));
-        CHECK_THAT(got, Catch::EndsWith("\nLine: ENDOPTIMIZER"));
+        CHECK_THAT(got, Catch::EndsWith("\nLine:     ALGO LD_LBFGS"));
         check_other(got);
     }
     {
@@ -832,11 +866,13 @@ TEST_CASE("HPOTargets names, for an INNER block under PC_LAMMPS, the "
             "  ENDSTRATEGY\nENDOPTIMIZER\nLOSS L2\n" + pc_lammps;
         const std::string got = error(body, false);
         CHECK_THAT(got, Catch::StartsWith(
-                            error_at_block_end(body, "ENDEXPLORE") +
-                            "--hpotarget defines PC_LAMMPS but EXPLORE's "
+                            error_at_block_end(body, "ALGO LD_MMA") +
+                            "--hpotarget defines PC_LAMMPS on line " +
+                            line_starting(body, "PC_LAMMPS") +
+                            " but EXPLORE's "
                             "optimiser NLOPT:LD_MMA is gradient-based. "
                             "A PC_LAMMPS or PC_FAILPROBE line requires"));
-        CHECK_THAT(got, Catch::EndsWith("\nLine:     ENDEXPLORE"));
+        CHECK_THAT(got, Catch::EndsWith("\nLine:       ALGO LD_MMA"));
         check_other(got);
     }
     /* Every optimiser the advice names runs with PC_LAMMPS as written, in
@@ -899,9 +935,12 @@ TEST_CASE("HPOTargets applies the PC_LAMMPS and PC_OBSERVABLE gradient rules "
      * LD_LBFGS there ran with PC_LAMMPS, failed at once inside NLopt
      * ("nlopt failure") and the run reported success after a wasted
      * exploration; a GRAD_STRATEGY there failed only after the first
-     * evaluation. Each refusal names the line that closes the block it
-     * refuses (ENDEXPLORE, the EXPLORE block's ENDINNER); the pins read the
-     * message alone before that fix, which it was (no line). */
+     * evaluation. Each refusal names the line of the key it refuses (the
+     * ALGO or GRAD_STRATEGY line of the EXPLORE block or of its INNER
+     * block) and the line of the PC_LAMMPS line; the pins named the line
+     * that closes the block (ENDEXPLORE, the EXPLORE block's ENDINNER) and
+     * no PC_LAMMPS line before the key lines, and read the message alone
+     * before the lines were named (no line). */
     tadah::core::PeriodicTable::initialize();
     auto script_path = std::filesystem::current_path() /
                        "test_pc_lammps_grad_explore_stub.in";
@@ -939,44 +978,51 @@ TEST_CASE("HPOTargets applies the PC_LAMMPS and PC_OBSERVABLE gradient rules "
         return what;
     };
 
+    /* Each message after "--hpotarget defines PC_LAMMPS on line <n> but "
+     * (n the line of the PC_LAMMPS line), or "--hpotarget defines
+     * PC_OBSERVABLE but ", and the key line the refusal names. */
     struct Case { std::string explore, loss_line, message, closing; };
     for (const auto& c : std::vector<Case>{
              /* PC_LAMMPS: a gradient-based optimiser ... */
              {"      LIB NLOPT\n      ALGO LD_LBFGS\n      MAXEVAL 1\n",
               pc_lammps,
-              "--hpotarget defines PC_LAMMPS but EXPLORE's optimiser "
-              "NLOPT:LD_LBFGS is gradient-based. A PC_LAMMPS or "
-              "PC_FAILPROBE line requires a gradient-free optimiser",
-              "ENDEXPLORE"},
+              "EXPLORE's optimiser NLOPT:LD_LBFGS is gradient-based. A "
+              "PC_LAMMPS or PC_FAILPROBE line requires a gradient-free "
+              "optimiser",
+              "ALGO LD_LBFGS"},
              {mlsl_inner + "        ALGO LD_LBFGS\n      ENDINNER\n",
               pc_lammps,
-              "--hpotarget defines PC_LAMMPS but EXPLORE INNER's optimiser "
-              "NLOPT:LD_LBFGS is gradient-based. A PC_LAMMPS or "
-              "PC_FAILPROBE line requires a gradient-free optimiser",
-              "ENDINNER"},
+              "EXPLORE INNER's optimiser NLOPT:LD_LBFGS is gradient-based. A "
+              "PC_LAMMPS or PC_FAILPROBE line requires a gradient-free "
+              "optimiser",
+              "ALGO LD_LBFGS"},
              /* DLIB:BFGS among them (it was accepted). */
              {"      LIB DLIB\n      ALGO BFGS\n      MAXEVAL 1\n",
               pc_lammps,
-              "--hpotarget defines PC_LAMMPS but EXPLORE's optimiser "
-              "DLIB:BFGS is gradient-based. A PC_LAMMPS or PC_FAILPROBE "
-              "line requires a gradient-free optimiser", "ENDEXPLORE"},
+              "EXPLORE's optimiser DLIB:BFGS is gradient-based. A PC_LAMMPS "
+              "or PC_FAILPROBE line requires a gradient-free optimiser",
+              "ALGO BFGS"},
              /* ... and any GRAD_STRATEGY. */
              {"      LIB DLIB\n      ALGO BFGS\n      MAXEVAL 1\n"
               "      GRAD_STRATEGY ANALYTICAL\n",
               pc_lammps,
-              "--hpotarget defines PC_LAMMPS but EXPLORE's GRAD_STRATEGY is "
-              "set.", "ENDEXPLORE"},
+              "EXPLORE's GRAD_STRATEGY is set.", "GRAD_STRATEGY ANALYTICAL"},
              /* PC_OBSERVABLE: GRAD_STRATEGY NUMERICAL. */
              {"      LIB NLOPT\n      ALGO LD_LBFGS\n      MAXEVAL 1\n"
               "      GRAD_STRATEGY NUMERICAL\n",
               pc_observable,
-              "--hpotarget defines PC_OBSERVABLE but EXPLORE's "
-              "GRAD_STRATEGY=NUMERICAL is set.", "ENDEXPLORE"}}) {
+              "EXPLORE's GRAD_STRATEGY=NUMERICAL is set.",
+              "GRAD_STRATEGY NUMERICAL"}}) {
         const std::string body = prestage(bobyqa, c.explore) + c.loss_line;
         INFO(body);
+        const std::string defines =
+            c.loss_line == pc_lammps
+                ? "--hpotarget defines PC_LAMMPS on line " +
+                      line_starting(body, "PC_LAMMPS") + " but "
+                : "--hpotarget defines PC_OBSERVABLE but ";
         CHECK_THAT(error(body),
                    Catch::StartsWith(error_at_block_end(body, c.closing) +
-                                     c.message) &&
+                                     defines + c.message) &&
                    Catch::Contains("\nLine: ") &&
                    Catch::EndsWith(c.closing));
     }

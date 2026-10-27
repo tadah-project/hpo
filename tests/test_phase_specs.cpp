@@ -217,6 +217,47 @@ TEST_CASE("phase specs: the PRESTAGE refinement starts from the candidates",
     CHECK(refine.lib == "DLIB");
 }
 
+/* Pins: the starting points of a phase keep their INIT origin (CONFIG,
+ * WARM, a sampled point) only where it holds, so that an NLopt search whose
+ * start moves warns for a user's own point (nlopt_adapter.h): a MULTISTART
+ * start keeps the origin of its INIT point, and a PRESTAGE refinement,
+ * which starts from exploration candidates, carries no origin, also when it
+ * has as many candidates as the spec had INIT points.
+ * Before the fix: the refinement kept the spec's origins -- one CONFIG
+ * origin for one candidate here, so an LN_BOBYQA refinement whose candidate
+ * moved named it a CONFIG start. The MULTISTART part fails on the code
+ * before a start kept the origin of its point (the change came with the
+ * moving LN_BOBYQA starts, before this case): multistart_start_spec copied
+ * the spec's origins, two for its one start ("2 == 1"), and an NLopt search
+ * then took the origins for stale and named no CONFIG start ("LN_BOBYQA
+ * under MULTISTART: a moved CONFIG start gets the warning ...",
+ * test_step_plan.cpp, runs it). */
+TEST_CASE("phase specs: a phase's starting points keep their INIT origin "
+          "only where it holds", "[HPO][phase_specs][prestage][multistart]")
+{
+    using tadah::hpo::InitOrigin;
+    auto s = local_spec(2);
+    s.optim_init_origin = {InitOrigin{InitOrigin::Kind::Config, {}},
+                           InitOrigin{InitOrigin::Kind::Random, {}}};
+    const MultiStartPlan plan = tadah::hpo::plan_multistart(s, 2, std::nullopt);
+    for (std::size_t i = 0; i < 2; ++i) {
+        INFO("MULTISTART start " << i + 1);
+        const OptimizerSpec sub = tadah::hpo::multistart_start_spec(s, plan, i);
+        REQUIRE(sub.optim_init_origin.size() == 1u);
+        CHECK(sub.optim_init_origin.front().kind ==
+              s.optim_init_origin[i].kind);
+    }
+
+    auto one = local_spec(1);
+    one.optim_init_origin = {InitOrigin{InitOrigin::Kind::Config, {}}};
+    one.strategy_type = tadah::hpo::StrategyType::PRESTAGE;
+    one.prestage = std::make_unique<OptimizerSpec>(local_spec(1));
+    const OptimizerSpec refine =
+        tadah::hpo::prestage_refinement_spec(one, {{0.2, 0.3}});
+    CHECK(refine.optim_init.size() == 1u);
+    CHECK(refine.optim_init_origin.empty());
+}
+
 /* A PRESTAGE exploration whose optimiser reads SEED and that has no seed of
  * its own takes the STRATEGY-level SEED, as the refinement's starts and the
  * RESTART rounds derive theirs from it (the refinement draws streams of its
@@ -287,10 +328,18 @@ TEST_CASE("phase specs: a PRESTAGE exploration without a SEED takes the "
         REQUIRE(s.prestage);
         CHECK_FALSE(s.prestage->seed);
     }
-    SECTION("without a STRATEGY-level SEED the exploration has none") {
+    /* Without a STRATEGY-level SEED the exploration takes none from the
+     * STRATEGY block; GN_CRS2_LM, which draws random numbers, draws a seed
+     * of its own once for the run (the case "drawn seeds: an NLopt
+     * algorithm that draws random numbers without a SEED ..."). Before the
+     * fix: the exploration had no seed (NLopt's clock seed). The journal
+     * says the seed is drawn (test_drawn_seeds.cpp). */
+    SECTION("without a STRATEGY-level SEED the exploration draws one of its "
+            "own") {
         const OptimizerSpec s = prestage("", crs2);
         REQUIRE(s.prestage);
-        CHECK_FALSE(s.prestage->seed);
+        CHECK(s.prestage->seed);
+        CHECK_FALSE(s.prestage->seed_from_strategy);
     }
 }
 
@@ -503,8 +552,7 @@ TEST_CASE("backend rules: validate_backend runs each backend's own checks",
               "TADAH:RANDOM does not use POPULATION; remove it (it is read "
               "by NLOPT:GD_MLSL, "},
              {"TADAH", "GRID", [](OptimizerSpec& s) { s.seed = 3; },
-              "TADAH:GRID does not use SEED: it draws no random numbers; "
-              "remove it"},
+              "TADAH:GRID does not use SEED: it draws no random numbers"},
              {"DLIB", "GFS", [](OptimizerSpec& s) { s.vector_storage = 5; },
               "DLIB:GFS does not use VECTOR_ARR; remove it (it is read by "
               "NLOPT:LD_LBFGS, "},
@@ -528,6 +576,15 @@ TEST_CASE("backend rules: validate_backend runs each backend's own checks",
         auto s = with(c.lib, c.algo);
         c.set(s);
         CHECK_THAT(error_of(s), Catch::StartsWith(c.message));
+    }
+    /* Pins: the SEED refusal says what is refused and why, and nothing
+     * after it: "TADAH:GRID does not use SEED: it draws no random numbers".
+     * Before: it ended "; remove it". */
+    {
+        auto grid = with("TADAH", "GRID");
+        grid.seed = 3;
+        CHECK(error_of(grid) ==
+              "TADAH:GRID does not use SEED: it draws no random numbers");
     }
 
     /* Pins: a tolerance on G_MLSL without an INNER block -- a spec built

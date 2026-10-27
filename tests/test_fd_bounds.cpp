@@ -1480,6 +1480,71 @@ TEST_CASE("No usable gradient: under FAILSCORE_GRADING a search from a graded "
     }
 }
 
+TEST_CASE("No usable gradient: under FAILSCORE_GRADING NLopt is given the "
+          "gradient of the stand-in of a graded failure",
+          "[HPO][grad_provider][fd_bounds][failscore_grading][failscore]")
+{
+    /* NLopt is given a finite stand-in for a failed evaluation
+     * (failed_loss_stand_in.h), and for a graded failure with a usable
+     * gradient that gradient times the derivative of the stand-in in the
+     * loss (FailedLossStandIn::slope): K / FAILSCORE before any usable loss
+     * (K = 1e100 for a FAILSCORE above it), the margin over the width of
+     * the failure band after usable losses. Below 1.47 the graded band-D
+     * loss of v = 10 (1.47 - x), which falls towards the usable side.
+     * Pins: (a) FAILSCORE 1e200, usable 1 + (x - 1.8)^2 from 1.47 up,
+     * LD_LBFGS from 1.25, a graded failure: NLopt is given about 1e100 for
+     * the start and a gradient of that scale, follows it to the usable side
+     * and reaches the minimum, 1.8 (loss 1), ending "SUCCESS -- generic
+     * success" after 16 evaluations. (b) FAILSCORE 1e9, usable 1 + (x -
+     * 1.3)^2 from 1.47 up, LD_LBFGS from 1.9: its line search tries 1.0,
+     * a graded failure after usable losses, whose gradient (the stencil
+     * 1.2 and 1.4, graded too) it is given scaled with the stand-in, and
+     * steps back to eval 7 at 1.84951119517.
+     * Before the fix (each gradient given as the finite differences of the
+     * loss, unscaled): (a) the gradient, about 1e197, was not the
+     * derivative of the value NLopt was given, and LD_LBFGS ended at once,
+     * "STOPPED -- nlopt failure (...)" after the start and its stencil, 3
+     * evaluations; (b) eval 7 was at 1.891. */
+    SECTION("before any usable loss, FAILSCORE 1e200") {
+        const auto graded = [](double x, std::size_t) {
+            if (x < 1.47)
+                return tadah::hpo::graded_failscore(
+                    1e200, tadah::hpo::FailBand::D, 10.0 * (1.47 - x), 1.0);
+            return 1.0 + (x - 1.8) * (x - 1.8);
+        };
+        Journal j;
+        auto sp = region_spec("NLOPT", "LD_LBFGS", 1.25, 1e200);
+        sp.failscore_grading = true;
+        RegionHost host{graded, {}, {}};
+        const std::string status = run_region(sp, host);
+        CHECK(host.losses.front() >= 0.999e200);
+        CHECK(status == "SUCCESS -- generic success");
+        CHECK(host.asked.size() == 16u);
+        CHECK(std::any_of(host.asked.begin(), host.asked.end(),
+                          [](double x) { return x == Approx(1.8); }));
+        CHECK(host.reached_usable(1.0 + 1e-9));
+    }
+    SECTION("after usable losses, FAILSCORE 1e9") {
+        const auto graded = [](double x, std::size_t) {
+            if (x < 1.47)
+                return tadah::hpo::graded_failscore(
+                    1e9, tadah::hpo::FailBand::D, 10.0 * (1.47 - x), 1.0);
+            return 1.0 + (x - 1.3) * (x - 1.3);
+        };
+        Journal j;
+        auto sp = region_spec("NLOPT", "LD_LBFGS", 1.9, 1e9);
+        sp.failscore_grading = true;
+        RegionHost host{graded, {}, {}};
+        run_region(sp, host);
+        REQUIRE(host.asked.size() >= 7u);
+        CHECK(host.losses[0] < 2.0);
+        CHECK(host.asked[3] == Approx(1.0));
+        CHECK(host.losses[3] >= 0.999e9);
+        CHECK(host.losses[3] < 1e9);
+        CHECK(host.asked[6] == Approx(1.84951119517).epsilon(1e-10));
+    }
+}
+
 #ifdef TADAH_USE_CERES
 TEST_CASE("No usable gradient: a CERES search from a start inside the "
           "failure region stops there",

@@ -796,6 +796,10 @@ private:
 
     /* formatting -- fixed geometry */
     static constexpr std::size_t iter_cw_   = 12;  // #ITERATION(10) + 2; holds up to 10^6
+    /* The first column of a best_* file, #IMPROVEMENT(12) + 2: the best's
+     * number among the run's bests, before EVAL (its evaluation, iter_cw_
+     * wide), which the other files head #ITERATION. */
+    static constexpr std::size_t improve_cw_ = 14;
     static constexpr std::size_t ittime_cw_ = 12;  // IT-TIME/ms(10)  + 2
     // Replica/slot column (Result::chain_id). "SLOT"(4) + 2, wide
     // enough for any REPLICAS a shared-memory pool can drive.
@@ -813,10 +817,18 @@ private:
     std::size_t metric_column_width() const;
 
     /* line printers ------------------------------------ */
-    void init_loss   (const std::string& fn) const;
-    void init_outvar (const std::string& fn) const;
-    void init_params (const std::string& fn) const;
-    void init_stats  (const std::string& fn) const;
+    /* `best`: the header of a best_* file, whose first columns are
+     * #IMPROVEMENT and EVAL (write_row_head). */
+    void init_loss   (const std::string& fn, bool best = false) const;
+    void init_outvar (const std::string& fn, bool best = false) const;
+    void init_params (const std::string& fn, bool best = false) const;
+    void init_stats  (const std::string& fn, bool best = false) const;
+    /* The first column(s) of a row: the evaluation number `it`, or for a
+     * best_* file (`best`) the improvement number `it` and the evaluation
+     * of that best (e.iter); and of a header (`header`), their titles. */
+    static void write_row_head(std::ostream& f, std::size_t it,
+                               const Result& e, bool best);
+    static void write_header_head(std::ostream& f, bool best);
     /* False when no per-structure metric is active (a run with no
      * training/validation DB), in which case stats.tadah has no columns
      * beyond #ITERATION and its rows are suppressed. */
@@ -827,14 +839,15 @@ private:
      * compute is NaN (see the definitions). */
     static void print_loss_line  (std::ostream&, size_t it, const Result&,
                                   const HPOTargets&, std::size_t n_val,
-                                  std::size_t cw, int prec);
+                                  std::size_t cw, int prec, bool best = false);
     static void print_outvar_line(std::ostream&, size_t it, const Result&,
-                                  const HPOTargets&, std::size_t cw, int prec);
+                                  const HPOTargets&, std::size_t cw, int prec,
+                                  bool best = false);
     static void print_params_line(std::ostream&, size_t it, const Result&,
-                                  std::size_t cw, int prec);
+                                  std::size_t cw, int prec, bool best = false);
     static void print_stats_line (std::ostream&, size_t it, const Result&,
                                   const HPOTargets&, std::size_t n_val,
-                                  std::size_t cw, int prec);
+                                  std::size_t cw, int prec, bool best = false);
 
 };
 

@@ -12,7 +12,10 @@
  *   - NELDERMEAD / SBPLX use it as the first simplex's edges,
  *   - NEWUOA / PRAXIS collapse it to min_i |dx_i| (uniform in a unit box),
  *   - MMA / CCSAQ take it as the per-dim trust half-width,
- *   - MLSL / AUGLAG forward it to the INNER optimiser.
+ *   - MLSL / AUGLAG forward it to the INNER optimiser; one whose local
+ *     search keeps its first step (BOBYQA, COBYLA) is given that search's
+ *     plan, its full step with STEP unset too (local_step_plan,
+ *     nlopt_adapter.h).
  *
  * Near-bound handling is per dimension (the old adapter shrank ONE
  * scalar to half the slack of the single tightest dimension, starving
@@ -21,20 +24,30 @@
  *     upper bound but not of the lower one, dx is NEGATIVE so the first
  *     vertex points inward instead of being clamped/flipped by nldrmd
  *     (NLopt accepts a signed initial step);
- *   - BOBYQA alone (PerDimRescale): a dimension whose slack to the
- *     nearest bound is below |dx| gets dx = 0.75 * slack -- NLopt's own
- *     default near-bound rule -- so BOBYQA neither relocates the warm
- *     start (bobyqa.c: an interior start within rhobeg of a bound is moved
- *     to bound +/- rhobeg) nor rejects the box (width >= 2*rhobeg); a
- *     start exactly ON a bound is left alone (BOBYQA keeps it there).
- *     COBYLA treats the bounds as constraints, and the MinCollapsed
- *     algorithms (NEWUOA, PRAXIS) take one radius, min_i |dx_i|, that a
- *     shrink of one dimension would cut for every dimension; neither
- *     relocates the start, so their steps are not shrunk;
+ *   - PerDimRescale (BOBYQA, COBYLA): the step of each dimension rescales
+ *     its coordinate for the whole search -- the trust region is a ball
+ *     in the rescaled coordinates, and its radius only shrinks -- so a
+ *     dimension whose first step is small keeps a small scale: from a start
+ *     0.005 inside a box of width 2 BOBYQA moved that coordinate by at most
+ *     0.01 in 30 evaluations. Every dimension keeps its full step: STEP, or
+ *     with STEP unset 0.25 of the width (NLopt's own default for a start
+ *     well inside the box), given explicitly (`given`), where NLopt's own
+ *     default shrinks to 0.75 of the distance to a bound closer than that;
+ *   - BOBYQA alone moves an interior start that lies within a step of a
+ *     bound to bound +/- step (bobyqa.c) and refuses a box narrower than
+ *     two steps: a start within half a step of a bound moves onto the
+ *     bound (BOBYQA keeps a start on a bound), one between half a step and
+ *     a step from it to one step from it -- by at most half a step, where
+ *     BOBYQA moved it by up to a whole step (`start`, the start given to
+ *     BOBYQA). COBYLA treats the bounds as constraints and turns a first
+ *     step that would leave the box inward, so its start stays. The
+ *     MinCollapsed algorithms (NEWUOA, PRAXIS) take one radius, min_i
+ *     |dx_i|, that a shrink of one dimension would cut for every dimension;
+ *     they do not move the start, and their steps are not shrunk;
  *   - never zero (NLopt rejects a zero step).
  *
- * STEP unset: NLopt's x-dependent heuristic stays in force
- * (0.25*width, or 0.75*slack when the start is closer than that to a
+ * STEP unset for another algorithm: NLopt's x-dependent heuristic stays in
+ * force (0.25*width, or 0.75*slack when the start is closer than that to a
  * bound); the adapter only reads it back for the journal.
  */
 
@@ -42,6 +55,7 @@
 #include <tadah/hpo/log_index.h>
 #include <tadah/hpo/optimizer_spec.h>
 
+#include <algorithm>
 #include <cmath>
 #include <optional>
 #include <sstream>
@@ -53,11 +67,26 @@ namespace tadah::hpo {
 
 struct StepPlan {
     bool                     user_set = false;   // STEP / overrides present
+    bool                     given = false;      // dx is given to NLopt
     std::string              source;             // one-line provenance
     std::vector<double>      dx;                 // internal units, signed
     std::vector<double>      frac;               // |dx| / internal width
     std::vector<std::string> note;               // per dim: "", "override", ...
+    std::vector<double>      start;              // the start given to NLopt
+                                                 // (internal; empty without one)
 };
+
+/* Whether `caps`' algorithm keeps the first step of each dimension as the
+ * scale of its coordinate for the whole search (StepUse::PerDimRescale:
+ * BOBYQA, COBYLA): it is given its full step, with STEP unset too. */
+inline bool keeps_first_step(const OptimizerCaps& caps)
+{
+    return caps.step_use == StepUse::PerDimRescale;
+}
+
+/* The width fraction of the step given to such an algorithm when STEP is
+ * unset (NLopt's own default away from the bounds). */
+inline constexpr double kDefaultStepFrac = 0.25;
 
 /* Powell's rule for BOBYQA (XU-XL >= 2*RHOBEG) and NLopt's own default
  * (0.25*width) bound the useful range of a width fraction. */
@@ -125,9 +154,10 @@ inline void require_step_coverage(const OptimizerSpec& sp)
                 "is set; add `STEP <frac>` or override every OPTIM'd dimension");
 }
 
-/* Build the plan. `start_internal` may be empty (INNER specs: the local
- * starts are chosen by MLSL at run time) -- the near-bound rules are
- * then skipped. */
+/* Build the plan. `start_internal` may be empty (the local searches of an
+ * MLSL, whose starts it picks at run time) -- the near-bound rules are
+ * then skipped, and `start` stays empty; an algorithm that keeps its first
+ * step (keeps_first_step) is given its full step all the same. */
 inline StepPlan make_step_plan(const OptimizerSpec&        sp,
                                const std::vector<double>&  start_internal,
                                const OptimizerCaps&        caps)
@@ -138,14 +168,19 @@ inline StepPlan make_step_plan(const OptimizerSpec&        sp,
     plan.frac.assign(n, 0.0);
     plan.note.assign(n, "");
     plan.user_set = sp.step.has_value() || !sp.step_overrides.empty();
-    if (!plan.user_set) {
+    const bool have_start = start_internal.size() == n;
+    if (have_start) plan.start = start_internal;
+    const bool full_step = keeps_first_step(caps);
+    if (!plan.user_set && !full_step) {
         plan.source = "STEP unset -- NLopt default per dim (0.25*width, or 0.75*distance "
                       "to the nearer bound when the start is closer than that)";
         return plan;
     }
-    require_step_coverage(sp);
-    const auto ov = resolve_step_overrides(sp);
-    {
+    plan.given = true;
+    std::vector<std::optional<double>> ov(n);
+    if (plan.user_set) {
+        require_step_coverage(sp);
+        ov = resolve_step_overrides(sp);
         std::ostringstream src;
         if (sp.step) src << "STEP " << *sp.step;
         else         src << "STEP overrides";
@@ -164,18 +199,20 @@ inline StepPlan make_step_plan(const OptimizerSpec&        sp,
             }
         }
         plan.source = src.str();
+    } else {
+        plan.source = "STEP unset -- 0.25*width per dim, given to NLopt: " +
+                      sp.algo + " keeps the first step of each dimension as "
+                      "its scale";
     }
-    const bool have_start = start_internal.size() == n;
     /* BOBYQA is the one algorithm that relocates an interior start lying
      * within rhobeg of a bound and refuses a box narrower than 2*rhobeg
      * (bobyqa.c ~3219-3257); COBYLA treats bounds as constraints,
-     * NEWUOA/PRAXIS collapse the vector to min|dx| (so shrinking one dim
-     * would shrink every dim's radius) and never relocate. */
+     * NEWUOA/PRAXIS collapse the vector to min|dx| and never relocate. */
     const bool bobyqa = caps.step_use == StepUse::PerDimRescale &&
                         sp.algo.find("BOBYQA") != std::string::npos;
     for (std::size_t i = 0; i < n; ++i) {
         const double width = sp.high[i] - sp.low[i];
-        double frac  = ov[i] ? *ov[i] : *sp.step;
+        double frac = ov[i] ? *ov[i] : (sp.step ? *sp.step : kDefaultStepFrac);
         std::string note = ov[i] ? "override" : "";
         if (bobyqa && frac >= kStepFracMax) {
             /* Powell's check is `width >= 2*rhobeg` evaluated in BOBYQA's
@@ -190,7 +227,6 @@ inline StepPlan make_step_plan(const OptimizerSpec&        sp,
             const double x = start_internal[i];
             const double slack_lo = x - sp.low[i];
             const double slack_hi = sp.high[i] - x;
-            const double slack    = std::min(slack_lo, slack_hi);
             switch (caps.step_use) {
                 case StepUse::PerDimVector:
                     if (slack_hi < dx && slack_lo >= dx) {
@@ -201,13 +237,27 @@ inline StepPlan make_step_plan(const OptimizerSpec&        sp,
                     break;
                 case StepUse::PerDimRescale:
                     if (!bobyqa) break;
-                    if (slack > 0.0 && slack < dx) {
-                        dx = 0.75 * slack;
-                        note += (note.empty() ? "" : "; ");
-                        note += "near-bound: shrunk to 0.75*slack";
-                    } else if (slack <= 0.0) {
+                    /* BOBYQA moves a start within a step of a bound to one
+                     * step from it; move it by at most half a step instead,
+                     * to a point BOBYQA keeps: onto the bound, or one step
+                     * from it. */
+                    if (std::min(slack_lo, slack_hi) <= 0.0) {
                         note += (note.empty() ? "" : "; ");
                         note += "start on a bound (kept)";
+                    } else if (slack_lo < dx || slack_hi < dx) {
+                        const bool lower = slack_lo < dx;
+                        const double gap = lower ? slack_lo : slack_hi;
+                        const double bound = lower ? sp.low[i] : sp.high[i];
+                        double moved = bound;
+                        if (gap >= 0.5 * dx)
+                            moved = lower ? sp.low[i] + dx : sp.high[i] - dx;
+                        plan.start[i] = moved;
+                        note += (note.empty() ? "" : "; ");
+                        note += gap < 0.5 * dx
+                            ? std::string("start moved onto the ") +
+                                  (lower ? "lower" : "upper") + " bound"
+                            : std::string("start moved to one step from the ") +
+                                  (lower ? "lower" : "upper") + " bound";
                     }
                     break;
                 default:

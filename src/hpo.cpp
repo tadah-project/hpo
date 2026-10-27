@@ -38,6 +38,7 @@
 #include <functional> // std::function
 #include <filesystem>
 #include <iostream>   // std::cout, std::cerr
+#include <map>
 #include <set>
 #include <unistd.h>   // getpid()
 // #include <dlib/global_optimization/find_max_global.h>
@@ -1036,12 +1037,16 @@ int hpo_run_from_startup(core::Context& ctx, HPOLog& log,
     } else {
         mlip::AuditMode mode = mlip::audit_mode_from_context(ctx);
         if (mode != mlip::AuditMode::Off) {
-            std::vector<std::string> optim_keys;
-            optim_keys.reserve(trg.optimap.size());
-            for (const auto& kv : trg.optimap) optim_keys.push_back(kv.first);
+            /* The entries each OPTIM key searches: on a joined line an
+             * entry belongs to one descriptor (the audit judges each by
+             * its own entries). */
+            std::map<std::string, std::vector<bool>> searched;
+            for (const auto& kv : trg.optimap)
+                searched[kv.first] = std::vector<bool>(kv.second.opt.begin(),
+                                                       kv.second.opt.end());
             auto rep_soft  = mlip::run_preflight_from_db(
                 host.train_stdb_mut(), ctx, mode);
-            auto rep_optim = mlip::run_critical_optim_audit(ctx, optim_keys);
+            auto rep_optim = mlip::run_critical_optim_audit(ctx, searched);
             rep_soft.log();
             rep_optim.log();
             mlip::enforce_audit_mode(rep_soft,  mode);

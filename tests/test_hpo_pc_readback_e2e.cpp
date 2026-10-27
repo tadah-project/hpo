@@ -2403,11 +2403,18 @@ TEST_CASE("tadah hpo: a PC_LAMMPS read-back or script error ends the same "
         if (dirs.size() > 1)
             CHECK(read_text(dirs[0] / f) == read_text(dirs[1] / f));
     }
+    /* IT-TIME/ms, the time of an evaluation, differs between the runs: the
+     * second column of outvar.tadah, the third of best_outvar.tadah, after
+     * #IMPROVEMENT and EVAL. */
     if (dirs.size() > 1)
-        for (const char* f : {"outvar.tadah", "best_outvar.tadah"}) {
+        for (const auto& [f, at] : {std::pair<const char*, int>{"outvar.tadah", 1},
+                                    {"best_outvar.tadah", 2}}) {
             INFO(name << ": " << f << " without IT-TIME/ms");
-            CHECK(lines_without(dirs[0] / f, 1) ==
-                  lines_without(dirs[1] / f, 1));
+            REQUIRE(lines_without(dirs[0] / f, -1).size() > 0);
+            CHECK(lines_without(dirs[0] / f, -1)[0][static_cast<std::size_t>(at)] ==
+                  "IT-TIME/ms");
+            CHECK(lines_without(dirs[0] / f, at) ==
+                  lines_without(dirs[1] / f, at));
         }
 }
 

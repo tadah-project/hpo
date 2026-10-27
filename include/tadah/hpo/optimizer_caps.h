@@ -83,11 +83,16 @@ struct OptimizerCaps {
      *                        LD_TNEWTON_RESTART run without a preconditioner,
      *                        which alone reads it)
      *   reads_seed           SEED: TADAH:RANDOM, the ANNEAL family, ASA and
-     *                        NLopt (every NLopt algorithm: which of them draw
-     *                        random numbers is not recorded). Another
-     *                        backend refuses SEED, unless its spec is a
-     *                        PRESTAGE refinement whose SEED the exploration
-     *                        takes (OptimizerSpec::seed_seeds_exploration)
+     *                        the NLopt algorithms that draw random numbers
+     *                        (nlopt 2.10: GN_CRS2_LM, GN_ISRES, GN_ESCH,
+     *                        GN_MLSL, GD_MLSL, G_MLSL, LN_PRAXIS,
+     *                        GD_STOGO_RAND, and GN_DIRECT_L_RAND in two or
+     *                        more dimensions); an MLSL or AUGLAG form reads
+     *                        it through its local search (reads_seed(),
+     *                        phase_specs.h). Another backend refuses SEED,
+     *                        unless its spec is a PRESTAGE refinement whose
+     *                        SEED the exploration takes
+     *                        (OptimizerSpec::seed_seeds_exploration)
      *   reads_ftol_abs_as_setting  FTOL_ABS as a setting, not a stop (no
      *                        supports_ftol_abs): DLIB:GFS's solver epsilon
      *   reads_threads        the THREADS of its own block, beyond the
@@ -328,6 +333,25 @@ const OptimizerCaps* find_optimizer_caps(std::string_view lib,
  * single source of truth for who supports what. */
 using CapsPredicate = bool (*)(const OptimizerCaps&);
 std::vector<const OptimizerCaps*> filter_optimizer_caps(CapsPredicate pred);
+
+/* How a run of a registered optimiser reads SEED, the rule reads_seed()
+ * (phase_specs.h) applies to a run and the ALGO help and the optimiser
+ * registry (blueprint/optimizers_gen.toml, its field seed) state:
+ *   Read                 the seed of the random numbers it draws
+ *                        (OptimizerCaps::reads_seed);
+ *   ReadInTwoDimensions  read in two OPTIM dimensions or more: it draws
+ *                        random numbers only to choose between equally
+ *                        long sides of a box (RandomDraws::BetweenSides,
+ *                        NLopt's GN_DIRECT_L_RAND), which a box of one
+ *                        dimension never has;
+ *   ThroughLocalSearch   an MLSL or AUGLAG form that draws none itself
+ *                        reads it when its local search does (an INNER
+ *                        LN_PRAXIS: inner_run_spec(), phase_specs.h);
+ *   Refused              it draws no random numbers: a SEED line is
+ *                        refused, unless it is a PRESTAGE refinement's
+ *                        SEED that the exploration takes. */
+enum class SeedUse { Read, ReadInTwoDimensions, ThroughLocalSearch, Refused };
+SeedUse seed_use(const OptimizerCaps& c);
 
 /* Format LIB:ALGO entries from filter_optimizer_caps as a comma-
  * separated list, sorted by LIB:ALGO whatever the order of `caps` (the

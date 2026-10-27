@@ -24,6 +24,7 @@
 #include "catch2/catch.hpp"
 
 #include <tadah/core/context.h>
+#include <tadah/core/logger.h>
 #include <tadah/core/periodic_table.h>
 #include <tadah/hpo/hpo.h>
 #include <tadah/hpo/hpo_host.h>
@@ -1428,4 +1429,59 @@ TEST_CASE("hpo --check: sockets, named pipes and devices among the output "
         CHECK(check_error.empty());
         CHECK(run_error.empty());
     }
+}
+
+/* Pins: tadah hpo hands the critical-OPTIM audit the entries its OPTIM
+ * lines search (HPOTargets::optimap's opt flags), so a joined line is
+ * judged by each descriptor's own entries: for TYPE2B D2_mJoin of two D2_BP
+ * (RCUT2B 5 5) under AUDIT warn, OPTIM RCUT2B (1) and OPTIM SGRID2B (2),
+ * the check prints the warning "RCUT2B(2) is a critical parameter that the
+ * seed fixes and no OPTIM line searches" for the second D2_BP, and none
+ * for RCUT2B(1), which the search holds.
+ * Before the fix: tadah hpo passed the key names, so OPTIM RCUT2B (1)
+ * counted as a search of the second descriptor's RCUT2B too: no warning. */
+TEST_CASE("hpo --check: the critical-OPTIM audit judges a joined line by "
+          "the entries the OPTIM lines search",
+          "[HPO][hpo_check][join]")
+{
+    fresh_process_state();
+    ScratchDir sd("audit_entries");
+    write_inputs("LOSS L2\nFAILSCORE 1e9\nPC_ERMSE 0 1\n"
+                 "OPTIM RCUT2B (1) 4.5 5.5\nOPTIM SGRID2B (2) 4.0 6.0\n" +
+                 kOptimizer);
+    tadah::core::Context ctx =
+        make_ta_context("train.db", "config.hpo", "config.val");
+    ctx.remove("TYPE2B");
+    ctx.add("TYPE2B", "D2_mJoin D2_BP 1 1 Ta Ta D2_BP 1 1 Ta Ta");
+    ctx.remove("RCTYPE2B");
+    ctx.add("RCTYPE2B", "Cut_Cos Cut_Cos");
+    ctx.remove("RCUT2B");
+    ctx.add("RCUT2B", "5.0 5.0");
+    ctx.add("AUDIT", "warn");
+    ctx.add("CHECK", "true");
+    /* The audit's findings are WARNING lines of core::Logger, which the
+     * tadah command line prints (its level) and a test binary does not (its
+     * level is ERROR). */
+    struct LoggerLevel {
+        tadah::core::LogLevel old = tadah::core::Logger::instance().getLogLevel();
+        LoggerLevel() {
+            tadah::core::Logger::instance().setLogLevel(
+                tadah::core::LogLevel::WARNING);
+        }
+        ~LoggerLevel() { tadah::core::Logger::instance().setLogLevel(old); }
+    } level;
+    std::string out;
+    int status = -1;
+    {
+        CaptureCout capture;
+        status = tadah::hpo::hpo_run(ctx);
+        out = capture.text.str();
+    }
+    INFO("output:\n" << out);
+    REQUIRE(status == 0);
+    const std::string fixed =
+        " is a critical parameter that the seed fixes and no OPTIM line "
+        "searches";
+    CHECK(contains(out, "D2_BP.RCUT2B — RCUT2B(2)" + fixed));
+    CHECK_FALSE(contains(out, "RCUT2B(1)" + fixed));
 }

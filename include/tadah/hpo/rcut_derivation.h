@@ -13,6 +13,9 @@
 //    evaluation can reach — i.e. also the OPTIM upper bounds of the knot
 //    grids, which the legacy RCUT-only scan missed (an OPTIM'd knot pushed
 //    beyond the stated RCUT would silently outrun the prebuilt NN list).
+// A knot channel is a line of one knot descriptor or a knot descriptor of
+// a joined line (cutoff_channels.h), whose own RCUT entry is derived from
+// its own knots.
 // Bump (blip) channels are never touched: RCUT is authoritative there and
 // never auto-extended. Their counterpart protection is the bump-support
 // GATE — under a hard Cut_Dummy cutoff a truncated overhang (c + w/eta
@@ -31,6 +34,7 @@
 #include <string>
 
 #include <tadah/core/context.h>
+#include <tadah/hpo/cutoff_channels.h>
 #include <tadah/hpo/hpo_targets.h>
 #include <tadah/models/eam/pot_curve_edit.h>
 
@@ -52,15 +56,10 @@ inline bool apply_knot_rcut_derivation(core::Context &ctx, bool knot2b,
                                        bool knotmb) {
   bool changed = false;
   auto apply = [&](const char *sfx) {
-    const auto d = models::potedit::derived_knot_rcut(ctx, sfx);
-    if (!d) return;
-    const std::string key = std::string("RCUT") + sfx;
-    if (ctx.contains(key) && ctx.size(key) > 0 &&
-        ctx.get<double>(key) == *d)
-      return;
-    ctx.remove(key);
-    ctx.add(key, *d);
-    changed = true;
+    for (const auto &ch : knot_channels(ctx, sfx)) {
+      const auto d = models::potedit::derived_knot_rcut(ch.context, sfx);
+      if (d && set_channel_rcut(ctx, ch, *d)) changed = true;
+    }
   };
   if (knot2b) apply("2B");
   if (knotmb) apply("MB");
@@ -69,15 +68,20 @@ inline bool apply_knot_rcut_derivation(core::Context &ctx, bool knot2b,
 
 /** \brief Cutoff for the ONE-TIME neighbour-list build: the stated RCUTMAX,
  *  any OPTIM RCUT2B/RCUTMB upper bounds (legacy behaviour), and — for knot
- *  channels — the OPTIM CGRID2B/CGRIDMB upper bounds (a knot moved to its
- *  bound IS the new effective cutoff and the prebuilt list must cover it). */
+ *  channels — the OPTIM upper bounds of their CGRID2B/CGRIDMB entries (a
+ *  knot moved to its bound IS the new effective cutoff and the prebuilt
+ *  list must cover it). */
 inline double nn_safe_rcutmax(const core::Context &master,
                               const HPOTargets &trg) {
   double rcutmax = master.get<double>("RCUTMAX");
-  auto scan = [&](const std::string &key) {
+  /* The OPTIM entries [first, first + count) of key (every entry by
+   * default). */
+  auto scan = [&](const std::string &key, std::size_t first = 0,
+                  std::size_t count = static_cast<std::size_t>(-1)) {
     const auto it = trg.optimap.find(key);
     if (it == trg.optimap.end()) return;
-    for (std::size_t i = 0; i < it->second.opt.size(); ++i)
+    for (std::size_t i = first;
+         i < it->second.opt.size() && i - first < count; ++i)
       if (it->second.opt[i] && it->second.highbound[i] > rcutmax)
         rcutmax = it->second.highbound[i];
   };
@@ -87,8 +91,17 @@ inline double nn_safe_rcutmax(const core::Context &master,
     if(kv.first.size()>=22 &&
        kv.first.compare(kv.first.size()-22,22,".DENSITY.CUTOFF.RADIUS")==0)
       scan(kv.first);
-  if (models::potedit::derived_knot_rcut(master, "2B")) scan("CGRID2B");
-  if (models::potedit::derived_knot_rcut(master, "MB")) scan("CGRIDMB");
+  for (const char *sfx : {"2B", "MB"}) {
+    const std::string ckey = std::string("CGRID") + sfx;
+    for (const auto &ch : knot_channels(master, sfx)) {
+      if (!ch.joined) {
+        scan(ckey);
+        continue;
+      }
+      scan(ckey, ch.first(ckey),
+           ch.context.contains(ckey) ? ch.context.size(ckey) : 0);
+    }
+  }
   return rcutmax;
 }
 

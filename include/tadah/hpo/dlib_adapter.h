@@ -6,6 +6,7 @@
 #include <dlib/optimization.h>
 #include <tadah/hpo/anneal_core.h>
 #include <tadah/hpo/backend_rules.h>
+#include <tadah/hpo/failed_loss_stand_in.h>
 #include <tadah/hpo/gradient_provider.h>
 #include <tadah/hpo/optimizer_spec.h>
 #include <tadah/hpo/hpo_host.h>
@@ -160,136 +161,6 @@ inline void validate_dlib_bfgs_spec(const OptimizerSpec& sp)
         "DLIB:BFGS accepts either FTOL_ABS or PARAM tol_gradinf, but not both");
 }
 
-/** The value DLIB:GFS is given for an evaluation's loss (run_dlib_global).
- *
- * find_min_global maximises the negated loss, and the trust-region step of
- * its search (dlib::qopt_impl::pick_next_sample_using_trust_region) takes as
- * best sample the first one whose negated value exceeds -1e300. A failed
- * evaluation reports FAILSCORE, by default the largest double: once the
- * dims + 2 samples dlib had when it first took that step all sat at or above
- * 1e300 it found no best sample and, its assertions compiled out, indexed an
- * empty vector (SIGSEGV) -- whether or not later evaluations would have
- * produced usable losses. Values that large also overflow the squares of
- * dlib's upper-bound model, which normalises the samples by their standard
- * deviation. So dlib is given a finite stand-in for a failed evaluation;
- * loss.tadah, the journal and the incumbent keep the loss the evaluation
- * reported.
- *
- * A failed evaluation is one without a usable loss (loss_is_feasible):
- * non-finite, FAILSCORE, or a graded failure in [0.999 FS, FS). Its grade
- * g in [0, 1] places it among the failures -- (loss - 0.999 FS) /
- * (0.001 FS) for a graded failure, 1 for any other:
- *
- *   once usable losses exist, with W the worst and B the best so far:
- *     W + m (1 + g),  m = max(W - B, |W|), or 1 when both are 0
- *   -- above every usable loss seen, by one to two times the larger of their
- *   spread and magnitude: a step of the size of the landscape dlib has seen,
- *   not a cliff that dwarfs it;
- *
- *   before any usable loss:  K (0.999 + 0.001 g),  K = min(FS, kCeiling)
- *   (kCeiling when FS is not positive) -- a positive FAILSCORE up to
- *   kCeiling gives exactly the loss the evaluation reported, the default
- *   largest double gives kCeiling.
- *
- * A stand-in is fixed when dlib is given it and never revised, and "so
- * far" is this object's: one per DLIB:GFS search (run_dlib_global), so a
- * RESTART round starts afresh with its fresh dlib model. Graded failures
- * therefore keep their order (FAILSCORE_GRADING's way out of a failing
- * region), below the ungraded ones, only among the failures handed over
- * in the same state: all before the first usable loss, or all while the
- * same W and B hold. Across states the order is not kept: a failure
- * before the first usable loss keeps its value near K, far above the W +
- * 2m of a later ungraded failure, and an ungraded failure handed over
- * while W is small can rank below a graded one handed over after W has
- * grown.
- *
- * No value handed to dlib exceeds kCeiling in magnitude: a usable loss
- * beyond it is clamped as well, and a stand-in capped at it, so a stand-in
- * can rank below a usable loss only when that loss is above 1e100 itself.
- * kCeiling = 1e100 lies 200 orders of magnitude below dlib's 1e300
- * sentinel; its square, and a sum of such squares over any feasible number
- * of evaluations, stays finite in the standard deviation dlib normalises by,
- * and so do its products with the quadratic model's interpolation
- * coefficients, which grow like the inverse square of the trust-region
- * radius, for any radius above 1e-100. Yet it lies far above any loss a
- * potential produces.
- *
- * Thread-safe: find_min_global evaluates on a pool. */
-class GfsLossForDlib {
-public:
-  /** The largest magnitude dlib is given (see above). */
-  static constexpr double kCeiling = 1e100;
-
-  /** For a search whose FAILSCORE is `failscore` (none: only a loss that
-   *  is not finite is a failure). */
-  explicit GfsLossForDlib(std::optional<double> failscore)
-      : failscore_(failscore)
-  {}
-
-  /** Is `loss` a failed evaluation's, one dlib is given a stand-in for? */
-  bool failed(double loss) const
-  {
-    return failscore_ ? !loss_is_feasible(loss, *failscore_)
-                      : !std::isfinite(loss);
-  }
-
-  /** The value dlib is given for an evaluation that reported `loss`; a
-   *  usable loss also joins the worst and best usable losses so far. */
-  double operator()(double loss)
-  {
-    std::lock_guard<std::mutex> lk(m_);
-    if (failed(loss))
-      return stand_in_locked(grade(loss));
-    const double v = std::clamp(loss, -kCeiling, kCeiling);
-    if (!have_usable_) {
-      best_ = worst_ = v;
-      have_usable_ = true;
-    } else {
-      best_  = std::min(best_, v);
-      worst_ = std::max(worst_, v);
-    }
-    return v;
-  }
-
-  /** The value dlib is given for an evaluation that did not run (queued
-   *  after a stop): an ungraded failure's. */
-  double not_evaluated() const
-  {
-    std::lock_guard<std::mutex> lk(m_);
-    return stand_in_locked(1.0);
-  }
-
-private:
-  double grade(double loss) const
-  {
-    if (!failscore_ || !std::isfinite(loss)) return 1.0;
-    const double fs = *failscore_;
-    if (!(fs > 0.0) || !std::isfinite(fs)) return 1.0;
-    const double floor = kFailBandFloor * fs;
-    if (!(loss >= floor && loss < fs)) return 1.0;
-    return std::clamp((loss - floor) / (fs - floor), 0.0, 1.0);
-  }
-
-  double stand_in_locked(double g) const
-  {
-    if (have_usable_) {
-      double m = std::max(worst_ - best_, std::fabs(worst_));
-      if (!(m > 0.0)) m = 1.0;
-      return std::min(worst_ + m * (1.0 + g), kCeiling);
-    }
-    double k = kCeiling;
-    if (failscore_ && *failscore_ > 0.0)
-      k = std::min(*failscore_, kCeiling);
-    return k * (kFailBandFloor + (1.0 - kFailBandFloor) * g);
-  }
-
-  std::optional<double> failscore_;
-  mutable std::mutex m_;
-  bool   have_usable_ = false;
-  double best_  = 0.0;
-  double worst_ = 0.0;
-};
-
 }  // namespace detail
 
 /* DLIB:GFS on any host with `double operator()(const dlib::matrix<double,
@@ -386,10 +257,10 @@ template<class HostT>
     {   return host( sp.out(x) ); };            // host expects real scale
 
     /* dlib is given a finite stand-in for a failed evaluation's loss
-     * (detail::GfsLossForDlib): FAILSCORE, by default the largest double,
-     * crashed its trust-region step. The journal says so once per search,
-     * at its first failed evaluation. */
-    detail::GfsLossForDlib to_dlib(sp.failscore);
+     * (detail::FailedLossStandIn): FAILSCORE, by default the largest
+     * double, crashed its trust-region step. The journal says so once per
+     * search, at its first failed evaluation. */
+    detail::FailedLossStandIn to_dlib(sp.failscore);
     std::atomic<bool> stand_in_noted{false};
     const auto dlib_value = [&](double loss) {
         if (to_dlib.failed(loss) && !stand_in_noted.exchange(true)) {
@@ -676,7 +547,23 @@ inline double stalled_reach(double f0, double d0, double a0, double rho)
  *      and MAXEVAL bounds the rest. Every iteration that evaluates is
  *      dlib's.
  *
- *  dlib's checks for a non-finite loss or gradient are kept (dlib::error). */
+ *  dlib's checks for a non-finite loss or gradient are kept (dlib::error),
+ *  and (f) a trial step of a line search that is not finite is refused the
+ *  same way, before it is evaluated: dlib's interpolation gives one when the
+ *  losses it interpolates overflow (a loss of +inf, or values whose squares
+ *  pass the largest double), and dlib evaluated the point the box put it on,
+ *  a corner of the box, for the rest of the line search. */
+template <class Search, class Stop, class F, class G, class OnNotRun,
+          class Evaluations>
+BfgsBoxResult bfgs_box_iterate(Search search, Stop stop, const F& f,
+                               const G& der, dlib::matrix<double,0,1>& x,
+                               const dlib::matrix<double,0,1>& x_lower,
+                               const dlib::matrix<double,0,1>& x_upper,
+                               double& f_value,
+                               const dlib::matrix<double,0,1>& g_start,
+                               OnNotRun&& on_not_run,
+                               Evaluations&& evaluations);
+
 template <class Search, class Stop, class F, class G, class OnNotRun,
           class Evaluations>
 BfgsBoxResult bfgs_box_search(Search search, Stop stop, const F& f,
@@ -687,16 +574,107 @@ BfgsBoxResult bfgs_box_search(Search search, Stop stop, const F& f,
                               Evaluations&& evaluations)
 {
   using T = dlib::matrix<double,0,1>;
-  BfgsBoxResult r;
-  T& g = r.gradient;
-  T s;
   f_value = f(x);
-  g = der(x);
+  const T g = der(x);
 
   if (!dlib::is_finite(f_value))
     throw dlib::error("The objective function generated non-finite outputs");
   if (!dlib::is_finite(g))
     throw dlib::error("The objective function generated non-finite outputs");
+  return bfgs_box_iterate(std::move(search), std::move(stop), f, der, x,
+                          x_lower, x_upper, f_value, g,
+                          std::forward<OnNotRun>(on_not_run),
+                          std::forward<Evaluations>(evaluations));
+}
+
+/** The scale DLIB:BFGS divides its loss by (bfgs_box_search_scaled): the
+ *  length of the gradient `g` at the start `x`, whose loss is `f`, over the
+ *  coordinates its first step can move -- the gradient dlib's first step
+ *  takes, without the components of coordinates held at a bound of the box
+ *  (`x_lower`, `x_upper`) that point out of it (zero_bounded_variables). A
+ *  component the box holds takes no part in the step: counted, a start on
+ *  a bound with a steep loss beyond it divided the free coordinates'
+ *  gradient by it, and their steps shrank to that fraction. None (the loss
+ *  is not divided) when the length is 0 or not finite, or the loss divided
+ *  by it is not finite. */
+inline std::optional<double> bfgs_loss_scale(
+    double f, const dlib::matrix<double,0,1>& g,
+    const dlib::matrix<double,0,1>& x,
+    const dlib::matrix<double,0,1>& x_lower,
+    const dlib::matrix<double,0,1>& x_upper)
+{
+  const double gap_eps = 1e-8;   // dlib's, as in bfgs_box_iterate
+  const double c = dlib::length(
+      dlib::zero_bounded_variables(gap_eps, g, x, g, x_lower, x_upper));
+  if (!(c > 0.0) || !std::isfinite(c) || !std::isfinite(f / c))
+    return std::nullopt;
+  return c;
+}
+
+/** bfgs_box_search on the loss divided by c = bfgs_loss_scale of the start
+ *  (returned in `scale`): dlib's loop takes its steps in multiples of the
+ *  gradient, and its first trial is the start minus the gradient, so on
+ *  the loss itself its path followed the unit of the loss -- a loss in
+ *  meV^2 crept, the same loss times 1e6 jumped to a corner of the box and
+ *  stalled. Divided by the length of its first gradient (over the
+ *  coordinates the box lets it move), every loss starts with a step of
+ *  length 1, and the same problem in any unit asks for the same points
+ *  (exactly so for a factor that is a power of 2). The
+ *  gradient is divided by c with the loss, and the stop strategy is built
+ *  by `make_stop(length)` for the divided loss (its tolerances divided by
+ *  c; `length` is bfgs_loss_scale's, none when c is 1);
+ *  `f_value` and the result's gradient are those of the divided loss; the
+ *  calls of `f` and `der` -- the evaluations, their records -- are in the
+ *  loss's own units. */
+template <class Search, class MakeStop, class F, class G, class OnNotRun,
+          class Evaluations>
+BfgsBoxResult bfgs_box_search_scaled(Search search, MakeStop&& make_stop,
+                                     const F& f, const G& der,
+                                     dlib::matrix<double,0,1>& x,
+                                     const dlib::matrix<double,0,1>& x_lower,
+                                     const dlib::matrix<double,0,1>& x_upper,
+                                     double& f_value, OnNotRun&& on_not_run,
+                                     Evaluations&& evaluations, double& scale)
+{
+  using T = dlib::matrix<double,0,1>;
+  const double f0 = f(x);
+  const T g0 = der(x);
+  if (!dlib::is_finite(f0))
+    throw dlib::error("The objective function generated non-finite outputs");
+  if (!dlib::is_finite(g0))
+    throw dlib::error("The objective function generated non-finite outputs");
+  const std::optional<double> length =
+      bfgs_loss_scale(f0, g0, x, x_lower, x_upper);
+  const double c = length.value_or(1.0);
+  scale = c;
+  const auto fc = [&f, c](const T& v) { return f(v) / c; };
+  const auto gc = [&der, c](const T& v) -> T { return der(v) / c; };
+  f_value = f0 / c;
+  const T g = g0 / c;
+  return bfgs_box_iterate(std::move(search), make_stop(length), fc, gc, x,
+                          x_lower, x_upper, f_value, g,
+                          std::forward<OnNotRun>(on_not_run),
+                          std::forward<Evaluations>(evaluations));
+}
+
+/** The iterations of bfgs_box_search from `x`, whose loss `f_value` and
+ *  gradient `g_start` are known. */
+template <class Search, class Stop, class F, class G, class OnNotRun,
+          class Evaluations>
+BfgsBoxResult bfgs_box_iterate(Search search, Stop stop, const F& f,
+                               const G& der, dlib::matrix<double,0,1>& x,
+                               const dlib::matrix<double,0,1>& x_lower,
+                               const dlib::matrix<double,0,1>& x_upper,
+                               double& f_value,
+                               const dlib::matrix<double,0,1>& g_start,
+                               OnNotRun&& on_not_run,
+                               Evaluations&& evaluations)
+{
+  using T = dlib::matrix<double,0,1>;
+  BfgsBoxResult r;
+  T& g = r.gradient;
+  T s;
+  g = g_start;
 
   const double gap_eps = 1e-8;   // dlib's
   double last_alpha = 1;
@@ -750,9 +728,22 @@ BfgsBoxResult bfgs_box_search(Search search, Stop stop, const F& f,
         from_reach = true;
         last_alpha = start;
       }
+      /* dlib's line-search function keeps references: to the clamped loss
+       * too, which therefore has a name. */
+      const auto clamped = dlib::clamp_function(f, x_lower, x_upper);
+      const auto line =
+          dlib::make_line_search_function(clamped, x, s, f_value);
       alpha = dlib::backtracking_line_search(
-          dlib::make_line_search_function(
-              dlib::clamp_function(f, x_lower, x_upper), x, s, f_value),
+          [&line](double a) {
+            /* (f) A trial step that is not finite -- dlib's interpolation of
+             * losses that overflow gives one -- is not evaluated: the box
+             * would put it on a corner (clamp of a NaN), which the search
+             * never meant to visit. */
+            if (!std::isfinite(a))
+              throw dlib::error(
+                  "The line search generated a step that is not finite");
+            return line(a);
+          },
           f_value, d0, last_alpha, search.get_wolfe_rho(),
           search.get_max_line_search_iterations());
       const T next = dlib::clamp(x + alpha * s, x_lower, x_upper);
@@ -1174,11 +1165,46 @@ template<class Vec,class Runner,class HostT>
      * differences (fd_stencil.h: PARAM fd_step, fd_kernel, diff_method);
      * ANALYTICAL and HYBRID the host's analytical gradient. */
     detail::BfgsObjective<Vec, Runner, HostT> objective(sp, host, maxeval);
-    const auto feval = [&objective](const matrix<double,0,1>& xin) {
-      return objective.loss(xin);
+    /* dlib's loop is given a finite stand-in for a failed evaluation's loss
+     * (detail::FailedLossStandIn), before the loop divides it by the length
+     * of its first gradient (bfgs_box_search_scaled): FAILSCORE, by default
+     * the largest double, overflowed to +inf when that length is below 1,
+     * and dlib's line search, interpolating it, took a step that is not a
+     * number, which the box put on its upper corner -- the rest of MAXEVAL
+     * went on that failed corner. The stand-in is the worst usable loss of
+     * the search so far plus a margin, in the unit of the loss, so the
+     * divided loss does not depend on that unit. A gradient is scaled with
+     * the value of its point, the last one the loop was given (dlib asks
+     * for the gradient of the point it was given a loss of last: its start
+     * and the end of each line search). The journal says so once per
+     * search, at its first failed evaluation; the records, the journal and
+     * loss.tadah keep the loss the evaluation reported. */
+    detail::FailedLossStandIn to_dlib(sp.failscore);
+    bool stand_in_noted = false;
+    matrix<double,0,1> given_x;
+    double given_slope = 1.0;
+    const auto feval = [&](const matrix<double,0,1>& xin) {
+      const double loss = objective.loss(xin);
+      if (to_dlib.failed(loss) && !stand_in_noted) {
+        stand_in_noted = true;
+        HPOLog::instance().info(
+            "DLIB:BFGS: dlib is given a finite stand-in for each failed "
+            "evaluation of this search (the worst usable loss of the search "
+            "so far plus a margin; before any, FAILSCORE, at most 1e100); "
+            "loss.tadah records the loss the evaluation reported");
+      }
+      const double v = to_dlib(loss, given_slope);
+      given_x = xin;
+      return v;
     };
-    const auto grad = [&objective](const matrix<double,0,1>& xin) {
-      return objective.gradient(xin);
+    const auto grad = [&](const matrix<double,0,1>& xin) {
+      if (!detail::same_point(given_x, xin))
+        throw std::logic_error(
+            "internal error: DLIB:BFGS asked for the gradient of a point "
+            "whose loss it was not given last");
+      matrix<double,0,1> g = objective.gradient(xin);
+      if (given_slope != 1.0) g *= given_slope;
+      return g;
     };
     /* An iteration whose step cannot move the point (bfgs_box_search (a)):
      * counted, the first journalled. It asks for no evaluation, so it
@@ -1197,22 +1223,52 @@ template<class Vec,class Runner,class HostT>
           "(DIAGNOSTICS counts such steps)");
     };
 
+    /* dlib's loop runs on the loss divided by the length of its first
+     * gradient (detail::bfgs_box_search_scaled): the journal gives that
+     * length when the search has it, with the one stop in force, `stop`
+     * (FTOL_ABS or PARAM tol_gradinf: validate_dlib_bfgs_spec refuses
+     * both), which the stop strategy `make` divides by it. */
+    const auto noted_stop = [&](auto make, const std::string& stop) {
+      return [make, stop](std::optional<double> length) {
+        std::ostringstream oss;
+        if (length) {
+          oss << "DLIB:BFGS: the search runs on the loss divided by the "
+                 "length of its first gradient, " << *length
+              << " (over the coordinates its first step can move); " << stop
+              << " is divided by it as well, so it keeps its meaning for the "
+                 "loss, and the records keep the loss";
+        } else {
+          oss << "DLIB:BFGS: the gradient at the start of the search has a "
+                 "length of 0 over the coordinates its first step can move, "
+                 "or one the loss cannot be divided by: the search runs on "
+                 "the loss itself";
+        }
+        HPOLog::instance().info(oss.str());
+        return make(length.value_or(1.0));
+      };
+    };
+
     /* How the search ends (run_end.h): MAXEVAL (MaxEvalReached, from the
      * loss or the gradient), a gradient that is not finite, no step within
      * the box (bfgs_box_search (c)), an iteration that moved without an
      * evaluation (bfgs_box_search (e)), or -- when the loop returns on its
      * stop strategy -- that strategy's test: `converged` (FTOL_ABS or
-     * tol_gradinf) with the stop line's `test` text. */
-    auto run_with_eval_cap = [&](auto&& search, auto&& stop,
+     * tol_gradinf) with the stop line's `test` text. `make_stop` builds the
+     * stop strategy for the loss divided by the scale it is given, and
+     * `stop` names that stop in the journal. */
+    auto run_with_eval_cap = [&](auto&& search, auto&& make_stop,
+                                 const std::string& stop,
                                  EndReason converged,
                                  const std::string& test) {
       try {
         double f_value = 0.0;
-        const detail::BfgsBoxResult r = detail::bfgs_box_search(
+        double scale = 1.0;
+        const detail::BfgsBoxResult r = detail::bfgs_box_search_scaled(
             std::forward<decltype(search)>(search),
-            std::forward<decltype(stop)>(stop), feval, grad, x, lo, hi,
-            f_value, on_not_run,
-            [&objective] { return objective.evaluations(); });
+            noted_stop(std::forward<decltype(make_stop)>(make_stop), stop),
+            feval,
+            grad, x, lo, hi, f_value, on_not_run,
+            [&objective] { return objective.evaluations(); }, scale);
         /* A loss answered from the record that no call followed is counted
          * now (it can end the run's window: StagnationStop). */
         objective.settle();
@@ -1268,9 +1324,12 @@ template<class Vec,class Runner,class HostT>
       std::ostringstream test;
       test << "the largest component of the gradient fell below PARAM "
               "tol_gradinf = " << *tol_gradinf;
+      const double tol = *tol_gradinf;
       run_with_eval_cap(bfgs_search_strategy(),
-                        detail::GradientMaxStop(*tol_gradinf),
-                        EndReason::GradTol, test.str());
+                        [tol](double c) {
+                          return detail::GradientMaxStop(tol / c);
+                        },
+                        "PARAM tol_gradinf", EndReason::GradTol, test.str());
       return;
     }
 
@@ -1280,8 +1339,10 @@ template<class Vec,class Runner,class HostT>
          << (sp.stop.ftol_abs ? "" : " (default)")
          << " from one iteration to the next";
     run_with_eval_cap(bfgs_search_strategy(),
-                      objective_delta_stop_strategy(ftol_abs),
-                      EndReason::FtolAbs, test.str());
+                      [ftol_abs](double c) {
+                        return objective_delta_stop_strategy(ftol_abs / c);
+                      },
+                      "FTOL_ABS", EndReason::FtolAbs, test.str());
   }
 
 /* Production entry point used by run_inner(). */

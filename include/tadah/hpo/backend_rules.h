@@ -263,9 +263,36 @@ GradientCost gradient_cost(const OptimizerSpec& spec);
 std::vector<std::string> gradient_budget_warnings(const OptimizerSpec& root,
                                                   bool reuse);
 
-/* The startup WARNINGs about settings that have no effect on a search that
- * does not start at the point it is given (search_ignoring_start(),
- * phase_specs.h: NLopt's StoGO, DIRECT and AGS, and an AUGLAG whose local
+/* The startup WARNINGs about INIT points a phase does not evaluate, and
+ * about settings that have no effect on a search that does not start at
+ * the point it is given.
+ *
+ * INIT points: a phase that takes fewer than its INIT block gives (its
+ * points, OptimizerSpec::optim_init, resolved), naming the block's line,
+ * the phase, its optimiser and the count:
+ *  - PLAIN, an optimiser that takes one point and starts there: "the INIT
+ *    block on line 5 gives 3 starting points, and the STRATEGY-level
+ *    optimiser NLOPT:LN_BOBYQA starts from the first only: the other 2 are
+ *    not evaluated. STRATEGY TYPE MULTISTART with N_STARTS 3 starts
+ *    NLOPT:LN_BOBYQA from each of them, and an optimiser that takes several
+ *    starting points in one run (DLIB:GFS) takes them all, also as the
+ *    exploration of STRATEGY TYPE PRESTAGE." (the MULTISTART advice only
+ *    for an optimiser MULTISTART runs from each point, runs_from_each_start);
+ *  - PRESTAGE, an exploration that takes one: "the INIT block on line 5
+ *    gives 7 starting points, and the PRESTAGE exploration (EXPLORE block)
+ *    NLOPT:GN_CRS2_LM starts from the first only: the other 6 are not
+ *    evaluated (the refinement starts from them only when no evaluation of
+ *    the exploration has a usable loss). An exploration optimiser that
+ *    takes several starting points in one run (DLIB:GFS) takes them all."
+ *    (without the parenthesis for the EXPLORE block's own INIT block);
+ *  - MULTISTART with fewer starts than points (plan_multistart): "the INIT
+ *    block on line 5 gives 7 starting points, and STRATEGY TYPE MULTISTART
+ *    runs NLOPT:LN_BOBYQA from N_STARTS 3 of them: the other 4 are not
+ *    evaluated. N_STARTS 7 starts it from each of them."
+ *
+ * Settings that have no effect on a search that does not start at the
+ * point it is given (search_ignoring_start(), phase_specs.h: NLopt's StoGO,
+ * DIRECT and AGS, and an AUGLAG whose local
  * search is one), where such a search is accepted: the STRATEGY-level
  * optimiser under PLAIN and the PRESTAGE exploration (a PRESTAGE
  * refinement and a MULTISTART start on one are refused,

@@ -274,11 +274,35 @@ namespace header_detail {
 
 /* -----------------  header writers  ---------------------------------- */
 template<class P,class R>
-void HPO_Host<P,R>::init_loss(const std::string& fn) const
+void HPO_Host<P,R>::write_header_head(std::ostream& f, bool best)
+{
+  /* A best_* file numbers its rows by improvement and joins each to the
+   * evaluation it is (the ITERATION of the other files) in EVAL. */
+  if (best)
+    f << std::left << std::setw(improve_cw_) << "#IMPROVEMENT"
+      << std::setw(iter_cw_) << "EVAL";
+  else
+    f << std::left << std::setw(iter_cw_) << "#ITERATION";
+}
+
+template<class P,class R>
+void HPO_Host<P,R>::write_row_head(std::ostream& f, std::size_t it,
+                                   const Result& e, bool best)
+{
+  if (best)
+    f << std::left << std::setw(improve_cw_) << it << std::setw(iter_cw_)
+      << e.iter;
+  else
+    f << std::left << std::setw(iter_cw_) << it;
+}
+
+template<class P,class R>
+void HPO_Host<P,R>::init_loss(const std::string& fn, bool best) const
 {
   std::ofstream f(fn);
 
-  f << std::left << std::setw(iter_cw_) << "#ITERATION" << std::right;
+  write_header_head(f, best);
+  f << std::right;
   /* Which replica produced this row. Under ANNEAL_PT/PA every
    * evaluation belongs to a slot, and without this column a row cannot
    * be attributed to one -- run22 wrote 2.5 GB of rows in which a
@@ -342,11 +366,11 @@ void HPO_Host<P,R>::init_loss(const std::string& fn) const
 }
 
 template<class P,class R>
-void HPO_Host<P,R>::init_outvar(const std::string& fn) const
+void HPO_Host<P,R>::init_outvar(const std::string& fn, bool best) const
 {
   std::ofstream f(fn);
 
-  f << std::left << std::setw(iter_cw_) << "#ITERATION";
+  write_header_head(f, best);
   f << std::setw(ittime_cw_) << "IT-TIME/ms" << std::right;
   f << std::setw(slot_cw_) << "SLOT";
   if (trg_.use_emae)
@@ -379,11 +403,12 @@ void HPO_Host<P,R>::init_outvar(const std::string& fn) const
 }
 
 template<class P,class R>
-void HPO_Host<P,R>::init_params(const std::string& fn) const
+void HPO_Host<P,R>::init_params(const std::string& fn, bool best) const
 {
 
   std::ofstream f(fn);
-  f << std::left << std::setw(iter_cw_) << "#ITERATION" << std::right;
+  write_header_head(f, best);
+  f << std::right;
   f << std::setw(slot_cw_) << "SLOT";
 
   /* Label every column with its INDEX, not just its family name.
@@ -426,10 +451,11 @@ std::size_t HPO_Host<P,R>::metric_column_width() const
 }
 
 template<class P,class R>
-void HPO_Host<P,R>::init_stats(const std::string& fn) const
+void HPO_Host<P,R>::init_stats(const std::string& fn, bool best) const
 {
   std::ofstream f(fn);
-  f << std::left << std::setw(iter_cw_) << "#ITERATION" << std::right;
+  write_header_head(f, best);
+  f << std::right;
   f << std::setw(slot_cw_) << "SLOT";
 
   /* The titles of the metrics are distinct and fit their column
@@ -484,9 +510,9 @@ bool HPO_Host<P,R>::stats_have_columns() const
 template<class P,class R>
 void HPO_Host<P,R>::print_loss_line(std::ostream& f, size_t it,const Result& e,
                                     const HPOTargets& trg, std::size_t n_val,
-                                    std::size_t cw,int prec)
+                                    std::size_t cw,int prec, bool best)
 {
-    f << std::left << std::setw(iter_cw_) << it;
+    write_row_head(f, it, e, best);
     /* 1-based like every other slot a person reads (1.5.0); e.chain_id
      * itself stays 0-based -- it is the warm-start cache key and the
      * durable-best comparison key. */
@@ -527,9 +553,9 @@ void HPO_Host<P,R>::print_loss_line(std::ostream& f, size_t it,const Result& e,
 template<class P,class R>
 void HPO_Host<P,R>::print_outvar_line(std::ostream& f,size_t it,const Result& e,
                                       const HPOTargets& trg,
-                                      std::size_t cw,int prec)
+                                      std::size_t cw,int prec, bool best)
 {
-    f << std::left << std::setw(iter_cw_) << it;
+    write_row_head(f, it, e, best);
     f << std::left << std::setw(ittime_cw_) << e.wall_ms.count();
     /* 1-based like every other slot a person reads (1.5.0); e.chain_id
      * itself stays 0-based -- it is the warm-start cache key and the
@@ -580,9 +606,9 @@ void HPO_Host<P,R>::print_outvar_line(std::ostream& f,size_t it,const Result& e,
 
 template<class P,class R>
 void HPO_Host<P,R>::print_params_line(std::ostream& f,size_t it,const Result& e,
-                                      std::size_t cw,int prec)
+                                      std::size_t cw,int prec, bool best)
 {
-  f << std::left << std::setw(iter_cw_) << it;
+  write_row_head(f, it, e, best);
   /* 1-based like every other slot a person reads (1.5.0); e.chain_id
      * itself stays 0-based -- it is the warm-start cache key and the
      * durable-best comparison key. */
@@ -601,7 +627,7 @@ void HPO_Host<P,R>::print_params_line(std::ostream& f,size_t it,const Result& e,
 template<class P,class R>
 void HPO_Host<P,R>::print_stats_line(std::ostream& f, size_t it, const Result& e,
                                      const HPOTargets& trg, std::size_t n_val,
-                                     std::size_t cw, int prec)
+                                     std::size_t cw, int prec, bool best)
 {
   /* With no metric enabled this row would be a bare iteration number
    * and nothing else -- run22 accumulated 4.6 MB of exactly that across
@@ -611,7 +637,7 @@ void HPO_Host<P,R>::print_stats_line(std::ostream& f, size_t it, const Result& e
         trg.use_ersq || trg.use_frmse || trg.use_srmse))
     return;
 
-  f << std::left << std::setw(iter_cw_) << it;
+  write_row_head(f, it, e, best);
   /* 1-based like every other slot a person reads (1.5.0); e.chain_id
      * itself stays 0-based -- it is the warm-start cache key and the
      * durable-best comparison key. */
@@ -1185,8 +1211,8 @@ HPO_Host<P,R>::HPO_Host(core::Context master_ctx,
     /* knot channels: RCUT keys are derived from the largest knot (see
      * rcut_derivation.h). Flags are computed once here because the per-eval
      * hook lives in the const update_context(). */
-    knot2b_ = models::potedit::derived_knot_rcut(master_ctx_, "2B").has_value();
-    knotmb_ = models::potedit::derived_knot_rcut(master_ctx_, "MB").has_value();
+    knot2b_ = detail::has_knot_channel(master_ctx_, "2B");
+    knotmb_ = detail::has_knot_channel(master_ctx_, "MB");
 
     /* Per-candidate bump-support gate (bump_support_gate.h). Under STRICT
      * validate_hpo_setup already hard-errored on any violable box, so the
@@ -1617,10 +1643,10 @@ HPO_Host<P,R>::HPO_Host(core::Context master_ctx,
         init_outvar (trg_.outvarFile);
         init_params (trg_.paramsFile);
         init_stats  (trg_.statsFile);
-        init_loss   (trg_.bestLossFile);
-        init_outvar (trg_.bestOutvarFile);
-        init_params (trg_.bestParamsFile);
-        init_stats  (trg_.bestStatsFile);
+        init_loss   (trg_.bestLossFile, true);
+        init_outvar (trg_.bestOutvarFile, true);
+        init_params (trg_.bestParamsFile, true);
+        init_stats  (trg_.bestStatsFile, true);
 
         /* The writer opens these files at its first drain and takes their
          * header-only sizes as committed offsets; drop any it still holds
@@ -4297,10 +4323,10 @@ void HPO_Host<P,R>::write_result(WriterFiles& wf, const Result& e,
     /* ---- new best logs ------------------------------------------ */
     if(e.is_best) {
         if(e.best_iter % trg.bestOutputEvery == 0) {
-            print_loss_line  (wf.best.stage()      , e.best_iter, e, trg, n_val, cw, prec);
-            print_outvar_line(wf.best_outv.stage() , e.best_iter, e, trg, cw, prec);
-            print_params_line(wf.best_par.stage()  , e.best_iter, e,      cw, prec);
-            print_stats_line (wf.best_stats.stage(), e.best_iter, e, trg, n_val, cw, prec);
+            print_loss_line  (wf.best.stage()      , e.best_iter, e, trg, n_val, cw, prec, true);
+            print_outvar_line(wf.best_outv.stage() , e.best_iter, e, trg, cw, prec, true);
+            print_params_line(wf.best_par.stage()  , e.best_iter, e,      cw, prec, true);
+            print_stats_line (wf.best_stats.stage(), e.best_iter, e, trg, n_val, cw, prec, true);
         }
 
         /* archive best_pot_N.tadah ---------------------------------- */

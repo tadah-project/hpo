@@ -508,11 +508,15 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
                                  "cannot be read (" + e.what() + "): " +
                                  rule->by + " needs its widths");
       }
-      for (std::size_t i = 0; i < eta.size(); ++i)
-        if (!rule->admits(eta[i]))
+      /* Each width by the rule of its entry: on a D2_mJoin line, that of
+       * the descriptor whose entry it is (a D2_BP's width has none). */
+      for (std::size_t i = 0; i < eta.size(); ++i) {
+        const auto r = models::optim_low_bound_rule(key, train_ctx, i);
+        if (r && !r->admits(eta[i]))
           bad.push_back(std::string(key) + " (" + core::to_string(i + 1) +
-                        ") = " + core::to_string(eta[i]) + ": " + rule->by +
-                        " requires " + rule->requirement);
+                        ") = " + core::to_string(eta[i]) + ": " + r->by +
+                        " requires " + r->requirement);
+      }
     }
     if (!bad.empty()) {
       std::string msg = "the -c potential has a radial bump width <= 0:";
@@ -1006,27 +1010,48 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
   }
 
   /* --- RCUT contract for refit-family channels -------------------------- */
+  /* WARNINGs and INFO lines of the run, as every startup check writes
+   * them: a WARNING on stderr and in the journal (which tadah hpo --check
+   * lists and counts), an INFO line in the journal. */
   auto warn = [](const std::string &m) {
-    core::Logger::instance().log(core::LogLevel::WARNING, m);
+    std::cerr << "[HPO] WARNING: " << m << "\n";
+    HPOLog::instance().warning(m);
   };
   auto info = [](const std::string &m) {
-    core::Logger::instance().log(core::LogLevel::INFO, m);
+    std::cout << "[HPO] " << m << "\n";
+    HPOLog::instance().info(m);
   };
 
   /* Knot channels: the basis vanishes at its largest knot, so RCUT2B/RCUTMB
    * are DERIVED. Correct a stale stated value (warns) BEFORE the host sizes
    * the one-time neighbour list from RCUTMAX, and flag a user's OPTIM RCUT
    * line — that dimension is overridden on every evaluation. */
-  models::potedit::normalize_knot_rcut(train_ctx, "tadah hpo");
+  {
+    std::vector<models::potedit::KnotRcutNote> notes;
+    /* a knot descriptor of a joined line (D2_mJoin, DM_mJoin) too: its
+     * own RCUT value, the note naming the descriptor */
+    models::potedit::normalize_knot_rcut(train_ctx, "tadah hpo", notes);
+    for (const auto &n : notes) {
+      if (n.level == core::LogLevel::WARNING) warn(n.text);
+      else HPOLog::instance().info(n.text);
+    }
+  }
   for (const char *sfx : {"2B", "MB"}) {
-    if (!models::potedit::derived_knot_rcut(train_ctx, sfx)) continue;
     const std::string rkey = std::string("RCUT") + sfx;
-    if (trg.optimap.count(rkey)) {
-      warn("OPTIM " + rkey + " has no effect for the knot basis family: the "
-           "effective cutoff is the largest CGRID" + std::string(sfx) +
-           " knot and " + rkey + " is re-derived on every evaluation. Remove "
-           "the OPTIM " + rkey + " line (a wasted search dimension) and vary "
-           "CGRID" + std::string(sfx) + " to change the effective cutoff.");
+    const auto itr = trg.optimap.find(rkey);
+    if (itr == trg.optimap.end()) continue;
+    for (const auto &ch : detail::knot_channels(train_ctx, sfx)) {
+      /* a descriptor of a joined line: its own RCUT entry */
+      const std::size_t e = ch.rcut_index();
+      if (ch.joined && !(e < itr->second.opt.size() && itr->second.opt[e]))
+        continue;
+      const std::string rn = ch.rcut_name();
+      warn(ch.prefix() + "OPTIM " + rn + " has no effect for the knot basis "
+           "family: the effective cutoff is the largest CGRID" +
+           std::string(sfx) + " knot and " + rn + " is re-derived on every "
+           "evaluation. Remove the OPTIM " + rn + " line (a wasted search "
+           "dimension) and vary CGRID" + std::string(sfx) + " to change the "
+           "effective cutoff.");
     }
   }
 
@@ -1040,202 +1065,249 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
    * beyond rcut still gets a warning: only its inner shoulder contributes).
    * To search longer range, raise RCUT2B/RCUTMB in the config. */
   std::vector<std::string> gate_errors;
+  /* Each bump channel: a line of one bump descriptor, or a bump descriptor
+   * of a joined line with its own centres, widths and cutoff (its own
+   * RCUT entry; cutoff_channels.h). Its value i of a key is entry
+   * first(key) + i of the whole key, as the messages number it. */
   for (const char *sfx : {"2B", "MB"}) {
-    const auto wopt = models::potedit::bump_channel_halfwidth(train_ctx, sfx);
-    if (!wopt) continue;
-    const double w = *wopt;
-    const std::string ckey = std::string("CGRID") + sfx;
-    const std::string skey = std::string("SGRID") + sfx;
-    const std::string rkey = std::string("RCUT") + sfx;
-    /* The descriptor of this channel was built by probe_model() above, so
-     * its grids are readable and pair up (read_bump_grids throws
-     * otherwise). */
-    const auto [mu, eta] = detail::read_bump_grids(train_ctx, ckey, skey);
+    for (const auto &bc : detail::bump_channels(train_ctx, sfx)) {
+      const core::Context &own = bc.context;
+      const auto wopt = models::potedit::bump_channel_halfwidth(own, sfx);
+      if (!wopt) continue;
+      const double w = *wopt;
+      const std::string ckey = std::string("CGRID") + sfx;
+      const std::string skey = std::string("SGRID") + sfx;
+      const std::string rkey = std::string("RCUT") + sfx;
+      /* The channel's entries of the keys, and its cutoff as a message names
+       * it ("RCUT2B", or "RCUT2B (2)" for a descriptor of a joined line). */
+      const std::size_t c0 = bc.first(ckey), s0 = bc.first(skey);
+      const std::string rn = bc.rcut_name();
+      const std::string p = bc.prefix();
+      auto cn = [&](std::size_t i) { return core::to_string(c0 + i + 1); };
+      auto sn = [&](std::size_t i) { return core::to_string(s0 + i + 1); };
+      /* The descriptor of this channel was built by probe_model() above, so
+       * its grids are readable and pair up (read_bump_grids throws
+       * otherwise). */
+      const auto [mu, eta] = detail::read_bump_grids(own, ckey, skey);
 
-    const bool hard =
-        models::potedit::channel_cutoff_is_discontinuous(train_ctx, sfx);
+      const bool hard =
+          models::potedit::channel_cutoff_is_discontinuous(own, sfx);
 
-    /* The stated cutoff (the seed pot's own truncation): RCUT{sfx}MAX, the
-     * max over a per-pair RCUT list. */
-    const std::string rmax = rkey + "MAX";
-    const double rcut0 =
-        (train_ctx.contains(rmax) && train_ctx.size(rmax) > 0)
-            ? train_ctx.get<double>(rmax)
-            : train_ctx.get<double>(rkey);
-    /* Cutoff range candidates can reach when RCUT itself is OPTIM'd
-     * (shared with the per-candidate gate table so the two cannot drift). */
-    const auto brc = detail::derive_binding_rcut(train_ctx, trg, sfx);
-    const bool rcut_is_optim = !brc.flat_idx.empty();
-    /* STRICT (legacy) binding: every trial satisfies rcut >= its OPTIM low
-     * bound, so the corner gate binds against min(stated, low bounds). */
-    double rcut_strict = rcut0;
-    {
-      const auto itr = trg.optimap.find(rkey);
-      if (itr != trg.optimap.end())
-        for (std::size_t i = 0; i < itr->second.opt.size(); ++i)
-          if (itr->second.opt[i])
-            rcut_strict = std::min(rcut_strict, itr->second.lowbound[i]);
-    }
-    /* Seed binding: STRICT keeps the legacy min'd value; CANDIDATE binds
-     * the seed against its OWN stated cutoff (a sampled RCUT below the
-     * seed's reach is a per-candidate rejection, not a startup error). */
-    const double rcut = trg.BUMPGATE_STRICT ? rcut_strict : rcut0;
-    const double tol = models::bump_rcut_tol(rcut);
-    const std::string rname =
-        (trg.BUMPGATE_STRICT && rcut_is_optim)
-            ? ("the OPTIM " + rkey + " low bound")
-            : rkey;
-    if (hard && rcut_is_optim) {
-      if (trg.BUMPGATE_STRICT) {
-        warn("OPTIM " + rkey + " on a bump channel is a wasted search "
-             "dimension: the bump-support gate keeps every support inside "
-             "its LOW bound (" + core::to_string(rcut_strict) + "), so the "
-             "cutoff value cannot affect the model. Remove the OPTIM " +
-             rkey + " line and set " + rkey + " in the config instead.");
-      } else {
-        warn("OPTIM " + rkey + " on a bump channel is usually a wasted "
-             "search dimension: every feasible candidate's bumps vanish at "
-             "their own support edge inside the cutoff, so the sampled " +
-             rkey + " value cannot change the model's energies — it only "
-             "widens or narrows the feasible (c, eta) region. Prefer a "
-             "fixed " + rkey + " in the config.");
+      /* The stated cutoff (the seed pot's own truncation): RCUT{sfx}MAX, the
+       * max over a per-pair RCUT list. */
+      const std::string rmax = rkey + "MAX";
+      const double rcut0 =
+          (own.contains(rmax) && own.size(rmax) > 0)
+              ? own.get<double>(rmax)
+              : own.get<double>(rkey);
+      /* Cutoff range candidates can reach when RCUT itself is OPTIM'd
+       * (shared with the per-candidate gate table so the two cannot drift). */
+      const auto brc =
+          detail::derive_binding_rcut(own, trg, sfx, bc.rcut_index());
+      const bool rcut_is_optim = !brc.flat_idx.empty();
+      /* STRICT (legacy) binding: every trial satisfies rcut >= its OPTIM low
+       * bound, so the corner gate binds against min(stated, low bounds) --
+       * the channel's own RCUT entries. */
+      double rcut_strict = rcut0;
+      {
+        const auto itr = trg.optimap.find(rkey);
+        if (itr != trg.optimap.end())
+          for (std::size_t i = 0; i < itr->second.opt.size(); ++i)
+            if (itr->second.opt[i] && (!bc.joined || i == bc.rcut_index()))
+              rcut_strict = std::min(rcut_strict, itr->second.lowbound[i]);
       }
-    }
-
-    /* (a) the seed pot's own bumps must fit (every width > 0: checked
-     * above) */
-    for (std::size_t i = 0; i < mu.size(); ++i) {
-      const double reach = mu[i] + w / eta[i];
-      if (mu[i] > rcut + tol) {
-        const std::string m =
-            ckey + " bump " + core::to_string(i + 1) + " centre " +
-            core::to_string(mu[i]) + " lies beyond " + rname + " = " +
-            core::to_string(rcut) + " (pathological: only its inner "
-            "shoulder can contribute) — move the centre below the cutoff.";
-        if (hard) gate_errors.push_back(m);
-        else warn(m);
-        continue;
-      }
-      /* A search over the cutoff tries cutoffs down to the OPTIM low
-       * bound: below the centre a candidate keeps the inner shoulder only.
-       * A hard cutoff rejects such a candidate per candidate (the bump
-       * gate); a smooth one evaluates it, so say so. */
-      if (!hard && rcut_strict < rcut &&
-          mu[i] > rcut_strict + models::bump_rcut_tol(rcut_strict))
-        warn(ckey + " bump " + core::to_string(i + 1) + " centre " +
-             core::to_string(mu[i]) + " lies beyond the OPTIM " + rkey +
-             " low bound " + core::to_string(rcut_strict) + ": a candidate "
-             "whose " + rkey + " is below the centre keeps only the bump's "
-             "inner shoulder (pathological); with the OPTIM " + rkey +
-             " low bound above " + core::to_string(mu[i]) + ", or the "
-             "centre below " + core::to_string(rcut_strict) + ", no "
-             "candidate does.");
-      if (!hard || reach <= rcut + tol) continue;
-      gate_errors.push_back(
-          ckey + " bump " + core::to_string(i + 1) + " (centre " +
-          core::to_string(mu[i]) + ", eta " + core::to_string(eta[i]) +
-          ") reaches " + core::to_string(reach) + ", past " + rname + " = " +
-          core::to_string(rcut) + " — set " + skey + " (" +
-          core::to_string(i + 1) + ") >= " +
-          core::to_string(w / (rcut - mu[i])) + ", move the centre inward "
-          "(tadah refit --edit), or raise " + rkey + ".");
-    }
-    if (!hard) continue;  // smooth cutoff: overhanging boxes are legitimate
-
-    /* (b) the OPTIM boxes. STRICT: the worst corner (CGRID high bound,
-     * SGRID low bound) must fit — the legacy gate. CANDIDATE (default):
-     * only a box with NO feasible point is an error; a partially feasible
-     * box arms the per-candidate gate (HPO_Host rejects violating trials
-     * before training as graded band-D failures) and is announced with an
-     * INFO line per bump. */
-    const auto itc = trg.optimap.find(ckey);
-    const auto its = trg.optimap.find(skey);
-    if (trg.BUMPGATE_STRICT) {
-      for (std::size_t i = 0; i < mu.size(); ++i) {
-        double hi_mu = mu[i];
-        if (itc != trg.optimap.end() && i < itc->second.opt.size() &&
-            itc->second.opt[i])
-          hi_mu = itc->second.highbound[i];
-        /* the OPTIM low bound of a width is > 0
-         * (models::optim_low_bound_rule, at parse) */
-        double eta_i = eta[i];
-        if (its != trg.optimap.end() && i < its->second.opt.size() &&
-            its->second.opt[i])
-          eta_i = std::min(eta_i, its->second.lowbound[i]);
-        if (hi_mu + w / eta_i <= rcut + tol) continue;
-        if (hi_mu >= rcut - tol) {
-          gate_errors.push_back(
-              "the OPTIM bounds let bump " + core::to_string(i + 1) + " of " +
-              ckey + " reach " + core::to_string(hi_mu + w / eta_i) +
-              ", past " + rname + " = " + core::to_string(rcut) +
-              " — impossible while the OPTIM " + ckey + " (" +
-              core::to_string(i + 1) + ") high bound " + core::to_string(hi_mu) +
-              " >= " + core::to_string(rcut) + ": lower the " + ckey +
-              " high bound below " + rkey + " first.");
+      /* Seed binding: STRICT keeps the legacy min'd value; CANDIDATE binds
+       * the seed against its OWN stated cutoff (a sampled RCUT below the
+       * seed's reach is a per-candidate rejection, not a startup error). */
+      const double rcut = trg.BUMPGATE_STRICT ? rcut_strict : rcut0;
+      const double tol = models::bump_rcut_tol(rcut);
+      const std::string rname =
+          (trg.BUMPGATE_STRICT && rcut_is_optim)
+              ? ("the OPTIM " + rn + " low bound")
+              : rn;
+      if (hard && rcut_is_optim) {
+        if (trg.BUMPGATE_STRICT) {
+          warn(p + "OPTIM " + rn + " on a bump channel is a wasted search "
+               "dimension: the bump-support gate keeps every support inside "
+               "its LOW bound (" + core::to_string(rcut_strict) + "), so the "
+               "cutoff value cannot affect the model. Remove the OPTIM " +
+               rn + " line and set " + rkey + " in the config instead.");
         } else {
-          gate_errors.push_back(
-              "the OPTIM bounds let bump " + core::to_string(i + 1) + " of " +
-              ckey + " reach " + core::to_string(hi_mu + w / eta_i) +
-              ", past " + rname + " = " + core::to_string(rcut) +
-              " — need the OPTIM " + skey + " (" + core::to_string(i + 1) +
-              ") low bound >= w/(" + rkey + " - c_hi) = " +
-              core::to_string(w / (rcut - hi_mu)) + " (currently " +
-              core::to_string(eta_i) + ").");
+          warn(p + "OPTIM " + rn + " on a bump channel is usually a wasted "
+               "search dimension: every feasible candidate's bumps vanish at "
+               "their own support edge inside the cutoff, so the sampled " +
+               rn + " value cannot change the model's energies — it only "
+               "widens or narrows the feasible (c, eta) region. Prefer a "
+               "fixed " + rkey + " in the config.");
         }
       }
-    } else {
-      const double tol_best = models::bump_rcut_tol(brc.max_reachable);
-      const double tol_min = models::bump_rcut_tol(brc.min_reachable);
+
+      /* (a) the seed pot's own bumps must fit (every width > 0: checked
+       * above) */
       for (std::size_t i = 0; i < mu.size(); ++i) {
-        const bool c_opt = itc != trg.optimap.end() &&
-                           i < itc->second.opt.size() && itc->second.opt[i];
-        const bool s_opt = its != trg.optimap.end() &&
-                           i < its->second.opt.size() && its->second.opt[i];
-        if (!c_opt && !s_opt && !rcut_is_optim)
-          continue;  /* fully static bump: the seed check (a) owns it */
-        const double lo_mu = c_opt ? itc->second.lowbound[i] : mu[i];
-        const double hi_mu = c_opt ? itc->second.highbound[i] : mu[i];
-        /* every width, seed and box, is > 0 (checked above; the OPTIM
-         * low bound at parse) */
-        const double eta_hi = s_opt ? its->second.highbound[i] : eta[i];
-        const double eta_lo = s_opt ? its->second.lowbound[i] : eta[i];
-        /* best corner: is there ANY feasible point in the box? */
-        if (lo_mu + w / eta_hi > brc.max_reachable + tol_best) {
-          if (lo_mu >= brc.max_reachable - tol_best) {
-            gate_errors.push_back(
-                "no feasible point for bump " + core::to_string(i + 1) +
-                " of " + ckey + ": even its most favorable corner (centre " +
-                core::to_string(lo_mu) + ", eta " + core::to_string(eta_hi) +
-                ") reaches " + core::to_string(lo_mu + w / eta_hi) +
-                ", past " + rkey + " = " + core::to_string(brc.max_reachable) +
-                " — impossible while the " + ckey + " low bound is at/above " +
-                rkey + ": lower the " + ckey + " low bound below " + rkey +
-                " or raise " + rkey + ".");
-          } else {
-            gate_errors.push_back(
-                "no feasible point for bump " + core::to_string(i + 1) +
-                " of " + ckey + ": even its most favorable corner (centre " +
-                core::to_string(lo_mu) + ", eta " + core::to_string(eta_hi) +
-                ") reaches " + core::to_string(lo_mu + w / eta_hi) +
-                ", past " + rkey + " = " + core::to_string(brc.max_reachable) +
-                " — need the OPTIM " + skey + " (" + core::to_string(i + 1) +
-                ") high bound >= w/(" + rkey + " - c_lo) = " +
-                core::to_string(w / (brc.max_reachable - lo_mu)) +
-                ", a lower " + ckey + " low bound, or a larger " + rkey + ".");
-          }
+        const double reach = mu[i] + w / eta[i];
+        if (mu[i] > rcut + tol) {
+          const std::string m =
+              p + ckey + " bump " + cn(i) + " centre " +
+              core::to_string(mu[i]) + " lies beyond " + rname + " = " +
+              core::to_string(rcut) + " (pathological: only its inner "
+              "shoulder can contribute) — move the centre below the cutoff.";
+          if (hard) gate_errors.push_back(m);
+          else warn(m);
           continue;
         }
-        /* worst corner: partially infeasible box -> per-candidate gate */
-        if (hi_mu + w / eta_lo > brc.min_reachable + tol_min) {
-          const std::string rdesc =
-              rcut_is_optim ? ("the sampled " + rkey)
-                            : (rkey + " = " + core::to_string(brc.min_reachable));
-          info("bump-support gate (CANDIDATE): armed for " + ckey + " bump " +
-               core::to_string(i + 1) + " — candidates with c + " +
-               core::to_string(w) + "/eta > " + rdesc + " are rejected "
-               "before training as graded band-D failures (worst box corner "
-               "reaches " + core::to_string(hi_mu + w / eta_lo) + "). "
-               "BUMPGATE STRICT restores the startup box-corner error.");
+        /* A search over the cutoff tries cutoffs down to the OPTIM low
+         * bound: below the centre a candidate keeps the inner shoulder only.
+         * A hard cutoff rejects such a candidate per candidate (the bump
+         * gate); a smooth one evaluates it, so say so. */
+        if (!hard && rcut_strict < rcut &&
+            mu[i] > rcut_strict + models::bump_rcut_tol(rcut_strict))
+          warn(p + ckey + " bump " + cn(i) + " centre " +
+               core::to_string(mu[i]) + " lies beyond the OPTIM " + rn +
+               " low bound " + core::to_string(rcut_strict) + ": a candidate "
+               "whose " + rn + " is below the centre keeps only the bump's "
+               "inner shoulder (pathological); with the OPTIM " + rn +
+               " low bound above " + core::to_string(mu[i]) + ", or the "
+               "centre below " + core::to_string(rcut_strict) + ", no "
+               "candidate does.");
+        /* An OPTIM box of the centre reaching past the cutoff (a smooth
+         * one: under a hard cutoff the bump-support gate below owns the
+         * box): a candidate whose centre lies there keeps the inner shoulder
+         * only, as a seed centre beyond the cutoff does. The cutoff is the
+         * fixed RCUT, or with an OPTIM RCUT the low bound of its box. */
+        if (!hard) {
+          const auto itc_box = trg.optimap.find(ckey);
+          if (itc_box != trg.optimap.end() &&
+              c0 + i < itc_box->second.opt.size() &&
+              itc_box->second.opt[c0 + i]) {
+            const double hi = itc_box->second.highbound[c0 + i];
+            const double edge = rcut_strict;
+            if (hi > edge + models::bump_rcut_tol(edge)) {
+              const std::string bound =
+                  rcut_strict < rcut
+                      ? "the OPTIM " + rn + " low bound " +
+                            core::to_string(edge)
+                      : rn + " = " + core::to_string(edge);
+              warn(p + ckey + " bump " + cn(i) + ": the OPTIM " + ckey + " (" +
+                   cn(i) + ") high bound " + core::to_string(hi) +
+                   " lies beyond " + bound +
+                   ": a candidate whose centre is beyond the cutoff keeps "
+                   "only the bump's inner shoulder (pathological); with the "
+                   "high bound at or below " + core::to_string(edge) +
+                   ", no candidate does.");
+            }
+          }
+        }
+        if (!hard || reach <= rcut + tol) continue;
+        gate_errors.push_back(
+            p + ckey + " bump " + cn(i) + " (centre " +
+            core::to_string(mu[i]) + ", eta " + core::to_string(eta[i]) +
+            ") reaches " + core::to_string(reach) + ", past " + rname + " = " +
+            core::to_string(rcut) + " — set " + skey + " (" + sn(i) +
+            ") >= " + core::to_string(w / (rcut - mu[i])) +
+            ", move the centre inward (tadah refit --edit), or raise " + rn +
+            ".");
+      }
+      if (!hard) continue;  // smooth cutoff: overhanging boxes are legitimate
+
+      /* (b) the OPTIM boxes. STRICT: the worst corner (CGRID high bound,
+       * SGRID low bound) must fit — the legacy gate. CANDIDATE (default):
+       * only a box with NO feasible point is an error; a partially feasible
+       * box arms the per-candidate gate (HPO_Host rejects violating trials
+       * before training as graded band-D failures) and is announced with an
+       * INFO line per bump. */
+      const auto itc = trg.optimap.find(ckey);
+      const auto its = trg.optimap.find(skey);
+      auto c_opt_at = [&](std::size_t i) {
+        return itc != trg.optimap.end() && c0 + i < itc->second.opt.size() &&
+               itc->second.opt[c0 + i];
+      };
+      auto s_opt_at = [&](std::size_t i) {
+        return its != trg.optimap.end() && s0 + i < its->second.opt.size() &&
+               its->second.opt[s0 + i];
+      };
+      if (trg.BUMPGATE_STRICT) {
+        for (std::size_t i = 0; i < mu.size(); ++i) {
+          double hi_mu = mu[i];
+          if (c_opt_at(i)) hi_mu = itc->second.highbound[c0 + i];
+          /* the OPTIM low bound of a width is > 0
+           * (models::optim_low_bound_rule, at parse) */
+          double eta_i = eta[i];
+          if (s_opt_at(i)) eta_i = std::min(eta_i, its->second.lowbound[s0 + i]);
+          if (hi_mu + w / eta_i <= rcut + tol) continue;
+          if (hi_mu >= rcut - tol) {
+            gate_errors.push_back(
+                p + "the OPTIM bounds let bump " + cn(i) + " of " + ckey +
+                " reach " + core::to_string(hi_mu + w / eta_i) + ", past " +
+                rname + " = " + core::to_string(rcut) +
+                " — impossible while the OPTIM " + ckey + " (" + cn(i) +
+                ") high bound " + core::to_string(hi_mu) + " >= " +
+                core::to_string(rcut) + ": lower the " + ckey +
+                " high bound below " + rn + " first.");
+          } else {
+            gate_errors.push_back(
+                p + "the OPTIM bounds let bump " + cn(i) + " of " + ckey +
+                " reach " + core::to_string(hi_mu + w / eta_i) + ", past " +
+                rname + " = " + core::to_string(rcut) +
+                " — need the OPTIM " + skey + " (" + sn(i) +
+                ") low bound >= w/(" + rn + " - c_hi) = " +
+                core::to_string(w / (rcut - hi_mu)) + " (currently " +
+                core::to_string(eta_i) + ").");
+          }
+        }
+      } else {
+        const double tol_best = models::bump_rcut_tol(brc.max_reachable);
+        const double tol_min = models::bump_rcut_tol(brc.min_reachable);
+        for (std::size_t i = 0; i < mu.size(); ++i) {
+          const bool c_opt = c_opt_at(i);
+          const bool s_opt = s_opt_at(i);
+          if (!c_opt && !s_opt && !rcut_is_optim)
+            continue;  /* fully static bump: the seed check (a) owns it */
+          const double lo_mu = c_opt ? itc->second.lowbound[c0 + i] : mu[i];
+          const double hi_mu = c_opt ? itc->second.highbound[c0 + i] : mu[i];
+          /* every width, seed and box, is > 0 (checked above; the OPTIM
+           * low bound at parse) */
+          const double eta_hi = s_opt ? its->second.highbound[s0 + i] : eta[i];
+          const double eta_lo = s_opt ? its->second.lowbound[s0 + i] : eta[i];
+          /* best corner: is there ANY feasible point in the box? */
+          if (lo_mu + w / eta_hi > brc.max_reachable + tol_best) {
+            if (lo_mu >= brc.max_reachable - tol_best) {
+              gate_errors.push_back(
+                  p + "no feasible point for bump " + cn(i) + " of " + ckey +
+                  ": even its most favourable corner (centre " +
+                  core::to_string(lo_mu) + ", eta " + core::to_string(eta_hi) +
+                  ") reaches " + core::to_string(lo_mu + w / eta_hi) +
+                  ", past " + rn + " = " + core::to_string(brc.max_reachable) +
+                  " — impossible while the " + ckey + " low bound is at/above " +
+                  rn + ": lower the " + ckey + " low bound below " + rn +
+                  " or raise " + rn + ".");
+            } else {
+              gate_errors.push_back(
+                  p + "no feasible point for bump " + cn(i) + " of " + ckey +
+                  ": even its most favourable corner (centre " +
+                  core::to_string(lo_mu) + ", eta " + core::to_string(eta_hi) +
+                  ") reaches " + core::to_string(lo_mu + w / eta_hi) +
+                  ", past " + rn + " = " + core::to_string(brc.max_reachable) +
+                  " — need the OPTIM " + skey + " (" + sn(i) +
+                  ") high bound >= w/(" + rn + " - c_lo) = " +
+                  core::to_string(w / (brc.max_reachable - lo_mu)) +
+                  ", a lower " + ckey + " low bound, or a larger " + rn + ".");
+            }
+            continue;
+          }
+          /* worst corner: partially infeasible box -> per-candidate gate */
+          if (hi_mu + w / eta_lo > brc.min_reachable + tol_min) {
+            const std::string rdesc =
+                rcut_is_optim ? ("the sampled " + rn)
+                              : (rn + " = " + core::to_string(brc.min_reachable));
+            info("bump-support gate (CANDIDATE): armed for " + ckey + " bump " +
+                 cn(i) + (bc.joined ? " of " + bc.where() : std::string()) +
+                 " — candidates with c + " +
+                 core::to_string(w) + "/eta > " + rdesc + " are rejected "
+                 "before training as graded band-D failures (worst box corner "
+                 "reaches " + core::to_string(hi_mu + w / eta_lo) + "). "
+                 "BUMPGATE STRICT restores the startup box-corner error.");
+          }
         }
       }
     }

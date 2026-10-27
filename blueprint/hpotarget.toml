@@ -235,10 +235,16 @@ doc = """\
 The keys of an optimiser: its LIB and ALGO, its stops and its settings. \
 They are valid in each block that configures an optimiser."""
 long_doc = """\
-A refusal of a key of the group when tadah hpo starts names the END line \
-of its optimiser. That is ENDOPTIMIZER for the STRATEGY-level optimiser, \
-whose keys are written in OPTIMIZER, STRATEGY or REFINE, and ENDEXPLORE \
-for the optimiser of the EXPLORE block."""
+These refusals name the line of their key. A STEP the optimiser does not \
+use, or a STEP value out of range, is refused at its STEP line. Beside a \
+PC_LAMMPS or PC_FAILPROBE line, a gradient-based ALGO is refused at its \
+ALGO line, and a GRAD_STRATEGY at its own line. Beside a PC_OBSERVABLE \
+line, GRAD_STRATEGY NUMERICAL is refused at its line. Every other refusal \
+of a key when tadah hpo starts, such as that of a SEED the optimiser does \
+not use, names the END line of its optimiser, as does the refusal of a \
+combination of keys. That is ENDOPTIMIZER for the STRATEGY-level \
+optimiser, whose keys are written in OPTIMIZER, STRATEGY or REFINE, and \
+ENDEXPLORE for the optimiser of the EXPLORE block."""
 blocks = ["OPTIMIZER", "STRATEGY", "EXPLORE", "REFINE", "INNER"]
 leftover_msg = "{key} takes no further value here (unexpected '{tok}')"
 
@@ -1015,7 +1021,13 @@ long_doc = """\
 A PC_LAMMPS line without --failscore gives its variables this value when \
 its simulation fails, and a PC_FAILPROBE line without --failscore takes \
 it as its --failscore. FAILSCORE_GRADING ON needs a FAILSCORE below \
-1e300."""
+1e300. DLIB:GFS, DLIB:BFGS and NLopt are given a finite stand-in for a \
+failed evaluation: the worst usable loss of the search so far plus a \
+margin, or, before any, FAILSCORE capped at 1e100. A loss NLopt asks for \
+together with its gradient is given the stand-in only for a graded \
+failure with a usable gradient; a failed point whose gradient fails is \
+rejected. The result files and the journal record the loss the \
+evaluation reported."""
 quirk = """\
 A PC_LAMMPS or PC_FAILPROBE line without --failscore takes the FAILSCORE \
 of the lines above it: a FAILSCORE line below it leaves that line's \
@@ -1497,7 +1509,7 @@ check = "startup"
 at = "none"
 doc = "Under CANDIDATE, the default: no point of the box keeps bump 4 inside RCUT2B."
 text = "OPTIM CGRID2B (4) 5.4 5.5"
-error = "bump-support gate: with a hard (Cut_Dummy) cutoff every compact bump must vanish at or before RCUT (c + w/eta <= RCUT) — a truncated overhang is an energy/force STEP at the cutoff. Violations:\n  - no feasible point for bump 4 of CGRID2B: even its most favorable corner (centre 5.4, eta 3) reaches 6.4, past RCUT2B = 5.5 — need the OPTIM SGRID2B (4) high bound >= w/(RCUT2B - c_lo) = 30, a lower CGRID2B low bound, or a larger RCUT2B.\n  To search longer range, raise RCUT2B/RCUTMB in the config (the potential stays smooth: bumps still vanish at their own support edge)."
+error = "bump-support gate: with a hard (Cut_Dummy) cutoff every compact bump must vanish at or before RCUT (c + w/eta <= RCUT) — a truncated overhang is an energy/force STEP at the cutoff. Violations:\n  - no feasible point for bump 4 of CGRID2B: even its most favourable corner (centre 5.4, eta 3) reaches 6.4, past RCUT2B = 5.5 — need the OPTIM SGRID2B (4) high bound >= w/(RCUT2B - c_lo) = 30, a lower CGRID2B low bound, or a larger RCUT2B.\n  To search longer range, raise RCUT2B/RCUTMB in the config (the potential stays smooth: bumps still vanish at their own support edge)."
 
 [[key.invalid]]
 wrap = "main_ream"

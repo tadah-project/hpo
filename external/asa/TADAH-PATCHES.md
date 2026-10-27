@@ -180,6 +180,29 @@ fails when a line of one of them does not end in CRLF, and
    boxes (`asa_probe_box_error`, `src/algorithms_asa.cpp`); with this
    patch every probe it checks is the probe evaluated.
 
+9. **The periodic tests of a block (upstream bug fix)**: in serial mode
+   `asa()` runs its periodic test (the section that reanneals, checks the
+   cost repeat and, with `ASA_PARALLEL`, resizes the block) right after the
+   state that brings the count of accepted states to a multiple of
+   `Acceptance_Frequency_Modulus`, or the count of generated states to a
+   multiple of `Generated_Frequency_Modulus`. In block mode
+   (`Gener_Block > 1`) the section runs once per block, after the block's
+   states have been accepted or rejected, and tested the counts as they
+   stood after the block's last state: a block whose acceptance reached a
+   multiple before its last state, or whose last state was rejected, called
+   no test, and a block of 4 states ends on a multiple of 4, so
+   `Generated_Frequency_Modulus 42` tested only every 84 generated states
+   (in a run with `Acceptance_Frequency_Modulus 5`, `Gener_Block 4` and
+   `Gener_Mov_Avr 0`, no periodic test in 96 acceptances). The patch
+   records, after each state of the block, whether it met the test serial
+   ASA makes after it (`tadah_afm_reached`, `tadah_gfm_reached`, reset at
+   the start of each block), and the block's periodic test uses them; the
+   serial branch (`ASA_PARALLEL` off, the pristine build) keeps upstream's
+   test verbatim. With `Gener_Block = 1` the two are the same test, so
+   serial runs are unchanged (golden-gated); a block run calls one test
+   after each block in which a state met one, as serial ASA calls one after
+   that state. Guarded `#if ASA_PARALLEL` (featured build only).
+
 ## Known upstream quirks the embedding must respect
 
 - `ASA_PRINT` must stay `1`: `asa_exit()` calls

@@ -246,14 +246,17 @@ public:
  *   - backends the registry does not flag global (DLIB:BFGS, CERES:*,
  *     NLOPT:LD_*, NLOPT:LN_*, NLOPT:AUGLAG*)
  *                                         -> K independent runs (intended).
- *   - multi-seed globals (DLIB:GFS)       -> seeds the K points into
- *     find_min_global's `initial_function_evals`; the global engine then
- *     runs once (single call).
+ *   - multi-seed globals (DLIB:GFS)       -> take every point in one
+ *     run, so MULTISTART would run them once whatever N_STARTS:
+ *     require_multistart_backend() rejects them (STRATEGY TYPE PLAIN runs
+ *     them once from every point). A batch of the PRESTAGE refinement
+ *     (StartBatch::Refinement) seeds the TOPK candidates into
+ *     find_min_global's `initial_function_evals`, one run.
  *   - every other global (NLOPT:G*, TADAH:RANDOM/GRID/ANNEAL*, ASA)
- *                                         -> consumes a single starting
- *     point, so require_multistart_backend() rejects it for any N_STARTS;
- *     the user picks a local or multi-seed backend, or STRATEGY TYPE
- *     PLAIN. validate_hpo_setup() applies the rule at startup; validate()
+ *                                         -> takes one starting point,
+ *     so require_multistart_backend() rejects it for any N_STARTS; a
+ *     local backend, or STRATEGY TYPE PLAIN, runs instead.
+ *     validate_hpo_setup() applies the rule at startup; validate()
  *     applies the same function again when the policy runs.
  *
  * The starts run one after another (the parser refuses PARALLEL, which
@@ -373,12 +376,13 @@ public:
           const OptimizerSpec sub = multistart_start_spec(spec, plan, i);
 
           /* The start's seed: its SEED, or the INIT block's SEED that NLopt
-           * takes without one. */
+           * takes without one, when it draws random numbers (reads_seed:
+           * LN_SBPLX takes a seed it never reads). */
           const std::string start_msg =
               "MULTISTART start " + std::to_string(i+1) + "/" +
               std::to_string(actual_k) + " -- running inner optimiser" +
               (sub.seed ? " (seed=" + std::to_string(*sub.seed) + ")"
-               : sub.nlopt_seed_from_init()
+               : sub.nlopt_seed_from_init() && reads_seed(sub)
                    ? " (INIT seed=" +
                          std::to_string(*sub.init_strategy_spec.seed) + ")"
                    : "");
@@ -892,12 +896,15 @@ private:
       oss << sep << phase << "SEED " << *seed;
       sep = ", ";
     };
+    /* The INIT block's SEED that an NLopt phase takes is named when the
+     * phase draws random numbers (reads_seed): LD_MMA reads none. */
     const auto add_phase = [&](const char* phase, const char* init_phase,
                                const OptimizerSpec& p) {
-      if (p.nlopt_seed_from_init())
-        add(init_phase, p.init_strategy_spec.seed);
-      else
+      if (p.nlopt_seed_from_init()) {
+        if (reads_seed(p)) add(init_phase, p.init_strategy_spec.seed);
+      } else {
         add(phase, p.seed);
+      }
     };
     add("RESTART ", point_seed);
     add_phase("", "INIT ", s);

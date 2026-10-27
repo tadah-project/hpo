@@ -1405,10 +1405,16 @@ TEST_CASE("seed anchor: tadah hpo WARM + MAXEVAL 1 reproduces the seed file",
  * (a few ulp off u0; see kSeedAnchorUlps): the seed-anchor window still
  * evaluates -- and writes -- the WARM seed bit for bit. The search is
  * OPTIM FIXWEIGHT (2-11) in explicit [-300, 300] boxes on an
- * 11-weight D2_BP model; DUMP keeps the
- * first evaluation's potential (PRAXIS makes a second one even at
+ * 11-weight D2_BP model, with STEP 0.1 and STEP FIXWEIGHT(4,6,8,10) 0.13
+ * (steps that differ, so BOBYQA and COBYLA rescale the start; every seed
+ * lies more than a step from its bounds, so BOBYQA does not move it); DUMP
+ * keeps the first evaluation's potential (PRAXIS makes a second one even at
  * MAXEVAL 1). Needs TADAH_BINARY (the tadah_cli entries of
- * tests/CMakeLists.txt set it); Skipped without it. */
+ * tests/CMakeLists.txt set it); Skipped without it.
+ * The case ran with STEP unset, where NLopt's default steps differed per
+ * dimension; BOBYQA and COBYLA are now given 0.25 of every width, and
+ * BOBYQA moves FIXWEIGHT(2), 0.14 of its width above its lower bound, to
+ * one step from it (with a WARNING for the WARM start). */
 TEST_CASE("seed anchor: tadah hpo NLopt BOBYQA/COBYLA/PRAXIS evaluate the WARM "
           "seed exactly", "[seed_anchor][tadah_cli][.tadah_cli_seed_anchor_nlopt]")
 {
@@ -1437,7 +1443,8 @@ TEST_CASE("seed anchor: tadah hpo NLopt BOBYQA/COBYLA/PRAXIS evaluate the WARM "
                 std::ofstream os(sd.dir / "config.hpo");
                 os << "OPTIMIZER\nINIT\nSTRATEGY WARM seed.tadah\n"
                       "WARM_ON_MISMATCH error\nENDINIT\n"
-                      "LIB NLOPT\nALGO " << algo << "\nMAXEVAL 1\nENDOPTIMIZER\n"
+                      "LIB NLOPT\nALGO " << algo << "\nMAXEVAL 1\n"
+                      "STEP 0.1\nSTEP FIXWEIGHT(4,6,8,10) 0.13\nENDOPTIMIZER\n"
                       "LOSS L2\nPC_EMAE 0 1\n"
                       "OPTIM FIXWEIGHT (2-11) -300.0 300.0\n"
                       "DUMP 1 dump\n";
