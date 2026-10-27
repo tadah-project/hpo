@@ -1971,7 +1971,7 @@ id = "STRATEGY.N_STARTS"
 name = "N_STARTS"
 blocks = ["STRATEGY"]
 synopsis = "N_STARTS <n>"
-args = [ { name = "n", kind = "integer", min = 2, max = "UINT64_MAX", what = "{key}", msg = "N_STARTS must be an integer >= 2, got '{tok}' (one start is STRATEGY TYPE PLAIN)" } ]
+args = [ { name = "n", kind = "integer", min = 2, what = "{key}", msg = "N_STARTS must be an integer >= 2, got '{tok}' (one start is STRATEGY TYPE PLAIN)" } ]
 repeat = "error"
 repeat_msg = "N_STARTS is set twice in the STRATEGY block (first on line {first_line}); each key is given once"
 checks = [
