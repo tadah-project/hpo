@@ -56,10 +56,12 @@
  *     The stop line and the WARNING give the whole message.
  */
 
+#include <tadah/hpo/failed_loss_stand_in.h>   // FailedLossStandIn::kCeiling
 #include <tadah/hpo/gradient_provider.h>
 #include <tadah/hpo/hpo_host.h>
 #include <tadah/hpo/hpo_log.h>
 #include <tadah/hpo/optimizer_spec.h>
+#include <tadah/hpo/pc_fail_grading.h>   // loss_is_feasible
 #include <tadah/hpo/run_end.h>
 
 #include <algorithm>
@@ -68,7 +70,9 @@
 #include <cstddef>
 #include <exception>
 #include <limits>
+#include <map>
 #include <memory>
+#include <optional>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -275,6 +279,29 @@ inline void validate_ceres_steepest_spec(const OptimizerSpec& sp) {
  * propagated from the host or finite-diff functor; Ceres translates
  * that into LINE_SEARCH_FAILED / NUMERICAL_FAILURE termination.
  *
+ * Ceres is given a failed evaluation's loss -- FAILSCORE, by default the
+ * largest double, a graded failure just below it, or the band-D score of
+ * a point outside the OPTIM box (box_penalty.h) -- scaled to at most 1e100
+ * (FailedLossStandIn::kCeiling): above FAILSCORE 1e100 the loss times
+ * 1e100 / FAILSCORE, and its gradient likewise; a usable loss, and every
+ * loss under a FAILSCORE of 1e100 or less, as it is. Values near the
+ * largest double overflow in Ceres' line search: STEEPEST_DESCENT's
+ * Armijo search takes the squared length of the gradient as its first
+ * slope, which for a graded failure near the largest double is not a
+ * finite double (on the Ta data of the tests from a FAILSCORE of about
+ * 1e160 on: "Numerical failure in line search ... initial_gradient:
+ * -inf" after one iteration), and the polynomial its line search fits
+ * through a failed trial point near the largest double overflowed as well
+ * (in the tests each trial outside the box then shrank the step to about
+ * 0.3 of the one before, where under FAILSCORE 1e9 the polynomial's step
+ * shrinks it to 1e-3). Scaled, every failure still lies above every
+ * usable loss below 0.999e100 (a loss no potential reaches), the graded
+ * failures keep their order and the slope its direction. The journal says
+ * so once per search, at its first scaled loss; the records, the journal
+ * and loss.tadah keep the loss the evaluation reported, and `reported`
+ * maps each value Ceres was given that differs from it back to that loss
+ * (the ending line's costs).
+ *
  * An exception from the host or the gradient provider (durable_best::Error,
  * StagnationStop, core::ShutdownRequested, ...) is captured in *host_exc --
  * the first one wins -- and reported to Ceres as a failed evaluation. Once
@@ -290,8 +317,14 @@ template<class Vec, class Runner>
 class HPO_FirstOrderFunction : public ceres::FirstOrderFunction {
 public:
     HPO_FirstOrderFunction(GradientProvider<Vec,Runner>* gp, int dim,
-                           std::exception_ptr* host_exc)
-        : gp_(gp), dim_(dim), host_exc_(host_exc) {}
+                           std::exception_ptr* host_exc,
+                           const std::string& backend,
+                           std::optional<double> failscore)
+        : gp_(gp), dim_(dim), host_exc_(host_exc), backend_(backend),
+          failscore_(failscore),
+          scale_(failscore && *failscore > FailedLossStandIn::kCeiling
+                     ? FailedLossStandIn::kCeiling / *failscore
+                     : 1.0) {}
 
     bool Evaluate(const double* parameters,
                   double*       cost,
@@ -309,7 +342,6 @@ public:
             }
             const double y = gp_->cost(x);
             if (!std::isfinite(y)) return false;
-            *cost = y;
 
             if (gradient) {
                 /* y is the loss of exactly x, just evaluated: NUMERICAL
@@ -327,13 +359,27 @@ public:
                     }
                     return false;
                 }
-                for (int i = 0; i < dim_; ++i) gradient[i] = g(i);
+                double slope = 1.0;
+                *cost = given(y, slope);
+                for (int i = 0; i < dim_; ++i)
+                    gradient[i] = slope == 1.0 ? g(i) : g(i) * slope;
+            } else {
+                double slope = 1.0;
+                *cost = given(y, slope);
             }
             return true;
         } catch (...) {
             *host_exc_ = std::current_exception();
             return false;
         }
+    }
+
+    /* The loss the evaluation reported for `v`, a value Ceres was given
+     * (`v` itself when Ceres was given the loss). */
+    double reported(double v) const
+    {
+        const auto r = reported_.find(v);
+        return r != reported_.end() ? r->second : v;
     }
 
     int NumParameters() const override { return dim_; }
@@ -346,12 +392,41 @@ public:
     bool budget_refused() const { return budget_refused_; }
 
 private:
+    /* What Ceres is given for the loss `y` of a point, and in `slope` the
+     * factor of its gradient (see the class comment). */
+    double given(double y, double& slope) const
+    {
+        slope = 1.0;
+        /* A failed evaluation's loss (loss_is_feasible; `y` is finite). */
+        if (!(scale_ < 1.0) || !failscore_ ||
+            loss_is_feasible(y, *failscore_))
+            return y;
+        if (!scaled_noted_) {
+            scaled_noted_ = true;
+            HPOLog::instance().info(
+                backend_ + ": Ceres is given each failed evaluation's loss "
+                "of this search times 1e100 / FAILSCORE, and its gradient "
+                "likewise, so that its line search does not overflow; "
+                "loss.tadah records the loss the evaluation reported");
+        }
+        slope = scale_;
+        const double v = y * scale_;
+        reported_[v] = y;
+        return v;
+    }
+
     GradientProvider<Vec,Runner>* gp_;
     int dim_;
     mutable bool                  last_rejected_ = false;
     mutable bool                  budget_refused_ = false;
     mutable GradientFailureInfo   rejected_;
     std::exception_ptr* host_exc_;
+    std::string                   backend_;
+    std::optional<double>         failscore_;
+    /* 1e100 / FAILSCORE above FAILSCORE 1e100, 1 otherwise. */
+    double                        scale_ = 1.0;
+    mutable bool                  scaled_noted_ = false;
+    mutable std::map<double, double> reported_;
 };
 
 /* Ends the solve (SOLVER_ABORT -> USER_FAILURE) at the first iteration
@@ -449,7 +524,7 @@ inline void run_ceres_gradient_problem(
      * stays valid while `problem` lives. */
     std::exception_ptr host_exc;
     auto owned = std::make_unique<HPO_FirstOrderFunction<Vec, Runner>>(
-        &gp, dim, &host_exc);
+        &gp, dim, &host_exc, "CERES:" + algo_label, sp.failscore);
     const HPO_FirstOrderFunction<Vec, Runner>* fof = owned.get();
     ceres::GradientProblem problem(owned.release());
 
@@ -482,8 +557,8 @@ inline void run_ceres_gradient_problem(
         << " -- termination: " << ceres::TerminationTypeToString(summary.termination_type)
         << " | iters=" << summary.iterations.size()
         << " | host_evals=" << evals_used.load()
-        << " | initial_cost=" << summary.initial_cost
-        << " | final_cost="   << summary.final_cost;
+        << " | initial_cost=" << fof->reported(summary.initial_cost)
+        << " | final_cost="   << fof->reported(summary.final_cost);
     HPOLog::instance().info(oss.str());
 
     /* Surface a degraded-termination diagnostic so the journal records
