@@ -78,6 +78,7 @@ TEST_CASE("hpotarget generated tables: the generated headers exist",
 #include <algorithm>
 #include <cctype>
 #include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <cstdlib>
 #include <exception>
@@ -111,6 +112,25 @@ std::string str(std::string_view s) { return std::string(s); }
 
 /* A number as the parser's messages write a value they read. */
 std::string core_text(double v) { return tadah::core::format_roundtrip(v); }
+
+/* A number as a stream writes it by default (the loss functions'
+ * messages). */
+std::string stream_text(double v)
+{
+    std::ostringstream os;
+    os << v;
+    return os.str();
+}
+
+/* The least double above x that is not subnormal: the first value a bound
+ * "above x" takes. A subnormal is left out, as a build with -ffast-math
+ * may read one as zero. */
+double least_above(double x)
+{
+    if (x >= 0.0 && x < std::numeric_limits<double>::min())
+        return std::numeric_limits<double>::min();
+    return std::nextafter(x, std::numeric_limits<double>::infinity());
+}
 
 /* The message `f` throws, "" when it returns. */
 std::string thrown(const std::function<void()>& f)
@@ -730,10 +750,14 @@ TEST_CASE("hpotarget generated tables: the options of PC_OBSERVABLE "
 
 /* Pins: the loss functions are LossFunction's, in the order of its Type:
  * each name reads (in any case) as its Type and is written back by
- * to_string(), its parameters are default_params(), a parameter at its gt
- * bound is refused and its default taken; the unknown-loss refusal (a
- * check of LOSS) lists the names in order. Before the fix: the headers do
- * not exist. */
+ * to_string(), its parameters are default_params(); a parameter at its gt
+ * bound is refused with the LOSS check of a parameter, which names the
+ * loss function, the parameter and its default, the least double above gt
+ * that is not subnormal is taken (so gt is the code's bound exactly), and
+ * so is its default; the unknown-loss refusal (a check of LOSS) lists the
+ * names in order. Before the fix: the headers do not exist. With them, a
+ * gt below the code's bound or another parameter name fails the case (a
+ * pin of the tables against LossFunction). */
 TEST_CASE("hpotarget generated tables: the loss functions are "
           "LossFunction's, in order, with their parameters", "[hpotarget_gen]")
 {
@@ -761,8 +785,16 @@ TEST_CASE("hpotarget generated tables: the loss functions are "
         for (const R::LossParam& p : f.params) defaults.push_back(p.default_value);
         CHECK(LossFunction::default_params(t) == defaults);
         for (const R::LossParam& p : f.params) {
+            CAPTURE(p.name, p.gt);
             REQUIRE(p.has_gt);
-            CHECK_THROWS(LossFunction::resolve_params(t, {p.gt}));
+            CHECK(one_of(thrown([&] { LossFunction::resolve_params(t, {p.gt}); }),
+                         root_key("LOSS").checks,
+                         {{"name", f.name}, {"key", p.name},
+                          {"value", stream_text(p.gt)},
+                          {"default", stream_text(p.default_value)}}));
+            CHECK(thrown([&] {
+                      LossFunction::resolve_params(t, {least_above(p.gt)});
+                  }) == "");
             CHECK(LossFunction::resolve_params(t, {p.default_value}) ==
                   std::vector<double>{p.default_value});
         }
