@@ -3705,14 +3705,17 @@ TEST_CASE("Termination: METHOD SOBOL K starts the INIT round and each "
           "[HPO][termination][restart][seed][sobol]")
 {
     /* A Sobol seed used to skip `seed` points. With METHOD SOBOL 3 and SEED
-     * 42 in both blocks, the INIT block drew points 42-44, restart 1 (seed
-     * 43) points 43-45 and restart 2 (seed 44) points 44-46: two of each
-     * round's three fresh points were the previous round's. Seed s now
-     * draws block s, points 3s ... 3s + 2, and PLAIN starts each round from
-     * the first of them: this run checks that the seeds reach the blocks
-     * (the rounds start at points 126, 129 and 132, not 42, 43 and 44).
-     * That blocks share no point is SobolInitStrategy's (test_init_
-     * strategies.cpp); a PLAIN run evaluates only a block's first point. */
+     * 42 in both blocks, the INIT block drew points 43-45, restart 1 (seed
+     * 43) points 44-46 and restart 2 (seed 44) points 45-47: two of each
+     * round's three fresh points were the previous round's. Seed s draws
+     * block s, points 3 (s + 1) ... 3 (s + 1) + 2 (point 0 is the low
+     * corner of the box), and PLAIN starts each round from the first of
+     * them: this run checks that the seeds reach the blocks (the rounds
+     * start at points 129, 132 and 135). That blocks share no point is
+     * SobolInitStrategy's (test_init_strategies.cpp); a PLAIN run evaluates
+     * only a block's first point.
+     * Before the fix: block s started one point late, at point 3 s + 1
+     * (127, 130 and 133 here). */
     const std::string strategy =
         "  STRATEGY\n"
         "    TYPE PLAIN\n    LIB TADAH\n    ALGO RANDOM\n"
@@ -3745,8 +3748,8 @@ TEST_CASE("Termination: METHOD SOBOL K starts the INIT round and each "
         check_run_files();
     }
 
-    /* Sobol point n is what METHOD SOBOL 1 draws with SEED n: a block of
-     * one point is the point itself. */
+    /* Sobol point n + 1 is what METHOD SOBOL 1 draws with SEED n: a block
+     * of one point is the point itself. */
     const auto sobol_point = [](std::uint64_t n) {
         const auto pts = reference_points(
             "OPTIMIZER\n"
@@ -3761,9 +3764,9 @@ TEST_CASE("Termination: METHOD SOBOL K starts the INIT round and each "
         return pts.front();
     };
     REQUIRE(rounds.size() == 3u);
-    CHECK(rounds[0].front() == sobol_point(3 * 42));   // INIT, seed 42
-    CHECK(rounds[1].front() == sobol_point(3 * 43));   // restart 1
-    CHECK(rounds[2].front() == sobol_point(3 * 44));   // restart 2
+    CHECK(rounds[0].front() == sobol_point(3 * 43 - 1));   // INIT, seed 42
+    CHECK(rounds[1].front() == sobol_point(3 * 44 - 1));   // restart 1
+    CHECK(rounds[2].front() == sobol_point(3 * 45 - 1));   // restart 2
 }
 
 /* Without a SEED in the RESTART block the restart points come from
@@ -6994,20 +6997,24 @@ TEST_CASE("DLIB:GFS: a run whose first evaluations all fail goes on to "
 {
     /* One dimension, CGRID2B[2] in [1, 2]. On this fixture the validation
      * ERMSE falls from 10 meV/atom at 1.0 to 9.76 at 2.0, but only in the
-     * sixth decimal up to 1.4: 9.9999994 at 1.25, 9.9999974 at 1.375,
-     * 9.9999944 at 1.4, 9.99989 at 1.5. The skip cap 9.99999 fails the box
-     * below a point between 1.4 and 1.5 and leaves the rest usable. The
-     * three starting points -- Sobol points 2 and 3 (SEED 1 selects block 1
-     * of METHOD SOBOL 2; the chain hands its first method the SEED itself),
-     * 1.25 and 1.375, and the configuration's 1.4 -- all fail: dims + 2
-     * failed evaluations reach dlib's first trust-region step, which used
-     * to end the run in SIGSEGV. GFS picks some points at random, and which
-     * ones depends on whether an evaluation has finished when it asks for
-     * the next point, so the usable half of the box is wide enough for a
-     * run of 40 evaluations to reach it whatever GFS picks. */
+     * fourth decimal up to 1.55: 9.9999994 at 1.25, 9.9999945 at 1.4,
+     * 9.99965 at 1.55, 9.99874 at 1.6. The skip cap 9.999 fails the box
+     * below a point between 1.55 and 1.6 and leaves the rest usable. The
+     * three starting points -- Sobol points 14 and 15 (SEED 6 selects block
+     * 6 of METHOD SOBOL 2; the chain hands its first method the SEED
+     * itself), 1.5625 and 1.0625, and the configuration's 1.4 -- all fail:
+     * dims + 2 failed evaluations reach dlib's first trust-region step,
+     * which used to end the run in SIGSEGV. GFS picks some points at random,
+     * and which ones depends on whether an evaluation has finished when it
+     * asks for the next point, so the usable part of the box is wide enough
+     * for a run of 40 evaluations to reach it whatever GFS picks.
+     * The case ran with SEED 1 and the cap 9.99999, where block 1 of SOBOL 2
+     * drew 1.25 and 1.375; a block of 2 Sobol points now puts one in each
+     * half of the box (block 1 draws 1.375 and 1.875), so the cap and the
+     * block are chosen to fail both. */
     TaRun run(
         "OPTIMIZER\n"
-        "  INIT\n    METHOD SOBOL 2\n    METHOD CONFIG\n    SEED 1\n"
+        "  INIT\n    METHOD SOBOL 2\n    METHOD CONFIG\n    SEED 6\n"
         "  ENDINIT\n"
         "  STRATEGY\n    TYPE PLAIN\n    LIB DLIB\n    ALGO GFS\n"
         "    MAXEVAL 40\n    THREADS 1\n  ENDSTRATEGY\n"
@@ -7015,7 +7022,7 @@ TEST_CASE("DLIB:GFS: a run whose first evaluations all fail goes on to "
         "LOSS L2\n"
         "QFLUSH 1000\n"
         "DIGITS 15\n"
-        "PC_ERMSE 0 1 --skip-above 9.99999\n"
+        "PC_ERMSE 0 1 --skip-above 9.999\n"
         "OPTIM CGRID2B (2) 1.0 2.0\n");
     int status = -1;
     REQUIRE_NOTHROW(status = run_within(run, std::chrono::seconds(120),
@@ -7028,8 +7035,8 @@ TEST_CASE("DLIB:GFS: a run whose first evaluations all fail goes on to "
     /* Pins: "DLIB:GFS: MAXEVAL reached". Before the fix: COMPLETED. */
     CHECK(journal_status(journal) == "DLIB:GFS: MAXEVAL reached");
 
-    /* Every row is a usable loss (an ERMSE of at most 9.99999, so a loss of
-     * at most 99.9998) or the FAILSCORE the evaluation returned: whatever
+    /* Every row is a usable loss (an ERMSE of at most 9.999, so a loss of
+     * at most 99.980001) or the FAILSCORE the evaluation returned: whatever
      * dlib is told about a failure, the files record FAILSCORE. */
     const auto loss = data_rows("loss.tadah");
     REQUIRE(loss.size() == 40u);
@@ -7039,7 +7046,7 @@ TEST_CASE("DLIB:GFS: a run whose first evaluations all fail goes on to "
         if (loss[i].back() == kDefaultFailScoreRow) {
             ++failed;
         } else {
-            CHECK(loss_value(loss[i].back()) <= 99.9998);
+            CHECK(loss_value(loss[i].back()) <= 99.980001);
         }
     }
     for (std::size_t i = 0; i < 3; ++i) {

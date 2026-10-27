@@ -17,6 +17,8 @@
 #include <tadah/hpo/run_policy.h>
 #include <tadah/hpo/warmstart_cache.h>
 
+#include <boost/random/sobol.hpp>
+
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -303,17 +305,24 @@ TEST_CASE("SobolInitStrategy: cell coverage on unit square",
 
 namespace {
 
-/* The first `n` points of the Sobol sequence in this spec's box: SEED 0
- * skips nothing. */
+/* The points 1 ... n of the Sobol sequence (Boost's boost::random::sobol,
+ * which draws point 1 first; point 0 is the low corner) in the box of
+ * `sp`, a spec without a search space or log-scaled dimension: element j
+ * is point j + 1. */
 std::vector<std::vector<double>>
-sobol_sequence(const tadah::hpo::OptimizerSpec& sp,
-               const tadah::hpo::HPOTargets& trg, std::size_t n)
+sobol_sequence(const tadah::hpo::OptimizerSpec& sp, std::size_t n)
 {
-    using namespace tadah::hpo;
-    InitStrategySpec ispec;
-    ispec.chain.push_back({"SOBOL", {std::to_string(n)}});
-    InitContext ic{sp, trg, 0};
-    return build_init_strategy(ispec)->generate(ic, n);
+    const std::size_t dim = sp.low.size();
+    boost::random::sobol engine(static_cast<unsigned>(dim));
+    const double lo = static_cast<double>(engine.min());
+    const double range = static_cast<double>(engine.max()) - lo + 1.0;
+    std::vector<std::vector<double>> out(n, std::vector<double>(dim));
+    for (auto& p : out)
+        for (std::size_t d = 0; d < dim; ++d) {
+            const double u = (static_cast<double>(engine()) - lo) / range;
+            p[d] = sp.low[d] + u * (sp.high[d] - sp.low[d]);
+        }
+    return out;
 }
 
 /* The points METHOD SOBOL <k> draws with `seed` (K_TOTAL `k_total`, 0 for
@@ -336,21 +345,36 @@ TEST_CASE("SobolInitStrategy: the first points are the Sobol sequence's",
           "[HPO][init_strategy][sobol]")
 {
     /* Pins the Sobol points (Boost's boost::random::sobol, Joe-Kuo
-     * direction numbers, the zero point skipped) in the unit cube, SEED 0:
-     * exact binary fractions, so equality is exact. They must not change
-     * with the Boost the build uses (every SOBOL start depends on them). */
+     * direction numbers) in the unit cube: points 1 to 8 of the sequence,
+     * and points 8 to 15, which METHOD SOBOL 8 draws with SEED 0 (block 0
+     * of 8 points starts at point 8); exact binary fractions, so equality is
+     * exact. They must not change with the Boost the build uses (every
+     * SOBOL start depends on them).
+     * Before the fix: SOBOL 8 with SEED 0 drew points 1 to 8 (each block
+     * started one point late), the first list. */
     using namespace tadah::hpo;
     auto sp = make_synthetic_spec({0.0, 0.0, 0.0}, {1.0, 1.0, 1.0});
     StubTargets st;
-    const std::vector<std::vector<double>> want = {
+    const std::vector<std::vector<double>> first = {
         {0.5, 0.5, 0.5},       {0.75, 0.25, 0.25},     {0.25, 0.75, 0.75},
         {0.375, 0.375, 0.625}, {0.875, 0.875, 0.125},  {0.625, 0.125, 0.875},
         {0.125, 0.625, 0.375}, {0.1875, 0.3125, 0.9375}};
-    const auto pts = sobol_sequence(sp, *st.trg, 8);
-    REQUIRE(pts.size() == want.size());
-    for (std::size_t i = 0; i < want.size(); ++i) {
-        INFO("point " << i);
-        CHECK(pts[i] == want[i]);
+    const auto seq = sobol_sequence(sp, 8);
+    REQUIRE(seq.size() == first.size());
+    for (std::size_t i = 0; i < first.size(); ++i) {
+        INFO("point " << i + 1);
+        CHECK(seq[i] == first[i]);
+    }
+    const std::vector<std::vector<double>> block0 = {
+        {0.1875, 0.3125, 0.9375}, {0.6875, 0.8125, 0.4375},
+        {0.9375, 0.0625, 0.6875}, {0.4375, 0.5625, 0.1875},
+        {0.3125, 0.1875, 0.3125}, {0.8125, 0.6875, 0.8125},
+        {0.5625, 0.4375, 0.0625}, {0.0625, 0.9375, 0.5625}};
+    const auto pts = sobol_draw(sp, *st.trg, 8, 0);
+    REQUIRE(pts.size() == block0.size());
+    for (std::size_t i = 0; i < block0.size(); ++i) {
+        INFO("point " << i + 8);
+        CHECK(pts[i] == block0[i]);
     }
 }
 
@@ -359,12 +383,15 @@ TEST_CASE("SobolInitStrategy: a seed selects a whole block of K points",
 {
     /* A seed used to skip `seed` points, so the seeds s and s + 1 -- restart
      * rounds r and r + 1 under a RESTART SEED, or an INIT SEED and restart
-     * 1 with the same SEED -- shared K - 1 of their K points. Seed s now
-     * draws block s of K points: points s*K ... s*K + K - 1. */
+     * 1 with the same SEED -- shared K - 1 of their K points. Seed s draws
+     * block s of K points: points (s + 1) K ... (s + 1) K + K - 1 (seq[j]
+     * is point j + 1).
+     * Before the fix: block s held points s K + 1 ... s K + K, one point
+     * later than its own index (seq[s K + i] here). */
     using namespace tadah::hpo;
     auto sp = make_synthetic_spec({0.0, -1.0}, {1.0, 1.0});
     StubTargets st;
-    const auto seq = sobol_sequence(sp, *st.trg, 200);
+    const auto seq = sobol_sequence(sp, 200);
     REQUIRE(seq.size() == 200u);
 
     const std::size_t K = 3;
@@ -373,7 +400,7 @@ TEST_CASE("SobolInitStrategy: a seed selects a whole block of K points",
         const auto pts = sobol_draw(sp, *st.trg, K, seed);
         REQUIRE(pts.size() == K);
         for (std::size_t i = 0; i < K; ++i)
-            CHECK(pts[i] == seq[seed * K + i]);
+            CHECK(pts[i] == seq[(seed + 1) * K + i - 1]);
     }
 
     /* Consecutive seeds share no point. */
@@ -383,11 +410,12 @@ TEST_CASE("SobolInitStrategy: a seed selects a whole block of K points",
         CHECK(std::find(b.begin(), b.end(), p) == b.end());
 
     /* K_TOTAL caps a lone SOBOL: K_TOTAL 2 of SOBOL 5 with seed 7 keeps
-     * the first 2 points of block 7 of 5. (K_TOTAL replaced the K of a lone
-     * method: SOBOL 2 with K_TOTAL 5 drew block 7 of 5, 5 points.) */
+     * the first 2 points of block 7 of 5, points 40 and 41. (K_TOTAL
+     * replaced the K of a lone method: SOBOL 2 with K_TOTAL 5 drew block 7
+     * of 5, 5 points.) */
     const auto t = sobol_draw(sp, *st.trg, 5, 7, /*k_total=*/2);
     REQUIRE(t.size() == 2u);
-    for (std::size_t i = 0; i < 2; ++i) CHECK(t[i] == seq[7 * 5 + i]);
+    for (std::size_t i = 0; i < 2; ++i) CHECK(t[i] == seq[8 * 5 + i - 1]);
     CHECK(sobol_draw(sp, *st.trg, 2, 7, /*k_total=*/5).size() == 2u);
 }
 
@@ -395,12 +423,13 @@ TEST_CASE("SobolInitStrategy: SOBOL 1 still draws the point its seed "
           "names", "[HPO][init_strategy][sobol][seed]")
 {
     /* A block of one point is the point itself, so METHOD SOBOL 1 is
-     * unchanged: seed s draws point s. The seed's low 16 bits select the
-     * block (seed 65536 + s draws what seed s draws), as they always did. */
+     * unchanged: seed s draws point s + 1 (seq[s]). The seed's low 16 bits
+     * select the block (seed 65536 + s draws what seed s draws), as they
+     * always did. */
     using namespace tadah::hpo;
     auto sp = make_synthetic_spec({0.0, -1.0, 2.0}, {1.0, 1.0, 3.0});
     StubTargets st;
-    const auto seq = sobol_sequence(sp, *st.trg, 100);
+    const auto seq = sobol_sequence(sp, 100);
     for (const std::uint64_t seed : {1u, 5u, 42u, 99u}) {
         INFO("SOBOL 1, seed " << seed);
         const auto pts = sobol_draw(sp, *st.trg, 1, seed);
