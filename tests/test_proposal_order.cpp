@@ -18,7 +18,12 @@
  * The files are compared whole, except the times they record -- the
  * IT-TIME/ms column of outvar.tadah and best_outvar.tadah and the date line
  * of the header of best_pot.tadah -- and the run's scratch directory, which
- * the training record of best_pot.tadah names. */
+ * the training record of best_pot.tadah names.
+ *
+ * The [stream] cases read the files while the run goes on, from the host's
+ * hooks: the rows of a batch are written as soon as every lower-numbered
+ * evaluation of the batch has ended. The [eval_batch] cases drive an
+ * EvalBatch without a host. */
 
 #include "catch2/catch.hpp"
 
@@ -28,6 +33,7 @@
 #include <tadah/hpo/algorithms_asa.h>
 #include <tadah/hpo/algorithms_pa.h>
 #include <tadah/hpo/algorithms_pt.h>
+#include <tadah/hpo/eval_batch.h>
 #include <tadah/hpo/hpo_host.h>
 #include <tadah/hpo/hpo_log.h>
 #include <tadah/hpo/hpo_targets.h>
@@ -376,6 +382,80 @@ std::size_t count_of(const std::string& text, const std::string& what)
     for (auto p = text.find(what); p != std::string::npos;
          p = text.find(what, p + what.size()))
         ++n;
+    return n;
+}
+
+/* Whether `pred` holds within `seconds`, polled every millisecond. */
+bool within(double seconds, const std::function<bool()>& pred)
+{
+    const auto end = std::chrono::steady_clock::now() +
+                     std::chrono::duration_cast<std::chrono::nanoseconds>(
+                         std::chrono::duration<double>(seconds));
+    for (;;) {
+        if (pred()) return true;
+        if (std::chrono::steady_clock::now() >= end) return false;
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+}
+
+/* Whether the file `name` of the working directory, as it is now, has a
+ * complete data line (ended by a newline) whose field `col` (0-based,
+ * whitespace-separated) is `value`. */
+bool has_line(const std::string& name, std::size_t col,
+              const std::string& value)
+{
+    const std::string text = read_file(name);
+    std::size_t start = 0;
+    for (std::size_t end; (end = text.find('\n', start)) != std::string::npos;
+         start = end + 1) {
+        std::istringstream ls(text.substr(start, end - start));
+        std::vector<std::string> tok;
+        for (std::string t; ls >> t;) tok.push_back(t);
+        if (tok.size() > col && tok[0][0] != '#' && tok[col] == value)
+            return true;
+    }
+    return false;
+}
+
+/* Whether the history file `name` has the complete row of evaluation `n`
+ * now. */
+bool has_row(const std::string& name, std::size_t n)
+{
+    return has_line(name, 0, std::to_string(n));
+}
+
+/* The evaluation numbers of the unit cases below: reserved from `next`;
+ * the numbers given back and skipped are recorded. */
+struct CountingNumbers final : tadah::hpo::EvalBatch::Numbers {
+    std::size_t next = 1;
+    std::vector<std::size_t> skipped;
+    std::vector<std::pair<std::size_t, std::size_t>> given_back;
+    std::size_t reserve(std::size_t n) override
+    {
+        const std::size_t first = next;
+        next += n;
+        return first;
+    }
+    bool give_back(std::size_t first, std::size_t end) override
+    {
+        if (end != next) return false;
+        given_back.emplace_back(first, end);
+        next = first;
+        return true;
+    }
+    void skip(std::size_t n) override { skipped.push_back(n); }
+};
+
+/* The next evaluation of the calling thread's slot of `batch`: takes its
+ * number from `src` and parks a commit that appends the number to
+ * `committed` and holds `token` (the evaluation's result) until it has
+ * run. Returns the number. */
+std::size_t evaluate_in(tadah::hpo::EvalBatch& batch, CountingNumbers& src,
+                        std::vector<std::size_t>& committed,
+                        std::shared_ptr<int> token = nullptr)
+{
+    const std::size_t n = tadah::hpo::EvalBatch::take_number(src);
+    batch.park(n, [&committed, n, token] { committed.push_back(n); });
     return n;
 }
 
@@ -889,4 +969,279 @@ TEST_CASE("Proposal order: a stop during a round of the ANNEAL_PT "
                    "of its 4 evaluations did not run\n") == 1);
     CHECK(count_of(r.journal, "full-vector") == 0);
     CHECK(iterations(r.files.at("loss.tadah")) == numbers_to(38));
+}
+
+/* Pins: EvalBatch commits an evaluation of a batch as soon as every
+ * lower-numbered evaluation of the batch has ended, in number order, and
+ * releases its result then. A batch of three slots that make 1, 2 and 1
+ * evaluations (numbers 11, 12-13 and 14): slot 2 ends 12 and 13 first,
+ * which wait for 11 (no commit has run, and the result of 12 is held);
+ * slot 1 ending 11 commits 11, 12 and 13 at once, in that order, and the
+ * result of 12 is released; slot 3 ending 14 commits it. commit() after
+ * the batch has nothing left to commit, skips no number and gives none
+ * back.
+ * Before the fix: every commit waited for commit() after the batch: when
+ * 11 ended no commit had run, and the result of 12 was still held. */
+TEST_CASE("Proposal order: an evaluation of a batch is committed once every "
+          "lower-numbered evaluation of its batch has ended",
+          "[HPO][proposal_order][eval_batch]")
+{
+    using tadah::hpo::EvalBatch;
+    EvalBatch batch("a test batch", {1, 2, 1});
+    CountingNumbers src;
+    src.next = 11;
+    std::vector<std::size_t> committed;
+    auto result_12 = std::make_shared<int>(12);
+    const std::weak_ptr<int> held = result_12;
+    {
+        EvalBatch::Slot slot(batch, 1);
+        CHECK(evaluate_in(batch, src, committed, std::move(result_12)) == 12);
+        CHECK(evaluate_in(batch, src, committed) == 13);
+    }
+    CHECK(committed.empty());
+    CHECK_FALSE(held.expired());
+    {
+        EvalBatch::Slot slot(batch, 0);
+        CHECK(evaluate_in(batch, src, committed) == 11);
+        CHECK(committed == std::vector<std::size_t>{11, 12, 13});
+        CHECK(held.expired());
+    }
+    {
+        EvalBatch::Slot slot(batch, 2);
+        CHECK(evaluate_in(batch, src, committed) == 14);
+        CHECK(committed == std::vector<std::size_t>{11, 12, 13, 14});
+    }
+    CHECK(batch.commit() == nullptr);
+    CHECK(committed == std::vector<std::size_t>{11, 12, 13, 14});
+    CHECK(src.skipped.empty());
+    CHECK(src.given_back.empty());
+    CHECK(src.next == 15);
+}
+
+/* Pins: the numbers of a slot that ended before making all its
+ * evaluations (as a replica that reaches STOPVAL ends its sweep) are
+ * skipped when a later evaluation of the batch is committed, and those at
+ * the end of the batch are given back after it. A batch of three slots
+ * that may make 2, 1 and 2 evaluations (numbers 11-12, 13 and 14-15):
+ * slot 1 makes 11 and ends, and 11 is committed; 12 waits for 13, which
+ * has not ended; slot 2 ending 13 skips 12 and commits 13; slot 3 makes 14
+ * and ends, and 14 is committed; 15 is not given back during the batch:
+ * commit() after it gives 15 back ([15, 16)) and skips no other number.
+ * Before the fix: no commit ran and no number was skipped during the
+ * batch; commit() after it committed 11, 13 and 14, skipped 12 and gave
+ * 15 back. */
+TEST_CASE("Proposal order: the numbers a slot did not use are skipped when a "
+          "later evaluation of its batch is committed and given back at the "
+          "end of the batch", "[HPO][proposal_order][eval_batch]")
+{
+    using tadah::hpo::EvalBatch;
+    EvalBatch batch("a test batch", {2, 1, 2});
+    CountingNumbers src;
+    src.next = 11;
+    std::vector<std::size_t> committed;
+    {
+        EvalBatch::Slot slot(batch, 0);
+        CHECK(evaluate_in(batch, src, committed) == 11);
+        CHECK(committed == std::vector<std::size_t>{11});
+    }
+    CHECK(src.skipped.empty());
+    {
+        EvalBatch::Slot slot(batch, 1);
+        CHECK(evaluate_in(batch, src, committed) == 13);
+        CHECK(src.skipped == std::vector<std::size_t>{12});
+        CHECK(committed == std::vector<std::size_t>{11, 13});
+    }
+    {
+        EvalBatch::Slot slot(batch, 2);
+        CHECK(evaluate_in(batch, src, committed) == 14);
+    }
+    CHECK(committed == std::vector<std::size_t>{11, 13, 14});
+    CHECK(src.given_back.empty());
+    CHECK(batch.commit() == nullptr);
+    CHECK(committed == std::vector<std::size_t>{11, 13, 14});
+    CHECK(src.skipped == std::vector<std::size_t>{12});
+    CHECK(src.given_back ==
+          std::vector<std::pair<std::size_t, std::size_t>>{{15, 16}});
+    CHECK(src.next == 15);
+}
+
+/* Pins: a commit of a batch that throws does not hold back the commits
+ * after it, and the batch returns its exception after the batch (where
+ * the driver hands it on: the RESTART stop, a failure to save
+ * best_pot.tadah). A batch of two slots of one evaluation each (11, 12):
+ * the commit of 11 throws; slot 2 ending 12 commits 12 during the batch;
+ * commit() after it returns the exception of 11.
+ * Before the fix: 12 was committed by commit() after the batch only. */
+TEST_CASE("Proposal order: a commit that throws does not hold back the later "
+          "commits of its batch", "[HPO][proposal_order][eval_batch]")
+{
+    using tadah::hpo::EvalBatch;
+    EvalBatch batch("a test batch", {1, 1});
+    CountingNumbers src;
+    src.next = 11;
+    std::vector<std::size_t> committed;
+    {
+        EvalBatch::Slot slot(batch, 0);
+        const std::size_t n = EvalBatch::take_number(src);
+        CHECK(n == 11);
+        batch.park(n, [] { throw std::runtime_error("commit of 11"); });
+    }
+    {
+        EvalBatch::Slot slot(batch, 1);
+        CHECK(evaluate_in(batch, src, committed) == 12);
+        CHECK(committed == std::vector<std::size_t>{12});
+    }
+    const std::exception_ptr e = batch.commit();
+    REQUIRE(e != nullptr);
+    CHECK_THROWS_WITH(std::rethrow_exception(e), "commit of 11");
+    CHECK(committed == std::vector<std::size_t>{12});
+}
+
+/* Pins: the rows of an epoch are written as its evaluations end, once
+ * every lower-numbered evaluation of the epoch has ended, not when the
+ * epoch ends. ANNEAL_PT (SEED 1, REPLICAS 4, STEP_MODE FIXED: one
+ * evaluation per replica and epoch, MAXEVAL 12, QFLUSH 1) at THREADS 2,
+ * whose fourth replica holds its evaluation of epoch 1 (evaluation 8)
+ * back, before it reaches the host, until loss.tadah has the rows of
+ * evaluations 5, 6 and 7, those of the first three replicas, and
+ * params.tadah the row of 7 (at most 10 s). They are written while it
+ * waits, and so are the row of the new best that evaluation 5 is
+ * (best_params.tadah, EVAL 5) and best_pot.tadah, whose header names
+ * HPO_SOURCE_EVAL 5. The run writes the same files as at THREADS 1, with
+ * the rows 1 to 12.
+ * Before the fix: the rows of an epoch were written once its last
+ * evaluation had ended, so the wait ran out after 10 s without the rows
+ * 5 to 7, the best_params.tadah row of evaluation 5 or a best_pot.tadah
+ * that names it. */
+TEST_CASE("Proposal order: the rows of an ANNEAL_PT epoch are written while a "
+          "later replica of the epoch has not ended",
+          "[HPO][proposal_order][anneal_pt][stream]")
+{
+    const std::string fixed = "    PARAM STEP_MODE FIXED\n";
+    const std::string tail = target_tail() + "QFLUSH 1\n";
+    struct Seen {
+        std::atomic<bool> rows{false};
+        std::atomic<bool> best{false};
+    };
+    const auto seen = std::make_shared<Seen>();
+    RunOptions opt;
+    opt.before = [seen](std::size_t slot, std::size_t n) {
+        if (slot != 3 || n != 2) return;
+        seen->rows = within(10, [] {
+            return has_row("loss.tadah", 5) && has_row("loss.tadah", 6) &&
+                   has_row("loss.tadah", 7) && has_row("params.tadah", 7);
+        });
+        seen->best = has_line("best_params.tadah", 1, "5") &&
+                     count_of(read_file("best_pot.tadah"),
+                              "# HPO_SOURCE_EVAL 5\n") == 1;
+    };
+    const RunFiles held =
+        run_on_ta(pt_target(2, fixed, 12, tail), Driver::PT, opt);
+    const RunFiles one =
+        run_on_ta(pt_target(1, fixed, 12, tail), Driver::PT, {});
+    INFO("journal:\n" << held.journal);
+    CHECK(seen->rows.load());
+    CHECK(seen->best.load());
+    CHECK(iterations(held.files.at("loss.tadah")) == numbers_to(12));
+    check_same_files(held, one);
+}
+
+/* Pins: the rows of a batch appear one by one as its evaluations end in
+ * number order. ANNEAL_PT (SEED 1, REPLICAS 4, STEP_MODE FIXED, MAXEVAL 12,
+ * QFLUSH 1) at THREADS 4, one worker per replica: every evaluation but the
+ * first waits, before it reaches the host, until loss.tadah has the row of
+ * the evaluation numbered one below it (at most 10 s each) -- the
+ * replicas' starting points 2 to 4, epoch 1 (5 to 8) and epoch 2 (9 to
+ * 12), whose evaluation k (from 1) is replica ((k - 1) mod 4) + 1's. No
+ * wait runs out, and the run writes the same files as at THREADS 1.
+ * Before the fix: no row of a batch was written before its last
+ * evaluation had ended, so the waits for the rows 2, 3, 5, 6, 7, 9, 10
+ * and 11 ran out (those for 1, 4 and 8, each the last evaluation before a
+ * batch, did not). */
+TEST_CASE("Proposal order: rows appear one by one when each evaluation of a "
+          "batch waits for the row of the one before it",
+          "[HPO][proposal_order][anneal_pt][stream]")
+{
+    const std::string fixed = "    PARAM STEP_MODE FIXED\n";
+    const std::string tail = target_tail() + "QFLUSH 1\n";
+    struct Missed {
+        std::mutex m;
+        std::vector<std::size_t> rows;
+    };
+    const auto missed = std::make_shared<Missed>();
+    RunOptions opt;
+    opt.before = [missed](std::size_t slot, std::size_t n) {
+        const std::size_t number = 4 * (n - 1) + 1 + slot;
+        if (number == 1) return;
+        if (within(10, [number] { return has_row("loss.tadah", number - 1); }))
+            return;
+        std::lock_guard<std::mutex> lk(missed->m);
+        missed->rows.push_back(number - 1);
+    };
+    const RunFiles chained =
+        run_on_ta(pt_target(4, fixed, 12, tail), Driver::PT, opt);
+    const RunFiles one =
+        run_on_ta(pt_target(1, fixed, 12, tail), Driver::PT, {});
+    INFO("journal:\n" << chained.journal);
+    std::sort(missed->rows.begin(), missed->rows.end());
+    CHECK(missed->rows == std::vector<std::size_t>{});
+    const auto rows = data_rows(chained.files.at("params.tadah"));
+    REQUIRE(rows.size() == 12);
+    for (std::size_t i = 0; i < rows.size(); ++i) {
+        CHECK(rows[i].at(0) == std::to_string(i + 1));
+        CHECK(rows[i].at(1) == std::to_string(i % 4 + 1));
+    }
+    check_same_files(chained, one);
+}
+
+/* Pins: at a stop during a batch, the rows of the evaluations of the
+ * batch below the first one that has not ended are already written. The
+ * run of "a stop during a batch keeps the evaluations that finished at
+ * their numbers" with QFLUSH 1: when the evaluation of slot 3 (1-based)
+ * in epoch 2, number 11, throws core::ShutdownRequested, loss.tadah has
+ * the rows of 9 and 10 (slots 1 and 2; at most 10 s) and not that of 12,
+ * slot 4's, which has ended but follows 11. After the stop, loss.tadah
+ * has the rows 1 to 10 and 12, and the journal says "epoch 2 of
+ * TADAH:ANNEAL_PT: 1 of its 4 evaluations did not run; evaluation 11 has
+ * no row".
+ * Before the fix: the rows of epoch 2 were written after the batch: at
+ * the stop loss.tadah had neither the row of 9 nor that of 10 (the wait
+ * ran out after 10 s). */
+TEST_CASE("Proposal order: at a stop during a batch the rows of its "
+          "evaluations below the first unfinished one are written",
+          "[HPO][proposal_order][anneal_pt][stream]")
+{
+    struct AtStop {
+        std::atomic<bool> prefix{false};
+        std::atomic<bool> row12{true};
+    };
+    const auto at_stop = std::make_shared<AtStop>();
+    const auto slot4_done = std::make_shared<std::atomic<bool>>(false);
+    RunOptions opt;
+    opt.delay_ms = {150, 0, 0, 0};
+    opt.after = [slot4_done](std::size_t slot, std::size_t n) {
+        if (slot == 3 && n == 3) slot4_done->store(true);
+    };
+    opt.before = [slot4_done, at_stop](std::size_t slot, std::size_t n) {
+        if (slot != 2 || n != 3) return;
+        for (int i = 0; i < 60000 && !slot4_done->load(); ++i)
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        at_stop->prefix = within(10, [] {
+            return has_row("loss.tadah", 9) && has_row("loss.tadah", 10);
+        });
+        at_stop->row12 = has_row("loss.tadah", 12);
+        throw tadah::core::ShutdownRequested{};
+    };
+    const RunFiles r = run_on_ta(
+        pt_target(2, "    PARAM STEP_MODE FIXED\n", 40,
+                  target_tail() + "QFLUSH 1\n"),
+        Driver::PT, opt);
+    INFO("journal:\n" << r.journal);
+    CHECK(r.shut_down);
+    CHECK(at_stop->prefix.load());
+    CHECK_FALSE(at_stop->row12.load());
+    CHECK(iterations(r.files.at("loss.tadah")) == numbers_to(12, {11}));
+    CHECK(count_of(r.journal,
+                   "epoch 2 of TADAH:ANNEAL_PT: 1 of its 4 evaluations did "
+                   "not run; evaluation 11 has no row\n") == 1);
 }
