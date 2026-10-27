@@ -5690,7 +5690,7 @@ error = "OPTIM OALGO (2): the box [0.001, 2] is not inside (0, 1), but the secon
 id = "RULE.fit_OALGO3_intercepts"
 title = "OALGO 3 fits an intercept column with LAMBDA 0"
 check = "startup"
-msg = "OALGO=3 (SVD with uniform ridge) does not support intercept exclusion from regularisation. The model has {count} intercept column(s) (BIAS=true with ATOM) and LAMBDA != 0: use OALGO=1, 2 or 4 instead."
+msg = "OALGO=3 (SVD with uniform ridge) does not support intercept exclusion from regularisation. The model has {count} intercept column(s) (BIAS=true with ATOM) and LAMBDA != 0; OALGO 1, 2 or 4 fits such a model with LAMBDA != 0."
 doc = """\
 OALGO 3 penalises every weight alike, and a ridge penalty leaves the \
 intercept columns out (BIAS true), so a fit with an intercept column that \
@@ -5705,7 +5705,7 @@ check = "startup"
 context = "lines_oalgo3_bias"
 at = "none"
 text = "PC_EMAE 5 1"
-error = "OALGO=3 (SVD with uniform ridge) does not support intercept exclusion from regularisation. The model has 1 intercept column(s) (BIAS=true with ATOM) and LAMBDA != 0: use OALGO=1, 2 or 4 instead."
+error = "OALGO=3 (SVD with uniform ridge) does not support intercept exclusion from regularisation. The model has 1 intercept column(s) (BIAS=true with ATOM) and LAMBDA != 0; OALGO 1, 2 or 4 fits such a model with LAMBDA != 0."
 
 [[rule]]
 id = "RULE.fit_OALGO3_intercepts_evidence"

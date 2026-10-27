@@ -200,8 +200,9 @@ TEST_CASE_METHOD(PTFixture,
    *  - RHOFORM MONOTONE with the defaulted basis is refused before any
    *    fitting, naming it as the compact default ("RHOFORM MONOTONE is not
    *    defined for REFIT_BASIS Knot5 (the REFIT_MODE compact default, a
-   *    one-sided knot family): use a bump basis (Blip, Blip5) or RHOFORM
-   *    NONNEG"), and with a chosen Knot3 as "REFIT_BASIS Knot3 (the
+   *    one-sided knot family): RHOFORM MONOTONE fits with a bump basis
+   *    (Blip, Blip5), and a knot basis with RHOFORM NONNEG"), and with a
+   *    chosen Knot3 as "REFIT_BASIS Knot3 (the
    *    one-sided knot family)"; nothing is written;
    *  - RHOFORM NONNEG with a chosen Knot5 logs the convex-lock HINT ("HINT:
    *    RHOFORM NONNEG with REFIT_BASIS Knot5: a knot density with every
@@ -209,13 +210,17 @@ TEST_CASE_METHOD(PTFixture,
    *    default's WARNING, and the compact fit writes a NONNEG potential;
    *  - RHOFORM NONNEG with the defaulted Knot5 logs the WARNING naming
    *    REFIT_BASIS Blip5 ("tadah refit: RHOFORM NONNEG with the REFIT_MODE
-   *    compact default basis Knot5: ... Set REFIT_BASIS Blip5 (a
-   *    non-negative bump density without the convex lock), or use RHOFORM
-   *    SIGNED."), not the HINT, and the compact fit writes a NONNEG
-   *    potential.
+   *    compact default basis Knot5: ... (such as near the core) ...
+   *    REFIT_BASIS Blip5 (a non-negative bump density without the convex
+   *    lock) or RHOFORM SIGNED lifts the lock."), not the HINT, and the
+   *    compact fit writes a NONNEG potential.
    * Before the fix: passes as well (a pin: these cases ran in MLIP's
    * RefitEngine tests, which has no compact fitter, through the fallback
-   * to the dense fit that REFIT_MODE compact's refusal replaced there). */
+   * to the dense fit that REFIT_MODE compact's refusal replaced there).
+   * Before the fix of their wording the refusal ended "...: use a bump
+   * basis (Blip, Blip5) or RHOFORM NONNEG (...)." and the WARNING "(e.g.
+   * near the core) ... Set REFIT_BASIS Blip5 (...), or use RHOFORM
+   * SIGNED.", instructions. */
   SECTION("MONOTONE: the knot families are refused, a defaulted one as the "
           "compact default") {
     for (const bool defaulted : {false, true}) {
@@ -226,10 +231,13 @@ TEST_CASE_METHOD(PTFixture,
       c.remove("REFIT_BASIS");
       if (defaulted) c.remove("REFIT_MODE");
       const auto [what, logged] = run_compact(c);
-      CHECK(what.find("RHOFORM MONOTONE is not defined for REFIT_BASIS Knot5 "
-                      "(the REFIT_MODE compact default, a one-sided knot "
-                      "family): use a bump basis (Blip, Blip5) or RHOFORM "
-                      "NONNEG") != std::string::npos);
+      CHECK(what ==
+            "tadah refit: RHOFORM MONOTONE is not defined for REFIT_BASIS "
+            "Knot5 (the REFIT_MODE compact default, a one-sided knot "
+            "family): RHOFORM MONOTONE fits with a bump basis (Blip, Blip5), "
+            "and a knot basis with RHOFORM NONNEG (a non-negative knot "
+            "density is already non-increasing with a non-increasing "
+            "cutoff).");
       CHECK_FALSE(fs::exists("pot.tadah"));
       CHECK_FALSE(fs::exists("refit_opt.log"));
     }
@@ -275,8 +283,11 @@ TEST_CASE_METHOD(PTFixture,
                         "REFIT_MODE compact default basis Knot5: a knot "
                         "density with every amplitude >= 0 is non-increasing "
                         "and convex") != std::string::npos);
-      CHECK(logged.find("Set REFIT_BASIS Blip5 (a non-negative bump density "
-                        "without the convex lock), or use RHOFORM SIGNED.") !=
+      CHECK(logged.find("so a table whose density is concave anywhere in "
+                        "the fit window (such as near the core) is fitted "
+                        "poorly and the self-test can fail. REFIT_BASIS "
+                        "Blip5 (a non-negative bump density without the "
+                        "convex lock) or RHOFORM SIGNED lifts the lock.") !=
             std::string::npos);
       CHECK(logged.find("HINT: RHOFORM NONNEG") == std::string::npos);
       CHECK(slurp("refit_opt.log").find("basis=Knot5") != std::string::npos);

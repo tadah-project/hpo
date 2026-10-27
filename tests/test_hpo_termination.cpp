@@ -9794,8 +9794,9 @@ TEST_CASE("PRESTAGE: an exploration whose every candidate the bump gate "
  * ("startup: ..."), and nothing is evaluated (no loss.tadah):
  *   - no provenance (a context a program built) and a -c run of a
  *     configuration file (the provenance of `tadah hpo -c config.tadah`):
- *     "tadah hpo: no HPOTARGET: name the hpotarget file with --hpotarget,
- *     or with an HPOTARGET line in a configuration file without WEIGHTS.";
+ *     "tadah hpo: no HPOTARGET: the target file is given with --hpotarget,
+ *     or with an HPOTARGET line in a configuration file without WEIGHTS.",
+ *     the words of tadah analysis check_bounds;
  *   - the -c run of old.tadah, a potential whose HPOTARGET line the parse
  *     did not read (a best_pot.tadah of an earlier version has one; the CLI
  *     requires --hpotarget there, a program can build the run): the first
@@ -9807,15 +9808,23 @@ TEST_CASE("PRESTAGE: an exploration whose every candidate the bump gate "
  * whose line was not read: the message checks fail. Before the HPOTARGET
  * check: Context::get threw "Key not found in the Context object:
  * HPOTARGET". (A pin: these legs pass before the removal of the task
- * files as well.) */
+ * files as well.)
+ * Before the fix that states the refusal in the impersonal voice: it read
+ * "tadah hpo: no HPOTARGET: name the hpotarget file with --hpotarget, or with
+ * an HPOTARGET line in a configuration file without WEIGHTS.": the checks of
+ * the refusal fail.
+ * Before the fix that names the target file as tadah analysis check_bounds
+ * does: it read "tadah hpo: no HPOTARGET: the hpotarget file is given with
+ * --hpotarget, ...": the checks of the refusal fail. */
 TEST_CASE("hpo_run without HPOTARGET is refused, naming where the run's own "
           "goes",
           "[hpo][startup][run_settings]")
 {
     using tadah::mlip::KeyProvenance;
     const std::string none_given =
-        "tadah hpo: no HPOTARGET: name the hpotarget file with --hpotarget, "
-        "or with an HPOTARGET line in a configuration file without WEIGHTS.";
+        "tadah hpo: no HPOTARGET: the target file is given with "
+        "--hpotarget, or with an HPOTARGET line in a configuration file "
+        "without WEIGHTS.";
     const std::string not_read =
         " old.tadah is a potential (it has WEIGHTS): its HPOTARGET config.hpo "
         "line was a setting of the run that wrote it and is not read.";

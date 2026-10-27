@@ -1482,6 +1482,6 @@ TEST_CASE("hpo --check: the critical-OPTIM audit judges a joined line by "
     const std::string fixed =
         " is a critical parameter that the seed fixes and no OPTIM line "
         "searches";
-    CHECK(contains(out, "D2_BP.RCUT2B — RCUT2B(2)" + fixed));
+    CHECK(contains(out, "D2_BP.RCUT2B: RCUT2B(2)" + fixed));
     CHECK_FALSE(contains(out, "RCUT2B(1)" + fixed));
 }
