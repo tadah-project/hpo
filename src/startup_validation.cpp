@@ -968,8 +968,8 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
      * and the default is the largest double), and the four bands are
      * ordered for each one (graded_failscore_is_ordered): the default
      * too, whose graded failures every optimiser takes, except ASA:ASA,
-     * which refuses a FAILSCORE above its largest valid cost
-     * (validate_asa_spec). */
+     * which refuses a FAILSCORE whose largest graded failure reaches its
+     * largest valid cost (validate_asa_spec). */
     if (!graded_failscore_is_ordered(trg.FAIL_SCORE))
       throw std::runtime_error(
           "FAILSCORE_GRADING ON requires a FAILSCORE large enough to "

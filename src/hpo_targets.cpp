@@ -3464,11 +3464,15 @@ void HPOTargets::bind_space_recursive() {
 
 void HPOTargets::set_failscore_grading(bool on) {
   FAILSCORE_GRADING = on;
-  spec.failscore_grading = on;
+  const auto set = [on](OptimizerSpec& sp) {
+    sp.failscore_grading = on;
+    sp.failscore_grading_by_env = true;
+  };
+  set(spec);
   for (OptimizerSpec* sub : {spec.inner.get(), spec.prestage.get()}) {
     if (!sub) continue;
-    sub->failscore_grading = on;
-    if (sub->inner) sub->inner->failscore_grading = on;
+    set(*sub);
+    if (sub->inner) set(*sub->inner);
   }
 }
 

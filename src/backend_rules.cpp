@@ -546,8 +546,13 @@ void validate_asa_spec(const OptimizerSpec& sp)
         /* The limit is 1e18 rounded down to a double; FAILSCORE 1e18 keeps
          * the largest graded failure below it. */
         const std::string cap = core::format_sig(limit, 6);
+        /* The variable may set ON over a file that says OFF: named. */
+        const std::string mode =
+            sp.failscore_grading_by_env
+                ? "FAILSCORE_GRADING ON, set by TADAH_FAILSCORE_GRADING,"
+                : "FAILSCORE_GRADING ON";
         throw std::runtime_error(
-            "ASA:ASA: under FAILSCORE_GRADING ON a failed evaluation scores "
+            "ASA:ASA: under " + mode + " a failed evaluation scores "
             "from 0.999 FAILSCORE to below FAILSCORE (" + value + "), and "
             "ASA:ASA takes a cost of about " + cap + " or more for "
             "an invalid state and draws another, so it would not see the "

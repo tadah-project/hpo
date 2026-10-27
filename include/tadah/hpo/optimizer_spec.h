@@ -284,6 +284,7 @@ struct OptimizerSpec {
           optim_init_origin(o.optim_init_origin),
           failscore(o.failscore),
           failscore_grading(o.failscore_grading),
+          failscore_grading_by_env(o.failscore_grading_by_env),
           init_strategy_spec(o.init_strategy_spec),
           noise(o.noise),
           multistart(o.multistart),
@@ -431,6 +432,11 @@ struct OptimizerSpec {
      * grading a failed loss at the point fails the gradient
      * (gradient_provider.h). false in bare specs built outside HPOTargets. */
     bool failscore_grading = false;
+    /* Whether TADAH_FAILSCORE_GRADING set failscore_grading (the override
+     * of hpo_run, HPOTargets::set_failscore_grading): a refusal of the mode
+     * names the variable, as the target file may say otherwise
+     * (validate_asa_spec). */
+    bool failscore_grading_by_env = false;
 
     /* -------- top-level OPTIMIZER blocks (parsed children) -------- */
     InitStrategySpec init_strategy_spec;    // INIT/ENDINIT block

@@ -421,9 +421,10 @@ public:
     bool FAILSCORE_GRADING = false;
     /* Sets FAILSCORE_GRADING (the TADAH_FAILSCORE_GRADING override of
      * hpo_run) and its copy in the outer spec, its INNER block, the
-     * PRESTAGE exploration and that one's INNER block; the specs copied
-     * from them later (MULTISTART starts, the PRESTAGE refinement, RESTART
-     * rounds) keep it. */
+     * PRESTAGE exploration and that one's INNER block, each marked as set
+     * by the variable (OptimizerSpec::failscore_grading_by_env); the specs
+     * copied from them later (MULTISTART starts, the PRESTAGE refinement,
+     * RESTART rounds) keep both. */
     void set_failscore_grading(bool on);
 
     /* BUMPGATE CANDIDATE|STRICT: how the bump-support invariant
