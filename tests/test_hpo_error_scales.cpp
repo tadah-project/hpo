@@ -674,6 +674,61 @@ TEST_CASE("tadah hpo refuses a configuration with retired keys when it "
     }
 }
 
+/* Pins: a training configuration with a line that changes nothing a fit
+ * gives (MODELS inert_keys.h: here the deprecated MBLOCK 64) is refused
+ * when tadah hpo starts, by the run and by --check, naming the line
+ * ("MBLOCK 64 (line 18 of outer.train)"); with a retired key as well
+ * (EWEIGHT 1.0 on line 18, MBLOCK 64 on line 19) one refusal names both:
+ * the retired key's with its conversion, then "The configuration also has a
+ * line that changes nothing a fit gives ...: MBLOCK 64 (line 19 of
+ * outer.train)". The run writes no evaluation.
+ * Before the fix: the refusal of a configuration with a retired key named
+ * the retired key only (core::require_no_retired_keys at the start), and
+ * MBLOCK, until a fit refused it too, gave a WARNING and the run went on. */
+TEST_CASE("tadah hpo refuses a configuration with a line that changes "
+          "nothing a fit gives when it starts, with its retired keys",
+          "[HPO][error_scales][retired][inert]") {
+    ScratchDir sd;
+    auto parse = [](const std::string& extra) {
+        {
+            std::ofstream outer("outer.train");
+            for (const std::string& l : kModelLines) outer << l << "\n";
+            outer << extra;
+        }
+        tadah::core::IgnoredKeyNoticeCapture quiet;
+        return tadah::core::CoreUserConfigParser().parse("outer.train");
+    };
+    for (const bool check : {true, false}) {
+        DYNAMIC_SECTION((check ? "--check" : "the run")) {
+            {
+                const Context c = parse("MBLOCK 64\n");
+                const std::string err = run_error(c, target(), check);
+                INFO(err);
+                CHECK_THAT(err,
+                           Contains("tadah hpo: the configuration has a line "
+                                    "that changes nothing a fit gives") &&
+                               Contains("MBLOCK 64 (line 18 of "
+                                        "outer.train)"));
+            }
+            {
+                const Context c = parse("EWEIGHT 1.0\nMBLOCK 64\n");
+                const std::string err = run_error(c, target(), check);
+                INFO(err);
+                CHECK_THAT(err,
+                           Contains("tadah hpo: the configuration has a "
+                                    "key retired in Tadah! 1.6.0") &&
+                               Contains("EWEIGHT 1.0 (line 18 of "
+                                        "outer.train)") &&
+                               Contains("The configuration also has a line "
+                                        "that changes nothing a fit gives") &&
+                               Contains("MBLOCK 64 (line 19 of "
+                                        "outer.train)"));
+            }
+            CHECK(read_file("loss.tadah").find("\n1 ") == std::string::npos);
+        }
+    }
+}
+
 /* Pins: the validation configuration refuses at its line ESIGMA, FSIGMA,
  * SSIGMA, ENORM and ENERGY (they set the fit, and the validation set is not
  * fitted) and each retired key, with its conversion.

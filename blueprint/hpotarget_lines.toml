@@ -5034,6 +5034,35 @@ ENDOPTIMIZER'''
 error = "OPTIM RCUT2B (1) is not a valid search target: D2_EAM takes the cutoff 5 of its setfl file 'lines_ta.eam.alloy' (SETFL) and refuses another value, so every candidate but the value of the training configuration would fail."
 
 [[rule]]
+id = "RULE.OPTIM_unread_watom"
+title = "OPTIM does not search a WATOM that no descriptor reads"
+check = "startup"
+keys = ["ROOT.OPTIM"]
+msg = "OPTIM WATOM (line {line} of the target file) is not a valid search target: no descriptor of the training configuration reads WATOM (D2_EAM, DM_EAM, D2_Dummy and DM_Dummy read none), and a fit refuses a WATOM other than 1 that no descriptor reads, so every candidate other than 1 would fail its evaluation."
+doc = """\
+OPTIM does not search WATOM when no descriptor of the training \
+configuration reads it (D2_EAM and DM_EAM take their pair and density \
+functions from the setfl file, SETFL, unweighted, and the dummies \
+D2_Dummy and DM_Dummy read none), as a fit refuses a WATOM other than 1 \
+that no descriptor reads. The refusal comes at startup."""
+msg_doc = "The message names the OPTIM WATOM line of the target file and the descriptors that read no WATOM."
+
+[[rule.invalid]]
+wrap = "none"
+check = "startup"
+context = "lines_setfl"
+at = "none"
+text = '''
+OPTIM WATOM (1) 0.5 2.0
+PC_ERMSE 0 1
+OPTIMIZER
+LIB NLOPT
+ALGO LN_SBPLX
+MAXEVAL 10
+ENDOPTIMIZER'''
+error = "OPTIM WATOM (line 1 of the target file) is not a valid search target: no descriptor of the training configuration reads WATOM (D2_EAM, DM_EAM, D2_Dummy and DM_Dummy read none), and a fit refuses a WATOM other than 1 that no descriptor reads, so every candidate other than 1 would fail its evaluation."
+
+[[rule]]
 id = "RULE.settings_taken_by_lines"
 title = "FAILSCORE, LOSS and PC_SCRIPT_TIMEOUT repeat after a line that reads them"
 check = "parse"
