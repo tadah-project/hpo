@@ -31,7 +31,10 @@
  *     back to the host, when the host has reserved no number after them;
  *     the result files go on past any other (Numbers::skip). The journal
  *     says how many evaluations of the batch did not run, and which numbers
- *     have no row.
+ *     have no row, without a cause, which the batch does not know (a
+ *     signal, or a slot that reached STOPVAL and ended its own sequence
+ *     while the search goes on to the end of the batch): the line of the
+ *     run's stop gives it.
  *
  * A worker marks the evaluations of its slot with an EvalBatch::Slot for
  * as long as the slot's task runs; HPO_Host::operator() finds the batch of
@@ -234,7 +237,7 @@ private:
         std::string line = what_ + ": " + std::to_string(not_run) +
                            " of its " + std::to_string(total_) +
                            (total_ == 1 ? " evaluation" : " evaluations") +
-                           " did not run (the search stopped during it)";
+                           " did not run";
         if (!gaps.empty())
             line += "; " + numbers_text(gaps) +
                     (gaps.size() == 1 ? " has no row" : " have no rows");

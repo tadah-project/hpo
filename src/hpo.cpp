@@ -557,7 +557,8 @@ int hpo_run_from_startup(core::Context& ctx, HPOLog& log,
     /* Its training_record (the comment block of every potential file the
      * run writes) is taken from ctx before anything inserts a default; the
      * provenance leaves out the blueprint defaults no one wrote. */
-    HPOTargets trg(ctx, ctx.get<std::string>("HPOTARGET"), provenance);
+    HPOTargets trg(ctx, ctx.get<std::string>("HPOTARGET"), provenance,
+                   check ? TargetsPurpose::Check : TargetsPurpose::Run);
     /* The search-space files the run writes (they depend on the target
      * file): an existing one the run cannot write stops it here, before
      * any data is loaded, as it stops a check. */

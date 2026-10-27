@@ -1046,7 +1046,7 @@ void coordinate_warmup(
   call.finish();
 }
 
-/* The full-vector pilot of one slot, one evaluation at a time, as
+/* The whole-vector pilot of one slot, one evaluation at a time, as
  * CoordinateWarmup is the coordinate warm-up: the constructor is the
  * entry of a call of full_vector_pilot(), prepare() says whether the next
  * step evaluates (false ends the call: the pilot is finished, or the
@@ -1321,7 +1321,7 @@ private:
   std::size_t proposed_at_entry = 0;
 };
 
-/* One call of the full-vector pilot of a slot, at most `allowance`
+/* One call of the whole-vector pilot of a slot, at most `allowance`
  * evaluations (FullVectorPilot, run to its end). */
 template<class Vec, class HostT>
 void full_vector_pilot(anneal::ChainState<Vec>& c, double T,
@@ -2352,9 +2352,9 @@ template<typename Vec, typename HostT>
               calls[li].emplace(chains[li], T[k], sp, kb, ctx,
                                 pilot_allowance[k], step_calibration[li]);
             }
-            run_rounds(calls, "full-vector pilot");
+            run_rounds(calls, "whole-vector pilot");
           }
-          rethrow_pool_error("automatic full-vector pilot");
+          rethrow_pool_error("automatic whole-vector pilot");
           warmup_code = phase_stop_code();
           after_pilot = world > 1
               ? hpo_allreduce_sum(budget.spent()) : budget.spent();
@@ -2749,7 +2749,7 @@ template<typename Vec, typename HostT>
               "scales: " + std::to_string(unexplained_dimensions) +
               " coordinate(s) missed for no known reason and " +
               std::to_string(unresolved_pilots) +
-              " full-vector pilot(s) did not converge; hpo_step_scales.tsv "
+              " whole-vector pilot(s) did not converge; hpo_step_scales.tsv "
               "has the calibration of each coordinate");
         }
         if (warmup_code == 0 &&

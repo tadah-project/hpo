@@ -282,8 +282,10 @@ void HPOTargets::Opti::resize(size_t s) {
 }
 
 HPOTargets::HPOTargets(core::Context &c, std::string fn,
-                       const mlip::KeyProvenance *provenance)
+                       const mlip::KeyProvenance *provenance,
+                       TargetsPurpose purpose)
     : context(c) {
+  const bool check = purpose == TargetsPurpose::Check;
   models::resolve_embed_blocks(context);
   /* The training record of the potential files, taken before anything
    * below can insert a default into the context. */
@@ -487,8 +489,9 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn,
     /* A chain that draws its points without a SEED draws them with a seed
      * the run draws once, kept as the block's SEED (and so, for NLopt
      * without a SEED of its own, nlopt_seed_from_init, NLopt's) and named
-     * with the SEED line that draws the same points again. A chain of
-     * CONFIG and WARM points draws nothing and takes none. */
+     * with the SEED line that draws the same points again; a check says
+     * that a run draws one, without the number (TargetsPurpose). A chain
+     * of CONFIG and WARM points draws nothing and takes none. */
     std::uint64_t seed = s.init_strategy_spec.seed.value_or(0);
     if (!s.init_strategy_spec.seed &&
         chain_draws_from_seed(s.init_strategy_spec)) {
@@ -496,17 +499,26 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn,
       s.init_strategy_spec.seed = seed;
       s.init_strategy_spec.seed_drawn = true;
       const std::string n = std::to_string(seed);
+      const bool nlopt_takes_it = s.lib == "NLOPT" && !s.seed && reads_seed(s);
+      const std::string nlopt_note =
+          nlopt_takes_it ? s.lib + ":" + s.algo + ", without a SEED of its "
+                           "own, takes its random numbers from the same seed"
+                         : std::string();
       std::ostringstream oss;
       oss << "the INIT block";
       if (s.init_strategy_spec.line > 0)
         oss << " on line " << s.init_strategy_spec.line;
-      oss << " has no SEED, so its starting points are drawn with a seed "
-             "drawn once for the run, " << n << " (SEED " << n
-          << " in the INIT block draws the same points again";
-      if (s.lib == "NLOPT" && !s.seed && reads_seed(s))
-        oss << "; " << s.lib << ":" << s.algo << ", without a SEED of its "
-               "own, takes its random numbers from the same seed";
-      oss << ")";
+      if (check) {
+        oss << " has no SEED, so a run draws a seed for its starting points "
+               "once and names it";
+        if (nlopt_takes_it) oss << " (" << nlopt_note << ")";
+      } else {
+        oss << " has no SEED, so its starting points are drawn with a seed "
+               "drawn once for the run, " << n << " (SEED " << n
+            << " in the INIT block draws the same points again";
+        if (nlopt_takes_it) oss << "; " << nlopt_note;
+        oss << ")";
+      }
       std::cout << "[HPO] " << oss.str() << "\n";
       HPOLog::instance().info(oss.str());
     }
@@ -559,8 +571,9 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn,
    * optimiser's ALGO line, where its SEED goes: the STRATEGY-level
    * optimiser's keys may be written in OPTIMIZER, STRATEGY or REFINE, and
    * a file may have no STRATEGY block; a parsed spec has an ALGO line (the
-   * parser refuses a block without one). */
-  const auto draw_optimiser_seed = [](OptimizerSpec& s) {
+   * parser refuses a block without one). A check says that a run draws a
+   * seed, without the number (TargetsPurpose). */
+  const auto draw_optimiser_seed = [check](OptimizerSpec& s) {
     if (s.seed || s.nlopt_seed_from_init() || !reads_seed(s))
       return;
     const std::string& block = s.key_lines.at("ALGO").block;
@@ -568,11 +581,14 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn,
     s.seed = seed;
     s.seed_drawn = true;
     const std::string n = std::to_string(seed);
+    const std::string head = std::string("the ") + block +
+                             " block has no SEED, and " + s.lib + ":" +
+                             s.algo + " draws random numbers, so ";
     const std::string msg =
-        std::string("the ") + block + " block has no SEED, and " + s.lib +
-        ":" + s.algo + " draws random numbers, so it draws them with a seed "
-        "drawn once for the run, " + n + " (SEED " + n + " in the " + block +
-        " block draws the same numbers again)";
+        check ? head + "a run draws a seed for them once and names it"
+              : head + "it draws them with a seed drawn once for the run, " +
+                    n + " (SEED " + n + " in the " + block +
+                    " block draws the same numbers again)";
     std::cout << "[HPO] " << msg << "\n";
     HPOLog::instance().info(msg);
   };
