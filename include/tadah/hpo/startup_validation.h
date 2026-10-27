@@ -86,7 +86,7 @@ std::set<core::Element> declared_element_set(const core::Context &train_ctx);
  *   - OPTIM of a retired key (with its conversion) and of ENORM or ENERGY
  *     (HPOTargets::optim_retired_key_error, optim_switch_key_error, also at
  *     their line);
- *   - OPTIM WEIGHTS is rejected (silent no-op: LS overwrites weights);
+ *   - OPTIM WEIGHTS is rejected (each evaluation fits the coefficients);
  *   - OPTIM EMBF0 is rejected (a discrete property of the potential), and
  *     a stored EMBF0 of a DM_REAM configuration must be ZERO or FREE;
  *   - OPTIM on structure data is rejected (RHOFORM, TYPE2B, TYPEMB,

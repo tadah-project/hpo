@@ -128,13 +128,15 @@ TEST_CASE("RHOFORM: OPTIM on structure keys is refused",
     const std::string e = targets_error(
         make_ream_ctx("SIGNED"),
         std::string("OPTIM ") + key + " (1) 0 1\nPC_ERMSE 0 1\n" + kOptimizer);
-    /* at its line, as every hpotarget error */
+    /* at its line, as every hpotarget error; the ending says what sets the
+     * value (before the fix: "; set it in the -c potential/configuration.") */
     std::string up(key);
     for (auto& ch : up) ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
     CHECK_THAT(e, Catch::StartsWith("Error on line 1: OPTIM " + up +
                                     " is not a valid search target") &&
                       Catch::Contains("structure data") &&
-                      Catch::Contains("-c potential/configuration"));
+                      Catch::Contains("; the training configuration sets "
+                                      "it."));
   }
   SECTION("refused before the key is looked up: nothing materialised") {
     Context ctx;
@@ -228,9 +230,12 @@ TEST_CASE("RHOFORM NONNEG/MONOTONE: non-negative AMPGRIDMB AUTO boxes",
     const std::string e = targets_error(
         make_ream_ctx("NONNEG", "0.0 0.3 0.1"),
         "OPTIM AMPGRIDMB (1) AUTO\nPC_ERMSE 0 1\n" + std::string(kOptimizer));
+    /* The hint is a statement. Before the fix: "set FLOOR <a> for the box
+     * [0, a]". */
     CHECK_THAT(e, Catch::Contains("every seed on this line is 0") &&
                       Catch::Contains("RHOFORM NONNEG") &&
-                      Catch::Contains("set FLOOR <a> for the box [0, a]"));
+                      Catch::Contains("AUTO FLOOR <a> with a > 0 gives the "
+                                      "box [0, a]"));
     /* FLOOR gives the absolute box [0, a] */
     const auto d = boxes("NONNEG", "0.0 0.3 0.1", "OPTIM AMPGRIDMB (1) AUTO FLOOR 0.2\n");
     CHECK(d[0].lo == 0.0);
@@ -261,7 +266,10 @@ TEST_CASE("RHOFORM NONNEG/MONOTONE: non-negative AMPGRIDMB AUTO boxes",
         make_ream_ctx("NONNEG"),
         "OPTIM AMPGRIDMB (2) AUTO FRAC 2 LOG\nPC_ERMSE 0 1\n" +
             std::string(kOptimizer));
-    CHECK_THAT(e, Catch::Contains("is not positive but the dim is tagged LOG"));
+    /* Before the fix: "AUTO box [0, 0.9] is not positive but the dim is
+     * tagged LOG; use RATIO (geometric) or drop the tag". */
+    CHECK_THAT(e, Catch::Contains("OPTIM AMPGRIDMB (2): the line is tagged "
+                                  "LOG, and the AUTO box [0, "));
   }
   SECTION("a negative seed is refused") {
     const std::string e = targets_error(

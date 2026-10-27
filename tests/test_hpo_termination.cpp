@@ -27,6 +27,10 @@
 #include "pc_process_workers.h"  // before catch2/catch.hpp
 #include "catch2/catch.hpp"
 
+#ifdef TADAH_ENABLE_OPENMP
+#include <omp.h>
+#endif
+
 #include <tadah/core/checkpoint.h>      // core::ShutdownRequested
 #include <tadah/core/context.h>
 #include <tadah/core/periodic_table.h>
@@ -784,14 +788,20 @@ TEST_CASE("Journal: without PC_LAMMPS lines the PC_ISOLATION line says "
     const std::string optimizer = plain_block(
         "    TYPE PLAIN\n    LIB TADAH\n    ALGO RANDOM\n    MAXEVAL 1\n"
         "    SEED 1\n");
+    /* The journal's line names the mode and then says what it does (it
+     * was "PC_ISOLATION: <mode> -- ..."); the echo of the target file has
+     * the key and its value alone. */
     const auto isolation_line = [](const std::string& journal) {
         std::istringstream in(journal);
         std::string found;
-        for (std::string l; std::getline(in, l);)
-            if (l.find("PC_ISOLATION:") != std::string::npos) {
+        for (std::string l; std::getline(in, l);) {
+            const auto p = l.find("PC_ISOLATION ");
+            if (p != std::string::npos &&
+                l.find(':', p) != std::string::npos) {
                 REQUIRE(found.empty());
                 found = l;
             }
+        }
         return found;
     };
 
@@ -801,24 +811,23 @@ TEST_CASE("Journal: without PC_LAMMPS lines the PC_ISOLATION line says "
         REQUIRE(tadah::hpo::hpo_run(run.ctx) == 0);
         const std::string line = isolation_line(read_file("hpo_run.log"));
         CHECK_THAT(line, Catch::EndsWith(
-            "PC_ISOLATION: PROCESS (default) -- no PC_LAMMPS sims are "
-            "configured, nothing to isolate"));
-        CHECK(line.find("requested") == std::string::npos);
+            "PC_ISOLATION PROCESS (the default): the target file has no "
+            "PC_LAMMPS or PC_FAILPROBE line, so no worker process starts"));
     }
     SECTION("PROCESS written in the configuration") {
         TaRun run(optimizer + "PC_ISOLATION PROCESS\n");
         REQUIRE(tadah::hpo::hpo_run(run.ctx) == 0);
         CHECK_THAT(isolation_line(read_file("hpo_run.log")), Catch::EndsWith(
-            "PC_ISOLATION: PROCESS requested but no PC_LAMMPS sims are "
-            "configured -- nothing to isolate"));
+            "PC_ISOLATION PROCESS: the target file has no PC_LAMMPS or "
+            "PC_FAILPROBE line, so no worker process starts"));
     }
     SECTION("PROCESS set by TADAH_PC_ISOLATION") {
         ::setenv("TADAH_PC_ISOLATION", "PROCESS", 1);
         TaRun run(optimizer);
         REQUIRE(tadah::hpo::hpo_run(run.ctx) == 0);
         CHECK_THAT(isolation_line(read_file("hpo_run.log")), Catch::EndsWith(
-            "PC_ISOLATION: PROCESS requested but no PC_LAMMPS sims are "
-            "configured -- nothing to isolate"));
+            "PC_ISOLATION PROCESS: the target file has no PC_LAMMPS or "
+            "PC_FAILPROBE line, so no worker process starts"));
     }
 #else
     /* The MPI build has no PROCESS pool (pc_worker_main refuses to start
@@ -834,8 +843,8 @@ TEST_CASE("Journal: without PC_LAMMPS lines the PC_ISOLATION line says "
         TaRun run(optimizer);
         REQUIRE(tadah::hpo::hpo_run(run.ctx) == 0);
         CHECK_THAT(isolation_line(read_file("hpo_run.log")), Catch::EndsWith(
-            "PC_ISOLATION: THREAD (MPI build -- the PROCESS worker pool is "
-            "serial-build only)"));
+            "PC_ISOLATION THREAD: the MPI build of tadah runs the scripts "
+            "inside the tadah process"));
     }
     SECTION("PROCESS written in the configuration is refused in the MPI "
             "build") {
@@ -848,6 +857,140 @@ TEST_CASE("Journal: without PC_LAMMPS lines the PC_ISOLATION line says "
         CHECK_THROWS_WITH(tadah::hpo::hpo_run(run.ctx), refusal);
     }
 #endif
+}
+
+/* Pins: the startup journal lines on OpenMP and on FAILSCORE_GRADING ON
+ * say what they set: "OpenMP: at most <n> threads (OMP_NUM_THREADS=<v>),
+ * for the OpenMP parts (neighbour lists, data statistics), not for the
+ * LAMMPS scripts", "OpenMP: OMP_WAIT_POLICY=<v>; it sets how the threads
+ * of the OpenMP parts wait between them (the workers of the evaluations
+ * wait without spinning); 'passive' suits a shared node" (in a build with
+ * OpenMP), and, under FAILSCORE_GRADING ON without a PC_FAILPROBE line,
+ * "FAILSCORE_GRADING ON: a failed evaluation scores from 0.999 FAILSCORE
+ * up to FAILSCORE, in four bands from the lowest: A, ...; no PC_FAILPROBE
+ * line: band C scores the top of its range, and band D is graded only for
+ * a --skip-above or --skip-rel cap and for BUMPGATE, RHOGATE and
+ * RHOBARGATE".
+ * Before the fix: "OpenMP: max threads = <n>  (OMP_NUM_THREADS=<v>);
+ * drives only the residual OpenMP kernels (NN lists, data-stats), NOT the
+ * pc_lammps fan-out", "...; affects only the residual OMP kernels now
+ * (pool idles on a futex); prefer 'passive' on shared nodes" and
+ * "FAILSCORE_GRADING: ON -- failed evals graded in [0.999*FS, FS), bands
+ * A-D (see docs); no PC_FAILPROBE (bands C/D constant)": the checks
+ * fail. */
+TEST_CASE("Journal: the OpenMP and FAILSCORE_GRADING lines say what they "
+          "set", "[HPO][journal][termination]")
+{
+    TaRun run(plain_block("    TYPE PLAIN\n    LIB TADAH\n    ALGO RANDOM\n"
+                          "    MAXEVAL 1\n    SEED 1\n"),
+              kRootLines + "FAILSCORE_GRADING ON\n");
+    REQUIRE(tadah::hpo::hpo_run(run.ctx) == 0);
+    const std::string journal = read_file("hpo_run.log");
+    INFO(journal);
+#ifdef TADAH_ENABLE_OPENMP
+    const auto openmp = lines_with(journal, "OpenMP: at most ");
+    REQUIRE(openmp.size() == 1u);
+    CHECK_THAT(openmp[0], Catch::EndsWith(
+        "), for the OpenMP parts (neighbour lists, data statistics), not for "
+        "the LAMMPS scripts"));
+    /* A count of 1 takes the singular (it was "at most 1 threads"). */
+    const int omp_max = omp_get_max_threads();
+    CHECK(openmp[0].find("OpenMP: at most " +
+                         (omp_max == 1 ? std::string("1 thread (")
+                                       : std::to_string(omp_max) +
+                                             " threads (")) !=
+          std::string::npos);
+    const auto wait = lines_with(journal, "OpenMP: OMP_WAIT_POLICY=");
+    REQUIRE(wait.size() == 1u);
+    CHECK_THAT(wait[0], Catch::EndsWith(
+        "; it sets how the threads of the OpenMP parts wait between them (the "
+        "workers of the evaluations wait without spinning); 'passive' suits a "
+        "shared node"));
+#endif
+    const auto grading = lines_with(
+        journal, "FAILSCORE_GRADING ON: a failed evaluation scores from 0.999 "
+                 "FAILSCORE up to FAILSCORE, in four bands from the lowest: "
+                 "A, a --hotvar value outside its range; B, a script or "
+                 "PC_OBSERVABLE term that failed; C, a simulation that did "
+                 "not finish; D, a potential rejected as unusable (by "
+                 "PC_FAILPROBE --gate, a --skip-above or --skip-rel cap, "
+                 "BUMPGATE, RHOGATE or RHOBARGATE, a refused fit, or a "
+                 "potential LAMMPS cannot build); ");
+    REQUIRE(grading.size() == 1u);
+    CHECK_THAT(grading[0], Catch::EndsWith(
+        "; no PC_FAILPROBE line: band C scores the top of its range, and band "
+        "D is graded only for a --skip-above or --skip-rel cap and for "
+        "BUMPGATE, RHOGATE and RHOBARGATE"));
+    /* Without THREADS one worker runs the evaluations, in the singular (it
+     * was "THREADS: 1 workers run the work of the evaluations"). */
+    CHECK(lines_with(journal, "THREADS: 1 worker runs the work of the "
+                              "evaluations").size() == 1u);
+}
+
+/* Pins: under FAILSCORE_GRADING ON with a PC_FAILPROBE line, the startup
+ * journal line ends with the probe's script and what its --outvar grades:
+ * "...; PC_FAILPROBE probe.in: its --outvar S grades band C and the band-D
+ * failures of --gate and of a potential LAMMPS cannot build (--gate 0.5)",
+ * and "(no --gate)" for a line without --gate. Each run stops when it
+ * loads its validation data (the validation configuration names a dataset
+ * that does not exist), after its startup lines: the case needs no
+ * evaluation.
+ * Before the fix: "FAILSCORE_GRADING: ON -- failed evals graded in
+ * [0.999*FS, FS), bands A-D (see docs); PC_FAILPROBE 'probe.in' S=S
+ * gate=0.500000" (and "gate=off" without --gate), which the case does not
+ * find; that probe note after the words of the fix fails the EndsWith
+ * check. */
+TEST_CASE("Journal: the FAILSCORE_GRADING ON line names the PC_FAILPROBE "
+          "line and what its value grades", "[HPO][journal][termination]")
+{
+    PcIsolationEnvUnset no_env;
+    const std::string optimizer = plain_block(
+        "    TYPE PLAIN\n    LIB TADAH\n    ALGO RANDOM\n    MAXEVAL 1\n"
+        "    SEED 1\n");
+    struct Case { std::string gate, note; };
+    for (const Case& c : std::vector<Case>{{" --gate 0.5", "(--gate 0.5)"},
+                                           {"", "(no --gate)"}}) {
+        INFO("PC_FAILPROBE options:" << c.gate);
+        TaRun run(optimizer,
+                  kRootLines + "FAILSCORE_GRADING ON\nPC_ISOLATION THREAD\n"
+                               "PC_FAILPROBE --script probe.in --outvar S" +
+                      c.gate + "\n");
+        std::ofstream(run.sd.dir / "probe.in") << "variable S equal 0.0\n";
+        std::ofstream(run.val)
+            << "DBFILE " << (run.sd.dir / "missing.db").string() << "\n";
+        CHECK_THROWS(tadah::hpo::hpo_run(run.ctx));
+        const std::string journal = read_file("hpo_run.log");
+        INFO(journal);
+        const auto grading = lines_with(
+            journal, "FAILSCORE_GRADING ON: a failed evaluation scores from "
+                     "0.999 FAILSCORE up to FAILSCORE");
+        REQUIRE(grading.size() == 1u);
+        CHECK_THAT(grading[0], Catch::EndsWith(
+            "; PC_FAILPROBE probe.in: its --outvar S grades band C and the "
+            "band-D failures of --gate and of a potential LAMMPS cannot "
+            "build " + c.note));
+    }
+}
+
+/* Pins: a journal that cannot be opened is a WARNING on standard error
+ * naming its path: "[HPO] WARNING: the journal <path> cannot be opened,
+ * so the run writes no journal".
+ * Before the fix: "[HPOLog] Cannot open log file: <path>": the check
+ * fails. */
+TEST_CASE("Journal: a journal that cannot be opened is a warning naming its "
+          "path", "[HPO][journal]")
+{
+    ScratchDir sd;
+    const std::string path = (sd.dir / "missing" / "hpo_run.log").string();
+    tadah::hpo::HPOLog::instance().reset_for_test();
+    std::ostringstream err;
+    std::streambuf* old = std::cerr.rdbuf(err.rdbuf());
+    tadah::hpo::HPOLog::instance().open(path, "test", sd.dir.string(), 0);
+    std::cerr.rdbuf(old);
+    CHECK(err.str() == "[HPO] WARNING: the journal " + path +
+                           " cannot be opened, so the run writes no "
+                           "journal\n");
+    tadah::hpo::HPOLog::instance().reset_for_test();
 }
 
 TEST_CASE("Termination: DLIB BFGS MAXEVAL ends with best_pot.tadah = the "
@@ -2276,9 +2419,10 @@ TEST_CASE("Two runs in one process: a run without WARM does not start its "
 
 /* Pins: a run that fails after it started its PC_ISOLATION PROCESS worker
  * processes stops them: the first run (one PC_LAMMPS line, PC_ISOLATION
- * PROCESS, THREADS 1) starts its worker ("PC_ISOLATION: PROCESS --
- * pc_lammps tasks execute in 1 persistent worker processes" in its
- * journal) and then fails building its host (its validation DBFILE does
+ * PROCESS, THREADS 1) starts its worker ("PC_ISOLATION PROCESS: the
+ * PC_LAMMPS and PC_FAILPROBE scripts run in 1 worker process" in its
+ * journal; it was "PC_ISOLATION: PROCESS -- pc_lammps tasks execute in 1
+ * persistent worker processes") and then fails building its host (its validation DBFILE does
  * not exist: hpo_run throws, the journal has "ERROR" and "startup: "); no
  * worker pool is up after it, and MLIP has no parallel backend installed.
  * The second run in the process, the same configuration with an existing
@@ -2290,7 +2434,7 @@ TEST_CASE("Two runs in one process: a run without WARM does not start its "
  * Skipped in the MPI build (TADAH_HPO_MPI), which has no PROCESS workers
  * (pc_process_workers.h). Before it skipped there it failed there: hpo_run
  * refuses PC_ISOLATION PROCESS at startup in that build, so the first
- * journal had no "PC_ISOLATION: PROCESS -- ..." line. */
+ * journal had no "PC_ISOLATION PROCESS: ..." line. */
 TEST_CASE("Two runs in one process: a run that fails after starting its "
           "PC_ISOLATION PROCESS workers stops them, and the next run starts "
           "its own", "[HPO][termination][two_runs][pc_isolation]")
@@ -2303,8 +2447,8 @@ TEST_CASE("Two runs in one process: a run that fails after starting its "
     const std::string root = kRootLines +
         "PC_LAMMPS --script pe.in --varloss E 0 1\nPC_ISOLATION PROCESS\n";
     const std::string started =
-        "PC_ISOLATION: PROCESS -- pc_lammps tasks execute in 1 persistent "
-        "worker processes";
+        "PC_ISOLATION PROCESS: the PC_LAMMPS and PC_FAILPROBE scripts run in "
+        "1 worker process,";
     {
         TaRun run(optimizer, root);
         write_pe_script(run.sd.dir / "pe.in", "E");
@@ -2335,7 +2479,8 @@ TEST_CASE("Two runs in one process: a run that fails after starting its "
 
 /* Pins: every run gets a worker pool of its own THREADS and stops it when
  * it ends: two runs in one process, THREADS 2 then 3, each journal says
- * "ScriptExecutor: <its THREADS> workers = THREADS" once, and after each
+ * "THREADS: <its THREADS> workers run the work of the evaluations" once
+ * (it was "ScriptExecutor: <n> workers = THREADS ..."), and after each
  * run MLIP has no parallel backend installed (a later caller in the
  * process, a training after hpo_run(), runs its kernels on OpenMP
  * again).
@@ -2356,9 +2501,9 @@ TEST_CASE("Two runs in one process: each run's worker pool has the run's "
         REQUIRE(tadah::hpo::hpo_run(run.ctx) == 0);
         const std::string journal = read_file("hpo_run.log");
         INFO("journal:\n" << journal);
-        CHECK(lines_with(journal, "ScriptExecutor: " +
-                                      std::to_string(threads) +
-                                      " workers = THREADS").size() == 1u);
+        CHECK(lines_with(journal, "THREADS: " + std::to_string(threads) +
+                                      " workers run the work of the "
+                                      "evaluations").size() == 1u);
         CHECK_FALSE(tadah::mlip::has_parallel_backend());
     }
 }
@@ -4822,25 +4967,27 @@ std::vector<InnerContext> inner_contexts()
     };
 }
 
+/* The refusals name the block that takes the key (they ended "; set
+ * <KEY> on the enclosing <block> block"). */
 std::string inner_seed_error(const std::string& enclosing)
 {
     return "SEED is not accepted inside an INNER block: NLopt draws the "
-           "INNER search from the enclosing run's random stream; set SEED "
-           "on the enclosing " + enclosing + " block";
+           "INNER search from the enclosing run's random stream; the "
+           "enclosing " + enclosing + " block takes SEED";
 }
 
 std::string inner_grad_strategy_error(const std::string& enclosing)
 {
     return "GRAD_STRATEGY is not accepted inside an INNER block: the "
            "enclosing block's GRAD_STRATEGY applies to its local search; "
-           "set GRAD_STRATEGY on the enclosing " + enclosing + " block";
+           "the enclosing " + enclosing + " block takes GRAD_STRATEGY";
 }
 
 std::string inner_stopval_error(const std::string& enclosing)
 {
     return "STOPVAL is not accepted inside an INNER block: NLopt's MLSL and "
            "AUGLAG replace the INNER search's STOPVAL with the enclosing "
-           "block's; set STOPVAL on the enclosing " + enclosing + " block";
+           "block's; the enclosing " + enclosing + " block takes STOPVAL";
 }
 
 }  // namespace
@@ -4977,10 +5124,18 @@ TEST_CASE("NLopt: the unknown-key error of an INNER block lists every "
         INFO("INNER inside " << c.enclosing);
         const std::string bogus = c.indent + "  BOGUS 1";
         const std::string cfg = c.config("", bogus + "\n");
+        /* The message names the line the block opened on and its END line
+         * (it was "unknown key 'BOGUS' inside INNER block (only ... are
+         * valid)"). */
+        const std::string upto = cfg.substr(0, cfg.find(c.indent + "INNER\n"));
+        const std::size_t inner_line =
+            static_cast<std::size_t>(std::count(upto.begin(), upto.end(),
+                                                '\n')) + 1;
         CHECK_THAT(startup_error(cfg), Catch::StartsWith(
             "Error on line " + std::to_string(line_number(cfg, bogus)) +
-            ": unknown key 'BOGUS' inside INNER block (only " + keys +
-            " are valid)"));
+            ": unknown key 'BOGUS' inside the INNER block opened on line " +
+            std::to_string(inner_line) + " (only " + keys + " are valid; "
+            "ENDINNER closes it)"));
     }
 }
 
@@ -8772,8 +8927,9 @@ TEST_CASE("Finite differences: a search on the upper bound evaluates nothing "
             } else {
                 /* once, at startup, and once at the first point outside the
                  * box */
-                CHECK(count_of(journal, "CERES:STEEPEST_DESCENT (OUTER): "
-                                        "ignores the OPTIM box: Ceres' "
+                CHECK(count_of(journal, "the STRATEGY-level optimiser: "
+                                        "CERES:STEEPEST_DESCENT ignores "
+                                        "the OPTIM box: Ceres' "
                                         "line-search solver has no "
                                         "bounds") == 1u);
                 CHECK(count_of(journal, "lies outside its OPTIM box [1, 2]: "

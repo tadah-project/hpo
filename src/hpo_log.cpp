@@ -310,7 +310,8 @@ void HPOLog::open(const std::string& path,
 
     f_.open(path, std::ios::out | std::ios::trunc);
     if (!f_.is_open()) {
-        std::cerr << "[HPOLog] Cannot open log file: " << path << "\n";
+        std::cerr << "[HPO] WARNING: the journal " << path
+                  << " cannot be opened, so the run writes no journal\n";
         return;
     }
 

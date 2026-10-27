@@ -2,6 +2,7 @@
 #include <tadah/hpo/log_index.h>
 #include <tadah/hpo/optimizer_caps.h>
 #include <tadah/hpo/phase_specs.h>        // with_block_line
+#include <tadah/hpo/strategy_rules.h>     // run_phase_name
 #include <tadah/hpo/initial_step.h>
 #include <tadah/hpo/hpo_log.h>
 #include <tadah/hpo/validation_metric.h>   // metric_value_is_finite
@@ -17,11 +18,23 @@ namespace tadah::hpo {
 
 namespace {
 
+/* The words that name the optimiser of `sp` in a message, as the other
+ * startup checks name it: `where` is the place run_scale_validation() or
+ * the run gives it. */
+std::string phase_words(const OptimizerSpec& sp, const std::string& where)
+{
+    if (where == "OUTER" || where == "run") return run_phase_name(sp);
+    if (where == "INNER" || where == "run.INNER") return "the INNER search";
+    if (where == "PRESTAGE") return "the PRESTAGE exploration (EXPLORE block)";
+    if (where == "PRESTAGE.INNER")
+        return "the INNER search of the EXPLORE block";
+    throw std::logic_error("validate_optimizer_scaling: unknown place '" +
+                           where + "'");
+}
+
 std::string spec_name(const OptimizerSpec& sp, const std::string& where)
 {
-    std::string s = sp.lib + ":" + sp.algo;
-    if (!where.empty()) s += " (" + where + ")";
-    return s;
+    return phase_words(sp, where) + ": " + sp.lib + ":" + sp.algo;
 }
 
 std::string dim_label(const OptimizerSpec& sp, std::size_t i)
@@ -64,8 +77,10 @@ void validate_start_points(const OptimizerSpec& sp, const std::string& where)
     if (sp.space) {
         for (std::size_t p = 0; p < sp.optim_init.size(); ++p) {
             const auto& x = sp.optim_init[p];
-            const std::string what = "INIT[" + where + "] starting point " +
-                                     std::to_string(p + 1);
+            const std::string what = "the starting point " +
+                                     std::to_string(p + 1) +
+                                     " of the INIT block of " +
+                                     phase_words(sp, where);
             if (x.size() != sp.space->dim()) {
                 std::ostringstream oss;
                 oss << what << " has " << x.size() << " coordinate(s), expected "
@@ -91,7 +106,8 @@ void validate_start_points(const OptimizerSpec& sp, const std::string& where)
         const auto& x = sp.optim_init[p];
         if (x.size() != dim) {
             std::ostringstream oss;
-            oss << "INIT[" << where << "] starting point " << (p + 1)
+            oss << "the starting point " << (p + 1) << " of the INIT block of "
+                    << phase_words(sp, where)
                 << " has " << x.size() << " coordinate(s), expected " << dim;
             throw std::runtime_error(oss.str());
         }
@@ -99,7 +115,8 @@ void validate_start_points(const OptimizerSpec& sp, const std::string& where)
             const double v = x[i];
             if (!std::isfinite(v)) {
                 std::ostringstream oss;
-                oss << "INIT[" << where << "] starting point " << (p + 1)
+                oss << "the starting point " << (p + 1) << " of the INIT block of "
+                    << phase_words(sp, where)
                     << ": " << dim_label(sp, i) << " = " << v
                     << " is not finite";
                 throw std::runtime_error(oss.str());
@@ -109,7 +126,8 @@ void validate_start_points(const OptimizerSpec& sp, const std::string& where)
             if (is_log(sp, i)) {
                 if (!(v > 0.0)) {
                     std::ostringstream oss;
-                    oss << "INIT[" << where << "] starting point " << (p + 1)
+                    oss << "the starting point " << (p + 1) << " of the INIT block of "
+                    << phase_words(sp, where)
                         << ": " << dim_label(sp, i) << " = " << v
                         << " must be > 0 on a log-scaled dimension (LOG_HP)";
                     throw std::runtime_error(oss.str());
@@ -121,10 +139,11 @@ void validate_start_points(const OptimizerSpec& sp, const std::string& where)
             const double tlo = sp.low[i], thi = sp.high[i];
             if (t < tlo || t > thi) {
                 std::ostringstream oss;
-                oss << "INIT[" << where << "] starting point " << (p + 1)
+                oss << "the starting point " << (p + 1) << " of the INIT block of "
+                    << phase_words(sp, where)
                     << ": " << dim_label(sp, i) << " = " << v
-                    << " lies outside its OPTIM bounds [" << lo << ", " << hi
-                    << "]; move the seed inside the box or widen the box";
+                    << " lies outside its OPTIM box [" << lo << ", " << hi
+                    << "]";
                 throw std::runtime_error(oss.str());
             }
         }
@@ -188,7 +207,7 @@ void validate_optimizer_scaling(const OptimizerSpec& sp,
         if (caps.ignores_bounds && caps.bounds_note && caps.bounds_note[0] &&
             HPOLog::instance().first_in_run("ignores the OPTIM bounds: " +
                                             sp.lib + ":" + sp.algo))
-            warn(name + ": " + caps.bounds_note);
+            warn(name + " " + caps.bounds_note);
     }
 
     if (check_start_points) validate_start_points(sp, where);

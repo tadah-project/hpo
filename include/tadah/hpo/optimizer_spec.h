@@ -56,9 +56,8 @@ struct StopCriteria {
  * an unset value resolves to ANALYTICAL in the blocks that run an
  * optimiser and obtain gradients (HPOTargets::read). An INNER block
  * takes none (a parse error at its line): MLSL/AUGLAG hand their local
- * search the gradient the enclosing block obtains. The Phase-1 keyword
- * `AUTODIFF` is no longer accepted; the parser emits a tailored error
- * pointing at ANALYTICAL. */
+ * search the gradient the enclosing block obtains. Another word is
+ * refused with the three values. */
 enum class GradStrategy { Numerical, Analytical, Hybrid };
 
 /* The GRAD_STRATEGY keyword of `g`. */
@@ -102,13 +101,17 @@ namespace anneal { struct ChainObserver; }
  * after bounds + log-scale are settled. */
 struct InitStrategySpec {
     struct Entry {
-        std::string method;                    // CONFIG, RANDOM, LHS, SOBOL, WARM, NOISE_AUTO
+        std::string method;                    // CONFIG, RANDOM, LHS, SOBOL, WARM
         std::vector<std::string> args;         // method-specific tokens
         /* The METHOD line of the hpotarget file and its text (0 and "" for
          * an entry built outside the parser): a refusal of the entry when
          * the chain is drawn names it (build_init_strategy). */
         std::size_t line = 0;
         std::string line_text;
+        /* The key of the line, METHOD or STRATEGY (its other name inside
+         * INIT and RESTART), as the line wrote it: the refusals of the
+         * entry name it. */
+        std::string key = "METHOD";
     };
     std::vector<Entry> chain;                  // STRATEGY lines (in order, inside INIT block)
     std::optional<std::size_t> k_total;        // K_TOTAL cap (default = sum of strategy default_k)

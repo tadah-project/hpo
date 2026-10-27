@@ -349,11 +349,13 @@ PC_OBSERVABLE cohesive_energy --species Ta --target 8.100 --weight 1000 --hotvar
 )");
         CHECK_THROWS_WITH(
             tadah::hpo::HPOTargets(ctx, cfg.string()),
+            /* It ended "; set GRAD_STRATEGY on the enclosing STRATEGY
+             * block". */
             Catch::Matchers::StartsWith(
                 "Error on line 9: GRAD_STRATEGY is not accepted inside an "
                 "INNER block: the enclosing block's GRAD_STRATEGY applies "
-                "to its local search; set GRAD_STRATEGY on the enclosing "
-                "STRATEGY block"));
+                "to its local search; the enclosing STRATEGY block takes "
+                "GRAD_STRATEGY"));
         std::filesystem::remove(cfg);
     }
 }
@@ -508,15 +510,19 @@ TEST_CASE("HPOTargets rejects PC_OBSERVABLE and PC_LAMMPS side by side",
     /* PC_OBSERVABLE is mutually exclusive with PC_LAMMPS. The post-parse
      * validation in HPOTargets::read fires a clear runtime_error mentioning
      * both counts.
-     * Pins: the message states the rule, without a development state.
+     * Pins: the message states the rule, without a development state, at
+     * the first line of the later group (it was "--hpotarget defines both
+     * PC_OBSERVABLE (1 entries) and PC_LAMMPS (1 entries); ... mutually
+     * exclusive. Remove one set of lines and rerun.", without a line).
      * Before the fix: "... these paths are mutually exclusive in the
      * current MVP. ...". */
     CHECK_THROWS_WITH(
         tadah::hpo::HPOTargets(ctx, cfg.string()),
-        Catch::Matchers::Contains(
-            "--hpotarget defines both PC_OBSERVABLE (1 entries) and "
-            "PC_LAMMPS (1 entries); PC_OBSERVABLE and PC_LAMMPS lines are "
-            "mutually exclusive. Remove one set of lines and rerun."));
+        Catch::Matchers::StartsWith(
+            "Error on line 8: PC_LAMMPS: this target file also has 1 "
+            "PC_OBSERVABLE line (line 7); PC_OBSERVABLE lines do not share "
+            "a target file with PC_LAMMPS or PC_FAILPROBE lines\nLine: "
+            "PC_LAMMPS --script "));
 
     std::filesystem::remove(cfg);
     std::filesystem::remove(script_path);
@@ -633,7 +639,7 @@ TEST_CASE("HPOTargets judges an MLSL or AUGLAG under PC_LAMMPS by its local "
  *   "--hpotarget defines PC_LAMMPS but INNER's optimiser NLOPT:LD_MMA is
  *   gradient-based. A PC_LAMMPS or PC_FAILPROBE line requires a
  *   gradient-free optimiser, and an INNER search is a local NLopt
- *   algorithm: name a derivative-free one in the INNER block (NLOPT:LN_AUGLAG, NLOPT:LN_AUGLAG_EQ, NLOPT:LN_BOBYQA,
+ *   algorithm; the INNER block takes a derivative-free one (NLOPT:LN_AUGLAG, NLOPT:LN_AUGLAG_EQ, NLOPT:LN_BOBYQA,
  *   NLOPT:LN_COBYLA, NLOPT:LN_NELDERMEAD, NLOPT:LN_PRAXIS,
  *   NLOPT:LN_SBPLX)."
  * at the INNER block's ENDINNER line -- for the G_MLSL_LDS search of
@@ -705,8 +711,8 @@ TEST_CASE("HPOTargets names, for an INNER block under PC_LAMMPS, the "
     };
     const std::string inner_advice =
         " A PC_LAMMPS or PC_FAILPROBE line requires a gradient-free "
-        "optimiser, and an INNER search is a local NLopt algorithm: name a "
-        "derivative-free one in the INNER block (NLOPT:LN_AUGLAG, NLOPT:LN_AUGLAG_EQ, NLOPT:LN_BOBYQA, "
+        "optimiser, and an INNER search is a local NLopt algorithm; the "
+        "INNER block takes a derivative-free one (NLOPT:LN_AUGLAG, NLOPT:LN_AUGLAG_EQ, NLOPT:LN_BOBYQA, "
         "NLOPT:LN_COBYLA, NLOPT:LN_NELDERMEAD, NLOPT:LN_PRAXIS, "
         "NLOPT:LN_SBPLX).";
 
@@ -760,8 +766,9 @@ TEST_CASE("HPOTargets names, for an INNER block under PC_LAMMPS, the "
         const std::string got = error(body, true);
         CHECK_THAT(got, Catch::Contains("names CERES:LBFGS, but "
                                         "NLOPT:G_MLSL_LDS runs its INNER "
-                                        "search with NLopt: set LIB NLOPT "
-                                        "and an NLopt ALGO"));
+                                        "search with NLopt: the INNER block "
+                                        "takes LIB NLOPT and an NLopt "
+                                        "ALGO"));
         CHECK_THAT(got, !(Catch::Contains("is refused") ||
                           Catch::Contains("DLIB:BFGS") ||
                           Catch::Contains("STEEPEST_DESCENT")));
@@ -989,7 +996,7 @@ TEST_CASE("HPOTargets applies the PC_LAMMPS and PC_OBSERVABLE gradient rules "
         CHECK_THAT(error(body), Catch::StartsWith(
             "Error on line 14: GRAD_STRATEGY is not accepted inside an INNER "
             "block: the enclosing block's GRAD_STRATEGY applies to its local "
-            "search; set GRAD_STRATEGY on the enclosing EXPLORE block"));
+            "search; the enclosing EXPLORE block takes GRAD_STRATEGY"));
     }
 
     /* What the rules allow in the EXPLORE block is still accepted: with

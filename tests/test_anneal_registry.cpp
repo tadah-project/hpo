@@ -189,8 +189,11 @@ TEST_CASE("registry: every key steers to its family members for kinds it "
             INFO("key " << ki.name << " kind " << anneal::algo_name(kind));
             auto sp = registry_base_spec(kind);
             set_good(sp, ki);
+            /* It was "... belongs to ...". */
             REQUIRE_THROWS_WITH(anneal::Knobs::parse(sp, kind),
-                                Catch::Contains("belongs to"));
+                                Catch::Contains(": PARAM " +
+                                                std::string(ki.name) +
+                                                " is a key of TADAH:"));
         }
     }
 }

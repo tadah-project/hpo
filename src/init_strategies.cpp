@@ -138,7 +138,8 @@ private:
 class LhsInitStrategy : public InitStrategy {
 public:
     explicit LhsInitStrategy(std::size_t k) : k_(k) {
-        if (k_ == 0) throw std::runtime_error("INIT METHOD LHS K must be > 0");
+        /* make_one() refuses K = 0 first. */
+        if (k_ == 0) throw std::logic_error("INIT METHOD LHS K must be > 0");
     }
 
     std::vector<std::vector<double>>
@@ -185,7 +186,8 @@ private:
 class SobolInitStrategy : public InitStrategy {
 public:
     explicit SobolInitStrategy(std::size_t k) : k_(k) {
-        if (k_ == 0) throw std::runtime_error("INIT METHOD SOBOL K must be > 0");
+        /* make_one() refuses K = 0 first. */
+        if (k_ == 0) throw std::logic_error("INIT METHOD SOBOL K must be > 0");
     }
 
     std::vector<std::vector<double>>
@@ -769,40 +771,43 @@ make_one(const InitStrategySpec::Entry& e, const std::string& warm_policy)
      * hold; stoul read "3x" as 3 and "-1" as 2^64-1. */
     auto parse_k = [&](const std::string& s,
                        std::uint64_t min) -> std::size_t {
-        return parse_uint(s, "INIT METHOD " + e.method + " K", min,
+        return parse_uint(s, e.key + " " + e.method + ": K", min,
                           kMaxStartingPoints);
     };
 
     if (e.method == "CONFIG") {
         if (!e.args.empty())
-            throw std::runtime_error("INIT METHOD CONFIG takes no arguments");
+            throw std::runtime_error(e.key + " CONFIG takes no value");
         return std::make_unique<ConfigInitStrategy>();
     }
     if (e.method == "RANDOM") {
         if (e.args.size() != 1)
-            throw std::runtime_error("INIT METHOD RANDOM expects exactly one arg: K");
+            throw std::runtime_error(e.key + " RANDOM takes one value, K, the "
+                                     "number of starting points it draws");
         return std::make_unique<RandomInitStrategy>(parse_k(e.args[0], 1));
     }
     if (e.method == "LHS") {
         if (e.args.size() != 1)
-            throw std::runtime_error("INIT METHOD LHS expects exactly one arg: K");
+            throw std::runtime_error(e.key + " LHS takes one value, K, the "
+                                     "number of starting points it draws");
         return std::make_unique<LhsInitStrategy>(parse_k(e.args[0], 1));
     }
     if (e.method == "SOBOL") {
         if (e.args.size() != 1)
-            throw std::runtime_error("INIT METHOD SOBOL expects exactly one arg: K");
+            throw std::runtime_error(e.key + " SOBOL takes one value, K, the "
+                                     "number of starting points it draws");
         return std::make_unique<SobolInitStrategy>(parse_k(e.args[0], 1));
     }
     if (e.method == "WARM") {
         if (e.args.size() != 1)
-            throw std::runtime_error("INIT METHOD WARM expects exactly one arg: <pot_file>");
+            throw std::runtime_error(e.key + " WARM takes one value, the "
+                                     "potential file the starting point is "
+                                     "read from");
         return std::make_unique<WarmInitStrategy>(e.args[0], warm_policy);
     }
-    /* NOISE_AUTO is rejected up-front in the parser so the user gets
-     * an immediate, clear error rather than discovering at resolve
-     * time. The branch here would only fire if a caller bypassed the
-     * parser; treat it the same as an unknown method for safety. */
-    throw std::runtime_error("Unknown INIT_STRATEGY method: " + e.method);
+    throw std::runtime_error(e.key + " " + e.method + ": unknown method; the "
+                             "methods are CONFIG, RANDOM, LHS, SOBOL and WARM, "
+                             "in upper case");
 }
 
 }  // namespace

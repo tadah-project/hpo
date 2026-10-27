@@ -448,7 +448,7 @@ default = "FROZEN"
 kinds = ["pt"]
 group = "steps"
 rank = 10
-doc = "How the CLASSIC kernel sets its steps: FIXED keeps the scales STEP_FRAC gives; FROZEN calibrates the scales of each slot, then keeps them; ADAPTIVE calibrates them and keeps adapting them, a diagonal form of robust adaptive Metropolis."
+doc = "How the CLASSIC kernel sets its steps: FIXED keeps the scales STEP_FRAC gives; FROZEN calibrates the scales of each slot, then keeps them; ADAPTIVE calibrates them and keeps adapting them, a diagonal form of robust adaptive Metropolis. The calibration spends at most a quarter of MAXEVAL."
 
 [[key]]
 name = "STEP_WARMUP_SWEEPS"

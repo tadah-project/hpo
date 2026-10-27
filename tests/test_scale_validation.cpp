@@ -93,7 +93,7 @@ TEST_CASE("scale_validation: STEP is rejected on every non-consuming backend",
     struct Row { const char* lib; const char* algo; const char* hint; };
     const std::vector<Row> rows = {
         {"DLIB",  "GFS",        "trust region"},
-        {"TADAH", "RANDOM",     "remove STEP"},
+        {"TADAH", "RANDOM",     "has no initial step"},
         {"TADAH", "GRID",       "GRID_POINTS"},
         {"NLOPT", "GN_CRS2_LM", "never reads an initial step"},
         {"NLOPT", "LD_LBFGS",   "never reads an initial step"},
@@ -201,7 +201,8 @@ TEST_CASE("scale_validation: bounds-ignoring backends warn at startup",
     for (const char* where : {"OUTER", "run"})
         REQUIRE_NOTHROW(validate_optimizer_scaling(ce, where));
     const std::string ceres =
-        "CERES:STEEPEST_DESCENT (OUTER): ignores the OPTIM box: Ceres' "
+        "the STRATEGY-level optimiser: CERES:STEEPEST_DESCENT ignores the "
+        "OPTIM box: Ceres' "
         "line-search solver has no bounds, so its line searches can "
         "propose points outside the box (a LOG dimension stays positive, a "
         "linear one is unbounded). Such a point is not evaluated: it is "
@@ -229,7 +230,7 @@ TEST_CASE("scale_validation: start points must lie inside the OPTIM box",
         sp.optim_init = {{0.5, 2.5}};
         REQUIRE_THROWS_WITH(validate_optimizer_scaling(sp, "OUTER"),
                             Catch::Contains("SGRIDMB[1]") &&
-                            Catch::Contains("outside its OPTIM bounds") &&
+                            Catch::Contains("outside its OPTIM box") &&
                             Catch::Contains("[1, 2]"));
     }
     SECTION("size mismatch") {
@@ -266,7 +267,7 @@ TEST_CASE("scale_validation: log-scaled dims need positive seeds in real space",
     sp.optim_init = {{20.0}};       /* positive but outside the real box */
     REQUIRE_THROWS_WITH(validate_optimizer_scaling(sp, "OUTER"),
                         Catch::Contains("SGRID2B") &&
-                        Catch::Contains("outside its OPTIM bounds"));
+                        Catch::Contains("outside its OPTIM box"));
 }
 
 TEST_CASE("scale_validation: the tree walk checks the PRESTAGE EXPLORE stage and its INNER",
@@ -279,13 +280,17 @@ TEST_CASE("scale_validation: the tree walk checks the PRESTAGE EXPLORE stage and
 
     root.prestage->step = 0.1;       /* GN_CRS2_LM never reads a step */
     REQUIRE_THROWS_WITH(run_scale_validation(root),
-                        Catch::Contains("NLOPT:GN_CRS2_LM (PRESTAGE) does not use STEP"));
+                        Catch::Contains("the PRESTAGE exploration (EXPLORE block): "
+                                        "NLOPT:GN_CRS2_LM does not use "
+                                        "STEP"));
 
     root.prestage = std::make_unique<OptimizerSpec>(make_spec("NLOPT", "GN_MLSL_LDS"));
     root.prestage->inner = std::make_unique<OptimizerSpec>(make_spec("NLOPT", "LD_LBFGS"));
     root.prestage->inner->step = 0.1;   /* LD_LBFGS never reads a step */
     REQUIRE_THROWS_WITH(run_scale_validation(root),
-                        Catch::Contains("NLOPT:LD_LBFGS (PRESTAGE.INNER) does not use STEP"));
+                        Catch::Contains("the INNER search of the EXPLORE block: "
+                                        "NLOPT:LD_LBFGS does not use "
+                                        "STEP"));
 
     root.prestage->inner = std::make_unique<OptimizerSpec>(make_spec("NLOPT", "LN_SBPLX"));
     root.prestage->inner->step = 0.1;   /* LN_SBPLX consumes it */

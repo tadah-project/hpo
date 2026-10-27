@@ -351,15 +351,15 @@ TEST_CASE("OPTIM of ENORM, ENERGY or a retired key is refused at its line",
     const Context c = model_ctx();
     CHECK_THAT(parse_error(c, target("OPTIM ENORM (1) 0 1\n")),
                Equals("Error on line 1: OPTIM ENORM is not a valid search "
-                      "target: ENORM (ATOM|SQRT) chooses how the residual of "
-                      "an energy is normalised, a choice rather than a "
-                      "continuous parameter; set it in the -c "
-                      "configuration.\nLine: OPTIM ENORM (1) 0 1"));
+                      "target: ENORM (ATOM or SQRT) chooses how the residual "
+                      "of an energy is normalised, a choice rather than a "
+                      "continuous parameter; the training configuration "
+                      "sets it.\nLine: OPTIM ENORM (1) 0 1"));
     CHECK_THAT(parse_error(c, target("OPTIM ENERGY (1) 0 1\n")),
                Equals("Error on line 1: OPTIM ENERGY is not a valid search "
-                      "target: ENERGY (true|false) says whether the fit has "
-                      "the energies, a switch rather than a continuous "
-                      "parameter; set it in the -c configuration.\n"
+                      "target: ENERGY (true or false) says whether the fit "
+                      "has the energies, a switch rather than a continuous "
+                      "parameter; the training configuration sets it.\n"
                       "Line: OPTIM ENERGY (1) 0 1"));
     for (const char* key :
          {"EWEIGHT", "FWEIGHT", "SWEIGHT", "WDBFILE_AUTO", "EWEIGHT_TEMP"}) {

@@ -270,8 +270,8 @@ void SearchSpace::require_inside_real(const std::vector<double>& x,
         if (x[i] < d.lo || x[i] > d.hi) {
             std::ostringstream oss;
             oss << what << ": " << labels_[i] << " = " << x[i]
-                << " lies outside its OPTIM bounds [" << d.lo << ", " << d.hi
-                << "]; move the seed inside the box or widen the box";
+                << " lies outside its OPTIM box [" << d.lo << ", " << d.hi
+                << "]";
             throw std::runtime_error(oss.str());
         }
     }

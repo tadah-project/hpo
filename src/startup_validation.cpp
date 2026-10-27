@@ -427,8 +427,8 @@ void require_error_scale_search_changes_the_fit(core::Context &ctx,
 std::set<core::Element> declared_element_set(const core::Context &train_ctx) {
   if (!train_ctx.has_stored("ATOM"))
     throw std::runtime_error(
-        "No training DBFILE: the ATOM key is required in the training "
-        "configuration to declare the element set (e.g. 'ATOM Ta'). " +
+        "No training DBFILE: the training configuration declares the "
+        "element set with the ATOM key, such as ATOM Ta. " +
         tadah::mlip::potential_has_no_datasets_advice());
   std::set<core::Element> elements;
   for (const auto &sym : train_ctx("ATOM"))
@@ -464,22 +464,9 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
   tadah::mlip::check_bias_constraints(train_ctx);
 
   /* --- OPTIM key sanity (parse-time rules, re-checked cheaply) -------- */
-  if (trg.optimap.count("WEIGHTS")) {
-    throw std::runtime_error(
-        "OPTIM WEIGHTS is not a valid search target: the linear WEIGHTS are "
-        "re-fitted by least squares on every evaluation, so optimising them "
-        "is a silent no-op. To search linear coefficients, pin them with "
-        "FIXINDEX + FIXWEIGHT in the training configuration and use "
-        "`OPTIM FIXWEIGHT (<weight-index>) <low> <high>`.");
-  }
-  if (trg.optimap.count("EMBF0")) {
-    throw std::runtime_error(
-        "OPTIM EMBF0 is not a valid search target: EMBF0 (ZERO|FREE) "
-        "selects the DM_REAM embedding reference, a discrete property of "
-        "the potential; set it in the -c potential/configuration.");
-  }
   for (const auto &kv : trg.optimap) {
-    std::string e = HPOTargets::optim_structure_key_error(kv.first);
+    std::string e = HPOTargets::optim_fitted_key_error(kv.first);
+    if (e.empty()) e = HPOTargets::optim_structure_key_error(kv.first);
     if (e.empty()) e = HPOTargets::optim_retired_key_error(kv.first);
     if (e.empty()) e = HPOTargets::optim_switch_key_error(kv.first);
     if (e.empty()) e = HPOTargets::optim_startup_only_key_error(kv.first);
@@ -775,8 +762,8 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
         throw std::runtime_error(
             head + "MPARAMS (" + idx + ") of " + model.function +
             " is its " + slot.name + ", an integer, a discrete value rather "
-            "than a continuous parameter; set it in the -c "
-            "potential/configuration.");
+            "than a continuous parameter; the training configuration sets "
+            "it.");
       if (slot.positive && !(o.lowbound[t] > 0.0))
         throw std::runtime_error(
             "OPTIM MPARAMS (" + idx + "): the box [" +
@@ -806,8 +793,8 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
       throw std::runtime_error(
           "OPTIM " + idx + " is not a valid search target: " +
           fixed->second[t] + " and refuses another value, so every "
-          "candidate but the -c value would fail; leave " + idx +
-          " out of OPTIM.");
+          "candidate but the value of the training configuration would "
+          "fail.");
     }
   }
 
@@ -979,8 +966,9 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
     if (!std::isfinite(trg.FAIL_SCORE) || trg.FAIL_SCORE >= 1.0e300 ||
         trg.FAIL_SCORE <= 0.0)
       throw std::runtime_error(
-          "FAILSCORE_GRADING ON requires a finite positive FAILSCORE (e.g. "
-          "`FAILSCORE 1e9`); the default DBL_MAX sentinel cannot be banded.");
+          "FAILSCORE_GRADING ON grades failures in bands below FAILSCORE, "
+          "which needs a FAILSCORE above 0 and below 1e300 (without a "
+          "FAILSCORE line, FAILSCORE is the largest double)");
     if (!graded_failscore_is_ordered(trg.FAIL_SCORE))
       throw std::runtime_error(
           "FAILSCORE_GRADING ON requires a FAILSCORE large enough to "

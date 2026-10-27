@@ -501,13 +501,17 @@ TEST_CASE("backend rules: validate_backend runs each backend's own checks",
               },
               "TADAH:ANNEAL_PT: LADDER_ADAPT requires REPLICAS >= 3"},
              {"ASA", "ASA", [](OptimizerSpec& s) { s.stop.xtol_rel = 1e-3; },
-              "ASA:ASA does not implement XTOL_REL/XTOL_ABS"},
+              /* It was "ASA:ASA does not implement XTOL_REL/XTOL_ABS". */
+              "ASA:ASA does not take XTOL_REL or XTOL_ABS"},
              {"TADAH", "GRID", [](OptimizerSpec& s) { s.param["FOO"] = 1; },
               "TADAH:GRID: unknown PARAM 'FOO'"},
              {"TADAH", "GRID",
               [](OptimizerSpec& s) { s.param_raw["GRID_POINTS"] = "AUTO"; },
-              "TADAH:GRID PARAM GRID_POINTS must be an integer >= 2 (got "
-              "'AUTO')"},
+              /* It was "TADAH:GRID PARAM GRID_POINTS must be an integer
+               * >= 2 (got 'AUTO')". */
+              "TADAH:GRID: PARAM GRID_POINTS must be an integer from 2 to "
+              "4294967295, got 'AUTO' (the points of each dimension include "
+              "both of its bounds)"},
              {"NLOPT", "LN_SBPLX",
               [](OptimizerSpec& s) { s.stop.maxeval = 4294967299u; },
               "NLopt spec with MAXEVAL 4294967299"},
@@ -750,7 +754,11 @@ TEST_CASE("backend rules: a backend with no convergence test and no finite "
     anneal.lib = "TADAH";
     anneal.algo = "ANNEAL";
     CHECK_THAT(error_of(anneal),
-               Catch::Contains("CHAIN_LENGTH AUTO needs MAXEVAL"));
+               /* It was "CHAIN_LENGTH AUTO needs MAXEVAL to derive the
+                * per-rung budget; set PARAM CHAIN_LENGTH explicitly". */
+               Catch::Contains("CHAIN_LENGTH AUTO spreads MAXEVAL over the "
+                               "temperature steps, and this search has no "
+                               "MAXEVAL"));
     anneal.param["CHAIN_LENGTH"] = 5;
     CHECK(error_of(anneal) == "");
 }
