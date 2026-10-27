@@ -1144,10 +1144,9 @@ void unused_init_point_warnings(const OptimizerSpec& root,
                             ", and the STRATEGY-level optimiser " + name +
                             " starts from the first only: " +
                             others_not_evaluated(n - 1) + ". ";
-            /* MULTISTART runs a local optimiser from each point
-             * (runs_from_each_start, the rule of
-             * require_multistart_backend). */
-            if (runs_from_each_start(optimizer_caps(root)))
+            /* MULTISTART runs a local optimiser from each point (the rule
+             * of require_multistart_backend). */
+            if (!optimizer_caps(root).is_global)
                 w += "STRATEGY TYPE MULTISTART with N_STARTS " +
                      std::to_string(n) + " starts " + name +
                      " from each of them, and an ";

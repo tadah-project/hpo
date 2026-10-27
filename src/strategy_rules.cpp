@@ -45,6 +45,14 @@ std::string multi_start_alternatives()
     return format_caps_list(filter_optimizer_caps(&runs_from_each_start));
 }
 
+/* The local backends, the ones STRATEGY TYPE MULTISTART runs from each
+ * start, sorted (format_caps_list), from the live registry. */
+std::string local_alternatives()
+{
+    return format_caps_list(filter_optimizer_caps(
+        [](const OptimizerCaps& c) { return !c.is_global; }));
+}
+
 /* The backends that run a local search without an INNER block
  * (OptimizerCaps::default_inner), every one, sorted. */
 std::string with_default_inner()
@@ -315,18 +323,24 @@ void require_multistart_backend(const OptimizerSpec& spec)
 {
     require_driver(spec, DriverPhase::Run);
     const OptimizerCaps& caps = optimizer_caps(spec);
-    if (caps.accepts_multi_seed && spec.multistart.budget_per_start)
-        throw std::runtime_error(
-            "BUDGET_PER_START has no effect with " + backend_name(spec) +
-            ", which runs every start in one optimiser; use MAXEVAL");
-    if (runs_from_each_start(caps)) return;
     const std::string name = backend_name(spec);
+    /* An optimiser that takes several starting points in one run runs once
+     * under MULTISTART (plan_multistart, phase_specs.h), as under PLAIN:
+     * N_STARTS, which MULTISTART needs, and BUDGET_PER_START would have no
+     * effect. */
+    if (caps.accepts_multi_seed)
+        throw std::runtime_error(
+            "STRATEGY TYPE MULTISTART cannot run " + name + ": it takes every "
+            "INIT point in one run, so MULTISTART would run it once, whatever "
+            "N_STARTS; STRATEGY TYPE PLAIN runs " + name + " once from every "
+            "INIT point.");
+    if (!caps.is_global) return;
     throw std::runtime_error(
         "STRATEGY TYPE MULTISTART cannot run " + name + ": it is a global "
         "optimiser that consumes a single starting point, so restarting it "
-        "from each INIT point is rejected for any N_STARTS. Use a local or "
-        "multi-seed optimiser (" + multi_start_alternatives() + "), or "
-        "STRATEGY TYPE PLAIN to run " + name + " once.");
+        "from each INIT point is rejected for any N_STARTS. Use a local "
+        "optimiser (" + local_alternatives() + "), or STRATEGY TYPE PLAIN to "
+        "run " + name + " once.");
 }
 
 void require_prestage_explore(const OptimizerSpec& spec)

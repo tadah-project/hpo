@@ -94,8 +94,8 @@ void require_inner_backend(const OptimizerSpec& parent,
 /* True when a backend can run once from each of several starting points:
  * a local optimiser, or a global one that consumes several seeds in one
  * run (DLIB:GFS). A global optimiser that consumes a single starting point
- * cannot. MULTISTART and the PRESTAGE refinement over TOPK > 1 candidates
- * both need this. */
+ * cannot. The PRESTAGE refinement over TOPK > 1 candidates needs this;
+ * MULTISTART takes a local optimiser only (require_multistart_backend). */
 bool runs_from_each_start(const OptimizerCaps& caps);
 
 /* The NLopt algorithms an INNER block can name (require_inner_backend():
@@ -118,13 +118,15 @@ std::string nlopt_inner_searches_without_gradient();
  * refuses a gradient-based one. */
 std::string searches_without_gradient();
 
-/* STRATEGY TYPE MULTISTART: `spec` names an optimiser, and one that
- * runs_from_each_start() accepts, for any N_STARTS. A multi-seed backend
- * (OptimizerCaps::accepts_multi_seed: DLIB:GFS) runs every start in one
- * optimiser (plan_multistart(), phase_specs.h), so BUDGET_PER_START, each
- * start's budget, has no effect there and is rejected: "BUDGET_PER_START
- * has no effect with DLIB:GFS, which runs every start in one optimiser;
- * use MAXEVAL". */
+/* STRATEGY TYPE MULTISTART: `spec` names an optimiser, and a local one
+ * (not OptimizerCaps::is_global), which it runs from each start, for any
+ * N_STARTS. A multi-seed backend (OptimizerCaps::accepts_multi_seed:
+ * DLIB:GFS) takes every INIT point in one run (plan_multistart(),
+ * phase_specs.h), as under PLAIN, so N_STARTS would have no effect: "STRATEGY
+ * TYPE MULTISTART cannot run DLIB:GFS: it takes every INIT point in one run,
+ * so MULTISTART would run it once, whatever N_STARTS; STRATEGY TYPE PLAIN
+ * runs DLIB:GFS once from every INIT point."; a global optimiser that takes
+ * one point is refused, naming the local ones. */
 void require_multistart_backend(const OptimizerSpec& spec);
 
 /* STRATEGY TYPE PRESTAGE: an EXPLORE block that names an optimiser. */
