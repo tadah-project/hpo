@@ -144,6 +144,25 @@ RhoBarGateSpec parse_rhobargate(std::istringstream& iss) {
   return s;
 }
 
+/* Whether the WARM seed file `warm` is the file `best` that a run writes
+ * its best potential to: the path `warm` leads to (symbolic links
+ * followed) is the directory entry `best` names in its directory, which
+ * the run removes and replaces (a link there is replaced, not the file it
+ * leads to). Paths are compared as the system resolves them, so
+ * best_pot.tadah, ./best_pot.tadah, its absolute path and a link to it are
+ * one. */
+bool names_best_pot_file(const std::string& warm, const std::string& best)
+{
+  std::error_code ec;
+  const fs::path w = fs::weakly_canonical(fs::path(warm), ec);
+  if (ec) return false;
+  const fs::path b(best);
+  const fs::path dir = b.has_parent_path() ? b.parent_path() : fs::path(".");
+  const fs::path d = fs::weakly_canonical(dir, ec);
+  if (ec) return false;
+  return w == d / b.filename();
+}
+
 }  // namespace
 
 size_t HPOTargets::ui_offset(std::vector<std::string> &tokens, size_t ui) {
@@ -511,6 +530,15 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn,
       spec.restart.seed_origins.push_back(origins[i]);
     }
   }
+
+  /* A WARM seed that is the file the run writes its best potential to:
+   * the run removes it before its first evaluation
+   * (HPO_Host::prepare_best_publication) and writes its best potential
+   * there, so the seed it held does not outlive the start of the run; a
+   * RESTART round, which reads its WARM file again, reads the run's best
+   * potential so far. A WARNING each, on stderr and in the journal (and
+   * so in the summary of tadah hpo --check). */
+  warn_warm_of_best_pot();
 
   /* Fail fast on the initial-step policy (registry-driven). Seeds vs
    * box and the width audit run in validate_hpo_setup(), with the other
@@ -2699,6 +2727,50 @@ void check_output_file(const std::string& file, OutputUse use,
                              "' is not writable");
 }
 }  // namespace
+
+void HPOTargets::warn_warm_of_best_pot() const {
+  struct Chain {
+    const InitStrategySpec* spec;
+    const char* block;
+    std::size_t line;
+    bool restart;
+  };
+  std::vector<Chain> chains = {
+      {&spec.init_strategy_spec, "INIT", spec.init_strategy_spec.line, false}};
+  if (spec.prestage)
+    chains.push_back({&spec.prestage->init_strategy_spec, "INIT",
+                      spec.prestage->init_strategy_spec.line, false});
+  if (spec.restart.active())
+    chains.push_back(
+        {&spec.restart.init_strategy, "RESTART", spec.restart.line, true});
+  const OutputNames names = output_names();
+  for (const Chain& c : chains) {
+    for (const auto& e : c.spec->chain) {
+      if (e.method != "WARM" || e.args.empty()) continue;
+      std::string best;
+      for (const std::string* f : {&names.canonicalBestPot, &names.localBestPot})
+        if (names_best_pot_file(e.args[0], *f)) { best = *f; break; }
+      if (best.empty()) continue;
+      std::string w = std::string("the ") + c.block + " block" +
+                      (c.line > 0 ? " on line " + std::to_string(c.line)
+                                  : std::string()) +
+                      ": METHOD WARM " + e.args[0] +
+                      (e.line > 0 ? " (line " + std::to_string(e.line) + ")"
+                                  : std::string()) +
+                      " reads " + best + ", the file this run writes its "
+                      "best potential to: the run removes it before its "
+                      "first evaluation";
+      w += c.restart
+               ? ", so each RESTART round starts from the best potential the "
+                 "run has written by then, not from the file's content at "
+                 "startup."
+               : " and writes its best potential there, so only a copy under "
+                 "another name keeps this seed.";
+      std::cerr << "[HPO] WARNING: " << w << "\n";
+      HPOLog::instance().warning(w);
+    }
+  }
+}
 
 HPOTargets::OutputNames HPOTargets::output_names() {
   const std::string r = hpo_rank_suffix();
