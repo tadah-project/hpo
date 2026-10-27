@@ -1,6 +1,7 @@
 /* Per-dimension initial-step plan (initial_step.h) and the NLopt
  * adapter's use of it (make_nlopt + get_initial_step read-back). */
 #include "catch2/catch.hpp"
+#include <tadah/hpo/hpo_log.h>
 #include <tadah/hpo/initial_step.h>
 #include <tadah/hpo/nlopt_adapter.h>
 #include <tadah/hpo/optimizer_caps.h>
@@ -8,10 +9,19 @@
 #include <tadah/hpo/search_space.h>
 #include <tadah/hpo/scale_validation.h>
 
+#include <dlib/matrix.h>
+
+#include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <filesystem>
+#include <fstream>
 #include <memory>
+#include <optional>
+#include <sstream>
 #include <string>
+#include <utility>
 #include <vector>
 
 using namespace tadah::hpo;
@@ -87,15 +97,23 @@ TEST_CASE("StepPlan: per-key and per-index overrides",
 TEST_CASE("StepPlan: near-bound rules are per dimension",
           "[HPO][step_plan]")
 {
-    SECTION("BOBYQA: only the tight dim shrinks to 0.75*slack") {
+    SECTION("BOBYQA: only the tight dim's start moves, every step stays") {
+        /* B, within 1e-4 of its HI bound (less than half its step, 0.002),
+         * starts on the bound with its full step. Before the fix: B's step
+         * shrank to 0.75*slack (7.5e-5) and its start stayed. */
         auto sp = spec("LN_BOBYQA", false);
         sp.step = 0.25;
         sp.optim_init = {{1.0, 0.0079}};   /* B within 1e-4 of its HI bound */
         const auto start = sp.in(sp.optim_init.front());
         const auto plan = make_step_plan(sp, start, optimizer_caps(sp));
+        CHECK(plan.given);
         CHECK(plan.dx[0] == Approx(0.5));                       /* untouched */
-        CHECK(plan.dx[1] == Approx(0.75 * (0.008 - 0.0079)));   /* shrunk */
-        CHECK(plan.note[1].find("near-bound") != std::string::npos);
+        CHECK(plan.dx[1] == Approx(0.002));                     /* full */
+        REQUIRE(plan.start.size() == 2u);
+        CHECK(plan.start[0] == 1.0);
+        CHECK(plan.start[1] == 0.008);                          /* on HI */
+        CHECK(plan.note[1].find("start moved onto the upper bound") !=
+              std::string::npos);
         CHECK(plan.note[0].empty());
     }
     SECTION("BOBYQA: a start ON a bound keeps its step (noted)") {
@@ -278,5 +296,481 @@ TEST_CASE("StepPlan: BOBYQA-only near-bound rule, 0.5 cap, coverage at validatio
                             Catch::Contains("cover only some dimensions"));
         sp.step_overrides.push_back({"AMPGRIDMB", {}, 0.2});
         REQUIRE_NOTHROW(validate_optimizer_scaling(sp, "OUTER", false));
+    }
+}
+
+namespace {
+
+using Vec = dlib::matrix<double, 0, 1>;
+struct NoRunner {};   // the GradientProvider's Runner is only a type tag
+
+/* Records every point asked for; a bowl in the box of spec(), its minimum
+ * at (1, `b_min`) -- by default the centre. */
+struct StepRecorder {
+    std::vector<Vec> asked;
+    double b_min = 0.004;
+    double operator()(const Vec& x) {
+        asked.push_back(x);
+        const double a = x(0) - 1.0, b = (x(1) - b_min) / 0.008;
+        return a * a + b * b;
+    }
+};
+
+/* An open journal; `text()` closes it and returns it. */
+struct StepJournal {
+    std::filesystem::path path =
+        std::filesystem::temp_directory_path() /
+        ("tadah_step_plan_" +
+         std::to_string(std::chrono::steady_clock::now()
+                            .time_since_epoch().count()) +
+         ".log");
+    StepJournal() {
+        auto& log = HPOLog::instance();
+        log.reset_for_test();
+        log.open(path.string(), "test", "/", 0);
+    }
+    std::string text() {
+        HPOLog::instance().finish();
+        std::ifstream f(path);
+        std::ostringstream s;
+        s << f.rdbuf();
+        return s.str();
+    }
+    ~StepJournal() {
+        HPOLog::instance().reset_for_test();
+        std::error_code ec;
+        std::filesystem::remove(path, ec);
+    }
+};
+
+/* Whether a point of `asked` has AMPGRIDMB[6] = `b` (to 1e-12). */
+bool asks_b(const std::vector<Vec>& asked, double b)
+{
+    return std::any_of(asked.begin(), asked.end(), [b](const Vec& p) {
+        return p(1) == Approx(b).epsilon(1e-12);
+    });
+}
+
+/* One LN_BOBYQA search (MAXEVAL 9) of spec() from (1, `b`), a start of
+ * origin `origin`, with STEP `step` (none: unset), on the bowl whose
+ * minimum is (1, `b_min`); the points asked for and the journal. */
+std::pair<std::vector<Vec>, std::string>
+bobyqa_from(double b, std::optional<double> step, InitOrigin::Kind origin,
+            double b_min = 0.004)
+{
+    auto sp = spec("LN_BOBYQA", false);
+    sp.step = step;
+    sp.optim_init = {{1.0, b}};
+    sp.optim_init_origin = {InitOrigin{origin, {}}};
+    sp.stop.maxeval = 9;
+    StepRecorder host;
+    host.b_min = b_min;
+    StepJournal j;
+    REQUIRE_NOTHROW(run_nlopt_impl<Vec, NoRunner>(sp, host));
+    return {host.asked, j.text()};
+}
+
+}  // namespace
+
+/* Pins: LN_BOBYQA from AMPGRIDMB[6] = 0.0079, 1e-4 below its upper bound
+ * 0.008 (width 0.008), with STEP 0.25 and with STEP unset (a step of 0.25
+ * of the width, 0.002, given to NLopt): the gap is below half the step, so
+ * the search starts on the bound -- its first point is (1, 0.008) -- and
+ * keeps its full step: a point of its first model has AMPGRIDMB[6] =
+ * 0.006, one step inside. The journal gives the old and the new start ("NLOPT:LN_BOBYQA:
+ * AMPGRIDMB[6] starts at 0.008 instead of 0.0079"); a CONFIG start that
+ * moves gets a WARNING, a sampled (RANDOM) start does not.
+ * Before the fix: the search started at 0.0079 and the step of
+ * AMPGRIDMB[6] shrank to 0.75 of the gap, 7.5e-5 (with STEP unset by
+ * NLopt's own default rule), as the scale of that coordinate: no point of
+ * the 9 had AMPGRIDMB[6] = 0.006, and the journal had neither line. */
+TEST_CASE("LN_BOBYQA: a start within half a step of a bound starts on the "
+          "bound with the full step", "[HPO][step_plan][nlopt]")
+{
+    for (const std::optional<double> step :
+         {std::optional<double>(0.25), std::optional<double>()}) {
+        for (const auto origin :
+             {InitOrigin::Kind::Config, InitOrigin::Kind::Random}) {
+            const bool config = origin == InitOrigin::Kind::Config;
+            DYNAMIC_SECTION((step ? "STEP 0.25" : "STEP unset")
+                            << (config ? ", CONFIG" : ", RANDOM")) {
+                const auto [asked, journal] = bobyqa_from(0.0079, step, origin);
+                REQUIRE(asked.size() == 9u);
+                CHECK(asked.front()(0) == 1.0);
+                CHECK(asked.front()(1) == Approx(0.008).epsilon(1e-12));
+                CHECK(asks_b(asked, 0.006));
+                CHECK(journal.find("NLOPT:LN_BOBYQA: AMPGRIDMB[6] starts at "
+                                   "0.008 instead of 0.0079") !=
+                      std::string::npos);
+                CHECK((journal.find("WARNING   NLOPT:LN_BOBYQA: the CONFIG "
+                                    "start moves") != std::string::npos) ==
+                      config);
+            }
+        }
+    }
+}
+
+/* Pins: LN_BOBYQA (STEP 0.25: a step of 0.002 on AMPGRIDMB[6]) from
+ * AMPGRIDMB[6] = 0.0068, 0.0012 below its upper bound, on the bowl whose
+ * minimum is (1, 0.001): the gap is at least half the step, so the search
+ * starts one step from the bound, at 0.006 (moved by 0.0008, less than half
+ * a step), and keeps its full step: a point of its first model has
+ * AMPGRIDMB[6] = 0.004, one step further in. (On the bowl whose minimum is
+ * (1, 0.004) BOBYQA's quadratic model reaches 0.004 whatever its step: the
+ * check passed before the fix as well.)
+ * Before the fix: the search started at 0.0068 and the step of
+ * AMPGRIDMB[6] shrank to 0.75 of the gap, 9e-4: no point of the 9 had
+ * AMPGRIDMB[6] = 0.004, and the journal had no INFO line. */
+TEST_CASE("LN_BOBYQA: a start between half a step and a step from a bound "
+          "starts one step from it", "[HPO][step_plan][nlopt]")
+{
+    const auto [asked, journal] =
+        bobyqa_from(0.0068, 0.25, InitOrigin::Kind::Random, 0.001);
+    REQUIRE(asked.size() == 9u);
+    CHECK(asked.front()(0) == 1.0);
+    CHECK(asked.front()(1) == Approx(0.006).epsilon(1e-12));
+    CHECK(asks_b(asked, 0.004));
+    CHECK(journal.find("NLOPT:LN_BOBYQA: AMPGRIDMB[6] starts at 0.006 instead "
+                       "of 0.0068") != std::string::npos);
+}
+
+/* Pins: LN_COBYLA with STEP unset from AMPGRIDMB[6] = 0.0079, 1e-4 below
+ * its upper bound: it is given a step of 0.25 of each width (0.002 on
+ * AMPGRIDMB[6]), which it keeps as the scale of the coordinate, and its
+ * first simplex turns the step inward at the bound: a point of its first
+ * simplex has AMPGRIDMB[6] = 0.0059; the start stays (COBYLA takes any
+ * start with its full step) and the journal has no INFO line of a moved
+ * start. The journal's step line says what the search is given and ends
+ * there ("... given to NLopt: LN_COBYLA keeps the first step of each
+ * dimension as its scale").
+ * Before the fix: NLopt's own default shrank the step of AMPGRIDMB[6] to
+ * 0.75 of the gap, 7.5e-5, and COBYLA kept it as the scale of the
+ * coordinate: no point had AMPGRIDMB[6] = 0.0059. Once it was given its
+ * full step, the step line went on ", and NLopt's own default shrinks it
+ * near a bound", which read as if the step given shrank. */
+TEST_CASE("LN_COBYLA: with STEP unset a start next to a bound keeps the full "
+          "step", "[HPO][step_plan][nlopt]")
+{
+    auto sp = spec("LN_COBYLA", false);
+    sp.optim_init = {{1.0, 0.0079}};
+    sp.optim_init_origin = {InitOrigin{InitOrigin::Kind::Config, {}}};
+    sp.stop.maxeval = 9;
+    StepRecorder host;
+    StepJournal j;
+    REQUIRE_NOTHROW(run_nlopt_impl<Vec, NoRunner>(sp, host));
+    const std::string journal = j.text();
+    REQUIRE(host.asked.size() == 9u);
+    CHECK(host.asked.front()(0) == 1.0);
+    CHECK(host.asked.front()(1) == 0.0079);
+    CHECK(asks_b(host.asked, 0.0059));
+    CHECK(journal.find("starts at") == std::string::npos);
+    /* The step given is the full step: the source ends at "as its scale"
+     * (it went on ", and NLopt's own default shrinks it near a bound",
+     * which read as if the step given shrank). */
+    CHECK(journal.find("Initial step (NLOPT:LN_COBYLA): STEP unset -- "
+                       "0.25*width per dim, given to NLopt: LN_COBYLA keeps "
+                       "the first step of each dimension as its scale\n") !=
+          std::string::npos);
+}
+
+namespace {
+
+/* One search of `algo` (an MLSL or AUGLAG) on spec() from (1, `b`), a
+ * CONFIG start, with STEP unset, MAXEVAL `maxeval` and the INNER block
+ * `inner` (empty: none, NLopt's default local search); the points asked for
+ * and the journal. */
+template <class Host>
+std::pair<std::vector<Vec>, std::string>
+inner_search_from(const char* algo, const char* inner, double b,
+                  unsigned maxeval, Host& host)
+{
+    auto sp = spec(algo, false);
+    sp.optim_init = {{1.0, b}};
+    sp.optim_init_origin = {InitOrigin{InitOrigin::Kind::Config, {}}};
+    sp.stop.maxeval = maxeval;
+    if (inner[0]) {
+        sp.inner = std::make_unique<OptimizerSpec>();
+        sp.inner->lib = "NLOPT";
+        sp.inner->algo = inner;
+    }
+    StepJournal j;
+    REQUIRE_NOTHROW(run_nlopt_impl<Vec, NoRunner>(sp, host));
+    return {host.asked, j.text()};
+}
+
+/* (A - 2)^2 + ((B - 0.008) / 0.008)^2 on the box of spec(): the minimum at
+ * the upper corner (2, 0.008), so MLSL's best samples, the starts of its
+ * local searches, lie next to the upper bounds. */
+struct UpperCornerBowl {
+    std::vector<Vec> asked;
+    double operator()(const Vec& x) {
+        asked.push_back(x);
+        const double a = x(0) - 2.0, b = (x(1) - 0.008) / 0.008;
+        return a * a + b * b;
+    }
+};
+
+}  // namespace
+
+/* Pins: LN_AUGLAG with an INNER LN_BOBYQA and STEP unset (MAXEVAL 9), from
+ * AMPGRIDMB[6] = 0.0079, 1e-4 below its upper bound: AUGLAG runs its one
+ * local search from its start, and that search is given 0.25 of each width
+ * (0.002 on AMPGRIDMB[6]) and moves the start onto the bound, as an
+ * LN_BOBYQA search of its own does: the first point is (1, 0.008), a point
+ * of the first model has AMPGRIDMB[6] = 0.006, one step inside, the journal
+ * gives the old and the new start ("NLOPT:LN_AUGLAG (its local search
+ * LN_BOBYQA): AMPGRIDMB[6] starts at 0.008 instead of 0.0079") and the
+ * CONFIG start that moves gets a WARNING.
+ * Before the fix: the local search was given no step, and took NLopt's
+ * default from the start, which shrank the step of AMPGRIDMB[6] to 0.75 of
+ * the gap, 7.5e-5, as the scale of that coordinate: the search started at
+ * 0.0079, no point of the 9 had AMPGRIDMB[6] = 0.006, and the journal had
+ * neither line. */
+TEST_CASE("LN_AUGLAG with an INNER LN_BOBYQA: a start within half a step of "
+          "a bound starts on the bound with the full step",
+          "[HPO][step_plan][nlopt]")
+{
+    StepRecorder host;
+    const auto [asked, journal] =
+        inner_search_from("LN_AUGLAG", "LN_BOBYQA", 0.0079, 9, host);
+    REQUIRE(asked.size() >= 5u);
+    CHECK(asked.front()(0) == 1.0);
+    CHECK(asked.front()(1) == Approx(0.008).epsilon(1e-12));
+    CHECK(asks_b(asked, 0.006));
+    CHECK(journal.find("NLOPT:LN_AUGLAG (its local search LN_BOBYQA): "
+                       "AMPGRIDMB[6] starts at 0.008 instead of 0.0079") !=
+          std::string::npos);
+    CHECK(journal.find("WARNING   NLOPT:LN_AUGLAG (its local search "
+                       "LN_BOBYQA): the CONFIG start moves") !=
+          std::string::npos);
+}
+
+/* Pins: LN_AUGLAG without an INNER block (NLopt's default local search
+ * LN_COBYLA) and STEP unset (MAXEVAL 9), from AMPGRIDMB[6] = 0.0079: the
+ * local search is given 0.25 of each width, which it keeps as the scale of
+ * the coordinate, and turns its first step inward at the bound: a point of
+ * its first simplex has AMPGRIDMB[6] = 0.0059; the start stays, and the
+ * journal's step line names the local search's step ("... LN_COBYLA keeps
+ * the first step of each dimension as its scale (the step of the local
+ * search, which LN_AUGLAG hands it)").
+ * Before the fix: the local search took NLopt's default from the start,
+ * which shrank the step of AMPGRIDMB[6] to 0.75 of the gap, 7.5e-5: no
+ * point had AMPGRIDMB[6] = 0.0059, and the journal's step line was NLopt's
+ * default ("STEP unset -- NLopt default per dim ..."). Once the local
+ * search was given its full step, the line had ", and NLopt's own default
+ * shrinks it near a bound" before the parenthesis. */
+TEST_CASE("LN_AUGLAG with its default local search LN_COBYLA: a start next "
+          "to a bound keeps the full step", "[HPO][step_plan][nlopt]")
+{
+    StepRecorder host;
+    const auto [asked, journal] =
+        inner_search_from("LN_AUGLAG", "", 0.0079, 9, host);
+    REQUIRE(asked.size() >= 3u);
+    CHECK(asked.front()(1) == 0.0079);
+    CHECK(asks_b(asked, 0.0059));
+    CHECK(journal.find("starts at") == std::string::npos);
+    CHECK(journal.find("STEP unset -- 0.25*width per dim, given to NLopt: "
+                       "LN_COBYLA keeps the first step of each dimension as "
+                       "its scale (the step of the local search, which "
+                       "LN_AUGLAG hands it)\n") != std::string::npos);
+}
+
+/* Pins: GN_MLSL_LDS with an INNER LN_COBYLA and STEP unset (MAXEVAL 60) on
+ * the bowl whose minimum is the upper corner, from (1, 0.004): every local
+ * search is given 0.25 of each width (0.5 on CGRID2B[1], 0.002 on
+ * AMPGRIDMB[6]), whatever its start, and turns a step inward at a bound.
+ * MLSL evaluates its start and four Sobol samples, then starts a local
+ * search at the sample (1.1875, 0.00775), 0.00025 below the upper bound of
+ * AMPGRIDMB[6]: its first simplex asks for (1.6875, 0.00775) and (1.6875,
+ * 0.00575), 0.002 inward; the local search from (1.6875, 0.00175), 0.3125
+ * below the upper bound of CGRID2B[1], asks for (1.1875, 0.00175), 0.5
+ * inward, and (1.6875, 0.00375). The journal's step line names the step
+ * of the local search ("... given to NLopt: LN_COBYLA keeps the first step
+ * of each dimension as its scale (the step of the local search, which
+ * GN_MLSL_LDS hands it)").
+ * Before the fix: each local search took NLopt's default from its own
+ * start, which shrinks a step to 0.75 of the distance to a bound closer
+ * than a quarter of the width: eval 8 was (1.6875, 0.0079375), a step of
+ * 1.875e-4 on AMPGRIDMB[6], and eval 32 (1.921875, 0.00175), a step of
+ * 0.234375 on CGRID2B[1], then eval 33 (1.921875, 0.0030625); the journal's
+ * step line was NLopt's default ("STEP unset -- NLopt default per dim
+ * ..."), and, once the local search was given its full step, it had ", and
+ * NLopt's own default shrinks it near a bound" before the parenthesis. */
+TEST_CASE("GN_MLSL_LDS with an INNER LN_COBYLA: every local search keeps the "
+          "full step", "[HPO][step_plan][nlopt]")
+{
+    UpperCornerBowl host;
+    const auto [asked, journal] =
+        inner_search_from("GN_MLSL_LDS", "LN_COBYLA", 0.004, 60, host);
+    const auto at = [&asked](std::size_t eval, double a, double b) {
+        INFO("eval " << eval << ": (" << asked[eval - 1](0) << ", "
+                     << asked[eval - 1](1) << ")");
+        CHECK(asked[eval - 1](0) == Approx(a).epsilon(1e-12));
+        CHECK(asked[eval - 1](1) == Approx(b).epsilon(1e-12));
+    };
+    REQUIRE(asked.size() == 60u);
+    at(6, 1.1875, 0.00775);
+    at(7, 1.6875, 0.00775);
+    at(8, 1.6875, 0.00575);
+    at(31, 1.6875, 0.00175);
+    at(32, 1.1875, 0.00175);
+    at(33, 1.6875, 0.00375);
+    CHECK(journal.find("STEP unset -- 0.25*width per dim, given to NLopt: "
+                       "LN_COBYLA keeps the first step of each dimension as "
+                       "its scale (the step of the local search, which "
+                       "GN_MLSL_LDS hands it)\n") != std::string::npos);
+}
+
+/* Pins: LN_BOBYQA from AMPGRIDMB[6] = 0.008, on its upper bound, a CONFIG
+ * start, with STEP 0.25 and with STEP unset: BOBYQA keeps a start on a
+ * bound and its full step -- the first point is (1, 0.008), and a point of
+ * its first model has AMPGRIDMB[6] = 0.006, one step inside -- so nothing
+ * about the start changes: the journal's step table notes "start on a
+ * bound (kept)" (INFO), and no WARNING names it; no line of a moved start.
+ * Before the fix: the note was a WARNING in both runs ("WARNING
+ * LN_BOBYQA: AMPGRIDMB[6]: start on a bound (kept)"), with STEP unset since
+ * BOBYQA is given its step (Tadah! 1.5.0 gave it with STEP set only). */
+TEST_CASE("LN_BOBYQA: a start on a bound is kept without a warning",
+          "[HPO][step_plan][nlopt]")
+{
+    for (const std::optional<double> step :
+         {std::optional<double>(0.25), std::optional<double>()}) {
+        DYNAMIC_SECTION((step ? "STEP 0.25" : "STEP unset")) {
+            const auto [asked, journal] =
+                bobyqa_from(0.008, step, InitOrigin::Kind::Config);
+            REQUIRE(asked.size() == 9u);
+            CHECK(asked.front()(0) == 1.0);
+            CHECK(asked.front()(1) == 0.008);
+            CHECK(asks_b(asked, 0.006));
+            CHECK(journal.find("start on a bound (kept)") != std::string::npos);
+            CHECK(journal.find("WARNING   LN_BOBYQA: AMPGRIDMB[6]: start on a "
+                               "bound") == std::string::npos);
+            CHECK(journal.find("starts at") == std::string::npos);
+        }
+    }
+}
+
+/* Pins: a MULTISTART start keeps the INIT origin of its point
+ * (multistart_start_spec), so an LN_BOBYQA start that moves warns for a
+ * user's own point only: with STEP unset and the INIT points (1, 0.0079), a
+ * CONFIG start, and (1, 0.0068), a RANDOM one, the first start moves onto
+ * the bound with the INFO line and the WARNING of a moved CONFIG start
+ * ("WARNING   NLOPT:LN_BOBYQA: the CONFIG start moves: AMPGRIDMB[6] starts
+ * at 0.008 instead of 0.0079 ..."), the second to one step from the bound,
+ * 0.006, with the INFO line alone.
+ * Before the fix (multistart_start_spec copied the spec's two origins for
+ * its one start): both starts moved with the INFO line, and neither got the
+ * WARNING -- the search took the origins for stale. */
+TEST_CASE("LN_BOBYQA under MULTISTART: a moved CONFIG start gets the "
+          "warning, a moved sampled start does not",
+          "[HPO][step_plan][nlopt][multistart]")
+{
+    auto sp = spec("LN_BOBYQA", false);
+    sp.optim_init = {{1.0, 0.0079}, {1.0, 0.0068}};
+    sp.optim_init_origin = {InitOrigin{InitOrigin::Kind::Config, {}},
+                            InitOrigin{InitOrigin::Kind::Random, {}}};
+    sp.stop.maxeval = 18;
+    const MultiStartPlan plan = plan_multistart(sp, 2, std::nullopt);
+    std::vector<std::string> journals;
+    for (std::size_t i = 0; i < 2; ++i) {
+        const OptimizerSpec sub = multistart_start_spec(sp, plan, i);
+        StepRecorder host;
+        StepJournal j;
+        REQUIRE_NOTHROW(run_nlopt_impl<Vec, NoRunner>(sub, host));
+        journals.push_back(j.text());
+    }
+    CHECK(journals[0].find("NLOPT:LN_BOBYQA: AMPGRIDMB[6] starts at 0.008 "
+                           "instead of 0.0079") != std::string::npos);
+    CHECK(journals[0].find("WARNING   NLOPT:LN_BOBYQA: the CONFIG start "
+                           "moves: AMPGRIDMB[6] starts at 0.008 instead of "
+                           "0.0079") != std::string::npos);
+    CHECK(journals[1].find("NLOPT:LN_BOBYQA: AMPGRIDMB[6] starts at 0.006 "
+                           "instead of 0.0068") != std::string::npos);
+    CHECK(journals[1].find("WARNING   NLOPT:LN_BOBYQA: the") ==
+          std::string::npos);
+}
+
+/* Pins: the journal's OPTIMISER section ("Initial step") of an MLSL or
+ * AUGLAG with STEP unset names the step its local search is given. With
+ * STEP unset in the INNER block as well, a local search that keeps its
+ * first step is given 0.25 of each width: LN_AUGLAG with an INNER LN_BOBYQA
+ * and GN_MLSL_LDS with its default LN_COBYLA, "(STEP unset -- 0.25*width
+ * per dim, given to NLopt for its local search LN_BOBYQA, which keeps the
+ * first step of each dimension as its scale)". An INNER block that sets
+ * STEP gives its local search that STEP, whatever the local search:
+ * LN_AUGLAG with an INNER LN_BOBYQA or LN_SBPLX and STEP 0.1, and
+ * GN_MLSL_LDS with an INNER LN_NELDERMEAD whose STEP sets overrides only,
+ * "(STEP unset -- the INNER block's STEP, given to NLopt for its local
+ * search LN_SBPLX)" (build_nlopt gives every local optimiser the INNER
+ * block's step plan, and the run-time line names it: "INNER STEP 0.1 ...
+ * (forwarded to LN_SBPLX)").
+ * Before the fix (STEP unset in both blocks): both lines read "(STEP unset
+ * -- NLopt default per dim: 0.25*width, or 0.75*distance to the nearer
+ * bound; read back at run time)", the step each local search took before
+ * it was given its full step. With the INNER STEP the LN_BOBYQA case passed
+ * (a pin), and the LN_SBPLX and LN_NELDERMEAD cases read NLopt's default,
+ * as above: the INNER block's STEP was named only for a local search that
+ * keeps its first step. */
+TEST_CASE("Journal: the OPTIMISER section names the step of an MLSL or "
+          "AUGLAG local search that keeps its first step",
+          "[HPO][step_plan][nlopt]")
+{
+    struct Case {
+        const char* name;
+        const char* algo;
+        const char* inner;
+        std::optional<double> inner_step;
+        bool inner_override;
+        std::string line;
+    };
+    const std::string full = "(STEP unset -- 0.25*width per dim, given to "
+                             "NLopt for its local search ";
+    const std::string inner = "(STEP unset -- the INNER block's STEP, given "
+                              "to NLopt for its local search ";
+    const std::vector<Case> cases = {
+        {"LN_AUGLAG, INNER LN_BOBYQA", "LN_AUGLAG", "LN_BOBYQA", std::nullopt,
+         false,
+         full + "LN_BOBYQA, which keeps the first step of each dimension as "
+                "its scale)"},
+        {"GN_MLSL_LDS, default LN_COBYLA", "GN_MLSL_LDS", "", std::nullopt,
+         false,
+         full + "LN_COBYLA, which keeps the first step of each dimension as "
+                "its scale)"},
+        {"LN_AUGLAG, INNER LN_BOBYQA with STEP 0.1", "LN_AUGLAG", "LN_BOBYQA",
+         0.1, false, inner + "LN_BOBYQA)"},
+        {"LN_AUGLAG, INNER LN_SBPLX with STEP 0.1", "LN_AUGLAG", "LN_SBPLX",
+         0.1, false, inner + "LN_SBPLX)"},
+        {"GN_MLSL_LDS, INNER LN_NELDERMEAD with STEP overrides", "GN_MLSL_LDS",
+         "LN_NELDERMEAD", std::nullopt, true, inner + "LN_NELDERMEAD)"},
+    };
+    for (const Case& c : cases) {
+        DYNAMIC_SECTION(c.name) {
+            auto sp = spec(c.algo, false);
+            if (c.inner[0]) {
+                sp.inner = std::make_unique<OptimizerSpec>();
+                sp.inner->lib = "NLOPT";
+                sp.inner->algo = c.inner;
+                sp.inner->step = c.inner_step;
+                if (c.inner_override) {
+                    StepOverride o;
+                    o.key = "CGRID2B";
+                    o.frac = 0.1;
+                    sp.inner->step_overrides.push_back(o);
+                    o.key = "AMPGRIDMB";
+                    o.frac = 0.2;
+                    sp.inner->step_overrides.push_back(o);
+                }
+            }
+            StepJournal j;
+            HPOLog::instance().write_optimizer_section(sp,
+                                                       sp.parameter_labels);
+            const std::string journal = j.text();
+            const auto at = journal.find("Initial step");
+            REQUIRE(at != std::string::npos);
+            const std::string shown =
+                journal.substr(at, journal.find('\n', at) - at);
+            INFO(shown);
+            CHECK(shown.find(c.line) != std::string::npos);
+        }
     }
 }

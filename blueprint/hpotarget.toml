@@ -1021,7 +1021,13 @@ long_doc = """\
 A PC_LAMMPS line without --failscore gives its variables this value when \
 its simulation fails, and a PC_FAILPROBE line without --failscore takes \
 it as its --failscore. FAILSCORE_GRADING ON needs a FAILSCORE below \
-1e300."""
+1e300. DLIB:GFS, DLIB:BFGS and NLopt are given a finite stand-in for a \
+failed evaluation: the worst usable loss of the search so far plus a \
+margin, or, before any, FAILSCORE capped at 1e100. A loss NLopt asks for \
+together with its gradient is given the stand-in only for a graded \
+failure with a usable gradient; a failed point whose gradient fails is \
+rejected. The result files and the journal record the loss the \
+evaluation reported."""
 quirk = """\
 A PC_LAMMPS or PC_FAILPROBE line without --failscore takes the FAILSCORE \
 of the lines above it: a FAILSCORE line below it leaves that line's \

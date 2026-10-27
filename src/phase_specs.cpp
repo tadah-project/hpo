@@ -38,8 +38,15 @@ OptimizerSpec multistart_start_spec(const OptimizerSpec& spec,
                                     const MultiStartPlan& plan, std::size_t i)
 {
     OptimizerSpec sub = spec;                       // deep copy
-    if (i < spec.optim_init.size())
+    if (i < spec.optim_init.size()) {
         sub.optim_init = {spec.optim_init[i]};      // single start
+        /* Its origin (CONFIG, WARM, a sampled point), when the spec keeps
+         * them: an NLopt start that has to move warns for a user's seed. */
+        if (spec.optim_init_origin.size() == spec.optim_init.size())
+            sub.optim_init_origin = {spec.optim_init_origin[i]};
+        else
+            sub.optim_init_origin.clear();
+    }
     if (plan.per_start_maxeval) sub.stop.maxeval = *plan.per_start_maxeval;
     /* Decorrelate the starts: reusing one seed hands every start the same
      * proposal stream, so stochastic optimisers (ANNEAL) produce
@@ -62,6 +69,9 @@ OptimizerSpec prestage_refinement_spec(
         spec.prestage && spec.prestage->seed_from_strategy;
     refine.prestage.reset();          // the refinement does not explore again
     refine.optim_init = std::move(candidates);
+    /* Exploration candidates have no INIT origin: a search whose start
+     * moves gives an INFO line, not the WARNING of a user's own point. */
+    refine.optim_init_origin.clear();
     /* Streams of its own: with the exploration's optimiser it drew the
      * exploration's numbers for an equal seed (seed_stream.h). */
     refine.stream_phase = StreamPhase::Refinement;

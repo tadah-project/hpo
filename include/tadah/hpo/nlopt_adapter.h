@@ -1,6 +1,7 @@
 #pragma once
 #include <nlopt.hpp>
 #include <tadah/hpo/backend_rules.h>
+#include <tadah/hpo/failed_loss_stand_in.h>
 #include <tadah/hpo/log_index.h>
 #include <tadah/hpo/optimizer_spec.h>
 #include <tadah/hpo/hpo_host.h>
@@ -17,9 +18,11 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 #include <exception>
 #include <iomanip>
 #include <limits>
+#include <map>
 #include <optional>
 #include <sstream>
 #include <stdexcept>
@@ -124,7 +127,7 @@ inline nlopt::opt build_nlopt(const OptimizerSpec& sp, unsigned dim,
      * carries the per-dim vector (see initial_step.h). Never the old
      * uniform scalar: identical dx on every dim made BOBYQA/COBYLA's
      * internal rescaling a no-op and starved narrow dims. */
-    if (plan && plan->user_set) o.set_initial_step(plan->dx);
+    if (plan && plan->given) o.set_initial_step(plan->dx);
 
     /* generic param lines */
     for (auto& kv : sp.param) {
@@ -146,6 +149,49 @@ inline nlopt::opt build_nlopt(const OptimizerSpec& sp, unsigned dim,
     }
 
     return o;
+}
+
+/* The step plan of the local searches of `sp`, an MLSL or AUGLAG
+ * (OptimizerCaps::accepts_inner) whose local search (inner_run_spec: the
+ * INNER block's, or NLopt's default LN_COBYLA of GN_MLSL and LN_AUGLAG)
+ * keeps the first step of each dimension as its scale for the whole search
+ * (keeps_first_step: LN_BOBYQA, LN_COBYLA); nullopt for any other spec.
+ * NLopt gives a local search the step of the enclosing block when that
+ * block has one (optimize.c copies it into the local optimiser), else the
+ * local optimiser's own, the INNER block's STEP -- and with neither, the
+ * local search's own default from its own start, which shrinks a step to
+ * 0.75 of the distance to a bound closer than that, a scale the search
+ * then keeps. So the plan is that of the local search with the STEP NLopt
+ * gives it (the enclosing block's STEP and overrides when it sets any,
+ * else the INNER block's), and its full step when neither sets one
+ * (make_step_plan): from `start` for an AUGLAG, whose one local search
+ * starts there (single_local_search), so an LN_BOBYQA start within a step
+ * of a bound moves by at most half a step (StepPlan::start), as a search
+ * of its own does; without a start for an MLSL, whose local searches start
+ * where it picks -- LN_BOBYQA moves such a start within a step of a bound
+ * itself, by up to a step. run_nlopt_impl gives the plan's step to the
+ * enclosing optimiser, which hands it to its local search. */
+inline std::optional<StepPlan> local_step_plan(const OptimizerSpec& sp,
+                                               const std::vector<double>& start)
+{
+    if (!optimizer_caps(sp).accepts_inner) return std::nullopt;
+    const std::optional<OptimizerSpec> local = inner_run_spec(sp);
+    if (!local) return std::nullopt;
+    const OptimizerCaps& local_caps = optimizer_caps(*local);
+    if (!keeps_first_step(local_caps)) return std::nullopt;
+    OptimizerSpec stepped = *local;
+    stepped.low = sp.low;
+    stepped.high = sp.high;
+    stepped.space = sp.space;
+    stepped.parameter_labels = sp.parameter_labels;
+    if (sp.step || !sp.step_overrides.empty()) {
+        stepped.step = sp.step;
+        stepped.step_overrides = sp.step_overrides;
+    }
+    const bool one_search = single_local_search(sp).has_value();
+    return make_step_plan(stepped,
+                          one_search ? start : std::vector<double>{},
+                          local_caps);
 }
 
 /* The evaluations without a gradient that NLopt's AUGLAG makes after its
@@ -216,9 +262,12 @@ inline bool withheld_reaches_stopval(double f, const OptimizerSpec& sp)
 }  // namespace detail
 
 /* create an nlopt::opt, with its INNER, from OptimizerSpec ---------
- * `plan` is the per-dimension initial-step plan for THIS spec (nullptr
- * = STEP unset: NLopt's own per-dim heuristic stays in force). INNER
- * specs get a plan without a start point (MLSL picks the local starts).
+ * `plan` is the per-dimension initial-step plan for THIS spec (nullptr,
+ * or a plan that gives no step: NLopt's own per-dim heuristic stays in
+ * force) -- for an MLSL or AUGLAG whose local search keeps its first step,
+ * the plan of that search (detail::local_step_plan), which NLopt hands it.
+ * An INNER block's own STEP becomes a plan without a start point (MLSL
+ * picks the local starts).
  *
  * NLopt's stochastic algorithms (CRS, MLSL, ISRES, ESCH, PRAXIS, ...)
  * draw from an internal RNG seeded only by `nlopt::srand`; the C library
@@ -285,8 +334,65 @@ void run_nlopt_impl(const OptimizerSpec& sp, HostT& host,
     /* Per-dimension initial-step plan (fraction of width, overrides,
      * per-dim near-bound rules) -- see initial_step.h. */
     const StepPlan plan = make_step_plan(sp, start, caps);
+    /* An MLSL or AUGLAG whose local search keeps its first step (LN_BOBYQA,
+     * LN_COBYLA) is given the step of that search, which it hands over
+     * (detail::local_step_plan). */
+    const std::optional<StepPlan> local_plan =
+        detail::local_step_plan(sp, start);
+    const StepPlan& given_plan = local_plan ? *local_plan : plan;
     nlopt::opt opt =
-        make_nlopt(sp, dim, restart, &plan);
+        make_nlopt(sp, dim, restart, &given_plan);
+    /* BOBYQA starts from a point it keeps with its full step: a start within
+     * a step of a bound moves by at most half a step (StepPlan::start) --
+     * the start of the search, or of AUGLAG, whose local search starts
+     * there. The journal says so per dimension; a CONFIG or WARM start, the
+     * user's own point, gets a WARNING (stderr and journal): the search
+     * evaluates the moved point, not that one. */
+    std::string searcher = sp.lib + ":" + sp.algo;
+    if (local_plan)
+        searcher += " (its local search " + inner_run_spec(sp)->algo + ")";
+    if (given_plan.start.size() == dim && given_plan.start != start) {
+        const std::vector<double> real_from = sp.out(start);
+        const std::vector<double> real_to = sp.out(given_plan.start);
+        std::string seed_origin;
+        if (sp.optim_init_origin.size() == sp.optim_init.size() &&
+            sp.optim_init_origin.front().is_seed())
+            seed_origin = sp.optim_init_origin.front().kind ==
+                                  InitOrigin::Kind::Config
+                              ? "CONFIG" : "WARM";
+        std::string moves;
+        for (unsigned i = 0; i < dim; ++i) {
+            if (given_plan.start[i] == start[i]) continue;
+            const double p = given_plan.start[i];
+            const bool onto = p == sp.low[i] || p == sp.high[i];
+            const bool lower = onto ? p == sp.low[i]
+                                    : p - sp.low[i] < sp.high[i] - p;
+            std::ostringstream m;
+            m.precision(10);
+            m << (i < sp.parameter_labels.size() ? sp.parameter_labels[i]
+                                                 : logidx::dim_label(i))
+              << " starts at " << real_to[i] << " instead of " << real_from[i]
+              << ", "
+              << (onto ? "on" : "one step from") << " its "
+              << (lower ? "lower" : "upper") << " bound";
+            if (!moves.empty()) moves += "; ";
+            moves += m.str();
+        }
+        const std::string why =
+            "BOBYQA keeps its full first step only from a start on a bound "
+            "or at least one step from it, and a start within half a step of "
+            "a bound moves onto it";
+        HPOLog::instance().info(searcher + ": " + moves + ": " + why);
+        if (!seed_origin.empty()) {
+            const std::string w =
+                searcher + ": the " + seed_origin +
+                " start moves: " + moves + "; the search evaluates the moved "
+                "point, not the " + seed_origin + " point";
+            std::cerr << "[HPO] WARNING: " << w << "\n";
+            HPOLog::instance().warning(w);
+        }
+        start = given_plan.start;
+    }
 
     /* The *_MLSL_LDS variants explore with a deterministic Sobol
      * low-discrepancy sequence -- nlopt's RNG (seeded in make_nlopt)
@@ -431,7 +537,19 @@ void run_nlopt_impl(const OptimizerSpec& sp, HostT& host,
      *
      * `error`, `gradient_stop`, `budget_spent` and `withheld` exclude each
      * other: the first one set makes the objective refuse every later call
-     * without evaluating. */
+     * without evaluating.
+     *
+     * `to_nlopt`: what NLopt is given for a loss (detail::FailedLossStandIn):
+     * a usable loss as it is, a failed evaluation's -- FAILSCORE, by default
+     * the largest double, which overflowed the models of LN_BOBYQA and
+     * LN_COBYLA -- a finite stand-in, and a gradient scaled with it.
+     * `stand_in_noted`: the journal has said so (once per search, at its
+     * first failed evaluation). The records keep the loss the evaluation
+     * reported. `reported`: the loss the evaluation reported for each value
+     * NLopt was given that differs from it (a stand-in, or a usable loss
+     * held at the ceiling), so the ending line can give the loss behind the
+     * value NLopt returns as its fmin (two failed evaluations given the
+     * same stand-in: the later one's). */
     struct Withheld {
         double              loss;
         GradientFailureInfo why;   /* the gradient's failure */
@@ -468,6 +586,9 @@ void run_nlopt_impl(const OptimizerSpec& sp, HostT& host,
         bool                               budget_spent = false;
         std::optional<Withheld>            withheld;
         RepeatPoints<Vec>*                 repeats = nullptr;
+        detail::FailedLossStandIn*         to_nlopt = nullptr;
+        bool                               stand_in_noted = false;
+        std::map<double, double>           reported;
     };
     const std::optional<OptimizerSpec> local = single_local_search(sp);
     const unsigned long reevaluations = detail::auglag_reevaluations(sp);
@@ -484,6 +605,8 @@ void run_nlopt_impl(const OptimizerSpec& sp, HostT& host,
                 /*evals=*/&evals_used, /*maxeval=*/maxeval,
                 /*budget_spent=*/false, /*withheld=*/std::nullopt,
                 /*repeats=*/&repeats};
+    detail::FailedLossStandIn to_nlopt(sp.failscore);
+    udata.to_nlopt = &to_nlopt;
 
     /* objective adapter (handles log-scale automatically). For
      * gradient-based algorithms NLopt passes a writable `grad` vector
@@ -495,6 +618,25 @@ void run_nlopt_impl(const OptimizerSpec& sp, HostT& host,
                       std::vector<double>& grad, void* userdata)->double
     {
         auto* u = static_cast<UData*>(userdata);
+        /* What NLopt is given for the loss `f` of the point, with the
+         * gradient in `grad` scaled to it (see UData::to_nlopt). */
+        const auto given = [u, &grad](double f) {
+            if (u->to_nlopt->failed(f) && !u->stand_in_noted) {
+                u->stand_in_noted = true;
+                HPOLog::instance().info(
+                    u->sp->lib + ":" + u->sp->algo + ": NLopt is given a "
+                    "finite stand-in for each failed evaluation of this "
+                    "search (the worst usable loss of the search so far "
+                    "plus a margin; before any, FAILSCORE, at most 1e100); "
+                    "loss.tadah records the loss the evaluation reported");
+            }
+            double slope = 1.0;
+            const double v = (*u->to_nlopt)(f, slope);
+            if (slope != 1.0)
+                for (double& gi : grad) gi *= slope;
+            if (std::memcmp(&v, &f, sizeof v) != 0) u->reported[v] = f;
+            return v;
+        };
         /* Stopping: an algorithm may still probe a point before it sees
          * the forced stop (GD_STOGO never sees it); never evaluate again. */
         if (u->error || u->gradient_stop || u->budget_spent || u->withheld) {
@@ -519,7 +661,7 @@ void run_nlopt_impl(const OptimizerSpec& sp, HostT& host,
                     for (size_t i = 0; i < x.size(); ++i)
                         grad[i] = e->gradient(static_cast<long>(i));
                 }
-                return e->loss;
+                return given(e->loss);
             }
             /* MAXEVAL spent (see evals_used): no evaluation; the search
              * ends. */
@@ -597,7 +739,7 @@ void run_nlopt_impl(const OptimizerSpec& sp, HostT& host,
                 for (size_t i=0;i<x.size();++i)
                     grad[i] = g(static_cast<long>(i));
             }
-            return f;
+            return given(f);
         } catch (...) {
             u->error = std::current_exception();
             u->opt->force_stop();
@@ -624,12 +766,17 @@ void run_nlopt_impl(const OptimizerSpec& sp, HostT& host,
     }
 
     /* Journal the EFFECTIVE per-dimension initial step: the plan's
-     * vector when STEP is set, otherwise NLopt's x-dependent default read
+     * vector when STEP is set, or when the plan gives the step anyway (an
+     * algorithm that keeps its first step, or the local search of an MLSL
+     * or AUGLAG that does), otherwise NLopt's x-dependent default read
      * back through get_initial_step(x, dx) so the printed number is the
      * number used. Only for algorithms that read an initial step. */
     if (step_use_consumes(caps.step_use)) {
-        StepPlan effective = plan;
-        if (!plan.user_set) {
+        StepPlan effective = given_plan;
+        if (local_plan) {
+            effective.source += " (the step of the local search, which " +
+                                sp.algo + " hands it)";
+        } else if (!plan.given) {
             const bool inner_sets = sp.inner &&
                 (sp.inner->step || !sp.inner->step_overrides.empty());
             if (caps.step_use == StepUse::ForwardedToInner && inner_sets) {
@@ -665,11 +812,12 @@ void run_nlopt_impl(const OptimizerSpec& sp, HostT& host,
         HPOLog::instance().info(report);
         std::cout << "[HPO] Initial step (" << sp.lib << ":" << sp.algo << "): "
                   << effective.source << " -- per-dim table in hpo_run.log\n";
+        /* A note of a step that differs from the STEP asked for (turned
+         * inward, capped) is a WARNING; "start on a bound (kept)", where
+         * BOBYQA keeps the start and its full step, stays in the table. */
         for (unsigned i = 0; i < dim; ++i) {
             const std::string& nt = effective.note[i];
-            if (nt.find("near-bound") != std::string::npos ||
-                nt.find("inward")     != std::string::npos ||
-                nt.find("on a bound") != std::string::npos ||
+            if (nt.find("inward")     != std::string::npos ||
                 nt.find("capped")     != std::string::npos) {
                 std::ostringstream oss;
                 oss << sp.algo << ": "
@@ -813,8 +961,12 @@ void run_nlopt_impl(const OptimizerSpec& sp, HostT& host,
         } else if (res == nlopt::MAXEVAL_REACHED) {
             maxeval_ending();
         } else {
+            /* fmin is a value NLopt was given: the line gives the loss the
+             * evaluation reported for it (UData::reported). */
+            const auto r = udata.reported.find(fmin);
             std::ostringstream nfo;
-            nfo << "NLopt finished: " << status_str << "  fmin=" << fmin;
+            nfo << "NLopt finished: " << status_str << "  fmin="
+                << (r != udata.reported.end() ? r->second : fmin);
             std::cout << "[HPO] " << nfo.str() << "\n";
             HPOLog::instance().info(nfo.str());
         }

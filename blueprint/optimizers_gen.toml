@@ -24,7 +24,6 @@ accepts_inner = false
 default_inner = ""
 accepts_multi_seed = false
 reads = ["SEED", "THREADS"]
-seed = "read"
 algorithm_params = []
 stops = ["MAXEVAL", "MAXTIME", "STOPVAL"]
 needs_stop = false
@@ -64,8 +63,8 @@ Options for ASA:ASA
   PARAM Temperature_Anneal_Scale  (default 100.0)  n = log(TAS); above the number of dimensions for large problems
   PARAM Sequential_Parameters  (default -1)  start the cyclic generation of one dimension at a time at this index; any negative = off
   PARAM Initial_Parameter_Temperature  (default 1.0)  initial parameter temperature (must be > 0)
-  PARAM Acceptance_Frequency_Modulus  (default 100)  periodic-test cadence in accepted states; 0 = off
-  PARAM Generated_Frequency_Modulus  (default 10000)  periodic-test cadence in generated states; 0 = off
+  PARAM Acceptance_Frequency_Modulus  (default 100)  a periodic test follows each state, or each block of states, that brings the count of accepted states to a multiple of this number; 0 = off
+  PARAM Generated_Frequency_Modulus  (default 10000)  a periodic test follows each state, or each block of states, that brings the count of generated states to a multiple of this number; 0 = off
   PARAM Reanneal_Cost  (default 1)  0 = off, 1 = default, >1 / <-1 = deviation-sample variants (-1 invalid)
   PARAM Reanneal_Parameters  (default 1)  adapt the temperature of each dimension to its tangent sensitivity
   PARAM Delta_X  (default 0.001)  finite-difference step for tangents; 0 disables tangents
@@ -137,7 +136,6 @@ accepts_inner = false
 default_inner = ""
 accepts_multi_seed = false
 reads = []
-seed = "refused"
 algorithm_params = []
 stops = ["MAXEVAL", "FTOL_REL", "XTOL_REL"]
 needs_stop = false
@@ -197,7 +195,6 @@ accepts_inner = false
 default_inner = ""
 accepts_multi_seed = false
 reads = []
-seed = "refused"
 algorithm_params = []
 stops = ["MAXEVAL", "FTOL_ABS"]
 needs_stop = false
@@ -244,7 +241,6 @@ accepts_inner = false
 default_inner = ""
 accepts_multi_seed = true
 reads = ["FTOL_ABS", "THREADS"]
-seed = "refused"
 algorithm_params = []
 stops = ["MAXEVAL", "MAXTIME", "STOPVAL"]
 needs_stop = true
@@ -281,8 +277,7 @@ gradient_based = false
 accepts_inner = true
 default_inner = ""
 accepts_multi_seed = false
-reads = []
-seed = "local_search"
+reads = ["SEED"]
 algorithm_params = []
 stops = ["MAXEVAL", "MAXTIME", "STOPVAL", "FTOL_REL", "FTOL_ABS", "XTOL_REL", "XTOL_ABS"]
 needs_stop = false
@@ -293,7 +288,7 @@ untested_tolerance_note = "AUGLAG ends when its INNER search ends (tadah hpo set
 step_use = "forwarded_to_inner"
 step_use_text = "passed to the optimiser of the INNER block"
 step_consumed = true
-step_note = "passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block"
+step_note = "passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block; with neither STEP set, an INNER LN_BOBYQA or LN_COBYLA takes 0.25 of the width of each search parameter"
 starts_at_x0 = true
 start_note = ""
 random_draws = "not_recorded"
@@ -304,9 +299,7 @@ Options for NLOPT:AUGLAG
    * Stops that end a run: MAXEVAL, MAXTIME, STOPVAL, FTOL_REL, FTOL_ABS, XTOL_REL, XTOL_ABS
    * PARAM: NLopt reads no PARAM key of this algorithm
    * STEP <double>  initial step; consumption: passed to the optimiser of the INNER block
-     passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block
-   * SEED: read only when its local search draws random numbers (an
-     INNER LN_PRAXIS); otherwise rejected
+     passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block; with neither STEP set, an INNER LN_BOBYQA or LN_COBYLA takes 0.25 of the width of each search parameter
    * INNER ... ENDINNER: the local search it runs, from its own starting
      point: LIB NLOPT and a local ALGO; a global one (`tadah explain ALGO`
      marks each) is refused, and so is one that needs an INNER block of its
@@ -324,8 +317,7 @@ gradient_based = false
 accepts_inner = true
 default_inner = ""
 accepts_multi_seed = false
-reads = []
-seed = "local_search"
+reads = ["SEED"]
 algorithm_params = []
 stops = ["MAXEVAL", "MAXTIME", "STOPVAL", "FTOL_REL", "FTOL_ABS", "XTOL_REL", "XTOL_ABS"]
 needs_stop = false
@@ -336,7 +328,7 @@ untested_tolerance_note = "AUGLAG ends when its INNER search ends (tadah hpo set
 step_use = "forwarded_to_inner"
 step_use_text = "passed to the optimiser of the INNER block"
 step_consumed = true
-step_note = "passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block"
+step_note = "passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block; with neither STEP set, an INNER LN_BOBYQA or LN_COBYLA takes 0.25 of the width of each search parameter"
 starts_at_x0 = true
 start_note = ""
 random_draws = "not_recorded"
@@ -347,9 +339,7 @@ Options for NLOPT:AUGLAG_EQ
    * Stops that end a run: MAXEVAL, MAXTIME, STOPVAL, FTOL_REL, FTOL_ABS, XTOL_REL, XTOL_ABS
    * PARAM: NLopt reads no PARAM key of this algorithm
    * STEP <double>  initial step; consumption: passed to the optimiser of the INNER block
-     passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block
-   * SEED: read only when its local search draws random numbers (an
-     INNER LN_PRAXIS); otherwise rejected
+     passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block; with neither STEP set, an INNER LN_BOBYQA or LN_COBYLA takes 0.25 of the width of each search parameter
    * INNER ... ENDINNER: the local search it runs, from its own starting
      point: LIB NLOPT and a local ALGO; a global one (`tadah explain ALGO`
      marks each) is refused, and so is one that needs an INNER block of its
@@ -368,7 +358,6 @@ accepts_inner = true
 default_inner = "LD_MMA"
 accepts_multi_seed = false
 reads = ["POPULATION", "SEED"]
-seed = "read"
 algorithm_params = []
 stops = ["MAXEVAL", "MAXTIME", "STOPVAL"]
 needs_stop = true
@@ -379,7 +368,7 @@ untested_tolerance_note = "MLSL's multistart loop tests no tolerance, and NLopt 
 step_use = "forwarded_to_inner"
 step_use_text = "passed to the optimiser of the INNER block"
 step_consumed = true
-step_note = "passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block"
+step_note = "passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block; with neither STEP set, an INNER LN_BOBYQA or LN_COBYLA takes 0.25 of the width of each search parameter"
 starts_at_x0 = true
 start_note = ""
 random_draws = "not_recorded"
@@ -392,8 +381,7 @@ Options for NLOPT:GD_MLSL
    * PARAM: NLopt reads no PARAM key of this algorithm
    * global optimiser
    * STEP <double>  initial step; consumption: passed to the optimiser of the INNER block
-     passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block
-   * SEED <int>  the seed of the random numbers it draws
+     passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block; with neither STEP set, an INNER LN_BOBYQA or LN_COBYLA takes 0.25 of the width of each search parameter
    * INNER ... ENDINNER: the local search it runs, from the points it
      samples in the OPTIM box: LIB NLOPT and a local ALGO; a global one
      (`tadah explain ALGO` marks each) is refused, and so is one that needs
@@ -410,8 +398,7 @@ gradient_based = true
 accepts_inner = true
 default_inner = "LD_MMA"
 accepts_multi_seed = false
-reads = ["POPULATION"]
-seed = "local_search"
+reads = ["POPULATION", "SEED"]
 algorithm_params = []
 stops = ["MAXEVAL", "MAXTIME", "STOPVAL"]
 needs_stop = true
@@ -422,7 +409,7 @@ untested_tolerance_note = "MLSL's multistart loop tests no tolerance, and NLopt 
 step_use = "forwarded_to_inner"
 step_use_text = "passed to the optimiser of the INNER block"
 step_consumed = true
-step_note = "passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block"
+step_note = "passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block; with neither STEP set, an INNER LN_BOBYQA or LN_COBYLA takes 0.25 of the width of each search parameter"
 starts_at_x0 = true
 start_note = ""
 random_draws = "not_recorded"
@@ -435,9 +422,7 @@ Options for NLOPT:GD_MLSL_LDS
    * PARAM: NLopt reads no PARAM key of this algorithm
    * global optimiser
    * STEP <double>  initial step; consumption: passed to the optimiser of the INNER block
-     passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block
-   * SEED: read only when its local search draws random numbers (an
-     INNER LN_PRAXIS); otherwise rejected
+     passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block; with neither STEP set, an INNER LN_BOBYQA or LN_COBYLA takes 0.25 of the width of each search parameter
    * INNER ... ENDINNER: the local search it runs, from the points it
      samples in the OPTIM box: LIB NLOPT and a local ALGO; a global one
      (`tadah explain ALGO` marks each) is refused, and so is one that needs
@@ -454,8 +439,7 @@ gradient_based = true
 accepts_inner = false
 default_inner = ""
 accepts_multi_seed = false
-reads = []
-seed = "refused"
+reads = ["SEED"]
 algorithm_params = []
 stops = ["MAXEVAL", "MAXTIME", "STOPVAL"]
 needs_stop = true
@@ -479,7 +463,6 @@ Options for NLOPT:GD_STOGO
    * PARAM: NLopt reads no PARAM key of this algorithm
    * global optimiser
    * STEP is rejected: this algorithm never reads an initial step (population, branch-and-bound, or line-search method)
-   * SEED is rejected: it draws no random numbers
 """
 
 [[optimizer]]
@@ -493,7 +476,6 @@ accepts_inner = false
 default_inner = ""
 accepts_multi_seed = false
 reads = ["POPULATION", "SEED"]
-seed = "read"
 algorithm_params = []
 stops = ["MAXEVAL", "MAXTIME", "STOPVAL"]
 needs_stop = true
@@ -517,7 +499,6 @@ Options for NLOPT:GD_STOGO_RAND
    * PARAM: NLopt reads no PARAM key of this algorithm
    * global optimiser
    * STEP is rejected: this algorithm never reads an initial step (population, branch-and-bound, or line-search method)
-   * SEED <int>  the seed of the random numbers it draws
 """
 
 [[optimizer]]
@@ -530,8 +511,7 @@ gradient_based = false
 accepts_inner = false
 default_inner = ""
 accepts_multi_seed = false
-reads = []
-seed = "refused"
+reads = ["SEED"]
 algorithm_params = []
 stops = ["MAXEVAL", "MAXTIME", "STOPVAL"]
 needs_stop = true
@@ -556,7 +536,6 @@ Options for NLOPT:GN_AGS
    * global optimiser
    * derivative-free
    * STEP is rejected: this algorithm never reads an initial step (population, branch-and-bound, or line-search method)
-   * SEED is rejected: it draws no random numbers
 """
 
 [[optimizer]]
@@ -570,7 +549,6 @@ accepts_inner = false
 default_inner = ""
 accepts_multi_seed = false
 reads = ["POPULATION", "SEED"]
-seed = "read"
 algorithm_params = []
 stops = ["MAXEVAL", "MAXTIME", "STOPVAL", "FTOL_REL", "FTOL_ABS", "XTOL_REL", "XTOL_ABS"]
 needs_stop = true
@@ -595,7 +573,6 @@ Options for NLOPT:GN_CRS2_LM
    * global optimiser
    * derivative-free
    * STEP is rejected: this algorithm never reads an initial step (population, branch-and-bound, or line-search method)
-   * SEED <int>  the seed of the random numbers it draws
 """
 
 [[optimizer]]
@@ -608,8 +585,7 @@ gradient_based = false
 accepts_inner = false
 default_inner = ""
 accepts_multi_seed = false
-reads = []
-seed = "refused"
+reads = ["SEED"]
 algorithm_params = ["magic_eps"]
 stops = ["MAXEVAL", "MAXTIME", "STOPVAL", "FTOL_REL", "FTOL_ABS", "XTOL_REL", "XTOL_ABS"]
 needs_stop = true
@@ -635,7 +611,6 @@ Options for NLOPT:GN_DIRECT
    * global optimiser
    * derivative-free
    * STEP is rejected: this algorithm never reads an initial step (population, branch-and-bound, or line-search method)
-   * SEED is rejected: it draws no random numbers
 """
 
 [[optimizer]]
@@ -648,8 +623,7 @@ gradient_based = false
 accepts_inner = false
 default_inner = ""
 accepts_multi_seed = false
-reads = []
-seed = "refused"
+reads = ["SEED"]
 algorithm_params = ["magic_eps"]
 stops = ["MAXEVAL", "MAXTIME", "STOPVAL", "FTOL_REL", "FTOL_ABS", "XTOL_REL", "XTOL_ABS"]
 needs_stop = true
@@ -675,7 +649,6 @@ Options for NLOPT:GN_DIRECT_L
    * global optimiser
    * derivative-free
    * STEP is rejected: this algorithm never reads an initial step (population, branch-and-bound, or line-search method)
-   * SEED is rejected: it draws no random numbers
 """
 
 [[optimizer]]
@@ -688,8 +661,7 @@ gradient_based = false
 accepts_inner = false
 default_inner = ""
 accepts_multi_seed = false
-reads = []
-seed = "refused"
+reads = ["SEED"]
 algorithm_params = ["magic_eps"]
 stops = ["MAXEVAL", "MAXTIME", "STOPVAL", "FTOL_REL", "FTOL_ABS", "XTOL_REL", "XTOL_ABS"]
 needs_stop = true
@@ -715,7 +687,6 @@ Options for NLOPT:GN_DIRECT_L_NOSCAL
    * global optimiser
    * derivative-free
    * STEP is rejected: this algorithm never reads an initial step (population, branch-and-bound, or line-search method)
-   * SEED is rejected: it draws no random numbers
 """
 
 [[optimizer]]
@@ -729,7 +700,6 @@ accepts_inner = false
 default_inner = ""
 accepts_multi_seed = false
 reads = ["SEED"]
-seed = "two_dimensions"
 algorithm_params = ["magic_eps"]
 stops = ["MAXEVAL", "MAXTIME", "STOPVAL", "FTOL_REL", "FTOL_ABS", "XTOL_REL", "XTOL_ABS"]
 needs_stop = true
@@ -755,8 +725,6 @@ Options for NLOPT:GN_DIRECT_L_RAND
    * global optimiser
    * derivative-free
    * STEP is rejected: this algorithm never reads an initial step (population, branch-and-bound, or line-search method)
-   * SEED <int>  the seed of the random numbers it draws; in one OPTIM
-     dimension it draws none, and SEED is rejected
 """
 
 [[optimizer]]
@@ -790,7 +758,6 @@ accepts_inner = false
 default_inner = ""
 accepts_multi_seed = false
 reads = ["POPULATION", "SEED"]
-seed = "read"
 algorithm_params = []
 stops = ["MAXEVAL", "MAXTIME", "STOPVAL"]
 needs_stop = true
@@ -815,7 +782,6 @@ Options for NLOPT:GN_ESCH
    * global optimiser
    * derivative-free
    * STEP is rejected: this algorithm never reads an initial step (population, branch-and-bound, or line-search method)
-   * SEED <int>  the seed of the random numbers it draws
 """
 
 [[optimizer]]
@@ -829,7 +795,6 @@ accepts_inner = false
 default_inner = ""
 accepts_multi_seed = false
 reads = ["POPULATION", "SEED"]
-seed = "read"
 algorithm_params = []
 stops = ["MAXEVAL", "MAXTIME", "STOPVAL", "FTOL_REL", "FTOL_ABS", "XTOL_REL", "XTOL_ABS"]
 needs_stop = true
@@ -854,7 +819,6 @@ Options for NLOPT:GN_ISRES
    * global optimiser
    * derivative-free
    * STEP is rejected: this algorithm never reads an initial step (population, branch-and-bound, or line-search method)
-   * SEED <int>  the seed of the random numbers it draws
 """
 
 [[optimizer]]
@@ -868,7 +832,6 @@ accepts_inner = true
 default_inner = "LN_COBYLA"
 accepts_multi_seed = false
 reads = ["POPULATION", "SEED"]
-seed = "read"
 algorithm_params = []
 stops = ["MAXEVAL", "MAXTIME", "STOPVAL"]
 needs_stop = true
@@ -879,7 +842,7 @@ untested_tolerance_note = "MLSL's multistart loop tests no tolerance, and NLopt 
 step_use = "forwarded_to_inner"
 step_use_text = "passed to the optimiser of the INNER block"
 step_consumed = true
-step_note = "passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block"
+step_note = "passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block; with neither STEP set, a local search LN_BOBYQA or LN_COBYLA (the INNER block's, or the default LN_COBYLA) takes 0.25 of the width of each search parameter"
 starts_at_x0 = true
 start_note = ""
 random_draws = "not_recorded"
@@ -893,8 +856,7 @@ Options for NLOPT:GN_MLSL
    * global optimiser
    * derivative-free
    * STEP <double>  initial step; consumption: passed to the optimiser of the INNER block
-     passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block
-   * SEED <int>  the seed of the random numbers it draws
+     passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block; with neither STEP set, a local search LN_BOBYQA or LN_COBYLA (the INNER block's, or the default LN_COBYLA) takes 0.25 of the width of each search parameter
    * INNER ... ENDINNER: the local search it runs, from the points it
      samples in the OPTIM box: LIB NLOPT and a local ALGO; a global one
      (`tadah explain ALGO` marks each) is refused, and so is one that needs
@@ -912,8 +874,7 @@ gradient_based = false
 accepts_inner = true
 default_inner = "LN_COBYLA"
 accepts_multi_seed = false
-reads = ["POPULATION"]
-seed = "local_search"
+reads = ["POPULATION", "SEED"]
 algorithm_params = []
 stops = ["MAXEVAL", "MAXTIME", "STOPVAL"]
 needs_stop = true
@@ -924,7 +885,7 @@ untested_tolerance_note = "MLSL's multistart loop tests no tolerance, and NLopt 
 step_use = "forwarded_to_inner"
 step_use_text = "passed to the optimiser of the INNER block"
 step_consumed = true
-step_note = "passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block"
+step_note = "passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block; with neither STEP set, a local search LN_BOBYQA or LN_COBYLA (the INNER block's, or the default LN_COBYLA) takes 0.25 of the width of each search parameter"
 starts_at_x0 = true
 start_note = ""
 random_draws = "not_recorded"
@@ -938,9 +899,7 @@ Options for NLOPT:GN_MLSL_LDS
    * global optimiser
    * derivative-free
    * STEP <double>  initial step; consumption: passed to the optimiser of the INNER block
-     passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block
-   * SEED: read only when its local search draws random numbers (an
-     INNER LN_PRAXIS); otherwise rejected
+     passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block; with neither STEP set, a local search LN_BOBYQA or LN_COBYLA (the INNER block's, or the default LN_COBYLA) takes 0.25 of the width of each search parameter
    * INNER ... ENDINNER: the local search it runs, from the points it
      samples in the OPTIM box: LIB NLOPT and a local ALGO; a global one
      (`tadah explain ALGO` marks each) is refused, and so is one that needs
@@ -958,8 +917,7 @@ gradient_based = false
 accepts_inner = false
 default_inner = ""
 accepts_multi_seed = false
-reads = []
-seed = "refused"
+reads = ["SEED"]
 algorithm_params = ["magic_eps", "magic_eps_abs", "sigma_reltol", "fglobal_reltol"]
 stops = ["MAXEVAL", "MAXTIME", "STOPVAL", "XTOL_REL"]
 needs_stop = false
@@ -984,7 +942,6 @@ Options for NLOPT:GN_ORIG_DIRECT
    * global optimiser
    * derivative-free
    * STEP is rejected: this algorithm never reads an initial step (population, branch-and-bound, or line-search method)
-   * SEED is rejected: it draws no random numbers
 """
 
 [[optimizer]]
@@ -997,8 +954,7 @@ gradient_based = false
 accepts_inner = false
 default_inner = ""
 accepts_multi_seed = false
-reads = []
-seed = "refused"
+reads = ["SEED"]
 algorithm_params = ["magic_eps", "magic_eps_abs", "sigma_reltol", "fglobal_reltol"]
 stops = ["MAXEVAL", "MAXTIME", "STOPVAL", "XTOL_REL"]
 needs_stop = false
@@ -1023,7 +979,6 @@ Options for NLOPT:GN_ORIG_DIRECT_L
    * global optimiser
    * derivative-free
    * STEP is rejected: this algorithm never reads an initial step (population, branch-and-bound, or line-search method)
-   * SEED is rejected: it draws no random numbers
 """
 
 [[optimizer]]
@@ -1037,7 +992,6 @@ accepts_inner = true
 default_inner = ""
 accepts_multi_seed = false
 reads = ["POPULATION", "SEED"]
-seed = "read"
 algorithm_params = []
 stops = ["MAXEVAL", "MAXTIME", "STOPVAL"]
 needs_stop = true
@@ -1048,7 +1002,7 @@ untested_tolerance_note = "MLSL's multistart loop tests no tolerance, and NLopt 
 step_use = "forwarded_to_inner"
 step_use_text = "passed to the optimiser of the INNER block"
 step_consumed = true
-step_note = "passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block"
+step_note = "passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block; with neither STEP set, an INNER LN_BOBYQA or LN_COBYLA takes 0.25 of the width of each search parameter"
 starts_at_x0 = true
 start_note = ""
 random_draws = "not_recorded"
@@ -1061,8 +1015,7 @@ Options for NLOPT:G_MLSL
    * PARAM: NLopt reads no PARAM key of this algorithm
    * global optimiser
    * STEP <double>  initial step; consumption: passed to the optimiser of the INNER block
-     passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block
-   * SEED <int>  the seed of the random numbers it draws
+     passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block; with neither STEP set, an INNER LN_BOBYQA or LN_COBYLA takes 0.25 of the width of each search parameter
    * INNER ... ENDINNER: the local search it runs, from the points it
      samples in the OPTIM box: LIB NLOPT and a local ALGO; a global one
      (`tadah explain ALGO` marks each) is refused, and so is one that needs
@@ -1080,8 +1033,7 @@ gradient_based = false
 accepts_inner = true
 default_inner = ""
 accepts_multi_seed = false
-reads = ["POPULATION"]
-seed = "local_search"
+reads = ["POPULATION", "SEED"]
 algorithm_params = []
 stops = ["MAXEVAL", "MAXTIME", "STOPVAL"]
 needs_stop = true
@@ -1092,7 +1044,7 @@ untested_tolerance_note = "MLSL's multistart loop tests no tolerance, and NLopt 
 step_use = "forwarded_to_inner"
 step_use_text = "passed to the optimiser of the INNER block"
 step_consumed = true
-step_note = "passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block"
+step_note = "passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block; with neither STEP set, an INNER LN_BOBYQA or LN_COBYLA takes 0.25 of the width of each search parameter"
 starts_at_x0 = true
 start_note = ""
 random_draws = "not_recorded"
@@ -1105,9 +1057,7 @@ Options for NLOPT:G_MLSL_LDS
    * PARAM: NLopt reads no PARAM key of this algorithm
    * global optimiser
    * STEP <double>  initial step; consumption: passed to the optimiser of the INNER block
-     passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block
-   * SEED: read only when its local search draws random numbers (an
-     INNER LN_PRAXIS); otherwise rejected
+     passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block; with neither STEP set, an INNER LN_BOBYQA or LN_COBYLA takes 0.25 of the width of each search parameter
    * INNER ... ENDINNER: the local search it runs, from the points it
      samples in the OPTIM box: LIB NLOPT and a local ALGO; a global one
      (`tadah explain ALGO` marks each) is refused, and so is one that needs
@@ -1125,8 +1075,7 @@ gradient_based = true
 accepts_inner = true
 default_inner = "LD_MMA"
 accepts_multi_seed = false
-reads = []
-seed = "local_search"
+reads = ["SEED"]
 algorithm_params = []
 stops = ["MAXEVAL", "MAXTIME", "STOPVAL", "FTOL_REL", "FTOL_ABS", "XTOL_REL", "XTOL_ABS"]
 needs_stop = false
@@ -1137,7 +1086,7 @@ untested_tolerance_note = "AUGLAG ends when its INNER search ends (tadah hpo set
 step_use = "forwarded_to_inner"
 step_use_text = "passed to the optimiser of the INNER block"
 step_consumed = true
-step_note = "passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block"
+step_note = "passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block; with neither STEP set, an INNER LN_BOBYQA or LN_COBYLA takes 0.25 of the width of each search parameter"
 starts_at_x0 = true
 start_note = ""
 random_draws = "not_recorded"
@@ -1148,9 +1097,7 @@ Options for NLOPT:LD_AUGLAG
    * Stops that end a run: MAXEVAL, MAXTIME, STOPVAL, FTOL_REL, FTOL_ABS, XTOL_REL, XTOL_ABS
    * PARAM: NLopt reads no PARAM key of this algorithm
    * STEP <double>  initial step; consumption: passed to the optimiser of the INNER block
-     passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block
-   * SEED: read only when its local search draws random numbers (an
-     INNER LN_PRAXIS); otherwise rejected
+     passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block; with neither STEP set, an INNER LN_BOBYQA or LN_COBYLA takes 0.25 of the width of each search parameter
    * INNER ... ENDINNER: the local search it runs, from its own starting
      point: LIB NLOPT and a local ALGO; a global one (`tadah explain ALGO`
      marks each) is refused, and so is one that needs an INNER block of its
@@ -1167,8 +1114,7 @@ gradient_based = true
 accepts_inner = true
 default_inner = "LD_MMA"
 accepts_multi_seed = false
-reads = []
-seed = "local_search"
+reads = ["SEED"]
 algorithm_params = []
 stops = ["MAXEVAL", "MAXTIME", "STOPVAL", "FTOL_REL", "FTOL_ABS", "XTOL_REL", "XTOL_ABS"]
 needs_stop = false
@@ -1179,7 +1125,7 @@ untested_tolerance_note = "AUGLAG ends when its INNER search ends (tadah hpo set
 step_use = "forwarded_to_inner"
 step_use_text = "passed to the optimiser of the INNER block"
 step_consumed = true
-step_note = "passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block"
+step_note = "passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block; with neither STEP set, an INNER LN_BOBYQA or LN_COBYLA takes 0.25 of the width of each search parameter"
 starts_at_x0 = true
 start_note = ""
 random_draws = "not_recorded"
@@ -1190,9 +1136,7 @@ Options for NLOPT:LD_AUGLAG_EQ
    * Stops that end a run: MAXEVAL, MAXTIME, STOPVAL, FTOL_REL, FTOL_ABS, XTOL_REL, XTOL_ABS
    * PARAM: NLopt reads no PARAM key of this algorithm
    * STEP <double>  initial step; consumption: passed to the optimiser of the INNER block
-     passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block
-   * SEED: read only when its local search draws random numbers (an
-     INNER LN_PRAXIS); otherwise rejected
+     passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block; with neither STEP set, an INNER LN_BOBYQA or LN_COBYLA takes 0.25 of the width of each search parameter
    * INNER ... ENDINNER: the local search it runs, from its own starting
      point: LIB NLOPT and a local ALGO; a global one (`tadah explain ALGO`
      marks each) is refused, and so is one that needs an INNER block of its
@@ -1209,8 +1153,7 @@ gradient_based = true
 accepts_inner = false
 default_inner = ""
 accepts_multi_seed = false
-reads = []
-seed = "refused"
+reads = ["SEED"]
 algorithm_params = ["inner_maxeval", "verbosity", "rho_init", "dual_algorithm", "dual_ftol_rel", "dual_ftol_abs", "dual_xtol_rel", "dual_xtol_abs", "dual_maxeval"]
 stops = ["MAXEVAL", "MAXTIME", "STOPVAL", "FTOL_REL", "FTOL_ABS", "XTOL_REL", "XTOL_ABS"]
 needs_stop = true
@@ -1236,7 +1179,6 @@ Options for NLOPT:LD_CCSAQ
      dual_ftol_abs, dual_xtol_rel, dual_xtol_abs, dual_maxeval
    * STEP <double>  initial step; consumption: one per dimension: the first trust-region half-width
      the first trust-region half-width in each dimension; without STEP it is half the width of the OPTIM box
-   * SEED is rejected: it draws no random numbers
 """
 
 [[optimizer]]
@@ -1249,8 +1191,7 @@ gradient_based = true
 accepts_inner = false
 default_inner = ""
 accepts_multi_seed = false
-reads = ["VECTOR_ARR"]
-seed = "refused"
+reads = ["SEED", "VECTOR_ARR"]
 algorithm_params = ["tolg"]
 stops = ["MAXEVAL", "MAXTIME", "STOPVAL", "FTOL_REL", "FTOL_ABS", "XTOL_REL", "XTOL_ABS"]
 needs_stop = false
@@ -1272,7 +1213,6 @@ Options for NLOPT:LD_LBFGS
    * Stops that end a run: MAXEVAL, MAXTIME, STOPVAL, FTOL_REL, FTOL_ABS, XTOL_REL, XTOL_ABS
    * PARAM <name> <value>  the PARAM keys NLopt reads for it: tolg
    * STEP is rejected: this algorithm never reads an initial step (population, branch-and-bound, or line-search method)
-   * SEED is rejected: it draws no random numbers
 """
 
 [[optimizer]]
@@ -1285,8 +1225,7 @@ gradient_based = true
 accepts_inner = false
 default_inner = ""
 accepts_multi_seed = false
-reads = []
-seed = "refused"
+reads = ["SEED"]
 algorithm_params = ["inner_maxeval", "verbosity", "rho_init", "dual_algorithm", "dual_ftol_rel", "dual_ftol_abs", "dual_xtol_rel", "dual_xtol_abs", "dual_maxeval"]
 stops = ["MAXEVAL", "MAXTIME", "STOPVAL", "FTOL_REL", "FTOL_ABS", "XTOL_REL", "XTOL_ABS"]
 needs_stop = true
@@ -1312,7 +1251,6 @@ Options for NLOPT:LD_MMA
      dual_ftol_abs, dual_xtol_rel, dual_xtol_abs, dual_maxeval
    * STEP <double>  initial step; consumption: one per dimension: the first trust-region half-width
      the first trust-region half-width in each dimension; without STEP it is half the width of the OPTIM box
-   * SEED is rejected: it draws no random numbers
 """
 
 [[optimizer]]
@@ -1325,8 +1263,7 @@ gradient_based = true
 accepts_inner = false
 default_inner = ""
 accepts_multi_seed = false
-reads = []
-seed = "refused"
+reads = ["SEED"]
 algorithm_params = []
 stops = ["MAXEVAL", "MAXTIME", "STOPVAL", "FTOL_REL", "FTOL_ABS", "XTOL_REL", "XTOL_ABS"]
 needs_stop = true
@@ -1349,7 +1286,6 @@ Options for NLOPT:LD_SLSQP
      One of them is required (a tolerance above 0), or a RESTART block: without a tolerance it has no convergence test and runs until it is interrupted.
    * PARAM: NLopt reads no PARAM key of this algorithm
    * STEP is rejected: this algorithm never reads an initial step (population, branch-and-bound, or line-search method)
-   * SEED is rejected: it draws no random numbers
 """
 
 [[optimizer]]
@@ -1362,8 +1298,7 @@ gradient_based = true
 accepts_inner = false
 default_inner = ""
 accepts_multi_seed = false
-reads = []
-seed = "refused"
+reads = ["SEED"]
 algorithm_params = ["tolg"]
 stops = ["MAXEVAL", "MAXTIME", "STOPVAL", "FTOL_REL", "FTOL_ABS", "XTOL_REL", "XTOL_ABS"]
 needs_stop = false
@@ -1385,7 +1320,6 @@ Options for NLOPT:LD_TNEWTON
    * Stops that end a run: MAXEVAL, MAXTIME, STOPVAL, FTOL_REL, FTOL_ABS, XTOL_REL, XTOL_ABS
    * PARAM <name> <value>  the PARAM keys NLopt reads for it: tolg
    * STEP is rejected: this algorithm never reads an initial step (population, branch-and-bound, or line-search method)
-   * SEED is rejected: it draws no random numbers
 """
 
 [[optimizer]]
@@ -1398,8 +1332,7 @@ gradient_based = true
 accepts_inner = false
 default_inner = ""
 accepts_multi_seed = false
-reads = ["VECTOR_ARR"]
-seed = "refused"
+reads = ["SEED", "VECTOR_ARR"]
 algorithm_params = ["tolg"]
 stops = ["MAXEVAL", "MAXTIME", "STOPVAL", "FTOL_REL", "FTOL_ABS", "XTOL_REL", "XTOL_ABS"]
 needs_stop = false
@@ -1421,7 +1354,6 @@ Options for NLOPT:LD_TNEWTON_PRECOND
    * Stops that end a run: MAXEVAL, MAXTIME, STOPVAL, FTOL_REL, FTOL_ABS, XTOL_REL, XTOL_ABS
    * PARAM <name> <value>  the PARAM keys NLopt reads for it: tolg
    * STEP is rejected: this algorithm never reads an initial step (population, branch-and-bound, or line-search method)
-   * SEED is rejected: it draws no random numbers
 """
 
 [[optimizer]]
@@ -1434,8 +1366,7 @@ gradient_based = true
 accepts_inner = false
 default_inner = ""
 accepts_multi_seed = false
-reads = ["VECTOR_ARR"]
-seed = "refused"
+reads = ["SEED", "VECTOR_ARR"]
 algorithm_params = ["tolg"]
 stops = ["MAXEVAL", "MAXTIME", "STOPVAL", "FTOL_REL", "FTOL_ABS", "XTOL_REL", "XTOL_ABS"]
 needs_stop = false
@@ -1457,7 +1388,6 @@ Options for NLOPT:LD_TNEWTON_PRECOND_RESTART
    * Stops that end a run: MAXEVAL, MAXTIME, STOPVAL, FTOL_REL, FTOL_ABS, XTOL_REL, XTOL_ABS
    * PARAM <name> <value>  the PARAM keys NLopt reads for it: tolg
    * STEP is rejected: this algorithm never reads an initial step (population, branch-and-bound, or line-search method)
-   * SEED is rejected: it draws no random numbers
 """
 
 [[optimizer]]
@@ -1470,8 +1400,7 @@ gradient_based = true
 accepts_inner = false
 default_inner = ""
 accepts_multi_seed = false
-reads = []
-seed = "refused"
+reads = ["SEED"]
 algorithm_params = ["tolg"]
 stops = ["MAXEVAL", "MAXTIME", "STOPVAL", "FTOL_REL", "FTOL_ABS", "XTOL_REL", "XTOL_ABS"]
 needs_stop = false
@@ -1493,7 +1422,6 @@ Options for NLOPT:LD_TNEWTON_RESTART
    * Stops that end a run: MAXEVAL, MAXTIME, STOPVAL, FTOL_REL, FTOL_ABS, XTOL_REL, XTOL_ABS
    * PARAM <name> <value>  the PARAM keys NLopt reads for it: tolg
    * STEP is rejected: this algorithm never reads an initial step (population, branch-and-bound, or line-search method)
-   * SEED is rejected: it draws no random numbers
 """
 
 [[optimizer]]
@@ -1506,8 +1434,7 @@ gradient_based = true
 accepts_inner = false
 default_inner = ""
 accepts_multi_seed = false
-reads = ["VECTOR_ARR"]
-seed = "refused"
+reads = ["SEED", "VECTOR_ARR"]
 algorithm_params = ["tolg"]
 stops = ["MAXEVAL", "MAXTIME", "STOPVAL", "FTOL_REL", "FTOL_ABS", "XTOL_REL", "XTOL_ABS"]
 needs_stop = false
@@ -1529,7 +1456,6 @@ Options for NLOPT:LD_VAR1
    * Stops that end a run: MAXEVAL, MAXTIME, STOPVAL, FTOL_REL, FTOL_ABS, XTOL_REL, XTOL_ABS
    * PARAM <name> <value>  the PARAM keys NLopt reads for it: tolg
    * STEP is rejected: this algorithm never reads an initial step (population, branch-and-bound, or line-search method)
-   * SEED is rejected: it draws no random numbers
 """
 
 [[optimizer]]
@@ -1542,8 +1468,7 @@ gradient_based = true
 accepts_inner = false
 default_inner = ""
 accepts_multi_seed = false
-reads = ["VECTOR_ARR"]
-seed = "refused"
+reads = ["SEED", "VECTOR_ARR"]
 algorithm_params = ["tolg"]
 stops = ["MAXEVAL", "MAXTIME", "STOPVAL", "FTOL_REL", "FTOL_ABS", "XTOL_REL", "XTOL_ABS"]
 needs_stop = false
@@ -1565,7 +1490,6 @@ Options for NLOPT:LD_VAR2
    * Stops that end a run: MAXEVAL, MAXTIME, STOPVAL, FTOL_REL, FTOL_ABS, XTOL_REL, XTOL_ABS
    * PARAM <name> <value>  the PARAM keys NLopt reads for it: tolg
    * STEP is rejected: this algorithm never reads an initial step (population, branch-and-bound, or line-search method)
-   * SEED is rejected: it draws no random numbers
 """
 
 [[optimizer]]
@@ -1578,8 +1502,7 @@ gradient_based = false
 accepts_inner = true
 default_inner = "LN_COBYLA"
 accepts_multi_seed = false
-reads = []
-seed = "local_search"
+reads = ["SEED"]
 algorithm_params = []
 stops = ["MAXEVAL", "MAXTIME", "STOPVAL", "FTOL_REL", "FTOL_ABS", "XTOL_REL", "XTOL_ABS"]
 needs_stop = false
@@ -1590,7 +1513,7 @@ untested_tolerance_note = "AUGLAG ends when its INNER search ends (tadah hpo set
 step_use = "forwarded_to_inner"
 step_use_text = "passed to the optimiser of the INNER block"
 step_consumed = true
-step_note = "passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block"
+step_note = "passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block; with neither STEP set, a local search LN_BOBYQA or LN_COBYLA (the INNER block's, or the default LN_COBYLA) takes 0.25 of the width of each search parameter"
 starts_at_x0 = true
 start_note = ""
 random_draws = "not_recorded"
@@ -1602,9 +1525,7 @@ Options for NLOPT:LN_AUGLAG
    * PARAM: NLopt reads no PARAM key of this algorithm
    * derivative-free
    * STEP <double>  initial step; consumption: passed to the optimiser of the INNER block
-     passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block
-   * SEED: read only when its local search draws random numbers (an
-     INNER LN_PRAXIS); otherwise rejected
+     passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block; with neither STEP set, a local search LN_BOBYQA or LN_COBYLA (the INNER block's, or the default LN_COBYLA) takes 0.25 of the width of each search parameter
    * INNER ... ENDINNER: the local search it runs, from its own starting
      point: LIB NLOPT and a local ALGO; a global one (`tadah explain ALGO`
      marks each) is refused, and so is one that needs an INNER block of its
@@ -1621,8 +1542,7 @@ gradient_based = false
 accepts_inner = true
 default_inner = "LN_COBYLA"
 accepts_multi_seed = false
-reads = []
-seed = "local_search"
+reads = ["SEED"]
 algorithm_params = []
 stops = ["MAXEVAL", "MAXTIME", "STOPVAL", "FTOL_REL", "FTOL_ABS", "XTOL_REL", "XTOL_ABS"]
 needs_stop = false
@@ -1633,7 +1553,7 @@ untested_tolerance_note = "AUGLAG ends when its INNER search ends (tadah hpo set
 step_use = "forwarded_to_inner"
 step_use_text = "passed to the optimiser of the INNER block"
 step_consumed = true
-step_note = "passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block"
+step_note = "passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block; with neither STEP set, a local search LN_BOBYQA or LN_COBYLA (the INNER block's, or the default LN_COBYLA) takes 0.25 of the width of each search parameter"
 starts_at_x0 = true
 start_note = ""
 random_draws = "not_recorded"
@@ -1645,9 +1565,7 @@ Options for NLOPT:LN_AUGLAG_EQ
    * PARAM: NLopt reads no PARAM key of this algorithm
    * derivative-free
    * STEP <double>  initial step; consumption: passed to the optimiser of the INNER block
-     passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block
-   * SEED: read only when its local search draws random numbers (an
-     INNER LN_PRAXIS); otherwise rejected
+     passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block; with neither STEP set, a local search LN_BOBYQA or LN_COBYLA (the INNER block's, or the default LN_COBYLA) takes 0.25 of the width of each search parameter
    * INNER ... ENDINNER: the local search it runs, from its own starting
      point: LIB NLOPT and a local ALGO; a global one (`tadah explain ALGO`
      marks each) is refused, and so is one that needs an INNER block of its
@@ -1664,8 +1582,7 @@ gradient_based = false
 accepts_inner = false
 default_inner = ""
 accepts_multi_seed = false
-reads = []
-seed = "refused"
+reads = ["SEED"]
 algorithm_params = []
 stops = ["MAXEVAL", "MAXTIME", "STOPVAL", "FTOL_REL", "FTOL_ABS", "XTOL_REL", "XTOL_ABS"]
 needs_stop = false
@@ -1676,7 +1593,7 @@ untested_tolerance_note = ""
 step_use = "per_dim_rescale"
 step_use_text = "one per dimension: rescaling of the coordinates"
 step_consumed = true
-step_note = "STEP rescales the coordinates, so that the first trust-region radius is STEP in each dimension; the last radius is XTOL_REL times the first, and not below XTOL_ABS"
+step_note = "STEP rescales the coordinates, so that the first trust-region radius is STEP in each search parameter, and that scale holds for the whole search; without STEP each search parameter takes 0.25 of the width of its box, in the coordinates of the search. The last radius is XTOL_REL times the first, and not below XTOL_ABS. LN_BOBYQA moves a start that lies within a step of a bound by at most half a step: onto the bound when it lies within half a step of it, otherwise to one step from it"
 starts_at_x0 = true
 start_note = ""
 random_draws = "not_recorded"
@@ -1688,8 +1605,7 @@ Options for NLOPT:LN_BOBYQA
    * PARAM: NLopt reads no PARAM key of this algorithm
    * derivative-free
    * STEP <double>  initial step; consumption: one per dimension: rescaling of the coordinates
-     STEP rescales the coordinates, so that the first trust-region radius is STEP in each dimension; the last radius is XTOL_REL times the first, and not below XTOL_ABS
-   * SEED is rejected: it draws no random numbers
+     STEP rescales the coordinates, so that the first trust-region radius is STEP in each search parameter, and that scale holds for the whole search; without STEP each search parameter takes 0.25 of the width of its box, in the coordinates of the search. The last radius is XTOL_REL times the first, and not below XTOL_ABS. LN_BOBYQA moves a start that lies within a step of a bound by at most half a step: onto the bound when it lies within half a step of it, otherwise to one step from it
 """
 
 [[optimizer]]
@@ -1702,8 +1618,7 @@ gradient_based = false
 accepts_inner = false
 default_inner = ""
 accepts_multi_seed = false
-reads = []
-seed = "refused"
+reads = ["SEED"]
 algorithm_params = []
 stops = ["MAXEVAL", "MAXTIME", "STOPVAL", "FTOL_REL", "FTOL_ABS", "XTOL_REL", "XTOL_ABS"]
 needs_stop = false
@@ -1714,7 +1629,7 @@ untested_tolerance_note = ""
 step_use = "per_dim_rescale"
 step_use_text = "one per dimension: rescaling of the coordinates"
 step_consumed = true
-step_note = "STEP rescales the coordinates, so that the first trust-region radius is STEP in each dimension; the last radius is XTOL_REL times the first, and not below XTOL_ABS"
+step_note = "STEP rescales the coordinates, so that the first trust-region radius is STEP in each search parameter, and that scale holds for the whole search; without STEP each search parameter takes 0.25 of the width of its box, in the coordinates of the search. The last radius is XTOL_REL times the first, and not below XTOL_ABS. LN_BOBYQA moves a start that lies within a step of a bound by at most half a step: onto the bound when it lies within half a step of it, otherwise to one step from it"
 starts_at_x0 = true
 start_note = ""
 random_draws = "not_recorded"
@@ -1726,8 +1641,7 @@ Options for NLOPT:LN_COBYLA
    * PARAM: NLopt reads no PARAM key of this algorithm
    * derivative-free
    * STEP <double>  initial step; consumption: one per dimension: rescaling of the coordinates
-     STEP rescales the coordinates, so that the first trust-region radius is STEP in each dimension; the last radius is XTOL_REL times the first, and not below XTOL_ABS
-   * SEED is rejected: it draws no random numbers
+     STEP rescales the coordinates, so that the first trust-region radius is STEP in each search parameter, and that scale holds for the whole search; without STEP each search parameter takes 0.25 of the width of its box, in the coordinates of the search. The last radius is XTOL_REL times the first, and not below XTOL_ABS. LN_BOBYQA moves a start that lies within a step of a bound by at most half a step: onto the bound when it lies within half a step of it, otherwise to one step from it
 """
 
 [[optimizer]]
@@ -1740,8 +1654,7 @@ gradient_based = false
 accepts_inner = false
 default_inner = ""
 accepts_multi_seed = false
-reads = []
-seed = "refused"
+reads = ["SEED"]
 algorithm_params = []
 stops = ["MAXEVAL", "MAXTIME", "STOPVAL", "FTOL_REL", "FTOL_ABS", "XTOL_REL", "XTOL_ABS"]
 needs_stop = false
@@ -1765,7 +1678,6 @@ Options for NLOPT:LN_NELDERMEAD
    * derivative-free
    * STEP <double>  initial step; consumption: one per dimension: the edges of the first simplex
      the first simplex has an edge of STEP in each dimension, and the coordinates are not rescaled; the later steps of every dimension change by one progress ratio between 0.1 and 10. The stop on a small step is relative to |x| in each dimension; XTOL_ABS adds an absolute one
-   * SEED is rejected: it draws no random numbers
 """
 
 [[optimizer]]
@@ -1799,7 +1711,6 @@ accepts_inner = false
 default_inner = ""
 accepts_multi_seed = false
 reads = ["SEED"]
-seed = "read"
 algorithm_params = ["t0_tol"]
 stops = ["MAXEVAL", "MAXTIME", "STOPVAL", "FTOL_REL", "FTOL_ABS", "XTOL_REL", "XTOL_ABS"]
 needs_stop = false
@@ -1823,7 +1734,6 @@ Options for NLOPT:LN_PRAXIS
    * derivative-free
    * STEP <double>  initial step; consumption: one radius: the smallest STEP of the dimensions
      one radius for every dimension, the smallest STEP of the dimensions
-   * SEED <int>  the seed of the random numbers it draws
 """
 
 [[optimizer]]
@@ -1836,8 +1746,7 @@ gradient_based = false
 accepts_inner = false
 default_inner = ""
 accepts_multi_seed = false
-reads = []
-seed = "refused"
+reads = ["SEED"]
 algorithm_params = []
 stops = ["MAXEVAL", "MAXTIME", "STOPVAL", "FTOL_REL", "FTOL_ABS", "XTOL_REL", "XTOL_ABS"]
 needs_stop = false
@@ -1861,7 +1770,6 @@ Options for NLOPT:LN_SBPLX
    * derivative-free
    * STEP <double>  initial step; consumption: one per dimension: the edges of the first simplex
      the first simplex has an edge of STEP in each dimension, and the coordinates are not rescaled; the later steps of every dimension change by one progress ratio between 0.1 and 10. The stop on a small step is relative to |x| in each dimension; XTOL_ABS adds an absolute one
-   * SEED is rejected: it draws no random numbers
 """
 
 [[optimizer]]
@@ -1885,7 +1793,6 @@ accepts_inner = false
 default_inner = ""
 accepts_multi_seed = false
 reads = ["SEED"]
-seed = "read"
 algorithm_params = []
 stops = ["MAXEVAL", "MAXTIME", "STOPVAL", "FTOL_REL", "FTOL_ABS"]
 needs_stop = false
@@ -1972,7 +1879,6 @@ accepts_inner = false
 default_inner = ""
 accepts_multi_seed = false
 reads = ["POPULATION", "SEED", "THREADS"]
-seed = "read"
 algorithm_params = []
 stops = ["MAXEVAL", "MAXTIME", "STOPVAL", "FTOL_REL", "FTOL_ABS"]
 needs_stop = false
@@ -2058,7 +1964,6 @@ accepts_inner = false
 default_inner = ""
 accepts_multi_seed = false
 reads = ["SEED", "THREADS"]
-seed = "read"
 algorithm_params = []
 stops = ["MAXEVAL", "MAXTIME", "STOPVAL", "FTOL_REL", "FTOL_ABS"]
 needs_stop = true
@@ -2191,7 +2096,6 @@ accepts_inner = false
 default_inner = ""
 accepts_multi_seed = false
 reads = []
-seed = "refused"
 algorithm_params = []
 stops = ["MAXEVAL", "MAXTIME", "STOPVAL"]
 needs_stop = false
@@ -2228,7 +2132,6 @@ accepts_inner = false
 default_inner = ""
 accepts_multi_seed = false
 reads = ["SEED"]
-seed = "read"
 algorithm_params = []
 stops = ["MAXEVAL", "MAXTIME", "STOPVAL"]
 needs_stop = true

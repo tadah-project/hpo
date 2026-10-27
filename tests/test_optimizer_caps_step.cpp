@@ -61,6 +61,52 @@ TEST_CASE("OptimizerCaps: StepUse classification per backend",
     }
 }
 
+/* Pins: the STEP note of an MLSL or AUGLAG (StepUse::ForwardedToInner),
+ * which `tadah explain` and the optimiser reference print, names NLopt's
+ * default local search LN_COBYLA only for the algorithms NLopt runs it for
+ * (default_inner: GN_MLSL, GN_MLSL_LDS, LN_AUGLAG, LN_AUGLAG_EQ); the GD_
+ * and LD_ forms run LD_MMA, and AUGLAG, AUGLAG_EQ, G_MLSL and G_MLSL_LDS
+ * need an INNER block. Each gives the step of an LN_BOBYQA or LN_COBYLA
+ * local search without STEP as 0.25 of the width of each search parameter.
+ * The note of LN_BOBYQA and LN_COBYLA says where LN_BOBYQA moves a start
+ * next to a bound (onto the bound within half a step of it, otherwise to one
+ * step from it) and speaks of search parameters, not dimensions.
+ * Before the fix: one note served every MLSL and AUGLAG, "(the INNER
+ * block's, or the default LN_COBYLA) takes 0.25 of each width", also for
+ * GD_MLSL, whose default is LD_MMA; the LN_BOBYQA note said "onto the
+ * bound, or to one step from it" without saying which, and "each
+ * dimension takes 0.25 of its width". */
+TEST_CASE("OptimizerCaps: the STEP note names a default local search only "
+          "where NLopt runs one", "[HPO][caps][step]")
+{
+    const auto forwarded = filter_optimizer_caps([](const OptimizerCaps& c) {
+        return c.step_use == StepUse::ForwardedToInner;
+    });
+    REQUIRE(forwarded.size() == 12u);
+    for (const auto* c : forwarded) {
+        INFO(c->lib << ":" << c->algo << ": " << c->step_note);
+        const std::string note = c->step_note;
+        const bool cobyla_default = c->default_inner &&
+                                    std::string(c->default_inner) == "LN_COBYLA";
+        CHECK((note.find("the default LN_COBYLA") != std::string::npos) ==
+              cobyla_default);
+        CHECK(note.find("takes 0.25 of the width of each search parameter") !=
+              std::string::npos);
+        CHECK(note.find("each width") == std::string::npos);
+    }
+    for (const char* algo : {"LN_BOBYQA", "LN_COBYLA"}) {
+        const auto& c = optimizer_caps("NLOPT", algo);
+        const std::string note = c.step_note;
+        INFO(algo << ": " << note);
+        CHECK(note.find("LN_BOBYQA moves a start that lies within a step of a "
+                        "bound by at most half a step: onto the bound when it "
+                        "lies within half a step of it, otherwise to one step "
+                        "from it") != std::string::npos);
+        CHECK(note.find("0.25 of the width of its box") != std::string::npos);
+        CHECK(note.find("dimension") == std::string::npos);
+    }
+}
+
 TEST_CASE("OptimizerCaps: step_use_consumes and names",
           "[HPO][caps][step]")
 {
