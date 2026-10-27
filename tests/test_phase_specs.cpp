@@ -225,9 +225,13 @@ TEST_CASE("phase specs: the PRESTAGE refinement starts from the candidates",
  * has as many candidates as the spec had INIT points.
  * Before the fix: the refinement kept the spec's origins -- one CONFIG
  * origin for one candidate here, so an LN_BOBYQA refinement whose candidate
- * moved named it a CONFIG start. The MULTISTART part passes as well (a
- * pin: each start has kept the origin of its point since LN_BOBYQA moves
- * starts). */
+ * moved named it a CONFIG start. The MULTISTART part fails on the code
+ * before a start kept the origin of its point (the change came with the
+ * moving LN_BOBYQA starts, before this case): multistart_start_spec copied
+ * the spec's origins, two for its one start ("2 == 1"), and an NLopt search
+ * then took the origins for stale and named no CONFIG start ("LN_BOBYQA
+ * under MULTISTART: a moved CONFIG start gets the warning ...",
+ * test_step_plan.cpp, runs it). */
 TEST_CASE("phase specs: a phase's starting points keep their INIT origin "
           "only where it holds", "[HPO][phase_specs][prestage][multistart]")
 {

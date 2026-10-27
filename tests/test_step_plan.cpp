@@ -635,3 +635,43 @@ TEST_CASE("LN_BOBYQA: a start on a bound is kept without a warning",
         }
     }
 }
+
+/* Pins: a MULTISTART start keeps the INIT origin of its point
+ * (multistart_start_spec), so an LN_BOBYQA start that moves warns for a
+ * user's own point only: with STEP unset and the INIT points (1, 0.0079), a
+ * CONFIG start, and (1, 0.0068), a RANDOM one, the first start moves onto
+ * the bound with the INFO line and the WARNING of a moved CONFIG start
+ * ("WARNING   NLOPT:LN_BOBYQA: the CONFIG start moves: AMPGRIDMB[6] starts
+ * at 0.008 instead of 0.0079 ..."), the second to one step from the bound,
+ * 0.006, with the INFO line alone.
+ * Before the fix (multistart_start_spec copied the spec's two origins for
+ * its one start): both starts moved with the INFO line, and neither got the
+ * WARNING -- the search took the origins for stale. */
+TEST_CASE("LN_BOBYQA under MULTISTART: a moved CONFIG start gets the "
+          "warning, a moved sampled start does not",
+          "[HPO][step_plan][nlopt][multistart]")
+{
+    auto sp = spec("LN_BOBYQA", false);
+    sp.optim_init = {{1.0, 0.0079}, {1.0, 0.0068}};
+    sp.optim_init_origin = {InitOrigin{InitOrigin::Kind::Config, {}},
+                            InitOrigin{InitOrigin::Kind::Random, {}}};
+    sp.stop.maxeval = 18;
+    const MultiStartPlan plan = plan_multistart(sp, 2, std::nullopt);
+    std::vector<std::string> journals;
+    for (std::size_t i = 0; i < 2; ++i) {
+        const OptimizerSpec sub = multistart_start_spec(sp, plan, i);
+        StepRecorder host;
+        StepJournal j;
+        REQUIRE_NOTHROW(run_nlopt_impl<Vec, NoRunner>(sub, host));
+        journals.push_back(j.text());
+    }
+    CHECK(journals[0].find("NLOPT:LN_BOBYQA: AMPGRIDMB[6] starts at 0.008 "
+                           "instead of 0.0079") != std::string::npos);
+    CHECK(journals[0].find("WARNING   NLOPT:LN_BOBYQA: the CONFIG start "
+                           "moves: AMPGRIDMB[6] starts at 0.008 instead of "
+                           "0.0079") != std::string::npos);
+    CHECK(journals[1].find("NLOPT:LN_BOBYQA: AMPGRIDMB[6] starts at 0.006 "
+                           "instead of 0.0068") != std::string::npos);
+    CHECK(journals[1].find("WARNING   NLOPT:LN_BOBYQA: the") ==
+          std::string::npos);
+}
