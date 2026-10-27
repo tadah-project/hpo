@@ -954,9 +954,11 @@ TEST_CASE("Repeated points: an NLopt run of fit metrics evaluates no point "
 /* Pins: DLIB:BFGS (MAXEVAL 60) on the same run reaches SGRID2B (2) = 4,
  * takes its one-sided gradient there, and its next step, held to the box,
  * cannot move the point: the line search is not run, the loss has not
- * changed, and the run ends "DLIB:BFGS: FTOL_ABS reached" after 15
+ * changed, and the run ends "DLIB:BFGS: FTOL_ABS reached" after 6
  * evaluations, no row repeating another; DIAGNOSTICS has "Line searches not
- * run : 1".
+ * run : 1". (15 evaluations until DLIB:BFGS ran on the loss divided by the
+ * length of its first gradient: its first step, the gradient itself,
+ * reached the bound later.)
  * Before the fix: 18 rows, the last 3 the bound and its stencil again (the
  * line search evaluated the bound, and BFGS took its gradient again), then
  * FTOL_ABS. */
@@ -971,7 +973,7 @@ TEST_CASE("Repeated points: a DLIB:BFGS run that reaches a bound evaluates "
     CHECK(status == 0);
     check_run_files();
     CHECK(repeated_rows() == 0u);
-    CHECK(data_rows("params.tadah").size() == 15u);
+    CHECK(data_rows("params.tadah").size() == 6u);
     const std::string journal = read_file("hpo_run.log");
     CHECK(journal_status(journal) == "DLIB:BFGS: FTOL_ABS reached");
     CHECK(diagnostics_count(journal, "Line searches not run") == "1");
@@ -981,7 +983,8 @@ TEST_CASE("Repeated points: a DLIB:BFGS run that reaches a bound evaluates "
  * DLIB:BFGS (MAXEVAL 60) held at SGRID2B (2) = 4 ends "DLIB:BFGS: no step
  * within the OPTIM box", the stop line naming the bound ("SGRID2B[2] at
  * its lower bound 4, with a gradient that points out of the box"), after
- * 15 evaluations, no row repeating another.
+ * 6 evaluations, no row repeating another (15 until DLIB:BFGS ran on the
+ * loss divided by the length of its first gradient).
  * Before the fix: the bound and its gradient were evaluated until MAXEVAL,
  * 60 rows, "DLIB:BFGS: MAXEVAL reached"; without MAXEVAL the run never
  * ended. */
@@ -996,7 +999,7 @@ TEST_CASE("Repeated points: a DLIB:BFGS run that no step can move ends",
     CHECK(status == 0);
     check_run_files();
     CHECK(repeated_rows() == 0u);
-    CHECK(data_rows("params.tadah").size() == 15u);
+    CHECK(data_rows("params.tadah").size() == 6u);
     const std::string journal = read_file("hpo_run.log");
     CHECK(journal_status(journal) == "DLIB:BFGS: no step within the OPTIM box");
     CHECK(journal.find("SGRID2B[2] at its lower bound 4, with a gradient that "
@@ -1300,14 +1303,15 @@ TEST_CASE("Run record: a PRESTAGE refinement under ANALYTICAL evaluates its "
 /* Pins: MULTISTART starts reach points an earlier start evaluated: two
  * DLIB:BFGS starts (INIT LHS 2, SEED 3; BUDGET_PER_START 30, FTOL_ABS
  * 1e-12) on the run whose loss falls towards SGRID2B (2) = 4 both end at
- * the bound. Start 1 evaluates it (eval 7) and its one-sided stencil;
+ * the bound. Start 1 evaluates it (eval 4) and its one-sided stencil;
  * start 2's line-search trial clamped onto 4 is answered from the run's
- * record ("DLIB:BFGS asked for the point of eval 7 (SGRID2B[2] = 4), which
+ * record ("DLIB:BFGS asked for the point of eval 4 (SGRID2B[2] = 4), which
  * an earlier search of the run evaluated"), so the bound is evaluated once
  * (one params row at 4). Start 2 evaluates its own gradient's stencil
  * there (the gradients are each search's: 2 rows repeat start 1's
- * stencil). BUDGET_PER_START charges each start its own evaluations: 9 and
- * 14 "eval(s) consumed", the run's 23 rows.
+ * stencil). BUDGET_PER_START charges each start its own evaluations: 6 and
+ * 5 "eval(s) consumed", the run's 11 rows. (Until DLIB:BFGS ran on the loss
+ * divided by the length of its first gradient: eval 7, 9 and 14, 23 rows.)
  * Before the fix: each start evaluated the bound (two rows at 4, 3 rows
  * repeating another, 24 rows). */
 TEST_CASE("Run record: a MULTISTART start does not evaluate a point an "
@@ -1331,13 +1335,13 @@ TEST_CASE("Run record: a MULTISTART start does not evaluate a point an "
     INFO("journal:\n" << journal);
     CHECK(rows_at(4.0) == 1u);
     CHECK(repeated_rows() == 2u);
-    CHECK(data_rows("loss.tadah").size() == 23u);
-    CHECK(journal.find("DLIB:BFGS asked for the point of eval 7 (SGRID2B[2] = "
+    CHECK(data_rows("loss.tadah").size() == 11u);
+    CHECK(journal.find("DLIB:BFGS asked for the point of eval 4 (SGRID2B[2] = "
                        "4), which an earlier search of the run evaluated") !=
           std::string::npos);
-    CHECK(journal.find("MULTISTART start 1/2 done: 9 eval(s) consumed") !=
+    CHECK(journal.find("MULTISTART start 1/2 done: 6 eval(s) consumed") !=
           std::string::npos);
-    CHECK(journal.find("MULTISTART start 2/2 done: 14 eval(s) consumed") !=
+    CHECK(journal.find("MULTISTART start 2/2 done: 5 eval(s) consumed") !=
           std::string::npos);
 }
 
@@ -1992,10 +1996,13 @@ TEST_CASE("Two runs in one process: each journal carries its own "
      * pc-worker error's occurrence, the FAILPROBE "total gated=N") went
      * on from the first run's. The second run here has only hpo_run()'s
      * own per-run resets. */
+    /* MAXEVAL 5: under OALGO 4 the search converges after 8 evaluations
+     * (it was MAXEVAL 9 until DLIB:BFGS ran on the loss divided by the
+     * length of its first gradient, which reaches the optimum sooner). */
     for (const char* oalgo : {"4", "1"}) {
         CAPTURE(oalgo);
         const std::string optimizer = plain_block(
-            "    TYPE PLAIN\n    LIB DLIB\n    ALGO BFGS\n    MAXEVAL 9\n"
+            "    TYPE PLAIN\n    LIB DLIB\n    ALGO BFGS\n    MAXEVAL 5\n"
             "    GRAD_STRATEGY HYBRID\n");
         std::vector<std::string> journals;
         for (int run = 0; run < 2; ++run) {
@@ -6565,15 +6572,17 @@ TEST_CASE("Termination: the RESTART stagnation stop ends a search that has "
  *   MAXEVAL 3 -- 3 evaluations, "DLIB:BFGS -- MAXEVAL=3 reached" (the
  *     MAXEVAL stop line, unchanged) and the status "DLIB:BFGS: MAXEVAL
  *     reached";
- *   MAXEVAL 200 -- 44 evaluations, the stop line "DLIB:BFGS stopped:
- *     FTOL_ABS reached after 44 evaluation(s): the loss changed by less
+ *   MAXEVAL 200 -- 21 evaluations, the stop line "DLIB:BFGS stopped:
+ *     FTOL_ABS reached after 21 evaluation(s): the loss changed by less
  *     than FTOL_ABS = 1e-07 (default) from one iteration to the next", no
  *     MAXEVAL line, the status "DLIB:BFGS: FTOL_ABS reached" (51 until
  *     2026-10-12: at the bound SGRID2B[2] = 4, where its step cannot move
  *     the point, its line search evaluated the point again and BFGS took
- *     its gradient there again, 7 evaluations);
- *   FTOL_ABS 1e-3 -- 14 evaluations, "FTOL_ABS = 0.001" without
- *     "(default)";
+ *     its gradient there again, 7 evaluations; 44 until DLIB:BFGS ran on
+ *     the loss divided by the length of its first gradient);
+ *   FTOL_ABS 1e-3 -- 21 evaluations as well (the loss changes by more
+ *     than 1e-3 until the search stands still; 14 until DLIB:BFGS ran on
+ *     the divided loss), "FTOL_ABS = 0.001" without "(default)";
  *   PARAM tol_gradinf 1e6 -- 1 + 2 x 3 = 7 evaluations (the loss at the
  *     start and its gradient's stencil, which takes that loss as its
  *     centre), the stop line "DLIB:BFGS stopped: tol_gradinf reached after
@@ -6596,14 +6605,14 @@ TEST_CASE("Termination: DLIB:BFGS records why it ended",
              {"MAXEVAL 3", "    MAXEVAL 3\n", 3u,
               "DLIB:BFGS: MAXEVAL reached",
               "DLIB:BFGS -- MAXEVAL=3 reached; preserving best-so-far"},
-             {"the default FTOL_ABS", "    MAXEVAL 200\n", 44u,
+             {"the default FTOL_ABS", "    MAXEVAL 200\n", 21u,
               "DLIB:BFGS: FTOL_ABS reached",
-              "DLIB:BFGS stopped: FTOL_ABS reached after 44 evaluation(s): "
+              "DLIB:BFGS stopped: FTOL_ABS reached after 21 evaluation(s): "
               "the loss changed by less than FTOL_ABS = 1e-07 (default) "
               "from one iteration to the next"},
-             {"FTOL_ABS 1e-3", "    MAXEVAL 200\n    FTOL_ABS 1e-3\n", 14u,
+             {"FTOL_ABS 1e-3", "    MAXEVAL 200\n    FTOL_ABS 1e-3\n", 21u,
               "DLIB:BFGS: FTOL_ABS reached",
-              "DLIB:BFGS stopped: FTOL_ABS reached after 14 evaluation(s): "
+              "DLIB:BFGS stopped: FTOL_ABS reached after 21 evaluation(s): "
               "the loss changed by less than FTOL_ABS = 0.001 from one "
               "iteration to the next"},
              {"PARAM tol_gradinf 1e6",
@@ -7557,17 +7566,21 @@ TEST_CASE("Finite differences: DLIB:BFGS goes on past a later point with a "
           "[HPO][termination][fd_gradient]")
 {
     /* With the ERMSE target 10.5 the loss falls towards the failures. From
-     * 1.8, BFGS's line search tries 1.059 (a failed evaluation: dlib steps
-     * back), accepts 1.726; the stencil of its next point 1.6676 reaches
-     * 1.4676, which fails, and the gradient there is the one-sided
-     * difference into the usable side.
-     * Pins: the search goes on to the edge of the failure region, 1.4813
-     * (loss 0.250056, the best), and ends "DLIB:BFGS: FTOL_ABS reached"
-     * after 54 evaluations; no stop line.
-     * Before the fix: the gradient at 1.6676 failed, and the search ended
-     * there after 10 evaluations, the last a failed one, with the stop line
-     * "DLIB:BFGS stopped: no usable gradient: ... (at CGRID2B[2] = 1.6675"
-     * and the status "STOPPED -- no usable gradient: ...". */
+     * 1.8, BFGS's line search tries 1.0 (a failed evaluation: dlib steps
+     * back), accepts 1.6; the stencil of its next point 1.6583 reaches
+     * 1.4583, which fails, and the gradient there is the one-sided
+     * difference into the usable side; so is the gradient of the next
+     * point, 1.5324, whose stencil point 1.3324 fails.
+     * Pins: the search goes on past both, its best 1.5 (loss 0.250093),
+     * and ends "DLIB:BFGS: FTOL_ABS reached" after 54 evaluations; no stop
+     * line. (Until DLIB:BFGS ran on the loss divided by the length of its
+     * first gradient its line search first tried 1.059 and the search went
+     * on to the edge of the failure region, 1.4813, loss 0.250056.)
+     * Before the fix: the gradient at the first such point failed, and the
+     * search ended there after 10 evaluations, the last a failed one, with
+     * the stop line "DLIB:BFGS stopped: no usable gradient: ... (at
+     * CGRID2B[2] = 1.6675" and the status "STOPPED -- no usable gradient:
+     * ...". */
     TaRun run(straddle_block("DLIB", "BFGS"), straddle_root("10.5"));
     int status = -1;
     REQUIRE_NOTHROW(status = straddle_run(run, "1.8", "DLIB:BFGS"));
@@ -7576,7 +7589,7 @@ TEST_CASE("Finite differences: DLIB:BFGS goes on past a later point with a "
     CHECK(loss.size() == 54u);
     const auto best = data_rows("best_params.tadah");
     REQUIRE_FALSE(best.empty());
-    CHECK(std::stod(best.back().back()) == Approx(1.481330854).epsilon(1e-8));
+    CHECK(std::stod(best.back().back()) == 1.5);
     const std::string journal = read_file("hpo_run.log");
     CHECK(journal_status(journal) == "DLIB:BFGS: FTOL_ABS reached");
     CHECK(journal.find("stopped: no usable gradient") == std::string::npos);

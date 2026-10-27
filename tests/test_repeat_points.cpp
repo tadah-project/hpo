@@ -194,6 +194,24 @@ const std::string kBlocker =
     "PC_LAMMPS: its scripts run on LAMMPS instances kept from one "
     "evaluation to the next (test)";
 
+/* 100 ((a - 0.92)^2 + (b - 0.92)^2) on [0, 1]^2: from (0.88, 0.88) the
+ * first steps of DLIB:BFGS's line search (the unit step along the
+ * steepest descent, then a half and a quarter of it) all pass the corner
+ * (1, 1), where the box puts them, and the loss there is above the
+ * start's: three trials at the corner before one inside the box passes.
+ * `reason` as CornerBowl's. */
+struct InnerCornerBowl {
+    std::vector<Vec> asked;
+    std::string reason;
+    double operator()(const Vec& x) {
+        asked.push_back(x);
+        const double a = x(0) - 0.92, b = x(1) - 0.92;
+        return 100.0 * (a * a + b * b);
+    }
+    std::string repeat_reuse_blocker() const { return reason; }
+    std::size_t g_iter_value() const { return asked.size(); }
+};
+
 OptimizerSpec nlopt_spec(const std::string& algo, unsigned maxeval)
 {
     OptimizerSpec sp;
@@ -643,24 +661,27 @@ TEST_CASE("Repeated points: DLIB:BFGS ends a search that no step can move",
                        "box") != std::string::npos);
 }
 
-/* Pins: on the steep bowl (scale 100) from (0.5, 0.5) at MAXEVAL 60, the
- * first line search's trials are clamped onto the corner (1, 1) until its
- * decrease test passes there. A reusing host is asked for the corner once:
- * the later trials get its loss; a host that evaluates the repeats is asked
- * for it on every trial, and for nothing else twice. Both reach the corner
- * and end "DLIB:BFGS: FTOL_ABS reached" without a line search at the
- * corner.
+/* Pins: on InnerCornerBowl from (0.88, 0.88) at MAXEVAL 60, the first line
+ * search's trials are clamped onto the corner (1, 1) until a shorter step
+ * stays inside the box and passes the decrease test. A reusing host is
+ * asked for the corner once: the later trials get its loss; a host that
+ * evaluates the repeats is asked for it on every trial, and for nothing
+ * else twice. Both end "DLIB:BFGS: FTOL_ABS reached".
+ * The case ran on the steep CornerBowl from (0.5, 0.5), whose first trial,
+ * the gradient itself, landed far beyond the corner; DLIB:BFGS runs on the
+ * loss divided by the length of its first gradient, and its first trial
+ * from there, a unit step, reaches the corner and passes at once.
  * Before the fix: both hosts were asked for the corner on every trial and
  * again by the line search from the corner, which also took its gradient
  * again (5 repeats more than now on the host that evaluates the repeats). */
 TEST_CASE("Repeated points: DLIB:BFGS reuses a line-search trial the box "
           "put on a point it evaluated", "[HPO][repeat_points][dlib_bfgs]")
 {
-    CornerBowl again{{}, kBlocker, 100.0};
-    auto sp = bfgs_spec({0.0, 0.0}, {1.0, 1.0}, {0.5, 0.5});
+    InnerCornerBowl again{{}, kBlocker};
+    auto sp = bfgs_spec({0.0, 0.0}, {1.0, 1.0}, {0.88, 0.88});
     sp.stop.maxeval = 60;
     const std::string j_again = run_bfgs(sp, again);
-    CornerBowl reuse{{}, "", 100.0};
+    InnerCornerBowl reuse{{}, ""};
     const std::string j_reuse = run_bfgs(sp, reuse);
 
     const std::size_t trial_repeats = repeats_in(again.asked);
@@ -681,9 +702,10 @@ TEST_CASE("Repeated points: DLIB:BFGS reuses a line-search trial the box "
  * is no evaluation: HPO's MAXEVAL does not count it, but NLopt counts it
  * among the calls its own MAXEVAL bounds", which is what ends the search
  * after 38 evaluations ("NLopt counts its calls, and 22 of them asked
- * again"); DLIB:BFGS (the steep bowl, whose line-search trials the box puts
- * on the corner): "a reuse is no evaluation, and MAXEVAL counts
- * evaluations". DIAGNOSTICS says both: "points the run had evaluated that a
+ * again"); DLIB:BFGS (InnerCornerBowl, whose line-search trials the box
+ * puts on the corner; the steep CornerBowl until DLIB:BFGS ran on the loss
+ * divided by the length of its first gradient): "a reuse is no evaluation,
+ * and MAXEVAL counts evaluations". DIAGNOSTICS says both: "points the run had evaluated that a
  * search asked for, ... HPO's MAXEVAL does not count them, NLopt's own
  * MAXEVAL counts them among its calls, and the RESTART window counts each
  * as one evaluation without a new best".
@@ -717,8 +739,8 @@ TEST_CASE("Repeated points: the journal says how MAXEVAL takes a reuse",
     CHECK(j_nlopt.find(diag) != std::string::npos);
     CHECK(j_nlopt.find("not counted in\n    MAXEVAL") == std::string::npos);
 
-    CornerBowl bowl{{}, "", 100.0};
-    auto sp = bfgs_spec({0.0, 0.0}, {1.0, 1.0}, {0.5, 0.5});
+    InnerCornerBowl bowl{{}, ""};
+    auto sp = bfgs_spec({0.0, 0.0}, {1.0, 1.0}, {0.88, 0.88});
     sp.stop.maxeval = 60;
     const std::string j_bfgs = run_bfgs(sp, bowl);
     CHECK(j_bfgs.find("DLIB:BFGS asked again for the point of eval ") !=
@@ -1037,11 +1059,12 @@ TEST_CASE("Repeated points: DLIB:BFGS ends a search held next to a jump in "
 
 /* Pins: run_dlib_bfgs_impl at the jump (fd_step 1e-6, inhouse, MAXEVAL 50,
  * a reusing host), under PARAM tol_gradinf 1e-12 and under FTOL_ABS 0:
- * the search returns, after 49 evaluations (the start, its stencil, and
- * the first line search's trials left of the start), with "DLIB:BFGS: no
- * step within the OPTIM box" and the stop line "... after 49
- * evaluation(s): A = 0.499999999, whose step is below the rounding of its
- * value".
+ * the search returns, after 48 evaluations (the start, its stencil, and
+ * the first line search's trials left of the start; 49 until DLIB:BFGS ran
+ * on the loss divided by the length of its first gradient), with
+ * "DLIB:BFGS: no step within the OPTIM box" and the stop line "... after
+ * 48 evaluation(s): A = 0.499999999, whose step is below the rounding of
+ * its value".
  * Before the fix: it never returned (the host made its 49 evaluations,
  * and the iterations after them asked for none), and a minute ended the
  * case. */
@@ -1054,10 +1077,10 @@ TEST_CASE("Repeated points: DLIB:BFGS held next to a jump returns, under "
     sp.param["tol_gradinf"] = 1e-12;
     const std::string journal =
         run_bfgs_within(sp, host, "DLIB:BFGS at the jump, tol_gradinf");
-    CHECK(host.asked.size() == 49u);
+    CHECK(host.asked.size() == 48u);
     CHECK(status_of(journal) == "DLIB:BFGS: no step within the OPTIM box");
     CHECK(journal.find("DLIB:BFGS stopped: no step within the OPTIM box after "
-                       "49 evaluation(s): A = 0.499999999, whose step is "
+                       "48 evaluation(s): A = 0.499999999, whose step is "
                        "below the rounding of its value") != std::string::npos);
 }
 
@@ -1072,7 +1095,7 @@ TEST_CASE("Repeated points: DLIB:BFGS held next to a jump returns, under "
     sp.stop.ftol_abs = 0.0;
     const std::string journal =
         run_bfgs_within(sp, host, "DLIB:BFGS at the jump, FTOL_ABS 0");
-    CHECK(host.asked.size() == 49u);
+    CHECK(host.asked.size() == 48u);
     CHECK(status_of(journal) == "DLIB:BFGS: no step within the OPTIM box");
 }
 
@@ -1173,10 +1196,19 @@ TEST_CASE("DLIB:BFGS: PARAM tol_gradinf tests the largest component of the "
 }
 
 /* Pins: run_dlib_bfgs_impl on the gap case (MAXEVAL 50, PARAM tol_gradinf
- * 1e-12, a reusing host): it returns after 22 evaluations, "DLIB:BFGS: no
- * step within the OPTIM box", the stop line "... after 22 evaluation(s): A
- * at its upper bound 6, with a gradient that points out of the box; B =
- * 0.48, with a gradient of zero".
+ * 1e-12, a reusing host): A stays in dlib's gap of its upper bound 6 (every
+ * point asked for has A = 6, one ulp below it, or a point of its stencil),
+ * no point is asked for twice, and the search returns at its MAXEVAL,
+ * "DLIB:BFGS: MAXEVAL reached". DLIB:BFGS runs on the loss divided by the
+ * length of its first gradient over the coordinates it can move (B's,
+ * 0.4): its first step goes to B = 0, its line search comes back to the
+ * kink of q at 0.5, and every later step from next to the kink, where the
+ * central difference is never zero, comes back near it: each of these
+ * iterations evaluates, so MAXEVAL ends the search. (Until DLIB:BFGS ran
+ * on that loss, B's first line search ended on the flat part of q at 0.48,
+ * and the search returned after 22 evaluations, "DLIB:BFGS: no step within
+ * the OPTIM box"; bfgs_box_search on the loss itself still does: "DLIB:BFGS
+ * ends a search held in dlib's gap of a bound".)
  * Before the fix: it never returned after its 22 evaluations, and a minute
  * ended the case. */
 TEST_CASE("Repeated points: DLIB:BFGS held in dlib's gap of a bound returns",
@@ -1189,12 +1221,10 @@ TEST_CASE("Repeated points: DLIB:BFGS held in dlib's gap of a bound returns",
     sp.param["tol_gradinf"] = 1e-12;
     const std::string journal =
         run_bfgs_within(sp, host, "DLIB:BFGS in the gap of a bound");
-    CHECK(host.asked.size() == 22u);
-    CHECK(status_of(journal) == "DLIB:BFGS: no step within the OPTIM box");
-    CHECK(journal.find("DLIB:BFGS stopped: no step within the OPTIM box after "
-                       "22 evaluation(s): A at its upper bound 6, with a "
-                       "gradient that points out of the box; B = 0.48, with "
-                       "a gradient of zero") != std::string::npos);
+    CHECK(host.asked.size() == 50u);
+    CHECK(repeats_in(host.asked) == 0u);
+    for (const Vec& x : host.asked) CHECK(x(0) > 6.0 - 1.3e-5);
+    CHECK(status_of(journal) == "DLIB:BFGS: MAXEVAL reached");
 }
 
 /* Pins: run_dlib_bfgs_impl from the minimum of VHost (MAXEVAL 200, PARAM
@@ -1205,8 +1235,9 @@ TEST_CASE("Repeated points: DLIB:BFGS held in dlib's gap of a bound returns",
  * run once (4 trials), comes back, and the search ends "DLIB:BFGS: no step
  * within the OPTIM box", the stop line "... after 24 evaluation(s): from A
  * = 0.5 the line search from the farthest step BFGS takes there
- * (5.551115122e-14 of the steepest-descent step) found no lower loss and
- * came back to the point". A reusing host is asked for 24 points, none
+ * (5.551115123e-14 of the steepest-descent step of the loss divided by the
+ * length of its first gradient; 5.551115122e-14 until DLIB:BFGS ran on
+ * that loss) found no lower loss and came back to the point". A reusing host is asked for 24 points, none
  * twice; a host that evaluates repeats for 26, the start twice more (the
  * two trials that were the start).
  * Before the fix: after the first line search the step length grew without
@@ -1223,7 +1254,7 @@ TEST_CASE("Repeated points: DLIB:BFGS runs the line search from its farthest "
     const std::string stop_line =
         "DLIB:BFGS stopped: no step within the OPTIM box after N "
         "evaluation(s): from A = 0.5 the line search from the farthest step "
-        "BFGS takes there (5.551115122e-14 of the steepest-descent step) "
+        "BFGS takes there (5.551115123e-14 of the steepest-descent step) "
         "found no lower loss and came back to the point";
     const auto with_count = [&](std::size_t n) {
         std::string line = stop_line;
@@ -1305,22 +1336,21 @@ std::string bfgs_stop_line(const std::string& journal)
 
 /* Pins: run_dlib_bfgs_impl on the plateau (PlateauV, from u =
  * 0.96678801528256708, fd_step 1e-6 inhouse, FTOL_ABS 0, MAXEVAL 400, a
- * reusing host) ends after 111 evaluations, none of a point asked for
- * before, "DLIB:BFGS: back at an earlier point", with the stop line
- * "DLIB:BFGS stopped: back at an earlier point after 111 evaluation(s): the
- * iteration from A = 0.89349363928454106 (the point of eval 109) made no
- * evaluation: it asked only for points the run had evaluated, and took the
- * search back to A = 0.89349363928412684 (the point of eval 98), where it
- * had stood with the same loss and gradient": an iteration that moves the
- * point without an evaluation ends the search at the next stop test; the
- * best, eval 95, is the one the search would find.
- * Before the fix: the search went on from there, made 12 evaluations more
- * (123; none lower than eval 95), then went round points it had evaluated
- * (the loss 23207.610197404945 at each), every call answered from the
- * record, without end: MAXEVAL, which counts evaluations, never fired, and
- * a minute ended the case. */
+ * reusing host) returns after 159 evaluations, none of a point asked for
+ * before, "DLIB:BFGS: no step within the OPTIM box", with the stop line
+ * "DLIB:BFGS stopped: no step within the OPTIM box after 159 evaluation(s):
+ * A = 0.8934936382, with a gradient of zero". (Until DLIB:BFGS ran on the
+ * loss divided by the length of its first gradient, the search took other
+ * steps and ended "DLIB:BFGS: back at an earlier point" after 111
+ * evaluations, the iteration from eval 109 having taken it back to the
+ * point of eval 98 without an evaluation; that ending is pinned on
+ * BoundBowl below and on bfgs_box_search, test_repeat_record.cpp.)
+ * Before the fix: the search went round points it had evaluated (the loss
+ * 23207.610197404945 at each), every call answered from the record,
+ * without end: MAXEVAL, which counts evaluations, never fired, and a minute
+ * ended the case. */
 TEST_CASE("Repeated points: DLIB:BFGS on a plateau of the loss's rounding "
-          "ends back at an earlier point, under FTOL_ABS 0",
+          "returns, under FTOL_ABS 0",
           "[HPO][repeat_points][dlib_bfgs][revisit]")
 {
     PlateauV host;
@@ -1329,27 +1359,24 @@ TEST_CASE("Repeated points: DLIB:BFGS on a plateau of the loss's rounding "
     sp.stop.ftol_abs = 0.0;
     const std::string journal =
         run_bfgs_within(sp, host, "DLIB:BFGS on the rounding plateau");
-    CHECK(host.asked.size() == 111u);
+    CHECK(host.asked.size() == 159u);
     CHECK(repeats_in(host.asked) == 0u);
-    CHECK(status_of(journal) == "DLIB:BFGS: back at an earlier point");
+    CHECK(status_of(journal) == "DLIB:BFGS: no step within the OPTIM box");
     CHECK(bfgs_stop_line(journal) ==
-          "DLIB:BFGS stopped: back at an earlier point after 111 "
-          "evaluation(s): the iteration from A = 0.89349363928454106 (the "
-          "point of eval 109) made no evaluation: it asked only for points "
-          "the run had evaluated, and took the search back to A = "
-          "0.89349363928412684 (the point of eval 98), where it had stood "
-          "with the same loss and gradient");
+          "DLIB:BFGS stopped: no step within the OPTIM box after 159 "
+          "evaluation(s): A = 0.8934936382, with a gradient of zero");
 }
 
 /* Pins: run_dlib_bfgs_impl on BoundBowl from (0.40137104310117261, 0)
  * under PARAM tol_gradinf 1e-12 (MAXEVAL 400, a reusing host): A reaches
  * its lower bound and stays (its gradient, 28, points out of the box, so
  * the gradient norm never falls below tol_gradinf), B goes to its minimum,
- * and the search ends after 96 evaluations, none repeated, "DLIB:BFGS: back
+ * and the search ends after 45 evaluations, none repeated, "DLIB:BFGS: back
  * at an earlier point", the stop line naming the point it came back to
  * ("... took the search back to A = 0, B = 0.233112594... (the point of
- * eval 47) ...").
- * Before the fix: after the same 96 evaluations BFGS went round points of
+ * eval 26) ..."). (96 evaluations and eval 47 until DLIB:BFGS ran on the
+ * loss divided by the length of its first gradient.)
+ * Before the fix: after its 96 evaluations BFGS went round points of
  * B's plateau without an evaluation and never returned (a minute ended the
  * case; 17 million calls in 4 s answered from the record). */
 TEST_CASE("Repeated points: DLIB:BFGS held at a bound under PARAM "
@@ -1362,17 +1389,17 @@ TEST_CASE("Repeated points: DLIB:BFGS held at a bound under PARAM "
     sp.param["tol_gradinf"] = 1e-12;
     const std::string journal = run_bfgs_within(
         sp, host, "DLIB:BFGS held at a bound under tol_gradinf");
-    CHECK(host.asked.size() == 96u);
+    CHECK(host.asked.size() == 45u);
     CHECK(repeats_in(host.asked) == 0u);
     CHECK(status_of(journal) == "DLIB:BFGS: back at an earlier point");
     const std::string line = bfgs_stop_line(journal);
     CHECK_THAT(line,
                Catch::StartsWith("DLIB:BFGS stopped: back at an earlier "
-                                 "point after 96 evaluation(s): the "
+                                 "point after 45 evaluation(s): the "
                                  "iteration from A = 0, B = "));
     CHECK_THAT(line, Catch::Contains(", and took the search back to A = 0, "
                                      "B = 0.233112594") &&
-                         Catch::EndsWith("(the point of eval 47), where it "
+                         Catch::EndsWith("(the point of eval 26), where it "
                                          "had stood with the same loss and "
                                          "gradient"));
 }
