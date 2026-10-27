@@ -2033,6 +2033,7 @@ error = "N_STARTS must be an integer >= 2, got 'x'"
 
 [[key.invalid]]
 wrap = "strategy"
+check = "startup"
 at = 2
 doc = "Without a METHOD line the INIT chain gives the CONFIG point alone."
 text = '''
@@ -2042,6 +2043,7 @@ error = "N_STARTS 2 needs 2 starting points, and the INIT chain gives 1 (the CON
 
 [[key.invalid]]
 wrap = "strategy"
+check = "startup"
 at = 2
 doc = "K_TOTAL keeps two of the six LHS points."
 text = '''

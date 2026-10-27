@@ -4123,8 +4123,8 @@ void write_dropped_warm_seed()
  * start, which is STRATEGY TYPE PLAIN. A chain of 2 or more starting
  * points (METHOD LHS 2, RANDOM 2 or SOBOL 2) runs 2 starts." It advises no
  * lower N_STARTS, which would be N_STARTS 1, refused at its line ("one
- * start is STRATEGY TYPE PLAIN"). A chain known to give one point when
- * the file is read (no INIT block, which this case had) is refused at the
+ * start is STRATEGY TYPE PLAIN"). A chain whose METHOD lines give one
+ * point (no INIT block, which this case had) is refused at startup, at the
  * N_STARTS line: the case "startup validation: a MULTISTART whose INIT
  * chain gives fewer starting points than N_STARTS is refused at the
  * N_STARTS line".
@@ -4190,8 +4190,8 @@ TEST_CASE("Termination: MULTISTART with fewer starting points than N_STARTS "
 }
 
 /* Pins: a MULTISTART whose K_TOTAL keeps fewer starting points than
- * N_STARTS is refused when the file is read, at the N_STARTS line, before
- * any evaluation: hpo_run throws the refusal, which names K_TOTAL, and the
+ * N_STARTS is refused at startup, at the N_STARTS line, before any
+ * evaluation: hpo_run throws the refusal, which names K_TOTAL, and the
  * advice depends on the points of the METHOD lines (LHS 4, 3 and 3 here,
  * K_TOTAL 2):
  *  - more than N_STARTS 3: "N_STARTS 3 needs 3 starting points, and the

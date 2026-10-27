@@ -307,6 +307,16 @@ std::string parse_error(const std::string& config)
     return error_of([&] { HPOTargets trg(ctx, tf.path.string()); });
 }
 
+/* What validate_hpo_setup() throws for `config`, with the line it names
+ * ("" when it accepts it), or "the parser refused it: <error>" when the
+ * parser does. */
+std::string startup_refusal(const std::string& config)
+{
+    if (const std::string p = parse_error(config); !p.empty())
+        return "the parser refused it: " + p;
+    return judge(config).startup_raw;
+}
+
 bool runs_from_each_start(const OptimizerCaps& c)
 {
     return !c.is_global || c.accepts_multi_seed;
@@ -363,7 +373,7 @@ void check_alternatives(const std::string& msg, const std::string& lead,
 
 /* An INIT block whose chain gives `n` starting points (METHOD LHS n): a
  * MULTISTART of N_STARTS n starts from each of them (a chain of fewer is
- * refused when the file is read, at the N_STARTS line). */
+ * refused at startup, at the N_STARTS line). */
 std::string init_points(const std::string& n)
 {
     return "    INIT\n      METHOD LHS " + n + "\n      SEED 1\n    ENDINIT\n";
@@ -831,12 +841,15 @@ TEST_CASE("startup validation: STRATEGY TYPE MULTISTART needs N_STARTS 2 or "
 }
 
 /* Pins: a MULTISTART whose INIT chain gives fewer starting points than
- * N_STARTS is refused when the file is read, at the N_STARTS line. The
- * most points a chain can give are the K of its RANDOM, LHS and SOBOL
- * lines and one point of each CONFIG and WARM line (the CONFIG point
- * without a METHOD line), at most K_TOTAL; the INIT blocks inside
- * OPTIMIZER and STRATEGY make one chain. The message names the count, the
- * METHOD lines and K_TOTAL, and what gives N_STARTS starts:
+ * N_STARTS is refused at startup, at the N_STARTS line (the parser reads
+ * the file; validate_hpo_setup refuses it once MULTISTART is known to run
+ * its optimiser from each start). The most points a chain can give are
+ * the K of its RANDOM, LHS and SOBOL lines, one point for its CONFIG lines
+ * (every CONFIG line gives the same point, and the chain keeps it once),
+ * one point for the WARM lines of each file (the CONFIG point without a
+ * METHOD line), at most K_TOTAL; the INIT blocks inside OPTIMIZER and
+ * STRATEGY make one chain. The message names the count, the METHOD lines
+ * and K_TOTAL, and what gives N_STARTS starts:
  *   - no INIT block, N_STARTS 2: "N_STARTS 2 needs 2 starting points, and
  *     the INIT chain gives 1 (the CONFIG point: the chain has no METHOD
  *     line); one start is STRATEGY TYPE PLAIN, and a chain of 2 or more
@@ -844,31 +857,41 @@ TEST_CASE("startup validation: STRATEGY TYPE MULTISTART needs N_STARTS 2 or "
  *   - CONFIG and RANDOM 1, N_STARTS 3: "... gives 2 (CONFIG, RANDOM 1); a
  *     chain of 3 or more ... runs 3 starts, and N_STARTS 2 starts from each
  *     of the 2";
+ *   - two CONFIG lines, in one INIT block or in the blocks inside
+ *     OPTIMIZER and STRATEGY: "... gives 1 (CONFIG, CONFIG; the CONFIG
+ *     lines give one point); ...";
  *   - K_TOTAL below N_STARTS: "(LHS 6, capped by K_TOTAL 2); with K_TOTAL
  *     4, or without K_TOTAL, 4 starts run, ...", "(LHS 3, capped by K_TOTAL
  *     2); without K_TOTAL, 3 starts run, ...", and for METHOD lines of
  *     fewer points "... without K_TOTAL runs 3 starts";
  *   - a WARM line, which WARM_ON_MISMATCH may drop when the chain is drawn,
- *     counts as at most one point: "gives at most 1 (WARM <file>)".
+ *     counts as at most one point: "gives at most 1 (WARM <file>)", and two
+ *     WARM lines of one file as one: "gives at most 1 (WARM <file>, WARM
+ *     <file>; the WARM lines of one file give one point)".
  * Accepted: a chain of N_STARTS points (LHS 2), the CONFIG line of an INIT
  * block inside OPTIMIZER with the RANDOM 1 of one inside STRATEGY, a chain
  * of a WARM line and RANDOM 1 under N_STARTS 2 (the WARM point may be
  * dropped when the run starts, which the run warns about), and a RESTART
  * block of fewer points than N_STARTS (a RESTART round draws its own).
- * Before the fix: every one of these files was read, and the run warned
- * "MULTISTART N_STARTS 2 requested but the resolved INIT chain produced
- * only 1 starting point; running 1 start, ..." and ran fewer starts than
- * N_STARTS. */
+ * Before the fix: the parser refused these files when it read them
+ * (HPOTargets::read), before the refusals of the optimiser at startup, and
+ * accepted the chains of two CONFIG lines and of two WARM lines of one
+ * file, whose run warned "MULTISTART N_STARTS 2 requested but the resolved
+ * INIT chain produced only 1 starting point; running 1 start, which is
+ * STRATEGY TYPE PLAIN" and ran one start. */
 TEST_CASE("startup validation: a MULTISTART whose INIT chain gives fewer "
           "starting points than N_STARTS is refused at the N_STARTS line",
           "[startup_validation][strategy][knobs][multistart]")
 {
     const std::string backend = "    LIB DLIB\n    ALGO BFGS\n";
+    /* What startup says, with the line it names; the parser reads the
+     * file. */
     const auto refused = [&](const std::string& n_starts,
                              const std::string& init) {
         /* TYPE on line 5, N_STARTS on line 6. */
-        return parse_error(strategy_config("    TYPE MULTISTART\n    N_STARTS " +
-                                           n_starts + "\n" + backend + init));
+        return startup_refusal(strategy_config(
+            "    TYPE MULTISTART\n    N_STARTS " + n_starts + "\n" +
+            backend + init));
     };
     const auto block = [](const std::string& lines) {
         return "    INIT\n" + lines + "    ENDINIT\n";
@@ -876,24 +899,44 @@ TEST_CASE("startup validation: a MULTISTART whose INIT chain gives fewer "
     const auto line = [](const std::string& n_starts) {
         return "\nLine:     N_STARTS " + n_starts;
     };
+    const std::string one_start =
+        "one start is STRATEGY TYPE PLAIN, and a chain of 2 or more "
+        "starting points (METHOD LHS 2, RANDOM 2 or SOBOL 2) runs 2 starts";
     CHECK(refused("2", "") ==
           "Error on line 6: N_STARTS 2 needs 2 starting points, and the INIT "
-          "chain gives 1 (the CONFIG point: the chain has no METHOD line); "
-          "one start is STRATEGY TYPE PLAIN, and a chain of 2 or more "
-          "starting points (METHOD LHS 2, RANDOM 2 or SOBOL 2) runs 2 starts" +
-              line("2"));
+          "chain gives 1 (the CONFIG point: the chain has no METHOD line); " +
+              one_start + line("2"));
     CHECK(refused("2", block("      SEED 4\n")) ==
           "Error on line 6: N_STARTS 2 needs 2 starting points, and the INIT "
-          "chain gives 1 (the CONFIG point: the chain has no METHOD line); "
-          "one start is STRATEGY TYPE PLAIN, and a chain of 2 or more "
-          "starting points (METHOD LHS 2, RANDOM 2 or SOBOL 2) runs 2 starts" +
-              line("2"));
+          "chain gives 1 (the CONFIG point: the chain has no METHOD line); " +
+              one_start + line("2"));
     CHECK(refused("3", block("      METHOD CONFIG\n      METHOD RANDOM 1\n"
                              "      SEED 4\n")) ==
           "Error on line 6: N_STARTS 3 needs 3 starting points, and the INIT "
           "chain gives 2 (CONFIG, RANDOM 1); a chain of 3 or more starting "
           "points (METHOD LHS 3, RANDOM 3 or SOBOL 3) runs 3 starts, and "
           "N_STARTS 2 starts from each of the 2" + line("3"));
+    CHECK(refused("2", block("      METHOD CONFIG\n      METHOD CONFIG\n")) ==
+          "Error on line 6: N_STARTS 2 needs 2 starting points, and the INIT "
+          "chain gives 1 (CONFIG, CONFIG; the CONFIG lines give one point); " +
+              one_start + line("2"));
+    CHECK(refused("3", block("      METHOD CONFIG\n      METHOD RANDOM 1\n"
+                             "      METHOD CONFIG\n      SEED 4\n")) ==
+          "Error on line 6: N_STARTS 3 needs 3 starting points, and the INIT "
+          "chain gives 2 (CONFIG, RANDOM 1, CONFIG; the CONFIG lines give one "
+          "point); a chain of 3 or more starting points (METHOD LHS 3, "
+          "RANDOM 3 or SOBOL 3) runs 3 starts, and N_STARTS 2 starts from "
+          "each of the 2" + line("3"));
+    /* The INIT blocks inside OPTIMIZER and STRATEGY make one chain: N_STARTS
+     * on line 9. */
+    CHECK(startup_refusal(kRoot + "OPTIMIZER\n  INIT\n    METHOD CONFIG\n"
+                                  "  ENDINIT\n  STRATEGY\n"
+                                  "    TYPE MULTISTART\n    N_STARTS 2\n" +
+                          backend + block("      METHOD CONFIG\n") +
+                          "  ENDSTRATEGY\nENDOPTIMIZER\n") ==
+          "Error on line 9: N_STARTS 2 needs 2 starting points, and the INIT "
+          "chain gives 1 (CONFIG, CONFIG; the CONFIG lines give one point); " +
+              one_start + line("2"));
     CHECK(refused("4", block("      METHOD LHS 6\n      K_TOTAL 2\n"
                              "      SEED 4\n")) ==
           "Error on line 6: N_STARTS 4 needs 4 starting points, and the INIT "
@@ -911,27 +954,101 @@ TEST_CASE("startup validation: a MULTISTART whose INIT chain gives fewer "
           "chain gives 1 (LHS 2, capped by K_TOTAL 1); one start is STRATEGY "
           "TYPE PLAIN, and a chain of 3 or more starting points (METHOD LHS 3, "
           "RANDOM 3 or SOBOL 3) without K_TOTAL runs 3 starts" + line("3"));
-    CHECK(refused("2", block("      METHOD WARM seed.tadah\n")) ==
+    /* A seed with the OPTIM key WATOM. */
+    ScopedTempFile seed("WATOM 1.0\n");
+    const std::string warm = "WARM " + seed.path.string();
+    CHECK(refused("2", block("      METHOD " + warm + "\n")) ==
           "Error on line 6: N_STARTS 2 needs 2 starting points, and the INIT "
-          "chain gives at most 1 (WARM seed.tadah); one start is STRATEGY TYPE "
-          "PLAIN, and a chain of 2 or more starting points (METHOD LHS 2, "
-          "RANDOM 2 or SOBOL 2) runs 2 starts" + line("2"));
+          "chain gives at most 1 (" + warm + "); " + one_start + line("2"));
+    CHECK(refused("2", block("      METHOD " + warm + "\n      METHOD " +
+                             warm + "\n")) ==
+          "Error on line 6: N_STARTS 2 needs 2 starting points, and the INIT "
+          "chain gives at most 1 (" + warm + ", " + warm + "; the WARM lines "
+          "of one file give one point); " + one_start + line("2"));
 
     /* Accepted. */
     CHECK(refused("2", init_points("2")) == "");
-    CHECK(parse_error(kRoot +
-                      "OPTIMIZER\n  INIT\n    METHOD CONFIG\n  ENDINIT\n"
-                      "  STRATEGY\n    TYPE MULTISTART\n    N_STARTS 2\n" +
-                      backend + block("      METHOD RANDOM 1\n"
-                                      "      SEED 4\n") +
-                      "  ENDSTRATEGY\nENDOPTIMIZER\n") == "");
+    CHECK(startup_refusal(kRoot + "OPTIMIZER\n  INIT\n    METHOD CONFIG\n"
+                                  "  ENDINIT\n  STRATEGY\n"
+                                  "    TYPE MULTISTART\n    N_STARTS 2\n" +
+                          backend +
+                          block("      METHOD RANDOM 1\n      SEED 4\n") +
+                          "  ENDSTRATEGY\nENDOPTIMIZER\n") == "");
     /* A seed without the OPTIM key WATOM, which WARM_ON_MISMATCH skip
      * drops when the chain is drawn. */
-    ScopedTempFile seed("RCUT2B 5.0\n");
-    CHECK(refused("2", block("      METHOD WARM " + seed.path.string() +
+    ScopedTempFile dropped("RCUT2B 5.0\n");
+    CHECK(refused("2", block("      METHOD WARM " + dropped.path.string() +
                              "\n      METHOD RANDOM 1\n      SEED 4\n"
                              "      WARM_ON_MISMATCH skip\n")) == "");
     CHECK(refused("3", init_points("3") + kRestart) == "");
+}
+
+/* Pins: a MULTISTART whose optimiser MULTISTART cannot run, or which an MPI
+ * launch on more than one rank refuses, is refused for that, whatever its
+ * INIT chain: the count of the starting points the chain gives, whose
+ * advice is a chain of N_STARTS points, comes after these refusals.
+ *   - DLIB:GFS, N_STARTS 2, no INIT block: the parser reads the file, and
+ *     startup refuses it with "STRATEGY TYPE MULTISTART cannot run
+ *     DLIB:GFS: it takes every INIT point in one run, ...", as with an
+ *     INIT chain of two points;
+ *   - NLOPT:GN_DIRECT likewise: "STRATEGY TYPE MULTISTART cannot run
+ *     NLOPT:GN_DIRECT: it is a global optimiser ...";
+ *   - NLOPT:LN_SBPLX, N_STARTS 2, no INIT block: the parser reads the
+ *     file, an MPI launch on 2 ranks refuses it (hpo_mpi_dispatch_refusal,
+ *     which hpo_run applies before the startup checks: "a run on 2 MPI
+ *     ranks takes STRATEGY TYPE PLAIN with TADAH:ANNEAL_PT or
+ *     TADAH:ANNEAL_PA only, ..."), and a run on one rank is refused at
+ *     startup for the count.
+ * Before the fix: the parser refused each file at the N_STARTS line, "N_STARTS
+ * 2 needs 2 starting points, and the INIT chain gives 1 (the CONFIG point:
+ * the chain has no METHOD line); one start is STRATEGY TYPE PLAIN, and a
+ * chain of 2 or more starting points (METHOD LHS 2, RANDOM 2 or SOBOL 2)
+ * runs 2 starts", advice a run with such a chain refuses again for the
+ * optimiser or the MPI launch. */
+TEST_CASE("startup validation: a MULTISTART that cannot run its optimiser "
+          "or on the MPI ranks of its launch is refused for that before the "
+          "count of its starting points",
+          "[startup_validation][strategy][multistart]")
+{
+    struct Case { std::string lib, algo, head; };
+    for (const Case& c :
+         {Case{"DLIB", "GFS",
+               "STRATEGY TYPE MULTISTART cannot run DLIB:GFS: it takes every "
+               "INIT point in one run"},
+          Case{"NLOPT", "GN_DIRECT",
+               "STRATEGY TYPE MULTISTART cannot run NLOPT:GN_DIRECT: it is a "
+               "global optimiser"}}) {
+        INFO(c.lib << ":" << c.algo);
+        const std::string body = "    TYPE MULTISTART\n    N_STARTS 2\n"
+                                 "    LIB " + c.lib + "\n    ALGO " + c.algo +
+                                 "\n    MAXEVAL 20\n";
+        for (const std::string& init : {std::string(), init_points("2")}) {
+            INFO("INIT block: " << init);
+            CHECK_THAT(startup_refusal(strategy_config(body + init)),
+                       Catch::StartsWith("Error on line ") &&
+                           Catch::Contains(": " + c.head));
+        }
+    }
+    const std::string sbplx = strategy_config(
+        "    TYPE MULTISTART\n    N_STARTS 2\n    LIB NLOPT\n"
+        "    ALGO LN_SBPLX\n    MAXEVAL 20\n");
+    CHECK_THAT(startup_refusal(sbplx),
+               Catch::StartsWith("Error on line 6: N_STARTS 2 needs 2 "
+                                 "starting points, and the INIT chain gives "
+                                 "1 (the CONFIG point: the chain has no "
+                                 "METHOD line)"));
+    REQUIRE(parse_error(sbplx) == "");
+    PeriodicTable::initialize();
+    ScopedTempFile tf(sbplx);
+    Context ctx = make_minimal_ctx();
+    HPOTargets trg(ctx, tf.path.string());
+    CHECK_THAT(tadah::hpo::hpo_mpi_dispatch_refusal(2, trg.spec),
+               Catch::Contains("a run on 2 MPI ranks takes STRATEGY TYPE "
+                               "PLAIN with TADAH:ANNEAL_PT or "
+                               "TADAH:ANNEAL_PA only, and the block has "
+                               "STRATEGY TYPE MULTISTART with "
+                               "NLOPT:LN_SBPLX"));
+    CHECK(tadah::hpo::hpo_mpi_dispatch_refusal(1, trg.spec) == "");
 }
 
 /* Pins: a RESTART block restarts the search after AFTER_STAGNATION
