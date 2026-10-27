@@ -1976,7 +1976,7 @@ repeat = "error"
 repeat_msg = "N_STARTS is set twice in the STRATEGY block (first on line {first_line}); each key is given once"
 checks = [
   { msg = "N_STARTS must be an integer >= 2, got '{tok}'", doc = "When the file is read: a token that is no whole number, such as a word, a sign, a fraction or a number past the largest; the note about one start follows 0 and 1 only." },
-  { msg = "N_STARTS {value} needs {value} starting points, and the INIT chain gives {count} ({list}); {hint}", doc = "At startup, at the N_STARTS line, after the checks of the optimiser MULTISTART runs: the INIT blocks inside OPTIMIZER and STRATEGY give fewer starting points than N_STARTS, counting the K of each RANDOM, LHS and SOBOL line, one point for the CONFIG lines and one for the WARM lines of each file, at most K_TOTAL; {list} names the METHOD lines and K_TOTAL, and {hint} what gives N_STARTS starts." },
+  { msg = "N_STARTS {value} needs {value} starting points, and the INIT chain gives {count} ({list}); {hint}", doc = "At startup, at the N_STARTS line, after the checks of the optimiser MULTISTART runs: the INIT blocks inside OPTIMIZER and STRATEGY give fewer starting points than N_STARTS, counting the K of each RANDOM, LHS and SOBOL line, one point for the CONFIG lines and one for the WARM lines of each file, or the CONFIG point without a METHOD line, at most K_TOTAL. {count} reads \"at most n\" when the chain has a WARM line, whose point WARM_ON_MISMATCH skip may drop; {list} names the METHOD lines (\"the CONFIG point: the chain has no METHOD line\" without one), K_TOTAL and why repeated lines count once, and {hint} what gives N_STARTS starts." },
 ]
 doc = """\
 The number of starts of STRATEGY TYPE MULTISTART: the optimiser runs once \
@@ -1984,15 +1984,16 @@ from each of the first N_STARTS starting points of the INIT block."""
 long_doc = """\
 N_STARTS is 2 or more, and TYPE MULTISTART needs it: one start is TYPE \
 PLAIN. The INIT blocks inside OPTIMIZER and STRATEGY must give N_STARTS \
-starting points or more, counting the K of each RANDOM, LHS and SOBOL line, \
-one point for the CONFIG lines and one for the WARM lines of each file \
-(the CONFIG point without a METHOD line), at most K_TOTAL: fewer are \
-refused at startup, at the N_STARTS line. \
-When the points drawn are fewer still (a WARM point dropped under \
-WARM_ON_MISMATCH skip, a RESTART round of fewer points), the optimiser \
-runs once from each of them, with a warning; with more, the points after \
-the first N_STARTS are not evaluated, and a startup warning says so. \
-Another TYPE refuses N_STARTS when the STRATEGY block ends."""
+starting points or more; fewer are refused at startup, at the N_STARTS \
+line. Each RANDOM, LHS and SOBOL line gives its K points. The CONFIG \
+lines give one point, and so do the WARM lines of one file. A chain \
+without a METHOD line gives the CONFIG point. K_TOTAL caps the sum. \
+When the chain drawn gives fewer than N_STARTS points (a WARM point \
+dropped under WARM_ON_MISMATCH skip, a point equal to another, a RESTART \
+round of fewer points), the optimiser runs once from each, with a \
+warning that names the cause. With more, the points after the first \
+N_STARTS are not evaluated, and a startup warning says so. Another TYPE \
+refuses N_STARTS when the STRATEGY block ends."""
 
 [[key.examples]]
 wrap = "strategy"
@@ -2430,7 +2431,7 @@ Once for each set of starting points. A second line is refused in the same \
 block, in a second block of that type, or in another INIT block inside \
 OPTIMIZER, STRATEGY or REFINE, which set the starting points of one \
 optimiser."""
-default = { text = "The sum of the K of the METHOD lines, 1 for CONFIG and WARM.", unchecked = "The numbers count starting points; they are no setting." }
+default = { text = "No cap: every starting point the METHOD lines give.", unchecked = "The chain draws its points when the run starts; no setting holds their number." }
 doc = """\
 The largest number of starting points of a chain: the chain keeps its \
 first K_TOTAL points, a single METHOD line included. The INIT blocks \
@@ -2439,14 +2440,16 @@ EXPLORE another, and the RESTART blocks a third."""
 long_doc = """\
 K_TOTAL is 1 or more. One at or above the number of points the METHOD \
 lines of its chain give caps nothing and is refused when the file is \
-read; a WARM line counts as one point. An INIT block inside EXPLORE \
+read. Each RANDOM, LHS and SOBOL line gives its K points; the CONFIG \
+lines give one point, and so do the WARM lines of one file. An INIT \
+block inside EXPLORE \
 without a METHOD line gives the exploration the starting points of the \
 INIT blocks inside OPTIMIZER, STRATEGY and REFINE, which its K_TOTAL does \
 not cap, so a K_TOTAL there is refused too. In the RESTART blocks it caps \
 the points of each restart."""
 checks = [
-  { msg = "K_TOTAL {value} caps nothing: the METHOD lines of {parent} give at most {count} starting points ({list}), and K_TOTAL keeps the first K_TOTAL starting points", doc = "When the file is read, at the K_TOTAL line: a K_TOTAL at or above the starting points the METHOD lines of its chain give, K of a RANDOM, LHS or SOBOL line and 1 of a CONFIG or WARM line; {list} names the lines. {parent} names the blocks of the chain: the INIT blocks inside OPTIMIZER, STRATEGY and REFINE, the INIT blocks inside EXPLORE, or the RESTART blocks." },
-  { msg = "K_TOTAL {value} caps nothing: the METHOD lines of {parent} give at most 1 starting point ({list}), and K_TOTAL keeps the first K_TOTAL starting points", doc = "When the file is read, at the K_TOTAL line: METHOD lines that give one starting point, a CONFIG or a WARM line." },
+  { msg = "K_TOTAL {value} caps nothing: the METHOD lines of {parent} give at most {count} starting points ({list}), and K_TOTAL keeps the first K_TOTAL starting points", doc = "When the file is read, at the K_TOTAL line: a K_TOTAL at or above the starting points the METHOD lines of its chain give, the K of each RANDOM, LHS and SOBOL line, one point for the CONFIG lines and one for the WARM lines of each file; {list} names the lines and why repeated lines count once. {parent} names the blocks of the chain: the INIT blocks inside OPTIMIZER, STRATEGY and REFINE, the INIT blocks inside EXPLORE, or the RESTART blocks." },
+  { msg = "K_TOTAL {value} caps nothing: the METHOD lines of {parent} give at most 1 starting point ({list}), and K_TOTAL keeps the first K_TOTAL starting points", doc = "When the file is read, at the K_TOTAL line: METHOD lines that give one starting point, CONFIG lines or the WARM lines of one file." },
   { msg = "K_TOTAL {value} caps nothing: a block without a METHOD line gives one starting point (the CONFIG point), and K_TOTAL keeps the first K_TOTAL starting points", doc = "When the file is read, at the K_TOTAL line: an INIT block inside OPTIMIZER, STRATEGY or REFINE, or a RESTART block, without a METHOD line." },
   { msg = "K_TOTAL {value} caps nothing: an INIT block inside EXPLORE without a METHOD line gives the exploration the starting points of the INIT blocks inside OPTIMIZER, STRATEGY and REFINE (the CONFIG point without one), and K_TOTAL caps only the points of the block's own METHOD lines", doc = "When the file is read, at the K_TOTAL line: an INIT block inside EXPLORE without a METHOD line." },
 ]
