@@ -240,3 +240,57 @@ TEST_CASE("NLopt failed evaluations: a search without a failed evaluation "
     for (const double l : host.reported) CHECK(l < kDblMax);
     CHECK(count_of(journal, kStandInNote) == 0u);
 }
+
+/* Pins: LN_NELDERMEAD (FTOL_ABS 1e-6, MAXEVAL 60) on the valley whose
+ * every point is rejected (cap -1), under the default FAILSCORE: NLopt is
+ * given the same stand-in for every evaluation, its simplex is flat, and
+ * the search ends FTOL_REACHED; the journal's ending line gives as fmin the
+ * loss the evaluation of NLopt's best point reported, the largest double
+ * ("NLopt finished: FTOL_REACHED -- function tolerance converged
+ * fmin=1.79769e+308"), not the stand-in. On the valley without a cap
+ * (MAXEVAL 400) the search ends FTOL_REACHED too, and the line gives the
+ * best usable loss, the loss NLopt was given (a pin).
+ * Before the fix: the line gave the stand-in NLopt was given, a loss no
+ * evaluation reported ("fmin=1e+100"); the run without a cap passed as
+ * well. */
+TEST_CASE("NLopt failed evaluations: the ending line gives the loss the "
+          "evaluation reported as fmin", "[HPO][nlopt][failscore]")
+{
+    const auto fmin_of = [](const std::string& journal) {
+        std::smatch m;
+        if (std::regex_search(
+                journal, m,
+                std::regex(R"(NLopt finished: FTOL_REACHED -- function )"
+                           R"(tolerance converged  fmin=([^\n]*))")))
+            return std::string(m[1]);
+        return std::string("(no FTOL_REACHED line)");
+    };
+    SECTION("every evaluation rejected") {
+        auto sp = spec("LN_NELDERMEAD", kDblMax);
+        sp.stop.ftol_abs = 1e-6;
+        CappedValley host;
+        host.cap = -1.0;
+        Journal j;
+        REQUIRE_NOTHROW(tadah::hpo::run_nlopt_impl<Vec, NoRunner>(sp, host));
+        const std::string journal = j.text();
+        for (const double l : host.reported) CHECK(l == kDblMax);
+        CHECK(host.asked.size() < 60u);
+        CHECK(fmin_of(journal) == "1.79769e+308");
+    }
+    SECTION("no evaluation rejected") {
+        auto sp = spec("LN_NELDERMEAD", kDblMax);
+        sp.stop.ftol_abs = 1e-6;
+        sp.stop.maxeval = 400;
+        CappedValley host;
+        host.cap = kDblMax;
+        Journal j;
+        REQUIRE_NOTHROW(tadah::hpo::run_nlopt_impl<Vec, NoRunner>(sp, host));
+        const std::string journal = j.text();
+        const double best =
+            *std::min_element(host.reported.begin(), host.reported.end());
+        std::ostringstream shown;
+        shown << best;
+        CHECK(host.asked.size() < 400u);
+        CHECK(fmin_of(journal) == shown.str());
+    }
+}
