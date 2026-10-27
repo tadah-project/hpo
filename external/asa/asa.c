@@ -184,6 +184,10 @@ asa (user_cost_function,
   LONG_INT *parallel_gen_ratio_block;
   LONG_INT *parallel_sort;
   LONG_INT i_prll, sort_index;  /* count of parallel generated states */
+  /* TADAH-PATCH begin: the periodic tests a block calls (patch 9 in
+   * TADAH-PATCHES.md) */
+  int tadah_afm_reached, tadah_gfm_reached;
+  /* TADAH-PATCH end */
   STATE *gener_block_state;
   int *generate_flg_par;
   LONG_INT *number_invalid_generated_states_par;
@@ -2710,6 +2714,12 @@ RET1_asa:
     /* ACCEPT/REJECT NEW PARAMETERS */
 
 #if ASA_PARALLEL
+    /* TADAH-PATCH begin: whether a state of this block reaches a multiple
+     * of Acceptance_Frequency_Modulus (an accepted state) or of
+     * Generated_Frequency_Modulus (patch 9 in TADAH-PATCHES.md) */
+    tadah_afm_reached = FALSE;
+    tadah_gfm_reached = FALSE;
+    /* TADAH-PATCH end */
     for (sort_index = 0; sort_index < OPTIONS->Gener_Block; ++sort_index) {
       parallel_sort[sort_index] = sort_index;
     }
@@ -2759,6 +2769,19 @@ RET1_asa:
                         OPTIONS);
 
 #if ASA_PARALLEL
+      /* TADAH-PATCH begin: the tests serial ASA makes after this state
+       * (below), latched for the block's periodic test (patch 9 in
+       * TADAH-PATCHES.md) */
+      if (OPTIONS->Acceptance_Frequency_Modulus != 0
+          && (int) (*number_accepted %
+                    ((LONG_INT) OPTIONS->Acceptance_Frequency_Modulus)) == 0
+          && *number_acceptances_saved == *number_accepted)
+        tadah_afm_reached = TRUE;
+      if (OPTIONS->Generated_Frequency_Modulus != 0
+          && (int) (*number_generated %
+                    ((LONG_INT) OPTIONS->Generated_Frequency_Modulus)) == 0)
+        tadah_gfm_reached = TRUE;
+      /* TADAH-PATCH end */
 #else
 #if ASA_PIPE_FILE
 #if INT_ALLOC
@@ -3300,6 +3323,16 @@ RET1_asa:
 
     /* PERIODIC TESTING/REANNEALING/PRINTING SECTION */
 
+    /* TADAH-PATCH begin: upstream bug -- these tests read the counts at
+     * the end of a block, so a block whose acceptance or generated state
+     * reached a multiple of the modulus before its last state called no
+     * test; the block calls one when any of its states met the test serial
+     * ASA makes after each state (patch 9 in TADAH-PATCHES.md). */
+#if ASA_PARALLEL
+    tmp_var_int1 = tadah_afm_reached;
+    tmp_var_int2 = tadah_gfm_reached;
+#else
+    /* TADAH-PATCH end */
     if (OPTIONS->Acceptance_Frequency_Modulus == 0)
       tmp_var_int1 = FALSE;
     else if ((int) (*number_accepted %
@@ -3316,6 +3349,9 @@ RET1_asa:
       tmp_var_int2 = TRUE;
     else
       tmp_var_int2 = FALSE;
+    /* TADAH-PATCH begin: close the serial branch (patch 9) */
+#endif /* ASA_PARALLEL */
+    /* TADAH-PATCH end */
 
     if (tmp_var_int1 == TRUE || tmp_var_int2 == TRUE
         || (*accepted_to_generated_ratio
