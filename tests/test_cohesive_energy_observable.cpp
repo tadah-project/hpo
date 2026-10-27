@@ -19,6 +19,8 @@
 //      the current cell); and --supercell 1 1 1 gives the E_coh of 4 4 4.
 //   6. --fmax-converged is the force tolerance of the relaxation: it
 //      loosens and tightens it.
+//   7. --unconverged force-scaled grows with the strain force of the cell
+//      at the end of a relaxation that does not converge.
 
 #include "catch2/catch.hpp"
 
@@ -39,6 +41,8 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <iomanip>
+#include <string>
 #include <sstream>
 #include <stdexcept>
 
@@ -619,4 +623,79 @@ TEST_CASE("CohesiveEnergyObservable: --fmax-converged is the force tolerance "
     REQUIRE(standard != 3.1);
     CHECK(loose == 3.1);
     CHECK(tight != standard);
+}
+
+/* Pins: --unconverged force-scaled reports target + slope x the larger of
+ * the largest atomic force and the strain force of the cell,
+ * |dE/deps| / (3V), at the end of the relaxation: the measure the
+ * relaxation stops at. In the bcc cell the atomic forces vanish by
+ * symmetry, so the strain force decides: a relaxation from a0 = 3.1,
+ * about 7% below the model's minimum, capped at one iteration (--maxiter
+ * 1; the --unconverged const value shows that it does not converge),
+ * reports target + slope x the strain force of the cell it ends at (its
+ * relaxed a0), computed here by the relaxer's central difference, and the
+ * excess over the target doubles with the slope.
+ * Before the fix: the value was target + slope x the largest atomic force,
+ * about 1e-15 in the bcc cell: the target, a loss of about 0, for every
+ * relaxation that does not converge. */
+TEST_CASE("CohesiveEnergyObservable: --unconverged force-scaled grows with "
+          "the strain force of the cell",
+          "[hpo][observable][cohesive_energy][unconverged]")
+{
+    PeriodicTable::initialize();
+
+    MLIPWorkspaceManager ws;
+    Context ctx = make_ta_context(4.5, {2.4, 3.0, 3.6}, {2.0, 2.0, 2.0});
+    Trainer host(ctx, ws);
+    auto train_db = make_parabola_train_db();
+    host.train(train_db);
+
+    const std::string line =
+        "cohesive_energy --species Ta --target 8 --weight 1 "
+        "--supercell 2 2 2 --hotvar a0 2.7 3.9 3.1 --maxiter 1 ";
+    auto evaluate = [&](const std::string& unconverged) {
+        auto obs = tadah::hpo::parse_pc_observable_line(line + unconverged);
+        return obs->evaluate(*host.model, host.dc, host.context);
+    };
+
+    /* Precondition: the capped relaxation does not converge. */
+    const ObservableEvalResult constant = evaluate("--unconverged const 100");
+    REQUIRE(constant.value_is_constant);
+    REQUIRE(constant.value == 100.0);
+
+    const ObservableEvalResult r = evaluate("--unconverged force-scaled 1000");
+    const ObservableEvalResult r2 = evaluate("--unconverged force-scaled 2000");
+    REQUIRE_FALSE(r.value_is_constant);
+    REQUIRE(r.hotvar_updated_value.has_value());
+
+    /* The strain force of the cell the relaxation ends at: the 2x2x2 bcc
+     * cell of a0 = 3.1 scaled to the relaxed a0, by the relaxer's central
+     * difference (step 1e-5 in the strain). */
+    Structure start = tadah::mlip::cells::bcc("Ta", 3.1);
+    tadah::mlip::StructureTransformation::replicate(start, 2, 2, 2);
+    const double scale = *r.hotvar_updated_value / 3.1;
+    REQUIRE(scale != 1.0);
+    auto energy = [&](double s) {
+        Structure x = start;
+        for (int i = 0; i < 3; ++i)
+            for (int j = 0; j < 3; ++j) x.cell(i, j) = s * start.cell(i, j);
+        for (auto& at : x.atoms)
+            for (int k = 0; k < 3; ++k) at.position[k] *= s;
+        x.nn.reset();
+        NNFinder().calc(x, host.context);
+        return host.model->epredict(host.dc.calc(x));
+    };
+    const double h = 1.0e-5;
+    Structure end = start;
+    for (int i = 0; i < 3; ++i)
+        for (int j = 0; j < 3; ++j) end.cell(i, j) = scale * start.cell(i, j);
+    const double strain_force =
+        std::abs(energy(scale * (1.0 + h)) - energy(scale * (1.0 - h))) /
+        (2.0 * h) / (3.0 * end.get_volume());
+    INFO(std::setprecision(17) << "relaxed a0 " << *r.hotvar_updated_value
+         << ", strain force " << strain_force << " eV/A^3; value "
+         << r.value << " (slope 1000), " << r2.value << " (slope 2000)");
+    REQUIRE(strain_force > 1.0e-4);
+    CHECK(r.value == Approx(8.0 + 1000.0 * strain_force).epsilon(1e-6));
+    CHECK(r2.value - 8.0 == Approx(2.0 * (r.value - 8.0)).epsilon(1e-9));
 }

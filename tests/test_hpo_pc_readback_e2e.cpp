@@ -2027,9 +2027,10 @@ std::string sci6(double v) {
  *     TOTAL_LOSS/N 1.000000e+16, no "[ok] Every evaluation produced a
  *     usable loss";
  *   - FAILSCORE_GRADING OFF, a PC_FAILPROBE S deleted at run time: the
- *     startup warning says that S, without --gate, neither grades nor
- *     gates an evaluation and that a probe that fails fails its
- *     evaluation; exit 1, "PC_LAMMPS
+ *     startup warning says that S, without --gate, grades no evaluation
+ *     and that a probe that fails -- its script fails, or its S cannot be
+ *     read, has no number, or is negative, not finite or at or above the
+ *     line's --failscore -- fails its evaluation; exit 1, "PC_LAMMPS
  *     task failed (probe.in, occurrence 1): reading PC_FAILPROBE --outvar S
  *     after the script: no value (...)", S and E failscored, TOTAL_LOSS/N
  *     1.000000e+16;
@@ -2272,17 +2273,21 @@ TEST_CASE("tadah hpo: a PC_LAMMPS read-back or script error ends the same "
              1,
              /* (the warning said "is defined but FAILSCORE_GRADING is
               * OFF": with --gate, the gate fails an evaluation under OFF
-              * too) */
+              * too; and "its S neither grades nor gates an evaluation",
+              * but an S that is negative, not finite or at or above
+              * --failscore fails the evaluation under OFF without --gate) */
              {"PC_FAILPROBE is defined without --gate and FAILSCORE_GRADING "
-              "is OFF -- its S neither grades nor gates an evaluation; a "
-              "probe that fails "
-              "(its script fails, or its S cannot be read or has no number) "
-              "fails its evaluation, as any PC_LAMMPS simulation does.",
+              "is OFF -- its S grades no evaluation; a probe that fails "
+              "(its script fails, or its S cannot be read, has no number, "
+              "or is negative, not finite or at or above the line's "
+              "--failscore) fails its evaluation, as any PC_LAMMPS "
+              "simulation does.",
               "PC_LAMMPS task failed (probe.in, occurrence 1): reading "
               "PC_FAILPROBE --outvar S after the script: " +
                   spoiled_reason(false),
               "no evaluation produced a usable loss"},
-             {"plain diagnostic sim", "--outvar is NaN"},
+             {"plain diagnostic sim", "--outvar is NaN",
+              "neither grades nor gates"},
              "1.000000e+16",
              {{"S", "1.000000e+16"}, {"E", "1.000000e+16"}},
              {{"probe.in", ta_script("3.301", "variable S equal 0.1\n" +

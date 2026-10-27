@@ -181,13 +181,20 @@ std::string sim_error(std::string cmd, bool failprobe = false,
 
 /* Pins: a PC_LAMMPS line, or a PC_FAILPROBE line alone, refuses DLIB:BFGS
  * as it refuses every gradient-based optimiser, in the STRATEGY block and
- * in a PRESTAGE EXPLORE block: "--hpotarget defines PC_LAMMPS but
- * OPTIMIZER's optimiser DLIB:BFGS is gradient-based. PC_LAMMPS requires a
- * gradient-free optimiser (" and the list, with no exception for DLIB:BFGS
- * in the message; a gradient-free optimiser is still accepted.
+ * in a PRESTAGE EXPLORE block: "--hpotarget defines <line> but OPTIMIZER's
+ * optimiser DLIB:BFGS is gradient-based. A PC_LAMMPS or PC_FAILPROBE line
+ * requires a gradient-free optimiser (" and the list, with no exception for
+ * DLIB:BFGS in the message; a gradient-free optimiser is still accepted.
+ * The refusals name the line the file has: PC_LAMMPS when it has one, and
+ * PC_FAILPROBE for a file whose only script line is the probe -- for a
+ * gradient-based optimiser, an MLSL whose default local optimiser takes
+ * gradients, such an INNER block and a GRAD_STRATEGY line alike.
  * Before the fix: DLIB:BFGS was the one gradient-based optimiser accepted
  * (read_error was "" for the three files), and the refusal of the others
- * said "or DLIB:BFGS, the one gradient-based optimiser it accepts". */
+ * said "or DLIB:BFGS, the one gradient-based optimiser it accepts". Before
+ * the line was named: every refusal said "--hpotarget defines PC_LAMMPS
+ * but" and "PC_LAMMPS requires" (or "PC_LAMMPS does not support"), also
+ * for a file without a PC_LAMMPS line. */
 TEST_CASE("PC lines: PC_LAMMPS and PC_FAILPROBE refuse DLIB:BFGS",
           "[HPO][pc_lines][gradient]") {
     tadah::core::PeriodicTable::initialize();
@@ -198,16 +205,21 @@ TEST_CASE("PC lines: PC_LAMMPS and PC_FAILPROBE refuse DLIB:BFGS",
     const std::string lammps = "PC_LAMMPS --script p.in --varloss E 1 1\n";
     const std::string probe =
         "PC_ERMSE 0 1\nPC_FAILPROBE --script p.in --outvar S\n";
-    for (const std::string& line : {lammps, probe}) {
-        INFO(line);
-        const std::string e = read_error(bfgs + line);
+    struct Case { std::string lines, named; };
+    for (const Case& c : std::vector<Case>{
+             {lammps, "PC_LAMMPS"},
+             {probe, "PC_FAILPROBE"},
+             {probe + lammps, "PC_LAMMPS"}}) {
+        INFO(c.lines);
+        const std::string e = read_error(bfgs + c.lines);
         CHECK_THAT(e, Catch::StartsWith(
-                          "Error on line 5: --hpotarget defines PC_LAMMPS but "
-                          "OPTIMIZER's optimiser DLIB:BFGS is gradient-based. "
-                          "PC_LAMMPS requires a gradient-free optimiser (") &&
+                          "Error on line 5: --hpotarget defines " + c.named +
+                          " but OPTIMIZER's optimiser DLIB:BFGS is "
+                          "gradient-based. A PC_LAMMPS or PC_FAILPROBE line "
+                          "requires a gradient-free optimiser (") &&
                           Catch::EndsWith("Line: ENDOPTIMIZER"));
         CHECK_THAT(e, !Catch::Contains("DLIB:BFGS, the one"));
-        CHECK(read_error(kSbplx + line) == "");
+        CHECK(read_error(kSbplx + c.lines) == "");
     }
     const std::string explore =
         "OPTIMIZER\n  STRATEGY\n    TYPE PRESTAGE\n    LIB NLOPT\n"
@@ -218,7 +230,44 @@ TEST_CASE("PC lines: PC_LAMMPS and PC_FAILPROBE refuse DLIB:BFGS",
                Catch::StartsWith(
                    "Error on line 11: --hpotarget defines PC_LAMMPS but "
                    "EXPLORE's optimiser DLIB:BFGS is gradient-based. "
-                   "PC_LAMMPS requires a gradient-free optimiser ("));
+                   "A PC_LAMMPS or PC_FAILPROBE line requires a "
+                   "gradient-free optimiser ("));
+    CHECK_THAT(read_error(explore + probe),
+               Catch::StartsWith(
+                   "Error on line 11: --hpotarget defines PC_FAILPROBE but "
+                   "EXPLORE's optimiser DLIB:BFGS is gradient-based. "
+                   "A PC_LAMMPS or PC_FAILPROBE line requires a "
+                   "gradient-free optimiser ("));
+
+    /* The other refusals of a gradient with a script line, for a file
+     * whose only script line is the probe. */
+    CHECK(read_error(
+              "OPTIMIZER\nLIB NLOPT\nALGO LN_SBPLX\nMAXEVAL 1\n"
+              "GRAD_STRATEGY HYBRID\nENDOPTIMIZER\n" + probe) ==
+          "Error on line 6: --hpotarget defines PC_FAILPROBE but "
+          "OPTIMIZER's GRAD_STRATEGY is set. A PC_LAMMPS or PC_FAILPROBE "
+          "line does not support analytical/numerical/hybrid gradients. "
+          "Drop the GRAD_STRATEGY line.\nLine: ENDOPTIMIZER");
+    CHECK_THAT(read_error("OPTIMIZER\nLIB NLOPT\nALGO GD_MLSL\nMAXEVAL 1\n"
+                          "ENDOPTIMIZER\n" + probe),
+               Catch::StartsWith(
+                   "Error on line 5: --hpotarget defines PC_FAILPROBE but "
+                   "OPTIMIZER's optimiser NLOPT:GD_MLSL takes a gradient: "
+                   "NLopt's MLSL and AUGLAG take one for their local "
+                   "search, and NLopt's default local optimiser, "
+                   "NLOPT:LD_MMA, is gradient-based; an INNER block with a "
+                   "derivative-free one takes none. A PC_LAMMPS or "
+                   "PC_FAILPROBE line requires a gradient-free optimiser ("));
+    CHECK_THAT(read_error("OPTIMIZER\nSTRATEGY\nLIB NLOPT\nALGO LN_AUGLAG\n"
+                          "MAXEVAL 1\nINNER\nLIB NLOPT\nALGO LD_LBFGS\n"
+                          "ENDINNER\nENDSTRATEGY\nENDOPTIMIZER\n" + probe),
+               Catch::StartsWith(
+                   "Error on line 9: --hpotarget defines PC_FAILPROBE but "
+                   "INNER's optimiser NLOPT:LD_LBFGS is gradient-based. A "
+                   "PC_LAMMPS or PC_FAILPROBE line requires a gradient-free "
+                   "optimiser, and an INNER search is a local NLopt "
+                   "algorithm: name a derivative-free one in the INNER "
+                   "block ("));
 }
 
 /* Pins: a file whose only PC line is PC_FAILPROBE has no loss source and
