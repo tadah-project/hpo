@@ -1,18 +1,19 @@
-/* What DLIB:GFS is given for an evaluation's loss (detail::GfsLossForDlib,
- * dlib_adapter.h).
+/* What DLIB:GFS and NLopt are given for an evaluation's loss
+ * (detail::FailedLossStandIn, failed_loss_stand_in.h).
  *
  * dlib's find_min_global crashed (SIGSEGV in its trust-region step) once
  * the dims + 2 samples it held all sat at or above 1e300, which a failed
  * evaluation's default FAILSCORE, the largest double, does. run_dlib_global
  * hands dlib a finite stand-in for a failed evaluation instead: the worst
  * usable loss so far plus a margin, or, before any usable loss, FAILSCORE
- * capped at 1e100. The end-to-end runs are in test_hpo_termination.cpp
- * ("DLIB:GFS: ..."); these cases pin the values and run dlib itself on
- * them. */
+ * capped at 1e100; the NLopt objective does the same
+ * (test_nlopt_failed_evaluations.cpp). The end-to-end runs are in
+ * test_hpo_termination.cpp ("DLIB:GFS: ...") and test_search_steps_e2e.cpp;
+ * these cases pin the values and run dlib itself on them. */
 
 #include "catch2/catch.hpp"
 
-#include <tadah/hpo/dlib_adapter.h>
+#include <tadah/hpo/failed_loss_stand_in.h>
 #include <tadah/hpo/pc_fail_grading.h>
 
 #include <dlib/global_optimization.h>
@@ -24,9 +25,9 @@
 
 namespace {
 
-using tadah::hpo::detail::GfsLossForDlib;
+using tadah::hpo::detail::FailedLossStandIn;
 constexpr double kDblMax = std::numeric_limits<double>::max();
-constexpr double kCeiling = GfsLossForDlib::kCeiling;
+constexpr double kCeiling = FailedLossStandIn::kCeiling;
 
 }  // namespace
 
@@ -34,7 +35,7 @@ TEST_CASE("GFS loss for dlib: before any usable loss a failure is FAILSCORE, "
           "at most 1e100", "[HPO][gfs][dlib]")
 {
     SECTION("the default FAILSCORE, the largest double") {
-        GfsLossForDlib to_dlib(kDblMax);
+        FailedLossStandIn to_dlib(kDblMax);
         CHECK(to_dlib.failed(kDblMax));
         CHECK(to_dlib(kDblMax) == kCeiling);
         CHECK(to_dlib(std::numeric_limits<double>::infinity()) == kCeiling);
@@ -44,7 +45,7 @@ TEST_CASE("GFS loss for dlib: before any usable loss a failure is FAILSCORE, "
     SECTION("a finite FAILSCORE below the ceiling is kept, graded failures "
             "too") {
         const double fs = 1e9;
-        GfsLossForDlib to_dlib(fs);
+        FailedLossStandIn to_dlib(fs);
         CHECK(to_dlib(fs) == fs);
         const double graded = tadah::hpo::kFailBandFloor * fs + 0.25e6;
         REQUIRE(to_dlib.failed(graded));
@@ -54,7 +55,7 @@ TEST_CASE("GFS loss for dlib: before any usable loss a failure is FAILSCORE, "
     SECTION("a FAILSCORE above the ceiling maps its failure band onto "
             "[0.999, 1] x 1e100") {
         const double fs = 1e200;
-        GfsLossForDlib to_dlib(fs);
+        FailedLossStandIn to_dlib(fs);
         CHECK(to_dlib(fs) == Approx(kCeiling));
         const double band_bottom = tadah::hpo::kFailBandFloor * fs;
         CHECK(to_dlib(band_bottom) ==
@@ -68,7 +69,7 @@ TEST_CASE("GFS loss for dlib: after usable losses a failure is the worst "
           "usable loss plus a margin", "[HPO][gfs][dlib]")
 {
     const double fs = 1e9;
-    GfsLossForDlib to_dlib(fs);
+    FailedLossStandIn to_dlib(fs);
     /* Usable losses reach dlib as they are. */
     CHECK_FALSE(to_dlib.failed(5.0));
     CHECK(to_dlib(5.0) == 5.0);
@@ -90,12 +91,12 @@ TEST_CASE("GFS loss for dlib: the margin of degenerate usable ranges",
           "[HPO][gfs][dlib]")
 {
     SECTION("losses of exactly 0: a margin of 1") {
-        GfsLossForDlib to_dlib(kDblMax);
+        FailedLossStandIn to_dlib(kDblMax);
         CHECK(to_dlib(0.0) == 0.0);
         CHECK(to_dlib(kDblMax) == 2.0);
     }
     SECTION("negative losses: the spread") {
-        GfsLossForDlib to_dlib(kDblMax);
+        FailedLossStandIn to_dlib(kDblMax);
         CHECK(to_dlib(-5.0) == -5.0);
         CHECK(to_dlib(-1.0) == -1.0);
         /* W = -1, B = -5: m = max(4, 1) = 4. */
@@ -103,7 +104,7 @@ TEST_CASE("GFS loss for dlib: the margin of degenerate usable ranges",
     }
     SECTION("usable losses beyond the ceiling are clamped, and so is the "
             "stand-in") {
-        GfsLossForDlib to_dlib(kDblMax);
+        FailedLossStandIn to_dlib(kDblMax);
         CHECK(to_dlib(1e250) == kCeiling);
         CHECK(to_dlib(kDblMax) == kCeiling);
         CHECK(to_dlib(-1e250) == -kCeiling);
@@ -124,7 +125,7 @@ TEST_CASE("GFS loss for dlib: dlib's global search reaches its budget when "
     for (const std::size_t first_failures : {std::size_t{40}, std::size_t{8}}) {
         DYNAMIC_SECTION("the first " << first_failures
                         << " of 40 evaluations fail") {
-            GfsLossForDlib to_dlib(kDblMax);
+            FailedLossStandIn to_dlib(kDblMax);
             std::size_t calls = 0;
             std::size_t usable = 0;
             const auto loss = [&](const dlib::matrix<double, 0, 1>& x) {
@@ -149,4 +150,42 @@ TEST_CASE("GFS loss for dlib: dlib's global search reaches its budget when "
             }
         }
     }
+}
+
+/* Pins: the derivative of the value handed over in the loss (the slope a
+ * gradient handed over with it is scaled by): 1 for a usable loss; for a
+ * graded failure (FAILSCORE 1e9, the band [0.999e9, 1e9)) the slope of its
+ * stand-in -- before any usable loss 1 (the stand-in is the loss itself
+ * there), after the usable losses 5 and 3 (worst 5, margin 5) 5 / 1e6, the
+ * margin over the width of the band; 0 for FAILSCORE itself, an ungraded
+ * failure, and, under the default FAILSCORE, for a usable loss beyond the
+ * ceiling 1e100, which is held there.
+ * Before the fix: does not compile (the stand-in was DLIB:GFS's alone, as
+ * detail::GfsLossForDlib, without a slope: dlib takes no gradient, and NLopt
+ * was given the loss and its gradient as the evaluation reported them). */
+TEST_CASE("Failed-loss stand-in: the slope a gradient handed over with a "
+          "value is scaled by", "[HPO][gfs][nlopt][failscore]")
+{
+    const double fs = 1e9;
+    const double band_bottom = tadah::hpo::kFailBandFloor * fs;
+    FailedLossStandIn to(fs);
+    double slope = -1.0;
+    const double graded = band_bottom + 0.25 * (fs - band_bottom);
+    CHECK(to(graded, slope) == Approx(graded).epsilon(1e-15));
+    CHECK(slope == Approx(1.0).epsilon(1e-12));
+    CHECK(to(fs, slope) == fs);
+    CHECK(slope == 0.0);
+    CHECK(to(5.0, slope) == 5.0);
+    CHECK(slope == 1.0);
+    CHECK(to(3.0, slope) == 3.0);
+    CHECK(slope == 1.0);
+    /* W = 5, B = 3: m = 5; the stand-in of a graded failure is
+     * 5 + 5 (1 + g), g = (loss - 0.999e9) / 1e6. */
+    CHECK(to(graded, slope) == Approx(5.0 + 5.0 * 1.25));
+    CHECK(slope == Approx(5.0 / 1e6));
+    CHECK(to(fs, slope) == 15.0);
+    CHECK(slope == 0.0);
+    FailedLossStandIn by_default(kDblMax);
+    CHECK(by_default(1e250, slope) == kCeiling);
+    CHECK(slope == 0.0);
 }
