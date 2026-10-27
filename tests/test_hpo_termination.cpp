@@ -912,6 +912,51 @@ TEST_CASE("Journal: the OpenMP and FAILSCORE_GRADING lines say what they "
         "BUMPGATE, RHOGATE and RHOBARGATE"));
 }
 
+/* Pins: under FAILSCORE_GRADING ON with a PC_FAILPROBE line, the startup
+ * journal line ends with the probe's script and what its --outvar grades:
+ * "...; PC_FAILPROBE probe.in: its --outvar S grades band C and the band-D
+ * failures of --gate and of a potential LAMMPS cannot build (--gate 0.5)",
+ * and "(no --gate)" for a line without --gate. Each run stops when it
+ * loads its validation data (the validation configuration names a dataset
+ * that does not exist), after its startup lines: the case needs no
+ * evaluation.
+ * Before the fix: "FAILSCORE_GRADING: ON -- failed evals graded in
+ * [0.999*FS, FS), bands A-D (see docs); PC_FAILPROBE 'probe.in' S=S
+ * gate=0.500000" (and "gate=off" without --gate), which the case does not
+ * find; that probe note after the words of the fix fails the EndsWith
+ * check. */
+TEST_CASE("Journal: the FAILSCORE_GRADING ON line names the PC_FAILPROBE "
+          "line and what its value grades", "[HPO][journal][termination]")
+{
+    PcIsolationEnvUnset no_env;
+    const std::string optimizer = plain_block(
+        "    TYPE PLAIN\n    LIB TADAH\n    ALGO RANDOM\n    MAXEVAL 1\n"
+        "    SEED 1\n");
+    struct Case { std::string gate, note; };
+    for (const Case& c : std::vector<Case>{{" --gate 0.5", "(--gate 0.5)"},
+                                           {"", "(no --gate)"}}) {
+        INFO("PC_FAILPROBE options:" << c.gate);
+        TaRun run(optimizer,
+                  kRootLines + "FAILSCORE_GRADING ON\nPC_ISOLATION THREAD\n"
+                               "PC_FAILPROBE --script probe.in --outvar S" +
+                      c.gate + "\n");
+        std::ofstream(run.sd.dir / "probe.in") << "variable S equal 0.0\n";
+        std::ofstream(run.val)
+            << "DBFILE " << (run.sd.dir / "missing.db").string() << "\n";
+        CHECK_THROWS(tadah::hpo::hpo_run(run.ctx));
+        const std::string journal = read_file("hpo_run.log");
+        INFO(journal);
+        const auto grading = lines_with(
+            journal, "FAILSCORE_GRADING ON: a failed evaluation scores from "
+                     "0.999 FAILSCORE up to FAILSCORE");
+        REQUIRE(grading.size() == 1u);
+        CHECK_THAT(grading[0], Catch::EndsWith(
+            "; PC_FAILPROBE probe.in: its --outvar S grades band C and the "
+            "band-D failures of --gate and of a potential LAMMPS cannot "
+            "build " + c.note));
+    }
+}
+
 /* Pins: a journal that cannot be opened is a WARNING on standard error
  * naming its path: "[HPO] WARNING: the journal <path> cannot be opened,
  * so the run writes no journal".

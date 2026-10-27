@@ -3708,6 +3708,10 @@ msg = "OPTIM {key} ({index}): the seed {value} is negative, but {what} requires 
 doc = "A non-negative amplitude has a negative value in the configuration; {what} is the RHOFORM line."
 
 [[form.checks]]
+msg = "OPTIM {key} ({index}): the seed {value} is negative, but {why}"
+doc = "A value that every fit takes >= 0 (the relative part b of FSIGMA or SSIGMA, LAMBDA) is negative in the training configuration; {why} says what the fit takes."
+
+[[form.checks]]
 msg = "OPTIM {key} ({index}): the line is tagged LOG, and the AUTO box [{low}, {high}] reaches 0 or below, and a box tagged LOG lies above 0{hint}"
 doc = "The line has the shape tag LOG and the AUTO box reaches 0 or below."
 
@@ -3764,6 +3768,27 @@ wrap = "root"
 context = "lines_ream"
 text = "OPTIM AMPGRIDMB (3) AUTO"
 error = "OPTIM AMPGRIDMB (3): the seed -0.1 is negative, but RHOFORM NONNEG requires every AMPGRIDMB amplitude >= 0"
+
+[[form.invalid]]
+wrap = "root"
+context = "lines_force_relative_negative"
+doc = "A negative relative part b of FSIGMA, the value the AUTO box is made around."
+text = "OPTIM FSIGMA (2) AUTO"
+error = "OPTIM FSIGMA (2): the seed -0.5 is negative, but the relative part b of FSIGMA is a number >= 0, and every fit refuses a negative one"
+
+[[form.invalid]]
+wrap = "root"
+context = "lines_stress_relative_negative"
+doc = "A negative relative part b of SSIGMA, with a FRAC that would reach above 0."
+text = "OPTIM SSIGMA (2) AUTO FRAC 2"
+error = "OPTIM SSIGMA (2): the seed -0.2 is negative, but the relative part b of SSIGMA is a number >= 0, and every fit refuses a negative one"
+
+[[form.invalid]]
+wrap = "root"
+context = "lines_lambda_negative"
+doc = "A negative LAMBDA other than -1."
+text = "OPTIM LAMBDA (1) AUTO"
+error = "OPTIM LAMBDA (1): the seed -2 is negative, but LAMBDA is the ridge penalty, a number >= 0: every fit refuses a negative value other than -1, and -1, which requests the evidence approximation, is no value of a box"
 
 [[form.invalid]]
 wrap = "root"
@@ -6535,6 +6560,48 @@ OALGO 4
 LAMBDA 1e-3
 FORCE true
 FSIGMA 0.1 0.05
+"""
+
+[context.lines_force_relative_negative]
+doc = "The default training configuration with FORCE true and FSIGMA 0.1 -0.5 (a negative relative part, which every fit refuses)."
+config = """
+ATOM H
+WATOM 1.0
+DBFILE dummy.db
+INIT2B true
+INITMB false
+TYPE2B D2_BP 2 2 H H
+CGRID2B 1.0 2.0
+SGRID2B 0.5 1.0
+RCTYPE2B Cut_Cos
+RCUT2B 5.0
+VERBOSE 0
+MODEL M_BLR BF_Linear
+OALGO 4
+LAMBDA 1e-3
+FORCE true
+FSIGMA 0.1 -0.5
+"""
+
+[context.lines_stress_relative_negative]
+doc = "The default training configuration with STRESS true and SSIGMA 0.5 -0.2 (a negative relative part, which every fit refuses)."
+config = """
+ATOM H
+WATOM 1.0
+DBFILE dummy.db
+INIT2B true
+INITMB false
+TYPE2B D2_BP 2 2 H H
+CGRID2B 1.0 2.0
+SGRID2B 0.5 1.0
+RCTYPE2B Cut_Cos
+RCUT2B 5.0
+VERBOSE 0
+MODEL M_BLR BF_Linear
+OALGO 4
+LAMBDA 1e-3
+STRESS true
+SSIGMA 0.5 -0.2
 """
 
 [context.lines_stress]

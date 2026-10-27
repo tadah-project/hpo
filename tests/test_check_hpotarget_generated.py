@@ -70,20 +70,40 @@ class Generated(unittest.TestCase):
                          "unknown key 'X' in this block")
         self.assertIsNone(self.g.frame_what(err, 3))
 
+    # Pins: FAILSCORE, which the registry lists at the top level only, is
+    # refused in OPTIMIZER and in INNER as a top-level key in an open block
+    # (root_key_in_block_msg), and the block's unknown-key message for it
+    # is no refusal of a key out of place; SEED, a key of the blocks, is
+    # refused in INNER, which refuses it, and the top-level-key message for
+    # it is no such refusal either.
+    # Before the fix: the generated check took root_key_in_block_msg for
+    # every key in every block, and the unknown-key message for every key
+    # too, so both wrong texts were judged refusals (judge gave None, and
+    # 'is not refused as out of place' is not found in 'None').
     def test_blocks(self):
-        # FAILSCORE belongs to ROOT: refused in OPTIMIZER with the block's
-        # unknown-key message; SEED is refused in INNER, which refuses it.
         self.g.gen_blocks()
         c = self.cases("blocks")
         self.assertEqual(set(c), {f"{k} in {p}" for k in
                                   ("FAILSCORE", "LIB", "SEED")
                                   for p in ("ROOT", "OPTIMIZER", "INNER")})
         in_opt = c["FAILSCORE in OPTIMIZER"]
-        refused = result("Error on line 3: unknown key 'FAILSCORE' in this "
-                         "block\nLine: FAILSCORE 10")
+        refused = result("Error on line 3: FAILSCORE is a top-level key "
+                         "inside OPTIMIZER of line 1 (ENDOPTIMIZER)\n"
+                         "Line: FAILSCORE 10")
         self.assertIsNone(in_opt.judge(refused))
+        self.assertIsNone(c["FAILSCORE in INNER"].judge(result(
+            "Error on line 4: FAILSCORE is a top-level key inside INNER of "
+            "line 3 (ENDINNER)\nLine: FAILSCORE 10")))
+        unknown = result("Error on line 3: unknown key 'FAILSCORE' in this "
+                         "block\nLine: FAILSCORE 10")
+        self.assertIn("is not refused as out of place",
+                      str(in_opt.judge(unknown)))
         self.assertIn("is not refused as out of place",
                       in_opt.judge(result()))
+        self.assertIn("is not refused as out of place",
+                      str(c["SEED in INNER"].judge(result(
+                          "Error on line 4: SEED is a top-level key inside "
+                          "INNER of line 3 (ENDINNER)\nLine: SEED 7"))))
         self.assertIsNone(c["FAILSCORE in ROOT"].judge(result()))
         self.assertIn("is refused in ROOT, which the registry lists",
                       c["FAILSCORE in ROOT"].judge(result(
