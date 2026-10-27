@@ -582,6 +582,11 @@ std::string stop_reason_string(const AsaRunCtx& c, int exit_status)
 
 }  // namespace
 
+double asa_cost_limit()
+{
+    return MAX_DOUBLE;
+}
+
 std::string asa_probe_box_error(const OptimizerSpec& sp)
 {
     const std::size_t dim = sp.low.size();

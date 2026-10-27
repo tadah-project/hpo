@@ -31,6 +31,7 @@
 #include <tadah/models/descriptors/dm/embf0.h>
 #include <tadah/models/descriptors/dm/ream_density.h>
 #include <tadah/models/descriptors/dm/rhoform.h>
+#include <tadah/models/inert_keys.h>
 #include <tadah/models/eam/pot_curve_edit.h>
 
 #include <algorithm>
@@ -802,6 +803,30 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
     }
   }
 
+  /* --- OPTIM WATOM when no descriptor reads WATOM -----------------------
+   * D2_EAM and DM_EAM take their pair and density functions from the setfl
+   * file unweighted, and the dummies read nothing
+   * (models::context_reads_watom): every fit refuses a WATOM other than 1
+   * that no descriptor reads (mlip::require_no_unused_keys), so every
+   * candidate but 1 would fail its evaluation. The training configuration's
+   * own WATOM is 1 here (require_fit_settings above refuses another).
+   * Named by its line of the target file: the line of the first value it
+   * searches (a pair-triple WATOM numbers its values among the tokens). */
+  if (const auto it = trg.optimap.find("WATOM");
+      it != trg.optimap.end() && !models::context_reads_watom(train_ctx)) {
+    const auto &o = it->second;
+    for (std::size_t t = 0; t < o.opt.size(); ++t) {
+      if (!o.opt[t]) continue;
+      throw std::runtime_error(
+          "OPTIM WATOM (line " + core::to_string(o.line[t]) +
+          " of the target file) is not a valid search target: no "
+          "descriptor of the training configuration reads WATOM (D2_EAM, "
+          "DM_EAM, D2_Dummy and DM_Dummy read none), and a fit refuses a "
+          "WATOM other than 1 that no descriptor reads, so every candidate "
+          "other than 1 would fail its evaluation.");
+    }
+  }
+
   /* --- FIXINDEX with BIAS true and two or more species ------------------
    * Which weights are the intercepts is the model function's (for a
    * linear model weights 1..N, and the descriptor weights start at index
@@ -964,15 +989,12 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
 
   /* --- FAILSCORE_GRADING ON bands the failures below FAILSCORE ---------- */
   if (trg.FAILSCORE_GRADING) {
-    /* The band arithmetic needs a finite FAILSCORE: with the legacy
-     * DBL_MAX default, 0.999*FS and FS are not meaningfully ordered in
-     * loss space and L2 of the substituted value overflows. */
-    if (!std::isfinite(trg.FAIL_SCORE) || trg.FAIL_SCORE >= 1.0e300 ||
-        trg.FAIL_SCORE <= 0.0)
-      throw std::runtime_error(
-          "FAILSCORE_GRADING ON grades failures in bands below FAILSCORE, "
-          "which needs a FAILSCORE above 0 and below 1e300 (without a "
-          "FAILSCORE line, FAILSCORE is the largest double)");
+    /* FAILSCORE is a positive finite number (the parser reads no other,
+     * and the default is the largest double), and the four bands are
+     * ordered for each one (graded_failscore_is_ordered): the default
+     * too, whose graded failures every optimiser takes, except ASA:ASA,
+     * which refuses a FAILSCORE whose largest graded failure reaches its
+     * largest valid cost (validate_asa_spec). */
     if (!graded_failscore_is_ordered(trg.FAIL_SCORE))
       throw std::runtime_error(
           "FAILSCORE_GRADING ON requires a FAILSCORE large enough to "

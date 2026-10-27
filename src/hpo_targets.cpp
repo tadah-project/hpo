@@ -1635,6 +1635,10 @@ void HPOTargets::read(const std::string& fn)
                         "one start is STRATEGY TYPE PLAIN");
                     set_once(&spec.strategy_type, key, "strategy");
                     n_starts_given = true;
+                    /* Its line: startup refuses an INIT chain of fewer
+                     * starting points there (require_multistart_points). */
+                    spec.key_lines[key] =
+                        KeyLine{nline, line, block_name(block)};
                     continue;
                 }
                 if (key=="BUDGET_PER_START") {
@@ -1729,6 +1733,7 @@ void HPOTargets::read(const std::string& fn)
             else if (key=="PC_ISOLATION") {
                 PC_ISOLATION = single_value(iss, key);
                 PC_ISOLATION_set = true;
+                PC_ISOLATION_line = nline;
                 if (PC_ISOLATION != "THREAD" && PC_ISOLATION != "PROCESS")
                     throw std::runtime_error(
                         "PC_ISOLATION must be THREAD or PROCESS, got '"
@@ -1738,6 +1743,7 @@ void HPOTargets::read(const std::string& fn)
                 PC_WORKER_TIMEOUT = parse_pc_worker_timeout(
                     single_value(iss, key), "PC_WORKER_TIMEOUT");
                 PC_WORKER_TIMEOUT_line = nline;
+                PC_WORKER_TIMEOUT_text = line;
             }
             else if (key=="FAILSCORE_GRADING") {
                 const std::string v = single_value(iss, key);
@@ -1985,11 +1991,34 @@ void HPOTargets::read(const std::string& fn)
                 if (wgt < 0)
                     throw std::runtime_error(key + " <weight> must be a number >= 0, got '" +
                                              weight_token + "'");
+                /* A second line of a metric without indices would replace
+                 * the first's target, weight and caps: refused as a whole
+                 * line, before its options are read. */
+                if (!dataset_metric)
+                    if (const auto [first, fresh] = metric_lines.emplace(
+                            key, std::make_pair(nline, line));
+                        !fresh)
+                        throw std::runtime_error(
+                            key + ": repeated declaration (first declared on "
+                            "line " + std::to_string(first->second.first) +
+                            ")");
                 HPOTargets::SkipCaps caps;
                 std::string flag;
                 while (iss >> flag) {
                     if (flag != "--skip-above" && flag != "--skip-rel")
                         throw std::runtime_error(key + ": unknown flag '" + flag + "'");
+                    /* A cap rejects an evaluation whose metric is above it
+                     * (MetricSkipTracker), and R^2 is better when higher:
+                     * on PC_ERSQ it would reject the better fits. Refused
+                     * at the option, before its value is read, so the
+                     * first option of the line is named whatever follows
+                     * it. */
+                    if (key == "PC_ERSQ")
+                        throw std::runtime_error(
+                            "PC_ERSQ takes no " + flag + ": a cap rejects an "
+                            "evaluation whose metric is above it, and a "
+                            "higher R^2 is a better fit, so the cap would "
+                            "reject the better fits");
                     std::string token;
                     if (!(iss >> token)) throw std::runtime_error(key + " " + flag + " requires a positive number");
                     const double value = parse_positive(token, key + " " + flag);
@@ -2006,17 +2035,9 @@ void HPOTargets::read(const std::string& fn)
                     else if (key == "PC_FRMSE") use_frmse = true;
                     else use_srmse = true;
                 }
-                else if (const auto [first, fresh] =
-                             metric_lines.emplace(key, std::make_pair(nline, line));
-                         !fresh)
-                    /* A second line would replace the first's target,
-                     * weight and caps. */
-                    throw std::runtime_error(
-                        key + ": repeated declaration (first declared on "
-                        "line " + std::to_string(first->second.first) + ")");
                 else if (key=="PC_EMAE")   { emae=tgt;   w_emae=wgt;   use_emae=true;   skip_emae=caps; }
                 else if (key=="PC_ErRMSE") { errmse=tgt; w_errmse=wgt; use_errmse=true; skip_errmse=caps; }
-                else if (key=="PC_ERSQ")   { ersq=tgt;   w_ersq=wgt;   use_ersq=true;   skip_ersq=caps; }
+                else if (key=="PC_ERSQ")   { ersq=tgt;   w_ersq=wgt;   use_ersq=true; }
             }
             else
                 throw std::runtime_error("unknown key '" + key + "'");
@@ -2043,9 +2064,11 @@ void HPOTargets::read(const std::string& fn)
             in.text));
     }
     /* K_TOTAL caps the starting points the METHOD lines of its chain give,
-     * at most the chain's default_k() (the K of RANDOM, LHS and SOBOL, one
-     * point of CONFIG and of WARM, which gives at most one; without a
-     * METHOD line the CONFIG point): one at or above their number caps
+     * counted as the startup check of N_STARTS counts them (chain_points:
+     * the K of RANDOM, LHS and SOBOL, one point for the CONFIG lines and one
+     * for the WARM lines of each file, as the chain keeps a point once; a
+     * WARM point may be dropped, so "at most"; without a METHOD line the
+     * CONFIG point): one at or above their number caps
      * nothing. The INIT blocks of one optimiser make one chain, and so do
      * the RESTART blocks. An EXPLORE chain without a METHOD line is not
      * resolved: the exploration takes the points of the STRATEGY-level
@@ -2060,12 +2083,10 @@ void HPOTargets::read(const std::string& fn)
               });
     for (const auto& [at, init] : k_totals) {
         if (!init->k_total) continue;
-        const std::size_t points = build_init_strategy(*init)->default_k();
-        std::string list;
-        for (const auto& e : init->chain) {
-            list += (list.empty() ? "" : ", ") + e.method;
-            for (const auto& a : e.args) list += " " + a;
-        }
+        const ChainPoints count = chain_points(*init);
+        const std::size_t points = count.distinct;
+        const std::string list =
+            count.lines + (count.notes.empty() ? "" : "; " + count.notes);
         const std::size_t cap = *init->k_total;
         const std::string head =
             "K_TOTAL " + std::to_string(cap) + " caps nothing: ";
@@ -2540,7 +2561,6 @@ std::string HPOTargets::repeat_reuse_blocker() const {
   if (srmse_targets.has_relative_cap()) return "PC_SRMSE_GPA" + rel;
   if (use_emae && skip_emae.rel_above) return "PC_EMAE" + rel;
   if (use_errmse && skip_errmse.rel_above) return "PC_ErRMSE" + rel;
-  if (use_ersq && skip_ersq.rel_above) return "PC_ERSQ" + rel;
   return "";
 }
 
@@ -3467,11 +3487,15 @@ void HPOTargets::bind_space_recursive() {
 
 void HPOTargets::set_failscore_grading(bool on) {
   FAILSCORE_GRADING = on;
-  spec.failscore_grading = on;
+  const auto set = [on](OptimizerSpec& sp) {
+    sp.failscore_grading = on;
+    sp.failscore_grading_by_env = true;
+  };
+  set(spec);
   for (OptimizerSpec* sub : {spec.inner.get(), spec.prestage.get()}) {
     if (!sub) continue;
-    sub->failscore_grading = on;
-    if (sub->inner) sub->inner->failscore_grading = on;
+    set(*sub);
+    if (sub->inner) set(*sub->inner);
   }
 }
 

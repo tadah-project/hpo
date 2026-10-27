@@ -39,6 +39,7 @@
 #include <tadah/hpo/algorithms_pt.h>
 #include <tadah/hpo/anneal_parallel.h>
 #include <tadah/hpo/box_penalty.h>
+#include <tadah/hpo/ceres_adapter.h>  // run_ceres_steepest_descent
 #include <tadah/hpo/durable_best.h>
 #include <tadah/hpo/hpo.h>
 #include <tadah/hpo/hpo_host.h>
@@ -54,10 +55,12 @@
 #include <tadah/hpo/run_policy.h>
 #include <tadah/hpo/run_stop.h>
 #include <tadah/hpo/runners.h>
+#include <tadah/hpo/script_executor.h>
 #include <tadah/mlip/key_provenance.h>
 #include <tadah/mlip/parallel.h>
 
 #include "anneal_test_support.h"
+#include "ceres_build.h"
 #include "finish_within.h"
 #include "rhoform_test_support.h"
 
@@ -74,6 +77,7 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <mutex>
 #include <iomanip>
 #include <iostream>
 #include <limits>
@@ -2534,6 +2538,104 @@ TEST_CASE("Two runs in one process: each run's worker pool has the run's "
     }
 }
 
+/* Pins: CERES:STEEPEST_DESCENT takes the STRATEGY-level THREADS as every
+ * other optimiser does: a run with THREADS 3 returns 0, its journal says
+ * once "THREADS: 3 workers run the work of the evaluations" (the width of
+ * the pool the run built, which hpo_run writes for every optimiser), and
+ * loss.tadah records its evaluations. That the work of a CERES evaluation
+ * runs on those workers is the case "CERES:STEEPEST_DESCENT runs the
+ * training and prediction of its evaluations on the executor's workers".
+ * In a build without Ceres (TADAH_ENABLE_CERES OFF) the run is refused as
+ * every LIB CERES is (kCeresNotBuilt).
+ * Before the fix: the run was refused at startup, "the STRATEGY-level
+ * optimiser: CERES:STEEPEST_DESCENT does not support THREADS (host
+ * evaluation is single-threaded inside one optimizer step)". */
+TEST_CASE("CERES:STEEPEST_DESCENT takes the STRATEGY-level THREADS: the run "
+          "builds a pool of THREADS workers",
+          "[HPO][termination][threads][ceres]")
+{
+    TaRun run(plain_block("    TYPE PLAIN\n    LIB CERES\n"
+                          "    ALGO STEEPEST_DESCENT\n    MAXEVAL 20\n"
+                          "    THREADS 3\n"));
+#ifdef TADAH_USE_CERES
+    int status = -1;
+    REQUIRE_NOTHROW(status = tadah::hpo::hpo_run(run.ctx));
+    CHECK(status == 0);
+    const std::string journal = read_file("hpo_run.log");
+    INFO("journal:\n" << journal);
+    CHECK(lines_with(journal, "THREADS: 3 workers run the work of the "
+                              "evaluations").size() == 1u);
+    CHECK_FALSE(data_rows("loss.tadah").empty());
+#else
+    CHECK_THROWS_WITH(tadah::hpo::hpo_run(run.ctx),
+                      Catch::Contains(hpo_test::kCeresNotBuilt));
+#endif
+}
+
+#ifdef TADAH_USE_CERES
+/* Pins: a CERES:STEEPEST_DESCENT search with the STRATEGY-level THREADS 3
+ * runs the work of its evaluations -- the MLIP loops of the training and
+ * prediction of the potential -- on the workers of the executor of THREADS
+ * workers: on a host of the Ta data, with the executor and MLIP's parallel
+ * backend routed to it as hpo_run installs them for a run (RunPools,
+ * hpo.cpp), the search makes evaluations, and every loop body of them runs
+ * on an executor worker (worker id 0, 1 or 2), none on the thread that runs
+ * the search.
+ * Before the fix: the search was refused before any evaluation,
+ * "CERES:STEEPEST_DESCENT does not support THREADS (host evaluation is
+ * single-threaded inside one optimizer step)". */
+TEST_CASE("CERES:STEEPEST_DESCENT runs the training and prediction of its "
+          "evaluations on the executor's workers",
+          "[HPO][termination][threads][ceres]")
+{
+    TaRun run(plain_block("    TYPE PLAIN\n    LIB CERES\n"
+                          "    ALGO STEEPEST_DESCENT\n    MAXEVAL 6\n"
+                          "    THREADS 3\n"));
+    tadah::hpo::HPOTargets trg(run.ctx, run.hpo.string());
+    REQUIRE(trg.spec.num_threads);
+    REQUIRE(*trg.spec.num_threads == 3u);
+    /* The run's pools: the executor of THREADS workers, MLIP's loops on it;
+     * each loop body records the thread and the worker that ran it. */
+    struct Body { std::thread::id thread; int worker; };
+    std::mutex m;
+    std::vector<Body> bodies;
+    struct Pools {
+        explicit Pools(int width) { tadah::hpo::init_script_executor(width); }
+        ~Pools()
+        {
+            tadah::mlip::set_parallel_backend({});
+            tadah::hpo::shutdown_script_executor();
+        }
+    } pools(static_cast<int>(*trg.spec.num_threads));
+    tadah::mlip::set_parallel_backend(
+        [&](std::size_t n, const std::function<void(std::size_t)>& body) {
+            tadah::hpo::script_executor().run_batch(
+                n, [&](std::size_t i, int worker) {
+                    {
+                        std::lock_guard<std::mutex> lk(m);
+                        bodies.push_back({std::this_thread::get_id(), worker});
+                    }
+                    body(i);
+                });
+        });
+    Host host(run.ctx, trg, run.val.string());
+    {
+        std::lock_guard<std::mutex> lk(m);
+        bodies.clear();
+    }
+    const std::size_t before = Host::g_iter_value();
+    REQUIRE_NOTHROW(tadah::hpo::run_ceres_steepest_descent(trg.spec, host));
+    CHECK(Host::g_iter_value() > before);
+    std::lock_guard<std::mutex> lk(m);
+    REQUIRE_FALSE(bodies.empty());
+    const std::thread::id search = std::this_thread::get_id();
+    for (const Body& b : bodies) {
+        CHECK(b.thread != search);
+        CHECK((b.worker >= 0 && b.worker < 3));
+    }
+}
+#endif
+
 /* Pins: a second run with a smaller THREADS under PC_ISOLATION PROCESS runs
  * its PC_LAMMPS tasks on its own pool: the first run (THREADS 3, no
  * PC_LAMMPS) and then a run with THREADS 1 and three PC_LAMMPS lines (one
@@ -4088,24 +4190,47 @@ TEST_CASE("Termination: MULTISTART gives each start of an NLopt search "
                        "(INIT seed=8)\n") != std::string::npos);
 }
 
+/* A WARM seed without the search parameters of TaRun (CGRID2B, SGRID2B),
+ * in the run's directory: WARM_ON_MISMATCH skip drops its point when the
+ * INIT chain is drawn, so the chain gives one point fewer than its METHOD
+ * lines when the file is read. */
+namespace {
+const std::string kDroppedWarm =
+    "    METHOD WARM dropped_seed.tadah\n    WARM_ON_MISMATCH skip\n";
+void write_dropped_warm_seed()
+{
+    std::ofstream("dropped_seed.tadah") << "RCUT2B 5.0\n";
+}
+}  // namespace
+
 /* Pins: a MULTISTART of N_STARTS 2 whose INIT chain gives one starting
- * point (no INIT block: the CONFIG point) runs one start and journals
- * "MULTISTART: running 1 start", after the WARNING that counts the one
- * starting point and advises a setting the parser takes: "MULTISTART
- * N_STARTS 2 requested but the resolved INIT chain produced only 1
- * starting point; running 1 start, which is STRATEGY TYPE PLAIN. A chain
- * of 2 or more starting points (METHOD LHS 2, RANDOM 2 or SOBOL 2) runs 2
- * starts." It advises no lower N_STARTS, which would be N_STARTS 1, refused
- * at its line ("one start is STRATEGY TYPE PLAIN").
- * Before the fix: the WARNING ended "running 1 start(s). Add INIT points
- * (e.g. METHOD LHS/RANDOM/SOBOL with K >= 2) or lower N_STARTS." (the text
- * fails); the run line said "running 1 start" already. */
+ * point when it is drawn (a WARM seed that WARM_ON_MISMATCH skip drops,
+ * and METHOD CONFIG: the chain as written gives two, which the startup
+ * check takes) runs one start and journals "MULTISTART: running 1 start",
+ * after the WARNING that names the cause, which the chain as written does
+ * not show: "MULTISTART N_STARTS 2: the INIT chain gave 1 starting point
+ * when it was drawn (WARM_ON_MISMATCH skip drops a WARM point, and a point
+ * equal to another counts once); running 1 start, which is STRATEGY TYPE
+ * PLAIN." It advises no chain of more points, which this chain is
+ * already, and no lower N_STARTS, which would be N_STARTS 1, refused at
+ * its line ("one start is STRATEGY TYPE PLAIN"). A chain whose METHOD
+ * lines give one point is refused at startup, at the N_STARTS line: the
+ * case "startup validation: a MULTISTART whose INIT chain gives fewer
+ * starting points than N_STARTS is refused at the N_STARTS line".
+ * Before the fix: the WARNING said "MULTISTART N_STARTS 2 requested but the
+ * resolved INIT chain produced only 1 starting point; running 1 start,
+ * which is STRATEGY TYPE PLAIN. A chain of 2 or more starting points
+ * (METHOD LHS 2, RANDOM 2 or SOBOL 2) runs 2 starts.", advising the chain
+ * the file has. */
 TEST_CASE("Termination: MULTISTART with one starting point journals that it "
           "runs 1 start", "[HPO][termination][multistart]")
 {
-    TaRun run("OPTIMIZER\n  STRATEGY\n    TYPE MULTISTART\n    N_STARTS 2\n"
+    TaRun run("OPTIMIZER\n  INIT\n" + kDroppedWarm +
+              "    METHOD CONFIG\n  ENDINIT\n  STRATEGY\n"
+              "    TYPE MULTISTART\n    N_STARTS 2\n"
               "    LIB NLOPT\n    ALGO LN_SBPLX\n    MAXEVAL 3\n"
               "  ENDSTRATEGY\nENDOPTIMIZER\n");
+    write_dropped_warm_seed();
     int status = -1;
     REQUIRE_NOTHROW(status = tadah::hpo::hpo_run(run.ctx));
     CHECK(status == 0);
@@ -4114,31 +4239,36 @@ TEST_CASE("Termination: MULTISTART with one starting point journals that it "
     CHECK(journal.find("MULTISTART: running 1 start\n") != std::string::npos);
     CHECK(journal.find("1 starts") == std::string::npos);
     CHECK(journal.find(
-              "MULTISTART N_STARTS 2 requested but the resolved INIT chain "
-              "produced only 1 starting point; running 1 start, which is "
-              "STRATEGY TYPE PLAIN. A chain of 2 or more starting points "
-              "(METHOD LHS 2, RANDOM 2 or SOBOL 2) runs 2 starts.\n") !=
-          std::string::npos);
+              "MULTISTART N_STARTS 2: the INIT chain gave 1 starting point "
+              "when it was drawn (WARM_ON_MISMATCH skip drops a WARM point, "
+              "and a point equal to another counts once); running 1 start, "
+              "which is STRATEGY TYPE PLAIN.\n") != std::string::npos);
+    CHECK(journal.find("A chain of") == std::string::npos);
     CHECK(journal.find("lower N_STARTS") == std::string::npos);
 }
 
 /* Pins: a MULTISTART of N_STARTS 3 whose INIT chain gives two starting
- * points (METHOD RANDOM 2) runs two starts and journals "MULTISTART:
- * running 2 starts", after the WARNING that names the N_STARTS that runs
- * them, which the parser takes: "MULTISTART N_STARTS 3 requested but the
+ * points when it is drawn (a WARM seed that WARM_ON_MISMATCH skip drops,
+ * and METHOD RANDOM 2: three as written) runs two starts and journals
+ * "MULTISTART: running 2 starts", after the WARNING that names the cause
+ * and the N_STARTS that runs them, which the parser takes: "MULTISTART
+ * N_STARTS 3: the INIT chain gave 2 starting points when it was drawn
+ * (WARM_ON_MISMATCH skip drops a WARM point, and a point equal to another
+ * counts once); running 2 starts, and N_STARTS 2 asks for the 2 that run."
+ * Before the fix: the WARNING said "MULTISTART N_STARTS 3 requested but the
  * resolved INIT chain produced only 2 starting points; running 2 starts. A
  * chain of 3 or more starting points (METHOD LHS 3, RANDOM 3 or SOBOL 3)
- * runs 3 starts, and N_STARTS 2 asks for the 2 that run."
- * Before the fix: the WARNING read "... produced only 2 starting point(s);
- * running 2 start(s). Add INIT points (e.g. METHOD LHS/RANDOM/SOBOL with K
- * >= 3) or lower N_STARTS." (the text fails). */
+ * runs 3 starts, and N_STARTS 2 asks for the 2 that run.", advising the
+ * chain the file has. */
 TEST_CASE("Termination: MULTISTART with fewer starting points than N_STARTS "
           "names the N_STARTS that runs them", "[HPO][termination][multistart]")
 {
-    TaRun run("OPTIMIZER\n  INIT\n    METHOD RANDOM 2\n    SEED 4\n"
+    TaRun run("OPTIMIZER\n  INIT\n" + kDroppedWarm +
+              "    METHOD RANDOM 2\n    SEED 4\n"
               "  ENDINIT\n  STRATEGY\n    TYPE MULTISTART\n    N_STARTS 3\n"
               "    LIB NLOPT\n    ALGO LN_SBPLX\n    MAXEVAL 4\n"
               "  ENDSTRATEGY\nENDOPTIMIZER\n");
+    write_dropped_warm_seed();
     int status = -1;
     REQUIRE_NOTHROW(status = tadah::hpo::hpo_run(run.ctx));
     CHECK(status == 0);
@@ -4146,37 +4276,141 @@ TEST_CASE("Termination: MULTISTART with fewer starting points than N_STARTS "
     INFO(journal);
     CHECK(journal.find("MULTISTART: running 2 starts\n") != std::string::npos);
     CHECK(journal.find(
-              "MULTISTART N_STARTS 3 requested but the resolved INIT chain "
-              "produced only 2 starting points; running 2 starts. A chain of "
-              "3 or more starting points (METHOD LHS 3, RANDOM 3 or SOBOL 3) "
-              "runs 3 starts, and N_STARTS 2 asks for the 2 that run.\n") !=
+              "MULTISTART N_STARTS 3: the INIT chain gave 2 starting points "
+              "when it was drawn (WARM_ON_MISMATCH skip drops a WARM point, "
+              "and a point equal to another counts once); running 2 starts, "
+              "and N_STARTS 2 asks for the 2 that run.\n") !=
+          std::string::npos);
+    CHECK(journal.find("A chain of") == std::string::npos);
+}
+
+/* Pins: a MULTISTART of N_STARTS 2 whose INIT chain has a WARM line whose
+ * seed holds the values of the training configuration, and METHOD CONFIG,
+ * gives two starting points as written, which the startup check takes,
+ * and one when it is drawn: the chain keeps a point once. The WARNING
+ * names that cause alone, as no WARM point is dropped (WARM_ON_MISMATCH
+ * warn): "MULTISTART N_STARTS 2: the INIT chain gave 1 starting point when
+ * it was drawn (a point equal to another counts once); running 1 start,
+ * which is STRATEGY TYPE PLAIN."
+ * Before the fix: the WARNING said "... produced only 1 starting point;
+ * running 1 start, which is STRATEGY TYPE PLAIN. A chain of 2 or more
+ * starting points (METHOD LHS 2, RANDOM 2 or SOBOL 2) runs 2 starts.". */
+TEST_CASE("Termination: MULTISTART whose INIT chain draws one point twice "
+          "names the equal points", "[HPO][termination][multistart]")
+{
+    TaRun run("OPTIMIZER\n  INIT\n    METHOD WARM config_seed.tadah\n"
+              "    METHOD CONFIG\n  ENDINIT\n  STRATEGY\n"
+              "    TYPE MULTISTART\n    N_STARTS 2\n"
+              "    LIB NLOPT\n    ALGO LN_SBPLX\n    MAXEVAL 3\n"
+              "  ENDSTRATEGY\nENDOPTIMIZER\n");
+    /* The values make_ta_context gives the search parameters. */
+    std::ofstream("config_seed.tadah") << "CGRID2B 0.5 1.4\nSGRID2B 3.0 5.0\n";
+    int status = -1;
+    REQUIRE_NOTHROW(status = tadah::hpo::hpo_run(run.ctx));
+    CHECK(status == 0);
+    const std::string journal = read_file("hpo_run.log");
+    INFO(journal);
+    CHECK(journal.find("MULTISTART: running 1 start\n") != std::string::npos);
+    CHECK(journal.find(
+              "MULTISTART N_STARTS 2: the INIT chain gave 1 starting point "
+              "when it was drawn (a point equal to another counts once); "
+              "running 1 start, which is STRATEGY TYPE PLAIN.\n") !=
           std::string::npos);
 }
 
-/* Pins: a MULTISTART whose INIT chain has fewer starting points than
- * N_STARTS because K_TOTAL keeps fewer names that K_TOTAL in the WARNING,
- * and the advice depends on the points of the METHOD lines (LHS 4, 3 and
- * 3 here, K_TOTAL 2):
- *  - more than N_STARTS 3: "... produced only 2 starting points (K_TOTAL
- *    2); running 2 starts. With K_TOTAL 3, or without K_TOTAL, 3 starts
- *    run, and N_STARTS 2 asks for the 2 that run.";
+/* Pins: the WARNING of a RESTART round whose points are fewer than
+ * N_STARTS names the RESTART round, not the INIT chain (MULTISTART N_STARTS
+ * 3 from METHOD LHS 3, RESTART AFTER_STAGNATION 2, MAX 1):
+ *  - a RESTART chain whose METHOD lines give fewer points than N_STARTS,
+ *    which the startup check does not count (a round draws its own), gets
+ *    the count and what gives N_STARTS starts, as the startup refusal of
+ *    an INIT chain does: METHOD RANDOM 1, "MULTISTART N_STARTS 3: the
+ *    RESTART round gave 1 starting point; running 1 start. The RESTART
+ *    chain gives 1 (RANDOM 1); a chain of 3 or more starting points (METHOD
+ *    LHS 3, RANDOM 3 or SOBOL 3) runs 3 starts."; METHOD LHS 5 with K_TOTAL
+ *    2, "... The RESTART chain gives 2 (LHS 5, capped by K_TOTAL 2); with
+ *    K_TOTAL 3, or without K_TOTAL, 3 starts run.";
+ *  - a RESTART chain of N_STARTS points that gives fewer when drawn (a WARM
+ *    seed that WARM_ON_MISMATCH skip drops, and METHOD RANDOM 2) gets the
+ *    cause: "MULTISTART N_STARTS 3: the RESTART round gave 2 starting
+ *    points when it was drawn (WARM_ON_MISMATCH skip drops a WARM point,
+ *    and a point equal to another counts once); running 2 starts.".
+ * No WARNING names the INIT chain, which gave its 3 points.
+ * Before the fix: each WARNING said "MULTISTART N_STARTS 3 requested but
+ * the resolved INIT chain produced only 1 starting point; ..." (2 for the
+ * others), naming the INIT chain for a RESTART round. */
+TEST_CASE("Termination: MULTISTART with a RESTART round of fewer starting "
+          "points than N_STARTS names the RESTART round",
+          "[HPO][termination][multistart][restart]")
+{
+    struct Case { std::string restart, warning; };
+    const std::vector<Case> cases = {
+        {"      METHOD RANDOM 1\n      SEED 5\n",
+         "MULTISTART N_STARTS 3: the RESTART round gave 1 starting point; "
+         "running 1 start. The RESTART chain gives 1 (RANDOM 1); a chain of "
+         "3 or more starting points (METHOD LHS 3, RANDOM 3 or SOBOL 3) runs "
+         "3 starts.\n"},
+        {"      METHOD LHS 5\n      K_TOTAL 2\n      SEED 5\n",
+         "MULTISTART N_STARTS 3: the RESTART round gave 2 starting points; "
+         "running 2 starts. The RESTART chain gives 2 (LHS 5, capped by "
+         "K_TOTAL 2); with K_TOTAL 3, or without K_TOTAL, 3 starts run.\n"},
+        {"      METHOD WARM dropped_seed.tadah\n      WARM_ON_MISMATCH skip\n"
+         "      METHOD RANDOM 2\n      SEED 5\n",
+         "MULTISTART N_STARTS 3: the RESTART round gave 2 starting points "
+         "when it was drawn (WARM_ON_MISMATCH skip drops a WARM point, and a "
+         "point equal to another counts once); running 2 starts.\n"},
+    };
+    for (const auto& c : cases) {
+        INFO(c.restart);
+        TaRun run("OPTIMIZER\n  INIT\n    METHOD LHS 3\n    SEED 3\n"
+                  "  ENDINIT\n  STRATEGY\n    TYPE MULTISTART\n"
+                  "    N_STARTS 3\n    LIB NLOPT\n    ALGO LN_SBPLX\n"
+                  "    MAXEVAL 30\n    RESTART\n      AFTER_STAGNATION 2\n"
+                  "      MAX 1\n" + c.restart + "    ENDRESTART\n"
+                  "  ENDSTRATEGY\nENDOPTIMIZER\n");
+        write_dropped_warm_seed();
+        int status = -1;
+        REQUIRE_NOTHROW(status = tadah::hpo::hpo_run(run.ctx));
+        CHECK(status == 0);
+        const std::string journal = read_file("hpo_run.log");
+        INFO(journal);
+        REQUIRE(journal.find("RESTART 1/1") != std::string::npos);
+        CHECK(journal.find(c.warning) != std::string::npos);
+        CHECK(journal.find("MULTISTART N_STARTS 3: the INIT chain") ==
+              std::string::npos);
+        CHECK(journal.find("resolved INIT chain") == std::string::npos);
+    }
+}
+
+/* Pins: a MULTISTART whose K_TOTAL keeps fewer starting points than
+ * N_STARTS is refused at startup, at the N_STARTS line, before any
+ * evaluation: hpo_run throws the refusal, which names K_TOTAL, and the
+ * advice depends on the points of the METHOD lines (LHS 4, 3 and 3 here,
+ * K_TOTAL 2):
+ *  - more than N_STARTS 3: "N_STARTS 3 needs 3 starting points, and the
+ *    INIT chain gives 2 (LHS 4, capped by K_TOTAL 2); with K_TOTAL 3, or
+ *    without K_TOTAL, 3 starts run, and N_STARTS 2 starts from each of the
+ *    2";
  *  - as many as N_STARTS 3 (a K_TOTAL 3 would cap nothing, refused when
- *    the file is read): "... Without K_TOTAL, 3 starts run, ...";
- *  - fewer than N_STARTS 4: "... A chain of 4 or more starting points
+ *    the file is read): "... without K_TOTAL, 3 starts run, ...";
+ *  - fewer than N_STARTS 4: "... a chain of 4 or more starting points
  *    (METHOD LHS 4, RANDOM 4 or SOBOL 4) without K_TOTAL runs 4 starts,
  *    ...".
- * Before the fix: the WARNING named no K_TOTAL and advised METHOD lines
- * the block already had ("A chain of 3 or more starting points (METHOD LHS
- * 3, RANDOM 3 or SOBOL 3) runs 3 starts" beside METHOD LHS 4; the text
- * fails). */
+ * No loss.tadah is written.
+ * Before the fix: each run ran 2 starts, and its journal had the WARNING
+ * "MULTISTART N_STARTS 3 requested but the resolved INIT chain produced
+ * only 2 starting points (K_TOTAL 2); running 2 starts. With K_TOTAL 3, or
+ * without K_TOTAL, 3 starts run, and N_STARTS 2 asks for the 2 that run."
+ * (and the other two advices), which this case pinned. */
 TEST_CASE("Termination: MULTISTART with fewer starting points than N_STARTS "
-          "because of K_TOTAL names K_TOTAL", "[HPO][termination][multistart]")
+          "because of K_TOTAL is refused before any evaluation, naming "
+          "K_TOTAL", "[HPO][termination][multistart]")
 {
     struct Case { std::string lhs, n_starts, advice; };
     const std::vector<Case> cases = {
-        {"4", "3", "With K_TOTAL 3, or without K_TOTAL, 3 starts run"},
-        {"3", "3", "Without K_TOTAL, 3 starts run"},
-        {"3", "4", "A chain of 4 or more starting points (METHOD LHS 4, "
+        {"4", "3", "with K_TOTAL 3, or without K_TOTAL, 3 starts run"},
+        {"3", "3", "without K_TOTAL, 3 starts run"},
+        {"3", "4", "a chain of 4 or more starting points (METHOD LHS 4, "
                    "RANDOM 4 or SOBOL 4) without K_TOTAL runs 4 starts"},
     };
     for (const auto& c : cases) {
@@ -4186,19 +4420,15 @@ TEST_CASE("Termination: MULTISTART with fewer starting points than N_STARTS "
                   "    TYPE MULTISTART\n    N_STARTS " + c.n_starts +
                   "\n    LIB NLOPT\n    ALGO LN_SBPLX\n    MAXEVAL 4\n"
                   "  ENDSTRATEGY\nENDOPTIMIZER\n");
-        int status = -1;
-        REQUIRE_NOTHROW(status = tadah::hpo::hpo_run(run.ctx));
-        CHECK(status == 0);
-        const std::string journal = read_file("hpo_run.log");
-        INFO(journal);
-        CHECK(journal.find("MULTISTART: running 2 starts\n") !=
-              std::string::npos);
-        CHECK(journal.find(
-                  "MULTISTART N_STARTS " + c.n_starts + " requested but the "
-                  "resolved INIT chain produced only 2 starting points "
-                  "(K_TOTAL 2); running 2 starts. " + c.advice +
-                  ", and N_STARTS 2 asks for the 2 that run.\n") !=
-              std::string::npos);
+        CHECK_THROWS_WITH(
+            tadah::hpo::hpo_run(run.ctx),
+            Catch::Contains("Error on line 9: N_STARTS " + c.n_starts +
+                            " needs " + c.n_starts + " starting points, and "
+                            "the INIT chain gives 2 (LHS " + c.lhs +
+                            ", capped by K_TOTAL 2); " + c.advice +
+                            ", and N_STARTS 2 starts from each of the 2\n"
+                            "Line:     N_STARTS " + c.n_starts));
+        CHECK_FALSE(fs::exists("loss.tadah"));
     }
 }
 
@@ -6334,12 +6564,18 @@ TEST_CASE("Termination: each MULTISTART start runs with the MAXEVAL the "
         CHECK(data_rows("loss.tadah").size() <= 10u);
         CHECK(startup_maxeval(run) == std::optional<std::uint64_t>(5));
     }
-    /* The INIT chain yields fewer points than N_STARTS: MAXEVAL is split
-     * over the starts that run (3), not over N_STARTS (4). SBPLX spends
-     * every evaluation of its 4-evaluation budget. */
+    /* The INIT chain drawn yields fewer points than N_STARTS: MAXEVAL is
+     * split over the starts that run (3), not over N_STARTS (4). SBPLX
+     * spends every evaluation of its 4-evaluation budget. The chain is a
+     * WARM seed that WARM_ON_MISMATCH skip drops and METHOD RANDOM 3 (it
+     * was RANDOM 3 alone, which is refused at the N_STARTS line). */
     SECTION("MAXEVAL split over the starts the INIT points allow") {
-        TaRun run(multistart(3, "    LIB NLOPT\n    ALGO LN_SBPLX\n"
-                                "    MAXEVAL 12\n    N_STARTS 4\n"));
+        TaRun run("OPTIMIZER\n  INIT\n" + kDroppedWarm +
+                  "    METHOD RANDOM 3\n    SEED 3\n  ENDINIT\n  STRATEGY\n"
+                  "    TYPE MULTISTART\n    LIB NLOPT\n    ALGO LN_SBPLX\n"
+                  "    MAXEVAL 12\n    N_STARTS 4\n  ENDSTRATEGY\n"
+                  "ENDOPTIMIZER\n");
+        write_dropped_warm_seed();
         int status = -1;
         REQUIRE_NOTHROW(status = tadah::hpo::hpo_run(run.ctx));
         CHECK(status == 0);
@@ -7654,7 +7890,7 @@ SideEnding side_ending(const std::string& name)
     if (name == "NLOPT:LD_MMA") return {maxeval, 9u};
     if (name == "NLOPT:LD_CCSAQ") return {maxeval, 6u};
     if (name == "CERES:STEEPEST_DESCENT")
-        return {"CERES:STEEPEST_DESCENT: FTOL_REL reached", 35u};
+        return {"CERES:STEEPEST_DESCENT: FTOL_REL reached", 11u};
     return {nlopt_ok, 6u};   /* LD_LBFGS, LD_TNEWTON_PRECOND_RESTART, LD_VAR2 */
 }
 
@@ -7672,8 +7908,15 @@ TEST_CASE("Finite differences: a failed stencil point at the start point: "
      * best is 2.0, on the bound (loss 95.25); no stop line; per backend the
      * status and evaluations of side_ending (DLIB:BFGS "FTOL_ABS reached"
      * after 6, NLopt LD_LBFGS 6 "SUCCESS -- generic success", ...,
-     * CERES:STEEPEST_DESCENT "FTOL_REL reached" after 35, 4 of its points
-     * outside the box and not evaluated); status 0.
+     * CERES:STEEPEST_DESCENT "FTOL_REL reached" after 11: its first step
+     * leaves the box (2.6, not evaluated: a failure graded by its distance),
+     * and its line search then takes a step of 1e-3 of it, as under
+     * FAILSCORE 1e9); status 0.
+     * Before Ceres was given a failed evaluation's loss scaled to at most
+     * 1e100: CERES:STEEPEST_DESCENT made 35 evaluations, 4 of its points
+     * outside the box (2.6, 2.1922, 2.0595, 2.0096): its line search fitted
+     * its polynomial through the score of 2.6, near the largest double, which
+     * overflowed, and each step shrank to about 0.3 of the one before.
      * Before the fix: every backend stopped at that gradient after three
      * evaluations, 1.6, 1.8 and 1.4, with the status "STOPPED -- no usable
      * gradient: a failed evaluation in the finite-difference stencil" and
@@ -7724,7 +7967,13 @@ TEST_CASE("Finite differences: with Ceres' step rule a failed stencil point "
      * for each), its line search backs off to the start, and the search
      * ends "FTOL_ABS reached" at 1.5 after 39 evaluations; NLOPT:LD_LBFGS
      * ends "STOPPED -- nlopt failure (...)" after 33; CERES:STEEPEST_DESCENT
-     * "FAILURE (Numerical failure in line search)" after 49. (Until dlib
+     * "FAILURE (Numerical failure in line search)" after 25: its first step
+     * leaves the box (0.63, not evaluated), its line search takes a step of
+     * 1e-3 of it (1.49913) and then backs off to the start. (Until Ceres
+     * was given a failed evaluation's loss scaled to at most 1e100, it made
+     * 49: its line search shrank each step to about 0.3 of the one before,
+     * its polynomial through the score of 0.63, near the largest double,
+     * having overflowed. Until dlib
      * was given a finite stand-in, its line search, handed FAILSCORE divided
      * by the length of the first gradient, 0.87, which is +inf, took a step
      * that is not a number after the trial 1.4, which the box put on the
@@ -7739,7 +7988,7 @@ TEST_CASE("Finite differences: with Ceres' step rule a failed stencil point "
          "STOPPED -- nlopt failure (algorithm converged; consider adding "
          "ftol_rel / xtol_rel / maxeval to stop cleanly next time)"}};
 #ifdef TADAH_USE_CERES
-    cases.push_back({{"CERES", "STEEPEST_DESCENT"}, 49u,
+    cases.push_back({{"CERES", "STEEPEST_DESCENT"}, 25u,
                      "STOPPED -- CERES:STEEPEST_DESCENT: FAILURE (Numerical "
                      "failure in line search)"});
 #endif
@@ -8512,11 +8761,15 @@ TEST_CASE("Finite differences: a failed stencil point is not differenced "
      * default FAILSCORE.
      * Pins: every backend evaluates 1.6, 1.8, 1.4 (loss 1e9) and 2.0 first,
      * makes no stop line, and ends as under the default FAILSCORE
-     * (side_ending: the same evaluations and status), but
-     * CERES:STEEPEST_DESCENT, whose first step leaves the box (2.6, scored
-     * a failure graded by its distance below 1e9) and whose line search then
-     * takes a step of 1e-3 of it: "FTOL_REL reached" after 11 evaluations;
-     * the best is 2.0; status 0.
+     * (side_ending: the same evaluations and status), CERES:STEEPEST_DESCENT
+     * too, whose first step leaves the box (2.6, scored a failure graded by
+     * its distance below 1e9) and whose line search then takes a step of
+     * 1e-3 of it: "FTOL_REL reached" after 11 evaluations; the best is 2.0;
+     * status 0. (Until Ceres was given a failed evaluation's loss scaled to
+     * at most 1e100, CERES:STEEPEST_DESCENT ended otherwise under the
+     * default FAILSCORE, after 35 evaluations, and this case named its
+     * ending apart. Before that change: passes as well, a pin of the ending
+     * under FAILSCORE 1e9, which side_ending gives now.)
      * Before the fix: three evaluations, 1.6, 1.8 and 1.4, the stop line
      * "<backend> stopped: no usable gradient: ... (at CGRID2B[2] = 1.6, the
      * stencil point CGRID2B[2] = 1.4 failed: loss 1000000000)" and the
@@ -8528,9 +8781,7 @@ TEST_CASE("Finite differences: a failed stencil point is not differenced "
             int status = -1;
             REQUIRE_NOTHROW(status = straddle_run(run, "1.6", name));
             CHECK(status == 0);
-            SideEnding e = side_ending(name);
-            if (b.lib == "CERES")
-                e = {"CERES:STEEPEST_DESCENT: FTOL_REL reached", 11u};
+            const SideEnding e = side_ending(name);
             const auto x = evaluated_cgrid2();
             REQUIRE(x.size() == e.evals);
             CHECK(x[0] == Approx(1.6));
@@ -8896,14 +9147,19 @@ TEST_CASE("Finite differences: a search on the upper bound evaluates nothing "
      * is scored as a failure graded by its
      * distance to the box, 1.797243...e+308 to 1.797468...e+308 here, with
      * that score's slope as its gradient and no stencil.
-     * Pins (CERES:STEEPEST_DESCENT): 21 rows, the start and its stencil, then
-     * 18 out-of-box points from 3 down towards 2, none evaluated: no row in
+     * Pins (CERES:STEEPEST_DESCENT): 7 rows, the start and its stencil, then
+     * 4 out-of-box points, 3, 2.001, 2.000001 and 2.000000001 (each step 1e-3
+     * of the one before), none evaluated: no row in
      * the box after the first three, each out-of-box row scored in
      * [0.99975, 1) x FAILSCORE and no higher than the one before; one
      * startup line "ignores the OPTIM box" and one WARNING "lies outside its
      * OPTIM box [1, 2]: it is not evaluated"; DIAGNOSTICS "Out-of-box points
-     * : 18"; the best the start 2; the ending "FAILURE (Numerical failure in
+     * : 4"; the best the start 2; the ending "FAILURE (Numerical failure in
      * line search)".
+     * Before Ceres was given a failed evaluation's loss scaled to at most
+     * 1e100: 21 rows, 18 out-of-box points from 3 down towards 2, each step
+     * about 0.3 of the one before (the polynomial of its line search, fitted
+     * through scores near the largest double, overflowed).
      * Before the fix: the case ran CERES:LBFGS, refused since; the CERES
      * drivers evaluated their points outside the box (the line "lies
      * outside its OPTIM box [1, 2] and is evaluated there", DIAGNOSTICS
@@ -8980,7 +9236,7 @@ TEST_CASE("Finite differences: a search on the upper bound evaluates nothing "
                 CHECK(count_of(journal, "lies outside its OPTIM box [1, 2]: "
                                         "it is not evaluated") == 1u);
                 CHECK(journal.find("is evaluated there") == std::string::npos);
-                REQUIRE(x.size() == 21u);
+                REQUIRE(x.size() == 7u);
                 const auto loss = data_rows("loss.tadah");
                 REQUIRE(loss.size() == x.size());
                 const double fs = std::numeric_limits<double>::max();
@@ -8996,9 +9252,9 @@ TEST_CASE("Finite differences: a search on the upper bound evaluates nothing "
                     previous = l;
                     ++outside;
                 }
-                CHECK(outside == 18u);
+                CHECK(outside == 4u);
                 CHECK_THAT(journal,
-                           Catch::Contains("Out-of-box points       : 18 "));
+                           Catch::Contains("Out-of-box points       : 4 "));
                 CHECK(journal.find("Out-of-box evaluations") ==
                       std::string::npos);
                 CHECK(journal_status(journal) ==
@@ -9825,8 +10081,9 @@ TEST_CASE("PRESTAGE: an exploration whose every candidate the bump gate "
  * ("startup: ..."), and nothing is evaluated (no loss.tadah):
  *   - no provenance (a context a program built) and a -c run of a
  *     configuration file (the provenance of `tadah hpo -c config.tadah`):
- *     "tadah hpo: no HPOTARGET: name the hpotarget file with --hpotarget,
- *     or with an HPOTARGET line in a configuration file without WEIGHTS.";
+ *     "tadah hpo: no HPOTARGET: the target file is given with --hpotarget,
+ *     or with an HPOTARGET line in a configuration file without WEIGHTS.",
+ *     the words of tadah analysis check_bounds;
  *   - the -c run of old.tadah, a potential whose HPOTARGET line the parse
  *     did not read (a best_pot.tadah of an earlier version has one; the CLI
  *     requires --hpotarget there, a program can build the run): the first
@@ -9838,15 +10095,23 @@ TEST_CASE("PRESTAGE: an exploration whose every candidate the bump gate "
  * whose line was not read: the message checks fail. Before the HPOTARGET
  * check: Context::get threw "Key not found in the Context object:
  * HPOTARGET". (A pin: these legs pass before the removal of the task
- * files as well.) */
+ * files as well.)
+ * Before the fix that states the refusal in the impersonal voice: it read
+ * "tadah hpo: no HPOTARGET: name the hpotarget file with --hpotarget, or with
+ * an HPOTARGET line in a configuration file without WEIGHTS.": the checks of
+ * the refusal fail.
+ * Before the fix that names the target file as tadah analysis check_bounds
+ * does: it read "tadah hpo: no HPOTARGET: the hpotarget file is given with
+ * --hpotarget, ...": the checks of the refusal fail. */
 TEST_CASE("hpo_run without HPOTARGET is refused, naming where the run's own "
           "goes",
           "[hpo][startup][run_settings]")
 {
     using tadah::mlip::KeyProvenance;
     const std::string none_given =
-        "tadah hpo: no HPOTARGET: name the hpotarget file with --hpotarget, "
-        "or with an HPOTARGET line in a configuration file without WEIGHTS.";
+        "tadah hpo: no HPOTARGET: the target file is given with "
+        "--hpotarget, or with an HPOTARGET line in a configuration file "
+        "without WEIGHTS.";
     const std::string not_read =
         " old.tadah is a potential (it has WEIGHTS): its HPOTARGET config.hpo "
         "line was a setting of the run that wrote it and is not read.";

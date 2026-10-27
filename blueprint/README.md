@@ -5,7 +5,9 @@ documentation (Tadah.MLIP `docs/`): it is built without C++, so it cannot ask
 the code. The documentation reads `anneal_keys.toml`; `optimizers_gen.toml`
 is written for it, and so are the target-file registry, `hpotarget.toml` and
 its part files, and `optimizers_doc.toml`, what each optimiser is. A CTest
-entry fails when a file and the code differ.
+entry fails when a file and the code differ. The target-file registry is
+also the source of two C++ headers, which `gen_hpotarget.py` writes ("The
+generated tables" below).
 
 | File | Kept in step by |
 |---|---|
@@ -308,7 +310,8 @@ group, the INIT and RESTART keys, the NOISE keys, `LOG_HP`, the STRATEGY
 keys, the unknown-key refusal of the block, the top-level keys; the loader
 requires exactly this order); `end_without_open_msg`, `end_mismatch_msg`,
 `end_takes_no_value_msg`, `open_takes_no_value_msg`, `unclosed_msg`,
-`unknown_root_msg`, `removed_msg`.
+`unknown_root_msg`, `root_key_in_block_msg` (a top-level key inside an
+open block), `removed_msg`.
 
 `[group.<NAME>]`: `blocks` (where the keys of the group are valid),
 `leftover_msg` (a value after the last one a key reads), `doc`.
@@ -466,24 +469,97 @@ word of a word argument needs an example that writes it, and a word an
 example writes there is one of `words`: so `hpotarget_registry.py --check`
 fails on a word left out of `words` while an example still shows it.
 
+A change that alters what the generated tables hold ("The generated
+tables", below) is committed with the regenerated headers;
+`hpo_hpotarget_registry_sync` fails otherwise.
+
+### The generated tables
+
+`gen_hpotarget.py` (Python 3.11 or later, standard library only) loads the
+registry with `hpotarget_registry.py` and writes two C++ headers, which are
+checked in:
+
+- `include/tadah/hpo/hpotarget_registry_gen.h` (namespace
+  `tadah::hpo::hpotarget_registry`): the blocks, each with the keys it takes
+  (those valid in it, less those it refuses); the optimiser group; the keys,
+  with their places, arguments (reader, limits, words, messages), literal
+  default, repeat rule and checks; the options of the lines; the forms; the
+  removed keywords; the rules (whether each is checked as the file is read
+  or at startup, and its message); the environment overrides; the loss
+  functions; the `STRATEGY` types; the `INIT` methods; `[optim]` and the
+  `OPTIM` targets; `[lexing]`, `[reading]` and `[structure]`, with
+  `check_order`; the top-level keys a block refuses as such (the keys valid
+  at the top level, less the names of the keys of a group); and the
+  placeholders, taken from the loader, of each message whose set it fixes
+  (`FIXED_PLACEHOLDERS`), of the readers' messages and of the entries'
+  messages;
+- `include/tadah/hpo/hpo_param_registry_gen.h` (namespace
+  `tadah::hpo::param_registry`): the `PARAM` keys, the `PARAM` keys of each
+  optimiser as the entries name it (`LIB:ALGO`, `LIB` or `*`), the
+  excluded `PARAM` keys and the `PARAM` policies.
+
+The tables are in registry order; the placeholder sets, which come from
+the loader, are sorted. A block has an enumerator of its name
+(`BlockId::INNER`, and `BlockId::ROOT` for the top level), and a key, an
+option, a form and a `PARAM` key one named after its id, with `.` and `:`
+written as `_` and `-` left out (`KeyId::ROOT_FAILSCORE`,
+`LineOptionId::PC_LAMMPS_hotvar`, `ParamId::PARAM_ASA_ASA_Delta_X`). An id
+of the registry that gives no C++ identifier, and two ids that give one
+name, stop `gen_hpotarget.py`. A message is the registry's template;
+`fill()` puts values into it (`{name}` is a placeholder, `${name}` text).
+
+What only the documentation reads (`doc`, `long_doc`, `quirk`, `synopsis`,
+`title`, `condition`, `repeat_doc`, `msg_doc`, the sentence of a default,
+the reason of a refused entry, the keys a rule concerns), the examples and
+the invalid lines, the wrappers, the training configurations and the
+fixtures stay out of the headers. The program does not include them. The
+cases of `[hpotarget_gen]` compare generated tables with the ones the
+parser and the startup checks hold by hand; the header comment of
+`tests/test_hpotarget_registry_bindings.cpp` lists the tables compared.
+
+The output depends on the registry, on its loader, `hpotarget_registry.py`
+(the headers also hold its placeholder sets, the words and the field order
+of its schema and its named integer limits), and on `gen_hpotarget.py`
+itself; it depends on nothing else (no date, no path), so two runs write
+the same text. After a change to any of the three, the command below
+regenerates the two headers (`gen_hpotarget.py --header`), which are
+committed with the change:
+
+```bash
+cmake --build <build directory> --target hpo_regenerate_hpotarget_registry
+```
+
 ### Checks
 
 | CTest entry | What fails it |
 |---|---|
 | `hpo_hpotarget_registry_python` | the loader, on synthetic registries (`tests/test_hpotarget_registry.py`) |
 | `hpo_hpotarget_registry_check` | `hpotarget_registry.py --check`: an unknown table or field, a table of an entry (`[[key.invalid]]`, ...) that follows a table of another kind instead of its entry, a wrong type, a missing field, a repeated id, a reference to nothing, a `version` other than 1, a placeholder a message may not hold, a wrapper without exactly one slot line or whose `block` is not that of its slot, a place a line can be without its wrapper, documentation text that addresses the reader or holds a placeholder, a `doc` of more than two sentences, a later example without a doc, a rule without a title, an optimiser or a library without a description, an entry without the cases it needs, an example that puts a key outside its blocks, an argument the synopsis does not name, an invalid line whose error is no message of the registry, a message without an invalid line or an `untested` reason, an example that writes at the place of a word argument a word that is not one of its `words` (compared in any case), a word of `words` that no example writes |
-| `hpo_hpotarget_registry_coverage` | a name the parser's sources recognise without an entry, or an entry whose name they do not recognise; the keys of each block, the options of each line and the `STRATEGY` keys of each `TYPE` are compared apart, so an option given to another line fails (`tests/check_hpotarget_coverage.py`; its docstring says how the names are extracted and what the extraction cannot see) |
+| `hpo_hpotarget_registry_coverage` | a name the parser's sources recognise without an entry, or an entry whose name they do not recognise; the keys of each block, the options of each line and the `STRATEGY` keys of each `TYPE` are compared apart, so an option given to another line fails; a name a block refuses as a top-level key that is no key of the top level (`tests/check_hpotarget_coverage.py`; its docstring says how the names are extracted and what the extraction cannot see) |
 | `hpo_hpotarget_coverage_tool` | the extraction itself, on synthetic sources (`tests/test_check_hpotarget_coverage.py`) |
 | `hpo_hpotarget_registry_conformance` | an example the parser refuses, an invalid line it accepts or refuses with another message (`tests/test_hpotarget_registry_conformance.cpp`), the script of `[lammps_script]` that does not take the candidate potential (`tests/test_hpotarget_script_contract.cpp`): every case of tag `[hpotarget_registry]` |
 | `hpo_hpotarget_registry_generated` | a case derived from the structured fields that the parser answers otherwise (`tests/check_hpotarget_generated.py`, which runs the cases through `hpotarget_case_runner`, `tests/tools/hpotarget_case_runner.cpp`; its docstring lists the checks and what they cannot see): the first example of each key in every block, accepted where the key's blocks list it and refused there otherwise; each key and option given twice, as its repeat rule says; the values at and past the limits of the argument of each key, `INIT` method, `PARAM` key and option, in the file of each example (of the first, for an option), the largest value through the startup checks and a `PARAM` value at every limit, a value in the range accepted in one example's file at least; each word of a word list accepted and each refused word refused; each `PARAM` key on each optimiser a wrapper names, accepted where the key lists the optimiser and refused otherwise; each option on every other line; the defaults, against what the code gives a file without the keys |
-| `hpo_hpotarget_generated_tool` | the generator, on a synthetic registry (`tests/test_check_hpotarget_generated.py`) |
+| `hpo_hpotarget_generated_tool` | the case generator, `check_hpotarget_generated.py`, on a synthetic registry (`tests/test_check_hpotarget_generated.py`) |
+| `hpo_hpotarget_registry_sync` | `gen_hpotarget.py --check`: a generated header that is missing or differs from what the registry and its loader give; an id of the registry that gives no C++ name, or two ids that give one |
+| `hpo_hpotarget_generator_tool` | the header generator, `gen_hpotarget.py`, on a synthetic registry (`tests/test_gen_hpotarget.py`): the C++ names and their collisions, the escaping of a message, the placeholders, the tables and what they leave out, the comment at the top of each header, `--header`, `--check` and the command it names, the help; the headers compiled with the build's C++ compiler |
+| the Catch2 cases of tag `[hpotarget_gen]` | a generated table that differs from the table the parser or the startup checks hold by hand, in order where a message shows the order (`tests/test_hpotarget_registry_bindings.cpp`; its header comment lists the tables and says how each is compared) |
 
-All seven have the label `docs`. The conformance test reads the TOML when
-it runs, so a change to the registry needs no rebuild; it has one Catch2
-case per file, which the tag `[hpotarget_main]`, `[hpotarget_optimizer]`,
-`[hpotarget_lines]` or `[hpotarget_params]` selects, and a part file is read
-with `hpotarget.toml`. `TADAH_HPOTARGET_REGISTRY_DIR` names another
-directory to read the registry from. One part file is checked with:
+The nine entries named above have the label `docs`; CTest runs the cases
+of `[hpotarget_gen]` one by one, without a label, as the command below
+selects them:
+
+```bash
+ctest --test-dir build_tadah -R "hpotarget generated tables"
+```
+
+The conformance test reads the TOML when it runs, so a change to the
+registry needs no rebuild; it has one Catch2 case per file, which the tag
+`[hpotarget_main]`, `[hpotarget_optimizer]`, `[hpotarget_lines]` or
+`[hpotarget_params]` selects, and a part file is read with
+`hpotarget.toml`. `TADAH_HPOTARGET_REGISTRY_DIR` names another directory to
+read the registry from. The cases of `[hpotarget_gen]` compile the headers
+in: after the headers are regenerated, they compare the regenerated tables
+only once `test_hpo` is built again. One part file is checked with:
 
 ```bash
 python3 HPO/blueprint/hpotarget_registry.py --check --part hpotarget_lines.toml
@@ -494,9 +570,11 @@ and the whole registry with:
 
 ```bash
 python3 HPO/blueprint/hpotarget_registry.py --check
+python3 HPO/blueprint/gen_hpotarget.py --check
 python3 HPO/tests/check_hpotarget_coverage.py HPO
 python3 HPO/tests/check_hpotarget_generated.py \
     --runner build_tadah/_deps/tadah.hpo-build/tests/hpotarget_case_runner
+cmake --build build_tadah --target test_hpo
 ctest --test-dir build_tadah -R hpotarget --output-on-failure
 ```
 

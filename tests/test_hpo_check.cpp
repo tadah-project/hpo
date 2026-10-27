@@ -459,6 +459,124 @@ TEST_CASE("hpo --check: a startup error is the run's, and no file is "
     }
 }
 
+/* An environment variable set (or, with nullopt, unset) while this lives,
+ * as it was afterwards. */
+struct ScopedEnv {
+    std::string name;
+    std::optional<std::string> saved;
+    ScopedEnv(std::string n, const std::optional<std::string>& value)
+        : name(std::move(n))
+    {
+        if (const char* e = std::getenv(name.c_str())) saved = e;
+        if (value) ::setenv(name.c_str(), value->c_str(), 1);
+        else       ::unsetenv(name.c_str());
+    }
+    ~ScopedEnv()
+    {
+        if (saved) ::setenv(name.c_str(), saved->c_str(), 1);
+        else       ::unsetenv(name.c_str());
+    }
+    ScopedEnv(const ScopedEnv&) = delete;
+    ScopedEnv& operator=(const ScopedEnv&) = delete;
+};
+
+/* Pins: PC_WORKER_TIMEOUT, the deadline of a script task of a worker
+ * process, is refused under PC_ISOLATION THREAD, where the scripts run
+ * inside the tadah process without a worker deadline: at its line
+ * ("Error on line 18: PC_WORKER_TIMEOUT sets the deadline of a script task
+ * in a worker process (PC_ISOLATION PROCESS); under PC_ISOLATION THREAD,
+ * set on line 17, the scripts run inside the tadah process without a
+ * worker deadline, so it would have no effect"), for any value (0 too),
+ * with THREAD from the file or from TADAH_PC_ISOLATION ("..., set by
+ * TADAH_PC_ISOLATION, ..."); TADAH_PC_WORKER_TIMEOUT is refused naming
+ * itself and its value ("TADAH_PC_WORKER_TIMEOUT (got '60') sets ...").
+ * The check and the run stop alike, before any evaluation. Accepted: the
+ * key under PROCESS (the serial build's default, or TADAH_PC_ISOLATION
+ * PROCESS over a file's THREAD), and an empty TADAH_PC_WORKER_TIMEOUT,
+ * which sets nothing. In the MPI build THREAD is the only mode: the key is
+ * refused there without a PC_ISOLATION line ("..., the only mode of the
+ * MPI build of tadah, ...").
+ * Before the fix: every one of these setups passed, and the key had no
+ * effect under THREAD. */
+TEST_CASE("hpo --check: PC_WORKER_TIMEOUT and TADAH_PC_WORKER_TIMEOUT are "
+          "refused under PC_ISOLATION THREAD",
+          "[HPO][hpo_check][pc_isolation]")
+{
+    const std::string why =
+        " sets the deadline of a script task in a worker process "
+        "(PC_ISOLATION PROCESS); under PC_ISOLATION THREAD, ";
+    const std::string tail =
+        ", the scripts run inside the tadah process without a worker "
+        "deadline, so it would have no effect";
+    /* kOptimizer and kRootLines are lines 1-16. */
+    const auto check_error = [](const std::string& extra) {
+        fresh_process_state();
+        ScratchDir sd("worker_timeout");
+        write_inputs(kOptimizer + kRootLines + extra);
+        tadah::core::Context ctx =
+            make_ta_context("train.db", "config.hpo", "config.val");
+        ctx.add("CHECK", "true");
+        return error_of([&] { return tadah::hpo::hpo_run(ctx); });
+    };
+    ScopedEnv no_isolation("TADAH_PC_ISOLATION", std::nullopt);
+    ScopedEnv no_timeout("TADAH_PC_WORKER_TIMEOUT", std::nullopt);
+    for (const std::string v : {"60", "0"}) {
+        INFO("PC_WORKER_TIMEOUT " << v);
+        CHECK(check_error("PC_ISOLATION THREAD\nPC_WORKER_TIMEOUT " + v +
+                          "\n") ==
+              "Error on line 18: PC_WORKER_TIMEOUT" + why +
+                  "set on line 17" + tail + "\nLine: PC_WORKER_TIMEOUT " + v);
+    }
+    /* The key before the PC_ISOLATION line. */
+    CHECK(check_error("PC_WORKER_TIMEOUT 60\nPC_ISOLATION THREAD\n") ==
+          "Error on line 17: PC_WORKER_TIMEOUT" + why + "set on line 18" +
+              tail + "\nLine: PC_WORKER_TIMEOUT 60");
+    {
+        ScopedEnv thread("TADAH_PC_ISOLATION", std::string("THREAD"));
+        CHECK(check_error("PC_WORKER_TIMEOUT 60\n") ==
+              "Error on line 17: PC_WORKER_TIMEOUT" + why +
+                  "set by TADAH_PC_ISOLATION" + tail +
+                  "\nLine: PC_WORKER_TIMEOUT 60");
+    }
+    {
+        ScopedEnv timeout("TADAH_PC_WORKER_TIMEOUT", std::string("60"));
+        CHECK(check_error("PC_ISOLATION THREAD\n") ==
+              "TADAH_PC_WORKER_TIMEOUT (got '60')" + why + "set on line 17" +
+                  tail);
+    }
+    {
+        /* An empty value sets nothing. */
+        ScopedEnv timeout("TADAH_PC_WORKER_TIMEOUT", std::string());
+        CHECK(check_error("PC_ISOLATION THREAD\n") == "");
+    }
+    /* The run stops as the check does, before any evaluation. */
+    {
+        fresh_process_state();
+        ScratchDir sd("worker_timeout_run");
+        write_inputs(kOptimizer + kRootLines +
+                     "PC_ISOLATION THREAD\nPC_WORKER_TIMEOUT 60\n");
+        tadah::core::Context ctx =
+            make_ta_context("train.db", "config.hpo", "config.val");
+        CHECK(error_of([&] { return tadah::hpo::hpo_run(ctx); }) ==
+              "Error on line 18: PC_WORKER_TIMEOUT" + why + "set on line 17" +
+                  tail + "\nLine: PC_WORKER_TIMEOUT 60");
+        CHECK_FALSE(fs::exists("loss.tadah"));
+    }
+#ifndef TADAH_HPO_MPI
+    CHECK(check_error("PC_WORKER_TIMEOUT 60\n") == "");
+    {
+        ScopedEnv process("TADAH_PC_ISOLATION", std::string("PROCESS"));
+        CHECK(check_error("PC_ISOLATION THREAD\nPC_WORKER_TIMEOUT 60\n") ==
+              "");
+    }
+#else
+    CHECK(check_error("PC_WORKER_TIMEOUT 60\n") ==
+          "Error on line 17: PC_WORKER_TIMEOUT" + why +
+              "the only mode of the MPI build of tadah" + tail +
+              "\nLine: PC_WORKER_TIMEOUT 60");
+#endif
+}
+
 /* Pins: a run that stops at startup after it has loaded its data -- here
  * the pre-flight audit, under AUDIT error, refuses RCUT2B 1 (no neighbour
  * in any structure) -- creates neither its DUMP nor its BDUMP directory:
@@ -1483,7 +1601,7 @@ TEST_CASE("hpo --check: the critical-OPTIM audit judges a joined line by "
     const std::string fixed =
         " is a critical parameter that the seed fixes and no OPTIM line "
         "searches";
-    CHECK(contains(out, "D2_BP.RCUT2B — RCUT2B(2)" + fixed));
+    CHECK(contains(out, "D2_BP.RCUT2B: RCUT2B(2)" + fixed));
     CHECK_FALSE(contains(out, "RCUT2B(1)" + fixed));
 }
 

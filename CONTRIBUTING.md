@@ -50,7 +50,7 @@ build directory.
 | `include/tadah/hpo/` | Public headers (drivers, init strategies, run policies, loss terms). |
 | `src/`               | Implementation translation units. |
 | `tests/`             | Unit and integration tests; `tests/data/` holds their data (`tests/data/ta`: the Ta training and validation configurations, datasets, LAMMPS scripts and target files). |
-| `blueprint/`         | Registry files for the documentation (see `blueprint/README.md`). |
+| `blueprint/`         | Registry files (read by the documentation, and the source of the generated headers in `include/tadah/hpo/`), the loader of the target-file registry and the generators (see `blueprint/README.md`). |
 
 ## The target-file registry
 
@@ -67,7 +67,8 @@ keys (the largest value through the startup checks of `tadah hpo`), the
 `PARAM` keys of each optimiser, the options of each line and the defaults,
 and each word of an argument is shown by an example. A change to what the
 parser accepts, or to one of its messages, therefore changes the registry in
-the same commit. A new optimiser needs its description in
+the same commit, with the C++ tables generated from it (below). A new
+optimiser needs its description in
 `blueprint/optimizers_doc.toml`, which the check requires, and a new key of
 `blueprint/anneal_keys.toml` an example in the examples of the annealers'
 `PARAM` policy (`blueprint/hpotarget_params.toml`), without which the
@@ -76,6 +77,8 @@ registry") describes the files and the checks, which run with:
 
 ```bash
 python3 blueprint/hpotarget_registry.py --check
+python3 blueprint/gen_hpotarget.py --check
+cmake --build <build directory> --target test_hpo
 ctest --test-dir <build directory> -R hpotarget --output-on-failure
 ```
 
@@ -89,3 +92,7 @@ with the change that alters it.
   and `blueprint/optimizers_gen.toml` (CTest
   `hpo_optimizer_registry_sync`): `blueprint/README.md` says what each is
   generated from and how to regenerate it.
+- `include/tadah/hpo/hpotarget_registry_gen.h` and
+  `include/tadah/hpo/hpo_param_registry_gen.h` (CTest
+  `hpo_hpotarget_registry_sync`): `blueprint/README.md`, "The generated
+  tables", says what they are generated from and how to regenerate them.

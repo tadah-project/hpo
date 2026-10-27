@@ -6,12 +6,13 @@
 #include <tadah/hpo/run_policy.h>
 #include <tadah/hpo/run_driver.h>
 #include <tadah/mlip/key_provenance.h>
-#include <tadah/core/retired_keys.h>
+#include <tadah/mlip/row_weights.h>   // require_no_unused_keys
 #include <tadah/mlip/training_record.h>  // ignore_configuration_potential_lines
 #include <tadah/mlip/fit_balance.h>
 #include <tadah/hpo/hpo.h>
 #include <tadah/hpo/phase_specs.h>   // with_block_line
 #include <tadah/hpo/strategy_rules.h>   // strategy_type_name
+#include <tadah/hpo/strict_parse.h>     // config_line_error
 #include <tadah/core/number_format.h>
 #include <tadah/hpo/hpo_log.h>
 #include <tadah/hpo/hpo_mpi.h>     // hpo_rank(), hpo_size(), hpo_rank_suffix()
@@ -245,12 +246,14 @@ struct PcIsolation {
     double      worker_timeout;  // seconds; 0: derived from each script's limit
     bool        mode_from_env = false;     // TADAH_PC_ISOLATION chose the mode
     bool        timeout_from_env = false;  // TADAH_PC_WORKER_TIMEOUT set it
+    std::string timeout_env_text;          // its value, as written
 };
 
 /* The run's PC_ISOLATION settings, with every check of them: an override
  * that is not a number (TADAH_PC_WORKER_TIMEOUT), a TADAH_PC_ISOLATION that
- * is neither THREAD nor PROCESS, and, in the MPI build, a PROCESS that was
- * asked for (the default PROCESS is THREAD there) throw. */
+ * is neither THREAD nor PROCESS, in the MPI build a PROCESS that was asked
+ * for (the default PROCESS is THREAD there), and a worker deadline
+ * (PC_WORKER_TIMEOUT, TADAH_PC_WORKER_TIMEOUT) under THREAD throw. */
 PcIsolation resolve_pc_isolation(const HPOTargets& trg, HPOLog& log)
 {
     PcIsolation pc{trg.PC_ISOLATION, trg.PC_ISOLATION_set,
@@ -271,6 +274,7 @@ PcIsolation resolve_pc_isolation(const HPOTargets& trg, HPOLog& log)
             pc.worker_timeout = HPOTargets::parse_pc_worker_timeout(
                 e, "TADAH_PC_WORKER_TIMEOUT");
             pc.timeout_from_env = true;
+            pc.timeout_env_text = e;
         }
     }
 #ifdef TADAH_HPO_MPI
@@ -291,6 +295,30 @@ PcIsolation resolve_pc_isolation(const HPOTargets& trg, HPOLog& log)
 #else
     (void)log;
 #endif
+    /* A worker deadline is that of a script task in a worker process:
+     * under THREAD the scripts run inside the tadah process, without one,
+     * so PC_WORKER_TIMEOUT (at its line, for any value) and its override
+     * would have no effect. Refused once the mode is known: an override of
+     * the mode decides it, and THREAD is the only mode of the MPI build. */
+    if (pc.mode == "THREAD" &&
+        (pc.timeout_from_env || trg.PC_WORKER_TIMEOUT_line != 0)) {
+        const std::string why =
+            pc.mode_from_env ? std::string("set by TADAH_PC_ISOLATION")
+            : trg.PC_ISOLATION_set
+                ? "set on line " + std::to_string(trg.PC_ISOLATION_line)
+                : std::string("the only mode of the MPI build of tadah");
+        const std::string what =
+            " sets the deadline of a script task in a worker process "
+            "(PC_ISOLATION PROCESS); under PC_ISOLATION THREAD, " + why +
+            ", the scripts run inside the tadah process without a worker "
+            "deadline, so it would have no effect";
+        if (pc.timeout_from_env)
+            throw std::runtime_error("TADAH_PC_WORKER_TIMEOUT (got '" +
+                                     pc.timeout_env_text + "')" + what);
+        throw std::runtime_error(config_line_error(
+            trg.PC_WORKER_TIMEOUT_line, "PC_WORKER_TIMEOUT" + what,
+            trg.PC_WORKER_TIMEOUT_text));
+    }
     return pc;
 }
 
@@ -538,21 +566,23 @@ int hpo_run_from_startup(core::Context& ctx, HPOLog& log,
             log.warning(ignored);
         }
     }
-    /* A configuration with a line of a retired key (its own, or of a file
-     * it includes with CONFIG: the parse recorded them) is refused with the
-     * conversion of each, before the target file is read: every fit of the
-     * run would refuse it (core::require_no_retired_keys, which
+    /* A configuration with a line of a retired key, or a line that changes
+     * nothing a fit gives (its own, or of a file it includes with CONFIG:
+     * the parse recorded them), is refused in one refusal, the conversion
+     * of each retired key with it, before the target file is read: every
+     * fit of the run would refuse it (mlip::require_no_unused_keys, which
      * validate_hpo_setup applies again through mlip::require_fit_settings
      * for a caller that skips this). */
-    core::require_no_retired_keys(ctx, "tadah hpo");
-    /* The hpotarget file is the run's own: --hpotarget (tadah hpo -c
+    mlip::require_no_unused_keys(ctx, "tadah hpo");
+    /* The target file is the run's own: --hpotarget (tadah hpo -c
      * requires it), or, for a context a program builds, an HPOTARGET line
      * of its configuration. A configuration whose only HPOTARGET line was
      * that of the potential it includes has none: the refusal names where
-     * the run's own goes and the potential's line that was not read. */
+     * the run's own goes and the potential's line that was not read, in
+     * the words of tadah analysis check_bounds. */
     if (!ctx.has_stored("HPOTARGET"))
         throw std::runtime_error(mlip::missing_run_setting(
-            "hpo", "HPOTARGET", "the hpotarget file", provenance));
+            "hpo", "HPOTARGET", "the target file", provenance));
 
     /* Its training_record (the comment block of every potential file the
      * run writes) is taken from ctx before anything inserts a default; the

@@ -23,6 +23,7 @@
 #include <tadah/core/periodic_table.h>
 #include <tadah/hpo/runners.h>
 
+#include <cmath>
 #include <cstdio>
 #include <fstream>
 #include <iostream>
@@ -78,13 +79,14 @@ struct Run {
 
 /* Two Ta atoms 2.9 A apart; pair_coeff * * <the potential file> Ta (the
  * plain LAMMPS user path), log.lammps written to a file, no screen. */
-Run run_with_potential(const std::string &extra, const std::string &tag) {
+Run run_with_potential(const std::string &extra, const std::string &tag,
+                       const std::string &base = kPairPotential) {
   tadah::core::PeriodicTable::initialize();
   const std::string stem =
       "pair_notice_" + std::to_string(::getpid()) + "_" + tag;
   const std::string pot = stem + ".tadah", script = stem + ".in",
                     log = stem + ".log";
-  std::ofstream(pot) << kPairPotential << extra;
+  std::ofstream(pot) << base << extra;
   {
     std::ofstream ofs(script);
     for (const char *line :
@@ -220,3 +222,73 @@ TEST_CASE("pair_coeff loads a potential with WCOV and WNOISE, with one "
   CHECK(lines_with(r.log, {"WARNING", "WCOV"}).size() == 1);
   CHECK(lines_with(r.log, {"WARNING", "WNOISE"}).size() == 1);
 }
+
+namespace {
+
+/* A one-element Ta setfl file of analytic tables (cutoff 4.5 A), written to
+ * @p path: F(rho) = -sqrt(rho), rho(r) = (rc - r)^2, phi(r) = 0.5 (rc - r)^3. */
+void write_ta_setfl(const std::string &path) {
+  const int nrho = 501, nr = 501;
+  const double drho = 0.1, dr = 0.01, rc = 4.5;
+  std::ofstream os(path);
+  os.precision(17);
+  os << "Ta setfl of the pair_tadah notice test\nanalytic tables\n\n"
+     << "1 Ta\n"
+     << nrho << " " << drho << " " << nr << " " << dr << " 4.5\n"
+     << "73 180.95 3.304 bcc\n";
+  for (int i = 0; i < nrho; ++i) os << -std::sqrt(i * drho) << "\n";
+  for (int i = 0; i < nr; ++i) {
+    const double r = i * dr;
+    os << (r < rc ? (rc - r) * (rc - r) : 0.0) << "\n";
+  }
+  for (int i = 0; i < nr; ++i) {
+    const double r = i * dr;
+    os << (r < rc ? r * 0.5 * (rc - r) * (rc - r) * (rc - r) : 0.0) << "\n";
+  }
+}
+
+/* A D2_EAM + DM_EAM potential on the setfl file @p setfl, without WATOM. */
+std::string eam_potential(const std::string &setfl) {
+  return "ATOM     Ta\nBIAS     false\nDIMER     false     0     false\n"
+         "INIT2B     true\nINITMB     true\nLAMBDA     0\n"
+         "MODEL     M_BLR     BF_Linear\nNORM     false\nOALGO     1\n"
+         "RCTYPE2B     Cut_Dummy\nRCTYPEMB     Cut_Dummy\nRCUT2B     4.5\n"
+         "RCUTMB     4.5\nSETFL     " +
+         setfl +
+         "\nTYPE2B     D2_EAM     0     Ta     Ta\n"
+         "TYPEMB     DM_EAM     0     Ta     Ta\nWEIGHTS     1     1\n";
+}
+
+}  // namespace
+
+/* Pins: pair_coeff with a D2_EAM + DM_EAM potential whose WATOM is 2.5 (a
+ * pair weight no descriptor of it reads: both take their functions from
+ * the SETFL file, unweighted) writes one LAMMPS WARNING naming the
+ * potential, "WARNING: pair tadah: potential '<file>': Key WATOM (2.5) is
+ * ignored: no descriptor of the potential reads it ...", and nothing of it
+ * to standard error; its energy is that of the potential with WATOM 1 (bit
+ * for bit), whose log.lammps has no notice of WATOM.
+ * Before the fix: no notice; the same energy. */
+TEST_CASE("pair_coeff writes the notice of a WATOM no descriptor reads to "
+          "log.lammps",
+          "[pair_tadah][notices][watom]") {
+  const std::string setfl =
+      "pair_notice_" + std::to_string(::getpid()) + "_ta.alloy";
+  write_ta_setfl(setfl);
+  const Run w = run_with_potential("WATOM     2.5\n", "watom25",
+                                   eam_potential(setfl));
+  const Run one = run_with_potential("WATOM     1\n", "watom1",
+                                     eam_potential(setfl));
+  std::remove(setfl.c_str());
+  INFO("WATOM 2.5 log.lammps:\n" << w.log << "\nstderr:\n" << w.err);
+  REQUIRE(w.ok);
+  REQUIRE(one.ok);
+  CHECK(lines_with(w.log, {"WARNING: pair tadah: potential '",
+                           "Key WATOM (2.5) is ignored: no descriptor of the "
+                           "potential reads it"})
+            .size() == 1);
+  CHECK(lines_with(w.err, {"WATOM"}).empty());
+  CHECK(lines_with(one.log, {"WATOM"}).empty());
+  CHECK(w.pe == one.pe);
+}
+

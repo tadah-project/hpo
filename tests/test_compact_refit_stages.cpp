@@ -484,9 +484,9 @@ TEST_CASE_METHOD(PTFixture,
                  "[compact][refit][mode_keys]") {
   /* Pins: a compact fit whose crystal self-test stays above the tolerances
    * (REFIT_TOL_AMBIENT and REFIT_TOL_COMPRESSED 1e-6 meV/atom) ends with
-   * the WARNING "still above tolerance — raise REFIT_COMPACT_NMAX or
-   * EXPLORE MAX_ADD (a larger basis), or relax REFIT_TOL_* if this regime
-   * is irrelevant for your use.", and its window report is "tadah
+   * the WARNING "still above tolerance — a larger REFIT_COMPACT_NMAX or
+   * EXPLORE MAX_ADD (a larger basis) can lower the error, and a larger
+   * REFIT_TOL_* accepts it.", and its window report is "tadah
    * refit: fit windows (reachability-driven):" with "(control:
    * REFIT_REACH_SMIN, REFIT_REACH_MARGIN)"; the log names none of the dense
    * fit's keys or its uniform tail basis (REFIT_MAX_ESCALATIONS,
@@ -496,7 +496,10 @@ TEST_CASE_METHOD(PTFixture,
    * N2B/NRHO_BASIS/NF_BASIS, ...") and the window report said "windowed
    * basis placement", "the unreachable tail keeps a small uniform basis"
    * and "(control: REFIT_PLACEMENT window|uniform, ...)", although the
-   * compact fit reads none of those keys. */
+   * compact fit reads none of those keys. Before the fix of its wording the
+   * WARNING read "... — raise REFIT_COMPACT_NMAX or EXPLORE MAX_ADD (a
+   * larger basis), or relax REFIT_TOL_* if this regime is irrelevant for
+   * your use.", instructions to the reader. */
   ScopedTempDir tmp;
   write_synth_eam("synth.eam.alloy");
   Context c = compact_context("SIGNED");
@@ -505,9 +508,9 @@ TEST_CASE_METHOD(PTFixture,
   const auto [what, logged] = run_compact(c);
   INFO(logged);
   REQUIRE(what == "");
-  CHECK(logged.find("still above tolerance — raise REFIT_COMPACT_NMAX or "
-                    "EXPLORE MAX_ADD (a larger basis), or relax REFIT_TOL_* "
-                    "if this regime is irrelevant for your use.") !=
+  CHECK(logged.find("still above tolerance — a larger REFIT_COMPACT_NMAX or "
+                    "EXPLORE MAX_ADD (a larger basis) can lower the error, "
+                    "and a larger REFIT_TOL_* accepts it.") !=
         std::string::npos);
   CHECK(logged.find("tadah refit: fit windows (reachability-driven):") !=
         std::string::npos);
@@ -944,9 +947,11 @@ TEST_CASE_METHOD(PTFixture,
  * the fcc crystal 0 A apart at the strongest compression the refit tests
  * (a/a0 = REFIT_REACH_SMIN 0.1), less than the step of the table's radial
  * grid, dr = 0.0125313 A: the table describes no pair distance of that
- * crystal. Edit the element line of the setfl file (`<Z> <mass> <a0>
- * <lattice>`): set the equilibrium lattice constant, in Angstrom."; it
- * writes no pot.tadah.
+ * crystal. The a0 of the element line of the setfl file (`<Z> <mass> <a0>
+ * <lattice>`) is the equilibrium lattice constant in Angstrom."; it
+ * writes no pot.tadah (before the fix of its wording the last sentence
+ * read "Edit the element line of the setfl file (...): set the
+ * equilibrium lattice constant, in Angstrom.").
  * Before the fix: the gate asked for a known lattice and a0 > 0 only, and
  * compact_fit's r_reach = 0.1 x a0 / sqrt(2) underflowed to 0:
  * std::logic_error "tadah refit[compact]: internal error: the reachable
@@ -990,8 +995,8 @@ TEST_CASE_METHOD(PTFixture,
         "strongest compression the refit tests (a/a0 = REFIT_REACH_SMIN "
         "0.1), less than the step of the table's radial grid, dr = "
         "0.0125313 A: the table describes no pair distance of that crystal. "
-        "Edit the element line of the setfl file (`<Z> <mass> <a0> "
-        "<lattice>`): set the equilibrium lattice constant, in Angstrom.");
+        "The a0 of the element line of the setfl file (`<Z> <mass> <a0> "
+        "<lattice>`) is the equilibrium lattice constant in Angstrom.");
   CHECK_FALSE(fs::exists("pot.tadah"));
 }
 
@@ -1002,10 +1007,12 @@ TEST_CASE_METHOD(PTFixture,
  * of the EAM header, a0 = 361 A, puts the nearest neighbours of the fcc
  * crystal 255.26554800834364 A apart, at or beyond the table's cutoff,
  * rcut = 5 A, and LAMMPS (pair_style eam/alloy) counts a pair only below
- * rcut: the crystal has no interaction in LAMMPS. Edit the element line of
- * the setfl file (`<Z> <mass> <a0> <lattice>`): set the equilibrium
- * lattice constant, in Angstrom (a value in picometres is 100 times the
- * value in Angstrom)."; no ladder runs and no pot.tadah is written.
+ * rcut: the crystal has no interaction in LAMMPS. The a0 of the element
+ * line of the setfl file (`<Z> <mass> <a0> <lattice>`) is the equilibrium
+ * lattice constant in Angstrom (a value in picometres is 100 times the
+ * value in Angstrom)."; no ladder runs and no pot.tadah is written (before
+ * the fix of its wording the last sentence read "Edit the element line of
+ * the setfl file (...): set the equilibrium lattice constant, ...").
  * Before the fix: the refusal said "...: the crystal has no pair within
  * the cutoff." (tadah itself counts a pair at exactly rcut), so the text
  * check fails. Before the crystal gate took the cutoff, the compact fit
@@ -1035,11 +1042,10 @@ TEST_CASE_METHOD(PTFixture,
         "puts the nearest neighbours of the fcc crystal 255.26554800834364 A "
         "apart, at or beyond the table's cutoff, rcut = 5 A, and LAMMPS "
         "(pair_style eam/alloy) counts a pair only below rcut: the crystal "
-        "has no interaction in LAMMPS. Edit the element line of the setfl "
-        "file "
-        "(`<Z> <mass> <a0> <lattice>`): set the equilibrium lattice constant, "
-        "in Angstrom (a value in picometres is 100 times the value in "
-        "Angstrom).");
+        "has no interaction in LAMMPS. The a0 of the element line of the "
+        "setfl file (`<Z> <mass> <a0> <lattice>`) is the equilibrium "
+        "lattice constant in Angstrom (a value in picometres is 100 times "
+        "the value in Angstrom).");
   CHECK(log_lines("---- phi ladder ----").empty());
   CHECK_FALSE(fs::exists("pot.tadah"));
 }
