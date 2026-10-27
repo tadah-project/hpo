@@ -176,9 +176,10 @@ inline void validate_ceres_common_(const OptimizerSpec& sp,
      * likewise. */
     if (sp.seed && !sp.seed_seeds_exploration)
         throw std::runtime_error("CERES:" + algo + " does not support SEED");
-    if (sp.num_threads)
-        throw std::runtime_error("CERES:" + algo + " does not support THREADS "
-            "(host evaluation is single-threaded inside one optimizer step)");
+    /* THREADS (an integer >= 1, read at its line) sizes the workers of the
+     * run, which run the work of each evaluation -- the training and
+     * prediction of the potential -- while GradientProblemSolver follows one
+     * trajectory, as DLIB:BFGS does. */
     if (sp.step)
         throw std::runtime_error("CERES:" + algo + " does not support STEP "
             "(Ceres chooses the initial line-search step itself; PARAM "
