@@ -456,3 +456,146 @@ TEST_CASE("LN_COBYLA: with STEP unset a start next to a bound keeps the full "
     CHECK(journal.find("STEP unset -- 0.25*width per dim, given to NLopt") !=
           std::string::npos);
 }
+
+namespace {
+
+/* One search of `algo` (an MLSL or AUGLAG) on spec() from (1, `b`), a
+ * CONFIG start, with STEP unset, MAXEVAL `maxeval` and the INNER block
+ * `inner` (empty: none, NLopt's default local search); the points asked for
+ * and the journal. */
+template <class Host>
+std::pair<std::vector<Vec>, std::string>
+inner_search_from(const char* algo, const char* inner, double b,
+                  unsigned maxeval, Host& host)
+{
+    auto sp = spec(algo, false);
+    sp.optim_init = {{1.0, b}};
+    sp.optim_init_origin = {InitOrigin{InitOrigin::Kind::Config, {}}};
+    sp.stop.maxeval = maxeval;
+    if (inner[0]) {
+        sp.inner = std::make_unique<OptimizerSpec>();
+        sp.inner->lib = "NLOPT";
+        sp.inner->algo = inner;
+    }
+    StepJournal j;
+    REQUIRE_NOTHROW(run_nlopt_impl<Vec, NoRunner>(sp, host));
+    return {host.asked, j.text()};
+}
+
+/* (A - 2)^2 + ((B - 0.008) / 0.008)^2 on the box of spec(): the minimum at
+ * the upper corner (2, 0.008), so MLSL's best samples, the starts of its
+ * local searches, lie next to the upper bounds. */
+struct UpperCornerBowl {
+    std::vector<Vec> asked;
+    double operator()(const Vec& x) {
+        asked.push_back(x);
+        const double a = x(0) - 2.0, b = (x(1) - 0.008) / 0.008;
+        return a * a + b * b;
+    }
+};
+
+}  // namespace
+
+/* Pins: LN_AUGLAG with an INNER LN_BOBYQA and STEP unset (MAXEVAL 9), from
+ * AMPGRIDMB[6] = 0.0079, 1e-4 below its upper bound: AUGLAG runs its one
+ * local search from its start, and that search is given 0.25 of each width
+ * (0.002 on AMPGRIDMB[6]) and moves the start onto the bound, as an
+ * LN_BOBYQA search of its own does: the first point is (1, 0.008), a point
+ * of the first model has AMPGRIDMB[6] = 0.006, one step inside, the journal
+ * gives the old and the new start ("NLOPT:LN_AUGLAG (its local search
+ * LN_BOBYQA): AMPGRIDMB[6] starts at 0.008 instead of 0.0079") and the
+ * CONFIG start that moves gets a WARNING.
+ * Before the fix: the local search was given no step, and took NLopt's
+ * default from the start, which shrank the step of AMPGRIDMB[6] to 0.75 of
+ * the gap, 7.5e-5, as the scale of that coordinate: the search started at
+ * 0.0079, no point of the 9 had AMPGRIDMB[6] = 0.006, and the journal had
+ * neither line. */
+TEST_CASE("LN_AUGLAG with an INNER LN_BOBYQA: a start within half a step of "
+          "a bound starts on the bound with the full step",
+          "[HPO][step_plan][nlopt]")
+{
+    StepRecorder host;
+    const auto [asked, journal] =
+        inner_search_from("LN_AUGLAG", "LN_BOBYQA", 0.0079, 9, host);
+    REQUIRE(asked.size() >= 5u);
+    CHECK(asked.front()(0) == 1.0);
+    CHECK(asked.front()(1) == Approx(0.008).epsilon(1e-12));
+    CHECK(asks_b(asked, 0.006));
+    CHECK(journal.find("NLOPT:LN_AUGLAG (its local search LN_BOBYQA): "
+                       "AMPGRIDMB[6] starts at 0.008 instead of 0.0079") !=
+          std::string::npos);
+    CHECK(journal.find("WARNING   NLOPT:LN_AUGLAG (its local search "
+                       "LN_BOBYQA): the CONFIG start moves") !=
+          std::string::npos);
+}
+
+/* Pins: LN_AUGLAG without an INNER block (NLopt's default local search
+ * LN_COBYLA) and STEP unset (MAXEVAL 9), from AMPGRIDMB[6] = 0.0079: the
+ * local search is given 0.25 of each width, which it keeps as the scale of
+ * the coordinate, and turns its first step inward at the bound: a point of
+ * its first simplex has AMPGRIDMB[6] = 0.0059; the start stays, and the
+ * journal's step line names the local search's step.
+ * Before the fix: the local search took NLopt's default from the start,
+ * which shrank the step of AMPGRIDMB[6] to 0.75 of the gap, 7.5e-5: no
+ * point had AMPGRIDMB[6] = 0.0059, and the journal's step line was NLopt's
+ * default ("STEP unset -- NLopt default per dim ..."). */
+TEST_CASE("LN_AUGLAG with its default local search LN_COBYLA: a start next "
+          "to a bound keeps the full step", "[HPO][step_plan][nlopt]")
+{
+    StepRecorder host;
+    const auto [asked, journal] =
+        inner_search_from("LN_AUGLAG", "", 0.0079, 9, host);
+    REQUIRE(asked.size() >= 3u);
+    CHECK(asked.front()(1) == 0.0079);
+    CHECK(asks_b(asked, 0.0059));
+    CHECK(journal.find("starts at") == std::string::npos);
+    CHECK(journal.find("STEP unset -- 0.25*width per dim, given to NLopt: "
+                       "LN_COBYLA keeps the first step of each dimension as "
+                       "its scale") != std::string::npos);
+}
+
+/* Pins: GN_MLSL_LDS with an INNER LN_COBYLA and STEP unset (MAXEVAL 60) on
+ * the bowl whose minimum is the upper corner, from (1, 0.004): every local
+ * search is given 0.25 of each width (0.5 on CGRID2B[1], 0.002 on
+ * AMPGRIDMB[6]), whatever its start, and turns a step inward at a bound.
+ * MLSL evaluates its start and four Sobol samples, then starts a local
+ * search at the sample (1.1875, 0.00775), 0.00025 below the upper bound of
+ * AMPGRIDMB[6]: its first simplex asks for (1.6875, 0.00775) and (1.6875,
+ * 0.00575), 0.002 inward; the local search from (1.6875, 0.00175), 0.3125
+ * below the upper bound of CGRID2B[1], asks for (1.1875, 0.00175), 0.5
+ * inward, and (1.6875, 0.00375). The journal's step line names the step
+ * of the local search ("... given to NLopt: LN_COBYLA keeps the first step
+ * of each dimension as its scale, ... (the step of the local search, which
+ * GN_MLSL_LDS hands it)").
+ * Before the fix: each local search took NLopt's default from its own
+ * start, which shrinks a step to 0.75 of the distance to a bound closer
+ * than a quarter of the width: eval 8 was (1.6875, 0.0079375), a step of
+ * 1.875e-4 on AMPGRIDMB[6], and eval 32 (1.921875, 0.00175), a step of
+ * 0.234375 on CGRID2B[1], then eval 33 (1.921875, 0.0030625); the journal's
+ * step line was NLopt's default ("STEP unset -- NLopt default per dim
+ * ..."). */
+TEST_CASE("GN_MLSL_LDS with an INNER LN_COBYLA: every local search keeps the "
+          "full step", "[HPO][step_plan][nlopt]")
+{
+    UpperCornerBowl host;
+    const auto [asked, journal] =
+        inner_search_from("GN_MLSL_LDS", "LN_COBYLA", 0.004, 60, host);
+    const auto at = [&asked](std::size_t eval, double a, double b) {
+        INFO("eval " << eval << ": (" << asked[eval - 1](0) << ", "
+                     << asked[eval - 1](1) << ")");
+        CHECK(asked[eval - 1](0) == Approx(a).epsilon(1e-12));
+        CHECK(asked[eval - 1](1) == Approx(b).epsilon(1e-12));
+    };
+    REQUIRE(asked.size() == 60u);
+    at(6, 1.1875, 0.00775);
+    at(7, 1.6875, 0.00775);
+    at(8, 1.6875, 0.00575);
+    at(31, 1.6875, 0.00175);
+    at(32, 1.1875, 0.00175);
+    at(33, 1.6875, 0.00375);
+    CHECK(journal.find("STEP unset -- 0.25*width per dim, given to NLopt: "
+                       "LN_COBYLA keeps the first step of each dimension as "
+                       "its scale") != std::string::npos);
+    CHECK(journal.find("(the step of the local search, which GN_MLSL_LDS "
+                       "hands it)") != std::string::npos);
+}

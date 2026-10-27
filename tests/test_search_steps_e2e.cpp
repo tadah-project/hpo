@@ -308,6 +308,42 @@ TEST_CASE("LN_COBYLA: a start next to a bound keeps the full step with STEP "
     CHECK(journal.find("starts at") == std::string::npos);
 }
 
+/* Pins: LN_AUGLAG (MAXEVAL 30) with an INNER LN_BOBYQA and STEP unset from
+ * the configuration's RCUT2B 4.005, 0.005 above its lower bound 4: AUGLAG
+ * runs its one local search from its start, and that search is given 0.25
+ * of each width and moves the start onto the bound, as an LN_BOBYQA search
+ * of its own does: the first evaluation is at RCUT2B 4, the search reaches
+ * beyond RCUT2B 4.1, and the journal gives the moved start and warns that
+ * the CONFIG start moved.
+ * Before the fix: the local search took NLopt's default from the start,
+ * which shrank the step of RCUT2B to 0.75 of the gap, and kept it as the
+ * scale of the coordinate: the first evaluation was at 4.005, none went
+ * beyond RCUT2B 4.0101, and the journal had neither line. */
+TEST_CASE("LN_AUGLAG with an INNER LN_BOBYQA: a start next to a bound moves "
+          "by at most half a step and the search keeps its full step",
+          "[HPO][nlopt][step_plan][e2e]")
+{
+    TaDataRun run(ta_target("    LIB NLOPT\n    ALGO LN_AUGLAG\n    MAXEVAL 30\n"
+                            "    INNER\n      LIB NLOPT\n      ALGO LN_BOBYQA\n"
+                            "    ENDINNER\n",
+                            "FAILSCORE 1e16\nPC_ERMSE 0 0.0001\n"),
+                  4.005);
+    CHECK(run.status == 0);
+    const auto pts = params_rows();
+    REQUIRE(pts.size() >= 20u);
+    CHECK(pts.front()[0] == 4.0);
+    double reach = 0.0;
+    for (const auto& p : pts) reach = std::max(reach, p[0]);
+    INFO("largest RCUT2B evaluated " << reach);
+    CHECK(reach > 4.1);
+    const std::string journal = read_file("hpo_run.log");
+    CHECK(journal.find("NLOPT:LN_AUGLAG (its local search LN_BOBYQA): RCUT2B "
+                       "starts at 4 instead of 4.005") != std::string::npos);
+    CHECK(journal.find("WARNING   NLOPT:LN_AUGLAG (its local search "
+                       "LN_BOBYQA): the CONFIG start moves") !=
+          std::string::npos);
+}
+
 /* Pins: DLIB:BFGS (MAXEVAL 60, FAILSCORE 1e300) from RCUT2B 5.6, SGRIDMB
  * 0.2 with PC_ERMSE 0 <w> and FTOL_ABS 1e-7 w at the loss-term weights w =
  * 1e-4, 1 and 1e6 -- the same problem with its loss, and the tolerance on
