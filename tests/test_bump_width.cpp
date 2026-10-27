@@ -301,20 +301,18 @@ TEST_CASE("a bump centre beyond the low bound of an OPTIM RCUT2B box is "
     WidthTempFile tf(target);
     Context ctx = blip_ctx("2.0 1.0", "Cut_Cos");
     HPOTargets trg(ctx, tf.path.string());
+    /* A startup WARNING of the run: on standard error ("[HPO] WARNING: ")
+     * and in the journal (test_startup_warnings_journal.cpp). It went
+     * through core::Logger to standard output. */
     std::ostringstream captured;
-    auto& logger = tadah::core::Logger::instance();
-    const auto level = logger.getLogLevel();
-    logger.setLogLevel(tadah::core::LogLevel::WARNING);
-    auto* old = std::cout.rdbuf(captured.rdbuf());
+    auto* old = std::cerr.rdbuf(captured.rdbuf());
     try {
       tadah::hpo::validate_hpo_setup(ctx, trg, true, true);
     } catch (...) {
-      std::cout.rdbuf(old);
-      logger.setLogLevel(level);
+      std::cerr.rdbuf(old);
       throw;
     }
-    std::cout.rdbuf(old);
-    logger.setLogLevel(level);
+    std::cerr.rdbuf(old);
     return captured.str();
   };
   const std::string tail = std::string("PC_ERMSE 0 1\n") + kWidthOptimizer;
@@ -322,6 +320,7 @@ TEST_CASE("a bump centre beyond the low bound of an OPTIM RCUT2B box is "
     const std::string w = warnings("OPTIM RCUT2B (1) 3.5 6.0\n" + tail);
     INFO(w);
     CHECK_THAT(w, Catch::Contains(
+                      "[HPO] WARNING: "
                       "CGRID2B bump 1 centre 4 lies beyond the OPTIM RCUT2B "
                       "low bound 3.5: a candidate whose RCUT2B is below the "
                       "centre keeps only the bump's inner shoulder "
