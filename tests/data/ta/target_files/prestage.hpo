@@ -1,11 +1,11 @@
-# STRATEGY TYPE PRESTAGE: an NLopt EXPLORE block, then DLIB:BFGS from its
-# TOPK best points.
+# STRATEGY TYPE PRESTAGE: an NLopt EXPLORE block, then NLOPT:LN_BOBYQA from
+# its TOPK best points.
 
 OPTIMIZER
   STRATEGY
     TYPE PRESTAGE
-    LIB DLIB
-    ALGO BFGS
+    LIB NLOPT
+    ALGO LN_BOBYQA
     MAXEVAL 30
     TOPK 3
     EXPLORE

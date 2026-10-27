@@ -594,16 +594,22 @@ int hpo_run_from_startup(core::Context& ctx, HPOLog& log,
         }
         log.info("FAILSCORE_GRADING: ON -- failed evals graded in "
                  "[0.999*FS, FS), bands A-D (see docs); " + probe_note);
-    } else if (trg.failprobe_idx >= 0) {
+    } else if (trg.failprobe_idx >= 0 && !std::isfinite(trg.failprobe_gate)) {
         /* Under OFF the probe is still one of the evaluation's
          * simulations: its failure -- the script's, or an S that cannot be
-         * read or has no number (apply_task_result) -- fails the
-         * evaluation like any other's. Only the use of S is off. */
-        log.warning("PC_FAILPROBE is defined but FAILSCORE_GRADING is "
-                    "OFF -- its S neither grades nor gates an evaluation; "
-                    "a probe that fails (its script fails, or its S cannot "
-                    "be read or has no number) fails its evaluation, as "
-                    "any PC_LAMMPS simulation does.");
+         * read or has no number (apply_task_result), or an S that is no
+         * probe value, negative, not finite or at or above the line's
+         * --failscore (run_lammps) -- fails the evaluation like any
+         * other's, and an S above --gate fails it (run_lammps). Without
+         * --gate, S grades nothing under OFF: only a failed probe fails
+         * the evaluation. */
+        log.warning("PC_FAILPROBE is defined without --gate and "
+                    "FAILSCORE_GRADING is OFF -- its S grades no "
+                    "evaluation; a probe that fails (its script fails, or "
+                    "its S cannot be read, has no number, or is negative, "
+                    "not finite or at or above the line's --failscore) "
+                    "fails its evaluation, as any PC_LAMMPS simulation "
+                    "does.");
     }
 
     /* ---- BUMPGATE: bump-support enforcement mode --------------------

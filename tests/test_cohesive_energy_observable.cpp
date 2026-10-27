@@ -17,6 +17,10 @@
 //      changed equals a fresh neighbour-list evaluation of the relaxed bulk
 //      (the relaxer's cached list must carry the image displacements of
 //      the current cell); and --supercell 1 1 1 gives the E_coh of 4 4 4.
+//   6. --fmax-converged is the force tolerance of the relaxation: it
+//      loosens and tightens it.
+//   7. --unconverged force-scaled grows with the strain force of the cell
+//      at the end of a relaxation that does not converge.
 
 #include "catch2/catch.hpp"
 
@@ -24,6 +28,7 @@
 #include <tadah/core/element.h>
 #include <tadah/core/periodic_table.h>
 #include <tadah/hpo/observables/cohesive_energy.h>
+#include <tadah/hpo/observables/observable_parser.h>
 #include <tadah/mlip/cell_builder.h>
 #include <tadah/mlip/nn_finder.h>
 #include <tadah/mlip/structure.h>
@@ -34,6 +39,10 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
+#include <cstring>
+#include <iomanip>
+#include <string>
 #include <sstream>
 #include <stdexcept>
 
@@ -225,24 +234,25 @@ TEST_CASE("CohesiveEnergyObservable seeds hot-var correctly",
     /* No explicit initial → midpoint. */
     {
         CohesiveEnergyObservable obs(cfg);
-        CHECK(std::abs(obs.current_a0() - 3.3) < 1e-12);
+        CHECK(std::abs(obs.start_a0() - 3.3) < 1e-12);
     }
     /* Explicit initial inside bounds. */
     {
         auto c = cfg; c.a0_initial = 3.50;
         CohesiveEnergyObservable obs(c);
-        CHECK(std::abs(obs.current_a0() - 3.50) < 1e-12);
+        CHECK(std::abs(obs.start_a0() - 3.50) < 1e-12);
     }
-    /* Out-of-bounds initial gets clamped. */
+    /* Pins: an initial outside the window is refused (the parser refuses
+     * the line).
+     * Before the fix: it was moved onto the nearer bound, 3.9 and 2.7,
+     * without a word. */
     {
         auto c = cfg; c.a0_initial = 4.5;   /* > a0_max */
-        CohesiveEnergyObservable obs(c);
-        CHECK(std::abs(obs.current_a0() - 3.9) < 1e-12);
+        CHECK_THROWS_AS(CohesiveEnergyObservable{c}, std::invalid_argument);
     }
     {
         auto c = cfg; c.a0_initial = 2.0;   /* < a0_min */
-        CohesiveEnergyObservable obs(c);
-        CHECK(std::abs(obs.current_a0() - 2.7) < 1e-12);
+        CHECK_THROWS_AS(CohesiveEnergyObservable{c}, std::invalid_argument);
     }
 }
 
@@ -326,25 +336,65 @@ TEST_CASE("CohesiveEnergyObservable updates hot-var after relaxation",
     cfg.a0_min = 2.7;
     cfg.a0_max = 3.9;
     cfg.a0_initial = 3.10;        /* start away from any plausible minimum */
-    cfg.relax_atom_ftol = 1.0e-2;
+    cfg.eq_fmax_threshold = 1.0e-2;
     cfg.relax_maxiter = 500;
 
     CohesiveEnergyObservable obs(cfg);
-    const double a0_before = obs.current_a0();
+    const double a0_before = obs.start_a0();
     ObservableEvalResult r = obs.evaluate(*host.model, host.dc, host.context);
 
+    REQUIRE(r.hotvar_updated_value.has_value());
     INFO("a0 before = " << a0_before
-         << "  a0 after = " << obs.current_a0()
+         << "  a0 after = " << *r.hotvar_updated_value
          << "  Ecoh = " << r.value);
 
-    REQUIRE(r.hotvar_updated_value.has_value());
-    /* a0 changed under relaxation (synthetic potential, but the
-     * relaxer's Iso DOF still moves it). Just check the cache field
-     * reflects current_a0. */
-    CHECK(std::abs(obs.current_a0() - *r.hotvar_updated_value) < 1e-12);
-    /* Hot-var didn't escape the bounds. */
-    CHECK(obs.current_a0() >= cfg.a0_min * 0.5);   /* leniency for sneak-out */
-    CHECK(obs.current_a0() <= cfg.a0_max * 2.0);
+    /* Pins: a0 changed under relaxation (synthetic potential, but the
+     * relaxer's Iso DOF still moves it): the a0 handed on differs from the
+     * start 3.10 and stays inside the window, and the observable's start
+     * is still 3.10. The observable keeps none of it: with the relaxation
+     * capped at 2 iterations, where the start matters (from the a0 the
+     * first evaluation handed on, it ends at another a0), a second
+     * evaluation from the start gives the first one's value and a0, bit
+     * for bit (the host keeps the relaxed a0 per chain).
+     * Before the fix: the observable kept the relaxed a0 as its own start
+     * (current_a0() was the relaxed value), one value for every chain: the
+     * second evaluation started from the first one's a0 and ended at the
+     * a0 of the evaluation from it. (The converged relaxation alone could
+     * not tell: from its relaxed a0 it stops at once, at the same a0.) */
+    CHECK(*r.hotvar_updated_value != a0_before);
+    CHECK(*r.hotvar_updated_value >= cfg.a0_min);
+    CHECK(*r.hotvar_updated_value <= cfg.a0_max);
+    CHECK(obs.start_a0() == a0_before);
+
+    auto bits = [](double x) {
+        std::uint64_t b = 0;
+        std::memcpy(&b, &x, sizeof b);
+        return b;
+    };
+    CohesiveEnergyObservable::Config capped_cfg = cfg;
+    capped_cfg.relax_maxiter = 2;
+    CohesiveEnergyObservable capped(capped_cfg);
+    const ObservableEvalResult first =
+        capped.evaluate(*host.model, host.dc, host.context);
+    const ObservableEvalResult again =
+        capped.evaluate(*host.model, host.dc, host.context);
+    REQUIRE(first.hotvar_updated_value.has_value());
+    REQUIRE(again.hotvar_updated_value.has_value());
+    const ObservableEvalResult from_first = capped.evaluate(
+        *host.model, host.dc, host.context, first.hotvar_updated_value);
+    REQUIRE(from_first.hotvar_updated_value.has_value());
+    INFO(std::hexfloat << "first: value " << first.value << ", a0 "
+                       << *first.hotvar_updated_value << "; again: value "
+                       << again.value << ", a0 "
+                       << *again.hotvar_updated_value
+                       << "; from the first a0: a0 "
+                       << *from_first.hotvar_updated_value);
+    /* Precondition: the start of the capped relaxation changes its a0. */
+    REQUIRE(bits(*from_first.hotvar_updated_value) !=
+            bits(*first.hotvar_updated_value));
+    CHECK(bits(again.value) == bits(first.value));
+    CHECK(bits(*again.hotvar_updated_value) ==
+          bits(*first.hotvar_updated_value));
 }
 
 /* The relaxed bulk's neighbour list is the relaxer's cached one (built at
@@ -355,11 +405,14 @@ TEST_CASE("CohesiveEnergyObservable updates hot-var after relaxation",
  * a perfect bcc lattice felt spurious forces (the relaxation stalls on
  * them) and E_coh was computed from misplaced images.
  *
- * relax_etol and a lenient eq_fmax_threshold make the observable report the
- * E_coh it computes for the bulk the relaxation ends at, whether it stops on
- * the force criterion (exact lists: every atomic force ~1e-15 on a perfect
- * lattice) or stalls on an energy plateau (misplaced images); that value
- * must be the relaxed bulk's energy. */
+ * relax_etol makes the observable report the E_coh it computes for the bulk
+ * the relaxation ends at, whether it stops on the force criterion (exact
+ * lists: every atomic force ~1e-15 on a perfect lattice, the strain force
+ * below the eq_fmax_threshold of 1e-4) or on the energy criterion; that
+ * value must be the relaxed bulk's energy. (The relaxation stopped at a
+ * force tolerance of its own, 1e-4, while a lenient eq_fmax_threshold,
+ * 1e3, judged it; one value, the --fmax-converged tolerance, does
+ * both.) */
 TEST_CASE("CohesiveEnergyObservable: relaxed E_coh equals a fresh "
           "neighbour-list evaluation of the relaxed bulk",
           "[hpo][observable][cohesive_energy][nn]")
@@ -380,26 +433,27 @@ TEST_CASE("CohesiveEnergyObservable: relaxed E_coh equals a fresh "
     cfg.a0_min = 2.7;
     cfg.a0_max = 3.9;
     cfg.a0_initial = 3.27;           /* about 2% below the model's minimum */
-    cfg.relax_atom_ftol = 1.0e-4;    /* the strain must converge: several Iso steps */
+    cfg.eq_fmax_threshold = 1.0e-4;  /* the strain must converge: several Iso steps */
     cfg.relax_etol = 1.0e-12;
     cfg.relax_maxiter = 500;
-    cfg.eq_fmax_threshold = 1.0e3;
 
     CohesiveEnergyObservable obs(cfg);
     const ObservableEvalResult r = obs.evaluate(*host.model, host.dc, host.context);
 
-    INFO("a0 " << *cfg.a0_initial << " -> " << obs.current_a0()
+    REQUIRE(r.hotvar_updated_value.has_value());
+    const double relaxed_a0 = *r.hotvar_updated_value;
+    INFO("a0 " << *cfg.a0_initial << " -> " << relaxed_a0
          << ", E_coh " << r.value);
     /* Precondition: the relaxation changed the cell (accepted Iso steps
      * after the list was built), so the cached list's cell is not the
      * relaxed one. Each Iso step changes the scale by at most 0.1%. */
-    REQUIRE(std::abs(obs.current_a0() / *cfg.a0_initial - 1.0) > 5.0e-3);
+    REQUIRE(std::abs(relaxed_a0 / *cfg.a0_initial - 1.0) > 5.0e-3);
     /* The observable's own value, not the unconverged penalty. */
     REQUIRE_FALSE(r.value_is_constant);
     REQUIRE(std::isfinite(r.value));
     REQUIRE(r.energy_terms.size() == 2u);
     REQUIRE(r.energy_terms[0].structure.cell(0, 0) ==
-            Approx(2.0 * obs.current_a0()).epsilon(1e-12));
+            Approx(2.0 * relaxed_a0).epsilon(1e-12));
 
     const double ecoh = fresh_ecoh(host, r);
     INFO("fresh-list E_coh " << ecoh);
@@ -408,8 +462,9 @@ TEST_CASE("CohesiveEnergyObservable: relaxed E_coh equals a fresh "
 
 /* A guard, expected to pass before and after the exact-image fix: the E_coh
  * of the 2-atom bcc cell (--supercell 1 1 1) equals that of 4 4 4 at the
- * same a0, without relaxation (relax_maxiter 0; a relax_atom_ftol no
- * pressure reaches, so the iteration-0 check accepts the cell as it is).
+ * same a0, without relaxation (relax_maxiter 0; an eq_fmax_threshold, the
+ * --fmax-converged force tolerance, that no pressure reaches, so the
+ * iteration-0 check accepts the cell as it is).
  * At rcut 6 and a0 3.3 (rcut/a0 = 1.82) a list built at the model's cutoff
  * would miss images of the 2-atom cell before the fix, but the relaxer
  * builds its list at rcut + skin (2 A), wide enough that no pair inside
@@ -436,7 +491,7 @@ TEST_CASE("CohesiveEnergyObservable: supercell 1 1 1 and 4 4 4 give the "
         cfg.a0_max = 3.9;
         cfg.a0_initial = 3.3;
         cfg.relax_maxiter = 0;
-        cfg.relax_atom_ftol = 1.0e6;
+        cfg.eq_fmax_threshold = 1.0e6;
         CohesiveEnergyObservable obs(cfg);
         const ObservableEvalResult r =
             obs.evaluate(*host.model, host.dc, host.context);
@@ -446,7 +501,8 @@ TEST_CASE("CohesiveEnergyObservable: supercell 1 1 1 and 4 4 4 give the "
         REQUIRE(r.energy_terms.size() == 2u);
         REQUIRE(r.energy_terms[0].structure.natoms() ==
                 static_cast<std::size_t>(2 * n * n * n));
-        CHECK(obs.current_a0() == 3.3);   /* not relaxed */
+        REQUIRE(r.hotvar_updated_value.has_value());
+        CHECK(*r.hotvar_updated_value == 3.3);   /* not relaxed */
         return r.value;
     };
 
@@ -456,13 +512,14 @@ TEST_CASE("CohesiveEnergyObservable: supercell 1 1 1 and 4 4 4 give the "
     CHECK(std::abs(e1 - e4) <= 1.0e-10 * std::max(1.0, std::abs(e4)));
 }
 
-/* Pins: the hot-var a0 that an evaluation hands on (current_a0() and
- * hotvar_updated_value) is the a0 it started from times the Iso
+/* Pins: the hot-var a0 that an evaluation hands on (hotvar_updated_value)
+ * is the a0 it started from times the Iso
  * relaxation's scale factor (NativeRelaxer::Result::scale_factor), the
  * quantity the early-reject predicate already uses, and not the relaxed
  * cell(0,0) divided by nx. An evaluation that does not move the cell
- * (relax_maxiter 0 and a relax_atom_ftol that no force reaches, so the
- * iteration-0 check accepts the cell with scale factor 1) therefore hands
+ * (relax_maxiter 0 and an eq_fmax_threshold, the --fmax-converged force
+ * tolerance, that no force reaches, so the iteration-0 check accepts the
+ * cell with scale factor 1) therefore hands
  * on its a0 bit for bit, whatever the supercell.
  *
  * a0 = 3.3 (0x1.a666666666666p+1) with --supercell 3 3 3: replicate()
@@ -474,8 +531,9 @@ TEST_CASE("CohesiveEnergyObservable: supercell 1 1 1 and 4 4 4 give the "
  * The expected values are written as literals, not computed here, so the
  * test does no arithmetic that -ffast-math could rewrite.
  *
- * Before the fix: new_a0 was bulk.cell(0,0) / nx, so current_a0() and
- * hotvar_updated_value were 3.2999999999999994 (0x1.a666666666665p+1)
+ * Before the fix: new_a0 was bulk.cell(0,0) / nx, so the observable's a0
+ * (which it kept then) and hotvar_updated_value were 3.2999999999999994
+ * (0x1.a666666666665p+1)
  * instead of 3.3 (0x1.a666666666666p+1). */
 TEST_CASE("CohesiveEnergyObservable: an evaluation that does not move the "
           "cell hands on its a0 bit for bit with --supercell 3 3 3",
@@ -498,10 +556,10 @@ TEST_CASE("CohesiveEnergyObservable: an evaluation that does not move the "
     cfg.a0_max = 3.9;
     cfg.a0_initial = 3.3;
     cfg.relax_maxiter = 0;
-    cfg.relax_atom_ftol = 1.0e6;
+    cfg.eq_fmax_threshold = 1.0e6;
 
     CohesiveEnergyObservable obs(cfg);
-    REQUIRE(obs.current_a0() == 0x1.a666666666666p+1);   /* 3.3 */
+    REQUIRE(obs.start_a0() == 0x1.a666666666666p+1);   /* 3.3 */
     const ObservableEvalResult r =
         obs.evaluate(*host.model, host.dc, host.context);
 
@@ -516,9 +574,128 @@ TEST_CASE("CohesiveEnergyObservable: an evaluation that does not move the "
     REQUIRE(bulk.cell(0, 0) == 0x1.3ccccccccccccp+3);
 
     REQUIRE(r.hotvar_updated_value.has_value());
-    INFO("current_a0 " << std::hexfloat << obs.current_a0()
-         << ", hotvar_updated_value " << *r.hotvar_updated_value
+    INFO("hotvar_updated_value " << std::hexfloat << *r.hotvar_updated_value
          << ", expected 0x1.a666666666666p+1 (3.3)");
-    CHECK(obs.current_a0() == 0x1.a666666666666p+1);
     CHECK(*r.hotvar_updated_value == 0x1.a666666666666p+1);
+}
+
+/* Pins: --fmax-converged is the force tolerance of the relaxation as well
+ * as its convergence test. From a0 = 3.1, about 7% below the model's
+ * minimum: with --fmax-converged 100, which the forces of the start meet,
+ * the relaxation stops at once and hands on its start a0 bit for bit;
+ * with the default 0.1 it relaxes the cell; with 1e-4 it relaxes further,
+ * to another a0. Each relaxation converges (the value is not the
+ * --unconverged one).
+ * Before the fix: the relaxation stopped at the fixed tolerance 0.1
+ * whatever the option: 100 relaxed the cell as 0.1 does (the a0 moved
+ * from 3.1), and 1e-4 stopped where 0.1 does (the same a0). */
+TEST_CASE("CohesiveEnergyObservable: --fmax-converged is the force tolerance "
+          "of the relaxation",
+          "[hpo][observable][cohesive_energy][fmax_converged]")
+{
+    PeriodicTable::initialize();
+
+    MLIPWorkspaceManager ws;
+    Context ctx = make_ta_context(4.5, {2.4, 3.0, 3.6}, {2.0, 2.0, 2.0});
+    Trainer host(ctx, ws);
+    auto train_db = make_parabola_train_db();
+    host.train(train_db);
+
+    auto relaxed_a0 = [&](const std::string& fmax) {
+        auto obs = tadah::hpo::parse_pc_observable_line(
+            "cohesive_energy --species Ta --target 8 --weight 1 "
+            "--supercell 2 2 2 --hotvar a0 2.7 3.9 3.1 --maxiter 2000 "
+            "--maxeval 20000" +
+            (fmax.empty() ? std::string() : " --fmax-converged " + fmax));
+        const ObservableEvalResult r =
+            obs->evaluate(*host.model, host.dc, host.context);
+        INFO("--fmax-converged " << fmax << ": value " << r.value);
+        REQUIRE_FALSE(r.value_is_constant);
+        REQUIRE(r.hotvar_updated_value.has_value());
+        return *r.hotvar_updated_value;
+    };
+    const double loose = relaxed_a0("100");
+    const double standard = relaxed_a0("");
+    const double tight = relaxed_a0("1e-4");
+    INFO(std::hexfloat << "a0: 100 -> " << loose << ", 0.1 -> " << standard
+                       << ", 1e-4 -> " << tight);
+    /* Precondition: the default relaxes the cell from this start. */
+    REQUIRE(standard != 3.1);
+    CHECK(loose == 3.1);
+    CHECK(tight != standard);
+}
+
+/* Pins: --unconverged force-scaled reports target + slope x the larger of
+ * the largest atomic force and the strain force of the cell,
+ * |dE/deps| / (3V), at the end of the relaxation: the measure the
+ * relaxation stops at. In the bcc cell the atomic forces vanish by
+ * symmetry, so the strain force decides: a relaxation from a0 = 3.1,
+ * about 7% below the model's minimum, capped at one iteration (--maxiter
+ * 1; the --unconverged const value shows that it does not converge),
+ * reports target + slope x the strain force of the cell it ends at (its
+ * relaxed a0), computed here by the relaxer's central difference, and the
+ * excess over the target doubles with the slope.
+ * Before the fix: the value was target + slope x the largest atomic force,
+ * about 1e-15 in the bcc cell: the target, a loss of about 0, for every
+ * relaxation that does not converge. */
+TEST_CASE("CohesiveEnergyObservable: --unconverged force-scaled grows with "
+          "the strain force of the cell",
+          "[hpo][observable][cohesive_energy][unconverged]")
+{
+    PeriodicTable::initialize();
+
+    MLIPWorkspaceManager ws;
+    Context ctx = make_ta_context(4.5, {2.4, 3.0, 3.6}, {2.0, 2.0, 2.0});
+    Trainer host(ctx, ws);
+    auto train_db = make_parabola_train_db();
+    host.train(train_db);
+
+    const std::string line =
+        "cohesive_energy --species Ta --target 8 --weight 1 "
+        "--supercell 2 2 2 --hotvar a0 2.7 3.9 3.1 --maxiter 1 ";
+    auto evaluate = [&](const std::string& unconverged) {
+        auto obs = tadah::hpo::parse_pc_observable_line(line + unconverged);
+        return obs->evaluate(*host.model, host.dc, host.context);
+    };
+
+    /* Precondition: the capped relaxation does not converge. */
+    const ObservableEvalResult constant = evaluate("--unconverged const 100");
+    REQUIRE(constant.value_is_constant);
+    REQUIRE(constant.value == 100.0);
+
+    const ObservableEvalResult r = evaluate("--unconverged force-scaled 1000");
+    const ObservableEvalResult r2 = evaluate("--unconverged force-scaled 2000");
+    REQUIRE_FALSE(r.value_is_constant);
+    REQUIRE(r.hotvar_updated_value.has_value());
+
+    /* The strain force of the cell the relaxation ends at: the 2x2x2 bcc
+     * cell of a0 = 3.1 scaled to the relaxed a0, by the relaxer's central
+     * difference (step 1e-5 in the strain). */
+    Structure start = tadah::mlip::cells::bcc("Ta", 3.1);
+    tadah::mlip::StructureTransformation::replicate(start, 2, 2, 2);
+    const double scale = *r.hotvar_updated_value / 3.1;
+    REQUIRE(scale != 1.0);
+    auto energy = [&](double s) {
+        Structure x = start;
+        for (int i = 0; i < 3; ++i)
+            for (int j = 0; j < 3; ++j) x.cell(i, j) = s * start.cell(i, j);
+        for (auto& at : x.atoms)
+            for (int k = 0; k < 3; ++k) at.position[k] *= s;
+        x.nn.reset();
+        NNFinder().calc(x, host.context);
+        return host.model->epredict(host.dc.calc(x));
+    };
+    const double h = 1.0e-5;
+    Structure end = start;
+    for (int i = 0; i < 3; ++i)
+        for (int j = 0; j < 3; ++j) end.cell(i, j) = scale * start.cell(i, j);
+    const double strain_force =
+        std::abs(energy(scale * (1.0 + h)) - energy(scale * (1.0 - h))) /
+        (2.0 * h) / (3.0 * end.get_volume());
+    INFO(std::setprecision(17) << "relaxed a0 " << *r.hotvar_updated_value
+         << ", strain force " << strain_force << " eV/A^3; value "
+         << r.value << " (slope 1000), " << r2.value << " (slope 2000)");
+    REQUIRE(strain_force > 1.0e-4);
+    CHECK(r.value == Approx(8.0 + 1000.0 * strain_force).epsilon(1e-6));
+    CHECK(r2.value - 8.0 == Approx(2.0 * (r.value - 8.0)).epsilon(1e-9));
 }

@@ -193,11 +193,23 @@ run 500000000
  * same MAX_TIME string; if both appear the later line wins. (The OPTIMIZER-
  * block MAXTIME is a different setting and is not exercised here.)
  * ------------------------------------------------------------------------- */
-namespace { const char* MIN_OPT = "OPTIMIZER\nLIB DLIB\nALGO BFGS\nENDOPTIMIZER\n"; }
+namespace {
+const char* MIN_OPT = "OPTIMIZER\nLIB NLOPT\nALGO LN_SBPLX\nENDOPTIMIZER\n";
+/* A PC_LAMMPS line of the script @p script: it takes the PC_SCRIPT_TIMEOUT
+ * above it (one that no line after it takes is refused). The cases had no
+ * such line, and DLIB:BFGS, which a PC_LAMMPS line refuses. Before the fix:
+ * they pass as well (a pin: the limit a line takes is unchanged). */
+std::string pc_line(const ScopedTempFile& script) {
+    return "PC_LAMMPS --script " + script.path.string() +
+           " --varloss foo 0.0 1.0\n";
+}
+}
 
 TEST_CASE("PC_SCRIPT_TIMEOUT sets the per-script limit",
           "[lammps_sim][timeout][config]") {
-    ScopedTempFile cfg(std::string(MIN_OPT) + "PC_SCRIPT_TIMEOUT 5\n");
+    ScopedTempFile script(SIMPLE_BODY);
+    ScopedTempFile cfg(std::string(MIN_OPT) + "PC_SCRIPT_TIMEOUT 5\n" +
+                       pc_line(script));
     tadah::core::Context ctx;
     tadah::hpo::HPOTargets trg(ctx, cfg.path.string());
     REQUIRE(trg.MAX_TIME == "5");
@@ -208,7 +220,8 @@ TEST_CASE("PC_SCRIPT_TIMEOUT sets the per-script limit",
 
 TEST_CASE("legacy MAXTIME still sets the per-script limit (alias)",
           "[lammps_sim][timeout][config]") {
-    ScopedTempFile cfg(std::string(MIN_OPT) + "MAXTIME 7\n");
+    ScopedTempFile script(SIMPLE_BODY);
+    ScopedTempFile cfg(std::string(MIN_OPT) + "MAXTIME 7\n" + pc_line(script));
     tadah::core::Context ctx;
     tadah::hpo::HPOTargets trg(ctx, cfg.path.string());
     REQUIRE(trg.MAX_TIME == "7");
@@ -219,8 +232,10 @@ TEST_CASE("legacy MAXTIME still sets the per-script limit (alias)",
 
 TEST_CASE("PC_SCRIPT_TIMEOUT and legacy MAXTIME set an identical value",
           "[lammps_sim][timeout][config]") {
-    ScopedTempFile a(std::string(MIN_OPT) + "PC_SCRIPT_TIMEOUT 3\n");
-    ScopedTempFile b(std::string(MIN_OPT) + "MAXTIME 3\n");
+    ScopedTempFile script(SIMPLE_BODY);
+    ScopedTempFile a(std::string(MIN_OPT) + "PC_SCRIPT_TIMEOUT 3\n" +
+                     pc_line(script));
+    ScopedTempFile b(std::string(MIN_OPT) + "MAXTIME 3\n" + pc_line(script));
     tadah::core::Context ctx;
     tadah::hpo::HPOTargets ta(ctx, a.path.string());
     tadah::hpo::HPOTargets tb(ctx, b.path.string());
@@ -228,10 +243,14 @@ TEST_CASE("PC_SCRIPT_TIMEOUT and legacy MAXTIME set an identical value",
 }
 
 /* MAXTIME and PC_SCRIPT_TIMEOUT are one key: set again only after a
- * PC_LAMMPS line has taken the first value, else refused naming the first
- * (it was: the later line replaced the first). With a PC_LAMMPS line
- * between, that line keeps the first value and the later line is the
- * run-wide value; both flags are set. */
+ * PC_LAMMPS line has read the first value, else refused naming the first
+ * and the lines that read it, "(a PC_LAMMPS or PC_FAILPROBE line without
+ * --maxtime)" (it was: the later line replaced the first; then the
+ * message said "no PC_LAMMPS or PC_FAILPROBE line between takes the
+ * first"). With a PC_LAMMPS line between, that line keeps the first value
+ * and the later line is the run-wide value, which the PC_LAMMPS line after
+ * it takes; both flags are set. (The case had no line after the later
+ * value, which no line read.) */
 TEST_CASE("both timeout keys: one key, set again after a PC_LAMMPS line "
           "takes the first",
           "[lammps_sim][timeout][config]") {
@@ -241,15 +260,16 @@ TEST_CASE("both timeout keys: one key, set again after a PC_LAMMPS line "
     REQUIRE_THROWS_WITH(
         tadah::hpo::HPOTargets(ctx, twice.path.string()),
         Catch::Contains("Error on line 6: PC_SCRIPT_TIMEOUT is set twice "
-                        "(first on line 5, as MAXTIME) and no PC_LAMMPS or "
-                        "PC_FAILPROBE line between takes the first"));
+                        "(first on line 5, as MAXTIME) and no line between "
+                        "reads the first (a PC_LAMMPS or PC_FAILPROBE line "
+                        "without --maxtime)"));
     ScopedTempFile script(SIMPLE_BODY);
-    ScopedTempFile cfg(std::string(MIN_OPT) + "MAXTIME 7\nPC_LAMMPS --script " +
-                       script.path.string() +
-                       " --varloss foo 0.0 1.0\nPC_SCRIPT_TIMEOUT 5\n");
+    ScopedTempFile cfg(std::string(MIN_OPT) + "MAXTIME 7\n" + pc_line(script) +
+                       "PC_SCRIPT_TIMEOUT 5\n" + pc_line(script));
     tadah::hpo::HPOTargets trg(ctx, cfg.path.string());
-    REQUIRE(trg.LS.size() == 1);
+    REQUIRE(trg.LS.size() == 2);
     REQUIRE(trg.LS[0].maxtime == "7");     // the line takes the first
+    REQUIRE(trg.LS[1].maxtime == "5");     // the line after takes the later
     REQUIRE(trg.MAX_TIME == "5");          // the run-wide value: the later
     REQUIRE(trg.MAX_TIME_seen_new);
     REQUIRE(trg.MAX_TIME_seen_legacy);

@@ -1731,7 +1731,8 @@ const std::string kHead =
  * and with a --hotvar "each --hotvar starts from the value of the best
  * evaluation so far"), a PC_OBSERVABLE whose observable keeps state
  * (cohesive_energy: "its relaxation starts from the lattice constant the
- * previous evaluation relaxed to") and a --skip-rel filter ("compares with
+ * previous evaluation of its chain relaxed to") and a --skip-rel filter
+ * ("compares with
  * the best value so far").
  * Before the fix: does not compile (repeat_reuse_blocker is new). */
 TEST_CASE("Repeated points: the run says when an evaluation is a function "
@@ -1749,8 +1750,11 @@ TEST_CASE("Repeated points: the run says when an evaluation is a function "
         "PC_OBSERVABLE cohesive_energy --species Ta --target 8.100 --weight "
         "1000 --hotvar a0 2.7 3.9 3.3036\n");
     CHECK(obs.find("PC_OBSERVABLE cohesive_energy") != std::string::npos);
+    /* (of its chain: each chain keeps its own a0; it said "the previous
+     * evaluation", one a0 shared by every chain) */
     CHECK(obs.find("its relaxation starts from the lattice constant the "
-                   "previous evaluation relaxed to") != std::string::npos);
+                   "previous evaluation of its chain relaxed to") !=
+          std::string::npos);
 
     const fs::path script = fs::temp_directory_path() /
                             ("test_repeat_points_" +

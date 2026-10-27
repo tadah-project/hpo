@@ -396,7 +396,11 @@ EXTRACTION: list[Rule] = [
          ignore_literals={"-var": "a LAMMPS command-line option, passed to "
                                   "LAMMPS (checked for the reserved name)",
                           "-v": "a LAMMPS command-line option, passed to "
-                                "LAMMPS (checked for the reserved name)"}),
+                                "LAMMPS (checked for the reserved name)",
+                          "-sc": "LAMMPS' short spelling of -screen, passed "
+                                 "to LAMMPS as -screen",
+                          "-l": "LAMMPS' short spelling of -log, passed to "
+                                "LAMMPS as -log"}),
     Rule("the observable kinds", "src/observable_parser.cpp",
          r"^std::unique_ptr<Observable> parse_pc_observable_line\(",
          operands={"kind": ("form",)}),

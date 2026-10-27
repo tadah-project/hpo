@@ -70,7 +70,7 @@ std::string analytical_loss_term_blocker(const HPOTargets& trg)
         const std::string term =
             "the PC_OBSERVABLE term " + observable_journal_label(*obs, k + 1);
         if (!loss_has_derivative_wrt_observed(obs->lossfn()))
-            return term + " uses --loss " +
+            return term + " uses the loss function " +
                    LossFunction::to_string(obs->lossfn().type()) +
                    ", which has no derivative with respect to the value";
         if (const std::string gap = obs->analytical_gradient_gap();

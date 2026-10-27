@@ -1493,8 +1493,8 @@ DBFILE, no FIXINDEX, STRESS false, NORM false, OALGO 4, a fixed LAMBDA >= \
 least-squares fit of the training rows the gradient differentiates \
 (implementation 2 of M_KRR solves over its basis vectors instead). In the \
 target file they are no \
-PC_SRMSE_GPA line, no PC_OBSERVABLE line with --loss MAPE or RMSLE or with \
---unconverged force-scaled, and no OPTIM line of an error scale of the fit \
+PC_SRMSE_GPA line, no PC_OBSERVABLE line with --unconverged \
+force-scaled, and no OPTIM line of an error scale of the fit \
 (ESIGMA, FSIGMA, SSIGMA) or of WDBFILE, a priority of the fit, which the \
 analytical gradient does not differentiate. Another search parameter without an analytical derivative \
 passes startup, and stops an ANALYTICAL run at its first gradient."""

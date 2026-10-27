@@ -44,8 +44,10 @@ std::string analytical_gradient_blocker(const core::Context& ctx,
 /* Why a loss term of `trg` can have no analytical gradient on a setup
  * analytical_gradient_blocker() accepts, naming the term (cohesive_energy[k]
  * for the k-th PC_OBSERVABLE line) and the option, or "" when every term
- * has one: a PC_OBSERVABLE --loss without a derivative with respect to the
- * value (MAPE, RMSLE: at every evaluation), or an observable whose settings
+ * has one: a PC_OBSERVABLE loss function (its --loss, or the LOSS line
+ * above it) without a derivative with respect to the value
+ * (loss_has_derivative_wrt_observed; every loss function of LossFunction
+ * has one), or an observable whose settings
  * report values without one (Observable::analytical_gradient_gap, e.g.
  * --unconverged force-scaled: at every relaxation that does not converge).
  * ANALYTICAL stops the run at such a gradient, so validate_hpo_setup refuses

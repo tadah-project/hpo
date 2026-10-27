@@ -93,8 +93,11 @@ std::filesystem::path write_script() {
                       "variable fv_q equal 0.0\n");
 }
 
+/* A gradient-free optimiser: a PC_LAMMPS line refuses a gradient-based one,
+ * DLIB:BFGS among them (the head named DLIB:BFGS). Before the fix: the
+ * cases pass as well (a pin: the optimiser does not enter what they test). */
 std::string config_head() {
-    return "OPTIMIZER\nLIB DLIB\nALGO BFGS\nMAXEVAL 1\nENDOPTIMIZER\n"
+    return "OPTIMIZER\nLIB NLOPT\nALGO LN_SBPLX\nMAXEVAL 1\nENDOPTIMIZER\n"
            "LOSS L2\nFAILSCORE 1e6\n";
 }
 
@@ -210,7 +213,10 @@ TEST_CASE("FAILSCORE_GRADING: every optimiser spec carries it, through the "
      * multistart_start_spec and prestage_refinement_spec.
      * Before the fix: the specs had no such flag (the gradient read none);
      * built with the field declared but neither set nor copied, every
-     * spec reads false. */
+     * spec reads false.
+     * The file has no LOSS line: no line of it reads one, and such a line
+     * is refused (it had LOSS L2; the case passes before that fix as well,
+     * a pin). */
     tadah::core::PeriodicTable::initialize();
     tadah::core::Context ctx;
     const auto config = [](const std::string& grading) {
@@ -237,7 +243,6 @@ TEST_CASE("FAILSCORE_GRADING: every optimiser spec carries it, through the "
                    "  ENDEXPLORE\n"
                    "ENDSTRATEGY\n"
                    "ENDOPTIMIZER\n"
-                   "LOSS L2\n"
                    "FAILSCORE 1e6\n") +
                grading;
     };

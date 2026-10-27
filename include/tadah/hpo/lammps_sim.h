@@ -138,8 +138,40 @@ class LammpsSim {
     struct FailVarDecl {
         std::string name;
         double      scale = 1.0;
+        /* <scale> is written on the line: it grades the failure, which
+         * FAILSCORE_GRADING ON does, and is refused under OFF
+         * (validate_hpo_setup). */
+        bool        scale_given = false;
     };
     std::vector<FailVarDecl> failvars;
+
+    /* A LAMMPS variable the line defines on LAMMPS' command line: --invar
+     * <name> <value>, -var <name> <values...> or -v <name> <values...>
+     * (`option` as written). Each name is defined once on a line
+     * (parse_tokens), and none is a --hotvar of the line, nor, on a line
+     * without a --hotvar, a --hotvar of another line its script reads
+     * (HPOTargets): the run injects `variable <name> equal <value>` for a
+     * hot variable, which LAMMPS refuses for a variable of another style. */
+    struct LineVariable {
+        std::string name;
+        std::string option;
+    };
+    std::vector<LineVariable> line_variables;
+
+    /* Which of the settings read above the line it uses (HPOTargets: a
+     * LOSS, FAILSCORE or PC_SCRIPT_TIMEOUT line that no line after it uses
+     * is refused). The LOSS: a --varloss term of the line without a loss
+     * function of its own. The FAILSCORE: the line has no --failscore. The
+     * PC_SCRIPT_TIMEOUT: the line has no --maxtime. */
+    bool reads_default_loss = false;
+    bool reads_default_failscore = true;
+    bool reads_default_maxtime = true;
+
+    /* The line of the target file that holds this PC_LAMMPS or PC_FAILPROBE
+     * line (its last physical line) and its text, for the refusals the
+     * startup checks make of it; 0 for a LammpsSim made without a file. */
+    std::size_t line = 0;
+    std::string line_text;
 
     /* Set for the PC_FAILPROBE entry only: a minimiser-free potential-sanity
      * probe dispatched at the FRONT of wave 1 (exempt from LPT ordering),
@@ -183,6 +215,17 @@ class LammpsSim {
 
     void prep_script_lines();
 };
+
+/**
+ * Whether the LAMMPS script `lines` reads the variable `name`: a reference
+ * ${name}, $name for a one-character name, or v_name as a whole word (v_x
+ * is not read by v_xb, nor by a word that ends in v_x). The one test of
+ * HPOTargets (a variable a line defines is not another line's --hotvar its
+ * script reads) and of the run (the hot values a cold script is injected),
+ * so the two cannot disagree.
+ */
+bool script_reads_variable(const std::vector<std::string>& lines,
+                           const std::string& name);
 
 /**
  * Strict double parser. Returns true and writes to `value` only when the

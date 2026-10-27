@@ -11,19 +11,19 @@ bool loss_has_derivative_wrt_observed(const tadah::LossFunction& fn)
 {
     using Type = tadah::LossFunction::Type;
     switch (fn.type()) {
-        /* Residual-based: L = f(v - t), so dL/dv = -dL/dt = -loss_prime. */
+        /* Residual-based: L = f(v - t), so dL/dv = -dL/dt. */
         case Type::L1:
         case Type::L2:
         case Type::LOG_COSH:
         case Type::HUBER:
         case Type::TUKEY:
-            return true;
-        /* Non-residual: MAPE depends on |y|, RMSLE on log(y); the
-         * "negate loss_prime" trick doesn't hold. These could be
-         * hand-coded; for now the observable is routed to FD. */
+        /* Not a function of v - t alone, with a derivative in v all the
+         * same: MAPE w |v - t| / |t| (w sign(v - t) / |t|; a target of 0
+         * is refused where it is given), RMSLE w (ln(v + eps) -
+         * ln(t + eps))^2. */
         case Type::MAPE:
         case Type::RMSLE:
-            return false;
+            return true;
     }
     return false;
 }
@@ -35,7 +35,9 @@ bool loss_grad_wrt_observed(const tadah::LossFunction& fn,
                             double& out)
 {
     if (!loss_has_derivative_wrt_observed(fn)) return false;
-    out = -fn.loss_prime(v_observed, t_target, w_weight);
+    /* dL/dv, the derivative the metric lines take as well
+     * (dloss_dtheta.h): for MAPE and RMSLE not -dL/dt. */
+    out = fn.loss_prime_observed(v_observed, t_target, w_weight);
     return true;
 }
 
@@ -385,7 +387,8 @@ bool compute_observables_grad_dWchain(
         dL_dW.setZero();
         if (!apply_loss_fold(obs.loss_fn, obs.value, obs.target, obs.weight,
                              obs.dO_dW, dL_dW)) {
-            /* MAPE / RMSLE not supported by loss_grad_wrt_observed. */
+            /* A loss function loss_grad_wrt_observed does not
+             * differentiate (none of LossFunction's today). */
             for (int idx : all_theta_indices) needs_fd_out.push_back(idx);
             return false;
         }

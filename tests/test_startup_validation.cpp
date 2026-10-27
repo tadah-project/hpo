@@ -839,14 +839,14 @@ const std::string kObservable =
 
 }  // namespace
 
-/* Loss terms whose value has no analytical derivative -- at every
- * evaluation (a PC_OBSERVABLE --loss MAPE or RMSLE) or at some (an
- * unconverged relaxation under --unconverged force-scaled) -- stop an
+/* Loss terms whose value has no analytical derivative at some evaluations
+ * (an unconverged relaxation under --unconverged force-scaled) stop an
  * ANALYTICAL run at the first such gradient. Startup refuses ANALYTICAL
  * for them, written out or resolved for PC_OBSERVABLE, naming the line;
  * HYBRID fills them with finite differences. They used to pass startup
  * and stop the run after its first evaluation with "no registered
- * analytical derivative ... dtheta_registry". */
+ * analytical derivative ... dtheta_registry". Every loss function of a
+ * term has a derivative with respect to the value. */
 TEST_CASE("startup validation: GRAD_STRATEGY ANALYTICAL needs loss terms "
           "with an analytical derivative",
           "[startup_validation][grad_strategy]") {
@@ -859,26 +859,27 @@ TEST_CASE("startup validation: GRAD_STRATEGY ANALYTICAL needs loss terms "
   const std::string analytical = "GRAD_STRATEGY ANALYTICAL\n";
   Context ctx = analytical_ready_ctx();
 
-  SECTION("--loss MAPE and RMSLE have no derivative with respect to the "
+  SECTION("every loss function has a derivative with respect to the "
           "value") {
-    for (const char* loss : {"MAPE", "RMSLE"}) {
-      INFO("--loss " << loss);
-      const std::string line = kObservable + " --loss " + loss + "\n";
+    /* Pins: ANALYTICAL, written or resolved for PC_OBSERVABLE, accepts a
+     * term of every loss function, set by --loss or by the LOSS line
+     * above it: MAPE (w sign(m - t) / |t|) and RMSLE as the residual
+     * losses.
+     * Before the fix: MAPE and RMSLE were refused, "the PC_OBSERVABLE term
+     * cohesive_energy[1] uses the loss function MAPE, which has no
+     * derivative with respect to the value", with GRAD_STRATEGY HYBRID
+     * as the remedy. */
+    for (const char* loss :
+         {"MAPE", "RMSLE", "L1", "L2", "HUBER", "TUKEY", "LOG_COSH"}) {
+      INFO("loss " << loss);
       for (const std::string& grad : {analytical, std::string()}) {
         INFO("GRAD_STRATEGY line: '" << grad << "'");
-        CHECK_THAT(startup_error(ctx, target(grad, line)),
-                   Catch::Contains("GRAD_STRATEGY ANALYTICAL") &&
-                   Catch::Contains("cohesive_energy[1]") &&
-                   Catch::Contains(std::string("--loss ") + loss) &&
-                   Catch::Contains("GRAD_STRATEGY HYBRID"));
+        CHECK(startup_error(ctx, target(grad, kObservable + " --loss " +
+                                                  loss + "\n")) == "");
+        CHECK(startup_error(ctx, target(grad, std::string("LOSS ") + loss +
+                                                  "\n" + kObservable +
+                                                  "\n")) == "");
       }
-      CHECK(startup_error(ctx, target("GRAD_STRATEGY HYBRID\n", line)) == "");
-    }
-    /* The residual losses have one. */
-    for (const char* loss : {"L1", "L2", "HUBER", "TUKEY", "LOG_COSH"}) {
-      INFO("--loss " << loss);
-      CHECK(startup_error(ctx, target(analytical, kObservable + " --loss " +
-                                                      loss + "\n")) == "");
     }
   }
   SECTION("--unconverged force-scaled has none at an unconverged "
@@ -897,7 +898,10 @@ TEST_CASE("startup validation: GRAD_STRATEGY ANALYTICAL needs loss terms "
                                     " --unconverged const 100\n")) == "");
   }
   SECTION("the message names the PC_OBSERVABLE line by its 1-based index") {
-    const std::string two = kObservable + "\n" + kObservable + " --loss MAPE\n";
+    /* (The second line's --unconverged force-scaled is the blocker: it
+     * was --loss MAPE, which ANALYTICAL accepts.) */
+    const std::string two = kObservable + "\n" + kObservable +
+                            " --unconverged force-scaled 1.0\n";
     CHECK_THAT(startup_error(ctx, target(analytical, two)),
                Catch::Contains("cohesive_energy[2]") &&
                !Catch::Contains("cohesive_energy[1]"));

@@ -97,7 +97,9 @@ double LossFunction::loss(double y, double ypred, double w,
 
         case Type::LOG_COSH : return stable_log_cosh(r) * w;
 
-        case Type::MAPE :     return abs_r / (std::abs(y)+eps) * w;
+        /* Relative to the target (ypred), not the measured value: a
+         * target of 0 is refused where it is given (target_refusal). */
+        case Type::MAPE :     return abs_r / std::abs(ypred) * w;
 
         case Type::HUBER : {
             const double delta = params_[0];   // resolve_params() guarantees one
@@ -151,8 +153,11 @@ double LossFunction::loss_prime(double y, double ypred, double w,
             return -w * std::tanh(r);
 
         case Type::MAPE : {
-            const double denom = std::abs(y) + eps;
-            return -w * sgn(r) / denom;
+            /* L = w |y - t| / |t|, t = ypred:
+             * dL/dt = -w sgn(r) / |t| - w |r| sgn(t) / t^2. */
+            const double t = std::abs(ypred);
+            const double sign_t = (ypred > 0) - (ypred < 0);
+            return -w * sgn(r) / t - w * abs_r * sign_t / (t * t);
         }
 
         case Type::HUBER : {
@@ -186,16 +191,28 @@ double LossFunction::loss_prime_observed(double measured, double target,
 {
     if (w == 0.0) return 0.0;
     if (type_ == Type::MAPE) {
+        /* L = w |m - t| / |t|: dL/dm = w sign(m - t) / |t|. */
         const double r = measured - target;
-        const double denom = std::abs(measured) + eps;
         const double sign_r = (r > 0) - (r < 0);
-        const double sign_y = (measured > 0) - (measured < 0);
-        return w * (sign_r / denom - std::abs(r) * sign_y / (denom * denom));
+        return w * sign_r / std::abs(target);
     }
     if (type_ == Type::RMSLE)
         return 2 * w * (std::log(measured + eps) - std::log(target + eps))
              / (measured + eps);
     return -loss_prime(measured, target, w, eps);
+}
+
+std::string LossFunction::target_refusal(double target) const
+{
+    if (type_ == Type::MAPE && target == 0.0)
+        return "MAPE divides by the target, and the target is 0";
+    if (type_ == Type::RMSLE && !(target > -1e-12)) {
+        std::ostringstream oss;
+        oss << "RMSLE takes ln(target + 1e-12), and the target " << target
+            << " is at or below -1e-12";
+        return oss.str();
+    }
+    return {};
 }
 
 bool LossFunction::is_squared() const noexcept

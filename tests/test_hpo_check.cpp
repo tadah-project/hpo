@@ -359,8 +359,10 @@ TEST_CASE("hpo --check: a valid setup passes, with a summary, no evaluation "
     CHECK(contains(summary, "SGRID2B[2]  [4, 6]  LIN"));
     CHECK(contains(summary, "Optimiser: STRATEGY TYPE PLAIN"));
     CHECK(contains(summary, "STRATEGY  NLOPT:LN_SBPLX; stops: MAXEVAL 5"));
-    CHECK(contains(summary, "Loss terms: LOSS L2"));
-    CHECK(contains(summary, "PC_ERMSE  target 0, weight 1"));
+    /* Each term with its loss function (the heading named the last LOSS
+     * line, "Loss terms: LOSS L2", and the rows had none). */
+    CHECK(contains(summary,
+                   "Loss terms:\n  PC_ERMSE  target 0, weight 1, loss L2\n"));
     CHECK(contains(summary, "Data: 1 training structure, 1 validation "
                             "structure"));
     CHECK(contains(summary, "No candidate was evaluated and no file was "

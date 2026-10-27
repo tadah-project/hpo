@@ -114,8 +114,8 @@ std::string nlopt_inner_searches_without_gradient();
  * NLopt's MLSL and AUGLAG algorithms without a default local optimiser
  * (AUGLAG, AUGLAG_EQ, G_MLSL, G_MLSL_LDS) are left out: they need an INNER
  * block. The optimisers a block can name as written in a run with
- * PC_LAMMPS, which takes no gradient, besides DLIB:BFGS: HPOTargets::read()
- * names them when it refuses a gradient-based one. */
+ * PC_LAMMPS, which takes no gradient: HPOTargets::read() names them when it
+ * refuses a gradient-based one. */
 std::string searches_without_gradient();
 
 /* STRATEGY TYPE MULTISTART: `spec` names an optimiser, and one that
