@@ -1840,3 +1840,129 @@ TEST_CASE("DLIB:BFGS: the points a search asks for do not depend on the unit "
         CHECK(count_of(j, "DLIB:BFGS: the search runs on the loss divided by "
                           "the length of its first gradient, ") == 1u);
 }
+
+namespace {
+
+/* s ((a - 0.5)^2 + (b - 0.5)^2) on [0, 1]^2 (real = internal coordinates),
+ * its minimum 0 at (0.5, 0.5): a point farther than 0.3 from the minimum
+ * fails and reports the largest double, the default FAILSCORE, as a
+ * --skip-above cap makes it. Every evaluation is a function of its point. */
+struct FailingBowl {
+    std::vector<Vec> asked;
+    std::vector<double> reported;
+    double scale = 1.0;
+    double operator()(const Vec& x) {
+        asked.push_back(x);
+        const double a = x(0) - 0.5, b = x(1) - 0.5;
+        const double r2 = a * a + b * b;
+        reported.push_back(r2 > 0.09 ? std::numeric_limits<double>::max()
+                                     : scale * r2);
+        return reported.back();
+    }
+    std::string repeat_reuse_blocker() const { return ""; }
+    std::size_t g_iter_value() const { return asked.size(); }
+};
+
+}  // namespace
+
+/* Pins: DLIB:BFGS (MAXEVAL 60, FTOL_ABS 1e-7 times the factor) on the
+ * failing bowl from (0.45, 0.5), under the default FAILSCORE, with the
+ * loss multiplied by 2^-13, 1 and 2^7: the length of the first gradient
+ * the search divides its loss by is 0.1 times the factor, below 1 for the
+ * first two and above it for the third. Its first trial, a unit step, goes
+ * to (1, 0.5), outside the disc of usable points, and fails; dlib is given
+ * a finite stand-in for it (the journal says so once), its line search
+ * backs off inside the disc, and the search ends "DLIB:BFGS: FTOL_ABS
+ * reached" with at most 2 failed evaluations, no failed point asked for
+ * twice and a best loss below 1e-12 times the factor. The three searches
+ * ask for the same points, bit for bit.
+ * Before the fix: dlib was given FAILSCORE divided by the length, +inf for
+ * a length below 1; its line search, interpolating it, took a step that is
+ * not a number, which the box put on the corner (1, 1): at the factors
+ * 2^-13 and 1 the search asked for that failed corner again and again
+ * until its MAXEVAL, "DLIB:BFGS: MAXEVAL reached" (54 of 60 evaluations
+ * failed), and its best was a point of the first stencil (2.5e-3 times the
+ * factor); at 2^7 it ended FTOL_ABS reached after 32
+ * evaluations, 1 of them failed, along other points than the two others;
+ * no journal line named a stand-in. */
+TEST_CASE("DLIB:BFGS: a failed evaluation in a line search is given a finite "
+          "stand-in, in any unit of the loss",
+          "[HPO][repeat_points][dlib_bfgs][failscore]")
+{
+    std::vector<std::vector<Vec>> searches;
+    for (const double factor : {std::ldexp(1.0, -13), 1.0,
+                                std::ldexp(1.0, 7)}) {
+        INFO("the loss times " << factor);
+        auto sp = bfgs_spec({0.0, 0.0}, {1.0, 1.0}, {0.45, 0.5});
+        sp.stop.maxeval = 60;
+        sp.stop.ftol_abs = 1e-7 * factor;
+        FailingBowl host;
+        host.scale = factor;
+        const std::string journal =
+            run_bfgs_within(sp, host, "DLIB:BFGS on the failing bowl");
+        std::vector<Vec> failed;
+        double best = std::numeric_limits<double>::max();
+        for (std::size_t k = 0; k < host.asked.size(); ++k) {
+            if (host.reported[k] == std::numeric_limits<double>::max())
+                failed.push_back(host.asked[k]);
+            else
+                best = std::min(best, host.reported[k]);
+        }
+        INFO(host.asked.size() << " evaluations, " << failed.size()
+                               << " failed, best " << best);
+        CHECK(status_of(journal) == "DLIB:BFGS: FTOL_ABS reached");
+        CHECK(failed.size() <= 2u);
+        CHECK(repeats_in(failed) == 0u);
+        CHECK(best < 1e-12 * factor);
+        CHECK(count_of(journal, "DLIB:BFGS: dlib is given a finite stand-in "
+                                "for each failed evaluation of this "
+                                "search") == 1u);
+        searches.push_back(host.asked);
+    }
+    REQUIRE(searches[0].size() > 10u);
+    CHECK(same_sequence(searches[1], searches[0]));
+    CHECK(same_sequence(searches[2], searches[0]));
+}
+
+/* Pins: bfgs_box_search (dlib's loop on the loss itself) on 10 ((a -
+ * 0.5)^2 + (b - 0.5)^2) over [0, 1]^2 from (0.45, 0.5), with its exact
+ * gradient, whose loss is +inf farther than 0.3 from the minimum: the first
+ * trial, the start minus the gradient, lies on the bound at (1, 0.5) and
+ * its loss is +inf; the second, a tenth of the step, (0.55, 0.5), has the
+ * start's loss, not a decrease; dlib's interpolation through +inf then
+ * gives a step that is not finite, and the search throws "The line search
+ * generated a step that is not finite" before it evaluates a third trial.
+ * Before the fix: the line search evaluated the trials of that step, which
+ * the box put on a corner, 101 evaluations in all, and the search threw
+ * dlib's "The objective function generated non-finite outputs" after it. */
+TEST_CASE("DLIB:BFGS: the line search evaluates no step that is not finite",
+          "[HPO][repeat_points][dlib_bfgs][failscore]")
+{
+    std::vector<Vec> asked;
+    const auto loss = [&asked](const Vec& x) {
+        asked.push_back(x);
+        const double a = x(0) - 0.5, b = x(1) - 0.5;
+        const double r2 = a * a + b * b;
+        return r2 > 0.09 ? std::numeric_limits<double>::infinity()
+                         : 10.0 * r2;
+    };
+    const auto grad = [](const Vec& x) {
+        Vec g(2);
+        g(0) = 20.0 * (x(0) - 0.5);
+        g(1) = 20.0 * (x(1) - 0.5);
+        return g;
+    };
+    Vec x = point(0.45, 0.5);
+    double f_value = 0.0;
+    CHECK_THROWS_WITH(
+        tadah::hpo::detail::bfgs_box_search(
+            dlib::bfgs_search_strategy(),
+            dlib::objective_delta_stop_strategy(1e-9), loss, grad, x,
+            point(0.0, 0.0), point(1.0, 1.0), f_value, [](const Vec&) {}),
+        "The line search generated a step that is not finite");
+    REQUIRE(asked.size() == 3u);
+    CHECK(same_bits(asked[0], point(0.45, 0.5)));
+    CHECK(same_bits(asked[1], point(1.0, 0.5)));
+    CHECK(asked[2](0) == Approx(0.55).epsilon(1e-12));
+    CHECK(asked[2](1) == 0.5);
+}

@@ -347,3 +347,44 @@ TEST_CASE("DLIB:BFGS: the path does not depend on the scale of the loss",
     const auto [lo, hi] = std::minmax_element(evals.begin(), evals.end());
     CHECK(*hi - *lo <= 5u);
 }
+
+/* Pins: DLIB:BFGS (MAXEVAL 60, FTOL_ABS 1e-11) from RCUT2B 5.6, SGRIDMB 0.2
+ * with PC_ERMSE 0 0.0001 --skip-above 6.0, which rejects part of the box,
+ * under the default FAILSCORE (the largest double): the length of the first
+ * gradient the search divides its loss by is below 1 (0.0072), the journal
+ * says once that dlib is given a finite stand-in for a failed evaluation,
+ * at most 2 of the 60 evaluations fail, and the best loss is below 1.2e-3
+ * (the start's is 2.77e-3, and Tadah! 1.5.0, which runs dlib's loop on the
+ * loss itself, reaches 2.29e-3 here).
+ * Before the fix: dlib was given FAILSCORE divided by that length, +inf;
+ * its line search took a step that is not a number, which the box put on a
+ * corner: 55 of the 60 evaluations failed, the best loss was the start's
+ * (2.767e-3), and no journal line named a stand-in. */
+TEST_CASE("DLIB:BFGS: failed evaluations under the default FAILSCORE with a "
+          "first gradient shorter than 1", "[HPO][dlib_bfgs][failscore][e2e]")
+{
+    TaDataRun run(ta_target("    LIB DLIB\n    ALGO BFGS\n    MAXEVAL 60\n"
+                            "    FTOL_ABS 1e-11\n",
+                            "PC_ERMSE 0 0.0001 --skip-above 6.0\n"));
+    CHECK(run.status == 0);
+    const auto loss = data_rows("loss.tadah");
+    REQUIRE(loss.size() == 60u);
+    std::size_t failed = 0;
+    double best = 1e300;
+    for (const auto& row : loss) {
+        if (row.back() == "1.797693134862316e+308") ++failed;
+        else best = std::min(best, std::stod(row.back()));
+    }
+    INFO("failed evaluations " << failed << ", best " << best);
+    CHECK(failed <= 2u);
+    CHECK(best < 1.2e-3);
+    const std::string journal = read_file("hpo_run.log");
+    std::smatch m;
+    REQUIRE(std::regex_search(
+        journal, m,
+        std::regex("DLIB:BFGS: the search runs on the loss divided by the "
+                   "length of its first gradient, ([0-9.e+-]+) ")));
+    CHECK(std::stod(m[1]) < 1.0);
+    CHECK(count_of(journal, "DLIB:BFGS: dlib is given a finite stand-in for "
+                            "each failed evaluation of this search") == 1u);
+}
