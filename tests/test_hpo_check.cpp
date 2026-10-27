@@ -26,10 +26,12 @@
 #include <tadah/core/context.h>
 #include <tadah/core/logger.h>
 #include <tadah/core/periodic_table.h>
+#include <tadah/hpo/dloss_dtheta.h>
 #include <tadah/hpo/hpo.h>
 #include <tadah/hpo/hpo_host.h>
 #include <tadah/hpo/hpo_log.h>
 #include <tadah/hpo/hpo_mpi.h>
+#include <tadah/hpo/hpo_targets.h>
 #include <tadah/hpo/io_retry.h>
 #include <tadah/hpo/runners.h>
 
@@ -42,6 +44,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <csignal>
 #include <cstdio>
 #include <cstdlib>
@@ -1663,18 +1666,22 @@ std::size_t line_number(const std::string& text, const std::string& line)
  * descriptors of the training configuration do not differentiate on the
  * data -- the routing of the analytical gradient -- is refused by the check
  * and by the run alike, before any evaluation, at the line that closes the
- * OPTIMIZER block, naming each such OPTIM line and HYBRID:
+ * OPTIMIZER block, naming each such OPTIM line, why, and HYBRID:
  *   - OPTIM LAMBDA (1) (D2_BP, FORCE false): "OPTIMIZER block: GRAD_STRATEGY
  *     ANALYTICAL needs an analytical derivative with respect to every
- *     search parameter, and the descriptors of the training configuration
- *     give none for OPTIM LAMBDA (1) on line 4 of the target file (no
- *     descriptor differentiates it). GRAD_STRATEGY HYBRID takes finite
- *     differences for it.";
+ *     search parameter, and the descriptors give none for OPTIM LAMBDA (1)
+ *     on line 4 of the target file (no descriptor differentiates it).
+ *     GRAD_STRATEGY HYBRID takes finite differences for it.";
  *   - OPTIM SGRIDMB (1) of DM_Blip, whose derivatives cover the energy rows
- *     only, with FORCE true: "... (the descriptors differentiate it in the
- *     energy rows only, and FORCE true gives the fit force rows) ...";
+ *     only, with FORCE true: "... (DM_Blip differentiates it in the energy
+ *     rows only, and FORCE true gives the fit force rows) ...";
  *   - the same with FORCE false and PC_FRMSE: "... and PC_FRMSE measures the
  *     forces of the validation set) ...";
+ *   - OPTIM WATOM (1), which D2_BP differentiates in the energy and the
+ *     force rows and DM_Blip in the energy rows only, with FORCE true: "...
+ *     for OPTIM WATOM (1) on line 4 of the target file (DM_Blip
+ *     differentiates it in the energy rows only, and FORCE true gives the
+ *     fit force rows) ...";
  *   - OPTIM LAMBDA (1) and OPTIM SGRIDMB (1) with FORCE true: both, in the
  *     order of their lines ("... for OPTIM LAMBDA (1) on line 4 of the
  *     target file (...) or OPTIM SGRIDMB (1) on line 5 (...). ... for
@@ -1682,10 +1689,15 @@ std::size_t line_number(const std::string& text, const std::string& line)
  * The run evaluates nothing: the process-wide evaluation counter is where
  * it was, and loss.tadah, whose header the run writes when it has read the
  * data, holds no row.
- * Before the fix: the check passed each of these setups, and the run
- * evaluated the start and ended at its first gradient, "GRAD_STRATEGY=
- * ANALYTICAL: no analytical gradient for 1 parameter at this point
- * (indices: [0]): ...". */
+ * Before the fix: the check and the run passed OPTIM WATOM with D2_BP and
+ * DM_Blip under FORCE true (the force rows of D2_BP hid the missing DM_Blip
+ * part, and the run optimised on that gradient), and the other refusals
+ * read "... and the descriptors of the training configuration give none
+ * for ..." and "(the descriptors differentiate it in the energy rows only,
+ * ...)", naming no descriptor. Tadah! 1.5.0 passed each of these setups,
+ * and its run evaluated the start and ended at its first gradient,
+ * "GRAD_STRATEGY=ANALYTICAL: no analytical gradient for 1 parameter at
+ * this point (indices: [0]): ...". */
 TEST_CASE("hpo --check: GRAD_STRATEGY ANALYTICAL refuses a search parameter "
           "without an analytical derivative before any evaluation, as the "
           "run does",
@@ -1697,10 +1709,10 @@ TEST_CASE("hpo --check: GRAD_STRATEGY ANALYTICAL refuses a search parameter "
     const std::string head =
         "OPTIMIZER block: GRAD_STRATEGY ANALYTICAL needs an analytical "
         "derivative with respect to every search parameter, and the "
-        "descriptors of the training configuration give none for ";
+        "descriptors give none for ";
     const std::string no_descriptor = " (no descriptor differentiates it)";
     const std::string energy_rows =
-        " (the descriptors differentiate it in the energy rows only, and ";
+        " (DM_Blip differentiates it in the energy rows only, and ";
     const std::string by_force = "FORCE true gives the fit force rows)";
     const std::string by_frmse =
         "PC_FRMSE measures the forces of the validation set)";
@@ -1726,6 +1738,11 @@ TEST_CASE("hpo --check: GRAD_STRATEGY ANALYTICAL refuses a search parameter "
          false,
          head + "OPTIM SGRIDMB (1) on line 5 of the target file" +
              energy_rows + by_frmse + for_it},
+        {"D2_BP and DM_Blip WATOM with FORCE true",
+         root + "OPTIM WATOM (1) 0.5 2.0\n" + lbfgs_block("ANALYTICAL"), true,
+         true,
+         head + "OPTIM WATOM (1) on line 4 of the target file" +
+             energy_rows + by_force + for_it},
         {"OPTIM LAMBDA and DM_Blip SGRIDMB with FORCE true",
          root + lambda + sgridmb + lbfgs_block("ANALYTICAL"), true, true,
          head + "OPTIM LAMBDA (1) on line 4 of the target file" +
@@ -1876,4 +1893,303 @@ TEST_CASE("hpo --check: a RESTART block on TADAH:GRID is refused at its "
     CHECK(error_of([&] { return tadah::hpo::hpo_run(ctx); }) == expected);
     CHECK(Host::g_iter_value() == evaluations);
     CHECK_FALSE(fs::exists("loss.tadah"));
+}
+
+namespace {
+
+/* Two-atom Ta structures in a 20 A cubic cell, one per distance of
+ * `distances` (A) between the atoms, written to `path`: no pair of atoms
+ * within 1 A of a cutoff of 5 A. */
+void write_dimer_db(const fs::path& path, const std::vector<double>& distances)
+{
+    std::ofstream os(path);
+    for (const double r : distances) {
+        os << "ta_dimer\n"
+           << "1.0 1.0 1.0\n"
+           << -0.01 * r << " 0.0\n"
+           << "20.0 0.0 0.0\n"
+           << "0.0 20.0 0.0\n"
+           << "0.0 0.0 20.0\n"
+           << "0.0 0.0 0.0\n"
+           << "0.0 0.0 0.0\n"
+           << "0.0 0.0 0.0\n"
+           << "Ta 5.0 5.0 5.0  0.0 0.0 0.0\n"
+           << "Ta " << 5.0 + r << " 5.0 5.0  0.0 0.0 0.0\n"
+           << "\n";
+    }
+}
+
+/* `c` with ATOM `atoms` and WATOM `watom`. */
+tadah::core::Context with_watom(tadah::core::Context c,
+                                const std::string& atoms,
+                                const std::string& watom)
+{
+    c.remove("ATOM");
+    c.remove("WATOM");
+    c.add("ATOM", atoms);
+    c.add("WATOM", watom);
+    return c;
+}
+
+/* The training configuration of the gradients with respect to WATOM: D2_Blip
+ * (TYPE2B D2_Blip 3 3 Ta Ta, CGRID2B 2.5 3.5 4.5, SGRID2B 1 1 1) and the
+ * many-body descriptor `typemb` with its `lines`, each under Cut_Cos 5,
+ * WATOM `watom`, LAMBDA 1e-6 and FORCE true, trained on the Ta data
+ * (elastic.tadahdb and eos_bcc.tadahdb of the shipped Ta test data) and
+ * validated on its elastic set (config.val, written here): data whose loss
+ * depends on WATOM through the many-body descriptor. */
+tadah::core::Context ta_watom_context(
+    const std::string& typemb,
+    const std::vector<std::pair<std::string, std::string>>& lines,
+    const std::string& watom)
+{
+    const fs::path data = fs::path(TADAH_HPO_TA_DATA_DIR) / "common" / "data";
+    std::ofstream("config.val")
+        << "DBFILE " << (data / "elastic.tadahdb").string() << "\n";
+    tadah::core::Context c =
+        make_ta_context("train.db", "config.hpo", "config.val");
+    for (const char* key : {"DBFILE", "TYPE2B", "CGRID2B", "SGRID2B",
+                            "INITMB", "TYPEMB", "LAMBDA", "FORCE", "WATOM"})
+        c.remove(key);
+    c.add("DBFILE", (data / "elastic.tadahdb").string() + " " +
+                        (data / "eos_bcc.tadahdb").string());
+    c.add("TYPE2B", "D2_Blip 3 3 Ta Ta");
+    c.add("CGRID2B", "2.5 3.5 4.5");
+    c.add("SGRID2B", "1.0 1.0 1.0");
+    c.add("INITMB", "true");
+    c.add("TYPEMB", typemb);
+    for (const auto& [key, value] : lines) c.add(key, value);
+    c.add("LAMBDA", 1e-6);
+    c.add("FORCE", "true");
+    c.add("WATOM", watom);
+    return c;
+}
+
+const std::vector<std::pair<std::string, std::string>> kDmBlipLines = {
+    {"CGRIDMB", "2.8 3.4"}, {"SGRIDMB", "1.0 1.0"}};
+const std::vector<std::pair<std::string, std::string>> kDmMBlipLines = {
+    {"CGRIDMB", "0.0"}, {"SGRIDMB", "0.2"}, {"CEMBFUNC", "1.0 2.0"},
+    {"SEMBFUNC", "1.0 1.0"}};
+
+/* The analytical gradient of the loss with respect to the one search
+ * parameter of the target file config.hpo at `x`, by
+ * HPO_Host::analytical_gradient after the evaluation of `x` (the trained
+ * model the gradient differentiates), with the parameters it hands to
+ * finite differences in `needs_fd`; the loss at x - h and x + h in `fm`
+ * and `fp` when `h` > 0. */
+struct HostGradient {
+    double g = 0.0;
+    std::vector<int> needs_fd;
+    double fm = 0.0, fp = 0.0;
+};
+HostGradient host_gradient(tadah::core::Context ctx, double x, double h)
+{
+    tadah::hpo::HPOTargets trg(ctx, "config.hpo");
+    Host host(ctx, trg, "config.val");
+    HostGradient out;
+    ParamVec p(1);
+    if (h > 0.0) {
+        p(0) = x - h;
+        out.fm = host(p);
+        p(0) = x + h;
+        out.fp = host(p);
+    }
+    p(0) = x;
+    (void)host(p);
+    ParamVec g(1);
+    REQUIRE(host.analytical_gradient(p, g, out.needs_fd));
+    out.g = g(0);
+    return out;
+}
+
+}  // namespace
+
+/* Pins: a search parameter that the descriptors differentiate, but for
+ * pairs of atoms the data do not hold at the values of the training
+ * configuration, is refused under GRAD_STRATEGY ANALYTICAL with that
+ * reason, naming the structures that lack them: OPTIM RCUT2B (1) of D2_BP
+ * under Cut_PolyS (RCUT2B 5), which depends on RCUT2B only for a pair
+ * within 1 A of the cutoff, with Ta dimers of 2.4 and 2.6 A,
+ *   - as the validation structures (the training structure has pairs at
+ *     4.67 A): "... and the descriptors give none for OPTIM RCUT2B (1) on
+ *     line 4 of the target file (at the values of the training
+ *     configuration, no pair of atoms of the validation structures lies
+ *     where the descriptors depend on it: Cut_PolyS depends on RCUT2B only
+ *     for a pair within 1 A of the cutoff). ...";
+ *   - as the training structures: "... of the training structures ...";
+ *   - as both: "... of the training or the validation structures ...".
+ * Under Cut_Cos, which depends on RCUT2B for every pair within the cutoff,
+ * the check passes with the dimers as both.
+ * Before the fix: each refusal said "the descriptors of the training
+ * configuration give none for OPTIM RCUT2B (1) on line 4 of the target
+ * file (no descriptor differentiates it)", though D2_BP differentiates
+ * RCUT2B and the training structures had the pairs it needs in the first
+ * case. */
+TEST_CASE("hpo --check: GRAD_STRATEGY ANALYTICAL names the structures that "
+          "lack the pairs a search parameter acts on",
+          "[HPO][hpo_check][analytical]")
+{
+    const std::string hpo = "LOSS L2\nFAILSCORE 1e9\nPC_ERMSE 0 1\n"
+                            "OPTIM RCUT2B (1) 4.5 5.5\n" +
+                            lbfgs_block("ANALYTICAL");
+    const std::string head =
+        "Error on line " + std::to_string(line_number(hpo, "ENDOPTIMIZER")) +
+        ": OPTIMIZER block: GRAD_STRATEGY ANALYTICAL needs an analytical "
+        "derivative with respect to every search parameter, and the "
+        "descriptors give none for OPTIM RCUT2B (1) on line 4 of the target "
+        "file (at the values of the training configuration, no pair of atoms "
+        "of the ";
+    const std::string tail =
+        " lies where the descriptors depend on it: Cut_PolyS depends on "
+        "RCUT2B only for a pair within 1 A of the cutoff). GRAD_STRATEGY "
+        "HYBRID takes finite differences for it.\nLine: ENDOPTIMIZER";
+    struct Case {
+        const char* name;
+        bool dimer_train, dimer_val;
+        std::string cutoff;
+        std::string expected;
+    };
+    const std::vector<Case> cases = {
+        {"dimers as the validation structures", false, true, "Cut_PolyS",
+         head + "validation structures" + tail},
+        {"dimers as the training structures", true, false, "Cut_PolyS",
+         head + "training structures" + tail},
+        {"dimers as both", true, true, "Cut_PolyS",
+         head + "training or the validation structures" + tail},
+        {"dimers as both under Cut_Cos", true, true, "Cut_Cos", ""},
+    };
+    for (const Case& c : cases) {
+        INFO("case: " << c.name);
+        fresh_process_state();
+        ScratchDir sd("analytical_pairs");
+        write_inputs(hpo);
+        if (c.dimer_train) write_dimer_db("train.db", {2.4, 2.6});
+        if (c.dimer_val) write_dimer_db("val.db", {2.4, 2.6});
+        tadah::core::Context ctx =
+            make_ta_context("train.db", "config.hpo", "config.val");
+        ctx.remove("RCTYPE2B");
+        ctx.add("RCTYPE2B", c.cutoff);
+        ctx.add("CHECK", "true");
+        CHECK(error_of([&] { return tadah::hpo::hpo_run(ctx); }) ==
+              c.expected);
+    }
+}
+
+/* Pins: OPTIM WATOM (n) of the pair form of WATOM (sym sym value triples)
+ * searches the value of the n-th pair, and the analytical gradient
+ * differentiates the descriptors with respect to that pair's weight:
+ *   - the search parameter of OPTIM WATOM (2) of WATOM Ta Ta 1.0 Ta W 1.0
+ *     W W 1.0 has arg_pos 2, the pair the descriptors index (ParamRef);
+ *   - OPTIM WATOM (1) of WATOM Ta Ta 1.0 (D2_BP) passes the check under
+ *     GRAD_STRATEGY ANALYTICAL, as OPTIM WATOM (1) of WATOM 1.0 does;
+ *   - with D2_Blip and DM_mBlip on the shipped Ta data (ta_watom_context),
+ *     the analytical gradient with respect to OPTIM WATOM (1) of WATOM Ta
+ *     Ta 1.0 Ta W 1.0 W W 1.0, the weight of the pair Ta Ta, at 1.0 is that
+ *     with respect to OPTIM WATOM (1) of WATOM 1.0, the weight of Ta, whose
+ *     chain to the pair Ta Ta is 1: not 0, and no parameter goes to finite
+ *     differences.
+ * Before the fix: the search parameter had arg_pos 6, the position of the
+ * value among the tokens of WATOM, which the descriptors read as the 6th
+ * pair; the check refused WATOM Ta Ta 1.0 with "... give none for OPTIM
+ * WATOM (3) on line 4 of the target file (no descriptor differentiates
+ * it) ..." (no 3rd pair), and the gradient of the three pairs was that
+ * with respect to the pair W W, 0 on the Ta data, with no parameter handed
+ * to finite differences. */
+TEST_CASE("hpo --check: OPTIM WATOM (n) of the pair form of WATOM is the "
+          "n-th pair under GRAD_STRATEGY ANALYTICAL",
+          "[HPO][hpo_check][analytical][watom]")
+{
+    const std::string root = "LOSS L2\nFAILSCORE 1e9\nPC_ERMSE 0 1\n";
+    const std::string three = "Ta Ta 1.0 Ta W 1.0 W W 1.0";
+    {
+        INFO("the search parameter of OPTIM WATOM (2)");
+        fresh_process_state();
+        ScratchDir sd("watom_pairs_ref");
+        write_inputs(root + "OPTIM WATOM (2) 0.5 2.0\n" + kOptimizer);
+        tadah::core::Context ctx = with_watom(
+            make_ta_context("train.db", "config.hpo", "config.val"), "Ta W",
+            three);
+        tadah::hpo::HPOTargets trg(ctx, "config.hpo");
+        const auto prefs = tadah::hpo::make_param_ref_table(trg);
+        REQUIRE(prefs.size() == 1u);
+        CHECK(prefs[0].theta_name == "WATOM");
+        CHECK(prefs[0].arg_pos == 2);
+    }
+    {
+        INFO("WATOM Ta Ta 1.0 under ANALYTICAL");
+        fresh_process_state();
+        ScratchDir sd("watom_pair_check");
+        write_inputs(root + "OPTIM WATOM (1) 0.5 2.0\n" +
+                     lbfgs_block("ANALYTICAL"));
+        tadah::core::Context ctx = with_watom(
+            make_ta_context("train.db", "config.hpo", "config.val"), "Ta",
+            "Ta Ta 1.0");
+        ctx.add("CHECK", "true");
+        CHECK(error_of([&] { return tadah::hpo::hpo_run(ctx); }) == "");
+    }
+    {
+        INFO("the gradient of the three pairs and of the species");
+        const auto gradient = [&](const std::string& watom) {
+            fresh_process_state();
+            ScratchDir sd("watom_pair_gradient");
+            write_inputs(root + "OPTIM WATOM (1) 0.5 2.0\n" +
+                         lbfgs_block("HYBRID"));
+            return host_gradient(
+                ta_watom_context("DM_mBlip 0 1 1 2 2 Ta Ta", kDmMBlipLines,
+                                 watom),
+                1.0, 0.0);
+        };
+        const HostGradient pairs = gradient(three);
+        const HostGradient species = gradient("1.0");
+        CHECK(pairs.needs_fd.empty());
+        CHECK(species.needs_fd.empty());
+        CHECK(std::fabs(species.g) > 1e-3);
+        CHECK(pairs.g == Approx(species.g).epsilon(1e-9));
+    }
+}
+
+/* Pins: with D2_Blip and a many-body descriptor on the shipped Ta data
+ * under FORCE true (ta_watom_context), the analytical gradient with respect
+ * to OPTIM WATOM (1), which both descriptors read, at WATOM 1.0:
+ *   - DM_Blip, which differentiates WATOM in the energy rows only: WATOM
+ *     goes to finite differences (needs_fd holds it), so GRAD_STRATEGY
+ *     HYBRID takes it by finite differences;
+ *   - DM_mBlip, which differentiates it in the force rows too: no
+ *     parameter goes to finite differences, and the gradient is the central
+ *     difference of the loss (h = 1e-4) to 1e-4 of its size.
+ * Before the fix: the DM_Blip setup handed no parameter to finite
+ * differences, and its gradient lacked the DM_Blip part of the force rows:
+ * HYBRID used it as the derivative of the loss. */
+TEST_CASE("hpo: the analytical gradient hands WATOM to finite differences "
+          "when a descriptor that reads it lacks its force rows",
+          "[HPO][hpo_check][analytical][watom]")
+{
+    const std::string hpo = "LOSS L2\nFAILSCORE 1e9\nPC_ERMSE 0 1\n"
+                            "OPTIM WATOM (1) 0.5 2.0\n" +
+                            lbfgs_block("HYBRID");
+    {
+        INFO("D2_Blip and DM_Blip");
+        fresh_process_state();
+        ScratchDir sd("watom_blip_gradient");
+        write_inputs(hpo);
+        const HostGradient r = host_gradient(
+            ta_watom_context("DM_Blip 0 2 2 Ta Ta", kDmBlipLines, "1.0"), 1.0,
+            0.0);
+        CHECK(r.needs_fd == std::vector<int>{0});
+    }
+    {
+        INFO("D2_Blip and DM_mBlip");
+        fresh_process_state();
+        ScratchDir sd("watom_mblip_gradient");
+        write_inputs(hpo);
+        const double h = 1e-4;
+        const HostGradient r = host_gradient(
+            ta_watom_context("DM_mBlip 0 1 1 2 2 Ta Ta", kDmMBlipLines, "1.0"),
+            1.0, h);
+        CHECK(r.needs_fd.empty());
+        const double central = (r.fp - r.fm) / (2.0 * h);
+        INFO("analytical " << r.g << ", central difference " << central);
+        CHECK(std::fabs(central) > 1e-3);
+        CHECK(r.g == Approx(central).epsilon(1e-4));
+    }
 }

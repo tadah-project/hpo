@@ -1549,7 +1549,7 @@ the fit under FORCE true and the forces that PC_FRMSE measures."""
 checks = [
   { msg = "GRAD_STRATEGY takes one value: NUMERICAL, ANALYTICAL or HYBRID", doc = "At the line: the key ends the line without its value." },
   { msg = "{block} block: GRAD_STRATEGY ANALYTICAL{note} needs the analytical gradient of the loss, which this setup cannot form: {why}. Change that setting, or set GRAD_STRATEGY HYBRID to use finite differences where no analytical gradient is available.", doc = "At startup, at the END line of its optimiser; {block} is OPTIMIZER or EXPLORE, and {why} names the first setting the analytical gradient does not cover. {note} is \" (resolved for PC_OBSERVABLE: the block sets no GRAD_STRATEGY)\" when the block takes ANALYTICAL for PC_OBSERVABLE." },
-  { msg = "{block} block: GRAD_STRATEGY ANALYTICAL{note} needs an analytical derivative with respect to every search parameter, and the descriptors of the training configuration give none for {list}. GRAD_STRATEGY HYBRID takes finite differences for {what}.", doc = "At startup, once the data are read, at the END line of its optimiser: {list} names each OPTIM line whose search parameter the descriptors do not differentiate on the data in the rows the fit and the validation have, and why; {what} is it or them." },
+  { msg = "{block} block: GRAD_STRATEGY ANALYTICAL{note} needs an analytical derivative with respect to every search parameter, and the descriptors give none for {list}. GRAD_STRATEGY HYBRID takes finite differences for {what}.", doc = "At startup, once the data are read, at the END line of its optimiser: {list} names each OPTIM line whose search parameter the descriptors do not differentiate, at the values of the training configuration, in the rows the fit and the validation have, and why: no descriptor differentiates it; a descriptor that reads it differentiates it in the energy rows only (named), and FORCE true or PC_FRMSE gives force rows; or no pair of atoms of the training or the validation structures lies where the descriptors depend on it. {what} is it or them." },
   { msg = "{phase}: ASA:ASA does not accept GRAD_STRATEGY: it is gradient-free, and the reannealing takes its tangents by finite differences (PARAM Delta_X)", doc = "At startup, at the END line of its optimiser." },
   { msg = "{phase}: TADAH:{algo} does not use GRAD_STRATEGY: it is gradient-free", doc = "At startup, at the END line of its optimiser: an annealer." },
   { msg = "{phase} {lib}:{algo}: GRAD_STRATEGY never takes effect: {lib}:{algo} takes no gradient{note}; remove it.", doc = "At startup, at the END line of its optimiser: an optimiser that obtains no gradient; {note} says why, for an NLopt MLSL or AUGLAG." },
@@ -1665,7 +1665,7 @@ MAXEVAL 10
 GRAD_STRATEGY ANALYTICAL
 ENDSTRATEGY
 ENDOPTIMIZER'''
-error = "OPTIMIZER block: GRAD_STRATEGY ANALYTICAL needs an analytical derivative with respect to every search parameter, and the descriptors of the training configuration give none for OPTIM LAMBDA (1) on line 1 of the target file (no descriptor differentiates it). GRAD_STRATEGY HYBRID takes finite differences for it."
+error = "OPTIMIZER block: GRAD_STRATEGY ANALYTICAL needs an analytical derivative with respect to every search parameter, and the descriptors give none for OPTIM LAMBDA (1) on line 1 of the target file (no descriptor differentiates it). GRAD_STRATEGY HYBRID takes finite differences for it."
 
 [[key.invalid]]
 wrap = "opt_asa"

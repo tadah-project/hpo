@@ -199,3 +199,64 @@ TEST_CASE("analytical gradient: the search parameters each descriptor "
     INFO(dummy);
     CHECK(claims(dummy, keys2).at("RCUT2B") == "-");
 }
+
+namespace {
+
+/* A two-body descriptor `type2` (TYPE2B) and a many-body descriptor
+ * `typem` (TYPEMB), with their lines, in one configuration. */
+std::string joined(const std::string& type2, const std::string& lines2,
+                   const std::string& typem, const std::string& linesm)
+{
+    return kModel + "INIT2B true\nINITMB true\nTYPE2B " + type2 + "\n" +
+           lines2 + "RCTYPE2B Cut_Cos\nRCUT2B 4.5\nTYPEMB " + typem + "\n" +
+           linesm + "RCTYPEMB Cut_Cos\nRCUTMB 4.5\n";
+}
+
+}  // namespace
+
+/* Pins: the search parameters a two-body and a many-body descriptor
+ * differentiate together (index 1, on the two-atom Ta cell, Cut_Cos 4.5 A
+ * for both): each key of one descriptor as that descriptor alone, and
+ * WATOM, which both read, in the force rows only when both differentiate
+ * it there:
+ *   - D2_Blip and DM_Blip: CGRID2B, SGRID2B and RCUT2B, EF; CGRIDMB,
+ *     SGRIDMB and RCUTMB, E; WATOM, E (DM_Blip has no force rows);
+ *   - D2_Blip and DM_mBlip: CGRID2B, CGRIDMB, CEMBFUNC and WATOM, EF.
+ * No descriptor differentiates LAMBDA.
+ * Before the fix: D2_Blip and DM_Blip claimed WATOM for the force rows,
+ * "EF": the claims of the two descriptors were joined by an OR, so the
+ * force rows of D2_Blip hid the missing DM_Blip part, and the analytical
+ * gradient used force rows without it. */
+TEST_CASE("analytical gradient: the search parameters a two-body and a "
+          "many-body descriptor differentiate together",
+          "[HPO][analytical_gradient][coverage]")
+{
+    tadah::core::PeriodicTable::initialize();
+    using Claims = std::map<std::string, std::string>;
+    const std::string grid2 = "CGRID2B 1.0 2.0\nSGRID2B 1.0 1.2\n";
+    struct Case { std::string name, config; Claims expected; };
+    const std::vector<Case> cases = {
+        {"D2_Blip and DM_Blip",
+         joined("D2_Blip 2 2 Ta Ta", grid2, "DM_Blip 0 2 2 Ta Ta",
+                "CGRIDMB 2.0 3.0\nSGRIDMB 1.0 1.0\n"),
+         {{"CGRID2B", "EF"}, {"SGRID2B", "EF"}, {"RCUT2B", "EF"},
+          {"CGRIDMB", "E"},  {"SGRIDMB", "E"},  {"RCUTMB", "E"},
+          {"WATOM", "E"},    {"LAMBDA", "-"}}},
+        {"D2_Blip and DM_mBlip",
+         joined("D2_Blip 2 2 Ta Ta", grid2, "DM_mBlip 0 1 1 2 2 Ta Ta",
+                "CGRIDMB 0.0\nSGRIDMB 0.2\nCEMBFUNC 1.0 2.0\n"
+                "SEMBFUNC 1.0 1.0\n"),
+         {{"CGRID2B", "EF"}, {"CGRIDMB", "EF"}, {"CEMBFUNC", "EF"},
+          {"WATOM", "EF"},   {"LAMBDA", "-"}}},
+    };
+    for (const Case& c : cases) {
+        INFO(c.name << "\n" << c.config);
+        std::vector<std::string> keys;
+        for (const auto& kv : c.expected) keys.push_back(kv.first);
+        const Claims got = claims(c.config, keys);
+        for (const auto& [key, want] : c.expected) {
+            INFO(key);
+            CHECK(got.at(key) == want);
+        }
+    }
+}

@@ -1117,7 +1117,7 @@ inline constexpr Arg OPTIMIZER_GRAD_STRATEGY_args[] = {
 inline constexpr std::string_view OPTIMIZER_GRAD_STRATEGY_checks[] = {
     "GRAD_STRATEGY takes one value: NUMERICAL, ANALYTICAL or HYBRID",
     "{block} block: GRAD_STRATEGY ANALYTICAL{note} needs the analytical gradient of the loss, which this setup cannot form: {why}. Change that setting, or set GRAD_STRATEGY HYBRID to use finite differences where no analytical gradient is available.",
-    "{block} block: GRAD_STRATEGY ANALYTICAL{note} needs an analytical derivative with respect to every search parameter, and the descriptors of the training configuration give none for {list}. GRAD_STRATEGY HYBRID takes finite differences for {what}.",
+    "{block} block: GRAD_STRATEGY ANALYTICAL{note} needs an analytical derivative with respect to every search parameter, and the descriptors give none for {list}. GRAD_STRATEGY HYBRID takes finite differences for {what}.",
     "{phase}: ASA:ASA does not accept GRAD_STRATEGY: it is gradient-free, and the reannealing takes its tangents by finite differences (PARAM Delta_X)",
     "{phase}: TADAH:{algo} does not use GRAD_STRATEGY: it is gradient-free",
     "{phase} {lib}:{algo}: GRAD_STRATEGY never takes effect: {lib}:{algo} takes no gradient{note}; remove it.",
