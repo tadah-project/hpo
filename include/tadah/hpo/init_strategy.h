@@ -24,6 +24,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -129,5 +130,36 @@ std::unique_ptr<InitStrategy> build_init_strategy(const struct InitStrategySpec&
  * at the METHOD line, so the error names that line. Throws
  * std::runtime_error. */
 void validate_init_entry(const InitStrategySpec::Entry& e);
+
+/* The starting points a chain gives as the target file writes it (the
+ * INIT blocks of one optimiser, those inside EXPLORE, or the RESTART
+ * blocks): the K of each RANDOM, LHS and SOBOL line, one point for its
+ * CONFIG lines and one for the WARM lines of each file -- the chain keeps a
+ * point once (ChainStrategy), and every CONFIG line, and every WARM line of
+ * one file, gives the same point -- or the CONFIG point when it has no
+ * METHOD line. The one count of the startup check of N_STARTS
+ * (require_multistart_points), of the K_TOTAL that caps nothing
+ * (HPOTargets::read) and of the run-time warning of a RESTART round of
+ * MULTISTART. The chain drawn can give fewer: a WARM point that
+ * WARM_ON_MISMATCH skip drops, a drawn point equal to another. */
+struct ChainPoints {
+    std::size_t distinct = 0;              // before K_TOTAL
+    std::size_t points = 0;                // at most K_TOTAL
+    std::optional<std::size_t> k_total;    // the chain's K_TOTAL
+    bool warm = false;                     // a WARM line
+    /* WARM_ON_MISMATCH skip, which drops a WARM point that does not fit. */
+    bool warm_skip = false;
+    /* The METHOD lines with their values ("CONFIG, CONFIG, RANDOM 2"),
+     * empty without one, and why repeated lines count once ("the CONFIG
+     * lines give one point", "the WARM lines of one file give one point",
+     * both joined with ", and "). */
+    std::string lines;
+    std::string notes;
+    /* What the count is made of, as a message names it: "LHS 6, capped by
+     * K_TOTAL 2", "CONFIG, CONFIG; the CONFIG lines give one point", "the
+     * CONFIG point: the chain has no METHOD line". */
+    std::string from() const;
+};
+ChainPoints chain_points(const InitStrategySpec& init);
 
 }  // namespace tadah::hpo

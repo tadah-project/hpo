@@ -2040,9 +2040,11 @@ void HPOTargets::read(const std::string& fn)
             in.text));
     }
     /* K_TOTAL caps the starting points the METHOD lines of its chain give,
-     * at most the chain's default_k() (the K of RANDOM, LHS and SOBOL, one
-     * point of CONFIG and of WARM, which gives at most one; without a
-     * METHOD line the CONFIG point): one at or above their number caps
+     * counted as the startup check of N_STARTS counts them (chain_points:
+     * the K of RANDOM, LHS and SOBOL, one point for the CONFIG lines and one
+     * for the WARM lines of each file, as the chain keeps a point once; a
+     * WARM point may be dropped, so "at most"; without a METHOD line the
+     * CONFIG point): one at or above their number caps
      * nothing. The INIT blocks of one optimiser make one chain, and so do
      * the RESTART blocks. An EXPLORE chain without a METHOD line is not
      * resolved: the exploration takes the points of the STRATEGY-level
@@ -2057,12 +2059,10 @@ void HPOTargets::read(const std::string& fn)
               });
     for (const auto& [at, init] : k_totals) {
         if (!init->k_total) continue;
-        const std::size_t points = build_init_strategy(*init)->default_k();
-        std::string list;
-        for (const auto& e : init->chain) {
-            list += (list.empty() ? "" : ", ") + e.method;
-            for (const auto& a : e.args) list += " " + a;
-        }
+        const ChainPoints count = chain_points(*init);
+        const std::size_t points = count.distinct;
+        const std::string list =
+            count.lines + (count.notes.empty() ? "" : "; " + count.notes);
         const std::size_t cap = *init->k_total;
         const std::string head =
             "K_TOTAL " + std::to_string(cap) + " caps nothing: ";

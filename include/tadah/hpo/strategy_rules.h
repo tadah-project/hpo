@@ -17,10 +17,12 @@
 
 #include <tadah/hpo/optimizer_spec.h>
 
+#include <cstddef>
 #include <string>
 
 namespace tadah::hpo {
 
+struct ChainPoints;
 struct OptimizerCaps;
 
 /* The phase an optimiser drives, for require_driver(). */
@@ -130,10 +132,11 @@ std::string searches_without_gradient();
 void require_multistart_backend(const OptimizerSpec& spec);
 
 /* STRATEGY TYPE MULTISTART: an INIT chain of N_STARTS starting points or
- * more. The most points the chain gives are the K of each RANDOM, LHS and
- * SOBOL line, one point for its CONFIG lines and one for the WARM lines of
- * each file (the chain keeps a point once), or the CONFIG point without a
- * METHOD line; at most K_TOTAL. Fewer are refused at the N_STARTS line
+ * more. The most points the chain gives (chain_points) are the K of each
+ * RANDOM, LHS and SOBOL line, one point for its CONFIG lines and one for
+ * the WARM lines of each file (the chain keeps a point once), or the
+ * CONFIG point without a METHOD line; at most K_TOTAL. Fewer are refused
+ * at the N_STARTS line
  * (OptimizerSpec::key_lines), naming the count, the METHOD lines and
  * K_TOTAL, and what gives N_STARTS starts: "N_STARTS 2 needs 2 starting
  * points, and the INIT chain gives 1 (the CONFIG point: the chain has no
@@ -142,6 +145,16 @@ void require_multistart_backend(const OptimizerSpec& spec);
  * most" with a WARM line, which WARM_ON_MISMATCH may drop). A spec without
  * an N_STARTS line (one built outside the parser) is not checked. */
 void require_multistart_points(const OptimizerSpec& spec);
+
+/* What gives `want` starting points to a chain of `c` (chain_points) that
+ * gives fewer: "a chain of 3 or more starting points (METHOD LHS 3, RANDOM
+ * 3 or SOBOL 3) runs 3 starts"; under a K_TOTAL that keeps fewer, "with
+ * K_TOTAL 3, or without K_TOTAL, 3 starts run" (the METHOD lines give
+ * more), "without K_TOTAL, 3 starts run" (as many) or "a chain of ...
+ * without K_TOTAL runs 3 starts" (fewer). The refusal of
+ * require_multistart_points and the run-time warning of a RESTART round of
+ * MULTISTART (MultiStartPolicy) give it. */
+std::string multistart_chain_advice(const ChainPoints& c, std::size_t want);
 
 /* STRATEGY TYPE PRESTAGE: an EXPLORE block that names an optimiser. */
 void require_prestage_explore(const OptimizerSpec& spec);
