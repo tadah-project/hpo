@@ -1,5 +1,6 @@
 #include <tadah/hpo/backend_rules.h>
 
+#include <tadah/hpo/algorithms_asa.h>    // asa_cost_limit
 #include <tadah/hpo/anneal_core.h>
 #include <tadah/hpo/asa_options.h>
 #include <tadah/hpo/ceres_adapter.h>
@@ -522,6 +523,30 @@ void validate_asa_spec(const OptimizerSpec& sp)
         throw std::runtime_error(
             "ASA:ASA requires at least one OPTIM dimension");
     (void)parse_asa_options(sp, dim);
+    /* ASA takes a cost at or above asa_cost_limit() for an invalid state and
+     * draws another (algorithms_asa.cpp, cost_is_valid). A graded failure
+     * scores from 0.999 FAILSCORE up to FAILSCORE: above that limit ASA
+     * would not see the grading, and a search under FAILSCORE_GRADING ON
+     * would evaluate the points of one under OFF. */
+    const double limit = asa_cost_limit();
+    if (sp.failscore_grading && sp.failscore && *sp.failscore > limit) {
+        const double fs = *sp.failscore;
+        const std::string value =
+            core::format_roundtrip(fs) +
+            (fs == std::numeric_limits<double>::max()
+                 ? ", the largest double, as without a FAILSCORE line"
+                 : "");
+        /* The limit is 1e18 rounded down to a double, and the next double
+         * is 1e18: "below 1e18" is the rule, exactly. */
+        const std::string cap = core::format_sig(limit, 6);
+        throw std::runtime_error(
+            "ASA:ASA: under FAILSCORE_GRADING ON a failed evaluation scores "
+            "from 0.999 FAILSCORE up to FAILSCORE (" + value + "), and "
+            "ASA:ASA takes a cost of about " + cap + " or more for an "
+            "invalid state and draws another, so it would not see the "
+            "grading; a FAILSCORE below " + cap + " keeps every graded "
+            "failure below that cost");
+    }
 }
 
 void validate_backend(const OptimizerSpec& spec, RestartStop restart,
