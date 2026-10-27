@@ -3,9 +3,9 @@
 // The generated tables of the target-file registry
 // (include/tadah/hpo/hpotarget_registry_gen.h and hpo_param_registry_gen.h,
 // written by blueprint/gen_hpotarget.py) against the tables the parser and
-// the startup checks hold by hand, which a parser built on the generated
-// tables replaces: each generated table must equal the hand-written one,
-// in order where the order shows in a message.
+// the startup checks hold by hand: each table the cases compare (listed
+// below) must equal the hand-written one, in order where the order shows
+// in a message.
 //
 // Where the hand-written table can be read (a function of the library:
 // opt_attr_keys(), the OPTIM refusals of HPOTargets, LossFunction,

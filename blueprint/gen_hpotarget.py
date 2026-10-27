@@ -6,47 +6,26 @@
 
 Reads the target-file registry (hpotarget.toml and the part files of its
 meta.parts) with its loader, hpotarget_registry.py, and writes two headers
-into include/tadah/hpo/ (or the directory -o names):
+into include/tadah/hpo/ of this repository (or the directory -o names):
 
-    hpotarget_registry_gen.h   the blocks, the optimiser group, the keys
-                               and their arguments, the options of the
-                               lines, the forms, the removed keys, the
-                               rules, the environment overrides, the loss
-                               functions, the STRATEGY types, the INIT
-                               methods, the OPTIM section and its targets,
-                               [lexing], [reading] and [structure] with
-                               check_order, every message template, the
-                               placeholders of the messages the loader
-                               fixes (FIXED_PLACEHOLDERS), and fill(),
-                               which puts values into a template
-    hpo_param_registry_gen.h   the PARAM keys, the PARAM keys of each
-                               optimiser the entries name, the excluded
-                               PARAM keys and the PARAM policies
+    hpotarget_registry_gen.h   the tables of the target-file registry
+    hpo_param_registry_gen.h   its PARAM keys
 
-The headers hold data, no documentation: doc, long_doc, quirk, synopsis,
-title, condition, repeat_doc, msg_doc, the sentence of a default, the
-reason of a refused entry, the keys a rule concerns, the examples and the
-invalid lines, the wrappers, the training configurations and the fixtures
-stay out. A message is a template: {name} marks a value, ${name} is text
-(a LAMMPS variable reference).
+blueprint/README.md, "The generated tables", lists what the headers hold,
+what stays out of them and how the ids are named.
 
-Names: an entry's C++ name is its id with '.' and ':' written as '_' and
-'-' left out (ROOT.FAILSCORE -> ROOT_FAILSCORE, PC_LAMMPS.--hotvar ->
-PC_LAMMPS_hotvar, PARAM.ASA:ASA.Delta_X -> PARAM_ASA_ASA_Delta_X). An id
-that gives no C++ identifier, or two ids that give one name, stop the
-generator.
+The output depends on the registry, on its loader (the headers also hold
+its placeholder sets, the words and the field order of its schema and its
+named integer limits) and on this generator, and on nothing else (no
+date, no path), so two runs write the same files. The headers are checked
+in, and regenerated after a change to any of the three; CTest
+hpo_hpotarget_registry_sync runs --check, which fails when a header is
+missing or differs from what the registry and its loader give, and the
+build target hpo_regenerate_hpotarget_registry runs --header.
 
-The output depends on the registry and on its loader (the placeholder
-sets the loader fixes, the words its schema allows for an argument, a
-repeat rule and a check, its named integer limits), and on nothing else
-(no date, no path), so two runs write the same files. The headers are
-checked in, and regenerated after a change to the registry or to the
-loader; CTest hpo_hpotarget_registry_sync runs --check, which fails when
-a header differs from what the registry and its loader give, and the
-build target hpo_regenerate_registries runs --header.
-
-Exit status: 0, or 1 with the reason (a registry the loader refuses, a
-name the generator cannot give, a header that differs with --check).
+Exit status: 0; 1 with the reason (a registry the loader refuses, a loader
+of another API, a name the generator cannot give, a header that is missing
+or differs with --check); 2 for a usage error.
 """
 
 from __future__ import annotations

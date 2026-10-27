@@ -396,8 +396,8 @@ set_tests_properties(hpo_hpotarget_registry_conformance PROPERTIES
 # line, the defaults), run through the parser by hpotarget_case_runner
 # (tests/tools/hpotarget_case_runner.cpp) and compared by
 # tests/check_hpotarget_generated.py, whose docstring lists the checks
-# and what they cannot see. hpo_hpotarget_generated_tool tests the
-# generator on a synthetic registry.
+# and what they cannot see. hpo_hpotarget_generated_tool tests the case
+# generator, check_hpotarget_generated.py, on a synthetic registry.
 add_executable(hpotarget_case_runner tools/hpotarget_case_runner.cpp)
 target_link_libraries(hpotarget_case_runner PRIVATE tadah.core tadah.hpo)
 add_test(NAME hpo_hpotarget_registry_generated
@@ -415,27 +415,30 @@ set_tests_properties(hpo_hpotarget_generated_tool PROPERTIES
     LABELS "docs"
     TIMEOUT 60
     FAIL_REGULAR_EXPRESSION "\nRan 0 tests ")
-# The generated tables of the target-file registry: blueprint/
-# gen_hpotarget.py writes include/tadah/hpo/hpotarget_registry_gen.h and
-# hpo_param_registry_gen.h from the registry and its loader
-# (blueprint/README.md, "The generated tables"); both are checked in.
+# The generated tables of the target-file registry:
+# blueprint/gen_hpotarget.py writes
+# include/tadah/hpo/hpotarget_registry_gen.h and hpo_param_registry_gen.h
+# from the registry and its loader (blueprint/README.md, "The generated
+# tables"); both are checked in.
 #  - hpo_hpotarget_registry_sync: gen_hpotarget.py --check fails when a
-#    checked-in header differs from what the registry and its loader give,
-#    naming the command that regenerates it;
-#  - hpo_hpotarget_generator_tool: the generator on the synthetic registry
-#    of test_hpotarget_registry.py (tests/test_gen_hpotarget.py), the
-#    headers compiled with this build's C++ compiler;
+#    checked-in header is missing or differs from what the registry and
+#    its loader give, naming the command that regenerates it;
+#  - hpo_hpotarget_generator_tool: the header generator, gen_hpotarget.py,
+#    on the synthetic registry of test_hpotarget_registry.py
+#    (tests/test_gen_hpotarget.py), the headers compiled with this build's
+#    C++ compiler;
 #  - the Catch2 cases "hpotarget generated tables: ..." (tag
-#    [hpotarget_gen], tests/test_hpotarget_registry_bindings.cpp): each
-#    generated table equals the table the parser holds by hand.
+#    [hpotarget_gen], tests/test_hpotarget_registry_bindings.cpp):
+#    generated tables equal the ones the parser and the startup checks
+#    hold by hand (the header comment of the file lists them).
 # Before the fix: the three fail, the generator and the headers do not
 # exist. The target hpo_regenerate_hpotarget_registry writes the headers
-# (gen_hpotarget.py --header) after a change to the registry or its
-# loader. test_hpotarget_registry_bindings.cpp tests for the two headers
-# with __has_include: the build compiles it again when they appear, change
-# or go (hpo_depend_on_has_include(), has_include_rebuild/
-# has_include_depends.cmake), so a build tree that compiled it without
-# them runs the binding cases once they exist.
+# (gen_hpotarget.py --header) after a change to the registry, its loader
+# or the generator. test_hpotarget_registry_bindings.cpp tests for the two
+# headers with __has_include: the build compiles it again when they
+# appear, change or go (hpo_depend_on_has_include(),
+# has_include_rebuild/has_include_depends.cmake), so a build tree that
+# compiled it without them runs the binding cases once they exist.
 include(${CMAKE_CURRENT_SOURCE_DIR}/has_include_rebuild/has_include_depends.cmake)
 cmake_path(SET _hpo_generated_dir NORMALIZE
     "${CMAKE_CURRENT_SOURCE_DIR}/../include/tadah/hpo")

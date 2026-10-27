@@ -50,7 +50,7 @@ build directory.
 | `include/tadah/hpo/` | Public headers (drivers, init strategies, run policies, loss terms). |
 | `src/`               | Implementation translation units. |
 | `tests/`             | Unit and integration tests; `tests/data/` holds their data (`tests/data/ta`: the Ta training and validation configurations, datasets, LAMMPS scripts and target files). |
-| `blueprint/`         | Registry files for the documentation, and the generator of the C++ tables of the target-file registry (see `blueprint/README.md`). |
+| `blueprint/`         | Registry files (read by the documentation, and the source of the generated headers in `include/tadah/hpo/`), the loader of the target-file registry and the generators (see `blueprint/README.md`). |
 
 ## The target-file registry
 
@@ -78,6 +78,7 @@ registry") describes the files and the checks, which run with:
 ```bash
 python3 blueprint/hpotarget_registry.py --check
 python3 blueprint/gen_hpotarget.py --check
+cmake --build <build directory> --target test_hpo
 ctest --test-dir <build directory> -R hpotarget --output-on-failure
 ```
 
@@ -93,9 +94,5 @@ with the change that alters it.
   generated from and how to regenerate it.
 - `include/tadah/hpo/hpotarget_registry_gen.h` and
   `include/tadah/hpo/hpo_param_registry_gen.h` (CTest
-  `hpo_hpotarget_registry_sync`): the tables of the target-file registry,
-  which `blueprint/gen_hpotarget.py` writes from the registry and its
-  loader, `blueprint/hpotarget_registry.py`; after a change to either they
-  are regenerated with
-  `cmake --build <build directory> --target hpo_regenerate_registries`
-  (`blueprint/README.md`, "The generated tables").
+  `hpo_hpotarget_registry_sync`): `blueprint/README.md`, "The generated
+  tables", says what they are generated from and how to regenerate them.
