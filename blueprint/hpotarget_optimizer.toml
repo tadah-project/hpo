@@ -966,7 +966,7 @@ args = [
 repeat = "error"
 repeat_msg = "STEP is set twice in the {block} block (first on line {first_line}); each key is given once"
 repeat_doc = "A line with a fraction alone is given once for each optimiser, as a key of the optimiser group is. Each line with a key adds an override, given once for its key and its indices; of two overrides of one search parameter the later line wins."
-default = { text = "Not set: NLOPT:LN_BOBYQA and NLOPT:LN_COBYLA take 0.25 of each width, also as the local search of an MLSL or AUGLAG; another optimiser chooses its first step.", unchecked = "The NLopt searches take the steps when they start; no setting of the target file holds them." }
+default = { text = "Not set: NLOPT:LN_BOBYQA and NLOPT:LN_COBYLA take 0.25 of the width of the box of each search parameter, in the coordinates of the search, also as the local search of an MLSL or AUGLAG; another optimiser chooses its first step.", unchecked = "The NLopt searches take the steps when they start; no setting of the target file holds them." }
 doc = """\
 The first step of the optimiser as a fraction, in (0, 0.5], of the width \
 of each OPTIM box in the coordinates of the search. With an OPTIM key, and \
@@ -988,7 +988,14 @@ whole file is read. A refusal names the ENDOPTIMIZER line, or the \
 ENDEXPLORE or ENDINNER line for the optimiser of that block; an optimiser \
 that does not use STEP is refused there too. An NLopt MLSL or AUGLAG hands \
 its STEP to its local search: a STEP in its block replaces the STEP of its \
-INNER block, and hpo_run.log has a warning."""
+INNER block, and hpo_run.log has a warning. LN_BOBYQA moves a start within \
+one step of a bound by at most half a step. As the local search of an \
+AUGLAG, which starts at the start of the search, it moves that start the \
+same way. The journal names a moved start of the search, or of AUGLAG's \
+local search, with a WARNING (stderr and journal) for a CONFIG or WARM \
+start. MLSL picks the starts of its local searches; LN_BOBYQA moves such a \
+start within one step of a bound to one step from it, and the journal \
+does not name it."""
 quirk = """\
 The key of an override is matched as written, while an OPTIM line reads \
 its key in any case: STEP cgrid2b refers to no OPTIM key. The index list \
@@ -2633,10 +2640,11 @@ id = "METHOD.SOBOL"
 name = "SOBOL"
 args = [ { name = "K", kind = "integer", min = 1, max = 1000000, what = "INIT METHOD SOBOL K" } ]
 doc = """\
-K consecutive points of the Sobol sequence, from point (s + 1) K for the \
-seed s of the block: seeds that differ in their lowest 16 bits draw \
-disjoint points. A K that is a power of 2 puts one point in each 1/K of \
-the range of every search parameter."""
+K consecutive points of the Sobol sequence, from point (b + 1) K, b being \
+the lowest 16 bits of the seed of the block: seeds that differ in those \
+bits draw disjoint points. A K that is a power of 2 puts one point in each \
+1/K of the range of every search parameter, in the coordinates of the \
+search."""
 
 [[init_method.checks]]
 msg = "INIT METHOD SOBOL expects exactly one arg: K"
