@@ -1591,13 +1591,25 @@ struct SharedBudget {
 };
 
 /* Per-proposal stop context shared by all chains of a run. `stop` is
- * raised by whichever consumer first hits STOPVAL (or by the driver)
- * and makes every other chain wind down at its next proposal. */
+ * raised by the driver (the workers' pool, when an evaluation throws: a
+ * signal, an error) and makes every chain wind down at its next proposal.
+ * A chain that reaches STOPVAL ends its own sequence and reports it
+ * (RungStop::StopVal); reached_stopval() raises `stop` for the others too
+ * when `stopval_stops_others` is set (the serial driver). The parallel
+ * drivers clear it: the chains of one fan-out are a batch (eval_batch.h),
+ * whose evaluations must not depend on the timing of the others, and the
+ * driver ends the search when the batch has ended. */
 struct StopCtx {
   SharedBudget&                budget;
   std::atomic<bool>&           stop;
   const std::function<bool()>& time_exceeded;
   std::optional<double>        stopval;
+  bool                         stopval_stops_others = true;
+
+  void reached_stopval()
+  {
+    if (stopval_stops_others) stop.store(true, std::memory_order_relaxed);
+  }
 };
 
 enum class RungStop { Completed, Budget, Time, StopVal, External };
@@ -1916,7 +1928,7 @@ bool corana_move(ChainState<Vec>& c, std::size_t i, double T,
     }
   }
   if (stopval_reached(c.f, ctx.stopval, sp.failscore)) {
-    ctx.stop.store(true, std::memory_order_relaxed);
+    ctx.reached_stopval();
     rs.stop = RungStop::StopVal; return false;
   }
   return true;
@@ -2231,7 +2243,7 @@ RungStats classic_rung(ChainState<Vec>& c, double T,
     if (!z.empty())
       apply_diagonal_ram(c, z, alpha, sp, kb.step_trust_factor);
     if (stopval_reached(c.f, ctx.stopval, sp.failscore)) {
-      ctx.stop.store(true, std::memory_order_relaxed);
+      ctx.reached_stopval();
       rs.stop = RungStop::StopVal;
       break;
     }

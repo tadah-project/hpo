@@ -770,7 +770,7 @@ msg = "PARAM STEP_AUTO_SWEEPS was renamed to STEP_WARMUP_SWEEPS (same meaning: m
 [[renamed]]
 old = "STEP_ADAPT_EVERY"
 kinds = ["pt"]
-msg = "PARAM STEP_ADAPT_EVERY was removed: STEP_MODE ADAPTIVE applies the robust-adaptive-Metropolis update after every proposal (a batched cadence multiplied the feedback gain by the batch size)"
+msg = "PARAM STEP_ADAPT_EVERY was removed: STEP_MODE ADAPTIVE applies the robust-adaptive-Metropolis update after every proposal (an update every n proposals multiplied the feedback gain by n)"
 
 [[renamed]]
 old = "LADDER_ADAPT_UPDATES"

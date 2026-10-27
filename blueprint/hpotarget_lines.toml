@@ -1088,7 +1088,10 @@ The threshold acts once a finite value of the metric has been seen; on \
 an indexed line it applies to each dataset the line lists. PC_ERSQ, whose \
 R squared is better when higher, refuses the option. \
 Two evaluations of one point can therefore score differently, so a \
-search does not answer a repeated point from the record of the run."""
+search does not answer a repeated point from the record of the run. An \
+evaluation that TADAH:ANNEAL_PT, TADAH:ANNEAL_PA or ASA:ASA runs at once \
+with others compares with the smallest value recorded before them, not \
+with theirs."""
 
 [[line_option.args]]
 name = "ratio"
@@ -2282,9 +2285,9 @@ relaxation ends when the magnitude of the cell's pressure is below \
 relaxation starts from the lattice constant at which the previous \
 relaxation of the same replica (TADAH:ANNEAL_PT), walker \
 (TADAH:ANNEAL_PA) or ASA trial-state slot (the n-th trial state of each \
-generated batch, see Gener_Block) ended; the first starts from the \
-start value of --hotvar. Every other optimiser hands the lattice constant \
-on from each evaluation to the next, across MULTISTART starts and \
+generated block of states, see Gener_Block) ended; the first starts from \
+the start value of --hotvar. Every other optimiser hands the lattice \
+constant on from each evaluation to the next, across MULTISTART starts and \
 PRESTAGE phases. A relaxation whose a0 ends outside the --hotvar window \
 fails the term, and with it the evaluation, and hands on the lattice \
 constant it started from. A relaxation that does not converge reports \

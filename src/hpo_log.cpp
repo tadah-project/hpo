@@ -93,6 +93,28 @@ void HPOLog::set_eval_slot(int slot, std::size_t n_slots, double T,
     tl_T_label = t_label;
 }
 
+HPOLog::EvalContext HPOLog::eval_context()
+{
+    return EvalContext{tl_slot, tl_nslots, tl_T, tl_T_label};
+}
+
+HPOLog::ScopedEvalContext::ScopedEvalContext(const EvalContext& ctx)
+    : prev_(eval_context())
+{
+    tl_slot    = ctx.slot;
+    tl_nslots  = ctx.n_slots;
+    tl_T       = ctx.T;
+    tl_T_label = ctx.T_label;
+}
+
+HPOLog::ScopedEvalContext::~ScopedEvalContext()
+{
+    tl_slot    = prev_.slot;
+    tl_nslots  = prev_.n_slots;
+    tl_T       = prev_.T;
+    tl_T_label = prev_.T_label;
+}
+
 void HPOLog::set_eval_probe()
 {
     tl_slot   = kSlotProbe;

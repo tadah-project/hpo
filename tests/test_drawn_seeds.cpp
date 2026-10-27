@@ -1,10 +1,12 @@
 // test_drawn_seeds.cpp
 //
-// A run draws random numbers without a SEED in two places this file
+// A run draws random numbers without a SEED in three places this file
 // covers: the METHOD lines of an INIT block (RANDOM, LHS, SOBOL) whose block
-// has no SEED, and an NLopt algorithm that draws random numbers whose block
+// has no SEED, an NLopt algorithm that draws random numbers whose block
 // has no SEED (and no SEED of its INIT block, which NLopt takes in its
-// place). Each draws a 64-bit seed once for the run, keeps it as the
+// place), and TADAH:RANDOM, the annealers (TADAH:ANNEAL, ANNEAL_PT,
+// ANNEAL_PA) and ASA:ASA in a block without SEED. Each draws a 64-bit seed
+// once for the run, keeps it as the
 // block's SEED (InitStrategySpec::seed, OptimizerSpec::seed) and says so on
 // standard output and in the journal, with the SEED line that draws the
 // same numbers again, as the RESTART block does for its points. A chain of
@@ -295,4 +297,86 @@ TEST_CASE("drawn seeds: an NLopt algorithm that draws random numbers without "
     }
     std::error_code ec;
     fs::remove(seed_file, ec);
+}
+
+/* Pins: TADAH:ANNEAL, TADAH:ANNEAL_PT, TADAH:ANNEAL_PA, ASA:ASA and
+ * TADAH:RANDOM in a STRATEGY block without SEED draw a seed S once for the
+ * run and keep it as the block's SEED (OptimizerSpec::seed, seed_drawn);
+ * standard output and the journal say "the STRATEGY block has no SEED, and
+ * <LIB:ALGO> draws random numbers, so it draws them with a seed drawn once
+ * for the run, S (SEED S in the STRATEGY block draws the same numbers
+ * again)", and the OPTIMISER section gives "S (drawn for the run)"; another
+ * read draws another seed, and a block with SEED 9 draws none. With a SEED
+ * in its INIT block only (and METHOD RANDOM 2, which draws from it), the
+ * journal's WARNING says "the SEED of the INIT block on line 4 draws the
+ * block's starting points only: TADAH:ANNEAL_PT draws its own random
+ * numbers with the SEED of the STRATEGY block, which has none, so with a
+ * seed drawn once for the run", and the STRATEGY block's seed is drawn and
+ * named.
+ * Before the fix: the drivers drew their seed from std::random_device when
+ * they started (OptimizerSpec::seed unset, no line); the journal named it
+ * only in the driver's banner, and the INIT-block WARNING said that the
+ * annealer's proposal stream falls back to random_device. */
+TEST_CASE("drawn seeds: the annealers, ASA and TADAH:RANDOM without a SEED "
+          "draw a seed once for the run and name it",
+          "[HPO][anneal][asa][seed][drawn_seed]")
+{
+    Context ctx = make_ctx();
+    const auto block = [](const std::string& lib_algo,
+                          const std::string& extra) {
+        const auto colon = lib_algo.find(':');
+        return "OPTIM CGRID2B (1) 0.5 1.5\nOPTIM CGRID2B (2) 1.6 2.5\n"
+               "OPTIMIZER\nSTRATEGY\nLIB " + lib_algo.substr(0, colon) +
+               "\nALGO " + lib_algo.substr(colon + 1) + "\nMAXEVAL 5\n" +
+               extra + "ENDSTRATEGY\nENDOPTIMIZER\n";
+    };
+    for (const std::string lib_algo :
+         {"TADAH:ANNEAL", "TADAH:ANNEAL_PT", "TADAH:ANNEAL_PA", "ASA:ASA",
+          "TADAH:RANDOM"}) {
+        INFO(lib_algo);
+        const Read a = read_target(block(lib_algo, ""), ctx);
+        INFO("stdout:\n" << a.out << "\njournal:\n" << a.journal);
+        REQUIRE(a.trg->spec.seed.has_value());
+        CHECK(a.trg->spec.seed_drawn);
+        const std::string s = std::to_string(*a.trg->spec.seed);
+        const std::string w =
+            "the STRATEGY block has no SEED, and " + lib_algo + " draws "
+            "random numbers, so it draws them with a seed drawn once for the "
+            "run, " + s + " (SEED " + s + " in the STRATEGY block draws the "
+            "same numbers again)";
+        CHECK(count_of(a.journal, w) == 1);
+        CHECK(count_of(a.out, "[HPO] " + w + "\n") == 1);
+        CHECK(count_of(a.journal, s + " (drawn for the run)") == 1);
+        const Read b = read_target(block(lib_algo, ""), ctx);
+        REQUIRE(b.trg->spec.seed.has_value());
+        CHECK(*b.trg->spec.seed != *a.trg->spec.seed);
+        const Read c = read_target(block(lib_algo, "SEED 9\n"), ctx);
+        CHECK(c.trg->spec.seed == std::optional<std::uint64_t>(9));
+        CHECK_FALSE(c.trg->spec.seed_drawn);
+        CHECK(count_of(c.journal, "drawn once for the run") == 0);
+    }
+    {
+        const std::string text =
+            "OPTIM CGRID2B (1) 0.5 1.5\nOPTIM CGRID2B (2) 1.6 2.5\n"
+            "OPTIMIZER\nINIT\nMETHOD RANDOM 2\nSEED 5\nENDINIT\n"
+            "STRATEGY\nLIB TADAH\nALGO ANNEAL_PT\nMAXEVAL 5\n"
+            "ENDSTRATEGY\nENDOPTIMIZER\n";
+        const Read a = read_target(text, ctx);
+        INFO("journal:\n" << a.journal);
+        CHECK(count_of(a.journal,
+                       "the SEED of the INIT block on line 4 draws the "
+                       "block's starting points only: TADAH:ANNEAL_PT draws "
+                       "its own random numbers with the SEED of the STRATEGY "
+                       "block, which has none, so with a seed drawn once for "
+                       "the run") == 1);
+        CHECK(count_of(a.journal, "random_device") == 0);
+        REQUIRE(a.trg->spec.seed.has_value());
+        CHECK(a.trg->spec.init_strategy_spec.seed ==
+              std::optional<std::uint64_t>(5));
+        const std::string s = std::to_string(*a.trg->spec.seed);
+        CHECK(count_of(a.journal,
+                       "the STRATEGY block has no SEED, and TADAH:ANNEAL_PT "
+                       "draws random numbers, so it draws them with a seed "
+                       "drawn once for the run, " + s) == 1);
+    }
 }

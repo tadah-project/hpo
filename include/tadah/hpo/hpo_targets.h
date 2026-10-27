@@ -62,6 +62,17 @@ struct RhoBarGateSpec {
     std::string line_text;
 };
 
+/* What the targets are read for.
+ *   Run    a run: a seed the run draws once, for an INIT block or an
+ *          optimiser without SEED, is named on standard output and in the
+ *          journal with the SEED line that draws the same numbers again.
+ *   Check  the startup checks of `tadah hpo --check`, which no run follows:
+ *          the seeds are drawn as for a run, so the chains resolve as a
+ *          run's do, but the lines only say that a run draws a seed and
+ *          names it, without a number, which the next run would not draw
+ *          again. */
+enum class TargetsPurpose { Run, Check };
+
 class HPOTargets {
 private:
     struct Opti {
@@ -144,9 +155,11 @@ public:
     /** The targets of the run whose configuration is @p c and whose
      * hpotarget file is @p fn. @p provenance: where the keys of @p c came
      * from (the task's KeyProvenance, hpo_run passes it), for
-     * training_record; none: every stored key is the configuration's. */
+     * training_record; none: every stored key is the configuration's.
+     * @p purpose: a run, or the check of one (TargetsPurpose). */
     HPOTargets(core::Context &c, std::string fn,
-               const mlip::KeyProvenance *provenance = nullptr);
+               const mlip::KeyProvenance *provenance = nullptr,
+               TargetsPurpose purpose = TargetsPurpose::Run);
     void read(const std::string &fn);
     std::map<std::string, Opti> optimap;  // used by HPO_Host
     std::vector<LammpsSim> LS;
