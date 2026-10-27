@@ -1203,7 +1203,7 @@ args = [ { name = "n", kind = "integer", min = 0, max = "UINT64_MAX", what = "{k
 repeat = "error"
 repeat_msg = "SEED is set twice in the {block} block (first on line {first_line}); each key is given once"
 repeat_doc = "Once for each optimiser: a second line is refused, in the same block, in a second block of that type, or in another of OPTIMIZER, STRATEGY and REFINE, which set the same optimiser."
-default = { text = "Not set: each run takes a seed of its own, so two runs differ. An NLopt algorithm that draws random numbers takes the SEED of its INIT block, else a seed drawn once for the run, which standard output and the journal give." }
+default = { text = "Not set: an optimiser that draws random numbers (an NLopt algorithm after the SEED of its INIT block) draws them with a seed drawn once for the run, which standard output and the journal give, so two runs differ." }
 doc = """\
 The seed of the random numbers of the optimiser, for a reproducible \
 search. An optimiser that does not read SEED refuses it when tadah hpo \
@@ -1470,7 +1470,9 @@ default of REPLICAS (TADAH:ANNEAL_PT) and of POPULATION \
 (TADAH:ANNEAL_PA); the workers of the run keep the number of the \
 STRATEGY-level THREADS. An INNER block refuses THREADS at startup, and so \
 do an EXPLORE block whose optimiser is none of these and \
-CERES:STEEPEST_DESCENT."""
+CERES:STEEPEST_DESCENT. A seeded run writes the same result files at any \
+THREADS, apart from the times they record, except under DLIB:GFS, which \
+proposes each point from the evaluations that have ended."""
 checks = [
   { msg = "{phase}: CERES:{algo} does not support THREADS (host evaluation is single-threaded inside one optimizer step)", doc = "At startup, at the END line of its optimiser." },
   { msg = "{phase}: {lib}:{algo} does not use THREADS in an INNER block: the THREADS of the STRATEGY-level optimiser sets the workers of the run; remove it", doc = "At startup, at the ENDINNER line." },
