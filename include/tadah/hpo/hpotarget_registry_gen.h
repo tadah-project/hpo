@@ -2998,6 +2998,8 @@ inline constexpr Rule kRules[] = {
       "OPTIM MPARAMS ({index}): the box [{low}, {high}] of {name}'s {key} must be positive ({key} > 0)."},
   Rule{"RULE.OPTIM_file_cutoff", RuleCheck::Startup,
       "OPTIM {key} ({index}) is not a valid search target: {why} and refuses another value, so every candidate but the value of the training configuration would fail."},
+  Rule{"RULE.OPTIM_unread_watom", RuleCheck::Startup,
+      "OPTIM WATOM (line {line} of the target file) is not a valid search target: no descriptor of the training configuration reads WATOM (D2_EAM, DM_EAM, D2_Dummy and DM_Dummy read none), and a fit refuses a WATOM other than 1 that no descriptor reads, so every candidate other than 1 would fail its evaluation."},
   Rule{"RULE.settings_taken_by_lines", RuleCheck::Parse,
       "{key} is set twice (first on line {first_line}{note}) and no line between reads the first ({list}); each key is given once"},
   Rule{"RULE.PC_OBSERVABLE_excludes_PC_LAMMPS", RuleCheck::Parse,
