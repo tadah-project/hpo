@@ -6642,9 +6642,9 @@ TEST_CASE("Termination: DLIB:BFGS records why it ended",
  * error), so this sweep is the guard that no backend and strategy does.
  * Each run spends a small MAXEVAL on the three-dimensional fixture:
  *   PLAIN       the backend alone;
- *   MULTISTART  two starts from two INIT points (the backends that run
- *               from each start, runs_from_each_start(); a global one is
- *               refused at startup);
+ *   MULTISTART  two starts from two INIT points (the local backends; a
+ *               global one is refused at startup, DLIB:GFS, which takes
+ *               every INIT point in one run, too);
  *   PRESTAGE    a TADAH:RANDOM exploration, then the backend as the
  *               refinement of TOPK 2 candidates (TOPK 1 for a global
  *               backend; one that does not start at the point it is given,
@@ -6708,7 +6708,7 @@ void check_every_backend_records_its_end(const std::string& strategy)
 #ifndef TADAH_USE_CERES
         if (c->lib == "CERES") continue;   // registered, not built
 #endif
-        if (strategy == "MULTISTART" && !tadah::hpo::runs_from_each_start(*c))
+        if (strategy == "MULTISTART" && c->is_global)
             continue;                      // refused at startup
         if (strategy == "PRESTAGE" && !c->starts_at_x0)
             continue;                      // refused at startup
