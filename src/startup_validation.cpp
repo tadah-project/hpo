@@ -1018,18 +1018,30 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
   }
 
   /* --- RCUT contract for refit-family channels -------------------------- */
+  /* WARNINGs and INFO lines of the run, as every startup check writes
+   * them: a WARNING on stderr and in the journal (which tadah hpo --check
+   * lists and counts), an INFO line in the journal. */
   auto warn = [](const std::string &m) {
-    core::Logger::instance().log(core::LogLevel::WARNING, m);
+    std::cerr << "[HPO] WARNING: " << m << "\n";
+    HPOLog::instance().warning(m);
   };
   auto info = [](const std::string &m) {
-    core::Logger::instance().log(core::LogLevel::INFO, m);
+    std::cout << "[HPO] " << m << "\n";
+    HPOLog::instance().info(m);
   };
 
   /* Knot channels: the basis vanishes at its largest knot, so RCUT2B/RCUTMB
    * are DERIVED. Correct a stale stated value (warns) BEFORE the host sizes
    * the one-time neighbour list from RCUTMAX, and flag a user's OPTIM RCUT
    * line — that dimension is overridden on every evaluation. */
-  models::potedit::normalize_knot_rcut(train_ctx, "tadah hpo");
+  {
+    std::vector<models::potedit::KnotRcutNote> notes;
+    models::potedit::normalize_knot_rcut(train_ctx, "tadah hpo", notes);
+    for (const auto &n : notes) {
+      if (n.level == core::LogLevel::WARNING) warn(n.text);
+      else HPOLog::instance().info(n.text);
+    }
+  }
   for (const char *sfx : {"2B", "MB"}) {
     if (!models::potedit::derived_knot_rcut(train_ctx, sfx)) continue;
     const std::string rkey = std::string("RCUT") + sfx;
@@ -1142,6 +1154,33 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
              " low bound above " + core::to_string(mu[i]) + ", or the "
              "centre below " + core::to_string(rcut_strict) + ", no "
              "candidate does.");
+      /* An OPTIM box of the centre reaching past the cutoff (a smooth
+       * one: under a hard cutoff the bump-support gate below owns the
+       * box): a candidate whose centre lies there keeps the inner shoulder
+       * only, as a seed centre beyond the cutoff does. The cutoff is the
+       * fixed RCUT, or with an OPTIM RCUT the low bound of its box. */
+      if (!hard) {
+        const auto itc_box = trg.optimap.find(ckey);
+        if (itc_box != trg.optimap.end() && i < itc_box->second.opt.size() &&
+            itc_box->second.opt[i]) {
+          const double hi = itc_box->second.highbound[i];
+          const double edge = rcut_strict;
+          if (hi > edge + models::bump_rcut_tol(edge)) {
+            const std::string bound =
+                rcut_strict < rcut
+                    ? "the OPTIM " + rkey + " low bound " +
+                          core::to_string(edge)
+                    : rkey + " = " + core::to_string(edge);
+            warn(ckey + " bump " + core::to_string(i + 1) + ": the OPTIM " +
+                 ckey + " (" + core::to_string(i + 1) + ") high bound " +
+                 core::to_string(hi) + " lies beyond " + bound +
+                 ": a candidate whose centre is beyond the cutoff keeps "
+                 "only the bump's inner shoulder (pathological); with the "
+                 "high bound at or below " + core::to_string(edge) +
+                 ", no candidate does.");
+          }
+        }
+      }
       if (!hard || reach <= rcut + tol) continue;
       gate_errors.push_back(
           ckey + " bump " + core::to_string(i + 1) + " (centre " +
