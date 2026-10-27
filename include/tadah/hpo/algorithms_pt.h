@@ -814,6 +814,22 @@ public:
     }
   }
 
+  /* Whether the call ended at STOPVAL. */
+  bool reached_stopval() const
+  {
+    return out.stop == anneal::RungStop::StopVal;
+  }
+
+  /* Ends the call before its next step, as a stop of the driver does
+   * (another slot reached STOPVAL in the round); a call that has ended
+   * keeps its end. */
+  void interrupt()
+  {
+    if (done) return;
+    out.stop = anneal::RungStop::External;
+    done = true;
+  }
+
   /* The end of the call: an interrupted coordinate continues at its best
    * tested scale. */
   void finish()
@@ -1254,6 +1270,22 @@ public:
     }
   }
 
+  /* Whether the call ended at STOPVAL. */
+  bool reached_stopval() const
+  {
+    return out.stop == anneal::RungStop::StopVal;
+  }
+
+  /* Ends the call before its next step, as a stop of the driver does
+   * (another slot reached STOPVAL in the round); a call that has ended
+   * keeps its end. */
+  void interrupt()
+  {
+    if (done) return;
+    out.stop = anneal::RungStop::External;
+    done = true;
+  }
+
   /* The end of the call: the production step of every dimension from the
    * pilot's multiplier; an interrupted pilot is marked. */
   void finish()
@@ -1414,7 +1446,8 @@ template<typename Vec, typename HostT>
     anneal::StopCtx ctx{budget, stop_flag, time_exceeded, stopval};
     /* The replicas of an epoch (and of a round of the step calibration)
      * are a batch (eval_batch.h): a replica that reaches STOPVAL ends its
-     * own sweep, not the others', and the search ends after the epoch. */
+     * own sweep, not the others', and the search ends after the epoch (or
+     * the round, run_rounds). */
     ctx.stopval_stops_others = false;
 
     /* Best-stall stop (PT analogue of the serial eps-NEPS plateau): the
@@ -2217,8 +2250,13 @@ template<typename Vec, typename HostT>
        * it, so the phase's evaluations, numbers and bests do not depend on
        * the timing of the slots. Each slot's call makes the evaluations of
        * one uninterrupted call, in the same order. The rounds end when
-       * every call has ended, or when an evaluation threw (the phase then
-       * ends with that error, rethrow_pool_error). */
+       * every call has ended. After a round in which a slot reached
+       * STOPVAL, which ended its call, the other calls are interrupted and
+       * the phase ends with that round, as the search ends with the epoch
+       * in which a replica reaches it (phase_stop_code then gives STOPVAL;
+       * in a run of several ranks the rank of that slot ends its phase
+       * there, the others at the end of theirs). An evaluation that threw
+       * ends the phase with its error (rethrow_pool_error). */
       std::size_t calibration_round = 0;
       auto run_rounds = [&](auto& calls, const char* phase) {
         for (;;) {
@@ -2243,6 +2281,13 @@ template<typename Vec, typename HostT>
           });
           pool.offer_error(round.commit());
           if (pool.has_error()) return;
+          bool stopval = false;
+          for (std::size_t li = 0; li < n_local; ++li)
+            if (calls[li]->reached_stopval()) stopval = true;
+          if (stopval) {
+            for (auto& call : calls) call->interrupt();
+            break;
+          }
         }
         for (auto& call : calls) call->finish();
       };
