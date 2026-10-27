@@ -260,9 +260,10 @@ class Generator(unittest.TestCase):
                       str(cm.exception))
 
     # Pins: --header writes both headers and --check passes on them; a
-    # header that differs, or one that is missing, fails --check naming it
-    # and the build target that regenerates it; --header again reports the
-    # headers up to date.
+    # header that differs ("differs from what the registry and its loader
+    # give"), or one that is missing, fails --check naming it and the build
+    # target that regenerates it; --header again reports the headers up to
+    # date.
     # Before the fix: fails, gen_hpotarget.py does not exist.
     def test_header_and_check(self):
         self.full_registry()
@@ -279,12 +280,43 @@ class Generator(unittest.TestCase):
         header.write_text(header.read_text() + "// edited\n")
         code, _, err = self.main("--check", *args)
         self.assertEqual(code, 1)
-        self.assertIn(f"{header} differs from what the registry gives", err)
+        self.assertIn(f"{header} differs from what the registry and its "
+                      "loader give", err)
         self.assertIn("--target hpo_regenerate_registries", err)
         (out / gen.REGISTRY_HEADER).unlink()
         code, _, err = self.main("--check", *args)
         self.assertEqual(code, 1)
         self.assertIn(f"{out / gen.REGISTRY_HEADER} does not exist", err)
+
+    # Pins: the headers follow the loader as well as the registry: with a
+    # placeholder set the loader fixes changed (the frame's
+    # FIXED_PLACEHOLDERS given "file") and no file of the registry
+    # changed, --check fails on hpotarget_registry_gen.h, which "differs
+    # from what the registry and its loader give", and says to commit the
+    # headers "with the change to the registry or its loader"; with the
+    # loader as it was, --check passes again.
+    # Before the fix: fails, --check says the header "differs from what
+    # the registry gives" and to commit the headers "with the registry
+    # change".
+    def test_check_follows_the_loader(self):
+        self.full_registry()
+        self.write()
+        out = self.dir / "include"
+        args = ["--registry", str(self.dir), "-o", str(out)]
+        self.assertEqual(self.main("--header", *args)[0], 0)
+        frame = ("lexing", "error_frame")
+        saved = hr.FIXED_PLACEHOLDERS[frame]
+        hr.FIXED_PLACEHOLDERS[frame] = saved | {"file"}
+        try:
+            code, _, err = self.main("--check", *args)
+        finally:
+            hr.FIXED_PLACEHOLDERS[frame] = saved
+        self.assertEqual(code, 1, err)
+        self.assertIn(f"{out / gen.REGISTRY_HEADER} differs from what the "
+                      "registry and its loader give", err)
+        self.assertIn("commit the headers with the change to the registry "
+                      "or its loader", err)
+        self.assertEqual(self.main("--check", *args)[0], 0)
 
     # Pins: the headers of the synthetic registry, whose tables of line
     # options and forms are empty, compile as C++17 without a warning
