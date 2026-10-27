@@ -2495,6 +2495,16 @@ K_TOTAL 1'''
 error = "K_TOTAL 1 caps nothing: the METHOD lines of the INIT blocks inside OPTIMIZER, STRATEGY and REFINE give at most 1 starting point (CONFIG), and K_TOTAL keeps the first K_TOTAL starting points"
 
 [[key.invalid]]
+wrap = "init"
+at = 3
+doc = "The CONFIG lines of a chain give one point."
+text = '''
+METHOD CONFIG
+METHOD CONFIG
+K_TOTAL 1'''
+error = "K_TOTAL 1 caps nothing: the METHOD lines of the INIT blocks inside OPTIMIZER, STRATEGY and REFINE give at most 1 starting point (CONFIG, CONFIG; the CONFIG lines give one point), and K_TOTAL keeps the first K_TOTAL starting points"
+
+[[key.invalid]]
 doc = "The RESTART blocks make a chain of their own."
 wrap = "restart"
 at = 2
