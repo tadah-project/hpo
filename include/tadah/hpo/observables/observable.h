@@ -125,6 +125,10 @@ public:
      *  for every k up to 99. */
     virtual std::string column_tag() const = 0;
 
+    /** The unit of the value ("eV/atom"), which the best_pot.tadah header
+     *  writes with the term; "" for a value without one. */
+    virtual std::string unit() const { return {}; }
+
     /** Why a value this observable reports under its settings can have no
      *  analytical derivative (ObservableEvalResult::dO_dW empty, and not a
      *  constant), naming the option; "" when every value has one or is a

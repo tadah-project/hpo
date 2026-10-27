@@ -219,22 +219,34 @@ parse_cohesive_energy(const std::vector<std::string>& tokens, std::size_t start,
                 integer(need_value(i, t), "--maxeval", 0));
         } else if (t == "--fmax-converged") {
             once(t);
-            /* The force tolerance of the relaxation and its eq_ok test
-             * (matches Ecoh_fast.in's `ternary($(fmax) < 0.1, 1, 0)`): the
-             * relaxation stops when the largest force falls below it, and
-             * one that ends above it returns the --unconverged value as
-             * Ecoh. Positive: no relaxation reaches a tolerance of 0. */
+            /* The force tolerance of the atoms in the relaxation and its
+             * eq_ok test (matches Ecoh_fast.in's `ternary($(fmax) < 0.1,
+             * 1, 0)`): the atoms have converged when the largest atomic
+             * force falls below it, and a relaxation that ends above it
+             * returns the --unconverged value as Ecoh. Positive: no
+             * relaxation reaches a tolerance of 0. */
             const std::string& v = need_value(i, t);
             cfg.eq_fmax_threshold = number(v, "--fmax-converged");
             if (!(cfg.eq_fmax_threshold > 0.0))
                 throw std::runtime_error(
                     "PC_OBSERVABLE cohesive_energy: --fmax-converged must be "
                     "> 0 (got " + v + ")");
+        } else if (t == "--ptol") {
+            once(t);
+            /* The pressure tolerance of the cell in the relaxation, in GPa.
+             * Positive: no relaxation reaches a pressure of 0. */
+            const std::string& v = need_value(i, t);
+            cfg.relax_ptol = number(v, "--ptol");
+            if (!(cfg.relax_ptol > 0.0))
+                throw std::runtime_error(
+                    "PC_OBSERVABLE cohesive_energy: --ptol must be > 0 (got " +
+                    v + ")");
         } else if (t == "--unconverged") {
             once(t);
             /* Strategy + value for unconverged relax outcomes. Syntax:
              *   --unconverged const        <V>     # res.value = V
-             *   --unconverged force-scaled <slope> # res.value = target + slope.fmax
+             *   --unconverged force-scaled <slope> # res.value = Ecoh at the
+             *       end, moved away from the target by slope.fmax
              *
              * `const 100.0` mirrors Ecoh_fast.in's eq_ok=false branch
              * (the cliff). `force-scaled <slope>` gives local optimisers
@@ -253,9 +265,17 @@ parse_cohesive_energy(const std::vector<std::string>& tokens, std::size_t start,
                     "PC_OBSERVABLE cohesive_energy: --unconverged kind must be "
                     "'const' or 'force-scaled' (got '" + kind + "')");
             }
-            cfg.unconverged_value = number(
-                need_value(i, "--unconverged " + kind + " <value>"),
-                "--unconverged " + kind);
+            const std::string& v =
+                need_value(i, "--unconverged " + kind + " <value>");
+            cfg.unconverged_value = number(v, "--unconverged " + kind);
+            /* A negative slope would move the value of an unconverged
+             * relaxation towards the target, lowering its loss. */
+            if (cfg.unconverged_strategy == Strat::ForceScaled &&
+                cfg.unconverged_value < 0.0)
+                throw std::runtime_error(
+                    "PC_OBSERVABLE cohesive_energy: the slope of "
+                    "--unconverged force-scaled must be >= 0 (got " + v +
+                    ")");
         } else {
             throw std::runtime_error(
                 "PC_OBSERVABLE cohesive_energy: unknown option '" + t + "'");

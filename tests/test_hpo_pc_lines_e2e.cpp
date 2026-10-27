@@ -424,7 +424,13 @@ TEST_CASE("a script without --hotvar that reads $a is injected the hot "
  * give, bit for bit, the losses of a run with one chain: the third that
  * of the first evaluation of x1 (from the declared start), the fourth
  * that of x1 after x2 (from the a0 of x2), which differs from it (the
- * start matters).
+ * start matters: each relaxation stops after --maxiter 2 iterations, at a
+ * cell that depends on its start, and reports the cohesive energy of that
+ * cell moved away from the target by the magnitude of its pressure in
+ * eV/A^3, --unconverged force-scaled 1; a relaxation to --ptol, 1e-4
+ * GPa, gives the same loss from either start. The line had --maxiter 500
+ * --maxeval 500 while the relaxation stopped at 0.1 eV/A^3, 16 GPa, at a
+ * cell that depended on its start).
  * Before the fix: one a0 was shared by every chain, each evaluation
  * starting where the last one of any chain ended: the third evaluation
  * started from the a0 of x2, and its loss was that of x1 after x2. */
@@ -434,7 +440,7 @@ TEST_CASE("a PC_OBSERVABLE relaxation starts from the a0 of its own chain",
     const std::string obs =
         "PC_ERMSE 0 1\nPC_OBSERVABLE cohesive_energy --species Ta --target "
         "8.1 --weight 1 --supercell 2 2 2 --hotvar a0 2.8 3.8 3.1 "
-        "--maxiter 500 --maxeval 500\n";
+        "--maxiter 2 --unconverged force-scaled 1\n";
     const double x1 = 2.4, x2 = 2.8;
     std::vector<double> one;
     {

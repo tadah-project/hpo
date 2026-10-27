@@ -262,6 +262,7 @@ enum class LineOptionId : unsigned short {
   PC_OBSERVABLE_cohesive_energy_maxwalltime,
   PC_OBSERVABLE_cohesive_energy_etol,
   PC_OBSERVABLE_cohesive_energy_fmaxconverged,
+  PC_OBSERVABLE_cohesive_energy_ptol,
   PC_OBSERVABLE_cohesive_energy_unconverged,
   OPTIM_AUTO_RATIO,
   OPTIM_AUTO_FRAC,
@@ -1927,6 +1928,19 @@ inline constexpr Arg PC_OBSERVABLE_cohesive_energy_fmaxconverged_args[] = {
 inline constexpr std::string_view PC_OBSERVABLE_cohesive_energy_fmaxconverged_checks[] = {
     "PC_OBSERVABLE cohesive_energy: --fmax-converged must be > 0 (got {tok})",
 };
+inline constexpr std::string_view PC_OBSERVABLE_cohesive_energy_ptol_lines[] = {
+    "PC_OBSERVABLE.cohesive_energy",
+};
+inline constexpr Arg PC_OBSERVABLE_cohesive_energy_ptol_args[] = {
+    Arg{"pressure", ArgKind::Number, false, false,
+        Limit{true, "0", 0.0, true, 0ull}, Limit{}, true, false,
+        Span<std::string_view>{nullptr, 0}, Span<RefusedWord>{nullptr, 0}, "",
+        "PC_OBSERVABLE cohesive_energy: --ptol takes a finite number (got '{tok}'){underflow}",
+        "", false, ""},
+};
+inline constexpr std::string_view PC_OBSERVABLE_cohesive_energy_ptol_checks[] = {
+    "PC_OBSERVABLE cohesive_energy: --ptol must be > 0 (got {tok})",
+};
 inline constexpr std::string_view PC_OBSERVABLE_cohesive_energy_unconverged_lines[] = {
     "PC_OBSERVABLE.cohesive_energy",
 };
@@ -1944,6 +1958,9 @@ inline constexpr Arg PC_OBSERVABLE_cohesive_energy_unconverged_args[] = {
         Span<std::string_view>{nullptr, 0}, Span<RefusedWord>{nullptr, 0}, "",
         "PC_OBSERVABLE cohesive_energy: --unconverged {kind} takes a finite number (got '{tok}'){underflow}",
         "", false, ""},
+};
+inline constexpr std::string_view PC_OBSERVABLE_cohesive_energy_unconverged_checks[] = {
+    "PC_OBSERVABLE cohesive_energy: the slope of --unconverged force-scaled must be >= 0 (got {tok})",
 };
 inline constexpr std::string_view OPTIM_AUTO_RATIO_lines[] = {
     "OPTIM.AUTO",
@@ -2860,13 +2877,22 @@ inline constexpr LineOption kLineOptions[] = {
       "PC_OBSERVABLE cohesive_energy: --fmax-converged is given twice on this line; each option is given once",
       true, "0.1", false,
       Span<std::string_view>{detail::PC_OBSERVABLE_cohesive_energy_fmaxconverged_checks, 1}},
+  LineOption{LineOptionId::PC_OBSERVABLE_cohesive_energy_ptol,
+      "PC_OBSERVABLE.cohesive_energy.--ptol", "--ptol",
+      Span<std::string_view>{detail::PC_OBSERVABLE_cohesive_energy_ptol_lines, 1},
+      Span<Arg>{detail::PC_OBSERVABLE_cohesive_energy_ptol_args, 1},
+      Repeat::Error,
+      "PC_OBSERVABLE cohesive_energy: --ptol is given twice on this line; each option is given once",
+      true, "1e-4", false,
+      Span<std::string_view>{detail::PC_OBSERVABLE_cohesive_energy_ptol_checks, 1}},
   LineOption{LineOptionId::PC_OBSERVABLE_cohesive_energy_unconverged,
       "PC_OBSERVABLE.cohesive_energy.--unconverged", "--unconverged",
       Span<std::string_view>{detail::PC_OBSERVABLE_cohesive_energy_unconverged_lines, 1},
       Span<Arg>{detail::PC_OBSERVABLE_cohesive_energy_unconverged_args, 2},
       Repeat::Error,
       "PC_OBSERVABLE cohesive_energy: --unconverged is given twice on this line; each option is given once",
-      true, "const 100", false, Span<std::string_view>{nullptr, 0}},
+      true, "const 100", false,
+      Span<std::string_view>{detail::PC_OBSERVABLE_cohesive_energy_unconverged_checks, 1}},
   LineOption{LineOptionId::OPTIM_AUTO_RATIO, "OPTIM.AUTO.RATIO", "RATIO",
       Span<std::string_view>{detail::OPTIM_AUTO_RATIO_lines, 1},
       Span<Arg>{detail::OPTIM_AUTO_RATIO_args, 1}, Repeat::Error,

@@ -23,7 +23,8 @@ namespace hpo {
  *  Evaluation pipeline:
  *      1. Build bulk: cells::bcc(species, a0) -> replicate(nx, ny, nz).
  *      2. Build isolated: cells::isolated_atom(species).
- *      3. Iso-relax bulk under P=0 (NativeRelaxer, box_mode=Iso).
+ *      3. Iso-relax bulk under P=0 (NativeRelaxer, box_mode=Iso) until the
+ *         magnitude of its pressure is below --ptol.
  *      4. dc.calc + model.predict_E + model.predict_dE_dW on both.
  *      5. Closed-form E_coh and dE_coh/dW (linear chain rule).
  *      6. Update hot-var with relaxed a0 (= a0 x the Iso scale factor).
@@ -71,15 +72,27 @@ public:
          * Caps work on pathological theta where the relax never converges,
          * which would otherwise dominate HPO wall time. */
         std::size_t relax_maxeval = 5000;
-        /* --fmax-converged: the force tolerance of the relaxation
-         * (NativeRelaxer::Options::ftol: the largest atomic force, and
-         * the strain force, at which it stops) and its convergence test:
-         * a relaxation that ends with fmax > eq_fmax_threshold reports a
+        /* --fmax-converged: the force tolerance of the atoms in the
+         * relaxation (NativeRelaxer::Options::ftol: the largest atomic
+         * force at which it stops) and its convergence test: a relaxation
+         * that ends with fmax > eq_fmax_threshold reports a
          * strategy-controlled "unconverged" value instead of the computed
          * Ecoh. The default 0.1 matches Ecoh_fast.in's
          *   variable eq_ok equal ternary($(fmax) < 0.1, 1, 0)
-         *   variable Ecoh  equal ternary(v_eq_ok, v_Ecoh_raw, 100.0). */
+         *   variable Ecoh  equal ternary(v_eq_ok, v_Ecoh_raw, 100.0).
+         * It does not bound the cell (relax_ptol does). */
         double eq_fmax_threshold      = 0.1;       /* eV/Ang */
+        /* --ptol: the pressure tolerance of the cell in the relaxation, in
+         * GPa (NativeRelaxer::Options::ptol, in eV/Ang^3, takes it times
+         * kGPaInEvPerA3): the cell has converged when the magnitude of its
+         * pressure, |dE/deps| / (3V), falls below it. A residual pressure
+         * P leaves E_coh below its value at zero pressure by about
+         * P^2 (V/N) / (2B), for the bulk modulus B, and the relaxed a0
+         * depends on where the relaxation started: at 1e-4 GPa about
+         * 3e-12 eV/atom for bcc Ta (V/N = 18.1 A^3, B = 195 GPa). The
+         * analytical gradient (needs_adjoint false, energy_terms at the
+         * relaxed cell) takes dE_bulk/deps = 0, which this bounds. */
+        double relax_ptol             = 1.0e-4;    /* GPa */
 
         /* Strategy for the observable value returned by an unconverged
          * relax (not-converged / maxeval / scale-out-of-range /
@@ -92,19 +105,21 @@ public:
          *                FAIL_SCORE -- i.e. a cliff. Use when you want
          *                hard rejection without leaking NaN through
          *                downstream best-tracking.
-         * - ForceScaled: res.value = target + unconverged_value .
-         *                fmax, the larger of the relaxer's
-         *                final_fmax_atoms and final_strain_force_norm
-         *                (the measure its ftol bounds). Maps "how far from
-         *                convergence" linearly into the value; the
+         * - ForceScaled: res.value = Ecoh_end +- unconverged_value .
+         *                fmax: the cohesive energy of the cell the
+         *                relaxation ends at, moved away from the target
+         *                (+ when Ecoh_end >= target) by the slope
+         *                unconverged_value (>= 0) times fmax, the larger of
+         *                the relaxer's final_fmax_atoms and
+         *                final_strain_force_norm (the measures its ftol
+         *                and ptol bound). The loss is never below that of
+         *                Ecoh_end and tends to it as fmax -> 0; the
          *                optimiser sees a smooth gradient toward
-         *                fmax -> 0 instead of a flat FAIL_SCORE plateau,
+         *                convergence instead of a flat FAIL_SCORE plateau,
          *                so local optimisers (BOBYQA, LBFGS) can
          *                navigate the boundary of the converged region.
-         *                Set unconverged_value=0 to degenerate the
-         *                penalty to "target" (zero extra loss for
-         *                unconverged), which is essentially trusting
-         *                the partial relax.
+         *                Set unconverged_value=0 to report Ecoh_end itself,
+         *                which is trusting the partial relax.
          *
          * Surface via parser `--unconverged const <V>` or
          * `--unconverged force-scaled <slope>`. */
@@ -117,6 +132,7 @@ public:
 
     std::string kind() const override { return "cohesive_energy"; }
     std::string column_tag() const override { return "Ecoh"; }
+    std::string unit() const override { return "eV/atom"; }
     std::string analytical_gradient_gap() const override;
     /** Every evaluation starts its relaxation from the lattice constant the
      *  previous evaluation of its chain relaxed to (the host's warm start,

@@ -2279,7 +2279,9 @@ energy per atom of the crystal relaxed at zero pressure."""
 long_doc = """\
 Each evaluation builds a bcc supercell with the lattice constant a0, \
 relaxes it at zero pressure with tadah's own relaxer and compares the \
-cohesive energy with the target through the loss function. Each \
+cohesive energy with the target through the loss function. The \
+relaxation ends when the magnitude of the cell's pressure is below \
+--ptol and the largest atomic force below --fmax-converged. Each \
 relaxation starts from the lattice constant at which the previous \
 relaxation of the same replica (TADAH:ANNEAL_PT), walker \
 (TADAH:ANNEAL_PA) or ASA trial-state slot (the n-th trial state of each \
@@ -2835,8 +2837,8 @@ repeat_msg = "PC_OBSERVABLE cohesive_energy: --etol is given twice on this line;
 default = { literal = "0" }
 doc = """\
 The energy tolerance of the relaxation, as the first value of the LAMMPS \
-minimize command; a value of 0 or below leaves the forces alone to decide \
-convergence."""
+minimize command; a value of 0 or below leaves --fmax-converged and \
+--ptol alone to decide convergence."""
 
 [[line_option.args]]
 name = "tol"
@@ -2872,19 +2874,18 @@ repeat = "error"
 repeat_msg = "PC_OBSERVABLE cohesive_energy: --fmax-converged is given twice on this line; each option is given once"
 default = { literal = "0.1" }
 doc = """\
-The force tolerance of the relaxation, a number > 0: the relaxation stops \
-when the largest atomic force, in eV/Å, and the strain force of the cell, \
-in eV/Å³, both fall below it."""
+The force tolerance of the atoms in the relaxation, in eV/Å, a number \
+> 0: the atoms have relaxed when the largest atomic force falls below it."""
 long_doc = """\
-The strain force is |dE/dε| / (3V), for the isotropic strain ε of the \
-cell and its volume V: the magnitude of the cell's pressure, in eV/Å³. \
-The one number bounds both, so the default 0.1 allows 0.1 eV/Å³, about \
-16 GPa. In the bcc cell the atomic forces vanish by symmetry, so the \
-strain force decides. A relaxation that stops before both fall below the \
-tolerance (at --maxiter, --maxeval or --max-wall-time, or when no step \
-lowers its energy) reports the --unconverged value; one that --etol \
-stops counts as converged when its largest atomic force is below the \
-tolerance."""
+In the bcc cell the atomic forces vanish by symmetry; the pressure of the \
+cell is bounded by --ptol. A relaxation is converged when the cell it \
+ends at meets both tolerances, also when it stops there at --maxiter, \
+--maxeval or --max-wall-time. It reports the --unconverged value when it \
+reaches one of these limits first, when the line search of the atoms \
+finds no lower energy, or when a step of the cell falls below 1e-12 of \
+the lattice constant before the pressure meets --ptol. One that --etol \
+stops counts as converged when its largest atomic force is below \
+--fmax-converged, whatever its pressure."""
 
 [[line_option.args]]
 name = "fmax"
@@ -2922,6 +2923,65 @@ text = "PC_OBSERVABLE cohesive_energy --species H --target 2 --weight 1 --hotvar
 error = "PC_OBSERVABLE cohesive_energy: --fmax-converged must be > 0 (got 0)"
 
 
+[[line_option]]
+id = "PC_OBSERVABLE.cohesive_energy.--ptol"
+option = "--ptol"
+lines = ["PC_OBSERVABLE.cohesive_energy"]
+synopsis = "--ptol <pressure>"
+repeat = "error"
+repeat_msg = "PC_OBSERVABLE cohesive_energy: --ptol is given twice on this line; each option is given once"
+default = { literal = "1e-4" }
+doc = """\
+The pressure tolerance of the relaxation, in GPa, a number > 0: the cell \
+has relaxed when the magnitude of its pressure falls below it."""
+long_doc = """\
+The magnitude of the pressure is |dE/dε| / (3V), for the isotropic \
+strain ε of the cell and its volume V, a central difference of the \
+energy over a strain of ±1e-5. A residual pressure P leaves the energy \
+per atom of the crystal above its minimum by about P² (V/N) / (2B), for \
+N atoms and the bulk modulus B, so the cohesive energy below its value \
+at zero pressure. The cell moves by a search for the zero of its \
+pressure, which uses the pressure alone, so a tight --ptol is reached \
+also where the energy is too flat or too noisy to show the change; a \
+--ptol below the rounding error of the central difference is not met, \
+and the relaxation then ends unconverged."""
+
+[[line_option.args]]
+name = "pressure"
+kind = "number"
+min = 0
+min_open = true
+msg = "PC_OBSERVABLE cohesive_energy: --ptol takes a finite number (got '{tok}'){underflow}"
+
+[[line_option.checks]]
+msg = "PC_OBSERVABLE cohesive_energy: --ptol must be > 0 (got {tok})"
+doc = "The value is 0 or negative."
+
+[[line_option.examples]]
+wrap = "root"
+text = "PC_OBSERVABLE cohesive_energy --species H --target 2.0 --weight 1 --hotvar a0 1.5 2.5 --ptol 1e-3"
+
+[[line_option.invalid]]
+wrap = "root"
+text = "PC_OBSERVABLE cohesive_energy --species H --target 2 --weight 1 --hotvar a0 1.5 2.5 --ptol"
+error = "PC_OBSERVABLE cohesive_energy: '--ptol' requires a value"
+
+[[line_option.invalid]]
+wrap = "root"
+text = "PC_OBSERVABLE cohesive_energy --species H --target 2 --weight 1 --hotvar a0 1.5 2.5 --ptol x"
+error = "PC_OBSERVABLE cohesive_energy: --ptol takes a finite number (got 'x')"
+
+[[line_option.invalid]]
+wrap = "root"
+text = "PC_OBSERVABLE cohesive_energy --species H --target 2 --weight 1 --hotvar a0 1.5 2.5 --ptol 1e-3 --ptol 1e-4"
+error = "PC_OBSERVABLE cohesive_energy: --ptol is given twice on this line; each option is given once"
+
+[[line_option.invalid]]
+wrap = "root"
+text = "PC_OBSERVABLE cohesive_energy --species H --target 2 --weight 1 --hotvar a0 1.5 2.5 --ptol 0"
+error = "PC_OBSERVABLE cohesive_energy: --ptol must be > 0 (got 0)"
+
+
 
 [[line_option]]
 id = "PC_OBSERVABLE.cohesive_energy.--unconverged"
@@ -2934,13 +2994,18 @@ default = { literal = "const 100" }
 doc = """\
 The value the observable reports for a relaxation that does not converge: \
 const <value> reports <value> in eV/atom, force-scaled <slope> reports \
-the target plus <slope> times the larger of the largest atomic force and \
-the strain force of the cell at the end."""
+the cohesive energy of the cell the relaxation ends at, moved away from \
+the target by <slope> times the larger of the largest atomic force, in \
+eV/Å, and the magnitude of the cell's pressure, in eV/Å³, there."""
 long_doc = """\
-The two forces are those that --fmax-converged bounds; in the bcc cell \
-the atomic forces vanish by symmetry, so the strain force decides. \
-force-scaled leaves the loss sloping towards converged candidates; its \
-value has no analytical gradient."""
+The largest atomic force is the one --fmax-converged bounds; the \
+magnitude of the cell's pressure, |dE/dε| / (3V), is the one --ptol \
+bounds in GPa. In the bcc cell the atomic forces vanish by symmetry, so \
+the pressure decides. Under \
+force-scaled the loss of the term is at least that of the cohesive \
+energy of the final cell and tends to it as the relaxation nears \
+convergence, so the loss slopes towards converged candidates; its value \
+has no analytical gradient. The slope is a number >= 0."""
 
 [[line_option.args]]
 name = "kind"
@@ -2952,14 +3017,18 @@ msg = "PC_OBSERVABLE cohesive_energy: --unconverged kind must be 'const' or 'for
 name = "value"
 kind = "number"
 msg = "PC_OBSERVABLE cohesive_energy: --unconverged {kind} takes a finite number (got '{tok}'){underflow}"
-doc = "The value of const, in eV/atom, or the slope of force-scaled."
+doc = "For const, the value in eV/atom, of either sign; for force-scaled, the slope, a number >= 0."
+
+[[line_option.checks]]
+msg = "PC_OBSERVABLE cohesive_energy: the slope of --unconverged force-scaled must be >= 0 (got {tok})"
+doc = "The slope of force-scaled is negative."
 
 [[line_option.examples]]
 wrap = "root"
 text = "PC_OBSERVABLE cohesive_energy --species H --target 2.0 --weight 1 --hotvar a0 1.5 2.5 --unconverged const 50"
 
 [[line_option.examples]]
-doc = "The target plus 10 times the larger of the two forces at the end of the relaxation."
+doc = "The cohesive energy of the final cell, moved away from the target by 10 times the larger of the largest atomic force and the magnitude of the pressure there."
 wrap = "root"
 text = "PC_OBSERVABLE cohesive_energy --species H --target 2.0 --weight 1 --hotvar a0 1.5 2.5 --unconverged force-scaled 10"
 
@@ -2982,6 +3051,11 @@ error = "PC_OBSERVABLE cohesive_energy: --unconverged const takes a finite numbe
 wrap = "root"
 text = "PC_OBSERVABLE cohesive_energy --species H --target 2 --weight 1 --hotvar a0 1.5 2.5 --unconverged const 50 --unconverged const 60"
 error = "PC_OBSERVABLE cohesive_energy: --unconverged is given twice on this line; each option is given once"
+
+[[line_option.invalid]]
+wrap = "root"
+text = "PC_OBSERVABLE cohesive_energy --species H --target 2 --weight 1 --hotvar a0 1.5 2.5 --unconverged force-scaled -1"
+error = "PC_OBSERVABLE cohesive_energy: the slope of --unconverged force-scaled must be >= 0 (got -1)"
 
 
 # ============================================================== LOSS ====
