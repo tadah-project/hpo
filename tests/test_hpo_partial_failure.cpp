@@ -571,11 +571,10 @@ TEST_CASE("a failed PC_OBSERVABLE term's journal line says why: an evaluation "
  * compressed cell, a0 = 2.2 in the window [2, 5]) reports its --unconverged
  * value: the constant, or target + slope x fmax. When
  * that value is not finite the term fails, and the reason names the
- * strategy and its numbers. No PC_OBSERVABLE line gives such a value (the
- * parser reads only finite numbers, and the relaxed bcc cell's atom forces
- * vanish, so a finite slope does not overflow): a force-scaled value is not
- * finite when fmax is not, or slope x fmax overflows. The observable is
- * built here with a slope of +inf, and a constant of NaN.
+ * strategy and its numbers. The parser reads only finite numbers, so a
+ * const value is finite, and a force-scaled value is not finite when fmax
+ * is not, or slope x fmax overflows (a slope near the largest double). The
+ * observable is built here with a slope of +inf, and a constant of NaN.
  * Pins: the reason is "the relaxation did not converge (maxeval reached)
  * and its --unconverged force-scaled value, target + slope x fmax = 8.1 +
  * inf x <fmax> = <v>, is not finite", and "... and its --unconverged const
