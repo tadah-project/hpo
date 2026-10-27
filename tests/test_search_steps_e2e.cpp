@@ -1,6 +1,6 @@
 /* The first steps of a search on the Ta test data (tests/data/ta/common):
- * what NLopt is given for a failed evaluation, and where LN_BOBYQA starts
- * next to a bound.
+ * what NLopt is given for a failed evaluation, where LN_BOBYQA starts next
+ * to a bound, and the scale DLIB:BFGS runs on.
  *
  * Each case runs the whole hpo_run() stack in a scratch directory on the
  * shared Ta model of the tests (config.tadah, the elastic and bcc
@@ -271,4 +271,39 @@ TEST_CASE("LN_BOBYQA: a start next to a bound moves by at most half a step "
                                "moves") != std::string::npos);
         }
     }
+}
+
+/* Pins: DLIB:BFGS (MAXEVAL 60, FAILSCORE 1e300) from RCUT2B 5.6, SGRIDMB
+ * 0.2 with PC_ERMSE 0 <w> at the loss-term weights 1e-4, 1 and 1e6 -- the
+ * same problem, its loss multiplied by 1e4 and 1e10: every run reaches the
+ * optimum at RCUT2B 6 (its upper bound) and ends there, and the numbers of
+ * evaluations of the three runs differ by at most one line search (a trial
+ * and the 4 points of a central difference in two dimensions); the journal
+ * gives the length of the first gradient each run divides its loss by.
+ * Before the fix: dlib's first step is the gradient itself, so the path
+ * followed the unit of the loss: at 1e-4 and 1 BFGS crept along RCUT2B and
+ * reached 6 after 55 and 59 evaluations; at 1e6 its first step went to the
+ * corner (6, 0.1), backtracked to RCUT2B 5.604 and the run stopped there on
+ * FTOL_ABS after 34 evaluations; the journal had no such line. */
+TEST_CASE("DLIB:BFGS: the path does not depend on the scale of the loss",
+          "[HPO][dlib_bfgs][e2e]")
+{
+    std::vector<std::size_t> evals;
+    for (const std::string weight : {"1e-4", "1", "1e6"}) {
+        INFO("PC_ERMSE weight " << weight);
+        TaDataRun run(ta_target("    LIB DLIB\n    ALGO BFGS\n    MAXEVAL 60\n",
+                                "FAILSCORE 1e300\nPC_ERMSE 0 " + weight + "\n"));
+        CHECK(run.status == 0);
+        const auto best = data_rows("best_params.tadah");
+        REQUIRE_FALSE(best.empty());
+        CHECK(std::stod(best.back().at(2)) == 6.0);
+        evals.push_back(data_rows("loss.tadah").size());
+        const std::string journal = read_file("hpo_run.log");
+        CHECK(journal.find("DLIB:BFGS: the search runs on the loss divided by "
+                           "the length of its first gradient, ") !=
+              std::string::npos);
+    }
+    INFO("evaluations " << evals[0] << ", " << evals[1] << ", " << evals[2]);
+    const auto [lo, hi] = std::minmax_element(evals.begin(), evals.end());
+    CHECK(*hi - *lo <= 5u);
 }
