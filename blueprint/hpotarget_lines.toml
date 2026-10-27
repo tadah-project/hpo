@@ -4945,7 +4945,7 @@ msg = "--hpotarget defines PC_OBSERVABLE but {block} GRAD_STRATEGY=NUMERICAL is 
 doc = """\
 With a PC_OBSERVABLE line, GRAD_STRATEGY NUMERICAL is refused, and a block \
 that obtains gradients without a GRAD_STRATEGY line takes ANALYTICAL. The \
-refusal names the END line of the block."""
+refusal names the GRAD_STRATEGY line."""
 msg_doc = "The message names the block, OPTIMIZER or EXPLORE."
 
 [[rule.examples]]
@@ -4982,10 +4982,10 @@ keys = ["ROOT.PC_LAMMPS", "ROOT.PC_FAILPROBE", "OPTIMIZER.GRAD_STRATEGY"]
 msg = "--hpotarget defines {key} on line {line} but {block} GRAD_STRATEGY is set. A PC_LAMMPS or PC_FAILPROBE line does not support analytical/numerical/hybrid gradients. Drop the GRAD_STRATEGY line."
 doc = """\
 With a PC_LAMMPS or PC_FAILPROBE line, no block has a GRAD_STRATEGY line. \
-The refusal names the END line of the block."""
+The refusal names the GRAD_STRATEGY line."""
 msg_doc = """\
-The message names PC_LAMMPS, or PC_FAILPROBE in a file without a \
-PC_LAMMPS line, and the block, OPTIMIZER or EXPLORE."""
+The message names PC_LAMMPS and its line, or the PC_FAILPROBE line in a \
+file without a PC_LAMMPS line, and the block, OPTIMIZER or EXPLORE."""
 
 [[rule.invalid]]
 wrap = "none"
@@ -5027,11 +5027,12 @@ msg = "--hpotarget defines {key} on line {line} but {block} optimiser {lib}:{alg
 doc = """\
 With a PC_LAMMPS or PC_FAILPROBE line, every optimiser of the file runs \
 without gradients, as the results of a LAMMPS script have no gradient. \
-The refusal names the END line of the block."""
+The refusal names the ALGO line of the block."""
 msg_doc = """\
-The message names PC_LAMMPS, or PC_FAILPROBE in a file without a \
-PC_LAMMPS line, the block, OPTIMIZER or EXPLORE, and its optimiser, and \
-lists the optimisers that run without gradients as a block names them."""
+The message names PC_LAMMPS and its line, or the PC_FAILPROBE line in a \
+file without a PC_LAMMPS line, the block, OPTIMIZER or EXPLORE, and its \
+optimiser, and lists the optimisers that run without gradients as a block \
+names them."""
 
 [[rule.examples]]
 wrap = "none"
@@ -5118,12 +5119,12 @@ msg = "--hpotarget defines {key} on line {line} but {block} optimiser {lib}:{alg
 doc = """\
 With a PC_LAMMPS or PC_FAILPROBE line, an NLopt MLSL or AUGLAG without an \
 INNER block is refused when NLopt's default local optimiser takes \
-gradients. The refusal names the END line of the block."""
+gradients. The refusal names the ALGO line of the block."""
 msg_doc = """\
-The message names PC_LAMMPS, or PC_FAILPROBE in a file without a \
-PC_LAMMPS line, the block, OPTIMIZER or EXPLORE, its optimiser and the \
-default local optimiser, and lists the optimisers that run without \
-gradients as a block names them."""
+The message names PC_LAMMPS and its line, or the PC_FAILPROBE line in a \
+file without a PC_LAMMPS line, the block, OPTIMIZER or EXPLORE, its \
+optimiser and the default local optimiser, and lists the optimisers that \
+run without gradients as a block names them."""
 
 [[rule.invalid]]
 wrap = "none"
@@ -5148,12 +5149,12 @@ msg = "--hpotarget defines {key} on line {line} but {block} optimiser {lib}:{alg
 doc = """\
 With a PC_LAMMPS or PC_FAILPROBE line, an INNER block that names an NLopt \
 MLSL or AUGLAG is refused when NLopt's default local optimiser takes \
-gradients. The refusal names the ENDINNER line."""
+gradients. The refusal names the ALGO line of the INNER block."""
 msg_doc = """\
-The message names PC_LAMMPS, or PC_FAILPROBE in a file without a \
-PC_LAMMPS line, the block, INNER, or EXPLORE INNER for the INNER block \
-inside EXPLORE, its optimiser, the default local optimiser and the local \
-NLopt algorithms without gradients."""
+The message names PC_LAMMPS and its line, or the PC_FAILPROBE line in a \
+file without a PC_LAMMPS line, the block, INNER, or EXPLORE INNER for the \
+INNER block inside EXPLORE, its optimiser, the default local optimiser and \
+the local NLopt algorithms without gradients."""
 
 [[rule.invalid]]
 wrap = "none"
@@ -5183,12 +5184,13 @@ keys = ["ROOT.PC_LAMMPS", "ROOT.PC_FAILPROBE", "BLOCK.INNER"]
 msg = "--hpotarget defines {key} on line {line} but {block} optimiser {lib}:{algo} is gradient-based. A PC_LAMMPS or PC_FAILPROBE line requires a gradient-free optimiser, and an INNER search is a local NLopt algorithm: name a derivative-free one in the INNER block ({list})."
 doc = """\
 With a PC_LAMMPS or PC_FAILPROBE line, an INNER block names a local NLopt \
-algorithm without gradients. The refusal names the ENDINNER line."""
+algorithm without gradients. The refusal names the ALGO line of the INNER \
+block."""
 msg_doc = """\
-The message names PC_LAMMPS, or PC_FAILPROBE in a file without a \
-PC_LAMMPS line, the block, INNER, or EXPLORE INNER for the INNER block \
-inside EXPLORE, its optimiser and the local NLopt algorithms without \
-gradients."""
+The message names PC_LAMMPS and its line, or the PC_FAILPROBE line in a \
+file without a PC_LAMMPS line, the block, INNER, or EXPLORE INNER for the \
+INNER block inside EXPLORE, its optimiser and the local NLopt algorithms \
+without gradients."""
 
 [[rule.examples]]
 wrap = "none"

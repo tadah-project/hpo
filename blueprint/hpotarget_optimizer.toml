@@ -149,13 +149,12 @@ default = { text = "No evaluation limit: an optimiser that needs a stop is refus
 doc = """\
 The evaluation budget of the optimiser of the block. Under STRATEGY TYPE \
 MULTISTART, and in a PRESTAGE refinement from more than one candidate, the \
-starts share it, unless the optimiser runs every start in one run, as \
-DLIB:GFS does."""
+starts share it."""
 long_doc = """\
 Each start receives MAXEVAL divided by the number of starts, rounded up; \
 under MULTISTART, BUDGET_PER_START sets the budget of each start instead. \
-An optimiser that takes several starting points in one run, such as \
-DLIB:GFS, runs once with all of them and the whole MAXEVAL. The EXPLORE \
+A PRESTAGE refinement on an optimiser that takes every candidate in one \
+run, DLIB:GFS, runs once with all of them and the whole MAXEVAL. The EXPLORE \
 block of STRATEGY TYPE PRESTAGE has a MAXEVAL of its own. Under a RESTART \
 block each round runs with the whole MAXEVAL, so a run can make up \
 to (MAX + 1) times MAXEVAL evaluations. An optimiser without a convergence \
@@ -1208,7 +1207,8 @@ TYPE PRESTAGE an EXPLORE block whose optimiser reads SEED, and that has no \
 seed of its own, takes the STRATEGY-level SEED. A SEED line, and for NLopt \
 a SEED in its INIT block, is a seed of its own; the refinement draws \
 random numbers of its own. A refinement whose optimiser reads no SEED \
-(DLIB:GFS, DLIB:BFGS, TADAH:GRID, CERES:STEEPEST_DESCENT) takes a SEED \
+(DLIB:GFS, DLIB:BFGS, TADAH:GRID, CERES:STEEPEST_DESCENT, an NLopt \
+algorithm that draws no random numbers) takes a SEED \
 that the EXPLORE block takes, and refuses one when the EXPLORE block has \
 a seed of its own or reads none. Restart r of the RESTART block runs the \
 optimiser with SEED + r times the number of starts (N_STARTS under \
@@ -2043,10 +2043,6 @@ default = { text = "MAXEVAL divided by the number of starts, rounded up; no budg
 doc = """\
 The evaluation budget of each start of STRATEGY TYPE MULTISTART, in place \
 of a share of MAXEVAL."""
-long_doc = """\
-TYPE MULTISTART runs a local optimiser, which takes one starting point in \
-each start: an optimiser that takes every INIT point in one run \
-(DLIB:GFS) refuses TYPE MULTISTART."""
 
 [[key.examples]]
 wrap = "opt_multistart"
@@ -2132,10 +2128,10 @@ name = "MULTISTART"
 keys = ["STRATEGY.N_STARTS", "STRATEGY.BUDGET_PER_START"]
 doc = """\
 The STRATEGY-level optimiser runs once from each of the first N_STARTS \
-starting points of its INIT block, SEED + i for start i. An optimiser \
-that takes every INIT point in one run (DLIB:GFS), and a global optimiser \
-that takes one starting point, refuse it: STRATEGY TYPE PLAIN runs them \
-once."""
+starting points of its INIT block, SEED + i for start i. TYPE MULTISTART \
+refuses an optimiser that takes every INIT point in one run (DLIB:GFS) and \
+a global optimiser that takes one starting point; STRATEGY TYPE PLAIN runs \
+them once."""
 
 [[strategy_type.checks]]
 msg = "STRATEGY TYPE MULTISTART cannot run {name}: it takes every INIT point in one run, so MULTISTART would run it once, whatever N_STARTS; STRATEGY TYPE PLAIN runs {name} once from every INIT point."
@@ -2494,7 +2490,8 @@ optimiser."""
 default = { text = "Not set: each run takes a seed of its own, so the drawn points differ between runs." }
 doc = """\
 The seed of the RANDOM, LHS and SOBOL lines of the block. An NLopt \
-optimiser without a SEED of its own takes this seed too."""
+optimiser that draws random numbers and has no SEED of its own takes this \
+seed too."""
 long_doc = """\
 Restart r of a RESTART block draws with SEED + r. A chain without RANDOM, \
 LHS or SOBOL does not use the seed, with a warning. Without SEED, an INIT \
