@@ -1966,3 +1966,124 @@ TEST_CASE("DLIB:BFGS: the line search evaluates no step that is not finite",
     CHECK(asked[2](0) == Approx(0.55).epsilon(1e-12));
     CHECK(asked[2](1) == 0.5);
 }
+
+namespace {
+
+/* 1 + 1000 (1 - a) + (b - 0.7)^2 on [0, 1]^2: from a start with A on its
+ * upper bound 1, A's gradient, -1000, points out of the box (BFGS's step
+ * cannot move A), and B's, -1 at B = 0.2, is the gradient of the
+ * coordinate its first step moves. Every evaluation is a function of its
+ * point. */
+struct HeldSteepBowl {
+    std::vector<Vec> asked;
+    double operator()(const Vec& x) {
+        asked.push_back(x);
+        const double b = x(1) - 0.7;
+        return 1.0 + 1000.0 * (1.0 - x(0)) + b * b;
+    }
+    std::string repeat_reuse_blocker() const { return ""; }
+    std::size_t g_iter_value() const { return asked.size(); }
+};
+
+/* A constant loss: its gradient is 0. */
+struct FlatLoss {
+    std::vector<Vec> asked;
+    double operator()(const Vec& x) {
+        asked.push_back(x);
+        return 1.0;
+    }
+    std::string repeat_reuse_blocker() const { return ""; }
+    std::size_t g_iter_value() const { return asked.size(); }
+};
+
+/* The length the journal says DLIB:BFGS divides its loss by ("the search
+ * runs on the loss divided by the length of its first gradient, <c> ..."),
+ * -1 when there is no such line. */
+double bfgs_scale_in(const std::string& journal)
+{
+    std::smatch m;
+    if (std::regex_search(
+            journal, m,
+            std::regex("DLIB:BFGS: the search runs on the loss divided by the "
+                       "length of its first gradient, ([0-9.e+-]+) ")))
+        return std::stod(m[1]);
+    return -1.0;
+}
+
+const std::string kBfgsLossItself =
+    "DLIB:BFGS: the gradient at the start of the search has a length of 0 "
+    "over the coordinates its first step can move, or one the loss cannot "
+    "be divided by: the search runs on the loss itself";
+
+}  // namespace
+
+/* Pins: DLIB:BFGS (MAXEVAL 60) on the held steep bowl from (1, 0.2): the
+ * length its loss is divided by is that of the gradient over the
+ * coordinates its first step can move, B's alone, 1 (the journal's
+ * "... the length of its first gradient, 1 (over the coordinates its first
+ * step can move) ..."), not that of the whole gradient, 1000; so B's first
+ * trial is a unit step, held to the box: eval 6, the first point after the
+ * start and its stencil (one-sided in A, at the bound), is (1, 1). A stays
+ * on its bound, B reaches 0.7 at eval 11, and the search ends "DLIB:BFGS:
+ * FTOL_ABS reached" after 20 evaluations.
+ * Before the fix (dlib's loop ran on the loss itself): the same points, and
+ * the journal had no line of a length. With the length of the whole
+ * gradient, the journal gives 1000 and eval 6 is a step of 1/1000 in B,
+ * not (1, 1). */
+TEST_CASE("DLIB:BFGS: the loss is divided by the length of the gradient over "
+          "the coordinates its first step can move",
+          "[HPO][repeat_points][dlib_bfgs]")
+{
+    HeldSteepBowl host;
+    auto sp = bfgs_spec({0.0, 0.0}, {1.0, 1.0}, {1.0, 0.2});
+    sp.stop.maxeval = 60;
+    const std::string journal =
+        run_bfgs_within(sp, host, "DLIB:BFGS held at a steep bound");
+    CHECK(bfgs_scale_in(journal) == Approx(1.0).epsilon(1e-6));
+    REQUIRE(host.asked.size() == 20u);
+    CHECK(same_bits(host.asked[5], point(1.0, 1.0)));
+    CHECK(host.asked[10](0) == 1.0);
+    CHECK(host.asked[10](1) == Approx(0.7).margin(1e-9));
+    for (const Vec& x : host.asked) CHECK(x(0) > 1.0 - 3e-6);
+    CHECK(status_of(journal) == "DLIB:BFGS: FTOL_ABS reached");
+    CHECK(count_of(journal, kBfgsLossItself) == 0u);
+}
+
+/* Pins: DLIB:BFGS on a loss whose gradient at the start has a length of 0
+ * over the coordinates its first step can move runs on the loss itself,
+ * and the journal says so once (kBfgsLossItself), with no line of a length
+ * the loss is divided by: a constant loss on [0, 1] from 0.5 (its gradient
+ * is 0), and the loss 1 - u from its upper bound 1, where the gradient, -1,
+ * points out of the box. Each search ends "DLIB:BFGS: FTOL_ABS reached"
+ * after 3 evaluations (the start and its stencil).
+ * Before the fix (dlib's loop ran on the loss itself): the same searches,
+ * and the journal had no such line. With the length of the whole gradient
+ * the search from the bound divides its loss by 1, and the journal says so
+ * instead. */
+TEST_CASE("DLIB:BFGS: a first gradient of length 0 over the coordinates its "
+          "first step can move leaves the loss undivided",
+          "[HPO][repeat_points][dlib_bfgs]")
+{
+    SECTION("a constant loss") {
+        FlatLoss host;
+        auto sp = bfgs_spec({0.0}, {1.0}, {0.5});
+        sp.stop.maxeval = 20;
+        const std::string journal =
+            run_bfgs_within(sp, host, "DLIB:BFGS on a constant loss");
+        CHECK(count_of(journal, kBfgsLossItself) == 1u);
+        CHECK(bfgs_scale_in(journal) == -1.0);
+        CHECK(host.asked.size() == 3u);
+        CHECK(status_of(journal) == "DLIB:BFGS: FTOL_ABS reached");
+    }
+    SECTION("a start on the bound the gradient points out of") {
+        Slope host;
+        auto sp = bfgs_spec({0.0}, {1.0}, {1.0});
+        sp.stop.maxeval = 20;
+        const std::string journal =
+            run_bfgs_within(sp, host, "DLIB:BFGS held at its bound");
+        CHECK(count_of(journal, kBfgsLossItself) == 1u);
+        CHECK(bfgs_scale_in(journal) == -1.0);
+        CHECK(host.asked.size() == 3u);
+        CHECK(status_of(journal) == "DLIB:BFGS: FTOL_ABS reached");
+    }
+}
