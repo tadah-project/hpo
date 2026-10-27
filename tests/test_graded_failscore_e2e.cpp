@@ -197,11 +197,12 @@ constexpr double kLargest = std::numeric_limits<double>::max();
  * and an Optimiser status other than FAILED or STOPPED; every loss of
  * loss.tadah is a finite double, either usable or a graded failure in
  * [0.999 FAILSCORE, FAILSCORE) (none is FAILSCORE itself); the run has a
- * usable loss, and from the start in the failure region a graded failure. The optimisers that compare losses
- * alone (LN_SBPLX, LN_NELDERMEAD, GN_CRS2_LM, TADAH:RANDOM and the
- * annealers) evaluate the same points as under FAILSCORE 1e299, which the
- * startup checks accepted. (A search of the gradient-based or model-based
- * optimisers can take another path at another FAILSCORE: the finite
+ * usable loss, and from the start in the failure region a graded failure.
+ * The optimisers that compare losses alone (LN_SBPLX, LN_NELDERMEAD,
+ * GN_CRS2_LM, TADAH:RANDOM and the annealers) evaluate the same points as
+ * under FAILSCORE 1e299, which the startup checks accepted. (A search of
+ * the gradient-based or model-based optimisers can take another path at
+ * another FAILSCORE: the finite
  * stand-in of a failure before the first usable loss is FAILSCORE capped
  * at 1e100, and rounding in its slope changes the steps. ASA:ASA refuses
  * a FAILSCORE of 1e18 or more under FAILSCORE_GRADING ON: the case
