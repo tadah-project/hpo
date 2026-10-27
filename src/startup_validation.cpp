@@ -31,6 +31,7 @@
 #include <tadah/models/descriptors/dm/embf0.h>
 #include <tadah/models/descriptors/dm/ream_density.h>
 #include <tadah/models/descriptors/dm/rhoform.h>
+#include <tadah/models/inert_keys.h>
 #include <tadah/models/eam/pot_curve_edit.h>
 
 #include <algorithm>
@@ -799,6 +800,30 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
           fixed->second[t] + " and refuses another value, so every "
           "candidate but the value of the training configuration would "
           "fail.");
+    }
+  }
+
+  /* --- OPTIM WATOM when no descriptor reads WATOM -----------------------
+   * D2_EAM and DM_EAM take their pair and density functions from the setfl
+   * file unweighted, and the dummies read nothing
+   * (models::context_reads_watom): every fit refuses a WATOM other than 1
+   * that no descriptor reads (mlip::require_no_unused_keys), so every
+   * candidate but 1 would fail its evaluation. The training configuration's
+   * own WATOM is 1 here (require_fit_settings above refuses another).
+   * Named by its line of the target file: the line of the first value it
+   * searches (a pair-triple WATOM numbers its values among the tokens). */
+  if (const auto it = trg.optimap.find("WATOM");
+      it != trg.optimap.end() && !models::context_reads_watom(train_ctx)) {
+    const auto &o = it->second;
+    for (std::size_t t = 0; t < o.opt.size(); ++t) {
+      if (!o.opt[t]) continue;
+      throw std::runtime_error(
+          "OPTIM WATOM (line " + core::to_string(o.line[t]) +
+          " of the target file) is not a valid search target: no "
+          "descriptor of the training configuration reads WATOM (D2_EAM, "
+          "DM_EAM, D2_Dummy and DM_Dummy read none), and a fit refuses a "
+          "WATOM other than 1 that no descriptor reads, so every candidate "
+          "other than 1 would fail its evaluation.");
     }
   }
 
