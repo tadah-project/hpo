@@ -785,6 +785,7 @@ inline constexpr Arg ROOT_PC_WORKER_TIMEOUT_args[] = {
 };
 inline constexpr std::string_view ROOT_PC_WORKER_TIMEOUT_checks[] = {
     "PC_WORKER_TIMEOUT is too large for the worker deadline, got '{tok}' (it is kept in 64-bit milliseconds: at most about 9.2e15 s)",
+    "PC_WORKER_TIMEOUT sets the deadline of a script task in a worker process (PC_ISOLATION PROCESS); under PC_ISOLATION THREAD, {why}, the scripts run inside the tadah process without a worker deadline, so it would have no effect",
 };
 inline constexpr std::string_view ROOT_FAILSCORE_GRADING_arg0_words[] = {
     "ON",
@@ -797,7 +798,7 @@ inline constexpr Arg ROOT_FAILSCORE_GRADING_args[] = {
         "FAILSCORE_GRADING must be ON or OFF, got '{tok}'", "", false, ""},
 };
 inline constexpr std::string_view ROOT_FAILSCORE_GRADING_checks[] = {
-    "FAILSCORE_GRADING ON grades failures in bands below FAILSCORE, which needs a FAILSCORE above 0 and below 1e300 (without a FAILSCORE line, FAILSCORE is the largest double)",
+    "{phase}: ASA:ASA: under FAILSCORE_GRADING ON a failed evaluation scores from 0.999 FAILSCORE to below FAILSCORE ({value}), and ASA:ASA takes a cost of about 1e+18 or more for an invalid state and draws another, so it would not see the graded failures at or above that cost; a FAILSCORE of 1e+18 or less keeps every graded failure below it",
 };
 inline constexpr std::string_view ROOT_BUMPGATE_arg0_words[] = {
     "CANDIDATE",
@@ -1097,7 +1098,6 @@ inline constexpr Arg OPTIMIZER_THREADS_args[] = {
         Span<RefusedWord>{nullptr, 0}, "{key}", "", "", false, ""},
 };
 inline constexpr std::string_view OPTIMIZER_THREADS_checks[] = {
-    "{phase}: CERES:{algo} does not support THREADS (host evaluation is single-threaded inside one optimizer step)",
     "{phase}: {lib}:{algo} does not use THREADS in an INNER block: the THREADS of the STRATEGY-level optimiser sets the workers of the run; remove it",
     "{phase}: {lib}:{algo} does not use THREADS: the THREADS of the STRATEGY-level optimiser sets the workers of the run, and the THREADS of an EXPLORE block is read by {list}; remove it",
 };
@@ -1158,14 +1158,14 @@ inline constexpr std::string_view STRATEGY_TYPE_checks[] = {
 };
 inline constexpr Arg STRATEGY_N_STARTS_args[] = {
     Arg{"n", ArgKind::Integer, false, false, Limit{true, "2", 2.0, true, 2ull},
-        Limit{true, "UINT64_MAX", 1.8446744073709552e+19, true, 18446744073709551615ull},
-        false, false, Span<std::string_view>{nullptr, 0},
+        Limit{}, false, false, Span<std::string_view>{nullptr, 0},
         Span<RefusedWord>{nullptr, 0}, "{key}",
         "N_STARTS must be an integer >= 2, got '{tok}' (one start is STRATEGY TYPE PLAIN)",
         "", false, ""},
 };
 inline constexpr std::string_view STRATEGY_N_STARTS_checks[] = {
     "N_STARTS must be an integer >= 2, got '{tok}'",
+    "N_STARTS {value} needs {value} starting points, and the INIT chain gives {count} ({list}); {hint}",
 };
 inline constexpr Arg STRATEGY_BUDGET_PER_START_args[] = {
     Arg{"n", ArgKind::Integer, false, false, Limit{true, "1", 1.0, true, 1ull},
@@ -1334,6 +1334,7 @@ inline constexpr std::string_view ROOT_PC_ERSQ_checks[] = {
     "{key} requires <target> <weight>",
     "{key}: unknown flag '{tok}'",
     "{key}: indexed targets are supported only for PC_ERMSE, PC_FRMSE and PC_SRMSE_GPA",
+    "PC_ERSQ takes no {option}: a cap rejects an evaluation whose metric is above it, and a higher R^2 is a better fit, so the cap would reject the better fits",
 };
 inline constexpr Arg ROOT_PC_SRMSE_GPA_args[] = {
     Arg{"indices", ArgKind::Indices, true, false, Limit{}, Limit{}, false,
@@ -1569,7 +1570,6 @@ inline constexpr std::string_view PC_EMAE_skipabove_lines[] = {
     "PC_EMAE",
     "PC_ERMSE",
     "PC_ErRMSE",
-    "PC_ERSQ",
     "PC_SRMSE_GPA",
     "PC_FRMSE",
 };
@@ -1585,7 +1585,6 @@ inline constexpr std::string_view PC_EMAE_skiprel_lines[] = {
     "PC_EMAE",
     "PC_ERMSE",
     "PC_ErRMSE",
-    "PC_ERSQ",
     "PC_SRMSE_GPA",
     "PC_FRMSE",
 };
@@ -2077,6 +2076,9 @@ inline constexpr std::string_view ENV_TADAH_FAILSCORE_GRADING_values[] = {
     "ON",
     "OFF",
 };
+inline constexpr std::string_view ENV_TADAH_FAILSCORE_GRADING_checks[] = {
+    "{phase}: ASA:ASA: under FAILSCORE_GRADING ON, set by TADAH_FAILSCORE_GRADING, a failed evaluation scores from 0.999 FAILSCORE to below FAILSCORE ({value}), and ASA:ASA takes a cost of about 1e+18 or more for an invalid state and draws another, so it would not see the graded failures at or above that cost; a FAILSCORE of 1e+18 or less keeps every graded failure below it",
+};
 inline constexpr std::string_view ENV_TADAH_BUMPGATE_values[] = {
     "CANDIDATE",
     "STRICT",
@@ -2087,6 +2089,7 @@ inline constexpr std::string_view ENV_TADAH_PC_ISOLATION_values[] = {
 };
 inline constexpr std::string_view ENV_TADAH_PC_WORKER_TIMEOUT_checks[] = {
     "TADAH_PC_WORKER_TIMEOUT is too large for the worker deadline, got '{tok}' (it is kept in 64-bit milliseconds: at most about 9.2e15 s)",
+    "TADAH_PC_WORKER_TIMEOUT (got '{tok}') sets the deadline of a script task in a worker process (PC_ISOLATION PROCESS); under PC_ISOLATION THREAD, {why}, the scripts run inside the tadah process without a worker deadline, so it would have no effect",
 };
 inline constexpr LossParam LOSS_HUBER_params[] = {
     LossParam{"delta", 50.0, true, 0.0},
@@ -2371,7 +2374,7 @@ inline constexpr Key kKeys[] = {
       "PC_WORKER_TIMEOUT is set twice (first on line {first_line}); each key is given once",
       "", true, "0", false, KeyId::ROOT_PC_WORKER_TIMEOUT, false,
       "TADAH_PC_WORKER_TIMEOUT",
-      Span<std::string_view>{detail::ROOT_PC_WORKER_TIMEOUT_checks, 1}},
+      Span<std::string_view>{detail::ROOT_PC_WORKER_TIMEOUT_checks, 2}},
   Key{KeyId::ROOT_FAILSCORE_GRADING, "ROOT.FAILSCORE_GRADING",
       "FAILSCORE_GRADING", "", block_bit(BlockId::ROOT),
       Span<Arg>{detail::ROOT_FAILSCORE_GRADING_args, 1}, Repeat::Error,
@@ -2523,7 +2526,7 @@ inline constexpr Key kKeys[] = {
       Span<Arg>{detail::OPTIMIZER_THREADS_args, 1}, Repeat::Error,
       "THREADS is set twice in the {block} block (first on line {first_line}); each key is given once",
       "", true, "1", false, KeyId::OPTIMIZER_THREADS, false, "",
-      Span<std::string_view>{detail::OPTIMIZER_THREADS_checks, 3}},
+      Span<std::string_view>{detail::OPTIMIZER_THREADS_checks, 2}},
   Key{KeyId::OPTIMIZER_GRAD_STRATEGY, "OPTIMIZER.GRAD_STRATEGY",
       "GRAD_STRATEGY", "OPTIMIZER",
       block_bit(BlockId::OPTIMIZER) | block_bit(BlockId::STRATEGY) | block_bit(BlockId::EXPLORE) | block_bit(BlockId::REFINE) | block_bit(BlockId::INNER),
@@ -2554,7 +2557,7 @@ inline constexpr Key kKeys[] = {
       Span<Arg>{detail::STRATEGY_N_STARTS_args, 1}, Repeat::Error,
       "N_STARTS is set twice in the STRATEGY block (first on line {first_line}); each key is given once",
       "", false, "", false, KeyId::STRATEGY_N_STARTS, false, "",
-      Span<std::string_view>{detail::STRATEGY_N_STARTS_checks, 1}},
+      Span<std::string_view>{detail::STRATEGY_N_STARTS_checks, 2}},
   Key{KeyId::STRATEGY_BUDGET_PER_START, "STRATEGY.BUDGET_PER_START",
       "BUDGET_PER_START", "", block_bit(BlockId::STRATEGY),
       Span<Arg>{detail::STRATEGY_BUDGET_PER_START_args, 1}, Repeat::Error,
@@ -2635,7 +2638,7 @@ inline constexpr Key kKeys[] = {
       Repeat::Error,
       "PC_ERSQ: repeated declaration (first declared on line {first_line})",
       "", false, "", false, KeyId::ROOT_PC_ERSQ, false, "",
-      Span<std::string_view>{detail::ROOT_PC_ERSQ_checks, 5}},
+      Span<std::string_view>{detail::ROOT_PC_ERSQ_checks, 6}},
   Key{KeyId::ROOT_PC_SRMSE_GPA, "ROOT.PC_SRMSE_GPA", "PC_SRMSE_GPA", "",
       block_bit(BlockId::ROOT), Span<Arg>{detail::ROOT_PC_SRMSE_GPA_args, 3},
       Repeat::Add, "", "", false, "", false, KeyId::ROOT_PC_SRMSE_GPA, false,
@@ -2704,12 +2707,12 @@ inline constexpr LineOption kLineOptions[] = {
       Span<std::string_view>{detail::RHOBARGATE_SEED_checks, 1}},
   LineOption{LineOptionId::PC_EMAE_skipabove, "PC_EMAE.--skip-above",
       "--skip-above",
-      Span<std::string_view>{detail::PC_EMAE_skipabove_lines, 6},
+      Span<std::string_view>{detail::PC_EMAE_skipabove_lines, 5},
       Span<Arg>{detail::PC_EMAE_skipabove_args, 1}, Repeat::Error,
       "{key}: repeated --skip-above", false, "", false,
       Span<std::string_view>{detail::PC_EMAE_skipabove_checks, 1}},
   LineOption{LineOptionId::PC_EMAE_skiprel, "PC_EMAE.--skip-rel", "--skip-rel",
-      Span<std::string_view>{detail::PC_EMAE_skiprel_lines, 6},
+      Span<std::string_view>{detail::PC_EMAE_skiprel_lines, 5},
       Span<Arg>{detail::PC_EMAE_skiprel_args, 1}, Repeat::Error,
       "{key}: repeated --skip-rel", false, "", false,
       Span<std::string_view>{detail::PC_EMAE_skiprel_checks, 1}},
@@ -3036,7 +3039,7 @@ inline constexpr Rule kRules[] = {
   Rule{"RULE.OPTIM_OALGO_threshold_box", RuleCheck::Parse,
       "OPTIM OALGO (2): the box [{low}, {high}] is not inside (0, 1), but the second value of OALGO is the rank threshold M of OALGO 1 and 3, which only a value 0 < M < 1 sets: every M below 0 is the machine precision under OALGO 1, every M of 0 or below leaves out only a singular value of 0 under OALGO 3, and a fit refuses an M of 1 or more, so the box of a search is inside (0, 1)"},
   Rule{"RULE.fit_OALGO3_intercepts", RuleCheck::Startup,
-      "OALGO=3 (SVD with uniform ridge) does not support intercept exclusion from regularisation. The model has {count} intercept column(s) (BIAS=true with ATOM) and LAMBDA != 0: use OALGO=1, 2 or 4 instead."},
+      "OALGO=3 (SVD with uniform ridge) does not support intercept exclusion from regularisation. The model has {count} intercept column(s) (BIAS=true with ATOM) and LAMBDA != 0; OALGO 1, 2 or 4 fits such a model with LAMBDA != 0."},
   Rule{"RULE.fit_OALGO3_intercepts_evidence", RuleCheck::Startup,
       "LAMBDA -1 requests the evidence approximation, which only OALGO 3 runs; OALGO 3 penalises every weight alike, and the model has {count} intercept column(s) (BIAS true with ATOM), which a ridge penalty leaves out. The evidence approximation needs BIAS false, or every intercept weight pinned with FIXINDEX and FIXWEIGHT. With BIAS true, LAMBDA 0 fits with any OALGO, and LAMBDA > 0 with OALGO 1, 2 or 4."},
   Rule{"RULE.optim_LAMBDA_OALGO3_intercepts", RuleCheck::Startup,
@@ -3071,7 +3074,7 @@ inline constexpr Env kEnvs[] = {
   Env{"TADAH_FAILSCORE_GRADING", KeyId::ROOT_FAILSCORE_GRADING,
       Span<std::string_view>{detail::ENV_TADAH_FAILSCORE_GRADING_values, 2},
       "TADAH_FAILSCORE_GRADING must be ON or OFF (got '{tok}')",
-      Span<std::string_view>{nullptr, 0}},
+      Span<std::string_view>{detail::ENV_TADAH_FAILSCORE_GRADING_checks, 1}},
   Env{"TADAH_BUMPGATE", KeyId::ROOT_BUMPGATE,
       Span<std::string_view>{detail::ENV_TADAH_BUMPGATE_values, 2},
       "TADAH_BUMPGATE must be CANDIDATE or STRICT (got '{tok}')",
@@ -3083,7 +3086,7 @@ inline constexpr Env kEnvs[] = {
   Env{"TADAH_PC_WORKER_TIMEOUT", KeyId::ROOT_PC_WORKER_TIMEOUT,
       Span<std::string_view>{nullptr, 0},
       "TADAH_PC_WORKER_TIMEOUT must be a finite number of seconds >= 0 (0 derives the deadline from each script's timeout), got '{tok}'{underflow}",
-      Span<std::string_view>{detail::ENV_TADAH_PC_WORKER_TIMEOUT_checks, 1}},
+      Span<std::string_view>{detail::ENV_TADAH_PC_WORKER_TIMEOUT_checks, 2}},
 };
 
 inline constexpr LossFunction kLossFunctions[] = {
