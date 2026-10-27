@@ -283,6 +283,31 @@ TEST_CASE("LN_BOBYQA: a start next to a bound moves by at most half a step "
     }
 }
 
+/* Pins: LN_COBYLA (MAXEVAL 30, STEP unset) from the configuration's
+ * RCUT2B 4.005, 0.005 above its lower bound 4: it is given a step of 0.25
+ * of the width of each dimension, keeps it as the scale of the coordinate,
+ * and the search reaches beyond RCUT2B 4.1; the start stays (the first
+ * evaluation is at 4.005), and the journal has no line of a moved start.
+ * Before the fix: NLopt's own default shrank the step of RCUT2B to 0.75 of
+ * the gap, and COBYLA kept it: no evaluation went beyond RCUT2B 4.0091. */
+TEST_CASE("LN_COBYLA: a start next to a bound keeps the full step with STEP "
+          "unset", "[HPO][nlopt][step_plan][e2e]")
+{
+    TaDataRun run(ta_target("    LIB NLOPT\n    ALGO LN_COBYLA\n    MAXEVAL 30\n",
+                            "FAILSCORE 1e16\nPC_ERMSE 0 0.0001\n"),
+                  4.005);
+    CHECK(run.status == 0);
+    const auto pts = params_rows();
+    REQUIRE(pts.size() == 30u);
+    CHECK(pts.front()[0] == Approx(4.005).epsilon(1e-12));
+    double reach = 0.0;
+    for (const auto& p : pts) reach = std::max(reach, p[0]);
+    INFO("largest RCUT2B evaluated " << reach);
+    CHECK(reach > 4.1);
+    const std::string journal = read_file("hpo_run.log");
+    CHECK(journal.find("starts at") == std::string::npos);
+}
+
 /* Pins: DLIB:BFGS (MAXEVAL 60, FAILSCORE 1e300) from RCUT2B 5.6, SGRIDMB
  * 0.2 with PC_ERMSE 0 <w> and FTOL_ABS 1e-7 w at the loss-term weights w =
  * 1e-4, 1 and 1e6 -- the same problem with its loss, and the tolerance on

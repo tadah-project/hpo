@@ -418,3 +418,33 @@ TEST_CASE("LN_BOBYQA: a start between half a step and a step from a bound "
     CHECK(journal.find("NLOPT:LN_BOBYQA: AMPGRIDMB[6] starts at 0.006 instead "
                        "of 0.0068") != std::string::npos);
 }
+
+/* Pins: LN_COBYLA with STEP unset from AMPGRIDMB[6] = 0.0079, 1e-4 below
+ * its upper bound: it is given a step of 0.25 of each width (0.002 on
+ * AMPGRIDMB[6]), which it keeps as the scale of the coordinate, and its
+ * first simplex turns the step inward at the bound: a point of its first
+ * simplex has AMPGRIDMB[6] = 0.0059; the start stays (COBYLA takes any
+ * start with its full step) and the journal has no INFO line of a moved
+ * start.
+ * Before the fix: NLopt's own default shrank the step of AMPGRIDMB[6] to
+ * 0.75 of the gap, 7.5e-5, and COBYLA kept it as the scale of the
+ * coordinate: no point had AMPGRIDMB[6] = 0.0059. */
+TEST_CASE("LN_COBYLA: with STEP unset a start next to a bound keeps the full "
+          "step", "[HPO][step_plan][nlopt]")
+{
+    auto sp = spec("LN_COBYLA", false);
+    sp.optim_init = {{1.0, 0.0079}};
+    sp.optim_init_origin = {InitOrigin{InitOrigin::Kind::Config, {}}};
+    sp.stop.maxeval = 9;
+    StepRecorder host;
+    StepJournal j;
+    REQUIRE_NOTHROW(run_nlopt_impl<Vec, NoRunner>(sp, host));
+    const std::string journal = j.text();
+    REQUIRE(host.asked.size() == 9u);
+    CHECK(host.asked.front()(0) == 1.0);
+    CHECK(host.asked.front()(1) == 0.0079);
+    CHECK(asks_b(host.asked, 0.0059));
+    CHECK(journal.find("starts at") == std::string::npos);
+    CHECK(journal.find("STEP unset -- 0.25*width per dim, given to NLopt") !=
+          std::string::npos);
+}
