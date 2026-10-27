@@ -317,15 +317,15 @@ void run_nlopt_impl(const OptimizerSpec& sp, HostT& host,
                    "most the INIT-chain starting point (a SEED in the INIT "
                    "block, when the chain has a RANDOM/LHS/SOBOL entry) and "
                    "the random numbers of the local search "
-                << local->lib << ":" << local->algo << ". Use "
+                << local->lib << ":" << local->algo << ". "
                 << sp.algo.substr(0, sp.algo.size() - 4)
-                << " for seed-controlled random sampling";
+                << " draws its sample points at random from SEED";
         else if (seeded)
             oss << "; SEED affects at most the INIT-chain starting point "
                    "(and only when the chain has a RANDOM/LHS/SOBOL entry), "
-                   "not the sampled points. Use " <<
+                   "not the sampled points. " <<
                    sp.algo.substr(0, sp.algo.size() - 4)
-                << " for seed-controlled random sampling";
+                << " draws its sample points at random from SEED";
         oss << ".";
         if (seeded) {
             std::cerr << "[HPO] " << oss.str() << "\n";

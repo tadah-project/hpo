@@ -1222,10 +1222,10 @@ local search draws them (an INNER block with LN_PRAXIS). The others draw \
 none and refuse it. SEED inside an INIT or RESTART block is another key, \
 the seed of the starting points."""
 checks = [
-  { msg = "{phase}: {lib}:{algo} does not use SEED: it draws no random numbers; remove it", doc = "At startup, at the END line of its optimiser: an optimiser that does not read SEED, outside a PRESTAGE refinement." },
-  { msg = "{phase}: {lib}:{algo} does not use SEED: in one OPTIM dimension it draws no random numbers (it draws them only to choose between equally long sides of a box); remove it", doc = "At startup, at the END line of its optimiser: NLOPT:GN_DIRECT_L_RAND in a search of one OPTIM dimension, outside a PRESTAGE refinement." },
+  { msg = "{phase}: {lib}:{algo} does not use SEED: it draws no random numbers", doc = "At startup, at the END line of its optimiser: an optimiser that does not read SEED, outside a PRESTAGE refinement." },
+  { msg = "{phase}: {lib}:{algo} does not use SEED: in one OPTIM dimension it draws no random numbers (it draws them only to choose between equally long sides of a box)", doc = "At startup, at the END line of its optimiser: NLOPT:GN_DIRECT_L_RAND in a search of one OPTIM dimension, outside a PRESTAGE refinement." },
   { msg = "{phase}: {lib}:{algo} does not support SEED", doc = "At startup, at the END line of its optimiser: DLIB:BFGS or CERES:STEEPEST_DESCENT, outside a PRESTAGE refinement." },
-  { msg = "{phase}: {lib}:{algo} does not use SEED: it draws no random numbers, and the exploration ({name}) {why}; remove it", doc = "At startup, at the END line of its optimiser: the SEED of a PRESTAGE refinement whose optimiser does not read SEED, when the EXPLORE block does not take it; {why} is 'has a SEED of its own' or 'reads none'." },
+  { msg = "{phase}: {lib}:{algo} does not use SEED: it draws no random numbers, and the exploration ({name}) {why}", doc = "At startup, at the END line of its optimiser: the SEED of a PRESTAGE refinement whose optimiser does not read SEED, when the EXPLORE block does not take it; {why} is 'has a SEED of its own' or 'reads none'." },
 ]
 
 [[key.examples]]
@@ -1305,14 +1305,14 @@ ALGO GRID
 ENDEXPLORE
 ENDSTRATEGY
 ENDOPTIMIZER'''
-error = "the PRESTAGE refinement: DLIB:BFGS does not use SEED: it draws no random numbers, and the exploration (TADAH:GRID) reads none; remove it"
+error = "the PRESTAGE refinement: DLIB:BFGS does not use SEED: it draws no random numbers, and the exploration (TADAH:GRID) reads none"
 
 [[key.invalid]]
 wrap = "opt_grid"
 check = "startup"
 at = "ENDOPTIMIZER"
 text = "SEED 1"
-error = "the STRATEGY-level optimiser: TADAH:GRID does not use SEED: it draws no random numbers; remove it"
+error = "the STRATEGY-level optimiser: TADAH:GRID does not use SEED: it draws no random numbers"
 
 [[key.invalid]]
 wrap = "strategy"
@@ -1320,7 +1320,7 @@ check = "startup"
 at = "ENDOPTIMIZER"
 doc = "NLOPT:LN_SBPLX draws no random numbers."
 text = "SEED 1"
-error = "the STRATEGY-level optimiser: NLOPT:LN_SBPLX does not use SEED: it draws no random numbers; remove it"
+error = "the STRATEGY-level optimiser: NLOPT:LN_SBPLX does not use SEED: it draws no random numbers"
 
 [[key.invalid]]
 wrap = "none"
@@ -1338,7 +1338,7 @@ MAXEVAL 10
 SEED 5
 ENDSTRATEGY
 ENDOPTIMIZER'''
-error = "the STRATEGY-level optimiser: NLOPT:GN_DIRECT_L_RAND does not use SEED: in one OPTIM dimension it draws no random numbers (it draws them only to choose between equally long sides of a box); remove it"
+error = "the STRATEGY-level optimiser: NLOPT:GN_DIRECT_L_RAND does not use SEED: in one OPTIM dimension it draws no random numbers (it draws them only to choose between equally long sides of a box)"
 
 [[key.invalid]]
 wrap = "strategy"
@@ -1363,7 +1363,7 @@ MAXEVAL 10
 SEED 5
 ENDSTRATEGY
 ENDOPTIMIZER'''
-error = "the STRATEGY-level optimiser: DLIB:GFS does not use SEED: it draws no random numbers; remove it"
+error = "the STRATEGY-level optimiser: DLIB:GFS does not use SEED: it draws no random numbers"
 
 [[key]]
 id = "OPTIMIZER.VECTOR_ARR"

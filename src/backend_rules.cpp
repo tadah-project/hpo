@@ -341,7 +341,7 @@ void reject_unread_attributes(const OptimizerSpec& spec,
     if (spec.seed && !reads_seed(spec) && !spec.seed_seeds_exploration)
         throw std::runtime_error(backend_name(spec) +
                                  " does not use SEED: " +
-                                 seed_unread_reason(spec) + "; remove it");
+                                 seed_unread_reason(spec));
 }
 
 /* THREADS of the STRATEGY-level optimiser sizes the run's workers; a
@@ -588,8 +588,7 @@ void reject_refinement_seed(const OptimizerSpec& root, const PhaseSpec& phase)
     throw std::runtime_error(
         backend_name(spec) + " does not use SEED: " + seed_unread_reason(spec) +
         ", and the exploration (" + backend_name(explore) + ") " +
-        (reads_seed(explore) ? "has a SEED of its own" : "reads none") +
-        "; remove it");
+        (reads_seed(explore) ? "has a SEED of its own" : "reads none"));
 }
 }  // namespace
 
