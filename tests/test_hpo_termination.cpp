@@ -364,6 +364,28 @@ std::optional<std::uint64_t> drawn_restart_seed(const std::string& journal)
     return std::nullopt;
 }
 
+/* The seed D an optimiser that draws random numbers, in `block` without
+ * SEED, drew once for the run, as the journal names it ("the <block> block
+ * has no SEED, and <lib_algo> draws random numbers, so it draws them with a
+ * seed drawn once for the run, D (SEED D in the <block> block draws the
+ * same numbers again)"); none without the line. */
+std::optional<std::uint64_t> drawn_optimiser_seed(const std::string& journal,
+                                                  const std::string& block,
+                                                  const std::string& lib_algo)
+{
+    std::smatch m;
+    if (std::regex_search(
+            journal, m,
+            std::regex("the " + block + " block has no SEED, and " +
+                       lib_algo + " draws random numbers, so it draws them "
+                       "with a seed drawn once for the run, (\\d+) \\(SEED "
+                       "(\\d+) in the " + block + " block draws the same "
+                       "numbers again\\)")) &&
+        m[1] == m[2])
+        return std::stoull(m[1]);
+    return std::nullopt;
+}
+
 /* The journal line of restart `r` of `max` of a RESTART block without
  * SEED: "RESTART r/max -- fresh init from <method>; RESTART SEED <S + r>"
  * and the optimisers' seeds `seeds` ("SEED 6"; "" for none), S the drawn
@@ -4625,9 +4647,18 @@ TEST_CASE("Termination: a restarted seeded exploration draws a new "
         const std::string journal = read_file("hpo_run.log");
         REQUIRE(journal.find("RESTART 1/1") != std::string::npos);
         /* Until 2026-10-12 without "RESTART SEED <S + 1>, " (S drawn from
-         * std::random_device, now named). */
-        CHECK(journal.find(drawn_round_line(journal, 1, 1, "RANDOM",
-                                            "EXPLORE SEED 1718")) !=
+         * std::random_device, now named). The refinement's TADAH:RANDOM,
+         * in a STRATEGY block without SEED, draws a seed D once for the
+         * run, which round 1 derives as it derives a SEED line's: "SEED
+         * <D + 1>" (TOPK 1). Before the fix: TADAH:RANDOM drew a seed of its
+         * own from std::random_device at each start, and the round line
+         * named none ("...; RESTART SEED <S + 1>, EXPLORE SEED 1718"). */
+        const auto d = drawn_optimiser_seed(journal, "STRATEGY",
+                                            "TADAH:RANDOM");
+        REQUIRE(d);
+        CHECK(journal.find(drawn_round_line(
+                  journal, 1, 1, "RANDOM",
+                  "SEED " + std::to_string(*d + 1) + ", EXPLORE SEED 1718")) !=
               std::string::npos);
         CHECK(count_of(journal, "REFINEMENT: refining top-1") == 2u);
 

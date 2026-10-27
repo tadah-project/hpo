@@ -499,7 +499,7 @@ inline constexpr AnnealKeyRename kRenamed[] = {
   {"T0_PACCEPT", KIND_SERIAL | KIND_PT | KIND_PA, "PARAM T0_PACCEPT was renamed to T0_ACCEPT (same meaning: target initial acceptance probability); update the config"},
   {"STEP_AUTO", KIND_PT, "PARAM STEP_AUTO was replaced by PARAM STEP_MODE (FIXED / FROZEN / ADAPTIVE); STEP_AUTO 1 corresponds to STEP_MODE FROZEN, STEP_AUTO 0 to STEP_MODE FIXED"},
   {"STEP_AUTO_SWEEPS", KIND_PT, "PARAM STEP_AUTO_SWEEPS was renamed to STEP_WARMUP_SWEEPS (same meaning: minimum calibration attempts per coordinate); update the config"},
-  {"STEP_ADAPT_EVERY", KIND_PT, "PARAM STEP_ADAPT_EVERY was removed: STEP_MODE ADAPTIVE applies the robust-adaptive-Metropolis update after every proposal (a batched cadence multiplied the feedback gain by the batch size)"},
+  {"STEP_ADAPT_EVERY", KIND_PT, "PARAM STEP_ADAPT_EVERY was removed: STEP_MODE ADAPTIVE applies the robust-adaptive-Metropolis update after every proposal (an update every n proposals multiplied the feedback gain by n)"},
   {"LADDER_ADAPT_UPDATES", KIND_PT, "PARAM LADDER_ADAPT_UPDATES was removed; the pooled-evidence equalization freeze (LADDER_FREEZE) governs the adaptation lifetime"},
   {"RT", KIND_PT, "PARAM RT is not used by ANNEAL_PT: parallel tempering runs a static (optionally self-adapting) temperature ladder; cooling schedules belong to the serial TADAH:ANNEAL"},
   {"T_MIN", KIND_PT, "PARAM T_MIN is not used by ANNEAL_PT: parallel tempering runs a static (optionally self-adapting) temperature ladder; cooling schedules belong to the serial TADAH:ANNEAL"},

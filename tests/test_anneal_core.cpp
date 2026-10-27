@@ -563,13 +563,16 @@ TEST_CASE("anneal::Knobs::parse validation errors", "[HPO][anneal_core][knobs]")
                             Catch::Contains("renamed to STEP_WARMUP_SWEEPS"));
         pt.param.erase("STEP_AUTO_SWEEPS");
         /* STEP_ADAPT_EVERY is retired outright: the per-proposal RAM has
-         * no batching cadence any more. */
+         * no cadence of updates any more. The hint says what the cadence
+         * did in words that keep "batch" for the evaluations an optimiser
+         * runs at once. */
         pt.param["STEP_ADAPT_EVERY"] = 5.0;
         REQUIRE_THROWS_WITH(
             anneal::Knobs::parse(pt, anneal::AlgoKind::PT),
             Catch::Contains("PARAM STEP_ADAPT_EVERY was removed: STEP_MODE "
                             "ADAPTIVE applies the robust-adaptive-Metropolis "
-                            "update after every proposal"));
+                            "update after every proposal (an update every n "
+                            "proposals multiplied the feedback gain by n)"));
         pt.param.erase("STEP_ADAPT_EVERY");
         pt.param["LADDER_ADAPT_UPDATES"] = 4.0;
         REQUIRE_THROWS_WITH(anneal::Knobs::parse(pt, anneal::AlgoKind::PT),
