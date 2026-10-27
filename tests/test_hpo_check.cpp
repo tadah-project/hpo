@@ -1676,7 +1676,7 @@ std::size_t line_number(const std::string& text, const std::string& line)
  *     only, with FORCE true: "... (DM_Blip differentiates it in the energy
  *     rows only, and FORCE true gives the fit force rows) ...";
  *   - the same with FORCE false and PC_FRMSE: "... and PC_FRMSE measures the
- *     forces of the validation set) ...";
+ *     forces of the validation structures) ...";
  *   - OPTIM WATOM (1), which D2_BP differentiates in the energy and the
  *     force rows and DM_Blip in the energy rows only, with FORCE true: "...
  *     for OPTIM WATOM (1) on line 4 of the target file (DM_Blip
@@ -1694,10 +1694,11 @@ std::size_t line_number(const std::string& text, const std::string& line)
  * part, and the run optimised on that gradient), and the other refusals
  * read "... and the descriptors of the training configuration give none
  * for ..." and "(the descriptors differentiate it in the energy rows only,
- * ...)", naming no descriptor. Tadah! 1.5.0 passed each of these setups,
- * and its run evaluated the start and ended at its first gradient,
- * "GRAD_STRATEGY=ANALYTICAL: no analytical gradient for 1 parameter at
- * this point (indices: [0]): ...". */
+ * ...)", naming no descriptor, and the PC_FRMSE case "... and PC_FRMSE
+ * measures the forces of the validation set)". Tadah! 1.5.0 passed each of
+ * these setups, and its run evaluated the start and ended at its first
+ * gradient, "GRAD_STRATEGY=ANALYTICAL: no analytical gradient for 1
+ * parameter at this point (indices: [0]): ...". */
 TEST_CASE("hpo --check: GRAD_STRATEGY ANALYTICAL refuses a search parameter "
           "without an analytical derivative before any evaluation, as the "
           "run does",
@@ -1715,7 +1716,7 @@ TEST_CASE("hpo --check: GRAD_STRATEGY ANALYTICAL refuses a search parameter "
         " (DM_Blip differentiates it in the energy rows only, and ";
     const std::string by_force = "FORCE true gives the fit force rows)";
     const std::string by_frmse =
-        "PC_FRMSE measures the forces of the validation set)";
+        "PC_FRMSE measures the forces of the validation structures)";
     const std::string for_it =
         ". GRAD_STRATEGY HYBRID takes finite differences for it.";
     struct Case {
@@ -1898,7 +1899,8 @@ TEST_CASE("hpo --check: a RESTART block on TADAH:GRID is refused at its "
 namespace {
 
 /* Two-atom Ta structures in a 20 A cubic cell, one per distance of
- * `distances` (A) between the atoms, written to `path`: no pair of atoms
+ * `distances` (A) between the atoms, written to `path`: no image of an atom
+ * within 5 A of the other, and for distances below 4 A no pair of atoms
  * within 1 A of a cutoff of 5 A. */
 void write_dimer_db(const fs::path& path, const std::vector<double>& distances)
 {
@@ -2004,74 +2006,116 @@ HostGradient host_gradient(tadah::core::Context ctx, double x, double h)
 
 }  // namespace
 
-/* Pins: a search parameter that the descriptors differentiate, but for
- * pairs of atoms the data do not hold at the values of the training
- * configuration, is refused under GRAD_STRATEGY ANALYTICAL with that
- * reason, naming the structures that lack them: OPTIM RCUT2B (1) of D2_BP
- * under Cut_PolyS (RCUT2B 5), which depends on RCUT2B only for a pair
- * within 1 A of the cutoff, with Ta dimers of 2.4 and 2.6 A,
+/* Pins: a search parameter that the descriptors differentiate has rows of
+ * 0 in the structures that hold no pair of atoms that depends on it, and
+ * the analytical gradient forms them: OPTIM RCUT2B (1) of D2_BP (CGRID2B
+ * 4.0 4.6, SGRID2B 1 1) under Cut_PolyS (RCUT2B 5), which depends on
+ * RCUT2B only for a pair within 1 A of the cutoff, with Ta dimers of 2.4
+ * and 2.6 A
  *   - as the validation structures (the training structure has pairs at
- *     4.67 A): "... and the descriptors give none for OPTIM RCUT2B (1) on
- *     line 4 of the target file (at the values of the training
- *     configuration, no pair of atoms of the validation structures lies
- *     where the descriptors depend on it: Cut_PolyS depends on RCUT2B only
- *     for a pair within 1 A of the cutoff). ...";
- *   - as the training structures: "... of the training structures ...";
- *   - as both: "... of the training or the validation structures ...".
+ *     4.67 A): the check passes under GRAD_STRATEGY ANALYTICAL, and
+ *     HPO_Host::analytical_gradient hands no parameter to finite
+ *     differences, its gradient the central difference of the loss
+ *     (h = 1e-3) to 1e-3 of its size (the loss of the one-structure fit
+ *     varies by about 1e-4 of the slope's size between steps of 1e-4 and
+ *     1e-5);
+ *   - as the training structures (the validation structure has the pairs):
+ *     the same;
+ *   - as both: the check passes, and the gradient is 0, with no parameter
+ *     handed to finite differences (no structure of the run depends on
+ *     RCUT2B, and the central difference is 0 too).
  * Under Cut_Cos, which depends on RCUT2B for every pair within the cutoff,
- * the check passes with the dimers as both.
- * Before the fix: each refusal said "the descriptors of the training
- * configuration give none for OPTIM RCUT2B (1) on line 4 of the target
- * file (no descriptor differentiates it)", though D2_BP differentiates
- * RCUT2B and the training structures had the pairs it needs in the first
- * case. */
-TEST_CASE("hpo --check: GRAD_STRATEGY ANALYTICAL names the structures that "
-          "lack the pairs a search parameter acts on",
+ * the check passes with the dimers as both. Under Cut_Dummy, which does
+ * not depend on it, the check refuses it: "... give none for OPTIM RCUT2B
+ * (1) on line 4 of the target file (no descriptor differentiates it).
+ * GRAD_STRATEGY HYBRID takes finite differences for it.".
+ * Before the fix: the check refused the three Cut_PolyS setups, "...
+ * give none for OPTIM RCUT2B (1) on line 4 of the target file (at the
+ * values of the training configuration, no pair of atoms of the
+ * validation structures lies where the descriptors depend on it:
+ * Cut_PolyS depends on RCUT2B only for a pair within 1 A of the cutoff)
+ * ...", and the analytical gradient handed RCUT2B to finite differences
+ * (needs_fd held it), so an ANALYTICAL run stopped at its first gradient
+ * and HYBRID took finite differences for a derivative of 0 rows. */
+TEST_CASE("hpo --check: GRAD_STRATEGY ANALYTICAL takes a search parameter "
+          "whose structures hold no pair of atoms that depends on it, its "
+          "rows 0",
           "[HPO][hpo_check][analytical]")
 {
-    const std::string hpo = "LOSS L2\nFAILSCORE 1e9\nPC_ERMSE 0 1\n"
-                            "OPTIM RCUT2B (1) 4.5 5.5\n" +
-                            lbfgs_block("ANALYTICAL");
-    const std::string head =
-        "Error on line " + std::to_string(line_number(hpo, "ENDOPTIMIZER")) +
+    const std::string root = "LOSS L2\nFAILSCORE 1e9\nPC_ERMSE 0 1\n"
+                             "OPTIM RCUT2B (1) 4.5 5.5\n";
+    const std::string refused =
+        "Error on line " +
+        std::to_string(line_number(root + lbfgs_block("ANALYTICAL"),
+                                   "ENDOPTIMIZER")) +
         ": OPTIMIZER block: GRAD_STRATEGY ANALYTICAL needs an analytical "
         "derivative with respect to every search parameter, and the "
         "descriptors give none for OPTIM RCUT2B (1) on line 4 of the target "
-        "file (at the values of the training configuration, no pair of atoms "
-        "of the ";
-    const std::string tail =
-        " lies where the descriptors depend on it: Cut_PolyS depends on "
-        "RCUT2B only for a pair within 1 A of the cutoff). GRAD_STRATEGY "
-        "HYBRID takes finite differences for it.\nLine: ENDOPTIMIZER";
+        "file (no descriptor differentiates it). GRAD_STRATEGY HYBRID takes "
+        "finite differences for it.\nLine: ENDOPTIMIZER";
     struct Case {
         const char* name;
         bool dimer_train, dimer_val;
         std::string cutoff;
-        std::string expected;
+        std::string check_error;
+        bool gradient;
+        bool flat;
     };
     const std::vector<Case> cases = {
-        {"dimers as the validation structures", false, true, "Cut_PolyS",
-         head + "validation structures" + tail},
-        {"dimers as the training structures", true, false, "Cut_PolyS",
-         head + "training structures" + tail},
-        {"dimers as both", true, true, "Cut_PolyS",
-         head + "training or the validation structures" + tail},
-        {"dimers as both under Cut_Cos", true, true, "Cut_Cos", ""},
+        {"dimers as the validation structures", false, true, "Cut_PolyS", "",
+         true, false},
+        {"dimers as the training structures", true, false, "Cut_PolyS", "",
+         true, false},
+        {"dimers as both", true, true, "Cut_PolyS", "", true, true},
+        {"dimers as both under Cut_Cos", true, true, "Cut_Cos", "", false,
+         false},
+        {"Cut_Dummy", false, false, "Cut_Dummy", refused, false, false},
+    };
+    /* Gaussians at 4.0 and 4.6 A, whose terms change with a cutoff of
+     * 5 A where the Ta structure has pairs (4.67 A). */
+    const auto context = [](const Case& c) {
+        tadah::core::Context ctx =
+            make_ta_context("train.db", "config.hpo", "config.val");
+        for (const char* key : {"RCTYPE2B", "CGRID2B", "SGRID2B"})
+            ctx.remove(key);
+        ctx.add("RCTYPE2B", c.cutoff);
+        ctx.add("CGRID2B", "4.0 4.6");
+        ctx.add("SGRID2B", "1.0 1.0");
+        return ctx;
+    };
+    const auto data = [](const Case& c) {
+        if (c.dimer_train) write_dimer_db("train.db", {2.4, 2.6});
+        if (c.dimer_val) write_dimer_db("val.db", {2.4, 2.6});
     };
     for (const Case& c : cases) {
         INFO("case: " << c.name);
+        {
+            fresh_process_state();
+            ScratchDir sd("analytical_pairs");
+            write_inputs(root + lbfgs_block("ANALYTICAL"));
+            data(c);
+            tadah::core::Context ctx = context(c);
+            ctx.add("CHECK", "true");
+            CHECK(error_of([&] { return tadah::hpo::hpo_run(ctx); }) ==
+                  c.check_error);
+        }
+        if (!c.gradient) continue;
         fresh_process_state();
-        ScratchDir sd("analytical_pairs");
-        write_inputs(hpo);
-        if (c.dimer_train) write_dimer_db("train.db", {2.4, 2.6});
-        if (c.dimer_val) write_dimer_db("val.db", {2.4, 2.6});
-        tadah::core::Context ctx =
-            make_ta_context("train.db", "config.hpo", "config.val");
-        ctx.remove("RCTYPE2B");
-        ctx.add("RCTYPE2B", c.cutoff);
-        ctx.add("CHECK", "true");
-        CHECK(error_of([&] { return tadah::hpo::hpo_run(ctx); }) ==
-              c.expected);
+        ScratchDir sd("analytical_pairs_gradient");
+        write_inputs(root + lbfgs_block("HYBRID"));
+        data(c);
+        const double h = 1e-3;
+        const HostGradient r = host_gradient(context(c), 5.0, h);
+        const double central = (r.fp - r.fm) / (2.0 * h);
+        INFO("analytical " << r.g << ", central difference " << central);
+        CHECK(r.needs_fd.empty());
+        if (c.flat) {
+            CHECK(r.g == 0.0);
+            CHECK(central == 0.0);
+        } else {
+            CHECK(std::fabs(central) > 1e-6);
+            CHECK(r.g == Approx(central).epsilon(1e-3));
+        }
     }
 }
 
