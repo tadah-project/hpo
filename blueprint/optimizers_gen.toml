@@ -288,7 +288,7 @@ untested_tolerance_note = "AUGLAG ends when its INNER search ends (tadah hpo set
 step_use = "forwarded_to_inner"
 step_use_text = "passed to the optimiser of the INNER block"
 step_consumed = true
-step_note = "passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block"
+step_note = "passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block; with neither STEP set, an LN_BOBYQA or LN_COBYLA local search (the INNER block's, or the default LN_COBYLA) takes 0.25 of each width"
 starts_at_x0 = true
 start_note = ""
 random_draws = "not_recorded"
@@ -299,7 +299,7 @@ Options for NLOPT:AUGLAG
    * Stops that end a run: MAXEVAL, MAXTIME, STOPVAL, FTOL_REL, FTOL_ABS, XTOL_REL, XTOL_ABS
    * PARAM: NLopt reads no PARAM key of this algorithm
    * STEP <double>  initial step; consumption: passed to the optimiser of the INNER block
-     passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block
+     passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block; with neither STEP set, an LN_BOBYQA or LN_COBYLA local search (the INNER block's, or the default LN_COBYLA) takes 0.25 of each width
    * INNER ... ENDINNER: the local search it runs, from its own starting
      point: LIB NLOPT and a local ALGO; a global one (`tadah explain ALGO`
      marks each) is refused, and so is one that needs an INNER block of its
@@ -328,7 +328,7 @@ untested_tolerance_note = "AUGLAG ends when its INNER search ends (tadah hpo set
 step_use = "forwarded_to_inner"
 step_use_text = "passed to the optimiser of the INNER block"
 step_consumed = true
-step_note = "passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block"
+step_note = "passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block; with neither STEP set, an LN_BOBYQA or LN_COBYLA local search (the INNER block's, or the default LN_COBYLA) takes 0.25 of each width"
 starts_at_x0 = true
 start_note = ""
 random_draws = "not_recorded"
@@ -339,7 +339,7 @@ Options for NLOPT:AUGLAG_EQ
    * Stops that end a run: MAXEVAL, MAXTIME, STOPVAL, FTOL_REL, FTOL_ABS, XTOL_REL, XTOL_ABS
    * PARAM: NLopt reads no PARAM key of this algorithm
    * STEP <double>  initial step; consumption: passed to the optimiser of the INNER block
-     passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block
+     passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block; with neither STEP set, an LN_BOBYQA or LN_COBYLA local search (the INNER block's, or the default LN_COBYLA) takes 0.25 of each width
    * INNER ... ENDINNER: the local search it runs, from its own starting
      point: LIB NLOPT and a local ALGO; a global one (`tadah explain ALGO`
      marks each) is refused, and so is one that needs an INNER block of its
@@ -368,7 +368,7 @@ untested_tolerance_note = "MLSL's multistart loop tests no tolerance, and NLopt 
 step_use = "forwarded_to_inner"
 step_use_text = "passed to the optimiser of the INNER block"
 step_consumed = true
-step_note = "passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block"
+step_note = "passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block; with neither STEP set, an LN_BOBYQA or LN_COBYLA local search (the INNER block's, or the default LN_COBYLA) takes 0.25 of each width"
 starts_at_x0 = true
 start_note = ""
 random_draws = "not_recorded"
@@ -381,7 +381,7 @@ Options for NLOPT:GD_MLSL
    * PARAM: NLopt reads no PARAM key of this algorithm
    * global optimiser
    * STEP <double>  initial step; consumption: passed to the optimiser of the INNER block
-     passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block
+     passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block; with neither STEP set, an LN_BOBYQA or LN_COBYLA local search (the INNER block's, or the default LN_COBYLA) takes 0.25 of each width
    * INNER ... ENDINNER: the local search it runs, from the points it
      samples in the OPTIM box: LIB NLOPT and a local ALGO; a global one
      (`tadah explain ALGO` marks each) is refused, and so is one that needs
@@ -409,7 +409,7 @@ untested_tolerance_note = "MLSL's multistart loop tests no tolerance, and NLopt 
 step_use = "forwarded_to_inner"
 step_use_text = "passed to the optimiser of the INNER block"
 step_consumed = true
-step_note = "passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block"
+step_note = "passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block; with neither STEP set, an LN_BOBYQA or LN_COBYLA local search (the INNER block's, or the default LN_COBYLA) takes 0.25 of each width"
 starts_at_x0 = true
 start_note = ""
 random_draws = "not_recorded"
@@ -422,7 +422,7 @@ Options for NLOPT:GD_MLSL_LDS
    * PARAM: NLopt reads no PARAM key of this algorithm
    * global optimiser
    * STEP <double>  initial step; consumption: passed to the optimiser of the INNER block
-     passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block
+     passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block; with neither STEP set, an LN_BOBYQA or LN_COBYLA local search (the INNER block's, or the default LN_COBYLA) takes 0.25 of each width
    * INNER ... ENDINNER: the local search it runs, from the points it
      samples in the OPTIM box: LIB NLOPT and a local ALGO; a global one
      (`tadah explain ALGO` marks each) is refused, and so is one that needs
@@ -842,7 +842,7 @@ untested_tolerance_note = "MLSL's multistart loop tests no tolerance, and NLopt 
 step_use = "forwarded_to_inner"
 step_use_text = "passed to the optimiser of the INNER block"
 step_consumed = true
-step_note = "passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block"
+step_note = "passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block; with neither STEP set, an LN_BOBYQA or LN_COBYLA local search (the INNER block's, or the default LN_COBYLA) takes 0.25 of each width"
 starts_at_x0 = true
 start_note = ""
 random_draws = "not_recorded"
@@ -856,7 +856,7 @@ Options for NLOPT:GN_MLSL
    * global optimiser
    * derivative-free
    * STEP <double>  initial step; consumption: passed to the optimiser of the INNER block
-     passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block
+     passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block; with neither STEP set, an LN_BOBYQA or LN_COBYLA local search (the INNER block's, or the default LN_COBYLA) takes 0.25 of each width
    * INNER ... ENDINNER: the local search it runs, from the points it
      samples in the OPTIM box: LIB NLOPT and a local ALGO; a global one
      (`tadah explain ALGO` marks each) is refused, and so is one that needs
@@ -885,7 +885,7 @@ untested_tolerance_note = "MLSL's multistart loop tests no tolerance, and NLopt 
 step_use = "forwarded_to_inner"
 step_use_text = "passed to the optimiser of the INNER block"
 step_consumed = true
-step_note = "passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block"
+step_note = "passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block; with neither STEP set, an LN_BOBYQA or LN_COBYLA local search (the INNER block's, or the default LN_COBYLA) takes 0.25 of each width"
 starts_at_x0 = true
 start_note = ""
 random_draws = "not_recorded"
@@ -899,7 +899,7 @@ Options for NLOPT:GN_MLSL_LDS
    * global optimiser
    * derivative-free
    * STEP <double>  initial step; consumption: passed to the optimiser of the INNER block
-     passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block
+     passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block; with neither STEP set, an LN_BOBYQA or LN_COBYLA local search (the INNER block's, or the default LN_COBYLA) takes 0.25 of each width
    * INNER ... ENDINNER: the local search it runs, from the points it
      samples in the OPTIM box: LIB NLOPT and a local ALGO; a global one
      (`tadah explain ALGO` marks each) is refused, and so is one that needs
@@ -1002,7 +1002,7 @@ untested_tolerance_note = "MLSL's multistart loop tests no tolerance, and NLopt 
 step_use = "forwarded_to_inner"
 step_use_text = "passed to the optimiser of the INNER block"
 step_consumed = true
-step_note = "passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block"
+step_note = "passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block; with neither STEP set, an LN_BOBYQA or LN_COBYLA local search (the INNER block's, or the default LN_COBYLA) takes 0.25 of each width"
 starts_at_x0 = true
 start_note = ""
 random_draws = "not_recorded"
@@ -1015,7 +1015,7 @@ Options for NLOPT:G_MLSL
    * PARAM: NLopt reads no PARAM key of this algorithm
    * global optimiser
    * STEP <double>  initial step; consumption: passed to the optimiser of the INNER block
-     passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block
+     passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block; with neither STEP set, an LN_BOBYQA or LN_COBYLA local search (the INNER block's, or the default LN_COBYLA) takes 0.25 of each width
    * INNER ... ENDINNER: the local search it runs, from the points it
      samples in the OPTIM box: LIB NLOPT and a local ALGO; a global one
      (`tadah explain ALGO` marks each) is refused, and so is one that needs
@@ -1044,7 +1044,7 @@ untested_tolerance_note = "MLSL's multistart loop tests no tolerance, and NLopt 
 step_use = "forwarded_to_inner"
 step_use_text = "passed to the optimiser of the INNER block"
 step_consumed = true
-step_note = "passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block"
+step_note = "passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block; with neither STEP set, an LN_BOBYQA or LN_COBYLA local search (the INNER block's, or the default LN_COBYLA) takes 0.25 of each width"
 starts_at_x0 = true
 start_note = ""
 random_draws = "not_recorded"
@@ -1057,7 +1057,7 @@ Options for NLOPT:G_MLSL_LDS
    * PARAM: NLopt reads no PARAM key of this algorithm
    * global optimiser
    * STEP <double>  initial step; consumption: passed to the optimiser of the INNER block
-     passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block
+     passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block; with neither STEP set, an LN_BOBYQA or LN_COBYLA local search (the INNER block's, or the default LN_COBYLA) takes 0.25 of each width
    * INNER ... ENDINNER: the local search it runs, from the points it
      samples in the OPTIM box: LIB NLOPT and a local ALGO; a global one
      (`tadah explain ALGO` marks each) is refused, and so is one that needs
@@ -1086,7 +1086,7 @@ untested_tolerance_note = "AUGLAG ends when its INNER search ends (tadah hpo set
 step_use = "forwarded_to_inner"
 step_use_text = "passed to the optimiser of the INNER block"
 step_consumed = true
-step_note = "passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block"
+step_note = "passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block; with neither STEP set, an LN_BOBYQA or LN_COBYLA local search (the INNER block's, or the default LN_COBYLA) takes 0.25 of each width"
 starts_at_x0 = true
 start_note = ""
 random_draws = "not_recorded"
@@ -1097,7 +1097,7 @@ Options for NLOPT:LD_AUGLAG
    * Stops that end a run: MAXEVAL, MAXTIME, STOPVAL, FTOL_REL, FTOL_ABS, XTOL_REL, XTOL_ABS
    * PARAM: NLopt reads no PARAM key of this algorithm
    * STEP <double>  initial step; consumption: passed to the optimiser of the INNER block
-     passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block
+     passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block; with neither STEP set, an LN_BOBYQA or LN_COBYLA local search (the INNER block's, or the default LN_COBYLA) takes 0.25 of each width
    * INNER ... ENDINNER: the local search it runs, from its own starting
      point: LIB NLOPT and a local ALGO; a global one (`tadah explain ALGO`
      marks each) is refused, and so is one that needs an INNER block of its
@@ -1125,7 +1125,7 @@ untested_tolerance_note = "AUGLAG ends when its INNER search ends (tadah hpo set
 step_use = "forwarded_to_inner"
 step_use_text = "passed to the optimiser of the INNER block"
 step_consumed = true
-step_note = "passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block"
+step_note = "passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block; with neither STEP set, an LN_BOBYQA or LN_COBYLA local search (the INNER block's, or the default LN_COBYLA) takes 0.25 of each width"
 starts_at_x0 = true
 start_note = ""
 random_draws = "not_recorded"
@@ -1136,7 +1136,7 @@ Options for NLOPT:LD_AUGLAG_EQ
    * Stops that end a run: MAXEVAL, MAXTIME, STOPVAL, FTOL_REL, FTOL_ABS, XTOL_REL, XTOL_ABS
    * PARAM: NLopt reads no PARAM key of this algorithm
    * STEP <double>  initial step; consumption: passed to the optimiser of the INNER block
-     passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block
+     passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block; with neither STEP set, an LN_BOBYQA or LN_COBYLA local search (the INNER block's, or the default LN_COBYLA) takes 0.25 of each width
    * INNER ... ENDINNER: the local search it runs, from its own starting
      point: LIB NLOPT and a local ALGO; a global one (`tadah explain ALGO`
      marks each) is refused, and so is one that needs an INNER block of its
@@ -1513,7 +1513,7 @@ untested_tolerance_note = "AUGLAG ends when its INNER search ends (tadah hpo set
 step_use = "forwarded_to_inner"
 step_use_text = "passed to the optimiser of the INNER block"
 step_consumed = true
-step_note = "passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block"
+step_note = "passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block; with neither STEP set, an LN_BOBYQA or LN_COBYLA local search (the INNER block's, or the default LN_COBYLA) takes 0.25 of each width"
 starts_at_x0 = true
 start_note = ""
 random_draws = "not_recorded"
@@ -1525,7 +1525,7 @@ Options for NLOPT:LN_AUGLAG
    * PARAM: NLopt reads no PARAM key of this algorithm
    * derivative-free
    * STEP <double>  initial step; consumption: passed to the optimiser of the INNER block
-     passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block
+     passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block; with neither STEP set, an LN_BOBYQA or LN_COBYLA local search (the INNER block's, or the default LN_COBYLA) takes 0.25 of each width
    * INNER ... ENDINNER: the local search it runs, from its own starting
      point: LIB NLOPT and a local ALGO; a global one (`tadah explain ALGO`
      marks each) is refused, and so is one that needs an INNER block of its
@@ -1553,7 +1553,7 @@ untested_tolerance_note = "AUGLAG ends when its INNER search ends (tadah hpo set
 step_use = "forwarded_to_inner"
 step_use_text = "passed to the optimiser of the INNER block"
 step_consumed = true
-step_note = "passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block"
+step_note = "passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block; with neither STEP set, an LN_BOBYQA or LN_COBYLA local search (the INNER block's, or the default LN_COBYLA) takes 0.25 of each width"
 starts_at_x0 = true
 start_note = ""
 random_draws = "not_recorded"
@@ -1565,7 +1565,7 @@ Options for NLOPT:LN_AUGLAG_EQ
    * PARAM: NLopt reads no PARAM key of this algorithm
    * derivative-free
    * STEP <double>  initial step; consumption: passed to the optimiser of the INNER block
-     passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block
+     passed to the local optimiser of the INNER block; a STEP of the enclosing block replaces the STEP of the INNER block; with neither STEP set, an LN_BOBYQA or LN_COBYLA local search (the INNER block's, or the default LN_COBYLA) takes 0.25 of each width
    * INNER ... ENDINNER: the local search it runs, from its own starting
      point: LIB NLOPT and a local ALGO; a global one (`tadah explain ALGO`
      marks each) is refused, and so is one that needs an INNER block of its

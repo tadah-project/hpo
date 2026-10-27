@@ -966,7 +966,7 @@ args = [
 repeat = "error"
 repeat_msg = "STEP is set twice in the {block} block (first on line {first_line}); each key is given once"
 repeat_doc = "A line with a fraction alone is given once for each optimiser, as a key of the optimiser group is. Each line with a key adds an override, given once for its key and its indices; of two overrides of one search parameter the later line wins."
-default = { text = "Not set: NLOPT:LN_BOBYQA and NLOPT:LN_COBYLA take 0.25 of each width; another optimiser chooses its first step.", unchecked = "The NLopt searches take the steps when they start; no setting of the target file holds them." }
+default = { text = "Not set: NLOPT:LN_BOBYQA and NLOPT:LN_COBYLA take 0.25 of each width, also as the local search of an MLSL or AUGLAG; another optimiser chooses its first step.", unchecked = "The NLopt searches take the steps when they start; no setting of the target file holds them." }
 doc = """\
 The first step of the optimiser as a fraction, in (0, 0.5], of the width \
 of each OPTIM box in the coordinates of the search. With an OPTIM key, and \

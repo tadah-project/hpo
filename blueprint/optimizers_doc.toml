@@ -57,8 +57,9 @@ doc = """\
 A Broyden-Fletcher-Goldfarb-Shanno (BFGS) quasi-Newton search within the \
 OPTIM box: each step follows an estimate of the inverse Hessian built from \
 the gradients of the earlier steps. The search runs on the loss divided by \
-the length of its first gradient, so its steps do not depend on the unit \
-of the loss."""
+the length of its first gradient, and a failed trial of its line search is \
+given a finite stand-in, the worst usable loss so far plus a margin, so \
+its steps do not depend on the unit of the loss."""
 
 [optimizer."DLIB:GFS"]
 doc = """\

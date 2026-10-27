@@ -623,7 +623,10 @@ Registry build_registry()
         } else if (has("MLSL") || has("AUGLAG")) {
             c.step_use  = StepUse::ForwardedToInner;
             c.step_note = "passed to the local optimiser of the INNER block; a STEP of the "
-                          "enclosing block replaces the STEP of the INNER block";
+                          "enclosing block replaces the STEP of the INNER block; with "
+                          "neither STEP set, an LN_BOBYQA or LN_COBYLA local search (the "
+                          "INNER block's, or the default LN_COBYLA) takes 0.25 of each "
+                          "width";
         } else {
             c.step_use  = StepUse::Ignored;
             c.step_note = "this algorithm never reads an initial step (population, "
