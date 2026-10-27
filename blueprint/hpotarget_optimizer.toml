@@ -2127,14 +2127,14 @@ that takes several starting points in one run, such as DLIB:GFS, runs \
 once with all of them."""
 
 [[strategy_type.checks]]
-msg = "BUDGET_PER_START has no effect with {name}, which runs every start in one optimiser; use MAXEVAL"
-doc = "At startup, at the ENDOPTIMIZER line: the optimiser runs from each start."
+msg = "STRATEGY TYPE MULTISTART cannot run {name}: it takes every INIT point in one run, so MULTISTART would run it once, whatever N_STARTS; STRATEGY TYPE PLAIN runs {name} once from every INIT point."
+doc = "At startup, at the ENDOPTIMIZER line: the optimiser does not take several starting points in one run."
 
 [[strategy_type.checks]]
-msg = "STRATEGY TYPE MULTISTART cannot run {name}: it is a global optimiser that consumes a single starting point, so restarting it from each INIT point is rejected for any N_STARTS. Use a local or multi-seed optimiser ({list}), or STRATEGY TYPE PLAIN to run {name} once."
+msg = "STRATEGY TYPE MULTISTART cannot run {name}: it is a global optimiser that consumes a single starting point, so restarting it from each INIT point is rejected for any N_STARTS. Use a local optimiser ({list}), or STRATEGY TYPE PLAIN to run {name} once."
 doc = """\
-At startup, at the ENDOPTIMIZER line: the optimiser is a local one or \
-takes several starting points; {list} names them."""
+At startup, at the ENDOPTIMIZER line: the optimiser is a local one; {list} \
+names them."""
 
 [[strategy_type.examples]]
 wrap = "strategy"
@@ -2176,10 +2176,9 @@ N_STARTS 2
 LIB DLIB
 ALGO GFS
 MAXEVAL 10
-BUDGET_PER_START 5
 ENDSTRATEGY
 ENDOPTIMIZER'''
-error = "BUDGET_PER_START has no effect with DLIB:GFS, which runs every start in one optimiser; use MAXEVAL"
+error = "STRATEGY TYPE MULTISTART cannot run DLIB:GFS: it takes every INIT point in one run, so MULTISTART would run it once, whatever N_STARTS; STRATEGY TYPE PLAIN runs DLIB:GFS once from every INIT point."
 
 [[strategy_type.invalid]]
 wrap = "none"
@@ -2197,7 +2196,7 @@ ALGO GN_DIRECT_L
 MAXEVAL 10
 ENDSTRATEGY
 ENDOPTIMIZER'''
-error = "STRATEGY TYPE MULTISTART cannot run NLOPT:GN_DIRECT_L: it is a global optimiser that consumes a single starting point, so restarting it from each INIT point is rejected for any N_STARTS. Use a local or multi-seed optimiser (CERES:STEEPEST_DESCENT, DLIB:BFGS, DLIB:GFS, NLOPT:AUGLAG, NLOPT:AUGLAG_EQ, NLOPT:LD_AUGLAG, ... (18 more)), or STRATEGY TYPE PLAIN to run NLOPT:GN_DIRECT_L once."
+error = "STRATEGY TYPE MULTISTART cannot run NLOPT:GN_DIRECT_L: it is a global optimiser that consumes a single starting point, so restarting it from each INIT point is rejected for any N_STARTS. Use a local optimiser (CERES:STEEPEST_DESCENT, DLIB:BFGS, NLOPT:AUGLAG, NLOPT:AUGLAG_EQ, NLOPT:LD_AUGLAG, NLOPT:LD_AUGLAG_EQ, ... (17 more)), or STRATEGY TYPE PLAIN to run NLOPT:GN_DIRECT_L once."
 
 [[strategy_type]]
 id = "STRATEGY.TYPE.PRESTAGE"
