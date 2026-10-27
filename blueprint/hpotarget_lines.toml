@@ -481,7 +481,7 @@ hpo_run.log names it. A run in which no validation dataset has an energy \
 is refused."""
 checks = [
   { msg = "tadah hpo: {keys} on the validation set: no dataset has a structure with an energy ({list}): every structure has energy priority 0 (eweight), so the energy metrics have nothing to measure", doc = "When the run starts, once the validation data are read, without a line: no validation structure has an energy to measure; {keys} names the energy metrics of the file, {list} the files." },
-  { msg = "tadah hpo: PC_ERSQ on the validation set: the energies per atom of validation dataset {index} ({file}) are all equal, so its R^2 has no value; PC_ERSQ needs two different energies per atom in every validation dataset it measures", doc = "When the run starts, once the validation data are read, without a line: the structures of a measured validation dataset, those with an energy priority above 0, have one energy per atom (a single structure, or identical ones)." },
+  { msg = "tadah hpo: PC_ERSQ on the validation set: the energies per atom of validation dataset {index} ({file}) are all equal, so its R^2 has no value; PC_ERSQ needs two different energies per atom in every validation dataset it measures", doc = "When the run starts, once the validation data are read, without a line: the structures of a measured validation dataset, those with an energy priority above 0, have one energy per atom (a single structure, or structures with the same energy per atom)." },
   { msg = "{key} requires <target> <weight>", doc = "At the line: fewer than two values follow the key and its index list." },
   { msg = "{key}: unknown flag '{tok}'", doc = "At the line: a token after the weight that is no option of the metric lines." },
   { msg = "{key}: indexed targets are supported only for PC_ERMSE, PC_FRMSE and PC_SRMSE_GPA", doc = "At the line: an index list, which only PC_ERMSE, PC_FRMSE and PC_SRMSE_GPA take." },
@@ -1980,8 +1980,9 @@ repeat_msg = "only one PC_FAILPROBE line is allowed"
 doc = """\
 A LAMMPS script that each evaluation runs first to measure how unsound \
 the candidate potential is: its first --outvar is the probe value S, \
-which grades failed evaluations under FAILSCORE_GRADING ON. It adds no \
-loss term."""
+which fails the evaluation above --gate or when it is negative, not \
+finite or at or above --failscore, and grades failed evaluations under \
+FAILSCORE_GRADING ON. It adds no loss term."""
 long_doc = """\
 The line takes the options of a PC_LAMMPS line except --varloss, \
 --hotvar and --failvar, and the options --gate and --s0 of its own. Its \
@@ -2086,7 +2087,7 @@ lines = ["PC_FAILPROBE"]
 synopsis = "--gate <g>"
 repeat = "error"
 repeat_msg = "PC_FAILPROBE --gate is given twice on this line; each option is given once"
-default = { text = "none: no probe value stops an evaluation" }
+default = { text = "none: only an S that is negative, not finite or at or above --failscore stops an evaluation" }
 doc = """\
 An evaluation whose probe value S exceeds <g> stops its other scripts and \
 fails: under FAILSCORE_GRADING ON with a loss graded by S, under OFF with \
@@ -2236,16 +2237,17 @@ energy per atom of the crystal relaxed at zero pressure."""
 long_doc = """\
 Each evaluation builds a bcc supercell with the lattice constant a0, \
 relaxes it at zero pressure with tadah's own relaxer and compares the \
-cohesive energy with the target through the loss function. The \
-relaxation starts from the lattice constant the previous evaluation of \
-its sequence relaxed to: each replica of TADAH:ANNEAL_PT, each walker of \
-TADAH:ANNEAL_PA and each position in an ASA block has its own sequence, \
-and every other optimiser evaluates on the first one, so the lattice \
-constant carries over from one MULTISTART start, and from one PRESTAGE \
-phase, to the next. A relaxation whose a0 ends \
-outside the --hotvar window fails the term, and with it the evaluation. A \
-relaxation that does not converge reports the value that --unconverged \
-sets."""
+cohesive energy with the target through the loss function. Each \
+relaxation starts from the lattice constant at which the previous \
+relaxation of the same replica (TADAH:ANNEAL_PT), walker \
+(TADAH:ANNEAL_PA) or ASA trial-state slot (the n-th trial state of each \
+generated batch, see Gener_Block) ended; the first starts from the \
+start value of --hotvar. Every other optimiser hands the lattice constant \
+on from each evaluation to the next, across MULTISTART starts and \
+PRESTAGE phases. A relaxation whose a0 ends outside the --hotvar window \
+fails the term, and with it the evaluation, and hands on the lattice \
+constant it started from. A relaxation that does not converge reports \
+the value that --unconverged sets."""
 
 [[form.checks]]
 msg = "PC_OBSERVABLE cohesive_energy: --species is required"
@@ -2829,15 +2831,18 @@ repeat_msg = "PC_OBSERVABLE cohesive_energy: --fmax-converged is given twice on 
 default = { literal = "0.1" }
 doc = """\
 The force tolerance of the relaxation, a number > 0: the relaxation stops \
-when the largest atomic force, in eV/Å, and the strain force of the cell \
-both fall below it."""
+when the largest atomic force, in eV/Å, and the strain force of the cell, \
+in eV/Å³, both fall below it."""
 long_doc = """\
 The strain force is |dE/dε| / (3V), for the isotropic strain ε of the \
-cell and its volume V; in the bcc cell the atomic forces vanish by \
-symmetry, so it decides. A relaxation that stops before both fall below the tolerance, at \
---maxiter, --maxeval or --max-wall-time, reports the --unconverged value; \
-one that --etol stops counts as converged when its largest atomic force \
-is below the tolerance."""
+cell and its volume V: the magnitude of the cell's pressure, in eV/Å³. \
+The one number bounds both, so the default 0.1 allows 0.1 eV/Å³, about \
+16 GPa. In the bcc cell the atomic forces vanish by symmetry, so the \
+strain force decides. A relaxation that stops before both fall below the \
+tolerance (at --maxiter, --maxeval or --max-wall-time, or when no step \
+lowers its energy) reports the --unconverged value; one that --etol \
+stops counts as converged when its largest atomic force is below the \
+tolerance."""
 
 [[line_option.args]]
 name = "fmax"
@@ -2887,8 +2892,11 @@ default = { literal = "const 100" }
 doc = """\
 The value the observable reports for a relaxation that does not converge: \
 const <value> reports <value> in eV/atom, force-scaled <slope> reports \
-the target plus <slope> times the largest force at the end."""
+the target plus <slope> times the larger of the largest atomic force and \
+the strain force of the cell at the end."""
 long_doc = """\
+The two forces are those that --fmax-converged bounds; in the bcc cell \
+the atomic forces vanish by symmetry, so the strain force decides. \
 force-scaled leaves the loss sloping towards converged candidates; its \
 value has no analytical gradient."""
 
@@ -2909,7 +2917,7 @@ wrap = "root"
 text = "PC_OBSERVABLE cohesive_energy --species H --target 2.0 --weight 1 --hotvar a0 1.5 2.5 --unconverged const 50"
 
 [[line_option.examples]]
-doc = "The target plus 10 times the largest force at the end of the relaxation."
+doc = "The target plus 10 times the larger of the two forces at the end of the relaxation."
 wrap = "root"
 text = "PC_OBSERVABLE cohesive_energy --species H --target 2.0 --weight 1 --hotvar a0 1.5 2.5 --unconverged force-scaled 10"
 
@@ -2951,9 +2959,10 @@ the others), and the default loss function of a --varloss term and of a \
 PC_OBSERVABLE line."""
 long_doc = """\
 The name is one of the loss functions below, in any case; HUBER \
-and TUKEY take an optional positive parameter. A file without a metric \
-line refuses a LOSS line that no --varloss or PC_OBSERVABLE term after it \
-reads, a term that names no loss function: it would have no effect. A target that the loss function of its term \
+and TUKEY take an optional positive parameter. In a file without a \
+metric line, a LOSS line is refused when no --varloss or PC_OBSERVABLE \
+term that names no loss function follows it: it would have no effect. A \
+target that the loss function of its term \
 cannot measure is refused at its line: 0 under MAPE, or one at or below \
 -1e-12 under RMSLE."""
 quirk = """\
@@ -4970,14 +4979,16 @@ error = "--hpotarget defines PC_OBSERVABLE but OPTIMIZER's GRAD_STRATEGY=NUMERIC
 
 [[rule]]
 id = "RULE.PC_LAMMPS_GRAD_STRATEGY"
-title = "PC_LAMMPS refuses a GRAD_STRATEGY line"
+title = "PC_LAMMPS and PC_FAILPROBE refuse a GRAD_STRATEGY line"
 check = "parse"
-keys = ["ROOT.PC_LAMMPS", "OPTIMIZER.GRAD_STRATEGY"]
+keys = ["ROOT.PC_LAMMPS", "ROOT.PC_FAILPROBE", "OPTIMIZER.GRAD_STRATEGY"]
 msg = "--hpotarget defines {key} but {block} GRAD_STRATEGY is set. A PC_LAMMPS or PC_FAILPROBE line does not support analytical/numerical/hybrid gradients. Drop the GRAD_STRATEGY line."
 doc = """\
 With a PC_LAMMPS or PC_FAILPROBE line, no block has a GRAD_STRATEGY line. \
 The refusal names the END line of the block."""
-msg_doc = "The message names the block, OPTIMIZER or EXPLORE."
+msg_doc = """\
+The message names PC_LAMMPS, or PC_FAILPROBE in a file without a \
+PC_LAMMPS line, and the block, OPTIMIZER or EXPLORE."""
 
 [[rule.invalid]]
 wrap = "none"
@@ -5012,16 +5023,17 @@ error = "--hpotarget defines PC_FAILPROBE but OPTIMIZER's GRAD_STRATEGY is set. 
 [[rule]]
 id = "RULE.PC_LAMMPS_gradient_free"
 title = """\
-With PC_LAMMPS every optimiser runs without gradients"""
+With PC_LAMMPS or PC_FAILPROBE every optimiser runs without gradients"""
 check = "parse"
-keys = ["ROOT.PC_LAMMPS", "OPTIMIZER.ALGO"]
+keys = ["ROOT.PC_LAMMPS", "ROOT.PC_FAILPROBE", "OPTIMIZER.ALGO"]
 msg = "--hpotarget defines {key} but {block} optimiser {lib}:{algo} is gradient-based. A PC_LAMMPS or PC_FAILPROBE line requires a gradient-free optimiser ({list}); an NLopt MLSL or AUGLAG algorithm is accepted with a derivative-free INNER block."
 doc = """\
 With a PC_LAMMPS or PC_FAILPROBE line, every optimiser of the file runs \
-without gradients, as a PC_LAMMPS term has no gradient. The refusal names \
-the END line of the block."""
+without gradients, as the results of a LAMMPS script have no gradient. \
+The refusal names the END line of the block."""
 msg_doc = """\
-The message names the block, OPTIMIZER or EXPLORE, and its optimiser, and \
+The message names PC_LAMMPS, or PC_FAILPROBE in a file without a \
+PC_LAMMPS line, the block, OPTIMIZER or EXPLORE, and its optimiser, and \
 lists the optimisers that run without gradients as a block names them."""
 
 [[rule.examples]]
@@ -5102,16 +5114,17 @@ error = "--hpotarget defines PC_FAILPROBE but EXPLORE's optimiser NLOPT:LD_LBFGS
 [[rule]]
 id = "RULE.PC_LAMMPS_local_optimiser"
 title = """\
-With PC_LAMMPS an MLSL or AUGLAG search has a derivative-free local search"""
+With PC_LAMMPS or PC_FAILPROBE, MLSL and AUGLAG search locally without gradients"""
 check = "parse"
-keys = ["ROOT.PC_LAMMPS", "BLOCK.INNER"]
+keys = ["ROOT.PC_LAMMPS", "ROOT.PC_FAILPROBE", "BLOCK.INNER"]
 msg = "--hpotarget defines {key} but {block} optimiser {lib}:{algo} takes a gradient: NLopt's MLSL and AUGLAG take one for their local search, and NLopt's default local optimiser, {name}, is gradient-based; an INNER block with a derivative-free one takes none. A PC_LAMMPS or PC_FAILPROBE line requires a gradient-free optimiser ({list}); an NLopt MLSL or AUGLAG algorithm is accepted with a derivative-free INNER block."
 doc = """\
 With a PC_LAMMPS or PC_FAILPROBE line, an NLopt MLSL or AUGLAG without an \
 INNER block is refused when NLopt's default local optimiser takes \
 gradients. The refusal names the END line of the block."""
 msg_doc = """\
-The message names the block, OPTIMIZER or EXPLORE, its optimiser and the \
+The message names PC_LAMMPS, or PC_FAILPROBE in a file without a \
+PC_LAMMPS line, the block, OPTIMIZER or EXPLORE, its optimiser and the \
 default local optimiser, and lists the optimisers that run without \
 gradients as a block names them."""
 
@@ -5131,16 +5144,17 @@ error = "--hpotarget defines PC_LAMMPS but OPTIMIZER's optimiser NLOPT:GD_MLSL t
 [[rule]]
 id = "RULE.PC_LAMMPS_INNER_local_optimiser"
 title = """\
-With PC_LAMMPS an INNER MLSL or AUGLAG has no gradient-based local search"""
+With PC_LAMMPS or PC_FAILPROBE no INNER MLSL or AUGLAG uses gradients"""
 check = "parse"
-keys = ["ROOT.PC_LAMMPS", "BLOCK.INNER"]
+keys = ["ROOT.PC_LAMMPS", "ROOT.PC_FAILPROBE", "BLOCK.INNER"]
 msg = "--hpotarget defines {key} but {block} optimiser {lib}:{algo} takes a gradient: NLopt's MLSL and AUGLAG take one for their local search, and NLopt's default local optimiser, {name}, is gradient-based. A PC_LAMMPS or PC_FAILPROBE line requires a gradient-free optimiser, and an INNER search is a local NLopt algorithm: name a derivative-free one in the INNER block ({list})."
 doc = """\
 With a PC_LAMMPS or PC_FAILPROBE line, an INNER block that names an NLopt \
 MLSL or AUGLAG is refused when NLopt's default local optimiser takes \
 gradients. The refusal names the ENDINNER line."""
 msg_doc = """\
-The message names the block, INNER, or EXPLORE INNER for the INNER block \
+The message names PC_LAMMPS, or PC_FAILPROBE in a file without a \
+PC_LAMMPS line, the block, INNER, or EXPLORE INNER for the INNER block \
 inside EXPLORE, its optimiser, the default local optimiser and the local \
 NLopt algorithms without gradients."""
 
@@ -5166,15 +5180,16 @@ error = "--hpotarget defines PC_LAMMPS but INNER's optimiser NLOPT:LD_AUGLAG tak
 [[rule]]
 id = "RULE.PC_LAMMPS_INNER_gradient_free"
 title = """\
-With PC_LAMMPS an INNER block names a derivative-free local algorithm"""
+With PC_LAMMPS or PC_FAILPROBE an INNER algorithm is derivative-free"""
 check = "parse"
-keys = ["ROOT.PC_LAMMPS", "BLOCK.INNER"]
+keys = ["ROOT.PC_LAMMPS", "ROOT.PC_FAILPROBE", "BLOCK.INNER"]
 msg = "--hpotarget defines {key} but {block} optimiser {lib}:{algo} is gradient-based. A PC_LAMMPS or PC_FAILPROBE line requires a gradient-free optimiser, and an INNER search is a local NLopt algorithm: name a derivative-free one in the INNER block ({list})."
 doc = """\
 With a PC_LAMMPS or PC_FAILPROBE line, an INNER block names a local NLopt \
 algorithm without gradients. The refusal names the ENDINNER line."""
 msg_doc = """\
-The message names the block, INNER, or EXPLORE INNER for the INNER block \
+The message names PC_LAMMPS, or PC_FAILPROBE in a file without a \
+PC_LAMMPS line, the block, INNER, or EXPLORE INNER for the INNER block \
 inside EXPLORE, its optimiser and the local NLopt algorithms without \
 gradients."""
 
@@ -5232,7 +5247,7 @@ at startup and names no line."""
 wrap = "none"
 check = "startup"
 at = "none"
-doc = "A PC_FAILPROBE line alone: its probe value grades failures and adds no loss term."
+doc = "A PC_FAILPROBE line alone: it adds no loss term."
 error = "No loss source: a loss term comes from a PC_EMAE, PC_ERMSE, PC_ErRMSE, PC_ERSQ, PC_FRMSE or PC_SRMSE_GPA line (with --validation), a PC_OBSERVABLE line or a PC_LAMMPS line, and the target file has none (a PC_FAILPROBE line gives no loss term)"
 text = '''
 OPTIM CGRID2B (1) 0.5 1.5
