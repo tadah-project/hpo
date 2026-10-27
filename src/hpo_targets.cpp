@@ -534,11 +534,17 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn,
    * take (nlopt_seed_from_init), draws them with a seed the run draws once,
    * kept as the block's SEED -- NLopt's own clock seed would leave the run
    * unrepeatable -- and named with the SEED line that draws the same
-   * numbers again. After the INIT chains, whose drawn seed NLopt takes. */
-  const auto draw_nlopt_seed = [](OptimizerSpec& s, const char* block) {
+   * numbers again. After the INIT chains, whose drawn seed NLopt takes.
+   * The line names the block that holds the optimiser's ALGO line, where
+   * its SEED goes: the STRATEGY-level optimiser's keys may be written in
+   * OPTIMIZER, STRATEGY or REFINE, and a file may have no STRATEGY block;
+   * a parsed spec has an ALGO line (the parser refuses a block without
+   * one). */
+  const auto draw_nlopt_seed = [](OptimizerSpec& s) {
     if (s.lib != "NLOPT" || s.seed || s.nlopt_seed_from_init() ||
         !reads_seed(s))
       return;
+    const std::string& block = s.key_lines.at("ALGO").block;
     const std::uint64_t seed = draw_run_seed();
     s.seed = seed;
     s.seed_drawn = true;
@@ -567,8 +573,8 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn,
       resolve_init(*spec.prestage, "PRESTAGE");
     spec.share_init_with_nested_phases();
   }
-  draw_nlopt_seed(spec, "STRATEGY");
-  if (spec.prestage) draw_nlopt_seed(*spec.prestage, "EXPLORE");
+  draw_nlopt_seed(spec);
+  if (spec.prestage) draw_nlopt_seed(*spec.prestage);
 
   /* The RESTART block's SEED seeds the METHOD chain that draws each
    * restart's points (round r with SEED + r, RestartPolicy). Like an INIT
@@ -1381,7 +1387,8 @@ void HPOTargets::read(const std::string& fn)
                     ov.line_text = line;
                 } else if (key == "LIB" || key == "ALGO" || key == "STEP" ||
                            key == "GRAD_STRATEGY") {
-                    active_opt->key_lines[key] = KeyLine{nline, line};
+                    active_opt->key_lines[key] =
+                        KeyLine{nline, line, block_name(block)};
                 }
                 /* A STEP <KEY> override: once for its key and indices
                  * ("WATOM(1)" and "WATOM (1)" are one). */
@@ -3657,6 +3664,8 @@ void HPOTargets::process_optim_config(std::istringstream& iss,
           !e.empty())
         throw std::runtime_error(e);
     }
+    /* A refusal of this entry says why; the catch below names the entry
+     * once, "OPTIM <KEY> (<i>): <why>". */
     try {
       size_t i = ui_offset(omap.config, ui);
       if (i>=s) {
@@ -3724,13 +3733,11 @@ void HPOTargets::process_optim_config(std::istringstream& iss,
          * the key (ui >= 1, index 0 refused by the selector). */
         const double x0 = core::to_double(omap.config[i]);
         if (nonneg_amp && x0 < 0.0)
-          throw std::runtime_error("OPTIM " + k + " (" + core::to_string(ui) +
-                                   "): the seed " + omap.config[i] + " is negative, but " +
+          throw std::runtime_error("the seed " + omap.config[i] + " is negative, but " +
                                    form_name + " requires every AMPGRIDMB amplitude >= 0");
         if (geometric) {
           if (!(x0 != 0.0))
-            throw std::runtime_error("OPTIM " + k + " (" + core::to_string(ui) +
-                                     "): AUTO RATIO needs a non-zero seed; use FRAC + FLOOR");
+            throw std::runtime_error("AUTO RATIO needs a non-zero seed; use FRAC + FLOOR");
           const double a = x0 / factor, b = x0 * factor;
           lo_i = std::min(a, b); hi_i = std::max(a, b);
           omap.origin[i] = BoxOrigin::AutoGeometric;
@@ -3738,16 +3745,14 @@ void HPOTargets::process_optim_config(std::istringstream& iss,
           const double d = std::max({factor * std::fabs(x0), rule.floor,
                                      rule.group_floor * group_max});
           if (!(d > 0.0) && nonneg_amp && !floor_set)
-            throw std::runtime_error("OPTIM " + k + " (" + core::to_string(ui) +
-                                     "): every seed on this line is 0, so the AUTO box has "
+            throw std::runtime_error("every seed on this line is 0, so the AUTO box has "
                                      "zero width (FRAC and the GROUP_FLOOR 1e-3 that " +
                                      form_name + " implies for AMPGRIDMB are relative to the "
                                      "seeds); set FLOOR <a> for the box [0, a], or give "
                                      "explicit bounds `OPTIM " + k + " (" +
                                      core::to_string(ui) + ") 0 <high>`");
           if (!(d > 0.0))
-            throw std::runtime_error("OPTIM " + k + " (" + core::to_string(ui) +
-                                     "): AUTO FRAC gives a zero-width box (seed 0 or FRAC 0); " +
+            throw std::runtime_error(std::string("AUTO FRAC gives a zero-width box (seed 0 or FRAC 0); ") +
                                      ((rule.group_floor > 0.0 && !(group_max > 0.0))
                                         ? "every seed on this line is 0, so GROUP_FLOOR has "
                                           "nothing to scale; set FLOOR"
@@ -3763,8 +3768,7 @@ void HPOTargets::process_optim_config(std::istringstream& iss,
           }
         }
         if (tf.kind == ScaleKind::Log && lo_i <= 0.0)
-          throw std::runtime_error("OPTIM " + k + " (" + core::to_string(ui) +
-                                   "): AUTO box [" + core::to_string(lo_i) + ", " +
+          throw std::runtime_error("AUTO box [" + core::to_string(lo_i) + ", " +
                                    core::to_string(hi_i) + "] is not positive but the dim is "
                                    "tagged LOG; use RATIO (geometric) or drop the tag");
       }
@@ -3801,8 +3805,7 @@ void HPOTargets::process_optim_config(std::istringstream& iss,
       if (!named && low_rule)
         entry_rule = models::optim_low_bound_rule(k, context, ui - 1);
       if (entry_rule && !entry_rule->admits(lo_i))
-        throw std::runtime_error("OPTIM " + k + " (" + core::to_string(ui) +
-                                 "): the low bound " + core::to_string(lo_i) +
+        throw std::runtime_error("the low bound " + core::to_string(lo_i) +
                                  (entry_rule->strict ? " is not > 0" : " is negative") +
                                  ", but " + entry_rule->by + " requires " +
                                  entry_rule->requirement + "; use a low bound " +

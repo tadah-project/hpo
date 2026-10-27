@@ -129,7 +129,8 @@ namespace {
  * dimension has one side. */
 bool direct_rand_in_one_dimension(const OptimizerSpec& spec)
 {
-    return spec.lib == "NLOPT" && spec.algo == "GN_DIRECT_L_RAND" &&
+    const OptimizerCaps* caps = find_optimizer_caps(spec.lib, spec.algo);
+    return caps && seed_use(*caps) == SeedUse::ReadInTwoDimensions &&
            spec.low.size() == 1;
 }
 }  // namespace
@@ -138,10 +139,19 @@ bool reads_seed(const OptimizerSpec& spec)
 {
     const OptimizerCaps* caps = find_optimizer_caps(spec.lib, spec.algo);
     if (!caps) return false;
-    if (caps->reads_seed) return !direct_rand_in_one_dimension(spec);
-    if (!caps->accepts_inner) return false;
-    const std::optional<OptimizerSpec> local = inner_run_spec(spec);
-    return local && reads_seed(*local);
+    switch (seed_use(*caps)) {
+        case SeedUse::Read:
+            return true;
+        case SeedUse::ReadInTwoDimensions:
+            return !direct_rand_in_one_dimension(spec);
+        case SeedUse::ThroughLocalSearch: {
+            const std::optional<OptimizerSpec> local = inner_run_spec(spec);
+            return local && reads_seed(*local);
+        }
+        case SeedUse::Refused:
+            return false;
+    }
+    return false;
 }
 
 std::string seed_unread_reason(const OptimizerSpec& spec)

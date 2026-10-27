@@ -1286,7 +1286,7 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
             if (lo_mu >= brc.max_reachable - tol_best) {
               gate_errors.push_back(
                   p + "no feasible point for bump " + cn(i) + " of " + ckey +
-                  ": even its most favorable corner (centre " +
+                  ": even its most favourable corner (centre " +
                   core::to_string(lo_mu) + ", eta " + core::to_string(eta_hi) +
                   ") reaches " + core::to_string(lo_mu + w / eta_hi) +
                   ", past " + rn + " = " + core::to_string(brc.max_reachable) +
@@ -1296,7 +1296,7 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
             } else {
               gate_errors.push_back(
                   p + "no feasible point for bump " + cn(i) + " of " + ckey +
-                  ": even its most favorable corner (centre " +
+                  ": even its most favourable corner (centre " +
                   core::to_string(lo_mu) + ", eta " + core::to_string(eta_hi) +
                   ") reaches " + core::to_string(lo_mu + w / eta_hi) +
                   ", past " + rn + " = " + core::to_string(brc.max_reachable) +

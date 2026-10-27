@@ -93,7 +93,7 @@ void require_inner_backend(const OptimizerSpec& parent,
 
 /* True when a backend can run once from each of several starting points:
  * a local optimiser, or a global one that consumes several seeds in one
- * run (DLIB:GFS). A global optimiser that consumes a single starting point
+ * run (DLIB:GFS). A global optimiser that takes one starting point
  * cannot. The PRESTAGE refinement over TOPK > 1 candidates needs this;
  * MULTISTART takes a local optimiser only (require_multistart_backend). */
 bool runs_from_each_start(const OptimizerCaps& caps);

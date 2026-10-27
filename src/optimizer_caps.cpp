@@ -727,6 +727,15 @@ void reject_refused_backend(std::string_view lib, std::string_view algo,
                              " is refused: " + reason);
 }
 
+SeedUse seed_use(const OptimizerCaps& c)
+{
+    if (c.reads_seed)
+        return c.random_draws == OptimizerCaps::RandomDraws::BetweenSides
+                   ? SeedUse::ReadInTwoDimensions
+                   : SeedUse::Read;
+    return c.accepts_inner ? SeedUse::ThroughLocalSearch : SeedUse::Refused;
+}
+
 const OptimizerCaps* find_optimizer_caps(std::string_view lib,
                                          std::string_view algo)
 {

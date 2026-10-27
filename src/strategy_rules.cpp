@@ -342,7 +342,7 @@ void require_multistart_backend(const OptimizerSpec& spec)
     if (!caps.is_global) return;
     throw std::runtime_error(
         "STRATEGY TYPE MULTISTART cannot run " + name + ": it is a global "
-        "optimiser that consumes a single starting point, so restarting it "
+        "optimiser that takes one starting point, so restarting it "
         "from each INIT point is rejected for any N_STARTS. Use a local "
         "optimiser (" + local_alternatives() + "), or STRATEGY TYPE PLAIN to "
         "run " + name + " once.");
@@ -385,7 +385,7 @@ void require_prestage_refinement(const OptimizerSpec& spec)
         "STRATEGY TYPE PRESTAGE with TOPK " + topk + " cannot refine with " +
         name + ": the refinement runs its optimiser once from each of the "
         "TOPK candidates the exploration forwards, and " + name + " is a "
-        "global optimiser that consumes a single starting point. Use a local "
+        "global optimiser that takes one starting point. Use a local "
         "or multi-seed refinement optimiser (" + multi_start_alternatives() +
         "), or TOPK 1 to refine the best candidate once.");
 }

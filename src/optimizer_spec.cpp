@@ -297,21 +297,27 @@ static void print_nlopt_caps(std::ostream& os,const std::string& algo)
               << "     " << c.step_note << "\n";
         else
             os<<"   * STEP is rejected: " << c.step_note << "\n";
-        /* SEED, as the startup checks read it (reads_seed, phase_specs.h):
-         * an algorithm that draws random numbers reads it; an MLSL or
-         * AUGLAG that draws none itself reads it through its local search,
-         * of which only LN_PRAXIS draws. */
-        if (c.reads_seed && algo == "GN_DIRECT_L_RAND")
-            os<<"   * SEED <int>  the seed of the random numbers it draws; "
-                "in one OPTIM\n     dimension it draws none, and SEED is "
-                "rejected\n";
-        else if (c.reads_seed)
-            os<<"   * SEED <int>  the seed of the random numbers it draws\n";
-        else if (c.accepts_inner)
-            os<<"   * SEED: read only when its local search draws random "
-                "numbers (an\n     INNER LN_PRAXIS); otherwise rejected\n";
-        else
-            os<<"   * SEED is rejected: it draws no random numbers\n";
+        /* SEED, as the startup checks read it (seed_use, reads_seed,
+         * phase_specs.h): an algorithm that draws random numbers reads it;
+         * an MLSL or AUGLAG that draws none itself reads it through its
+         * local search, of which only LN_PRAXIS draws. */
+        switch (seed_use(c)) {
+            case SeedUse::ReadInTwoDimensions:
+                os<<"   * SEED <int>  the seed of the random numbers it draws; "
+                    "in one OPTIM\n     dimension it draws none, and SEED is "
+                    "rejected\n";
+                break;
+            case SeedUse::Read:
+                os<<"   * SEED <int>  the seed of the random numbers it draws\n";
+                break;
+            case SeedUse::ThroughLocalSearch:
+                os<<"   * SEED: read only when its local search draws random "
+                    "numbers (an\n     INNER LN_PRAXIS); otherwise rejected\n";
+                break;
+            case SeedUse::Refused:
+                os<<"   * SEED is rejected: it draws no random numbers\n";
+                break;
+        }
         if (c.ignores_bounds)
             os<<"   * WARNING: " << c.bounds_note << "\n";
         /* MLSL and AUGLAG: what their INNER block takes (require_inner_

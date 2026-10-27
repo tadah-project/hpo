@@ -334,6 +334,25 @@ const OptimizerCaps* find_optimizer_caps(std::string_view lib,
 using CapsPredicate = bool (*)(const OptimizerCaps&);
 std::vector<const OptimizerCaps*> filter_optimizer_caps(CapsPredicate pred);
 
+/* How a run of a registered optimiser reads SEED, the rule reads_seed()
+ * (phase_specs.h) applies to a run and the ALGO help and the optimiser
+ * registry (blueprint/optimizers_gen.toml, its field seed) state:
+ *   Read                 the seed of the random numbers it draws
+ *                        (OptimizerCaps::reads_seed);
+ *   ReadInTwoDimensions  read in two OPTIM dimensions or more: it draws
+ *                        random numbers only to choose between equally
+ *                        long sides of a box (RandomDraws::BetweenSides,
+ *                        NLopt's GN_DIRECT_L_RAND), which a box of one
+ *                        dimension never has;
+ *   ThroughLocalSearch   an MLSL or AUGLAG form that draws none itself
+ *                        reads it when its local search does (an INNER
+ *                        LN_PRAXIS: inner_run_spec(), phase_specs.h);
+ *   Refused              it draws no random numbers: a SEED line is
+ *                        refused, unless it is a PRESTAGE refinement's
+ *                        SEED that the exploration takes. */
+enum class SeedUse { Read, ReadInTwoDimensions, ThroughLocalSearch, Refused };
+SeedUse seed_use(const OptimizerCaps& c);
+
 /* Format LIB:ALGO entries from filter_optimizer_caps as a comma-
  * separated list, sorted by LIB:ALGO whatever the order of `caps` (the
  * registry order is a hash order), truncated after max_show entries with

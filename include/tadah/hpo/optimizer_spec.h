@@ -232,10 +232,12 @@ struct StepOverride {
 };
 
 /* KeyLine -- the line of the hpotarget file that sets one key of an
- * optimiser block, and its text (OptimizerSpec::key_lines). */
+ * optimiser block, its text and the block that holds it ("OPTIMIZER",
+ * "STRATEGY", "REFINE", "EXPLORE", "INNER"; OptimizerSpec::key_lines). */
 struct KeyLine {
     std::size_t number = 0;
     std::string text;
+    std::string block;
 };
 
 /* BuildNotes -- whether the ALGO help (OptimizerSpec::print_caps) says

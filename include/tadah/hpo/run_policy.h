@@ -246,14 +246,17 @@ public:
  *   - backends the registry does not flag global (DLIB:BFGS, CERES:*,
  *     NLOPT:LD_*, NLOPT:LN_*, NLOPT:AUGLAG*)
  *                                         -> K independent runs (intended).
- *   - multi-seed globals (DLIB:GFS)       -> seeds the K points into
- *     find_min_global's `initial_function_evals`; the global engine then
- *     runs once (single call).
+ *   - multi-seed globals (DLIB:GFS)       -> take every point in one
+ *     run, so MULTISTART would run them once whatever N_STARTS:
+ *     require_multistart_backend() rejects them (STRATEGY TYPE PLAIN runs
+ *     them once from every point). A batch of the PRESTAGE refinement
+ *     (StartBatch::Refinement) seeds the TOPK candidates into
+ *     find_min_global's `initial_function_evals`, one run.
  *   - every other global (NLOPT:G*, TADAH:RANDOM/GRID/ANNEAL*, ASA)
- *                                         -> consumes a single starting
- *     point, so require_multistart_backend() rejects it for any N_STARTS;
- *     the user picks a local or multi-seed backend, or STRATEGY TYPE
- *     PLAIN. validate_hpo_setup() applies the rule at startup; validate()
+ *                                         -> takes one starting point,
+ *     so require_multistart_backend() rejects it for any N_STARTS; a
+ *     local backend, or STRATEGY TYPE PLAIN, runs instead.
+ *     validate_hpo_setup() applies the rule at startup; validate()
  *     applies the same function again when the policy runs.
  *
  * The starts run one after another (the parser refuses PARALLEL, which

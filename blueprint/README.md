@@ -96,6 +96,11 @@ A registered optimiser has these fields (an empty string means none):
 - `reads`: the attributes a run reads besides its stops, sorted, from
   `FTOL_ABS` (read as a setting, not a stop), `POPULATION`, `SEED`,
   `THREADS` (the `THREADS` of an `EXPLORE` block), `VECTOR_ARR`.
+- `seed`: how a run reads `SEED`: `read` (the seed of the random numbers
+  it draws), `two_dimensions` (read in two `OPTIM` dimensions or more; in
+  one it draws no random numbers and refuses `SEED`), `local_search` (read
+  only when its local search draws random numbers, an `INNER LN_PRAXIS`;
+  refused otherwise), `refused` (it draws no random numbers).
 - `algorithm_params`: the `PARAM` keys NLopt reads for the algorithm, in
   NLopt's order; empty for an algorithm that reads none and for another
   library. A `PARAM` key of an NLopt algorithm that is neither one of them
