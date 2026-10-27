@@ -123,6 +123,18 @@ std::optional<OptimizerSpec> search_ignoring_start(const OptimizerSpec& spec);
  * strict_parse.h); `what` alone for a spec built outside the parser. */
 std::string with_block_line(const OptimizerSpec& spec, const std::string& what);
 
+/* `what`, a refusal of the key `key` of the block that configures `spec`
+ * alone, at the line that sets it (OptimizerSpec::key_lines: LIB, ALGO,
+ * STEP, GRAD_STRATEGY), in the same form; without that line (a key not
+ * written, a spec built outside the parser) as with_block_line(). */
+std::string with_key_line(const OptimizerSpec& spec, const std::string& key,
+                          const std::string& what);
+
+/* `what` at `line` (its number and text), in the parser's form; as
+ * with_block_line(spec, what) for a line of number 0. */
+std::string with_line(const OptimizerSpec& spec, const KeyLine& line,
+                      const std::string& what);
+
 /* One phase of a run: its name, for messages, and the spec it runs.
  * `inner` marks the search an INNER block runs: it takes the gradient of
  * the phase it runs in (obtains_gradients), which that phase's

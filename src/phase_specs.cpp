@@ -74,6 +74,21 @@ std::string with_block_line(const OptimizerSpec& spec, const std::string& what)
     return config_line_error(spec.block_line, what, spec.block_line_text);
 }
 
+std::string with_line(const OptimizerSpec& spec, const KeyLine& line,
+                      const std::string& what)
+{
+    if (line.number == 0) return with_block_line(spec, what);
+    return config_line_error(line.number, what, line.text);
+}
+
+std::string with_key_line(const OptimizerSpec& spec, const std::string& key,
+                          const std::string& what)
+{
+    const auto it = spec.key_lines.find(key);
+    return with_line(spec, it != spec.key_lines.end() ? it->second : KeyLine{},
+                     what);
+}
+
 std::optional<OptimizerSpec> inner_run_spec(const OptimizerSpec& parent)
 {
     const OptimizerCaps& caps = optimizer_caps(parent);
@@ -89,6 +104,7 @@ std::optional<OptimizerSpec> inner_run_spec(const OptimizerSpec& parent)
         run.algo = caps.default_inner;
         run.block_line = parent.block_line;
         run.block_line_text = parent.block_line_text;
+        run.key_lines = parent.key_lines;
         run.stop.ftol_rel = parent.stop.ftol_rel;
         run.stop.ftol_abs = parent.stop.ftol_abs;
         run.stop.xtol_rel = parent.stop.xtol_rel;

@@ -1295,6 +1295,18 @@ void HPOTargets::read(const std::string& fn)
                 else if (!first.empty() && !is_number_shaped(first)) attr.clear();
             }
             if (active_opt && dispatch_opt_attr(key, iss, *active_opt)) {
+                /* The line of a key whose refusal is about it alone
+                 * (OptimizerSpec::key_lines, with_key_line); a STEP <KEY>
+                 * override keeps its own (StepOverride::line). */
+                if (attr.empty() && key == "STEP" &&
+                    !active_opt->step_overrides.empty()) {
+                    StepOverride& ov = active_opt->step_overrides.back();
+                    ov.line = nline;
+                    ov.line_text = line;
+                } else if (key == "LIB" || key == "ALGO" || key == "STEP" ||
+                           key == "GRAD_STRATEGY") {
+                    active_opt->key_lines[key] = KeyLine{nline, line};
+                }
                 /* A STEP <KEY> override: once for its key and indices
                  * ("WATOM(1)" and "WATOM (1)" are one). */
                 if (attr.empty() && key == "STEP" &&
@@ -2111,14 +2123,15 @@ void HPOTargets::read(const std::string& fn)
      * the analytical gradient is unavailable (a parameter without a
      * registered derivative, a model setting the analytical gradient does
      * not cover), which it fills with finite differences. */
-    /* The refusals below name the line the refused block closes at
-     * (OptimizerSpec::block_line: ENDOPTIMIZER, ENDEXPLORE, ENDINNER), as
-     * the startup refusals of a block's settings do (with_block_line). */
+    /* The refusals below name the line of the key they refuse (the
+     * GRAD_STRATEGY or ALGO line of the block, OptimizerSpec::key_lines:
+     * with_key_line), or without it the line the block closes at
+     * (OptimizerSpec::block_line: ENDOPTIMIZER, ENDEXPLORE, ENDINNER). */
     auto reject_numerical_with_observable =
         [&](const OptimizerSpec& sp, const char* tag) {
             if (sp.grad_strategy
                 && *sp.grad_strategy == GradStrategy::Numerical) {
-                throw std::runtime_error(with_block_line(sp,
+                throw std::runtime_error(with_key_line(sp, "GRAD_STRATEGY",
                     std::string("--hpotarget defines PC_OBSERVABLE but ")
                     + tag + " GRAD_STRATEGY=NUMERICAL is set. PC_OBSERVABLE "
                     "is built for the analytical gradient: use GRAD_STRATEGY "
@@ -2240,12 +2253,20 @@ void HPOTargets::read(const std::string& fn)
     for (std::size_t i = 0; i < LS.size(); ++i)
         if (static_cast<int>(i) != failprobe_idx)
             has_pc_lammps = true;
-    const std::string script_line =
-        has_pc_lammps ? "PC_LAMMPS" : "PC_FAILPROBE";
+    /* The script line a refusal names: the first PC_LAMMPS line, else the
+     * PC_FAILPROBE line, with its line number when the parser read it
+     * ("PC_LAMMPS on line 12"). */
+    std::string script_line = has_pc_lammps ? "PC_LAMMPS" : "PC_FAILPROBE";
+    for (std::size_t i = 0; i < LS.size(); ++i) {
+        if (has_pc_lammps == (static_cast<int>(i) == failprobe_idx)) continue;
+        if (LS[i].line > 0)
+            script_line += " on line " + std::to_string(LS[i].line);
+        break;
+    }
     auto reject_pc_lammps_grad =
         [&](const OptimizerSpec& sp, const char* tag, bool inner) {
             if (sp.grad_strategy) {
-                throw std::runtime_error(with_block_line(sp,
+                throw std::runtime_error(with_key_line(sp, "GRAD_STRATEGY",
                     "--hpotarget defines " + script_line + " but " + tag
                     + " GRAD_STRATEGY is set. A PC_LAMMPS or PC_FAILPROBE "
                     "line does not support analytical/numerical/hybrid "
@@ -2276,7 +2297,7 @@ void HPOTargets::read(const std::string& fn)
                 if (sp.inner) return;
                 /* obtains_gradients: there is a default local search. */
                 const OptimizerSpec local = inner_run_spec(sp).value();
-                throw std::runtime_error(with_block_line(sp,
+                throw std::runtime_error(with_key_line(sp, "ALGO",
                     "--hpotarget defines " + script_line + " but " + tag
                     + " optimiser " + sp.lib + ":" + sp.algo +
                     " takes a gradient: NLopt's MLSL and AUGLAG take one for "
@@ -2289,7 +2310,7 @@ void HPOTargets::read(const std::string& fn)
                                          "none.")) +
                     requires_free));
             }
-            throw std::runtime_error(with_block_line(sp,
+            throw std::runtime_error(with_key_line(sp, "ALGO",
                 "--hpotarget defines " + script_line + " but " + tag
                 + " optimiser " + sp.lib + ":" + sp.algo +
                 " is gradient-based." + requires_free));

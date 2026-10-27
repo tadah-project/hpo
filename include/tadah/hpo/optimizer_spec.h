@@ -220,6 +220,18 @@ struct StepOverride {
     std::string              key;
     std::vector<std::size_t> indices;   // 1-based OPTIM indices; empty = all
     double                   frac = 0.0;
+    /* The line of the hpotarget file that sets the override, and its text
+     * (0 and "" for an override built outside the parser): a refusal of the
+     * override names it (validate_optimizer_scaling). */
+    std::size_t              line = 0;
+    std::string              line_text;
+};
+
+/* KeyLine -- the line of the hpotarget file that sets one key of an
+ * optimiser block, and its text (OptimizerSpec::key_lines). */
+struct KeyLine {
+    std::size_t number = 0;
+    std::string text;
 };
 
 /* BuildNotes -- whether the ALGO help (OptimizerSpec::print_caps) says
@@ -267,7 +279,8 @@ struct OptimizerSpec {
           multistart(o.multistart),
           stage_topk(o.stage_topk),
           restart(o.restart),
-          block_line(o.block_line), block_line_text(o.block_line_text) {}
+          block_line(o.block_line), block_line_text(o.block_line_text),
+          key_lines(o.key_lines) {}
     OptimizerSpec& operator=(const OptimizerSpec& o) {
         if (this != &o) {
             OptimizerSpec tmp(o);
@@ -423,6 +436,15 @@ struct OptimizerSpec {
      * phase_specs.h), as the parser's refusals of the block do. */
     std::size_t      block_line = 0;
     std::string      block_line_text;
+    /* The line of each key of that block whose refusal is about the key
+     * alone, by key: LIB, ALGO, the block-wide STEP and GRAD_STRATEGY (a
+     * STEP <KEY> override keeps its line in StepOverride). Filled by
+     * HPOTargets::read(); copied with block_line (the MULTISTART starts, the
+     * PRESTAGE refinement, NLopt's default local optimiser of an MLSL or
+     * AUGLAG, inner_run_spec). Empty for a spec built outside the parser.
+     * The refusals of one key name its line (with_key_line, phase_specs.h);
+     * a refusal of a combination of keys names block_line. */
+    std::unordered_map<std::string, KeyLine> key_lines;
 
     /* Bind the search space: low/high become the INTERNAL bounds, is_int,
      * log_scaled and parameter_labels are derived from it. Called by

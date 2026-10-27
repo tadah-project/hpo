@@ -24,6 +24,28 @@ std::string spec_name(const OptimizerSpec& sp, const std::string& where)
     return s;
 }
 
+/* The optimiser a refusal of a STEP names: LIB:ALGO, with `where` only for
+ * a spec built outside the parser, whose refusal names no line of the
+ * file (a line names the block). */
+std::string step_refusal_name(const OptimizerSpec& sp, const std::string& where)
+{
+    const bool parsed = sp.block_line > 0 || !sp.key_lines.empty();
+    return parsed ? sp.lib + ":" + sp.algo : spec_name(sp, where);
+}
+
+/* The first line of the file that sets a STEP of `sp`: the block-wide STEP
+ * or an override (number 0 when the parser read none). */
+KeyLine first_step_line(const OptimizerSpec& sp)
+{
+    KeyLine first;
+    if (const auto it = sp.key_lines.find("STEP"); it != sp.key_lines.end())
+        first = it->second;
+    for (const auto& ov : sp.step_overrides)
+        if (ov.line > 0 && (first.number == 0 || ov.line < first.number))
+            first = KeyLine{ov.line, ov.line_text};
+    return first;
+}
+
 std::string dim_label(const OptimizerSpec& sp, std::size_t i)
 {
     if (i < sp.parameter_labels.size() && !sp.parameter_labels[i].empty())
@@ -145,30 +167,57 @@ void validate_optimizer_scaling(const OptimizerSpec& sp,
     if (has_backend) {
         const OptimizerCaps& caps = optimizer_caps(sp);
         const std::string name = spec_name(sp, where);
+        const std::string step_name = step_refusal_name(sp, where);
 
-        /* A refusal of the block's STEP names the line the block closes at
-         * (OptimizerSpec::block_line), as the parser's refusals of a block
-         * do (with_block_line); a spec built outside the parser has none. */
-        try {
-            const bool consumes = step_use_consumes(caps.step_use);
-            if ((sp.step || !sp.step_overrides.empty()) && !consumes) {
-                std::string msg = name + " does not use STEP";
-                if (caps.step_note && caps.step_note[0])
-                    msg += std::string("; ") + caps.step_note;
-                throw std::runtime_error(msg);
+        /* A refusal of a STEP names its line: the block-wide STEP's
+         * (OptimizerSpec::key_lines), an override's (StepOverride::line),
+         * and for an optimiser that uses none the first of them; overrides
+         * that cover too little, a refusal of several lines, name the line
+         * the block closes at (OptimizerSpec::block_line). Without such a
+         * line -- a spec built outside the parser -- the message names
+         * none. */
+        const auto at = [&](const KeyLine& line, const std::string& what) {
+            return std::runtime_error(with_line(sp, line, what));
+        };
+        if ((sp.step || !sp.step_overrides.empty()) &&
+            !step_use_consumes(caps.step_use)) {
+            std::string msg = step_name + " does not use STEP";
+            if (caps.step_note && caps.step_note[0])
+                msg += std::string("; ") + caps.step_note;
+            throw at(first_step_line(sp), msg);
+        }
+        if (sp.step) {
+            const auto it = sp.key_lines.find("STEP");
+            try {
+                check_step_value(*sp.step, step_name);
+            } catch (const std::exception& e) {
+                throw at(it != sp.key_lines.end() ? it->second : KeyLine{},
+                         e.what());
             }
-            if (sp.step) check_step_value(*sp.step, name);
-            for (const auto& ov : sp.step_overrides)
-                check_step_value(ov.frac, name + " STEP " + ov.key);
-            /* Override targets must exist (unknown key / index are errors)
-             * and overrides without a block-wide STEP must cover every
-             * dim. */
-            if (!sp.step_overrides.empty() && sp.space) {
-                resolve_step_overrides(sp);
+        }
+        for (const auto& ov : sp.step_overrides) {
+            try {
+                check_step_value(ov.frac, step_name + " STEP " + ov.key);
+                /* The override's key and indices name OPTIM dimensions
+                 * (resolve_step_overrides, of this override alone). */
+                if (sp.space) {
+                    OptimizerSpec one;
+                    one.low = sp.low;
+                    one.space = sp.space;
+                    one.step_overrides = {ov};
+                    resolve_step_overrides(one);
+                }
+            } catch (const std::exception& e) {
+                throw at(KeyLine{ov.line, ov.line_text}, e.what());
+            }
+        }
+        /* Overrides without a block-wide STEP must cover every dim. */
+        if (!sp.step_overrides.empty() && sp.space) {
+            try {
                 require_step_coverage(sp);
+            } catch (const std::exception& e) {
+                throw std::runtime_error(with_block_line(sp, e.what()));
             }
-        } catch (const std::exception& e) {
-            throw std::runtime_error(with_block_line(sp, e.what()));
         }
 
         if (caps.step_use == StepUse::ForwardedToInner && sp.step && sp.inner &&
