@@ -1,6 +1,7 @@
 #pragma once
 #include <nlopt.hpp>
 #include <tadah/hpo/backend_rules.h>
+#include <tadah/hpo/failed_loss_stand_in.h>
 #include <tadah/hpo/log_index.h>
 #include <tadah/hpo/optimizer_spec.h>
 #include <tadah/hpo/hpo_host.h>
@@ -416,7 +417,15 @@ void run_nlopt_impl(const OptimizerSpec& sp, HostT& host,
      *
      * `error`, `gradient_stop`, `budget_spent` and `withheld` exclude each
      * other: the first one set makes the objective refuse every later call
-     * without evaluating. */
+     * without evaluating.
+     *
+     * `to_nlopt`: what NLopt is given for a loss (detail::FailedLossStandIn):
+     * a usable loss as it is, a failed evaluation's -- FAILSCORE, by default
+     * the largest double, which overflowed the models of LN_BOBYQA and
+     * LN_COBYLA -- a finite stand-in, and a gradient scaled with it.
+     * `stand_in_noted`: the journal has said so (once per search, at its
+     * first failed evaluation). The records keep the loss the evaluation
+     * reported. */
     struct Withheld {
         double              loss;
         GradientFailureInfo why;   /* the gradient's failure */
@@ -453,6 +462,8 @@ void run_nlopt_impl(const OptimizerSpec& sp, HostT& host,
         bool                               budget_spent = false;
         std::optional<Withheld>            withheld;
         RepeatPoints<Vec>*                 repeats = nullptr;
+        detail::FailedLossStandIn*         to_nlopt = nullptr;
+        bool                               stand_in_noted = false;
     };
     const std::optional<OptimizerSpec> local = single_local_search(sp);
     const unsigned long reevaluations = detail::auglag_reevaluations(sp);
@@ -469,6 +480,8 @@ void run_nlopt_impl(const OptimizerSpec& sp, HostT& host,
                 /*evals=*/&evals_used, /*maxeval=*/maxeval,
                 /*budget_spent=*/false, /*withheld=*/std::nullopt,
                 /*repeats=*/&repeats};
+    detail::FailedLossStandIn to_nlopt(sp.failscore);
+    udata.to_nlopt = &to_nlopt;
 
     /* objective adapter (handles log-scale automatically). For
      * gradient-based algorithms NLopt passes a writable `grad` vector
@@ -480,6 +493,24 @@ void run_nlopt_impl(const OptimizerSpec& sp, HostT& host,
                       std::vector<double>& grad, void* userdata)->double
     {
         auto* u = static_cast<UData*>(userdata);
+        /* What NLopt is given for the loss `f` of the point, with the
+         * gradient in `grad` scaled to it (see UData::to_nlopt). */
+        const auto given = [u, &grad](double f) {
+            if (u->to_nlopt->failed(f) && !u->stand_in_noted) {
+                u->stand_in_noted = true;
+                HPOLog::instance().info(
+                    u->sp->lib + ":" + u->sp->algo + ": NLopt is given a "
+                    "finite stand-in for each failed evaluation of this "
+                    "search (the worst usable loss of the search so far "
+                    "plus a margin; before any, FAILSCORE, at most 1e100); "
+                    "loss.tadah records the loss the evaluation reported");
+            }
+            double slope = 1.0;
+            const double v = (*u->to_nlopt)(f, slope);
+            if (slope != 1.0)
+                for (double& gi : grad) gi *= slope;
+            return v;
+        };
         /* Stopping: an algorithm may still probe a point before it sees
          * the forced stop (GD_STOGO never sees it); never evaluate again. */
         if (u->error || u->gradient_stop || u->budget_spent || u->withheld) {
@@ -504,7 +535,7 @@ void run_nlopt_impl(const OptimizerSpec& sp, HostT& host,
                     for (size_t i = 0; i < x.size(); ++i)
                         grad[i] = e->gradient(static_cast<long>(i));
                 }
-                return e->loss;
+                return given(e->loss);
             }
             /* MAXEVAL spent (see evals_used): no evaluation; the search
              * ends. */
@@ -582,7 +613,7 @@ void run_nlopt_impl(const OptimizerSpec& sp, HostT& host,
                 for (size_t i=0;i<x.size();++i)
                     grad[i] = g(static_cast<long>(i));
             }
-            return f;
+            return given(f);
         } catch (...) {
             u->error = std::current_exception();
             u->opt->force_stop();
