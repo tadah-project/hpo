@@ -83,6 +83,21 @@ std::optional<OptimizerSpec> inner_run_spec(const OptimizerSpec& parent);
  * which the INNER block replaces). */
 bool obtains_gradients(const OptimizerSpec& spec);
 
+/* True when a run of `spec` reads its SEED: its optimiser draws random
+ * numbers (OptimizerCaps::reads_seed) -- NLopt's GN_DIRECT_L_RAND only in
+ * two or more OPTIM dimensions (spec.low.size(): it draws them only to
+ * choose between equally long sides of a box) -- or, for NLopt's MLSL and
+ * AUGLAG (OptimizerCaps::accepts_inner), their local search
+ * (inner_run_spec) does: NLopt draws it from the random numbers of the
+ * enclosing run. A backend the registry does not have reads none. */
+bool reads_seed(const OptimizerSpec& spec);
+
+/* Why a run of `spec` does not read its SEED (!reads_seed(spec)): "it draws
+ * no random numbers", or for GN_DIRECT_L_RAND in one OPTIM dimension "in one
+ * OPTIM dimension it draws no random numbers (it draws them only to choose
+ * between equally long sides of a box)". */
+std::string seed_unread_reason(const OptimizerSpec& spec);
+
 /* The local search a run of `spec` is, when the run is one local search
  * from its starting point: `spec` itself for a local backend without a
  * local search of its own, or for NLopt's AUGLAG -- a local algorithm

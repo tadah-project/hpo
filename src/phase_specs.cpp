@@ -123,6 +123,35 @@ std::optional<OptimizerSpec> inner_run_spec(const OptimizerSpec& parent)
     return run;
 }
 
+namespace {
+/* GN_DIRECT_L_RAND in one OPTIM dimension: cdirect.c draws only to choose
+ * between equally long sides of a box (which_div 2), and a box of one
+ * dimension has one side. */
+bool direct_rand_in_one_dimension(const OptimizerSpec& spec)
+{
+    return spec.lib == "NLOPT" && spec.algo == "GN_DIRECT_L_RAND" &&
+           spec.low.size() == 1;
+}
+}  // namespace
+
+bool reads_seed(const OptimizerSpec& spec)
+{
+    const OptimizerCaps* caps = find_optimizer_caps(spec.lib, spec.algo);
+    if (!caps) return false;
+    if (caps->reads_seed) return !direct_rand_in_one_dimension(spec);
+    if (!caps->accepts_inner) return false;
+    const std::optional<OptimizerSpec> local = inner_run_spec(spec);
+    return local && reads_seed(*local);
+}
+
+std::string seed_unread_reason(const OptimizerSpec& spec)
+{
+    if (direct_rand_in_one_dimension(spec))
+        return "in one OPTIM dimension it draws no random numbers (it draws "
+               "them only to choose between equally long sides of a box)";
+    return "it draws no random numbers";
+}
+
 bool obtains_gradients(const OptimizerSpec& spec)
 {
     /* MLSL and AUGLAG evaluate their own points without a gradient (mlsl.c,

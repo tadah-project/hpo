@@ -551,7 +551,18 @@ Registry build_registry()
          * LD_TNEWTON: LD_TNEWTON and LD_TNEWTON_RESTART read none. */
         c.reads_vector_storage = s == "LD_LBFGS" || starts("LD_VAR") ||
                                  starts("LD_TNEWTON_PRECOND");
-        c.reads_seed = true;
+        /* The algorithms that draw random numbers (nlopt 2.10 sources:
+         * crs.c, isres.c, esch.c, mlsl.c without LDS, praxis.c, stogo's
+         * global.cc for the RAND form, cdirect.c for DIRECT-L's RAND form,
+         * which draws only between equally long sides of a box, so not in
+         * one dimension: reads_seed() in phase_specs.h). Every other one
+         * draws none: COBYLA draws from a generator of its own with a fixed
+         * seed (cobyla.c), the MLSL LDS forms take a Sobol sequence, and
+         * MLSL and AUGLAG read SEED through their local search only. */
+        c.reads_seed = starts("GN_CRS2") || starts("GN_ISRES") ||
+                       starts("GN_ESCH") || s == "GN_MLSL" ||
+                       s == "GD_MLSL" || s == "G_MLSL" || s == "LN_PRAXIS" ||
+                       s == "GD_STOGO_RAND" || s == "GN_DIRECT_L_RAND";
         /* Where the first call is (OptimizerCaps::starts_at_x0): StoGO,
          * DIRECT and AGS take x0 as their output only. */
         c.starts_at_x0 = !(starts("GD_STOGO") || starts("GN_DIRECT") ||

@@ -334,11 +334,14 @@ void reject_unread_attributes(const OptimizerSpec& spec,
             }) +
             ")");
     /* A PRESTAGE refinement's SEED that the exploration took seeds the
-     * exploration (OptimizerSpec::seed_seeds_exploration). */
-    if (spec.seed && !caps.reads_seed && !spec.seed_seeds_exploration)
+     * exploration (OptimizerSpec::seed_seeds_exploration). Whether the run
+     * reads SEED: reads_seed() (phase_specs.h), which asks an MLSL or
+     * AUGLAG about its local search and GN_DIRECT_L_RAND about its
+     * dimensions. */
+    if (spec.seed && !reads_seed(spec) && !spec.seed_seeds_exploration)
         throw std::runtime_error(backend_name(spec) +
-                                 " does not use SEED: it draws no random "
-                                 "numbers; remove it");
+                                 " does not use SEED: " +
+                                 seed_unread_reason(spec) + "; remove it");
 }
 
 /* THREADS of the STRATEGY-level optimiser sizes the run's workers; a
@@ -575,13 +578,12 @@ void reject_refinement_seed(const OptimizerSpec& root, const PhaseSpec& phase)
     if (!root.prestage || spec.stream_phase != StreamPhase::Refinement ||
         !spec.seed || spec.seed_seeds_exploration)
         return;
-    if (optimizer_caps(spec).reads_seed) return;
+    if (reads_seed(spec)) return;
     const OptimizerSpec& explore = *root.prestage;
     throw std::runtime_error(
-        backend_name(spec) + " does not use SEED: it draws no random numbers, "
-        "and the exploration (" + backend_name(explore) + ") " +
-        (optimizer_caps(explore).reads_seed ? "has a SEED of its own"
-                                            : "reads none") +
+        backend_name(spec) + " does not use SEED: " + seed_unread_reason(spec) +
+        ", and the exploration (" + backend_name(explore) + ") " +
+        (reads_seed(explore) ? "has a SEED of its own" : "reads none") +
         "; remove it");
 }
 }  // namespace
