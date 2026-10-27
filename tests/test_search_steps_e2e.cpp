@@ -1,5 +1,6 @@
 /* The first steps of a search on the Ta test data (tests/data/ta/common):
- * what NLopt is given for a failed evaluation.
+ * what NLopt is given for a failed evaluation, and where LN_BOBYQA starts
+ * next to a bound.
  *
  * Each case runs the whole hpo_run() stack in a scratch directory on the
  * shared Ta model of the tests (config.tadah, the elastic and bcc
@@ -228,6 +229,46 @@ TEST_CASE("NLopt failed evaluations: LN_BOBYQA and LN_COBYLA on the Ta data "
                                             "evaluation of this search") ==
                       1u);
             }
+        }
+    }
+}
+
+/* Pins: LN_BOBYQA (MAXEVAL 30) from the configuration's RCUT2B 4.005, 0.005
+ * above its lower bound 4, with STEP unset and with STEP 0.25: the start
+ * moves onto the bound (the gap is below half the step, 0.5), the first
+ * evaluation is at RCUT2B 4, and the search reaches beyond RCUT2B 4.1. The
+ * journal gives the old and the new start in an INFO line and warns that
+ * the CONFIG start moved.
+ * Before the fix: BOBYQA started at 4.005, shrank the step of RCUT2B to
+ * 0.75 of the gap and kept it as that coordinate's scale: no evaluation
+ * reached beyond RCUT2B 4.01006 in either run, and neither journal had the
+ * two lines. */
+TEST_CASE("LN_BOBYQA: a start next to a bound moves by at most half a step "
+          "and the search keeps its full step",
+          "[HPO][nlopt][step_plan][e2e]")
+{
+    for (const std::string step : {std::string(), std::string("0.25")}) {
+        DYNAMIC_SECTION((step.empty() ? std::string("STEP unset")
+                                      : "STEP " + step)) {
+            TaDataRun run(
+                ta_target("    LIB NLOPT\n    ALGO LN_BOBYQA\n    MAXEVAL 30\n" +
+                              (step.empty() ? std::string()
+                                            : "    STEP " + step + "\n"),
+                          "FAILSCORE 1e16\nPC_ERMSE 0 0.0001\n"),
+                4.005);
+            CHECK(run.status == 0);
+            const auto pts = params_rows();
+            REQUIRE(pts.size() == 30u);
+            CHECK(pts.front()[0] == 4.0);
+            double reach = 0.0;
+            for (const auto& p : pts) reach = std::max(reach, p[0]);
+            INFO("largest RCUT2B evaluated " << reach);
+            CHECK(reach > 4.1);
+            const std::string journal = read_file("hpo_run.log");
+            CHECK(journal.find("NLOPT:LN_BOBYQA: RCUT2B starts at 4 instead "
+                               "of 4.005") != std::string::npos);
+            CHECK(journal.find("WARNING   NLOPT:LN_BOBYQA: the CONFIG start "
+                               "moves") != std::string::npos);
         }
     }
 }

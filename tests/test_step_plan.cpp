@@ -1,6 +1,7 @@
 /* Per-dimension initial-step plan (initial_step.h) and the NLopt
  * adapter's use of it (make_nlopt + get_initial_step read-back). */
 #include "catch2/catch.hpp"
+#include <tadah/hpo/hpo_log.h>
 #include <tadah/hpo/initial_step.h>
 #include <tadah/hpo/nlopt_adapter.h>
 #include <tadah/hpo/optimizer_caps.h>
@@ -8,10 +9,19 @@
 #include <tadah/hpo/search_space.h>
 #include <tadah/hpo/scale_validation.h>
 
+#include <dlib/matrix.h>
+
+#include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <filesystem>
+#include <fstream>
 #include <memory>
+#include <optional>
+#include <sstream>
 #include <string>
+#include <utility>
 #include <vector>
 
 using namespace tadah::hpo;
@@ -279,4 +289,132 @@ TEST_CASE("StepPlan: BOBYQA-only near-bound rule, 0.5 cap, coverage at validatio
         sp.step_overrides.push_back({"AMPGRIDMB", {}, 0.2});
         REQUIRE_NOTHROW(validate_optimizer_scaling(sp, "OUTER", false));
     }
+}
+
+namespace {
+
+using Vec = dlib::matrix<double, 0, 1>;
+struct NoRunner {};   // the GradientProvider's Runner is only a type tag
+
+/* Records every point asked for; a bowl centred in the box of spec(). */
+struct StepRecorder {
+    std::vector<Vec> asked;
+    double operator()(const Vec& x) {
+        asked.push_back(x);
+        const double a = x(0) - 1.0, b = (x(1) - 0.004) / 0.008;
+        return a * a + b * b;
+    }
+};
+
+/* An open journal; `text()` closes it and returns it. */
+struct StepJournal {
+    std::filesystem::path path =
+        std::filesystem::temp_directory_path() /
+        ("tadah_step_plan_" +
+         std::to_string(std::chrono::steady_clock::now()
+                            .time_since_epoch().count()) +
+         ".log");
+    StepJournal() {
+        auto& log = HPOLog::instance();
+        log.reset_for_test();
+        log.open(path.string(), "test", "/", 0);
+    }
+    std::string text() {
+        HPOLog::instance().finish();
+        std::ifstream f(path);
+        std::ostringstream s;
+        s << f.rdbuf();
+        return s.str();
+    }
+    ~StepJournal() {
+        HPOLog::instance().reset_for_test();
+        std::error_code ec;
+        std::filesystem::remove(path, ec);
+    }
+};
+
+/* Whether a point of `asked` has AMPGRIDMB[6] = `b` (to 1e-12). */
+bool asks_b(const std::vector<Vec>& asked, double b)
+{
+    return std::any_of(asked.begin(), asked.end(), [b](const Vec& p) {
+        return p(1) == Approx(b).epsilon(1e-12);
+    });
+}
+
+/* One LN_BOBYQA search (MAXEVAL 9) of spec() from (1, `b`), a start of
+ * origin `origin`, with STEP `step` (none: unset); the points asked for and
+ * the journal. */
+std::pair<std::vector<Vec>, std::string>
+bobyqa_from(double b, std::optional<double> step, InitOrigin::Kind origin)
+{
+    auto sp = spec("LN_BOBYQA", false);
+    sp.step = step;
+    sp.optim_init = {{1.0, b}};
+    sp.optim_init_origin = {InitOrigin{origin, {}}};
+    sp.stop.maxeval = 9;
+    StepRecorder host;
+    StepJournal j;
+    REQUIRE_NOTHROW(run_nlopt_impl<Vec, NoRunner>(sp, host));
+    return {host.asked, j.text()};
+}
+
+}  // namespace
+
+/* Pins: LN_BOBYQA from AMPGRIDMB[6] = 0.0079, 1e-4 below its upper bound
+ * 0.008 (width 0.008), with STEP 0.25 and with STEP unset (a step of 0.25
+ * of the width, 0.002, given to NLopt): the gap is below half the step, so
+ * the search starts on the bound -- its first point is (1, 0.008) -- and
+ * keeps its full step: a point of its first model has AMPGRIDMB[6] =
+ * 0.006, one step inside. The journal gives the old and the new start ("NLOPT:LN_BOBYQA:
+ * AMPGRIDMB[6] starts at 0.008 instead of 0.0079"); a CONFIG start that
+ * moves gets a WARNING, a sampled (RANDOM) start does not.
+ * Before the fix: the search started at 0.0079 and the step of
+ * AMPGRIDMB[6] shrank to 0.75 of the gap, 7.5e-5 (with STEP unset by
+ * NLopt's own default rule), as the scale of that coordinate: no point of
+ * the 9 had AMPGRIDMB[6] = 0.006, and the journal had neither line. */
+TEST_CASE("LN_BOBYQA: a start within half a step of a bound starts on the "
+          "bound with the full step", "[HPO][step_plan][nlopt]")
+{
+    for (const std::optional<double> step :
+         {std::optional<double>(0.25), std::optional<double>()}) {
+        for (const auto origin :
+             {InitOrigin::Kind::Config, InitOrigin::Kind::Random}) {
+            const bool config = origin == InitOrigin::Kind::Config;
+            DYNAMIC_SECTION((step ? "STEP 0.25" : "STEP unset")
+                            << (config ? ", CONFIG" : ", RANDOM")) {
+                const auto [asked, journal] = bobyqa_from(0.0079, step, origin);
+                REQUIRE(asked.size() == 9u);
+                CHECK(asked.front()(0) == 1.0);
+                CHECK(asked.front()(1) == Approx(0.008).epsilon(1e-12));
+                CHECK(asks_b(asked, 0.006));
+                CHECK(journal.find("NLOPT:LN_BOBYQA: AMPGRIDMB[6] starts at "
+                                   "0.008 instead of 0.0079") !=
+                      std::string::npos);
+                CHECK((journal.find("WARNING   NLOPT:LN_BOBYQA: the CONFIG "
+                                    "start moves") != std::string::npos) ==
+                      config);
+            }
+        }
+    }
+}
+
+/* Pins: LN_BOBYQA (STEP 0.25: a step of 0.002 on AMPGRIDMB[6]) from
+ * AMPGRIDMB[6] = 0.0068, 0.0012 below its upper bound: the gap is at least
+ * half the step, so the search starts one step from the bound, at 0.006
+ * (moved by 0.0008, less than half a step), and keeps its full step: a
+ * point of its first model has AMPGRIDMB[6] = 0.004, one step further in.
+ * Before the fix: the search started at 0.0068 and the step of
+ * AMPGRIDMB[6] shrank to 0.75 of the gap, 9e-4: no point had AMPGRIDMB[6]
+ * = 0.004, and the journal had no INFO line. */
+TEST_CASE("LN_BOBYQA: a start between half a step and a step from a bound "
+          "starts one step from it", "[HPO][step_plan][nlopt]")
+{
+    const auto [asked, journal] =
+        bobyqa_from(0.0068, 0.25, InitOrigin::Kind::Random);
+    REQUIRE(asked.size() == 9u);
+    CHECK(asked.front()(0) == 1.0);
+    CHECK(asked.front()(1) == Approx(0.006).epsilon(1e-12));
+    CHECK(asks_b(asked, 0.004));
+    CHECK(journal.find("NLOPT:LN_BOBYQA: AMPGRIDMB[6] starts at 0.006 instead "
+                       "of 0.0068") != std::string::npos);
 }
