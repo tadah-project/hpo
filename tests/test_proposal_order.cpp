@@ -550,11 +550,12 @@ TEST_CASE("Proposal order: the equal-loss tie-break and the stagnation stop "
  * 5 to 8, and of epoch 2 (9 to 12) slots 1, 2 and 4 -- with SLOT 1, 2 and
  * 4 for 9, 10 and 12: evaluation 11, slot 3's, did not run and has no
  * row; the journal says "epoch 2 of TADAH:ANNEAL_PT: 1 of its 4
- * evaluations did not run (the search stopped during it); evaluation 11
- * has no row".
+ * evaluations did not run; evaluation 11 has no row", without a cause,
+ * which the batch does not know (the line of the run's stop gives it).
  * Before the fix: the evaluations of epoch 2 took their numbers in the
  * order they started (9 slot 2, 10 slot 4, 11 slot 1), and the journal
- * had no such line. */
+ * had no such line; then the line said "did not run (the search stopped
+ * during it)", also when the slot had ended its own sweep at STOPVAL. */
 TEST_CASE("Proposal order: a stop during a batch keeps the evaluations that "
           "finished at their numbers", "[HPO][proposal_order][anneal_pt]")
 {
@@ -591,8 +592,8 @@ TEST_CASE("Proposal order: a stop during a batch keeps the evaluations that "
     CHECK(data_rows(r.files.at("loss.tadah")).size() == 11);
     CHECK(count_of(r.journal,
                    "epoch 2 of TADAH:ANNEAL_PT: 1 of its 4 evaluations did "
-                   "not run (the search stopped during it); evaluation 11 "
-                   "has no row") == 1);
+                   "not run; evaluation 11 has no row\n") == 1);
+    CHECK(count_of(r.journal, "stopped during it") == 0);
 }
 
 /* Pins: a STOPVAL reached in a round of the step calibration of
@@ -646,8 +647,10 @@ TEST_CASE("Proposal order: a STOPVAL reached in a round of the ANNEAL_PT "
  * slot 1, 173, has a loss below STOPVAL, its second, 174, does not run,
  * and the other slots make theirs. loss.tadah and params.tadah have the
  * rows 1 to 180 without 174, and the journal says "epoch 22 of
- * TADAH:ANNEAL_PT: 1 of its 8 evaluations did not run (the search stopped
- * during it); evaluation 174 has no row" and "ANNEAL_PT stopped: STOPVAL
+ * TADAH:ANNEAL_PT: 1 of its 8 evaluations did not run; evaluation 174 has
+ * no row" (no "the search stopped during it": the search ends after the
+ * epoch, and the evaluation did not run because its slot ended its own
+ * sweep) and "ANNEAL_PT stopped: STOPVAL
  * reached after 179 host eval(s) (22 epoch(s)" -- the same files at THREADS
  * 1, at THREADS 2 in reverse and in forward slot order and at THREADS 4 in
  * reverse slot order.
@@ -675,8 +678,8 @@ TEST_CASE("Proposal order: a STOPVAL reached during an ANNEAL_PT epoch ends "
               numbers_to(180, {174}));
         CHECK(count_of(r->journal,
                        "epoch 22 of TADAH:ANNEAL_PT: 1 of its 8 evaluations "
-                       "did not run (the search stopped during it); "
-                       "evaluation 174 has no row") == 1);
+                       "did not run; evaluation 174 has no row\n") == 1);
+        CHECK(count_of(r->journal, "stopped during it") == 0);
         CHECK(count_of(r->journal, "ANNEAL_PT stopped: STOPVAL reached after "
                                    "179 host eval(s) (22 epoch(s)") == 1);
     }
@@ -693,8 +696,9 @@ TEST_CASE("Proposal order: a STOPVAL reached during an ANNEAL_PT epoch ends "
  * 89, has a loss below STOPVAL, its other four, 90 to 93, do not run, and
  * the other walkers make theirs. loss.tadah and params.tadah have the
  * rows 1 to 128 without 90 to 93, and the journal says "temperature step 2
- * of TADAH:ANNEAL_PA: 4 of its 40 evaluations did not run (the search
- * stopped during it); evaluations 90-93 have no rows" and "ANNEAL_PA
+ * of TADAH:ANNEAL_PA: 4 of its 40 evaluations did not run; evaluations
+ * 90-93 have no rows" (without "the search stopped during it", as the
+ * search ends after the step) and "ANNEAL_PA
  * stopped: STOPVAL reached after 124 host eval(s)" -- the same files at
  * THREADS 1, at THREADS 2 in reverse and in forward walker order and at
  * THREADS 4 in reverse walker order.
@@ -722,8 +726,9 @@ TEST_CASE("Proposal order: a STOPVAL reached during an ANNEAL_PA temperature "
         CHECK(iterations(r->files.at("params.tadah")) == numbers_to(128, gap));
         CHECK(count_of(r->journal,
                        "temperature step 2 of TADAH:ANNEAL_PA: 4 of its 40 "
-                       "evaluations did not run (the search stopped during "
-                       "it); evaluations 90-93 have no rows") == 1);
+                       "evaluations did not run; evaluations 90-93 have no "
+                       "rows\n") == 1);
+        CHECK(count_of(r->journal, "stopped during it") == 0);
         CHECK(count_of(r->journal, "ANNEAL_PA stopped: STOPVAL reached after "
                                    "124 host eval(s)") == 1);
     }
@@ -809,7 +814,7 @@ TEST_CASE("Proposal order: an ASA run whose blocks have invalid states writes "
     check_same_files(a, d);
 }
 
-/* Pins: the rounds of the full-vector pilot of ANNEAL_PT's step
+/* Pins: the rounds of the whole-vector pilot of ANNEAL_PT's step
  * calibration are numbered and recorded in slot order. ANNEAL_PT (SEED 1,
  * REPLICAS 4, MAXEVAL 320, T_HOT and T_COLD set, the default CLASSIC steps
  * with PARAM STEP_WARMUP_SWEEPS 2): the calibration's budget, 80
@@ -817,12 +822,16 @@ TEST_CASE("Proposal order: an ASA run whose blocks have invalid states writes "
  * says ("and the pilot made 48 evaluations"). The run writes the
  * same files at THREADS 1, at THREADS 2 in reverse and in forward slot
  * order and at THREADS 4 in reverse slot order, with the rows 1 to 320.
+ * The journal calls the phase a whole-vector pilot, as the documentation
+ * does ("... 3 coordinate(s) missed for no known reason and 0 whole-vector
+ * pilot(s) did not converge; ..."), never "full-vector".
  * Before the fix: each slot ran its whole pilot in one task, whose
  * evaluations took their numbers as they started, so the runs at THREADS
  * 2 and 4 numbered the pilot's evaluations, and the epochs after it, in
  * the order of the delays: their params.tadah, loss.tadah, the best_*
- * files and best_pot.tadah differed from those at THREADS 1. */
-TEST_CASE("Proposal order: the rounds of the ANNEAL_PT full-vector pilot are "
+ * files and best_pot.tadah differed from those at THREADS 1. Then the
+ * journal said "0 full-vector pilot(s) did not converge". */
+TEST_CASE("Proposal order: the rounds of the ANNEAL_PT whole-vector pilot are "
           "numbered and recorded in slot order",
           "[HPO][proposal_order][anneal_pt]")
 {
@@ -838,9 +847,46 @@ TEST_CASE("Proposal order: the rounds of the ANNEAL_PT full-vector pilot are "
         INFO("journal:\n" << r->journal);
         CHECK(count_of(r->journal, "and the pilot made 48 "
                                    "evaluations") == 1);
+        CHECK(count_of(r->journal,
+                       "3 coordinate(s) missed for no known reason and 0 "
+                       "whole-vector pilot(s) did not converge; ") == 1);
+        CHECK(count_of(r->journal, "full-vector") == 0);
         CHECK(iterations(r->files.at("loss.tadah")) == numbers_to(320));
     }
     check_same_files(a, b);
     check_same_files(a, c);
     check_same_files(a, d);
+}
+
+/* Pins: the journal line of a round of the whole-vector pilot that a stop
+ * cuts short names the round by the documentation's name of the phase.
+ * The run of the case above at THREADS 1 whose evaluation of slot 3
+ * (1-based) in the first round of the pilot -- its tenth: its starting
+ * point, the 8 evaluations of its coordinate warm-up, then the pilot --
+ * throws core::ShutdownRequested before it reaches the host, as an
+ * evaluation that starts after a signal does. The run ends with the stop,
+ * after evaluation 38, and the journal says "round 9 of the whole-vector
+ * pilot of TADAH:ANNEAL_PT: 2 of its 4 evaluations did not run": slot 4's
+ * evaluation, after the stop, does not run either, and their numbers, 39
+ * and 40, the last of the round, go back to the run.
+ * Before the fix: "round 9 of the full-vector pilot of TADAH:ANNEAL_PT: 2
+ * of its 4 evaluations did not run (the search stopped during it)". */
+TEST_CASE("Proposal order: a stop during a round of the ANNEAL_PT "
+          "whole-vector pilot names the round in the journal",
+          "[HPO][proposal_order][anneal_pt]")
+{
+    RunOptions opt;
+    opt.before = [](std::size_t slot, std::size_t n) {
+        if (slot == 2 && n == 10) throw tadah::core::ShutdownRequested{};
+    };
+    const RunFiles r = run_on_ta(
+        pt_target(1, "    PARAM STEP_WARMUP_SWEEPS 2\n", 320), Driver::PT,
+        opt);
+    INFO("journal:\n" << r.journal);
+    CHECK(r.shut_down);
+    CHECK(count_of(r.journal,
+                   "round 9 of the whole-vector pilot of TADAH:ANNEAL_PT: 2 "
+                   "of its 4 evaluations did not run\n") == 1);
+    CHECK(count_of(r.journal, "full-vector") == 0);
+    CHECK(iterations(r.files.at("loss.tadah")) == numbers_to(38));
 }
