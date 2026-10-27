@@ -55,7 +55,7 @@ std::string slurp(const fs::path& p)
 }
 
 /* What reading `target` gives: the parsed targets, standard output and the
- * journal. */
+ * journal, with the OPTIMISER section a run writes after reading it. */
 struct Read {
     std::unique_ptr<HPOTargets> trg;
     std::string out, journal;
@@ -92,6 +92,7 @@ Read read_target(const std::string& target, Context ctx)
     }
     std::cout.rdbuf(old);
     r.out = out.str();
+    log.write_optimizer_section(r.trg->spec, {});
     log.finish("test-end");
     log.reset_for_test();
     r.journal = slurp(journal);
