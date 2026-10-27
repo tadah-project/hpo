@@ -26,6 +26,9 @@
 //
 // Tag [hpotarget_gen]. The file compiles with or without the generated
 // headers (__has_include): without them it holds one case, which fails.
+// The build compiles it again when the headers appear, change or go
+// (tests/CMakeLists.txt, hpo_depend_on_has_include(); CTest
+// hpo_has_include_rebuild checks the mechanism).
 //
 // Before the fix: the headers and their generator do not exist; the one
 // case "hpotarget generated tables: the generated headers exist" fails.
