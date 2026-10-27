@@ -37,6 +37,7 @@
 
 #include <dlib/matrix.h>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstddef>
@@ -289,29 +290,39 @@ std::vector<std::vector<std::string>> data_rows(const std::string& text)
     return rows;
 }
 
-std::string pt_target(int threads, const std::string& extra = "")
+/* The lines of the target files after the OPTIMIZER block: FAILSCORE
+ * `failscore`, the loss term `pc_line`. */
+std::string target_tail(const std::string& failscore = "1e16",
+                        const std::string& pc_line = "PC_ERMSE 0 0.0001")
+{
+    return "LOSS L2\nFAILSCORE " + failscore + "\n" + pc_line +
+           "\nOPTIM RCUT2B (1) 4.0 6.0\n"
+           "OPTIM SGRIDMB (1) 0.1 0.4\nOUTPUT 1\nBOUTPUT 1\nDIGITS 15\n";
+}
+
+std::string pt_target(int threads, const std::string& extra = "",
+                      int maxeval = 40, const std::string& tail = target_tail())
 {
     return "OPTIMIZER\n  STRATEGY\n    TYPE PLAIN\n    LIB TADAH\n"
            "    ALGO ANNEAL_PT\n    THREADS " + std::to_string(threads) +
-           "\n    SEED 1\n    MAXEVAL 40\n    PARAM REPLICAS 4\n"
+           "\n    SEED 1\n    MAXEVAL " + std::to_string(maxeval) +
+           "\n    PARAM REPLICAS 4\n"
            "    PARAM T_HOT 0.10\n    PARAM T_COLD 0.001\n" + extra +
-           "  ENDSTRATEGY\nENDOPTIMIZER\nLOSS L2\nFAILSCORE 1e16\n"
-           "PC_ERMSE 0 0.0001\nOPTIM RCUT2B (1) 4.0 6.0\n"
-           "OPTIM SGRIDMB (1) 0.1 0.4\nOUTPUT 1\nBOUTPUT 1\nDIGITS 15\n";
+           "  ENDSTRATEGY\nENDOPTIMIZER\n" + tail;
 }
 
-std::string pa_target(int threads)
+std::string pa_target(int threads, const std::string& extra = "",
+                      int maxeval = 40)
 {
     return "OPTIMIZER\n  STRATEGY\n    TYPE PLAIN\n    LIB TADAH\n"
            "    ALGO ANNEAL_PA\n    THREADS " + std::to_string(threads) +
-           "\n    POPULATION 8\n    SEED 1\n    MAXEVAL 40\n"
-           "    PARAM T_HOT 0.10\n    PARAM T_MIN 0.001\n    PARAM RT 0.85\n"
-           "  ENDSTRATEGY\nENDOPTIMIZER\nLOSS L2\nFAILSCORE 1e16\n"
-           "PC_ERMSE 0 0.0001\nOPTIM RCUT2B (1) 4.0 6.0\n"
-           "OPTIM SGRIDMB (1) 0.1 0.4\nOUTPUT 1\nBOUTPUT 1\nDIGITS 15\n";
+           "\n    POPULATION 8\n    SEED 1\n    MAXEVAL " +
+           std::to_string(maxeval) + "\n"
+           "    PARAM T_HOT 0.10\n    PARAM T_MIN 0.001\n    PARAM RT 0.85\n" +
+           extra + "  ENDSTRATEGY\nENDOPTIMIZER\n" + target_tail();
 }
 
-std::string asa_target(int threads)
+std::string asa_target(int threads, const std::string& failscore = "1e16")
 {
     return "OPTIMIZER\n  STRATEGY\n    TYPE PLAIN\n    LIB ASA\n"
            "    ALGO ASA\n    THREADS " + std::to_string(threads) +
@@ -319,9 +330,26 @@ std::string asa_target(int threads)
            "    PARAM Temperature_Ratio_Scale 1e-4\n    PARAM Curvature_0 1\n"
            "    PARAM Gener_Block 4\n    PARAM Gener_Block_Max 4\n"
            "    PARAM Gener_Mov_Avr 0\n"
-           "  ENDSTRATEGY\nENDOPTIMIZER\nLOSS L2\nFAILSCORE 1e16\n"
-           "PC_ERMSE 0 0.0001\nOPTIM RCUT2B (1) 4.0 6.0\n"
-           "OPTIM SGRIDMB (1) 0.1 0.4\nOUTPUT 1\nBOUTPUT 1\nDIGITS 15\n";
+           "  ENDSTRATEGY\nENDOPTIMIZER\n" + target_tail(failscore);
+}
+
+/* The #ITERATION column of the data rows of `text`. */
+std::vector<std::string> iterations(const std::string& text)
+{
+    std::vector<std::string> v;
+    for (const auto& row : data_rows(text)) v.push_back(row.at(0));
+    return v;
+}
+
+/* "1", "2", ..., `last` without the numbers in `missing`. */
+std::vector<std::string> numbers_to(
+    std::size_t last, const std::vector<std::size_t>& missing = {})
+{
+    std::vector<std::string> v;
+    for (std::size_t n = 1; n <= last; ++n)
+        if (std::find(missing.begin(), missing.end(), n) == missing.end())
+            v.push_back(std::to_string(n));
+    return v;
 }
 
 /* Slot k of n waits (n - 1 - k) * step ms: the batch starts and ends in
@@ -354,8 +382,11 @@ std::size_t count_of(const std::string& text, const std::string& what)
 }  // namespace
 
 /* Pins: TADAH:ANNEAL_PT (SEED 1, REPLICAS 4, MAXEVAL 40, T_HOT and T_COLD
- * set, the default CLASSIC steps with their calibration, and PARAM CORANA
- * ON) writes the same files -- loss.tadah, params.tadah, stats.tadah,
+ * set, the default CLASSIC steps with the coordinate warm-up of their
+ * calibration -- at MAXEVAL 40 the calibration's budget, 10 evaluations,
+ * ends during the warm-up and the pilot makes none (the pilot case below
+ * has one that runs) --, and PARAM CORANA ON, which runs no calibration)
+ * writes the same files -- loss.tadah, params.tadah, stats.tadah,
  * outvar.tadah, the four best_* files and best_pot.tadah, whose header
  * names HPO_SOURCE_EVAL, HPO_SOURCE_SLOT and "Evaluation N, improvement K"
  * -- in two runs at THREADS 2 whose evaluations start and end in reverse
@@ -562,4 +593,254 @@ TEST_CASE("Proposal order: a stop during a batch keeps the evaluations that "
                    "epoch 2 of TADAH:ANNEAL_PT: 1 of its 4 evaluations did "
                    "not run (the search stopped during it); evaluation 11 "
                    "has no row") == 1);
+}
+
+/* Pins: a STOPVAL reached in a round of the step calibration of
+ * TADAH:ANNEAL_PT ends the search after that round. ANNEAL_PT (SEED 1,
+ * REPLICAS 4, MAXEVAL 1200, T_HOT and T_COLD set, the default CLASSIC
+ * steps, STOPVAL 1.7e-3): evaluation 13, slot 1's in the third round of
+ * the coordinate warm-up (evaluations 13 to 16, slots 1 to 4), is the
+ * first whose loss is below STOPVAL. The other slots make their
+ * evaluations of that round and the search ends: loss.tadah has the rows
+ * 1 to 16, the journal says "ANNEAL_PT stopped: STOPVAL reached after 16
+ * host eval(s) (0 epoch(s)" and no evaluation "did not run" -- the same
+ * files at THREADS 1, at THREADS 2 with the evaluations of each round in
+ * slot order and at THREADS 4 in reverse slot order.
+ * Before the fix: the replica that reached STOPVAL ended its own
+ * calibration, and the other replicas went on through their whole
+ * coordinate warm-up before the search ended: 79 rows ("STOPVAL reached
+ * after 79 host eval(s)"). */
+TEST_CASE("Proposal order: a STOPVAL reached in a round of the ANNEAL_PT "
+          "step calibration ends the search after that round",
+          "[HPO][proposal_order][anneal_pt][stopval]")
+{
+    const std::string stop = "    STOPVAL 1.7e-3\n";
+    const RunFiles one = run_on_ta(pt_target(1, stop, 1200), Driver::PT, {});
+    const RunFiles two = run_on_ta(pt_target(2, stop, 1200), Driver::PT,
+                                   {forward_delays(4, 20), {}, {}, 0});
+    const RunFiles four = run_on_ta(pt_target(4, stop, 1200), Driver::PT,
+                                    {reverse_delays(4, 20), {}, {}, 0});
+    for (const RunFiles* r : {&one, &two, &four}) {
+        INFO("journal:\n" << r->journal);
+        const auto rows = data_rows(r->files.at("loss.tadah"));
+        CHECK(iterations(r->files.at("loss.tadah")) == numbers_to(16));
+        REQUIRE(rows.size() >= 16);
+        std::size_t first_below = 0;
+        for (std::size_t i = 0; i < rows.size() && first_below == 0; ++i)
+            if (std::stod(rows[i].back()) < 1.7e-3) first_below = i + 1;
+        CHECK(first_below == 13);
+        for (std::size_t i = 12; i < 16; ++i)
+            CHECK(rows[i].at(1) == std::to_string(i - 11));
+        CHECK(count_of(r->journal, "ANNEAL_PT stopped: STOPVAL reached after "
+                                   "16 host eval(s) (0 epoch(s)") == 1);
+        CHECK(count_of(r->journal, "did not run") == 0);
+    }
+    check_same_files(one, two);
+    check_same_files(one, four);
+}
+
+/* Pins: a replica that reaches STOPVAL during an epoch of TADAH:ANNEAL_PT
+ * ends its own sweep, and the search ends after the epoch. ANNEAL_PT
+ * (SEED 1, REPLICAS 4, MAXEVAL 400, PARAM CORANA ON, STOPVAL 1.2e-3):
+ * epoch 22 has the evaluations 173 to 180, two for each slot; the first of
+ * slot 1, 173, has a loss below STOPVAL, its second, 174, does not run,
+ * and the other slots make theirs. loss.tadah and params.tadah have the
+ * rows 1 to 180 without 174, and the journal says "epoch 22 of
+ * TADAH:ANNEAL_PT: 1 of its 8 evaluations did not run (the search stopped
+ * during it); evaluation 174 has no row" and "ANNEAL_PT stopped: STOPVAL
+ * reached after 179 host eval(s) (22 epoch(s)" -- the same files at THREADS
+ * 1, at THREADS 2 in reverse and in forward slot order and at THREADS 4 in
+ * reverse slot order.
+ * Before the fix: a replica that reached STOPVAL stopped the others at
+ * their next proposal, and the evaluations of an epoch took their numbers
+ * in the order they started: the runs stopped after 173 (THREADS 1), 175
+ * and 174 (THREADS 2 in reverse and in forward order) and 179 (THREADS 4)
+ * evaluations, without the journal line, and their files differed. */
+TEST_CASE("Proposal order: a STOPVAL reached during an ANNEAL_PT epoch ends "
+          "the search after the epoch at any THREADS",
+          "[HPO][proposal_order][anneal_pt][stopval]")
+{
+    const std::string extra = "    PARAM CORANA ON\n    STOPVAL 1.2e-3\n";
+    const RunFiles a = run_on_ta(pt_target(1, extra, 400), Driver::PT, {});
+    const RunFiles b = run_on_ta(pt_target(2, extra, 400), Driver::PT,
+                                 {reverse_delays(4, 10), {}, {}, 0});
+    const RunFiles c = run_on_ta(pt_target(2, extra, 400), Driver::PT,
+                                 {forward_delays(4, 10), {}, {}, 0});
+    const RunFiles d = run_on_ta(pt_target(4, extra, 400), Driver::PT,
+                                 {reverse_delays(4, 10), {}, {}, 0});
+    for (const RunFiles* r : {&a, &b, &c, &d}) {
+        INFO("journal:\n" << r->journal);
+        CHECK(iterations(r->files.at("loss.tadah")) == numbers_to(180, {174}));
+        CHECK(iterations(r->files.at("params.tadah")) ==
+              numbers_to(180, {174}));
+        CHECK(count_of(r->journal,
+                       "epoch 22 of TADAH:ANNEAL_PT: 1 of its 8 evaluations "
+                       "did not run (the search stopped during it); "
+                       "evaluation 174 has no row") == 1);
+        CHECK(count_of(r->journal, "ANNEAL_PT stopped: STOPVAL reached after "
+                                   "179 host eval(s) (22 epoch(s)") == 1);
+    }
+    check_same_files(a, b);
+    check_same_files(a, c);
+    check_same_files(a, d);
+}
+
+/* Pins: a walker that reaches STOPVAL during a temperature step of
+ * TADAH:ANNEAL_PA ends its own sweeps, and the search ends after the step.
+ * ANNEAL_PA (SEED 1, POPULATION 8, MAXEVAL 300, PARAM CHAIN_LENGTH 5: a
+ * step of 40 evaluations, five for each walker; STOPVAL 1.1e-3):
+ * temperature step 2 has the evaluations 89 to 128; the first of walker 1,
+ * 89, has a loss below STOPVAL, its other four, 90 to 93, do not run, and
+ * the other walkers make theirs. loss.tadah and params.tadah have the
+ * rows 1 to 128 without 90 to 93, and the journal says "temperature step 2
+ * of TADAH:ANNEAL_PA: 4 of its 40 evaluations did not run (the search
+ * stopped during it); evaluations 90-93 have no rows" and "ANNEAL_PA
+ * stopped: STOPVAL reached after 124 host eval(s)" -- the same files at
+ * THREADS 1, at THREADS 2 in reverse and in forward walker order and at
+ * THREADS 4 in reverse walker order.
+ * Before the fix: a walker that reached STOPVAL stopped the others at
+ * their next proposal, and the evaluations of a step took their numbers in
+ * the order they started: the runs stopped after 89 (THREADS 1), 91 and 90
+ * (THREADS 2 in reverse and in forward order) and 95 (THREADS 4)
+ * evaluations, without the journal line, and their files differed. */
+TEST_CASE("Proposal order: a STOPVAL reached during an ANNEAL_PA temperature "
+          "step ends the search after the step at any THREADS",
+          "[HPO][proposal_order][anneal_pa][stopval]")
+{
+    const std::string extra = "    PARAM CHAIN_LENGTH 5\n    STOPVAL 1.1e-3\n";
+    const RunFiles a = run_on_ta(pa_target(1, extra, 300), Driver::PA, {});
+    const RunFiles b = run_on_ta(pa_target(2, extra, 300), Driver::PA,
+                                 {reverse_delays(8, 10), {}, {}, 0});
+    const RunFiles c = run_on_ta(pa_target(2, extra, 300), Driver::PA,
+                                 {forward_delays(8, 10), {}, {}, 0});
+    const RunFiles d = run_on_ta(pa_target(4, extra, 300), Driver::PA,
+                                 {reverse_delays(8, 10), {}, {}, 0});
+    for (const RunFiles* r : {&a, &b, &c, &d}) {
+        INFO("journal:\n" << r->journal);
+        const std::vector<std::size_t> gap{90, 91, 92, 93};
+        CHECK(iterations(r->files.at("loss.tadah")) == numbers_to(128, gap));
+        CHECK(iterations(r->files.at("params.tadah")) == numbers_to(128, gap));
+        CHECK(count_of(r->journal,
+                       "temperature step 2 of TADAH:ANNEAL_PA: 4 of its 40 "
+                       "evaluations did not run (the search stopped during "
+                       "it); evaluations 90-93 have no rows") == 1);
+        CHECK(count_of(r->journal, "ANNEAL_PA stopped: STOPVAL reached after "
+                                   "124 host eval(s)") == 1);
+    }
+    check_same_files(a, b);
+    check_same_files(a, c);
+    check_same_files(a, d);
+}
+
+/* Pins: the lowest values of a --skip-rel filter that an evaluation reads
+ * are those of the evaluations recorded before its batch. ANNEAL_PT (SEED
+ * 1, REPLICAS 4, MAXEVAL 40, T_HOT and T_COLD set) with PC_ERMSE 0 0.0001
+ * --skip-rel 1.3: an evaluation whose ERMSE exceeds 1.3 times the lowest
+ * ERMSE so far scores FAILSCORE (1e16), which 18 of the evaluations do.
+ * The run writes the same files at THREADS 1, at
+ * THREADS 2 and at THREADS 4 with the evaluations of each batch in reverse
+ * slot order, where a later evaluation of a batch ends before an earlier
+ * one.
+ * Before the fix: the lowest values were updated as the evaluations
+ * ended, so an evaluation of a batch read those of a later one that had
+ * ended first, and the evaluations took their numbers in the order they
+ * started: 23, 22 and 17 evaluations scored FAILSCORE at THREADS 1, 2 and
+ * 4, and the files differed. With only the deferral of the lowest values
+ * undone, 22 and 19 did at THREADS 1 and 2. */
+TEST_CASE("Proposal order: a --skip-rel filter reads the lowest values "
+          "recorded before the batch at any THREADS",
+          "[HPO][proposal_order][anneal_pt][skip_rel]")
+{
+    const std::string tail =
+        target_tail("1e16", "PC_ERMSE 0 0.0001 --skip-rel 1.3");
+    const RunFiles a = run_on_ta(pt_target(1, "", 40, tail), Driver::PT, {});
+    const RunFiles b = run_on_ta(pt_target(2, "", 40, tail), Driver::PT,
+                                 {reverse_delays(4), {}, {}, 0});
+    const RunFiles d = run_on_ta(pt_target(4, "", 40, tail), Driver::PT,
+                                 {reverse_delays(4), {}, {}, 0});
+    for (const RunFiles* r : {&a, &b, &d}) {
+        INFO("journal:\n" << r->journal);
+        std::size_t trips = 0;
+        for (const auto& row : data_rows(r->files.at("loss.tadah")))
+            if (std::stod(row.back()) == 1e16) ++trips;
+        CHECK(trips == 18);
+        CHECK(iterations(r->files.at("loss.tadah")) == numbers_to(40));
+    }
+    check_same_files(a, b);
+    check_same_files(a, d);
+}
+
+/* Pins: ASA:ASA with a block of 4 states (Gener_Block 4, Gener_Block_Max
+ * 4, Gener_Mov_Avr 0; SEED 1, MAXEVAL 40) and FAILSCORE 6e-3, so that
+ * states of the blocks have a loss at or above FAILSCORE and are invalid
+ * for ASA (9 of them in the slots 2 to 4 of the blocks), writes the same
+ * files at THREADS 1, at THREADS 2 in reverse and in forward block order
+ * and at THREADS 4 in reverse block order; the rows of loss.tadah are
+ * numbered 1 to 40.
+ * Before the fix: the states of a block took their numbers in the order
+ * they started, so loss.tadah, params.tadah, stats.tadah and outvar.tadah
+ * of the runs at THREADS 2 and 4 in reverse block order differed from
+ * those at THREADS 1. The cost that ASA reads for an invalid state, the
+ * last valid cost before its block, does not reach the files (ASA sorts
+ * the block by cost and skips an invalid state), so this case passes with
+ * that part of the fix undone. */
+TEST_CASE("Proposal order: an ASA run whose blocks have invalid states writes "
+          "the same files at any THREADS",
+          "[HPO][proposal_order][asa]")
+{
+    const RunFiles a = run_on_ta(asa_target(1, "6e-3"), Driver::ASA, {});
+    const RunFiles b = run_on_ta(asa_target(2, "6e-3"), Driver::ASA,
+                                 {reverse_delays(4), {}, {}, 0});
+    const RunFiles c = run_on_ta(asa_target(2, "6e-3"), Driver::ASA,
+                                 {forward_delays(4), {}, {}, 0});
+    const RunFiles d = run_on_ta(asa_target(4, "6e-3"), Driver::ASA,
+                                 {reverse_delays(4), {}, {}, 0});
+    for (const RunFiles* r : {&a, &b, &c, &d}) {
+        INFO("journal:\n" << r->journal);
+        std::size_t invalid_in_blocks = 0;
+        for (const auto& row : data_rows(r->files.at("loss.tadah")))
+            if (row.at(1) != "1" && std::stod(row.back()) >= 6e-3)
+                ++invalid_in_blocks;
+        CHECK(invalid_in_blocks == 9);
+        CHECK(iterations(r->files.at("loss.tadah")) == numbers_to(40));
+    }
+    check_same_files(a, b);
+    check_same_files(a, c);
+    check_same_files(a, d);
+}
+
+/* Pins: the rounds of the full-vector pilot of ANNEAL_PT's step
+ * calibration are numbered and recorded in slot order. ANNEAL_PT (SEED 1,
+ * REPLICAS 4, MAXEVAL 320, T_HOT and T_COLD set, the default CLASSIC steps
+ * with PARAM STEP_WARMUP_SWEEPS 2): the calibration's budget, 80
+ * evaluations, leaves 48 for the pilot, which the journal
+ * says ("and the pilot made 48 evaluations"). The run writes the
+ * same files at THREADS 1, at THREADS 2 in reverse and in forward slot
+ * order and at THREADS 4 in reverse slot order, with the rows 1 to 320.
+ * Before the fix: each slot ran its whole pilot in one task, whose
+ * evaluations took their numbers as they started, so the runs at THREADS
+ * 2 and 4 numbered the pilot's evaluations, and the epochs after it, in
+ * the order of the delays: their params.tadah, loss.tadah, the best_*
+ * files and best_pot.tadah differed from those at THREADS 1. */
+TEST_CASE("Proposal order: the rounds of the ANNEAL_PT full-vector pilot are "
+          "numbered and recorded in slot order",
+          "[HPO][proposal_order][anneal_pt]")
+{
+    const std::string extra = "    PARAM STEP_WARMUP_SWEEPS 2\n";
+    const RunFiles a = run_on_ta(pt_target(1, extra, 320), Driver::PT, {});
+    const RunFiles b = run_on_ta(pt_target(2, extra, 320), Driver::PT,
+                                 {reverse_delays(4, 10), {}, {}, 0});
+    const RunFiles c = run_on_ta(pt_target(2, extra, 320), Driver::PT,
+                                 {forward_delays(4, 10), {}, {}, 0});
+    const RunFiles d = run_on_ta(pt_target(4, extra, 320), Driver::PT,
+                                 {reverse_delays(4, 10), {}, {}, 0});
+    for (const RunFiles* r : {&a, &b, &c, &d}) {
+        INFO("journal:\n" << r->journal);
+        CHECK(count_of(r->journal, "and the pilot made 48 "
+                                   "evaluations") == 1);
+        CHECK(iterations(r->files.at("loss.tadah")) == numbers_to(320));
+    }
+    check_same_files(a, b);
+    check_same_files(a, c);
+    check_same_files(a, d);
 }
