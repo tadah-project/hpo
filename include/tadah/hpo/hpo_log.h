@@ -358,6 +358,15 @@ public:
     std::size_t record_repeat_evaluated(const std::string& why);
     /** Counts a DLIB:BFGS line search not run. */
     std::size_t record_line_search_not_run();
+    /** Counts a point evaluated again whose usable loss differs from its
+     *  earlier evaluation's (repeat_losses_differ; HPO_Host journals the
+     *  first of each power of two). DIAGNOSTICS prints the count when it
+     *  is > 0. */
+    std::size_t record_repeat_other_loss();
+    /** The points evaluated again with another loss so far. */
+    std::size_t repeats_other_loss() const {
+        return n_repeat_other_.load(std::memory_order_relaxed);
+    }
     /** The repeats answered without an evaluation so far. */
     std::size_t repeats_reused() const {
         return n_repeat_reused_.load(std::memory_order_relaxed);
@@ -715,6 +724,7 @@ private:
      * protected by mtx_. */
     std::atomic<std::size_t> n_repeat_reused_ {0};
     std::atomic<std::size_t> n_repeat_again_  {0};
+    std::atomic<std::size_t> n_repeat_other_  {0};
     std::atomic<std::size_t> n_ls_not_run_    {0};
     std::string              repeat_again_why_;
     /* One-sided components per dimension, in the order first seen --

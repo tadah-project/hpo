@@ -7,6 +7,7 @@
 #include <tadah/hpo/phase_specs.h>
 #include <tadah/hpo/scale_validation.h>
 #include <tadah/hpo/strategy_rules.h>
+#include <tadah/hpo/strict_parse.h>
 
 #include <tadah/core/intercept_layout.h>
 #include <tadah/core/logger.h>
@@ -20,6 +21,7 @@
 #include <tadah/mlip/data_weights.h>
 #include <tadah/mlip/intercepts.h>
 #include <tadah/mlip/row_weights.h>
+#include <tadah/mlip/structure_db.h>
 #include <tadah/mlip/trainer.h>
 #include <tadah/mlip/training_datasets.h>
 #include <tadah/mlip/weight_provisioning.h>
@@ -680,11 +682,55 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
   const bool has_val_metrics = trg.use_emae || trg.use_ermse ||
                                trg.use_errmse || trg.use_ersq ||
                                trg.use_frmse || trg.use_srmse;
-  if (!has_val_metrics && trg.observables.empty() && trg.LS.empty()) {
+  /* The PC_FAILPROBE line, an entry of LS, gives no loss term: a file
+   * whose only PC line it is scored 0 for every evaluation. */
+  const std::size_t loss_sims =
+      trg.LS.size() - (trg.failprobe_idx >= 0 ? 1u : 0u);
+  if (!has_val_metrics && trg.observables.empty() && loss_sims == 0) {
     throw std::runtime_error(
-        "No loss source: declare at least one of PC_EMAE/PC_ERMSE/"
-        "PC_ErRMSE/PC_ERSQ/PC_FRMSE/PC_SRMSE_GPA (requires --validation), "
-        "PC_OBSERVABLE, or PC_LAMMPS in the hpotarget file.");
+        "No loss source: a loss term comes from a PC_EMAE, PC_ERMSE, "
+        "PC_ErRMSE, PC_ERSQ, PC_FRMSE or PC_SRMSE_GPA line (with "
+        "--validation), a PC_OBSERVABLE line or a PC_LAMMPS line, and the "
+        "target file has none (a PC_FAILPROBE line gives no loss term)");
+  }
+
+  /* --- PC_OBSERVABLE: the elements of its structures --------------------
+   * Each is an element of the potential: the elements of the run (ATOM,
+   * which tadah hpo sets from the training data when the configuration
+   * does not, or the training data's). One the potential lacks has no
+   * descriptor: its cohesive energy was 0 for every candidate. */
+  if (!trg.observables.empty()) {
+    std::vector<std::string> run_elements;
+    if (train_ctx.contains("ATOM")) {
+      for (const auto &el : train_ctx("ATOM")) run_elements.push_back(el);
+    } else if (has_train_db) {
+      for (const auto &el : mlip::StructureDB::find_unique_elements(train_ctx))
+        run_elements.push_back(el.symbol);
+    }
+    if (!run_elements.empty()) {
+      std::string listed;
+      for (const auto &el : run_elements)
+        listed += (listed.empty() ? "" : ", ") + el;
+      for (std::size_t k = 0; k < trg.observables.size(); ++k) {
+        const auto &obs = trg.observables[k];
+        if (!obs) continue;
+        for (const auto &el : obs->elements()) {
+          if (std::find(run_elements.begin(), run_elements.end(), el) !=
+              run_elements.end())
+            continue;
+          const std::string what =
+              "PC_OBSERVABLE " + obs->kind() + " --species " + el +
+              ": the potential has no element " + el + " (its elements: " +
+              listed + ")";
+          if (k < trg.observable_lines.size() &&
+              trg.observable_lines[k].number > 0)
+            throw std::runtime_error(config_line_error(
+                trg.observable_lines[k].number, what,
+                trg.observable_lines[k].text));
+          throw std::runtime_error(what);
+        }
+      }
+    }
   }
   if (has_val_metrics && !has_validation) {
     throw std::runtime_error(
@@ -939,6 +985,36 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
       throw std::runtime_error(
           "FAILSCORE_GRADING ON requires a FAILSCORE large enough to "
           "represent four strictly ordered grading bands.");
+  } else {
+    /* Under OFF a failure signal (a --failvar above 0, a PC_FAILPROBE S
+     * above --gate) fails its evaluation, which scores FAILSCORE; the
+     * settings that only grade a failure would have no effect. Refused at
+     * their line (after the TADAH_FAILSCORE_GRADING override, which
+     * hpo_run applies before these checks). */
+    auto at = [](const LammpsSim &sim, const std::string &what) {
+      return sim.line > 0 ? config_line_error(sim.line, what, sim.line_text)
+                          : what;
+    };
+    if (trg.failprobe_s0_given && trg.failprobe_idx >= 0)
+      throw std::runtime_error(at(
+          trg.LS[static_cast<std::size_t>(trg.failprobe_idx)],
+          "PC_FAILPROBE --s0 grades failed evaluations, which "
+          "FAILSCORE_GRADING ON does; under FAILSCORE_GRADING OFF every "
+          "failed evaluation scores FAILSCORE, so --s0 would have no "
+          "effect"));
+    for (const auto &sim : trg.LS)
+      for (const auto &fv : sim.failvars)
+        if (fv.scale_given) {
+          std::ostringstream scale;
+          scale << fv.scale;
+          throw std::runtime_error(at(sim,
+              "--failvar " + fv.name + " " + scale.str() +
+              ": the scale grades the failure, which FAILSCORE_GRADING ON "
+              "does; under FAILSCORE_GRADING OFF a failed evaluation scores "
+              "FAILSCORE, so the scale would have no effect (--failvar " +
+              fv.name + " alone fails the evaluation when " + fv.name +
+              " > 0)"));
+        }
   }
 
   /* --- RCUT contract for refit-family channels -------------------------- */

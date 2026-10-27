@@ -445,8 +445,11 @@ TEST_CASE("The parsed timeout seconds reach HPOTargets and LammpsSim",
           "[HPO][strict_parse][timeout]")
 {
     TempFile script("clear\nrun 0\nvariable E equal 0.0\n", ".in");
+    /* A gradient-free optimiser: a PC_LAMMPS line refuses a gradient-based
+     * one, DLIB:BFGS among them (it was DLIB:BFGS). Before the fix: passes
+     * as well (a pin). */
     const std::string optimizer =
-        "OPTIMIZER\nLIB DLIB\nALGO BFGS\nMAXEVAL 1\nENDOPTIMIZER\n";
+        "OPTIMIZER\nLIB NLOPT\nALGO LN_SBPLX\nMAXEVAL 1\nENDOPTIMIZER\n";
     const std::string sim = "PC_LAMMPS --script " + script.path.string() +
                             " --varloss E 1.0 1.0";
     auto parse = [&](const std::string& root) {

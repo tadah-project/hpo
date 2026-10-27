@@ -95,8 +95,11 @@ std::filesystem::path write_script(int n) {
     return write_file("script.in", body);
 }
 
+/* A gradient-free optimiser: a PC_LAMMPS line refuses a gradient-based one,
+ * DLIB:BFGS among them (the head named DLIB:BFGS). Before the fix: the
+ * cases pass as well (a pin: the optimiser does not enter what they test). */
 std::string config_head() {
-    return "OPTIMIZER\nLIB DLIB\nALGO BFGS\nMAXEVAL 1\nENDOPTIMIZER\n"
+    return "OPTIMIZER\nLIB NLOPT\nALGO LN_SBPLX\nMAXEVAL 1\nENDOPTIMIZER\n"
            "LOSS L2\nFAILSCORE 1e6\n"
            "OPTIM WATOM (1) 0.1 5.0\n";
 }

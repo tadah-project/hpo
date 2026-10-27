@@ -146,25 +146,34 @@ TEST_CASE("sims_grad — loss_grad_wrt_observed sign + magnitudes for L2",
     CHECK(g == Approx(fd).epsilon(1e-7));
 }
 
+/* Pins: loss_grad_wrt_observed differentiates every loss function, MAPE
+ * and RMSLE as well as the residual ones: dL/dv is the central difference
+ * of LossFunction::loss in v, at v = 1, t = 0.5, w = 3 (MAPE: w sign(v -
+ * t) / |t| = 6).
+ * Before the fix: MAPE and RMSLE returned false and left g untouched (a
+ * PC_OBSERVABLE term of either went to finite differences, and
+ * GRAD_STRATEGY ANALYTICAL refused it). */
 TEST_CASE("sims_grad — loss_grad_wrt_observed dispatch coverage",
           "[sims_grad][adjoint]")
 {
-    /* Residual-based losses → supported. */
-    for (auto t : {LossFunction::Type::L1, LossFunction::Type::L2,
-                   LossFunction::Type::LOG_COSH, LossFunction::Type::HUBER,
-                   LossFunction::Type::TUKEY})
+    const double v = 1.0, t = 0.5, w = 3.0, h = 1e-6;
+    for (auto type : {LossFunction::Type::L1, LossFunction::Type::L2,
+                      LossFunction::Type::LOG_COSH, LossFunction::Type::HUBER,
+                      LossFunction::Type::TUKEY, LossFunction::Type::MAPE,
+                      LossFunction::Type::RMSLE})
     {
-        LossFunction fn(t);
-        double g = 0.0;
-        CHECK(loss_grad_wrt_observed(fn, 1.0, 0.5, 1.0, g));
-    }
-    /* Non-residual losses → fail closed. */
-    for (auto t : {LossFunction::Type::MAPE, LossFunction::Type::RMSLE}) {
-        LossFunction fn(t);
+        LossFunction fn(type);
+        INFO(LossFunction::to_string(type));
         double g = 42.0;
-        CHECK_FALSE(loss_grad_wrt_observed(fn, 1.0, 0.5, 1.0, g));
-        CHECK(g == 42.0);  /* untouched */
+        REQUIRE(loss_grad_wrt_observed(fn, v, t, w, g));
+        const double fd =
+            (fn.loss(v + h, t, w) - fn.loss(v - h, t, w)) / (2.0 * h);
+        CHECK(g == Approx(fd).epsilon(1e-6));
     }
+    double g = 0.0;
+    REQUIRE(loss_grad_wrt_observed(LossFunction(LossFunction::Type::MAPE),
+                                   v, t, w, g));
+    CHECK(g == Approx(6.0).epsilon(1e-14));
 }
 
 TEST_CASE("sims_grad — apply_loss_fold accumulates correctly",
@@ -190,16 +199,18 @@ TEST_CASE("sims_grad — apply_loss_fold accumulates correctly",
     CHECK(dL_dW(2) == Approx(6.0 - 0.4 * 3.0));
 }
 
-TEST_CASE("sims_grad — apply_loss_fold rejects MAPE without writing dL_dW",
+/* Pins: apply_loss_fold folds a MAPE term like any other: dL_dW +=
+ * (w sign(v - t) / |t|) dO_dW, here 2 dO_dW onto (7, 8).
+ * Before the fix: it returned false and left dL_dW as it was. */
+TEST_CASE("sims_grad — apply_loss_fold folds MAPE",
           "[sims_grad][adjoint]")
 {
     LossFunction mape(LossFunction::Type::MAPE);
     Eigen::VectorXd dO_dW(2);  dO_dW << 1.0, 2.0;
     Eigen::VectorXd dL_dW(2);  dL_dW << 7.0, 8.0;
-    CHECK_FALSE(apply_loss_fold(mape, 1.0, 0.5, 1.0, dO_dW, dL_dW));
-    /* No mutation on failure. */
-    CHECK(dL_dW(0) == 7.0);
-    CHECK(dL_dW(1) == 8.0);
+    REQUIRE(apply_loss_fold(mape, 1.0, 0.5, 1.0, dO_dW, dL_dW));
+    CHECK(dL_dW(0) == Approx(9.0).epsilon(1e-14));
+    CHECK(dL_dW(1) == Approx(12.0).epsilon(1e-14));
 }
 
 TEST_CASE("sims_grad — apply_dWdtheta_chain: g_out[i] += Σ_c dL_dW · dWdθ[i,c]",
@@ -536,9 +547,11 @@ TEST_CASE("sims_grad — compute_observables_grad_dWchain skips failed=true "
     }
 }
 
-/* The loss kinds loss_grad_wrt_observed differentiates are the ones
- * loss_has_derivative_wrt_observed reports: the startup rule for GRAD_STRATEGY
- * ANALYTICAL (analytical_loss_term_blocker) refuses the others. */
+/* Pins: the loss kinds loss_grad_wrt_observed differentiates are the ones
+ * loss_has_derivative_wrt_observed reports, which the startup rule for
+ * GRAD_STRATEGY ANALYTICAL (analytical_loss_term_blocker) asks: every loss
+ * function, MAPE and RMSLE included.
+ * Before the fix: MAPE and RMSLE had none (false for both). */
 TEST_CASE("sims_grad — loss_has_derivative_wrt_observed agrees with "
           "loss_grad_wrt_observed",
           "[sims_grad][pc_observable][analytical_gradient]")
@@ -553,13 +566,8 @@ TEST_CASE("sims_grad — loss_has_derivative_wrt_observed agrees with "
         double g = 0.0;
         CHECK(loss_has_derivative_wrt_observed(fn) ==
               loss_grad_wrt_observed(fn, 1.0, 0.5, 1.0, g));
+        CHECK(loss_has_derivative_wrt_observed(fn));
     }
-    CHECK_FALSE(loss_has_derivative_wrt_observed(
-        LossFunction(LossFunction::Type::MAPE)));
-    CHECK_FALSE(loss_has_derivative_wrt_observed(
-        LossFunction(LossFunction::Type::RMSLE)));
-    CHECK(loss_has_derivative_wrt_observed(
-        LossFunction(LossFunction::Type::L2)));
 }
 
 /* compute_observables_grad_dWchain folds each PC_OBSERVABLE term into the
@@ -669,6 +677,43 @@ TEST_CASE("sims_grad — compute_observables_grad_dWchain: a value without "
         /* All or nothing: the converged term is not half-applied. */
         CHECK(g[0] == 1.5);
         CHECK(g[1] == -2.5);
+    }
+}
+
+/* Pins: a MAPE term is folded analytically, as an L2 term is: no theta
+ * goes to finite differences, and g = dL/dO * dO/dW . dW/dtheta with
+ * dL/dO = w sign(v - t) / |t| (2 * 1 / 0.5 = 4); RMSLE likewise, with
+ * dL/dO = 2 w (ln(v + 1e-12) - ln(t + 1e-12)) / (v + 1e-12).
+ * Before the fix: it returned false and sent every theta to finite
+ * differences (needs_fd == all_theta), g as it was. */
+TEST_CASE("sims_grad — compute_observables_grad_dWchain folds MAPE and "
+          "RMSLE terms analytically",
+          "[sims_grad][pc_observable][analytical_gradient]")
+{
+    ObsChainFixture f;
+    struct Case { LossFunction::Type type; double dL_dO; };
+    const double v = 0.6, t = 0.5, w = 2.0;
+    for (const Case& c : std::vector<Case>{
+             {LossFunction::Type::MAPE, w / t},
+             {LossFunction::Type::RMSLE,
+              2.0 * w * (std::log(v + 1e-12) - std::log(t + 1e-12)) /
+                  (v + 1e-12)}}) {
+        INFO(LossFunction::to_string(c.type));
+        ObservableGradInput in = ObsChainFixture::converged();
+        in.loss_fn = LossFunction(c.type);
+        std::vector<double> g(2, 0.0);
+        std::vector<int>    needs_fd;
+        REQUIRE(compute_observables_grad_dWchain({in}, f.dWdtheta, f.n_cols,
+                                                  f.theta_row_to_g_idx,
+                                                  f.all_theta, g, needs_fd));
+        CHECK(needs_fd.empty());
+        for (std::size_t r = 0; r < 2; ++r) {
+            double s = 0.0;
+            for (std::size_t col = 0; col < f.n_cols; ++col)
+                s += in.dO_dW(static_cast<long>(col)) *
+                     f.dWdtheta[r * f.n_cols + col];
+            CHECK(g[r] == Approx(c.dL_dO * s).epsilon(1e-12));
+        }
     }
 }
 

@@ -51,12 +51,23 @@ public:
     static std::vector<double>  resolve_params(Type t,
                                                const std::vector<double>& params);
 
+    /* Why this loss function cannot measure a value against `target`,
+     * "" when it can: MAPE divides by the target, so a target of 0 is
+     * refused; RMSLE takes ln(target + 1e-12), so a target at or below
+     * -1e-12 is refused. Every site that pairs a target with a loss
+     * function asks (a --varloss term, a PC_OBSERVABLE term, the metric
+     * lines under LOSS), and refuses the line with the reason. */
+    std::string target_refusal(double target) const;
+
     /* accessors -------------------------------------------------------- */
     Type                         type ()   const noexcept { return type_;   }
     const std::vector<double>&   params()  const noexcept { return params_; }
 
     /* ----------------------------------------------------------------- *
-     *  Evaluate     L(y, y ; w )
+     *  Evaluate     L(y, ypred; w): y the measured value and ypred the
+     *  target (HPO calls loss(measured, target, weight)). MAPE is
+     *  w |y - ypred| / |ypred|, relative to the target, which is not 0
+     *  (target_refusal).
      * ----------------------------------------------------------------- */
     double loss(double y, double ypred, double w = 1.0,
                 double eps = 1e-12) const;

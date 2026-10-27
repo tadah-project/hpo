@@ -48,16 +48,14 @@ public:
         double                     weight;
         double                     a0_min;          /* hot-var lo bound */
         double                     a0_max;          /* hot-var hi bound */
-        std::optional<double>      a0_initial;      /* hot-var seed; midpoint if absent */
+        /* The start of a chain's first relaxation, inside [a0_min,
+         * a0_max]; the midpoint if absent. */
+        std::optional<double>      a0_initial;
         tadah::LossFunction        lossfn{tadah::LossFunction::Type::L2};
+        /* lossfn is the line's --loss, not the LOSS above the line. */
+        bool                       lossfn_given = false;
 
-        /* Relaxer tuning knobs -- observable-specific overrides exposed
-         * so the parser layer can pass them through if a user needs
-         * tighter ftol etc. Defaults match LAMMPS box/relax + the
-         * Ecoh_fast.in eq_ok post-hoc check (`fmax < 0.1` on the
-         * combined atom+strain DOF). */
-        double relax_ftol  = 1.0e-3;   /* pressure-normalised, see NativeRelaxer */
-        double relax_atom_ftol = 1.0e-1;
+        /* Relaxer tuning knobs, set by the options of the line. */
         /* Energy convergence tolerance forwarded to NativeRelaxer::Options::etol.
          * Default 0 = disabled (force-only). LAMMPS Ecoh_fast.in uses 1e-15 in
          * its `minimize 1e-15 1e-15 5000 5000`. Surface via parser --etol. */
@@ -73,10 +71,12 @@ public:
          * Caps work on pathological theta where the relax never converges,
          * which would otherwise dominate HPO wall time. */
         std::size_t relax_maxeval = 5000;
-        /* eq_ok-style convergence gate (matches Ecoh_fast.in):
-         * if the relax finishes with fmax > eq_fmax_threshold, the
-         * observable returns a strategy-controlled "unconverged" value
-         * instead of the computed Ecoh. Mirrors LAMMPS's
+        /* --fmax-converged: the force tolerance of the relaxation
+         * (NativeRelaxer::Options::ftol: the largest atomic force, and
+         * the strain force, at which it stops) and its convergence test:
+         * a relaxation that ends with fmax > eq_fmax_threshold reports a
+         * strategy-controlled "unconverged" value instead of the computed
+         * Ecoh. The default 0.1 matches Ecoh_fast.in's
          *   variable eq_ok equal ternary($(fmax) < 0.1, 1, 0)
          *   variable Ecoh  equal ternary(v_eq_ok, v_Ecoh_raw, 100.0). */
         double eq_fmax_threshold      = 0.1;       /* eV/Ang */
@@ -93,7 +93,9 @@ public:
          *                hard rejection without leaking NaN through
          *                downstream best-tracking.
          * - ForceScaled: res.value = target + unconverged_value .
-         *                final_fmax_atoms. Maps "how far from
+         *                fmax, the larger of the relaxer's
+         *                final_fmax_atoms and final_strain_force_norm
+         *                (the measure its ftol bounds). Maps "how far from
          *                convergence" linearly into the value; the
          *                optimiser sees a smooth gradient toward
          *                fmax -> 0 instead of a flat FAIL_SCORE plateau,
@@ -116,30 +118,50 @@ public:
     std::string kind() const override { return "cohesive_energy"; }
     std::string column_tag() const override { return "Ecoh"; }
     std::string analytical_gradient_gap() const override;
-    /** Every evaluation starts its relaxation from a0_current_, which the
-     *  previous one overwrote with the lattice constant it relaxed to. */
+    /** Every evaluation starts its relaxation from the lattice constant the
+     *  previous evaluation of its chain relaxed to (the host's warm start,
+     *  warm_start_name()). */
     std::string carried_state() const override
     {
         return "its relaxation starts from the lattice constant the previous "
-               "evaluation relaxed to";
+               "evaluation of its chain relaxed to";
     }
+    /** The relaxed a0, handed on to the next evaluation of the chain. */
+    std::string warm_start_name() const override { return "a0"; }
+    std::vector<std::string> elements() const override { return {cfg_.species}; }
 
+    /** From the declared start, start_a0(). */
     ObservableEvalResult evaluate(
         tadah::mlip::M_Tadah_Base& model,
         tadah::mlip::DC_Base& dc,
         const tadah::core::Context& ctx) override;
 
+    /** From @p start, the a0 the chain's previous evaluation relaxed to
+     *  (inside [a0_min, a0_max]: the evaluation hands on no a0 outside),
+     *  or start_a0() when nullopt. hotvar_updated_value is the a0 this
+     *  evaluation relaxed to, or @p start when the relaxed a0 left the
+     *  window. The observable keeps no state: chains evaluated at the same
+     *  time do not share an a0. */
+    ObservableEvalResult evaluate(
+        tadah::mlip::M_Tadah_Base& model,
+        tadah::mlip::DC_Base& dc,
+        const tadah::core::Context& ctx,
+        std::optional<double> start) override;
+
     double target() const override { return cfg_.target; }
     double weight() const override { return cfg_.weight; }
     const tadah::LossFunction& lossfn() const override { return cfg_.lossfn; }
+    bool reads_default_loss() const override { return !cfg_.lossfn_given; }
 
-    /** Current hot-var value (a0). Useful for tests + WarmStart cache. */
-    double current_a0() const { return a0_current_; }
+    /** The a0 a chain's first relaxation starts from: --hotvar a0 <init>,
+     *  or the midpoint of the window. */
+    double start_a0() const
+    {
+        return cfg_.a0_initial.value_or(0.5 * (cfg_.a0_min + cfg_.a0_max));
+    }
 
 private:
     Config cfg_;
-    /** Hot-var state. Seeded from cfg_.a0_initial or midpoint of [min, max]. */
-    double a0_current_;
 };
 
 }  // namespace hpo

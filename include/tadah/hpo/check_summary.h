@@ -15,11 +15,11 @@
  *
  *   Optimiser: STRATEGY TYPE PRESTAGE
  *     EXPLORE   NLOPT:GN_CRS2_LM; stops: MAXEVAL 60
- *     STRATEGY  DLIB:BFGS; stops: MAXEVAL 30; TOPK 3
+ *     STRATEGY  NLOPT:LN_BOBYQA; stops: MAXEVAL 30; TOPK 3
  *
- *   Loss terms: LOSS L2
- *     PC_ERMSE  target 0, weight 0.0001
- *     PC_LAMMPS ../common/lammps/Ecoh.in: Ecoh  target 8.1, weight 800
+ *   Loss terms:
+ *     PC_ERMSE  target 0, weight 0.0001, loss L2
+ *     PC_LAMMPS ../common/lammps/Ecoh.in: Ecoh  target 8.1, weight 800, loss L2
  *
  *   Data: 167 training structures, 29 validation structures
  *
@@ -57,9 +57,11 @@ void write_check_notes(std::ostream& out,
  *  LIB:ALGO and stops (MAXEVAL, MAXTIME, STOPVAL, FTOL_REL, FTOL_ABS,
  *  XTOL_REL, XTOL_ABS as set, "none set" without one), N_STARTS and
  *  BUDGET_PER_START (MULTISTART), TOPK (PRESTAGE) and the RESTART block;
- *  the LOSS and every loss term with its target and weight (the validation
- *  metrics, an indexed PC_ERMSE or PC_FRMSE per dataset, each --varloss of
- *  a PC_LAMMPS line, each PC_OBSERVABLE); the numbers of training
+ *  every loss term with its target, weight and loss function (the
+ *  validation metrics, which take the last LOSS line's, an indexed
+ *  PC_ERMSE or PC_FRMSE per dataset, each --varloss of a PC_LAMMPS line,
+ *  each PC_OBSERVABLE, which take their own or the LOSS line's above
+ *  them); the numbers of training
  *  (@p n_train) and validation (@p n_val) structures loaded; and the
  *  WARNING and HINT lines a run writes to its journal at startup
  *  (@p notes: write_check_notes), which the first line counts ("passed the

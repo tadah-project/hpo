@@ -310,6 +310,9 @@ public:
      * when computing the loss + gradient.
      * Populated by PC_OBSERVABLE lines in the .hpotarget config. */
     std::vector<std::unique_ptr<Observable>> observables;
+    /* The line of each PC_OBSERVABLE line (observables[k] is on
+     * observable_lines[k]), for the refusals of the startup checks. */
+    std::vector<ArchiveLine> observable_lines;
 
     // int THREADS = -1; // number of threads for parallel evaluation, -1 means all available threads
     double FAIL_SCORE = std::numeric_limits<double>::max();
@@ -423,6 +426,10 @@ public:
     std::string failprobe_svar;          /* name of the S outvar            */
     double failprobe_gate = std::numeric_limits<double>::infinity(); /* off */
     double failprobe_s0   = 1.0;
+    /* --s0 is written on the PC_FAILPROBE line: it grades failures, which
+     * FAILSCORE_GRADING ON does; under OFF it is refused
+     * (validate_hpo_setup). */
+    bool   failprobe_s0_given = false;
 
     OptimizerSpec spec;
 

@@ -1402,6 +1402,11 @@ std::size_t HPOLog::record_line_search_not_run()
     return n_ls_not_run_.fetch_add(1, std::memory_order_relaxed) + 1;
 }
 
+std::size_t HPOLog::record_repeat_other_loss()
+{
+    return n_repeat_other_.fetch_add(1, std::memory_order_relaxed) + 1;
+}
+
 std::size_t HPOLog::record_one_sided(const std::string& label)
 {
     std::lock_guard<std::mutex> lg(mtx_);
@@ -1445,6 +1450,7 @@ void HPOLog::reset_fd_counters_locked()
     mixed_kind_.clear();
     n_repeat_reused_.store(0, std::memory_order_relaxed);
     n_repeat_again_.store(0, std::memory_order_relaxed);
+    n_repeat_other_.store(0, std::memory_order_relaxed);
     n_ls_not_run_.store(0, std::memory_order_relaxed);
     repeat_again_why_.clear();
 }
@@ -2372,6 +2378,7 @@ void HPOLog::finish(const std::string& status_str)
         const std::size_t rr = n_repeat_reused_.load(std::memory_order_relaxed);
         const std::size_t ra = n_repeat_again_.load(std::memory_order_relaxed);
         const std::size_t ls = n_ls_not_run_.load(std::memory_order_relaxed);
+        const std::size_t ro = n_repeat_other_.load(std::memory_order_relaxed);
         if (rr > 0)
             f_ << "  " << std::left << std::setw(KW) << "Repeated points reused"
                << ": " << rr << " (points the run had evaluated that a "
@@ -2383,6 +2390,12 @@ void HPOLog::finish(const std::string& status_str)
         if (ra > 0)
             f_ << "  " << std::left << std::setw(KW) << "Repeats evaluated again"
                << ": " << ra << " (" << repeat_again_why_ << ")\n";
+        if (ro > 0)
+            f_ << "  " << std::left << std::setw(KW)
+               << "Repeats with another loss" << ": " << ro
+               << " (points evaluated again whose loss differs from that of\n"
+                  "    their earlier evaluation by more than 1e-9 of it; the "
+                  "WARNING of the first\n    says why they can differ)\n";
         if (ls > 0)
             f_ << "  " << std::left << std::setw(KW) << "Line searches not run"
                << ": " << ls << " (DLIB:BFGS steps that the OPTIM box held at "

@@ -1488,6 +1488,36 @@ HPO_Host<P,R>::HPO_Host(core::Context master_ctx,
                     "tadah hpo: " + key + " on the validation set", files);
                 val_measured_energy_ =
                     mlip::measured_datasets(val_stdb_, mlip::MetricQuantity::Energy);
+                /* PC_ERSQ: the R^2 of the energies per atom of each measured
+                 * dataset has no value when they are all equal (one
+                 * structure, or identical ones): it is NaN
+                 * (mlip::Statistics::r_sq), and every evaluation would
+                 * fail. */
+                if (trg_.use_ersq)
+                    for (std::size_t d = 0; d + 1 < val_stdb_.dbidx.size(); ++d) {
+                        if (d < val_measured_energy_.size() &&
+                            !val_measured_energy_[d])
+                            continue;
+                        bool first = true, differ = false;
+                        double e0 = 0.0;
+                        for (std::size_t i = val_stdb_.dbidx[d];
+                             i < val_stdb_.dbidx[d + 1] && !differ; ++i) {
+                            const auto& st = val_stdb_(i);
+                            if (!mlip::counts_in_metric(st, mlip::MetricQuantity::Energy))
+                                continue;
+                            const double e =
+                                st.energy / static_cast<double>(st.natoms());
+                            if (first) { e0 = e; first = false; }
+                            else if (e != e0) differ = true;
+                        }
+                        if (!differ)
+                            throw std::runtime_error(
+                                "tadah hpo: PC_ERSQ on the validation set: the "
+                                "energies per atom of " + name(d) + " are all "
+                                "equal, so its R^2 has no value; PC_ERSQ needs "
+                                "two different energies per atom in every "
+                                "validation dataset it measures");
+                    }
                 if (trg_.use_ermse) {
                     refuse_indexed(trg_.ermse_targets, val_measured_energy_, "PC_ERMSE",
                                    "an energy", "energy priority 0 (eweight)");
@@ -1919,6 +1949,10 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
   /* A task that could not start (CREATE_FAIL): it does not abort the eval,
    * but the eval has a failed simulation all the same (r.sims_failed). */
   std::atomic<bool> create_failed{false};
+  /* The PC_FAILPROBE task failed (a failed run, or a variable it could not
+   * read back): its S slot holds the --failscore clamp, and the failure is
+   * journalled and the eval failed where the task's result is applied. */
+  std::atomic<bool> probe_task_failed{false};
   /* Separate run-local latch so the rate-limited "rejecting" warning fires at
    * most once per eval, decoupled from eval_aborted (a crashed script raises
    * eval_aborted without being a hot-var rejection). Replaces the global
@@ -2005,6 +2039,8 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
        * could not be rendered) is journalled as for the other failures. */
       journal_task_failure(tres.error_msg);
       create_failed.store(true, std::memory_order_relaxed);
+      if (lsim.is_failprobe)
+        probe_task_failed.store(true, std::memory_order_relaxed);
       if (fg_on) fail_state.record_infra();
       for (const auto& n : lsim.n_outvar) {
         (void)n;
@@ -2210,20 +2246,35 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
       }
     }
 
-    /* Graded-FAILSCORE Tier 2: a declared failvar > 0 means the sim
-     * completed but vouches AGAINST itself -- classify band B, grade by
-     * scale*value, and treat the sim as failed (outvars excluded from the
-     * fit via the failscore fill below; a failed HOT sim also skips the
-     * warmstart caching and aborts the cold phase, same as a rejection).
-     * Each value is a finite number here (a task with one that is not has
-     * failed above). LAMMPS' compute_equal flushes |v| < DBL_MIN to 0, so
-     * no subnormal reaches the parse today; the parse is not where one
-     * would be lost. */
-    if (fg_on && !fail && !lsim.failvars.empty()) {
+    /* A declared failvar > 0 means the sim completed but vouches AGAINST
+     * itself: the sim fails, whatever FAILSCORE_GRADING (its outvars are
+     * excluded from the loss via the failscore fill below, the evaluation
+     * scores FAILSCORE; a failed HOT sim also skips the warmstart caching
+     * and aborts the cold phase, same as a rejection), and under ON the
+     * failure is band B, graded by scale*value. Under OFF the value was
+     * not read, and the evaluation kept the loss of the failed sim's
+     * variables. Journalled as a failed task is, rate-limited on powers of
+     * two per run. Each value is a finite number here (a task with one
+     * that is not has failed above). LAMMPS' compute_equal flushes |v| <
+     * DBL_MIN to 0, so no subnormal reaches the parse today; the parse is
+     * not where one would be lost. */
+    if (!fail && !lsim.failvars.empty()) {
       for (std::size_t j = 0; j < lsim.failvars.size(); ++j) {
         const double v = fail_value[j];
         if (v > 0.0) {
-          fail_state.record(FailBand::B, lsim.failvars[j].scale * v);
+          if (fg_on) fail_state.record(FailBand::B, lsim.failvars[j].scale * v);
+          if (!fail) {
+            const std::size_t n =
+                HPOLog::instance().count_in_run("PC_LAMMPS --failvar above 0");
+            if ((n & (n - 1)) == 0)
+              HPOLog::instance().warning(
+                  "PC_LAMMPS --failvar above 0 (" + lsim.script +
+                  ", occurrence " + std::to_string(n) + "): " +
+                  lsim.failvars[j].name + " = " +
+                  tadah::core::format_roundtrip(v) +
+                  ": the simulation reports a failure, and its evaluation "
+                  "fails");
+          }
           fail = true;
         }
       }
@@ -2275,6 +2326,8 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
 
     if (fail) {
       eval_aborted.store(true, std::memory_order_relaxed);
+      if (lsim.is_failprobe)
+        probe_task_failed.store(true, std::memory_order_relaxed);
     }
 
     /* Hot-var validation + cache update. Only meaningful for hot
@@ -2447,13 +2500,11 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
         if (std::find(hot_names.begin(), hot_names.end(), hv.name) ==
             hot_names.end())
           hot_names.push_back(hv.name);
+    /* The test HPOTargets makes when it refuses a variable a line defines
+     * that is a hot one its script reads (script_reads_variable: a whole
+     * name, v_a0 is not read by v_a0b), so the two cannot disagree. */
     auto references = [&](std::size_t i, const std::string& name) -> bool {
-      const std::string brace = "${" + name + "}", v = "v_" + name;
-      for (const auto& line : LS[i].script_lines)
-        if (line.find(brace) != std::string::npos ||
-            line.find(v)     != std::string::npos)
-          return true;
-      return false;
+      return script_reads_variable(LS[i].script_lines, name);
     };
     for (auto i : cold_idx) {
       for (const auto& name : hot_names)
@@ -2505,21 +2556,24 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
       if (!r.v_outvar[i].empty()) {
         try { S = tadah::core::to_double(r.v_outvar[i].front()); } catch (...) {}
       }
-      /* S >= failscore means the probe task itself failed (its outvars
-       * were clamped to failscore strings) -- that is "probe garbage",
-       * not a huge-but-real S: fall through to the band-D branch below
-       * so a broken probe consistently reads as "potential sick". */
+      /* S >= failscore: the probe task itself failed (its outvars were
+       * clamped to failscore strings), or its script gave such a value --
+       * "probe garbage", not a huge-but-real S, as are a negative and a
+       * non-finite S: the branch below makes a broken probe consistently
+       * read as "potential sick". */
       if (failprobe_value_is_real(S, LS[i].failscore)) {
         fail_state.set_S(S);
-        if (fg_on && S > trg_.failprobe_gate) {
-          /* GATE: potential too sick to be worth the fan-out. Classify the
-           * WHOLE eval band D (graded by S), cancel everything still queued
-           * (the eval_aborted check below), and -- PROCESS mode -- SIGKILL
-           * this eval's in-flight sims (slot-targeted; other replicas'
-           * tasks on the shared pool are untouched). Results of tasks that
-           * already completed are clamped at assembly regardless, so the
-           * outcome does not depend on the probe-vs-sims race. */
-          fail_state.set_gated();
+        if (S > trg_.failprobe_gate) {
+          /* GATE: potential too sick to be worth the fan-out, whatever
+           * FAILSCORE_GRADING (under OFF the gate did nothing): the eval
+           * fails -- under ON the WHOLE eval is band D (graded by S) --,
+           * everything still queued is cancelled (the eval_aborted check
+           * below), and -- PROCESS mode -- this eval's in-flight sims are
+           * SIGKILLed (slot-targeted; other replicas' tasks on the shared
+           * pool are untouched). Results of tasks that already completed
+           * are clamped at assembly regardless, so the outcome does not
+           * depend on the probe-vs-sims race. */
+          if (fg_on) fail_state.set_gated();
           eval_aborted.store(true, std::memory_order_relaxed);
           if (pc_process_mode) pc_worker_pool().kill_matching(r.iter);
           /* counted per run (HPOLog::count_in_run) */
@@ -2533,10 +2587,38 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
                 + ")");
           }
         }
-      } else if (fg_on) {
-        /* The probe itself failed or produced garbage -- by design it cannot,
-         * so treat the potential as sick (band D, S unavailable = band top). */
-        fail_state.record(FailBand::D);
+      } else {
+        /* No probe value: the probe task failed (its S slot holds the
+         * --failscore clamp), or its script gave an S that is negative,
+         * not finite, or at or above --failscore. By design a probe cannot
+         * fail, so the potential is treated as sick: under ON band D, S
+         * unavailable = band top. Such an S is a failed probe, as a failed
+         * probe task is, and fails the eval in both modes as the gate
+         * does: everything still queued is cancelled, this eval's
+         * in-flight sims are SIGKILLed (PROCESS mode), and the journal
+         * says why. Under OFF this S was ignored (a value at or above
+         * --failscore, or inf, passed with the usable loss of the other
+         * scripts); under ON it graded the eval without a word, and the
+         * other scripts ran on. A failed probe task has been journalled
+         * and has failed the eval where its result was applied. */
+        if (fg_on) fail_state.record(FailBand::D);
+        if (!probe_task_failed.load(std::memory_order_relaxed)) {
+          eval_aborted.store(true, std::memory_order_relaxed);
+          if (pc_process_mode) pc_worker_pool().kill_matching(r.iter);
+          /* counted per run (HPOLog::count_in_run) */
+          const std::size_t n =
+              HPOLog::instance().count_in_run("FAILPROBE no probe value");
+          if (n <= 5 || (n & (n - 1)) == 0) {
+            HPOLog::instance().warning(
+                "eval " + std::to_string(r.iter) + " FAILPROBE: S="
+                + tadah::core::format_roundtrip(S)
+                + " is not a probe value (one is at least 0 and below the "
+                  "line's --failscore, "
+                + tadah::core::format_roundtrip(LS[i].failscore)
+                + ") -- the evaluation fails (total="
+                + std::to_string(n) + ")");
+          }
+        }
       }
       return;
     }
@@ -2881,10 +2963,25 @@ void HPO_Host<P,R>::obs_loss(Result& r) const
     if (have_trainer && trg_.observables[k]) {
       auto& obs = *trg_.observables[k];
       try {
+        /* The warm start of the term is this chain's (the evaluation's
+         * chain_id, keyed in the warm-start cache as a PC_LAMMPS --hotvar
+         * is): each chain of a parallel annealer starts its relaxation
+         * where its own previous evaluation ended, whatever another chain
+         * did. It was one value of the observable, shared by every chain
+         * and written by concurrent evaluations without a lock. */
+        const std::string ws_name = obs.warm_start_name();
+        const std::string ws_key = observable_journal_label(obs, k + 1);
+        std::optional<double> start;
+        if (!ws_name.empty())
+          start = warmstart::get(r.chain_id, ws_key, ws_name);
         ObservableEvalResult res = obs.evaluate(
             *cache.trainer->model,
             cache.trainer->dc,
-            cache.trainer->context);
+            cache.trainer->context,
+            start);
+        if (!ws_name.empty() && res.hotvar_updated_value)
+          warmstart::set(r.chain_id, ws_key, ws_name,
+                         *res.hotvar_updated_value);
         v = res.value;
         if (std::isfinite(v)) {
           l = obs.lossfn().loss(v, obs.target(), obs.weight());
@@ -3759,8 +3856,34 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
     /* The run's record of its usable evaluations (recorded(),
      * repeat_points.h), by the point evaluated, before the stagnation check
      * below can end this evaluation's search: the evaluation is complete. */
-    if (loss_kind(r) == EvalLoss::Usable)
-      run_record_.record(r.params, r.loss, r.iter);
+    if (loss_kind(r) == EvalLoss::Usable) {
+      /* A point evaluated again whose loss differs from its earlier
+       * evaluation's: the two evaluations of one point disagree (a
+       * PC_LAMMPS instance that keeps a script's state, a relaxation that
+       * starts elsewhere, a --skip-rel filter), which the run says, with
+       * the reason the target file gives (repeat_reuse_blocker), and
+       * DIAGNOSTICS counts. The record keeps the later loss, as before. */
+      const auto earlier = run_record_.record(r.params, r.loss, r.iter);
+      if (earlier && repeat_losses_differ(earlier->loss, r.loss)) {
+        const std::size_t n = HPOLog::instance().record_repeat_other_loss();
+        if ((n & (n - 1)) == 0) {
+          const std::string why = trg_.repeat_reuse_blocker();
+          HPOLog::instance().warning(
+              "eval " + std::to_string(r.iter) + " evaluated the point of " +
+              (earlier->eval ? "eval " + std::to_string(*earlier->eval)
+                             : std::string("an earlier evaluation")) +
+              " again and its loss differs: " +
+              core::format_roundtrip(earlier->loss) + " then " +
+              core::format_roundtrip(r.loss) +
+              (why.empty() ? std::string(", although nothing in the target "
+                                         "file makes two evaluations of a "
+                                         "point differ")
+                           : ", because " + why) +
+              "; the run's record of the point keeps the later loss "
+              "(occurrence " + std::to_string(n) + ")");
+        }
+      }
+    }
 
     /* Top-K tracking -- cheap fast-path when disabled (capacity == 0).
      * Near-clone dedup (loss + normalised parameter distance) lives in topk.h.
@@ -4593,10 +4716,10 @@ bool HPO_Host<P,R>::analytical_gradient(const P& x, P& g,
      * cohesive_energy). Captures the thread-local trainer slot to
      * route model + dc + context references through.
      *
-     * Hot-var warmstart: lives inside Observable state (a0_current_
-     * for cohesive_energy), updated in-place on every evaluate call.
-     * No external WarmStart cache plumbing needed -- the Observable
-     * owns its hot vars. */
+     * Hot-var warmstart: the chain's, in the warm-start cache, as
+     * obs_loss() reads and writes it (the gradient follows an evaluation
+     * of its point on this thread: its relaxation starts where that one
+     * ended). */
     ObservableGradProvider obs_grad_provider = nullptr;
     if (!trg_.observables.empty()) {
         obs_grad_provider =
@@ -4619,10 +4742,21 @@ bool HPO_Host<P,R>::analytical_gradient(const P& x, P& g,
                     }
                     ObservableEvalResult res;
                     try {
+                        const std::string ws_name = obs_ptr->warm_start_name();
+                        const std::string ws_key =
+                            observable_journal_label(*obs_ptr, k + 1);
+                        const std::size_t chain = warmstart::current_chain();
+                        std::optional<double> start;
+                        if (!ws_name.empty())
+                            start = warmstart::get(chain, ws_key, ws_name);
                         res = obs_ptr->evaluate(
                             *cache.trainer->model,
                             cache.trainer->dc,
-                            cache.trainer->context);
+                            cache.trainer->context,
+                            start);
+                        if (!ws_name.empty() && res.hotvar_updated_value)
+                            warmstart::set(chain, ws_key, ws_name,
+                                           *res.hotvar_updated_value);
                     } catch (const std::exception&) {
                         /* Phase A masking: relaxer divergence, NaN
                          * energy, model mismatch. Mark this observable

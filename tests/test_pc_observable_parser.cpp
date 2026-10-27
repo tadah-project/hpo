@@ -101,7 +101,7 @@ TEST_CASE("parse_pc_observable_line: cohesive_energy with all required flags",
 
     auto* cohs = dynamic_cast<tadah::hpo::CohesiveEnergyObservable*>(obs.get());
     REQUIRE(cohs != nullptr);
-    CHECK(std::abs(cohs->current_a0() - 3.3036) < 1e-12);
+    CHECK(std::abs(cohs->start_a0() - 3.3036) < 1e-12);
 }
 
 TEST_CASE("parse_pc_observable_line: cohesive_energy hotvar without init seeds midpoint",
@@ -115,7 +115,7 @@ TEST_CASE("parse_pc_observable_line: cohesive_energy hotvar without init seeds m
 
     auto* cohs = dynamic_cast<tadah::hpo::CohesiveEnergyObservable*>(obs.get());
     REQUIRE(cohs != nullptr);
-    CHECK(std::abs(cohs->current_a0() - 0.5 * (2.7 + 3.9)) < 1e-12);
+    CHECK(std::abs(cohs->start_a0() - 0.5 * (2.7 + 3.9)) < 1e-12);
 }
 
 TEST_CASE("parse_pc_observable_line: --supercell sets nx/ny/nz",
@@ -360,8 +360,9 @@ PC_OBSERVABLE cohesive_energy --species Ta --target 8.100 --weight 1000 --hotvar
 
 /* Pins (among the refusals of this case): GRAD_STRATEGY NUMERICAL, HYBRID
  * or ANALYTICAL beside PC_LAMMPS is refused with a message that names
- * PC_LAMMPS and GRAD_STRATEGY and says "PC_LAMMPS does not support
- * analytical/numerical/hybrid gradients. Drop the GRAD_STRATEGY line.",
+ * PC_LAMMPS and GRAD_STRATEGY and says "A PC_LAMMPS or PC_FAILPROBE line
+ * does not support analytical/numerical/hybrid gradients. Drop the
+ * GRAD_STRATEGY line.",
  * with no date ("2026") in it: no release supported these gradients with
  * PC_LAMMPS (v1.3.0-beta.1 and 1.5.0 refused them as now).
  * Before the fix: the message said "PC_LAMMPS no longer supports
@@ -398,9 +399,9 @@ TEST_CASE("HPOTargets rejects PC_LAMMPS with gradient-based optimisers",
         CHECK_THROWS_WITH(
             tadah::hpo::HPOTargets(ctx, cfg.string()),
             Catch::Matchers::Contains(
-                "GRAD_STRATEGY is set. PC_LAMMPS does not support "
-                "analytical/numerical/hybrid gradients. Drop the "
-                "GRAD_STRATEGY line.")
+                "GRAD_STRATEGY is set. A PC_LAMMPS or PC_FAILPROBE line "
+                "does not support analytical/numerical/hybrid gradients. "
+                "Drop the GRAD_STRATEGY line.")
             && !Catch::Matchers::Contains("2026"));
         std::filesystem::remove(cfg);
     }
@@ -431,13 +432,19 @@ TEST_CASE("HPOTargets rejects PC_LAMMPS with gradient-based optimisers",
         std::filesystem::remove(cfg);
     }
 
-    /* DLIB:BFGS ACCEPTED — the explicit exception (per-θ-per-iter
-     * dtheta, not a full-vector gradient). */
+    /* DLIB:BFGS rejected like every gradient-based optimiser: it takes
+     * the central-difference gradient of the loss, as an NLopt LD_*
+     * algorithm would, and the message names no exception. (It was
+     * accepted, the one gradient-based optimiser PC_LAMMPS took.) */
     {
         auto cfg = write_temp_config(
             std::string("OPTIMIZER\nLIB DLIB\nALGO BFGS\nMAXEVAL 1\nENDOPTIMIZER\nLOSS L2\n")
             + pc_lammps_line);
-        REQUIRE_NOTHROW(tadah::hpo::HPOTargets(ctx, cfg.string()));
+        CHECK_THROWS_WITH(
+            tadah::hpo::HPOTargets(ctx, cfg.string()),
+            Catch::Matchers::Contains("optimiser DLIB:BFGS is gradient-based")
+            && Catch::Matchers::Contains("gradient-free")
+            && !Catch::Matchers::Contains("the one gradient-based"));
         std::filesystem::remove(cfg);
     }
 
@@ -528,8 +535,8 @@ TEST_CASE("HPOTargets rejects PC_OBSERVABLE and PC_LAMMPS side by side",
  *     OPTIMIZER's optimiser NLOPT:GD_MLSL takes a gradient: NLopt's MLSL
  *     and AUGLAG take one for their local search, and NLopt's default
  *     local optimiser, NLOPT:LD_MMA, is gradient-based; an INNER block with
- *     a derivative-free one takes none. PC_LAMMPS requires a gradient-free
- *     optimiser ...");
+ *     a derivative-free one takes none. A PC_LAMMPS or PC_FAILPROBE line
+ *     requires a gradient-free optimiser ...");
  *   - refused as before: GN_MLSL_LDS with an INNER LD_LBFGS, at the INNER
  *     block ("... INNER's optimiser NLOPT:LD_LBFGS is gradient-based.").
  * Each refusal names the line that closes the block it refuses
@@ -599,8 +606,9 @@ TEST_CASE("HPOTargets judges an MLSL or AUGLAG under PC_LAMMPS by its local "
                        "NLopt's MLSL and AUGLAG take one for their local "
                        "search, and NLopt's default local optimiser, "
                        "NLOPT:LD_MMA, is gradient-based; an INNER block "
-                       "with a derivative-free one takes none. PC_LAMMPS "
-                       "requires a gradient-free optimiser"));
+                       "with a derivative-free one takes none. A PC_LAMMPS "
+                       "or PC_FAILPROBE line requires a gradient-free "
+                       "optimiser"));
     }
     {
         INFO("GN_MLSL_LDS with an INNER LD_LBFGS");
@@ -609,8 +617,9 @@ TEST_CASE("HPOTargets judges an MLSL or AUGLAG under PC_LAMMPS by its local "
                        error_at_block_end(plain("GN_MLSL_LDS", "LD_LBFGS"),
                                           "ENDINNER") +
                        "--hpotarget defines PC_LAMMPS but INNER's optimiser "
-                       "NLOPT:LD_LBFGS is gradient-based. PC_LAMMPS requires "
-                       "a gradient-free optimiser") &&
+                       "NLOPT:LD_LBFGS is gradient-based. A PC_LAMMPS or "
+                       "PC_FAILPROBE line requires a gradient-free "
+                       "optimiser") &&
                    Catch::EndsWith("\nLine:     ENDINNER"));
     }
     std::filesystem::remove(script_path);
@@ -622,9 +631,9 @@ TEST_CASE("HPOTargets judges an MLSL or AUGLAG under PC_LAMMPS by its local "
  * advice of the other blocks only the derivative-free local NLopt
  * algorithms remain, every one, from the registry:
  *   "--hpotarget defines PC_LAMMPS but INNER's optimiser NLOPT:LD_MMA is
- *   gradient-based. PC_LAMMPS requires a gradient-free optimiser, and an
- *   INNER search is a local NLopt algorithm: name a derivative-free one in
- *   the INNER block (NLOPT:LN_AUGLAG, NLOPT:LN_AUGLAG_EQ, NLOPT:LN_BOBYQA,
+ *   gradient-based. A PC_LAMMPS or PC_FAILPROBE line requires a
+ *   gradient-free optimiser, and an INNER search is a local NLopt
+ *   algorithm: name a derivative-free one in the INNER block (NLOPT:LN_AUGLAG, NLOPT:LN_AUGLAG_EQ, NLOPT:LN_BOBYQA,
  *   NLOPT:LN_COBYLA, NLOPT:LN_NELDERMEAD, NLOPT:LN_PRAXIS,
  *   NLOPT:LN_SBPLX)."
  * at the INNER block's ENDINNER line -- for the G_MLSL_LDS search of
@@ -639,8 +648,9 @@ TEST_CASE("HPOTargets judges an MLSL or AUGLAG under PC_LAMMPS by its local "
  * rules). The STRATEGY-level and EXPLORE blocks name every optimiser that
  * takes no gradient, from the registry (ASA:ASA, DLIB:GFS, the NLopt
  * derivative-free algorithms, TADAH:ANNEAL, ANNEAL_PA, ANNEAL_PT, GRID and
- * RANDOM), "or DLIB:BFGS, the one gradient-based optimiser it accepts";
- * they named "NLOPT GN_*\/LN_*, TADAH RANDOM/GRID/ANNEAL" (no DLIB:GFS,
+ * RANDOM), and no other: DLIB:BFGS is refused with them (they added "or
+ * DLIB:BFGS, the one gradient-based optimiser it accepts" while it was
+ * accepted); they named "NLOPT GN_*\/LN_*, TADAH RANDOM/GRID/ANNEAL" (no DLIB:GFS,
  * ASA, ANNEAL_PT or ANNEAL_PA) and said that DLIB:BFGS "uses
  * per-theta-per-iter dtheta, not a full gradient", while it takes the
  * central-difference gradient of the loss, as an NLopt LD_* algorithm
@@ -694,9 +704,9 @@ TEST_CASE("HPOTargets names, for an INNER block under PC_LAMMPS, the "
                pc_lammps;
     };
     const std::string inner_advice =
-        " PC_LAMMPS requires a gradient-free optimiser, and an INNER search "
-        "is a local NLopt algorithm: name a derivative-free one in the INNER "
-        "block (NLOPT:LN_AUGLAG, NLOPT:LN_AUGLAG_EQ, NLOPT:LN_BOBYQA, "
+        " A PC_LAMMPS or PC_FAILPROBE line requires a gradient-free "
+        "optimiser, and an INNER search is a local NLopt algorithm: name a "
+        "derivative-free one in the INNER block (NLOPT:LN_AUGLAG, NLOPT:LN_AUGLAG_EQ, NLOPT:LN_BOBYQA, "
         "NLOPT:LN_COBYLA, NLOPT:LN_NELDERMEAD, NLOPT:LN_PRAXIS, "
         "NLOPT:LN_SBPLX).";
 
@@ -767,24 +777,26 @@ TEST_CASE("HPOTargets names, for an INNER block under PC_LAMMPS, the "
     }
 
     /* The STRATEGY-level and EXPLORE blocks name every optimiser that takes
-     * no gradient, and DLIB:BFGS. */
+     * no gradient, and no other. */
     const auto check_other = [](const std::string& got) {
         INFO(got);
         CHECK_THAT(got, Catch::Contains(
-                            " PC_LAMMPS requires a gradient-free optimiser "
-                            "(ASA:ASA, DLIB:GFS, NLOPT:"));
+                            " A PC_LAMMPS or PC_FAILPROBE line requires a "
+                            "gradient-free optimiser (ASA:ASA, DLIB:GFS, "
+                            "NLOPT:"));
         for (const char* name :
              {"NLOPT:GN_CRS2_LM", "NLOPT:GN_DIRECT_L", "NLOPT:LN_BOBYQA",
               "NLOPT:LN_SBPLX", "TADAH:ANNEAL", "TADAH:ANNEAL_PA",
               "TADAH:ANNEAL_PT", "TADAH:GRID", "TADAH:RANDOM"})
             CHECK_THAT(got, Catch::Contains(name));
+        /* No exception follows the list (it said "or DLIB:BFGS, the one
+         * gradient-based optimiser it accepts" before the list's end). */
         CHECK_THAT(got, Catch::Contains(
-                            "TADAH:RANDOM) or DLIB:BFGS, the one "
-                            "gradient-based optimiser it accepts; an NLopt "
-                            "MLSL or AUGLAG algorithm is accepted with a "
-                            "derivative-free INNER block."));
+                            "TADAH:RANDOM); an NLopt MLSL or AUGLAG "
+                            "algorithm is accepted with a derivative-free "
+                            "INNER block."));
         /* The advice, after the refused optimiser's name. */
-        const auto at = got.find("PC_LAMMPS requires");
+        const auto at = got.find("line requires a gradient-free");
         REQUIRE(at != std::string::npos);
         const std::string advice = got.substr(at);
         CHECK_THAT(advice, !(Catch::Contains("per-theta") ||
@@ -801,7 +813,7 @@ TEST_CASE("HPOTargets names, for an INNER block under PC_LAMMPS, the "
                             error_at_block_end(body, "ENDOPTIMIZER") +
                             "--hpotarget defines PC_LAMMPS but OPTIMIZER's "
                             "optimiser NLOPT:LD_LBFGS is gradient-based. "
-                            "PC_LAMMPS requires"));
+                            "A PC_LAMMPS or PC_FAILPROBE line requires"));
         CHECK_THAT(got, Catch::EndsWith("\nLine: ENDOPTIMIZER"));
         check_other(got);
     }
@@ -816,7 +828,7 @@ TEST_CASE("HPOTargets names, for an INNER block under PC_LAMMPS, the "
                             error_at_block_end(body, "ENDEXPLORE") +
                             "--hpotarget defines PC_LAMMPS but EXPLORE's "
                             "optimiser NLOPT:LD_MMA is gradient-based. "
-                            "PC_LAMMPS requires"));
+                            "A PC_LAMMPS or PC_FAILPROBE line requires"));
         CHECK_THAT(got, Catch::EndsWith("\nLine:     ENDEXPLORE"));
         check_other(got);
     }
@@ -834,7 +846,7 @@ TEST_CASE("HPOTargets names, for an INNER block under PC_LAMMPS, the "
             false);
         const std::string open = "gradient-free optimiser (";
         const auto from = got.find(open);
-        const auto to = got.find(") or DLIB:BFGS");
+        const auto to = got.find("); an NLopt MLSL");
         REQUIRE(from != std::string::npos);
         REQUIRE(to != std::string::npos);
         std::istringstream names(got.substr(from + open.size(),
@@ -854,18 +866,18 @@ TEST_CASE("HPOTargets names, for an INNER block under PC_LAMMPS, the "
         }
         CHECK(n > 10);
     }
-    /* What the advice names is accepted with PC_LAMMPS (pins). */
+    /* What the advice names is accepted with PC_LAMMPS (pins; DLIB:BFGS,
+     * which the advice named as an exception, is refused). */
     for (const std::string& lib_algo :
          {std::string("DLIB\n    ALGO GFS"), std::string("ASA\n    ALGO ASA"),
-          std::string("TADAH\n    ALGO ANNEAL_PT"),
-          std::string("DLIB\n    ALGO BFGS")}) {
+          std::string("TADAH\n    ALGO ANNEAL_PT")}) {
         INFO(lib_algo);
         const std::string body =
             "OPTIMIZER\n  STRATEGY\n    LIB " + lib_algo +
             "\n    MAXEVAL 4\n  ENDSTRATEGY\nENDOPTIMIZER\nLOSS L2\n" +
             pc_lammps;
         CHECK_THAT(error(body, false),
-                   !Catch::Contains("PC_LAMMPS requires"));
+                   !Catch::Contains("requires a gradient-free optimiser"));
     }
     std::filesystem::remove(script_path);
 }
@@ -926,13 +938,21 @@ TEST_CASE("HPOTargets applies the PC_LAMMPS and PC_OBSERVABLE gradient rules "
              {"      LIB NLOPT\n      ALGO LD_LBFGS\n      MAXEVAL 1\n",
               pc_lammps,
               "--hpotarget defines PC_LAMMPS but EXPLORE's optimiser "
-              "NLOPT:LD_LBFGS is gradient-based. PC_LAMMPS requires a "
-              "gradient-free optimiser", "ENDEXPLORE"},
+              "NLOPT:LD_LBFGS is gradient-based. A PC_LAMMPS or "
+              "PC_FAILPROBE line requires a gradient-free optimiser",
+              "ENDEXPLORE"},
              {mlsl_inner + "        ALGO LD_LBFGS\n      ENDINNER\n",
               pc_lammps,
               "--hpotarget defines PC_LAMMPS but EXPLORE INNER's optimiser "
-              "NLOPT:LD_LBFGS is gradient-based. PC_LAMMPS requires a "
-              "gradient-free optimiser", "ENDINNER"},
+              "NLOPT:LD_LBFGS is gradient-based. A PC_LAMMPS or "
+              "PC_FAILPROBE line requires a gradient-free optimiser",
+              "ENDINNER"},
+             /* DLIB:BFGS among them (it was accepted). */
+             {"      LIB DLIB\n      ALGO BFGS\n      MAXEVAL 1\n",
+              pc_lammps,
+              "--hpotarget defines PC_LAMMPS but EXPLORE's optimiser "
+              "DLIB:BFGS is gradient-based. A PC_LAMMPS or PC_FAILPROBE "
+              "line requires a gradient-free optimiser", "ENDEXPLORE"},
              /* ... and any GRAD_STRATEGY. */
              {"      LIB DLIB\n      ALGO BFGS\n      MAXEVAL 1\n"
               "      GRAD_STRATEGY ANALYTICAL\n",
@@ -973,12 +993,12 @@ TEST_CASE("HPOTargets applies the PC_LAMMPS and PC_OBSERVABLE gradient rules "
     }
 
     /* What the rules allow in the EXPLORE block is still accepted: with
-     * PC_LAMMPS a gradient-free optimiser and DLIB:BFGS (its own
-     * per-theta differences), with PC_OBSERVABLE the analytical modes. */
+     * PC_LAMMPS a gradient-free optimiser, with PC_OBSERVABLE the
+     * analytical modes. (DLIB:BFGS was accepted with PC_LAMMPS; it is
+     * refused as gradient-based, above.) */
     for (const std::string& explore :
          {std::string("      LIB NLOPT\n      ALGO GN_CRS2_LM\n"
                       "      MAXEVAL 1\n"),
-          std::string("      LIB DLIB\n      ALGO BFGS\n      MAXEVAL 1\n"),
           mlsl_inner + "        ALGO LN_SBPLX\n      ENDINNER\n"}) {
         const std::string body = prestage(bobyqa, explore) + pc_lammps;
         INFO(body);

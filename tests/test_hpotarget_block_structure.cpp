@@ -843,15 +843,17 @@ TEST_CASE("hpotarget block structure: a top-level key that takes one value "
 }
 
 /* Fixes: FAILSCORE, LOSS and PC_SCRIPT_TIMEOUT (its alias MAXTIME) are set
- * once for each PC_LAMMPS or PC_FAILPROBE line that takes them: a second
- * line is read only after such a line has taken the first, and is refused
- * otherwise, naming the first ("LOSS is set twice (first on line 3) and no
- * PC_LAMMPS or PC_FAILPROBE line between takes the first; each key is
- * given once"). The run-wide uses (the validation metrics' loss, the
- * ceiling of every loss) take the last line.
+ * once for each line that reads them: a second line is read only after
+ * such a line has read the first, and is refused otherwise, naming the
+ * first and the lines that read the key ("LOSS is set twice (first on
+ * line 3) and no line between reads the first (a --varloss or
+ * PC_OBSERVABLE term that names no loss function); each key is given
+ * once"). The run-wide uses (the validation metrics' loss, the ceiling of
+ * every loss) take the last line.
  * Before the fix: a second line with no PC_LAMMPS line between replaced
  * the first without a word, for the validation metrics and the run's
- * ceiling too. */
+ * ceiling too; then the message said "and no PC_LAMMPS or PC_OBSERVABLE
+ * (PC_FAILPROBE) line between takes the first". */
 TEST_CASE("hpotarget block structure: FAILSCORE, LOSS or PC_SCRIPT_TIMEOUT "
           "set again before a PC_LAMMPS line takes it is refused",
           "[hpotarget][block_structure]")
@@ -875,11 +877,21 @@ TEST_CASE("hpotarget block structure: FAILSCORE, LOSS or PC_SCRIPT_TIMEOUT "
               "MAXTIME is set twice (first on line 3, as "
               "PC_SCRIPT_TIMEOUT)"}}) {
         INFO(c.second);
+        /* LOSS is read by a term that names no loss function, FAILSCORE
+         * and PC_SCRIPT_TIMEOUT by a PC_LAMMPS or PC_FAILPROBE line without
+         * its own --failscore or --maxtime. */
+        const std::string readers =
+            c.first.rfind("LOSS", 0) == 0
+                ? "a --varloss or PC_OBSERVABLE term that names no loss "
+                  "function"
+                : c.first.rfind("FAILSCORE", 0) == 0
+                      ? "a PC_LAMMPS or PC_FAILPROBE line without --failscore"
+                      : "a PC_LAMMPS or PC_FAILPROBE line without --maxtime";
         CHECK(parse_error(kRoot + Lines{c.first, c.second} + block) ==
-              at_line(4, c.message + " and no PC_LAMMPS or PC_FAILPROBE "
-                                     "line between takes the first; each "
-                                     "key is given once", c.second));
-        /* a PC_LAMMPS line between takes the first */
+              at_line(4, c.message + " and no line between reads the first (" +
+                             readers + "); each key is given once",
+                      c.second));
+        /* a PC_LAMMPS line between reads the first */
         CHECK(parse_error(kRoot + Lines{c.first, pc_lammps, c.second,
                                         pc_lammps} + block) == "");
     }
