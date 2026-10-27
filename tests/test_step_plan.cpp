@@ -599,3 +599,32 @@ TEST_CASE("GN_MLSL_LDS with an INNER LN_COBYLA: every local search keeps the "
     CHECK(journal.find("(the step of the local search, which GN_MLSL_LDS "
                        "hands it)") != std::string::npos);
 }
+
+/* Pins: LN_BOBYQA from AMPGRIDMB[6] = 0.008, on its upper bound, a CONFIG
+ * start, with STEP 0.25 and with STEP unset: BOBYQA keeps a start on a
+ * bound and its full step -- the first point is (1, 0.008), and a point of
+ * its first model has AMPGRIDMB[6] = 0.006, one step inside -- so nothing
+ * about the start changes: the journal's step table notes "start on a
+ * bound (kept)" (INFO), and no WARNING names it; no line of a moved start.
+ * Before the fix: the note was a WARNING in both runs ("WARNING
+ * LN_BOBYQA: AMPGRIDMB[6]: start on a bound (kept)"), with STEP unset since
+ * BOBYQA is given its step (Tadah! 1.5.0 gave it with STEP set only). */
+TEST_CASE("LN_BOBYQA: a start on a bound is kept without a warning",
+          "[HPO][step_plan][nlopt]")
+{
+    for (const std::optional<double> step :
+         {std::optional<double>(0.25), std::optional<double>()}) {
+        DYNAMIC_SECTION((step ? "STEP 0.25" : "STEP unset")) {
+            const auto [asked, journal] =
+                bobyqa_from(0.008, step, InitOrigin::Kind::Config);
+            REQUIRE(asked.size() == 9u);
+            CHECK(asked.front()(0) == 1.0);
+            CHECK(asked.front()(1) == 0.008);
+            CHECK(asks_b(asked, 0.006));
+            CHECK(journal.find("start on a bound (kept)") != std::string::npos);
+            CHECK(journal.find("WARNING   LN_BOBYQA: AMPGRIDMB[6]: start on a "
+                               "bound") == std::string::npos);
+            CHECK(journal.find("starts at") == std::string::npos);
+        }
+    }
+}
