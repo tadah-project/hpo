@@ -1976,7 +1976,7 @@ repeat = "error"
 repeat_msg = "N_STARTS is set twice in the STRATEGY block (first on line {first_line}); each key is given once"
 checks = [
   { msg = "N_STARTS must be an integer >= 2, got '{tok}'", doc = "When the file is read: a token that is no whole number, such as a word, a sign, a fraction or a number past the largest; the note about one start follows 0 and 1 only." },
-  { msg = "N_STARTS {value} needs {value} starting points, and the INIT chain gives {count} ({list}); {hint}", doc = "When the file is read, at the N_STARTS line: the INIT blocks inside OPTIMIZER and STRATEGY give fewer starting points than N_STARTS, counting the K of each RANDOM, LHS and SOBOL line and one point of each CONFIG and WARM line, at most K_TOTAL; {list} names the METHOD lines and K_TOTAL, and {hint} what gives N_STARTS starts." },
+  { msg = "N_STARTS {value} needs {value} starting points, and the INIT chain gives {count} ({list}); {hint}", doc = "At startup, at the N_STARTS line, after the checks of the optimiser MULTISTART runs: the INIT blocks inside OPTIMIZER and STRATEGY give fewer starting points than N_STARTS, counting the K of each RANDOM, LHS and SOBOL line, one point for the CONFIG lines and one for the WARM lines of each file, at most K_TOTAL; {list} names the METHOD lines and K_TOTAL, and {hint} what gives N_STARTS starts." },
 ]
 doc = """\
 The number of starts of STRATEGY TYPE MULTISTART: the optimiser runs once \
@@ -1984,9 +1984,10 @@ from each of the first N_STARTS starting points of the INIT block."""
 long_doc = """\
 N_STARTS is 2 or more, and TYPE MULTISTART needs it: one start is TYPE \
 PLAIN. The INIT blocks inside OPTIMIZER and STRATEGY must give N_STARTS \
-starting points or more, counting the K of each RANDOM, LHS and SOBOL line \
-and one point of each CONFIG and WARM line (the CONFIG point without a \
-METHOD line), at most K_TOTAL: fewer are refused at the N_STARTS line. \
+starting points or more, counting the K of each RANDOM, LHS and SOBOL line, \
+one point for the CONFIG lines and one for the WARM lines of each file \
+(the CONFIG point without a METHOD line), at most K_TOTAL: fewer are \
+refused at startup, at the N_STARTS line. \
 When the points drawn are fewer still (a WARM point dropped under \
 WARM_ON_MISMATCH skip, a RESTART round of fewer points), the optimiser \
 runs once from each of them, with a warning; with more, the points after \

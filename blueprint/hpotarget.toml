@@ -1026,7 +1026,10 @@ failed evaluation: the worst usable loss of the search so far plus a \
 margin, or, before any, FAILSCORE capped at 1e100. A loss NLopt asks for \
 together with its gradient is given the stand-in only for a graded \
 failure with a usable gradient; a failed point whose gradient fails is \
-rejected. The result files and the journal record the loss the \
+rejected. CERES:STEEPEST_DESCENT is given a failed evaluation's loss \
+scaled to at most 1e100: above FAILSCORE 1e100, the loss times 1e100 / \
+FAILSCORE, and its gradient likewise, so its line search does not \
+overflow. The result files and the journal record the loss the \
 evaluation reported."""
 quirk = """\
 A PC_LAMMPS or PC_FAILPROBE line without --failscore takes the FAILSCORE \
@@ -1417,7 +1420,8 @@ candidates that do not fail; OFF gives it FAILSCORE."""
 long_doc = """\
 ON takes any FAILSCORE, the default largest double too, except with \
 ASA:ASA, which takes a cost of about 1e18 or more for an invalid state: an \
-ASA:ASA search under ON needs a FAILSCORE below 1e18 (checked at \
+ASA:ASA search under ON needs a FAILSCORE whose graded failures, all \
+below FAILSCORE, stay below that cost, such as 1e18 or less (checked at \
 startup). A --failvar value above 0 and a PC_FAILPROBE probe value above --gate fail \
 the evaluation under ON and OFF alike: under ON with a graded loss, under \
 OFF with FAILSCORE. The settings that only grade a failure, PC_FAILPROBE \
@@ -1426,7 +1430,7 @@ OPTIM boxes, which a CERES optimiser can propose, is not evaluated. Under \
 ON and OFF alike its loss lies in [0.99975 FAILSCORE, FAILSCORE) and grows \
 with its distance from the boxes."""
 checks = [
-  { msg = "{phase}: ASA:ASA: under FAILSCORE_GRADING ON a failed evaluation scores from 0.999 FAILSCORE to below FAILSCORE ({value}), and ASA:ASA takes a cost of about 1e+18 or more for an invalid state and draws another, so it would not see the graded failures at or above that cost; a FAILSCORE of 1e+18 or less keeps every graded failure below it", doc = "At startup, under ON, at the line that closes the block of an ASA:ASA search, in any phase: FAILSCORE is 1e18 or more, as it is without a FAILSCORE line; {value} is FAILSCORE." },
+  { msg = "{phase}: ASA:ASA: under FAILSCORE_GRADING ON a failed evaluation scores from 0.999 FAILSCORE to below FAILSCORE ({value}), and ASA:ASA takes a cost of about 1e+18 or more for an invalid state and draws another, so it would not see the graded failures at or above that cost; a FAILSCORE of 1e+18 or less keeps every graded failure below it", doc = "At startup, under ON, at the line that closes the block of an ASA:ASA search, in any phase: the largest graded failure, a little below FAILSCORE, reaches the cost of about 1e18 at which ASA takes a state for an invalid one, from a FAILSCORE a little above 1e18 on, as without a FAILSCORE line; {value} is FAILSCORE." },
 ]
 
 [[key.examples]]
