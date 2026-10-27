@@ -1176,9 +1176,6 @@ class _Loader:
                 if kind == "invalid" and check not in INVALID_CHECKS:
                     self.err(w, f"check '{check}' is not parse, startup or "
                                 "check")
-                if check == "check" and c.get("at", 1) != "none":
-                    self.err(w, "check = \"check\" shows a refusal of the "
-                                "run, which names no line: at = \"none\"")
                 at = c.get("at", 1)
                 if isinstance(at, int) and at < 1:
                     self.err(w, "at counts logical lines from 1")

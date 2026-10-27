@@ -951,10 +951,13 @@ error = "GRID_POINTS must be at least 2"
                       "entry", self.errors(templates=True))
 
     def test_check_mode_shows_a_refusal_of_the_run(self):
+        # A refusal of the run names the line of the file it is about, as
+        # PC_WORKER_TIMEOUT's under PC_ISOLATION THREAD does, or none (at =
+        # "none"), as an environment variable's does: both load. (The
+        # loader refused a case of the run that named a line.)
         self.edit("hpotarget.toml", 'text = "FAILSCORE 0"',
                   'text = "FAILSCORE 0"\ncheck = "check"')
-        self.assertIn('check = "check" shows a refusal of the run, which '
-                      'names no line: at = "none"', self.errors())
+        self.load()
         self.edit("hpotarget.toml", 'check = "check"',
                   'check = "check"\nat = "none"')
         self.load()

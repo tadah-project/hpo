@@ -465,7 +465,7 @@ error = "tadah hpo: PC_ErRMSE on the validation set: no dataset has a structure 
 id = "ROOT.PC_ERSQ"
 name = "PC_ERSQ"
 blocks = ["ROOT"]
-synopsis = "PC_ERSQ <target> <weight> [--skip-above <cap>] [--skip-rel <ratio>]"
+synopsis = "PC_ERSQ <target> <weight>"
 repeat = "error"
 repeat_msg = "PC_ERSQ: repeated declaration (first declared on line {first_line})"
 doc = """\
@@ -473,6 +473,8 @@ A loss term on the coefficient of determination (R squared) of the \
 energies of the validation datasets: the LOSS function of the metric \
 averaged over the datasets, its target and its weight."""
 long_doc = """\
+R squared is better when higher, so PC_ERSQ takes neither --skip-above \
+nor --skip-rel: a cap rejects an evaluation whose metric is above it. \
 The term needs a validation configuration (--validation). The weight is \
 a number >= 0. A structure with energy \
 priority 0 (eweight) is left out of the metric. A dataset whose structures \
@@ -485,6 +487,7 @@ checks = [
   { msg = "{key} requires <target> <weight>", doc = "At the line: fewer than two values follow the key and its index list." },
   { msg = "{key}: unknown flag '{tok}'", doc = "At the line: a token after the weight that is no option of the metric lines." },
   { msg = "{key}: indexed targets are supported only for PC_ERMSE, PC_FRMSE and PC_SRMSE_GPA", doc = "At the line: an index list, which only PC_ERMSE, PC_FRMSE and PC_SRMSE_GPA take." },
+  { msg = "PC_ERSQ takes no {option}: a cap rejects an evaluation whose metric is above it, and a higher R^2 is a better fit, so the cap would reject the better fits", doc = "At the line: a --skip-above or --skip-rel option; {option} is the first of them on the line." },
 ]
 
 [[key.args]]
@@ -504,6 +507,29 @@ doc = "The weight of the term. The loss of an evaluation is the mean of its term
 [[key.examples]]
 wrap = "root"
 text = "PC_ERSQ 1 1"
+
+[[key.invalid]]
+wrap = "root"
+text = "PC_ERSQ 1 1 --skip-above 0.9"
+error = "PC_ERSQ takes no --skip-above: a cap rejects an evaluation whose metric is above it, and a higher R^2 is a better fit, so the cap would reject the better fits"
+
+[[key.invalid]]
+wrap = "root"
+doc = "With both options, the first is named."
+text = "PC_ERSQ 1 1 --skip-rel 2 --skip-above 0.9"
+error = "PC_ERSQ takes no --skip-rel: a cap rejects an evaluation whose metric is above it, and a higher R^2 is a better fit, so the cap would reject the better fits"
+
+[[key.invalid]]
+wrap = "root"
+doc = "An option without its value is refused as the option, before its value is read."
+text = "PC_ERSQ 1 1 --skip-above"
+error = "PC_ERSQ takes no --skip-above: a cap rejects an evaluation whose metric is above it, and a higher R^2 is a better fit, so the cap would reject the better fits"
+
+[[key.invalid]]
+wrap = "root"
+doc = "An option given twice is refused as the option."
+text = "PC_ERSQ 1 1 --skip-above 0.9 --skip-above 0.8"
+error = "PC_ERSQ takes no --skip-above: a cap rejects an evaluation whose metric is above it, and a higher R^2 is a better fit, so the cap would reject the better fits"
 
 [[key.invalid]]
 wrap = "root"
@@ -1005,7 +1031,7 @@ error = "tadah hpo: PC_FRMSE (2) gives weight 0.5 to validation dataset 2 (lines
 [[line_option]]
 id = "PC_EMAE.--skip-above"
 option = "--skip-above"
-lines = ["PC_EMAE", "PC_ERMSE", "PC_ErRMSE", "PC_ERSQ", "PC_SRMSE_GPA", "PC_FRMSE"]
+lines = ["PC_EMAE", "PC_ERMSE", "PC_ErRMSE", "PC_SRMSE_GPA", "PC_FRMSE"]
 synopsis = "--skip-above <cap>"
 repeat = "error"
 repeat_msg = "{key}: repeated --skip-above"
@@ -1014,7 +1040,7 @@ doc = """\
 An evaluation whose metric exceeds <cap>, in the units of the metric, \
 skips its PC_OBSERVABLE and PC_LAMMPS terms and scores FAILSCORE (a \
 graded failure under FAILSCORE_GRADING ON)."""
-long_doc = "On an indexed line the threshold applies to each dataset the line lists."
+long_doc = "On an indexed line the threshold applies to each dataset the line lists. PC_ERSQ, whose R squared is better when higher, refuses the option."
 
 [[line_option.args]]
 name = "cap"
@@ -1048,7 +1074,7 @@ error = "PC_FRMSE: repeated --skip-above"
 [[line_option]]
 id = "PC_EMAE.--skip-rel"
 option = "--skip-rel"
-lines = ["PC_EMAE", "PC_ERMSE", "PC_ErRMSE", "PC_ERSQ", "PC_SRMSE_GPA", "PC_FRMSE"]
+lines = ["PC_EMAE", "PC_ERMSE", "PC_ErRMSE", "PC_SRMSE_GPA", "PC_FRMSE"]
 synopsis = "--skip-rel <ratio>"
 repeat = "error"
 repeat_msg = "{key}: repeated --skip-rel"
@@ -1059,7 +1085,8 @@ the metric so far skips its PC_OBSERVABLE and PC_LAMMPS terms and scores \
 FAILSCORE (a graded failure under FAILSCORE_GRADING ON)."""
 long_doc = """\
 The threshold acts once a finite value of the metric has been seen; on \
-an indexed line it applies to each dataset the line lists. \
+an indexed line it applies to each dataset the line lists. PC_ERSQ, whose \
+R squared is better when higher, refuses the option. \
 Two evaluations of one point can therefore score differently, so a \
 search does not answer a repeated point from the record of the run."""
 
@@ -1075,7 +1102,7 @@ doc = "The option ends the line without its value."
 
 [[line_option.examples]]
 wrap = "root"
-text = "PC_ERSQ 1 1 --skip-rel 2"
+text = "PC_ErRMSE 1 1 --skip-rel 2"
 
 [[line_option.invalid]]
 wrap = "root"
