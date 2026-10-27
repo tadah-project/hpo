@@ -2900,8 +2900,11 @@ std::vector<std::string> journal_lines_with(const std::string& journal,
  *     and the note that MAXTIME on line 16 is PC_SCRIPT_TIMEOUT under
  *     another name;
  *   - PROCESS, neither key: "no worker task deadline";
- *   - THREAD, PC_WORKER_TIMEOUT 600: "no worker task deadline under
- *     PC_ISOLATION THREAD", the worker timeout taking no effect.
+ *   - THREAD: "no worker task deadline under PC_ISOLATION THREAD" (the
+ *     case gave PC_WORKER_TIMEOUT 600 on line 14, which had no effect;
+ *     PC_ISOLATION THREAD refuses it: the case "hpo --check:
+ *     PC_WORKER_TIMEOUT and TADAH_PC_WORKER_TIMEOUT are refused under
+ *     PC_ISOLATION THREAD").
  * The MPI build, which has no worker processes, runs the THREAD case
  * alone. tadah runs without TADAH_PC_WORKER_TIMEOUT, which would override
  * the target file's PC_WORKER_TIMEOUT, as it runs without
@@ -2964,8 +2967,8 @@ TEST_CASE("tadah hpo: the PC_SCRIPT_TIMEOUT startup lines name the limit and "
     cases.push_back({"none", "PROCESS", pc_line,
                      {of_line(14) + off + "no worker task deadline"}});
 #endif
-    cases.push_back({"thread", "THREAD", "PC_WORKER_TIMEOUT 600\n" + pc_line,
-                     {of_line(15) + off + "no worker task deadline under "
+    cases.push_back({"thread", "THREAD", pc_line,
+                     {of_line(14) + off + "no worker task deadline under "
                       "PC_ISOLATION THREAD"}});
     for (const Case& c : cases) {
         INFO(c.name << ": PC_ISOLATION " << c.mode << "\n" << c.body);

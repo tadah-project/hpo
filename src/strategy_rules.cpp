@@ -1,5 +1,6 @@
 #include <tadah/hpo/strategy_rules.h>
 
+#include <tadah/hpo/init_strategy.h>
 #include <tadah/hpo/optimizer_caps.h>
 #include <tadah/hpo/phase_specs.h>
 
@@ -348,6 +349,46 @@ void require_multistart_backend(const OptimizerSpec& spec)
         "STRATEGY TYPE PLAIN runs " + name + " once.");
 }
 
+std::string multistart_chain_advice(const ChainPoints& c, std::size_t want)
+{
+    const std::string k = std::to_string(want);
+    const std::string more =
+        "a chain of " + k + " or more starting points (METHOD LHS " + k +
+        ", RANDOM " + k + " or SOBOL " + k + ")";
+    if (!c.k_total) return more + " runs " + k + " starts";
+    if (c.distinct > want)
+        return "with K_TOTAL " + k + ", or without K_TOTAL, " + k +
+               " starts run";
+    if (c.distinct == want) return "without K_TOTAL, " + k + " starts run";
+    return more + " without K_TOTAL runs " + k + " starts";
+}
+
+void require_multistart_points(const OptimizerSpec& spec)
+{
+    if (spec.strategy_type != StrategyType::MULTISTART) return;
+    /* The chain the file wrote: a spec built outside the parser has no
+     * N_STARTS line, and gives its starting points itself (optim_init). */
+    if (spec.key_lines.find("N_STARTS") == spec.key_lines.end()) return;
+    /* The most starting points the chain gives (chain_points). A chain
+     * that gives fewer when it is drawn -- a WARM point dropped under
+     * WARM_ON_MISMATCH skip, a drawn point equal to another -- is warned
+     * about when the run starts (MultiStartPolicy). */
+    const ChainPoints c = chain_points(spec.init_strategy_spec);
+    const std::size_t want = spec.multistart.n_starts;
+    if (c.points >= want) return;
+
+    const std::string k = std::to_string(want);
+    const std::string n = std::to_string(c.points);
+    const std::string advice = multistart_chain_advice(c, want);
+    throw std::runtime_error(with_key_line(spec, "N_STARTS",
+        "N_STARTS " + k + " needs " + k + " starting points, and the INIT "
+        "chain gives " + (c.warm ? "at most " : "") + n + " (" + c.from() +
+        "); " +
+        (c.points == 1 ? "one start is STRATEGY TYPE PLAIN, and " + advice
+                       : advice + ", and N_STARTS " + n +
+                             " starts from each of the " + n)));
+}
+
 void require_prestage_explore(const OptimizerSpec& spec)
 {
     if (!spec.prestage)
@@ -425,6 +466,9 @@ void validate_run_policy(const OptimizerSpec& spec)
         at(explore.inner ? *explore.inner : explore,
            [&] { require_inner_backend(explore, kExploreBlock); });
     }
+    /* Once MULTISTART is known to run its optimiser from each start: at
+     * the N_STARTS line, which the refusal names itself. */
+    require_multistart_points(spec);
 }
 
 void reject_refused_backends(const OptimizerSpec& spec)

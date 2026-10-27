@@ -9,7 +9,9 @@
 
 #include <tadah/core/context.h>
 #include <tadah/core/periodic_table.h>
+#include <tadah/hpo/algorithms_asa.h>
 #include <tadah/hpo/hpo_targets.h>
+#include <tadah/hpo/pc_fail_grading.h>
 #include <tadah/hpo/startup_validation.h>
 #include <tadah/models/descriptors/basis_dispatch.h>
 
@@ -17,6 +19,7 @@
 #include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -1003,32 +1006,152 @@ TEST_CASE("startup validation: the ANALYTICAL rule applies to the block "
   }
 }
 
-/* FAILSCORE_GRADING ON bands the failure losses below FAILSCORE, so it
- * needs a finite FAILSCORE. The rule used to live in hpo_run() alone, so a
- * setup checked with validate_hpo_setup() -- the target-file parse cases
- * (test_ta_target_files.cpp), any embedding -- passed it. */
-TEST_CASE("startup validation: FAILSCORE_GRADING ON needs a finite FAILSCORE",
+/* Pins: FAILSCORE_GRADING ON takes any FAILSCORE the parser reads (a
+ * positive finite number), the default largest double too: the startup
+ * checks accept it without a FAILSCORE line and with FAILSCORE 1e9. A
+ * search of ASA:ASA, in any phase, refuses under FAILSCORE_GRADING ON a
+ * FAILSCORE whose largest graded failure, just below FAILSCORE
+ * (graded_failscore of band D at saturation), reaches ASA's largest valid
+ * cost, 1/1e-18 (asa_cost_limit): ASA takes a cost at or above it for an
+ * invalid state and draws another, so it would not see the graded failures
+ * there ("the STRATEGY-level optimiser: ASA:ASA: under FAILSCORE_GRADING ON
+ * a failed evaluation scores from 0.999 FAILSCORE to below FAILSCORE
+ * (1e+30), and ASA:ASA takes a cost of about 1e+18 or more for
+ * an invalid state and draws another, so it would not see the graded
+ * failures at or above that cost; a FAILSCORE of 1e+18 or less keeps every
+ * graded failure below it"; without a FAILSCORE line
+ * "(1.7976931348623157e+308, the largest double, as without a FAILSCORE
+ * line)"). The limit lies between FAILSCORE 1.0000000000002e18, whose
+ * largest graded failure is below it, accepted, and 1.0000000000003e18,
+ * refused; FAILSCORE 1e18 and 9.99e17, and FAILSCORE_GRADING OFF, are
+ * accepted. When TADAH_FAILSCORE_GRADING sets ON (the override of
+ * hpo_run, set_failscore_grading), over a file that says OFF, the refusal
+ * names the variable, which the file does not show: "... ASA:ASA: under
+ * FAILSCORE_GRADING ON, set by TADAH_FAILSCORE_GRADING, a failed
+ * evaluation scores ..."; the variable set to OFF over a file that says ON
+ * takes the search.
+ * Before the variable was named: "... ASA:ASA: under FAILSCORE_GRADING ON
+ * a failed evaluation scores ..." over a file that says OFF (the case
+ * fails).
+ * Before the fix: FAILSCORE 1e18 and 1.0000000000002e18 were refused (the
+ * rule was a FAILSCORE above the limit, while every graded failure lies
+ * below FAILSCORE: under FAILSCORE 1e18 a seeded ASA:ASA run of 1.5.0 on
+ * the Ta data of the tests evaluated other points under ON than under
+ * OFF), with the reason "so it would not see the grading; a FAILSCORE
+ * below 1e+18 keeps every graded failure below that cost". Before the
+ * refusal: without a FAILSCORE line every optimiser was refused,
+ * "FAILSCORE_GRADING ON grades failures in bands below FAILSCORE, which
+ * needs a FAILSCORE above 0 and below 1e300 (without a FAILSCORE line,
+ * FAILSCORE is the largest double)", and ASA:ASA took a FAILSCORE up to
+ * 1e300 under ON, where from about 1.001e18 on it saw no graded failure (a
+ * seeded run with FAILSCORE 1e30 evaluated the points of OFF). */
+TEST_CASE("startup validation: FAILSCORE_GRADING ON takes any FAILSCORE, "
+          "and ASA:ASA one whose graded failures stay below its largest "
+          "valid cost",
           "[startup_validation][failscore_grading]") {
-  const std::string head = "OPTIM WATOM (1) 0.1 5.0\nPC_ERMSE 0 1\n"
-                           "FAILSCORE_GRADING ON\n";
-  PeriodicTable::initialize();
-  SECTION("the default FAILSCORE is rejected") {
-    ScopedTempFile tf(head + kOptimizerBlock);
+  const std::string head = "OPTIM WATOM (1) 0.1 5.0\nPC_ERMSE 0 1\n";
+  const std::string asa =
+      "OPTIMIZER\nLIB ASA\nALGO ASA\nMAXEVAL 20\nENDOPTIMIZER\n";
+  const std::string explore_asa =
+      "OPTIMIZER\n  STRATEGY\n    TYPE PRESTAGE\n    LIB DLIB\n"
+      "    ALGO BFGS\n    MAXEVAL 5\n    EXPLORE\n      LIB ASA\n"
+      "      ALGO ASA\n      MAXEVAL 10\n    ENDEXPLORE\n  ENDSTRATEGY\n"
+      "ENDOPTIMIZER\n";
+  const auto startup = [&](const std::string& lines,
+                           const std::string& optimizer) {
+    PeriodicTable::initialize();
+    ScopedTempFile tf(head + lines + optimizer);
     Context ctx = make_model_ctx();
     ctx.add("DBFILE", "dummy.db");
     HPOTargets trg(ctx, tf.path.string());
-    REQUIRE_THROWS_WITH(validate_hpo_setup(ctx, trg, true, true),
-                        Catch::Contains("FAILSCORE_GRADING ON grades "
-                                        "failures in bands below FAILSCORE, "
-                                        "which needs a FAILSCORE above 0 and "
-                                        "below 1e300"));
+    try {
+      validate_hpo_setup(ctx, trg, true, true);
+    } catch (const std::exception& e) {
+      return std::string(e.what());
+    }
+    return std::string();
+  };
+  const auto refusal = [](const std::string& phase, const std::string& fs) {
+    return phase + ": ASA:ASA: under FAILSCORE_GRADING ON a failed "
+           "evaluation scores from 0.999 FAILSCORE to below FAILSCORE "
+           "(" + fs + "), and ASA:ASA takes a cost of about 1e+18 "
+           "or more for an invalid state and draws another, so it would not "
+           "see the graded failures at or above that cost; a FAILSCORE of "
+           "1e+18 or less keeps every graded failure below it";
+  };
+  SECTION("the default FAILSCORE passes") {
+    CHECK(startup("FAILSCORE_GRADING ON\n", kOptimizerBlock) == "");
   }
   SECTION("a finite FAILSCORE passes") {
-    ScopedTempFile tf(head + "FAILSCORE 1e9\n" + kOptimizerBlock);
-    Context ctx = make_model_ctx();
-    ctx.add("DBFILE", "dummy.db");
-    HPOTargets trg(ctx, tf.path.string());
-    REQUIRE_NOTHROW(validate_hpo_setup(ctx, trg, true, true));
+    CHECK(startup("FAILSCORE_GRADING ON\nFAILSCORE 1e9\n",
+                  kOptimizerBlock) == "");
+  }
+  SECTION("ASA:ASA refuses a FAILSCORE whose graded failures reach its "
+          "largest valid cost under ON") {
+    /* The two FAILSCOREs on either side of the limit. */
+    const double inf = std::numeric_limits<double>::infinity();
+    const double limit = tadah::hpo::asa_cost_limit();
+    CHECK(tadah::hpo::graded_failscore(1.0000000000002e18,
+                                       tadah::hpo::FailBand::D, inf,
+                                       1.0) < limit);
+    CHECK(tadah::hpo::graded_failscore(1.0000000000003e18,
+                                       tadah::hpo::FailBand::D, inf,
+                                       1.0) >= limit);
+    CHECK_THAT(startup("FAILSCORE_GRADING ON\n", asa),
+               Catch::StartsWith("Error on line 8: " + refusal(
+                   "the STRATEGY-level optimiser",
+                   "1.7976931348623157e+308, the largest double, as without "
+                   "a FAILSCORE line")) &&
+               Catch::EndsWith("\nLine: ENDOPTIMIZER"));
+    CHECK_THAT(startup("FAILSCORE_GRADING ON\nFAILSCORE 1e30\n", asa),
+               Catch::StartsWith("Error on line 9: " + refusal(
+                   "the STRATEGY-level optimiser", "1e+30")));
+    CHECK_THAT(startup("FAILSCORE_GRADING ON\nFAILSCORE 1e30\n",
+                       explore_asa),
+               Catch::Contains(refusal(
+                   "the PRESTAGE exploration (EXPLORE block)", "1e+30")));
+    CHECK_THAT(
+        startup("FAILSCORE_GRADING ON\nFAILSCORE 1.0000000000003e18\n", asa),
+        Catch::StartsWith("Error on line 9: " + refusal(
+            "the STRATEGY-level optimiser", "1.0000000000003e+18")));
+    CHECK(startup("FAILSCORE_GRADING ON\nFAILSCORE 1.0000000000002e18\n",
+                  asa) == "");
+    CHECK(startup("FAILSCORE_GRADING ON\nFAILSCORE 1e18\n", asa) == "");
+    CHECK(startup("FAILSCORE_GRADING ON\nFAILSCORE 9.99e17\n", asa) == "");
+    CHECK(startup("FAILSCORE_GRADING OFF\n", asa) == "");
+    CHECK(startup("", asa) == "");
+  }
+  SECTION("the refusal names TADAH_FAILSCORE_GRADING when it sets ON") {
+    /* What startup says when the variable sets the mode: hpo_run applies
+     * it with set_failscore_grading before the startup checks. */
+    const auto by_env = [&](const std::string& lines, bool on) {
+      PeriodicTable::initialize();
+      ScopedTempFile tf(head + lines + asa);
+      Context ctx = make_model_ctx();
+      ctx.add("DBFILE", "dummy.db");
+      HPOTargets trg(ctx, tf.path.string());
+      trg.set_failscore_grading(on);
+      try {
+        validate_hpo_setup(ctx, trg, true, true);
+      } catch (const std::exception& e) {
+        return std::string(e.what());
+      }
+      return std::string();
+    };
+    CHECK_THAT(by_env("FAILSCORE_GRADING OFF\n", true),
+               Catch::StartsWith(
+                   "Error on line 8: the STRATEGY-level optimiser: ASA:ASA: "
+                   "under FAILSCORE_GRADING ON, set by "
+                   "TADAH_FAILSCORE_GRADING, a failed evaluation scores from "
+                   "0.999 FAILSCORE to below FAILSCORE "
+                   "(1.7976931348623157e+308, the largest double, as without "
+                   "a FAILSCORE line), and ASA:ASA takes a cost of about "
+                   "1e+18 or more for an invalid state and draws another, so "
+                   "it would not see the graded failures at or above that "
+                   "cost; a FAILSCORE of 1e+18 or less keeps every graded "
+                   "failure below it") &&
+               Catch::EndsWith("\nLine: ENDOPTIMIZER"));
+    CHECK(by_env("FAILSCORE_GRADING ON\n", false) == "");
   }
 }
 
