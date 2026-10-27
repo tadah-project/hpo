@@ -217,6 +217,43 @@ TEST_CASE("phase specs: the PRESTAGE refinement starts from the candidates",
     CHECK(refine.lib == "DLIB");
 }
 
+/* Pins: the starting points of a phase keep their INIT origin (CONFIG,
+ * WARM, a sampled point) only where it holds, so that an NLopt search whose
+ * start moves warns for a user's own point (nlopt_adapter.h): a MULTISTART
+ * start keeps the origin of its INIT point, and a PRESTAGE refinement,
+ * which starts from exploration candidates, carries no origin, also when it
+ * has as many candidates as the spec had INIT points.
+ * Before the fix: the refinement kept the spec's origins -- one CONFIG
+ * origin for one candidate here, so an LN_BOBYQA refinement whose candidate
+ * moved named it a CONFIG start. The MULTISTART part passes as well (a
+ * pin: each start has kept the origin of its point since LN_BOBYQA moves
+ * starts). */
+TEST_CASE("phase specs: a phase's starting points keep their INIT origin "
+          "only where it holds", "[HPO][phase_specs][prestage][multistart]")
+{
+    using tadah::hpo::InitOrigin;
+    auto s = local_spec(2);
+    s.optim_init_origin = {InitOrigin{InitOrigin::Kind::Config, {}},
+                           InitOrigin{InitOrigin::Kind::Random, {}}};
+    const MultiStartPlan plan = tadah::hpo::plan_multistart(s, 2, std::nullopt);
+    for (std::size_t i = 0; i < 2; ++i) {
+        INFO("MULTISTART start " << i + 1);
+        const OptimizerSpec sub = tadah::hpo::multistart_start_spec(s, plan, i);
+        REQUIRE(sub.optim_init_origin.size() == 1u);
+        CHECK(sub.optim_init_origin.front().kind ==
+              s.optim_init_origin[i].kind);
+    }
+
+    auto one = local_spec(1);
+    one.optim_init_origin = {InitOrigin{InitOrigin::Kind::Config, {}}};
+    one.strategy_type = tadah::hpo::StrategyType::PRESTAGE;
+    one.prestage = std::make_unique<OptimizerSpec>(local_spec(1));
+    const OptimizerSpec refine =
+        tadah::hpo::prestage_refinement_spec(one, {{0.2, 0.3}});
+    CHECK(refine.optim_init.size() == 1u);
+    CHECK(refine.optim_init_origin.empty());
+}
+
 /* A PRESTAGE exploration whose optimiser reads SEED and that has no seed of
  * its own takes the STRATEGY-level SEED, as the refinement's starts and the
  * RESTART rounds derive theirs from it (the refinement draws streams of its
