@@ -3603,10 +3603,7 @@ doc = "<high> is not greater than <low>."
 
 [[form.checks]]
 msg = "OPTIM {key}: under ASINH {value} the box [{low}, {high}] maps to [{min}, {max}], which has no finite width; a c of the size of the values of the box gives one"
-doc = """\
-The box, in the coordinate of its shape tag, is empty or not finite; the \
-message has no line frame. {name} is the key, with [<index>] for a key \
-of more than one value."""
+doc = "Under ASINH <c> the box, in the coordinate of its shape tag, is empty or not finite."
 
 [[form.checks]]
 msg = "OPTIM {key}: the line is tagged LOG, and <low> {low} is not > 0, and a box tagged LOG lies above 0{hint}"
@@ -3676,7 +3673,10 @@ parameter other than an amplitude, and FRAC 0.5 for the others. The \
 non-negative amplitudes (AMPGRIDMB under RHOFORM NONNEG or MONOTONE, a \
 DM_Embed density with non-negative amplitudes) keep a FRAC box at or \
 above 0, and take GROUP_FLOOR 1e-3 when the line sets neither FLOOR nor \
-GROUP_FLOOR. A cutoff key (a key that starts with RCUT) takes no AUTO \
+GROUP_FLOOR; so does the relative part b of FSIGMA and SSIGMA. A \
+negative seed of a value that every fit takes >= 0 (a non-negative \
+amplitude, the relative part b of FSIGMA or SSIGMA, LAMBDA) is refused. A \
+cutoff key (a key that starts with RCUT) takes no AUTO \
 box. hpo_optim_resolved.hpo records the boxes as explicit lines. The \
 option names are read in any case."""
 
@@ -5788,8 +5788,9 @@ keys = ["OPTIM.TARGET.FSIGMA", "OPTIM.TARGET.SSIGMA"]
 msg = "OPTIM {key} ({index}): the low bound {low} is negative, but the relative part b of {key} is a number >= 0, and every fit refuses a negative one, so the low bound of its box is >= 0"
 doc = """\
 Index 2 of OPTIM FSIGMA and OPTIM SSIGMA, the relative part b of the \
-error scale, takes values from 0 up: a box whose low bound, explicit or \
-made by AUTO, is below 0 is refused at its line."""
+error scale, takes values from 0 up: an explicit box whose low bound is \
+below 0 is refused at its line, and so is an AUTO box around a negative \
+value of the training configuration."""
 
 [[rule.examples]]
 wrap = "root"

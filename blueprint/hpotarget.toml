@@ -1104,10 +1104,9 @@ sets the deadline of a worker task, max(3t, t + 120 s), unless \
 PC_WORKER_TIMEOUT sets one: each line's own limit sizes the deadline of \
 its tasks. MAXTIME is another name for this key. A PC_LAMMPS or \
 PC_FAILPROBE line without --maxtime takes the limit of the lines above it, \
-and a line of the key that no such line follows is refused."""
-quirk = """\
-The deadline in the summary of hpo_run.log is that of the last line of \
-the key."""
+and a line of the key that no such line follows is refused. hpo_run.log \
+gives the limit of each PC_LAMMPS and PC_FAILPROBE line, where it comes \
+from and the deadline of its worker tasks."""
 
 [[key.checks]]
 msg = "{key} sets the script timeout of the PC_LAMMPS and PC_FAILPROBE lines after it that give no --maxtime, and no such line follows it; it would have no effect"
@@ -1211,10 +1210,8 @@ of a PC_LAMMPS and PC_FAILPROBE script."""
 long_doc = """\
 The two names are one key: a second line, of either name, comes only \
 after a PC_LAMMPS or PC_FAILPROBE line without --maxtime, which reads the \
-first. When both \
-names are given, \
-hpo_run.log has a warning; with MAXTIME alone, it names PC_SCRIPT_TIMEOUT \
-as the preferred name."""
+first. hpo_run.log notes that a top-level MAXTIME line is \
+PC_SCRIPT_TIMEOUT under another name."""
 quirk = """\
 MAXTIME at the top level is the script limit PC_SCRIPT_TIMEOUT, while \
 MAXTIME inside OPTIMIZER, STRATEGY, EXPLORE, REFINE or INNER is a time \
