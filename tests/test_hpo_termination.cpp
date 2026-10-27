@@ -4183,20 +4183,23 @@ void write_dropped_warm_seed()
 
 /* Pins: a MULTISTART of N_STARTS 2 whose INIT chain gives one starting
  * point when it is drawn (a WARM seed that WARM_ON_MISMATCH skip drops,
- * and METHOD CONFIG) runs one start and journals "MULTISTART: running 1
- * start", after the WARNING that counts the one starting point and
- * advises a setting the parser takes: "MULTISTART N_STARTS 2 requested
- * but the resolved INIT chain produced only 1 starting point; running 1
- * start, which is STRATEGY TYPE PLAIN. A chain of 2 or more starting
- * points (METHOD LHS 2, RANDOM 2 or SOBOL 2) runs 2 starts." It advises no
- * lower N_STARTS, which would be N_STARTS 1, refused at its line ("one
- * start is STRATEGY TYPE PLAIN"). A chain whose METHOD lines give one
- * point (no INIT block, which this case had) is refused at startup, at the
- * N_STARTS line: the case "startup validation: a MULTISTART whose INIT
- * chain gives fewer starting points than N_STARTS is refused at the
- * N_STARTS line".
- * Before the fix: passes as well (a pin of the warning where the chain
- * drawn gives fewer points than the file's METHOD lines). */
+ * and METHOD CONFIG: the chain as written gives two, which the startup
+ * check takes) runs one start and journals "MULTISTART: running 1 start",
+ * after the WARNING that names the cause, which the chain as written does
+ * not show: "MULTISTART N_STARTS 2: the INIT chain gave 1 starting point
+ * when it was drawn (WARM_ON_MISMATCH skip drops a WARM point, and a point
+ * equal to another counts once); running 1 start, which is STRATEGY TYPE
+ * PLAIN." It advises no chain of more points, which this chain is
+ * already, and no lower N_STARTS, which would be N_STARTS 1, refused at
+ * its line ("one start is STRATEGY TYPE PLAIN"). A chain whose METHOD
+ * lines give one point is refused at startup, at the N_STARTS line: the
+ * case "startup validation: a MULTISTART whose INIT chain gives fewer
+ * starting points than N_STARTS is refused at the N_STARTS line".
+ * Before the fix: the WARNING said "MULTISTART N_STARTS 2 requested but the
+ * resolved INIT chain produced only 1 starting point; running 1 start,
+ * which is STRATEGY TYPE PLAIN. A chain of 2 or more starting points
+ * (METHOD LHS 2, RANDOM 2 or SOBOL 2) runs 2 starts.", advising the chain
+ * the file has. */
 TEST_CASE("Termination: MULTISTART with one starting point journals that it "
           "runs 1 start", "[HPO][termination][multistart]")
 {
@@ -4214,25 +4217,27 @@ TEST_CASE("Termination: MULTISTART with one starting point journals that it "
     CHECK(journal.find("MULTISTART: running 1 start\n") != std::string::npos);
     CHECK(journal.find("1 starts") == std::string::npos);
     CHECK(journal.find(
-              "MULTISTART N_STARTS 2 requested but the resolved INIT chain "
-              "produced only 1 starting point; running 1 start, which is "
-              "STRATEGY TYPE PLAIN. A chain of 2 or more starting points "
-              "(METHOD LHS 2, RANDOM 2 or SOBOL 2) runs 2 starts.\n") !=
-          std::string::npos);
+              "MULTISTART N_STARTS 2: the INIT chain gave 1 starting point "
+              "when it was drawn (WARM_ON_MISMATCH skip drops a WARM point, "
+              "and a point equal to another counts once); running 1 start, "
+              "which is STRATEGY TYPE PLAIN.\n") != std::string::npos);
+    CHECK(journal.find("A chain of") == std::string::npos);
     CHECK(journal.find("lower N_STARTS") == std::string::npos);
 }
 
 /* Pins: a MULTISTART of N_STARTS 3 whose INIT chain gives two starting
  * points when it is drawn (a WARM seed that WARM_ON_MISMATCH skip drops,
- * and METHOD RANDOM 2) runs two starts and journals "MULTISTART: running
- * 2 starts", after the WARNING that names the N_STARTS that runs them,
- * which the parser takes: "MULTISTART N_STARTS 3 requested but the
- * resolved INIT chain produced only 2 starting points; running 2 starts.
- * A chain of 3 or more starting points (METHOD LHS 3, RANDOM 3 or SOBOL 3)
- * runs 3 starts, and N_STARTS 2 asks for the 2 that run." (This case had
- * METHOD RANDOM 2 alone, which is refused at the N_STARTS line.)
- * Before the fix: passes as well (a pin of the warning where the chain
- * drawn gives fewer points than the file's METHOD lines). */
+ * and METHOD RANDOM 2: three as written) runs two starts and journals
+ * "MULTISTART: running 2 starts", after the WARNING that names the cause
+ * and the N_STARTS that runs them, which the parser takes: "MULTISTART
+ * N_STARTS 3: the INIT chain gave 2 starting points when it was drawn
+ * (WARM_ON_MISMATCH skip drops a WARM point, and a point equal to another
+ * counts once); running 2 starts, and N_STARTS 2 asks for the 2 that run."
+ * Before the fix: the WARNING said "MULTISTART N_STARTS 3 requested but the
+ * resolved INIT chain produced only 2 starting points; running 2 starts. A
+ * chain of 3 or more starting points (METHOD LHS 3, RANDOM 3 or SOBOL 3)
+ * runs 3 starts, and N_STARTS 2 asks for the 2 that run.", advising the
+ * chain the file has. */
 TEST_CASE("Termination: MULTISTART with fewer starting points than N_STARTS "
           "names the N_STARTS that runs them", "[HPO][termination][multistart]")
 {
@@ -4249,11 +4254,110 @@ TEST_CASE("Termination: MULTISTART with fewer starting points than N_STARTS "
     INFO(journal);
     CHECK(journal.find("MULTISTART: running 2 starts\n") != std::string::npos);
     CHECK(journal.find(
-              "MULTISTART N_STARTS 3 requested but the resolved INIT chain "
-              "produced only 2 starting points; running 2 starts. A chain of "
-              "3 or more starting points (METHOD LHS 3, RANDOM 3 or SOBOL 3) "
-              "runs 3 starts, and N_STARTS 2 asks for the 2 that run.\n") !=
+              "MULTISTART N_STARTS 3: the INIT chain gave 2 starting points "
+              "when it was drawn (WARM_ON_MISMATCH skip drops a WARM point, "
+              "and a point equal to another counts once); running 2 starts, "
+              "and N_STARTS 2 asks for the 2 that run.\n") !=
           std::string::npos);
+    CHECK(journal.find("A chain of") == std::string::npos);
+}
+
+/* Pins: a MULTISTART of N_STARTS 2 whose INIT chain has a WARM line whose
+ * seed holds the values of the training configuration, and METHOD CONFIG,
+ * gives two starting points as written, which the startup check takes,
+ * and one when it is drawn: the chain keeps a point once. The WARNING
+ * names that cause alone, as no WARM point is dropped (WARM_ON_MISMATCH
+ * warn): "MULTISTART N_STARTS 2: the INIT chain gave 1 starting point when
+ * it was drawn (a point equal to another counts once); running 1 start,
+ * which is STRATEGY TYPE PLAIN."
+ * Before the fix: the WARNING said "... produced only 1 starting point;
+ * running 1 start, which is STRATEGY TYPE PLAIN. A chain of 2 or more
+ * starting points (METHOD LHS 2, RANDOM 2 or SOBOL 2) runs 2 starts.". */
+TEST_CASE("Termination: MULTISTART whose INIT chain draws one point twice "
+          "names the equal points", "[HPO][termination][multistart]")
+{
+    TaRun run("OPTIMIZER\n  INIT\n    METHOD WARM config_seed.tadah\n"
+              "    METHOD CONFIG\n  ENDINIT\n  STRATEGY\n"
+              "    TYPE MULTISTART\n    N_STARTS 2\n"
+              "    LIB NLOPT\n    ALGO LN_SBPLX\n    MAXEVAL 3\n"
+              "  ENDSTRATEGY\nENDOPTIMIZER\n");
+    /* The values make_ta_context gives the search parameters. */
+    std::ofstream("config_seed.tadah") << "CGRID2B 0.5 1.4\nSGRID2B 3.0 5.0\n";
+    int status = -1;
+    REQUIRE_NOTHROW(status = tadah::hpo::hpo_run(run.ctx));
+    CHECK(status == 0);
+    const std::string journal = read_file("hpo_run.log");
+    INFO(journal);
+    CHECK(journal.find("MULTISTART: running 1 start\n") != std::string::npos);
+    CHECK(journal.find(
+              "MULTISTART N_STARTS 2: the INIT chain gave 1 starting point "
+              "when it was drawn (a point equal to another counts once); "
+              "running 1 start, which is STRATEGY TYPE PLAIN.\n") !=
+          std::string::npos);
+}
+
+/* Pins: the WARNING of a RESTART round whose points are fewer than
+ * N_STARTS names the RESTART round, not the INIT chain (MULTISTART N_STARTS
+ * 3 from METHOD LHS 3, RESTART AFTER_STAGNATION 2, MAX 1):
+ *  - a RESTART chain whose METHOD lines give fewer points than N_STARTS,
+ *    which the startup check does not count (a round draws its own), gets
+ *    the count and what gives N_STARTS starts, as the startup refusal of
+ *    an INIT chain does: METHOD RANDOM 1, "MULTISTART N_STARTS 3: the
+ *    RESTART round gave 1 starting point; running 1 start. The RESTART
+ *    chain gives 1 (RANDOM 1); a chain of 3 or more starting points (METHOD
+ *    LHS 3, RANDOM 3 or SOBOL 3) runs 3 starts."; METHOD LHS 5 with K_TOTAL
+ *    2, "... The RESTART chain gives 2 (LHS 5, capped by K_TOTAL 2); with
+ *    K_TOTAL 3, or without K_TOTAL, 3 starts run.";
+ *  - a RESTART chain of N_STARTS points that gives fewer when drawn (a WARM
+ *    seed that WARM_ON_MISMATCH skip drops, and METHOD RANDOM 2) gets the
+ *    cause: "MULTISTART N_STARTS 3: the RESTART round gave 2 starting
+ *    points when it was drawn (WARM_ON_MISMATCH skip drops a WARM point,
+ *    and a point equal to another counts once); running 2 starts.".
+ * No WARNING names the INIT chain, which gave its 3 points.
+ * Before the fix: each WARNING said "MULTISTART N_STARTS 3 requested but
+ * the resolved INIT chain produced only 1 starting point; ..." (2 for the
+ * others), naming the INIT chain for a RESTART round. */
+TEST_CASE("Termination: MULTISTART with a RESTART round of fewer starting "
+          "points than N_STARTS names the RESTART round",
+          "[HPO][termination][multistart][restart]")
+{
+    struct Case { std::string restart, warning; };
+    const std::vector<Case> cases = {
+        {"      METHOD RANDOM 1\n      SEED 5\n",
+         "MULTISTART N_STARTS 3: the RESTART round gave 1 starting point; "
+         "running 1 start. The RESTART chain gives 1 (RANDOM 1); a chain of "
+         "3 or more starting points (METHOD LHS 3, RANDOM 3 or SOBOL 3) runs "
+         "3 starts.\n"},
+        {"      METHOD LHS 5\n      K_TOTAL 2\n      SEED 5\n",
+         "MULTISTART N_STARTS 3: the RESTART round gave 2 starting points; "
+         "running 2 starts. The RESTART chain gives 2 (LHS 5, capped by "
+         "K_TOTAL 2); with K_TOTAL 3, or without K_TOTAL, 3 starts run.\n"},
+        {"      METHOD WARM dropped_seed.tadah\n      WARM_ON_MISMATCH skip\n"
+         "      METHOD RANDOM 2\n      SEED 5\n",
+         "MULTISTART N_STARTS 3: the RESTART round gave 2 starting points "
+         "when it was drawn (WARM_ON_MISMATCH skip drops a WARM point, and a "
+         "point equal to another counts once); running 2 starts.\n"},
+    };
+    for (const auto& c : cases) {
+        INFO(c.restart);
+        TaRun run("OPTIMIZER\n  INIT\n    METHOD LHS 3\n    SEED 3\n"
+                  "  ENDINIT\n  STRATEGY\n    TYPE MULTISTART\n"
+                  "    N_STARTS 3\n    LIB NLOPT\n    ALGO LN_SBPLX\n"
+                  "    MAXEVAL 30\n    RESTART\n      AFTER_STAGNATION 2\n"
+                  "      MAX 1\n" + c.restart + "    ENDRESTART\n"
+                  "  ENDSTRATEGY\nENDOPTIMIZER\n");
+        write_dropped_warm_seed();
+        int status = -1;
+        REQUIRE_NOTHROW(status = tadah::hpo::hpo_run(run.ctx));
+        CHECK(status == 0);
+        const std::string journal = read_file("hpo_run.log");
+        INFO(journal);
+        REQUIRE(journal.find("RESTART 1/1") != std::string::npos);
+        CHECK(journal.find(c.warning) != std::string::npos);
+        CHECK(journal.find("MULTISTART N_STARTS 3: the INIT chain") ==
+              std::string::npos);
+        CHECK(journal.find("resolved INIT chain") == std::string::npos);
+    }
 }
 
 /* Pins: a MULTISTART whose K_TOTAL keeps fewer starting points than
