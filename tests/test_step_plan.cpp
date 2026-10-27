@@ -304,12 +304,14 @@ namespace {
 using Vec = dlib::matrix<double, 0, 1>;
 struct NoRunner {};   // the GradientProvider's Runner is only a type tag
 
-/* Records every point asked for; a bowl centred in the box of spec(). */
+/* Records every point asked for; a bowl in the box of spec(), its minimum
+ * at (1, `b_min`) -- by default the centre. */
 struct StepRecorder {
     std::vector<Vec> asked;
+    double b_min = 0.004;
     double operator()(const Vec& x) {
         asked.push_back(x);
-        const double a = x(0) - 1.0, b = (x(1) - 0.004) / 0.008;
+        const double a = x(0) - 1.0, b = (x(1) - b_min) / 0.008;
         return a * a + b * b;
     }
 };
@@ -350,10 +352,11 @@ bool asks_b(const std::vector<Vec>& asked, double b)
 }
 
 /* One LN_BOBYQA search (MAXEVAL 9) of spec() from (1, `b`), a start of
- * origin `origin`, with STEP `step` (none: unset); the points asked for and
- * the journal. */
+ * origin `origin`, with STEP `step` (none: unset), on the bowl whose
+ * minimum is (1, `b_min`); the points asked for and the journal. */
 std::pair<std::vector<Vec>, std::string>
-bobyqa_from(double b, std::optional<double> step, InitOrigin::Kind origin)
+bobyqa_from(double b, std::optional<double> step, InitOrigin::Kind origin,
+            double b_min = 0.004)
 {
     auto sp = spec("LN_BOBYQA", false);
     sp.step = step;
@@ -361,6 +364,7 @@ bobyqa_from(double b, std::optional<double> step, InitOrigin::Kind origin)
     sp.optim_init_origin = {InitOrigin{origin, {}}};
     sp.stop.maxeval = 9;
     StepRecorder host;
+    host.b_min = b_min;
     StepJournal j;
     REQUIRE_NOTHROW(run_nlopt_impl<Vec, NoRunner>(sp, host));
     return {host.asked, j.text()};
@@ -407,18 +411,21 @@ TEST_CASE("LN_BOBYQA: a start within half a step of a bound starts on the "
 }
 
 /* Pins: LN_BOBYQA (STEP 0.25: a step of 0.002 on AMPGRIDMB[6]) from
- * AMPGRIDMB[6] = 0.0068, 0.0012 below its upper bound: the gap is at least
- * half the step, so the search starts one step from the bound, at 0.006
- * (moved by 0.0008, less than half a step), and keeps its full step: a
- * point of its first model has AMPGRIDMB[6] = 0.004, one step further in.
+ * AMPGRIDMB[6] = 0.0068, 0.0012 below its upper bound, on the bowl whose
+ * minimum is (1, 0.001): the gap is at least half the step, so the search
+ * starts one step from the bound, at 0.006 (moved by 0.0008, less than half
+ * a step), and keeps its full step: a point of its first model has
+ * AMPGRIDMB[6] = 0.004, one step further in. (On the bowl whose minimum is
+ * (1, 0.004) BOBYQA's quadratic model reaches 0.004 whatever its step: the
+ * check passed before the fix as well.)
  * Before the fix: the search started at 0.0068 and the step of
- * AMPGRIDMB[6] shrank to 0.75 of the gap, 9e-4: no point had AMPGRIDMB[6]
- * = 0.004, and the journal had no INFO line. */
+ * AMPGRIDMB[6] shrank to 0.75 of the gap, 9e-4: no point of the 9 had
+ * AMPGRIDMB[6] = 0.004, and the journal had no INFO line. */
 TEST_CASE("LN_BOBYQA: a start between half a step and a step from a bound "
           "starts one step from it", "[HPO][step_plan][nlopt]")
 {
     const auto [asked, journal] =
-        bobyqa_from(0.0068, 0.25, InitOrigin::Kind::Random);
+        bobyqa_from(0.0068, 0.25, InitOrigin::Kind::Random, 0.001);
     REQUIRE(asked.size() == 9u);
     CHECK(asked.front()(0) == 1.0);
     CHECK(asked.front()(1) == Approx(0.006).epsilon(1e-12));
