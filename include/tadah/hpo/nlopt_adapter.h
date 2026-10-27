@@ -18,9 +18,11 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 #include <exception>
 #include <iomanip>
 #include <limits>
+#include <map>
 #include <optional>
 #include <sstream>
 #include <stdexcept>
@@ -528,7 +530,11 @@ void run_nlopt_impl(const OptimizerSpec& sp, HostT& host,
      * LN_COBYLA -- a finite stand-in, and a gradient scaled with it.
      * `stand_in_noted`: the journal has said so (once per search, at its
      * first failed evaluation). The records keep the loss the evaluation
-     * reported. */
+     * reported. `reported`: the loss the evaluation reported for each value
+     * NLopt was given that differs from it (a stand-in, or a usable loss
+     * held at the ceiling), so the ending line can give the loss behind the
+     * value NLopt returns as its fmin (two failed evaluations given the
+     * same stand-in: the later one's). */
     struct Withheld {
         double              loss;
         GradientFailureInfo why;   /* the gradient's failure */
@@ -567,6 +573,7 @@ void run_nlopt_impl(const OptimizerSpec& sp, HostT& host,
         RepeatPoints<Vec>*                 repeats = nullptr;
         detail::FailedLossStandIn*         to_nlopt = nullptr;
         bool                               stand_in_noted = false;
+        std::map<double, double>           reported;
     };
     const std::optional<OptimizerSpec> local = single_local_search(sp);
     const unsigned long reevaluations = detail::auglag_reevaluations(sp);
@@ -612,6 +619,7 @@ void run_nlopt_impl(const OptimizerSpec& sp, HostT& host,
             const double v = (*u->to_nlopt)(f, slope);
             if (slope != 1.0)
                 for (double& gi : grad) gi *= slope;
+            if (std::memcmp(&v, &f, sizeof v) != 0) u->reported[v] = f;
             return v;
         };
         /* Stopping: an algorithm may still probe a point before it sees
@@ -938,8 +946,12 @@ void run_nlopt_impl(const OptimizerSpec& sp, HostT& host,
         } else if (res == nlopt::MAXEVAL_REACHED) {
             maxeval_ending();
         } else {
+            /* fmin is a value NLopt was given: the line gives the loss the
+             * evaluation reported for it (UData::reported). */
+            const auto r = udata.reported.find(fmin);
             std::ostringstream nfo;
-            nfo << "NLopt finished: " << status_str << "  fmin=" << fmin;
+            nfo << "NLopt finished: " << status_str << "  fmin="
+                << (r != udata.reported.end() ? r->second : fmin);
             std::cout << "[HPO] " << nfo.str() << "\n";
             HPOLog::instance().info(nfo.str());
         }
