@@ -284,10 +284,15 @@ TEST_CASE("MULTISTART rejection of a single-seed global states the real "
         CHECK_THAT(msg, Catch::Contains("TYPE PLAIN"));
         CHECK_THAT(msg, !Catch::Contains("set N_STARTS 1"));
     }
-    /* A multi-seed global (DLIB:GFS) stays accepted. */
+    /* A multi-seed global (DLIB:GFS) is refused too, for a reason of its
+     * own: it takes every INIT point in one run, so MULTISTART would run it
+     * once. Before the fix: accepted (CHECK_NOTHROW). */
     tadah::hpo::OptimizerSpec gfs;
     gfs.lib = "DLIB"; gfs.algo = "GFS";
-    CHECK_NOTHROW(tadah::hpo::MultiStartPolicy<V, int>::validate(gfs));
+    gfs.strategy_type = tadah::hpo::StrategyType::MULTISTART;
+    gfs.multistart.n_starts = 2;
+    CHECK_THROWS_WITH((tadah::hpo::MultiStartPolicy<V, int>::validate(gfs)),
+                      Catch::Contains("it takes every INIT point in one run"));
 }
 
 TEST_CASE("PRESTAGE without EXPLORE names the current grammar",
