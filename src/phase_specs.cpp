@@ -84,6 +84,21 @@ std::string with_block_line(const OptimizerSpec& spec, const std::string& what)
     return config_line_error(spec.block_line, what, spec.block_line_text);
 }
 
+std::string with_line(const OptimizerSpec& spec, const KeyLine& line,
+                      const std::string& what)
+{
+    if (line.number == 0) return with_block_line(spec, what);
+    return config_line_error(line.number, what, line.text);
+}
+
+std::string with_key_line(const OptimizerSpec& spec, const std::string& key,
+                          const std::string& what)
+{
+    const auto it = spec.key_lines.find(key);
+    return with_line(spec, it != spec.key_lines.end() ? it->second : KeyLine{},
+                     what);
+}
+
 std::optional<OptimizerSpec> inner_run_spec(const OptimizerSpec& parent)
 {
     const OptimizerCaps& caps = optimizer_caps(parent);
@@ -99,6 +114,7 @@ std::optional<OptimizerSpec> inner_run_spec(const OptimizerSpec& parent)
         run.algo = caps.default_inner;
         run.block_line = parent.block_line;
         run.block_line_text = parent.block_line_text;
+        run.key_lines = parent.key_lines;
         run.stop.ftol_rel = parent.stop.ftol_rel;
         run.stop.ftol_abs = parent.stop.ftol_abs;
         run.stop.xtol_rel = parent.stop.xtol_rel;
@@ -115,6 +131,45 @@ std::optional<OptimizerSpec> inner_run_spec(const OptimizerSpec& parent)
     run.stop.maxtime = tighter(run.stop.maxtime, parent.stop.maxtime);
     run.stop.stopval = parent.stop.stopval;
     return run;
+}
+
+namespace {
+/* GN_DIRECT_L_RAND in one OPTIM dimension: cdirect.c draws only to choose
+ * between equally long sides of a box (which_div 2), and a box of one
+ * dimension has one side. */
+bool direct_rand_in_one_dimension(const OptimizerSpec& spec)
+{
+    const OptimizerCaps* caps = find_optimizer_caps(spec.lib, spec.algo);
+    return caps && seed_use(*caps) == SeedUse::ReadInTwoDimensions &&
+           spec.low.size() == 1;
+}
+}  // namespace
+
+bool reads_seed(const OptimizerSpec& spec)
+{
+    const OptimizerCaps* caps = find_optimizer_caps(spec.lib, spec.algo);
+    if (!caps) return false;
+    switch (seed_use(*caps)) {
+        case SeedUse::Read:
+            return true;
+        case SeedUse::ReadInTwoDimensions:
+            return !direct_rand_in_one_dimension(spec);
+        case SeedUse::ThroughLocalSearch: {
+            const std::optional<OptimizerSpec> local = inner_run_spec(spec);
+            return local && reads_seed(*local);
+        }
+        case SeedUse::Refused:
+            return false;
+    }
+    return false;
+}
+
+std::string seed_unread_reason(const OptimizerSpec& spec)
+{
+    if (direct_rand_in_one_dimension(spec))
+        return "in one OPTIM dimension it draws no random numbers (it draws "
+               "them only to choose between equally long sides of a box)";
+    return "it draws no random numbers";
 }
 
 bool obtains_gradients(const OptimizerSpec& spec)

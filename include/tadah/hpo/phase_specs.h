@@ -83,6 +83,21 @@ std::optional<OptimizerSpec> inner_run_spec(const OptimizerSpec& parent);
  * which the INNER block replaces). */
 bool obtains_gradients(const OptimizerSpec& spec);
 
+/* True when a run of `spec` reads its SEED: its optimiser draws random
+ * numbers (OptimizerCaps::reads_seed) -- NLopt's GN_DIRECT_L_RAND only in
+ * two or more OPTIM dimensions (spec.low.size(): it draws them only to
+ * choose between equally long sides of a box) -- or, for NLopt's MLSL and
+ * AUGLAG (OptimizerCaps::accepts_inner), their local search
+ * (inner_run_spec) does: NLopt draws it from the random numbers of the
+ * enclosing run. A backend the registry does not have reads none. */
+bool reads_seed(const OptimizerSpec& spec);
+
+/* Why a run of `spec` does not read its SEED (!reads_seed(spec)): "it draws
+ * no random numbers", or for GN_DIRECT_L_RAND in one OPTIM dimension "in one
+ * OPTIM dimension it draws no random numbers (it draws them only to choose
+ * between equally long sides of a box)". */
+std::string seed_unread_reason(const OptimizerSpec& spec);
+
 /* The local search a run of `spec` is, when the run is one local search
  * from its starting point: `spec` itself for a local backend without a
  * local search of its own, or for NLopt's AUGLAG -- a local algorithm
@@ -122,6 +137,18 @@ std::optional<OptimizerSpec> search_ignoring_start(const OptimizerSpec& spec);
  * form "Error on line N: <what>\nLine: <text>" (config_line_error,
  * strict_parse.h); `what` alone for a spec built outside the parser. */
 std::string with_block_line(const OptimizerSpec& spec, const std::string& what);
+
+/* `what`, a refusal of the key `key` of the block that configures `spec`
+ * alone, at the line that sets it (OptimizerSpec::key_lines: LIB, ALGO,
+ * STEP, GRAD_STRATEGY), in the same form; without that line (a key not
+ * written, a spec built outside the parser) as with_block_line(). */
+std::string with_key_line(const OptimizerSpec& spec, const std::string& key,
+                          const std::string& what);
+
+/* `what` at `line` (its number and text), in the parser's form; as
+ * with_block_line(spec, what) for a line of number 0. */
+std::string with_line(const OptimizerSpec& spec, const KeyLine& line,
+                      const std::string& what);
 
 /* One phase of a run: its name, for messages, and the spec it runs.
  * `inner` marks the search an INNER block runs: it takes the gradient of

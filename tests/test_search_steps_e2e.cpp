@@ -375,9 +375,10 @@ TEST_CASE("DLIB:BFGS: the path does not depend on the scale of the loss",
                                 "    FTOL_ABS " + ftol + "\n",
                                 "FAILSCORE 1e300\nPC_ERMSE 0 " + weight + "\n"));
         CHECK(run.status == 0);
+        /* best_params.tadah: #IMPROVEMENT, EVAL, TIME, then RCUT2B. */
         const auto best = data_rows("best_params.tadah");
         REQUIRE_FALSE(best.empty());
-        CHECK(std::stod(best.back().at(2)) == 6.0);
+        CHECK(std::stod(best.back().at(3)) == 6.0);
         evals.push_back(data_rows("loss.tadah").size());
         const std::string journal = read_file("hpo_run.log");
         CHECK(journal.find("DLIB:BFGS: the search runs on the loss divided by "

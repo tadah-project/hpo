@@ -6,8 +6,7 @@
 // or any evaluation runs -- instead of the policy finding out once the run
 // (under PRESTAGE, the whole EXPLORE phase) is under way:
 //  - MULTISTART runs its optimiser from each INIT point, which a global
-//    optimiser that consumes a single starting point cannot do, for any
-//    N_STARTS;
+//    optimiser that takes one starting point cannot do, for any N_STARTS;
 //  - the PRESTAGE refinement does the same over the TOPK candidates, so a
 //    configured TOPK > 1 needs a refinement optimiser MULTISTART accepts;
 //  - the PRESTAGE refinement, and the INNER search of an AUGLAG under
@@ -313,20 +312,29 @@ bool runs_from_each_start(const OptimizerCaps& c)
     return !c.is_global || c.accepts_multi_seed;
 }
 
-/* Every backend runs_from_each_start() accepts, as LIB:ALGO, sorted. */
-std::vector<std::string> compatible_backends()
+/* A local backend: the backends STRATEGY TYPE MULTISTART runs from each
+ * start (one that takes several starting points in one run, DLIB:GFS, is
+ * refused there: it would run once, whatever N_STARTS). */
+bool is_local(const OptimizerCaps& c) { return !c.is_global; }
+
+/* Every backend `accepts` accepts (runs_from_each_start() by default), as
+ * LIB:ALGO, sorted. */
+std::vector<std::string> compatible_backends(
+    bool (*accepts)(const OptimizerCaps&) = &runs_from_each_start)
 {
     std::vector<std::string> out;
-    for (const auto* c : tadah::hpo::filter_optimizer_caps(&runs_from_each_start))
+    for (const auto* c : tadah::hpo::filter_optimizer_caps(accepts))
         out.push_back(c->lib + ":" + c->algo);
     std::sort(out.begin(), out.end());
     return out;
 }
 
 /* The alternatives a rejection lists: the "(A, B, ..., ... (N more))" group
- * after `lead`. They must be the first compatible backends in sorted
+ * after `lead`. They must be the first backends `accepts` accepts in sorted
  * order. */
-void check_alternatives(const std::string& msg, const std::string& lead)
+void check_alternatives(const std::string& msg, const std::string& lead,
+                        bool (*accepts)(const OptimizerCaps&) =
+                            &runs_from_each_start)
 {
     INFO("message: " << msg);
     const auto open = msg.find(lead + " (");
@@ -344,7 +352,7 @@ void check_alternatives(const std::string& msg, const std::string& lead)
         item.erase(0, item.find_first_not_of(' '));
         shown.push_back(item);
     }
-    const auto all = compatible_backends();
+    const auto all = compatible_backends(accepts);
     REQUIRE_FALSE(shown.empty());
     REQUIRE(shown.size() <= all.size());
     for (std::size_t i = 0; i < shown.size(); ++i) {
@@ -379,6 +387,19 @@ std::string prestage_body(const std::string& lib, const std::string& algo,
 
 }  // namespace
 
+/* Pins: a global optimiser that takes one starting point is refused under
+ * STRATEGY TYPE MULTISTART for any N_STARTS, the refusal naming the local
+ * optimisers as the alternatives ("A local optimiser (CERES:..., ...
+ * (N more)) runs from each start", the first ones of the sorted list) and
+ * saying what runs ("STRATEGY TYPE PLAIN runs X once."); local optimisers pass
+ * (DLIB:BFGS, NLOPT:LN_SBPLX). DLIB:GFS, which takes every INIT point in
+ * one run, is refused with a message of its own (the case "MULTISTART
+ * refuses an optimiser that takes every INIT point in one run").
+ * The refusal says why in the words of the documentation: "it is a global
+ * optimiser that takes one starting point".
+ * Before the fix: the alternatives were "a local or multi-seed optimiser",
+ * DLIB:GFS among them (the check of the lead fails); then the refusal said
+ * "consumes a single starting point". */
 TEST_CASE("startup validation: MULTISTART rejects a single-seed global "
           "optimiser for any N_STARTS",
           "[startup_validation][strategy][multistart]")
@@ -400,22 +421,25 @@ TEST_CASE("startup validation: MULTISTART rejects a single-seed global "
             const auto v =
                 judge(strategy_config(multistart_body(c.lib, c.algo,
                                                       c.n_starts, c.extra)));
-            /* The message says what runs (it ended "Use a local or multi-seed
-             * optimiser (...), or STRATEGY TYPE PLAIN to run X once."). */
+            /* The message says what runs (it ended "Use a local optimiser
+             * (...), or STRATEGY TYPE PLAIN to run X once."). */
             CHECK_THAT(v.startup,
                        Catch::Contains("STRATEGY TYPE MULTISTART cannot run " +
                                        c.lib + ":" + c.algo + ":") &&
                        Catch::Contains("any N_STARTS") &&
+                       Catch::Contains(": it is a global optimiser that takes "
+                                       "one starting point, so ") &&
                        Catch::Contains("STRATEGY TYPE PLAIN runs " + c.lib +
                                        ":" + c.algo + " once."));
             CHECK(v.policy == v.startup);
             if (!v.startup.empty())
-                check_alternatives(v.startup, "multi-seed optimiser");
+                check_alternatives(v.startup, "A local optimiser",
+                                   &is_local);
         }
     }
-    SECTION("local and multi-seed optimisers pass") {
+    SECTION("local optimisers pass") {
         for (const auto& la : std::vector<std::pair<std::string, std::string>>{
-                 {"DLIB", "BFGS"}, {"NLOPT", "LN_SBPLX"}, {"DLIB", "GFS"}}) {
+                 {"DLIB", "BFGS"}, {"NLOPT", "LN_SBPLX"}}) {
             INFO(la.first << ":" << la.second);
             const auto v = judge(strategy_config(
                 multistart_body(la.first, la.second, "3")));
@@ -425,6 +449,10 @@ TEST_CASE("startup validation: MULTISTART rejects a single-seed global "
     }
 }
 
+/* Pins: under PRESTAGE with TOPK > 1, a global refinement optimiser that
+ * takes one starting point is refused with a message of its own, which
+ * says "<LIB:ALGO> is a global optimiser that takes one starting point".
+ * Before the fix: it said "consumes a single starting point". */
 TEST_CASE("startup validation: PRESTAGE with TOPK > 1 rejects a single-seed "
           "global refinement with a message of its own",
           "[startup_validation][strategy][prestage]")
@@ -442,6 +470,9 @@ TEST_CASE("startup validation: PRESTAGE with TOPK > 1 rejects a single-seed "
                                        c.topk + " cannot refine with " +
                                        c.lib + ":" + c.algo + ":") &&
                        Catch::Contains("TOPK 1") &&
+                       Catch::Contains(c.lib + ":" + c.algo + " is a global "
+                                       "optimiser that takes one starting "
+                                       "point. ") &&
                        !Catch::Contains("TYPE MULTISTART"));
             CHECK(v.policy == v.startup);
             if (!v.startup.empty())
@@ -1100,7 +1131,7 @@ TEST_CASE("startup validation: VECTOR_ARR is refused for LD_TNEWTON and "
 
 /* Pins: DLIB:GFS draws no random numbers, so a SEED it would run with is
  * refused at startup, as TADAH:GRID's is ("DLIB:GFS does not use SEED: it
- * draws no random numbers; remove it"): a STRATEGY-level SEED, an EXPLORE
+ * draws no random numbers"): a STRATEGY-level SEED, an EXPLORE
  * block's SEED, and the STRATEGY-level SEED of a PRESTAGE refinement on
  * DLIB:GFS whose exploration has a SEED of its own. A PRESTAGE refinement's
  * SEED that the exploration takes (an exploration that reads SEED and has
@@ -1110,8 +1141,9 @@ TEST_CASE("startup validation: VECTOR_ARR is refused for LD_TNEWTON and "
  * exploration that reads none, the refinement's SEED is refused, saying
  * why the exploration does not take it ("the PRESTAGE refinement:
  * CERES:STEEPEST_DESCENT does not use SEED: it draws no random numbers,
- * and the exploration (NLOPT:GN_CRS2_LM) has a SEED of its own; remove
- * it", "... and the exploration (TADAH:GRID) reads none; ..."). A build
+ * and the exploration (NLOPT:GN_CRS2_LM) has a SEED of its own", "...
+ * and the exploration (TADAH:GRID) reads none"; each ended "; remove
+ * it"). A build
  * without Ceres refuses the CERES refinement as it refuses every LIB CERES
  * (hpo_test::ceres_expect).
  * Before the fix: DLIB:GFS's SEED was accepted at startup (tadah hpo
@@ -1127,7 +1159,7 @@ TEST_CASE("startup validation: DLIB:GFS refuses a SEED, unless it seeds the "
           "[startup_validation][gfs][seed]")
 {
     const std::string unread =
-        "DLIB:GFS does not use SEED: it draws no random numbers; remove it";
+        "DLIB:GFS does not use SEED: it draws no random numbers";
     CHECK(judge(strategy_config("    LIB DLIB\n    ALGO GFS\n    MAXEVAL 20\n"
                                 "    SEED 5\n")).startup ==
           "the STRATEGY-level optimiser: " + unread);
@@ -1144,7 +1176,7 @@ TEST_CASE("startup validation: DLIB:GFS refuses a SEED, unless it seeds the "
      * says why. */
     const std::string own =
         " does not use SEED: it draws no random numbers, and the exploration "
-        "(NLOPT:GN_CRS2_LM) has a SEED of its own; remove it";
+        "(NLOPT:GN_CRS2_LM) has a SEED of its own";
     CHECK(judge(prestage("    SEED 7\n", "      SEED 3\n")).startup ==
           "the PRESTAGE refinement: DLIB:GFS" + own);
     /* The refinement optimisers that read no SEED of their own. */
@@ -1175,14 +1207,104 @@ TEST_CASE("startup validation: DLIB:GFS refuses a SEED, unless it seeds the "
               "    MAXEVAL 10\n    SEED 5\n    EXPLORE\n      LIB TADAH\n"
               "      ALGO GRID\n    ENDEXPLORE\n")).startup ==
           "the PRESTAGE refinement: DLIB:BFGS does not use SEED: it draws no "
-          "random numbers, and the exploration (TADAH:GRID) reads none; "
-          "remove it");
+          "random numbers, and the exploration (TADAH:GRID) reads none");
     CHECK(judge(strategy_config(
               "    TYPE PRESTAGE\n    LIB NLOPT\n    ALGO LN_BOBYQA\n"
               "    MAXEVAL 10\n    EXPLORE\n      LIB DLIB\n"
               "      ALGO GFS\n      MAXEVAL 12\n      SEED 3\n"
               "    ENDEXPLORE\n")).startup ==
           "the PRESTAGE exploration (EXPLORE block): " + unread);
+}
+
+/* Pins: an NLopt algorithm reads SEED when it draws random numbers (NLopt
+ * 2.10: CRS2, ISRES, ESCH, the MLSL forms without LDS, PRAXIS, StoGO's RAND
+ * form, and DIRECT-L's RAND form in two or more OPTIM dimensions), or when
+ * the local search it runs does (an MLSL or AUGLAG whose INNER block, or
+ * NLopt's default local optimiser, is LN_PRAXIS). A SEED for any other is
+ * refused at startup as TADAH:GRID's is: "the STRATEGY-level optimiser:
+ * NLOPT:LN_BOBYQA does not use SEED: it draws no random numbers" (it
+ * ended "; remove it") -- LN_BOBYQA, LN_SBPLX, LN_COBYLA (which draws from
+ * a generator of its own with a fixed seed), LD_LBFGS, GN_DIRECT_L,
+ * GN_AGS, GD_STOGO, GN_MLSL_LDS with NLopt's default local optimiser,
+ * LN_AUGLAG with an INNER LN_BOBYQA; GN_DIRECT_L_RAND in one OPTIM dimension "...: in one OPTIM
+ * dimension it draws no random numbers (it draws them only to choose
+ * between equally long sides of a box)"; the EXPLORE block's
+ * SEED of GN_DIRECT_L ("the PRESTAGE exploration (EXPLORE block): ...");
+ * and the STRATEGY-level SEED of a PRESTAGE that refines with LN_BOBYQA
+ * after a GN_DIRECT_L exploration ("the PRESTAGE refinement:
+ * NLOPT:LN_BOBYQA does not use SEED: it draws no random numbers, and the
+ * exploration (NLOPT:GN_DIRECT_L) reads none"). Accepted: SEED
+ * for GN_CRS2_LM, GN_ISRES, GN_ESCH, GN_MLSL, LN_PRAXIS, GD_STOGO_RAND,
+ * GN_DIRECT_L_RAND in two dimensions, G_MLSL_LDS and LN_AUGLAG with an
+ * INNER LN_PRAXIS, and the STRATEGY-level SEED of a PRESTAGE that refines
+ * with LN_BOBYQA after a GN_CRS2_LM exploration, which takes it.
+ * Before the fix: every NLopt algorithm took SEED (OptimizerCaps::
+ * reads_seed was true for each), so each refusal above was "" (the run
+ * seeded NLopt's generator, which these algorithms never read). */
+TEST_CASE("startup validation: an NLopt algorithm that draws no random "
+          "numbers refuses SEED", "[startup_validation][nlopt][seed]")
+{
+    const std::string one_dim = kRoot;
+    const std::string two_dims =
+        "OPTIM WATOM (1) 0.1 5.0\nOPTIM RCUT2B (1) 4.0 6.0\nPC_ERMSE 0 1\n";
+    const auto plain = [](const std::string& root, const std::string& algo,
+                          const std::string& extra) {
+        return root + "OPTIMIZER\n  STRATEGY\n    LIB NLOPT\n    ALGO " + algo +
+               "\n    MAXEVAL 20\n    SEED 5\n" + extra +
+               "  ENDSTRATEGY\nENDOPTIMIZER\n";
+    };
+    const auto inner = [](const std::string& algo) {
+        return "    INNER\n      LIB NLOPT\n      ALGO " + algo +
+               "\n    ENDINNER\n";
+    };
+    const std::string unread = " does not use SEED: it draws no random "
+                               "numbers";
+    const std::string top = "the STRATEGY-level optimiser: NLOPT:";
+    struct Case { std::string algo, extra, root; };
+    for (const Case& c : std::vector<Case>{
+             {"LN_BOBYQA", "", one_dim}, {"LN_SBPLX", "", one_dim},
+             {"LN_COBYLA", "", one_dim}, {"LD_LBFGS", "", one_dim},
+             {"GN_DIRECT_L", "", one_dim}, {"GN_AGS", "", one_dim},
+             {"GD_STOGO", "", one_dim}, {"GN_MLSL_LDS", "", one_dim},
+             {"LN_AUGLAG", inner("LN_BOBYQA"), one_dim}}) {
+        INFO("NLOPT:" << c.algo << " " << c.extra);
+        CHECK(judge(plain(c.root, c.algo, c.extra)).startup ==
+              top + c.algo + unread);
+    }
+    CHECK(judge(plain(one_dim, "GN_DIRECT_L_RAND", "")).startup ==
+          top + "GN_DIRECT_L_RAND does not use SEED: in one OPTIM dimension "
+          "it draws no random numbers (it draws them only to choose between "
+          "equally long sides of a box)");
+    for (const Case& c : std::vector<Case>{
+             {"GN_CRS2_LM", "", one_dim}, {"GN_ISRES", "", one_dim},
+             {"GN_ESCH", "", one_dim}, {"GN_MLSL", "", one_dim},
+             {"LN_PRAXIS", "", one_dim}, {"GD_STOGO_RAND", "", one_dim},
+             {"GN_DIRECT_L_RAND", "", two_dims},
+             {"G_MLSL_LDS", inner("LN_PRAXIS"), one_dim},
+             {"LN_AUGLAG", inner("LN_PRAXIS"), one_dim}}) {
+        INFO("NLOPT:" << c.algo << " " << c.extra);
+        CHECK(judge(plain(c.root, c.algo, c.extra)).startup == "");
+    }
+    const auto prestage = [](const std::string& explore,
+                             const std::string& explore_seed) {
+        return strategy_config(
+            "    TYPE PRESTAGE\n    LIB NLOPT\n    ALGO LN_BOBYQA\n"
+            "    MAXEVAL 10\n    SEED 7\n    EXPLORE\n      LIB NLOPT\n"
+            "      ALGO " + explore + "\n      MAXEVAL 12\n" + explore_seed +
+            "    ENDEXPLORE\n");
+    };
+    CHECK(judge(prestage("GN_CRS2_LM", "")).startup == "");
+    CHECK(judge(prestage("GN_DIRECT_L", "")).startup ==
+          "the PRESTAGE refinement: NLOPT:LN_BOBYQA does not use SEED: it "
+          "draws no random numbers, and the exploration (NLOPT:GN_DIRECT_L) "
+          "reads none");
+    CHECK(judge(strategy_config(
+              "    TYPE PRESTAGE\n    LIB NLOPT\n    ALGO LN_BOBYQA\n"
+              "    MAXEVAL 10\n    EXPLORE\n      LIB NLOPT\n"
+              "      ALGO GN_DIRECT_L\n      MAXEVAL 12\n      SEED 3\n"
+              "    ENDEXPLORE\n")).startup ==
+          "the PRESTAGE exploration (EXPLORE block): NLOPT:GN_DIRECT_L" +
+              unread);
 }
 
 TEST_CASE("startup validation: a TYPE line after an EXPLORE or REFINE "
@@ -2207,11 +2329,6 @@ TEST_CASE("startup validation: each phase's backend checks run at startup",
              {"DLIB:GFS without a stop",
               "    TYPE PLAIN\n    LIB DLIB\n    ALGO GFS\n",
               "the STRATEGY-level optimiser: DLIB:GFS needs a stop"},
-             {"DLIB:GFS under MULTISTART without a stop (one run from every "
-              "INIT point)",
-              "    TYPE MULTISTART\n    LIB DLIB\n    ALGO GFS\n"
-              "    N_STARTS 2\n",
-              "the MULTISTART run: DLIB:GFS needs a stop"},
              {"the PRESTAGE exploration: TADAH:RANDOM without a stop",
               "    TYPE PRESTAGE\n    LIB DLIB\n    ALGO BFGS\n"
               "    MAXEVAL 20\n    EXPLORE\n      LIB TADAH\n"
@@ -2524,13 +2641,17 @@ TEST_CASE("startup validation: the GRAD_STRATEGY ANALYTICAL check, the "
  * STEP setting: a backend that does not use STEP, a value outside (0,
  * 0.5], overrides that cover only some dimensions.
  * Pins: each refusal is "Error on line N: <what>\nLine: <text>", N the
- * line that closes the block whose STEP it refuses: ENDOPTIMIZER for the
- * STRATEGY-level block, ENDEXPLORE for the EXPLORE block, ENDINNER for an
- * INNER block (the STRATEGY-level one's and the EXPLORE block's).
- * Before the fix: the same text without a line ("DLIB:BFGS (OUTER) does
- * not use STEP; ..."). */
-TEST_CASE("startup validation: the STEP rules name the line that closes the "
-          "block whose STEP they refuse",
+ * line of the STEP it refuses -- in the STRATEGY block, the EXPLORE block
+ * and an INNER block (the STRATEGY-level one's and the EXPLORE block's),
+ * the message naming the optimiser in words before it ("the STRATEGY-level
+ * optimiser: DLIB:BFGS does not use STEP; ...") -- and, for overrides that
+ * cover only some dimensions, a refusal of several lines, the line that
+ * closes the block (ENDOPTIMIZER).
+ * Before the fix: every refusal named the line that closes the block
+ * (ENDOPTIMIZER, ENDEXPLORE, ENDINNER), with the phase after the optimiser
+ * ("DLIB:BFGS (OUTER) does not use STEP; ..."); before that, no line. */
+TEST_CASE("startup validation: the STEP rules name the STEP line, or the "
+          "line that closes the block for overrides that cover too little",
           "[startup_validation][strategy][block_line][step]")
 {
     struct Case {
@@ -2542,12 +2663,12 @@ TEST_CASE("startup validation: the STEP rules name the line that closes the "
         {"STEP on the STRATEGY-level DLIB:BFGS",
          strategy_config("    TYPE PLAIN\n    LIB DLIB\n    ALGO BFGS\n"
                          "    MAXEVAL 20\n    STEP 0.1\n"),
-         "ENDOPTIMIZER",
+         "STEP 0.1",
          "the STRATEGY-level optimiser: DLIB:BFGS does not use STEP"},
         {"STEP 0.9 on the STRATEGY-level NLOPT:LN_SBPLX",
          strategy_config("    TYPE PLAIN\n    LIB NLOPT\n    ALGO LN_SBPLX\n"
                          "    MAXEVAL 20\n    STEP 0.9\n"),
-         "ENDOPTIMIZER",
+         "STEP 0.9",
          "the STRATEGY-level optimiser: NLOPT:LN_SBPLX: STEP must be a "
          "fraction of the OPTIM width "
          "in (0, 0.5] (got 0.9)"},
@@ -2563,7 +2684,7 @@ TEST_CASE("startup validation: the STEP rules name the line that closes the "
                          "    MAXEVAL 20\n    EXPLORE\n      LIB NLOPT\n"
                          "      ALGO GN_CRS2_LM\n      MAXEVAL 12\n"
                          "      STEP 0.1\n    ENDEXPLORE\n"),
-         "ENDEXPLORE",
+         "STEP 0.1",
          "the PRESTAGE exploration (EXPLORE block): NLOPT:GN_CRS2_LM does "
          "not use STEP"},
         {"STEP on the STRATEGY-level INNER block's NLOPT:LD_LBFGS",
@@ -2571,7 +2692,7 @@ TEST_CASE("startup validation: the STEP rules name the line that closes the "
                          "    MAXEVAL 60\n    INNER\n      LIB NLOPT\n"
                          "      ALGO LD_LBFGS\n      STEP 0.1\n"
                          "    ENDINNER\n"),
-         "ENDINNER", "the INNER search: NLOPT:LD_LBFGS does not use STEP"},
+         "STEP 0.1", "the INNER search: NLOPT:LD_LBFGS does not use STEP"},
         {"STEP on the EXPLORE block's INNER block's NLOPT:LD_LBFGS",
          strategy_config("    TYPE PRESTAGE\n    LIB NLOPT\n    ALGO LN_SBPLX\n"
                          "    MAXEVAL 20\n    EXPLORE\n      LIB NLOPT\n"
@@ -2579,7 +2700,7 @@ TEST_CASE("startup validation: the STEP rules name the line that closes the "
                          "      INNER\n        LIB NLOPT\n"
                          "        ALGO LD_LBFGS\n        STEP 0.1\n"
                          "      ENDINNER\n    ENDEXPLORE\n"),
-         "ENDINNER",
+         "STEP 0.1",
          "the INNER search of the EXPLORE block: NLOPT:LD_LBFGS does not "
          "use STEP"}};
     for (const auto& c : cases) {
@@ -2616,7 +2737,6 @@ TEST_CASE("startup validation: the backend checks reject no valid "
              /* MULTISTART: BUDGET_PER_START is each start's budget. */
              "    TYPE MULTISTART\n    LIB NLOPT\n    ALGO LN_SBPLX\n"
              "    N_STARTS 2\n    BUDGET_PER_START 5\n",
-             multistart_body("DLIB", "GFS", "3"),
              multistart_body("DLIB", "BFGS", "3"),
              /* The PRESTAGE refinement over TOPK candidates, each with its
               * share of MAXEVAL. */
@@ -3158,13 +3278,13 @@ TEST_CASE("startup validation: TADAH:RANDOM/GRID and DLIB:GFS reject what "
     }
     unread.push_back({"GRID SEED", grid + "    SEED 7\n",
                       top + "TADAH:GRID does not use SEED: it draws no random "
-                            "numbers; remove it"});
+                            "numbers"});
     /* DLIB:GFS's SEED, which find_min_global does not read either, is
      * refused as TADAH:GRID's is (it was accepted at startup and reported
      * with a warning when the run started). */
     unread.push_back({"GFS SEED", gfs + "    SEED 7\n",
                       top + "DLIB:GFS does not use SEED: it draws no random "
-                            "numbers; remove it"});
+                            "numbers"});
     for (const auto& c : unread) {
         INFO(c.what << "\n" << c.body);
         CHECK(judge(strategy_config(c.body)).startup == c.message);
@@ -3332,7 +3452,10 @@ TEST_CASE("startup validation: NLopt rejects a tolerance, POPULATION or "
         nlopt("GN_ISRES", "    POPULATION 10\n"),
         nlopt("LD_LBFGS", "    VECTOR_ARR 5\n"),
         nlopt("LD_TNEWTON_PRECOND", "    VECTOR_ARR 5\n"),
-        nlopt("LN_BOBYQA", "    SEED 3\n"),
+        /* SEED, read by an algorithm that draws random numbers (LN_BOBYQA,
+         * which draws none, refuses it: the case "an NLopt algorithm that
+         * draws no random numbers refuses SEED"). */
+        nlopt("LN_PRAXIS", "    SEED 3\n"),
         "    TYPE PLAIN\n    LIB NLOPT\n    ALGO G_MLSL_LDS\n    MAXEVAL 120\n"
         "    POPULATION 5\n    INNER\n      LIB NLOPT\n      ALGO LN_BOBYQA\n"
         "    ENDINNER\n",
@@ -3464,28 +3587,46 @@ TEST_CASE("startup validation: NLopt's AUGLAG, AUGLAG_EQ, G_MLSL and "
 }
 
 /* ======================================================================
- * MULTISTART runs a multi-seed backend (DLIB:GFS) once, from every INIT
- * point: BUDGET_PER_START, each start's budget, has no effect there.
+ * STRATEGY TYPE MULTISTART and an optimiser that takes every INIT point in
+ * one run (DLIB:GFS, OptimizerCaps::accepts_multi_seed).
  * ==================================================================== */
 
-TEST_CASE("startup validation: BUDGET_PER_START with a multi-seed backend is "
-          "rejected", "[startup_validation][strategy][multistart]")
+/* Pins: STRATEGY TYPE MULTISTART refuses an optimiser that takes every INIT
+ * point in one run, for any N_STARTS and with or without BUDGET_PER_START,
+ * at startup and in the policy: "STRATEGY TYPE MULTISTART cannot run
+ * DLIB:GFS: it takes every INIT point in one run, so MULTISTART would run
+ * it once, whatever N_STARTS; STRATEGY TYPE PLAIN runs DLIB:GFS once from
+ * every INIT point." (plan_multistart runs such an optimiser once, as
+ * PLAIN does). The global optimisers that take one starting point keep
+ * their refusal, whose alternatives are now the local optimisers only
+ * (the case "MULTISTART rejects a single-seed global optimiser for any
+ * N_STARTS"). A local optimiser takes BUDGET_PER_START.
+ * Before the fix: DLIB:GFS under MULTISTART was accepted and ran once
+ * (v.startup "" for N_STARTS 2 and 4), and with BUDGET_PER_START refused
+ * as "BUDGET_PER_START has no effect with DLIB:GFS, which runs every start
+ * in one optimiser; use MAXEVAL". */
+TEST_CASE("startup validation: MULTISTART refuses an optimiser that takes "
+          "every INIT point in one run",
+          "[startup_validation][strategy][multistart]")
 {
-    /* It ended "; use MAXEVAL". */
     const std::string message =
-        "BUDGET_PER_START has no effect with DLIB:GFS, which runs every start "
-        "in one optimiser; MAXEVAL sets its budget";
+        "STRATEGY TYPE MULTISTART cannot run DLIB:GFS: it takes every INIT "
+        "point in one run, so MULTISTART would run it once, whatever "
+        "N_STARTS; STRATEGY TYPE PLAIN runs DLIB:GFS once from every INIT "
+        "point.";
     for (const std::string& extra :
-         {std::string("    MAXEVAL 40\n    BUDGET_PER_START 5\n"),
-          std::string("    BUDGET_PER_START 5\n")}) {
+         {std::string("    N_STARTS 2\n    MAXEVAL 40\n"),
+          std::string("    N_STARTS 4\n    MAXEVAL 40\n"),
+          std::string("    N_STARTS 2\n    MAXEVAL 40\n"
+                      "    BUDGET_PER_START 5\n"),
+          std::string("    N_STARTS 2\n    BUDGET_PER_START 5\n")}) {
         INFO(extra);
         const auto v = judge(strategy_config(
-            "    TYPE MULTISTART\n    LIB DLIB\n    ALGO GFS\n"
-            "    N_STARTS 2\n" + extra));
+            "    TYPE MULTISTART\n    LIB DLIB\n    ALGO GFS\n" + extra));
         CHECK(v.startup == message);
         CHECK(v.policy == message);
     }
-    /* A backend that runs from each start takes it. */
+    /* A backend that runs from each start takes BUDGET_PER_START. */
     const auto v = judge(strategy_config(
         "    TYPE MULTISTART\n    LIB DLIB\n    ALGO BFGS\n"
         "    N_STARTS 2\n    BUDGET_PER_START 5\n"));
@@ -3917,7 +4058,7 @@ TEST_CASE("startup validation: GRAD_STRATEGY on a phase that takes no "
     struct LocalCase { std::string body, who, local; };
     for (const auto& c : std::vector<LocalCase>{
              {"    TYPE PLAIN\n    LIB NLOPT\n    ALGO GD_MLSL_LDS\n"
-              "    MAXEVAL 12\n    SEED 3\n    GRAD_STRATEGY NUMERICAL\n" +
+              "    MAXEVAL 12\n    GRAD_STRATEGY NUMERICAL\n" +
                   inner("    ", "LN_BOBYQA"),
               "the STRATEGY-level optimiser NLOPT:GD_MLSL_LDS",
               the_inner + "NLOPT:LN_BOBYQA"},

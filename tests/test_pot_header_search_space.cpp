@@ -165,3 +165,47 @@ TEST_CASE("best_pot.tadah header and journal: a numeric PARAM value as "
     CHECK_THAT(journal, Contains("GRID_POINTS         : 11\n"));
     CHECK(journal.find("1.1000e+01") == std::string::npos);
 }
+
+/* Pins: the banner of best_pot.tadah names the evaluation and the
+ * improvement it is ("#  Evaluation 7, improvement 4  |  Loss:
+ * 1.2500e+00"), and the header of a BDUMP archive does too ("# Tadah HPO --
+ * improvement 4 (eval 7)  |  loss="): the improvement is the best's
+ * number among the run's bests, the evaluation its number among the run's
+ * evaluations (the ITERATION of loss.tadah and params.tadah).
+ * Before the fix: "#  Best iter 4  (eval 7)" and "# Tadah HPO -- best iter
+ * 4  (eval 7)", which mixed the two numberings without saying what each
+ * counts. */
+TEST_CASE("best_pot.tadah header: the banner and the archive header name "
+          "the evaluation and the improvement", "[HPO][pot_header]")
+{
+    ScopedTextFile f(kGrid);
+    Context ctx = watom_ctx();
+    HPOTargets trg(ctx, f.path.string());
+    tadah::hpo::EvalResult<ParamVec> r;
+    r.iter = 7;
+    r.best_iter = 4;
+    r.loss = 1.25;
+    r.params.set_size(static_cast<long>(trg.spec.low.size()));
+    for (long i = 0; i < r.params.size(); ++i) r.params(i) = 0.5;
+    const Context val_ctx{};
+    const tadah::mlip::StructureDB train_db{}, val_db{};
+    const tadah::mlip::LoadTransformReport report{};
+    std::ostringstream os;
+    tadah::hpo::PotHeaderWriter::write_best_header(
+        os, r, trg, ctx, val_ctx, train_db, val_db, trg.spec.parameter_labels,
+        report, /*cw=*/16, /*prec=*/6);
+    const std::string header = os.str();
+    INFO(header);
+    CHECK_THAT(header,
+               Contains("\n#  Evaluation 7, improvement 4  |  Loss: "
+                        "1.2500e+00\n"));
+    CHECK_THAT(header, !Contains("Best iter"));
+    std::ostringstream archive;
+    tadah::hpo::PotHeaderWriter::write_best_archive_header(archive, r, trg,
+                                                           /*cw=*/16,
+                                                           /*prec=*/6);
+    INFO(archive.str());
+    CHECK_THAT(archive.str(),
+               Contains("# Tadah HPO -- improvement 4 (eval 7)  |  loss="));
+    CHECK_THAT(archive.str(), !Contains("best iter"));
+}

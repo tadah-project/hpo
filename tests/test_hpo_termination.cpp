@@ -440,11 +440,14 @@ void check_run_files()
     CHECK(key->loss == Approx(winner->loss).epsilon(kPrintResolution));
 
     /* best_params.tadah has one row per improvement (BOUTPUT 1), with the
-     * improvement ordinal k = 1, 2, ... in its first column, and the row of
-     * the last improvement is the incumbent's params.tadah row (same slot
-     * and values). Rows are written in evaluation order, so with concurrent
-     * evaluations a later improvement can precede an earlier one: the last
-     * improvement is the highest k, not necessarily the last row. */
+     * improvement ordinal k = 1, 2, ... in its first column (#IMPROVEMENT)
+     * and the evaluation of that best in its second (EVAL), and the row of
+     * the last improvement is the incumbent's params.tadah row (the same
+     * evaluation, slot and values). Rows are written in evaluation order,
+     * so with concurrent evaluations a later improvement can precede an
+     * earlier one: the last improvement is the highest k, not necessarily
+     * the last row. Before the fix: no EVAL column (the row's columns from
+     * the second on were params.tadah's). */
     const auto params  = data_rows("params.tadah");
     const auto bparams = data_rows("best_params.tadah");
     REQUIRE_FALSE(bparams.empty());
@@ -464,10 +467,11 @@ void check_run_files()
     for (const auto& row : params)
         if (std::stoull(row.at(0)) == winner->iter) incumbent_row = &row;
     REQUIRE(incumbent_row != nullptr);
-    REQUIRE(last_best->size() == incumbent_row->size());
-    for (std::size_t c = 1; c < last_best->size(); ++c) {
-        INFO("best_params.tadah column " << c);
-        CHECK((*last_best)[c] == (*incumbent_row)[c]);
+    REQUIRE(last_best->size() == incumbent_row->size() + 1);
+    CHECK(std::stoull(last_best->at(1)) == winner->iter);
+    for (std::size_t c = 1; c < incumbent_row->size(); ++c) {
+        INFO("best_params.tadah column " << c + 1);
+        CHECK((*last_best)[c + 1] == (*incumbent_row)[c]);
     }
 
     const std::string journal = read_file("hpo_run.log");
@@ -4034,10 +4038,12 @@ TEST_CASE("Termination: an NLopt search seeded by its INIT block's SEED "
 
 /* Pins: MULTISTART (and the PRESTAGE refinement it runs) gives start i of an
  * NLopt search seeded only by its INIT block's SEED that SEED + i, as it
- * gives a SEED: N_STARTS 2 of NLOPT:LN_SBPLX with an INIT block METHOD
- * RANDOM 2, SEED 7 journals "MULTISTART start 1/2 -- running inner optimiser
- * (INIT seed=7)" and "MULTISTART start 2/2 -- running inner optimiser (INIT
- * seed=8)".
+ * gives a SEED: N_STARTS 2 of NLOPT:LN_PRAXIS, which draws random numbers,
+ * with an INIT block METHOD RANDOM 2, SEED 7 journals "MULTISTART start 1/2
+ * -- running inner optimiser (INIT seed=7)" and "MULTISTART start 2/2 --
+ * running inner optimiser (INIT seed=8)". The case ran NLOPT:LN_SBPLX,
+ * which draws none, until a start line named only a seed its optimiser
+ * reads (the case below).
  * Before the fix: every start took the INIT block's SEED 7, and the start
  * lines named no seed ("MULTISTART start 2/2 -- running inner optimiser"):
  * the checks fail. */
@@ -4047,7 +4053,7 @@ TEST_CASE("Termination: MULTISTART gives each start of an NLopt search "
 {
     TaRun run("OPTIMIZER\n  INIT\n    METHOD RANDOM 2\n    SEED 7\n"
               "  ENDINIT\n  STRATEGY\n    TYPE MULTISTART\n    LIB NLOPT\n"
-              "    ALGO LN_SBPLX\n    MAXEVAL 8\n    N_STARTS 2\n"
+              "    ALGO LN_PRAXIS\n    MAXEVAL 8\n    N_STARTS 2\n"
               "  ENDSTRATEGY\nENDOPTIMIZER\n");
     int status = -1;
     REQUIRE_NOTHROW(status = tadah::hpo::hpo_run(run.ctx));
@@ -4175,8 +4181,9 @@ TEST_CASE("Termination: MULTISTART with fewer starting points than N_STARTS "
 }
 
 /* Pins: what the RESTART rounds of NLopt's StoGO evaluate, as the startup
- * WARNING says (PLAIN, 3 OPTIM dimensions, MAXEVAL 60, STRATEGY SEED 11,
- * RESTART AFTER_STAGNATION 4, MAX 1, METHOD RANDOM 1, SEED 5): round 1
+ * WARNING says (PLAIN, 3 OPTIM dimensions, MAXEVAL 60, STRATEGY SEED 11 for
+ * GD_STOGO_RAND, RESTART AFTER_STAGNATION 4, MAX 1, METHOD RANDOM 1, SEED
+ * 5): round 1
  * makes evaluations, and
  *  - GD_STOGO: each is at a point of round 0 (the box centre's loss comes
  *    from the record, its stencil is evaluated again); the WARNING names
@@ -4200,9 +4207,13 @@ TEST_CASE("Termination: a RESTART round of StoGO evaluates what the startup "
           "warning says",
           "[HPO][termination][restart][start_point]")
 {
+    /* SEED 11 for GD_STOGO_RAND, which draws random numbers; GD_STOGO
+     * draws none and refuses SEED. */
     const auto stogo = [](const std::string& algo, const std::string& pop) {
+        const std::string seed =
+            algo == "GD_STOGO_RAND" ? "    SEED 11\n" : "";
         return plain_block("    TYPE PLAIN\n    LIB NLOPT\n    ALGO " + algo +
-                           "\n    MAXEVAL 60\n    SEED 11\n" + pop +
+                           "\n    MAXEVAL 60\n" + seed + pop +
                            "    RESTART\n      AFTER_STAGNATION 4\n"
                            "      MAX 1\n      METHOD RANDOM 1\n"
                            "      SEED 5\n    ENDRESTART\n");
@@ -4421,12 +4432,14 @@ TEST_CASE("Termination: the MULTISTART starts of a restarted run never "
 {
     /* MULTISTART runs start i with SEED + i. A restart used to keep SEED,
      * so the starts of every round reused round 0's seeds; round r now
-     * runs start i with SEED + r*N_STARTS + i. */
+     * runs start i with SEED + r*N_STARTS + i. The starts run LN_PRAXIS,
+     * which draws random numbers and so reads SEED (LN_SBPLX draws none
+     * and refuses SEED). */
     TaRun run(
         "OPTIMIZER\n"
         "  INIT\n    METHOD LHS 3\n  ENDINIT\n"
         "  STRATEGY\n"
-        "    TYPE MULTISTART\n    LIB NLOPT\n    ALGO LN_SBPLX\n"
+        "    TYPE MULTISTART\n    LIB NLOPT\n    ALGO LN_PRAXIS\n"
         "    N_STARTS 3\n    BUDGET_PER_START 200\n    SEED 10\n"
         "    RESTART\n      AFTER_STAGNATION 3\n      MAX 2\n"
         "      METHOD RANDOM 3\n    ENDRESTART\n"
@@ -4464,11 +4477,12 @@ TEST_CASE("Termination: the PRESTAGE refinement starts of a restarted run "
      * refinement start (MAXEVAL 12 split over TOPK 3) runs in a stagnation
      * window of its own; after the third start a refinement in which a
      * start stagnated restarts the PRESTAGE: every round runs all three
-     * starts. */
+     * starts. The refinement runs LN_PRAXIS, which draws random numbers
+     * and so reads SEED (LN_SBPLX draws none and refuses SEED). */
     TaRun run(
         "OPTIMIZER\n"
         "  STRATEGY\n"
-        "    TYPE PRESTAGE\n    LIB NLOPT\n    ALGO LN_SBPLX\n"
+        "    TYPE PRESTAGE\n    LIB NLOPT\n    ALGO LN_PRAXIS\n"
         "    MAXEVAL 12\n    TOPK 3\n    SEED 7\n"
         "    EXPLORE\n      LIB TADAH\n      ALGO RANDOM\n"
         "      MAXEVAL 20\n      SEED 1717\n    ENDEXPLORE\n"
@@ -6801,9 +6815,9 @@ TEST_CASE("Termination: DLIB:BFGS records why it ended",
  * error), so this sweep is the guard that no backend and strategy does.
  * Each run spends a small MAXEVAL on the three-dimensional fixture:
  *   PLAIN       the backend alone;
- *   MULTISTART  two starts from two INIT points (the backends that run
- *               from each start, runs_from_each_start(); a global one is
- *               refused at startup);
+ *   MULTISTART  two starts from two INIT points (the local backends; a
+ *               global one is refused at startup, DLIB:GFS, which takes
+ *               every INIT point in one run, too);
  *   PRESTAGE    a TADAH:RANDOM exploration, then the backend as the
  *               refinement of TOPK 2 candidates (TOPK 1 for a global
  *               backend; one that does not start at the point it is given,
@@ -6867,7 +6881,7 @@ void check_every_backend_records_its_end(const std::string& strategy)
 #ifndef TADAH_USE_CERES
         if (c->lib == "CERES") continue;   // registered, not built
 #endif
-        if (strategy == "MULTISTART" && !tadah::hpo::runs_from_each_start(*c))
+        if (strategy == "MULTISTART" && c->is_global)
             continue;                      // refused at startup
         if (strategy == "PRESTAGE" && !c->starts_at_x0)
             continue;                      // refused at startup
@@ -9838,5 +9852,169 @@ TEST_CASE("hpo_run without HPOTARGET is refused, naming where the run's own "
         CHECK(read_file("hpo_run.log").find("startup: " + leg.message) !=
               std::string::npos);
         CHECK_FALSE(fs::exists("loss.tadah"));
+    }
+}
+
+namespace {
+/* The journal lines of `journal` that contain `needle`. */
+std::vector<std::string> journal_lines_with(const std::string& journal,
+                                            const std::string& needle)
+{
+    std::vector<std::string> out;
+    std::istringstream in(journal);
+    for (std::string l; std::getline(in, l);)
+        if (l.find(needle) != std::string::npos) out.push_back(l);
+    return out;
+}
+
+/* A PLAIN NLOPT:GN_MLSL_LDS search (POPULATION 2, MAXEVAL 4) whose INNER
+ * block runs `inner`, with `init` in its INIT block and `seed` in its
+ * STRATEGY block. */
+std::string mlsl_lds(const std::string& init, const std::string& inner,
+                     const std::string& seed)
+{
+    return "OPTIMIZER\n  INIT\n" + init + "  ENDINIT\n  STRATEGY\n"
+           "    TYPE PLAIN\n    LIB NLOPT\n    ALGO GN_MLSL_LDS\n"
+           "    MAXEVAL 4\n    POPULATION 2\n" + seed +
+           "    INNER\n      LIB NLOPT\n      ALGO " + inner + "\n"
+           "    ENDINNER\n  ENDSTRATEGY\nENDOPTIMIZER\n";
+}
+}  // namespace
+
+/* Pins: the note of an NLOPT:GN_MLSL_LDS search that its exploration points
+ * are a Sobol sequence, the same in every run, is a WARNING about SEED only
+ * when the target file sets a SEED, never for a seed the run draws:
+ *  - an INIT block of METHOD LHS 3 without SEED (the run draws its seed)
+ *    and an INNER LN_SBPLX, and an INIT block of METHOD CONFIG without SEED
+ *    and an INNER LN_PRAXIS (the run draws the STRATEGY block's seed):
+ *    "GN_MLSL_LDS: exploration points come from a deterministic Sobol (LDS)
+ *    sequence and are identical across runs." at INFO in the journal;
+ *  - SEED 5 in the INIT block (METHOD LHS 3), INNER LN_SBPLX: the WARNING
+ *    "GN_MLSL_LDS: exploration points come from a deterministic Sobol (LDS)
+ *    sequence and are identical across runs; SEED affects at most the
+ *    INIT-chain starting point (and only when the chain has a
+ *    RANDOM/LHS/SOBOL entry), not the sampled points. GN_MLSL draws its
+ *    sample points at random from SEED." (it ended "Use GN_MLSL for
+ *    seed-controlled random sampling.");
+ *  - SEED 5 in the STRATEGY block, INNER LN_PRAXIS, whose random steps draw
+ *    from it: the WARNING "...; SEED does not change the sampled points: it
+ *    changes at most the INIT-chain starting point (a SEED in the INIT
+ *    block, when the chain has a RANDOM/LHS/SOBOL entry) and the random
+ *    numbers of the local search NLOPT:LN_PRAXIS. GN_MLSL draws its sample
+ *    points at random from SEED.".
+ * Before the fix: a drawn seed counted as a SEED of the file, so both runs
+ * without SEED gave the WARNING of the INIT-block SEED; the STRATEGY-level
+ * SEED's WARNING said that SEED affects at most the INIT-chain starting
+ * point. */
+TEST_CASE("Termination: the Sobol note of GN_MLSL_LDS warns about a SEED of "
+          "the target file only",
+          "[HPO][termination][nlopt][seed][drawn_seed]")
+{
+    const std::string head =
+        "GN_MLSL_LDS: exploration points come from a deterministic Sobol "
+        "(LDS) sequence and are identical across runs";
+    const auto note = [&](const std::string& optimizer) {
+        TaRun run(optimizer);
+        int status = -1;
+        REQUIRE_NOTHROW(status = tadah::hpo::hpo_run(run.ctx));
+        CHECK(status == 0);
+        const std::string journal = read_file("hpo_run.log");
+        INFO("journal:\n" << journal);
+        const auto lines = journal_lines_with(journal, head);
+        REQUIRE(lines.size() == 1u);
+        return lines.front();
+    };
+    for (const auto& [init, inner] :
+         {std::pair<std::string, std::string>{"    METHOD LHS 3\n",
+                                              "LN_SBPLX"},
+          std::pair<std::string, std::string>{"    METHOD CONFIG\n",
+                                              "LN_PRAXIS"}}) {
+        INFO(init << inner);
+        const std::string line = note(mlsl_lds(init, inner, ""));
+        INFO(line);
+        CHECK(line.find("INFO") != std::string::npos);
+        CHECK(line.find("WARNING") == std::string::npos);
+        CHECK(line.size() >= head.size() + 1);
+        CHECK(line.compare(line.size() - head.size() - 1, head.size() + 1,
+                           head + ".") == 0);
+    }
+    {
+        const std::string line =
+            note(mlsl_lds("    METHOD LHS 3\n    SEED 5\n", "LN_SBPLX", ""));
+        INFO(line);
+        CHECK(line.find("WARNING") != std::string::npos);
+        CHECK(line.find(head + "; SEED affects at most the INIT-chain "
+                        "starting point (and only when the chain has a "
+                        "RANDOM/LHS/SOBOL entry), not the sampled points. "
+                        "GN_MLSL draws its sample points at random from "
+                        "SEED.") !=
+              std::string::npos);
+    }
+    {
+        const std::string line = note(
+            mlsl_lds("    METHOD CONFIG\n", "LN_PRAXIS", "    SEED 5\n"));
+        INFO(line);
+        CHECK(line.find("WARNING") != std::string::npos);
+        CHECK(line.find(head + "; SEED does not change the sampled points: it "
+                        "changes at most the INIT-chain starting point (a "
+                        "SEED in the INIT block, when the chain has a "
+                        "RANDOM/LHS/SOBOL entry) and the random numbers of "
+                        "the local search NLOPT:LN_PRAXIS. GN_MLSL draws its "
+                        "sample points at random from SEED.") !=
+              std::string::npos);
+    }
+}
+
+/* Pins: the start lines of a MULTISTART and the RESTART line name the seed
+ * of an NLopt search only when the search draws random numbers: N_STARTS 2
+ * of NLOPT:LN_SBPLX, which draws none, journals "MULTISTART start 1/2 --
+ * running inner optimiser" and "MULTISTART start 2/2 -- running inner
+ * optimiser", with an INIT block of METHOD RANDOM 2 and SEED 7 as with one
+ * without SEED (whose seed the run draws); NLOPT:LD_MMA held at a bound,
+ * restarted once (RESTART METHOD RANDOM 1, SEED 5), with an INIT block of
+ * SEED 7 journals "RESTART 1/1 -- fresh init from RANDOM; RESTART SEED 6"
+ * and nothing after it.
+ * Before the fix: the start lines named the INIT block's seed, written or
+ * drawn ("(INIT seed=7)", "(INIT seed=8)"), and the RESTART line ", INIT
+ * SEED 8", though LN_SBPLX and LD_MMA read no seed. */
+TEST_CASE("Termination: the MULTISTART and RESTART lines name no seed of an "
+          "NLopt search that draws no random numbers",
+          "[HPO][termination][multistart][restart][seed]")
+{
+    for (const std::string seed : {"    SEED 7\n", ""}) {
+        INFO("INIT block: METHOD RANDOM 2\n" << seed);
+        TaRun run("OPTIMIZER\n  INIT\n    METHOD RANDOM 2\n" + seed +
+                  "  ENDINIT\n  STRATEGY\n    TYPE MULTISTART\n"
+                  "    LIB NLOPT\n    ALGO LN_SBPLX\n    MAXEVAL 8\n"
+                  "    N_STARTS 2\n  ENDSTRATEGY\nENDOPTIMIZER\n");
+        int status = -1;
+        REQUIRE_NOTHROW(status = tadah::hpo::hpo_run(run.ctx));
+        CHECK(status == 0);
+        const std::string journal = read_file("hpo_run.log");
+        INFO(journal);
+        for (const char* start : {"MULTISTART start 1/2 -- running inner "
+                                  "optimiser",
+                                  "MULTISTART start 2/2 -- running inner "
+                                  "optimiser"}) {
+            const auto lines = journal_lines_with(journal, start);
+            REQUIRE(lines.size() == 1u);
+            CHECK(lines.front().compare(
+                      lines.front().size() - std::string(start).size(),
+                      std::string::npos, start) == 0);
+        }
+    }
+    {
+        TaRun run("OPTIMIZER\n  INIT\n    SEED 7\n  ENDINIT\n  STRATEGY\n"
+                  "    TYPE PLAIN\n    LIB NLOPT\n    ALGO LD_MMA\n" +
+                      kRepeatRestart + "  ENDSTRATEGY\nENDOPTIMIZER\n",
+                  kLowerBoundRoot);
+        int status = -1;
+        REQUIRE_NOTHROW(status = repeat_run_within(
+                            run, "LD_MMA at a bound under RESTART, INIT SEED"));
+        CHECK(status == 0);
+        const std::string journal = read_file("hpo_run.log");
+        INFO(journal);
+        CHECK(journal.find("RESTART 1/1 -- fresh init from RANDOM; RESTART "
+                           "SEED 6\n") != std::string::npos);
     }
 }

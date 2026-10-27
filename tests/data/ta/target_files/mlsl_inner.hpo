@@ -1,5 +1,6 @@
-# NLOPT:G_MLSL_LDS with POPULATION and an INNER block (LN_BOBYQA), seeded
-# by the INIT block's SEED alone.
+# NLOPT:G_MLSL_LDS with POPULATION and an INNER block (LN_PRAXIS, whose
+# random steps draw NLopt's random numbers), seeded by the INIT block's SEED
+# alone.
 
 OPTIMIZER
   INIT
@@ -13,7 +14,7 @@ OPTIMIZER
     POPULATION 5
     INNER
       LIB NLOPT
-      ALGO LN_BOBYQA
+      ALGO LN_PRAXIS
     ENDINNER
   ENDSTRATEGY
 ENDOPTIMIZER

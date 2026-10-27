@@ -328,10 +328,18 @@ TEST_CASE("phase specs: a PRESTAGE exploration without a SEED takes the "
         REQUIRE(s.prestage);
         CHECK_FALSE(s.prestage->seed);
     }
-    SECTION("without a STRATEGY-level SEED the exploration has none") {
+    /* Without a STRATEGY-level SEED the exploration takes none from the
+     * STRATEGY block; GN_CRS2_LM, which draws random numbers, draws a seed
+     * of its own once for the run (the case "drawn seeds: an NLopt
+     * algorithm that draws random numbers without a SEED ..."). Before the
+     * fix: the exploration had no seed (NLopt's clock seed). The journal
+     * says the seed is drawn (test_drawn_seeds.cpp). */
+    SECTION("without a STRATEGY-level SEED the exploration draws one of its "
+            "own") {
         const OptimizerSpec s = prestage("", crs2);
         REQUIRE(s.prestage);
-        CHECK_FALSE(s.prestage->seed);
+        CHECK(s.prestage->seed);
+        CHECK_FALSE(s.prestage->seed_from_strategy);
     }
 }
 
@@ -544,8 +552,7 @@ TEST_CASE("backend rules: validate_backend runs each backend's own checks",
               "TADAH:RANDOM does not use POPULATION; remove it (it is read "
               "by NLOPT:GD_MLSL, "},
              {"TADAH", "GRID", [](OptimizerSpec& s) { s.seed = 3; },
-              "TADAH:GRID does not use SEED: it draws no random numbers; "
-              "remove it"},
+              "TADAH:GRID does not use SEED: it draws no random numbers"},
              {"DLIB", "GFS", [](OptimizerSpec& s) { s.vector_storage = 5; },
               "DLIB:GFS does not use VECTOR_ARR; remove it (it is read by "
               "NLOPT:LD_LBFGS, "},
@@ -569,6 +576,15 @@ TEST_CASE("backend rules: validate_backend runs each backend's own checks",
         auto s = with(c.lib, c.algo);
         c.set(s);
         CHECK_THAT(error_of(s), Catch::StartsWith(c.message));
+    }
+    /* Pins: the SEED refusal says what is refused and why, and nothing
+     * after it: "TADAH:GRID does not use SEED: it draws no random numbers".
+     * Before: it ended "; remove it". */
+    {
+        auto grid = with("TADAH", "GRID");
+        grid.seed = 3;
+        CHECK(error_of(grid) ==
+              "TADAH:GRID does not use SEED: it draws no random numbers");
     }
 
     /* Pins: a tolerance on G_MLSL without an INNER block -- a spec built

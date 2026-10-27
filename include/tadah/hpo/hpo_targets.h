@@ -283,6 +283,17 @@ public:
     };
     static OutputNames output_names();
 
+    /* One WARNING (stderr and the journal) for each METHOD WARM line of an
+     * INIT block (the OPTIMIZER-level one, the EXPLORE block's) or of the
+     * RESTART block whose file is the run's best_pot.tadah, by whatever
+     * path or symbolic link (canonicalBestPotFile, localBestPotFile): the
+     * run removes that file before its first evaluation and writes its best
+     * potential there. A RESTART block's path that names that directory
+     * entry is warned about whatever the entry links to: each round opens
+     * the path again, after the run has replaced the entry, link and all.
+     * Called by the constructor, once the chains are resolved. */
+    void warn_warm_of_best_pot() const;
+
     /* Whether the run writes the search-space files: hpo_search_space.tsv
      * when the target file has a search space, hpo_optim_resolved.hpo when
      * a box of it comes from an AUTO rule (write_search_space_files). */

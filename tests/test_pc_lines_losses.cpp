@@ -189,12 +189,17 @@ std::string sim_error(std::string cmd, bool failprobe = false,
  * PC_FAILPROBE for a file whose only script line is the probe -- for a
  * gradient-based optimiser, an MLSL whose default local optimiser takes
  * gradients, such an INNER block and a GRAD_STRATEGY line alike.
+ * Each refusal names the line of the key it refuses (ALGO, GRAD_STRATEGY)
+ * and the line of the script line it names ("--hpotarget defines
+ * PC_FAILPROBE on line 7 but ...").
  * Before the fix: DLIB:BFGS was the one gradient-based optimiser accepted
  * (read_error was "" for the three files), and the refusal of the others
  * said "or DLIB:BFGS, the one gradient-based optimiser it accepts". Before
  * the line was named: every refusal said "--hpotarget defines PC_LAMMPS
  * but" and "PC_LAMMPS requires" (or "PC_LAMMPS does not support"), also
- * for a file without a PC_LAMMPS line. */
+ * for a file without a PC_LAMMPS line. Before the key lines: each named
+ * the line that closes its block (ENDOPTIMIZER, ENDEXPLORE, ENDINNER) and
+ * not the line of the script line. */
 TEST_CASE("PC lines: PC_LAMMPS and PC_FAILPROBE refuse DLIB:BFGS",
           "[HPO][pc_lines][gradient]") {
     tadah::core::PeriodicTable::initialize();
@@ -205,19 +210,20 @@ TEST_CASE("PC lines: PC_LAMMPS and PC_FAILPROBE refuse DLIB:BFGS",
     const std::string lammps = "PC_LAMMPS --script p.in --varloss E 1 1\n";
     const std::string probe =
         "PC_ERMSE 0 1\nPC_FAILPROBE --script p.in --outvar S\n";
-    struct Case { std::string lines, named; };
+    struct Case { std::string lines, named, line; };
     for (const Case& c : std::vector<Case>{
-             {lammps, "PC_LAMMPS"},
-             {probe, "PC_FAILPROBE"},
-             {probe + lammps, "PC_LAMMPS"}}) {
+             {lammps, "PC_LAMMPS", "6"},
+             {probe, "PC_FAILPROBE", "7"},
+             {probe + lammps, "PC_LAMMPS", "8"}}) {
         INFO(c.lines);
         const std::string e = read_error(bfgs + c.lines);
         CHECK_THAT(e, Catch::StartsWith(
-                          "Error on line 5: --hpotarget defines " + c.named +
-                          " but OPTIMIZER's optimiser DLIB:BFGS is "
-                          "gradient-based. A PC_LAMMPS or PC_FAILPROBE line "
-                          "requires a gradient-free optimiser (") &&
-                          Catch::EndsWith("Line: ENDOPTIMIZER"));
+                          "Error on line 3: --hpotarget defines " + c.named +
+                          " on line " + c.line + " but OPTIMIZER's optimiser "
+                          "DLIB:BFGS is gradient-based. A PC_LAMMPS or "
+                          "PC_FAILPROBE line requires a gradient-free "
+                          "optimiser (") &&
+                          Catch::EndsWith("Line: ALGO BFGS"));
         CHECK_THAT(e, !Catch::Contains("DLIB:BFGS, the one"));
         CHECK(read_error(kSbplx + c.lines) == "");
     }
@@ -228,14 +234,14 @@ TEST_CASE("PC lines: PC_LAMMPS and PC_FAILPROBE refuse DLIB:BFGS",
         "ENDOPTIMIZER\n";
     CHECK_THAT(read_error(explore + lammps),
                Catch::StartsWith(
-                   "Error on line 11: --hpotarget defines PC_LAMMPS but "
-                   "EXPLORE's optimiser DLIB:BFGS is gradient-based. "
+                   "Error on line 9: --hpotarget defines PC_LAMMPS on line "
+                   "14 but EXPLORE's optimiser DLIB:BFGS is gradient-based. "
                    "A PC_LAMMPS or PC_FAILPROBE line requires a "
                    "gradient-free optimiser ("));
     CHECK_THAT(read_error(explore + probe),
                Catch::StartsWith(
-                   "Error on line 11: --hpotarget defines PC_FAILPROBE but "
-                   "EXPLORE's optimiser DLIB:BFGS is gradient-based. "
+                   "Error on line 9: --hpotarget defines PC_FAILPROBE on "
+                   "line 15 but EXPLORE's optimiser DLIB:BFGS is gradient-based. "
                    "A PC_LAMMPS or PC_FAILPROBE line requires a "
                    "gradient-free optimiser ("));
 
@@ -244,15 +250,15 @@ TEST_CASE("PC lines: PC_LAMMPS and PC_FAILPROBE refuse DLIB:BFGS",
     CHECK(read_error(
               "OPTIMIZER\nLIB NLOPT\nALGO LN_SBPLX\nMAXEVAL 1\n"
               "GRAD_STRATEGY HYBRID\nENDOPTIMIZER\n" + probe) ==
-          "Error on line 6: --hpotarget defines PC_FAILPROBE but "
+          "Error on line 5: --hpotarget defines PC_FAILPROBE on line 8 but "
           "OPTIMIZER's GRAD_STRATEGY is set. A PC_LAMMPS or PC_FAILPROBE "
           "line does not support analytical/numerical/hybrid gradients. "
-          "Drop the GRAD_STRATEGY line.\nLine: ENDOPTIMIZER");
+          "Drop the GRAD_STRATEGY line.\nLine: GRAD_STRATEGY HYBRID");
     CHECK_THAT(read_error("OPTIMIZER\nLIB NLOPT\nALGO GD_MLSL\nMAXEVAL 1\n"
                           "ENDOPTIMIZER\n" + probe),
                Catch::StartsWith(
-                   "Error on line 5: --hpotarget defines PC_FAILPROBE but "
-                   "OPTIMIZER's optimiser NLOPT:GD_MLSL takes a gradient: "
+                   "Error on line 3: --hpotarget defines PC_FAILPROBE on "
+                   "line 7 but OPTIMIZER's optimiser NLOPT:GD_MLSL takes a gradient: "
                    "NLopt's MLSL and AUGLAG take one for their local "
                    "search, and NLopt's default local optimiser, "
                    "NLOPT:LD_MMA, is gradient-based; an INNER block with a "
@@ -262,8 +268,8 @@ TEST_CASE("PC lines: PC_LAMMPS and PC_FAILPROBE refuse DLIB:BFGS",
                           "MAXEVAL 1\nINNER\nLIB NLOPT\nALGO LD_LBFGS\n"
                           "ENDINNER\nENDSTRATEGY\nENDOPTIMIZER\n" + probe),
                Catch::StartsWith(
-                   "Error on line 9: --hpotarget defines PC_FAILPROBE but "
-                   "INNER's optimiser NLOPT:LD_LBFGS is gradient-based. A "
+                   "Error on line 8: --hpotarget defines PC_FAILPROBE on "
+                   "line 13 but INNER's optimiser NLOPT:LD_LBFGS is gradient-based. A "
                    "PC_LAMMPS or PC_FAILPROBE line requires a gradient-free "
                    "optimiser, and an INNER search is a local NLopt "
                    "algorithm; the INNER block takes a derivative-free one "

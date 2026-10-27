@@ -117,8 +117,9 @@ void PotHeaderWriter::write_banner(std::ostream& os,
 {
     rule(os);
     os << "#  Tadah HPO -- Best potential\n";
-    os << "#  Best iter " << best_iter
-       << "  (eval " << eval_iter << ")"
+    /* The evaluation (its number in loss.tadah and params.tadah) and the
+     * improvement (its number among the run's bests, in best_*.tadah). */
+    os << "#  Evaluation " << eval_iter << ", improvement " << best_iter
        << "  |  Loss: " << fmt_double(loss) << "\n";
     os << "#  " << fmt_timestamp() << "\n";
     rule(os);

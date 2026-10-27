@@ -149,13 +149,12 @@ default = { text = "No evaluation limit: an optimiser that needs a stop is refus
 doc = """\
 The evaluation budget of the optimiser of the block. Under STRATEGY TYPE \
 MULTISTART, and in a PRESTAGE refinement from more than one candidate, the \
-starts share it, unless the optimiser runs every start in one run, as \
-DLIB:GFS does."""
+starts share it."""
 long_doc = """\
 Each start receives MAXEVAL divided by the number of starts, rounded up; \
 under MULTISTART, BUDGET_PER_START sets the budget of each start instead. \
-An optimiser that takes several starting points in one run, such as \
-DLIB:GFS, runs once with all of them and the whole MAXEVAL. The EXPLORE \
+A PRESTAGE refinement on an optimiser that takes every candidate in one \
+run, DLIB:GFS, runs once with all of them and the whole MAXEVAL. The EXPLORE \
 block of STRATEGY TYPE PRESTAGE has a MAXEVAL of its own. Under a RESTART \
 block each round runs with the whole MAXEVAL, so a run can make up \
 to (MAX + 1) times MAXEVAL evaluations. An optimiser without a convergence \
@@ -984,9 +983,12 @@ KEY (1) being one. The key is matched as written against the OPTIM keys, \
 which are upper case. Of two overrides of one search parameter the later \
 line wins. Without a fraction for every search parameter, the overrides \
 must cover each of them. The fraction and the keys are checked once the \
-whole file is read. A refusal names the ENDOPTIMIZER line, or the \
-ENDEXPLORE or ENDINNER line for the optimiser of that block; an optimiser \
-that does not use STEP is refused there too. An NLopt MLSL or AUGLAG hands \
+whole file is read. A refusal of a fraction names its STEP line, and one \
+of an override the line of the override; an optimiser that does not use \
+STEP is refused at the first STEP line of its block. Overrides that leave \
+a search parameter without a fraction are refused at the ENDOPTIMIZER \
+line, or the ENDEXPLORE or ENDINNER line for the optimiser of that block. \
+An NLopt MLSL or AUGLAG hands \
 its STEP to its local search: a STEP in its block replaces the STEP of its \
 INNER block, and hpo_run.log has a warning. LN_BOBYQA moves a start within \
 one step of a bound by at most half a step. As the local search of an \
@@ -1001,15 +1003,17 @@ The key of an override is matched as written, while an OPTIM line reads \
 its key in any case: STEP cgrid2b refers to no OPTIM key. The index list \
 of an override takes no blank, while that of an OPTIM line does."""
 checks = [
-  { msg = "{phase}: {lib}:{algo} does not use STEP; {why}", doc = "Once the whole file is read, at the END line of its optimiser: an optimiser that does not use STEP; {phase} names the optimiser (the STRATEGY-level optimiser, the PRESTAGE refinement, the PRESTAGE exploration (EXPLORE block), the INNER search, or the INNER search of the EXPLORE block), and {why} says what sets its first step instead." },
+  { msg = "{phase}: {lib}:{algo} does not use STEP; {why}", doc = "Once the whole file is read, at the first STEP line of its block: an optimiser that does not use STEP; {phase} names the optimiser (the STRATEGY-level optimiser, the PRESTAGE refinement, the PRESTAGE exploration (EXPLORE block), the INNER search, or the INNER search of the EXPLORE block), and {why} says what sets its first step instead." },
   { msg = "STEP override '{text}': expected KEY(indices) <frac>", doc = "At the line: an index list without its closing parenthesis, or text after it." },
   { msg = "STEP override '{text}': empty index list", doc = "At the line: an empty index list." },
   { msg = "STEP override '{text}': bad index list ({why})", doc = "At the line: an index list the OPTIM grammar refuses, or an index 0." },
-  { msg = "STEP override names OPTIM key '{key}' which is not optimised (no OPTIM line for it)", doc = "Once the whole file is read, at the END line of its optimiser: a key no OPTIM line searches, matched as written." },
-  { msg = "STEP {key}({index}): index {index} is not an OPTIM'd index of {key}", doc = "Once the whole file is read, at the END line of its optimiser: an index no OPTIM line of the key selects." },
+  { msg = "STEP override names OPTIM key '{key}' which is not optimised (no OPTIM line for it)", doc = "Once the whole file is read, at the line of the override: a key no OPTIM line searches, matched as written." },
+  { msg = "STEP {key}({index}): index {index} is not an OPTIM'd index of {key}", doc = "Once the whole file is read, at the line of the override: an index no OPTIM line of the key selects." },
   { msg = "STEP overrides cover only some dimensions and no block-wide STEP is set; add `STEP <frac>` or override every OPTIM'd dimension", doc = "At startup, at the END line of its optimiser: overrides without a block-wide STEP that leave a search parameter without a fraction." },
-  { msg = "{phase}: {lib}:{algo}: STEP must be > 0 and finite (got {value})", doc = "Once the whole file is read, at the END line of its optimiser: a fraction of 0 or below." },
-  { msg = "{phase}: {lib}:{algo}: STEP must be a fraction of the OPTIM width in (0, 0.5] (got {value}); values above 0.5 cannot satisfy BOBYQA's width >= 2*step rule and exceed NLopt's own 0.25 default", doc = "Once the whole file is read, at the END line of its optimiser: a fraction above 0.5." },
+  { msg = "{phase}: {lib}:{algo}: STEP must be > 0 and finite (got {value})", doc = "Once the whole file is read, at the STEP line: a fraction of 0 or below." },
+  { msg = "{phase}: {lib}:{algo} STEP {key}: STEP must be > 0 and finite (got {value})", doc = "Once the whole file is read, at the line of the override: a fraction of 0 or below." },
+  { msg = "{phase}: {lib}:{algo}: STEP must be a fraction of the OPTIM width in (0, 0.5] (got {value}); values above 0.5 cannot satisfy BOBYQA's width >= 2*step rule and exceed NLopt's own 0.25 default", doc = "Once the whole file is read, at the STEP line: a fraction above 0.5." },
+  { msg = "{phase}: {lib}:{algo} STEP {key}: STEP must be a fraction of the OPTIM width in (0, 0.5] (got {value}); values above 0.5 cannot satisfy BOBYQA's width >= 2*step rule and exceed NLopt's own 0.25 default", doc = "Once the whole file is read, at the line of the override: a fraction above 0.5." },
   { msg = "STEP {key} is set twice in the {block} block (first on line {first_line}); each key is given once", doc = "At the line: an override given twice for one key and index list; {key} is the key with its index list." },
 ]
 
@@ -1109,44 +1113,49 @@ error = "STEP takes no further value here (unexpected '0.2')"
 
 [[key.invalid]]
 wrap = "strategy"
-at = "ENDOPTIMIZER"
 text = "STEP 0.7"
 error = "the STRATEGY-level optimiser: NLOPT:LN_SBPLX: STEP must be a fraction of the OPTIM width in (0, 0.5] (got 0.7); values above 0.5 cannot satisfy BOBYQA's width >= 2*step rule and exceed NLopt's own 0.25 default"
 
 [[key.invalid]]
 wrap = "strategy"
-at = "ENDOPTIMIZER"
 text = "STEP -0.1"
 error = "the STRATEGY-level optimiser: NLOPT:LN_SBPLX: STEP must be > 0 and finite (got -0.1)"
 
 [[key.invalid]]
 wrap = "strategy"
-at = "ENDOPTIMIZER"
+doc = "The fraction of an override."
+text = "STEP CGRID2B 0"
+error = "the STRATEGY-level optimiser: NLOPT:LN_SBPLX STEP CGRID2B: STEP must be > 0 and finite (got 0)"
+
+[[key.invalid]]
+wrap = "strategy"
+doc = "The fraction of an override above 0.5."
+text = "STEP CGRID2B 0.6"
+error = "the STRATEGY-level optimiser: NLOPT:LN_SBPLX STEP CGRID2B: STEP must be a fraction of the OPTIM width in (0, 0.5] (got 0.6); values above 0.5 cannot satisfy BOBYQA's width >= 2*step rule and exceed NLopt's own 0.25 default"
+
+[[key.invalid]]
+wrap = "strategy"
 text = "STEP RCUT2B 0.1"
 error = "STEP override names OPTIM key 'RCUT2B' which is not optimised (no OPTIM line for it)"
 
 [[key.invalid]]
 wrap = "strategy"
-at = "ENDOPTIMIZER"
 doc = "The key is matched as written."
 text = "STEP cgrid2b 0.2"
 error = "STEP override names OPTIM key 'cgrid2b' which is not optimised (no OPTIM line for it)"
 
 [[key.invalid]]
 wrap = "strategy"
-at = "ENDOPTIMIZER"
 text = "STEP CGRID2B(2) 0.1"
 error = "STEP CGRID2B(2): index 2 is not an OPTIM'd index of CGRID2B"
 
 [[key.invalid]]
 wrap = "explore"
-at = "ENDEXPLORE"
 text = "STEP 0.1"
 error = "the PRESTAGE exploration (EXPLORE block): TADAH:RANDOM does not use STEP; uniform sampling in the OPTIM box has no initial step"
 
 [[key.invalid]]
 wrap = "opt_asa"
-at = "ENDOPTIMIZER"
 text = "STEP 0.1"
 error = "the STRATEGY-level optimiser: ASA:ASA does not use STEP; the width of the generating distribution follows the parameter temperature of each dimension (Initial_Parameter_Temperature, Temperature_Ratio_Scale)"
 
@@ -1194,7 +1203,7 @@ args = [ { name = "n", kind = "integer", min = 0, max = "UINT64_MAX", what = "{k
 repeat = "error"
 repeat_msg = "SEED is set twice in the {block} block (first on line {first_line}); each key is given once"
 repeat_doc = "Once for each optimiser: a second line is refused, in the same block, in a second block of that type, or in another of OPTIMIZER, STRATEGY and REFINE, which set the same optimiser."
-default = { text = "Not set: each run takes a seed of its own, so two runs differ." }
+default = { text = "Not set: each run takes a seed of its own, so two runs differ. An NLopt algorithm that draws random numbers takes the SEED of its INIT block, else a seed drawn once for the run, which standard output and the journal give." }
 doc = """\
 The seed of the random numbers of the optimiser, for a reproducible \
 search. An optimiser that does not read SEED refuses it when tadah hpo \
@@ -1205,27 +1214,34 @@ TYPE PRESTAGE an EXPLORE block whose optimiser reads SEED, and that has no \
 seed of its own, takes the STRATEGY-level SEED. A SEED line, and for NLopt \
 a SEED in its INIT block, is a seed of its own; the refinement draws \
 random numbers of its own. A refinement whose optimiser reads no SEED \
-(DLIB:GFS, DLIB:BFGS, TADAH:GRID, CERES:STEEPEST_DESCENT) takes a SEED \
+(DLIB:GFS, DLIB:BFGS, TADAH:GRID, CERES:STEEPEST_DESCENT, an NLopt \
+algorithm that draws no random numbers) takes a SEED \
 that the EXPLORE block takes, and refuses one when the EXPLORE block has \
 a seed of its own or reads none. Restart r of the RESTART block runs the \
 optimiser with SEED + r times the number of starts (N_STARTS under \
 MULTISTART, TOPK under PRESTAGE, 1 under PLAIN), and the EXPLORE block \
 with its SEED + r. An INNER block refuses SEED: NLopt draws its local \
-search from the random numbers of the enclosing run. SEED inside an INIT \
-or RESTART block is another key, the seed of the starting points."""
+search from the random numbers of the enclosing run. An NLopt algorithm \
+reads SEED when it draws random numbers: GN_CRS2_LM, GN_ISRES, GN_ESCH, \
+GN_MLSL, GD_MLSL, G_MLSL, LN_PRAXIS, GD_STOGO_RAND, and GN_DIRECT_L_RAND \
+in two OPTIM dimensions or more; an MLSL_LDS or AUGLAG algorithm when its \
+local search draws them (an INNER block with LN_PRAXIS). The others draw \
+none and refuse it. SEED inside an INIT or RESTART block is another key, \
+the seed of the starting points."""
 checks = [
-  { msg = "{phase}: {lib}:{algo} does not use SEED: it draws no random numbers; remove it", doc = "At startup, at the END line of its optimiser: an optimiser that does not read SEED, outside a PRESTAGE refinement." },
+  { msg = "{phase}: {lib}:{algo} does not use SEED: it draws no random numbers", doc = "At startup, at the END line of its optimiser: an optimiser that does not read SEED, outside a PRESTAGE refinement." },
+  { msg = "{phase}: {lib}:{algo} does not use SEED: in one OPTIM dimension it draws no random numbers (it draws them only to choose between equally long sides of a box)", doc = "At startup, at the END line of its optimiser: NLOPT:GN_DIRECT_L_RAND in a search of one OPTIM dimension, outside a PRESTAGE refinement." },
   { msg = "{phase}: {lib}:{algo} does not support SEED", doc = "At startup, at the END line of its optimiser: DLIB:BFGS or CERES:STEEPEST_DESCENT, outside a PRESTAGE refinement." },
-  { msg = "{phase}: {lib}:{algo} does not use SEED: it draws no random numbers, and the exploration ({name}) {why}; remove it", doc = "At startup, at the END line of its optimiser: the SEED of a PRESTAGE refinement whose optimiser does not read SEED, when the EXPLORE block does not take it; {why} is 'has a SEED of its own' or 'reads none'." },
+  { msg = "{phase}: {lib}:{algo} does not use SEED: it draws no random numbers, and the exploration ({name}) {why}", doc = "At startup, at the END line of its optimiser: the SEED of a PRESTAGE refinement whose optimiser does not read SEED, when the EXPLORE block does not take it; {why} is 'has a SEED of its own' or 'reads none'." },
 ]
 
 [[key.examples]]
-wrap = "strategy"
+wrap = "opt_crs"
 text = "SEED 42"
 
 [[key.examples]]
 doc = "The largest seed, 2^64 - 1."
-wrap = "strategy"
+wrap = "opt_crs"
 text = "SEED 18446744073709551615"
 
 [[key.examples]]
@@ -1296,14 +1312,40 @@ ALGO GRID
 ENDEXPLORE
 ENDSTRATEGY
 ENDOPTIMIZER'''
-error = "the PRESTAGE refinement: DLIB:BFGS does not use SEED: it draws no random numbers, and the exploration (TADAH:GRID) reads none; remove it"
+error = "the PRESTAGE refinement: DLIB:BFGS does not use SEED: it draws no random numbers, and the exploration (TADAH:GRID) reads none"
 
 [[key.invalid]]
 wrap = "opt_grid"
 check = "startup"
 at = "ENDOPTIMIZER"
 text = "SEED 1"
-error = "the STRATEGY-level optimiser: TADAH:GRID does not use SEED: it draws no random numbers; remove it"
+error = "the STRATEGY-level optimiser: TADAH:GRID does not use SEED: it draws no random numbers"
+
+[[key.invalid]]
+wrap = "strategy"
+check = "startup"
+at = "ENDOPTIMIZER"
+doc = "NLOPT:LN_SBPLX draws no random numbers."
+text = "SEED 1"
+error = "the STRATEGY-level optimiser: NLOPT:LN_SBPLX does not use SEED: it draws no random numbers"
+
+[[key.invalid]]
+wrap = "none"
+check = "startup"
+at = "ENDOPTIMIZER"
+doc = "NLOPT:GN_DIRECT_L_RAND in one OPTIM dimension."
+text = '''
+OPTIM CGRID2B (1) 0.5 1.5
+PC_ERMSE 0 1
+OPTIMIZER
+STRATEGY
+LIB NLOPT
+ALGO GN_DIRECT_L_RAND
+MAXEVAL 10
+SEED 5
+ENDSTRATEGY
+ENDOPTIMIZER'''
+error = "the STRATEGY-level optimiser: NLOPT:GN_DIRECT_L_RAND does not use SEED: in one OPTIM dimension it draws no random numbers (it draws them only to choose between equally long sides of a box)"
 
 [[key.invalid]]
 wrap = "strategy"
@@ -1328,7 +1370,7 @@ MAXEVAL 10
 SEED 5
 ENDSTRATEGY
 ENDOPTIMIZER'''
-error = "the STRATEGY-level optimiser: DLIB:GFS does not use SEED: it draws no random numbers; remove it"
+error = "the STRATEGY-level optimiser: DLIB:GFS does not use SEED: it draws no random numbers"
 
 [[key]]
 id = "OPTIMIZER.VECTOR_ARR"
@@ -1940,8 +1982,9 @@ from each of the first N_STARTS starting points of the INIT block."""
 long_doc = """\
 N_STARTS is 2 or more, and TYPE MULTISTART needs it: one start is TYPE \
 PLAIN. With fewer starting points than N_STARTS, the optimiser runs once \
-from each of them, with a warning. Another TYPE refuses N_STARTS when the \
-STRATEGY block ends."""
+from each of them, with a warning; with more, the points after the first \
+N_STARTS are not evaluated, and a startup warning says so. Another TYPE \
+refuses N_STARTS when the STRATEGY block ends."""
 
 [[key.examples]]
 wrap = "strategy"
@@ -1999,9 +2042,6 @@ default = { text = "MAXEVAL divided by the number of starts, rounded up; no budg
 doc = """\
 The evaluation budget of each start of STRATEGY TYPE MULTISTART, in place \
 of a share of MAXEVAL."""
-long_doc = """\
-An optimiser that runs every start in one run, such as DLIB:GFS, refuses \
-it at startup."""
 
 [[key.examples]]
 wrap = "opt_multistart"
@@ -2087,19 +2127,20 @@ name = "MULTISTART"
 keys = ["STRATEGY.N_STARTS", "STRATEGY.BUDGET_PER_START"]
 doc = """\
 The STRATEGY-level optimiser runs once from each of the first N_STARTS \
-starting points of its INIT block, SEED + i for start i. An optimiser \
-that takes several starting points in one run, such as DLIB:GFS, runs \
-once with all of them."""
+starting points of its INIT block, SEED + i for start i. TYPE MULTISTART \
+refuses an optimiser that takes every INIT point in one run (DLIB:GFS) and \
+a global optimiser that takes one starting point; STRATEGY TYPE PLAIN runs \
+them once."""
 
 [[strategy_type.checks]]
-msg = "BUDGET_PER_START has no effect with {name}, which runs every start in one optimiser; MAXEVAL sets its budget"
-doc = "At startup, at the ENDOPTIMIZER line: the optimiser runs from each start."
+msg = "STRATEGY TYPE MULTISTART cannot run {name}: it takes every INIT point in one run, so MULTISTART would run it once, whatever N_STARTS; STRATEGY TYPE PLAIN runs {name} once from every INIT point."
+doc = "At startup, at the ENDOPTIMIZER line: an optimiser that takes every INIT point in one run (DLIB:GFS)."
 
 [[strategy_type.checks]]
-msg = "STRATEGY TYPE MULTISTART cannot run {name}: it is a global optimiser that consumes a single starting point, so restarting it from each INIT point is rejected for any N_STARTS. A local or multi-seed optimiser ({list}) runs from each start, and STRATEGY TYPE PLAIN runs {name} once."
+msg = "STRATEGY TYPE MULTISTART cannot run {name}: it is a global optimiser that takes one starting point, so restarting it from each INIT point is rejected for any N_STARTS. A local optimiser ({list}) runs from each start, and STRATEGY TYPE PLAIN runs {name} once."
 doc = """\
-At startup, at the ENDOPTIMIZER line: the optimiser is a local one or \
-takes several starting points; {list} names them."""
+At startup, at the ENDOPTIMIZER line: a global optimiser that takes one \
+starting point; {list} names the local optimisers."""
 
 [[strategy_type.examples]]
 wrap = "strategy"
@@ -2130,7 +2171,7 @@ ENDOPTIMIZER'''
 [[strategy_type.invalid]]
 wrap = "none"
 check = "startup"
-at = 12
+at = 11
 text = '''
 OPTIM CGRID2B (1) 0.5 1.5
 PC_ERMSE 0 1
@@ -2141,10 +2182,9 @@ N_STARTS 2
 LIB DLIB
 ALGO GFS
 MAXEVAL 10
-BUDGET_PER_START 5
 ENDSTRATEGY
 ENDOPTIMIZER'''
-error = "BUDGET_PER_START has no effect with DLIB:GFS, which runs every start in one optimiser; MAXEVAL sets its budget"
+error = "STRATEGY TYPE MULTISTART cannot run DLIB:GFS: it takes every INIT point in one run, so MULTISTART would run it once, whatever N_STARTS; STRATEGY TYPE PLAIN runs DLIB:GFS once from every INIT point."
 
 [[strategy_type.invalid]]
 wrap = "none"
@@ -2162,7 +2202,7 @@ ALGO GN_DIRECT_L
 MAXEVAL 10
 ENDSTRATEGY
 ENDOPTIMIZER'''
-error = "STRATEGY TYPE MULTISTART cannot run NLOPT:GN_DIRECT_L: it is a global optimiser that consumes a single starting point, so restarting it from each INIT point is rejected for any N_STARTS. A local or multi-seed optimiser (CERES:STEEPEST_DESCENT, DLIB:BFGS, DLIB:GFS, NLOPT:AUGLAG, NLOPT:AUGLAG_EQ, NLOPT:LD_AUGLAG, ... (18 more)) runs from each start, and STRATEGY TYPE PLAIN runs NLOPT:GN_DIRECT_L once."
+error = "STRATEGY TYPE MULTISTART cannot run NLOPT:GN_DIRECT_L: it is a global optimiser that takes one starting point, so restarting it from each INIT point is rejected for any N_STARTS. A local optimiser (CERES:STEEPEST_DESCENT, DLIB:BFGS, NLOPT:AUGLAG, NLOPT:AUGLAG_EQ, NLOPT:LD_AUGLAG, NLOPT:LD_AUGLAG_EQ, ... (17 more)) runs from each start, and STRATEGY TYPE PLAIN runs NLOPT:GN_DIRECT_L once."
 
 [[strategy_type]]
 id = "STRATEGY.TYPE.PRESTAGE"
@@ -2184,7 +2224,7 @@ At startup, at the ENDOPTIMIZER line: the refinement optimiser starts at \
 the point it is given; {note} says where it starts instead."""
 
 [[strategy_type.checks]]
-msg = "STRATEGY TYPE PRESTAGE with TOPK {value} cannot refine with {name}: the refinement runs its optimiser once from each of the TOPK candidates the exploration forwards, and {name} is a global optimiser that consumes a single starting point. A local or multi-seed refinement optimiser ({list}) refines each candidate, and TOPK 1 refines the best candidate once."
+msg = "STRATEGY TYPE PRESTAGE with TOPK {value} cannot refine with {name}: the refinement runs its optimiser once from each of the TOPK candidates the exploration forwards, and {name} is a global optimiser that takes one starting point. A local or multi-seed refinement optimiser ({list}) refines each candidate, and TOPK 1 refines the best candidate once."
 doc = "At startup, at the ENDOPTIMIZER line, with TOPK above 1: the refinement optimiser runs from each candidate."
 
 [[strategy_type.examples]]
@@ -2241,7 +2281,7 @@ ENDEXPLORE
 TOPK 2
 ENDSTRATEGY
 ENDOPTIMIZER'''
-error = "STRATEGY TYPE PRESTAGE with TOPK 2 cannot refine with NLOPT:GN_CRS2_LM: the refinement runs its optimiser once from each of the TOPK candidates the exploration forwards, and NLOPT:GN_CRS2_LM is a global optimiser that consumes a single starting point. A local or multi-seed refinement optimiser (CERES:STEEPEST_DESCENT, DLIB:BFGS, DLIB:GFS, NLOPT:AUGLAG, NLOPT:AUGLAG_EQ, NLOPT:LD_AUGLAG, ... (18 more)) refines each candidate, and TOPK 1 refines the best candidate once."
+error = "STRATEGY TYPE PRESTAGE with TOPK 2 cannot refine with NLOPT:GN_CRS2_LM: the refinement runs its optimiser once from each of the TOPK candidates the exploration forwards, and NLOPT:GN_CRS2_LM is a global optimiser that takes one starting point. A local or multi-seed refinement optimiser (CERES:STEEPEST_DESCENT, DLIB:BFGS, DLIB:GFS, NLOPT:AUGLAG, NLOPT:AUGLAG_EQ, NLOPT:LD_AUGLAG, ... (18 more)) refines each candidate, and TOPK 1 refines the best candidate once."
 
 # ============================================================ INIT keys ==
 # Valid in INIT and RESTART blocks. Inside them a STRATEGY line is read as
@@ -2455,11 +2495,16 @@ optimiser."""
 default = { text = "Not set: each run takes a seed of its own, so the drawn points differ between runs." }
 doc = """\
 The seed of the RANDOM, LHS and SOBOL lines of the block. An NLopt \
-optimiser without a SEED of its own takes this seed too."""
+optimiser that draws random numbers and has no SEED of its own takes this \
+seed too."""
 long_doc = """\
 Restart r of a RESTART block draws with SEED + r. A chain without RANDOM, \
-LHS or SOBOL does not use the seed, with a warning. SEED inside an \
-optimiser block is another key, the seed of the optimiser."""
+LHS or SOBOL does not use the seed, with a warning. Without SEED, an INIT \
+block whose chain draws its points draws them with a seed drawn once for \
+the run, which standard output and the journal give, so SEED with that \
+value draws the same points again; a RESTART block journals the seed of \
+its rounds. SEED inside an optimiser block is another key, the seed of \
+the optimiser."""
 
 [[key.examples]]
 wrap = "init"

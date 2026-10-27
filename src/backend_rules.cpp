@@ -334,11 +334,14 @@ void reject_unread_attributes(const OptimizerSpec& spec,
             }) +
             ")");
     /* A PRESTAGE refinement's SEED that the exploration took seeds the
-     * exploration (OptimizerSpec::seed_seeds_exploration). */
-    if (spec.seed && !caps.reads_seed && !spec.seed_seeds_exploration)
+     * exploration (OptimizerSpec::seed_seeds_exploration). Whether the run
+     * reads SEED: reads_seed() (phase_specs.h), which asks an MLSL or
+     * AUGLAG about its local search and GN_DIRECT_L_RAND about its
+     * dimensions. */
+    if (spec.seed && !reads_seed(spec) && !spec.seed_seeds_exploration)
         throw std::runtime_error(backend_name(spec) +
-                                 " does not use SEED: it draws no random "
-                                 "numbers; remove it");
+                                 " does not use SEED: " +
+                                 seed_unread_reason(spec));
 }
 
 /* THREADS of the STRATEGY-level optimiser sizes the run's workers; a
@@ -580,14 +583,12 @@ void reject_refinement_seed(const OptimizerSpec& root, const PhaseSpec& phase)
     if (!root.prestage || spec.stream_phase != StreamPhase::Refinement ||
         !spec.seed || spec.seed_seeds_exploration)
         return;
-    if (optimizer_caps(spec).reads_seed) return;
+    if (reads_seed(spec)) return;
     const OptimizerSpec& explore = *root.prestage;
     throw std::runtime_error(
-        backend_name(spec) + " does not use SEED: it draws no random numbers, "
-        "and the exploration (" + backend_name(explore) + ") " +
-        (optimizer_caps(explore).reads_seed ? "has a SEED of its own"
-                                            : "reads none") +
-        "; remove it");
+        backend_name(spec) + " does not use SEED: " + seed_unread_reason(spec) +
+        ", and the exploration (" + backend_name(explore) + ") " +
+        (reads_seed(explore) ? "has a SEED of its own" : "reads none"));
 }
 }  // namespace
 
@@ -1093,12 +1094,153 @@ std::string block_on_line(const char* block, std::size_t line)
            ": ";
 }
 
+/* "the INIT block on line 5 gives 7 starting points" */
+std::string init_block_gives(const InitStrategySpec& block, std::size_t n)
+{
+    return std::string("the INIT block") +
+           (block.line > 0 ? " on line " + std::to_string(block.line)
+                           : std::string()) +
+           " gives " + std::to_string(n) +
+           (n == 1 ? " starting point" : " starting points");
+}
+
+/* "the other 4 are not evaluated" */
+std::string others_not_evaluated(std::size_t unused)
+{
+    return "the other " + std::to_string(unused) +
+           (unused == 1 ? " is" : " are") + " not evaluated";
+}
+
+/* The optimisers that take several starting points in one run, from the
+ * caps registry: "DLIB:GFS". */
+std::string multi_seed_optimisers()
+{
+    return format_caps_list(filter_optimizer_caps(
+        [](const OptimizerCaps& c) { return c.accepts_multi_seed; }));
+}
+
+/* A search of `phase` that takes one starting point and keeps it: its
+ * optimiser takes no several points in one run, and its first call is at
+ * the point it is given (a search that is not is warned about below, with
+ * search_ignoring_start). */
+bool takes_one_point(const OptimizerSpec& phase)
+{
+    const OptimizerCaps* caps = find_optimizer_caps(phase.lib, phase.algo);
+    return caps && !caps->accepts_multi_seed &&
+           !search_ignoring_start(phase).has_value();
+}
+
+/* The INIT points a phase takes fewer of than its INIT block gives: a PLAIN
+ * search of an optimiser that takes one, a PRESTAGE exploration that takes
+ * one (given the points of its EXPLORE block's INIT block, else of the
+ * OPTIMIZER-level one), a MULTISTART with fewer starts than points
+ * (plan_multistart). The advice names what takes them all and is not the
+ * TYPE in use. Under PRESTAGE, an OPTIMIZER-level INIT block beside the
+ * EXPLORE block's own gives only the refinement's fallback its points. */
+void unused_init_point_warnings(const OptimizerSpec& root,
+                                std::vector<std::string>& out)
+{
+    switch (root.strategy_type) {
+        case StrategyType::PLAIN: {
+            const std::size_t n = root.optim_init.size();
+            if (n < 2 || !takes_one_point(root)) return;
+            const std::string name = backend_name(root);
+            std::string w = init_block_gives(root.init_strategy_spec, n) +
+                            ", and the STRATEGY-level optimiser " + name +
+                            " starts from the first only: " +
+                            others_not_evaluated(n - 1) + ". ";
+            /* MULTISTART runs a local optimiser from each point (the rule
+             * of require_multistart_backend). */
+            if (!optimizer_caps(root).is_global)
+                w += "STRATEGY TYPE MULTISTART with N_STARTS " +
+                     std::to_string(n) + " starts " + name +
+                     " from each of them, and an ";
+            else
+                w += "An ";
+            w += "optimiser that takes several starting points in one run (" +
+                 multi_seed_optimisers() + ") takes them all, also as the "
+                 "exploration of STRATEGY TYPE PRESTAGE.";
+            out.push_back(w);
+            return;
+        }
+        case StrategyType::MULTISTART: {
+            const std::size_t n = root.optim_init.size();
+            if (root.lib == "NOT SET" || root.algo == "NOT SET") return;
+            const MultiStartPlan plan = plan_multistart(
+                root, root.multistart.n_starts, root.multistart.budget_per_start);
+            if (plan.single_run || n <= plan.starts) return;
+            out.push_back(init_block_gives(root.init_strategy_spec, n) +
+                          ", and STRATEGY TYPE MULTISTART runs " +
+                          backend_name(root) + " from N_STARTS " +
+                          std::to_string(plan.starts) + " of them: " +
+                          others_not_evaluated(n - plan.starts) +
+                          ". N_STARTS " + std::to_string(n) +
+                          " starts it from each of them.");
+            return;
+        }
+        case StrategyType::PRESTAGE: {
+            if (!root.prestage) return;
+            const OptimizerSpec& explore = *root.prestage;
+            /* An OPTIMIZER-level INIT block beside the EXPLORE block's own:
+             * the exploration starts from the EXPLORE block's points
+             * (share_init_with_nested_phases), the refinement from the
+             * OPTIMIZER-level ones only when no evaluation of the
+             * exploration has a usable loss (StagedPolicy), and NOISE
+             * CALIBRATION evaluates the first of them. */
+            const InitStrategySpec& outer = root.init_strategy_spec;
+            const InitStrategySpec& inner = explore.init_strategy_spec;
+            if (!outer.chain.empty() && !inner.chain.empty() &&
+                !root.optim_init.empty()) {
+                const std::string calibration =
+                    should_run_noise_calibration(root.noise.calibration_n)
+                        ? " (NOISE CALIBRATION evaluates the first of them " +
+                              std::to_string(root.noise.calibration_n) +
+                              " times)"
+                        : std::string();
+                out.push_back(
+                    init_block_gives(outer, root.optim_init.size()) +
+                    ", and the PRESTAGE exploration (EXPLORE block) starts "
+                    "from those of its own INIT block" +
+                    (inner.line > 0 ? ", on line " + std::to_string(inner.line)
+                                    : std::string()) +
+                    ", so the search evaluates them only in the refinement, "
+                    "when no evaluation of the exploration has a usable loss" +
+                    calibration + ". Without an INIT block of its own, the "
+                    "exploration takes them.");
+            }
+            const std::size_t n = explore.optim_init.size();
+            if (n < 2 || !takes_one_point(explore)) return;
+            /* The exploration's points: its EXPLORE block's INIT block, or
+             * the OPTIMIZER-level one (share_init_with_nested_phases), which
+             * the refinement falls back to. */
+            const bool own = !explore.init_strategy_spec.chain.empty();
+            out.push_back(
+                init_block_gives(own ? explore.init_strategy_spec
+                                     : root.init_strategy_spec,
+                                 n) +
+                ", and the PRESTAGE exploration (EXPLORE block) " +
+                backend_name(explore) + " starts from the first only: " +
+                others_not_evaluated(n - 1) +
+                (own ? std::string()
+                     : std::string(" (the refinement starts from them only "
+                                   "when no evaluation of the exploration "
+                                   "has a usable loss)")) +
+                ". An exploration optimiser that takes several starting "
+                "points in one run (" + multi_seed_optimisers() +
+                ") takes them all.");
+            return;
+        }
+    }
+}
+
 }  // namespace
 
 std::vector<std::string> start_point_warnings(const OptimizerSpec& root,
                                               const std::string& reuse_blocker)
 {
     std::vector<std::string> out;
+    /* INIT points a phase takes fewer of than its INIT block gives. */
+    unused_init_point_warnings(root, out);
     /* The search each round starts with: PLAIN's STRATEGY-level optimiser,
      * PRESTAGE's exploration (MULTISTART starts and a PRESTAGE refinement
      * on such a search are refused). */

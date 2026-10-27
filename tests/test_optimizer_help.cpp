@@ -9,14 +9,18 @@
 #include <tadah/hpo/optimizer_caps.h>
 #include <tadah/hpo/optimizer_help.h>
 #include <tadah/hpo/optimizer_spec.h>
+#include <tadah/hpo/phase_specs.h>
 
 #include <algorithm>
 #include <cctype>
 #include <iostream>
+#include <map>
+#include <memory>
 #include <regex>
 #include <set>
 #include <sstream>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -328,6 +332,142 @@ TEST_CASE("explain_optimiser: the ALGO help of MLSL and AUGLAG says that "
                Catch::Contains("\n   * INNER ... ENDINNER: the local search "
                                "it runs, from the points it\n     samples in "
                                "the OPTIM box: LIB NLOPT"));
+}
+
+/* Pins: the ALGO help of every NLopt algorithm says whether it reads SEED,
+ * as the startup checks decide (backend_rules.h): an algorithm that draws
+ * random numbers (NLopt 2.10: GN_CRS2_LM, GN_ISRES, GN_ESCH, GN_MLSL,
+ * GD_MLSL, G_MLSL, LN_PRAXIS, GD_STOGO_RAND) "   * SEED <int>  the seed of
+ * the random numbers it draws"; GN_DIRECT_L_RAND the same, then "; in one
+ * OPTIM dimension it draws none, and SEED is rejected" on the next line;
+ * an MLSL or AUGLAG form that draws none itself (GN_MLSL_LDS, GD_MLSL_LDS,
+ * G_MLSL_LDS and the six AUGLAG forms) "   * SEED: read only when its local
+ * search draws random numbers (an INNER LN_PRAXIS); otherwise rejected";
+ * every other one "   * SEED is rejected: it draws no random numbers". The
+ * optimiser registry lists SEED among the keys an algorithm reads for the
+ * first two groups only (OptimizerCaps::reads_seed).
+ * Before the fix: the NLopt ALGO help said nothing of SEED, and every
+ * NLopt algorithm read it (reads_seed true for each): the checks fail. */
+TEST_CASE("explain_optimiser: the ALGO help of an NLopt algorithm says "
+          "whether it reads SEED", "[HPO][explain][seed]")
+{
+    const std::vector<std::string> draws = {
+        "GN_CRS2_LM", "GN_ISRES", "GN_ESCH", "GN_MLSL", "GD_MLSL", "G_MLSL",
+        "LN_PRAXIS", "GD_STOGO_RAND"};
+    const std::string reads =
+        "\n   * SEED <int>  the seed of the random numbers it draws\n";
+    const std::string inner_reads =
+        "\n   * SEED: read only when its local search draws random numbers "
+        "(an\n     INNER LN_PRAXIS); otherwise rejected\n";
+    const std::string rejected =
+        "\n   * SEED is rejected: it draws no random numbers\n";
+    std::size_t n = 0;
+    for (const auto* c : filter_optimizer_caps(
+             [](const OptimizerCaps& c) { return c.lib == "NLOPT"; })) {
+        INFO("NLOPT:" << c->algo);
+        ++n;
+        const std::string help = caps_help("NLOPT", c->algo);
+        const bool drawing =
+            std::find(draws.begin(), draws.end(), c->algo) != draws.end();
+        if (c->algo == "GN_DIRECT_L_RAND") {
+            CHECK_THAT(help, Catch::Contains(
+                                 "\n   * SEED <int>  the seed of the random "
+                                 "numbers it draws; in one OPTIM\n     "
+                                 "dimension it draws none, and SEED is "
+                                 "rejected\n"));
+            CHECK(c->reads_seed);
+        } else if (drawing) {
+            CHECK_THAT(help, Catch::Contains(reads));
+            CHECK(c->reads_seed);
+        } else if (c->accepts_inner) {
+            CHECK_THAT(help, Catch::Contains(inner_reads));
+            CHECK_FALSE(c->reads_seed);
+        } else {
+            CHECK_THAT(help, Catch::Contains(rejected));
+            CHECK_FALSE(c->reads_seed);
+        }
+    }
+    CHECK(n > 30);
+}
+
+/* Pins: seed_use() says of every registered optimiser how a run of it
+ * reads SEED, as the startup checks decide (reads_seed(), phase_specs.h),
+ * for the optimiser registry (blueprint/optimizers_gen.toml, its field
+ * seed) and the ALGO help: Read -- read in one OPTIM dimension and in two
+ * (TADAH:RANDOM, ASA:ASA, NLOPT:GN_CRS2_LM, NLOPT:GN_MLSL); Read in two
+ * dimensions -- read in two, not in one (NLOPT:GN_DIRECT_L_RAND); Through
+ * the local search -- not read without an INNER block or with an INNER
+ * LN_BOBYQA, read with an INNER LN_PRAXIS (NLOPT:GN_MLSL_LDS, NLOPT:AUGLAG);
+ * Refused -- read in neither (NLOPT:LN_SBPLX, DLIB:GFS, TADAH:GRID). Each
+ * of the four is the answer for some optimiser.
+ * Before the fix: there was no seed_use() (the case does not compile), and
+ * the optimiser registry listed SEED among what an optimiser reads only for
+ * one that reads it alone, so the reference said nothing of SEED for most
+ * NLopt algorithms. */
+TEST_CASE("seed_use: how a run of each optimiser reads SEED, as the startup "
+          "checks decide", "[HPO][explain][seed]")
+{
+    const auto spec = [](const OptimizerCaps& c, std::size_t dims,
+                         const char* inner) {
+        OptimizerSpec s;
+        s.lib = c.lib;
+        s.algo = c.algo;
+        s.low.assign(dims, 0.0);
+        s.high.assign(dims, 1.0);
+        if (inner) {
+            s.inner = std::make_unique<OptimizerSpec>();
+            s.inner->lib = "NLOPT";
+            s.inner->algo = inner;
+            s.inner->low = s.low;
+            s.inner->high = s.high;
+        }
+        return s;
+    };
+    std::map<SeedUse, std::size_t> seen;
+    for (const auto* c : filter_optimizer_caps(
+             [](const OptimizerCaps&) { return true; })) {
+        INFO(c->lib << ":" << c->algo);
+        const SeedUse use = seed_use(*c);
+        ++seen[use];
+        const bool one = reads_seed(spec(*c, 1, nullptr));
+        const bool two = reads_seed(spec(*c, 2, nullptr));
+        switch (use) {
+        case SeedUse::Read:
+            CHECK(one);
+            CHECK(two);
+            break;
+        case SeedUse::ReadInTwoDimensions:
+            CHECK_FALSE(one);
+            CHECK(two);
+            break;
+        case SeedUse::ThroughLocalSearch:
+            CHECK(c->accepts_inner);
+            CHECK_FALSE(two);
+            CHECK(reads_seed(spec(*c, 2, "LN_PRAXIS")));
+            CHECK_FALSE(reads_seed(spec(*c, 2, "LN_BOBYQA")));
+            break;
+        case SeedUse::Refused:
+            CHECK_FALSE(one);
+            CHECK_FALSE(two);
+            break;
+        }
+    }
+    CHECK(seen.size() == 4u);
+    for (const auto& [lib, algo, use] :
+         std::vector<std::tuple<std::string, std::string, SeedUse>>{
+             {"TADAH", "RANDOM", SeedUse::Read},
+             {"ASA", "ASA", SeedUse::Read},
+             {"NLOPT", "GN_CRS2_LM", SeedUse::Read},
+             {"NLOPT", "GN_MLSL", SeedUse::Read},
+             {"NLOPT", "GN_DIRECT_L_RAND", SeedUse::ReadInTwoDimensions},
+             {"NLOPT", "GN_MLSL_LDS", SeedUse::ThroughLocalSearch},
+             {"NLOPT", "AUGLAG", SeedUse::ThroughLocalSearch},
+             {"NLOPT", "LN_SBPLX", SeedUse::Refused},
+             {"DLIB", "GFS", SeedUse::Refused},
+             {"TADAH", "GRID", SeedUse::Refused}}) {
+        INFO(lib << ":" << algo);
+        CHECK(seed_use(optimizer_caps(lib, algo)) == use);
+    }
 }
 
 /* Pins: BuildNotes::Omit leaves out every line of the ALGO help that says

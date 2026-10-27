@@ -21,6 +21,7 @@
 
 #include "catch2/catch.hpp"
 
+#include <tadah/hpo/optimizer_caps.h>   // OptimizerCaps::reads_seed
 #include <tadah/hpo/backend_rules.h>
 #include <tadah/hpo/gradient_provider.h>
 #include <tadah/hpo/hpo_log.h>
@@ -126,7 +127,10 @@ OptimizerSpec nlopt_spec(const std::string& algo, unsigned maxeval)
     sp.analyse_logscale();
     sp.optim_init = {{-1.2, 1.0}};
     sp.stop.maxeval = maxeval;
-    sp.seed = 7;
+    /* SEED for an optimiser that reads it (one that draws random
+     * numbers, OptimizerCaps::reads_seed): the others refuse it. */
+    const auto* caps = tadah::hpo::find_optimizer_caps(sp.lib, sp.algo);
+    if (caps && caps->reads_seed) sp.seed = 7;
     sp.param["fd_step"] = 1e-6;
     sp.param_raw["fd_kernel"] = "inhouse";
     sp.failscore = std::numeric_limits<double>::max();

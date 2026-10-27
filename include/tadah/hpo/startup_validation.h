@@ -117,7 +117,7 @@ std::set<core::Element> declared_element_set(const core::Context &train_ctx);
  *   - NLOPT, DLIB and CERES need at least one OPTIM line;
  *   - the STRATEGY TYPE must suit the optimiser (validate_run_policy,
  *     strategy_rules.h): MULTISTART rejects a global optimiser that
- *     consumes a single starting point, for any N_STARTS; PRESTAGE needs
+ *     takes one starting point, for any N_STARTS; PRESTAGE needs
  *     an EXPLORE block and, with a configured TOPK > 1, a refinement
  *     optimiser MULTISTART accepts;
  *   - each phase's backend accepts its settings (validate_phase_backends,

@@ -702,7 +702,10 @@ TEST_CASE("startup validation: the RESTART warning says what a round of a "
  *    exploration never evaluates the block's INIT points. To start the
  *    exploration at them, use an exploration optimiser that starts at the
  *    point it is given." -- an OPTIMIZER-level INIT block beside it, which
- *    only the refinement's fallback and NOISE CALIBRATION read, gets none;
+ *    only the refinement's fallback and NOISE CALIBRATION read, gets not
+ *    this WARNING but the one that the search evaluates its points only in
+ *    the refinement ("the INIT block on line 5 gives 3 starting points,
+ *    ..."; it got none until that WARNING was added);
  *  - PRESTAGE, an OPTIMIZER-level INIT block (line 5) that the exploration
  *    takes (its EXPLORE block has none): "... the PRESTAGE exploration
  *    NLOPT:GN_DIRECT_L, which is given the block's INIT points (its EXPLORE
@@ -710,7 +713,7 @@ TEST_CASE("startup validation: the RESTART warning says what a round of a "
  *    evaluates them; the refinement starts from them only when no
  *    evaluation of the exploration has a usable loss. ...".
  * No warning: no INIT block; an INIT block without a METHOD (SEED only);
- * LN_BOBYQA, which starts at its first INIT point (and keeps the read-time
+ * LN_BOBYQA, which starts at its first INIT point (and keeps the
  * WARNING that it "starts from the first only" for METHOD LHS 3, which
  * said "consumes only the first" before the case "startup validation: the
  * INIT points a PLAIN search does not use are warned about in the
@@ -796,15 +799,22 @@ TEST_CASE("startup validation: an INIT block on a search that does not "
                            ", so the exploration never evaluates the block's "
                            "INIT points." + explore_tail) == 1);
         CHECK(count_of(s.journal, "the INIT block on line") == 1);
-        // with an OPTIMIZER-level INIT block too (lines 5-8): only the
-        // exploration's own (now on line 18) is warned about
+        // with an OPTIMIZER-level INIT block too (lines 5-8): the
+        // exploration's own (now on line 18) is warned about as above, the
+        // OPTIMIZER-level one as the refinement's fallback
         const Startup both = startup(prestage(lhs, explore_init));
         INFO("journal:\n" << both.journal);
         CHECK(count_of(both.journal,
                        "the INIT block on line 18" + explore_head +
                            ", so the exploration never evaluates the block's "
                            "INIT points." + explore_tail) == 1);
-        CHECK(count_of(both.journal, "the INIT block on line") == 1);
+        CHECK(count_of(both.journal, "the INIT block on line 18") == 1);
+        CHECK(count_of(both.journal, "the INIT block on line 5 gives 3 "
+                                     "starting points, and the PRESTAGE "
+                                     "exploration (EXPLORE block) starts from "
+                                     "those of its own INIT block, on line "
+                                     "18,") == 1);
+        CHECK(count_of(both.journal, "the INIT block on line") == 2);
     }
     {
         // the OPTIMIZER-level block (line 5), which the exploration takes
@@ -830,35 +840,42 @@ TEST_CASE("startup validation: an INIT block on a search that does not "
              {"LN_BOBYQA", lhs}}) {
         INFO("NLOPT:" << algo << ", INIT block '" << init << "'");
         const Startup s = startup(plain(algo, init));
-        CHECK(count_of(s.journal, "the INIT block on line") == 0);
+        /* This case's WARNING ("the INIT block on line 5: ..."), not the
+         * one about the points a search does not evaluate ("the INIT block
+         * on line 5 gives 3 starting points, ..."). */
+        CHECK(count_of(s.journal, "the INIT block on line 5: ") == 0);
+        CHECK(count_of(s.journal, "does not start at the point") == 0);
         if (algo == "LN_BOBYQA")
             CHECK(count_of(s.err, "starts from the first only") == 1);
     }
 }
 
-/* Pins: a PLAIN search with an INIT block of METHOD LHS 3, whose optimiser
- * takes one starting point: the read-time WARNING, on standard error and in
- * the journal, counts starting points and names only what takes them for
- * that optimiser. For NLOPT:LN_BOBYQA, a local optimiser that STRATEGY TYPE
- * MULTISTART runs from each point: "INIT chain produced 3 starting points
- * but NLOPT:LN_BOBYQA starts from the first only; the other 2 are not used.
- * STRATEGY TYPE MULTISTART with N_STARTS 3 starts NLOPT:LN_BOBYQA from each
- * of them, and an optimiser that takes several starting points in one run
- * (DLIB:GFS) takes them all, also as the exploration of STRATEGY TYPE
- * PRESTAGE." For a global optimiser that keeps its starting point and that
- * MULTISTART refuses (NLOPT:GN_CRS2_LM, ASA:ASA, TADAH:ANNEAL): "... the
- * other 2 are not used. An optimiser that takes several starting points in
- * one run (DLIB:GFS) takes them all, also as the exploration of STRATEGY
- * TYPE PRESTAGE.", which names no MULTISTART; the same file under TYPE
- * MULTISTART with N_STARTS 3 is refused ("STRATEGY TYPE MULTISTART cannot
- * run ..."), while the LN_BOBYQA one gets no such WARNING. No WARNING says
- * anything of seeds.
- * Before the fix: every optimiser was advised "STRATEGY TYPE MULTISTART
- * with N_STARTS 3 or TYPE PRESTAGE uses them, and so does an optimiser that
- * takes several starting points in one run (DLIB:GFS).": TYPE MULTISTART,
- * which refuses the three global optimisers, and TYPE PRESTAGE, whose
- * exploration takes only the first point unless its optimiser takes
- * several (the texts fail). */
+/* Pins: a PLAIN search with an INIT block of METHOD LHS 3 (line 5), whose
+ * optimiser takes one starting point: the startup WARNING, on standard
+ * error and in the journal, names the INIT block's line, the phase and its
+ * optimiser, counts the points it does not evaluate and names only what
+ * takes them for that optimiser. For NLOPT:LN_BOBYQA, a local optimiser
+ * that STRATEGY TYPE MULTISTART runs from each point: "the INIT block on
+ * line 5 gives 3 starting points, and the STRATEGY-level optimiser
+ * NLOPT:LN_BOBYQA starts from the first only: the other 2 are not
+ * evaluated. STRATEGY TYPE MULTISTART with N_STARTS 3 starts
+ * NLOPT:LN_BOBYQA from each of them, and an optimiser that takes several
+ * starting points in one run (DLIB:GFS) takes them all, also as the
+ * exploration of STRATEGY TYPE PRESTAGE." For a global optimiser that keeps
+ * its starting point and that MULTISTART refuses (NLOPT:GN_CRS2_LM,
+ * ASA:ASA, TADAH:ANNEAL): "... the other 2 are not evaluated. An optimiser
+ * that takes several starting points in one run (DLIB:GFS) takes them all,
+ * also as the exploration of STRATEGY TYPE PRESTAGE.", which names no
+ * MULTISTART; the same file under TYPE MULTISTART with N_STARTS 3 is
+ * refused ("STRATEGY TYPE MULTISTART cannot run ..."), while the LN_BOBYQA
+ * one gets no such WARNING. No WARNING says anything of seeds.
+ * Before the fix: the WARNING came when the file was read ("INIT chain
+ * produced 3 starting points but NLOPT:LN_BOBYQA starts from the first
+ * only; the other 2 are not used. ..."), naming neither the INIT block's
+ * line nor the phase (the texts fail). Before that: every optimiser was
+ * advised "STRATEGY TYPE MULTISTART with N_STARTS 3 or TYPE PRESTAGE uses
+ * them, and so does an optimiser that takes several starting points in
+ * one run (DLIB:GFS).". */
 TEST_CASE("startup validation: the INIT points a PLAIN search does not use "
           "are warned about in the journal", "[startup][init][start_point]")
 {
@@ -871,9 +888,10 @@ TEST_CASE("startup validation: the INIT points a PLAIN search does not use "
                "\n    MAXEVAL 20\n  ENDSTRATEGY\nENDOPTIMIZER\n";
     };
     const std::string head =
-        "INIT chain produced 3 starting points but ";
+        "the INIT block on line 5 gives 3 starting points, and the "
+        "STRATEGY-level optimiser ";
     const std::string unused =
-        " starts from the first only; the other 2 are not used. ";
+        " starts from the first only: the other 2 are not evaluated. ";
     const std::string takes_all =
         "optimiser that takes several starting points in one run (DLIB:GFS) "
         "takes them all, also as the exploration of STRATEGY TYPE PRESTAGE.";
@@ -895,6 +913,7 @@ TEST_CASE("startup validation: the INIT points a PLAIN search does not use "
         INFO("journal:\n" << s.journal << "\nstderr:\n" << s.err);
         CHECK(count_of(s.err, "starts from the first only") == 0);
         CHECK(count_of(s.journal, "starts from the first only") == 0);
+        CHECK(count_of(s.journal, "are not evaluated") == 0);
     }
     for (const auto& [lib, algo] :
          std::vector<std::pair<std::string, std::string>>{
@@ -911,5 +930,194 @@ TEST_CASE("startup validation: the INIT points a PLAIN search does not use "
         CHECK_THROWS_WITH(
             startup(run("    TYPE MULTISTART\n    N_STARTS 3\n", lib, algo)),
             Catch::Contains("STRATEGY TYPE MULTISTART cannot run " + name));
+    }
+}
+
+/* Pins: the startup WARNING about INIT points a phase does not evaluate,
+ * on standard error and in the journal, for the phases that take fewer
+ * points than an INIT block gives:
+ *  - STRATEGY TYPE PRESTAGE whose exploration (NLOPT:GN_CRS2_LM) takes one
+ *    starting point, given the OPTIMIZER-level block's 7 points (METHOD
+ *    CONFIG and METHOD LHS 6, the block on line 5): "the INIT block on line
+ *    5 gives 7 starting points, and the PRESTAGE exploration (EXPLORE
+ *    block) NLOPT:GN_CRS2_LM starts from the first only: the other 6 are
+ *    not evaluated (the refinement starts from them only when no evaluation
+ *    of the exploration has a usable loss). An exploration optimiser that
+ *    takes several starting points in one run (DLIB:GFS) takes them all.";
+ *  - the same with the EXPLORE block's own INIT block of METHOD RANDOM 5
+ *    (line 14): "the INIT block on line 14 gives 5 starting points, and the
+ *    PRESTAGE exploration (EXPLORE block) NLOPT:GN_CRS2_LM starts from the
+ *    first only: the other 4 are not evaluated. An exploration optimiser
+ *    ...";
+ *  - STRATEGY TYPE MULTISTART with N_STARTS 3 and METHOD LHS 7: "the INIT
+ *    block on line 5 gives 7 starting points, and STRATEGY TYPE MULTISTART
+ *    runs NLOPT:LN_BOBYQA from N_STARTS 3 of them: the other 4 are not
+ *    evaluated. N_STARTS 7 starts it from each of them.".
+ * No such WARNING: an exploration on DLIB:GFS, which takes every point;
+ * MULTISTART with as many starts as points.
+ * Before the fix: a PRESTAGE and a MULTISTART of N_STARTS 2 or more counted
+ * as taking every point, and nothing was said (the counts are 0). */
+TEST_CASE("startup validation: the INIT points a PRESTAGE exploration or a "
+          "MULTISTART does not evaluate are warned about",
+          "[startup][init][start_point]")
+{
+    const std::string chain7 =
+        "  INIT\n    METHOD CONFIG\n    METHOD LHS 6\n    SEED 7\n"
+        "  ENDINIT\n";  // lines 5-9
+    const auto prestage = [](const std::string& outer_init,
+                             const std::string& lib, const std::string& algo,
+                             const std::string& explore_init) {
+        return kRoot + "OPTIMIZER\n" + outer_init +
+               "  STRATEGY\n"
+               "    TYPE PRESTAGE\n"
+               "    LIB NLOPT\n"
+               "    ALGO LN_BOBYQA\n"
+               "    MAXEVAL 10\n"
+               "    EXPLORE\n"
+               "      LIB " + lib + "\n"
+               "      ALGO " + algo + "\n"
+               "      MAXEVAL 8\n" + explore_init +
+               "    ENDEXPLORE\n"
+               "  ENDSTRATEGY\n"
+               "ENDOPTIMIZER\n";
+    };
+    const std::string takes_all =
+        " An exploration optimiser that takes several starting points in one "
+        "run (DLIB:GFS) takes them all.";
+    {
+        const std::string w =
+            "the INIT block on line 5 gives 7 starting points, and the "
+            "PRESTAGE exploration (EXPLORE block) NLOPT:GN_CRS2_LM starts from "
+            "the first only: the other 6 are not evaluated (the refinement "
+            "starts from them only when no evaluation of the exploration has "
+            "a usable loss)." + takes_all;
+        const Startup s = startup(prestage(chain7, "NLOPT", "GN_CRS2_LM", ""));
+        INFO("journal:\n" << s.journal << "\nstderr:\n" << s.err);
+        CHECK(count_of(s.err, "[HPO] WARNING: " + w + "\n") == 1);
+        CHECK(count_of(s.journal, w) == 1);
+    }
+    {
+        // the EXPLORE block's own INIT block, lines 14-17
+        const std::string w =
+            "the INIT block on line 14 gives 5 starting points, and the "
+            "PRESTAGE exploration (EXPLORE block) NLOPT:GN_CRS2_LM starts from "
+            "the first only: the other 4 are not evaluated." + takes_all;
+        const Startup s = startup(prestage(
+            "", "NLOPT", "GN_CRS2_LM",
+            "      INIT\n        METHOD RANDOM 5\n        SEED 3\n"
+            "      ENDINIT\n"));
+        INFO("journal:\n" << s.journal << "\nstderr:\n" << s.err);
+        CHECK(count_of(s.err, "[HPO] WARNING: " + w + "\n") == 1);
+        CHECK(count_of(s.journal, w) == 1);
+    }
+    {
+        const Startup s = startup(prestage(chain7, "DLIB", "GFS", ""));
+        INFO("journal:\n" << s.journal << "\nstderr:\n" << s.err);
+        CHECK(count_of(s.journal, "are not evaluated") == 0);
+        CHECK(count_of(s.err, "are not evaluated") == 0);
+    }
+    const auto multistart = [](const std::string& k) {
+        return kRoot + "OPTIMIZER\n"
+               "  INIT\n    METHOD LHS " + k + "\n    SEED 7\n  ENDINIT\n"
+               "  STRATEGY\n"
+               "    TYPE MULTISTART\n"
+               "    N_STARTS 3\n"
+               "    LIB NLOPT\n"
+               "    ALGO LN_BOBYQA\n"
+               "    MAXEVAL 30\n"
+               "  ENDSTRATEGY\n"
+               "ENDOPTIMIZER\n";
+    };
+    {
+        const std::string w =
+            "the INIT block on line 5 gives 7 starting points, and STRATEGY "
+            "TYPE MULTISTART runs NLOPT:LN_BOBYQA from N_STARTS 3 of them: the "
+            "other 4 are not evaluated. N_STARTS 7 starts it from each of "
+            "them.";
+        const Startup s = startup(multistart("7"));
+        INFO("journal:\n" << s.journal << "\nstderr:\n" << s.err);
+        CHECK(count_of(s.err, "[HPO] WARNING: " + w + "\n") == 1);
+        CHECK(count_of(s.journal, w) == 1);
+    }
+    {
+        const Startup s = startup(multistart("3"));
+        INFO("journal:\n" << s.journal << "\nstderr:\n" << s.err);
+        CHECK(count_of(s.journal, "are not evaluated") == 0);
+    }
+}
+
+/* Pins: under STRATEGY TYPE PRESTAGE whose EXPLORE block has an INIT block
+ * of its own (METHOD RANDOM 5, line 19), the OPTIMIZER-level INIT block
+ * (METHOD CONFIG and METHOD LHS 6, line 5) gives the refinement its
+ * starting points only when no evaluation of the exploration has a usable
+ * loss, and the startup WARNING, on standard error and in the journal, says
+ * so: "the INIT block on line 5 gives 7 starting points, and the PRESTAGE
+ * exploration (EXPLORE block) starts from those of its own INIT block, on
+ * line 19, so the search evaluates them only in the refinement, when no
+ * evaluation of the exploration has a usable loss. Without an INIT block
+ * of its own, the exploration takes them."; whatever the exploration's
+ * optimiser (NLOPT:GN_CRS2_LM, which also leaves 4 of its own 5 points
+ * unevaluated, and DLIB:GFS, which takes them all); under NOISE
+ * CALIBRATION 3 it adds " (NOISE CALIBRATION evaluates the first of them 3
+ * times)" after "usable loss". An exploration without an INIT block of its
+ * own, which takes the OPTIMIZER-level points, gives no such WARNING.
+ * Before the fix: nothing was said of the OPTIMIZER-level block (the
+ * counts are 0). */
+TEST_CASE("startup validation: the OPTIMIZER-level INIT points of a "
+          "PRESTAGE whose exploration has its own are warned about",
+          "[startup][init][start_point]")
+{
+    const std::string chain7 =
+        "  INIT\n    METHOD CONFIG\n    METHOD LHS 6\n    SEED 7\n"
+        "  ENDINIT\n";  // lines 5-9
+    const std::string own =
+        "      INIT\n        METHOD RANDOM 5\n        SEED 3\n"
+        "      ENDINIT\n";  // lines 19-22
+    const auto prestage = [&](const std::string& lib, const std::string& algo,
+                              const std::string& explore_init,
+                              const std::string& noise) {
+        return kRoot + "OPTIMIZER\n" + chain7 +
+               "  STRATEGY\n"
+               "    TYPE PRESTAGE\n"
+               "    LIB NLOPT\n"
+               "    ALGO LN_BOBYQA\n"
+               "    MAXEVAL 10\n"
+               "    EXPLORE\n"
+               "      LIB " + lib + "\n"
+               "      ALGO " + algo + "\n"
+               "      MAXEVAL 8\n" + explore_init +
+               "    ENDEXPLORE\n"
+               "  ENDSTRATEGY\n" + noise +
+               "ENDOPTIMIZER\n";
+    };
+    const auto warning = [](const std::string& calibration) {
+        return "the INIT block on line 5 gives 7 starting points, and the "
+               "PRESTAGE exploration (EXPLORE block) starts from those of its "
+               "own INIT block, on line 19, so the search evaluates them only "
+               "in the refinement, when no evaluation of the exploration has "
+               "a usable loss" + calibration + ". Without an INIT block of "
+               "its own, the exploration takes them.";
+    };
+    for (const auto& [lib, algo] :
+         {std::pair<std::string, std::string>{"NLOPT", "GN_CRS2_LM"},
+          std::pair<std::string, std::string>{"DLIB", "GFS"}}) {
+        INFO(lib << ":" << algo);
+        const Startup s = startup(prestage(lib, algo, own, ""));
+        INFO("journal:\n" << s.journal << "\nstderr:\n" << s.err);
+        CHECK(count_of(s.err, "[HPO] WARNING: " + warning("") + "\n") == 1);
+        CHECK(count_of(s.journal, warning("")) == 1);
+        const Startup none = startup(prestage(lib, algo, "", ""));
+        INFO("journal:\n" << none.journal);
+        CHECK(count_of(none.journal, "starts from those of its own INIT "
+                                     "block") == 0);
+    }
+    {
+        const Startup s = startup(prestage(
+            "DLIB", "GFS", own, "  NOISE\n    CALIBRATION 3\n  ENDNOISE\n"));
+        INFO("journal:\n" << s.journal << "\nstderr:\n" << s.err);
+        const std::string w =
+            warning(" (NOISE CALIBRATION evaluates the first of them 3 times)");
+        CHECK(count_of(s.err, "[HPO] WARNING: " + w + "\n") == 1);
+        CHECK(count_of(s.journal, w) == 1);
     }
 }
