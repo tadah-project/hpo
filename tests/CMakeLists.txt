@@ -415,6 +415,35 @@ set_tests_properties(hpo_hpotarget_generated_tool PROPERTIES
     LABELS "docs"
     TIMEOUT 60
     FAIL_REGULAR_EXPRESSION "\nRan 0 tests ")
+# The generated tables of the target-file registry: blueprint/
+# gen_hpotarget.py writes include/tadah/hpo/hpotarget_registry_gen.h and
+# hpo_param_registry_gen.h from the registry (blueprint/README.md, "The
+# generated tables"); both are checked in.
+#  - hpo_hpotarget_registry_sync: gen_hpotarget.py --check fails when a
+#    checked-in header differs from what the registry gives, naming the
+#    command that regenerates it;
+#  - hpo_hpotarget_generator_tool: the generator on the synthetic registry
+#    of test_hpotarget_registry.py (tests/test_gen_hpotarget.py), the
+#    headers compiled with this build's C++ compiler;
+#  - the Catch2 cases "hpotarget generated tables: ..." (tag
+#    [hpotarget_gen], tests/test_hpotarget_registry_bindings.cpp): each
+#    generated table equals the table the parser holds by hand.
+# Before the fix: the three fail, the generator and the headers do not
+# exist.
+add_test(NAME hpo_hpotarget_registry_sync
+    COMMAND ${Python3_EXECUTABLE}
+        ${_hpo_blueprint_dir}/gen_hpotarget.py --check)
+set_tests_properties(hpo_hpotarget_registry_sync PROPERTIES
+    LABELS "docs"
+    TIMEOUT 60)
+add_test(NAME hpo_hpotarget_generator_tool
+    COMMAND ${CMAKE_COMMAND} -E env CXX=${CMAKE_CXX_COMPILER}
+        ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/test_gen_hpotarget.py)
+set_tests_properties(hpo_hpotarget_generator_tool PROPERTIES
+    LABELS "docs"
+    TIMEOUT 120
+    FAIL_REGULAR_EXPRESSION "\nRan 0 tests ")
 
 # Boost drift gate: every Boost header HPO includes must be in the Boost
 # Tadah vendors (MLIP's external/boost, on HPO's include path through
