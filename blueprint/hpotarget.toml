@@ -2719,6 +2719,9 @@ msg = "TADAH_FAILSCORE_GRADING must be ON or OFF (got '{tok}')"
 doc = """\
 Replaces FAILSCORE_GRADING of the target file when it is set and not \
 empty; the value is ON or OFF, in upper case."""
+checks = [
+  { msg = "{phase}: ASA:ASA: under FAILSCORE_GRADING ON, set by TADAH_FAILSCORE_GRADING, a failed evaluation scores from 0.999 FAILSCORE to below FAILSCORE ({value}), and ASA:ASA takes a cost of about 1e+18 or more for an invalid state and draws another, so it would not see the graded failures at or above that cost; a FAILSCORE of 1e+18 or less keeps every graded failure below it", doc = "When the run starts, at the line that closes the block of an ASA:ASA search, in any phase, when the variable sets ON: the refusal of FAILSCORE_GRADING ON with ASA:ASA, which names the variable, as the target file may say OFF." },
+]
 
 [[env.invalid]]
 wrap = "root"
@@ -2727,6 +2730,25 @@ env = { TADAH_FAILSCORE_GRADING = "MAYBE" }
 at = "none"
 text = ""
 error = "TADAH_FAILSCORE_GRADING must be ON or OFF (got 'MAYBE')"
+
+[[env.invalid]]
+wrap = "none"
+check = "check"
+env = { TADAH_FAILSCORE_GRADING = "ON" }
+at = "ENDOPTIMIZER"
+doc = "The variable sets ON over the OFF of the file: the refusal of an ASA:ASA search names it."
+text = '''
+FAILSCORE_GRADING OFF
+OPTIM CGRID2B (1) 0.5 1.5
+PC_ERMSE 0 1
+OPTIMIZER
+STRATEGY
+LIB ASA
+ALGO ASA
+MAXEVAL 10
+ENDSTRATEGY
+ENDOPTIMIZER'''
+error = "the STRATEGY-level optimiser: ASA:ASA: under FAILSCORE_GRADING ON, set by TADAH_FAILSCORE_GRADING, a failed evaluation scores from 0.999 FAILSCORE to below FAILSCORE (1.7976931348623157e+308, the largest double, as without a FAILSCORE line), and ASA:ASA takes a cost of about 1e+18 or more for an invalid state and draws another, so it would not see the graded failures at or above that cost; a FAILSCORE of 1e+18 or less keeps every graded failure below it"
 
 [[env]]
 name = "TADAH_BUMPGATE"

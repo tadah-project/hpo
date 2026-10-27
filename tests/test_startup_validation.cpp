@@ -1024,7 +1024,15 @@ TEST_CASE("startup validation: the ANALYTICAL rule applies to the block "
  * line)"). The limit lies between FAILSCORE 1.0000000000002e18, whose
  * largest graded failure is below it, accepted, and 1.0000000000003e18,
  * refused; FAILSCORE 1e18 and 9.99e17, and FAILSCORE_GRADING OFF, are
- * accepted.
+ * accepted. When TADAH_FAILSCORE_GRADING sets ON (the override of
+ * hpo_run, set_failscore_grading), over a file that says OFF, the refusal
+ * names the variable, which the file does not show: "... ASA:ASA: under
+ * FAILSCORE_GRADING ON, set by TADAH_FAILSCORE_GRADING, a failed
+ * evaluation scores ..."; the variable set to OFF over a file that says ON
+ * takes the search.
+ * Before the variable was named: "... ASA:ASA: under FAILSCORE_GRADING ON
+ * a failed evaluation scores ..." over a file that says OFF (the case
+ * fails).
  * Before the fix: FAILSCORE 1e18 and 1.0000000000002e18 were refused (the
  * rule was a FAILSCORE above the limit, while every graded failure lies
  * below FAILSCORE: under FAILSCORE 1e18 a seeded ASA:ASA run of 1.5.0 on
@@ -1112,6 +1120,38 @@ TEST_CASE("startup validation: FAILSCORE_GRADING ON takes any FAILSCORE, "
     CHECK(startup("FAILSCORE_GRADING ON\nFAILSCORE 9.99e17\n", asa) == "");
     CHECK(startup("FAILSCORE_GRADING OFF\n", asa) == "");
     CHECK(startup("", asa) == "");
+  }
+  SECTION("the refusal names TADAH_FAILSCORE_GRADING when it sets ON") {
+    /* What startup says when the variable sets the mode: hpo_run applies
+     * it with set_failscore_grading before the startup checks. */
+    const auto by_env = [&](const std::string& lines, bool on) {
+      PeriodicTable::initialize();
+      ScopedTempFile tf(head + lines + asa);
+      Context ctx = make_model_ctx();
+      ctx.add("DBFILE", "dummy.db");
+      HPOTargets trg(ctx, tf.path.string());
+      trg.set_failscore_grading(on);
+      try {
+        validate_hpo_setup(ctx, trg, true, true);
+      } catch (const std::exception& e) {
+        return std::string(e.what());
+      }
+      return std::string();
+    };
+    CHECK_THAT(by_env("FAILSCORE_GRADING OFF\n", true),
+               Catch::StartsWith(
+                   "Error on line 8: the STRATEGY-level optimiser: ASA:ASA: "
+                   "under FAILSCORE_GRADING ON, set by "
+                   "TADAH_FAILSCORE_GRADING, a failed evaluation scores from "
+                   "0.999 FAILSCORE to below FAILSCORE "
+                   "(1.7976931348623157e+308, the largest double, as without "
+                   "a FAILSCORE line), and ASA:ASA takes a cost of about "
+                   "1e+18 or more for an invalid state and draws another, so "
+                   "it would not see the graded failures at or above that "
+                   "cost; a FAILSCORE of 1e+18 or less keeps every graded "
+                   "failure below it") &&
+               Catch::EndsWith("\nLine: ENDOPTIMIZER"));
+    CHECK(by_env("FAILSCORE_GRADING ON\n", false) == "");
   }
 }
 
