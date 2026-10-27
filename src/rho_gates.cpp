@@ -324,8 +324,8 @@ DensityGates build_density_gates(const core::Context &master,
     throw std::runtime_error(
         "RHOGATE / RHOBARGATE need a bare DM_REAM many-body term (INITMB "
         "true, TYPEMB DM_REAM)");
-  g.knot2b = models::potedit::derived_knot_rcut(master, "2B").has_value();
-  g.knotmb = models::potedit::derived_knot_rcut(master, "MB").has_value();
+  g.knot2b = has_knot_channel(master, "2B");
+  g.knotmb = has_knot_channel(master, "MB");
   g.reach = knot_aware_reachable_rcut(master, trg);
   if (!gated) return g;
 

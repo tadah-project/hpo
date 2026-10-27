@@ -1211,8 +1211,8 @@ HPO_Host<P,R>::HPO_Host(core::Context master_ctx,
     /* knot channels: RCUT keys are derived from the largest knot (see
      * rcut_derivation.h). Flags are computed once here because the per-eval
      * hook lives in the const update_context(). */
-    knot2b_ = models::potedit::derived_knot_rcut(master_ctx_, "2B").has_value();
-    knotmb_ = models::potedit::derived_knot_rcut(master_ctx_, "MB").has_value();
+    knot2b_ = detail::has_knot_channel(master_ctx_, "2B");
+    knotmb_ = detail::has_knot_channel(master_ctx_, "MB");
 
     /* Per-candidate bump-support gate (bump_support_gate.h). Under STRICT
      * validate_hpo_setup already hard-errored on any violable box, so the
