@@ -1020,13 +1020,16 @@ loss at or above 0.999 FAILSCORE counts as a failure."""
 long_doc = """\
 A PC_LAMMPS line without --failscore gives its variables this value when \
 its simulation fails, and a PC_FAILPROBE line without --failscore takes \
-it as its --failscore. FAILSCORE_GRADING ON needs a FAILSCORE below \
-1e300. DLIB:GFS, DLIB:BFGS and NLopt are given a finite stand-in for a \
+it as its --failscore. DLIB:GFS, DLIB:BFGS and NLopt are given a finite \
+stand-in for a \
 failed evaluation: the worst usable loss of the search so far plus a \
 margin, or, before any, FAILSCORE capped at 1e100. A loss NLopt asks for \
 together with its gradient is given the stand-in only for a graded \
 failure with a usable gradient; a failed point whose gradient fails is \
-rejected. The result files and the journal record the loss the \
+rejected. CERES:STEEPEST_DESCENT is given a failed evaluation's loss \
+scaled to at most 1e100: for a FAILSCORE above 1e100, the loss times \
+1e100 / FAILSCORE, and its gradient likewise, so its line search does \
+not overflow. The result files and the journal record the loss the \
 evaluation reported."""
 quirk = """\
 A PC_LAMMPS or PC_FAILPROBE line without --failscore takes the FAILSCORE \
@@ -1345,14 +1348,37 @@ derives it from the script limit t as max(3t, t + 120 s), and without a \
 script limit there is no deadline."""
 long_doc = """\
 The deadline is kept in 64-bit milliseconds, so a value above about \
-9.2e15 s is refused. Under PC_ISOLATION THREAD the key has no effect."""
+9.2e15 s is refused. Under PC_ISOLATION THREAD the scripts run inside \
+the tadah process, without a worker deadline: the key, for any value, and \
+TADAH_PC_WORKER_TIMEOUT are refused when the run starts, whether the \
+PC_ISOLATION line, TADAH_PC_ISOLATION or the MPI build of tadah sets \
+THREAD."""
 checks = [
   { msg = "PC_WORKER_TIMEOUT is too large for the worker deadline, got '{tok}' (it is kept in 64-bit milliseconds: at most about 9.2e15 s)", doc = "The value is above about 9.2e15 s." },
+  { msg = "PC_WORKER_TIMEOUT sets the deadline of a script task in a worker process (PC_ISOLATION PROCESS); under PC_ISOLATION THREAD, {why}, the scripts run inside the tadah process without a worker deadline, so it would have no effect", doc = "When the run starts, at the line, for any value: the run uses PC_ISOLATION THREAD; {why} says what sets THREAD: \"set on line n\", the PC_ISOLATION line; \"set by TADAH_PC_ISOLATION\"; or \"the only mode of the MPI build of tadah\"." },
 ]
 
 [[key.examples]]
 wrap = "root"
 text = "PC_WORKER_TIMEOUT 600"
+
+[[key.invalid]]
+wrap = "root"
+check = "check"
+at = 2
+doc = "Under PC_ISOLATION THREAD the scripts run inside the tadah process, without a worker deadline."
+text = '''
+PC_ISOLATION THREAD
+PC_WORKER_TIMEOUT 600'''
+error = "PC_WORKER_TIMEOUT sets the deadline of a script task in a worker process (PC_ISOLATION PROCESS); under PC_ISOLATION THREAD, set on line 1, the scripts run inside the tadah process without a worker deadline, so it would have no effect"
+
+[[key.invalid]]
+wrap = "root"
+check = "check"
+env = { TADAH_PC_ISOLATION = "THREAD" }
+doc = "THREAD set by TADAH_PC_ISOLATION."
+text = "PC_WORKER_TIMEOUT 600"
+error = "PC_WORKER_TIMEOUT sets the deadline of a script task in a worker process (PC_ISOLATION PROCESS); under PC_ISOLATION THREAD, set by TADAH_PC_ISOLATION, the scripts run inside the tadah process without a worker deadline, so it would have no effect"
 
 [[key.invalid]]
 wrap = "root"
@@ -1392,8 +1418,13 @@ ON gives a failed evaluation a loss in [0.999 FAILSCORE, FAILSCORE) that \
 grows with the size of the failure, so the optimiser can move towards \
 candidates that do not fail; OFF gives it FAILSCORE."""
 long_doc = """\
-ON needs a FAILSCORE line with a value below 1e300 (checked at startup). A \
---failvar value above 0 and a PC_FAILPROBE probe value above --gate fail \
+ON takes any FAILSCORE, the default largest double too, with every \
+optimiser but ASA:ASA. ASA:ASA takes a loss of about 1e18 or more for an \
+invalid point and draws another, so it would not see such graded \
+failures. Under ON an ASA:ASA search, in any phase, is refused at startup \
+when its largest graded failure, a little below FAILSCORE, reaches that \
+loss; a FAILSCORE of 1e18 or less is always taken. A --failvar value \
+above 0 and a PC_FAILPROBE probe value above --gate fail \
 the evaluation under ON and OFF alike: under ON with a graded loss, under \
 OFF with FAILSCORE. The settings that only grade a failure, PC_FAILPROBE \
 --s0 and a --failvar scale, are refused under OFF. A point outside the \
@@ -1401,7 +1432,7 @@ OPTIM boxes, which a CERES optimiser can propose, is not evaluated. Under \
 ON and OFF alike its loss lies in [0.99975 FAILSCORE, FAILSCORE) and grows \
 with its distance from the boxes."""
 checks = [
-  { msg = "FAILSCORE_GRADING ON grades failures in bands below FAILSCORE, which needs a FAILSCORE above 0 and below 1e300 (without a FAILSCORE line, FAILSCORE is the largest double)", doc = "At startup, under ON: FAILSCORE is 1e300 or more, as it is without a FAILSCORE line." },
+  { msg = "{phase}: ASA:ASA: under FAILSCORE_GRADING ON a failed evaluation scores from 0.999 FAILSCORE to below FAILSCORE ({value}), and ASA:ASA takes a cost of about 1e+18 or more for an invalid state and draws another, so it would not see the graded failures at or above that cost; a FAILSCORE of 1e+18 or less keeps every graded failure below it", doc = "At startup, under ON, at the line that closes the block of an ASA:ASA search, in any phase: the largest graded failure, a little below FAILSCORE, reaches the cost of about 1e18 at which ASA takes a state for an invalid one, from a FAILSCORE a little above 1e18 on, as without a FAILSCORE line; {value} is FAILSCORE." },
 ]
 
 [[key.examples]]
@@ -1415,26 +1446,33 @@ wrap = "root"
 doc = "The default, written out: a failed evaluation scores FAILSCORE."
 text = "FAILSCORE_GRADING OFF"
 
+[[key.examples]]
+wrap = "root"
+doc = "Without a FAILSCORE line a failed evaluation scores from 0.999 times the largest double."
+text = "FAILSCORE_GRADING ON"
+
+[[key.invalid]]
+wrap = "none"
+check = "startup"
+at = "ENDOPTIMIZER"
+doc = "ASA:ASA takes a cost of about 1e18 or more for an invalid state."
+text = '''
+FAILSCORE_GRADING ON
+OPTIM CGRID2B (1) 0.5 1.5
+PC_ERMSE 0 1
+OPTIMIZER
+STRATEGY
+LIB ASA
+ALGO ASA
+MAXEVAL 10
+ENDSTRATEGY
+ENDOPTIMIZER'''
+error = "the STRATEGY-level optimiser: ASA:ASA: under FAILSCORE_GRADING ON a failed evaluation scores from 0.999 FAILSCORE to below FAILSCORE (1.7976931348623157e+308, the largest double, as without a FAILSCORE line), and ASA:ASA takes a cost of about 1e+18 or more for an invalid state and draws another, so it would not see the graded failures at or above that cost; a FAILSCORE of 1e+18 or less keeps every graded failure below it"
+
 [[key.invalid]]
 wrap = "root"
 text = "FAILSCORE_GRADING on"
 error = "FAILSCORE_GRADING must be ON or OFF, got 'on'"
-
-[[key.invalid]]
-wrap = "root"
-check = "startup"
-at = "none"
-text = "FAILSCORE_GRADING ON"
-error = "FAILSCORE_GRADING ON grades failures in bands below FAILSCORE, which needs a FAILSCORE above 0 and below 1e300 (without a FAILSCORE line, FAILSCORE is the largest double)"
-
-[[key.invalid]]
-wrap = "root"
-check = "startup"
-at = "none"
-text = '''
-FAILSCORE 1e301
-FAILSCORE_GRADING ON'''
-error = "FAILSCORE_GRADING ON grades failures in bands below FAILSCORE, which needs a FAILSCORE above 0 and below 1e300 (without a FAILSCORE line, FAILSCORE is the largest double)"
 
 [[key.invalid]]
 wrap = "root"
@@ -2683,6 +2721,9 @@ msg = "TADAH_FAILSCORE_GRADING must be ON or OFF (got '{tok}')"
 doc = """\
 Replaces FAILSCORE_GRADING of the target file when it is set and not \
 empty; the value is ON or OFF, in upper case."""
+checks = [
+  { msg = "{phase}: ASA:ASA: under FAILSCORE_GRADING ON, set by TADAH_FAILSCORE_GRADING, a failed evaluation scores from 0.999 FAILSCORE to below FAILSCORE ({value}), and ASA:ASA takes a cost of about 1e+18 or more for an invalid state and draws another, so it would not see the graded failures at or above that cost; a FAILSCORE of 1e+18 or less keeps every graded failure below it", doc = "When the run starts, at the line that closes the block of an ASA:ASA search, in any phase, when the variable sets ON: the refusal of FAILSCORE_GRADING ON with ASA:ASA, which names the variable, as the target file may say OFF." },
+]
 
 [[env.invalid]]
 wrap = "root"
@@ -2691,6 +2732,25 @@ env = { TADAH_FAILSCORE_GRADING = "MAYBE" }
 at = "none"
 text = ""
 error = "TADAH_FAILSCORE_GRADING must be ON or OFF (got 'MAYBE')"
+
+[[env.invalid]]
+wrap = "none"
+check = "check"
+env = { TADAH_FAILSCORE_GRADING = "ON" }
+at = "ENDOPTIMIZER"
+doc = "The variable sets ON over the OFF of the file: the refusal of an ASA:ASA search names it."
+text = '''
+FAILSCORE_GRADING OFF
+OPTIM CGRID2B (1) 0.5 1.5
+PC_ERMSE 0 1
+OPTIMIZER
+STRATEGY
+LIB ASA
+ALGO ASA
+MAXEVAL 10
+ENDSTRATEGY
+ENDOPTIMIZER'''
+error = "the STRATEGY-level optimiser: ASA:ASA: under FAILSCORE_GRADING ON, set by TADAH_FAILSCORE_GRADING, a failed evaluation scores from 0.999 FAILSCORE to below FAILSCORE (1.7976931348623157e+308, the largest double, as without a FAILSCORE line), and ASA:ASA takes a cost of about 1e+18 or more for an invalid state and draws another, so it would not see the graded failures at or above that cost; a FAILSCORE of 1e+18 or less keeps every graded failure below it"
 
 [[env]]
 name = "TADAH_BUMPGATE"
@@ -2735,6 +2795,7 @@ Replaces PC_WORKER_TIMEOUT of the target file when it is set and not \
 empty, with the same values."""
 checks = [
   { msg = "TADAH_PC_WORKER_TIMEOUT is too large for the worker deadline, got '{tok}' (it is kept in 64-bit milliseconds: at most about 9.2e15 s)", doc = "When the run starts: a value above about 9.2e15 s." },
+  { msg = "TADAH_PC_WORKER_TIMEOUT (got '{tok}') sets the deadline of a script task in a worker process (PC_ISOLATION PROCESS); under PC_ISOLATION THREAD, {why}, the scripts run inside the tadah process without a worker deadline, so it would have no effect", doc = "When the run starts, for any value: the run uses PC_ISOLATION THREAD; {why} says what sets THREAD, as for PC_WORKER_TIMEOUT." },
 ]
 
 [[env.invalid]]
@@ -2752,6 +2813,14 @@ env = { TADAH_PC_WORKER_TIMEOUT = "1e16" }
 at = "none"
 text = ""
 error = "TADAH_PC_WORKER_TIMEOUT is too large for the worker deadline, got '1e16' (it is kept in 64-bit milliseconds: at most about 9.2e15 s)"
+
+[[env.invalid]]
+wrap = "root"
+check = "check"
+env = { TADAH_PC_WORKER_TIMEOUT = "600" }
+at = "none"
+text = "PC_ISOLATION THREAD"
+error = "TADAH_PC_WORKER_TIMEOUT (got '600') sets the deadline of a script task in a worker process (PC_ISOLATION PROCESS); under PC_ISOLATION THREAD, set on line 1, the scripts run inside the tadah process without a worker deadline, so it would have no effect"
 
 # ------------------------------------------------------------ wrappers ----
 # A wrapper is a complete target file with one slot line, {line}. The

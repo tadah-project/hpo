@@ -17,10 +17,12 @@
 
 #include <tadah/hpo/optimizer_spec.h>
 
+#include <cstddef>
 #include <string>
 
 namespace tadah::hpo {
 
+struct ChainPoints;
 struct OptimizerCaps;
 
 /* The phase an optimiser drives, for require_driver(). */
@@ -129,6 +131,31 @@ std::string searches_without_gradient();
  * one point is refused, naming the local ones. */
 void require_multistart_backend(const OptimizerSpec& spec);
 
+/* STRATEGY TYPE MULTISTART: an INIT chain of N_STARTS starting points or
+ * more. The most points the chain gives (chain_points) are the K of each
+ * RANDOM, LHS and SOBOL line, one point for its CONFIG lines and one for
+ * the WARM lines of each file (the chain keeps a point once), or the
+ * CONFIG point without a METHOD line; at most K_TOTAL. Fewer are refused
+ * at the N_STARTS line
+ * (OptimizerSpec::key_lines), naming the count, the METHOD lines and
+ * K_TOTAL, and what gives N_STARTS starts: "N_STARTS 2 needs 2 starting
+ * points, and the INIT chain gives 1 (the CONFIG point: the chain has no
+ * METHOD line); one start is STRATEGY TYPE PLAIN, and a chain of 2 or more
+ * starting points (METHOD LHS 2, RANDOM 2 or SOBOL 2) runs 2 starts" ("at
+ * most" with a WARM line, which WARM_ON_MISMATCH may drop). A spec without
+ * an N_STARTS line (one built outside the parser) is not checked. */
+void require_multistart_points(const OptimizerSpec& spec);
+
+/* What gives `want` starting points to a chain of `c` (chain_points) that
+ * gives fewer: "a chain of 3 or more starting points (METHOD LHS 3, RANDOM
+ * 3 or SOBOL 3) runs 3 starts"; under a K_TOTAL that keeps fewer, "with
+ * K_TOTAL 3, or without K_TOTAL, 3 starts run" (the METHOD lines give
+ * more), "without K_TOTAL, 3 starts run" (as many) or "a chain of ...
+ * without K_TOTAL runs 3 starts" (fewer). The refusal of
+ * require_multistart_points and the run-time warning of a RESTART round of
+ * MULTISTART (MultiStartPolicy) give it. */
+std::string multistart_chain_advice(const ChainPoints& c, std::size_t want);
+
 /* STRATEGY TYPE PRESTAGE: an EXPLORE block that names an optimiser. */
 void require_prestage_explore(const OptimizerSpec& spec);
 
@@ -161,7 +188,9 @@ std::string run_phase_name(const OptimizerSpec& s);
  * and require_prestage_refinement() for PRESTAGE; then
  * require_inner_backend() for the INNER block of the STRATEGY-level
  * optimiser and, under PRESTAGE, for the INNER block of the EXPLORE
- * block. A refusal of a
+ * block; last, under MULTISTART, require_multistart_points() at the
+ * N_STARTS line, so a MULTISTART that cannot run its optimiser is refused
+ * for that whatever its INIT chain. A refusal of a
  * parsed spec names the line of the block it is about
  * (OptimizerSpec::block_line, with_block_line): "Error on line N: ...
  * \nLine: ENDOPTIMIZER" (or the INNER block's ENDINNER, the EXPLORE

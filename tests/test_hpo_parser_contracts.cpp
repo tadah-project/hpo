@@ -610,9 +610,13 @@ TEST_CASE("STRATEGY TYPE BASINS and BASINSV2 are rejected with the "
     for (const auto& [name, type] : accepted) {
         INFO("TYPE " << name);
         /* TYPE MULTISTART needs N_STARTS 2 or more (it ran one start
-         * without N_STARTS). */
+         * without N_STARTS), and an INIT chain of as many points (it ran
+         * one start from the CONFIG point). */
         TempFile cfg(strategy_block(
-            name, std::string(name == "MULTISTART" ? "  N_STARTS 2\n" : "") +
+            name, std::string(name == "MULTISTART"
+                                  ? "  N_STARTS 2\n  INIT\n    METHOD LHS 2\n"
+                                    "    SEED 1\n  ENDINIT\n"
+                                  : "") +
                       "  LIB NLOPT\n  ALGO LN_BOBYQA\n"));
         tadah::core::Context ctx;
         tadah::hpo::HPOTargets trg(ctx, cfg.path.string());
@@ -792,10 +796,14 @@ TEST_CASE("build_run_policy wraps PLAIN/MULTISTART/PRESTAGE in RestartPolicy "
     for (const std::string t : {"PLAIN", "MULTISTART", "PRESTAGE"}) {
         INFO("TYPE " << t);
         /* TYPE MULTISTART needs N_STARTS 2 or more (it ran one start
-         * without N_STARTS). */
+         * without N_STARTS), and an INIT chain of as many points (it ran
+         * one start from the CONFIG point). */
         const std::string common = "  LIB NLOPT\n  ALGO LN_SBPLX\n  MAXEVAL 50\n" +
             std::string(t == "PRESTAGE" ? explore : "") +
-            std::string(t == "MULTISTART" ? "  N_STARTS 2\n" : "");
+            std::string(t == "MULTISTART"
+                            ? "  N_STARTS 2\n  INIT\n    METHOD LHS 2\n"
+                              "    SEED 1\n  ENDINIT\n"
+                            : "");
         {
             TempFile cfg(strategy_block(t, common + restart));
             tadah::core::Context ctx;
@@ -1493,15 +1501,19 @@ TEST_CASE("Strict numbers: STRATEGY N_STARTS is an integer >= 2, "
      * naming THREADS"). */
     /* N_STARTS 1 is one start, which is TYPE PLAIN: N_STARTS is an integer
      * >= 2 (it was >= 1, and N_STARTS 1 ran one start). */
-    check_uint_key(strategy_home("N_STARTS", "MULTISTART", "DLIB", "BFGS"),
+    /* An INIT chain of 4 points: a MULTISTART needs N_STARTS of them. */
+    const std::string four = "INIT\nMETHOD LHS 4\nSEED 1\nENDINIT\n";
+    check_uint_key(strategy_home("N_STARTS", "MULTISTART", "DLIB", "BFGS",
+                                 four),
                    "an integer >= 2", {"4", "2"}, {"0", "1"});
     /* BUDGET_PER_START becomes each start's MAXEVAL: the same int budget. */
     check_uint_key(strategy_home("BUDGET_PER_START", "MULTISTART", "DLIB",
-                                 "BFGS", "N_STARTS 2\n"),
+                                 "BFGS", "N_STARTS 2\n" + four),
                    "an integer from 1 to 2147483647", {"4", "1", "2147483647"},
                    {"0", "2147483648", "4294967299"});
     const auto ms = parse_config(
-        strategy_home("N_STARTS", "MULTISTART", "DLIB", "BFGS").config("4"));
+        strategy_home("N_STARTS", "MULTISTART", "DLIB", "BFGS", four)
+            .config("4"));
     CHECK(ms.spec.multistart.n_starts == 4u);
 
     const auto topk = strategy_home("TOPK", "PRESTAGE", "DLIB", "BFGS",

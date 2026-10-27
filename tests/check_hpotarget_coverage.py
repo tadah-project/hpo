@@ -236,9 +236,11 @@ class Rule:
 IGNORE_OPTIMISERS = "an optimiser name (LIB or ALGO value: the optimiser list)"
 IGNORE_INIT_MODE = ("the INIT_MODE grammar of the annealers' PARAM keys "
                     "(anneal_keys.toml)")
+# The metric lines that take --skip-above and --skip-rel (PC_ERSQ takes
+# neither: a cap would reject the better fits).
 METRIC_OPTIONS = ("line_option:PC_EMAE", "line_option:PC_ERMSE",
-                  "line_option:PC_ErRMSE", "line_option:PC_ERSQ",
-                  "line_option:PC_SRMSE_GPA", "line_option:PC_FRMSE")
+                  "line_option:PC_ErRMSE", "line_option:PC_SRMSE_GPA",
+                  "line_option:PC_FRMSE")
 
 
 def pc_line_option_of(element: str) -> tuple[str, ...]:
@@ -271,7 +273,8 @@ EXTRACTION: list[Rule] = [
          operands={"key": READ_KEY, "t": ("strategy_type", "word"),
                    "v": ("word",), "PC_ISOLATION": ("word",),
                    "flag": METRIC_OPTIONS,
-                   "toks[i2]": ("line_option:PC_FAILPROBE",)},
+                   "toks[i2]": ("line_option:PC_FAILPROBE",),
+                   "e.method": ("init_method",)},
          ignore={"sp.lib": IGNORE_OPTIMISERS, "sp.algo": IGNORE_OPTIMISERS,
                  "sp.inner->lib": IGNORE_OPTIMISERS,
                  "b.sp->inner->lib": IGNORE_OPTIMISERS},
