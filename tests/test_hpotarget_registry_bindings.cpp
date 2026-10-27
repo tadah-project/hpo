@@ -49,7 +49,8 @@ TEST_CASE("hpotarget generated tables: the generated headers exist",
 {
     FAIL("include/tadah/hpo/hpotarget_registry_gen.h or "
          "hpo_param_registry_gen.h is missing: blueprint/gen_hpotarget.py "
-         "--header writes them (build target hpo_regenerate_registries)");
+         "--header writes them (build target "
+         "hpo_regenerate_hpotarget_registry)");
 }
 
 #else

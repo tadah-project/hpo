@@ -55,6 +55,7 @@ import argparse
 import math
 import pathlib
 import re
+import shlex
 import sys
 from typing import Any, Iterable
 
@@ -67,11 +68,15 @@ import hpotarget_registry as hr  # noqa: E402
 # another schema, which the generator must follow first.
 LOADER_API = 1
 
+# The registry and the header directory of this repository: the build
+# target REGENERATE runs --header with these two.
+DEFAULT_REGISTRY = SCRIPT_DIR
 DEFAULT_OUT = SCRIPT_DIR.parent / "include" / "tadah" / "hpo"
 REGISTRY_HEADER = "hpotarget_registry_gen.h"
 PARAM_HEADER = "hpo_param_registry_gen.h"
+REGENERATE_TARGET = "hpo_regenerate_hpotarget_registry"
 REGENERATE = ("cmake --build <build directory> --target "
-              "hpo_regenerate_registries")
+              f"{REGENERATE_TARGET}")
 
 # The statuses of an OPTIM target the loader accepts.
 OPTIM_TARGET_STATUS = {"refused": "Refused", "special": "Special"}
@@ -493,12 +498,15 @@ inline std::string fill(std::string_view tmpl,
 """
 
 
-def header_top(w: Writer, sources: str, description: list[str]) -> None:
+def header_top(w: Writer, sources: list[str],
+               description: list[str]) -> None:
     w.out("// GENERATED FILE -- DO NOT EDIT.")
     w.out("//")
-    w.out(f"// Source of truth: {sources}")
+    w.out(f"// Source of truth: {sources[0]}")
+    for line in sources[1:]:
+        w.out(f"//                  {line}")
     w.out("// Generator:       HPO/blueprint/gen_hpotarget.py --header")
-    w.out("//                  (build target hpo_regenerate_registries)")
+    w.out(f"//                  (build target {REGENERATE_TARGET})")
     w.out("// Drift gate:      ctest hpo_hpotarget_registry_sync "
           "(gen_hpotarget.py --check)")
     w.out("//")
@@ -520,11 +528,14 @@ def finish(w: Writer, body_at: int) -> str:
 def emit_registry(reg: hr.Registry) -> str:
     m = Model(reg)
     w = Writer()
-    header_top(w, "HPO/blueprint/hpotarget.toml and the part files of its "
-                  "meta.parts", [
+    header_top(w, [
+        "HPO/blueprint/hpotarget.toml and the part files of its",
+        "meta.parts, read by HPO/blueprint/hpotarget_registry.py"], [
         "The tables of the target-file registry (blueprint/README.md, \"The",
-        "target-file registry\"), in the order of the registry. Messages are",
-        "templates: fill() puts the values of their {name} placeholders in."])
+        "generated tables\"), in the order of the registry (the placeholder",
+        "sets sorted). Messages are templates: fill() puts the values of "
+        "their",
+        "{name} placeholders in."])
     for inc in ("cstddef", "cstdint", "initializer_list", "stdexcept",
                 "string", "string_view"):
         w.out(f"#include <{inc}>")
@@ -922,11 +933,14 @@ constexpr const LineOption* find_line_option(std::string_view line,
 def emit_params(reg: hr.Registry) -> str:
     m = Model(reg)
     w = Writer()
-    header_top(w, "HPO/blueprint/hpotarget_params.toml (a part file of "
-                  "HPO/blueprint/hpotarget.toml)", [
+    header_top(w, [
+        "HPO/blueprint/hpotarget_params.toml (a part file of",
+        "HPO/blueprint/hpotarget.toml), read by",
+        "HPO/blueprint/hpotarget_registry.py"], [
         "The PARAM keys of the target-file registry: [[param]],",
-        "[[param_excluded]] and [[param_policy]] (blueprint/README.md). The",
-        "PARAM keys of the annealers are anneal_keys_gen.h's."])
+        "[[param_excluded]] and [[param_policy]] (blueprint/README.md, \"The",
+        "generated tables\"). The PARAM keys of the annealers are",
+        "anneal_keys_gen.h's."])
     w.out("#include <tadah/hpo/hpotarget_registry_gen.h>")
     w.out()
     w.out("#include <cstddef>")
@@ -1026,6 +1040,18 @@ def headers(reg: hr.Registry) -> dict[str, str]:
 
 # ---------------------------------------------------------------- main ----
 
+def regenerate_hint(registry: pathlib.Path, out: pathlib.Path) -> str:
+    """The command that rewrites the headers --check compared: the build
+    target, which writes the headers of this repository from its registry,
+    when both directories are the defaults; else --header with the two
+    directories checked."""
+    if (registry.resolve() == DEFAULT_REGISTRY.resolve()
+            and out.resolve() == DEFAULT_OUT.resolve()):
+        return f"`{REGENERATE}` (or gen_hpotarget.py --header)"
+    return (f"`gen_hpotarget.py --header --registry "
+            f"{shlex.quote(str(registry))} -o {shlex.quote(str(out))}`")
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(
         description="Write or check the C++ tables of the target-file "
@@ -1034,14 +1060,16 @@ def main(argv: list[str] | None = None) -> int:
     mode.add_argument("--header", action="store_true",
                       help="write the headers")
     mode.add_argument("--check", action="store_true",
-                      help="fail when a checked-in header differs from "
-                           "what the registry and its loader give")
-    ap.add_argument("--registry", type=pathlib.Path, default=SCRIPT_DIR,
+                      help="fail when a checked-in header is missing or "
+                           "differs from what the registry and its loader "
+                           "give")
+    ap.add_argument("--registry", type=pathlib.Path,
+                    default=DEFAULT_REGISTRY,
                     help="the directory of hpotarget.toml (default: this "
                          "script's)")
     ap.add_argument("-o", "--out", type=pathlib.Path, default=DEFAULT_OUT,
                     help="the directory of the headers (default: "
-                         "include/tadah/hpo)")
+                         "include/tadah/hpo of this script's repository)")
     args = ap.parse_args(argv)
     try:
         texts = headers(hr.load(args.registry))
@@ -1076,9 +1104,10 @@ def main(argv: list[str] | None = None) -> int:
     if stale:
         for s in stale:
             print(f"gen_hpotarget.py --check: {s}", file=sys.stderr)
-        print(f"gen_hpotarget.py --check: regenerate with `{REGENERATE}` "
-              f"(or gen_hpotarget.py --header) and commit the headers with "
-              "the change to the registry or its loader", file=sys.stderr)
+        print("gen_hpotarget.py --check: regenerate with "
+              f"{regenerate_hint(args.registry, args.out)} and commit the "
+              "headers with the change to the registry, its loader or the "
+              "generator", file=sys.stderr)
         return 1
     print(f"gen_hpotarget.py --check: {', '.join(texts)} in {args.out} "
           "match the registry and its loader")

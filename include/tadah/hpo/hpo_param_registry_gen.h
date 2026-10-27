@@ -1,13 +1,16 @@
 // GENERATED FILE -- DO NOT EDIT.
 //
-// Source of truth: HPO/blueprint/hpotarget_params.toml (a part file of HPO/blueprint/hpotarget.toml)
+// Source of truth: HPO/blueprint/hpotarget_params.toml (a part file of
+//                  HPO/blueprint/hpotarget.toml), read by
+//                  HPO/blueprint/hpotarget_registry.py
 // Generator:       HPO/blueprint/gen_hpotarget.py --header
-//                  (build target hpo_regenerate_registries)
+//                  (build target hpo_regenerate_hpotarget_registry)
 // Drift gate:      ctest hpo_hpotarget_registry_sync (gen_hpotarget.py --check)
 //
 // The PARAM keys of the target-file registry: [[param]],
-// [[param_excluded]] and [[param_policy]] (blueprint/README.md). The
-// PARAM keys of the annealers are anneal_keys_gen.h's.
+// [[param_excluded]] and [[param_policy]] (blueprint/README.md, "The
+// generated tables"). The PARAM keys of the annealers are
+// anneal_keys_gen.h's.
 #pragma once
 
 #include <tadah/hpo/hpotarget_registry_gen.h>

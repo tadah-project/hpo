@@ -1,13 +1,15 @@
 // GENERATED FILE -- DO NOT EDIT.
 //
-// Source of truth: HPO/blueprint/hpotarget.toml and the part files of its meta.parts
+// Source of truth: HPO/blueprint/hpotarget.toml and the part files of its
+//                  meta.parts, read by HPO/blueprint/hpotarget_registry.py
 // Generator:       HPO/blueprint/gen_hpotarget.py --header
-//                  (build target hpo_regenerate_registries)
+//                  (build target hpo_regenerate_hpotarget_registry)
 // Drift gate:      ctest hpo_hpotarget_registry_sync (gen_hpotarget.py --check)
 //
 // The tables of the target-file registry (blueprint/README.md, "The
-// target-file registry"), in the order of the registry. Messages are
-// templates: fill() puts the values of their {name} placeholders in.
+// generated tables"), in the order of the registry (the placeholder
+// sets sorted). Messages are templates: fill() puts the values of their
+// {name} placeholders in.
 #pragma once
 
 #include <cstddef>

@@ -429,7 +429,7 @@ set_tests_properties(hpo_hpotarget_generated_tool PROPERTIES
 #    [hpotarget_gen], tests/test_hpotarget_registry_bindings.cpp): each
 #    generated table equals the table the parser holds by hand.
 # Before the fix: the three fail, the generator and the headers do not
-# exist. The target hpo_regenerate_registries writes the headers
+# exist. The target hpo_regenerate_hpotarget_registry writes the headers
 # (gen_hpotarget.py --header) after a change to the registry or its
 # loader. test_hpotarget_registry_bindings.cpp tests for the two headers
 # with __has_include: the build compiles it again when they appear, change
@@ -443,7 +443,7 @@ hpo_depend_on_has_include(
     ${CMAKE_CURRENT_SOURCE_DIR}/test_hpotarget_registry_bindings.cpp
     ${_hpo_generated_dir}/hpotarget_registry_gen.h
     ${_hpo_generated_dir}/hpo_param_registry_gen.h)
-add_custom_target(hpo_regenerate_registries
+add_custom_target(hpo_regenerate_hpotarget_registry
     COMMAND ${Python3_EXECUTABLE}
         ${_hpo_blueprint_dir}/gen_hpotarget.py --header
     COMMENT "Writing the generated tables of the target-file registry"
