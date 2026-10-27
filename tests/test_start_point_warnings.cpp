@@ -702,7 +702,10 @@ TEST_CASE("startup validation: the RESTART warning says what a round of a "
  *    exploration never evaluates the block's INIT points. To start the
  *    exploration at them, use an exploration optimiser that starts at the
  *    point it is given." -- an OPTIMIZER-level INIT block beside it, which
- *    only the refinement's fallback and NOISE CALIBRATION read, gets none;
+ *    only the refinement's fallback and NOISE CALIBRATION read, gets not
+ *    this WARNING but the one that the search evaluates its points only in
+ *    the refinement ("the INIT block on line 5 gives 3 starting points,
+ *    ..."; it got none until that WARNING was added);
  *  - PRESTAGE, an OPTIMIZER-level INIT block (line 5) that the exploration
  *    takes (its EXPLORE block has none): "... the PRESTAGE exploration
  *    NLOPT:GN_DIRECT_L, which is given the block's INIT points (its EXPLORE
@@ -796,15 +799,22 @@ TEST_CASE("startup validation: an INIT block on a search that does not "
                            ", so the exploration never evaluates the block's "
                            "INIT points." + explore_tail) == 1);
         CHECK(count_of(s.journal, "the INIT block on line") == 1);
-        // with an OPTIMIZER-level INIT block too (lines 5-8): only the
-        // exploration's own (now on line 18) is warned about
+        // with an OPTIMIZER-level INIT block too (lines 5-8): the
+        // exploration's own (now on line 18) is warned about as above, the
+        // OPTIMIZER-level one as the refinement's fallback
         const Startup both = startup(prestage(lhs, explore_init));
         INFO("journal:\n" << both.journal);
         CHECK(count_of(both.journal,
                        "the INIT block on line 18" + explore_head +
                            ", so the exploration never evaluates the block's "
                            "INIT points." + explore_tail) == 1);
-        CHECK(count_of(both.journal, "the INIT block on line") == 1);
+        CHECK(count_of(both.journal, "the INIT block on line 18") == 1);
+        CHECK(count_of(both.journal, "the INIT block on line 5 gives 3 "
+                                     "starting points, and the PRESTAGE "
+                                     "exploration (EXPLORE block) starts from "
+                                     "those of its own INIT block, on line "
+                                     "18,") == 1);
+        CHECK(count_of(both.journal, "the INIT block on line") == 2);
     }
     {
         // the OPTIMIZER-level block (line 5), which the exploration takes
@@ -1033,5 +1043,81 @@ TEST_CASE("startup validation: the INIT points a PRESTAGE exploration or a "
         const Startup s = startup(multistart("3"));
         INFO("journal:\n" << s.journal << "\nstderr:\n" << s.err);
         CHECK(count_of(s.journal, "are not evaluated") == 0);
+    }
+}
+
+/* Pins: under STRATEGY TYPE PRESTAGE whose EXPLORE block has an INIT block
+ * of its own (METHOD RANDOM 5, line 19), the OPTIMIZER-level INIT block
+ * (METHOD CONFIG and METHOD LHS 6, line 5) gives the refinement its
+ * starting points only when no evaluation of the exploration has a usable
+ * loss, and the startup WARNING, on standard error and in the journal, says
+ * so: "the INIT block on line 5 gives 7 starting points, and the PRESTAGE
+ * exploration (EXPLORE block) starts from those of its own INIT block, on
+ * line 19, so the search evaluates them only in the refinement, when no
+ * evaluation of the exploration has a usable loss. Without an INIT block
+ * of its own, the exploration takes them."; whatever the exploration's
+ * optimiser (NLOPT:GN_CRS2_LM, which also leaves 4 of its own 5 points
+ * unevaluated, and DLIB:GFS, which takes them all); under NOISE
+ * CALIBRATION 3 it adds " (NOISE CALIBRATION evaluates the first of them 3
+ * times)" after "usable loss". An exploration without an INIT block of its
+ * own, which takes the OPTIMIZER-level points, gives no such WARNING.
+ * Before the fix: nothing was said of the OPTIMIZER-level block (the
+ * counts are 0). */
+TEST_CASE("startup validation: the OPTIMIZER-level INIT points of a "
+          "PRESTAGE whose exploration has its own are warned about",
+          "[startup][init][start_point]")
+{
+    const std::string chain7 =
+        "  INIT\n    METHOD CONFIG\n    METHOD LHS 6\n    SEED 7\n"
+        "  ENDINIT\n";  // lines 5-9
+    const std::string own =
+        "      INIT\n        METHOD RANDOM 5\n        SEED 3\n"
+        "      ENDINIT\n";  // lines 19-22
+    const auto prestage = [&](const std::string& lib, const std::string& algo,
+                              const std::string& explore_init,
+                              const std::string& noise) {
+        return kRoot + "OPTIMIZER\n" + chain7 +
+               "  STRATEGY\n"
+               "    TYPE PRESTAGE\n"
+               "    LIB NLOPT\n"
+               "    ALGO LN_BOBYQA\n"
+               "    MAXEVAL 10\n"
+               "    EXPLORE\n"
+               "      LIB " + lib + "\n"
+               "      ALGO " + algo + "\n"
+               "      MAXEVAL 8\n" + explore_init +
+               "    ENDEXPLORE\n"
+               "  ENDSTRATEGY\n" + noise +
+               "ENDOPTIMIZER\n";
+    };
+    const auto warning = [](const std::string& calibration) {
+        return "the INIT block on line 5 gives 7 starting points, and the "
+               "PRESTAGE exploration (EXPLORE block) starts from those of its "
+               "own INIT block, on line 19, so the search evaluates them only "
+               "in the refinement, when no evaluation of the exploration has "
+               "a usable loss" + calibration + ". Without an INIT block of "
+               "its own, the exploration takes them.";
+    };
+    for (const auto& [lib, algo] :
+         {std::pair<std::string, std::string>{"NLOPT", "GN_CRS2_LM"},
+          std::pair<std::string, std::string>{"DLIB", "GFS"}}) {
+        INFO(lib << ":" << algo);
+        const Startup s = startup(prestage(lib, algo, own, ""));
+        INFO("journal:\n" << s.journal << "\nstderr:\n" << s.err);
+        CHECK(count_of(s.err, "[HPO] WARNING: " + warning("") + "\n") == 1);
+        CHECK(count_of(s.journal, warning("")) == 1);
+        const Startup none = startup(prestage(lib, algo, "", ""));
+        INFO("journal:\n" << none.journal);
+        CHECK(count_of(none.journal, "starts from those of its own INIT "
+                                     "block") == 0);
+    }
+    {
+        const Startup s = startup(prestage(
+            "DLIB", "GFS", own, "  NOISE\n    CALIBRATION 3\n  ENDNOISE\n"));
+        INFO("journal:\n" << s.journal << "\nstderr:\n" << s.err);
+        const std::string w =
+            warning(" (NOISE CALIBRATION evaluates the first of them 3 times)");
+        CHECK(count_of(s.err, "[HPO] WARNING: " + w + "\n") == 1);
+        CHECK(count_of(s.journal, w) == 1);
     }
 }
