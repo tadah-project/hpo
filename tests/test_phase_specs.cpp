@@ -1012,7 +1012,9 @@ TEST_CASE("backend rules: the ALGO help lists the stops that end a run",
                                "STOPVAL\n") &&
                Catch::Contains("One of them is required"));
     /* DIRECT's XTOL is a stop, but a costly one; a backend that needs a
-     * stop names the RESTART alternative. */
+     * stop names the RESTART alternative, "a RESTART block" (every RESTART
+     * block the parser takes restarts the search; it said "an active
+     * RESTART"). */
     CHECK_THAT(help("NLOPT", "GN_DIRECT_L"),
                Catch::Contains("Stops that end a run: MAXEVAL, MAXTIME, "
                                "STOPVAL, FTOL_REL, FTOL_ABS, XTOL_REL, "
@@ -1021,10 +1023,10 @@ TEST_CASE("backend rules: the ALGO help lists the stops that end a run",
                                "small, after roughly (1/XTOL_REL)^n "
                                "evaluations in n dimensions.\n") &&
                Catch::Contains("One of them is required (a tolerance above "
-                               "0), or an active RESTART: "));
+                               "0), or a RESTART block: "));
     CHECK_THAT(help("TADAH", "RANDOM"),
-               Catch::Contains("One of them is required, or an active "
-                               "RESTART: "));
+               Catch::Contains("One of them is required, or a RESTART "
+                               "block: "));
     CHECK_THAT(help("NLOPT", "LN_SBPLX"),
                Catch::Contains("Stops that end a run: MAXEVAL, MAXTIME, "
                                "STOPVAL, FTOL_REL, FTOL_ABS, XTOL_REL, "
@@ -1037,7 +1039,7 @@ TEST_CASE("backend rules: the ALGO help lists the stops that end a run",
                Catch::Contains("Stops that end a run: MAXEVAL, MAXTIME, "
                                "STOPVAL\n") &&
                Catch::Contains("MAXEVAL is required (MAXTIME, STOPVAL and "
-                               "an active RESTART are not enough): ") &&
+                               "a RESTART block are not enough): ") &&
                !Catch::Contains("One of them is required") &&
                !Catch::Contains("MAXEVAL or MAXTIME"));
 }
