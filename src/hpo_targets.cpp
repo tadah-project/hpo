@@ -3886,6 +3886,13 @@ void HPOTargets::process_optim_config(std::istringstream& iss,
           throw std::runtime_error("the seed " + seed + " is negative, but " +
                                    form_label() + " requires every AMPGRIDMB "
                                    "amplitude >= 0");
+        /* A value every fit takes >= 0 (optim_fit_value_rule) is the seed
+         * of its box: a negative one is refused as such, before a FRAC box
+         * clamped at 0 would be reversed ([0, x0 + d] with x0 + d < 0) or
+         * leave the seed out ([0, x0 + d] with x0 + d > 0). */
+        if (value_rule && !value_rule->strict && x0 < 0.0)
+          throw std::runtime_error("the seed " + seed + " is negative, but " +
+                                   value_rule->why);
         if (geometric) {
           if (!(x0 != 0.0)) {
             /* The key, with the index for FSIGMA and SSIGMA, whose two
@@ -3962,7 +3969,8 @@ void HPOTargets::process_optim_config(std::istringstream& iss,
             omap.origin[i] = BoxOrigin::AutoLinearNonneg;
           }
           /* A half-width below the spacing of the doubles at the seed
-           * rounds the box to the seed. */
+           * rounds the box to the seed (the seed of a clamped box is >= 0:
+           * a negative one is refused above). */
           if (!(hi_i > lo_i))
             throw std::runtime_error(
                 "the AUTO box around the seed " + seed + " has zero width in "
