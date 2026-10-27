@@ -431,7 +431,18 @@ set_tests_properties(hpo_hpotarget_generated_tool PROPERTIES
 # Before the fix: the three fail, the generator and the headers do not
 # exist. The target hpo_regenerate_registries writes the headers
 # (gen_hpotarget.py --header) after a change to the registry or its
-# loader.
+# loader. test_hpotarget_registry_bindings.cpp tests for the two headers
+# with __has_include: the build compiles it again when they appear, change
+# or go (hpo_depend_on_has_include(), has_include_rebuild/
+# has_include_depends.cmake), so a build tree that compiled it without
+# them runs the binding cases once they exist.
+include(${CMAKE_CURRENT_SOURCE_DIR}/has_include_rebuild/has_include_depends.cmake)
+cmake_path(SET _hpo_generated_dir NORMALIZE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../include/tadah/hpo")
+hpo_depend_on_has_include(
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_hpotarget_registry_bindings.cpp
+    ${_hpo_generated_dir}/hpotarget_registry_gen.h
+    ${_hpo_generated_dir}/hpo_param_registry_gen.h)
 add_custom_target(hpo_regenerate_registries
     COMMAND ${Python3_EXECUTABLE}
         ${_hpo_blueprint_dir}/gen_hpotarget.py --header
