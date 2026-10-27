@@ -1,0 +1,233 @@
+/* The first steps of a search on the Ta test data (tests/data/ta/common):
+ * what NLopt is given for a failed evaluation.
+ *
+ * Each case runs the whole hpo_run() stack in a scratch directory on the
+ * shared Ta model of the tests (config.tadah, the elastic and bcc
+ * equation-of-state datasets for training, the elastic set for validation)
+ * with RCUT2B in [4, 6] and SGRIDMB in [0.1, 0.4]; an evaluation takes a
+ * few milliseconds. */
+
+#include "catch2/catch.hpp"
+
+#include <tadah/core/core_user_config_parser.h>
+#include <tadah/core/periodic_table.h>
+#include <tadah/hpo/hpo.h>
+#include <tadah/hpo/hpo_host.h>
+#include <tadah/hpo/hpo_log.h>
+#include <tadah/hpo/runners.h>
+
+#include "finish_within.h"
+
+#include <dlib/matrix.h>
+
+#include <algorithm>
+#include <chrono>
+#include <cstddef>
+#include <filesystem>
+#include <fstream>
+#include <regex>
+#include <set>
+#include <sstream>
+#include <string>
+#include <vector>
+
+namespace {
+
+namespace fs = std::filesystem;
+using ParamVec = dlib::matrix<double, 0, 1>;
+using Host     = tadah::hpo::HPO_Host<ParamVec, ::LammpsRunner>;
+
+const fs::path& ta_common_dir()
+{
+    static const fs::path dir = fs::path(TADAH_HPO_TA_DATA_DIR) / "common";
+    return dir;
+}
+
+/* A scratch working directory: hpo_run() writes its files into the current
+ * directory. */
+struct ScratchDir {
+    fs::path dir;
+    fs::path original_cwd;
+    ScratchDir()
+    {
+        dir = fs::temp_directory_path() /
+              ("tadah_search_steps_" +
+               std::to_string(std::chrono::steady_clock::now()
+                                  .time_since_epoch().count()));
+        fs::create_directories(dir);
+        original_cwd = fs::current_path();
+        fs::current_path(dir);
+    }
+    ~ScratchDir()
+    {
+        std::error_code ec;
+        fs::current_path(original_cwd, ec);
+        fs::remove_all(dir, ec);
+    }
+};
+
+/* One hpo_run() of the target file `target` on the Ta model, with RCUT2B
+ * set to `rcut2b` in the training configuration. */
+struct TaDataRun {
+    ScratchDir sd;
+    tadah::core::Context ctx;
+    int status = -1;
+
+    TaDataRun(const std::string& target, double rcut2b = 5.6)
+    {
+        tadah::core::PeriodicTable::initialize();
+        tadah::hpo::HPOLog::instance().reset_for_test();
+        Host::reset_globals_for_test();
+        const fs::path& common = ta_common_dir();
+        const fs::path hpo = sd.dir / "config.hpo";
+        const fs::path val = sd.dir / "config.val";
+        std::ofstream(hpo) << target;
+        std::ofstream(val) << "DBFILE "
+                           << (common / "data" / "elastic.tadahdb").string()
+                           << "\n";
+        ctx = tadah::core::Context(tadah::core::CoreUserConfigParser().parse(
+            (common / "config.tadah").string()));
+        ctx.remove("DBFILE");
+        ctx.add("DBFILE", (common / "data" / "elastic.tadahdb").string());
+        ctx.add("DBFILE", (common / "data" / "eos_bcc.tadahdb").string());
+        ctx.remove("RCUT2B");
+        ctx.add("RCUT2B", rcut2b);
+        ctx.add("HPOTARGET", hpo.string());
+        ctx.add("VALIDATION", val.string());
+        hpo_test::finish_within(std::chrono::seconds(300), "a Ta-data run",
+                                [&] { status = tadah::hpo::hpo_run(ctx); });
+    }
+};
+
+std::string read_file(const fs::path& path)
+{
+    std::ifstream in(path);
+    std::ostringstream ss;
+    ss << in.rdbuf();
+    return ss.str();
+}
+
+/* Whitespace-separated tokens of every data row (not '#', not blank). */
+std::vector<std::vector<std::string>> data_rows(const fs::path& path)
+{
+    std::vector<std::vector<std::string>> rows;
+    std::ifstream in(path);
+    std::string line;
+    while (std::getline(in, line)) {
+        const auto p = line.find_first_not_of(" \t");
+        if (p == std::string::npos || line[p] == '#') continue;
+        std::istringstream is(line);
+        std::vector<std::string> tok;
+        for (std::string t; is >> t;) tok.push_back(t);
+        rows.push_back(std::move(tok));
+    }
+    return rows;
+}
+
+/* The parameters of each row of params.tadah (RCUT2B, SGRIDMB). */
+std::vector<std::vector<double>> params_rows()
+{
+    std::vector<std::vector<double>> out;
+    for (const auto& row : data_rows("params.tadah")) {
+        std::vector<double> p;
+        for (std::size_t i = 2; i < row.size(); ++i)
+            p.push_back(std::stod(row[i]));
+        out.push_back(std::move(p));
+    }
+    return out;
+}
+
+/* The rows of params.tadah whose parameters repeat an earlier row's. */
+std::size_t repeated_rows()
+{
+    std::set<std::vector<std::string>> seen;
+    std::size_t n = 0;
+    for (const auto& row : data_rows("params.tadah")) {
+        const std::vector<std::string> params(row.begin() + 2, row.end());
+        if (!seen.insert(params).second) ++n;
+    }
+    return n;
+}
+
+std::size_t count_of(const std::string& text, const std::string& what)
+{
+    std::size_t n = 0;
+    for (auto p = text.find(what); p != std::string::npos;
+         p = text.find(what, p + what.size()))
+        ++n;
+    return n;
+}
+
+/* The "Optimiser status" value of the journal's RESULT section. */
+std::string journal_status(const std::string& journal)
+{
+    std::smatch m;
+    if (std::regex_search(journal, m,
+                          std::regex(R"(Optimiser status\s*: ([^\n]*))")))
+        return m[1];
+    return "(no RESULT section)";
+}
+
+/* The target file of a PLAIN search of `strategy_body` on RCUT2B in [4, 6]
+ * and SGRIDMB in [0.1, 0.4], with the loss lines `loss`. */
+std::string ta_target(const std::string& strategy_body,
+                      const std::string& loss)
+{
+    return "OPTIMIZER\n  STRATEGY\n    TYPE PLAIN\n" + strategy_body +
+           "  ENDSTRATEGY\nENDOPTIMIZER\nLOSS L2\nDIGITS 15\n" + loss +
+           "OPTIM RCUT2B (1) 4.0 6.0\nOPTIM SGRIDMB (1) 0.1 0.4\n";
+}
+
+}  // namespace
+
+/* Pins: LN_BOBYQA and LN_COBYLA (MAXEVAL 60, from RCUT2B 5.6, SGRIDMB 0.2)
+ * with PC_ERMSE 0 0.0001 --skip-above 5.0, which rejects part of the box
+ * (the start among it), under the default FAILSCORE (the largest double)
+ * and under FAILSCORE 1e300: each run makes 60 evaluations, no
+ * params.tadah row repeats another and none was answered from the record
+ * (no "Repeated points reused" in DIAGNOSTICS), it ends MAXEVAL_REACHED,
+ * and loss.tadah records the FAILSCORE of every rejected evaluation; the
+ * journal says once that NLopt is given a finite stand-in.
+ * Before the fix: NLopt was given FAILSCORE itself, and the journal had no
+ * stand-in line. LN_BOBYQA made 49 evaluations under both FAILSCOREs, 2 of
+ * them repeating an earlier row, and spent its other calls on points
+ * answered from the record; LN_COBYLA made 60 under the largest double, 7
+ * of them repeats, and ended after 3 evaluations under 1e300. */
+TEST_CASE("NLopt failed evaluations: LN_BOBYQA and LN_COBYLA on the Ta data "
+          "with a --skip-above cap make every evaluation of MAXEVAL",
+          "[HPO][nlopt][failscore][e2e]")
+{
+    for (const std::string algo : {"LN_BOBYQA", "LN_COBYLA"}) {
+        for (const std::string failscore : {std::string(), std::string("1e300")}) {
+            DYNAMIC_SECTION(algo << (failscore.empty() ? ", default FAILSCORE"
+                                                       : ", FAILSCORE 1e300")) {
+                TaDataRun run(ta_target(
+                    "    LIB NLOPT\n    ALGO " + algo + "\n    MAXEVAL 60\n",
+                    (failscore.empty() ? std::string()
+                                       : "FAILSCORE " + failscore + "\n") +
+                        "PC_ERMSE 0 0.0001 --skip-above 5.0\n"));
+                CHECK(run.status == 0);
+                const std::string journal = read_file("hpo_run.log");
+                const auto loss = data_rows("loss.tadah");
+                const std::string fail_row = failscore.empty()
+                    ? "1.797693134862316e+308" : "1.000000000000000e+300";
+                std::size_t failed = 0;
+                for (const auto& row : loss)
+                    if (row.back() == fail_row) ++failed;
+                INFO("rejected evaluations " << failed);
+                CHECK(loss.size() == 60u);
+                CHECK(failed > 0u);
+                CHECK(repeated_rows() == 0u);
+                CHECK(journal.find("Repeated points reused") ==
+                      std::string::npos);
+                CHECK(journal_status(journal) ==
+                      "MAXEVAL_REACHED -- maximum evaluations exhausted");
+                CHECK(count_of(journal, "NLOPT:" + algo +
+                                            ": NLopt is given a finite "
+                                            "stand-in for each failed "
+                                            "evaluation of this search") ==
+                      1u);
+            }
+        }
+    }
+}
