@@ -675,3 +675,43 @@ TEST_CASE("LN_BOBYQA under MULTISTART: a moved CONFIG start gets the "
     CHECK(journals[1].find("WARNING   NLOPT:LN_BOBYQA: the") ==
           std::string::npos);
 }
+
+/* Pins: the journal's OPTIMISER section ("Initial step") of an MLSL or
+ * AUGLAG whose local search keeps its first step, with STEP unset, names
+ * the step that local search is given: LN_AUGLAG with an INNER LN_BOBYQA
+ * and GN_MLSL_LDS with its default LN_COBYLA, "(STEP unset -- 0.25*width
+ * per dim, given to NLopt for its local search LN_BOBYQA, which keeps the
+ * first step of each dimension as its scale)".
+ * Before the fix: both lines read "(STEP unset -- NLopt default per dim:
+ * 0.25*width, or 0.75*distance to the nearer bound; read back at run
+ * time)", the step each local search took before it was given its full
+ * step. */
+TEST_CASE("Journal: the OPTIMISER section names the step of an MLSL or "
+          "AUGLAG local search that keeps its first step",
+          "[HPO][step_plan][nlopt]")
+{
+    struct Case { const char* algo; const char* inner; const char* local; };
+    for (const Case c : {Case{"LN_AUGLAG", "LN_BOBYQA", "LN_BOBYQA"},
+                         Case{"GN_MLSL_LDS", "", "LN_COBYLA"}}) {
+        DYNAMIC_SECTION(c.algo) {
+            auto sp = spec(c.algo, false);
+            if (c.inner[0]) {
+                sp.inner = std::make_unique<OptimizerSpec>();
+                sp.inner->lib = "NLOPT";
+                sp.inner->algo = c.inner;
+            }
+            StepJournal j;
+            HPOLog::instance().write_optimizer_section(sp,
+                                                       sp.parameter_labels);
+            const std::string journal = j.text();
+            const auto at = journal.find("Initial step");
+            INFO(journal.substr(at, journal.find('\n', at) - at));
+            CHECK(journal.find(std::string("(STEP unset -- 0.25*width per "
+                                           "dim, given to NLopt for its local "
+                                           "search ") +
+                               c.local + ", which keeps the first step of "
+                               "each dimension as its scale)") !=
+                  std::string::npos);
+        }
+    }
+}
