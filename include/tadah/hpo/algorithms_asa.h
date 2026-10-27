@@ -56,9 +56,10 @@ std::string asa_probe_box_error(const OptimizerSpec& sp);
  * draws another (cost_is_valid, src/algorithms_asa.cpp): ASA's MAX_DOUBLE,
  * 1/SMALL_FLOAT, in this build 1e18 rounded down to a double (the next
  * double is 1e18). Under FAILSCORE_GRADING ON a graded failure scores from
- * 0.999 FAILSCORE up to FAILSCORE, so ASA sees every graded failure when
- * FAILSCORE is at most this cost, and none above about 1.001 times it
- * (validate_asa_spec, backend_rules.cpp). */
+ * 0.999 FAILSCORE up to just below FAILSCORE, so ASA sees every graded
+ * failure while the largest one lies below this cost -- for FAILSCORE 1e18
+ * too -- and none from about 1.001 times it (validate_asa_spec,
+ * backend_rules.cpp). */
 double asa_cost_limit();
 
 /* Generic-host adapter (unit tests drive this with a stub host). */
