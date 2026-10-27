@@ -1036,20 +1036,9 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
    * line — that dimension is overridden on every evaluation. */
   {
     std::vector<models::potedit::KnotRcutNote> notes;
+    /* a knot descriptor of a joined line (D2_mJoin, DM_mJoin) too: its
+     * own RCUT value, the note naming the descriptor */
     models::potedit::normalize_knot_rcut(train_ctx, "tadah hpo", notes);
-    /* A knot descriptor of a joined line (D2_mJoin, DM_mJoin): its own
-     * RCUT entry is derived from its own knots, as normalize_knot_rcut
-     * derives the cutoff of a line of one knot descriptor, and the note
-     * names the descriptor. */
-    for (const char *sfx : {"2B", "MB"})
-      for (auto &ch : detail::knot_channels(train_ctx, sfx)) {
-        if (!ch.joined) continue;
-        if (!models::potedit::normalize_knot_rcut(
-                ch.context, "tadah hpo: " + ch.where(), notes))
-          continue;
-        detail::set_channel_rcut(
-            train_ctx, ch, ch.context.get<double>(std::string("RCUT") + sfx));
-      }
     for (const auto &n : notes) {
       if (n.level == core::LogLevel::WARNING) warn(n.text);
       else HPOLog::instance().info(n.text);
