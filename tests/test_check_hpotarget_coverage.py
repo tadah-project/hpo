@@ -4,7 +4,9 @@ and a synthetic registry: comment stripping, brace matching, the three
 kinds of extraction (comparisons, tables, calls), the refusal of a
 comparison no rule classifies, of a rule that finds nothing or whose
 function is not found once, the comparison of the names found with the
-registry's in both directions, and the command without a registry."""
+registry's in both directions, and the command without a registry; on a
+copy of the HPO sources, a name added to the top-level keys of
+is_top_level_key()."""
 
 from __future__ import annotations
 
@@ -12,6 +14,7 @@ import contextlib
 import dataclasses
 import io
 import pathlib
+import shutil
 import sys
 import tempfile
 import textwrap
@@ -301,6 +304,40 @@ class RealSources(unittest.TestCase):
     def test_rules_match_the_sources(self):
         _, problems = cov.extract(HERE.parent)
         self.assertEqual(problems, [])
+
+
+class TopLevelKeys(unittest.TestCase):
+    """The keys a block refuses as top-level keys, the set of
+    is_top_level_key() in src/hpo_targets.cpp, are read from the sources
+    and compared with the keys of the top level of the registry."""
+
+    # Pins: on a copy of the files the rules read, with "ZZTOPKEY" added to
+    # the set of is_top_level_key() (so a block would refuse it as a
+    # top-level key), the check against the registry exits 1 and reports
+    # 'ZZTOPKEY' as missing from the registry, as a key of the top level
+    # (key:ROOT), at src/hpo_targets.cpp.
+    # Before the fix: fails, no rule reads is_top_level_key(): the check
+    # passes on the copy ("OK: the registry and the parser's sources name
+    # the same ... names").
+    def test_a_name_only_the_code_holds_is_reported(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = pathlib.Path(d)
+            for f in sorted({r.file for r in cov.EXTRACTION}):
+                (root / f).parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy(HERE.parent / f, root / f)
+            src = root / "src" / "hpo_targets.cpp"
+            text = src.read_text()
+            start = text.find("static bool is_top_level_key(")
+            self.assertGreaterEqual(start, 0, "is_top_level_key() not found")
+            at = text.index("= {", start) + len("= {")
+            src.write_text(text[:at] + '"ZZTOPKEY", ' + text[at:])
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                code = cov.main([str(root), "--registry",
+                                 str(HERE.parent / "blueprint")])
+        self.assertEqual(code, 1, out.getvalue())
+        self.assertIn("missing from the registry: 'ZZTOPKEY' (key:ROOT), "
+                      "src/hpo_targets.cpp:", out.getvalue())
 
 
 if __name__ == "__main__":

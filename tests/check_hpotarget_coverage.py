@@ -298,6 +298,13 @@ EXTRACTION: list[Rule] = [
          tables=[(r"\bmap\s*\[\]", "first", ("removed",))],
          unread_ok={"key == r": "a keyword of the table, which is read as "
                                 "a table"}),
+    # The keys a block refuses as top-level keys: each must be a key of the
+    # top level. That each key of the top level (less the keys of a group)
+    # is refused so, and no other, the [hpotarget_gen] case of the
+    # top-level keys checks.
+    Rule("the top-level keys a block refuses as such", "src/hpo_targets.cpp",
+         r"^static bool is_top_level_key\(", compare=False,
+         tables=[(r"\bkeys", "all", ("key:ROOT",))]),
     Rule("the OPTIM line", "src/hpo_targets.cpp",
          r"^void HPOTargets::process_optim_config\(",
          operands={"k": ("optim_target",),
