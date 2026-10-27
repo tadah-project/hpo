@@ -113,6 +113,10 @@ struct InitStrategySpec {
     std::vector<Entry> chain;                  // STRATEGY lines (in order, inside INIT block)
     std::optional<std::size_t> k_total;        // K_TOTAL cap (default = sum of strategy default_k)
     std::optional<std::uint64_t> seed;         // SEED for stochastic strategies
+    /* The block had no SEED and its chain draws its points: HPOTargets drew
+     * `seed` once for the run (and journalled it, with the SEED line that
+     * draws the same points again). */
+    bool seed_drawn = false;
     std::string warm_on_mismatch = "warn";     // warn | error | skip: the WARM entries of
                                                // this block's chain (build_init_strategy)
     /* The line of the hpotarget file that opens the block (INIT; for the
@@ -257,6 +261,7 @@ struct OptimizerSpec {
           prestage(o.prestage ? std::make_unique<OptimizerSpec>(*o.prestage) : nullptr),
           vector_storage(o.vector_storage), pop(o.pop),
           num_threads(o.num_threads), seed(o.seed),
+          seed_drawn(o.seed_drawn),
           seed_from_strategy(o.seed_from_strategy),
           seed_seeds_exploration(o.seed_seeds_exploration),
           stream_phase(o.stream_phase), step(o.step),
@@ -322,6 +327,12 @@ struct OptimizerSpec {
     /* 64-bit so SEED values at or above 2^32 are preserved exactly;
      * every consumer already widens to std::uint64_t. */
     std::optional<std::uint64_t> seed;
+    /* seed was not written in the file: the block's NLopt algorithm draws
+     * random numbers and had no seed (no SEED, no INIT block SEED), so
+     * HPOTargets drew one once for the run and journalled it, with the SEED
+     * line that draws the same numbers again. MULTISTART starts and RESTART
+     * rounds derive theirs from it as from a SEED line. */
+    bool seed_drawn = false;
     /* seed was not written in the block but taken from the STRATEGY-level
      * SEED: a PRESTAGE exploration whose optimiser reads SEED and that has
      * no seed of its own (no SEED; for NLopt no INIT block SEED either)

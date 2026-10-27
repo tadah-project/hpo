@@ -144,6 +144,16 @@ RhoBarGateSpec parse_rhobargate(std::istringstream& iss) {
   return s;
 }
 
+/* A seed the run draws once, where a block that draws random numbers has no
+ * SEED: 64 bits from std::random_device, two draws (as RestartPolicy draws
+ * the seed of its rounds). */
+std::uint64_t draw_run_seed()
+{
+  std::random_device rd;
+  const std::uint64_t hi = rd(), lo = rd();
+  return (hi << 32) ^ lo;
+}
+
 /* Whether the WARM seed file `warm` is the file `best` that a run writes
  * its best potential to: the path `warm` leads to (symbolic links
  * followed) is the directory entry `best` names in its directory, which
@@ -440,8 +450,32 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn,
         HPOLog::instance().warning(oss.str());
       }
     }
-    std::uint64_t seed = s.init_strategy_spec.seed.value_or(
-        static_cast<std::uint64_t>(std::random_device{}()));
+    /* A chain that draws its points without a SEED draws them with a seed
+     * the run draws once, kept as the block's SEED (and so, for NLopt
+     * without a SEED of its own, nlopt_seed_from_init, NLopt's) and named
+     * with the SEED line that draws the same points again. A chain of
+     * CONFIG and WARM points draws nothing and takes none. */
+    std::uint64_t seed = s.init_strategy_spec.seed.value_or(0);
+    if (!s.init_strategy_spec.seed &&
+        chain_draws_from_seed(s.init_strategy_spec)) {
+      seed = draw_run_seed();
+      s.init_strategy_spec.seed = seed;
+      s.init_strategy_spec.seed_drawn = true;
+      const std::string n = std::to_string(seed);
+      std::ostringstream oss;
+      oss << "the INIT block";
+      if (s.init_strategy_spec.line > 0)
+        oss << " on line " << s.init_strategy_spec.line;
+      oss << " has no SEED, so its starting points are drawn with a seed "
+             "drawn once for the run, " << n << " (SEED " << n
+          << " in the INIT block draws the same points again";
+      if (s.lib == "NLOPT" && !s.seed && reads_seed(s))
+        oss << "; " << s.lib << ":" << s.algo << ", without a SEED of its "
+               "own, takes its random numbers from the same seed";
+      oss << ")";
+      std::cout << "[HPO] " << oss.str() << "\n";
+      HPOLog::instance().info(oss.str());
+    }
     InitContext ictx{s, *this, seed, &context};
     std::size_t k = s.init_strategy_spec.k_total.value_or(strategy->default_k());
     /* with the provenance of every point (CONFIG, WARM <file>, RANDOM, LHS,
@@ -476,6 +510,29 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn,
 
   resolve_init(spec, "OUTER");
 
+  /* An NLopt algorithm that draws random numbers (reads_seed) in a block
+   * without SEED, and without the SEED of its INIT block, which it would
+   * take (nlopt_seed_from_init), draws them with a seed the run draws once,
+   * kept as the block's SEED -- NLopt's own clock seed would leave the run
+   * unrepeatable -- and named with the SEED line that draws the same
+   * numbers again. After the INIT chains, whose drawn seed NLopt takes. */
+  const auto draw_nlopt_seed = [](OptimizerSpec& s, const char* block) {
+    if (s.lib != "NLOPT" || s.seed || s.nlopt_seed_from_init() ||
+        !reads_seed(s))
+      return;
+    const std::uint64_t seed = draw_run_seed();
+    s.seed = seed;
+    s.seed_drawn = true;
+    const std::string n = std::to_string(seed);
+    const std::string msg =
+        std::string("the ") + block + " block has no SEED, and " + s.lib +
+        ":" + s.algo + " draws random numbers, so it draws them with a seed "
+        "drawn once for the run, " + n + " (SEED " + n + " in the " + block +
+        " block draws the same numbers again)";
+    std::cout << "[HPO] " << msg << "\n";
+    HPOLog::instance().info(msg);
+  };
+
   /* INIT points a phase does not evaluate -- more than a PLAIN search, a
    * PRESTAGE exploration or the starts of a MULTISTART take -- are warned
    * about at startup (start_point_warnings, backend_rules.h), once every
@@ -491,6 +548,8 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn,
       resolve_init(*spec.prestage, "PRESTAGE");
     spec.share_init_with_nested_phases();
   }
+  draw_nlopt_seed(spec, "STRATEGY");
+  if (spec.prestage) draw_nlopt_seed(*spec.prestage, "EXPLORE");
 
   /* The RESTART block's SEED seeds the METHOD chain that draws each
    * restart's points (round r with SEED + r, RestartPolicy). Like an INIT
