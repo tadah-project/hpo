@@ -327,7 +327,12 @@ void require_multistart_backend(const OptimizerSpec& spec)
     /* An optimiser that takes several starting points in one run runs once
      * under MULTISTART (plan_multistart, phase_specs.h), as under PLAIN:
      * N_STARTS, which MULTISTART needs, and BUDGET_PER_START would have no
-     * effect. */
+     * effect. The PRESTAGE refinement over TOPK candidates runs as a batch
+     * of this policy (StartBatch::Refinement), whose spec is the PRESTAGE
+     * spec: there such an optimiser takes every candidate in its one run,
+     * the refinement's purpose. */
+    if (caps.accepts_multi_seed && spec.strategy_type != StrategyType::MULTISTART)
+        return;
     if (caps.accepts_multi_seed)
         throw std::runtime_error(
             "STRATEGY TYPE MULTISTART cannot run " + name + ": it takes every "
