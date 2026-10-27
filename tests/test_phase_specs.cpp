@@ -287,10 +287,18 @@ TEST_CASE("phase specs: a PRESTAGE exploration without a SEED takes the "
         REQUIRE(s.prestage);
         CHECK_FALSE(s.prestage->seed);
     }
-    SECTION("without a STRATEGY-level SEED the exploration has none") {
+    /* Without a STRATEGY-level SEED the exploration takes none from the
+     * STRATEGY block; GN_CRS2_LM, which draws random numbers, draws a seed
+     * of its own once for the run (the case "drawn seeds: an NLopt
+     * algorithm that draws random numbers without a SEED ..."). Before the
+     * fix: the exploration had no seed (NLopt's clock seed). The journal
+     * says the seed is drawn (test_drawn_seeds.cpp). */
+    SECTION("without a STRATEGY-level SEED the exploration draws one of its "
+            "own") {
         const OptimizerSpec s = prestage("", crs2);
         REQUIRE(s.prestage);
-        CHECK_FALSE(s.prestage->seed);
+        CHECK(s.prestage->seed);
+        CHECK_FALSE(s.prestage->seed_from_strategy);
     }
 }
 
