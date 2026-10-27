@@ -512,8 +512,12 @@ lines, the wrappers, the training configurations and the fixtures stay out
 of the headers. The program does not include them: the tests compare each
 table with the table the parser and the startup checks hold by hand.
 
-The output depends on the registry alone, so two runs write the same text.
-After a change to the registry, the command below regenerates the headers
+The output depends on the registry and on its loader,
+`hpotarget_registry.py`: the headers also hold the placeholder sets the
+loader fixes, the words its schema allows for an argument, a repeat rule
+and a check, and its named integer limits. The output depends on nothing
+else (no date, no path), so two runs write the same text. After a change to
+the registry or to the loader, the command below regenerates the headers
 (`gen_hpotarget.py --header`), which are committed with the change:
 
 ```bash
@@ -531,7 +535,7 @@ cmake --build <build directory> --target hpo_regenerate_registries
 | `hpo_hpotarget_registry_conformance` | an example the parser refuses, an invalid line it accepts or refuses with another message (`tests/test_hpotarget_registry_conformance.cpp`), the script of `[lammps_script]` that does not take the candidate potential (`tests/test_hpotarget_script_contract.cpp`): every case of tag `[hpotarget_registry]` |
 | `hpo_hpotarget_registry_generated` | a case derived from the structured fields that the parser answers otherwise (`tests/check_hpotarget_generated.py`, which runs the cases through `hpotarget_case_runner`, `tests/tools/hpotarget_case_runner.cpp`; its docstring lists the checks and what they cannot see): the first example of each key in every block, accepted where the key's blocks list it and refused there otherwise; each key and option given twice, as its repeat rule says; the values at and past the limits of the argument of each key, `INIT` method, `PARAM` key and option, in the file of each example (of the first, for an option), the largest value through the startup checks and a `PARAM` value at every limit, a value in the range accepted in one example's file at least; each word of a word list accepted and each refused word refused; each `PARAM` key on each optimiser a wrapper names, accepted where the key lists the optimiser and refused otherwise; each option on every other line; the defaults, against what the code gives a file without the keys |
 | `hpo_hpotarget_generated_tool` | the generator, on a synthetic registry (`tests/test_check_hpotarget_generated.py`) |
-| `hpo_hpotarget_registry_sync` | `gen_hpotarget.py --check`: a generated header that is missing or differs from what the registry gives |
+| `hpo_hpotarget_registry_sync` | `gen_hpotarget.py --check`: a generated header that is missing or differs from what the registry and its loader give |
 | `hpo_hpotarget_generator_tool` | the generator of the headers, on a synthetic registry (`tests/test_gen_hpotarget.py`): the C++ names and their collisions, the escaping of a message, the placeholders, the tables and what they leave out, `--header` and `--check`; the headers compiled with the build's C++ compiler |
 | the Catch2 cases of tag `[hpotarget_gen]` | a generated table that differs from the table the parser or the startup checks hold by hand, in order where a message shows the order (`tests/test_hpotarget_registry_bindings.cpp`; its header comment says how each table is compared) |
 

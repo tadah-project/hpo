@@ -94,7 +94,8 @@ with the change that alters it.
 - `include/tadah/hpo/hpotarget_registry_gen.h` and
   `include/tadah/hpo/hpo_param_registry_gen.h` (CTest
   `hpo_hpotarget_registry_sync`): the tables of the target-file registry,
-  which `blueprint/gen_hpotarget.py` writes; after a change to the
-  registry they are regenerated with
+  which `blueprint/gen_hpotarget.py` writes from the registry and its
+  loader, `blueprint/hpotarget_registry.py`; after a change to either they
+  are regenerated with
   `cmake --build <build directory> --target hpo_regenerate_registries`
   (`blueprint/README.md`, "The generated tables").
