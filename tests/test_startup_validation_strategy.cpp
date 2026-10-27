@@ -2493,13 +2493,16 @@ TEST_CASE("startup validation: the GRAD_STRATEGY ANALYTICAL check, the "
  * STEP setting: a backend that does not use STEP, a value outside (0,
  * 0.5], overrides that cover only some dimensions.
  * Pins: each refusal is "Error on line N: <what>\nLine: <text>", N the
- * line that closes the block whose STEP it refuses: ENDOPTIMIZER for the
- * STRATEGY-level block, ENDEXPLORE for the EXPLORE block, ENDINNER for an
- * INNER block (the STRATEGY-level one's and the EXPLORE block's).
- * Before the fix: the same text without a line ("DLIB:BFGS (OUTER) does
- * not use STEP; ..."). */
-TEST_CASE("startup validation: the STEP rules name the line that closes the "
-          "block whose STEP they refuse",
+ * line of the STEP it refuses -- in the STRATEGY block, the EXPLORE block
+ * and an INNER block (the STRATEGY-level one's and the EXPLORE block's),
+ * the message naming the optimiser without its phase ("DLIB:BFGS does not
+ * use STEP; ...") -- and, for overrides that cover only some dimensions, a
+ * refusal of several lines, the line that closes the block (ENDOPTIMIZER).
+ * Before the fix: every refusal named the line that closes the block
+ * (ENDOPTIMIZER, ENDEXPLORE, ENDINNER), with the phase after the optimiser
+ * ("DLIB:BFGS (OUTER) does not use STEP; ..."); before that, no line. */
+TEST_CASE("startup validation: the STEP rules name the STEP line, or the "
+          "line that closes the block for overrides that cover too little",
           "[startup_validation][strategy][block_line][step]")
 {
     struct Case {
@@ -2511,12 +2514,12 @@ TEST_CASE("startup validation: the STEP rules name the line that closes the "
         {"STEP on the STRATEGY-level DLIB:BFGS",
          strategy_config("    TYPE PLAIN\n    LIB DLIB\n    ALGO BFGS\n"
                          "    MAXEVAL 20\n    STEP 0.1\n"),
-         "ENDOPTIMIZER", "DLIB:BFGS (OUTER) does not use STEP"},
+         "STEP 0.1", "DLIB:BFGS does not use STEP"},
         {"STEP 0.9 on the STRATEGY-level NLOPT:LN_SBPLX",
          strategy_config("    TYPE PLAIN\n    LIB NLOPT\n    ALGO LN_SBPLX\n"
                          "    MAXEVAL 20\n    STEP 0.9\n"),
-         "ENDOPTIMIZER",
-         "NLOPT:LN_SBPLX (OUTER): STEP must be a fraction of the OPTIM width "
+         "STEP 0.9",
+         "NLOPT:LN_SBPLX: STEP must be a fraction of the OPTIM width "
          "in (0, 0.5] (got 0.9)"},
         {"a STEP override that covers one of two dimensions",
          two_dims + "OPTIMIZER\n  STRATEGY\n    TYPE PLAIN\n    LIB NLOPT\n"
@@ -2530,13 +2533,13 @@ TEST_CASE("startup validation: the STEP rules name the line that closes the "
                          "    MAXEVAL 20\n    EXPLORE\n      LIB NLOPT\n"
                          "      ALGO GN_CRS2_LM\n      MAXEVAL 12\n"
                          "      STEP 0.1\n    ENDEXPLORE\n"),
-         "ENDEXPLORE", "NLOPT:GN_CRS2_LM (PRESTAGE) does not use STEP"},
+         "STEP 0.1", "NLOPT:GN_CRS2_LM does not use STEP"},
         {"STEP on the STRATEGY-level INNER block's NLOPT:LD_LBFGS",
          strategy_config("    TYPE PLAIN\n    LIB NLOPT\n    ALGO G_MLSL_LDS\n"
                          "    MAXEVAL 60\n    INNER\n      LIB NLOPT\n"
                          "      ALGO LD_LBFGS\n      STEP 0.1\n"
                          "    ENDINNER\n"),
-         "ENDINNER", "NLOPT:LD_LBFGS (INNER) does not use STEP"},
+         "STEP 0.1", "NLOPT:LD_LBFGS does not use STEP"},
         {"STEP on the EXPLORE block's INNER block's NLOPT:LD_LBFGS",
          strategy_config("    TYPE PRESTAGE\n    LIB NLOPT\n    ALGO LN_SBPLX\n"
                          "    MAXEVAL 20\n    EXPLORE\n      LIB NLOPT\n"
@@ -2544,7 +2547,7 @@ TEST_CASE("startup validation: the STEP rules name the line that closes the "
                          "      INNER\n        LIB NLOPT\n"
                          "        ALGO LD_LBFGS\n        STEP 0.1\n"
                          "      ENDINNER\n    ENDEXPLORE\n"),
-         "ENDINNER", "NLOPT:LD_LBFGS (PRESTAGE.INNER) does not use STEP"}};
+         "STEP 0.1", "NLOPT:LD_LBFGS does not use STEP"}};
     for (const auto& c : cases) {
         INFO(c.what << ", config:\n" << c.config);
         const auto at = line_of(c.config, c.closing);

@@ -994,15 +994,17 @@ The key of an override is matched as written, while an OPTIM line reads \
 its key in any case: STEP cgrid2b refers to no OPTIM key. The index list \
 of an override takes no blank, while that of an OPTIM line does."""
 checks = [
-  { msg = "{lib}:{algo} ({phase}) does not use STEP; {why}", doc = "Once the whole file is read, at the END line of its optimiser: an optimiser that does not use STEP; {phase} is OUTER, INNER, PRESTAGE or PRESTAGE.INNER, and {why} says what sets its first step instead." },
+  { msg = "{lib}:{algo} does not use STEP; {why}", doc = "Once the whole file is read, at the first STEP line of its block: an optimiser that does not use STEP; {why} says what sets its first step instead." },
   { msg = "STEP override '{text}': expected KEY(indices) <frac>", doc = "At the line: an index list without its closing parenthesis, or text after it." },
   { msg = "STEP override '{text}': empty index list", doc = "At the line: an empty index list." },
   { msg = "STEP override '{text}': bad index list ({why})", doc = "At the line: an index list the OPTIM grammar refuses, or an index 0." },
-  { msg = "STEP override names OPTIM key '{key}' which is not optimised (no OPTIM line for it)", doc = "Once the whole file is read, at the END line of its optimiser: a key no OPTIM line searches, matched as written." },
-  { msg = "STEP {key}({index}): index {index} is not an OPTIM'd index of {key}", doc = "Once the whole file is read, at the END line of its optimiser: an index no OPTIM line of the key selects." },
+  { msg = "STEP override names OPTIM key '{key}' which is not optimised (no OPTIM line for it)", doc = "Once the whole file is read, at the line of the override: a key no OPTIM line searches, matched as written." },
+  { msg = "STEP {key}({index}): index {index} is not an OPTIM'd index of {key}", doc = "Once the whole file is read, at the line of the override: an index no OPTIM line of the key selects." },
   { msg = "STEP overrides cover only some dimensions and no block-wide STEP is set; add `STEP <frac>` or override every OPTIM'd dimension", doc = "At startup, at the END line of its optimiser: overrides without a block-wide STEP that leave a search parameter without a fraction." },
-  { msg = "{lib}:{algo} ({phase}): STEP must be > 0 and finite (got {value})", doc = "Once the whole file is read, at the END line of its optimiser: a fraction of 0 or below." },
-  { msg = "{lib}:{algo} ({phase}): STEP must be a fraction of the OPTIM width in (0, 0.5] (got {value}); values above 0.5 cannot satisfy BOBYQA's width >= 2*step rule and exceed NLopt's own 0.25 default", doc = "Once the whole file is read, at the END line of its optimiser: a fraction above 0.5." },
+  { msg = "{lib}:{algo}: STEP must be > 0 and finite (got {value})", doc = "Once the whole file is read, at the STEP line: a fraction of 0 or below." },
+  { msg = "{lib}:{algo} STEP {key}: STEP must be > 0 and finite (got {value})", doc = "Once the whole file is read, at the line of the override: a fraction of 0 or below." },
+  { msg = "{lib}:{algo}: STEP must be a fraction of the OPTIM width in (0, 0.5] (got {value}); values above 0.5 cannot satisfy BOBYQA's width >= 2*step rule and exceed NLopt's own 0.25 default", doc = "Once the whole file is read, at the STEP line: a fraction above 0.5." },
+  { msg = "{lib}:{algo} STEP {key}: STEP must be a fraction of the OPTIM width in (0, 0.5] (got {value}); values above 0.5 cannot satisfy BOBYQA's width >= 2*step rule and exceed NLopt's own 0.25 default", doc = "Once the whole file is read, at the line of the override: a fraction above 0.5." },
   { msg = "STEP {key} is set twice in the {block} block (first on line {first_line}); each key is given once", doc = "At the line: an override given twice for one key and index list; {key} is the key with its index list." },
 ]
 
@@ -1102,46 +1104,51 @@ error = "STEP takes no further value here (unexpected '0.2')"
 
 [[key.invalid]]
 wrap = "strategy"
-at = "ENDOPTIMIZER"
 text = "STEP 0.7"
-error = "NLOPT:LN_SBPLX (OUTER): STEP must be a fraction of the OPTIM width in (0, 0.5] (got 0.7); values above 0.5 cannot satisfy BOBYQA's width >= 2*step rule and exceed NLopt's own 0.25 default"
+error = "NLOPT:LN_SBPLX: STEP must be a fraction of the OPTIM width in (0, 0.5] (got 0.7); values above 0.5 cannot satisfy BOBYQA's width >= 2*step rule and exceed NLopt's own 0.25 default"
 
 [[key.invalid]]
 wrap = "strategy"
-at = "ENDOPTIMIZER"
 text = "STEP -0.1"
-error = "NLOPT:LN_SBPLX (OUTER): STEP must be > 0 and finite (got -0.1)"
+error = "NLOPT:LN_SBPLX: STEP must be > 0 and finite (got -0.1)"
 
 [[key.invalid]]
 wrap = "strategy"
-at = "ENDOPTIMIZER"
+doc = "The fraction of an override."
+text = "STEP CGRID2B 0"
+error = "NLOPT:LN_SBPLX STEP CGRID2B: STEP must be > 0 and finite (got 0)"
+
+[[key.invalid]]
+wrap = "strategy"
+doc = "The fraction of an override above 0.5."
+text = "STEP CGRID2B 0.6"
+error = "NLOPT:LN_SBPLX STEP CGRID2B: STEP must be a fraction of the OPTIM width in (0, 0.5] (got 0.6); values above 0.5 cannot satisfy BOBYQA's width >= 2*step rule and exceed NLopt's own 0.25 default"
+
+[[key.invalid]]
+wrap = "strategy"
 text = "STEP RCUT2B 0.1"
 error = "STEP override names OPTIM key 'RCUT2B' which is not optimised (no OPTIM line for it)"
 
 [[key.invalid]]
 wrap = "strategy"
-at = "ENDOPTIMIZER"
 doc = "The key is matched as written."
 text = "STEP cgrid2b 0.2"
 error = "STEP override names OPTIM key 'cgrid2b' which is not optimised (no OPTIM line for it)"
 
 [[key.invalid]]
 wrap = "strategy"
-at = "ENDOPTIMIZER"
 text = "STEP CGRID2B(2) 0.1"
 error = "STEP CGRID2B(2): index 2 is not an OPTIM'd index of CGRID2B"
 
 [[key.invalid]]
 wrap = "explore"
-at = "ENDEXPLORE"
 text = "STEP 0.1"
-error = "TADAH:RANDOM (PRESTAGE) does not use STEP; uniform sampling in the OPTIM box has no initial step; remove STEP"
+error = "TADAH:RANDOM does not use STEP; uniform sampling in the OPTIM box has no initial step; remove STEP"
 
 [[key.invalid]]
 wrap = "opt_asa"
-at = "ENDOPTIMIZER"
 text = "STEP 0.1"
-error = "ASA:ASA (OUTER) does not use STEP; the width of the generating distribution follows the parameter temperature of each dimension (Initial_Parameter_Temperature, Temperature_Ratio_Scale)"
+error = "ASA:ASA does not use STEP; the width of the generating distribution follows the parameter temperature of each dimension (Initial_Parameter_Temperature, Temperature_Ratio_Scale)"
 
 [[key.invalid]]
 wrap = "strategy"

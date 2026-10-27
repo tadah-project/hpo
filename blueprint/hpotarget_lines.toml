@@ -4962,7 +4962,7 @@ ENDOPTIMIZER'''
 
 [[rule.invalid]]
 wrap = "none"
-at = "ENDOPTIMIZER"
+at = "GRAD_STRATEGY"
 text = '''
 OPTIM CGRID2B (1) 0.5 1.5
 PC_OBSERVABLE cohesive_energy --species H --target 2 --weight 1 --hotvar a0 1.5 2.5
@@ -4979,7 +4979,7 @@ id = "RULE.PC_LAMMPS_GRAD_STRATEGY"
 title = "PC_LAMMPS and PC_FAILPROBE refuse a GRAD_STRATEGY line"
 check = "parse"
 keys = ["ROOT.PC_LAMMPS", "ROOT.PC_FAILPROBE", "OPTIMIZER.GRAD_STRATEGY"]
-msg = "--hpotarget defines {key} but {block} GRAD_STRATEGY is set. A PC_LAMMPS or PC_FAILPROBE line does not support analytical/numerical/hybrid gradients. Drop the GRAD_STRATEGY line."
+msg = "--hpotarget defines {key} on line {line} but {block} GRAD_STRATEGY is set. A PC_LAMMPS or PC_FAILPROBE line does not support analytical/numerical/hybrid gradients. Drop the GRAD_STRATEGY line."
 doc = """\
 With a PC_LAMMPS or PC_FAILPROBE line, no block has a GRAD_STRATEGY line. \
 The refusal names the END line of the block."""
@@ -4989,7 +4989,7 @@ PC_LAMMPS line, and the block, OPTIMIZER or EXPLORE."""
 
 [[rule.invalid]]
 wrap = "none"
-at = "ENDOPTIMIZER"
+at = "GRAD_STRATEGY"
 text = '''
 OPTIM CGRID2B (1) 0.5 1.5
 PC_LAMMPS --script lines_pc.in --varloss E 1 1
@@ -4999,11 +4999,11 @@ ALGO LN_SBPLX
 MAXEVAL 10
 GRAD_STRATEGY NUMERICAL
 ENDOPTIMIZER'''
-error = "--hpotarget defines PC_LAMMPS but OPTIMIZER's GRAD_STRATEGY is set. A PC_LAMMPS or PC_FAILPROBE line does not support analytical/numerical/hybrid gradients. Drop the GRAD_STRATEGY line."
+error = "--hpotarget defines PC_LAMMPS on line 2 but OPTIMIZER's GRAD_STRATEGY is set. A PC_LAMMPS or PC_FAILPROBE line does not support analytical/numerical/hybrid gradients. Drop the GRAD_STRATEGY line."
 
 [[rule.invalid]]
 wrap = "none"
-at = "ENDOPTIMIZER"
+at = "GRAD_STRATEGY"
 doc = "A PC_FAILPROBE line in a file without a PC_LAMMPS line."
 text = '''
 OPTIM CGRID2B (1) 0.5 1.5
@@ -5015,7 +5015,7 @@ ALGO LN_SBPLX
 MAXEVAL 10
 GRAD_STRATEGY HYBRID
 ENDOPTIMIZER'''
-error = "--hpotarget defines PC_FAILPROBE but OPTIMIZER's GRAD_STRATEGY is set. A PC_LAMMPS or PC_FAILPROBE line does not support analytical/numerical/hybrid gradients. Drop the GRAD_STRATEGY line."
+error = "--hpotarget defines PC_FAILPROBE on line 2 but OPTIMIZER's GRAD_STRATEGY is set. A PC_LAMMPS or PC_FAILPROBE line does not support analytical/numerical/hybrid gradients. Drop the GRAD_STRATEGY line."
 
 [[rule]]
 id = "RULE.PC_LAMMPS_gradient_free"
@@ -5023,7 +5023,7 @@ title = """\
 With PC_LAMMPS or PC_FAILPROBE every optimiser runs without gradients"""
 check = "parse"
 keys = ["ROOT.PC_LAMMPS", "ROOT.PC_FAILPROBE", "OPTIMIZER.ALGO"]
-msg = "--hpotarget defines {key} but {block} optimiser {lib}:{algo} is gradient-based. A PC_LAMMPS or PC_FAILPROBE line requires a gradient-free optimiser ({list}); an NLopt MLSL or AUGLAG algorithm is accepted with a derivative-free INNER block."
+msg = "--hpotarget defines {key} on line {line} but {block} optimiser {lib}:{algo} is gradient-based. A PC_LAMMPS or PC_FAILPROBE line requires a gradient-free optimiser ({list}); an NLopt MLSL or AUGLAG algorithm is accepted with a derivative-free INNER block."
 doc = """\
 With a PC_LAMMPS or PC_FAILPROBE line, every optimiser of the file runs \
 without gradients, as the results of a LAMMPS script have no gradient. \
@@ -5046,7 +5046,7 @@ ENDOPTIMIZER'''
 
 [[rule.invalid]]
 wrap = "none"
-at = "ENDOPTIMIZER"
+at = "ALGO"
 doc = "DLIB:BFGS, which takes the finite-difference gradient of the loss."
 text = '''
 OPTIM CGRID2B (1) 0.5 1.5
@@ -5056,11 +5056,11 @@ LIB DLIB
 ALGO BFGS
 MAXEVAL 10
 ENDOPTIMIZER'''
-error = "--hpotarget defines PC_LAMMPS but OPTIMIZER's optimiser DLIB:BFGS is gradient-based. A PC_LAMMPS or PC_FAILPROBE line requires a gradient-free optimiser (ASA:ASA, DLIB:GFS, NLOPT:GN_AGS, NLOPT:GN_CRS2_LM, NLOPT:GN_DIRECT, NLOPT:GN_DIRECT_L, NLOPT:GN_DIRECT_L_NOSCAL, NLOPT:GN_DIRECT_L_RAND, NLOPT:GN_ESCH, NLOPT:GN_ISRES, NLOPT:GN_MLSL, NLOPT:GN_MLSL_LDS, NLOPT:GN_ORIG_DIRECT, NLOPT:GN_ORIG_DIRECT_L, NLOPT:LN_AUGLAG, NLOPT:LN_AUGLAG_EQ, NLOPT:LN_BOBYQA, NLOPT:LN_COBYLA, NLOPT:LN_NELDERMEAD, NLOPT:LN_PRAXIS, NLOPT:LN_SBPLX, TADAH:ANNEAL, TADAH:ANNEAL_PA, TADAH:ANNEAL_PT, TADAH:GRID, TADAH:RANDOM); an NLopt MLSL or AUGLAG algorithm is accepted with a derivative-free INNER block."
+error = "--hpotarget defines PC_LAMMPS on line 2 but OPTIMIZER's optimiser DLIB:BFGS is gradient-based. A PC_LAMMPS or PC_FAILPROBE line requires a gradient-free optimiser (ASA:ASA, DLIB:GFS, NLOPT:GN_AGS, NLOPT:GN_CRS2_LM, NLOPT:GN_DIRECT, NLOPT:GN_DIRECT_L, NLOPT:GN_DIRECT_L_NOSCAL, NLOPT:GN_DIRECT_L_RAND, NLOPT:GN_ESCH, NLOPT:GN_ISRES, NLOPT:GN_MLSL, NLOPT:GN_MLSL_LDS, NLOPT:GN_ORIG_DIRECT, NLOPT:GN_ORIG_DIRECT_L, NLOPT:LN_AUGLAG, NLOPT:LN_AUGLAG_EQ, NLOPT:LN_BOBYQA, NLOPT:LN_COBYLA, NLOPT:LN_NELDERMEAD, NLOPT:LN_PRAXIS, NLOPT:LN_SBPLX, TADAH:ANNEAL, TADAH:ANNEAL_PA, TADAH:ANNEAL_PT, TADAH:GRID, TADAH:RANDOM); an NLopt MLSL or AUGLAG algorithm is accepted with a derivative-free INNER block."
 
 [[rule.invalid]]
 wrap = "none"
-at = "ENDOPTIMIZER"
+at = "ALGO"
 doc = "DLIB:BFGS with a PC_FAILPROBE line, in a file without a PC_LAMMPS line."
 text = '''
 OPTIM CGRID2B (1) 0.5 1.5
@@ -5071,11 +5071,11 @@ LIB DLIB
 ALGO BFGS
 MAXEVAL 10
 ENDOPTIMIZER'''
-error = "--hpotarget defines PC_FAILPROBE but OPTIMIZER's optimiser DLIB:BFGS is gradient-based. A PC_LAMMPS or PC_FAILPROBE line requires a gradient-free optimiser (ASA:ASA, DLIB:GFS, NLOPT:GN_AGS, NLOPT:GN_CRS2_LM, NLOPT:GN_DIRECT, NLOPT:GN_DIRECT_L, NLOPT:GN_DIRECT_L_NOSCAL, NLOPT:GN_DIRECT_L_RAND, NLOPT:GN_ESCH, NLOPT:GN_ISRES, NLOPT:GN_MLSL, NLOPT:GN_MLSL_LDS, NLOPT:GN_ORIG_DIRECT, NLOPT:GN_ORIG_DIRECT_L, NLOPT:LN_AUGLAG, NLOPT:LN_AUGLAG_EQ, NLOPT:LN_BOBYQA, NLOPT:LN_COBYLA, NLOPT:LN_NELDERMEAD, NLOPT:LN_PRAXIS, NLOPT:LN_SBPLX, TADAH:ANNEAL, TADAH:ANNEAL_PA, TADAH:ANNEAL_PT, TADAH:GRID, TADAH:RANDOM); an NLopt MLSL or AUGLAG algorithm is accepted with a derivative-free INNER block."
+error = "--hpotarget defines PC_FAILPROBE on line 2 but OPTIMIZER's optimiser DLIB:BFGS is gradient-based. A PC_LAMMPS or PC_FAILPROBE line requires a gradient-free optimiser (ASA:ASA, DLIB:GFS, NLOPT:GN_AGS, NLOPT:GN_CRS2_LM, NLOPT:GN_DIRECT, NLOPT:GN_DIRECT_L, NLOPT:GN_DIRECT_L_NOSCAL, NLOPT:GN_DIRECT_L_RAND, NLOPT:GN_ESCH, NLOPT:GN_ISRES, NLOPT:GN_MLSL, NLOPT:GN_MLSL_LDS, NLOPT:GN_ORIG_DIRECT, NLOPT:GN_ORIG_DIRECT_L, NLOPT:LN_AUGLAG, NLOPT:LN_AUGLAG_EQ, NLOPT:LN_BOBYQA, NLOPT:LN_COBYLA, NLOPT:LN_NELDERMEAD, NLOPT:LN_PRAXIS, NLOPT:LN_SBPLX, TADAH:ANNEAL, TADAH:ANNEAL_PA, TADAH:ANNEAL_PT, TADAH:GRID, TADAH:RANDOM); an NLopt MLSL or AUGLAG algorithm is accepted with a derivative-free INNER block."
 
 [[rule.invalid]]
 wrap = "none"
-at = "ENDOPTIMIZER"
+at = "ALGO"
 text = '''
 OPTIM CGRID2B (1) 0.5 1.5
 PC_LAMMPS --script lines_pc.in --varloss E 1 1
@@ -5084,11 +5084,11 @@ LIB NLOPT
 ALGO LD_LBFGS
 MAXEVAL 10
 ENDOPTIMIZER'''
-error = "--hpotarget defines PC_LAMMPS but OPTIMIZER's optimiser NLOPT:LD_LBFGS is gradient-based. A PC_LAMMPS or PC_FAILPROBE line requires a gradient-free optimiser (ASA:ASA, DLIB:GFS, NLOPT:GN_AGS, NLOPT:GN_CRS2_LM, NLOPT:GN_DIRECT, NLOPT:GN_DIRECT_L, NLOPT:GN_DIRECT_L_NOSCAL, NLOPT:GN_DIRECT_L_RAND, NLOPT:GN_ESCH, NLOPT:GN_ISRES, NLOPT:GN_MLSL, NLOPT:GN_MLSL_LDS, NLOPT:GN_ORIG_DIRECT, NLOPT:GN_ORIG_DIRECT_L, NLOPT:LN_AUGLAG, NLOPT:LN_AUGLAG_EQ, NLOPT:LN_BOBYQA, NLOPT:LN_COBYLA, NLOPT:LN_NELDERMEAD, NLOPT:LN_PRAXIS, NLOPT:LN_SBPLX, TADAH:ANNEAL, TADAH:ANNEAL_PA, TADAH:ANNEAL_PT, TADAH:GRID, TADAH:RANDOM); an NLopt MLSL or AUGLAG algorithm is accepted with a derivative-free INNER block."
+error = "--hpotarget defines PC_LAMMPS on line 2 but OPTIMIZER's optimiser NLOPT:LD_LBFGS is gradient-based. A PC_LAMMPS or PC_FAILPROBE line requires a gradient-free optimiser (ASA:ASA, DLIB:GFS, NLOPT:GN_AGS, NLOPT:GN_CRS2_LM, NLOPT:GN_DIRECT, NLOPT:GN_DIRECT_L, NLOPT:GN_DIRECT_L_NOSCAL, NLOPT:GN_DIRECT_L_RAND, NLOPT:GN_ESCH, NLOPT:GN_ISRES, NLOPT:GN_MLSL, NLOPT:GN_MLSL_LDS, NLOPT:GN_ORIG_DIRECT, NLOPT:GN_ORIG_DIRECT_L, NLOPT:LN_AUGLAG, NLOPT:LN_AUGLAG_EQ, NLOPT:LN_BOBYQA, NLOPT:LN_COBYLA, NLOPT:LN_NELDERMEAD, NLOPT:LN_PRAXIS, NLOPT:LN_SBPLX, TADAH:ANNEAL, TADAH:ANNEAL_PA, TADAH:ANNEAL_PT, TADAH:GRID, TADAH:RANDOM); an NLopt MLSL or AUGLAG algorithm is accepted with a derivative-free INNER block."
 
 [[rule.invalid]]
 wrap = "none"
-at = "ENDEXPLORE"
+at = 12
 text = '''
 OPTIM CGRID2B (1) 0.5 1.5
 PC_FAILPROBE --script lines_pc.in --outvar S
@@ -5106,7 +5106,7 @@ MAXEVAL 5
 ENDEXPLORE
 ENDSTRATEGY
 ENDOPTIMIZER'''
-error = "--hpotarget defines PC_FAILPROBE but EXPLORE's optimiser NLOPT:LD_LBFGS is gradient-based. A PC_LAMMPS or PC_FAILPROBE line requires a gradient-free optimiser (ASA:ASA, DLIB:GFS, NLOPT:GN_AGS, NLOPT:GN_CRS2_LM, NLOPT:GN_DIRECT, NLOPT:GN_DIRECT_L, NLOPT:GN_DIRECT_L_NOSCAL, NLOPT:GN_DIRECT_L_RAND, NLOPT:GN_ESCH, NLOPT:GN_ISRES, NLOPT:GN_MLSL, NLOPT:GN_MLSL_LDS, NLOPT:GN_ORIG_DIRECT, NLOPT:GN_ORIG_DIRECT_L, NLOPT:LN_AUGLAG, NLOPT:LN_AUGLAG_EQ, NLOPT:LN_BOBYQA, NLOPT:LN_COBYLA, NLOPT:LN_NELDERMEAD, NLOPT:LN_PRAXIS, NLOPT:LN_SBPLX, TADAH:ANNEAL, TADAH:ANNEAL_PA, TADAH:ANNEAL_PT, TADAH:GRID, TADAH:RANDOM); an NLopt MLSL or AUGLAG algorithm is accepted with a derivative-free INNER block."
+error = "--hpotarget defines PC_FAILPROBE on line 2 but EXPLORE's optimiser NLOPT:LD_LBFGS is gradient-based. A PC_LAMMPS or PC_FAILPROBE line requires a gradient-free optimiser (ASA:ASA, DLIB:GFS, NLOPT:GN_AGS, NLOPT:GN_CRS2_LM, NLOPT:GN_DIRECT, NLOPT:GN_DIRECT_L, NLOPT:GN_DIRECT_L_NOSCAL, NLOPT:GN_DIRECT_L_RAND, NLOPT:GN_ESCH, NLOPT:GN_ISRES, NLOPT:GN_MLSL, NLOPT:GN_MLSL_LDS, NLOPT:GN_ORIG_DIRECT, NLOPT:GN_ORIG_DIRECT_L, NLOPT:LN_AUGLAG, NLOPT:LN_AUGLAG_EQ, NLOPT:LN_BOBYQA, NLOPT:LN_COBYLA, NLOPT:LN_NELDERMEAD, NLOPT:LN_PRAXIS, NLOPT:LN_SBPLX, TADAH:ANNEAL, TADAH:ANNEAL_PA, TADAH:ANNEAL_PT, TADAH:GRID, TADAH:RANDOM); an NLopt MLSL or AUGLAG algorithm is accepted with a derivative-free INNER block."
 
 [[rule]]
 id = "RULE.PC_LAMMPS_local_optimiser"
@@ -5114,7 +5114,7 @@ title = """\
 With PC_LAMMPS or PC_FAILPROBE, MLSL and AUGLAG search locally without gradients"""
 check = "parse"
 keys = ["ROOT.PC_LAMMPS", "ROOT.PC_FAILPROBE", "BLOCK.INNER"]
-msg = "--hpotarget defines {key} but {block} optimiser {lib}:{algo} takes a gradient: NLopt's MLSL and AUGLAG take one for their local search, and NLopt's default local optimiser, {name}, is gradient-based; an INNER block with a derivative-free one takes none. A PC_LAMMPS or PC_FAILPROBE line requires a gradient-free optimiser ({list}); an NLopt MLSL or AUGLAG algorithm is accepted with a derivative-free INNER block."
+msg = "--hpotarget defines {key} on line {line} but {block} optimiser {lib}:{algo} takes a gradient: NLopt's MLSL and AUGLAG take one for their local search, and NLopt's default local optimiser, {name}, is gradient-based; an INNER block with a derivative-free one takes none. A PC_LAMMPS or PC_FAILPROBE line requires a gradient-free optimiser ({list}); an NLopt MLSL or AUGLAG algorithm is accepted with a derivative-free INNER block."
 doc = """\
 With a PC_LAMMPS or PC_FAILPROBE line, an NLopt MLSL or AUGLAG without an \
 INNER block is refused when NLopt's default local optimiser takes \
@@ -5127,7 +5127,7 @@ gradients as a block names them."""
 
 [[rule.invalid]]
 wrap = "none"
-at = "ENDOPTIMIZER"
+at = "ALGO"
 text = '''
 OPTIM CGRID2B (1) 0.5 1.5
 PC_LAMMPS --script lines_pc.in --varloss E 1 1
@@ -5136,7 +5136,7 @@ LIB NLOPT
 ALGO GD_MLSL
 MAXEVAL 10
 ENDOPTIMIZER'''
-error = "--hpotarget defines PC_LAMMPS but OPTIMIZER's optimiser NLOPT:GD_MLSL takes a gradient: NLopt's MLSL and AUGLAG take one for their local search, and NLopt's default local optimiser, NLOPT:LD_MMA, is gradient-based; an INNER block with a derivative-free one takes none. A PC_LAMMPS or PC_FAILPROBE line requires a gradient-free optimiser (ASA:ASA, DLIB:GFS, NLOPT:GN_AGS, NLOPT:GN_CRS2_LM, NLOPT:GN_DIRECT, NLOPT:GN_DIRECT_L, NLOPT:GN_DIRECT_L_NOSCAL, NLOPT:GN_DIRECT_L_RAND, NLOPT:GN_ESCH, NLOPT:GN_ISRES, NLOPT:GN_MLSL, NLOPT:GN_MLSL_LDS, NLOPT:GN_ORIG_DIRECT, NLOPT:GN_ORIG_DIRECT_L, NLOPT:LN_AUGLAG, NLOPT:LN_AUGLAG_EQ, NLOPT:LN_BOBYQA, NLOPT:LN_COBYLA, NLOPT:LN_NELDERMEAD, NLOPT:LN_PRAXIS, NLOPT:LN_SBPLX, TADAH:ANNEAL, TADAH:ANNEAL_PA, TADAH:ANNEAL_PT, TADAH:GRID, TADAH:RANDOM); an NLopt MLSL or AUGLAG algorithm is accepted with a derivative-free INNER block."
+error = "--hpotarget defines PC_LAMMPS on line 2 but OPTIMIZER's optimiser NLOPT:GD_MLSL takes a gradient: NLopt's MLSL and AUGLAG take one for their local search, and NLopt's default local optimiser, NLOPT:LD_MMA, is gradient-based; an INNER block with a derivative-free one takes none. A PC_LAMMPS or PC_FAILPROBE line requires a gradient-free optimiser (ASA:ASA, DLIB:GFS, NLOPT:GN_AGS, NLOPT:GN_CRS2_LM, NLOPT:GN_DIRECT, NLOPT:GN_DIRECT_L, NLOPT:GN_DIRECT_L_NOSCAL, NLOPT:GN_DIRECT_L_RAND, NLOPT:GN_ESCH, NLOPT:GN_ISRES, NLOPT:GN_MLSL, NLOPT:GN_MLSL_LDS, NLOPT:GN_ORIG_DIRECT, NLOPT:GN_ORIG_DIRECT_L, NLOPT:LN_AUGLAG, NLOPT:LN_AUGLAG_EQ, NLOPT:LN_BOBYQA, NLOPT:LN_COBYLA, NLOPT:LN_NELDERMEAD, NLOPT:LN_PRAXIS, NLOPT:LN_SBPLX, TADAH:ANNEAL, TADAH:ANNEAL_PA, TADAH:ANNEAL_PT, TADAH:GRID, TADAH:RANDOM); an NLopt MLSL or AUGLAG algorithm is accepted with a derivative-free INNER block."
 
 [[rule]]
 id = "RULE.PC_LAMMPS_INNER_local_optimiser"
@@ -5144,7 +5144,7 @@ title = """\
 With PC_LAMMPS or PC_FAILPROBE no INNER MLSL or AUGLAG uses gradients"""
 check = "parse"
 keys = ["ROOT.PC_LAMMPS", "ROOT.PC_FAILPROBE", "BLOCK.INNER"]
-msg = "--hpotarget defines {key} but {block} optimiser {lib}:{algo} takes a gradient: NLopt's MLSL and AUGLAG take one for their local search, and NLopt's default local optimiser, {name}, is gradient-based. A PC_LAMMPS or PC_FAILPROBE line requires a gradient-free optimiser, and an INNER search is a local NLopt algorithm: name a derivative-free one in the INNER block ({list})."
+msg = "--hpotarget defines {key} on line {line} but {block} optimiser {lib}:{algo} takes a gradient: NLopt's MLSL and AUGLAG take one for their local search, and NLopt's default local optimiser, {name}, is gradient-based. A PC_LAMMPS or PC_FAILPROBE line requires a gradient-free optimiser, and an INNER search is a local NLopt algorithm: name a derivative-free one in the INNER block ({list})."
 doc = """\
 With a PC_LAMMPS or PC_FAILPROBE line, an INNER block that names an NLopt \
 MLSL or AUGLAG is refused when NLopt's default local optimiser takes \
@@ -5157,7 +5157,7 @@ NLopt algorithms without gradients."""
 
 [[rule.invalid]]
 wrap = "none"
-at = "ENDINNER"
+at = 10
 text = '''
 OPTIM CGRID2B (1) 0.5 1.5
 PC_LAMMPS --script lines_pc.in --varloss E 1 1
@@ -5172,7 +5172,7 @@ ALGO LD_AUGLAG
 ENDINNER
 ENDSTRATEGY
 ENDOPTIMIZER'''
-error = "--hpotarget defines PC_LAMMPS but INNER's optimiser NLOPT:LD_AUGLAG takes a gradient: NLopt's MLSL and AUGLAG take one for their local search, and NLopt's default local optimiser, NLOPT:LD_MMA, is gradient-based. A PC_LAMMPS or PC_FAILPROBE line requires a gradient-free optimiser, and an INNER search is a local NLopt algorithm: name a derivative-free one in the INNER block (NLOPT:LN_AUGLAG, NLOPT:LN_AUGLAG_EQ, NLOPT:LN_BOBYQA, NLOPT:LN_COBYLA, NLOPT:LN_NELDERMEAD, NLOPT:LN_PRAXIS, NLOPT:LN_SBPLX)."
+error = "--hpotarget defines PC_LAMMPS on line 2 but INNER's optimiser NLOPT:LD_AUGLAG takes a gradient: NLopt's MLSL and AUGLAG take one for their local search, and NLopt's default local optimiser, NLOPT:LD_MMA, is gradient-based. A PC_LAMMPS or PC_FAILPROBE line requires a gradient-free optimiser, and an INNER search is a local NLopt algorithm: name a derivative-free one in the INNER block (NLOPT:LN_AUGLAG, NLOPT:LN_AUGLAG_EQ, NLOPT:LN_BOBYQA, NLOPT:LN_COBYLA, NLOPT:LN_NELDERMEAD, NLOPT:LN_PRAXIS, NLOPT:LN_SBPLX)."
 
 [[rule]]
 id = "RULE.PC_LAMMPS_INNER_gradient_free"
@@ -5180,7 +5180,7 @@ title = """\
 With PC_LAMMPS or PC_FAILPROBE an INNER algorithm is derivative-free"""
 check = "parse"
 keys = ["ROOT.PC_LAMMPS", "ROOT.PC_FAILPROBE", "BLOCK.INNER"]
-msg = "--hpotarget defines {key} but {block} optimiser {lib}:{algo} is gradient-based. A PC_LAMMPS or PC_FAILPROBE line requires a gradient-free optimiser, and an INNER search is a local NLopt algorithm: name a derivative-free one in the INNER block ({list})."
+msg = "--hpotarget defines {key} on line {line} but {block} optimiser {lib}:{algo} is gradient-based. A PC_LAMMPS or PC_FAILPROBE line requires a gradient-free optimiser, and an INNER search is a local NLopt algorithm: name a derivative-free one in the INNER block ({list})."
 doc = """\
 With a PC_LAMMPS or PC_FAILPROBE line, an INNER block names a local NLopt \
 algorithm without gradients. The refusal names the ENDINNER line."""
@@ -5209,7 +5209,7 @@ ENDOPTIMIZER'''
 
 [[rule.invalid]]
 wrap = "none"
-at = "ENDINNER"
+at = 10
 text = '''
 OPTIM CGRID2B (1) 0.5 1.5
 PC_LAMMPS --script lines_pc.in --varloss E 1 1
@@ -5224,7 +5224,7 @@ ALGO LD_LBFGS
 ENDINNER
 ENDSTRATEGY
 ENDOPTIMIZER'''
-error = "--hpotarget defines PC_LAMMPS but INNER's optimiser NLOPT:LD_LBFGS is gradient-based. A PC_LAMMPS or PC_FAILPROBE line requires a gradient-free optimiser, and an INNER search is a local NLopt algorithm: name a derivative-free one in the INNER block (NLOPT:LN_AUGLAG, NLOPT:LN_AUGLAG_EQ, NLOPT:LN_BOBYQA, NLOPT:LN_COBYLA, NLOPT:LN_NELDERMEAD, NLOPT:LN_PRAXIS, NLOPT:LN_SBPLX)."
+error = "--hpotarget defines PC_LAMMPS on line 2 but INNER's optimiser NLOPT:LD_LBFGS is gradient-based. A PC_LAMMPS or PC_FAILPROBE line requires a gradient-free optimiser, and an INNER search is a local NLopt algorithm: name a derivative-free one in the INNER block (NLOPT:LN_AUGLAG, NLOPT:LN_AUGLAG_EQ, NLOPT:LN_BOBYQA, NLOPT:LN_COBYLA, NLOPT:LN_NELDERMEAD, NLOPT:LN_PRAXIS, NLOPT:LN_SBPLX)."
 
 [[rule]]
 id = "RULE.loss_source_required"
