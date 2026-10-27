@@ -173,6 +173,25 @@ bool names_best_pot_file(const std::string& warm, const std::string& best)
   return w == d / b.filename();
 }
 
+/* Whether the WARM path `warm` names the directory entry `best` itself,
+ * a symbolic link there not followed: a RESTART round opens the path
+ * again, after the run has replaced that entry, link and all, with its
+ * best potential. */
+bool names_best_pot_entry(const std::string& warm, const std::string& best)
+{
+  const auto entry = [](const fs::path& p, std::error_code& ec) {
+    const fs::path dir =
+        p.has_parent_path() ? p.parent_path() : fs::path(".");
+    return fs::weakly_canonical(dir, ec) / p.filename();
+  };
+  std::error_code ec;
+  const fs::path w = entry(fs::path(warm), ec);
+  if (ec) return false;
+  const fs::path b = entry(fs::path(best), ec);
+  if (ec) return false;
+  return w == b;
+}
+
 }  // namespace
 
 size_t HPOTargets::ui_offset(std::vector<std::string> &tokens, size_t ui) {
@@ -2806,9 +2825,16 @@ void HPOTargets::warn_warm_of_best_pot() const {
   for (const Chain& c : chains) {
     for (const auto& e : c.spec->chain) {
       if (e.method != "WARM" || e.args.empty()) continue;
+      /* An INIT block reads its file once, at startup: the file the path
+       * leads to then. A RESTART round opens the path again: its entry,
+       * which the run replaces, counts too. */
       std::string best;
       for (const std::string* f : {&names.canonicalBestPot, &names.localBestPot})
-        if (names_best_pot_file(e.args[0], *f)) { best = *f; break; }
+        if (names_best_pot_file(e.args[0], *f) ||
+            (c.restart && names_best_pot_entry(e.args[0], *f))) {
+          best = *f;
+          break;
+        }
       if (best.empty()) continue;
       std::string w = std::string("the ") + c.block + " block" +
                       (c.line > 0 ? " on line " + std::to_string(c.line)

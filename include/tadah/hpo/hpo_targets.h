@@ -270,8 +270,10 @@ public:
      * RESTART block whose file is the run's best_pot.tadah, by whatever
      * path or symbolic link (canonicalBestPotFile, localBestPotFile): the
      * run removes that file before its first evaluation and writes its best
-     * potential there. Called by the constructor, once the chains are
-     * resolved. */
+     * potential there. A RESTART block's path that names that directory
+     * entry is warned about whatever the entry links to: each round opens
+     * the path again, after the run has replaced the entry, link and all.
+     * Called by the constructor, once the chains are resolved. */
     void warn_warm_of_best_pot() const;
 
     /* Whether the run writes the search-space files: hpo_search_space.tsv
