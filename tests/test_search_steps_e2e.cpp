@@ -354,12 +354,15 @@ TEST_CASE("LN_AUGLAG with an INNER LN_BOBYQA: a start next to a bound moves "
  * numbers of evaluations of the three runs differ by at most one line
  * search (a trial and the 4 points of a central difference in two
  * dimensions); the journal gives the length of the first gradient each run
- * divides its loss by.
+ * divides its loss by, and that FTOL_ABS, divided by it as well, keeps its
+ * meaning for the loss.
  * Before the fix: dlib's first step is the gradient itself, so the path
  * followed the unit of the loss: at 1e-4 and 1 BFGS crept along RCUT2B and
  * made 60 and 59 evaluations; at 1e6 its first step went to the corner
  * (6, 0.1), backtracked, and the run stopped at RCUT2B 5.604 on FTOL_ABS
- * after 24; the journal had no such line. */
+ * after 24; the journal had no such line. Once it had one, the line named
+ * both stops ("FTOL_ABS and PARAM tol_gradinf are divided by it as well"),
+ * whichever was in force. */
 TEST_CASE("DLIB:BFGS: the path does not depend on the scale of the loss",
           "[HPO][dlib_bfgs][e2e]")
 {
@@ -380,6 +383,11 @@ TEST_CASE("DLIB:BFGS: the path does not depend on the scale of the loss",
         CHECK(journal.find("DLIB:BFGS: the search runs on the loss divided by "
                            "the length of its first gradient, ") !=
               std::string::npos);
+        /* The stop in force, FTOL_ABS, keeps its meaning for the loss. */
+        CHECK(journal.find("(over the coordinates its first step can move); "
+                           "FTOL_ABS is divided by it as well, so it keeps its "
+                           "meaning for the loss, and the records keep the "
+                           "loss\n") != std::string::npos);
     }
     INFO("evaluations " << evals[0] << ", " << evals[1] << ", " << evals[2]);
     const auto [lo, hi] = std::minmax_element(evals.begin(), evals.end());

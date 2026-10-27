@@ -440,10 +440,14 @@ TEST_CASE("LN_BOBYQA: a start between half a step and a step from a bound "
  * first simplex turns the step inward at the bound: a point of its first
  * simplex has AMPGRIDMB[6] = 0.0059; the start stays (COBYLA takes any
  * start with its full step) and the journal has no INFO line of a moved
- * start.
+ * start. The journal's step line says what the search is given and ends
+ * there ("... given to NLopt: LN_COBYLA keeps the first step of each
+ * dimension as its scale").
  * Before the fix: NLopt's own default shrank the step of AMPGRIDMB[6] to
  * 0.75 of the gap, 7.5e-5, and COBYLA kept it as the scale of the
- * coordinate: no point had AMPGRIDMB[6] = 0.0059. */
+ * coordinate: no point had AMPGRIDMB[6] = 0.0059. Once it was given its
+ * full step, the step line went on ", and NLopt's own default shrinks it
+ * near a bound", which read as if the step given shrank. */
 TEST_CASE("LN_COBYLA: with STEP unset a start next to a bound keeps the full "
           "step", "[HPO][step_plan][nlopt]")
 {
@@ -460,7 +464,12 @@ TEST_CASE("LN_COBYLA: with STEP unset a start next to a bound keeps the full "
     CHECK(host.asked.front()(1) == 0.0079);
     CHECK(asks_b(host.asked, 0.0059));
     CHECK(journal.find("starts at") == std::string::npos);
-    CHECK(journal.find("STEP unset -- 0.25*width per dim, given to NLopt") !=
+    /* The step given is the full step: the source ends at "as its scale"
+     * (it went on ", and NLopt's own default shrinks it near a bound",
+     * which read as if the step given shrank). */
+    CHECK(journal.find("Initial step (NLOPT:LN_COBYLA): STEP unset -- "
+                       "0.25*width per dim, given to NLopt: LN_COBYLA keeps "
+                       "the first step of each dimension as its scale\n") !=
           std::string::npos);
 }
 
@@ -541,11 +550,15 @@ TEST_CASE("LN_AUGLAG with an INNER LN_BOBYQA: a start within half a step of "
  * local search is given 0.25 of each width, which it keeps as the scale of
  * the coordinate, and turns its first step inward at the bound: a point of
  * its first simplex has AMPGRIDMB[6] = 0.0059; the start stays, and the
- * journal's step line names the local search's step.
+ * journal's step line names the local search's step ("... LN_COBYLA keeps
+ * the first step of each dimension as its scale (the step of the local
+ * search, which LN_AUGLAG hands it)").
  * Before the fix: the local search took NLopt's default from the start,
  * which shrank the step of AMPGRIDMB[6] to 0.75 of the gap, 7.5e-5: no
  * point had AMPGRIDMB[6] = 0.0059, and the journal's step line was NLopt's
- * default ("STEP unset -- NLopt default per dim ..."). */
+ * default ("STEP unset -- NLopt default per dim ..."). Once the local
+ * search was given its full step, the line had ", and NLopt's own default
+ * shrinks it near a bound" before the parenthesis. */
 TEST_CASE("LN_AUGLAG with its default local search LN_COBYLA: a start next "
           "to a bound keeps the full step", "[HPO][step_plan][nlopt]")
 {
@@ -558,7 +571,8 @@ TEST_CASE("LN_AUGLAG with its default local search LN_COBYLA: a start next "
     CHECK(journal.find("starts at") == std::string::npos);
     CHECK(journal.find("STEP unset -- 0.25*width per dim, given to NLopt: "
                        "LN_COBYLA keeps the first step of each dimension as "
-                       "its scale") != std::string::npos);
+                       "its scale (the step of the local search, which "
+                       "LN_AUGLAG hands it)\n") != std::string::npos);
 }
 
 /* Pins: GN_MLSL_LDS with an INNER LN_COBYLA and STEP unset (MAXEVAL 60) on
@@ -572,7 +586,7 @@ TEST_CASE("LN_AUGLAG with its default local search LN_COBYLA: a start next "
  * below the upper bound of CGRID2B[1], asks for (1.1875, 0.00175), 0.5
  * inward, and (1.6875, 0.00375). The journal's step line names the step
  * of the local search ("... given to NLopt: LN_COBYLA keeps the first step
- * of each dimension as its scale, ... (the step of the local search, which
+ * of each dimension as its scale (the step of the local search, which
  * GN_MLSL_LDS hands it)").
  * Before the fix: each local search took NLopt's default from its own
  * start, which shrinks a step to 0.75 of the distance to a bound closer
@@ -580,7 +594,8 @@ TEST_CASE("LN_AUGLAG with its default local search LN_COBYLA: a start next "
  * 1.875e-4 on AMPGRIDMB[6], and eval 32 (1.921875, 0.00175), a step of
  * 0.234375 on CGRID2B[1], then eval 33 (1.921875, 0.0030625); the journal's
  * step line was NLopt's default ("STEP unset -- NLopt default per dim
- * ..."). */
+ * ..."), and, once the local search was given its full step, it had ", and
+ * NLopt's own default shrinks it near a bound" before the parenthesis. */
 TEST_CASE("GN_MLSL_LDS with an INNER LN_COBYLA: every local search keeps the "
           "full step", "[HPO][step_plan][nlopt]")
 {
@@ -602,9 +617,8 @@ TEST_CASE("GN_MLSL_LDS with an INNER LN_COBYLA: every local search keeps the "
     at(33, 1.6875, 0.00375);
     CHECK(journal.find("STEP unset -- 0.25*width per dim, given to NLopt: "
                        "LN_COBYLA keeps the first step of each dimension as "
-                       "its scale") != std::string::npos);
-    CHECK(journal.find("(the step of the local search, which GN_MLSL_LDS "
-                       "hands it)") != std::string::npos);
+                       "its scale (the step of the local search, which "
+                       "GN_MLSL_LDS hands it)\n") != std::string::npos);
 }
 
 /* Pins: LN_BOBYQA from AMPGRIDMB[6] = 0.008, on its upper bound, a CONFIG
@@ -677,41 +691,86 @@ TEST_CASE("LN_BOBYQA under MULTISTART: a moved CONFIG start gets the "
 }
 
 /* Pins: the journal's OPTIMISER section ("Initial step") of an MLSL or
- * AUGLAG whose local search keeps its first step, with STEP unset, names
- * the step that local search is given: LN_AUGLAG with an INNER LN_BOBYQA
+ * AUGLAG with STEP unset names the step its local search is given. With
+ * STEP unset in the INNER block as well, a local search that keeps its
+ * first step is given 0.25 of each width: LN_AUGLAG with an INNER LN_BOBYQA
  * and GN_MLSL_LDS with its default LN_COBYLA, "(STEP unset -- 0.25*width
  * per dim, given to NLopt for its local search LN_BOBYQA, which keeps the
- * first step of each dimension as its scale)".
- * Before the fix: both lines read "(STEP unset -- NLopt default per dim:
- * 0.25*width, or 0.75*distance to the nearer bound; read back at run
- * time)", the step each local search took before it was given its full
- * step. */
+ * first step of each dimension as its scale)". An INNER block that sets
+ * STEP gives its local search that STEP, whatever the local search:
+ * LN_AUGLAG with an INNER LN_BOBYQA or LN_SBPLX and STEP 0.1, and
+ * GN_MLSL_LDS with an INNER LN_NELDERMEAD whose STEP sets overrides only,
+ * "(STEP unset -- the INNER block's STEP, given to NLopt for its local
+ * search LN_SBPLX)" (build_nlopt gives every local optimiser the INNER
+ * block's step plan, and the run-time line names it: "INNER STEP 0.1 ...
+ * (forwarded to LN_SBPLX)").
+ * Before the fix (STEP unset in both blocks): both lines read "(STEP unset
+ * -- NLopt default per dim: 0.25*width, or 0.75*distance to the nearer
+ * bound; read back at run time)", the step each local search took before
+ * it was given its full step. With the INNER STEP the LN_BOBYQA case passed
+ * (a pin), and the LN_SBPLX and LN_NELDERMEAD cases read NLopt's default,
+ * as above: the INNER block's STEP was named only for a local search that
+ * keeps its first step. */
 TEST_CASE("Journal: the OPTIMISER section names the step of an MLSL or "
           "AUGLAG local search that keeps its first step",
           "[HPO][step_plan][nlopt]")
 {
-    struct Case { const char* algo; const char* inner; const char* local; };
-    for (const Case c : {Case{"LN_AUGLAG", "LN_BOBYQA", "LN_BOBYQA"},
-                         Case{"GN_MLSL_LDS", "", "LN_COBYLA"}}) {
-        DYNAMIC_SECTION(c.algo) {
+    struct Case {
+        const char* name;
+        const char* algo;
+        const char* inner;
+        std::optional<double> inner_step;
+        bool inner_override;
+        std::string line;
+    };
+    const std::string full = "(STEP unset -- 0.25*width per dim, given to "
+                             "NLopt for its local search ";
+    const std::string inner = "(STEP unset -- the INNER block's STEP, given "
+                              "to NLopt for its local search ";
+    const std::vector<Case> cases = {
+        {"LN_AUGLAG, INNER LN_BOBYQA", "LN_AUGLAG", "LN_BOBYQA", std::nullopt,
+         false,
+         full + "LN_BOBYQA, which keeps the first step of each dimension as "
+                "its scale)"},
+        {"GN_MLSL_LDS, default LN_COBYLA", "GN_MLSL_LDS", "", std::nullopt,
+         false,
+         full + "LN_COBYLA, which keeps the first step of each dimension as "
+                "its scale)"},
+        {"LN_AUGLAG, INNER LN_BOBYQA with STEP 0.1", "LN_AUGLAG", "LN_BOBYQA",
+         0.1, false, inner + "LN_BOBYQA)"},
+        {"LN_AUGLAG, INNER LN_SBPLX with STEP 0.1", "LN_AUGLAG", "LN_SBPLX",
+         0.1, false, inner + "LN_SBPLX)"},
+        {"GN_MLSL_LDS, INNER LN_NELDERMEAD with STEP overrides", "GN_MLSL_LDS",
+         "LN_NELDERMEAD", std::nullopt, true, inner + "LN_NELDERMEAD)"},
+    };
+    for (const Case& c : cases) {
+        DYNAMIC_SECTION(c.name) {
             auto sp = spec(c.algo, false);
             if (c.inner[0]) {
                 sp.inner = std::make_unique<OptimizerSpec>();
                 sp.inner->lib = "NLOPT";
                 sp.inner->algo = c.inner;
+                sp.inner->step = c.inner_step;
+                if (c.inner_override) {
+                    StepOverride o;
+                    o.key = "CGRID2B";
+                    o.frac = 0.1;
+                    sp.inner->step_overrides.push_back(o);
+                    o.key = "AMPGRIDMB";
+                    o.frac = 0.2;
+                    sp.inner->step_overrides.push_back(o);
+                }
             }
             StepJournal j;
             HPOLog::instance().write_optimizer_section(sp,
                                                        sp.parameter_labels);
             const std::string journal = j.text();
             const auto at = journal.find("Initial step");
-            INFO(journal.substr(at, journal.find('\n', at) - at));
-            CHECK(journal.find(std::string("(STEP unset -- 0.25*width per "
-                                           "dim, given to NLopt for its local "
-                                           "search ") +
-                               c.local + ", which keeps the first step of "
-                               "each dimension as its scale)") !=
-                  std::string::npos);
+            REQUIRE(at != std::string::npos);
+            const std::string shown =
+                journal.substr(at, journal.find('\n', at) - at);
+            INFO(shown);
+            CHECK(shown.find(c.line) != std::string::npos);
         }
     }
 }

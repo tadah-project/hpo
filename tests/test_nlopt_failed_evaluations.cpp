@@ -296,3 +296,33 @@ TEST_CASE("NLopt failed evaluations: the ending line gives the loss the "
         CHECK(fmin_of(journal) == shown.str());
     }
 }
+
+/* Pins: a loss NLopt asks for without its gradient is given the stand-in
+ * for every failed evaluation, an ungraded one included, also in a
+ * gradient-based search: GD_MLSL (its default local search LD_MMA,
+ * MAXEVAL 60, POPULATION 4) on the capped valley under the default
+ * FAILSCORE and FAILSCORE_GRADING OFF evaluates its random samples without
+ * a gradient (mlsl.c), and samples high on the walls of the valley fail;
+ * NLopt is given the stand-in for them, and the journal says so once. (A
+ * loss NLopt asks for with its gradient is given the stand-in only for a
+ * graded failure with a usable gradient: an ungraded failure fails the
+ * gradient, and the point is rejected.)
+ * Before the fix: passes as well (a pin of the rule the documentation of
+ * FAILSCORE states). */
+TEST_CASE("NLopt failed evaluations: a gradient-based search is given the "
+          "stand-in for a failed loss asked for without its gradient",
+          "[HPO][nlopt][failscore]")
+{
+    auto sp = spec("GD_MLSL", kDblMax);
+    sp.pop = 4;
+    CappedValley host;
+    Journal j;
+    REQUIRE_NOTHROW(tadah::hpo::run_nlopt_impl<Vec, NoRunner>(sp, host));
+    const std::string journal = j.text();
+    std::size_t failed = 0;
+    for (const double l : host.reported)
+        if (l == kDblMax) ++failed;
+    INFO("evaluations " << host.reported.size() << ", failed " << failed);
+    CHECK(failed > 0u);
+    CHECK(count_of(journal, "NLOPT:GD_MLSL" + kStandInNote) == 1u);
+}

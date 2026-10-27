@@ -2049,6 +2049,49 @@ TEST_CASE("DLIB:BFGS: the loss is divided by the length of the gradient over "
     CHECK(count_of(journal, kBfgsLossItself) == 0u);
 }
 
+/* Pins: the journal line of the length DLIB:BFGS divides its loss by
+ * names the one stop in force, which is divided by that length too, and
+ * says that it keeps its meaning for the loss (DLIB:BFGS refuses FTOL_ABS
+ * and PARAM tol_gradinf together): on the held steep bowl from (1, 0.2),
+ * "DLIB:BFGS: the search runs on the loss divided by the length of its
+ * first gradient, 1 (over the coordinates its first step can move);
+ * FTOL_ABS is divided by it as well, so it keeps its meaning for the loss,
+ * and the records keep the loss", and with PARAM tol_gradinf the same line
+ * with "PARAM tol_gradinf is divided by it as well".
+ * Before the fix: the line named both stops and said that the search
+ * "takes its steps in units of that gradient" ("...; FTOL_ABS and PARAM
+ * tol_gradinf are divided by it as well, and the records keep the loss"),
+ * whatever the stop. */
+TEST_CASE("DLIB:BFGS: the journal line of the divided loss names the stop "
+          "in force", "[HPO][repeat_points][dlib_bfgs]")
+{
+    const std::string head =
+        "DLIB:BFGS: the search runs on the loss divided by the length of its "
+        "first gradient, ";
+    const std::string tail =
+        " (over the coordinates its first step can move); %s is divided by "
+        "it as well, so it keeps its meaning for the loss, and the records "
+        "keep the loss\n";
+    for (const std::string stop : {"FTOL_ABS", "PARAM tol_gradinf"}) {
+        DYNAMIC_SECTION(stop) {
+            HeldSteepBowl host;
+            auto sp = bfgs_spec({0.0, 0.0}, {1.0, 1.0}, {1.0, 0.2});
+            sp.stop.maxeval = 20;
+            if (stop != "FTOL_ABS") sp.param["tol_gradinf"] = 1e-9;
+            const std::string journal =
+                run_bfgs_within(sp, host, "DLIB:BFGS, " + stop);
+            const auto at = journal.find(head);
+            REQUIRE(at != std::string::npos);
+            const auto end = journal.find('\n', at);
+            const std::string line = journal.substr(at, end + 1 - at);
+            INFO(line);
+            std::string expected = tail;
+            expected.replace(expected.find("%s"), 2, stop);
+            CHECK(line.find(head + "1" + expected) == 0u);
+        }
+    }
+}
+
 /* Pins: DLIB:BFGS on a loss whose gradient at the start has a length of 0
  * over the coordinates its first step can move runs on the loss itself,
  * and the journal says so once (kBfgsLossItself), with no line of a length
