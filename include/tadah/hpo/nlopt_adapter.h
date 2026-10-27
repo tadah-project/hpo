@@ -789,10 +789,12 @@ void run_nlopt_impl(const OptimizerSpec& sp, HostT& host,
         HPOLog::instance().info(report);
         std::cout << "[HPO] Initial step (" << sp.lib << ":" << sp.algo << "): "
                   << effective.source << " -- per-dim table in hpo_run.log\n";
+        /* A note of a step that differs from the STEP asked for (turned
+         * inward, capped) is a WARNING; "start on a bound (kept)", where
+         * BOBYQA keeps the start and its full step, stays in the table. */
         for (unsigned i = 0; i < dim; ++i) {
             const std::string& nt = effective.note[i];
             if (nt.find("inward")     != std::string::npos ||
-                nt.find("on a bound") != std::string::npos ||
                 nt.find("capped")     != std::string::npos) {
                 std::ostringstream oss;
                 oss << sp.algo << ": "
