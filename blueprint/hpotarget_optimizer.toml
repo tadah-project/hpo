@@ -1504,9 +1504,6 @@ checks = [
   { msg = "{phase}: TADAH:{algo} does not use GRAD_STRATEGY: it is gradient-free", doc = "At startup, at the END line of its optimiser: an annealer." },
   { msg = "{phase} {lib}:{algo}: GRAD_STRATEGY never takes effect: {lib}:{algo} takes no gradient{note}; remove it.", doc = "At startup, at the END line of its optimiser: an optimiser that obtains no gradient; {note} says why, for an NLopt MLSL or AUGLAG." },
 ]
-quirk = """\
-GRAD_STRATEGY without a value is refused with the message about its \
-words, ending (got ''), not with the message about a missing value."""
 
 [[key.args]]
 name = "strategy"
@@ -1768,9 +1765,6 @@ The ratio is a finite number >= 1. LOG_HP is written once, inside \
 OPTIMIZER or inside STRATEGY; a second line, in either block, is \
 refused. The EXPLORE, REFINE and INNER blocks refuse it, as \
 does the top level; inside INIT, RESTART and NOISE it is an unknown key."""
-quirk = """\
-At the top level LOG_HP is refused with the message about blocks, not as \
-an unknown key."""
 
 [[key.examples]]
 wrap = "strategy"
@@ -2266,10 +2260,6 @@ and the points are drawn, once the whole file has been read, and a \
 refusal then names the METHOD line. Inside an INIT or RESTART block a \
 STRATEGY line is a METHOD line. The method names are compared as written, \
 in upper case."""
-quirk = """\
-The messages about a METHOD line name it INIT METHOD, or INIT.METHOD, \
-inside a RESTART block too, and the message about an unknown method names \
-it an INIT_STRATEGY method."""
 checks = [
   { msg = "{key} requires a method name", doc = "At the line: METHOD, or its other name STRATEGY, without a method." },
 ]

@@ -3679,10 +3679,6 @@ above 0, and take GROUP_FLOOR 1e-3 when the line sets neither FLOOR nor \
 GROUP_FLOOR. A cutoff key (a key that starts with RCUT) takes no AUTO \
 box. hpo_optim_resolved.hpo records the boxes as explicit lines. The \
 option names are read in any case."""
-quirk = """\
-An unknown word followed by a token that is no number gets the message \
-that AUTO <WORD> must be a finite number, not the message about an \
-unexpected option."""
 
 [[form.args]]
 name = "indices"
@@ -3823,7 +3819,6 @@ repeat = "error"
 repeat_msg = "OPTIM {key}: AUTO RATIO is given twice on this line; each option is given once"
 default = { text = "RATIO 2 for SGRID2B, SGRIDMB and SEMBFUNC, whose values stay positive, and for a positive DM_Embed parameter other than an amplitude; FRAC 0.5 otherwise" }
 doc = "The geometric box [x0/f, x0*f] (mirrored for x0 < 0), for a factor f > 1."
-quirk = "A second RATIO on the line is refused with the message for RATIO beside FRAC."
 
 [[line_option.args]]
 name = "f"
@@ -3899,7 +3894,6 @@ default = { text = "FRAC 0.5 for the keys that RATIO 2 does not apply to" }
 doc = """\
 The linear box x0 +/- d with d = max(p|x0|, a, r max|x0|), for p >= 0; \
 FRAC 0 with FLOOR gives every value the half-width a."""
-quirk = "A second FRAC on the line is refused with the message for RATIO beside FRAC."
 
 [[line_option.args]]
 name = "p"
@@ -4171,8 +4165,8 @@ doc = "The optimiser searches the logarithm of the value; the box is above 0."
 [[line_option.checks]]
 msg = "OPTIM {key}: the line is tagged LOG, and <low> {low} is not > 0, and a box tagged LOG lies above 0{hint}"
 doc = """\
-An explicit box reaches 0 or below. The message has no line frame; \
-{name} is the key, with [<index>] for a key of more than one value."""
+An explicit box reaches 0 or below; {hint} says that a line without the \
+tag takes the box when the line's checks of every index take it."""
 
 [[line_option.examples]]
 wrap = "root"
@@ -4304,7 +4298,7 @@ context = "lines_fixindex_alone"
 text = "OPTIM FIXWEIGHT (2) 0 2"
 error = "OPTIM FIXWEIGHT requires FIXWEIGHT in the training configuration (the FIXWEIGHT values hold the coefficients FIXINDEX names, and OPTIM FIXWEIGHT searches those values)."
 msg_of = "OPTIM"
-doc = "A configuration without FIXWEIGHT."
+doc = "A configuration with FIXINDEX and without FIXWEIGHT."
 
 [[optim_target]]
 id = "OPTIM.TARGET.OALGO"
@@ -5057,12 +5051,9 @@ keys = ["ROOT.PC_OBSERVABLE", "ROOT.PC_LAMMPS"]
 msg = "{key}: this target file also has {list}; PC_OBSERVABLE lines do not share a target file with PC_LAMMPS or PC_FAILPROBE lines"
 doc = """\
 A target file has PC_OBSERVABLE lines or PC_LAMMPS and PC_FAILPROBE lines, \
-not both. The refusal comes after the whole file is read and names no \
-line."""
-quirk = """\
-The message counts a PC_FAILPROBE line as a PC_LAMMPS entry, and names \
-PC_LAMMPS when the file has PC_FAILPROBE lines only."""
-msg_doc = "The message gives the number of lines of each key."
+not both. The refusal comes after the whole file is read, at the first \
+line of the group that comes later in the file."""
+msg_doc = "The message names the key of that line, and gives the number of lines of each key of the other group, with the first of them."
 
 [[rule.invalid]]
 wrap = "root"
@@ -5088,12 +5079,10 @@ check = "parse"
 keys = ["ROOT.PC_LAMMPS", "PC_LAMMPS.--hotvar"]
 msg = "PC_LAMMPS --hotvar {name}: line {line} declares --hotvar {name} as well (script {script}); one line declares each --hotvar name, as an evaluation keeps one value of each name for the scripts that read it, and the line that finished last would set it"
 doc = """\
-A --hotvar name is declared by one PC_LAMMPS line. The refusal comes after \
-the whole file is read and names no line."""
-msg_doc = "The message names the scripts of the two lines."
-quirk = """\
-Two lines that run the same script are two declarations too: the \
-message then names that script twice."""
+A --hotvar name is declared by one PC_LAMMPS line; two lines that run the \
+same script are two declarations too. The refusal comes after the whole \
+file is read, at the later of the two lines."""
+msg_doc = "The message names the earlier line and its script."
 
 [[rule.examples]]
 wrap = "root"

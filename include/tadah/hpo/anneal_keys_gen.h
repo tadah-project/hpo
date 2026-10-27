@@ -349,7 +349,7 @@ inline constexpr AnnealKeyInfo kKeys[] = {
    0u,
    nullptr, nullptr, nullptr},
   {"STEP_MODE", AnnealKeyType::Enum, KIND_PT,
-   "steps", 10, "How the CLASSIC kernel sets its steps: FIXED keeps the scales STEP_FRAC gives; FROZEN calibrates the scales of each slot, then keeps them; ADAPTIVE calibrates them and keeps adapting them, a diagonal form of robust adaptive Metropolis.",
+   "steps", 10, "How the CLASSIC kernel sets its steps: FIXED keeps the scales STEP_FRAC gives; FROZEN calibrates the scales of each slot, then keeps them; ADAPTIVE calibrates them and keeps adapting them, a diagonal form of robust adaptive Metropolis. The calibration spends at most a quarter of MAXEVAL.",
    nullptr,
    false, true, false, 0.0, 1.0, 0.0,
    false, false, false, false, 0.0, 0.0,

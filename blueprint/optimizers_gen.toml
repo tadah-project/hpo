@@ -2053,7 +2053,7 @@ Options for TADAH:ANNEAL_PT
      PARAM RESET_TO_BEST (default OFF)
         ON moves the chain back to the best point so far after each cooling step; under TADAH:ANNEAL_PT it moves the coldest slot after each epoch.
      PARAM STEP_MODE <FIXED|FROZEN|ADAPTIVE> (default FROZEN)
-        How the CLASSIC kernel sets its steps: FIXED keeps the scales STEP_FRAC gives; FROZEN calibrates the scales of each slot, then keeps them; ADAPTIVE calibrates them and keeps adapting them, a diagonal form of robust adaptive Metropolis.
+        How the CLASSIC kernel sets its steps: FIXED keeps the scales STEP_FRAC gives; FROZEN calibrates the scales of each slot, then keeps them; ADAPTIVE calibrates them and keeps adapting them, a diagonal form of robust adaptive Metropolis. The calibration spends at most a quarter of MAXEVAL.
      PARAM STEP_WARMUP_SWEEPS (default 12)
         The smallest number of calibration attempts of each coordinate in the warm-up of the steps; the largest is twice this number.
      PARAM STEP_TRUST_FACTOR (default 64) [accepts OFF]

@@ -152,7 +152,8 @@ A block opens only where its parents allow, an END line closes the \
 innermost open block, and every block is closed before the file ends. An \
 END line without an open block, or one that names another block than the \
 innermost, is refused. An unknown key is refused, at the top level and in \
-every block."""
+every block, and a top-level key inside an open block is refused with \
+that block and the line that opened it."""
 check_order = ["block_lines", "removed", "inner_refusal", "group_keys",
                "init_restart_keys", "noise_keys", "log_hp", "strategy_keys",
                "block_unknown", "root_keys"]
@@ -2164,8 +2165,8 @@ The coordinates the optimiser works in: AUTO maps every OPTIM dimension \
 to [0, 1], and NONE leaves each in its OPTIM units: the value for LIN, \
 its natural logarithm for LOG and asinh(x/c) for ASINH <c>."""
 quirk = """\
-The value is read in any case (auto, None), and its refusal quotes it in \
-upper case, while every key is matched as written."""
+The value is read in any case (auto, None), while every key is matched \
+as written."""
 
 [[key.examples]]
 wrap = "root"
