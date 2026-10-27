@@ -1471,8 +1471,10 @@ default of REPLICAS (TADAH:ANNEAL_PT) and of POPULATION \
 STRATEGY-level THREADS. An INNER block refuses THREADS at startup, and so \
 do an EXPLORE block whose optimiser is none of these and \
 CERES:STEEPEST_DESCENT. A seeded run writes the same result files at any \
-THREADS, apart from the times they record, except under DLIB:GFS, which \
-proposes each point from the evaluations that have ended."""
+THREADS, apart from the times they record, when REPLICAS \
+(TADAH:ANNEAL_PT) and POPULATION (TADAH:ANNEAL_PA) are given, as their \
+defaults follow THREADS; under DLIB:GFS, which proposes each point from \
+the evaluations that have ended, it does not."""
 checks = [
   { msg = "{phase}: CERES:{algo} does not support THREADS (host evaluation is single-threaded inside one optimizer step)", doc = "At startup, at the END line of its optimiser." },
   { msg = "{phase}: {lib}:{algo} does not use THREADS in an INNER block: the THREADS of the STRATEGY-level optimiser sets the workers of the run; remove it", doc = "At startup, at the ENDINNER line." },

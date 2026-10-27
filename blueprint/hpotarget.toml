@@ -1841,7 +1841,18 @@ repeat_msg = "QFLUSH is set twice (first on line {first_line}); each key is give
 default = { literal = "10" }
 doc = """\
 The number of evaluation results held in memory before their rows are \
-written to the output files; 0 and 1 write after each evaluation."""
+written to the output files; 0 and 1 write after each evaluation, or \
+after each batch of evaluations that run at once."""
+long_doc = """\
+TADAH:ANNEAL_PT, TADAH:ANNEAL_PA and ASA:ASA with a block of states run \
+their evaluations in batches (an epoch, a temperature step, a block of \
+states), whose results are held in memory until the batch ends, whatever \
+QFLUSH is: the rows of a batch join the queue, and an improvement in it \
+reaches best_pot.tadah, once the batch has ended, and a process killed \
+during the batch (SIGKILL, out of memory) loses its results. A \
+temperature step of TADAH:ANNEAL_PA makes POPULATION times CHAIN_LENGTH \
+times SWEEPS evaluations, or POPULATION times NT times NS times SWEEPS \
+times the number of search parameters under CORANA."""
 
 [[key.examples]]
 wrap = "root"
