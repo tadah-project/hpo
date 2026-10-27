@@ -192,29 +192,37 @@ constexpr double kLargest = std::numeric_limits<double>::max();
  * runs through the optimisers of each family, from a usable start and
  * from a start in the failure region: NLopt's LN_SBPLX, LN_BOBYQA,
  * LN_COBYLA, LN_NELDERMEAD, LD_LBFGS and GN_CRS2_LM, DLIB:GFS, DLIB:BFGS,
- * TADAH:RANDOM, TADAH:ANNEAL, TADAH:ANNEAL_PT and TADAH:ANNEAL_PA, and
- * CERES:STEEPEST_DESCENT from the usable start. For each run: status 0
- * and an Optimiser status other than FAILED or STOPPED; every loss of
- * loss.tadah is a finite double, either usable or a graded failure in
- * [0.999 FAILSCORE, FAILSCORE) (none is FAILSCORE itself); the run has a
- * usable loss, and from the start in the failure region a graded failure.
- * The optimisers that compare losses alone (LN_SBPLX, LN_NELDERMEAD,
- * GN_CRS2_LM, TADAH:RANDOM and the annealers) evaluate the same points as
- * under FAILSCORE 1e299, which the startup checks accepted. (A search of
- * the gradient-based or model-based optimisers can take another path at
- * another FAILSCORE: the finite
- * stand-in of a failure before the first usable loss is FAILSCORE capped
- * at 1e100, and rounding in its slope changes the steps. ASA:ASA refuses
- * a FAILSCORE of 1e18 or more under FAILSCORE_GRADING ON: the case
- * "startup validation: FAILSCORE_GRADING ON takes any FAILSCORE, and
- * ASA:ASA one below 1e18". From a start in the failure region,
- * CERES:STEEPEST_DESCENT's line search squares the slope of a graded
- * failure, which on these data is not a finite double from a FAILSCORE of
- * about 1e160 on, below 1e299 too.)
+ * TADAH:RANDOM, TADAH:ANNEAL, TADAH:ANNEAL_PT, TADAH:ANNEAL_PA and
+ * CERES:STEEPEST_DESCENT. For each run: status 0 and an Optimiser status
+ * other than FAILED or STOPPED; every loss of loss.tadah is a finite
+ * double, either usable or a graded failure in [0.999 FAILSCORE,
+ * FAILSCORE) (none is FAILSCORE itself); the run has a usable loss, and
+ * from the start in the failure region a graded failure. The optimisers
+ * that compare losses alone (LN_SBPLX, LN_NELDERMEAD, GN_CRS2_LM,
+ * TADAH:RANDOM and the annealers) evaluate the same points as under
+ * FAILSCORE 1e299, which the startup checks accepted. (A search of the
+ * gradient-based or model-based optimisers can take another path at
+ * another FAILSCORE: the finite stand-in of a failure before the first
+ * usable loss is FAILSCORE capped at 1e100, and rounding in its slope
+ * changes the steps. ASA:ASA refuses, under FAILSCORE_GRADING ON, a
+ * FAILSCORE whose graded failures reach the cost it takes for an invalid
+ * state: the case "startup validation: FAILSCORE_GRADING ON takes any
+ * FAILSCORE, and ASA:ASA one whose graded failures stay below its largest
+ * valid cost".) CERES:STEEPEST_DESCENT's Armijo line search takes the
+ * squared length of the gradient as its first slope: its lines in the
+ * journal ("CERES:STEEPEST_DESCENT -- termination: ...", "--
+ * non-convergent: ...") name no infinite or NaN number, and the search
+ * runs more than one iteration.
  * Before the fix: every run without a FAILSCORE line was refused at
  * startup, "FAILSCORE_GRADING ON grades failures in bands below FAILSCORE,
  * which needs a FAILSCORE above 0 and below 1e300 (without a FAILSCORE
- * line, FAILSCORE is the largest double)". */
+ * line, FAILSCORE is the largest double)". Before Ceres was given a
+ * finite stand-in for a failed evaluation: CERES:STEEPEST_DESCENT from the
+ * start in the failure region ran 1 iteration, its line search failing on
+ * a slope that is not a finite double ("termination: FAILURE | iters=1",
+ * "Numerical failure in line search ... initial_gradient: -inf"; on these
+ * data from a FAILSCORE of about 1e160 on, below 1e299 too), and 50 of its
+ * 60 evaluations were graded failures. */
 TEST_CASE("Graded failures near the largest double: FAILSCORE_GRADING ON "
           "without a FAILSCORE line runs through the optimiser families",
           "[HPO][failscore][grading][e2e]")
@@ -243,7 +251,6 @@ TEST_CASE("Graded failures near the largest double: FAILSCORE_GRADING ON "
     };
     for (const Case& c : cases) {
         for (const Start* start : {&kUsable, &kFailing}) {
-            if (c.lib == "CERES" && start != &kUsable) continue;
             INFO(c.lib << ":" << c.algo << " from " << start->name);
             const Outcome o =
                 run(c.lib, c.algo, c.extra, "", *start, c.maxeval);
@@ -264,6 +271,29 @@ TEST_CASE("Graded failures near the largest double: FAILSCORE_GRADING ON "
             /* A start in the failure region is a graded failure. */
             if (start == &kFailing) CHECK(graded > 0u);
             CHECK(usable > 0u);
+            if (c.lib == "CERES") {
+                std::size_t ceres_lines = 0;
+                bool ended = false;
+                std::istringstream in(o.journal);
+                for (std::string line; std::getline(in, line);) {
+                    if (line.find("CERES:" + c.algo + " -- ") ==
+                        std::string::npos)
+                        continue;
+                    ++ceres_lines;
+                    INFO(line);
+                    CHECK_FALSE(std::regex_search(
+                        line, std::regex(R"((^|[^A-Za-z])(inf|nan)\b)",
+                                         std::regex::icase)));
+                    std::smatch m;
+                    if (std::regex_search(line, m,
+                                          std::regex(R"(iters=(\d+))"))) {
+                        ended = true;
+                        CHECK(std::stoul(m[1]) > 1u);
+                    }
+                }
+                CHECK(ended);
+                CHECK(ceres_lines > 0u);
+            }
             if (c.compares_only) {
                 const Outcome near =
                     run(c.lib, c.algo, c.extra, "1e299", *start, c.maxeval);
