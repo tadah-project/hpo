@@ -236,9 +236,11 @@ class Rule:
 IGNORE_OPTIMISERS = "an optimiser name (LIB or ALGO value: the optimiser list)"
 IGNORE_INIT_MODE = ("the INIT_MODE grammar of the annealers' PARAM keys "
                     "(anneal_keys.toml)")
+# The metric lines that take --skip-above and --skip-rel (PC_ERSQ takes
+# neither: a cap would reject the better fits).
 METRIC_OPTIONS = ("line_option:PC_EMAE", "line_option:PC_ERMSE",
-                  "line_option:PC_ErRMSE", "line_option:PC_ERSQ",
-                  "line_option:PC_SRMSE_GPA", "line_option:PC_FRMSE")
+                  "line_option:PC_ErRMSE", "line_option:PC_SRMSE_GPA",
+                  "line_option:PC_FRMSE")
 
 
 def pc_line_option_of(element: str) -> tuple[str, ...]:
