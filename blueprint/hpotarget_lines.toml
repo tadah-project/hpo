@@ -5015,10 +5015,10 @@ msg = "OPTIM WATOM (line {line} of the target file) is not a valid search target
 doc = """\
 OPTIM does not search WATOM when no descriptor of the training \
 configuration reads it (D2_EAM and DM_EAM take their pair and density \
-functions from the setfl file, SETFL, unweighted), as a fit refuses a \
-WATOM other than 1 that no descriptor reads. The refusal comes at \
-startup."""
-msg_doc = "The message names the line of the OPTIM WATOM line and the descriptors that read no WATOM."
+functions from the setfl file, SETFL, unweighted, and the dummies \
+D2_Dummy and DM_Dummy read none), as a fit refuses a WATOM other than 1 \
+that no descriptor reads. The refusal comes at startup."""
+msg_doc = "The message names the OPTIM WATOM line of the target file and the descriptors that read no WATOM."
 
 [[rule.invalid]]
 wrap = "none"
