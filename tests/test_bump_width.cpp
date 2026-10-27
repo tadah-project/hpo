@@ -88,6 +88,27 @@ Context blip_ctx(const char* sgrid = "2.0 1.0",
   return c;
 }
 
+/* TYPE2B D2_mJoin of a D2_BP (centres 0 0, widths SGRID2B 1-2) and a
+ * two-bump D2_Blip (centres 4.0 3.0, widths SGRID2B 3-4 = `blip_sgrid`),
+ * each with RCUT2B 5 and the cutoff `cutoff`. */
+Context joined_blip_ctx(const char* blip_sgrid = "2.0 1.0",
+                        const char* cutoff = "Cut_Dummy") {
+  Context c;
+  c.add("ATOM", "Ta");
+  c.add("WATOM", 1.0);
+  c.add("INIT2B", "true");
+  c.add("TYPE2B", "D2_mJoin D2_BP 2 2 Ta Ta D2_Blip 2 2 Ta Ta");
+  c.add("CGRID2B", "0 0 4.0 3.0");
+  c.add("SGRID2B", std::string("0.5 1.0 ") + blip_sgrid);
+  c.add("RCUT2B", "5.0 5.0");
+  c.add("RCTYPE2B", std::string(cutoff) + " " + cutoff);
+  c.add("INITMB", "false");
+  c.add("VERBOSE", 0);
+  c.add("MODEL", "M_BLR");
+  c.add("MODEL", "BF_Linear");
+  return c;
+}
+
 /* The error HPOTargets(ctx, target) throws ("" when it does not). */
 std::string parse_error(Context ctx, const std::string& target) {
   WidthTempFile tf(target);
@@ -334,5 +355,40 @@ TEST_CASE("a bump centre beyond the low bound of an OPTIM RCUT2B box is "
     const std::string w = warnings("OPTIM RCUT2B (1) 4.5 6.0\n" + tail);
     INFO(w);
     CHECK(w.find("lies beyond") == std::string::npos);
+  }
+}
+
+/* Pins: the widths of a D2_Blip descriptor of a D2_mJoin line are held > 0
+ * as those of a line of one D2_Blip: an OPTIM SGRID2B box from 0 is refused
+ * at its line ("the low bound 0 is not > 0, but the D2_Blip pair basis of
+ * the D2_mJoin line requires every SGRID2B width > 0"), and a seed width of
+ * -1 at startup ("SGRID2B (4) = -1: ..."), under a hard or a smooth cutoff.
+ * Before the fix: both accepted (no width rule for a D2_mJoin line; the
+ * bump-support checks skipped the joined descriptor). */
+TEST_CASE("the widths of a D2_Blip of a D2_mJoin line are held > 0, at the "
+          "OPTIM line and at startup",
+          "[HPO][optim][startup][bump_width][join]") {
+  tadah::core::PeriodicTable::initialize();
+  const std::string tail = std::string("PC_ERMSE 0 1\n") + kWidthOptimizer;
+  for (const char* cutoff : {"Cut_Dummy", "Cut_Cos"}) {
+    INFO(cutoff);
+    const std::string e = parse_error(joined_blip_ctx("2.0 1.0", cutoff),
+                                      "OPTIM SGRID2B (4) 0 3\n" + tail);
+    CHECK_THAT(e, Catch::Contains("Error on line 1") &&
+                      Catch::Contains("OPTIM SGRID2B (4)") &&
+                      Catch::Contains("the low bound 0 is not > 0") &&
+                      Catch::Contains("the D2_Blip pair basis of the D2_mJoin "
+                                      "line requires every SGRID2B width > 0"));
+    CHECK(parse_error(joined_blip_ctx("2.0 1.0", cutoff),
+                      "OPTIM SGRID2B (4) 0.5 3\n" + tail).empty());
+    const std::string s = startup_error(
+        joined_blip_ctx("2.0 -1.0", cutoff),
+        std::string("OPTIM WATOM (1) 0.5 2.0\n") + tail);
+    CHECK_THAT(s, Catch::Contains("SGRID2B (4) = -1") &&
+                      Catch::Contains("the D2_Blip pair basis of the D2_mJoin "
+                                      "line requires every SGRID2B width > 0"));
+    CHECK(startup_error(joined_blip_ctx("2.0 1.0", cutoff),
+                        std::string("OPTIM WATOM (1) 0.5 2.0\n") + tail)
+              .empty());
   }
 }
