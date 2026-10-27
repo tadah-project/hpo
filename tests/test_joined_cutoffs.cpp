@@ -142,9 +142,10 @@ Startup startup(Context& ctx, const std::string& target)
  * knot descriptor reaches (nn_safe_rcutmax 6.2 for OPTIM CGRID2B (3) 4.0
  * 6.2).
  * Before the fix: a joined line has no knot channel for these rules
- * (derived_knot_rcut reads the line's first value, D2_mJoin): RCUT2B stays
- * 5.3, nothing is said, the knot's move leaves it, and nn_safe_rcutmax is
- * the stated 5.3. */
+ * (derived_knot_rcut reads the line's first value, D2_mJoin): at startup
+ * RCUT2B stays 5.3 and nothing is said; on an evaluation the knot's move
+ * to 4.8 leaves RCUT2B 4.5; and nn_safe_rcutmax is RCUT2BMAX, 5.0 (the
+ * D2_Blip's stated cutoff, the larger of RCUT2B 4.5 5.0), not 6.2. */
 TEST_CASE("joined cutoffs: the cutoff of a D2_Knot5 of a joined line is "
           "derived from its largest knot", "[HPO][join][knot]")
 {
