@@ -547,7 +547,12 @@ inline double stalled_reach(double f0, double d0, double a0, double rho)
  *      and MAXEVAL bounds the rest. Every iteration that evaluates is
  *      dlib's.
  *
- *  dlib's checks for a non-finite loss or gradient are kept (dlib::error). */
+ *  dlib's checks for a non-finite loss or gradient are kept (dlib::error),
+ *  and (f) a trial step of a line search that is not finite is refused the
+ *  same way, before it is evaluated: dlib's interpolation gives one when the
+ *  losses it interpolates overflow (a loss of +inf, or values whose squares
+ *  pass the largest double), and dlib evaluated the point the box put it on,
+ *  a corner of the box, for the rest of the line search. */
 template <class Search, class Stop, class F, class G, class OnNotRun,
           class Evaluations>
 BfgsBoxResult bfgs_box_iterate(Search search, Stop stop, const F& f,
@@ -723,9 +728,22 @@ BfgsBoxResult bfgs_box_iterate(Search search, Stop stop, const F& f,
         from_reach = true;
         last_alpha = start;
       }
+      /* dlib's line-search function keeps references: to the clamped loss
+       * too, which therefore has a name. */
+      const auto clamped = dlib::clamp_function(f, x_lower, x_upper);
+      const auto line =
+          dlib::make_line_search_function(clamped, x, s, f_value);
       alpha = dlib::backtracking_line_search(
-          dlib::make_line_search_function(
-              dlib::clamp_function(f, x_lower, x_upper), x, s, f_value),
+          [&line](double a) {
+            /* (f) A trial step that is not finite -- dlib's interpolation of
+             * losses that overflow gives one -- is not evaluated: the box
+             * would put it on a corner (clamp of a NaN), which the search
+             * never meant to visit. */
+            if (!std::isfinite(a))
+              throw dlib::error(
+                  "The line search generated a step that is not finite");
+            return line(a);
+          },
           f_value, d0, last_alpha, search.get_wolfe_rho(),
           search.get_max_line_search_iterations());
       const T next = dlib::clamp(x + alpha * s, x_lower, x_upper);
@@ -1147,11 +1165,46 @@ template<class Vec,class Runner,class HostT>
      * differences (fd_stencil.h: PARAM fd_step, fd_kernel, diff_method);
      * ANALYTICAL and HYBRID the host's analytical gradient. */
     detail::BfgsObjective<Vec, Runner, HostT> objective(sp, host, maxeval);
-    const auto feval = [&objective](const matrix<double,0,1>& xin) {
-      return objective.loss(xin);
+    /* dlib's loop is given a finite stand-in for a failed evaluation's loss
+     * (detail::FailedLossStandIn), before the loop divides it by the length
+     * of its first gradient (bfgs_box_search_scaled): FAILSCORE, by default
+     * the largest double, overflowed to +inf when that length is below 1,
+     * and dlib's line search, interpolating it, took a step that is not a
+     * number, which the box put on its upper corner -- the rest of MAXEVAL
+     * went on that failed corner. The stand-in is the worst usable loss of
+     * the search so far plus a margin, in the unit of the loss, so the
+     * divided loss does not depend on that unit. A gradient is scaled with
+     * the value of its point, the last one the loop was given (dlib asks
+     * for the gradient of the point it was given a loss of last: its start
+     * and the end of each line search). The journal says so once per
+     * search, at its first failed evaluation; the records, the journal and
+     * loss.tadah keep the loss the evaluation reported. */
+    detail::FailedLossStandIn to_dlib(sp.failscore);
+    bool stand_in_noted = false;
+    matrix<double,0,1> given_x;
+    double given_slope = 1.0;
+    const auto feval = [&](const matrix<double,0,1>& xin) {
+      const double loss = objective.loss(xin);
+      if (to_dlib.failed(loss) && !stand_in_noted) {
+        stand_in_noted = true;
+        HPOLog::instance().info(
+            "DLIB:BFGS: dlib is given a finite stand-in for each failed "
+            "evaluation of this search (the worst usable loss of the search "
+            "so far plus a margin; before any, FAILSCORE, at most 1e100); "
+            "loss.tadah records the loss the evaluation reported");
+      }
+      const double v = to_dlib(loss, given_slope);
+      given_x = xin;
+      return v;
     };
-    const auto grad = [&objective](const matrix<double,0,1>& xin) {
-      return objective.gradient(xin);
+    const auto grad = [&](const matrix<double,0,1>& xin) {
+      if (!detail::same_point(given_x, xin))
+        throw std::logic_error(
+            "internal error: DLIB:BFGS asked for the gradient of a point "
+            "whose loss it was not given last");
+      matrix<double,0,1> g = objective.gradient(xin);
+      if (given_slope != 1.0) g *= given_slope;
+      return g;
     };
     /* An iteration whose step cannot move the point (bfgs_box_search (a)):
      * counted, the first journalled. It asks for no evaluation, so it

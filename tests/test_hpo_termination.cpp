@@ -7518,17 +7518,23 @@ TEST_CASE("Finite differences: with Ceres' step rule a failed stencil point "
      * side, 1.6 and 1.7 (a difference never mixes a usable loss with a
      * failure).
      * Pins: the first four evaluations 1.5, 1.6, 1.4 (failed), 1.7; no stop
-     * line at 1.5; DLIB:BFGS reaches the bound 2.0 after 9 evaluations
-     * ("FTOL_ABS reached"); NLOPT:LD_LBFGS, misled next to the failure
-     * region by the one-sided estimate over 0.2 of a strongly curved loss,
+     * line at 1.5. The one-sided estimate over 0.2 of a strongly curved
+     * loss misleads the searches next to the failure region: DLIB:BFGS
+     * steps towards it (1.0 and 1.4 fail; dlib is given a finite stand-in
+     * for each), its line search backs off to the start, and the search
+     * ends "FTOL_ABS reached" at 1.5 after 39 evaluations; NLOPT:LD_LBFGS
      * ends "STOPPED -- nlopt failure (...)" after 33; CERES:STEEPEST_DESCENT
-     * "FAILURE (Numerical failure in line search)" after 49.
+     * "FAILURE (Numerical failure in line search)" after 49. (Until dlib
+     * was given a finite stand-in, its line search, handed FAILSCORE divided
+     * by the length of the first gradient, 0.87, which is +inf, took a step
+     * that is not a number after the trial 1.4, which the box put on the
+     * upper bound 2.0, and DLIB:BFGS ended there after 9 evaluations.)
      * Before the fix: three evaluations, the last 1.4, and the stop line
      * "<backend> stopped: no usable gradient: ... (at CGRID2B[2] = 1.5, the
      * stencil point CGRID2B[2] = 1.4 failed ...". */
     struct Case { GradientBackend b; std::size_t evals; std::string status; };
     std::vector<Case> cases = {
-        {{"DLIB", "BFGS"}, 9u, "DLIB:BFGS: FTOL_ABS reached"},
+        {{"DLIB", "BFGS"}, 39u, "DLIB:BFGS: FTOL_ABS reached"},
         {{"NLOPT", "LD_LBFGS"}, 33u,
          "STOPPED -- nlopt failure (algorithm converged; consider adding "
          "ftol_rel / xtol_rel / maxeval to stop cleanly next time)"}};
@@ -7562,20 +7568,26 @@ TEST_CASE("Finite differences: with Ceres' step rule a failed stencil point "
 }
 
 TEST_CASE("Finite differences: DLIB:BFGS goes on past a later point with a "
-          "failed stencil point, to the edge of the failure region",
+          "failed stencil point, next to the failure region",
           "[HPO][termination][fd_gradient]")
 {
     /* With the ERMSE target 10.5 the loss falls towards the failures. From
-     * 1.8, BFGS's line search tries 1.0 (a failed evaluation: dlib steps
-     * back), accepts 1.6; the stencil of its next point 1.6583 reaches
-     * 1.4583, which fails, and the gradient there is the one-sided
-     * difference into the usable side; so is the gradient of the next
-     * point, 1.5324, whose stencil point 1.3324 fails.
-     * Pins: the search goes on past both, its best 1.5 (loss 0.250093),
-     * and ends "DLIB:BFGS: FTOL_ABS reached" after 54 evaluations; no stop
-     * line. (Until DLIB:BFGS ran on the loss divided by the length of its
-     * first gradient its line search first tried 1.059 and the search went
-     * on to the edge of the failure region, 1.4813, loss 0.250056.)
+     * 1.8, BFGS's line search tries 1.0 (a failed evaluation: dlib is given
+     * a finite stand-in for it and steps back) and accepts 1.5404; the
+     * stencil of that point reaches 1.3404, which fails, and the gradient
+     * there is the one-sided difference into the usable side.
+     * Pins: the search goes on past that point -- a line search from it,
+     * which comes back to it, and its gradient again, one-sided again (2
+     * mixed-kind stencils) -- its best 1.5404422557 (loss 0.250273), and
+     * ends "DLIB:BFGS: FTOL_ABS reached" after 47 evaluations; no stop
+     * line. (Until dlib was given a finite stand-in for a failed
+     * evaluation, the line search, handed FAILSCORE divided by the length
+     * of the first gradient, 0.74, which is +inf, accepted 1.6, and the
+     * search went on past 1.6583 and 1.5324, whose stencil points 1.4583
+     * and 1.3324 fail, to its best 1.5, loss 0.250093, after 54
+     * evaluations; until DLIB:BFGS ran on the loss divided by that length
+     * its line search first tried 1.059 and the search went on to 1.4813,
+     * loss 0.250056.)
      * Before the fix: the gradient at the first such point failed, and the
      * search ended there after 10 evaluations, the last a failed one, with
      * the stop line "DLIB:BFGS stopped: no usable gradient: ... (at
@@ -7586,11 +7598,14 @@ TEST_CASE("Finite differences: DLIB:BFGS goes on past a later point with a "
     REQUIRE_NOTHROW(status = straddle_run(run, "1.8", "DLIB:BFGS"));
     CHECK(status == 0);
     const auto loss = data_rows("loss.tadah");
-    CHECK(loss.size() == 54u);
+    CHECK(loss.size() == 47u);
     const auto best = data_rows("best_params.tadah");
     REQUIRE_FALSE(best.empty());
-    CHECK(std::stod(best.back().back()) == 1.5);
+    CHECK(std::stod(best.back().back()) ==
+          Approx(1.5404422557).epsilon(1e-10));
     const std::string journal = read_file("hpo_run.log");
+    CHECK(std::regex_search(journal,
+                            std::regex(R"(Mixed-kind stencils\s*: 2 )")));
     CHECK(journal_status(journal) == "DLIB:BFGS: FTOL_ABS reached");
     CHECK(journal.find("stopped: no usable gradient") == std::string::npos);
     CHECK(journal.find("MAXEVAL=60 reached") == std::string::npos);
