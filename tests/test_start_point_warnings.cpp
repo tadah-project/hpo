@@ -830,7 +830,11 @@ TEST_CASE("startup validation: an INIT block on a search that does not "
              {"LN_BOBYQA", lhs}}) {
         INFO("NLOPT:" << algo << ", INIT block '" << init << "'");
         const Startup s = startup(plain(algo, init));
-        CHECK(count_of(s.journal, "the INIT block on line") == 0);
+        /* This case's WARNING ("the INIT block on line 5: ..."), not the
+         * one about the points a search does not evaluate ("the INIT block
+         * on line 5 gives 3 starting points, ..."). */
+        CHECK(count_of(s.journal, "the INIT block on line 5: ") == 0);
+        CHECK(count_of(s.journal, "does not start at the point") == 0);
         if (algo == "LN_BOBYQA")
             CHECK(count_of(s.err, "starts from the first only") == 1);
     }
