@@ -1420,7 +1420,7 @@ OPTIM boxes, which a CERES optimiser can propose, is not evaluated. Under \
 ON and OFF alike its loss lies in [0.99975 FAILSCORE, FAILSCORE) and grows \
 with its distance from the boxes."""
 checks = [
-  { msg = "FAILSCORE_GRADING ON grades failures in bands below FAILSCORE, which needs a FAILSCORE above 0 and below 1e300 (without a FAILSCORE line, FAILSCORE is the largest double)", doc = "At startup, under ON: FAILSCORE is 1e300 or more, as it is without a FAILSCORE line." },
+  { msg = "{phase}: ASA:ASA: under FAILSCORE_GRADING ON a failed evaluation scores from 0.999 FAILSCORE up to FAILSCORE ({value}), and ASA:ASA takes a cost of 1e+18 or more for an invalid state and draws another, so it would not see the grading; a FAILSCORE of at most 1e+18 keeps every graded failure below that cost", doc = "At startup, under ON, at the line that closes the block of an ASA:ASA search, in any phase: FAILSCORE is above 1e18, as it is without a FAILSCORE line; {value} is FAILSCORE." },
 ]
 
 [[key.examples]]
@@ -1434,26 +1434,33 @@ wrap = "root"
 doc = "The default, written out: a failed evaluation scores FAILSCORE."
 text = "FAILSCORE_GRADING OFF"
 
+[[key.examples]]
+wrap = "root"
+doc = "Without a FAILSCORE line a failed evaluation scores from 0.999 times the largest double."
+text = "FAILSCORE_GRADING ON"
+
+[[key.invalid]]
+wrap = "none"
+check = "startup"
+at = "ENDOPTIMIZER"
+doc = "ASA:ASA takes a cost of 1e18 or more for an invalid state."
+text = '''
+FAILSCORE_GRADING ON
+OPTIM CGRID2B (1) 0.5 1.5
+PC_ERMSE 0 1
+OPTIMIZER
+STRATEGY
+LIB ASA
+ALGO ASA
+MAXEVAL 10
+ENDSTRATEGY
+ENDOPTIMIZER'''
+error = "the STRATEGY-level optimiser: ASA:ASA: under FAILSCORE_GRADING ON a failed evaluation scores from 0.999 FAILSCORE up to FAILSCORE (1.7976931348623157e+308, the largest double, as without a FAILSCORE line), and ASA:ASA takes a cost of 1e+18 or more for an invalid state and draws another, so it would not see the grading; a FAILSCORE of at most 1e+18 keeps every graded failure below that cost"
+
 [[key.invalid]]
 wrap = "root"
 text = "FAILSCORE_GRADING on"
 error = "FAILSCORE_GRADING must be ON or OFF, got 'on'"
-
-[[key.invalid]]
-wrap = "root"
-check = "startup"
-at = "none"
-text = "FAILSCORE_GRADING ON"
-error = "FAILSCORE_GRADING ON grades failures in bands below FAILSCORE, which needs a FAILSCORE above 0 and below 1e300 (without a FAILSCORE line, FAILSCORE is the largest double)"
-
-[[key.invalid]]
-wrap = "root"
-check = "startup"
-at = "none"
-text = '''
-FAILSCORE 1e301
-FAILSCORE_GRADING ON'''
-error = "FAILSCORE_GRADING ON grades failures in bands below FAILSCORE, which needs a FAILSCORE above 0 and below 1e300 (without a FAILSCORE line, FAILSCORE is the largest double)"
 
 [[key.invalid]]
 wrap = "root"
