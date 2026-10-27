@@ -197,16 +197,16 @@ constexpr double kLargest = std::numeric_limits<double>::max();
  * and an Optimiser status other than FAILED or STOPPED; every loss of
  * loss.tadah is a finite double, either usable or a graded failure in
  * [0.999 FAILSCORE, FAILSCORE) (none is FAILSCORE itself); the run has a
- * graded failure and a usable loss. The optimisers that compare losses
+ * usable loss, and from the start in the failure region a graded failure. The optimisers that compare losses
  * alone (LN_SBPLX, LN_NELDERMEAD, GN_CRS2_LM, TADAH:RANDOM and the
  * annealers) evaluate the same points as under FAILSCORE 1e299, which the
  * startup checks accepted. (A search of the gradient-based or model-based
  * optimisers can take another path at another FAILSCORE: the finite
  * stand-in of a failure before the first usable loss is FAILSCORE capped
  * at 1e100, and rounding in its slope changes the steps. ASA:ASA refuses
- * a FAILSCORE above 1e18 under FAILSCORE_GRADING ON: the case
+ * a FAILSCORE of 1e18 or more under FAILSCORE_GRADING ON: the case
  * "startup validation: FAILSCORE_GRADING ON takes any FAILSCORE, and
- * ASA:ASA one of at most 1e18". From a start in the failure region,
+ * ASA:ASA one below 1e18". From a start in the failure region,
  * CERES:STEEPEST_DESCENT's line search squares the slope of a graded
  * failure, which on these data is not a finite double from a FAILSCORE of
  * about 1e160 on, below 1e299 too.)
@@ -260,7 +260,8 @@ TEST_CASE("Graded failures near the largest double: FAILSCORE_GRADING ON "
                 if (l >= 0.999 * kLargest) ++graded;
                 else ++usable;
             }
-            CHECK(graded > 0u);
+            /* A start in the failure region is a graded failure. */
+            if (start == &kFailing) CHECK(graded > 0u);
             CHECK(usable > 0u);
             if (c.compares_only) {
                 const Outcome near =

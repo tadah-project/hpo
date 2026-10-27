@@ -1006,17 +1006,18 @@ TEST_CASE("startup validation: the ANALYTICAL rule applies to the block "
 /* Pins: FAILSCORE_GRADING ON takes any FAILSCORE the parser reads (a
  * positive finite number), the default largest double too: the startup
  * checks accept it without a FAILSCORE line and with FAILSCORE 1e9. A
- * search of ASA:ASA, in any phase, refuses a FAILSCORE above 1e18 under
- * FAILSCORE_GRADING ON: ASA takes a cost of 1e18 or more for an invalid
+ * search of ASA:ASA, in any phase, refuses a FAILSCORE of 1e18 or more under
+ * FAILSCORE_GRADING ON: ASA takes a cost of about 1e18 or more for an invalid
  * state and draws another, so it would not see a graded failure, which
  * scores from 0.999 FAILSCORE ("the STRATEGY-level optimiser: ASA:ASA:
  * under FAILSCORE_GRADING ON a failed evaluation scores from 0.999
- * FAILSCORE up to FAILSCORE (1e+30), and ASA:ASA takes a cost of 1e+18 or
- * more for an invalid state and draws another, so it would not see the
- * grading; a FAILSCORE of at most 1e+18 keeps every graded failure below
- * that cost"; without a FAILSCORE line "(1.7976931348623157e+308, the
- * largest double, as without a FAILSCORE line)"); FAILSCORE 1e18, and
- * FAILSCORE_GRADING OFF, are accepted.
+ * FAILSCORE up to FAILSCORE (1e+30), and ASA:ASA takes a cost of about
+ * 1e+18 or more for an invalid state and draws another, so it would not
+ * see the grading; a FAILSCORE below 1e+18 keeps every graded failure
+ * below that cost"; without a FAILSCORE line "(1.7976931348623157e+308,
+ * the largest double, as without a FAILSCORE line)"; FAILSCORE 1e18 too:
+ * ASA's limit is 1e18 rounded down to a double, and a cost at it is
+ * invalid); FAILSCORE 9.99e17, and FAILSCORE_GRADING OFF, are accepted.
  * Before the fix: without a FAILSCORE line every optimiser was refused,
  * "FAILSCORE_GRADING ON grades failures in bands below FAILSCORE, which
  * needs a FAILSCORE above 0 and below 1e300 (without a FAILSCORE line,
@@ -1025,7 +1026,7 @@ TEST_CASE("startup validation: the ANALYTICAL rule applies to the block "
  * (ON and OFF of a seeded ASA:ASA run on the Ta data of the tests with
  * FAILSCORE 1e30 gave the same points; with FAILSCORE 1e9 they differ). */
 TEST_CASE("startup validation: FAILSCORE_GRADING ON takes any FAILSCORE, "
-          "and ASA:ASA one of at most 1e18",
+          "and ASA:ASA one below 1e18",
           "[startup_validation][failscore_grading]") {
   const std::string head = "OPTIM WATOM (1) 0.1 5.0\nPC_ERMSE 0 1\n";
   const std::string asa =
@@ -1052,10 +1053,10 @@ TEST_CASE("startup validation: FAILSCORE_GRADING ON takes any FAILSCORE, "
   const auto refusal = [](const std::string& phase, const std::string& fs) {
     return phase + ": ASA:ASA: under FAILSCORE_GRADING ON a failed "
            "evaluation scores from 0.999 FAILSCORE up to FAILSCORE (" + fs +
-           "), and ASA:ASA takes a cost of 1e+18 or more for an invalid "
-           "state and draws another, so it would not see the grading; a "
-           "FAILSCORE of at most 1e+18 keeps every graded failure below that "
-           "cost";
+           "), and ASA:ASA takes a cost of about 1e+18 or more for an "
+           "invalid state and draws another, so it would not see the "
+           "grading; a FAILSCORE below 1e+18 keeps every graded failure "
+           "below that cost";
   };
   SECTION("the default FAILSCORE passes") {
     CHECK(startup("FAILSCORE_GRADING ON\n", kOptimizerBlock) == "");
@@ -1064,7 +1065,7 @@ TEST_CASE("startup validation: FAILSCORE_GRADING ON takes any FAILSCORE, "
     CHECK(startup("FAILSCORE_GRADING ON\nFAILSCORE 1e9\n",
                   kOptimizerBlock) == "");
   }
-  SECTION("ASA:ASA refuses a FAILSCORE above 1e18 under ON") {
+  SECTION("ASA:ASA refuses a FAILSCORE of 1e18 or more under ON") {
     CHECK_THAT(startup("FAILSCORE_GRADING ON\n", asa),
                Catch::StartsWith("Error on line 8: " + refusal(
                    "the STRATEGY-level optimiser",
@@ -1078,7 +1079,10 @@ TEST_CASE("startup validation: FAILSCORE_GRADING ON takes any FAILSCORE, "
                        explore_asa),
                Catch::Contains(refusal(
                    "the PRESTAGE exploration (EXPLORE block)", "1e+30")));
-    CHECK(startup("FAILSCORE_GRADING ON\nFAILSCORE 1e18\n", asa) == "");
+    CHECK_THAT(startup("FAILSCORE_GRADING ON\nFAILSCORE 1e18\n", asa),
+               Catch::StartsWith("Error on line 9: " + refusal(
+                   "the STRATEGY-level optimiser", "1e+18")));
+    CHECK(startup("FAILSCORE_GRADING ON\nFAILSCORE 9.99e17\n", asa) == "");
     CHECK(startup("FAILSCORE_GRADING OFF\n", asa) == "");
     CHECK(startup("", asa) == "");
   }
