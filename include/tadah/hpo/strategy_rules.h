@@ -146,6 +146,21 @@ void require_multistart_backend(const OptimizerSpec& spec);
  * an N_STARTS line (one built outside the parser) is not checked. */
 void require_multistart_points(const OptimizerSpec& spec);
 
+/* STRATEGY TYPE MULTISTART with an active RESTART block: a RESTART chain
+ * of N_STARTS starting points or more. Each RESTART round runs N_STARTS
+ * starts from the points of the RESTART chain (RestartPolicy draws them,
+ * MultiStartPolicy runs them), counted as require_multistart_points()
+ * counts an INIT chain (chain_points; a RESTART block without a METHOD line
+ * gives the CONFIG point). Fewer are refused at the RESTART line
+ * (RestartSpec::line), naming the count, the METHOD lines and K_TOTAL, and
+ * what gives N_STARTS starts: "N_STARTS 3 needs 3 starting points in each
+ * RESTART round, and the RESTART chain gives 1 (RANDOM 1); a chain of 3 or
+ * more starting points (METHOD LHS 3, RANDOM 3 or SOBOL 3) runs 3 starts"
+ * ("at most" with a WARM line). A chain that gives fewer only when a round
+ * draws it is warned about then (MultiStartPolicy). A spec without an
+ * N_STARTS line (one built outside the parser) is not checked. */
+void require_restart_points(const OptimizerSpec& spec);
+
 /* What gives `want` starting points to a chain of `c` (chain_points) that
  * gives fewer: "a chain of 3 or more starting points (METHOD LHS 3, RANDOM
  * 3 or SOBOL 3) runs 3 starts"; under a K_TOTAL that keeps fewer, "with
@@ -189,8 +204,9 @@ std::string run_phase_name(const OptimizerSpec& s);
  * require_inner_backend() for the INNER block of the STRATEGY-level
  * optimiser and, under PRESTAGE, for the INNER block of the EXPLORE
  * block; last, under MULTISTART, require_multistart_points() at the
- * N_STARTS line, so a MULTISTART that cannot run its optimiser is refused
- * for that whatever its INIT chain. A refusal of a
+ * N_STARTS line and require_restart_points() at the RESTART line, so a
+ * MULTISTART that cannot run its optimiser is refused for that whatever
+ * its INIT and RESTART chains. A refusal of a
  * parsed spec names the line of the block it is about
  * (OptimizerSpec::block_line, with_block_line): "Error on line N: ...
  * \nLine: ENDOPTIMIZER" (or the INNER block's ENDINNER, the EXPLORE

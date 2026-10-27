@@ -384,12 +384,14 @@ private:
    *    N_STARTS is named for two starts or more (N_STARTS is 2 or more; one
    *    start is STRATEGY TYPE PLAIN);
    *  - a RESTART round (OptimizerSpec::init_from_restart), whose chain the
-   *    startup check does not count: a chain of fewer points as written
-   *    gets the count and what gives N_STARTS starts, as the startup
-   *    refusal does ("... the RESTART round gave 1 starting point; running
-   *    1 start. The RESTART chain gives 1 (RANDOM 1); a chain of 3 or more
-   *    starting points (METHOD LHS 3, RANDOM 3 or SOBOL 3) runs 3 starts."),
-   *    one of N_STARTS points or more the cause, as above. */
+   *    startup check counts too for a parsed file (require_restart_points),
+   *    so one of N_STARTS points or more gets the cause, as above; a chain
+   *    of fewer points as written, which only a spec built outside the
+   *    parser has, gets the count and what gives N_STARTS starts, as the
+   *    startup refusal does ("... the RESTART round gave 1 starting point;
+   *    running 1 start. The RESTART chain gives 1 (RANDOM 1); a chain of 3
+   *    or more starting points (METHOD LHS 3, RANDOM 3 or SOBOL 3) runs 3
+   *    starts."). */
   void warn_fewer_starts(const OptimizerSpec& spec, std::size_t actual_k) const {
     const bool restart = spec.init_from_restart;
     const ChainPoints c = chain_points(restart ? spec.restart.init_strategy
