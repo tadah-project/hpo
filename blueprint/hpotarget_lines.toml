@@ -2875,11 +2875,12 @@ The force tolerance of the atoms in the relaxation, in eV/Å, a number \
 > 0: the atoms have relaxed when the largest atomic force falls below it."""
 long_doc = """\
 In the bcc cell the atomic forces vanish by symmetry; the pressure of the \
-cell is bounded by --ptol. A relaxation that stops before both \
-tolerances are met (at --maxiter, --maxeval or --max-wall-time, or when \
-no step lowers its energy) reports the --unconverged value; one that \
---etol stops counts as converged when its largest atomic force is below \
---fmax-converged, whatever its pressure."""
+cell is bounded by --ptol. A relaxation is converged when the cell it \
+ends at meets both tolerances, also when it stops there at --maxiter, \
+--maxeval or --max-wall-time; one that stops before then, or whose steps \
+can no longer change the energy of the atoms or the cell, reports the \
+--unconverged value. One that --etol stops counts as converged when its \
+largest atomic force is below --fmax-converged, whatever its pressure."""
 
 [[line_option.args]]
 name = "fmax"
@@ -2930,11 +2931,17 @@ The pressure tolerance of the relaxation, in GPa, a number > 0: the cell \
 has relaxed when the magnitude of its pressure falls below it."""
 long_doc = """\
 The magnitude of the pressure is |dE/dε| / (3V), for the isotropic \
-strain ε of the cell and its volume V. A residual pressure P leaves the \
-energy per atom of the crystal above its minimum by about P² (V/N) / (2B), \
-for N atoms and the bulk modulus B, so the cohesive energy below its \
-value at zero pressure. The relaxation stops when the pressure is below \
---ptol and the largest atomic force below --fmax-converged."""
+strain ε of the cell and its volume V, a central difference of the \
+energy over a strain of ±1e-5. A residual pressure P leaves the energy \
+per atom of the crystal above its minimum by about P² (V/N) / (2B), for \
+N atoms and the bulk modulus B, so the cohesive energy below its value \
+at zero pressure. The cell moves by a search for the zero of its \
+pressure, which uses the pressure alone, so a tight --ptol is reached \
+also where the energy is too flat or too noisy to show the change; a \
+--ptol below the rounding error of the central difference is not met, \
+and the relaxation then ends unconverged. The relaxation stops when the \
+pressure is below --ptol and the largest atomic force below \
+--fmax-converged."""
 
 [[line_option.args]]
 name = "pressure"
@@ -2984,15 +2991,18 @@ default = { literal = "const 100" }
 doc = """\
 The value the observable reports for a relaxation that does not converge: \
 const <value> reports <value> in eV/atom, force-scaled <slope> reports \
-the target plus <slope> times the larger of the largest atomic force and \
-the strain force of the cell at the end."""
+the cohesive energy of the cell the relaxation ends at, moved away from \
+the target by <slope> times the larger of the largest atomic force and \
+the strain force of the cell there."""
 long_doc = """\
 The largest atomic force, in eV/Å, is the one --fmax-converged bounds; \
 the strain force of the cell, |dE/dε| / (3V), in eV/Å³, is the magnitude \
 of its pressure, which --ptol bounds in GPa. In the bcc cell the atomic \
-forces vanish by symmetry, so the strain force decides. \
-force-scaled leaves the loss sloping towards converged candidates; its \
-value has no analytical gradient."""
+forces vanish by symmetry, so the strain force decides. Under \
+force-scaled the loss of the term is at least that of the cohesive \
+energy of the final cell and tends to it as the relaxation nears \
+convergence, so the loss slopes towards converged candidates; its value \
+has no analytical gradient. The slope is a number >= 0."""
 
 [[line_option.args]]
 name = "kind"
@@ -3015,7 +3025,7 @@ wrap = "root"
 text = "PC_OBSERVABLE cohesive_energy --species H --target 2.0 --weight 1 --hotvar a0 1.5 2.5 --unconverged const 50"
 
 [[line_option.examples]]
-doc = "The target plus 10 times the larger of the two forces at the end of the relaxation."
+doc = "The cohesive energy of the final cell, moved away from the target by 10 times the larger of the two forces there."
 wrap = "root"
 text = "PC_OBSERVABLE cohesive_energy --species H --target 2.0 --weight 1 --hotvar a0 1.5 2.5 --unconverged force-scaled 10"
 
