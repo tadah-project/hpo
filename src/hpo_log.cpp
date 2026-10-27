@@ -3,6 +3,7 @@
 #include <tadah/hpo/column_titles.h>
 #include <tadah/hpo/fd_stencil.h>
 #include <tadah/hpo/log_index.h>
+#include <tadah/hpo/initial_step.h>
 #include <tadah/hpo/optimizer_caps.h>
 #include <tadah/hpo/optimizer_spec.h>
 #include <tadah/hpo/phase_specs.h>
@@ -678,6 +679,9 @@ void HPOLog::write_optimizer_section(const OptimizerSpec&            sp,
                 oss << " " << o.frac;
             }
             line = oss.str();
+        } else if (sp.lib == "NLOPT" && keeps_first_step(optimizer_caps(sp))) {
+            line = "(STEP unset -- 0.25*width per dim, given to NLopt: " + sp.algo +
+                   " keeps the first step of each dimension as its scale)";
         } else if (sp.lib == "NLOPT") {
             line = "(STEP unset -- NLopt default per dim: 0.25*width, or 0.75*distance to "
                    "the nearer bound; read back at run time)";

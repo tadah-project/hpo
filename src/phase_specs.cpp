@@ -38,8 +38,15 @@ OptimizerSpec multistart_start_spec(const OptimizerSpec& spec,
                                     const MultiStartPlan& plan, std::size_t i)
 {
     OptimizerSpec sub = spec;                       // deep copy
-    if (i < spec.optim_init.size())
+    if (i < spec.optim_init.size()) {
         sub.optim_init = {spec.optim_init[i]};      // single start
+        /* Its origin (CONFIG, WARM, a sampled point), when the spec keeps
+         * them: an NLopt start that has to move warns for a user's seed. */
+        if (spec.optim_init_origin.size() == spec.optim_init.size())
+            sub.optim_init_origin = {spec.optim_init_origin[i]};
+        else
+            sub.optim_init_origin.clear();
+    }
     if (plan.per_start_maxeval) sub.stop.maxeval = *plan.per_start_maxeval;
     /* Decorrelate the starts: reusing one seed hands every start the same
      * proposal stream, so stochastic optimisers (ANNEAL) produce

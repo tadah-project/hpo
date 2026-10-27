@@ -279,13 +279,17 @@ TEST_CASE("seed anchors: every adapter's first evaluation is the seed bitwise",
 }
 
 /* A pinned-weight seed searched as OPTIM FIXWEIGHT (2-11) in explicit
- * [-300, 300] boxes. With no STEP, NLopt's default initial steps differ
- * per dimension, so BOBYQA
- * and COBYLA rescale the start (u -> (u/s)*s) and PRAXIS maps it through
- * atanh/tanh: their first evaluation is a few ulp off u0 in some
- * dimension (FIXWEIGHT(8) for BOBYQA/COBYLA, FIXWEIGHT(2) -- whose plain
- * round trip is exact -- for PRAXIS). The anchor window still evaluates
- * the seed bit for bit. */
+ * [-300, 300] boxes, with STEP 0.1 and STEP FIXWEIGHT(4,6,8,10) 0.13: the
+ * initial steps differ per dimension, so BOBYQA and COBYLA rescale the
+ * start (u -> (u/s)*s) and PRAXIS maps it through atanh/tanh: their first
+ * evaluation is a few ulp off u0 in some dimension. The anchor window
+ * still evaluates the seed bit for bit. Every seed lies more than a step
+ * from its bounds, so BOBYQA does not move it.
+ * The case ran with STEP unset, where NLopt's default steps differed per
+ * dimension (0.75 of the distance to a bound closer than 0.25 of the
+ * width); BOBYQA and COBYLA are now given 0.25 of every width, which in the
+ * unit box rescales nothing, and BOBYQA moves FIXWEIGHT(2), 0.14 of its
+ * width above its lower bound, to one step from it. */
 TEST_CASE("seed anchors: NLopt BOBYQA/COBYLA/PRAXIS evaluate a rounded start "
           "at the seed", "[HPO][seed_anchor]")
 {
@@ -298,6 +302,7 @@ TEST_CASE("seed anchors: NLopt BOBYQA/COBYLA/PRAXIS evaluate a rounded start "
     for (std::size_t i = 0; i < seed.size(); ++i) {
         DimSpec d;
         d.key = "FIXWEIGHT";
+        d.user_index = i + 2;
         d.label = "FIXWEIGHT[" + std::to_string(i + 2) + "]";
         d.lo = -300.0;
         d.hi = 300.0;
@@ -318,6 +323,8 @@ TEST_CASE("seed anchors: NLopt BOBYQA/COBYLA/PRAXIS evaluate a rounded start "
             sp.optim_init = {seed};
             sp.stop.maxeval = 3;
             sp.num_threads = 1;
+            sp.step = 0.1;
+            sp.step_overrides = {{"FIXWEIGHT", {4, 6, 8, 10}, 0.13}};
 
             /* control: without anchors the first evaluation is the plain
              * map of a u that is NOT u0 in some dimension */
@@ -410,8 +417,14 @@ TEST_CASE("seed anchors: the window never swallows a finite-difference step",
  * seed with |x0| >= 2^26 in dimension 1 or later -- where NLopt BOBYQA and
  * COBYLA rescale the start by up to 1 ulp(x0) -- was evaluated 1 ulp off.
  * Each anchor's window is now at least 2 ulp of its own u0. 48 large seeds
- * in [0, 2^30] behind a unit dimension: without anchors some first
- * evaluations are off the seed; with them none is. */
+ * in [0, 2^30] behind a unit dimension, with STEP 0.25 and STEP
+ * FIXWEIGHT[2] 0.06 (a step below 2^26, so BOBYQA does not move a seed,
+ * and not a power of 2 of the other: the rescaling rounds): without anchors
+ * some first evaluations are off the seed; with them none is.
+ * The case ran with STEP unset, where NLopt's default step of FIXWEIGHT[2]
+ * was 0.75 of the seed (its distance to the lower bound); BOBYQA and COBYLA
+ * are now given 0.25 of every width, 2^28 here, a power of 2 of the other
+ * step that rescales nothing, and BOBYQA moves a seed below 2^28. */
 TEST_CASE("seed anchors: NLopt BOBYQA/COBYLA evaluate a large NONE seed exactly",
           "[HPO][seed_anchor]")
 {
@@ -444,6 +457,8 @@ TEST_CASE("seed anchors: NLopt BOBYQA/COBYLA evaluate a large NONE seed exactly"
                 sp.optim_init = {seed};
                 sp.stop.maxeval = 1;
                 sp.num_threads = 1;
+                sp.step = 0.25;
+                sp.step_overrides = {{"FIXWEIGHT[2]", {}, 0.06}};
                 const std::vector<double> xp = first_eval(sp, nlopt);
                 if (!same_bits(xp[1], x1)) ++off_plain;
                 const auto anchored = anchor_seed_points(sp);

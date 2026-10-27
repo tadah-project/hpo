@@ -97,15 +97,23 @@ TEST_CASE("StepPlan: per-key and per-index overrides",
 TEST_CASE("StepPlan: near-bound rules are per dimension",
           "[HPO][step_plan]")
 {
-    SECTION("BOBYQA: only the tight dim shrinks to 0.75*slack") {
+    SECTION("BOBYQA: only the tight dim's start moves, every step stays") {
+        /* B, within 1e-4 of its HI bound (less than half its step, 0.002),
+         * starts on the bound with its full step. Before the fix: B's step
+         * shrank to 0.75*slack (7.5e-5) and its start stayed. */
         auto sp = spec("LN_BOBYQA", false);
         sp.step = 0.25;
         sp.optim_init = {{1.0, 0.0079}};   /* B within 1e-4 of its HI bound */
         const auto start = sp.in(sp.optim_init.front());
         const auto plan = make_step_plan(sp, start, optimizer_caps(sp));
+        CHECK(plan.given);
         CHECK(plan.dx[0] == Approx(0.5));                       /* untouched */
-        CHECK(plan.dx[1] == Approx(0.75 * (0.008 - 0.0079)));   /* shrunk */
-        CHECK(plan.note[1].find("near-bound") != std::string::npos);
+        CHECK(plan.dx[1] == Approx(0.002));                     /* full */
+        REQUIRE(plan.start.size() == 2u);
+        CHECK(plan.start[0] == 1.0);
+        CHECK(plan.start[1] == 0.008);                          /* on HI */
+        CHECK(plan.note[1].find("start moved onto the upper bound") !=
+              std::string::npos);
         CHECK(plan.note[0].empty());
     }
     SECTION("BOBYQA: a start ON a bound keeps its step (noted)") {

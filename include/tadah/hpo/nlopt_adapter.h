@@ -125,7 +125,7 @@ inline nlopt::opt build_nlopt(const OptimizerSpec& sp, unsigned dim,
      * carries the per-dim vector (see initial_step.h). Never the old
      * uniform scalar: identical dx on every dim made BOBYQA/COBYLA's
      * internal rescaling a no-op and starved narrow dims. */
-    if (plan && plan->user_set) o.set_initial_step(plan->dx);
+    if (plan && plan->given) o.set_initial_step(plan->dx);
 
     /* generic param lines */
     for (auto& kv : sp.param) {
@@ -288,6 +288,54 @@ void run_nlopt_impl(const OptimizerSpec& sp, HostT& host,
     const StepPlan plan = make_step_plan(sp, start, caps);
     nlopt::opt opt =
         make_nlopt(sp, dim, restart, &plan);
+    /* BOBYQA starts from a point it keeps with its full step: a start within
+     * a step of a bound moves by at most half a step (StepPlan::start). The
+     * journal says so per dimension; a CONFIG or WARM start, the user's own
+     * point, gets a WARNING (stderr and journal): the search evaluates the
+     * moved point, not that one. */
+    if (plan.start.size() == dim && plan.start != start) {
+        const std::vector<double> real_from = sp.out(start);
+        const std::vector<double> real_to = sp.out(plan.start);
+        std::string seed_origin;
+        if (sp.optim_init_origin.size() == sp.optim_init.size() &&
+            sp.optim_init_origin.front().is_seed())
+            seed_origin = sp.optim_init_origin.front().kind ==
+                                  InitOrigin::Kind::Config
+                              ? "CONFIG" : "WARM";
+        std::string moves;
+        for (unsigned i = 0; i < dim; ++i) {
+            if (plan.start[i] == start[i]) continue;
+            const double p = plan.start[i];
+            const bool onto = p == sp.low[i] || p == sp.high[i];
+            const bool lower = onto ? p == sp.low[i]
+                                    : p - sp.low[i] < sp.high[i] - p;
+            std::ostringstream m;
+            m.precision(10);
+            m << (i < sp.parameter_labels.size() ? sp.parameter_labels[i]
+                                                 : logidx::dim_label(i))
+              << " starts at " << real_to[i] << " instead of " << real_from[i]
+              << ", "
+              << (onto ? "on" : "one step from") << " its "
+              << (lower ? "lower" : "upper") << " bound";
+            if (!moves.empty()) moves += "; ";
+            moves += m.str();
+        }
+        const std::string why =
+            "BOBYQA keeps its full first step only from a start on a bound "
+            "or at least one step from it, and a start within half a step of "
+            "a bound moves onto it";
+        HPOLog::instance().info(sp.lib + ":" + sp.algo + ": " + moves + ": " +
+                                why);
+        if (!seed_origin.empty()) {
+            const std::string w =
+                sp.lib + ":" + sp.algo + ": the " + seed_origin +
+                " start moves: " + moves + "; the search evaluates the moved "
+                "point, not the " + seed_origin + " point";
+            std::cerr << "[HPO] WARNING: " << w << "\n";
+            HPOLog::instance().warning(w);
+        }
+        start = plan.start;
+    }
 
     /* The *_MLSL_LDS variants explore with a deterministic Sobol
      * low-discrepancy sequence -- nlopt's RNG (seeded in make_nlopt)
@@ -645,7 +693,7 @@ void run_nlopt_impl(const OptimizerSpec& sp, HostT& host,
      * number used. Only for algorithms that read an initial step. */
     if (step_use_consumes(caps.step_use)) {
         StepPlan effective = plan;
-        if (!plan.user_set) {
+        if (!plan.given) {
             const bool inner_sets = sp.inner &&
                 (sp.inner->step || !sp.inner->step_overrides.empty());
             if (caps.step_use == StepUse::ForwardedToInner && inner_sets) {
@@ -683,8 +731,7 @@ void run_nlopt_impl(const OptimizerSpec& sp, HostT& host,
                   << effective.source << " -- per-dim table in hpo_run.log\n";
         for (unsigned i = 0; i < dim; ++i) {
             const std::string& nt = effective.note[i];
-            if (nt.find("near-bound") != std::string::npos ||
-                nt.find("inward")     != std::string::npos ||
+            if (nt.find("inward")     != std::string::npos ||
                 nt.find("on a bound") != std::string::npos ||
                 nt.find("capped")     != std::string::npos) {
                 std::ostringstream oss;
