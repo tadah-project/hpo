@@ -13,6 +13,7 @@
 #include "catch2/catch.hpp"
 
 #include <tadah/core/checkpoint.h>
+#include <tadah/hpo/optimizer_caps.h>   // OptimizerCaps::reads_seed
 #include <tadah/hpo/ceres_adapter.h>
 #include <tadah/hpo/durable_best.h>
 #include <tadah/hpo/hpo_log.h>
@@ -73,7 +74,10 @@ OptimizerSpec make_spec(const std::string& lib, const std::string& algo)
     sp.analyse_logscale();
     sp.optim_init = {{0.5, -0.3}};
     sp.stop.maxeval = 200;
-    sp.seed = 7;
+    /* SEED for an optimiser that reads it (one that draws random
+     * numbers, OptimizerCaps::reads_seed): the others refuse it. */
+    const auto* caps = tadah::hpo::find_optimizer_caps(sp.lib, sp.algo);
+    if (caps && caps->reads_seed) sp.seed = 7;
     return sp;
 }
 

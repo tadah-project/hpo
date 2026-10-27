@@ -3387,7 +3387,10 @@ TEST_CASE("startup validation: NLopt rejects a tolerance, POPULATION or "
         nlopt("GN_ISRES", "    POPULATION 10\n"),
         nlopt("LD_LBFGS", "    VECTOR_ARR 5\n"),
         nlopt("LD_TNEWTON_PRECOND", "    VECTOR_ARR 5\n"),
-        nlopt("LN_BOBYQA", "    SEED 3\n"),
+        /* SEED, read by an algorithm that draws random numbers (LN_BOBYQA,
+         * which draws none, refuses it: the case "an NLopt algorithm that
+         * draws no random numbers refuses SEED"). */
+        nlopt("LN_PRAXIS", "    SEED 3\n"),
         "    TYPE PLAIN\n    LIB NLOPT\n    ALGO G_MLSL_LDS\n    MAXEVAL 120\n"
         "    POPULATION 5\n    INNER\n      LIB NLOPT\n      ALGO LN_BOBYQA\n"
         "    ENDINNER\n",
@@ -3963,7 +3966,7 @@ TEST_CASE("startup validation: GRAD_STRATEGY on a phase that takes no "
     struct LocalCase { std::string body, who, local; };
     for (const auto& c : std::vector<LocalCase>{
              {"    TYPE PLAIN\n    LIB NLOPT\n    ALGO GD_MLSL_LDS\n"
-              "    MAXEVAL 12\n    SEED 3\n    GRAD_STRATEGY NUMERICAL\n" +
+              "    MAXEVAL 12\n    GRAD_STRATEGY NUMERICAL\n" +
                   inner("    ", "LN_BOBYQA"),
               "the STRATEGY-level optimiser NLOPT:GD_MLSL_LDS",
               the_inner + "NLOPT:LN_BOBYQA"},

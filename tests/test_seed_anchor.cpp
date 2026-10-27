@@ -15,6 +15,7 @@
 
 #include "catch2/catch.hpp"
 
+#include <tadah/hpo/optimizer_caps.h>   // OptimizerCaps::reads_seed
 #include <tadah/hpo/algorithms.h>
 #include <tadah/hpo/algorithms_asa.h>
 #include <tadah/hpo/algorithms_pa.h>
@@ -95,7 +96,10 @@ OptimizerSpec seed_spec(const std::string& lib, const std::string& algo)
     sp.bind_space(seed_space());
     sp.optim_init = {kSeed};
     sp.stop.maxeval = 40;
-    sp.seed = 7;
+    /* SEED for an optimiser that reads it (one that draws random
+     * numbers, OptimizerCaps::reads_seed): the others refuse it. */
+    const auto* caps = tadah::hpo::find_optimizer_caps(sp.lib, sp.algo);
+    if (caps && caps->reads_seed) sp.seed = 7;
     sp.num_threads = 1;
     return sp;
 }

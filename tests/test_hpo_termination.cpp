@@ -4020,8 +4020,9 @@ TEST_CASE("Termination: MULTISTART with fewer starting points than N_STARTS "
 }
 
 /* Pins: what the RESTART rounds of NLopt's StoGO evaluate, as the startup
- * WARNING says (PLAIN, 3 OPTIM dimensions, MAXEVAL 60, STRATEGY SEED 11,
- * RESTART AFTER_STAGNATION 4, MAX 1, METHOD RANDOM 1, SEED 5): round 1
+ * WARNING says (PLAIN, 3 OPTIM dimensions, MAXEVAL 60, STRATEGY SEED 11 for
+ * GD_STOGO_RAND, RESTART AFTER_STAGNATION 4, MAX 1, METHOD RANDOM 1, SEED
+ * 5): round 1
  * makes evaluations, and
  *  - GD_STOGO: each is at a point of round 0 (the box centre's loss comes
  *    from the record, its stencil is evaluated again); the WARNING names
@@ -4045,9 +4046,13 @@ TEST_CASE("Termination: a RESTART round of StoGO evaluates what the startup "
           "warning says",
           "[HPO][termination][restart][start_point]")
 {
+    /* SEED 11 for GD_STOGO_RAND, which draws random numbers; GD_STOGO
+     * draws none and refuses SEED. */
     const auto stogo = [](const std::string& algo, const std::string& pop) {
+        const std::string seed =
+            algo == "GD_STOGO_RAND" ? "    SEED 11\n" : "";
         return plain_block("    TYPE PLAIN\n    LIB NLOPT\n    ALGO " + algo +
-                           "\n    MAXEVAL 60\n    SEED 11\n" + pop +
+                           "\n    MAXEVAL 60\n" + seed + pop +
                            "    RESTART\n      AFTER_STAGNATION 4\n"
                            "      MAX 1\n      METHOD RANDOM 1\n"
                            "      SEED 5\n    ENDRESTART\n");
@@ -4266,12 +4271,14 @@ TEST_CASE("Termination: the MULTISTART starts of a restarted run never "
 {
     /* MULTISTART runs start i with SEED + i. A restart used to keep SEED,
      * so the starts of every round reused round 0's seeds; round r now
-     * runs start i with SEED + r*N_STARTS + i. */
+     * runs start i with SEED + r*N_STARTS + i. The starts run LN_PRAXIS,
+     * which draws random numbers and so reads SEED (LN_SBPLX draws none
+     * and refuses SEED). */
     TaRun run(
         "OPTIMIZER\n"
         "  INIT\n    METHOD LHS 3\n  ENDINIT\n"
         "  STRATEGY\n"
-        "    TYPE MULTISTART\n    LIB NLOPT\n    ALGO LN_SBPLX\n"
+        "    TYPE MULTISTART\n    LIB NLOPT\n    ALGO LN_PRAXIS\n"
         "    N_STARTS 3\n    BUDGET_PER_START 200\n    SEED 10\n"
         "    RESTART\n      AFTER_STAGNATION 3\n      MAX 2\n"
         "      METHOD RANDOM 3\n    ENDRESTART\n"
@@ -4309,11 +4316,12 @@ TEST_CASE("Termination: the PRESTAGE refinement starts of a restarted run "
      * refinement start (MAXEVAL 12 split over TOPK 3) runs in a stagnation
      * window of its own; after the third start a refinement in which a
      * start stagnated restarts the PRESTAGE: every round runs all three
-     * starts. */
+     * starts. The refinement runs LN_PRAXIS, which draws random numbers
+     * and so reads SEED (LN_SBPLX draws none and refuses SEED). */
     TaRun run(
         "OPTIMIZER\n"
         "  STRATEGY\n"
-        "    TYPE PRESTAGE\n    LIB NLOPT\n    ALGO LN_SBPLX\n"
+        "    TYPE PRESTAGE\n    LIB NLOPT\n    ALGO LN_PRAXIS\n"
         "    MAXEVAL 12\n    TOPK 3\n    SEED 7\n"
         "    EXPLORE\n      LIB TADAH\n      ALGO RANDOM\n"
         "      MAXEVAL 20\n      SEED 1717\n    ENDEXPLORE\n"
