@@ -149,6 +149,49 @@ inline nlopt::opt build_nlopt(const OptimizerSpec& sp, unsigned dim,
     return o;
 }
 
+/* The step plan of the local searches of `sp`, an MLSL or AUGLAG
+ * (OptimizerCaps::accepts_inner) whose local search (inner_run_spec: the
+ * INNER block's, or NLopt's default LN_COBYLA of GN_MLSL and LN_AUGLAG)
+ * keeps the first step of each dimension as its scale for the whole search
+ * (keeps_first_step: LN_BOBYQA, LN_COBYLA); nullopt for any other spec.
+ * NLopt gives a local search the step of the enclosing block when that
+ * block has one (optimize.c copies it into the local optimiser), else the
+ * local optimiser's own, the INNER block's STEP -- and with neither, the
+ * local search's own default from its own start, which shrinks a step to
+ * 0.75 of the distance to a bound closer than that, a scale the search
+ * then keeps. So the plan is that of the local search with the STEP NLopt
+ * gives it (the enclosing block's STEP and overrides when it sets any,
+ * else the INNER block's), and its full step when neither sets one
+ * (make_step_plan): from `start` for an AUGLAG, whose one local search
+ * starts there (single_local_search), so an LN_BOBYQA start within a step
+ * of a bound moves by at most half a step (StepPlan::start), as a search
+ * of its own does; without a start for an MLSL, whose local searches start
+ * where it picks -- LN_BOBYQA moves such a start within a step of a bound
+ * itself, by up to a step. run_nlopt_impl gives the plan's step to the
+ * enclosing optimiser, which hands it to its local search. */
+inline std::optional<StepPlan> local_step_plan(const OptimizerSpec& sp,
+                                               const std::vector<double>& start)
+{
+    if (!optimizer_caps(sp).accepts_inner) return std::nullopt;
+    const std::optional<OptimizerSpec> local = inner_run_spec(sp);
+    if (!local) return std::nullopt;
+    const OptimizerCaps& local_caps = optimizer_caps(*local);
+    if (!keeps_first_step(local_caps)) return std::nullopt;
+    OptimizerSpec stepped = *local;
+    stepped.low = sp.low;
+    stepped.high = sp.high;
+    stepped.space = sp.space;
+    stepped.parameter_labels = sp.parameter_labels;
+    if (sp.step || !sp.step_overrides.empty()) {
+        stepped.step = sp.step;
+        stepped.step_overrides = sp.step_overrides;
+    }
+    const bool one_search = single_local_search(sp).has_value();
+    return make_step_plan(stepped,
+                          one_search ? start : std::vector<double>{},
+                          local_caps);
+}
+
 /* The evaluations without a gradient that NLopt's AUGLAG makes after its
  * local search has ended, in a run of `sp` that is one local search
  * (single_local_search, phase_specs.h): auglag.c evaluates the point that
@@ -217,9 +260,12 @@ inline bool withheld_reaches_stopval(double f, const OptimizerSpec& sp)
 }  // namespace detail
 
 /* create an nlopt::opt, with its INNER, from OptimizerSpec ---------
- * `plan` is the per-dimension initial-step plan for THIS spec (nullptr
- * = STEP unset: NLopt's own per-dim heuristic stays in force). INNER
- * specs get a plan without a start point (MLSL picks the local starts).
+ * `plan` is the per-dimension initial-step plan for THIS spec (nullptr,
+ * or a plan that gives no step: NLopt's own per-dim heuristic stays in
+ * force) -- for an MLSL or AUGLAG whose local search keeps its first step,
+ * the plan of that search (detail::local_step_plan), which NLopt hands it.
+ * An INNER block's own STEP becomes a plan without a start point (MLSL
+ * picks the local starts).
  *
  * NLopt's stochastic algorithms (CRS, MLSL, ISRES, ESCH, PRAXIS, ...)
  * draw from an internal RNG seeded only by `nlopt::srand`; the C library
@@ -286,16 +332,26 @@ void run_nlopt_impl(const OptimizerSpec& sp, HostT& host,
     /* Per-dimension initial-step plan (fraction of width, overrides,
      * per-dim near-bound rules) -- see initial_step.h. */
     const StepPlan plan = make_step_plan(sp, start, caps);
+    /* An MLSL or AUGLAG whose local search keeps its first step (LN_BOBYQA,
+     * LN_COBYLA) is given the step of that search, which it hands over
+     * (detail::local_step_plan). */
+    const std::optional<StepPlan> local_plan =
+        detail::local_step_plan(sp, start);
+    const StepPlan& given_plan = local_plan ? *local_plan : plan;
     nlopt::opt opt =
-        make_nlopt(sp, dim, restart, &plan);
+        make_nlopt(sp, dim, restart, &given_plan);
     /* BOBYQA starts from a point it keeps with its full step: a start within
-     * a step of a bound moves by at most half a step (StepPlan::start). The
-     * journal says so per dimension; a CONFIG or WARM start, the user's own
-     * point, gets a WARNING (stderr and journal): the search evaluates the
-     * moved point, not that one. */
-    if (plan.start.size() == dim && plan.start != start) {
+     * a step of a bound moves by at most half a step (StepPlan::start) --
+     * the start of the search, or of AUGLAG, whose local search starts
+     * there. The journal says so per dimension; a CONFIG or WARM start, the
+     * user's own point, gets a WARNING (stderr and journal): the search
+     * evaluates the moved point, not that one. */
+    std::string searcher = sp.lib + ":" + sp.algo;
+    if (local_plan)
+        searcher += " (its local search " + inner_run_spec(sp)->algo + ")";
+    if (given_plan.start.size() == dim && given_plan.start != start) {
         const std::vector<double> real_from = sp.out(start);
-        const std::vector<double> real_to = sp.out(plan.start);
+        const std::vector<double> real_to = sp.out(given_plan.start);
         std::string seed_origin;
         if (sp.optim_init_origin.size() == sp.optim_init.size() &&
             sp.optim_init_origin.front().is_seed())
@@ -304,8 +360,8 @@ void run_nlopt_impl(const OptimizerSpec& sp, HostT& host,
                               ? "CONFIG" : "WARM";
         std::string moves;
         for (unsigned i = 0; i < dim; ++i) {
-            if (plan.start[i] == start[i]) continue;
-            const double p = plan.start[i];
+            if (given_plan.start[i] == start[i]) continue;
+            const double p = given_plan.start[i];
             const bool onto = p == sp.low[i] || p == sp.high[i];
             const bool lower = onto ? p == sp.low[i]
                                     : p - sp.low[i] < sp.high[i] - p;
@@ -324,17 +380,16 @@ void run_nlopt_impl(const OptimizerSpec& sp, HostT& host,
             "BOBYQA keeps its full first step only from a start on a bound "
             "or at least one step from it, and a start within half a step of "
             "a bound moves onto it";
-        HPOLog::instance().info(sp.lib + ":" + sp.algo + ": " + moves + ": " +
-                                why);
+        HPOLog::instance().info(searcher + ": " + moves + ": " + why);
         if (!seed_origin.empty()) {
             const std::string w =
-                sp.lib + ":" + sp.algo + ": the " + seed_origin +
+                searcher + ": the " + seed_origin +
                 " start moves: " + moves + "; the search evaluates the moved "
                 "point, not the " + seed_origin + " point";
             std::cerr << "[HPO] WARNING: " << w << "\n";
             HPOLog::instance().warning(w);
         }
-        start = plan.start;
+        start = given_plan.start;
     }
 
     /* The *_MLSL_LDS variants explore with a deterministic Sobol
@@ -688,12 +743,17 @@ void run_nlopt_impl(const OptimizerSpec& sp, HostT& host,
     }
 
     /* Journal the EFFECTIVE per-dimension initial step: the plan's
-     * vector when STEP is set, otherwise NLopt's x-dependent default read
+     * vector when STEP is set, or when the plan gives the step anyway (an
+     * algorithm that keeps its first step, or the local search of an MLSL
+     * or AUGLAG that does), otherwise NLopt's x-dependent default read
      * back through get_initial_step(x, dx) so the printed number is the
      * number used. Only for algorithms that read an initial step. */
     if (step_use_consumes(caps.step_use)) {
-        StepPlan effective = plan;
-        if (!plan.given) {
+        StepPlan effective = given_plan;
+        if (local_plan) {
+            effective.source += " (the step of the local search, which " +
+                                sp.algo + " hands it)";
+        } else if (!plan.given) {
             const bool inner_sets = sp.inner &&
                 (sp.inner->step || !sp.inner->step_overrides.empty());
             if (caps.step_use == StepUse::ForwardedToInner && inner_sets) {

@@ -12,7 +12,10 @@
  *   - NELDERMEAD / SBPLX use it as the first simplex's edges,
  *   - NEWUOA / PRAXIS collapse it to min_i |dx_i| (uniform in a unit box),
  *   - MMA / CCSAQ take it as the per-dim trust half-width,
- *   - MLSL / AUGLAG forward it to the INNER optimiser.
+ *   - MLSL / AUGLAG forward it to the INNER optimiser; one whose local
+ *     search keeps its first step (BOBYQA, COBYLA) is given that search's
+ *     plan, its full step with STEP unset too (local_step_plan,
+ *     nlopt_adapter.h).
  *
  * Near-bound handling is per dimension (the old adapter shrank ONE
  * scalar to half the slack of the single tightest dimension, starving
@@ -151,9 +154,10 @@ inline void require_step_coverage(const OptimizerSpec& sp)
                 "is set; add `STEP <frac>` or override every OPTIM'd dimension");
 }
 
-/* Build the plan. `start_internal` may be empty (INNER specs: the local
- * starts are chosen by MLSL at run time) -- the near-bound rules are
- * then skipped, and `start` stays empty. */
+/* Build the plan. `start_internal` may be empty (the local searches of an
+ * MLSL, whose starts it picks at run time) -- the near-bound rules are
+ * then skipped, and `start` stays empty; an algorithm that keeps its first
+ * step (keeps_first_step) is given its full step all the same. */
 inline StepPlan make_step_plan(const OptimizerSpec&        sp,
                                const std::vector<double>&  start_internal,
                                const OptimizerCaps&        caps)
@@ -166,7 +170,7 @@ inline StepPlan make_step_plan(const OptimizerSpec&        sp,
     plan.user_set = sp.step.has_value() || !sp.step_overrides.empty();
     const bool have_start = start_internal.size() == n;
     if (have_start) plan.start = start_internal;
-    const bool full_step = keeps_first_step(caps) && have_start;
+    const bool full_step = keeps_first_step(caps);
     if (!plan.user_set && !full_step) {
         plan.source = "STEP unset -- NLopt default per dim (0.25*width, or 0.75*distance "
                       "to the nearer bound when the start is closer than that)";
