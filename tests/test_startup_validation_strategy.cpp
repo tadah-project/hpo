@@ -1174,6 +1174,97 @@ TEST_CASE("startup validation: DLIB:GFS refuses a SEED, unless it seeds the "
           "the PRESTAGE exploration (EXPLORE block): " + unread);
 }
 
+/* Pins: an NLopt algorithm reads SEED when it draws random numbers (NLopt
+ * 2.10: CRS2, ISRES, ESCH, the MLSL forms without LDS, PRAXIS, StoGO's RAND
+ * form, and DIRECT-L's RAND form in two or more OPTIM dimensions), or when
+ * the local search it runs does (an MLSL or AUGLAG whose INNER block, or
+ * NLopt's default local optimiser, is LN_PRAXIS). A SEED for any other is
+ * refused at startup as TADAH:GRID's is: "the STRATEGY-level optimiser:
+ * NLOPT:LN_BOBYQA does not use SEED: it draws no random numbers; remove
+ * it" -- LN_BOBYQA, LN_SBPLX, LN_COBYLA (which draws from a generator of
+ * its own with a fixed seed), LD_LBFGS, GN_DIRECT_L, GN_AGS, GD_STOGO,
+ * GN_MLSL_LDS with NLopt's default local optimiser, LN_AUGLAG with an INNER
+ * LN_BOBYQA; GN_DIRECT_L_RAND in one OPTIM dimension "...: in one OPTIM
+ * dimension it draws no random numbers (it draws them only to choose
+ * between equally long sides of a box); remove it"; the EXPLORE block's
+ * SEED of GN_DIRECT_L ("the PRESTAGE exploration (EXPLORE block): ...");
+ * and the STRATEGY-level SEED of a PRESTAGE that refines with LN_BOBYQA
+ * after a GN_DIRECT_L exploration ("the PRESTAGE refinement:
+ * NLOPT:LN_BOBYQA does not use SEED: it draws no random numbers, and the
+ * exploration (NLOPT:GN_DIRECT_L) reads none; remove it"). Accepted: SEED
+ * for GN_CRS2_LM, GN_ISRES, GN_ESCH, GN_MLSL, LN_PRAXIS, GD_STOGO_RAND,
+ * GN_DIRECT_L_RAND in two dimensions, G_MLSL_LDS and LN_AUGLAG with an
+ * INNER LN_PRAXIS, and the STRATEGY-level SEED of a PRESTAGE that refines
+ * with LN_BOBYQA after a GN_CRS2_LM exploration, which takes it.
+ * Before the fix: every NLopt algorithm took SEED (OptimizerCaps::
+ * reads_seed was true for each), so each refusal above was "" (the run
+ * seeded NLopt's generator, which these algorithms never read). */
+TEST_CASE("startup validation: an NLopt algorithm that draws no random "
+          "numbers refuses SEED", "[startup_validation][nlopt][seed]")
+{
+    const std::string one_dim = kRoot;
+    const std::string two_dims =
+        "OPTIM WATOM (1) 0.1 5.0\nOPTIM RCUT2B (1) 4.0 6.0\nPC_ERMSE 0 1\n";
+    const auto plain = [](const std::string& root, const std::string& algo,
+                          const std::string& extra) {
+        return root + "OPTIMIZER\n  STRATEGY\n    LIB NLOPT\n    ALGO " + algo +
+               "\n    MAXEVAL 20\n    SEED 5\n" + extra +
+               "  ENDSTRATEGY\nENDOPTIMIZER\n";
+    };
+    const auto inner = [](const std::string& algo) {
+        return "    INNER\n      LIB NLOPT\n      ALGO " + algo +
+               "\n    ENDINNER\n";
+    };
+    const std::string unread = " does not use SEED: it draws no random "
+                               "numbers; remove it";
+    const std::string top = "the STRATEGY-level optimiser: NLOPT:";
+    struct Case { std::string algo, extra, root; };
+    for (const Case& c : std::vector<Case>{
+             {"LN_BOBYQA", "", one_dim}, {"LN_SBPLX", "", one_dim},
+             {"LN_COBYLA", "", one_dim}, {"LD_LBFGS", "", one_dim},
+             {"GN_DIRECT_L", "", one_dim}, {"GN_AGS", "", one_dim},
+             {"GD_STOGO", "", one_dim}, {"GN_MLSL_LDS", "", one_dim},
+             {"LN_AUGLAG", inner("LN_BOBYQA"), one_dim}}) {
+        INFO("NLOPT:" << c.algo << " " << c.extra);
+        CHECK(judge(plain(c.root, c.algo, c.extra)).startup ==
+              top + c.algo + unread);
+    }
+    CHECK(judge(plain(one_dim, "GN_DIRECT_L_RAND", "")).startup ==
+          top + "GN_DIRECT_L_RAND does not use SEED: in one OPTIM dimension "
+          "it draws no random numbers (it draws them only to choose between "
+          "equally long sides of a box); remove it");
+    for (const Case& c : std::vector<Case>{
+             {"GN_CRS2_LM", "", one_dim}, {"GN_ISRES", "", one_dim},
+             {"GN_ESCH", "", one_dim}, {"GN_MLSL", "", one_dim},
+             {"LN_PRAXIS", "", one_dim}, {"GD_STOGO_RAND", "", one_dim},
+             {"GN_DIRECT_L_RAND", "", two_dims},
+             {"G_MLSL_LDS", inner("LN_PRAXIS"), one_dim},
+             {"LN_AUGLAG", inner("LN_PRAXIS"), one_dim}}) {
+        INFO("NLOPT:" << c.algo << " " << c.extra);
+        CHECK(judge(plain(c.root, c.algo, c.extra)).startup == "");
+    }
+    const auto prestage = [](const std::string& explore,
+                             const std::string& explore_seed) {
+        return strategy_config(
+            "    TYPE PRESTAGE\n    LIB NLOPT\n    ALGO LN_BOBYQA\n"
+            "    MAXEVAL 10\n    SEED 7\n    EXPLORE\n      LIB NLOPT\n"
+            "      ALGO " + explore + "\n      MAXEVAL 12\n" + explore_seed +
+            "    ENDEXPLORE\n");
+    };
+    CHECK(judge(prestage("GN_CRS2_LM", "")).startup == "");
+    CHECK(judge(prestage("GN_DIRECT_L", "")).startup ==
+          "the PRESTAGE refinement: NLOPT:LN_BOBYQA does not use SEED: it "
+          "draws no random numbers, and the exploration (NLOPT:GN_DIRECT_L) "
+          "reads none; remove it");
+    CHECK(judge(strategy_config(
+              "    TYPE PRESTAGE\n    LIB NLOPT\n    ALGO LN_BOBYQA\n"
+              "    MAXEVAL 10\n    EXPLORE\n      LIB NLOPT\n"
+              "      ALGO GN_DIRECT_L\n      MAXEVAL 12\n      SEED 3\n"
+              "    ENDEXPLORE\n")).startup ==
+          "the PRESTAGE exploration (EXPLORE block): NLOPT:GN_DIRECT_L" +
+              unread);
+}
+
 TEST_CASE("startup validation: a TYPE line after an EXPLORE or REFINE "
           "block is refused as a second TYPE line",
           "[startup_validation][strategy][knobs][prestage]")

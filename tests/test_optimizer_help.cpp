@@ -330,6 +330,62 @@ TEST_CASE("explain_optimiser: the ALGO help of MLSL and AUGLAG says that "
                                "the OPTIM box: LIB NLOPT"));
 }
 
+/* Pins: the ALGO help of every NLopt algorithm says whether it reads SEED,
+ * as the startup checks decide (backend_rules.h): an algorithm that draws
+ * random numbers (NLopt 2.10: GN_CRS2_LM, GN_ISRES, GN_ESCH, GN_MLSL,
+ * GD_MLSL, G_MLSL, LN_PRAXIS, GD_STOGO_RAND) "   * SEED <int>  the seed of
+ * the random numbers it draws"; GN_DIRECT_L_RAND the same, then "; in one
+ * OPTIM dimension it draws none, and SEED is rejected" on the next line;
+ * an MLSL or AUGLAG form that draws none itself (GN_MLSL_LDS, GD_MLSL_LDS,
+ * G_MLSL_LDS and the six AUGLAG forms) "   * SEED: read only when its local
+ * search draws random numbers (an INNER LN_PRAXIS); otherwise rejected";
+ * every other one "   * SEED is rejected: it draws no random numbers". The
+ * optimiser registry lists SEED among the keys an algorithm reads for the
+ * first two groups only (OptimizerCaps::reads_seed).
+ * Before the fix: the NLopt ALGO help said nothing of SEED, and every
+ * NLopt algorithm read it (reads_seed true for each): the checks fail. */
+TEST_CASE("explain_optimiser: the ALGO help of an NLopt algorithm says "
+          "whether it reads SEED", "[HPO][explain][seed]")
+{
+    const std::vector<std::string> draws = {
+        "GN_CRS2_LM", "GN_ISRES", "GN_ESCH", "GN_MLSL", "GD_MLSL", "G_MLSL",
+        "LN_PRAXIS", "GD_STOGO_RAND"};
+    const std::string reads =
+        "\n   * SEED <int>  the seed of the random numbers it draws\n";
+    const std::string inner_reads =
+        "\n   * SEED: read only when its local search draws random numbers "
+        "(an\n     INNER LN_PRAXIS); otherwise rejected\n";
+    const std::string rejected =
+        "\n   * SEED is rejected: it draws no random numbers\n";
+    std::size_t n = 0;
+    for (const auto* c : filter_optimizer_caps(
+             [](const OptimizerCaps& c) { return c.lib == "NLOPT"; })) {
+        INFO("NLOPT:" << c->algo);
+        ++n;
+        const std::string help = caps_help("NLOPT", c->algo);
+        const bool drawing =
+            std::find(draws.begin(), draws.end(), c->algo) != draws.end();
+        if (c->algo == "GN_DIRECT_L_RAND") {
+            CHECK_THAT(help, Catch::Contains(
+                                 "\n   * SEED <int>  the seed of the random "
+                                 "numbers it draws; in one OPTIM\n     "
+                                 "dimension it draws none, and SEED is "
+                                 "rejected\n"));
+            CHECK(c->reads_seed);
+        } else if (drawing) {
+            CHECK_THAT(help, Catch::Contains(reads));
+            CHECK(c->reads_seed);
+        } else if (c->accepts_inner) {
+            CHECK_THAT(help, Catch::Contains(inner_reads));
+            CHECK_FALSE(c->reads_seed);
+        } else {
+            CHECK_THAT(help, Catch::Contains(rejected));
+            CHECK_FALSE(c->reads_seed);
+        }
+    }
+    CHECK(n > 30);
+}
+
 /* Pins: BuildNotes::Omit leaves out every line of the ALGO help that says
  * what this build lacks, so the text written for the documentation
  * (blueprint/optimizers_gen.toml) is the same in every build of one NLopt

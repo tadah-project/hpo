@@ -1215,17 +1215,18 @@ search from the random numbers of the enclosing run. SEED inside an INIT \
 or RESTART block is another key, the seed of the starting points."""
 checks = [
   { msg = "{phase}: {lib}:{algo} does not use SEED: it draws no random numbers; remove it", doc = "At startup, at the END line of its optimiser: an optimiser that does not read SEED, outside a PRESTAGE refinement." },
+  { msg = "{phase}: {lib}:{algo} does not use SEED: in one OPTIM dimension it draws no random numbers (it draws them only to choose between equally long sides of a box); remove it", doc = "At startup, at the END line of its optimiser: NLOPT:GN_DIRECT_L_RAND in a search of one OPTIM dimension, outside a PRESTAGE refinement." },
   { msg = "{phase}: {lib}:{algo} does not support SEED", doc = "At startup, at the END line of its optimiser: DLIB:BFGS or CERES:STEEPEST_DESCENT, outside a PRESTAGE refinement." },
   { msg = "{phase}: {lib}:{algo} does not use SEED: it draws no random numbers, and the exploration ({name}) {why}; remove it", doc = "At startup, at the END line of its optimiser: the SEED of a PRESTAGE refinement whose optimiser does not read SEED, when the EXPLORE block does not take it; {why} is 'has a SEED of its own' or 'reads none'." },
 ]
 
 [[key.examples]]
-wrap = "strategy"
+wrap = "opt_crs"
 text = "SEED 42"
 
 [[key.examples]]
 doc = "The largest seed, 2^64 - 1."
-wrap = "strategy"
+wrap = "opt_crs"
 text = "SEED 18446744073709551615"
 
 [[key.examples]]
@@ -1304,6 +1305,32 @@ check = "startup"
 at = "ENDOPTIMIZER"
 text = "SEED 1"
 error = "the STRATEGY-level optimiser: TADAH:GRID does not use SEED: it draws no random numbers; remove it"
+
+[[key.invalid]]
+wrap = "strategy"
+check = "startup"
+at = "ENDOPTIMIZER"
+doc = "NLOPT:LN_SBPLX draws no random numbers."
+text = "SEED 1"
+error = "the STRATEGY-level optimiser: NLOPT:LN_SBPLX does not use SEED: it draws no random numbers; remove it"
+
+[[key.invalid]]
+wrap = "none"
+check = "startup"
+at = "ENDOPTIMIZER"
+doc = "NLOPT:GN_DIRECT_L_RAND in one OPTIM dimension."
+text = '''
+OPTIM CGRID2B (1) 0.5 1.5
+PC_ERMSE 0 1
+OPTIMIZER
+STRATEGY
+LIB NLOPT
+ALGO GN_DIRECT_L_RAND
+MAXEVAL 10
+SEED 5
+ENDSTRATEGY
+ENDOPTIMIZER'''
+error = "the STRATEGY-level optimiser: NLOPT:GN_DIRECT_L_RAND does not use SEED: in one OPTIM dimension it draws no random numbers (it draws them only to choose between equally long sides of a box); remove it"
 
 [[key.invalid]]
 wrap = "strategy"
