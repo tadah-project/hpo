@@ -69,6 +69,9 @@ OptimizerSpec prestage_refinement_spec(
         spec.prestage && spec.prestage->seed_from_strategy;
     refine.prestage.reset();          // the refinement does not explore again
     refine.optim_init = std::move(candidates);
+    /* Exploration candidates have no INIT origin: a search whose start
+     * moves gives an INFO line, not the WARNING of a user's own point. */
+    refine.optim_init_origin.clear();
     /* Streams of its own: with the exploration's optimiser it drew the
      * exploration's numbers for an equal seed (seed_stream.h). */
     refine.stream_phase = StreamPhase::Refinement;
