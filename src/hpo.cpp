@@ -6,7 +6,7 @@
 #include <tadah/hpo/run_policy.h>
 #include <tadah/hpo/run_driver.h>
 #include <tadah/mlip/key_provenance.h>
-#include <tadah/core/retired_keys.h>
+#include <tadah/mlip/row_weights.h>   // require_no_unused_keys
 #include <tadah/mlip/training_record.h>  // ignore_configuration_potential_lines
 #include <tadah/mlip/fit_balance.h>
 #include <tadah/hpo/hpo.h>
@@ -538,13 +538,14 @@ int hpo_run_from_startup(core::Context& ctx, HPOLog& log,
             log.warning(ignored);
         }
     }
-    /* A configuration with a line of a retired key (its own, or of a file
-     * it includes with CONFIG: the parse recorded them) is refused with the
-     * conversion of each, before the target file is read: every fit of the
-     * run would refuse it (core::require_no_retired_keys, which
+    /* A configuration with a line of a retired key, or a line that changes
+     * nothing a fit gives (its own, or of a file it includes with CONFIG:
+     * the parse recorded them), is refused in one refusal, the conversion
+     * of each retired key with it, before the target file is read: every
+     * fit of the run would refuse it (mlip::require_no_unused_keys, which
      * validate_hpo_setup applies again through mlip::require_fit_settings
      * for a caller that skips this). */
-    core::require_no_retired_keys(ctx, "tadah hpo");
+    mlip::require_no_unused_keys(ctx, "tadah hpo");
     /* The hpotarget file is the run's own: --hpotarget (tadah hpo -c
      * requires it), or, for a context a program builds, an HPOTARGET line
      * of its configuration. A configuration whose only HPOTARGET line was
