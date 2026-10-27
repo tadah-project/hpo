@@ -157,6 +157,44 @@ TEST_CASE("parse_pc_observable_line: --etol sets relax_etol",
         "--hotvar a0 2.7 3.9 --etol 1e-15"));
 }
 
+/* Pins: --ptol, the pressure tolerance of the relaxation in GPa, takes one
+ * finite number above 0: 1e-4 and 10 are accepted; 0 and -1 are refused
+ * with "PC_OBSERVABLE cohesive_energy: --ptol must be > 0 (got 0)" (no
+ * relaxation reaches a pressure of 0), a word with "--ptol takes a finite
+ * number (got 'x')", a missing value with "'--ptol' requires a value" and
+ * a second --ptol with "--ptol is given twice on this line; each option
+ * is given once".
+ * Before the fix: every line with --ptol was refused with
+ * "PC_OBSERVABLE cohesive_energy: unknown option '--ptol'". */
+TEST_CASE("parse_pc_observable_line: --ptol takes a pressure above 0",
+          "[hpo][pc_observable_parser][cohesive_energy][ptol]")
+{
+    tadah::core::PeriodicTable::initialize();
+
+    const std::string line =
+        "cohesive_energy --species Ta --target 8.100 --weight 1000 "
+        "--hotvar a0 2.7 3.9 ";
+    CHECK_NOTHROW(tadah::hpo::parse_pc_observable_line(line + "--ptol 1e-4"));
+    CHECK_NOTHROW(tadah::hpo::parse_pc_observable_line(line + "--ptol 10"));
+    const std::string prefix = "PC_OBSERVABLE cohesive_energy: ";
+    CHECK_THROWS_WITH(
+        tadah::hpo::parse_pc_observable_line(line + "--ptol 0"),
+        prefix + "--ptol must be > 0 (got 0)");
+    CHECK_THROWS_WITH(
+        tadah::hpo::parse_pc_observable_line(line + "--ptol -1"),
+        prefix + "--ptol must be > 0 (got -1)");
+    CHECK_THROWS_WITH(
+        tadah::hpo::parse_pc_observable_line(line + "--ptol x"),
+        prefix + "--ptol takes a finite number (got 'x')");
+    CHECK_THROWS_WITH(
+        tadah::hpo::parse_pc_observable_line(line + "--ptol"),
+        prefix + "'--ptol' requires a value");
+    CHECK_THROWS_WITH(
+        tadah::hpo::parse_pc_observable_line(line + "--ptol 1 --ptol 2"),
+        prefix + "--ptol is given twice on this line; each option is given "
+                 "once");
+}
+
 TEST_CASE("parse_pc_observable_line: --unconverged const accepts a value",
           "[hpo][pc_observable_parser][cohesive_energy][unconverged]")
 {
