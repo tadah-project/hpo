@@ -682,6 +682,19 @@ void HPOLog::write_optimizer_section(const OptimizerSpec&            sp,
         } else if (sp.lib == "NLOPT" && keeps_first_step(optimizer_caps(sp))) {
             line = "(STEP unset -- 0.25*width per dim, given to NLopt: " + sp.algo +
                    " keeps the first step of each dimension as its scale)";
+        } else if (const auto local = sp.lib == "NLOPT" &&
+                                          optimizer_caps(sp).accepts_inner
+                                      ? inner_run_spec(sp)
+                                      : std::nullopt;
+                   local && keeps_first_step(optimizer_caps(*local))) {
+            /* An MLSL or AUGLAG hands its local search the step of that
+             * search (local_step_plan, nlopt_adapter.h). */
+            line = local->step || !local->step_overrides.empty()
+                       ? "(STEP unset -- the INNER block's STEP, given to NLopt for "
+                         "its local search " + local->algo + ")"
+                       : "(STEP unset -- 0.25*width per dim, given to NLopt for its "
+                         "local search " + local->algo + ", which keeps the first "
+                         "step of each dimension as its scale)";
         } else if (sp.lib == "NLOPT") {
             line = "(STEP unset -- NLopt default per dim: 0.25*width, or 0.75*distance to "
                    "the nearer bound; read back at run time)";
