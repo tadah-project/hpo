@@ -1061,7 +1061,10 @@ long_doc = """\
 The threshold acts once a finite value of the metric has been seen; on \
 an indexed line it applies to each dataset the line lists. \
 Two evaluations of one point can therefore score differently, so a \
-search does not answer a repeated point from the record of the run."""
+search does not answer a repeated point from the record of the run. An \
+evaluation that TADAH:ANNEAL_PT, TADAH:ANNEAL_PA or ASA:ASA runs at once \
+with others compares with the smallest value recorded before them, not \
+with theirs."""
 
 [[line_option.args]]
 name = "ratio"

@@ -378,7 +378,13 @@ below it, the loss of a failed evaluation included. Only the optimisers \
 that read it take it (the optimiser list names the stops of each): \
 DLIB:BFGS and CERES:STEEPEST_DESCENT refuse it at startup, at the END \
 line of the block. An INNER block refuses STOPVAL: NLopt's MLSL and \
-AUGLAG stop their local search at the STOPVAL of the enclosing block."""
+AUGLAG stop their local search at the STOPVAL of the enclosing block. \
+TADAH:ANNEAL_PT and TADAH:ANNEAL_PA end the search after the starting \
+points, the epoch, the temperature step or, in a run on one MPI rank, the \
+round of the step calibration in which a replica or walker reaches it: \
+the others complete their evaluations of it. ASA:ASA with \
+Gener_Block_Max above 1 ends it after the group of states in which it is \
+reached."""
 checks = [
   { msg = "{phase}: {lib}:{algo} does not support STOPVAL", doc = "At startup, at the END line of its optimiser: DLIB:BFGS or CERES:STEEPEST_DESCENT." },
 ]
@@ -1203,7 +1209,7 @@ args = [ { name = "n", kind = "integer", min = 0, max = "UINT64_MAX", what = "{k
 repeat = "error"
 repeat_msg = "SEED is set twice in the {block} block (first on line {first_line}); each key is given once"
 repeat_doc = "Once for each optimiser: a second line is refused, in the same block, in a second block of that type, or in another of OPTIMIZER, STRATEGY and REFINE, which set the same optimiser."
-default = { text = "Not set: an optimiser that draws random numbers (an NLopt algorithm after the SEED of its INIT block) draws them with a seed drawn once for the run, which standard output and the journal give, so two runs differ." }
+default = { text = "Not set: an optimiser that draws random numbers draws them with a seed drawn once for the run, which standard output and the journal give, so two runs differ. An NLopt algorithm first takes the SEED of its INIT block." }
 doc = """\
 The seed of the random numbers of the optimiser, for a reproducible \
 search. An optimiser that does not read SEED refuses it when tadah hpo \
@@ -1211,9 +1217,10 @@ starts; the optimiser list shows which optimisers read it."""
 long_doc = """\
 Under STRATEGY TYPE MULTISTART start i runs with SEED + i. Under STRATEGY \
 TYPE PRESTAGE an EXPLORE block whose optimiser reads SEED, and that has no \
-seed of its own, takes the STRATEGY-level SEED. A SEED line, and for NLopt \
-a SEED in its INIT block, is a seed of its own; the refinement draws \
-random numbers of its own. A refinement whose optimiser reads no SEED \
+seed of its own, takes the SEED line of the STRATEGY-level optimiser, and \
+without one draws its own. A SEED line, and for NLopt a SEED in its INIT \
+block, is a seed of its own; the refinement draws random numbers of its \
+own. A refinement whose optimiser reads no SEED \
 (DLIB:GFS, DLIB:BFGS, TADAH:GRID, CERES:STEEPEST_DESCENT, an NLopt \
 algorithm that draws no random numbers) takes a SEED \
 that the EXPLORE block takes, and refuses one when the EXPLORE block has \
@@ -1470,11 +1477,14 @@ default of REPLICAS (TADAH:ANNEAL_PT) and of POPULATION \
 (TADAH:ANNEAL_PA); the workers of the run keep the number of the \
 STRATEGY-level THREADS. An INNER block refuses THREADS at startup, and so \
 do an EXPLORE block whose optimiser is none of these and \
-CERES:STEEPEST_DESCENT. A seeded run writes the same result files at any \
-THREADS, apart from the times they record, when REPLICAS \
-(TADAH:ANNEAL_PT) and POPULATION (TADAH:ANNEAL_PA) are given, as their \
-defaults follow THREADS; under DLIB:GFS, which proposes each point from \
-the evaluations that have ended, it does not."""
+CERES:STEEPEST_DESCENT. A seeded run writes the same history files and \
+best_pot.tadah at any THREADS, apart from the times they record, under \
+two conditions. REPLICAS (TADAH:ANNEAL_PT) and POPULATION \
+(TADAH:ANNEAL_PA) are given, as their defaults follow THREADS. No \
+PC_LAMMPS script reads what an earlier script left in its LAMMPS \
+instance, which a worker keeps from one evaluation to the next. Under \
+DLIB:GFS, which proposes each point from the evaluations that have \
+ended, the files depend on the timing of the evaluations."""
 checks = [
   { msg = "{phase}: CERES:{algo} does not support THREADS (host evaluation is single-threaded inside one optimizer step)", doc = "At startup, at the END line of its optimiser." },
   { msg = "{phase}: {lib}:{algo} does not use THREADS in an INNER block: the THREADS of the STRATEGY-level optimiser sets the workers of the run; remove it", doc = "At startup, at the ENDINNER line." },
@@ -2920,7 +2930,11 @@ long_doc = """\
 A restart runs the whole STRATEGY TYPE again. Without a METHOD line it \
 starts from the values of the training configuration. A RESTART block \
 needs AFTER_STAGNATION and MAX, each 1 or more: a block without one of \
-them is refused when the STRATEGY block ends."""
+them is refused when the STRATEGY block ends. TADAH:ANNEAL_PT, \
+TADAH:ANNEAL_PA and ASA:ASA with Gener_Block_Max above 1 count these \
+evaluations in the order of their numbers. When the count is reached \
+during evaluations they run at once, the others still run and are \
+recorded, and the restart follows them."""
 
 [[key.examples]]
 wrap = "strategy"
