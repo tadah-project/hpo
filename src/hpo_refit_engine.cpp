@@ -358,9 +358,9 @@ void HPORefitEngine::compact_fit(const tadah::core::Context &c,
   log_disabled_stages(rcfg);
   if (lcfg.seed_algo == "UNIFORM" && rcfg.init.empty())
     Logger::instance().log(LogLevel::WARNING,
-        "tadah refit: EXPLORE rung 0 is UNIFORM (no global search) and INIT is "
-        "empty — the global structure search is disabled. Set a global EXPLORE "
-        "ALGO (e.g. GN_MLSL_LDS) or provide INIT guesses for robustness.");
+        "tadah refit: EXPLORE stage 0 is UNIFORM (no global search) and INIT "
+        "is empty, so no global structure search runs; a global EXPLORE ALGO, "
+        "such as GN_MLSL_LDS, or INIT points give one.");
   const std::string &joint_algo = lcfg.joint_algo;
 
   // ---- curve-objective optimiser policy ----

@@ -205,21 +205,15 @@ bool dispatch_opt_attr(const std::string &key, std::istringstream &iss,
   else if (key == "THREADS")
     a.num_threads = attr_threads(iss, key);
   else if (key == "GRAD_STRATEGY") {
-    std::string v;
-    iss >> v;
+    /* A line without a value is refused as every key's ("GRAD_STRATEGY
+     * requires a value"). */
+    const std::string v = next_value(iss, key);
     if (v == "NUMERICAL")
       a.grad_strategy = GradStrategy::Numerical;
     else if (v == "ANALYTICAL")
       a.grad_strategy = GradStrategy::Analytical;
     else if (v == "HYBRID")
       a.grad_strategy = GradStrategy::Hybrid;
-    else if (v == "AUTODIFF")
-      throw std::runtime_error(
-          "GRAD_STRATEGY=AUTODIFF was renamed to ANALYTICAL; "
-          "the prior stub now backs a closed-form analytical gradient. "
-          "Use GRAD_STRATEGY ANALYTICAL (strict -- every theta must have a "
-          "registered analytical derivative) or GRAD_STRATEGY HYBRID "
-          "(analytical-where-registered + finite-difference fallback).");
     else
       throw std::runtime_error(
           "GRAD_STRATEGY must be one of NUMERICAL, ANALYTICAL, HYBRID "

@@ -8,6 +8,7 @@
 #include <tadah/hpo/dloss_dtheta.h>
 #include <tadah/hpo/hpo_log.h>
 #include <tadah/hpo/init_strategy.h>
+#include <tadah/hpo/strict_parse.h>   // config_line_error
 #include <tadah/models/cutoffs.h>
 #include <tadah/models/descriptors/d_base.h>
 #include <tadah/models/descriptors/dm/ream_density.h>
@@ -551,28 +552,54 @@ void validate_density_gates(const core::Context &train_ctx,
   const std::string keys = trg.RHOGATE && trg.RHOBARGATE ? "RHOGATE and RHOBARGATE"
                            : trg.RHOGATE                 ? "RHOGATE"
                                                          : "RHOBARGATE";
+  /* A refusal about the gate @p key (RHOGATE, RHOBARGATE, or "" for both:
+   * the first of their lines), framed at its line. */
+  auto at_gate = [&](const std::string &key, const std::string &what) {
+    std::size_t line = 0;
+    std::string text;
+    auto take = [&](std::size_t l, const std::string &t) {
+      if (l != 0 && (line == 0 || l < line)) { line = l; text = t; }
+    };
+    if (trg.RHOGATE && key != "RHOBARGATE")
+      take(trg.RHOGATE->line, trg.RHOGATE->line_text);
+    if (trg.RHOBARGATE && key != "RHOGATE")
+      take(trg.RHOBARGATE->line, trg.RHOBARGATE->line_text);
+    return std::runtime_error(line ? config_line_error(line, what, text)
+                                   : what);
+  };
   if (!context_is_bare_ream(train_ctx)) {
+    const std::string head =
+        keys + (trg.RHOGATE && trg.RHOBARGATE ? " evaluate" : " evaluates") +
+        " the density of one DM_REAM many-body term or of one DM_Embed "
+        "component, and ";
     const auto label = train_ctx.stored_value("TYPEMB", 0);
+    const auto initmb = train_ctx.stored_value("INITMB");
     std::string have;
-    if (!models::context_has_ream(train_ctx))
-      have = "this configuration has no DM_REAM many-body term (INITMB true "
-             "and TYPEMB DM_REAM)";
+    if (!train_ctx.blocks("DESCRIPTOR").empty())
+      have = "this configuration has " +
+             std::to_string(models::embed_contexts(train_ctx).size()) +
+             " DM_Embed components";
+    else if (!initmb || core::to_upper(*initmb) != "TRUE" || !label)
+      have = "this configuration has no many-body term";
     else
-      have = "its many-body term is " + label.value_or("?") +
-             ", not a bare DM_REAM (the gates evaluate one DM_REAM density; "
-             "DM_mJoin is not supported)";
-    throw std::runtime_error(keys + " evaluate the density of a bare DM_REAM "
-                             "many-body term, but " + have + ". Remove the " +
-                             keys + " line(s).");
+      have = "the many-body term of this configuration is " + *label +
+             (*label == "DM_mJoin" ? " (DM_mJoin is not read by these checks)"
+                                   : "");
+    throw at_gate("", head + have);
   }
   const auto specs=models::embed_specs(train_ctx);
   const models::RhoForm form = specs.empty()?models::require_rhoform(train_ctx, "tadah hpo"):specs.at(0).form;
+  /* The form of the density: RHOFORM of a DM_REAM term, the FORM of the
+   * DENSITY block of the DM_Embed component. */
+  const std::string form_label =
+      specs.empty() ? std::string("RHOFORM ") + models::rhoform_name(form)
+                    : std::string("FORM ") + models::rhoform_name(form) +
+                          " of the DENSITY of DESCRIPTOR " + specs.at(0).id;
   if (trg.RHOGATE && form != models::RhoForm::Signed)
-    throw std::runtime_error(
-        std::string("RHOGATE: RHOFORM ") + models::rhoform_name(form) +
-        ": the form guarantees rho >= 0 by construction, so the rho(r) sign "
-        "gate applies to RHOFORM SIGNED only. Remove the RHOGATE line "
-        "(RHOBARGATE works under every form).");
+    throw at_gate("RHOGATE",
+        "RHOGATE: under " + form_label + " every density rho(r) is >= 0, so "
+        "the sign condition of RHOGATE holds for every candidate; RHOGATE is "
+        "taken under RHOFORM SIGNED only (RHOBARGATE under every form)");
 
   const DensityGates g = build_density_gates(train_ctx, trg);
   const double rmin = g.reach.min_reachable;
@@ -580,23 +607,24 @@ void validate_density_gates(const core::Context &train_ctx,
       "RCUTMB = " + f4(rmin) + " A" +
       (g.reach.knot ? " (the largest CGRIDMB knot over its OPTIM box)" : "");
   if (!std::isfinite(rmin) || !(rmin > 0.0))
-    throw std::runtime_error(keys + ": the many-body cutoff RCUTMB is not set.");
+    throw at_gate("", keys + ": the many-body cutoff RCUTMB is not set.");
   if (trg.RHOGATE && trg.RHOGATE->r_lo && !(*trg.RHOGATE->r_lo < rmin))
-    throw std::runtime_error(
+    throw at_gate("RHOGATE",
         "RHOGATE R_LO " + gnum(*trg.RHOGATE->r_lo) + " A must lie below the "
         "smallest cutoff a candidate can have, " + rmin_text + ": the window "
-        "[R_LO, RCUTMB] would be empty. Lower R_LO.");
+        "[R_LO, RCUTMB] would be empty; a smaller R_LO gives the window a "
+        "width.");
   if (trg.RHOBARGATE) {
     const RhoBarGateSpec &s = *trg.RHOBARGATE;
     const double d1 = models::eam_lattice::shells(s.lattice, 2.0).front().d;
     const double r1 = d1 * s.f_hi * s.a0;
     if (r1 > rmin)
-      throw std::runtime_error(
+      throw at_gate("RHOBARGATE",
           "RHOBARGATE: the first " + s.lattice + " shell at a = f_hi a0 = " +
           f4(s.f_hi * s.a0) + " A lies at r = " + f4(r1) + " A, beyond the "
           "smallest cutoff a candidate can have, " + rmin_text + ": rhobar(a) "
-          "would lose its nearest neighbours. Lower f_hi or a0, or raise "
-          "RCUTMB.");
+          "would lose its nearest neighbours; a smaller f_hi or a0, or a "
+          "larger RCUTMB, keeps the first shell inside the cutoff.");
   }
 
   /* A density pair weight no candidate can make positive (WATOM fixed at
@@ -607,12 +635,13 @@ void validate_density_gates(const core::Context &train_ctx,
   const std::string fixed_w = fixed_weight_problem(train_ctx, trg, g);
   if (!fixed_w.empty())
     errors.push_back(
-        keys + ": " + fixed_w + " on every candidate (WATOM is not OPTIM'd, or "
-        "its OPTIM box does not reach above 0): every evaluation would be "
-        "rejected, under SEED ERROR or WARN. The density gates need every "
-        "density pair weight > 0: set WATOM > 0 (under RHOFORM SIGNED the "
-        "sign of rho belongs in the AMPGRIDMB amplitudes), or remove the " +
-        keys + " line(s).");
+        keys + ": " + fixed_w + " on every candidate (WATOM has no OPTIM "
+        "line, or its OPTIM box does not reach above 0), so every evaluation "
+        "would be refused before training, under SEED ERROR and SEED WARN "
+        "alike. The checks of " + keys + " need every density pair weight "
+        "> 0, which a WATOM above 0 gives (under RHOFORM SIGNED the sign of "
+        "rho is that of the AMPGRIDMB amplitudes); without the " + keys +
+        " line(s) the run makes no such check.");
 
   /* The seeds, each evaluated as a candidate (seed_context) by the
    * per-candidate functions. */
@@ -694,6 +723,11 @@ void validate_density_gates(const core::Context &train_ctx,
         "reachable RCUTMB, SEED " + (t.spec.seed_warn ? "WARN" : "ERROR") +
         "; " + arm_why + "; seeds: " + join(verdicts, ", "));
   }
+  /* A density pair weight no candidate makes positive refuses every
+   * evaluation: the seeds are not judged, and the refusal names the gate
+   * line. */
+  if (!fixed_w.empty())
+    throw at_gate("", errors.front());
   if (!errors.empty()) {
     std::string msg = errors.front();
     for (std::size_t i = 1; i < errors.size(); ++i) msg += "\n  " + errors[i];

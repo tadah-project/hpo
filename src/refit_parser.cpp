@@ -85,12 +85,13 @@ KeyCheckFn stage_key_check(const StageKeys &sk, SeenKeys *seen) {
     if (key == "SEED")
       throw std::runtime_error(
           "SEED is not accepted in a tadah refit OPTIMIZER block: the "
-          "refit's random numbers come from REFIT_COMPACT_SEED; set "
-          "REFIT_COMPACT_SEED in the configuration instead.");
+          "refit's random numbers come from REFIT_COMPACT_SEED: "
+          "REFIT_COMPACT_SEED in the training configuration seeds the "
+          "refit.");
     if (key == "FTOL_ABS" && std::string(sk.stage) != "EXPLORE")
       throw std::runtime_error(
           "FTOL_ABS is not supported — Ceres' function_tolerance is RELATIVE "
-          "and has no absolute form. Use FTOL_REL.");
+          "and has no absolute form; FTOL_REL sets the relative tolerance.");
     throw std::runtime_error(key +
                              " is not used by a tadah refit stage (it reads " +
                              reads_list(reads) + ")");
@@ -116,8 +117,9 @@ const StageKeys kFuseKeys{
 void require_algo(const OptimizerSpec &o, const std::string &where,
                   const char *block, const char *off) {
   if (o.algo == "NOT SET")
-    throw std::runtime_error(where + ": ALGO is not set; set ALGO in the " +
-                             block + " block (" + off + ")");
+    throw std::runtime_error(where + ": ALGO is not set; the " + block +
+                             " block of a tadah refit stage names its ALGO (" +
+                             off + ")");
 }
 
 bool as_bool(const std::string &s, const std::string &what) {
@@ -297,7 +299,7 @@ bool ceres_extra(const std::string &key, std::istringstream &iss,
     throw std::runtime_error(
         "'" + key +
         "' is not supported — Ceres' function_tolerance is RELATIVE and has no "
-        "absolute form. Use FTOL_REL.");
+        "absolute form; FTOL_REL sets the relative tolerance.");
   if (tolerance_attr(key, iss, a)) return true;  // GTOL among them
   if (key == "MAXITER") {
     // The alias of MAXEVAL, with its range: the int iteration cap Ceres
@@ -467,9 +469,9 @@ std::string stage_algo(const OptimizerSpec &s,
       return a.canonical;
     }
     if (lib.empty())
-      throw std::runtime_error(std::string(block) + ": LIB is not set; set LIB " +
-                               a.lib + " (ALGO " + s.algo + " is " +
-                               library_kind(a.lib) + ")");
+      throw std::runtime_error(std::string(block) + ": LIB is not set; ALGO " +
+                               s.algo + " is " + library_kind(a.lib) +
+                               ", whose LIB is " + a.lib);
     if (lib != a.lib) {
       // The LIB may be the one meant and the ALGO the slip (LIB NLOPT ALGO
       // LBFGS for NLopt's L-BFGS): name that library's algorithms of the
@@ -477,9 +479,9 @@ std::string stage_algo(const OptimizerSpec &s,
       const std::string in_lib = listed_in(algos, lib);
       throw std::runtime_error(
           std::string(block) + ": LIB " + s.lib + " does not match ALGO " +
-          s.algo + ", " + library_kind(a.lib) + "; set LIB " + a.lib +
+          s.algo + ", " + library_kind(a.lib) + ", whose LIB is " + a.lib +
           (in_lib.empty() ? std::string()
-                          : ", or with LIB " + lib + " set ALGO " + in_lib));
+                          : "; LIB " + lib + " takes ALGO " + in_lib));
     }
     return a.canonical;
   }
@@ -602,7 +604,8 @@ void reject_keys_not_read(const std::string &block, const OptimizerSpec &s,
     if (key == "FTOL_ABS" && has_key(reads, "GTOL"))
       throw std::runtime_error(
           block + ": FTOL_ABS is not supported — Ceres' function_tolerance is "
-          "RELATIVE and has no absolute form. Use FTOL_REL.");
+          "RELATIVE and has no absolute form; FTOL_REL sets the relative "
+          "tolerance.");
     throw std::runtime_error(block + ": " + key + " has no effect with ALGO " +
                              algo + " (it reads " + reads_list(reads) + mlsl +
                              "); remove " + key);
@@ -616,8 +619,8 @@ void reject_disabled_with_optimizer(const char *stage, bool enabled,
   if (!enabled && has_opt)
     throw std::runtime_error(
         std::string(stage) + ": ENABLED false skips the stage, so its "
-        "OPTIMIZER block has no effect; remove the OPTIMIZER block, or write "
-        "ALGO NONE in it instead of ENABLED false");
+        "OPTIMIZER block has no effect; ALGO NONE in the OPTIMIZER block "
+        "switches the stage off");
 }
 
 }  // namespace
