@@ -3278,10 +3278,11 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
   /* The batch of this thread's slot (eval_batch.h: the evaluations a
    * parallel optimiser runs at once), or none. In a batch the evaluation
    * takes the number of its place in the batch, and what follows from its
-   * result is committed after the batch, in number order; outside one it
-   * takes the next number and is committed when it ends. Either way every
-   * number taken reaches the commit (finish_evaluation), whatever way the
-   * evaluation ends, so the writer never waits for a number. */
+   * result is committed once every lower-numbered evaluation of the batch
+   * has ended, in number order; outside one it takes the next number and
+   * is committed when it ends. Either way every number taken reaches the
+   * commit (finish_evaluation), whatever way the evaluation ends, so the
+   * writer never waits for a number. */
   EvalBatch* const batch = EvalBatch::current();
   Completed c;
   Result& r = c.r;
@@ -3748,8 +3749,9 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
      * while evaluations run -- its only other stores (the fresh-run reset,
      * prepare_best_publication) run before the first evaluation -- so a
      * loss above this snapshot is above the best at the commit too; a NaN
-     * fails both comparisons. In a batch no commit runs before the batch
-     * has ended, so the snapshot is the best before the batch. Outside a
+     * fails both comparisons. In a batch the commits of the evaluations
+     * numbered before this one may run while it runs (eval_batch.h); its
+     * own commit follows them, so this holds there too. Outside a
      * batch the decision is counted first, before the table
      * (detail::BestDecision): a stagnation check that would fire and began
      * after the count waits until the decision has ended
@@ -3872,8 +3874,19 @@ double HPO_Host<P,R>::finish_evaluation(Completed&& c, EvalBatch* batch) const
         return loss;
     }
     const std::size_t number = c.r.iter;
+    /* The --skip-rel lowest values it found are recorded after the batch:
+     * no evaluation of the batch reads those of another, whatever order
+     * they run in (MetricSkipTracker::check). */
+    std::function<void()> after;
+    if (!c.skip_best.empty())
+        after = [tracker = metric_skip_tracker_,
+                 values = std::move(c.skip_best)] {
+            for (const auto& kv : values)
+                tracker->note_best(kv.first, kv.second);
+        };
     auto held = std::make_shared<Completed>(std::move(c));
-    batch->park(number, [this, held] { commit_evaluation(std::move(*held)); });
+    batch->park(number, [this, held] { commit_evaluation(std::move(*held)); },
+                std::move(after));
     return loss;
 }
 
@@ -3882,7 +3895,9 @@ void HPO_Host<P,R>::commit_evaluation(Completed&& c) const
 {
     Result& r = c.r;
     /* The journal lines of the commit name the slot of the evaluation: the
-     * commit of a batch runs on the driver's thread, after the batch. */
+     * commit of an evaluation of a batch runs on the thread whose
+     * evaluation, or the end of whose slot, lets it through, or on the
+     * driver's thread after the batch (eval_batch.h). */
     const HPOLog::ScopedEvalContext slot_tag(c.tag);
     auto _stage_log = [](const std::string& msg) {
         HPOLog::instance().warning(msg);
@@ -4024,10 +4039,6 @@ void HPO_Host<P,R>::commit_evaluation(Completed&& c) const
       }
     }
 
-    /* The --skip-rel lowest values an evaluation of a batch found, which
-     * the evaluations of its batch did not read. */
-    for (const auto& kv : c.skip_best)
-      metric_skip_tracker_->note_best(kv.first, kv.second);
     } /* end post_lammps_finalize watchdog */
 
     /* save fields before r is moved into the queue ---------------------- */

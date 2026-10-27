@@ -40,7 +40,7 @@
  * per-epoch budget slicing), and the same evaluation numbers, bests and
  * files: an epoch, the population's starting points and each round of
  * the step calibration are batches (eval_batch.h), numbered in slot order
- * and committed after their last evaluation. A replica that reaches
+ * and committed in that order as they end. A replica that reaches
  * STOPVAL ends its own sweep and the search ends after the epoch.
  * Documented exceptions: MAXTIME truncation and a signal are
  * timing-dependent (the evaluations of the batch that ran keep their
@@ -2246,10 +2246,10 @@ template<typename Vec, typename HostT>
 
       /* The calls of a calibration phase, one per slot, in rounds of at
        * most one evaluation each: each round is a batch (eval_batch.h),
-       * whose evaluations are numbered in slot order and committed after
-       * it, so the phase's evaluations, numbers and bests do not depend on
-       * the timing of the slots. Each slot's call makes the evaluations of
-       * one uninterrupted call, in the same order. The rounds end when
+       * whose evaluations are numbered in slot order and committed in that
+       * order as they end, so the phase's evaluations, numbers and bests
+       * do not depend on the timing of the slots. Each slot's call makes
+       * the evaluations of one uninterrupted call, in the same order. The rounds end when
        * every call has ended. After a round in which a slot reached
        * STOPVAL, which ended its call, the other calls are interrupted and
        * the phase ends with that round, as the search ends with the epoch
@@ -3203,7 +3203,7 @@ template<typename Vec, typename HostT>
 
         /* The epoch's evaluations: allowance[k] for slot k (a sweep makes
          * them all unless the search stops during it), numbered in slot
-         * order and committed after the epoch (eval_batch.h). */
+         * order and committed in that order as they end (eval_batch.h). */
         std::vector<std::size_t> epoch_evals(n_local, 0);
         for (std::size_t li = 0; li < n_local; ++li)
           epoch_evals[li] = static_cast<std::size_t>(allowance[off_local + li]);

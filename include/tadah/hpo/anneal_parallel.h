@@ -16,10 +16,11 @@
  *     so sibling chains wind down at their next proposal, and the driver
  *     rethrows after the epoch barrier -- preserving the RestartPolicy /
  *     signal-handler semantics that rely on exceptions propagating out of
- *     host(). The commit of the epoch's evaluations (EvalBatch::commit,
- *     eval_batch.h), after the barrier, adds its own -- HPO_Host's
- *     stagnation stop, a failure to save best_pot.tadah -- with
- *     offer_error. When several are stashed, the stash keeps the one that
+ *     host(). The commits of the epoch's evaluations (eval_batch.h) run
+ *     on the workers as the evaluations end, and keep their exceptions --
+ *     HPO_Host's stagnation stop, a failure to save best_pot.tadah --
+ *     until the barrier, after which EvalBatch::commit hands them over
+ *     and the driver adds them with offer_error. When several are stashed, the stash keeps the one that
  *     decides how the run ends (an error before a signal stop before a
  *     stagnation stop, run_stop.h).
  */
@@ -96,8 +97,8 @@ public:
    * (agree_on_rank_stop, run_stop.h). Driver thread, after run_epoch. */
   std::exception_ptr take_error() { return errors_.take(); }
 
-  /* Add an exception the driver met after run_epoch -- the commit of the
-   * epoch's evaluations (EvalBatch::commit, eval_batch.h) -- to the
+  /* Add an exception the driver met after run_epoch -- of the commits of
+   * the epoch's evaluations (EvalBatch::commit, eval_batch.h) -- to the
    * workers' stash, which keeps the one that decides how the run ends;
    * null adds nothing. Driver thread, after run_epoch. */
   void offer_error(std::exception_ptr e)

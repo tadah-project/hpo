@@ -274,7 +274,7 @@ extern "C" double tadah_asa_rng(LONG_INT* /*seed*/)
  * results are THREADS-invariant; ASA sorts the block by cost before
  * consuming it sequentially, so evaluation order never matters). The
  * block is a batch (eval_batch.h): its evaluations are numbered in block
- * order and committed after it. */
+ * order and committed in that order as they end. */
 extern "C" void tadah_asa_block_hook(tadah_asa_state_view* block,
                                      LONG_INT gener_block,
                                      double* /*lo*/, double* /*hi*/,

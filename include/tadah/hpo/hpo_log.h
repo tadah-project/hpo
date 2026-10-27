@@ -575,7 +575,7 @@ public:
     static void set_eval_probe();
     /** The calling thread's eval context, as the set_eval_* calls left it:
      *  what an evaluation of a batch (eval_batch.h) takes with it to its
-     *  commit, which the driver's thread runs after the join. */
+     *  commit, which may run on another thread. */
     struct EvalContext {
         int         slot    = kSlotNone;
         std::size_t n_slots = 0;

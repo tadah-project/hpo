@@ -18,9 +18,9 @@
  * throw before the optimiser stops: every evaluation that starts after a
  * signal throws ShutdownRequested, every evaluation that is committed
  * after the stagnation window closed throws StagnationStop (DLIB:GFS's
- * when it ends; those of an annealer's or ASA's batch after the batch, in
- * number order, eval_batch.h), and an evaluation that was already running
- * can fail on its own. ExceptionStash keeps the one
+ * when it ends; those of an annealer's or ASA's batch in number order,
+ * kept by the batch until it ends, eval_batch.h), and an evaluation that
+ * was already running can fail on its own. ExceptionStash keeps the one
  * that decides how the run ends: an error before a signal stop before a
  * stagnation stop. A stop request never hides a failure, and a signal
  * ends the run even when a restart was due. Among exceptions of the same

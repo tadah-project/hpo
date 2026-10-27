@@ -11,8 +11,9 @@
  *     potential, committed synchronously and atomically, the rows, the
  *     journal's census and the RESTART window -- is committed before
  *     operator() returns, or, for an evaluation of a batch (eval_batch.h:
- *     the evaluations a parallel optimiser runs at once), after the batch
- *     has ended, in the order of the evaluation numbers.
+ *     the evaluations a parallel optimiser runs at once), once every
+ *     lower-numbered evaluation of the batch has ended, in the order of the
+ *     evaluation numbers.
  *  -  MPI code is protected by one global mutex so that threaded builds can
  *     still work.  Remove the mutex if you choose to forbid that mix.
  */
@@ -652,8 +653,9 @@ private:
          * density summary. */
         double      embf0_best = std::numeric_limits<double>::quiet_NaN();
         std::optional<detail::DensitySummary> density;
-        /* The --skip-rel lowest values it found, which an evaluation of a
-         * batch commits with it (MetricSkipTracker::note_best). */
+        /* The --skip-rel lowest values an evaluation of a batch found,
+         * which the batch records after its last evaluation has ended
+         * (finish_evaluation, MetricSkipTracker::note_best). */
         std::vector<std::pair<std::string, double>> skip_best;
         /* The slot its journal lines name (HPOLog::set_eval_slot). */
         HPOLog::EvalContext tag;
@@ -663,15 +665,16 @@ private:
     };
     /* Commits @p c: the new-best decision (best_pot.tadah, the best_*
      * rows, the HOT snapshot, the incumbent), the run's record of its
-     * point, the PRESTAGE candidates, the --skip-rel lowest values, its
-     * rows (submit_result), its journal lines (census, BEST) and the
+     * point, the PRESTAGE candidates, its rows (submit_result), its
+     * journal lines (census, BEST) and the
      * RESTART window, whose StagnationStop it throws last; a failure to
      * save best_pot.tadah (durable_best::Error) is thrown once the rest is
      * committed. */
     void commit_evaluation(Completed&& c) const;
     /* Commits @p c now, outside a batch, or parks its commit with
-     * @p batch, which commits it after the batch (eval_batch.h). Returns
-     * its loss. */
+     * @p batch, which commits it once every lower-numbered evaluation of
+     * the batch has ended, and records its --skip-rel lowest values after
+     * the batch (eval_batch.h). Returns its loss. */
     double finish_evaluation(Completed&& c, EvalBatch* batch) const;
     /* The evaluation numbers a batch reserves (g_iter_). */
     struct BatchNumbers;

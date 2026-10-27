@@ -27,7 +27,7 @@
  * decorrelate deterministically and results are identical for any
  * THREADS. The walkers' sweeps of a temperature step, and the
  * population's starting points, are batches (eval_batch.h): numbered in
- * slot order and committed after their last evaluation, so the evaluation
+ * slot order and committed in that order as they end, so the evaluation
  * numbers, the bests and the files are identical too; a walker that
  * reaches STOPVAL ends its own sweeps and the search ends after the
  * step.
@@ -612,7 +612,7 @@ template<typename Vec, typename HostT>
       }
       /* The step's evaluations: allowance[k] for walker k (its sweeps make
        * them all unless the search stops during them), numbered in slot
-       * order and committed after the step (eval_batch.h). */
+       * order and committed in that order as they end (eval_batch.h). */
       std::vector<std::size_t> step_evals(n_local, 0);
       for (std::size_t li = 0; li < n_local; ++li)
         step_evals[li] = static_cast<std::size_t>(allowance[off_local + li]);

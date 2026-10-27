@@ -103,15 +103,17 @@ public:
      *  value of @p key that did not trip them. A value that does not trip
      *  them and is below that lowest one becomes it -- or, with @p deferred,
      *  is appended to it and becomes it only when note_best() gives it: an
-     *  evaluation of a batch (eval_batch.h) reads the lowest values of the
-     *  evaluations committed before the batch, never those of another
-     *  evaluation of the batch, so what it trips does not depend on the
-     *  order in which the evaluations of the batch run. */
+     *  evaluation of a batch (eval_batch.h) reads the lowest values
+     *  recorded before the batch, never those of another evaluation of the
+     *  batch, whose values are recorded after the batch, so what it trips
+     *  does not depend on the order in which the evaluations of the batch
+     *  run. */
     std::optional<Trigger> check(
         const std::string& key, double value, const MetricSkipCaps& caps,
         std::vector<std::pair<std::string, double>>* deferred = nullptr);
-    /** The lowest value of @p key becomes @p value when it is lower: the
-     *  commit of a value that check() deferred. */
+    /** The lowest value of @p key becomes @p value when it is lower: a
+     *  value that check() deferred, recorded after its batch
+     *  (HPO_Host::finish_evaluation). */
     void note_best(const std::string& key, double value);
 private:
     std::mutex mutex_;
