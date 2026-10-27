@@ -410,6 +410,49 @@ TEST_CASE("SobolInitStrategy: SOBOL 1 still draws the point its seed "
     }
 }
 
+/* Pins: METHOD SOBOL K with K a power of two (2, 4, 8, 16), in 1 to 5
+ * dimensions of the unit cube and with the seeds 0, 1, 2 and 7: each
+ * coordinate of the K points has exactly one point in each slice [j/K,
+ * (j+1)/K) of its range, and no point is the low corner of the box (every
+ * coordinate 0) -- a block of 2^m Sobol points that starts at a multiple of
+ * 2^m is such a net.
+ * Before the fix: every block started one point late (Sobol points bK + 1
+ * to bK + K for block b), and each of the 80 blocks had a slice with two
+ * points and one with none: K = 4 in 2-D with seed 0 drew (0.5, 0.5),
+ * (0.75, 0.25), (0.25, 0.75) and (0.375, 0.375), 0, 2, 1 and 1 points in the
+ * quarters of each coordinate. */
+TEST_CASE("SobolInitStrategy: a block of K = 2^m points puts one point in "
+          "each 1/K of every range", "[HPO][init_strategy][sobol][seed]")
+{
+    using namespace tadah::hpo;
+    StubTargets st;
+    for (std::size_t dim = 1; dim <= 5; ++dim) {
+        const auto sp = make_synthetic_spec(std::vector<double>(dim, 0.0),
+                                            std::vector<double>(dim, 1.0));
+        for (const std::size_t K : {2u, 4u, 8u, 16u}) {
+            for (const std::uint64_t seed : {0u, 1u, 2u, 7u}) {
+                INFO("dimensions " << dim << ", SOBOL " << K << ", seed "
+                     << seed);
+                const auto pts = sobol_draw(sp, *st.trg, K, seed);
+                REQUIRE(pts.size() == K);
+                for (std::size_t d = 0; d < dim; ++d) {
+                    INFO("coordinate " << d + 1);
+                    std::vector<std::size_t> per_slice(K, 0);
+                    for (const auto& p : pts) {
+                        REQUIRE(p[d] >= 0.0);
+                        REQUIRE(p[d] < 1.0);
+                        ++per_slice[static_cast<std::size_t>(
+                            p[d] * static_cast<double>(K))];
+                    }
+                    CHECK(per_slice == std::vector<std::size_t>(K, 1));
+                }
+                for (const auto& p : pts)
+                    CHECK(p != std::vector<double>(dim, 0.0));
+            }
+        }
+    }
+}
+
 TEST_CASE("SobolInitStrategy: a K above 1000000 is refused before a block "
           "is drawn", "[HPO][init_strategy][sobol][seed]")
 {
