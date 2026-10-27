@@ -24,12 +24,10 @@
  *
  * Full regression coverage of HPO_Host requires actual training data
  * (StructureDB files) which are not bundled with the source tree.
- * The key invariants validated by unit tests in MODELS/tests/test_reinit.cpp
- * already cover the bugs found during the reinit() implementation:
- *
- *   - D2_mJoin::reinit() / DM_mJoin::reinit() outer fcut updated
- *     when RCUT changes (Bug 2 — the tadah-predict mismatch).
- *   - M_Core::reset_trained() correctly clears the trained flag (Bug 3).
+ * HPO_Host builds a Trainer, and so the descriptors, for every evaluation
+ * (the descriptors have no in-place update); M_Core::reset_trained(), the
+ * way to retrain a model in place, is tested in MODELS
+ * (test_m_core_reset_trained.cpp).
  *
  * What belongs here when data is available
  * -----------------------------------------
@@ -147,7 +145,6 @@ TEST_CASE("ANNEAL capability help exposes corrected public contracts",
 TEST_CASE("HPO placeholder — see comments above for planned tests", "[HPO]")
 {
     // No self-contained integration tests yet.
-    // All unit-level regression tests are in MODELS/tests/test_reinit.cpp.
     SUCCEED();
 }
 
