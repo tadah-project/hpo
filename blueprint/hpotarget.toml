@@ -233,10 +233,14 @@ doc = """\
 The keys of an optimiser: its LIB and ALGO, its stops and its settings. \
 They are valid in each block that configures an optimiser."""
 long_doc = """\
-A refusal of a key of the group when tadah hpo starts names the END line \
-of its optimiser. That is ENDOPTIMIZER for the STRATEGY-level optimiser, \
-whose keys are written in OPTIMIZER, STRATEGY or REFINE, and ENDEXPLORE \
-for the optimiser of the EXPLORE block."""
+A refusal of one key of the group names the line of that key: a STEP \
+the optimiser does not use or a STEP value out of range, a gradient-based \
+ALGO or a GRAD_STRATEGY beside a PC_LAMMPS or PC_FAILPROBE line, a \
+GRAD_STRATEGY NUMERICAL beside a PC_OBSERVABLE line. A refusal of a key when \
+tadah hpo starts, or of a combination of keys, names the END line of its \
+optimiser. That is ENDOPTIMIZER for the STRATEGY-level optimiser, whose \
+keys are written in OPTIMIZER, STRATEGY or REFINE, and ENDEXPLORE for the \
+optimiser of the EXPLORE block."""
 blocks = ["OPTIMIZER", "STRATEGY", "EXPLORE", "REFINE", "INNER"]
 leftover_msg = "{key} takes no further value here (unexpected '{tok}')"
 

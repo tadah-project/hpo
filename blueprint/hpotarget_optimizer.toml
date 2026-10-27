@@ -984,9 +984,12 @@ KEY (1) being one. The key is matched as written against the OPTIM keys, \
 which are upper case. Of two overrides of one search parameter the later \
 line wins. Without a fraction for every search parameter, the overrides \
 must cover each of them. The fraction and the keys are checked once the \
-whole file is read. A refusal names the ENDOPTIMIZER line, or the \
-ENDEXPLORE or ENDINNER line for the optimiser of that block; an optimiser \
-that does not use STEP is refused there too. An NLopt MLSL or AUGLAG hands \
+whole file is read. A refusal of a fraction names its STEP line, and one \
+of an override the line of the override; an optimiser that does not use \
+STEP is refused at the first STEP line of its block. Overrides that leave \
+a search parameter without a fraction are refused at the ENDOPTIMIZER \
+line, or the ENDEXPLORE or ENDINNER line for the optimiser of that block. \
+An NLopt MLSL or AUGLAG hands \
 its STEP to its local search: a STEP in its block replaces the STEP of its \
 INNER block, and hpo_run.log has a warning."""
 quirk = """\
@@ -1194,7 +1197,7 @@ args = [ { name = "n", kind = "integer", min = 0, max = "UINT64_MAX", what = "{k
 repeat = "error"
 repeat_msg = "SEED is set twice in the {block} block (first on line {first_line}); each key is given once"
 repeat_doc = "Once for each optimiser: a second line is refused, in the same block, in a second block of that type, or in another of OPTIMIZER, STRATEGY and REFINE, which set the same optimiser."
-default = { text = "Not set: each run takes a seed of its own, so two runs differ." }
+default = { text = "Not set: each run takes a seed of its own, so two runs differ. An NLopt algorithm that draws random numbers takes the SEED of its INIT block, else a seed drawn once for the run, which standard output and the journal give." }
 doc = """\
 The seed of the random numbers of the optimiser, for a reproducible \
 search. An optimiser that does not read SEED refuses it when tadah hpo \
@@ -1211,8 +1214,13 @@ a seed of its own or reads none. Restart r of the RESTART block runs the \
 optimiser with SEED + r times the number of starts (N_STARTS under \
 MULTISTART, TOPK under PRESTAGE, 1 under PLAIN), and the EXPLORE block \
 with its SEED + r. An INNER block refuses SEED: NLopt draws its local \
-search from the random numbers of the enclosing run. SEED inside an INIT \
-or RESTART block is another key, the seed of the starting points."""
+search from the random numbers of the enclosing run. An NLopt algorithm \
+reads SEED when it draws random numbers: GN_CRS2_LM, GN_ISRES, GN_ESCH, \
+GN_MLSL, GD_MLSL, G_MLSL, LN_PRAXIS, GD_STOGO_RAND, and GN_DIRECT_L_RAND \
+in two OPTIM dimensions or more; an MLSL_LDS or AUGLAG algorithm when its \
+local search draws them (an INNER block with LN_PRAXIS). The others draw \
+none and refuse it. SEED inside an INIT or RESTART block is another key, \
+the seed of the starting points."""
 checks = [
   { msg = "{phase}: {lib}:{algo} does not use SEED: it draws no random numbers; remove it", doc = "At startup, at the END line of its optimiser: an optimiser that does not read SEED, outside a PRESTAGE refinement." },
   { msg = "{phase}: {lib}:{algo} does not use SEED: in one OPTIM dimension it draws no random numbers (it draws them only to choose between equally long sides of a box); remove it", doc = "At startup, at the END line of its optimiser: NLOPT:GN_DIRECT_L_RAND in a search of one OPTIM dimension, outside a PRESTAGE refinement." },
@@ -1975,8 +1983,9 @@ from each of the first N_STARTS starting points of the INIT block."""
 long_doc = """\
 N_STARTS is 2 or more, and TYPE MULTISTART needs it: one start is TYPE \
 PLAIN. With fewer starting points than N_STARTS, the optimiser runs once \
-from each of them, with a warning. Another TYPE refuses N_STARTS when the \
-STRATEGY block ends."""
+from each of them, with a warning; with more, the points after the first \
+N_STARTS are not evaluated, and a startup warning says so. Another TYPE \
+refuses N_STARTS when the STRATEGY block ends."""
 
 [[key.examples]]
 wrap = "strategy"
@@ -2035,8 +2044,9 @@ doc = """\
 The evaluation budget of each start of STRATEGY TYPE MULTISTART, in place \
 of a share of MAXEVAL."""
 long_doc = """\
-An optimiser that runs every start in one run, such as DLIB:GFS, refuses \
-it at startup."""
+TYPE MULTISTART runs a local optimiser, which takes one starting point in \
+each start: an optimiser that takes every INIT point in one run \
+(DLIB:GFS) refuses TYPE MULTISTART."""
 
 [[key.examples]]
 wrap = "opt_multistart"
@@ -2123,18 +2133,19 @@ keys = ["STRATEGY.N_STARTS", "STRATEGY.BUDGET_PER_START"]
 doc = """\
 The STRATEGY-level optimiser runs once from each of the first N_STARTS \
 starting points of its INIT block, SEED + i for start i. An optimiser \
-that takes several starting points in one run, such as DLIB:GFS, runs \
-once with all of them."""
+that takes every INIT point in one run (DLIB:GFS), and a global optimiser \
+that takes one starting point, refuse it: STRATEGY TYPE PLAIN runs them \
+once."""
 
 [[strategy_type.checks]]
 msg = "STRATEGY TYPE MULTISTART cannot run {name}: it takes every INIT point in one run, so MULTISTART would run it once, whatever N_STARTS; STRATEGY TYPE PLAIN runs {name} once from every INIT point."
-doc = "At startup, at the ENDOPTIMIZER line: the optimiser does not take several starting points in one run."
+doc = "At startup, at the ENDOPTIMIZER line: an optimiser that takes every INIT point in one run (DLIB:GFS)."
 
 [[strategy_type.checks]]
 msg = "STRATEGY TYPE MULTISTART cannot run {name}: it is a global optimiser that consumes a single starting point, so restarting it from each INIT point is rejected for any N_STARTS. Use a local optimiser ({list}), or STRATEGY TYPE PLAIN to run {name} once."
 doc = """\
-At startup, at the ENDOPTIMIZER line: the optimiser is a local one; {list} \
-names them."""
+At startup, at the ENDOPTIMIZER line: a global optimiser that takes one \
+starting point; {list} names the local optimisers."""
 
 [[strategy_type.examples]]
 wrap = "strategy"
@@ -2486,8 +2497,12 @@ The seed of the RANDOM, LHS and SOBOL lines of the block. An NLopt \
 optimiser without a SEED of its own takes this seed too."""
 long_doc = """\
 Restart r of a RESTART block draws with SEED + r. A chain without RANDOM, \
-LHS or SOBOL does not use the seed, with a warning. SEED inside an \
-optimiser block is another key, the seed of the optimiser."""
+LHS or SOBOL does not use the seed, with a warning. Without SEED, an INIT \
+block whose chain draws its points draws them with a seed drawn once for \
+the run, which standard output and the journal give, so SEED with that \
+value draws the same points again; a RESTART block journals the seed of \
+its rounds. SEED inside an optimiser block is another key, the seed of \
+the optimiser."""
 
 [[key.examples]]
 wrap = "init"
