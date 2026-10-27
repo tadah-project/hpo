@@ -90,18 +90,13 @@ std::string analytical_loss_term_blocker(const HPOTargets& trg)
     return {};
 }
 
-namespace {
-
-/* Pairs of atoms the data need not hold, on which the walker shows what
- * the descriptors differentiate at all: for each pair of species of ATOM
- * of `ctx`, two atoms at each distance from `rcut` - 0.25 A down to 1 A
- * (rcut / 2 when that is less), 0.25 A apart, alone in a cubic cell of
- * side 3 rcut (no image within the cutoff), with its neighbour list at
- * `rcut`. Every cutoff up to `rcut` has such a pair within 1 A of it, where
- * Cut_PolyS and Cut_CosS depend on it. */
-mlip::StructureDB probe_pairs(const core::Context& ctx, double rcut)
+mlip::StructureDB probe_pairs(const core::Context& ctx,
+                              const models::DC_Selector& dcs)
 {
     mlip::StructureDB db;
+    const double rcut =
+        std::max(dcs.d2b ? dcs.d2b->get_rcut() : 0.0,
+                 dcs.dmb ? dcs.dmb->get_rcut() : 0.0);
     if (!(rcut > 0.0)) return db;
     std::vector<core::Element> species;
     for (std::size_t i = 0;; ++i) {
@@ -129,6 +124,8 @@ mlip::StructureDB probe_pairs(const core::Context& ctx, double rcut)
     }
     return db;
 }
+
+namespace {
 
 /* The labels of the descriptors of `dcs` (its two-body and its many-body
  * descriptor) that the walker claims `p` for in the energy rows of the
@@ -164,27 +161,6 @@ energy_rows_only_descriptors(const mlip::StructureDB& db,
     return out;
 }
 
-/* The cutoff functions of RCTYPE2B (for RCUT2B) or RCTYPEMB (for RCUTMB)
- * of `ctx` that depend on the cutoff only for a pair within 1 A of it,
- * once each in the order of their values: Cut_PolyS, Cut_CosS. */
-std::vector<std::string> near_cutoff_functions(const core::Context& ctx,
-                                               const std::string& key)
-{
-    std::vector<std::string> out;
-    const std::string rctype = key == "RCUT2B"   ? "RCTYPE2B"
-                               : key == "RCUTMB" ? "RCTYPEMB"
-                                                 : "";
-    if (rctype.empty()) return out;
-    for (std::size_t i = 0;; ++i) {
-        const auto f = ctx.stored_value(rctype, i);
-        if (!f) break;
-        if ((*f == "Cut_PolyS" || *f == "Cut_CosS") &&
-            std::find(out.begin(), out.end(), *f) == out.end())
-            out.push_back(*f);
-    }
-    return out;
-}
-
 }  // namespace
 
 std::vector<ParameterWithoutDerivative>
@@ -205,7 +181,7 @@ parameters_without_analytical_derivative(const core::Context& ctx,
     /* The force rows of the run: the fit's, or those PC_FRMSE measures. */
     const bool force_rows = train_force || (has_val && val_force);
 
-    /* Built for the first parameter without a derivative. */
+    /* Built for the first parameter whose rows the data do not claim. */
     std::optional<mlip::StructureDB> pairs;
 
     std::vector<ParameterWithoutDerivative> out;
@@ -217,33 +193,30 @@ parameters_without_analytical_derivative(const core::Context& ctx,
                     : ThetaClaims{};
         if (claims_differentiate(t, train_force, v, has_val, val_force))
             continue;
+        /* Rows the data do not claim are 0 when the descriptors
+         * differentiate the parameter at all (probe_pairs). */
+        if (!pairs) pairs = probe_pairs(ctx, probe.DCS);
+        const ThetaClaims o =
+            theta_claims(*pairs, probe.DCS, p, force_rows, n_cols);
+        if (claims_differentiate(t, train_force, v, has_val, val_force, o))
+            continue;
         ParameterWithoutDerivative g;
         g.key = p.theta_name;
         g.index = static_cast<std::size_t>(p.arg_pos);
         const auto it = trg.optimap.find(p.theta_name);
         if (it != trg.optimap.end() && p.token < it->second.line.size())
             g.line = it->second.line[p.token];
-        if (!pairs) {
-            const double rcut = std::max(
-                probe.DCS.d2b->get_rcut(),
-                probe.DCS.dmb ? probe.DCS.dmb->get_rcut() : 0.0);
-            pairs = probe_pairs(ctx, rcut);
-        }
-        const ThetaClaims o =
-            theta_claims(*pairs, probe.DCS, p, force_rows, n_cols);
         if (!o.energy) {
             g.why = ParameterWithoutDerivative::Why::NoDerivative;
-        } else if (force_rows && !o.force) {
+        } else {
+            /* The descriptors differentiate it, in the energy rows only:
+             * the force rows of the fit lack it, or those PC_FRMSE
+             * measures. */
             g.why = ParameterWithoutDerivative::Why::EnergyRowsOnly;
             g.descriptors =
                 energy_rows_only_descriptors(*pairs, probe.DCS, p, n_cols);
-            g.force_rows_of_fit = train_force;
-        } else {
-            g.why = ParameterWithoutDerivative::Why::NoPairInData;
-            g.training = !(t.energy && (!train_force || t.force));
-            g.validation =
-                has_val && !(v.energy && (!val_force || v.force));
-            g.near_cutoff = near_cutoff_functions(ctx, p.theta_name);
+            g.force_rows_of_fit = !claims_differentiate(
+                t, train_force, ThetaClaims{}, false, false, o);
         }
         out.push_back(std::move(g));
     }

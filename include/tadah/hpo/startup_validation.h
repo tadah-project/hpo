@@ -193,8 +193,8 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
  *  a block that obtains gradients, as validate_hpo_setup() takes it, needs
  *  an analytical derivative with respect to every search parameter: one
  *  the descriptors of the training configuration @p train_ctx do not
- *  differentiate on the training structures @p train and the validation
- *  structures @p val (parameters_without_analytical_derivative,
+ *  differentiate in the rows of the training structures @p train and the
+ *  validation structures @p val (parameters_without_analytical_derivative,
  *  analytical_gate.h) is refused at the line that closes the block, naming
  *  each such OPTIM line, why, and HYBRID: "OPTIMIZER block: GRAD_STRATEGY
  *  ANALYTICAL needs an analytical derivative with respect to every search
@@ -202,10 +202,10 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
  *  of the target file (no descriptor differentiates it). GRAD_STRATEGY
  *  HYBRID takes finite differences for it."; "... (DM_Blip differentiates
  *  it in the energy rows only, and FORCE true gives the fit force rows)";
- *  "... (at the values of the training configuration, no pair of atoms of
- *  the validation structures lies where the descriptors depend on it:
- *  Cut_PolyS depends on RCUT2B only for a pair within 1 A of the cutoff)".
- *  The data decide which pairs of atoms the descriptors see, so
+ *  "... and PC_FRMSE measures the forces of the validation structures)".
+ *  A parameter the descriptors differentiate has rows of 0 in structures
+ *  that hold no pair of atoms that depends on it, which the analytical
+ *  gradient forms. The data decide which rows the descriptors claim, so
  *  hpo_run() calls it once HPO_Host has read them (a check too), before
  *  any evaluation; validate_hpo_setup() has accepted the setup. */
 void require_analytical_parameters(const core::Context &train_ctx,

@@ -975,11 +975,13 @@ make_gradient_provider(const OptimizerSpec&     sp,
           }
           /* Otherwise the host does not say which cause applies; name them
            * all. The settings-level ones and a search parameter the
-           * descriptors do not differentiate on the data (analytical_gate.h)
-           * were refused at startup, so what is left is per point. Each
-           * parameter by its label, as the journal names it (KEY[n]). */
+           * descriptors do not differentiate in the rows of the run at the
+           * values of the training configuration (analytical_gate.h) were
+           * refused at startup, so what is left is per point. The strategy
+           * as the target file writes it, each parameter by its label, as
+           * the journal names it (KEY[n]). */
           std::ostringstream oss;
-          oss << "GRAD_STRATEGY=ANALYTICAL: no analytical gradient for "
+          oss << "GRAD_STRATEGY ANALYTICAL: no analytical gradient for "
               << needs_fd.size() << " parameter"
               << (needs_fd.size() == 1 ? "" : "s")
               << " at this point (";

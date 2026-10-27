@@ -471,10 +471,8 @@ std::string joined_with_and(const std::vector<std::string> &words) {
 /* Why the descriptors give no derivative with respect to the search
  * parameter `g`: "no descriptor differentiates it"; "DM_Blip
  * differentiates it in the energy rows only, and FORCE true gives the fit
- * force rows"; "at the values of the training configuration, no pair of
- * atoms of the validation structures lies where the descriptors depend on
- * it: Cut_PolyS depends on RCUT2B only for a pair within 1 A of the
- * cutoff". */
+ * force rows" ("... and PC_FRMSE measures the forces of the validation
+ * structures"). */
 std::string parameter_without_derivative_why(
     const ParameterWithoutDerivative &g) {
   using Why = ParameterWithoutDerivative::Why;
@@ -490,22 +488,8 @@ std::string parameter_without_derivative_why(
              " it in the energy rows only, and " +
              (g.force_rows_of_fit
                   ? "FORCE true gives the fit force rows"
-                  : "PC_FRMSE measures the forces of the validation set");
-    case Why::NoPairInData: {
-      std::string why =
-          "at the values of the training configuration, no pair of atoms of "
-          "the " +
-          std::string(g.training && g.validation
-                          ? "training or the validation structures"
-                      : g.training ? "training structures"
-                                   : "validation structures") +
-          " lies where the descriptors depend on it";
-      if (!g.near_cutoff.empty())
-        why += ": " + joined_with_and(g.near_cutoff) +
-               (g.near_cutoff.size() == 1 ? " depends" : " depend") + " on " +
-               g.key + " only for a pair within 1 A of the cutoff";
-      return why;
-    }
+                  : "PC_FRMSE measures the forces of the validation "
+                    "structures");
   }
   return {};
 }

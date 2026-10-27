@@ -818,7 +818,9 @@ using ObservableGradProvider =
  *  analytical path or hands it to finite differences (needs_fd), and the
  *  startup check of GRAD_STRATEGY ANALYTICAL
  *  (parameters_without_analytical_derivative, analytical_gate.h) applies
- *  the same rule to the data of the run.
+ *  the same rule to the data of the run. Rows that no pair of atoms of
+ *  the data claims are rows of 0 when the descriptors differentiate the
+ *  parameter on the pairs of probe_pairs() (analytical_gate.h).
  * ------------------------------------------------------------------- */
 struct ThetaClaims {
     bool energy = false;  // the walker claims the energy rows
@@ -864,14 +866,29 @@ theta_claims(const mlip::StructureDB&           stdb,
  * validation rows, when there are any (`has_val`), the energy claim and,
  * with forces measured (`val_force`, PC_FRMSE), the force claim. A
  * parameter claimed for the energy rows alone would get zero force rows,
- * a wrong gradient, so it goes to finite differences whole. */
+ * a wrong gradient, so it goes to finite differences whole.
+ * `descriptors` are the claims of the descriptors on pairs of atoms the
+ * data need not hold (probe_pairs, analytical_gate.h); default none, the
+ * data alone. A side whose structures hold no pair of atoms that depends
+ * on the parameter (no claim at all) has rows of 0 where the descriptors
+ * claim the energy rows. Force rows the data do not claim beside energy
+ * rows they claim are 0 where the descriptors claim the force rows: a
+ * many-body descriptor claims the energy rows of every atom, and its force
+ * rows only for a pair of atoms within its cutoff, which the structures
+ * need not hold. A descriptor whose derivatives cover the energy rows only
+ * makes the descriptors claim no force rows, so its parameter goes to
+ * finite differences whenever the run has force rows and the data claim
+ * the energy rows. */
 inline bool claims_differentiate(const ThetaClaims& train, bool train_force,
                                  const ThetaClaims& val, bool has_val,
-                                 bool val_force)
+                                 bool val_force,
+                                 const ThetaClaims& descriptors = {})
 {
-    const bool ok_train = train.energy && (!train_force || train.force);
-    const bool ok_val   = !has_val || (val.energy && (!val_force || val.force));
-    return ok_train && ok_val;
+    const auto rows = [&descriptors](const ThetaClaims& c, bool force) {
+        if (!c.energy && !c.force) return descriptors.energy;
+        return c.energy && (!force || c.force || descriptors.force);
+    };
+    return rows(train, train_force) && (!has_val || rows(val, val_force));
 }
 
 /* ------------------------------------------------------------------- *
@@ -1361,6 +1378,13 @@ compute_analytical_gradient_from_trainer(
     std::vector<std::vector<double>> dphi_train_buf(prefs.size());
     std::vector<std::vector<double>> dphi_val_buf  (prefs.size());
     std::vector<PerThetaInputs>      per_theta     (prefs.size());
+    /* The claims of the walker on the training and the validation
+     * structures, for the parameters whose rows the data do not claim in
+     * full (`unclaimed`): after the loop, the claims of the descriptors on
+     * probe_pairs() decide whether the rows they lack are 0. */
+    std::vector<ThetaClaims> train_claims(prefs.size());
+    std::vector<ThetaClaims> val_claims  (prefs.size());
+    std::vector<char>        unclaimed   (prefs.size(), 0);
 
     /* Per-theta loop is embarrassingly parallel: each iteration i writes to
      * its own dphi_train_buf[i] / dphi_val_buf[i] / per_theta[i] slot,
@@ -1494,11 +1518,18 @@ compute_analytical_gradient_from_trainer(
              * PC_OBSERVABLE-only run): there are no validation rows to
              * differentiate, so the val side has nothing to claim. The rule
              * is claims_differentiate(), which the startup check of
-             * GRAD_STRATEGY ANALYTICAL applies too. */
-            if (!claims_differentiate({ok_e_train, ok_f_train}, use_force,
-                                      {ok_e_val, ok_f_val},
-                                      val_stdb.size() > 0, use_frmse_val))
-                continue;     /* -> needs_fd */
+             * GRAD_STRATEGY ANALYTICAL applies too. Rows the data do not
+             * claim may be rows of 0: no pair of atoms of the structures
+             * depends on the parameter. The rows are formed below all the
+             * same (the walker wrote 0 where nothing claimed them), and
+             * after the loop the claims of the descriptors on
+             * probe_pairs() decide. */
+            train_claims[i] = {ok_e_train, ok_f_train};
+            val_claims[i]   = {ok_e_val, ok_f_val};
+            const bool claimed = claims_differentiate(
+                train_claims[i], use_force, val_claims[i],
+                val_stdb.size() > 0, use_frmse_val);
+            unclaimed[i] = claimed ? 0 : 1;
 
             /* Copy energy scratch rows into dphi_train_buf at the energy
              * row offsets and scale by w_e, the row factor of the fit. */
@@ -1535,8 +1566,10 @@ compute_analytical_gradient_from_trainer(
             /* Val force rows were written directly by the walker into the
              * interleaved positions -- no copy needed, and no weight scaling. */
 
-            per_theta[i].dPhi_train_aug = dphi_train_buf[i].data();
-            per_theta[i].dPhi_val       = dphi_val_buf  [i].data();
+            if (claimed) {
+                per_theta[i].dPhi_train_aug = dphi_train_buf[i].data();
+                per_theta[i].dPhi_val       = dphi_val_buf  [i].data();
+            }
 
             per_theta_ms[i] = ms(t_th_start, clk::now());
         } catch (...) {
@@ -1546,11 +1579,33 @@ compute_analytical_gradient_from_trainer(
     for (const auto& e : per_theta_errors)
         if (e) std::rethrow_exception(e);
 
+    /* A parameter whose rows the data do not claim in full: where no pair
+     * of atoms of the structures depends on it, its rows are 0, which the
+     * walker wrote, if the descriptors differentiate it at all -- on pairs
+     * of atoms the data need not hold (probe_pairs, built once). Otherwise
+     * (no descriptor differentiates it, or one in the energy rows only and
+     * the run has force rows) it stays on needs_fd. */
+    if (std::find(unclaimed.begin(), unclaimed.end(), 1) != unclaimed.end()) {
+        const mlip::StructureDB pairs = probe_pairs(ctx, host.DCS);
+        const bool force_rows =
+            use_force || (val_stdb.size() > 0 && use_frmse_val);
+        for (std::size_t i = 0; i < prefs.size(); ++i) {
+            if (!unclaimed[i]) continue;
+            const ThetaClaims descriptors =
+                theta_claims(pairs, host.DCS, prefs[i], force_rows, n_cols);
+            if (!claims_differentiate(train_claims[i], use_force,
+                                      val_claims[i], val_stdb.size() > 0,
+                                      use_frmse_val, descriptors))
+                continue;     /* -> needs_fd */
+            per_theta[i].dPhi_train_aug = dphi_train_buf[i].data();
+            per_theta[i].dPhi_val       = dphi_val_buf  [i].data();
+        }
+    }
+
     if (profile_grad) t_per_theta = clk::now();
 
-    /* Feed the scheduling cache for the next gradient call. Skipped theta
-     * (continue branches above) keep per_theta_ms[i] ~= 0 -- fine, they
-     * route to FD anyway and will sort to the tail next call. */
+    /* Feed the scheduling cache for the next gradient call: every theta
+     * records the time of its walk, a theta left on needs_fd too. */
     for (std::size_t i = 0; i < prefs.size(); ++i)
         theta_cost_cache[cost_key(prefs[i])] = per_theta_ms[i];
 
