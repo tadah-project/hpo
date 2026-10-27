@@ -974,18 +974,20 @@ make_gradient_provider(const OptimizerSpec&     sp,
             }
           }
           /* Otherwise the host does not say which cause applies; name them
-           * all. The settings-level ones (analytical_gate.h) were refused
-           * at startup, so what is left is per parameter or per point. */
+           * all. The settings-level ones and a search parameter the
+           * descriptors do not differentiate on the data (analytical_gate.h)
+           * were refused at startup, so what is left is per point. Each
+           * parameter by its label, as the journal names it (KEY[n]). */
           std::ostringstream oss;
           oss << "GRAD_STRATEGY=ANALYTICAL: no analytical gradient for "
               << needs_fd.size() << " parameter"
               << (needs_fd.size() == 1 ? "" : "s")
-              << " at this point (indices: [";
+              << " at this point (";
           for (std::size_t i = 0; i < needs_fd.size(); ++i) {
             if (i) oss << ", ";
-            oss << needs_fd[i];
+            oss << report.label(needs_fd[i]);
           }
-          oss << "]): a parameter without an analytical derivative, or a "
+          oss << "): a parameter without an analytical derivative, or a "
                  "loss term without an analytical derivative at this "
                  "point; GRAD_STRATEGY HYBRID fills these with finite "
                  "differences.";

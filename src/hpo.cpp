@@ -957,6 +957,12 @@ int hpo_run_from_startup(core::Context& ctx, HPOLog& log,
      * does, and creates no result file and no archive directory. */
     HPO_Host<V,R> host(ctx, trg, val,
                        check ? HostPurpose::Check : HostPurpose::Run);
+    /* GRAD_STRATEGY ANALYTICAL: every search parameter has an analytical
+     * derivative on the data the host has read, by the rule the analytical
+     * gradient routes a parameter by; one without is refused here, before
+     * any evaluation, not at the first gradient. */
+    require_analytical_parameters(host.master_context(), trg,
+                                  host.train_stdb(), host.val_stdb());
     /* This run's evaluations are numbered on from an earlier run's in the
      * process; the journal's milestones count this run's. */
     if (!check) log.set_eval_base(HPO_Host<V,R>::g_iter_value());

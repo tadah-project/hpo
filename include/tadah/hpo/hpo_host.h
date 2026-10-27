@@ -365,6 +365,12 @@ public:
      *  may run NN-finder on it; the host has already done so but the
      *  call is idempotent. */
     mlip::StructureDB&       train_stdb_mut()   { return train_stdb_; }
+    /** Read-only view of the validation StructureDB (empty without a
+     *  validation configuration), with its neighbour lists. */
+    const mlip::StructureDB& val_stdb() const { return val_stdb_; }
+    /** The training configuration the evaluations build their models
+     *  from (each adds its candidate's values). */
+    const core::Context&     master_context() const { return master_ctx_; }
 
     /** Report of load-time transforms applied to the training set during
      *  construction. */

@@ -784,6 +784,75 @@ using ObservableGradProvider =
     std::function<bool(std::vector<ObservableGradInput>& inputs)>;
 
 /* ------------------------------------------------------------------- *
+ *  ThetaClaims, theta_claims, claims_differentiate
+ *
+ *  Which rows of the design matrix the descriptors differentiate with
+ *  respect to one search parameter: the descriptor walker
+ *  (assemble_dphi_train_both_rows, dphi_dtheta_walk.h) claims a parameter
+ *  for the energy rows, and for the force rows, of the structures in
+ *  which a pair of atoms within a descriptor's cutoff has a closed-form
+ *  derivative with respect to it. claims_differentiate() is the rule by
+ *  which compute_analytical_gradient_from_trainer keeps a parameter on the
+ *  analytical path or hands it to finite differences (needs_fd), and the
+ *  startup check of GRAD_STRATEGY ANALYTICAL
+ *  (parameters_without_analytical_derivative, analytical_gate.h) applies
+ *  the same rule to the data of the run.
+ * ------------------------------------------------------------------- */
+struct ThetaClaims {
+    bool energy = false;  // the walker claims the energy rows
+    bool force  = false;  // ... and the force rows (when they were asked)
+};
+
+/* The claims of the descriptors of `dcs` for the parameter `p` on the
+ * structures of `stdb` (each with its neighbour list), the force rows
+ * only when `force`: the walker of the analytical gradient, run structure
+ * by structure until the claims asked for are found (a structure that
+ * claims every row asked for ends the walk). `n_cols` is the width of the
+ * design matrix (DC_Selector::descriptor_size()). */
+inline ThetaClaims
+theta_claims(const mlip::StructureDB&           stdb,
+             const tadah::models::DC_Selector& dcs,
+             const ParamRef&                   p,
+             bool                              force,
+             std::size_t                       n_cols)
+{
+    ThetaClaims c;
+    std::vector<double> energy_rows;
+    std::vector<double> force_rows;
+    for (std::size_t s = 0;
+         s < stdb.size() && !(c.energy && (!force || c.force)); ++s) {
+        mlip::StructureDB one;
+        one.add(stdb(s));
+        energy_rows.assign(n_cols, 0.0);
+        if (force) force_rows.assign(3 * stdb(s).natoms() * n_cols, 0.0);
+        const auto claimed = mlip::assemble_dphi_train_both_rows(
+            one, dcs, p.theta_name, p.arg_pos, energy_rows.data(),
+            force ? force_rows.data() : nullptr, n_cols,
+            /*force_row_start_per_struct=*/{0});
+        c.energy = c.energy || claimed.first;
+        c.force  = c.force  || claimed.second;
+    }
+    return c;
+}
+
+/* Whether the analytical gradient differentiates a parameter whose claims
+ * are `train` on the training structures and `val` on the validation
+ * structures: the training rows need the energy claim and, with force
+ * rows in the fit (`train_force`, FORCE true), the force claim; the
+ * validation rows, when there are any (`has_val`), the energy claim and,
+ * with forces measured (`val_force`, PC_FRMSE), the force claim. A
+ * parameter claimed for the energy rows alone would get zero force rows,
+ * a wrong gradient, so it goes to finite differences whole. */
+inline bool claims_differentiate(const ThetaClaims& train, bool train_force,
+                                 const ThetaClaims& val, bool has_val,
+                                 bool val_force)
+{
+    const bool ok_train = train.energy && (!train_force || train.force);
+    const bool ok_val   = !has_val || (val.energy && (!val_force || val.force));
+    return ok_train && ok_val;
+}
+
+/* ------------------------------------------------------------------- *
  *  compute_analytical_gradient_from_trainer
  *
  *  Free helper that takes a live, trained mlip::Trainer plus the
@@ -1390,8 +1459,8 @@ compute_analytical_gradient_from_trainer(
 
             /* Train-side ownership requires BOTH energy and (if FORCE) force
              * walkers to claim the theta. A descriptor that owns theta for
-             * energy but not yet for force (e.g. D2_LJ, D2_ZBL today: only
-             * calc_dDdtheta is implemented) would otherwise produce a
+             * energy but not for force (DM_Blip, DM_EAD: their derivatives
+             * cover the energy rows only) would otherwise produce a
              * dphi_train_aug with correct energy rows but zero force rows,
              * silently giving the IFT a wrong gradient. Force the whole
              * theta to needs_fd instead.
@@ -1399,14 +1468,15 @@ compute_analytical_gradient_from_trainer(
              * Val-side ownership: when use_frmse_val is true, both energy
              * and force walkers must claim the theta for val too -- same
              * argument applies (a missing val force walker would silently
-             * zero the dPhi_val force rows). */
-            /* No validation structures (a PC_OBSERVABLE-only run): there are
-             * no validation rows to differentiate, so the val side has nothing
-             * to claim. */
-            const bool ok_train = ok_e_train && (!use_force      || ok_f_train);
-            const bool ok_val   = val_stdb.size() == 0 ||
-                                  (ok_e_val && (!use_frmse_val || ok_f_val));
-            if (!ok_train || !ok_val) continue;     /* -> needs_fd */
+             * zero the dPhi_val force rows). No validation structures (a
+             * PC_OBSERVABLE-only run): there are no validation rows to
+             * differentiate, so the val side has nothing to claim. The rule
+             * is claims_differentiate(), which the startup check of
+             * GRAD_STRATEGY ANALYTICAL applies too. */
+            if (!claims_differentiate({ok_e_train, ok_f_train}, use_force,
+                                      {ok_e_val, ok_f_val},
+                                      val_stdb.size() > 0, use_frmse_val))
+                continue;     /* -> needs_fd */
 
             /* Copy energy scratch rows into dphi_train_buf at the energy
              * row offsets and scale by w_e, the row factor of the fit. */
