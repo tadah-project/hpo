@@ -1018,8 +1018,10 @@ TEST_CASE("startup validation: FAILSCORE_GRADING ON needs a finite FAILSCORE",
     ctx.add("DBFILE", "dummy.db");
     HPOTargets trg(ctx, tf.path.string());
     REQUIRE_THROWS_WITH(validate_hpo_setup(ctx, trg, true, true),
-                        Catch::Contains("FAILSCORE_GRADING ON requires a "
-                                        "finite positive FAILSCORE"));
+                        Catch::Contains("FAILSCORE_GRADING ON grades "
+                                        "failures in bands below FAILSCORE, "
+                                        "which needs a FAILSCORE above 0 and "
+                                        "below 1e300"));
   }
   SECTION("a finite FAILSCORE passes") {
     ScopedTempFile tf(head + "FAILSCORE 1e9\n" + kOptimizerBlock);

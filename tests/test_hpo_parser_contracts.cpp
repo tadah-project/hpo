@@ -947,7 +947,7 @@ std::string attr_extra(const KeyHome& h, const std::string& tok)
 
 std::string single_extra(const KeyHome& h, const std::string& tok)
 {
-    return h.at() + h.key + " takes a single value (unexpected '" + tok + "')";
+    return h.at() + h.key + " takes one value (unexpected '" + tok + "')";
 }
 
 /* Tokens no integer key accepts. */
@@ -2138,19 +2138,20 @@ TEST_CASE("Strict numbers: a PC_LAMMPS option takes only its own values",
     struct Case { std::string options, message; };
     const std::vector<Case> cases = {
         {vl + "--maxtime 1:30 00",
-         "--maxtime takes a single value (unexpected '00')"},
+         "PC_LAMMPS --maxtime takes one value (unexpected '00')"},
         {vl + "--failscore 100 5",
-         "--failscore takes a single value (unexpected '5')"},
+         "PC_LAMMPS --failscore takes one value (unexpected '5')"},
         {vl + "--outvar F extra",
-         "--outvar takes a single value (unexpected 'extra')"},
+         "PC_LAMMPS --outvar takes one value (unexpected 'extra')"},
         {vl + "--invar x 1 2",
-         "--invar takes <name> <value> (unexpected '2')"},
+         "PC_LAMMPS --invar takes <name> <value> (unexpected '2')"},
         {vl + "--hotvar a0 2.5 4.5 3.3 9",
-         "--hotvar takes <name> <min> <max> [<initial>] (unexpected '9')"},
+         "PC_LAMMPS --hotvar takes <name> <min> <max> [<initial>] "
+         "(unexpected '9')"},
         {vl + "--failvar F 0.5 7",
-         "--failvar takes <name> [<scale>] (unexpected '7')"},
+         "PC_LAMMPS --failvar takes <name> [<scale>] (unexpected '7')"},
         {"extra --varloss E 8.1 1",
-         "--script takes a single value (unexpected 'extra')"},
+         "PC_LAMMPS --script takes one value (unexpected 'extra')"},
     };
     for (const auto& c : cases) {
         INFO(c.options);
@@ -3109,9 +3110,9 @@ TEST_CASE("tadah refit: a stage OPTIMIZER block rejects the keys the stage "
                                    "ENDOPTIMIZER"),
                Catch::StartsWith("FUSE: SEED is not accepted in a tadah refit "
                                  "OPTIMIZER block") &&
-               Catch::EndsWith("refit's random numbers come from "
-                               "REFIT_COMPACT_SEED: REFIT_COMPACT_SEED in the "
-                               "training configuration seeds the refit."));
+               Catch::EndsWith(": REFIT_COMPACT_SEED in the refit "
+                               "configuration seeds the refit's random "
+                               "numbers"));
     CHECK_THAT(refit_error("REFINE", "OPTIMIZER LIB CERES ALGO LM FTOL_ABS "
                                      "1e-12 ENDOPTIMIZER"),
                Catch::StartsWith("REFINE: FTOL_ABS is not supported") &&
@@ -3339,16 +3340,16 @@ TEST_CASE("tadah refit: a stage block that runs an optimiser names the "
              {"EXPLORE", "OPTIMIZER LIB NLOPT ALGO GN_MLSL_LDS MAXEVAL 100 "
                          "INNER LIB NLOPT ALGO NONE ENDINNER ENDOPTIMIZER",
               "EXPLORE INNER: LIB has no effect with ALGO NONE (no local "
-              "search runs); remove LIB"},
+              "search runs)"},
              {"EXPLORE", "OPTIMIZER LIB NLOPT ALGO NONE ENDOPTIMIZER",
               "EXPLORE: LIB has no effect with ALGO NONE (no global search "
-              "runs); remove LIB"},
+              "runs)"},
              {"REFINE", "OPTIMIZER LIB CERES ALGO NONE ENDOPTIMIZER",
               "REFINE: LIB has no effect with ALGO NONE (the stage is "
-              "skipped); remove LIB"},
+              "skipped)"},
              {"FUSE", "OPTIMIZER LIB CERES ALGO NONE ENDOPTIMIZER",
               "FUSE: LIB has no effect with ALGO NONE (the stage is "
-              "skipped); remove LIB"}}) {
+              "skipped)"}}) {
         INFO(n.key << ": " << n.body);
         CHECK(refit_error(n.key, n.body) == n.message);
     }
@@ -3371,7 +3372,7 @@ TEST_CASE("tadah refit: a stage block that runs an optimiser names the "
         CHECK(refit_error("EXPLORE", "OPTIMIZER LIB " + lib +
                                          " ALGO UNIFORM ENDOPTIMIZER") ==
               "EXPLORE: LIB has no effect with ALGO UNIFORM (no global search "
-              "runs); remove LIB");
+              "runs)");
     }
 
     /* An ALGO the stage does not run is still named with the stage's
@@ -3419,8 +3420,7 @@ TEST_CASE("tadah refit: ALGO GN_MLSL, GN_DIRECT and GN_CRS2 are refused, "
                                                  algo +
                                                  " MAXEVAL 100 ENDOPTIMIZER") ==
                       "EXPLORE: ALGO " + algo + " is not run by tadah refit (" +
-                          r.what + "); its " + r.short_name + " is " + r.runs +
-                          ": set ALGO " + r.runs);
+                          r.what + "); its " + r.short_name + " is " + r.runs);
             }
         }
         /* The algorithm the refit runs, and its short name, stay. */
@@ -3525,34 +3525,34 @@ TEST_CASE("tadah refit: a key that has no effect with ALGO NONE or UNIFORM "
     for (const auto& c : std::vector<Case>{
              {"EXPLORE", "OPTIMIZER ALGO UNIFORM MAXEVAL 100 ENDOPTIMIZER",
               "EXPLORE: MAXEVAL has no effect with ALGO UNIFORM (no global "
-              "search runs); remove MAXEVAL"},
+              "search runs)"},
              {"EXPLORE", "OPTIMIZER ALGO NONE MAXEVAL 100 ENDOPTIMIZER",
               "EXPLORE: MAXEVAL has no effect with ALGO NONE (no global "
-              "search runs); remove MAXEVAL"},
+              "search runs)"},
              {"EXPLORE", "OPTIMIZER MAXEVAL 100 ALGO uniform ENDOPTIMIZER",
               "EXPLORE: MAXEVAL has no effect with ALGO UNIFORM (no global "
-              "search runs); remove MAXEVAL"},
+              "search runs)"},
              {"REFINE", "OPTIMIZER ALGO NONE MAXEVAL 100 ENDOPTIMIZER",
               "REFINE: MAXEVAL has no effect with ALGO NONE (the stage is "
-              "skipped); remove MAXEVAL"},
+              "skipped)"},
              {"REFINE", "OPTIMIZER ALGO NONE MAXITER 100 ENDOPTIMIZER",
               "REFINE: MAXITER has no effect with ALGO NONE (the stage is "
-              "skipped); remove MAXITER"},
+              "skipped)"},
              {"REFINE", "OPTIMIZER ALGO NONE FTOL_REL 1e-12 ENDOPTIMIZER",
               "REFINE: FTOL_REL has no effect with ALGO NONE (the stage is "
-              "skipped); remove FTOL_REL"},
+              "skipped)"},
              {"REFINE", "OPTIMIZER ALGO NONE GTOL 1e-12 ENDOPTIMIZER",
               "REFINE: GTOL has no effect with ALGO NONE (the stage is "
-              "skipped); remove GTOL"},
+              "skipped)"},
              {"FUSE", "OPTIMIZER ALGO NONE MAXITER 100 ENDOPTIMIZER",
               "FUSE: MAXITER has no effect with ALGO NONE (the stage is "
-              "skipped); remove MAXITER"},
+              "skipped)"},
              {"FUSE", "OPTIMIZER ALGO NONE FTOL_REL 1e-12 ENDOPTIMIZER",
               "FUSE: FTOL_REL has no effect with ALGO NONE (the stage is "
-              "skipped); remove FTOL_REL"},
+              "skipped)"},
              {"FUSE", "OPTIMIZER ALGO NONE GTOL 1e-12 ENDOPTIMIZER",
               "FUSE: GTOL has no effect with ALGO NONE (the stage is "
-              "skipped); remove GTOL"}}) {
+              "skipped)"}}) {
         INFO(c.key << ": " << c.body);
         CHECK(refit_error(c.key, c.body) == c.message);
     }
@@ -3579,7 +3579,7 @@ TEST_CASE("tadah refit: a key that has no effect with ALGO NONE or UNIFORM "
                                              " INNER ALGO NONE " + kv +
                                              " ENDINNER ENDOPTIMIZER") ==
                   "EXPLORE INNER: " + key + " has no effect with ALGO NONE (no "
-                  "local search runs); remove " + key);
+                  "local search runs)");
         }
     }
     CHECK(refit_error("EXPLORE", "OPTIMIZER LIB NLOPT ALGO GN_MLSL_LDS "
@@ -3596,8 +3596,8 @@ TEST_CASE("tadah refit: a key that has no effect with ALGO NONE or UNIFORM "
         "REFINE", "OPTIMIZER ALGO NONE MAXITER 100 FTOL_REL 1e-12 GTOL 1e-12 "
                   "ENDOPTIMIZER"};
     const std::string skipped =
-        "REFINE: MAXITER has no effect with ALGO NONE (the stage is skipped); "
-        "remove MAXITER";
+        "REFINE: MAXITER has no effect with ALGO NONE (the stage is "
+        "skipped)";
     CHECK(refit_stages_error({refine_none}, "curve") == skipped);
     CHECK(refit_stages_error({refine_none, {"FUSE", "OPTIMIZER LIB CERES ALGO "
                                                     "LM ENDOPTIMIZER"}},
@@ -3646,41 +3646,41 @@ TEST_CASE("tadah refit: a key the block's ALGO does not read is rejected",
              {"REFINE", "OPTIMIZER LIB NLOPT ALGO LD_LBFGS GTOL 1e-3 "
                         "ENDOPTIMIZER",
               "REFINE: GTOL has no effect with ALGO LD_LBFGS (it reads "
-              "MAXEVAL, FTOL_REL); remove GTOL"},
+              "MAXEVAL, FTOL_REL)"},
              {"REFINE", "OPTIMIZER LIB DLIB ALGO LBFGS GTOL 1e-3 "
                         "ENDOPTIMIZER",
               "REFINE: GTOL has no effect with ALGO LBFGS (it reads MAXEVAL, "
-              "FTOL_ABS); remove GTOL"},
+              "FTOL_ABS)"},
              {"EXPLORE", crs2 + "LIB DLIB ALGO LBFGS MAXEVAL 40 XTOL_REL "
                                 "1e-3 ENDINNER ENDOPTIMIZER",
               "EXPLORE INNER: XTOL_REL has no effect with ALGO LBFGS (it "
-              "reads MAXEVAL, FTOL_ABS); remove XTOL_REL"},
+              "reads MAXEVAL, FTOL_ABS)"},
              {"REFINE", "OPTIMIZER LIB NLOPT ALGO LD_LBFGS MAXITER 20 "
                         "ENDOPTIMIZER",
               "REFINE: MAXITER counts Ceres iterations; ALGO LD_LBFGS "
-              "counts objective evaluations: write MAXEVAL"},
+              "counts objective evaluations, which MAXEVAL limits"},
              {"REFINE", "OPTIMIZER LIB DLIB ALGO lbfgs MAXITER 20 "
                         "ENDOPTIMIZER",
               "REFINE: MAXITER counts Ceres iterations; ALGO LBFGS counts "
-              "objective evaluations: write MAXEVAL"},
+              "objective evaluations, which MAXEVAL limits"},
              {"REFINE", "OPTIMIZER LIB DLIB ALGO LBFGS FTOL_REL 1e-9 "
                         "ENDOPTIMIZER",
               "REFINE: FTOL_REL has no effect with ALGO LBFGS: dlib's L-BFGS "
-              "stops on an absolute change of the objective; write "
-              "FTOL_ABS"},
+              "stops on an absolute change of the objective, which "
+              "FTOL_ABS sets"},
              {"EXPLORE", crs2 + "LIB DLIB ALGO LBFGS FTOL_REL 1e-9 ENDINNER "
                                 "ENDOPTIMIZER",
               "EXPLORE INNER: FTOL_REL has no effect with ALGO LBFGS: dlib's "
-              "L-BFGS stops on an absolute change of the objective; write "
-              "FTOL_ABS"},
+              "L-BFGS stops on an absolute change of the objective, which "
+              "FTOL_ABS sets"},
              {"REFINE", "OPTIMIZER LIB NLOPT ALGO LD_LBFGS FTOL_ABS 1e-9 "
                         "ENDOPTIMIZER",
               "REFINE: FTOL_ABS has no effect with ALGO LD_LBFGS (it reads "
-              "MAXEVAL, FTOL_REL); remove FTOL_ABS"},
+              "MAXEVAL, FTOL_REL)"},
              {"EXPLORE", crs2 + "LIB NLOPT ALGO LN_SBPLX FTOL_ABS 1e-9 "
                                 "ENDINNER ENDOPTIMIZER",
               "EXPLORE INNER: FTOL_ABS has no effect with ALGO LN_SBPLX (it "
-              "reads MAXEVAL, FTOL_REL, XTOL_REL); remove FTOL_ABS"},
+              "reads MAXEVAL, FTOL_REL, XTOL_REL)"},
              {"EXPLORE", mlsl + "LIB DLIB ALGO LBFGS GTOL 1e-9 ENDINNER "
                                 "ENDOPTIMIZER",
               "EXPLORE INNER: GTOL is not used by a tadah refit stage (it "
@@ -3691,25 +3691,25 @@ TEST_CASE("tadah refit: a key the block's ALGO does not read is rejected",
              {"EXPLORE", crs2 + "ALGO NONE FTOL_ABS 1e-9 ENDINNER "
                                 "ENDOPTIMIZER",
               "EXPLORE INNER: FTOL_ABS has no effect with ALGO NONE (no "
-              "local search runs); remove FTOL_ABS"},
+              "local search runs)"},
              {"EXPLORE", mlsl + "ALGO NONE FTOL_ABS 1e-9 ENDINNER "
                                 "ENDOPTIMIZER",
               "EXPLORE INNER: FTOL_ABS has no effect with ALGO NONE (no "
               "local search runs; under ALGO GN_MLSL_LDS the block sets "
               "MLSL's local LN_SBPLX searches, which read MAXEVAL, "
-              "FTOL_REL, XTOL_REL); remove FTOL_ABS"},
+              "FTOL_REL, XTOL_REL)"},
              {"EXPLORE", "OPTIMIZER LIB NLOPT ALGO mlsl MAXEVAL 100 INNER "
                          "ALGO none FTOL_ABS 1e-9 ENDINNER ENDOPTIMIZER",
               "EXPLORE INNER: FTOL_ABS has no effect with ALGO NONE (no "
               "local search runs; under ALGO MLSL the block sets MLSL's "
               "local LN_SBPLX searches, which read MAXEVAL, FTOL_REL, "
-              "XTOL_REL); remove FTOL_ABS"},
+              "XTOL_REL)"},
              /* An NLopt INNER search reads what LN_SBPLX reads: the message
               * gives its own keys. */
              {"EXPLORE", mlsl + "LIB NLOPT ALGO LN_SBPLX FTOL_ABS 1e-9 "
                                 "ENDINNER ENDOPTIMIZER",
               "EXPLORE INNER: FTOL_ABS has no effect with ALGO LN_SBPLX (it "
-              "reads MAXEVAL, FTOL_REL, XTOL_REL); remove FTOL_ABS"},
+              "reads MAXEVAL, FTOL_REL, XTOL_REL)"},
              /* A Ceres ALGO keeps the pointer to FTOL_REL. */
              {"REFINE", "OPTIMIZER LIB CERES ALGO LM FTOL_ABS 1e-12 "
                         "ENDOPTIMIZER",
@@ -3836,8 +3836,9 @@ TEST_CASE("tadah refit: ENABLED false with an OPTIMIZER block is rejected",
      * skipped with only a WARNING that the configured optimiser is
      * ignored), so every rejecting case returns "". */
     const std::string tail =
-        " skips the stage, so its OPTIMIZER block has no effect; ALGO NONE in "
-        "the OPTIMIZER block switches the stage off";
+        " skips the stage, so its OPTIMIZER block has no effect; ENABLED "
+        "false without the block, or ALGO NONE in the block without ENABLED "
+        "false, switches the stage off";
     for (const std::string stage : {"REFINE", "FUSE"}) {
         for (const std::string body :
              {"ENABLED false OPTIMIZER LIB CERES ALGO LM ENDOPTIMIZER",

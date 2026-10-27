@@ -669,7 +669,8 @@ TEST_CASE("Density gates: startup refusals and seed checks",
                                   "4.4025 A, rho_max 5.0036e-01, rel -3.9903e-01 < "
                                   "-tol = -1.0000e-05 on [0.8250, 5.5000] A (20001 "
                                   "points), v = 4.4515e-01.") &&
-                      Catch::Contains("add SEED WARN"));
+                      Catch::Contains("evaluated as a rejected start "
+                                      "under SEED WARN"));
     Journal j;
     CHECK(gates_error(bad, "OPTIM AMPGRIDMB (3) -0.5 0.5\nRHOGATE 1e-5 SEED WARN\n" +
                                tail) == "");

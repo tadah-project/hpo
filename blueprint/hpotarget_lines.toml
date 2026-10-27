@@ -280,25 +280,25 @@ error = "Invalid index number 'a'"
 [[key.invalid]]
 wrap = "lines_metric"
 text = "PC_ERMSE (1 2 1"
-error = "Unmatched opening parenthesis in index selector"
+error = "PC_ERMSE: the indices have no closing parenthesis"
 msg_of = "OPTIM"
 
 [[key.invalid]]
 wrap = "lines_metric"
 text = "PC_ERMSE () 2 1"
-error = "Empty index selector"
+error = "PC_ERMSE: the parentheses hold no index"
 msg_of = "OPTIM"
 
 [[key.invalid]]
 wrap = "lines_metric"
 text = "PC_ERMSE ((1) 2 1"
-error = "Nested parentheses in index selector"
+error = "PC_ERMSE: the indices hold another opening parenthesis"
 msg_of = "OPTIM"
 
 [[key.invalid]]
 wrap = "lines_metric"
 text = "PC_ERMSE (1)2 1"
-error = "Expected whitespace after (indices)"
+error = "PC_ERMSE: a space follows the closing parenthesis of the indices"
 msg_of = "OPTIM"
 
 [[key.invalid]]
@@ -1331,7 +1331,7 @@ option = "--script"
 lines = ["PC_LAMMPS", "PC_FAILPROBE"]
 synopsis = "--script <file>"
 repeat = "error"
-repeat_msg = "--script is given twice on this line; each option is given once"
+repeat_msg = "{key} --script is given twice on this line; each option is given once"
 doc = """\
 The LAMMPS script of the line, a path relative to the working directory \
 of the run. The line requires it."""
@@ -1359,12 +1359,12 @@ error = "PC_LAMMPS --script takes one value, the LAMMPS script file"
 [[line_option.invalid]]
 wrap = "root"
 text = "PC_LAMMPS --script lines_pc.in lines_pc2.in --varloss E 1 1"
-error = "--script takes a single value (unexpected 'lines_pc2.in')"
+error = "PC_LAMMPS --script takes one value (unexpected 'lines_pc2.in')"
 
 [[line_option.invalid]]
 wrap = "root"
 text = "PC_LAMMPS --script lines_pc.in --script lines_pc2.in --varloss E 1 1"
-error = "--script is given twice on this line; each option is given once"
+error = "PC_LAMMPS --script is given twice on this line; each option is given once"
 
 
 [[line_option]]
@@ -1406,15 +1406,15 @@ optional = true
 doc = "A loss function of LOSS, in any case, and its parameter."
 
 [[line_option.checks]]
-msg = "--varloss: missing <name>"
+msg = "{key} --varloss takes <name> <target> <weight> (the name is missing)"
 doc = "No variable name follows the option."
 
 [[line_option.checks]]
-msg = "--varloss {name}: missing <target>"
+msg = "{key} --varloss takes <name> <target> <weight> ({name} has no target)"
 doc = "No target follows the name."
 
 [[line_option.checks]]
-msg = "--varloss {name}: missing <weight>"
+msg = "{key} --varloss takes <name> <target> <weight> ({name} has no weight)"
 doc = "No weight follows the target."
 
 [[line_option.checks]]
@@ -1437,17 +1437,17 @@ text = "PC_LAMMPS --script lines_pc.in --varloss E -5.0 1.0 tukey 2"
 [[line_option.invalid]]
 wrap = "root"
 text = "PC_LAMMPS --script lines_pc.in --varloss"
-error = "--varloss: missing <name>"
+error = "PC_LAMMPS --varloss takes <name> <target> <weight> (the name is missing)"
 
 [[line_option.invalid]]
 wrap = "root"
 text = "PC_LAMMPS --script lines_pc.in --varloss E"
-error = "--varloss E: missing <target>"
+error = "PC_LAMMPS --varloss takes <name> <target> <weight> (E has no target)"
 
 [[line_option.invalid]]
 wrap = "root"
 text = "PC_LAMMPS --script lines_pc.in --varloss E 1"
-error = "--varloss E: missing <weight>"
+error = "PC_LAMMPS --varloss takes <name> <target> <weight> (E has no weight)"
 
 [[line_option.invalid]]
 wrap = "root"
@@ -1530,7 +1530,7 @@ msg = "{key} --invar maxtime: the variable maxtime is reserved: tadah hpo passes
 doc = "The variable is maxtime."
 
 [[line_option.checks]]
-msg = "--invar takes <name> <value> (unexpected '{tok}')"
+msg = "{key} --invar takes <name> <value> (unexpected '{tok}')"
 doc = "At the line: a token after the value that is no option."
 
 [[line_option.checks]]
@@ -1548,7 +1548,7 @@ error = "PC_LAMMPS --invar takes two values, the name of a LAMMPS variable and i
 [[line_option.invalid]]
 wrap = "root"
 text = "PC_LAMMPS --script lines_pc.in --varloss E 1 1 --invar a 1 2"
-error = "--invar takes <name> <value> (unexpected '2')"
+error = "PC_LAMMPS --invar takes <name> <value> (unexpected '2')"
 
 [[line_option.invalid]]
 wrap = "root"
@@ -1597,7 +1597,7 @@ error = "PC_LAMMPS --outvar takes one value, the name of a LAMMPS variable"
 [[line_option.invalid]]
 wrap = "root"
 text = "PC_LAMMPS --script lines_pc.in --varloss E 1 1 --outvar S T"
-error = "--outvar takes a single value (unexpected 'T')"
+error = "PC_LAMMPS --outvar takes one value (unexpected 'T')"
 
 [[line_option]]
 id = "PC_LAMMPS.--failscore"
@@ -1605,7 +1605,7 @@ option = "--failscore"
 lines = ["PC_LAMMPS", "PC_FAILPROBE"]
 synopsis = "--failscore <value>"
 repeat = "error"
-repeat_msg = "--failscore is given twice on this line; each option is given once"
+repeat_msg = "{key} --failscore is given twice on this line; each option is given once"
 default = { text = "the FAILSCORE of the lines read before the line; the largest double without one" }
 doc = """\
 The value the variables of the line take when its script fails. On a \
@@ -1651,17 +1651,17 @@ error = "PC_FAILPROBE --failscore must be a positive finite number, got '0'"
 [[line_option.invalid]]
 wrap = "root"
 text = "PC_LAMMPS --script lines_pc.in --varloss E 1 1 --failscore 3 7"
-error = "--failscore takes a single value (unexpected '7')"
+error = "PC_LAMMPS --failscore takes one value (unexpected '7')"
 
 [[line_option.invalid]]
 wrap = "root"
 text = "PC_FAILPROBE --script lines_pc.in --outvar S --failscore 3 7"
-error = "--failscore takes a single value (unexpected '7')"
+error = "PC_FAILPROBE --failscore takes one value (unexpected '7')"
 
 [[line_option.invalid]]
 wrap = "root"
 text = "PC_LAMMPS --script lines_pc.in --varloss E 1 1 --failscore 3 --failscore 4"
-error = "--failscore is given twice on this line; each option is given once"
+error = "PC_LAMMPS --failscore is given twice on this line; each option is given once"
 
 
 [[line_option]]
@@ -1670,7 +1670,7 @@ option = "--maxtime"
 lines = ["PC_LAMMPS", "PC_FAILPROBE"]
 synopsis = "--maxtime <time>"
 repeat = "error"
-repeat_msg = "--maxtime is given twice on this line; each option is given once"
+repeat_msg = "{key} --maxtime is given twice on this line; each option is given once"
 default = { text = "the PC_SCRIPT_TIMEOUT (or MAXTIME) of the lines read before the line; off without one" }
 doc = """\
 The wall-clock limit of the script of the line: off, unlimited or a \
@@ -1721,12 +1721,12 @@ error = "--maxtime is too large for the worker deadline, got '1e20' (the PC_ISOL
 [[line_option.invalid]]
 wrap = "root"
 text = "PC_LAMMPS --script lines_pc.in --varloss E 1 1 --maxtime 1:30 00"
-error = "--maxtime takes a single value (unexpected '00')"
+error = "PC_LAMMPS --maxtime takes one value (unexpected '00')"
 
 [[line_option.invalid]]
 wrap = "root"
 text = "PC_LAMMPS --script lines_pc.in --varloss E 1 1 --maxtime 1:30 --maxtime 2:00"
-error = "--maxtime is given twice on this line; each option is given once"
+error = "PC_LAMMPS --maxtime is given twice on this line; each option is given once"
 
 
 [[line_option]]
@@ -1780,7 +1780,7 @@ msg = "--hotvar {name}: <max> must exceed <min>"
 doc = "<max> is not greater than <min>."
 
 [[line_option.checks]]
-msg = "--hotvar takes <name> <min> <max> [<initial>] (unexpected '{tok}')"
+msg = "{key} --hotvar takes <name> <min> <max> [<initial>] (unexpected '{tok}')"
 doc = "At the line: a token after the initial value that is no option."
 
 [[line_option.checks]]
@@ -1822,7 +1822,7 @@ error = "--hotvar a <initial> must be a finite number, got 'x'"
 [[line_option.invalid]]
 wrap = "root"
 text = "PC_LAMMPS --script lines_pc.in --varloss E 1 1 --hotvar a 1 2 1.5 7"
-error = "--hotvar takes <name> <min> <max> [<initial>] (unexpected '7')"
+error = "PC_LAMMPS --hotvar takes <name> <min> <max> [<initial>] (unexpected '7')"
 
 [[line_option.invalid]]
 wrap = "root"
@@ -1879,7 +1879,7 @@ msg = "--failvar: <name> must be a non-empty identifier"
 doc = "The name starts with - and is not a number."
 
 [[line_option.checks]]
-msg = "--failvar takes <name> [<scale>] (unexpected '{tok}')"
+msg = "{key} --failvar takes <name> [<scale>] (unexpected '{tok}')"
 doc = "At the line: a token after the scale that is no option."
 
 [[line_option.checks]]
@@ -1921,7 +1921,7 @@ error = "--failvar V <scale> must be a positive number, got '0'"
 [[line_option.invalid]]
 wrap = "root"
 text = "PC_LAMMPS --script lines_pc.in --varloss E 1 1 --failvar V 0.5 7"
-error = "--failvar takes <name> [<scale>] (unexpected '7')"
+error = "PC_LAMMPS --failvar takes <name> [<scale>] (unexpected '7')"
 
 [[line_option.invalid]]
 wrap = "root"
@@ -2125,7 +2125,7 @@ error = "PC_FAILPROBE --gate is given twice on this line; each option is given o
 wrap = "root"
 doc = "A word after the value, which no option takes: it is named with --gate."
 text = "PC_FAILPROBE --script lines_pc.in --outvar S --gate 1 stray"
-error = "--gate takes a single value (unexpected 'stray')"
+error = "PC_FAILPROBE --gate takes one value (unexpected 'stray')"
 
 
 [[line_option]]
@@ -2181,7 +2181,7 @@ error = "PC_FAILPROBE --s0 is given twice on this line; each option is given onc
 wrap = "root"
 doc = "A word after the value, which no option takes: it is named with --s0."
 text = "PC_FAILPROBE --script lines_pc.in --outvar S --s0 1 stray"
-error = "--s0 takes a single value (unexpected 'stray')"
+error = "PC_FAILPROBE --s0 takes one value (unexpected 'stray')"
 
 [[line_option.invalid]]
 wrap = "root"
@@ -3287,27 +3287,27 @@ msg = "Failed to read key from input."
 doc = "The line has no key."
 
 [[optim.checks]]
-msg = "Expected (indices)"
+msg = "{what}: the key is followed by its indices in parentheses, such as {what} (1)"
 doc = "No index list in parentheses follows the key."
 
 [[optim.checks]]
-msg = "Unmatched opening parenthesis in index selector"
+msg = "{what}: the indices have no closing parenthesis"
 doc = "The index list has no closing parenthesis."
 
 [[optim.checks]]
-msg = "Nested parentheses in index selector"
+msg = "{what}: the indices hold another opening parenthesis"
 doc = "The index list holds an opening parenthesis."
 
 [[optim.checks]]
-msg = "Empty index selector"
+msg = "{what}: the parentheses hold no index"
 doc = "The parentheses hold no index."
 
 [[optim.checks]]
-msg = "Expected whitespace after (indices)"
+msg = "{what}: a space follows the closing parenthesis of the indices"
 doc = "A token is joined to the closing parenthesis."
 
 [[optim.checks]]
-msg = "Only one (indices) selector is accepted"
+msg = "{what}: the line takes one list of indices in parentheses (unexpected '{tok}')"
 doc = "A token after the index list holds a parenthesis."
 
 [[optim.checks]]
@@ -3432,36 +3432,36 @@ error = "Failed to read key from input."
 [[optim.invalid]]
 wrap = "root"
 text = "OPTIM CGRID2B 2 1.5 2.5"
-error = "Expected (indices)"
+error = "OPTIM CGRID2B: the key is followed by its indices in parentheses, such as OPTIM CGRID2B (1)"
 
 [[optim.invalid]]
 wrap = "root"
 text = "OPTIM CGRID2B (2 1.5 2.5"
-error = "Unmatched opening parenthesis in index selector"
+error = "OPTIM CGRID2B: the indices have no closing parenthesis"
 msg_of = "OPTIM"
 
 [[optim.invalid]]
 wrap = "root"
 text = "OPTIM CGRID2B ((2) 1.5 2.5"
-error = "Nested parentheses in index selector"
+error = "OPTIM CGRID2B: the indices hold another opening parenthesis"
 msg_of = "OPTIM"
 
 [[optim.invalid]]
 wrap = "root"
 text = "OPTIM CGRID2B ( ) 1.5 2.5"
-error = "Empty index selector"
+error = "OPTIM CGRID2B: the parentheses hold no index"
 msg_of = "OPTIM"
 
 [[optim.invalid]]
 wrap = "root"
 text = "OPTIM CGRID2B (2)1.5 2.5"
-error = "Expected whitespace after (indices)"
+error = "OPTIM CGRID2B: a space follows the closing parenthesis of the indices"
 msg_of = "OPTIM"
 
 [[optim.invalid]]
 wrap = "root"
 text = "OPTIM CGRID2B (1) (2) 0.5 1.5"
-error = "Only one (indices) selector is accepted"
+error = "OPTIM CGRID2B: the line takes one list of indices in parentheses (unexpected '(2)')"
 
 [[optim.invalid]]
 wrap = "root"
@@ -3608,6 +3608,10 @@ doc = "Under ASINH <c> the box, in the coordinate of its shape tag, is empty or 
 [[form.checks]]
 msg = "OPTIM {key}: the line is tagged LOG, and <low> {low} is not > 0, and a box tagged LOG lies above 0{hint}"
 doc = "A LOG box whose lower bound is 0 or below."
+
+[[form.checks]]
+msg = "the starting point {index} of the INIT block of {phase}: {key} = {value} lies outside its OPTIM box [{low}, {high}]"
+doc = "At startup, without a line: a starting point of the INIT block, such as the value of the training configuration that METHOD CONFIG takes, lies outside the box. {phase} names the optimiser, such as the STRATEGY-level optimiser."
 [[form.examples]]
 wrap = "root"
 text = "OPTIM CGRID2B (2) 1.5 2.5"
@@ -3646,6 +3650,14 @@ error = "OPTIM CGRID2B: <high> must be a finite number (got 'inf')"
 wrap = "root"
 text = "OPTIM CGRID2B (2) 2.5 1.5"
 error = "OPTIM CGRID2B: <high> 1.5 is not greater than <low> 2.5"
+
+[[form.invalid]]
+wrap = "root"
+check = "startup"
+at = "none"
+doc = "Without an INIT block the search starts from the values of the training configuration: CGRID2B 1.0 2.0."
+text = "OPTIM CGRID2B (2) 2.5 3.5"
+error = "the starting point 1 of the INIT block of the STRATEGY-level optimiser: CGRID2B[2] = 2 lies outside its OPTIM box [2.5, 3.5]"
 
 [[form.invalid]]
 wrap = "root"
@@ -4057,7 +4069,7 @@ msg = "OPTIM {key}: AUTO FLOOR must be >= 0 (got {tok})"
 doc = "a is negative."
 
 [[line_option.checks]]
-msg = "OPTIM {key}: FLOOR and GROUP_FLOOR set the smallest half-width of an AUTO FRAC box; AUTO RATIO makes the geometric box [seed/f, seed*f], which they do not change, so they are given with FRAC <p> only"
+msg = "OPTIM {key}: FLOOR and GROUP_FLOOR set the smallest half-width of an AUTO FRAC box; AUTO RATIO {value} makes the geometric box [seed/{value}, seed*{value}], which they do not change, so they are given with FRAC <p> only"
 doc = "The line gives RATIO."
 
 [[line_option.checks]]
@@ -4076,7 +4088,7 @@ error = "OPTIM CGRID2B: AUTO FLOOR must be >= 0 (got -1)"
 [[line_option.invalid]]
 wrap = "root"
 text = "OPTIM CGRID2B (2) AUTO RATIO 2 FLOOR 0.3"
-error = "OPTIM CGRID2B: FLOOR and GROUP_FLOOR set the smallest half-width of an AUTO FRAC box; AUTO RATIO makes the geometric box [seed/f, seed*f], which they do not change, so they are given with FRAC <p> only"
+error = "OPTIM CGRID2B: FLOOR and GROUP_FLOOR set the smallest half-width of an AUTO FRAC box; AUTO RATIO 2 makes the geometric box [seed/2, seed*2], which they do not change, so they are given with FRAC <p> only"
 
 [[line_option.invalid]]
 wrap = "root"
@@ -4109,7 +4121,7 @@ msg = "OPTIM {key}: AUTO GROUP_FLOOR must be >= 0 (got {tok})"
 doc = "r is negative."
 
 [[line_option.checks]]
-msg = "OPTIM {key}: FLOOR and GROUP_FLOOR set the smallest half-width of an AUTO FRAC box; AUTO RATIO makes the geometric box [seed/f, seed*f], which they do not change, so they are given with FRAC <p> only"
+msg = "OPTIM {key}: FLOOR and GROUP_FLOOR set the smallest half-width of an AUTO FRAC box; AUTO RATIO {value} makes the geometric box [seed/{value}, seed*{value}], which they do not change, so they are given with FRAC <p> only"
 doc = "The line gives RATIO."
 
 [[line_option.checks]]
@@ -4137,7 +4149,7 @@ error = "OPTIM CGRID2B: AUTO GROUP_FLOOR must be >= 0 (got -1)"
 [[line_option.invalid]]
 wrap = "root"
 text = "OPTIM CGRID2B (1-2) AUTO RATIO 1.5 GROUP_FLOOR 0.1"
-error = "OPTIM CGRID2B: FLOOR and GROUP_FLOOR set the smallest half-width of an AUTO FRAC box; AUTO RATIO makes the geometric box [seed/f, seed*f], which they do not change, so they are given with FRAC <p> only"
+error = "OPTIM CGRID2B: FLOOR and GROUP_FLOOR set the smallest half-width of an AUTO FRAC box; AUTO RATIO 1.5 makes the geometric box [seed/1.5, seed*1.5], which they do not change, so they are given with FRAC <p> only"
 
 [[line_option.invalid]]
 wrap = "root"
@@ -5340,7 +5352,7 @@ title = """\
 With PC_LAMMPS or PC_FAILPROBE no INNER MLSL or AUGLAG uses gradients"""
 check = "parse"
 keys = ["ROOT.PC_LAMMPS", "ROOT.PC_FAILPROBE", "BLOCK.INNER"]
-msg = "--hpotarget defines {key} but {block} optimiser {lib}:{algo} takes a gradient: NLopt's MLSL and AUGLAG take one for their local search, and NLopt's default local optimiser, {name}, is gradient-based. A PC_LAMMPS or PC_FAILPROBE line requires a gradient-free optimiser, and an INNER search is a local NLopt algorithm: name a derivative-free one in the INNER block ({list})."
+msg = "--hpotarget defines {key} but {block} optimiser {lib}:{algo} takes a gradient: NLopt's MLSL and AUGLAG take one for their local search, and NLopt's default local optimiser, {name}, is gradient-based. A PC_LAMMPS or PC_FAILPROBE line requires a gradient-free optimiser, and an INNER search is a local NLopt algorithm; the INNER block takes a derivative-free one ({list})."
 doc = """\
 With a PC_LAMMPS or PC_FAILPROBE line, an INNER block that names an NLopt \
 MLSL or AUGLAG is refused when NLopt's default local optimiser takes \
@@ -5368,7 +5380,7 @@ ALGO LD_AUGLAG
 ENDINNER
 ENDSTRATEGY
 ENDOPTIMIZER'''
-error = "--hpotarget defines PC_LAMMPS but INNER's optimiser NLOPT:LD_AUGLAG takes a gradient: NLopt's MLSL and AUGLAG take one for their local search, and NLopt's default local optimiser, NLOPT:LD_MMA, is gradient-based. A PC_LAMMPS or PC_FAILPROBE line requires a gradient-free optimiser, and an INNER search is a local NLopt algorithm: name a derivative-free one in the INNER block (NLOPT:LN_AUGLAG, NLOPT:LN_AUGLAG_EQ, NLOPT:LN_BOBYQA, NLOPT:LN_COBYLA, NLOPT:LN_NELDERMEAD, NLOPT:LN_PRAXIS, NLOPT:LN_SBPLX)."
+error = "--hpotarget defines PC_LAMMPS but INNER's optimiser NLOPT:LD_AUGLAG takes a gradient: NLopt's MLSL and AUGLAG take one for their local search, and NLopt's default local optimiser, NLOPT:LD_MMA, is gradient-based. A PC_LAMMPS or PC_FAILPROBE line requires a gradient-free optimiser, and an INNER search is a local NLopt algorithm; the INNER block takes a derivative-free one (NLOPT:LN_AUGLAG, NLOPT:LN_AUGLAG_EQ, NLOPT:LN_BOBYQA, NLOPT:LN_COBYLA, NLOPT:LN_NELDERMEAD, NLOPT:LN_PRAXIS, NLOPT:LN_SBPLX)."
 
 [[rule]]
 id = "RULE.PC_LAMMPS_INNER_gradient_free"
@@ -5376,7 +5388,7 @@ title = """\
 With PC_LAMMPS or PC_FAILPROBE an INNER algorithm is derivative-free"""
 check = "parse"
 keys = ["ROOT.PC_LAMMPS", "ROOT.PC_FAILPROBE", "BLOCK.INNER"]
-msg = "--hpotarget defines {key} but {block} optimiser {lib}:{algo} is gradient-based. A PC_LAMMPS or PC_FAILPROBE line requires a gradient-free optimiser, and an INNER search is a local NLopt algorithm: name a derivative-free one in the INNER block ({list})."
+msg = "--hpotarget defines {key} but {block} optimiser {lib}:{algo} is gradient-based. A PC_LAMMPS or PC_FAILPROBE line requires a gradient-free optimiser, and an INNER search is a local NLopt algorithm; the INNER block takes a derivative-free one ({list})."
 doc = """\
 With a PC_LAMMPS or PC_FAILPROBE line, an INNER block names a local NLopt \
 algorithm without gradients. The refusal names the ENDINNER line."""
@@ -5420,7 +5432,7 @@ ALGO LD_LBFGS
 ENDINNER
 ENDSTRATEGY
 ENDOPTIMIZER'''
-error = "--hpotarget defines PC_LAMMPS but INNER's optimiser NLOPT:LD_LBFGS is gradient-based. A PC_LAMMPS or PC_FAILPROBE line requires a gradient-free optimiser, and an INNER search is a local NLopt algorithm: name a derivative-free one in the INNER block (NLOPT:LN_AUGLAG, NLOPT:LN_AUGLAG_EQ, NLOPT:LN_BOBYQA, NLOPT:LN_COBYLA, NLOPT:LN_NELDERMEAD, NLOPT:LN_PRAXIS, NLOPT:LN_SBPLX)."
+error = "--hpotarget defines PC_LAMMPS but INNER's optimiser NLOPT:LD_LBFGS is gradient-based. A PC_LAMMPS or PC_FAILPROBE line requires a gradient-free optimiser, and an INNER search is a local NLopt algorithm; the INNER block takes a derivative-free one (NLOPT:LN_AUGLAG, NLOPT:LN_AUGLAG_EQ, NLOPT:LN_BOBYQA, NLOPT:LN_COBYLA, NLOPT:LN_NELDERMEAD, NLOPT:LN_PRAXIS, NLOPT:LN_SBPLX)."
 
 [[rule]]
 id = "RULE.loss_source_required"

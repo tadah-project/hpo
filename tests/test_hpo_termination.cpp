@@ -27,6 +27,10 @@
 #include "pc_process_workers.h"  // before catch2/catch.hpp
 #include "catch2/catch.hpp"
 
+#ifdef TADAH_ENABLE_OPENMP
+#include <omp.h>
+#endif
+
 #include <tadah/core/checkpoint.h>      // core::ShutdownRequested
 #include <tadah/core/context.h>
 #include <tadah/core/periodic_table.h>
@@ -889,6 +893,13 @@ TEST_CASE("Journal: the OpenMP and FAILSCORE_GRADING lines say what they "
     CHECK_THAT(openmp[0], Catch::EndsWith(
         "), for the OpenMP parts (neighbour lists, data statistics), not for "
         "the LAMMPS scripts"));
+    /* A count of 1 takes the singular (it was "at most 1 threads"). */
+    const int omp_max = omp_get_max_threads();
+    CHECK(openmp[0].find("OpenMP: at most " +
+                         (omp_max == 1 ? std::string("1 thread (")
+                                       : std::to_string(omp_max) +
+                                             " threads (")) !=
+          std::string::npos);
     const auto wait = lines_with(journal, "OpenMP: OMP_WAIT_POLICY=");
     REQUIRE(wait.size() == 1u);
     CHECK_THAT(wait[0], Catch::EndsWith(
@@ -910,6 +921,10 @@ TEST_CASE("Journal: the OpenMP and FAILSCORE_GRADING lines say what they "
         "; no PC_FAILPROBE line: band C scores the top of its range, and band "
         "D is graded only for a --skip-above or --skip-rel cap and for "
         "BUMPGATE, RHOGATE and RHOBARGATE"));
+    /* Without THREADS one worker runs the evaluations, in the singular (it
+     * was "THREADS: 1 workers run the work of the evaluations"). */
+    CHECK(lines_with(journal, "THREADS: 1 worker runs the work of the "
+                              "evaluations").size() == 1u);
 }
 
 /* Pins: under FAILSCORE_GRADING ON with a PC_FAILPROBE line, the startup
@@ -8877,8 +8892,9 @@ TEST_CASE("Finite differences: a search on the upper bound evaluates nothing "
             } else {
                 /* once, at startup, and once at the first point outside the
                  * box */
-                CHECK(count_of(journal, "CERES:STEEPEST_DESCENT (OUTER): "
-                                        "ignores the OPTIM box: Ceres' "
+                CHECK(count_of(journal, "the STRATEGY-level optimiser: "
+                                        "CERES:STEEPEST_DESCENT ignores "
+                                        "the OPTIM box: Ceres' "
                                         "line-search solver has no "
                                         "bounds") == 1u);
                 CHECK(count_of(journal, "lies outside its OPTIM box [1, 2]: "

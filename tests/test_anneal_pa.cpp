@@ -347,6 +347,35 @@ TEST_CASE("ANNEAL_PA: FAILSCORE walkers are culled at the first resample",
     CHECK(log.find("ANNEAL_PA stopped:") != std::string::npos);
 }
 
+/* Pins: without THREADS the journal says, as a WARNING, that the walkers
+ * run on one worker thread and what THREADS does: "ANNEAL_PA: THREADS is
+ * not set, so the 8 walkers run on 1 worker thread; THREADS <n> in the
+ * STRATEGY block evaluates up to n of them at a time".
+ * Before the fix: "ANNEAL_PA: THREADS not set -- running 8 walkers on 1
+ * worker thread. Set THREADS <n> in the STRATEGY block to evaluate walkers
+ * concurrently.": the check fails. */
+TEST_CASE("ANNEAL_PA: without THREADS the journal says that the walkers run "
+          "on one worker thread", "[HPO][anneal_pa][log]")
+{
+    using namespace tadah::hpo;
+    auto sp = make_pa_spec({-1.0}, {1.0});
+    set_seed_point(sp, {0.5});
+    sp.seed = 7;
+    sp.pop = 8;
+    sp.stop.maxeval = 16;
+    sp.param["T_HOT"] = 0.5;
+    sp.param["STEP_FRAC"] = 0.1;
+    LoggedRun lr;
+    MtStubHost stub{ [&](const Vec& x){ return x(0) * x(0); }, {}, {} };
+    run_anneal_pa_impl<Vec>(sp, stub);
+    const std::string log = lr.read();
+    INFO(log);
+    CHECK(log.find("ANNEAL_PA: THREADS is not set, so the 8 walkers "
+                   "run on 1 worker thread; THREADS <n> in the STRATEGY block "
+                   "evaluates up to n of them at a time") !=
+          std::string::npos);
+}
+
 TEST_CASE("ANNEAL_PA: MAXEVAL is a hard cap across the population",
           "[HPO][anneal_pa]")
 {

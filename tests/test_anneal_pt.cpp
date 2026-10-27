@@ -503,8 +503,9 @@ TEST_CASE("ANNEAL_PT automatic steps learn a 12-decade diagonal and emit TSV",
  * a WARNING in the journal that gives the budget, how many coordinates did
  * not finish and what a complete warm-up takes: "ANNEAL_PT: the step
  * warm-up stopped at its budget, 100 evaluations, a quarter of MAXEVAL
- * 400: <n> of 6 coordinates did not finish (<m> of them without a tested
- * scale), and the pilot made <p> evaluations. A complete warm-up takes up
+ * 400: <n> of the 6 slot coordinates (2 slots x 3 search parameters) did
+ * not finish (<m> of them without a tested scale), and the pilot made <p>
+ * evaluations. A complete warm-up takes up
  * to about <c> evaluations, so the step scales, and a calibrated T_HOT,
  * depend on MAXEVAL; STEP_MODE FIXED runs no warm-up, and an explicit
  * PARAM T_HOT is not calibrated."
@@ -546,7 +547,8 @@ TEST_CASE("ANNEAL_PT: a step warm-up that stops at its budget is a warning "
     const auto bol = log.rfind('\n', at);
     CHECK(log.substr(bol + 1, at - bol - 1).find("WARNING") !=
           std::string::npos);
-    CHECK(log.find(" of 6 coordinates did not finish (") != std::string::npos);
+    CHECK(log.find(" of the 6 slot coordinates (2 slots x 3 search "
+                   "parameters) did not finish (") != std::string::npos);
     CHECK(log.find("A complete warm-up takes up to about ") !=
           std::string::npos);
     CHECK(log.find("evaluations, so the step scales, and a calibrated T_HOT, "
@@ -554,6 +556,36 @@ TEST_CASE("ANNEAL_PT: a step warm-up that stops at its budget is a warning "
                    "an explicit PARAM T_HOT is not calibrated.") !=
           std::string::npos);
     CHECK(log.find("reached the calibration budget") == std::string::npos);
+}
+
+/* Pins: without THREADS the journal says, as a WARNING, that the replicas
+ * run on one worker thread and what THREADS does: "ANNEAL_PT: THREADS is
+ * not set, so the 2 replicas run on 1 worker thread; THREADS <n> in the
+ * STRATEGY block evaluates up to n of them at a time".
+ * Before the fix: "ANNEAL_PT: THREADS not set -- running 2 replicas on 1
+ * worker thread. Set THREADS <n> in the STRATEGY block to evaluate replicas
+ * concurrently.": the check fails. */
+TEST_CASE("ANNEAL_PT: without THREADS the journal says that the replicas "
+          "run on one worker thread", "[HPO][anneal_pt][log]")
+{
+    using namespace tadah::hpo;
+    TempWorkingDirectory cwd;
+    LoggedRun lr;
+    auto sp = make_pt_spec({-1.0}, {1.0});
+    set_seed_point(sp, {0.5});
+    sp.seed = 7;
+    sp.stop.maxeval = 8;
+    sp.param["REPLICAS"] = 2.0;
+    sp.param["T_HOT"] = 1.0;
+    sp.param["T_COLD"] = 0.1;
+    MtStubHost host{[](const Vec& x) { return x(0) * x(0); }, {}, {}};
+    run_anneal_pt_impl<Vec>(sp, host);
+    const std::string log = lr.read();
+    INFO(log);
+    CHECK(log.find("ANNEAL_PT: THREADS is not set, so the 2 replicas "
+                   "run on 1 worker thread; THREADS <n> in the STRATEGY block "
+                   "evaluates up to n of them at a time") !=
+          std::string::npos);
 }
 
 /* Pins: a ladder without a range, T_COLD not between 0 and T_HOT, is
@@ -2365,7 +2397,8 @@ TEST_CASE("ANNEAL_PT: validation errors", "[HPO][anneal_pt][validation]")
         sp.step = 0.1;
         REQUIRE_THROWS_WITH(
             run_anneal_pt_impl<Vec>(sp, stub),
-            Catch::Contains("does not use STEP; set PARAM STEP_FRAC"));
+            Catch::Contains("does not use STEP; PARAM STEP_FRAC sets its "
+                                "proposal steps"));
     }
     SECTION("retired STEP_ADAPT_EVERY is removed under every STEP_MODE") {
         /* The rename gate fires before any cross-key rule, so the removal

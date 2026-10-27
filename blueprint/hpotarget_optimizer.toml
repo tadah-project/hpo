@@ -994,15 +994,15 @@ The key of an override is matched as written, while an OPTIM line reads \
 its key in any case: STEP cgrid2b refers to no OPTIM key. The index list \
 of an override takes no blank, while that of an OPTIM line does."""
 checks = [
-  { msg = "{lib}:{algo} ({phase}) does not use STEP; {why}", doc = "Once the whole file is read, at the END line of its optimiser: an optimiser that does not use STEP; {phase} is OUTER, INNER, PRESTAGE or PRESTAGE.INNER, and {why} says what sets its first step instead." },
+  { msg = "{phase}: {lib}:{algo} does not use STEP; {why}", doc = "Once the whole file is read, at the END line of its optimiser: an optimiser that does not use STEP; {phase} names the optimiser (the STRATEGY-level optimiser, the PRESTAGE refinement, the PRESTAGE exploration (EXPLORE block), the INNER search, or the INNER search of the EXPLORE block), and {why} says what sets its first step instead." },
   { msg = "STEP override '{text}': expected KEY(indices) <frac>", doc = "At the line: an index list without its closing parenthesis, or text after it." },
   { msg = "STEP override '{text}': empty index list", doc = "At the line: an empty index list." },
   { msg = "STEP override '{text}': bad index list ({why})", doc = "At the line: an index list the OPTIM grammar refuses, or an index 0." },
   { msg = "STEP override names OPTIM key '{key}' which is not optimised (no OPTIM line for it)", doc = "Once the whole file is read, at the END line of its optimiser: a key no OPTIM line searches, matched as written." },
   { msg = "STEP {key}({index}): index {index} is not an OPTIM'd index of {key}", doc = "Once the whole file is read, at the END line of its optimiser: an index no OPTIM line of the key selects." },
   { msg = "STEP overrides cover only some dimensions and no block-wide STEP is set; add `STEP <frac>` or override every OPTIM'd dimension", doc = "At startup, at the END line of its optimiser: overrides without a block-wide STEP that leave a search parameter without a fraction." },
-  { msg = "{lib}:{algo} ({phase}): STEP must be > 0 and finite (got {value})", doc = "Once the whole file is read, at the END line of its optimiser: a fraction of 0 or below." },
-  { msg = "{lib}:{algo} ({phase}): STEP must be a fraction of the OPTIM width in (0, 0.5] (got {value}); values above 0.5 cannot satisfy BOBYQA's width >= 2*step rule and exceed NLopt's own 0.25 default", doc = "Once the whole file is read, at the END line of its optimiser: a fraction above 0.5." },
+  { msg = "{phase}: {lib}:{algo}: STEP must be > 0 and finite (got {value})", doc = "Once the whole file is read, at the END line of its optimiser: a fraction of 0 or below." },
+  { msg = "{phase}: {lib}:{algo}: STEP must be a fraction of the OPTIM width in (0, 0.5] (got {value}); values above 0.5 cannot satisfy BOBYQA's width >= 2*step rule and exceed NLopt's own 0.25 default", doc = "Once the whole file is read, at the END line of its optimiser: a fraction above 0.5." },
   { msg = "STEP {key} is set twice in the {block} block (first on line {first_line}); each key is given once", doc = "At the line: an override given twice for one key and index list; {key} is the key with its index list." },
 ]
 
@@ -1104,13 +1104,13 @@ error = "STEP takes no further value here (unexpected '0.2')"
 wrap = "strategy"
 at = "ENDOPTIMIZER"
 text = "STEP 0.7"
-error = "NLOPT:LN_SBPLX (OUTER): STEP must be a fraction of the OPTIM width in (0, 0.5] (got 0.7); values above 0.5 cannot satisfy BOBYQA's width >= 2*step rule and exceed NLopt's own 0.25 default"
+error = "the STRATEGY-level optimiser: NLOPT:LN_SBPLX: STEP must be a fraction of the OPTIM width in (0, 0.5] (got 0.7); values above 0.5 cannot satisfy BOBYQA's width >= 2*step rule and exceed NLopt's own 0.25 default"
 
 [[key.invalid]]
 wrap = "strategy"
 at = "ENDOPTIMIZER"
 text = "STEP -0.1"
-error = "NLOPT:LN_SBPLX (OUTER): STEP must be > 0 and finite (got -0.1)"
+error = "the STRATEGY-level optimiser: NLOPT:LN_SBPLX: STEP must be > 0 and finite (got -0.1)"
 
 [[key.invalid]]
 wrap = "strategy"
@@ -1135,13 +1135,13 @@ error = "STEP CGRID2B(2): index 2 is not an OPTIM'd index of CGRID2B"
 wrap = "explore"
 at = "ENDEXPLORE"
 text = "STEP 0.1"
-error = "TADAH:RANDOM (PRESTAGE) does not use STEP; uniform sampling in the OPTIM box has no initial step; remove STEP"
+error = "the PRESTAGE exploration (EXPLORE block): TADAH:RANDOM does not use STEP; uniform sampling in the OPTIM box has no initial step"
 
 [[key.invalid]]
 wrap = "opt_asa"
 at = "ENDOPTIMIZER"
 text = "STEP 0.1"
-error = "ASA:ASA (OUTER) does not use STEP; the width of the generating distribution follows the parameter temperature of each dimension (Initial_Parameter_Temperature, Temperature_Ratio_Scale)"
+error = "the STRATEGY-level optimiser: ASA:ASA does not use STEP; the width of the generating distribution follows the parameter temperature of each dimension (Initial_Parameter_Temperature, Temperature_Ratio_Scale)"
 
 [[key.invalid]]
 wrap = "strategy"
@@ -1499,6 +1499,7 @@ force-scaled, and no OPTIM line of an error scale of the fit \
 analytical gradient does not differentiate. Another search parameter without an analytical derivative \
 passes startup, and stops an ANALYTICAL run at its first gradient."""
 checks = [
+  { msg = "GRAD_STRATEGY takes one value: NUMERICAL, ANALYTICAL or HYBRID", doc = "At the line: the key ends the line without its value." },
   { msg = "{block} block: GRAD_STRATEGY ANALYTICAL{note} needs the analytical gradient of the loss, which this setup cannot form: {why}. Change that setting, or set GRAD_STRATEGY HYBRID to use finite differences where no analytical gradient is available.", doc = "At startup, at the END line of its optimiser; {block} is OPTIMIZER or EXPLORE, and {why} names the first setting the analytical gradient does not cover. {note} is \" (resolved for PC_OBSERVABLE: the block sets no GRAD_STRATEGY)\" when the block takes ANALYTICAL for PC_OBSERVABLE." },
   { msg = "{phase}: ASA:ASA does not accept GRAD_STRATEGY: it is gradient-free, and the reannealing takes its tangents by finite differences (PARAM Delta_X)", doc = "At startup, at the END line of its optimiser." },
   { msg = "{phase}: TADAH:{algo} does not use GRAD_STRATEGY: it is gradient-free", doc = "At startup, at the END line of its optimiser: an annealer." },
@@ -1533,7 +1534,7 @@ error = "GRAD_STRATEGY must be one of NUMERICAL, ANALYTICAL, HYBRID (got 'numeri
 [[key.invalid]]
 wrap = "opt_lbfgs"
 text = "GRAD_STRATEGY"
-error = "GRAD_STRATEGY requires a value"
+error = "GRAD_STRATEGY takes one value: NUMERICAL, ANALYTICAL or HYBRID"
 
 [[key.invalid]]
 wrap = "opt_lbfgs"
@@ -1793,7 +1794,7 @@ error = "LOG_HP requires a value"
 [[key.invalid]]
 wrap = "strategy"
 text = "LOG_HP 2 3"
-error = "LOG_HP takes a single value (unexpected '3')"
+error = "LOG_HP takes one value (unexpected '3')"
 
 [[key.invalid]]
 wrap = "explore"
@@ -1905,7 +1906,7 @@ error = "TYPE requires a value"
 [[key.invalid]]
 wrap = "strategy"
 text = "TYPE PLAIN MULTISTART"
-error = "TYPE takes a single value (unexpected 'MULTISTART')"
+error = "TYPE takes one value (unexpected 'MULTISTART')"
 
 [[key.invalid]]
 wrap = "strategy"
@@ -2420,7 +2421,7 @@ error = "K_TOTAL 2 caps nothing: an INIT block inside EXPLORE without a METHOD l
 [[key.invalid]]
 wrap = "init"
 text = "K_TOTAL 1 2"
-error = "K_TOTAL takes a single value (unexpected '2')"
+error = "K_TOTAL takes one value (unexpected '2')"
 
 [[key.invalid]]
 wrap = "init"
@@ -2765,7 +2766,7 @@ error = "NOISE.AUTO: expected boolean (true/false/1/0/yes/no/on/off), got 'maybe
 [[key.invalid]]
 wrap = "noise"
 text = "AUTO true false"
-error = "AUTO takes a single value (unexpected 'false')"
+error = "AUTO takes one value (unexpected 'false')"
 
 [[key.invalid]]
 wrap = "none"
@@ -2900,7 +2901,7 @@ RESTART
 AFTER_STAGNATION 20 3
 MAX 3
 ENDRESTART'''
-error = "AFTER_STAGNATION takes a single value (unexpected '3')"
+error = "AFTER_STAGNATION takes one value (unexpected '3')"
 
 [[key.invalid]]
 wrap = "strategy"

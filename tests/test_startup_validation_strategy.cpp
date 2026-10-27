@@ -1252,8 +1252,9 @@ TEST_CASE("startup validation: a second STRATEGY block is rejected at its "
             "ENDOPTIMIZER\nOPTIMIZER\n  STRATEGY\n    TYPE PLAIN\n"
             "  ENDSTRATEGY\nENDOPTIMIZER\n");
         CHECK(twice == "Error on line 11: OPTIMIZER block given more than "
-                       "once (the first opens on line 3); write every "
-                       "optimiser setting in one block\nLine: OPTIMIZER");
+                       "once (the first opens on line 3); one OPTIMIZER "
+                       "block holds every optimiser setting\nLine: "
+                       "OPTIMIZER");
     }
 }
 
@@ -2541,12 +2542,14 @@ TEST_CASE("startup validation: the STEP rules name the line that closes the "
         {"STEP on the STRATEGY-level DLIB:BFGS",
          strategy_config("    TYPE PLAIN\n    LIB DLIB\n    ALGO BFGS\n"
                          "    MAXEVAL 20\n    STEP 0.1\n"),
-         "ENDOPTIMIZER", "DLIB:BFGS (OUTER) does not use STEP"},
+         "ENDOPTIMIZER",
+         "the STRATEGY-level optimiser: DLIB:BFGS does not use STEP"},
         {"STEP 0.9 on the STRATEGY-level NLOPT:LN_SBPLX",
          strategy_config("    TYPE PLAIN\n    LIB NLOPT\n    ALGO LN_SBPLX\n"
                          "    MAXEVAL 20\n    STEP 0.9\n"),
          "ENDOPTIMIZER",
-         "NLOPT:LN_SBPLX (OUTER): STEP must be a fraction of the OPTIM width "
+         "the STRATEGY-level optimiser: NLOPT:LN_SBPLX: STEP must be a "
+         "fraction of the OPTIM width "
          "in (0, 0.5] (got 0.9)"},
         {"a STEP override that covers one of two dimensions",
          two_dims + "OPTIMIZER\n  STRATEGY\n    TYPE PLAIN\n    LIB NLOPT\n"
@@ -2560,13 +2563,15 @@ TEST_CASE("startup validation: the STEP rules name the line that closes the "
                          "    MAXEVAL 20\n    EXPLORE\n      LIB NLOPT\n"
                          "      ALGO GN_CRS2_LM\n      MAXEVAL 12\n"
                          "      STEP 0.1\n    ENDEXPLORE\n"),
-         "ENDEXPLORE", "NLOPT:GN_CRS2_LM (PRESTAGE) does not use STEP"},
+         "ENDEXPLORE",
+         "the PRESTAGE exploration (EXPLORE block): NLOPT:GN_CRS2_LM does "
+         "not use STEP"},
         {"STEP on the STRATEGY-level INNER block's NLOPT:LD_LBFGS",
          strategy_config("    TYPE PLAIN\n    LIB NLOPT\n    ALGO G_MLSL_LDS\n"
                          "    MAXEVAL 60\n    INNER\n      LIB NLOPT\n"
                          "      ALGO LD_LBFGS\n      STEP 0.1\n"
                          "    ENDINNER\n"),
-         "ENDINNER", "NLOPT:LD_LBFGS (INNER) does not use STEP"},
+         "ENDINNER", "the INNER search: NLOPT:LD_LBFGS does not use STEP"},
         {"STEP on the EXPLORE block's INNER block's NLOPT:LD_LBFGS",
          strategy_config("    TYPE PRESTAGE\n    LIB NLOPT\n    ALGO LN_SBPLX\n"
                          "    MAXEVAL 20\n    EXPLORE\n      LIB NLOPT\n"
@@ -2574,7 +2579,9 @@ TEST_CASE("startup validation: the STEP rules name the line that closes the "
                          "      INNER\n        LIB NLOPT\n"
                          "        ALGO LD_LBFGS\n        STEP 0.1\n"
                          "      ENDINNER\n    ENDEXPLORE\n"),
-         "ENDINNER", "NLOPT:LD_LBFGS (PRESTAGE.INNER) does not use STEP"}};
+         "ENDINNER",
+         "the INNER search of the EXPLORE block: NLOPT:LD_LBFGS does not "
+         "use STEP"}};
     for (const auto& c : cases) {
         INFO(c.what << ", config:\n" << c.config);
         const auto at = line_of(c.config, c.closing);

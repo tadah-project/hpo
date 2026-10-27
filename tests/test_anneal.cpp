@@ -541,6 +541,42 @@ TEST_CASE("ANNEAL: T0 line reports loss range and std",
     CHECK(log.find("anchor=seed")     != std::string::npos);
 }
 
+/* Pins: a count of 1 in the T0 line takes the singular: with two probes, of
+ * which the first raises the loss (0 -> 1) and the second lowers it, the
+ * line reads "T0=... from 2 probes: median rise of the loss 1.000e+00 over
+ * the 1 probe that raised it".
+ * Before the fix: "over the 1 probes that raised it": the check fails. */
+TEST_CASE("ANNEAL: the T0 line counts one probe in the singular",
+          "[HPO][anneal][log]")
+{
+    using namespace tadah::hpo;
+    auto sp = make_spec({-1.0}, {1.0});
+    set_seed_point(sp, {0.0});
+    sp.seed = 5;
+    sp.stop.maxeval = 6;
+    sp.param["T0_PROBES"] = 2.0;
+    sp.param["CHAIN_LENGTH"] = 2.0;
+
+    LoggedRun lr;
+    /* The starting point scores 0, the first probe 1, the second -1. */
+    std::size_t calls = 0;
+    StubHost stub{ [&](const Vec& x) {
+        const std::size_t k = calls++;
+        if (k == 0) return 0.0;
+        if (k == 1) return 1.0;
+        if (k == 2) return -1.0;
+        return x(0) * x(0);
+    }, {} };
+    run_anneal_impl<Vec>(sp, stub);
+
+    const std::string log = lr.read();
+    INFO(log);
+    CHECK(log.find("ANNEAL: T0=") != std::string::npos);
+    CHECK(log.find(" from 2 probes: median rise of the loss 1.000e+00 over "
+                   "the 1 probe that raised it, T0 = median rise / "
+                   "ln(1/T0_ACCEPT)") != std::string::npos);
+}
+
 TEST_CASE("ANNEAL[CORANA]: per-dim step vector adapts (grows for fruitful dim)",
           "[HPO][anneal][corana]")
 {
@@ -858,7 +894,8 @@ TEST_CASE("ANNEAL: top-level STEP is a hard error steering to STEP_FRAC",
 
     StubHost stub{ [&](const Vec& /*x*/){ return 0.0; }, {} };
     REQUIRE_THROWS_WITH(run_anneal_impl<Vec>(sp, stub),
-                        Catch::Contains("does not use STEP; set PARAM STEP_FRAC"));
+                        Catch::Contains("does not use STEP; PARAM STEP_FRAC sets its "
+                                "proposal steps"));
     CHECK(stub.calls.empty());
 }
 

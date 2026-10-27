@@ -131,7 +131,7 @@ finite_msg = "{what} must be a finite number, got '{tok}'{underflow}"
 positive_msg = "{what} must be a positive {noun}, got '{tok}'{underflow}"
 underflow_note = " (too small: its magnitude is below the smallest normal double, 2.2250738585072014e-308)"
 requires_value_msg = "{key} requires a value"
-single_value_msg = "{key} takes a single value (unexpected '{tok}')"
+single_value_msg = "{key} takes one value (unexpected '{tok}')"
 bool_msg = "{what}: expected boolean (true/false/1/0/yes/no/on/off), got '{tok}'"
 timespec_msg = "{what} must be 'off', 'unlimited' or a time [[HH:]MM:]SS, got '{tok}'{underflow}"
 script_timeout_msg = "{what} must be a positive time, 'off' or 'unlimited' (a limit <= 0 stops every script), got '{tok}'"
@@ -160,7 +160,7 @@ check_order = ["block_lines", "removed", "inner_refusal", "group_keys",
 end_without_open_msg = "{end} without matching {name}"
 end_mismatch_msg = "{end} does not close the innermost open block, the {open} block opened on line {open_line} (END{open} closes it)"
 end_takes_no_value_msg = "{end} closes the {name} block and takes no value (unexpected '{tok}')"
-open_takes_no_value_msg = "{name} opens a block and takes no value (unexpected '{tok}'); write each key on its own line inside the block"
+open_takes_no_value_msg = "{name} opens a block and takes no value (unexpected '{tok}'); each key stands on its own line inside the block"
 unclosed_msg = "{name} block not closed with {end}"
 unknown_root_msg = "unknown key '{key}'"
 root_key_in_block_msg = "{key} is a top-level key, and the {name} block opened on line {open_line} is still open ({end} closes it)"
@@ -194,7 +194,7 @@ error = "ENDSTRATEGY does not close the innermost open block, the INIT block ope
 [[structure.invalid]]
 wrap = "optimizer"
 text = "NOISE AUTO"
-error = "NOISE opens a block and takes no value (unexpected 'AUTO'); write each key on its own line inside the block"
+error = "NOISE opens a block and takes no value (unexpected 'AUTO'); each key stands on its own line inside the block"
 
 [[structure.invalid]]
 wrap = "noise"
@@ -254,7 +254,7 @@ name = "OPTIMIZER"
 end = "ENDOPTIMIZER"
 parents = ["ROOT"]
 repeat = "error"
-repeat_msg = "OPTIMIZER block given more than once (the first opens on line {first_line}); write every optimiser setting in one block"
+repeat_msg = "OPTIMIZER block given more than once (the first opens on line {first_line}); one OPTIMIZER block holds every optimiser setting"
 misplaced_msg = "OPTIMIZER block must appear at the top level of the file (it is inside the {parent} block opened on line {parent_line})"
 unknown_msg = "unknown key '{key}' inside the OPTIMIZER block opened on line {open_line} (ENDOPTIMIZER closes it)"
 doc = """\
@@ -305,7 +305,7 @@ ENDOPTIMIZER'''
 [[block.invalid]]
 wrap = "end"
 text = "OPTIMIZER"
-error = "OPTIMIZER block given more than once (the first opens on line 3); write every optimiser setting in one block"
+error = "OPTIMIZER block given more than once (the first opens on line 3); one OPTIMIZER block holds every optimiser setting"
 
 [[block.invalid]]
 wrap = "strategy"
@@ -326,7 +326,7 @@ PC_ERMSE 0 1
 OPTIMIZER LIB NLOPT
 ALGO LN_SBPLX
 ENDOPTIMIZER'''
-error = "OPTIMIZER opens a block and takes no value (unexpected 'LIB'); write each key on its own line inside the block"
+error = "OPTIMIZER opens a block and takes no value (unexpected 'LIB'); each key stands on its own line inside the block"
 
 [[block.invalid]]
 wrap = "none"
@@ -403,8 +403,8 @@ name = "STRATEGY"
 end = "ENDSTRATEGY"
 parents = ["OPTIMIZER"]
 repeat = "error"
-repeat_msg = "STRATEGY block given more than once (the first opens on line {first_line}); write every STRATEGY key in one block"
-misplaced_msg = "STRATEGY block must appear inside OPTIMIZER (OUTER level)"
+repeat_msg = "STRATEGY block given more than once (the first opens on line {first_line}); one STRATEGY block holds every STRATEGY key"
+misplaced_msg = "STRATEGY block must appear directly inside OPTIMIZER"
 unknown_msg = "unknown key '{key}' inside the STRATEGY block opened on line {open_line} (ENDSTRATEGY closes it)"
 doc = """\
 How the search runs its optimiser: once (TYPE PLAIN), from several \
@@ -431,12 +431,12 @@ ENDSTRATEGY'''
 [[block.invalid]]
 wrap = "root"
 text = "STRATEGY"
-error = "STRATEGY block must appear inside OPTIMIZER (OUTER level)"
+error = "STRATEGY block must appear directly inside OPTIMIZER"
 
 [[block.invalid]]
 wrap = "explore"
 text = "STRATEGY"
-error = "STRATEGY block must appear inside OPTIMIZER (OUTER level)"
+error = "STRATEGY block must appear directly inside OPTIMIZER"
 
 [[block.invalid]]
 wrap = "none"
@@ -453,7 +453,7 @@ ENDSTRATEGY
 STRATEGY
 ENDSTRATEGY
 ENDOPTIMIZER'''
-error = "STRATEGY block given more than once (the first opens on line 4); write every STRATEGY key in one block"
+error = "STRATEGY block given more than once (the first opens on line 4); one STRATEGY block holds every STRATEGY key"
 
 [[block.invalid]]
 wrap = "strategy"
@@ -538,7 +538,7 @@ name = "NOISE"
 end = "ENDNOISE"
 parents = ["OPTIMIZER"]
 repeat = "merge"
-misplaced_msg = "NOISE block must appear inside OPTIMIZER (OUTER level)"
+misplaced_msg = "NOISE block must appear directly inside OPTIMIZER"
 unknown_msg = "unknown key '{key}' inside the NOISE block opened on line {open_line} (only AUTO and CALIBRATION are valid; ENDNOISE closes it)"
 unknown_first = true
 doc = """\
@@ -560,7 +560,7 @@ ENDNOISE'''
 [[block.invalid]]
 wrap = "strategy"
 text = "NOISE"
-error = "NOISE block must appear inside OPTIMIZER (OUTER level)"
+error = "NOISE block must appear directly inside OPTIMIZER"
 
 [[block.invalid]]
 wrap = "noise"
@@ -779,14 +779,14 @@ ALGO RANDOM
 ENDEXPLORE
 REFINE
 INNER'''
-error = "INNER block given twice in one block (the first on line 9)"
+error = "INNER block given twice for one optimiser (the first on line 9); STRATEGY and REFINE configure the same optimiser, and so do two EXPLORE blocks"
 
 [[block]]
 name = "INNER"
 end = "ENDINNER"
 parents = ["STRATEGY", "EXPLORE", "REFINE"]
 repeat = "error_per_parent"
-repeat_msg = "INNER block given twice in one block (the first on line {first_line})"
+repeat_msg = "INNER block given twice for one optimiser (the first on line {first_line}); STRATEGY and REFINE configure the same optimiser, and so do two EXPLORE blocks"
 misplaced_msg = "INNER block must appear inside STRATEGY, EXPLORE or REFINE: it holds the local search that an NLopt MLSL or AUGLAG algorithm runs"
 unknown_msg = "unknown key '{key}' inside the INNER block opened on line {open_line} (only {keys} are valid; ENDINNER closes it)"
 refuse_msg = "{key} is not accepted inside an INNER block: {why}; the enclosing {enclosing} block takes {key}"
@@ -854,7 +854,7 @@ LIB NLOPT
 ALGO LN_BOBYQA
 ENDINNER
 INNER'''
-error = "INNER block given twice in one block (the first on line 8)"
+error = "INNER block given twice for one optimiser (the first on line 8); STRATEGY and REFINE configure the same optimiser, and so do two EXPLORE blocks"
 
 [[block.invalid]]
 wrap = "inner"
@@ -1049,7 +1049,7 @@ error = "FAILSCORE requires a value"
 [[key.invalid]]
 wrap = "root"
 text = "FAILSCORE 1e9 1e10"
-error = "FAILSCORE takes a single value (unexpected '1e10')"
+error = "FAILSCORE takes one value (unexpected '1e10')"
 
 [[key.invalid]]
 wrap = "optimizer"
@@ -1183,7 +1183,7 @@ error = "PC_SCRIPT_TIMEOUT is too large for the worker deadline, got '1e16' (the
 [[key.invalid]]
 wrap = "root"
 text = "PC_SCRIPT_TIMEOUT 10 20"
-error = "PC_SCRIPT_TIMEOUT takes a single value (unexpected '20')"
+error = "PC_SCRIPT_TIMEOUT takes one value (unexpected '20')"
 
 [[key.invalid]]
 wrap = "root"
@@ -1389,7 +1389,7 @@ OPTIM boxes, which a CERES optimiser can propose, is not evaluated. Under \
 ON and OFF alike its loss lies in [0.99975 FAILSCORE, FAILSCORE) and grows \
 with its distance from the boxes."""
 checks = [
-  { msg = "FAILSCORE_GRADING ON requires a finite positive FAILSCORE (e.g. `FAILSCORE 1e9`); the default DBL_MAX sentinel cannot be banded.", doc = "At startup, under ON: FAILSCORE is 1e300 or more, as it is without a FAILSCORE line." },
+  { msg = "FAILSCORE_GRADING ON grades failures in bands below FAILSCORE, which needs a FAILSCORE above 0 and below 1e300 (without a FAILSCORE line, FAILSCORE is the largest double)", doc = "At startup, under ON: FAILSCORE is 1e300 or more, as it is without a FAILSCORE line." },
 ]
 
 [[key.examples]]
@@ -1413,7 +1413,7 @@ wrap = "root"
 check = "startup"
 at = "none"
 text = "FAILSCORE_GRADING ON"
-error = "FAILSCORE_GRADING ON requires a finite positive FAILSCORE (e.g. `FAILSCORE 1e9`); the default DBL_MAX sentinel cannot be banded."
+error = "FAILSCORE_GRADING ON grades failures in bands below FAILSCORE, which needs a FAILSCORE above 0 and below 1e300 (without a FAILSCORE line, FAILSCORE is the largest double)"
 
 [[key.invalid]]
 wrap = "root"
@@ -1422,7 +1422,7 @@ at = "none"
 text = '''
 FAILSCORE 1e301
 FAILSCORE_GRADING ON'''
-error = "FAILSCORE_GRADING ON requires a finite positive FAILSCORE (e.g. `FAILSCORE 1e9`); the default DBL_MAX sentinel cannot be banded."
+error = "FAILSCORE_GRADING ON grades failures in bands below FAILSCORE, which needs a FAILSCORE above 0 and below 1e300 (without a FAILSCORE line, FAILSCORE is the largest double)"
 
 [[key.invalid]]
 wrap = "root"
@@ -1545,7 +1545,7 @@ checks = [
   { msg = "RHOGATE: under {form} every density rho(r) is >= 0, so the sign condition of RHOGATE holds for every candidate; RHOGATE is taken under RHOFORM SIGNED only (RHOBARGATE under every form)", doc = "At startup, at its line: the density form is NONNEG or MONOTONE." },
   { msg = "{keys}: the many-body cutoff RCUTMB is not set.", doc = "At startup, at the first gate line: the smallest RCUTMB a candidate can have is not a number above 0." },
   { msg = "{keys}: {why} on every candidate (WATOM has no OPTIM line, or its OPTIM box does not reach above 0), so every evaluation would be refused before training, under SEED ERROR and SEED WARN alike. The checks of {keys} need every density pair weight > 0, which a WATOM above 0 gives (under RHOFORM SIGNED the sign of rho is that of the AMPGRIDMB amplitudes); without the {keys} line(s) the run makes no such check.", doc = "At startup, at the first gate line: a density pair weight is not above 0 with WATOM at the upper end of its OPTIM box, or at its value in the training configuration when no OPTIM line searches it. {why} names the weight: \"a density pair weight W = <w> (WATOM) is not finite and > 0\"." },
-  { msg = "RHOGATE: seed {name} fails the rho(r) sign gate: {why}. Repair the seed's density (for a WARM seed, its OPTIM'd density values: the rest comes from the -c potential) with tadah refit --edit, relax the gate, or add SEED WARN to evaluate it as a rejected start.", doc = "At startup, without a line, under SEED ERROR: a CONFIG or WARM starting point of the INIT or RESTART chain fails the condition; {name} names it, and {why} gives the smallest and largest density on the window. Under SEED WARN hpo_run.log has a warning instead, and the run goes on." },
+  { msg = "RHOGATE: seed {name} fails the rho(r) sign gate: {why}. A seed that fails is refused under SEED ERROR, the default, and is evaluated as a rejected start under SEED WARN. tadah refit --edit changes the density of a potential file; a WARM seed takes the values of its search parameters from its file and the others from the training configuration.", doc = "At startup, without a line, under SEED ERROR: a CONFIG or WARM starting point of the INIT or RESTART chain fails the condition; {name} names it, and {why} gives the smallest and largest density on the window. Under SEED WARN hpo_run.log has a warning instead, and the run goes on." },
 ]
 untested = [
   { msg = "{keys}: the many-body cutoff RCUTMB is not set.", why = "Needs a DM_REAM term without RCUTMB, which the training configuration refuses first." },
@@ -1643,7 +1643,7 @@ context = "main_ream_negative"
 at = "none"
 doc = "The starting point, the training configuration, has a density that falls below 0."
 text = "RHOGATE 1e-5"
-error = "RHOGATE: seed -c pot (INIT CONFIG) fails the rho(r) sign gate: rho_min -4.9965e-01 at r 2.7990 A, rho_max 2.9956e-01, rel -1.6680e+00 < -tol = -1.0000e-05 on [0.8250, 5.5000] A (20001 points), v = 1.8694e+00. Repair the seed's density (for a WARM seed, its OPTIM'd density values: the rest comes from the -c potential) with tadah refit --edit, relax the gate, or add SEED WARN to evaluate it as a rejected start."
+error = "RHOGATE: seed -c pot (INIT CONFIG) fails the rho(r) sign gate: rho_min -4.9965e-01 at r 2.7990 A, rho_max 2.9956e-01, rel -1.6680e+00 < -tol = -1.0000e-05 on [0.8250, 5.5000] A (20001 points), v = 1.8694e+00. A seed that fails is refused under SEED ERROR, the default, and is evaluated as a rejected start under SEED WARN. tadah refit --edit changes the density of a potential file; a WARM seed takes the values of its search parameters from its file and the others from the training configuration."
 
 [[key.examples]]
 wrap = "none"
@@ -1689,7 +1689,7 @@ METHOD CONFIG
 ENDRESTART
 ENDSTRATEGY
 ENDOPTIMIZER'''
-error = "RHOGATE: seed -c pot (RESTART CONFIG) fails the rho(r) sign gate: rho_min -4.9965e-01 at r 2.7990 A, rho_max 2.9956e-01, rel -1.6680e+00 < -tol = -1.0000e-05 on [0.8250, 5.5000] A (20001 points), v = 1.8694e+00. Repair the seed's density (for a WARM seed, its OPTIM'd density values: the rest comes from the -c potential) with tadah refit --edit, relax the gate, or add SEED WARN to evaluate it as a rejected start."
+error = "RHOGATE: seed -c pot (RESTART CONFIG) fails the rho(r) sign gate: rho_min -4.9965e-01 at r 2.7990 A, rho_max 2.9956e-01, rel -1.6680e+00 < -tol = -1.0000e-05 on [0.8250, 5.5000] A (20001 points), v = 1.8694e+00. A seed that fails is refused under SEED ERROR, the default, and is evaluated as a rejected start under SEED WARN. tadah refit --edit changes the density of a potential file; a WARM seed takes the values of its search parameters from its file and the others from the training configuration."
 
 [[key]]
 id = "ROOT.RHOBARGATE"
@@ -1732,8 +1732,8 @@ checks = [
   { msg = "RHOBARGATE needs 0 < f_lo < f_hi, got f_lo '{low}', f_hi '{high}'", doc = "Once a0, f_lo and f_hi are read as numbers and a0 is above 0: f_lo is 0 or below, or not below f_hi." },
   { msg = "RHOBARGATE: unexpected token '{tok}'; expected RHOBARGATE <bcc|fcc|hcp> <a0> <f_lo> <f_hi> [NPTS <n>] [SEED ERROR|WARN]", doc = "A word after f_hi, in the place of an option, is not NPTS or SEED." },
   { msg = "{keys} {what} the density of one DM_REAM many-body term or of one DM_Embed component, and {why}", doc = "At startup, at the first gate line: as for RHOGATE." },
-  { msg = "RHOBARGATE: f_lo = {low} puts the largest reachable RCUTMB, {max} A, at {value} lattice constants of the smallest lattice (a = f_lo a0 = {min} A); the limit is 20. f_lo and f_hi are fractions of a0 (0.75 scans down to 25 % compression): raise f_lo.", doc = "At startup, without a line: the largest RCUTMB a candidate can have, {max}, is more than 20 lattice constants of the smallest lattice, {min}." },
-  { msg = "RHOBARGATE: seed {name} fails the lattice rhobar(a) gate: {why}. Repair the seed's density (for a WARM seed, its OPTIM'd density values: the rest comes from the -c potential) with tadah refit --edit, relax the gate, or add SEED WARN to evaluate it as a rejected start.", doc = "At startup, without a line, under SEED ERROR: a CONFIG or WARM starting point of the INIT or RESTART chain fails the condition; {name} names it. Under SEED WARN hpo_run.log has a warning instead, and the run goes on." },
+  { msg = "RHOBARGATE: f_lo = {low} puts the largest reachable RCUTMB, {max} A, at {value} lattice constants of the smallest lattice (a = f_lo a0 = {min} A); the limit is 20. f_lo and f_hi are fractions of a0 (0.75 scans down to 25 % compression), and a larger f_lo puts that RCUTMB at fewer lattice constants.", doc = "At startup, without a line: the largest RCUTMB a candidate can have, {max}, is more than 20 lattice constants of the smallest lattice, {min}." },
+  { msg = "RHOBARGATE: seed {name} fails the lattice rhobar(a) gate: {why}. A seed that fails is refused under SEED ERROR, the default, and is evaluated as a rejected start under SEED WARN. tadah refit --edit changes the density of a potential file; a WARM seed takes the values of its search parameters from its file and the others from the training configuration.", doc = "At startup, without a line, under SEED ERROR: a CONFIG or WARM starting point of the INIT or RESTART chain fails the condition; {name} names it. Under SEED WARN hpo_run.log has a warning instead, and the run goes on." },
   { msg = "RHOBARGATE: the first {name} shell at a = f_hi a0 = {high} A lies at r = {value} A, beyond the smallest cutoff a candidate can have, RCUTMB = {max} A{note}: rhobar(a) would lose its nearest neighbours; a smaller f_hi or a0, or a larger RCUTMB, keeps the first shell inside the cutoff.", doc = "At startup, at the RHOBARGATE line: the nearest neighbours of the lattice {name} at f_hi a0, {high}, lie at {value}, beyond the smallest RCUTMB a candidate can have, {max}; {note} is \" (the largest CGRIDMB knot over its OPTIM box)\" when that knot sets it." },
 ]
 
@@ -1782,7 +1782,7 @@ wrap = "main_ream"
 check = "startup"
 at = "none"
 text = "RHOBARGATE bcc 3.304 0.05 1.05"
-error = "RHOBARGATE: f_lo = 0.05 puts the largest reachable RCUTMB, 5.5000 A, at 33.29297821 lattice constants of the smallest lattice (a = f_lo a0 = 0.1652 A); the limit is 20. f_lo and f_hi are fractions of a0 (0.75 scans down to 25 % compression): raise f_lo."
+error = "RHOBARGATE: f_lo = 0.05 puts the largest reachable RCUTMB, 5.5000 A, at 33.29297821 lattice constants of the smallest lattice (a = f_lo a0 = 0.1652 A); the limit is 20. f_lo and f_hi are fractions of a0 (0.75 scans down to 25 % compression), and a larger f_lo puts that RCUTMB at fewer lattice constants."
 
 [[key.invalid]]
 wrap = "root"
@@ -2396,7 +2396,7 @@ wrap = "main_ream"
 check = "startup"
 at = "none"
 text = "RHOBARGATE bcc 3.304 0.9 1.1 SEED ERROR"
-error = "RHOBARGATE: seed -c pot (INIT CONFIG) fails the lattice rhobar(a) gate: rhobar rises at 208 of 1000 steps on bcc (a0 3.304 A, a/a0 [0.9, 1.1], 1001 points), first at a/a0 = 0.9000, v = 2.9237e-02. Repair the seed's density (for a WARM seed, its OPTIM'd density values: the rest comes from the -c potential) with tadah refit --edit, relax the gate, or add SEED WARN to evaluate it as a rejected start."
+error = "RHOBARGATE: seed -c pot (INIT CONFIG) fails the lattice rhobar(a) gate: rhobar rises at 208 of 1000 steps on bcc (a0 3.304 A, a/a0 [0.9, 1.1], 1001 points), first at a/a0 = 0.9000, v = 2.9237e-02. A seed that fails is refused under SEED ERROR, the default, and is evaluated as a rejected start under SEED WARN. tadah refit --edit changes the density of a potential file; a WARM seed takes the values of its search parameters from its file and the others from the training configuration."
 msg_of = "ROOT.RHOBARGATE"
 
 [[line_option.invalid]]
@@ -2492,12 +2492,12 @@ error = "'MULTISTART_BUDGET_PER_START' was removed from the grammar: moved into 
 
 [[removed]]
 name = "STAGE_GLOBAL"
-hint = "removed: STRATEGY TYPE PRESTAGE runs an exploration and then a refinement."
+hint = "STRATEGY TYPE PRESTAGE runs an exploration and then a refinement."
 
 [[removed.invalid]]
 wrap = "strategy"
 text = "STAGE_GLOBAL"
-error = "'STAGE_GLOBAL' was removed from the grammar: removed: STRATEGY TYPE PRESTAGE runs an exploration and then a refinement."
+error = "'STAGE_GLOBAL' was removed from the grammar: STRATEGY TYPE PRESTAGE runs an exploration and then a refinement."
 
 [[removed]]
 name = "RESTART_AFTER_STAGNATION"
@@ -2555,21 +2555,21 @@ error = "'INIT_SEED' was removed from the grammar: renamed to SEED inside an INI
 
 [[removed]]
 name = "INIT_INCLUDE_CONFIG"
-hint = "removed. The values of the training configuration for the search parameters are a starting point only when the INIT block has a `METHOD CONFIG` line."
+hint = "the values of the training configuration for the search parameters are a starting point only when the INIT block has a `METHOD CONFIG` line."
 
 [[removed.invalid]]
 wrap = "init"
 text = "INIT_INCLUDE_CONFIG true"
-error = "'INIT_INCLUDE_CONFIG' was removed from the grammar: removed. The values of the training configuration for the search parameters are a starting point only when the INIT block has a `METHOD CONFIG` line."
+error = "'INIT_INCLUDE_CONFIG' was removed from the grammar: the values of the training configuration for the search parameters are a starting point only when the INIT block has a `METHOD CONFIG` line."
 
 [[removed]]
 name = "INCLUDE_CONFIG"
-hint = "removed. The values of the training configuration for the search parameters are a starting point only when the INIT block has a `METHOD CONFIG` line."
+hint = "the values of the training configuration for the search parameters are a starting point only when the INIT block has a `METHOD CONFIG` line."
 
 [[removed.invalid]]
 wrap = "init"
 text = "INCLUDE_CONFIG true"
-error = "'INCLUDE_CONFIG' was removed from the grammar: removed. The values of the training configuration for the search parameters are a starting point only when the INIT block has a `METHOD CONFIG` line."
+error = "'INCLUDE_CONFIG' was removed from the grammar: the values of the training configuration for the search parameters are a starting point only when the INIT block has a `METHOD CONFIG` line."
 
 [[removed]]
 name = "NOISE_AUTO"

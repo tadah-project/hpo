@@ -250,7 +250,7 @@ TEST_CASE("hpotarget block structure: a second OPTIMIZER block is refused at "
                                       "  ALGO BFGS", "ENDOPTIMIZER"};
     const std::string twice =
         "OPTIMIZER block given more than once (the first opens on line 3); "
-        "write every optimiser setting in one block";
+        "one OPTIMIZER block holds every optimiser setting";
     SECTION("right after the first") {
         CHECK(parse_error(first + Lines{"OPTIMIZER", "  MAXEVAL 5",
                                         "ENDOPTIMIZER"}) ==
@@ -455,7 +455,7 @@ TEST_CASE("hpotarget block structure: a line that opens or closes a block "
             CHECK(parse_error(lines) ==
                   at_line(f.open,
                           f.block + " opens a block and takes no value "
-                          "(unexpected 'LIB'); write each key on its own "
+                          "(unexpected 'LIB'); each key stands on its own "
                           "line inside the block",
                           lines[f.open - 1]));
         }

@@ -360,7 +360,7 @@ ENDOPTIMIZER
   tadah::hpo::HPOTargets trg(ctx, in.path.string());
   REQUIRE_THROWS_WITH(tadah::hpo::run_scale_validation(trg.spec, true),
                       Catch::Contains("WATOM") &&
-                      Catch::Contains("outside its OPTIM bounds"));
+                      Catch::Contains("outside its OPTIM box"));
 }
 
 TEST_CASE("INNER unknown-key message lists the shared attribute vocabulary",
@@ -542,13 +542,15 @@ ENDOPTIMIZER
 }
 
 /* FLOOR and GROUP_FLOOR set the smallest half-width of an AUTO FRAC box; a
- * geometric box [seed/f, seed*f] has none, so they are refused with AUTO RATIO
+ * geometric box [seed/f, seed*f] of AUTO RATIO f has none, so they are
+ * refused with AUTO RATIO
  * and with the geometric rule a positive-only key takes by default (SGRID2B:
  * RATIO 2), naming the line's key and what to write instead ("OPTIM WATOM:
  * FLOOR and GROUP_FLOOR set the smallest half-width of an AUTO FRAC box;
- * AUTO RATIO makes the geometric box [seed/f, seed*f], which they do not
- * change, so they are given with FRAC <p> only"; the box was written
- * [x0/f, x0*f], a symbol the message does not define). FRAC with FLOOR stays
+ * AUTO RATIO 2 makes the geometric box [seed/2, seed*2], which they do not
+ * change, so they are given with FRAC <p> only", with the factor as
+ * written; the box was written [x0/f, x0*f], then [seed/f, seed*f], a
+ * symbol the message does not define). FRAC with FLOOR stays
  * accepted (the case above).
  * Before the fix: the floors were accepted and ignored ('AUTO RATIO 2
  * FLOOR 5' gave the box [0.5, 2] of RATIO 2 alone). */
@@ -566,7 +568,8 @@ TEST_CASE("OPTIM AUTO RATIO refuses FLOOR and GROUP_FLOOR",
           tadah::hpo::HPOTargets(ctx, in.path.string()),
           Catch::Contains("OPTIM WATOM: FLOOR and GROUP_FLOOR set the "
                           "smallest half-width of an AUTO FRAC box; AUTO "
-                          "RATIO makes the geometric box [seed/f, seed*f], "
+                          "RATIO 2 makes the geometric box [seed/2, "
+                          "seed*2], "
                           "which they do not change, so they are given with "
                           "FRAC <p> only"));
     }

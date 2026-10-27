@@ -266,8 +266,8 @@ TEST_CASE("PC lines: PC_LAMMPS and PC_FAILPROBE refuse DLIB:BFGS",
                    "INNER's optimiser NLOPT:LD_LBFGS is gradient-based. A "
                    "PC_LAMMPS or PC_FAILPROBE line requires a gradient-free "
                    "optimiser, and an INNER search is a local NLopt "
-                   "algorithm: name a derivative-free one in the INNER "
-                   "block ("));
+                   "algorithm; the INNER block takes a derivative-free one "
+                   "("));
 }
 
 /* Pins: a file whose only PC line is PC_FAILPROBE has no loss source and
@@ -417,14 +417,14 @@ TEST_CASE("PC lines: a one-value option or a variable given twice on a "
     struct Case { std::string tail, what; };
     for (const Case& c : std::vector<Case>{
              {"--script q.in",
-              "--script is given twice on this line; each option is given "
-              "once"},
+              "PC_LAMMPS --script is given twice on this line; each "
+              "option is given once"},
              {"--failscore 10 --failscore 20",
-              "--failscore is given twice on this line; each option is given "
-              "once"},
+              "PC_LAMMPS --failscore is given twice on this line; each "
+              "option is given once"},
              {"--maxtime 10 --maxtime 20",
-              "--maxtime is given twice on this line; each option is given "
-              "once"},
+              "PC_LAMMPS --maxtime is given twice on this line; each "
+              "option is given once"},
              {"--hotvar E2 0 3 --hotvar E2 0 4",
               "--hotvar E2 is declared twice on this line; each variable is "
               "declared once"},
@@ -454,8 +454,8 @@ TEST_CASE("PC lines: a one-value option or a variable given twice on a "
               "PC_FAILPROBE --s0 is given twice on this line; each option is "
               "given once"},
              {"--maxtime 10 --maxtime 20",
-              "--maxtime is given twice on this line; each option is given "
-              "once"}}) {
+              "PC_FAILPROBE --maxtime is given twice on this line; each "
+              "option is given once"}}) {
         INFO(c.tail);
         const std::string line = probe + c.tail;
         CHECK(read_error(kSbplx + "FAILSCORE_GRADING ON\nFAILSCORE 1e9\n"

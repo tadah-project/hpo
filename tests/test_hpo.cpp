@@ -482,7 +482,7 @@ ENDOPTIMIZER
     CHECK(caught);
     CHECK(msg.find("METHOD CONFIG") != std::string::npos);
     CHECK_THAT(msg, Catch::Contains(
-        "'INCLUDE_CONFIG' was removed from the grammar: removed. The values "
+        "'INCLUDE_CONFIG' was removed from the grammar: the values "
         "of the training configuration for the search parameters are a "
         "starting point only when the INIT block has a `METHOD CONFIG` "
         "line."));

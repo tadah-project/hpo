@@ -774,7 +774,8 @@ TEST_CASE("anneal::Knobs::parse validation errors", "[HPO][anneal_core][knobs]")
             sp.step = 0.1;
             REQUIRE_THROWS_WITH(
                 anneal::Knobs::parse(sp, kind),
-                Catch::Contains("does not use STEP; set PARAM STEP_FRAC"));
+                Catch::Contains("does not use STEP; PARAM STEP_FRAC sets its "
+                                "proposal steps"));
         }
     }
     SECTION("integer parsing rejects the first unrepresentable size") {

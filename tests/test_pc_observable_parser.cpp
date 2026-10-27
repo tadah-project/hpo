@@ -639,7 +639,7 @@ TEST_CASE("HPOTargets judges an MLSL or AUGLAG under PC_LAMMPS by its local "
  *   "--hpotarget defines PC_LAMMPS but INNER's optimiser NLOPT:LD_MMA is
  *   gradient-based. A PC_LAMMPS or PC_FAILPROBE line requires a
  *   gradient-free optimiser, and an INNER search is a local NLopt
- *   algorithm: name a derivative-free one in the INNER block (NLOPT:LN_AUGLAG, NLOPT:LN_AUGLAG_EQ, NLOPT:LN_BOBYQA,
+ *   algorithm; the INNER block takes a derivative-free one (NLOPT:LN_AUGLAG, NLOPT:LN_AUGLAG_EQ, NLOPT:LN_BOBYQA,
  *   NLOPT:LN_COBYLA, NLOPT:LN_NELDERMEAD, NLOPT:LN_PRAXIS,
  *   NLOPT:LN_SBPLX)."
  * at the INNER block's ENDINNER line -- for the G_MLSL_LDS search of
@@ -711,8 +711,8 @@ TEST_CASE("HPOTargets names, for an INNER block under PC_LAMMPS, the "
     };
     const std::string inner_advice =
         " A PC_LAMMPS or PC_FAILPROBE line requires a gradient-free "
-        "optimiser, and an INNER search is a local NLopt algorithm: name a "
-        "derivative-free one in the INNER block (NLOPT:LN_AUGLAG, NLOPT:LN_AUGLAG_EQ, NLOPT:LN_BOBYQA, "
+        "optimiser, and an INNER search is a local NLopt algorithm; the "
+        "INNER block takes a derivative-free one (NLOPT:LN_AUGLAG, NLOPT:LN_AUGLAG_EQ, NLOPT:LN_BOBYQA, "
         "NLOPT:LN_COBYLA, NLOPT:LN_NELDERMEAD, NLOPT:LN_PRAXIS, "
         "NLOPT:LN_SBPLX).";
 
