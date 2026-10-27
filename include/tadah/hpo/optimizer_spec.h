@@ -385,10 +385,11 @@ struct OptimizerSpec {
      * HPOTargets (the INIT chains of OUTER and PRESTAGE; a PRESTAGE that
      * shares the OUTER's points, share_init_with_nested_phases, shares
      * their origins) and by a RESTART refresh. An INNER spec has neither:
-     * its search's starting points are MLSL's or AUGLAG's. MULTISTART and the
-     * PRESTAGE refinement, which run from single points or exploration
-     * candidates, do not maintain it: a consumer uses it only when its
-     * size equals optim_init's. Empty for hand-built specs. */
+     * its search's starting points are MLSL's or AUGLAG's. A MULTISTART
+     * start keeps the origin of its point (multistart_start_spec); the
+     * PRESTAGE refinement, which runs from exploration candidates, has none.
+     * A consumer uses it only when its size equals optim_init's. Empty for
+     * hand-built specs. */
     std::vector<InitOrigin> optim_init_origin;
 
     /* FAILSCORE from the enclosing HPOTargets, copied in so optimisers

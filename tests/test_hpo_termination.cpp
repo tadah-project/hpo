@@ -1097,9 +1097,11 @@ TEST_CASE("Repeated points: an NLopt run of fit metrics evaluates no point "
 /* Pins: DLIB:BFGS (MAXEVAL 60) on the same run reaches SGRID2B (2) = 4,
  * takes its one-sided gradient there, and its next step, held to the box,
  * cannot move the point: the line search is not run, the loss has not
- * changed, and the run ends "DLIB:BFGS: FTOL_ABS reached" after 15
+ * changed, and the run ends "DLIB:BFGS: FTOL_ABS reached" after 6
  * evaluations, no row repeating another; DIAGNOSTICS has "Line searches not
- * run : 1".
+ * run : 1". (15 evaluations until DLIB:BFGS ran on the loss divided by the
+ * length of its first gradient: its first step, the gradient itself,
+ * reached the bound later.)
  * Before the fix: 18 rows, the last 3 the bound and its stencil again (the
  * line search evaluated the bound, and BFGS took its gradient again), then
  * FTOL_ABS. */
@@ -1114,7 +1116,7 @@ TEST_CASE("Repeated points: a DLIB:BFGS run that reaches a bound evaluates "
     CHECK(status == 0);
     check_run_files();
     CHECK(repeated_rows() == 0u);
-    CHECK(data_rows("params.tadah").size() == 15u);
+    CHECK(data_rows("params.tadah").size() == 6u);
     const std::string journal = read_file("hpo_run.log");
     CHECK(journal_status(journal) == "DLIB:BFGS: FTOL_ABS reached");
     CHECK(diagnostics_count(journal, "Line searches not run") == "1");
@@ -1124,7 +1126,8 @@ TEST_CASE("Repeated points: a DLIB:BFGS run that reaches a bound evaluates "
  * DLIB:BFGS (MAXEVAL 60) held at SGRID2B (2) = 4 ends "DLIB:BFGS: no step
  * within the OPTIM box", the stop line naming the bound ("SGRID2B[2] at
  * its lower bound 4, with a gradient that points out of the box"), after
- * 15 evaluations, no row repeating another.
+ * 6 evaluations, no row repeating another (15 until DLIB:BFGS ran on the
+ * loss divided by the length of its first gradient).
  * Before the fix: the bound and its gradient were evaluated until MAXEVAL,
  * 60 rows, "DLIB:BFGS: MAXEVAL reached"; without MAXEVAL the run never
  * ended. */
@@ -1139,7 +1142,7 @@ TEST_CASE("Repeated points: a DLIB:BFGS run that no step can move ends",
     CHECK(status == 0);
     check_run_files();
     CHECK(repeated_rows() == 0u);
-    CHECK(data_rows("params.tadah").size() == 15u);
+    CHECK(data_rows("params.tadah").size() == 6u);
     const std::string journal = read_file("hpo_run.log");
     CHECK(journal_status(journal) == "DLIB:BFGS: no step within the OPTIM box");
     CHECK(journal.find("SGRID2B[2] at its lower bound 4, with a gradient that "
@@ -1443,14 +1446,15 @@ TEST_CASE("Run record: a PRESTAGE refinement under ANALYTICAL evaluates its "
 /* Pins: MULTISTART starts reach points an earlier start evaluated: two
  * DLIB:BFGS starts (INIT LHS 2, SEED 3; BUDGET_PER_START 30, FTOL_ABS
  * 1e-12) on the run whose loss falls towards SGRID2B (2) = 4 both end at
- * the bound. Start 1 evaluates it (eval 7) and its one-sided stencil;
+ * the bound. Start 1 evaluates it (eval 4) and its one-sided stencil;
  * start 2's line-search trial clamped onto 4 is answered from the run's
- * record ("DLIB:BFGS asked for the point of eval 7 (SGRID2B[2] = 4), which
+ * record ("DLIB:BFGS asked for the point of eval 4 (SGRID2B[2] = 4), which
  * an earlier search of the run evaluated"), so the bound is evaluated once
  * (one params row at 4). Start 2 evaluates its own gradient's stencil
  * there (the gradients are each search's: 2 rows repeat start 1's
- * stencil). BUDGET_PER_START charges each start its own evaluations: 9 and
- * 14 "eval(s) consumed", the run's 23 rows.
+ * stencil). BUDGET_PER_START charges each start its own evaluations: 6 and
+ * 5 "eval(s) consumed", the run's 11 rows. (Until DLIB:BFGS ran on the loss
+ * divided by the length of its first gradient: eval 7, 9 and 14, 23 rows.)
  * Before the fix: each start evaluated the bound (two rows at 4, 3 rows
  * repeating another, 24 rows). */
 TEST_CASE("Run record: a MULTISTART start does not evaluate a point an "
@@ -1474,13 +1478,13 @@ TEST_CASE("Run record: a MULTISTART start does not evaluate a point an "
     INFO("journal:\n" << journal);
     CHECK(rows_at(4.0) == 1u);
     CHECK(repeated_rows() == 2u);
-    CHECK(data_rows("loss.tadah").size() == 23u);
-    CHECK(journal.find("DLIB:BFGS asked for the point of eval 7 (SGRID2B[2] = "
+    CHECK(data_rows("loss.tadah").size() == 11u);
+    CHECK(journal.find("DLIB:BFGS asked for the point of eval 4 (SGRID2B[2] = "
                        "4), which an earlier search of the run evaluated") !=
           std::string::npos);
-    CHECK(journal.find("MULTISTART start 1/2 done: 9 eval(s) consumed") !=
+    CHECK(journal.find("MULTISTART start 1/2 done: 6 eval(s) consumed") !=
           std::string::npos);
-    CHECK(journal.find("MULTISTART start 2/2 done: 14 eval(s) consumed") !=
+    CHECK(journal.find("MULTISTART start 2/2 done: 5 eval(s) consumed") !=
           std::string::npos);
 }
 
@@ -2135,10 +2139,13 @@ TEST_CASE("Two runs in one process: each journal carries its own "
      * pc-worker error's occurrence, the FAILPROBE "total gated=N") went
      * on from the first run's. The second run here has only hpo_run()'s
      * own per-run resets. */
+    /* MAXEVAL 5: under OALGO 4 the search converges after 8 evaluations
+     * (it was MAXEVAL 9 until DLIB:BFGS ran on the loss divided by the
+     * length of its first gradient, which reaches the optimum sooner). */
     for (const char* oalgo : {"4", "1"}) {
         CAPTURE(oalgo);
         const std::string optimizer = plain_block(
-            "    TYPE PLAIN\n    LIB DLIB\n    ALGO BFGS\n    MAXEVAL 9\n"
+            "    TYPE PLAIN\n    LIB DLIB\n    ALGO BFGS\n    MAXEVAL 5\n"
             "    GRAD_STRATEGY HYBRID\n");
         std::vector<std::string> journals;
         for (int run = 0; run < 2; ++run) {
@@ -3850,14 +3857,17 @@ TEST_CASE("Termination: METHOD SOBOL K starts the INIT round and each "
           "[HPO][termination][restart][seed][sobol]")
 {
     /* A Sobol seed used to skip `seed` points. With METHOD SOBOL 3 and SEED
-     * 42 in both blocks, the INIT block drew points 42-44, restart 1 (seed
-     * 43) points 43-45 and restart 2 (seed 44) points 44-46: two of each
-     * round's three fresh points were the previous round's. Seed s now
-     * draws block s, points 3s ... 3s + 2, and PLAIN starts each round from
-     * the first of them: this run checks that the seeds reach the blocks
-     * (the rounds start at points 126, 129 and 132, not 42, 43 and 44).
-     * That blocks share no point is SobolInitStrategy's (test_init_
-     * strategies.cpp); a PLAIN run evaluates only a block's first point. */
+     * 42 in both blocks, the INIT block drew points 43-45, restart 1 (seed
+     * 43) points 44-46 and restart 2 (seed 44) points 45-47: two of each
+     * round's three fresh points were the previous round's. Seed s draws
+     * block s, points 3 (s + 1) ... 3 (s + 1) + 2 (point 0 is the low
+     * corner of the box), and PLAIN starts each round from the first of
+     * them: this run checks that the seeds reach the blocks (the rounds
+     * start at points 129, 132 and 135). That blocks share no point is
+     * SobolInitStrategy's (test_init_strategies.cpp); a PLAIN run evaluates
+     * only a block's first point.
+     * Before the fix: block s started one point late, at point 3 s + 1
+     * (127, 130 and 133 here). */
     const std::string strategy =
         "  STRATEGY\n"
         "    TYPE PLAIN\n    LIB TADAH\n    ALGO RANDOM\n"
@@ -3890,8 +3900,8 @@ TEST_CASE("Termination: METHOD SOBOL K starts the INIT round and each "
         check_run_files();
     }
 
-    /* Sobol point n is what METHOD SOBOL 1 draws with SEED n: a block of
-     * one point is the point itself. */
+    /* Sobol point n + 1 is what METHOD SOBOL 1 draws with SEED n: a block
+     * of one point is the point itself. */
     const auto sobol_point = [](std::uint64_t n) {
         const auto pts = reference_points(
             "OPTIMIZER\n"
@@ -3906,9 +3916,9 @@ TEST_CASE("Termination: METHOD SOBOL K starts the INIT round and each "
         return pts.front();
     };
     REQUIRE(rounds.size() == 3u);
-    CHECK(rounds[0].front() == sobol_point(3 * 42));   // INIT, seed 42
-    CHECK(rounds[1].front() == sobol_point(3 * 43));   // restart 1
-    CHECK(rounds[2].front() == sobol_point(3 * 44));   // restart 2
+    CHECK(rounds[0].front() == sobol_point(3 * 43 - 1));   // INIT, seed 42
+    CHECK(rounds[1].front() == sobol_point(3 * 44 - 1));   // restart 1
+    CHECK(rounds[2].front() == sobol_point(3 * 45 - 1));   // restart 2
 }
 
 /* Without a SEED in the RESTART block the restart points come from
@@ -6717,15 +6727,17 @@ TEST_CASE("Termination: the RESTART stagnation stop ends a search that has "
  *   MAXEVAL 3 -- 3 evaluations, "DLIB:BFGS -- MAXEVAL=3 reached" (the
  *     MAXEVAL stop line, unchanged) and the status "DLIB:BFGS: MAXEVAL
  *     reached";
- *   MAXEVAL 200 -- 44 evaluations, the stop line "DLIB:BFGS stopped:
- *     FTOL_ABS reached after 44 evaluation(s): the loss changed by less
+ *   MAXEVAL 200 -- 21 evaluations, the stop line "DLIB:BFGS stopped:
+ *     FTOL_ABS reached after 21 evaluation(s): the loss changed by less
  *     than FTOL_ABS = 1e-07 (default) from one iteration to the next", no
  *     MAXEVAL line, the status "DLIB:BFGS: FTOL_ABS reached" (51 until
  *     2026-10-12: at the bound SGRID2B[2] = 4, where its step cannot move
  *     the point, its line search evaluated the point again and BFGS took
- *     its gradient there again, 7 evaluations);
- *   FTOL_ABS 1e-3 -- 14 evaluations, "FTOL_ABS = 0.001" without
- *     "(default)";
+ *     its gradient there again, 7 evaluations; 44 until DLIB:BFGS ran on
+ *     the loss divided by the length of its first gradient);
+ *   FTOL_ABS 1e-3 -- 21 evaluations as well (the loss changes by more
+ *     than 1e-3 until the search stands still; 14 until DLIB:BFGS ran on
+ *     the divided loss), "FTOL_ABS = 0.001" without "(default)";
  *   PARAM tol_gradinf 1e6 -- 1 + 2 x 3 = 7 evaluations (the loss at the
  *     start and its gradient's stencil, which takes that loss as its
  *     centre), the stop line "DLIB:BFGS stopped: tol_gradinf reached after
@@ -6748,14 +6760,14 @@ TEST_CASE("Termination: DLIB:BFGS records why it ended",
              {"MAXEVAL 3", "    MAXEVAL 3\n", 3u,
               "DLIB:BFGS: MAXEVAL reached",
               "DLIB:BFGS -- MAXEVAL=3 reached; preserving best-so-far"},
-             {"the default FTOL_ABS", "    MAXEVAL 200\n", 44u,
+             {"the default FTOL_ABS", "    MAXEVAL 200\n", 21u,
               "DLIB:BFGS: FTOL_ABS reached",
-              "DLIB:BFGS stopped: FTOL_ABS reached after 44 evaluation(s): "
+              "DLIB:BFGS stopped: FTOL_ABS reached after 21 evaluation(s): "
               "the loss changed by less than FTOL_ABS = 1e-07 (default) "
               "from one iteration to the next"},
-             {"FTOL_ABS 1e-3", "    MAXEVAL 200\n    FTOL_ABS 1e-3\n", 14u,
+             {"FTOL_ABS 1e-3", "    MAXEVAL 200\n    FTOL_ABS 1e-3\n", 21u,
               "DLIB:BFGS: FTOL_ABS reached",
-              "DLIB:BFGS stopped: FTOL_ABS reached after 14 evaluation(s): "
+              "DLIB:BFGS stopped: FTOL_ABS reached after 21 evaluation(s): "
               "the loss changed by less than FTOL_ABS = 0.001 from one "
               "iteration to the next"},
              {"PARAM tol_gradinf 1e6",
@@ -7149,20 +7161,24 @@ TEST_CASE("DLIB:GFS: a run whose first evaluations all fail goes on to "
 {
     /* One dimension, CGRID2B[2] in [1, 2]. On this fixture the validation
      * ERMSE falls from 10 meV/atom at 1.0 to 9.76 at 2.0, but only in the
-     * sixth decimal up to 1.4: 9.9999994 at 1.25, 9.9999974 at 1.375,
-     * 9.9999944 at 1.4, 9.99989 at 1.5. The skip cap 9.99999 fails the box
-     * below a point between 1.4 and 1.5 and leaves the rest usable. The
-     * three starting points -- Sobol points 2 and 3 (SEED 1 selects block 1
-     * of METHOD SOBOL 2; the chain hands its first method the SEED itself),
-     * 1.25 and 1.375, and the configuration's 1.4 -- all fail: dims + 2
-     * failed evaluations reach dlib's first trust-region step, which used
-     * to end the run in SIGSEGV. GFS picks some points at random, and which
-     * ones depends on whether an evaluation has finished when it asks for
-     * the next point, so the usable half of the box is wide enough for a
-     * run of 40 evaluations to reach it whatever GFS picks. */
+     * fourth decimal up to 1.55: 9.9999994 at 1.25, 9.9999945 at 1.4,
+     * 9.99965 at 1.55, 9.99874 at 1.6. The skip cap 9.999 fails the box
+     * below a point between 1.55 and 1.6 and leaves the rest usable. The
+     * three starting points -- Sobol points 14 and 15 (SEED 6 selects block
+     * 6 of METHOD SOBOL 2; the chain hands its first method the SEED
+     * itself), 1.5625 and 1.0625, and the configuration's 1.4 -- all fail:
+     * dims + 2 failed evaluations reach dlib's first trust-region step,
+     * which used to end the run in SIGSEGV. GFS picks some points at random,
+     * and which ones depends on whether an evaluation has finished when it
+     * asks for the next point, so the usable part of the box is wide enough
+     * for a run of 40 evaluations to reach it whatever GFS picks.
+     * The case ran with SEED 1 and the cap 9.99999, where block 1 of SOBOL 2
+     * drew 1.25 and 1.375; a block of 2 Sobol points now puts one in each
+     * half of the box (block 1 draws 1.375 and 1.875), so the cap and the
+     * block are chosen to fail both. */
     TaRun run(
         "OPTIMIZER\n"
-        "  INIT\n    METHOD SOBOL 2\n    METHOD CONFIG\n    SEED 1\n"
+        "  INIT\n    METHOD SOBOL 2\n    METHOD CONFIG\n    SEED 6\n"
         "  ENDINIT\n"
         "  STRATEGY\n    TYPE PLAIN\n    LIB DLIB\n    ALGO GFS\n"
         "    MAXEVAL 40\n    THREADS 1\n  ENDSTRATEGY\n"
@@ -7170,7 +7186,7 @@ TEST_CASE("DLIB:GFS: a run whose first evaluations all fail goes on to "
         "LOSS L2\n"
         "QFLUSH 1000\n"
         "DIGITS 15\n"
-        "PC_ERMSE 0 1 --skip-above 9.99999\n"
+        "PC_ERMSE 0 1 --skip-above 9.999\n"
         "OPTIM CGRID2B (2) 1.0 2.0\n");
     int status = -1;
     REQUIRE_NOTHROW(status = run_within(run, std::chrono::seconds(120),
@@ -7183,8 +7199,8 @@ TEST_CASE("DLIB:GFS: a run whose first evaluations all fail goes on to "
     /* Pins: "DLIB:GFS: MAXEVAL reached". Before the fix: COMPLETED. */
     CHECK(journal_status(journal) == "DLIB:GFS: MAXEVAL reached");
 
-    /* Every row is a usable loss (an ERMSE of at most 9.99999, so a loss of
-     * at most 99.9998) or the FAILSCORE the evaluation returned: whatever
+    /* Every row is a usable loss (an ERMSE of at most 9.999, so a loss of
+     * at most 99.980001) or the FAILSCORE the evaluation returned: whatever
      * dlib is told about a failure, the files record FAILSCORE. */
     const auto loss = data_rows("loss.tadah");
     REQUIRE(loss.size() == 40u);
@@ -7194,7 +7210,7 @@ TEST_CASE("DLIB:GFS: a run whose first evaluations all fail goes on to "
         if (loss[i].back() == kDefaultFailScoreRow) {
             ++failed;
         } else {
-            CHECK(loss_value(loss[i].back()) <= 99.9998);
+            CHECK(loss_value(loss[i].back()) <= 99.980001);
         }
     }
     for (std::size_t i = 0; i < 3; ++i) {
@@ -7657,17 +7673,23 @@ TEST_CASE("Finite differences: with Ceres' step rule a failed stencil point "
      * side, 1.6 and 1.7 (a difference never mixes a usable loss with a
      * failure).
      * Pins: the first four evaluations 1.5, 1.6, 1.4 (failed), 1.7; no stop
-     * line at 1.5; DLIB:BFGS reaches the bound 2.0 after 9 evaluations
-     * ("FTOL_ABS reached"); NLOPT:LD_LBFGS, misled next to the failure
-     * region by the one-sided estimate over 0.2 of a strongly curved loss,
+     * line at 1.5. The one-sided estimate over 0.2 of a strongly curved
+     * loss misleads the searches next to the failure region: DLIB:BFGS
+     * steps towards it (1.0 and 1.4 fail; dlib is given a finite stand-in
+     * for each), its line search backs off to the start, and the search
+     * ends "FTOL_ABS reached" at 1.5 after 39 evaluations; NLOPT:LD_LBFGS
      * ends "STOPPED -- nlopt failure (...)" after 33; CERES:STEEPEST_DESCENT
-     * "FAILURE (Numerical failure in line search)" after 49.
+     * "FAILURE (Numerical failure in line search)" after 49. (Until dlib
+     * was given a finite stand-in, its line search, handed FAILSCORE divided
+     * by the length of the first gradient, 0.87, which is +inf, took a step
+     * that is not a number after the trial 1.4, which the box put on the
+     * upper bound 2.0, and DLIB:BFGS ended there after 9 evaluations.)
      * Before the fix: three evaluations, the last 1.4, and the stop line
      * "<backend> stopped: no usable gradient: ... (at CGRID2B[2] = 1.5, the
      * stencil point CGRID2B[2] = 1.4 failed ...". */
     struct Case { GradientBackend b; std::size_t evals; std::string status; };
     std::vector<Case> cases = {
-        {{"DLIB", "BFGS"}, 9u, "DLIB:BFGS: FTOL_ABS reached"},
+        {{"DLIB", "BFGS"}, 39u, "DLIB:BFGS: FTOL_ABS reached"},
         {{"NLOPT", "LD_LBFGS"}, 33u,
          "STOPPED -- nlopt failure (algorithm converged; consider adding "
          "ftol_rel / xtol_rel / maxeval to stop cleanly next time)"}};
@@ -7701,31 +7723,44 @@ TEST_CASE("Finite differences: with Ceres' step rule a failed stencil point "
 }
 
 TEST_CASE("Finite differences: DLIB:BFGS goes on past a later point with a "
-          "failed stencil point, to the edge of the failure region",
+          "failed stencil point, next to the failure region",
           "[HPO][termination][fd_gradient]")
 {
     /* With the ERMSE target 10.5 the loss falls towards the failures. From
-     * 1.8, BFGS's line search tries 1.059 (a failed evaluation: dlib steps
-     * back), accepts 1.726; the stencil of its next point 1.6676 reaches
-     * 1.4676, which fails, and the gradient there is the one-sided
-     * difference into the usable side.
-     * Pins: the search goes on to the edge of the failure region, 1.4813
-     * (loss 0.250056, the best), and ends "DLIB:BFGS: FTOL_ABS reached"
-     * after 54 evaluations; no stop line.
-     * Before the fix: the gradient at 1.6676 failed, and the search ended
-     * there after 10 evaluations, the last a failed one, with the stop line
-     * "DLIB:BFGS stopped: no usable gradient: ... (at CGRID2B[2] = 1.6675"
-     * and the status "STOPPED -- no usable gradient: ...". */
+     * 1.8, BFGS's line search tries 1.0 (a failed evaluation: dlib is given
+     * a finite stand-in for it and steps back) and accepts 1.5404; the
+     * stencil of that point reaches 1.3404, which fails, and the gradient
+     * there is the one-sided difference into the usable side.
+     * Pins: the search goes on past that point -- a line search from it,
+     * which comes back to it, and its gradient again, one-sided again (2
+     * mixed-kind stencils) -- its best 1.5404422557 (loss 0.250273), and
+     * ends "DLIB:BFGS: FTOL_ABS reached" after 47 evaluations; no stop
+     * line. (Until dlib was given a finite stand-in for a failed
+     * evaluation, the line search, handed FAILSCORE divided by the length
+     * of the first gradient, 0.74, which is +inf, accepted 1.6, and the
+     * search went on past 1.6583 and 1.5324, whose stencil points 1.4583
+     * and 1.3324 fail, to its best 1.5, loss 0.250093, after 54
+     * evaluations; until DLIB:BFGS ran on the loss divided by that length
+     * its line search first tried 1.059 and the search went on to 1.4813,
+     * loss 0.250056.)
+     * Before the fix: the gradient at the first such point failed, and the
+     * search ended there after 10 evaluations, the last a failed one, with
+     * the stop line "DLIB:BFGS stopped: no usable gradient: ... (at
+     * CGRID2B[2] = 1.6675" and the status "STOPPED -- no usable gradient:
+     * ...". */
     TaRun run(straddle_block("DLIB", "BFGS"), straddle_root("10.5"));
     int status = -1;
     REQUIRE_NOTHROW(status = straddle_run(run, "1.8", "DLIB:BFGS"));
     CHECK(status == 0);
     const auto loss = data_rows("loss.tadah");
-    CHECK(loss.size() == 54u);
+    CHECK(loss.size() == 47u);
     const auto best = data_rows("best_params.tadah");
     REQUIRE_FALSE(best.empty());
-    CHECK(std::stod(best.back().back()) == Approx(1.481330854).epsilon(1e-8));
+    CHECK(std::stod(best.back().back()) ==
+          Approx(1.5404422557).epsilon(1e-10));
     const std::string journal = read_file("hpo_run.log");
+    CHECK(std::regex_search(journal,
+                            std::regex(R"(Mixed-kind stencils\s*: 2 )")));
     CHECK(journal_status(journal) == "DLIB:BFGS: FTOL_ABS reached");
     CHECK(journal.find("stopped: no usable gradient") == std::string::npos);
     CHECK(journal.find("MAXEVAL=60 reached") == std::string::npos);

@@ -607,8 +607,13 @@ Registry build_registry()
         } else if (has("BOBYQA") || has("COBYLA")) {
             c.step_use  = StepUse::PerDimRescale;
             c.step_note = "STEP rescales the coordinates, so that the first trust-region "
-                          "radius is STEP in each dimension; the last radius is XTOL_REL "
-                          "times the first, and not below XTOL_ABS";
+                          "radius is STEP in each search parameter, and that scale holds "
+                          "for the whole search; without STEP each search parameter takes "
+                          "0.25 of the width of its box, in the coordinates of the search. "
+                          "The last radius is XTOL_REL times the first, and not below "
+                          "XTOL_ABS. LN_BOBYQA moves a start that lies within a step of a "
+                          "bound by at most half a step: onto the bound when it lies within "
+                          "half a step of it, otherwise to one step from it";
         } else if (has("NEWUOA") || has("PRAXIS")) {
             c.step_use  = StepUse::MinCollapsed;
             c.step_note = "one radius for every dimension, the smallest STEP of the "
@@ -619,8 +624,19 @@ Registry build_registry()
                           "STEP it is half the width of the OPTIM box";
         } else if (has("MLSL") || has("AUGLAG")) {
             c.step_use  = StepUse::ForwardedToInner;
-            c.step_note = "passed to the local optimiser of the INNER block; a STEP of the "
-                          "enclosing block replaces the STEP of the INNER block";
+            /* NLopt's default local search (default_inner, set above) is
+             * LN_COBYLA for the GN_ MLSL and LN_ AUGLAG forms only. */
+            c.step_note = c.default_inner &&
+                                  std::string(c.default_inner) == "LN_COBYLA"
+                ? "passed to the local optimiser of the INNER block; a STEP of the "
+                  "enclosing block replaces the STEP of the INNER block; with "
+                  "neither STEP set, a local search LN_BOBYQA or LN_COBYLA (the "
+                  "INNER block's, or the default LN_COBYLA) takes 0.25 of the width "
+                  "of each search parameter"
+                : "passed to the local optimiser of the INNER block; a STEP of the "
+                  "enclosing block replaces the STEP of the INNER block; with "
+                  "neither STEP set, an INNER LN_BOBYQA or LN_COBYLA takes 0.25 of "
+                  "the width of each search parameter";
         } else {
             c.step_use  = StepUse::Ignored;
             c.step_note = "this algorithm never reads an initial step (population, "

@@ -895,8 +895,11 @@ optimizers = ["ASA:ASA"]
 args = [{ name = "value", kind = "number", min = 0, integral = true }]
 default = { literal = "100" }
 doc = """\
-The number of accepted states between the periodic tests; 0 switches \
-them off."""
+ASA's periodic test, in which it reanneals and checks whether the cost \
+repeats, follows each accepted state that brings the count of accepted states \
+to a multiple of this number; 0 switches this off. When a block holds \
+more than one state, the test follows the block in which the count \
+reaches a multiple of this number."""
 checks = [
   { msg = "{phase}: ASA:ASA: PARAM {key} must be an integer (got {value})", doc = "For a value with a fraction." },
   { msg = "{phase}: ASA:ASA: PARAM {key} must be >= {min} (got {value})", doc = "For a value below 0." },
@@ -916,8 +919,11 @@ optimizers = ["ASA:ASA"]
 args = [{ name = "value", kind = "number", min = 0, integral = true }]
 default = { literal = "10000" }
 doc = """\
-The number of generated states between the periodic tests; 0 switches \
-them off."""
+ASA's periodic test, in which it reanneals and checks whether the cost \
+repeats, follows each state that brings the count of generated states \
+to a multiple of this number; 0 switches this off. When a block holds \
+more than one state, the test follows the block in which the count \
+reaches a multiple of this number."""
 checks = [
   { msg = "{phase}: ASA:ASA: PARAM {key} must be an integer (got {value})", doc = "For a value with a fraction." },
   { msg = "{phase}: ASA:ASA: PARAM {key} must be >= {min} (got {value})", doc = "For a value below 0." },

@@ -835,13 +835,18 @@ namespace asa_testing {
 namespace {
 RawCost g_raw_cost = nullptr;
 RawRng  g_raw_rng  = nullptr;
+std::vector<RawCall>* g_raw_calls = nullptr;
 
 extern "C" double raw_cost_tramp(double* x, double* /*lo*/, double* /*hi*/,
                                  double* /*tang*/, double* /*curv*/,
                                  ALLOC_INT* dim, int* /*type*/,
                                  int* cost_flag, int* /*exit_code*/,
-                                 USER_DEFINES* /*o*/)
+                                 USER_DEFINES* o)
 {
+    if (g_raw_calls)
+        g_raw_calls->push_back({o->Locate_Cost,
+                                static_cast<long>(o->N_Accepted),
+                                static_cast<long>(o->N_Generated)});
     int flag = 1;
     const double f =
         g_raw_cost(x, static_cast<long>(*dim), &flag);
@@ -854,7 +859,8 @@ extern "C" double raw_rng_tramp(LONG_INT* /*seed*/) { return g_raw_rng(); }
 
 RawResult run_raw_featured(RawCost cost, RawRng rng, std::size_t dim,
                            const double* lo, const double* hi,
-                           const double* x0, long limit_generated)
+                           const double* x0, long limit_generated,
+                           const std::map<std::string, double>& params)
 {
     OptimizerSpec sp;
     sp.lib  = "ASA";
@@ -862,6 +868,7 @@ RawResult run_raw_featured(RawCost cost, RawRng rng, std::size_t dim,
     sp.low.assign(lo, lo + dim);
     sp.high.assign(hi, hi + dim);
     sp.optim_init.assign(1, std::vector<double>(x0, x0 + dim));
+    for (const auto& kv : params) sp.param[kv.first] = kv.second;
 
     AsaOptions ao = parse_asa_options(sp, dim);
     ao.limit_generated = limit_generated;
@@ -876,6 +883,7 @@ RawResult run_raw_featured(RawCost cost, RawRng rng, std::size_t dim,
     std::lock_guard<std::mutex> lk(g_asa_mutex);
     g_raw_cost = cost;
     g_raw_rng  = rng;
+    g_raw_calls = &r.calls;
     r.final_cost =
         asa(&raw_cost_tramp, &raw_rng_tramp, &w.rand_seed, w.x.data(),
             w.lo.data(), w.hi.data(), w.tangents.data(), w.curvature.data(),
@@ -883,6 +891,7 @@ RawResult run_raw_featured(RawCost cost, RawRng rng, std::size_t dim,
             &w.exit_status, &w.opts);
     g_raw_cost = nullptr;
     g_raw_rng  = nullptr;
+    g_raw_calls = nullptr;
     r.exit_status = w.exit_status;
     r.n_accepted  = static_cast<long>(w.opts.N_Accepted);
     r.n_generated = static_cast<long>(w.opts.N_Generated);
