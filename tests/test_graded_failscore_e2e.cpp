@@ -217,12 +217,13 @@ constexpr double kLargest = std::numeric_limits<double>::max();
  * startup, "FAILSCORE_GRADING ON grades failures in bands below FAILSCORE,
  * which needs a FAILSCORE above 0 and below 1e300 (without a FAILSCORE
  * line, FAILSCORE is the largest double)". Before Ceres was given a
- * finite stand-in for a failed evaluation: CERES:STEEPEST_DESCENT from the
- * start in the failure region ran 1 iteration, its line search failing on
- * a slope that is not a finite double ("termination: FAILURE | iters=1",
- * "Numerical failure in line search ... initial_gradient: -inf"; on these
- * data from a FAILSCORE of about 1e160 on, below 1e299 too), and 50 of its
- * 60 evaluations were graded failures. */
+ * failed evaluation's loss scaled to at most 1e100: CERES:STEEPEST_DESCENT
+ * from the start in the failure region ran 1 iteration, its line search
+ * failing on a slope that is not a finite double ("termination: FAILURE |
+ * iters=1", "Numerical failure in line search ... initial_gradient: -inf";
+ * on these data from a FAILSCORE of about 1e160 on, below 1e299 too), and
+ * most of its evaluations were graded failures (50 of 60 under MAXEVAL 60,
+ * 11 under FAILSCORE 1e9). */
 TEST_CASE("Graded failures near the largest double: FAILSCORE_GRADING ON "
           "without a FAILSCORE line runs through the optimiser families",
           "[HPO][failscore][grading][e2e]")

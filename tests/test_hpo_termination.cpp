@@ -7688,7 +7688,7 @@ SideEnding side_ending(const std::string& name)
     if (name == "NLOPT:LD_MMA") return {maxeval, 9u};
     if (name == "NLOPT:LD_CCSAQ") return {maxeval, 6u};
     if (name == "CERES:STEEPEST_DESCENT")
-        return {"CERES:STEEPEST_DESCENT: FTOL_REL reached", 35u};
+        return {"CERES:STEEPEST_DESCENT: FTOL_REL reached", 11u};
     return {nlopt_ok, 6u};   /* LD_LBFGS, LD_TNEWTON_PRECOND_RESTART, LD_VAR2 */
 }
 
@@ -7706,8 +7706,15 @@ TEST_CASE("Finite differences: a failed stencil point at the start point: "
      * best is 2.0, on the bound (loss 95.25); no stop line; per backend the
      * status and evaluations of side_ending (DLIB:BFGS "FTOL_ABS reached"
      * after 6, NLopt LD_LBFGS 6 "SUCCESS -- generic success", ...,
-     * CERES:STEEPEST_DESCENT "FTOL_REL reached" after 35, 4 of its points
-     * outside the box and not evaluated); status 0.
+     * CERES:STEEPEST_DESCENT "FTOL_REL reached" after 11: its first step
+     * leaves the box (2.6, not evaluated: a failure graded by its distance),
+     * and its line search then takes a step of 1e-3 of it, as under
+     * FAILSCORE 1e9); status 0.
+     * Before Ceres was given a failed evaluation's loss scaled to at most
+     * 1e100: CERES:STEEPEST_DESCENT made 35 evaluations, 4 of its points
+     * outside the box (2.6, 2.1922, 2.0595, 2.0096): its line search fitted
+     * its polynomial through the score of 2.6, near the largest double, which
+     * overflowed, and each step shrank to about 0.3 of the one before.
      * Before the fix: every backend stopped at that gradient after three
      * evaluations, 1.6, 1.8 and 1.4, with the status "STOPPED -- no usable
      * gradient: a failed evaluation in the finite-difference stencil" and
@@ -7758,7 +7765,13 @@ TEST_CASE("Finite differences: with Ceres' step rule a failed stencil point "
      * for each), its line search backs off to the start, and the search
      * ends "FTOL_ABS reached" at 1.5 after 39 evaluations; NLOPT:LD_LBFGS
      * ends "STOPPED -- nlopt failure (...)" after 33; CERES:STEEPEST_DESCENT
-     * "FAILURE (Numerical failure in line search)" after 49. (Until dlib
+     * "FAILURE (Numerical failure in line search)" after 25: its first step
+     * leaves the box (0.63, not evaluated), its line search takes a step of
+     * 1e-3 of it (1.49913) and then backs off to the start. (Until Ceres
+     * was given a failed evaluation's loss scaled to at most 1e100, it made
+     * 49: its line search shrank each step to about 0.3 of the one before,
+     * its polynomial through the score of 0.63, near the largest double,
+     * having overflowed. Until dlib
      * was given a finite stand-in, its line search, handed FAILSCORE divided
      * by the length of the first gradient, 0.87, which is +inf, took a step
      * that is not a number after the trial 1.4, which the box put on the
@@ -7773,7 +7786,7 @@ TEST_CASE("Finite differences: with Ceres' step rule a failed stencil point "
          "STOPPED -- nlopt failure (algorithm converged; consider adding "
          "ftol_rel / xtol_rel / maxeval to stop cleanly next time)"}};
 #ifdef TADAH_USE_CERES
-    cases.push_back({{"CERES", "STEEPEST_DESCENT"}, 49u,
+    cases.push_back({{"CERES", "STEEPEST_DESCENT"}, 25u,
                      "STOPPED -- CERES:STEEPEST_DESCENT: FAILURE (Numerical "
                      "failure in line search)"});
 #endif
@@ -8546,11 +8559,15 @@ TEST_CASE("Finite differences: a failed stencil point is not differenced "
      * default FAILSCORE.
      * Pins: every backend evaluates 1.6, 1.8, 1.4 (loss 1e9) and 2.0 first,
      * makes no stop line, and ends as under the default FAILSCORE
-     * (side_ending: the same evaluations and status), but
-     * CERES:STEEPEST_DESCENT, whose first step leaves the box (2.6, scored
-     * a failure graded by its distance below 1e9) and whose line search then
-     * takes a step of 1e-3 of it: "FTOL_REL reached" after 11 evaluations;
-     * the best is 2.0; status 0.
+     * (side_ending: the same evaluations and status), CERES:STEEPEST_DESCENT
+     * too, whose first step leaves the box (2.6, scored a failure graded by
+     * its distance below 1e9) and whose line search then takes a step of
+     * 1e-3 of it: "FTOL_REL reached" after 11 evaluations; the best is 2.0;
+     * status 0. (Until Ceres was given a failed evaluation's loss scaled to
+     * at most 1e100, CERES:STEEPEST_DESCENT ended otherwise under the
+     * default FAILSCORE, after 35 evaluations, and this case named its
+     * ending apart. Before that change: passes as well, a pin of the ending
+     * under FAILSCORE 1e9, which side_ending gives now.)
      * Before the fix: three evaluations, 1.6, 1.8 and 1.4, the stop line
      * "<backend> stopped: no usable gradient: ... (at CGRID2B[2] = 1.6, the
      * stencil point CGRID2B[2] = 1.4 failed: loss 1000000000)" and the
@@ -8562,9 +8579,7 @@ TEST_CASE("Finite differences: a failed stencil point is not differenced "
             int status = -1;
             REQUIRE_NOTHROW(status = straddle_run(run, "1.6", name));
             CHECK(status == 0);
-            SideEnding e = side_ending(name);
-            if (b.lib == "CERES")
-                e = {"CERES:STEEPEST_DESCENT: FTOL_REL reached", 11u};
+            const SideEnding e = side_ending(name);
             const auto x = evaluated_cgrid2();
             REQUIRE(x.size() == e.evals);
             CHECK(x[0] == Approx(1.6));
@@ -8930,14 +8945,19 @@ TEST_CASE("Finite differences: a search on the upper bound evaluates nothing "
      * is scored as a failure graded by its
      * distance to the box, 1.797243...e+308 to 1.797468...e+308 here, with
      * that score's slope as its gradient and no stencil.
-     * Pins (CERES:STEEPEST_DESCENT): 21 rows, the start and its stencil, then
-     * 18 out-of-box points from 3 down towards 2, none evaluated: no row in
+     * Pins (CERES:STEEPEST_DESCENT): 7 rows, the start and its stencil, then
+     * 4 out-of-box points, 3, 2.001, 2.000001 and 2.000000001 (each step 1e-3
+     * of the one before), none evaluated: no row in
      * the box after the first three, each out-of-box row scored in
      * [0.99975, 1) x FAILSCORE and no higher than the one before; one
      * startup line "ignores the OPTIM box" and one WARNING "lies outside its
      * OPTIM box [1, 2]: it is not evaluated"; DIAGNOSTICS "Out-of-box points
-     * : 18"; the best the start 2; the ending "FAILURE (Numerical failure in
+     * : 4"; the best the start 2; the ending "FAILURE (Numerical failure in
      * line search)".
+     * Before Ceres was given a failed evaluation's loss scaled to at most
+     * 1e100: 21 rows, 18 out-of-box points from 3 down towards 2, each step
+     * about 0.3 of the one before (the polynomial of its line search, fitted
+     * through scores near the largest double, overflowed).
      * Before the fix: the case ran CERES:LBFGS, refused since; the CERES
      * drivers evaluated their points outside the box (the line "lies
      * outside its OPTIM box [1, 2] and is evaluated there", DIAGNOSTICS
@@ -9014,7 +9034,7 @@ TEST_CASE("Finite differences: a search on the upper bound evaluates nothing "
                 CHECK(count_of(journal, "lies outside its OPTIM box [1, 2]: "
                                         "it is not evaluated") == 1u);
                 CHECK(journal.find("is evaluated there") == std::string::npos);
-                REQUIRE(x.size() == 21u);
+                REQUIRE(x.size() == 7u);
                 const auto loss = data_rows("loss.tadah");
                 REQUIRE(loss.size() == x.size());
                 const double fs = std::numeric_limits<double>::max();
@@ -9030,9 +9050,9 @@ TEST_CASE("Finite differences: a search on the upper bound evaluates nothing "
                     previous = l;
                     ++outside;
                 }
-                CHECK(outside == 18u);
+                CHECK(outside == 4u);
                 CHECK_THAT(journal,
-                           Catch::Contains("Out-of-box points       : 18 "));
+                           Catch::Contains("Out-of-box points       : 4 "));
                 CHECK(journal.find("Out-of-box evaluations") ==
                       std::string::npos);
                 CHECK(journal_status(journal) ==
