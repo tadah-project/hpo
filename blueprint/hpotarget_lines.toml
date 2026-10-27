@@ -2276,7 +2276,9 @@ energy per atom of the crystal relaxed at zero pressure."""
 long_doc = """\
 Each evaluation builds a bcc supercell with the lattice constant a0, \
 relaxes it at zero pressure with tadah's own relaxer and compares the \
-cohesive energy with the target through the loss function. Each \
+cohesive energy with the target through the loss function. The \
+relaxation ends when the magnitude of the cell's pressure is below \
+--ptol and the largest atomic force below --fmax-converged. Each \
 relaxation starts from the lattice constant at which the previous \
 relaxation of the same replica (TADAH:ANNEAL_PT), walker \
 (TADAH:ANNEAL_PA) or ASA trial-state slot (the n-th trial state of each \
@@ -2832,8 +2834,8 @@ repeat_msg = "PC_OBSERVABLE cohesive_energy: --etol is given twice on this line;
 default = { literal = "0" }
 doc = """\
 The energy tolerance of the relaxation, as the first value of the LAMMPS \
-minimize command; a value of 0 or below leaves the forces alone to decide \
-convergence."""
+minimize command; a value of 0 or below leaves --fmax-converged and \
+--ptol alone to decide convergence."""
 
 [[line_option.args]]
 name = "tol"
@@ -2869,19 +2871,15 @@ repeat = "error"
 repeat_msg = "PC_OBSERVABLE cohesive_energy: --fmax-converged is given twice on this line; each option is given once"
 default = { literal = "0.1" }
 doc = """\
-The force tolerance of the relaxation, a number > 0: the relaxation stops \
-when the largest atomic force, in eV/Å, and the strain force of the cell, \
-in eV/Å³, both fall below it."""
+The force tolerance of the atoms in the relaxation, in eV/Å, a number \
+> 0: the atoms have relaxed when the largest atomic force falls below it."""
 long_doc = """\
-The strain force is |dE/dε| / (3V), for the isotropic strain ε of the \
-cell and its volume V: the magnitude of the cell's pressure, in eV/Å³. \
-The one number bounds both, so the default 0.1 allows 0.1 eV/Å³, about \
-16 GPa. In the bcc cell the atomic forces vanish by symmetry, so the \
-strain force decides. A relaxation that stops before both fall below the \
-tolerance (at --maxiter, --maxeval or --max-wall-time, or when no step \
-lowers its energy) reports the --unconverged value; one that --etol \
-stops counts as converged when its largest atomic force is below the \
-tolerance."""
+In the bcc cell the atomic forces vanish by symmetry; the pressure of the \
+cell is bounded by --ptol. A relaxation that stops before both \
+tolerances are met (at --maxiter, --maxeval or --max-wall-time, or when \
+no step lowers its energy) reports the --unconverged value; one that \
+--etol stops counts as converged when its largest atomic force is below \
+--fmax-converged, whatever its pressure."""
 
 [[line_option.args]]
 name = "fmax"
@@ -2989,8 +2987,10 @@ const <value> reports <value> in eV/atom, force-scaled <slope> reports \
 the target plus <slope> times the larger of the largest atomic force and \
 the strain force of the cell at the end."""
 long_doc = """\
-The two forces are those that --fmax-converged bounds; in the bcc cell \
-the atomic forces vanish by symmetry, so the strain force decides. \
+The largest atomic force, in eV/Å, is the one --fmax-converged bounds; \
+the strain force of the cell, |dE/dε| / (3V), in eV/Å³, is the magnitude \
+of its pressure, which --ptol bounds in GPa. In the bcc cell the atomic \
+forces vanish by symmetry, so the strain force decides. \
 force-scaled leaves the loss sloping towards converged candidates; its \
 value has no analytical gradient."""
 
