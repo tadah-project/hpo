@@ -43,6 +43,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cctype>
 #include <chrono>
 #include <cmath>
 #include <csignal>
@@ -2235,5 +2236,98 @@ TEST_CASE("hpo: the analytical gradient hands WATOM to finite differences "
         INFO("analytical " << r.g << ", central difference " << central);
         CHECK(std::fabs(central) > 1e-3);
         CHECK(r.g == Approx(central).epsilon(1e-4));
+    }
+}
+
+/* Pins: a check names no seed that a run would draw. No run follows a
+ * check, and the next run draws another seed, so a number would repeat
+ * nothing. For a STRATEGY block of TADAH:RANDOM without SEED, after an
+ * INIT block on line 2 without SEED whose METHOD RANDOM 2 draws its
+ * points, hpo_run() with CHECK true says on standard output "[HPO] the
+ * INIT block on line 2 has no SEED, so a run draws a seed for its starting
+ * points once and names it" and "[HPO] the STRATEGY block has no SEED, and
+ * TADAH:RANDOM draws random numbers, so a run draws a seed for them once
+ * and names it"; for NLOPT:GN_CRS2_LM after an INIT block of METHOD LHS 3,
+ * whose seed it takes, the INIT line ends "... names it
+ * (NLOPT:GN_CRS2_LM, without a SEED of its own, takes its random numbers
+ * from the same seed)". Neither says "drawn once for the run". The same
+ * files as a run name the seeds they draw ("..., so it draws them with a
+ * seed drawn once for the run, S (SEED S in the STRATEGY block draws the
+ * same numbers again)").
+ * Before the fix: the check named a seed "drawn once for the run, S (SEED
+ * S in the STRATEGY block draws the same numbers again)", which no run
+ * used. */
+TEST_CASE("hpo --check: a seed that a run would draw is announced without "
+          "a number",
+          "[HPO][hpo_check][drawn_seed]")
+{
+    const std::string root = "LOSS L2\nFAILSCORE 1e9\nPC_ERMSE 0 1\n"
+                             "OPTIM CGRID2B (1) 0.1 0.9\n"
+                             "OPTIM CGRID2B (2) 1.0 2.0\n";
+    const auto optimizer = [](const std::string& method,
+                              const std::string& lib,
+                              const std::string& algo) {
+        return "OPTIMIZER\n  INIT\n    " + method + "\n  ENDINIT\n"
+               "  STRATEGY\n    TYPE PLAIN\n    LIB " + lib + "\n    ALGO " +
+               algo + "\n    MAXEVAL 3\n  ENDSTRATEGY\nENDOPTIMIZER\n";
+    };
+    const std::string init_line =
+        "[HPO] the INIT block on line 2 has no SEED, so a run draws a seed "
+        "for its starting points once and names it";
+    struct Case {
+        std::string method, lib, algo;
+        std::vector<std::string> expected;   // lines of standard output
+    };
+    for (const Case& c : std::vector<Case>{
+             {"METHOD RANDOM 2", "TADAH", "RANDOM",
+              {init_line + "\n",
+               "[HPO] the STRATEGY block has no SEED, and TADAH:RANDOM draws "
+               "random numbers, so a run draws a seed for them once and "
+               "names it\n"}},
+             {"METHOD LHS 3", "NLOPT", "GN_CRS2_LM",
+              {init_line + " (NLOPT:GN_CRS2_LM, without a SEED of its own, "
+                           "takes its random numbers from the same seed)\n"}}}) {
+        INFO(c.lib << ":" << c.algo);
+        fresh_process_state();
+        ScratchDir sd("drawn_seed");
+        write_inputs(optimizer(c.method, c.lib, c.algo) + root);
+        std::string out;
+        {
+            tadah::core::Context ctx =
+                make_ta_context("train.db", "config.hpo", "config.val");
+            ctx.add("CHECK", "true");
+            int status = -1;
+            {
+                CaptureCout capture;
+                status = tadah::hpo::hpo_run(ctx);
+                out = capture.text.str();
+            }
+            REQUIRE(status == 0);
+        }
+        INFO("check:\n" << out);
+        for (const std::string& line : c.expected) {
+            INFO("expected: " << line);
+            CHECK(contains(out, line));
+        }
+        CHECK_FALSE(contains(out, "drawn once for the run"));
+
+        fresh_process_state();
+        tadah::core::Context ctx =
+            make_ta_context("train.db", "config.hpo", "config.val");
+        std::string run_out;
+        int status = -1;
+        {
+            CaptureCout capture;
+            status = tadah::hpo::hpo_run(ctx);
+            run_out = capture.text.str();
+        }
+        INFO("run:\n" << run_out);
+        REQUIRE(status == 0);
+        const std::string drawn = "drawn once for the run, ";
+        const auto p = run_out.find(drawn);
+        REQUIRE(p != std::string::npos);
+        CHECK(std::isdigit(static_cast<unsigned char>(
+            run_out[p + drawn.size()])));
+        CHECK_FALSE(contains(run_out, "so a run draws a seed"));
     }
 }

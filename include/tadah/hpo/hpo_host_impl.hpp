@@ -681,6 +681,34 @@ std::mutex HPO_Host<P,R>::bound_occ_mtx_;
 template<class P, class R>
 std::optional<durable_best::Key> HPO_Host<P,R>::g_best_key_;
 
+/* The evaluation numbers of a batch (eval_batch.h): reserved from the
+ * process-wide counter g_iter_, the unused ones at the end given back when
+ * no number was reserved after them, and any other unused one written as
+ * a result that is not run (EvalResult::not_run), which the writer goes on
+ * past. */
+template<class P,class R>
+struct HPO_Host<P,R>::BatchNumbers final : EvalBatch::Numbers {
+    std::size_t reserve(std::size_t n) override
+    {
+        return g_iter_.fetch_add(n, std::memory_order_relaxed) + 1;
+    }
+    bool give_back(std::size_t first, std::size_t end) override
+    {
+        std::size_t last = end - 1;
+        return g_iter_.compare_exchange_strong(last, first - 1,
+                                               std::memory_order_relaxed);
+    }
+    void skip(std::size_t n) override
+    {
+        Result unused;
+        unused.iter    = n;
+        unused.not_run = true;
+        g_q_.enqueue(std::move(unused));
+    }
+};
+template<class P,class R>
+typename HPO_Host<P,R>::BatchNumbers HPO_Host<P,R>::batch_numbers_;
+
 template<class P,class R> typename HPO_Host<P,R>::Queue  HPO_Host<P,R>::g_q_;
 template<class P,class R> std::atomic_flag               HPO_Host<P,R>::writer_token_;
 template<class P,class R> std::mutex                     HPO_Host<P,R>::io_mtx_;
@@ -3239,7 +3267,7 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
     throw std::logic_error("HPO_Host: a host built for the startup checks "
                            "(tadah hpo --check) evaluates no candidate");
   /* Cooperative shutdown: SIGINT/SIGTERM/SIGUSR2 raised the stop flag.
-   * Throw before consuming an iter slot. The exception unwinds every
+   * Throw before taking an evaluation number. The exception unwinds every
    * optimiser and strategy to drive_run() (run_driver.h), which flushes
    * the result files, writes the SHUTDOWN trailer and returns 128 + the
    * signal number. SignalHandler::install() is wired in hpo_run(). */
@@ -3247,8 +3275,20 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
     throw core::ShutdownRequested{};
   }
 
-  Result r;
-  r.iter   = ++g_iter_;
+  /* The batch of this thread's slot (eval_batch.h: the evaluations a
+   * parallel optimiser runs at once), or none. In a batch the evaluation
+   * takes the number of its place in the batch, and what follows from its
+   * result is committed once every lower-numbered evaluation of the batch
+   * has ended, in number order; outside one it takes the next number and
+   * is committed when it ends. Either way every number taken reaches the
+   * commit (finish_evaluation), whatever way the evaluation ends, so the
+   * writer never waits for a number. */
+  EvalBatch* const batch = EvalBatch::current();
+  Completed c;
+  Result& r = c.r;
+  r.iter = batch ? EvalBatch::take_number(batch_numbers_) : ++g_iter_;
+  c.tag   = HPOLog::eval_context();
+  c.probe = probe::active();
     /* A coordinate proposed outside its box within rounding is evaluated
      * on the bound. `p` is p_in itself when nothing was snapped. A point
      * further out is not evaluated (below). */
@@ -3269,7 +3309,10 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
 
     auto t0 = std::chrono::high_resolution_clock::now();
     auto t_train_start = t0, t_train_end = t0, t_predict_end = t0,
-         t_lammps_end = t0, t_sims_loss_end = t0, t_submit_end = t0;
+         t_lammps_end = t0, t_sims_loss_end = t0;
+    /* The evaluation went the whole way (no early exit): its row of the
+     * TADAH_HPO_BENCH timings is written. */
+    bool full_evaluation = false;
 
     /* Per-stage watchdog logger -- closes over r.iter so the post-hoc
      * leave() warning includes the iter that was running. */
@@ -3277,36 +3320,13 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
         HPOLog::instance().warning(msg);
     };
 
-    /* Every evaluation that consumed an iter slot must reach the
-     * journal's census, including the ones that leave through a catch.
-     *
-     * record_eval() used to be called only on the success path, from inside
-     * the try below. n_eval_ is what drives the milestone SUMMARY schedule,
-     * so a run whose evaluations all took an exception path stopped
-     * producing SUMMARY lines entirely -- it read as FROZEN rather than as
-     * FAILING, which is the worst possible presentation of a failure. Worse,
-     * "NaN rate" stayed pinned at whatever it was, because n_nan_ is
-     * incremented in the same place.
-     *
-     * An RAII census closes every exit at once, including the three catches
-     * that rethrow, without duplicating the call five times. `census_done`
-     * is set by the normal path so the success case still records exactly
-     * once, with its own precise wall time. */
-    struct EvalCensus {
-        std::size_t iter;
-        std::chrono::high_resolution_clock::time_point t0;
-        /* An evaluation that leaves without saying otherwise produced no
-         * usable loss. */
-        EvalLoss loss = EvalLoss::Failed;
-        bool     done = false;
-        ~EvalCensus() {
-            if (done) return;
-            const double ms = static_cast<double>(
-                std::chrono::duration_cast<std::chrono::milliseconds>(
-                    std::chrono::high_resolution_clock::now() - t0).count());
-            HPOLog::instance().record_eval(iter, ms, loss);
-        }
-    } _census{r.iter, t0, EvalLoss::Failed, false};
+    /* The evaluation's time, measured when it ends (the census counts it
+     * at the commit). */
+    const auto stop_clock = [&]() {
+        r.wall_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::high_resolution_clock::now() - t0);
+        c.wall_ms = static_cast<double>(r.wall_ms.count());
+    };
 
     /* The census kind of a completed evaluation's loss: only a usable
      * (feasible) loss can become the incumbent. An evaluation with a failed
@@ -3319,33 +3339,22 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
                                                            : EvalLoss::Failed;
     };
 
-    /* Set by persist_durable_best when it has journalled its own failure
-     * (under best_mtx_, so the journal orders a run's publication failures
-     * as the latch saw them); the durable_best::Error catch below then does
-     * not log it again. */
-    bool durable_failure_journalled = false;
-
-    /* Bug 5: wrap the entire eval pipeline in try/catch.
+    /* Every evaluation that took a number ends at finish_evaluation, the
+     * ones that leave through a catch below included: its row, the
+     * journal's census of it (record_eval; a run whose evaluations all
+     * throw still writes its milestone SUMMARY lines, and they read as
+     * failing, not frozen) and, for a computed loss, the new-best decision.
      *
-     * Without this guard, a throw between `r.iter = ++g_iter_` above
-     * and the eventual `submit_result(std::move(r), ...)` below leaves
-     * the writer's `next_flush_` permanently stuck at the missing
-     * iter -- every subsequent eval enqueues fine but the writer never
-     * advances past the gap, freezing loss.tadah / params.tadah / etc
-     * while hpo_run.log keeps progressing.
-     *
-     * Recovery: catch any std::exception (or unknown throw), submit a
-     * synthetic FAIL_SCORE Result for this iter so the writer queue
-     * stays contiguous, and return FAIL_SCORE to the optimiser. The
-     * census records it as an evaluation that threw (EvalLoss::Threw),
-     * which the journal's DIAGNOSTICS count apart from the NaN/Inf
-     * clampings: no loss was computed, let alone a non-finite one.
-     *
-     * Excluded from the catch:
-     *  - core::ShutdownRequested -- must propagate to hpo_run() so the
-     *    run shuts down cleanly (result files flushed, journal closed).
-     *  - StagnationStop -- must propagate to RestartPolicy. */
-    try {
+     * The evaluation runs in this lambda; a throw from it -- any
+     * std::exception or unknown throw of training, prediction, LAMMPS --
+     * becomes a FAIL_SCORE result for this number (the census counts it as
+     * an evaluation that threw, EvalLoss::Threw, apart from the NaN/Inf
+     * clampings: no loss was computed, let alone a non-finite one), and a
+     * core::ShutdownRequested from inside it is passed on after its
+     * number is finished. The RESTART stagnation stop (StagnationStop) and
+     * a failure to save the best potential (durable_best::Error) come from
+     * the commit, outside it. */
+    const auto evaluate = [&]() {
 
     /* A point outside the OPTIM box (box_penalty.h): not evaluated -- no
      * context, no gate, no training, no LAMMPS --, scored out_of_box_score()
@@ -3364,26 +3373,9 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
         tls_untrained_why_ = "the point lies outside the OPTIM box and is not "
                              "evaluated: it has no fit to differentiate";
         tls_analytical_failure_why_.clear();
-        {
-          const std::size_t threshold =
-              stagnation_threshold_.load(std::memory_order_relaxed);
-          if (threshold > 0 && !probe::active())
-            detail::throw_if_stagnated(r.iter, threshold, iter_at_last_best_,
-                                       reused_since_best_, best_mtx_,
-                                       best_pubs_);
-        }
-        r.wall_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::high_resolution_clock::now() - t0);
-        const std::size_t save_iter = r.iter;
-        const double save_loss = r.loss;
-        const double save_wall_ms = static_cast<double>(r.wall_ms.count());
-        submit_result(std::move(r), trg_, master_ctx_, val_ctx_,
-                      train_stdb_, val_stdb_, param_labels_, report_,
-                      n_val_datasets_, cw_, prec_);
-        HPOLog::instance().record_eval(save_iter, save_wall_ms,
-                                       EvalLoss::Failed);
-        _census.done = true;   /* counted here, with the measured wall */
-        return save_loss;
+        c.kind = EvalLoss::Failed;
+        stop_clock();
+        return;
     }
 
     /* Pre-training reject (the feasibility gates below): a graded band-D
@@ -3391,11 +3383,12 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
      * below), with the bookkeeping of a completed evaluation. The note is
      * rate-limited per gate -- first 5, then powers of two, parity with the
      * bad-pot skip counter -- and the gate's reject counter moves strictly
-     * after record_fail_band, so no SUMMARY shows more gate rejects than
-     * band-D failures. A rejected candidate's DUMP potential is header-only
-     * (no pot_ctx). */
+     * after record_fail_band (the commit), so no SUMMARY shows more gate
+     * rejects than band-D failures. A rejected candidate's DUMP potential
+     * is header-only (no pot_ctx). An all-infeasible run still reaches the
+     * stagnation window (the commit). */
     auto reject_pre_training = [&](GateKind kind, double v,
-                                   const std::string& what) -> double {
+                                   const std::string& what) {
         r.fail.band = std::max(r.fail.band, static_cast<int>(FailBand::D));
         r.fail.vD = v;
         r.loss = trg_.FAILSCORE_GRADING
@@ -3414,37 +3407,11 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
         tls_untrained_why_ = "the candidate was rejected before training (" +
                              what + "): it has no fit to differentiate";
         tls_analytical_failure_why_.clear();
-        /* Stagnation check (parity with post_lammps_finalize): an
-         * all-infeasible run must still trip StagnationStop -- its catch
-         * submits r with the real graded loss. */
-        {
-          const std::size_t threshold =
-              stagnation_threshold_.load(std::memory_order_relaxed);
-          /* A probe phase is deliberately non-improving; counting it would
-           * trip the threshold and fire a restart mid-calibration. A
-           * check that would fire waits out a new best being published
-           * (detail::throw_if_stagnated). */
-          if (threshold > 0 && !probe::active())
-            detail::throw_if_stagnated(r.iter, threshold, iter_at_last_best_,
-                                       reused_since_best_, best_mtx_,
-                                       best_pubs_);
-        }
-        r.wall_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::high_resolution_clock::now() - t0);
-        const std::size_t save_iter = r.iter;
-        const double save_loss = r.loss;
-        const double save_wall_ms = static_cast<double>(r.wall_ms.count());
-        const int save_fail_band = r.fail.band;
-        submit_result(std::move(r), trg_, master_ctx_, val_ctx_,
-                      train_stdb_, val_stdb_, param_labels_, report_,
-                      n_val_datasets_, cw_, prec_);
-        auto& log = HPOLog::instance();
         /* A gate reject is a failure (graded band D, or FAILSCORE). */
-        log.record_eval(save_iter, save_wall_ms, EvalLoss::Failed);
-        _census.done = true;   /* counted here, with the measured wall */
-        log.record_fail_band(save_fail_band);
-        log.record_gate_reject(kind);
-        return save_loss;
+        c.kind = EvalLoss::Failed;
+        c.record_band = true;
+        c.gate = kind;
+        stop_clock();
     };
 
     /* A candidate whose fit is refused for its own targets and design
@@ -3454,7 +3421,7 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
      * FAILSCORE, with the bookkeeping of a completed evaluation. The
      * journal gives the refusal once per run, naming the first evaluation;
      * every such evaluation counts as failed, none as one that threw. */
-    auto fail_fit = [&](const std::string& what) -> double {
+    auto fail_fit = [&](const std::string& what) {
         r.fail.band = std::max(r.fail.band, static_cast<int>(FailBand::D));
         r.fail.vD = std::numeric_limits<double>::infinity();
         r.loss = trg_.FAILSCORE_GRADING
@@ -3471,28 +3438,9 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
         tls_untrained_why_ = "its fit was refused (" + what +
                              "): it has no fit to differentiate";
         tls_analytical_failure_why_.clear();
-        {
-          const std::size_t threshold =
-              stagnation_threshold_.load(std::memory_order_relaxed);
-          if (threshold > 0 && !probe::active())
-            detail::throw_if_stagnated(r.iter, threshold, iter_at_last_best_,
-                                       reused_since_best_, best_mtx_,
-                                       best_pubs_);
-        }
-        r.wall_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::high_resolution_clock::now() - t0);
-        const std::size_t save_iter = r.iter;
-        const double save_loss = r.loss;
-        const double save_wall_ms = static_cast<double>(r.wall_ms.count());
-        const int save_fail_band = r.fail.band;
-        submit_result(std::move(r), trg_, master_ctx_, val_ctx_,
-                      train_stdb_, val_stdb_, param_labels_, report_,
-                      n_val_datasets_, cw_, prec_);
-        auto& log = HPOLog::instance();
-        log.record_eval(save_iter, save_wall_ms, EvalLoss::Failed);
-        _census.done = true;   /* counted here, with the measured wall */
-        log.record_fail_band(save_fail_band);
-        return save_loss;
+        c.kind = EvalLoss::Failed;
+        c.record_band = true;
+        stop_clock();
     };
 
     /* Bump-support per-candidate gate (BUMPGATE CANDIDATE): an infeasible
@@ -3508,8 +3456,10 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
       v_bump = detail::bump_gate_violation(bump_gate_, p);
       if (v_bump > 0.0) {
         bump_what = detail::bump_gate_reject_what(v_bump);
-        if (!density_gated)
-          return reject_pre_training(GateKind::Bump, v_bump, bump_what);
+        if (!density_gated) {
+          reject_pre_training(GateKind::Bump, v_bump, bump_what);
+          return;
+        }
       }
     }
 
@@ -3528,7 +3478,10 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
       const auto rej = detail::combine_gate_verdicts(
           v_bump, bump_what, *density_,
           detail::check_density_gates(*density_, ctx));
-      if (rej) return reject_pre_training(rej->kind, rej->v, rej->what);
+      if (rej) {
+        reject_pre_training(rej->kind, rej->v, rej->what);
+        return;
+      }
     }
 
     t_train_start = std::chrono::high_resolution_clock::now();
@@ -3606,7 +3559,8 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
     }
     if (!fit_refusal.empty()) {
         stage_watchdog::leave(r.iter, "train", _stage_log);
-        return fail_fit(fit_refusal);
+        fail_fit(fit_refusal);
+        return;
     }
     mlip::Trainer& host = *tls_trainer_cache_.trainer;
     /* Training succeeded: the trainer slot reflects theta = p again. */
@@ -3701,7 +3655,8 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
       auto check_metric = [&](const std::string& tag, bool used, double value,
                               const HPOTargets::SkipCaps& caps, const char* unit) {
         if (!used) return false;
-        const auto hit = metric_skip_tracker_->check(tag, value, caps);
+        const auto hit = metric_skip_tracker_->check(
+            tag, value, caps, batch ? &c.skip_best : nullptr);
         if (!hit) return false;
         skip_excess = hit->excess;
         if (hit->count <= 5 || (hit->count & (hit->count - 1)) == 0) {
@@ -3780,9 +3735,181 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
       stage_watchdog::leave(r.iter, "lammps", _stage_log);
     }
 
-    /* Bug 7: post-LAMMPS finalize watchdog. Covers best tracking +
-     * top-K + stagnation in one stage. RAII ensures leave() runs even
-     * if stagnation_check throws StagnationStop. */
+
+    /* What a new best records that only this thread has, for an
+     * evaluation whose loss may make it the new best: the balance table of
+     * its fit (one O(n p^2) pass; best_pot.tadah's training record), the
+     * raw F(0) of the EMBF0 journal and the density summary of its
+     * candidate context. `host` still holds this evaluation's fit: nothing
+     * since the training refits this thread's trainer.
+     *
+     * The lock-free pre-check: an evaluation whose loss is above the
+     * current best cannot become the best (lower_loss and the tie both
+     * need r.loss <= cur, commit_evaluation), and g_best_ only decreases
+     * while evaluations run -- its only other stores (the fresh-run reset,
+     * prepare_best_publication) run before the first evaluation -- so a
+     * loss above this snapshot is above the best at the commit too; a NaN
+     * fails both comparisons. In a batch the commits of the evaluations
+     * numbered before this one may run while it runs (eval_batch.h); its
+     * own commit follows them, so this holds there too. Outside a
+     * batch the decision is counted first, before the table
+     * (detail::BestDecision): a stagnation check that would fire and began
+     * after the count waits until the decision has ended
+     * (detail::throw_if_stagnated), whatever stage it is at. */
+    if (may_become_best(r.loss, g_best_.load(std::memory_order_acquire))) {
+      if (!batch)
+        c.decision = std::make_unique<detail::BestDecision>(best_pubs_,
+                                                            best_mtx_);
+      if (loss_is_feasible(r.loss, trg_.FAIL_SCORE)) {
+        r.balance = balance_of_fit(host);
+        if (embf0_diag_)
+          c.embf0_best = detail::raw_embedding_f0_of(host);
+        if (density_)
+          c.density = detail::summarise_density(*density_, ctx);
+      }
+    }
+    c.computed      = true;
+    c.kind          = loss_kind(r);
+    c.record_band   = true;
+    c.record_fanout = true;
+    stop_clock();
+    full_evaluation = true;
+    };  /* evaluate */
+
+    bool shutdown = false;
+    try {
+        evaluate();
+    } catch (const core::ShutdownRequested&) {
+        /* Cooperative shutdown -- passed on to hpo_run()'s outer catch,
+         * which drains the result queue and closes the journal, once this
+         * number is finished with a FAIL_SCORE result (an interrupted
+         * evaluation has no loss: the census counts it as a failed one,
+         * not as a NaN/Inf clamping). (Unreachable today: operator() raises
+         * the stop before it evaluates anything.) */
+        r.loss = trg_.FAIL_SCORE;
+        c.computed = false;
+        c.check_stagnation = false;
+        c.kind = EvalLoss::Failed;
+        c.decision.reset();
+        stop_clock();
+        shutdown = true;
+    } catch (const std::exception& e) {
+        /* Any other throw must not leave the number without a result: a
+         * FAIL_SCORE result carrying r.iter keeps the writer going past it.
+         * The census counts it as an evaluation that threw, not as a
+         * NaN/Inf clamping, and it does not close the RESTART window. */
+        r.loss = trg_.FAIL_SCORE;
+        c.computed = false;
+        c.check_stagnation = false;
+        c.kind = EvalLoss::Threw;
+        c.decision.reset();
+        stop_clock();
+        try {
+            HPOLog::instance().warning(
+                std::string("eval ") + std::to_string(r.iter) +
+                ": eval-thread caught throw, submitting FAIL_SCORE to "
+                "keep writer queue contiguous (type=" + typeid(e).name() +
+                "): " + e.what());
+        } catch (...) { /* logging must never abort the recovery path */ }
+    } catch (...) {
+        /* Same path for non-std::exception throws. */
+        r.loss = trg_.FAIL_SCORE;
+        c.computed = false;
+        c.check_stagnation = false;
+        c.kind = EvalLoss::Threw;
+        c.decision.reset();
+        stop_clock();
+        try {
+            HPOLog::instance().warning(
+                std::string("eval ") + std::to_string(r.iter) +
+                ": eval-thread caught unknown throw, submitting "
+                "FAIL_SCORE to keep writer queue contiguous");
+        } catch (...) {}
+    }
+
+    const std::size_t save_iter = r.iter;
+    const auto t_finish = std::chrono::high_resolution_clock::now();
+    if (shutdown) {
+        try {
+            (void)finish_evaluation(std::move(c), batch);
+        } catch (...) { /* the shutdown is what ends the run */ }
+        throw core::ShutdownRequested{};
+    }
+    const double loss = finish_evaluation(std::move(c), batch);
+    const auto t_submit_end = std::chrono::high_resolution_clock::now();
+
+    if (full_evaluation && bench_detail::enabled()) {
+      const double total_ms     = bench_detail::elapsed_ms(t0,              t_submit_end);
+      const double train_ms     = bench_detail::elapsed_ms(t_train_start,   t_train_end);
+      const double predict_ms   = bench_detail::elapsed_ms(t_train_end,     t_predict_end);
+      const double lammps_ms    = bench_detail::elapsed_ms(t_predict_end,   t_lammps_end);
+      const double sims_loss_ms = bench_detail::elapsed_ms(t_lammps_end,    t_sims_loss_end);
+      const double submit_ms    = bench_detail::elapsed_ms(t_finish,        t_submit_end);
+      int nthreads = 1;
+#ifdef TADAH_ENABLE_OPENMP
+      nthreads = omp_get_max_threads();
+#endif
+      std::lock_guard<std::mutex> lg(bench_detail::mtx());
+      bench_detail::csv()
+        << save_iter << ','
+        << total_ms  << ','
+        << train_ms  << ','
+        << predict_ms << ','
+        << lammps_ms << ','
+        << sims_loss_ms << ','
+        << submit_ms << ','
+        << nthreads << '\n';
+      bench_detail::csv().flush();
+    }
+    return loss;
+}
+
+/* ----------  the commit of an evaluation ------------------------------- */
+template<class P, class R>
+double HPO_Host<P,R>::finish_evaluation(Completed&& c, EvalBatch* batch) const
+{
+    const double loss = c.r.loss;
+    if (!batch) {
+        commit_evaluation(std::move(c));
+        return loss;
+    }
+    const std::size_t number = c.r.iter;
+    /* The --skip-rel lowest values it found are recorded after the batch:
+     * no evaluation of the batch reads those of another, whatever order
+     * they run in (MetricSkipTracker::check). */
+    std::function<void()> after;
+    if (!c.skip_best.empty())
+        after = [tracker = metric_skip_tracker_,
+                 values = std::move(c.skip_best)] {
+            for (const auto& kv : values)
+                tracker->note_best(kv.first, kv.second);
+        };
+    auto held = std::make_shared<Completed>(std::move(c));
+    batch->park(number, [this, held] { commit_evaluation(std::move(*held)); },
+                std::move(after));
+    return loss;
+}
+
+template<class P, class R>
+void HPO_Host<P,R>::commit_evaluation(Completed&& c) const
+{
+    Result& r = c.r;
+    /* The journal lines of the commit name the slot of the evaluation: the
+     * commit of an evaluation of a batch runs on the thread whose
+     * evaluation, or the end of whose slot, lets it through, or on the
+     * driver's thread after the batch (eval_batch.h). */
+    const HPOLog::ScopedEvalContext slot_tag(c.tag);
+    auto _stage_log = [](const std::string& msg) {
+        HPOLog::instance().warning(msg);
+    };
+
+    /* Set by persist_durable_best when it has journalled its own failure
+     * (under best_mtx_, so the journal orders a run's publication failures
+     * as the latch saw them); the failure is thrown once the rest of this
+     * evaluation is committed. */
+    bool durable_failure_journalled = false;
+    std::exception_ptr persist_error;
+
     {
     stage_watchdog::Scope<decltype(_stage_log)> _sg_finalize(r.iter, "post_lammps_finalize", _stage_log);
     /* best tracking ----------------------------------------------------
@@ -3791,40 +3918,18 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
      * finishing (rank,slot,eval)-smaller candidate would never reach the file
      * comparator. New-best commits are rare, so holding this mutex across the
      * two fsync+rename operations is preferable to split-brain metadata/HOT.
-     *
-     * Lock-free early-out: an evaluation whose loss is above the current
-     * best cannot pass any test in the block (lower_loss and
-     * tied_compound_winner both need r.loss <= cur), and the block makes no
-     * other decision. During evaluations g_best_ only ever decreases -- its
-     * only other stores (the fresh-run reset, prepare_best_publication) run
-     * before the first evaluation -- so the
-     * value read under the lock is <= this snapshot and a loss above the
-     * snapshot is above it too; a NaN fails both comparisons. Such
-     * evaluations therefore skip best_mtx_ and do not queue behind a
-     * publication (fsync + rename, or a transient-I/O backoff of up to
-     * 30 s). The lock was also where the stagnation check below waited for
-     * an in-flight publication to store iter_at_last_best_; that wait now
-     * happens only on the path that would throw StagnationStop: until every
-     * decision counted (best_pubs_) before the check began has ended --
-     * computing its table, queued for the lock or holding it -- whatever
-     * the order in which they end (detail::throw_if_stagnated). */
-    if (may_become_best(r.loss, g_best_.load(std::memory_order_acquire)))
-    {
-      /* The decision is counted first, then computes the balance table of
-       * this evaluation's fit, then waits for the lock, and is done while
-       * still holding it, or, when the table throws, under the lock all the
-       * same: a stagnation check that would fire and began after the count
-       * waits until this decision has ended (detail::throw_if_stagnated),
-       * whatever stage it is at. */
-      detail::BestDecision best_decision(best_pubs_, best_mtx_);
-      /* The table, for best_pot.tadah: one O(n p^2) pass, made before
-       * best_mtx_ is taken (other chains' decisions do not wait for it) and
-       * only for a usable loss that may be the new best, not for the other
-       * evaluations. `host` still holds this evaluation's fit: nothing
-       * since the training refits this thread's trainer. */
-      if (loss_is_feasible(r.loss, trg_.FAIL_SCORE))
-        r.balance = balance_of_fit(host);
-      best_decision.lock();
+     * The decision of an evaluation outside a batch was counted while it
+     * ran (finish of operator()); one of a batch is counted here, where the
+     * batch's commits run one after another in number order. An evaluation
+     * whose loss is above the current best skips best_mtx_ (the lock-free
+     * pre-check, operator()) and does not queue behind a publication (fsync
+     * + rename, or a transient-I/O backoff of up to 30 s). */
+    std::unique_ptr<detail::BestDecision> decision = std::move(c.decision);
+    if (!decision && c.computed &&
+        may_become_best(r.loss, g_best_.load(std::memory_order_acquire)))
+      decision = std::make_unique<detail::BestDecision>(best_pubs_, best_mtx_);
+    if (decision) {
+      decision->lock();
       const durable_best::Key key{
           r.loss, r.source_rank, r.chain_id, r.iter};
       const double cur = g_best_.load(std::memory_order_relaxed);
@@ -3859,30 +3964,37 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
          * best_hot_map are deliberately rank-local live-search state. The
          * early multi-rank dispatch guard limits this split ownership to plain
          * PT/PA; the canonical file remains the sole global result. */
-        persist_durable_best(r, durable_failure_journalled);
+        try {
+          persist_durable_best(r, durable_failure_journalled);
+          if (!warmstart::promote_batch(key, r.hot_produced))
+            throw durable_best::Error(
+                "HOT snapshot comparator contradicts the durable compound best key");
+        } catch (...) {
+          persist_error = std::current_exception();
+        }
 
-        if (!warmstart::promote_batch(key, r.hot_produced))
-          throw durable_best::Error(
-              "HOT snapshot comparator contradicts the durable compound best key");
-
-        g_best_.store(r.loss, std::memory_order_release);
-        g_best_key_ = key;
-        g_best_iter_.store(r.best_iter, std::memory_order_relaxed);
-        iter_at_last_best_.store(r.iter, std::memory_order_relaxed);
-        reused_since_best_.store(0, std::memory_order_relaxed);
-        r.is_best = true;
-        /* EMBF0 journal: `host` still holds this eval's weights (nothing
-         * since the potential was built retrains this thread's trainer).
-         * Diagnostic only. */
-        if (embf0_diag_ && std::isnan(r.embf0_raw))
-            r.embf0_raw = detail::raw_embedding_f0_of(host);
+        if (!persist_error) {
+          g_best_.store(r.loss, std::memory_order_release);
+          g_best_key_ = key;
+          g_best_iter_.store(r.best_iter, std::memory_order_relaxed);
+          iter_at_last_best_.store(r.iter, std::memory_order_relaxed);
+          reused_since_best_.store(0, std::memory_order_relaxed);
+          r.is_best = true;
+          /* EMBF0 journal: the raw F(0) of this evaluation's weights, taken
+           * while it ran. Diagnostic only. */
+          if (embf0_diag_ && std::isnan(r.embf0_raw))
+              r.embf0_raw = c.embf0_best;
+        }
       }
+      /* The decision ends here, before the stagnation check below, which
+       * waits for the decisions in progress. */
+      decision.reset();
     }
 
     /* The run's record of its usable evaluations (recorded(),
      * repeat_points.h), by the point evaluated, before the stagnation check
      * below can end this evaluation's search: the evaluation is complete. */
-    if (loss_kind(r) == EvalLoss::Usable) {
+    if (c.computed && c.kind == EvalLoss::Usable) {
       /* A point evaluated again whose loss differs from its earlier
        * evaluation's: the two evaluations of one point disagree (a
        * PC_LAMMPS instance that keeps a script's state, a relaxation that
@@ -3918,7 +4030,8 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
      * has room, so a failed loss -- FAILSCORE, a graded failure -- stayed
      * among the PRESTAGE candidates while fewer than TOPK usable ones
      * existed, and the refinement started from it (StagedPolicy). */
-    if (topk_capacity_ > 0 && loss_is_feasible(r.loss, trg_.FAIL_SCORE)) {
+    if (c.computed && topk_capacity_ > 0 &&
+        loss_is_feasible(r.loss, trg_.FAIL_SCORE)) {
       std::lock_guard<std::mutex> lk(topk_mtx_);
       if (topk_capacity_ > 0) {  /* re-check inside lock */
         topk_consider(topk_buf_, topk_capacity_, r.loss, r.params,
@@ -3926,32 +4039,15 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
       }
     }
 
-    /* Stagnation check -- throw to short-circuit the optimiser loop. The
-     * surrounding RestartPolicy catches StagnationStop and decides
-     * whether to restart from a fresh init. A check that would fire first
-     * waits until every new-best decision counted before it began has
-     * ended (this evaluation may have skipped the lock above) and checks
-     * again. */
-    {
-      const std::size_t threshold =
-          stagnation_threshold_.load(std::memory_order_relaxed);
-      /* See the BUMPGATE path above: probe evals do not count. */
-      if (threshold > 0 && !probe::active())
-        detail::throw_if_stagnated(r.iter, threshold, iter_at_last_best_,
-                                   reused_since_best_, best_mtx_, best_pubs_);
-    }
     } /* end post_lammps_finalize watchdog */
-
-    r.wall_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-        std::chrono::high_resolution_clock::now() - t0);
 
     /* save fields before r is moved into the queue ---------------------- */
     const std::size_t save_iter    = r.iter;
     const double      save_loss    = r.loss;
-    const double      save_wall_ms = static_cast<double>(r.wall_ms.count());
+    const double      save_wall_ms = c.wall_ms;
     const bool        save_best    = r.is_best;
     const bool        save_nan     = r.was_nan_clamped;
-    const EvalLoss    save_kind    = loss_kind(r);
+    const EvalLoss    save_kind    = c.kind;
     /* The graded-failure band of this eval. Disjoint from save_nan --
      * a killed worker or a failed script yields a finite failscore, so it
      * never trips the NaN path. Worst band wins within the eval. */
@@ -3966,6 +4062,7 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
     const double      save_fo_max   = r.fanout_max_ms;
     const std::string save_fo_slow  = r.fanout_slowest;
     const double      save_embf0    = r.embf0_raw;
+    const P           p             = r.params;
 
     /* Build a one-line "top loss components" breakdown when this eval
      * is a new best. Defensive: any failure here must not crash the
@@ -4081,41 +4178,17 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
     stage_watchdog::Scope<decltype(_stage_log)> _sg_submit(save_iter, "submit_result", _stage_log);
     submit_result(std::move(r), trg_, master_ctx_, val_ctx_, train_stdb_, val_stdb_, param_labels_, report_, n_val_datasets_, cw_, prec_);
     }
-    t_submit_end = std::chrono::high_resolution_clock::now();
-
-    if (bench_detail::enabled()) {
-      const double total_ms     = bench_detail::elapsed_ms(t0,              t_submit_end);
-      const double train_ms     = bench_detail::elapsed_ms(t_train_start,   t_train_end);
-      const double predict_ms   = bench_detail::elapsed_ms(t_train_end,     t_predict_end);
-      const double lammps_ms    = bench_detail::elapsed_ms(t_predict_end,   t_lammps_end);
-      const double sims_loss_ms = bench_detail::elapsed_ms(t_lammps_end,    t_sims_loss_end);
-      const double submit_ms    = bench_detail::elapsed_ms(t_sims_loss_end, t_submit_end);
-      int nthreads = 1;
-#ifdef TADAH_ENABLE_OPENMP
-      nthreads = omp_get_max_threads();
-#endif
-      std::lock_guard<std::mutex> lg(bench_detail::mtx());
-      bench_detail::csv()
-        << save_iter << ','
-        << total_ms  << ','
-        << train_ms  << ','
-        << predict_ms << ','
-        << lammps_ms << ','
-        << sims_loss_ms << ','
-        << submit_ms << ','
-        << nthreads << '\n';
-      bench_detail::csv().flush();
-    }
 
     /* log to run journal ------------------------------------------------ */
     {
     stage_watchdog::Scope<decltype(_stage_log)> _sg_journal(save_iter, "journal_log", _stage_log);
     auto& log = HPOLog::instance();
     log.record_eval(save_iter, save_wall_ms, save_kind);
-    _census.done = true;   /* counted here, with the exact measured wall */
-    log.record_fail_band(save_fail_band);
-    log.record_fanout(save_fo_busy,
-                      save_fo_nsc, save_fo_min, save_fo_max, save_fo_slow);
+    if (c.record_band) log.record_fail_band(save_fail_band);
+    if (c.gate) log.record_gate_reject(*c.gate);
+    if (c.record_fanout)
+        log.record_fanout(save_fo_busy,
+                          save_fo_nsc, save_fo_min, save_fo_max, save_fo_slow);
     if (save_iter == 1 && !std::isnan(save_embf0))
         log.record_embf0_start(save_iter, save_embf0);
 
@@ -4131,11 +4204,10 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
         if (!std::isnan(save_embf0))
             log.record_embf0_best(save_iter, save_loss, save_embf0);
         /* DM_REAM density of the new best (the RESULT line), summarised
-         * from this candidate's context now that best_mtx_ is released.
-         * Diagnostic only; never throws. */
-        if (density_)
-            log.record_density_best(save_iter, save_loss,
-                                    detail::summarise_density(*density_, ctx));
+         * from this candidate's context while it ran. Diagnostic only;
+         * never throws. */
+        if (c.density)
+            log.record_density_best(save_iter, save_loss, *c.density);
         /* Bound-occupancy audit on the new best (REAL coordinates). */
         std::lock_guard<std::mutex> lg(bound_occ_mtx_);
         if (bound_occ_.armed()) {
@@ -4150,57 +4222,49 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
         log.log_nan_clamped(save_iter,
                             format_params_str(p),
                             bound_hints(p));
-
     }
 
-    return save_loss;
+    /* Persistence is part of committing a completed best evaluation.
+     * Converting this failure to FAIL_SCORE would let optimization carry
+     * on while silently losing the global best, so it is thrown, once the
+     * evaluation's rows and journal lines are committed. */
+    if (persist_error) {
+        if (!durable_failure_journalled) {
+            try {
+                std::rethrow_exception(persist_error);
+            } catch (const std::exception& e) {
+                try {
+                    HPOLog::instance().warning(
+                        std::string("fatal best-potential persistence failure at eval ") +
+                        std::to_string(save_iter) + ": " + e.what());
+                } catch (...) {}
+            } catch (...) {}
+        }
+        std::rethrow_exception(persist_error);
+    }
 
-    } catch (const core::ShutdownRequested&) {
-        /* Cooperative shutdown -- pass through to hpo_run()'s outer
-         * catch, which drains the result queue and closes the journal.
-         *
-         * Bug 7: before rethrowing, submit a synthetic FAIL_SCORE
-         * Result so the iter slot we consumed at `++g_iter_` does not
-         * leak from the writer queue. Without this, the writer's
-         * next_flush_ would be permanently stuck at our iter (the
-         * gap-skip recovery would eventually advance it after 60 s,
-         * but by then per-eval logs are lost).
-         *
-         * An interrupted evaluation has no loss: the census counts it as
-         * a failed one, not as a NaN/Inf clamping. (Unreachable
-         * today: operator() raises the stop before the try, before it
-         * evaluates anything.) */
-        r.loss = trg_.FAIL_SCORE;
-        _census.loss = EvalLoss::Failed;
-        r.wall_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::high_resolution_clock::now() - t0);
-        try {
-            submit_result(std::move(r), trg_, master_ctx_, val_ctx_,
-                          train_stdb_, val_stdb_, param_labels_, report_,
-                          n_val_datasets_, cw_, prec_);
-        } catch (...) { /* swallow -- main shutdown path takes over */ }
-        throw;
-    } catch (const StagnationStop&) {
-        /* StagnationStop is thrown from post_lammps_finalize AFTER r.loss
-         * is computed and counted in best/top-K tracking. This eval is
-         * therefore a real, valid result -- submit it as-is. The earlier
-         * recovery path (Bug 7) overwrote r.loss with FAIL_SCORE and
-         * flagged was_nan_clamped, which corrupted loss.tadah and
-         * fabricated a NaN-clamp event for every concurrent thread that
-         * happened to cross the threshold while the surrounding policy
-         * was still resetting it.
-         *
-         * We still need to submit so the writer's next_flush_ does not
-         * stall on the iter slot consumed at ++g_iter_ -- but with the
-         * real loss, not a synthetic FAIL_SCORE. */
-        _census.loss = loss_kind(r);   /* counted with its real loss too */
-        r.wall_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::high_resolution_clock::now() - t0);
-        /* Diagnostic at most once per stagnation event. Concurrent
-         * eval threads commonly race to this catch when the threshold
-         * is crossed; without this gate the journal gets one warning
-         * per concurrent eval. Cleared by reset_stagnation() at the
-         * next stage boundary. */
+    /* Stagnation check -- throw to short-circuit the optimiser loop. The
+     * surrounding RestartPolicy catches StagnationStop and decides
+     * whether to restart from a fresh init. A check that would fire first
+     * waits until every new-best decision counted before it began has
+     * ended (an evaluation outside a batch may have skipped the lock
+     * above) and checks again. An evaluation of a batch checks at its
+     * commit, in number order: the stop comes at the same evaluation
+     * whatever order the evaluations of the batch ran in, and the batch's
+     * later evaluations, which ran, are committed before the stop is
+     * thrown (eval_batch.h). A probe phase is deliberately non-improving;
+     * counting it would trip the threshold and fire a restart
+     * mid-calibration. */
+    const std::size_t threshold =
+        stagnation_threshold_.load(std::memory_order_relaxed);
+    if (c.check_stagnation && threshold > 0 && !c.probe) {
+      try {
+        detail::throw_if_stagnated(save_iter, threshold, iter_at_last_best_,
+                                   reused_since_best_, best_mtx_, best_pubs_);
+      } catch (const StagnationStop&) {
+        /* Diagnostic at most once per stagnation event: the evaluations
+         * after the one that closed the window close it too. Cleared by
+         * reset_stagnation() at the next stage boundary. */
         if (!stagnation_warned_.exchange(true, std::memory_order_relaxed)) {
             try {
                 /* The window counts the calls answered from the run's
@@ -4211,10 +4275,9 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
                     reused_since_best_.load(std::memory_order_relaxed);
                 HPOLog::instance().info(
                     std::string("StagnationStop fired at eval ") +
-                    std::to_string(r.iter) +
+                    std::to_string(save_iter) +
                     "; short-circuiting optimiser, real loss preserved "
-                    "(threshold=" +
-                    std::to_string(stagnation_threshold_.load(std::memory_order_relaxed)) +
+                    "(threshold=" + std::to_string(threshold) +
                     " evals without improvement" +
                     (reused > 0 ? ", " + std::to_string(reused) +
                                       " of them call(s) answered from the "
@@ -4223,86 +4286,8 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
                     ")");
             } catch (...) {}
         }
-        try {
-            submit_result(std::move(r), trg_, master_ctx_, val_ctx_,
-                          train_stdb_, val_stdb_, param_labels_, report_,
-                          n_val_datasets_, cw_, prec_);
-        } catch (...) {}
         throw;
-    } catch (const durable_best::Error& e) {
-        /* Persistence is part of committing a completed best evaluation.
-         * Converting this failure to FAIL_SCORE would let optimization carry
-         * on while silently losing the global best, so it must escape. The
-         * evaluation itself is nevertheless complete and consumed an ordered
-         * iter slot; enqueue its real loss before rethrowing so final cleanup
-         * does not discard every later result behind a permanent gap. */
-        _census.loss = loss_kind(r);
-        r.wall_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::high_resolution_clock::now() - t0);
-        if (!durable_failure_journalled) {
-            try {
-                HPOLog::instance().warning(
-                    std::string("fatal best-potential persistence failure at eval ") +
-                    std::to_string(r.iter) + ": " + e.what());
-            } catch (...) {}
-        }
-        try {
-            submit_result(std::move(r), trg_, master_ctx_, val_ctx_,
-                          train_stdb_, val_stdb_, param_labels_, report_,
-                          n_val_datasets_, cw_, prec_);
-        } catch (...) {
-            /* Preserve the primary durability exception. The writer's
-             * time-based gap recovery remains the last resort if enqueueing
-             * itself fails. */
-        }
-        throw;
-    } catch (const std::exception& e) {
-        /* Any other throw between ++g_iter_ and submit_result must
-         * not leak the iter slot. Build a synthetic FAIL_SCORE Result
-         * carrying r.iter and submit it so the writer's next_flush_
-         * cursor can advance past this iter. The census counts it as an
-         * evaluation that threw, not as a NaN/Inf clamping. */
-        r.loss = trg_.FAIL_SCORE;
-        _census.loss = EvalLoss::Threw;
-        r.wall_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::high_resolution_clock::now() - t0);
-        try {
-            HPOLog::instance().warning(
-                std::string("eval ") + std::to_string(r.iter) +
-                ": eval-thread caught throw, submitting FAIL_SCORE to "
-                "keep writer queue contiguous (type=" + typeid(e).name() +
-                "): " + e.what());
-        } catch (...) { /* logging must never abort the recovery path */ }
-        try {
-            submit_result(std::move(r), trg_, master_ctx_, val_ctx_,
-                          train_stdb_, val_stdb_, param_labels_, report_,
-                          n_val_datasets_, cw_, prec_);
-        } catch (...) {
-            /* If the synthetic submit also throws (extremely
-             * unlikely), the writer fix from Bug 4 will at worst drop
-             * this single iter from the per-iter logs. The eval
-             * counter still advances; we don't make the freeze
-             * recurrence worse. */
-        }
-        return trg_.FAIL_SCORE;
-    } catch (...) {
-        /* Same path for non-std::exception throws. */
-        r.loss = trg_.FAIL_SCORE;
-        _census.loss = EvalLoss::Threw;
-        r.wall_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::high_resolution_clock::now() - t0);
-        try {
-            HPOLog::instance().warning(
-                std::string("eval ") + std::to_string(r.iter) +
-                ": eval-thread caught unknown throw, submitting "
-                "FAIL_SCORE to keep writer queue contiguous");
-        } catch (...) {}
-        try {
-            submit_result(std::move(r), trg_, master_ctx_, val_ctx_,
-                          train_stdb_, val_stdb_, param_labels_, report_,
-                          n_val_datasets_, cw_, prec_);
-        } catch (...) {}
-        return trg_.FAIL_SCORE;
+      }
     }
 }
 
@@ -4312,6 +4297,10 @@ void HPO_Host<P,R>::write_result(WriterFiles& wf, const Result& e,
                                  const HPOTargets& trg, std::size_t n_val,
                                  std::size_t cw, int prec)
 {
+    /* A number a batch reserved for an evaluation that did not run
+     * (eval_batch.h): no row, no archive. */
+    if (e.not_run) return;
+
     /* ---- print standard logs ------------------------------------ */
     if(e.iter % trg.outputEvery == 0){
         print_loss_line  (wf.loss.stage() , e.iter, e, trg, n_val, cw, prec);

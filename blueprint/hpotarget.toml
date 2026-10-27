@@ -1882,6 +1882,11 @@ default = { literal = "10" }
 doc = """\
 The number of evaluation results held in memory before their rows are \
 written to the output files; 0 and 1 write after each evaluation."""
+long_doc = """\
+TADAH:ANNEAL_PT, TADAH:ANNEAL_PA and ASA:ASA with Gener_Block_Max above 1 \
+hold the result of an evaluation they run at once with others in memory, \
+whatever QFLUSH is, until every lower-numbered evaluation run with it has \
+ended. The result then joins the queue that QFLUSH drains."""
 
 [[key.examples]]
 wrap = "root"
