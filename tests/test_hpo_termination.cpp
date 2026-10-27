@@ -436,11 +436,14 @@ void check_run_files()
     CHECK(key->loss == Approx(winner->loss).epsilon(kPrintResolution));
 
     /* best_params.tadah has one row per improvement (BOUTPUT 1), with the
-     * improvement ordinal k = 1, 2, ... in its first column, and the row of
-     * the last improvement is the incumbent's params.tadah row (same slot
-     * and values). Rows are written in evaluation order, so with concurrent
-     * evaluations a later improvement can precede an earlier one: the last
-     * improvement is the highest k, not necessarily the last row. */
+     * improvement ordinal k = 1, 2, ... in its first column (#IMPROVEMENT)
+     * and the evaluation of that best in its second (EVAL), and the row of
+     * the last improvement is the incumbent's params.tadah row (the same
+     * evaluation, slot and values). Rows are written in evaluation order,
+     * so with concurrent evaluations a later improvement can precede an
+     * earlier one: the last improvement is the highest k, not necessarily
+     * the last row. Before the fix: no EVAL column (the row's columns from
+     * the second on were params.tadah's). */
     const auto params  = data_rows("params.tadah");
     const auto bparams = data_rows("best_params.tadah");
     REQUIRE_FALSE(bparams.empty());
@@ -460,10 +463,11 @@ void check_run_files()
     for (const auto& row : params)
         if (std::stoull(row.at(0)) == winner->iter) incumbent_row = &row;
     REQUIRE(incumbent_row != nullptr);
-    REQUIRE(last_best->size() == incumbent_row->size());
-    for (std::size_t c = 1; c < last_best->size(); ++c) {
-        INFO("best_params.tadah column " << c);
-        CHECK((*last_best)[c] == (*incumbent_row)[c]);
+    REQUIRE(last_best->size() == incumbent_row->size() + 1);
+    CHECK(std::stoull(last_best->at(1)) == winner->iter);
+    for (std::size_t c = 1; c < incumbent_row->size(); ++c) {
+        INFO("best_params.tadah column " << c + 1);
+        CHECK((*last_best)[c + 1] == (*incumbent_row)[c]);
     }
 
     const std::string journal = read_file("hpo_run.log");

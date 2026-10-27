@@ -1229,6 +1229,13 @@ TEST_CASE("params.tadah columns: iteration then slot then OPTIM dimensions "
     (void)host(p);
     host.flush_remaining();
 
+    /* params.tadah: the evaluation number (a process-wide counter) under
+     * #ITERATION; best_params.tadah: the improvement ordinal under
+     * #IMPROVEMENT -- 1 for the first best of a fresh run -- and the
+     * evaluation number of that best under EVAL, which joins the row to
+     * params.tadah. Before the fix: best_params.tadah's first column was
+     * headed #ITERATION and had no EVAL column. */
+    double eval = 0.0;
     for (const auto* file : {&trg.paramsFile, &trg.bestParamsFile}) {
         INFO(*file);
         std::ifstream in(*file);
@@ -1237,20 +1244,28 @@ TEST_CASE("params.tadah columns: iteration then slot then OPTIM dimensions "
         std::istringstream hs(head);
         std::vector<std::string> cols;
         for (std::string c; hs >> c;) cols.push_back(c);
-        const std::vector<std::string> want = {"#ITERATION", "SLOT",
-                                               "CGRID2B[1]", "CGRID2B[2]",
-                                               "SGRID2B[2]"};
+        const bool best = file == &trg.bestParamsFile;
+        const std::vector<std::string> want =
+            best ? std::vector<std::string>{"#IMPROVEMENT", "EVAL", "SLOT",
+                                            "CGRID2B[1]", "CGRID2B[2]",
+                                            "SGRID2B[2]"}
+                 : std::vector<std::string>{"#ITERATION", "SLOT",
+                                            "CGRID2B[1]", "CGRID2B[2]",
+                                            "SGRID2B[2]"};
         CHECK(cols == want);
         const auto row = last_dataset_row(*file);
-        REQUIRE(row.size() == 5);
-        /* params.tadah: global evaluation number (process-wide counter);
-         * best_params.tadah: improvement ordinal -- 1 for the first best
-         * of a fresh run. */
-        if (file == &trg.bestParamsFile) CHECK(row[0] == 1.0);
-        else                             CHECK(row[0] >= 1.0);
-        CHECK(row[2] == Approx(0.5));
-        CHECK(row[3] == Approx(1.4));
-        CHECK(row[4] == Approx(5.0));
+        REQUIRE(row.size() == want.size());
+        const std::size_t at = best ? 3 : 2;
+        if (best) {
+            CHECK(row[0] == 1.0);
+            CHECK(row[1] == eval);
+        } else {
+            CHECK(row[0] >= 1.0);
+            eval = row[0];
+        }
+        CHECK(row[at] == Approx(0.5));
+        CHECK(row[at + 1] == Approx(1.4));
+        CHECK(row[at + 2] == Approx(5.0));
     }
 }
 
@@ -1449,9 +1464,16 @@ TEST_CASE("PC_OBSERVABLE columns are L(Ecoh)[k] and Ecoh[k] with a 1-based "
             }
             want_loss.push_back("TOTAL_LOSS/N");
             CHECK(header_columns(trg.lossFile) == want_loss);
-            CHECK(header_columns(trg.bestLossFile) == want_loss);
             CHECK(header_columns(trg.outvarFile) == want_outvar);
-            CHECK(header_columns(trg.bestOutvarFile) == want_outvar);
+            /* The best_* files: #IMPROVEMENT, then EVAL, the evaluation of
+             * that best (before the fix: #ITERATION and no EVAL). */
+            auto best = [](std::vector<std::string> cols) {
+                cols[0] = "#IMPROVEMENT";
+                cols.insert(cols.begin() + 1, "EVAL");
+                return cols;
+            };
+            CHECK(header_columns(trg.bestLossFile) == best(want_loss));
+            CHECK(header_columns(trg.bestOutvarFile) == best(want_outvar));
             for (const auto* file :
                  {&trg.lossFile, &trg.bestLossFile, &trg.outvarFile,
                   &trg.bestOutvarFile, &trg.paramsFile, &trg.bestParamsFile,
