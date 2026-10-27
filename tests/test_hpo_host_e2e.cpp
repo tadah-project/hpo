@@ -1629,12 +1629,20 @@ TEST_CASE("Every metric column title is whole and keeps a blank before it "
         Host host(ctx, trg, val_cfg.string());
         REQUIRE(host.val_size() == 2u);
 
+        /* The best_* files: #IMPROVEMENT, then EVAL (the evaluation of
+         * that best), then the columns of the other files (before the
+         * best files' change: the same titles as the other files). */
+        auto best = [](std::vector<std::string> cols) {
+            cols[0] = "#IMPROVEMENT";
+            cols.insert(cols.begin() + 1, "EVAL");
+            return cols;
+        };
         CHECK(header_columns(trg.lossFile) == want_loss);
-        CHECK(header_columns(trg.bestLossFile) == want_loss);
+        CHECK(header_columns(trg.bestLossFile) == best(want_loss));
         CHECK(header_columns(trg.statsFile) == want_stats);
-        CHECK(header_columns(trg.bestStatsFile) == want_stats);
+        CHECK(header_columns(trg.bestStatsFile) == best(want_stats));
         CHECK(header_columns(trg.outvarFile) == want_outvar);
-        CHECK(header_columns(trg.bestOutvarFile) == want_outvar);
+        CHECK(header_columns(trg.bestOutvarFile) == best(want_outvar));
         if (digits != 0) continue;
 
         host.prepare_best_publication();
@@ -1643,7 +1651,8 @@ TEST_CASE("Every metric column title is whole and keeps a blank before it "
         REQUIRE_NOTHROW(host(p));
         host.flush_remaining();
         for (const std::string* file :
-             {&trg.lossFile, &trg.statsFile, &trg.outvarFile}) {
+             {&trg.lossFile, &trg.statsFile, &trg.outvarFile,
+              &trg.bestLossFile, &trg.bestStatsFile, &trg.bestOutvarFile}) {
             INFO(*file << ": " << first_line(*file));
             CHECK(first_row_fields(*file).size() ==
                   header_columns(*file).size());
