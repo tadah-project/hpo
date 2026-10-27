@@ -934,7 +934,7 @@ aliases = { STRATEGY = "INIT.METHOD" }
 doc = """\
 The stagnation restart of the STRATEGY-level optimiser: when to restart, \
 how often, and the chain of METHOD lines that draws the points of each \
-restart. A run on more than one MPI rank refuses an active RESTART block."""
+restart. A run on more than one MPI rank refuses a RESTART block."""
 long_doc = """\
 A second RESTART block continues the first. Inside a RESTART block a \
 STRATEGY line is read as a METHOD line."""

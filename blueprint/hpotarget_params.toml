@@ -204,10 +204,11 @@ msg = "{phase}: NLOPT:{algo}: unknown PARAM '{key}' (it takes {keys})"
 doc = """\
 An NLopt algorithm takes, with a number, the PARAM keys NLopt reads for it \
 (the optimiser list names them: tolg of LD_LBFGS, magic_eps of the \
-GN_DIRECT algorithms), which tadah hpo passes to NLopt, and the \
-finite-difference keys fd_step, fd_kernel and diff_method. Any other \
-name, and a word given to a key NLopt reads, are refused when tadah hpo \
-starts."""
+GN_DIRECT algorithms), which tadah hpo passes to NLopt, and, when it \
+takes finite-difference gradients, the finite-difference keys fd_step, \
+fd_kernel (a word) and diff_method. Any other name, and a word given to a \
+key NLopt reads, are refused when tadah hpo starts; the refusal lists the \
+keys the algorithm takes."""
 checks = [
   { msg = "{phase}: NLOPT:{algo}: PARAM {key} takes a number (got '{value}')", doc = "At startup, at the END line of its optimiser: a word given to a PARAM key the algorithm reads." },
 ]

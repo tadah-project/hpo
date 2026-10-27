@@ -20,9 +20,10 @@ The `PARAM` keys of the `TADAH:ANNEAL` family: names, types, defaults,
 ranges and help text (`doc`, one or two sentences; `long_doc`, the detail;
 `range_doc`, in words, the range of a key whose range the code checks by
 hand; `default_doc`, in words, a default that is no value, such as a
-calibration). Every annealer that takes a key has a default or a
-`default_doc` for it, except one that refuses the key (a `kind_reject`
-rule), which the help and the documentation leave out. It is the source: `gen_anneal_keys.py --header` writes
+calibration). Every kind a key lists has a default or a `default_doc`
+for it, except a kind that refuses the key (a `kind_reject` rule); the
+help and the documentation leave such a key out. It is the source:
+`gen_anneal_keys.py --header` writes
 `include/tadah/hpo/anneal_keys_gen.h` from it, and
 `hpo_anneal_registry_sync` (`gen_anneal_keys.py --check`) fails when the
 checked-in header differs. The example of each key is in the `PARAM` policy

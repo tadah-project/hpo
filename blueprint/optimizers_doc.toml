@@ -215,8 +215,8 @@ step."""
 [optimizer."NLOPT:LD_TNEWTON"]
 doc = """\
 A truncated Newton method: each step solves the Newton equations \
-approximately, by conjugate gradients. tadah hpo takes VECTOR_ARR for it, \
-but NLopt reads the storage only in the PRECOND forms."""
+approximately, by conjugate gradients, without a preconditioner. It keeps \
+no vector storage and refuses VECTOR_ARR; LD_TNEWTON_PRECOND reads it."""
 
 [optimizer."NLOPT:LD_TNEWTON_PRECOND"]
 doc = """\

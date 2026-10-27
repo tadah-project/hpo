@@ -156,11 +156,11 @@ Each start receives MAXEVAL divided by the number of starts, rounded up; \
 under MULTISTART, BUDGET_PER_START sets the budget of each start instead. \
 An optimiser that takes several starting points in one run, such as \
 DLIB:GFS, runs once with all of them and the whole MAXEVAL. The EXPLORE \
-block of STRATEGY TYPE PRESTAGE has a MAXEVAL of its own. Under an active \
-RESTART block each round runs with the whole MAXEVAL, so a run can make up \
+block of STRATEGY TYPE PRESTAGE has a MAXEVAL of its own. Under a RESTART \
+block each round runs with the whole MAXEVAL, so a run can make up \
 to (MAX + 1) times MAXEVAL evaluations. An optimiser without a convergence \
 test or a finite schedule of its own, such as TADAH:RANDOM, needs MAXEVAL, \
-another stop it reads or an active RESTART block; the optimiser list names \
+another stop it reads or a RESTART block; the optimiser list names \
 its stops. TADAH:ANNEAL without MAXEVAL needs PARAM CHAIN_LENGTH, or PARAM \
 NT under PARAM CORANA ON, which it otherwise derives from MAXEVAL. \
 NLOPT:GD_STOGO and NLOPT:GD_STOGO_RAND need MAXEVAL itself: MAXTIME, \
@@ -1200,15 +1200,15 @@ a SEED in its INIT block, is a seed of its own; the refinement draws \
 random numbers of its own. A refinement whose optimiser reads no SEED \
 (DLIB:GFS, DLIB:BFGS, TADAH:GRID, CERES:STEEPEST_DESCENT) takes a SEED \
 that the EXPLORE block takes, and refuses one when the EXPLORE block has \
-a seed of its own. Restart r of an active RESTART block runs the \
+a seed of its own or reads none. Restart r of the RESTART block runs the \
 optimiser with SEED + r times the number of starts (N_STARTS under \
 MULTISTART, TOPK under PRESTAGE, 1 under PLAIN), and the EXPLORE block \
 with its SEED + r. An INNER block refuses SEED: NLopt draws its local \
 search from the random numbers of the enclosing run. SEED inside an INIT \
 or RESTART block is another key, the seed of the starting points."""
 checks = [
-  { msg = "{phase}: {lib}:{algo} does not use SEED: it draws no random numbers; remove it", doc = "At startup, at the END line of its optimiser: an optimiser that does not read SEED, unless the SEED is that of a PRESTAGE refinement, which the EXPLORE block takes." },
-  { msg = "{phase}: {lib}:{algo} does not support SEED", doc = "At startup, at the END line of its optimiser: DLIB:BFGS or CERES:STEEPEST_DESCENT, unless the SEED is that of a PRESTAGE refinement, which the EXPLORE block takes." },
+  { msg = "{phase}: {lib}:{algo} does not use SEED: it draws no random numbers; remove it", doc = "At startup, at the END line of its optimiser: an optimiser that does not read SEED, outside a PRESTAGE refinement." },
+  { msg = "{phase}: {lib}:{algo} does not support SEED", doc = "At startup, at the END line of its optimiser: DLIB:BFGS or CERES:STEEPEST_DESCENT, outside a PRESTAGE refinement." },
   { msg = "{phase}: {lib}:{algo} does not use SEED: it draws no random numbers, and the exploration ({name}) {why}; remove it", doc = "At startup, at the END line of its optimiser: the SEED of a PRESTAGE refinement whose optimiser does not read SEED, when the EXPLORE block does not take it; {why} is 'has a SEED of its own' or 'reads none'." },
 ]
 
@@ -1414,10 +1414,13 @@ The number of workers that run the work of the evaluations at the same \
 time: the LAMMPS scripts and the training and prediction of the potential."""
 long_doc = """\
 The value of the STRATEGY-level optimiser sizes the workers of the run; \
-OMP_NUM_THREADS does not change their number. DLIB:GFS, ASA:ASA, \
-TADAH:ANNEAL_PT and TADAH:ANNEAL_PA also read the THREADS of their own \
-EXPLORE block. An INNER block refuses THREADS at startup, and so do an \
-EXPLORE block whose optimiser is none of these and \
+OMP_NUM_THREADS does not change their number. The THREADS of an EXPLORE \
+block that names DLIB:GFS, ASA:ASA, TADAH:ANNEAL_PT or TADAH:ANNEAL_PA \
+sets how many evaluations that exploration asks for at once, and the \
+default of REPLICAS (TADAH:ANNEAL_PT) and of POPULATION \
+(TADAH:ANNEAL_PA); the workers of the run keep the number of the \
+STRATEGY-level THREADS. An INNER block refuses THREADS at startup, and so \
+do an EXPLORE block whose optimiser is none of these and \
 CERES:STEEPEST_DESCENT."""
 checks = [
   { msg = "{phase}: CERES:{algo} does not support THREADS (host evaluation is single-threaded inside one optimizer step)", doc = "At startup, at the END line of its optimiser." },
@@ -2331,17 +2334,18 @@ OPTIMIZER, STRATEGY or REFINE, which set the starting points of one \
 optimiser."""
 default = { text = "The sum of the K of the METHOD lines, 1 for CONFIG and WARM.", unchecked = "The numbers count starting points; they are no setting." }
 doc = """\
-The largest number of starting points of the block: the chain of its \
-METHOD lines keeps its first K_TOTAL points, a single METHOD line \
-included."""
+The largest number of starting points of a chain: the chain keeps its \
+first K_TOTAL points, a single METHOD line included. The INIT blocks \
+inside OPTIMIZER, STRATEGY and REFINE make one chain, those inside \
+EXPLORE another, and the RESTART blocks a third."""
 long_doc = """\
 K_TOTAL is 1 or more. One at or above the number of points the METHOD \
-lines give caps nothing and is refused when the file is read; a WARM \
-line counts as one point. An INIT block inside EXPLORE without a METHOD \
-line gives the exploration the starting points of the INIT blocks inside \
-OPTIMIZER, STRATEGY and REFINE, which its K_TOTAL does not cap, so a \
-K_TOTAL there is refused too. In a RESTART block it caps the points of \
-each restart."""
+lines of its chain give caps nothing and is refused when the file is \
+read; a WARM line counts as one point. An INIT block inside EXPLORE \
+without a METHOD line gives the exploration the starting points of the \
+INIT blocks inside OPTIMIZER, STRATEGY and REFINE, which its K_TOTAL does \
+not cap, so a K_TOTAL there is refused too. In the RESTART blocks it caps \
+the points of each restart."""
 checks = [
   { msg = "K_TOTAL {value} caps nothing: the METHOD lines of {parent} give at most {count} starting points ({list}), and K_TOTAL keeps the first K_TOTAL starting points", doc = "When the file is read, at the K_TOTAL line: a K_TOTAL at or above the starting points the METHOD lines of its chain give, K of a RANDOM, LHS or SOBOL line and 1 of a CONFIG or WARM line; {list} names the lines. {parent} names the blocks of the chain: the INIT blocks inside OPTIMIZER, STRATEGY and REFINE, the INIT blocks inside EXPLORE, or the RESTART blocks." },
   { msg = "K_TOTAL {value} caps nothing: the METHOD lines of {parent} give at most 1 starting point ({list}), and K_TOTAL keeps the first K_TOTAL starting points", doc = "When the file is read, at the K_TOTAL line: METHOD lines that give one starting point, a CONFIG or a WARM line." },
@@ -3299,7 +3303,7 @@ check = "startup"
 keys = ["BLOCK.RESTART", "RESTART.AFTER_STAGNATION", "RESTART.MAX"]
 msg = "multi-rank HPO does not support RESTART (AFTER_STAGNATION {value}, MAX {max} on {count} ranks): stagnation is tracked per rank; run on one rank or remove RESTART"
 doc = """\
-A run on more than one MPI rank has no active RESTART block. The refusal \
+A run on more than one MPI rank has no RESTART block. The refusal \
 comes when the run starts, before any evaluation, at the ENDOPTIMIZER \
 line, after that of the optimiser."""
 untested = [
