@@ -521,11 +521,15 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
                                  "cannot be read (" + e.what() + "): " +
                                  rule->by + " needs its widths");
       }
-      for (std::size_t i = 0; i < eta.size(); ++i)
-        if (!rule->admits(eta[i]))
+      /* Each width by the rule of its entry: on a D2_mJoin line, that of
+       * the descriptor whose entry it is (a D2_BP's width has none). */
+      for (std::size_t i = 0; i < eta.size(); ++i) {
+        const auto r = models::optim_low_bound_rule(key, train_ctx, i);
+        if (r && !r->admits(eta[i]))
           bad.push_back(std::string(key) + " (" + core::to_string(i + 1) +
-                        ") = " + core::to_string(eta[i]) + ": " + rule->by +
-                        " requires " + rule->requirement);
+                        ") = " + core::to_string(eta[i]) + ": " + r->by +
+                        " requires " + r->requirement);
+      }
     }
     if (!bad.empty()) {
       std::string msg = "the -c potential has a radial bump width <= 0:";

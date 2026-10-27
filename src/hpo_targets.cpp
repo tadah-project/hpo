@@ -3769,14 +3769,19 @@ void HPOTargets::process_optim_config(std::istringstream& iss,
             "1, every M of 0 or below leaves out only a singular value of 0 "
             "under OALGO 3, and a fit refuses an M of 1 or more, so the box "
             "of a search is inside (0, 1)");
-      if (low_rule && !low_rule->admits(lo_i))
+      /* The rule of this entry: on a D2_mJoin line, that of the
+       * descriptor whose entry it is (a D2_BP's width has none). */
+      std::optional<models::OptimLowBoundRule> entry_rule = low_rule;
+      if (!named && low_rule)
+        entry_rule = models::optim_low_bound_rule(k, context, ui - 1);
+      if (entry_rule && !entry_rule->admits(lo_i))
         throw std::runtime_error("OPTIM " + k + " (" + core::to_string(ui) +
                                  "): the low bound " + core::to_string(lo_i) +
-                                 (low_rule->strict ? " is not > 0" : " is negative") +
-                                 ", but " + low_rule->by + " requires " +
-                                 low_rule->requirement + "; use a low bound " +
-                                 (low_rule->strict ? "> 0"
-                                                   : ">= 0 (0 is allowed) or AUTO"));
+                                 (entry_rule->strict ? " is not > 0" : " is negative") +
+                                 ", but " + entry_rule->by + " requires " +
+                                 entry_rule->requirement + "; use a low bound " +
+                                 (entry_rule->strict ? "> 0"
+                                                     : ">= 0 (0 is allowed) or AUTO"));
       omap.opt[i] = true;
       omap.line[i] = nline;
       omap.highbound[i] = hi_i;
