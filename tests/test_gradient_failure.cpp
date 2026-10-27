@@ -913,7 +913,12 @@ TEST_CASE("GradientProvider: ANALYTICAL at a candidate rejected before "
      * point", the detail naming the point, the host's reason and HYBRID.
      * Where the host gives no reason -- a parameter without an analytical
      * derivative at a point it trained -- ANALYTICAL still throws, naming
-     * the parameters (a pin: as before the fix).
+     * the strategy as the target file writes it and the parameters by
+     * their labels, "GRAD_STRATEGY ANALYTICAL: no analytical gradient for 2
+     * parameters at this point (CGRID2B[2], SGRID2B[2])" (a pin of the
+     * throw, as before the fix; it named them by their indices,
+     * "(indices: [0, 1])", until the message took the labels, and wrote
+     * "GRAD_STRATEGY=ANALYTICAL").
      * Before the fix: gradient_at threw "GRAD_STRATEGY=ANALYTICAL: no
      * analytical gradient for 2 parameters at this point (indices: [0,
      * 1]) ..." at the rejected point; until 2026-10-12 gradient_at ran the
@@ -969,10 +974,10 @@ TEST_CASE("GradientProvider: ANALYTICAL at a candidate rejected before "
     const Vec trained = point(1.0, 0.5);
     const double fy = host(trained);
     CHECK_THROWS_WITH(gp.gradient_at(trained, fy, g),
-                      Catch::StartsWith("GRAD_STRATEGY=ANALYTICAL: no "
+                      Catch::StartsWith("GRAD_STRATEGY ANALYTICAL: no "
                                         "analytical gradient for 2 "
-                                        "parameters at this point (indices: "
-                                        "[0, 1])"));
+                                        "parameters at this point "
+                                        "(CGRID2B[2], SGRID2B[2])"));
 }
 
 TEST_CASE("GradientProvider: a non-finite stencil loss is of another kind, "

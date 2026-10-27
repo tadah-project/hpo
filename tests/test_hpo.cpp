@@ -1310,6 +1310,13 @@ TEST_CASE("GradientProvider Analytical with full callback matches analytic",
     CHECK(counter.load() == 1u);
 }
 
+/* Pins: under GRAD_STRATEGY ANALYTICAL a parameter left to finite
+ * differences at a point the host trained throws, naming the parameter by
+ * its label (OptimizerSpec::parameter_labels, the KEY[n] of the journal:
+ * "(SGRID2B[1])"), or by its dimension where the spec has no labels (a
+ * spec built outside the parser: "(dim[2])"), the causes and HYBRID.
+ * Before the fix: the message named the index of the optimiser's vector,
+ * "(indices: [1])", for both. */
 TEST_CASE("GradientProvider Analytical with leftover needs_fd throws strict diagnostic",
           "[HPO][grad_provider][analytical][strict]")
 {
@@ -1319,7 +1326,7 @@ TEST_CASE("GradientProvider Analytical with leftover needs_fd throws strict diag
     std::atomic<unsigned long> counter{0};
 
     /* Callback fills index 0 but punts index 1 onto needs_fd. Strict
-     * Analytical mode must throw, naming the missing index. */
+     * Analytical mode must throw, naming the missing parameter. */
     auto agf = [](const DlibVec& x, DlibVec& g, std::vector<int>& nfd) -> bool {
         g.set_size(2);
         g(0) = std::cos(x(0));
@@ -1333,21 +1340,30 @@ TEST_CASE("GradientProvider Analytical with leftover needs_fd throws strict diag
 
     DlibVec x; x.set_size(2); x(0)=1.0; x(1)=0.5;
     DlibVec g;
-    /* The message names the index and the possible causes, and points at
-     * HYBRID; it used to send the user to a "dtheta_registry" that does
+    /* The message names the parameter and the possible causes, and points
+     * at HYBRID; it used to send the user to a "dtheta_registry" that does
      * not exist. */
     CHECK_THROWS_WITH(gp.gradient(x, g),
                       Catch::Contains("ANALYTICAL") &&
                       Catch::Contains("HYBRID") &&
-                      Catch::Contains("indices: [1]") &&
                       Catch::Contains("no analytical gradient for 1 "
-                                      "parameter") &&
+                                      "parameter at this point (dim[2]): ") &&
+                      !Catch::Contains("indices") &&
                       Catch::Contains("a loss term") &&
                       /* (it ended "... point. Use GRAD_STRATEGY=HYBRID to
                        * fill these with finite differences.") */
                       Catch::EndsWith("point; GRAD_STRATEGY HYBRID fills "
                                       "these with finite differences.") &&
                       !Catch::Contains("dtheta_registry"));
+
+    /* The labels of a parsed spec. */
+    sp.parameter_labels = {"CGRID2B[1]", "SGRID2B[1]"};
+    auto labelled = tadah::hpo::make_gradient_provider<DlibVec, void>(
+        sp, host, &counter, /*maxeval=*/0, agf);
+    CHECK_THROWS_WITH(labelled.gradient(x, g),
+                      Catch::Contains("no analytical gradient for 1 "
+                                      "parameter at this point (SGRID2B[1]): ") &&
+                      !Catch::Contains("indices"));
 }
 
 TEST_CASE("GradientProvider Hybrid runs masked FD on needs_fd indices",

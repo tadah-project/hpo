@@ -228,7 +228,7 @@ std::string fixed_weight_problem(const core::Context &train_ctx,
   std::vector<double> p = config_point_from_targets(trg);
   for (const ParamRef &r : make_param_ref_table(trg))
     if (r.theta_name == "WATOM")
-      p[r.flat_idx] = trg.optimap.at(r.theta_name).highbound[r.arg_pos - 1];
+      p[r.flat_idx] = trg.optimap.at(r.theta_name).highbound[r.token];
   return weight_problem(seed_context(train_ctx, trg, p, g));
 }
 

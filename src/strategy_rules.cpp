@@ -3,6 +3,7 @@
 #include <tadah/hpo/init_strategy.h>
 #include <tadah/hpo/optimizer_caps.h>
 #include <tadah/hpo/phase_specs.h>
+#include <tadah/hpo/strict_parse.h>   // config_line_error
 
 #include <algorithm>
 #include <stdexcept>
@@ -389,6 +390,29 @@ void require_multistart_points(const OptimizerSpec& spec)
                              " starts from each of the " + n)));
 }
 
+void require_restart_points(const OptimizerSpec& spec)
+{
+    if (spec.strategy_type != StrategyType::MULTISTART) return;
+    /* The chain the file wrote (require_multistart_points). */
+    if (spec.key_lines.find("N_STARTS") == spec.key_lines.end()) return;
+    if (!spec.restart.active()) return;
+    const ChainPoints c = chain_points(spec.restart.init_strategy);
+    const std::size_t want = spec.multistart.n_starts;
+    if (c.points >= want) return;
+
+    const std::string k = std::to_string(want);
+    const std::string what =
+        "N_STARTS " + k + " needs " + k + " starting points in each RESTART "
+        "round, and the RESTART chain gives " + (c.warm ? "at most " : "") +
+        std::to_string(c.points) + " (" + c.from() + "); " +
+        multistart_chain_advice(c, want);
+    throw std::runtime_error(
+        spec.restart.line > 0
+            ? config_line_error(spec.restart.line, what,
+                                spec.restart.line_text)
+            : what);
+}
+
 void require_prestage_explore(const OptimizerSpec& spec)
 {
     if (!spec.prestage)
@@ -467,8 +491,10 @@ void validate_run_policy(const OptimizerSpec& spec)
            [&] { require_inner_backend(explore, kExploreBlock); });
     }
     /* Once MULTISTART is known to run its optimiser from each start: at
-     * the N_STARTS line, which the refusal names itself. */
+     * the N_STARTS line and at the RESTART line, which the refusals name
+     * themselves. */
     require_multistart_points(spec);
+    require_restart_points(spec);
 }
 
 void reject_refused_backends(const OptimizerSpec& spec)

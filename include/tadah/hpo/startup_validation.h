@@ -11,6 +11,7 @@
 #include <string>
 
 namespace tadah {
+namespace mlip { class StructureDB; }
 namespace hpo {
 
 /** Derive the total model weight count K from the training configuration
@@ -180,12 +181,37 @@ std::set<core::Element> declared_element_set(const core::Context &train_ctx);
  *     gradient covers and loss terms with an analytical derivative
  *     (analytical_gradient_blocker, analytical_loss_term_blocker,
  *     analytical_gate.h), and no OPTIM of an error scale, which it does
- *     not differentiate;
+ *     not differentiate (each search parameter's derivative is checked
+ *     once the data are read: require_analytical_parameters());
  *   - FAILSCORE_GRADING ON needs a finite FAILSCORE that leaves room for
  *     the four grading bands.
  */
 void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
                         bool has_train_db, bool has_validation);
+
+/** GRAD_STRATEGY ANALYTICAL (written out, or resolved for PC_OBSERVABLE) in
+ *  a block that obtains gradients, as validate_hpo_setup() takes it, needs
+ *  an analytical derivative with respect to every search parameter: one
+ *  the descriptors of the training configuration @p train_ctx do not
+ *  differentiate in the rows of the training structures @p train and the
+ *  validation structures @p val (parameters_without_analytical_derivative,
+ *  analytical_gate.h) is refused at the line that closes the block, naming
+ *  each such OPTIM line, why, and HYBRID: "OPTIMIZER block: GRAD_STRATEGY
+ *  ANALYTICAL needs an analytical derivative with respect to every search
+ *  parameter, and the descriptors give none for OPTIM LAMBDA (1) on line 4
+ *  of the target file (no descriptor differentiates it). GRAD_STRATEGY
+ *  HYBRID takes finite differences for it."; "... (DM_Blip differentiates
+ *  it in the energy rows only, and FORCE true gives the fit force rows)";
+ *  "... and PC_FRMSE measures the forces of the validation structures)".
+ *  A parameter the descriptors differentiate has rows of 0 in structures
+ *  that hold no pair of atoms that depends on it, which the analytical
+ *  gradient forms. The data decide which rows the descriptors claim, so
+ *  hpo_run() calls it once HPO_Host has read them (a check too), before
+ *  any evaluation; validate_hpo_setup() has accepted the setup. */
+void require_analytical_parameters(const core::Context &train_ctx,
+                                   const HPOTargets &trg,
+                                   const mlip::StructureDB &train,
+                                   const mlip::StructureDB &val);
 
 /** The --validation file of the run (VALIDATION): "" when there is none,
  *  else its one value. tadah hpo reads one validation configuration file,

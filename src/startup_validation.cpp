@@ -423,7 +423,110 @@ void require_error_scale_search_changes_the_fit(core::Context &ctx,
        tail);
 }
 
+/* A block whose optimiser takes GRAD_STRATEGY ANALYTICAL -- written out, or
+ * resolved from an unset GRAD_STRATEGY for PC_OBSERVABLE -- and obtains
+ * gradients: the STRATEGY-level block ("OPTIMIZER") and EXPLORE. An INNER
+ * block has no GRAD_STRATEGY (the parser rejects one): MLSL and AUGLAG
+ * hand their local search the gradient of their own objective, which the
+ * enclosing block's GRAD_STRATEGY obtains (nlopt_adapter.h). */
+struct AnalyticalBlock {
+  const OptimizerSpec *sp;
+  const char *name;
+};
+
+/* The blocks of `trg` that take GRAD_STRATEGY ANALYTICAL, in the order
+ * their refusals name them: OPTIMIZER, then EXPLORE. */
+std::vector<AnalyticalBlock> analytical_blocks(const HPOTargets &trg) {
+  std::vector<AnalyticalBlock> blocks = {{&trg.spec, "OPTIMIZER"}};
+  if (trg.spec.prestage)
+    blocks.push_back({trg.spec.prestage.get(), "EXPLORE"});
+  std::vector<AnalyticalBlock> out;
+  for (const AnalyticalBlock &b : blocks)
+    if (b.sp->grad_strategy == GradStrategy::Analytical &&
+        obtains_gradients(*b.sp))
+      out.push_back(b);
+  return out;
+}
+
+/* "OPTIMIZER block: GRAD_STRATEGY ANALYTICAL", with the note of a strategy
+ * resolved for PC_OBSERVABLE: the head of a refusal of `b`. */
+std::string analytical_head(const AnalyticalBlock &b) {
+  return std::string(b.name) + " block: GRAD_STRATEGY ANALYTICAL" +
+         (b.sp->grad_strategy_resolved
+              ? " (resolved for PC_OBSERVABLE: the block sets no "
+                "GRAD_STRATEGY)"
+              : "");
+}
+
+/* "A", "A and B", "A, B and C". */
+std::string joined_with_and(const std::vector<std::string> &words) {
+  std::string out;
+  for (std::size_t i = 0; i < words.size(); ++i) {
+    if (i > 0) out += i + 1 == words.size() ? " and " : ", ";
+    out += words[i];
+  }
+  return out;
+}
+
+/* Why the descriptors give no derivative with respect to the search
+ * parameter `g`: "no descriptor differentiates it"; "DM_Blip
+ * differentiates it in the energy rows only, and FORCE true gives the fit
+ * force rows" ("... and PC_FRMSE measures the forces of the validation
+ * structures"). */
+std::string parameter_without_derivative_why(
+    const ParameterWithoutDerivative &g) {
+  using Why = ParameterWithoutDerivative::Why;
+  switch (g.why) {
+    case Why::NoDerivative:
+      return "no descriptor differentiates it";
+    case Why::EnergyRowsOnly:
+      return (g.descriptors.empty()
+                  ? std::string("the descriptors differentiate")
+                  : joined_with_and(g.descriptors) +
+                        (g.descriptors.size() == 1 ? " differentiates"
+                                                   : " differentiate")) +
+             " it in the energy rows only, and " +
+             (g.force_rows_of_fit
+                  ? "FORCE true gives the fit force rows"
+                  : "PC_FRMSE measures the forces of the validation "
+                    "structures");
+  }
+  return {};
+}
+
 }  // namespace
+
+void require_analytical_parameters(const core::Context &train_ctx,
+                                   const HPOTargets &trg,
+                                   const mlip::StructureDB &train,
+                                   const mlip::StructureDB &val) {
+  const std::vector<AnalyticalBlock> blocks = analytical_blocks(trg);
+  if (blocks.empty()) return;
+  const std::vector<ParameterWithoutDerivative> gaps =
+      parameters_without_analytical_derivative(train_ctx, trg, train, val);
+  if (gaps.empty()) return;
+  /* "OPTIM LAMBDA (1) on line 4 of the target file (why)", the lines after
+   * the first "on line 5", joined "A or B", "A, B or C". */
+  std::string list;
+  bool first_line = true;
+  for (std::size_t i = 0; i < gaps.size(); ++i) {
+    const ParameterWithoutDerivative &g = gaps[i];
+    if (i > 0) list += i + 1 == gaps.size() ? " or " : ", ";
+    list += "OPTIM " + g.key + " (" + std::to_string(g.index) + ")";
+    if (g.line > 0) {
+      list += " on line " + std::to_string(g.line);
+      if (first_line) list += " of the target file";
+      first_line = false;
+    }
+    list += " (" + parameter_without_derivative_why(g) + ")";
+  }
+  throw std::runtime_error(with_block_line(*blocks.front().sp,
+      analytical_head(blocks.front()) +
+      " needs an analytical derivative with respect to every search "
+      "parameter, and the descriptors give none for " + list +
+      ". GRAD_STRATEGY HYBRID takes finite differences "
+      "for " + (gaps.size() == 1 ? "it" : "them") + "."));
+}
 
 std::set<core::Element> declared_element_set(const core::Context &train_ctx) {
   if (!train_ctx.has_stored("ATOM"))
@@ -954,37 +1057,20 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
    * one): MLSL and AUGLAG hand their local search the gradient of their
    * own objective, which the enclosing block's GRAD_STRATEGY obtains
    * (nlopt_adapter.h). */
-  {
-    struct Block { const OptimizerSpec* sp; const char* name; };
-    std::vector<Block> blocks = {{&trg.spec, "OPTIMIZER"}};
-    if (trg.spec.prestage)
-      blocks.push_back({trg.spec.prestage.get(), "EXPLORE"});
-    std::string why;
-    bool checked = false;
-    for (const auto& b : blocks) {
-      if (b.sp->grad_strategy != GradStrategy::Analytical ||
-          !obtains_gradients(*b.sp))
-        continue;
-      if (!checked) {
-        why = analytical_gradient_blocker(train_ctx, trg, has_train_db);
-        if (why.empty()) why = analytical_loss_term_blocker(trg);
-        if (why.empty()) why = error_scale_search_blocker(trg);
-        checked = true;
-      }
-      if (why.empty()) break;
-      /* At the line the block closes at, as the parser's refusals of a
-       * block (with_block_line). */
-      throw std::runtime_error(with_block_line(*b.sp,
-          std::string(b.name) + " block: GRAD_STRATEGY ANALYTICAL" +
-          (b.sp->grad_strategy_resolved
-               ? " (resolved for PC_OBSERVABLE: the block sets no "
-                 "GRAD_STRATEGY)"
-               : "") +
+  if (const std::vector<AnalyticalBlock> blocks = analytical_blocks(trg);
+      !blocks.empty()) {
+    std::string why = analytical_gradient_blocker(train_ctx, trg, has_train_db);
+    if (why.empty()) why = analytical_loss_term_blocker(trg);
+    if (why.empty()) why = error_scale_search_blocker(trg);
+    /* At the line the block closes at, as the parser's refusals of a
+     * block (with_block_line). */
+    if (!why.empty())
+      throw std::runtime_error(with_block_line(*blocks.front().sp,
+          analytical_head(blocks.front()) +
           " needs the analytical gradient of the loss, which this setup "
           "cannot form: " + why + ". Change that setting, or set "
           "GRAD_STRATEGY HYBRID to use finite differences where no "
           "analytical gradient is available."));
-    }
   }
 
   /* --- FAILSCORE_GRADING ON bands the failures below FAILSCORE ---------- */

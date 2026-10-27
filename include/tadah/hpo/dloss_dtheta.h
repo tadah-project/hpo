@@ -51,6 +51,7 @@
 
 #include <tadah/core/core_types.h>
 #include <tadah/core/intercept_layout.h>
+#include <tadah/core/utils.h>
 #include <tadah/hpo/fit_switch_guard.h>
 #include <tadah/hpo/analytical_gate.h>
 #include <tadah/hpo/hpo_targets.h>
@@ -105,11 +106,20 @@ struct ParamRef {
     /** The OPTIM key (upper-case), e.g. "CGRID2B", "SGRID2B", "RCUT2B".
      *  Matches the keys D2_Base::calc_dDdtheta expects. */
     std::string theta_name;
-    /** 1-based index for vector parameters. Always positive -- descriptor
-     *  closed forms for vector keys (CGRID*, SGRID*, CEMBFUNC, SEMBFUNC,
-     *  ...) require `arg_pos >= 1`. Scalar keys (RCUT*, RCUTENV) ignore
-     *  arg_pos and match on theta_name alone, so 1 is fine there too. */
+    /** The OPTIM index: the 1-based position of the value among the
+     *  numbers of its key (DimSpec::user_index, but the model weight of
+     *  FIXWEIGHT under FIXINDEX), the index the descriptor closed forms
+     *  take. For a key of numbers only it is the position among the key's
+     *  values; for the pair form of WATOM (sym sym value triples) it is the
+     *  pair. Always positive -- descriptor closed forms for vector keys
+     *  (CGRID*, SGRID*, CEMBFUNC, SEMBFUNC, WATOM, ...) require
+     *  `arg_pos >= 1`. Scalar keys (RCUT*, RCUTENV) ignore arg_pos and
+     *  match on theta_name alone, so 1 is fine there too. */
     int         arg_pos = 1;
+    /** The 0-based position of the value among the tokens of its key: its
+     *  index into the per-token vectors of HPOTargets::optimap (opt, line,
+     *  lowbound, highbound, ...). */
+    std::size_t token = 0;
     /** Flat index in the optimiser's theta vector. */
     std::size_t flat_idx = 0;
 };
@@ -119,7 +129,9 @@ struct ParamRef {
  *  ordered the same way as `param_labels_` (and the optimiser's x).
  *
  *  Walks `optimap` in iteration order (std::map: lexicographic by
- *  key), and within each key emits one entry per opt[i]==true position. */
+ *  key), and within each key emits one entry per opt[i]==true position,
+ *  token i of the key, a number (HPOTargets selects the value of OPTIM
+ *  index n at the n-th number of the key). */
 inline std::vector<ParamRef>
 make_param_ref_table(const HPOTargets& trg)
 {
@@ -128,11 +140,21 @@ make_param_ref_table(const HPOTargets& trg)
     for (const auto& kv : trg.optimap) {
         const std::string& key = kv.first;
         const auto&        op  = kv.second.opt;
+        const auto&        cfg = kv.second.config;
+        int numbers = 0;
         for (std::size_t i = 0; i < op.size(); ++i) {
+            const bool number = i < cfg.size() && core::is_number(cfg[i]);
+            if (number) ++numbers;
             if (!op[i]) continue;
+            if (!number)
+                throw std::logic_error(
+                    "make_param_ref_table: OPTIM " + key + " selects token " +
+                    std::to_string(i + 1) + " of " + key + ", which is not a "
+                    "number");
             ParamRef r;
             r.theta_name = key;
-            r.arg_pos    = static_cast<int>(i + 1);
+            r.arg_pos    = numbers;
+            r.token      = i;
             r.flat_idx   = flat++;
             out.push_back(std::move(r));
         }
@@ -784,6 +806,92 @@ using ObservableGradProvider =
     std::function<bool(std::vector<ObservableGradInput>& inputs)>;
 
 /* ------------------------------------------------------------------- *
+ *  ThetaClaims, theta_claims, claims_differentiate
+ *
+ *  Which rows of the design matrix the descriptors differentiate with
+ *  respect to one search parameter: the descriptor walker
+ *  (assemble_dphi_train_both_rows, dphi_dtheta_walk.h) claims a parameter
+ *  for the energy rows, and for the force rows, of the structures in
+ *  which a pair of atoms within a descriptor's cutoff has a closed-form
+ *  derivative with respect to it. claims_differentiate() is the rule by
+ *  which compute_analytical_gradient_from_trainer keeps a parameter on the
+ *  analytical path or hands it to finite differences (needs_fd), and the
+ *  startup check of GRAD_STRATEGY ANALYTICAL
+ *  (parameters_without_analytical_derivative, analytical_gate.h) applies
+ *  the same rule to the data of the run. Rows that no pair of atoms of
+ *  the data claims are rows of 0 when the descriptors differentiate the
+ *  parameter on the pairs of probe_pairs() (analytical_gate.h).
+ * ------------------------------------------------------------------- */
+struct ThetaClaims {
+    bool energy = false;  // the walker claims the energy rows
+    bool force  = false;  // ... and the force rows (when they were asked)
+};
+
+/* The claims of the descriptors of `dcs` for the parameter `p` on the
+ * structures of `stdb` (each with its neighbour list), the force rows
+ * only when `force`: the walker of the analytical gradient, run structure
+ * by structure until the claims asked for are found (a structure that
+ * claims every row asked for ends the walk). `n_cols` is the width of the
+ * design matrix (DC_Selector::descriptor_size()). */
+inline ThetaClaims
+theta_claims(const mlip::StructureDB&           stdb,
+             const tadah::models::DC_Selector& dcs,
+             const ParamRef&                   p,
+             bool                              force,
+             std::size_t                       n_cols)
+{
+    ThetaClaims c;
+    std::vector<double> energy_rows;
+    std::vector<double> force_rows;
+    for (std::size_t s = 0;
+         s < stdb.size() && !(c.energy && (!force || c.force)); ++s) {
+        mlip::StructureDB one;
+        one.add(stdb(s));
+        energy_rows.assign(n_cols, 0.0);
+        if (force) force_rows.assign(3 * stdb(s).natoms() * n_cols, 0.0);
+        const auto claimed = mlip::assemble_dphi_train_both_rows(
+            one, dcs, p.theta_name, p.arg_pos, energy_rows.data(),
+            force ? force_rows.data() : nullptr, n_cols,
+            /*force_row_start_per_struct=*/{0});
+        c.energy = c.energy || claimed.first;
+        c.force  = c.force  || claimed.second;
+    }
+    return c;
+}
+
+/* Whether the analytical gradient differentiates a parameter whose claims
+ * are `train` on the training structures and `val` on the validation
+ * structures: the training rows need the energy claim and, with force
+ * rows in the fit (`train_force`, FORCE true), the force claim; the
+ * validation rows, when there are any (`has_val`), the energy claim and,
+ * with forces measured (`val_force`, PC_FRMSE), the force claim. A
+ * parameter claimed for the energy rows alone would get zero force rows,
+ * a wrong gradient, so it goes to finite differences whole.
+ * `descriptors` are the claims of the descriptors on pairs of atoms the
+ * data need not hold (probe_pairs, analytical_gate.h); default none, the
+ * data alone. A side whose structures hold no pair of atoms that depends
+ * on the parameter (no claim at all) has rows of 0 where the descriptors
+ * claim the energy rows. Force rows the data do not claim beside energy
+ * rows they claim are 0 where the descriptors claim the force rows: a
+ * many-body descriptor claims the energy rows of every atom, and its force
+ * rows only for a pair of atoms within its cutoff, which the structures
+ * need not hold. A descriptor whose derivatives cover the energy rows only
+ * makes the descriptors claim no force rows, so its parameter goes to
+ * finite differences whenever the run has force rows and the data claim
+ * the energy rows. */
+inline bool claims_differentiate(const ThetaClaims& train, bool train_force,
+                                 const ThetaClaims& val, bool has_val,
+                                 bool val_force,
+                                 const ThetaClaims& descriptors = {})
+{
+    const auto rows = [&descriptors](const ThetaClaims& c, bool force) {
+        if (!c.energy && !c.force) return descriptors.energy;
+        return c.energy && (!force || c.force || descriptors.force);
+    };
+    return rows(train, train_force) && (!has_val || rows(val, val_force));
+}
+
+/* ------------------------------------------------------------------- *
  *  compute_analytical_gradient_from_trainer
  *
  *  Free helper that takes a live, trained mlip::Trainer plus the
@@ -1270,6 +1378,13 @@ compute_analytical_gradient_from_trainer(
     std::vector<std::vector<double>> dphi_train_buf(prefs.size());
     std::vector<std::vector<double>> dphi_val_buf  (prefs.size());
     std::vector<PerThetaInputs>      per_theta     (prefs.size());
+    /* The claims of the walker on the training and the validation
+     * structures, for the parameters whose rows the data do not claim in
+     * full (`unclaimed`): after the loop, the claims of the descriptors on
+     * probe_pairs() decide whether the rows they lack are 0. */
+    std::vector<ThetaClaims> train_claims(prefs.size());
+    std::vector<ThetaClaims> val_claims  (prefs.size());
+    std::vector<char>        unclaimed   (prefs.size(), 0);
 
     /* Per-theta loop is embarrassingly parallel: each iteration i writes to
      * its own dphi_train_buf[i] / dphi_val_buf[i] / per_theta[i] slot,
@@ -1390,8 +1505,8 @@ compute_analytical_gradient_from_trainer(
 
             /* Train-side ownership requires BOTH energy and (if FORCE) force
              * walkers to claim the theta. A descriptor that owns theta for
-             * energy but not yet for force (e.g. D2_LJ, D2_ZBL today: only
-             * calc_dDdtheta is implemented) would otherwise produce a
+             * energy but not for force (DM_Blip, DM_EAD: their derivatives
+             * cover the energy rows only) would otherwise produce a
              * dphi_train_aug with correct energy rows but zero force rows,
              * silently giving the IFT a wrong gradient. Force the whole
              * theta to needs_fd instead.
@@ -1399,14 +1514,22 @@ compute_analytical_gradient_from_trainer(
              * Val-side ownership: when use_frmse_val is true, both energy
              * and force walkers must claim the theta for val too -- same
              * argument applies (a missing val force walker would silently
-             * zero the dPhi_val force rows). */
-            /* No validation structures (a PC_OBSERVABLE-only run): there are
-             * no validation rows to differentiate, so the val side has nothing
-             * to claim. */
-            const bool ok_train = ok_e_train && (!use_force      || ok_f_train);
-            const bool ok_val   = val_stdb.size() == 0 ||
-                                  (ok_e_val && (!use_frmse_val || ok_f_val));
-            if (!ok_train || !ok_val) continue;     /* -> needs_fd */
+             * zero the dPhi_val force rows). No validation structures (a
+             * PC_OBSERVABLE-only run): there are no validation rows to
+             * differentiate, so the val side has nothing to claim. The rule
+             * is claims_differentiate(), which the startup check of
+             * GRAD_STRATEGY ANALYTICAL applies too. Rows the data do not
+             * claim may be rows of 0: no pair of atoms of the structures
+             * depends on the parameter. The rows are formed below all the
+             * same (the walker wrote 0 where nothing claimed them), and
+             * after the loop the claims of the descriptors on
+             * probe_pairs() decide. */
+            train_claims[i] = {ok_e_train, ok_f_train};
+            val_claims[i]   = {ok_e_val, ok_f_val};
+            const bool claimed = claims_differentiate(
+                train_claims[i], use_force, val_claims[i],
+                val_stdb.size() > 0, use_frmse_val);
+            unclaimed[i] = claimed ? 0 : 1;
 
             /* Copy energy scratch rows into dphi_train_buf at the energy
              * row offsets and scale by w_e, the row factor of the fit. */
@@ -1443,8 +1566,10 @@ compute_analytical_gradient_from_trainer(
             /* Val force rows were written directly by the walker into the
              * interleaved positions -- no copy needed, and no weight scaling. */
 
-            per_theta[i].dPhi_train_aug = dphi_train_buf[i].data();
-            per_theta[i].dPhi_val       = dphi_val_buf  [i].data();
+            if (claimed) {
+                per_theta[i].dPhi_train_aug = dphi_train_buf[i].data();
+                per_theta[i].dPhi_val       = dphi_val_buf  [i].data();
+            }
 
             per_theta_ms[i] = ms(t_th_start, clk::now());
         } catch (...) {
@@ -1454,11 +1579,33 @@ compute_analytical_gradient_from_trainer(
     for (const auto& e : per_theta_errors)
         if (e) std::rethrow_exception(e);
 
+    /* A parameter whose rows the data do not claim in full: where no pair
+     * of atoms of the structures depends on it, its rows are 0, which the
+     * walker wrote, if the descriptors differentiate it at all -- on pairs
+     * of atoms the data need not hold (probe_pairs, built once). Otherwise
+     * (no descriptor differentiates it, or one in the energy rows only and
+     * the run has force rows) it stays on needs_fd. */
+    if (std::find(unclaimed.begin(), unclaimed.end(), 1) != unclaimed.end()) {
+        const mlip::StructureDB pairs = probe_pairs(ctx, host.DCS);
+        const bool force_rows =
+            use_force || (val_stdb.size() > 0 && use_frmse_val);
+        for (std::size_t i = 0; i < prefs.size(); ++i) {
+            if (!unclaimed[i]) continue;
+            const ThetaClaims descriptors =
+                theta_claims(pairs, host.DCS, prefs[i], force_rows, n_cols);
+            if (!claims_differentiate(train_claims[i], use_force,
+                                      val_claims[i], val_stdb.size() > 0,
+                                      use_frmse_val, descriptors))
+                continue;     /* -> needs_fd */
+            per_theta[i].dPhi_train_aug = dphi_train_buf[i].data();
+            per_theta[i].dPhi_val       = dphi_val_buf  [i].data();
+        }
+    }
+
     if (profile_grad) t_per_theta = clk::now();
 
-    /* Feed the scheduling cache for the next gradient call. Skipped theta
-     * (continue branches above) keep per_theta_ms[i] ~= 0 -- fine, they
-     * route to FD anyway and will sort to the tail next call. */
+    /* Feed the scheduling cache for the next gradient call: every theta
+     * records the time of its walk, a theta left on needs_fd too. */
     for (std::size_t i = 0; i < prefs.size(); ++i)
         theta_cost_cache[cost_key(prefs[i])] = per_theta_ms[i];
 

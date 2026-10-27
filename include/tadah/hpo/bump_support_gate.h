@@ -130,7 +130,7 @@ inline BindingRcut derive_binding_rcut(const core::Context &ctx,
                      itr->second.opt[e];
     if (opt) {
       for (const auto &r : prefs)
-        if (r.theta_name == itr->first && r.arg_pos == static_cast<int>(e + 1))
+        if (r.theta_name == itr->first && r.token == e)
           rc.flat_idx.push_back(static_cast<long>(r.flat_idx));
       rc.min_reachable = std::max(rc.min_reachable, itr->second.lowbound[e]);
       rc.max_reachable = std::max(rc.max_reachable, itr->second.highbound[e]);
@@ -172,7 +172,7 @@ build_bump_gate_table(const core::Context &ctx, const HPOTargets &trg) {
   const auto prefs = make_param_ref_table(trg);
   auto flat_of = [&prefs](const std::string &key, std::size_t i) -> long {
     for (const auto &r : prefs)
-      if (r.theta_name == key && r.arg_pos == static_cast<int>(i + 1))
+      if (r.theta_name == key && r.token == i)
         return static_cast<long>(r.flat_idx);
     return -1;
   };
