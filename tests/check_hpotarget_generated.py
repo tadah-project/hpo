@@ -21,11 +21,16 @@ blocks    The line of each key, taken from its first example, is put into
           registry lists the place for a key of that name (its blocks, or
           the blocks of its group less those that refuse it), the parser
           must not refuse the line as out of place; elsewhere it must,
-          with the block's unknown-key or refusal message, the top-level
-          unknown-key message, or the key's own misplaced_msg. Catches a
-          block added to or left out of `blocks`, a key in the wrong
-          group, and a lost entry of a name the parser reads in more
-          places (ROOT.MAXTIME).
+          with the block's refusal message, the key's own misplaced_msg,
+          the top-level unknown-key message at the top level, and in a
+          block the structure's root_key_in_block_msg for a key the
+          registry lists at the top level only, the block's unknown-key
+          message for any other key (MAXTIME, which the blocks of an
+          optimiser take as well, included). Catches a block added to or
+          left out of `blocks`, a key in the wrong group, a lost entry of
+          a name the parser reads in more places (ROOT.MAXTIME), and a
+          key the parser names as a top-level key in a block that the
+          registry does not list at the top level only, or the reverse.
 repeat    A key whose repeat is error, last_wins or warn_last_wins: its
           line, from its first example, is given again right after it.
           error: the second line is refused with repeat_msg ({first_line}
@@ -258,7 +263,10 @@ class Generator:
                     if k.name not in {r.key for r in reg.block(b).refuse}}
         return set(k.blocks)
 
-    def placement_patterns(self, place: str, name: str) -> list[re.Pattern]:
+    def placement_patterns(self, place: str, name: str,
+                           places: set[str]) -> list[re.Pattern]:
+        """The refusals of the key `name` in `place`, which the registry
+        does not list for it; `places` are those it lists."""
         hr, reg = self.hr, self.reg
         out = []
         if place == "ROOT":
@@ -266,7 +274,14 @@ class Generator:
                 reg.structure.fields["unknown_root_msg"], {"key": name}))
         else:
             b = reg.block(place)
-            out.append(hr.template_regex(b.unknown_msg, {"key": name}))
+            if places == {"ROOT"}:
+                # A key of the top level only is named as a top-level key,
+                # with the block that is still open, and not as unknown.
+                out.append(hr.template_regex(
+                    reg.structure.fields["root_key_in_block_msg"],
+                    {"key": name, "name": place, "end": b.end}))
+            else:
+                out.append(hr.template_regex(b.unknown_msg, {"key": name}))
             for r in b.refuse:
                 if r.key == name:
                     out.append(hr.template_regex(
@@ -295,7 +310,8 @@ class Generator:
             for place, wname in hr.block_wrappers(reg).items():
                 comp = hr.compose(reg, wname, probe)
                 listed = place in places[k.name]
-                pats = self.placement_patterns(place, k.name)
+                pats = self.placement_patterns(place, k.name,
+                                               places[k.name])
                 line = comp.slot
 
                 def judge(res, line=line, listed=listed, pats=pats,

@@ -987,8 +987,7 @@ make_gradient_provider(const OptimizerSpec&     sp,
           }
           oss << "]): a parameter without an analytical derivative, or a "
                  "loss term without an analytical derivative at this "
-                 "point. Use "
-                 "GRAD_STRATEGY=HYBRID to fill these with finite "
+                 "point; GRAD_STRATEGY HYBRID fills these with finite "
                  "differences.";
           throw std::runtime_error(oss.str());
         }

@@ -740,7 +740,7 @@ JitterPlan run_jitter_calibration(const OptimizerSpec& sp, const Knobs& kb,
            "# Lengths are INTERNAL optimiser coordinates, the space the\n"
            "# jitter is actually drawn in -- under OPTIM_SCALE AUTO (the\n"
            "# default) every dimension spans [0,1], so sigma and sigma/width\n"
-           "# coincide there. Use hpo_search_space.tsv to map back to real\n"
+           "# coincide there. hpo_search_space.tsv maps them back to real\n"
            "# units.\n"
            "#\n"
            "#   dim        1-based position in the parameter vector\n"

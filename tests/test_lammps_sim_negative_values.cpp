@@ -102,12 +102,14 @@ TEST_CASE("PC_LAMMPS options still terminate a --varloss value list",
     SECTION("an option in place of the weight is a missing weight") {
         REQUIRE_THROWS_WITH(make_sim("--script " + s.path
                                      + " --varloss E 1.0 --outvar F"),
-                            Catch::Contains("missing <weight>"));
+                            Catch::Contains("PC_LAMMPS --varloss takes <name> <target> "
+                                            "<weight> (E has no weight)"));
     }
     SECTION("an option in place of the target is a missing target") {
         REQUIRE_THROWS_WITH(make_sim("--script " + s.path
                                      + " --varloss E --outvar F"),
-                            Catch::Contains("missing <target>"));
+                            Catch::Contains("PC_LAMMPS --varloss takes <name> <target> "
+                                            "<weight> (E has no target)"));
     }
 }
 

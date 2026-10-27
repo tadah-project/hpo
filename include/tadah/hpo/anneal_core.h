@@ -24,6 +24,7 @@
 #include <tadah/hpo/pc_fail_grading.h>   /* kFailBandFloor, loss_is_feasible */
 #include <tadah/hpo/seed_stream.h>       /* seed_stream, seed_streams         */
 #include <tadah/hpo/anneal_keys_gen.h>   /* generated key/rule registry      */
+#include <tadah/hpo/count_text.h>       /* count_text                       */
 #include <tadah/hpo/strict_parse.h>     /* parse_number                     */
 
 #include <algorithm>
@@ -234,11 +235,19 @@ inline bool stopval_reached(double f,
  *
  * Returns: nullopt when NO finite probe exists (cliff-saturated
  * neighbourhood -- caller decides); 0.0 when finite probes are all
- * identical to f0 (constant landscape -- caller picks a fallback). */
-inline std::optional<double> robust_t0(double f0,
-                                       const std::vector<double>& probes,
-                                       const std::optional<double>& failscore,
-                                       double paccept)
+ * identical to f0 (constant landscape -- caller picks a fallback).
+ * robust_t0_basis() returns the estimate with the median it divides and
+ * the probes that gave it, for the T0 line of the journal. */
+struct T0Basis {
+  double      t0 = 0.0;      ///< the estimate (0: no variation)
+  double      median = 0.0;  ///< the median rise (or change) of the loss
+  std::size_t uphill = 0;    ///< probes that raised the loss above f0
+  std::size_t finite = 0;    ///< probes with a usable loss
+};
+
+inline std::optional<T0Basis> robust_t0_basis(
+    double f0, const std::vector<double>& probes,
+    const std::optional<double>& failscore, double paccept)
 {
   if (!std::isfinite(f0) || !std::isfinite(paccept) ||
       !(paccept > 0.0 && paccept < 1.0))
@@ -266,10 +275,25 @@ inline std::optional<double> robust_t0(double f0,
       : 0.5L * src[n / 2 - 1] + 0.5L * src[n / 2];
   const long double estimate =
       med / -std::log(static_cast<long double>(paccept));
-  if (estimate >= static_cast<long double>(
-                      std::numeric_limits<double>::max()))
-    return std::numeric_limits<double>::max();
-  return static_cast<double>(estimate);
+  const long double dmax =
+      static_cast<long double>(std::numeric_limits<double>::max());
+  T0Basis b;
+  b.t0 = estimate >= dmax ? std::numeric_limits<double>::max()
+                          : static_cast<double>(estimate);
+  b.median = static_cast<double>(std::min(med, dmax));
+  b.uphill = up.size();
+  b.finite = absd.size();
+  return b;
+}
+
+inline std::optional<double> robust_t0(double f0,
+                                       const std::vector<double>& probes,
+                                       const std::optional<double>& failscore,
+                                       double paccept)
+{
+  const auto b = robust_t0_basis(f0, probes, failscore, paccept);
+  if (!b) return std::nullopt;
+  return b->t0;
 }
 
 /* ---- Knobs ---------------------------------------------------------
@@ -472,25 +496,17 @@ inline Knobs Knobs::parse(const OptimizerSpec& sp, AlgoKind kind)
     const auto* ki = reg::find_key(name);
     if (ki && (ki->kinds & kind_mask)) return;
     if (ki) {
-      if (ki->kinds == reg::KIND_PT)
-        throw std::runtime_error(
-            ctx + ": PARAM " + name + " belongs to TADAH:ANNEAL_PT");
-      if (ki->kinds == reg::KIND_PA)
-        throw std::runtime_error(
-            ctx + ": PARAM " + name + " belongs to TADAH:ANNEAL_PA");
-      if (ki->kinds == reg::KIND_SERIAL)
-        throw std::runtime_error(
-            ctx + ": PARAM " + name + " belongs to the serial TADAH:ANNEAL");
-      if (ki->kinds == (reg::KIND_PT | reg::KIND_PA))
-        throw std::runtime_error(
-            ctx + ": PARAM " + name + " belongs to the parallel drivers "
-            "TADAH:ANNEAL_PT/TADAH:ANNEAL_PA");
-      std::string members;
-      if (ki->kinds & reg::KIND_SERIAL) members += " TADAH:ANNEAL";
-      if (ki->kinds & reg::KIND_PT)     members += " TADAH:ANNEAL_PT";
-      if (ki->kinds & reg::KIND_PA)     members += " TADAH:ANNEAL_PA";
+      /* The annealers whose kinds hold the key, "a", "a and b". */
+      std::vector<std::string> members;
+      if (ki->kinds & reg::KIND_SERIAL) members.push_back("TADAH:ANNEAL");
+      if (ki->kinds & reg::KIND_PT)     members.push_back("TADAH:ANNEAL_PT");
+      if (ki->kinds & reg::KIND_PA)     members.push_back("TADAH:ANNEAL_PA");
+      std::string list;
+      for (std::size_t i = 0; i < members.size(); ++i)
+        list += (i == 0 ? "" : i + 1 == members.size() ? " and " : ", ") +
+                members[i];
       throw std::runtime_error(
-          ctx + ": PARAM " + name + " belongs to" + members);
+          ctx + ": PARAM " + name + " is a key of " + list);
     }
     /* The keys this annealer takes: those of its kind but a key a
      * kind_reject rule refuses for it (RESET_TO_BEST of ANNEAL_PA), which
@@ -505,8 +521,8 @@ inline Knobs Knobs::parse(const OptimizerSpec& sp, AlgoKind kind)
     std::string keys;
     for (const auto& k : reg::kKeys)
       if ((k.kinds & kind_mask) && !refused(k.name)) {
+        if (!keys.empty()) keys += ' ';
         keys += k.name;
-        keys += ' ';
       }
     throw std::runtime_error(
         ctx + ": unknown PARAM '" + name + "'; accepted keys: " + keys);
@@ -550,18 +566,19 @@ inline Knobs Knobs::parse(const OptimizerSpec& sp, AlgoKind kind)
   /* -- spec-level knobs that are dead for this family --------------- */
   if (sp.stop.xtol_rel || sp.stop.xtol_abs)
     throw std::runtime_error(
-        ctx + " does not implement XTOL_REL/XTOL_ABS (no x-space "
-        "convergence test); remove them or use FTOL_REL/FTOL_ABS "
-        "(eps-NEPS plateau stop)");
+        ctx + " does not use XTOL_REL or XTOL_ABS: it has no convergence "
+        "test on the point; FTOL_REL and FTOL_ABS end it on a plateau of the "
+        "loss (the eps-NEPS test)");
   if (sp.vector_storage)
-    throw std::runtime_error(ctx + " does not use VECTOR_ARR; remove it");
+    throw std::runtime_error(ctx + " does not use VECTOR_ARR: it keeps no "
+                             "gradient history");
   if (sp.grad_strategy)
     throw std::runtime_error(
-        ctx + " is derivative-free and does not use GRAD_STRATEGY; remove it");
+        ctx + " does not use GRAD_STRATEGY: it is gradient-free");
   if (sp.step)
     throw std::runtime_error(
-        ctx + " does not use STEP; set PARAM STEP_FRAC (and PARAM "
-        "STEP_MODE for ANNEAL_PT) instead");
+        ctx + " does not use STEP; PARAM STEP_FRAC sets its proposal steps "
+        "(and PARAM STEP_MODE for ANNEAL_PT)");
   /* THREADS is honoured by EVERY family under the shared-pool model:
    * it sizes the per-rank worker pool that runs the pc_lammps
    * fan-out + MLIP train/predict. Serial ANNEAL still drives ONE chain, but
@@ -572,7 +589,7 @@ inline Knobs Knobs::parse(const OptimizerSpec& sp, AlgoKind kind)
     throw std::runtime_error(ctx + ": THREADS must be >= 1");
   if (kind != AlgoKind::PA && sp.pop)
     throw std::runtime_error(
-        ctx + " does not use POPULATION; use TADAH:ANNEAL_PA");
+        ctx + " does not use POPULATION: TADAH:ANNEAL_PA runs a population");
 
   auto require_finite_stop = [&](const char* name,
                                  const std::optional<double>& value,
@@ -820,7 +837,7 @@ inline Knobs Knobs::parse(const OptimizerSpec& sp, AlgoKind kind)
         if (toks.size() < 3)
           throw std::runtime_error(
               ctx + ": PARAM INIT_MODE JITTER AUTO needs a relative loss "
-                    "tolerance, e.g. `PARAM INIT_MODE JITTER AUTO 0.05`");
+                    "tolerance, such as PARAM INIT_MODE JITTER AUTO 0.05");
         kb.init_jitter_tol  = as_number(toks[2], "AUTO tolerance");
         if (!(kb.init_jitter_tol > 0.0))
           throw std::runtime_error(
@@ -1017,14 +1034,15 @@ inline Knobs Knobs::parse(const OptimizerSpec& sp, AlgoKind kind)
   if (kind == AlgoKind::Serial && !sp.stop.maxeval) {
     if (!kb.corana && kb.chain_length == 0)
       throw std::runtime_error(
-          ctx + ": CHAIN_LENGTH AUTO needs MAXEVAL to derive the "
-          "per-rung budget; set PARAM CHAIN_LENGTH explicitly (e.g. for "
-          "MAXTIME- or STOPVAL-driven runs)");
+          ctx + ": CHAIN_LENGTH AUTO spreads MAXEVAL over the temperature "
+          "steps, and this search has no MAXEVAL; without MAXEVAL, PARAM "
+          "CHAIN_LENGTH gives the number of proposals at each temperature "
+          "step");
     if (kb.corana && kb.NT == 0)
       throw std::runtime_error(
-          ctx + ": NT AUTO needs MAXEVAL to derive the per-rung budget; "
-          "set PARAM NT explicitly (e.g. for MAXTIME- or STOPVAL-driven "
-          "runs)");
+          ctx + ": NT AUTO follows from MAXEVAL, and this search has no "
+          "MAXEVAL; without MAXEVAL, PARAM NT gives the number of step "
+          "adjustments of the Corana kernel at each temperature step");
   }
   if (kind == AlgoKind::PT) {
     if (sp.param.count("REPLICAS") && kb.replicas < 2)
@@ -1106,9 +1124,9 @@ inline void announce_knobs(const Knobs& kb, AlgoKind kind)
         "from a truncated kernel whose normalisation depends on the current "
         "point, and the Metropolis rule applies no Hastings correction for "
         "it. Sampling near an OPTIM bound is therefore biased away from the "
-        "edge. This does not affect which best point is reported, but if you "
-        "care about the distribution rather than the optimum, use "
-        "BOUNDARY_MODE REFLECT, which is an exact symmetric fold.");
+        "edge. This does not change the best point reported; for the "
+        "distribution of the samples, BOUNDARY_MODE REFLECT is an exact "
+        "symmetric fold.");
 }
 
 /* The ladder size K of an ANNEAL_PT run: PARAM REPLICAS, or else THREADS
@@ -2279,16 +2297,21 @@ T0Outcome calibrate_t0(const OptimizerSpec& sp, const Knobs& kb,
   const std::size_t dim = sp.low.size();
   T0Outcome out;
 
+  /* The key of the starting temperature: the serial schedule's start is
+   * T_INIT, the hot end of ANNEAL_PT and ANNEAL_PA is T_HOT. */
+  const std::string tkey =
+      std::string_view(banner_ctx) == "ANNEAL" ? "T_INIT" : "T_HOT";
   if (kb.t_start) {
     out.T0 = *kb.t_start;
-    /* Key name matches the kind: the serial schedule's start is T_INIT,
-     * the PT/PA hot end is T_HOT. */
-    const bool serial = std::string_view(banner_ctx) == "ANNEAL";
-    HPOLog::instance().info(std::string(banner_ctx) +
-      ": using user-specified " + (serial ? "T_INIT=" : "T_HOT=") +
-      std::to_string(out.T0));
+    HPOLog::instance().info(std::string(banner_ctx) + ": PARAM " + tkey +
+      "=" + core::format_roundtrip(out.T0) + " given, so no calibration "
+      "runs");
     return out;
   }
+  /* The probes of ANNEAL_PT's second pass step by the hottest slot's
+   * scales, not by STEP_FRAC. */
+  const bool step_frac_probes =
+      std::string_view(banner_ctx).find("pass 2") == std::string_view::npos;
 
   /* Tag this thread's evals as T0 probes for the journal's best-origin
    * tracking; cleared before returning so the serial driver's chain
@@ -2386,8 +2409,9 @@ T0Outcome calibrate_t0(const OptimizerSpec& sp, const Knobs& kb,
     run_probes(/*local=*/true, x, probes);
   } else {
     HPOLog::instance().warning(std::string(banner_ctx) +
-      ": the seed point evaluates to FAILSCORE; sampling "
-      + std::to_string(kb.t0_probes) + " uniform box probe(s) to re-anchor");
+      ": the starting point scored FAILSCORE, so "
+      + std::to_string(kb.t0_probes) + " probes drawn from the OPTIM box "
+      "choose the point the probes start from");
     if (run_probes(/*local=*/false, x, probes) && !out.aborted) {
       if (std::isfinite(bf_probe)) {
         x   = bx_probe;
@@ -2400,16 +2424,17 @@ T0Outcome calibrate_t0(const OptimizerSpec& sp, const Knobs& kb,
         probes.clear();
         run_probes(/*local=*/true, x, probes);
       } else {
-        std::ostringstream oss;
-        oss << std::scientific << std::setprecision(3)
-            << banner_ctx << ": T0 calibration failed -- the seed point and all "
-            << probes.size() << " uniform box probe(s) scored FAILSCORE";
-        if (sp.failscore) oss << " (" << *sp.failscore << ")";
-        oss << ". The optimiser has no finite loss to anchor on. "
-               "Remedies: set PARAM T_HOT explicitly, provide a viable "
-               "starting point (INIT block / config values), or shrink "
-               "the OPTIM boxes.";
-        throw std::runtime_error(oss.str());
+        std::string msg = std::string(banner_ctx) +
+            ": T0 calibration failed: the starting point and all " +
+            std::to_string(probes.size()) + " probes drawn from the OPTIM "
+            "box scored FAILSCORE";
+        if (sp.failscore)
+          msg += " (" + core::format_roundtrip(*sp.failscore) + ")";
+        msg += ", so the search has no usable loss to start from. PARAM " +
+               tkey + " sets the starting temperature without probes; a "
+               "starting point with a usable loss (INIT block) or narrower "
+               "OPTIM boxes give the probes one.";
+        throw std::runtime_error(msg);
       }
     }
   }
@@ -2445,34 +2470,61 @@ T0Outcome calibrate_t0(const OptimizerSpec& sp, const Knobs& kb,
   }
 
   if (!out.aborted) {
-    const auto t0_est = robust_t0(f_x, probes, sp.failscore, kb.t0_accept);
-    double med_de = 0.0;
-    if (!t0_est) {
+    const auto basis =
+        robust_t0_basis(f_x, probes, sp.failscore, kb.t0_accept);
+    /* The point the probes stepped around. */
+    const std::string anchor = out.re_anchored
+        ? "the best probe drawn from the OPTIM box"
+        : "the starting point";
+    const std::string set_t =
+        "PARAM " + tkey + " sets the starting temperature without probes";
+    bool fallback = false;
+    if (!basis) {
       out.T0 = 1.0;
+      fallback = true;
       HPOLog::instance().warning(std::string(banner_ctx) + ": all "
-        + std::to_string(probes.size()) + " local probe(s) around the "
-        "(finite) anchor scored FAILSCORE; falling back to T0=1.0. "
-        "Consider a smaller STEP_FRAC or PARAM T_HOT.");
-    } else if (*t0_est <= 0.0) {
+        + std::to_string(probes.size()) + " probes around " + anchor +
+        " scored FAILSCORE, so T0 falls back to 1.0. " + set_t +
+        (step_frac_probes ? ", and STEP_FRAC sets the size of the probe "
+                            "steps."
+                          : "."));
+    } else if (basis->t0 <= 0.0) {
       out.T0 = 1.0;
-      HPOLog::instance().warning(std::string(banner_ctx) +
-        ": T0 calibration saw zero loss variation over "
-        + std::to_string(probes.size())
-        + " probe(s); falling back to T0=1.0. Consider PARAM T_HOT "
-        "or a larger STEP_FRAC.");
+      fallback = true;
+      HPOLog::instance().warning(std::string(banner_ctx) + ": the "
+        + std::to_string(probes.size()) + " probes around " + anchor +
+        " left the loss unchanged, so T0 falls back to 1.0. " + set_t +
+        (step_frac_probes ? ", and a larger STEP_FRAC gives larger probe "
+                            "steps."
+                          : "."));
     } else {
-      out.T0 = *t0_est;
-      med_de = out.T0 * -std::log(kb.t0_accept);
+      out.T0 = basis->t0;
     }
+    /* The T0 line: the median it divides and the probes it comes from
+     * (the uphill moves, or every usable one when none rose), or the
+     * fallback of the WARNING above. */
     std::ostringstream oss;
     oss << std::scientific << std::setprecision(3)
         << banner_ctx << ": T0=" << out.T0
-        << " from " << probes.size() << " probes,"
-        << "  median|dE|=" << med_de
-        << "  loss range=[" << pmin << ", " << pmax << "]"
-        << "  std=" << pstd
-        << "  target p_accept=" << kb.t0_accept
-        << "  anchor=" << (out.re_anchored ? "re-anchored" : "seed");
+        << " from " << count_text(probes.size(), "probe", "probes");
+    if (fallback) {
+      oss << ", the fallback of the WARNING above";
+    } else if (basis->uphill > 0) {
+      oss << ": median rise of the loss " << basis->median << " over the "
+          << count_text(basis->uphill, "probe", "probes")
+          << " that raised it, T0 = median rise / "
+          "ln(1/T0_ACCEPT) with T0_ACCEPT=" << kb.t0_accept;
+    } else {
+      oss << ": no probe raised the loss; median change of the loss "
+          << basis->median << " over the "
+          << count_text(basis->finite, "probe", "probes")
+          << " with a usable loss, T0 = median change / "
+          "ln(1/T0_ACCEPT) with T0_ACCEPT=" << kb.t0_accept;
+    }
+    if (basis)
+      oss << "  loss range=[" << pmin << ", " << pmax << "]"
+          << "  std=" << pstd;
+    oss << "  anchor=" << (out.re_anchored ? "re-anchored" : "seed");
     std::cout << "[HPO] " << oss.str() << "\n";
     HPOLog::instance().info(oss.str());
   } else {

@@ -102,8 +102,14 @@ ENDOPTIMIZER
 ENDOPTIMIZER
 )");
     auto ctx = watom_ctx();
+    /* It was "LOG_HP is a search-space property; declare it once at the
+     * OPTIMIZER or STRATEGY level, not inside a stage, INNER or INIT
+     * block". */
     REQUIRE_THROWS_WITH(tadah::hpo::HPOTargets(ctx, in.path.string()),
-                        Catch::Contains("search-space property"));
+                        Catch::Contains("LOG_HP is written once, inside "
+                                        "OPTIMIZER or STRATEGY: it holds for "
+                                        "the whole search space, and the "
+                                        "INNER block does not take it"));
   }
   SECTION("ratio below 1 is rejected") {
     ScopedTempFile in(std::string(kOptim) + R"(OPTIMIZER
@@ -354,7 +360,7 @@ ENDOPTIMIZER
   tadah::hpo::HPOTargets trg(ctx, in.path.string());
   REQUIRE_THROWS_WITH(tadah::hpo::run_scale_validation(trg.spec, true),
                       Catch::Contains("WATOM") &&
-                      Catch::Contains("outside its OPTIM bounds"));
+                      Catch::Contains("outside its OPTIM box"));
 }
 
 TEST_CASE("INNER unknown-key message lists the shared attribute vocabulary",
@@ -381,7 +387,8 @@ ENDOPTIMIZER
    * Before the fix: the list had STOPVAL ("/MAXTIME/STOPVAL/FTOL_REL/"),
    * which an INNER block accepted and NLopt ignored. */
   REQUIRE_THROWS_WITH(tadah::hpo::HPOTargets(ctx, in.path.string()),
-                      Catch::Contains("inside INNER block") &&
+                      Catch::Contains("inside the INNER block opened on "
+                                      "line ") &&
                       Catch::Contains("/MAXEVAL/MAXTIME/FTOL_REL/") &&
                       Catch::Contains("/XTOL_REL/XTOL_ABS/") &&
                       !Catch::Contains("GRAD_STRATEGY") &&
@@ -489,12 +496,19 @@ ENDOPTIMIZER
     {
       ScopedTempFile in("OPTIM_SCALE AUTO\nOPTIM_SCALE NONE\nOPTIM WATOM (1) 0.1 5.0\nOPTIMIZER\nLIB DLIB\nALGO BFGS\nMAXEVAL 5\nENDOPTIMIZER\n");
       REQUIRE_THROWS_WITH(tadah::hpo::HPOTargets(ctx, in.path.string()),
-                          Catch::Contains("OPTIM_SCALE given more than once"));
+                          /* It was "OPTIM_SCALE given more than once". */
+                          Catch::Contains("OPTIM_SCALE is set twice (first "
+                                          "on line 1); each key is given "
+                                          "once"));
     }
     {
+      /* Refused at the line (it was refused after the whole file was
+       * read, without a frame: "LOG scale requires low > 0"). */
       ScopedTempFile in("OPTIM WATOM (1) -1.0 5.0 LOG\nOPTIMIZER\nLIB DLIB\nALGO BFGS\nMAXEVAL 5\nENDOPTIMIZER\n");
       REQUIRE_THROWS_WITH(tadah::hpo::HPOTargets(ctx, in.path.string()),
-                          Catch::Contains("LOG scale requires low > 0"));
+                          Catch::Contains("Error on line 1: OPTIM WATOM: the "
+                                          "line is tagged LOG, and <low> -1.0 "
+                                          "is not > 0"));
     }
   }
   SECTION("PRESTAGE stage specs are bound to the space") {
@@ -528,12 +542,15 @@ ENDOPTIMIZER
 }
 
 /* FLOOR and GROUP_FLOOR set the smallest half-width of an AUTO FRAC box; a
- * geometric box [x0/f, x0*f] has none, so they are refused with AUTO RATIO
+ * geometric box [seed/f, seed*f] of AUTO RATIO f has none, so they are
+ * refused with AUTO RATIO
  * and with the geometric rule a positive-only key takes by default (SGRID2B:
  * RATIO 2), naming the line's key and what to write instead ("OPTIM WATOM:
  * FLOOR and GROUP_FLOOR set the smallest half-width of an AUTO FRAC box;
- * AUTO RATIO makes the geometric box [x0/f, x0*f], which they do not
- * change, so they are given with FRAC <p> only"). FRAC with FLOOR stays
+ * AUTO RATIO 2 makes the geometric box [seed/2, seed*2], which they do not
+ * change, so they are given with FRAC <p> only", with the factor as
+ * written; the box was written [x0/f, x0*f], then [seed/f, seed*f], a
+ * symbol the message does not define). FRAC with FLOOR stays
  * accepted (the case above).
  * Before the fix: the floors were accepted and ignored ('AUTO RATIO 2
  * FLOOR 5' gave the box [0.5, 2] of RATIO 2 alone). */
@@ -551,7 +568,8 @@ TEST_CASE("OPTIM AUTO RATIO refuses FLOOR and GROUP_FLOOR",
           tadah::hpo::HPOTargets(ctx, in.path.string()),
           Catch::Contains("OPTIM WATOM: FLOOR and GROUP_FLOOR set the "
                           "smallest half-width of an AUTO FRAC box; AUTO "
-                          "RATIO makes the geometric box [x0/f, x0*f], "
+                          "RATIO 2 makes the geometric box [seed/2, "
+                          "seed*2], "
                           "which they do not change, so they are given with "
                           "FRAC <p> only"));
     }
@@ -646,11 +664,13 @@ ENDOPTIMIZER
     auto ctx = watom_ctx();
     {
       ScopedTempFile in("OPTIM WATOM (1) AUTO RATIO 2 FRAC 0.5\nOPTIMIZER\nLIB DLIB\nALGO BFGS\nMAXEVAL 5\nENDOPTIMIZER\n");
-      REQUIRE_THROWS_WITH(tadah::hpo::HPOTargets(ctx, in.path.string()), Catch::Contains("mutually exclusive"));
+      /* Before the fix: "RATIO and FRAC are mutually exclusive". */
+      REQUIRE_THROWS_WITH(tadah::hpo::HPOTargets(ctx, in.path.string()), Catch::Contains("OPTIM WATOM: AUTO takes RATIO or FRAC, not both"));
     }
     {
       ScopedTempFile in("OPTIM WATOM (1) AUTO WIDTH 2\nOPTIMIZER\nLIB DLIB\nALGO BFGS\nMAXEVAL 5\nENDOPTIMIZER\n");
-      REQUIRE_THROWS_WITH(tadah::hpo::HPOTargets(ctx, in.path.string()), Catch::Contains("unexpected AUTO option"));
+      /* Before the fix: "unexpected AUTO option 'WIDTH'". */
+      REQUIRE_THROWS_WITH(tadah::hpo::HPOTargets(ctx, in.path.string()), Catch::Contains("OPTIM WATOM: 'WIDTH' is not an AUTO option (RATIO, FRAC, FLOOR or GROUP_FLOOR)"));
     }
     {
       ScopedTempFile in("OPTIM WATOM (1) AUTO RATIO 1\nOPTIMIZER\nLIB DLIB\nALGO BFGS\nMAXEVAL 5\nENDOPTIMIZER\n");
@@ -660,7 +680,9 @@ ENDOPTIMIZER
       tadah::core::Context c2 = watom_ctx();
       c2.add("RCUT2B", 5.0);
       ScopedTempFile in("OPTIM RCUT2B (1) AUTO\nOPTIMIZER\nLIB DLIB\nALGO BFGS\nMAXEVAL 5\nENDOPTIMIZER\n");
-      REQUIRE_THROWS_WITH(tadah::hpo::HPOTargets(c2, in.path.string()), Catch::Contains("cutoff keys"));
+      /* Before the fix: "AUTO boxes are not allowed on cutoff keys ...;
+       * give explicit bounds". */
+      REQUIRE_THROWS_WITH(tadah::hpo::HPOTargets(c2, in.path.string()), Catch::Contains("OPTIM RCUT2B: a cutoff key takes explicit bounds"));
     }
   }
   SECTION("positive-only keys (writer table) default to the geometric rule") {

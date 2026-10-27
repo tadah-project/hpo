@@ -61,9 +61,10 @@
 //     builds, under PC_ISOLATION THREAD and PROCESS.
 //   - [.tadah_cli_pc_deadline_line] (CTest entry
 //     hpo_tadah_cli_pc_deadline_line, the same harness): the startup line
-//     on the per-script limit names the hard per-worker-task deadline of
-//     PC_ISOLATION PROCESS (PC_WORKER_TIMEOUT, derived from
-//     PC_SCRIPT_TIMEOUT, or none) and of THREAD (n/a).
+//     of each PC_LAMMPS line names its script limit, where the limit comes
+//     from, and the worker task deadline of PC_ISOLATION PROCESS
+//     (PC_WORKER_TIMEOUT, max(3t, t + 120 s) of the limit, or none) or
+//     that THREAD has none.
 
 #include "pc_process_workers.h"  // before catch2/catch.hpp
 #include "tadah_test_skip.hpp"  // before catch2/catch.hpp
@@ -1970,6 +1971,21 @@ std::string sci6(double v) {
     return buf;
 }
 
+/* The journal line of the PC_ISOLATION mode, from its start (it was
+ * "PC_ISOLATION: <mode> ..."). */
+std::string isolation_line(const std::string& mode) {
+#ifdef TADAH_HPO_MPI
+    (void)mode;
+    return "PC_ISOLATION THREAD: the MPI build of tadah runs the scripts "
+           "inside the tadah process";
+#else
+    return mode == "THREAD"
+               ? "PC_ISOLATION THREAD is deprecated in the serial build: "
+               : "PC_ISOLATION " + mode + ": the PC_LAMMPS and PC_FAILPROBE "
+                 "scripts run in ";
+#endif
+}
+
 }  // namespace
 
 /* Pins, through the built tadah: a LAMMPS error while a PC_LAMMPS variable
@@ -2275,10 +2291,13 @@ TEST_CASE("tadah hpo: a PC_LAMMPS read-back or script error ends the same "
               * OFF": with --gate, the gate fails an evaluation under OFF
               * too; and "its S neither grades nor gates an evaluation",
               * but an S that is negative, not finite or at or above
-              * --failscore fails the evaluation under OFF without --gate) */
-             {"PC_FAILPROBE is defined without --gate and FAILSCORE_GRADING "
-              "is OFF -- its S grades no evaluation; a probe that fails "
-              "(its script fails, or its S cannot be read, has no number, "
+              * --failscore fails the evaluation under OFF without --gate;
+              * then "PC_FAILPROBE is defined without --gate and
+              * FAILSCORE_GRADING is OFF -- its S grades no evaluation;
+              * ...", without the line and with "S" for the --outvar) */
+             {"PC_FAILPROBE on line 14 has no --gate and FAILSCORE_GRADING "
+              "is OFF, so its --outvar S grades no evaluation; a probe that "
+              "fails (its script fails, or S cannot be read, is no number, "
               "or is negative, not finite or at or above the line's "
               "--failscore) fails its evaluation, as any PC_LAMMPS "
               "simulation does.",
@@ -2309,7 +2328,9 @@ TEST_CASE("tadah hpo: a PC_LAMMPS read-back or script error ends the same "
     }
     /* The MPI build (TADAH_HPO_MPI) has PC_ISOLATION THREAD only: there
      * the THREAD run is checked alone, its journal names the mode
-     * ("PC_ISOLATION: THREAD (requested; the only mode of the MPI build)"),
+     * ("PC_ISOLATION THREAD: the MPI build of tadah runs the scripts inside
+     * the tadah process"; it was "PC_ISOLATION: THREAD (requested; the
+     * only mode of the MPI build)"),
      * and a PROCESS request is the startup error, exit 1; tadah runs under
      * the launcher of one rank (run_tadah_hpo). Before the fix the MPI
      * build's THREAD journal had no PC_ISOLATION line (the "deprecated
@@ -2318,8 +2339,7 @@ TEST_CASE("tadah hpo: a PC_LAMMPS read-back or script error ends the same "
      * tadah crashed in the unrendered section (exit status 139). */
 #ifdef TADAH_HPO_MPI
     const std::vector<std::string> modes{"THREAD"};
-    const std::string thread_line =
-        "PC_ISOLATION: THREAD (requested; the only mode of the MPI build)";
+    const std::string thread_line = isolation_line("THREAD");
     {
         INFO(name << ", PC_ISOLATION PROCESS in the MPI build");
         const fs::path dir = sd.dir / (name + "_PROCESS");
@@ -2333,7 +2353,7 @@ TEST_CASE("tadah hpo: a PC_LAMMPS read-back or script error ends the same "
     }
 #else
     const std::vector<std::string> modes{"THREAD", "PROCESS"};
-    const std::string thread_line = "PC_ISOLATION: THREAD (deprecated fallback)";
+    const std::string thread_line = isolation_line("THREAD");
 #endif
     std::vector<fs::path> dirs;
     for (const std::string& mode : modes) {
@@ -2347,10 +2367,8 @@ TEST_CASE("tadah hpo: a PC_LAMMPS read-back or script error ends the same "
         REQUIRE(WIFEXITED(rc));
         CHECK(WEXITSTATUS(rc) == c.exit_status);
         CHECK_THAT(journal,
-                   Catch::Contains(mode == "THREAD"
-                                       ? thread_line
-                                       : "PC_ISOLATION: PROCESS -- pc_lammps "
-                                         "tasks execute in"));
+                   Catch::Contains(mode == "THREAD" ? thread_line
+                                                    : isolation_line(mode)));
         for (const auto& needle : c.journal_has)
             CHECK_THAT(journal, Catch::Contains(needle));
         for (const auto& needle : c.journal_lacks)
@@ -2588,7 +2606,7 @@ TEST_CASE("tadah hpo: the PC_LAMMPS potential is built at the run's VERBOSE",
         INFO(journal);
         REQUIRE(WIFEXITED(rc));
         CHECK(WEXITSTATUS(rc) == 0);
-        CHECK_THAT(journal, Catch::Contains("PC_ISOLATION: " + mode));
+        CHECK_THAT(journal, Catch::Contains(isolation_line(mode)));
         CHECK(read_table(dir / "loss.tadah").rows.size() == 3);
         INFO(read_text(dir / "tadah.stdout"));
         CHECK(count_lines_with(dir / "tadah.stdout", "Kern_RBF |") == 0);
@@ -2610,7 +2628,9 @@ namespace {
 /* N of the journal line "PC_ISOLATION: PROCESS -- pc_lammps tasks execute
  * in N persistent worker processes ...", or -1 when @p journal has none. */
 long process_workers(const std::string& journal) {
-    const std::string head = "pc_lammps tasks execute in ";
+    /* It was "pc_lammps tasks execute in <n> persistent worker
+     * processes". */
+    const std::string head = "PC_FAILPROBE scripts run in ";
     const auto p = journal.find(head);
     if (p == std::string::npos) return -1;
     return std::strtol(journal.c_str() + p + head.size(), nullptr, 10);
@@ -2798,7 +2818,7 @@ void check_kernel_line_of_each_run(const std::string& mode) {
         INFO(run.journal);
         CHECK(run.error == "");
         CHECK(run.status == 0);
-        CHECK_THAT(run.journal, Catch::Contains("PC_ISOLATION: " + mode));
+        CHECK_THAT(run.journal, Catch::Contains(isolation_line(mode)));
         if (mode == "PROCESS") CHECK(process_workers(run.journal) >= 1);
     }
     const fs::path out = sd.dir / "runs.stdout";
@@ -2858,29 +2878,34 @@ std::vector<std::string> journal_lines_with(const std::string& journal,
 
 }  // namespace
 
-/* Checks, through the built tadah: the startup line on the per-script
- * limit, "PC_SCRIPT_TIMEOUT: <limit> (from <key>) -- soft LAMMPS `timer
- * timeout`, re-armed each run-section; hard per-worker-task deadline:
- * <deadline>", ends with the deadline the run's PC_ISOLATION mode gives a
- * worker task. A PC_LAMMPS line under TADAH:RANDOM MAXEVAL 1 (exit 0):
- *   - PROCESS, PC_WORKER_TIMEOUT 600: "600 s (PC_WORKER_TIMEOUT)", the
- *     limit "off (no per-script limit)" from "default";
- *   - PROCESS, PC_SCRIPT_TIMEOUT 10 and no PC_WORKER_TIMEOUT: "130 s,
- *     derived as max(3t, t + 120 s) from the per-script limit t (a line's
- *     --maxtime derives its own)", the limit "10 s" from
- *     "PC_SCRIPT_TIMEOUT";
- *   - PROCESS, neither key: "none";
- *   - THREAD, PC_WORKER_TIMEOUT 600: "n/a (THREAD mode)", the worker
- *     timeout taking no effect.
+/* Checks, through the built tadah: the journal has one startup line on
+ * the script limit for each PC_LAMMPS line, in the order of the file,
+ * "PC_SCRIPT_TIMEOUT of the PC_LAMMPS line on line <n>: <limit>
+ * (<source>)<set>; <deadline>", the deadline the run's PC_ISOLATION mode
+ * gives the line's worker tasks. Under TADAH:RANDOM MAXEVAL 1 (exit 0),
+ * the target file's lines 1-13 before the case's:
+ *   - PROCESS, PC_WORKER_TIMEOUT 600 on line 14: "off (the default), no
+ *     limit; worker task deadline: 600 s (PC_WORKER_TIMEOUT on line 14)";
+ *   - PROCESS, three lines and two limits: PC_SCRIPT_TIMEOUT 10 on line
+ *     14 for line 15, MAXTIME 1:00 on line 16 for line 17, and line 18's
+ *     own --maxtime 5, each "set as LAMMPS `timer timeout` ..." with the
+ *     deadline max(3t, t + 120 s) of its own limit (130, 180 and 125 s),
+ *     and the note that MAXTIME on line 16 is PC_SCRIPT_TIMEOUT under
+ *     another name;
+ *   - PROCESS, neither key: "no worker task deadline";
+ *   - THREAD, PC_WORKER_TIMEOUT 600: "no worker task deadline under
+ *     PC_ISOLATION THREAD", the worker timeout taking no effect.
  * The MPI build, which has no worker processes, runs the THREAD case
  * alone. tadah runs without TADAH_PC_WORKER_TIMEOUT, which would override
  * the target file's PC_WORKER_TIMEOUT, as it runs without
  * TADAH_PC_ISOLATION (run_tadah_hpo).
- * With the text of the PC_WORKER_TIMEOUT branch in hpo_run changed ("s
- * (PC_WORKER_TIMEOUT)" to "s (worker timeout)"), the first case fails:
- * no test checked this line before. */
-TEST_CASE("tadah hpo: the PC_SCRIPT_TIMEOUT startup line names the hard "
-          "per-worker-task deadline of the run's PC_ISOLATION mode",
+ * Before the fix: the journal had one line for the run, "PC_SCRIPT_TIMEOUT:
+ * <limit> (from <key>) -- soft LAMMPS `timer timeout`, re-armed each
+ * run-section; hard per-worker-task deadline: <deadline>", with the limit
+ * of the last line of the key, so the two-limit case named 1:00 for every
+ * line; no case finds its lines. */
+TEST_CASE("tadah hpo: the PC_SCRIPT_TIMEOUT startup lines name the limit and "
+          "the worker task deadline of each PC_LAMMPS line",
           "[pc_deadline_line][tadah_cli][.tadah_cli_pc_deadline_line]") {
     const char* bin = std::getenv("TADAH_BINARY");
     if (!bin || !*bin)
@@ -2894,49 +2919,67 @@ TEST_CASE("tadah hpo: the PC_SCRIPT_TIMEOUT startup line names the hard "
         "    ALGO RANDOM\n    MAXEVAL 1\n    SEED 1234\n  ENDSTRATEGY\n"
         "ENDOPTIMIZER\nLOSS L2\nFAILSCORE 1e16\nPC_ERMSE 0 1\n"
         "OPTIM CGRID2B (1) 0.0 4.0\n";
-    /* The case's keys come before the PC_LAMMPS line, which takes the
-     * PC_SCRIPT_TIMEOUT above it (one after it, read by no line, is
-     * refused). */
+    /* A PC_LAMMPS line takes the PC_SCRIPT_TIMEOUT (or MAXTIME) above it
+     * (one after it, read by no line, is refused). */
     const std::string pc_line =
         "PC_LAMMPS --script readback.in --varloss E 0 1\n";
     const std::string script = ta_script("3.301", "variable E equal pe\n");
+    const std::string set = ", set as LAMMPS `timer timeout` at the start of "
+                            "the script and after each clear; ";
+    const std::string off = "off (the default), no limit; ";
     struct Case {
-        std::string name, mode, keys, limit, deadline;
+        std::string name, mode, body;
+        std::vector<std::string> lines;  /* each from "PC_SCRIPT_TIMEOUT" */
+        bool maxtime_note = false;
     };
-    const std::string no_limit = "off (no per-script limit) (from default)";
+    const auto of_line = [](int n) {
+        return "PC_SCRIPT_TIMEOUT of the PC_LAMMPS line on line " +
+               std::to_string(n) + ": ";
+    };
     std::vector<Case> cases;
 #ifndef TADAH_HPO_MPI
-    cases.push_back({"worker_timeout", "PROCESS", "PC_WORKER_TIMEOUT 600\n",
-                     no_limit, "600 s (PC_WORKER_TIMEOUT)"});
-    cases.push_back({"derived", "PROCESS", "PC_SCRIPT_TIMEOUT 10\n",
-                     "10 s (from PC_SCRIPT_TIMEOUT)",
-                     "130 s, derived as max(3t, t + 120 s) from the "
-                     "per-script limit t (a line's --maxtime derives its "
-                     "own)"});
-    cases.push_back({"none", "PROCESS", "", no_limit, "none"});
+    cases.push_back({"worker_timeout", "PROCESS",
+                     "PC_WORKER_TIMEOUT 600\n" + pc_line,
+                     {of_line(15) + off + "worker task deadline: 600 s "
+                      "(PC_WORKER_TIMEOUT on line 14)"}});
+    cases.push_back(
+        {"two_limits", "PROCESS",
+         "PC_SCRIPT_TIMEOUT 10\n" + pc_line + "MAXTIME 1:00\n" + pc_line +
+             "PC_LAMMPS --script readback.in --varloss E 0 1 --maxtime 5\n",
+         {of_line(15) + "10 s (PC_SCRIPT_TIMEOUT on line 14)" + set +
+              "worker task deadline: 130 s, max(3t, t + 120 s) of the limit t",
+          of_line(17) + "60 s (1:00) (MAXTIME on line 16)" + set +
+              "worker task deadline: 180 s, max(3t, t + 120 s) of the limit t",
+          of_line(18) + "5 s (its --maxtime)" + set +
+              "worker task deadline: 125 s, max(3t, t + 120 s) of the limit "
+              "t"},
+         true});
+    cases.push_back({"none", "PROCESS", pc_line,
+                     {of_line(14) + off + "no worker task deadline"}});
 #endif
-    cases.push_back({"thread", "THREAD", "PC_WORKER_TIMEOUT 600\n", no_limit,
-                     "n/a (THREAD mode)"});
+    cases.push_back({"thread", "THREAD", "PC_WORKER_TIMEOUT 600\n" + pc_line,
+                     {of_line(15) + off + "no worker task deadline under "
+                      "PC_ISOLATION THREAD"}});
     for (const Case& c : cases) {
-        INFO(c.name << ": PC_ISOLATION " << c.mode << ", " << c.keys);
+        INFO(c.name << ": PC_ISOLATION " << c.mode << "\n" << c.body);
         const fs::path dir = sd.dir / c.name;
-        const int rc = run_tadah_hpo(bin, dir, c.mode, head + c.keys + pc_line,
-                                     script, {}, "-u TADAH_PC_WORKER_TIMEOUT");
+        const int rc = run_tadah_hpo(bin, dir, c.mode, head + c.body, script,
+                                     {}, "-u TADAH_PC_WORKER_TIMEOUT");
         INFO(read_text(dir / "tadah.stderr"));
         const std::string journal = read_text(dir / "hpo_run.log");
         INFO(journal);
         REQUIRE(WIFEXITED(rc));
         CHECK(WEXITSTATUS(rc) == 0);
         const std::vector<std::string> lines =
-            journal_lines_with(journal, "hard per-worker-task deadline: ");
-        REQUIRE(lines.size() == 1);
-        const std::string tail =
-            "PC_SCRIPT_TIMEOUT: " + c.limit + " -- soft LAMMPS `timer "
-            "timeout`, re-armed each run-section; hard per-worker-task "
-            "deadline: " + c.deadline;
-        INFO("the line: " << lines[0]);
-        REQUIRE(lines[0].size() >= tail.size());
-        CHECK(lines[0].compare(lines[0].size() - tail.size(), tail.size(),
-                               tail) == 0);
+            journal_lines_with(journal, "PC_SCRIPT_TIMEOUT of the ");
+        REQUIRE(lines.size() == c.lines.size());
+        for (std::size_t i = 0; i < lines.size(); ++i) {
+            INFO("line " << i << ": " << lines[i]);
+            CHECK_THAT(lines[i], Catch::EndsWith(c.lines[i]));
+        }
+        CHECK(journal_lines_with(journal, "MAXTIME on line 16 is "
+                                          "PC_SCRIPT_TIMEOUT under another "
+                                          "name").size() ==
+              (c.maxtime_note ? 1u : 0u));
     }
 }

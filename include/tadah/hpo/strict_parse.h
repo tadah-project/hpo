@@ -105,7 +105,7 @@ std::string next_value(std::istringstream& iss, const std::string& key);
 void expect_end(std::istringstream& iss, const std::string& what);
 
 /* The one value of a single-value key: next_value(), then
- * expect_end(iss, key + " takes a single value"). */
+ * expect_end(iss, key + " takes one value"). */
 std::string single_value(std::istringstream& iss, const std::string& key);
 
 /* A LAMMPS time spec, a strict subset of what `timer timeout` reads

@@ -308,6 +308,10 @@ EXTRACTION: list[Rule] = [
                                 "by its OPTIM key"},
          not_names={"RCUT": "the prefix of the cutoff keys that AUTO "
                             "refuses ([optim] auto_excluded_prefix)"}),
+    Rule("the OPTIM keys of the fitted coefficients and of the embedding "
+         "reference", "src/hpo_targets.cpp",
+         r"^std::string HPOTargets::optim_fitted_key_error\(",
+         operands={"k": ("optim_target",)}),
     Rule("the OPTIM structure keys", "src/hpo_targets.cpp",
          r"^std::string HPOTargets::optim_structure_key_error\(",
          tables=[(r"\bstructure\s*\[\]", "first", ("optim_target",))],

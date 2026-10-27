@@ -170,9 +170,9 @@ template<typename Vec, typename HostT>
 
     if (!sp.num_threads) {
       const std::string hint =
-          "ANNEAL_PA: THREADS not set -- running " + std::to_string(R) +
-          " walkers on 1 worker thread. Set THREADS <n> in the STRATEGY "
-          "block to evaluate walkers concurrently.";
+          "ANNEAL_PA: THREADS is not set, so the " + std::to_string(R) +
+          " walkers run on 1 worker thread; THREADS <n> in the STRATEGY "
+          "block evaluates up to n of them at a time";
       std::cout << "[HPO] " << hint << "\n";
       HPOLog::instance().warning(hint);
     }

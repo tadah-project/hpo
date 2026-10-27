@@ -84,13 +84,13 @@ KeyCheckFn stage_key_check(const StageKeys &sk, SeenKeys *seen) {
     // instead.
     if (key == "SEED")
       throw std::runtime_error(
-          "SEED is not accepted in a tadah refit OPTIMIZER block: the "
-          "refit's random numbers come from REFIT_COMPACT_SEED; set "
-          "REFIT_COMPACT_SEED in the configuration instead.");
+          "SEED is not accepted in a tadah refit OPTIMIZER block: "
+          "REFIT_COMPACT_SEED in the refit configuration seeds the refit's "
+          "random numbers");
     if (key == "FTOL_ABS" && std::string(sk.stage) != "EXPLORE")
       throw std::runtime_error(
           "FTOL_ABS is not supported — Ceres' function_tolerance is RELATIVE "
-          "and has no absolute form. Use FTOL_REL.");
+          "and has no absolute form; FTOL_REL sets the relative tolerance.");
     throw std::runtime_error(key +
                              " is not used by a tadah refit stage (it reads " +
                              reads_list(reads) + ")");
@@ -116,8 +116,9 @@ const StageKeys kFuseKeys{
 void require_algo(const OptimizerSpec &o, const std::string &where,
                   const char *block, const char *off) {
   if (o.algo == "NOT SET")
-    throw std::runtime_error(where + ": ALGO is not set; set ALGO in the " +
-                             block + " block (" + off + ")");
+    throw std::runtime_error(where + ": ALGO is not set; the " + block +
+                             " block of a tadah refit stage names its ALGO (" +
+                             off + ")");
 }
 
 bool as_bool(const std::string &s, const std::string &what) {
@@ -297,7 +298,7 @@ bool ceres_extra(const std::string &key, std::istringstream &iss,
     throw std::runtime_error(
         "'" + key +
         "' is not supported — Ceres' function_tolerance is RELATIVE and has no "
-        "absolute form. Use FTOL_REL.");
+        "absolute form; FTOL_REL sets the relative tolerance.");
   if (tolerance_attr(key, iss, a)) return true;  // GTOL among them
   if (key == "MAXITER") {
     // The alias of MAXEVAL, with its range: the int iteration cap Ceres
@@ -462,14 +463,13 @@ std::string stage_algo(const OptimizerSpec &s,
       if (!lib.empty())
         throw std::runtime_error(std::string(block) +
                                  ": LIB has no effect with ALGO " +
-                                 a.spelling + " (" + none_means +
-                                 "); remove LIB");
+                                 a.spelling + " (" + none_means + ")");
       return a.canonical;
     }
     if (lib.empty())
-      throw std::runtime_error(std::string(block) + ": LIB is not set; set LIB " +
-                               a.lib + " (ALGO " + s.algo + " is " +
-                               library_kind(a.lib) + ")");
+      throw std::runtime_error(std::string(block) + ": LIB is not set; ALGO " +
+                               s.algo + " is " + library_kind(a.lib) +
+                               ", whose LIB is " + a.lib);
     if (lib != a.lib) {
       // The LIB may be the one meant and the ALGO the slip (LIB NLOPT ALGO
       // LBFGS for NLopt's L-BFGS): name that library's algorithms of the
@@ -477,9 +477,9 @@ std::string stage_algo(const OptimizerSpec &s,
       const std::string in_lib = listed_in(algos, lib);
       throw std::runtime_error(
           std::string(block) + ": LIB " + s.lib + " does not match ALGO " +
-          s.algo + ", " + library_kind(a.lib) + "; set LIB " + a.lib +
+          s.algo + ", " + library_kind(a.lib) + ", whose LIB is " + a.lib +
           (in_lib.empty() ? std::string()
-                          : ", or with LIB " + lib + " set ALGO " + in_lib));
+                          : "; LIB " + lib + " takes ALGO " + in_lib));
     }
     return a.canonical;
   }
@@ -590,22 +590,23 @@ void reject_keys_not_read(const std::string &block, const OptimizerSpec &s,
                   : std::string();
     if (reads.empty())
       throw std::runtime_error(block + ": " + key + " has no effect with ALGO " +
-                               algo + " (" + off + mlsl + "); remove " + key);
+                               algo + " (" + off + mlsl + ")");
     if (key == "MAXITER")
       throw std::runtime_error(block + ": MAXITER counts Ceres iterations; "
                                "ALGO " + algo + " counts objective "
-                               "evaluations: write MAXEVAL");
+                               "evaluations, which MAXEVAL limits");
     if (key == "FTOL_REL" && has_key(reads, "FTOL_ABS"))
       throw std::runtime_error(block + ": FTOL_REL has no effect with ALGO " +
                                algo + ": dlib's L-BFGS stops on an absolute "
-                               "change of the objective; write FTOL_ABS");
+                               "change of the objective, which FTOL_ABS sets");
     if (key == "FTOL_ABS" && has_key(reads, "GTOL"))
       throw std::runtime_error(
           block + ": FTOL_ABS is not supported — Ceres' function_tolerance is "
-          "RELATIVE and has no absolute form. Use FTOL_REL.");
+          "RELATIVE and has no absolute form; FTOL_REL sets the relative "
+          "tolerance.");
     throw std::runtime_error(block + ": " + key + " has no effect with ALGO " +
                              algo + " (it reads " + reads_list(reads) + mlsl +
-                             "); remove " + key);
+                             ")");
   }
 }
 
@@ -616,8 +617,9 @@ void reject_disabled_with_optimizer(const char *stage, bool enabled,
   if (!enabled && has_opt)
     throw std::runtime_error(
         std::string(stage) + ": ENABLED false skips the stage, so its "
-        "OPTIMIZER block has no effect; remove the OPTIMIZER block, or write "
-        "ALGO NONE in it instead of ENABLED false");
+        "OPTIMIZER block has no effect; ENABLED false without the block, or "
+        "ALGO NONE in the block without ENABLED false, switches the stage "
+        "off");
 }
 
 }  // namespace
@@ -634,8 +636,7 @@ std::string refit_explore_outer_algo(const OptimizerSpec &s) {
     if (algo == r.spelling)
       throw std::runtime_error(std::string("EXPLORE: ALGO ") + s.algo +
                                " is not run by tadah refit (" + r.what +
-                               "); its " + r.short_name + " is " + r.runs +
-                               ": set ALGO " + r.runs);
+                               "); its " + r.short_name + " is " + r.runs);
   return stage_algo(s, kExploreOuterAlgos, "EXPLORE", "EXPLORE outer",
                     kExploreOff,
                     "NLOPT GN_MLSL_LDS|GN_DIRECT_L|GN_CRS2_LM, DLIB GLOBAL, or "

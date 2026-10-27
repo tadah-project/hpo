@@ -148,7 +148,8 @@ TEST_CASE("ANNEAL_PT two-pass calibration journals both passes and "
     const std::string log = lr.read();
     CHECK(log.find("ANNEAL_PT calibration pass 2: T_HOT=")
           != std::string::npos);
-    CHECK(log.find("pass2/pass1 ratio=") != std::string::npos);
+    /* It was "pass2/pass1 ratio=". */
+    CHECK(log.find("T_HOT of pass 2 / pass 1 = ") != std::string::npos);
     CHECK(log.find("ladder T per slot after calibration pass 2")
           != std::string::npos);
     /* Budget accounting is exact across seed, pass-1 probes, init,
