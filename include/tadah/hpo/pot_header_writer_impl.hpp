@@ -227,8 +227,8 @@ void PotHeaderWriter::write_best_archive_header(
     std::size_t                  cw, int prec)
 {
     thin(os);
-    os << "# Tadah HPO -- best iter " << result.best_iter
-       << "  (eval " << result.iter << ")"
+    os << "# Tadah HPO -- improvement " << result.best_iter
+       << " (eval " << result.iter << ")"
        << "  |  loss=" << fmt_double(result.loss, prec)
        << "  |  " << fmt_timestamp() << "\n";
     write_result_table(os, result, trg, cw, prec);
