@@ -5,8 +5,10 @@ test_hpotarget_registry.py: the C++ name of an id and the refusal of an id
 without one or of two ids of one name, the escaping of a message, the
 placeholders of the messages the loader fixes (taken from the loader, not
 written into the generator), the tables of the two headers and what they
-leave out, that two runs write the same text, the headers compiled and
-read back by a C++ compiler, and --header and --check."""
+leave out, the comment at the top of each header, that two runs write
+the same text, the headers compiled and read back by a C++ compiler,
+--header and --check with the command each failure names, and the
+help."""
 
 from __future__ import annotations
 
@@ -21,6 +23,7 @@ import sys
 import tempfile
 import textwrap
 import unittest
+from unittest import mock
 
 HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
@@ -261,10 +264,14 @@ class Generator(unittest.TestCase):
 
     # Pins: --header writes both headers and --check passes on them; a
     # header that differs ("differs from what the registry and its loader
-    # give"), or one that is missing, fails --check naming it and the build
-    # target that regenerates it; --header again reports the headers up to
-    # date.
-    # Before the fix: fails, gen_hpotarget.py does not exist.
+    # give"), or one that is missing, fails --check naming it and the
+    # command that regenerates it: for directories other than the defaults,
+    # gen_hpotarget.py --header with those directories (the build target
+    # writes the defaults only); for the default directories, given or
+    # left out, the build target hpo_regenerate_hpotarget_registry;
+    # --header again reports the headers up to date.
+    # Before the fix: fails, --check names the build target
+    # hpo_regenerate_registries for any directories.
     def test_header_and_check(self):
         self.full_registry()
         self.write()
@@ -282,7 +289,21 @@ class Generator(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn(f"{header} differs from what the registry and its "
                       "loader give", err)
-        self.assertIn("--target hpo_regenerate_registries", err)
+        self.assertIn("regenerate with `gen_hpotarget.py --header "
+                      f"--registry {self.dir} -o {out}`", err)
+        self.assertNotIn("--target", err)
+        saved = gen.DEFAULT_REGISTRY, gen.DEFAULT_OUT
+        gen.DEFAULT_REGISTRY, gen.DEFAULT_OUT = self.dir, out
+        try:
+            for argv in (["--check"], ["--check", *args]):
+                code, _, err = self.main(*argv)
+                self.assertEqual(code, 1, argv)
+                self.assertIn(
+                    "regenerate with `cmake --build <build directory> "
+                    "--target hpo_regenerate_hpotarget_registry` (or "
+                    "gen_hpotarget.py --header)", err)
+        finally:
+            gen.DEFAULT_REGISTRY, gen.DEFAULT_OUT = saved
         (out / gen.REGISTRY_HEADER).unlink()
         code, _, err = self.main("--check", *args)
         self.assertEqual(code, 1)
@@ -293,11 +314,11 @@ class Generator(unittest.TestCase):
     # FIXED_PLACEHOLDERS given "file") and no file of the registry
     # changed, --check fails on hpotarget_registry_gen.h, which "differs
     # from what the registry and its loader give", and says to commit the
-    # headers "with the change to the registry or its loader"; with the
-    # loader as it was, --check passes again.
-    # Before the fix: fails, --check says the header "differs from what
-    # the registry gives" and to commit the headers "with the registry
-    # change".
+    # headers "with the change to the registry, its loader or the
+    # generator" (a change to gen_hpotarget.py alone changes them too);
+    # with the loader as it was, --check passes again.
+    # Before the fix: fails, --check says to commit the headers "with the
+    # change to the registry or its loader".
     def test_check_follows_the_loader(self):
         self.full_registry()
         self.write()
@@ -314,9 +335,84 @@ class Generator(unittest.TestCase):
         self.assertEqual(code, 1, err)
         self.assertIn(f"{out / gen.REGISTRY_HEADER} differs from what the "
                       "registry and its loader give", err)
-        self.assertIn("commit the headers with the change to the registry "
-                      "or its loader", err)
+        self.assertIn("commit the headers with the change to the registry, "
+                      "its loader or the generator", err)
         self.assertEqual(self.main("--check", *args)[0], 0)
+
+    # Pins: the help says that --check fails on a header that is missing
+    # as well as on one that differs, and that the default directory of
+    # the headers is the one of this script's repository, not of the
+    # working directory; a call without --header or --check is a usage
+    # error, exit status 2.
+    # Before the fix: fails, the help says "fail when a checked-in header
+    # differs" and "(default: include/tadah/hpo)".
+    def test_help(self):
+        out = io.StringIO()
+        with mock.patch.dict(os.environ, {"COLUMNS": "200"}), \
+                contextlib.redirect_stdout(out), \
+                self.assertRaises(SystemExit) as cm:
+            gen.main(["--help"])
+        self.assertEqual(cm.exception.code, 0)
+        text = re.sub(r"\s+", " ", out.getvalue())
+        self.assertIn("--check fail when a checked-in header is missing or "
+                      "differs from what the registry and its loader give",
+                      text)
+        self.assertIn("the directory of the headers (default: "
+                      "include/tadah/hpo of this script's repository)", text)
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err), \
+                self.assertRaises(SystemExit) as cm:
+            gen.main([])
+        self.assertEqual(cm.exception.code, 2)
+        self.assertIn("one of the arguments --header --check is required",
+                      err.getvalue())
+
+    # Pins: the comment at the top of each header names the registry, read
+    # by its loader hpotarget_registry.py, as the source of the tables; the
+    # build target that regenerates them, hpo_regenerate_hpotarget_registry;
+    # the section of blueprint/README.md that describes them, "The
+    # generated tables"; and that the placeholder sets are sorted, not in
+    # the order of the registry.
+    # Before the fix: fails, the source names the TOML files only, the
+    # build target is hpo_regenerate_registries, and the comment points to
+    # "The target-file registry" (the PARAM header to no section).
+    def test_header_comment(self):
+        texts = self.headers()
+        h, p = texts[gen.REGISTRY_HEADER], texts[gen.PARAM_HEADER]
+        generator = (
+            "// Generator:       HPO/blueprint/gen_hpotarget.py --header\n"
+            "//                  (build target "
+            "hpo_regenerate_hpotarget_registry)\n")
+        self.assertTrue(h.startswith(
+            "// GENERATED FILE -- DO NOT EDIT.\n//\n"
+            "// Source of truth: HPO/blueprint/hpotarget.toml and the part "
+            "files of its\n"
+            "//                  meta.parts, read by "
+            "HPO/blueprint/hpotarget_registry.py\n" + generator), h[:600])
+        self.assertIn(
+            "// The tables of the target-file registry (blueprint/README.md, "
+            "\"The\n"
+            "// generated tables\"), in the order of the registry (the "
+            "placeholder\n"
+            "// sets sorted). Messages are templates: fill() puts the values "
+            "of their\n"
+            "// {name} placeholders in.\n#pragma once\n", h)
+        self.assertTrue(p.startswith(
+            "// GENERATED FILE -- DO NOT EDIT.\n//\n"
+            "// Source of truth: HPO/blueprint/hpotarget_params.toml (a part "
+            "file of\n"
+            "//                  HPO/blueprint/hpotarget.toml), read by\n"
+            "//                  HPO/blueprint/hpotarget_registry.py\n"
+            + generator), p[:600])
+        self.assertIn(
+            "// The PARAM keys of the target-file registry: [[param]],\n"
+            "// [[param_excluded]] and [[param_policy]] (blueprint/README.md, "
+            "\"The\n"
+            "// generated tables\"). The PARAM keys of the annealers are\n"
+            "// anneal_keys_gen.h's.\n#pragma once\n", p)
+        for text in (h, p):
+            self.lacks("hpo_regenerate_registries", text)
+            self.lacks("\"The\n// target-file registry\"", text)
 
     # Pins: the headers of the synthetic registry, whose tables of line
     # options and forms are empty, compile as C++17 without a warning
