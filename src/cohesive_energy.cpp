@@ -43,20 +43,28 @@ CohesiveEnergyObservable(Config cfg)
     if (!(cfg_.relax_ptol > 0.0))
         throw std::invalid_argument(
             "CohesiveEnergyObservable: relax_ptol must be > 0");
+    /* A negative slope would move the value of an unconverged relaxation
+     * towards the target (the parser refuses it at its line). */
+    if (cfg_.unconverged_strategy == Config::UnconvergedStrategy::ForceScaled &&
+        !(cfg_.unconverged_value >= 0.0))
+        throw std::invalid_argument(
+            "CohesiveEnergyObservable: the force-scaled slope must be >= 0");
 }
 
 std::string CohesiveEnergyObservable::analytical_gradient_gap() const
 {
     /* A relaxation that does not converge reports the --unconverged value:
-     * the constant penalty (value_is_constant, a zero gradient), or
-     * target + slope * fmax (fmax the larger of the largest atomic force
-     * and the strain force of the cell at the end), which depends on the
-     * weights and on theta through the partial relaxation and has no
-     * closed-form derivative (evaluate() returns it without dO_dW). */
+     * the constant penalty (value_is_constant, a zero gradient), or the
+     * cohesive energy of the cell it ends at moved away from the target by
+     * slope * fmax (fmax the larger of the largest atomic force and the
+     * strain force of the cell at the end), which depends on the weights
+     * and on theta through the partial relaxation and has no closed-form
+     * derivative (evaluate() returns it without dO_dW). */
     if (cfg_.unconverged_strategy == Config::UnconvergedStrategy::ForceScaled)
-        return "--unconverged force-scaled reports target + slope x fmax "
-               "for a relaxation that does not converge, a value without an "
-               "analytical derivative";
+        return "--unconverged force-scaled reports, for a relaxation that "
+               "does not converge, the cohesive energy of the cell it ends "
+               "at moved away from the target by slope x fmax, a value "
+               "without an analytical derivative";
     return {};
 }
 
@@ -194,7 +202,8 @@ evaluate(tadah::mlip::M_Tadah_Base& model,
      * the canonical unconverged signal. Returns
      * the --unconverged value (--unconverged const 100 by default,
      * matches the `Ecoh = ternary(v_eq_ok, v_Ecoh_raw, 100.0)` fallback,
-     * or --unconverged force-scaled's target + slope x fmax). */
+     * or --unconverged force-scaled's cohesive energy of the final cell
+     * moved away from the target by slope x fmax). */
     const bool relax_unconverged =
         !rr.converged ||
         rr.maxeval_reached ||
@@ -211,27 +220,43 @@ evaluate(tadah::mlip::M_Tadah_Base& model,
             (std::isfinite(fa) && std::isfinite(fs)) ? std::max(fa, fs)
                                                      : fa + fs;
         ObservableEvalResult res;
+        /* force-scaled: the cohesive energy of the cell the relaxation
+         * ends at, and the side of the target it lies on. */
+        double ecoh_end = 0.0;
+        double away = 1.0;
         switch (cfg_.unconverged_strategy) {
             using Strat = Config::UnconvergedStrategy;
             case Strat::Const:
                 res.value = cfg_.unconverged_value;
                 res.value_is_constant = true;
                 break;
-            case Strat::ForceScaled:
-                /* target + slope . fmax, fmax the measure the relaxation
-                 * stops at: the larger of the largest atomic force and
-                 * the strain force of the cell, |dE/deps| / (3V), at its
-                 * end. With fmax -> 0 the value -> target (no extra
-                 * loss); with large fmax the value grows linearly and the
-                 * L2 loss grows quadratically. This gives local
+            case Strat::ForceScaled: {
+                /* The cohesive energy of the cell the relaxation ends at
+                 * (its energy is the relaxer's final_energy, with the
+                 * relaxer's list, which holds every pair within the cutoff
+                 * at that cell), moved away from the target by
+                 * slope . fmax, fmax the measure the relaxation stops at:
+                 * the larger of the largest atomic force and the strain
+                 * force of the cell, |dE/deps| / (3V), at its end. The
+                 * loss of the term is then never below that of the cell's
+                 * cohesive energy, and it tends to it as the relaxation
+                 * nears convergence; it grows with fmax. This gives local
                  * optimisers a usable gradient toward convergence instead
-                 * of a FAIL_SCORE cliff. In the bcc cell the atomic
-                 * forces vanish by symmetry and the strain force decides
-                 * (with the atomic force alone the value was the target,
-                 * a loss of about 0, for every such relaxation). */
-                res.value = cfg_.target
-                          + cfg_.unconverged_value * unconverged_fmax;
+                 * of a FAIL_SCORE cliff. In the bcc cell the atomic forces
+                 * vanish by symmetry and the strain force decides. (The
+                 * target plus slope . fmax gave about the target, a loss
+                 * of about 0, for a relaxation stopped near zero pressure,
+                 * whatever its cohesive energy.) */
+                Structure iso = cells::isolated_atom(cfg_.species);
+                NNFinder().calc(iso, ctx);
+                const double E_iso = model.epredict(dc.calc(iso));
+                const double N = static_cast<double>(bulk.natoms());
+                ecoh_end = -(rr.final_energy - N * E_iso) / N;
+                away = ecoh_end >= cfg_.target ? 1.0 : -1.0;
+                res.value = ecoh_end +
+                            away * cfg_.unconverged_value * unconverged_fmax;
                 break;
+            }
         }
         res.needs_adjoint = false;
         res.box_dofs = 0;
@@ -239,7 +264,8 @@ evaluate(tadah::mlip::M_Tadah_Base& model,
         /* A value that is not finite: the term fails, and says why, naming
          * the strategy that gave it. The parser reads only finite numbers,
          * so a parsed --unconverged const value is finite; a force-scaled
-         * one is not when fmax is not, or slope x fmax overflows. */
+         * one is not when the cohesive energy of the final cell or fmax is
+         * not, or slope x fmax overflows. */
         if (!std::isfinite(res.value)) {
             std::ostringstream why;
             why << "the relaxation did not converge (";
@@ -261,10 +287,12 @@ evaluate(tadah::mlip::M_Tadah_Base& model,
                     why << "const value " << res.value;
                     break;
                 case Strat::ForceScaled:
-                    why << "force-scaled value, target + slope x fmax = "
-                        << cfg_.target << " + " << cfg_.unconverged_value
-                        << " x " << unconverged_fmax << " = " << res.value
-                        << ",";
+                    why << "force-scaled value, the cohesive energy of the "
+                           "cell it ends at moved away from the target by "
+                           "slope x fmax, " << ecoh_end
+                        << (away > 0.0 ? " + " : " - ")
+                        << cfg_.unconverged_value << " x " << unconverged_fmax
+                        << " = " << res.value << ",";
                     break;
             }
             why << " is not finite";

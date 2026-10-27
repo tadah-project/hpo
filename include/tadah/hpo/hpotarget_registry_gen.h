@@ -1959,6 +1959,9 @@ inline constexpr Arg PC_OBSERVABLE_cohesive_energy_unconverged_args[] = {
         "PC_OBSERVABLE cohesive_energy: --unconverged {kind} takes a finite number (got '{tok}'){underflow}",
         "", false, ""},
 };
+inline constexpr std::string_view PC_OBSERVABLE_cohesive_energy_unconverged_checks[] = {
+    "PC_OBSERVABLE cohesive_energy: the slope of --unconverged force-scaled must be >= 0 (got {tok})",
+};
 inline constexpr std::string_view OPTIM_AUTO_RATIO_lines[] = {
     "OPTIM.AUTO",
 };
@@ -2888,7 +2891,8 @@ inline constexpr LineOption kLineOptions[] = {
       Span<Arg>{detail::PC_OBSERVABLE_cohesive_energy_unconverged_args, 2},
       Repeat::Error,
       "PC_OBSERVABLE cohesive_energy: --unconverged is given twice on this line; each option is given once",
-      true, "const 100", false, Span<std::string_view>{nullptr, 0}},
+      true, "const 100", false,
+      Span<std::string_view>{detail::PC_OBSERVABLE_cohesive_energy_unconverged_checks, 1}},
   LineOption{LineOptionId::OPTIM_AUTO_RATIO, "OPTIM.AUTO.RATIO", "RATIO",
       Span<std::string_view>{detail::OPTIM_AUTO_RATIO_lines, 1},
       Span<Arg>{detail::OPTIM_AUTO_RATIO_args, 1}, Repeat::Error,

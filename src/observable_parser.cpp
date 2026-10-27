@@ -245,7 +245,8 @@ parse_cohesive_energy(const std::vector<std::string>& tokens, std::size_t start,
             once(t);
             /* Strategy + value for unconverged relax outcomes. Syntax:
              *   --unconverged const        <V>     # res.value = V
-             *   --unconverged force-scaled <slope> # res.value = target + slope.fmax
+             *   --unconverged force-scaled <slope> # res.value = Ecoh at the
+             *       end, moved away from the target by slope.fmax
              *
              * `const 100.0` mirrors Ecoh_fast.in's eq_ok=false branch
              * (the cliff). `force-scaled <slope>` gives local optimisers
@@ -264,9 +265,17 @@ parse_cohesive_energy(const std::vector<std::string>& tokens, std::size_t start,
                     "PC_OBSERVABLE cohesive_energy: --unconverged kind must be "
                     "'const' or 'force-scaled' (got '" + kind + "')");
             }
-            cfg.unconverged_value = number(
-                need_value(i, "--unconverged " + kind + " <value>"),
-                "--unconverged " + kind);
+            const std::string& v =
+                need_value(i, "--unconverged " + kind + " <value>");
+            cfg.unconverged_value = number(v, "--unconverged " + kind);
+            /* A negative slope would move the value of an unconverged
+             * relaxation towards the target, lowering its loss. */
+            if (cfg.unconverged_strategy == Strat::ForceScaled &&
+                cfg.unconverged_value < 0.0)
+                throw std::runtime_error(
+                    "PC_OBSERVABLE cohesive_energy: the slope of "
+                    "--unconverged force-scaled must be >= 0 (got " + v +
+                    ")");
         } else {
             throw std::runtime_error(
                 "PC_OBSERVABLE cohesive_energy: unknown option '" + t + "'");

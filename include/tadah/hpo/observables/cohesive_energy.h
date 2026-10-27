@@ -105,19 +105,21 @@ public:
          *                FAIL_SCORE -- i.e. a cliff. Use when you want
          *                hard rejection without leaking NaN through
          *                downstream best-tracking.
-         * - ForceScaled: res.value = target + unconverged_value .
-         *                fmax, the larger of the relaxer's
-         *                final_fmax_atoms and final_strain_force_norm
-         *                (the measure its ftol bounds). Maps "how far from
-         *                convergence" linearly into the value; the
+         * - ForceScaled: res.value = Ecoh_end +- unconverged_value .
+         *                fmax: the cohesive energy of the cell the
+         *                relaxation ends at, moved away from the target
+         *                (+ when Ecoh_end >= target) by the slope
+         *                unconverged_value (>= 0) times fmax, the larger of
+         *                the relaxer's final_fmax_atoms and
+         *                final_strain_force_norm (the measures its ftol
+         *                and ptol bound). The loss is never below that of
+         *                Ecoh_end and tends to it as fmax -> 0; the
          *                optimiser sees a smooth gradient toward
-         *                fmax -> 0 instead of a flat FAIL_SCORE plateau,
+         *                convergence instead of a flat FAIL_SCORE plateau,
          *                so local optimisers (BOBYQA, LBFGS) can
          *                navigate the boundary of the converged region.
-         *                Set unconverged_value=0 to degenerate the
-         *                penalty to "target" (zero extra loss for
-         *                unconverged), which is essentially trusting
-         *                the partial relax.
+         *                Set unconverged_value=0 to report Ecoh_end itself,
+         *                which is trusting the partial relax.
          *
          * Surface via parser `--unconverged const <V>` or
          * `--unconverged force-scaled <slope>`. */

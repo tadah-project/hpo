@@ -3004,7 +3004,11 @@ msg = "PC_OBSERVABLE cohesive_energy: --unconverged kind must be 'const' or 'for
 name = "value"
 kind = "number"
 msg = "PC_OBSERVABLE cohesive_energy: --unconverged {kind} takes a finite number (got '{tok}'){underflow}"
-doc = "The value of const, in eV/atom, or the slope of force-scaled."
+doc = "The value of const, in eV/atom, or the slope of force-scaled, a number >= 0."
+
+[[line_option.checks]]
+msg = "PC_OBSERVABLE cohesive_energy: the slope of --unconverged force-scaled must be >= 0 (got {tok})"
+doc = "The slope of force-scaled is negative."
 
 [[line_option.examples]]
 wrap = "root"
@@ -3034,6 +3038,11 @@ error = "PC_OBSERVABLE cohesive_energy: --unconverged const takes a finite numbe
 wrap = "root"
 text = "PC_OBSERVABLE cohesive_energy --species H --target 2 --weight 1 --hotvar a0 1.5 2.5 --unconverged const 50 --unconverged const 60"
 error = "PC_OBSERVABLE cohesive_energy: --unconverged is given twice on this line; each option is given once"
+
+[[line_option.invalid]]
+wrap = "root"
+text = "PC_OBSERVABLE cohesive_energy --species H --target 2 --weight 1 --hotvar a0 1.5 2.5 --unconverged force-scaled -1"
+error = "PC_OBSERVABLE cohesive_energy: the slope of --unconverged force-scaled must be >= 0 (got -1)"
 
 
 # ============================================================== LOSS ====
