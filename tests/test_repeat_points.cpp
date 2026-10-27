@@ -1769,7 +1769,10 @@ TEST_CASE("Repeated points: the run says when an evaluation is a function "
     const std::string hot = blocker_of(
         kHead + "PC_LAMMPS --script " + script.string() +
         " --hotvar xyz 0 1 0.5 --varloss xyz 1.0 100\n");
-    CHECK(hot.find("each --hotvar starts from the value of the best "
-                   "evaluation so far") != std::string::npos);
+    /* It was "each --hotvar starts from the value of the best evaluation
+     * so far", which the run does not do. */
+    CHECK(hot.find("each --hotvar starts from the last value inside its "
+                   "range that an earlier evaluation of its chain read "
+                   "back") != std::string::npos);
     fs::remove(script);
 }

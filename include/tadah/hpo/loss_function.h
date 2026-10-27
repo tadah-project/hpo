@@ -38,7 +38,13 @@ public:
     {}
 
     /* from / to string ------------------------------------------------- */
+    /* The loss function a name gives, in any case; throws "unknown loss
+     * function '<name>'; the loss functions are ..." for another word. */
     static Type                 from_string(const std::string&);
+    /* The same, the refusal prefixed with @p where, the key or option that
+     * names the loss function ("LOSS", "--varloss E"). */
+    static Type                 from_name(const std::string& s,
+                                          const std::string& where);
     static std::string          to_string  (Type);
     /* Defaults used when a parameterised loss is given no parameter:
      * HUBER delta = 50, TUKEY c = 4.685. Empty for the other types. */

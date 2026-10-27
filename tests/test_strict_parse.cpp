@@ -342,7 +342,7 @@ TEST_CASE("single_value: exactly one token",
     {
         std::istringstream iss("5 6");
         CHECK(error_of([&] { tadah::hpo::single_value(iss, "QFLUSH"); }) ==
-              "QFLUSH takes a single value (unexpected '6')");
+              "QFLUSH takes one value (unexpected '6')");
     }
     {
         /* next_value leaves the rest to the caller. */

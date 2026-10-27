@@ -446,25 +446,30 @@ unsigned validate_grid_spec(const OptimizerSpec& sp)
      * points and loop forever at the low corner, STEP 1 divided by zero. */
     if (sp.step)
         throw std::runtime_error(
-            "TADAH:GRID: STEP is not the grid resolution; use PARAM GRID_POINTS "
-            "<n> (integer >= 2, default 20 points per dimension)");
+            "TADAH:GRID: STEP is not the grid resolution; PARAM GRID_POINTS "
+            "<n> sets it (an integer >= 2, default 20 points per dimension)");
     unsigned steps = 20;
+    /* The points of each dimension include both of its bounds (point j at
+     * low + j (high - low) / (n - 1)), so a grid has 2 points or more. */
+    auto grid_points_error = [](const std::string& value) {
+        return std::runtime_error(
+            "TADAH:GRID: PARAM GRID_POINTS must be an integer from 2 to " +
+            std::to_string(std::numeric_limits<unsigned>::max()) +
+            ", got '" + value + "' (the points of each dimension include "
+            "both of its bounds)");
+    };
     if (auto it = sp.param.find("GRID_POINTS"); it != sp.param.end()) {
         const double v = it->second;
         if (!std::isfinite(v) || v < 2.0 || v != std::floor(v) ||
             v > static_cast<double>(std::numeric_limits<unsigned>::max()))
-            throw std::runtime_error(
-                "TADAH:GRID PARAM GRID_POINTS must be an integer >= 2 (got " +
-                std::to_string(v) + "; a 1-point grid divides by zero)");
+            throw grid_points_error(core::format_roundtrip(v));
         steps = static_cast<unsigned>(v);
     }
     reject_unknown_params(sp, {"GRID_POINTS"});
     /* A word where a number belongs (PARAM GRID_POINTS AUTO) was stored as
      * a word and ignored. */
     if (auto it = sp.param_raw.find("GRID_POINTS"); it != sp.param_raw.end())
-        throw std::runtime_error(
-            "TADAH:GRID PARAM GRID_POINTS must be an integer >= 2 (got '" +
-            it->second + "')");
+        throw grid_points_error(it->second);
     reject_unread_attributes(sp, optimizer_caps(sp), SpecRole::Phase);
     return steps;
 }

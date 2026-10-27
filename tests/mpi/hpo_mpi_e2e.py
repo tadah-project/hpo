@@ -8,8 +8,8 @@ tests/data/ta, --data), and checks one case:
 
   restart_refusal   ANNEAL_PT with an active RESTART block.
                     Pins: on 2 ranks the launch fails on every rank before
-                    any evaluation (exit status 1; "multi-rank HPO does not
-                    support RESTART (AFTER_STAGNATION 4, MAX 1 on 2 ranks)"
+                    any evaluation (exit status 1; "a run on 2 MPI ranks
+                    takes no RESTART block (AFTER_STAGNATION 4, MAX 1): ..."
                     on stderr and on an "ERROR     * startup: Error on
                     line 20:" line of
                     hpo_run.log.r0 and hpo_run.log.r1; no loss.tadah.r*);
@@ -23,9 +23,9 @@ tests/data/ta, --data), and checks one case:
                     Pins: target_files/dlib_bfgs.hpo (DLIB BFGS, numerical
                     gradients; its ENDOPTIMIZER is on line 14) on 2
                     ranks fails on every rank before any evaluation
-                    ("multi-rank HPO supports only STRATEGY TYPE PLAIN with
-                    LIB TADAH and ALGO ANNEAL_PT or ANNEAL_PA; got DLIB:BFGS
-                    on 2 ranks"); on 1 rank of the MPI build it runs and its
+                    ("a run on 2 MPI ranks takes STRATEGY TYPE PLAIN with
+                    TADAH:ANNEAL_PT or TADAH:ANNEAL_PA only, and the block
+                    has STRATEGY TYPE PLAIN with DLIB:BFGS"); on 1 rank of the MPI build it runs and its
                     DIAGNOSTICS count one-sided differences ("One-sided
                     differences : N", N > 0).
                     Before the fix: passes as well (a pin).
@@ -337,10 +337,14 @@ def case_restart_refusal(r):
         "\nOPTIM CEMBFUNC (1) -2.19 -2.15\n" + TAIL
     args = ["-c", "../ta2_refit_seed.tadah"]
     d, p = r.run("restart", 2, config, args)
+    # It was "multi-rank HPO does not support RESTART (...): stagnation is
+    # tracked per rank; run on one rank or remove RESTART".
     check_refused(d, p, 2, 20,
-                  "multi-rank HPO does not support RESTART (AFTER_STAGNATION "
-                  "4, MAX 1 on 2 ranks): stagnation is tracked per rank; run "
-                  "on one rank or remove RESTART")
+                  "a run on 2 MPI ranks takes no RESTART block "
+                  "(AFTER_STAGNATION 4, MAX 1): each rank counts its own "
+                  "evaluations without a new best, so one rank would restart "
+                  "without the others; a run with a RESTART block runs on "
+                  "one rank")
     d, p = r.run("restart", 1, config, args)
     check(p.returncode == 0, f"{d.name}: exit status {p.returncode}, "
           "expected 0 (RESTART runs on one rank)")
@@ -352,10 +356,12 @@ def case_gradient_refusal(r):
     args = ["--validation", "../common/config.val",
             "-c", "../common/config.tadah"]
     d, p = r.run("bfgs", 2, config, args)
+    # It was "multi-rank HPO supports only STRATEGY TYPE PLAIN with LIB
+    # TADAH and ALGO ANNEAL_PT or ANNEAL_PA; got DLIB:BFGS on 2 ranks".
     check_refused(d, p, 2, 14,
-                  "multi-rank HPO supports only STRATEGY TYPE PLAIN with LIB "
-                  "TADAH and ALGO ANNEAL_PT or ANNEAL_PA; got DLIB:BFGS on 2 "
-                  "ranks")
+                  "a run on 2 MPI ranks takes STRATEGY TYPE PLAIN with "
+                  "TADAH:ANNEAL_PT or TADAH:ANNEAL_PA only, and the block has "
+                  "STRATEGY TYPE PLAIN with DLIB:BFGS")
     d, p = r.run("bfgs", 1, config, args)
     check(p.returncode == 0, f"{d.name}: exit status {p.returncode}")
     m = re.search(r"One-sided differences\s*: (\d+)",

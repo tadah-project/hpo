@@ -93,6 +93,13 @@ class LammpsSim {
      *  and "unlimited". Sizes the PROCESS worker deadline
      *  (pc_worker_deadline_ms). */
     std::optional<double> maxtime_seconds;
+    /** Where maxtime comes from, for the journal: "PC_SCRIPT_TIMEOUT on line
+     *  11", "MAXTIME on line 11", "its --maxtime" or "the default" (set by
+     *  HPOTargets; "" for a LammpsSim made without a file). */
+    std::string maxtime_source;
+    /** The script has a timer command of its own: the limit is not
+     *  injected as `timer timeout` (prep_script_lines). */
+    bool own_timer = false;
     /** The value each --varloss / --outvar variable of this line takes when
      *  its simulation fails (--failscore; default: the root FAILSCORE in
      *  force when the line is read). On a PC_LAMMPS line any finite number;

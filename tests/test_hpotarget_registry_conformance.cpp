@@ -334,10 +334,13 @@ std::vector<Logical> logical_lines(const std::string& file)
         if (line.empty()) continue;
         Logical l;
         l.first = n;
+        /* A last line that ends with the backslash keeps it, as the
+         * frame of its refusal shows the line as written
+         * (hpotarget_registry.logical_lines). */
         while (!line.empty() && line.back() == '\\') {
-            line.pop_back();
             std::string more;
             if (!std::getline(in, more)) break;
+            line.pop_back();
             ++n;
             cut(more);
             line += more;

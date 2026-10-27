@@ -31,8 +31,10 @@
 
 namespace tadah::hpo {
 
-/** Validate one spec. `where` tags messages ("OUTER", "INNER",
- *  "PRESTAGE", "PRESTAGE.INNER", ...). Throws std::runtime_error on the
+/** Validate one spec. `where` is its place, "OUTER", "INNER", "PRESTAGE"
+ *  or "PRESTAGE.INNER" (or "run" and "run.INNER" for a spec built at run
+ *  time); the messages name the optimiser in words ("the STRATEGY-level
+ *  optimiser", "the INNER search", ...). Throws std::runtime_error on the
  *  first violated rule; journals warnings/hints. `check_start_points`
  *  is false on the run_inner path (seeds were validated at startup, and
  *  run-time stage seeds come from the INIT chain or the top-K, already

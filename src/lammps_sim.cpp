@@ -246,9 +246,9 @@ static bool is_option_token(const std::string& s)
 }
 
 /* HPO's "--" options on a PC_LAMMPS or PC_FAILPROBE line, and which line
- * takes each. parse_tokens() reads all but --gate and --s0, which
- * HPOTargets reads and removes from a PC_FAILPROBE line before LammpsSim
- * parses it; HPOTargets refuses --varloss, --hotvar and --failvar on a
+ * takes each. parse_tokens() reads all but the values of --gate and --s0,
+ * which HPOTargets reads from a PC_FAILPROBE line (parse_tokens() skips
+ * them with their value); HPOTargets refuses --varloss, --hotvar and --failvar on a
  * PC_FAILPROBE line once parse_tokens() has read them (hpo_targets.cpp: the
  * probe grades failures and must not shape the objective). Every other
  * option goes to LAMMPS. */
@@ -308,7 +308,7 @@ static std::string unknown_option_error(const std::string& token,
             const std::size_t d = edit_distance(token, k);
             if (d < best) {
                 best = d;
-                note = " (did you mean '" + k + "'?)";
+                note = " (closest option: '" + k + "')";
             }
         }
     }
@@ -317,10 +317,10 @@ static std::string unknown_option_error(const std::string& token,
         if (i) list += (i + 1 == known.size()) ? " and " : ", ";
         list += known[i];
     }
-    return std::string(failprobe ? "PC_FAILPROBE" : "PC_LAMMPS") +
-           ": unknown option '" + token + "'" + note +
-           ": HPO's options are " + list +
-           "; LAMMPS command-line options start with a single '-'";
+    const std::string key = failprobe ? "PC_FAILPROBE" : "PC_LAMMPS";
+    return key + ": unknown option '" + token + "'" + note + ": a " + key +
+           " line takes the options " + list + ", and LAMMPS command-line "
+           "options, which start with a single '-'";
 }
 
 LammpsSim::LammpsSim() {}
@@ -360,21 +360,29 @@ LammpsSim::LammpsSim(std::string& cmd_,
   invar.push_back("maxtime");
   invar.push_back(maxtime+" every 1");
 
+  const std::string key = is_failprobe ? "PC_FAILPROBE" : "PC_LAMMPS";
   if (!script.length())
-    throw std::runtime_error("LammpsSim object must have a script specified.\n");
+    throw std::runtime_error(key + ": the line has no --script option; "
+                             "--script <file> names the LAMMPS script the line "
+                             "runs");
 
   /* A PC_FAILPROBE sim is forbidden from declaring --varloss (it grades
    * failures; it must not shape the feasible objective) -- the >=1
    * requirement applies to ordinary PC_LAMMPS sims only. */
   if (!n_varloss.size() && !is_failprobe)
-    throw std::runtime_error("LammpsSim: --varloss variable is not defined.\n");
-
-
+    throw std::runtime_error(
+        "PC_LAMMPS: the line has no --varloss option; a PC_LAMMPS line gives "
+        "at least one --varloss <name> <target> <weight>, a loss term "
+        "(--outvar records a value without one)");
 
   prep_script_lines();
 
+  /* prep_script_lines() reads the files the script includes before it
+   * drops the comments and blank lines. */
   if (script_lines.empty()) {
-    throw std::runtime_error("LammpsSim: script_lines is empty.\n");
+    throw std::runtime_error(key + ": the script " + script + " has no "
+                             "command: every line of it, and of the files it "
+                             "includes, is blank or a comment");
   }
   // Validate PC_LAMMPS contract
   // every --varloss/--outvar must be defined in the script and must be equal-style.
@@ -382,8 +390,9 @@ LammpsSim::LammpsSim(std::string& cmd_,
 
 
  // prepare containers
+  /* parse_tokens() fills the --varloss vectors together. */
   if (n_varloss.size() != t_varloss.size() || w_varloss.size() != n_varloss.size()) {
-    throw std::runtime_error("LammpsSim: n_varloss, w_varloss and v_varloss must have the same size.\n");
+    throw std::logic_error("LammpsSim: n_varloss, w_varloss and t_varloss have different sizes");
   }
   // v_outvar.resize(n_outvar.size());
   // prepare i_varloss
@@ -399,11 +408,11 @@ LammpsSim::LammpsSim(std::string& cmd_,
   // }
   // check if i_varloss is the same size as n_varloss
   if (i_varloss.size() != n_varloss.size()) {
-    throw std::runtime_error("LammpsSim: i_varloss must have the same size as n_varloss.\n");
+    throw std::logic_error("LammpsSim: i_varloss and n_varloss have different sizes");
   }
 
   if (lossFn.size()!=n_varloss.size())
-    throw std::runtime_error("lossTypeId size mismatch in LammpsSim");
+    throw std::logic_error("LammpsSim: lossFn and n_varloss have different sizes");
 }
 void LammpsSim::tokenise() {
   std::stringstream ss(cmd);
@@ -421,21 +430,24 @@ void LammpsSim::parse_tokens() {
    * bare token after an HPO option's values (`--maxtime 1:30 00`, a typo
    * for 1:30:00) used to reach LAMMPS as a command-line argument, and every
    * run failed on it; it is an error naming the option. */
+  const std::string key = is_failprobe ? "PC_FAILPROBE" : "PC_LAMMPS";
   std::string hpo_values;       /* "<option> takes ...", after its values */
   bool lammps_values = false;   /* after a LAMMPS option or its values */
   auto hpo_option_read = [&](const std::string& takes) {
-    hpo_values = takes;
+    hpo_values = key + " " + takes;
     lammps_values = false;
   };
   /* The variable maxtime carries the script timeout (the constructor
    * passes -var maxtime "<spec> every 1" for `timer timeout ${maxtime}`);
    * a user's definition would replace the checked, reported value. */
-  auto reject_reserved = [](const std::string& option, const std::string& name) {
+  auto reject_reserved = [&key](const std::string& option,
+                                const std::string& name) {
     if (name == "maxtime")
       throw std::runtime_error(
-          option + " maxtime: the variable maxtime is reserved for the "
-          "script timeout HPO injects (timer timeout ${maxtime}); set "
-          "--maxtime on this line or PC_SCRIPT_TIMEOUT instead");
+          key + " " + option + " maxtime: the variable maxtime is reserved: "
+          "tadah hpo passes the script's time limit to LAMMPS in it, for "
+          "`timer timeout ${maxtime}`; --maxtime on this line or "
+          "PC_SCRIPT_TIMEOUT sets the limit");
   };
 
   /* An option that takes one value is given once: a second would replace
@@ -445,8 +457,8 @@ void LammpsSim::parse_tokens() {
   std::unordered_set<std::string> once_seen;
   auto once = [&](const std::string& option) {
     if (!once_seen.insert(option).second)
-      throw std::runtime_error(option + " is given twice on this line; each "
-                               "option is given once");
+      throw std::runtime_error(key + " " + option + " is given twice on "
+                               "this line; each option is given once");
   };
   /* A LAMMPS variable the line defines on LAMMPS' command line (--invar,
    * -var, -v), once. */
@@ -468,9 +480,10 @@ void LammpsSim::parse_tokens() {
       if (i + 1 < tokens.size()) {
         script = tokens[++i];
         i++;
-        hpo_option_read("--script takes a single value");
+        hpo_option_read("--script takes one value");
       } else {
-        throw std::runtime_error("Invalid number of arguments for --script");
+        throw std::runtime_error(key + " --script takes one value, the LAMMPS "
+                                 "script file");
       }
     }
     // Tadah! specific keywords
@@ -481,16 +494,19 @@ void LammpsSim::parse_tokens() {
       std::size_t j=i+1;
 
       if(j>=tokens.size() || is_flag(tokens[j]))
-        throw std::runtime_error("--varloss: missing <name>");
+        throw std::runtime_error(key + " --varloss takes <name> <target> "
+                                 "<weight> (the name is missing)");
       std::string vname = tokens[j++];
 
       if(j>=tokens.size() || is_flag(tokens[j]))
-        throw std::runtime_error("--varloss "+vname+": missing <target>");
+        throw std::runtime_error(key + " --varloss takes <name> <target> "
+                                 "<weight> (" + vname + " has no target)");
       const std::string tgt_tok = tokens[j];
       const double tgt = parse_finite(tokens[j++], "--varloss "+vname+" <target>");
 
       if(j>=tokens.size() || is_flag(tokens[j]))
-        throw std::runtime_error("--varloss "+vname+": missing <weight>");
+        throw std::runtime_error(key + " --varloss takes <name> <target> "
+                                 "<weight> (" + vname + " has no weight)");
       /* Any finite weight; a negative one is accepted. */
       const double wgt = parse_finite(tokens[j++], "--varloss "+vname+" <weight>");
 
@@ -500,7 +516,8 @@ void LammpsSim::parse_tokens() {
       tadah::LossFunction myLoss = defLoss;
       if(j<tokens.size() && !is_flag(tokens[j])){
         const std::string tname = tokens[j];
-        auto t = tadah::LossFunction::from_string(tokens[j++]);
+        auto t = tadah::LossFunction::from_name(tokens[j++],
+                                                "--varloss " + vname);
         std::vector<double> pars;
         while(j<tokens.size() && !is_flag(tokens[j]))
           pars.push_back(parse_finite(tokens[j++],
@@ -542,7 +559,8 @@ void LammpsSim::parse_tokens() {
         i++;
         hpo_option_read("--invar takes <name> <value>");
       } else {
-        throw std::runtime_error("Invalid number of arguments for --invar");
+        throw std::runtime_error(key + " --invar takes two values, the name of "
+                                 "a LAMMPS variable and its value");
       }
     }
     else if (tokens[i] == "--outvar") {
@@ -553,9 +571,10 @@ void LammpsSim::parse_tokens() {
           n_outvar.push_back(vname);
         }
         i++;
-        hpo_option_read("--outvar takes a single value");
+        hpo_option_read("--outvar takes one value");
       } else {
-        throw std::runtime_error("Invalid number of arguments for --outvar");
+        throw std::runtime_error(key + " --outvar takes one value, the name of "
+                                 "a LAMMPS variable");
       }
     }
     else if (tokens[i] == "--failscore") {
@@ -577,9 +596,9 @@ void LammpsSim::parse_tokens() {
             : parse_finite(tokens[++i], "--failscore");
         reads_default_failscore = false;
         i++;
-        hpo_option_read("--failscore takes a single value");
+        hpo_option_read("--failscore takes one value");
       } else {
-        throw std::runtime_error("Invalid number of arguments for --failscore");
+        throw std::runtime_error(key + " --failscore takes one value, a number");
       }
     }
     else if (tokens[i] == "--maxtime") {
@@ -589,9 +608,10 @@ void LammpsSim::parse_tokens() {
         (void)parse_script_timeout(maxtime, "--maxtime");
         reads_default_maxtime = false;
         i++;
-        hpo_option_read("--maxtime takes a single value");
+        hpo_option_read("--maxtime takes one value");
       } else {
-        throw std::runtime_error("Invalid number of arguments for --maxtime");
+        throw std::runtime_error(key + " --maxtime takes one value, a time "
+                                 "limit (off, unlimited or [[HH:]MM:]SS)");
       }
     }
     else if (tokens[i] == "--hotvar") {
@@ -657,9 +677,18 @@ void LammpsSim::parse_tokens() {
       /* Rejected, not ignored: an unrecognised option would otherwise be
        * forwarded to LAMMPS as a command-line argument below. */
       throw std::runtime_error(
-          "--ncpu was removed in 1.6.0 (legacy MPI build); parallelism over "
-          "PC_LAMMPS scripts is THREADS / PC_ISOLATION. Delete --ncpu from "
-          "this line.");
+          key + " --ncpu: a removed option: it set the MPI ranks of one "
+          "script in an MPI build of Tadah! 1.5.0; THREADS sets the number of "
+          "workers that run the scripts, and PC_ISOLATION whether they run in "
+          "worker processes or inside the tadah process");
+    }
+    else if (is_failprobe && (tokens[i] == "--gate" || tokens[i] == "--s0")) {
+      /* HPOTargets reads the value (failprobe_gate, failprobe_s0) and
+       * refuses one that is missing; it is skipped here, so that a word
+       * after it is named with this option. */
+      const std::string option = tokens[i];
+      i += 2;
+      hpo_option_read(option + " takes one value");
     }
     else if (tokens[i].rfind("--", 0) == 0) {
       /* None of HPO's options (line_options(): each that parse_tokens()
@@ -695,9 +724,9 @@ void LammpsSim::parse_tokens() {
     }
     else {
       throw std::runtime_error(
-          "unexpected '" + tokens[i] + "': a PC_LAMMPS token is an option or "
-          "a value of one (HPO options start with --, LAMMPS command-line "
-          "options with -)");
+          key + ": unexpected '" + tokens[i] + "': every word after " + key +
+          " is an option or a value of one (the options of " + key +
+          " start with --, LAMMPS command-line options with -)");
     }
   }
 
@@ -901,10 +930,11 @@ void LammpsSim::prep_script_lines()
     if (command_quits(script_lines[li]))
       throw std::runtime_error(
           std::string(is_failprobe ? "PC_FAILPROBE" : "PC_LAMMPS") +
-          ": the script " + script + " has a quit command (logical command #" +
-          std::to_string(li + 1) + " in expanded script: " +
-          trim_ascii(script_lines[li]) + "): quit ends the process that runs "
-          "the script (tadah hpo itself under PC_ISOLATION THREAD)");
+          ": the script " + script + " has a quit command, command " +
+          std::to_string(li + 1) + " of the script with its include files "
+          "read in (" + trim_ascii(script_lines[li]) + "): quit ends the "
+          "process that runs the script (tadah hpo itself under PC_ISOLATION "
+          "THREAD)");
 
   /* Per-sim wall-clock enforcement. LAMMPS's native `timer timeout` is the
    * only mechanism that stops a running minimize cleanly (checked every
@@ -940,6 +970,7 @@ void LammpsSim::prep_script_lines()
       std::string tok;
       if ((ls >> tok) && to_lower_ascii(tok) == "timer") { user_timer = true; break; }
     }
+    own_timer = user_timer;
     if (!user_timer) {
       const std::string timer_line = "timer timeout ${maxtime}\n";
       const std::string guard_line =

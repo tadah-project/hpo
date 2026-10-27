@@ -71,13 +71,13 @@ comment = "#"
 continuation = "\\"
 key_case = "exact"
 error_frame = "Error on line {line}: {what}\nLine: {text}"
-unfinished_msg = "unfinished line {line}"
-missing_file_msg = "HPO file {file} not found"
+unfinished_msg = "the line ends with \\, which continues it on the next line, and the file has no next line"
+missing_file_msg = "the target file {file} (--hpotarget) cannot be opened"
 bool_true = ["true", "1", "yes", "on"]
 bool_false = ["false", "0", "no", "off"]
 timespec_words = ["off", "unlimited"]
 untested = [
-  { msg = "HPO file {file} not found", why = "The file of every case exists; tadah hpo gives the message when --hpotarget names a file that does not." },
+  { msg = "the target file {file} (--hpotarget) cannot be opened", why = "The file of every case exists; tadah hpo gives the message when --hpotarget names a file that does not exist or cannot be read." },
 ]
 
 [[lexing.examples]]
@@ -94,11 +94,11 @@ FAILSCORE \
 [[lexing.invalid]]
 wrap = "strategy"
 text = "maxeval 5"
-error = "unknown key 'maxeval' inside STRATEGY block"
+error = "unknown key 'maxeval' inside the STRATEGY block opened on line 4 (ENDSTRATEGY closes it)"
 
 [[lexing.invalid]]
 wrap = "none"
-at = "none"
+at = 8
 text = '''
 OPTIM CGRID2B (1) 0.5 1.5
 PC_ERMSE 0 1
@@ -108,7 +108,7 @@ ALGO LN_SBPLX
 MAXEVAL 10
 ENDOPTIMIZER
 FAILSCORE \'''
-error = "unfinished line 8"
+error = "the line ends with \\, which continues it on the next line, and the file has no next line"
 
 # ------------------------------------------------------------ reading ----
 # The value readers every key shares. The `args` of a key name the reader
@@ -131,7 +131,7 @@ finite_msg = "{what} must be a finite number, got '{tok}'{underflow}"
 positive_msg = "{what} must be a positive {noun}, got '{tok}'{underflow}"
 underflow_note = " (too small: its magnitude is below the smallest normal double, 2.2250738585072014e-308)"
 requires_value_msg = "{key} requires a value"
-single_value_msg = "{key} takes a single value (unexpected '{tok}')"
+single_value_msg = "{key} takes one value (unexpected '{tok}')"
 bool_msg = "{what}: expected boolean (true/false/1/0/yes/no/on/off), got '{tok}'"
 timespec_msg = "{what} must be 'off', 'unlimited' or a time [[HH:]MM:]SS, got '{tok}'{underflow}"
 script_timeout_msg = "{what} must be a positive time, 'off' or 'unlimited' (a limit <= 0 stops every script), got '{tok}'"
@@ -152,22 +152,24 @@ A block opens only where its parents allow, an END line closes the \
 innermost open block, and every block is closed before the file ends. An \
 END line without an open block, or one that names another block than the \
 innermost, is refused. An unknown key is refused, at the top level and in \
-every block."""
+every block, and a top-level key inside an open block is refused with \
+that block and the line that opened it."""
 check_order = ["block_lines", "removed", "inner_refusal", "group_keys",
                "init_restart_keys", "noise_keys", "log_hp", "strategy_keys",
                "block_unknown", "root_keys"]
 end_without_open_msg = "{end} without matching {name}"
 end_mismatch_msg = "{end} does not close the innermost open block, the {open} block opened on line {open_line} (END{open} closes it)"
 end_takes_no_value_msg = "{end} closes the {name} block and takes no value (unexpected '{tok}')"
-open_takes_no_value_msg = "{name} opens a block and takes no value (unexpected '{tok}'); write each key on its own line inside the block"
+open_takes_no_value_msg = "{name} opens a block and takes no value (unexpected '{tok}'); each key stands on its own line inside the block"
 unclosed_msg = "{name} block not closed with {end}"
-unknown_root_msg = "unknown key \"{key}\""
+unknown_root_msg = "unknown key '{key}'"
+root_key_in_block_msg = "{key} is a top-level key, and the {name} block opened on line {open_line} is still open ({end} closes it)"
 removed_msg = "'{key}' was removed from the grammar: {hint}"
 
 [[structure.invalid]]
 wrap = "root"
 text = "FOO 1"
-error = "unknown key \"FOO\""
+error = "unknown key 'FOO'"
 
 [[structure.invalid]]
 wrap = "end"
@@ -192,7 +194,7 @@ error = "ENDSTRATEGY does not close the innermost open block, the INIT block ope
 [[structure.invalid]]
 wrap = "optimizer"
 text = "NOISE AUTO"
-error = "NOISE opens a block and takes no value (unexpected 'AUTO'); write each key on its own line inside the block"
+error = "NOISE opens a block and takes no value (unexpected 'AUTO'); each key stands on its own line inside the block"
 
 [[structure.invalid]]
 wrap = "noise"
@@ -252,9 +254,9 @@ name = "OPTIMIZER"
 end = "ENDOPTIMIZER"
 parents = ["ROOT"]
 repeat = "error"
-repeat_msg = "OPTIMIZER block given more than once (the first opens on line {first_line}); write every optimiser setting in one block"
+repeat_msg = "OPTIMIZER block given more than once (the first opens on line {first_line}); one OPTIMIZER block holds every optimiser setting"
 misplaced_msg = "OPTIMIZER block must appear at the top level of the file (it is inside the {parent} block opened on line {parent_line})"
-unknown_msg = "unknown key '{key}' in this block"
+unknown_msg = "unknown key '{key}' inside the OPTIMIZER block opened on line {open_line} (ENDOPTIMIZER closes it)"
 doc = """\
 The search: its optimiser, its starting points, the noise settings and the \
 strategy. A target file has one OPTIMIZER block."""
@@ -264,18 +266,18 @@ directly inside OPTIMIZER; both set the same optimiser, so each key is \
 given in one of them."""
 
 [[block.close_checks]]
-msg = "the OPTIMIZER block names no optimiser: {missing}; set LIB and ALGO in its STRATEGY block (or directly inside OPTIMIZER)"
+msg = "the OPTIMIZER block names no optimiser: {missing}; LIB and ALGO in its STRATEGY block (or directly inside OPTIMIZER) name it"
 doc = """\
 At ENDOPTIMIZER, and at the end of a file without an OPTIMIZER block (that \
 refusal names no line), under STRATEGY TYPE PLAIN. {missing} is "LIB and \
 ALGO are not set", "LIB is not set" or "ALGO is not set"."""
 
 [[block.close_checks]]
-msg = "STRATEGY TYPE MULTISTART names no optimiser to run from each start: {missing}; set LIB and ALGO in the STRATEGY block"
+msg = "STRATEGY TYPE MULTISTART names no optimiser to run from each start: {missing}; LIB and ALGO in the STRATEGY block name it"
 doc = "At ENDOPTIMIZER, under STRATEGY TYPE MULTISTART."
 
 [[block.close_checks]]
-msg = "STRATEGY TYPE PRESTAGE names no refinement optimiser: {missing}; set LIB and ALGO in the STRATEGY block or in a REFINE block"
+msg = "STRATEGY TYPE PRESTAGE names no refinement optimiser: {missing}; LIB and ALGO in the STRATEGY block or in a REFINE block name it"
 doc = "At ENDOPTIMIZER, under STRATEGY TYPE PRESTAGE."
 
 [[block.close_checks]]
@@ -303,7 +305,7 @@ ENDOPTIMIZER'''
 [[block.invalid]]
 wrap = "end"
 text = "OPTIMIZER"
-error = "OPTIMIZER block given more than once (the first opens on line 3); write every optimiser setting in one block"
+error = "OPTIMIZER block given more than once (the first opens on line 3); one OPTIMIZER block holds every optimiser setting"
 
 [[block.invalid]]
 wrap = "strategy"
@@ -313,7 +315,7 @@ error = "OPTIMIZER block must appear at the top level of the file (it is inside 
 [[block.invalid]]
 wrap = "optimizer"
 text = "TYPE PLAIN"
-error = "unknown key 'TYPE' in this block"
+error = "unknown key 'TYPE' inside the OPTIMIZER block opened on line 3 (ENDOPTIMIZER closes it)"
 
 [[block.invalid]]
 wrap = "none"
@@ -324,22 +326,22 @@ PC_ERMSE 0 1
 OPTIMIZER LIB NLOPT
 ALGO LN_SBPLX
 ENDOPTIMIZER'''
-error = "OPTIMIZER opens a block and takes no value (unexpected 'LIB'); write each key on its own line inside the block"
+error = "OPTIMIZER opens a block and takes no value (unexpected 'LIB'); each key stands on its own line inside the block"
 
 [[block.invalid]]
 wrap = "none"
-at = "ENDOPTIMIZER"
+at = 5
 text = '''
 OPTIM CGRID2B (1) 0.5 1.5
 PC_ERMSE 0 1
 OPTIMIZER
 MAXEVAL 10
 ENDOPTIMIZER'''
-error = "the OPTIMIZER block names no optimiser: LIB and ALGO are not set; set LIB and ALGO in its STRATEGY block (or directly inside OPTIMIZER)"
+error = "the OPTIMIZER block names no optimiser: LIB and ALGO are not set; LIB and ALGO in its STRATEGY block (or directly inside OPTIMIZER) name it"
 
 [[block.invalid]]
 wrap = "none"
-at = "ENDOPTIMIZER"
+at = 9
 text = '''
 OPTIM CGRID2B (1) 0.5 1.5
 PC_ERMSE 0 1
@@ -350,11 +352,11 @@ N_STARTS 2
 LIB NLOPT
 ENDSTRATEGY
 ENDOPTIMIZER'''
-error = "STRATEGY TYPE MULTISTART names no optimiser to run from each start: ALGO is not set; set LIB and ALGO in the STRATEGY block"
+error = "STRATEGY TYPE MULTISTART names no optimiser to run from each start: ALGO is not set; LIB and ALGO in the STRATEGY block name it"
 
 [[block.invalid]]
 wrap = "none"
-at = "ENDOPTIMIZER"
+at = 12
 text = '''
 OPTIM CGRID2B (1) 0.5 1.5
 PC_ERMSE 0 1
@@ -368,7 +370,7 @@ MAXEVAL 5
 ENDEXPLORE
 ENDSTRATEGY
 ENDOPTIMIZER'''
-error = "STRATEGY TYPE PRESTAGE names no refinement optimiser: LIB and ALGO are not set; set LIB and ALGO in the STRATEGY block or in a REFINE block"
+error = "STRATEGY TYPE PRESTAGE names no refinement optimiser: LIB and ALGO are not set; LIB and ALGO in the STRATEGY block or in a REFINE block name it"
 
 [[block.invalid]]
 wrap = "none"
@@ -401,9 +403,9 @@ name = "STRATEGY"
 end = "ENDSTRATEGY"
 parents = ["OPTIMIZER"]
 repeat = "error"
-repeat_msg = "STRATEGY block given more than once (the first opens on line {first_line}); write every STRATEGY key in one block"
-misplaced_msg = "STRATEGY block must appear inside OPTIMIZER (OUTER level)"
-unknown_msg = "unknown key '{key}' inside STRATEGY block"
+repeat_msg = "STRATEGY block given more than once (the first opens on line {first_line}); one STRATEGY block holds every STRATEGY key"
+misplaced_msg = "STRATEGY block must appear directly inside OPTIMIZER"
+unknown_msg = "unknown key '{key}' inside the STRATEGY block opened on line {open_line} (ENDSTRATEGY closes it)"
 doc = """\
 How the search runs its optimiser: once (TYPE PLAIN), from several \
 starting points (MULTISTART), or as an exploration followed by a \
@@ -412,7 +414,7 @@ long_doc = """\
 Its optimiser keys set the STRATEGY-level optimiser."""
 
 [[block.close_checks]]
-msg = "{key} is not accepted with STRATEGY TYPE {type}{note}: {effect}, so it would have no effect; set TYPE {home} or remove {key}"
+msg = "{key} is not accepted with STRATEGY TYPE {type}{note}: {effect}, so it would have no effect; {key} takes effect under STRATEGY TYPE {home}"
 doc = """\
 At ENDSTRATEGY, reported at the line of the key: a key of one TYPE (the \
 STRATEGY types) is checked against the TYPE the block ends with, so TYPE \
@@ -429,12 +431,12 @@ ENDSTRATEGY'''
 [[block.invalid]]
 wrap = "root"
 text = "STRATEGY"
-error = "STRATEGY block must appear inside OPTIMIZER (OUTER level)"
+error = "STRATEGY block must appear directly inside OPTIMIZER"
 
 [[block.invalid]]
 wrap = "explore"
 text = "STRATEGY"
-error = "STRATEGY block must appear inside OPTIMIZER (OUTER level)"
+error = "STRATEGY block must appear directly inside OPTIMIZER"
 
 [[block.invalid]]
 wrap = "none"
@@ -451,17 +453,17 @@ ENDSTRATEGY
 STRATEGY
 ENDSTRATEGY
 ENDOPTIMIZER'''
-error = "STRATEGY block given more than once (the first opens on line 4); write every STRATEGY key in one block"
+error = "STRATEGY block given more than once (the first opens on line 4); one STRATEGY block holds every STRATEGY key"
 
 [[block.invalid]]
 wrap = "strategy"
 text = "AFTER_STAGNATION 3"
-error = "unknown key 'AFTER_STAGNATION' inside STRATEGY block"
+error = "unknown key 'AFTER_STAGNATION' inside the STRATEGY block opened on line 4 (ENDSTRATEGY closes it)"
 
 [[block.invalid]]
 wrap = "strategy"
 text = "N_STARTS 4"
-error = "N_STARTS is not accepted with STRATEGY TYPE PLAIN (the default when the block has no TYPE line): only TYPE MULTISTART runs N_STARTS starts, so it would have no effect; set TYPE MULTISTART or remove N_STARTS"
+error = "N_STARTS is not accepted with STRATEGY TYPE PLAIN (the default when the block has no TYPE line): only TYPE MULTISTART runs N_STARTS starts, so it would have no effect; N_STARTS takes effect under STRATEGY TYPE MULTISTART"
 
 [[block]]
 name = "INIT"
@@ -469,7 +471,7 @@ end = "ENDINIT"
 parents = ["OPTIMIZER", "STRATEGY", "EXPLORE", "REFINE"]
 repeat = "merge"
 misplaced_msg = "INIT block must appear inside OPTIMIZER, STRATEGY, EXPLORE, or REFINE"
-unknown_msg = "unknown key '{key}' inside INIT block"
+unknown_msg = "unknown key '{key}' inside the INIT block opened on line {open_line} (ENDINIT closes it)"
 unknown_first = true
 aliases = { STRATEGY = "INIT.METHOD" }
 unreachable_msgs = ["INIT block requires an active OptimizerSpec"]
@@ -524,20 +526,20 @@ error = "INIT block must appear inside OPTIMIZER, STRATEGY, EXPLORE, or REFINE"
 [[block.invalid]]
 wrap = "init"
 text = "LIB NLOPT"
-error = "unknown key 'LIB' inside INIT block"
+error = "unknown key 'LIB' inside the INIT block opened on line 4 (ENDINIT closes it)"
 
 [[block.invalid]]
 wrap = "init"
 text = "LOG_HP 10"
-error = "unknown key 'LOG_HP' inside INIT block"
+error = "unknown key 'LOG_HP' inside the INIT block opened on line 4 (ENDINIT closes it)"
 
 [[block]]
 name = "NOISE"
 end = "ENDNOISE"
 parents = ["OPTIMIZER"]
 repeat = "merge"
-misplaced_msg = "NOISE block must appear inside OPTIMIZER (OUTER level)"
-unknown_msg = "unknown key '{key}' inside NOISE block (only AUTO and CALIBRATION are valid)"
+misplaced_msg = "NOISE block must appear directly inside OPTIMIZER"
+unknown_msg = "unknown key '{key}' inside the NOISE block opened on line {open_line} (only AUTO and CALIBRATION are valid; ENDNOISE closes it)"
 unknown_first = true
 doc = """\
 The noise settings of the STRATEGY-level optimiser: AUTO derives the \
@@ -558,12 +560,12 @@ ENDNOISE'''
 [[block.invalid]]
 wrap = "strategy"
 text = "NOISE"
-error = "NOISE block must appear inside OPTIMIZER (OUTER level)"
+error = "NOISE block must appear directly inside OPTIMIZER"
 
 [[block.invalid]]
 wrap = "noise"
 text = "MAXEVAL 5"
-error = "unknown key 'MAXEVAL' inside NOISE block (only AUTO and CALIBRATION are valid)"
+error = "unknown key 'MAXEVAL' inside the NOISE block opened on line 4 (only AUTO and CALIBRATION are valid; ENDNOISE closes it)"
 
 [[block]]
 name = "EXPLORE"
@@ -571,7 +573,7 @@ end = "ENDEXPLORE"
 parents = ["STRATEGY"]
 repeat = "merge"
 misplaced_msg = "EXPLORE block must appear inside STRATEGY"
-unknown_msg = "unknown key '{key}' inside EXPLORE block"
+unknown_msg = "unknown key '{key}' inside the EXPLORE block opened on line {open_line} (ENDEXPLORE closes it)"
 doc = """\
 The exploration of STRATEGY TYPE PRESTAGE: an optimiser of its own, whose \
 best candidates (TOPK) the refinement starts from. A second EXPLORE block \
@@ -582,7 +584,7 @@ msg = "EXPLORE block is only valid with TYPE PRESTAGE (declare TYPE before EXPLO
 doc = "At the EXPLORE line: the STRATEGY block has TYPE PRESTAGE before it."
 
 [[block.close_checks]]
-msg = "the EXPLORE block names no optimiser: {missing}; set LIB and ALGO inside the EXPLORE block (the exploration phase of STRATEGY TYPE PRESTAGE)"
+msg = "the EXPLORE block names no optimiser: {missing}; LIB and ALGO inside the EXPLORE block name the optimiser of the exploration of STRATEGY TYPE PRESTAGE"
 doc = "At ENDEXPLORE: the exploration has LIB and ALGO."
 
 [[block.close_checks]]
@@ -616,7 +618,7 @@ error = "EXPLORE block must appear inside STRATEGY"
 [[block.invalid]]
 wrap = "explore"
 text = "TOPK 2"
-error = "unknown key 'TOPK' inside EXPLORE block"
+error = "unknown key 'TOPK' inside the EXPLORE block opened on line 9 (ENDEXPLORE closes it)"
 
 [[block.invalid]]
 wrap = "strategy"
@@ -635,13 +637,13 @@ msg_of = "STRATEGY.TYPE"
 
 [[block.invalid]]
 wrap = "strategy"
-at = "ENDEXPLORE"
+at = 4
 text = '''
 TYPE PRESTAGE
 EXPLORE
 MAXEVAL 5
 ENDEXPLORE'''
-error = "the EXPLORE block names no optimiser: LIB and ALGO are not set; set LIB and ALGO inside the EXPLORE block (the exploration phase of STRATEGY TYPE PRESTAGE)"
+error = "the EXPLORE block names no optimiser: LIB and ALGO are not set; LIB and ALGO inside the EXPLORE block name the optimiser of the exploration of STRATEGY TYPE PRESTAGE"
 
 [[block.invalid]]
 wrap = "none"
@@ -692,7 +694,7 @@ end = "ENDREFINE"
 parents = ["STRATEGY"]
 repeat = "merge"
 misplaced_msg = "REFINE block must appear inside STRATEGY"
-unknown_msg = "unknown key '{key}' inside REFINE block"
+unknown_msg = "unknown key '{key}' inside the REFINE block opened on line {open_line} (ENDREFINE closes it)"
 quirk = """\
 The REFINE block sets the STRATEGY-level optimiser, as the STRATEGY block \
 does. A key given in both is refused, an INIT block in either adds to the \
@@ -743,7 +745,7 @@ error = "REFINE block must appear inside STRATEGY"
 [[block.invalid]]
 wrap = "refine"
 text = "TYPE PLAIN"
-error = "unknown key 'TYPE' inside REFINE block"
+error = "unknown key 'TYPE' inside the REFINE block opened on line 11 (ENDREFINE closes it)"
 
 [[block.invalid]]
 wrap = "strategy"
@@ -777,17 +779,17 @@ ALGO RANDOM
 ENDEXPLORE
 REFINE
 INNER'''
-error = "INNER block specified more than once in this scope"
+error = "INNER block given twice for one optimiser (the first on line 9); STRATEGY and REFINE configure the same optimiser, and so do two EXPLORE blocks"
 
 [[block]]
 name = "INNER"
 end = "ENDINNER"
 parents = ["STRATEGY", "EXPLORE", "REFINE"]
 repeat = "error_per_parent"
-repeat_msg = "INNER block specified more than once in this scope"
-misplaced_msg = "INNER block must appear inside STRATEGY, EXPLORE, or REFINE (it configures the MLSL/AUGLAG inner local sub-optimiser)"
-unknown_msg = "unknown key '{key}' inside INNER block (only {keys} are valid)"
-refuse_msg = "{key} is not accepted inside an INNER block: {why}; set {key} on the enclosing {enclosing} block"
+repeat_msg = "INNER block given twice for one optimiser (the first on line {first_line}); STRATEGY and REFINE configure the same optimiser, and so do two EXPLORE blocks"
+misplaced_msg = "INNER block must appear inside STRATEGY, EXPLORE or REFINE: it holds the local search that an NLopt MLSL or AUGLAG algorithm runs"
+unknown_msg = "unknown key '{key}' inside the INNER block opened on line {open_line} (only {keys} are valid; ENDINNER closes it)"
+refuse_msg = "{key} is not accepted inside an INNER block: {why}; the enclosing {enclosing} block takes {key}"
 refuse = [
   { key = "SEED", why = "NLopt draws the INNER search from the enclosing run's random stream" },
   { key = "GRAD_STRATEGY", why = "the enclosing block's GRAD_STRATEGY applies to its local search" },
@@ -809,7 +811,7 @@ block: an INNER block in REFINE after one in STRATEGY is refused as given \
 twice, and so is one in a second EXPLORE block."""
 
 [[block.close_checks]]
-msg = "the INNER block inside {enclosing} names no optimiser: {missing}; set LIB and ALGO inside the INNER block (the local optimiser that NLopt's MLSL and AUGLAG run)"
+msg = "the INNER block inside {enclosing} names no optimiser: {missing}; LIB and ALGO inside the INNER block name the local optimiser that NLopt's MLSL and AUGLAG run"
 doc = "At ENDINNER: the INNER search has LIB and ALGO. {enclosing} is STRATEGY, EXPLORE or REFINE."
 
 [[block.close_checks]]
@@ -841,7 +843,7 @@ ENDOPTIMIZER'''
 [[block.invalid]]
 wrap = "optimizer"
 text = "INNER"
-error = "INNER block must appear inside STRATEGY, EXPLORE, or REFINE (it configures the MLSL/AUGLAG inner local sub-optimiser)"
+error = "INNER block must appear inside STRATEGY, EXPLORE or REFINE: it holds the local search that an NLopt MLSL or AUGLAG algorithm runs"
 
 [[block.invalid]]
 wrap = "strategy"
@@ -852,36 +854,36 @@ LIB NLOPT
 ALGO LN_BOBYQA
 ENDINNER
 INNER'''
-error = "INNER block specified more than once in this scope"
+error = "INNER block given twice for one optimiser (the first on line 8); STRATEGY and REFINE configure the same optimiser, and so do two EXPLORE blocks"
 
 [[block.invalid]]
 wrap = "inner"
 text = "SEED 1"
-error = "SEED is not accepted inside an INNER block: NLopt draws the INNER search from the enclosing run's random stream; set SEED on the enclosing STRATEGY block"
+error = "SEED is not accepted inside an INNER block: NLopt draws the INNER search from the enclosing run's random stream; the enclosing STRATEGY block takes SEED"
 
 [[block.invalid]]
 wrap = "inner"
 text = "GRAD_STRATEGY NUMERICAL"
-error = "GRAD_STRATEGY is not accepted inside an INNER block: the enclosing block's GRAD_STRATEGY applies to its local search; set GRAD_STRATEGY on the enclosing STRATEGY block"
+error = "GRAD_STRATEGY is not accepted inside an INNER block: the enclosing block's GRAD_STRATEGY applies to its local search; the enclosing STRATEGY block takes GRAD_STRATEGY"
 
 [[block.invalid]]
 wrap = "inner"
 text = "STOPVAL 0"
-error = "STOPVAL is not accepted inside an INNER block: NLopt's MLSL and AUGLAG replace the INNER search's STOPVAL with the enclosing block's; set STOPVAL on the enclosing STRATEGY block"
+error = "STOPVAL is not accepted inside an INNER block: NLopt's MLSL and AUGLAG replace the INNER search's STOPVAL with the enclosing block's; the enclosing STRATEGY block takes STOPVAL"
 
 [[block.invalid]]
 wrap = "inner"
 text = "TYPE PLAIN"
-error = "unknown key 'TYPE' inside INNER block (only LIB/ALGO/MAXEVAL/MAXTIME/FTOL_REL/FTOL_ABS/XTOL_REL/XTOL_ABS/POPULATION/STEP/VECTOR_ARR/THREADS/PARAM are valid)"
+error = "unknown key 'TYPE' inside the INNER block opened on line 8 (only LIB/ALGO/MAXEVAL/MAXTIME/FTOL_REL/FTOL_ABS/XTOL_REL/XTOL_ABS/POPULATION/STEP/VECTOR_ARR/THREADS/PARAM are valid; ENDINNER closes it)"
 
 [[block.invalid]]
 wrap = "strategy"
-at = "ENDINNER"
+at = 3
 text = '''
 INNER
 MAXEVAL 5
 ENDINNER'''
-error = "the INNER block inside STRATEGY names no optimiser: LIB and ALGO are not set; set LIB and ALGO inside the INNER block (the local optimiser that NLopt's MLSL and AUGLAG run)"
+error = "the INNER block inside STRATEGY names no optimiser: LIB and ALGO are not set; LIB and ALGO inside the INNER block name the local optimiser that NLopt's MLSL and AUGLAG run"
 
 [[block.invalid]]
 wrap = "none"
@@ -928,7 +930,7 @@ end = "ENDRESTART"
 parents = ["STRATEGY"]
 repeat = "merge"
 misplaced_msg = "RESTART block must appear inside STRATEGY"
-unknown_msg = "unknown key '{key}' inside RESTART block"
+unknown_msg = "unknown key '{key}' inside the RESTART block opened on line {open_line} (ENDRESTART closes it)"
 unknown_first = true
 aliases = { STRATEGY = "INIT.METHOD" }
 doc = """\
@@ -987,7 +989,7 @@ error = "RESTART block must appear inside STRATEGY"
 [[block.invalid]]
 wrap = "restart"
 text = "LIB NLOPT"
-error = "unknown key 'LIB' inside RESTART block"
+error = "unknown key 'LIB' inside the RESTART block opened on line 8 (ENDRESTART closes it)"
 
 # ----------------------------------------------------- top-level keys ----
 # The top-level keys of this file: the failure loss, the PC_LAMMPS script
@@ -1047,17 +1049,17 @@ error = "FAILSCORE requires a value"
 [[key.invalid]]
 wrap = "root"
 text = "FAILSCORE 1e9 1e10"
-error = "FAILSCORE takes a single value (unexpected '1e10')"
+error = "FAILSCORE takes one value (unexpected '1e10')"
 
 [[key.invalid]]
 wrap = "optimizer"
 text = "FAILSCORE 1e9"
-error = "unknown key 'FAILSCORE' in this block"
+error = "FAILSCORE is a top-level key, and the OPTIMIZER block opened on line 3 is still open (ENDOPTIMIZER closes it)"
 
 [[key.invalid]]
 wrap = "strategy"
 text = "FAILSCORE 1e9"
-error = "unknown key 'FAILSCORE' inside STRATEGY block"
+error = "FAILSCORE is a top-level key, and the STRATEGY block opened on line 4 is still open (ENDSTRATEGY closes it)"
 
 [[key.invalid]]
 wrap = "root"
@@ -1102,10 +1104,9 @@ sets the deadline of a worker task, max(3t, t + 120 s), unless \
 PC_WORKER_TIMEOUT sets one: each line's own limit sizes the deadline of \
 its tasks. MAXTIME is another name for this key. A PC_LAMMPS or \
 PC_FAILPROBE line without --maxtime takes the limit of the lines above it, \
-and a line of the key that no such line follows is refused."""
-quirk = """\
-The deadline in the summary of hpo_run.log is that of the last line of \
-the key."""
+and a line of the key that no such line follows is refused. hpo_run.log \
+gives the limit of each PC_LAMMPS and PC_FAILPROBE line, where it comes \
+from and the deadline of its worker tasks."""
 
 [[key.checks]]
 msg = "{key} sets the script timeout of the PC_LAMMPS and PC_FAILPROBE lines after it that give no --maxtime, and no such line follows it; it would have no effect"
@@ -1182,7 +1183,7 @@ error = "PC_SCRIPT_TIMEOUT is too large for the worker deadline, got '1e16' (the
 [[key.invalid]]
 wrap = "root"
 text = "PC_SCRIPT_TIMEOUT 10 20"
-error = "PC_SCRIPT_TIMEOUT takes a single value (unexpected '20')"
+error = "PC_SCRIPT_TIMEOUT takes one value (unexpected '20')"
 
 [[key.invalid]]
 wrap = "root"
@@ -1209,10 +1210,8 @@ of a PC_LAMMPS and PC_FAILPROBE script."""
 long_doc = """\
 The two names are one key: a second line, of either name, comes only \
 after a PC_LAMMPS or PC_FAILPROBE line without --maxtime, which reads the \
-first. When both \
-names are given, \
-hpo_run.log has a warning; with MAXTIME alone, it names PC_SCRIPT_TIMEOUT \
-as the preferred name."""
+first. hpo_run.log notes that a top-level MAXTIME line is \
+PC_SCRIPT_TIMEOUT under another name."""
 quirk = """\
 MAXTIME at the top level is the script limit PC_SCRIPT_TIMEOUT, while \
 MAXTIME inside OPTIMIZER, STRATEGY, EXPLORE, REFINE or INNER is a time \
@@ -1390,7 +1389,7 @@ OPTIM boxes, which a CERES optimiser can propose, is not evaluated. Under \
 ON and OFF alike its loss lies in [0.99975 FAILSCORE, FAILSCORE) and grows \
 with its distance from the boxes."""
 checks = [
-  { msg = "FAILSCORE_GRADING ON requires a finite positive FAILSCORE (e.g. `FAILSCORE 1e9`); the default DBL_MAX sentinel cannot be banded.", doc = "At startup, under ON: FAILSCORE is 1e300 or more, as it is without a FAILSCORE line." },
+  { msg = "FAILSCORE_GRADING ON grades failures in bands below FAILSCORE, which needs a FAILSCORE above 0 and below 1e300 (without a FAILSCORE line, FAILSCORE is the largest double)", doc = "At startup, under ON: FAILSCORE is 1e300 or more, as it is without a FAILSCORE line." },
 ]
 
 [[key.examples]]
@@ -1414,7 +1413,7 @@ wrap = "root"
 check = "startup"
 at = "none"
 text = "FAILSCORE_GRADING ON"
-error = "FAILSCORE_GRADING ON requires a finite positive FAILSCORE (e.g. `FAILSCORE 1e9`); the default DBL_MAX sentinel cannot be banded."
+error = "FAILSCORE_GRADING ON grades failures in bands below FAILSCORE, which needs a FAILSCORE above 0 and below 1e300 (without a FAILSCORE line, FAILSCORE is the largest double)"
 
 [[key.invalid]]
 wrap = "root"
@@ -1423,7 +1422,7 @@ at = "none"
 text = '''
 FAILSCORE 1e301
 FAILSCORE_GRADING ON'''
-error = "FAILSCORE_GRADING ON requires a finite positive FAILSCORE (e.g. `FAILSCORE 1e9`); the default DBL_MAX sentinel cannot be banded."
+error = "FAILSCORE_GRADING ON grades failures in bands below FAILSCORE, which needs a FAILSCORE above 0 and below 1e300 (without a FAILSCORE line, FAILSCORE is the largest double)"
 
 [[key.invalid]]
 wrap = "root"
@@ -1519,7 +1518,7 @@ args = [
   { name = "tol", kind = "number", min = 0, what = "RHOGATE tol", msg = "RHOGATE tol must be >= 0, got '{tok}'", doc = "The tolerance, a fraction of the largest density. R_LO, NPTS and SEED follow it, each with its value, in any order and each at most once." },
 ]
 repeat = "error"
-repeat_msg = "RHOGATE given more than once"
+repeat_msg = "RHOGATE is set twice (first on line {first_line}); each key is given once"
 doc = """\
 The sign condition of a many-body density under the SIGNED form: a \
 candidate whose pair density rho(r) falls below -tol times its largest \
@@ -1542,11 +1541,11 @@ in any case (npts, seed warn), while every key is matched as written."""
 checks = [
   { msg = "RHOGATE: the tolerance is missing; expected RHOGATE <tol> [R_LO <r>] [NPTS <n>] [SEED ERROR|WARN]", doc = "The line has no value." },
   { msg = "RHOGATE: unexpected token '{tok}'; expected RHOGATE <tol> [R_LO <r>] [NPTS <n>] [SEED ERROR|WARN]", doc = "A word after the tolerance, in the place of an option, is not R_LO, NPTS or SEED." },
-  { msg = "{keys} evaluate the density of a bare DM_REAM many-body term, but {why}. Remove the {keys} line(s).", doc = "At startup, without a line: the many-body term is neither a bare DM_REAM term nor a single DM_Embed component. {keys} is RHOGATE, RHOBARGATE, or both joined by and. {why} says \"this configuration has no DM_REAM many-body term (INITMB true and TYPEMB DM_REAM)\", or names the many-body term of a DM_mJoin." },
-  { msg = "RHOGATE: RHOFORM {form}: the form guarantees rho >= 0 by construction, so the rho(r) sign gate applies to RHOFORM SIGNED only. Remove the RHOGATE line (RHOBARGATE works under every form).", doc = "At startup, without a line: the density form is NONNEG or MONOTONE." },
-  { msg = "{keys}: the many-body cutoff RCUTMB is not set.", doc = "At startup, without a line: the smallest RCUTMB a candidate can have is not a number above 0." },
-  { msg = "{keys}: {why} on every candidate (WATOM is not OPTIM'd, or its OPTIM box does not reach above 0): every evaluation would be rejected, under SEED ERROR or WARN. The density gates need every density pair weight > 0: set WATOM > 0 (under RHOFORM SIGNED the sign of rho belongs in the AMPGRIDMB amplitudes), or remove the {keys} line(s).", doc = "At startup, without a line: a density pair weight is not above 0 with WATOM at the upper end of its OPTIM box, or at its value in the training configuration when no OPTIM line searches it. {why} names the weight: \"a density pair weight W = <w> (WATOM) is not finite and > 0\"." },
-  { msg = "RHOGATE: seed {name} fails the rho(r) sign gate: {why}. Repair the seed's density (for a WARM seed, its OPTIM'd density values: the rest comes from the -c potential) with tadah refit --edit, relax the gate, or add SEED WARN to evaluate it as a rejected start.", doc = "At startup, without a line, under SEED ERROR: a CONFIG or WARM starting point of the INIT or RESTART chain fails the condition; {name} names it, and {why} gives the smallest and largest density on the window. Under SEED WARN hpo_run.log has a warning instead, and the run goes on." },
+  { msg = "{keys} {what} the density of one DM_REAM many-body term or of one DM_Embed component, and {why}", doc = "At startup, at the RHOGATE or RHOBARGATE line (the first of them when both are given): the many-body term is neither one DM_REAM term nor one DM_Embed component. {keys} is RHOGATE, RHOBARGATE, or both joined by and, with the verb {what} agreeing. {why} says that the configuration has no many-body term, names its many-body term (DM_mJoin is not read by these checks), or gives the number of its DM_Embed components." },
+  { msg = "RHOGATE: under {form} every density rho(r) is >= 0, so the sign condition of RHOGATE holds for every candidate; RHOGATE is taken under RHOFORM SIGNED only (RHOBARGATE under every form)", doc = "At startup, at its line: the density form is NONNEG or MONOTONE." },
+  { msg = "{keys}: the many-body cutoff RCUTMB is not set.", doc = "At startup, at the RHOGATE or RHOBARGATE line (the first of them when both are given): the smallest RCUTMB a candidate can have is not a number above 0." },
+  { msg = "{keys}: {why} on every candidate (WATOM has no OPTIM line, or its OPTIM box does not reach above 0), so every evaluation would be refused before training, under SEED ERROR and SEED WARN alike. The checks of {keys} need every density pair weight > 0, which a WATOM above 0 gives (under RHOFORM SIGNED the sign of rho is that of the AMPGRIDMB amplitudes); without the {keys} line(s) the run makes no such check.", doc = "At startup, at the RHOGATE or RHOBARGATE line (the first of them when both are given): a density pair weight is not above 0 with WATOM at the upper end of its OPTIM box, or at its value in the training configuration when no OPTIM line searches it. {why} names the weight: \"a density pair weight W = <w> (WATOM) is not finite and > 0\"." },
+  { msg = "RHOGATE: seed {name} fails the rho(r) sign gate: {why}. A seed that fails is refused under SEED ERROR, the default, and is evaluated as a rejected start under SEED WARN. tadah refit --edit changes the density of a potential file; a WARM seed takes the values of its search parameters from its file and the others from the training configuration.", doc = "At startup, without a line, under SEED ERROR: a CONFIG or WARM starting point of the INIT or RESTART chain fails the condition; {name} names it, and {why} gives the smallest and largest density on the window. Under SEED WARN hpo_run.log has a warning instead, and the run goes on." },
 ]
 untested = [
   { msg = "{keys}: the many-body cutoff RCUTMB is not set.", why = "Needs a DM_REAM term without RCUTMB, which the training configuration refuses first." },
@@ -1601,13 +1600,12 @@ at = 2
 text = '''
 RHOGATE 1e-5
 RHOGATE 1e-6'''
-error = "RHOGATE given more than once"
+error = "RHOGATE is set twice (first on line 1); each key is given once"
 
 [[key.invalid]]
 wrap = "none"
 check = "startup"
 context = "main_ream_nonneg"
-at = "none"
 doc = "The density form NONNEG keeps rho(r) at or above 0."
 text = '''
 RHOGATE 1e-5
@@ -1618,27 +1616,25 @@ LIB NLOPT
 ALGO LN_SBPLX
 MAXEVAL 10
 ENDOPTIMIZER'''
-error = "RHOGATE: RHOFORM NONNEG: the form guarantees rho >= 0 by construction, so the rho(r) sign gate applies to RHOFORM SIGNED only. Remove the RHOGATE line (RHOBARGATE works under every form)."
+error = "RHOGATE: under RHOFORM NONNEG every density rho(r) is >= 0, so the sign condition of RHOGATE holds for every candidate; RHOGATE is taken under RHOFORM SIGNED only (RHOBARGATE under every form)"
 
 [[key.invalid]]
 wrap = "root"
 check = "startup"
 context = "main_ead"
-at = "none"
 doc = "A configuration whose many-body term is not DM_REAM."
 text = '''
 RHOGATE 1e-5
 OPTIM CGRIDMB (1) 2 3'''
-error = "RHOGATE evaluate the density of a bare DM_REAM many-body term, but this configuration has no DM_REAM many-body term (INITMB true and TYPEMB DM_REAM). Remove the RHOGATE line(s)."
+error = "RHOGATE evaluates the density of one DM_REAM many-body term or of one DM_Embed component, and the many-body term of this configuration is DM_EAD"
 
 [[key.invalid]]
 wrap = "main_ream"
 check = "startup"
 context = "main_ream_watom0"
-at = "none"
 doc = "WATOM 0, not searched: no candidate has a density pair weight above 0."
 text = "RHOGATE 1e-5"
-error = "RHOGATE: a density pair weight W = 0 (WATOM) is not finite and > 0 on every candidate (WATOM is not OPTIM'd, or its OPTIM box does not reach above 0): every evaluation would be rejected, under SEED ERROR or WARN. The density gates need every density pair weight > 0: set WATOM > 0 (under RHOFORM SIGNED the sign of rho belongs in the AMPGRIDMB amplitudes), or remove the RHOGATE line(s)."
+error = "RHOGATE: a density pair weight W = 0 (WATOM) is not finite and > 0 on every candidate (WATOM has no OPTIM line, or its OPTIM box does not reach above 0), so every evaluation would be refused before training, under SEED ERROR and SEED WARN alike. The checks of RHOGATE need every density pair weight > 0, which a WATOM above 0 gives (under RHOFORM SIGNED the sign of rho is that of the AMPGRIDMB amplitudes); without the RHOGATE line(s) the run makes no such check."
 
 [[key.invalid]]
 wrap = "main_ream"
@@ -1647,7 +1643,7 @@ context = "main_ream_negative"
 at = "none"
 doc = "The starting point, the training configuration, has a density that falls below 0."
 text = "RHOGATE 1e-5"
-error = "RHOGATE: seed -c pot (INIT CONFIG) fails the rho(r) sign gate: rho_min -4.9965e-01 at r 2.7990 A, rho_max 2.9956e-01, rel -1.6680e+00 < -tol = -1.0000e-05 on [0.8250, 5.5000] A (20001 points), v = 1.8694e+00. Repair the seed's density (for a WARM seed, its OPTIM'd density values: the rest comes from the -c potential) with tadah refit --edit, relax the gate, or add SEED WARN to evaluate it as a rejected start."
+error = "RHOGATE: seed -c pot (INIT CONFIG) fails the rho(r) sign gate: rho_min -4.9965e-01 at r 2.7990 A, rho_max 2.9956e-01, rel -1.6680e+00 < -tol = -1.0000e-05 on [0.8250, 5.5000] A (20001 points), v = 1.8694e+00. A seed that fails is refused under SEED ERROR, the default, and is evaluated as a rejected start under SEED WARN. tadah refit --edit changes the density of a potential file; a WARM seed takes the values of its search parameters from its file and the others from the training configuration."
 
 [[key.examples]]
 wrap = "none"
@@ -1693,7 +1689,7 @@ METHOD CONFIG
 ENDRESTART
 ENDSTRATEGY
 ENDOPTIMIZER'''
-error = "RHOGATE: seed -c pot (RESTART CONFIG) fails the rho(r) sign gate: rho_min -4.9965e-01 at r 2.7990 A, rho_max 2.9956e-01, rel -1.6680e+00 < -tol = -1.0000e-05 on [0.8250, 5.5000] A (20001 points), v = 1.8694e+00. Repair the seed's density (for a WARM seed, its OPTIM'd density values: the rest comes from the -c potential) with tadah refit --edit, relax the gate, or add SEED WARN to evaluate it as a rejected start."
+error = "RHOGATE: seed -c pot (RESTART CONFIG) fails the rho(r) sign gate: rho_min -4.9965e-01 at r 2.7990 A, rho_max 2.9956e-01, rel -1.6680e+00 < -tol = -1.0000e-05 on [0.8250, 5.5000] A (20001 points), v = 1.8694e+00. A seed that fails is refused under SEED ERROR, the default, and is evaluated as a rejected start under SEED WARN. tadah refit --edit changes the density of a potential file; a WARM seed takes the values of its search parameters from its file and the others from the training configuration."
 
 [[key]]
 id = "ROOT.RHOBARGATE"
@@ -1707,7 +1703,7 @@ args = [
   { name = "f_hi", kind = "number", what = "RHOBARGATE f_hi", doc = "The largest lattice constant, as a fraction of a0. NPTS and SEED follow it, each with its value, in any order and each at most once." },
 ]
 repeat = "error"
-repeat_msg = "RHOBARGATE given more than once"
+repeat_msg = "RHOBARGATE is set twice (first on line {first_line}); each key is given once"
 doc = """\
 The lattice condition of a many-body density: a candidate whose \
 monatomic lattice density rhobar(a) does not decrease strictly for a from \
@@ -1735,10 +1731,10 @@ checks = [
   { msg = "RHOBARGATE a0 must be > 0, got '{tok}'", doc = "Once a0, f_lo and f_hi are read as numbers: a0 is 0 or below." },
   { msg = "RHOBARGATE needs 0 < f_lo < f_hi, got f_lo '{low}', f_hi '{high}'", doc = "Once a0, f_lo and f_hi are read as numbers and a0 is above 0: f_lo is 0 or below, or not below f_hi." },
   { msg = "RHOBARGATE: unexpected token '{tok}'; expected RHOBARGATE <bcc|fcc|hcp> <a0> <f_lo> <f_hi> [NPTS <n>] [SEED ERROR|WARN]", doc = "A word after f_hi, in the place of an option, is not NPTS or SEED." },
-  { msg = "{keys} evaluate the density of a bare DM_REAM many-body term, but {why}. Remove the {keys} line(s).", doc = "At startup, without a line: as for RHOGATE." },
-  { msg = "RHOBARGATE: f_lo = {low} puts the largest reachable RCUTMB, {max} A, at {value} lattice constants of the smallest lattice (a = f_lo a0 = {min} A); the limit is 20. f_lo and f_hi are fractions of a0 (0.75 scans down to 25 % compression): raise f_lo.", doc = "At startup, without a line: the largest RCUTMB a candidate can have, {max}, is more than 20 lattice constants of the smallest lattice, {min}." },
-  { msg = "RHOBARGATE: seed {name} fails the lattice rhobar(a) gate: {why}. Repair the seed's density (for a WARM seed, its OPTIM'd density values: the rest comes from the -c potential) with tadah refit --edit, relax the gate, or add SEED WARN to evaluate it as a rejected start.", doc = "At startup, without a line, under SEED ERROR: a CONFIG or WARM starting point of the INIT or RESTART chain fails the condition; {name} names it. Under SEED WARN hpo_run.log has a warning instead, and the run goes on." },
-  { msg = "RHOBARGATE: the first {name} shell at a = f_hi a0 = {high} A lies at r = {value} A, beyond the smallest cutoff a candidate can have, RCUTMB = {max} A{note}: rhobar(a) would lose its nearest neighbours. Lower f_hi or a0, or raise RCUTMB.", doc = "At startup: the nearest neighbours of the lattice {name} at f_hi a0, {high}, lie at {value}, beyond the smallest RCUTMB a candidate can have, {max}; {note} is \" (the largest CGRIDMB knot over its OPTIM box)\" when that knot sets it." },
+  { msg = "{keys} {what} the density of one DM_REAM many-body term or of one DM_Embed component, and {why}", doc = "At startup, at the RHOGATE or RHOBARGATE line (the first of them when both are given): as for RHOGATE." },
+  { msg = "RHOBARGATE: f_lo = {low} puts the largest reachable RCUTMB, {max} A, at {value} lattice constants of the smallest lattice (a = f_lo a0 = {min} A); the limit is 20. f_lo and f_hi are fractions of a0 (0.75 scans down to 25 % compression), and a larger f_lo puts that RCUTMB at fewer lattice constants.", doc = "At startup, without a line: the largest RCUTMB a candidate can have, {max}, is more than 20 lattice constants of the smallest lattice, {min}." },
+  { msg = "RHOBARGATE: seed {name} fails the lattice rhobar(a) gate: {why}. A seed that fails is refused under SEED ERROR, the default, and is evaluated as a rejected start under SEED WARN. tadah refit --edit changes the density of a potential file; a WARM seed takes the values of its search parameters from its file and the others from the training configuration.", doc = "At startup, without a line, under SEED ERROR: a CONFIG or WARM starting point of the INIT or RESTART chain fails the condition; {name} names it. Under SEED WARN hpo_run.log has a warning instead, and the run goes on." },
+  { msg = "RHOBARGATE: the first {name} shell at a = f_hi a0 = {high} A lies at r = {value} A, beyond the smallest cutoff a candidate can have, RCUTMB = {max} A{note}: rhobar(a) would lose its nearest neighbours; a smaller f_hi or a0, or a larger RCUTMB, keeps the first shell inside the cutoff.", doc = "At startup, at the RHOBARGATE line: the nearest neighbours of the lattice {name} at f_hi a0, {high}, lie at {value}, beyond the smallest RCUTMB a candidate can have, {max}; {note} is \" (the largest CGRIDMB knot over its OPTIM box)\" when that knot sets it." },
 ]
 
 [[key.examples]]
@@ -1786,7 +1782,7 @@ wrap = "main_ream"
 check = "startup"
 at = "none"
 text = "RHOBARGATE bcc 3.304 0.05 1.05"
-error = "RHOBARGATE: f_lo = 0.05 puts the largest reachable RCUTMB, 5.5000 A, at 33.29297821 lattice constants of the smallest lattice (a = f_lo a0 = 0.1652 A); the limit is 20. f_lo and f_hi are fractions of a0 (0.75 scans down to 25 % compression): raise f_lo."
+error = "RHOBARGATE: f_lo = 0.05 puts the largest reachable RCUTMB, 5.5000 A, at 33.29297821 lattice constants of the smallest lattice (a = f_lo a0 = 0.1652 A); the limit is 20. f_lo and f_hi are fractions of a0 (0.75 scans down to 25 % compression), and a larger f_lo puts that RCUTMB at fewer lattice constants."
 
 [[key.invalid]]
 wrap = "root"
@@ -1804,24 +1800,23 @@ at = 2
 text = '''
 RHOBARGATE bcc 3.3 0.9 1.1
 RHOBARGATE fcc 4.2 0.9 1.1'''
-error = "RHOBARGATE given more than once"
+error = "RHOBARGATE is set twice (first on line 1); each key is given once"
 
 [[key.invalid]]
 wrap = "main_ream"
 check = "startup"
-at = "none"
 text = "RHOBARGATE bcc 3.304 0.9 2.0"
-error = "RHOBARGATE: the first bcc shell at a = f_hi a0 = 6.6080 A lies at r = 5.7227 A, beyond the smallest cutoff a candidate can have, RCUTMB = 5.5000 A: rhobar(a) would lose its nearest neighbours. Lower f_hi or a0, or raise RCUTMB."
+error = "RHOBARGATE: the first bcc shell at a = f_hi a0 = 6.6080 A lies at r = 5.7227 A, beyond the smallest cutoff a candidate can have, RCUTMB = 5.5000 A: rhobar(a) would lose its nearest neighbours; a smaller f_hi or a0, or a larger RCUTMB, keeps the first shell inside the cutoff."
 
 [[key.invalid]]
 wrap = "root"
 check = "startup"
 context = "main_ead"
-at = "none"
+at = 2
 text = '''
 OPTIM RCUTMB (1) 4 6
 RHOBARGATE bcc 3.3 0.9 1.1'''
-error = "RHOBARGATE evaluate the density of a bare DM_REAM many-body term, but this configuration has no DM_REAM many-body term (INITMB true and TYPEMB DM_REAM). Remove the RHOBARGATE line(s)."
+error = "RHOBARGATE evaluates the density of one DM_REAM many-body term or of one DM_Embed component, and the many-body term of this configuration is DM_EAD"
 
 [[key]]
 id = "ROOT.QFLUSH"
@@ -2157,9 +2152,9 @@ id = "ROOT.OPTIM_SCALE"
 name = "OPTIM_SCALE"
 blocks = ["ROOT"]
 synopsis = "OPTIM_SCALE AUTO | NONE"
-args = [ { name = "mode", kind = "word", words = ["AUTO", "NONE"], msg = "OPTIM_SCALE must be AUTO (every OPTIM dimension is mapped to the unit box [0,1]) or NONE (optimisers work in raw OPTIM units; ln for LOG dims) -- got '{tok}'" } ]
+args = [ { name = "mode", kind = "word", words = ["AUTO", "NONE"], msg = "OPTIM_SCALE must be AUTO (every OPTIM dimension is mapped to [0, 1]) or NONE (each dimension stays in its OPTIM units: the value for LIN, its natural logarithm for LOG, asinh(x/c) for ASINH <c>), got '{tok}'" } ]
 repeat = "error"
-repeat_msg = "OPTIM_SCALE given more than once"
+repeat_msg = "OPTIM_SCALE is set twice (first on line {first_line}); each key is given once"
 default = { literal = "AUTO" }
 env = "TADAH_OPTIM_SCALE"
 doc = """\
@@ -2167,8 +2162,8 @@ The coordinates the optimiser works in: AUTO maps every OPTIM dimension \
 to [0, 1], and NONE leaves each in its OPTIM units: the value for LIN, \
 its natural logarithm for LOG and asinh(x/c) for ASINH <c>."""
 quirk = """\
-The value is read in any case (auto, None), and its refusal quotes it in \
-upper case, while every key is matched as written."""
+The value is read in any case (auto, None), while every key is matched \
+as written."""
 
 [[key.examples]]
 wrap = "root"
@@ -2182,7 +2177,7 @@ text = "OPTIM_SCALE auto"
 [[key.invalid]]
 wrap = "root"
 text = "OPTIM_SCALE unit"
-error = "OPTIM_SCALE must be AUTO (every OPTIM dimension is mapped to the unit box [0,1]) or NONE (optimisers work in raw OPTIM units; ln for LOG dims) -- got 'UNIT'"
+error = "OPTIM_SCALE must be AUTO (every OPTIM dimension is mapped to [0, 1]) or NONE (each dimension stays in its OPTIM units: the value for LIN, its natural logarithm for LOG, asinh(x/c) for ASINH <c>), got 'unit'"
 
 [[key.invalid]]
 wrap = "root"
@@ -2190,7 +2185,7 @@ at = 2
 text = '''
 OPTIM_SCALE AUTO
 OPTIM_SCALE NONE'''
-error = "OPTIM_SCALE given more than once"
+error = "OPTIM_SCALE is set twice (first on line 1); each key is given once"
 
 [[key.invalid]]
 wrap = "root"
@@ -2209,11 +2204,11 @@ lines = ["RHOGATE"]
 synopsis = "R_LO <r>"
 args = [ { name = "r", kind = "number", min = 0, what = "RHOGATE R_LO", msg = "RHOGATE R_LO must be >= 0, got '{tok}'" } ]
 repeat = "error"
-repeat_msg = "RHOGATE: R_LO given more than once; expected RHOGATE <tol> [R_LO <r>] [NPTS <n>] [SEED ERROR|WARN]"
+repeat_msg = "RHOGATE: R_LO is given twice on this line; each option is given once"
 default = { text = "0.15 RCUTMB of each candidate", unchecked = "RHOGATE takes the window of each candidate from its RCUTMB when it checks it; no setting holds it." }
 checks = [
   { msg = "RHOGATE: R_LO needs a value; expected RHOGATE <tol> [R_LO <r>] [NPTS <n>] [SEED ERROR|WARN]", doc = "R_LO is the last word of the line." },
-  { msg = "RHOGATE R_LO {value} A must lie below the smallest cutoff a candidate can have, RCUTMB = {max} A{note}: the window [R_LO, RCUTMB] would be empty. Lower R_LO.", doc = "At startup: R_LO is not below the smallest RCUTMB a candidate can have, {max}; {note} is \" (the largest CGRIDMB knot over its OPTIM box)\" when that knot sets it." },
+  { msg = "RHOGATE R_LO {value} A must lie below the smallest cutoff a candidate can have, RCUTMB = {max} A{note}: the window [R_LO, RCUTMB] would be empty; a smaller R_LO gives the window a width.", doc = "At startup, at the RHOGATE line: R_LO is not below the smallest RCUTMB a candidate can have, {max}; {note} is \" (the largest CGRIDMB knot over its OPTIM box)\" when that knot sets it." },
 ]
 doc = """\
 The lower end, in Å, of the window [R_LO, RCUTMB] on which RHOGATE checks \
@@ -2241,14 +2236,13 @@ error = "RHOGATE: R_LO needs a value; expected RHOGATE <tol> [R_LO <r>] [NPTS <n
 [[line_option.invalid]]
 wrap = "root"
 text = "RHOGATE 1e-5 R_LO 1 r_lo 2"
-error = "RHOGATE: R_LO given more than once; expected RHOGATE <tol> [R_LO <r>] [NPTS <n>] [SEED ERROR|WARN]"
+error = "RHOGATE: R_LO is given twice on this line; each option is given once"
 
 [[line_option.invalid]]
 wrap = "main_ream"
 check = "startup"
-at = "none"
 text = "RHOGATE 1e-5 R_LO 6"
-error = "RHOGATE R_LO 6 A must lie below the smallest cutoff a candidate can have, RCUTMB = 5.5000 A: the window [R_LO, RCUTMB] would be empty. Lower R_LO."
+error = "RHOGATE R_LO 6 A must lie below the smallest cutoff a candidate can have, RCUTMB = 5.5000 A: the window [R_LO, RCUTMB] would be empty; a smaller R_LO gives the window a width."
 
 [[line_option]]
 id = "RHOGATE.NPTS"
@@ -2257,7 +2251,7 @@ lines = ["RHOGATE"]
 synopsis = "NPTS <n>"
 args = [ { name = "n", kind = "integer", min = 2, max = 10000000, what = "RHOGATE NPTS" } ]
 repeat = "error"
-repeat_msg = "RHOGATE: NPTS given more than once; expected RHOGATE <tol> [R_LO <r>] [NPTS <n>] [SEED ERROR|WARN]"
+repeat_msg = "RHOGATE: NPTS is given twice on this line; each option is given once"
 default = { literal = "20001" }
 checks = [
   { msg = "RHOGATE: NPTS needs a value; expected RHOGATE <tol> [R_LO <r>] [NPTS <n>] [SEED ERROR|WARN]", doc = "NPTS is the last word of the line." },
@@ -2286,7 +2280,7 @@ error = "RHOGATE: NPTS needs a value; expected RHOGATE <tol> [R_LO <r>] [NPTS <n
 [[line_option.invalid]]
 wrap = "root"
 text = "RHOGATE 1e-5 NPTS 100 npts 200"
-error = "RHOGATE: NPTS given more than once; expected RHOGATE <tol> [R_LO <r>] [NPTS <n>] [SEED ERROR|WARN]"
+error = "RHOGATE: NPTS is given twice on this line; each option is given once"
 
 [[line_option]]
 id = "RHOGATE.SEED"
@@ -2295,7 +2289,7 @@ lines = ["RHOGATE"]
 synopsis = "SEED ERROR | WARN"
 args = [ { name = "mode", kind = "word", words = ["ERROR", "WARN"], msg = "RHOGATE SEED must be ERROR or WARN, got '{tok}'" } ]
 repeat = "error"
-repeat_msg = "RHOGATE: SEED given more than once; expected RHOGATE <tol> [R_LO <r>] [NPTS <n>] [SEED ERROR|WARN]"
+repeat_msg = "RHOGATE: SEED is given twice on this line; each option is given once"
 default = { literal = "ERROR" }
 checks = [
   { msg = "RHOGATE: SEED needs a value; expected RHOGATE <tol> [R_LO <r>] [NPTS <n>] [SEED ERROR|WARN]", doc = "SEED is the last word of the line." },
@@ -2328,7 +2322,7 @@ error = "RHOGATE: SEED needs a value; expected RHOGATE <tol> [R_LO <r>] [NPTS <n
 [[line_option.invalid]]
 wrap = "main_ream"
 text = "RHOGATE 1e-5 SEED WARN SEED ERROR"
-error = "RHOGATE: SEED given more than once; expected RHOGATE <tol> [R_LO <r>] [NPTS <n>] [SEED ERROR|WARN]"
+error = "RHOGATE: SEED is given twice on this line; each option is given once"
 
 [[line_option]]
 id = "RHOBARGATE.NPTS"
@@ -2337,7 +2331,7 @@ lines = ["RHOBARGATE"]
 synopsis = "NPTS <n>"
 args = [ { name = "n", kind = "integer", min = 3, max = 10000000, what = "RHOBARGATE NPTS" } ]
 repeat = "error"
-repeat_msg = "RHOBARGATE: NPTS given more than once; expected RHOBARGATE <bcc|fcc|hcp> <a0> <f_lo> <f_hi> [NPTS <n>] [SEED ERROR|WARN]"
+repeat_msg = "RHOBARGATE: NPTS is given twice on this line; each option is given once"
 default = { literal = "1001" }
 checks = [
   { msg = "RHOBARGATE: NPTS needs a value; expected RHOBARGATE <bcc|fcc|hcp> <a0> <f_lo> <f_hi> [NPTS <n>] [SEED ERROR|WARN]", doc = "NPTS is the last word of the line." },
@@ -2363,7 +2357,7 @@ error = "RHOBARGATE: NPTS needs a value; expected RHOBARGATE <bcc|fcc|hcp> <a0> 
 [[line_option.invalid]]
 wrap = "main_ream"
 text = "RHOBARGATE bcc 3.3 0.9 1.1 NPTS 100 NPTS 200"
-error = "RHOBARGATE: NPTS given more than once; expected RHOBARGATE <bcc|fcc|hcp> <a0> <f_lo> <f_hi> [NPTS <n>] [SEED ERROR|WARN]"
+error = "RHOBARGATE: NPTS is given twice on this line; each option is given once"
 
 [[line_option]]
 id = "RHOBARGATE.SEED"
@@ -2372,7 +2366,7 @@ lines = ["RHOBARGATE"]
 synopsis = "SEED ERROR | WARN"
 args = [ { name = "mode", kind = "word", words = ["ERROR", "WARN"], msg = "RHOBARGATE SEED must be ERROR or WARN, got '{tok}'" } ]
 repeat = "error"
-repeat_msg = "RHOBARGATE: SEED given more than once; expected RHOBARGATE <bcc|fcc|hcp> <a0> <f_lo> <f_hi> [NPTS <n>] [SEED ERROR|WARN]"
+repeat_msg = "RHOBARGATE: SEED is given twice on this line; each option is given once"
 default = { literal = "ERROR" }
 checks = [
   { msg = "RHOBARGATE: SEED needs a value; expected RHOBARGATE <bcc|fcc|hcp> <a0> <f_lo> <f_hi> [NPTS <n>] [SEED ERROR|WARN]", doc = "SEED is the last word of the line." },
@@ -2395,14 +2389,14 @@ text = "RHOBARGATE bcc 3.304 0.95 1.05 SEED ERROR"
 [[line_option.invalid]]
 wrap = "root"
 text = "RHOBARGATE bcc 3.3 0.9 1.1 SEED warn seed error"
-error = "RHOBARGATE: SEED given more than once; expected RHOBARGATE <bcc|fcc|hcp> <a0> <f_lo> <f_hi> [NPTS <n>] [SEED ERROR|WARN]"
+error = "RHOBARGATE: SEED is given twice on this line; each option is given once"
 
 [[line_option.invalid]]
 wrap = "main_ream"
 check = "startup"
 at = "none"
 text = "RHOBARGATE bcc 3.304 0.9 1.1 SEED ERROR"
-error = "RHOBARGATE: seed -c pot (INIT CONFIG) fails the lattice rhobar(a) gate: rhobar rises at 208 of 1000 steps on bcc (a0 3.304 A, a/a0 [0.9, 1.1], 1001 points), first at a/a0 = 0.9000, v = 2.9237e-02. Repair the seed's density (for a WARM seed, its OPTIM'd density values: the rest comes from the -c potential) with tadah refit --edit, relax the gate, or add SEED WARN to evaluate it as a rejected start."
+error = "RHOBARGATE: seed -c pot (INIT CONFIG) fails the lattice rhobar(a) gate: rhobar rises at 208 of 1000 steps on bcc (a0 3.304 A, a/a0 [0.9, 1.1], 1001 points), first at a/a0 = 0.9000, v = 2.9237e-02. A seed that fails is refused under SEED ERROR, the default, and is evaluated as a rejected start under SEED WARN. tadah refit --edit changes the density of a potential file; a WARM seed takes the values of its search parameters from its file and the others from the training configuration."
 msg_of = "ROOT.RHOBARGATE"
 
 [[line_option.invalid]]
@@ -2421,12 +2415,12 @@ error = "RHOBARGATE SEED must be ERROR or WARN, got 'MAYBE'"
 
 [[removed]]
 name = "LOCAL"
-hint = "renamed to INNER (the MLSL/AUGLAG inner sub-optimizer block)."
+hint = "renamed to INNER, the block of the local search that an NLopt MLSL or AUGLAG algorithm runs."
 
 [[removed.invalid]]
 wrap = "strategy"
 text = "LOCAL"
-error = "'LOCAL' was removed from the grammar: renamed to INNER (the MLSL/AUGLAG inner sub-optimizer block)."
+error = "'LOCAL' was removed from the grammar: renamed to INNER, the block of the local search that an NLopt MLSL or AUGLAG algorithm runs."
 
 [[removed]]
 name = "ENDLOCAL"
@@ -2498,12 +2492,12 @@ error = "'MULTISTART_BUDGET_PER_START' was removed from the grammar: moved into 
 
 [[removed]]
 name = "STAGE_GLOBAL"
-hint = "removed. Use `STRATEGY { TYPE PRESTAGE ... }` for staged-global runs."
+hint = "STRATEGY TYPE PRESTAGE runs an exploration and then a refinement."
 
 [[removed.invalid]]
 wrap = "strategy"
 text = "STAGE_GLOBAL"
-error = "'STAGE_GLOBAL' was removed from the grammar: removed. Use `STRATEGY { TYPE PRESTAGE ... }` for staged-global runs."
+error = "'STAGE_GLOBAL' was removed from the grammar: STRATEGY TYPE PRESTAGE runs an exploration and then a refinement."
 
 [[removed]]
 name = "RESTART_AFTER_STAGNATION"
@@ -2561,21 +2555,21 @@ error = "'INIT_SEED' was removed from the grammar: renamed to SEED inside an INI
 
 [[removed]]
 name = "INIT_INCLUDE_CONFIG"
-hint = "removed. The values of the training configuration for the search parameters are a starting point only when the INIT block has a `METHOD CONFIG` line."
+hint = "the values of the training configuration for the search parameters are a starting point only when the INIT block has a `METHOD CONFIG` line."
 
 [[removed.invalid]]
 wrap = "init"
 text = "INIT_INCLUDE_CONFIG true"
-error = "'INIT_INCLUDE_CONFIG' was removed from the grammar: removed. The values of the training configuration for the search parameters are a starting point only when the INIT block has a `METHOD CONFIG` line."
+error = "'INIT_INCLUDE_CONFIG' was removed from the grammar: the values of the training configuration for the search parameters are a starting point only when the INIT block has a `METHOD CONFIG` line."
 
 [[removed]]
 name = "INCLUDE_CONFIG"
-hint = "removed. The values of the training configuration for the search parameters are a starting point only when the INIT block has a `METHOD CONFIG` line."
+hint = "the values of the training configuration for the search parameters are a starting point only when the INIT block has a `METHOD CONFIG` line."
 
 [[removed.invalid]]
 wrap = "init"
 text = "INCLUDE_CONFIG true"
-error = "'INCLUDE_CONFIG' was removed from the grammar: removed. The values of the training configuration for the search parameters are a starting point only when the INIT block has a `METHOD CONFIG` line."
+error = "'INCLUDE_CONFIG' was removed from the grammar: the values of the training configuration for the search parameters are a starting point only when the INIT block has a `METHOD CONFIG` line."
 
 [[removed]]
 name = "NOISE_AUTO"
@@ -2611,7 +2605,7 @@ error = "'PC_SRMSE' was removed from the grammar: replaced by PC_SRMSE_GPA, the 
 id = "RULE.density_key_arming"
 title = "RHOGATE and RHOBARGATE need a search of the density"
 check = "parse"
-msg = "{key} cannot act: no OPTIM line searches a key that changes the DM_REAM density or its window ({keys}), so every candidate has the -c density and its one verdict (OPTIM WATOM only scales the density; the verdict does not change). Add an OPTIM line on {keys}, or remove the {key} line."
+msg = "{key} cannot act: no OPTIM line searches a key that changes the density or its window ({keys} of a DM_REAM many-body term, or a DENSITY parameter <ID>.DENSITY.<parameter> of a DM_Embed component), so every candidate has the density of the training configuration and its one verdict (OPTIM WATOM only scales the density; the verdict does not change). The {key} line takes effect with an OPTIM line on one of these keys, anywhere in the file."
 keys = ["ROOT.RHOGATE", "ROOT.RHOBARGATE", "ROOT.OPTIM"]
 doc = """\
 A file with RHOGATE or RHOBARGATE searches a key that changes the DM_REAM \
@@ -2627,14 +2621,14 @@ text = "RHOGATE 1e-5"
 [[rule.invalid]]
 wrap = "root"
 text = "RHOGATE 1e-5"
-error = "RHOGATE cannot act: no OPTIM line searches a key that changes the DM_REAM density or its window (AMPGRIDMB, CGRIDMB, SGRIDMB or RCUTMB), so every candidate has the -c density and its one verdict (OPTIM WATOM only scales the density; the verdict does not change). Add an OPTIM line on AMPGRIDMB, CGRIDMB, SGRIDMB or RCUTMB, or remove the RHOGATE line."
+error = "RHOGATE cannot act: no OPTIM line searches a key that changes the density or its window (AMPGRIDMB, CGRIDMB, SGRIDMB or RCUTMB of a DM_REAM many-body term, or a DENSITY parameter <ID>.DENSITY.<parameter> of a DM_Embed component), so every candidate has the density of the training configuration and its one verdict (OPTIM WATOM only scales the density; the verdict does not change). The RHOGATE line takes effect with an OPTIM line on one of these keys, anywhere in the file."
 
 [[rule.invalid]]
 wrap = "root"
 text = '''
 RHOBARGATE bcc 3.3 0.9 1.1
 RHOGATE 1e-5'''
-error = "RHOBARGATE cannot act: no OPTIM line searches a key that changes the DM_REAM density or its window (AMPGRIDMB, CGRIDMB, SGRIDMB or RCUTMB), so every candidate has the -c density and its one verdict (OPTIM WATOM only scales the density; the verdict does not change). Add an OPTIM line on AMPGRIDMB, CGRIDMB, SGRIDMB or RCUTMB, or remove the RHOBARGATE line."
+error = "RHOBARGATE cannot act: no OPTIM line searches a key that changes the density or its window (AMPGRIDMB, CGRIDMB, SGRIDMB or RCUTMB of a DM_REAM many-body term, or a DENSITY parameter <ID>.DENSITY.<parameter> of a DM_Embed component), so every candidate has the density of the training configuration and its one verdict (OPTIM WATOM only scales the density; the verdict does not change). The RHOBARGATE line takes effect with an OPTIM line on one of these keys, anywhere in the file."
 
 # ---------------------------------------------- environment overrides ----
 # A variable that is set and not empty replaces the key of the target

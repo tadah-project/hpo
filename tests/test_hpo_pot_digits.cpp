@@ -114,7 +114,11 @@ TEST_CASE("HPOTargets: NUMERIC absent -> 18 significant digits, nothing "
  * auto-inserted 'NUMERIC 12' line; if this configuration is (or was copied
  * from) such a best_pot.tadah, delete that line." (this case pinned that
  * sentence, as "the legacy 'NUMERIC 12' is honoured with a WARNING naming
- * the fix"): the advice checks fail. */
+ * the fix"): the advice checks fail.
+ * Pins also: the WARNING names the files it is about, "potential files of
+ * tadah hpo (best_pot.tadah, BDUMP and DUMP archives): NUMERIC 12 limits".
+ * Before the fix that names them so: "HPO potential files (best_pot.tadah,
+ * BDUMP/DUMP archives): NUMERIC 12 limits ...": that check fails. */
 TEST_CASE("HPOTargets: a NUMERIC 12 of the configuration is honoured with a "
           "WARNING naming the fix", "[HPO][numeric][lossless]")
 {
@@ -127,6 +131,8 @@ TEST_CASE("HPOTargets: a NUMERIC 12 of the configuration is honoured with a "
   CHECK(trg.pot_digits_explicit);
   const std::string body = journal.close_and_read();
   CHECK(body.find("WARNING") != std::string::npos);
+  CHECK(body.find("potential files of tadah hpo (best_pot.tadah, BDUMP and "
+                  "DUMP archives): NUMERIC 12 limits") != std::string::npos);
   CHECK(body.find("NUMERIC 12 limits every non-integer number of the "
                   "potential's key/value lines") != std::string::npos);
   CHECK(body.find("integers are written exactly") != std::string::npos);

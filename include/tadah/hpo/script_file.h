@@ -126,14 +126,14 @@ private:
        * with O_EXCL and mode 0600, trying other names while one exists. */
       fd = ::mkostemps(name.data(), kSuffixLen, O_CLOEXEC);
       if (fd < 0)
-        throw std::runtime_error("ScriptFile: cannot create a file in " +
+        throw std::runtime_error("cannot create a file in " +
                                  dir.string() + ": " + std::strerror(errno));
       /* The name goes at once: from here on the file exists only through
        * the descriptor. */
       if (::unlink(name.c_str()) != 0) {
         const int err = errno;
         ::close(fd);
-        throw std::runtime_error("ScriptFile: cannot unlink " + name + ": " +
+        throw std::runtime_error("cannot unlink " + name + ": " +
                                  std::strerror(err));
       }
       std::size_t off = 0;
@@ -143,7 +143,7 @@ private:
           if (errno == EINTR) continue;
           const int err = errno;
           ::close(fd);
-          throw std::runtime_error("ScriptFile: cannot write the rendered "
+          throw std::runtime_error("cannot write the rendered "
                                    "script (" + name + ", unlinked): " +
                                    std::strerror(err));
         }
@@ -156,7 +156,7 @@ private:
       if (probe < 0) {
         const int err = errno;
         ::close(fd);
-        throw std::runtime_error("ScriptFile: cannot reopen the rendered "
+        throw std::runtime_error("cannot reopen the rendered "
                                  "script through " + path + ": " +
                                  std::strerror(err));
       }

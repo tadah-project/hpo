@@ -453,6 +453,32 @@ TEST_CASE_METHOD(PTFixture,
 }
 
 TEST_CASE_METHOD(PTFixture,
+                 "tadah refit compact: an EXPLORE UNIFORM without INIT points "
+                 "is a warning that says what gives a global search",
+                 "[compact][refit][stages]") {
+  /* Pins: EXPLORE with ALGO UNIFORM and no INIT block is the WARNING
+   * "tadah refit: EXPLORE stage 0 is UNIFORM (no global search) and INIT is
+   * empty, so no global structure search runs; a global EXPLORE ALGO, such
+   * as GN_MLSL_LDS, or INIT points give one."
+   * Before the fix: "tadah refit: EXPLORE rung 0 is UNIFORM (no global
+   * search) and INIT is empty — the global structure search is disabled.
+   * Set a global EXPLORE ALGO (e.g. GN_MLSL_LDS) or provide INIT guesses
+   * for robustness.": the check fails. */
+  ScopedTempDir tmp;
+  write_synth_eam("synth.eam.alloy");
+  Context c = compact_context("SIGNED");
+  c.remove("EXPLORE");
+  add_block(c, "EXPLORE", "OPTIMIZER ALGO UNIFORM ENDOPTIMIZER");
+  const auto [what, logged] = run_compact(c);
+  INFO(logged);
+  CHECK(what == "");
+  CHECK(logged.find("tadah refit: EXPLORE stage 0 is UNIFORM (no global "
+                    "search) and INIT is empty, so no global structure "
+                    "search runs; a global EXPLORE ALGO, such as GN_MLSL_LDS, "
+                    "or INIT points give one.") != std::string::npos);
+}
+
+TEST_CASE_METHOD(PTFixture,
                  "tadah refit compact: above tolerance, the log names the "
                  "compact fit's keys, not the dense fit's",
                  "[compact][refit][mode_keys]") {

@@ -301,8 +301,8 @@ FdSettings fd_settings_of(const OptimizerSpec& sp)
                 "PARAM diff_method 2 (RIDDERS) is refused: Ridders' "
                 "extrapolation ignored PARAM fd_step, started from a step of "
                 "0.32 x max(|u|, 1) -- outside most OPTIM boxes -- and took "
-                "up to 20 evaluations per parameter; use diff_method 0 "
-                "(CENTRAL, the default) or 1 (FORWARD)");
+                "up to 20 evaluations per parameter; diff_method 0 "
+                "(CENTRAL, the default) and 1 (FORWARD) take PARAM fd_step");
         } else {
             throw std::runtime_error(dm_rule + " (got " + num(v) + ")");
         }
