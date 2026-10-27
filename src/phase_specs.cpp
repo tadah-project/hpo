@@ -183,7 +183,8 @@ std::vector<PhaseSpec> strategy_phase_specs(const OptimizerSpec& spec)
         case StrategyType::PRESTAGE: {
             if (spec.prestage)
                 phases.push_back({"the PRESTAGE exploration (EXPLORE block)",
-                                  *spec.prestage});
+                                  *spec.prestage, /*inner=*/false,
+                                  /*exploration=*/true});
             const std::size_t topk = std::max<std::size_t>(1, spec.stage_topk);
             OptimizerSpec refine = prestage_refinement_spec(
                 spec, std::vector<std::vector<double>>(topk,

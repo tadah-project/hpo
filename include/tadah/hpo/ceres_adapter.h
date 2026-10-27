@@ -174,7 +174,7 @@ inline void validate_ceres_common_(const OptimizerSpec& sp,
         throw std::runtime_error("CERES:" + algo + " does not support POPULATION");
     /* GradientProblemSolver draws no random numbers; DLIB:BFGS refuses SEED
      * likewise. */
-    if (sp.seed)
+    if (sp.seed && !sp.seed_seeds_exploration)
         throw std::runtime_error("CERES:" + algo + " does not support SEED");
     if (sp.num_threads)
         throw std::runtime_error("CERES:" + algo + " does not support THREADS "
@@ -227,15 +227,28 @@ inline void validate_ceres_common_(const OptimizerSpec& sp,
     static const std::vector<std::string> common_params = {
         "tol_gradinf", "max_iter", "max_ls_iter"
     };
+    const auto supported = [&](const std::string& key) {
+        return std::find(common_params.begin(), common_params.end(), key) !=
+               common_params.end();
+    };
+    const auto unsupported = [&](const std::string& key) {
+        return std::runtime_error(
+            "CERES:" + algo + " does not support PARAM " + key +
+            "; supported: fd_step, fd_kernel, diff_method, tol_gradinf, "
+            "max_iter, max_ls_iter");
+    };
     for (const auto& kv : sp.param) {
         if (is_fd_param(kv.first)) continue;
-        if (std::find(common_params.begin(), common_params.end(), kv.first)
-                == common_params.end()) {
-            throw std::runtime_error(
-                "CERES:" + algo + " does not support PARAM " + kv.first +
-                "; supported: fd_step, fd_kernel, diff_method, tol_gradinf, "
-                "max_iter, max_ls_iter");
-        }
+        if (!supported(kv.first)) throw unsupported(kv.first);
+    }
+    /* A word (OptimizerSpec::param_raw): refused under a name the solver
+     * does not take as a number is, and under one of its keys, which take
+     * numbers; the finite-difference keys judge theirs. */
+    for (const auto& kv : sp.param_raw) {
+        if (is_fd_param(kv.first)) continue;
+        if (!supported(kv.first)) throw unsupported(kv.first);
+        throw std::runtime_error("CERES:" + algo + ": PARAM " + kv.first +
+                                 " takes a number (got '" + kv.second + "')");
     }
     if (auto it = sp.param.find("tol_gradinf"); it != sp.param.end())
         if (!(it->second > 0.0))

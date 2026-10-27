@@ -256,12 +256,10 @@ public:
  *     PLAIN. validate_hpo_setup() applies the rule at startup; validate()
  *     applies the same function again when the policy runs.
  *
- * Parallelism: the inner optimisers are not natively thread-safe in all
- * cases (NLopt's `nlopt::opt` is, dlib's `find_min_box_constrained`
- * uses local state). The starts run sequentially: PARALLEL is parsed and
- * range-checked, and a value > 1 only draws a warning. Each per-start run
- * still benefits from the shared worker pool (THREADS) that parallelises
- * the pc_lammps fan-out within a single evaluation.
+ * The starts run one after another (the parser refuses PARALLEL, which
+ * asked for starts at the same time). Each start's evaluations run on the
+ * shared worker pool (THREADS), which runs the pc_lammps fan-out and the
+ * training and prediction of an evaluation.
  *
  * A start that fails is logged and the next one runs; a batch in which
  * every start failed fails the run (detail::run_starts). Two exceptions
@@ -280,11 +278,10 @@ public:
 template<class Vec, class Runner>
 class MultiStartPolicy : public RunPolicy<Vec,Runner> {
 public:
-  MultiStartPolicy(std::size_t k, std::size_t parallel,
+  MultiStartPolicy(std::size_t k,
                    std::optional<std::size_t> budget_per_start = std::nullopt,
                    detail::StartBatch batch = detail::StartBatch::MultiStart)
-      : k_(k), parallel_(parallel), budget_per_start_(budget_per_start),
-        batch_(batch) {}
+      : k_(k), budget_per_start_(budget_per_start), batch_(batch) {}
 
   /* The startup rules (strategy_rules.h), applied again when the policy
    * runs: a safety net for specs built outside HPOTargets. */
@@ -309,27 +306,48 @@ public:
 
     const std::size_t actual_k = plan.starts;
     if (actual_k < k_) {
-      HPOLog::instance().warning(
-          "MULTISTART N_STARTS " + std::to_string(k_) + " requested but the "
-          "resolved INIT chain produced only " +
-          std::to_string(spec.optim_init.size()) +
-          " starting point(s); running " + std::to_string(actual_k) +
-          " start(s). Add INIT points (e.g. METHOD LHS/RANDOM/SOBOL "
-          "with K >= " + std::to_string(k_) + ") or lower N_STARTS.");
+      /* The advice names settings the parser takes: N_STARTS is 2 or more
+       * (one start is STRATEGY TYPE PLAIN), so a lower N_STARTS is named
+       * only for two starts or more. When K_TOTAL keeps the chain to fewer
+       * points than N_STARTS, the advice is about K_TOTAL, which may be
+       * raised only below the points of the METHOD lines (one at or above
+       * them caps nothing and is refused when the file is read). */
+      const std::string k = std::to_string(k_);
+      const std::string got = std::to_string(actual_k);
+      const std::optional<std::size_t>& cap = spec.init_strategy_spec.k_total;
+      const bool capped = cap && *cap == actual_k;
+      const std::size_t drawn =
+          capped ? build_init_strategy(spec.init_strategy_spec)->default_k()
+                 : 0;
+      const std::string more =
+          "A chain of " + k + " or more starting points (METHOD LHS " + k +
+          ", RANDOM " + k + " or SOBOL " + k + ")";
+      std::string advice;
+      if (!capped)
+        advice = more + " runs " + k + " starts";
+      else if (drawn > k_)
+        advice = "With K_TOTAL " + k + ", or without K_TOTAL, " + k +
+                 " starts run";
+      else if (drawn == k_)
+        advice = "Without K_TOTAL, " + k + " starts run";
+      else
+        advice = more + " without K_TOTAL runs " + k + " starts";
+      std::string msg =
+          "MULTISTART N_STARTS " + k + " requested but the resolved INIT "
+          "chain produced only " + got +
+          (actual_k == 1 ? " starting point" : " starting points") +
+          (capped ? " (K_TOTAL " + got + ")" : "") +
+          (actual_k == 1 ? "; running 1 start, which is STRATEGY TYPE PLAIN."
+                         : "; running " + got + " starts.") +
+          " " + advice;
+      if (actual_k >= 2)
+        msg += ", and N_STARTS " + got + " asks for the " + got +
+               " that run";
+      HPOLog::instance().warning(msg + ".");
     }
     HPOLog::instance().info(
         "MULTISTART: running " + std::to_string(actual_k) +
-        " starts (parallel=" + std::to_string(parallel_) + ")");
-
-    /* Sequential per-start runs. Parallelism deferred until we have
-     * thread-safety audits for each inner adapter; PARALLEL is parsed
-     * and range-checked but not honoured > 1. */
-    if (parallel_ > 1) {
-      HPOLog::instance().warning(
-          "MULTISTART PARALLEL > 1 not yet implemented; running starts "
-          "sequentially. The shared THREADS pool still parallelises the "
-          "pc_lammps fan-out within each evaluation.");
-    }
+        (actual_k == 1 ? " start" : " starts"));
 
     /* Each start's MAXEVAL: BUDGET_PER_START, or the outer MAXEVAL split
      * over the starts (plan_multistart); without either the starts run
@@ -417,7 +435,6 @@ private:
   }
 
   std::size_t k_;
-  std::size_t parallel_;
   std::optional<std::size_t> budget_per_start_;
   detail::StartBatch batch_;
 };
@@ -555,7 +572,7 @@ public:
     /* The refinement is a batch of seeds: each in its own window, a
      * stagnating seed reported after the last one. */
     MultiStartPolicy<Vec,Runner> refiner(
-        std::max<std::size_t>(topk.size(), 1), 1, std::nullopt,
+        std::max<std::size_t>(topk.size(), 1), std::nullopt,
         detail::StartBatch::Refinement);
 
     /* An exploration that asked for no point: no candidate and nothing
@@ -926,8 +943,7 @@ build_run_policy(const OptimizerSpec& spec, const HPOTargets* targets = nullptr)
 
     case StrategyType::MULTISTART:
       inner = std::make_unique<MultiStartPolicy<Vec,Runner>>(
-          spec.multistart.n_starts, spec.multistart.parallel,
-          spec.multistart.budget_per_start);
+          spec.multistart.n_starts, spec.multistart.budget_per_start);
       break;
 
     case StrategyType::PLAIN:

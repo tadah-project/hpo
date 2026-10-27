@@ -18,17 +18,27 @@ using namespace tadah::hpo;
 /* ANNEAL-family key listing, generated from the registry
  * (blueprint/anneal_keys.toml -> anneal_keys_gen.h): names, defaults,
  * enum tokens, grouping, and importance order all come from the same
- * tables Knobs::parse validates against, so this text cannot drift. */
+ * tables Knobs::parse validates against, so this text cannot drift. A key
+ * the family refuses (a KindReject rule) is not listed, and each default
+ * is a value the family takes or the default_doc of the key in words. */
 static void print_anneal_family_caps(std::ostream& os, unsigned kind_mask)
 {
     namespace reg = tadah::hpo::anneal_registry;
     static const char* const group_order[] = {
         "budget", "temperature", "ladder", "swaps", "steps", "init",
         "stopping"};
+    const auto refused = [&](const reg::AnnealKeyInfo& k) {
+        for (const auto& r : reg::kRules)
+            if (r.type == reg::AnnealRuleType::KindReject &&
+                std::string_view(r.key) == k.name && (r.kind_mask & kind_mask))
+                return true;
+        return false;
+    };
     for (const char* group : group_order) {
         std::vector<const reg::AnnealKeyInfo*> keys;
         for (const auto& k : reg::kKeys)
-            if ((k.kinds & kind_mask) && std::string_view(group) == k.group)
+            if ((k.kinds & kind_mask) && std::string_view(group) == k.group &&
+                !refused(k))
                 keys.push_back(&k);
         if (keys.empty()) continue;
         std::sort(keys.begin(), keys.end(),
@@ -39,12 +49,16 @@ static void print_anneal_family_caps(std::ostream& os, unsigned kind_mask)
         for (const auto* k : keys) {
             bool has = false;
             double def = 0.0;
+            const char* def_doc = nullptr;
             if (kind_mask == reg::KIND_SERIAL) {
                 has = k->has_def_serial; def = k->def_serial;
+                def_doc = k->def_doc_serial;
             } else if (kind_mask == reg::KIND_PT) {
                 has = k->has_def_pt; def = k->def_pt;
+                def_doc = k->def_doc_pt;
             } else {
                 has = k->has_def_pa; def = k->def_pa;
+                def_doc = k->def_doc_pa;
             }
             std::ostringstream head;
             head << "PARAM " << k->name;
@@ -57,6 +71,12 @@ static void print_anneal_family_caps(std::ostream& os, unsigned kind_mask)
                     head << " (default "
                          << k->enum_values[static_cast<std::size_t>(def)]
                          << ")";
+            } else if (def_doc) {
+                /* A rule rather than a value (a calibration, AUTO with
+                 * what it takes): the registry's words. */
+                head << " (default: " << def_doc << ")";
+            } else if (k->type == reg::AnnealKeyType::Bool) {
+                head << (def != 0.0 ? " (default ON)" : " (default OFF)");
             } else if (has && k->accepts_auto &&
                        (k->auto_kinds & kind_mask) && def == k->auto_value) {
                 /* 1.5.0: print the TOKEN the user has to type. These keys
@@ -66,10 +86,10 @@ static void print_anneal_family_caps(std::ostream& os, unsigned kind_mask)
                 head << " (default AUTO)";
             } else if (has && k->accepts_off && def == k->off_value) {
                 head << " (default OFF)";
-            } else if (has) {
-                head << " (default " << def << ")";
             } else {
-                head << " (default auto)";
+                /* gen_anneal_keys.py gives every kind that takes the key a
+                 * default or a default_doc. */
+                head << " (default " << def << ")";
             }
             /* AUTO only for the kinds that take it (auto_kinds). */
             const bool takes_auto =
@@ -113,18 +133,19 @@ static void print_stops(std::ostream& os, const std::string& lib,
     os << "   * Stops that end a run: " << list << "\n";
     if (c->tolerance_note[0])
         os << "     " << c->tolerance_note << ".\n";
-    /* require_stop() (backend_rules.h): a tolerance counts above 0, and an
-     * active RESTART's stagnation stop counts too -- but for a backend that
+    /* require_stop() (backend_rules.h): a tolerance counts above 0, and the
+     * stagnation stop of a RESTART block counts too (every RESTART block
+     * the parser takes restarts the search) -- but for a backend that
      * ignores NLopt's forced stop, only MAXEVAL. */
     const bool tolerances = c->supports_ftol_rel || c->supports_ftol_abs ||
                             c->supports_xtol_rel || c->supports_xtol_abs;
     if (c->needs_stop && c->ignores_forced_stop)
-        os << "     MAXEVAL is required (MAXTIME, STOPVAL and an active "
-              "RESTART are not enough): " << c->stop_note << ".\n";
+        os << "     MAXEVAL is required (MAXTIME, STOPVAL and a RESTART "
+              "block are not enough): " << c->stop_note << ".\n";
     else if (c->needs_stop)
         os << "     One of them is required"
            << (tolerances ? " (a tolerance above 0)" : "")
-           << ", or an active RESTART: " << c->stop_note << ".\n";
+           << ", or a RESTART block: " << c->stop_note << ".\n";
 }
 
 /* One, easily extendable, registry ---------------------------------*/
@@ -222,8 +243,8 @@ static void print_dlib_caps(std::ostream& os, const std::string& algo)
             "   * PARAM fd_step <double>      (finite-difference step, default 1e-6)\n"
             "   * PARAM fd_kernel inhouse|ceres (the step rule)\n"
             "   * PARAM diff_method 0|1       (CENTRAL, default, or FORWARD)\n"
-            "   * PARAM tol_gradinf <double>  (stop once the L2 norm of the gradient\n"
-            "                   falls below it; alternative to FTOL_ABS)\n"
+            "   * PARAM tol_gradinf <double>  (stop once the largest component of the\n"
+            "                   gradient falls below it, as CERES's; alternative to FTOL_ABS)\n"
             "   * a point that no step can move (each coordinate at a bound its\n"
             "                   gradient points out of, or a step below its\n"
             "                   rounding), or whose line search from the farthest\n"
@@ -240,8 +261,31 @@ static void print_nlopt_caps(std::ostream& os,const std::string& algo)
     if (a==NLOPT_NUM_ALGORITHMS) { os<<"   * (unknown)\n"; return; }
 
     print_stops(os, "NLOPT", algo);
-    os<<"   * PARAM <name> <value>  passed to NLopt as its algorithm parameter\n"
-        "     of that name\n";
+    /* The PARAM keys NLopt reads for it (OptimizerCaps::algorithm_params);
+     * any other name is refused, the finite-difference keys aside. */
+    if (const OptimizerCaps* c = find_optimizer_caps("NLOPT", algo)) {
+        if (c->algorithm_params.empty()) {
+            os<<"   * PARAM: NLopt reads no PARAM key of this algorithm\n";
+        } else {
+            const std::string head =
+                "   * PARAM <name> <value>  the PARAM keys NLopt reads for it:";
+            os << head;
+            /* The names after it, on lines of up to 72 characters. */
+            std::size_t width = head.size();
+            for (std::size_t i = 0; i < c->algorithm_params.size(); ++i) {
+                const std::string& p = c->algorithm_params[i];
+                const std::string item = p + (i + 1 < c->algorithm_params.size()
+                                                  ? "," : "");
+                if (width + 1 + item.size() > 72) {
+                    os << "\n    ";
+                    width = 4;
+                }
+                os << " " << item;
+                width += 1 + item.size();
+            }
+            os << "\n";
+        }
+    }
     if (algo[0]=='G')        os<<"   * global optimiser\n";
     if (algo[1]=='N') os<<"   * derivative-free\n";
     /* Initial-step policy from the registry (single source of truth). */
@@ -321,8 +365,8 @@ static void print_asa_caps(std::ostream& os, const std::string& algo)
           "   * single-instance: one ASA run per process at a time\n"
           "   * stops: MAXEVAL / MAXTIME / STOPVAL plus ASA's own\n"
           "     Limit_* and plateau options below; FTOL/XTOL rejected\n"
-          "   * SEED seeds the proposal stream; INIT seed auto-sets\n"
-          "     User_Initial_Parameters\n"
+          "   * SEED seeds the proposal stream; ASA starts at the first\n"
+          "     starting point of the INIT block\n"
           "   * PARAM keys use the original ASA option spellings\n"
           "     (case-sensitive); an option of each dimension accepts Name[i]\n";
     print_asa_param_table(os);

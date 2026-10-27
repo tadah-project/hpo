@@ -441,11 +441,13 @@ TEST_CASE("End status: DLIB:GFS records a spent MAXEVAL",
     CHECK(lr.status() == "DLIB:GFS: MAXEVAL reached");
 }
 
-/* DLIB:GFS is deterministic: a SEED of its spec has no effect on its
- * search, which it says once. A PRESTAGE refinement's SEED that also seeds
- * the exploration (an exploration without a seed of its own takes the
- * STRATEGY-level one) is said to: "SEED has no effect on the refinement: it
- * seeds the exploration (EXPLORE SEED 7)".
+/* DLIB:GFS is deterministic: a SEED of its spec is refused when its
+ * search starts, as at startup ("DLIB:GFS does not use SEED: it draws no
+ * random numbers; remove it"; it was warned about: "SEED has no effect on
+ * the search. Randomise via the INIT block ..."). A PRESTAGE refinement's
+ * SEED that also seeds the exploration (an exploration without a seed of
+ * its own takes the STRATEGY-level one) is said to: "SEED has no effect on
+ * the refinement: it seeds the exploration (EXPLORE SEED 7)".
  * Before the fix: the refinement said "SEED has no effect on the search.
  * Randomise via the INIT block (e.g. METHOD RANDOM K with SEED) instead.",
  * while the journal named the same SEED as the exploration's. */
@@ -459,10 +461,9 @@ TEST_CASE("End status: DLIB:GFS says what its SEED does",
     {
         LoggedRun lr;
         StubHost host{bowl};
-        tadah::hpo::run_dlib_global_impl(sp, host);
-        CHECK_THAT(lr.read(), Catch::Contains(
-                                  "SEED has no effect on the search. "
-                                  "Randomise via the INIT block"));
+        CHECK_THROWS_WITH(tadah::hpo::run_dlib_global_impl(sp, host),
+                          "DLIB:GFS does not use SEED: it draws no random "
+                          "numbers; remove it");
     }
     OptimizerSpec outer = sp;
     outer.strategy_type = tadah::hpo::StrategyType::PRESTAGE;
@@ -842,9 +843,11 @@ TEST_CASE("End status: the head of a Ceres message names its ending without "
 
 /* Pins: the ALGO help says what each DLIB:BFGS stop tests: FTOL_ABS the
  * change of the loss from one iteration to the next, PARAM tol_gradinf the
- * L2 norm of the gradient (dlib's gradient_norm_stop_strategy tests
- * length(g)).
- * Before the fix: "gradient-inf-norm stop", which is not what dlib tests. */
+ * largest component of the gradient, as CERES's gradient_tolerance.
+ * Before the fix: "gradient-inf-norm stop" while dlib's
+ * gradient_norm_stop_strategy tested the L2 norm, length(g), and then "the
+ * L2 norm of the gradient", until tol_gradinf tested the largest
+ * component. */
 TEST_CASE("End status: the DLIB:BFGS help says what its stops test",
           "[HPO][stop_status][caps]")
 {
@@ -856,8 +859,10 @@ TEST_CASE("End status: the DLIB:BFGS help says what its stops test",
     CHECK(s.find("   * FTOL_ABS     (objective-delta stop, default 1e-7: the "
                  "loss\n                   changed by less from one iteration "
                  "to the next)\n") != std::string::npos);
-    CHECK(s.find("   * PARAM tol_gradinf <double>  (stop once the L2 norm of "
-                 "the gradient\n                   falls below it; alternative "
-                 "to FTOL_ABS)\n") != std::string::npos);
+    CHECK(s.find("   * PARAM tol_gradinf <double>  (stop once the largest "
+                 "component of the\n                   gradient falls below "
+                 "it, as CERES's; alternative to FTOL_ABS)\n") !=
+          std::string::npos);
     CHECK(s.find("inf-norm") == std::string::npos);
+    CHECK(s.find("L2 norm") == std::string::npos);
 }

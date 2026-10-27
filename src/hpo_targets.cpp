@@ -24,10 +24,12 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <deque>
 #include <filesystem>
 #include <iomanip>
 #include <iostream>
+#include <limits>
 #include <map>
 #include <set>
 #include <optional>
@@ -214,6 +216,7 @@ void HPOTargets::Opti::resize(size_t s) {
   line.resize(s, 0);
   config.resize(s);
   scale.resize(s);
+  tagged.resize(s, false);
   origin.resize(s, BoxOrigin::Explicit);
   lowbound.resize(s, 0);
   highbound.resize(s, 0);
@@ -262,8 +265,9 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn,
    * to every sub-spec. spec.low/high are the INTERNAL bounds. */
   /* Env override TADAH_OPTIM_SCALE=AUTO|NONE (an A/B of the coordinate
    * system without editing the target file). Read here because the space
-   * is built in this constructor. */
-  if (const char* e = std::getenv("TADAH_OPTIM_SCALE")) {
+   * is built in this constructor. An empty value is ignored, as an empty
+   * value of the other overrides is (the shell's way of clearing it). */
+  if (const char* e = std::getenv("TADAH_OPTIM_SCALE"); e && *e) {
     std::string v = e;
     for (auto& ch : v) ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
     if      (v == "AUTO") scale_policy_.normalise = true;
@@ -457,19 +461,34 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn,
     const bool ignores_start =
         registered && search_ignoring_start(spec).has_value();
     if (spec.optim_init.size() > 1 && !multi_seed_consumer && !ignores_start) {
-      /* Surface compatible options from the live caps registry rather
-       * than hard-coding LIB:ALGO names -- the registry is the single
-       * source of truth for who consumes >1 seed in one run. */
+      /* The strategies consume them (MULTISTART needs N_STARTS 2 or more,
+       * PRESTAGE an EXPLORE block), so this is a PLAIN search. The advice
+       * names only what takes the points with this optimiser: MULTISTART
+       * when it runs the optimiser from each point (runs_from_each_start,
+       * the rule of require_multistart_backend, which refuses a global
+       * optimiser that takes one starting point), and an optimiser that
+       * takes several in one run, from the live caps registry, alone or as
+       * the PRESTAGE exploration, which is given these points; a
+       * single-start exploration would take the first only. */
       auto multi_seed = filter_optimizer_caps(
           [](const OptimizerCaps& c) { return c.accepts_multi_seed; });
-      std::cerr << "[HPO] WARNING: INIT chain produced "
-                << spec.optim_init.size() << " seeds but " << spec.lib
-                << ":" << spec.algo << " consumes only the first; "
-                << (spec.optim_init.size() - 1)
-                << " seed(s) will be discarded. "
-                << "Use STRATEGY TYPE MULTISTART (N_STARTS >= 2) or TYPE "
-                   "PRESTAGE, or pick a multi-seed backend (" << format_caps_list(multi_seed)
-                << ") to use them.\n";
+      const std::size_t n = spec.optim_init.size();
+      const std::string name = spec.lib + ":" + spec.algo;
+      const std::string takes_all =
+          "optimiser that takes several starting points in one run (" +
+          format_caps_list(multi_seed) + ") takes them all, also as the "
+          "exploration of STRATEGY TYPE PRESTAGE.";
+      std::ostringstream oss;
+      oss << "INIT chain produced " << n << " starting points but " << name
+          << " starts from the first only; the other " << (n - 1)
+          << (n == 2 ? " is" : " are") << " not used. ";
+      if (runs_from_each_start(optimizer_caps(spec)))
+        oss << "STRATEGY TYPE MULTISTART with N_STARTS " << n << " starts "
+            << name << " from each of them, and an " << takes_all;
+      else
+        oss << "An " << takes_all;
+      std::cerr << "[HPO] WARNING: " << oss.str() << "\n";
+      HPOLog::instance().warning(oss.str());
     }
   }
 
@@ -574,8 +593,9 @@ static bool dispatch_init_attr(const std::string& key,
         return true;
     }
     if (key=="K_TOTAL") {
-        a.k_total = parse_uint(single_value(iss, key), key, 0,
-                               kMaxStartingPoints);
+        /* A cap of the points the METHOD lines give: 1 or more, and below
+         * their number, checked when the file is read (HPOTargets::read). */
+        a.k_total = parse_uint(single_value(iss, key), key, 1);
         return true;
     }
     if (key=="SEED") {
@@ -640,6 +660,15 @@ static std::string inner_attr_keys_joined(const char* sep)
 /* Helper: throw a "renamed to X" error for any old-grammar keyword.
  * Returns true if the key was a known-old keyword (caller should not
  * fall through to an "unknown key" error). */
+/* Why PARALLEL (and MULTISTART_PARALLEL, its form before the STRATEGY
+ * block) is refused: it asked for the starts of TYPE MULTISTART to run at
+ * the same time, and they run one after another; the workers of the run
+ * are THREADS. */
+static constexpr const char* kParallelRemoved =
+    "the starts of STRATEGY TYPE MULTISTART run one after another; THREADS "
+    "sets the number of workers that run the work of the evaluations (the "
+    "LAMMPS scripts and the training and prediction of the potential).";
+
 static bool reject_old_keyword(const std::string& key)
 {
     struct Rename { const char* old_; const char* hint; };
@@ -649,7 +678,8 @@ static bool reject_old_keyword(const std::string& key)
         {"PRESTAGE",                    "replaced by `STRATEGY { TYPE PRESTAGE EXPLORE { ... } [REFINE { ... }] }` (REFINE is optional; without it the STRATEGY-level LIB/ALGO refines)."},
         {"ENDPRESTAGE",                 "replaced by ENDEXPLORE / ENDREFINE / ENDSTRATEGY (see STRATEGY block)."},
         {"MULTISTART",                  "moved into `STRATEGY { TYPE MULTISTART N_STARTS N }`."},
-        {"MULTISTART_PARALLEL",         "moved into `STRATEGY { TYPE MULTISTART PARALLEL N }`."},
+        {"MULTISTART_PARALLEL",         kParallelRemoved},
+        {"PARALLEL",                    kParallelRemoved},
         {"MULTISTART_BUDGET_PER_START", "moved into `STRATEGY { TYPE MULTISTART BUDGET_PER_START N }`."},
         {"STAGE_GLOBAL",                "removed. Use `STRATEGY { TYPE PRESTAGE ... }` for staged-global runs."},
         {"RESTART_AFTER_STAGNATION",    "moved into `STRATEGY { RESTART { AFTER_STAGNATION N } ENDRESTART }`."},
@@ -740,6 +770,22 @@ void HPOTargets::read(const std::string& fn)
     struct TypeKeySeen { std::string key; std::size_t line; std::string text; };
     std::vector<TypeKeySeen> type_keys;
     bool strategy_type_given = false;
+    /* The TYPE line (its number and text) and whether the block has an
+     * N_STARTS line: TYPE MULTISTART needs N_STARTS 2 or more, checked
+     * when the block ends (N_STARTS may follow TYPE). */
+    std::size_t type_line = 0;
+    std::string type_text;
+    bool n_starts_given = false;
+    /* The last ENDRESTART line and its text (0 before one): a RESTART
+     * block -- the RESTART blocks of the STRATEGY block make one -- needs
+     * AFTER_STAGNATION and MAX, checked when the STRATEGY block ends. */
+    std::size_t endrestart_line = 0;
+    std::string endrestart_text;
+    /* The K_TOTAL line of each set of starting points (an INIT chain, the
+     * RESTART chain) and its text: whether it caps anything is known once
+     * every block that adds to the chain has been read. */
+    std::map<const InitStrategySpec*, std::pair<std::size_t, std::string>>
+        k_total_lines;
     /* The line of the STRATEGY block (0 before it): there is one. A second
      * block reopened the first and could change the TYPE its keys had been
      * checked against. */
@@ -1091,6 +1137,33 @@ void HPOTargets::read(const std::string& fn)
             }
             if (key=="ENDSTRATEGY") {
                 check_type_keys();
+                /* N_STARTS 1 is refused at its line; without N_STARTS a
+                 * MULTISTART would run one start, which is TYPE PLAIN. */
+                if (spec.strategy_type == StrategyType::MULTISTART &&
+                    !n_starts_given)
+                    throw EarlierLineError(
+                        type_line, type_text,
+                        "STRATEGY TYPE MULTISTART needs N_STARTS 2 or more: "
+                        "without N_STARTS it runs one start, which is "
+                        "STRATEGY TYPE PLAIN");
+                /* A restart comes after AFTER_STAGNATION evaluations without
+                 * a new best, at most MAX times: a block without one of them
+                 * would restart nothing (0 is refused at its line). */
+                if (endrestart_line != 0 && !spec.restart.active()) {
+                    const bool no_after = spec.restart.after_stagnation == 0;
+                    const bool no_max = spec.restart.max == 0;
+                    const std::string missing =
+                        no_after && no_max
+                            ? "no AFTER_STAGNATION line and no MAX line"
+                        : no_after ? "no AFTER_STAGNATION line"
+                                   : "no MAX line";
+                    throw EarlierLineError(
+                        endrestart_line, endrestart_text,
+                        "the RESTART block never restarts the search: a "
+                        "restart needs AFTER_STAGNATION and MAX, and the block "
+                        "has " + missing + "; a search without restarts has "
+                        "no RESTART block");
+                }
                 close_block();
                 refresh_active_opt();
                 continue;
@@ -1183,6 +1256,8 @@ void HPOTargets::read(const std::string& fn)
                 continue;
             }
             if (key=="ENDRESTART") {
+                endrestart_line = nline;
+                endrestart_text = line;
                 active_init = nullptr;
                 close_block();
                 active_opt = inner_parent;
@@ -1260,17 +1335,28 @@ void HPOTargets::read(const std::string& fn)
                     /* METHOD (and its alias STRATEGY) adds to the chain */
                     if (key != "METHOD" && key != "STRATEGY")
                         set_once(active_init, key, "starting points");
+                    if (key == "K_TOTAL")
+                        k_total_lines[active_init] = {nline, line};
                     continue;
                 }
                 if (block == RESTART_BLK) {
+                    /* Each 1 or more: 0 restarts nothing. */
+                    const char* const kNoRestart =
+                        "0 never restarts the search; a search without "
+                        "restarts has no RESTART block";
                     if (key=="AFTER_STAGNATION") {
-                        spec.restart.after_stagnation =
-                            parse_uint(single_value(iss, key), key);
+                        spec.restart.after_stagnation = parse_uint(
+                            single_value(iss, key), key, 1,
+                            std::numeric_limits<std::uint64_t>::max(),
+                            kNoRestart);
                         set_once(&spec.restart, key, "restarts");
                         continue;
                     }
                     if (key=="MAX") {
-                        spec.restart.max = parse_uint(single_value(iss, key), key);
+                        spec.restart.max = parse_uint(
+                            single_value(iss, key), key, 1,
+                            std::numeric_limits<std::uint64_t>::max(),
+                            kNoRestart);
                         set_once(&spec.restart, key, "restarts");
                         continue;
                     }
@@ -1341,6 +1427,8 @@ void HPOTargets::read(const std::string& fn)
                     else throw std::runtime_error("STRATEGY TYPE must be PLAIN, MULTISTART, or PRESTAGE (got '" + t + "')");
                     set_once(&spec.strategy_type, key, "strategy");
                     strategy_type_given = true;
+                    type_line = nline;
+                    type_text = line;
                     continue;
                 }
                 /* The keys of one TYPE are checked against the block's TYPE
@@ -1349,13 +1437,14 @@ void HPOTargets::read(const std::string& fn)
                     type_keys.push_back({key, nline, line});
                 /* MULTISTART knobs. */
                 if (key=="N_STARTS") {
-                    spec.multistart.n_starts = parse_uint(single_value(iss, key), key, 1);
+                    /* One start is TYPE PLAIN: N_STARTS 1 would make a
+                     * MULTISTART that is one. */
+                    spec.multistart.n_starts = parse_uint(
+                        single_value(iss, key), key, 2,
+                        std::numeric_limits<std::uint64_t>::max(),
+                        "one start is STRATEGY TYPE PLAIN");
                     set_once(&spec.strategy_type, key, "strategy");
-                    continue;
-                }
-                if (key=="PARALLEL") {
-                    spec.multistart.parallel = parse_uint(single_value(iss, key), key, 1);
-                    set_once(&spec.strategy_type, key, "strategy");
+                    n_starts_given = true;
                     continue;
                 }
                 if (key=="BUDGET_PER_START") {
@@ -1766,6 +1855,63 @@ void HPOTargets::read(const std::string& fn)
                 block_name(in.id),
             in.text));
     }
+    /* K_TOTAL caps the starting points the METHOD lines of its chain give,
+     * at most the chain's default_k() (the K of RANDOM, LHS and SOBOL, one
+     * point of CONFIG and of WARM, which gives at most one; without a
+     * METHOD line the CONFIG point): one at or above their number caps
+     * nothing. The INIT blocks of one optimiser make one chain, and so do
+     * the RESTART blocks. An EXPLORE chain without a METHOD line is not
+     * resolved: the exploration takes the points of the STRATEGY-level
+     * chain (share_init_with_nested_phases), which its K_TOTAL does not
+     * cap. */
+    std::vector<std::pair<std::pair<std::size_t, std::string>,
+                          const InitStrategySpec*>> k_totals;
+    for (const auto& [init, at] : k_total_lines) k_totals.push_back({at, init});
+    std::sort(k_totals.begin(), k_totals.end(),
+              [](const auto& a, const auto& b) {
+                  return a.first.first < b.first.first;
+              });
+    for (const auto& [at, init] : k_totals) {
+        if (!init->k_total) continue;
+        const std::size_t points = build_init_strategy(*init)->default_k();
+        std::string list;
+        for (const auto& e : init->chain) {
+            list += (list.empty() ? "" : ", ") + e.method;
+            for (const auto& a : e.args) list += " " + a;
+        }
+        const std::size_t cap = *init->k_total;
+        const std::string head =
+            "K_TOTAL " + std::to_string(cap) + " caps nothing: ";
+        const std::string keeps =
+            ", and K_TOTAL keeps the first K_TOTAL starting points";
+        const bool explore =
+            spec.prestage && init == &spec.prestage->init_strategy_spec;
+        if (init->chain.empty() && explore)
+            throw std::runtime_error(at_line(at.first,
+                head + "an INIT block inside EXPLORE without a METHOD line "
+                "gives the exploration the starting points of the INIT "
+                "blocks inside OPTIMIZER, STRATEGY and REFINE (the CONFIG "
+                "point without one), and K_TOTAL caps only the points of the "
+                "block's own METHOD lines", at.second));
+        if (init->chain.empty())
+            throw std::runtime_error(at_line(at.first,
+                head + "a block without a METHOD line gives one starting "
+                "point (the CONFIG point)" + keeps, at.second));
+        /* The blocks of the chain, which a K_TOTAL in a block without a
+         * METHOD line caps too. */
+        const std::string blocks =
+            init == &spec.restart.init_strategy ? "the RESTART blocks"
+            : explore ? "the INIT blocks inside EXPLORE"
+                      : "the INIT blocks inside OPTIMIZER, STRATEGY and REFINE";
+        if (cap >= points)
+            throw std::runtime_error(at_line(at.first,
+                head + "the METHOD lines of " + blocks + " give at most " +
+                    std::to_string(points) +
+                    (points == 1 ? " starting point (" : " starting points (") +
+                    list + ")" + keeps,
+                at.second));
+    }
+
 
     /* A PC_SCRIPT_TIMEOUT (MAXTIME) that no PC_LAMMPS or PC_FAILPROBE line
      * without --maxtime after it reads, and a LOSS that no --varloss or
@@ -2910,10 +3056,14 @@ SearchSpace HPOTargets::build_search_space() const {
       if (!fixidx.empty() && d.user_index >= 1 && d.user_index <= fixidx.size())
         d.user_index = fixidx[d.user_index - 1];
       d.label      = kv.first;
-      if (o.opt.size() > 1) d.label += "[" + std::to_string(d.user_index) + "]";
+      /* FIXWEIGHT's index is a model weight, which a FIXWEIGHT with one
+       * value names too. */
+      if (o.opt.size() > 1 || kv.first == "FIXWEIGHT")
+        d.label += "[" + std::to_string(d.user_index) + "]";
       d.lo = o.lowbound[i];
       d.hi = o.highbound[i];
       d.tf = i < o.scale.size() ? o.scale[i] : DimTransform{};
+      d.tagged = i < o.tagged.size() && o.tagged[i];
       d.origin = i < o.origin.size() ? o.origin[i] : BoxOrigin::Explicit;
       if (numeric) {
         try { d.x0 = core::to_double(o.config[i]); } catch (const std::exception&) {}
@@ -2968,7 +3118,7 @@ void HPOTargets::write_search_space_files(const std::string& dir) const {
       "# (the same order as the params.tadah columns and the journal tables).\n"
       "#   dim          1-based position in the parameter vector\n"
       "#   label        KEY[n]: n is the OPTIM index (1-based; for FIXWEIGHT the model weight\n"
-      "#                named in FIXINDEX); single-value keys carry no index\n"
+      "#                named in FIXINDEX); single-value keys other than FIXWEIGHT carry no index\n"
       "#   lo, hi       real bounds the optimiser may not leave\n"
       "#   origin       OPTIM = explicit bounds; AUTO FRAC / AUTO RATIO = derived from the seed;\n"
       "#                AUTO FRAC>=0 = AUTO FRAC with lo = max(0, x0 - d) (AMPGRIDMB under\n"
@@ -3005,6 +3155,9 @@ void HPOTargets::write_search_space_files(const std::string& dir) const {
     const DimSpec& d = ss.at(i);
     hpo << "OPTIM " << d.key << " (" << (d.user_index ? d.user_index : 1) << ") "
         << core::format_roundtrip(d.lo) << " " << core::format_roundtrip(d.hi);
+    /* A tagged LIN line keeps its tag: untagged, LOG_HP could log-scale
+     * the box pasted back. */
+    if (d.tf.kind == ScaleKind::Linear && d.tagged) hpo << " LIN";
     if (d.tf.kind == ScaleKind::Log)   hpo << " LOG";
     if (d.tf.kind == ScaleKind::Asinh) hpo << " ASINH " << core::format_roundtrip(d.tf.c);
     hpo << "   # " << box_origin_name(d.origin) << '\n';
@@ -3137,6 +3290,7 @@ void HPOTargets::process_optim_config(std::istringstream& iss,
    * Cutoff keys (RCUT*) are excluded: the neighbour list is sized from
    * explicit high bounds. */
   DimTransform tf;
+  bool tag_written = false;   // the line writes LIN, LOG or ASINH <c>
   auto upper = [](std::string t) {
     for (auto& ch : t) ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
     return t;
@@ -3160,12 +3314,16 @@ void HPOTargets::process_optim_config(std::istringstream& iss,
         throw std::runtime_error("OPTIM " + k + ": ASINH requires a positive "
                                  "linear scale c (got " + toks.back() + ")");
       toks.pop_back(); toks.pop_back();
+      tag_written = true;
       return;
     }
     if (!toks.empty()) {
       const std::string tag = upper(toks.back());
-      if (tag == "LIN")      { tf.kind = ScaleKind::Linear; toks.pop_back(); }
-      else if (tag == "LOG") { tf.kind = ScaleKind::Log;    toks.pop_back(); }
+      if (tag == "LIN") {
+        tf.kind = ScaleKind::Linear; toks.pop_back(); tag_written = true;
+      } else if (tag == "LOG") {
+        tf.kind = ScaleKind::Log; toks.pop_back(); tag_written = true;
+      }
       else if (tag == "ASINH")
         throw std::runtime_error("OPTIM " + k + ": ASINH needs one argument <c> "
                                  "(the linear scale)");
@@ -3433,10 +3591,8 @@ void HPOTargets::process_optim_config(std::istringstream& iss,
       const double factor =
           mode_set ? rule.factor : (geometric ? 2.0 : 0.5);
       if (auto_box) {
-        if (!core::is_number(omap.config[i]))
-          throw std::runtime_error("OPTIM " + k + " (" + core::to_string(ui) +
-                                   "): AUTO needs a numeric CONFIG seed (got '" +
-                                   omap.config[i] + "')");
+        /* A number: ui_offset gives the position of the ui-th number of
+         * the key (ui >= 1, index 0 refused by the selector). */
         const double x0 = core::to_double(omap.config[i]);
         if (nonneg_amp && x0 < 0.0)
           throw std::runtime_error("OPTIM " + k + " (" + core::to_string(ui) +
@@ -3523,6 +3679,7 @@ void HPOTargets::process_optim_config(std::istringstream& iss,
       omap.highbound[i] = hi_i;
       omap.lowbound[i] = lo_i;
       omap.scale[i] = tf;
+      omap.tagged[i] = tag_written;
     } catch (const std::exception& e) {
       throw std::runtime_error("OPTIM " + k + " (" +
                                core::to_string(typed_indices[j]) + "): " +

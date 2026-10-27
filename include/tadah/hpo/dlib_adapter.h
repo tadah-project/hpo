@@ -98,7 +98,9 @@ inline void validate_dlib_bfgs_spec(const OptimizerSpec& sp)
         "DLIB:BFGS does not support VECTOR_ARR; use ALGO GFS or an NLopt L-BFGS variant instead");
   if (sp.pop)
     throw std::runtime_error("DLIB:BFGS does not support POPULATION");
-  if (sp.seed)
+  /* A PRESTAGE refinement's SEED that the exploration took seeds the
+   * exploration (OptimizerSpec::seed_seeds_exploration). */
+  if (sp.seed && !sp.seed_seeds_exploration)
     throw std::runtime_error("DLIB:BFGS does not support SEED");
   /* THREADS sizes the shared fan-out pool (pc_lammps + MLIP
    * train/predict), not any DLIB-internal parallelism -- BFGS itself runs ONE
@@ -128,12 +130,24 @@ inline void validate_dlib_bfgs_spec(const OptimizerSpec& sp)
    * them, and the gradient before its first evaluation (fd_settings_of,
    * fd_stencil.h), with the same message on every backend -- a number for
    * fd_kernel too, which this list refused as unsupported. */
-  for (const auto& kv : sp.param) {
-    if (is_fd_param(kv.first) || kv.first == "tol_gradinf") continue;
-    throw std::runtime_error(
-        "DLIB:BFGS does not support PARAM " + kv.first +
+  const auto unsupported = [](const std::string& key) {
+    return std::runtime_error(
+        "DLIB:BFGS does not support PARAM " + key +
         "; supported PARAM keys are fd_step, fd_kernel, diff_method and "
         "tol_gradinf");
+  };
+  for (const auto& kv : sp.param) {
+    if (is_fd_param(kv.first) || kv.first == "tol_gradinf") continue;
+    throw unsupported(kv.first);
+  }
+  /* A word (OptimizerSpec::param_raw): refused under a name DLIB:BFGS does
+   * not take as a number is, and under tol_gradinf, which takes a number;
+   * the finite-difference keys judge theirs (fd_kernel takes a word). */
+  for (const auto& kv : sp.param_raw) {
+    if (is_fd_param(kv.first)) continue;
+    if (kv.first != "tol_gradinf") throw unsupported(kv.first);
+    throw std::runtime_error("DLIB:BFGS: PARAM " + kv.first +
+                             " takes a number (got '" + kv.second + "')");
   }
 
 
@@ -296,24 +310,17 @@ template<class HostT>
     validate_dlib_gfs_spec(sp, restart);
     const auto t0 = std::chrono::steady_clock::now();
 
-    /* find_min_global (MaxLIPO+TR) is a deterministic algorithm; a
-     * SEED on this spec is never consulted. DLIB:BFGS rejects SEED
-     * outright, but GFS configs with SEED already exist in the wild,
-     * so warn instead of throwing (OptimizerCaps::warns_unread_seed, which
-     * keeps validate_dlib_gfs_spec from refusing it). (INIT-block SEED is
-     * unaffected -- it feeds the INIT chain, whose points are consumed
-     * below.) */
-    if (sp.seed) {
-      /* A PRESTAGE refinement's SEED that the exploration took seeds it:
-       * the journal names it as the exploration's (EXPLORE SEED). */
+    /* find_min_global (MaxLIPO+TR) is a deterministic algorithm; a SEED
+     * on this spec is refused (validate_dlib_gfs_spec), unless it is a
+     * PRESTAGE refinement's SEED that the exploration took, which seeds
+     * the exploration: the journal names it as the exploration's (EXPLORE
+     * SEED). (INIT-block SEED is unaffected -- it feeds the INIT chain,
+     * whose points are consumed below.) */
+    if (sp.seed && sp.seed_seeds_exploration) {
       const std::string msg =
-          sp.seed_seeds_exploration
-              ? "DLIB:GFS (find_min_global, MaxLIPO+TR) is deterministic; "
-                "SEED has no effect on the refinement: it seeds the "
-                "exploration (EXPLORE SEED " + std::to_string(*sp.seed) + ")."
-              : "DLIB:GFS (find_min_global, MaxLIPO+TR) is deterministic; "
-                "SEED has no effect on the search. Randomise via the INIT "
-                "block (e.g. METHOD RANDOM K with SEED) instead.";
+          "DLIB:GFS (find_min_global, MaxLIPO+TR) is deterministic; SEED has "
+          "no effect on the refinement: it seeds the exploration (EXPLORE "
+          "SEED " + std::to_string(*sp.seed) + ").";
       std::cerr << "[HPO] " << msg << "\n";
       HPOLog::instance().warning(msg);
     }
@@ -1104,6 +1111,24 @@ std::string revisit_detail(const OptimizerSpec& sp, const Vec& from,
          ", where it had stood with the same loss and gradient";
 }
 
+/** The stop test of PARAM tol_gradinf: the search ends once the largest
+ *  component of the gradient, in absolute value, is below `tol` -- the
+ *  max-norm CERES's gradient_tolerance tests. dlib's
+ *  gradient_norm_stop_strategy tests the L2 norm, length(g), which for n
+ *  components can be up to sqrt(n) times the largest: the same
+ *  tol_gradinf ended DLIB:BFGS later than CERES. The stop strategy
+ *  interface of dlib's optimisers (should_continue_search). */
+class GradientMaxStop {
+public:
+  explicit GradientMaxStop(double tol) : tol_(tol) {}
+  template <class T>
+  bool should_continue_search(const T&, double, const T& g) {
+    return !(dlib::max(dlib::abs(g)) < tol_);
+  }
+private:
+  double tol_;
+};
+
 }  // namespace detail
 
 /* DLIB:BFGS on any host with `double operator()(const Vec&)` (real-space
@@ -1241,10 +1266,10 @@ template<class Vec,class Runner,class HostT>
 
     if (const auto tol_gradinf = detail::dlib_param(sp, "tol_gradinf")) {
       std::ostringstream test;
-      test << "the L2 norm of the gradient fell below PARAM tol_gradinf = "
-           << *tol_gradinf;
+      test << "the largest component of the gradient fell below PARAM "
+              "tol_gradinf = " << *tol_gradinf;
       run_with_eval_cap(bfgs_search_strategy(),
-                        gradient_norm_stop_strategy(*tol_gradinf),
+                        detail::GradientMaxStop(*tol_gradinf),
                         EndReason::GradTol, test.str());
       return;
     }

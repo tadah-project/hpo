@@ -129,7 +129,11 @@ std::uint64_t parse_uint(const std::string& tok, const std::string& what,
     else
         msg += "from " + std::to_string(min) + " to " + std::to_string(max);
     msg += ", got '" + tok + "'";
-    if (!note.empty()) msg += " (" + note + ")";
+    /* The note explains why a whole number below `min` is refused (0
+     * restarts nothing); any other token gets the range alone. */
+    const bool below_min = !tok.empty() && r.ec == std::errc{} &&
+                           r.ptr == last && v < min;
+    if (!note.empty() && below_min) msg += " (" + note + ")";
     throw std::runtime_error(msg);
 }
 

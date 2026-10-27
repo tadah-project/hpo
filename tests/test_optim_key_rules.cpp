@@ -132,6 +132,27 @@ TEST_CASE("OPTIM fixweight maps its indices through FIXINDEX",
   CHECK(it->second.opt[2]);
 }
 
+/* Pins: a FIXWEIGHT with one value names its model weight as a FIXWEIGHT
+ * with several does: FIXINDEX 26, FIXWEIGHT 0.4 and OPTIM FIXWEIGHT (26)
+ * label the dimension FIXWEIGHT[26] (the params.tadah column, the
+ * journal and hpo_search_space.tsv), the index being a model weight, not
+ * a position among the values of the key.
+ * Before the fix: "FIXWEIGHT", the label of a key with one value. */
+TEST_CASE("OPTIM FIXWEIGHT with one value is labelled with its model weight",
+          "[HPO][optim][fixweight]") {
+  Context ctx;
+  ctx.add("FIXINDEX", "26");
+  ctx.add("FIXWEIGHT", 0.4);
+  KeyRulesTempFile tf("OPTIM FIXWEIGHT (26) 0 1\n" +
+                      std::string(kKeyRulesOptimizer));
+  HPOTargets trg(ctx, tf.path.string());
+  REQUIRE(trg.spec.parameter_labels.size() == 1);
+  CHECK(trg.spec.parameter_labels[0] == "FIXWEIGHT[26]");
+  REQUIRE(trg.spec.space);
+  CHECK(trg.spec.space->at(0).label == "FIXWEIGHT[26]");
+  CHECK(trg.spec.space->at(0).user_index == 26);
+}
+
 /* Pins: OPTIM FIXWEIGHT (14) with FIXINDEX given as separate values,
  * 'FIXINDEX 13 14' (the values '13' and '14', as `FIXINDEX 13 14` in a
  * configuration gives them) and FIXWEIGHT 14.0 2500, selects FIXWEIGHT

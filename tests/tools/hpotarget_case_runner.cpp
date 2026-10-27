@@ -277,15 +277,10 @@ Values defaults_of(const HPOTargets& trg)
     add("OPTIMIZER.GRAD_STRATEGY",
         grad_strategy_name(sp.grad_strategy.value_or(GradStrategy::Numerical)));
     add("STRATEGY.TYPE", strategy_type_name(sp.strategy_type));
-    add("STRATEGY.N_STARTS", std::to_string(sp.multistart.n_starts));
-    add("STRATEGY.PARALLEL", std::to_string(sp.multistart.parallel));
     add("STRATEGY.TOPK", std::to_string(sp.stage_topk));
     add("INIT.WARM_ON_MISMATCH", sp.init_strategy_spec.warm_on_mismatch);
     add("NOISE.AUTO", sp.noise.autodetect ? "true" : "false");
     add("NOISE.CALIBRATION", std::to_string(sp.noise.calibration_n));
-    add("RESTART.AFTER_STAGNATION",
-        std::to_string(sp.restart.after_stagnation));
-    add("RESTART.MAX", std::to_string(sp.restart.max));
 
     /* The AUTO boxes the file holds: the factor of a geometric box,
      * high/x0, and the fraction of a linear one, (high - x0)/|x0|. */
@@ -389,10 +384,6 @@ Values defaults_of(const HPOTargets& trg)
         add(p + "Cost_Parameter_Scale_Ratio",
             num(o.cost_parameter_scale_ratio));
         add(p + "Temperature_Anneal_Scale", num(o.temperature_anneal_scale));
-        add(p + "Include_Integer_Parameters",
-            std::to_string(o.include_integer_parameters));
-        add(p + "User_Initial_Parameters",
-            std::to_string(o.user_initial_parameters));
         add(p + "Sequential_Parameters",
             std::to_string(o.sequential_parameters));
         add(p + "Initial_Parameter_Temperature",
@@ -422,10 +413,6 @@ Values defaults_of(const HPOTargets& trg)
             add(p + "Queue_Resolution", num(o.queue_resolution.front()));
         add(p + "Gener_Block", std::to_string(o.gener_block));
         add(p + "Gener_Mov_Avr", std::to_string(o.gener_mov_avr));
-        /* User_Initial_Parameters is 1 with a starting point. */
-        asa.optim_init = {{0.0}};
-        add(p + "User_Initial_Parameters",
-            std::to_string(parse_asa_options(asa, 1).user_initial_parameters));
     }
 
     /* The parameters of the loss functions. */

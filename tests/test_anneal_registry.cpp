@@ -22,7 +22,12 @@
 #include <tadah/hpo/optimizer_spec.h>
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
+#include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -303,6 +308,52 @@ TEST_CASE("registry: non-numeric, unknown, and renamed PARAMs are hard "
     }
 }
 
+/* Pins: the refusal of an unknown PARAM lists, in registry order, the keys
+ * the annealer takes: the keys of its kind but those a kind_reject rule
+ * refuses for it, so TADAH:ANNEAL_PA does not list RESET_TO_BEST, which it
+ * refuses ("PARAM RESET_TO_BEST is not defined for population annealing"),
+ * and TADAH:ANNEAL_PT does.
+ * Before the fix: the list held every key of the kind, RESET_TO_BEST under
+ * TADAH:ANNEAL_PA included. */
+TEST_CASE("registry: the accepted keys of an unknown-key refusal leave out "
+          "a key the annealer refuses", "[HPO][anneal_core][registry]")
+{
+    for (const auto& [kind, mask] : kAllKinds) {
+        INFO("kind " << anneal::algo_name(kind));
+        auto sp = registry_base_spec(kind);
+        sp.param["NO_SUCH_KEY"] = 1.0;
+        std::string what;
+        try {
+            (void)anneal::Knobs::parse(sp, kind);
+        } catch (const std::exception& e) {
+            what = e.what();
+        }
+        const std::string head = "accepted keys: ";
+        const auto at = what.find(head);
+        REQUIRE(at != std::string::npos);
+        std::istringstream is(what.substr(at + head.size()));
+        std::vector<std::string> listed;
+        for (std::string k; is >> k;) listed.push_back(k);
+        std::vector<std::string> expected;
+        for (const auto& k : reg::kKeys) {
+            if (!(k.kinds & mask)) continue;
+            const bool refused = std::any_of(
+                std::begin(reg::kRules), std::end(reg::kRules),
+                [&](const reg::AnnealKeyRule& r) {
+                    return r.type == reg::AnnealRuleType::KindReject &&
+                           (r.kind_mask & mask) &&
+                           std::strcmp(r.key, k.name) == 0;
+                });
+            if (!refused) expected.push_back(k.name);
+        }
+        CHECK(listed == expected);
+        const bool lists_reset =
+            std::find(listed.begin(), listed.end(), "RESET_TO_BEST") !=
+            listed.end();
+        CHECK(lists_reset == (kind != anneal::AlgoKind::PA));
+    }
+}
+
 TEST_CASE("registry: defaults in the generated header match the parsed "
           "defaults", "[HPO][anneal_core][registry]")
 {
@@ -389,4 +440,48 @@ TEST_CASE("registry: the INIT_MODE JITTER numbers take the decimal number "
                              anneal::AlgoKind::PT),
         Catch::Contains("PARAM INIT_MODE JITTER AUTO tolerance must be a "
                         "finite number (got '0x1p-4')"));
+}
+
+/* Pins: the comments of algorithms_pt.h name no key that the registry
+ * retires for TADAH:ANNEAL_PT (its [[renamed]] entries for pt: RT,
+ * T_MIN, T0_PACCEPT, STEP_AUTO, LADDER_ADAPT_UPDATES, ...); the keys and
+ * their defaults are those of blueprint/anneal_keys.toml. One-letter names
+ * (L, C) are left out: they are words of the formulas too.
+ * Before the fix: the header described RT ladder cooling (RT < 1, a PT ->
+ * SA hybrid ending at T_MIN), T0_PACCEPT, and a PARAM table with
+ * LADDER_ADAPT_UPDATES, RT, STEP_AUTO, STEP_AUTO_SWEEPS and
+ * STEP_ADAPT_EVERY; two body comments named RT cooling. */
+TEST_CASE("registry: algorithms_pt.h names no key the registry retires for "
+          "TADAH:ANNEAL_PT", "[HPO][anneal_pt][registry][lint]")
+{
+    namespace fs = std::filesystem;
+    /* __FILE__ is an absolute path (CMake GLOBs the test sources). */
+    const fs::path header = fs::path(__FILE__).parent_path().parent_path() /
+                            "include" / "tadah" / "hpo" / "algorithms_pt.h";
+    std::ifstream in(header);
+    REQUIRE(in.good());
+    std::vector<std::string> lines;
+    for (std::string l; std::getline(in, l);) lines.push_back(l);
+    REQUIRE(lines.size() > 100u);
+    const auto word = [](char c) {
+        return std::isalnum(static_cast<unsigned char>(c)) != 0 || c == '_';
+    };
+    std::size_t checked = 0;
+    for (const auto& r : reg::kRenamed) {
+        if (!(r.kinds & reg::KIND_PT) || std::strlen(r.old_name) < 2) continue;
+        ++checked;
+        const std::string name = r.old_name;
+        for (std::size_t i = 0; i < lines.size(); ++i) {
+            const std::string& l = lines[i];
+            for (auto at = l.find(name); at != std::string::npos;
+                 at = l.find(name, at + 1)) {
+                const bool starts = at == 0 || !word(l[at - 1]);
+                const bool ends = at + name.size() == l.size() ||
+                                  !word(l[at + name.size()]);
+                INFO("algorithms_pt.h:" << i + 1 << ": " << l);
+                CHECK_FALSE((starts && ends));
+            }
+        }
+    }
+    CHECK(checked >= 8u);
 }

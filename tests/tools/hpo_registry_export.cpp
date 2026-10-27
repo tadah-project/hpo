@@ -124,6 +124,7 @@ Strings reads(const OptimizerCaps& c)
     if (c.reads_ftol_abs_as_setting) keys.push_back("FTOL_ABS");
     if (c.reads_population)          keys.push_back("POPULATION");
     if (c.reads_seed)                keys.push_back("SEED");
+    if (c.reads_threads)             keys.push_back("THREADS");
     if (c.reads_vector_storage)      keys.push_back("VECTOR_ARR");
     return keys;
 }
@@ -164,7 +165,8 @@ Table registered_entry(const OptimizerCaps& c)
     t.add("default_inner", c.default_inner);
     t.add("accepts_multi_seed", c.accepts_multi_seed);
     t.add("reads", reads(c));
-    t.add("warns_unread_seed", c.warns_unread_seed);
+    t.add("algorithm_params", Strings(c.algorithm_params.begin(),
+                                      c.algorithm_params.end()));
     t.add("stops", stops(c));
     t.add("needs_stop", c.needs_stop);
     t.add("stop_note", c.stop_note);

@@ -279,8 +279,8 @@ std::string method_lines_warning(const std::string& algo, int line = 10)
  * INNER search NLOPT:GN_DIRECT_L from the point it is given, and
  * NLOPT:GN_DIRECT_L does not start ..."); a PRESTAGE exploration on
  * GN_DIRECT_L gets the exploration's text (RESTART on line 15). No warning:
- * LN_SBPLX and GN_CRS2_LM, which start at their point, and an inactive
- * RESTART (MAX 0). The gradient searches (StoGO), the RAND forms in two
+ * LN_SBPLX and GN_CRS2_LM, which start at their point (a RESTART of MAX
+ * 0 is refused at its line). The gradient searches (StoGO), the RAND forms in two
  * dimensions and the METHOD lines of a RESTART block are the next case's.
  * Before the fix: none of these warnings was given (a RESTART run: round 1
  * asked for round 0's points, answered from the record, without a word at
@@ -293,8 +293,9 @@ TEST_CASE("startup validation: RESTART on a search that does not start at "
     SECTION("each search that draws no random numbers")
     {
         for (const char* algo :
-             {"GN_DIRECT", "GN_DIRECT_L", "GN_DIRECT_NOSCAL",
-              "GN_DIRECT_L_NOSCAL", "GN_DIRECT_L_RAND_NOSCAL",
+             /* GN_DIRECT_NOSCAL and GN_DIRECT_L_RAND_NOSCAL are refused
+              * (they were in this list). */
+             {"GN_DIRECT", "GN_DIRECT_L", "GN_DIRECT_L_NOSCAL",
               "GN_ORIG_DIRECT", "GN_ORIG_DIRECT_L", "GN_AGS"}) {
             INFO("NLOPT:" << algo);
             const Startup s = startup(plain_restart(algo));
@@ -408,16 +409,16 @@ TEST_CASE("startup validation: RESTART on a search that does not start at "
                   "is given.") == 1);
     }
 
-    SECTION("no warning: a search that starts at its point, an inactive "
-            "RESTART")
+    SECTION("no warning: a search that starts at its point")
     {
+        /* An inactive RESTART (MAX 0), the other leg of this section, is
+         * refused at its MAX line (the case "startup validation: a RESTART
+         * block that never restarts the search is refused"). */
         for (const char* algo : {"LN_SBPLX", "GN_CRS2_LM"}) {
             INFO("NLOPT:" << algo);
             const Startup s = startup(plain_restart(algo));
             CHECK(count_of(s.journal, "the RESTART block on line") == 0);
         }
-        const Startup off = startup(plain_restart("GN_DIRECT_L", kRoot, "0"));
-        CHECK(count_of(off.journal, "the RESTART block on line") == 0);
     }
 }
 
@@ -710,7 +711,10 @@ TEST_CASE("startup validation: the RESTART warning says what a round of a "
  *    evaluation of the exploration has a usable loss. ...".
  * No warning: no INIT block; an INIT block without a METHOD (SEED only);
  * LN_BOBYQA, which starts at its first INIT point (and keeps the read-time
- * "consumes only the first" WARNING for METHOD LHS 3).
+ * WARNING that it "starts from the first only" for METHOD LHS 3, which
+ * said "consumes only the first" before the case "startup validation: the
+ * INIT points a PLAIN search does not use are warned about in the
+ * journal").
  * Before the fix: no INIT warning was given, and standard error said that
  * GN_DIRECT_L "consumes only the first" of the 3 seeds: the counts fail. */
 TEST_CASE("startup validation: an INIT block on a search that does not "
@@ -828,6 +832,84 @@ TEST_CASE("startup validation: an INIT block on a search that does not "
         const Startup s = startup(plain(algo, init));
         CHECK(count_of(s.journal, "the INIT block on line") == 0);
         if (algo == "LN_BOBYQA")
-            CHECK(count_of(s.err, "consumes only the first") == 1);
+            CHECK(count_of(s.err, "starts from the first only") == 1);
+    }
+}
+
+/* Pins: a PLAIN search with an INIT block of METHOD LHS 3, whose optimiser
+ * takes one starting point: the read-time WARNING, on standard error and in
+ * the journal, counts starting points and names only what takes them for
+ * that optimiser. For NLOPT:LN_BOBYQA, a local optimiser that STRATEGY TYPE
+ * MULTISTART runs from each point: "INIT chain produced 3 starting points
+ * but NLOPT:LN_BOBYQA starts from the first only; the other 2 are not used.
+ * STRATEGY TYPE MULTISTART with N_STARTS 3 starts NLOPT:LN_BOBYQA from each
+ * of them, and an optimiser that takes several starting points in one run
+ * (DLIB:GFS) takes them all, also as the exploration of STRATEGY TYPE
+ * PRESTAGE." For a global optimiser that keeps its starting point and that
+ * MULTISTART refuses (NLOPT:GN_CRS2_LM, ASA:ASA, TADAH:ANNEAL): "... the
+ * other 2 are not used. An optimiser that takes several starting points in
+ * one run (DLIB:GFS) takes them all, also as the exploration of STRATEGY
+ * TYPE PRESTAGE.", which names no MULTISTART; the same file under TYPE
+ * MULTISTART with N_STARTS 3 is refused ("STRATEGY TYPE MULTISTART cannot
+ * run ..."), while the LN_BOBYQA one gets no such WARNING. No WARNING says
+ * anything of seeds.
+ * Before the fix: every optimiser was advised "STRATEGY TYPE MULTISTART
+ * with N_STARTS 3 or TYPE PRESTAGE uses them, and so does an optimiser that
+ * takes several starting points in one run (DLIB:GFS).": TYPE MULTISTART,
+ * which refuses the three global optimisers, and TYPE PRESTAGE, whose
+ * exploration takes only the first point unless its optimiser takes
+ * several (the texts fail). */
+TEST_CASE("startup validation: the INIT points a PLAIN search does not use "
+          "are warned about in the journal", "[startup][init][start_point]")
+{
+    const std::string lhs =
+        "  INIT\n    METHOD LHS 3\n    SEED 7\n  ENDINIT\n";
+    const auto run = [&](const std::string& strategy, const std::string& lib,
+                         const std::string& algo) {
+        return kRoot + "OPTIMIZER\n" + lhs + "  STRATEGY\n" + strategy +
+               "    LIB " + lib + "\n    ALGO " + algo +
+               "\n    MAXEVAL 20\n  ENDSTRATEGY\nENDOPTIMIZER\n";
+    };
+    const std::string head =
+        "INIT chain produced 3 starting points but ";
+    const std::string unused =
+        " starts from the first only; the other 2 are not used. ";
+    const std::string takes_all =
+        "optimiser that takes several starting points in one run (DLIB:GFS) "
+        "takes them all, also as the exploration of STRATEGY TYPE PRESTAGE.";
+    {
+        const std::string w =
+            head + "NLOPT:LN_BOBYQA" + unused + "STRATEGY TYPE MULTISTART "
+            "with N_STARTS 3 starts NLOPT:LN_BOBYQA from each of them, and an " +
+            takes_all;
+        const Startup s =
+            startup(run("    TYPE PLAIN\n", "NLOPT", "LN_BOBYQA"));
+        INFO("journal:\n" << s.journal << "\nstderr:\n" << s.err);
+        CHECK(count_of(s.err, "[HPO] WARNING: " + w + "\n") == 1);
+        CHECK(count_of(s.journal, w) == 1);
+        CHECK(count_of(s.err, "seed(s)") == 0);
+    }
+    {
+        const Startup s = startup(
+            run("    TYPE MULTISTART\n    N_STARTS 3\n", "NLOPT", "LN_BOBYQA"));
+        INFO("journal:\n" << s.journal << "\nstderr:\n" << s.err);
+        CHECK(count_of(s.err, "starts from the first only") == 0);
+        CHECK(count_of(s.journal, "starts from the first only") == 0);
+    }
+    for (const auto& [lib, algo] :
+         std::vector<std::pair<std::string, std::string>>{
+             {"NLOPT", "GN_CRS2_LM"}, {"ASA", "ASA"}, {"TADAH", "ANNEAL"}}) {
+        const std::string name = lib + ":" + algo;
+        INFO(name);
+        const std::string w = head + name + unused + "An " + takes_all;
+        const Startup s = startup(run("    TYPE PLAIN\n", lib, algo));
+        INFO("journal:\n" << s.journal << "\nstderr:\n" << s.err);
+        CHECK(count_of(s.err, "[HPO] WARNING: " + w + "\n") == 1);
+        CHECK(count_of(s.journal, w) == 1);
+        CHECK(count_of(s.err, "MULTISTART") == 0);
+        CHECK(count_of(s.journal, "MULTISTART") == 0);
+        CHECK_THROWS_WITH(
+            startup(run("    TYPE MULTISTART\n    N_STARTS 3\n", lib, algo)),
+            Catch::Contains("STRATEGY TYPE MULTISTART cannot run " + name));
     }
 }

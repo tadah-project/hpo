@@ -156,23 +156,63 @@ bool has_stop(const OptimizerSpec& spec, const OptimizerCaps& caps,
 /* TADAH:RANDOM and DLIB:GFS read no PARAM, TADAH:GRID only GRID_POINTS
  * (validate_grid_spec): a PARAM they do not read, numeric or a word, is
  * refused with the list of those they take. */
+/* "<LIB:ALGO>: unknown PARAM '<key>' (it takes <takes>)", the names joined
+ * as "a, b and c", "none" for an empty `takes`. */
+[[noreturn]] void refuse_unknown_param(const OptimizerSpec& spec,
+                                       const std::string& key,
+                                       const std::vector<std::string>& takes)
+{
+    std::string takes_list;
+    for (std::size_t i = 0; i < takes.size(); ++i)
+        takes_list += (i == 0 ? "" : i + 1 == takes.size() ? " and " : ", ") +
+                      takes[i];
+    if (takes_list.empty()) takes_list = "none";
+    throw std::runtime_error(backend_name(spec) + ": unknown PARAM '" + key +
+                             "' (it takes " + takes_list + ")");
+}
+
 void reject_unknown_params(const OptimizerSpec& spec,
                            const std::vector<std::string>& takes)
 {
     const auto known = [&](const std::string& k) {
         return std::find(takes.begin(), takes.end(), k) != takes.end();
     };
-    std::string takes_list;
-    for (const auto& k : takes) takes_list += (takes_list.empty() ? "" : ", ") + k;
-    if (takes_list.empty()) takes_list = "none";
-    const auto refuse = [&](const std::string& key) {
-        throw std::runtime_error(backend_name(spec) + ": unknown PARAM '" +
-                                 key + "' (it takes " + takes_list + ")");
-    };
     for (const auto& kv : spec.param)
-        if (!known(kv.first)) refuse(kv.first);
+        if (!known(kv.first)) refuse_unknown_param(spec, kv.first, takes);
     for (const auto& kv : spec.param_raw)
-        if (!known(kv.first)) refuse(kv.first);
+        if (!known(kv.first)) refuse_unknown_param(spec, kv.first, takes);
+}
+
+/* An NLopt algorithm reads the PARAM keys NLopt reads for it
+ * (OptimizerCaps::algorithm_params) and the finite-difference keys, which
+ * the startup checks of the finite differences judge (fd_stencil.h): any
+ * other name is refused, numeric or a word, and so is a word given to one
+ * of the algorithm's keys, which NLopt reads as a number. The refusal of
+ * another name lists the algorithm's keys and, for a phase that takes
+ * finite-difference gradients with its own settings (takes_fd_gradients:
+ * not an INNER search, a derivative-free algorithm or GRAD_STRATEGY
+ * ANALYTICAL, which refuse them), the finite-difference keys. */
+void reject_unread_nlopt_params(const OptimizerSpec& spec,
+                                const OptimizerCaps& caps, SpecRole role)
+{
+    const std::vector<std::string>& own_keys = caps.algorithm_params;
+    const auto own = [&](const std::string& k) {
+        return std::find(own_keys.begin(), own_keys.end(), k) !=
+               own_keys.end();
+    };
+    std::vector<std::string> takes = own_keys;
+    if (takes_fd_gradients(
+            PhaseSpec{"", spec, /*inner=*/role == SpecRole::Inner}))
+        takes.insert(takes.end(), {"fd_step", "fd_kernel", "diff_method"});
+    for (const auto& kv : spec.param)
+        if (!own(kv.first) && !is_fd_param(kv.first))
+            refuse_unknown_param(spec, kv.first, takes);
+    for (const auto& kv : spec.param_raw) {
+        if (is_fd_param(kv.first)) continue;
+        if (!own(kv.first)) refuse_unknown_param(spec, kv.first, takes);
+        throw std::runtime_error(backend_name(spec) + ": PARAM " + kv.first +
+                                 " takes a number (got '" + kv.second + "')");
+    }
 }
 
 /* Whether a run of `spec` tests a tolerance its caps mark with `supports`.
@@ -293,10 +333,35 @@ void reject_unread_attributes(const OptimizerSpec& spec,
                 return c.reads_vector_storage;
             }) +
             ")");
-    if (spec.seed && !caps.reads_seed && !caps.warns_unread_seed)
+    /* A PRESTAGE refinement's SEED that the exploration took seeds the
+     * exploration (OptimizerSpec::seed_seeds_exploration). */
+    if (spec.seed && !caps.reads_seed && !spec.seed_seeds_exploration)
         throw std::runtime_error(backend_name(spec) +
                                  " does not use SEED: it draws no random "
                                  "numbers; remove it");
+}
+
+/* THREADS of the STRATEGY-level optimiser sizes the run's workers; a
+ * phase of another block reads its own THREADS only when its optimiser
+ * does (OptimizerCaps::reads_threads): an INNER block never, an EXPLORE
+ * block for DLIB:GFS, ASA:ASA, TADAH:ANNEAL_PT and TADAH:ANNEAL_PA. */
+void reject_unread_threads(const PhaseSpec& phase)
+{
+    const OptimizerSpec& spec = phase.spec;
+    if (!spec.num_threads) return;
+    const std::string who = backend_name(spec);
+    const std::string run_workers =
+        "the THREADS of the STRATEGY-level optimiser sets the workers of the "
+        "run";
+    if (phase.inner)
+        throw std::runtime_error(who + " does not use THREADS in an INNER "
+                                 "block: " + run_workers + "; remove it");
+    if (phase.exploration && !optimizer_caps(spec).reads_threads)
+        throw std::runtime_error(
+            who + " does not use THREADS: " + run_workers + ", and the "
+            "THREADS of an EXPLORE block is read by " +
+            readers([](const OptimizerCaps& c) { return c.reads_threads; }) +
+            "; remove it");
 }
 
 }  // namespace
@@ -436,6 +501,7 @@ void validate_nlopt_spec(const OptimizerSpec& sp, RestartStop restart,
             "STOPVAL on the enclosing block");
     require_nlopt_maxeval(sp);
     if (sp.inner) require_nlopt_maxeval(*sp.inner);
+    reject_unread_nlopt_params(sp, optimizer_caps(sp), role);
     reject_unread_attributes(sp, optimizer_caps(sp), role);
     require_stop(sp, restart);
     require_inner_run_stop(sp, restart);
@@ -495,6 +561,31 @@ void validate_backend(const OptimizerSpec& spec, RestartStop restart,
     require_stop(spec, restart);
 }
 
+/* The SEED of a PRESTAGE refinement (StreamPhase::Refinement) whose
+ * optimiser reads none seeds the exploration when the exploration takes it
+ * (OptimizerSpec::seed_seeds_exploration); otherwise it is refused, saying
+ * why the exploration does not take it: it has a seed of its own (a SEED
+ * line, for NLopt a SEED in its INIT block), or its optimiser reads none.
+ * Before the backend's own check, which refuses the SEED without that
+ * reason. */
+namespace {
+void reject_refinement_seed(const OptimizerSpec& root, const PhaseSpec& phase)
+{
+    const OptimizerSpec& spec = phase.spec;
+    if (!root.prestage || spec.stream_phase != StreamPhase::Refinement ||
+        !spec.seed || spec.seed_seeds_exploration)
+        return;
+    if (optimizer_caps(spec).reads_seed) return;
+    const OptimizerSpec& explore = *root.prestage;
+    throw std::runtime_error(
+        backend_name(spec) + " does not use SEED: it draws no random numbers, "
+        "and the exploration (" + backend_name(explore) + ") " +
+        (optimizer_caps(explore).reads_seed ? "has a SEED of its own"
+                                            : "reads none") +
+        "; remove it");
+}
+}  // namespace
+
 void validate_phase_backends(const OptimizerSpec& root)
 {
     /* RESTART wraps every phase (RestartPolicy, run_policy.h). */
@@ -513,6 +604,8 @@ void validate_phase_backends(const OptimizerSpec& root)
              * block's included; it was checked for the STRATEGY-level LIB
              * only, so an EXPLORE NLopt or DLIB:GFS failed in the run). */
             require_search_dimensions(phase.spec);
+            reject_unread_threads(phase);
+            reject_refinement_seed(root, phase);
             validate_backend(phase.spec, restart,
                              phase.inner ? SpecRole::Inner : SpecRole::Phase);
         } catch (const std::exception& e) {

@@ -25,9 +25,9 @@
 //  - a phase without LIB or ALGO (the STRATEGY-level optimiser, the
 //    PRESTAGE refinement, an EXPLORE block, an INNER block), naming the
 //    block;
-//  - a STRATEGY key that has no effect under the block's TYPE (N_STARTS,
-//    PARALLEL and BUDGET_PER_START outside MULTISTART, TOPK outside
-//    PRESTAGE), at the key's own line, whether TYPE comes before or after
+//  - a STRATEGY key that has no effect under the block's TYPE (N_STARTS
+//    and BUDGET_PER_START outside MULTISTART, TOPK outside PRESTAGE), at
+//    the key's own line, whether TYPE comes before or after
 //    the key; an EXPLORE or REFINE block before TYPE PRESTAGE, and a
 //    second TYPE line (TYPE is set once);
 //  - a second STRATEGY block, which could change the TYPE the first one
@@ -386,7 +386,10 @@ TEST_CASE("startup validation: MULTISTART rejects a single-seed global "
     SECTION("single-seed globals are rejected with the policy's text") {
         struct Case { std::string lib, algo, n_starts, extra; };
         for (const auto& c : std::vector<Case>{
-                 {"NLOPT", "GN_DIRECT", "1", ""},
+                 /* N_STARTS 4: N_STARTS 1 is refused at its line (the case
+                  * "STRATEGY TYPE MULTISTART needs N_STARTS 2 or more"); this
+                  * leg had N_STARTS 1. */
+                 {"NLOPT", "GN_DIRECT", "4", ""},
                  {"NLOPT", "G_MLSL_LDS", "2",
                   "    INNER\n      LIB NLOPT\n      ALGO LN_BOBYQA\n"
                   "      MAXEVAL 5\n    ENDINNER\n"},
@@ -640,7 +643,6 @@ TEST_CASE("startup validation: a STRATEGY key of another TYPE is rejected at "
     };
     for (const auto& c : std::vector<Case>{
              {"    TYPE PLAIN\n", "N_STARTS 3", "TYPE PLAIN", "TYPE MULTISTART"},
-             {"    TYPE PLAIN\n", "PARALLEL 2", "TYPE PLAIN", "TYPE MULTISTART"},
              {"    TYPE PLAIN\n", "BUDGET_PER_START 10", "TYPE PLAIN",
               "TYPE MULTISTART"},
              {"    TYPE MULTISTART\n", "TOPK 3", "TYPE MULTISTART",
@@ -663,14 +665,6 @@ TEST_CASE("startup validation: a STRATEGY key of another TYPE is rejected at "
                    Catch::EndsWith("Line:     " + c.knob));
     }
 
-    SECTION("PARALLEL under TYPE PRESTAGE") {
-        const auto msg = parse_error(strategy_config(
-            "    TYPE PRESTAGE\n    LIB DLIB\n    ALGO BFGS\n    PARALLEL 2\n" +
-            kExploreGfs));
-        CHECK_THAT(msg, Catch::StartsWith("Error on line 8: PARALLEL is not "
-                                          "accepted with STRATEGY TYPE "
-                                          "PRESTAGE"));
-    }
     SECTION("TYPE written after the key decides") {
         PeriodicTable::initialize();
         ScopedTempFile tf(strategy_config(
@@ -697,6 +691,487 @@ TEST_CASE("startup validation: a STRATEGY key of another TYPE is rejected at "
                                           "in the STRATEGY block (first on "
                                           "line 5); each key is given once"));
     }
+}
+
+/* Pins: PARALLEL, in a STRATEGY block of any TYPE and with any value (1
+ * included), is refused at its line as a removed key whose message names
+ * THREADS: "'PARALLEL' was removed from the grammar: the starts of
+ * STRATEGY TYPE MULTISTART run one after another; THREADS sets the number
+ * of workers that run the work of the evaluations (the LAMMPS scripts and
+ * the training and prediction of the potential)." MULTISTART_PARALLEL, the
+ * key of Tadah! 1.4, is refused with the same reason, and its message no
+ * longer points to `TYPE MULTISTART PARALLEL N`.
+ * Before the fix: PARALLEL 2 under TYPE MULTISTART was accepted (the run
+ * warned "MULTISTART PARALLEL > 1 not yet implemented; running starts
+ * sequentially" and ran the starts one after another); PARALLEL under
+ * another TYPE was refused as a key of TYPE MULTISTART; MULTISTART_PARALLEL
+ * pointed to "`STRATEGY { TYPE MULTISTART PARALLEL N }`". */
+TEST_CASE("startup validation: STRATEGY PARALLEL is refused at its line, "
+          "naming THREADS", "[startup_validation][strategy][knobs]")
+{
+    const std::string reason =
+        "the starts of STRATEGY TYPE MULTISTART run one after another; "
+        "THREADS sets the number of workers that run the work of the "
+        "evaluations (the LAMMPS scripts and the training and prediction "
+        "of the potential).";
+    for (const std::string value : {"2", "1"}) {
+        for (const std::string type : {"MULTISTART", "PLAIN", "PRESTAGE"}) {
+            INFO("TYPE " << type << ", PARALLEL " << value);
+            const std::string extra =
+                type == "MULTISTART" ? "    N_STARTS 2\n"
+                : type == "PRESTAGE" ? kExploreGfs
+                                     : std::string();
+            /* TYPE on line 5, PARALLEL on line 6. */
+            const auto msg = parse_error(strategy_config(
+                "    TYPE " + type + "\n    PARALLEL " + value +
+                "\n    LIB DLIB\n    ALGO BFGS\n    MAXEVAL 20\n" + extra));
+            CHECK(msg == "Error on line 6: 'PARALLEL' was removed from the "
+                         "grammar: " + reason + "\nLine:     PARALLEL " + value);
+        }
+    }
+    const auto old = parse_error(strategy_config(
+        "    MULTISTART_PARALLEL 2\n    LIB DLIB\n    ALGO BFGS\n"));
+    CHECK(old == "Error on line 5: 'MULTISTART_PARALLEL' was removed from the "
+                 "grammar: " + reason + "\nLine:     MULTISTART_PARALLEL 2");
+}
+
+/* Pins: STRATEGY TYPE MULTISTART needs N_STARTS 2 or more. Without an
+ * N_STARTS line the block is refused when it ends, at the TYPE line:
+ * "STRATEGY TYPE MULTISTART needs N_STARTS 2 or more: without N_STARTS it
+ * runs one start, which is STRATEGY TYPE PLAIN"; N_STARTS 1 (and 0) is
+ * refused at its line: "N_STARTS must be an integer >= 2, got '1' (one
+ * start is STRATEGY TYPE PLAIN)". A token that is no whole number (x, 1e5,
+ * -1, 2.5) is refused without that note: "N_STARTS must be an integer >= 2,
+ * got 'x'". N_STARTS 2 is read.
+ * Before the fix: TYPE MULTISTART without N_STARTS, and with N_STARTS 1,
+ * ran one start (N_STARTS 1 by default); N_STARTS 0 was refused as "an
+ * integer >= 1". Before the fix of the note: it followed every refused
+ * token ("got 'x' (one start is STRATEGY TYPE PLAIN)"). */
+TEST_CASE("startup validation: STRATEGY TYPE MULTISTART needs N_STARTS 2 or "
+          "more", "[startup_validation][strategy][knobs]")
+{
+    const std::string backend = "    LIB DLIB\n    ALGO BFGS\n";
+    /* TYPE on line 5. */
+    CHECK(parse_error(strategy_config("    TYPE MULTISTART\n" + backend)) ==
+          "Error on line 5: STRATEGY TYPE MULTISTART needs N_STARTS 2 or "
+          "more: without N_STARTS it runs one start, which is STRATEGY TYPE "
+          "PLAIN\nLine:     TYPE MULTISTART");
+    for (const std::string n : {"1", "0"})
+        CHECK(parse_error(strategy_config("    TYPE MULTISTART\n    N_STARTS " +
+                                          n + "\n" + backend)) ==
+              "Error on line 6: N_STARTS must be an integer >= 2, got '" + n +
+                  "' (one start is STRATEGY TYPE PLAIN)\nLine:     N_STARTS " +
+                  n);
+    /* The note is about a number of starts below 2: a token that is no
+     * whole number does not get it. */
+    for (const std::string n : {"x", "1e5", "-1", "2.5"})
+        CHECK(parse_error(strategy_config("    TYPE MULTISTART\n    N_STARTS " +
+                                          n + "\n" + backend)) ==
+              "Error on line 6: N_STARTS must be an integer >= 2, got '" + n +
+                  "'\nLine:     N_STARTS " + n);
+    PeriodicTable::initialize();
+    ScopedTempFile ok(strategy_config("    TYPE MULTISTART\n    N_STARTS 2\n" +
+                                      backend));
+    Context ctx = make_minimal_ctx();
+    HPOTargets trg(ctx, ok.path.string());
+    CHECK(trg.spec.multistart.n_starts == 2u);
+}
+
+/* Pins: a RESTART block restarts the search after AFTER_STAGNATION
+ * evaluations without a new best, at most MAX times, so it needs both, each
+ * 1 or more. AFTER_STAGNATION 0 and MAX 0 are refused at their line ("MAX
+ * must be an integer >= 1, got '0' (0 never restarts the search; a search
+ * without restarts has no RESTART block)"); a block without one of them,
+ * or with METHOD lines only, is refused when the STRATEGY block ends, at
+ * the last ENDRESTART line ("the RESTART block never restarts the search:
+ * a restart needs AFTER_STAGNATION and MAX, and the block has no MAX line;
+ * a search without restarts has no RESTART block"). A token that is no
+ * whole number (x, -1, 2.5) is refused without that note ("MAX must be an
+ * integer >= 1, got 'x'"). Two RESTART blocks, which make one, may give one
+ * key each.
+ * Before the fix: each of these blocks was accepted and restarted nothing
+ * (RestartSpec::active() false), without a word. Before the fix of the
+ * note: it followed every refused token ("got 'x' (0 never restarts the
+ * search; ...)"). */
+TEST_CASE("startup validation: a RESTART block that never restarts the "
+          "search is refused", "[startup_validation][strategy][restart]")
+{
+    /* LIB on line 5, RESTART on line 8. */
+    const auto with = [](const std::string& blocks) {
+        return strategy_config("    LIB NLOPT\n    ALGO LN_SBPLX\n"
+                               "    MAXEVAL 20\n" + blocks);
+    };
+    const std::string none =
+        "; a search without restarts has no RESTART block";
+    const auto missing = [&](const std::string& what, std::size_t line) {
+        return "Error on line " + std::to_string(line) +
+               ": the RESTART block never restarts the search: a restart "
+               "needs AFTER_STAGNATION and MAX, and the block has " + what +
+               none + "\nLine:     ENDRESTART";
+    };
+    CHECK(parse_error(with("    RESTART\n      AFTER_STAGNATION 5\n"
+                           "    ENDRESTART\n")) ==
+          missing("no MAX line", 10));
+    CHECK(parse_error(with("    RESTART\n      MAX 2\n    ENDRESTART\n")) ==
+          missing("no AFTER_STAGNATION line", 10));
+    CHECK(parse_error(with("    RESTART\n      METHOD RANDOM 2\n"
+                           "    ENDRESTART\n")) ==
+          missing("no AFTER_STAGNATION line and no MAX line", 10));
+    for (const std::string key : {"AFTER_STAGNATION", "MAX"}) {
+        const std::string other =
+            key == "MAX" ? "AFTER_STAGNATION 5" : "MAX 2";
+        CHECK(parse_error(with("    RESTART\n      " + key + " 0\n      " +
+                               other + "\n    ENDRESTART\n")) ==
+              "Error on line 9: " + key + " must be an integer >= 1, got '0' "
+              "(0 never restarts the search" + none + ")\nLine:       " +
+                  key + " 0");
+        /* The note is about 0: a token that is no whole number does not
+         * get it. */
+        for (const std::string tok : {"x", "-1", "2.5"})
+            CHECK(parse_error(with("    RESTART\n      " + key + " " + tok +
+                                   "\n      " + other +
+                                   "\n    ENDRESTART\n")) ==
+                  "Error on line 9: " + key + " must be an integer >= 1, got '" +
+                      tok + "'\nLine:       " + key + " " + tok);
+    }
+    /* Two blocks make one: AFTER_STAGNATION in the first, MAX in the
+     * second. */
+    PeriodicTable::initialize();
+    ScopedTempFile ok(with("    RESTART\n      AFTER_STAGNATION 5\n"
+                           "    ENDRESTART\n    RESTART\n      MAX 2\n"
+                           "    ENDRESTART\n"));
+    Context ctx = make_minimal_ctx();
+    HPOTargets trg(ctx, ok.path.string());
+    CHECK(trg.spec.restart.active());
+}
+
+/* Pins: THREADS of the STRATEGY-level optimiser sets the workers of the
+ * run; DLIB:GFS, ASA:ASA, TADAH:ANNEAL_PT and TADAH:ANNEAL_PA also read the
+ * THREADS of their own block. THREADS in an INNER block, and in an EXPLORE
+ * block whose optimiser is not one of those, is refused at startup at the
+ * line that closes its block: "the INNER block of the STRATEGY-level
+ * optimiser: NLOPT:LN_BOBYQA does not use THREADS in an INNER block: the
+ * THREADS of the STRATEGY-level optimiser sets the workers of the run;
+ * remove it"; "the PRESTAGE exploration (EXPLORE block): NLOPT:GN_CRS2_LM
+ * does not use THREADS: the THREADS of the STRATEGY-level optimiser sets
+ * the workers of the run, and the THREADS of an EXPLORE block is read by
+ * ASA:ASA, DLIB:GFS, TADAH:ANNEAL_PA, TADAH:ANNEAL_PT; remove it" (serial
+ * TADAH:ANNEAL too). An EXPLORE block of DLIB:GFS with THREADS 2, and the
+ * STRATEGY-level THREADS of every optimiser but CERES (which refuses it
+ * itself), are accepted.
+ * Before the fix: each of these files was accepted, and the THREADS of the
+ * INNER and EXPLORE blocks had no effect. */
+TEST_CASE("startup validation: THREADS in an INNER block or in an EXPLORE "
+          "block whose optimiser does not read it is refused",
+          "[startup_validation][strategy][threads]")
+{
+    const std::string unused =
+        " does not use THREADS: the THREADS of the STRATEGY-level optimiser "
+        "sets the workers of the run, and the THREADS of an EXPLORE block is "
+        "read by ASA:ASA, DLIB:GFS, TADAH:ANNEAL_PA, TADAH:ANNEAL_PT; remove "
+        "it";
+    {
+        const auto v = judge(strategy_config(
+            "    LIB NLOPT\n    ALGO G_MLSL_LDS\n    MAXEVAL 20\n"
+            "    INNER\n      LIB NLOPT\n      ALGO LN_BOBYQA\n"
+            "      MAXEVAL 5\n      THREADS 4\n    ENDINNER\n"));
+        CHECK(v.startup ==
+              "the INNER block of the STRATEGY-level optimiser: "
+              "NLOPT:LN_BOBYQA does not use THREADS in an INNER block: the "
+              "THREADS of the STRATEGY-level optimiser sets the workers of the "
+              "run; remove it");
+    }
+    const auto explore = [](const std::string& lib, const std::string& algo,
+                            const std::string& extra) {
+        return strategy_config(
+            "    TYPE PRESTAGE\n    LIB NLOPT\n    ALGO LN_BOBYQA\n"
+            "    MAXEVAL 10\n    EXPLORE\n      LIB " + lib + "\n      ALGO " +
+            algo + "\n      MAXEVAL 12\n" + extra +
+            "      THREADS 4\n    ENDEXPLORE\n");
+    };
+    CHECK(judge(explore("NLOPT", "GN_CRS2_LM", "")).startup ==
+          "the PRESTAGE exploration (EXPLORE block): NLOPT:GN_CRS2_LM" +
+              unused);
+    CHECK(judge(explore("TADAH", "ANNEAL", "")).startup ==
+          "the PRESTAGE exploration (EXPLORE block): TADAH:ANNEAL" + unused);
+    CHECK(judge(explore("DLIB", "GFS", "")).startup == "");
+    CHECK(judge(explore("TADAH", "ANNEAL_PT", "")).startup == "");
+    CHECK(judge(strategy_config("    LIB NLOPT\n    ALGO LN_SBPLX\n"
+                                "    MAXEVAL 20\n    THREADS 4\n"))
+              .startup == "");
+}
+
+/* Pins: an NLopt algorithm takes the PARAM keys NLopt 2.10 reads for it
+ * (optimize.c): magic_eps for the DIRECT forms; magic_eps, magic_eps_abs,
+ * sigma_reltol and fglobal_reltol for the original DIRECT; t0_tol for
+ * LN_PRAXIS; tolg for LD_LBFGS, LD_VAR1/2 and the LD_TNEWTON forms;
+ * inner_maxeval, verbosity, rho_init, dual_algorithm and dual_ftol_rel,
+ * dual_ftol_abs, dual_xtol_rel, dual_xtol_abs, dual_maxeval for LD_MMA and
+ * LD_CCSAQ; none for any other. Any other name is refused at startup for
+ * every phase, the EXPLORE and INNER blocks included ("NLOPT:LN_SBPLX:
+ * unknown PARAM 'nosuchparam' (it takes none)"), and so is a word where a
+ * number is read ("NLOPT:LD_MMA: PARAM verbosity takes a number (got
+ * 'loud')"). DLIB:BFGS, CERES and ASA:ASA refuse a word as they refuse a
+ * number: under a name they do not take with their unknown-key message,
+ * under one of their keys with "PARAM <name> takes a number (got
+ * '<word>')". The finite-difference keys keep their own checks (fd_kernel
+ * takes a word); the refusal of an unknown name lists them after the
+ * algorithm's keys for a phase that takes finite-difference gradients
+ * ("NLOPT:LD_LBFGS: unknown PARAM 'fd_stp' (it takes tolg, fd_step,
+ * fd_kernel and diff_method)", "NLOPT:GD_MLSL: ... (it takes fd_step,
+ * fd_kernel and diff_method)"), and not for a derivative-free algorithm or
+ * an INNER block, which refuse them. The ALGO help names the keys of an
+ * NLopt algorithm ("the PARAM keys NLopt reads for it: tolg", "NLopt reads
+ * no PARAM key of this algorithm").
+ * Before the fix: every NLopt PARAM name was accepted and passed to NLopt,
+ * which ignored a name the algorithm does not read, and a word was
+ * accepted and passed to nothing, as under the PARAM keys of DLIB:BFGS,
+ * CERES and ASA:ASA and under a name they do not take. Before the fix of
+ * the list: it named the algorithm's keys alone, joined by commas ("(it
+ * takes tolg)" for 'fd_stp'), and the help said "NLopt's parameters of
+ * this algorithm" and "NLopt reads no parameter of this algorithm". */
+TEST_CASE("startup validation: an optimiser refuses a PARAM key it does not "
+          "read and a word where it reads a number",
+          "[startup_validation][param_vocabulary]")
+{
+    const auto plain = [](const std::string& lib, const std::string& algo,
+                          const std::string& extra) {
+        return strategy_config("    LIB " + lib + "\n    ALGO " + algo +
+                               "\n    MAXEVAL 20\n" + extra);
+    };
+    const std::string top = "the STRATEGY-level optimiser: ";
+    struct Case { std::string lib, algo, param, error; };
+    const std::vector<Case> cases = {
+        {"NLOPT", "LN_SBPLX", "nosuchparam 7",
+         top + "NLOPT:LN_SBPLX: unknown PARAM 'nosuchparam' (it takes none)"},
+        {"NLOPT", "LN_SBPLX", "magic_eps 1e-4",
+         top + "NLOPT:LN_SBPLX: unknown PARAM 'magic_eps' (it takes none)"},
+        {"NLOPT", "LN_SBPLX", "verbosity loud",
+         top + "NLOPT:LN_SBPLX: unknown PARAM 'verbosity' (it takes none)"},
+        {"NLOPT", "LD_LBFGS", "magic_eps 1e-4",
+         top + "NLOPT:LD_LBFGS: unknown PARAM 'magic_eps' (it takes tolg, "
+               "fd_step, fd_kernel and diff_method)"},
+        {"NLOPT", "LD_LBFGS", "fd_stp 1e-4",
+         top + "NLOPT:LD_LBFGS: unknown PARAM 'fd_stp' (it takes tolg, "
+               "fd_step, fd_kernel and diff_method)"},
+        {"NLOPT", "GD_MLSL", "fd_stp 1e-4",
+         top + "NLOPT:GD_MLSL: unknown PARAM 'fd_stp' (it takes fd_step, "
+               "fd_kernel and diff_method)"},
+        {"NLOPT", "GN_ORIG_DIRECT_L", "magic_eps_rel 0.1",
+         top + "NLOPT:GN_ORIG_DIRECT_L: unknown PARAM 'magic_eps_rel' (it "
+               "takes magic_eps, magic_eps_abs, sigma_reltol and "
+               "fglobal_reltol)"},
+        {"NLOPT", "LN_SBPLX", "fd_stp 1e-4",
+         top + "NLOPT:LN_SBPLX: unknown PARAM 'fd_stp' (it takes none)"},
+        {"NLOPT", "LD_MMA", "verbosity loud",
+         top + "NLOPT:LD_MMA: PARAM verbosity takes a number (got 'loud')"},
+        {"NLOPT", "LD_LBFGS", "tolg tight",
+         top + "NLOPT:LD_LBFGS: PARAM tolg takes a number (got 'tight')"},
+        {"DLIB", "BFGS", "tol_gradinf tight",
+         top + "DLIB:BFGS: PARAM tol_gradinf takes a number (got 'tight')"},
+        {"DLIB", "BFGS", "bogus word",
+         top + "DLIB:BFGS does not support PARAM bogus; supported PARAM keys "
+               "are fd_step, fd_kernel, diff_method and tol_gradinf"},
+        {"ASA", "ASA", "Limit_Acceptances many",
+         top + "ASA:ASA: PARAM Limit_Acceptances takes a number (got "
+               "'many')"},
+    };
+    for (const auto& c : cases) {
+        INFO(c.lib << ":" << c.algo << " PARAM " << c.param);
+        CHECK(judge(plain(c.lib, c.algo, "    PARAM " + c.param + "\n"))
+                  .startup == c.error);
+    }
+    const auto asa = judge(plain("ASA", "ASA", "    PARAM Bogus_Option word\n"));
+    CHECK_THAT(asa.startup,
+               Catch::StartsWith(top + "ASA:ASA: unknown PARAM 'Bogus_Option'. "
+                                       "Accepted keys:"));
+    CHECK(judge(plain("CERES", "STEEPEST_DESCENT",
+                      "    PARAM max_iter many\n")).startup ==
+          hpo_test::ceres_expect(
+              top + "CERES:STEEPEST_DESCENT: PARAM max_iter takes a number "
+                    "(got 'many')", top));
+    CHECK(judge(plain("CERES", "STEEPEST_DESCENT",
+                      "    PARAM max_lbfgs_rank many\n")).startup ==
+          hpo_test::ceres_expect(
+              top + "CERES:STEEPEST_DESCENT does not support PARAM "
+                    "max_lbfgs_rank; supported: fd_step, fd_kernel, "
+                    "diff_method, tol_gradinf, max_iter, max_ls_iter", top));
+
+    /* The keys each algorithm reads are accepted. */
+    for (const auto& [algo, param] :
+         std::vector<std::pair<std::string, std::string>>{
+             {"GN_DIRECT_L", "magic_eps 1e-4"},
+             {"GN_ORIG_DIRECT", "sigma_reltol 0.1"},
+             {"LN_PRAXIS", "t0_tol 0.01"},
+             {"LD_LBFGS", "tolg 1e-8"},
+             {"LD_TNEWTON_PRECOND", "tolg 1e-8"},
+             {"LD_MMA", "inner_maxeval 5"},
+             {"LD_CCSAQ", "dual_ftol_rel 1e-10"}}) {
+        INFO("NLOPT:" << algo << " PARAM " << param);
+        CHECK(judge(plain("NLOPT", algo, "    PARAM " + param + "\n"))
+                  .startup == "");
+    }
+    CHECK(judge(plain("DLIB", "BFGS", "    PARAM fd_kernel ceres\n")).startup ==
+          "");
+
+    /* The ALGO help (tadah explain) names them. */
+    const auto help = [](const std::string& algo) {
+        std::ostringstream os;
+        OptimizerSpec::print_caps(os, "NLOPT", algo);
+        return os.str();
+    };
+    CHECK_THAT(help("LD_LBFGS"),
+               Catch::Contains("   * PARAM <name> <value>  the PARAM keys "
+                               "NLopt reads for it: tolg\n"));
+    CHECK_THAT(help("LN_SBPLX"),
+               Catch::Contains("   * PARAM: NLopt reads no PARAM key of this "
+                               "algorithm\n"));
+
+    /* Every phase: the exploration and an INNER block. */
+    CHECK(judge(strategy_config(
+              "    TYPE PRESTAGE\n    LIB NLOPT\n    ALGO LN_BOBYQA\n"
+              "    MAXEVAL 10\n    EXPLORE\n      LIB NLOPT\n"
+              "      ALGO GN_CRS2_LM\n      MAXEVAL 12\n"
+              "      PARAM tolg 1e-8\n    ENDEXPLORE\n"))
+              .startup ==
+          "the PRESTAGE exploration (EXPLORE block): NLOPT:GN_CRS2_LM: "
+          "unknown PARAM 'tolg' (it takes none)");
+    CHECK(judge(strategy_config(
+              "    LIB NLOPT\n    ALGO G_MLSL_LDS\n    MAXEVAL 20\n"
+              "    INNER\n      LIB NLOPT\n      ALGO LN_BOBYQA\n"
+              "      MAXEVAL 5\n      PARAM tolg 1e-8\n    ENDINNER\n"))
+              .startup ==
+          "the INNER block of the STRATEGY-level optimiser: NLOPT:LN_BOBYQA: "
+          "unknown PARAM 'tolg' (it takes none)");
+    /* An INNER search takes the gradient of the block it runs in, so its
+     * list names no finite-difference key. */
+    CHECK(judge(strategy_config(
+              "    LIB NLOPT\n    ALGO G_MLSL_LDS\n    MAXEVAL 20\n"
+              "    INNER\n      LIB NLOPT\n      ALGO LD_LBFGS\n"
+              "      MAXEVAL 5\n      PARAM fd_stp 1e-4\n    ENDINNER\n"))
+              .startup ==
+          "the INNER block of the STRATEGY-level optimiser: NLOPT:LD_LBFGS: "
+          "unknown PARAM 'fd_stp' (it takes tolg)");
+}
+
+/* Pins: VECTOR_ARR, the vector storage of NLopt's Luksan algorithms, is
+ * read by LD_LBFGS, LD_VAR1/2 and the preconditioned LD_TNEWTON forms
+ * (pnet.c reads it only with a preconditioner, mos2 > 1, which optimize.c
+ * gives LD_TNEWTON_PRECOND and LD_TNEWTON_PRECOND_RESTART): LD_TNEWTON and
+ * LD_TNEWTON_RESTART refuse it at startup, as LN_SBPLX does ("NLOPT:
+ * LD_TNEWTON does not use VECTOR_ARR; remove it (it is read by
+ * NLOPT:LD_LBFGS, NLOPT:LD_TNEWTON_PRECOND, ...)"); LD_TNEWTON_PRECOND
+ * reads it.
+ * Before the fix: LD_TNEWTON and LD_TNEWTON_RESTART accepted VECTOR_ARR,
+ * which NLopt does not read for them. */
+TEST_CASE("startup validation: VECTOR_ARR is refused for LD_TNEWTON and "
+          "LD_TNEWTON_RESTART", "[startup_validation][vector_arr]")
+{
+    const auto lbfgs_like = [](const std::string& algo) {
+        return strategy_config("    LIB NLOPT\n    ALGO " + algo +
+                               "\n    MAXEVAL 20\n    VECTOR_ARR 5\n");
+    };
+    for (const std::string algo : {"LD_TNEWTON", "LD_TNEWTON_RESTART"}) {
+        INFO("NLOPT:" << algo);
+        CHECK(judge(lbfgs_like(algo)).startup ==
+              "the STRATEGY-level optimiser: NLOPT:" + algo +
+                  " does not use VECTOR_ARR; remove it (it is read by "
+                  "NLOPT:LD_LBFGS, NLOPT:LD_TNEWTON_PRECOND, "
+                  "NLOPT:LD_TNEWTON_PRECOND_RESTART, NLOPT:LD_VAR1, "
+                  "NLOPT:LD_VAR2)");
+    }
+    for (const std::string algo :
+         {"LD_TNEWTON_PRECOND", "LD_TNEWTON_PRECOND_RESTART", "LD_LBFGS"}) {
+        INFO("NLOPT:" << algo);
+        CHECK(judge(lbfgs_like(algo)).startup == "");
+    }
+}
+
+/* Pins: DLIB:GFS draws no random numbers, so a SEED it would run with is
+ * refused at startup, as TADAH:GRID's is ("DLIB:GFS does not use SEED: it
+ * draws no random numbers; remove it"): a STRATEGY-level SEED, an EXPLORE
+ * block's SEED, and the STRATEGY-level SEED of a PRESTAGE refinement on
+ * DLIB:GFS whose exploration has a SEED of its own. A PRESTAGE refinement's
+ * SEED that the exploration takes (an exploration that reads SEED and has
+ * none of its own) seeds the exploration, and is accepted, on DLIB:GFS and
+ * on every refinement optimiser that reads no SEED (DLIB:BFGS, TADAH:GRID,
+ * CERES:STEEPEST_DESCENT); with an exploration SEED of its own, or an
+ * exploration that reads none, the refinement's SEED is refused, saying
+ * why the exploration does not take it ("the PRESTAGE refinement:
+ * CERES:STEEPEST_DESCENT does not use SEED: it draws no random numbers,
+ * and the exploration (NLOPT:GN_CRS2_LM) has a SEED of its own; remove
+ * it", "... and the exploration (TADAH:GRID) reads none; ..."). A build
+ * without Ceres refuses the CERES refinement as it refuses every LIB CERES
+ * (hpo_test::ceres_expect).
+ * Before the fix: DLIB:GFS's SEED was accepted at startup (tadah hpo
+ * --check said nothing), and the search warned when it started that SEED
+ * had no effect on it; DLIB:BFGS, TADAH:GRID and CERES:STEEPEST_DESCENT
+ * refused the refinement's SEED that seeded the exploration ("the PRESTAGE
+ * refinement: CERES:STEEPEST_DESCENT does not support SEED" for the file
+ * that the CERES leg accepts). Before the reason was given: a refused
+ * refinement SEED was "DLIB:BFGS does not support SEED" or "...: it draws
+ * no random numbers; remove it", without the exploration's part. */
+TEST_CASE("startup validation: DLIB:GFS refuses a SEED, unless it seeds the "
+          "exploration of a PRESTAGE that it refines",
+          "[startup_validation][gfs][seed]")
+{
+    const std::string unread =
+        "DLIB:GFS does not use SEED: it draws no random numbers; remove it";
+    CHECK(judge(strategy_config("    LIB DLIB\n    ALGO GFS\n    MAXEVAL 20\n"
+                                "    SEED 5\n")).startup ==
+          "the STRATEGY-level optimiser: " + unread);
+    const auto prestage = [](const std::string& refine,
+                             const std::string& explore) {
+        return strategy_config(
+            "    TYPE PRESTAGE\n    LIB DLIB\n    ALGO GFS\n"
+            "    MAXEVAL 10\n" + refine + "    EXPLORE\n      LIB NLOPT\n"
+            "      ALGO GN_CRS2_LM\n      MAXEVAL 12\n" + explore +
+            "    ENDEXPLORE\n");
+    };
+    CHECK(judge(prestage("    SEED 7\n", "")).startup == "");
+    /* A refinement's SEED that the exploration does not take: the refusal
+     * says why. */
+    const std::string own =
+        " does not use SEED: it draws no random numbers, and the exploration "
+        "(NLOPT:GN_CRS2_LM) has a SEED of its own; remove it";
+    CHECK(judge(prestage("    SEED 7\n", "      SEED 3\n")).startup ==
+          "the PRESTAGE refinement: DLIB:GFS" + own);
+    /* The refinement optimisers that read no SEED of their own. */
+    const auto refine = [](const std::string& lib, const std::string& algo,
+                           const std::string& explore) {
+        return strategy_config(
+            "    TYPE PRESTAGE\n    LIB " + lib + "\n    ALGO " + algo +
+            "\n    MAXEVAL 10\n    SEED 7\n    EXPLORE\n      LIB NLOPT\n"
+            "      ALGO GN_CRS2_LM\n      MAXEVAL 12\n" + explore +
+            "    ENDEXPLORE\n");
+    };
+    CHECK(judge(refine("DLIB", "BFGS", "")).startup == "");
+    CHECK(judge(refine("TADAH", "GRID", "")).startup == "");
+    CHECK(judge(refine("DLIB", "BFGS", "      SEED 3\n")).startup ==
+          "the PRESTAGE refinement: DLIB:BFGS" + own);
+    CHECK(judge(refine("TADAH", "GRID", "      SEED 3\n")).startup ==
+          "the PRESTAGE refinement: TADAH:GRID" + own);
+    const std::string refinement = "the PRESTAGE refinement: ";
+    CHECK(judge(refine("CERES", "STEEPEST_DESCENT", "")).startup ==
+          hpo_test::ceres_expect("", refinement));
+    CHECK(judge(refine("CERES", "STEEPEST_DESCENT", "      SEED 3\n"))
+              .startup ==
+          hpo_test::ceres_expect(
+              refinement + "CERES:STEEPEST_DESCENT" + own, refinement));
+    /* An exploration that reads no SEED takes none. */
+    CHECK(judge(strategy_config(
+              "    TYPE PRESTAGE\n    LIB DLIB\n    ALGO BFGS\n"
+              "    MAXEVAL 10\n    SEED 5\n    EXPLORE\n      LIB TADAH\n"
+              "      ALGO GRID\n    ENDEXPLORE\n")).startup ==
+          "the PRESTAGE refinement: DLIB:BFGS does not use SEED: it draws no "
+          "random numbers, and the exploration (TADAH:GRID) reads none; "
+          "remove it");
+    CHECK(judge(strategy_config(
+              "    TYPE PRESTAGE\n    LIB NLOPT\n    ALGO LN_BOBYQA\n"
+              "    MAXEVAL 10\n    EXPLORE\n      LIB DLIB\n"
+              "      ALGO GFS\n      MAXEVAL 12\n      SEED 3\n"
+              "    ENDEXPLORE\n")).startup ==
+          "the PRESTAGE exploration (EXPLORE block): " + unread);
 }
 
 TEST_CASE("startup validation: a TYPE line after an EXPLORE or REFINE "
@@ -1243,6 +1718,46 @@ TEST_CASE("startup validation: NLOPT:LN_NEWUOA_BOUND is refused at the line "
  * NLOPT:LN_NEWUOA and Ceres' least-squares solvers are refused, and an
  * unknown optimiser is an error, at the line that closes their block.
  * ==================================================================== */
+
+/* Pins: NLOPT:GN_DIRECT_NOSCAL and GN_DIRECT_L_RAND_NOSCAL are refused,
+ * as LN_NEWUOA is, at the line that closes their block (ENDOPTIMIZER here):
+ * NLopt 2.10 picks the DIRECT variant by comparing the algorithm with
+ * GN_DIRECT and GN_DIRECT_L_RAND, which a _NOSCAL algorithm never equals, so
+ * both run GN_DIRECT_L_NOSCAL. The refusal names the algorithm of the
+ * variant and GN_DIRECT_L_NOSCAL. Neither is registered, so no list of
+ * optimisers offers it; GN_DIRECT_L_NOSCAL stays registered.
+ * Before the fix: both were accepted and ran as GN_DIRECT_L_NOSCAL (an
+ * 80-evaluation run of GN_DIRECT_NOSCAL wrote the params.tadah of
+ * GN_DIRECT_L_NOSCAL, not that of GN_DIRECT). */
+TEST_CASE("startup validation: NLOPT:GN_DIRECT_NOSCAL and "
+          "GN_DIRECT_L_RAND_NOSCAL, which NLopt runs as GN_DIRECT_L_NOSCAL, "
+          "are refused", "[startup_validation][strategy][backend][refused]")
+{
+    const std::string runs =
+        " as GN_DIRECT_L_NOSCAL: it picks the variant of DIRECT by comparing "
+        "the algorithm with GN_DIRECT and GN_DIRECT_L_RAND, which a _NOSCAL "
+        "algorithm never equals, so it runs the locally biased DIRECT-L";
+    const std::vector<std::pair<std::string, std::string>> cases = {
+        {"GN_DIRECT_NOSCAL",
+         "NLopt 2.10 runs GN_DIRECT_NOSCAL" + runs + ". The recommended "
+         "replacements are NLOPT:GN_DIRECT, the DIRECT it names, and "
+         "NLOPT:GN_DIRECT_L_NOSCAL, what it runs"},
+        {"GN_DIRECT_L_RAND_NOSCAL",
+         "NLopt 2.10 runs GN_DIRECT_L_RAND_NOSCAL" + runs + " without its "
+         "random choice between equally long sides of a box. The recommended "
+         "replacements are NLOPT:GN_DIRECT_L_RAND, the randomised DIRECT-L it "
+         "names, and NLOPT:GN_DIRECT_L_NOSCAL, what it runs"}};
+    for (const auto& [algo, reason] : cases) {
+        INFO("NLOPT:" << algo);
+        CHECK(parse_error(strategy_config("    LIB NLOPT\n    ALGO " + algo +
+                                          "\n    MAXEVAL 25\n")) ==
+              "Error on line 9: the STRATEGY-level optimiser: NLOPT:" + algo +
+                  " is refused: " + reason + "\nLine: ENDOPTIMIZER");
+        CHECK(tadah::hpo::find_optimizer_caps("NLOPT", algo) == nullptr);
+    }
+    CHECK(tadah::hpo::find_optimizer_caps("NLOPT", "GN_DIRECT_L_NOSCAL") !=
+          nullptr);
+}
 
 TEST_CASE("startup validation: NLOPT:LN_NEWUOA, the Ceres least-squares "
           "solvers and an unknown optimiser are refused at the line that "
@@ -2220,15 +2735,16 @@ const std::string kDirectXtol =
  * backend that does not lists them (sorted): ANNEAL_PA's walkers, and
  * NLopt's stochastic population (POP() in nlopt 2.10's optimize.c: CRS2,
  * ISRES, ESCH, the six MLSL forms, GD_STOGO_RAND) and the Luksan
- * algorithms' vector storage (LD_LBFGS, LD_VAR1/2, LD_TNEWTON*). */
+ * algorithms' vector storage (LD_LBFGS, LD_VAR1/2 and the preconditioned
+ * LD_TNEWTON forms: pnet.c reads it only for them, so LD_TNEWTON and
+ * LD_TNEWTON_RESTART, which this list named, refuse it). */
 const std::string kPopulationReaders =
     "NLOPT:GD_MLSL, NLOPT:GD_MLSL_LDS, NLOPT:GD_STOGO_RAND, NLOPT:GN_CRS2_LM, "
     "NLOPT:GN_ESCH, NLOPT:GN_ISRES, NLOPT:GN_MLSL, NLOPT:GN_MLSL_LDS, "
     "NLOPT:G_MLSL, NLOPT:G_MLSL_LDS, TADAH:ANNEAL_PA";
 const std::string kVectorStorageReaders =
-    "NLOPT:LD_LBFGS, NLOPT:LD_TNEWTON, NLOPT:LD_TNEWTON_PRECOND, "
-    "NLOPT:LD_TNEWTON_PRECOND_RESTART, NLOPT:LD_TNEWTON_RESTART, "
-    "NLOPT:LD_VAR1, NLOPT:LD_VAR2";
+    "NLOPT:LD_LBFGS, NLOPT:LD_TNEWTON_PRECOND, "
+    "NLOPT:LD_TNEWTON_PRECOND_RESTART, NLOPT:LD_VAR1, NLOPT:LD_VAR2";
 
 }  // namespace
 
@@ -2243,8 +2759,11 @@ TEST_CASE("startup validation: a backend with no convergence test and no "
     const std::string top = "the STRATEGY-level optimiser: ";
     std::vector<Case> cases;
     for (const std::string algo :
-         {"GN_DIRECT", "GN_DIRECT_L", "GN_DIRECT_L_RAND", "GN_DIRECT_NOSCAL",
-          "GN_DIRECT_L_NOSCAL", "GN_DIRECT_L_RAND_NOSCAL"})
+         /* GN_DIRECT_NOSCAL and GN_DIRECT_L_RAND_NOSCAL are refused (the
+          * case "... which NLopt runs as GN_DIRECT_L_NOSCAL, are
+          * refused"); they were in this list. */
+         {"GN_DIRECT", "GN_DIRECT_L", "GN_DIRECT_L_RAND",
+          "GN_DIRECT_L_NOSCAL"})
         cases.push_back({"NLOPT:" + algo + " without a stop", nlopt(algo, ""),
                          top + "NLOPT:" + algo + " needs a stop: ",
                          kAnyTolerance + kDirectXtol});
@@ -2280,17 +2799,10 @@ TEST_CASE("startup validation: a backend with no convergence test and no "
                          top + "TADAH:ANNEAL_PT needs a stop: ",
                          "; set MAXEVAL, MAXTIME, STOPVAL or a positive "
                          "tolerance it honours (FTOL_REL, FTOL_ABS)"});
-    /* A RESTART that is not active (MAX 0, or no AFTER_STAGNATION) arms no
-     * stagnation stop. */
-    for (const std::string& restart :
-         {std::string("      AFTER_STAGNATION 60\n      MAX 0\n"),
-          std::string("      MAX 2\n")})
-        cases.push_back({"NLOPT:GN_DIRECT_L under an inactive RESTART",
-                         nlopt("GN_DIRECT_L", "    RESTART\n" + restart +
-                                                  "      METHOD RANDOM 1\n"
-                                                  "    ENDRESTART\n"),
-                         top + "NLOPT:GN_DIRECT_L needs a stop: ",
-                         kAnyTolerance + kDirectXtol});
+    /* A RESTART that is not active (MAX 0, or no AFTER_STAGNATION), which
+     * armed no stagnation stop, is refused when the file is read (the
+     * case "startup validation: a RESTART block that never restarts the
+     * search is refused"); its legs left this case. */
     for (const std::string algo : {"GN_ESCH", "GN_AGS"})
         cases.push_back({"NLOPT:" + algo + " without a stop", nlopt(algo, ""),
                          top + "NLOPT:" + algo + " needs a stop: ",
@@ -2608,18 +3120,22 @@ TEST_CASE("startup validation: TADAH:RANDOM/GRID and DLIB:GFS reject what "
     unread.push_back({"GRID SEED", grid + "    SEED 7\n",
                       top + "TADAH:GRID does not use SEED: it draws no random "
                             "numbers; remove it"});
+    /* DLIB:GFS's SEED, which find_min_global does not read either, is
+     * refused as TADAH:GRID's is (it was accepted at startup and reported
+     * with a warning when the run started). */
+    unread.push_back({"GFS SEED", gfs + "    SEED 7\n",
+                      top + "DLIB:GFS does not use SEED: it draws no random "
+                            "numbers; remove it"});
     for (const auto& c : unread) {
         INFO(c.what << "\n" << c.body);
         CHECK(judge(strategy_config(c.body)).startup == c.message);
     }
-    /* The stops they honour, RANDOM's SEED, and DLIB:GFS's SEED, which
-     * find_min_global does not read either: it is reported with a warning
-     * when the run starts (existing configurations set it), not refused. */
+    /* The stops they honour and RANDOM's SEED. */
     for (const std::string& body : std::vector<std::string>{
              random + "    MAXTIME 60\n    STOPVAL 0.1\n",
              grid + "    MAXTIME 60\n    STOPVAL 0.1\n",
              gfs + "    MAXTIME 60\n    STOPVAL 0.1\n    FTOL_ABS 1e-3\n",
-             random + "    SEED 7\n", gfs + "    SEED 7\n"}) {
+             random + "    SEED 7\n"}) {
         INFO(body);
         CHECK(judge(strategy_config(body)).startup == "");
     }
@@ -3703,10 +4219,10 @@ std::string global_inner_refusal(const std::string& phase,
 
 /* Pins: the PRESTAGE refinement on every registered backend whose first
  * call is not at the point it is given (OptimizerCaps::starts_at_x0 false:
- * the eleven NLopt algorithms GD_STOGO, GD_STOGO_RAND, GN_AGS, GN_DIRECT,
- * GN_DIRECT_L, GN_DIRECT_L_NOSCAL, GN_DIRECT_L_RAND,
- * GN_DIRECT_L_RAND_NOSCAL, GN_DIRECT_NOSCAL, GN_ORIG_DIRECT and
- * GN_ORIG_DIRECT_L), with TOPK 1 (the default) and TOPK 3, written at the
+ * the nine NLopt algorithms GD_STOGO, GD_STOGO_RAND, GN_AGS, GN_DIRECT,
+ * GN_DIRECT_L, GN_DIRECT_L_NOSCAL, GN_DIRECT_L_RAND, GN_ORIG_DIRECT and
+ * GN_ORIG_DIRECT_L; GN_DIRECT_NOSCAL and GN_DIRECT_L_RAND_NOSCAL, which
+ * were the eleventh and the tenth, are refused), with TOPK 1 (the default) and TOPK 3, written at the
  * STRATEGY level or in a REFINE block, is refused at startup, at the
  * ENDOPTIMIZER line, with "STRATEGY TYPE PRESTAGE cannot refine with
  * NLOPT:<ALGO>: it does not start at the point it is given (<where it
@@ -3821,9 +4337,7 @@ TEST_CASE("startup validation: a PRESTAGE refinement or MULTISTART whose "
                            "NLOPT:GD_STOGO", "NLOPT:GD_STOGO_RAND",
                            "NLOPT:GN_AGS", "NLOPT:GN_DIRECT",
                            "NLOPT:GN_DIRECT_L", "NLOPT:GN_DIRECT_L_NOSCAL",
-                           "NLOPT:GN_DIRECT_L_RAND",
-                           "NLOPT:GN_DIRECT_L_RAND_NOSCAL",
-                           "NLOPT:GN_DIRECT_NOSCAL", "NLOPT:GN_ORIG_DIRECT",
+                           "NLOPT:GN_DIRECT_L_RAND", "NLOPT:GN_ORIG_DIRECT",
                            "NLOPT:GN_ORIG_DIRECT_L"});
         for (const std::string& name : blind) {
             const std::string algo = name.substr(name.find(':') + 1);
@@ -3980,7 +4494,6 @@ TEST_CASE("startup validation: an INNER block that names a global optimiser "
                         "GD_MLSL", "GD_MLSL_LDS", "GD_STOGO", "GD_STOGO_RAND",
                         "GN_AGS", "GN_CRS2_LM", "GN_DIRECT", "GN_DIRECT_L",
                         "GN_DIRECT_L_NOSCAL", "GN_DIRECT_L_RAND",
-                        "GN_DIRECT_L_RAND_NOSCAL", "GN_DIRECT_NOSCAL",
                         "GN_ESCH", "GN_ISRES", "GN_MLSL", "GN_MLSL_LDS",
                         "GN_ORIG_DIRECT", "GN_ORIG_DIRECT_L"});
 

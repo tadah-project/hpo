@@ -61,6 +61,7 @@
 #include <fstream>
 #include <limits>
 #include <map>
+#include <iterator>
 #include <memory>
 #include <sstream>
 #include <string>
@@ -603,7 +604,11 @@ TEST_CASE("STRATEGY TYPE BASINS and BASINSV2 are rejected with the "
         {"PRESTAGE", StrategyType::PRESTAGE}};
     for (const auto& [name, type] : accepted) {
         INFO("TYPE " << name);
-        TempFile cfg(strategy_block(name, "  LIB NLOPT\n  ALGO LN_BOBYQA\n"));
+        /* TYPE MULTISTART needs N_STARTS 2 or more (it ran one start
+         * without N_STARTS). */
+        TempFile cfg(strategy_block(
+            name, std::string(name == "MULTISTART" ? "  N_STARTS 2\n" : "") +
+                      "  LIB NLOPT\n  ALGO LN_BOBYQA\n"));
         tadah::core::Context ctx;
         tadah::hpo::HPOTargets trg(ctx, cfg.path.string());
         CHECK(trg.spec.strategy_type == type);
@@ -769,8 +774,11 @@ TEST_CASE("build_run_policy wraps PLAIN/MULTISTART/PRESTAGE in RestartPolicy "
         "  ENDEXPLORE\n";
     for (const std::string t : {"PLAIN", "MULTISTART", "PRESTAGE"}) {
         INFO("TYPE " << t);
+        /* TYPE MULTISTART needs N_STARTS 2 or more (it ran one start
+         * without N_STARTS). */
         const std::string common = "  LIB NLOPT\n  ALGO LN_SBPLX\n  MAXEVAL 50\n" +
-            std::string(t == "PRESTAGE" ? explore : "");
+            std::string(t == "PRESTAGE" ? explore : "") +
+            std::string(t == "MULTISTART" ? "  N_STARTS 2\n" : "");
         {
             TempFile cfg(strategy_block(t, common + restart));
             tadah::core::Context ctx;
@@ -857,12 +865,19 @@ KeyHome strategy_home(const std::string& key, const std::string& type,
             tail + "ENDSTRATEGY\nENDOPTIMIZER\n"};
 }
 
+/* A RESTART block restarts the search: it needs AFTER_STAGNATION and MAX,
+ * given after the key's line (one block took a single key before the case
+ * "startup validation: a RESTART block that never restarts the search is
+ * refused"). */
 KeyHome restart_home(const std::string& key)
 {
+    const std::string keys =
+        std::string(key == "AFTER_STAGNATION" ? "" : "AFTER_STAGNATION 3\n") +
+        (key == "MAX" ? "" : "MAX 2\n");
     return {key,
             "OPTIMIZER\nSTRATEGY\nTYPE PLAIN\nLIB NLOPT\nALGO LN_SBPLX\n"
             "MAXEVAL 5\nRESTART\n",
-            "ENDRESTART\nENDSTRATEGY\nENDOPTIMIZER\n"};
+            keys + "ENDRESTART\nENDSTRATEGY\nENDOPTIMIZER\n"};
 }
 
 const std::string kStrategyBlock =
@@ -1452,16 +1467,20 @@ TEST_CASE("DUMP and BDUMP refuse a directory the run cannot write into",
     }
 }
 
-TEST_CASE("Strict numbers: STRATEGY N_STARTS, PARALLEL, BUDGET_PER_START and "
-          "TOPK are integers >= 1", "[HPO][hpo_targets][strict_numbers]")
+TEST_CASE("Strict numbers: STRATEGY N_STARTS is an integer >= 2, "
+          "BUDGET_PER_START and TOPK integers >= 1",
+          "[HPO][hpo_targets][strict_numbers]")
 {
-    for (const std::string key : {"N_STARTS", "PARALLEL"}) {
-        const auto h = strategy_home(key, "MULTISTART", "DLIB", "BFGS");
-        check_uint_key(h, "an integer >= 1", {"4", "1"}, {"0"});
-    }
+    /* PARALLEL, which this case read as an integer >= 1, is refused
+     * ("startup validation: STRATEGY PARALLEL is refused at its line,
+     * naming THREADS"). */
+    /* N_STARTS 1 is one start, which is TYPE PLAIN: N_STARTS is an integer
+     * >= 2 (it was >= 1, and N_STARTS 1 ran one start). */
+    check_uint_key(strategy_home("N_STARTS", "MULTISTART", "DLIB", "BFGS"),
+                   "an integer >= 2", {"4", "2"}, {"0", "1"});
     /* BUDGET_PER_START becomes each start's MAXEVAL: the same int budget. */
     check_uint_key(strategy_home("BUDGET_PER_START", "MULTISTART", "DLIB",
-                                 "BFGS"),
+                                 "BFGS", "N_STARTS 2\n"),
                    "an integer from 1 to 2147483647", {"4", "1", "2147483647"},
                    {"0", "2147483648", "4294967299"});
     const auto ms = parse_config(
@@ -1477,12 +1496,13 @@ TEST_CASE("Strict numbers: STRATEGY N_STARTS, PARALLEL, BUDGET_PER_START and "
     CHECK(parse_config(topk.config("3")).spec.stage_topk == 3u);
 }
 
-TEST_CASE("Strict numbers: RESTART AFTER_STAGNATION and MAX are integers >= 0",
+TEST_CASE("Strict numbers: RESTART AFTER_STAGNATION and MAX are integers >= 1",
           "[HPO][hpo_targets][strict_numbers]")
 {
-    check_uint_key(restart_home("AFTER_STAGNATION"), "an integer >= 0",
-                   {"10", "0"}, {});
-    check_uint_key(restart_home("MAX"), "an integer >= 0", {"2", "0"}, {});
+    /* 0 never restarts the search: it was accepted (an integer >= 0). */
+    check_uint_key(restart_home("AFTER_STAGNATION"), "an integer >= 1",
+                   {"10", "1"}, {"0"});
+    check_uint_key(restart_home("MAX"), "an integer >= 1", {"2", "1"}, {"0"});
     const auto trg = parse_config(restart_home("MAX").config("2"));
     CHECK(trg.spec.restart.max == 2u);
 
@@ -1499,10 +1519,15 @@ TEST_CASE("Strict numbers: RESTART AFTER_STAGNATION and MAX are integers >= 0",
 TEST_CASE("Strict numbers: INIT K_TOTAL, SEED and the METHOD K",
           "[HPO][hpo_targets][strict_numbers]")
 {
-    /* K_TOTAL and K are counts of starting points, at most 1000000
-     * (kMaxStartingPoints); they were read up to 2^64 - 1. */
-    check_uint_key(init_home("K_TOTAL"), "an integer from 0 to 1000000",
-                   {"4", "0", "1000000"}, {"1000001"});
+    /* K is a count of starting points, at most 1000000
+     * (kMaxStartingPoints); it was read up to 2^64 - 1. K_TOTAL caps the
+     * points of the METHOD lines (RANDOM 5 here), so it is 1 or more and a
+     * K_TOTAL of 5 or more caps nothing ("K_TOTAL that caps nothing, K_TOTAL
+     * 0 and METHOD RANDOM 0 are refused at their line"); it was an integer
+     * from 0 (no cap) to 1000000. */
+    check_uint_key(KeyHome{"K_TOTAL", "OPTIMIZER\nINIT\nMETHOD RANDOM 5\n",
+                           "ENDINIT\n" + kStrategyBlock + "ENDOPTIMIZER\n"},
+                   "an integer >= 1", {"4", "1"}, {"0"});
     check_uint_key(init_home("SEED"), "an integer >= 0",
                    {"11", "0", "18446744073709551615"},
                    {"18446744073709551616"});
@@ -1510,28 +1535,24 @@ TEST_CASE("Strict numbers: INIT K_TOTAL, SEED and the METHOD K",
               .spec.init_strategy_spec.seed ==
           std::optional<std::uint64_t>(18446744073709551615ull));
 
-    /* METHOD RANDOM|LHS|SOBOL <K>, checked at its own line (line 3). LHS
-     * and SOBOL draw at least one point: K 0 is out of their range, in the
-     * same message (it was "INIT METHOD LHS K must be > 0"). */
+    /* METHOD RANDOM|LHS|SOBOL <K>, checked at its own line (line 3). Each
+     * draws at least one point: K 0 is out of their range, in the same
+     * message (it was "INIT METHOD LHS K must be > 0", and RANDOM 0 drew no
+     * point). */
     for (const std::string method : {"RANDOM", "LHS", "SOBOL"}) {
         const KeyHome h{"METHOD " + method, "OPTIMIZER\nINIT\n",
                         "ENDINIT\n" + kStrategyBlock + "ENDOPTIMIZER\n"};
         INFO(h.key);
         CHECK(parse_error(h.config("3")) == "");
-        const bool random = method == "RANDOM";
         std::vector<std::string> rejected = kNotUnsigned;
         rejected.push_back("1000001");
-        if (random)
-            CHECK(parse_error(h.config("0")) == "");
-        else
-            rejected.push_back("0");
+        rejected.push_back("0");
         for (const auto& tok : rejected) {
             INFO("K '" << tok << "'");
             CHECK_THAT(parse_error(h.config(tok)),
                        Catch::StartsWith(h.at() + "INIT METHOD " + method +
-                                         " K must be an integer from " +
-                                         (random ? "0" : "1") +
-                                         " to 1000000, got '" + tok + "'"));
+                                         " K must be an integer from 1 to "
+                                         "1000000, got '" + tok + "'"));
         }
         CHECK_THAT(parse_error(h.config("")),
                    Catch::StartsWith(h.at() + "INIT METHOD " + method +
@@ -1539,6 +1560,86 @@ TEST_CASE("Strict numbers: INIT K_TOTAL, SEED and the METHOD K",
         CHECK_THAT(parse_error(h.config("3 4")),
                    Catch::StartsWith(h.at() + "INIT METHOD " + method +
                                      " expects exactly one arg: K"));
+    }
+}
+
+/* Pins: a shape tag written on an OPTIM line wins over LOG_HP: under
+ * LOG_HP 2, "OPTIM WATOM (1) 0.5 5.0 LIN" stays linear ("LIN") while the
+ * same box untagged is log-scaled ("LOG (auto)"), and so does an AUTO box
+ * tagged LIN (WATOM seed 1, AUTO FRAC 0.5: [0.5, 1.5], ratio 3), whose line
+ * in hpo_optim_resolved.hpo keeps the tag ("OPTIM WATOM (1) 0.5 1.5 LIN"),
+ * so pasted back under LOG_HP it gives the same search space.
+ * Before the fix: the LIN tag set the shape an untagged line has, so LOG_HP
+ * log-scaled both ("LOG (auto)"), and the resolved line held no tag. */
+TEST_CASE("OPTIM: an explicit LIN tag keeps a dimension linear under LOG_HP",
+          "[HPO][hpo_targets][log_hp]")
+{
+    const auto space_of = [](const std::string& optim) {
+        TempFile cfg(optim + "\nPC_ERMSE 0 1\nOPTIMIZER\nSTRATEGY\n"
+                     "LIB NLOPT\nALGO LN_SBPLX\nMAXEVAL 5\nLOG_HP 2\n"
+                     "ENDSTRATEGY\nENDOPTIMIZER\n");
+        tadah::core::Context ctx;
+        ctx.add("WATOM", 1.0);
+        return std::make_unique<tadah::hpo::HPOTargets>(ctx, cfg.path.string());
+    };
+    CHECK(space_of("OPTIM WATOM (1) 0.5 5.0 LIN")->space()->describe_dim(0) ==
+          "LIN");
+    CHECK(space_of("OPTIM WATOM (1) 0.5 5.0")->space()->describe_dim(0) ==
+          "LOG (auto)");
+    const auto tagged = space_of("OPTIM WATOM (1) AUTO FRAC 0.5 LIN");
+    CHECK(tagged->space()->describe_dim(0) == "LIN");
+    const fs::path dir = physical_temp_dir("");
+    tagged->write_search_space_files(dir.string());
+    std::ifstream in(dir / "hpo_optim_resolved.hpo");
+    REQUIRE(in.good());
+    std::string text((std::istreambuf_iterator<char>(in)),
+                     std::istreambuf_iterator<char>());
+    CHECK_THAT(text, Catch::Contains("OPTIM WATOM (1) 0.5 1.5 LIN   # "));
+    std::error_code ec;
+    fs::remove_all(dir, ec);
+}
+
+/* Pins: an empty TADAH_OPTIM_SCALE is ignored, as an empty value of the
+ * other environment overrides is (the shell's way of clearing a
+ * variable): the file's OPTIM_SCALE NONE stands; a value other than AUTO
+ * or NONE is refused naming the variable and quoting the value
+ * ("TADAH_OPTIM_SCALE must be AUTO or NONE (got 'unit')"), and NONE in
+ * any case replaces the file's OPTIM_SCALE AUTO.
+ * Before the fix: the empty value was refused ("TADAH_OPTIM_SCALE must be
+ * AUTO or NONE (got '')"). */
+TEST_CASE("Environment: an empty TADAH_OPTIM_SCALE is ignored",
+          "[HPO][hpo_targets][env]")
+{
+    struct Env {
+        explicit Env(const char* value) { ::setenv(kName, value, 1); }
+        ~Env() { ::unsetenv(kName); }
+        const char* kName = "TADAH_OPTIM_SCALE";
+    };
+    const auto read = [](const std::string& scale) {
+        TempFile cfg("OPTIM WATOM (1) 0.5 5.0\nPC_ERMSE 0 1\nOPTIM_SCALE " +
+                     scale + "\nOPTIMIZER\nSTRATEGY\nLIB NLOPT\n"
+                     "ALGO LN_SBPLX\nMAXEVAL 5\nENDSTRATEGY\nENDOPTIMIZER\n");
+        tadah::core::Context ctx;
+        ctx.add("WATOM", 1.0);
+        return std::make_unique<tadah::hpo::HPOTargets>(ctx, cfg.path.string());
+    };
+    {
+        Env e("");
+        CHECK_FALSE(read("NONE")->space()->normalised());
+    }
+    {
+        Env e("unit");
+        try {
+            (void)read("NONE");
+            FAIL("TADAH_OPTIM_SCALE unit was accepted");
+        } catch (const std::exception& ex) {
+            CHECK(std::string(ex.what()) ==
+                  "TADAH_OPTIM_SCALE must be AUTO or NONE (got 'unit')");
+        }
+    }
+    {
+        Env e("none");
+        CHECK_FALSE(read("AUTO")->space()->normalised());
     }
 }
 

@@ -160,7 +160,6 @@ enum class StrategyType {
 /* MultiStartSpec -- knobs for `STRATEGY { TYPE MULTISTART }`. */
 struct MultiStartSpec {
     std::size_t n_starts = 1;                      // N_STARTS -- count
-    std::size_t parallel = 1;                      // PARALLEL -- concurrent runs
     std::optional<std::size_t> budget_per_start;   // BUDGET_PER_START override
 };
 
@@ -169,7 +168,7 @@ struct MultiStartSpec {
  * in RestartPolicy; on HPO_Host::StagnationStop it re-runs the whole inner
  * policy from a fresh init (see RestartPolicy in run_policy.h). */
 struct RestartSpec {
-    std::size_t after_stagnation = 0;              // 0 disables
+    std::size_t after_stagnation = 0;              // 0: no RESTART block
     std::size_t max              = 0;              // cap on restart count
     InitStrategySpec init_strategy;                // INIT chain to refresh on restart;
                                                    // its SEED draws round r with SEED + r,
@@ -191,7 +190,10 @@ struct RestartSpec {
 
     /* RESTART takes effect only when both AFTER_STAGNATION and MAX are
      * positive. The one rule for build_run_policy() and for the
-     * multi-rank dispatch, which refuses an active RESTART. */
+     * multi-rank dispatch, which refuses an active RESTART. The parser
+     * refuses a RESTART block that is not active (HPOTargets::read): a
+     * spec without RESTART, or one built outside the parser, has it
+     * inactive. */
     bool active() const noexcept { return after_stagnation > 0 && max > 0; }
 };
 

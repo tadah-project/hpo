@@ -346,6 +346,7 @@ PC_ERMSE 0 1
 OPTIMIZER
 STRATEGY
 TYPE MULTISTART
+N_STARTS 2
 LIB NLOPT
 ENDSTRATEGY
 ENDOPTIMIZER'''
@@ -933,10 +934,17 @@ aliases = { STRATEGY = "INIT.METHOD" }
 doc = """\
 The stagnation restart of the STRATEGY-level optimiser: when to restart, \
 how often, and the chain of METHOD lines that draws the points of each \
-restart. A run on more than one MPI rank refuses an active RESTART block."""
+restart. A run on more than one MPI rank refuses a RESTART block."""
 long_doc = """\
 A second RESTART block continues the first. Inside a RESTART block a \
 STRATEGY line is read as a METHOD line."""
+
+[[block.close_checks]]
+msg = "the RESTART block never restarts the search: a restart needs AFTER_STAGNATION and MAX, and the block has {missing}; a search without restarts has no RESTART block"
+doc = """\
+At ENDSTRATEGY, reported at the last ENDRESTART line: {missing} is "no \
+AFTER_STAGNATION line", "no MAX line" or "no AFTER_STAGNATION line and no \
+MAX line"."""
 
 [[block.examples]]
 wrap = "strategy"
@@ -946,6 +954,25 @@ AFTER_STAGNATION 20
 MAX 3
 METHOD RANDOM 2
 ENDRESTART'''
+
+[[block.invalid]]
+wrap = "strategy"
+at = 3
+text = '''
+RESTART
+AFTER_STAGNATION 20
+ENDRESTART'''
+error = "the RESTART block never restarts the search: a restart needs AFTER_STAGNATION and MAX, and the block has no MAX line; a search without restarts has no RESTART block"
+
+[[block.invalid]]
+wrap = "strategy"
+at = 3
+doc = "METHOD lines alone draw starting points for restarts that never come."
+text = '''
+RESTART
+METHOD RANDOM 2
+ENDRESTART'''
+error = "the RESTART block never restarts the search: a restart needs AFTER_STAGNATION and MAX, and the block has no AFTER_STAGNATION line and no MAX line; a search without restarts has no RESTART block"
 
 [[block.invalid]]
 wrap = "optimizer"
@@ -2439,12 +2466,26 @@ error = "'MULTISTART' was removed from the grammar: moved into `STRATEGY { TYPE 
 
 [[removed]]
 name = "MULTISTART_PARALLEL"
-hint = "moved into `STRATEGY { TYPE MULTISTART PARALLEL N }`."
+hint = "the starts of STRATEGY TYPE MULTISTART run one after another; THREADS sets the number of workers that run the work of the evaluations (the LAMMPS scripts and the training and prediction of the potential)."
 
 [[removed.invalid]]
 wrap = "strategy"
 text = "MULTISTART_PARALLEL 2"
-error = "'MULTISTART_PARALLEL' was removed from the grammar: moved into `STRATEGY { TYPE MULTISTART PARALLEL N }`."
+error = "'MULTISTART_PARALLEL' was removed from the grammar: the starts of STRATEGY TYPE MULTISTART run one after another; THREADS sets the number of workers that run the work of the evaluations (the LAMMPS scripts and the training and prediction of the potential)."
+
+[[removed]]
+name = "PARALLEL"
+hint = "the starts of STRATEGY TYPE MULTISTART run one after another; THREADS sets the number of workers that run the work of the evaluations (the LAMMPS scripts and the training and prediction of the potential)."
+
+[[removed.invalid]]
+wrap = "strategy"
+text = "PARALLEL 2"
+error = "'PARALLEL' was removed from the grammar: the starts of STRATEGY TYPE MULTISTART run one after another; THREADS sets the number of workers that run the work of the evaluations (the LAMMPS scripts and the training and prediction of the potential)."
+
+[[removed.invalid]]
+wrap = "strategy"
+text = "PARALLEL 1"
+error = "'PARALLEL' was removed from the grammar: the starts of STRATEGY TYPE MULTISTART run one after another; THREADS sets the number of workers that run the work of the evaluations (the LAMMPS scripts and the training and prediction of the potential)."
 
 [[removed]]
 name = "MULTISTART_BUDGET_PER_START"
@@ -2597,8 +2638,8 @@ error = "RHOBARGATE cannot act: no OPTIM line searches a key that changes the DM
 
 # ---------------------------------------------- environment overrides ----
 # A variable that is set and not empty replaces the key of the target
-# file when the run starts. TADAH_OPTIM_SCALE is read with the target
-# file, and an empty TADAH_OPTIM_SCALE is refused.
+# file when the run starts; an empty one is ignored. TADAH_OPTIM_SCALE is
+# read with the target file.
 
 [[env]]
 name = "TADAH_OPTIM_SCALE"
@@ -2606,8 +2647,8 @@ key = "ROOT.OPTIM_SCALE"
 values = ["AUTO", "NONE"]
 msg = "TADAH_OPTIM_SCALE must be AUTO or NONE (got '{tok}')"
 doc = """\
-Replaces OPTIM_SCALE of the target file. The value is read in any case, \
-and an empty value is refused."""
+Replaces OPTIM_SCALE of the target file when it is set and not empty; \
+the value is AUTO or NONE, read in any case."""
 
 [[env.examples]]
 wrap = "root"
@@ -2622,18 +2663,17 @@ at = "none"
 text = "OPTIM_SCALE AUTO"
 error = "TADAH_OPTIM_SCALE must be AUTO or NONE (got 'unit')"
 
-[[env.invalid]]
+[[env.examples]]
 wrap = "root"
 env = { TADAH_OPTIM_SCALE = "" }
-at = "none"
+doc = "An empty value is ignored: the run uses the OPTIM_SCALE AUTO of the file."
 text = "OPTIM_SCALE AUTO"
-error = "TADAH_OPTIM_SCALE must be AUTO or NONE (got '')"
 
 [[env]]
 name = "TADAH_FAILSCORE_GRADING"
 key = "ROOT.FAILSCORE_GRADING"
 values = ["ON", "OFF"]
-msg = "TADAH_FAILSCORE_GRADING must be ON or OFF"
+msg = "TADAH_FAILSCORE_GRADING must be ON or OFF (got '{tok}')"
 doc = """\
 Replaces FAILSCORE_GRADING of the target file when it is set and not \
 empty; the value is ON or OFF, in upper case."""
@@ -2644,13 +2684,13 @@ check = "check"
 env = { TADAH_FAILSCORE_GRADING = "MAYBE" }
 at = "none"
 text = ""
-error = "TADAH_FAILSCORE_GRADING must be ON or OFF"
+error = "TADAH_FAILSCORE_GRADING must be ON or OFF (got 'MAYBE')"
 
 [[env]]
 name = "TADAH_BUMPGATE"
 key = "ROOT.BUMPGATE"
 values = ["CANDIDATE", "STRICT"]
-msg = "TADAH_BUMPGATE must be CANDIDATE or STRICT"
+msg = "TADAH_BUMPGATE must be CANDIDATE or STRICT (got '{tok}')"
 doc = """\
 Replaces BUMPGATE of the target file when it is set and not empty; the \
 value is CANDIDATE or STRICT, in upper case."""
@@ -2661,17 +2701,16 @@ check = "check"
 env = { TADAH_BUMPGATE = "MAYBE" }
 at = "none"
 text = ""
-error = "TADAH_BUMPGATE must be CANDIDATE or STRICT"
+error = "TADAH_BUMPGATE must be CANDIDATE or STRICT (got 'MAYBE')"
 
 [[env]]
 name = "TADAH_PC_ISOLATION"
 key = "ROOT.PC_ISOLATION"
 values = ["THREAD", "PROCESS"]
-msg = "PC_ISOLATION must be THREAD or PROCESS, got '{tok}'"
+msg = "TADAH_PC_ISOLATION must be THREAD or PROCESS (got '{tok}')"
 doc = """\
 Replaces PC_ISOLATION of the target file when it is set and not empty; \
-the value is THREAD or PROCESS, in upper case, and its refusal names \
-PC_ISOLATION."""
+the value is THREAD or PROCESS, in upper case."""
 
 [[env.invalid]]
 wrap = "root"
@@ -2679,7 +2718,7 @@ check = "check"
 env = { TADAH_PC_ISOLATION = "process" }
 at = "none"
 text = ""
-error = "PC_ISOLATION must be THREAD or PROCESS, got 'process'"
+error = "TADAH_PC_ISOLATION must be THREAD or PROCESS (got 'process')"
 
 [[env]]
 name = "TADAH_PC_WORKER_TIMEOUT"
@@ -2825,6 +2864,8 @@ LIB NLOPT
 ALGO LN_SBPLX
 MAXEVAL 10
 RESTART
+AFTER_STAGNATION 20
+MAX 2
 {line}
 ENDRESTART
 ENDSTRATEGY

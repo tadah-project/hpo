@@ -88,6 +88,17 @@ using Registry = std::unordered_map<CapsKey, OptimizerCaps, CapsKeyHash>;
  * argument" once its setup was done. The repro is the unit test that
  * calls nlopt_optimize() with it (test_optimizer_caps_step.cpp).
  *
+ * NLOPT:GN_DIRECT_NOSCAL, GN_DIRECT_L_RAND_NOSCAL -- NLopt v2.10.0 picks the
+ * DIRECT variant (optimize.c, the which_alg argument of cdirect_unscaled)
+ * by comparing the algorithm with NLOPT_GN_DIRECT and NLOPT_GN_DIRECT_L_RAND,
+ * which a _NOSCAL algorithm never equals, so all three _NOSCAL forms run
+ * which_alg 13, GN_DIRECT_L_NOSCAL's: measured, an 80-evaluation run of
+ * GN_DIRECT_NOSCAL wrote the params.tadah of GN_DIRECT_L and
+ * GN_DIRECT_L_NOSCAL, GN_DIRECT another, and a 12-evaluation run of
+ * GN_DIRECT_L_RAND_NOSCAL that of GN_DIRECT_L_NOSCAL, GN_DIRECT_L_RAND
+ * another. A name that runs another algorithm is refused, naming the
+ * algorithm of its variant and GN_DIRECT_L_NOSCAL, which stays registered.
+ *
  * CERES:LBFGS, WOLFE, NLCG -- Ceres' GradientProblemSolver has no bounds, and
  * HPO does not evaluate a point outside the OPTIM box: it scores it as a
  * failure graded by its distance to the box (box_penalty.h), a loss in [0.99975, 1) x FAILSCORE, far above every
@@ -166,6 +177,21 @@ constexpr Refusal kRefused[] = {
      "also needs two OPTIM dimensions or more. The recommended replacement "
      "is NLOPT:LN_BOBYQA, Powell's bound-constrained successor of NEWUOA "
      "(its STEP rescales each dimension instead of setting one radius)"},
+    {"NLOPT", "GN_DIRECT_NOSCAL",
+     "NLopt 2.10 runs GN_DIRECT_NOSCAL as GN_DIRECT_L_NOSCAL: it picks the "
+     "variant of DIRECT by comparing the algorithm with GN_DIRECT and "
+     "GN_DIRECT_L_RAND, which a _NOSCAL algorithm never equals, so it runs "
+     "the locally biased DIRECT-L. The recommended replacements are "
+     "NLOPT:GN_DIRECT, the DIRECT it names, and NLOPT:GN_DIRECT_L_NOSCAL, "
+     "what it runs"},
+    {"NLOPT", "GN_DIRECT_L_RAND_NOSCAL",
+     "NLopt 2.10 runs GN_DIRECT_L_RAND_NOSCAL as GN_DIRECT_L_NOSCAL: it picks "
+     "the variant of DIRECT by comparing the algorithm with GN_DIRECT and "
+     "GN_DIRECT_L_RAND, which a _NOSCAL algorithm never equals, so it runs "
+     "the locally biased DIRECT-L without its random choice between equally "
+     "long sides of a box. The recommended replacements are "
+     "NLOPT:GN_DIRECT_L_RAND, the randomised DIRECT-L it names, and "
+     "NLOPT:GN_DIRECT_L_NOSCAL, what it runs"},
     {"NLOPT", "NLOPT_LD_LBFGS_NOCEDAL",
      "NLopt 2.10 does not implement it: NLopt names it, but its optimiser "
      "rejects it as an invalid argument, so a run of it would fail once its "
@@ -248,6 +274,7 @@ Registry build_registry()
         OptimizerCaps c;
         c.lib = "TADAH";  c.algo = "ANNEAL_PT";
         c.is_global       = true;
+        c.reads_threads   = true;   /* its replicas, and the REPLICAS default */
         c.reads_seed      = true;   /* its replica ladder is PARAM REPLICAS;
                                        POPULATION is refused */
         c.supports_maxeval = true;
@@ -271,6 +298,7 @@ Registry build_registry()
         OptimizerCaps c;
         c.lib = "TADAH";  c.algo = "ANNEAL_PA";
         c.is_global       = true;
+        c.reads_threads    = true;  /* the walkers run concurrently */
         c.reads_population = true;  /* the walkers */
         c.reads_seed       = true;
         c.supports_maxeval = true;
@@ -290,6 +318,7 @@ Registry build_registry()
         OptimizerCaps c;
         c.lib = "ASA";  c.algo = "ASA";
         c.is_global       = true;
+        c.reads_threads   = true;   /* a block of generated states (Gener_Block) */
         c.reads_seed      = true;
         c.supports_maxeval = true;
         c.supports_maxtime = true;
@@ -308,6 +337,7 @@ Registry build_registry()
         OptimizerCaps c;
         c.lib = "DLIB";  c.algo = "GFS";
         c.is_global          = true;
+        c.reads_threads      = true;  /* find_min_global's evaluation pool */
         c.accepts_multi_seed = true;
         /* find_min_global ends when its call budget is spent (MAXEVAL),
          * its run time (MAXTIME) is up or its stop condition (STOPVAL)
@@ -322,10 +352,8 @@ Registry build_registry()
         c.reads_ftol_abs_as_setting = true;
         c.untested_tolerance_note =
             "dlib's global search has no convergence test to apply it to";
-        /* find_min_global (MaxLIPO+TR) is deterministic and does not read
-         * SEED; configurations that set it predate the check, so
-         * run_dlib_global() warns instead of refusing it. */
-        c.warns_unread_seed = true;
+        /* find_min_global (MaxLIPO+TR) is deterministic: SEED is refused
+         * (reads_seed false), unless it seeds a PRESTAGE exploration. */
         c.step_use  = StepUse::Rejected;
         c.step_note = "MaxLIPO+TR sizes its own trust region from the samples; remove STEP";
         add(r, c);
@@ -411,7 +439,8 @@ Registry build_registry()
      * Which attributes a run reads (optimize.c): the stochastic population
      * (POP()) CRS2, ISRES, ESCH, the MLSL forms and GD_STOGO_RAND; the
      * vector storage the Luksan algorithms LD_LBFGS, LD_VAR1/2 and
-     * LD_TNEWTON*; the random seed (nlopt::srand) is set for every one. */
+     * LD_TNEWTON_PRECOND*; the random seed (nlopt::srand) is set for every
+     * one. */
     for (int i = 0; i < NLOPT_NUM_ALGORITHMS; ++i) {
         const char* name = nlopt_algorithm_to_string(static_cast<nlopt_algorithm>(i));
         if (!name || !name[0]) continue;
@@ -517,8 +546,11 @@ Registry build_registry()
         c.reads_population = starts("GN_CRS2") || starts("GN_ISRES") ||
                              starts("GN_ESCH") || mlsl ||
                              s == "GD_STOGO_RAND";
+        /* pnet.c reads the vector storage only with a preconditioner
+         * (mos2 > 1), which optimize.c gives the two _PRECOND forms of
+         * LD_TNEWTON: LD_TNEWTON and LD_TNEWTON_RESTART read none. */
         c.reads_vector_storage = s == "LD_LBFGS" || starts("LD_VAR") ||
-                                 starts("LD_TNEWTON");
+                                 starts("LD_TNEWTON_PRECOND");
         c.reads_seed = true;
         /* Where the first call is (OptimizerCaps::starts_at_x0): StoGO,
          * DIRECT and AGS take x0 as their output only. */
@@ -552,8 +584,8 @@ Registry build_registry()
          * GD_STOGO_RAND its POPULATION trial points (stogo.cc, POP(2n)),
          * the box centre first below POPULATION 2n + 1; GN_DIRECT_L_RAND
          * only between equally long sides (cdirect.c, which_div 2); the
-         * other StoGO and DIRECT forms and AGS none (optimize.c hands every
-         * _NOSCAL form which_alg 13, GN_DIRECT_L_NOSCAL's). */
+         * other StoGO and DIRECT forms and AGS none (GN_DIRECT_L_NOSCAL,
+         * the one _NOSCAL form registered, runs which_alg 13). */
         if (!c.starts_at_x0)
             c.random_draws =
                 s == "GD_STOGO_RAND" ? OptimizerCaps::RandomDraws::TrialPoints
@@ -595,6 +627,24 @@ Registry build_registry()
         }
         /* Every registered NLopt algorithm keeps to the box: LN_NEWUOA,
          * which NLopt runs without it, is refused (kRefused). */
+
+        /* The PARAM keys NLopt reads for the algorithm (OptimizerCaps::
+         * algorithm_params): the names optimize.c passes to
+         * nlopt_get_param in its case of the algorithm. */
+        if (starts("GN_DIRECT"))
+            c.algorithm_params = {"magic_eps"};
+        else if (starts("GN_ORIG_DIRECT"))
+            c.algorithm_params = {"magic_eps", "magic_eps_abs", "sigma_reltol",
+                                  "fglobal_reltol"};
+        else if (s == "LN_PRAXIS")
+            c.algorithm_params = {"t0_tol"};
+        else if (c.reads_vector_storage || starts("LD_TNEWTON"))
+            c.algorithm_params = {"tolg"};
+        else if (s == "LD_MMA" || s == "LD_CCSAQ")
+            c.algorithm_params = {"inner_maxeval", "verbosity", "rho_init",
+                                  "dual_algorithm", "dual_ftol_rel",
+                                  "dual_ftol_abs", "dual_xtol_rel",
+                                  "dual_xtol_abs", "dual_maxeval"};
 
         add(r, c);
     }

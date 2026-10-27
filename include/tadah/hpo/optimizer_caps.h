@@ -77,20 +77,44 @@ struct OptimizerCaps {
      *                        2.10's optimize.c): GN_CRS2_LM, GN_ISRES,
      *                        GN_ESCH, the six MLSL forms, GD_STOGO_RAND
      *   reads_vector_storage VECTOR_ARR: the Luksan algorithms of NLopt
-     *                        (optimize.c): LD_LBFGS, LD_VAR1/2, LD_TNEWTON*
+     *                        that read it (optimize.c, pnet.c): LD_LBFGS,
+     *                        LD_VAR1/2, LD_TNEWTON_PRECOND and
+     *                        LD_TNEWTON_PRECOND_RESTART (LD_TNEWTON and
+     *                        LD_TNEWTON_RESTART run without a preconditioner,
+     *                        which alone reads it)
      *   reads_seed           SEED: TADAH:RANDOM, the ANNEAL family, ASA and
      *                        NLopt (every NLopt algorithm: which of them draw
-     *                        random numbers is not recorded)
+     *                        random numbers is not recorded). Another
+     *                        backend refuses SEED, unless its spec is a
+     *                        PRESTAGE refinement whose SEED the exploration
+     *                        takes (OptimizerSpec::seed_seeds_exploration)
      *   reads_ftol_abs_as_setting  FTOL_ABS as a setting, not a stop (no
      *                        supports_ftol_abs): DLIB:GFS's solver epsilon
-     *   warns_unread_seed    SEED is not read, but configurations that set it
-     *                        predate the check, so run_dlib_global() warns
-     *                        instead of refusing it (DLIB:GFS) */
+     *   reads_threads        the THREADS of its own block, beyond the
+     *                        STRATEGY-level THREADS that sizes the run's
+     *                        workers: DLIB:GFS (its evaluation pool), ASA:ASA
+     *                        (a block of generated states), TADAH:ANNEAL_PT
+     *                        (its replicas and the REPLICAS default) and
+     *                        TADAH:ANNEAL_PA (its walkers). validate_phase_
+     *                        backends() refuses THREADS in an EXPLORE block of
+     *                        another optimiser, and in an INNER block */
     bool reads_population          = false;
     bool reads_vector_storage      = false;
     bool reads_seed                = false;
     bool reads_ftol_abs_as_setting = false;
-    bool warns_unread_seed         = false;
+    bool reads_threads             = false;
+
+    /* The PARAM keys NLopt reads for an NLopt algorithm, by name, beside
+     * the finite-difference keys of tadah hpo (fd_stencil.h): NLopt 2.10's
+     * optimize.c calls nlopt_get_param with these names (magic_eps for the
+     * DIRECT forms; magic_eps, magic_eps_abs, sigma_reltol and
+     * fglobal_reltol for the original DIRECT; t0_tol for LN_PRAXIS; tolg for
+     * the Luksan algorithms; the MMA keys for LD_MMA and LD_CCSAQ) and no
+     * other, and hands none to the local optimiser of MLSL or AUGLAG.
+     * validate_nlopt_spec() (backend_rules.h) refuses any other name, and a
+     * word given to one of them. Empty for every other backend, whose
+     * PARAM keys its own validator checks. */
+    std::vector<std::string> algorithm_params;
 
     /* Stop criteria: which fields of StopCriteria end the backend's run
      * when they are met. require_stop() (backend_rules.h) counts these as
@@ -172,10 +196,10 @@ struct OptimizerCaps {
      * numbers, so that a run with other numbers asks for other points
      * (nlopt 2.10 sources):
      *   Never         GD_STOGO (stogo.cc: no random trial point), GN_DIRECT,
-     *                 GN_DIRECT_L and the three _NOSCAL forms (optimize.c
-     *                 runs GN_DIRECT_L_RAND_NOSCAL with GN_DIRECT_L_NOSCAL's
-     *                 cdirect settings), GN_ORIG_DIRECT and GN_ORIG_DIRECT_L
-     *                 (DIRect.c), GN_AGS (ags);
+     *                 GN_DIRECT_L and GN_DIRECT_L_NOSCAL (the other _NOSCAL
+     *                 forms, which optimize.c runs as it, are refused),
+     *                 GN_ORIG_DIRECT and GN_ORIG_DIRECT_L (DIRect.c), GN_AGS
+     *                 (ags);
      *   BetweenSides  GN_DIRECT_L_RAND: cdirect.c draws only to choose one of
      *                 several equally long sides of a box, which a box of
      *                 one dimension never has;
@@ -235,7 +259,8 @@ struct OptimizerCaps {
  * the library version HPO builds makes them unsafe to run, or they do not
  * solve the problem HPO poses, one scalar loss inside the OPTIM box (the
  * refusal table in optimizer_caps.cpp, each entry with its repro:
- * NLOPT:LN_NEWUOA_BOUND, LN_NEWUOA, NLOPT_LD_LBFGS_NOCEDAL, Ceres' Wolfe
+ * NLOPT:LN_NEWUOA_BOUND, LN_NEWUOA, NLOPT_LD_LBFGS_NOCEDAL, GN_DIRECT_NOSCAL
+ * and GN_DIRECT_L_RAND_NOSCAL (which NLopt runs as GN_DIRECT_L_NOSCAL), Ceres' Wolfe
  * line-search drivers CERES:LBFGS, WOLFE and NLCG, which stall at a point
  * outside the box scored by box_penalty.h, and Ceres' least-squares solvers
  * CERES:LEVENBERG_MARQUARDT, DOGLEG and SUBSPACE_DOGLEG). A refused backend is not registered, so

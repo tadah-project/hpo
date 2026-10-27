@@ -92,9 +92,9 @@ TEST_CASE("ANNEAL capability help exposes corrected public contracts",
      * format and a few registry facts, not hand-written prose.
      * The help is text for a user: the keys a family does not read are
      * "refused" ("Dead knobs are hard errors" before the help was
-     * rewritten), ANNEAL_PA "accepts and does not use" the INIT_JITTER
-     * calibration keys of ANNEAL_PT ("Accepted as an inactive setting by
-     * the current ANNEAL_PA driver"), and no key's help gives history
+     * rewritten), ANNEAL_PA lists none of the INIT_JITTER calibration keys
+     * of ANNEAL_PT, which it refuses (it listed six, each "TADAH:ANNEAL_PA
+     * accepts it and does not use it"), and no key's help gives history
      * (INIT_JITTER_LADDER OFF was "(pre-1.5.0 behaviour)"); the help says
      * what a key does, not what the reader is to do ("Adapts ...", not
      * "Adapt ..."; POPULATION is read by TADAH:ANNEAL_PA, not "use
@@ -104,7 +104,9 @@ TEST_CASE("ANNEAL capability help exposes corrected public contracts",
      * AUTO measures at most ..." before the reference rendered them). */
     const std::string serial = capture("ANNEAL");
     CHECK(serial.find("PARAM T_INIT") != std::string::npos);
-    CHECK(serial.find("PARAM CHAIN_LENGTH (default auto)")
+    /* The default in words of the registry (default_doc), with the token
+     * the key takes ("(default auto)" before it). */
+    CHECK(serial.find("PARAM CHAIN_LENGTH (default: AUTO, from MAXEVAL)")
           != std::string::npos);
     CHECK(serial.find("PARAM RT (default 0.85)") != std::string::npos);
     CHECK(serial.find("Keys it does not read are refused: STEP")
@@ -137,14 +139,8 @@ TEST_CASE("ANNEAL capability help exposes corrected public contracts",
     CHECK(pa.find("POPULATION <R> population size") != std::string::npos);
     CHECK(pa.find("PARAM INIT_MODE <JITTER|UNIFORM> (default JITTER)")
           != std::string::npos);
-    /* INIT_JITTER_MAX, _PROBES, _MAXEVAL, _MAXTIME_FRAC, _SAMPLE and
-     * _AUDIT, each listed once */
-    std::size_t unused = 0;
-    for (auto at = pa.find("ANNEAL_PA accepts it and does not use it.");
-         at != std::string::npos;
-         at = pa.find("ANNEAL_PA accepts it and does not use it.", at + 1))
-        ++unused;
-    CHECK(unused == 6u);
+    CHECK(pa.find("PARAM INIT_JITTER_") == std::string::npos);
+    CHECK(pa.find("does not use it") == std::string::npos);
     CHECK(pa.find("driver") == std::string::npos);
 }
 
@@ -416,7 +412,7 @@ TEST_CASE("HPO parses INIT block",
 INIT
   STRATEGY CONFIG
   STRATEGY RANDOM 4
-  K_TOTAL 5
+  K_TOTAL 4
   SEED 12345
   WARM_ON_MISMATCH skip
 ENDINIT
@@ -428,6 +424,9 @@ STRATEGY
 ENDSTRATEGY
 ENDOPTIMIZER
 )");
+    /* K_TOTAL 4 caps the 5 points of CONFIG and RANDOM 4 (K_TOTAL 5, which
+     * capped nothing, is refused: "K_TOTAL that caps nothing, K_TOTAL 0 and
+     * METHOD RANDOM 0 are refused at their line"). */
     tadah::core::Context ctx;
     tadah::hpo::HPOTargets trg(ctx, input.path.string());
 
@@ -438,7 +437,7 @@ ENDOPTIMIZER
     REQUIRE(isp.chain[1].args.size() == 1);
     CHECK(isp.chain[1].args[0] == "4");
     REQUIRE(isp.k_total.has_value());
-    CHECK(*isp.k_total == 5u);
+    CHECK(*isp.k_total == 4u);
     REQUIRE(isp.seed.has_value());
     CHECK(*isp.seed == 12345u);
     CHECK(isp.warm_on_mismatch == "skip");

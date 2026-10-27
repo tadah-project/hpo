@@ -31,10 +31,10 @@
  *                                             iteration to the next
  *   FtolRel       FTOL_REL reached            CERES: function_tolerance
  *   XtolRel       XTOL_REL reached            CERES: parameter_tolerance
- *   GradTol       tol_gradinf reached         PARAM tol_gradinf (DLIB:BFGS:
- *                                             the gradient's L2 norm; CERES:
- *                                             gradient_tolerance, its max
- *                                             norm)
+ *   GradTol       tol_gradinf reached         PARAM tol_gradinf: the largest
+ *                                             component of the gradient
+ *                                             (DLIB:BFGS: GradientMaxStop;
+ *                                             CERES: gradient_tolerance)
  *   MaxIter       max_iter reached            CERES: PARAM max_iter
  *   TMin          T_MIN reached               the annealing schedule cooled
  *                                             below T_MIN

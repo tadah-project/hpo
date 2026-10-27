@@ -87,15 +87,24 @@ TEST_CASE("RESTART METHOD WARM: the seed file is read at startup",
     CHECK(rs.seed_points[0] == std::vector<double>{0.4});
     CHECK(rs.seed_origins[0].kind == tadah::hpo::InitOrigin::Kind::Warm);
   }
-  SECTION("an inactive RESTART block draws nothing") {
+  SECTION("a RESTART block that never restarts is refused before its "
+          "seeds are read") {
+    /* It was accepted and drew nothing: an inactive block (AFTER_STAGNATION
+     * 0) did not read its WARM file. AFTER_STAGNATION 0 is refused at its
+     * line, before the missing WARM file is read. */
     Context ctx = make_ream_ctx("SIGNED");
     TempFile target(head +
         "OPTIMIZER\nSTRATEGY\n  TYPE PLAIN\n  LIB DLIB\n  ALGO BFGS\n"
         "  MAXEVAL 5\n  RESTART\n    AFTER_STAGNATION 0\n    MAX 1\n"
         "    METHOD WARM no_such_restart_seed.tadah\n  ENDRESTART\n"
         "ENDSTRATEGY\nENDOPTIMIZER\n");
-    HPOTargets trg(ctx, target.path.string());
-    CHECK(trg.spec.restart.seed_points.empty());
+    try {
+      HPOTargets trg(ctx, target.path.string());
+      FAIL("the RESTART block was accepted");
+    } catch (const std::exception& e) {
+      CHECK_THAT(e.what(), Catch::Contains("AFTER_STAGNATION must be an "
+                                           "integer >= 1, got '0'"));
+    }
   }
 }
 

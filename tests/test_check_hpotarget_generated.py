@@ -146,7 +146,7 @@ class Generated(unittest.TestCase):
 
     def test_ranges_of_every_example(self):
         # Pins: each example of an entry gives its own cases, so the value
-        # is judged where the file uses it (K_TOTAL replaces the K of a
+        # is judged where the file uses it (K_TOTAL caps the points of a
         # single METHOD line; after two lines it caps what they draw).
         key = next(k for k in self.reg.keys if k.id == "OPTIMIZER.SEED")
         key.examples.append(dataclasses.replace(

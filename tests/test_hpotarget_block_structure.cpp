@@ -442,6 +442,8 @@ TEST_CASE("hpotarget block structure: a line that opens or closes a block "
                                         "    LIB DLIB", "    ALGO BFGS",
                                         "    INIT", "      STRATEGY RANDOM 2",
                                         "    ENDINIT", "    RESTART",
+                                        "      AFTER_STAGNATION 5",
+                                        "      MAX 2",
                                         "      STRATEGY LHS 3",
                                         "    ENDRESTART", "  ENDSTRATEGY",
                                         "ENDOPTIMIZER"});

@@ -228,6 +228,102 @@ TEST_CASE("vocabulary: the help text advertises the TOKEN, not the sentinel",
     CHECK(me_line.find("(default 0)") == std::string::npos);
 }
 
+/* Pins: every default `tadah explain` prints for an annealing key is a
+ * value the annealer takes, or says in words what the key takes without
+ * a line (default_doc of the registry): an ON/OFF key prints ON or OFF,
+ * a key without a fixed default prints its rule ("(default: calibrated
+ * with probes)"), and a key the annealer refuses (RESET_TO_BEST of
+ * TADAH:ANNEAL_PA) is not listed.
+ * Before the fix: "PARAM CORANA (default 0)", "PARAM REANNEAL (default
+ * 1)" and "PARAM LADDER_FREEZE (default 1)", which the parser refuses
+ * ("0/1 booleans were removed in 1.5.0"), "PARAM T_INIT (default auto)",
+ * a token T_INIT refuses, and TADAH:ANNEAL_PA listed RESET_TO_BEST with
+ * "(default auto)". */
+TEST_CASE("vocabulary: every printed default of an annealing key is a "
+          "value it takes", "[HPO][anneal][vocabulary][caps]")
+{
+    namespace reg = tadah::hpo::anneal_registry;
+    const auto help = [](const char* algo) {
+        std::ostringstream captured;
+        auto* old = std::cout.rdbuf(captured.rdbuf());
+        tadah::hpo::OptimizerSpec::print_caps("TADAH", algo);
+        std::cout.rdbuf(old);
+        return captured.str();
+    };
+    /* The listing line of a key ("     PARAM <key> (default ...)" or
+     * "     PARAM <key> <A|B> ..."), not a mention of the key in the prose
+     * of the help ("     PARAM CORANA ON selects ..."). */
+    const auto line_of = [](const std::string& text, const std::string& key) {
+        const std::string head = "\n     PARAM " + key + " ";
+        for (auto found = text.find(head); found != std::string::npos;
+             found = text.find(head, found + 1)) {
+            const char next = text[found + head.size()];
+            if (next != '(' && next != '<') continue;
+            const auto at = found + 6;
+            return text.substr(at, text.find('\n', at) - at);
+        }
+        return std::string();
+    };
+    struct Family { const char* algo; unsigned mask; };
+    for (const Family f : {Family{"ANNEAL", reg::KIND_SERIAL},
+                           Family{"ANNEAL_PT", reg::KIND_PT},
+                           Family{"ANNEAL_PA", reg::KIND_PA}}) {
+        INFO(f.algo);
+        const std::string text = help(f.algo);
+        REQUIRE_FALSE(text.empty());
+        CHECK(text.find("(default auto)") == std::string::npos);
+        for (const auto& k : reg::kKeys) {
+            if (!(k.kinds & f.mask) || k.type != reg::AnnealKeyType::Bool)
+                continue;
+            bool refused = false;
+            for (const auto& r : reg::kRules)
+                refused = refused ||
+                          (r.type == reg::AnnealRuleType::KindReject &&
+                           std::string_view(r.key) == k.name &&
+                           (r.kind_mask & f.mask));
+            const std::string line = line_of(text, k.name);
+            INFO(k.name << ": " << line);
+            if (refused) {
+                CHECK(line.empty());
+                continue;
+            }
+            REQUIRE_FALSE(line.empty());
+            CHECK((line.find("(default ON)") != std::string::npos ||
+                   line.find("(default OFF)") != std::string::npos ||
+                   line.find("(default: ON") != std::string::npos ||
+                   line.find("(default: OFF") != std::string::npos));
+        }
+    }
+    const std::string serial = help("ANNEAL");
+    const std::string pt = help("ANNEAL_PT");
+    const std::string pa = help("ANNEAL_PA");
+    CHECK(line_of(serial, "CORANA") == "PARAM CORANA (default OFF)");
+    CHECK(line_of(serial, "REANNEAL") == "PARAM REANNEAL (default ON)");
+    CHECK(line_of(serial, "T_INIT") ==
+          "PARAM T_INIT (default: calibrated with probes)");
+    CHECK(line_of(serial, "T_MIN") ==
+          "PARAM T_MIN (default: 1e-6 times the starting temperature)");
+    CHECK(line_of(serial, "CHAIN_LENGTH") ==
+          "PARAM CHAIN_LENGTH (default: AUTO, from MAXEVAL) [accepts AUTO]");
+    CHECK(line_of(serial, "RESET_TO_BEST") ==
+          "PARAM RESET_TO_BEST (default: OFF; ON with CORANA ON)");
+    CHECK(line_of(pt, "LADDER_FREEZE") == "PARAM LADDER_FREEZE (default ON)");
+    CHECK(line_of(pt, "T_HOT") ==
+          "PARAM T_HOT (default: calibrated with probes)");
+    CHECK(line_of(pt, "T_COLD") ==
+          "PARAM T_COLD (default: T_HOT divided by LADDER_SPAN)");
+    /* A value default, OFF, as for every other ON/OFF key (it read
+     * "(default: OFF)", a default in words). */
+    CHECK(line_of(pt, "RESET_TO_BEST") ==
+          "PARAM RESET_TO_BEST (default OFF)");
+    CHECK(line_of(pt, "REPLICAS") ==
+          "PARAM REPLICAS (default: AUTO, the larger of THREADS and 2) "
+          "[accepts AUTO]");
+    CHECK(line_of(pa, "RESET_TO_BEST").empty());
+    CHECK(line_of(pa, "T_HOT") ==
+          "PARAM T_HOT (default: calibrated with probes)");
+}
+
 /* AUTO of CHAIN_LENGTH and NT is the serial TADAH:ANNEAL's: it derives the
  * value from MAXEVAL and the cooling schedule. TADAH:ANNEAL_PA has static
  * defaults for both (50 and 5) and no such derivation, so it refuses AUTO,

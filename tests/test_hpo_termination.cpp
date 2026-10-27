@@ -3905,6 +3905,120 @@ TEST_CASE("Termination: MULTISTART gives each start of an NLopt search "
                        "(INIT seed=8)\n") != std::string::npos);
 }
 
+/* Pins: a MULTISTART of N_STARTS 2 whose INIT chain gives one starting
+ * point (no INIT block: the CONFIG point) runs one start and journals
+ * "MULTISTART: running 1 start", after the WARNING that counts the one
+ * starting point and advises a setting the parser takes: "MULTISTART
+ * N_STARTS 2 requested but the resolved INIT chain produced only 1
+ * starting point; running 1 start, which is STRATEGY TYPE PLAIN. A chain
+ * of 2 or more starting points (METHOD LHS 2, RANDOM 2 or SOBOL 2) runs 2
+ * starts." It advises no lower N_STARTS, which would be N_STARTS 1, refused
+ * at its line ("one start is STRATEGY TYPE PLAIN").
+ * Before the fix: the WARNING ended "running 1 start(s). Add INIT points
+ * (e.g. METHOD LHS/RANDOM/SOBOL with K >= 2) or lower N_STARTS." (the text
+ * fails); the run line said "running 1 start" already. */
+TEST_CASE("Termination: MULTISTART with one starting point journals that it "
+          "runs 1 start", "[HPO][termination][multistart]")
+{
+    TaRun run("OPTIMIZER\n  STRATEGY\n    TYPE MULTISTART\n    N_STARTS 2\n"
+              "    LIB NLOPT\n    ALGO LN_SBPLX\n    MAXEVAL 3\n"
+              "  ENDSTRATEGY\nENDOPTIMIZER\n");
+    int status = -1;
+    REQUIRE_NOTHROW(status = tadah::hpo::hpo_run(run.ctx));
+    CHECK(status == 0);
+    const std::string journal = read_file("hpo_run.log");
+    INFO(journal);
+    CHECK(journal.find("MULTISTART: running 1 start\n") != std::string::npos);
+    CHECK(journal.find("1 starts") == std::string::npos);
+    CHECK(journal.find(
+              "MULTISTART N_STARTS 2 requested but the resolved INIT chain "
+              "produced only 1 starting point; running 1 start, which is "
+              "STRATEGY TYPE PLAIN. A chain of 2 or more starting points "
+              "(METHOD LHS 2, RANDOM 2 or SOBOL 2) runs 2 starts.\n") !=
+          std::string::npos);
+    CHECK(journal.find("lower N_STARTS") == std::string::npos);
+}
+
+/* Pins: a MULTISTART of N_STARTS 3 whose INIT chain gives two starting
+ * points (METHOD RANDOM 2) runs two starts and journals "MULTISTART:
+ * running 2 starts", after the WARNING that names the N_STARTS that runs
+ * them, which the parser takes: "MULTISTART N_STARTS 3 requested but the
+ * resolved INIT chain produced only 2 starting points; running 2 starts. A
+ * chain of 3 or more starting points (METHOD LHS 3, RANDOM 3 or SOBOL 3)
+ * runs 3 starts, and N_STARTS 2 asks for the 2 that run."
+ * Before the fix: the WARNING read "... produced only 2 starting point(s);
+ * running 2 start(s). Add INIT points (e.g. METHOD LHS/RANDOM/SOBOL with K
+ * >= 3) or lower N_STARTS." (the text fails). */
+TEST_CASE("Termination: MULTISTART with fewer starting points than N_STARTS "
+          "names the N_STARTS that runs them", "[HPO][termination][multistart]")
+{
+    TaRun run("OPTIMIZER\n  INIT\n    METHOD RANDOM 2\n    SEED 4\n"
+              "  ENDINIT\n  STRATEGY\n    TYPE MULTISTART\n    N_STARTS 3\n"
+              "    LIB NLOPT\n    ALGO LN_SBPLX\n    MAXEVAL 4\n"
+              "  ENDSTRATEGY\nENDOPTIMIZER\n");
+    int status = -1;
+    REQUIRE_NOTHROW(status = tadah::hpo::hpo_run(run.ctx));
+    CHECK(status == 0);
+    const std::string journal = read_file("hpo_run.log");
+    INFO(journal);
+    CHECK(journal.find("MULTISTART: running 2 starts\n") != std::string::npos);
+    CHECK(journal.find(
+              "MULTISTART N_STARTS 3 requested but the resolved INIT chain "
+              "produced only 2 starting points; running 2 starts. A chain of "
+              "3 or more starting points (METHOD LHS 3, RANDOM 3 or SOBOL 3) "
+              "runs 3 starts, and N_STARTS 2 asks for the 2 that run.\n") !=
+          std::string::npos);
+}
+
+/* Pins: a MULTISTART whose INIT chain has fewer starting points than
+ * N_STARTS because K_TOTAL keeps fewer names that K_TOTAL in the WARNING,
+ * and the advice depends on the points of the METHOD lines (LHS 4, 3 and
+ * 3 here, K_TOTAL 2):
+ *  - more than N_STARTS 3: "... produced only 2 starting points (K_TOTAL
+ *    2); running 2 starts. With K_TOTAL 3, or without K_TOTAL, 3 starts
+ *    run, and N_STARTS 2 asks for the 2 that run.";
+ *  - as many as N_STARTS 3 (a K_TOTAL 3 would cap nothing, refused when
+ *    the file is read): "... Without K_TOTAL, 3 starts run, ...";
+ *  - fewer than N_STARTS 4: "... A chain of 4 or more starting points
+ *    (METHOD LHS 4, RANDOM 4 or SOBOL 4) without K_TOTAL runs 4 starts,
+ *    ...".
+ * Before the fix: the WARNING named no K_TOTAL and advised METHOD lines
+ * the block already had ("A chain of 3 or more starting points (METHOD LHS
+ * 3, RANDOM 3 or SOBOL 3) runs 3 starts" beside METHOD LHS 4; the text
+ * fails). */
+TEST_CASE("Termination: MULTISTART with fewer starting points than N_STARTS "
+          "because of K_TOTAL names K_TOTAL", "[HPO][termination][multistart]")
+{
+    struct Case { std::string lhs, n_starts, advice; };
+    const std::vector<Case> cases = {
+        {"4", "3", "With K_TOTAL 3, or without K_TOTAL, 3 starts run"},
+        {"3", "3", "Without K_TOTAL, 3 starts run"},
+        {"3", "4", "A chain of 4 or more starting points (METHOD LHS 4, "
+                   "RANDOM 4 or SOBOL 4) without K_TOTAL runs 4 starts"},
+    };
+    for (const auto& c : cases) {
+        INFO("METHOD LHS " << c.lhs << ", N_STARTS " << c.n_starts);
+        TaRun run("OPTIMIZER\n  INIT\n    METHOD LHS " + c.lhs +
+                  "\n    K_TOTAL 2\n    SEED 1\n  ENDINIT\n  STRATEGY\n"
+                  "    TYPE MULTISTART\n    N_STARTS " + c.n_starts +
+                  "\n    LIB NLOPT\n    ALGO LN_SBPLX\n    MAXEVAL 4\n"
+                  "  ENDSTRATEGY\nENDOPTIMIZER\n");
+        int status = -1;
+        REQUIRE_NOTHROW(status = tadah::hpo::hpo_run(run.ctx));
+        CHECK(status == 0);
+        const std::string journal = read_file("hpo_run.log");
+        INFO(journal);
+        CHECK(journal.find("MULTISTART: running 2 starts\n") !=
+              std::string::npos);
+        CHECK(journal.find(
+                  "MULTISTART N_STARTS " + c.n_starts + " requested but the "
+                  "resolved INIT chain produced only 2 starting points "
+                  "(K_TOTAL 2); running 2 starts. " + c.advice +
+                  ", and N_STARTS 2 asks for the 2 that run.\n") !=
+              std::string::npos);
+    }
+}
+
 /* Pins: what the RESTART rounds of NLopt's StoGO evaluate, as the startup
  * WARNING says (PLAIN, 3 OPTIM dimensions, MAXEVAL 60, STRATEGY SEED 11,
  * RESTART AFTER_STAGNATION 4, MAX 1, METHOD RANDOM 1, SEED 5): round 1
@@ -4007,10 +4121,10 @@ TEST_CASE("RESTART: a SEED no METHOD of the chain draws from is reported at "
                !Catch::Contains(unused));
     CHECK_THAT(startup_stderr("      METHOD CONFIG\n"),
                !Catch::Contains(unused));
-    /* An inactive RESTART block (AFTER_STAGNATION 0) draws no restart
-     * points at all, so its SEED is not reported. */
-    CHECK_THAT(startup_stderr("      METHOD CONFIG\n      SEED 42\n", "0"),
-               !Catch::Contains(unused));
+    /* An inactive RESTART block (AFTER_STAGNATION 0), whose SEED was not
+     * reported (it drew no restart points), is refused at its
+     * AFTER_STAGNATION line ("startup validation: a RESTART block that
+     * never restarts the search is refused"). */
 }
 
 /* best_pot.tadah.lock, the file the publications of the best potential
@@ -6460,9 +6574,10 @@ TEST_CASE("Termination: the RESTART stagnation stop ends a search that has "
  *   PARAM tol_gradinf 1e6 -- 1 + 2 x 3 = 7 evaluations (the loss at the
  *     start and its gradient's stencil, which takes that loss as its
  *     centre), the stop line "DLIB:BFGS stopped: tol_gradinf reached after
- *     7 evaluation(s): the L2 norm of the gradient fell below PARAM
- *     tol_gradinf = 1e+06" and the status "DLIB:BFGS: tol_gradinf
- *     reached".
+ *     7 evaluation(s): the largest component of the gradient fell below
+ *     PARAM tol_gradinf = 1e+06" ("the L2 norm of the gradient" until
+ *     tol_gradinf tested the largest component) and the status "DLIB:BFGS:
+ *     tol_gradinf reached".
  * Before the fix: the same evaluations, no stop line for a convergence
  * test, and the trailer COMPLETED in every case. */
 TEST_CASE("Termination: DLIB:BFGS records why it ended",
@@ -6492,8 +6607,8 @@ TEST_CASE("Termination: DLIB:BFGS records why it ended",
               "    MAXEVAL 200\n    PARAM tol_gradinf 1e6\n", 7u,
               "DLIB:BFGS: tol_gradinf reached",
               "DLIB:BFGS stopped: tol_gradinf reached after 7 "
-              "evaluation(s): the L2 norm of the gradient fell below PARAM "
-              "tol_gradinf = 1e+06"}}) {
+              "evaluation(s): the largest component of the gradient fell "
+              "below PARAM tol_gradinf = 1e+06"}}) {
         DYNAMIC_SECTION(c.what) {
             TaRun run(plain_block(bfgs + c.lines));
             int status = -1;
@@ -9137,8 +9252,10 @@ TEST_CASE("PRESTAGE: an exploration whose every call the run's record "
  * search's first: every search makes at least one evaluation, as the TADAH
  * drivers (they read MAXTIME after an evaluation), NLopt and DLIB:GFS's
  * INIT points do. MAXTIME 1e-9 has passed before any search starts.
- * Pins: with MAXTIME 1e-9, a PLAIN DLIB:GFS without an INIT point (INIT
- * METHOD RANDOM 0) and a PLAIN ASA each make one evaluation and end with
+ * Pins: with MAXTIME 1e-9, a PLAIN DLIB:GFS without an INIT point (an
+ * INIT block whose WARM seed WARM_ON_MISMATCH skip drops, its value
+ * outside the OPTIM box; the case used METHOD RANDOM 0 until a K of 0 was
+ * refused) and a PLAIN ASA each make one evaluation and end with
  * status 0 ("DLIB:GFS stopped: MAXTIME exceeded after 1 evaluation(s)",
  * "ASA stopped: MAXTIME exceeded after 1 host eval(s)", the run's status
  * their MAXTIME stop); a PRESTAGE (TADAH:RANDOM, MAXEVAL 2) whose
@@ -9159,10 +9276,19 @@ TEST_CASE("MAXTIME: a search makes its first evaluation when MAXTIME has "
         std::string stopped;    // its journal line
         std::string status;     // the run's status under PLAIN
     };
+    /* A WARM seed whose CGRID2B (1), 5, lies outside the box [0.1, 0.9]:
+     * WARM_ON_MISMATCH skip drops it, and the chain gives no point. */
+    ScratchDir seeds;
+    const fs::path outside = seeds.dir / "outside.tadah";
+    {
+        std::ofstream out(outside);
+        out << "CGRID2B 5.0 1.5\nSGRID2B 1.0 5.0\n";
+    }
     const std::vector<Case> cases = {
         {"DLIB:GFS without an INIT point",
          "LIB DLIB\nALGO GFS\nMAXTIME 1e-9\n",
-         "INIT\nMETHOD RANDOM 0\nSEED 4\nENDINIT\n",
+         "INIT\nMETHOD WARM " + outside.string() +
+             "\nWARM_ON_MISMATCH skip\nENDINIT\n",
          "DLIB:GFS stopped: MAXTIME exceeded after 1 evaluation(s)",
          "DLIB:GFS: MAXTIME exceeded"},
         {"ASA", "LIB ASA\nALGO ASA\nMAXTIME 1e-9\nSEED 3\n", "",

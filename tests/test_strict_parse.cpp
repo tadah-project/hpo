@@ -113,6 +113,22 @@ TEST_CASE("parse_uint accepts decimal digits in range and nothing else",
                                    std::numeric_limits<std::uint64_t>::max(),
                                    "it is a cadence"); }) ==
           "OUTPUT must be an integer >= 1, got '0' (it is a cadence)");
+    /* The note explains a whole number below the minimum: any other refused
+     * token -- a word, a sign, a fraction, an exponent, a number past the
+     * maximum or past the type -- is refused without it.
+     * Before the fix: the note followed every refused token. */
+    for (const std::string tok :
+         {"x", "-1", "2.5", "1e5", "18446744073709551616"}) {
+        INFO("'" << tok << "'");
+        CHECK(error_of([&] { parse_uint(tok, "OUTPUT", 1,
+                                        std::numeric_limits<std::uint64_t>::max(),
+                                        "it is a cadence"); }) ==
+              "OUTPUT must be an integer >= 1, got '" + tok + "'");
+    }
+    CHECK(error_of([] { parse_uint("16", "DIGITS", 1, 15, "a note"); }) ==
+          "DIGITS must be an integer from 1 to 15, got '16'");
+    CHECK(error_of([] { parse_uint("0", "DIGITS", 1, 15, "a note"); }) ==
+          "DIGITS must be an integer from 1 to 15, got '0' (a note)");
 }
 
 TEST_CASE("parse_finite accepts a whole finite number and nothing else",

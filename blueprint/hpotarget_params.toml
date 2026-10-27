@@ -193,13 +193,6 @@ ENDSTRATEGY
 ENDOPTIMIZER
 """
 
-[fixture.params_seed_outside]
-path = "params_seed_outside.tadah"
-doc = "A seed with CGRID2B (1) = 3.0, outside the box [0.5, 1.5] of the wrappers."
-text = """
-CGRID2B 3.0 2.0
-"""
-
 # ---------------------------------------------------- policies ----
 # What each optimiser does with a PARAM key that no [[param]] entry below
 # names for it.
@@ -207,19 +200,26 @@ CGRID2B 3.0 2.0
 [[param_policy]]
 id = "PARAM.NLOPT"
 optimizers = ["NLOPT"]
+msg = "{phase}: NLOPT:{algo}: unknown PARAM '{key}' (it takes {keys})"
 doc = """\
-An NLopt algorithm takes a PARAM of any name: a number is passed to NLopt \
-as the algorithm parameter of that name, which the algorithm reads when it \
-knows the name (tolg of LD_LBFGS, magic_eps of the GN_DIRECT algorithms). \
-A name the algorithm does not read has no effect."""
-quirk = """\
-A word value is accepted and has no effect: no algorithm receives it. \
-Only the finite-difference keys fd_step, fd_kernel and diff_method check \
-theirs."""
+An NLopt algorithm takes, with a number, the PARAM keys NLopt reads for it \
+(the optimiser list names them: tolg of LD_LBFGS, magic_eps of the \
+GN_DIRECT algorithms), which tadah hpo passes to NLopt, and, when it \
+takes finite-difference gradients, the finite-difference keys fd_step, \
+fd_kernel (a word) and diff_method. Any other name, and a word given to a \
+key NLopt reads, are refused when tadah hpo starts; the refusal lists the \
+keys the algorithm takes."""
+checks = [
+  { msg = "{phase}: NLOPT:{algo}: PARAM {key} takes a number (got '{value}')", doc = "At startup, at the END line of its optimiser: a word given to a PARAM key the algorithm reads." },
+]
 examples = [
   { wrap = "params_lbfgs", text = "PARAM tolg 1e-8" },
-  { wrap = "strategy", text = "PARAM magic_eps 1e-4", doc = "LN_SBPLX does not read magic_eps: the line is accepted and has no effect." },
-  { wrap = "strategy", text = "PARAM magic_eps tight", doc = "A word is accepted and passed to no algorithm." },
+]
+invalid = [
+  { wrap = "strategy", check = "startup", at = "ENDOPTIMIZER", text = "PARAM magic_eps 1e-4", error = "the STRATEGY-level optimiser: NLOPT:LN_SBPLX: unknown PARAM 'magic_eps' (it takes none)", doc = "LN_SBPLX reads no PARAM key; magic_eps is read by the DIRECT algorithms." },
+  { wrap = "params_lbfgs", check = "startup", at = "ENDOPTIMIZER", text = "PARAM magic_eps 1e-4", error = "the STRATEGY-level optimiser: NLOPT:LD_LBFGS: unknown PARAM 'magic_eps' (it takes tolg, fd_step, fd_kernel and diff_method)" },
+  { wrap = "params_lbfgs", check = "startup", at = "ENDOPTIMIZER", text = "PARAM tolg tight", error = "the STRATEGY-level optimiser: NLOPT:LD_LBFGS: PARAM tolg takes a number (got 'tight')" },
+  { wrap = "inner", check = "startup", at = "ENDINNER", text = "PARAM tolg 1e-8", error = "the INNER block of the STRATEGY-level optimiser: NLOPT:LN_BOBYQA: unknown PARAM 'tolg' (it takes none)" },
 ]
 
 [[param_policy]]
@@ -257,18 +257,15 @@ optimizers = ["DLIB:BFGS"]
 msg = "{phase}: DLIB:BFGS does not support PARAM {key}; supported PARAM keys are fd_step, fd_kernel, diff_method and tol_gradinf"
 doc = """\
 DLIB:BFGS takes the PARAM keys fd_step, fd_kernel, diff_method and \
-tol_gradinf: a number given to any other name is refused when tadah hpo \
-starts."""
-quirk = """\
-A word value is accepted and has no effect, under tol_gradinf as under a \
-name DLIB:BFGS does not take; only the finite-difference keys fd_step, \
-fd_kernel and diff_method check theirs."""
+tol_gradinf: any other name, and a word given to tol_gradinf, are refused \
+when tadah hpo starts."""
+checks = [
+  { msg = "{phase}: DLIB:BFGS: PARAM {key} takes a number (got '{value}')", doc = "At startup, at the END line of its optimiser: a word given to tol_gradinf." },
+]
 invalid = [
   { wrap = "params_bfgs", check = "startup", at = "ENDOPTIMIZER", text = "PARAM max_iter 50", error = "the STRATEGY-level optimiser: DLIB:BFGS does not support PARAM max_iter; supported PARAM keys are fd_step, fd_kernel, diff_method and tol_gradinf" },
-]
-examples = [
-  { wrap = "params_bfgs", text = "PARAM max_iter many", doc = "A word under a name DLIB:BFGS does not take is accepted and has no effect." },
-  { wrap = "params_bfgs", text = "PARAM tol_gradinf tight", doc = "A word given to tol_gradinf is accepted and has no effect." },
+  { wrap = "params_bfgs", check = "startup", at = "ENDOPTIMIZER", text = "PARAM max_iter many", error = "the STRATEGY-level optimiser: DLIB:BFGS does not support PARAM max_iter; supported PARAM keys are fd_step, fd_kernel, diff_method and tol_gradinf", doc = "A word under a name DLIB:BFGS does not take." },
+  { wrap = "params_bfgs", check = "startup", at = "ENDOPTIMIZER", text = "PARAM tol_gradinf tight", error = "the STRATEGY-level optimiser: DLIB:BFGS: PARAM tol_gradinf takes a number (got 'tight')" },
 ]
 
 [[param_policy]]
@@ -277,18 +274,15 @@ optimizers = ["CERES:STEEPEST_DESCENT"]
 msg = "{phase}: CERES:{algo} does not support PARAM {key}; supported: fd_step, fd_kernel, diff_method, tol_gradinf, max_iter, max_ls_iter"
 doc = """\
 A CERES algorithm takes the PARAM keys fd_step, fd_kernel, diff_method, \
-tol_gradinf, max_iter and max_ls_iter: a number given to any other name is \
-refused when tadah hpo starts."""
-quirk = """\
-A word value is accepted and has no effect, under tol_gradinf, max_iter \
-and max_ls_iter as under a name CERES does not take; only the \
-finite-difference keys fd_step, fd_kernel and diff_method check theirs."""
+tol_gradinf, max_iter and max_ls_iter: any other name, and a word given to \
+tol_gradinf, max_iter or max_ls_iter, are refused when tadah hpo starts."""
+checks = [
+  { msg = "{phase}: CERES:{algo}: PARAM {key} takes a number (got '{value}')", doc = "At startup, at the END line of its optimiser: a word given to tol_gradinf, max_iter or max_ls_iter." },
+]
 invalid = [
   { wrap = "params_ceres", check = "startup", at = "ENDOPTIMIZER", text = "PARAM max_lbfgs_rank 5", error = "the STRATEGY-level optimiser: CERES:STEEPEST_DESCENT does not support PARAM max_lbfgs_rank; supported: fd_step, fd_kernel, diff_method, tol_gradinf, max_iter, max_ls_iter" },
-]
-examples = [
-  { wrap = "params_ceres", text = "PARAM max_iter many", doc = "A word given to a PARAM key of CERES is accepted and has no effect." },
-  { wrap = "params_ceres", text = "PARAM max_lbfgs_rank many", doc = "A word under a name CERES does not take is accepted and has no effect." },
+  { wrap = "params_ceres", check = "startup", at = "ENDOPTIMIZER", text = "PARAM max_iter many", error = "the STRATEGY-level optimiser: CERES:STEEPEST_DESCENT: PARAM max_iter takes a number (got 'many')" },
+  { wrap = "params_ceres", check = "startup", at = "ENDOPTIMIZER", text = "PARAM max_lbfgs_rank many", error = "the STRATEGY-level optimiser: CERES:STEEPEST_DESCENT does not support PARAM max_lbfgs_rank; supported: fd_step, fd_kernel, diff_method, tol_gradinf, max_iter, max_ls_iter", doc = "A word under a name CERES does not take." },
 ]
 
 [[param_policy]]
@@ -298,27 +292,23 @@ msg = "{phase}: ASA:ASA: unknown PARAM '{key}'. Accepted keys: {keys}"
 doc = """\
 ASA:ASA takes its options as PARAM keys, named as ASA names them and \
 matched with case; a per-dimension key also takes the form Name[i], which \
-sets dimension i (from 1) whatever the order of the lines. A number given \
-to any other name is refused when tadah hpo starts."""
-quirk = """\
-A word value is accepted and has no effect, under an option of ASA:ASA as \
-under any other name."""
+sets dimension i (from 1) whatever the order of the lines. Any other \
+name, and a word given to an option, are refused when tadah hpo starts."""
 invalid = [
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Cooling_Rate 0.9", error = "the STRATEGY-level optimiser: ASA:ASA: unknown PARAM 'Cooling_Rate'. Accepted keys: Limit_Acceptances Limit_Generated Limit_Invalid_Generated_States Accepted_To_Generated_Ratio Cost_Precision Maximum_Cost_Repeat Number_Cost_Samples Temperature_Ratio_Scale Cost_Parameter_Scale_Ratio Temperature_Anneal_Scale Include_Integer_Parameters User_Initial_Parameters Sequential_Parameters Initial_Parameter_Temperature Acceptance_Frequency_Modulus Generated_Frequency_Modulus Reanneal_Cost Reanneal_Parameters Delta_X User_Tangents Curvature_0 User_Quench_Cost_Scale User_Quench_Param_Scale User_Temperature_Ratio User_Delta_Parameter User_Parameter_Temperature Multi_Number Multi_Specify Multi_Grid Queue_Size Queue_Resolution Gener_Block Gener_Block_Max Gener_Mov_Avr" },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Cooling_Rate 0.9", error = "the STRATEGY-level optimiser: ASA:ASA: unknown PARAM 'Cooling_Rate'. Accepted keys: Limit_Acceptances Limit_Generated Limit_Invalid_Generated_States Accepted_To_Generated_Ratio Cost_Precision Maximum_Cost_Repeat Number_Cost_Samples Temperature_Ratio_Scale Cost_Parameter_Scale_Ratio Temperature_Anneal_Scale Sequential_Parameters Initial_Parameter_Temperature Acceptance_Frequency_Modulus Generated_Frequency_Modulus Reanneal_Cost Reanneal_Parameters Delta_X User_Tangents Curvature_0 User_Quench_Cost_Scale User_Quench_Param_Scale User_Temperature_Ratio User_Delta_Parameter User_Parameter_Temperature Multi_Number Multi_Specify Multi_Grid Queue_Size Queue_Resolution Gener_Block Gener_Block_Max Gener_Mov_Avr" },
   { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM limit_acceptances 500", error = "the STRATEGY-level optimiser: ASA:ASA: unknown PARAM 'limit_acceptances'. Did you mean 'Limit_Acceptances'? ASA option names are case-sensitive.", doc = "A name that differs from an option in case only." },
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM multi_grid[1] 0.01", error = "the STRATEGY-level optimiser: ASA:ASA: unknown PARAM 'multi_grid[1]'. Accepted keys: Limit_Acceptances Limit_Generated Limit_Invalid_Generated_States Accepted_To_Generated_Ratio Cost_Precision Maximum_Cost_Repeat Number_Cost_Samples Temperature_Ratio_Scale Cost_Parameter_Scale_Ratio Temperature_Anneal_Scale Include_Integer_Parameters User_Initial_Parameters Sequential_Parameters Initial_Parameter_Temperature Acceptance_Frequency_Modulus Generated_Frequency_Modulus Reanneal_Cost Reanneal_Parameters Delta_X User_Tangents Curvature_0 User_Quench_Cost_Scale User_Quench_Param_Scale User_Temperature_Ratio User_Delta_Parameter User_Parameter_Temperature Multi_Number Multi_Specify Multi_Grid Queue_Size Queue_Resolution Gener_Block Gener_Block_Max Gener_Mov_Avr", doc = "An indexed name that differs from an option in case only gets the list, not the hint." },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM multi_grid[1] 0.01", error = "the STRATEGY-level optimiser: ASA:ASA: unknown PARAM 'multi_grid[1]'. Accepted keys: Limit_Acceptances Limit_Generated Limit_Invalid_Generated_States Accepted_To_Generated_Ratio Cost_Precision Maximum_Cost_Repeat Number_Cost_Samples Temperature_Ratio_Scale Cost_Parameter_Scale_Ratio Temperature_Anneal_Scale Sequential_Parameters Initial_Parameter_Temperature Acceptance_Frequency_Modulus Generated_Frequency_Modulus Reanneal_Cost Reanneal_Parameters Delta_X User_Tangents Curvature_0 User_Quench_Cost_Scale User_Quench_Param_Scale User_Temperature_Ratio User_Delta_Parameter User_Parameter_Temperature Multi_Number Multi_Specify Multi_Grid Queue_Size Queue_Resolution Gener_Block Gener_Block_Max Gener_Mov_Avr", doc = "An indexed name that differs from an option in case only gets the list, not the hint." },
   { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Limit_Acceptances[1] 500", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Limit_Acceptances is a scalar option (indexed form not accepted)" },
   { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Multi_Grid[0] 0.01", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Multi_Grid[0] index 0 is not a dimension: per-dimension indices are 1-based and match the dim column of hpo_search_space.tsv. They were 0-based in Tadah 1.4 and earlier, so every old index shifts up by one ([0] is now [1])" },
   { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Multi_Grid[2] 0.01", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Multi_Grid[2] index out of range (dim=1, 1-based)" },
   { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Multi_Grid[1 0.01", error = "the STRATEGY-level optimiser: ASA:ASA: malformed indexed PARAM 'Multi_Grid[1' (expected Name[<1-based index>])" },
   { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Multi_Grid[x] 0.01", error = "the STRATEGY-level optimiser: ASA:ASA: malformed index in PARAM 'Multi_Grid[x]' (expected a positive integer)" },
   { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Multi_Grid[99999999999999999999] 0.01", error = "the STRATEGY-level optimiser: ASA:ASA: the index in PARAM 'Multi_Grid[99999999999999999999]' must be an integer from 0 to 9223372036854775807, got '99999999999999999999'" },
-]
-examples = [
-  { wrap = "params_asa", text = "PARAM Limit_Acceptances many", doc = "A word given to a PARAM key of ASA:ASA is accepted and has no effect." },
-  { wrap = "params_asa", text = "PARAM Cooling_Rate fast", doc = "A word under a name ASA:ASA does not take is accepted and has no effect." },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Limit_Acceptances many", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Limit_Acceptances takes a number (got 'many')" },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Cooling_Rate fast", error = "the STRATEGY-level optimiser: ASA:ASA: unknown PARAM 'Cooling_Rate'. Accepted keys: Limit_Acceptances Limit_Generated Limit_Invalid_Generated_States Accepted_To_Generated_Ratio Cost_Precision Maximum_Cost_Repeat Number_Cost_Samples Temperature_Ratio_Scale Cost_Parameter_Scale_Ratio Temperature_Anneal_Scale Sequential_Parameters Initial_Parameter_Temperature Acceptance_Frequency_Modulus Generated_Frequency_Modulus Reanneal_Cost Reanneal_Parameters Delta_X User_Tangents Curvature_0 User_Quench_Cost_Scale User_Quench_Param_Scale User_Temperature_Ratio User_Delta_Parameter User_Parameter_Temperature Multi_Number Multi_Specify Multi_Grid Queue_Size Queue_Resolution Gener_Block Gener_Block_Max Gener_Mov_Avr", doc = "A word under a name ASA:ASA does not take." },
 ]
 checks = [
+  { msg = "{phase}: ASA:ASA: PARAM {key} takes a number (got '{value}')", doc = "At startup, at the END line of its optimiser: a word given to an option of ASA:ASA." },
   { msg = "{phase}: ASA:ASA: unknown PARAM '{key}'. '{key}' is not available: {why}", doc = "At startup, at the END line of its optimiser: an ASA option that tadah hpo does not take; {why} says why, and the option has an entry of its own." },
   { msg = "{phase}: ASA:ASA: unknown PARAM '{key}'. Did you mean '{name}'? ASA option names are case-sensitive.", doc = "At startup, at the END line of its optimiser: a name that differs from an ASA option only in case; {name} is the option." },
   { msg = "{phase}: ASA:ASA: PARAM {key} is a scalar option (indexed form not accepted)", doc = "At startup, at the END line of its optimiser: an index on an option that has one value." },
@@ -340,11 +330,13 @@ annealer it belongs to."""
 invalid = [
   { wrap = "params_anneal", check = "startup", at = "ENDOPTIMIZER", text = "PARAM COOLING 0.9", error = "the STRATEGY-level optimiser: TADAH:ANNEAL: unknown PARAM 'COOLING'; accepted keys: CORANA STEP_FRAC CHAIN_LENGTH NS NT CORANA_C V_FLOOR_FRAC BOUNDARY_MODE RESET_TO_BEST T_INIT T_MIN RT T0_PROBES T0_ACCEPT NEPS REANNEAL REANNEAL_SCALE " },
   { wrap = "params_anneal_pt", check = "startup", at = "ENDOPTIMIZER", text = "PARAM COOLING 0.9", error = "the STRATEGY-level optimiser: TADAH:ANNEAL_PT: unknown PARAM 'COOLING'; accepted keys: CORANA STEP_FRAC NS CORANA_C V_FLOOR_FRAC BOUNDARY_MODE RESET_TO_BEST T_HOT T0_PROBES T0_ACCEPT NEPS REPLICAS T_COLD LADDER_SPAN LADDER_POWER LADDER_ADAPT LADDER_ADAPT_EVERY LADDER_ADAPT_GAIN LADDER_ADAPT_DECAY LADDER_MIN_GAP LADDER_FREEZE SWAP_EVERY SWAP_WINDOW STEP_MODE STEP_WARMUP_SWEEPS STEP_TRUST_FACTOR INIT_MODE INIT_JITTER_MAX INIT_JITTER_PROBES INIT_JITTER_MAXEVAL INIT_JITTER_SAMPLE INIT_JITTER_AUDIT INIT_JITTER_LADDER INIT_JITTER_MAXTIME_FRAC " },
-  { wrap = "params_anneal_pa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM COOLING 0.9", error = "the STRATEGY-level optimiser: TADAH:ANNEAL_PA: unknown PARAM 'COOLING'; accepted keys: CORANA STEP_FRAC CHAIN_LENGTH NS NT CORANA_C V_FLOOR_FRAC BOUNDARY_MODE RESET_TO_BEST T_HOT T_MIN RT T0_PROBES T0_ACCEPT NEPS INIT_MODE INIT_JITTER_MAX INIT_JITTER_PROBES INIT_JITTER_MAXEVAL INIT_JITTER_SAMPLE INIT_JITTER_AUDIT INIT_JITTER_MAXTIME_FRAC SWEEPS ESS_TARGET " },
+  { wrap = "params_anneal_pa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM COOLING 0.9", error = "the STRATEGY-level optimiser: TADAH:ANNEAL_PA: unknown PARAM 'COOLING'; accepted keys: CORANA STEP_FRAC CHAIN_LENGTH NS NT CORANA_C V_FLOOR_FRAC BOUNDARY_MODE T_HOT T_MIN RT T0_PROBES T0_ACCEPT NEPS INIT_MODE SWEEPS ESS_TARGET " },
   { wrap = "params_anneal", check = "startup", at = "ENDOPTIMIZER", text = "PARAM REPLICAS 4", error = "the STRATEGY-level optimiser: TADAH:ANNEAL: PARAM REPLICAS belongs to TADAH:ANNEAL_PT" },
   { wrap = "params_anneal", check = "startup", at = "ENDOPTIMIZER", text = "PARAM SWEEPS 2", error = "the STRATEGY-level optimiser: TADAH:ANNEAL: PARAM SWEEPS belongs to TADAH:ANNEAL_PA" },
   { wrap = "params_anneal_pt", check = "startup", at = "ENDOPTIMIZER", text = "PARAM REANNEAL 0", error = "the STRATEGY-level optimiser: TADAH:ANNEAL_PT: PARAM REANNEAL belongs to the serial TADAH:ANNEAL" },
-  { wrap = "params_anneal", check = "startup", at = "ENDOPTIMIZER", text = "PARAM INIT_JITTER_MAX 0.2", error = "the STRATEGY-level optimiser: TADAH:ANNEAL: PARAM INIT_JITTER_MAX belongs to the parallel drivers TADAH:ANNEAL_PT/TADAH:ANNEAL_PA" },
+  { wrap = "params_anneal", check = "startup", at = "ENDOPTIMIZER", text = "PARAM INIT_JITTER_MAX 0.2", error = "the STRATEGY-level optimiser: TADAH:ANNEAL: PARAM INIT_JITTER_MAX belongs to TADAH:ANNEAL_PT" },
+  { wrap = "params_anneal_pa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM INIT_MODE JITTER AUTO\nPARAM INIT_JITTER_MAX 0.2", doc = "TADAH:ANNEAL_PA measures no displacement: the keys of the measurement are those of TADAH:ANNEAL_PT.", error = "the STRATEGY-level optimiser: TADAH:ANNEAL_PA: PARAM INIT_JITTER_MAX belongs to TADAH:ANNEAL_PT" },
+  { wrap = "params_anneal_pa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM INIT_MODE JITTER AUTO 0.05", doc = "TADAH:ANNEAL_PA takes JITTER AUTO without a tolerance.", error = "the STRATEGY-level optimiser: TADAH:ANNEAL_PA: PARAM INIT_MODE JITTER AUTO takes no tolerance (got '0.05'): TADAH:ANNEAL_PA measures no displacement and takes the first proposal scales as the bounds; TADAH:ANNEAL_PT measures them against the tolerance" },
   { wrap = "params_anneal_pa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM CHAIN_LENGTH AUTO", doc = "AUTO derives CHAIN_LENGTH from MAXEVAL in TADAH:ANNEAL only.", error = "the STRATEGY-level optimiser: TADAH:ANNEAL_PA: PARAM CHAIN_LENGTH must be a number (got 'AUTO'; AUTO is accepted by TADAH:ANNEAL only)" },
   { wrap = "params_anneal_pa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM CORANA ON\nPARAM NT AUTO", doc = "AUTO derives NT from MAXEVAL in TADAH:ANNEAL only.", error = "the STRATEGY-level optimiser: TADAH:ANNEAL_PA: PARAM NT must be a number (got 'AUTO'; AUTO is accepted by TADAH:ANNEAL only)" },
 ]
@@ -390,10 +382,12 @@ examples = [
   { wrap = "params_anneal_pt", text = "PARAM INIT_MODE JITTER AUTO 0.05\nPARAM INIT_JITTER_AUDIT 0", doc = "No dimension probed again." },
   { wrap = "params_anneal_pt", text = "PARAM INIT_JITTER_LADDER 1", doc = "Displacements in proportion to the temperature of each replica." },
   { wrap = "params_anneal_pt", text = "MAXTIME 600\nPARAM INIT_MODE JITTER AUTO 0.05\nPARAM INIT_JITTER_MAXTIME_FRAC 0.1", doc = "At most a tenth of MAXTIME for the calibration." },
+  { wrap = "params_anneal_pa", text = "PARAM INIT_MODE JITTER AUTO", doc = "The walkers but the first start at uniform displacements of up to the first proposal scale of each dimension." },
   { wrap = "params_anneal_pa", text = "PARAM SWEEPS 2", doc = "Two rounds of each walker at each temperature." },
   { wrap = "params_anneal_pa", text = "PARAM ESS_TARGET 0.7", doc = "An effective sample size of 0.7 times the population after each temperature step." },
 ]
 checks = [
+  { msg = "{phase}: TADAH:ANNEAL_PA: PARAM INIT_MODE JITTER AUTO takes no tolerance (got '{tok}'): TADAH:ANNEAL_PA measures no displacement and takes the first proposal scales as the bounds; TADAH:ANNEAL_PT measures them against the tolerance", doc = "At startup, at the END line of its optimiser: a tolerance after INIT_MODE JITTER AUTO of TADAH:ANNEAL_PA." },
   { msg = "{phase}: TADAH:{algo}: PARAM {key} belongs to {name}", doc = "At startup, at the END line of its optimiser: a PARAM key of the other annealers; {name} names those it belongs to." },
   { msg = "{phase}: TADAH:{algo}: PARAM {key} must be {what} (got '{tok}'{note})", doc = "At startup, at the END line of its optimiser: a value that is neither a number nor a word the key takes; {what} names what it takes, and {note} the annealers that take AUTO when this one does not." },
   { msg = "{phase}: TADAH:{algo}: PARAM {key} must be one of: {list} (got '{tok}')", doc = "At startup, at the END line of its optimiser: a word of a key that takes words, matched as written; {list} names them." },
@@ -440,8 +434,9 @@ optimizers = ["DLIB:BFGS"]
 args = [{ name = "tolerance", kind = "number", min = 0, min_open = true }]
 default = { text = "not set: the FTOL_ABS test ends the search, with 1e-7 when FTOL_ABS is not set", unchecked = "DLIB:BFGS takes the value when it starts; no setting of the target file holds it." }
 doc = """\
-The search ends once the L2 norm of the gradient falls below this value, \
-above 0. It replaces the FTOL_ABS test, and the two are not set together."""
+The search ends once the largest component of the gradient, in absolute \
+value, falls below this value, above 0, as under CERES. It replaces the \
+FTOL_ABS test, and the two are not set together."""
 checks = [
   { msg = "{phase}: DLIB:BFGS requires PARAM tol_gradinf > 0", doc = "For a value of 0 or below." },
   { msg = "{phase}: DLIB:BFGS accepts either FTOL_ABS or PARAM tol_gradinf, but not both", doc = "When the block also sets FTOL_ABS." },
@@ -847,90 +842,6 @@ examples = [
 invalid = [
   { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Temperature_Anneal_Scale -1", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Temperature_Anneal_Scale must be >= 0.000000" },
   { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Temperature_Anneal_Scale 0", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Temperature_Anneal_Scale must be > 0" },
-]
-
-[[param]]
-id = "PARAM.ASA:ASA.Include_Integer_Parameters"
-name = "Include_Integer_Parameters"
-optimizers = ["ASA:ASA"]
-args = [{ name = "value", kind = "number", min = 0, max = 1, integral = true }]
-default = { literal = "0" }
-doc = """\
-Whether the derivative and reannealing calculations include the integer \
-dimensions: 1 includes them, 0 leaves them out."""
-quirk = """\
-No OPTIM dimension is an integer, so the key has no effect."""
-checks = [
-  { msg = "{phase}: ASA:ASA: PARAM {key} must be an integer value", doc = "For a value with a fraction." },
-  { msg = "{phase}: ASA:ASA: PARAM {key} must be >= {min}", doc = "For a value below 0, written with six decimals." },
-  { msg = "{phase}: ASA:ASA: PARAM {key} must be <= {max}", doc = "For a value above 1, written with six decimals." },
-]
-examples = [
-  { wrap = "params_asa", text = "PARAM Include_Integer_Parameters 1" },
-]
-invalid = [
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Include_Integer_Parameters 1.5", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Include_Integer_Parameters must be an integer value" },
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Include_Integer_Parameters -1", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Include_Integer_Parameters must be >= 0.000000" },
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Include_Integer_Parameters 2", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Include_Integer_Parameters must be <= 1.000000" },
-]
-
-[[param]]
-id = "PARAM.ASA:ASA.User_Initial_Parameters"
-name = "User_Initial_Parameters"
-optimizers = ["ASA:ASA"]
-args = [{ name = "value", kind = "number", min = 0, max = 1, integral = true }]
-default = { text = "1 when the search has a starting point (from its INIT block, or from the training configuration without one), else 0" }
-doc = """\
-1 starts ASA from the first starting point of the search, 0 from a point \
-ASA draws; a value that contradicts the starting points is refused."""
-quirk = """\
-Without an INIT block the search starts from the training configuration, \
-so 0 is refused there too, with a message that names the INIT block."""
-checks = [
-  { msg = "{phase}: ASA:ASA: PARAM {key} must be an integer value", doc = "For a value with a fraction." },
-  { msg = "{phase}: ASA:ASA: PARAM {key} must be >= {min}", doc = "For a value below 0, written with six decimals." },
-  { msg = "{phase}: ASA:ASA: PARAM {key} must be <= {max}", doc = "For a value above 1, written with six decimals." },
-  { msg = "{phase}: ASA:ASA: PARAM User_Initial_Parameters 0 contradicts the INIT block: remove the INIT seed to start from an ASA-generated random point, or drop the PARAM", doc = "For 0 when the search has a starting point." },
-  { msg = "{phase}: ASA:ASA: PARAM User_Initial_Parameters 1 requires an INIT seed (none resolved)", doc = "For 1 when the search has no starting point." },
-]
-examples = [
-  { wrap = "params_asa", text = "PARAM User_Initial_Parameters 1" },
-  { wrap = "none", text = """
-OPTIM CGRID2B (1) 0.5 1.5
-PC_ERMSE 0 1
-OPTIMIZER
-INIT
-METHOD WARM params_seed_outside.tadah
-WARM_ON_MISMATCH skip
-ENDINIT
-STRATEGY
-LIB ASA
-ALGO ASA
-MAXEVAL 10
-PARAM User_Initial_Parameters 0
-ENDSTRATEGY
-ENDOPTIMIZER""", doc = "The search has no starting point, as the seed of its only WARM line is dropped: ASA draws its first point." },
-]
-invalid = [
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM User_Initial_Parameters 0", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM User_Initial_Parameters 0 contradicts the INIT block: remove the INIT seed to start from an ASA-generated random point, or drop the PARAM", doc = "The search starts from the training configuration, as the file has no INIT block." },
-  { wrap = "none", check = "startup", at = "ENDOPTIMIZER", text = """
-OPTIM CGRID2B (1) 0.5 1.5
-PC_ERMSE 0 1
-OPTIMIZER
-INIT
-METHOD WARM params_seed_outside.tadah
-WARM_ON_MISMATCH skip
-ENDINIT
-STRATEGY
-LIB ASA
-ALGO ASA
-MAXEVAL 10
-PARAM User_Initial_Parameters 1
-ENDSTRATEGY
-ENDOPTIMIZER""", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM User_Initial_Parameters 1 requires an INIT seed (none resolved)", doc = "The search has no starting point, as the seed of its only WARM line is dropped." },
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM User_Initial_Parameters 1.5", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM User_Initial_Parameters must be an integer value" },
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM User_Initial_Parameters -1", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM User_Initial_Parameters must be >= 0.000000" },
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM User_Initial_Parameters 2", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM User_Initial_Parameters must be <= 1.000000" },
 ]
 
 [[param]]
@@ -1442,6 +1353,25 @@ invalid = [
 
 # --------------------------------------------- ASA options not available ----
 # ASA options tadah hpo does not take: each is refused with the reason.
+
+[[param_excluded]]
+id = "PARAM.ASA:ASA.Include_Integer_Parameters"
+name = "Include_Integer_Parameters"
+optimizers = ["ASA:ASA"]
+why = "every OPTIM dimension of tadah hpo takes real values, so ASA has no integer dimension to include."
+invalid = [
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Include_Integer_Parameters 1", error = "the STRATEGY-level optimiser: ASA:ASA: unknown PARAM 'Include_Integer_Parameters'. 'Include_Integer_Parameters' is not available: every OPTIM dimension of tadah hpo takes real values, so ASA has no integer dimension to include." },
+]
+
+[[param_excluded]]
+id = "PARAM.ASA:ASA.User_Initial_Parameters"
+name = "User_Initial_Parameters"
+optimizers = ["ASA:ASA"]
+why = "ASA starts at the first starting point of the INIT block (the values of the training configuration without one); METHOD RANDOM 1 in the INIT block draws a random start from its SEED."
+invalid = [
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM User_Initial_Parameters 1", error = "the STRATEGY-level optimiser: ASA:ASA: unknown PARAM 'User_Initial_Parameters'. 'User_Initial_Parameters' is not available: ASA starts at the first starting point of the INIT block (the values of the training configuration without one); METHOD RANDOM 1 in the INIT block draws a random start from its SEED." },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM User_Initial_Parameters 0", error = "the STRATEGY-level optimiser: ASA:ASA: unknown PARAM 'User_Initial_Parameters'. 'User_Initial_Parameters' is not available: ASA starts at the first starting point of the INIT block (the values of the training configuration without one); METHOD RANDOM 1 in the INIT block draws a random start from its SEED." },
+]
 
 [[param_excluded]]
 id = "PARAM.ASA:ASA.Coarse_Resolution"

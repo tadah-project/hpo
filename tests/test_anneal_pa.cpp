@@ -548,14 +548,15 @@ TEST_CASE("ANNEAL_PA: Corana banner and step diagnostics expose bounds",
     CHECK(log.find("V_cap=") != std::string::npos);
 }
 
-/* INIT_MODE JITTER AUTO <tolerance> in ANNEAL_PA draws each walker's start
+/* Pins: INIT_MODE JITTER AUTO in ANNEAL_PA draws each walker's start
  * uniformly within the proposal scale of each dimension (the CLASSIC
- * sigma, the Corana initial V): ANNEAL_PA calibrates nothing, so the
- * tolerance is unused, and the banner says so ("INIT_MODE=JITTER AUTO
- * (uniform bound; sigma=proposal sigma per dim, not calibrated: tolerance
- * 0.05 unused)").
- * Before the fix: "(uniform bound; sigma=AUTO per dim, tol=0.05)", which
- * names a calibration ANNEAL_PA does not run. */
+ * sigma, the Corana initial V): ANNEAL_PA calibrates nothing and takes no
+ * tolerance, and the banner says so ("INIT_MODE=JITTER AUTO (uniform
+ * bound; sigma=proposal sigma per dim, not calibrated)").
+ * Before the fix: JITTER AUTO without a tolerance was refused ("needs a
+ * relative loss tolerance"), and with one the banner said "not calibrated:
+ * tolerance 0.05 unused" (before that, "(uniform bound; sigma=AUTO per
+ * dim, tol=0.05)", which names a calibration ANNEAL_PA does not run). */
 TEST_CASE("ANNEAL_PA: the INIT_MODE JITTER AUTO banner names the scale the "
           "draw uses", "[HPO][anneal_pa][log]")
 {
@@ -570,7 +571,7 @@ TEST_CASE("ANNEAL_PA: the INIT_MODE JITTER AUTO banner names the scale the "
         sp.stop.maxeval = 160;
         sp.param["T_HOT"] = 1.0;
         sp.param_raw["INIT_MODE"] = "JITTER";
-        sp.param_tokens["INIT_MODE"] = {"JITTER", "AUTO", "0.05"};
+        sp.param_tokens["INIT_MODE"] = {"JITTER", "AUTO"};
         if (corana) {
             sp.param_raw["CORANA"] = "ON";
             sp.param["NS"] = 1.0;
@@ -584,8 +585,7 @@ TEST_CASE("ANNEAL_PA: the INIT_MODE JITTER AUTO banner names the scale the "
         CHECK(log.find(std::string("INIT_MODE=JITTER AUTO (uniform bound; "
                                    "sigma=") +
                        (corana ? "initial V" : "proposal sigma") +
-                       " per dim, not calibrated: tolerance 0.05 unused)") !=
-              std::string::npos);
+                       " per dim, not calibrated)") != std::string::npos);
         CHECK(log.find("sigma=AUTO") == std::string::npos);
     }
 }
@@ -636,6 +636,45 @@ TEST_CASE("ANNEAL_PA: validation errors", "[HPO][anneal_pa][validation]")
         sp.param["SWAP_EVERY"] = 2.0;
         REQUIRE_THROWS_WITH(run_anneal_pa_impl<Vec>(sp, stub),
                             Catch::Contains("ANNEAL_PT"));
+    }
+    /* Pins: ANNEAL_PA refuses the keys of the INIT_MODE JITTER AUTO
+     * calibration of ANNEAL_PT, which it does not run, naming ANNEAL_PT,
+     * and the tolerance of JITTER AUTO, which it does not use.
+     * Before the fix: each key and the tolerance were accepted and had no
+     * effect. */
+    SECTION("the calibration keys and the AUTO tolerance of ANNEAL_PT") {
+        for (const char* k : {"INIT_JITTER_MAX", "INIT_JITTER_PROBES",
+                              "INIT_JITTER_MAXEVAL", "INIT_JITTER_SAMPLE",
+                              "INIT_JITTER_AUDIT",
+                              "INIT_JITTER_MAXTIME_FRAC"}) {
+            INFO(k);
+            auto sp = make_pa_spec({-1.0}, {1.0});
+            set_seed_point(sp, {0.0});
+            sp.stop.maxeval = 10;
+            sp.pop = 16;
+            /* With the tolerance ANNEAL_PT takes: the key is refused
+             * before the tolerance is read. */
+            sp.param_raw["INIT_MODE"] = "JITTER";
+            sp.param_tokens["INIT_MODE"] = {"JITTER", "AUTO", "0.05"};
+            sp.param[k] = std::string(k) == "INIT_JITTER_MAX" ||
+                                  std::string(k) == "INIT_JITTER_MAXTIME_FRAC"
+                              ? 0.25 : 4.0;
+            REQUIRE_THROWS_WITH(run_anneal_pa_impl<Vec>(sp, stub),
+                                std::string("TADAH:ANNEAL_PA: PARAM ") + k +
+                                    " belongs to TADAH:ANNEAL_PT");
+        }
+        auto sp = make_pa_spec({-1.0}, {1.0});
+        set_seed_point(sp, {0.0});
+        sp.stop.maxeval = 10;
+        sp.pop = 16;
+        sp.param_raw["INIT_MODE"] = "JITTER";
+        sp.param_tokens["INIT_MODE"] = {"JITTER", "AUTO", "0.05"};
+        REQUIRE_THROWS_WITH(
+            run_anneal_pa_impl<Vec>(sp, stub),
+            "TADAH:ANNEAL_PA: PARAM INIT_MODE JITTER AUTO takes no tolerance "
+            "(got '0.05'): TADAH:ANNEAL_PA measures no displacement and "
+            "takes the first proposal scales as the bounds; TADAH:ANNEAL_PT "
+            "measures them against the tolerance");
     }
     SECTION("RESET_TO_BEST is rejected instead of silently ignored") {
         auto sp = make_pa_spec({-1.0}, {1.0});

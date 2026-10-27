@@ -16,6 +16,12 @@
 #              and for keys whose default is derived at run time (AUTO)
 #   default_serial / default_pt / default_pa   per-kind defaults (override
 #              `default`; may appear without a base default)
+#   default_doc  the default in words, for a kind without a value default
+#              (a calibration, a rule of other keys) or with an AUTO one;
+#              key names and tokens in upper case. default_doc_serial /
+#              default_doc_pt / default_doc_pa override it for one kind.
+#              Every kind of a key has a default or a default_doc, except a
+#              kind that refuses the key (kind_reject), which has neither
 #   values     enum type only: the accepted tokens, first = conventional order
 #   kinds      subset of ["serial", "pt", "pa"] the key applies to
 #   auto_kinds subset of `kinds` that accept AUTO (accepts_auto keys only;
@@ -105,6 +111,7 @@ name = "CHAIN_LENGTH"
 type = "count"
 default_pa = "50"
 kinds = ["serial", "pa"]
+default_doc_serial = "AUTO, from MAXEVAL"
 group = "steps"
 rank = 3
 doc = "The number of proposals of the CLASSIC kernel at each temperature step."
@@ -133,6 +140,7 @@ name = "NT"
 type = "count"
 default_pa = "5"
 kinds = ["serial", "pa"]
+default_doc_serial = "AUTO, from MAXEVAL"
 group = "steps"
 rank = 5
 doc = "Corana kernel: the number of step adjustments at each temperature step."
@@ -179,18 +187,22 @@ doc = "What a proposal outside the OPTIM box becomes: REFLECT folds it back into
 name = "RESET_TO_BEST"
 type = "bool"
 kinds = ["serial", "pt", "pa"]
+default_doc_serial = "OFF; ON with CORANA ON"
+default_pt = "0"
 group = "steps"
 rank = 9
 doc = "ON moves the chain back to the best point so far after each cooling step; under TADAH:ANNEAL_PT it moves the coldest slot after each epoch."
-# default is dynamic: 1 under serial CORANA (Corana 1987 returns to the
-# optimum on each temperature drop), else 0; PA rejects the key via the
-# kind_reject rule below, so it stays visible to all kinds for the
-# specific error message.
+# the serial default is dynamic: 1 under serial CORANA (Corana 1987 returns
+# to the optimum on each temperature drop), else 0; PT's is 0; PA rejects
+# the key via the kind_reject rule below, so it stays visible to all kinds
+# for the specific error message (the help and the documentation leave it
+# out).
 
 [[key]]
 name = "T_INIT"
 type = "float"
 kinds = ["serial"]
+default_doc = "calibrated with probes"
 group = "temperature"
 rank = 1
 doc = "The starting temperature of the cooling schedule. Without it, the search calibrates the starting temperature with probes (T0_PROBES, T0_ACCEPT)."
@@ -201,6 +213,7 @@ min_open = true
 name = "T_HOT"
 type = "float"
 kinds = ["pt", "pa"]
+default_doc = "calibrated with probes"
 group = "temperature"
 rank = 1
 doc = "The hottest temperature of the ladder of TADAH:ANNEAL_PT, and the starting temperature of TADAH:ANNEAL_PA. Without it, the search calibrates it with probes (T0_PROBES, T0_ACCEPT)."
@@ -211,6 +224,7 @@ min_open = true
 name = "T_MIN"
 type = "float"
 kinds = ["serial", "pa"]
+default_doc = "1e-6 times the starting temperature"
 group = "temperature"
 rank = 2
 doc = "The temperature at which the cooling schedule ends; without it, 1e-6 times the starting temperature."
@@ -298,6 +312,7 @@ name = "REPLICAS"
 type = "count"
 default = "0"
 kinds = ["pt"]
+default_doc = "AUTO, the larger of THREADS and 2"
 group = "ladder"
 rank = 1
 doc = "The number of replicas, one for each temperature of the ladder; AUTO takes the larger of THREADS and 2."
@@ -309,6 +324,7 @@ range_doc = "an integer >= 2, or AUTO"
 name = "T_COLD"
 type = "float"
 kinds = ["pt"]
+default_doc = "T_HOT divided by LADDER_SPAN"
 group = "temperature"
 rank = 8
 doc = "The coldest temperature of the ladder; without it, T_HOT divided by LADDER_SPAN."
@@ -468,7 +484,7 @@ kinds = ["pt", "pa"]
 group = "init"
 rank = 1
 doc = "How the replicas or walkers start: the first at the starting point of the search; JITTER moves the others away from it, UNIFORM draws them from the OPTIM box."
-long_doc = "JITTER alone draws Gaussian displacements with the first proposal scales, and JITTER <fraction> uniform displacements of up to the fraction times the width of each box. Under TADAH:ANNEAL_PT, JITTER AUTO <p> measures the bounds of the uniform displacements of each dimension against a band of the loss relative to that of the starting point, and scales them by INIT_JITTER_LADDER, which scales the other JITTER forms too. Under TADAH:ANNEAL_PA, JITTER AUTO <p> takes the first proposal scales as the bounds, and p and the calibration keys have no effect."
+long_doc = "JITTER alone draws Gaussian displacements with the first proposal scales, and JITTER <fraction> uniform displacements of up to the fraction times the width of each box. Under TADAH:ANNEAL_PT, JITTER AUTO <p> measures the bounds of the uniform displacements of each dimension against a band of the loss relative to that of the starting point, and scales them by INIT_JITTER_LADDER, which scales the other JITTER forms too. Under TADAH:ANNEAL_PA, JITTER AUTO takes no tolerance: the bounds are the first proposal scales."
 
 # NOTE the INIT_JITTER_* keys below are gated on `INIT_MODE JITTER AUTO <p>`,
 # which the rule table cannot express: AUTO is an EXTRA token on the JITTER
@@ -479,10 +495,10 @@ long_doc = "JITTER alone draws Gaussian displacements with the first proposal sc
 name = "INIT_JITTER_MAX"
 type = "float"
 default = "0.5"
-kinds = ["pt", "pa"]
+kinds = ["pt"]
 group = "init"
 rank = 2
-doc = "Under INIT_MODE JITTER AUTO of TADAH:ANNEAL_PT, the largest measured displacement, as a fraction of the width of the OPTIM box, where the first probe lies too. TADAH:ANNEAL_PA accepts it and does not use it."
+doc = "Under INIT_MODE JITTER AUTO of TADAH:ANNEAL_PT, the largest measured displacement, as a fraction of the width of the OPTIM box, where the first probe lies too."
 min = 0.0
 min_open = true
 max = 1.0
@@ -492,10 +508,10 @@ range_msg = "must be in (0,1]"
 name = "INIT_JITTER_PROBES"
 type = "count"
 default = "8"
-kinds = ["pt", "pa"]
+kinds = ["pt"]
 group = "init"
 rank = 3
-doc = "Under INIT_MODE JITTER AUTO of TADAH:ANNEAL_PT, the largest number of probes of the loss in each dimension, split between its two sides. TADAH:ANNEAL_PA accepts it and does not use it."
+doc = "Under INIT_MODE JITTER AUTO of TADAH:ANNEAL_PT, the largest number of probes of the loss in each dimension, split between its two sides."
 min = 2
 range_msg = "must be >= 2 (one screen probe per side)"
 
@@ -504,10 +520,10 @@ name = "INIT_JITTER_MAXEVAL"
 type = "count"
 default = "0"
 accepts_auto = 0.0
-kinds = ["pt", "pa"]
+kinds = ["pt"]
 group = "init"
 rank = 4
-doc = "Under INIT_MODE JITTER AUTO of TADAH:ANNEAL_PT, the largest number of calibration probes, which MAXEVAL does not count. TADAH:ANNEAL_PA accepts it and does not use it."
+doc = "Under INIT_MODE JITTER AUTO of TADAH:ANNEAL_PT, the largest number of calibration probes, which MAXEVAL does not count."
 long_doc = "AUTO takes the number of measured dimensions times INIT_JITTER_PROBES, plus the smaller of INIT_JITTER_AUDIT and the number of measured dimensions; INIT_JITTER_SAMPLE limits the measured dimensions."
 custom_range = true   # AUTO, or >= 1 when set numerically
 range_doc = "an integer >= 1, or AUTO"
@@ -516,20 +532,20 @@ range_doc = "an integer >= 1, or AUTO"
 name = "INIT_JITTER_SAMPLE"
 type = "count"
 default = "0"
-kinds = ["pt", "pa"]
+kinds = ["pt"]
 group = "init"
 rank = 6
-doc = "Under INIT_MODE JITTER AUTO of TADAH:ANNEAL_PT, the largest number of dimensions measured, taken in turn from the families of parameters; 0 measures every dimension. TADAH:ANNEAL_PA accepts it and does not use it."
+doc = "Under INIT_MODE JITTER AUTO of TADAH:ANNEAL_PT, the largest number of dimensions measured, taken in turn from the families of parameters; 0 measures every dimension."
 long_doc = "A dimension that is not measured takes the median displacement of its family, as a fraction of the width, and hpo_run.log marks it inferred."
 
 [[key]]
 name = "INIT_JITTER_AUDIT"
 type = "count"
 default = "32"
-kinds = ["pt", "pa"]
+kinds = ["pt"]
 group = "init"
 rank = 7
-doc = "Under INIT_MODE JITTER AUTO of TADAH:ANNEAL_PT, the largest number of measured dimensions probed again at half their displacement, to check the measured displacements for a loss that does not grow with the displacement; 0 checks none. TADAH:ANNEAL_PA accepts it and does not use it."
+doc = "Under INIT_MODE JITTER AUTO of TADAH:ANNEAL_PT, the largest number of measured dimensions probed again at half their displacement, to check the measured displacements for a loss that does not grow with the displacement; 0 checks none."
 
 [[key]]
 name = "INIT_JITTER_LADDER"
@@ -549,10 +565,10 @@ range_doc = "a number above 0, up to 4, or AUTO or OFF"
 name = "INIT_JITTER_MAXTIME_FRAC"
 type = "float"
 default = "0.25"
-kinds = ["pt", "pa"]
+kinds = ["pt"]
 group = "init"
 rank = 5
-doc = "Under INIT_MODE JITTER AUTO of TADAH:ANNEAL_PT, the share of the MAXTIME of the search that the calibration may take, when MAXTIME is set; INIT_JITTER_MAXEVAL caps its probes, which have a budget of their own. TADAH:ANNEAL_PA accepts it and does not use it."
+doc = "Under INIT_MODE JITTER AUTO of TADAH:ANNEAL_PT, the share of the MAXTIME of the search that the calibration may take, when MAXTIME is set; INIT_JITTER_MAXEVAL caps its probes, which have a budget of their own."
 min = 0.0
 min_open = true
 max = 1.0
