@@ -12,6 +12,7 @@
 #include <tadah/hpo/hpo.h>
 #include <tadah/hpo/phase_specs.h>   // with_block_line
 #include <tadah/hpo/strategy_rules.h>   // strategy_type_name
+#include <tadah/hpo/strict_parse.h>     // config_line_error
 #include <tadah/core/number_format.h>
 #include <tadah/hpo/hpo_log.h>
 #include <tadah/hpo/hpo_mpi.h>     // hpo_rank(), hpo_size(), hpo_rank_suffix()
@@ -245,12 +246,14 @@ struct PcIsolation {
     double      worker_timeout;  // seconds; 0: derived from each script's limit
     bool        mode_from_env = false;     // TADAH_PC_ISOLATION chose the mode
     bool        timeout_from_env = false;  // TADAH_PC_WORKER_TIMEOUT set it
+    std::string timeout_env_text;          // its value, as written
 };
 
 /* The run's PC_ISOLATION settings, with every check of them: an override
  * that is not a number (TADAH_PC_WORKER_TIMEOUT), a TADAH_PC_ISOLATION that
- * is neither THREAD nor PROCESS, and, in the MPI build, a PROCESS that was
- * asked for (the default PROCESS is THREAD there) throw. */
+ * is neither THREAD nor PROCESS, in the MPI build a PROCESS that was asked
+ * for (the default PROCESS is THREAD there), and a worker deadline
+ * (PC_WORKER_TIMEOUT, TADAH_PC_WORKER_TIMEOUT) under THREAD throw. */
 PcIsolation resolve_pc_isolation(const HPOTargets& trg, HPOLog& log)
 {
     PcIsolation pc{trg.PC_ISOLATION, trg.PC_ISOLATION_set,
@@ -271,6 +274,7 @@ PcIsolation resolve_pc_isolation(const HPOTargets& trg, HPOLog& log)
             pc.worker_timeout = HPOTargets::parse_pc_worker_timeout(
                 e, "TADAH_PC_WORKER_TIMEOUT");
             pc.timeout_from_env = true;
+            pc.timeout_env_text = e;
         }
     }
 #ifdef TADAH_HPO_MPI
@@ -291,6 +295,30 @@ PcIsolation resolve_pc_isolation(const HPOTargets& trg, HPOLog& log)
 #else
     (void)log;
 #endif
+    /* A worker deadline is that of a script task in a worker process:
+     * under THREAD the scripts run inside the tadah process, without one,
+     * so PC_WORKER_TIMEOUT (at its line, for any value) and its override
+     * would have no effect. Refused once the mode is known: an override of
+     * the mode decides it, and THREAD is the only mode of the MPI build. */
+    if (pc.mode == "THREAD" &&
+        (pc.timeout_from_env || trg.PC_WORKER_TIMEOUT_line != 0)) {
+        const std::string why =
+            pc.mode_from_env ? std::string("set by TADAH_PC_ISOLATION")
+            : trg.PC_ISOLATION_set
+                ? "set on line " + std::to_string(trg.PC_ISOLATION_line)
+                : std::string("the only mode of the MPI build of tadah");
+        const std::string what =
+            " sets the deadline of a script task in a worker process "
+            "(PC_ISOLATION PROCESS); under PC_ISOLATION THREAD, " + why +
+            ", the scripts run inside the tadah process without a worker "
+            "deadline, so it would have no effect";
+        if (pc.timeout_from_env)
+            throw std::runtime_error("TADAH_PC_WORKER_TIMEOUT (got '" +
+                                     pc.timeout_env_text + "')" + what);
+        throw std::runtime_error(config_line_error(
+            trg.PC_WORKER_TIMEOUT_line, "PC_WORKER_TIMEOUT" + what,
+            trg.PC_WORKER_TIMEOUT_text));
+    }
     return pc;
 }
 

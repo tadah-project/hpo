@@ -367,8 +367,10 @@ public:
      * Each PC_LAMMPS and PC_FAILPROBE line keeps where its own limit comes
      * from (LammpsSim::maxtime_source). */
     std::size_t MAXTIME_line = 0;
-    /* The PC_WORKER_TIMEOUT line (0: none), for the journal. */
+    /* The PC_WORKER_TIMEOUT line (0: none) and its text, for the journal
+     * and for its refusal under PC_ISOLATION THREAD (hpo.cpp). */
     std::size_t PC_WORKER_TIMEOUT_line = 0;
+    std::string PC_WORKER_TIMEOUT_text;
 
     /* PC_ISOLATION: execution mode for the pc_lammps fan-out.
      *   PROCESS (default) -- persistent worker-process pool: each fan-out
@@ -391,9 +393,13 @@ public:
      * lets MPI builds distinguish "defaulted to PROCESS" (silently fall back
      * to THREAD) from "explicitly requested PROCESS" (hard error). */
     bool PC_ISOLATION_set = false;
+    /* The PC_ISOLATION line (0: none), which the refusal of a
+     * PC_WORKER_TIMEOUT under THREAD names. */
+    std::size_t PC_ISOLATION_line = 0;
     /* PC_WORKER_TIMEOUT <seconds>: PROCESS mode only -- global override of
      * the per-task deadline formula max(3*maxtime, maxtime+120s); 0 =
-     * derive from each sim's maxtime ("off" => no deadline, thread parity).
+     * derive from each sim's maxtime ("off" => no deadline). Refused
+     * under THREAD, which has no worker deadline (hpo.cpp).
      * Env override: TADAH_PC_WORKER_TIMEOUT. */
     double PC_WORKER_TIMEOUT = 0.0;
     /* Strict parser shared by the PC_WORKER_TIMEOUT key (a single value)

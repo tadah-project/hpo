@@ -1713,6 +1713,7 @@ void HPOTargets::read(const std::string& fn)
             else if (key=="PC_ISOLATION") {
                 PC_ISOLATION = single_value(iss, key);
                 PC_ISOLATION_set = true;
+                PC_ISOLATION_line = nline;
                 if (PC_ISOLATION != "THREAD" && PC_ISOLATION != "PROCESS")
                     throw std::runtime_error(
                         "PC_ISOLATION must be THREAD or PROCESS, got '"
@@ -1722,6 +1723,7 @@ void HPOTargets::read(const std::string& fn)
                 PC_WORKER_TIMEOUT = parse_pc_worker_timeout(
                     single_value(iss, key), "PC_WORKER_TIMEOUT");
                 PC_WORKER_TIMEOUT_line = nline;
+                PC_WORKER_TIMEOUT_text = line;
             }
             else if (key=="FAILSCORE_GRADING") {
                 const std::string v = single_value(iss, key);
