@@ -1131,7 +1131,7 @@ TEST_CASE("startup validation: VECTOR_ARR is refused for LD_TNEWTON and "
 
 /* Pins: DLIB:GFS draws no random numbers, so a SEED it would run with is
  * refused at startup, as TADAH:GRID's is ("DLIB:GFS does not use SEED: it
- * draws no random numbers; remove it"): a STRATEGY-level SEED, an EXPLORE
+ * draws no random numbers"): a STRATEGY-level SEED, an EXPLORE
  * block's SEED, and the STRATEGY-level SEED of a PRESTAGE refinement on
  * DLIB:GFS whose exploration has a SEED of its own. A PRESTAGE refinement's
  * SEED that the exploration takes (an exploration that reads SEED and has
@@ -1141,8 +1141,9 @@ TEST_CASE("startup validation: VECTOR_ARR is refused for LD_TNEWTON and "
  * exploration that reads none, the refinement's SEED is refused, saying
  * why the exploration does not take it ("the PRESTAGE refinement:
  * CERES:STEEPEST_DESCENT does not use SEED: it draws no random numbers,
- * and the exploration (NLOPT:GN_CRS2_LM) has a SEED of its own; remove
- * it", "... and the exploration (TADAH:GRID) reads none; ..."). A build
+ * and the exploration (NLOPT:GN_CRS2_LM) has a SEED of its own", "...
+ * and the exploration (TADAH:GRID) reads none"; each ended "; remove
+ * it"). A build
  * without Ceres refuses the CERES refinement as it refuses every LIB CERES
  * (hpo_test::ceres_expect).
  * Before the fix: DLIB:GFS's SEED was accepted at startup (tadah hpo
@@ -1158,7 +1159,7 @@ TEST_CASE("startup validation: DLIB:GFS refuses a SEED, unless it seeds the "
           "[startup_validation][gfs][seed]")
 {
     const std::string unread =
-        "DLIB:GFS does not use SEED: it draws no random numbers; remove it";
+        "DLIB:GFS does not use SEED: it draws no random numbers";
     CHECK(judge(strategy_config("    LIB DLIB\n    ALGO GFS\n    MAXEVAL 20\n"
                                 "    SEED 5\n")).startup ==
           "the STRATEGY-level optimiser: " + unread);
@@ -1175,7 +1176,7 @@ TEST_CASE("startup validation: DLIB:GFS refuses a SEED, unless it seeds the "
      * says why. */
     const std::string own =
         " does not use SEED: it draws no random numbers, and the exploration "
-        "(NLOPT:GN_CRS2_LM) has a SEED of its own; remove it";
+        "(NLOPT:GN_CRS2_LM) has a SEED of its own";
     CHECK(judge(prestage("    SEED 7\n", "      SEED 3\n")).startup ==
           "the PRESTAGE refinement: DLIB:GFS" + own);
     /* The refinement optimisers that read no SEED of their own. */
@@ -1206,8 +1207,7 @@ TEST_CASE("startup validation: DLIB:GFS refuses a SEED, unless it seeds the "
               "    MAXEVAL 10\n    SEED 5\n    EXPLORE\n      LIB TADAH\n"
               "      ALGO GRID\n    ENDEXPLORE\n")).startup ==
           "the PRESTAGE refinement: DLIB:BFGS does not use SEED: it draws no "
-          "random numbers, and the exploration (TADAH:GRID) reads none; "
-          "remove it");
+          "random numbers, and the exploration (TADAH:GRID) reads none");
     CHECK(judge(strategy_config(
               "    TYPE PRESTAGE\n    LIB NLOPT\n    ALGO LN_BOBYQA\n"
               "    MAXEVAL 10\n    EXPLORE\n      LIB DLIB\n"
@@ -1222,18 +1222,18 @@ TEST_CASE("startup validation: DLIB:GFS refuses a SEED, unless it seeds the "
  * the local search it runs does (an MLSL or AUGLAG whose INNER block, or
  * NLopt's default local optimiser, is LN_PRAXIS). A SEED for any other is
  * refused at startup as TADAH:GRID's is: "the STRATEGY-level optimiser:
- * NLOPT:LN_BOBYQA does not use SEED: it draws no random numbers; remove
- * it" -- LN_BOBYQA, LN_SBPLX, LN_COBYLA (which draws from a generator of
- * its own with a fixed seed), LD_LBFGS, GN_DIRECT_L, GN_AGS, GD_STOGO,
- * GN_MLSL_LDS with NLopt's default local optimiser, LN_AUGLAG with an INNER
- * LN_BOBYQA; GN_DIRECT_L_RAND in one OPTIM dimension "...: in one OPTIM
+ * NLOPT:LN_BOBYQA does not use SEED: it draws no random numbers" (it
+ * ended "; remove it") -- LN_BOBYQA, LN_SBPLX, LN_COBYLA (which draws from
+ * a generator of its own with a fixed seed), LD_LBFGS, GN_DIRECT_L,
+ * GN_AGS, GD_STOGO, GN_MLSL_LDS with NLopt's default local optimiser,
+ * LN_AUGLAG with an INNER LN_BOBYQA; GN_DIRECT_L_RAND in one OPTIM dimension "...: in one OPTIM
  * dimension it draws no random numbers (it draws them only to choose
- * between equally long sides of a box); remove it"; the EXPLORE block's
+ * between equally long sides of a box)"; the EXPLORE block's
  * SEED of GN_DIRECT_L ("the PRESTAGE exploration (EXPLORE block): ...");
  * and the STRATEGY-level SEED of a PRESTAGE that refines with LN_BOBYQA
  * after a GN_DIRECT_L exploration ("the PRESTAGE refinement:
  * NLOPT:LN_BOBYQA does not use SEED: it draws no random numbers, and the
- * exploration (NLOPT:GN_DIRECT_L) reads none; remove it"). Accepted: SEED
+ * exploration (NLOPT:GN_DIRECT_L) reads none"). Accepted: SEED
  * for GN_CRS2_LM, GN_ISRES, GN_ESCH, GN_MLSL, LN_PRAXIS, GD_STOGO_RAND,
  * GN_DIRECT_L_RAND in two dimensions, G_MLSL_LDS and LN_AUGLAG with an
  * INNER LN_PRAXIS, and the STRATEGY-level SEED of a PRESTAGE that refines
@@ -1258,7 +1258,7 @@ TEST_CASE("startup validation: an NLopt algorithm that draws no random "
                "\n    ENDINNER\n";
     };
     const std::string unread = " does not use SEED: it draws no random "
-                               "numbers; remove it";
+                               "numbers";
     const std::string top = "the STRATEGY-level optimiser: NLOPT:";
     struct Case { std::string algo, extra, root; };
     for (const Case& c : std::vector<Case>{
@@ -1274,7 +1274,7 @@ TEST_CASE("startup validation: an NLopt algorithm that draws no random "
     CHECK(judge(plain(one_dim, "GN_DIRECT_L_RAND", "")).startup ==
           top + "GN_DIRECT_L_RAND does not use SEED: in one OPTIM dimension "
           "it draws no random numbers (it draws them only to choose between "
-          "equally long sides of a box); remove it");
+          "equally long sides of a box)");
     for (const Case& c : std::vector<Case>{
              {"GN_CRS2_LM", "", one_dim}, {"GN_ISRES", "", one_dim},
              {"GN_ESCH", "", one_dim}, {"GN_MLSL", "", one_dim},
@@ -1297,7 +1297,7 @@ TEST_CASE("startup validation: an NLopt algorithm that draws no random "
     CHECK(judge(prestage("GN_DIRECT_L", "")).startup ==
           "the PRESTAGE refinement: NLOPT:LN_BOBYQA does not use SEED: it "
           "draws no random numbers, and the exploration (NLOPT:GN_DIRECT_L) "
-          "reads none; remove it");
+          "reads none");
     CHECK(judge(strategy_config(
               "    TYPE PRESTAGE\n    LIB NLOPT\n    ALGO LN_BOBYQA\n"
               "    MAXEVAL 10\n    EXPLORE\n      LIB NLOPT\n"
@@ -3278,13 +3278,13 @@ TEST_CASE("startup validation: TADAH:RANDOM/GRID and DLIB:GFS reject what "
     }
     unread.push_back({"GRID SEED", grid + "    SEED 7\n",
                       top + "TADAH:GRID does not use SEED: it draws no random "
-                            "numbers; remove it"});
+                            "numbers"});
     /* DLIB:GFS's SEED, which find_min_global does not read either, is
      * refused as TADAH:GRID's is (it was accepted at startup and reported
      * with a warning when the run started). */
     unread.push_back({"GFS SEED", gfs + "    SEED 7\n",
                       top + "DLIB:GFS does not use SEED: it draws no random "
-                            "numbers; remove it"});
+                            "numbers"});
     for (const auto& c : unread) {
         INFO(c.what << "\n" << c.body);
         CHECK(judge(strategy_config(c.body)).startup == c.message);

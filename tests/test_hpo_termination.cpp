@@ -9858,14 +9858,15 @@ std::string mlsl_lds(const std::string& init, const std::string& inner,
  *    "GN_MLSL_LDS: exploration points come from a deterministic Sobol (LDS)
  *    sequence and are identical across runs; SEED affects at most the
  *    INIT-chain starting point (and only when the chain has a
- *    RANDOM/LHS/SOBOL entry), not the sampled points. Use GN_MLSL for
- *    seed-controlled random sampling.";
+ *    RANDOM/LHS/SOBOL entry), not the sampled points. GN_MLSL draws its
+ *    sample points at random from SEED." (it ended "Use GN_MLSL for
+ *    seed-controlled random sampling.");
  *  - SEED 5 in the STRATEGY block, INNER LN_PRAXIS, whose random steps draw
  *    from it: the WARNING "...; SEED does not change the sampled points: it
  *    changes at most the INIT-chain starting point (a SEED in the INIT
  *    block, when the chain has a RANDOM/LHS/SOBOL entry) and the random
- *    numbers of the local search NLOPT:LN_PRAXIS. Use GN_MLSL for
- *    seed-controlled random sampling.".
+ *    numbers of the local search NLOPT:LN_PRAXIS. GN_MLSL draws its sample
+ *    points at random from SEED.".
  * Before the fix: a drawn seed counted as a SEED of the file, so both runs
  * without SEED gave the WARNING of the INIT-block SEED; the STRATEGY-level
  * SEED's WARNING said that SEED affects at most the INIT-chain starting
@@ -9909,8 +9910,9 @@ TEST_CASE("Termination: the Sobol note of GN_MLSL_LDS warns about a SEED of "
         CHECK(line.find("WARNING") != std::string::npos);
         CHECK(line.find(head + "; SEED affects at most the INIT-chain "
                         "starting point (and only when the chain has a "
-                        "RANDOM/LHS/SOBOL entry), not the sampled points. Use "
-                        "GN_MLSL for seed-controlled random sampling.") !=
+                        "RANDOM/LHS/SOBOL entry), not the sampled points. "
+                        "GN_MLSL draws its sample points at random from "
+                        "SEED.") !=
               std::string::npos);
     }
     {
@@ -9922,8 +9924,8 @@ TEST_CASE("Termination: the Sobol note of GN_MLSL_LDS warns about a SEED of "
                         "changes at most the INIT-chain starting point (a "
                         "SEED in the INIT block, when the chain has a "
                         "RANDOM/LHS/SOBOL entry) and the random numbers of "
-                        "the local search NLOPT:LN_PRAXIS. Use GN_MLSL for "
-                        "seed-controlled random sampling.") !=
+                        "the local search NLOPT:LN_PRAXIS. GN_MLSL draws its "
+                        "sample points at random from SEED.") !=
               std::string::npos);
     }
 }

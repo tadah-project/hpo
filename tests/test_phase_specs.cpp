@@ -511,8 +511,7 @@ TEST_CASE("backend rules: validate_backend runs each backend's own checks",
               "TADAH:RANDOM does not use POPULATION; remove it (it is read "
               "by NLOPT:GD_MLSL, "},
              {"TADAH", "GRID", [](OptimizerSpec& s) { s.seed = 3; },
-              "TADAH:GRID does not use SEED: it draws no random numbers; "
-              "remove it"},
+              "TADAH:GRID does not use SEED: it draws no random numbers"},
              {"DLIB", "GFS", [](OptimizerSpec& s) { s.vector_storage = 5; },
               "DLIB:GFS does not use VECTOR_ARR; remove it (it is read by "
               "NLOPT:LD_LBFGS, "},
@@ -536,6 +535,15 @@ TEST_CASE("backend rules: validate_backend runs each backend's own checks",
         auto s = with(c.lib, c.algo);
         c.set(s);
         CHECK_THAT(error_of(s), Catch::StartsWith(c.message));
+    }
+    /* Pins: the SEED refusal says what is refused and why, and nothing
+     * after it: "TADAH:GRID does not use SEED: it draws no random numbers".
+     * Before: it ended "; remove it". */
+    {
+        auto grid = with("TADAH", "GRID");
+        grid.seed = 3;
+        CHECK(error_of(grid) ==
+              "TADAH:GRID does not use SEED: it draws no random numbers");
     }
 
     /* Pins: a tolerance on G_MLSL without an INNER block -- a spec built

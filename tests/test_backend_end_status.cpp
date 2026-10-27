@@ -443,10 +443,11 @@ TEST_CASE("End status: DLIB:GFS records a spent MAXEVAL",
 
 /* DLIB:GFS is deterministic: a SEED of its spec is refused when its
  * search starts, as at startup ("DLIB:GFS does not use SEED: it draws no
- * random numbers; remove it"; it was warned about: "SEED has no effect on
- * the search. Randomise via the INIT block ..."). A PRESTAGE refinement's
- * SEED that also seeds the exploration (an exploration without a seed of
- * its own takes the STRATEGY-level one) is said to: "SEED has no effect on
+ * random numbers", which ended "; remove it"; it was warned about:
+ * "SEED has no effect on the search. Randomise via the INIT block ...").
+ * A PRESTAGE refinement's SEED that also seeds the exploration (an
+ * exploration without a seed of its own takes the STRATEGY-level one) is
+ * said to: "SEED has no effect on
  * the refinement: it seeds the exploration (EXPLORE SEED 7)".
  * Before the fix: the refinement said "SEED has no effect on the search.
  * Randomise via the INIT block (e.g. METHOD RANDOM K with SEED) instead.",
@@ -463,7 +464,7 @@ TEST_CASE("End status: DLIB:GFS says what its SEED does",
         StubHost host{bowl};
         CHECK_THROWS_WITH(tadah::hpo::run_dlib_global_impl(sp, host),
                           "DLIB:GFS does not use SEED: it draws no random "
-                          "numbers; remove it");
+                          "numbers");
     }
     OptimizerSpec outer = sp;
     outer.strategy_type = tadah::hpo::StrategyType::PRESTAGE;
