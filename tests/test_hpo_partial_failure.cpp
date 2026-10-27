@@ -21,12 +21,16 @@
 // The fixture: the minimal 4-atom bcc Ta structure (train and validation),
 // a fixed potential (D2_BP, 5 Gaussians, Cut_Cos, every weight pinned:
 // FIXINDEX 1-5), PC_ERMSE 0 1, and a cohesive_energy observable whose
-// lattice-parameter window is [3.0, 3.35]. The relaxed lattice parameter
-// of this potential grows with RCUT2B and leaves the window above about
-// RCUT2B = 4.94, so in the OPTIM box [4.0, 5.5] the observable fails from
-// there up (its value NaN, its term FAILSCORE) while L(ERMSE) is usable
-// everywhere (7.7e4 at 4.0, 5.7e5 at 5.5). The same observable with the
-// window [2.0, 5.0] never fails.
+// lattice-parameter window is [3.0, 5.7]. The potential binds no crystal:
+// relaxed at zero pressure, the bcc cell expands until its nearest
+// neighbours reach the cutoff, a0 = 2 RCUT2B / sqrt(3) (5.195 at RCUT2B =
+// 4.5), with a cohesive energy of about 0. It leaves the window above
+// RCUT2B = 5.7 sqrt(3) / 2 = 4.94, so in the OPTIM box [4.0, 5.5] the
+// observable fails from there up (its value NaN, its term FAILSCORE) while
+// L(ERMSE) is usable everywhere (7.7e4 at 4.0, 5.7e5 at 5.5). The same
+// observable with the window [2.0, 7.0] never fails. (The windows were
+// [3.0, 3.35] and [2.0, 5.0] while the relaxation stopped at the first
+// cell whose pressure was below 0.1 eV/A^3, 16 GPa, near its start.)
 //
 //   - "[HPO][partial_failure][host]": HPO_Host evaluations, in-process;
 //   - "[HPO][partial_failure][run]": hpo_run(), a gradient search that
@@ -280,14 +284,14 @@ void write_data(const fs::path& dir) {
 }
 
 /* The cohesive energy whose relaxed lattice parameter leaves its window
- * [3.0, 3.35] above RCUT2B of about 4.94 (it fails there), and the same
+ * [3.0, 5.7] above RCUT2B of about 4.94 (it fails there), and the same
  * observable with a window it never leaves. */
 const std::string kFailingObservable =
     "PC_OBSERVABLE cohesive_energy --species Ta --target 8.1 --weight 1 "
-    "--supercell 2 2 2 --hotvar a0 3.0 3.35 3.3\n";
+    "--supercell 2 2 2 --hotvar a0 3.0 5.7 3.3\n";
 const std::string kUsableObservable =
     "PC_OBSERVABLE cohesive_energy --species Ta --target 8.1 --weight 1 "
-    "--supercell 2 2 2 --hotvar a0 2.0 5.0 3.3\n";
+    "--supercell 2 2 2 --hotvar a0 2.0 7.0 3.3\n";
 const std::string kOptimRcut = "OPTIM RCUT2B (1) 4.0 5.5\n";
 
 /* One HPO_Host in the cwd with the hpotarget @p target (the objective
@@ -437,10 +441,10 @@ TEST_CASE("a failed PC_OBSERVABLE term is a graded band-B failure under "
  * the evaluation and why it failed, as a failed PC_LAMMPS task is: a
  * WARNING "PC_OBSERVABLE term failed (cohesive_energy[1], eval <n>,
  * occurrence <k>): the relaxed lattice parameter a0 = <a> is outside its
- * --hotvar window [3, 3.35]" at the first, second and fourth failure of
+ * --hotvar window [3, 5.7]" at the first, second and fourth failure of
  * the run (rate-limited on powers of two): evals 2, 3 and 5 of RCUT2B 4.5
  * (computed: no line), 5.2, 5.3, 5.4 and 5.5; the third failure (eval 4)
- * has no line; a0 is above 3.35.
+ * has no line; a0 is above 5.7.
  * Before the fix: no journal line named a failed term or its reason; the
  * evaluation's FAILSCORE (loss.tadah) and NaN value (outvar.tadah) were
  * all it left. */
@@ -459,12 +463,12 @@ TEST_CASE("a failed PC_OBSERVABLE term is journalled with its observable and "
     const std::regex line(
         R"(WARNING +PC_OBSERVABLE term failed \(cohesive_energy\[1\], eval )"
         R"((\d+), occurrence (\d+)\): the relaxed lattice parameter a0 = )"
-        R"(([0-9.]+) is outside its --hotvar window \[3, 3\.35\])");
+        R"(([0-9.]+) is outside its --hotvar window \[3, 5\.7\])");
     std::vector<std::pair<int, int>> seen;
     for (auto it = std::sregex_iterator(journal.begin(), journal.end(), line);
          it != std::sregex_iterator(); ++it) {
         seen.emplace_back(std::stoi((*it)[1]), std::stoi((*it)[2]));
-        CHECK(std::stod((*it)[3]) > 3.35);
+        CHECK(std::stod((*it)[3]) > 5.7);
     }
     CHECK(seen == std::vector<std::pair<int, int>>{{2, 1}, {3, 2}, {5, 4}});
     CHECK(count_of(journal, "PC_OBSERVABLE term failed") == 3u);
@@ -638,7 +642,7 @@ TEST_CASE("an unconverged cohesive_energy relaxation whose --unconverged value "
 }
 
 /* Pins: two failed PC_OBSERVABLE terms at the default FAILSCORE (the
- * largest double; RCUT2B = 5.2, both windows [3.0, 3.35]) fail their
+ * largest double; RCUT2B = 5.2, both windows [3.0, 5.7]) fail their
  * evaluation as a failure, not as a NaN/Inf clamping: the loss is FAILSCORE,
  * the census counts it under "Unusable losses" and not under "NaN/Inf
  * clampings", and there is no "evaluation produced NaN/Inf" WARNING; under

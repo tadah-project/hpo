@@ -444,6 +444,20 @@ void PotHeaderWriter::write_loss_section(std::ostream& os,
             }
         }
     }
+
+    /* PC_OBSERVABLE terms, named as the journal names them (<kind>[k],
+     * k the 1-based ordinal of the line); RESULT has the row of each. */
+    for (std::size_t k = 0; k < trg.observables.size(); ++k) {
+        const auto& obs = trg.observables[k];
+        if (!obs) continue;
+        std::ostringstream s;
+        s << "target=" << std::setprecision(12) << obs->target();
+        if (!obs->unit().empty()) s << " " << obs->unit();
+        s << " weight=" << obs->weight()
+          << " loss=" << tadah::LossFunction::to_string(obs->lossfn().type());
+        for (double p : obs->lossfn().params()) s << " " << p;
+        kv(os, observable_journal_label(*obs, k + 1), s.str());
+    }
 }
 
 }   // namespace tadah::hpo

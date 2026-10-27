@@ -2919,6 +2919,61 @@ text = "PC_OBSERVABLE cohesive_energy --species H --target 2 --weight 1 --hotvar
 error = "PC_OBSERVABLE cohesive_energy: --fmax-converged must be > 0 (got 0)"
 
 
+[[line_option]]
+id = "PC_OBSERVABLE.cohesive_energy.--ptol"
+option = "--ptol"
+lines = ["PC_OBSERVABLE.cohesive_energy"]
+synopsis = "--ptol <pressure>"
+repeat = "error"
+repeat_msg = "PC_OBSERVABLE cohesive_energy: --ptol is given twice on this line; each option is given once"
+default = { literal = "1e-4" }
+doc = """\
+The pressure tolerance of the relaxation, in GPa, a number > 0: the cell \
+has relaxed when the magnitude of its pressure falls below it."""
+long_doc = """\
+The magnitude of the pressure is |dE/dε| / (3V), for the isotropic \
+strain ε of the cell and its volume V. A residual pressure P leaves the \
+energy per atom of the crystal above its minimum by about P² (V/N) / (2B), \
+for N atoms and the bulk modulus B, so the cohesive energy below its \
+value at zero pressure. The relaxation stops when the pressure is below \
+--ptol and the largest atomic force below --fmax-converged."""
+
+[[line_option.args]]
+name = "pressure"
+kind = "number"
+min = 0
+min_open = true
+msg = "PC_OBSERVABLE cohesive_energy: --ptol takes a finite number (got '{tok}'){underflow}"
+
+[[line_option.checks]]
+msg = "PC_OBSERVABLE cohesive_energy: --ptol must be > 0 (got {tok})"
+doc = "The value is 0 or negative."
+
+[[line_option.examples]]
+wrap = "root"
+text = "PC_OBSERVABLE cohesive_energy --species H --target 2.0 --weight 1 --hotvar a0 1.5 2.5 --ptol 1e-3"
+
+[[line_option.invalid]]
+wrap = "root"
+text = "PC_OBSERVABLE cohesive_energy --species H --target 2 --weight 1 --hotvar a0 1.5 2.5 --ptol"
+error = "PC_OBSERVABLE cohesive_energy: '--ptol' requires a value"
+
+[[line_option.invalid]]
+wrap = "root"
+text = "PC_OBSERVABLE cohesive_energy --species H --target 2 --weight 1 --hotvar a0 1.5 2.5 --ptol x"
+error = "PC_OBSERVABLE cohesive_energy: --ptol takes a finite number (got 'x')"
+
+[[line_option.invalid]]
+wrap = "root"
+text = "PC_OBSERVABLE cohesive_energy --species H --target 2 --weight 1 --hotvar a0 1.5 2.5 --ptol 1e-3 --ptol 1e-4"
+error = "PC_OBSERVABLE cohesive_energy: --ptol is given twice on this line; each option is given once"
+
+[[line_option.invalid]]
+wrap = "root"
+text = "PC_OBSERVABLE cohesive_energy --species H --target 2 --weight 1 --hotvar a0 1.5 2.5 --ptol 0"
+error = "PC_OBSERVABLE cohesive_energy: --ptol must be > 0 (got 0)"
+
+
 
 [[line_option]]
 id = "PC_OBSERVABLE.cohesive_energy.--unconverged"

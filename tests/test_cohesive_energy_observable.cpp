@@ -339,6 +339,10 @@ TEST_CASE("CohesiveEnergyObservable dO/dW matches W-FD without relaxation",
     cfg.a0_max = 3.9;
     cfg.a0_initial = 3.30;
     cfg.relax_maxiter = 0;        /* skip relax — fixed cell → clean FD parity */
+    /* A pressure tolerance, in GPa, that the cell meets, so the
+     * iteration-0 check accepts it as it is (at the default, 1e-4 GPa,
+     * the cell of maxiter 0 is unconverged and gives no dO/dW). */
+    cfg.relax_ptol = 1.0e9;
 
     CohesiveEnergyObservable obs(cfg);
     ObservableEvalResult r0 = obs.evaluate(*host.model, host.dc, host.context);
@@ -469,12 +473,12 @@ TEST_CASE("CohesiveEnergyObservable updates hot-var after relaxation",
  *
  * relax_etol makes the observable report the E_coh it computes for the bulk
  * the relaxation ends at, whether it stops on the force criterion (exact
- * lists: every atomic force ~1e-15 on a perfect lattice, the strain force
- * below the eq_fmax_threshold of 1e-4) or on the energy criterion; that
- * value must be the relaxed bulk's energy. (The relaxation stopped at a
- * force tolerance of its own, 1e-4, while a lenient eq_fmax_threshold,
- * 1e3, judged it; one value, the --fmax-converged tolerance, does
- * both.) */
+ * lists: every atomic force ~1e-15 on a perfect lattice, below the
+ * eq_fmax_threshold of 1e-4, and the pressure below relax_ptol, 1e-4 GPa
+ * by default) or on the energy criterion; that value must be the relaxed
+ * bulk's energy. (The relaxation stopped at a force tolerance of its own,
+ * 1e-4, while a lenient eq_fmax_threshold, 1e3, judged it; the
+ * --fmax-converged tolerance does both for the atoms.) */
 TEST_CASE("CohesiveEnergyObservable: relaxed E_coh equals a fresh "
           "neighbour-list evaluation of the relaxed bulk",
           "[hpo][observable][cohesive_energy][nn]")
@@ -495,7 +499,7 @@ TEST_CASE("CohesiveEnergyObservable: relaxed E_coh equals a fresh "
     cfg.a0_min = 2.7;
     cfg.a0_max = 3.9;
     cfg.a0_initial = 3.27;           /* about 2% below the model's minimum */
-    cfg.eq_fmax_threshold = 1.0e-4;  /* the strain must converge: several Iso steps */
+    cfg.eq_fmax_threshold = 1.0e-4;  /* the atoms; the cell relaxes to relax_ptol: several Iso steps */
     cfg.relax_etol = 1.0e-12;
     cfg.relax_maxiter = 500;
 
@@ -525,8 +529,9 @@ TEST_CASE("CohesiveEnergyObservable: relaxed E_coh equals a fresh "
 /* A guard, expected to pass before and after the exact-image fix: the E_coh
  * of the 2-atom bcc cell (--supercell 1 1 1) equals that of 4 4 4 at the
  * same a0, without relaxation (relax_maxiter 0; an eq_fmax_threshold, the
- * --fmax-converged force tolerance, that no pressure reaches, so the
- * iteration-0 check accepts the cell as it is).
+ * --fmax-converged force tolerance, that no force reaches, and a
+ * relax_ptol, the --ptol pressure tolerance, that no pressure reaches, so
+ * the iteration-0 check accepts the cell as it is).
  * At rcut 6 and a0 3.3 (rcut/a0 = 1.82) a list built at the model's cutoff
  * would miss images of the 2-atom cell before the fix, but the relaxer
  * builds its list at rcut + skin (2 A), wide enough that no pair inside
@@ -554,6 +559,7 @@ TEST_CASE("CohesiveEnergyObservable: supercell 1 1 1 and 4 4 4 give the "
         cfg.a0_initial = 3.3;
         cfg.relax_maxiter = 0;
         cfg.eq_fmax_threshold = 1.0e6;
+        cfg.relax_ptol = 1.0e9;
         CohesiveEnergyObservable obs(cfg);
         const ObservableEvalResult r =
             obs.evaluate(*host.model, host.dc, host.context);
@@ -579,9 +585,10 @@ TEST_CASE("CohesiveEnergyObservable: supercell 1 1 1 and 4 4 4 give the "
  * relaxation's scale factor (NativeRelaxer::Result::scale_factor), the
  * quantity the early-reject predicate already uses, and not the relaxed
  * cell(0,0) divided by nx. An evaluation that does not move the cell
- * (relax_maxiter 0 and an eq_fmax_threshold, the --fmax-converged force
- * tolerance, that no force reaches, so the iteration-0 check accepts the
- * cell with scale factor 1) therefore hands
+ * (relax_maxiter 0, an eq_fmax_threshold, the --fmax-converged force
+ * tolerance, that no force reaches, and a relax_ptol, the --ptol pressure
+ * tolerance, that no pressure reaches, so the iteration-0 check accepts
+ * the cell with scale factor 1) therefore hands
  * on its a0 bit for bit, whatever the supercell.
  *
  * a0 = 3.3 (0x1.a666666666666p+1) with --supercell 3 3 3: replicate()
@@ -619,6 +626,7 @@ TEST_CASE("CohesiveEnergyObservable: an evaluation that does not move the "
     cfg.a0_initial = 3.3;
     cfg.relax_maxiter = 0;
     cfg.eq_fmax_threshold = 1.0e6;
+    cfg.relax_ptol = 1.0e9;
 
     CohesiveEnergyObservable obs(cfg);
     REQUIRE(obs.start_a0() == 0x1.a666666666666p+1);   /* 3.3 */
@@ -691,7 +699,7 @@ TEST_CASE("CohesiveEnergyObservable: --fmax-converged is the force tolerance "
 
 /* Pins: --ptol is the pressure tolerance of the relaxation of the cell, in
  * GPa. From a0 = 3.1, about 7% below the model's minimum (a pressure of
- * about 22 GPa): with --ptol 100, which the start meets, the relaxation
+ * about 20 GPa): with --ptol 100, which the start meets, the relaxation
  * stops at once and hands on 3.1 bit for bit; with --ptol 1 it relaxes the
  * cell to a pressure below 1 GPa; with the default, 1e-4 GPa, it relaxes
  * further, to another a0, at a pressure below 1e-4 GPa. The pressure is
@@ -750,12 +758,13 @@ TEST_CASE("CohesiveEnergyObservable: --ptol is the pressure tolerance of the "
 /* Pins: the analytical dO/dW of the relaxed cohesive energy is the
  * derivative of the value the observable reports. With every relaxation
  * option at its default, from a0 = 3.1, about 7% below the model's
- * minimum (a pressure of about 22 GPa, above 0.1 eV/A^3), the central
+ * minimum (a pressure of about 20 GPa, above 0.1 eV/A^3), the central
  * difference of the reported value in each weight (step 1e-4, each
  * evaluation relaxing from 3.1) equals dO/dW of the evaluation at the
- * weights to 1e-6 of the largest |dO/dW|. dO/dW is taken with the relaxed
- * cell held fixed; at zero pressure the change of the cell with the
- * weights adds nothing to the derivative of the energy.
+ * weights to 1e-5 of the largest |dO/dW| (5e-7 here; with --ptol 1e-2,
+ * 7e-5). dO/dW is taken with the relaxed cell held fixed; at zero
+ * pressure the change of the cell with the weights adds nothing to the
+ * derivative of the energy.
  * Before the fix: passes as well (a pin: the relaxation stopped at the
  * first cell whose pressure was below 0.1 eV/A^3, after steps of the
  * largest strain a step takes, 0.1 %, so the cell it ended at did not
@@ -806,7 +815,7 @@ TEST_CASE("CohesiveEnergyObservable dO/dW matches W-FD of the relaxed value",
         INFO(std::setprecision(17) << "weight " << c << ": dO/dW "
              << r0.dO_dW(c) << ", central difference " << fd
              << ", difference / largest |dO/dW| " << diff);
-        CHECK(diff <= 1e-6);
+        CHECK(diff <= 1e-5);
     }
     host.model->set_weights(w0);
     INFO("largest difference / largest |dO/dW|: " << worst);

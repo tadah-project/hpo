@@ -1,5 +1,6 @@
 #pragma once
 #include <tadah/hpo/pot_header_writer.h>
+#include <tadah/hpo/column_titles.h>
 #include <tadah/hpo/log_index.h>
 #include <tadah/hpo/hpo_targets.h>
 #include <tadah/hpo/lammps_sim.h>
@@ -25,10 +26,15 @@ void PotHeaderWriter::write_result_table(std::ostream& os,
 {
     heading(os, "RESULT");
 
-    /* tabular header for global metrics */
+    /* tabular header for global metrics. The value and loss columns are
+     * as wide as a number at precision prec and one blank before it
+     * (column_width: sign, digit, point, prec digits, e+XXX), never
+     * below 16, so the fields of a row stay apart at any DIGITS: at a
+     * fixed 16 a number of DIGITS 15 filled its column and ran into the
+     * name or the number before it. */
     constexpr int NW = 20;  // name width
-    constexpr int VW = 16;  // value width
-    constexpr int LW = 16;  // loss width
+    const int VW = std::max(16, static_cast<int>(column_width(prec)));
+    const int LW = VW;
 
     auto metric_row = [&](const std::string& name, bool used,
                           double val, double loss_val,
@@ -123,6 +129,35 @@ void PotHeaderWriter::write_result_table(std::ostream& os,
                 }
                 os << "\n";
             }
+        }
+    }
+
+    /* PC_OBSERVABLE values and losses, one row per line: the column tag
+     * (Ecoh), its unit and the 1-based ordinal of the line. */
+    if (!trg.observables.empty()) {
+        thin(os);
+        os << "#   " << std::left << std::setw(NW) << "Observable"
+           << std::right << std::setw(VW) << "Value"
+           << std::right << std::setw(LW) << "Loss" << "\n";
+        os << "#   " << std::string(NW + VW + LW, '-') << "\n";
+        for (std::size_t k = 0; k < trg.observables.size(); ++k) {
+            const auto& obs = trg.observables[k];
+            if (!obs) continue;
+            std::string name = obs->column_tag();
+            if (!obs->unit().empty()) name += " (" + obs->unit() + ")";
+            name += "[" + std::to_string(k + 1) + "]";
+            os << "#   " << std::left << std::setw(NW) << name;
+            if (k < e.v_obs_value.size())
+                os << std::right << std::setw(VW) << std::scientific
+                   << std::setprecision(prec) << e.v_obs_value[k];
+            else
+                os << std::right << std::setw(VW) << "N/A";
+            if (k < e.v_obs_loss.size())
+                os << std::right << std::setw(LW) << std::scientific
+                   << std::setprecision(prec) << e.v_obs_loss[k];
+            else
+                os << std::right << std::setw(LW) << "N/A";
+            os << "\n";
         }
     }
 

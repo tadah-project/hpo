@@ -3,6 +3,7 @@
 #include <tadah/mlip/cell_builder.h>
 #include <tadah/mlip/native_relaxer.h>
 #include <tadah/mlip/nn_finder.h>
+#include <tadah/mlip/row_weights.h>   // kGPaInEvPerA3
 #include <tadah/mlip/st_descriptors.h>
 #include <tadah/mlip/structure_transformations.h>
 
@@ -38,6 +39,10 @@ CohesiveEnergyObservable(Config cfg)
     if (!(cfg_.eq_fmax_threshold > 0.0))
         throw std::invalid_argument(
             "CohesiveEnergyObservable: eq_fmax_threshold must be > 0");
+    /* No relaxation reaches a pressure of 0. */
+    if (!(cfg_.relax_ptol > 0.0))
+        throw std::invalid_argument(
+            "CohesiveEnergyObservable: relax_ptol must be > 0");
 }
 
 std::string CohesiveEnergyObservable::analytical_gradient_gap() const
@@ -110,10 +115,15 @@ evaluate(tadah::mlip::M_Tadah_Base& model,
     NativeRelaxer::Options relax_opts;
     relax_opts.box_mode = NativeRelaxer::Options::Iso;
     relax_opts.pressure = 0.0;
-    /* --fmax-converged: the tolerance the relaxation stops at is the one
-     * its result is judged by (it stopped at a fixed 0.1, so a larger
-     * value changed nothing and a smaller one only rejected relaxations). */
+    /* --fmax-converged: the force tolerance of the atoms the relaxation
+     * stops at is the one its result is judged by. --ptol, in GPa: the
+     * pressure tolerance of the cell. The cell is relaxed to zero pressure
+     * whatever the atoms' tolerance: with one tolerance for both (0.1, in
+     * eV/A for the atoms and eV/A^3, 16 GPa, for the cell) the relaxation
+     * stopped far from the minimum, at a cell that depended on where it
+     * started. */
     relax_opts.ftol     = cfg_.eq_fmax_threshold;
+    relax_opts.ptol     = cfg_.relax_ptol * tadah::mlip::kGPaInEvPerA3;
     relax_opts.etol     = cfg_.relax_etol;
     relax_opts.max_wall_time_s = cfg_.relax_max_wall_time_s;
     relax_opts.maxiter  = cfg_.relax_maxiter;
@@ -177,10 +187,11 @@ evaluate(tadah::mlip::M_Tadah_Base& model,
     }
 
     /* eq_ok-style convergence gate (matches Ecoh_fast.in). The relaxer
-     * stops at eq_fmax_threshold (--fmax-converged), so its internal
-     * `converged` flag fires exactly when (atom fmax, strain force
-     * normalised) both fall below it, and `!rr.converged` is the
-     * canonical unconverged signal. Returns
+     * stops at eq_fmax_threshold (--fmax-converged) for the atoms and at
+     * relax_ptol (--ptol) for the cell, so its internal `converged` flag
+     * fires exactly when the atom fmax and the strain force normalised
+     * fall below them, or when --etol stops it, and `!rr.converged` is
+     * the canonical unconverged signal. Returns
      * the --unconverged value (--unconverged const 100 by default,
      * matches the `Ecoh = ternary(v_eq_ok, v_Ecoh_raw, 100.0)` fallback,
      * or --unconverged force-scaled's target + slope x fmax). */
@@ -297,7 +308,9 @@ evaluate(tadah::mlip::M_Tadah_Base& model,
     }
 
     /* 6. Assemble result (new_a0: the warm start of the chain's next
-     *    evaluation). needs_adjoint = false (dE_coh/dx = 0 at minimum).
+     *    evaluation). needs_adjoint = false (dE_coh/dx = 0 at minimum: the
+     *    atomic forces vanish by symmetry, and the pressure is below
+     *    --ptol).
      *    E_coh = -E_bulk/N + E_iso: the host differentiates both energies
      *    with respect to the descriptor parameters at fixed W. */
     ObservableEvalResult res;

@@ -219,17 +219,28 @@ parse_cohesive_energy(const std::vector<std::string>& tokens, std::size_t start,
                 integer(need_value(i, t), "--maxeval", 0));
         } else if (t == "--fmax-converged") {
             once(t);
-            /* The force tolerance of the relaxation and its eq_ok test
-             * (matches Ecoh_fast.in's `ternary($(fmax) < 0.1, 1, 0)`): the
-             * relaxation stops when the largest force falls below it, and
-             * one that ends above it returns the --unconverged value as
-             * Ecoh. Positive: no relaxation reaches a tolerance of 0. */
+            /* The force tolerance of the atoms in the relaxation and its
+             * eq_ok test (matches Ecoh_fast.in's `ternary($(fmax) < 0.1,
+             * 1, 0)`): the atoms have converged when the largest atomic
+             * force falls below it, and a relaxation that ends above it
+             * returns the --unconverged value as Ecoh. Positive: no
+             * relaxation reaches a tolerance of 0. */
             const std::string& v = need_value(i, t);
             cfg.eq_fmax_threshold = number(v, "--fmax-converged");
             if (!(cfg.eq_fmax_threshold > 0.0))
                 throw std::runtime_error(
                     "PC_OBSERVABLE cohesive_energy: --fmax-converged must be "
                     "> 0 (got " + v + ")");
+        } else if (t == "--ptol") {
+            once(t);
+            /* The pressure tolerance of the cell in the relaxation, in GPa.
+             * Positive: no relaxation reaches a pressure of 0. */
+            const std::string& v = need_value(i, t);
+            cfg.relax_ptol = number(v, "--ptol");
+            if (!(cfg.relax_ptol > 0.0))
+                throw std::runtime_error(
+                    "PC_OBSERVABLE cohesive_energy: --ptol must be > 0 (got " +
+                    v + ")");
         } else if (t == "--unconverged") {
             once(t);
             /* Strategy + value for unconverged relax outcomes. Syntax:

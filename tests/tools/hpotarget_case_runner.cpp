@@ -325,6 +325,7 @@ Values defaults_of(const HPOTargets& trg)
         add(p + "--max-wall-time", num(c.relax_max_wall_time_s));
         add(p + "--etol", num(c.relax_etol));
         add(p + "--fmax-converged", num(c.eq_fmax_threshold));
+        add(p + "--ptol", num(c.relax_ptol));
         add(p + "--unconverged",
             std::string(c.unconverged_strategy ==
                                 CohesiveEnergyObservable::Config::
