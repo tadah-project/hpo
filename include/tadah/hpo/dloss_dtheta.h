@@ -51,6 +51,7 @@
 
 #include <tadah/core/core_types.h>
 #include <tadah/core/intercept_layout.h>
+#include <tadah/core/utils.h>
 #include <tadah/hpo/fit_switch_guard.h>
 #include <tadah/hpo/analytical_gate.h>
 #include <tadah/hpo/hpo_targets.h>
@@ -105,11 +106,20 @@ struct ParamRef {
     /** The OPTIM key (upper-case), e.g. "CGRID2B", "SGRID2B", "RCUT2B".
      *  Matches the keys D2_Base::calc_dDdtheta expects. */
     std::string theta_name;
-    /** 1-based index for vector parameters. Always positive -- descriptor
-     *  closed forms for vector keys (CGRID*, SGRID*, CEMBFUNC, SEMBFUNC,
-     *  ...) require `arg_pos >= 1`. Scalar keys (RCUT*, RCUTENV) ignore
-     *  arg_pos and match on theta_name alone, so 1 is fine there too. */
+    /** The OPTIM index: the 1-based position of the value among the
+     *  numbers of its key (DimSpec::user_index, but the model weight of
+     *  FIXWEIGHT under FIXINDEX), the index the descriptor closed forms
+     *  take. For a key of numbers only it is the position among the key's
+     *  values; for the pair form of WATOM (sym sym value triples) it is the
+     *  pair. Always positive -- descriptor closed forms for vector keys
+     *  (CGRID*, SGRID*, CEMBFUNC, SEMBFUNC, WATOM, ...) require
+     *  `arg_pos >= 1`. Scalar keys (RCUT*, RCUTENV) ignore arg_pos and
+     *  match on theta_name alone, so 1 is fine there too. */
     int         arg_pos = 1;
+    /** The 0-based position of the value among the tokens of its key: its
+     *  index into the per-token vectors of HPOTargets::optimap (opt, line,
+     *  lowbound, highbound, ...). */
+    std::size_t token = 0;
     /** Flat index in the optimiser's theta vector. */
     std::size_t flat_idx = 0;
 };
@@ -119,7 +129,9 @@ struct ParamRef {
  *  ordered the same way as `param_labels_` (and the optimiser's x).
  *
  *  Walks `optimap` in iteration order (std::map: lexicographic by
- *  key), and within each key emits one entry per opt[i]==true position. */
+ *  key), and within each key emits one entry per opt[i]==true position,
+ *  token i of the key, a number (HPOTargets selects the value of OPTIM
+ *  index n at the n-th number of the key). */
 inline std::vector<ParamRef>
 make_param_ref_table(const HPOTargets& trg)
 {
@@ -128,11 +140,21 @@ make_param_ref_table(const HPOTargets& trg)
     for (const auto& kv : trg.optimap) {
         const std::string& key = kv.first;
         const auto&        op  = kv.second.opt;
+        const auto&        cfg = kv.second.config;
+        int numbers = 0;
         for (std::size_t i = 0; i < op.size(); ++i) {
+            const bool number = i < cfg.size() && core::is_number(cfg[i]);
+            if (number) ++numbers;
             if (!op[i]) continue;
+            if (!number)
+                throw std::logic_error(
+                    "make_param_ref_table: OPTIM " + key + " selects token " +
+                    std::to_string(i + 1) + " of " + key + ", which is not a "
+                    "number");
             ParamRef r;
             r.theta_name = key;
-            r.arg_pos    = static_cast<int>(i + 1);
+            r.arg_pos    = numbers;
+            r.token      = i;
             r.flat_idx   = flat++;
             out.push_back(std::move(r));
         }

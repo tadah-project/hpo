@@ -65,16 +65,35 @@ std::string analytical_gradient_blocker(const core::Context& ctx,
 std::string analytical_loss_term_blocker(const HPOTargets& trg);
 
 /* A search parameter of an OPTIM line that the analytical gradient cannot
- * differentiate on the data of the run. */
+ * differentiate on the data of the run, and why. */
 struct ParameterWithoutDerivative {
     std::string key;            // the OPTIM key, "LAMBDA", "SGRIDMB"
-    std::size_t index = 0;      // the 1-based index of its value
+    std::size_t index = 0;      // its OPTIM index (ParamRef::arg_pos)
     std::size_t line = 0;       // its OPTIM line of the target file (0: none)
-    /* The descriptors differentiate it in the energy rows, not in the
-     * force rows the run has: those of the fit (FORCE true) when
-     * `force_rows_of_fit`, else those the validation measures (PC_FRMSE). */
-    bool energy_rows_only = false;
+    enum class Why {
+        /* No descriptor has a derivative with respect to it, for any pair
+         * of atoms (LAMBDA, a key of the fit; RCUT2B under Cut_Dummy). */
+        NoDerivative,
+        /* `descriptors` (their labels) differentiate it in the energy rows
+         * only, and the run has force rows: those of the fit (FORCE true)
+         * when `force_rows_of_fit`, else those PC_FRMSE measures. */
+        EnergyRowsOnly,
+        /* The descriptors differentiate it, but no pair of atoms of the
+         * training structures (`training`) or of the validation structures
+         * (`validation`) lies where they depend on it, at the values of
+         * the training configuration: a pair within the cutoff of a
+         * descriptor that reads it, of the species it pairs, and for a
+         * cutoff of RCUT2B or RCUTMB of `near_cutoff` (Cut_PolyS,
+         * Cut_CosS, which depend on it only for a pair within 1 A of the
+         * cutoff) within 1 A of it. */
+        NoPairInData,
+    };
+    Why why = Why::NoDerivative;
+    std::vector<std::string> descriptors;
     bool force_rows_of_fit = false;
+    bool training = false;
+    bool validation = false;
+    std::vector<std::string> near_cutoff;
 };
 
 /* The search parameters of `trg` (every value an OPTIM line searches) that
@@ -85,11 +104,16 @@ struct ParameterWithoutDerivative {
  * hands to finite differences at the point of the configuration, by the
  * same walker and rule (theta_claims, claims_differentiate,
  * dloss_dtheta.h), with the descriptors an evaluation builds (an
- * mlip::Trainer of `ctx`). A key no descriptor has a derivative with
- * respect to (LAMBDA, a key of the fit) gets no claim; a descriptor whose
- * derivatives cover the energy rows only (DM_Blip, DM_EAD) gets the
- * energy claim, which is not enough with FORCE true or PC_FRMSE. For a
- * setup analytical_gradient_blocker() accepts (training data, no
+ * mlip::Trainer of `ctx`), and why. The walker claims a parameter for the
+ * pairs of atoms a descriptor depends on it for; the why comes from the
+ * same walker on pairs of atoms the data need not hold (every pair of
+ * species of ATOM at distances from just below the largest cutoff down to
+ * 1 A, 0.25 A apart): no claim there is a key no descriptor differentiates
+ * (LAMBDA); claims of the energy rows only are a descriptor whose
+ * derivatives cover the energy rows only (DM_Blip, DM_EAD), named, which
+ * is not enough with FORCE true or PC_FRMSE; the claims the run needs are
+ * a parameter the training or the validation structures hold no pair for.
+ * For a setup analytical_gradient_blocker() accepts (training data, no
  * FIXINDEX). */
 std::vector<ParameterWithoutDerivative>
 parameters_without_analytical_derivative(const core::Context& ctx,

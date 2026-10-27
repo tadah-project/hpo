@@ -198,10 +198,14 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
  *  analytical_gate.h) is refused at the line that closes the block, naming
  *  each such OPTIM line, why, and HYBRID: "OPTIMIZER block: GRAD_STRATEGY
  *  ANALYTICAL needs an analytical derivative with respect to every search
- *  parameter, and the descriptors of the training configuration give none
- *  for OPTIM LAMBDA (1) on line 4 of the target file (no descriptor
- *  differentiates it). GRAD_STRATEGY HYBRID takes finite differences for
- *  it." The data decide which pairs of atoms the descriptors see, so
+ *  parameter, and the descriptors give none for OPTIM LAMBDA (1) on line 4
+ *  of the target file (no descriptor differentiates it). GRAD_STRATEGY
+ *  HYBRID takes finite differences for it."; "... (DM_Blip differentiates
+ *  it in the energy rows only, and FORCE true gives the fit force rows)";
+ *  "... (at the values of the training configuration, no pair of atoms of
+ *  the validation structures lies where the descriptors depend on it:
+ *  Cut_PolyS depends on RCUT2B only for a pair within 1 A of the cutoff)".
+ *  The data decide which pairs of atoms the descriptors see, so
  *  hpo_run() calls it once HPO_Host has read them (a check too), before
  *  any evaluation; validate_hpo_setup() has accepted the setup. */
 void require_analytical_parameters(const core::Context &train_ctx,

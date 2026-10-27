@@ -458,6 +458,58 @@ std::string analytical_head(const AnalyticalBlock &b) {
               : "");
 }
 
+/* "A", "A and B", "A, B and C". */
+std::string joined_with_and(const std::vector<std::string> &words) {
+  std::string out;
+  for (std::size_t i = 0; i < words.size(); ++i) {
+    if (i > 0) out += i + 1 == words.size() ? " and " : ", ";
+    out += words[i];
+  }
+  return out;
+}
+
+/* Why the descriptors give no derivative with respect to the search
+ * parameter `g`: "no descriptor differentiates it"; "DM_Blip
+ * differentiates it in the energy rows only, and FORCE true gives the fit
+ * force rows"; "at the values of the training configuration, no pair of
+ * atoms of the validation structures lies where the descriptors depend on
+ * it: Cut_PolyS depends on RCUT2B only for a pair within 1 A of the
+ * cutoff". */
+std::string parameter_without_derivative_why(
+    const ParameterWithoutDerivative &g) {
+  using Why = ParameterWithoutDerivative::Why;
+  switch (g.why) {
+    case Why::NoDerivative:
+      return "no descriptor differentiates it";
+    case Why::EnergyRowsOnly:
+      return (g.descriptors.empty()
+                  ? std::string("the descriptors differentiate")
+                  : joined_with_and(g.descriptors) +
+                        (g.descriptors.size() == 1 ? " differentiates"
+                                                   : " differentiate")) +
+             " it in the energy rows only, and " +
+             (g.force_rows_of_fit
+                  ? "FORCE true gives the fit force rows"
+                  : "PC_FRMSE measures the forces of the validation set");
+    case Why::NoPairInData: {
+      std::string why =
+          "at the values of the training configuration, no pair of atoms of "
+          "the " +
+          std::string(g.training && g.validation
+                          ? "training or the validation structures"
+                      : g.training ? "training structures"
+                                   : "validation structures") +
+          " lies where the descriptors depend on it";
+      if (!g.near_cutoff.empty())
+        why += ": " + joined_with_and(g.near_cutoff) +
+               (g.near_cutoff.size() == 1 ? " depends" : " depend") + " on " +
+               g.key + " only for a pair within 1 A of the cutoff";
+      return why;
+    }
+  }
+  return {};
+}
+
 }  // namespace
 
 void require_analytical_parameters(const core::Context &train_ctx,
@@ -469,7 +521,7 @@ void require_analytical_parameters(const core::Context &train_ctx,
   const std::vector<ParameterWithoutDerivative> gaps =
       parameters_without_analytical_derivative(train_ctx, trg, train, val);
   if (gaps.empty()) return;
-  /* "OPTIM LAMBDA (1) on line 4 of the target file (...)", the lines after
+  /* "OPTIM LAMBDA (1) on line 4 of the target file (why)", the lines after
    * the first "on line 5", joined "A or B", "A, B or C". */
   std::string list;
   bool first_line = true;
@@ -482,20 +534,13 @@ void require_analytical_parameters(const core::Context &train_ctx,
       if (first_line) list += " of the target file";
       first_line = false;
     }
-    list += g.energy_rows_only
-                ? std::string(" (the descriptors differentiate it in the "
-                              "energy rows only, and ") +
-                      (g.force_rows_of_fit
-                           ? "FORCE true gives the fit force rows)"
-                           : "PC_FRMSE measures the forces of the validation "
-                             "set)")
-                : std::string(" (no descriptor differentiates it)");
+    list += " (" + parameter_without_derivative_why(g) + ")";
   }
   throw std::runtime_error(with_block_line(*blocks.front().sp,
       analytical_head(blocks.front()) +
       " needs an analytical derivative with respect to every search "
-      "parameter, and the descriptors of the training configuration give "
-      "none for " + list + ". GRAD_STRATEGY HYBRID takes finite differences "
+      "parameter, and the descriptors give none for " + list +
+      ". GRAD_STRATEGY HYBRID takes finite differences "
       "for " + (gaps.size() == 1 ? "it" : "them") + "."));
 }
 
