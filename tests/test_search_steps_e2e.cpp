@@ -195,8 +195,10 @@ std::string ta_target(const std::string& strategy_body,
  * Before the fix: NLopt was given FAILSCORE itself, and the journal had no
  * stand-in line. Under the default FAILSCORE and 1e300 LN_BOBYQA made 49
  * evaluations, 2 of them repeating an earlier row, and its other calls were
- * answered from the record; LN_COBYLA repeated 6 rows under the default and
- * ended after 3 evaluations under 1e300. Under 1000 both made 60
+ * answered from the record; LN_COBYLA asked for points whose coordinates
+ * were not numbers under the default, 7 rows of NaN (the 6 repeated rows
+ * the check counted, 'Failed converting "-nan"' in the log), and ended
+ * after 3 evaluations under 1e300. Under 1000 both made 60
  * evaluations without a repeat, along other points than under the
  * default. */
 TEST_CASE("NLopt failed evaluations: LN_BOBYQA and LN_COBYLA on the Ta data "

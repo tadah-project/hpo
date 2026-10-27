@@ -176,10 +176,12 @@ const std::string kStandInNote =
  * Before the fix: NLopt was given FAILSCORE itself, and the journal had no
  * stand-in line. Under the largest double and under 1e300 LN_BOBYQA made 47
  * evaluations (best 14.47) and spent its other calls asking for points it
- * had evaluated; LN_COBYLA asked for 3 points twice under the largest
- * double and ended after 3 evaluations under 1e300 (best 16.2, the start).
- * Under 1000 both made 60 evaluations without a repeat (best 0.437 and
- * 1.64), and the three FAILSCOREs gave three different searches. */
+ * had evaluated; LN_COBYLA asked four times for a point whose
+ * coordinates were not numbers (NaN; the 3 repeats the check counted) under
+ * the largest double, and ended after 3 evaluations under 1e300 (best 16.2,
+ * the start). Under 1000 both made 60 evaluations without a repeat (best
+ * 0.437 and 1.64), and the three FAILSCOREs gave three different
+ * searches. */
 TEST_CASE("NLopt failed evaluations: LN_BOBYQA and LN_COBYLA reach MAXEVAL "
           "without asking for a point twice under any FAILSCORE",
           "[HPO][nlopt][failscore]")
