@@ -373,12 +373,13 @@ public:
           const OptimizerSpec sub = multistart_start_spec(spec, plan, i);
 
           /* The start's seed: its SEED, or the INIT block's SEED that NLopt
-           * takes without one. */
+           * takes without one, when it draws random numbers (reads_seed:
+           * LN_SBPLX takes a seed it never reads). */
           const std::string start_msg =
               "MULTISTART start " + std::to_string(i+1) + "/" +
               std::to_string(actual_k) + " -- running inner optimiser" +
               (sub.seed ? " (seed=" + std::to_string(*sub.seed) + ")"
-               : sub.nlopt_seed_from_init()
+               : sub.nlopt_seed_from_init() && reads_seed(sub)
                    ? " (INIT seed=" +
                          std::to_string(*sub.init_strategy_spec.seed) + ")"
                    : "");
@@ -892,12 +893,15 @@ private:
       oss << sep << phase << "SEED " << *seed;
       sep = ", ";
     };
+    /* The INIT block's SEED that an NLopt phase takes is named when the
+     * phase draws random numbers (reads_seed): LD_MMA reads none. */
     const auto add_phase = [&](const char* phase, const char* init_phase,
                                const OptimizerSpec& p) {
-      if (p.nlopt_seed_from_init())
-        add(init_phase, p.init_strategy_spec.seed);
-      else
+      if (p.nlopt_seed_from_init()) {
+        if (reads_seed(p)) add(init_phase, p.init_strategy_spec.seed);
+      } else {
         add(phase, p.seed);
+      }
     };
     add("RESTART ", point_seed);
     add_phase("", "INIT ", s);

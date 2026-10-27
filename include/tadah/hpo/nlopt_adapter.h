@@ -300,12 +300,27 @@ void run_nlopt_impl(const OptimizerSpec& sp, HostT& host,
      * dive; the non-LDS twin (e.g. G_MLSL) gives seed-controlled
      * random sampling. */
     if (sp.algo.find("MLSL_LDS") != std::string::npos) {
-        const bool seeded = sp.init_strategy_spec.seed.has_value() ||
-                            sp.seed.has_value();
+        /* A SEED of the target file: a seed the run drew (seed_drawn) is
+         * named where it is drawn, and no SEED line asks about it. */
+        const bool seeded =
+            (sp.init_strategy_spec.seed && !sp.init_strategy_spec.seed_drawn) ||
+            (sp.seed && !sp.seed_drawn);
+        /* The local search whose random numbers the seed drives, when it
+         * draws any (reads_seed: LN_PRAXIS). */
+        const std::optional<OptimizerSpec> local =
+            reads_seed(sp) ? inner_run_spec(sp) : std::nullopt;
         std::ostringstream oss;
         oss << sp.algo << ": exploration points come from a deterministic "
                "Sobol (LDS) sequence and are identical across runs";
-        if (seeded)
+        if (seeded && local)
+            oss << "; SEED does not change the sampled points: it changes at "
+                   "most the INIT-chain starting point (a SEED in the INIT "
+                   "block, when the chain has a RANDOM/LHS/SOBOL entry) and "
+                   "the random numbers of the local search "
+                << local->lib << ":" << local->algo << ". Use "
+                << sp.algo.substr(0, sp.algo.size() - 4)
+                << " for seed-controlled random sampling";
+        else if (seeded)
             oss << "; SEED affects at most the INIT-chain starting point "
                    "(and only when the chain has a RANDOM/LHS/SOBOL entry), "
                    "not the sampled points. Use " <<
