@@ -1468,9 +1468,9 @@ block that names DLIB:GFS, ASA:ASA, TADAH:ANNEAL_PT or TADAH:ANNEAL_PA \
 sets how many evaluations that exploration asks for at once, and the \
 default of REPLICAS (TADAH:ANNEAL_PT) and of POPULATION \
 (TADAH:ANNEAL_PA); the workers of the run keep the number of the \
-STRATEGY-level THREADS. An INNER block refuses THREADS at startup, and so \
-do an EXPLORE block whose optimiser is none of these and \
-CERES:STEEPEST_DESCENT."""
+STRATEGY-level THREADS, for every optimiser, CERES:STEEPEST_DESCENT \
+included. An INNER block refuses THREADS at startup, and so does an \
+EXPLORE block whose optimiser is none of these."""
 checks = [
   { msg = "{phase}: {lib}:{algo} does not use THREADS in an INNER block: the THREADS of the STRATEGY-level optimiser sets the workers of the run; remove it", doc = "At startup, at the ENDINNER line." },
   { msg = "{phase}: {lib}:{algo} does not use THREADS: the THREADS of the STRATEGY-level optimiser sets the workers of the run, and the THREADS of an EXPLORE block is read by {list}; remove it", doc = "At startup, at the ENDEXPLORE line: an exploration whose optimiser reads no THREADS of its own; {list} names those that do." },
@@ -1983,10 +1983,15 @@ The number of starts of STRATEGY TYPE MULTISTART: the optimiser runs once \
 from each of the first N_STARTS starting points of the INIT block."""
 long_doc = """\
 N_STARTS is 2 or more, and TYPE MULTISTART needs it: one start is TYPE \
-PLAIN. With fewer starting points than N_STARTS, the optimiser runs once \
-from each of them, with a warning; with more, the points after the first \
-N_STARTS are not evaluated, and a startup warning says so. Another TYPE \
-refuses N_STARTS when the STRATEGY block ends."""
+PLAIN. The INIT blocks inside OPTIMIZER and STRATEGY must give N_STARTS \
+starting points or more, counting the K of each RANDOM, LHS and SOBOL line \
+and one point of each CONFIG and WARM line (the CONFIG point without a \
+METHOD line), at most K_TOTAL: fewer are refused at the N_STARTS line. \
+When the points drawn are fewer still (a WARM point dropped under \
+WARM_ON_MISMATCH skip, a RESTART round of fewer points), the optimiser \
+runs once from each of them, with a warning; with more, the points after \
+the first N_STARTS are not evaluated, and a startup warning says so. \
+Another TYPE refuses N_STARTS when the STRATEGY block ends."""
 
 [[key.examples]]
 wrap = "strategy"

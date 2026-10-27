@@ -473,6 +473,8 @@ A loss term on the coefficient of determination (R squared) of the \
 energies of the validation datasets: the LOSS function of the metric \
 averaged over the datasets, its target and its weight."""
 long_doc = """\
+R squared is better when higher, so PC_ERSQ takes neither --skip-above \
+nor --skip-rel: a cap rejects an evaluation whose metric is above it. \
 The term needs a validation configuration (--validation). The weight is \
 a number >= 0. A structure with energy \
 priority 0 (eweight) is left out of the metric. A dataset whose structures \
@@ -1026,7 +1028,7 @@ doc = """\
 An evaluation whose metric exceeds <cap>, in the units of the metric, \
 skips its PC_OBSERVABLE and PC_LAMMPS terms and scores FAILSCORE (a \
 graded failure under FAILSCORE_GRADING ON)."""
-long_doc = "On an indexed line the threshold applies to each dataset the line lists."
+long_doc = "On an indexed line the threshold applies to each dataset the line lists. PC_ERSQ, whose R squared is better when higher, refuses the option."
 
 [[line_option.args]]
 name = "cap"
@@ -1071,7 +1073,8 @@ the metric so far skips its PC_OBSERVABLE and PC_LAMMPS terms and scores \
 FAILSCORE (a graded failure under FAILSCORE_GRADING ON)."""
 long_doc = """\
 The threshold acts once a finite value of the metric has been seen; on \
-an indexed line it applies to each dataset the line lists. \
+an indexed line it applies to each dataset the line lists. PC_ERSQ, whose \
+R squared is better when higher, refuses the option. \
 Two evaluations of one point can therefore score differently, so a \
 search does not answer a repeated point from the record of the run."""
 

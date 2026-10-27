@@ -1020,8 +1020,8 @@ loss at or above 0.999 FAILSCORE counts as a failure."""
 long_doc = """\
 A PC_LAMMPS line without --failscore gives its variables this value when \
 its simulation fails, and a PC_FAILPROBE line without --failscore takes \
-it as its --failscore. FAILSCORE_GRADING ON needs a FAILSCORE below \
-1e300. DLIB:GFS, DLIB:BFGS and NLopt are given a finite stand-in for a \
+it as its --failscore. DLIB:GFS, DLIB:BFGS and NLopt are given a finite \
+stand-in for a \
 failed evaluation: the worst usable loss of the search so far plus a \
 margin, or, before any, FAILSCORE capped at 1e100. A loss NLopt asks for \
 together with its gradient is given the stand-in only for a graded \
@@ -1345,7 +1345,11 @@ derives it from the script limit t as max(3t, t + 120 s), and without a \
 script limit there is no deadline."""
 long_doc = """\
 The deadline is kept in 64-bit milliseconds, so a value above about \
-9.2e15 s is refused. Under PC_ISOLATION THREAD the key has no effect."""
+9.2e15 s is refused. Under PC_ISOLATION THREAD the scripts run inside \
+the tadah process, without a worker deadline: the key, for any value, and \
+TADAH_PC_WORKER_TIMEOUT are refused when the run starts, whether the \
+PC_ISOLATION line, TADAH_PC_ISOLATION or the MPI build of tadah sets \
+THREAD."""
 checks = [
   { msg = "PC_WORKER_TIMEOUT is too large for the worker deadline, got '{tok}' (it is kept in 64-bit milliseconds: at most about 9.2e15 s)", doc = "The value is above about 9.2e15 s." },
   { msg = "PC_WORKER_TIMEOUT sets the deadline of a script task in a worker process (PC_ISOLATION PROCESS); under PC_ISOLATION THREAD, {why}, the scripts run inside the tadah process without a worker deadline, so it would have no effect", doc = "When the run starts, at the line, for any value: the run uses PC_ISOLATION THREAD; {why} says what sets it: its line, TADAH_PC_ISOLATION, or the MPI build of tadah, whose only mode it is." },
@@ -1411,8 +1415,10 @@ ON gives a failed evaluation a loss in [0.999 FAILSCORE, FAILSCORE) that \
 grows with the size of the failure, so the optimiser can move towards \
 candidates that do not fail; OFF gives it FAILSCORE."""
 long_doc = """\
-ON needs a FAILSCORE line with a value below 1e300 (checked at startup). A \
---failvar value above 0 and a PC_FAILPROBE probe value above --gate fail \
+ON takes any FAILSCORE, the default largest double too, except with \
+ASA:ASA, which takes a cost of about 1e18 or more for an invalid state: an \
+ASA:ASA search under ON needs a FAILSCORE below 1e18 (checked at \
+startup). A --failvar value above 0 and a PC_FAILPROBE probe value above --gate fail \
 the evaluation under ON and OFF alike: under ON with a graded loss, under \
 OFF with FAILSCORE. The settings that only grade a failure, PC_FAILPROBE \
 --s0 and a --failvar scale, are refused under OFF. A point outside the \
