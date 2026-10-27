@@ -445,6 +445,33 @@ TEST_CASE("the widths of a D2_BP of a D2_mJoin line with a D2_Blip are held "
   }
 }
 
+/* Pins: the hint of an AUTO refusal of a D2_BP width of a D2_mJoin line
+ * with a D2_Blip is chosen by the rule of the D2_BP's entries, which hold
+ * none > 0, as on a line of the D2_BP alone: "OPTIM SGRID2B (1) AUTO FRAC
+ * 0" is refused with "OPTIM SGRID2B (1): AUTO FRAC gives a zero-width box
+ * (the seed 0.3 times FRAC 0 is 0); FLOOR <a> or GROUP_FLOOR <r> above 0
+ * gives it a smallest half-width", a FLOOR box around the seed, from below
+ * 0, being one the D2_BP's width takes.
+ * Before the fix: on the joined line the hint followed the D2_Blip's rule
+ * (every width > 0) and named explicit bounds instead ("; the explicit
+ * bounds `OPTIM SGRID2B (1) <low> <high>` with <low> > 0 give it a
+ * box"). */
+TEST_CASE("the hint of an AUTO refusal of a D2_BP width of a D2_mJoin line "
+          "follows the rule of the D2_BP's entries",
+          "[HPO][optim][bump_width][join][message]") {
+  tadah::core::PeriodicTable::initialize();
+  const std::string tail = std::string("PC_ERMSE 0 1\n") + kWidthOptimizer;
+  for (const bool lone : {true, false}) {
+    INFO((lone ? "D2_BP alone" : "D2_BP of a D2_mJoin with a D2_Blip"));
+    CHECK_THAT(parse_error(joined_bp_ctx("0.3 1.0", lone),
+                           "OPTIM SGRID2B (1) AUTO FRAC 0\n" + tail),
+               Catch::Contains("OPTIM SGRID2B (1): AUTO FRAC gives a "
+                               "zero-width box (the seed 0.3 times FRAC 0 is "
+                               "0); FLOOR <a> or GROUP_FLOOR <r> above 0 "
+                               "gives it a smallest half-width\n"));
+  }
+}
+
 /* Pins: a refusal of one entry of an OPTIM line gives the key and the entry
  * once, as "OPTIM <KEY> (<i>): <why>": a bump width box from 0 ("OPTIM
  * SGRID2B (2): the low bound 0 is not > 0, but the D2_Blip pair basis
