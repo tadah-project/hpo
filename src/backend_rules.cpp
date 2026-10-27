@@ -12,6 +12,7 @@
 #include <tadah/hpo/phase_specs.h>
 #include <tadah/hpo/repeat_points.h>
 #include <tadah/hpo/strategy_rules.h>
+#include <tadah/hpo/strict_parse.h>     // config_line_error
 
 #include <algorithm>
 #include <cmath>
@@ -657,6 +658,29 @@ void validate_phase_backends(const OptimizerSpec& root)
             throw std::runtime_error(
                 with_block_line(phase.spec, phase.name + ": " + e.what()));
         }
+    }
+    reject_restart_of_grid(root);
+}
+
+void reject_restart_of_grid(const OptimizerSpec& root)
+{
+    if (!root.restart.active()) return;
+    for (const PhaseSpec& phase : strategy_phase_specs(root)) {
+        if (phase.inner || phase.spec.lib != "TADAH" ||
+            phase.spec.algo != "GRID")
+            continue;
+        const std::string what =
+            "a RESTART round would run the grid search of " + phase.name +
+            " (TADAH:GRID) again from its first node: a grid search "
+            "evaluates its starting point and then the nodes of its grid in "
+            "one fixed order, so each round would evaluate again the nodes "
+            "the rounds before it evaluated and never reach the rest of the "
+            "grid; a grid search has no RESTART block (MAXEVAL bounds it)";
+        throw std::runtime_error(
+            root.restart.line > 0
+                ? config_line_error(root.restart.line, what,
+                                    root.restart.line_text)
+                : what);
     }
 }
 

@@ -169,8 +169,23 @@ void validate_backend(const OptimizerSpec& spec, RestartStop restart,
  * included, whose phases cannot be derived without the caps of their
  * backend: "the INNER block of the STRATEGY-level optimiser:
  * NLOPT:LN_NEWUOA_BOUND is refused: ...", "the EXPLORE block: ...".
+ * Last, an active RESTART block of `root` is refused at its RESTART line
+ * when a phase runs TADAH:GRID (reject_restart_of_grid()).
  * validate_hpo_setup() calls it after validate_run_policy(). */
 void validate_phase_backends(const OptimizerSpec& root);
+
+/* An active RESTART block of `root` (RestartSpec::active()) is refused when
+ * a phase it restarts (strategy_phase_specs(): the STRATEGY-level
+ * optimiser, the PRESTAGE exploration or refinement) runs TADAH:GRID: a
+ * grid search evaluates its starting point and then the nodes of its grid
+ * in one fixed order (run_grid, algorithms.h), and evaluates every point
+ * it asks for, so a RESTART round, which changes only the starting point
+ * and the seeds, would evaluate the first nodes of the grid again, and the
+ * run would never reach the rest of it. Throws at the RESTART line
+ * (RestartSpec::line; no line for a spec built outside the parser): "a
+ * RESTART round would run the grid search of the STRATEGY-level optimiser
+ * (TADAH:GRID) again from its first node: ...". */
+void reject_restart_of_grid(const OptimizerSpec& root);
 
 /* The evaluations one gradient of a search with the settings of `spec`
  * costs, as GradientProvider counts them (gradient_provider.h) when the
