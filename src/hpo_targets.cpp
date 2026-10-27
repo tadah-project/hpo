@@ -80,7 +80,8 @@ void parse_gate_options(const std::string& key, const std::string& grammar,
     if (!known)
       throw std::runtime_error(key + ": unexpected token '" + toks[t] + "'; " + grammar);
     if (std::find(seen.begin(), seen.end(), kw) != seen.end())
-      throw std::runtime_error(key + ": " + kw + " given more than once; " + grammar);
+      throw std::runtime_error(key + ": " + kw + " is given twice on this "
+                               "line; each option is given once");
     seen.push_back(kw);
     if (t + 1 >= toks.size())
       throw std::runtime_error(key + ": " + kw + " needs a value; " + grammar);
@@ -207,18 +208,25 @@ size_t HPOTargets::ui_offset(std::vector<std::string> &tokens, size_t ui) {
 
 namespace {
 // OPTIM and indexed PC lines share the same parenthesized selector grammar.
-std::string read_index_selector(std::istringstream& iss) {
+// @p what names the line in a refusal: "OPTIM <KEY>" or the metric key.
+std::string read_index_selector(std::istringstream& iss, const std::string& what) {
     iss >> std::ws;
-    if (iss.get() != '(') throw std::runtime_error("Expected (indices)");
+    if (iss.get() != '(')
+        throw std::runtime_error(what + ": the key is followed by its indices "
+                                 "in parentheses, such as " + what + " (1)");
     std::string indices;
     if (!std::getline(iss, indices, ')') || iss.eof())
-        throw std::runtime_error("Unmatched opening parenthesis in index selector");
+        throw std::runtime_error(what + ": the indices have no closing "
+                                 "parenthesis");
     if (indices.find('(') != std::string::npos)
-        throw std::runtime_error("Nested parentheses in index selector");
-    if (core::trim(indices).empty()) throw std::runtime_error("Empty index selector");
+        throw std::runtime_error(what + ": the indices hold another opening "
+                                 "parenthesis");
+    if (core::trim(indices).empty())
+        throw std::runtime_error(what + ": the parentheses hold no index");
     const int next = iss.peek();
     if (next != std::char_traits<char>::eof() && !std::isspace(static_cast<unsigned char>(next)))
-        throw std::runtime_error("Expected whitespace after (indices)");
+        throw std::runtime_error(what + ": a space follows the closing "
+                                 "parenthesis of the indices");
     return indices;
 }
 
@@ -245,13 +253,16 @@ std::string chain_methods(const InitStrategySpec& ispec) {
 }
 }
 
-std::vector<std::string> HPOTargets::parse_optim_line(std::istringstream& iss) {
-    const auto indices = read_index_selector(iss);
+std::vector<std::string> HPOTargets::parse_optim_line(std::istringstream& iss,
+                                                      const std::string& what) {
+    const auto indices = read_index_selector(iss, what);
     std::vector<std::string> elements;
     std::string token;
     while (iss >> token) {
         if (token.find_first_of("()") != std::string::npos)
-            throw std::runtime_error("Only one (indices) selector is accepted");
+            throw std::runtime_error(what + ": the line takes one list of "
+                                     "indices in parentheses (unexpected '" +
+                                     token + "')");
         elements.push_back(token);
     }
     elements.push_back(indices);
@@ -287,7 +298,8 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn,
     const std::string w = core::pot_digits_warning(pd);
     if (!w.empty()) {
       const std::string msg =
-          "HPO potential files (best_pot.tadah, BDUMP/DUMP archives): " + w;
+          "potential files of tadah hpo (best_pot.tadah, BDUMP and DUMP "
+          "archives): " + w;
       std::cerr << "[HPO] WARNING: " << msg << "\n";
       HPOLog::instance().warning(msg);
     }
@@ -659,13 +671,10 @@ static bool dispatch_init_attr(const std::string& key,
         /* The line names the entry's refusals when the chain is drawn. */
         e.line = nline;
         e.line_text = line;
+        e.key = key;
         iss >> e.method;
         if (e.method.empty())
             throw std::runtime_error(key + " requires a method name");
-        if (e.method == "NOISE_AUTO")
-            throw std::runtime_error(
-                "INIT." + key + " NOISE_AUTO is not implemented "
-                "(reserved keyword). Use RANDOM/LHS/SOBOL/WARM/CONFIG.");
         std::string tok;
         while (iss >> tok) e.args.push_back(tok);
         /* Arity and K are checked here, at the line, not when the chain
@@ -723,6 +732,23 @@ static const char* inner_rejects_attr(const std::string& key)
     return nullptr;
 }
 
+/* The keys of the top level of the target file (HPOTargets::read, the ROOT
+ * section): a block refuses one naming itself as still open. MAXTIME is an
+ * optimiser key too, which the blocks of an optimiser take. */
+static bool is_top_level_key(const std::string& key)
+{
+    static const std::set<std::string> keys = {
+        "FAILSCORE", "PC_SCRIPT_TIMEOUT", "MAXTIME", "PC_ISOLATION",
+        "PC_WORKER_TIMEOUT", "FAILSCORE_GRADING", "BUMPGATE", "RHOGATE",
+        "RHOBARGATE", "PC_FAILPROBE", "QFLUSH", "OUTPUT", "BOUTPUT",
+        "DIGITS", "DUMP", "BDUMP", "LOSS", "OPTIM", "OPTIM_SCALE",
+        "PC_LAMMPS", "PC_OBSERVABLE", "PC_EMAE", "PC_ERMSE", "PC_ErRMSE",
+        "PC_ERSQ", "PC_SRMSE_GPA", "PC_FRMSE"};
+    if (!keys.count(key)) return false;
+    const auto& opt = opt_attr_keys();
+    return std::find(opt.begin(), opt.end(), key) == opt.end();
+}
+
 static bool inner_takes_attr(const std::string& key)
 {
     return inner_rejects_attr(key) == nullptr;
@@ -755,7 +781,7 @@ static bool reject_old_keyword(const std::string& key)
 {
     struct Rename { const char* old_; const char* hint; };
     static const Rename map[] = {
-        {"LOCAL",                       "renamed to INNER (the MLSL/AUGLAG inner sub-optimizer block)."},
+        {"LOCAL",                       "renamed to INNER, the block of the local search that an NLopt MLSL or AUGLAG algorithm runs."},
         {"ENDLOCAL",                    "renamed to ENDINNER."},
         {"PRESTAGE",                    "replaced by `STRATEGY { TYPE PRESTAGE EXPLORE { ... } [REFINE { ... }] }` (REFINE is optional; without it the STRATEGY-level LIB/ALGO refines)."},
         {"ENDPRESTAGE",                 "replaced by ENDEXPLORE / ENDREFINE / ENDSTRATEGY (see STRATEGY block)."},
@@ -763,15 +789,15 @@ static bool reject_old_keyword(const std::string& key)
         {"MULTISTART_PARALLEL",         kParallelRemoved},
         {"PARALLEL",                    kParallelRemoved},
         {"MULTISTART_BUDGET_PER_START", "moved into `STRATEGY { TYPE MULTISTART BUDGET_PER_START N }`."},
-        {"STAGE_GLOBAL",                "removed. Use `STRATEGY { TYPE PRESTAGE ... }` for staged-global runs."},
+        {"STAGE_GLOBAL",                "STRATEGY TYPE PRESTAGE runs an exploration and then a refinement."},
         {"RESTART_AFTER_STAGNATION",    "moved into `STRATEGY { RESTART { AFTER_STAGNATION N } ENDRESTART }`."},
         {"RESTART_MAX",                 "moved into `STRATEGY { RESTART { MAX N } ENDRESTART }`."},
         {"RESTART_INIT_STRATEGY",       "moved into `RESTART { METHOD <method> ... }` (re-uses INIT-block grammar)."},
         {"INIT_STRATEGY",               "moved into `INIT { METHOD <method> ... } ENDINIT` block."},
         {"INIT_K",                      "renamed to K_TOTAL inside an INIT block."},
         {"INIT_SEED",                   "renamed to SEED inside an INIT block."},
-        {"INIT_INCLUDE_CONFIG",         "removed. The values of the training configuration for the search parameters are a starting point only when the INIT block has a `METHOD CONFIG` line."},
-        {"INCLUDE_CONFIG",              "removed. The values of the training configuration for the search parameters are a starting point only when the INIT block has a `METHOD CONFIG` line."},
+        {"INIT_INCLUDE_CONFIG",         "the values of the training configuration for the search parameters are a starting point only when the INIT block has a `METHOD CONFIG` line."},
+        {"INCLUDE_CONFIG",              "the values of the training configuration for the search parameters are a starting point only when the INIT block has a `METHOD CONFIG` line."},
         {"NOISE_AUTO",                  "moved into `NOISE { AUTO true|false } ENDNOISE` block."},
         {"NOISE_CALIBRATION",           "moved into `NOISE { CALIBRATION N } ENDNOISE` block."},
         {"PC_SRMSE",                    "replaced by PC_SRMSE_GPA, the root mean square of the nine entries of each residual stress tensor in GPa (PC_SRMSE was that of the six entries x <= y in eV/A^3). PC_SRMSE_GPA of a residual is 160.2 times its PC_SRMSE when the six entries have equal mean squares, 130.8 times for a residual on the diagonal only (a pressure) and 185.0 times for a shear residual only: a target or --skip-above cap of PC_SRMSE times 160.2 is about that of PC_SRMSE_GPA, and a weight under LOSS L2 divided by about 25 670 (160.2 squared)."},
@@ -789,7 +815,9 @@ static bool reject_old_keyword(const std::string& key)
 void HPOTargets::read(const std::string& fn)
 {
     std::ifstream ifs(fn);
-    if (!ifs) throw std::runtime_error("HPO file " + fn + " not found");
+    if (!ifs)
+        throw std::runtime_error("the target file " + fn +
+                                 " (--hpotarget) cannot be opened");
 
     /* Block state machine.
      *
@@ -844,6 +872,8 @@ void HPOTargets::read(const std::string& fn)
     OptimizerSpec*   active_opt    = nullptr;  // recipient of LIB/ALGO/...
     InitStrategySpec* active_init  = nullptr;  // recipient of STRATEGY/K_TOTAL/...
     OptimizerSpec*   inner_parent  = nullptr;  // outer spec of an INNER block
+    /* The line of the INNER block of each optimiser: one block each. */
+    std::map<const OptimizerSpec*, std::size_t> inner_lines;
 
     /* STRATEGY keys that belong to one TYPE (strategy_rules.h), checked
      * when the STRATEGY block ends: TYPE may come after them. The EXPLORE
@@ -948,7 +978,25 @@ void HPOTargets::read(const std::string& fn)
                 "no value (unexpected '" + extra + "')");
         throw std::runtime_error(
             key + " opens a block and takes no value (unexpected '" + extra +
-            "'); write each key on its own line inside the block");
+            "'); each key stands on its own line inside the block");
+    };
+    /* A key the innermost open block does not take: a top-level key is
+     * named as such, with the block that is still open; another key is
+     * unknown there. @p valid names the keys the block takes, or is empty. */
+    auto refuse_in_block = [&](const std::string& key,
+                               const std::string& valid) {
+        const OpenBlock& in = open_blocks.back();
+        const std::string name = block_name(in.id);
+        const std::string where = "the " + name + " block opened on line " +
+                                  std::to_string(in.line);
+        if (is_top_level_key(key))
+            return std::runtime_error(key + " is a top-level key, and " +
+                                      where + " is still open (END" + name +
+                                      " closes it)");
+        return std::runtime_error(
+            "unknown key '" + key + "' inside " + where + " (" +
+            (valid.empty() ? std::string() : "only " + valid + " are valid; ") +
+            "END" + name + " closes it)");
     };
     /* The density gate lines, for the arming rule at the end of the file
      * (an OPTIM line that arms a gate may follow it). */
@@ -1071,6 +1119,16 @@ void HPOTargets::read(const std::string& fn)
         "a PC_LAMMPS or PC_FAILPROBE line without --maxtime";
     const char* const kLossReaders =
         "a --varloss or PC_OBSERVABLE term that names no loss function";
+    /* Where the script limit of the PC_LAMMPS or PC_FAILPROBE line @p sim
+     * comes from: its --maxtime, the last PC_SCRIPT_TIMEOUT (MAXTIME) line
+     * above it, or the default. */
+    auto maxtime_source = [&](const LammpsSim& sim) -> std::string {
+        if (!sim.reads_default_maxtime) return "its --maxtime";
+        const auto it = line_settings.find("PC_SCRIPT_TIMEOUT");
+        if (it == line_settings.end()) return "the default";
+        return it->second.spelling + " on line " +
+               std::to_string(it->second.line);
+    };
     /* The line of the last LOSS line (0: none), which the metric lines
      * take. */
     std::size_t loss_line = 0;
@@ -1085,8 +1143,12 @@ void HPOTargets::read(const std::string& fn)
         {
             line.pop_back();
             std::string cont;
+            /* A blank or comment line after the backslash is joined: only
+             * the end of the file leaves the line without a next one. */
             if (!std::getline(ifs,cont))
-                throw std::runtime_error("unfinished line "+std::to_string(nline));
+                throw std::runtime_error(at_line(nline,
+                    "the line ends with \\, which continues it on the next "
+                    "line, and the file has no next line", line + "\\"));
             ++nline;  strip_comment(cont);  rtrim(cont);
             line += cont;
         }
@@ -1126,7 +1188,7 @@ void HPOTargets::read(const std::string& fn)
                     throw std::runtime_error(
                         "OPTIMIZER block given more than once (the first opens "
                         "on line " + std::to_string(optimizer_line) + "); "
-                        "write every optimiser setting in one block");
+                        "one OPTIMIZER block holds every optimiser setting");
                 require_key_alone(iss, key);
                 optimizer_line = nline;
                 open_block(OUTER);
@@ -1150,7 +1212,7 @@ void HPOTargets::read(const std::string& fn)
                         "INIT block must appear inside OPTIMIZER, STRATEGY, EXPLORE, or REFINE");
                 /* INIT populates the active OptimizerSpec's init_strategy_spec. */
                 if (!active_opt)
-                    throw std::runtime_error("INIT block requires an active OptimizerSpec");
+                    throw std::logic_error("INIT block requires an active OptimizerSpec");
                 require_key_alone(iss, key);
                 active_init = &active_opt->init_strategy_spec;
                 /* The block's line: its first INIT block when it has two
@@ -1176,7 +1238,7 @@ void HPOTargets::read(const std::string& fn)
 
             if (key=="NOISE") {
                 if (block != OUTER)
-                    throw std::runtime_error("NOISE block must appear inside OPTIMIZER (OUTER level)");
+                    throw std::runtime_error("NOISE block must appear directly inside OPTIMIZER");
                 require_key_alone(iss, key);
                 /* A NOISE block takes AUTO and CALIBRATION only: no
                  * optimiser receives its lines, so an optimiser key there
@@ -1205,12 +1267,12 @@ void HPOTargets::read(const std::string& fn)
                     /* fall through to error */
                 }
                 if (block != OUTER)
-                    throw std::runtime_error("STRATEGY block must appear inside OPTIMIZER (OUTER level)");
+                    throw std::runtime_error("STRATEGY block must appear directly inside OPTIMIZER");
                 if (strategy_line != 0)
                     throw std::runtime_error(
                         "STRATEGY block given more than once (the first opens "
-                        "on line " + std::to_string(strategy_line) + "); write "
-                        "every STRATEGY key in one block");
+                        "on line " + std::to_string(strategy_line) + "); one "
+                        "STRATEGY block holds every STRATEGY key");
                 require_key_alone(iss, key);
                 strategy_line = nline;
                 open_block(STRATEGY_BLK);
@@ -1295,12 +1357,19 @@ void HPOTargets::read(const std::string& fn)
             if (key=="INNER") {
                 if (block != STRATEGY_BLK && block != EXPLORE_BLK && block != REFINE_BLK)
                     throw std::runtime_error(
-                        "INNER block must appear inside STRATEGY, EXPLORE, or REFINE "
-                        "(it configures the MLSL/AUGLAG inner local sub-optimiser)");
+                        "INNER block must appear inside STRATEGY, EXPLORE or "
+                        "REFINE: it holds the local search that an NLopt MLSL "
+                        "or AUGLAG algorithm runs");
                 if (!active_opt)
-                    throw std::runtime_error("INNER block has no parent OptimizerSpec");
+                    throw std::logic_error("INNER block has no parent OptimizerSpec");
                 if (active_opt->inner)
-                    throw std::runtime_error("INNER block specified more than once in this scope");
+                    throw std::runtime_error(
+                        "INNER block given twice for one optimiser (the "
+                        "first on line " +
+                        std::to_string(inner_lines[active_opt]) +
+                        "); STRATEGY and REFINE configure the same "
+                        "optimiser, and so do two EXPLORE blocks");
+                inner_lines[active_opt] = nline;
                 require_key_alone(iss, key);
                 active_opt->inner = std::make_unique<OptimizerSpec>();
                 inner_parent = active_opt;
@@ -1359,8 +1428,8 @@ void HPOTargets::read(const std::string& fn)
             if (block == INNER_BLK && !inner_takes_attr(key)) {
                 throw std::runtime_error(
                     key + " is not accepted inside an INNER block: " +
-                    inner_rejects_attr(key) + "; set " + key +
-                    " on the enclosing " + inner_enclosing() + " block");
+                    inner_rejects_attr(key) + "; the enclosing " +
+                    inner_enclosing() + " block takes " + key);
             }
 
             /* Common opt-attribute keys (LIB/ALGO/MAXEVAL/...) accepted in
@@ -1456,8 +1525,7 @@ void HPOTargets::read(const std::string& fn)
                         continue;
                     }
                 }
-                throw std::runtime_error("unknown key '" + key + "' inside "
-                    + std::string(block==INIT_BLK ? "INIT" : "RESTART") + " block");
+                throw refuse_in_block(key, "");
             }
 
             /* NOISE block keys */
@@ -1466,7 +1534,7 @@ void HPOTargets::read(const std::string& fn)
                     /* AUTO alone means AUTO true. */
                     std::string v;
                     iss >> v;
-                    expect_end(iss, "AUTO takes a single value");
+                    expect_end(iss, "AUTO takes one value");
                     spec.noise.autodetect = v.empty() ? true : parse_bool(v, "NOISE.AUTO");
                     set_once(&spec.noise, key, "noise settings");
                     continue;
@@ -1483,9 +1551,7 @@ void HPOTargets::read(const std::string& fn)
                     set_once(&spec.noise, key, "noise settings");
                     continue;
                 }
-                throw std::runtime_error("unknown key '" + key + "' inside NOISE "
-                                         "block (only AUTO and CALIBRATION are "
-                                         "valid)");
+                throw refuse_in_block(key, "AUTO and CALIBRATION");
             }
 
             /* LOG_HP is a property of the search space (one transform for
@@ -1507,9 +1573,15 @@ void HPOTargets::read(const std::string& fn)
                     continue;
                 }
                 throw std::runtime_error(
-                    "LOG_HP is a search-space property; declare it once at the "
-                    "OPTIMIZER or STRATEGY level, not inside a stage, INNER or "
-                    "INIT block");
+                    block == ROOT
+                        ? std::string("LOG_HP is written once, inside "
+                                      "OPTIMIZER or STRATEGY: it holds for "
+                                      "the whole search space and is not a "
+                                      "top-level key")
+                        : "LOG_HP is written once, inside OPTIMIZER or "
+                          "STRATEGY: it holds for the whole search space, "
+                          "and the " + block_name(block) + " block does not "
+                          "take it");
             }
 
             /* STRATEGY block keys */
@@ -1559,20 +1631,18 @@ void HPOTargets::read(const std::string& fn)
                     set_once(&spec.strategy_type, key, "strategy");
                     continue;
                 }
-                throw std::runtime_error("unknown key '" + key + "' inside STRATEGY block");
+                throw refuse_in_block(key, "");
             }
 
             /* EXPLORE / REFINE block keys: only the optimiser attributes
              * dispatched above (LIB/ALGO/MAXEVAL/...) are valid there. */
             if (block == EXPLORE_BLK || block == REFINE_BLK) {
-                throw std::runtime_error("unknown key '" + key + "' inside "
-                    + std::string(block == EXPLORE_BLK ? "EXPLORE" : "REFINE") + " block");
+                throw refuse_in_block(key, "");
             }
 
             /* INNER block -- only opt attributes, dispatched above. */
             if (block == INNER_BLK) {
-                throw std::runtime_error("unknown key '" + key + "' inside INNER block "
-                    "(only " + inner_attr_keys_joined("/") + " are valid)");
+                throw refuse_in_block(key, inner_attr_keys_joined("/"));
             }
 
             /* Anything still unhandled inside an OPTIMIZER-level block is
@@ -1580,7 +1650,7 @@ void HPOTargets::read(const std::string& fn)
              * STRATEGY). LOSS / PC_LAMMPS / OPTIM / FAILSCORE / OUTPUT /
              * BDUMP and friends are ROOT-level and fall through. */
             if (block != ROOT) {
-                throw std::runtime_error("unknown key '" + key + "' in this block");
+                throw refuse_in_block(key, "");
             }
 
             /* A top-level key that takes one value is set once: a second
@@ -1592,7 +1662,8 @@ void HPOTargets::read(const std::string& fn)
                 static const std::set<std::string> once = {
                     "QFLUSH", "OUTPUT", "BOUTPUT", "DIGITS", "DUMP",
                     "BDUMP", "FAILSCORE_GRADING", "BUMPGATE", "PC_ISOLATION",
-                    "PC_WORKER_TIMEOUT"};
+                    "PC_WORKER_TIMEOUT", "OPTIM_SCALE", "RHOGATE",
+                    "RHOBARGATE"};
                 if (once.count(key)) set_once(&run_settings, key, "run");
             }
 
@@ -1614,16 +1685,14 @@ void HPOTargets::read(const std::string& fn)
                 FAIL_SCORE = parse_positive(single_value(iss, key), key,
                                             "finite number");
             }
-            /* PC_SCRIPT_TIMEOUT: per-pc_script soft wall-clock limit (a LAMMPS
-             * time spec: off, unlimited or a positive [[HH:]MM:]SS) injected as
-             * LAMMPS `timer timeout` after each clear. MAXTIME is
-             * the legacy alias, kept so existing .hpo configs keep parsing.
-             * NOTE: the OPTIMIZER-block MAXTIME (whole-run stop) is a DIFFERENT
-             * setting parsed in optimizer_block.cpp -- do not conflate. The
-             * two spellings are one key (set_for_lines); with a line
-             * between that reads the first, the later line is the value
-             * the hpo_run.log summary gives, and hpo.cpp warns when both
-             * spellings were given. */
+            /* PC_SCRIPT_TIMEOUT, and MAXTIME at the top level, another name
+             * of the key: the wall-clock limit of each section of a
+             * PC_LAMMPS and PC_FAILPROBE script, a LAMMPS time spec (off,
+             * unlimited or a positive [[HH:]MM:]SS) injected as LAMMPS
+             * `timer timeout` after each clear. Each such line takes the
+             * value of the last line of the key above it (set_for_lines);
+             * its --maxtime gives it its own. MAXTIME inside an optimiser
+             * block is a different setting (optimizer_block.cpp). */
             else if (key=="PC_SCRIPT_TIMEOUT" || key=="MAXTIME") {
                 /* A LAMMPS time spec that is off, unlimited or positive:
                  * it becomes `timer timeout <spec>`, and its seconds size
@@ -1632,9 +1701,7 @@ void HPOTargets::read(const std::string& fn)
                 set_for_lines(key, kTimeoutReaders);
                 MAX_TIME = single_value(iss, key);
                 MAX_TIME_seconds = parse_script_timeout(MAX_TIME, key);
-                MAX_TIME_key = key;
-                if (key=="MAXTIME") MAX_TIME_seen_legacy = true;
-                else                MAX_TIME_seen_new    = true;
+                if (key=="MAXTIME" && MAXTIME_line == 0) MAXTIME_line = nline;
             }
             else if (key=="PC_ISOLATION") {
                 PC_ISOLATION = single_value(iss, key);
@@ -1647,6 +1714,7 @@ void HPOTargets::read(const std::string& fn)
             else if (key=="PC_WORKER_TIMEOUT") {
                 PC_WORKER_TIMEOUT = parse_pc_worker_timeout(
                     single_value(iss, key), "PC_WORKER_TIMEOUT");
+                PC_WORKER_TIMEOUT_line = nline;
             }
             else if (key=="FAILSCORE_GRADING") {
                 const std::string v = single_value(iss, key);
@@ -1665,30 +1733,31 @@ void HPOTargets::read(const std::string& fn)
             /* RHOGATE / RHOBARGATE: the DM_REAM density gates (strict
              * grammar above; semantic checks in validate_hpo_setup). */
             else if (key=="RHOGATE") {
-                if (RHOGATE)
-                    throw std::runtime_error("RHOGATE given more than once");
                 RHOGATE = parse_rhogate(iss);
+                RHOGATE->line = nline;
+                RHOGATE->line_text = line;
                 gate_lines.push_back({"RHOGATE", nline, line});
             }
             else if (key=="RHOBARGATE") {
-                if (RHOBARGATE)
-                    throw std::runtime_error("RHOBARGATE given more than once");
                 RHOBARGATE = parse_rhobargate(iss);
+                RHOBARGATE->line = nline;
+                RHOBARGATE->line_text = line;
                 gate_lines.push_back({"RHOBARGATE", nline, line});
             }
 
             /* PC_FAILPROBE: minimiser-free potential-sanity probe (graded-
-             * FAILSCORE Tier 3). Strips the probe-only flags (--gate, --s0)
-             * before handing the rest to the LammpsSim parser, then flags the
-             * sim. Loss components on the probe are forbidden -- it must not
-             * shape the feasible-region objective. */
+             * FAILSCORE Tier 3). Reads the probe-only options (--gate, --s0)
+             * here; the LammpsSim parser skips them with their value, so a
+             * word after one is named with it. Loss components on the probe
+             * are forbidden -- it must not shape the feasible-region
+             * objective. */
             else if (key=="PC_FAILPROBE")
             {
                 if (failprobe_idx >= 0)
                     throw std::runtime_error("only one PC_FAILPROBE line is allowed");
                 std::string cmd; std::getline(iss,cmd);
                 std::istringstream ts(cmd);
-                std::vector<std::string> toks, keep;
+                std::vector<std::string> toks;
                 { std::string t; while (ts>>t) toks.push_back(t); }
                 bool gate_seen = false;
                 for (std::size_t i2 = 0; i2 < toks.size(); ++i2) {
@@ -1711,14 +1780,13 @@ void HPOTargets::read(const std::string& fn)
                         else
                             failprobe_s0 = parse_positive(toks[i2+1], what);
                         ++i2;
-                    } else keep.push_back(toks[i2]);
+                    }
                 }
-                std::string cmd2;
-                for (const auto& t : keep) { cmd2 += ' '; cmd2 += t; }
-                LS.emplace_back(cmd2, MAX_TIME, FAIL_SCORE, globalLoss,
+                LS.emplace_back(cmd, MAX_TIME, FAIL_SCORE, globalLoss,
                                 /*failprobe=*/true);
                 LS.back().line = nline;
                 LS.back().line_text = line;
+                LS.back().maxtime_source = maxtime_source(LS.back());
                 line_reads_setting("FAILSCORE",
                                    LS.back().reads_default_failscore);
                 line_reads_setting("PC_SCRIPT_TIMEOUT",
@@ -1806,7 +1874,7 @@ void HPOTargets::read(const std::string& fn)
                             "' is not a number" + number_underflow_note(tok));
                     params.push_back(p);
                 }
-                auto id = tadah::LossFunction::from_string(type);
+                auto id = tadah::LossFunction::from_name(type, "LOSS");
                 globalLoss = tadah::LossFunction(id,params);
                 loss_line = nline;
             }
@@ -1814,16 +1882,16 @@ void HPOTargets::read(const std::string& fn)
             /* optimisation variables --------------------------------*/
             else if (key=="OPTIM")   { process_optim_config(iss, nline); }
             else if (key=="OPTIM_SCALE") {
-                std::string v = single_value(iss, key);
+                const std::string tok = single_value(iss, key);
+                std::string v = tok;
                 for (auto& ch : v) ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
-                if (scale_policy_set_)
-                    throw std::runtime_error("OPTIM_SCALE given more than once");
                 if      (v == "AUTO") scale_policy_.normalise = true;
                 else if (v == "NONE") scale_policy_.normalise = false;
                 else throw std::runtime_error(
-                    "OPTIM_SCALE must be AUTO (every OPTIM dimension is mapped to the unit "
-                    "box [0,1]) or NONE (optimisers work in raw OPTIM units; ln for LOG "
-                    "dims) -- got '" + v + "'");
+                    "OPTIM_SCALE must be AUTO (every OPTIM dimension is mapped "
+                    "to [0, 1]) or NONE (each dimension stays in its OPTIM "
+                    "units: the value for LIN, its natural logarithm for LOG, "
+                    "asinh(x/c) for ASINH <c>), got '" + tok + "'");
                 scale_policy_set_ = true;
             }
 
@@ -1834,6 +1902,7 @@ void HPOTargets::read(const std::string& fn)
                 LS.emplace_back(cmd, MAX_TIME, FAIL_SCORE, globalLoss);
                 LS.back().line = nline;
                 LS.back().line_text = line;
+                LS.back().maxtime_source = maxtime_source(LS.back());
                 line_reads_setting("FAILSCORE",
                                    LS.back().reads_default_failscore);
                 line_reads_setting("LOSS", LS.back().reads_default_loss);
@@ -1883,7 +1952,7 @@ void HPOTargets::read(const std::string& fn)
                 if (iss.peek() == '(') {
                     if (!dataset_metric)
                         throw std::runtime_error(key + ": indexed targets are supported only for PC_ERMSE, PC_FRMSE and PC_SRMSE_GPA");
-                    indices = core::parse_indices_strict(read_index_selector(iss));
+                    indices = core::parse_indices_strict(read_index_selector(iss, key));
                 }
                 std::string target_token, weight_token;
                 if (!(iss >> target_token >> weight_token))
@@ -1927,7 +1996,7 @@ void HPOTargets::read(const std::string& fn)
                 else if (key=="PC_ERSQ")   { ersq=tgt;   w_ersq=wgt;   use_ersq=true;   skip_ersq=caps; }
             }
             else
-                throw std::runtime_error("unknown key \""+key+"\"");
+                throw std::runtime_error("unknown key '" + key + "'");
         }
         catch (const EarlierLineError& e)
         {
@@ -2085,10 +2154,12 @@ void HPOTargets::read(const std::string& fn)
         }
     }
     /* A density gate that no OPTIM line arms cannot act: no dimension of
-     * the search changes rho(r) or its window, so every candidate has the
-     * -c density and its one verdict (OPTIM WATOM only scales the density,
-     * and the gate verdicts are scale-invariant). Refused at the gate's
-     * line, the first in the file. */
+     * the search changes rho(r) or its window -- a DM_REAM density key or a
+     * DENSITY parameter of a DM_Embed component -- so every candidate has
+     * the density of the training configuration and its one verdict (OPTIM
+     * WATOM only scales the density, and the gate verdicts are
+     * scale-invariant). Refused at the gate's line, the first in the file;
+     * the OPTIM line that arms it may stand anywhere. */
     {
         bool armed = false;
         for(const auto &kv:optimap) if(kv.first.find(".DENSITY.")!=std::string::npos)
@@ -2106,11 +2177,14 @@ void HPOTargets::read(const std::string& fn)
                 keys += (i == 0 ? "" : i + 1 == dk.size() ? " or " : ", ") + dk[i];
             throw std::runtime_error(at_line(g.line,
                 std::string(g.key) + " cannot act: no OPTIM line searches a key "
-                "that changes the DM_REAM density or its window (" + keys +
-                "), so every candidate has the -c density and its one verdict "
-                "(OPTIM WATOM only scales the density; the verdict does not "
-                "change). Add an OPTIM line on " + keys + ", or remove the " +
-                g.key + " line.", g.text));
+                "that changes the density or its window (" + keys + " of a "
+                "DM_REAM many-body term, or a DENSITY parameter "
+                "<ID>.DENSITY.<parameter> of a DM_Embed component), so every "
+                "candidate has the density of the training configuration and "
+                "its one verdict (OPTIM WATOM only scales the density; the "
+                "verdict does not change). The " + g.key + " line takes "
+                "effect with an OPTIM line on one of these keys, anywhere in "
+                "the file.", g.text));
         }
     }
 
@@ -2121,21 +2195,55 @@ void HPOTargets::read(const std::string& fn)
     /* A file without an OPTIMIZER block names no optimiser. */
     require_driver(spec, DriverPhase::Run);
 
-    /* Post-parse validation: PC_OBSERVABLE and PC_LAMMPS are mutually
-     * exclusive paths in the experimental MVP. The typed-observable
-     * path consumes analytical gradients exclusively; PC_LAMMPS now
-     * only supports gradient-free optimisers. Mixing them in one
-     * --hpotarget produces a config the orchestrator cannot serve
-     * consistently, so reject it early with a clear error rather than
-     * letting the user discover the problem at eval-time. */
+    /* PC_OBSERVABLE lines do not share a target file with PC_LAMMPS or
+     * PC_FAILPROBE lines: the run serves one of the two kinds of term.
+     * Refused at the first line of the group that comes later in the file,
+     * naming the lines of the other group. */
     if (!observables.empty() && !LS.empty()) {
-        throw std::runtime_error(
-            "--hpotarget defines both PC_OBSERVABLE (" +
-            core::to_string(observables.size()) +
-            " entries) and PC_LAMMPS (" +
-            core::to_string(LS.size()) +
-            " entries); PC_OBSERVABLE and PC_LAMMPS lines are mutually "
-            "exclusive. Remove one set of lines and rerun.");
+        struct Group { std::string key; std::size_t n = 0, first = 0; };
+        /* "1 PC_LAMMPS line (line 3)", "2 PC_LAMMPS lines (the first on
+         * line 3)". */
+        auto describe = [](const Group& g) {
+            return core::to_string(g.n) + " " + g.key +
+                   (g.n == 1 ? " line (line " : " lines (the first on line ") +
+                   core::to_string(g.first) + ")";
+        };
+        auto and_list = [](const std::vector<std::string>& items) {
+            std::string out;
+            for (std::size_t i = 0; i < items.size(); ++i)
+                out += (i == 0 ? "" : i + 1 == items.size()
+                                          ? (items.size() == 2 ? " and "
+                                                               : ", and ")
+                                          : ", ") + items[i];
+            return out;
+        };
+        Group obs{"PC_OBSERVABLE"}, lammps{"PC_LAMMPS"}, probe{"PC_FAILPROBE"};
+        for (const auto& l : observable_lines) {
+            if (obs.n++ == 0) obs.first = l.number;
+        }
+        const LammpsSim* first_script = nullptr;
+        for (const auto& sim : LS) {
+            Group& g = sim.is_failprobe ? probe : lammps;
+            if (g.n++ == 0) g.first = sim.line;
+            if (!first_script || sim.line < first_script->line)
+                first_script = &sim;
+        }
+        const std::string tail =
+            "; PC_OBSERVABLE lines do not share a target file with PC_LAMMPS "
+            "or PC_FAILPROBE lines";
+        if (first_script->line > obs.first)
+            throw std::runtime_error(at_line(first_script->line,
+                std::string(first_script->is_failprobe ? "PC_FAILPROBE"
+                                                       : "PC_LAMMPS") +
+                    ": this target file also has " + describe(obs) + tail,
+                first_script->line_text));
+        std::vector<std::string> others;
+        for (const Group* g : {&lammps, &probe})
+            if (g->n) others.push_back(describe(*g));
+        throw std::runtime_error(at_line(observable_lines.front().number,
+            "PC_OBSERVABLE: this target file also has " + and_list(others) +
+                tail,
+            observable_lines.front().text));
     }
 
     /* A LAMMPS variable a line without a --hotvar defines on LAMMPS'
@@ -2169,27 +2277,27 @@ void HPOTargets::read(const std::string& fn)
             }
     }
 
-    /* Reject the same --hotvar NAME declared by two DISTINCT PC_LAMMPS
-     * scripts. run_lammps' phase A writes hot_values_for_iter[name] (keyed by
-     * name only) and warmstart::set(script,name); if two scripts share a hot
-     * name, "last writer wins" makes the injected value order-dependent -- a
-     * latent non-determinism that longest-first fan-out reordering could
-     * expose. Hot names are meant to be unique per script (lammps_sim.h), so
-     * enforce it at parse time with a clear message. */
+    /* One line declares each --hotvar name: an evaluation keeps one value
+     * of each name (hot_values_for_iter, keyed by the name only) for the
+     * scripts that read it, and the line whose script finished last would
+     * set it -- whether the two lines run one script or two. Refused at the
+     * later line (LS keeps the order of the file). */
     {
         std::unordered_map<std::string, std::size_t> hot_owner;
         for (std::size_t s = 0; s < LS.size(); ++s) {
             for (const auto& hv : LS[s].hotvars) {
                 auto it = hot_owner.find(hv.name);
                 if (it != hot_owner.end() && it->second != s) {
-                    throw std::runtime_error(
-                        "PC_LAMMPS: --hotvar name '" + hv.name +
-                        "' is declared by two different scripts ('" +
-                        LS[it->second].script + "' and '" + LS[s].script +
-                        "'). Hot-var names must be unique across scripts: the "
-                        "per-iter hot value is keyed by name only, so sharing a "
-                        "name makes the injected value order-dependent. Rename "
-                        "one of them.");
+                    const LammpsSim& first = LS[it->second];
+                    throw std::runtime_error(at_line(LS[s].line,
+                        "PC_LAMMPS --hotvar " + hv.name + ": line " +
+                            core::to_string(first.line) + " declares --hotvar " +
+                            hv.name + " as well (script " + first.script +
+                            "); one line declares each --hotvar name, as an "
+                            "evaluation keeps one value of each name for the "
+                            "scripts that read it, and the line that finished "
+                            "last would set it",
+                        LS[s].line_text));
                 }
                 hot_owner.emplace(hv.name, s);
             }
@@ -2348,8 +2456,8 @@ void HPOTargets::read(const std::string& fn)
             const std::string requires_free = inner
                 ? " A PC_LAMMPS or PC_FAILPROBE line requires a "
                   "gradient-free optimiser, and an INNER search is a local "
-                  "NLopt algorithm: name a derivative-free one in the INNER "
-                  "block (" + nlopt_inner_searches_without_gradient() + ")."
+                  "NLopt algorithm; the INNER block takes a derivative-free "
+                  "one (" + nlopt_inner_searches_without_gradient() + ")."
                 : " A PC_LAMMPS or PC_FAILPROBE line requires a "
                   "gradient-free optimiser (" +
                       searches_without_gradient() + "); an NLopt MLSL or "
@@ -2392,8 +2500,8 @@ std::string HPOTargets::repeat_reuse_blocker() const {
         "keeps variables across clear)";
     for (const auto& sim : LS)
       if (!sim.hotvars.empty()) {
-        why += ", and each --hotvar starts from the value of the best "
-               "evaluation so far";
+        why += ", and each --hotvar starts from the last value inside its "
+               "range that an earlier evaluation of its chain read back";
         break;
       }
     return why;
@@ -2935,6 +3043,21 @@ bool HPOTargets::optim_key_positive_only(const std::string& key) {
   return false;
 }
 
+std::string HPOTargets::optim_fitted_key_error(const std::string& key) {
+  const std::string k = core::to_upper(key);
+  if (k == "WEIGHTS")
+    return "OPTIM WEIGHTS: WEIGHTS holds the coefficients each evaluation "
+           "fits, so a searched value would be replaced by the fit; FIXINDEX "
+           "and FIXWEIGHT in the training configuration hold coefficients "
+           "fixed, and OPTIM FIXWEIGHT (<coefficient>) <low> <high> searches "
+           "them";
+  if (k == "EMBF0")
+    return "OPTIM EMBF0: EMBF0 (ZERO or FREE) chooses the embedding "
+           "reference of a DM_REAM many-body term, a choice and not a number "
+           "to search; the training configuration sets it";
+  return "";
+}
+
 std::string HPOTargets::optim_structure_key_error(const std::string& key) {
   static const struct { const char* key; const char* what; } structure[] = {
     {"RHOFORM",  "RHOFORM (SIGNED|NONNEG|MONOTONE) selects the DM_REAM density "
@@ -2953,8 +3076,8 @@ std::string HPOTargets::optim_structure_key_error(const std::string& key) {
                  "distance enters the descriptors) declares the rigid-dimer "
                  "layout of the training data (its bond length is that of "
                  "the data's molecules)"},
-    {"FIXINDEX", "FIXINDEX names which model weights FIXWEIGHT pins (search "
-                 "their values with OPTIM FIXWEIGHT)"},
+    {"FIXINDEX", "FIXINDEX names the coefficients FIXWEIGHT holds fixed "
+                 "(OPTIM FIXWEIGHT searches their values)"},
     {"MODEL",    "MODEL names the model and its basis function or kernel "
                  "(and an integer option)"},
   };
@@ -2962,8 +3085,8 @@ std::string HPOTargets::optim_structure_key_error(const std::string& key) {
   for (const auto& e : structure)
     if (k == e.key)
       return "OPTIM " + k + " is not a valid search target: " + e.what +
-             ", structure data rather than a continuous parameter; set it "
-             "in the -c potential/configuration.";
+             ", structure data rather than a continuous parameter; the "
+             "training configuration sets it.";
   return "";
 }
 
@@ -2973,7 +3096,7 @@ std::string HPOTargets::optim_discrete_index_error(const std::string& key,
     return "OPTIM OALGO (1) is not a valid search target: the first OALGO "
            "value selects the training algorithm (1 GELSD, 2 GELS, 3 SVD, "
            "4 Cholesky), a discrete choice rather than a continuous "
-           "parameter; set it in the -c configuration. The second value, "
+           "parameter; the training configuration sets it. The second value, "
            "the rcond M of options 1 and 3, is continuous: OPTIM OALGO (2) "
            "<low> <high>.";
   return "";
@@ -3015,9 +3138,10 @@ std::string HPOTargets::optim_component_key_error(const core::Context& ctx,
   return "OPTIM " + k + ": the potential has no " + k + " key: its many-body "
          "term is DM_Embed component(s) (DESCRIPTOR blocks), whose " +
          (row->density ? "density" : "embedding") + " parameter is the named "
-         "path " + paths + "; write OPTIM <path> (indices) <low> <high> (the "
-         "starter target of tadah refit names the paths; a target written "
-         "for a DM_REAM potential names the legacy keys).";
+         "path " + paths + "; an OPTIM line names the path, OPTIM <path> "
+         "(indices) <low> <high> (the starter target file of tadah refit "
+         "names the paths; a target file written for a DM_REAM many-body "
+         "term names " + k + ")";
 }
 
 std::string HPOTargets::optim_internal_key_error(const std::string& key) {
@@ -3084,14 +3208,14 @@ std::optional<HPOTargets::FitValueRule> HPOTargets::optim_fit_value_rule(
 std::string HPOTargets::optim_switch_key_error(const std::string& key) {
   const std::string k = core::to_upper(key);
   if (k == "ENORM")
-    return "OPTIM ENORM is not a valid search target: ENORM (ATOM|SQRT) "
+    return "OPTIM ENORM is not a valid search target: ENORM (ATOM or SQRT) "
            "chooses how the residual of an energy is normalised, a choice "
-           "rather than a continuous parameter; set it in the -c "
-           "configuration.";
+           "rather than a continuous parameter; the training configuration "
+           "sets it.";
   if (k == "ENERGY")
-    return "OPTIM ENERGY is not a valid search target: ENERGY (true|false) "
-           "says whether the fit has the energies, a switch rather than a "
-           "continuous parameter; set it in the -c configuration.";
+    return "OPTIM ENERGY is not a valid search target: ENERGY (true or "
+           "false) says whether the fit has the energies, a switch rather "
+           "than a continuous parameter; the training configuration sets it.";
   return "";
 }
 
@@ -3159,8 +3283,8 @@ std::string HPOTargets::optim_integer_index_error(
   return "OPTIM " + k + " (" + core::to_string(index) +
          ") is not a valid search target: value " + core::to_string(index) +
          " of " + k + " is an integer (" + k + " takes " + takes +
-         "), a discrete value rather than a continuous parameter; set it in "
-         "the -c potential/configuration.";
+         "), a discrete value rather than a continuous parameter; the "
+         "training configuration sets it.";
 }
 
 const std::vector<std::string>& HPOTargets::density_gate_keys() {
@@ -3341,22 +3465,11 @@ void HPOTargets::process_optim_config(std::istringstream& iss,
    * one spelling whatever the case the line used. */
   k = core::to_upper(k);
 
-  if (k == "WEIGHTS") {
-    throw std::runtime_error(
-      "OPTIM WEIGHTS is not a valid search target: the linear WEIGHTS are "
-      "re-fitted by least squares on every evaluation, so optimising them "
-      "is a silent no-op. To search linear coefficients, pin them with "
-      "FIXINDEX + FIXWEIGHT in the training configuration and use "
-      "`OPTIM FIXWEIGHT (<weight-index>) <low> <high>`.");
-  }
-  /* Before context.size(k) below, which would materialise the blueprint
-   * default EMBF0 ZERO into the run context. */
-  if (k == "EMBF0") {
-    throw std::runtime_error(
-      "OPTIM EMBF0 is not a valid search target: EMBF0 (ZERO|FREE) selects "
-      "the DM_REAM embedding reference, a discrete property of the "
-      "potential; set it in the -c potential/configuration.");
-  }
+  /* WEIGHTS, which each evaluation fits, and EMBF0, a choice; before
+   * context.size(k) below, which would materialise the blueprint default
+   * EMBF0 ZERO into the run context. */
+  if (const std::string e = optim_fitted_key_error(k); !e.empty())
+    throw std::runtime_error(e);
   /* Structure keys, also before context.size(k): RHOFORM has no blueprint
    * default, so size() would log an ERROR and throw a generic message. */
   if (const std::string e = optim_structure_key_error(k); !e.empty())
@@ -3379,14 +3492,57 @@ void HPOTargets::process_optim_config(std::istringstream& iss,
   if (const std::string e = optim_component_key_error(context, k); !e.empty())
     throw std::runtime_error(e);
 
-  Opti& omap = optimap[k];
   const bool named=k.find('.')!=std::string::npos;
+  /* OPTIM FIXWEIGHT searches the FIXWEIGHT values, the coefficients FIXINDEX
+   * names, and neither key has a default: both are in the training
+   * configuration, checked before context.size(k), which would log an
+   * ERROR line and refuse an absent key without saying what it is for. */
+  if (k == "FIXWEIGHT") {
+    const bool has_index = context.has_stored("FIXINDEX");
+    const bool has_values = context.has_stored("FIXWEIGHT");
+    if (!has_index && !has_values)
+      throw std::runtime_error(
+          "OPTIM FIXWEIGHT requires FIXINDEX and FIXWEIGHT in the training "
+          "configuration (FIXINDEX names the coefficients the FIXWEIGHT "
+          "values hold, and OPTIM FIXWEIGHT searches those values).");
+    if (!has_values)
+      throw std::runtime_error(
+          "OPTIM FIXWEIGHT requires FIXWEIGHT in the training configuration "
+          "(the FIXWEIGHT values hold the coefficients FIXINDEX names, and "
+          "OPTIM FIXWEIGHT searches those values).");
+    if (!has_index)
+      throw std::runtime_error(
+          "OPTIM FIXWEIGHT requires FIXINDEX in the training configuration "
+          "(FIXINDEX names the coefficients the FIXWEIGHT values hold).");
+  }
+  /* A key of the training configuration, and one the configuration gives
+   * (a line or a default), before context.size(k), which logs an ERROR line
+   * and refuses either without saying what OPTIM needs. contains() inserts
+   * the blueprint default, as size() does. A path of a DM_Embed parameter
+   * is checked by embed_binding below. */
+  if (!named) {
+    const auto& keys = core::BlueprintParser::getKeysMapRef();
+    if (keys.find(k) == keys.end()) {
+      const std::string closest = core::BlueprintParser::findClosestKey(k, keys);
+      throw std::runtime_error(
+          "OPTIM " + k + ": " + k + " is not a key of the training "
+          "configuration" +
+          (closest.empty() ? std::string() : " (closest key: " + closest + ")"));
+    }
+    if (!context.contains(k))
+      throw std::runtime_error(
+          "OPTIM " + k + ": the training configuration has no " + k +
+          " line, and OPTIM " + k + " searches the values the training "
+          "configuration gives");
+  }
+
+  Opti& omap = optimap[k];
   std::optional<models::EmbedParameterBinding> binding;
   if(named) binding=models::embed_binding(context,k);
   size_t s = named?binding->values.size():context.size(k);
   omap.resize(s);
 
-  std::vector<std::string> tokens = parse_optim_line(iss);
+  std::vector<std::string> tokens = parse_optim_line(iss, "OPTIM " + k);
 
   /* At least the (indices) group plus one token (AUTO, or <low> <high>);
    * the exact grammar is checked below. */
@@ -3427,6 +3583,7 @@ void HPOTargets::process_optim_config(std::istringstream& iss,
    * explicit high bounds. */
   DimTransform tf;
   bool tag_written = false;   // the line writes LIN, LOG or ASINH <c>
+  std::string tag_c_tok;      // the c of ASINH <c>, as written
   auto upper = [](std::string t) {
     for (auto& ch : t) ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
     return t;
@@ -3449,6 +3606,7 @@ void HPOTargets::process_optim_config(std::istringstream& iss,
       if (!(tf.c > 0.0))
         throw std::runtime_error("OPTIM " + k + ": ASINH requires a positive "
                                  "linear scale c (got " + toks.back() + ")");
+      tag_c_tok = toks.back();
       toks.pop_back(); toks.pop_back();
       tag_written = true;
       return;
@@ -3484,51 +3642,89 @@ void HPOTargets::process_optim_config(std::istringstream& iss,
   auto low_rule = named ? std::optional<models::OptimLowBoundRule>{} : models::optim_low_bound_rule(k, context);
   if(named && binding->positive)
     low_rule=models::OptimLowBoundRule{!named_amp,named_amp?"nonnegative amplitudes":"a positive scale or radius",k};
-  const std::string form_name =
-      rho_form_ ? std::string("RHOFORM ") + models::rhoform_name(*rho_form_) : "";
+  /* What makes the amplitudes of a non-negative amplitude line >= 0: the
+   * RHOFORM line of a DM_REAM density, or the FORM of the DENSITY block of
+   * the DM_Embed component a path names (each component has its own). */
+  auto form_label = [&]() -> std::string {
+    if (named) {
+      for (const auto& es : models::embed_specs(context))
+        if (core::to_upper(es.id) == core::to_upper(binding->owner))
+          return std::string("FORM ") + models::rhoform_name(es.form) +
+                 " of the DENSITY of DESCRIPTOR " + es.id;
+    } else if (rho_form_) {
+      return std::string("RHOFORM ") + models::rhoform_name(*rho_form_);
+    }
+    throw std::logic_error("OPTIM " + k + ": a non-negative amplitude line "
+                           "without a density form");
+  };
 
   const bool auto_box = !tokens.empty() && upper(tokens.front()) == "AUTO";
   double low = 0.0, high = 0.0;
+  std::string low_tok, high_tok;  // the explicit bounds as written
   struct AutoRule { bool geometric = false; double factor = 0.0; double floor = 0.0; double group_floor = 0.0; } rule;
+  std::string factor_tok;   // the RATIO or FRAC value as written
+  std::string group_floor_tok;
   bool floor_set = false;   // FLOOR or GROUP_FLOOR given
   bool floor_seen = false, group_floor_seen = false;
+  bool ratio_seen = false, frac_seen = false;
   bool mode_set = false;    // RATIO or FRAC given
   if (auto_box) {
     tokens.erase(tokens.begin());
     take_tag(tokens);
+    /* The name of each option first: a word that is no AUTO option is
+     * named as such whatever follows it. */
     for (std::size_t t = 0; t < tokens.size(); t += 2) {
       const std::string opt = upper(tokens[t]);
+      if (opt != "RATIO" && opt != "FRAC" && opt != "FLOOR" &&
+          opt != "GROUP_FLOOR")
+        throw std::runtime_error("OPTIM " + k + ": '" + tokens[t] + "' is not "
+                                 "an AUTO option (RATIO, FRAC, FLOOR or "
+                                 "GROUP_FLOOR)" + grammar);
       if (t + 1 >= tokens.size())
         throw std::runtime_error("OPTIM " + k + ": AUTO option '" + tokens[t] +
                                  "' needs a value" + grammar);
+      /* Each is given once: a second replaced the first's value. */
+      bool& seen = opt == "RATIO" ? ratio_seen
+                 : opt == "FRAC"  ? frac_seen
+                 : opt == "FLOOR" ? floor_seen
+                                  : group_floor_seen;
+      if (seen)
+        throw std::runtime_error("OPTIM " + k + ": AUTO " + opt + " is given "
+                                 "twice on this line; each option is given once");
+      seen = true;
+      if ((opt == "RATIO" || opt == "FRAC") && mode_set)
+        throw std::runtime_error("OPTIM " + k + ": AUTO takes RATIO or FRAC, "
+                                 "not both");
       const double v = parse_num(tokens[t + 1], ("AUTO " + opt).c_str());
       if (opt == "RATIO") {
-        if (mode_set) throw std::runtime_error("OPTIM " + k + ": RATIO and FRAC are mutually exclusive");
         if (!(v > 1.0)) throw std::runtime_error("OPTIM " + k + ": AUTO RATIO must be > 1 (got " + tokens[t + 1] + ")");
         rule.geometric = true; rule.factor = v; mode_set = true;
+        factor_tok = tokens[t + 1];
       } else if (opt == "FRAC") {
-        if (mode_set) throw std::runtime_error("OPTIM " + k + ": RATIO and FRAC are mutually exclusive");
-        if (!(v >= 0.0)) throw std::runtime_error("OPTIM " + k + ": AUTO FRAC must be >= 0 (got " + tokens[t + 1] + "); FRAC 0 with FLOOR/GROUP_FLOOR gives a constant absolute half-width");
+        if (!(v >= 0.0))
+          throw std::runtime_error("OPTIM " + k + ": AUTO FRAC must be >= 0 (got " +
+                                   tokens[t + 1] + "); FRAC 0 with FLOOR or "
+                                   "GROUP_FLOOR gives a constant half-width");
         rule.geometric = false; rule.factor = v; mode_set = true;
-      } else if (opt == "FLOOR" || opt == "GROUP_FLOOR") {
-        /* Each is given once: a second replaced the first's value. */
-        bool& seen = opt == "FLOOR" ? floor_seen : group_floor_seen;
-        if (seen)
-          throw std::runtime_error("OPTIM " + k + ": AUTO " + opt + " is given "
-                                   "twice on this line; each option is given once");
-        seen = true;
-        if (v < 0.0) throw std::runtime_error("OPTIM " + k + ": AUTO " + opt + " must be >= 0");
-        (opt == "FLOOR" ? rule.floor : rule.group_floor) = v;
-        floor_set = true;
+        factor_tok = tokens[t + 1];
       } else {
-        throw std::runtime_error("OPTIM " + k + ": unexpected AUTO option '" +
-                                 tokens[t] + "'" + grammar);
+        if (v < 0.0)
+          throw std::runtime_error("OPTIM " + k + ": AUTO " + opt +
+                                   " must be >= 0 (got " + tokens[t + 1] + ")");
+        if (opt == "FLOOR") {
+          rule.floor = v;
+        } else {
+          rule.group_floor = v;
+          group_floor_tok = tokens[t + 1];
+        }
+        floor_set = true;
       }
     }
     if (k.rfind("RCUT", 0) == 0)
-      throw std::runtime_error("OPTIM " + k + ": AUTO boxes are not allowed on cutoff keys "
-                               "(the neighbour list is sized from an explicit high bound); "
-                               "give explicit bounds");
+      throw std::runtime_error("OPTIM " + k + ": a cutoff key takes explicit "
+                               "bounds, OPTIM " + k + " (indices) <low> <high>, "
+                               "and no AUTO box: the neighbour list is sized "
+                               "from the explicit high bound");
     if (!mode_set) {
       rule.geometric = named ? binding->positive && !named_amp : optim_key_positive_only(k);
       rule.factor    = rule.geometric ? 2.0 : 0.5;
@@ -3558,9 +3754,10 @@ void HPOTargets::process_optim_config(std::istringstream& iss,
       throw std::runtime_error(
           "OPTIM " + geometric_default + ": FLOOR and GROUP_FLOOR set the smallest "
           "half-width of an AUTO FRAC box; " +
-          (mode_set ? std::string("AUTO RATIO makes the geometric box "
-                                  "[x0/f, x0*f], which they do not change, "
-                                  "so they are given with FRAC <p> only")
+          (mode_set ? "AUTO RATIO " + factor_tok + " makes the geometric "
+                      "box [seed/" + factor_tok + ", seed*" + factor_tok +
+                      "], which they do not change, so they are given with "
+                      "FRAC <p> only"
                     : "the AUTO box of " + geometric_default + " is geometric by default "
                       "(RATIO 2), which they do not change, so they are "
                       "given with FRAC <p> only"));
@@ -3577,21 +3774,24 @@ void HPOTargets::process_optim_config(std::istringstream& iss,
     }
     low  = parse_num(tokens[0], "<low>");
     high = parse_num(tokens[1], "<high>");
+    low_tok = tokens[0];
+    high_tok = tokens[1];
+    /* An empty or reversed box, at the line and with the bounds as
+     * written. */
+    if (!(high > low))
+      throw std::runtime_error("OPTIM " + k + ": <high> " + high_tok +
+                               " is not greater than <low> " + low_tok);
   }
 
   /* The indices as the line wrote them (for FIXWEIGHT, model weights). */
   const std::vector<size_t> typed_indices = user_indices;
   if (k == "FIXWEIGHT") {
-    /* OPTIM FIXWEIGHT indices name MODEL WEIGHTS (the weights FIXINDEX
-     * pins), not positions in the FIXWEIGHT value list. Map each user
-     * index to its FIXWEIGHT slot through FIXINDEX; declaration order
-     * defines the pairing. Back-compatible with `tadah refit` targets,
-     * which pin FIXINDEX 1-K so weight index == slot. */
-    if (!context.contains("FIXINDEX")) {
-      throw std::runtime_error(
-        "OPTIM FIXWEIGHT requires FIXINDEX in the training configuration "
-        "(FIXINDEX names which model weights the FIXWEIGHT values pin).");
-    }
+    /* OPTIM FIXWEIGHT indices name coefficients (those FIXINDEX lists),
+     * not positions in the FIXWEIGHT value list. Map each user index to
+     * its FIXWEIGHT slot through FIXINDEX; declaration order defines the
+     * pairing. Back-compatible with `tadah refit` targets, which list
+     * FIXINDEX 1-K so the coefficient index == slot. (The training
+     * configuration has FIXINDEX and FIXWEIGHT: checked above.) */
     /* core::parse_fixindex, as the trainers read FIXINDEX; the weight
      * count is not known here (startup validation checks the bounds). */
     std::vector<std::string> fi_str(context.size("FIXINDEX"));
@@ -3602,11 +3802,10 @@ void HPOTargets::process_optim_config(std::istringstream& iss,
       auto it = std::find(fixidx.begin(), fixidx.end(), ui);
       if (it == fixidx.end()) {
         throw std::runtime_error(
-          "OPTIM FIXWEIGHT (" + core::to_string(ui) + "): weight " +
-          core::to_string(ui) + " is not pinned by FIXINDEX (" + core::join(fi_str)
-          + "). OPTIM FIXWEIGHT indices name MODEL WEIGHTS, not FIXWEIGHT "
-          "slots; add the weight to FIXINDEX/FIXWEIGHT or drop it from "
-          "this OPTIM line.");
+          "OPTIM FIXWEIGHT (" + core::to_string(ui) + "): coefficient " +
+          core::to_string(ui) + " is not in FIXINDEX (" + core::join(fi_str) +
+          "); the indices of OPTIM FIXWEIGHT name coefficients, those "
+          "FIXINDEX lists, not positions among the FIXWEIGHT values");
       }
       ui = static_cast<size_t>(it - fixidx.begin()) + 1;  // 1-based slot
     }
@@ -3631,6 +3830,83 @@ void HPOTargets::process_optim_config(std::istringstream& iss,
         "starting point of a search of LAMBDA; without OPTIM LAMBDA the "
         "evidence approximation finds it in every evaluation.");
 
+  /* The checks a box [lo_b, hi_b] of the index @p ui (a FIXWEIGHT slot)
+   * meets below, past its AUTO derivation: what the fit takes of the value
+   * (optim_fit_value_rule), the rank threshold of OALGO and the low-bound
+   * rule of the key. A hint of a message names a box only when the line's
+   * own checks take it. */
+  /* The low-bound rule of the index @p ui: on a D2_mJoin line, that of the
+   * descriptor whose entry it is (a D2_BP's width has none). */
+  auto entry_low_rule = [&](std::size_t ui) {
+    if (!named && low_rule)
+      return models::optim_low_bound_rule(k, context, ui - 1);
+    return low_rule;
+  };
+  auto box_passes = [&](double lo_b, double hi_b, std::size_t ui) {
+    const std::optional<FitValueRule> vr =
+        named ? std::nullopt : optim_fit_value_rule(k, ui);
+    if (vr && vr->strict && !(lo_b > 0.0)) return false;
+    if (vr && !vr->strict && lo_b < 0.0) return false;
+    if (!named && k == "OALGO" && ui == 2 && !(lo_b > 0.0 && hi_b < 1.0))
+      return false;
+    if (const auto r = entry_low_rule(ui); r && !r->admits(lo_b))
+      return false;
+    return true;
+  };
+  /* An AUTO FRAC box of the value: clamped at 0 for a non-negative
+   * amplitude and for a value the fit takes >= 0 other than LAMBDA. */
+  auto frac_clamped = [&](const std::optional<FitValueRule>& vr) {
+    return nonneg_amp || (vr && !vr->strict && k != "LAMBDA");
+  };
+  /* Whether an AUTO FRAC box with a FLOOR above 0 around the seed x0 of
+   * the index passes the line's checks. */
+  auto floor_box_passes = [&](double x0, std::size_t ui,
+                              const std::optional<FitValueRule>& vr) {
+    const double a = 0.5;  // a FLOOR above 0
+    double lo_b = x0 - a;
+    if (frac_clamped(vr) && lo_b < 0.0) lo_b = 0.0;
+    return box_passes(lo_b, x0 + a, ui);
+  };
+  /* The explicit bounds that give the value of index @p ui (written
+   * @p typed) a box the line's checks take: from 0 when a box from 0
+   * passes, above 0 otherwise. */
+  auto explicit_hint = [&](std::size_t ui, std::size_t typed) {
+    const std::string line = "OPTIM " + k + " (" + core::to_string(typed) + ")";
+    if (box_passes(0.0, 0.5, ui))
+      return "; the explicit bounds `" + line + " 0 <high>` give it a box";
+    return "; the explicit bounds `" + line + " <low> <high>` with <low> > 0 "
+           "give it a box";
+  };
+
+  /* An explicit box tagged LOG reaches 0 or below, or one that ASINH <c>
+   * maps to an empty or infinite range: refused at the line (SearchSpace
+   * keeps both checks as its own invariants). */
+  if (!auto_box) {
+    if (tf.kind == ScaleKind::Log && !(low > 0.0)) {
+      bool every_index_takes_it = true;
+      for (const size_t ui : user_indices)
+        every_index_takes_it = every_index_takes_it && box_passes(low, high, ui);
+      throw std::runtime_error(
+          "OPTIM " + k + ": the line is tagged LOG, and <low> " + low_tok +
+          " is not > 0, and a box tagged LOG lies above 0" +
+          (every_index_takes_it
+               ? std::string("; a line without a tag, or tagged LIN or "
+                             "ASINH <c>, takes this box")
+               : std::string()));
+    }
+    if (tf.kind == ScaleKind::Asinh) {
+      const double tlo = tf.fwd(low), thi = tf.fwd(high);
+      if (!metric_value_is_finite(tlo) || !metric_value_is_finite(thi) ||
+          !(thi > tlo))
+        throw std::runtime_error(
+            "OPTIM " + k + ": under ASINH " + tag_c_tok + " the box [" +
+            low_tok + ", " + high_tok + "] maps to [" +
+            core::format_roundtrip(tlo) + ", " + core::format_roundtrip(thi) +
+            "], which has no finite width; a c of the size of the values of "
+            "the box gives one");
+    }
+  }
+
   /* AUTO: the group floor is r * max|x0| over the indices of THIS line. */
   double group_max = 0.0;
   if (auto_box) {
@@ -3643,17 +3919,22 @@ void HPOTargets::process_optim_config(std::istringstream& iss,
   /* A geometric box cannot reach 0: non-negative amplitudes take RATIO only
    * when every seed of the line is > 0. */
   if (auto_box && nonneg_amp && rule.geometric) {
-    for (const auto& ui : user_indices) {
-      const size_t i = ui_offset(omap.config, ui);
+    for (std::size_t j = 0; j < user_indices.size(); ++j) {
+      const size_t i = ui_offset(omap.config, user_indices[j]);
       if (i >= s || !core::is_number(omap.config[i])) continue;  // reported below
       if (core::to_double(omap.config[i]) > 0.0) continue;
       throw std::runtime_error(
-          "OPTIM " + k + " (" + core::to_string(ui) + "): AUTO RATIO under " +
-          form_name + " needs every seed on the line > 0 (got " +
-          omap.config[i] + "); use FRAC (the default), whose box is clamped "
-          "at 0");
+          "OPTIM " + k + " (" + core::to_string(typed_indices[j]) +
+          "): AUTO RATIO under " + form_label() + " needs every seed on the "
+          "line > 0 (got " + omap.config[i] + "); FRAC, the default, gives a "
+          "box clamped at 0");
     }
   }
+
+  /* The numeric values of the key, those its indices count. */
+  std::size_t numeric_values = 0;
+  for (const auto& t : omap.config)
+    if (core::is_number(t)) ++numeric_values;
 
   for (std::size_t j = 0; j < user_indices.size(); ++j) {
     const size_t ui = user_indices[j];
@@ -3669,20 +3950,20 @@ void HPOTargets::process_optim_config(std::istringstream& iss,
     try {
       size_t i = ui_offset(omap.config, ui);
       if (i>=s) {
-        std::string why;
         /* Values of a potential its descriptors do not read were left out
          * (D_mJoin::expand_grids): the indices address the values kept. */
+        std::string why;
+        bool left_out = false;
         for (const auto& lo : left_out_) {
           if (lo.key != k) continue;
+          left_out = true;
           std::vector<std::string> out, rest = lo.kept;
           for (const auto& v : lo.given) {
             const auto it = std::find(rest.begin(), rest.end(), v);
             if (it != rest.end()) rest.erase(it);
             else out.push_back(v);
           }
-          why = " (" + k + " has " + core::to_string(lo.kept.size()) +
-                (lo.kept.size() == 1 ? " value" : " values") +
-                ": of the potential's " + k + " " + core::join(lo.given) +
+          why = " (of the potential's " + k + " " + core::join(lo.given) +
                 ", the descriptors do not read " + core::join(out) +
                 (out.size() == 1 ? ", which was" : ", which were") +
                 " left out, and OPTIM indices address the values kept, " +
@@ -3702,21 +3983,45 @@ void HPOTargets::process_optim_config(std::istringstream& iss,
          * which the configuration holds once it gives both values. */
         if (why.empty() && (k == "FSIGMA" || k == "SSIGMA") && ui == 2 &&
             s == 1)
-          why = " (the training configuration gives " + k + " one value, "
-                "its absolute part a; its relative part b, index 2, is "
-                "searched when it gives both, " + k + " <a> <b>)";
-        throw std::runtime_error("Out of bound index: " + core::to_string(ui) +
-                                 why);
+          why = " (its absolute part a; its relative part b, index 2, is "
+                "searched when the training configuration gives both, " + k +
+                " <a> <b>)";
+        const std::string has =
+            numeric_values == 1
+                ? "1 value"
+                : core::to_string(numeric_values) + " values";
+        const std::string range =
+            numeric_values == 1
+                ? "the index of OPTIM " + k + " is 1"
+                : "the indices of OPTIM " + k + " run from 1 to " +
+                      core::to_string(numeric_values);
+        /* A FIXWEIGHT slot is an entry of FIXINDEX, which
+         * core::parse_fixindex pairs with the FIXWEIGHT values one to
+         * one. */
+        if (k == "FIXWEIGHT")
+          throw std::logic_error(
+              "OPTIM FIXWEIGHT: coefficient " +
+              core::to_string(typed_indices[j]) + " is entry " +
+              core::to_string(ui) + " of FIXINDEX, past the FIXWEIGHT "
+              "values");
+        if (numeric_values == 0)
+          throw std::runtime_error(
+              k + " has no numeric value in the training configuration, so "
+              "no index of OPTIM " + k + " selects one");
+        throw std::runtime_error(
+            k + " has " + has +
+            (left_out ? " that the descriptors read"
+                      : " in the training configuration") +
+            ", so " + range + why);
       }
       /* One OPTIM line per index: a second box for an index would replace
        * the first without a word. Lines of one key that select other
        * indices add to it (in any case, the key being upper-cased). */
       if (omap.opt[i])
         throw std::runtime_error(
-            "the index is already selected by the OPTIM " + k +
-            " line on line " + core::to_string(omap.line[i]) +
-            " (OPTIM keys are case-insensitive); give each index one OPTIM "
-            "line");
+            "the OPTIM " + k + " line on line " + core::to_string(omap.line[i]) +
+            " selects this index as well; one OPTIM line selects each index "
+            "(OPTIM keys match in any case)");
       double lo_i = low, hi_i = high;
       /* What the fit takes of this value (> 0, >= 0), whose box keeps to
        * it: the AUTO box of a value > 0 is geometric unless RATIO or FRAC
@@ -3728,49 +4033,128 @@ void HPOTargets::process_optim_config(std::istringstream& iss,
                    : rule.geometric || (value_rule && value_rule->strict);
       const double factor =
           mode_set ? rule.factor : (geometric ? 2.0 : 0.5);
+      const std::string factor_text =
+          mode_set ? factor_tok : core::format_roundtrip(factor);
+      const std::size_t typed = typed_indices[j];
       if (auto_box) {
         /* A number: ui_offset gives the position of the ui-th number of
          * the key (ui >= 1, index 0 refused by the selector). */
         const double x0 = core::to_double(omap.config[i]);
+        const std::string& seed = omap.config[i];
         if (nonneg_amp && x0 < 0.0)
-          throw std::runtime_error("the seed " + omap.config[i] + " is negative, but " +
-                                   form_name + " requires every AMPGRIDMB amplitude >= 0");
+          throw std::runtime_error("the seed " + seed + " is negative, but " +
+                                   form_label() + " requires every AMPGRIDMB "
+                                   "amplitude >= 0");
+        /* A value every fit takes >= 0 (optim_fit_value_rule) is the seed
+         * of its box: a negative one is refused as such, before a FRAC box
+         * clamped at 0 would be reversed ([0, x0 + d] with x0 + d < 0) or
+         * leave the seed out ([0, x0 + d] with x0 + d > 0). */
+        if (value_rule && !value_rule->strict && x0 < 0.0)
+          throw std::runtime_error("the seed " + seed + " is negative, but " +
+                                   value_rule->why);
         if (geometric) {
-          if (!(x0 != 0.0))
-            throw std::runtime_error("AUTO RATIO needs a non-zero seed; use FRAC + FLOOR");
+          if (!(x0 != 0.0)) {
+            /* The key, with the index for FSIGMA and SSIGMA, whose two
+             * values have different defaults. */
+            const std::string subject =
+                (k == "FSIGMA" || k == "SSIGMA")
+                    ? k + " (" + core::to_string(typed) + ")"
+                    : k;
+            const std::string head =
+                mode_set
+                    ? "AUTO RATIO " + factor_text + " gives the box [seed/" +
+                          factor_text + ", seed*" + factor_text +
+                          "], which needs a seed other than 0, and the seed "
+                          "is 0"
+                    : "AUTO without RATIO or FRAC gives " + subject +
+                          " the box [seed/2, seed*2] (RATIO 2), which needs a "
+                          "seed other than 0, and the seed is 0";
+            throw std::runtime_error(
+                head + (floor_box_passes(x0, ui, value_rule)
+                            ? std::string("; AUTO FRAC <p> FLOOR <a> gives a "
+                                          "box of half-width a or more "
+                                          "around it")
+                            : explicit_hint(ui, typed)));
+          }
           const double a = x0 / factor, b = x0 * factor;
           lo_i = std::min(a, b); hi_i = std::max(a, b);
           omap.origin[i] = BoxOrigin::AutoGeometric;
+          if (!(hi_i > lo_i))
+            throw std::runtime_error(
+                "the AUTO box [" + core::format_roundtrip(lo_i) + ", " +
+                core::format_roundtrip(hi_i) + "] around the seed " + seed +
+                " has zero width in double precision; a larger RATIO gives it "
+                "a width");
         } else {
           const double d = std::max({factor * std::fabs(x0), rule.floor,
                                      rule.group_floor * group_max});
+          /* d is 0 only when every seed of the line is 0: the group floor
+           * 1e-3 is relative to the largest of them. */
           if (!(d > 0.0) && nonneg_amp && !floor_set)
-            throw std::runtime_error("every seed on this line is 0, so the AUTO box has "
-                                     "zero width (FRAC and the GROUP_FLOOR 1e-3 that " +
-                                     form_name + " implies for AMPGRIDMB are relative to the "
-                                     "seeds); set FLOOR <a> for the box [0, a], or give "
-                                     "explicit bounds `OPTIM " + k + " (" +
-                                     core::to_string(ui) + ") 0 <high>`");
-          if (!(d > 0.0))
-            throw std::runtime_error(std::string("AUTO FRAC gives a zero-width box (seed 0 or FRAC 0); ") +
-                                     ((rule.group_floor > 0.0 && !(group_max > 0.0))
-                                        ? "every seed on this line is 0, so GROUP_FLOOR has "
-                                          "nothing to scale; set FLOOR"
-                                        : "set FLOOR or GROUP_FLOOR"));
+            throw std::runtime_error(
+                "every seed on this line is 0, so the AUTO box has zero "
+                "width (FRAC and the GROUP_FLOOR 1e-3 that " + form_label() +
+                " implies for " + k + " are relative to the seeds); AUTO "
+                "FLOOR <a> with a > 0 gives the box [0, a], and the explicit "
+                "bounds `OPTIM " + k + " (" + core::to_string(typed) +
+                ") 0 <high>` the box [0, <high>]");
+          if (!(d > 0.0)) {
+            std::string head;
+            std::string hint;
+            if (group_max > 0.0) {
+              head = "AUTO FRAC gives a zero-width box (the seed " + seed +
+                     " times FRAC " + factor_text + " is 0)";
+              hint = "; FLOOR <a> or GROUP_FLOOR <r> above 0 gives it a "
+                     "smallest half-width";
+            } else {
+              head = "every seed on this line is 0, so AUTO FRAC gives a "
+                     "zero-width box";
+              if (rule.group_floor > 0.0)
+                head += ", and GROUP_FLOOR " + group_floor_tok + ", a "
+                        "fraction of the largest seed on the line, adds "
+                        "nothing";
+              hint = "; FLOOR <a> above 0 gives it the half-width a";
+            }
+            if (!floor_box_passes(x0, ui, value_rule))
+              hint = explicit_hint(ui, typed);
+            throw std::runtime_error(head + hint);
+          }
           lo_i = x0 - d; hi_i = x0 + d;
           omap.origin[i] = BoxOrigin::AutoLinear;
           /* non-negative amplitudes: lo = max(0, x0 - d), before the LOG
            * check below (a LOG box cannot start at 0) */
-          if (nonneg_amp || (value_rule && !value_rule->strict &&
-                             k != "LAMBDA")) {
+          if (frac_clamped(value_rule)) {
             if (lo_i < 0.0) lo_i = 0.0;
             omap.origin[i] = BoxOrigin::AutoLinearNonneg;
           }
+          /* A half-width below the spacing of the doubles at the seed
+           * rounds the box to the seed (the seed of a clamped box is >= 0:
+           * a negative one is refused above). */
+          if (!(hi_i > lo_i))
+            throw std::runtime_error(
+                "the AUTO box around the seed " + seed + " has zero width in "
+                "double precision (half-width " + core::format_roundtrip(d) +
+                "); a larger FRAC or FLOOR gives it a width");
         }
+        /* A box past the largest double (x0*f, x0 + d). */
+        if (!metric_value_is_finite(lo_i) || !metric_value_is_finite(hi_i))
+          throw std::runtime_error(
+              "the AUTO box [" + core::format_roundtrip(lo_i) + ", " +
+              core::format_roundtrip(hi_i) + "] around the seed " + seed +
+              " is not finite; a smaller RATIO or FRAC gives a finite box");
         if (tf.kind == ScaleKind::Log && lo_i <= 0.0)
-          throw std::runtime_error("AUTO box [" + core::to_string(lo_i) + ", " +
-                                   core::to_string(hi_i) + "] is not positive but the dim is "
-                                   "tagged LOG; use RATIO (geometric) or drop the tag");
+          throw std::runtime_error(
+              "the line is tagged LOG, and the AUTO box [" +
+              core::format_roundtrip(lo_i) + ", " +
+              core::format_roundtrip(hi_i) + "] reaches 0 or below, and a box "
+              "tagged LOG lies above 0" +
+              (x0 > 0.0 ? std::string("; AUTO RATIO <f> gives a box above 0 "
+                                      "around this seed")
+                        : std::string()) +
+              (box_passes(lo_i, hi_i, ui)
+                   ? std::string("; a line without a tag, or tagged LIN or "
+                                 "ASINH <c>, takes this box")
+                   : std::string()));
       }
       /* A value of the fit a fit refuses at or below 0, or below 0
        * (optim_fit_value_rule): every such candidate would be refused by
@@ -3799,18 +4183,30 @@ void HPOTargets::process_optim_config(std::istringstream& iss,
             "1, every M of 0 or below leaves out only a singular value of 0 "
             "under OALGO 3, and a fit refuses an M of 1 or more, so the box "
             "of a search is inside (0, 1)");
-      /* The rule of this entry: on a D2_mJoin line, that of the
-       * descriptor whose entry it is (a D2_BP's width has none). */
-      std::optional<models::OptimLowBoundRule> entry_rule = low_rule;
-      if (!named && low_rule)
-        entry_rule = models::optim_low_bound_rule(k, context, ui - 1);
-      if (entry_rule && !entry_rule->admits(lo_i))
-        throw std::runtime_error("the low bound " + core::to_string(lo_i) +
-                                 (entry_rule->strict ? " is not > 0" : " is negative") +
-                                 ", but " + entry_rule->by + " requires " +
-                                 entry_rule->requirement + "; use a low bound " +
-                                 (entry_rule->strict ? "> 0"
-                                                     : ">= 0 (0 is allowed) or AUTO"));
+      /* The low-bound rule of this entry (entry_low_rule: on a D2_mJoin
+       * line, that of the descriptor whose entry it is): an explicit low
+       * bound as written, an AUTO box with both ends (the line wrote
+       * neither). */
+      if (const auto entry_rule = entry_low_rule(ui);
+          entry_rule && !entry_rule->admits(lo_i)) {
+        const std::string requires_ =
+            entry_rule->by + " requires " + entry_rule->requirement;
+        if (auto_box)
+          throw std::runtime_error(
+              "the AUTO box [" + core::format_roundtrip(lo_i) + ", " +
+              core::format_roundtrip(hi_i) + "] has the low bound " +
+              core::format_roundtrip(lo_i) + ", which " +
+              (entry_rule->strict ? "is not > 0" : "is negative") + ", but " +
+              requires_ + ", so the low bound of its box is " +
+              (entry_rule->strict ? "> 0" : ">= 0"));
+        throw std::runtime_error(
+            "the low bound " + low_tok +
+            (entry_rule->strict ? " is not > 0" : " is negative") + ", but " +
+            requires_ + ", so the low bound of its box is " +
+            (entry_rule->strict ? std::string("> 0")
+                                : std::string(">= 0 (its AUTO FRAC box, the "
+                                              "default, is clamped at 0)")));
+      }
       omap.opt[i] = true;
       omap.line[i] = nline;
       omap.highbound[i] = hi_i;
@@ -3823,12 +4219,12 @@ void HPOTargets::process_optim_config(std::istringstream& iss,
                                e.what());
     }
   }
-  for (size_t i = 0; i < omap.lowbound.size(); ++i) {
-    if (omap.opt[i] && omap.highbound[i] <= omap.lowbound[i]) {
-      throw std::runtime_error("Error: Highbound must be greater than lowbound: "
-      + core::to_string(omap.lowbound[i])+">="+core::to_string(omap.highbound[i])+ "\n");
-    }
-  }
+  /* Every box has high > low: an explicit box is checked at its bounds, an
+   * AUTO box where it is derived. */
+  for (size_t i = 0; i < omap.lowbound.size(); ++i)
+    if (omap.opt[i] && !(omap.highbound[i] > omap.lowbound[i]))
+      throw std::logic_error("OPTIM " + k + ": a box with high <= low passed "
+                             "the checks of its line");
 }
 } // namespace hpo
 } // namespace tadah

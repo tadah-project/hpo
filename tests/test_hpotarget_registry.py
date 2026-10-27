@@ -40,8 +40,8 @@ comment = "#"
 continuation = "\\"
 key_case = "exact"
 error_frame = "Error on line {line}: {what}\nLine: {text}"
-unfinished_msg = "unfinished line {line}"
-missing_file_msg = "HPO file {file} not found"
+unfinished_msg = "the last line continues and the file has no next line"
+missing_file_msg = "the target file {file} cannot be opened"
 bool_true = ["true"]
 bool_false = ["false"]
 timespec_words = ["off"]
@@ -72,6 +72,7 @@ end_takes_no_value_msg = "{end} closes {name} (unexpected '{tok}')"
 open_takes_no_value_msg = "{name} opens a block (unexpected '{tok}')"
 unclosed_msg = "{name} block not closed with {end}"
 unknown_root_msg = "unknown key \"{key}\""
+root_key_in_block_msg = "{key} is a top-level key inside {name} of line {open_line} ({end})"
 removed_msg = "'{key}' was removed from the grammar: {hint}"
 
 [group.OPTIMIZER]
@@ -932,17 +933,21 @@ error = "GRID_POINTS must be at least 2"
     def test_every_message_has_a_case_or_a_reason(self):
         self.give_every_message_a_reason()
         self.load(templates=True)
-        self.edit("hpotarget.toml", "{ msg = \"unfinished line {line}\", why "
+        self.edit("hpotarget.toml", "{ msg = \"the last line continues and the "
+                                    "file has no next line\", why "
                                     "= \"Not exercised here.\" }, ", "")
         self.assertIn("LEXING: unfinished_msg: no invalid case shows the "
-                      "message 'unfinished line {line}'",
+                      "message 'the last line continues and the file has no "
+                      "next line'",
                       self.errors(templates=True))
 
     def test_untested_names_a_message_of_the_entry(self):
         self.give_every_message_a_reason()
-        self.edit("hpotarget.toml", '"HPO file {file} not found"',
-                  '"HPO file missing"')
-        self.assertIn("untested: 'HPO file missing' is no message of the "
+        self.edit("hpotarget.toml",
+                  '"the target file {file} cannot be opened"',
+                  '"the target file is missing"')
+        self.assertIn("untested: 'the target file is missing' is no message "
+                      "of the "
                       "entry", self.errors(templates=True))
 
     def test_check_mode_shows_a_refusal_of_the_run(self):
@@ -996,7 +1001,8 @@ error = "GRID_POINTS must be at least 2"
                               % json.dumps(m) for m in msgs)
             return f"untested = [{items}]\n"
         self.edit("hpotarget.toml", '[lexing]\n', '[lexing]\n' + reasons(
-            "unfinished line {line}", "HPO file {file} not found"))
+            "the last line continues and the file has no next line",
+            "the target file {file} cannot be opened"))
         self.edit("hpotarget.toml", '[reading]\n', '[reading]\n' + reasons(
             "{what} must be an integer >= {min}, got '{tok}'",
             "{what} must be an integer from {min} to {max}, got '{tok}'",
@@ -1015,6 +1021,8 @@ error = "GRID_POINTS must be at least 2"
                           "{name} opens a block (unexpected '{tok}')",
                           "{name} block not closed with {end}",
                           'unknown key "{key}"',
+                          "{key} is a top-level key inside {name} of line "
+                          "{open_line} ({end})",
                           "'{key}' was removed from the grammar: {hint}"))
         self.edit("hpotarget.toml", 'name = "OPTIMIZER"\n',
                   'name = "OPTIMIZER"\n' + reasons(

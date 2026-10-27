@@ -534,8 +534,47 @@ TEST_CASE("ANNEAL: T0 line reports loss range and std",
     CHECK(log.find("ANNEAL: T0=") != std::string::npos);
     CHECK(log.find("loss range=[")    != std::string::npos);
     CHECK(log.find("std=")            != std::string::npos);
-    CHECK(log.find("median|dE|=")     != std::string::npos);
+    /* The basis of T0 in words (it was "median|dE|=<x>"). */
+    CHECK(log.find(": median rise of the loss ") != std::string::npos);
+    CHECK(log.find("T0 = median rise / ln(1/T0_ACCEPT) with T0_ACCEPT=")
+          != std::string::npos);
     CHECK(log.find("anchor=seed")     != std::string::npos);
+}
+
+/* Pins: a count of 1 in the T0 line takes the singular: with two probes, of
+ * which the first raises the loss (0 -> 1) and the second lowers it, the
+ * line reads "T0=... from 2 probes: median rise of the loss 1.000e+00 over
+ * the 1 probe that raised it".
+ * Before the fix: "over the 1 probes that raised it": the check fails. */
+TEST_CASE("ANNEAL: the T0 line counts one probe in the singular",
+          "[HPO][anneal][log]")
+{
+    using namespace tadah::hpo;
+    auto sp = make_spec({-1.0}, {1.0});
+    set_seed_point(sp, {0.0});
+    sp.seed = 5;
+    sp.stop.maxeval = 6;
+    sp.param["T0_PROBES"] = 2.0;
+    sp.param["CHAIN_LENGTH"] = 2.0;
+
+    LoggedRun lr;
+    /* The starting point scores 0, the first probe 1, the second -1. */
+    std::size_t calls = 0;
+    StubHost stub{ [&](const Vec& x) {
+        const std::size_t k = calls++;
+        if (k == 0) return 0.0;
+        if (k == 1) return 1.0;
+        if (k == 2) return -1.0;
+        return x(0) * x(0);
+    }, {} };
+    run_anneal_impl<Vec>(sp, stub);
+
+    const std::string log = lr.read();
+    INFO(log);
+    CHECK(log.find("ANNEAL: T0=") != std::string::npos);
+    CHECK(log.find(" from 2 probes: median rise of the loss 1.000e+00 over "
+                   "the 1 probe that raised it, T0 = median rise / "
+                   "ln(1/T0_ACCEPT)") != std::string::npos);
 }
 
 TEST_CASE("ANNEAL[CORANA]: per-dim step vector adapts (grows for fruitful dim)",
@@ -855,7 +894,8 @@ TEST_CASE("ANNEAL: top-level STEP is a hard error steering to STEP_FRAC",
 
     StubHost stub{ [&](const Vec& /*x*/){ return 0.0; }, {} };
     REQUIRE_THROWS_WITH(run_anneal_impl<Vec>(sp, stub),
-                        Catch::Contains("does not use STEP; set PARAM STEP_FRAC"));
+                        Catch::Contains("does not use STEP; PARAM STEP_FRAC sets its "
+                                "proposal steps"));
     CHECK(stub.calls.empty());
 }
 
@@ -1218,7 +1258,7 @@ TEST_CASE("ANNEAL: T0 probes mirror the proposal kernel (one-dim under CORANA)",
         run_anneal_impl<Vec>(sp, stub);
         const std::string log = lr.read();
         CHECK(log.find("anchor=seed") != std::string::npos);
-        CHECK(log.find("falling back to T0=1.0") == std::string::npos);
+        CHECK(log.find("T0 falls back to 1.0") == std::string::npos);
         const auto pos = log.find("ANNEAL: T0=");
         REQUIRE(pos != std::string::npos);
         const double t0 = std::atof(log.c_str() + pos + 11);
@@ -1229,8 +1269,40 @@ TEST_CASE("ANNEAL: T0 probes mirror the proposal kernel (one-dim under CORANA)",
         auto sp = mkspec();
         LoggedRun lr;
         run_anneal_impl<Vec>(sp, stub);
-        CHECK(lr.read().find("falling back to T0=1.0") != std::string::npos);
+        /* It was "...; falling back to T0=1.0. Consider a smaller
+         * STEP_FRAC or PARAM T_HOT." */
+        CHECK(lr.read().find("so T0 falls back to 1.0") != std::string::npos);
     }
+}
+
+/* Pins: under BOUNDARY_MODE REDRAW the HINT says what REFLECT gives, with
+ * no instruction: "TADAH:ANNEAL: BOUNDARY_MODE REDRAW resamples ... This
+ * does not change the best point reported; for the distribution of the
+ * samples, BOUNDARY_MODE REFLECT is an exact symmetric fold."
+ * Before the fix: "... This does not affect which best point is reported,
+ * but if you care about the distribution rather than the optimum, use
+ * BOUNDARY_MODE REFLECT, which is an exact symmetric fold.": the check
+ * fails. */
+TEST_CASE("ANNEAL: the BOUNDARY_MODE REDRAW hint says what REFLECT gives",
+          "[HPO][anneal][boundary]")
+{
+    using namespace tadah::hpo;
+    auto sp = make_spec({0.0}, {1.0});
+    set_seed_point(sp, {0.5});
+    sp.seed = 987;
+    sp.stop.maxeval = 4;
+    sp.param_raw["BOUNDARY_MODE"] = "REDRAW";
+    sp.param["T_INIT"] = 1.0;
+    sp.param["CHAIN_LENGTH"] = 3.0;
+    LoggedRun lr;
+    StubHost stub{[](const Vec&) { return 0.0; }, {}};
+    run_anneal_impl<Vec>(sp, stub);
+    CHECK(lr.read().find("TADAH:ANNEAL: BOUNDARY_MODE REDRAW resamples "
+                         "out-of-box coordinates") != std::string::npos);
+    CHECK(lr.read().find("This does not change the best point reported; for "
+                         "the distribution of the samples, BOUNDARY_MODE "
+                         "REFLECT is an exact symmetric fold.") !=
+          std::string::npos);
 }
 
 TEST_CASE("ANNEAL: FAILSCORE seed re-anchors on the best finite box probe",
@@ -1250,7 +1322,13 @@ TEST_CASE("ANNEAL: FAILSCORE seed re-anchors on the best finite box probe",
     LoggedRun lr;
     StubHost stub{ [&](const Vec& x){ return cliff_bowl(x, {0.0, 0.0}, 5.0, FS); }, {} };
     REQUIRE_NOTHROW(run_anneal_impl<Vec>(sp, stub));
-    CHECK(lr.read().find("anchor=re-anchored") != std::string::npos);
+    const std::string log = lr.read();
+    CHECK(log.find("anchor=re-anchored") != std::string::npos);
+    /* It was "...: the seed point evaluates to FAILSCORE; sampling 30
+     * uniform box probe(s) to re-anchor". */
+    CHECK(log.find("ANNEAL: the starting point scored FAILSCORE, so 30 "
+                   "probes drawn from the OPTIM box choose the point the "
+                   "probes start from") != std::string::npos);
 }
 
 TEST_CASE("ANNEAL: all-FAILSCORE landscape is a hard error with remediation",
@@ -1266,8 +1344,43 @@ TEST_CASE("ANNEAL: all-FAILSCORE landscape is a hard error with remediation",
     sp.param["T0_PROBES"] = 5.0;
 
     StubHost stub{ [&](const Vec& /*x*/){ return FS; }, {} };
+    /* It was "... T0 calibration failed -- the seed point and all 5 uniform
+     * box probe(s) scored FAILSCORE (1.000e+16). The optimiser has no
+     * finite loss to anchor on. Remedies: set PARAM T_HOT explicitly, ..."
+     * (T_HOT for the serial annealer, whose key is T_INIT). */
     REQUIRE_THROWS_WITH(run_anneal_impl<Vec>(sp, stub),
-                        Catch::Contains("T0 calibration failed"));
+                        Catch::Contains("ANNEAL: T0 calibration failed: the "
+                                        "starting point and all 5 probes "
+                                        "drawn from the OPTIM box scored "
+                                        "FAILSCORE (1e+16), so the search "
+                                        "has no usable loss to start from. "
+                                        "PARAM T_INIT sets the starting "
+                                        "temperature without probes; a "
+                                        "starting point with a usable loss "
+                                        "(INIT block) or narrower OPTIM "
+                                        "boxes give the probes one."));
+}
+
+/* Pins: an explicit starting temperature is journalled with its key and
+ * value as written: "ANNEAL: PARAM T_INIT=0.25 given, so no calibration
+ * runs".
+ * Before the fix: "ANNEAL: using user-specified T_INIT=0.250000": the
+ * check fails. */
+TEST_CASE("ANNEAL: an explicit T_INIT is journalled as given, without a "
+          "calibration", "[HPO][anneal][t0]")
+{
+    using namespace tadah::hpo;
+    auto sp = make_spec({-1.0}, {1.0});
+    set_seed_point(sp, {0.5});
+    sp.seed = 4;
+    sp.stop.maxeval = 6;
+    sp.param["T_INIT"] = 0.25;
+    sp.param["CHAIN_LENGTH"] = 5.0;
+    LoggedRun lr;
+    StubHost stub{ [&](const Vec& x){ return x(0) * x(0); }, {} };
+    run_anneal_impl<Vec>(sp, stub);
+    CHECK(lr.read().find("ANNEAL: PARAM T_INIT=0.25 given, so no calibration "
+                         "runs") != std::string::npos);
 }
 
 TEST_CASE("ANNEAL: REANNEAL warm-restarts the schedule on T_MIN",

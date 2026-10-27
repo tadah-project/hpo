@@ -148,7 +148,7 @@ untested_tolerance_note = ""
 step_use = "rejected"
 step_use_text = "rejected (no initial-step concept)"
 step_consumed = false
-step_note = "Ceres chooses the initial line-search step itself; remove STEP (PARAM max_ls_iter caps the line-search iterations)"
+step_note = "Ceres chooses the initial line-search step itself (PARAM max_ls_iter caps the line-search iterations)"
 starts_at_x0 = true
 start_note = ""
 random_draws = "not_recorded"
@@ -162,7 +162,7 @@ Options for CERES:STEEPEST_DESCENT
    * PARAM max_iter <int>        (Ceres' max_num_iterations, 0 to 2147483647; MAXEVAL counts the evaluations)
    * PARAM max_ls_iter <int>     (line-search step-size iterations, 1 to 2147483647)
    * PARAM fd_step, fd_kernel, diff_method  (the finite differences of the gradient)
-   * STEP is rejected: Ceres chooses the initial line-search step itself; remove STEP (PARAM max_ls_iter caps the line-search iterations)
+   * STEP is rejected: Ceres chooses the initial line-search step itself (PARAM max_ls_iter caps the line-search iterations)
    * WARNING: ignores the OPTIM box: Ceres' line-search solver has no bounds, so its line searches can propose points outside the box (a LOG dimension stays positive, a linear one is unbounded). Such a point is not evaluated: it is scored as a failure graded by its distance to the box, whose slope points away from the box, so a descent step leads back into it; it counts against MAXEVAL and it is never the best; the first is reported with a WARNING and the DIAGNOSTICS section of hpo_run.log counts them all. DLIB:BFGS and the NLopt LD_* algorithms keep to the box
 """
 
@@ -255,7 +255,7 @@ untested_tolerance_note = "dlib's global search has no convergence test to apply
 step_use = "rejected"
 step_use_text = "rejected (no initial-step concept)"
 step_consumed = false
-step_note = "MaxLIPO+TR sizes its own trust region from the samples; remove STEP"
+step_note = "MaxLIPO+TR sizes its own trust region from the samples"
 starts_at_x0 = true
 start_note = ""
 random_draws = "not_recorded"
@@ -466,7 +466,7 @@ untested_tolerance_note = "NLopt's global search tests no tolerance"
 step_use = "ignored"
 step_use_text = "ignored by the algorithm (rejected)"
 step_consumed = false
-step_note = "this algorithm never reads an initial step (population, branch-and-bound, or line-search method); remove STEP"
+step_note = "this algorithm never reads an initial step (population, branch-and-bound, or line-search method)"
 starts_at_x0 = false
 start_note = "StoGO evaluates the centre of the OPTIM box first and then samples the whole box; NLopt never reads that point"
 random_draws = "never"
@@ -478,7 +478,7 @@ Options for NLOPT:GD_STOGO
      MAXEVAL is required (MAXTIME, STOPVAL and a RESTART block are not enough): NLopt's StoGO has no convergence test of its own and ignores NLopt's forced stop, by which tadah hpo ends a search (on a signal, an error, the RESTART stagnation stop, or a loss at or below STOPVAL that NLopt was not given): it then calls on, each call refused, and only NLopt's own evaluation count ends it promptly (MAXTIME only once the rest of its time has passed).
    * PARAM: NLopt reads no PARAM key of this algorithm
    * global optimiser
-   * STEP is rejected: this algorithm never reads an initial step (population, branch-and-bound, or line-search method); remove STEP
+   * STEP is rejected: this algorithm never reads an initial step (population, branch-and-bound, or line-search method)
    * SEED is rejected: it draws no random numbers
 """
 
@@ -504,7 +504,7 @@ untested_tolerance_note = "NLopt's global search tests no tolerance"
 step_use = "ignored"
 step_use_text = "ignored by the algorithm (rejected)"
 step_consumed = false
-step_note = "this algorithm never reads an initial step (population, branch-and-bound, or line-search method); remove STEP"
+step_note = "this algorithm never reads an initial step (population, branch-and-bound, or line-search method)"
 starts_at_x0 = false
 start_note = "StoGO evaluates the centre of the OPTIM box first (with POPULATION 2n + 1 or more, n the OPTIM dimensions, a random point of the box) and then samples the whole box; NLopt never reads that point"
 random_draws = "trial_points"
@@ -516,7 +516,7 @@ Options for NLOPT:GD_STOGO_RAND
      MAXEVAL is required (MAXTIME, STOPVAL and a RESTART block are not enough): NLopt's StoGO has no convergence test of its own and ignores NLopt's forced stop, by which tadah hpo ends a search (on a signal, an error, the RESTART stagnation stop, or a loss at or below STOPVAL that NLopt was not given): it then calls on, each call refused, and only NLopt's own evaluation count ends it promptly (MAXTIME only once the rest of its time has passed).
    * PARAM: NLopt reads no PARAM key of this algorithm
    * global optimiser
-   * STEP is rejected: this algorithm never reads an initial step (population, branch-and-bound, or line-search method); remove STEP
+   * STEP is rejected: this algorithm never reads an initial step (population, branch-and-bound, or line-search method)
    * SEED <int>  the seed of the random numbers it draws
 """
 
@@ -542,7 +542,7 @@ untested_tolerance_note = "NLopt's global search tests no tolerance"
 step_use = "ignored"
 step_use_text = "ignored by the algorithm (rejected)"
 step_consumed = false
-step_note = "this algorithm never reads an initial step (population, branch-and-bound, or line-search method); remove STEP"
+step_note = "this algorithm never reads an initial step (population, branch-and-bound, or line-search method)"
 starts_at_x0 = false
 start_note = "AGS evaluates points of a space-filling curve through the whole OPTIM box, the first near its centre; NLopt never reads that point"
 random_draws = "never"
@@ -555,7 +555,7 @@ Options for NLOPT:GN_AGS
    * PARAM: NLopt reads no PARAM key of this algorithm
    * global optimiser
    * derivative-free
-   * STEP is rejected: this algorithm never reads an initial step (population, branch-and-bound, or line-search method); remove STEP
+   * STEP is rejected: this algorithm never reads an initial step (population, branch-and-bound, or line-search method)
    * SEED is rejected: it draws no random numbers
 """
 
@@ -581,7 +581,7 @@ untested_tolerance_note = ""
 step_use = "ignored"
 step_use_text = "ignored by the algorithm (rejected)"
 step_consumed = false
-step_note = "this algorithm never reads an initial step (population, branch-and-bound, or line-search method); remove STEP"
+step_note = "this algorithm never reads an initial step (population, branch-and-bound, or line-search method)"
 starts_at_x0 = true
 start_note = ""
 random_draws = "not_recorded"
@@ -594,7 +594,7 @@ Options for NLOPT:GN_CRS2_LM
    * PARAM: NLopt reads no PARAM key of this algorithm
    * global optimiser
    * derivative-free
-   * STEP is rejected: this algorithm never reads an initial step (population, branch-and-bound, or line-search method); remove STEP
+   * STEP is rejected: this algorithm never reads an initial step (population, branch-and-bound, or line-search method)
    * SEED <int>  the seed of the random numbers it draws
 """
 
@@ -620,7 +620,7 @@ untested_tolerance_note = ""
 step_use = "ignored"
 step_use_text = "ignored by the algorithm (rejected)"
 step_consumed = false
-step_note = "this algorithm never reads an initial step (population, branch-and-bound, or line-search method); remove STEP"
+step_note = "this algorithm never reads an initial step (population, branch-and-bound, or line-search method)"
 starts_at_x0 = false
 start_note = "DIRECT evaluates the centre of the OPTIM box first and then divides the whole box; NLopt never reads that point"
 random_draws = "never"
@@ -634,7 +634,7 @@ Options for NLOPT:GN_DIRECT
    * PARAM <name> <value>  the PARAM keys NLopt reads for it: magic_eps
    * global optimiser
    * derivative-free
-   * STEP is rejected: this algorithm never reads an initial step (population, branch-and-bound, or line-search method); remove STEP
+   * STEP is rejected: this algorithm never reads an initial step (population, branch-and-bound, or line-search method)
    * SEED is rejected: it draws no random numbers
 """
 
@@ -660,7 +660,7 @@ untested_tolerance_note = ""
 step_use = "ignored"
 step_use_text = "ignored by the algorithm (rejected)"
 step_consumed = false
-step_note = "this algorithm never reads an initial step (population, branch-and-bound, or line-search method); remove STEP"
+step_note = "this algorithm never reads an initial step (population, branch-and-bound, or line-search method)"
 starts_at_x0 = false
 start_note = "DIRECT evaluates the centre of the OPTIM box first and then divides the whole box; NLopt never reads that point"
 random_draws = "never"
@@ -674,7 +674,7 @@ Options for NLOPT:GN_DIRECT_L
    * PARAM <name> <value>  the PARAM keys NLopt reads for it: magic_eps
    * global optimiser
    * derivative-free
-   * STEP is rejected: this algorithm never reads an initial step (population, branch-and-bound, or line-search method); remove STEP
+   * STEP is rejected: this algorithm never reads an initial step (population, branch-and-bound, or line-search method)
    * SEED is rejected: it draws no random numbers
 """
 
@@ -700,7 +700,7 @@ untested_tolerance_note = ""
 step_use = "ignored"
 step_use_text = "ignored by the algorithm (rejected)"
 step_consumed = false
-step_note = "this algorithm never reads an initial step (population, branch-and-bound, or line-search method); remove STEP"
+step_note = "this algorithm never reads an initial step (population, branch-and-bound, or line-search method)"
 starts_at_x0 = false
 start_note = "DIRECT evaluates the centre of the OPTIM box first and then divides the whole box; NLopt never reads that point"
 random_draws = "never"
@@ -714,7 +714,7 @@ Options for NLOPT:GN_DIRECT_L_NOSCAL
    * PARAM <name> <value>  the PARAM keys NLopt reads for it: magic_eps
    * global optimiser
    * derivative-free
-   * STEP is rejected: this algorithm never reads an initial step (population, branch-and-bound, or line-search method); remove STEP
+   * STEP is rejected: this algorithm never reads an initial step (population, branch-and-bound, or line-search method)
    * SEED is rejected: it draws no random numbers
 """
 
@@ -740,7 +740,7 @@ untested_tolerance_note = ""
 step_use = "ignored"
 step_use_text = "ignored by the algorithm (rejected)"
 step_consumed = false
-step_note = "this algorithm never reads an initial step (population, branch-and-bound, or line-search method); remove STEP"
+step_note = "this algorithm never reads an initial step (population, branch-and-bound, or line-search method)"
 starts_at_x0 = false
 start_note = "DIRECT evaluates the centre of the OPTIM box first and then divides the whole box; NLopt never reads that point"
 random_draws = "between_sides"
@@ -754,7 +754,7 @@ Options for NLOPT:GN_DIRECT_L_RAND
    * PARAM <name> <value>  the PARAM keys NLopt reads for it: magic_eps
    * global optimiser
    * derivative-free
-   * STEP is rejected: this algorithm never reads an initial step (population, branch-and-bound, or line-search method); remove STEP
+   * STEP is rejected: this algorithm never reads an initial step (population, branch-and-bound, or line-search method)
    * SEED <int>  the seed of the random numbers it draws; in one OPTIM
      dimension it draws none, and SEED is rejected
 """
@@ -801,7 +801,7 @@ untested_tolerance_note = "NLopt's global search tests no tolerance"
 step_use = "ignored"
 step_use_text = "ignored by the algorithm (rejected)"
 step_consumed = false
-step_note = "this algorithm never reads an initial step (population, branch-and-bound, or line-search method); remove STEP"
+step_note = "this algorithm never reads an initial step (population, branch-and-bound, or line-search method)"
 starts_at_x0 = true
 start_note = ""
 random_draws = "not_recorded"
@@ -814,7 +814,7 @@ Options for NLOPT:GN_ESCH
    * PARAM: NLopt reads no PARAM key of this algorithm
    * global optimiser
    * derivative-free
-   * STEP is rejected: this algorithm never reads an initial step (population, branch-and-bound, or line-search method); remove STEP
+   * STEP is rejected: this algorithm never reads an initial step (population, branch-and-bound, or line-search method)
    * SEED <int>  the seed of the random numbers it draws
 """
 
@@ -840,7 +840,7 @@ untested_tolerance_note = ""
 step_use = "ignored"
 step_use_text = "ignored by the algorithm (rejected)"
 step_consumed = false
-step_note = "this algorithm never reads an initial step (population, branch-and-bound, or line-search method); remove STEP"
+step_note = "this algorithm never reads an initial step (population, branch-and-bound, or line-search method)"
 starts_at_x0 = true
 start_note = ""
 random_draws = "not_recorded"
@@ -853,7 +853,7 @@ Options for NLOPT:GN_ISRES
    * PARAM: NLopt reads no PARAM key of this algorithm
    * global optimiser
    * derivative-free
-   * STEP is rejected: this algorithm never reads an initial step (population, branch-and-bound, or line-search method); remove STEP
+   * STEP is rejected: this algorithm never reads an initial step (population, branch-and-bound, or line-search method)
    * SEED <int>  the seed of the random numbers it draws
 """
 
@@ -970,7 +970,7 @@ untested_tolerance_note = "the original DIRECT tests only XTOL_REL, its volume t
 step_use = "ignored"
 step_use_text = "ignored by the algorithm (rejected)"
 step_consumed = false
-step_note = "this algorithm never reads an initial step (population, branch-and-bound, or line-search method); remove STEP"
+step_note = "this algorithm never reads an initial step (population, branch-and-bound, or line-search method)"
 starts_at_x0 = false
 start_note = "DIRECT evaluates the centre of the OPTIM box first and then divides the whole box; NLopt never reads that point"
 random_draws = "never"
@@ -983,7 +983,7 @@ Options for NLOPT:GN_ORIG_DIRECT
      magic_eps_abs, sigma_reltol, fglobal_reltol
    * global optimiser
    * derivative-free
-   * STEP is rejected: this algorithm never reads an initial step (population, branch-and-bound, or line-search method); remove STEP
+   * STEP is rejected: this algorithm never reads an initial step (population, branch-and-bound, or line-search method)
    * SEED is rejected: it draws no random numbers
 """
 
@@ -1009,7 +1009,7 @@ untested_tolerance_note = "the original DIRECT tests only XTOL_REL, its volume t
 step_use = "ignored"
 step_use_text = "ignored by the algorithm (rejected)"
 step_consumed = false
-step_note = "this algorithm never reads an initial step (population, branch-and-bound, or line-search method); remove STEP"
+step_note = "this algorithm never reads an initial step (population, branch-and-bound, or line-search method)"
 starts_at_x0 = false
 start_note = "DIRECT evaluates the centre of the OPTIM box first and then divides the whole box; NLopt never reads that point"
 random_draws = "never"
@@ -1022,7 +1022,7 @@ Options for NLOPT:GN_ORIG_DIRECT_L
      magic_eps_abs, sigma_reltol, fglobal_reltol
    * global optimiser
    * derivative-free
-   * STEP is rejected: this algorithm never reads an initial step (population, branch-and-bound, or line-search method); remove STEP
+   * STEP is rejected: this algorithm never reads an initial step (population, branch-and-bound, or line-search method)
    * SEED is rejected: it draws no random numbers
 """
 
@@ -1261,7 +1261,7 @@ untested_tolerance_note = ""
 step_use = "ignored"
 step_use_text = "ignored by the algorithm (rejected)"
 step_consumed = false
-step_note = "this algorithm never reads an initial step (population, branch-and-bound, or line-search method); remove STEP"
+step_note = "this algorithm never reads an initial step (population, branch-and-bound, or line-search method)"
 starts_at_x0 = true
 start_note = ""
 random_draws = "not_recorded"
@@ -1271,7 +1271,7 @@ explain_text = """
 Options for NLOPT:LD_LBFGS
    * Stops that end a run: MAXEVAL, MAXTIME, STOPVAL, FTOL_REL, FTOL_ABS, XTOL_REL, XTOL_ABS
    * PARAM <name> <value>  the PARAM keys NLopt reads for it: tolg
-   * STEP is rejected: this algorithm never reads an initial step (population, branch-and-bound, or line-search method); remove STEP
+   * STEP is rejected: this algorithm never reads an initial step (population, branch-and-bound, or line-search method)
    * SEED is rejected: it draws no random numbers
 """
 
@@ -1337,7 +1337,7 @@ untested_tolerance_note = ""
 step_use = "ignored"
 step_use_text = "ignored by the algorithm (rejected)"
 step_consumed = false
-step_note = "this algorithm never reads an initial step (population, branch-and-bound, or line-search method); remove STEP"
+step_note = "this algorithm never reads an initial step (population, branch-and-bound, or line-search method)"
 starts_at_x0 = true
 start_note = ""
 random_draws = "not_recorded"
@@ -1348,7 +1348,7 @@ Options for NLOPT:LD_SLSQP
    * Stops that end a run: MAXEVAL, MAXTIME, STOPVAL, FTOL_REL, FTOL_ABS, XTOL_REL, XTOL_ABS
      One of them is required (a tolerance above 0), or a RESTART block: without a tolerance it has no convergence test and runs until it is interrupted.
    * PARAM: NLopt reads no PARAM key of this algorithm
-   * STEP is rejected: this algorithm never reads an initial step (population, branch-and-bound, or line-search method); remove STEP
+   * STEP is rejected: this algorithm never reads an initial step (population, branch-and-bound, or line-search method)
    * SEED is rejected: it draws no random numbers
 """
 
@@ -1374,7 +1374,7 @@ untested_tolerance_note = ""
 step_use = "ignored"
 step_use_text = "ignored by the algorithm (rejected)"
 step_consumed = false
-step_note = "this algorithm never reads an initial step (population, branch-and-bound, or line-search method); remove STEP"
+step_note = "this algorithm never reads an initial step (population, branch-and-bound, or line-search method)"
 starts_at_x0 = true
 start_note = ""
 random_draws = "not_recorded"
@@ -1384,7 +1384,7 @@ explain_text = """
 Options for NLOPT:LD_TNEWTON
    * Stops that end a run: MAXEVAL, MAXTIME, STOPVAL, FTOL_REL, FTOL_ABS, XTOL_REL, XTOL_ABS
    * PARAM <name> <value>  the PARAM keys NLopt reads for it: tolg
-   * STEP is rejected: this algorithm never reads an initial step (population, branch-and-bound, or line-search method); remove STEP
+   * STEP is rejected: this algorithm never reads an initial step (population, branch-and-bound, or line-search method)
    * SEED is rejected: it draws no random numbers
 """
 
@@ -1410,7 +1410,7 @@ untested_tolerance_note = ""
 step_use = "ignored"
 step_use_text = "ignored by the algorithm (rejected)"
 step_consumed = false
-step_note = "this algorithm never reads an initial step (population, branch-and-bound, or line-search method); remove STEP"
+step_note = "this algorithm never reads an initial step (population, branch-and-bound, or line-search method)"
 starts_at_x0 = true
 start_note = ""
 random_draws = "not_recorded"
@@ -1420,7 +1420,7 @@ explain_text = """
 Options for NLOPT:LD_TNEWTON_PRECOND
    * Stops that end a run: MAXEVAL, MAXTIME, STOPVAL, FTOL_REL, FTOL_ABS, XTOL_REL, XTOL_ABS
    * PARAM <name> <value>  the PARAM keys NLopt reads for it: tolg
-   * STEP is rejected: this algorithm never reads an initial step (population, branch-and-bound, or line-search method); remove STEP
+   * STEP is rejected: this algorithm never reads an initial step (population, branch-and-bound, or line-search method)
    * SEED is rejected: it draws no random numbers
 """
 
@@ -1446,7 +1446,7 @@ untested_tolerance_note = ""
 step_use = "ignored"
 step_use_text = "ignored by the algorithm (rejected)"
 step_consumed = false
-step_note = "this algorithm never reads an initial step (population, branch-and-bound, or line-search method); remove STEP"
+step_note = "this algorithm never reads an initial step (population, branch-and-bound, or line-search method)"
 starts_at_x0 = true
 start_note = ""
 random_draws = "not_recorded"
@@ -1456,7 +1456,7 @@ explain_text = """
 Options for NLOPT:LD_TNEWTON_PRECOND_RESTART
    * Stops that end a run: MAXEVAL, MAXTIME, STOPVAL, FTOL_REL, FTOL_ABS, XTOL_REL, XTOL_ABS
    * PARAM <name> <value>  the PARAM keys NLopt reads for it: tolg
-   * STEP is rejected: this algorithm never reads an initial step (population, branch-and-bound, or line-search method); remove STEP
+   * STEP is rejected: this algorithm never reads an initial step (population, branch-and-bound, or line-search method)
    * SEED is rejected: it draws no random numbers
 """
 
@@ -1482,7 +1482,7 @@ untested_tolerance_note = ""
 step_use = "ignored"
 step_use_text = "ignored by the algorithm (rejected)"
 step_consumed = false
-step_note = "this algorithm never reads an initial step (population, branch-and-bound, or line-search method); remove STEP"
+step_note = "this algorithm never reads an initial step (population, branch-and-bound, or line-search method)"
 starts_at_x0 = true
 start_note = ""
 random_draws = "not_recorded"
@@ -1492,7 +1492,7 @@ explain_text = """
 Options for NLOPT:LD_TNEWTON_RESTART
    * Stops that end a run: MAXEVAL, MAXTIME, STOPVAL, FTOL_REL, FTOL_ABS, XTOL_REL, XTOL_ABS
    * PARAM <name> <value>  the PARAM keys NLopt reads for it: tolg
-   * STEP is rejected: this algorithm never reads an initial step (population, branch-and-bound, or line-search method); remove STEP
+   * STEP is rejected: this algorithm never reads an initial step (population, branch-and-bound, or line-search method)
    * SEED is rejected: it draws no random numbers
 """
 
@@ -1518,7 +1518,7 @@ untested_tolerance_note = ""
 step_use = "ignored"
 step_use_text = "ignored by the algorithm (rejected)"
 step_consumed = false
-step_note = "this algorithm never reads an initial step (population, branch-and-bound, or line-search method); remove STEP"
+step_note = "this algorithm never reads an initial step (population, branch-and-bound, or line-search method)"
 starts_at_x0 = true
 start_note = ""
 random_draws = "not_recorded"
@@ -1528,7 +1528,7 @@ explain_text = """
 Options for NLOPT:LD_VAR1
    * Stops that end a run: MAXEVAL, MAXTIME, STOPVAL, FTOL_REL, FTOL_ABS, XTOL_REL, XTOL_ABS
    * PARAM <name> <value>  the PARAM keys NLopt reads for it: tolg
-   * STEP is rejected: this algorithm never reads an initial step (population, branch-and-bound, or line-search method); remove STEP
+   * STEP is rejected: this algorithm never reads an initial step (population, branch-and-bound, or line-search method)
    * SEED is rejected: it draws no random numbers
 """
 
@@ -1554,7 +1554,7 @@ untested_tolerance_note = ""
 step_use = "ignored"
 step_use_text = "ignored by the algorithm (rejected)"
 step_consumed = false
-step_note = "this algorithm never reads an initial step (population, branch-and-bound, or line-search method); remove STEP"
+step_note = "this algorithm never reads an initial step (population, branch-and-bound, or line-search method)"
 starts_at_x0 = true
 start_note = ""
 random_draws = "not_recorded"
@@ -1564,7 +1564,7 @@ explain_text = """
 Options for NLOPT:LD_VAR2
    * Stops that end a run: MAXEVAL, MAXTIME, STOPVAL, FTOL_REL, FTOL_ABS, XTOL_REL, XTOL_ABS
    * PARAM <name> <value>  the PARAM keys NLopt reads for it: tolg
-   * STEP is rejected: this algorithm never reads an initial step (population, branch-and-bound, or line-search method); remove STEP
+   * STEP is rejected: this algorithm never reads an initial step (population, branch-and-bound, or line-search method)
    * SEED is rejected: it draws no random numbers
 """
 
@@ -1896,7 +1896,7 @@ untested_tolerance_note = ""
 step_use = "width_fraction"
 step_use_text = "a fraction of the width (PARAM STEP_FRAC)"
 step_consumed = false
-step_note = "set PARAM STEP_FRAC (and PARAM STEP_MODE for ANNEAL_PT) instead"
+step_note = "PARAM STEP_FRAC sets its proposal steps (and PARAM STEP_MODE for ANNEAL_PT)"
 starts_at_x0 = true
 start_note = ""
 random_draws = "not_recorded"
@@ -1983,7 +1983,7 @@ untested_tolerance_note = ""
 step_use = "width_fraction"
 step_use_text = "a fraction of the width (PARAM STEP_FRAC)"
 step_consumed = false
-step_note = "set PARAM STEP_FRAC (and PARAM STEP_MODE for ANNEAL_PT) instead"
+step_note = "PARAM STEP_FRAC sets its proposal steps (and PARAM STEP_MODE for ANNEAL_PT)"
 starts_at_x0 = true
 start_note = ""
 random_draws = "not_recorded"
@@ -2069,7 +2069,7 @@ untested_tolerance_note = ""
 step_use = "width_fraction"
 step_use_text = "a fraction of the width (PARAM STEP_FRAC)"
 step_consumed = false
-step_note = "set PARAM STEP_FRAC (and PARAM STEP_MODE for ANNEAL_PT) instead"
+step_note = "PARAM STEP_FRAC sets its proposal steps (and PARAM STEP_MODE for ANNEAL_PT)"
 starts_at_x0 = true
 start_note = ""
 random_draws = "not_recorded"
@@ -2148,7 +2148,7 @@ Options for TADAH:ANNEAL_PT
      PARAM RESET_TO_BEST (default OFF)
         ON moves the chain back to the best point so far after each cooling step; under TADAH:ANNEAL_PT it moves the coldest slot after each epoch.
      PARAM STEP_MODE <FIXED|FROZEN|ADAPTIVE> (default FROZEN)
-        How the CLASSIC kernel sets its steps: FIXED keeps the scales STEP_FRAC gives; FROZEN calibrates the scales of each slot, then keeps them; ADAPTIVE calibrates them and keeps adapting them, a diagonal form of robust adaptive Metropolis.
+        How the CLASSIC kernel sets its steps: FIXED keeps the scales STEP_FRAC gives; FROZEN calibrates the scales of each slot, then keeps them; ADAPTIVE calibrates them and keeps adapting them, a diagonal form of robust adaptive Metropolis. The calibration spends at most a quarter of MAXEVAL.
      PARAM STEP_WARMUP_SWEEPS (default 12)
         The smallest number of calibration attempts of each coordinate in the warm-up of the steps; the largest is twice this number.
      PARAM STEP_TRUST_FACTOR (default 64) [accepts OFF]
@@ -2200,9 +2200,9 @@ ignores_forced_stop = false
 tolerance_note = ""
 untested_tolerance_note = "the grid search has no convergence test to apply it to"
 step_use = "grid_count"
-step_use_text = "grid point count (use PARAM GRID_POINTS)"
+step_use_text = "grid point count (PARAM GRID_POINTS)"
 step_consumed = false
-step_note = "STEP is not the grid resolution; use PARAM GRID_POINTS <n> (integer >= 2, default 20 points per dimension)"
+step_note = "STEP is not the grid resolution; PARAM GRID_POINTS <n> sets it (an integer >= 2, default 20 points per dimension)"
 starts_at_x0 = true
 start_note = ""
 random_draws = "not_recorded"
@@ -2239,7 +2239,7 @@ untested_tolerance_note = "uniform random search has no convergence test to appl
 step_use = "rejected"
 step_use_text = "rejected (no initial-step concept)"
 step_consumed = false
-step_note = "uniform sampling in the OPTIM box has no initial step; remove STEP"
+step_note = "uniform sampling in the OPTIM box has no initial step"
 starts_at_x0 = true
 start_note = ""
 random_draws = "not_recorded"

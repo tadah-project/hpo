@@ -232,7 +232,7 @@ Registry build_registry()
         c.untested_tolerance_note =
             "uniform random search has no convergence test to apply it to";
         c.step_use  = StepUse::Rejected;
-        c.step_note = "uniform sampling in the OPTIM box has no initial step; remove STEP";
+        c.step_note = "uniform sampling in the OPTIM box has no initial step";
         add(r, c);
     }
     {
@@ -249,8 +249,9 @@ Registry build_registry()
         c.untested_tolerance_note =
             "the grid search has no convergence test to apply it to";
         c.step_use  = StepUse::GridCount;
-        c.step_note = "STEP is not the grid resolution; use PARAM GRID_POINTS <n> "
-                      "(integer >= 2, default 20 points per dimension)";
+        c.step_note = "STEP is not the grid resolution; PARAM GRID_POINTS <n> "
+                      "sets it (an integer >= 2, default 20 points per "
+                      "dimension)";
         add(r, c);
     }
     {
@@ -267,7 +268,7 @@ Registry build_registry()
         c.supports_ftol_rel = true;
         c.supports_ftol_abs = true;
         c.step_use  = StepUse::WidthFraction;
-        c.step_note = "set PARAM STEP_FRAC (and PARAM STEP_MODE for ANNEAL_PT) instead";
+        c.step_note = "PARAM STEP_FRAC sets its proposal steps (and PARAM STEP_MODE for ANNEAL_PT)";
         add(r, c);
     }
     {
@@ -291,7 +292,7 @@ Registry build_registry()
                        "no schedule ends it, and it runs until it is "
                        "interrupted";
         c.step_use  = StepUse::WidthFraction;
-        c.step_note = "set PARAM STEP_FRAC (and PARAM STEP_MODE for ANNEAL_PT) instead";
+        c.step_note = "PARAM STEP_FRAC sets its proposal steps (and PARAM STEP_MODE for ANNEAL_PT)";
         add(r, c);
     }
     {
@@ -309,7 +310,7 @@ Registry build_registry()
         c.supports_ftol_rel = true;
         c.supports_ftol_abs = true;
         c.step_use  = StepUse::WidthFraction;
-        c.step_note = "set PARAM STEP_FRAC (and PARAM STEP_MODE for ANNEAL_PT) instead";
+        c.step_note = "PARAM STEP_FRAC sets its proposal steps (and PARAM STEP_MODE for ANNEAL_PT)";
         add(r, c);
     }
 
@@ -355,7 +356,7 @@ Registry build_registry()
         /* find_min_global (MaxLIPO+TR) is deterministic: SEED is refused
          * (reads_seed false), unless it seeds a PRESTAGE exploration. */
         c.step_use  = StepUse::Rejected;
-        c.step_note = "MaxLIPO+TR sizes its own trust region from the samples; remove STEP";
+        c.step_note = "MaxLIPO+TR sizes its own trust region from the samples";
         add(r, c);
     }
     {
@@ -387,8 +388,8 @@ Registry build_registry()
             c.supports_ftol_rel  = true;
             c.supports_xtol_rel  = true;
             c.step_use           = StepUse::Rejected;
-            c.step_note          = "Ceres chooses the initial line-search step itself; remove "
-                                   "STEP (PARAM max_ls_iter caps the line-search iterations)";
+            c.step_note          = "Ceres chooses the initial line-search step itself "
+                                   "(PARAM max_ls_iter caps the line-search iterations)";
             c.ignores_bounds     = true;
             c.bounds_note        = "ignores the OPTIM box: Ceres' line-search solver has no "
                                    "bounds, so its line searches can propose points outside "
@@ -634,7 +635,7 @@ Registry build_registry()
         } else {
             c.step_use  = StepUse::Ignored;
             c.step_note = "this algorithm never reads an initial step (population, "
-                          "branch-and-bound, or line-search method); remove STEP";
+                          "branch-and-bound, or line-search method)";
         }
         /* Every registered NLopt algorithm keeps to the box: LN_NEWUOA,
          * which NLopt runs without it, is refused (kRefused). */
@@ -681,7 +682,7 @@ const char* step_use_name(StepUse u)
         case StepUse::MinCollapsed:     return "one radius: the smallest STEP of the dimensions";
         case StepUse::TrustHalfWidth:   return "one per dimension: the first trust-region half-width";
         case StepUse::ForwardedToInner: return "passed to the optimiser of the INNER block";
-        case StepUse::GridCount:        return "grid point count (use PARAM GRID_POINTS)";
+        case StepUse::GridCount:        return "grid point count (PARAM GRID_POINTS)";
         case StepUse::WidthFraction:    return "a fraction of the width (PARAM STEP_FRAC)";
     }
     return "?";

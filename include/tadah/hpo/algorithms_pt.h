@@ -67,6 +67,7 @@
 #include <tadah/hpo/hpo_host.h>
 #include <tadah/hpo/hpo_mpi.h>
 #include <tadah/hpo/anneal_core.h>
+#include <tadah/hpo/count_text.h>
 #include <tadah/hpo/backend_rules.h>
 #include <tadah/hpo/anneal_jitter.h>
 #include <tadah/hpo/corana_census.h>
@@ -1210,9 +1211,9 @@ template<typename Vec, typename HostT>
 
     if (!sp.num_threads) {
       const std::string hint =
-          "ANNEAL_PT: THREADS not set -- running " + std::to_string(K) +
-          " replicas on 1 worker thread. Set THREADS <n> in the STRATEGY "
-          "block to evaluate replicas concurrently.";
+          "ANNEAL_PT: THREADS is not set, so the " + std::to_string(K) +
+          " replicas run on 1 worker thread; THREADS <n> in the STRATEGY "
+          "block evaluates up to n of them at a time";
       std::cout << "[HPO] " << hint << "\n";
       HPOLog::instance().warning(hint);
     }
@@ -1620,12 +1621,39 @@ template<typename Vec, typename HostT>
     } else if (calib_threw) {
       std::rethrow_exception(calib_error);
     }
+    /* A ladder without a range: the values compared, and what gives
+     * another (@p source the calibration that gave T_HOT, or "" for PARAM
+     * T_HOT). Temperatures in the form of the other T lines. */
+    auto ladder_error = [&](const std::string& source, double t_hot,
+                            double t_cold) {
+      auto e = [](double t) {
+        std::ostringstream o;
+        o << std::scientific << std::setprecision(3) << t;
+        return o.str();
+      };
+      const std::string head =
+          "TADAH:ANNEAL_PT: " +
+          (source.empty() ? "PARAM T_HOT=" + e(t_hot)
+                          : source + " gives T_HOT=" + e(t_hot));
+      const std::string skip =
+          source.empty() ? std::string()
+                         : "an explicit PARAM T_HOT (which skips this "
+                           "calibration)";
+      if (kb.t_cold)
+        return std::runtime_error(
+            head + ", not above PARAM T_COLD=" + e(t_cold) + ", so the "
+            "ladder has no range; a smaller T_COLD" +
+            (skip.empty() ? "" : ", or " + skip + ",") +
+            " gives a valid ladder");
+      return std::runtime_error(
+          head + ", and T_COLD = T_HOT / LADDER_SPAN = " + e(t_cold) +
+          " is not between 0 and T_HOT, so the ladder has no range" +
+          (skip.empty() ? std::string()
+                        : "; " + skip + " gives a valid ladder"));
+    };
     T_cold = kb.t_cold ? *kb.t_cold : T_hot / kb.ladder_span;
     if (proceed && !(T_cold > 0.0 && T_cold < T_hot))
-      throw std::runtime_error(
-          "TADAH:ANNEAL_PT: resolved ladder is invalid (T_COLD=" +
-          std::to_string(T_cold) + ", T_HOT=" + std::to_string(T_hot) +
-          "); set PARAM T_COLD/T_HOT or LADDER_SPAN consistently");
+      throw ladder_error(kb.t_start ? "" : "the calibration", T_hot, T_cold);
 
     /* --- ladder + chains ----------------------------------------------
      * Every rank builds the FULL temperature ladder (identical, cheap)
@@ -1953,6 +1981,10 @@ template<typename Vec, typename HostT>
      * This phase deliberately precedes every epoch/swap/flow counter. Host
      * calls still consume the shared hard budget and discovered states/bests
      * are retained, while production diagnostics start from a clean epoch 0. */
+    /* The warm-up stopped at its budget, a quarter of MAXEVAL, before every
+     * coordinate finished: the step scales, and the T_HOT of calibration
+     * pass 2, then depend on MAXEVAL. */
+    bool warmup_capped = false;
     if (proceed && kb.step_mode != anneal_enums::STEP_MODE::FIXED) {
       /* Dedicated warm-up streams (SALT_WARMUP, global slot key): the
        * calibration must not consume the chains' production streams, so
@@ -2104,14 +2136,11 @@ template<typename Vec, typename HostT>
       {
         const std::uint64_t spent_now = world > 1
             ? hpo_allreduce_sum(budget.spent()) : budget.spent();
-        if (rank == 0 && warmup_code == 0 &&
-            max_eval_global != HUGE_UNSIGNED &&
+        /* Said with the calibration summary below, which counts the
+         * coordinates the budget interrupted. */
+        if (warmup_code == 0 && max_eval_global != HUGE_UNSIGNED &&
             spent_now - warmup_spent_begin >= warmup_budget)
-          HPOLog::instance().info(
-              "ANNEAL_PT step warm-up reached the calibration budget "
-              "(MAXEVAL/4 = " + std::to_string(warmup_budget) +
-              " evals); unfinished coordinates continue at their best "
-              "tested scales (see the calibration summary)");
+          warmup_capped = true;
       }
 
       for (std::size_t li = 0; li < n_local; ++li) {
@@ -2148,10 +2177,10 @@ template<typename Vec, typename HostT>
         rc_pilot_proposed, rc_pilot_accepted, rc_pilot_backoffs,
         rc_pilot_multiplier, rc_pilot_val_accepted, rc_pilot_val_attempts,
         rc_pilot_val_mean_alpha, rc_pilot_unusable, rc_pilot_status,
-        rc_pilot_moved, rc_field_count
+        rc_pilot_moved, rc_have_best, rc_field_count
       };
       constexpr std::size_t fields = rc_field_count;
-      static_assert(fields == 19, "step-scale record layout changed");
+      static_assert(fields == 20, "step-scale record layout changed");
       std::vector<double> local_records;
       local_records.reserve(n_local * dim * fields);
       for (std::size_t li = 0; li < n_local; ++li) {
@@ -2180,6 +2209,7 @@ template<typename Vec, typename HostT>
           rec[rc_pilot_unusable]   = static_cast<double>(sc.pilot_unusable);
           rec[rc_pilot_status]     = static_cast<double>(sc.pilot_status);
           rec[rc_pilot_moved]      = sc.pilot_multiplier_moved ? 1.0 : 0.0;
+          rec[rc_have_best]        = dc.have_best ? 1.0 : 0.0;
           local_records.insert(local_records.end(), rec, rec + fields);
         }
       }
@@ -2250,6 +2280,10 @@ template<typename Vec, typename HostT>
         std::size_t status_hypersensitive = 0;
         std::size_t unexplained_dimensions = 0;
         std::size_t unresolved_pilots = 0;
+        /* Interrupted coordinates without a tested scale (they go on at
+         * their starting scale), and the evaluations of the pilots. */
+        std::size_t interrupted_untested = 0;
+        std::size_t pilot_evaluations = 0;
         for (std::size_t k = 0; k < K; ++k) {
           std::size_t coordinate_accepted = 0;
           std::size_t coordinate_validation_attempts = 0;
@@ -2337,7 +2371,11 @@ template<typename Vec, typename HostT>
             if (status & pt_detail::StepNumericalFloor) ++status_floor;
             if (status & pt_detail::StepSupportCapped) ++status_capped;
             if (status & pt_detail::StepUnconverged) ++status_unconverged;
-            if (status & pt_detail::StepInterrupted) ++status_interrupted;
+            if (status & pt_detail::StepInterrupted) {
+              ++status_interrupted;
+              if (gathered_step_records[p + rc_have_best] == 0.0)
+                ++interrupted_untested;
+            }
             if (status & pt_detail::StepBracketOk) ++status_bracket_ok;
             if (status & pt_detail::StepInsensitive) ++status_insensitive;
             if (status & pt_detail::StepHypersensitive)
@@ -2377,6 +2415,7 @@ template<typename Vec, typename HostT>
                     gathered_step_records[slot_base + rc_pilot_status]))
               : pt_detail::StepOk;
           if (pilot_status & pt_detail::StepUnconverged) ++unresolved_pilots;
+          pilot_evaluations += pilot_attempts;
           std::ostringstream diag;
           diag << std::scientific << std::setprecision(3)
                << "ANNEAL_PT step calibration slot=" << logidx::uis(k)
@@ -2426,30 +2465,63 @@ template<typename Vec, typename HostT>
                   << "  unresolved-pilots=" << unresolved_pilots;
           HPOLog::instance().info(summary.str());
         }
+        if (warmup_capped) {
+          /* About 2*STEP_WARMUP_SWEEPS*dim coordinate evaluations and up
+           * to about 200 pilot evaluations per slot. */
+          const std::uint64_t coordinates = anneal::saturating_mul(
+              anneal::saturating_mul(
+                  static_cast<std::uint64_t>(kb.step_warmup_sweeps), 2),
+              static_cast<std::uint64_t>(dim));
+          const std::uint64_t per_slot =
+              coordinates > HUGE_UNSIGNED - 200 ? HUGE_UNSIGNED
+                                                : coordinates + 200;
+          const std::uint64_t complete = anneal::saturating_mul(
+              static_cast<std::uint64_t>(K), per_slot);
+          const std::string msg =
+              "ANNEAL_PT: the step warm-up stopped at its budget, " +
+              count_text(warmup_budget, "evaluation", "evaluations") +
+              ", a quarter of MAXEVAL " + std::to_string(max_eval_global) +
+              ": " + std::to_string(status_interrupted) + " of the " +
+              std::to_string(K * dim) + " slot coordinates (" +
+              count_text(K, "slot", "slots") + " x " +
+              count_text(dim, "search parameter", "search parameters") +
+              ") did not finish (" +
+              std::to_string(interrupted_untested) + " of them without a "
+              "tested scale), and the pilot made " +
+              count_text(pilot_evaluations, "evaluation", "evaluations") +
+              ". A complete "
+              "warm-up takes up to about " + std::to_string(complete) +
+              " evaluations, so the step scales, and a calibrated T_HOT, "
+              "depend on MAXEVAL; STEP_MODE FIXED runs no warm-up, and an "
+              "explicit PARAM T_HOT is not calibrated.";
+          std::cerr << "[HPO] WARNING: " << msg << "\n";
+          HPOLog::instance().warning(msg);
+        }
         if (warmup_code == 0 &&
             (unexplained_dimensions > 0 || unresolved_pilots > 0)) {
           HPOLog::instance().warning(
-              "ANNEAL_PT automatic step warm-up continuing with best tested "
+              "ANNEAL_PT: the step warm-up goes on with its best tested "
               "scales: " + std::to_string(unexplained_dimensions) +
-              " unexplained coordinate miss(es), " +
+              " coordinate(s) missed for no known reason and " +
               std::to_string(unresolved_pilots) +
-              " unresolved full-vector pilot(s); inspect the calibration-only "
-              "hpo_step_scales.tsv file");
+              " full-vector pilot(s) did not converge; hpo_step_scales.tsv "
+              "has the calibration of each coordinate");
         }
         if (warmup_code == 0 &&
             (status_insensitive > 0 || status_hypersensitive > 0)) {
           HPOLog::instance().hint(
-              "step warm-up sensitivity classification: 'insensitive' dims "
-              "(best alpha ~ 1 at every tested scale) do not affect the "
-              "objective over their OPTIM range -- consider dropping or "
-              "fixing them; 'hypersensitive' dims (best alpha ~ 0) collapse "
-              "acceptance at every tested scale -- consider narrowing or "
-              "log-scaling their OPTIM range");
+              "step warm-up: an 'insensitive' dimension (acceptance near 1 "
+              "at every tested scale) does not change the loss over its "
+              "OPTIM range, so fixing it at one value costs the search "
+              "little; a 'hypersensitive' dimension (acceptance near 0 at "
+              "every tested scale) rejects nearly every step, which a "
+              "narrower or log-scaled OPTIM range avoids");
         }
         HPOLog::instance().info(
-            "ANNEAL_PT automatic step warm-up spent " +
+            "ANNEAL_PT: the step warm-up took " +
             std::to_string(warmup_spent_end - warmup_spent_begin) +
-            " host eval(s); production epoch/swap/flow statistics reset");
+            " evaluations; the swap and flow statistics of the search start "
+            "after it");
       }
 
       if (warmup_code != 0) {
@@ -2552,11 +2624,7 @@ template<typename Vec, typename HostT>
         const double t_cold_pass2 =
             kb.t_cold ? *kb.t_cold : t_hot_pass2 / kb.ladder_span;
         if (!(t_cold_pass2 > 0.0 && t_cold_pass2 < t_hot_pass2))
-          throw std::runtime_error(
-              "TADAH:ANNEAL_PT: calibration pass 2 produced an invalid "
-              "ladder (T_COLD=" + std::to_string(t_cold_pass2) +
-              ", T_HOT=" + std::to_string(t_hot_pass2) +
-              "); set PARAM T_HOT/T_COLD explicitly");
+          throw ladder_error("calibration pass 2", t_hot_pass2, t_cold_pass2);
         T_hot = t_hot_pass2;
         T_cold = t_cold_pass2;
         log_t_cold = std::log(static_cast<long double>(T_cold));
@@ -2567,10 +2635,13 @@ template<typename Vec, typename HostT>
           std::ostringstream oss;
           oss << std::scientific << std::setprecision(3)
               << "ANNEAL_PT calibration pass 2: T_HOT=" << T_hot
-              << " from the calibrated production kernel (pass 1 used the "
-                 "generic STEP_FRAC kernel; pass2/pass1 ratio="
+              << " from probes with the proposal scales of the hottest slot "
+                 "after the step warm-up"
+              << (warmup_capped ? ", which stopped at its budget" : "")
+              << " (pass 1 used the STEP_FRAC scales; T_HOT of pass 2 / "
+                 "pass 1 = "
               << std::fixed << std::setprecision(2) << ratio
-              << "); ladder rebuilt";
+              << "); the ladder is rebuilt";
           HPOLog::instance().info(oss.str());
           std::ostringstream head2;
           head2 << "ANNEAL_PT ladder T per slot after calibration pass 2 ("

@@ -507,8 +507,10 @@ TEST_CASE("hpo --check: a run that stops at startup creates no DUMP or "
  * drop: for a setup without THREADS whose residual OpenMP width is 2, and
  * with PC_ISOLATION THREAD, the summary's first line counts them ("passed
  * the startup checks, with 2 warnings.") and its section "Warnings and
- * hints" lists each with its tag: "THREADS not set: ..." and, in the
- * serial build, "PC_ISOLATION: THREAD (deprecated fallback) -- ...". The
+ * hints" lists each with its tag: "THREADS is not set: ..." and, in the
+ * serial build, "PC_ISOLATION THREAD is deprecated in the serial build:
+ * ..." (they were "THREADS not set: the pc_lammps fan-out ..." and
+ * "PC_ISOLATION: THREAD (deprecated fallback) -- ..."). The
  * same setup as a run writes each of its startup WARNING and HINT lines
  * (those before the PROGRESS section of hpo_run.log) into the journal, and
  * the first line of each is in the check's summary.
@@ -543,8 +545,8 @@ TEST_CASE("hpo --check prints the startup warnings and hints the run writes "
     const std::size_t n_warnings = 1;
 #else
     const std::size_t n_warnings = 2;
-    CHECK(contains(summary, "\n  WARNING  PC_ISOLATION: THREAD (deprecated "
-                            "fallback) -- "));
+    CHECK(contains(summary, "\n  WARNING  PC_ISOLATION THREAD is deprecated "
+                            "in the serial build: "));
 #endif
     CHECK(contains(summary, "tadah hpo --check: config.hpo passed the "
                             "startup checks, with " +
@@ -552,9 +554,8 @@ TEST_CASE("hpo --check prints the startup warnings and hints the run writes "
                                 (n_warnings == 1 ? "" : "s") + ".\n"));
     CHECK(contains(summary, "\nWarnings and hints, which a run writes to "
                             "its journal (hpo_run.log):\n"));
-    CHECK(contains(summary, "\n  WARNING  THREADS not set: the pc_lammps "
-                            "fan-out and MLIP train/predict run on a SINGLE "
-                            "worker."));
+    CHECK(contains(summary, "\n  WARNING  THREADS is not set: one worker runs "
+                            "the work of the evaluations"));
 
     fresh_process_state();
     tadah::core::Context ctx =
@@ -699,9 +700,8 @@ TEST_CASE("hpo --check: the startup warnings before an error are written "
     CHECK(contains(err, "tadah hpo --check: the startup checks stopped at "
                         "the error below.\nWarnings and hints, which a run "
                         "writes to its journal (hpo_run.log):\n"));
-    CHECK(contains(err, "\n  WARNING  THREADS not set: the pc_lammps "
-                        "fan-out and MLIP train/predict run on a SINGLE "
-                        "worker."));
+    CHECK(contains(err, "\n  WARNING  THREADS is not set: one worker runs the "
+                        "work of the evaluations"));
 }
 
 namespace {

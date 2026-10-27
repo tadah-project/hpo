@@ -38,6 +38,10 @@ struct RhoGateSpec {
     std::optional<double> r_lo;          // R_LO: finite, >= 0
     std::size_t           npts = 20001;  // 2 <= NPTS <= 1e7
     bool                  seed_warn = false;
+    /* The line of the target file and its text (0 and "" for a spec made
+     * without a file): the startup refusals of the gate name it. */
+    std::size_t           line = 0;
+    std::string           line_text;
 };
 
 /* RHOBARGATE <lattice> <a0> <f_lo> <f_hi> [NPTS <n>] [SEED ERROR|WARN] --
@@ -52,6 +56,10 @@ struct RhoBarGateSpec {
     double      f_lo = 0.0, f_hi = 0.0;  // finite, 0 < f_lo < f_hi
     std::size_t npts = 1001;             // 3 <= NPTS <= 1e7
     bool        seed_warn = false;
+    /* The line of the target file and its text (0 and "" for a spec made
+     * without a file): the startup refusals of the gate name it. */
+    std::size_t line = 0;
+    std::string line_text;
 };
 
 class HPOTargets {
@@ -77,7 +85,10 @@ private:
     };
 
     size_t ui_offset(std::vector<std::string> &tokens, size_t ui);
-    std::vector<std::string> parse_optim_line(std::istringstream& iss);
+    /* The (indices) and the tokens after them; @p what, "OPTIM <KEY>",
+     * names the line in a refusal. */
+    std::vector<std::string> parse_optim_line(std::istringstream& iss,
+                                              const std::string& what);
     /* Throws when the run cannot create the archive directory @p dir of
      * the line @p key (DUMP, BDUMP) or write into it, and creates nothing.
      * The path is taken where the operating system puts it (every symbolic
@@ -170,6 +181,12 @@ public:
      * (core::retired_key_text). Returns the error message, "" for another
      * key. */
     static std::string optim_retired_key_error(const std::string& key);
+    /** OPTIM WEIGHTS, the coefficients each evaluation fits (a searched
+     * value would be replaced by the fit; OPTIM FIXWEIGHT searches the
+     * coefficients FIXINDEX holds fixed), and OPTIM EMBF0, a choice of the
+     * DM_REAM embedding reference, are refused; compared
+     * case-insensitively. Returns the error message, "" for another key. */
+    static std::string optim_fitted_key_error(const std::string& key);
     /* OPTIM on structure data is refused: the density form (RHOFORM), the
      * descriptor types (TYPE2B, TYPEMB), the cutoff classes (RCTYPE2B,
      * RCTYPEMB), the knot-degree lists (KDEG2B, KDEGMB, KDEGEMB), the
@@ -177,7 +194,8 @@ public:
      * the model (MODEL); compared case-insensitively. Their values are
      * discrete or describe the data, so a searched value is truncated,
      * refused or meaningless. Returns the error message for such a key,
-     * "" for a searchable one. (OPTIM EMBF0 has its own message.) */
+     * "" for a searchable one. (OPTIM EMBF0 has its own message,
+     * optim_fitted_key_error.) */
     static std::string optim_structure_key_error(const std::string& key);
     /* A discrete value of a key whose other values are continuous: the
      * first OALGO value (the training algorithm; the second, the rcond M,
@@ -343,13 +361,14 @@ public:
     /* MAX_TIME in seconds (parse_script_timeout), > 0: nullopt for "off"
      * and "unlimited". Sizes the PROCESS worker deadline. */
     std::optional<double> MAX_TIME_seconds;
-    /* Which root key last supplied MAX_TIME, and whether each spelling was
-     * seen -- consumed by the startup diagnostic line and the both-keys
-     * warning. PC_SCRIPT_TIMEOUT is the self-describing name; MAXTIME is the
-     * legacy alias kept so existing .hpo configs keep parsing. */
-    std::string MAX_TIME_key;           // "PC_SCRIPT_TIMEOUT" | "MAXTIME" | ""
-    bool MAX_TIME_seen_new    = false;  // PC_SCRIPT_TIMEOUT was given
-    bool MAX_TIME_seen_legacy = false;  // legacy MAXTIME was given
+    /* The line of the first top-level MAXTIME line, PC_SCRIPT_TIMEOUT
+     * under another name (0: none), for the journal's note on the name:
+     * MAXTIME inside an optimiser block is the time limit of a search.
+     * Each PC_LAMMPS and PC_FAILPROBE line keeps where its own limit comes
+     * from (LammpsSim::maxtime_source). */
+    std::size_t MAXTIME_line = 0;
+    /* The PC_WORKER_TIMEOUT line (0: none), for the journal. */
+    std::size_t PC_WORKER_TIMEOUT_line = 0;
 
     /* PC_ISOLATION: execution mode for the pc_lammps fan-out.
      *   PROCESS (default) -- persistent worker-process pool: each fan-out

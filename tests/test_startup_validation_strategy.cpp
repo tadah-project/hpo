@@ -389,8 +389,9 @@ std::string prestage_body(const std::string& lib, const std::string& algo,
 
 /* Pins: a global optimiser that takes one starting point is refused under
  * STRATEGY TYPE MULTISTART for any N_STARTS, the refusal naming the local
- * optimisers as the alternatives ("Use a local optimiser (CERES:..., ...
- * (N more))", the first ones of the sorted list); local optimisers pass
+ * optimisers as the alternatives ("A local optimiser (CERES:..., ...
+ * (N more)) runs from each start", the first ones of the sorted list) and
+ * saying what runs ("STRATEGY TYPE PLAIN runs X once."); local optimisers pass
  * (DLIB:BFGS, NLOPT:LN_SBPLX). DLIB:GFS, which takes every INIT point in
  * one run, is refused with a message of its own (the case "MULTISTART
  * refuses an optimiser that takes every INIT point in one run").
@@ -420,17 +421,19 @@ TEST_CASE("startup validation: MULTISTART rejects a single-seed global "
             const auto v =
                 judge(strategy_config(multistart_body(c.lib, c.algo,
                                                       c.n_starts, c.extra)));
+            /* The message says what runs (it ended "Use a local optimiser
+             * (...), or STRATEGY TYPE PLAIN to run X once."). */
             CHECK_THAT(v.startup,
                        Catch::Contains("STRATEGY TYPE MULTISTART cannot run " +
                                        c.lib + ":" + c.algo + ":") &&
                        Catch::Contains("any N_STARTS") &&
                        Catch::Contains(": it is a global optimiser that takes "
                                        "one starting point, so ") &&
-                       Catch::Contains("STRATEGY TYPE PLAIN to run " + c.lib +
-                                       ":" + c.algo + " once"));
+                       Catch::Contains("STRATEGY TYPE PLAIN runs " + c.lib +
+                                       ":" + c.algo + " once."));
             CHECK(v.policy == v.startup);
             if (!v.startup.empty())
-                check_alternatives(v.startup, "Use a local optimiser",
+                check_alternatives(v.startup, "A local optimiser",
                                    &is_local);
         }
     }
@@ -636,12 +639,16 @@ TEST_CASE("startup validation: an INNER block without LIB or ALGO is "
                 static_cast<std::size_t>(
                     std::count(upto.begin(), upto.end(), '\n')) + 1;
             INFO(c.name << ", config:\n" << text);
+            /* The message says which lines name the optimiser (it ended "; set
+             * LIB and ALGO inside the INNER block (...)"). */
             CHECK_THAT(parse_error(text),
                        Catch::StartsWith(
                            "Error on line " + std::to_string(endinner_line) +
                            ": the INNER block inside " + c.enclosing +
                            " names no optimiser: " + c.missing +
-                           "; set LIB and ALGO inside the INNER block") &&
+                           "; LIB and ALGO inside the INNER block name the "
+                           "local optimiser that NLopt's MLSL and AUGLAG "
+                           "run") &&
                        Catch::EndsWith("Line:     ENDINNER"));
         }
     }
@@ -686,12 +693,16 @@ TEST_CASE("startup validation: a STRATEGY key of another TYPE is rejected at "
         const auto msg = parse_error(strategy_config(
             c.type_line + "    " + c.knob + "\n    LIB DLIB\n    ALGO BFGS\n"
             "    MAXEVAL 20\n"));
+        /* The message says where the key takes effect (it ended "; set TYPE
+         * <home> or remove <key>"). */
         CHECK_THAT(msg,
                    Catch::StartsWith("Error on line " +
                                      std::to_string(knob_line) + ": " + key +
                                      " is not accepted with STRATEGY " +
                                      c.type_named) &&
-                   Catch::Contains("set " + c.home + " or remove " + key) &&
+                   Catch::EndsWith("; " + key + " takes effect under "
+                                   "STRATEGY " + c.home + "\nLine:     " +
+                                   c.knob) &&
                    Catch::EndsWith("Line:     " + c.knob));
     }
 
@@ -1012,9 +1023,10 @@ TEST_CASE("startup validation: an optimiser refuses a PARAM key it does not "
                   .startup == c.error);
     }
     const auto asa = judge(plain("ASA", "ASA", "    PARAM Bogus_Option word\n"));
+    /* The list follows "; accepted keys:" (it was ". Accepted keys:"). */
     CHECK_THAT(asa.startup,
-               Catch::StartsWith(top + "ASA:ASA: unknown PARAM 'Bogus_Option'. "
-                                       "Accepted keys:"));
+               Catch::StartsWith(top + "ASA:ASA: unknown PARAM 'Bogus_Option'; "
+                                       "accepted keys:"));
     CHECK(judge(plain("CERES", "STEEPEST_DESCENT",
                       "    PARAM max_iter many\n")).startup ==
           hpo_test::ceres_expect(
@@ -1362,8 +1374,9 @@ TEST_CASE("startup validation: a second STRATEGY block is rejected at its "
             "ENDOPTIMIZER\nOPTIMIZER\n  STRATEGY\n    TYPE PLAIN\n"
             "  ENDSTRATEGY\nENDOPTIMIZER\n");
         CHECK(twice == "Error on line 11: OPTIMIZER block given more than "
-                       "once (the first opens on line 3); write every "
-                       "optimiser setting in one block\nLine: OPTIMIZER");
+                       "once (the first opens on line 3); one OPTIMIZER "
+                       "block holds every optimiser setting\nLine: "
+                       "OPTIMIZER");
     }
 }
 
@@ -1399,12 +1412,15 @@ TEST_CASE("startup validation: an INNER block needs an optimiser that runs "
             INFO(la.first << ":" << la.second);
             const auto v = judge(strategy_config(
                 "    TYPE PLAIN\n" + mlsl + inner(la.first, la.second)));
+            /* The message says what the INNER block takes (it ended "set LIB
+             * NLOPT and an NLopt ALGO (such as LN_BOBYQA) inside the INNER block"). */
             CHECK_THAT(v.startup,
                        Catch::StartsWith("the INNER block of the STRATEGY-level "
                                          "optimiser names " + la.first + ":" +
                                          la.second + ", but NLOPT:G_MLSL_LDS "
                                          "runs its INNER search with NLopt") &&
-                       Catch::Contains("set LIB NLOPT and an NLopt ALGO"));
+                       Catch::EndsWith("the INNER block takes LIB NLOPT and "
+                                       "an NLopt ALGO, such as LN_BOBYQA"));
         }
     }
     SECTION("an INNER block under an optimiser that runs none") {
@@ -1426,12 +1442,14 @@ TEST_CASE("startup validation: an INNER block needs an optimiser that runs "
                   "the PRESTAGE refinement", "NLOPT:LN_BOBYQA"}}) {
             INFO(c.name << " (" << c.phase << ")");
             const auto v = judge(strategy_config(c.body));
+            /* It was "X does not accept an INNER sub-optimiser (...): ...;
+             * remove the INNER block or pick one of them". */
             CHECK_THAT(v.startup,
-                       Catch::StartsWith(c.name + " does not accept an INNER "
-                                         "sub-optimiser (the INNER block of " +
-                                         c.phase + ")") &&
+                       Catch::StartsWith(c.name + " takes no INNER block (the "
+                                         "INNER block of " + c.phase + ")") &&
                        Catch::Contains("NLOPT:AUGLAG") &&
-                       Catch::Contains("remove the INNER block"));
+                       Catch::Contains("an INNER block is taken by them "
+                                       "only"));
         }
     }
     SECTION("the same rules for a spec built outside the parser") {
@@ -1442,9 +1460,9 @@ TEST_CASE("startup validation: an INNER block needs an optimiser that runs "
         sp.inner->lib = "NLOPT";
         sp.inner->algo = "LN_SBPLX";
         CHECK_THAT(error_of([&] { tadah::hpo::validate_run_policy(sp); }),
-                   Catch::StartsWith("DLIB:BFGS does not accept an INNER "
-                                     "sub-optimiser (the INNER block of the "
-                                     "STRATEGY-level optimiser): only NLopt"));
+                   Catch::StartsWith("DLIB:BFGS takes no INNER block (the "
+                                     "INNER block of the STRATEGY-level "
+                                     "optimiser): only NLopt"));
         sp.lib = "NLOPT";
         sp.algo = "AUGLAG";
         sp.inner->lib = "DLIB";
@@ -2284,10 +2302,13 @@ TEST_CASE("startup validation: each phase's backend checks run at startup",
               "    MAXEVAL 20\n    PARAM REPLICAS 2\n"
               "    PARAM LADDER_ADAPT ON\n",
               "TADAH:ANNEAL_PT: LADDER_ADAPT requires REPLICAS >= 3"},
+             /* "does not implement FTOL_REL/FTOL_ABS" became "does not take
+              * FTOL_REL or FTOL_ABS", and "CHAIN_LENGTH AUTO needs MAXEVAL to derive
+              * the per-rung budget" says what AUTO does. */
              {"ASA:ASA with FTOL_REL",
               "    TYPE PLAIN\n    LIB ASA\n    ALGO ASA\n    MAXEVAL 20\n"
               "    FTOL_REL 1e-6\n",
-              "ASA:ASA does not implement FTOL_REL/FTOL_ABS"},
+              "ASA:ASA does not take FTOL_REL or FTOL_ABS"},
              {"TADAH:GRID with an unknown PARAM",
               "    TYPE PLAIN\n    LIB TADAH\n    ALGO GRID\n"
               "    PARAM GRID_STEPS 5\n",
@@ -2295,7 +2316,11 @@ TEST_CASE("startup validation: each phase's backend checks run at startup",
              {"TADAH:GRID with a one-point grid",
               "    TYPE PLAIN\n    LIB TADAH\n    ALGO GRID\n"
               "    PARAM GRID_POINTS 1\n",
-              "TADAH:GRID PARAM GRID_POINTS must be an integer >= 2"},
+              /* It was "TADAH:GRID PARAM GRID_POINTS must be an integer
+               * >= 2 (got 1.000000; ...)". */
+              "TADAH:GRID: PARAM GRID_POINTS must be an integer from 2 to "
+              "4294967295, got '1' (the points of each dimension include "
+              "both of its bounds)"},
              /* A backend with no convergence test and no finite schedule
               * needs a stop (the cases of its own test case below). */
              {"TADAH:RANDOM without a stop",
@@ -2313,7 +2338,8 @@ TEST_CASE("startup validation: each phase's backend checks run at startup",
              {"TADAH:ANNEAL without MAXEVAL (AUTO chain lengths)",
               "    TYPE PLAIN\n    LIB TADAH\n    ALGO ANNEAL\n"
               "    MAXTIME 60\n",
-              "TADAH:ANNEAL: CHAIN_LENGTH AUTO needs MAXEVAL"}}) {
+              "TADAH:ANNEAL: CHAIN_LENGTH AUTO spreads MAXEVAL over the "
+              "temperature steps, and this search has no MAXEVAL"}}) {
         INFO(c.what);
         const auto v = judge(strategy_config(c.body));
         CHECK_THAT(v.startup, Catch::Contains(c.message));
@@ -2570,21 +2596,27 @@ TEST_CASE("startup validation: the GRAD_STRATEGY ANALYTICAL check, the "
     SECTION("the multi-rank dispatch refusal of a parsed spec") {
         PeriodicTable::initialize();
         for (const auto& c : std::vector<Case>{
+                 /* The messages say what a run on several ranks takes, and why (they
+                  * were "multi-rank HPO supports only ...; got TADAH:RANDOM on 2 ranks"
+                  * and "multi-rank HPO does not support RESTART (...)"). */
                  {"TADAH:RANDOM on 2 ranks",
                   strategy_config("    TYPE PLAIN\n    LIB TADAH\n"
                                   "    ALGO RANDOM\n    MAXEVAL 2\n"),
                   "ENDOPTIMIZER",
-                  "multi-rank HPO supports only STRATEGY TYPE PLAIN with LIB "
-                  "TADAH and ALGO ANNEAL_PT or ANNEAL_PA; got TADAH:RANDOM "
-                  "on 2 ranks"},
+                  "a run on 2 MPI ranks takes STRATEGY TYPE PLAIN with "
+                  "TADAH:ANNEAL_PT or TADAH:ANNEAL_PA only, and the block has "
+                  "STRATEGY TYPE PLAIN with TADAH:RANDOM"},
                  {"TADAH:ANNEAL_PT with RESTART on 2 ranks",
                   strategy_config("    TYPE PLAIN\n    LIB TADAH\n"
                                   "    ALGO ANNEAL_PT\n    MAXEVAL 20\n"
                                   "    RESTART\n      AFTER_STAGNATION 10\n"
                                   "      MAX 1\n    ENDRESTART\n"),
                   "ENDOPTIMIZER",
-                  "multi-rank HPO does not support RESTART (AFTER_STAGNATION "
-                  "10, MAX 1 on 2 ranks)"}}) {
+                  "a run on 2 MPI ranks takes no RESTART block "
+                  "(AFTER_STAGNATION 10, MAX 1): each rank counts its own "
+                  "evaluations without a new best, so one rank would restart "
+                  "without the others; a run with a RESTART block runs on one "
+                  "rank"}}) {
             INFO(c.what << ", config:\n" << c.config);
             ScopedTempFile tf(c.config);
             Context ctx = make_minimal_ctx();
@@ -2611,9 +2643,10 @@ TEST_CASE("startup validation: the GRAD_STRATEGY ANALYTICAL check, the "
  * Pins: each refusal is "Error on line N: <what>\nLine: <text>", N the
  * line of the STEP it refuses -- in the STRATEGY block, the EXPLORE block
  * and an INNER block (the STRATEGY-level one's and the EXPLORE block's),
- * the message naming the optimiser without its phase ("DLIB:BFGS does not
- * use STEP; ...") -- and, for overrides that cover only some dimensions, a
- * refusal of several lines, the line that closes the block (ENDOPTIMIZER).
+ * the message naming the optimiser in words before it ("the STRATEGY-level
+ * optimiser: DLIB:BFGS does not use STEP; ...") -- and, for overrides that
+ * cover only some dimensions, a refusal of several lines, the line that
+ * closes the block (ENDOPTIMIZER).
  * Before the fix: every refusal named the line that closes the block
  * (ENDOPTIMIZER, ENDEXPLORE, ENDINNER), with the phase after the optimiser
  * ("DLIB:BFGS (OUTER) does not use STEP; ..."); before that, no line. */
@@ -2630,12 +2663,14 @@ TEST_CASE("startup validation: the STEP rules name the STEP line, or the "
         {"STEP on the STRATEGY-level DLIB:BFGS",
          strategy_config("    TYPE PLAIN\n    LIB DLIB\n    ALGO BFGS\n"
                          "    MAXEVAL 20\n    STEP 0.1\n"),
-         "STEP 0.1", "DLIB:BFGS does not use STEP"},
+         "STEP 0.1",
+         "the STRATEGY-level optimiser: DLIB:BFGS does not use STEP"},
         {"STEP 0.9 on the STRATEGY-level NLOPT:LN_SBPLX",
          strategy_config("    TYPE PLAIN\n    LIB NLOPT\n    ALGO LN_SBPLX\n"
                          "    MAXEVAL 20\n    STEP 0.9\n"),
          "STEP 0.9",
-         "NLOPT:LN_SBPLX: STEP must be a fraction of the OPTIM width "
+         "the STRATEGY-level optimiser: NLOPT:LN_SBPLX: STEP must be a "
+         "fraction of the OPTIM width "
          "in (0, 0.5] (got 0.9)"},
         {"a STEP override that covers one of two dimensions",
          two_dims + "OPTIMIZER\n  STRATEGY\n    TYPE PLAIN\n    LIB NLOPT\n"
@@ -2649,13 +2684,15 @@ TEST_CASE("startup validation: the STEP rules name the STEP line, or the "
                          "    MAXEVAL 20\n    EXPLORE\n      LIB NLOPT\n"
                          "      ALGO GN_CRS2_LM\n      MAXEVAL 12\n"
                          "      STEP 0.1\n    ENDEXPLORE\n"),
-         "STEP 0.1", "NLOPT:GN_CRS2_LM does not use STEP"},
+         "STEP 0.1",
+         "the PRESTAGE exploration (EXPLORE block): NLOPT:GN_CRS2_LM does "
+         "not use STEP"},
         {"STEP on the STRATEGY-level INNER block's NLOPT:LD_LBFGS",
          strategy_config("    TYPE PLAIN\n    LIB NLOPT\n    ALGO G_MLSL_LDS\n"
                          "    MAXEVAL 60\n    INNER\n      LIB NLOPT\n"
                          "      ALGO LD_LBFGS\n      STEP 0.1\n"
                          "    ENDINNER\n"),
-         "STEP 0.1", "NLOPT:LD_LBFGS does not use STEP"},
+         "STEP 0.1", "the INNER search: NLOPT:LD_LBFGS does not use STEP"},
         {"STEP on the EXPLORE block's INNER block's NLOPT:LD_LBFGS",
          strategy_config("    TYPE PRESTAGE\n    LIB NLOPT\n    ALGO LN_SBPLX\n"
                          "    MAXEVAL 20\n    EXPLORE\n      LIB NLOPT\n"
@@ -2663,7 +2700,9 @@ TEST_CASE("startup validation: the STEP rules name the STEP line, or the "
                          "      INNER\n        LIB NLOPT\n"
                          "        ALGO LD_LBFGS\n        STEP 0.1\n"
                          "      ENDINNER\n    ENDEXPLORE\n"),
-         "STEP 0.1", "NLOPT:LD_LBFGS does not use STEP"}};
+         "STEP 0.1",
+         "the INNER search of the EXPLORE block: NLOPT:LD_LBFGS does not "
+         "use STEP"}};
     for (const auto& c : cases) {
         INFO(c.what << ", config:\n" << c.config);
         const auto at = line_of(c.config, c.closing);
@@ -3124,10 +3163,12 @@ TEST_CASE("startup validation: a backend with no convergence test and no "
                         "      STOPVAL 0.1\n    ENDINNER\n");
     /* Lines 1-4 are kRoot, OPTIMIZER and STRATEGY; the INNER block's
      * STOPVAL is line 11. */
+    /* The message names the block that takes STOPVAL (it ended "; set
+     * STOPVAL on the enclosing STRATEGY block"). */
     CHECK(parse_error(strategy_config(inner_stopval)) ==
           "Error on line 11: STOPVAL is not accepted inside an INNER block: "
           "NLopt's MLSL and AUGLAG replace the INNER search's STOPVAL with the "
-          "enclosing block's; set STOPVAL on the enclosing STRATEGY block\n"
+          "enclosing block's; the enclosing STRATEGY block takes STOPVAL\n"
           "Line:       STOPVAL 0.1");
 
     /* The whole message of one NLopt global search. */
@@ -3458,12 +3499,16 @@ TEST_CASE("startup validation: NLopt's AUGLAG, AUGLAG_EQ, G_MLSL and "
      * G_MLSL_LDS or AUGLAG failed after some evaluations with only "nlopt
      * invalid argument"; require_inner_backend() returned at once without
      * an INNER block. */
+    /* It ended "; add INNER ... ENDINNER with LIB NLOPT and a local ALGO
+     * such as LN_BOBYQA, or use one of ..., which run ... without one", and
+     * the nested INNER refusal "...: pick a local algorithm such as
+     * LN_BOBYQA". */
     const std::string alternatives =
-        "; add INNER ... ENDINNER with LIB NLOPT and a local ALGO such as "
-        "LN_BOBYQA, or use one of NLOPT:GD_MLSL, NLOPT:GD_MLSL_LDS, "
+        "; an INNER block with LIB NLOPT and a local ALGO, such as "
+        "LN_BOBYQA, names one, or NLOPT:GD_MLSL, NLOPT:GD_MLSL_LDS, "
         "NLOPT:GN_MLSL, NLOPT:GN_MLSL_LDS, NLOPT:LD_AUGLAG, "
-        "NLOPT:LD_AUGLAG_EQ, NLOPT:LN_AUGLAG, NLOPT:LN_AUGLAG_EQ, which run "
-        "LD_MMA or LN_COBYLA without one";
+        "NLOPT:LD_AUGLAG_EQ, NLOPT:LN_AUGLAG, NLOPT:LN_AUGLAG_EQ run LD_MMA "
+        "or LN_COBYLA without one";
     const auto needs = [&](const std::string& algo, const std::string& phase) {
         return "NLOPT:" + algo + " needs an INNER block (" + phase +
                "): NLopt has no default local optimiser for it" + alternatives;
@@ -3497,8 +3542,9 @@ TEST_CASE("startup validation: NLopt's AUGLAG, AUGLAG_EQ, G_MLSL and "
                          "      ALGO " + algo + "\n    ENDINNER\n",
                          "the INNER block of the STRATEGY-level optimiser "
                          "names NLOPT:" + algo + ", which needs an INNER "
-                         "block of its own; INNER blocks do not nest: pick a "
-                         "local algorithm such as LN_BOBYQA"});
+                         "block of its own; INNER blocks do not nest, and the "
+                         "INNER block takes a local algorithm, such as "
+                         "LN_BOBYQA"});
     for (const auto& c : cases) {
         INFO(c.what << "\n" << c.body);
         const auto v = judge(strategy_config(c.body));
@@ -3534,8 +3580,8 @@ TEST_CASE("startup validation: NLopt's AUGLAG, AUGLAG_EQ, G_MLSL and "
     sp.inner->algo = "G_MLSL";
     CHECK(error_of([&] { tadah::hpo::require_inner_backend(sp, ""); }) ==
           "the INNER block of NLOPT:AUGLAG names NLOPT:G_MLSL, which needs an "
-          "INNER block of its own; INNER blocks do not nest: pick a local "
-          "algorithm such as LN_BOBYQA");
+          "INNER block of its own; INNER blocks do not nest, and the INNER "
+          "block takes a local algorithm, such as LN_BOBYQA");
     sp.inner->algo = "LN_BOBYQA";
     CHECK(error_of([&] { tadah::hpo::require_inner_backend(sp, ""); }) == "");
 }
@@ -3744,12 +3790,15 @@ TEST_CASE("startup validation: finite differences fit every OPTIM box, "
             std::string b = body;
             b.replace(b.find("PARAM fd_step 0.4"), 17, "PARAM diff_method 2");
             INFO(b);
+            /* It ended "; use diff_method 0 (CENTRAL, the default) or 1
+             * (FORWARD)". */
             CHECK(judge(strategy_config(b)).startup ==
                   name + ": PARAM diff_method 2 (RIDDERS) is refused: Ridders' "
                   "extrapolation ignored PARAM fd_step, started from a step of "
                   "0.32 x max(|u|, 1) -- outside most OPTIM boxes -- and took "
-                  "up to 20 evaluations per parameter; use diff_method 0 "
-                  "(CENTRAL, the default) or 1 (FORWARD)");
+                  "up to 20 evaluations per parameter; diff_method 0 "
+                  "(CENTRAL, the default) and 1 (FORWARD) take PARAM "
+                  "fd_step");
         }
     }
     SECTION("OPTIM_SCALE NONE: Ceres' rule, the default, over the whole box") {
@@ -4349,10 +4398,10 @@ std::string global_inner_refusal(const std::string& phase,
            (note.empty() ? std::string()
                          : " that does not start at the point it is given (" +
                                note + "; NLopt never reads that point)") +
-           ". Use a local NLopt algorithm in the INNER block, which starts at "
-           "the point it is given (" + joined(starting_where_given(true)) +
-           "), or run NLOPT:" + inner + " as the exploration (EXPLORE block) "
-           "or once, as STRATEGY TYPE PLAIN.";
+           ". A local NLopt algorithm in the INNER block starts at the point "
+           "it is given (" + joined(starting_where_given(true)) + "); NLOPT:" +
+           inner + " runs as the exploration (EXPLORE block) or once, as "
+           "STRATEGY TYPE PLAIN.";
 }
 
 }  // namespace
@@ -4367,10 +4416,10 @@ std::string global_inner_refusal(const std::string& phase,
  * ENDOPTIMIZER line, with "STRATEGY TYPE PRESTAGE cannot refine with
  * NLOPT:<ALGO>: it does not start at the point it is given (<where it
  * starts>; NLopt never reads that point), so the refinement would never use
- * the exploration's candidates, for any TOPK. Use a local optimiser, which
- * starts at each candidate (<every local optimiser of the registry that
- * starts at its point>), or run NLOPT:<ALGO> as the exploration (EXPLORE
- * block) or once, as STRATEGY TYPE PLAIN." -- also with TOPK 3, before the
+ * the exploration's candidates, for any TOPK. A local optimiser starts at
+ * each candidate (<every local optimiser of the registry that starts at its
+ * point>); NLOPT:<ALGO> runs as the exploration (EXPLORE block) or once, as
+ * STRATEGY TYPE PLAIN." -- also with TOPK 3, before the
  * TOPK rule, whose advice (TOPK 1) would not help -- and StagedPolicy::
  * validate() gives the same text; an AUGLAG whose INNER search is one of
  * them is refused at the INNER block's ENDINNER line, as the refinement
@@ -4381,8 +4430,8 @@ std::string global_inner_refusal(const std::string& phase,
  * search is a local search, which NLOPT:AUGLAG starts at its own starting
  * point, and NLOPT:GD_STOGO is a global optimiser that does not start at
  * the point it is given (<where it starts>; NLopt never reads that point).
- * Use a local NLopt algorithm in the INNER block, which starts at the point
- * it is given (<every such NLopt algorithm>), or run NLOPT:GD_STOGO as the
+ * A local NLopt algorithm in the INNER block starts at the point it is
+ * given (<every such NLopt algorithm>); NLOPT:GD_STOGO runs as the
  * exploration (EXPLORE block) or once, as STRATEGY TYPE PLAIN."). The lists
  * hold DLIB:BFGS, NLOPT:LN_BOBYQA and the AUGLAGs with a default local
  * optimiser, and no global optimiser, no TADAH backend and no NLOPT:AUGLAG
@@ -4446,15 +4495,16 @@ TEST_CASE("startup validation: a PRESTAGE refinement or MULTISTART whose "
         CHECK(name.rfind("TADAH:", 0) != 0);
     }
 
+    /* The refusal says what runs (it ended "Use a local optimiser, which
+     * starts at each candidate (...), or run NLOPT:X as the exploration ..."). */
     const auto own = [&](const std::string& algo) {
         return "STRATEGY TYPE PRESTAGE cannot refine with NLOPT:" + algo +
                ": it does not start at the point it is given (" +
                start_note_of(algo) + "; NLopt never reads that point), so "
                "the refinement would never use the exploration's candidates, "
-               "for any TOPK. Use a local optimiser, which starts at each "
-               "candidate (" + joined(local) + "), or run NLOPT:" + algo +
-               " as the exploration (EXPLORE block) or once, as STRATEGY "
-               "TYPE PLAIN.";
+               "for any TOPK. A local optimiser starts at each candidate (" +
+               joined(local) + "); NLOPT:" + algo + " runs as the exploration "
+               "(EXPLORE block) or once, as STRATEGY TYPE PLAIN.";
     };
     const auto refused_at = [](const std::string& config, const Verdict& v,
                                const std::string& closing,
@@ -4581,10 +4631,10 @@ TEST_CASE("startup validation: a PRESTAGE refinement or MULTISTART whose "
  * search is a local search, which NLOPT:<parent> starts at <the points it
  * samples in the OPTIM box | its own starting point>, and NLOPT:<inner> is a
  * global optimiser[ that does not start at the point it is given (<where it
- * starts>; NLopt never reads that point)]. Use a local NLopt algorithm in
- * the INNER block, which starts at the point it is given (<every one>), or
- * run NLOPT:<inner> as the exploration (EXPLORE block) or once, as STRATEGY
- * TYPE PLAIN." (two cases spelt out whole); in every phase: an EXPLORE
+ * starts>; NLopt never reads that point)]. A local NLopt algorithm in the
+ * INNER block starts at the point it is given (<every one>); NLOPT:<inner>
+ * runs as the exploration (EXPLORE block) or once, as STRATEGY TYPE
+ * PLAIN." (two cases spelt out whole); in every phase: an EXPLORE
  * block's INNER block ("the INNER block of the EXPLORE block: ...", at that
  * block's ENDINNER), a REFINE block's and the STRATEGY-level one under
  * PRESTAGE, TOPK 1 and 2 ("the INNER block of the PRESTAGE refinement:
@@ -4682,10 +4732,10 @@ TEST_CASE("startup validation: an INNER block that names a global optimiser "
                 "NLOPT:AUGLAG cannot run NLOPT:GN_CRS2_LM as its INNER "
                 "search: an INNER search is a local search, which "
                 "NLOPT:AUGLAG starts at its own starting point, and "
-                "NLOPT:GN_CRS2_LM is a global optimiser. Use a local NLopt "
-                "algorithm in the INNER block, which starts at the point it "
-                "is given (" + local_list + "), or run NLOPT:GN_CRS2_LM as "
-                "the exploration (EXPLORE block) or once, as STRATEGY TYPE "
+                "NLOPT:GN_CRS2_LM is a global optimiser. A local NLopt "
+                "algorithm in the INNER block starts at the point it is "
+                "given (" + local_list + "); NLOPT:GN_CRS2_LM runs as the "
+                "exploration (EXPLORE block) or once, as STRATEGY TYPE "
                 "PLAIN.", false);
         refused(plain("G_MLSL_LDS",
                       "    MAXEVAL 60\n" + inner("GD_STOGO", "      MAXEVAL 5\n")),
@@ -4696,11 +4746,10 @@ TEST_CASE("startup validation: an INNER block that names a global optimiser "
                 "OPTIM box, and NLOPT:GD_STOGO is a global optimiser that "
                 "does not start at the point it is given (StoGO evaluates the "
                 "centre of the OPTIM box first and then samples the whole "
-                "box; NLopt never reads that point). Use a local NLopt "
-                "algorithm in the INNER block, which starts at the point it "
-                "is given (" + local_list + "), or run NLOPT:GD_STOGO as the "
-                "exploration (EXPLORE block) or once, as STRATEGY TYPE "
-                "PLAIN.", false);
+                "box; NLopt never reads that point). A local NLopt algorithm "
+                "in the INNER block starts at the point it is given (" +
+                local_list + "); NLOPT:GD_STOGO runs as the exploration "
+                "(EXPLORE block) or once, as STRATEGY TYPE PLAIN.", false);
     }
     SECTION("in every phase and STRATEGY TYPE") {
         {
@@ -4830,6 +4879,9 @@ TEST_CASE("startup validation: an INNER block that names a global optimiser "
                                      "GD_STOGO"),
                 true);
     }
+    /* Their texts state what the INNER block takes (they ended "set LIB
+     * NLOPT and an NLopt ALGO (such as LN_BOBYQA) inside the INNER block" and
+     * "pick a local algorithm such as LN_BOBYQA"). */
     SECTION("the INNER rules before it keep their text") {
         CHECK(judge(strategy_config(plain(
                   "G_MLSL_LDS", "    MAXEVAL 60\n    INNER\n      LIB TADAH\n"
@@ -4838,15 +4890,15 @@ TEST_CASE("startup validation: an INNER block that names a global optimiser "
                   .startup ==
               "the INNER block of the STRATEGY-level optimiser names "
               "TADAH:RANDOM, but NLOPT:G_MLSL_LDS runs its INNER search with "
-              "NLopt: set LIB NLOPT and an NLopt ALGO (such as LN_BOBYQA) "
-              "inside the INNER block");
+              "NLopt: the INNER block takes LIB NLOPT and an NLopt ALGO, such "
+              "as LN_BOBYQA");
         CHECK(judge(strategy_config(plain(
                   "GN_MLSL_LDS", "    MAXEVAL 60\n" + inner("G_MLSL"))))
                   .startup ==
               "the INNER block of the STRATEGY-level optimiser names "
               "NLOPT:G_MLSL, which needs an INNER block of its own; INNER "
-              "blocks do not nest: pick a local algorithm such as "
-              "LN_BOBYQA");
+              "blocks do not nest, and the INNER block takes a local "
+              "algorithm, such as LN_BOBYQA");
     }
     SECTION("every local NLopt algorithm is accepted") {
         for (const std::string& name : starting_where_given(true)) {

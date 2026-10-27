@@ -32,13 +32,15 @@ std::vector<std::string> ws_tokens(const std::string& s) {
 }
 
 /* A finite number of the number grammar every key reads (strict_parse.h,
- * parse_number). */
-double parse_double(const std::string& s, const std::string& flag) {
+ * parse_number), the value of @p option of a PC_OBSERVABLE line of the
+ * observable @p kind. */
+double parse_double(const std::string& s, const std::string& kind,
+                    const std::string& option) {
     double v = 0.0;
     if (!parse_number(s, v))
         throw std::runtime_error(
-            "PC_OBSERVABLE: flag '" + flag + "' expected a finite number, got '"
-            + s + "'" + number_underflow_note(s));
+            "PC_OBSERVABLE " + kind + ": " + option + " takes a finite number "
+            "(got '" + s + "')" + number_underflow_note(s));
     return v;
 }
 
@@ -47,9 +49,10 @@ double parse_double(const std::string& s, const std::string& flag) {
  * narrowed from long long without a check (4294967300 became 4), and a
  * sign was read: `--maxiter -0` was 0, and a negative value got a range
  * error that did not name it. */
-int parse_int(const std::string& s, const std::string& flag, int min) {
+int parse_int(const std::string& s, const std::string& kind,
+              const std::string& option, int min) {
     return static_cast<int>(parse_uint(
-        s, "PC_OBSERVABLE: flag '" + flag + "'",
+        s, "PC_OBSERVABLE " + kind + ": " + option,
         static_cast<std::uint64_t>(min),
         static_cast<std::uint64_t>(std::numeric_limits<int>::max())));
 }
@@ -58,6 +61,12 @@ std::unique_ptr<Observable>
 parse_cohesive_energy(const std::vector<std::string>& tokens, std::size_t start,
                       const tadah::LossFunction& default_loss)
 {
+    const std::string observable = "cohesive_energy";
+    auto number = [&](const std::string& s, const std::string& option) {
+        return parse_double(s, observable, option);
+    };
+    auto integer = [&](const std::string& s, const std::string& option,
+                       int min) { return parse_int(s, observable, option, min); };
     CohesiveEnergyObservable::Config cfg;
     /* Defaults. */
     cfg.nx = cfg.ny = cfg.nz = 4;
@@ -108,41 +117,55 @@ parse_cohesive_energy(const std::vector<std::string>& tokens, std::size_t start,
         } else if (t == "--target") {
             once(t);
             target_tok = need_value(i, t);
-            cfg.target = parse_double(target_tok, t);
+            cfg.target = number(target_tok, t);
             seen_target = true;
         } else if (t == "--weight") {
             once(t);
-            cfg.weight = parse_double(need_value(i, t), t);
+            const std::string& v = need_value(i, t);
+            cfg.weight = number(v, t);
+            /* A weight below 0 would reward a worse cohesive energy. */
+            if (cfg.weight < 0.0)
+                throw std::runtime_error(
+                    "PC_OBSERVABLE cohesive_energy: --weight must be >= 0 "
+                    "(got " + v + ")");
             seen_weight = true;
         } else if (t == "--lattice") {
             once(t);
             lattice = need_value(i, t);
             if (lattice != "bcc")
                 throw std::runtime_error(
-                    "PC_OBSERVABLE cohesive_energy: lattice='" + lattice
-                    + "' not supported in MVP (only bcc).");
+                    "PC_OBSERVABLE cohesive_energy: --lattice takes bcc, the "
+                    "one lattice of the term (got '" + lattice + "')");
         } else if (t == "--supercell") {
             once(t);
             /* At least one cell along each axis. */
-            cfg.nx = parse_int(need_value(i, t), "--supercell nx", 1);
-            cfg.ny = parse_int(need_value(i, t), "--supercell ny", 1);
-            cfg.nz = parse_int(need_value(i, t), "--supercell nz", 1);
+            cfg.nx = integer(need_value(i, t), "--supercell <nx>", 1);
+            cfg.ny = integer(need_value(i, t), "--supercell <ny>", 1);
+            cfg.nz = integer(need_value(i, t), "--supercell <nz>", 1);
         } else if (t == "--hotvar") {
             once(t);
             /* --hotvar a0 <lo> <hi> [<init>] */
             const std::string& name = need_value(i, t);
             if (name != "a0")
                 throw std::runtime_error(
-                    "PC_OBSERVABLE cohesive_energy: only --hotvar a0 is "
-                    "supported in MVP (got '" + name + "').");
+                    "PC_OBSERVABLE cohesive_energy: --hotvar names a0, the "
+                    "lattice constant, the one variable of the term (got '" +
+                    name + "')");
             hotvar_lo_tok = need_value(i, "--hotvar a0 <lo>");
-            cfg.a0_min = parse_double(hotvar_lo_tok, "--hotvar a0 lo");
+            cfg.a0_min = number(hotvar_lo_tok, "--hotvar a0 <lo>");
             hotvar_hi_tok = need_value(i, "--hotvar a0 <hi>");
-            cfg.a0_max = parse_double(hotvar_hi_tok, "--hotvar a0 hi");
+            cfg.a0_max = number(hotvar_hi_tok, "--hotvar a0 <hi>");
+            /* The window of the relaxed a0 (the constructor keeps the
+             * check as an invariant). */
+            if (!(cfg.a0_max > cfg.a0_min))
+                throw std::runtime_error(
+                    "PC_OBSERVABLE cohesive_energy: --hotvar a0 <hi> must be "
+                    "greater than <lo> (got <lo> " + hotvar_lo_tok + ", <hi> " +
+                    hotvar_hi_tok + ")");
             /* Optional initial; peek next token. */
             if (i + 1 < tokens.size() && tokens[i + 1].substr(0, 2) != "--") {
                 hotvar_init_tok = tokens[++i];
-                cfg.a0_initial = parse_double(hotvar_init_tok, "--hotvar a0 init");
+                cfg.a0_initial = number(hotvar_init_tok, "--hotvar a0 <init>");
             }
             seen_hotvar = true;
         } else if (t == "--loss") {
@@ -151,11 +174,12 @@ parse_cohesive_energy(const std::vector<std::string>& tokens, std::size_t start,
              * and TUKEY (c), as LOSS and --varloss take it
              * (LossFunction::resolve_params). */
             const std::string& kind = need_value(i, t);
-            const auto type = tadah::LossFunction::from_string(kind);
+            const auto type = tadah::LossFunction::from_name(
+                kind, "PC_OBSERVABLE cohesive_energy: --loss");
             std::vector<double> params;
             while (i + 1 < tokens.size() && tokens[i + 1].substr(0, 2) != "--")
                 params.push_back(
-                    parse_double(tokens[++i], "--loss " + kind + " parameter"));
+                    number(tokens[++i], "--loss " + kind + " <param>"));
             cfg.lossfn = tadah::LossFunction(type, params);
             cfg.lossfn_given = true;
         } else if (t == "--maxiter") {
@@ -167,7 +191,7 @@ parse_cohesive_energy(const std::vector<std::string>& tokens, std::size_t start,
              * (50-200) for HPO use where the optimiser sweeps theta
              * before any pot is good enough for a true ground state. */
             cfg.relax_maxiter = static_cast<std::size_t>(
-                parse_int(need_value(i, t), "--maxiter", 0));
+                integer(need_value(i, t), "--maxiter", 0));
         } else if (t == "--max-wall-time") {
             once(t);
             /* Per-relax wall-time cap (seconds). PC_OBSERVABLE's
@@ -175,7 +199,7 @@ parse_cohesive_energy(const std::vector<std::string>& tokens, std::size_t start,
              * With NN caching, a pathological theta can burn maxeval=5000
              * in ~5 s; 1.0 s matches the LAMMPS reference's MAXTIME=1. */
             cfg.relax_max_wall_time_s =
-                parse_double(need_value(i, t), "--max-wall-time");
+                number(need_value(i, t), "--max-wall-time");
         } else if (t == "--etol") {
             once(t);
             /* LAMMPS-style energy convergence tolerance, mirrors 1st
@@ -183,7 +207,7 @@ parse_cohesive_energy(const std::vector<std::string>& tokens, std::size_t start,
              * Production runs use 1e-15 to match Ecoh_fast.in. Default
              * 0 = disabled (force-only convergence). */
             cfg.relax_etol =
-                parse_double(need_value(i, t), "--etol");
+                number(need_value(i, t), "--etol");
         } else if (t == "--maxeval") {
             once(t);
             /* LAMMPS-style total energy/force-eval cap. Mirrors the
@@ -192,7 +216,7 @@ parse_cohesive_energy(const std::vector<std::string>& tokens, std::size_t start,
              * that never converges does maxiter x maxiter_ls evals and
              * burns minutes per HPO iter. */
             cfg.relax_maxeval = static_cast<std::size_t>(
-                parse_int(need_value(i, t), "--maxeval", 0));
+                integer(need_value(i, t), "--maxeval", 0));
         } else if (t == "--fmax-converged") {
             once(t);
             /* The force tolerance of the relaxation and its eq_ok test
@@ -201,7 +225,7 @@ parse_cohesive_energy(const std::vector<std::string>& tokens, std::size_t start,
              * one that ends above it returns the --unconverged value as
              * Ecoh. Positive: no relaxation reaches a tolerance of 0. */
             const std::string& v = need_value(i, t);
-            cfg.eq_fmax_threshold = parse_double(v, "--fmax-converged");
+            cfg.eq_fmax_threshold = number(v, "--fmax-converged");
             if (!(cfg.eq_fmax_threshold > 0.0))
                 throw std::runtime_error(
                     "PC_OBSERVABLE cohesive_energy: --fmax-converged must be "
@@ -229,12 +253,12 @@ parse_cohesive_energy(const std::vector<std::string>& tokens, std::size_t start,
                     "PC_OBSERVABLE cohesive_energy: --unconverged kind must be "
                     "'const' or 'force-scaled' (got '" + kind + "')");
             }
-            cfg.unconverged_value = parse_double(
+            cfg.unconverged_value = number(
                 need_value(i, "--unconverged " + kind + " <value>"),
                 "--unconverged " + kind);
         } else {
             throw std::runtime_error(
-                "PC_OBSERVABLE cohesive_energy: unknown flag '" + t + "'");
+                "PC_OBSERVABLE cohesive_energy: unknown option '" + t + "'");
         }
     }
 

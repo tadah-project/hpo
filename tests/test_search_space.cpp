@@ -169,7 +169,7 @@ TEST_CASE("SearchSpace: require_inside_real, with_boxes",
     const auto ss = SearchSpace::build(three(), pol);
     REQUIRE_NOTHROW(ss.require_inside_real({6.0, 0.1, 0.0}, "seed"));
     REQUIRE_THROWS_WITH(ss.require_inside_real({6.1, 0.1, 0.0}, "seed"),
-                        Catch::Contains("LIN") && Catch::Contains("outside its OPTIM bounds"));
+                        Catch::Contains("LIN") && Catch::Contains("outside its OPTIM box"));
     REQUIRE_THROWS_WITH(ss.require_inside_real({6.0, 0.1}, "seed"),
                         Catch::Contains("expected 3"));
 

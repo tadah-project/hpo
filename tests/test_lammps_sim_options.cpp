@@ -53,7 +53,7 @@ const std::string kHpoOptions =
     "--script, --varloss, --invar, --outvar, --failscore, --maxtime, "
     "--hotvar and --failvar";
 const std::string kLammpsNote =
-    "; LAMMPS command-line options start with a single '-'";
+    ", and LAMMPS command-line options, which start with a single '-'";
 /* The options a PC_FAILPROBE line takes: HPOTargets reads --gate and --s0
  * and refuses --varloss, --hotvar and --failvar on it. */
 const std::string kProbeOptions =
@@ -81,46 +81,48 @@ TEST_CASE("PC_LAMMPS: an unknown -- option is an error naming HPO's options",
     TempScript s;
     const std::string head = "--script " + s.path + " ";
     struct Case { std::string cmd; bool failprobe; std::string message; };
+    /* "<KEY>: unknown option '<option>'<note>: a <KEY> line takes the
+     * options <list>, and LAMMPS command-line options, which start with a
+     * single '-'" (it was "...: HPO's options are <list>; LAMMPS
+     * command-line options start with a single '-'", and the note "(did
+     * you mean '--hotvar'?)"). */
+    const auto unknown = [](const std::string& key, const std::string& option,
+                            const std::string& note) {
+        return key + ": unknown option '" + option + "'" + note + ": a " +
+               key + " line takes the options " +
+               (key == "PC_LAMMPS" ? kHpoOptions : kProbeOptions) +
+               kLammpsNote;
+    };
+    const auto closest = [](const std::string& option) {
+        return " (closest option: '" + option + "')";
+    };
+    const std::string probe_option = " (a PC_FAILPROBE option)";
     for (const auto& c : std::vector<Case>{
              {head + "--varloss E 1 1 --hotvars a0 1 2", false,
-              "PC_LAMMPS: unknown option '--hotvars' (did you mean "
-              "'--hotvar'?): HPO's options are " + kHpoOptions + kLammpsNote},
+              unknown("PC_LAMMPS", "--hotvars", closest("--hotvar"))},
              {head + "--varlos E 1 1", false,
-              "PC_LAMMPS: unknown option '--varlos' (did you mean "
-              "'--varloss'?): HPO's options are " + kHpoOptions + kLammpsNote},
+              unknown("PC_LAMMPS", "--varlos", closest("--varloss"))},
              {head + "--varloss E 1 1 --outvars S", false,
-              "PC_LAMMPS: unknown option '--outvars' (did you mean "
-              "'--outvar'?): HPO's options are " + kHpoOptions + kLammpsNote},
+              unknown("PC_LAMMPS", "--outvars", closest("--outvar"))},
              {head + "--varloss E 1 1 --foo 3", false,
-              "PC_LAMMPS: unknown option '--foo': HPO's options are " +
-                  kHpoOptions + kLammpsNote},
+              unknown("PC_LAMMPS", "--foo", "")},
              {head + "--varloss E 1 1 --gate 0.5", false,
-              "PC_LAMMPS: unknown option '--gate' (a PC_FAILPROBE option): "
-              "HPO's options are " + kHpoOptions + kLammpsNote},
+              unknown("PC_LAMMPS", "--gate", probe_option)},
              {head + "--varloss E 1 1 --s0 0.5", false,
-              "PC_LAMMPS: unknown option '--s0' (a PC_FAILPROBE option): "
-              "HPO's options are " + kHpoOptions + kLammpsNote},
+              unknown("PC_LAMMPS", "--s0", probe_option)},
              /* After a LAMMPS option's values too. */
              {head + "--varloss E 1 1 -sf omp --maxtme 10", false,
-              "PC_LAMMPS: unknown option '--maxtme' (did you mean "
-              "'--maxtime'?): HPO's options are " + kHpoOptions +
-                  kLammpsNote},
+              unknown("PC_LAMMPS", "--maxtme", closest("--maxtime"))},
              {head + "--outvar S --foo", true,
-              "PC_FAILPROBE: unknown option '--foo': HPO's options are " +
-                  kProbeOptions + kLammpsNote},
+              unknown("PC_FAILPROBE", "--foo", "")},
              {head + "--outvar S --gates 1", true,
-              "PC_FAILPROBE: unknown option '--gates' (did you mean "
-              "'--gate'?): HPO's options are " + kProbeOptions + kLammpsNote},
+              unknown("PC_FAILPROBE", "--gates", closest("--gate"))},
              {head + "--outvar S --hotvars h 1 2", true,
-              "PC_FAILPROBE: unknown option '--hotvars': HPO's options are " +
-                  kProbeOptions + kLammpsNote},
+              unknown("PC_FAILPROBE", "--hotvars", "")},
              {head + "--outvar S --varlos S 1 1", true,
-              "PC_FAILPROBE: unknown option '--varlos': HPO's options are " +
-                  kProbeOptions + kLammpsNote},
+              unknown("PC_FAILPROBE", "--varlos", "")},
              {head + "--outvar S --outvars T", true,
-              "PC_FAILPROBE: unknown option '--outvars' (did you mean "
-              "'--outvar'?): HPO's options are " + kProbeOptions +
-                  kLammpsNote}}) {
+              unknown("PC_FAILPROBE", "--outvars", closest("--outvar"))}}) {
         INFO(c.cmd);
         CHECK(sim_error(c.cmd, c.failprobe) == c.message);
     }

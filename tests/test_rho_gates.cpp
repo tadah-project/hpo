@@ -195,6 +195,8 @@ TEST_CASE("RHOGATE / RHOBARGATE: strict grammar", "[hpo][rhogate][grammar]") {
     CHECK(b->RHOBARGATE->seed_warn);
   }
   SECTION("refused: numbers, ranges, keywords, duplicates, trailing tokens") {
+    /* A repeated option or line says how often each is given (it was "NPTS
+     * given more than once" and "RHOGATE given more than once"). */
     struct Case { const char* line; const char* what; };
     for (const Case& c : {
              Case{"RHOGATE\n", "the tolerance is missing"},
@@ -209,11 +211,15 @@ TEST_CASE("RHOGATE / RHOBARGATE: strict grammar", "[hpo][rhogate][grammar]") {
              Case{"RHOGATE 1e-5 R_LO -1\n", "RHOGATE R_LO must be >= 0"},
              Case{"RHOGATE 1e-5 R_LO nan\n", "RHOGATE R_LO must be a finite number"},
              Case{"RHOGATE 1e-5 SEED MAYBE\n", "RHOGATE SEED must be ERROR or WARN"},
-             Case{"RHOGATE 1e-5 NPTS 100 NPTS 200\n", "NPTS given more than once"},
+             Case{"RHOGATE 1e-5 NPTS 100 NPTS 200\n",
+                  "RHOGATE: NPTS is given twice on this line; each option is "
+                  "given once"},
              Case{"RHOGATE 1e-5 TOL 2\n", "unexpected token 'TOL'"},
              Case{"RHOGATE 1e-5 NPTS\n", "NPTS needs a value"},
              Case{"RHOGATE 1e-5 1e-6\n", "unexpected token '1e-6'"},
-             Case{"RHOGATE 1e-5\nRHOGATE 1e-6\n", "RHOGATE given more than once"},
+             Case{"RHOGATE 1e-5\nRHOGATE 1e-6\n",
+                  "RHOGATE is set twice (first on line 8); each key is given "
+                  "once"},
              Case{"RHOBARGATE bcc 3.304 0.75\n", "the lattice, a0, f_lo and f_hi are required"},
              Case{"RHOBARGATE sc 3.304 0.75 1.1\n", "lattice must be bcc, fcc or hcp"},
              Case{"RHOBARGATE bcc 0 0.75 1.1\n", "RHOBARGATE a0 must be > 0"},
@@ -225,7 +231,8 @@ TEST_CASE("RHOGATE / RHOBARGATE: strict grammar", "[hpo][rhogate][grammar]") {
              Case{"RHOBARGATE bcc 3.3 0.9 1.1 R_LO 1\n", "unexpected token 'R_LO'"},
              Case{"RHOBARGATE bcc 3.3 0.9 1.1 SEED WARN extra\n", "unexpected token 'extra'"},
              Case{"RHOBARGATE bcc 3.3 0.9 1.1\nRHOBARGATE fcc 4 0.9 1.1\n",
-                  "RHOBARGATE given more than once"}}) {
+                  "RHOBARGATE is set twice (first on line 8); each key is "
+                  "given once"}}) {
       CAPTURE(c.line);
       const std::string e = targets_error(make_ream_ctx("SIGNED"), base + c.line);
       CHECK_THAT(e, Catch::Contains(c.what));
@@ -603,8 +610,13 @@ TEST_CASE("Density gates: startup refusals and seed checks",
       CAPTURE(form);
       const std::string e = gates_error(make_ream_ctx(form),
                                         "OPTIM AMPGRIDMB (3) 0 0.5\nRHOGATE 1e-5\n" + tail);
-      CHECK_THAT(e, Catch::Contains("RHOGATE: RHOFORM " + std::string(form)) &&
-                        Catch::Contains("the form guarantees rho >= 0"));
+      /* It was "RHOGATE: RHOFORM <form>: the form guarantees rho >= 0 by
+       * construction, ... Remove the RHOGATE line (...)". */
+      CHECK_THAT(e, Catch::Contains("RHOGATE: under RHOFORM " +
+                                    std::string(form) +
+                                    " every density rho(r) is >= 0") &&
+                        Catch::Contains("RHOGATE is taken under RHOFORM "
+                                        "SIGNED only"));
       /* RHOBARGATE is fine under every form */
       CHECK(gates_error(make_ream_ctx(form),
                         "OPTIM AMPGRIDMB (3) 0 0.5\nRHOBARGATE bcc 3.304 0.98 1.1\n" +
@@ -618,13 +630,22 @@ TEST_CASE("Density gates: startup refusals and seed checks",
     Context no_mb = ctx;
     no_mb.remove("INITMB");
     no_mb.add("INITMB", "false");
+    /* It was "... evaluate the density of a bare DM_REAM many-body term,
+     * but this configuration has no DM_REAM many-body term (...). Remove
+     * the RHOGATE line(s)." */
     REQUIRE_THROWS_WITH(dt::validate_density_gates(no_mb, trg),
-                        Catch::Contains("no DM_REAM many-body term"));
+                        Catch::Contains("RHOGATE evaluates the density of "
+                                        "one DM_REAM many-body term or of "
+                                        "one DM_Embed component, and this "
+                                        "configuration has no many-body "
+                                        "term"));
     Context mjoin = ctx;
     mjoin.remove("TYPEMB");
     mjoin.add("TYPEMB", "DM_mJoin DM_REAM 3 3 3 3 5 5 0 0 Ta Ta");
     REQUIRE_THROWS_WITH(dt::validate_density_gates(mjoin, trg),
-                        Catch::Contains("DM_mJoin is not supported"));
+                        Catch::Contains("the many-body term of this "
+                                        "configuration is DM_mJoin (DM_mJoin "
+                                        "is not read by these checks)"));
   }
   SECTION("R_LO and the first RHOBARGATE shell inside the smallest RCUTMB") {
     CHECK_THAT(gates_error(make_ream_ctx("SIGNED"),
@@ -648,7 +669,8 @@ TEST_CASE("Density gates: startup refusals and seed checks",
                                   "4.4025 A, rho_max 5.0036e-01, rel -3.9903e-01 < "
                                   "-tol = -1.0000e-05 on [0.8250, 5.5000] A (20001 "
                                   "points), v = 4.4515e-01.") &&
-                      Catch::Contains("add SEED WARN"));
+                      Catch::Contains("evaluated as a rejected start "
+                                      "under SEED WARN"));
     Journal j;
     CHECK(gates_error(bad, "OPTIM AMPGRIDMB (3) -0.5 0.5\nRHOGATE 1e-5 SEED WARN\n" +
                                tail) == "");
@@ -679,12 +701,16 @@ TEST_CASE("Density gates: startup refusals and seed checks",
             "OPTIM AMPGRIDMB (3) -0.5 0.5\nOPTIM WATOM (1) -2 -0.5\n" + tail}) {
         CAPTURE(setup);
         const std::string e = gates_error(wneg, gate + setup);
+        /* It said "every evaluation would be rejected, under SEED ERROR or
+         * WARN", without a line; it is framed at the gate line. */
         CHECK_THAT(e, Catch::Contains("(WATOM) is not finite and > 0 on every "
                                       "candidate") &&
-                          Catch::Contains("every evaluation would be rejected, "
-                                          "under SEED ERROR or WARN"));
-        /* it stands in for the per-seed messages */
-        CHECK(e.find('\n') == std::string::npos);
+                          Catch::Contains("every evaluation would be refused "
+                                          "before training, under SEED ERROR "
+                                          "and SEED WARN alike"));
+        /* it stands in for the per-seed messages: one line, in its frame */
+        CHECK_THAT(e, Catch::StartsWith("Error on line 1: "));
+        CHECK(e.find('\n') == e.find("\nLine: "));
       }
     }
     /* an OPTIM WATOM box reaching above 0: only the failing seed is named */

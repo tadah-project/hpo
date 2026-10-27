@@ -18,7 +18,19 @@ LossFunction::Type LossFunction::from_string(const std::string& s)
     if(u=="HUBER")     return Type::HUBER;
     if(u=="RMSLE")     return Type::RMSLE;
     if(u=="TUKEY")     return Type::TUKEY;
-    throw std::runtime_error("LossFunction::from_string: unknown type '"+s+"'");
+    throw std::runtime_error("unknown loss function '" + s + "'; the loss "
+                             "functions are L1, L2, LOG_COSH, MAPE, HUBER, "
+                             "RMSLE and TUKEY, in any case");
+}
+
+LossFunction::Type LossFunction::from_name(const std::string& s,
+                                           const std::string& where)
+{
+    try {
+        return from_string(s);
+    } catch (const std::runtime_error& e) {
+        throw std::runtime_error(where + ": " + e.what());
+    }
 }
 
 std::string LossFunction::to_string(Type t)

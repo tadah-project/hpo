@@ -1,4 +1,5 @@
 #include <tadah/hpo/check_summary.h>
+#include <tadah/hpo/count_text.h>
 #include <tadah/hpo/hpo_host.h>
 #include <tadah/hpo/hpo_targets.h>
 #include <tadah/hpo/runners.h>
@@ -10,6 +11,8 @@
 #include <tadah/mlip/fit_balance.h>
 #include <tadah/hpo/hpo.h>
 #include <tadah/hpo/phase_specs.h>   // with_block_line
+#include <tadah/hpo/strategy_rules.h>   // strategy_type_name
+#include <tadah/core/number_format.h>
 #include <tadah/hpo/hpo_log.h>
 #include <tadah/hpo/hpo_mpi.h>     // hpo_rank(), hpo_size(), hpo_rank_suffix()
 #include <tadah/hpo/script_executor.h>
@@ -64,7 +67,7 @@ bool should_run_noise_calibration(std::size_t noise_n)
 std::string hpo_mpi_dispatch_refusal(int world_size, const OptimizerSpec& spec)
 {
     if (world_size <= 1) return {};
-    const std::string ranks = std::to_string(world_size) + " ranks";
+    const std::string ranks = std::to_string(world_size) + " MPI ranks";
     /* At the line the OPTIMIZER block closes at, as the startup refusals
      * of its settings (with_block_line); a spec built outside the parser
      * has none. */
@@ -72,19 +75,22 @@ std::string hpo_mpi_dispatch_refusal(int world_size, const OptimizerSpec& spec)
           spec.lib == "TADAH" &&
           (spec.algo == "ANNEAL_PT" || spec.algo == "ANNEAL_PA")))
         return with_block_line(spec,
-               "multi-rank HPO supports only STRATEGY TYPE PLAIN with "
-               "LIB TADAH and ALGO ANNEAL_PT or ANNEAL_PA; got " +
-               spec.lib + ":" + spec.algo + " on " + ranks);
+               "a run on " + ranks + " takes STRATEGY TYPE PLAIN with "
+               "TADAH:ANNEAL_PT or TADAH:ANNEAL_PA only, and the block has "
+               "STRATEGY TYPE " + strategy_type_name(spec.strategy_type) +
+               " with " + spec.lib + ":" + spec.algo);
     /* Each rank tracks stagnation over its own evaluations: the rank that
      * stagnated would restart and block in the driver's next collective
      * while its peers fail with "worker failed on another MPI rank". */
     if (spec.restart.active())
         return with_block_line(spec,
-               "multi-rank HPO does not support RESTART (AFTER_STAGNATION " +
+               "a run on " + ranks + " takes no RESTART block "
+               "(AFTER_STAGNATION " +
                std::to_string(spec.restart.after_stagnation) + ", MAX " +
-               std::to_string(spec.restart.max) + " on " + ranks +
-               "): stagnation is tracked per rank; run on one rank or "
-               "remove RESTART");
+               std::to_string(spec.restart.max) + "): each rank counts its "
+               "own evaluations without a new best, so one rank would "
+               "restart without the others; a run with a RESTART block runs "
+               "on one rank");
     return {};
 }
 
@@ -237,6 +243,8 @@ struct PcIsolation {
     std::string mode;            // "THREAD" | "PROCESS"
     bool        explicit_mode;   // the target file or the environment named it
     double      worker_timeout;  // seconds; 0: derived from each script's limit
+    bool        mode_from_env = false;     // TADAH_PC_ISOLATION chose the mode
+    bool        timeout_from_env = false;  // TADAH_PC_WORKER_TIMEOUT set it
 };
 
 /* The run's PC_ISOLATION settings, with every check of them: an override
@@ -256,10 +264,14 @@ PcIsolation resolve_pc_isolation(const HPOTargets& trg, HPOLog& log)
                 "')");
         pc.mode = v;
         pc.explicit_mode = true;
+        pc.mode_from_env = true;
     }
     if (const char* e = std::getenv("TADAH_PC_WORKER_TIMEOUT")) {
-        if (*e) pc.worker_timeout = HPOTargets::parse_pc_worker_timeout(
-                    e, "TADAH_PC_WORKER_TIMEOUT");
+        if (*e) {
+            pc.worker_timeout = HPOTargets::parse_pc_worker_timeout(
+                e, "TADAH_PC_WORKER_TIMEOUT");
+            pc.timeout_from_env = true;
+        }
     }
 #ifdef TADAH_HPO_MPI
     if (pc.mode == "PROCESS") {
@@ -273,8 +285,8 @@ PcIsolation resolve_pc_isolation(const HPOTargets& trg, HPOLog& log)
                 "(TADAH_HPO_MPI): the worker processes cannot initialize "
                 "MPI. Use the serial build, or PC_ISOLATION THREAD.");
         pc.mode = "THREAD";
-        log.info("PC_ISOLATION: THREAD (MPI build -- the PROCESS worker "
-                 "pool is serial-build only)");
+        log.info("PC_ISOLATION THREAD: the MPI build of tadah runs the "
+                 "scripts inside the tadah process");
     }
 #else
     (void)log;
@@ -472,12 +484,14 @@ int hpo_run_from_startup(core::Context& ctx, HPOLog& log,
          * OMP_NUM_THREADS now controls only the residual OpenMP kernels
          * (neighbour-list build, data-stats); journal its width for the record. */
         const char* env_omp = std::getenv("OMP_NUM_THREADS");
-        log.info("OpenMP: max threads = " +
-                 std::to_string(omp_get_max_threads()) +
-                 "  (OMP_NUM_THREADS=" +
+        log.info("OpenMP: at most " +
+                 count_text(static_cast<unsigned long long>(
+                                omp_get_max_threads()),
+                            "thread", "threads") +
+                 " (OMP_NUM_THREADS=" +
                  (env_omp && env_omp[0] ? std::string(env_omp) : "unset") +
-                 "); drives only the residual OpenMP kernels (NN lists, "
-                 "data-stats), NOT the pc_lammps fan-out");
+                 "), for the OpenMP parts (neighbour lists, data "
+                 "statistics), not for the LAMMPS scripts");
         /* Journal the wait policy. The shared pool's idle workers block on a
          * futex (0 CPU), so OMP_WAIT_POLICY no longer governs fan-out idle time
          * -- it now only affects those residual OMP kernels, which are short
@@ -486,8 +500,9 @@ int hpo_run_from_startup(core::Context& ctx, HPOLog& log,
         const char* env_wait = std::getenv("OMP_WAIT_POLICY");
         log.info(std::string("OpenMP: OMP_WAIT_POLICY=") +
                  (env_wait && env_wait[0] ? env_wait : "unset (runtime default)") +
-                 "; affects only the residual OMP kernels now (pool idles on a "
-                 "futex); prefer 'passive' on shared nodes");
+                 "; it sets how the threads of the OpenMP parts wait between "
+                 "them (the workers of the evaluations wait without "
+                 "spinning); 'passive' suits a shared node");
     }
 #endif
 
@@ -582,19 +597,31 @@ int hpo_run_from_startup(core::Context& ctx, HPOLog& log,
     }
     if (trg.FAILSCORE_GRADING) {
         /* validate_hpo_setup (below) refuses a FAILSCORE the bands do not
-         * fit. */
-        std::string probe_note = "no PC_FAILPROBE (bands C/D constant)";
+         * fit. The bands (pc_fail_grading.h) and what grades each. */
+        std::string probe_note =
+            "no PC_FAILPROBE line: band C scores the top of its range, and "
+            "band D is graded only for a --skip-above or --skip-rel cap and "
+            "for BUMPGATE, RHOGATE and RHOBARGATE";
         if (trg.failprobe_idx >= 0) {
-            probe_note = "PC_FAILPROBE '" +
+            probe_note =
+                "PC_FAILPROBE " +
                 trg.LS[static_cast<std::size_t>(trg.failprobe_idx)].script +
-                "' S=" + trg.failprobe_svar;
-            if (std::isfinite(trg.failprobe_gate))
-                probe_note += " gate=" + std::to_string(trg.failprobe_gate);
-            else
-                probe_note += " gate=off";
+                ": its --outvar " + trg.failprobe_svar + " grades band C and "
+                "the band-D failures of --gate and of a potential LAMMPS "
+                "cannot build (" +
+                (std::isfinite(trg.failprobe_gate)
+                     ? "--gate " + core::format_roundtrip(trg.failprobe_gate)
+                     : std::string("no --gate")) +
+                ")";
         }
-        log.info("FAILSCORE_GRADING: ON -- failed evals graded in "
-                 "[0.999*FS, FS), bands A-D (see docs); " + probe_note);
+        log.info("FAILSCORE_GRADING ON: a failed evaluation scores from 0.999 "
+                 "FAILSCORE up to FAILSCORE, in four bands from the lowest: "
+                 "A, a --hotvar value outside its range; B, a script or "
+                 "PC_OBSERVABLE term that failed; C, a simulation that did "
+                 "not finish; D, a potential rejected as unusable (by "
+                 "PC_FAILPROBE --gate, a --skip-above or --skip-rel cap, "
+                 "BUMPGATE, RHOGATE or RHOBARGATE, a refused fit, or a "
+                 "potential LAMMPS cannot build); " + probe_note);
     } else if (trg.failprobe_idx >= 0 && !std::isfinite(trg.failprobe_gate)) {
         /* Under OFF the probe is still one of the evaluation's
          * simulations: its failure -- the script's, or an S that cannot be
@@ -604,13 +631,16 @@ int hpo_run_from_startup(core::Context& ctx, HPOLog& log,
          * other's, and an S above --gate fails it (run_lammps). Without
          * --gate, S grades nothing under OFF: only a failed probe fails
          * the evaluation. */
-        log.warning("PC_FAILPROBE is defined without --gate and "
-                    "FAILSCORE_GRADING is OFF -- its S grades no "
-                    "evaluation; a probe that fails (its script fails, or "
-                    "its S cannot be read, has no number, or is negative, "
-                    "not finite or at or above the line's --failscore) "
-                    "fails its evaluation, as any PC_LAMMPS simulation "
-                    "does.");
+        const LammpsSim& probe =
+            trg.LS[static_cast<std::size_t>(trg.failprobe_idx)];
+        log.warning("PC_FAILPROBE on line " + std::to_string(probe.line) +
+                    " has no --gate and FAILSCORE_GRADING is OFF, so its "
+                    "--outvar " + trg.failprobe_svar + " grades no "
+                    "evaluation; a probe that fails (its script fails, or " +
+                    trg.failprobe_svar + " cannot be read, is no number, or "
+                    "is negative, not finite or at or above the line's "
+                    "--failscore) fails its evaluation, as any PC_LAMMPS "
+                    "simulation does.");
     }
 
     /* ---- BUMPGATE: bump-support enforcement mode --------------------
@@ -651,8 +681,8 @@ int hpo_run_from_startup(core::Context& ctx, HPOLog& log,
     /* ---- PC_ISOLATION: pc_lammps execution mode --------------------
      * PROCESS = persistent worker-process pool (one child per fan-out
      * slot; LAMMPS globals unshared -- the free(): invalid pointer race
-     * class is structurally gone). THREAD = in-process (pre-existing
-     * behaviour; kept one production cycle as a deprecated fallback).
+     * class is structurally gone). THREAD = in-process, deprecated in the
+     * serial build (the journal says so).
      * Env override TADAH_PC_ISOLATION lets the A/B and determinism
      * harnesses switch modes without touching configs. Design:
      * INVESTIGATIONS/PC_ISOLATION_process_pool.md. Resolved and checked
@@ -697,22 +727,23 @@ int hpo_run_from_startup(core::Context& ctx, HPOLog& log,
         }
 #endif
         if (!check)
-            log.info("ScriptExecutor: " + std::to_string(exec_width) +
-                     " workers = THREADS (total pool: fan-out + train/predict); "
-                     "OMP_NUM_THREADS=" + std::to_string(omp_w) +
-                     " drives only the residual OpenMP kernels (NN lists, "
-                     "data-stats)");
-        /* Migration nudge: pre-Option-A, OMP_NUM_THREADS widened the fan-out, so
-         * a config with no THREADS line still got OMP-wide parallelism. Now the
-         * pool is THREADS alone, so that same config runs the fan-out on ONE
-         * worker. Warn once so users know to set THREADS for concurrency. */
+            log.info("THREADS: " +
+                     count_text(static_cast<unsigned long long>(exec_width),
+                                "worker runs", "workers run") +
+                     " the work of the evaluations (the LAMMPS scripts and the "
+                     "training and prediction of the potential); "
+                     "OMP_NUM_THREADS=" + std::to_string(omp_w) + " sets the "
+                     "threads of the OpenMP parts only (neighbour lists, data "
+                     "statistics)");
+        /* The workers are THREADS alone: OMP_NUM_THREADS above 1 does not
+         * add any (it widened the scripts' fan-out in Tadah! 1.5.0). */
         if (!trg.spec.num_threads && omp_w > 1)
             log.warning(
-                "THREADS not set: the pc_lammps fan-out and MLIP train/predict "
-                "run on a SINGLE worker. Under the shared-pool model "
-                "OMP_NUM_THREADS (=" + std::to_string(omp_w) + ") no longer "
-                "widens the fan-out -- set THREADS <n> in the STRATEGY block to "
-                "run scripts concurrently.");
+                "THREADS is not set: one worker runs the work of the "
+                "evaluations (the LAMMPS scripts and the training and "
+                "prediction of the potential); OMP_NUM_THREADS=" +
+                std::to_string(omp_w) + " does not change that, and THREADS "
+                "<n> in the STRATEGY block gives n workers");
 
         const std::string& pc_mode = pc.mode;
         const bool pc_mode_explicit = pc.explicit_mode;
@@ -746,84 +777,108 @@ int hpo_run_from_startup(core::Context& ctx, HPOLog& log,
                 }
                 pc_worker_pool_init(exec_width, std::move(per_slot),
                                     pc_wtimeout);
-                log.info("PC_ISOLATION: PROCESS -- pc_lammps tasks execute in "
-                         + std::to_string(exec_width)
-                         + " persistent worker processes (LAMMPS globals "
-                           "unshared); MLIP train/predict stays in-process");
-            } else if (pc_mode_explicit) {
-                log.info("PC_ISOLATION: PROCESS requested but no PC_LAMMPS "
-                         "sims are configured -- nothing to isolate");
+                log.info("PC_ISOLATION PROCESS: the PC_LAMMPS and "
+                         "PC_FAILPROBE scripts run in " +
+                         std::to_string(exec_width) + " worker process" +
+                         (exec_width == 1 ? "" : "es") + ", each with its "
+                         "own LAMMPS library state; the training and "
+                         "prediction of the potential run inside the tadah "
+                         "process");
             } else {
-                /* PROCESS is the serial build's default: nothing asked
+                /* PROCESS is the serial build's default when nothing asked
                  * for it. */
-                log.info("PC_ISOLATION: PROCESS (default) -- no PC_LAMMPS "
-                         "sims are configured, nothing to isolate");
+                log.info(std::string("PC_ISOLATION PROCESS") +
+                         (pc_mode_explicit ? "" : " (the default)") +
+                         ": the target file has no PC_LAMMPS or "
+                         "PC_FAILPROBE line, so no worker process starts");
             }
 #endif
         } else {
 #ifndef TADAH_HPO_MPI
             /* Serial build running THREAD => it was explicitly requested
              * (the default is PROCESS): always flag the deprecated mode. */
-            log.warning("PC_ISOLATION: THREAD (deprecated fallback) -- "
-                        "concurrent in-process LAMMPS instances share process "
-                        "globals (the free(): invalid pointer race class); "
-                        "PROCESS is the supported mode. THREAD will be "
-                        "removed after one production cycle.");
+            log.warning(std::string("PC_ISOLATION THREAD") +
+                        (pc.mode_from_env ? " (from TADAH_PC_ISOLATION)"
+                                          : "") +
+                        " is deprecated in the serial build: the PC_LAMMPS "
+                        "and PC_FAILPROBE scripts run inside the tadah "
+                        "process, where concurrent LAMMPS instances share "
+                        "the global state of the process and can crash it "
+                        "(free(): invalid pointer). PROCESS, the default, "
+                        "runs them in worker processes, each with its own "
+                        "LAMMPS library state.");
 #else
             /* MPI build: THREAD is its only mode. The default says so in
-             * the PROCESS branch above; a request names the mode too, so
+             * the PROCESS branch above; a request gets the same line, so
              * the journal records it whichever way it was chosen. */
             if (pc_mode_explicit)
-                log.info("PC_ISOLATION: THREAD (requested; the only mode of "
-                         "the MPI build)");
+                log.info("PC_ISOLATION THREAD: the MPI build of tadah runs "
+                         "the scripts inside the tadah process");
 #endif
         }
 
-        /* ---- PC_SCRIPT_TIMEOUT (legacy alias: MAXTIME): per-pc_script soft
-         * wall-clock limit, injected as LAMMPS `timer timeout` after each
-         * clear. Distinct from PC_WORKER_TIMEOUT (the outer per-worker-task
-         * hard deadline) and from the OPTIMIZER-block MAXTIME (whole-run
-         * stop). No startup diagnostic existed for it before -- print the
-         * effective value, which keyword supplied it, and the hard deadline. */
-        {
-            const std::string src = trg.MAX_TIME_key.empty()
-                ? "default" : trg.MAX_TIME_key;
-            /* The spec as written, and its seconds when it is a time. */
-            std::string soft = trg.MAX_TIME + " (no per-script limit)";
-            if (trg.MAX_TIME_seconds) {
-                std::ostringstream t; t << *trg.MAX_TIME_seconds << " s";
-                soft = t.str();
-                if (t.str() != trg.MAX_TIME + " s")
-                    soft += " (" + trg.MAX_TIME + ")";
+        /* ---- PC_SCRIPT_TIMEOUT: the script limit of each PC_LAMMPS and
+         * PC_FAILPROBE line, in the order of the file, where it comes from
+         * (its --maxtime, the PC_SCRIPT_TIMEOUT or MAXTIME line above it,
+         * the default), how it is set in the script (prep_script_lines),
+         * and the deadline of its tasks under PC_ISOLATION PROCESS
+         * (pc_worker_deadline_ms: PC_WORKER_TIMEOUT, else max(3t, t +
+         * 120 s) of the limit t). Distinct from the MAXTIME of an optimiser
+         * block (the time limit of a search). */
+        for (const LammpsSim& lsim : trg.LS) {
+            std::string limit = lsim.maxtime;
+            if (lsim.maxtime_seconds) {
+                limit = core::format_roundtrip(*lsim.maxtime_seconds) + " s";
+                if (limit != lsim.maxtime + " s")
+                    limit += " (" + lsim.maxtime + ")";
             }
-            std::string hard;
+            const std::string set =
+                !lsim.maxtime_seconds
+                    ? ", no limit"
+                : lsim.own_timer
+                    ? ", not set: the script has a timer command of its own"
+                    : ", set as LAMMPS `timer timeout` at the start of the "
+                      "script and after each clear";
+            std::string deadline;
             if (pc_mode == "PROCESS") {
-                const long dl_ms = pc_worker_deadline_ms(pc_wtimeout,
-                                                         trg.MAX_TIME_seconds);
-                std::ostringstream w; w << static_cast<double>(dl_ms) / 1000.0;
-                if (pc_wtimeout > 0.0)
-                    hard = w.str() + " s (PC_WORKER_TIMEOUT)";
-                else if (dl_ms < 0)
-                    hard = "none";
+                const long dl_ms =
+                    pc_worker_deadline_ms(pc_wtimeout, lsim.maxtime_seconds);
+                const std::string d =
+                    core::format_roundtrip(static_cast<double>(dl_ms) / 1000.0);
+                if (dl_ms < 0)
+                    deadline = "no worker task deadline";
+                else if (pc_wtimeout > 0.0)
+                    deadline = "worker task deadline: " + d + " s (" +
+                               (pc.timeout_from_env
+                                    ? std::string("TADAH_PC_WORKER_TIMEOUT")
+                                    : "PC_WORKER_TIMEOUT on line " +
+                                          std::to_string(
+                                              trg.PC_WORKER_TIMEOUT_line)) +
+                               ")";
                 else
-                    hard = w.str() + " s, derived as max(3t, t + 120 s) from "
-                           "the per-script limit t (a line's --maxtime "
-                           "derives its own)";
+                    deadline = "worker task deadline: " + d + " s, max(3t, t + "
+                               "120 s) of the limit t";
             } else {
-                hard = "n/a (THREAD mode)";
+                deadline = std::string("no worker task deadline under "
+                                       "PC_ISOLATION THREAD") +
+                           (pc.mode_from_env ? " (from TADAH_PC_ISOLATION)"
+                                             : "");
             }
-            log.info("PC_SCRIPT_TIMEOUT: " + soft + " (from " + src +
-                     ") -- soft LAMMPS `timer timeout`, re-armed each "
-                     "run-section; hard per-worker-task deadline: " + hard);
-            if (trg.MAX_TIME_seen_new && trg.MAX_TIME_seen_legacy)
-                log.warning("both PC_SCRIPT_TIMEOUT and legacy MAXTIME were "
-                            "given; the later line wins (effective: " +
-                            soft + " from " + src + ")");
-            else if (trg.MAX_TIME_seen_legacy)
-                log.info("MAXTIME is a legacy alias for PC_SCRIPT_TIMEOUT "
-                         "(per-pc_script timeout, seconds); prefer "
-                         "PC_SCRIPT_TIMEOUT in new configs");
+            log.info("PC_SCRIPT_TIMEOUT of the " +
+                     std::string(lsim.is_failprobe ? "PC_FAILPROBE"
+                                                   : "PC_LAMMPS") +
+                     " line on line " + std::to_string(lsim.line) + ": " +
+                     limit + " (" + lsim.maxtime_source + ")" + set + "; " +
+                     deadline);
         }
+        /* MAXTIME at the top level is the key's other name. */
+        if (trg.MAXTIME_line)
+            log.info("MAXTIME on line " + std::to_string(trg.MAXTIME_line) +
+                     " is PC_SCRIPT_TIMEOUT under another name: it sets the "
+                     "script limit of each PC_LAMMPS and PC_FAILPROBE line "
+                     "after it without --maxtime, up to the next line of the "
+                     "key; inside an OPTIMIZER, STRATEGY, EXPLORE, REFINE or "
+                     "INNER block, MAXTIME is the time limit of a search");
     }
 
     /* -- Param labels for the search space section: built by the
@@ -941,11 +996,12 @@ int hpo_run_from_startup(core::Context& ctx, HPOLog& log,
             vr.eshift.empty())
             log.hint(std::string(ctx.blocks("DESCRIPTOR").empty()?"EMBF0 ZERO":"REFERENCE ZERO")+" fixes the "+reference_selector.dmb->label()+" isolated-atom energy at 0 "
                      "and the model has no other per-atom constant (BIAS "
-                     "false, no ESHIFT). If reference energies are absolute "
-                     "(e.g. DFT totals), set ESHIFT or give the run "
-                     "ESHIFT_ATOM or ESHIFT_DBATOM (--eshift-atom, "
+                     "false, no ESHIFT). For absolute reference energies, "
+                     "such as DFT totals, ESHIFT, or ESHIFT_ATOM or "
+                     "ESHIFT_DBATOM for the run (--eshift-atom, "
                      "--eshift-dbatom: a potential's own line of them is not "
-                     "read), all compatible with EAMFAST. BIAS true also "
+                     "read), gives that constant, all compatible with "
+                     "EAMFAST. BIAS true also "
                      "adds a per-atom constant, but its intercept columns, "
                      "one per ATOM species, precede the descriptor weights "
                      "(FIXINDEX/FIXWEIGHT indices shift) and it disables "

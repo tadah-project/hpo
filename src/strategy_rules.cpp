@@ -163,25 +163,25 @@ void require_driver(const OptimizerSpec& s, DriverPhase phase)
     if (phase == DriverPhase::Explore)
         throw std::runtime_error(
             "the EXPLORE block names no optimiser: " + missing +
-            "; set LIB and ALGO inside the EXPLORE block (the exploration "
-            "phase of STRATEGY TYPE PRESTAGE)");
+            "; LIB and ALGO inside the EXPLORE block name the optimiser of "
+            "the exploration of STRATEGY TYPE PRESTAGE");
     switch (s.strategy_type) {
         case StrategyType::MULTISTART:
             throw std::runtime_error(
                 "STRATEGY TYPE MULTISTART names no optimiser to run from each "
-                "start: " + missing + "; set LIB and ALGO in the STRATEGY "
-                "block");
+                "start: " + missing + "; LIB and ALGO in the STRATEGY block "
+                "name it");
         case StrategyType::PRESTAGE:
             throw std::runtime_error(
                 "STRATEGY TYPE PRESTAGE names no refinement optimiser: " +
-                missing + "; set LIB and ALGO in the STRATEGY block or in a "
-                "REFINE block");
+                missing + "; LIB and ALGO in the STRATEGY block or in a "
+                "REFINE block name it");
         case StrategyType::PLAIN:
             break;
     }
     throw std::runtime_error(
-        "the OPTIMIZER block names no optimiser: " + missing + "; set LIB and "
-        "ALGO in its STRATEGY block (or directly inside OPTIMIZER)");
+        "the OPTIMIZER block names no optimiser: " + missing + "; LIB and "
+        "ALGO in its STRATEGY block (or directly inside OPTIMIZER) name it");
 }
 
 void require_inner_driver(const OptimizerSpec& s, const std::string& enclosing)
@@ -201,8 +201,8 @@ void require_inner_driver(const OptimizerSpec& s, const std::string& enclosing)
     }
     throw std::runtime_error(
         "the INNER block inside " + enclosing + " names no optimiser: " +
-        missing + "; set LIB and ALGO inside the INNER block (the local "
-        "optimiser that NLopt's MLSL and AUGLAG run)");
+        missing + "; LIB and ALGO inside the INNER block name the local "
+        "optimiser that NLopt's MLSL and AUGLAG run");
 }
 
 void require_inner_backend(const OptimizerSpec& parent,
@@ -218,9 +218,9 @@ void require_inner_backend(const OptimizerSpec& parent,
         throw std::runtime_error(
             name + " needs an INNER block" +
             (phase.empty() ? "" : " (" + phase + ")") +
-            ": NLopt has no default local optimiser for it; add INNER ... "
-            "ENDINNER with LIB NLOPT and a local ALGO such as LN_BOBYQA, or "
-            "use one of " + with_default_inner() + ", which run " +
+            ": NLopt has no default local optimiser for it; an INNER block "
+            "with LIB NLOPT and a local ALGO, such as LN_BOBYQA, names one, "
+            "or " + with_default_inner() + " run " +
             default_inner_algorithms() + " without one");
     if (!parent.inner) return;
     const OptimizerSpec& inner = *parent.inner;
@@ -235,19 +235,19 @@ void require_inner_backend(const OptimizerSpec& parent,
         const std::string where =
             phase.empty() ? "" : " (the INNER block of " + phase + ")";
         throw std::runtime_error(
-            name + " does not accept an INNER sub-optimiser" + where +
+            name + " takes no INNER block" + where +
             ": only NLopt's MLSL and AUGLAG algorithms run a local search "
-            "inside their run (" +
+            "inside their run, and an INNER block is taken by them only (" +
             format_caps_list(filter_optimizer_caps(
                 [](const OptimizerCaps& c) { return c.accepts_inner; })) +
-            "); remove the INNER block or pick one of them");
+            ")");
     }
     if (inner.lib != "NLOPT")
         throw std::runtime_error(
             "the INNER block of " + (phase.empty() ? name : phase) +
             " names " + backend_name(inner) + ", but " + name + " runs its "
-            "INNER search with NLopt: set LIB NLOPT and an NLopt ALGO (such "
-            "as LN_BOBYQA) inside the INNER block");
+            "INNER search with NLopt: the INNER block takes LIB NLOPT and an "
+            "NLopt ALGO, such as LN_BOBYQA");
     /* An INNER search that itself needs an INNER block: the grammar has no
      * INNER inside INNER, and NLopt refused it inside the enclosing run
      * with only "nlopt invalid argument". */
@@ -256,8 +256,8 @@ void require_inner_backend(const OptimizerSpec& parent,
         throw std::runtime_error(
             "the INNER block of " + (phase.empty() ? name : phase) +
             " names " + backend_name(inner) + ", which needs an INNER block "
-            "of its own; INNER blocks do not nest: pick a local algorithm "
-            "such as LN_BOBYQA");
+            "of its own; INNER blocks do not nest, and the INNER block takes "
+            "a local algorithm, such as LN_BOBYQA");
     /* No nested global search: an INNER
      * search is the local search MLSL starts at the points it samples, and
      * AUGLAG (HPO sets it no constraint, auglag.c) once at its own starting
@@ -279,10 +279,10 @@ void require_inner_backend(const OptimizerSpec& parent,
             "search is a local search, which " + name + " starts at " +
             (caps.is_global ? "the points it samples in the OPTIM box"
                             : "its own starting point") +
-            ", and " + what + ". Use a local NLopt algorithm in the INNER "
-            "block, which starts at the point it is given (" +
-            nlopt_local_starting_at_their_point() + "), or run " + in +
-            " as the exploration (EXPLORE block) or once, as STRATEGY TYPE "
+            ", and " + what + ". A local NLopt algorithm in the INNER "
+            "block starts at the point it is given (" +
+            nlopt_local_starting_at_their_point() + "); " + in + " runs as "
+            "the exploration (EXPLORE block) or once, as STRATEGY TYPE "
             "PLAIN.");
     }
 }
@@ -343,9 +343,9 @@ void require_multistart_backend(const OptimizerSpec& spec)
     throw std::runtime_error(
         "STRATEGY TYPE MULTISTART cannot run " + name + ": it is a global "
         "optimiser that takes one starting point, so restarting it "
-        "from each INIT point is rejected for any N_STARTS. Use a local "
-        "optimiser (" + local_alternatives() + "), or STRATEGY TYPE PLAIN to "
-        "run " + name + " once.");
+        "from each INIT point is rejected for any N_STARTS. A local "
+        "optimiser (" + local_alternatives() + ") runs from each start, and "
+        "STRATEGY TYPE PLAIN runs " + name + " once.");
 }
 
 void require_prestage_explore(const OptimizerSpec& spec)
@@ -371,11 +371,10 @@ void require_prestage_refinement(const OptimizerSpec& spec)
             "STRATEGY TYPE PRESTAGE cannot refine with " + name + ": it does "
             "not start at the point it is given (" + caps.start_note +
             "), so the refinement would never use the exploration's "
-            "candidates, for any TOPK. Use a local "
-            "optimiser, which starts at each candidate (" +
-            local_starting_at_their_point() + "), or run " + name +
-            " as the exploration (EXPLORE block) or once, as STRATEGY TYPE "
-            "PLAIN.");
+            "candidates, for any TOPK. A local optimiser starts at each "
+            "candidate (" + local_starting_at_their_point() + "); " + name +
+            " runs as the exploration (EXPLORE block) or once, as STRATEGY "
+            "TYPE PLAIN.");
     }
     if (spec.stage_topk <= 1) return;
     if (runs_from_each_start(caps)) return;
@@ -385,9 +384,10 @@ void require_prestage_refinement(const OptimizerSpec& spec)
         "STRATEGY TYPE PRESTAGE with TOPK " + topk + " cannot refine with " +
         name + ": the refinement runs its optimiser once from each of the "
         "TOPK candidates the exploration forwards, and " + name + " is a "
-        "global optimiser that takes one starting point. Use a local "
-        "or multi-seed refinement optimiser (" + multi_start_alternatives() +
-        "), or TOPK 1 to refine the best candidate once.");
+        "global optimiser that takes one starting point. A local or "
+        "multi-seed refinement optimiser (" + multi_start_alternatives() +
+        ") refines each candidate, and TOPK 1 refines the best candidate "
+        "once.");
 }
 
 void validate_run_policy(const OptimizerSpec& spec)
@@ -463,8 +463,8 @@ void require_strategy_key(const std::string& key, StrategyType type,
         key + " is not accepted with STRATEGY TYPE " +
         strategy_type_name(type) +
         (type_given ? "" : " (the default when the block has no TYPE line)") +
-        ": " + k->effect + ", so it would have no effect; set TYPE " + home +
-        " or remove " + key);
+        ": " + k->effect + ", so it would have no effect; " + key +
+        " takes effect under STRATEGY TYPE " + home);
 }
 
 }  // namespace tadah::hpo
