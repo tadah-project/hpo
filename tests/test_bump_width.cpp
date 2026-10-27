@@ -109,6 +109,28 @@ Context joined_blip_ctx(const char* blip_sgrid = "2.0 1.0",
   return c;
 }
 
+/* joined_blip_ctx with the D2_BP widths (SGRID2B 1-2) `bp_sgrid`, and the
+ * same D2_BP alone on its line (`lone`). */
+Context joined_bp_ctx(const char* bp_sgrid, bool lone = false) {
+  Context c = joined_blip_ctx();
+  if (lone) {
+    c.remove("TYPE2B");
+    c.remove("CGRID2B");
+    c.remove("SGRID2B");
+    c.remove("RCUT2B");
+    c.remove("RCTYPE2B");
+    c.add("TYPE2B", "D2_BP 2 2 Ta Ta");
+    c.add("CGRID2B", "0 0");
+    c.add("SGRID2B", bp_sgrid);
+    c.add("RCUT2B", 5.0);
+    c.add("RCTYPE2B", "Cut_Dummy");
+    return c;
+  }
+  c.remove("SGRID2B");
+  c.add("SGRID2B", std::string(bp_sgrid) + " 2.0 1.0");
+  return c;
+}
+
 /* The error HPOTargets(ctx, target) throws ("" when it does not). */
 std::string parse_error(Context ctx, const std::string& target) {
   WidthTempFile tf(target);
@@ -361,8 +383,11 @@ TEST_CASE("a bump centre beyond the low bound of an OPTIM RCUT2B box is "
 /* Pins: the widths of a D2_Blip descriptor of a D2_mJoin line are held > 0
  * as those of a line of one D2_Blip: an OPTIM SGRID2B box from 0 is refused
  * at its line ("the low bound 0 is not > 0, but the D2_Blip pair basis of
- * the D2_mJoin line requires every SGRID2B width > 0"), and a seed width of
- * -1 at startup ("SGRID2B (4) = -1: ..."), under a hard or a smooth cutoff.
+ * the D2_mJoin line requires each of its SGRID2B widths > 0"), and a seed
+ * width of -1 at startup ("SGRID2B (4) = -1: ..."), under a hard or a
+ * smooth cutoff. The rule held every SGRID2B width of the line ("requires
+ * every SGRID2B width > 0") until it held the bump descriptor's own
+ * (the D2_BP case below).
  * Before the fix: both accepted (no width rule for a D2_mJoin line; the
  * bump-support checks skipped the joined descriptor). */
 TEST_CASE("the widths of a D2_Blip of a D2_mJoin line are held > 0, at the "
@@ -378,7 +403,8 @@ TEST_CASE("the widths of a D2_Blip of a D2_mJoin line are held > 0, at the "
                       Catch::Contains("OPTIM SGRID2B (4)") &&
                       Catch::Contains("the low bound 0 is not > 0") &&
                       Catch::Contains("the D2_Blip pair basis of the D2_mJoin "
-                                      "line requires every SGRID2B width > 0"));
+                                      "line requires each of its SGRID2B "
+                                      "widths > 0"));
     CHECK(parse_error(joined_blip_ctx("2.0 1.0", cutoff),
                       "OPTIM SGRID2B (4) 0.5 3\n" + tail).empty());
     const std::string s = startup_error(
@@ -386,9 +412,34 @@ TEST_CASE("the widths of a D2_Blip of a D2_mJoin line are held > 0, at the "
         std::string("OPTIM WATOM (1) 0.5 2.0\n") + tail);
     CHECK_THAT(s, Catch::Contains("SGRID2B (4) = -1") &&
                       Catch::Contains("the D2_Blip pair basis of the D2_mJoin "
-                                      "line requires every SGRID2B width > 0"));
+                                      "line requires each of its SGRID2B "
+                                      "widths > 0"));
     CHECK(startup_error(joined_blip_ctx("2.0 1.0", cutoff),
                         std::string("OPTIM WATOM (1) 0.5 2.0\n") + tail)
               .empty());
+  }
+}
+
+/* Pins: the widths of the D2_BP of a D2_mJoin line with a D2_Blip are held
+ * as those of a line of one D2_BP, which holds none > 0: an OPTIM SGRID2B
+ * (1) -0.5 1.0 box on the D2_BP's width parses, and a seed D2_BP width of
+ * -1 passes the startup checks, on the joined line as on the D2_BP alone;
+ * the D2_Blip's own width (4) is still held (the case above).
+ * Before the fix: the joined line was refused at the box ("OPTIM SGRID2B
+ * (1): the low bound -0.5 is not > 0, but the D2_Blip pair basis of the
+ * D2_mJoin line requires every SGRID2B width > 0") and at startup
+ * ("SGRID2B (1) = -1: ..."), the D2_BP alone was not. */
+TEST_CASE("the widths of a D2_BP of a D2_mJoin line with a D2_Blip are held "
+          "as those of a D2_BP alone",
+          "[HPO][optim][startup][bump_width][join]") {
+  tadah::core::PeriodicTable::initialize();
+  const std::string tail = std::string("PC_ERMSE 0 1\n") + kWidthOptimizer;
+  for (const bool lone : {true, false}) {
+    INFO((lone ? "D2_BP alone" : "D2_BP of a D2_mJoin with a D2_Blip"));
+    CHECK(parse_error(joined_bp_ctx("0.5 1.0", lone),
+                      "OPTIM SGRID2B (1) -0.5 1.0\n" + tail) == "");
+    CHECK(startup_error(joined_bp_ctx("-1.0 1.0", lone),
+                        std::string("OPTIM WATOM (1) 0.5 2.0\n") + tail) ==
+          "");
   }
 }
