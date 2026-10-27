@@ -309,40 +309,23 @@ public:
 
     const std::size_t actual_k = plan.starts;
     if (actual_k < k_) {
-      /* The advice names settings the parser takes: N_STARTS is 2 or more
-       * (one start is STRATEGY TYPE PLAIN), so a lower N_STARTS is named
-       * only for two starts or more. When K_TOTAL keeps the chain to fewer
-       * points than N_STARTS, the advice is about K_TOTAL, which may be
-       * raised only below the points of the METHOD lines (one at or above
-       * them caps nothing and is refused when the file is read). */
+      /* A chain that gives fewer points than N_STARTS is refused when the
+       * file is read (HPOTargets::read, at the N_STARTS line); the chain
+       * drawn can still give fewer: a WARM point dropped under
+       * WARM_ON_MISMATCH skip, two points that are the same, a RESTART
+       * round whose METHOD lines give fewer. The advice names settings the
+       * parser takes: N_STARTS is 2 or more (one start is STRATEGY TYPE
+       * PLAIN), so a lower N_STARTS is named only for two starts or more. */
       const std::string k = std::to_string(k_);
       const std::string got = std::to_string(actual_k);
-      const std::optional<std::size_t>& cap = spec.init_strategy_spec.k_total;
-      const bool capped = cap && *cap == actual_k;
-      const std::size_t drawn =
-          capped ? build_init_strategy(spec.init_strategy_spec)->default_k()
-                 : 0;
-      const std::string more =
-          "A chain of " + k + " or more starting points (METHOD LHS " + k +
-          ", RANDOM " + k + " or SOBOL " + k + ")";
-      std::string advice;
-      if (!capped)
-        advice = more + " runs " + k + " starts";
-      else if (drawn > k_)
-        advice = "With K_TOTAL " + k + ", or without K_TOTAL, " + k +
-                 " starts run";
-      else if (drawn == k_)
-        advice = "Without K_TOTAL, " + k + " starts run";
-      else
-        advice = more + " without K_TOTAL runs " + k + " starts";
       std::string msg =
           "MULTISTART N_STARTS " + k + " requested but the resolved INIT "
           "chain produced only " + got +
           (actual_k == 1 ? " starting point" : " starting points") +
-          (capped ? " (K_TOTAL " + got + ")" : "") +
           (actual_k == 1 ? "; running 1 start, which is STRATEGY TYPE PLAIN."
                          : "; running " + got + " starts.") +
-          " " + advice;
+          " A chain of " + k + " or more starting points (METHOD LHS " + k +
+          ", RANDOM " + k + " or SOBOL " + k + ") runs " + k + " starts";
       if (actual_k >= 2)
         msg += ", and N_STARTS " + got + " asks for the " + got +
                " that run";
