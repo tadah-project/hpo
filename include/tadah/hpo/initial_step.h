@@ -202,7 +202,7 @@ inline StepPlan make_step_plan(const OptimizerSpec&        sp,
     } else {
         plan.source = "STEP unset -- 0.25*width per dim, given to NLopt: " +
                       sp.algo + " keeps the first step of each dimension as "
-                      "its scale, and NLopt's own default shrinks it near a bound";
+                      "its scale";
     }
     /* BOBYQA is the one algorithm that relocates an interior start lying
      * within rhobeg of a bound and refuses a box narrower than 2*rhobeg

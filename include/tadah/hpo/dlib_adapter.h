@@ -1225,18 +1225,18 @@ template<class Vec,class Runner,class HostT>
 
     /* dlib's loop runs on the loss divided by the length of its first
      * gradient (detail::bfgs_box_search_scaled): the journal gives that
-     * length when the search has it, and the stop strategy `make` builds
-     * for it. */
-    const auto noted_stop = [&](auto make) {
-      return [make](std::optional<double> length) {
+     * length when the search has it, with the one stop in force, `stop`
+     * (FTOL_ABS or PARAM tol_gradinf: validate_dlib_bfgs_spec refuses
+     * both), which the stop strategy `make` divides by it. */
+    const auto noted_stop = [&](auto make, const std::string& stop) {
+      return [make, stop](std::optional<double> length) {
         std::ostringstream oss;
         if (length) {
           oss << "DLIB:BFGS: the search runs on the loss divided by the "
                  "length of its first gradient, " << *length
-              << " (over the coordinates its first step can move), and takes "
-                 "its steps in units of that gradient; FTOL_ABS and PARAM "
-                 "tol_gradinf are divided by it as well, and the records keep "
-                 "the loss";
+              << " (over the coordinates its first step can move); " << stop
+              << " is divided by it as well, so it keeps its meaning for the "
+                 "loss, and the records keep the loss";
         } else {
           oss << "DLIB:BFGS: the gradient at the start of the search has a "
                  "length of 0 over the coordinates its first step can move, "
@@ -1254,8 +1254,10 @@ template<class Vec,class Runner,class HostT>
      * evaluation (bfgs_box_search (e)), or -- when the loop returns on its
      * stop strategy -- that strategy's test: `converged` (FTOL_ABS or
      * tol_gradinf) with the stop line's `test` text. `make_stop` builds the
-     * stop strategy for the loss divided by the scale it is given. */
+     * stop strategy for the loss divided by the scale it is given, and
+     * `stop` names that stop in the journal. */
     auto run_with_eval_cap = [&](auto&& search, auto&& make_stop,
+                                 const std::string& stop,
                                  EndReason converged,
                                  const std::string& test) {
       try {
@@ -1263,7 +1265,8 @@ template<class Vec,class Runner,class HostT>
         double scale = 1.0;
         const detail::BfgsBoxResult r = detail::bfgs_box_search_scaled(
             std::forward<decltype(search)>(search),
-            noted_stop(std::forward<decltype(make_stop)>(make_stop)), feval,
+            noted_stop(std::forward<decltype(make_stop)>(make_stop), stop),
+            feval,
             grad, x, lo, hi, f_value, on_not_run,
             [&objective] { return objective.evaluations(); }, scale);
         /* A loss answered from the record that no call followed is counted
@@ -1326,7 +1329,7 @@ template<class Vec,class Runner,class HostT>
                         [tol](double c) {
                           return detail::GradientMaxStop(tol / c);
                         },
-                        EndReason::GradTol, test.str());
+                        "PARAM tol_gradinf", EndReason::GradTol, test.str());
       return;
     }
 
@@ -1339,7 +1342,7 @@ template<class Vec,class Runner,class HostT>
                       [ftol_abs](double c) {
                         return objective_delta_stop_strategy(ftol_abs / c);
                       },
-                      EndReason::FtolAbs, test.str());
+                      "FTOL_ABS", EndReason::FtolAbs, test.str());
   }
 
 /* Production entry point used by run_inner(). */

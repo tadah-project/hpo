@@ -65,11 +65,13 @@ const Desc kDescs[] = {
   {"Initial_Parameter_Temperature", Kind::Real, false, 0, kNaN, "1.0",
    "initial parameter temperature (must be > 0)"},
   {"Acceptance_Frequency_Modulus", Kind::Count, false, 0, kNaN, "100",
-   "accepted states between periodic tests (a block of states is followed "
-   "by one when it reaches a multiple); 0 = off"},
+   "a periodic test follows each state, or each block of states, that "
+   "brings the count of accepted states to a multiple of this number; "
+   "0 = off"},
   {"Generated_Frequency_Modulus", Kind::Count, false, 0, kNaN, "10000",
-   "generated states between periodic tests (a block of states is followed "
-   "by one when it reaches a multiple); 0 = off"},
+   "a periodic test follows each state, or each block of states, that "
+   "brings the count of generated states to a multiple of this number; "
+   "0 = off"},
   {"Reanneal_Cost", Kind::Count, false, kNaN, kNaN, "1",
    "0 = off, 1 = default, >1 / <-1 = deviation-sample variants (-1 invalid)"},
   {"Reanneal_Parameters", Kind::Bool, false, 0, 1, "1",
