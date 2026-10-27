@@ -39,6 +39,7 @@
 #include <tadah/hpo/algorithms_pt.h>
 #include <tadah/hpo/anneal_parallel.h>
 #include <tadah/hpo/box_penalty.h>
+#include <tadah/hpo/ceres_adapter.h>  // run_ceres_steepest_descent
 #include <tadah/hpo/durable_best.h>
 #include <tadah/hpo/hpo.h>
 #include <tadah/hpo/hpo_host.h>
@@ -54,6 +55,7 @@
 #include <tadah/hpo/run_policy.h>
 #include <tadah/hpo/run_stop.h>
 #include <tadah/hpo/runners.h>
+#include <tadah/hpo/script_executor.h>
 #include <tadah/mlip/key_provenance.h>
 #include <tadah/mlip/parallel.h>
 
@@ -75,6 +77,7 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <mutex>
 #include <iomanip>
 #include <iostream>
 #include <limits>
@@ -2514,19 +2517,19 @@ TEST_CASE("Two runs in one process: each run's worker pool has the run's "
 }
 
 /* Pins: CERES:STEEPEST_DESCENT takes the STRATEGY-level THREADS as every
- * other optimiser does: THREADS 3 sizes the workers that run the work of
- * its evaluations (the training and prediction of the potential; a
- * gradient-based optimiser runs no PC_LAMMPS line, which the parser
- * refuses beside it). The run returns 0, its journal says once "THREADS: 3
- * workers run the work of the evaluations" (the width of the pool the run
- * built), and loss.tadah records its evaluations. In a build without Ceres
- * (TADAH_ENABLE_CERES OFF) the run is refused as every LIB CERES is
- * (kCeresNotBuilt).
+ * other optimiser does: a run with THREADS 3 returns 0, its journal says
+ * once "THREADS: 3 workers run the work of the evaluations" (the width of
+ * the pool the run built, which hpo_run writes for every optimiser), and
+ * loss.tadah records its evaluations. That the work of a CERES evaluation
+ * runs on those workers is the case "CERES:STEEPEST_DESCENT runs the
+ * training and prediction of its evaluations on the executor's workers".
+ * In a build without Ceres (TADAH_ENABLE_CERES OFF) the run is refused as
+ * every LIB CERES is (kCeresNotBuilt).
  * Before the fix: the run was refused at startup, "the STRATEGY-level
  * optimiser: CERES:STEEPEST_DESCENT does not support THREADS (host
  * evaluation is single-threaded inside one optimizer step)". */
-TEST_CASE("CERES:STEEPEST_DESCENT runs the work of its evaluations on the "
-          "workers of the STRATEGY-level THREADS",
+TEST_CASE("CERES:STEEPEST_DESCENT takes the STRATEGY-level THREADS: the run "
+          "builds a pool of THREADS workers",
           "[HPO][termination][threads][ceres]")
 {
     TaRun run(plain_block("    TYPE PLAIN\n    LIB CERES\n"
@@ -2546,6 +2549,70 @@ TEST_CASE("CERES:STEEPEST_DESCENT runs the work of its evaluations on the "
                       Catch::Contains(hpo_test::kCeresNotBuilt));
 #endif
 }
+
+#ifdef TADAH_USE_CERES
+/* Pins: a CERES:STEEPEST_DESCENT search with the STRATEGY-level THREADS 3
+ * runs the work of its evaluations -- the MLIP loops of the training and
+ * prediction of the potential -- on the workers of the executor of THREADS
+ * workers: on a host of the Ta data, with the executor and MLIP's parallel
+ * backend routed to it as hpo_run installs them for a run (RunPools,
+ * hpo.cpp), the search makes evaluations, and every loop body of them runs
+ * on an executor worker (worker id 0, 1 or 2), none on the thread that runs
+ * the search.
+ * Before the fix: the search was refused before any evaluation,
+ * "CERES:STEEPEST_DESCENT does not support THREADS (host evaluation is
+ * single-threaded inside one optimizer step)". */
+TEST_CASE("CERES:STEEPEST_DESCENT runs the training and prediction of its "
+          "evaluations on the executor's workers",
+          "[HPO][termination][threads][ceres]")
+{
+    TaRun run(plain_block("    TYPE PLAIN\n    LIB CERES\n"
+                          "    ALGO STEEPEST_DESCENT\n    MAXEVAL 6\n"
+                          "    THREADS 3\n"));
+    tadah::hpo::HPOTargets trg(run.ctx, run.hpo.string());
+    REQUIRE(trg.spec.num_threads);
+    REQUIRE(*trg.spec.num_threads == 3u);
+    /* The run's pools: the executor of THREADS workers, MLIP's loops on it;
+     * each loop body records the thread and the worker that ran it. */
+    struct Body { std::thread::id thread; int worker; };
+    std::mutex m;
+    std::vector<Body> bodies;
+    struct Pools {
+        explicit Pools(int width) { tadah::hpo::init_script_executor(width); }
+        ~Pools()
+        {
+            tadah::mlip::set_parallel_backend({});
+            tadah::hpo::shutdown_script_executor();
+        }
+    } pools(static_cast<int>(*trg.spec.num_threads));
+    tadah::mlip::set_parallel_backend(
+        [&](std::size_t n, const std::function<void(std::size_t)>& body) {
+            tadah::hpo::script_executor().run_batch(
+                n, [&](std::size_t i, int worker) {
+                    {
+                        std::lock_guard<std::mutex> lk(m);
+                        bodies.push_back({std::this_thread::get_id(), worker});
+                    }
+                    body(i);
+                });
+        });
+    Host host(run.ctx, trg, run.val.string());
+    {
+        std::lock_guard<std::mutex> lk(m);
+        bodies.clear();
+    }
+    const std::size_t before = Host::g_iter_value();
+    REQUIRE_NOTHROW(tadah::hpo::run_ceres_steepest_descent(trg.spec, host));
+    CHECK(Host::g_iter_value() > before);
+    std::lock_guard<std::mutex> lk(m);
+    REQUIRE_FALSE(bodies.empty());
+    const std::thread::id search = std::this_thread::get_id();
+    for (const Body& b : bodies) {
+        CHECK(b.thread != search);
+        CHECK((b.worker >= 0 && b.worker < 3));
+    }
+}
+#endif
 
 /* Pins: a second run with a smaller THREADS under PC_ISOLATION PROCESS runs
  * its PC_LAMMPS tasks on its own pool: the first run (THREADS 3, no
