@@ -1,9 +1,11 @@
 #include <tadah/hpo/strategy_rules.h>
 
+#include <tadah/hpo/init_strategy.h>
 #include <tadah/hpo/optimizer_caps.h>
 #include <tadah/hpo/phase_specs.h>
 
 #include <algorithm>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -348,6 +350,87 @@ void require_multistart_backend(const OptimizerSpec& spec)
         "STRATEGY TYPE PLAIN runs " + name + " once.");
 }
 
+void require_multistart_points(const OptimizerSpec& spec)
+{
+    if (spec.strategy_type != StrategyType::MULTISTART) return;
+    /* The chain the file wrote: a spec built outside the parser has no
+     * N_STARTS line, and gives its starting points itself (optim_init). */
+    if (spec.key_lines.find("N_STARTS") == spec.key_lines.end()) return;
+    const InitStrategySpec& init = spec.init_strategy_spec;
+    /* The most starting points the chain gives: the K of each RANDOM, LHS
+     * and SOBOL line, one point for its CONFIG lines and one for the WARM
+     * lines of each file -- the chain keeps a point once (ChainStrategy),
+     * and every CONFIG line, and every WARM line of one file, gives the same
+     * point -- or the CONFIG point without a METHOD line; at most K_TOTAL. A
+     * WARM point may be dropped when the chain is drawn (WARM_ON_MISMATCH),
+     * and points the RANDOM, LHS and SOBOL lines draw may meet another:
+     * a chain that gives fewer when it is drawn is warned about when the
+     * run starts (MultiStartPolicy). */
+    std::size_t distinct = init.chain.empty() ? 1 : 0;
+    std::size_t config_lines = 0;
+    bool warm = false;
+    bool warm_repeated = false;
+    std::set<std::string> warm_files;
+    std::string list;
+    for (const auto& e : init.chain) {
+        list += (list.empty() ? "" : ", ") + e.method;
+        for (const auto& a : e.args) list += " " + a;
+        if (e.method == "CONFIG") {
+            if (config_lines++ == 0) ++distinct;
+        } else if (e.method == "WARM") {
+            warm = true;
+            if (warm_files.insert(e.args.empty() ? std::string()
+                                                 : e.args.front()).second)
+                ++distinct;
+            else
+                warm_repeated = true;
+        } else {
+            InitStrategySpec one;
+            one.chain = {e};
+            distinct += build_init_strategy(one)->default_k();
+        }
+    }
+    const std::size_t points =
+        init.k_total ? std::min(distinct, *init.k_total) : distinct;
+    const std::size_t want = spec.multistart.n_starts;
+    if (points >= want) return;
+
+    const std::string k = std::to_string(want);
+    const std::string n = std::to_string(points);
+    std::string notes;
+    if (config_lines > 1) notes = "the CONFIG lines give one point";
+    if (warm_repeated)
+        notes += (notes.empty() ? "" : ", and ") +
+                 std::string("the WARM lines of one file give one point");
+    const std::string from =
+        init.chain.empty()
+            ? std::string("the CONFIG point: the chain has no METHOD line")
+            : list +
+                  (init.k_total ? ", capped by K_TOTAL " +
+                                      std::to_string(*init.k_total)
+                                : std::string()) +
+                  (notes.empty() ? std::string() : "; " + notes);
+    const std::string more =
+        "a chain of " + k + " or more starting points (METHOD LHS " + k +
+        ", RANDOM " + k + " or SOBOL " + k + ")";
+    std::string advice;
+    if (!init.k_total)
+        advice = more + " runs " + k + " starts";
+    else if (distinct > want)
+        advice = "with K_TOTAL " + k + ", or without K_TOTAL, " + k +
+                 " starts run";
+    else if (distinct == want)
+        advice = "without K_TOTAL, " + k + " starts run";
+    else
+        advice = more + " without K_TOTAL runs " + k + " starts";
+    throw std::runtime_error(with_key_line(spec, "N_STARTS",
+        "N_STARTS " + k + " needs " + k + " starting points, and the INIT "
+        "chain gives " + (warm ? "at most " : "") + n + " (" + from + "); " +
+        (points == 1 ? "one start is STRATEGY TYPE PLAIN, and " + advice
+                     : advice + ", and N_STARTS " + n +
+                           " starts from each of the " + n)));
+}
+
 void require_prestage_explore(const OptimizerSpec& spec)
 {
     if (!spec.prestage)
@@ -425,6 +508,9 @@ void validate_run_policy(const OptimizerSpec& spec)
         at(explore.inner ? *explore.inner : explore,
            [&] { require_inner_backend(explore, kExploreBlock); });
     }
+    /* Once MULTISTART is known to run its optimiser from each start: at
+     * the N_STARTS line, which the refusal names itself. */
+    require_multistart_points(spec);
 }
 
 void reject_refused_backends(const OptimizerSpec& spec)

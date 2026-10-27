@@ -309,10 +309,10 @@ public:
 
     const std::size_t actual_k = plan.starts;
     if (actual_k < k_) {
-      /* A chain that gives fewer points than N_STARTS is refused when the
-       * file is read (HPOTargets::read, at the N_STARTS line); the chain
-       * drawn can still give fewer: a WARM point dropped under
-       * WARM_ON_MISMATCH skip, two points that are the same, a RESTART
+      /* A chain that gives fewer points than N_STARTS is refused at
+       * startup (require_multistart_points, at the N_STARTS line); the
+       * chain drawn can still give fewer: a WARM point dropped under
+       * WARM_ON_MISMATCH skip, a drawn point that meets another, a RESTART
        * round whose METHOD lines give fewer. The advice names settings the
        * parser takes: N_STARTS is 2 or more (one start is STRATEGY TYPE
        * PLAIN), so a lower N_STARTS is named only for two starts or more. */

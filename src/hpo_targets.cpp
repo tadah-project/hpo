@@ -888,11 +888,6 @@ void HPOTargets::read(const std::string& fn)
     std::size_t type_line = 0;
     std::string type_text;
     bool n_starts_given = false;
-    /* The N_STARTS line and its text: whether the INIT chain gives the
-     * starting points it asks for is known once every INIT block has been
-     * read (checked when the file ends). */
-    std::size_t n_starts_line = 0;
-    std::string n_starts_text;
     /* The last ENDRESTART line and its text (0 before one): a RESTART
      * block -- the RESTART blocks of the STRATEGY block make one -- needs
      * AFTER_STAGNATION and MAX, checked when the STRATEGY block ends. */
@@ -1617,8 +1612,10 @@ void HPOTargets::read(const std::string& fn)
                         "one start is STRATEGY TYPE PLAIN");
                     set_once(&spec.strategy_type, key, "strategy");
                     n_starts_given = true;
-                    n_starts_line = nline;
-                    n_starts_text = line;
+                    /* Its line: startup refuses an INIT chain of fewer
+                     * starting points there (require_multistart_points). */
+                    spec.key_lines[key] =
+                        KeyLine{nline, line, block_name(block)};
                     continue;
                 }
                 if (key=="BUDGET_PER_START") {
@@ -2097,65 +2094,6 @@ void HPOTargets::read(const std::string& fn)
                     (points == 1 ? " starting point (" : " starting points (") +
                     list + ")" + keeps,
                 at.second));
-    }
-
-    /* MULTISTART runs one start from each of N_STARTS starting points of
-     * the INIT chain (the INIT blocks inside OPTIMIZER and STRATEGY). The
-     * most points the chain can give are known here: the K of its RANDOM,
-     * LHS and SOBOL lines and one point of each CONFIG and WARM line (the
-     * CONFIG point without a METHOD line), at most K_TOTAL. A chain that
-     * gives fewer than N_STARTS is refused at the N_STARTS line. A WARM
-     * point may still be dropped when the chain is drawn (WARM_ON_MISMATCH),
-     * and a RESTART round draws points of its own: a start the run cannot
-     * make there is warned about when it runs (MultiStartPolicy). */
-    if (spec.strategy_type == StrategyType::MULTISTART && n_starts_line != 0) {
-        const InitStrategySpec& init = spec.init_strategy_spec;
-        const bool has_warm =
-            std::any_of(init.chain.begin(), init.chain.end(),
-                        [](const InitStrategySpec::Entry& e) {
-                            return e.method == "WARM";
-                        });
-        const std::size_t drawn = build_init_strategy(init)->default_k();
-        const std::size_t points =
-            init.k_total ? std::min(drawn, *init.k_total) : drawn;
-        const std::size_t want = spec.multistart.n_starts;
-        if (points < want) {
-            const std::string k = std::to_string(want);
-            const std::string n = std::to_string(points);
-            std::string list;
-            for (const auto& e : init.chain) {
-                list += (list.empty() ? "" : ", ") + e.method;
-                for (const auto& a : e.args) list += " " + a;
-            }
-            const std::string from =
-                init.chain.empty()
-                    ? "the CONFIG point: the chain has no METHOD line"
-                : init.k_total
-                    ? list + ", capped by K_TOTAL " +
-                          std::to_string(*init.k_total)
-                    : list;
-            const std::string more =
-                "a chain of " + k + " or more starting points (METHOD LHS " +
-                k + ", RANDOM " + k + " or SOBOL " + k + ")";
-            std::string advice;
-            if (!init.k_total)
-                advice = more + " runs " + k + " starts";
-            else if (drawn > want)
-                advice = "with K_TOTAL " + k + ", or without K_TOTAL, " + k +
-                         " starts run";
-            else if (drawn == want)
-                advice = "without K_TOTAL, " + k + " starts run";
-            else
-                advice = more + " without K_TOTAL runs " + k + " starts";
-            throw std::runtime_error(at_line(n_starts_line,
-                "N_STARTS " + k + " needs " + k + " starting points, and the "
-                "INIT chain gives " + (has_warm ? "at most " : "") + n +
-                " (" + from + "); " +
-                (points == 1 ? "one start is STRATEGY TYPE PLAIN, and " + advice
-                             : advice + ", and N_STARTS " + n +
-                                   " starts from each of the " + n),
-                n_starts_text));
-        }
     }
 
 
