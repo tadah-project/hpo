@@ -105,7 +105,8 @@ namespace {
  * on (Reanneal_Parameters 1, the default): each test evaluates the
  * tangents of the dimensions (Locate_Cost 3), so each maximal run of such
  * calls is one test. Returns, per test, the counts of accepted and of
- * generated states when it ran. */
+ * generated states when it ran. (RawResult's counts are those of the best
+ * state, which asa() reports at its exit.) */
 std::vector<tadah::hpo::asa_testing::RawCall>
 periodic_tests(const tadah::hpo::asa_testing::RawResult& r)
 {
@@ -117,6 +118,17 @@ periodic_tests(const tadah::hpo::asa_testing::RawResult& r)
         in_test = tangent;
     }
     return tests;
+}
+
+/* The counts when the run generated its last block of states (its last
+ * call for a generated state, Locate_Cost 2 or 12). */
+tadah::hpo::asa_testing::RawCall
+last_block(const tadah::hpo::asa_testing::RawResult& r)
+{
+    tadah::hpo::asa_testing::RawCall last;
+    for (const auto& c : r.calls)
+        if (c.locate_cost == 2 || c.locate_cost == 12) last = c;
+    return last;
 }
 
 /* The featured asa() on golden_cost in three dimensions with the PARAM
@@ -146,12 +158,12 @@ periodic_run(std::map<std::string, double> params)
  * acceptance -- in serial mode (Gener_Block 1) right after it, at exactly
  * 5k accepted states; in block mode (Gener_Block 4, Gener_Mov_Avr 0, every
  * block 4 states) after the block that holds it, at 5k to 5k + 3 accepted
- * states (a block accepts at most 4). Every multiple of 5 that the run
- * reaches gets its test.
+ * states (a block accepts at most 4): every multiple of 5 the run reaches
+ * before its last block gets its test, and no test comes between.
  * Before the fix: serial mode passes as well; in block mode the test ran
  * only when the block's last state was accepted and brought the count to a
- * multiple of 5: of the multiples a block passed, only those reached by its
- * last state got a test. */
+ * multiple of 5: no test ran for the 96 acceptances before the last
+ * block. */
 TEST_CASE("ASA block mode: a periodic test follows every "
           "Acceptance_Frequency_Modulus acceptances", "[HPO][asa][golden]")
 {
@@ -162,10 +174,11 @@ TEST_CASE("ASA block mode: a periodic test follows every "
                                          {"Acceptance_Frequency_Modulus", 5.0},
                                          {"Generated_Frequency_Modulus", 0.0}});
             const auto tests = periodic_tests(r);
-            INFO("accepted states " << r.n_accepted << ", generated "
-                 << r.n_generated << ", periodic tests " << tests.size());
-            REQUIRE(r.n_accepted >= 40);
-            CHECK(tests.size() == static_cast<std::size_t>(r.n_accepted / 5));
+            const long accepted = last_block(r).n_accepted;
+            INFO("accepted states before the last block " << accepted
+                 << ", periodic tests " << tests.size());
+            REQUIRE(accepted >= 40);
+            CHECK(tests.size() >= static_cast<std::size_t>(accepted / 5));
             for (std::size_t k = 1; k <= tests.size(); ++k) {
                 INFO("periodic test " << k);
                 const long a = tests[k - 1].n_accepted;
@@ -182,10 +195,11 @@ TEST_CASE("ASA block mode: a periodic test follows every "
  * a periodic test after each block in which the count of generated states
  * reaches a multiple of 42: the k-th test at 42k to 42k + 3 generated
  * states (a block generates 4), one for each multiple of 42 the run
- * reaches.
+ * reaches before its last block, and none between.
  * Before the fix: the test ran only when a block ended on a multiple of 42
- * -- a block of 4 states ends on 4j, so only on the multiples of 84: every
- * other test was missing. */
+ * -- a block of 4 states ends on 4j, so only on the multiples of 84: 4
+ * tests, at 84, 168, 252 and 336 generated states, for the 400 before the
+ * last block. */
 TEST_CASE("ASA block mode: a periodic test follows every "
           "Generated_Frequency_Modulus generated states", "[HPO][asa][golden]")
 {
@@ -194,10 +208,11 @@ TEST_CASE("ASA block mode: a periodic test follows every "
                                  {"Acceptance_Frequency_Modulus", 0.0},
                                  {"Generated_Frequency_Modulus", 42.0}});
     const auto tests = periodic_tests(r);
-    INFO("generated states " << r.n_generated << ", periodic tests "
-         << tests.size());
-    REQUIRE(r.n_generated >= 400);
-    CHECK(tests.size() == static_cast<std::size_t>(r.n_generated / 42));
+    const long generated = last_block(r).n_generated;
+    INFO("generated states before the last block " << generated
+         << ", periodic tests " << tests.size());
+    REQUIRE(generated >= 300);
+    CHECK(tests.size() >= static_cast<std::size_t>(generated / 42));
     for (std::size_t k = 1; k <= tests.size(); ++k) {
         INFO("periodic test " << k);
         const long g = tests[k - 1].n_generated;

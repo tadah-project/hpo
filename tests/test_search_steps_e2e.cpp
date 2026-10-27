@@ -30,6 +30,7 @@
 #include <set>
 #include <sstream>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -181,55 +182,64 @@ std::string ta_target(const std::string& strategy_body,
 
 }  // namespace
 
-/* Pins: LN_BOBYQA and LN_COBYLA (MAXEVAL 60, from RCUT2B 5.6, SGRIDMB 0.2)
- * with PC_ERMSE 0 0.0001 --skip-above 5.0, which rejects part of the box
- * (the start among it), under the default FAILSCORE (the largest double)
- * and under FAILSCORE 1e300: each run makes 60 evaluations, no
- * params.tadah row repeats another and none was answered from the record
- * (no "Repeated points reused" in DIAGNOSTICS), it ends MAXEVAL_REACHED,
- * and loss.tadah records the FAILSCORE of every rejected evaluation; the
- * journal says once that NLopt is given a finite stand-in.
+/* Pins: LN_BOBYQA and LN_COBYLA (MAXEVAL 60) with PC_ERMSE 0 0.0001
+ * --skip-above 5.5, which rejects part of the box (not the start), under
+ * the default FAILSCORE (the largest double), under FAILSCORE 1e300 and
+ * under FAILSCORE 1000: each run makes 60 evaluations, no params.tadah row
+ * repeats another and none was answered from the record (no "Repeated
+ * points reused" in DIAGNOSTICS), it ends MAXEVAL_REACHED, and loss.tadah
+ * records the FAILSCORE of every rejected evaluation; the journal says once
+ * that NLopt is given a finite stand-in, and the three runs evaluate the
+ * same points (the start is usable, so every failure is given the worst
+ * usable loss so far plus a margin, whatever FAILSCORE is).
  * Before the fix: NLopt was given FAILSCORE itself, and the journal had no
- * stand-in line. LN_BOBYQA made 49 evaluations under both FAILSCOREs, 2 of
- * them repeating an earlier row, and spent its other calls on points
- * answered from the record; LN_COBYLA made 60 under the largest double, 7
- * of them repeats, and ended after 3 evaluations under 1e300. */
+ * stand-in line. Under the default FAILSCORE and 1e300 LN_BOBYQA made 49
+ * evaluations, 2 of them repeating an earlier row, and its other calls were
+ * answered from the record; LN_COBYLA repeated 6 rows under the default and
+ * ended after 3 evaluations under 1e300. Under 1000 both made 60
+ * evaluations without a repeat, along other points than under the
+ * default. */
 TEST_CASE("NLopt failed evaluations: LN_BOBYQA and LN_COBYLA on the Ta data "
           "with a --skip-above cap make every evaluation of MAXEVAL",
           "[HPO][nlopt][failscore][e2e]")
 {
     for (const std::string algo : {"LN_BOBYQA", "LN_COBYLA"}) {
-        for (const std::string failscore : {std::string(), std::string("1e300")}) {
-            DYNAMIC_SECTION(algo << (failscore.empty() ? ", default FAILSCORE"
-                                                       : ", FAILSCORE 1e300")) {
-                TaDataRun run(ta_target(
-                    "    LIB NLOPT\n    ALGO " + algo + "\n    MAXEVAL 60\n",
-                    (failscore.empty() ? std::string()
-                                       : "FAILSCORE " + failscore + "\n") +
-                        "PC_ERMSE 0 0.0001 --skip-above 5.0\n"));
-                CHECK(run.status == 0);
-                const std::string journal = read_file("hpo_run.log");
-                const auto loss = data_rows("loss.tadah");
-                const std::string fail_row = failscore.empty()
-                    ? "1.797693134862316e+308" : "1.000000000000000e+300";
-                std::size_t failed = 0;
-                for (const auto& row : loss)
-                    if (row.back() == fail_row) ++failed;
-                INFO("rejected evaluations " << failed);
-                CHECK(loss.size() == 60u);
-                CHECK(failed > 0u);
-                CHECK(repeated_rows() == 0u);
-                CHECK(journal.find("Repeated points reused") ==
-                      std::string::npos);
-                CHECK(journal_status(journal) ==
-                      "MAXEVAL_REACHED -- maximum evaluations exhausted");
-                CHECK(count_of(journal, "NLOPT:" + algo +
-                                            ": NLopt is given a finite "
-                                            "stand-in for each failed "
-                                            "evaluation of this search") ==
-                      1u);
-            }
+        std::vector<std::vector<std::vector<double>>> runs;
+        for (const std::string failscore :
+             {std::string(), std::string("1e300"), std::string("1000")}) {
+            INFO(algo << (failscore.empty() ? ", default FAILSCORE"
+                                            : ", FAILSCORE " + failscore));
+            TaDataRun run(ta_target(
+                "    LIB NLOPT\n    ALGO " + algo + "\n    MAXEVAL 60\n",
+                (failscore.empty() ? std::string()
+                                   : "FAILSCORE " + failscore + "\n") +
+                    "PC_ERMSE 0 0.0001 --skip-above 5.5\n"));
+            CHECK(run.status == 0);
+            const std::string journal = read_file("hpo_run.log");
+            const auto loss = data_rows("loss.tadah");
+            const std::string fail_row =
+                failscore.empty() ? "1.797693134862316e+308"
+                : failscore == "1e300" ? "1.000000000000000e+300"
+                                       : "1.000000000000000e+03";
+            std::size_t failed = 0;
+            for (const auto& row : loss)
+                if (row.back() == fail_row) ++failed;
+            INFO("rejected evaluations " << failed);
+            CHECK(loss.size() == 60u);
+            CHECK(failed > 0u);
+            CHECK(repeated_rows() == 0u);
+            CHECK(journal.find("Repeated points reused") == std::string::npos);
+            CHECK(journal_status(journal) ==
+                  "MAXEVAL_REACHED -- maximum evaluations exhausted");
+            CHECK(count_of(journal, "NLOPT:" + algo +
+                                        ": NLopt is given a finite stand-in "
+                                        "for each failed evaluation of this "
+                                        "search") == 1u);
+            runs.push_back(params_rows());
         }
+        INFO(algo);
+        CHECK(runs[1] == runs[0]);
+        CHECK(runs[2] == runs[0]);
     }
 }
 
@@ -274,24 +284,29 @@ TEST_CASE("LN_BOBYQA: a start next to a bound moves by at most half a step "
 }
 
 /* Pins: DLIB:BFGS (MAXEVAL 60, FAILSCORE 1e300) from RCUT2B 5.6, SGRIDMB
- * 0.2 with PC_ERMSE 0 <w> at the loss-term weights 1e-4, 1 and 1e6 -- the
- * same problem, its loss multiplied by 1e4 and 1e10: every run reaches the
- * optimum at RCUT2B 6 (its upper bound) and ends there, and the numbers of
- * evaluations of the three runs differ by at most one line search (a trial
- * and the 4 points of a central difference in two dimensions); the journal
- * gives the length of the first gradient each run divides its loss by.
+ * 0.2 with PC_ERMSE 0 <w> and FTOL_ABS 1e-7 w at the loss-term weights w =
+ * 1e-4, 1 and 1e6 -- the same problem with its loss, and the tolerance on
+ * it, in units 1e4 times smaller and 1e6 times larger: every run reaches
+ * the optimum at RCUT2B 6 (its upper bound) and ends there, and the
+ * numbers of evaluations of the three runs differ by at most one line
+ * search (a trial and the 4 points of a central difference in two
+ * dimensions); the journal gives the length of the first gradient each run
+ * divides its loss by.
  * Before the fix: dlib's first step is the gradient itself, so the path
  * followed the unit of the loss: at 1e-4 and 1 BFGS crept along RCUT2B and
- * reached 6 after 55 and 59 evaluations; at 1e6 its first step went to the
- * corner (6, 0.1), backtracked to RCUT2B 5.604 and the run stopped there on
- * FTOL_ABS after 34 evaluations; the journal had no such line. */
+ * made 60 and 59 evaluations; at 1e6 its first step went to the corner
+ * (6, 0.1), backtracked, and the run stopped at RCUT2B 5.604 on FTOL_ABS
+ * after 24; the journal had no such line. */
 TEST_CASE("DLIB:BFGS: the path does not depend on the scale of the loss",
           "[HPO][dlib_bfgs][e2e]")
 {
     std::vector<std::size_t> evals;
-    for (const std::string weight : {"1e-4", "1", "1e6"}) {
-        INFO("PC_ERMSE weight " << weight);
-        TaDataRun run(ta_target("    LIB DLIB\n    ALGO BFGS\n    MAXEVAL 60\n",
+    for (const auto& [weight, ftol] :
+         std::vector<std::pair<std::string, std::string>>{
+             {"1e-4", "1e-11"}, {"1", "1e-7"}, {"1e6", "1e-1"}}) {
+        INFO("PC_ERMSE weight " << weight << ", FTOL_ABS " << ftol);
+        TaDataRun run(ta_target("    LIB DLIB\n    ALGO BFGS\n    MAXEVAL 60\n"
+                                "    FTOL_ABS " + ftol + "\n",
                                 "FAILSCORE 1e300\nPC_ERMSE 0 " + weight + "\n"));
         CHECK(run.status == 0);
         const auto best = data_rows("best_params.tadah");

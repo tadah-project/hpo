@@ -1778,11 +1778,12 @@ TEST_CASE("Repeated points: the run says when an evaluation is a function "
  * 40) on the bowl whose minimum lies beyond the corner (1, 1), from (0.2,
  * 0.3), with the loss multiplied by 2^-13, 1 and 2^20 (products exact in
  * binary): the three searches ask for the same points, bit for bit, in the
- * same order, and end at the corner (1, 1). Each journal gives the length
- * of the first gradient that the search divides its loss by ("DLIB:BFGS:
- * the search runs on the loss divided by the length of its first
- * gradient, ..."; at the factor 1 the gradient at the start is 200 (-1.1,
- * -0.8), of length 272.03).
+ * same order, and end at the corner (1, 1) ("no step within the OPTIM box
+ * ...: A at its upper bound 1, B at its upper bound 1"). Each journal gives
+ * the length of the first gradient that the search divides its loss by
+ * ("DLIB:BFGS: the search runs on the loss divided by the length of its
+ * first gradient, ..."; at the factor 1 the gradient at the start is 200
+ * (-1.1, -0.8), of length 272.03).
  * Before the fix: dlib's first step is the gradient itself (its first
  * trial x - g), so the path followed the unit of the loss: the three
  * searches asked for different points, and the journal had no such line. */
@@ -1801,7 +1802,8 @@ TEST_CASE("DLIB:BFGS: the points a search asks for do not depend on the unit "
         host.reason = kBlocker;   // every repeat evaluated: the plain path
         host.scale = 100.0 * factor;
         journals.push_back(run_bfgs_within(sp, host, "a scaled DLIB:BFGS"));
-        CHECK(same_bits(host.asked.back(), point(1.0, 1.0)));
+        CHECK(journals.back().find("A at its upper bound 1, B at its upper "
+                                   "bound 1") != std::string::npos);
         searches.push_back(host.asked);
     }
     REQUIRE(searches[0].size() > 10u);
