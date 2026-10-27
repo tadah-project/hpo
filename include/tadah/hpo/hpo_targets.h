@@ -551,6 +551,7 @@ public:
      * Replaces the legacy env vars TADAH_HPO_BAD_POT_ERMSE_MEV /
      * TADAH_HPO_BAD_POT_ERMSE_REL. Defaults are nullopt = no skip. */
     using SkipCaps = MetricSkipCaps;
+    /* skip_ersq stays empty: PC_ERSQ takes no cap (read() refuses one). */
     SkipCaps skip_emae, skip_errmse, skip_ersq;
 
     /** Why two evaluations of one point can give different losses in this

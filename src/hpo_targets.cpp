@@ -1970,6 +1970,8 @@ void HPOTargets::read(const std::string& fn)
                     throw std::runtime_error(key + " <weight> must be a number >= 0, got '" +
                                              weight_token + "'");
                 HPOTargets::SkipCaps caps;
+                /* The first cap option of the line, which PC_ERSQ refuses. */
+                std::string first_cap;
                 std::string flag;
                 while (iss >> flag) {
                     if (flag != "--skip-above" && flag != "--skip-rel")
@@ -1980,6 +1982,7 @@ void HPOTargets::read(const std::string& fn)
                     auto& cap = flag == "--skip-above" ? caps.abs_above : caps.rel_above;
                     if (cap) throw std::runtime_error(key + ": repeated " + flag);
                     cap = value;
+                    if (first_cap.empty()) first_cap = flag;
                 }
                 if (dataset_metric) {
                     auto& targets = key == "PC_ERMSE" ? ermse_targets
@@ -2000,7 +2003,18 @@ void HPOTargets::read(const std::string& fn)
                         "line " + std::to_string(first->second.first) + ")");
                 else if (key=="PC_EMAE")   { emae=tgt;   w_emae=wgt;   use_emae=true;   skip_emae=caps; }
                 else if (key=="PC_ErRMSE") { errmse=tgt; w_errmse=wgt; use_errmse=true; skip_errmse=caps; }
-                else if (key=="PC_ERSQ")   { ersq=tgt;   w_ersq=wgt;   use_ersq=true;   skip_ersq=caps; }
+                else if (key=="PC_ERSQ") {
+                    /* A cap rejects an evaluation whose metric is above it
+                     * (MetricSkipTracker), and R^2 is better when higher:
+                     * on PC_ERSQ it would reject the better fits. */
+                    if (!first_cap.empty())
+                        throw std::runtime_error(
+                            "PC_ERSQ takes no " + first_cap + ": a cap "
+                            "rejects an evaluation whose metric is above it, "
+                            "and a higher R^2 is a better fit, so the cap "
+                            "would reject the better fits");
+                    ersq=tgt;   w_ersq=wgt;   use_ersq=true;
+                }
             }
             else
                 throw std::runtime_error("unknown key '" + key + "'");
@@ -2583,7 +2597,6 @@ std::string HPOTargets::repeat_reuse_blocker() const {
   if (srmse_targets.has_relative_cap()) return "PC_SRMSE_GPA" + rel;
   if (use_emae && skip_emae.rel_above) return "PC_EMAE" + rel;
   if (use_errmse && skip_errmse.rel_above) return "PC_ErRMSE" + rel;
-  if (use_ersq && skip_ersq.rel_above) return "PC_ERSQ" + rel;
   return "";
 }
 
