@@ -21,8 +21,8 @@
 // and the code's answer, a refusal with its message, is compared with the
 // entry's message filled in. A name the code knows without a generated
 // entry is the coverage check's (hpo_hpotarget_registry_coverage, which
-// reads these functions); the OPTIM refusals are compared both ways over
-// every key of the blueprint.
+// reads these functions, the set of is_top_level_key() among them); the
+// OPTIM refusals are compared both ways over every key of the blueprint.
 //
 // Tag [hpotarget_gen]. The file compiles with or without the generated
 // headers (__has_include): without them it holds one case, which fails.
@@ -537,8 +537,10 @@ TEST_CASE("hpotarget generated tables: the removed keywords are the "
 /* Pins: kTopLevelKeys are the keys a block refuses as top-level keys
  * (is_top_level_key): each, inside INIT, is refused with
  * root_key_in_block_msg; a key of the top level that is not one of them
- * (MAXTIME, a key of the optimiser group too) is an unknown key there.
- * Before the fix: the headers do not exist. */
+ * (MAXTIME, a key of the optimiser group too) is an unknown key there. A
+ * name of the code's set that is no key of the top level is the coverage
+ * check's, which reads the set. Before the fix: the headers do not
+ * exist. */
 TEST_CASE("hpotarget generated tables: the top-level keys are those a "
           "block refuses as such", "[hpotarget_gen]")
 {
