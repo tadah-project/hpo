@@ -56,7 +56,9 @@ negative gradient, with an Armijo line search."""
 doc = """\
 A Broyden-Fletcher-Goldfarb-Shanno (BFGS) quasi-Newton search within the \
 OPTIM box: each step follows an estimate of the inverse Hessian built from \
-the gradients of the earlier steps."""
+the gradients of the earlier steps. The search runs on the loss divided by \
+the length of its first gradient, so its steps do not depend on the unit \
+of the loss."""
 
 [optimizer."DLIB:GFS"]
 doc = """\

@@ -606,8 +606,12 @@ Registry build_registry()
         } else if (has("BOBYQA") || has("COBYLA")) {
             c.step_use  = StepUse::PerDimRescale;
             c.step_note = "STEP rescales the coordinates, so that the first trust-region "
-                          "radius is STEP in each dimension; the last radius is XTOL_REL "
-                          "times the first, and not below XTOL_ABS";
+                          "radius is STEP in each dimension, and that scale holds for the "
+                          "whole search; without STEP each dimension takes 0.25 of its "
+                          "width. The last radius is XTOL_REL times the first, and not "
+                          "below XTOL_ABS. LN_BOBYQA moves a start that lies within a step "
+                          "of a bound by at most half a step: onto the bound, or to one "
+                          "step from it";
         } else if (has("NEWUOA") || has("PRAXIS")) {
             c.step_use  = StepUse::MinCollapsed;
             c.step_note = "one radius for every dimension, the smallest STEP of the "

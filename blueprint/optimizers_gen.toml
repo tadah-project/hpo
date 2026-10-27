@@ -63,8 +63,8 @@ Options for ASA:ASA
   PARAM Temperature_Anneal_Scale  (default 100.0)  n = log(TAS); above the number of dimensions for large problems
   PARAM Sequential_Parameters  (default -1)  start the cyclic generation of one dimension at a time at this index; any negative = off
   PARAM Initial_Parameter_Temperature  (default 1.0)  initial parameter temperature (must be > 0)
-  PARAM Acceptance_Frequency_Modulus  (default 100)  periodic-test cadence in accepted states; 0 = off
-  PARAM Generated_Frequency_Modulus  (default 10000)  periodic-test cadence in generated states; 0 = off
+  PARAM Acceptance_Frequency_Modulus  (default 100)  accepted states between periodic tests (a block of states is followed by one when it reaches a multiple); 0 = off
+  PARAM Generated_Frequency_Modulus  (default 10000)  generated states between periodic tests (a block of states is followed by one when it reaches a multiple); 0 = off
   PARAM Reanneal_Cost  (default 1)  0 = off, 1 = default, >1 / <-1 = deviation-sample variants (-1 invalid)
   PARAM Reanneal_Parameters  (default 1)  adapt the temperature of each dimension to its tangent sensitivity
   PARAM Delta_X  (default 0.001)  finite-difference step for tangents; 0 disables tangents
@@ -1593,7 +1593,7 @@ untested_tolerance_note = ""
 step_use = "per_dim_rescale"
 step_use_text = "one per dimension: rescaling of the coordinates"
 step_consumed = true
-step_note = "STEP rescales the coordinates, so that the first trust-region radius is STEP in each dimension; the last radius is XTOL_REL times the first, and not below XTOL_ABS"
+step_note = "STEP rescales the coordinates, so that the first trust-region radius is STEP in each dimension, and that scale holds for the whole search; without STEP each dimension takes 0.25 of its width. The last radius is XTOL_REL times the first, and not below XTOL_ABS. LN_BOBYQA moves a start that lies within a step of a bound by at most half a step: onto the bound, or to one step from it"
 starts_at_x0 = true
 start_note = ""
 random_draws = "not_recorded"
@@ -1605,7 +1605,7 @@ Options for NLOPT:LN_BOBYQA
    * PARAM: NLopt reads no PARAM key of this algorithm
    * derivative-free
    * STEP <double>  initial step; consumption: one per dimension: rescaling of the coordinates
-     STEP rescales the coordinates, so that the first trust-region radius is STEP in each dimension; the last radius is XTOL_REL times the first, and not below XTOL_ABS
+     STEP rescales the coordinates, so that the first trust-region radius is STEP in each dimension, and that scale holds for the whole search; without STEP each dimension takes 0.25 of its width. The last radius is XTOL_REL times the first, and not below XTOL_ABS. LN_BOBYQA moves a start that lies within a step of a bound by at most half a step: onto the bound, or to one step from it
 """
 
 [[optimizer]]
@@ -1629,7 +1629,7 @@ untested_tolerance_note = ""
 step_use = "per_dim_rescale"
 step_use_text = "one per dimension: rescaling of the coordinates"
 step_consumed = true
-step_note = "STEP rescales the coordinates, so that the first trust-region radius is STEP in each dimension; the last radius is XTOL_REL times the first, and not below XTOL_ABS"
+step_note = "STEP rescales the coordinates, so that the first trust-region radius is STEP in each dimension, and that scale holds for the whole search; without STEP each dimension takes 0.25 of its width. The last radius is XTOL_REL times the first, and not below XTOL_ABS. LN_BOBYQA moves a start that lies within a step of a bound by at most half a step: onto the bound, or to one step from it"
 starts_at_x0 = true
 start_note = ""
 random_draws = "not_recorded"
@@ -1641,7 +1641,7 @@ Options for NLOPT:LN_COBYLA
    * PARAM: NLopt reads no PARAM key of this algorithm
    * derivative-free
    * STEP <double>  initial step; consumption: one per dimension: rescaling of the coordinates
-     STEP rescales the coordinates, so that the first trust-region radius is STEP in each dimension; the last radius is XTOL_REL times the first, and not below XTOL_ABS
+     STEP rescales the coordinates, so that the first trust-region radius is STEP in each dimension, and that scale holds for the whole search; without STEP each dimension takes 0.25 of its width. The last radius is XTOL_REL times the first, and not below XTOL_ABS. LN_BOBYQA moves a start that lies within a step of a bound by at most half a step: onto the bound, or to one step from it
 """
 
 [[optimizer]]
