@@ -36,11 +36,14 @@ PC_LAMMPS_hotvar, PARAM.ASA:ASA.Delta_X -> PARAM_ASA_ASA_Delta_X). An id
 that gives no C++ identifier, or two ids that give one name, stop the
 generator.
 
-The output depends on the registry alone (no date, no path), so two runs
-write the same files. The headers are checked in; CTest
-hpo_hpotarget_registry_sync runs --check, which fails when a header
-differs from what the registry gives, and the build target
-hpo_regenerate_registries runs --header.
+The output depends on the registry and on its loader (the placeholder
+sets the loader fixes, the words its schema allows for an argument, a
+repeat rule and a check, its named integer limits), and on nothing else
+(no date, no path), so two runs write the same files. The headers are
+checked in, and regenerated after a change to the registry or to the
+loader; CTest hpo_hpotarget_registry_sync runs --check, which fails when
+a header differs from what the registry and its loader give, and the
+build target hpo_regenerate_registries runs --header.
 
 Exit status: 0, or 1 with the reason (a registry the loader refuses, a
 name the generator cannot give, a header that differs with --check).
@@ -1032,7 +1035,7 @@ def main(argv: list[str] | None = None) -> int:
                       help="write the headers")
     mode.add_argument("--check", action="store_true",
                       help="fail when a checked-in header differs from "
-                           "what the registry gives")
+                           "what the registry and its loader give")
     ap.add_argument("--registry", type=pathlib.Path, default=SCRIPT_DIR,
                     help="the directory of hpotarget.toml (default: this "
                          "script's)")
@@ -1068,16 +1071,17 @@ def main(argv: list[str] | None = None) -> int:
         if not path.exists():
             stale.append(f"{path} does not exist")
         elif path.read_text(encoding="utf-8") != text:
-            stale.append(f"{path} differs from what the registry gives")
+            stale.append(f"{path} differs from what the registry and its "
+                         "loader give")
     if stale:
         for s in stale:
             print(f"gen_hpotarget.py --check: {s}", file=sys.stderr)
         print(f"gen_hpotarget.py --check: regenerate with `{REGENERATE}` "
               f"(or gen_hpotarget.py --header) and commit the headers with "
-              "the registry change", file=sys.stderr)
+              "the change to the registry or its loader", file=sys.stderr)
         return 1
     print(f"gen_hpotarget.py --check: {', '.join(texts)} in {args.out} "
-          "match the registry")
+          "match the registry and its loader")
     return 0
 
 

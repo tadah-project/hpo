@@ -417,11 +417,11 @@ set_tests_properties(hpo_hpotarget_generated_tool PROPERTIES
     FAIL_REGULAR_EXPRESSION "\nRan 0 tests ")
 # The generated tables of the target-file registry: blueprint/
 # gen_hpotarget.py writes include/tadah/hpo/hpotarget_registry_gen.h and
-# hpo_param_registry_gen.h from the registry (blueprint/README.md, "The
-# generated tables"); both are checked in.
+# hpo_param_registry_gen.h from the registry and its loader
+# (blueprint/README.md, "The generated tables"); both are checked in.
 #  - hpo_hpotarget_registry_sync: gen_hpotarget.py --check fails when a
-#    checked-in header differs from what the registry gives, naming the
-#    command that regenerates it;
+#    checked-in header differs from what the registry and its loader give,
+#    naming the command that regenerates it;
 #  - hpo_hpotarget_generator_tool: the generator on the synthetic registry
 #    of test_hpotarget_registry.py (tests/test_gen_hpotarget.py), the
 #    headers compiled with this build's C++ compiler;
@@ -430,7 +430,8 @@ set_tests_properties(hpo_hpotarget_generated_tool PROPERTIES
 #    generated table equals the table the parser holds by hand.
 # Before the fix: the three fail, the generator and the headers do not
 # exist. The target hpo_regenerate_registries writes the headers
-# (gen_hpotarget.py --header) after a change to the registry.
+# (gen_hpotarget.py --header) after a change to the registry or its
+# loader.
 add_custom_target(hpo_regenerate_registries
     COMMAND ${Python3_EXECUTABLE}
         ${_hpo_blueprint_dir}/gen_hpotarget.py --header
