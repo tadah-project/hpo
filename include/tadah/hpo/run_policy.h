@@ -308,29 +308,7 @@ public:
     }
 
     const std::size_t actual_k = plan.starts;
-    if (actual_k < k_) {
-      /* A chain that gives fewer points than N_STARTS is refused at
-       * startup (require_multistart_points, at the N_STARTS line); the
-       * chain drawn can still give fewer: a WARM point dropped under
-       * WARM_ON_MISMATCH skip, a drawn point that meets another, a RESTART
-       * round whose METHOD lines give fewer. The advice names settings the
-       * parser takes: N_STARTS is 2 or more (one start is STRATEGY TYPE
-       * PLAIN), so a lower N_STARTS is named only for two starts or more. */
-      const std::string k = std::to_string(k_);
-      const std::string got = std::to_string(actual_k);
-      std::string msg =
-          "MULTISTART N_STARTS " + k + " requested but the resolved INIT "
-          "chain produced only " + got +
-          (actual_k == 1 ? " starting point" : " starting points") +
-          (actual_k == 1 ? "; running 1 start, which is STRATEGY TYPE PLAIN."
-                         : "; running " + got + " starts.") +
-          " A chain of " + k + " or more starting points (METHOD LHS " + k +
-          ", RANDOM " + k + " or SOBOL " + k + ") runs " + k + " starts";
-      if (actual_k >= 2)
-        msg += ", and N_STARTS " + got + " asks for the " + got +
-               " that run";
-      HPOLog::instance().warning(msg + ".");
-    }
+    if (actual_k < k_) warn_fewer_starts(spec, actual_k);
     HPOLog::instance().info(
         "MULTISTART: running " + std::to_string(actual_k) +
         (actual_k == 1 ? " start" : " starts"));
@@ -394,6 +372,57 @@ public:
   }
 
 private:
+  /* The WARNING of a batch of fewer starts than N_STARTS, naming the chain
+   * that gave the points and why they are fewer:
+   *  - the INIT chain: the startup check took its count
+   *    (require_multistart_points), so it gave fewer when it was drawn: a
+   *    WARM point dropped under WARM_ON_MISMATCH skip, a drawn point equal
+   *    to another, which the chain keeps once. "MULTISTART N_STARTS 3: the
+   *    INIT chain gave 2 starting points when it was drawn (WARM_ON_MISMATCH
+   *    skip drops a WARM point, and a point equal to another counts once);
+   *    running 2 starts, and N_STARTS 2 asks for the 2 that run." A lower
+   *    N_STARTS is named for two starts or more (N_STARTS is 2 or more; one
+   *    start is STRATEGY TYPE PLAIN);
+   *  - a RESTART round (OptimizerSpec::init_from_restart), whose chain the
+   *    startup check does not count: a chain of fewer points as written
+   *    gets the count and what gives N_STARTS starts, as the startup
+   *    refusal does ("... the RESTART round gave 1 starting point; running
+   *    1 start. The RESTART chain gives 1 (RANDOM 1); a chain of 3 or more
+   *    starting points (METHOD LHS 3, RANDOM 3 or SOBOL 3) runs 3 starts."),
+   *    one of N_STARTS points or more the cause, as above. */
+  void warn_fewer_starts(const OptimizerSpec& spec, std::size_t actual_k) const {
+    const bool restart = spec.init_from_restart;
+    const ChainPoints c = chain_points(restart ? spec.restart.init_strategy
+                                               : spec.init_strategy_spec);
+    const std::string k = std::to_string(k_);
+    const std::string got = std::to_string(actual_k);
+    const std::string gave =
+        got + (actual_k == 1 ? " starting point" : " starting points");
+    std::string msg = "MULTISTART N_STARTS " + k + ": the " +
+                      (restart ? "RESTART round" : "INIT chain") + " gave " +
+                      gave;
+    const bool written_fewer = restart && c.points < k_;
+    if (!written_fewer)
+      msg += std::string(" when it was drawn (") +
+             (c.warm_skip ? "WARM_ON_MISMATCH skip drops a WARM point, and "
+                          : "") +
+             "a point equal to another counts once)";
+    msg += "; running " + got + (actual_k == 1 ? " start" : " starts");
+    if (written_fewer) {
+      msg += ". The RESTART chain gives " +
+             std::string(c.warm ? "at most " : "") +
+             std::to_string(c.points) + " (" + c.from() + "); " +
+             multistart_chain_advice(c, k_) + ".";
+    } else if (restart) {
+      msg += ".";
+    } else if (actual_k == 1) {
+      msg += ", which is STRATEGY TYPE PLAIN.";
+    } else {
+      msg += ", and N_STARTS " + got + " asks for the " + got + " that run.";
+    }
+    HPOLog::instance().warning(msg);
+  }
+
   /* One inner run for all points (no per-start loop). MULTISTART: a
    * StagnationStop propagates as under PLAIN. PRESTAGE refinement: see
    * run_one_windowed. */
@@ -806,6 +835,7 @@ public:
           if (!pts.empty()) {
             cur.optim_init = std::move(pts);
             cur.optim_init_origin = std::move(origins);
+            cur.init_from_restart = true;
             /* A PRESTAGE exploration that starts from the OUTER INIT
              * points restarts from the fresh ones too. */
             cur.share_init_with_nested_phases();

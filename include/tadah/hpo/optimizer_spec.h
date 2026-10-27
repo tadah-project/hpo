@@ -282,6 +282,7 @@ struct OptimizerSpec {
           space(o.space), scale(o.scale),
           optim_init(o.optim_init),
           optim_init_origin(o.optim_init_origin),
+          init_from_restart(o.init_from_restart),
           failscore(o.failscore),
           failscore_grading(o.failscore_grading),
           failscore_grading_by_env(o.failscore_grading_by_env),
@@ -418,6 +419,11 @@ struct OptimizerSpec {
      * A consumer uses it only when its size equals optim_init's. Empty for
      * hand-built specs. */
     std::vector<InitOrigin> optim_init_origin;
+    /* Whether optim_init holds the points a RESTART round drew
+     * (RestartPolicy), not those of the INIT chain: the warning of a
+     * MULTISTART of fewer points than N_STARTS names the chain that gave
+     * them (MultiStartPolicy). */
+    bool init_from_restart = false;
 
     /* FAILSCORE from the enclosing HPOTargets, copied in so optimisers
      * can tell a real loss from a failed-evaluation sentinel (the
