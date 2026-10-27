@@ -1930,7 +1930,11 @@ doc = "A search from several starting points; TYPE may follow the keys of its TY
 wrap = "strategy"
 text = '''
 N_STARTS 3
-TYPE MULTISTART'''
+TYPE MULTISTART
+INIT
+METHOD LHS 3
+SEED 1
+ENDINIT'''
 
 [[key.examples]]
 doc = "One run of the optimiser, as without a TYPE line."
@@ -1975,6 +1979,7 @@ repeat = "error"
 repeat_msg = "N_STARTS is set twice in the STRATEGY block (first on line {first_line}); each key is given once"
 checks = [
   { msg = "N_STARTS must be an integer >= 2, got '{tok}'", doc = "When the file is read: a token that is no whole number, such as a word, a sign, a fraction or a number past the largest; the note about one start follows 0 and 1 only." },
+  { msg = "N_STARTS {value} needs {value} starting points, and the INIT chain gives {count} ({list}); {hint}", doc = "When the file is read, at the N_STARTS line: the INIT blocks inside OPTIMIZER and STRATEGY give fewer starting points than N_STARTS, counting the K of each RANDOM, LHS and SOBOL line and one point of each CONFIG and WARM line, at most K_TOTAL; {list} names the METHOD lines and K_TOTAL, and {hint} what gives N_STARTS starts." },
 ]
 doc = """\
 The number of starts of STRATEGY TYPE MULTISTART: the optimiser runs once \
@@ -1990,14 +1995,22 @@ refuses N_STARTS when the STRATEGY block ends."""
 wrap = "strategy"
 text = '''
 TYPE MULTISTART
-N_STARTS 4'''
+N_STARTS 4
+INIT
+METHOD LHS 4
+SEED 1
+ENDINIT'''
 
 [[key.examples]]
 wrap = "strategy"
 doc = "TYPE may follow the keys of its TYPE."
 text = '''
 N_STARTS 3
-TYPE MULTISTART'''
+TYPE MULTISTART
+INIT
+METHOD LHS 3
+SEED 1
+ENDINIT'''
 
 [[key.invalid]]
 wrap = "strategy"
@@ -2015,6 +2028,29 @@ text = '''
 TYPE MULTISTART
 N_STARTS x'''
 error = "N_STARTS must be an integer >= 2, got 'x'"
+
+[[key.invalid]]
+wrap = "strategy"
+at = 2
+doc = "Without a METHOD line the INIT chain gives the CONFIG point alone."
+text = '''
+TYPE MULTISTART
+N_STARTS 2'''
+error = "N_STARTS 2 needs 2 starting points, and the INIT chain gives 1 (the CONFIG point: the chain has no METHOD line); one start is STRATEGY TYPE PLAIN, and a chain of 2 or more starting points (METHOD LHS 2, RANDOM 2 or SOBOL 2) runs 2 starts"
+
+[[key.invalid]]
+wrap = "strategy"
+at = 2
+doc = "K_TOTAL keeps two of the six LHS points."
+text = '''
+TYPE MULTISTART
+N_STARTS 4
+INIT
+METHOD LHS 6
+K_TOTAL 2
+SEED 4
+ENDINIT'''
+error = "N_STARTS 4 needs 4 starting points, and the INIT chain gives 2 (LHS 6, capped by K_TOTAL 2); with K_TOTAL 4, or without K_TOTAL, 4 starts run, and N_STARTS 2 starts from each of the 2"
 
 [[key.invalid]]
 wrap = "opt_prestage"
@@ -2146,7 +2182,11 @@ starting point; {list} names the local optimisers."""
 wrap = "strategy"
 text = '''
 TYPE MULTISTART
-N_STARTS 2'''
+N_STARTS 2
+INIT
+METHOD LHS 2
+SEED 1
+ENDINIT'''
 
 [[strategy_type.examples]]
 wrap = "none"
@@ -2171,11 +2211,15 @@ ENDOPTIMIZER'''
 [[strategy_type.invalid]]
 wrap = "none"
 check = "startup"
-at = 11
+at = 15
 text = '''
 OPTIM CGRID2B (1) 0.5 1.5
 PC_ERMSE 0 1
 OPTIMIZER
+INIT
+METHOD LHS 2
+SEED 1
+ENDINIT
 STRATEGY
 TYPE MULTISTART
 N_STARTS 2
@@ -2189,11 +2233,15 @@ error = "STRATEGY TYPE MULTISTART cannot run DLIB:GFS: it takes every INIT point
 [[strategy_type.invalid]]
 wrap = "none"
 check = "startup"
-at = 11
+at = 15
 text = '''
 OPTIM CGRID2B (1) 0.5 1.5
 PC_ERMSE 0 1
 OPTIMIZER
+INIT
+METHOD LHS 2
+SEED 1
+ENDINIT
 STRATEGY
 TYPE MULTISTART
 N_STARTS 2
@@ -3567,6 +3615,10 @@ LIB NLOPT
 ALGO LN_SBPLX
 MAXEVAL 10
 {line}
+INIT
+METHOD LHS 2
+SEED 1
+ENDINIT
 ENDSTRATEGY
 ENDOPTIMIZER
 """

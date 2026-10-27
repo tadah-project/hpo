@@ -361,12 +361,23 @@ void check_alternatives(const std::string& msg, const std::string& lead,
     }
 }
 
+/* An INIT block whose chain gives `n` starting points (METHOD LHS n): a
+ * MULTISTART of N_STARTS n starts from each of them (a chain of fewer is
+ * refused when the file is read, at the N_STARTS line). */
+std::string init_points(const std::string& n)
+{
+    return "    INIT\n      METHOD LHS " + n + "\n      SEED 1\n    ENDINIT\n";
+}
+
+/* A MULTISTART of `n_starts` starts and an INIT block of as many points
+ * (init_points), after `extra`. */
 std::string multistart_body(const std::string& lib, const std::string& algo,
                             const std::string& n_starts,
                             const std::string& extra = "")
 {
     return "    TYPE MULTISTART\n    LIB " + lib + "\n    ALGO " + algo +
-           "\n    MAXEVAL 20\n    N_STARTS " + n_starts + "\n" + extra;
+           "\n    MAXEVAL 20\n    N_STARTS " + n_starts + "\n" + extra +
+           init_points(n_starts);
 }
 
 const std::string kExploreGfs =
@@ -718,7 +729,8 @@ TEST_CASE("startup validation: a STRATEGY key of another TYPE is rejected at "
                                           "PRESTAGE"));
 
         ScopedTempFile ok(strategy_config(
-            "    N_STARTS 3\n    TYPE MULTISTART\n    LIB DLIB\n    ALGO BFGS\n"));
+            "    N_STARTS 3\n    TYPE MULTISTART\n    LIB DLIB\n    ALGO BFGS\n" +
+            init_points("3")));
         HPOTargets trg(ctx, ok.path.string());
         CHECK(trg.spec.multistart.n_starts == 3);
     }
@@ -812,10 +824,114 @@ TEST_CASE("startup validation: STRATEGY TYPE MULTISTART needs N_STARTS 2 or "
                   "'\nLine:     N_STARTS " + n);
     PeriodicTable::initialize();
     ScopedTempFile ok(strategy_config("    TYPE MULTISTART\n    N_STARTS 2\n" +
-                                      backend));
+                                      backend + init_points("2")));
     Context ctx = make_minimal_ctx();
     HPOTargets trg(ctx, ok.path.string());
     CHECK(trg.spec.multistart.n_starts == 2u);
+}
+
+/* Pins: a MULTISTART whose INIT chain gives fewer starting points than
+ * N_STARTS is refused when the file is read, at the N_STARTS line. The
+ * most points a chain can give are the K of its RANDOM, LHS and SOBOL
+ * lines and one point of each CONFIG and WARM line (the CONFIG point
+ * without a METHOD line), at most K_TOTAL; the INIT blocks inside
+ * OPTIMIZER and STRATEGY make one chain. The message names the count, the
+ * METHOD lines and K_TOTAL, and what gives N_STARTS starts:
+ *   - no INIT block, N_STARTS 2: "N_STARTS 2 needs 2 starting points, and
+ *     the INIT chain gives 1 (the CONFIG point: the chain has no METHOD
+ *     line); one start is STRATEGY TYPE PLAIN, and a chain of 2 or more
+ *     starting points (METHOD LHS 2, RANDOM 2 or SOBOL 2) runs 2 starts";
+ *   - CONFIG and RANDOM 1, N_STARTS 3: "... gives 2 (CONFIG, RANDOM 1); a
+ *     chain of 3 or more ... runs 3 starts, and N_STARTS 2 starts from each
+ *     of the 2";
+ *   - K_TOTAL below N_STARTS: "(LHS 6, capped by K_TOTAL 2); with K_TOTAL
+ *     4, or without K_TOTAL, 4 starts run, ...", "(LHS 3, capped by K_TOTAL
+ *     2); without K_TOTAL, 3 starts run, ...", and for METHOD lines of
+ *     fewer points "... without K_TOTAL runs 3 starts";
+ *   - a WARM line, which WARM_ON_MISMATCH may drop when the chain is drawn,
+ *     counts as at most one point: "gives at most 1 (WARM <file>)".
+ * Accepted: a chain of N_STARTS points (LHS 2), the CONFIG line of an INIT
+ * block inside OPTIMIZER with the RANDOM 1 of one inside STRATEGY, a chain
+ * of a WARM line and RANDOM 1 under N_STARTS 2 (the WARM point may be
+ * dropped when the run starts, which the run warns about), and a RESTART
+ * block of fewer points than N_STARTS (a RESTART round draws its own).
+ * Before the fix: every one of these files was read, and the run warned
+ * "MULTISTART N_STARTS 2 requested but the resolved INIT chain produced
+ * only 1 starting point; running 1 start, ..." and ran fewer starts than
+ * N_STARTS. */
+TEST_CASE("startup validation: a MULTISTART whose INIT chain gives fewer "
+          "starting points than N_STARTS is refused at the N_STARTS line",
+          "[startup_validation][strategy][knobs][multistart]")
+{
+    const std::string backend = "    LIB DLIB\n    ALGO BFGS\n";
+    const auto refused = [&](const std::string& n_starts,
+                             const std::string& init) {
+        /* TYPE on line 5, N_STARTS on line 6. */
+        return parse_error(strategy_config("    TYPE MULTISTART\n    N_STARTS " +
+                                           n_starts + "\n" + backend + init));
+    };
+    const auto block = [](const std::string& lines) {
+        return "    INIT\n" + lines + "    ENDINIT\n";
+    };
+    const auto line = [](const std::string& n_starts) {
+        return "\nLine:     N_STARTS " + n_starts;
+    };
+    CHECK(refused("2", "") ==
+          "Error on line 6: N_STARTS 2 needs 2 starting points, and the INIT "
+          "chain gives 1 (the CONFIG point: the chain has no METHOD line); "
+          "one start is STRATEGY TYPE PLAIN, and a chain of 2 or more "
+          "starting points (METHOD LHS 2, RANDOM 2 or SOBOL 2) runs 2 starts" +
+              line("2"));
+    CHECK(refused("2", block("      SEED 4\n")) ==
+          "Error on line 6: N_STARTS 2 needs 2 starting points, and the INIT "
+          "chain gives 1 (the CONFIG point: the chain has no METHOD line); "
+          "one start is STRATEGY TYPE PLAIN, and a chain of 2 or more "
+          "starting points (METHOD LHS 2, RANDOM 2 or SOBOL 2) runs 2 starts" +
+              line("2"));
+    CHECK(refused("3", block("      METHOD CONFIG\n      METHOD RANDOM 1\n"
+                             "      SEED 4\n")) ==
+          "Error on line 6: N_STARTS 3 needs 3 starting points, and the INIT "
+          "chain gives 2 (CONFIG, RANDOM 1); a chain of 3 or more starting "
+          "points (METHOD LHS 3, RANDOM 3 or SOBOL 3) runs 3 starts, and "
+          "N_STARTS 2 starts from each of the 2" + line("3"));
+    CHECK(refused("4", block("      METHOD LHS 6\n      K_TOTAL 2\n"
+                             "      SEED 4\n")) ==
+          "Error on line 6: N_STARTS 4 needs 4 starting points, and the INIT "
+          "chain gives 2 (LHS 6, capped by K_TOTAL 2); with K_TOTAL 4, or "
+          "without K_TOTAL, 4 starts run, and N_STARTS 2 starts from each of "
+          "the 2" + line("4"));
+    CHECK(refused("3", block("      METHOD LHS 3\n      K_TOTAL 2\n"
+                             "      SEED 4\n")) ==
+          "Error on line 6: N_STARTS 3 needs 3 starting points, and the INIT "
+          "chain gives 2 (LHS 3, capped by K_TOTAL 2); without K_TOTAL, 3 "
+          "starts run, and N_STARTS 2 starts from each of the 2" + line("3"));
+    CHECK(refused("3", block("      METHOD LHS 2\n      K_TOTAL 1\n"
+                             "      SEED 4\n")) ==
+          "Error on line 6: N_STARTS 3 needs 3 starting points, and the INIT "
+          "chain gives 1 (LHS 2, capped by K_TOTAL 1); one start is STRATEGY "
+          "TYPE PLAIN, and a chain of 3 or more starting points (METHOD LHS 3, "
+          "RANDOM 3 or SOBOL 3) without K_TOTAL runs 3 starts" + line("3"));
+    CHECK(refused("2", block("      METHOD WARM seed.tadah\n")) ==
+          "Error on line 6: N_STARTS 2 needs 2 starting points, and the INIT "
+          "chain gives at most 1 (WARM seed.tadah); one start is STRATEGY TYPE "
+          "PLAIN, and a chain of 2 or more starting points (METHOD LHS 2, "
+          "RANDOM 2 or SOBOL 2) runs 2 starts" + line("2"));
+
+    /* Accepted. */
+    CHECK(refused("2", init_points("2")) == "");
+    CHECK(parse_error(kRoot +
+                      "OPTIMIZER\n  INIT\n    METHOD CONFIG\n  ENDINIT\n"
+                      "  STRATEGY\n    TYPE MULTISTART\n    N_STARTS 2\n" +
+                      backend + block("      METHOD RANDOM 1\n"
+                                      "      SEED 4\n") +
+                      "  ENDSTRATEGY\nENDOPTIMIZER\n") == "");
+    /* A seed without the OPTIM key WATOM, which WARM_ON_MISMATCH skip
+     * drops when the chain is drawn. */
+    ScopedTempFile seed("RCUT2B 5.0\n");
+    CHECK(refused("2", block("      METHOD WARM " + seed.path.string() +
+                             "\n      METHOD RANDOM 1\n      SEED 4\n"
+                             "      WARM_ON_MISMATCH skip\n")) == "");
+    CHECK(refused("3", init_points("3") + kRestart) == "");
 }
 
 /* Pins: a RESTART block restarts the search after AFTER_STAGNATION
@@ -1354,7 +1470,7 @@ TEST_CASE("startup validation: a second STRATEGY block is rejected at its "
     const std::string first = "    TYPE MULTISTART\n    N_STARTS 3\n"
                               "    LIB DLIB\n    ALGO BFGS\n";   // lines 5-8
     SECTION("in the same OPTIMIZER block") {
-        CHECK(parse_error(strategy_config(first)) == "");
+        CHECK(parse_error(strategy_config(first + init_points("3"))) == "");
         const auto twice = parse_error(
             kRoot + "OPTIMIZER\n  STRATEGY\n" + first + "  ENDSTRATEGY\n"
             "  STRATEGY\n    TYPE PLAIN\n  ENDSTRATEGY\nENDOPTIMIZER\n");
@@ -1689,7 +1805,8 @@ TEST_CASE("startup validation: hpo_run rejects a strategy before it loads "
             "PC_ISOLATION PROCESS\n"
             "OPTIMIZER\n  STRATEGY\n    TYPE MULTISTART\n    LIB NLOPT\n"
             "    ALGO GN_DIRECT\n    MAXEVAL 10\n    N_STARTS 2\n"
-            "    THREADS 2\n  ENDSTRATEGY\nENDOPTIMIZER\n");
+            "    THREADS 2\n" + init_points("2") +
+            "  ENDSTRATEGY\nENDOPTIMIZER\n");
         CHECK_THAT(err, Catch::Contains("STRATEGY TYPE MULTISTART cannot run "
                                         "NLOPT:GN_DIRECT:"));
 #ifdef TADAH_HPO_MPI
@@ -1759,9 +1876,9 @@ TEST_CASE("startup validation: NLOPT:LN_NEWUOA_BOUND is refused at the line "
               kRoot + "OPTIMIZER\nLIB NLOPT\nALGO LN_NEWUOA_BOUND\n"
                       "MAXEVAL 400\nENDOPTIMIZER\n",
               7, "ENDOPTIMIZER", top},
-             {"MULTISTART",
+             {"MULTISTART (an INIT block of two points on lines 10-13)",
               strategy_config(multistart_body("NLOPT", "LN_NEWUOA_BOUND", "2")),
-              11, "ENDOPTIMIZER", top},
+              15, "ENDOPTIMIZER", top},
              {"the PRESTAGE refinement at STRATEGY level",
               strategy_config("    TYPE PRESTAGE\n    LIB NLOPT\n"
                               "    ALGO LN_NEWUOA_BOUND\n    MAXEVAL 20\n" +
@@ -2736,7 +2853,7 @@ TEST_CASE("startup validation: the backend checks reject no valid "
              "    TYPE PLAIN\n    LIB TADAH\n    ALGO ANNEAL_PA\n",
              /* MULTISTART: BUDGET_PER_START is each start's budget. */
              "    TYPE MULTISTART\n    LIB NLOPT\n    ALGO LN_SBPLX\n"
-             "    N_STARTS 2\n    BUDGET_PER_START 5\n",
+             "    N_STARTS 2\n    BUDGET_PER_START 5\n" + init_points("2"),
              multistart_body("DLIB", "BFGS", "3"),
              /* The PRESTAGE refinement over TOPK candidates, each with its
               * share of MAXEVAL. */
@@ -2808,9 +2925,9 @@ TEST_CASE("startup validation: the backend checks reject no valid "
              /* Each MULTISTART start with its share of MAXEVAL, or its
               * BUDGET_PER_START. */
              "    TYPE MULTISTART\n    LIB NLOPT\n    ALGO LD_MMA\n"
-             "    MAXEVAL 20\n    N_STARTS 2\n",
+             "    MAXEVAL 20\n    N_STARTS 2\n" + init_points("2"),
              "    TYPE MULTISTART\n    LIB NLOPT\n    ALGO LD_MMA\n"
-             "    N_STARTS 2\n    BUDGET_PER_START 5\n",
+             "    N_STARTS 2\n    BUDGET_PER_START 5\n" + init_points("2"),
              "    TYPE PRESTAGE\n    LIB DLIB\n    ALGO BFGS\n"
              "    MAXEVAL 20\n    EXPLORE\n      LIB NLOPT\n"
              "      ALGO GN_CRS2_LM\n      MAXTIME 60\n    ENDEXPLORE\n",
@@ -2826,7 +2943,7 @@ TEST_CASE("startup validation: the backend checks reject no valid "
              "    TYPE PLAIN\n    LIB NLOPT\n    ALGO GN_MLSL_LDS\n" +
                  kRestart,
              "    TYPE MULTISTART\n    LIB NLOPT\n    ALGO LD_MMA\n"
-             "    N_STARTS 2\n" + kRestart,
+             "    N_STARTS 2\n" + init_points("2") + kRestart,
              "    TYPE PRESTAGE\n    LIB DLIB\n    ALGO BFGS\n"
              "    MAXEVAL 20\n    EXPLORE\n      LIB NLOPT\n"
              "      ALGO GN_CRS2_LM\n    ENDEXPLORE\n" + kRestart,
@@ -3041,7 +3158,7 @@ TEST_CASE("startup validation: a backend with no convergence test and no "
     /* Each phase, named. */
     cases.push_back({"each MULTISTART start: NLOPT:LD_MMA without a stop",
                      "    TYPE MULTISTART\n    LIB NLOPT\n    ALGO LD_MMA\n"
-                     "    N_STARTS 2\n",
+                     "    N_STARTS 2\n" + init_points("2"),
                      "each MULTISTART start: NLOPT:LD_MMA needs a stop: ",
                      kAnyTolerance});
     cases.push_back({"the PRESTAGE exploration: NLOPT:GN_CRS2_LM without a stop",
@@ -3426,7 +3543,8 @@ TEST_CASE("startup validation: NLopt rejects a tolerance, POPULATION or "
                      "NLOPT:LN_BOBYQA" + population});
     cases.push_back({"each MULTISTART start: LN_SBPLX VECTOR_ARR",
                      "    TYPE MULTISTART\n    LIB NLOPT\n    ALGO LN_SBPLX\n"
-                     "    MAXEVAL 20\n    N_STARTS 2\n    VECTOR_ARR 5\n",
+                     "    MAXEVAL 20\n    N_STARTS 2\n    VECTOR_ARR 5\n" +
+                         init_points("2"),
                      "each MULTISTART start: NLOPT:LN_SBPLX" + vector_storage});
     for (const auto& c : cases) {
         INFO(c.what << "\n" << c.body);
@@ -3522,7 +3640,7 @@ TEST_CASE("startup validation: NLopt's AUGLAG, AUGLAG_EQ, G_MLSL and "
                          needs(algo, "the STRATEGY-level optimiser")});
     cases.push_back({"MULTISTART AUGLAG",
                      "    TYPE MULTISTART\n    LIB NLOPT\n    ALGO AUGLAG\n"
-                     "    MAXEVAL 20\n    N_STARTS 2\n",
+                     "    MAXEVAL 20\n    N_STARTS 2\n" + init_points("2"),
                      needs("AUGLAG", "the STRATEGY-level optimiser")});
     cases.push_back({"PRESTAGE refinement AUGLAG",
                      "    TYPE PRESTAGE\n    EXPLORE\n      LIB NLOPT\n"
@@ -3622,14 +3740,15 @@ TEST_CASE("startup validation: MULTISTART refuses an optimiser that takes "
           std::string("    N_STARTS 2\n    BUDGET_PER_START 5\n")}) {
         INFO(extra);
         const auto v = judge(strategy_config(
-            "    TYPE MULTISTART\n    LIB DLIB\n    ALGO GFS\n" + extra));
+            "    TYPE MULTISTART\n    LIB DLIB\n    ALGO GFS\n" + extra +
+            init_points("4")));
         CHECK(v.startup == message);
         CHECK(v.policy == message);
     }
     /* A backend that runs from each start takes BUDGET_PER_START. */
     const auto v = judge(strategy_config(
         "    TYPE MULTISTART\n    LIB DLIB\n    ALGO BFGS\n"
-        "    N_STARTS 2\n    BUDGET_PER_START 5\n"));
+        "    N_STARTS 2\n    BUDGET_PER_START 5\n" + init_points("2")));
     CHECK(v.startup == "");
     CHECK(v.policy == "");
 }
@@ -3763,7 +3882,7 @@ TEST_CASE("startup validation: finite differences fit every OPTIM box, "
              bfgs + "    PARAM fd_step 0.4\n"},
             {"each MULTISTART start DLIB:BFGS",
              "    TYPE MULTISTART\n    LIB DLIB\n    ALGO BFGS\n    MAXEVAL 20\n"
-             "    N_STARTS 2\n    PARAM fd_step 0.4\n"},
+             "    N_STARTS 2\n    PARAM fd_step 0.4\n" + init_points("2")},
             {"the PRESTAGE refinement DLIB:BFGS",
              "    TYPE PRESTAGE\n    EXPLORE\n      LIB TADAH\n      ALGO RANDOM\n"
              "      MAXEVAL 3\n      SEED 1\n    ENDEXPLORE\n    REFINE\n"
@@ -4069,7 +4188,7 @@ TEST_CASE("startup validation: GRAD_STRATEGY on a phase that takes no "
               the_inner + "NLOPT:LN_BOBYQA"},
              {"    TYPE MULTISTART\n    LIB NLOPT\n    ALGO LD_AUGLAG_EQ\n"
               "    MAXEVAL 20\n    N_STARTS 2\n    GRAD_STRATEGY HYBRID\n" +
-                  inner("    ", "LN_SBPLX"),
+                  inner("    ", "LN_SBPLX") + init_points("2"),
               "each MULTISTART start NLOPT:LD_AUGLAG_EQ",
               the_inner + "NLOPT:LN_SBPLX"},
              {"    TYPE PRESTAGE\n    LIB DLIB\n    ALGO BFGS\n"
@@ -4223,7 +4342,7 @@ TEST_CASE("startup validation: NOISE AUTO derives fd_step where the "
          * exploration takes */
         CHECK(run(noise("    TYPE MULTISTART\n    LIB NLOPT\n"
                         "    ALGO LN_NELDERMEAD\n    MAXEVAL 20\n"
-                        "    N_STARTS 2\n"))
+                        "    N_STARTS 2\n" + init_points("2")))
                   .startup ==
               "each MULTISTART start NLOPT:LN_NELDERMEAD: NOISE AUTO has no "
               "effect: NLOPT:LN_NELDERMEAD measures no slopes; remove AUTO "
@@ -4579,7 +4698,8 @@ TEST_CASE("startup validation: a PRESTAGE refinement or MULTISTART whose "
             const std::string config = strategy_config(
                 "    TYPE MULTISTART\n    LIB NLOPT\n    ALGO LN_AUGLAG\n"
                 "    MAXEVAL 20\n    N_STARTS 2\n    INNER\n"
-                "      LIB NLOPT\n      ALGO GN_AGS\n    ENDINNER\n");
+                "      LIB NLOPT\n      ALGO GN_AGS\n    ENDINNER\n" +
+                init_points("2"));
             refused_at(config, judge(config), "ENDINNER",
                        global_inner_refusal("the STRATEGY-level optimiser",
                                             "LN_AUGLAG", "GN_AGS"));
@@ -4597,7 +4717,8 @@ TEST_CASE("startup validation: a PRESTAGE refinement or MULTISTART whose "
                  "      ALGO LN_BOBYQA\n    ENDINNER\n" + kExploreGfs,
                  "    TYPE MULTISTART\n    LIB NLOPT\n    ALGO LN_AUGLAG\n"
                  "    MAXEVAL 20\n    N_STARTS 2\n    INNER\n"
-                 "      LIB NLOPT\n      ALGO LN_SBPLX\n    ENDINNER\n",
+                 "      LIB NLOPT\n      ALGO LN_SBPLX\n    ENDINNER\n" +
+                     init_points("2"),
                  "    TYPE PLAIN\n    LIB NLOPT\n    ALGO GN_DIRECT_L\n"
                  "    MAXEVAL 20\n",
                  "    TYPE PRESTAGE\n    LIB DLIB\n    ALGO BFGS\n"
@@ -4793,7 +4914,8 @@ TEST_CASE("startup validation: an INNER block that names a global optimiser "
         {
             INFO("each MULTISTART start");
             refused("    TYPE MULTISTART\n    LIB NLOPT\n    ALGO AUGLAG\n"
-                    "    MAXEVAL 20\n    N_STARTS 2\n" + inner("GN_CRS2_LM"),
+                    "    MAXEVAL 20\n    N_STARTS 2\n" + inner("GN_CRS2_LM") +
+                        init_points("2"),
                     global_inner_refusal(top, "AUGLAG", "GN_CRS2_LM"), true);
         }
     }

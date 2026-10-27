@@ -961,7 +961,14 @@ TEST_CASE("WarmInitStrategy: EMBF0 of the seed vs the run's -c",
 TEST_CASE("HPO parses MULTISTART knobs",
           "[HPO][run_policy][multistart]")
 {
+    /* The INIT chain gives the 4 starting points N_STARTS 4 needs (a
+     * chain of fewer is refused at the N_STARTS line; this case had no
+     * INIT block, and the run started once, from the CONFIG point). */
     StrategyTempFile cfg(R"(OPTIMIZER
+INIT
+  METHOD LHS 4
+  SEED 1
+ENDINIT
 STRATEGY
   TYPE MULTISTART
   LIB DLIB
@@ -1522,7 +1529,10 @@ TEST_CASE("HPO log file records init/run-policy summary",
      * a full optimisation here — only check the writer output. */
     using namespace tadah::hpo;
     /* K_TOTAL 3 caps the 4 SOBOL points (K_TOTAL 4, which this case gave
-     * until a K_TOTAL that caps nothing was refused, is refused). */
+     * until a K_TOTAL that caps nothing was refused, is refused), and
+     * N_STARTS 3 starts from each of them (N_STARTS 4, which this case gave
+     * until a chain of fewer points than N_STARTS was refused, is
+     * refused). */
     StrategyTempFile cfg(R"(OPTIMIZER
 INIT
   STRATEGY SOBOL 4
@@ -1536,7 +1546,7 @@ STRATEGY
   LIB DLIB
   ALGO BFGS
   MAXEVAL 50
-  N_STARTS 4
+  N_STARTS 3
   BUDGET_PER_START 12
 ENDSTRATEGY
 ENDOPTIMIZER

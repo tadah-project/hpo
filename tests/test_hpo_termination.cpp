@@ -4066,24 +4066,44 @@ TEST_CASE("Termination: MULTISTART gives each start of an NLopt search "
                        "(INIT seed=8)\n") != std::string::npos);
 }
 
+/* A WARM seed without the search parameters of TaRun (CGRID2B, SGRID2B),
+ * in the run's directory: WARM_ON_MISMATCH skip drops its point when the
+ * INIT chain is drawn, so the chain gives one point fewer than its METHOD
+ * lines when the file is read. */
+namespace {
+const std::string kDroppedWarm =
+    "    METHOD WARM dropped_seed.tadah\n    WARM_ON_MISMATCH skip\n";
+void write_dropped_warm_seed()
+{
+    std::ofstream("dropped_seed.tadah") << "RCUT2B 5.0\n";
+}
+}  // namespace
+
 /* Pins: a MULTISTART of N_STARTS 2 whose INIT chain gives one starting
- * point (no INIT block: the CONFIG point) runs one start and journals
- * "MULTISTART: running 1 start", after the WARNING that counts the one
- * starting point and advises a setting the parser takes: "MULTISTART
- * N_STARTS 2 requested but the resolved INIT chain produced only 1
- * starting point; running 1 start, which is STRATEGY TYPE PLAIN. A chain
- * of 2 or more starting points (METHOD LHS 2, RANDOM 2 or SOBOL 2) runs 2
- * starts." It advises no lower N_STARTS, which would be N_STARTS 1, refused
- * at its line ("one start is STRATEGY TYPE PLAIN").
- * Before the fix: the WARNING ended "running 1 start(s). Add INIT points
- * (e.g. METHOD LHS/RANDOM/SOBOL with K >= 2) or lower N_STARTS." (the text
- * fails); the run line said "running 1 start" already. */
+ * point when it is drawn (a WARM seed that WARM_ON_MISMATCH skip drops,
+ * and METHOD CONFIG) runs one start and journals "MULTISTART: running 1
+ * start", after the WARNING that counts the one starting point and
+ * advises a setting the parser takes: "MULTISTART N_STARTS 2 requested
+ * but the resolved INIT chain produced only 1 starting point; running 1
+ * start, which is STRATEGY TYPE PLAIN. A chain of 2 or more starting
+ * points (METHOD LHS 2, RANDOM 2 or SOBOL 2) runs 2 starts." It advises no
+ * lower N_STARTS, which would be N_STARTS 1, refused at its line ("one
+ * start is STRATEGY TYPE PLAIN"). A chain known to give one point when
+ * the file is read (no INIT block, which this case had) is refused at the
+ * N_STARTS line: the case "startup validation: a MULTISTART whose INIT
+ * chain gives fewer starting points than N_STARTS is refused at the
+ * N_STARTS line".
+ * Before the fix: passes as well (a pin of the warning where the chain
+ * drawn gives fewer points than the file's METHOD lines). */
 TEST_CASE("Termination: MULTISTART with one starting point journals that it "
           "runs 1 start", "[HPO][termination][multistart]")
 {
-    TaRun run("OPTIMIZER\n  STRATEGY\n    TYPE MULTISTART\n    N_STARTS 2\n"
+    TaRun run("OPTIMIZER\n  INIT\n" + kDroppedWarm +
+              "    METHOD CONFIG\n  ENDINIT\n  STRATEGY\n"
+              "    TYPE MULTISTART\n    N_STARTS 2\n"
               "    LIB NLOPT\n    ALGO LN_SBPLX\n    MAXEVAL 3\n"
               "  ENDSTRATEGY\nENDOPTIMIZER\n");
+    write_dropped_warm_seed();
     int status = -1;
     REQUIRE_NOTHROW(status = tadah::hpo::hpo_run(run.ctx));
     CHECK(status == 0);
@@ -4101,22 +4121,25 @@ TEST_CASE("Termination: MULTISTART with one starting point journals that it "
 }
 
 /* Pins: a MULTISTART of N_STARTS 3 whose INIT chain gives two starting
- * points (METHOD RANDOM 2) runs two starts and journals "MULTISTART:
- * running 2 starts", after the WARNING that names the N_STARTS that runs
- * them, which the parser takes: "MULTISTART N_STARTS 3 requested but the
- * resolved INIT chain produced only 2 starting points; running 2 starts. A
- * chain of 3 or more starting points (METHOD LHS 3, RANDOM 3 or SOBOL 3)
- * runs 3 starts, and N_STARTS 2 asks for the 2 that run."
- * Before the fix: the WARNING read "... produced only 2 starting point(s);
- * running 2 start(s). Add INIT points (e.g. METHOD LHS/RANDOM/SOBOL with K
- * >= 3) or lower N_STARTS." (the text fails). */
+ * points when it is drawn (a WARM seed that WARM_ON_MISMATCH skip drops,
+ * and METHOD RANDOM 2) runs two starts and journals "MULTISTART: running
+ * 2 starts", after the WARNING that names the N_STARTS that runs them,
+ * which the parser takes: "MULTISTART N_STARTS 3 requested but the
+ * resolved INIT chain produced only 2 starting points; running 2 starts.
+ * A chain of 3 or more starting points (METHOD LHS 3, RANDOM 3 or SOBOL 3)
+ * runs 3 starts, and N_STARTS 2 asks for the 2 that run." (This case had
+ * METHOD RANDOM 2 alone, which is refused at the N_STARTS line.)
+ * Before the fix: passes as well (a pin of the warning where the chain
+ * drawn gives fewer points than the file's METHOD lines). */
 TEST_CASE("Termination: MULTISTART with fewer starting points than N_STARTS "
           "names the N_STARTS that runs them", "[HPO][termination][multistart]")
 {
-    TaRun run("OPTIMIZER\n  INIT\n    METHOD RANDOM 2\n    SEED 4\n"
+    TaRun run("OPTIMIZER\n  INIT\n" + kDroppedWarm +
+              "    METHOD RANDOM 2\n    SEED 4\n"
               "  ENDINIT\n  STRATEGY\n    TYPE MULTISTART\n    N_STARTS 3\n"
               "    LIB NLOPT\n    ALGO LN_SBPLX\n    MAXEVAL 4\n"
               "  ENDSTRATEGY\nENDOPTIMIZER\n");
+    write_dropped_warm_seed();
     int status = -1;
     REQUIRE_NOTHROW(status = tadah::hpo::hpo_run(run.ctx));
     CHECK(status == 0);
@@ -4131,30 +4154,35 @@ TEST_CASE("Termination: MULTISTART with fewer starting points than N_STARTS "
           std::string::npos);
 }
 
-/* Pins: a MULTISTART whose INIT chain has fewer starting points than
- * N_STARTS because K_TOTAL keeps fewer names that K_TOTAL in the WARNING,
- * and the advice depends on the points of the METHOD lines (LHS 4, 3 and
- * 3 here, K_TOTAL 2):
- *  - more than N_STARTS 3: "... produced only 2 starting points (K_TOTAL
- *    2); running 2 starts. With K_TOTAL 3, or without K_TOTAL, 3 starts
- *    run, and N_STARTS 2 asks for the 2 that run.";
+/* Pins: a MULTISTART whose K_TOTAL keeps fewer starting points than
+ * N_STARTS is refused when the file is read, at the N_STARTS line, before
+ * any evaluation: hpo_run throws the refusal, which names K_TOTAL, and the
+ * advice depends on the points of the METHOD lines (LHS 4, 3 and 3 here,
+ * K_TOTAL 2):
+ *  - more than N_STARTS 3: "N_STARTS 3 needs 3 starting points, and the
+ *    INIT chain gives 2 (LHS 4, capped by K_TOTAL 2); with K_TOTAL 3, or
+ *    without K_TOTAL, 3 starts run, and N_STARTS 2 starts from each of the
+ *    2";
  *  - as many as N_STARTS 3 (a K_TOTAL 3 would cap nothing, refused when
- *    the file is read): "... Without K_TOTAL, 3 starts run, ...";
- *  - fewer than N_STARTS 4: "... A chain of 4 or more starting points
+ *    the file is read): "... without K_TOTAL, 3 starts run, ...";
+ *  - fewer than N_STARTS 4: "... a chain of 4 or more starting points
  *    (METHOD LHS 4, RANDOM 4 or SOBOL 4) without K_TOTAL runs 4 starts,
  *    ...".
- * Before the fix: the WARNING named no K_TOTAL and advised METHOD lines
- * the block already had ("A chain of 3 or more starting points (METHOD LHS
- * 3, RANDOM 3 or SOBOL 3) runs 3 starts" beside METHOD LHS 4; the text
- * fails). */
+ * No loss.tadah is written.
+ * Before the fix: each run ran 2 starts, and its journal had the WARNING
+ * "MULTISTART N_STARTS 3 requested but the resolved INIT chain produced
+ * only 2 starting points (K_TOTAL 2); running 2 starts. With K_TOTAL 3, or
+ * without K_TOTAL, 3 starts run, and N_STARTS 2 asks for the 2 that run."
+ * (and the other two advices), which this case pinned. */
 TEST_CASE("Termination: MULTISTART with fewer starting points than N_STARTS "
-          "because of K_TOTAL names K_TOTAL", "[HPO][termination][multistart]")
+          "because of K_TOTAL is refused before any evaluation, naming "
+          "K_TOTAL", "[HPO][termination][multistart]")
 {
     struct Case { std::string lhs, n_starts, advice; };
     const std::vector<Case> cases = {
-        {"4", "3", "With K_TOTAL 3, or without K_TOTAL, 3 starts run"},
-        {"3", "3", "Without K_TOTAL, 3 starts run"},
-        {"3", "4", "A chain of 4 or more starting points (METHOD LHS 4, "
+        {"4", "3", "with K_TOTAL 3, or without K_TOTAL, 3 starts run"},
+        {"3", "3", "without K_TOTAL, 3 starts run"},
+        {"3", "4", "a chain of 4 or more starting points (METHOD LHS 4, "
                    "RANDOM 4 or SOBOL 4) without K_TOTAL runs 4 starts"},
     };
     for (const auto& c : cases) {
@@ -4164,19 +4192,15 @@ TEST_CASE("Termination: MULTISTART with fewer starting points than N_STARTS "
                   "    TYPE MULTISTART\n    N_STARTS " + c.n_starts +
                   "\n    LIB NLOPT\n    ALGO LN_SBPLX\n    MAXEVAL 4\n"
                   "  ENDSTRATEGY\nENDOPTIMIZER\n");
-        int status = -1;
-        REQUIRE_NOTHROW(status = tadah::hpo::hpo_run(run.ctx));
-        CHECK(status == 0);
-        const std::string journal = read_file("hpo_run.log");
-        INFO(journal);
-        CHECK(journal.find("MULTISTART: running 2 starts\n") !=
-              std::string::npos);
-        CHECK(journal.find(
-                  "MULTISTART N_STARTS " + c.n_starts + " requested but the "
-                  "resolved INIT chain produced only 2 starting points "
-                  "(K_TOTAL 2); running 2 starts. " + c.advice +
-                  ", and N_STARTS 2 asks for the 2 that run.\n") !=
-              std::string::npos);
+        CHECK_THROWS_WITH(
+            tadah::hpo::hpo_run(run.ctx),
+            Catch::Contains("Error on line 9: N_STARTS " + c.n_starts +
+                            " needs " + c.n_starts + " starting points, and "
+                            "the INIT chain gives 2 (LHS " + c.lhs +
+                            ", capped by K_TOTAL 2); " + c.advice +
+                            ", and N_STARTS 2 starts from each of the 2\n"
+                            "Line:     N_STARTS " + c.n_starts));
+        CHECK_FALSE(fs::exists("loss.tadah"));
     }
 }
 
@@ -6303,12 +6327,18 @@ TEST_CASE("Termination: each MULTISTART start runs with the MAXEVAL the "
         CHECK(data_rows("loss.tadah").size() <= 10u);
         CHECK(startup_maxeval(run) == std::optional<std::uint64_t>(5));
     }
-    /* The INIT chain yields fewer points than N_STARTS: MAXEVAL is split
-     * over the starts that run (3), not over N_STARTS (4). SBPLX spends
-     * every evaluation of its 4-evaluation budget. */
+    /* The INIT chain drawn yields fewer points than N_STARTS: MAXEVAL is
+     * split over the starts that run (3), not over N_STARTS (4). SBPLX
+     * spends every evaluation of its 4-evaluation budget. The chain is a
+     * WARM seed that WARM_ON_MISMATCH skip drops and METHOD RANDOM 3 (it
+     * was RANDOM 3 alone, which is refused at the N_STARTS line). */
     SECTION("MAXEVAL split over the starts the INIT points allow") {
-        TaRun run(multistart(3, "    LIB NLOPT\n    ALGO LN_SBPLX\n"
-                                "    MAXEVAL 12\n    N_STARTS 4\n"));
+        TaRun run("OPTIMIZER\n  INIT\n" + kDroppedWarm +
+                  "    METHOD RANDOM 3\n    SEED 3\n  ENDINIT\n  STRATEGY\n"
+                  "    TYPE MULTISTART\n    LIB NLOPT\n    ALGO LN_SBPLX\n"
+                  "    MAXEVAL 12\n    N_STARTS 4\n  ENDSTRATEGY\n"
+                  "ENDOPTIMIZER\n");
+        write_dropped_warm_seed();
         int status = -1;
         REQUIRE_NOTHROW(status = tadah::hpo::hpo_run(run.ctx));
         CHECK(status == 0);
