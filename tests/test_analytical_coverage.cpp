@@ -217,16 +217,26 @@ std::string joined(const std::string& type2, const std::string& lines2,
 /* Pins: the search parameters a two-body and a many-body descriptor
  * differentiate together (index 1, on the two-atom Ta cell, Cut_Cos 4.5 A
  * for both): each key of one descriptor as that descriptor alone, and
- * WATOM, which both read, in the force rows only when both differentiate
- * it there:
+ * WATOM, which both read, in the rows that both differentiate it in:
  *   - D2_Blip and DM_Blip: CGRID2B, SGRID2B and RCUT2B, EF; CGRIDMB,
  *     SGRIDMB and RCUTMB, E; WATOM, E (DM_Blip has no force rows);
- *   - D2_Blip and DM_mBlip: CGRID2B, CGRIDMB, CEMBFUNC and WATOM, EF.
+ *   - D2_Blip and DM_mBlip: CGRID2B, CGRIDMB, CEMBFUNC and WATOM, EF;
+ *   - D2_Blip and DM_REAM, DM_PS_SQ, a DESCRIPTOR block (DM_Embed) or
+ *     DM_mJoin (DM_Blip and DM_REAM joined), each of which reads WATOM and
+ *     has no derivative with respect to it: CGRID2B, EF; WATOM, none; the
+ *     component path TA.DENSITY.CENTRES of the block, EF; CGRIDMB of
+ *     DM_REAM, DM_PS_SQ and DM_mJoin, none;
+ *   - D2_mJoin (two D2_BP), which has no derivative with respect to WATOM,
+ *     and DM_Blip or DM_mBlip: CGRIDMB, E and EF; WATOM, none.
  * No descriptor differentiates LAMBDA.
  * Before the fix: D2_Blip and DM_Blip claimed WATOM for the force rows,
  * "EF": the claims of the two descriptors were joined by an OR, so the
  * force rows of D2_Blip hid the missing DM_Blip part, and the analytical
- * gradient used force rows without it. */
+ * gradient used force rows without it. The same OR let the derivative of
+ * D2_Blip stand for WATOM beside DM_REAM, DM_PS_SQ, the block and DM_mJoin
+ * ("EF"), and that of DM_Blip and DM_mBlip beside D2_mJoin ("E", "EF"):
+ * those cases failed, the analytical gradient forming rows without the
+ * part of the descriptor that has no derivative. */
 TEST_CASE("analytical gradient: the search parameters a two-body and a "
           "many-body descriptor differentiate together",
           "[HPO][analytical_gradient][coverage]")
@@ -234,6 +244,16 @@ TEST_CASE("analytical gradient: the search parameters a two-body and a "
     tadah::core::PeriodicTable::initialize();
     using Claims = std::map<std::string, std::string>;
     const std::string grid2 = "CGRID2B 1.0 2.0\nSGRID2B 1.0 1.2\n";
+    const std::string ream =
+        "CGRIDMB 2.8 3.6 4.4\nSGRIDMB 3.0 3.0 3.0\nAMPGRIDMB 0.5 0.3 0.1\n"
+        "CEMBFUNC -0.2 0.3 0.8 1.3 1.8\nSEMBFUNC 2.0 2.0 2.0 2.0 2.0\n"
+        "RHOFORM SIGNED\n";
+    const std::string mjoin2 =
+        kModel + "INIT2B true\nTYPE2B D2_mJoin\n"
+                 "TYPE2B D2_BP 1 1 Ta Ta\nRCUT2B 4.5\nRCTYPE2B Cut_Cos\n"
+                 "CGRID2B 1.0\nSGRID2B 1.0\n"
+                 "TYPE2B D2_BP 1 1 Ta Ta\nRCUT2B 4.5\nRCTYPE2B Cut_Cos\n"
+                 "CGRID2B 2.0\nSGRID2B 1.2\n";
     struct Case { std::string name, config; Claims expected; };
     const std::vector<Case> cases = {
         {"D2_Blip and DM_Blip",
@@ -248,6 +268,48 @@ TEST_CASE("analytical gradient: the search parameters a two-body and a "
                 "SEMBFUNC 1.0 1.0\n"),
          {{"CGRID2B", "EF"}, {"CGRIDMB", "EF"}, {"CEMBFUNC", "EF"},
           {"WATOM", "EF"},   {"LAMBDA", "-"}}},
+        {"D2_Blip and DM_REAM",
+         joined("D2_Blip 2 2 Ta Ta", grid2, "DM_REAM 3 3 3 3 5 5 0 0 Ta Ta",
+                ream),
+         {{"CGRID2B", "EF"}, {"CGRIDMB", "-"}, {"WATOM", "-"},
+          {"LAMBDA", "-"}}},
+        {"D2_Blip and DM_PS_SQ",
+         joined("D2_Blip 2 2 Ta Ta", grid2, "DM_PS_SQ 1 2 2 Ta Ta",
+                "CGRIDMB 2.0 3.0\nSGRIDMB 1.0 1.0\n"),
+         {{"CGRID2B", "EF"}, {"CGRIDMB", "-"}, {"WATOM", "-"},
+          {"LAMBDA", "-"}}},
+        {"D2_Blip and a DESCRIPTOR block",
+         kModel + "INIT2B true\nTYPE2B D2_Blip 2 2 Ta Ta\n" + grid2 +
+             "RCTYPE2B Cut_Cos\nRCUT2B 4.5\nINITMB true\n"
+             "DESCRIPTOR ta DM_Embed\nPAIRS Ta Ta\nDENSITY\nBASIS Blip5\n"
+             "FORM SIGNED\nCENTRES 2.8 3.6 4.4\nETA 3 3 3\n"
+             "AMPLITUDES 0.5 0.3 0.1\nCUTOFF\nTYPE Cut_Cos\nRADIUS 4.5\n"
+             "ENDCUTOFF\nENDDENSITY\nEMBEDDING\nBASIS Gaussian\n"
+             "CENTRES 0 0.5 1\nETA 2 2 2\nREFERENCE ZERO\nENDEMBEDDING\n"
+             "ENDDESCRIPTOR\n",
+         {{"CGRID2B", "EF"}, {"TA.DENSITY.CENTRES", "EF"}, {"WATOM", "-"},
+          {"LAMBDA", "-"}}},
+        {"D2_Blip and DM_mJoin of DM_Blip and DM_REAM",
+         kModel + "INIT2B true\nTYPE2B D2_Blip 2 2 Ta Ta\n" + grid2 +
+             "RCTYPE2B Cut_Cos\nRCUT2B 4.5\nINITMB true\nTYPEMB DM_mJoin\n"
+             "TYPEMB DM_Blip 0 2 2 Ta Ta\n"
+             "TYPEMB DM_REAM 3 3 3 3 5 5 0 0 Ta Ta\n"
+             "RCTYPEMB Cut_Cos Cut_Cos\nRCUTMB 4.5 4.5\n"
+             "CGRIDMB 2.0 3.0 2.8 3.6 4.4\nSGRIDMB 1.0 1.0 3.0 3.0 3.0\n"
+             "AMPGRIDMB 0.5 0.3 0.1\nCEMBFUNC -0.2 0.3 0.8 1.3 1.8\n"
+             "SEMBFUNC 2.0 2.0 2.0 2.0 2.0\nRHOFORM SIGNED\n",
+         {{"CGRID2B", "EF"}, {"CGRIDMB", "-"}, {"WATOM", "-"},
+          {"LAMBDA", "-"}}},
+        {"D2_mJoin and DM_Blip",
+         mjoin2 + "INITMB true\nTYPEMB DM_Blip 0 2 2 Ta Ta\n"
+                  "CGRIDMB 2.0 3.0\nSGRIDMB 1.0 1.0\nRCTYPEMB Cut_Cos\n"
+                  "RCUTMB 4.5\n",
+         {{"CGRIDMB", "E"}, {"WATOM", "-"}, {"LAMBDA", "-"}}},
+        {"D2_mJoin and DM_mBlip",
+         mjoin2 + "INITMB true\nTYPEMB DM_mBlip 0 1 1 2 2 Ta Ta\n"
+                  "CGRIDMB 0.0\nSGRIDMB 0.2\nCEMBFUNC 1.0 2.0\n"
+                  "SEMBFUNC 1.0 1.0\nRCTYPEMB Cut_Cos\nRCUTMB 4.5\n",
+         {{"CGRIDMB", "EF"}, {"WATOM", "-"}, {"LAMBDA", "-"}}},
     };
     for (const Case& c : cases) {
         INFO(c.name << "\n" << c.config);

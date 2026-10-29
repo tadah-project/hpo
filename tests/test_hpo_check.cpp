@@ -24,6 +24,7 @@
 #include "catch2/catch.hpp"
 
 #include <tadah/core/context.h>
+#include <tadah/core/core_user_config_parser.h>
 #include <tadah/core/logger.h>
 #include <tadah/core/periodic_table.h>
 #include <tadah/hpo/dloss_dtheta.h>
@@ -1849,6 +1850,145 @@ TEST_CASE("hpo --check: GRAD_STRATEGY ANALYTICAL takes search parameters "
         const std::string journal((std::istreambuf_iterator<char>(in)),
                                   std::istreambuf_iterator<char>());
         CHECK_FALSE(contains(journal, "no analytical gradient"));
+    }
+}
+
+namespace {
+
+/* The training configuration of the fixture with the two-body descriptor
+ * `type2b` (D2_Blip 2 2 Ta Ta, CGRID2B 2.8 3.6, SGRID2B 1 1.1; D2_mJoin of
+ * two D2_BP 1 1 Ta Ta; D2_BP: the fixture's) and the many-body term
+ * `typemb` (DM_REAM: a Blip5 density, RHOFORM NONNEG; DM_mBlip; DESCRIPTOR:
+ * a DESCRIPTOR block ta, DM_Embed), the cutoffs Cut_Cos 5 A. */
+tadah::core::Context with_terms(tadah::core::Context c,
+                                const std::string& type2b,
+                                const std::string& typemb)
+{
+    if (type2b == "D2_Blip") {
+        for (const char* key : {"TYPE2B", "CGRID2B", "SGRID2B"})
+            c.remove(key);
+        c.add("TYPE2B", "D2_Blip 2 2 Ta Ta");
+        c.add("CGRID2B", "2.8 3.6");
+        c.add("SGRID2B", "1.0 1.1");
+    } else if (type2b == "D2_mJoin") {
+        for (const char* key : {"TYPE2B", "RCTYPE2B", "RCUT2B"})
+            c.remove(key);
+        c.add("TYPE2B", "D2_mJoin D2_BP 1 1 Ta Ta D2_BP 1 1 Ta Ta");
+        c.add("RCTYPE2B", "Cut_Cos Cut_Cos");
+        c.add("RCUT2B", "5.0 5.0");
+    }
+    for (const char* key : {"INITMB", "TYPEMB"}) c.remove(key);
+    c.add("INITMB", "true");
+    if (typemb == "DM_REAM") {
+        c.add("TYPEMB", "DM_REAM 3 3 3 3 5 5 0 0 Ta Ta");
+        c.add("CGRIDMB", "2.8 3.6 4.4");
+        c.add("SGRIDMB", "3.0 3.0 3.0");
+        c.add("AMPGRIDMB", "0.5 0.3 0.1");
+        c.add("CEMBFUNC", "-0.2 0.3 0.8 1.3 1.8");
+        c.add("SEMBFUNC", "2.0 2.0 2.0 2.0 2.0");
+        c.add("RHOFORM", "NONNEG");
+    } else if (typemb == "DM_mBlip") {
+        c.add("TYPEMB", "DM_mBlip 0 1 1 2 2 Ta Ta");
+        c.add("CGRIDMB", "0.0");
+        c.add("SGRIDMB", "0.2");
+        c.add("CEMBFUNC", "1.0 2.0");
+        c.add("SEMBFUNC", "1.0 1.0");
+    } else if (typemb == "DESCRIPTOR") {
+        for (const char* key : {"RCTYPEMB", "RCUTMB"}) c.remove(key);
+        std::istringstream in(
+            "DESCRIPTOR ta DM_Embed\nPAIRS Ta Ta\nDENSITY\nBASIS Blip5\n"
+            "FORM SIGNED\nCENTRES 2.8 3.6 4.4\nETA 3 3 3\n"
+            "AMPLITUDES 0.5 0.3 0.1\nCUTOFF\nTYPE Cut_Cos\nRADIUS 5\n"
+            "ENDCUTOFF\nENDDENSITY\nEMBEDDING\nBASIS Gaussian\n"
+            "CENTRES 0 0.5 1\nETA 2 2 2\nREFERENCE ZERO\nENDEMBEDDING\n"
+            "ENDDESCRIPTOR\n");
+        const tadah::core::Context b =
+            tadah::core::CoreUserConfigParser().parse(in);
+        for (const auto& blk : b.blocks()) c.append_block(blk);
+    }
+    return c;
+}
+
+}  // namespace
+
+/* Pins: GRAD_STRATEGY ANALYTICAL refuses OPTIM WATOM (1), by the check and
+ * by the run alike, before any evaluation, at the line that closes the
+ * OPTIMIZER block, when a descriptor that depends on WATOM does not
+ * differentiate it while another descriptor does, naming that descriptor:
+ *   - D2_Blip and DM_REAM (RHOFORM NONNEG), FORCE false: "OPTIMIZER block:
+ *     GRAD_STRATEGY ANALYTICAL needs an analytical derivative with respect
+ *     to every search parameter, and the descriptors give none for OPTIM
+ *     WATOM (1) on line 4 of the target file (DM_REAM depends on it and
+ *     does not differentiate it). GRAD_STRATEGY HYBRID takes finite
+ *     differences for it.";
+ *   - D2_Blip and a DESCRIPTOR block: "... (DM_Embed depends on it and does
+ *     not differentiate it) ...";
+ *   - D2_mJoin (two D2_BP) and DM_mBlip: "... (D2_mJoin depends on it and
+ *     does not differentiate it) ...";
+ * and when no descriptor differentiates it, D2_mJoin and DM_REAM: "...
+ * (no descriptor differentiates it) ...".
+ * Before the fix: the check and the run passed the first three (the
+ * derivative of D2_Blip, or of DM_mBlip, stood for both descriptors; the
+ * run optimised on a gradient without the other descriptor's part), and
+ * refused the fourth alike. Tadah! 1.5.0 ran the first three to the end on
+ * that gradient. */
+TEST_CASE("hpo --check: GRAD_STRATEGY ANALYTICAL refuses WATOM when a "
+          "descriptor that depends on it does not differentiate it, naming "
+          "the descriptor",
+          "[HPO][hpo_check][analytical][watom]")
+{
+    const std::string hpo = "LOSS L2\nFAILSCORE 1e9\nPC_ERMSE 0 1\n"
+                            "OPTIM WATOM (1) 0.5 2.0\n" +
+                            lbfgs_block("ANALYTICAL");
+    const std::string head =
+        "OPTIMIZER block: GRAD_STRATEGY ANALYTICAL needs an analytical "
+        "derivative with respect to every search parameter, and the "
+        "descriptors give none for OPTIM WATOM (1) on line 4 of the target "
+        "file (";
+    const std::string for_it =
+        "). GRAD_STRATEGY HYBRID takes finite differences for it.";
+    struct Case {
+        const char *type2b, *typemb;
+        std::string why;
+    };
+    const std::vector<Case> cases = {
+        {"D2_Blip", "DM_REAM",
+         "DM_REAM depends on it and does not differentiate it"},
+        {"D2_Blip", "DESCRIPTOR",
+         "DM_Embed depends on it and does not differentiate it"},
+        {"D2_mJoin", "DM_mBlip",
+         "D2_mJoin depends on it and does not differentiate it"},
+        {"D2_mJoin", "DM_REAM", "no descriptor differentiates it"},
+    };
+    for (const Case& c : cases) {
+        INFO("case: " << c.type2b << " and " << c.typemb);
+        const std::string expected =
+            "Error on line " +
+            std::to_string(line_number(hpo, "ENDOPTIMIZER")) + ": " + head +
+            c.why + for_it + "\nLine: ENDOPTIMIZER";
+        const auto context = [&] {
+            return with_terms(
+                make_ta_context("train.db", "config.hpo", "config.val"),
+                c.type2b, c.typemb);
+        };
+        fresh_process_state();
+        ScratchDir sd("analytical_watom");
+        write_inputs(hpo);
+        {
+            tadah::core::Context ctx = context();
+            ctx.add("CHECK", "true");
+            CHECK(error_of([&] { return tadah::hpo::hpo_run(ctx); }) ==
+                  expected);
+        }
+        fresh_process_state();
+        const std::size_t evaluations = Host::g_iter_value();
+        {
+            tadah::core::Context ctx = context();
+            CHECK(error_of([&] { return tadah::hpo::hpo_run(ctx); }) ==
+                  expected);
+        }
+        CHECK(Host::g_iter_value() == evaluations);
+        CHECK(loss_rows("loss.tadah") == 0u);
     }
 }
 
