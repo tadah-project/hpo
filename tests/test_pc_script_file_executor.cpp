@@ -51,6 +51,7 @@
 
 #include "scratch_tmpdir.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -981,8 +982,11 @@ variable late equal 1.0
 /* Pins: a hot value HPO injects before the script (format_hot_inject,
  * `variable hot_a0 equal 3.25`) that LAMMPS refuses fails the task: status
  * RUN_FAIL, error_msg "injecting `variable hot_a0 equal 3.25` before the
- * script: " and the LAMMPS message ("ERROR: Cannot redefine variable hot_a0
- * with a different style"), the script not run, nothing read back (no
+ * script: " and the LAMMPS message, its refusal to redefine hot_a0 ("ERROR:
+ * Cannot redefine variable hot_a0 with a different style" in LAMMPS 11 Feb
+ * 2026, "ERROR: Cannot redefine index style variable hot_a0 as equal style
+ * variable" in LAMMPS 30 Sep 2026: the check takes the start and the name),
+ * the script not run, nothing read back (no
  * outvar, hot or fail value: the instance's variables are an earlier
  * evaluation's), and the slot's instance discarded:
  *   - the name defined by `-var hot_a0 3.3` on the line (index style, at
@@ -1005,8 +1009,14 @@ TEST_CASE("a hot value LAMMPS refuses to inject fails the task with the "
     const std::string inject_35 = tadah::hpo::format_hot_inject("hot_a0", 3.5);
     REQUIRE(inject_325 == "variable hot_a0 equal 3.25");
     REQUIRE(inject_35 == "variable hot_a0 equal 3.5");
-    const std::string refused =
-        "ERROR: Cannot redefine variable hot_a0 with a different style";
+    const std::string refused = "ERROR: Cannot redefine ";
+    /* The LAMMPS message after `prefix`: a refusal to redefine hot_a0. */
+    auto refusal_of_hot_a0 = [&](const std::string& msg,
+                                 const std::string& prefix) {
+        CHECK_THAT(msg, Catch::StartsWith(prefix + refused));
+        CHECK_THAT(msg.substr(std::min(prefix.size(), msg.size())),
+                   Catch::Contains("variable hot_a0 "));
+    };
 
     SECTION("the name defined by -var on the line") {
         tadah::hpo::PcSlotState<LammpsRunner> st;
@@ -1021,9 +1031,9 @@ TEST_CASE("a hot value LAMMPS refuses to inject fails the task with the "
              << (res.outvar_values.empty() ? std::string()
                                            : ", E2 = " + res.outvar_values[0]));
         REQUIRE(res.status == PcTaskStatus::RUN_FAIL);
-        CHECK_THAT(res.error_msg,
-                   Catch::StartsWith("injecting `variable hot_a0 equal 3.25` "
-                                     "before the script: " + refused));
+        refusal_of_hot_a0(res.error_msg,
+                          "injecting `variable hot_a0 equal 3.25` "
+                          "before the script: ");
         CHECK(res.outvar_values.empty());
         CHECK(res.hotvar_values.empty());
         CHECK(res.failvar_values.empty());
@@ -1053,9 +1063,9 @@ TEST_CASE("a hot value LAMMPS refuses to inject fails the task with the "
                      ? std::string()
                      : ", E2 = " + second.outvar_values[0]));
         REQUIRE(second.status == PcTaskStatus::RUN_FAIL);
-        CHECK_THAT(second.error_msg,
-                   Catch::StartsWith("injecting `variable hot_a0 equal 3.5` "
-                                     "before the script: " + refused));
+        refusal_of_hot_a0(second.error_msg,
+                          "injecting `variable hot_a0 equal 3.5` "
+                          "before the script: ");
         CHECK(second.outvar_values.empty());
         CHECK(second.failvar_values.empty());
         CHECK(st.lmp_cache.count(slot_cache_key("cold", base)) == 0);

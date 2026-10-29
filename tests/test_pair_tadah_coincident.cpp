@@ -26,6 +26,7 @@
 // The cell: a 3.3 A cube with atom 1 at (0, 0, 0), atom 2 at its centre and
 // atom 3 at (dx, 0, 0), created in that order (atom IDs 1, 2, 3).
 
+#include "tadah_test_skip.hpp"  // before catch2/catch.hpp
 #include "catch2/catch.hpp"
 
 #include <tadah/core/context.h>
@@ -33,6 +34,8 @@
 #include <tadah/core/periodic_table.h>
 #include <tadah/hpo/runners.h>
 #include <tadah/tadah.lammps/lammps_tadah.h>
+
+#include "lammps_styles.h"
 
 #include <atom.h>
 #include <force.h>
@@ -385,10 +388,13 @@ std::vector<std::string> dimer_script(double x3) {
  * molecules 4 A apart it completes.
  * Before the fix: compute_dimers had no check, so the intermolecular
  * distance 0 was divided by and `run 0` completed with NaN forces (err
- * empty, both message CHECKs failed). */
+ * empty, both message CHECKs failed).
+ * Skipped when LAMMPS has no atom_style bond (the MOLECULE package). */
 TEST_CASE("pair_style tadah: a DIMER potential refuses two atoms at the same "
           "position, naming the atom IDs",
           "[pair_tadah][coincident][dimer]") {
+    if (!lammps_has("atom", "bond"))
+        TADAH_SKIP("this LAMMPS has no atom_style bond (the MOLECULE package)");
     PeriodicTable::initialize();
     std::istringstream in(kN2Potential);
     const Context pot = tadah::core::CoreUserConfigParser().parse(in);
