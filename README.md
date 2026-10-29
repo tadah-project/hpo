@@ -1,7 +1,5 @@
-[![pipeline](https://git.ecdf.ed.ac.uk/tadah/hpo/badges/v1-dev/pipeline.svg)](https://git.ecdf.ed.ac.uk/tadah/hpo/-/commits/v1-dev)
-[![coverage](https://git.ecdf.ed.ac.uk/tadah/hpo/badges/v1-dev/coverage.svg)](https://git.ecdf.ed.ac.uk/tadah/hpo/-/commits/v1-dev)
 [![license](https://img.shields.io/badge/license-GPL--3.0-blue.svg)](LICENSE)
-[![version](https://img.shields.io/badge/version-1.6.0-blue.svg)](https://git.ecdf.ed.ac.uk/tadah/hpo/-/tags)
+[![version](https://img.shields.io/badge/version-1.6.0-blue.svg)](https://github.com/tadah-project/hpo/tags)
 
 # HPO
 
@@ -27,7 +25,7 @@ For the full grammar and the parallelism / performance notes, see the
 
 HPO is an internal module of the Tadah! MLIP toolchain. It is
 fetched automatically (via CMake `FetchContent`) by the umbrella
-project [Tadah!MLIP](https://git.ecdf.ed.ac.uk/tadah/tadah.mlip) when
+project [Tadah!MLIP](https://github.com/tadah-project/tadah.mlip) when
 configured with `-DTADAH_ENABLE_NFP=ON`. End users install the
 umbrella project; the `tadah hpo` CLI lives there.
 
@@ -43,7 +41,7 @@ GPL-3.0; see [LICENSE](LICENSE).
 
 ## Reporting issues
 
-Bugs and feature requests:
-[HPO issues](https://git.ecdf.ed.ac.uk/tadah/hpo/-/issues).
-For end-user questions please use the umbrella project
-[Tadah!MLIP](https://git.ecdf.ed.ac.uk/tadah/tadah.mlip).
+This repository is a component of Tadah! and has no issue tracker of
+its own. Bugs, feature requests and questions go to the tracker of
+the umbrella project,
+[Tadah!MLIP](https://github.com/tadah-project/tadah.mlip/issues).
