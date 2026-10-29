@@ -1561,14 +1561,18 @@ startup also refuses a search parameter that the descriptors do not \
 differentiate in the rows of the run: the energy rows, the force rows of \
 the fit under FORCE true and the forces that PC_FRMSE measures. Some \
 many-body descriptors differentiate their parameters in the energy rows \
-only, and the refusal names them. A two-body and a many-body descriptor \
-both read WATOM; it has a force-row derivative only when both give one. \
+only, and the refusal names them. A search parameter has a derivative \
+only in the rows that every descriptor depending on it differentiates. \
+WATOM, which a two-body and a many-body descriptor both read, has none \
+beside a descriptor that reads it without one (DM_REAM, a DM_Poly \
+descriptor, DESCRIPTOR blocks, DM_mJoin, D2_mJoin; the refusal names \
+it), and a force-row derivative only when both descriptors give one. \
 The rows of a structure that holds no pair of atoms that depends on a \
 search parameter are 0, which the analytical gradient forms."""
 checks = [
   { msg = "GRAD_STRATEGY takes one value: NUMERICAL, ANALYTICAL or HYBRID", doc = "At the line: the key ends the line without its value." },
   { msg = "{block} block: GRAD_STRATEGY ANALYTICAL{note} needs the analytical gradient of the loss, which this setup cannot form: {why}. Change that setting, or set GRAD_STRATEGY HYBRID to use finite differences where no analytical gradient is available.", doc = "At startup, at the END line of its optimiser; {block} is OPTIMIZER or EXPLORE, and {why} names the first setting the analytical gradient does not cover. {note} is \" (resolved for PC_OBSERVABLE: the block sets no GRAD_STRATEGY)\" when the block takes ANALYTICAL for PC_OBSERVABLE." },
-  { msg = "{block} block: GRAD_STRATEGY ANALYTICAL{note} needs an analytical derivative with respect to every search parameter, and the descriptors give none for {list}. GRAD_STRATEGY HYBRID takes finite differences for {what}.", doc = "At startup, once the data are read, at the END line of its optimiser: {list} names each OPTIM line whose search parameter the descriptors do not differentiate in the rows the fit and the validation have, and why: no descriptor differentiates it, or a descriptor that reads it differentiates it in the energy rows only (named), and FORCE true or PC_FRMSE gives force rows. {what} is it or them." },
+  { msg = "{block} block: GRAD_STRATEGY ANALYTICAL{note} needs an analytical derivative with respect to every search parameter, and the descriptors give none for {list}. GRAD_STRATEGY HYBRID takes finite differences for {what}.", doc = "At startup, once the data are read, at the END line of its optimiser: {list} names each OPTIM line whose search parameter the descriptors do not differentiate in the rows the fit and the validation have, and why: no descriptor differentiates it; a descriptor that depends on it does not differentiate it while another does (named); or a descriptor that reads it differentiates it in the energy rows only (named), and FORCE true or PC_FRMSE gives force rows. {what} is it or them." },
   { msg = "{phase}: ASA:ASA does not accept GRAD_STRATEGY: it is gradient-free, and the reannealing takes its tangents by finite differences (PARAM Delta_X)", doc = "At startup, at the END line of its optimiser." },
   { msg = "{phase}: TADAH:{algo} does not use GRAD_STRATEGY: it is gradient-free", doc = "At startup, at the END line of its optimiser: an annealer." },
   { msg = "{phase} {lib}:{algo}: GRAD_STRATEGY never takes effect: {lib}:{algo} takes no gradient{note}; remove it.", doc = "At startup, at the END line of its optimiser: an optimiser that obtains no gradient; {note} says why, for an NLopt MLSL or AUGLAG." },
