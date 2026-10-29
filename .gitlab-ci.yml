@@ -4,6 +4,13 @@ stages:
   - build_release
   - release
 
+# Base address of the Tadah! repositories that CMake's FetchContent and the
+# clones below use: the group of this project on the server running the
+# pipeline. A group or project CI/CD variable of the same name takes
+# precedence (e.g. an address with a job token).
+variables:
+  TADAH_GIT_BASE: "${CI_SERVER_URL}/${CI_PROJECT_NAMESPACE}"
+
 cache:
   key: "build-cache-$CI_COMMIT_REF_SLUG"
   paths:
