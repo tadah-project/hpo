@@ -25,6 +25,7 @@
  * fresh process. */
 
 #include "pc_process_workers.h"  // before catch2/catch.hpp
+#include "tadah_test_skip.hpp"   // before catch2/catch.hpp
 #include "catch2/catch.hpp"
 
 #ifdef TADAH_ENABLE_OPENMP
@@ -93,6 +94,8 @@
 #include <thread>
 #include <tuple>
 #include <vector>
+
+#include <unistd.h>
 
 namespace {
 
@@ -5589,7 +5592,8 @@ struct PersistFailure {
  * published (durable_best writes a temporary file there and renames it),
  * while the existing history files can still be appended to. The
  * configurations keep improving for hundreds of evaluations, so a new best
- * follows the switch. */
+ * follows the switch. The test cases that call it are skipped as root,
+ * whose writes no permission stops. */
 PersistFailure run_until_unpublishable(tadah::core::Context& ctx,
                                        const fs::path& dir)
 {
@@ -5630,6 +5634,8 @@ void check_persist_failure(const PersistFailure& o)
 TEST_CASE("Termination: MULTISTART ends at a fatal best-potential "
           "persistence failure", "[HPO][termination][durable_best]")
 {
+    if (::geteuid() == 0)
+        TADAH_SKIP("running as root: file permissions are not enforced");
     /* MULTISTART used to log the failure as a failed start and run the
      * next one, which failed the same way; the run then ended COMPLETED.
      * Each SBPLX start improves for about 200 evaluations. */
@@ -5650,6 +5656,8 @@ TEST_CASE("Termination: MULTISTART ends at a fatal best-potential "
 TEST_CASE("Termination: NLopt ends at a fatal best-potential persistence "
           "failure", "[HPO][termination][durable_best]")
 {
+    if (::geteuid() == 0)
+        TADAH_SKIP("running as root: file permissions are not enforced");
     /* NLopt used to report the failure as its own "nlopt failure"
      * self-termination, and the run ended as if converged. */
     TaRun run(plain_block(
