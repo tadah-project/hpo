@@ -984,11 +984,11 @@ variable late equal 1.0
  * RUN_FAIL, error_msg "injecting `variable hot_a0 equal 3.25` before the
  * script: " and the LAMMPS message, its refusal to redefine hot_a0 ("ERROR:
  * Cannot redefine variable hot_a0 with a different style" in LAMMPS 11 Feb
- * 2026, "ERROR: Cannot redefine index style variable hot_a0 as equal style
- * variable" in LAMMPS 30 Sep 2026: the check takes the start and the name),
- * the script not run, nothing read back (no
- * outvar, hot or fail value: the instance's variables are an earlier
- * evaluation's), and the slot's instance discarded:
+ * 2026, "ERROR: Cannot redefine index (or string) style variable hot_a0 as
+ * equal style variable" in LAMMPS 30 Sep 2026: the check takes the start
+ * and the name), the script not run, nothing read back (no outvar, hot or
+ * fail value: the instance's variables are an earlier evaluation's), and
+ * the slot's instance discarded:
  *   - the name defined by `-var hot_a0 3.3` on the line (index style, at
  *     the instance's creation);
  *   - a cached instance whose script, in the evaluation before, redefined

@@ -89,6 +89,7 @@
 #include <unistd.h>
 #include <sys/wait.h>
 
+#include <algorithm>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
@@ -680,13 +681,19 @@ TEST_CASE("a hot value LAMMPS refuses to inject fails the evaluation",
     CHECK(outv.rows[0][5] == "3.250000e+00");
     CHECK(outv.rows[1][4] != "1.000000e+16");
     CHECK(outv.rows[1][5] == "1.000000e+16");
-    CHECK_THAT(line_with(journal, "cold.in, occurrence 1): injecting "
-                                  "`variable hot_a0 equal 3.25` before the "
-                                  "script: "),
-               Catch::Contains("PC_LAMMPS task failed (") &&
-                   Catch::Contains("before the script: ERROR: Cannot "
-                                   "redefine ") &&
-                   Catch::Contains(" variable hot_a0 "));
+    const std::string injected = "cold.in, occurrence 1): injecting "
+                                 "`variable hot_a0 equal 3.25` before the "
+                                 "script: ";
+    const std::string failed = line_with(journal, injected);
+    CHECK_THAT(failed, Catch::Contains("PC_LAMMPS task failed (") &&
+                           Catch::Contains(injected + "ERROR: Cannot "
+                                           "redefine "));
+    /* The LAMMPS message names the variable (after the injected line). */
+    const std::size_t at = failed.find(injected);
+    CHECK_THAT(at == std::string::npos
+                   ? std::string()
+                   : failed.substr(at + injected.size()),
+               Catch::Contains("variable hot_a0 "));
     CHECK(journal.find("cold.in, occurrence 2)") == std::string::npos);
     CHECK(journal.find("eval-thread caught throw") == std::string::npos);
     Host::reset_globals_for_test();
@@ -892,8 +899,10 @@ TEST_CASE("a --varloss variable with no number for its value fails the "
                            "F after the script: " +
                                spoiled_reason(false));
         CHECK(second.find("PC_LAMMPS task failed (") != std::string::npos);
-        if (as_string)
-            CHECK_THAT(second, Catch::Contains(" variable F "));
+        if (as_string)  // the LAMMPS message names the variable
+            CHECK_THAT(second.substr(std::min(second.size(),
+                                              second.find("Cannot redefine "))),
+                       Catch::Contains("variable F "));
         CHECK(journal.find("[!] No evaluation produced a usable loss.") !=
               std::string::npos);
         Host::reset_globals_for_test();
