@@ -869,23 +869,28 @@ theta_claims(const mlip::StructureDB&           stdb,
  * a wrong gradient, so it goes to finite differences whole.
  * `descriptors` are the claims of the descriptors on pairs of atoms the
  * data need not hold (probe_pairs, analytical_gate.h); default none, the
- * data alone. A side whose structures hold no pair of atoms that depends
- * on the parameter (no claim at all) has rows of 0 where the descriptors
- * claim the energy rows. Force rows the data do not claim beside energy
- * rows they claim are 0 where the descriptors claim the force rows: a
- * many-body descriptor claims the energy rows of every atom, and its force
- * rows only for a pair of atoms within its cutoff, which the structures
- * need not hold. A descriptor whose derivatives cover the energy rows only
- * makes the descriptors claim no force rows, so its parameter goes to
- * finite differences whenever the run has force rows and the data claim
- * the energy rows. */
+ * data alone. A side that claims no row has the rows the walker wrote
+ * where the descriptors claim the rows the side has: its structures hold
+ * no pair of atoms that depends on the parameter (rows of 0), or none
+ * within the cutoff of a descriptor that depends on it, which then adds 0
+ * to the rows of the others (the walker claims no row where a descriptor
+ * that depends on the parameter claims none, assemble_dphi_train_both_rows).
+ * Force rows the data do not claim beside energy rows they claim are 0
+ * where the descriptors claim the force rows: a many-body descriptor
+ * claims the energy rows of every atom, and its force rows only for a pair
+ * of atoms within its cutoff, which the structures need not hold. A
+ * descriptor that depends on the parameter and has no derivative for it
+ * makes the descriptors claim no rows, and one whose derivatives cover the
+ * energy rows only no force rows, so the parameter goes to finite
+ * differences: whenever the run has rows, and whenever it has force rows. */
 inline bool claims_differentiate(const ThetaClaims& train, bool train_force,
                                  const ThetaClaims& val, bool has_val,
                                  bool val_force,
                                  const ThetaClaims& descriptors = {})
 {
     const auto rows = [&descriptors](const ThetaClaims& c, bool force) {
-        if (!c.energy && !c.force) return descriptors.energy;
+        if (!c.energy && !c.force)
+            return descriptors.energy && (!force || descriptors.force);
         return c.energy && (!force || c.force || descriptors.force);
     };
     return rows(train, train_force) && (!has_val || rows(val, val_force));

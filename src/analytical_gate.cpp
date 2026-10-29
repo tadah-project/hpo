@@ -127,15 +127,17 @@ mlip::StructureDB probe_pairs(const core::Context& ctx,
 
 namespace {
 
-/* The labels of the descriptors of `dcs` (its two-body and its many-body
- * descriptor) that the walker claims `p` for in the energy rows of the
- * structures of `db` and in none of their force rows. */
-std::vector<std::string>
-energy_rows_only_descriptors(const mlip::StructureDB& db,
-                             const models::DC_Selector& dcs,
-                             const ParamRef& p, std::size_t n_cols)
-{
+/* The claims of the two-body and of the many-body descriptor of `dcs`, each
+ * alone, for `p` on the structures of `db` (the force rows asked). */
+struct DescriptorClaims {
     ThetaClaims d2, dm;
+};
+
+DescriptorClaims descriptor_claims(const mlip::StructureDB& db,
+                                   const models::DC_Selector& dcs,
+                                   const ParamRef& p, std::size_t n_cols)
+{
+    DescriptorClaims c;
     for (std::size_t s = 0; s < db.size(); ++s) {
         mlip::StructureDB one;
         one.add(db(s));
@@ -144,20 +146,52 @@ energy_rows_only_descriptors(const mlip::StructureDB& db,
         const auto c2 = mlip::assemble_dphi_train_both_rows_d2(
             one, *dcs.d2b, p.theta_name, p.arg_pos, energy_rows.data(),
             force_rows.data(), n_cols, {0});
-        d2.energy = d2.energy || c2.first;
-        d2.force = d2.force || c2.second;
+        c.d2.energy = c.d2.energy || c2.first;
+        c.d2.force = c.d2.force || c2.second;
         if (!dcs.dmb) continue;
         energy_rows.assign(energy_rows.size(), 0.0);
         force_rows.assign(force_rows.size(), 0.0);
         const auto cm = mlip::assemble_dphi_train_both_rows_dm(
             one, *dcs.dmb, p.theta_name, p.arg_pos, energy_rows.data(),
             force_rows.data(), n_cols, {0});
-        dm.energy = dm.energy || cm.first;
-        dm.force = dm.force || cm.second;
+        c.dm.energy = c.dm.energy || cm.first;
+        c.dm.force = c.dm.force || cm.second;
     }
+    return c;
+}
+
+/* The labels of the descriptors of `dcs` that the walker claims `p` for in
+ * the energy rows of the structures of `db` and in none of their force
+ * rows. */
+std::vector<std::string>
+energy_rows_only_descriptors(const mlip::StructureDB& db,
+                             const models::DC_Selector& dcs,
+                             const ParamRef& p, std::size_t n_cols)
+{
+    const DescriptorClaims c = descriptor_claims(db, dcs, p, n_cols);
     std::vector<std::string> out;
-    if (d2.energy && !d2.force) out.push_back(dcs.d2b->label());
-    if (dm.energy && !dm.force) out.push_back(dcs.dmb->label());
+    if (c.d2.energy && !c.d2.force) out.push_back(dcs.d2b->label());
+    if (c.dm.energy && !c.dm.force) out.push_back(dcs.dmb->label());
+    return out;
+}
+
+/* The labels of the descriptors of `dcs` whose values depend on `p`
+ * (D_Base::depends_on) and that the walker claims `p` for in no energy row
+ * of the structures of `db`, when another descriptor claims it there; none
+ * when no descriptor claims it. */
+std::vector<std::string>
+depending_descriptors_without_derivative(const mlip::StructureDB& db,
+                                         const models::DC_Selector& dcs,
+                                         const ParamRef& p,
+                                         std::size_t n_cols)
+{
+    const DescriptorClaims c = descriptor_claims(db, dcs, p, n_cols);
+    if (!c.d2.energy && !c.dm.energy) return {};
+    const auto depends =
+        mlip::detail::arms_depend_on(dcs, p.theta_name, p.arg_pos);
+    std::vector<std::string> out;
+    if (depends.first && !c.d2.energy) out.push_back(dcs.d2b->label());
+    if (depends.second && !c.dm.energy) out.push_back(dcs.dmb->label());
     return out;
 }
 
@@ -207,7 +241,14 @@ parameters_without_analytical_derivative(const core::Context& ctx,
         if (it != trg.optimap.end() && p.token < it->second.line.size())
             g.line = it->second.line[p.token];
         if (!o.energy) {
-            g.why = ParameterWithoutDerivative::Why::NoDerivative;
+            /* A descriptor that depends on it gives no derivative beside one
+             * that does, or no descriptor differentiates it. */
+            g.descriptors = depending_descriptors_without_derivative(
+                *pairs, probe.DCS, p, n_cols);
+            g.why = g.descriptors.empty()
+                        ? ParameterWithoutDerivative::Why::NoDerivative
+                        : ParameterWithoutDerivative::Why::
+                              DependsWithoutDerivative;
         } else {
             /* The descriptors differentiate it, in the energy rows only:
              * the force rows of the fit lack it, or those PC_FRMSE

@@ -96,6 +96,12 @@ struct ParameterWithoutDerivative {
          * only, and the run has force rows: those of the fit (FORCE true)
          * when `force_rows_of_fit`, else those PC_FRMSE measures. */
         EnergyRowsOnly,
+        /* `descriptors` (their labels) depend on it (D_Base::depends_on)
+         * and differentiate it in no rows, while another descriptor
+         * differentiates it: WATOM, which DM_REAM, the DM_Poly descriptors,
+         * DM_Embed (a DESCRIPTOR block), DM_mJoin and D2_mJoin read without
+         * a derivative, beside a descriptor that has one. */
+        DependsWithoutDerivative,
     };
     Why why = Why::NoDerivative;
     std::vector<std::string> descriptors;
@@ -112,12 +118,15 @@ struct ParameterWithoutDerivative {
  * claims_differentiate, dloss_dtheta.h), with the descriptors an
  * evaluation builds (an mlip::Trainer of `ctx`), and why. The walker
  * claims a parameter for the pairs of atoms a descriptor depends on it
- * for; where the data hold no such pair, the claims on probe_pairs()
- * decide (rows of 0). No claim there is a key no descriptor differentiates
- * (LAMBDA); claims of the energy rows only are a descriptor whose
- * derivatives cover the energy rows only (DM_Blip, DM_EAD), named, which
- * is not enough with FORCE true or PC_FRMSE. For a setup
- * analytical_gradient_blocker() accepts (training data, no FIXINDEX). */
+ * for, and only when every descriptor that depends on it claims it; where
+ * the data hold no such pair, the claims on probe_pairs() decide (rows of
+ * 0). No claim there is a key no descriptor differentiates (LAMBDA), or a
+ * descriptor that depends on it without a derivative beside one that
+ * differentiates it (WATOM beside DM_REAM), named; claims of the energy
+ * rows only are a descriptor whose derivatives cover the energy rows only
+ * (DM_Blip, DM_EAD), named, which is not enough with FORCE true or
+ * PC_FRMSE. For a setup analytical_gradient_blocker() accepts (training
+ * data, no FIXINDEX). */
 std::vector<ParameterWithoutDerivative>
 parameters_without_analytical_derivative(const core::Context& ctx,
                                          const HPOTargets& trg,
