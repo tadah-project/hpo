@@ -2,12 +2,13 @@
 
 The full multi-repo contributor guide for the Tadah! project lives on
 the umbrella repository:
-<https://git.ecdf.ed.ac.uk/tadah/tadah.mlip/-/blob/v1-dev/CONTRIBUTING.md>
+<https://github.com/tadah-project/tadah.mlip/blob/v1-dev/CONTRIBUTING.md>
 
-This file covers what is specific to HPO. Bug reports and
-feature requests on this module use the GitLab issue tracker on this
-project; cross-cutting changes (work that touches more than one
-Tadah! module) should be discussed on the umbrella project first.
+This file covers what is specific to HPO. Bug reports and feature
+requests on this module use the issue tracker of the umbrella project,
+<https://github.com/tadah-project/tadah.mlip/issues>; cross-cutting
+changes (work that touches more than one Tadah! module) should be
+discussed on the umbrella project first.
 
 ## Build & test in isolation
 
@@ -23,10 +24,10 @@ build directory.
 ### Dependencies
 
 - C++17 compiler.
-- [CORE](https://git.ecdf.ed.ac.uk/tadah/core),
-  [MODELS](https://git.ecdf.ed.ac.uk/tadah/models),
-  [MLIP](https://git.ecdf.ed.ac.uk/tadah/mlip), and
-  [MD](https://git.ecdf.ed.ac.uk/tadah/md) — fetched
+- [CORE](https://github.com/tadah-project/core),
+  [MODELS](https://github.com/tadah-project/models),
+  [MLIP](https://github.com/tadah-project/mlip), and
+  [MD](https://github.com/tadah-project/md) — fetched
   automatically.
 - [dlib](http://dlib.net/), [NLopt](https://nlopt.readthedocs.io/),
   [Eigen3](https://eigen.tuxfamily.org/), and (optionally)
@@ -38,7 +39,7 @@ build directory.
   registry read TOML with `tomllib`, and the configure step refuses an
   older interpreter
   (`cmake/hpo_test_python.cmake`).
-- A LAMMPS library built with [Tadah!LAMMPS](https://git.ecdf.ed.ac.uk/tadah/tadah.lammps)
+- A LAMMPS library built with [Tadah!LAMMPS](https://github.com/tadah-project/tadah.lammps)
   is needed at link time only when building HPO against the
   LAMMPS-driven targets (`PC_LAMMPS`). See the umbrella
   [installation guide](https://tadah.readthedocs.io/v1-dev/installation.html#installation-nfp).
