@@ -1930,8 +1930,9 @@ tadah::core::Context with_terms(tadah::core::Context c,
  * Before the fix: the check and the run passed the first three (the
  * derivative of D2_Blip, or of DM_mBlip, stood for both descriptors; the
  * run optimised on a gradient without the other descriptor's part), and
- * refused the fourth alike. Tadah! 1.5.0 ran the first three to the end on
- * that gradient. */
+ * refused the fourth alike. Tadah! 1.5.0 ran the first and the third to
+ * the end on that gradient (RHOFORM and DESCRIPTOR blocks are new in
+ * 1.6.0: it ran the first without RHOFORM, and had no second). */
 TEST_CASE("hpo --check: GRAD_STRATEGY ANALYTICAL refuses WATOM when a "
           "descriptor that depends on it does not differentiate it, naming "
           "the descriptor",
