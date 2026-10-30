@@ -1565,8 +1565,10 @@ only, and the refusal names them. A search parameter has a derivative \
 only in the rows that every descriptor depending on it differentiates. \
 WATOM, which a two-body and a many-body descriptor both read, has none \
 beside a descriptor that reads it without one (DM_REAM, a DM_Poly \
-descriptor, DESCRIPTOR blocks, DM_mJoin, D2_mJoin; the refusal names \
-it), and a force-row derivative only when both descriptors give one. \
+descriptor, DESCRIPTOR blocks, DM_mJoin, D2_mJoin), and a force-row \
+derivative only when both descriptors give one. The refusal names that \
+descriptor when the other one differentiates WATOM, and says that no \
+descriptor differentiates it otherwise. \
 The rows of a structure that holds no pair of atoms that depends on a \
 search parameter are 0, which the analytical gradient forms."""
 checks = [
