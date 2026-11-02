@@ -307,6 +307,10 @@ TEST_CASE("NLopt failed evaluations: the ending line gives the loss the "
  * loss NLopt asks for with its gradient is given the stand-in only for a
  * graded failure with a usable gradient: an ungraded failure fails the
  * gradient, and the point is rejected.)
+ * NLopt is seeded (SEED 1): MLSL draws its samples from NLopt's generator,
+ * which takes a seed from the clock when none is given, and for some draws
+ * no sample evaluated without a gradient fails (seeds 2 and 16 of 1 to 40:
+ * 3 failed evaluations, all asked for with their gradient, and no note).
  * Before the fix: passes as well (a pin of the rule the documentation of
  * FAILSCORE states). */
 TEST_CASE("NLopt failed evaluations: a gradient-based search is given the "
@@ -315,6 +319,7 @@ TEST_CASE("NLopt failed evaluations: a gradient-based search is given the "
 {
     auto sp = spec("GD_MLSL", kDblMax);
     sp.pop = 4;
+    sp.seed = 1;
     CappedValley host;
     Journal j;
     REQUIRE_NOTHROW(tadah::hpo::run_nlopt_impl<Vec, NoRunner>(sp, host));
