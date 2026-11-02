@@ -1562,13 +1562,12 @@ differentiate in the rows of the run: the energy rows, the force rows of \
 the fit under FORCE true and the forces that PC_FRMSE measures. Some \
 many-body descriptors differentiate their parameters in the energy rows \
 only, and the refusal names them. A search parameter has a derivative \
-only in the rows that every descriptor depending on it differentiates. \
-WATOM, which a two-body and a many-body descriptor both read, has none \
-beside a descriptor that reads it without one (DM_REAM, a DM_Poly \
-descriptor, DESCRIPTOR blocks, DM_mJoin, D2_mJoin), and a force-row \
-derivative only when both descriptors give one. The refusal names that \
-descriptor when the other one differentiates WATOM, and says that no \
-descriptor differentiates it otherwise. \
+only in the rows that every descriptor that depends on it differentiates; \
+WATOM usually has two such descriptors. The refusal names a descriptor \
+that depends on the parameter and does not differentiate it while the \
+other does, and otherwise says that no descriptor differentiates it. It \
+names a descriptor as its TYPE2B or TYPEMB line writes it, and DESCRIPTOR \
+blocks as DM_Embed. \
 The rows of a structure that holds no pair of atoms that depends on a \
 search parameter are 0, which the analytical gradient forms."""
 checks = [
