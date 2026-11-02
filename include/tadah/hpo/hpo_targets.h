@@ -11,6 +11,7 @@
 #include <tadah/hpo/validation_metric.h>
 #include <tadah/models/descriptors/d_mjoin.h>
 #include <tadah/models/descriptors/dm/rhoform.h>
+#include <tadah/mlip/hpotarget_optim.h>
 #include <tadah/mlip/training_record.h>
 
 #include <memory>
@@ -95,11 +96,6 @@ private:
         void resize(size_t s);
     };
 
-    size_t ui_offset(std::vector<std::string> &tokens, size_t ui);
-    /* The (indices) and the tokens after them; @p what, "OPTIM <KEY>",
-     * names the line in a refusal. */
-    std::vector<std::string> parse_optim_line(std::istringstream& iss,
-                                              const std::string& what);
     /* Throws when the run cannot create the archive directory @p dir of
      * the line @p key (DUMP, BDUMP) or write into it, and creates nothing.
      * The path is taken where the operating system puts it (every symbolic
@@ -138,18 +134,18 @@ private:
     void bind_space_recursive();
 
     core::Context &context;
-    /* The values of a -c potential that its descriptors do not read, left
-     * out of `context` for the run (D_mJoin::expand_grids): an OPTIM index
-     * past the values kept names them. */
-    std::vector<models::D_mJoin::LeftOut> left_out_;
+    /* What the OPTIM lines read besides `context` (mlip::prepare_optim_seed:
+     * the values of a -c potential its descriptors do not read, left out of
+     * `context` for the run, and the density form), and the reader of the
+     * OPTIM lines of the file, which keeps the line that selects each value. */
+    mlip::OptimSeed optim_seed_;
+    std::optional<mlip::OptimReader> optim_reader_;
     SearchSpacePtr space_;
     /* OPTIM_SCALE (root key): AUTO by default -- every OPTIM dimension is
      * mapped to the unit box; NONE is the legacy escape hatch (raw units,
      * ln for LOG dims). LOG_HP lands on spec.log_threshold. */
     ScalePolicy    scale_policy_{std::nullopt, /*normalise=*/true};
     bool           scale_policy_set_ = false;
-    /* RHOFORM of the -c configuration; see rho_form(). */
-    std::optional<models::RhoForm> rho_form_;
 
 public:
     /** The targets of the run whose configuration is @p c and whose
@@ -167,88 +163,48 @@ public:
     /* The search space built from the OPTIM lines + OPTIM_SCALE + LOG_HP
      * (shared with spec and every sub-spec via bind_space). */
     SearchSpacePtr space() const { return space_; }
-    /* Positive-only OPTIM keys (geometric AUTO boxes by default), from the
-     * refit hpotarget writer's key table. */
-    static bool optim_key_positive_only(const std::string& key);
-    /** What the fit requires of a searched value of index @p index
-     * (1-based) of @p key (case-insensitive), which the low bound of its
-     * box must meet: a value > 0 (strict) for ESIGMA, the absolute parts
-     * FSIGMA (1) and SSIGMA (1) and every WDBFILE value (an AUTO box of
-     * them is geometric by default, RATIO 2), a value >= 0 for the
-     * relative parts FSIGMA (2) and SSIGMA (2) (an AUTO box of them is
-     * linear and clamped at 0) and for LAMBDA; nullopt for another key. */
-    struct FitValueRule {
-        bool strict;      ///< > 0; else >= 0
-        std::string why;  ///< the reason, in words
-    };
+    /* The rules of the OPTIM lines, which MLIP's OPTIM reader applies
+     * (tadah/mlip/hpotarget_optim.h, which documents each): tadah hpo and
+     * tadah analysis check_bounds read the OPTIM lines with it. */
+    static bool optim_key_positive_only(const std::string& key) {
+        return mlip::optim_key_positive_only(key);
+    }
+    using FitValueRule = mlip::OptimFitValueRule;
     static std::optional<FitValueRule> optim_fit_value_rule(
-        const std::string& key, std::size_t index);
-    /** OPTIM of a choice or a switch of the fit (ENORM ATOM|SQRT, ENERGY
-     * true|false) is refused: no continuous value. Returns the error
-     * message, "" for another key. */
-    static std::string optim_switch_key_error(const std::string& key);
-    /** OPTIM of a retired key (EWEIGHT, FWEIGHT, SWEIGHT, WDBFILE_AUTO,
-     * EWEIGHT_TEMP, UNCERTAINTY, WCOV, WNOISE, ERROR: the blueprint's
-     * retired state) is refused with why it
-     * was retired, what replaces it and its conversion
-     * (core::retired_key_text). Returns the error message, "" for another
-     * key. */
-    static std::string optim_retired_key_error(const std::string& key);
-    /** OPTIM WEIGHTS, the coefficients each evaluation fits (a searched
-     * value would be replaced by the fit; OPTIM FIXWEIGHT searches the
-     * coefficients FIXINDEX holds fixed), and OPTIM EMBF0, a choice of the
-     * DM_REAM embedding reference, are refused; compared
-     * case-insensitively. Returns the error message, "" for another key. */
-    static std::string optim_fitted_key_error(const std::string& key);
-    /* OPTIM on structure data is refused: the density form (RHOFORM), the
-     * descriptor types (TYPE2B, TYPEMB), the cutoff classes (RCTYPE2B,
-     * RCTYPEMB), the knot-degree lists (KDEG2B, KDEGMB, KDEGEMB), the
-     * rigid-dimer layout (DIMER), the pinned-weight indices (FIXINDEX) and
-     * the model (MODEL); compared case-insensitively. Their values are
-     * discrete or describe the data, so a searched value is truncated,
-     * refused or meaningless. Returns the error message for such a key,
-     * "" for a searchable one. (OPTIM EMBF0 has its own message,
-     * optim_fitted_key_error.) */
-    static std::string optim_structure_key_error(const std::string& key);
-    /* A discrete value of a key whose other values are continuous: the
-     * first OALGO value (the training algorithm; the second, the rcond M,
-     * is searchable). @p index is the OPTIM index (1-based among the key's
-     * numeric values). Returns the error message, "" for a searchable
-     * index. */
+        const std::string& key, std::size_t index) {
+        return mlip::optim_fit_value_rule(key, index);
+    }
+    static std::string optim_switch_key_error(const std::string& key) {
+        return mlip::optim_switch_key_error(key);
+    }
+    static std::string optim_retired_key_error(const std::string& key) {
+        return mlip::optim_retired_key_error(key);
+    }
+    static std::string optim_fitted_key_error(const std::string& key) {
+        return mlip::optim_fitted_key_error(key);
+    }
+    static std::string optim_structure_key_error(const std::string& key) {
+        return mlip::optim_structure_key_error(key);
+    }
     static std::string optim_discrete_index_error(const std::string& key,
-                                                  std::size_t index);
-    /* OPTIM on an internal key (the blueprint's INTERNAL_KEYS: DSIZE,
-     * RCUT*MAX, ESTDEV, ...) is refused: tadah computes those values and no
-     * configuration sets them (an evaluation could not write a candidate
-     * into one). Returns the error message, "" for another key. */
-    static std::string optim_internal_key_error(const std::string& key);
-    /** OPTIM on a key applied once, when the run starts and reads its data
-     * (LSCALE, ESHIFT, ESHIFT_ATOM, ESHIFT_DBATOM, EFILTER, FFILTER,
-     * ZERO_COM_FORCE: mlip::apply_load_transforms on the training and
-     * validation data) is refused, whatever the model: no evaluation would
-     * take a candidate value of it. (WDBFILE, the priority of each dataset,
-     * applies in each fit: mlip::RowWeights.) Compared case-insensitively.
-     * Returns the error message, "" for another key. */
-    static std::string optim_startup_only_key_error(const std::string& key);
-    /* OPTIM on a legacy many-body key (CGRIDMB, SGRIDMB, AMPGRIDMB,
-     * CEMBFUNC, SEMBFUNC, RCUTMB) that @p ctx does not store, while its
-     * many-body term is DM_Embed components (DESCRIPTOR blocks): refused
-     * naming the component path of each block that holds the parameter
-     * (<ID>.DENSITY.CENTRES, <ID>.DENSITY.ETA or .WIDTHS as declared, ...).
-     * A stored key (a DM_REAM term beside the blocks) is searchable.
-     * Returns the error message, "" otherwise. */
+                                                  std::size_t index) {
+        return mlip::optim_discrete_index_error(key, index);
+    }
+    static std::string optim_internal_key_error(const std::string& key) {
+        return mlip::optim_internal_key_error(key);
+    }
+    static std::string optim_startup_only_key_error(const std::string& key) {
+        return mlip::optim_startup_only_key_error(key);
+    }
     static std::string optim_component_key_error(const core::Context& ctx,
-                                                 const std::string& key);
-    /* OPTIM on a value that the key's formats (blueprint value_type, every
-     * alternative) take only as an integer -- SBASIS, the first value of
-     * OALGO -- is refused: a searched value is continuous, and an integer
-     * read of a candidate such as 14.47 is refused (or was truncated).
-     * @p config holds the key's tokens (Opti::config), @p pos the token of
-     * OPTIM index @p index. Returns the error message, "" for a value the
-     * key also takes as a fraction. */
+                                                 const std::string& key) {
+        return mlip::optim_component_key_error(ctx, key);
+    }
     static std::string optim_integer_index_error(
         const std::string& key, const std::vector<std::string>& config,
-        std::size_t pos, std::size_t index);
+        std::size_t pos, std::size_t index) {
+        return mlip::optim_integer_index_error(key, config, pos, index);
+    }
     /* The OPTIM keys that arm the density gates (RHOGATE, RHOBARGATE):
      * AMPGRIDMB, CGRIDMB, SGRIDMB, RCUTMB, the dimensions that change
      * rho_raw or the window. A gate without an OPTIM dimension on one of
@@ -260,7 +216,7 @@ public:
      * the OPTIM boxes and the WARM seeds that depend on it. nullopt: no
      * DM_REAM block. Under NONNEG and MONOTONE the AMPGRIDMB boxes are
      * non-negative (process_optim_config). */
-    std::optional<models::RhoForm> rho_form() const { return rho_form_; }
+    std::optional<models::RhoForm> rho_form() const { return optim_seed_.rho_form; }
     /* The -c configuration these targets were read against (the reference
      * the constructor holds): the run context of every InitContext, so the
      * WARM seed rules (EMBF0, RHOFORM) apply to each resolution, a RESTART

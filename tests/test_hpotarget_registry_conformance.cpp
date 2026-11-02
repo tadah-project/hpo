@@ -675,3 +675,395 @@ TEST_CASE("hpotarget registry conformance: hpotarget_params.toml",
 {
     check_file("hpotarget_params.toml");
 }
+
+/* ---- MLIP's OPTIM reader against tadah hpo ------------------------------
+ *
+ * tadah hpo reads the OPTIM lines with MLIP's OPTIM reader
+ * (tadah/mlip/hpotarget_optim.h), and tadah analysis check_bounds reads a
+ * target file with its file reader, read_optim_lines(), which reads the
+ * logical lines with its own lexer and the configuration as
+ * prepare_optim_seed() prepares it. Every case of the registry (examples
+ * and invalid lines, put into their wrappers) and every wrapper is read
+ * both ways, each on its own context parsed from the case's training
+ * configuration: HPOTargets (the parse, not the startup checks) and
+ * prepare_optim_seed + read_optim_lines. The two agree when
+ *   - HPOTargets reads the file: read_optim_lines reads it, and every value
+ *     an OPTIM line selects is one of its boxes with the same bounds (bit
+ *     for bit), origin, shape (and ASINH c), tag and line, the key's
+ *     values the same, and it has no other box;
+ *   - HPOTargets refuses an OPTIM line, or a last line that ends with a
+ *     backslash: read_optim_lines refuses the same line with the same
+ *     reason (config_line_error of its line, reason and text is HPOTargets'
+ *     message), except the refusal of an OPTIM line inside a block ("OPTIM
+ *     is a top-level key, and the ..."), which read_optim_lines does not
+ *     make: it then refuses no earlier line;
+ *   - HPOTargets refuses another line: read_optim_lines refuses no earlier
+ *     line;
+ *   - HPOTargets' error names no line: it is the refusal of the seed's
+ *     preparation, which prepare_optim_seed makes with the same text, or
+ *     one after the OPTIM lines were read, and read_optim_lines reads the
+ *     file.
+ * Tag [hpotarget_mlip]: one case per registry file and one for the
+ * wrappers. */
+
+#if __has_include(<tadah/mlip/hpotarget_optim.h>)
+
+#include <tadah/core/number_format.h>
+#include <tadah/hpo/strict_parse.h>
+#include <tadah/mlip/hpotarget_optim.h>
+
+#include <cstring>
+
+namespace {
+
+namespace M = tadah::mlip;
+
+/* What read_optim_lines did with a file. */
+struct MlipRead {
+    std::string seed_error;   // prepare_optim_seed's refusal
+    bool refused = false;     // read_optim_lines refused a line
+    std::size_t line = 0;
+    std::string what, text;
+    std::vector<M::OptimTargetLine> lines;
+};
+
+/* An error HPOTargets frames, "Error on line N: what\nLine: text". */
+struct Frame {
+    std::size_t line = 0;
+    std::string what, text;
+};
+
+std::optional<Frame> frame_of(const std::string& e)
+{
+    const std::string head = "Error on line ";
+    if (e.rfind(head, 0) != 0) return std::nullopt;
+    const auto colon = e.find(": ", head.size());
+    const auto at = e.rfind("\nLine: ");
+    if (colon == std::string::npos || at == std::string::npos || at < colon)
+        return std::nullopt;
+    Frame f;
+    f.line = std::stoul(e.substr(head.size(), colon - head.size()));
+    f.what = e.substr(colon + 2, at - colon - 2);
+    f.text = e.substr(at + 7);
+    return f;
+}
+
+bool same_bits(double a, double b)
+{
+    return std::memcmp(&a, &b, sizeof a) == 0;
+}
+
+const char* origin_name(M::OptimBoxOrigin o)
+{
+    switch (o) {
+        case M::OptimBoxOrigin::Explicit:         return "explicit";
+        case M::OptimBoxOrigin::AutoLinear:       return "AutoLinear";
+        case M::OptimBoxOrigin::AutoGeometric:    return "AutoGeometric";
+        case M::OptimBoxOrigin::AutoLinearNonneg: return "AutoLinearNonneg";
+    }
+    return "?";
+}
+
+const char* origin_name(tadah::hpo::BoxOrigin o)
+{
+    switch (o) {
+        case tadah::hpo::BoxOrigin::Explicit:         return "explicit";
+        case tadah::hpo::BoxOrigin::AutoLinear:       return "AutoLinear";
+        case tadah::hpo::BoxOrigin::AutoGeometric:    return "AutoGeometric";
+        case tadah::hpo::BoxOrigin::AutoLinearNonneg: return "AutoLinearNonneg";
+        case tadah::hpo::BoxOrigin::Adapted:          return "Adapted";
+    }
+    return "?";
+}
+
+const char* shape_name(M::OptimShape s)
+{
+    switch (s) {
+        case M::OptimShape::Linear: return "LIN";
+        case M::OptimShape::Log:    return "LOG";
+        case M::OptimShape::Asinh:  return "ASINH";
+    }
+    return "?";
+}
+
+const char* shape_name(tadah::hpo::ScaleKind s)
+{
+    switch (s) {
+        case tadah::hpo::ScaleKind::Linear: return "LIN";
+        case tadah::hpo::ScaleKind::Log:    return "LOG";
+        case tadah::hpo::ScaleKind::Asinh:  return "ASINH";
+    }
+    return "?";
+}
+
+/* "" when the boxes of `m` are those of `trg`, else the first difference. */
+std::string box_difference(const tadah::hpo::HPOTargets& trg,
+                           const std::vector<M::OptimTargetLine>& m,
+                           std::size_t& compared)
+{
+    struct At { const M::OptimLine* line; const M::OptimBox* box; };
+    std::map<std::pair<std::string, std::size_t>, At> boxes;
+    std::map<std::string, const M::OptimLine*> keys;
+    for (const auto& l : m) {
+        keys[l.optim.key] = &l.optim;
+        for (const auto& b : l.optim.boxes)
+            if (!boxes.emplace(std::make_pair(l.optim.key, b.slot),
+                               At{&l.optim, &b}).second)
+                return "MLIP's reader gives " + l.optim.key + " slot " +
+                       std::to_string(b.slot) + " two boxes";
+    }
+    std::size_t n = 0;
+    for (const auto& [key, o] : trg.optimap) {
+        const auto k = keys.find(key);
+        if (k == keys.end())
+            return "MLIP's reader has no line of " + key;
+        if (k->second->config != o.config)
+            return "the values of " + key + " differ";
+        for (std::size_t i = 0; i < o.opt.size(); ++i) {
+            if (!o.opt[i]) continue;
+            ++n;
+            const auto it = boxes.find({key, i});
+            const std::string what = key + " slot " + std::to_string(i);
+            if (it == boxes.end())
+                return "MLIP's reader has no box of " + what;
+            const M::OptimLine& l = *it->second.line;
+            const M::OptimBox& b = *it->second.box;
+            if (!same_bits(b.lo, o.lowbound[i]) ||
+                !same_bits(b.hi, o.highbound[i]))
+                return what + ": the box [" +
+                       tadah::core::format_roundtrip(o.lowbound[i]) + ", " +
+                       tadah::core::format_roundtrip(o.highbound[i]) +
+                       "] of tadah hpo is [" +
+                       tadah::core::format_roundtrip(b.lo) + ", " +
+                       tadah::core::format_roundtrip(b.hi) +
+                       "] in MLIP's reader";
+            if (std::string(origin_name(b.origin)) !=
+                origin_name(o.origin[i]))
+                return what + ": origin " + origin_name(o.origin[i]) +
+                       " of tadah hpo is " + origin_name(b.origin);
+            if (std::string(shape_name(l.shape)) !=
+                    shape_name(o.scale[i].kind) ||
+                (l.shape == M::OptimShape::Asinh &&
+                 !same_bits(l.c, o.scale[i].c)))
+                return what + ": the shape differs";
+            if (l.tagged != o.tagged[i]) return what + ": the tag differs";
+            if (l.line != o.line[i]) return what + ": the line differs";
+        }
+    }
+    if (n != boxes.size())
+        return "MLIP's reader gives " + std::to_string(boxes.size()) +
+               " boxes, tadah hpo " + std::to_string(n);
+    compared += n;
+    return "";
+}
+
+struct MlipCounts {
+    std::size_t boxes = 0;     // boxes compared bit for bit
+    std::size_t refusals = 0;  // OPTIM refusals compared
+};
+
+/* "" when MLIP's reader reads the case as tadah hpo reads it, else why
+ * not. */
+std::string mlip_failure(const Registry& reg, const Case& c,
+                         MlipCounts& counts)
+{
+    try {
+        const Composed comp = compose(reg, c);
+        const auto ctx_it = reg.contexts.find(comp.context);
+        if (ctx_it == reg.contexts.end())
+            throw std::runtime_error("context '" + comp.context +
+                                     "' is not in the files read");
+        const std::string file = "\n--- target file ---\n" + comp.file +
+                                 "-------------------";
+        tadah::core::PeriodicTable::initialize();
+        ScratchCwd cwd;
+        for (const auto& [name, f] : reg.fixtures) {
+            const fs::path p(f.path);
+            if (p.has_parent_path()) fs::create_directories(p.parent_path());
+            std::ofstream os(p);
+            os << f.text;
+        }
+        {
+            std::ofstream os("target.hpo");
+            os << comp.file;
+        }
+        ScopedEnv scoped(c.env);
+        auto parse = [&]() {
+            std::istringstream config(ctx_it->second.config);
+            return tadah::core::CoreUserConfigParser().parse(config);
+        };
+        tadah::core::Context hctx = parse();
+        tadah::core::Context mctx = parse();
+        std::string h_error;
+        std::optional<tadah::hpo::HPOTargets> trg;
+        try {
+            trg.emplace(hctx, "target.hpo");
+        } catch (const std::exception& e) {
+            h_error = e.what()[0] ? e.what() : "(empty message)";
+        }
+        MlipRead m;
+        std::optional<M::OptimSeed> seed;
+        try {
+            seed = M::prepare_optim_seed(mctx, "tadah hpo");
+        } catch (const std::exception& e) {
+            m.seed_error = e.what()[0] ? e.what() : "(empty message)";
+        }
+        if (seed) {
+            std::istringstream in(comp.file);
+            try {
+                m.lines = M::read_optim_lines(in, mctx, *seed);
+            } catch (const M::TargetLineError& e) {
+                m.refused = true;
+                m.line = e.line;
+                m.what = e.what();
+                m.text = e.text;
+            }
+        }
+        const std::string m_refusal =
+            m.refused ? tadah::hpo::config_line_error(m.line, m.what, m.text)
+                      : std::string();
+
+        if (h_error.empty()) {
+            if (!m.seed_error.empty())
+                return "tadah hpo reads the file; prepare_optim_seed "
+                       "refuses it:\n" + m.seed_error + file;
+            if (m.refused)
+                return "tadah hpo reads the file; MLIP's reader refuses "
+                       "it:\n" + m_refusal + file;
+            const std::string d = box_difference(*trg, m.lines, counts.boxes);
+            return d.empty() ? "" : d + file;
+        }
+        const std::optional<Frame> f = frame_of(h_error);
+        if (!f) {
+            if (!m.seed_error.empty())
+                return m.seed_error == h_error
+                           ? ""
+                           : "expected (tadah hpo):\n" + h_error +
+                                 "\ngot (prepare_optim_seed):\n" +
+                                 m.seed_error + file;
+            if (m.refused)
+                return "tadah hpo's refusal names no line:\n" + h_error +
+                       "\nand MLIP's reader refuses a line:\n" + m_refusal +
+                       file;
+            return "";
+        }
+        if (!m.seed_error.empty())
+            return "tadah hpo refuses line " + std::to_string(f->line) +
+                   " and prepare_optim_seed the file:\n" + m.seed_error + file;
+        std::istringstream in(comp.file);
+        const std::vector<M::TargetLine> logical =
+            M::target_logical_lines(in);
+        const auto at = std::find_if(
+            logical.begin(), logical.end(), [&](const M::TargetLine& l) {
+                return l.last == f->line && l.text == f->text;
+            });
+        if (at == logical.end())
+            return "tadah hpo's refusal names a line MLIP's lexer does not "
+                   "read:\n" + h_error + file;
+        const bool optim_line = at->key == "OPTIM" ||
+                                f->what == M::kTargetUnfinishedLineMsg;
+        const bool in_block =
+            f->what.rfind("OPTIM is a top-level key, and the ", 0) == 0;
+        if (optim_line && !in_block) {
+            ++counts.refusals;
+            if (!m.refused)
+                return "expected (tadah hpo):\n" + h_error +
+                       "\nMLIP's reader reads the file" + file;
+            return m_refusal == h_error
+                       ? ""
+                       : "expected (tadah hpo):\n" + h_error +
+                             "\ngot (MLIP's reader):\n" + m_refusal + file;
+        }
+        if (m.refused && m.line < f->line)
+            return "tadah hpo refuses line " + std::to_string(f->line) +
+                   ":\n" + h_error + "\nand MLIP's reader an earlier one:\n" +
+                   m_refusal + file;
+        return "";
+    } catch (const std::exception& e) {
+        return std::string("cannot run: ") + e.what();
+    }
+}
+
+void check_file_mlip(const std::string& file)
+{
+    const std::vector<std::string> parts =
+        file == kMainFile ? std::vector<std::string>{}
+                          : std::vector<std::string>{file};
+    const Registry reg = load(parts, {file});
+    MlipCounts counts;
+    std::size_t failed = 0;
+    for (const Case& c : reg.cases) {
+        const std::string why = mlip_failure(reg, c, counts);
+        if (!why.empty()) {
+            ++failed;
+            FAIL_CHECK(c.label() + ":\n" + why);
+        }
+    }
+    INFO(file << ": " << reg.cases.size() << " cases, " << counts.boxes
+              << " boxes and " << counts.refusals
+              << " OPTIM refusals compared, " << failed << " failed");
+    CHECK(failed == 0);
+    /* Every wrapper has an OPTIM line, so every file's cases compare
+     * boxes; hpotarget_lines.toml holds the invalid OPTIM lines. */
+    CHECK(counts.boxes > 0);
+    if (file == "hpotarget_lines.toml") CHECK(counts.refusals > 0);
+}
+
+}  // namespace
+
+/* Pins: MLIP's OPTIM reader (read_optim_lines, prepare_optim_seed) reads
+ * every case of each registry file, and every wrapper, as tadah hpo reads
+ * it (the rules above).
+ * Before the fix: MLIP has no OPTIM reader (the header does not exist). */
+TEST_CASE("hpotarget registry: MLIP's OPTIM reader reads every wrapper as "
+          "tadah hpo", "[hpotarget_mlip]")
+{
+    const Registry reg = load(kParts, {});
+    REQUIRE_FALSE(reg.wrappers.empty());
+    MlipCounts counts;
+    for (const auto& [name, w] : reg.wrappers) {
+        Case c;
+        c.part = "wrapper";
+        c.owner = name;
+        c.kind = "example";
+        c.wrap = name;
+        const std::string why = mlip_failure(reg, c, counts);
+        if (!why.empty()) FAIL_CHECK("wrapper " + name + ":\n" + why);
+    }
+    CHECK(counts.boxes > 0);
+}
+
+TEST_CASE("hpotarget registry: MLIP's OPTIM reader reads hpotarget.toml as "
+          "tadah hpo", "[hpotarget_mlip]")
+{
+    check_file_mlip(kMainFile);
+}
+
+TEST_CASE("hpotarget registry: MLIP's OPTIM reader reads "
+          "hpotarget_optimizer.toml as tadah hpo", "[hpotarget_mlip]")
+{
+    check_file_mlip("hpotarget_optimizer.toml");
+}
+
+TEST_CASE("hpotarget registry: MLIP's OPTIM reader reads "
+          "hpotarget_lines.toml as tadah hpo", "[hpotarget_mlip]")
+{
+    check_file_mlip("hpotarget_lines.toml");
+}
+
+TEST_CASE("hpotarget registry: MLIP's OPTIM reader reads "
+          "hpotarget_params.toml as tadah hpo", "[hpotarget_mlip]")
+{
+    check_file_mlip("hpotarget_params.toml");
+}
+
+#else
+
+TEST_CASE("hpotarget registry: MLIP's OPTIM reader reads every wrapper as "
+          "tadah hpo", "[hpotarget_mlip]")
+{
+    FAIL("tadah/mlip/hpotarget_optim.h does not exist: MLIP has no OPTIM "
+         "reader");
+}
+
+#endif
