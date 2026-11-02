@@ -3085,7 +3085,7 @@ it as the default loss function of its terms, while the metric terms take \
 the last LOSS line wherever it is."""
 checks = [
   { msg = "LOSS requires a loss type", doc = "At the line: no loss function follows the key." },
-  { msg = "{what}: unknown loss function '{tok}'; the loss functions are L1, L2, LOG_COSH, MAPE, HUBER, RMSLE and TUKEY, in upper or lower case", doc = "At the line: a name that is no loss function, in any case; {what} is LOSS, --varloss <name> on a PC_LAMMPS line, or PC_OBSERVABLE cohesive_energy: --loss." },
+  { msg = "{what}: unknown loss function '{tok}'; the loss functions are L1, L2, LOG_COSH, MAPE, HUBER, RMSLE and TUKEY, in upper or lower case", doc = "At the line: a name that is no loss function, in upper or lower case; {what} is LOSS, --varloss <name> on a PC_LAMMPS line, or PC_OBSERVABLE cohesive_energy: --loss." },
   { msg = "LOSS {name}: parameter '{tok}' is not a number{underflow}", doc = "At the line: a parameter that is no number of the number grammar." },
   { msg = "loss {name} takes no parameter (got {count})", doc = "At the line: a parameter of a loss function that takes none; {count} is the number given." },
   { msg = "loss {name} takes at most {max} parameter (got {count})", doc = "At the line: more parameters than the loss function takes." },
