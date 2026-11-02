@@ -535,21 +535,22 @@ cmake --build <build directory> --target hpo_regenerate_hpotarget_registry
 |---|---|
 | `hpo_hpotarget_registry_python` | the loader, on synthetic registries (`tests/test_hpotarget_registry.py`) |
 | `hpo_hpotarget_registry_check` | `hpotarget_registry.py --check`: an unknown table or field, a table of an entry (`[[key.invalid]]`, ...) that follows a table of another kind instead of its entry, a wrong type, a missing field, a repeated id, a reference to nothing, a `version` other than 1, a placeholder a message may not hold, a wrapper without exactly one slot line or whose `block` is not that of its slot, a place a line can be without its wrapper, documentation text that addresses the reader or holds a placeholder, a `doc` of more than two sentences, a later example without a doc, a rule without a title, an optimiser or a library without a description, an entry without the cases it needs, an example that puts a key outside its blocks, an argument the synopsis does not name, an invalid line whose error is no message of the registry, a message without an invalid line or an `untested` reason, an example that writes at the place of a word argument a word that is not one of its `words` (compared in any case), a word of `words` that no example writes |
-| `hpo_hpotarget_registry_coverage` | a name the parser's sources recognise without an entry, or an entry whose name they do not recognise; the keys of each block, the options of each line and the `STRATEGY` keys of each `TYPE` are compared apart, so an option given to another line fails; a name a block refuses as a top-level key that is no key of the top level (`tests/check_hpotarget_coverage.py`; its docstring says how the names are extracted and what the extraction cannot see) |
-| `hpo_hpotarget_coverage_tool` | the extraction itself, on synthetic sources (`tests/test_check_hpotarget_coverage.py`) |
+| `hpo_hpotarget_registry_coverage` | a name the parser's sources recognise without an entry, or an entry whose name they do not recognise; the keys of each block, the options of each line and the `STRATEGY` keys of each `TYPE` are compared apart, so an option given to another line fails; a name a block refuses as a top-level key that is no key of the top level (`tests/check_hpotarget_coverage.py`; its docstring says how the names are extracted and what the extraction cannot see). The `OPTIM` lines are read by MLIP's OPTIM reader, which `tadah analysis check_bounds` reads them with too: their rules read MLIP's sources, the directory `--mlip` names |
+| `hpo_hpotarget_coverage_tool` | the extraction itself, on synthetic sources (`tests/test_check_hpotarget_coverage.py`; its cases on the real sources read MLIP's from `TADAH_MLIP_SOURCE_DIR`, which CTest sets) |
 | `hpo_hpotarget_registry_conformance` | an example the parser refuses, an invalid line it accepts or refuses with another message (`tests/test_hpotarget_registry_conformance.cpp`), the script of `[lammps_script]` that does not take the candidate potential (`tests/test_hpotarget_script_contract.cpp`): every case of tag `[hpotarget_registry]` |
 | `hpo_hpotarget_registry_generated` | a case derived from the structured fields that the parser answers otherwise (`tests/check_hpotarget_generated.py`, which runs the cases through `hpotarget_case_runner`, `tests/tools/hpotarget_case_runner.cpp`; its docstring lists the checks and what they cannot see): the first example of each key in every block, accepted where the key's blocks list it and refused there otherwise; each key and option given twice, as its repeat rule says; the values at and past the limits of the argument of each key, `INIT` method, `PARAM` key and option, in the file of each example (of the first, for an option), the largest value through the startup checks and a `PARAM` value at every limit, a value in the range accepted in one example's file at least; each word of a word list accepted and each refused word refused; each `PARAM` key on each optimiser a wrapper names, accepted where the key lists the optimiser and refused otherwise; each option on every other line; the defaults, against what the code gives a file without the keys |
 | `hpo_hpotarget_generated_tool` | the case generator, `check_hpotarget_generated.py`, on a synthetic registry (`tests/test_check_hpotarget_generated.py`) |
 | `hpo_hpotarget_registry_sync` | `gen_hpotarget.py --check`: a generated header that is missing or differs from what the registry and its loader give; an id of the registry that gives no C++ name, or two ids that give one |
 | `hpo_hpotarget_generator_tool` | the header generator, `gen_hpotarget.py`, on a synthetic registry (`tests/test_gen_hpotarget.py`): the C++ names and their collisions, the escaping of a message, the placeholders, the tables and what they leave out, the comment at the top of each header, `--header`, `--check` and the command it names, the help; the headers compiled with the build's C++ compiler |
+| the Catch2 cases of tag `[hpotarget_mlip]` | a case of the registry, or a wrapper, that MLIP's OPTIM reader reads otherwise than `HPOTargets`: a box of another value, origin, shape or line, an `OPTIM` line refused with another message, or a refusal of the seed's preparation with another (`tests/test_hpotarget_registry_conformance.cpp`, whose comment above the cases gives the rules) |
 | the Catch2 cases of tag `[hpotarget_gen]` | a generated table that differs from the table the parser or the startup checks hold by hand, in order where a message shows the order (`tests/test_hpotarget_registry_bindings.cpp`; its header comment lists the tables and says how each is compared) |
 
 The nine entries named above have the label `docs`; CTest runs the cases
-of `[hpotarget_gen]` one by one, without a label, as the command below
-selects them:
+of `[hpotarget_mlip]` and `[hpotarget_gen]` one by one, without a label,
+as the command below selects them:
 
 ```bash
-ctest --test-dir build_tadah -R "hpotarget generated tables"
+ctest --test-dir build_tadah -R "hpotarget generated tables|OPTIM reader reads"
 ```
 
 The conformance test reads the TOML when it runs, so a change to the
@@ -571,7 +572,7 @@ and the whole registry with:
 ```bash
 python3 HPO/blueprint/hpotarget_registry.py --check
 python3 HPO/blueprint/gen_hpotarget.py --check
-python3 HPO/tests/check_hpotarget_coverage.py HPO
+python3 HPO/tests/check_hpotarget_coverage.py HPO --mlip MLIP
 python3 HPO/tests/check_hpotarget_generated.py \
     --runner build_tadah/_deps/tadah.hpo-build/tests/hpotarget_case_runner
 cmake --build build_tadah --target test_hpo
