@@ -417,11 +417,11 @@ How the search runs its optimiser: once (TYPE PLAIN), from several \
 starting points (MULTISTART), or as an exploration followed by a \
 refinement (PRESTAGE). Without a STRATEGY block the search is PLAIN."""
 long_doc = """\
-LIB, ALGO and the other optimiser keys inside STRATEGY, or directly \
-inside OPTIMIZER, set one optimiser, the STRATEGY-level optimiser. It runs \
-once under TYPE PLAIN and from each start under TYPE MULTISTART. Under \
-TYPE PRESTAGE it is the refinement optimiser, unless a REFINE block names \
-one."""
+LIB, ALGO and the other optimiser keys directly inside OPTIMIZER, \
+inside STRATEGY or inside REFINE set one optimiser, the STRATEGY-level \
+optimiser; each key is given once. It runs once under TYPE PLAIN, from \
+each start under TYPE MULTISTART, and as the refinement under TYPE \
+PRESTAGE."""
 
 [[block.close_checks]]
 msg = "{key} is not accepted with STRATEGY TYPE {type}{note}: {effect}, so it would have no effect; {key} takes effect under STRATEGY TYPE {home}"
@@ -490,8 +490,8 @@ An INIT block inside OPTIMIZER, STRATEGY or REFINE sets the starting \
 points of the one STRATEGY-level optimiser. The METHOD lines of these \
 blocks make one chain, in the order of the file, and each other key is \
 given in one of them. Under STRATEGY TYPE PRESTAGE the exploration takes \
-these points when its EXPLORE block has no INIT block, and the refinement \
-starts from them only when no evaluation of the exploration has a usable \
+these points when its EXPLORE block has no INIT block with a METHOD line, \
+and the refinement starts from them only when no evaluation of the exploration has a usable \
 loss."""
 doc = """\
 The starting points of the optimiser of the block around it: a chain of \
@@ -1594,14 +1594,11 @@ at startup. Its density form, RHOFORM for DM_REAM or the FORM of the \
 component, is SIGNED, and every density pair weight (WATOM) is above 0 at the upper \
 end of its OPTIM box, or at its value in the training configuration when \
 no OPTIM line searches it (both checked at startup, and the run is refused \
-when one fails). An OPTIM line on a density key makes RHOGATE take effect. Without R_LO \
-the window is [0.15 RCUTMB, RCUTMB] of each candidate, and R_LO has to lie \
-below the smallest RCUTMB a candidate can have (checked at startup). NPTS is the number \
-of grid points on the window, from 2 to 10000000, 20001 by default. At \
-startup the CONFIG and WARM starting points of the INIT and RESTART chains \
-are checked as candidates. Under SEED ERROR, the default, a starting point \
-that fails refuses the run, and under SEED WARN hpo_run.log has a warning \
-and the run goes on. A training configuration that is no such starting point and fails has a \
+when one fails). An OPTIM line on a density key makes RHOGATE take \
+effect. At startup the CONFIG and WARM starting points of the INIT and \
+RESTART chains are checked as candidates, and SEED says what a failing \
+one does. A training configuration that is no such starting point and \
+fails has a \
 warning instead; RANDOM, LHS and SOBOL points are checked when they are \
 evaluated."""
 quirk = """\
@@ -1614,7 +1611,6 @@ checks = [
   { msg = "RHOGATE: under {form} every density rho(r) is >= 0, so the sign condition of RHOGATE holds for every candidate; RHOGATE is taken under RHOFORM SIGNED only (RHOBARGATE under every form)", doc = "At startup, at its line: the density form is NONNEG or MONOTONE." },
   { msg = "{keys}: the many-body cutoff RCUTMB is not set.", doc = "At startup, at the RHOGATE or RHOBARGATE line (the first of them when both are given): the smallest RCUTMB a candidate can have is not a number above 0." },
   { msg = "{keys}: {why} on every candidate (WATOM has no OPTIM line, or its OPTIM box does not reach above 0), so every evaluation would be refused before training, under SEED ERROR and SEED WARN alike. The checks of {keys} need every density pair weight > 0, which a WATOM above 0 gives (under RHOFORM SIGNED the sign of rho is that of the AMPGRIDMB amplitudes); without the {keys} line(s) the run makes no such check.", doc = "At startup, at the RHOGATE or RHOBARGATE line (the first of them when both are given): a density pair weight is not above 0 with WATOM at the upper end of its OPTIM box, or at its value in the training configuration when no OPTIM line searches it. {why} names the weight: \"a density pair weight W = <w> (WATOM) is not finite and > 0\"." },
-  { msg = "RHOGATE R_LO {value} A must lie below the smallest cutoff a candidate can have, RCUTMB = {min} A{note}: the window [R_LO, RCUTMB] would be empty; a smaller R_LO gives the window a width.", doc = "At startup, at the RHOGATE line: R_LO, {value}, is not below the smallest RCUTMB a candidate can have, {min}; {note} is \" (the largest CGRIDMB knot over its OPTIM box)\" when that knot sets it." },
   { msg = "RHOGATE: seed {name} fails the rho(r) sign gate: {why}. A seed that fails is refused under SEED ERROR, the default, and is evaluated as a rejected start under SEED WARN. tadah refit --edit changes the density of a potential file; a WARM seed takes the values of its search parameters from its file and the others from the training configuration.", doc = "At startup, without a line, under SEED ERROR: a CONFIG or WARM starting point of the INIT or RESTART chain fails the condition; {name} names it, and {why} gives the smallest and largest density on the window. Under SEED WARN hpo_run.log has a warning instead, and the run goes on." },
 ]
 untested = [
@@ -1709,13 +1705,6 @@ error = "RHOGATE: a density pair weight W = 0 (WATOM) is not finite and > 0 on e
 [[key.invalid]]
 wrap = "main_ream"
 check = "startup"
-doc = "R_LO is not below RCUTMB 5.5, so the window [R_LO, RCUTMB] would be empty."
-text = "RHOGATE 1e-5 R_LO 6"
-error = "RHOGATE R_LO 6 A must lie below the smallest cutoff a candidate can have, RCUTMB = 5.5000 A: the window [R_LO, RCUTMB] would be empty; a smaller R_LO gives the window a width."
-
-[[key.invalid]]
-wrap = "main_ream"
-check = "startup"
 context = "main_ream_negative"
 at = "none"
 doc = "The starting point, the training configuration, has a density that falls below 0."
@@ -1796,13 +1785,12 @@ training configuration when no OPTIM line searches it, or when the first \
 shell of the lattice at f_hi a0 lies beyond the smallest RCUTMB a \
 candidate can have. It is refused too when the largest RCUTMB a candidate \
 can have is more than 20 lattice constants of the smallest lattice, \
-f_lo a0, or when that largest RCUTMB divided by f_lo a0 is not finite. An OPTIM line on a density key makes RHOBARGATE take effect, and hcp takes the \
-ideal c/a. NPTS is the number of evenly spaced lattice constants from \
-f_lo a0 to f_hi a0, from 3 to 10000000, 1001 by default. At startup the \
-CONFIG and WARM starting points of the INIT and RESTART chains are checked \
-as candidates. Under SEED ERROR, the default, a starting point that fails \
-refuses the run, and under SEED WARN hpo_run.log has a warning and the run \
-goes on. A training configuration that is no such starting point and fails has a warning \
+f_lo a0, or when that largest RCUTMB divided by f_lo a0 is not finite. An \
+OPTIM line on a density key makes RHOBARGATE take effect, and hcp takes \
+the ideal c/a. At startup the CONFIG and WARM starting points of the INIT \
+and RESTART chains are checked as candidates, and SEED says what a \
+failing one does. A training configuration that is no such starting point \
+and fails has a warning \
 instead; RANDOM, LHS and SOBOL points are checked when they are evaluated."""
 quirk = """\
 The lattice, the options NPTS and SEED and the values ERROR and WARN are \

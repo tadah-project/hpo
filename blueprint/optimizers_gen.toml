@@ -1941,7 +1941,7 @@ Options for TADAH:ANNEAL
         The first proposal scale of each dimension, as a fraction of the width of its OPTIM box.
      PARAM CHAIN_LENGTH (default: AUTO, from MAXEVAL) [accepts AUTO]
         The number of proposals of the CLASSIC kernel at each temperature step.
-        The default of TADAH:ANNEAL is AUTO: MAXEVAL spread evenly over the cooling schedule, which hpo_run.log reports. A search without MAXEVAL is refused unless PARAM CHAIN_LENGTH is given.
+        The default of TADAH:ANNEAL is AUTO: MAXEVAL spread evenly over the cooling schedule, which hpo_run.log reports. A TADAH:ANNEAL search without MAXEVAL is refused unless PARAM CHAIN_LENGTH gives a number.
      PARAM NS (default 20)
         Corana kernel: the number of cycles through the dimensions between two adjustments of the steps. Under TADAH:ANNEAL_PT, the number of sweeps between two adjustments of the steps of a slot.
      PARAM NT (default: AUTO, from MAXEVAL) [accepts AUTO]
@@ -2023,7 +2023,7 @@ Options for TADAH:ANNEAL_PA
         The first proposal scale of each dimension, as a fraction of the width of its OPTIM box.
      PARAM CHAIN_LENGTH (default 50)
         The number of proposals of the CLASSIC kernel at each temperature step.
-        The default of TADAH:ANNEAL is AUTO: MAXEVAL spread evenly over the cooling schedule, which hpo_run.log reports. A search without MAXEVAL is refused unless PARAM CHAIN_LENGTH is given.
+        The default of TADAH:ANNEAL is AUTO: MAXEVAL spread evenly over the cooling schedule, which hpo_run.log reports. A TADAH:ANNEAL search without MAXEVAL is refused unless PARAM CHAIN_LENGTH gives a number.
      PARAM NS (default 20)
         Corana kernel: the number of cycles through the dimensions between two adjustments of the steps. Under TADAH:ANNEAL_PT, the number of sweeps between two adjustments of the steps of a slot.
      PARAM NT (default 5)
@@ -2040,7 +2040,7 @@ Options for TADAH:ANNEAL_PA
    * init:
      PARAM INIT_MODE <JITTER|UNIFORM> (default JITTER)
         How the replicas or walkers start: the first at the starting point of the search; JITTER moves the others away from it, UNIFORM draws them from the OPTIM box.
-        JITTER alone draws Gaussian displacements with the first proposal scales, and JITTER <fraction> uniform displacements of up to the fraction times the width of the OPTIM interval of each search parameter. Under TADAH:ANNEAL_PT, JITTER AUTO <tolerance> measures the bounds of the uniform displacements of each dimension against a band of the loss relative to that of the starting point, the tolerance being the relative width of the band, and scales them by INIT_JITTER_LADDER, which scales the other JITTER forms too. Under TADAH:ANNEAL_PA, JITTER AUTO takes no tolerance: the bounds are the first proposal scales.
+        JITTER alone draws Gaussian displacements with the first proposal scales, and JITTER <fraction> uniform displacements of up to the fraction times the width of the OPTIM box of each search parameter. Under TADAH:ANNEAL_PT, JITTER AUTO <tolerance> measures the bounds of the uniform displacements of each dimension against a band of the loss relative to that of the starting point, the tolerance being the relative width of the band, and scales them by INIT_JITTER_LADDER, which scales the other JITTER forms too. Under TADAH:ANNEAL_PA, JITTER AUTO takes no tolerance: the bounds are the first proposal scales.
    * stopping:
      PARAM NEPS (default 4)
         The length of the history of the FTOL_REL and FTOL_ABS stop, which has an effect only when FTOL_REL or FTOL_ABS is above 0.
@@ -2150,15 +2150,15 @@ Options for TADAH:ANNEAL_PT
      PARAM STEP_MODE <FIXED|FROZEN|ADAPTIVE> (default FROZEN)
         How the CLASSIC kernel sets its steps: FIXED keeps the scales STEP_FRAC gives; FROZEN calibrates the scales of each slot, then keeps them; ADAPTIVE calibrates them and keeps adapting them, a diagonal form of robust adaptive Metropolis. The calibration spends at most a quarter of MAXEVAL.
      PARAM STEP_WARMUP_SWEEPS (default 12)
-        The smallest number of calibration attempts of each coordinate in the warm-up of the steps; the largest is twice this number. The key is refused under STEP_MODE FIXED, which runs no warm-up, and with CORANA ON.
+        The smallest number of calibration attempts of each coordinate in the warm-up of the steps; the largest is twice this number. The key is refused under STEP_MODE FIXED, which runs no warm-up.
      PARAM STEP_TRUST_FACTOR (default 64) [accepts OFF]
         Under STEP_MODE ADAPTIVE, keeps each adapted scale between the calibrated scale divided by this factor and multiplied by it; OFF sets no bound.
    * init:
      PARAM INIT_MODE <JITTER|UNIFORM> (default JITTER)
         How the replicas or walkers start: the first at the starting point of the search; JITTER moves the others away from it, UNIFORM draws them from the OPTIM box.
-        JITTER alone draws Gaussian displacements with the first proposal scales, and JITTER <fraction> uniform displacements of up to the fraction times the width of the OPTIM interval of each search parameter. Under TADAH:ANNEAL_PT, JITTER AUTO <tolerance> measures the bounds of the uniform displacements of each dimension against a band of the loss relative to that of the starting point, the tolerance being the relative width of the band, and scales them by INIT_JITTER_LADDER, which scales the other JITTER forms too. Under TADAH:ANNEAL_PA, JITTER AUTO takes no tolerance: the bounds are the first proposal scales.
+        JITTER alone draws Gaussian displacements with the first proposal scales, and JITTER <fraction> uniform displacements of up to the fraction times the width of the OPTIM box of each search parameter. Under TADAH:ANNEAL_PT, JITTER AUTO <tolerance> measures the bounds of the uniform displacements of each dimension against a band of the loss relative to that of the starting point, the tolerance being the relative width of the band, and scales them by INIT_JITTER_LADDER, which scales the other JITTER forms too. Under TADAH:ANNEAL_PA, JITTER AUTO takes no tolerance: the bounds are the first proposal scales.
      PARAM INIT_JITTER_MAX (default 0.5)
-        Under INIT_MODE JITTER AUTO of TADAH:ANNEAL_PT, the largest displacement that the calibration measures, as a fraction of the width of the OPTIM interval of each search parameter. The first probe of each side lies at this displacement unless a bound is nearer.
+        Under INIT_MODE JITTER AUTO of TADAH:ANNEAL_PT, the largest displacement that the calibration measures, as a fraction of the width of the OPTIM box of each search parameter. The first probe of each side lies at this displacement unless a bound is nearer.
      PARAM INIT_JITTER_PROBES (default 8)
         Under INIT_MODE JITTER AUTO of TADAH:ANNEAL_PT, the largest number of probes of the loss for each search parameter, split between its two sides.
      PARAM INIT_JITTER_MAXEVAL (default AUTO) [accepts AUTO]

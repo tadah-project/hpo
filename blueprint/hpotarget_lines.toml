@@ -2024,7 +2024,8 @@ cannot be read, is no number, or is negative, not finite, or at or above \
 its --failscore, has failed: the \
 evaluation fails, with the loss of the least sound evaluation under \
 FAILSCORE_GRADING ON and with FAILSCORE under OFF, and hpo_run.log has a \
-warning that gives S. The rules that relate PC_LAMMPS lines to the optimiser \
+warning that gives S or, when the script fails or S cannot be read or is \
+no number, why. The rules that relate PC_LAMMPS lines to the optimiser \
 apply to a file with a PC_FAILPROBE line too. The script is read, and \
 LAMMPS started, as for a PC_LAMMPS line, with the same refusals. The line \
 gives no loss term: a file needs another loss source."""
@@ -4665,7 +4666,7 @@ key = "SEMBFUNC"
 status = "refused"
 condition = "The many-body term is a DM_Embed component (a DESCRIPTOR block) and the training configuration has no SEMBFUNC."
 msg = "OPTIM SEMBFUNC: the potential has no SEMBFUNC key: its many-body term is DM_Embed component(s) (DESCRIPTOR blocks), whose embedding parameter is the named path {list}; an OPTIM line names the path, OPTIM <path> (indices) <low> <high> (the starter target file of tadah refit names the paths; a target file written for a DM_REAM many-body term names SEMBFUNC)"
-doc = "The embedding width parameters of a DM_Embed component are the path <ID>.EMBEDDING.ETA (inverse widths η) or <ID>.EMBEDDING.WIDTHS (widths)."
+doc = "The embedding width parameters of a DM_Embed component are the path <ID>.EMBEDDING.ETA (inverse scales) or <ID>.EMBEDDING.WIDTHS (widths), whichever the component declares."
 
 [[optim_target.invalid]]
 wrap = "root"
@@ -5374,15 +5375,16 @@ error = "--hpotarget defines PC_FAILPROBE on line 2 but OPTIMIZER's GRAD_STRATEG
 [[rule]]
 id = "RULE.PC_LAMMPS_gradient_free"
 title = """\
-With PC_LAMMPS or PC_FAILPROBE every optimiser must be gradient-free"""
+With PC_LAMMPS or PC_FAILPROBE every optimiser runs without gradients"""
 check = "parse"
 keys = ["ROOT.PC_LAMMPS", "ROOT.PC_FAILPROBE", "OPTIMIZER.ALGO"]
 msg = "--hpotarget defines {key} on line {line} but {block} optimiser {lib}:{algo} is gradient-based. A PC_LAMMPS or PC_FAILPROBE line requires a gradient-free optimiser ({list}); an NLopt MLSL or AUGLAG algorithm is accepted with a derivative-free INNER block."
 doc = """\
-With a PC_LAMMPS or PC_FAILPROBE line, every optimiser of the file must \
-be gradient-free, as the results of a LAMMPS script have no gradient; a \
-gradient-based optimiser in any block is refused. The refusal names the \
-ALGO line of the block."""
+With a PC_LAMMPS or PC_FAILPROBE line, every optimiser of the file runs \
+without gradients, as the results of a LAMMPS script have no gradient: an \
+optimiser that takes a gradient is refused in any block, and an NLopt \
+MLSL or AUGLAG takes none with a derivative-free INNER block. The refusal \
+names the ALGO line of the block."""
 msg_doc = """\
 The message names PC_LAMMPS and its line, or the PC_FAILPROBE line in a \
 file without a PC_LAMMPS line, the block, OPTIMIZER or EXPLORE, and its \

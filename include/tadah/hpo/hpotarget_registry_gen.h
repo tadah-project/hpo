@@ -827,7 +827,6 @@ inline constexpr std::string_view ROOT_RHOGATE_checks[] = {
     "RHOGATE: under {form} every density rho(r) is >= 0, so the sign condition of RHOGATE holds for every candidate; RHOGATE is taken under RHOFORM SIGNED only (RHOBARGATE under every form)",
     "{keys}: the many-body cutoff RCUTMB is not set.",
     "{keys}: {why} on every candidate (WATOM has no OPTIM line, or its OPTIM box does not reach above 0), so every evaluation would be refused before training, under SEED ERROR and SEED WARN alike. The checks of {keys} need every density pair weight > 0, which a WATOM above 0 gives (under RHOFORM SIGNED the sign of rho is that of the AMPGRIDMB amplitudes); without the {keys} line(s) the run makes no such check.",
-    "RHOGATE R_LO {value} A must lie below the smallest cutoff a candidate can have, RCUTMB = {min} A{note}: the window [R_LO, RCUTMB] would be empty; a smaller R_LO gives the window a width.",
     "RHOGATE: seed {name} fails the rho(r) sign gate: {why}. A seed that fails is refused under SEED ERROR, the default, and is evaluated as a rejected start under SEED WARN. tadah refit --edit changes the density of a potential file; a WARM seed takes the values of its search parameters from its file and the others from the training configuration.",
 };
 inline constexpr std::string_view ROOT_RHOBARGATE_arg0_words[] = {
@@ -2415,7 +2414,7 @@ inline constexpr Key kKeys[] = {
       Repeat::Error,
       "RHOGATE is set twice (first on line {first_line}); each key is given once",
       "", false, "", false, KeyId::ROOT_RHOGATE, false, "",
-      Span<std::string_view>{detail::ROOT_RHOGATE_checks, 8}},
+      Span<std::string_view>{detail::ROOT_RHOGATE_checks, 7}},
   Key{KeyId::ROOT_RHOBARGATE, "ROOT.RHOBARGATE", "RHOBARGATE", "",
       block_bit(BlockId::ROOT), Span<Arg>{detail::ROOT_RHOBARGATE_args, 4},
       Repeat::Error,

@@ -720,8 +720,9 @@ optimizers = ["ASA:ASA"]
 args = [{ name = "value", kind = "number", min = 0, min_open = true }]
 default = { literal = "1e-18" }
 doc = """\
-The difference between the last and the best loss below which a test \
-cycle counts as a plateau cycle of Maximum_Cost_Repeat; above 0."""
+The difference between the loss of the last accepted state and the best \
+loss below which a periodic test counts as a plateau cycle of \
+Maximum_Cost_Repeat; above 0."""
 checks = [
   { msg = "{phase}: ASA:ASA: PARAM {key} must be >= {min} (got {value})", doc = "For a value below 0." },
   { msg = "{phase}: ASA:ASA: PARAM Cost_Precision must be > 0 (got {value})", doc = "For a value of 0." },
@@ -742,8 +743,8 @@ args = [{ name = "value", kind = "number", min = 0, integral = true }]
 default = { literal = "5" }
 doc = """\
 The number of consecutive plateau cycles that ends the search; 0 switches \
-the test off. A test cycle is a plateau cycle when the last loss differs \
-from the best loss by less than Cost_Precision."""
+the test off. A periodic test is a plateau cycle when the loss of the last \
+accepted state differs from the best loss by less than Cost_Precision."""
 checks = [
   { msg = "{phase}: ASA:ASA: PARAM {key} must be an integer (got {value})", doc = "For a value with a fraction." },
   { msg = "{phase}: ASA:ASA: PARAM {key} must be >= {min} (got {value})", doc = "For a value below 0." },
@@ -990,9 +991,10 @@ optimizers = ["ASA:ASA"]
 args = [{ name = "value", kind = "number", min = 0 }]
 default = { literal = "0.001" }
 doc = """\
-The relative step of the finite differences of the tangents: ASA probes at \
-(1 + Delta_X) x, or at (1 - Delta_X) x when that lies outside the box, x in \
-the coordinates of the search. 0 switches the tangents off."""
+The relative step of the finite differences of the tangents in each \
+dimension without a User_Delta_Parameter: ASA probes at (1 + Delta_X) x, or \
+at (1 - Delta_X) x when that lies outside the box, x in the coordinates of \
+the search. 0 switches the tangents off in those dimensions."""
 long_doc = """\
 ASA's finite-difference probes stay inside the OPTIM box, whatever \
 Reanneal_Parameters is: at startup a Delta whose probes leave the box of \
