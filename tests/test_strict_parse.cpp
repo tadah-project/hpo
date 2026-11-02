@@ -521,3 +521,42 @@ TEST_CASE("parse_number and core::parse_decimal_normal are one number grammar",
     if (pa && pb) CHECK(std::memcmp(&a, &b, sizeof a) == 0);
   }
 }
+
+#if __has_include(<tadah/mlip/hpotarget_syntax.h>)
+#include <tadah/mlip/hpotarget_syntax.h>
+
+/* Pins: tadah hpo's number_underflow_note and MLIP's (the note of the
+ * OPTIM reader that tadah hpo and tadah analysis check_bounds share, and
+ * of tadah refit's keys) give the same note for every token of the number
+ * grammar test above: " (too small: ...)" for a token below the smallest
+ * normal double, "" for every other.
+ * Before the fix: MLIP has no such note (the header does not exist). */
+TEST_CASE("number_underflow_note and mlip::number_underflow_note are one "
+          "note", "[strict_parse][strict_numbers]") {
+  const std::vector<std::string> tokens = {
+      "0", "-0", "+0", "5", "-5", "+5", "5.", ".5", "-.5", "+.5", "5.25",
+      "1e3", "1E3", "1e+3", "1e-3", "2.5E+07", "0e-400", "0.0e5",
+      "1.7976931348623157e308", "1.7976931348623158e308", "1e308", "1e309",
+      "2.2250738585072014e-308", "2.2250738585072009e-308", "1e-310",
+      "4.9e-324", "1e-400", "-1e-400", "", "+", "-", ".", "e5", "1e", "1e+",
+      "5x", "x5", "0x10", "0x1p-1", "inf", "-inf", "Infinity", "nan", "NaN",
+      " 1", "1 ", "1,5", "1.5.2", "--1", "+-1", "1e5.5", "0000.0001"};
+  std::size_t notes = 0;
+  for (const auto &tok : tokens) {
+    INFO("token '" << tok << "'");
+    const std::string hpo = tadah::hpo::number_underflow_note(tok);
+    CHECK(hpo == tadah::mlip::number_underflow_note(tok));
+    notes += hpo.empty() ? 0 : 1;
+  }
+  CHECK(notes == 5);
+}
+
+#else
+
+TEST_CASE("number_underflow_note and mlip::number_underflow_note are one "
+          "note", "[strict_parse][strict_numbers]") {
+  FAIL("tadah/mlip/hpotarget_syntax.h does not exist: MLIP has no underflow "
+       "note");
+}
+
+#endif

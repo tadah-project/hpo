@@ -54,7 +54,7 @@ enum class InitStream { Init, Restart };
 
 struct InitContext {
     const OptimizerSpec& spec;            // bounds, log_scaled (post-transform)
-    const HPOTargets&    targets;         // optimap, ui_offset
+    const HPOTargets&    targets;         // optimap
     std::uint64_t        seed;            // resolved INIT_SEED or random_device
     /* The run's -c configuration (HPOTargets::run_context()), for WARM's
      * EMBF0 and RHOFORM checks; every resolution in a run passes it (the

@@ -371,10 +371,13 @@ set_tests_properties(hpo_hpotarget_registry_check PROPERTIES
     LABELS "docs"
     TIMEOUT 60)
 cmake_path(SET _hpo_source_root NORMALIZE "${CMAKE_CURRENT_SOURCE_DIR}/..")
+# The OPTIM lines are read by MLIP's OPTIM reader (src/hpotarget_syntax.cpp,
+# src/hpotarget_optim.cpp): the coverage check reads MLIP's sources too.
 add_test(NAME hpo_hpotarget_registry_coverage
     COMMAND ${Python3_EXECUTABLE}
         ${CMAKE_CURRENT_SOURCE_DIR}/check_hpotarget_coverage.py
-        ${_hpo_source_root})
+        ${_hpo_source_root}
+        --mlip $<TARGET_PROPERTY:tadah.mlip,SOURCE_DIR>)
 set_tests_properties(hpo_hpotarget_registry_coverage PROPERTIES
     LABELS "docs"
     TIMEOUT 60)
@@ -384,6 +387,7 @@ add_test(NAME hpo_hpotarget_coverage_tool
 set_tests_properties(hpo_hpotarget_coverage_tool PROPERTIES
     LABELS "docs"
     TIMEOUT 60
+    ENVIRONMENT "TADAH_MLIP_SOURCE_DIR=$<TARGET_PROPERTY:tadah.mlip,SOURCE_DIR>"
     FAIL_REGULAR_EXPRESSION "\nRan 0 tests ")
 add_test(NAME hpo_hpotarget_registry_conformance
     COMMAND test_hpo "[hpotarget_registry]" --warn NoTests)
@@ -446,6 +450,14 @@ hpo_depend_on_has_include(
     ${CMAKE_CURRENT_SOURCE_DIR}/test_hpotarget_registry_bindings.cpp
     ${_hpo_generated_dir}/hpotarget_registry_gen.h
     ${_hpo_generated_dir}/hpo_param_registry_gen.h)
+# The cases on MLIP's OPTIM reader test for its headers the same way.
+get_target_property(_hpo_mlip_source_dir tadah.mlip SOURCE_DIR)
+foreach(_src test_hpotarget_registry_bindings.cpp
+             test_hpotarget_registry_conformance.cpp test_strict_parse.cpp)
+  hpo_depend_on_has_include(${CMAKE_CURRENT_SOURCE_DIR}/${_src}
+      ${_hpo_mlip_source_dir}/include/tadah/mlip/hpotarget_optim.h
+      ${_hpo_mlip_source_dir}/include/tadah/mlip/hpotarget_syntax.h)
+endforeach()
 add_custom_target(hpo_regenerate_hpotarget_registry
     COMMAND ${Python3_EXECUTABLE}
         ${_hpo_blueprint_dir}/gen_hpotarget.py --header
