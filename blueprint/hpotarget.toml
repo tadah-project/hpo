@@ -1866,7 +1866,7 @@ check = "startup"
 at = "none"
 doc = "f_lo a0 is so small that it underflows to 0."
 text = "RHOBARGATE bcc 1e-200 1e-200 1"
-error = "RHOBARGATE: the largest reachable RCUTMB is not finite"
+error = "RHOBARGATE: the largest reachable RCUTMB, 5.5000 A, divided by the smallest lattice constant, f_lo a0 = 0 A, is not a finite number"
 
 [[key.invalid]]
 wrap = "main_ream"
