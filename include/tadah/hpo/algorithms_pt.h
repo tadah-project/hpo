@@ -1389,7 +1389,7 @@ template<typename Vec, typename HostT>
           "ANNEAL_PT: THREADS is not set, so the " + std::to_string(K) +
           " replicas run on 1 worker thread; THREADS <n> in the STRATEGY "
           "block evaluates up to n of them at a time";
-      std::cout << "[HPO] " << hint << "\n";
+      std::cout << "[tadah hpo] " << hint << "\n";
       HPOLog::instance().warning(hint);
     }
 #ifdef TADAH_ENABLE_OPENMP
@@ -1409,7 +1409,7 @@ template<typename Vec, typename HostT>
             << ") exceeds the hardware threads of this machine (" << hw
             << "); the shared worker pool is oversubscribed, which THREADS "
                "of at most the cores avoids.";
-        std::cout << "[HPO] " << oss.str() << "\n";
+        std::cout << "[tadah hpo] " << oss.str() << "\n";
         HPOLog::instance().warning(oss.str());
       }
     }
@@ -1591,7 +1591,7 @@ template<typename Vec, typename HostT>
         else
           oss << "0 [INIT_JITTER_LADDER OFF: every slot uses the same sigma]";
       }
-      std::cout << "[HPO] " << oss.str() << "\n";
+      std::cout << "[tadah hpo] " << oss.str() << "\n";
       HPOLog::instance().info(oss.str());
     }
 
@@ -2741,7 +2741,7 @@ template<typename Vec, typename HostT>
               " evaluations, so the step scales, and a calibrated T_HOT, "
               "depend on MAXEVAL; STEP_MODE FIXED runs no warm-up, and an "
               "explicit PARAM T_HOT is not calibrated.";
-          std::cerr << "[HPO] WARNING: " << msg << "\n";
+          std::cerr << "[tadah hpo] WARNING: " << msg << "\n";
           HPOLog::instance().warning(msg);
         }
         if (warmup_code == 0 &&

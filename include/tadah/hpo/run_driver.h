@@ -161,7 +161,7 @@ inline int end_without_usable_loss(HPOLog& log)
                  std::to_string(log.n_eval()) + " evaluations were rejected "
                  "by --skip-above or --skip-rel)";
     log.event("ERROR", error);
-    std::cerr << "[HPO] ERROR: " << error << std::endl;
+    std::cerr << "[tadah hpo] ERROR: " << error << std::endl;
     log.finish(kNoUsableLossStatus);
     return EXIT_FAILURE;
 }

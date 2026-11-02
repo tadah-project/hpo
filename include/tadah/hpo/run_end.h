@@ -123,7 +123,7 @@ inline void record_end(const std::string& backend, EndReason r)
 }
 
 /* The stop line "<backend> stopped: <reason> after <detail>" on stdout
- * ("[HPO] ...") and in the journal, then the run's status (record_end).
+ * ("[tadah hpo] ...") and in the journal, then the run's status (record_end).
  * `detail` says what the search spent and, for a tolerance, its value:
  * "51 evaluation(s): the loss changed by less than FTOL_ABS = 1e-07
  * (default) from one iteration to the next". */
@@ -132,7 +132,7 @@ inline void report_end(const std::string& backend, EndReason r,
 {
     const std::string msg = backend + " stopped: " + end_reason_text(r) +
                             " after " + detail;
-    std::cout << "[HPO] " << msg << "\n";
+    std::cout << "[tadah hpo] " << msg << "\n";
     HPOLog::instance().info(msg);
     record_end(backend, r);
 }

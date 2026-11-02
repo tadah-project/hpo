@@ -179,7 +179,7 @@ template<typename Vec, typename HostT>
           "ANNEAL_PA: THREADS is not set, so the " + std::to_string(R) +
           " walkers run on 1 worker thread; THREADS <n> in the STRATEGY "
           "block evaluates up to n of them at a time";
-      std::cout << "[HPO] " << hint << "\n";
+      std::cout << "[tadah hpo] " << hint << "\n";
       HPOLog::instance().warning(hint);
     }
 
@@ -286,7 +286,7 @@ template<typename Vec, typename HostT>
             break;
         }
       }
-      std::cout << "[HPO] " << oss.str() << "\n";
+      std::cout << "[tadah hpo] " << oss.str() << "\n";
       HPOLog::instance().info(oss.str());
     }
 

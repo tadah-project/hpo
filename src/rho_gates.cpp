@@ -652,7 +652,7 @@ void validate_density_gates(const core::Context &train_ctx,
    * per-candidate functions. */
   const std::vector<GateSeed> seeds = collect_gate_seeds(trg);
   auto warn = [](const std::string &m) {
-    std::cerr << "[HPO] WARNING: " << m << "\n";
+    std::cerr << "[tadah hpo] WARNING: " << m << "\n";
     HPOLog::instance().warning(m);
   };
   const std::string repair =

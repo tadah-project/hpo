@@ -252,7 +252,7 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn,
       const std::string msg =
           "potential files of tadah hpo (best_pot.tadah, BDUMP and DUMP "
           "archives): " + w;
-      std::cerr << "[HPO] WARNING: " << msg << "\n";
+      std::cerr << "[tadah hpo] WARNING: " << msg << "\n";
       HPOLog::instance().warning(msg);
     }
   }
@@ -289,7 +289,7 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn,
     oss << "OPTIM_SCALE " << v << " taken from the TADAH_OPTIM_SCALE environment "
            "override" << (scale_policy_set_ ? " (the OPTIM_SCALE line of the "
                                               "target file is not read)" : "");
-    std::cerr << "[HPO] " << oss.str() << "\n";
+    std::cerr << "[tadah hpo] " << oss.str() << "\n";
     HPOLog::instance().info(oss.str());
     scale_policy_set_ = true;
   }
@@ -329,8 +329,8 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn,
     if (spec.param.count("fd_step") || spec.param_raw.count("fd_step")) {
       /* refused by validate_hpo_setup */
     } else if (spec.low.empty()) {
-      std::cerr << "[HPO] NOISE AUTO: the search space has no dimension, so "
-                   "no PARAM fd_step is set\n";
+      std::cerr << "[tadah hpo] NOISE AUTO: the search space has no "
+                   "dimension, so no PARAM fd_step is set\n";
     } else {
       double sq = 0.0;
       for (std::size_t i = 0; i < spec.low.size(); ++i) {
@@ -349,7 +349,7 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn,
       oss << "NOISE AUTO: PARAM fd_step is " << fd << " (1e-3 x the "
           << "diagonal " << diag << " of the search space / sqrt("
           << spec.low.size() << " dimensions))";
-      std::cout << "[HPO] " << oss.str() << "\n";
+      std::cout << "[tadah hpo] " << oss.str() << "\n";
       HPOLog::instance().info(oss.str());
     }
   }
@@ -427,7 +427,7 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn,
           << s.algo << " draws its own random numbers from the SEED of the "
           << s.key_lines.at("ALGO").block << " block; that block has none, "
              "so a seed is drawn once for the run";
-      std::cerr << "[HPO] " << oss.str() << "\n";
+      std::cerr << "[tadah hpo] " << oss.str() << "\n";
       HPOLog::instance().warning(oss.str());
     }
     if (s.init_strategy_spec.seed) {
@@ -440,7 +440,7 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn,
         if (s.lib == "NLOPT" && !s.seed && reads_seed(s))
           oss << " (" << s.lib << ":" << s.algo << ", without a SEED of its "
                  "own, still takes its random numbers from it.)";
-        std::cerr << "[HPO] " << oss.str() << "\n";
+        std::cerr << "[tadah hpo] " << oss.str() << "\n";
         HPOLog::instance().warning(oss.str());
       }
     }
@@ -477,7 +477,7 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn,
         if (nlopt_takes_it) oss << "; " << nlopt_note;
         oss << ")";
       }
-      std::cout << "[HPO] " << oss.str() << "\n";
+      std::cout << "[tadah hpo] " << oss.str() << "\n";
       HPOLog::instance().info(oss.str());
     }
     InitContext ictx{s, *this, seed, &context};
@@ -498,7 +498,7 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn,
              "dropped): TADAH:ANNEAL, ANNEAL_PT and ANNEAL_PA start from the "
              "centre of the OPTIM box, not from the WARM point; "
              "WARM_ON_MISMATCH error in the INIT block makes this an error";
-      std::cerr << "[HPO] " << oss.str() << "\n";
+      std::cerr << "[tadah hpo] " << oss.str() << "\n";
       HPOLog::instance().warning(oss.str());
     }
     if (!s.optim_init.empty()) {
@@ -506,7 +506,7 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn,
       oss << init_name << " (" << chain_methods(s.init_strategy_spec)
           << ") gives " << s.optim_init.size() << " starting point"
           << (s.optim_init.size()==1 ? "" : "s");
-      std::cout << "[HPO] " << oss.str() << "\n";
+      std::cout << "[tadah hpo] " << oss.str() << "\n";
       HPOLog::instance().info(oss.str());
     }
     return strategy;
@@ -547,7 +547,7 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn,
               : head + "it draws them with a seed drawn once for the run, " +
                     n + " (SEED " + n + " in the " + block +
                     " block draws the same numbers again)";
-    std::cout << "[HPO] " << msg << "\n";
+    std::cout << "[tadah hpo] " << msg << "\n";
     HPOLog::instance().info(msg);
   };
 
@@ -581,7 +581,7 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn,
         << chain_methods(spec.restart.init_strategy)
         << ") draw no random numbers; a RANDOM, LHS or SOBOL method draws "
            "with it.";
-    std::cerr << "[HPO] " << oss.str() << "\n";
+    std::cerr << "[tadah hpo] " << oss.str() << "\n";
     HPOLog::instance().warning(oss.str());
   }
 
@@ -2986,7 +2986,7 @@ void HPOTargets::warn_warm_of_best_pot() const {
                  "startup."
                : " and writes its best potential there, so only a copy under "
                  "another name keeps this starting potential.";
-      std::cerr << "[HPO] WARNING: " << w << "\n";
+      std::cerr << "[tadah hpo] WARNING: " << w << "\n";
       HPOLog::instance().warning(w);
     }
   }

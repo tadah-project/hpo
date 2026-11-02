@@ -290,7 +290,7 @@ inline void report_gradient_stop(const std::string& backend,
   if (!f.detail.empty()) line += " (" + f.detail + ")";
   if (!ended.empty()) line += "; " + ended;
   line += "; the best evaluation so far is kept";
-  std::cout << "[HPO] " << line << "\n";
+  std::cout << "[tadah hpo] " << line << "\n";
   HPOLog::instance().warning(line);
   HPOLog::instance().set_status(gradient_stop_status(f));
 }

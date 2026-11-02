@@ -80,7 +80,7 @@ StartOutcome run_start_guarded(std::size_t i, std::size_t k, Fn&& fn,
     const std::string msg = label + " start " + std::to_string(i+1) + "/" +
                             std::to_string(k) + " failed: " + e.what();
     HPOLog::instance().warning(msg);
-    std::cerr << "[HPO] WARNING: " << msg << "\n";
+    std::cerr << "[tadah hpo] WARNING: " << msg << "\n";
     if (failure && !*failure) *failure = std::current_exception();
     return StartOutcome::Failed;
   }
@@ -200,7 +200,7 @@ StartsReport run_starts(std::size_t k, ResetFn&& reset_window, RunOne&& run_one,
       done << "; stopped on stagnation (RESTART window)";
     else if (out == StartOutcome::Failed)
       done << "; it failed (the WARNING above gives the reason)";
-    std::cout << "[HPO] " << done.str() << "\n";
+    std::cout << "[tadah hpo] " << done.str() << "\n";
     log.info(done.str());
   }
 
@@ -335,7 +335,7 @@ public:
           << (plan.from_budget_per_start
                   ? " (BUDGET_PER_START)"
                   : " (the MAXEVAL of the block, split over the starts)");
-      std::cout << "[HPO] " << oss.str() << "\n";
+      std::cout << "[tadah hpo] " << oss.str() << "\n";
       HPOLog::instance().info(oss.str());
     }
 
@@ -362,7 +362,7 @@ public:
                          std::to_string(*sub.init_strategy_spec.seed) +
                          ", from the SEED of the INIT block"
                    : "");
-          std::cout << "[HPO] " << start_msg << "\n";
+          std::cout << "[tadah hpo] " << start_msg << "\n";
           HPOLog::instance().info(start_msg);
           run_inner<Vec,Runner>(sub, host);
         },
@@ -463,7 +463,7 @@ private:
         << k << " start(s) stopped on stagnation";
     if (!ms && improved) oss << " (the refinement improved the global best)";
     oss << "; reporting stagnation to RESTART";
-    std::cout << "[HPO] " << oss.str() << "\n";
+    std::cout << "[tadah hpo] " << oss.str() << "\n";
     HPOLog::instance().info(oss.str());
     detail::report_stagnation(n_stagnated);
   }
@@ -566,7 +566,7 @@ public:
         oss << *spec.prestage->stop.maxeval << ")";
       else
         oss << "not set: no evaluation limit)";
-      std::cout << "[HPO] " << oss.str() << "\n";
+      std::cout << "[tadah hpo] " << oss.str() << "\n";
       HPOLog::instance().info(oss.str());
     }
     /* The exploration's evaluations and failed ones (the journal's census,
@@ -637,7 +637,7 @@ public:
       oss << "PRESTAGE: no evaluation of the exploration produced a usable "
              "loss (" << explore_evals << " evaluation(s)); the refinement "
              "starts from the INIT points of the STRATEGY-level optimiser";
-      std::cout << "[HPO] " << oss.str() << "\n";
+      std::cout << "[tadah hpo] " << oss.str() << "\n";
       HPOLog::instance().warning(oss.str());
       refiner.run_one_windowed(prestage_refinement_spec(spec, spec.optim_init),
                                host);
@@ -655,7 +655,7 @@ public:
         oss << ", and answered " << explore_reused
             << " call(s) from the run's record of earlier evaluations";
       oss << "); refining " << topk.size();
-      std::cout << "[HPO] " << oss.str() << "\n";
+      std::cout << "[tadah hpo] " << oss.str() << "\n";
       HPOLog::instance().info(oss.str());
     }
 
@@ -670,7 +670,7 @@ public:
       const std::size_t show = std::min<std::size_t>(sorted.size(), 5);
       for (std::size_t i = 0; i < show; ++i) oss << ' ' << sorted[i].first;
       if (sorted.size() > show) oss << " ...";
-      std::cout << "[HPO] " << oss.str() << "\n";
+      std::cout << "[tadah hpo] " << oss.str() << "\n";
       HPOLog::instance().info(oss.str());
     }
 
@@ -694,7 +694,7 @@ public:
       std::ostringstream oss;
       oss << "REFINEMENT: " << spec.lib << ":" << spec.algo << " from the "
           << topk.size() << " best point(s) of the exploration";
-      std::cout << "[HPO] " << oss.str() << "\n";
+      std::cout << "[tadah hpo] " << oss.str() << "\n";
       HPOLog::instance().info(oss.str());
     }
     if (topk.size() > 1) {
@@ -817,7 +817,7 @@ public:
               "RESTART: no new best within the stagnation window, and the "
               "MAX of " + std::to_string(max_restarts_) + " restart(s) is "
               "used: the run stops";
-          std::cout << "[HPO] " << msg << "\n";
+          std::cout << "[tadah hpo] " << msg << "\n";
           HPOLog::instance().info(msg);
           /* Say why the run ended: whatever an inner run recorded last (a
            * per-start MAXEVAL_REACHED, say) is not the reason. */
@@ -868,7 +868,7 @@ public:
                 "RESTART block (" + refresh_->name() + ") gave no starting "
                 "point; the round starts from the starting points of the "
                 "previous round";
-            std::cerr << "[HPO] WARNING: " << msg << "\n";
+            std::cerr << "[tadah hpo] WARNING: " << msg << "\n";
             HPOLog::instance().warning(msg);
           }
         }
@@ -885,7 +885,7 @@ public:
           const std::string seeds =
               describe_seeds(point_seed, restarts, cur, spec);
           if (!seeds.empty()) oss << "; seeds of this round: " << seeds;
-          std::cout << "[HPO] " << oss.str() << "\n";
+          std::cout << "[tadah hpo] " << oss.str() << "\n";
           HPOLog::instance().info(oss.str());
         }
       }
@@ -911,7 +911,7 @@ private:
           std::to_string(*drawn_seed_) + " + r (SEED " +
           std::to_string(*drawn_seed_) +
           " in the RESTART block draws the same points again)";
-      std::cout << "[HPO] " << msg << "\n";
+      std::cout << "[tadah hpo] " << msg << "\n";
       HPOLog::instance().info(msg);
     }
     return *drawn_seed_;

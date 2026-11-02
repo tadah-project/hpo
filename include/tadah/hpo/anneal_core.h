@@ -2539,7 +2539,7 @@ T0Outcome calibrate_t0(const OptimizerSpec& sp, const Knobs& kb,
       oss << "  loss range=[" << pmin << ", " << pmax << "]"
           << "  std=" << pstd;
     oss << "  anchor=" << (out.re_anchored ? "re-anchored" : "seed");
-    std::cout << "[HPO] " << oss.str() << "\n";
+    std::cout << "[tadah hpo] " << oss.str() << "\n";
     HPOLog::instance().info(oss.str());
   } else {
     std::ostringstream oss;

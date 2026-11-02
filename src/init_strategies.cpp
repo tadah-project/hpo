@@ -344,7 +344,7 @@ public:
             oss << "WARM: " << file_ << " gives the start of "
                 << count_text(hot_loaded, "--hotvar value", "--hotvar values")
                 << " (its # HOT lines)";
-            std::cout << "[HPO] " << oss.str() << "\n";
+            std::cout << "[tadah hpo] " << oss.str() << "\n";
             HPOLog::instance().info(oss.str());
         }
 
@@ -383,7 +383,7 @@ public:
                     "', which is neither ZERO nor FREE; it is not read: this "
                     "run evaluates EMBF0 " + models::embf0_name(run_mode) +
                     " (training configuration).";
-                std::cerr << "[HPO] " << msg << "\n";
+                std::cerr << "[tadah hpo] " << msg << "\n";
                 HPOLog::instance().warning(msg);
             } else if (seed_mode.value_or(EmbF0Mode::Zero) != run_mode) {
                 const std::string seed_decl =
@@ -402,13 +402,13 @@ public:
                     "unchanged), and coefficients fitted again by least "
                     "squares can differ, so the recorded loss of the seed "
                     "need not be reproduced";
-                std::cerr << "[HPO] " << msg << "\n";
+                std::cerr << "[tadah hpo] " << msg << "\n";
                 HPOLog::instance().warning(msg);
             } else if (!seed_mode) {
                 const std::string msg =
                     "WARM seed " + file_ + " does not declare EMBF0: it is "
                     "read as EMBF0 ZERO (the default), the EMBF0 of this run.";
-                std::cout << "[HPO] " << msg << "\n";
+                std::cout << "[tadah hpo] " << msg << "\n";
                 HPOLog::instance().info(msg);
             }
         }
@@ -527,7 +527,7 @@ public:
                 << ", which gives a value for each of the "
                 << count_text(point.size(), "dimension", "dimensions")
                 << " of the search space";
-            std::cout << "[HPO] " << oss.str() << "\n";
+            std::cout << "[tadah hpo] " << oss.str() << "\n";
             HPOLog::instance().info(oss.str());
         }
 
@@ -645,13 +645,13 @@ private:
             "parameter is a density key (AMPGRIDMB, CGRIDMB, SGRIDMB), so the "
             "density of the seed is not read: every candidate has the density "
             "of the training configuration.";
-        std::cerr << "[HPO] " << msg << "\n";
+        std::cerr << "[tadah hpo] " << msg << "\n";
         HPOLog::instance().warning(msg);
     }
 
     static void handle_mismatch(const std::string& policy, const std::string& msg) {
         if (policy == "error") throw std::runtime_error(msg);
-        std::cerr << "[HPO] " << msg << "\n";
+        std::cerr << "[tadah hpo] " << msg << "\n";
         /* stderr alone is easy to lose under SLURM -- a missing/short
          * seed silently changes the STARTING POINT of the run, so the
          * journal must carry it too. */

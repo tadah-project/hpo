@@ -1171,7 +1171,7 @@ void HPO_Host<P,R>::finish_best_publication() const noexcept {
     const auto report = [](const std::string& msg) {
         HPOLog& log = HPOLog::instance();
         if (log.is_open()) log.warning(msg);
-        else std::cerr << "[HPO] WARNING: " << msg << std::endl;
+        else std::cerr << "[tadah hpo] WARNING: " << msg << std::endl;
     };
     const auto remove = [&](const std::string& path) {
         try {
@@ -1798,7 +1798,7 @@ void HPO_Host<P,R>::note_out_of_box(const P& p, const OutOfBox& o,
                 "it, so an optimiser that ignores the bounds (CERES:*) "
                 "proposed this one. Such a point counts against MAXEVAL; "
                 "DIAGNOSTICS counts every such point";
-            std::cerr << "[HPO] WARNING: " << msg << "\n";
+            std::cerr << "[tadah hpo] WARNING: " << msg << "\n";
             HPOLog::instance().warning(msg);
         } else {
             HPOLog::instance().info(where + ": not evaluated, " + scored +
@@ -3697,7 +3697,7 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
              << " rejected by --skip-above or --skip-rel so far)";
           HPOLog::instance().warning(os.str());
           if (hit->count == 1)
-            std::cerr << "[HPO] WARNING: " << os.str()
+            std::cerr << "[tadah hpo] WARNING: " << os.str()
                       << "; later rejections are counted in hpo_run.log\n";
         }
         return true;
@@ -5110,7 +5110,7 @@ void HPO_Host<P,R>::emit_grad_diagnostic(
             }
         }
     }
-    std::cout << "[HPO] " << oss.str() << "\n";
+    std::cout << "[tadah hpo] " << oss.str() << "\n";
     HPOLog::instance().info(oss.str());
 }
 

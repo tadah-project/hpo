@@ -332,7 +332,7 @@ void HPOLog::open(const std::string& path,
 
     f_.open(path, std::ios::out | std::ios::trunc);
     if (!f_.is_open()) {
-        std::cerr << "[HPO] WARNING: the journal " << path
+        std::cerr << "[tadah hpo] WARNING: the journal " << path
                   << " cannot be opened, so the run writes no journal\n";
         return;
     }

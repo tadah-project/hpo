@@ -120,7 +120,7 @@ void run_noise_calibration(const OptimizerSpec& sp, const HPO_Host<V,R>& host,
                     "so no calibration runs");
         return;
     }
-    std::cout << "[HPO] NOISE CALIBRATION: " << N
+    std::cout << "[tadah hpo] NOISE CALIBRATION: " << N
               << " evaluations at the starting point measure the noise of "
                  "the loss\n";
     log.info("NOISE CALIBRATION: " + std::to_string(N) +
@@ -161,7 +161,7 @@ void run_noise_calibration(const OptimizerSpec& sp, const HPO_Host<V,R>& host,
     oss << "NOISE CALIBRATION: relative spread " << rel_spread
         << ", suggested FTOL_REL " << suggested_ftol
         << " (mean " << mean << ", min " << mn << ", max " << mx << ")";
-    std::cout << "[HPO] " << oss.str() << "\n";
+    std::cout << "[tadah hpo] " << oss.str() << "\n";
     log.info(oss.str());
 }
 
@@ -225,7 +225,7 @@ void print_best_fit_balance(const HPOTargets& trg)
             "training record");
         return;
     }
-    std::cout << "[HPO] " << path << ":\n";
+    std::cout << "[tadah hpo] " << path << ":\n";
     mlip::print_fit_balance(std::cout, lines,
                             computed && mlip::first_fit_balance_legend());
 }
@@ -1150,7 +1150,7 @@ int hpo_run_from_startup(core::Context& ctx, HPOLog& log,
             create_archive_directories_on_every_rank(trg);
             run_noise_calibration(sp, host, log);
             log.start_progress();
-            std::cout << "[HPO] " << sp.lib << ":" << sp.algo
+            std::cout << "[tadah hpo] " << sp.lib << ":" << sp.algo
                       << "   dim=" << sp.low.size() << "\n";
             policy->run(sp, host);
         },

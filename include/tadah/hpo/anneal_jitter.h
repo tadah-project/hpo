@@ -479,7 +479,7 @@ JitterPlan run_jitter_calibration(const OptimizerSpec& sp, const Knobs& kb,
         << " of MAXTIME)";
     if (rank == 0) {
       log.info(o.str());
-      std::cout << "[HPO] " << o.str() << "\n" << std::flush;
+      std::cout << "[tadah hpo] " << o.str() << "\n" << std::flush;
     }
   }
 

@@ -90,7 +90,7 @@ template<typename Vec, typename Runner>
     {
       std::ostringstream oss;
       oss << "RANDOM search: seed=" << seed;
-      std::cout << "[HPO] " << oss.str() << "\n";
+      std::cout << "[tadah hpo] " << oss.str() << "\n";
       HPOLog::instance().info(oss.str());
     }
     /* A stream of its own for the seed (seed_stream.h): it drew
@@ -177,7 +177,7 @@ template<typename Vec, typename Runner>
       oss << "GRID search: " << steps << " points in each dimension "
           << "(PARAM GRID_POINTS; spacing = width/" << (steps - 1) << "), "
           << dim << (dim == 1 ? " dimension." : " dimensions.");
-      std::cout << "[HPO] " << oss.str() << "\n";
+      std::cout << "[tadah hpo] " << oss.str() << "\n";
       HPOLog::instance().info(oss.str());
     }
 
@@ -200,7 +200,7 @@ template<typename Vec, typename Runner>
       else               oss << nodes;
       oss << " = " << steps << "^" << dim << " grid points); evaluating the "
           << "first " << budget << " in grid order";
-      std::cout << "[HPO] " << oss.str() << "\n";
+      std::cout << "[tadah hpo] " << oss.str() << "\n";
       HPOLog::instance().info(oss.str());
     }
 
@@ -259,7 +259,7 @@ template<typename Vec, typename Runner>
           std::string("TADAH:GRID finished: ") +
           (with_init ? "the INIT point and " : "") + "all " +
           std::to_string(nodes) + " grid points evaluated";
-      std::cout << "[HPO] " << msg << "\n";
+      std::cout << "[tadah hpo] " << msg << "\n";
       HPOLog::instance().info(msg);
       record_end("TADAH:GRID", EndReason::GridDone);
     }
@@ -426,7 +426,7 @@ template<typename Vec, typename HostT>
           << (kb.corana ? " (Corana V half-width/width)"
                         : " (CLASSIC Gaussian sigma/width)");
       oss << "  REANNEAL=" << (kb.reanneal ? "ON" : "OFF");
-      std::cout << "[HPO] " << oss.str() << "\n";
+      std::cout << "[tadah hpo] " << oss.str() << "\n";
       HPOLog::instance().info(oss.str());
     }
     HPOLog::instance().arm_pin_audit(sp, kb.v_floor_frac, 1, "rung");

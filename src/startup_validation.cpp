@@ -385,7 +385,7 @@ void require_error_scale_search_changes_the_fit(core::Context &ctx,
         "datasets, the dataset against the others.");
   if (!(lambda_scale_free || optim_lambda)) return;
   auto warn = [&](const std::string &w) {
-    std::cerr << "[HPO] WARNING: " << w << "\n";
+    std::cerr << "[tadah hpo] WARNING: " << w << "\n";
     HPOLog::instance().warning(w);
   };
   const std::string tail =
@@ -758,7 +758,7 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
    * the warning counts the evaluations the run spends. */
   for (const std::string &w : gradient_budget_warnings(
            trg.spec, trg.repeat_reuse_blocker().empty())) {
-    std::cerr << "[HPO] WARNING: " << w << "\n";
+    std::cerr << "[tadah hpo] WARNING: " << w << "\n";
     HPOLog::instance().warning(w);
   }
 
@@ -771,7 +771,7 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
    * search that draws them, which no round evaluates. */
   for (const std::string &w :
        start_point_warnings(trg.spec, trg.repeat_reuse_blocker())) {
-    std::cerr << "[HPO] WARNING: " << w << "\n";
+    std::cerr << "[tadah hpo] WARNING: " << w << "\n";
     HPOLog::instance().warning(w);
   }
 
@@ -950,7 +950,7 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
     const std::string w =
         tadah::mlip::fixindex_intercept_warning(probe.context, *probe.fb);
     if (!w.empty()) {
-      std::cerr << "[HPO] WARNING: " << w << "\n";
+      std::cerr << "[tadah hpo] WARNING: " << w << "\n";
       HPOLog::instance().warning(w);
     }
   }
@@ -1127,11 +1127,11 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
    * them: a WARNING on stderr and in the journal (which tadah hpo --check
    * lists and counts), an INFO line in the journal. */
   auto warn = [](const std::string &m) {
-    std::cerr << "[HPO] WARNING: " << m << "\n";
+    std::cerr << "[tadah hpo] WARNING: " << m << "\n";
     HPOLog::instance().warning(m);
   };
   auto info = [](const std::string &m) {
-    std::cout << "[HPO] " << m << "\n";
+    std::cout << "[tadah hpo] " << m << "\n";
     HPOLog::instance().info(m);
   };
 

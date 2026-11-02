@@ -751,7 +751,7 @@ void run_asa_erased(const OptimizerSpec& sp, std::size_t dim,
                 << "  workers="
                 << std::min<unsigned>(
                        threads, static_cast<unsigned>(ao.gener_block_max));
-        std::cout << "[HPO] " << oss.str() << "\n";
+        std::cout << "[tadah hpo] " << oss.str() << "\n";
         HPOLog::instance().info(oss.str());
         HPOLog::instance().info(
             "ASA: the ASA library writes its journal to " + out_name +
@@ -851,7 +851,7 @@ void run_asa_erased(const OptimizerSpec& sp, std::size_t dim,
         std::ostringstream oss;
         oss << "ASA stopped: " << reason << " after " << ctx.n_evals.load()
             << " evaluation(s) (asa exit: " << exit_text << ")";
-        std::cout << "[HPO] " << oss.str() << "\n";
+        std::cout << "[tadah hpo] " << oss.str() << "\n";
         HPOLog::instance().info(oss.str());
     }
 

@@ -605,7 +605,7 @@ inline void run_ceres_gradient_problem(
     const auto report_native = [&](const char* type, bool stopped) {
         const std::string msg = backend + " stopped: " + type + " after " +
                                 spent + "; Ceres: " + summary.message;
-        std::cout << "[HPO] " << msg << "\n";
+        std::cout << "[tadah hpo] " << msg << "\n";
         HPOLog::instance().info(msg);
         HPOLog::instance().set_status(
             std::string(stopped ? "STOPPED -- " : "") + backend + ": " +

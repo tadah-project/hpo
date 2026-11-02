@@ -65,7 +65,7 @@ bool is_log(const OptimizerSpec& sp, std::size_t i)
 
 void warn(const std::string& msg)
 {
-    std::cerr << "[HPO] " << msg << "\n";
+    std::cerr << "[tadah hpo] " << msg << "\n";
     HPOLog::instance().warning(msg);
 }
 

@@ -195,7 +195,7 @@ template<class HostT>
           "DLIB:GFS (find_min_global, MaxLIPO+TR) is deterministic; SEED has "
           "no effect on the refinement: it seeds the exploration (EXPLORE "
           "SEED " + std::to_string(*sp.seed) + ").";
-      std::cerr << "[HPO] " << msg << "\n";
+      std::cerr << "[tadah hpo] " << msg << "\n";
       HPOLog::instance().warning(msg);
     }
 
@@ -217,7 +217,7 @@ template<class HostT>
                "points it is given unchanged; the LOG tag on its OPTIM line, "
                "or OPTIM_SCALE AUTO, makes tadah hpo apply the log scale, to "
                "the starting points too";
-        std::cerr << "[HPO] " << oss.str() << "\n";
+        std::cerr << "[tadah hpo] " << oss.str() << "\n";
         HPOLog::instance().warning(oss.str());
       }
     }
@@ -329,7 +329,7 @@ template<class HostT>
       std::ostringstream oss;
       oss << "DLIB:GFS seeding with " << sp.optim_init.size()
           << " starting point" << (sp.optim_init.size()==1 ? "" : "s");
-      std::cout << "[HPO] " << oss.str() << "\n";
+      std::cout << "[tadah hpo] " << oss.str() << "\n";
       HPOLog::instance().info(oss.str());
       for (const auto& seed_real : sp.optim_init) {
         const auto start_vec = sp.in(seed_real);
@@ -1313,7 +1313,7 @@ template<class Vec,class Runner,class HostT>
                 "evaluations (dlib's stop rules count iterations, not "
                 "evaluations); later stops at MAXEVAL in this run are "
                 "reported in one line each";
-            std::cout << "[HPO] " << preamble << "\n";
+            std::cout << "[tadah hpo] " << preamble << "\n";
             HPOLog::instance().info(preamble);
         }
         /* The MAXEVAL stop line (the only one: no "stopped:" line), and
@@ -1321,7 +1321,7 @@ template<class Vec,class Runner,class HostT>
         std::ostringstream oss;
         oss << "DLIB:BFGS: MAXEVAL " << maxeval
             << " reached; the best evaluation so far is kept";
-        std::cout << "[HPO] " << oss.str() << "\n";
+        std::cout << "[tadah hpo] " << oss.str() << "\n";
         HPOLog::instance().info(oss.str());
         record_end("DLIB:BFGS", EndReason::MaxEval);
       } catch (const detail::GradientNotFinite& e) {
