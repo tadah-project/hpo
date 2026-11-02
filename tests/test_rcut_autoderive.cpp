@@ -336,7 +336,7 @@ TEST_CASE("rcut derivation: startup validation normalises stale knot RCUT",
                           std::string(kOptimizerBlock));
         HPOTargets trg(ctx, tf.path.string());
         REQUIRE_THROWS_WITH(validate_hpo_setup(ctx, trg, true, true),
-                            Catch::Contains("bump-support gate"));
+                            Catch::Contains("BUMPGATE: a compact bump reaches past its cutoff"));
         REQUIRE(ctx.get<double>("RCUT2B") == 5.0);  // stays authoritative
     }
     SECTION("bump channels: compliant boxes pass, RCUT untouched") {

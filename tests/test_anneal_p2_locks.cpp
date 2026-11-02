@@ -93,12 +93,13 @@ struct P2Log {
 };
 
 /* The journal's stop line carries the driver's own eval count:
- * "... stopped: <reason> after N host eval(s) ...". */
+ * "... stopped: <reason> after N evaluation(s) ..." (it said "N host
+ * eval(s)"). */
 std::size_t journal_eval_count(const std::string& log)
 {
     std::smatch m;
     REQUIRE(std::regex_search(
-        log, m, std::regex(R"(stopped: .* after (\d+) host eval\(s\))")));
+        log, m, std::regex(R"(stopped: .* after (\d+) evaluation\(s\))")));
     return static_cast<std::size_t>(std::stoull(m[1]));
 }
 

@@ -220,7 +220,7 @@ msg = "{key}: repeated declaration (first declared on line {first_line})"
 doc = "At the line: a second line without an index list."
 
 [[key.checks]]
-msg = "{key}: cannot mix global and indexed forms"
+msg = "{key}: a line without an index (every validation dataset) and indexed lines (one dataset each) are not combined"
 doc = "At the line: a line with an index list and a line without one."
 
 [[key.checks]]
@@ -228,7 +228,7 @@ msg = "{key}: duplicate assignment for dataset {index} (first declared on line {
 doc = "At the line: an index an earlier line of the key lists."
 
 [[key.checks]]
-msg = "{key}: validation indices start at 1"
+msg = "{key}: the validation datasets are numbered from 1, got the index 0"
 doc = "At the line: an index 0."
 
 [[key.checks]]
@@ -257,7 +257,7 @@ error = "PC_ERMSE: repeated declaration (first declared on line 2)"
 [[key.invalid]]
 wrap = "end"
 text = "PC_ERMSE (1) 2 1"
-error = "PC_ERMSE: cannot mix global and indexed forms"
+error = "PC_ERMSE: a line without an index (every validation dataset) and indexed lines (one dataset each) are not combined"
 
 [[key.invalid]]
 wrap = "lines_metric"
@@ -270,7 +270,7 @@ error = "PC_ERMSE: duplicate assignment for dataset 2 (first declared on line 1)
 [[key.invalid]]
 wrap = "lines_metric"
 text = "PC_ERMSE (0) 2 1"
-error = "PC_ERMSE: validation indices start at 1"
+error = "PC_ERMSE: the validation datasets are numbered from 1, got the index 0"
 
 [[key.invalid]]
 wrap = "lines_metric"
@@ -691,7 +691,7 @@ msg = "{key}: repeated declaration (first declared on line {first_line})"
 doc = "At the line: a second line without an index list."
 
 [[key.checks]]
-msg = "{key}: cannot mix global and indexed forms"
+msg = "{key}: a line without an index (every validation dataset) and indexed lines (one dataset each) are not combined"
 doc = "At the line: a line with an index list and a line without one."
 
 [[key.checks]]
@@ -699,7 +699,7 @@ msg = "{key}: duplicate assignment for dataset {index} (first declared on line {
 doc = "At the line: an index an earlier line of the key lists."
 
 [[key.checks]]
-msg = "{key}: validation indices start at 1"
+msg = "{key}: the validation datasets are numbered from 1, got the index 0"
 doc = "At the line: an index 0."
 [[key.examples]]
 wrap = "root"
@@ -726,7 +726,7 @@ at = 2
 text = '''
 PC_SRMSE_GPA (1) 0.5 4
 PC_SRMSE_GPA 1 4'''
-error = "PC_SRMSE_GPA: cannot mix global and indexed forms"
+error = "PC_SRMSE_GPA: a line without an index (every validation dataset) and indexed lines (one dataset each) are not combined"
 
 [[key.invalid]]
 wrap = "root"
@@ -739,7 +739,7 @@ error = "PC_SRMSE_GPA: duplicate assignment for dataset 2 (first declared on lin
 [[key.invalid]]
 wrap = "root"
 text = "PC_SRMSE_GPA (0) 0.5 4"
-error = "PC_SRMSE_GPA: validation indices start at 1"
+error = "PC_SRMSE_GPA: the validation datasets are numbered from 1, got the index 0"
 
 [[key.invalid]]
 wrap = "root"
@@ -896,7 +896,7 @@ msg = "{key}: repeated declaration (first declared on line {first_line})"
 doc = "At the line: a second line without an index list."
 
 [[key.checks]]
-msg = "{key}: cannot mix global and indexed forms"
+msg = "{key}: a line without an index (every validation dataset) and indexed lines (one dataset each) are not combined"
 doc = "At the line: a line with an index list and a line without one."
 
 [[key.checks]]
@@ -904,7 +904,7 @@ msg = "{key}: duplicate assignment for dataset {index} (first declared on line {
 doc = "At the line: an index an earlier line of the key lists."
 
 [[key.checks]]
-msg = "{key}: validation indices start at 1"
+msg = "{key}: the validation datasets are numbered from 1, got the index 0"
 doc = "At the line: an index 0."
 
 [[key.checks]]
@@ -939,7 +939,7 @@ at = 2
 text = '''
 PC_FRMSE (1) 0.1 1
 PC_FRMSE 0.2 1'''
-error = "PC_FRMSE: cannot mix global and indexed forms"
+error = "PC_FRMSE: a line without an index (every validation dataset) and indexed lines (one dataset each) are not combined"
 
 [[key.invalid]]
 wrap = "root"
@@ -967,7 +967,7 @@ error = "PC_FRMSE: duplicate assignment for dataset 2 (first declared on line 1)
 [[key.invalid]]
 wrap = "root"
 text = "PC_FRMSE (0) 0.1 1"
-error = "PC_FRMSE: validation indices start at 1"
+error = "PC_FRMSE: the validation datasets are numbered from 1, got the index 0"
 
 [[key.invalid]]
 wrap = "root"
@@ -1225,7 +1225,7 @@ msg = "PC_LAMMPS: the line has no --varloss option; a PC_LAMMPS line gives at le
 doc = "At the line: no --varloss option (a line that only records --outvar values)."
 
 [[key.checks]]
-msg = "PC_LAMMPS validation failed for script '{script}'.\nTadah requires every --varloss/--outvar/--failvar variable to be defined in the LAMMPS script (or included files)\nas an *equal-style* variable:\n  variable <name> equal ...\n\nProblems found:\n{list}"
+msg = "PC_LAMMPS: the script '{script}' and the files it includes define each --varloss, --outvar and --failvar variable as an equal-style variable (variable <name> equal ...), and these are not:\n{list}"
 doc = "At the line: a --varloss, --outvar or --failvar variable that the script and the files it includes do not define as an equal-style variable; {list} has a line for each."
 
 [[key.checks]]
@@ -1278,14 +1278,9 @@ error = "PC_LAMMPS: the line has no --varloss option; a PC_LAMMPS line gives at 
 wrap = "root"
 text = "PC_LAMMPS --script lines_pc.in --varloss Q 1 1 --outvar T"
 error = """\
-PC_LAMMPS validation failed for script 'lines_pc.in'.
-Tadah requires every --varloss/--outvar/--failvar variable to be defined in the LAMMPS script (or included files)
-as an *equal-style* variable:
-  variable <name> equal ...
-
-Problems found:
-  - Q requested by --varloss but not defined
-  - T requested by --outvar but defined as style 'string' (logical command #4 in expanded script)
+PC_LAMMPS: the script 'lines_pc.in' and the files it includes define each --varloss, --outvar and --failvar variable as an equal-style variable (variable <name> equal ...), and these are not:
+  - Q (--varloss): not defined
+  - T (--outvar): defined with the style 'string' (command 4 of the script with its include files read in)
 """
 
 [[key.invalid]]
@@ -1495,7 +1490,7 @@ error = "--varloss E <weight> must be a finite number, got 'x'"
 [[line_option.invalid]]
 wrap = "root"
 text = "PC_LAMMPS --script lines_pc.in --varloss E 1 1 FOO"
-error = "--varloss E: unknown loss function 'FOO'; the loss functions are L1, L2, LOG_COSH, MAPE, HUBER, RMSLE and TUKEY, in any case"
+error = "--varloss E: unknown loss function 'FOO'; the loss functions are L1, L2, LOG_COSH, MAPE, HUBER, RMSLE and TUKEY, in upper or lower case"
 msg_of = "ROOT.LOSS"
 
 [[line_option.invalid]]
@@ -1506,7 +1501,7 @@ error = "--varloss E HUBER parameter must be a finite number, got 'x'"
 [[line_option.invalid]]
 wrap = "root"
 text = "PC_LAMMPS --script lines_pc.in --varloss E 1 1 HUBER 0"
-error = "loss HUBER parameter (delta) must be finite and > 0 (got 0); omit it to use the default 50"
+error = "loss HUBER parameter (delta) must be finite and > 0 (got 0); without it the default 50 applies"
 msg_of = "ROOT.LOSS"
 
 [[line_option.invalid]]
@@ -1960,13 +1955,8 @@ error = "PC_LAMMPS --failvar takes <name> [<scale>] (unexpected '7')"
 wrap = "root"
 text = "PC_LAMMPS --script lines_pc.in --varloss E 1 1 --failvar W"
 error = """\
-PC_LAMMPS validation failed for script 'lines_pc.in'.
-Tadah requires every --varloss/--outvar/--failvar variable to be defined in the LAMMPS script (or included files)
-as an *equal-style* variable:
-  variable <name> equal ...
-
-Problems found:
-  - W requested by --failvar but not defined
+PC_LAMMPS: the script 'lines_pc.in' and the files it includes define each --varloss, --outvar and --failvar variable as an equal-style variable (variable <name> equal ...), and these are not:
+  - W (--failvar): not defined
 """
 msg_of = "ROOT.PC_LAMMPS"
 
@@ -2316,7 +2306,7 @@ msg = "PC_OBSERVABLE cohesive_energy: --hotvar a0 <lo> <hi> [<init>] is required
 doc = "The line has no --hotvar."
 
 [[form.checks]]
-msg = "PC_OBSERVABLE cohesive_energy: unknown option '{tok}'"
+msg = "PC_OBSERVABLE cohesive_energy: unknown option '{tok}' (it takes --species, --target, --weight, --lattice, --supercell, --hotvar, --loss, --maxiter, --max-wall-time, --etol, --maxeval, --fmax-converged, --ptol and --unconverged)"
 doc = "A token is not an option of the kind, nor a value of one."
 
 [[form.checks]]
@@ -2354,7 +2344,7 @@ error = "PC_OBSERVABLE cohesive_energy: --hotvar a0 <lo> <hi> [<init>] is requir
 [[form.invalid]]
 wrap = "root"
 text = "PC_OBSERVABLE cohesive_energy --species H --target 2 --weight 1 --hotvar a0 1.5 2.5 --bogus"
-error = "PC_OBSERVABLE cohesive_energy: unknown option '--bogus'"
+error = "PC_OBSERVABLE cohesive_energy: unknown option '--bogus' (it takes --species, --target, --weight, --lattice, --supercell, --hotvar, --loss, --maxiter, --max-wall-time, --etol, --maxeval, --fmax-converged, --ptol and --unconverged)"
 
 [[form.invalid]]
 wrap = "root"
@@ -2709,7 +2699,7 @@ text = "PC_OBSERVABLE cohesive_energy --species H --target 2.0 --weight 1 --hotv
 [[line_option.invalid]]
 wrap = "root"
 text = "PC_OBSERVABLE cohesive_energy --species H --target 2 --weight 1 --hotvar a0 1.5 2.5 --loss foo"
-error = "PC_OBSERVABLE cohesive_energy: --loss: unknown loss function 'foo'; the loss functions are L1, L2, LOG_COSH, MAPE, HUBER, RMSLE and TUKEY, in any case"
+error = "PC_OBSERVABLE cohesive_energy: --loss: unknown loss function 'foo'; the loss functions are L1, L2, LOG_COSH, MAPE, HUBER, RMSLE and TUKEY, in upper or lower case"
 msg_of = "ROOT.LOSS"
 
 [[line_option.examples]]
@@ -3095,11 +3085,11 @@ it as the default loss function of its terms, while the metric terms take \
 the last LOSS line wherever it is."""
 checks = [
   { msg = "LOSS requires a loss type", doc = "At the line: no loss function follows the key." },
-  { msg = "{what}: unknown loss function '{tok}'; the loss functions are L1, L2, LOG_COSH, MAPE, HUBER, RMSLE and TUKEY, in any case", doc = "At the line: a name that is no loss function, in any case; {what} is LOSS, --varloss <name> on a PC_LAMMPS line, or PC_OBSERVABLE cohesive_energy: --loss." },
+  { msg = "{what}: unknown loss function '{tok}'; the loss functions are L1, L2, LOG_COSH, MAPE, HUBER, RMSLE and TUKEY, in upper or lower case", doc = "At the line: a name that is no loss function, in any case; {what} is LOSS, --varloss <name> on a PC_LAMMPS line, or PC_OBSERVABLE cohesive_energy: --loss." },
   { msg = "LOSS {name}: parameter '{tok}' is not a number{underflow}", doc = "At the line: a parameter that is no number of the number grammar." },
   { msg = "loss {name} takes no parameter (got {count})", doc = "At the line: a parameter of a loss function that takes none; {count} is the number given." },
   { msg = "loss {name} takes at most {max} parameter (got {count})", doc = "At the line: more parameters than the loss function takes." },
-  { msg = "loss {name} parameter ({key}) must be finite and > 0 (got {value}); omit it to use the default {default}", doc = "At the line: a parameter of HUBER or TUKEY that is 0, negative or not finite; {key} is delta or c." },
+  { msg = "loss {name} parameter ({key}) must be finite and > 0 (got {value}); without it the default {default} applies", doc = "At the line: a parameter of HUBER or TUKEY that is 0, negative or not finite; {key} is delta or c." },
   { msg = "LOSS sets the loss function of the --varloss and PC_OBSERVABLE terms after it that name none, and of the metric lines (PC_EMAE, PC_ERMSE, PC_ErRMSE, PC_ERSQ, PC_FRMSE, PC_SRMSE_GPA), and the file has no metric line and no such term after it; it would have no effect", doc = "At the line, at the end of the file: the file has no metric line, and no --varloss or PC_OBSERVABLE term that names no loss function follows the LOSS line." },
   { msg = "{key} {value}: the metric lines take the loss function of the last LOSS line (line {line}): {why}", doc = "At a metric line, at the end of the file: the loss function of the last LOSS line cannot measure its target; {key} is the key, with the index of an indexed line, and {why} says why: MAPE divides by the target, which is 0, or RMSLE takes the logarithm of the target plus 1e-12, which is at or below -1e-12." },
 ]
@@ -3125,7 +3115,7 @@ error = "LOSS requires a loss type"
 [[key.invalid]]
 wrap = "root"
 text = "LOSS FOO"
-error = "LOSS: unknown loss function 'FOO'; the loss functions are L1, L2, LOG_COSH, MAPE, HUBER, RMSLE and TUKEY, in any case"
+error = "LOSS: unknown loss function 'FOO'; the loss functions are L1, L2, LOG_COSH, MAPE, HUBER, RMSLE and TUKEY, in upper or lower case"
 
 [[key.invalid]]
 wrap = "root"
@@ -3277,7 +3267,7 @@ text = "LOSS HUBER"
 [[loss_function.invalid]]
 wrap = "root"
 text = "LOSS HUBER 0"
-error = "loss HUBER parameter (delta) must be finite and > 0 (got 0); omit it to use the default 50"
+error = "loss HUBER parameter (delta) must be finite and > 0 (got 0); without it the default 50 applies"
 msg_of = "ROOT.LOSS"
 
 [[loss_function]]
@@ -3313,7 +3303,7 @@ text = "LOSS TUKEY 2"
 [[loss_function.invalid]]
 wrap = "root"
 text = "LOSS TUKEY -1"
-error = "loss TUKEY parameter (c) must be finite and > 0 (got -1); omit it to use the default 4.685"
+error = "loss TUKEY parameter (c) must be finite and > 0 (got -1); without it the default 4.685 applies"
 msg_of = "ROOT.LOSS"
 
 # ============================================================= OPTIM ====
@@ -5296,7 +5286,7 @@ id = "RULE.PC_OBSERVABLE_GRAD_STRATEGY"
 title = "PC_OBSERVABLE refuses GRAD_STRATEGY NUMERICAL"
 check = "parse"
 keys = ["ROOT.PC_OBSERVABLE", "OPTIMIZER.GRAD_STRATEGY"]
-msg = "--hpotarget defines PC_OBSERVABLE but {block} GRAD_STRATEGY=NUMERICAL is set. PC_OBSERVABLE is built for the analytical gradient: use GRAD_STRATEGY ANALYTICAL (an unset GRAD_STRATEGY resolves to it in a block that obtains gradients; it needs the settings of the analytical gradient, such as OALGO 4 with a fixed LAMBDA >= 0, and startup names a missing one) or GRAD_STRATEGY HYBRID, which uses finite differences where the analytical gradient is unavailable."
+msg = "{phase}: GRAD_STRATEGY NUMERICAL is refused in a target file with PC_OBSERVABLE lines (PC_OBSERVABLE on line {line}): PC_OBSERVABLE terms are built for the analytical gradient; GRAD_STRATEGY ANALYTICAL takes it (an unset GRAD_STRATEGY resolves to it in a block that obtains gradients; it needs the settings of the analytical gradient, such as OALGO 4 with a fixed LAMBDA >= 0, and startup names a missing one), and GRAD_STRATEGY HYBRID takes finite differences where the analytical gradient is unavailable"
 doc = """\
 With a PC_OBSERVABLE line, GRAD_STRATEGY NUMERICAL is refused, and a block \
 that obtains gradients without a GRAD_STRATEGY line takes ANALYTICAL. The \
@@ -5327,14 +5317,14 @@ ALGO LD_LBFGS
 MAXEVAL 10
 GRAD_STRATEGY NUMERICAL
 ENDOPTIMIZER'''
-error = "--hpotarget defines PC_OBSERVABLE but OPTIMIZER's GRAD_STRATEGY=NUMERICAL is set. PC_OBSERVABLE is built for the analytical gradient: use GRAD_STRATEGY ANALYTICAL (an unset GRAD_STRATEGY resolves to it in a block that obtains gradients; it needs the settings of the analytical gradient, such as OALGO 4 with a fixed LAMBDA >= 0, and startup names a missing one) or GRAD_STRATEGY HYBRID, which uses finite differences where the analytical gradient is unavailable."
+error = "the STRATEGY-level optimiser: GRAD_STRATEGY NUMERICAL is refused in a target file with PC_OBSERVABLE lines (PC_OBSERVABLE on line 2): PC_OBSERVABLE terms are built for the analytical gradient; GRAD_STRATEGY ANALYTICAL takes it (an unset GRAD_STRATEGY resolves to it in a block that obtains gradients; it needs the settings of the analytical gradient, such as OALGO 4 with a fixed LAMBDA >= 0, and startup names a missing one), and GRAD_STRATEGY HYBRID takes finite differences where the analytical gradient is unavailable"
 
 [[rule]]
 id = "RULE.PC_LAMMPS_GRAD_STRATEGY"
 title = "PC_LAMMPS and PC_FAILPROBE refuse a GRAD_STRATEGY line"
 check = "parse"
 keys = ["ROOT.PC_LAMMPS", "ROOT.PC_FAILPROBE", "OPTIMIZER.GRAD_STRATEGY"]
-msg = "--hpotarget defines {key} on line {line} but {block} GRAD_STRATEGY is set. A PC_LAMMPS or PC_FAILPROBE line does not support analytical/numerical/hybrid gradients. Drop the GRAD_STRATEGY line."
+msg = "{phase}: GRAD_STRATEGY is refused in a target file with PC_LAMMPS or PC_FAILPROBE lines ({key} on line {line}): tadah hpo takes no gradient (ANALYTICAL, NUMERICAL or HYBRID) of a loss that runs LAMMPS scripts, and such a file takes a gradient-free optimiser"
 doc = """\
 With a PC_LAMMPS or PC_FAILPROBE line, no block has a GRAD_STRATEGY line. \
 The refusal names the GRAD_STRATEGY line."""
@@ -5354,7 +5344,7 @@ ALGO LN_SBPLX
 MAXEVAL 10
 GRAD_STRATEGY NUMERICAL
 ENDOPTIMIZER'''
-error = "--hpotarget defines PC_LAMMPS on line 2 but OPTIMIZER's GRAD_STRATEGY is set. A PC_LAMMPS or PC_FAILPROBE line does not support analytical/numerical/hybrid gradients. Drop the GRAD_STRATEGY line."
+error = "the STRATEGY-level optimiser: GRAD_STRATEGY is refused in a target file with PC_LAMMPS or PC_FAILPROBE lines (PC_LAMMPS on line 2): tadah hpo takes no gradient (ANALYTICAL, NUMERICAL or HYBRID) of a loss that runs LAMMPS scripts, and such a file takes a gradient-free optimiser"
 
 [[rule.invalid]]
 wrap = "none"
@@ -5370,7 +5360,7 @@ ALGO LN_SBPLX
 MAXEVAL 10
 GRAD_STRATEGY HYBRID
 ENDOPTIMIZER'''
-error = "--hpotarget defines PC_FAILPROBE on line 2 but OPTIMIZER's GRAD_STRATEGY is set. A PC_LAMMPS or PC_FAILPROBE line does not support analytical/numerical/hybrid gradients. Drop the GRAD_STRATEGY line."
+error = "the STRATEGY-level optimiser: GRAD_STRATEGY is refused in a target file with PC_LAMMPS or PC_FAILPROBE lines (PC_FAILPROBE on line 2): tadah hpo takes no gradient (ANALYTICAL, NUMERICAL or HYBRID) of a loss that runs LAMMPS scripts, and such a file takes a gradient-free optimiser"
 
 [[rule]]
 id = "RULE.PC_LAMMPS_gradient_free"
@@ -5378,7 +5368,7 @@ title = """\
 With PC_LAMMPS or PC_FAILPROBE every optimiser runs without gradients"""
 check = "parse"
 keys = ["ROOT.PC_LAMMPS", "ROOT.PC_FAILPROBE", "OPTIMIZER.ALGO"]
-msg = "--hpotarget defines {key} on line {line} but {block} optimiser {lib}:{algo} is gradient-based. A PC_LAMMPS or PC_FAILPROBE line requires a gradient-free optimiser ({list}); an NLopt MLSL or AUGLAG algorithm is accepted with a derivative-free INNER block."
+msg = "{phase}: {lib}:{algo} is gradient-based, and a target file with PC_LAMMPS or PC_FAILPROBE lines ({key} on line {line}) takes a gradient-free optimiser ({list}); an NLopt MLSL or AUGLAG algorithm is accepted with a gradient-free INNER block."
 doc = """\
 With a PC_LAMMPS or PC_FAILPROBE line, every optimiser of the file runs \
 without gradients, as the results of a LAMMPS script have no gradient: an \
@@ -5414,7 +5404,7 @@ LIB DLIB
 ALGO BFGS
 MAXEVAL 10
 ENDOPTIMIZER'''
-error = "--hpotarget defines PC_LAMMPS on line 2 but OPTIMIZER's optimiser DLIB:BFGS is gradient-based. A PC_LAMMPS or PC_FAILPROBE line requires a gradient-free optimiser (ASA:ASA, DLIB:GFS, NLOPT:GN_AGS, NLOPT:GN_CRS2_LM, NLOPT:GN_DIRECT, NLOPT:GN_DIRECT_L, NLOPT:GN_DIRECT_L_NOSCAL, NLOPT:GN_DIRECT_L_RAND, NLOPT:GN_ESCH, NLOPT:GN_ISRES, NLOPT:GN_MLSL, NLOPT:GN_MLSL_LDS, NLOPT:GN_ORIG_DIRECT, NLOPT:GN_ORIG_DIRECT_L, NLOPT:LN_AUGLAG, NLOPT:LN_AUGLAG_EQ, NLOPT:LN_BOBYQA, NLOPT:LN_COBYLA, NLOPT:LN_NELDERMEAD, NLOPT:LN_PRAXIS, NLOPT:LN_SBPLX, TADAH:ANNEAL, TADAH:ANNEAL_PA, TADAH:ANNEAL_PT, TADAH:GRID, TADAH:RANDOM); an NLopt MLSL or AUGLAG algorithm is accepted with a derivative-free INNER block."
+error = "the STRATEGY-level optimiser: DLIB:BFGS is gradient-based, and a target file with PC_LAMMPS or PC_FAILPROBE lines (PC_LAMMPS on line 2) takes a gradient-free optimiser (ASA:ASA, DLIB:GFS, NLOPT:GN_AGS, NLOPT:GN_CRS2_LM, NLOPT:GN_DIRECT, NLOPT:GN_DIRECT_L, NLOPT:GN_DIRECT_L_NOSCAL, NLOPT:GN_DIRECT_L_RAND, NLOPT:GN_ESCH, NLOPT:GN_ISRES, NLOPT:GN_MLSL, NLOPT:GN_MLSL_LDS, NLOPT:GN_ORIG_DIRECT, NLOPT:GN_ORIG_DIRECT_L, NLOPT:LN_AUGLAG, NLOPT:LN_AUGLAG_EQ, NLOPT:LN_BOBYQA, NLOPT:LN_COBYLA, NLOPT:LN_NELDERMEAD, NLOPT:LN_PRAXIS, NLOPT:LN_SBPLX, TADAH:ANNEAL, TADAH:ANNEAL_PA, TADAH:ANNEAL_PT, TADAH:GRID, TADAH:RANDOM); an NLopt MLSL or AUGLAG algorithm is accepted with a gradient-free INNER block."
 
 [[rule.invalid]]
 wrap = "none"
@@ -5429,7 +5419,7 @@ LIB DLIB
 ALGO BFGS
 MAXEVAL 10
 ENDOPTIMIZER'''
-error = "--hpotarget defines PC_FAILPROBE on line 2 but OPTIMIZER's optimiser DLIB:BFGS is gradient-based. A PC_LAMMPS or PC_FAILPROBE line requires a gradient-free optimiser (ASA:ASA, DLIB:GFS, NLOPT:GN_AGS, NLOPT:GN_CRS2_LM, NLOPT:GN_DIRECT, NLOPT:GN_DIRECT_L, NLOPT:GN_DIRECT_L_NOSCAL, NLOPT:GN_DIRECT_L_RAND, NLOPT:GN_ESCH, NLOPT:GN_ISRES, NLOPT:GN_MLSL, NLOPT:GN_MLSL_LDS, NLOPT:GN_ORIG_DIRECT, NLOPT:GN_ORIG_DIRECT_L, NLOPT:LN_AUGLAG, NLOPT:LN_AUGLAG_EQ, NLOPT:LN_BOBYQA, NLOPT:LN_COBYLA, NLOPT:LN_NELDERMEAD, NLOPT:LN_PRAXIS, NLOPT:LN_SBPLX, TADAH:ANNEAL, TADAH:ANNEAL_PA, TADAH:ANNEAL_PT, TADAH:GRID, TADAH:RANDOM); an NLopt MLSL or AUGLAG algorithm is accepted with a derivative-free INNER block."
+error = "the STRATEGY-level optimiser: DLIB:BFGS is gradient-based, and a target file with PC_LAMMPS or PC_FAILPROBE lines (PC_FAILPROBE on line 2) takes a gradient-free optimiser (ASA:ASA, DLIB:GFS, NLOPT:GN_AGS, NLOPT:GN_CRS2_LM, NLOPT:GN_DIRECT, NLOPT:GN_DIRECT_L, NLOPT:GN_DIRECT_L_NOSCAL, NLOPT:GN_DIRECT_L_RAND, NLOPT:GN_ESCH, NLOPT:GN_ISRES, NLOPT:GN_MLSL, NLOPT:GN_MLSL_LDS, NLOPT:GN_ORIG_DIRECT, NLOPT:GN_ORIG_DIRECT_L, NLOPT:LN_AUGLAG, NLOPT:LN_AUGLAG_EQ, NLOPT:LN_BOBYQA, NLOPT:LN_COBYLA, NLOPT:LN_NELDERMEAD, NLOPT:LN_PRAXIS, NLOPT:LN_SBPLX, TADAH:ANNEAL, TADAH:ANNEAL_PA, TADAH:ANNEAL_PT, TADAH:GRID, TADAH:RANDOM); an NLopt MLSL or AUGLAG algorithm is accepted with a gradient-free INNER block."
 
 [[rule.invalid]]
 wrap = "none"
@@ -5442,7 +5432,7 @@ LIB NLOPT
 ALGO LD_LBFGS
 MAXEVAL 10
 ENDOPTIMIZER'''
-error = "--hpotarget defines PC_LAMMPS on line 2 but OPTIMIZER's optimiser NLOPT:LD_LBFGS is gradient-based. A PC_LAMMPS or PC_FAILPROBE line requires a gradient-free optimiser (ASA:ASA, DLIB:GFS, NLOPT:GN_AGS, NLOPT:GN_CRS2_LM, NLOPT:GN_DIRECT, NLOPT:GN_DIRECT_L, NLOPT:GN_DIRECT_L_NOSCAL, NLOPT:GN_DIRECT_L_RAND, NLOPT:GN_ESCH, NLOPT:GN_ISRES, NLOPT:GN_MLSL, NLOPT:GN_MLSL_LDS, NLOPT:GN_ORIG_DIRECT, NLOPT:GN_ORIG_DIRECT_L, NLOPT:LN_AUGLAG, NLOPT:LN_AUGLAG_EQ, NLOPT:LN_BOBYQA, NLOPT:LN_COBYLA, NLOPT:LN_NELDERMEAD, NLOPT:LN_PRAXIS, NLOPT:LN_SBPLX, TADAH:ANNEAL, TADAH:ANNEAL_PA, TADAH:ANNEAL_PT, TADAH:GRID, TADAH:RANDOM); an NLopt MLSL or AUGLAG algorithm is accepted with a derivative-free INNER block."
+error = "the STRATEGY-level optimiser: NLOPT:LD_LBFGS is gradient-based, and a target file with PC_LAMMPS or PC_FAILPROBE lines (PC_LAMMPS on line 2) takes a gradient-free optimiser (ASA:ASA, DLIB:GFS, NLOPT:GN_AGS, NLOPT:GN_CRS2_LM, NLOPT:GN_DIRECT, NLOPT:GN_DIRECT_L, NLOPT:GN_DIRECT_L_NOSCAL, NLOPT:GN_DIRECT_L_RAND, NLOPT:GN_ESCH, NLOPT:GN_ISRES, NLOPT:GN_MLSL, NLOPT:GN_MLSL_LDS, NLOPT:GN_ORIG_DIRECT, NLOPT:GN_ORIG_DIRECT_L, NLOPT:LN_AUGLAG, NLOPT:LN_AUGLAG_EQ, NLOPT:LN_BOBYQA, NLOPT:LN_COBYLA, NLOPT:LN_NELDERMEAD, NLOPT:LN_PRAXIS, NLOPT:LN_SBPLX, TADAH:ANNEAL, TADAH:ANNEAL_PA, TADAH:ANNEAL_PT, TADAH:GRID, TADAH:RANDOM); an NLopt MLSL or AUGLAG algorithm is accepted with a gradient-free INNER block."
 
 [[rule.invalid]]
 wrap = "none"
@@ -5464,7 +5454,7 @@ MAXEVAL 5
 ENDEXPLORE
 ENDSTRATEGY
 ENDOPTIMIZER'''
-error = "--hpotarget defines PC_FAILPROBE on line 2 but EXPLORE's optimiser NLOPT:LD_LBFGS is gradient-based. A PC_LAMMPS or PC_FAILPROBE line requires a gradient-free optimiser (ASA:ASA, DLIB:GFS, NLOPT:GN_AGS, NLOPT:GN_CRS2_LM, NLOPT:GN_DIRECT, NLOPT:GN_DIRECT_L, NLOPT:GN_DIRECT_L_NOSCAL, NLOPT:GN_DIRECT_L_RAND, NLOPT:GN_ESCH, NLOPT:GN_ISRES, NLOPT:GN_MLSL, NLOPT:GN_MLSL_LDS, NLOPT:GN_ORIG_DIRECT, NLOPT:GN_ORIG_DIRECT_L, NLOPT:LN_AUGLAG, NLOPT:LN_AUGLAG_EQ, NLOPT:LN_BOBYQA, NLOPT:LN_COBYLA, NLOPT:LN_NELDERMEAD, NLOPT:LN_PRAXIS, NLOPT:LN_SBPLX, TADAH:ANNEAL, TADAH:ANNEAL_PA, TADAH:ANNEAL_PT, TADAH:GRID, TADAH:RANDOM); an NLopt MLSL or AUGLAG algorithm is accepted with a derivative-free INNER block."
+error = "the PRESTAGE exploration (EXPLORE block): NLOPT:LD_LBFGS is gradient-based, and a target file with PC_LAMMPS or PC_FAILPROBE lines (PC_FAILPROBE on line 2) takes a gradient-free optimiser (ASA:ASA, DLIB:GFS, NLOPT:GN_AGS, NLOPT:GN_CRS2_LM, NLOPT:GN_DIRECT, NLOPT:GN_DIRECT_L, NLOPT:GN_DIRECT_L_NOSCAL, NLOPT:GN_DIRECT_L_RAND, NLOPT:GN_ESCH, NLOPT:GN_ISRES, NLOPT:GN_MLSL, NLOPT:GN_MLSL_LDS, NLOPT:GN_ORIG_DIRECT, NLOPT:GN_ORIG_DIRECT_L, NLOPT:LN_AUGLAG, NLOPT:LN_AUGLAG_EQ, NLOPT:LN_BOBYQA, NLOPT:LN_COBYLA, NLOPT:LN_NELDERMEAD, NLOPT:LN_PRAXIS, NLOPT:LN_SBPLX, TADAH:ANNEAL, TADAH:ANNEAL_PA, TADAH:ANNEAL_PT, TADAH:GRID, TADAH:RANDOM); an NLopt MLSL or AUGLAG algorithm is accepted with a gradient-free INNER block."
 
 [[rule]]
 id = "RULE.PC_LAMMPS_local_optimiser"
@@ -5472,7 +5462,7 @@ title = """\
 With PC_LAMMPS or PC_FAILPROBE, MLSL and AUGLAG search locally without gradients"""
 check = "parse"
 keys = ["ROOT.PC_LAMMPS", "ROOT.PC_FAILPROBE", "BLOCK.INNER"]
-msg = "--hpotarget defines {key} on line {line} but {block} optimiser {lib}:{algo} takes a gradient: NLopt's MLSL and AUGLAG take one for their local search, and NLopt's default local optimiser, {name}, is gradient-based; an INNER block with a derivative-free one takes none. A PC_LAMMPS or PC_FAILPROBE line requires a gradient-free optimiser ({list}); an NLopt MLSL or AUGLAG algorithm is accepted with a derivative-free INNER block."
+msg = "{phase}: {lib}:{algo} takes a gradient: NLopt's MLSL and AUGLAG take one for their local search, and NLopt's default local optimiser, {name}, is gradient-based; with an INNER block that names a gradient-free local NLopt algorithm it takes none. A target file with PC_LAMMPS or PC_FAILPROBE lines ({key} on line {line}) takes a gradient-free optimiser ({list})."
 doc = """\
 With a PC_LAMMPS or PC_FAILPROBE line, an NLopt MLSL or AUGLAG without an \
 INNER block is refused when NLopt's default local optimiser takes \
@@ -5494,7 +5484,7 @@ LIB NLOPT
 ALGO GD_MLSL
 MAXEVAL 10
 ENDOPTIMIZER'''
-error = "--hpotarget defines PC_LAMMPS on line 2 but OPTIMIZER's optimiser NLOPT:GD_MLSL takes a gradient: NLopt's MLSL and AUGLAG take one for their local search, and NLopt's default local optimiser, NLOPT:LD_MMA, is gradient-based; an INNER block with a derivative-free one takes none. A PC_LAMMPS or PC_FAILPROBE line requires a gradient-free optimiser (ASA:ASA, DLIB:GFS, NLOPT:GN_AGS, NLOPT:GN_CRS2_LM, NLOPT:GN_DIRECT, NLOPT:GN_DIRECT_L, NLOPT:GN_DIRECT_L_NOSCAL, NLOPT:GN_DIRECT_L_RAND, NLOPT:GN_ESCH, NLOPT:GN_ISRES, NLOPT:GN_MLSL, NLOPT:GN_MLSL_LDS, NLOPT:GN_ORIG_DIRECT, NLOPT:GN_ORIG_DIRECT_L, NLOPT:LN_AUGLAG, NLOPT:LN_AUGLAG_EQ, NLOPT:LN_BOBYQA, NLOPT:LN_COBYLA, NLOPT:LN_NELDERMEAD, NLOPT:LN_PRAXIS, NLOPT:LN_SBPLX, TADAH:ANNEAL, TADAH:ANNEAL_PA, TADAH:ANNEAL_PT, TADAH:GRID, TADAH:RANDOM); an NLopt MLSL or AUGLAG algorithm is accepted with a derivative-free INNER block."
+error = "the STRATEGY-level optimiser: NLOPT:GD_MLSL takes a gradient: NLopt's MLSL and AUGLAG take one for their local search, and NLopt's default local optimiser, NLOPT:LD_MMA, is gradient-based; with an INNER block that names a gradient-free local NLopt algorithm it takes none. A target file with PC_LAMMPS or PC_FAILPROBE lines (PC_LAMMPS on line 2) takes a gradient-free optimiser (ASA:ASA, DLIB:GFS, NLOPT:GN_AGS, NLOPT:GN_CRS2_LM, NLOPT:GN_DIRECT, NLOPT:GN_DIRECT_L, NLOPT:GN_DIRECT_L_NOSCAL, NLOPT:GN_DIRECT_L_RAND, NLOPT:GN_ESCH, NLOPT:GN_ISRES, NLOPT:GN_MLSL, NLOPT:GN_MLSL_LDS, NLOPT:GN_ORIG_DIRECT, NLOPT:GN_ORIG_DIRECT_L, NLOPT:LN_AUGLAG, NLOPT:LN_AUGLAG_EQ, NLOPT:LN_BOBYQA, NLOPT:LN_COBYLA, NLOPT:LN_NELDERMEAD, NLOPT:LN_PRAXIS, NLOPT:LN_SBPLX, TADAH:ANNEAL, TADAH:ANNEAL_PA, TADAH:ANNEAL_PT, TADAH:GRID, TADAH:RANDOM)."
 
 [[rule]]
 id = "RULE.PC_LAMMPS_INNER_local_optimiser"
@@ -5502,7 +5492,7 @@ title = """\
 With PC_LAMMPS or PC_FAILPROBE no INNER MLSL or AUGLAG uses gradients"""
 check = "parse"
 keys = ["ROOT.PC_LAMMPS", "ROOT.PC_FAILPROBE", "BLOCK.INNER"]
-msg = "--hpotarget defines {key} on line {line} but {block} optimiser {lib}:{algo} takes a gradient: NLopt's MLSL and AUGLAG take one for their local search, and NLopt's default local optimiser, {name}, is gradient-based. A PC_LAMMPS or PC_FAILPROBE line requires a gradient-free optimiser, and an INNER search is a local NLopt algorithm; the INNER block takes a derivative-free one ({list})."
+msg = "{phase}: {lib}:{algo} takes a gradient: NLopt's MLSL and AUGLAG take one for their local search, and NLopt's default local optimiser, {name}, is gradient-based. A target file with PC_LAMMPS or PC_FAILPROBE lines ({key} on line {line}) takes a gradient-free optimiser, and an INNER block takes a local NLopt algorithm; the gradient-free ones are {list}."
 doc = """\
 With a PC_LAMMPS or PC_FAILPROBE line, an INNER block that names an NLopt \
 MLSL or AUGLAG is refused when NLopt's default local optimiser takes \
@@ -5530,7 +5520,7 @@ ALGO LD_AUGLAG
 ENDINNER
 ENDSTRATEGY
 ENDOPTIMIZER'''
-error = "--hpotarget defines PC_LAMMPS on line 2 but INNER's optimiser NLOPT:LD_AUGLAG takes a gradient: NLopt's MLSL and AUGLAG take one for their local search, and NLopt's default local optimiser, NLOPT:LD_MMA, is gradient-based. A PC_LAMMPS or PC_FAILPROBE line requires a gradient-free optimiser, and an INNER search is a local NLopt algorithm; the INNER block takes a derivative-free one (NLOPT:LN_AUGLAG, NLOPT:LN_AUGLAG_EQ, NLOPT:LN_BOBYQA, NLOPT:LN_COBYLA, NLOPT:LN_NELDERMEAD, NLOPT:LN_PRAXIS, NLOPT:LN_SBPLX)."
+error = "the INNER block of the STRATEGY-level optimiser: NLOPT:LD_AUGLAG takes a gradient: NLopt's MLSL and AUGLAG take one for their local search, and NLopt's default local optimiser, NLOPT:LD_MMA, is gradient-based. A target file with PC_LAMMPS or PC_FAILPROBE lines (PC_LAMMPS on line 2) takes a gradient-free optimiser, and an INNER block takes a local NLopt algorithm; the gradient-free ones are NLOPT:LN_AUGLAG, NLOPT:LN_AUGLAG_EQ, NLOPT:LN_BOBYQA, NLOPT:LN_COBYLA, NLOPT:LN_NELDERMEAD, NLOPT:LN_PRAXIS, NLOPT:LN_SBPLX."
 
 [[rule]]
 id = "RULE.PC_LAMMPS_INNER_gradient_free"
@@ -5538,7 +5528,7 @@ title = """\
 With PC_LAMMPS or PC_FAILPROBE an INNER algorithm is derivative-free"""
 check = "parse"
 keys = ["ROOT.PC_LAMMPS", "ROOT.PC_FAILPROBE", "BLOCK.INNER"]
-msg = "--hpotarget defines {key} on line {line} but {block} optimiser {lib}:{algo} is gradient-based. A PC_LAMMPS or PC_FAILPROBE line requires a gradient-free optimiser, and an INNER search is a local NLopt algorithm; the INNER block takes a derivative-free one ({list})."
+msg = "{phase}: {lib}:{algo} is gradient-based. A target file with PC_LAMMPS or PC_FAILPROBE lines ({key} on line {line}) takes a gradient-free optimiser, and an INNER block takes a local NLopt algorithm; the gradient-free ones are {list}."
 doc = """\
 With a PC_LAMMPS or PC_FAILPROBE line, an INNER block names a local NLopt \
 algorithm without gradients. The refusal names the ALGO line of the INNER \
@@ -5583,7 +5573,7 @@ ALGO LD_LBFGS
 ENDINNER
 ENDSTRATEGY
 ENDOPTIMIZER'''
-error = "--hpotarget defines PC_LAMMPS on line 2 but INNER's optimiser NLOPT:LD_LBFGS is gradient-based. A PC_LAMMPS or PC_FAILPROBE line requires a gradient-free optimiser, and an INNER search is a local NLopt algorithm; the INNER block takes a derivative-free one (NLOPT:LN_AUGLAG, NLOPT:LN_AUGLAG_EQ, NLOPT:LN_BOBYQA, NLOPT:LN_COBYLA, NLOPT:LN_NELDERMEAD, NLOPT:LN_PRAXIS, NLOPT:LN_SBPLX)."
+error = "the INNER block of the STRATEGY-level optimiser: NLOPT:LD_LBFGS is gradient-based. A target file with PC_LAMMPS or PC_FAILPROBE lines (PC_LAMMPS on line 2) takes a gradient-free optimiser, and an INNER block takes a local NLopt algorithm; the gradient-free ones are NLOPT:LN_AUGLAG, NLOPT:LN_AUGLAG_EQ, NLOPT:LN_BOBYQA, NLOPT:LN_COBYLA, NLOPT:LN_NELDERMEAD, NLOPT:LN_PRAXIS, NLOPT:LN_SBPLX."
 
 [[rule]]
 id = "RULE.loss_source_required"
@@ -5886,7 +5876,7 @@ id = "RULE.optim_LAMBDA_OALGO3_intercepts"
 title = "OPTIM LAMBDA under OALGO 3 needs no intercept column"
 check = "startup"
 keys = ["ROOT.OPTIM"]
-msg = "OPTIM LAMBDA: OALGO 3 penalises every weight alike, and the fit has {count} intercept column(s) (BIAS true with ATOM), which a ridge penalty leaves out, so every fit refuses a LAMBDA other than 0: each candidate of the box but 0 would fail its evaluation. OALGO 1, 2 or 4 fits a positive LAMBDA with the intercepts unpenalised."
+msg = "OPTIM LAMBDA: OALGO 3 penalises every coefficient alike, and the fit has {count} intercept column(s) (BIAS true with ATOM), which a ridge penalty leaves out, so every fit refuses a LAMBDA other than 0: each candidate of the box but 0 would fail its evaluation. OALGO 1, 2 or 4 fits a positive LAMBDA with the intercepts unpenalised."
 doc = """\
 Under OALGO 3 a fit with an intercept column that FIXINDEX does not fix \
 refuses a LAMBDA other than 0, so tadah hpo refuses OPTIM LAMBDA when the \
@@ -5900,7 +5890,7 @@ check = "startup"
 context = "lines_oalgo3_bias_lambda0"
 at = "none"
 text = "OPTIM LAMBDA (1) 0 1e-2"
-error = "OPTIM LAMBDA: OALGO 3 penalises every weight alike, and the fit has 1 intercept column(s) (BIAS true with ATOM), which a ridge penalty leaves out, so every fit refuses a LAMBDA other than 0: each candidate of the box but 0 would fail its evaluation. OALGO 1, 2 or 4 fits a positive LAMBDA with the intercepts unpenalised."
+error = "OPTIM LAMBDA: OALGO 3 penalises every coefficient alike, and the fit has 1 intercept column(s) (BIAS true with ATOM), which a ridge penalty leaves out, so every fit refuses a LAMBDA other than 0: each candidate of the box but 0 would fail its evaluation. OALGO 1, 2 or 4 fits a positive LAMBDA with the intercepts unpenalised."
 
 [[rule]]
 id = "RULE.fit_krr_implementation"
@@ -6188,7 +6178,7 @@ check = "startup"
 context = "lines_pinned_all"
 at = "none"
 text = "OPTIM ESIGMA (1) 0.5 2"
-error = "OPTIM ESIGMA: the evaluations of this run fit no coefficient (FIXINDEX pins every weight), so ESIGMA would change nothing and every candidate would give the same potential."
+error = "OPTIM ESIGMA: the evaluations of this run fit no coefficient (FIXINDEX fixes every coefficient), so ESIGMA would change nothing and every candidate would give the same potential."
 
 # ============================================== wrappers and contexts ====
 

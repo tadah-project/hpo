@@ -204,9 +204,10 @@ TEST_CASE("startup warnings: the cutoff checks' warnings reach standard "
         const Startup s = startup(
             blip_ctx("5.5 3.0"),
             "OPTIM SGRID2B (1) 1.0 3.0\nPC_ERMSE 0 1\n" + kOptimizer);
-        check_warned(s, "CGRID2B bump 1 centre 5.5 lies beyond RCUT2B = 5 "
-                        "(pathological: only its inner shoulder can "
-                        "contribute) — move the centre below the cutoff.");
+        check_warned(s, "CGRID2B bump 1 has its centre 5.5 beyond RCUT2B = 5: "
+                        "only its inner shoulder reaches the neighbours; a "
+                        "centre below the cutoff (tadah refit --edit) gives "
+                        "the whole bump.");
     }
     {
         const Startup s = startup(
@@ -219,9 +220,12 @@ TEST_CASE("startup warnings: the cutoff checks' warnings reach standard "
     {
         const Startup s = startup(
             knot_ctx(5.0), "OPTIM RCUT2B (1) 4.5 5.5\nPC_ERMSE 0 1\n" + kOptimizer);
+        /* It ended "... re-derived on every evaluation." */
         check_warned(s, "OPTIM RCUT2B has no effect for the knot basis "
                         "family: the effective cutoff is the largest CGRID2B "
-                        "knot and RCUT2B is re-derived on every evaluation.");
+                        "knot and RCUT2B is re-derived on every evaluation, "
+                        "so the OPTIM RCUT2B line adds a search parameter "
+                        "without effect; CGRID2B sets the effective cutoff.");
     }
 }
 

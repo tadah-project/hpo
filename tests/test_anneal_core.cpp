@@ -536,7 +536,7 @@ TEST_CASE("anneal::Knobs::parse validation errors", "[HPO][anneal_core][knobs]")
         pt.algo = "ANNEAL_PT";
         pt.param["T_INIT"] = 1.0;  /* PT/PA take T_HOT */
         REQUIRE_THROWS_WITH(anneal::Knobs::parse(pt, anneal::AlgoKind::PT),
-                            Catch::Contains("use T_HOT here"));
+                            Catch::Contains("TADAH:ANNEAL_PT and TADAH:ANNEAL_PA take PARAM T_HOT"));
     }
     SECTION("renamed keys are hard errors with migration hints") {
         auto sp = bare_spec();
@@ -724,7 +724,7 @@ TEST_CASE("anneal::Knobs::parse validation errors", "[HPO][anneal_core][knobs]")
         corana.param["CHAIN_LENGTH"] = 5.0;
         REQUIRE_THROWS_WITH(
             anneal::Knobs::parse(corana, anneal::AlgoKind::Serial),
-            Catch::Contains("CLASSIC variant"));
+            Catch::Contains("CLASSIC kernel, and PARAM CORANA ON selects"));
 
         auto pa = bare_spec();
         pa.algo = "ANNEAL_PA";
@@ -1467,7 +1467,8 @@ TEST_CASE("anneal::make_initial_steps enforces Corana floor and cap",
     sp.high = {std::numeric_limits<double>::denorm_min()};
     kb = anneal::Knobs::parse(sp, anneal::AlgoKind::Serial);
     REQUIRE_THROWS_WITH(anneal::make_initial_steps(sp, kb),
-                        Catch::Contains("proposal scale underflowed"));
+                        Catch::Contains("proposal scale of dimension 1 of the "
+                                        "search space underflowed"));
     sp.param["STEP_FRAC"] = 1.0;     /* full width is still representable */
     kb = anneal::Knobs::parse(sp, anneal::AlgoKind::Serial);
     CHECK(anneal::make_initial_steps(sp, kb)[0] > 0.0);

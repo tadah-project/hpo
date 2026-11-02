@@ -154,12 +154,16 @@ TEST_CASE("key lines: a STEP an optimiser does not use is refused at the "
  * STRATEGY-level optimiser: NLOPT:LN_SBPLX: STEP must be a fraction of the
  * OPTIM width in (0, 0.5] (got 0.7); ...\nLine: STEP 0.7" for the
  * block-wide STEP, and the override's own line for "the STRATEGY-level
- * optimiser: NLOPT:LN_SBPLX STEP CGRID2B: STEP must be > 0 and finite (got
- * -0.1)" (line 6, after a valid block-wide STEP on line 5);
+ * optimiser: NLOPT:LN_SBPLX: STEP CGRID2B must be > 0 and finite (got
+ * -0.1)" (line 6, after a valid block-wide STEP on line 5; it said
+ * "NLOPT:LN_SBPLX STEP CGRID2B: STEP must be ...", and the fraction
+ * refusal "...; values above 0.5 cannot satisfy BOBYQA's width >= 2*step
+ * rule and exceed NLopt's own 0.25 default");
  * an override that names a key without an OPTIM line ("STEP override names
  * OPTIM key 'RCUT2B' which is not optimised (no OPTIM line for it)") and an
- * index that is not searched ("STEP CGRID2B(3): index 3 is not an OPTIM'd
- * index of CGRID2B") are refused at the override's line. Overrides that
+ * index that is not searched ("STEP CGRID2B(3): index 3 of CGRID2B is not
+ * on an OPTIM line"; it said "is not an OPTIM'd index of CGRID2B") are
+ * refused at the override's line. Overrides that
  * cover only some dimensions without a block-wide STEP are a combination of
  * lines, refused at ENDOPTIMIZER (line 8) as before.
  * Before the fix: every one named ENDOPTIMIZER, and the value refusals said
@@ -174,15 +178,15 @@ TEST_CASE("key lines: a STEP value or a STEP <KEY> override is refused at "
     CHECK(refusal(block("STEP 0.7\n")) ==
           framed(5,
                  "the STRATEGY-level optimiser: NLOPT:LN_SBPLX: STEP must be "
-                 "a fraction of the OPTIM width in (0, 0.5] (got 0.7); "
-                 "values above 0.5 cannot satisfy "
-                 "BOBYQA's width >= 2*step rule and exceed NLopt's own 0.25 "
-                 "default",
+                 "a fraction of the OPTIM width in (0, 0.5] (got 0.7); a STEP "
+                 "above 0.5 cannot meet the rule of NLOPT:LN_BOBYQA that each "
+                 "width is at least twice the step, and exceeds the 0.25 that "
+                 "NLopt takes by default",
                  "STEP 0.7"));
     CHECK(refusal(block("STEP 0.1\nSTEP CGRID2B -0.1\n")) ==
           framed(6,
-                 "the STRATEGY-level optimiser: NLOPT:LN_SBPLX STEP CGRID2B: "
-                 "STEP must be > 0 and finite (got -0.1)",
+                 "the STRATEGY-level optimiser: NLOPT:LN_SBPLX: STEP CGRID2B "
+                 "must be > 0 and finite (got -0.1)",
                  "STEP CGRID2B -0.1"));
     CHECK(refusal(block("STEP 0.1\nSTEP RCUT2B 0.2\n")) ==
           framed(6,
@@ -191,26 +195,30 @@ TEST_CASE("key lines: a STEP value or a STEP <KEY> override is refused at "
                  "STEP RCUT2B 0.2"));
     CHECK(refusal(block("STEP CGRID2B(1,2) 0.2\nSTEP CGRID2B(3) 0.1\n")) ==
           framed(6,
-                 "STEP CGRID2B(3): index 3 is not an OPTIM'd index of CGRID2B",
+                 "STEP CGRID2B(3): index 3 of CGRID2B is not on an OPTIM line",
                  "STEP CGRID2B(3) 0.1"));
     CHECK(refusal(block("STEP CGRID2B(1) 0.2\n")) ==
           framed(8,
                  "STEP overrides cover only some dimensions and no block-wide "
-                 "STEP is set; add `STEP <frac>` or override every OPTIM'd "
-                 "dimension",
+                 "STEP is set; the block needs `STEP <frac>` or an override "
+                 "for every search parameter",
                  "ENDOPTIMIZER"));
 }
 
 /* Pins: beside a PC_LAMMPS line (line 11), a gradient-based optimiser is
  * refused at its ALGO line, and the message names the PC_LAMMPS line:
- * "Error on line 4: --hpotarget defines PC_LAMMPS on line 11 but
- * OPTIMIZER's optimiser NLOPT:LD_LBFGS is gradient-based. ...\nLine: ALGO
- * LD_LBFGS" -- in the STRATEGY block, in an EXPLORE block ("EXPLORE's", the
- * EXPLORE block's ALGO line) and in an INNER block ("INNER's", the INNER
- * block's ALGO line); a GRAD_STRATEGY line beside a PC_FAILPROBE line (and
- * no PC_LAMMPS line) is refused at the GRAD_STRATEGY line: "--hpotarget
- * defines PC_FAILPROBE on line 12 but OPTIMIZER's GRAD_STRATEGY is set.
- * ...".
+ * "Error on line 4: the STRATEGY-level optimiser: NLOPT:LD_LBFGS is
+ * gradient-based, and a target file with PC_LAMMPS or PC_FAILPROBE lines
+ * (PC_LAMMPS on line 11) ...\nLine: ALGO LD_LBFGS" -- in the STRATEGY
+ * block, in an EXPLORE block ("the PRESTAGE exploration (EXPLORE block)",
+ * the EXPLORE block's ALGO line) and in an INNER block ("the INNER block of
+ * the STRATEGY-level optimiser", the INNER block's ALGO line); a
+ * GRAD_STRATEGY line beside a PC_FAILPROBE line (and no PC_LAMMPS line) is
+ * refused at the GRAD_STRATEGY line: "the STRATEGY-level optimiser:
+ * GRAD_STRATEGY is refused in a target file with PC_LAMMPS or PC_FAILPROBE
+ * lines (PC_FAILPROBE on line 12): ...". The messages said "--hpotarget
+ * defines PC_LAMMPS on line 11 but OPTIMIZER's optimiser ..." and "...
+ * OPTIMIZER's GRAD_STRATEGY is set. ... Drop the GRAD_STRATEGY line.".
  * Before the fix: each named the END line of its block (ENDOPTIMIZER,
  * ENDEXPLORE, ENDINNER) and no PC line ("--hpotarget defines PC_LAMMPS
  * but ..."). */
@@ -221,9 +229,7 @@ TEST_CASE("key lines: a gradient beside a PC_LAMMPS line is refused at the "
     const Script script;
     const std::string pc = "PC_LAMMPS --script " + script.path.string() +
                            " --varloss e 1.0 100\n";
-    const std::string free_list =
-        " A PC_LAMMPS or PC_FAILPROBE line requires a gradient-free "
-        "optimiser (";
+    const std::string free_list = ") takes a gradient-free optimiser (";
     {
         // lines 1-8 the OPTIMIZER block, 9-10 OPTIM, 11 PC_LAMMPS
         const std::string config =
@@ -231,9 +237,10 @@ TEST_CASE("key lines: a gradient beside a PC_LAMMPS line is refused at the "
             "ENDSTRATEGY\nENDOPTIMIZER\nLOSS L2\n" + kSpace + pc;
         const std::string got = refusal(config);
         INFO(got);
-        CHECK(got.rfind("Error on line 4: --hpotarget defines PC_LAMMPS on "
-                        "line 11 but OPTIMIZER's optimiser NLOPT:LD_LBFGS is "
-                        "gradient-based." + free_list, 0) == 0);
+        CHECK(got.rfind("Error on line 4: the STRATEGY-level optimiser: "
+                        "NLOPT:LD_LBFGS is gradient-based, and a target file "
+                        "with PC_LAMMPS or PC_FAILPROBE lines (PC_LAMMPS on "
+                        "line 11" + free_list, 0) == 0);
         CHECK(ends_with(got, "\nLine: ALGO LD_LBFGS"));
     }
     {
@@ -245,9 +252,10 @@ TEST_CASE("key lines: a gradient beside a PC_LAMMPS line is refused at the "
             pc;
         const std::string got = refusal(config);
         INFO(got);
-        CHECK(got.rfind("Error on line 8: --hpotarget defines PC_LAMMPS on "
-                        "line 17 but EXPLORE's optimiser NLOPT:LD_LBFGS is "
-                        "gradient-based." + free_list, 0) == 0);
+        CHECK(got.rfind("Error on line 8: the PRESTAGE exploration (EXPLORE "
+                        "block): NLOPT:LD_LBFGS is gradient-based, and a "
+                        "target file with PC_LAMMPS or PC_FAILPROBE lines "
+                        "(PC_LAMMPS on line 17" + free_list, 0) == 0);
         CHECK(ends_with(got, "\nLine: ALGO LD_LBFGS"));
     }
     {
@@ -258,12 +266,13 @@ TEST_CASE("key lines: a gradient beside a PC_LAMMPS line is refused at the "
             "ENDOPTIMIZER\nLOSS L2\n" + kSpace + pc;
         const std::string got = refusal(config);
         INFO(got);
-        CHECK(got.rfind("Error on line 8: --hpotarget defines PC_LAMMPS on "
-                        "line 15 but INNER's optimiser NLOPT:LD_LBFGS is "
-                        "gradient-based. A PC_LAMMPS or PC_FAILPROBE line "
-                        "requires a gradient-free optimiser, and an INNER "
-                        "search is a local NLopt algorithm; the INNER block "
-                        "takes a derivative-free one (", 0) == 0);
+        CHECK(got.rfind("Error on line 8: the INNER block of the "
+                        "STRATEGY-level optimiser: NLOPT:LD_LBFGS is "
+                        "gradient-based. A target file with PC_LAMMPS or "
+                        "PC_FAILPROBE lines (PC_LAMMPS on line 15) takes a "
+                        "gradient-free optimiser, and an INNER block takes a "
+                        "local NLopt algorithm; the gradient-free ones are ",
+                        0) == 0);
         CHECK(ends_with(got, "\nLine: ALGO LD_LBFGS"));
     }
     {
@@ -275,18 +284,22 @@ TEST_CASE("key lines: a gradient beside a PC_LAMMPS line is refused at the "
             script.path.string() + " --outvar s\nPC_ERMSE 0 1\n";
         CHECK(refusal(config) ==
               framed(5,
-                     "--hpotarget defines PC_FAILPROBE on line 12 but "
-                     "OPTIMIZER's GRAD_STRATEGY is set. A PC_LAMMPS or "
-                     "PC_FAILPROBE line does not support analytical/numerical/"
-                     "hybrid gradients. Drop the GRAD_STRATEGY line.",
+                     "the STRATEGY-level optimiser: GRAD_STRATEGY is refused "
+                     "in a target file with PC_LAMMPS or PC_FAILPROBE lines "
+                     "(PC_FAILPROBE on line 12): tadah hpo takes no gradient "
+                     "(ANALYTICAL, NUMERICAL or HYBRID) of a loss that runs "
+                     "LAMMPS scripts, and such a file takes a gradient-free "
+                     "optimiser",
                      "GRAD_STRATEGY NUMERICAL"));
     }
 }
 
 /* Pins: GRAD_STRATEGY NUMERICAL beside a PC_OBSERVABLE line is refused at
- * the GRAD_STRATEGY line (line 5): "Error on line 5: --hpotarget defines
- * PC_OBSERVABLE but OPTIMIZER's GRAD_STRATEGY=NUMERICAL is set. ...\nLine:
- * GRAD_STRATEGY NUMERICAL".
+ * the GRAD_STRATEGY line (line 5): "Error on line 5: the STRATEGY-level
+ * optimiser: GRAD_STRATEGY NUMERICAL is refused in a target file with
+ * PC_OBSERVABLE lines (PC_OBSERVABLE on line 10): ...\nLine: GRAD_STRATEGY
+ * NUMERICAL" (it said "--hpotarget defines PC_OBSERVABLE but OPTIMIZER's
+ * GRAD_STRATEGY=NUMERICAL is set. ...").
  * Before the fix: "Error on line 8: ...\nLine: ENDOPTIMIZER". */
 TEST_CASE("key lines: GRAD_STRATEGY NUMERICAL beside a PC_OBSERVABLE line is "
           "refused at the GRAD_STRATEGY line",
@@ -299,7 +312,9 @@ TEST_CASE("key lines: GRAD_STRATEGY NUMERICAL beside a PC_OBSERVABLE line is "
         "--weight 1000 --hotvar a0 2.7 3.9 3.3\n" + kSpace;
     const std::string got = refusal(config);
     INFO(got);
-    CHECK(got.rfind("Error on line 5: --hpotarget defines PC_OBSERVABLE but "
-                    "OPTIMIZER's GRAD_STRATEGY=NUMERICAL is set.", 0) == 0);
+    CHECK(got.rfind("Error on line 5: the STRATEGY-level optimiser: "
+                    "GRAD_STRATEGY NUMERICAL is refused in a target file with "
+                    "PC_OBSERVABLE lines (PC_OBSERVABLE on line 10): ", 0) ==
+          0);
     CHECK(ends_with(got, "\nLine: GRAD_STRATEGY NUMERICAL"));
 }

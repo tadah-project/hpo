@@ -81,7 +81,8 @@ TEST_CASE("HPOLog diagnostics state observations without inferring causes",
     const std::string mixed = read_log(mixed_path);
     CHECK(mixed.find("50.0% of evaluations produced a non-finite loss")
           != std::string::npos);
-    CHECK(mixed.find("This counter does not identify the cause.")
+    CHECK(mixed.find("This counter does not identify the cause; the matching "
+                     "WARNING")
           != std::string::npos);
     CHECK(mixed.find("evaluation produced NaN/Inf") != std::string::npos);
     CHECK(mixed.find("most evaluations") == std::string::npos);
@@ -160,7 +161,7 @@ TEST_CASE("HPOLog diagnostics judge every unusable loss, not only NaN/Inf "
             CHECK(text.find("Evaluations that threw  : " +
                             std::to_string(count(EvalLoss::Threw)) +
                             "  (") != std::string::npos);
-            CHECK((text.find("raised an exception and scored FAIL_SCORE") !=
+            CHECK((text.find("raised an exception and scored FAILSCORE") !=
                    std::string::npos) == (count(EvalLoss::Threw) > 0));
             for (const char* line :
                  {"[ok] Every evaluation produced a usable loss.",
@@ -337,8 +338,9 @@ TEST_CASE("HPOLog I/O diagnostics vouch for the best potential only when it "
     };
 
     const std::string ok = run(false, true);
-    CHECK(ok.find("Transient I/O retries   : 2 (best-potential 0, per-eval "
-                  "logs/archives 2); rows lost 3; archives lost 0") != std::string::npos);
+    CHECK(ok.find("Transient I/O retries   : 2 (best-potential 0, "
+                  "per-evaluation logs and archives 2); rows lost 3; archives "
+                  "lost 0") != std::string::npos);
     CHECK(ok.find("best potential is published separately and is complete")
           != std::string::npos);
 
@@ -349,7 +351,8 @@ TEST_CASE("HPOLog I/O diagnostics vouch for the best potential only when it "
 
     const std::string none = run(false, false);
     CHECK(none.find("is complete") == std::string::npos);
-    CHECK(none.find("not written after retrying; see the WARNING entries.")
+    CHECK(none.find("not written after retrying; the WARNING entries name "
+                    "them.")
           != std::string::npos);
     log.reset_for_test();
 }

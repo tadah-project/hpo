@@ -1010,7 +1010,8 @@ TEST_CASE("CERES validators reject integer-valued parameters",
     auto sp = make_minimal_ceres_spec("STEEPEST_DESCENT");
     sp.is_int = {true, false};
     CHECK_THROWS_WITH(tadah::hpo::detail::validate_ceres_steepest_spec(sp),
-                      Catch::Contains("integer-valued"));
+                      Catch::Contains("does not support integer search "
+                                      "parameters"));
 }
 
 TEST_CASE("CERES validators reject FTOL_ABS / XTOL_ABS",

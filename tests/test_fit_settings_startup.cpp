@@ -433,10 +433,10 @@ TEST_CASE("tadah hpo refuses at startup OALGO 3 with a LAMBDA other than 0 "
         const std::string line = "OPTIM LAMBDA (1) 0 1e-2\n";
         const Context c = bias("0");
         CHECK(startup_error(c, target(line)) ==
-              "OPTIM LAMBDA: OALGO 3 penalises every weight alike, and the "
-              "fit has 1 intercept column(s) (BIAS true with ATOM), which a "
-              "ridge penalty leaves out, so every fit refuses a LAMBDA other "
-              "than 0: each candidate of the box but 0 would fail its "
+              "OPTIM LAMBDA: OALGO 3 penalises every coefficient alike, and "
+              "the fit has 1 intercept column(s) (BIAS true with ATOM), which "
+              "a ridge penalty leaves out, so every fit refuses a LAMBDA "
+              "other than 0: each candidate of the box but 0 would fail its "
               "evaluation. OALGO 1, 2 or 4 fits a positive LAMBDA with the "
               "intercepts unpenalised.");
         Context pinned = bias("0");
@@ -719,7 +719,7 @@ TEST_CASE("The evidence approximation of tadah hpo is said once per run in "
         CHECK(count_of(journal, "LAMBDA -1 (evidence approximation): "
                                 "iteration 1 gave alpha") == 1);
         CHECK(count_of(journal, "once per run") == 1);
-        CHECK(count_of(journal, "eval-thread caught throw") == 0);
+        CHECK(count_of(journal, "the evaluation stopped on an error") == 0);
         const std::string threw_line = [&] {
             const std::size_t p = journal.find("Evaluations that threw");
             return p == std::string::npos

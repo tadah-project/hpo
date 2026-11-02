@@ -156,7 +156,8 @@ std::size_t warnings_with(const std::vector<tadah::hpo::JournalNote>& notes,
  * journal: "the INIT block on line 4: METHOD WARM <file> (line 5) reads
  * best_pot.tadah, the file this run writes its best potential to: the run
  * removes it before its first evaluation and writes its best potential
- * there, so only a copy under another name keeps this seed."; the file is
+ * there, so only a copy under another name keeps this starting potential."
+ * (it said "... keeps this seed."); the file is
  * read (the point is the file's). A WARM seed of another name, and a
  * best_pot.tadah that is a symbolic link to it (the run replaces the link,
  * not the file it leads to), give none.
@@ -174,7 +175,7 @@ TEST_CASE("WARM of the run's own best_pot.tadah is warned about",
                " (line 5) reads best_pot.tadah, the file this run writes its "
                "best potential to: the run removes it before its first "
                "evaluation and writes its best potential there, so only a "
-               "copy under another name keeps this seed.";
+               "copy under another name keeps this starting potential.";
     };
     for (const std::string& file :
          {std::string("best_pot.tadah"), std::string("./best_pot.tadah"),

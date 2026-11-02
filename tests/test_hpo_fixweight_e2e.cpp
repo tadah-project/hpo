@@ -657,7 +657,8 @@ JournaledEval journaled_eval(HealthHost& h, const std::vector<double>& x) {
  * but so large that the weights of the OALGO 4 solve overflow, which
  * LinearRegressor::train (Tadah.MODELS) refuses. The evaluation scores
  * FAIL_SCORE, its trainer is not trained, the health monitor records no
- * weights for it (no "iter_health" line), and hpo_run.log has "eval <n>:
+ * weights for it (no "HEALTH_LOG: eval" line; it was "iter_health"), and
+ * hpo_run.log has "eval <n>:
  * eval-thread caught throw, submitting FAIL_SCORE ..." with "OALGO 4: the
  * solve gave coefficients that are not finite"; it counts one evaluation
  * that threw and no NaN/Inf clamping.
@@ -677,11 +678,12 @@ TEST_CASE("health monitor: a fit whose coefficients would not be finite "
     const auto* tr = Host::tls_trainer_for_test();
     REQUIRE(tr != nullptr);
     CHECK_FALSE(tr->model->is_trained());
-    CHECK(r.printed.find("iter_health") == std::string::npos);
+    CHECK(r.printed.find("HEALTH_LOG: eval") == std::string::npos);
     const std::string eval_no = std::to_string(Host::g_iter_value());
-    CHECK(r.journal.find("eval " + eval_no + ": eval-thread caught throw, "
-                         "submitting FAIL_SCORE to keep writer queue "
-                         "contiguous") != std::string::npos);
+    /* (it said "eval-thread caught throw, submitting FAIL_SCORE to keep
+     * writer queue contiguous") */
+    CHECK(r.journal.find("eval " + eval_no + ": the evaluation stopped on an "
+                         "error and scores FAILSCORE: ") != std::string::npos);
     CHECK(r.journal.find("OALGO 4: the solve gave coefficients that are not "
                          "finite") != std::string::npos);
     CHECK(r.threw == 1u);
@@ -695,7 +697,7 @@ TEST_CASE("health monitor: a fit whose coefficients would not be finite "
  * that the OALGO 4 solve overflows, which LinearRegressor::train refuses:
  * the evaluation scores FAIL_SCORE, the trainer is not trained, hpo_run.log
  * names the refusal ("OALGO 4: the solve gave coefficients that are not
- * finite"), and HEALTH_LOG full prints no "iter_health" line, no
+ * finite"), and HEALTH_LOG full prints no "HEALTH_LOG: eval" line, no
  * "max_abs" and no "nz_fraction" (every block count 0).
  * Before the fix (LinearRegressor::train refused no coefficients): every
  * fitted weight was nan/inf, and the case pinned that the monitor reported
@@ -715,7 +717,7 @@ TEST_CASE("health monitor: a ridge fit whose coefficients would not be "
     CHECK_FALSE(tr->model->is_trained());
     CHECK(r.journal.find("OALGO 4: the solve gave coefficients that are not "
                          "finite") != std::string::npos);
-    CHECK(r.printed.find("iter_health") == std::string::npos);
+    CHECK(r.printed.find("HEALTH_LOG: eval") == std::string::npos);
     CHECK(r.printed.find("max_abs") == std::string::npos);
     CHECK(r.printed.find("nz_fraction") == std::string::npos);
     for (std::size_t b : {0u, 1u}) {
@@ -733,7 +735,7 @@ TEST_CASE("health monitor: a ridge fit whose coefficients would not be "
  * four free weights are fitted to -inf, which LinearRegressor::train
  * (Tadah.MODELS) refuses before LAPACK runs. The evaluation scores
  * FAIL_SCORE, its trainer is not trained, the health monitor records no
- * weights for it (no "iter_health" line, every block count 0), and
+ * weights for it (no "HEALTH_LOG: eval" line, every block count 0), and
  * hpo_run.log has "eval <n>: eval-thread caught throw, submitting FAIL_SCORE
  * to keep writer queue contiguous (type=...): LinearRegressor::train: the
  * target vector, less the part of the FIXINDEX weights, holds a value that
@@ -786,17 +788,18 @@ TEST_CASE("health monitor: a candidate whose residual target is not finite "
     const auto* tr = Host::tls_trainer_for_test();
     REQUIRE(tr != nullptr);
     CHECK_FALSE(tr->model->is_trained());
-    CHECK(printed.find("iter_health") == std::string::npos);
+    /* No coefficient warning (it said "iter_health: ..."). */
+    CHECK(printed.find("HEALTH_LOG: eval") == std::string::npos);
     for (std::size_t b : {0u, 1u}) {
         CAPTURE(b);
         CHECK(fm.mon.warning_count(b, "max_abs") == 0u);
         CHECK(fm.mon.warning_count(b, "nz_fraction") == 0u);
     }
     const std::string eval_no = std::to_string(Host::g_iter_value());
-    CHECK(text.find("eval " + eval_no + ": eval-thread caught throw, "
-                    "submitting FAIL_SCORE to keep writer queue contiguous") !=
-          std::string::npos);
-    CHECK(text.find("): LinearRegressor::train: the target vector, less the "
+    CHECK(text.find("eval " + eval_no + ": the evaluation stopped on an "
+                    "error and scores FAILSCORE: ") != std::string::npos);
+    CHECK(text.find("FAILSCORE: LinearRegressor::train: the target vector, "
+                    "less the "
                     "part of the FIXINDEX weights, holds a value that is not "
                     "finite (nan or inf) at row 1 (of 1 data row, then 6 "
                     "ridge rows); no weights were fitted") !=
@@ -1875,7 +1878,8 @@ TEST_CASE("durable best: a transient failure is retried and reported",
     INFO(journal);
     CHECK(line_with(journal, "Optimiser status").find("FAILED") == std::string::npos);
     CHECK(line_with(journal, "Transient I/O retries").find(
-              ": 3 (best-potential 3, per-eval logs/archives 0); rows lost 0; "
+              ": 3 (best-potential 3, per-evaluation logs and archives 0); "
+              "rows lost 0; "
               "archives lost 0") != std::string::npos);
 
     const std::size_t n = total_evaluations(journal);
@@ -2003,7 +2007,7 @@ TEST_CASE("per-eval logs: one retry budget per drain, shared by every file",
     std::istringstream in(journal);
     std::string line;
     while (std::getline(in, line)) {
-        if (line.find("HPO writer: ") == std::string::npos) continue;
+        if (line.find("result files: ") == std::string::npos) continue;
         if (line.find("(not retried: this drain's retry budget was spent)") !=
             std::string::npos)
             ++spent_lines;
@@ -2026,7 +2030,7 @@ TEST_CASE("per-eval logs: one retry budget per drain, shared by every file",
 /* Once a drain's budget was spent, a file whose permanent error
  * (ENOSPC) still got its one immediate re-attempt was reported as "not
  * retried: this drain's retry budget was spent" right after "permanent
- * error, re-trying once". Slow failures (latency 150 ms) spend the 1 s
+ * error, retrying once" (it said "re-trying"). Slow failures (latency 150 ms) spend the 1 s
  * budget part-way through the eight files. */
 TEST_CASE("per-eval logs: a re-attempted permanent error is not 'not retried'",
           "[durable_e2e][failure_handling][.]")
@@ -2048,9 +2052,9 @@ TEST_CASE("per-eval logs: a re-attempted permanent error is not 'not retried'",
     std::istringstream in(journal);
     std::string line;
     while (std::getline(in, line)) {
-        if (line.find("permanent error, re-trying once") != std::string::npos)
+        if (line.find("permanent error, retrying once") != std::string::npos)
             ++reattempted;
-        if (line.find("HPO writer: ") != std::string::npos &&
+        if (line.find("result files: ") != std::string::npos &&
             line.find(" lost: writer.append failed with ENOSPC") != std::string::npos) {
             ++lost;
             CHECK(line.find("(not retried:") == std::string::npos);
@@ -2092,10 +2096,11 @@ bool contains(const std::string& s, const std::string& needle)
     return s.find(needle) != std::string::npos;
 }
 
-/* "... N eval(s) consumed ..." -> N */
+/* "... N evaluation(s) consumed ..." -> N (it said "N eval(s)
+ * consumed"). */
 std::size_t evals_consumed(const std::string& line)
 {
-    const auto p = line.find(" eval(s) consumed");
+    const auto p = line.find(" evaluation(s) consumed");
     REQUIRE(p != std::string::npos);
     auto b = line.rfind(' ', p - 1);
     return static_cast<std::size_t>(std::stoul(line.substr(b + 1, p - b - 1)));
@@ -2148,7 +2153,8 @@ TEST_CASE("durable best: a blip right after SIGINT still saves the best",
     CHECK_FALSE(contains(journal, "retry abandoned"));
     CHECK(contains(journal, "best-potential I/O: durable.rename"));
     CHECK(contains(line_with(journal, "Transient I/O retries"),
-                   ": 2 (best-potential 1, per-eval logs/archives 1); rows lost 0; "
+                   ": 2 (best-potential 1, per-evaluation logs and archives 1); "
+                   "rows lost 0; "
                    "archives lost 0"));
     CHECK(line_with(journal, "Best potential saved").find(": best_pot.tadah") !=
           std::string::npos);
@@ -2179,11 +2185,14 @@ TEST_CASE("RESTART: running out of restarts is the run's status",
     const std::string journal = read_text(sd.dir / "hpo_run.log");
     INFO(journal);
     /* A 1-D bowl stagnates long before 60 evaluations. */
-    REQUIRE(contains(journal, "RESTART: stagnation reached, max restarts (1) used"));
+    REQUIRE(contains(journal, "RESTART: no new best within the stagnation "
+                              "window, and the MAX of 1 restart(s) is used"));
     CHECK(contains(r.output,
-                   "[HPO] RESTART: stagnation reached, max restarts (1) used; stopping"));
+                   "[HPO] RESTART: no new best within the stagnation window, "
+                   "and the MAX of 1 restart(s) is used: the run stops"));
     CHECK(line_with(journal, "Optimiser status").find(
-              ": STOPPED -- stagnation: no new best in 2 evals after 1 restart(s)")
+              ": STOPPED -- stagnation: no new best in 2 evaluations after 1 "
+              "restart(s)")
           != std::string::npos);
     CHECK(total_evaluations(journal) < 120u);
 }
@@ -2213,7 +2222,9 @@ TEST_CASE("MULTISTART under RESTART: every launch runs all its starts",
     std::size_t next_start = 1, launches = 0, restarts = 0, stagnated = 0;
     bool in_start = false;
     for (const std::string& l : lines_of(journal)) {
-        if (contains(l, "MULTISTART start ") && contains(l, " -- running inner optimiser")) {
+        /* A start's line names its optimiser (it said "MULTISTART start
+         * i/3 -- running inner optimiser"). */
+        if (contains(l, "MULTISTART start ") && contains(l, ": NLOPT:LN_SBPLX")) {
             CHECK_FALSE(in_start);
             CHECK(contains(l, "MULTISTART start " + std::to_string(next_start) + "/3"));
             if (next_start == 1) ++launches;
@@ -2224,7 +2235,8 @@ TEST_CASE("MULTISTART under RESTART: every launch runs all its starts",
             if (contains(l, "stopped on stagnation")) ++stagnated;
             in_start = false;
             next_start = next_start % 3 + 1;
-        } else if (contains(l, "INFO") && contains(l, "RESTART 1/1 -- fresh init")) {
+        } else if (contains(l, "INFO") && contains(l, "RESTART 1/1: new "
+                                                      "starting points")) {
             CHECK_FALSE(in_start);
             CHECK(next_start == 1);   // the batch finished: 3/3 done
             ++restarts;
@@ -2237,7 +2249,8 @@ TEST_CASE("MULTISTART under RESTART: every launch runs all its starts",
     CHECK(contains(journal, "MULTISTART: "));
     CHECK(contains(journal, "start(s) stopped on stagnation; reporting stagnation to RESTART"));
     CHECK(line_with(journal, "Optimiser status").find(
-              ": STOPPED -- stagnation: no new best in 3 evals after 1 restart(s)")
+              ": STOPPED -- stagnation: no new best in 3 evaluations after 1 "
+              "restart(s)")
           != std::string::npos);
 }
 
@@ -2261,16 +2274,19 @@ TEST_CASE("PRESTAGE under RESTART: every refinement seed gets a fair run",
 
     const std::string journal = read_text(sd.dir / "hpo_run.log");
     INFO(journal);
-    REQUIRE(contains(journal, "REFINEMENT: refining top-3 seed(s)"));
+    REQUIRE(contains(journal, " from the 3 best point(s) of the exploration"));
     std::size_t done = 0, done_before_restart = 0;
     bool restarted = false;
     for (const std::string& l : lines_of(journal)) {
-        if (contains(l, "MULTISTART start ") && contains(l, " done: ")) {
+        /* The refinement's starts are its own (they were "MULTISTART
+         * start i/3 done: ..."). */
+        if (contains(l, "REFINEMENT start ") && contains(l, " done: ")) {
             ++done;
             if (!restarted) ++done_before_restart;
             CAPTURE(l);
             CHECK(evals_consumed(l) > 1u);   // was 1 (or 0) per seed
-        } else if (contains(l, "INFO") && contains(l, "RESTART 1/1 -- fresh init")) {
+        } else if (contains(l, "INFO") && contains(l, "RESTART 1/1: new "
+                                                      "starting points")) {
             restarted = true;
         }
     }
@@ -2279,9 +2295,9 @@ TEST_CASE("PRESTAGE under RESTART: every refinement seed gets a fair run",
     CHECK(done >= 3u);
     const std::string status = line_with(journal, "Optimiser status");
     CHECK(status.find("FAILED") == std::string::npos);
-    if (contains(journal, "max restarts (1) used"))
-        CHECK(contains(status, "STOPPED -- stagnation: no new best in 4 evals "
-                               "after 1 restart(s)"));
+    if (contains(journal, "the MAX of 1 restart(s) is used"))
+        CHECK(contains(status, "STOPPED -- stagnation: no new best in 4 "
+                               "evaluations after 1 restart(s)"));
 }
 
 /* A MULTISTART whose every start failed ended COMPLETED with exit code 0
@@ -2312,8 +2328,9 @@ TEST_CASE("MULTISTART: a setup that would fail every start fails the run "
     REQUIRE(contains(r.output, "All tests passed"));
     const std::string journal = read_text(sd.dir / "hpo_run.log");
     INFO(journal);
-    CHECK(contains(journal, "ERROR     * startup: Error on line 14: "
-                            "OPTIMIZER block: GRAD_STRATEGY ANALYTICAL"));
+    CHECK(contains(journal, "ERROR     * startup: Error on line 14: the "
+                            "STRATEGY-level optimiser: GRAD_STRATEGY "
+                            "ANALYTICAL"));
     CHECK(contains(journal, "ERROR       Line: ENDOPTIMIZER\n"));
     CHECK_FALSE(contains(journal, "MULTISTART start 1/3"));
     CHECK(total_evaluations(journal) == 0u);
@@ -2337,7 +2354,7 @@ TEST_CASE("hpo_run starts with the stagnation window disarmed",
     const std::string journal = read_text(sd.dir / "hpo_run.log");
     INFO(journal);
     CHECK(total_evaluations(journal) == 5u);
-    CHECK_FALSE(contains(journal, "StagnationStop fired"));
+    CHECK_FALSE(contains(journal, "the stagnation stop at"));
     CHECK(line_with(journal, "Optimiser status").find("FAILED") == std::string::npos);
 }
 
@@ -2356,7 +2373,8 @@ TEST_CASE("RESULT names a best that could not be persisted",
         /* The rename lands, the directory fsync keeps failing (EIO). */
         {"TADAH_HPO_TEST_IO_FAULT=durable.dir_fsync,EIO,always", true,
          "not confirmed -- best_pot.tadah may hold eval 1 (write not synced) "
-         "or be absent; check its HPO_SOURCE_EVAL header"},
+         "or be absent; its HPO_SOURCE_EVAL header names the evaluation it "
+         "holds"},
         /* The rename itself fails on a read-only filesystem: it provably
          * did not happen. */
         {"TADAH_HPO_TEST_IO_FAULT=durable.rename,EROFS,always", false,
@@ -2656,7 +2674,7 @@ TEST_CASE("durable latch child: later candidates after a fatal failure",
                    "failure at eval " + S(B)) < lines.size());
     CHECK(index_of("best-potential I/O: durable.rename (possible landed rename) "
                    "on '") < lines.size());
-    CHECK(index_of("; re-trying once, no backoff") < lines.size());
+    CHECK(index_of("; retrying once, no backoff") < lines.size());
     CHECK(index_of("permanent error") == lines.size());
 
     /* RESULT: the later, lower saved best is the result; the lowest unsaved

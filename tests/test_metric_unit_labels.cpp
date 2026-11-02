@@ -573,34 +573,47 @@ TEST_CASE("metric units: the best_pot archive header labels ErRMSE per "
 }
 
 /* Place 5. The --skip-above rejection HPO_Host::operator() writes to
- * hpo_run.log (a WARNING "eval N: skipping downstream (obs+LAMMPS) --
- * <metric>=<value> <unit> > skip-above=<cap>, ..."). A fixed potential is
- * evaluated once with a cap (1e-12) no candidate can meet, on one metric at
- * a time (the checks stop at the first metric that rejects, so a second
- * capped metric would never be reported): the ErRMSE rejection is in per
- * mille, the SRMSE rejection in GPa. The line must name the metric
- * (case-insensitively), so the rejection read is the one asked for.
+ * hpo_run.log (a WARNING "eval N: <line> <value> <unit> is above its
+ * --skip-above <cap>: the evaluation fails (n evaluation(s) rejected by
+ * --skip-above or --skip-rel so far)"). A fixed potential is evaluated once
+ * with a cap (1e-12) no candidate can meet, on one metric at a time (the
+ * checks stop at the first metric that rejects, so a second capped metric
+ * would never be reported): the ErRMSE rejection is in per mille, the SRMSE
+ * rejection in GPa. The line names the metric by its target-file line
+ * (PC_ErRMSE, PC_SRMSE_GPA), and DIAGNOSTICS counts the rejection ("Early
+ * rejections : 1").
  * Before the fix: "srmse=<v> eV/A^3" (hpo_host_impl.hpp operator(),
- * check_metric). */
+ * check_metric); then "eval N: skipping downstream (obs+LAMMPS) --
+ * <metric>=<value> <unit> > skip-above=<cap>, ...", which named no line,
+ * said nothing of the evaluation's failure and was not counted. */
 TEST_CASE("valmetric e2e: the --skip-above rejection gives ErRMSE in per "
           "mille and SRMSE in GPa", "[valmetric_e2e][.]")
 {
+    const std::string fails =
+        ": the evaluation fails (1 evaluation rejected by --skip-above or "
+        "--skip-rel so far)";
     SECTION("PC_ErRMSE --skip-above") {
         const std::string journal =
             skip_above_journal("PC_ErRMSE 0 1 --skip-above 1e-12");
         INFO(journal);
-        const auto rows = lines_with(journal, "skipping downstream");
-        for (const auto& row : rows)
-            CHECK_THAT(lower(row), Contains("errmse="));
+        const auto rows = lines_with(journal, " is above its --skip-above ");
+        REQUIRE(rows.size() == 1u);
+        CHECK_THAT(rows.front(), Contains("eval 1: PC_ErRMSE ") &&
+                                     Contains(" per mille is above its "
+                                              "--skip-above 1e-12" + fails));
         check_errmse_rows(rows, "--skip-above rejection (PC_ErRMSE)", journal);
+        CHECK_THAT(journal, Contains("Early rejections        : 1 ("));
     }
     SECTION("PC_SRMSE_GPA --skip-above") {
         const std::string journal =
             skip_above_journal("PC_SRMSE_GPA 0 1 --skip-above 1e-12");
         INFO(journal);
-        const auto rows = lines_with(journal, "skipping downstream");
-        for (const auto& row : rows)
-            CHECK_THAT(lower(row), Contains("srmse="));
+        const auto rows = lines_with(journal, " is above its --skip-above ");
+        REQUIRE(rows.size() == 1u);
+        CHECK_THAT(rows.front(), Contains("eval 1: PC_SRMSE_GPA ") &&
+                                     Contains(" GPa is above its --skip-above "
+                                              "1e-12" + fails));
         check_srmse_rows(rows, "--skip-above rejection (PC_SRMSE_GPA)", journal);
+        CHECK_THAT(journal, Contains("Early rejections        : 1 ("));
     }
 }

@@ -525,9 +525,13 @@ TEST_CASE("NLopt MAXEVAL: the masked-diagnostic warning counts evaluations",
     REQUIRE_NOTHROW(tadah::hpo::run_nlopt_impl<Vec, NoRunner>(sp, host));
     CHECK(host.calls == 1u);
     const std::string journal = j.text();
-    CHECK(journal.find("LN_SBPLX: NLopt internal diagnostic was set after 1 "
-                       "evaluation(s) -- 'starting step size led to simplex "
-                       "that was too small") != std::string::npos);
+    /* It said "LN_SBPLX: NLopt internal diagnostic was set after 1
+     * evaluation(s) -- 'starting step size led to simplex that was too
+     * small ...". */
+    CHECK(journal.find("LN_SBPLX: NLopt reported ") != std::string::npos);
+    CHECK(journal.find(" after 1 evaluation(s), and its own message, "
+                       "'starting step size led to simplex that was too "
+                       "small") != std::string::npos);
 }
 
 /* Pins: the journal's "Inner stop criteria" of a block whose INNER search
@@ -785,8 +789,8 @@ TEST_CASE("NLopt STOPVAL: GD_STOGO without MAXEVAL is refused before it "
             CHECK_THROWS_WITH(
                 (tadah::hpo::run_nlopt_impl<Vec, NoRunner>(sp, host)),
                 Catch::StartsWith("NLOPT:" + algo + " needs a stop: ") &&
-                    Catch::EndsWith("; set MAXEVAL (it honours no "
-                                    "tolerance)"));
+                    Catch::EndsWith("; MAXEVAL (it honours no tolerance) "
+                                    "gives it one"));
             CHECK(seconds_since(t0) < 1.0);
             CHECK(host.asked.empty());
         }

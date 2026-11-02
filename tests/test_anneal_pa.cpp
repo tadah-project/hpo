@@ -411,7 +411,7 @@ TEST_CASE("ANNEAL_PA: MAXEVAL zero performs no host evaluation",
     MtStubHost stub{ [&](const Vec& x){ return x(0) * x(0); }, {}, {} };
     run_anneal_pa_impl<Vec>(sp, stub);
     CHECK(stub.sorted_calls().empty());
-    CHECK(lr.read().find("after 0 host eval(s)") != std::string::npos);
+    CHECK(lr.read().find("after 0 evaluation(s)") != std::string::npos);
 }
 
 TEST_CASE("ANNEAL_PA: T0 probe exhaustion reports MAXEVAL exactly",

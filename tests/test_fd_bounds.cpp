@@ -841,8 +841,9 @@ TEST_CASE("fd bounds: a difference taken without a point of another kind is "
                       "another kind, so the difference is taken without it: "
                       "one-sided 3-point difference, at X[1] = 0.45 and X[1] = "
                       "0.55 with the loss at the point itself; a difference "
-                      "never mixes a usable loss with a failure; DIAGNOSTICS "
-                      "counts such differences per dimension") &&
+                      "never mixes losses of different kinds (a usable loss, "
+                      "a graded failure, a failure without a grade); "
+                      "DIAGNOSTICS counts such differences per dimension") &&
                   Catch::Contains("Mixed-kind stencils     : 2 (a stencil "
                                   "point held a loss of another kind than "
                                   "the\n    point's own -- a failure next to a "
@@ -888,13 +889,14 @@ TEST_CASE("fd bounds: a difference taken without two points of another kind "
     const std::string t = j.text();
     CHECK(count_of(t, "finite differences: at X[1] = ") == 1u);
     CHECK_THAT(t, Catch::Contains(
-                      "finite differences: at X[1] = 0.35 (a usable loss), the "
-                      "stencil points X[1] = 0.25 (loss 1.797693135e+308) and "
-                      "X[1] = 0.55 (loss 1.797693135e+308) are of another "
+                      "finite differences: at X[1] = 0.35 (a usable loss), "
+                      "the stencil points X[1] = 0.25 (loss 1.797693135e+308) "
+                      "and X[1] = 0.55 (loss 1.797693135e+308) are of another "
                       "kind, so the difference is taken without them: forward "
-                      "difference, at X[1] = 0.45; a difference never mixes a "
-                      "usable loss with a failure; DIAGNOSTICS counts such "
-                      "differences per dimension") &&
+                      "difference, at X[1] = 0.45; a difference never mixes "
+                      "losses of different kinds (a usable loss, a graded "
+                      "failure, a failure without a grade); DIAGNOSTICS "
+                      "counts such differences per dimension") &&
                   Catch::Contains("Mixed-kind stencils     : 1 (") &&
                   Catch::Contains("without it): X[1] 1\n"));
 }

@@ -177,7 +177,10 @@ TEST_CASE("A repeated global PC_ERMSE or PC_FRMSE line is refused naming "
             CHECK_THROWS_WITH(HPOTargets(ctx, mixed.path.string()),
                               Catch::Matchers::StartsWith(
                                   "Error on line 7: " + key +
-                                  ": cannot mix global and indexed forms"));
+                                  ": a line without an index (every "
+                                  "validation dataset) and indexed lines "
+                                  "(one dataset each) are not combined"));
+        /* It said "<key>: cannot mix global and indexed forms". */
         }
         ConfigFile indexed(key + " (1) 0 1\n" + key + " (2) 0 2\n");
         CHECK_NOTHROW(HPOTargets(ctx, indexed.path.string()));

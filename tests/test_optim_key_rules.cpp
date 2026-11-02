@@ -238,7 +238,7 @@ TEST_CASE("lower-case OPTIM cgrid/sgrid keys arm the bump-support gate",
                         "PC_ERMSE 0 1\n" + std::string(kKeyRulesOptimizer));
     HPOTargets trg(ctx, tf.path.string());
     CHECK_THROWS_WITH(tadah::hpo::validate_hpo_setup(ctx, trg, true, true),
-                      Catch::Contains("bump-support gate") &&
+                      Catch::Contains("BUMPGATE: a compact bump reaches past its cutoff") &&
                       Catch::Contains("bump 1 of CGRID2B"));
   }
   SECTION("a lower-case OPTIM rcut2b bounds the neighbour list") {

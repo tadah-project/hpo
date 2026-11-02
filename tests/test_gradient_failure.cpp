@@ -877,8 +877,8 @@ TEST_CASE("GradientProvider: ANALYTICAL fails at a failed loss the caller "
  * a point it trained). */
 struct RejectedBelowZero {
     std::string why =
-        "the candidate was rejected before training (bump-support gate "
-        "reject (c + w/eta past the cutoff, violation=0.5, graded band D)): "
+        "the candidate was rejected before training (BUMPGATE rejected the "
+        "candidate (c + w/eta past the cutoff, violation=0.5)): "
         "it has no fit to differentiate";
     mutable bool last_rejected = false;
     double operator()(const Vec& x) const {

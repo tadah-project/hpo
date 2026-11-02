@@ -324,7 +324,7 @@ TEST_CASE("Removed PRESTAGE block keyword points at STRATEGY TYPE PRESTAGE",
     const std::string msg = parse_error(
         "OPTIMIZER\nPRESTAGE\nENDPRESTAGE\nENDOPTIMIZER\n");
     CHECK_THAT(msg, Catch::Contains("TYPE PRESTAGE"));
-    CHECK_THAT(msg, Catch::Contains("REFINE is optional"));
+    CHECK_THAT(msg, Catch::Contains("which may be left out"));
 }
 
 /* ------------------------------------------------------------------ */
@@ -675,12 +675,12 @@ TEST_CASE("EXPLORE and REFINE blocks name TYPE PRESTAGE as their only home",
         CHECK_THAT(explore, Catch::Contains("Error on line 4"));
         CHECK_THAT(explore, Catch::Contains(
             "EXPLORE block is only valid with TYPE PRESTAGE "
-            "(declare TYPE before EXPLORE)"));
+            "(the TYPE line comes before the EXPLORE block)"));
         const std::string refine =
             parse_error(strategy_block(t, "  REFINE\n  ENDREFINE\n"));
         CHECK_THAT(refine, Catch::Contains(
             "REFINE block is only valid with TYPE PRESTAGE "
-            "(declare TYPE before REFINE)"));
+            "(the TYPE line comes before the REFINE block)"));
     }
     /* Without a TYPE line the strategy is PLAIN. */
     CHECK_THAT(parse_error("OPTIMIZER\nSTRATEGY\n  EXPLORE\n  ENDEXPLORE\n"

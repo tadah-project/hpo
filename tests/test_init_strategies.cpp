@@ -612,7 +612,7 @@ TEST_CASE("WarmInitStrategy: missing file throws regardless of policy",
         auto strat = build_init_strategy(ispec);
         InitContext ic{sp, *st.trg, 0};
         REQUIRE_THROWS_WITH(strat->generate(ic, 1),
-                            Catch::Contains("cannot open seed file"));
+                            Catch::Contains("the seed file") && Catch::Contains("cannot be opened"));
     }
 }
 
@@ -655,7 +655,7 @@ ENDOPTIMIZER
      * parser accepted both keywords and the path reached the WARM
      * strategy -- which is what this round-trip is for. */
     REQUIRE_THROWS_WITH(tadah::hpo::HPOTargets(ctx, cfg.path.string()),
-                        Catch::Contains("cannot open seed file"));
+                        Catch::Contains("the seed file") && Catch::Contains("cannot be opened"));
 }
 
 TEST_CASE("WarmInitStrategy: HOT round-trip primes warmstart cache",
@@ -784,7 +784,7 @@ TEST_CASE("WARM_ON_MISMATCH applies to the WARM entries of its own block: "
                                             "    WARM_ON_MISMATCH error\n"));
         REQUIRE_THROWS_WITH(
             trg = std::make_unique<tadah::hpo::HPOTargets>(ctx, cfg.path.string()),
-            Catch::Contains("clamped into OPTIM bounds"));
+            Catch::Contains("holds a value outside the OPTIM box"));
     }
     SECTION("RESTART WARM_ON_MISMATCH skip: the clamped seed is dropped") {
         StrategyTempFile cfg(target("", "    " + warm +
@@ -809,7 +809,7 @@ TEST_CASE("WARM_ON_MISMATCH applies to the WARM entries of its own block: "
             "INIT\n  " + warm + "  WARM_ON_MISMATCH error\nENDINIT\n", ""));
         REQUIRE_THROWS_WITH(
             trg = std::make_unique<tadah::hpo::HPOTargets>(ctx, cfg.path.string()),
-            Catch::Contains("clamped into OPTIM bounds"));
+            Catch::Contains("holds a value outside the OPTIM box"));
     }
 }
 
@@ -915,9 +915,10 @@ TEST_CASE("WarmInitStrategy: EMBF0 of the seed vs the run's -c",
                                                    nullptr);
         const std::string ln = journal_line(txt, "declares EMBF0 FREE");
         CHECK(ln.find("WARNING") != std::string::npos);
-        CHECK(ln.find("; this run evaluates EMBF0 ZERO (from -c). WARM takes "
-                      "only the OPTIM values from the seed and evaluates them "
-                      "unchanged in the run's reference (no conversion)")
+        CHECK(ln.find("; this run evaluates EMBF0 ZERO (training "
+                      "configuration). WARM takes only the values of the "
+                      "search parameters from the seed and evaluates them "
+                      "unchanged in the reference of the run (no conversion)")
               != std::string::npos);
     }
     SECTION("seed ZERO, run FREE: WARNING") {
@@ -925,7 +926,7 @@ TEST_CASE("WarmInitStrategy: EMBF0 of the seed vs the run's -c",
                                                    "FREE");
         const std::string ln = journal_line(txt, "declares EMBF0 ZERO");
         CHECK(ln.find("WARNING") != std::string::npos);
-        CHECK(ln.find("this run evaluates EMBF0 FREE (from -c)")
+        CHECK(ln.find("this run evaluates EMBF0 FREE (training configuration)")
               != std::string::npos);
     }
     SECTION("seed without the key, run ZERO: INFO, read as ZERO") {
@@ -1574,10 +1575,11 @@ ENDOPTIMIZER
     CHECK(journal_block(body, "Init strategy:").find("K_TOTAL           : 3") !=
           std::string::npos);
     CHECK(body.find("INIT_K") == std::string::npos);
-    CHECK(body.find("Run policy:") != std::string::npos);
+    /* (the heading was "Run policy:" and the key "NOISE.AUTO") */
+    CHECK(body.find("Strategy, restart and noise:") != std::string::npos);
     CHECK(body.find("MULTISTART") != std::string::npos);
     CHECK(body.find("BUDGET_PER_START") != std::string::npos);
-    CHECK(body.find("NOISE.AUTO") != std::string::npos);
+    CHECK(body.find("NOISE AUTO") != std::string::npos);
 
     std::error_code ec; std::filesystem::remove(tmp_log, ec);
 }

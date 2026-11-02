@@ -1169,7 +1169,7 @@ TEST_CASE("ANNEAL_PT interrupted automatic warm-up consumes exact budget",
     CHECK(std::any_of(rows.begin(), rows.end(), [](const StepScaleRow& row) {
         return row.status.find("interrupted") != std::string::npos;
     }));
-    CHECK(lr.read().find("MAXEVAL exhausted after 137 host eval(s)")
+    CHECK(lr.read().find("MAXEVAL exhausted after 137 evaluation(s)")
           != std::string::npos);
 }
 
@@ -1223,7 +1223,7 @@ TEST_CASE("ANNEAL_PT: MAXEVAL zero performs no host evaluation",
     MtStubHost stub{ [&](const Vec& x){ return x(0) * x(0); }, {}, {} };
     run_anneal_pt_impl<Vec>(sp, stub);
     CHECK(stub.sorted_calls().empty());
-    CHECK(lr.read().find("after 0 host eval(s)") != std::string::npos);
+    CHECK(lr.read().find("after 0 evaluation(s)") != std::string::npos);
 }
 
 TEST_CASE("ANNEAL_PT: layout line matches the stepper and the planning gates "
@@ -1260,7 +1260,8 @@ TEST_CASE("ANNEAL_PT: layout line matches the stepper and the planning gates "
           != std::string::npos);
     CHECK(classic.find("one cold<->hot ladder round trip is impossible")
           != std::string::npos);
-    CHECK(classic.find("Raise MAXEVAL or reduce REPLICAS/SWAP_EVERY.")
+    CHECK(classic.find("A larger MAXEVAL, or a smaller REPLICAS or "
+                       "SWAP_EVERY, makes a round trip possible.")
           != std::string::npos);
 
     const std::string corana = run(true, 8);
@@ -1275,7 +1276,8 @@ TEST_CASE("ANNEAL_PT: layout line matches the stepper and the planning gates "
     CHECK(hinted.find("one cold<->hot ladder round trip is impossible")
           == std::string::npos);
     CHECK(hinted.find("< 2*(REPLICAS-1)/0.25 = 24") != std::string::npos);
-    CHECK(hinted.find("Consider a larger MAXEVAL or fewer REPLICAS.")
+    CHECK(hinted.find("A larger MAXEVAL or fewer REPLICAS give more nominal "
+                      "round trips.")
           != std::string::npos);
 }
 
@@ -2467,7 +2469,7 @@ TEST_CASE("ANNEAL_PT: validation errors", "[HPO][anneal_pt][validation]")
         one.param["LADDER_ADAPT"] = 1.0;
         REQUIRE_THROWS_WITH(
             run_anneal_pt_impl<Vec>(one, stub),
-            Catch::Contains("0/1 booleans were removed in 1.5.0")
+            Catch::Contains("a number is refused")
                 && Catch::Contains("PARAM LADDER_ADAPT ON"));
 
         auto word = make_pt_spec({-1.0}, {1.0});

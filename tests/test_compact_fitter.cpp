@@ -1686,9 +1686,14 @@ TEST_CASE("compact fitter: bump-support clamp projects spilling bumps",
     BlipFit f = make_truth();
     f.pinned.assign(f.mu.size(), false);
     f.pinned[3] = true;  // bump 4 spills at rcut 5.5 and cannot be moved
+    /* It said "... -- raise its --eta to at least 2.857143 or move the
+     * anchor inward." */
     REQUIRE_THROWS_WITH(clamp_bump_support_params(f, rcut, span),
-                        Catch::Contains("pinned INIT anchor") &&
-                            Catch::Contains("--eta"));
+                        Catch::Contains("pinned INIT anchor 4 (mu 4.8, eta "
+                                        "1.1) has support past the hard "
+                                        "cutoff 5.5; the anchor stays inside "
+                                        "with an eta of at least 2.85715 or "
+                                        "a centre further in."));
   }
   SECTION("member clamp re-solves the coefficients") {
     const BlipFit truth = make_truth();

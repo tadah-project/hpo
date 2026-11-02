@@ -12,21 +12,27 @@
 
 namespace hpo_test {
 
+/* The tail of the refusal of CERES:<ALGO> (it said "CERES support is not
+ * built; reconfigure with -DTADAH_ENABLE_CERES=ON"). */
 inline const std::string kCeresNotBuilt =
-    "CERES support is not built; reconfigure with -DTADAH_ENABLE_CERES=ON";
+    " is not in this build of tadah; a build with -DTADAH_ENABLE_CERES=ON "
+    "(Installation) has it";
 
-/* `with_ceres` in a build with Ceres; without it the refusal of LIB CERES,
- * after `prefix` (a phase's name and ": ", as validate_phase_backends
- * names the phase it refuses; empty for validate_backend itself). */
+/* `with_ceres` in a build with Ceres; without it the refusal of LIB CERES
+ * with ALGO `algo`, after `prefix` (a phase's name and ": ", as
+ * validate_phase_backends names the phase it refuses; empty for
+ * validate_backend itself). */
 inline std::string ceres_expect(const std::string& with_ceres,
-                                const std::string& prefix = "")
+                                const std::string& prefix = "",
+                                const std::string& algo = "STEEPEST_DESCENT")
 {
 #ifdef TADAH_USE_CERES
     (void)prefix;
+    (void)algo;
     return with_ceres;
 #else
     (void)with_ceres;
-    return prefix + kCeresNotBuilt;
+    return prefix + "CERES:" + algo + kCeresNotBuilt;
 #endif
 }
 

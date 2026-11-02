@@ -1732,9 +1732,9 @@ TEST_CASE("hpo --check: GRAD_STRATEGY ANALYTICAL refuses a search parameter "
     const std::string lambda = "OPTIM LAMBDA (1) 1e-8 1e-2 LOG\n";
     const std::string sgridmb = "OPTIM SGRIDMB (1) 0.5 2.0\n";
     const std::string head =
-        "OPTIMIZER block: GRAD_STRATEGY ANALYTICAL needs an analytical "
-        "derivative with respect to every search parameter, and the "
-        "descriptors give none for ";
+        "the STRATEGY-level optimiser: GRAD_STRATEGY ANALYTICAL needs an "
+        "analytical derivative with respect to every search parameter, and "
+        "the descriptors give none for ";
     const std::string no_descriptor = " (no descriptor differentiates it)";
     const std::string energy_rows =
         " (DM_Blip differentiates it in the energy rows only, and ";
@@ -1989,10 +1989,10 @@ TEST_CASE("hpo --check: GRAD_STRATEGY ANALYTICAL refuses WATOM when a "
                             "OPTIM WATOM (1) 0.5 2.0\n" +
                             lbfgs_block("ANALYTICAL");
     const std::string head =
-        "OPTIMIZER block: GRAD_STRATEGY ANALYTICAL needs an analytical "
-        "derivative with respect to every search parameter, and the "
-        "descriptors give none for OPTIM WATOM (1) on line 4 of the target "
-        "file (";
+        "the STRATEGY-level optimiser: GRAD_STRATEGY ANALYTICAL needs an "
+        "analytical derivative with respect to every search parameter, and "
+        "the descriptors give none for OPTIM WATOM (1) on line 4 of the "
+        "target file (";
     const std::string for_it =
         "). GRAD_STRATEGY HYBRID takes finite differences for it.";
     struct Case {
@@ -2239,11 +2239,11 @@ TEST_CASE("hpo --check: GRAD_STRATEGY ANALYTICAL takes a search parameter "
         "Error on line " +
         std::to_string(line_number(root + lbfgs_block("ANALYTICAL"),
                                    "ENDOPTIMIZER")) +
-        ": OPTIMIZER block: GRAD_STRATEGY ANALYTICAL needs an analytical "
-        "derivative with respect to every search parameter, and the "
-        "descriptors give none for OPTIM RCUT2B (1) on line 4 of the target "
-        "file (no descriptor differentiates it). GRAD_STRATEGY HYBRID takes "
-        "finite differences for it.\nLine: ENDOPTIMIZER";
+        ": the STRATEGY-level optimiser: GRAD_STRATEGY ANALYTICAL needs an "
+        "analytical derivative with respect to every search parameter, and "
+        "the descriptors give none for OPTIM RCUT2B (1) on line 4 of the "
+        "target file (no descriptor differentiates it). GRAD_STRATEGY HYBRID "
+        "takes finite differences for it.\nLine: ENDOPTIMIZER";
     struct Case {
         const char* name;
         bool dimer_train, dimer_val;

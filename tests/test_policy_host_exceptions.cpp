@@ -134,8 +134,10 @@ TEST_CASE("MULTISTART: every start runs in its own stagnation window",
     CHECK_FALSE(rep.improved);
 
     const std::string journal = j.finish_and_read();
-    CHECK(journal.find("MULTISTART start 1/3 done: 0 eval(s) consumed, no global "
-                       "improvement") != std::string::npos);
+    /* No evaluation: no usable loss yet (it said "0 eval(s) consumed, no
+     * global improvement (best stays at 1.7977e+308)"). */
+    CHECK(journal.find("MULTISTART start 1/3 done: 0 evaluation(s) consumed, "
+                       "no usable loss yet") != std::string::npos);
     CHECK(line_with(journal, "MULTISTART start 1/3 done").find(
               "stopped on stagnation (RESTART window)") != std::string::npos);
     CHECK(line_with(journal, "MULTISTART start 2/3 done").find(
@@ -223,12 +225,12 @@ TEST_CASE("MULTISTART: a failed start's status does not become the result",
         });
         CHECK(rep.n_failed == 1);
         CHECK(HPOLog::instance().status() ==
-              "MAXEVAL_REACHED -- maximum evaluations exhausted "
-              "(1 of 3 MULTISTART starts failed; see the WARNINGs)");
+              "MAXEVAL_REACHED -- maximum evaluations exhausted (1 of 3 "
+              "starts failed; the WARNING lines give the reasons)");
         const std::string status =
             line_with(j.finish_and_read(), "Optimiser status");
         CHECK(status.find("FAILED") == std::string::npos);
-        CHECK(status.find("1 of 3 MULTISTART starts failed") != std::string::npos);
+        CHECK(status.find("1 of 3 starts failed") != std::string::npos);
     }
     /* Every start that ends records its status, as every optimiser does
      * (run_end.h). Before the fix: passes as well (a pin; the stubs
@@ -245,7 +247,8 @@ TEST_CASE("MULTISTART: a failed start's status does not become the result",
         });
         CHECK(rep.n_failed == 1);
         CHECK(HPOLog::instance().status() ==
-              "STUB: done (1 of 3 MULTISTART starts failed; see the WARNINGs)");
+              "STUB: done (1 of 3 starts failed; the WARNING lines give the "
+              "reasons)");
     }
     /* A start that stagnates records no status (its RESTART window ran
      * out; the batch reports the stagnation to RESTART, whose status
@@ -381,9 +384,10 @@ TEST_CASE("RESULT reports a best that could not be saved",
                            "failed)") != std::string::npos);
         CHECK(r.first.find("none") == std::string::npos);
         CHECK(r.second.first.empty());
-        CHECK(r.second.second.find("not confirmed -- best_pot.tadah may hold eval "
-                                   "3 (write not synced) or be absent; check its "
-                                   "HPO_SOURCE_EVAL header") != std::string::npos);
+        CHECK(r.second.second.find("not confirmed -- best_pot.tadah may hold "
+                                   "eval 3 (write not synced) or be absent; "
+                                   "its HPO_SOURCE_EVAL header names the "
+                                   "evaluation it holds") != std::string::npos);
     }
     SECTION("first best, nothing written") {
         const auto r = result_of(false, false, true);
@@ -904,7 +908,8 @@ TEST_CASE("RESULT names the candidates that may be in best_pot.tadah",
                   "8.0000e-02  (eval 12) -- NOT saved") != std::string::npos);
         CHECK(line_with(journal, "Best potential saved").find(
                   ": not confirmed -- best_pot.tadah may hold eval 9 (write not "
-                  "synced) or be absent; check its HPO_SOURCE_EVAL header") !=
+                  "synced) or be absent; its HPO_SOURCE_EVAL header names the "
+                  "evaluation it holds") !=
               std::string::npos);
     }
     SECTION("an older saved best: the flagged candidate or that best") {
@@ -1092,21 +1097,22 @@ TEST_CASE("MULTISTART: the failed-start note counts the whole run",
         throw StagnationStop{};
     });
     CHECK(rep1.n_failed == 1);
-    CHECK(log.status() == "XTOL_REACHED -- x (1 of 3 MULTISTART starts failed; "
-                          "see the WARNINGs)");
+    CHECK(log.status() == "XTOL_REACHED -- x (1 of 3 starts failed; the "
+                          "WARNING lines give the reasons)");
 
     /* Launch 2 (a RESTART relaunch): no failure, no status of its own. The
      * note is neither dropped nor stacked; it counts both launches. */
     const auto rep2 = run_starts(3, [] {}, [](std::size_t) {});
     CHECK(rep2.n_failed == 0);
-    CHECK(log.status() == "XTOL_REACHED -- x (1 of 6 MULTISTART starts failed "
-                          "across 2 launches; see the WARNINGs)");
+    CHECK(log.status() == "XTOL_REACHED -- x (1 of 6 starts failed across 2 "
+                          "launches; the WARNING lines give the reasons)");
 
     /* What RestartPolicy appends to its exhaustion status. */
     CHECK("STOPPED -- stagnation: no new best in 3 evals after 1 restart(s)" +
           failed_starts_suffix(log.start_tally()) ==
           "STOPPED -- stagnation: no new best in 3 evals after 1 restart(s) "
-          "(1 of 6 MULTISTART starts failed across 2 launches; see the WARNINGs)");
+          "(1 of 6 starts failed across 2 launches; the WARNING lines give "
+          "the reasons)");
 
     CHECK(strip_failed_starts_note(log.status()) == "XTOL_REACHED -- x");
     CHECK(strip_failed_starts_note("COMPLETED (see notes; see the WARNINGs)") ==

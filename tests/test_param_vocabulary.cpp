@@ -80,15 +80,17 @@ TEST_CASE("vocabulary: every boolean key takes ON/OFF and rejects 0/1",
             }
         }
 
-        /* A number is rejected, and the message must carry the migration
-         * hint -- not merely "invalid value". */
+        /* A number is rejected, and the message gives the ON or OFF form
+         * of the line -- not merely "invalid value" (it said "0/1 booleans
+         * were removed in 1.5.0 -- use `PARAM <KEY> ON`"). */
         for (double v : {0.0, 1.0}) {
             auto sp = spec_for(kind);
             sp.param[ki.name] = v;
             REQUIRE_THROWS_WITH(
                 anneal::Knobs::parse(sp, kind),
                 Catch::Contains(std::string(ki.name) + " takes ON or OFF")
-                    && Catch::Contains("0/1 booleans were removed in 1.5.0"));
+                    && Catch::Contains("a number is refused, and the value of "
+                                       "this line is `PARAM "));
         }
 
         /* A word that is not ON/OFF is rejected too. */
@@ -333,7 +335,7 @@ TEST_CASE("vocabulary: every printed default of an annealing key is a "
  * Before the fix: TADAH:ANNEAL_PA accepted AUTO and resolved it to the
  * registry's internal 0, so every temperature step had 0 evaluations: a
  * run planned '~18446744073709551615 temperature step(s)' and stopped after
- * its initialisation ('MAXEVAL exhausted after 36 host eval(s) (0
+ * its initialisation ('MAXEVAL exhausted after 36 evaluation(s) (0
  * temperature step(s))' with MAXEVAL 200). */
 TEST_CASE("vocabulary: CHAIN_LENGTH AUTO and NT AUTO are the serial "
           "TADAH:ANNEAL's", "[HPO][anneal_core][registry][vocabulary]")

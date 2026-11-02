@@ -857,7 +857,7 @@ TEST_CASE("STEP FIXWEIGHT(i) names the model weight, like OPTIM FIXWEIGHT (i)",
     REQUIRE(ov[0].has_value());
     CHECK(*ov[0] == Approx(0.05));
   }
-  SECTION("the slot number is not an OPTIM'd index") {
+  SECTION("the slot number is not on an OPTIM line") {
     ScopedTempFile in(head + "    STEP FIXWEIGHT(3) 0.05\n" + tail);
     auto ctx = make_ctx();
     bool threw = false; std::string msg;
@@ -866,6 +866,6 @@ TEST_CASE("STEP FIXWEIGHT(i) names the model weight, like OPTIM FIXWEIGHT (i)",
       (void)tadah::hpo::resolve_step_overrides(trg.spec);
     } catch (const std::exception& e) { threw = true; msg = e.what(); }
     CHECK(threw);
-    CHECK(msg.find("not an OPTIM'd index") != std::string::npos);
+    CHECK(msg.find("index 3 of FIXWEIGHT is not on an OPTIM line") != std::string::npos);
   }
 }

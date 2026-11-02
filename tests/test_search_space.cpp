@@ -128,7 +128,12 @@ TEST_CASE("SearchSpace: build errors name the dimension",
     REQUIRE_THROWS_WITH(SearchSpace::build({dim("X", 1.0, 1.0)}, pol),
                         Catch::Contains("OPTIM X") && Catch::Contains("high > low"));
     REQUIRE_THROWS_WITH(SearchSpace::build({dim("Y", -1.0, 1.0, ScaleKind::Log)}, pol),
-                        Catch::Contains("OPTIM Y") && Catch::Contains("LOG scale requires low > 0"));
+                        Catch::Contains("OPTIM Y") && Catch::Contains("a LOG "
+                                                                      "box "
+                                                                      "needs "
+                                                                      "a low "
+                                                                      "bound "
+                                                                      "> 0"));
     REQUIRE_THROWS_WITH(SearchSpace::build({dim("Z", -1.0, 1.0, ScaleKind::Asinh, 0.0)}, pol),
                         Catch::Contains("OPTIM Z") && Catch::Contains("positive linear scale"));
     auto d = dim("I", 0.0, 3.0); d.is_int = true;

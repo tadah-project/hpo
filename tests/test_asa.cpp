@@ -227,7 +227,7 @@ std::string journal_line(const std::string& journal, const std::string& head)
 std::string stopped_line(const std::string& reason, std::size_t n)
 {
     return "ASA stopped: " + reason + " after " + std::to_string(n) +
-           " host eval(s) (asa exit: IMMEDIATE_EXIT)";
+           " evaluation(s) (asa exit: IMMEDIATE_EXIT)";
 }
 
 }  // namespace
@@ -822,9 +822,8 @@ TEST_CASE("ASA host failure during reanneal tangents aborts gracefully "
      * Acceptance_Frequency_Modulus 10 it fails (P_TEMP_TOO_SMALL). */
     const std::string stop = journal_line(jc.read(), "ASA stopped: ");
     INFO(stop);
-    CHECK(stop.find("ASA stopped: a host failure occurred while ASA was "
-                    "computing reanneal tangents "
-                    "(INVALID_COST_FUNCTION_DERIV)") != std::string::npos);
+    CHECK(stop.find("ASA stopped: an evaluation failed while ASA was "
+                    "computing reanneal tangents (INVALID_COST_FUNCTION_DERIV") != std::string::npos);
     CHECK(stop.find("(asa exit: INVALID_COST_FUNCTION_DERIV)") !=
           std::string::npos);
 }
@@ -842,7 +841,7 @@ TEST_CASE("ASA: a stop that falls in the reanneal tangents is not reported "
      * tests every 3 acceptances make the tangents frequent, so some
      * MAXEVAL in 8..40 falls inside them (REQUIRE below).
      * Before the fix: those runs read "ASA stopped: MAXEVAL reached after N
-     * host eval(s) (asa exit: INVALID_COST_FUNCTION_DERIV)" and the summary
+     * evaluation(s) (asa exit: INVALID_COST_FUNCTION_DERIV)" and the summary
      * "exit=INVALID_COST_FUNCTION_DERIV", the code of a failed evaluation
      * during the tangents. */
     std::size_t in_tangents = 0;
@@ -863,7 +862,7 @@ TEST_CASE("ASA: a stop that falls in the reanneal tangents is not reported "
         INFO("MAXEVAL " << maxeval << "\n" << stop << "\n" << summary);
         REQUIRE_FALSE(stop.empty());
         CHECK(stop.find("ASA stopped: MAXEVAL reached after " +
-                        std::to_string(maxeval) + " host eval(s)") !=
+                        std::to_string(maxeval) + " evaluation(s)") !=
               std::string::npos);
         for (const std::string* line : {&stop, &summary}) {
             const bool deriv =
@@ -916,7 +915,7 @@ TEST_CASE("ASA names a shutdown request or a RESTART stagnation stop, not "
      * loss.tadah, while a shutdown request comes before an evaluation
      * starts. The exception still propagates.
      * Before the fix: every section read "ASA stopped: exception raised
-     * during evaluation after 19 host eval(s)". */
+     * during evaluation after 19 evaluation(s)". */
     auto sp = make_asa_spec({-2.0}, {2.0});
     set_seed_point(sp, {1.0});
     sp.stop.maxeval = 1000;
@@ -932,20 +931,20 @@ TEST_CASE("ASA names a shutdown request or a RESTART stagnation stop, not "
         raise = [] { throw tadah::core::ShutdownRequested{}; };
         CHECK_THROWS_AS(run_asa_erased(sp, 1, host),
                         tadah::core::ShutdownRequested);
-        expected = "ASA stopped: shutdown requested after 19 host eval(s)";
+        expected = "ASA stopped: shutdown requested after 19 evaluation(s)";
     }
     SECTION("the RESTART stagnation stop") {
         raise = [] { throw tadah::hpo::StagnationStop{}; };
         CHECK_THROWS_AS(run_asa_erased(sp, 1, host),
                         tadah::hpo::StagnationStop);
         expected = "ASA stopped: RESTART stagnation stop (no new best within "
-                   "AFTER_STAGNATION evaluations) after 20 host eval(s)";
+                   "AFTER_STAGNATION evaluations) after 20 evaluation(s)";
     }
     SECTION("an error") {
         raise = [] { throw std::runtime_error("boom"); };
         CHECK_THROWS_WITH(run_asa_erased(sp, 1, host), "boom");
         expected = "ASA stopped: an evaluation raised an exception (boom) "
-                   "after 20 host eval(s)";
+                   "after 20 evaluation(s)";
     }
     CHECK(n.load() == 20);
     const std::string stop = journal_line(jc.read(), "ASA stopped: ");
@@ -1056,7 +1055,7 @@ TEST_CASE("ASA keeps sampling after a periodic test that follows a new "
     const auto calls = run_always_improving(sp, 2, console);
     INFO(console);
     CHECK(calls.size() == 400);
-    CHECK(console.find("ASA stopped: MAXEVAL reached after 400 host eval(s)")
+    CHECK(console.find("ASA stopped: MAXEVAL reached after 400 evaluation(s)")
           != std::string::npos);
 }
 
@@ -1146,8 +1145,7 @@ TEST_CASE("ASA block runs keep at least one state per block when the "
     const auto calls = run_always_improving(sp, 2, console);
     INFO(console);
     CHECK(calls.size() == 300);
-    CHECK(console.find("ASA stopped: MAXEVAL reached after 300 host "
-                       "eval(s)") != std::string::npos);
+    CHECK(console.find("ASA stopped: MAXEVAL reached after 300 evaluation(s)") != std::string::npos);
 }
 
 TEST_CASE("ASA Gener_Mov_Avr 0 keeps every generated block at Gener_Block",
@@ -1180,8 +1178,7 @@ TEST_CASE("ASA Gener_Mov_Avr 0 keeps every generated block at Gener_Block",
         evaluated += sizes[i];
     }
     CHECK(evaluated <= 300);
-    CHECK(console.find("ASA stopped: MAXEVAL reached after 300 host "
-                       "eval(s)") != std::string::npos);
+    CHECK(console.find("ASA stopped: MAXEVAL reached after 300 evaluation(s)") != std::string::npos);
 
     /* Control: the same run at the default window (Gener_Mov_Avr 3)
      * shrinks blocks, so the count above would see a resize. */

@@ -291,7 +291,10 @@ TEST_CASE("a failure signal fails its evaluation under FAILSCORE_GRADING OFF",
             if (std::string(gate) == "0.5") CHECK(l == 1e16);
             else CHECK(tadah::hpo::loss_is_feasible(l, 1e16));
         }
-        CHECK((journal.find("FAILPROBE gate: S=1.000000 > 0.500000") !=
+        /* the values as written (it said "FAILPROBE gate: S=1.000000 >
+         * 0.500000 -- eval short-circuited") */
+        CHECK((journal.find("the PC_FAILPROBE value 1 is above its --gate "
+                            "0.5: the evaluation fails") !=
                std::string::npos) == (std::string(gate) == "0.5"));
         Host::reset_globals_for_test();
     }
@@ -302,8 +305,8 @@ TEST_CASE("a failure signal fails its evaluation under FAILSCORE_GRADING OFF",
  * 1e16, without the option) -- fails the evaluation, with --gate or
  * without, as a probe whose script fails does: under FAILSCORE_GRADING
  * OFF it scores FAILSCORE (1e16), under ON the top of band D, and the
- * journal says "eval 1 FAILPROBE: S=<S> is not a probe value (one is at
- * least 0 and below the line's --failscore, <fs>) -- the evaluation
+ * journal says "eval 1: the PC_FAILPROBE value S=<S> is not a probe value (one is at
+ * least 0 and below the line's --failscore, <fs>): the evaluation
  * fails". A probe value below --gate does not (the case of S = 1 above).
  * Before the fix: under OFF such a value neither failed the evaluation
  * nor was journalled: every evaluation kept its usable loss (9 here);
@@ -346,10 +349,12 @@ TEST_CASE("a PC_FAILPROBE value that is no probe value fails its "
             if (c.on) CHECK(bits(l) == bits(band_d_top));
             else CHECK(l == 1e16);
         }
-        CHECK_THAT(line_with(journal, "eval 1 FAILPROBE: "),
+        /* The lines said "eval 1 FAILPROBE: S=<S> is not a probe value
+         * (...) -- the evaluation fails". */
+        CHECK_THAT(line_with(journal, "eval 1: the PC_FAILPROBE value "),
                    Catch::Contains(c.text) &&
-                   Catch::Contains("-- the evaluation fails"));
-        CHECK_THAT(line_with(journal, "eval 2 FAILPROBE: "),
+                   Catch::Contains("): the evaluation fails ("));
+        CHECK_THAT(line_with(journal, "eval 2: the PC_FAILPROBE value "),
                    Catch::Contains(c.text));
         Host::reset_globals_for_test();
     }

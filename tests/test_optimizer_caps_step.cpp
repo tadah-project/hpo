@@ -162,11 +162,11 @@ TEST_CASE("OptimizerCaps: bounds-ignoring backends are flagged",
     CHECK_FALSE(optimizer_caps("NLOPT", "LN_BOBYQA").ignores_bounds);
     CHECK(optimizer_caps("CERES", "STEEPEST_DESCENT").ignores_bounds);
     CHECK_THAT(std::string(optimizer_caps("CERES", "STEEPEST_DESCENT").bounds_note),
-               Catch::Contains("Such a point is not evaluated: it is scored "
+               Catch::Contains("Such a point is not evaluated. It is scored "
                                "as a failure graded by its distance to the "
-                               "box, whose slope points away from the box, "
-                               "so a descent step leads back into it; it "
-                               "counts against MAXEVAL and it is never the "
+                               "box, so the score rises away from the box and "
+                               "a descent step leads back into it. Such a "
+                               "point counts against MAXEVAL and is never the "
                                "best"));
     CHECK_FALSE(optimizer_caps("DLIB", "BFGS").ignores_bounds);
     CHECK_FALSE(optimizer_caps("TADAH", "ANNEAL").ignores_bounds);
@@ -196,7 +196,7 @@ TEST_CASE("OptimizerCaps: NLOPT:LN_NEWUOA_BOUND is refused, naming the "
                       Catch::StartsWith("NLOPT:LN_NEWUOA_BOUND is refused: ") &&
                       Catch::Contains("nested LD_MMA run") &&
                       Catch::Contains("non-finite value") &&
-                      Catch::Contains("HUGE_VAL") &&
+                      Catch::Contains("infinite loss") &&
                       Catch::EndsWith("The recommended replacement is "
                                       "NLOPT:LN_BOBYQA, Powell's "
                                       "bound-constrained successor of NEWUOA "
@@ -212,13 +212,13 @@ TEST_CASE("OptimizerCaps: NLOPT:LN_NEWUOA_BOUND is refused, naming the "
      * tadah hpo; before the help was rewritten for a user it said "HPO",
      * and this check fails on that text. */
     CHECK_THROWS_WITH(optimizer_caps("NLOPT", "LN_NEWUOA_BOUND"),
-                      Catch::Contains("after every stop tadah hpo makes through "
-                                      "the objective (a signal, a RESTART "
-                                      "stagnation stop, an error that ends "
-                                      "the run) from a run's (2n+1)-th "
-                                      "evaluation on, the last of NEWUOA's "
-                                      "starting points for n OPTIM "
-                                      "dimensions,"));
+                      Catch::Contains("after every stop that tadah hpo makes "
+                                      "through the objective: a signal, a "
+                                      "RESTART stagnation stop, or an error "
+                                      "that ends the run. This holds from a "
+                                      "run's (2n+1)-th evaluation on, the "
+                                      "last of NEWUOA's starting points for n "
+                                      "OPTIM dimensions,"));
     CHECK(filter_optimizer_caps([](const OptimizerCaps& c) {
               return c.lib == "NLOPT" && c.algo == "LN_NEWUOA_BOUND";
           }).empty());
@@ -237,7 +237,7 @@ TEST_CASE("OptimizerCaps: NLOPT:LN_NEWUOA_BOUND is refused, naming the "
                Catch::Contains("The recommended replacement is "
                                "NLOPT:LN_BOBYQA") &&
                !Catch::Contains("STEP <double>") &&
-               !Catch::Contains("Stops that end a run"));
+               !Catch::Contains("Stops that end a search"));
 }
 
 TEST_CASE("OptimizerCaps: backend_refusal names the refused backends, and "
@@ -344,7 +344,7 @@ TEST_CASE("OptimizerCaps: NLOPT:LN_NEWUOA, which ignores the OPTIM box, is "
                Catch::Contains("The recommended replacement is "
                                "NLOPT:LN_BOBYQA") &&
                !Catch::Contains("WARNING") &&
-               !Catch::Contains("Stops that end a run"));
+               !Catch::Contains("Stops that end a search"));
 }
 
 /* Pins: Ceres' least-squares solvers, CERES:LEVENBERG_MARQUARDT, DOGLEG and
@@ -454,7 +454,7 @@ TEST_CASE("OptimizerCaps: the ALGO help describes the CERES drivers",
                    Catch::StartsWith("Options for CERES:" + a + "\n") &&
                    Catch::Contains("Ceres' line-search solver: steepest "
                                    "descent, Armijo line search") &&
-                   Catch::Contains("   * Stops that end a run: MAXEVAL, "
+                   Catch::Contains("   * Stops that end a search: MAXEVAL, "
                                    "FTOL_REL, XTOL_REL\n") &&
                    Catch::Contains("PARAM tol_gradinf") &&
                    Catch::Contains("PARAM max_iter") &&

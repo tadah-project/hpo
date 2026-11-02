@@ -586,8 +586,8 @@ TEST_CASE("fd stencil: a box narrower than the stencil is refused",
                                            "stencil fits at X[1] = 0.3; fd_step "
                                            "up to 0.333333 fits it") &&
                            Catch::Contains("\n  - X[2]: OPTIM box [0, 1]") &&
-                           Catch::EndsWith("\n  Set PARAM fd_step to at most "
-                                           "0.333333."));
+                           Catch::EndsWith("\n  A PARAM fd_step of at most "
+                                           "0.333333 fits them."));
         }
         /* a third of the width fits */
         ProjectingHost host{f, box, {}};
@@ -599,12 +599,13 @@ TEST_CASE("fd stencil: a box narrower than the stencil is refused",
         const std::string what = refused(
             spec_over(box, 1e-6, /*normalise=*/false), box, vec({1000.0005}));
         CHECK_THAT(what, Catch::Contains("\n  - X[1]: OPTIM box [1000, "
-                                         "1000.001]; no stencil fits at X[1] = "
-                                         "1000.0005; fd_step up to 3.33333e-07 "
-                                         "fits it\n  Set PARAM fd_step to at "
-                                         "most 3.33333e-07; or use OPTIM_SCALE "
-                                         "AUTO (fd_step is then a fraction of "
-                                         "each box width)."));
+                                         "1000.001]; no stencil fits at X[1] "
+                                         "= 1000.0005; fd_step up to "
+                                         "3.33333e-07 fits it\n  A PARAM "
+                                         "fd_step of at most 3.33333e-07 fits "
+                                         "them; under OPTIM_SCALE AUTO "
+                                         "fd_step is a fraction of each box "
+                                         "width."));
     }
     SECTION("HYBRID") {
         const std::vector<std::pair<double, double>> box = {{0.0, 1.0}};

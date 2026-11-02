@@ -762,7 +762,7 @@ TEST_CASE("startup validation: GRAD_STRATEGY ANALYTICAL needs the settings "
     Context with_db = pinned;
     with_db.add("DBFILE", "dummy.db");
     CHECK_THAT(rejected(with_db, target(analytical, ermse)),
-               Catch::Contains("FIXINDEX pins model weights"));
+               Catch::Contains("FIXINDEX fixes coefficients of the model"));
     CHECK(rejected(pinned, target("GRAD_STRATEGY HYBRID\n", ermse), false) ==
           "");
   }
@@ -953,8 +953,8 @@ TEST_CASE("startup validation: the ANALYTICAL rule applies to the block "
     CHECK_THAT(neither, Catch::StartsWith(
                             "Error on line " +
                             std::to_string(line_of(config, "ENDOPTIMIZER")) +
-                            ": OPTIMIZER block: GRAD_STRATEGY ANALYTICAL "
-                            "(resolved") &&
+                            ": the STRATEGY-level optimiser: GRAD_STRATEGY "
+                            "ANALYTICAL (resolved") &&
                         Catch::EndsWith("\nLine: ENDOPTIMIZER") &&
                         Catch::Contains("OALGO 4") &&
                         !Catch::Contains("INNER"));
@@ -991,8 +991,8 @@ TEST_CASE("startup validation: the ANALYTICAL rule applies to the block "
     const std::string with_inner = prestage(explore_mlsl + explore_inner);
     CHECK_THAT(startup_error(ctx, with_inner),
                Catch::StartsWith(at_endexplore(with_inner) +
-                                 "EXPLORE block: GRAD_STRATEGY ANALYTICAL "
-                                 "(resolved") &&
+                                 "the PRESTAGE exploration (EXPLORE block): "
+                                 "GRAD_STRATEGY ANALYTICAL (resolved") &&
                Catch::EndsWith("\nLine:     ENDEXPLORE"));
     CHECK(startup_error(ctx, prestage(explore_mlsl +
                                       "      GRAD_STRATEGY HYBRID\n" +
@@ -1001,7 +1001,8 @@ TEST_CASE("startup validation: the ANALYTICAL rule applies to the block "
         "      LIB NLOPT\n      ALGO LD_LBFGS\n      MAXEVAL 5\n");
     CHECK_THAT(startup_error(ctx, lbfgs),
                Catch::StartsWith(at_endexplore(lbfgs) +
-                                 "EXPLORE block: GRAD_STRATEGY ANALYTICAL") &&
+                                 "the PRESTAGE exploration (EXPLORE block): "
+                                 "GRAD_STRATEGY ANALYTICAL") &&
                Catch::EndsWith("\nLine:     ENDEXPLORE"));
   }
 }
@@ -1071,13 +1072,15 @@ TEST_CASE("startup validation: FAILSCORE_GRADING ON takes any FAILSCORE, "
     }
     return std::string();
   };
+  /* It said "(<fs>), and ASA:ASA takes a cost ... at or above that cost; a
+   * FAILSCORE of 1e+18 or less ...". */
   const auto refusal = [](const std::string& phase, const std::string& fs) {
     return phase + ": ASA:ASA: under FAILSCORE_GRADING ON a failed "
            "evaluation scores from 0.999 FAILSCORE to below FAILSCORE "
-           "(" + fs + "), and ASA:ASA takes a cost of about 1e+18 "
-           "or more for an invalid state and draws another, so it would not "
-           "see the graded failures at or above that cost; a FAILSCORE of "
-           "1e+18 or less keeps every graded failure below it";
+           "(" + fs + "). ASA:ASA takes a cost of about 1e+18 or more for an "
+           "invalid state and draws another, so it would not see the graded "
+           "failures at or above that cost. A FAILSCORE of 1e+18 or less "
+           "keeps every graded failure below it";
   };
   SECTION("the default FAILSCORE passes") {
     CHECK(startup("FAILSCORE_GRADING ON\n", kOptimizerBlock) == "");
@@ -1145,11 +1148,11 @@ TEST_CASE("startup validation: FAILSCORE_GRADING ON takes any FAILSCORE, "
                    "TADAH_FAILSCORE_GRADING, a failed evaluation scores from "
                    "0.999 FAILSCORE to below FAILSCORE "
                    "(1.7976931348623157e+308, the largest double, as without "
-                   "a FAILSCORE line), and ASA:ASA takes a cost of about "
-                   "1e+18 or more for an invalid state and draws another, so "
-                   "it would not see the graded failures at or above that "
-                   "cost; a FAILSCORE of 1e+18 or less keeps every graded "
-                   "failure below it") &&
+                   "a FAILSCORE line). ASA:ASA takes a cost of about 1e+18 or "
+                   "more for an invalid state and draws another, so it would "
+                   "not see the graded failures at or above that cost. A "
+                   "FAILSCORE of 1e+18 or less keeps every graded failure "
+                   "below it") &&
                Catch::EndsWith("\nLine: ENDOPTIMIZER"));
     CHECK(by_env("FAILSCORE_GRADING ON\n", false) == "");
   }
@@ -1219,10 +1222,12 @@ TEST_CASE("startup validation: bump-support gate",
     HPOTargets trg(ctx, plain.path.string());
     REQUIRE_THROWS_WITH(
         validate_hpo_setup(ctx, trg, true, true),
-        Catch::Contains("bump-support gate") &&
+        Catch::Contains("BUMPGATE: a compact bump reaches past its cutoff") &&
             Catch::Contains("CGRID2B bump 1") &&
             Catch::Contains("CGRID2B bump 2") &&
-            Catch::Contains("set SGRID2B (2) >= 1"));
+            Catch::Contains("SGRID2B (2) >= 1, a centre further in "
+                            "(tadah refit --edit) or a larger RCUT2B keeps it "
+                            "inside"));
   }
   SECTION("partially feasible box arms the per-candidate gate (CANDIDATE)") {
     Context ctx = make_bump_ctx();
@@ -1246,7 +1251,7 @@ TEST_CASE("startup validation: bump-support gate",
     HPOTargets trg(ctx, tf.path.string());
     REQUIRE_THROWS_WITH(
         validate_hpo_setup(ctx, trg, true, true),
-        Catch::Contains("bump-support gate") &&
+        Catch::Contains("BUMPGATE: a compact bump reaches past its cutoff") &&
             Catch::Contains("low bound >= w/(RCUT2B - c_hi) = 2"));
   }
   SECTION("CGRID box with a feasible sliver arms the gate; STRICT errors") {
@@ -1265,8 +1270,9 @@ TEST_CASE("startup validation: bump-support gate",
     HPOTargets trg2(ctx, tf2.path.string());
     REQUIRE_THROWS_WITH(
         validate_hpo_setup(ctx, trg2, true, true),
-        Catch::Contains("impossible") &&
-            Catch::Contains("lower the CGRID2B high bound"));
+        Catch::Contains("its high bound 5.5 is at or above RCUT2B = 5, so "
+                        "bump 1 reaches") &&
+            Catch::Contains("with a CGRID2B high bound below RCUT2B"));
   }
   SECTION("no feasible point in the box is still a hard error (CANDIDATE)") {
     Context ctx = make_bump_ctx();
@@ -1277,9 +1283,9 @@ TEST_CASE("startup validation: bump-support gate",
     HPOTargets trg(ctx, tf.path.string());
     REQUIRE_THROWS_WITH(
         validate_hpo_setup(ctx, trg, true, true),
-        Catch::Contains("bump-support gate") &&
-            Catch::Contains("no feasible point") &&
-            Catch::Contains("CGRID2B"));
+        Catch::Contains("BUMPGATE: a compact bump reaches past its cutoff") &&
+            Catch::Contains("no point of the OPTIM boxes keeps bump 1 of "
+                            "CGRID2B inside"));
   }
   SECTION("MB density bump gate fires against RCUTMB") {
     Context ctx = make_bump_ctx();
@@ -1330,8 +1336,9 @@ TEST_CASE("startup validation: bump-support gate",
                       std::string(kOptimizerBlock));
     HPOTargets trg(ctx, tf.path.string());
     REQUIRE_THROWS_WITH(validate_hpo_setup(ctx, trg, true, true),
-                        Catch::Contains("bump-support gate") &&
-                            Catch::Contains("no feasible point"));
+                        Catch::Contains("BUMPGATE: a compact bump reaches past its cutoff") &&
+                            Catch::Contains("no point of the OPTIM boxes "
+                                            "keeps bump"));
   }
 }
 

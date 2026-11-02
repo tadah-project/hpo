@@ -86,7 +86,7 @@ TEST_CASE("StepPlan: per-key and per-index overrides",
                         Catch::Contains("SGRID2B") && Catch::Contains("not optimised"));
     sp.step_overrides = {{"AMPGRIDMB", {7}, 0.3}};     /* wrong index */
     REQUIRE_THROWS_WITH(make_step_plan(sp, start, optimizer_caps(sp)),
-                        Catch::Contains("index 7 is not an OPTIM'd index"));
+                        Catch::Contains("index 7 of AMPGRIDMB is not on an OPTIM line"));
 
     sp.step.reset();                                   /* overrides only, partial */
     sp.step_overrides = {{"CGRID2B", {}, 0.3}};

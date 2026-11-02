@@ -752,8 +752,10 @@ const std::string kRootObservable =
  * GRAD_STRATEGY ANALYTICAL or HYBRID, never NUMERICAL, so the budget
  * warning of its MLSL is ANALYTICAL's (or HYBRID's), not the NUMERICAL one:
  *   - GD_MLSL with INNER LD_LBFGS and GRAD_STRATEGY NUMERICAL is refused
- *     ("--hpotarget defines PC_OBSERVABLE but OPTIMIZER's
- *     GRAD_STRATEGY=NUMERICAL is set", HPOTargets);
+ *     ("the STRATEGY-level optimiser: GRAD_STRATEGY NUMERICAL is refused
+ *     in a target file with PC_OBSERVABLE lines ...", HPOTargets; it said
+ *     "--hpotarget defines PC_OBSERVABLE but OPTIMIZER's
+ *     GRAD_STRATEGY=NUMERICAL is set");
  *   - with no GRAD_STRATEGY, which resolves to ANALYTICAL with a
  *     PC_OBSERVABLE, MAXEVAL 7 warns "... then its first local search, from
  *     one of them, evaluates the loss there again (1 evaluation) and the
@@ -782,9 +784,10 @@ TEST_CASE("startup validation: the gradient budget warning of an MLSL in a "
         }
         Context ctx = make_ctx();
         CHECK_THROWS_WITH(HPOTargets(ctx, file.string()),
-                          Catch::Contains("--hpotarget defines PC_OBSERVABLE "
-                                          "but OPTIMIZER's "
-                                          "GRAD_STRATEGY=NUMERICAL is set"));
+                          Catch::Contains("the STRATEGY-level optimiser: "
+                                          "GRAD_STRATEGY NUMERICAL is refused "
+                                          "in a target file with "
+                                          "PC_OBSERVABLE lines"));
         std::error_code ec;
         fs::remove(file, ec);
     }

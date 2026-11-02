@@ -201,16 +201,16 @@ class ProcessRule(unittest.TestCase):
         self.assertEqual(problems(case(
             '  TaRun run(opt, "PC_LAMMPS --script pe.in\\nPC_ISOLATION '
             'PROCESS\\n");\n'
-            '  CHECK_THAT(err, Catch::Contains("PC_ISOLATION PROCESS is not '
-            'supported in "\n                                  "the MPI build '
-            '(TADAH_HPO_MPI)"));')), [])
+            '  CHECK_THAT(err, Catch::Contains("PC_ISOLATION PROCESS: the MPI '
+            'build "\n                                  "of tadah '
+            '(-DTADAH_HPO_MPI=ON)"));')), [])
 
     def test_a_refusal_in_an_enclosing_block_exempts_its_sections(self):
         # Before the fix: passes as well (a pin: test_hpo_termination.cpp's
         # PC_ISOLATION journal case, refusal at the top of its MPI branch).
         self.assertEqual(problems(case(
-            '  const std::string refusal = "PC_ISOLATION PROCESS is not '
-            'supported in the MPI build";\n'
+            '  const std::string refusal = "PC_ISOLATION PROCESS: the MPI '
+            'build of tadah";\n'
             '  SECTION("config") {\n'
             '    TaRun run(opt + "PC_ISOLATION PROCESS\\n");\n'
             "    CHECK_THROWS_WITH(hpo_run(run.ctx), refusal);\n  }\n"
@@ -226,7 +226,7 @@ class ProcessRule(unittest.TestCase):
             '  SECTION("refused") {\n'
             '    TaRun run(opt + "PC_ISOLATION PROCESS\\n");\n'
             '    CHECK_THROWS_WITH(hpo_run(run.ctx), Catch::Contains(\n'
-            '        "is not supported in the MPI build"));\n  }\n'
+            '        "the MPI build of tadah"));\n  }\n'
             '  SECTION("runs") {\n'
             '    TaRun run(opt + ' + LAMMPS_LINE + ' "PC_ISOLATION PROCESS\\n");\n'
             "    REQUIRE(hpo_run(run.ctx) == 0);\n  }"))

@@ -219,9 +219,9 @@ TEST_CASE("HPO target files: without a training DBFILE the startup rules "
     /* It was "No training DBFILE: the ATOM key is required in the
      * training configuration to declare the element set (e.g. 'ATOM
      * Ta)". */
-    CHECK(what.find("No training DBFILE: the training configuration "
-                    "declares the element set with the ATOM key, such as "
-                    "ATOM Ta. ") != std::string::npos);
+    CHECK(what.find("No training DBFILE and no ATOM key: without training "
+                    "data the training configuration declares the element set "
+                    "with the ATOM key, such as ATOM Ta. ") != std::string::npos);
 }
 
 TEST_CASE("HPO target files: every file of tests/data/ta/target_files is a "

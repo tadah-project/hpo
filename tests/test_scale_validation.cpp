@@ -153,9 +153,20 @@ TEST_CASE("scale_validation: STEP value must be > 0 and finite",
     sp.step = 0.1;
     sp.step_overrides.push_back({"RCUT2B", {}, 0.0});
     REQUIRE_THROWS_WITH(validate_optimizer_scaling(sp, "OUTER", false),
-                        Catch::Contains("STEP must be > 0 and finite"));
+                        Catch::Contains("STEP RCUT2B must be > 0 and finite"));
 }
 
+/* Pins: the STEP of an MLSL block with an INNER STEP is journalled once per
+ * run, though the check runs at parse time, at startup and when each phase
+ * starts, as "... STEP 0.1 replaces the STEP 0.05 of its INNER block (NLopt
+ * passes the initial step of NLOPT:G_MLSL_LDS to the local search
+ * NLOPT:LN_BOBYQA), so the INNER STEP has no effect"; with STEP <KEY> lines
+ * only in the INNER block, "... replaces the STEP <KEY> lines of its INNER
+ * block (...), so they have no effect".
+ * Before the fix: "... STEP 0.1 overrides the INNER NLOPT:LN_BOBYQA STEP
+ * 0.05 (NLopt forwards the outer initial step to the local optimiser);
+ * keep one of them" (an instruction), "... STEP overrides (...)" for the
+ * override lines, and one copy per check (twice here). */
 TEST_CASE("scale_validation: OUTER STEP overriding an INNER STEP is journaled",
           "[HPO][scale][step][journal]")
 {
@@ -165,9 +176,26 @@ TEST_CASE("scale_validation: OUTER STEP overriding an INNER STEP is journaled",
     sp.inner = std::make_unique<OptimizerSpec>(make_spec("NLOPT", "LN_BOBYQA"));
     sp.inner->step = 0.05;
     REQUIRE_NOTHROW(validate_optimizer_scaling(sp, "OUTER"));
+    REQUIRE_NOTHROW(validate_optimizer_scaling(sp, "run"));
     const std::string t = j.text();
     CHECK(t.find("WARNING") != std::string::npos);
-    CHECK(t.find("overrides the INNER") != std::string::npos);
+    CHECK(count_of(t, "the STRATEGY-level optimiser: NLOPT:G_MLSL_LDS: STEP "
+                      "0.1 replaces the STEP 0.05 of its INNER block (NLopt "
+                      "passes the initial step of NLOPT:G_MLSL_LDS to the "
+                      "local search NLOPT:LN_BOBYQA), so the INNER STEP has "
+                      "no effect") == 1u);
+    CHECK(count_of(t, "replaces the STEP") == 1u);
+
+    JournalCapture j2;
+    auto ov = make_spec("NLOPT", "GN_MLSL");
+    ov.step = 0.2;
+    ov.inner = std::make_unique<OptimizerSpec>(make_spec("NLOPT", "LN_SBPLX"));
+    ov.inner->step_overrides.push_back({"RCUT2B", {}, 0.1});
+    REQUIRE_NOTHROW(validate_optimizer_scaling(ov, "OUTER"));
+    CHECK(count_of(j2.text(), "STEP 0.2 replaces the STEP <KEY> lines of its "
+                              "INNER block (NLopt passes the initial step of "
+                              "NLOPT:GN_MLSL to the local search "
+                              "NLOPT:LN_SBPLX), so they have no effect") == 1u);
 }
 
 TEST_CASE("scale_validation: bounds-ignoring backends warn at startup",
@@ -205,11 +233,11 @@ TEST_CASE("scale_validation: bounds-ignoring backends warn at startup",
         "OPTIM box: Ceres' "
         "line-search solver has no bounds, so its line searches can "
         "propose points outside the box (a LOG dimension stays positive, a "
-        "linear one is unbounded). Such a point is not evaluated: it is "
-        "scored as a failure graded by its distance to the box, whose slope "
-        "points away from the box, so a descent step leads back into it; it "
-        "counts against MAXEVAL and it is never the best; the first is "
-        "reported with a WARNING and the DIAGNOSTICS section of hpo_run.log "
+        "linear one is unbounded). Such a point is not evaluated. It is "
+        "scored as a failure graded by its distance to the box, so the score "
+        "rises away from the box and a descent step leads back into it. Such "
+        "a point counts against MAXEVAL and is never the best. The first is "
+        "reported with a WARNING; the DIAGNOSTICS section of hpo_run.log "
         "counts them all. DLIB:BFGS and the NLopt LD_* algorithms keep to the "
         "box";
     CHECK(count_of(j.text(), ceres) == 1u);
@@ -241,7 +269,7 @@ TEST_CASE("scale_validation: start points must lie inside the OPTIM box",
     SECTION("non-finite") {
         sp.optim_init = {{0.5, std::numeric_limits<double>::quiet_NaN()}};
         REQUIRE_THROWS_WITH(validate_optimizer_scaling(sp, "OUTER"),
-                            Catch::Contains("not finite"));
+                            Catch::Contains("is not a finite number"));
     }
     SECTION("run path skips seed checks") {
         sp.optim_init = {{0.5, 2.5}};
@@ -262,7 +290,8 @@ TEST_CASE("scale_validation: log-scaled dims need positive seeds in real space",
 
     sp.optim_init = {{0.0}};
     REQUIRE_THROWS_WITH(validate_optimizer_scaling(sp, "OUTER"),
-                        Catch::Contains("must be > 0 on a log-scaled"));
+                        Catch::Contains("is not > 0, and the dimension is "
+                                        "log-scaled"));
 
     sp.optim_init = {{20.0}};       /* positive but outside the real box */
     REQUIRE_THROWS_WITH(validate_optimizer_scaling(sp, "OUTER"),
@@ -308,5 +337,12 @@ TEST_CASE("scale_validation: width audit journals ratio and pinned dims",
     CHECK(t.find("max/min ratio") != std::string::npos);
     CHECK(t.find("CGRID2B[1]") != std::string::npos);    /* widest */
     CHECK(t.find("SEMBFUNC[13]") != std::string::npos);  /* narrowest + pinned */
-    CHECK(t.find("effectively pinned") != std::string::npos);
+    /* It said "-- below 1e-12 of its magnitude, i.e. effectively pinned;
+     * drop the OPTIM line or widen the box" (an instruction). */
+    CHECK(t.find("SEMBFUNC[13] has the OPTIM width") != std::string::npos);
+    CHECK(t.find("below 1e-12 of its magnitude, so the search cannot move it "
+                 "in double precision; without its OPTIM line it keeps the "
+                 "value of the training configuration") != std::string::npos);
+    CHECK(t.find("search space: 3 dimension(s); OPTIM width min ") !=
+          std::string::npos);
 }

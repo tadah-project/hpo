@@ -288,11 +288,11 @@ TEST_CASE("BUMPGATE's reject text prints the violation losslessly",
   // carries the shortest round-trip form (core::format_roundtrip), as
   // hpo_optim_resolved.hpo does.
   CHECK(bg::bump_gate_reject_what(2.5e-7) ==
-        "bump-support gate reject (c + w/eta past the cutoff, "
-        "violation=2.5e-07, graded band D)");
+        "BUMPGATE rejected the candidate (c + w/eta past the cutoff, "
+        "violation=2.5e-07)");
   CHECK(bg::bump_gate_reject_what(0.8) ==
-        "bump-support gate reject (c + w/eta past the cutoff, "
-        "violation=0.8, graded band D)");
+        "BUMPGATE rejected the candidate (c + w/eta past the cutoff, "
+        "violation=0.8)");
   const double third = 1.0 / 3.0;
   const std::string t = bg::bump_gate_reject_what(third);
   const auto at = t.find("violation=") + 10;

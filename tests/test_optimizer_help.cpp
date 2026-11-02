@@ -297,10 +297,12 @@ TEST_CASE("explain_optimiser: the ALGO help of MLSL and AUGLAG says that "
         }
         return joined;
     };
+    /* (it said "...: LIB NLOPT and a local ALGO; a global one (`tadah
+     * explain ALGO` marks each) is refused, ...", one sentence) */
     const std::string takes =
-        ": LIB NLOPT and a local ALGO; a global one (`tadah explain ALGO` "
-        "marks each) is refused, and so is one that needs an INNER block of "
-        "its own. ";
+        ". The block takes LIB NLOPT and a local ALGO (`tadah explain ALGO` "
+        "marks each); a global ALGO is refused, and so is one that needs an "
+        "INNER block of its own. ";
     const std::string required =
         "The block is required: NLopt has no default local optimiser for it.";
     std::size_t with_inner = 0;
@@ -319,7 +321,7 @@ TEST_CASE("explain_optimiser: the ALGO help of MLSL and AUGLAG says that "
         const bool derivative = c->algo.rfind("GD_", 0) == 0 ||
                                 c->algo.rfind("LD_", 0) == 0;
         CHECK(entry(help) ==
-              "* INNER ... ENDINNER: the local search it runs, from " +
+              "* INNER ... ENDINNER: the local search it runs from " +
                   std::string(mlsl ? "the points it samples in the OPTIM box"
                                    : "its own starting point") +
                   takes +
@@ -330,8 +332,8 @@ TEST_CASE("explain_optimiser: the ALGO help of MLSL and AUGLAG says that "
     CHECK(with_inner == 12u);
     CHECK_THAT(explained("NLOPT:G_MLSL_LDS"),
                Catch::Contains("\n   * INNER ... ENDINNER: the local search "
-                               "it runs, from the points it\n     samples in "
-                               "the OPTIM box: LIB NLOPT"));
+                               "it runs from the points it samples\n     in "
+                               "the OPTIM box. The block takes LIB NLOPT"));
 }
 
 /* Pins: the ALGO help of every NLopt algorithm says whether it reads SEED,
@@ -489,9 +491,11 @@ TEST_CASE("seed_use: how a run of each optimiser reads SEED, as the startup "
 TEST_CASE("print_caps: BuildNotes::Omit leaves out the lines that depend on "
           "the build", "[HPO][explain][build_notes]")
 {
+    /* it said "this build has no Ceres (TADAH_ENABLE_CERES OFF): a run is
+     * refused" */
     const std::string ceres_line =
-        "   * this build has no Ceres (TADAH_ENABLE_CERES OFF): a run is "
-        "refused\n";
+        "   * this build of tadah has no Ceres: a run is refused (a build "
+        "with -DTADAH_ENABLE_CERES=ON has it)\n";
     const auto names = every_backend();
     REQUIRE(names.size() > 50u);
     std::size_t with_line = 0;

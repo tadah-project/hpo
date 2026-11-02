@@ -262,8 +262,9 @@ TEST_CASE("NLopt failed evaluations: the ending line gives the loss the "
         std::smatch m;
         if (std::regex_search(
                 journal, m,
+                /* It said "...  fmin=<loss>". */
                 std::regex(R"(NLopt finished: FTOL_REACHED -- function )"
-                           R"(tolerance converged  fmin=([^\n]*))")))
+                           R"(tolerance converged, best loss ([^\n]*))")))
             return std::string(m[1]);
         return std::string("(no FTOL_REACHED line)");
     };

@@ -207,20 +207,17 @@ TEST_CASE("Writer gap-skip: warning text format is grep-friendly",
     REQUIRE(log.is_open());
 
     log.warning(
-        std::string("HPO writer: gap-skip — advancing next_flush_ from ") +
-        std::to_string(3459) + " to " + std::to_string(3460) +
-        " (1 hung iter slot whose eval thread did not return within 60 s; "
-        "per-eval logs lost)");
+        "result files: evaluation " + std::to_string(3459) +
+        " did not return within 60 s; its rows are not written to the "
+        "result files");
     log.finish("TEST_DONE");
 
     std::ifstream in(path);
     REQUIRE(in.is_open());
     std::ostringstream ss; ss << in.rdbuf();
     const std::string body = ss.str();
-    CHECK(body.find("gap-skip") != std::string::npos);
-    CHECK(body.find("3459") != std::string::npos);
-    CHECK(body.find("3460") != std::string::npos);
-    CHECK(body.find("hung iter slot") != std::string::npos);
+    CHECK(body.find("result files: evaluation 3459") != std::string::npos);
+    CHECK(body.find("did not return within 60 s") != std::string::npos);
 
     std::error_code ec;
     std::filesystem::remove(path, ec);

@@ -858,9 +858,8 @@ TEST_CASE("A WARM seed without the line of a searched key does not have "
     TempFile old_seed("CGRID2B 1.2 1.9\nFWEIGHT 100\nSGRID2B 0.5 1.0\n",
                       ".tadah");
     CHECK_THAT(parse_error(c, text(old_seed.path.string())),
-               Contains("WARM: 1 parameter(s) not found in " +
-                        old_seed.path.string()) &&
-                   Contains("FSIGMA"));
+               Contains("WARM: " + old_seed.path.string() +
+                        " has no value for FSIGMA[1]"));
     TempFile seed("CGRID2B 1.2 1.9\nFSIGMA 0.2 0\nSGRID2B 0.5 1.0\n",
                   ".tadah");
     TempFile tf(text(seed.path.string()), ".hpo");
@@ -916,7 +915,7 @@ TEST_CASE("tadah hpo refuses OPTIM of an error scale when no evaluation "
             const std::string line = "OPTIM " + k + " (1) 0.5 2\n";
             CHECK(startup_error(pinned, target(line)) ==
                   "OPTIM " + k + ": the evaluations of this run fit no "
-                  "coefficient (FIXINDEX pins every weight), so " + k +
+                  "coefficient (FIXINDEX fixes every coefficient), so " + k +
                   " would change nothing and every candidate would give "
                   "the same potential.");
             Context fitted = model_ctx();

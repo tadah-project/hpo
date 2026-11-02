@@ -364,11 +364,11 @@ TEST_CASE("drawn seeds: the annealers, ASA and TADAH:RANDOM without a SEED "
         const Read a = read_target(text, ctx);
         INFO("journal:\n" << a.journal);
         CHECK(count_of(a.journal,
-                       "the SEED of the INIT block on line 4 draws the "
-                       "block's starting points only: TADAH:ANNEAL_PT draws "
-                       "its own random numbers with the SEED of the STRATEGY "
-                       "block, which has none, so with a seed drawn once for "
-                       "the run") == 1);
+                       "the SEED of the INIT block on line 4 seeds the "
+                       "starting points of the block only. TADAH:ANNEAL_PT "
+                       "draws its own random numbers from the SEED of the "
+                       "STRATEGY block; that block has none, so a seed is "
+                       "drawn once for the run") == 1);
         CHECK(count_of(a.journal, "random_device") == 0);
         REQUIRE(a.trg->spec.seed.has_value());
         CHECK(a.trg->spec.init_strategy_spec.seed ==

@@ -16,10 +16,12 @@
 #include <tadah/hpo/anneal_core.h>
 #include <tadah/hpo/hpo_log.h>
 #include <tadah/hpo/optimizer_spec.h>
+#include <tadah/hpo/search_space.h>
 
 #include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <memory>
 #include <sstream>
 #include <string>
 
@@ -116,7 +118,7 @@ TEST_CASE("HPOLog pinned-dim audit -- mark/unmark + milestone table",
 
     log.record_eval(100, 1.0, tadah::hpo::EvalLoss::Usable);          /* milestone 1 */
     std::string s1 = slurp(path);
-    CHECK(s1.find("2 OPTIM dim(s) near a bound") != std::string::npos);
+    CHECK(s1.find("2 OPTIM dimension(s) near a bound") != std::string::npos);
     CHECK(s1.find("WARNING") != std::string::npos);
     CHECK(s1.find("2/64") != std::string::npos);   /* dim0: both chains */
     CHECK(s1.find("1/64") != std::string::npos);   /* dim2: chain 7 only */
@@ -135,7 +137,7 @@ TEST_CASE("HPOLog pinned-dim audit -- mark/unmark + milestone table",
 
     log.record_eval(200, 1.0, tadah::hpo::EvalLoss::Usable);          /* milestone 2 */
     std::string s2 = slurp(path).substr(s1.size());
-    CHECK(s2.find("1 OPTIM dim(s) near a bound") != std::string::npos);
+    CHECK(s2.find("1 OPTIM dimension(s) near a bound") != std::string::npos);
     CHECK(s2.find("1/64") != std::string::npos);
     CHECK(s2.find("2 epochs") != std::string::npos);   /* held since 5 */
     CHECK(s2.find("(ln)") == std::string::npos);       /* dim2 row gone */
@@ -148,6 +150,67 @@ TEST_CASE("HPOLog pinned-dim audit -- mark/unmark + milestone table",
     CHECK(s3.find("OPTIM dim(s) pinned") == std::string::npos);
 
     log.finish("TEST");   /* close the singleton's file for later tests */
+    log.reset_for_test();
+    std::filesystem::remove(path);
+}
+
+/* Pins: the near-bound table of the milestone WARNING gives the OPTIM bound
+ * of a row in the units of the target file, and its gap and tol as
+ * fractions of the width of the box: under OPTIM_SCALE AUTO a dimension
+ * whose OPTIM box is [4, 6] and one tagged LOG with the box [1, 100] run in
+ * the unit box, and a mark at the LO bound of the first with gap 0.033 and
+ * tol 0.058 in those coordinates, and one at the HI bound of the second,
+ * read "param[1]  LO  4  3.3e-02  5.8e-02" and "param[2] (ln)  HI  100";
+ * the header says that the gap and tol are fractions of the width.
+ * Before the fix: the bounds of the optimiser's coordinates, "0.000e+00"
+ * for 4 and "1.000e+00" for 100, which no OPTIM line of the file has. */
+TEST_CASE("HPOLog pinned-dim audit -- the table gives the OPTIM bound in the "
+          "units of the target file", "[pinned_dims][hpolog]")
+{
+    auto& log = HPOLog::instance();
+    log.reset_for_test();
+    const auto path = scratch_log_path();
+    log.open(path.string(), "test", "test_cwd", 0);
+    REQUIRE(log.is_open());
+
+    DimSpec rcut;
+    rcut.key = "RCUTMB";
+    rcut.label = "RCUTMB";
+    rcut.lo = 4.0;
+    rcut.hi = 6.0;
+    DimSpec sgrid;
+    sgrid.key = "SGRIDMB";
+    sgrid.user_index = 1;
+    sgrid.label = "SGRIDMB[1]";
+    sgrid.lo = 1.0;
+    sgrid.hi = 100.0;
+    sgrid.tf.kind = ScaleKind::Log;
+    sgrid.tagged = true;
+    ScalePolicy pol;
+    pol.normalise = true;
+    OptimizerSpec sp;
+    sp.bind_space(std::make_shared<const SearchSpace>(
+        SearchSpace::build({rcut, sgrid}, pol)));
+    REQUIRE(sp.low.size() == 2u);
+    CHECK(sp.low[0] == 0.0);
+    CHECK(sp.high[0] == 1.0);
+    log.arm_pin_audit(sp, 1e-3, 1, "T-step");
+    log.record_pin_state(0, 3, {{0, false, 0.033, 0.058},
+                                {1, true, 0.0, 0.058}});
+    log.record_eval(100, 1.0, tadah::hpo::EvalLoss::Usable);
+    const std::string s = slurp(path);
+    INFO(s);
+    CHECK(s.find("the bound is the OPTIM bound, and the gap and tol are "
+                 "fractions of the width of the box") != std::string::npos);
+    /* The rows name the dimensions as the search-space section of the
+     * journal does, which this log has not written: param[1], param[2]. */
+    CHECK(s.find("param[1]                  LO    4            3.3e-02    "
+                 "5.8e-02") != std::string::npos);
+    CHECK(s.find("param[2] (ln)             HI    100          0          "
+                 "5.8e-02") != std::string::npos);
+    CHECK(s.find("0.000e+00") == std::string::npos);
+
+    log.finish("TEST");
     log.reset_for_test();
     std::filesystem::remove(path);
 }

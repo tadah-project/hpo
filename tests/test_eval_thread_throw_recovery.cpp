@@ -176,8 +176,8 @@ TEST_CASE("Bug 5 fix: HPOLog records the eval-thread catch as a warning",
     REQUIRE(log.is_open());
 
     log.warning(std::string("eval ") + std::to_string(50) +
-                ": eval-thread caught throw, submitting FAIL_SCORE to "
-                "keep writer queue contiguous (type=St13runtime_error): synthetic");
+                ": the evaluation stopped on an error and scores FAILSCORE: "
+                "synthetic");
     log.finish("TEST_DONE");
 
     std::ifstream in(path);
@@ -186,8 +186,8 @@ TEST_CASE("Bug 5 fix: HPOLog records the eval-thread catch as a warning",
     ss << in.rdbuf();
     const std::string body = ss.str();
     CHECK(body.find("eval 50:") != std::string::npos);
-    CHECK(body.find("eval-thread caught throw") != std::string::npos);
-    CHECK(body.find("submitting FAIL_SCORE") != std::string::npos);
+    CHECK(body.find("the evaluation stopped on an error") != std::string::npos);
+    CHECK(body.find("scores FAILSCORE: synthetic") != std::string::npos);
 
     std::error_code ec;
     std::filesystem::remove(path, ec);

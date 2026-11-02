@@ -523,8 +523,8 @@ TEST_CASE("Repeated points: under NUMERICAL a gradient at a recorded point "
     CHECK(journal.find("NLOPT:G_MLSL_LDS asked again for the point of eval 2 "
                        "(A = 0.59375, B = 0.96875) and its gradient: the loss "
                        "of eval 2 is reused, without an evaluation, as the "
-                       "loss at the point that the gradient's finite "
-                       "differences take, and their stencil is evaluated") !=
+                       "centre of the finite-difference gradient; the other "
+                       "points of the stencil are evaluated") !=
           std::string::npos);
     CHECK(diagnostics_count(journal, "Repeats evaluated again").empty());
     CHECK_FALSE(diagnostics_count(journal, "Repeated points reused").empty());
@@ -727,17 +727,20 @@ TEST_CASE("Repeated points: the journal says how MAXEVAL takes a reuse",
     CHECK(sbplx.asked.size() == 38u);
     CHECK(j_nlopt.find("NLOPT:LN_SBPLX asked again for the point of eval ") !=
           std::string::npos);
-    CHECK(j_nlopt.find("is reused, without an evaluation (a reuse is no "
-                       "evaluation: HPO's MAXEVAL does not count it, but NLopt "
-                       "counts it among the calls its own MAXEVAL bounds; "
-                       "DIAGNOSTICS counts reuses)") != std::string::npos);
+    /* "the MAXEVAL of the block", not "HPO's MAXEVAL" */
+    CHECK(j_nlopt.find("is reused, without an evaluation (a reuse is not an "
+                       "evaluation: the MAXEVAL of the block does not count "
+                       "it, but NLopt counts it among the calls its own "
+                       "MAXEVAL bounds; DIAGNOSTICS counts reuses)") !=
+          std::string::npos);
     CHECK(j_nlopt.find("NLopt counts its calls, and 22 of them asked for "
                        "points the run had evaluated") !=
           std::string::npos);
     const std::string diag =
         "points the run had evaluated that a search asked for, answered "
         "with the\n    loss -- and gradient -- of their evaluation, not "
-        "evaluated again: HPO's MAXEVAL\n    does not count them, NLopt's own "
+        "evaluated again: the MAXEVAL of\n    the block does not count them, "
+        "NLopt's own "
         "MAXEVAL counts them among its calls, and the\n    RESTART window "
         "counts each as one evaluation without a new best)";
     CHECK(j_nlopt.find(diag) != std::string::npos);
@@ -749,9 +752,9 @@ TEST_CASE("Repeated points: the journal says how MAXEVAL takes a reuse",
     const std::string j_bfgs = run_bfgs(sp, bowl);
     CHECK(j_bfgs.find("DLIB:BFGS asked again for the point of eval ") !=
           std::string::npos);
-    CHECK(j_bfgs.find("is reused, without an evaluation (a reuse is no "
-                      "evaluation, and MAXEVAL counts evaluations; DIAGNOSTICS "
-                      "counts reuses)") != std::string::npos);
+    CHECK(j_bfgs.find("is reused, without an evaluation (a reuse is not an "
+                      "evaluation, and MAXEVAL counts evaluations; "
+                      "DIAGNOSTICS counts reuses)") != std::string::npos);
     CHECK(j_bfgs.find(diag) != std::string::npos);
 }
 
@@ -904,8 +907,8 @@ TEST_CASE("Repeated points: DLIB:BFGS takes the recorded loss of a point as "
     const std::string journal = j.text();
     CHECK(journal.find("DLIB:BFGS asked again for the point of eval 1 (A = "
                        "0.5, B = 0.5) and its gradient: the loss of eval 1 is "
-                       "reused, without an evaluation, as the loss at the "
-                       "point that the gradient's finite differences take") !=
+                       "reused, without an evaluation, as the centre of the "
+                       "finite-difference gradient") !=
           std::string::npos);
     CHECK(diagnostics_count(journal, "Repeats evaluated again").empty());
 }
@@ -1257,9 +1260,9 @@ TEST_CASE("Repeated points: DLIB:BFGS runs the line search from its farthest "
     sp.param["tol_gradinf"] = 1e-12;
     const std::string stop_line =
         "DLIB:BFGS stopped: no step within the OPTIM box after N "
-        "evaluation(s): from A = 0.5 the line search from the farthest step "
-        "BFGS takes there (5.551115123e-14 of the steepest-descent step) "
-        "found no lower loss and came back to the point";
+        "evaluation(s): from A = 0.5, the line search starting at the "
+        "farthest step BFGS takes there (5.551115123e-14 of the "
+        "steepest-descent step) found no lower loss and came back to the point";
     const auto with_count = [&](std::size_t n) {
         std::string line = stop_line;
         line.replace(line.find(" N "), 3, " " + std::to_string(n) + " ");
