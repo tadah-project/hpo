@@ -3085,7 +3085,7 @@ it as the default loss function of its terms, while the metric terms take \
 the last LOSS line wherever it is."""
 checks = [
   { msg = "LOSS requires a loss type", doc = "At the line: no loss function follows the key." },
-  { msg = "{what}: unknown loss function '{tok}'; the loss functions are L1, L2, LOG_COSH, MAPE, HUBER, RMSLE and TUKEY, in any case", doc = "At the line: a name that is no loss function, in upper or lower case; {what} is LOSS, --varloss <name> on a PC_LAMMPS line, or PC_OBSERVABLE cohesive_energy: --loss." },
+  { msg = "{what}: unknown loss function '{tok}'; the loss functions are L1, L2, LOG_COSH, MAPE, HUBER, RMSLE and TUKEY, in any case", doc = "At the line: a name that is no loss function, in any case; {what} is LOSS, --varloss <name> on a PC_LAMMPS line, or PC_OBSERVABLE cohesive_energy: --loss." },
   { msg = "LOSS {name}: parameter '{tok}' is not a number{underflow}", doc = "At the line: a parameter that is no number of the number grammar." },
   { msg = "loss {name} takes no parameter (got {count})", doc = "At the line: a parameter of a loss function that takes none; {count} is the number given." },
   { msg = "loss {name} takes at most {max} parameter (got {count})", doc = "At the line: more parameters than the loss function takes." },
@@ -5373,7 +5373,7 @@ doc = """\
 With a PC_LAMMPS or PC_FAILPROBE line, every optimiser of the file runs \
 without gradients, as the results of a LAMMPS script have no gradient: an \
 optimiser that takes a gradient is refused in any block, and an NLopt \
-MLSL or AUGLAG takes none with a derivative-free INNER block. The refusal \
+MLSL or AUGLAG takes none with a gradient-free INNER block. The refusal \
 names the ALGO line of the block."""
 msg_doc = """\
 The message names PC_LAMMPS and its line, or the PC_FAILPROBE line in a \
@@ -5525,7 +5525,7 @@ error = "the INNER block of the STRATEGY-level optimiser: NLOPT:LD_AUGLAG takes 
 [[rule]]
 id = "RULE.PC_LAMMPS_INNER_gradient_free"
 title = """\
-With PC_LAMMPS or PC_FAILPROBE an INNER algorithm is derivative-free"""
+With PC_LAMMPS or PC_FAILPROBE an INNER algorithm is gradient-free"""
 check = "parse"
 keys = ["ROOT.PC_LAMMPS", "ROOT.PC_FAILPROBE", "BLOCK.INNER"]
 msg = "{phase}: {lib}:{algo} is gradient-based. A target file with PC_LAMMPS or PC_FAILPROBE lines ({key} on line {line}) takes a gradient-free optimiser, and an INNER block takes a local NLopt algorithm; the gradient-free ones are {list}."
@@ -5836,9 +5836,10 @@ title = "OALGO 3 fits an intercept column with LAMBDA 0"
 check = "startup"
 msg = "OALGO 3 (SVD with a uniform ridge) penalises every coefficient alike, and the model has {count} intercept column(s) (BIAS true with ATOM), which the ridge of OALGO 1, 2 and 4 leaves unpenalised and OALGO 3 cannot, so OALGO 3 takes LAMBDA 0 only; OALGO 1, 2 or 4 fits such a model with a LAMBDA other than 0."
 doc = """\
-OALGO 3 penalises every coefficient alike, and a ridge penalty leaves the \
-intercept columns out (BIAS true), so a fit with an intercept column that \
-FIXINDEX does not pin refuses OALGO 3 with a positive LAMBDA; tadah hpo \
+OALGO 3 penalises every coefficient alike, while the ridge of OALGO 1, 2 \
+and 4 leaves the intercept columns (BIAS true) unpenalised, so a fit with \
+an intercept column that FIXINDEX does not fix refuses OALGO 3 with a \
+positive LAMBDA; tadah hpo \
 refuses it when the run starts, without a line, if its evaluations fit \
 the model."""
 msg_doc = "The message gives the number of intercept columns the fit has."

@@ -65,9 +65,9 @@ Trailing blanks are removed, and a line left empty is skipped. A line that \
 ends with \\ continues on the next line, and the two are joined without a \
 separator. A file whose last line ends with \\ is refused. Keys are \
 written as this reference writes them: in upper case, and PC_ErRMSE with \
-its lower-case r. Each error names the file, as --hpotarget gives it, \
-and the line it is about: for a continued line, its last line and the \
-joined text."""
+its lower-case r. An error at a line of the target file names the file, \
+as --hpotarget gives it, and the line: for a continued line, its last line \
+and the joined text."""
 comment = "#"
 continuation = "\\"
 key_case = "exact"
