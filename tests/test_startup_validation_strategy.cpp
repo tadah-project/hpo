@@ -3714,6 +3714,33 @@ TEST_CASE("startup validation: TADAH:RANDOM/GRID and DLIB:GFS reject what "
     }
 }
 
+/* Pins: DLIB:BFGS and the Ceres optimisers refuse VECTOR_ARR as every
+ * other backend that does not read it does, naming the backends that read
+ * it (the caps' reads_vector_storage: NLopt's LD_LBFGS, LD_VAR1/2 and the
+ * preconditioned LD_TNEWTON forms).
+ * Before the fix: "DLIB:BFGS does not support VECTOR_ARR, which DLIB:GFS
+ * and the NLopt L-BFGS algorithms read" and "CERES:STEEPEST_DESCENT does
+ * not support VECTOR_ARR, which DLIB:GFS and the global NLopt algorithms
+ * read": DLIB:GFS and the global NLopt algorithms refuse VECTOR_ARR. */
+TEST_CASE("startup validation: DLIB:BFGS and CERES refuse VECTOR_ARR naming "
+          "the backends that read it", "[startup_validation][strategy]")
+{
+    const std::string top = "the STRATEGY-level optimiser: ";
+    const std::string vector_storage =
+        " does not use VECTOR_ARR (it is read by " + kVectorStorageReaders +
+        ")";
+    CHECK(judge(strategy_config("    TYPE PLAIN\n    LIB DLIB\n    ALGO BFGS\n"
+                                "    MAXEVAL 5\n    VECTOR_ARR 5\n"))
+              .startup == top + "DLIB:BFGS" + vector_storage);
+    CHECK(judge(strategy_config("    TYPE PLAIN\n    LIB CERES\n"
+                                "    ALGO STEEPEST_DESCENT\n    MAXEVAL 5\n"
+                                "    VECTOR_ARR 5\n"))
+              .startup ==
+          hpo_test::ceres_expect(top + "CERES:STEEPEST_DESCENT" +
+                                     vector_storage,
+                                 top));
+}
+
 /* ======================================================================
  * NLopt applies every attribute to nlopt::opt (build_nlopt), and an
  * algorithm ignores those it does not read. A tolerance its search never

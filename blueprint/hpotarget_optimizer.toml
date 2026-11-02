@@ -1427,7 +1427,7 @@ wrap = "opt_bfgs"
 check = "startup"
 at = "ENDOPTIMIZER"
 text = "VECTOR_ARR 5"
-error = "the STRATEGY-level optimiser: DLIB:BFGS does not support VECTOR_ARR, which DLIB:GFS and the NLopt L-BFGS algorithms read"
+error = "the STRATEGY-level optimiser: DLIB:BFGS does not use VECTOR_ARR (it is read by NLOPT:LD_LBFGS, NLOPT:LD_TNEWTON_PRECOND, NLOPT:LD_TNEWTON_PRECOND_RESTART, NLOPT:LD_VAR1, NLOPT:LD_VAR2)"
 
 [[key.invalid]]
 wrap = "opt_asa"
@@ -1449,7 +1449,7 @@ wrap = "opt_ceres"
 check = "startup"
 at = "ENDOPTIMIZER"
 text = "VECTOR_ARR 5"
-error = "the STRATEGY-level optimiser: CERES:STEEPEST_DESCENT does not support VECTOR_ARR, which DLIB:GFS and the global NLopt algorithms read"
+error = "the STRATEGY-level optimiser: CERES:STEEPEST_DESCENT does not use VECTOR_ARR (it is read by NLOPT:LD_LBFGS, NLOPT:LD_TNEWTON_PRECOND, NLOPT:LD_TNEWTON_PRECOND_RESTART, NLOPT:LD_VAR1, NLOPT:LD_VAR2)"
 
 [[key.invalid]]
 wrap = "opt_anneal"

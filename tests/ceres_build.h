@@ -12,11 +12,14 @@
 
 namespace hpo_test {
 
-/* The tail of the refusal of CERES:<ALGO> (it said "CERES support is not
- * built; reconfigure with -DTADAH_ENABLE_CERES=ON"). */
+/* The tail of the refusal of CERES:<ALGO>, which names the Installation
+ * page as the refusal of tadah hpo without the Nested Fitting Procedure
+ * does, "(see Installation)" (it said "CERES support is not built;
+ * reconfigure with -DTADAH_ENABLE_CERES=ON", then "(Installation) has
+ * it"). */
 inline const std::string kCeresNotBuilt =
     " is not in this build of tadah; a build with -DTADAH_ENABLE_CERES=ON "
-    "(Installation) has it";
+    "(see Installation) has it";
 
 /* `with_ceres` in a build with Ceres; without it the refusal of LIB CERES
  * with ALGO `algo`, after `prefix` (a phase's name and ": ", as

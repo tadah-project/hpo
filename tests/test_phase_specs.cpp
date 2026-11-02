@@ -578,6 +578,18 @@ TEST_CASE("backend rules: validate_backend runs each backend's own checks",
         c.set(s);
         CHECK_THAT(error_of(s), Catch::StartsWith(c.message));
     }
+    /* Pins: CERES refuses an integer search parameter (a spec built outside
+     * the parser, which marks none) as DLIB:BFGS does, with nothing after
+     * it. Before the fix: "..., which DLIB:GFS, the global NLopt algorithms
+     * and TADAH:GRID take": neither NLopt nor TADAH:GRID reads integer
+     * search parameters. */
+    {
+        auto ceres = with("CERES", "STEEPEST_DESCENT");
+        ceres.is_int.assign(ceres.low.size(), true);
+        CHECK(error_of(ceres) ==
+              hpo_test::ceres_expect("CERES:STEEPEST_DESCENT does not "
+                                     "support integer search parameters"));
+    }
     /* Pins: the SEED refusal says what is refused and why, and nothing
      * after it: "TADAH:GRID does not use SEED: it draws no random numbers".
      * Before: it ended "; remove it". */

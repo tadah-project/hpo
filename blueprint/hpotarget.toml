@@ -1555,7 +1555,7 @@ doc = "Under STRICT: the worst corner of the box of bump 4 reaches past RCUT2B."
 text = '''
 BUMPGATE STRICT
 OPTIM CGRID2B (4) 4.0 5.0'''
-error = "BUMPGATE: a compact bump reaches past its cutoff: under a Cut_Dummy cutoff each bump vanishes at or before RCUT (c + w/eta <= RCUT), as a bump cut off there gives the energy and the forces a step at the cutoff. The bumps past the cutoff:\n  - bump 4 of CGRID2B reaches 6, past RCUT2B = 5.5; it stays inside with an OPTIM SGRID2B (4) low bound >= w/(RCUT2B - c_hi) = 6 (the smallest width it can take is eta = 3).\n  A larger RCUT2B or RCUTMB in the training configuration gives a longer range; the potential stays smooth, as each bump vanishes at the edge of its own support."
+error = "BUMPGATE: a compact bump reaches past its cutoff: under a Cut_Dummy cutoff each bump vanishes at or before RCUT (c + w/eta <= RCUT), as a bump cut off there gives the energy and the forces a step at the cutoff. The bumps past the cutoff:\n  - bump 4 of CGRID2B reaches 6, past RCUT2B = 5.5; it stays inside with an OPTIM SGRID2B (4) low bound >= w/(RCUT2B - c_hi) = 6 (the smallest eta it can take, its widest bump, is 3).\n  A larger RCUT2B or RCUTMB in the training configuration gives a longer range; the potential stays smooth, as each bump vanishes at the edge of its own support."
 
 [[key.invalid]]
 wrap = "main_ream"

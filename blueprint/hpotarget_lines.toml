@@ -1490,7 +1490,7 @@ error = "--varloss E <weight> must be a finite number, got 'x'"
 [[line_option.invalid]]
 wrap = "root"
 text = "PC_LAMMPS --script lines_pc.in --varloss E 1 1 FOO"
-error = "--varloss E: unknown loss function 'FOO'; the loss functions are L1, L2, LOG_COSH, MAPE, HUBER, RMSLE and TUKEY, in upper or lower case"
+error = "--varloss E: unknown loss function 'FOO'; the loss functions are L1, L2, LOG_COSH, MAPE, HUBER, RMSLE and TUKEY, in any case"
 msg_of = "ROOT.LOSS"
 
 [[line_option.invalid]]
@@ -2699,7 +2699,7 @@ text = "PC_OBSERVABLE cohesive_energy --species H --target 2.0 --weight 1 --hotv
 [[line_option.invalid]]
 wrap = "root"
 text = "PC_OBSERVABLE cohesive_energy --species H --target 2 --weight 1 --hotvar a0 1.5 2.5 --loss foo"
-error = "PC_OBSERVABLE cohesive_energy: --loss: unknown loss function 'foo'; the loss functions are L1, L2, LOG_COSH, MAPE, HUBER, RMSLE and TUKEY, in upper or lower case"
+error = "PC_OBSERVABLE cohesive_energy: --loss: unknown loss function 'foo'; the loss functions are L1, L2, LOG_COSH, MAPE, HUBER, RMSLE and TUKEY, in any case"
 msg_of = "ROOT.LOSS"
 
 [[line_option.examples]]
@@ -3115,7 +3115,7 @@ error = "LOSS requires a loss type"
 [[key.invalid]]
 wrap = "root"
 text = "LOSS FOO"
-error = "LOSS: unknown loss function 'FOO'; the loss functions are L1, L2, LOG_COSH, MAPE, HUBER, RMSLE and TUKEY, in upper or lower case"
+error = "LOSS: unknown loss function 'FOO'; the loss functions are L1, L2, LOG_COSH, MAPE, HUBER, RMSLE and TUKEY, in any case"
 
 [[key.invalid]]
 wrap = "root"
@@ -5849,7 +5849,7 @@ check = "startup"
 context = "lines_oalgo3_bias"
 at = "none"
 text = "PC_EMAE 5 1"
-error = "OALGO 3 (SVD with a uniform ridge) penalises every coefficient alike, and the model has 1 intercept column(s) (BIAS true with ATOM), which a ridge penalty leaves out, so OALGO 3 takes LAMBDA 0 only; OALGO 1, 2 or 4 fits such a model with a LAMBDA other than 0."
+error = "OALGO 3 (SVD with a uniform ridge) penalises every coefficient alike, and the model has 1 intercept column(s) (BIAS true with ATOM), which the ridge of OALGO 1, 2 and 4 leaves unpenalised and OALGO 3 cannot, so OALGO 3 takes LAMBDA 0 only; OALGO 1, 2 or 4 fits such a model with a LAMBDA other than 0."
 
 [[rule]]
 id = "RULE.fit_OALGO3_intercepts_evidence"
@@ -5869,7 +5869,7 @@ check = "startup"
 context = "lines_oalgo3_bias_evidence"
 at = "none"
 text = "PC_EMAE 5 1"
-error = "LAMBDA -1 requests the evidence approximation, which only OALGO 3 runs; OALGO 3 penalises every coefficient alike, and the model has 1 intercept column(s) (BIAS true with ATOM), which a ridge penalty leaves out. The evidence approximation needs BIAS false, or every intercept coefficient fixed with FIXINDEX and FIXWEIGHT. With BIAS true, LAMBDA 0 fits with any OALGO, and LAMBDA > 0 with OALGO 1, 2 or 4."
+error = "LAMBDA -1 requests the evidence approximation, which only OALGO 3 runs; OALGO 3 penalises every coefficient alike, and the model has 1 intercept column(s) (BIAS true with ATOM), which the ridge of OALGO 1, 2 and 4 leaves unpenalised and OALGO 3 cannot. The evidence approximation needs BIAS false, or every intercept coefficient fixed with FIXINDEX and FIXWEIGHT. With BIAS true, LAMBDA 0 fits with any OALGO, and LAMBDA > 0 with OALGO 1, 2 or 4."
 
 [[rule]]
 id = "RULE.optim_LAMBDA_OALGO3_intercepts"
@@ -5890,7 +5890,7 @@ check = "startup"
 context = "lines_oalgo3_bias_lambda0"
 at = "none"
 text = "OPTIM LAMBDA (1) 0 1e-2"
-error = "OPTIM LAMBDA: OALGO 3 penalises every coefficient alike, and the fit has 1 intercept column(s) (BIAS true with ATOM), which a ridge penalty leaves out, so every fit refuses a LAMBDA other than 0: each candidate of the box but 0 would fail its evaluation. OALGO 1, 2 or 4 fits a positive LAMBDA with the intercepts unpenalised."
+error = "OPTIM LAMBDA: OALGO 3 penalises every coefficient alike, and the fit has 1 intercept column(s) (BIAS true with ATOM), which the ridge of OALGO 1, 2 and 4 leaves unpenalised and OALGO 3 cannot, so every fit refuses a LAMBDA other than 0: each candidate of the box but 0 would fail its evaluation. OALGO 1, 2 or 4 fits a positive LAMBDA with the intercepts unpenalised."
 
 [[rule]]
 id = "RULE.fit_krr_implementation"

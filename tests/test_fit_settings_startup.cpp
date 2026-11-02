@@ -427,7 +427,9 @@ TEST_CASE("tadah hpo refuses at startup OALGO 3 with a LAMBDA other than 0 "
     /* OPTIM LAMBDA with LAMBDA 0: every candidate of the box but 0 would
      * be refused by its fit, so the search is refused at startup, naming
      * the intercept columns; with the intercept pinned, or under OALGO 1,
-     * it passes (pins).
+     * it passes (pins). The intercept columns are those the ridge of
+     * OALGO 1, 2 and 4 leaves unpenalised (it said "which a ridge penalty
+     * leaves out", after "OALGO 3 penalises every coefficient alike").
      * Before the fix: the startup checks passed it, and each evaluation of
      * a candidate above 0 refused it. */
     SECTION("OPTIM LAMBDA with LAMBDA 0") {
@@ -436,7 +438,8 @@ TEST_CASE("tadah hpo refuses at startup OALGO 3 with a LAMBDA other than 0 "
         CHECK(startup_error(c, target(line)) ==
               "OPTIM LAMBDA: OALGO 3 penalises every coefficient alike, and "
               "the fit has 1 intercept column(s) (BIAS true with ATOM), which "
-              "a ridge penalty leaves out, so every fit refuses a LAMBDA "
+              "the ridge of OALGO 1, 2 and 4 leaves unpenalised and OALGO 3 "
+              "cannot, so every fit refuses a LAMBDA "
               "other than 0: each candidate of the box but 0 would fail its "
               "evaluation. OALGO 1, 2 or 4 fits a positive LAMBDA with the "
               "intercepts unpenalised.");
