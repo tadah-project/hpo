@@ -550,6 +550,45 @@ set_tests_properties(hpo_has_include_rebuild PROPERTIES
     LABELS cmake
     TIMEOUT 120)
 
+# hpo_hpotarget_handlers_removal: the handlers of the registry-driven
+# parser follow the keys of the registry
+# (handlers_removal/check_handlers_removal.cmake): with a key removed from
+# a copy of the registry, regenerated into the include directory the two
+# probe targets below put first, src/hpotarget_handlers.cpp does not
+# compile; with a key added, it compiles and the probe, which takes the
+# address of every handler (hpotarget_handlers_gen.h), does not link. The
+# probes are not built by default, and compile with the headers of the
+# repository when the directory is empty. Before the fix: fails,
+# src/hpotarget_handlers.cpp does not exist.
+set(_hpo_handlers_source ${CMAKE_CURRENT_SOURCE_DIR}/../src/hpotarget_handlers.cpp)
+set(_hpo_handlers_probe_include ${CMAKE_CURRENT_BINARY_DIR}/handlers_probe/include)
+if(EXISTS ${_hpo_handlers_source})
+  add_library(hpo_hpotarget_handlers_probe_objects OBJECT EXCLUDE_FROM_ALL
+      ${_hpo_handlers_source})
+  add_executable(hpo_hpotarget_handlers_probe EXCLUDE_FROM_ALL
+      ${CMAKE_CURRENT_SOURCE_DIR}/handlers_removal/probe_main.cpp
+      $<TARGET_OBJECTS:hpo_hpotarget_handlers_probe_objects>)
+  foreach(_t hpo_hpotarget_handlers_probe_objects hpo_hpotarget_handlers_probe)
+    target_include_directories(${_t} BEFORE PRIVATE
+        ${_hpo_handlers_probe_include})
+    target_link_libraries(${_t} PRIVATE tadah.hpo)
+    set_target_properties(${_t} PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
+  endforeach()
+endif()
+add_test(NAME hpo_hpotarget_handlers_removal
+    COMMAND ${CMAKE_COMMAND}
+        -DPYTHON=${Python3_EXECUTABLE}
+        -DHPO_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}/..
+        -DBUILD_DIR=${CMAKE_BINARY_DIR}
+        -DPROBE_INCLUDE_DIR=${_hpo_handlers_probe_include}
+        -DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/handlers_removal
+        -DOBJECTS_TARGET=hpo_hpotarget_handlers_probe_objects
+        -DPROBE_TARGET=hpo_hpotarget_handlers_probe
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/handlers_removal/check_handlers_removal.cmake)
+set_tests_properties(hpo_hpotarget_handlers_removal PROPERTIES
+    LABELS cmake
+    TIMEOUT 1800)
+
 # Boost drift gate: every Boost header HPO includes must be in the Boost
 # Tadah vendors (MLIP's external/boost, on HPO's include path through
 # tadah.mlip), so the build never depends on a system Boost. The include

@@ -7,7 +7,8 @@ file and a training configuration in place, in a copy of a directory tree
 (tree, cwd, target_file, config_file, config_drop, config_add, copies).
 
 Before the fix: the runner takes no option and no mode "describe", and
-every test fails."""
+every test fails; --parser new is refused until the build has the
+registry-driven parser."""
 
 from __future__ import annotations
 
@@ -105,14 +106,34 @@ class Runner(unittest.TestCase):
         self.assertEqual(res1[0]["parse_error"], "")
         self.assertIn("unknown key 'FOO'", res1[1]["parse_error"])
 
-    def test_parser_new_is_refused_until_it_exists(self):
+    # Pins: --parser new reads the cases with the registry-driven parser
+    # (src/hpotarget_parser.cpp) and reports as --parser old does: a file
+    # both read gives the same description, a refused one the same
+    # message; mode check, which runs tadah hpo --check and so the parser
+    # of the program, is refused with --parser new (exit status 2).
+    # Before the fix: fails, --parser new is refused (the build has no
+    # other parser).
+    def test_parser_new_reads_the_cases(self):
+        cases = [{"id": "ok", "mode": "describe", "file": TARGET,
+                  "config": CONFIG},
+                 {"id": "bad", "mode": "describe", "file": "FOO 1\n" + TARGET,
+                  "config": CONFIG},
+                 {"id": "values", "mode": "defaults", "file": TARGET,
+                  "config": CONFIG}]
+        rc0, err0, old = self.run_cases(cases, "--parser", "old")
+        rc1, err1, new = self.run_cases(cases, "--parser", "new")
+        self.assertEqual((rc0, rc1), (0, 0), err0 + err1)
+        self.assertEqual(old, new)
+        self.assertIn('\nspec.algo = "LN_SBPLX"\n', new[0]["dump"])
+        self.assertIn("unknown key 'FOO'", new[1]["parse_error"])
         rc, err, res = self.run_cases(
-            [{"id": "a", "mode": "parse", "file": TARGET, "config": CONFIG}],
+            [{"id": "a", "mode": "check", "file": TARGET, "config": CONFIG}],
             "--parser", "new")
         self.assertEqual(rc, 2)
         self.assertIsNone(res)
-        self.assertIn("--parser new: this build has no registry-driven "
-                      "parser of the target file", err)
+        self.assertIn("mode check runs tadah hpo --check, which reads the "
+                      "target file with the parser of the program; "
+                      "--parser new takes the other modes", err)
 
     def test_parser_takes_old_or_new(self):
         case = [{"id": "a", "mode": "parse", "file": TARGET,

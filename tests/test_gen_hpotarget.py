@@ -4,11 +4,12 @@ tables of the target-file registry, on the synthetic registry of
 test_hpotarget_registry.py: the C++ name of an id and the refusal of an id
 without one or of two ids of one name, the escaping of a message, the
 placeholders of the messages the loader fixes (taken from the loader, not
-written into the generator), the tables of the two headers and what they
-leave out, the comment at the top of each header, that two runs write
-the same text, the headers compiled and read back by a C++ compiler,
---header and --check with the command each failure names, and the
-help."""
+written into the generator), the tables of the headers and what they
+leave out, the handlers the parser calls (one for each key, line option
+and form it reads), the comment at the top of each header, that two runs
+write the same text, the headers compiled and read back by a C++
+compiler, --header and --check with the command each failure names, and
+the help."""
 
 from __future__ import annotations
 
@@ -312,6 +313,88 @@ class Generator(unittest.TestCase):
         self.has("RuleWhat{\"ROOT.FAILSCORE\", \"score\"}", h)
         self.has('"points per dimension"}', p)
 
+    # Pins: hpotarget_handlers_gen.h declares the handlers the parser
+    # calls, one static member of struct Handlers for each key, named as
+    # the key's enumerator, taking a KeyRead (declared, the parser defines
+    # it); kKeyHandlers holds their addresses in the order of KeyId, so a
+    # key the registry drops leaves a definition in hpotarget_handlers.cpp
+    # that names no member, and a key it adds a member no file defines. The
+    # synthetic registry has no line option and no form: their tables are
+    # empty. The header includes the registry's and holds no text of the
+    # registry.
+    # Before the fix: fails, the generator writes no handlers header.
+    def test_handlers(self):
+        texts = self.headers()
+        self.assertEqual(sorted(texts), sorted([gen.REGISTRY_HEADER,
+                                                gen.PARAM_HEADER,
+                                                gen.HANDLERS_HEADER]))
+        h = texts[gen.HANDLERS_HEADER]
+        self.has("#include <tadah/hpo/hpotarget_registry_gen.h>", h)
+        self.has("struct KeyRead;\nstruct OptionRead;\nstruct FormRead;", h)
+        self.has("struct Handlers {\n"
+                 "  static void ROOT_FAILSCORE(KeyRead& r);\n"
+                 "  static void OPTIMIZER_LIB(KeyRead& r);\n"
+                 "  static void OPTIMIZER_SEED(KeyRead& r);\n"
+                 "};", h)
+        self.has("using KeyHandler = void (*)(KeyRead&);", h)
+        self.has("inline constexpr KeyHandler kKeyHandlers[] = {\n"
+                 "  &Handlers::ROOT_FAILSCORE,\n"
+                 "  &Handlers::OPTIMIZER_LIB,\n"
+                 "  &Handlers::OPTIMIZER_SEED,\n};", h)
+        self.has("inline constexpr Span<OptionHandler> kOptionHandlers"
+                 "{nullptr, 0};", h)
+        self.has("inline constexpr Span<FormHandler> kFormHandlers"
+                 "{nullptr, 0};", h)
+        for text in ("The score of a failed evaluation.", "FAILSCORE 10",
+                     "must be a positive"):
+            self.lacks(text, h)
+        self.assertTrue(h.startswith("// GENERATED FILE -- DO NOT EDIT."),
+                        h[:200])
+
+    # Pins: on the registry of this repository the handlers header has a
+    # handler for each option and form of a line HPO reads (PC_LAMMPS
+    # --hotvar, a gate option, a PC_OBSERVABLE cohesive_energy option, the
+    # form cohesive_energy), each table in the order of its enumeration;
+    # the options and forms of the OPTIM line, which MLIP's OPTIM reader
+    # reads (tadah/mlip/hpotarget_optim.h), have none: their entries of
+    # kOptionHandlers and kFormHandlers are nullptr. Handler names are
+    # unique across keys, options and forms.
+    # Before the fix: fails, the generator writes no handlers header.
+    def test_handlers_of_the_registry(self):
+        reg = hr.load(HERE.parent / "blueprint", templates=False)
+        h = gen.headers(reg)[gen.HANDLERS_HEADER]
+        self.has("  static void ROOT_PC_LAMMPS(KeyRead& r);", h)
+        self.has("  static void PC_LAMMPS_hotvar(OptionRead& r);", h)
+        self.has("  static void RHOGATE_NPTS(OptionRead& r);", h)
+        self.has("  static void PC_OBSERVABLE_cohesive_energy_species("
+                 "OptionRead& r);", h)
+        self.has("  static void PC_OBSERVABLE_cohesive_energy(FormRead& r);",
+                 h)
+        for name in ("OPTIM_AUTO_RATIO", "OPTIM_LIN", "OPTIM_range",
+                     "OPTIM_AUTO"):
+            self.lacks(f" {name}(", h)
+        options = re.search(r"kOptionHandlers\[\] = \{\n(.*?)\n\};", h,
+                            re.S).group(1).split("\n")
+        self.assertEqual(len(options), len(reg.line_options))
+        for o, row in zip(reg.line_options, options):
+            name = gen.cxx_name(o.id)
+            if name.startswith("OPTIM_"):
+                self.assertEqual(row.strip(), "nullptr,", o.id)
+            else:
+                self.assertEqual(row.strip(), f"&Handlers::{name},", o.id)
+        forms = re.search(r"kFormHandlers\[\] = \{\n(.*?)\n\};", h,
+                          re.S).group(1).split("\n")
+        self.assertEqual([r.strip() for r in forms],
+                         ["&Handlers::PC_OBSERVABLE_cohesive_energy,",
+                          "nullptr,", "nullptr,"])
+        keys = re.search(r"kKeyHandlers\[\] = \{\n(.*?)\n\};", h,
+                         re.S).group(1).split("\n")
+        self.assertEqual([r.strip() for r in keys],
+                         [f"&Handlers::{gen.cxx_name(k.id)}," for k in
+                          reg.keys])
+        members = re.findall(r"static void (\w+)\(", h)
+        self.assertEqual(len(members), len(set(members)))
+
     # Pins: two runs write the same text, which names neither the
     # registry's directory nor the time.
     # Before the fix: fails, gen_hpotarget.py does not exist.
@@ -365,7 +448,8 @@ class Generator(unittest.TestCase):
         code, text, _ = self.main("--header", *args)
         self.assertEqual(code, 0)
         self.assertEqual(sorted(p.name for p in out.iterdir()),
-                         sorted([gen.REGISTRY_HEADER, gen.PARAM_HEADER]))
+                         sorted([gen.REGISTRY_HEADER, gen.PARAM_HEADER,
+                                 gen.HANDLERS_HEADER]))
         self.assertEqual(self.main("--check", *args)[0], 0)
         self.assertIn("is up to date", self.main("--header", *args)[1])
         header = out / gen.PARAM_HEADER
@@ -502,7 +586,9 @@ class Generator(unittest.TestCase):
 
     # Pins: the headers of the synthetic registry, whose tables of line
     # options and forms are empty, compile as C++17 without a warning
-    # (-Wall -Wextra -pedantic -Werror), twice included; read back, the
+    # (-Wall -Wextra -pedantic -Werror), twice included (the handlers
+    # header declares its handlers, which the program does not call);
+    # read back, the
     # continuation, the frame, an escaped message and a UTF-8 one are the
     # registry's text, the INNER block takes LIB, and fill() puts values
     # into a template (${name} kept). Needs a C++ compiler: $CXX, which
@@ -526,6 +612,8 @@ class Generator(unittest.TestCase):
             #include <tadah/hpo/hpo_param_registry_gen.h>
             #include <tadah/hpo/hpo_param_registry_gen.h>
             #include <tadah/hpo/hpotarget_registry_gen.h>
+            #include <tadah/hpo/hpotarget_handlers_gen.h>
+            #include <tadah/hpo/hpotarget_handlers_gen.h>
             #include <iostream>
             namespace R = tadah::hpo::hpotarget_registry;
             int main()
@@ -540,7 +628,8 @@ class Generator(unittest.TestCase):
                           << R::fill("{a}-{b}", {{"a", "1"}, {"b", "2"}})
                           << '|' << R::kLineOptions.size
                           << '|'
-                          << tadah::hpo::param_registry::kParams[0].name;
+                          << tadah::hpo::param_registry::kParams[0].name
+                          << '|' << R::kOptionHandlers.size;
             }
             """), encoding="utf-8")
         exe = self.dir / "read_back"
@@ -555,7 +644,8 @@ class Generator(unittest.TestCase):
         self.assertEqual(
             run.stdout.decode("utf-8"),
             "|".join(["\\", "line {line} of {file}: {what}\nLine: {text}",
-                      quoted, "LIB", quoted, "1-2", "0", "GRID_POINTS"]))
+                      quoted, "LIB", quoted, "1-2", "0", "GRID_POINTS",
+                      "0"]))
 
 
 if __name__ == "__main__":
