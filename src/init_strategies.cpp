@@ -721,8 +721,8 @@ private:
 /* ---------------- An entry with its METHOD line ------------------- */
 /* An entry the parser read: a refusal of its points, which a chain draws
  * after the whole file has been read (a WARM file that is missing or
- * unreadable, a WARM seed the run refuses, a WARM_ON_MISMATCH error, a
- * SOBOL block beyond the sequence), names the METHOD line in the parser's
+ * unreadable, a WARM seed the run refuses, a WARM_ON_MISMATCH error),
+ * names the METHOD line in the parser's
  * form (config_line_error), as the parser's own refusals of the line do. */
 class LinedEntryStrategy : public InitStrategy {
 public:
