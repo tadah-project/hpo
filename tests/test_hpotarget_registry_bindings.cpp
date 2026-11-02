@@ -1276,4 +1276,59 @@ TEST_CASE("hpotarget generated tables: the environment overrides name "
     CHECK(err == R::fill(scale->msg, {{"tok", "zzz"}}));
 }
 
+#if __has_include(<tadah/mlip/hpotarget_optim.h>)
+
+#include <tadah/mlip/hpotarget_optim.h>
+#include <tadah/mlip/hpotarget_syntax.h>
+
+/* Pins: the words MLIP's OPTIM reader holds by hand (tadah hpo and tadah
+ * analysis check_bounds read their OPTIM lines with it) are the
+ * registry's: the options of the lines OPTIM.AUTO are
+ * optim_auto_options() (RATIO, FRAC, FLOOR, GROUP_FLOOR) and those of the
+ * lines OPTIM optim_shape_tags() (LIN, LOG, ASINH), as sets; the word of
+ * the form OPTIM.AUTO is kOptimAutoWord; [optim] auto_excluded_prefix is
+ * kOptimAutoExcludedPrefix; [lexing] comment, continuation and
+ * unfinished_msg are kTargetComment, kTargetContinuation and
+ * kTargetUnfinishedLineMsg; [reading] underflow_note is
+ * mlip::number_underflow_note of 1e-400. (The refusal tables of the OPTIM
+ * keys, MLIP's too, are compared above through HPOTargets' forwards.)
+ * Before the fix: MLIP has no OPTIM reader (the header does not exist). */
+TEST_CASE("hpotarget generated tables: the words of MLIP's OPTIM reader are "
+          "the registry's", "[hpotarget_gen]")
+{
+    namespace M = tadah::mlip;
+    std::set<std::string> auto_options, tags;
+    for (const R::LineOption& o : R::kLineOptions)
+        for (std::string_view l : o.lines) {
+            if (l == "OPTIM.AUTO") auto_options.insert(std::string(o.option));
+            if (l == "OPTIM") tags.insert(std::string(o.option));
+        }
+    CHECK(auto_options == std::set<std::string>(M::optim_auto_options().begin(),
+                                                M::optim_auto_options().end()));
+    CHECK(tags == std::set<std::string>(M::optim_shape_tags().begin(),
+                                        M::optim_shape_tags().end()));
+    const R::Form* auto_form = nullptr;
+    for (const R::Form& f : R::kForms)
+        if (f.id_text == "OPTIM.AUTO") auto_form = &f;
+    REQUIRE(auto_form != nullptr);
+    CHECK(auto_form->word == M::kOptimAutoWord);
+    CHECK(R::optim::auto_excluded_prefix == M::kOptimAutoExcludedPrefix);
+    CHECK(R::lexing::comment == std::string(1, M::kTargetComment));
+    CHECK(R::lexing::continuation == std::string(1, M::kTargetContinuation));
+    CHECK(R::lexing::unfinished_msg ==
+          std::string_view(M::kTargetUnfinishedLineMsg));
+    CHECK(R::reading::underflow_note == M::number_underflow_note("1e-400"));
+}
+
+#else
+
+TEST_CASE("hpotarget generated tables: the words of MLIP's OPTIM reader are "
+          "the registry's", "[hpotarget_gen]")
+{
+    FAIL("tadah/mlip/hpotarget_optim.h does not exist: MLIP has no OPTIM "
+         "reader");
+}
+
+#endif  // __has_include(<tadah/mlip/hpotarget_optim.h>)
+
 #endif  // TADAH_HPOTARGET_TABLES

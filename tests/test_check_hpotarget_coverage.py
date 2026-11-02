@@ -4,15 +4,21 @@ and a synthetic registry: comment stripping, brace matching, the three
 kinds of extraction (comparisons, tables, calls), the refusal of a
 comparison no rule classifies, of a rule that finds nothing or whose
 function is not found once, the comparison of the names found with the
-registry's in both directions, and the command without a registry; on a
-copy of the HPO sources, a name added to the top-level keys of
-is_top_level_key()."""
+registry's in both directions, the command without a registry, and a
+rule on a file of MLIP (mlip:<path>, read from the --mlip directory); on a
+copy of the HPO and MLIP sources, a name added to the top-level keys of
+is_top_level_key().
+
+The rules on MLIP's files read the MLIP source directory that
+TADAH_MLIP_SOURCE_DIR names (CTest sets it); a test that needs it fails
+when it is not set."""
 
 from __future__ import annotations
 
 import contextlib
 import dataclasses
 import io
+import os
 import pathlib
 import shutil
 import sys
@@ -23,6 +29,17 @@ from unittest import mock
 
 HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
+
+
+def mlip_source_dir(test: unittest.TestCase) -> pathlib.Path:
+    """MLIP's source directory, TADAH_MLIP_SOURCE_DIR (the rules on mlip:
+    files read it); fails @p test when it is not set."""
+    d = os.environ.get("TADAH_MLIP_SOURCE_DIR", "")
+    if not d:
+        test.fail("TADAH_MLIP_SOURCE_DIR is not set: it names MLIP's source "
+                  "directory, which the rules on mlip: files read (CTest "
+                  "sets it)")
+    return pathlib.Path(d)
 
 import check_hpotarget_coverage as cov  # noqa: E402
 
@@ -221,6 +238,54 @@ class Extraction(unittest.TestCase):
         self.assertIn("table: no table /kMissing/", text)
 
 
+class MlipFiles(unittest.TestCase):
+    """A rule whose file is written mlip:<path> reads <path> under the
+    --mlip directory (MLIP's OPTIM reader), and is a problem without it."""
+
+    # Pins: with HPO's src/a.cpp holding SOURCE and MLIP's src/b.cpp a
+    # function `bool optim(...)` comparing k with "ZZ_OPTIM", a rule on
+    # "mlip:src/b.cpp" finds 'ZZ_OPTIM' (optim_target) at
+    # "mlip:src/b.cpp:<line>" when extract() is given the MLIP directory,
+    # and without it reports "mlip:src/b.cpp: optim: the rule reads a
+    # source file of MLIP, and no MLIP source directory is given (--mlip)";
+    # main() takes --mlip.
+    # Before the fix: fails, extract() takes no MLIP directory (TypeError)
+    # and main() refuses --mlip.
+    def test_a_rule_reads_the_mlip_directory(self):
+        with tempfile.TemporaryDirectory() as d:
+            hpo, mlip = pathlib.Path(d) / "hpo", pathlib.Path(d) / "mlip"
+            (hpo / "src").mkdir(parents=True)
+            (mlip / "src").mkdir(parents=True)
+            (hpo / "src" / "a.cpp").write_text(SOURCE)
+            (mlip / "src" / "b.cpp").write_text(
+                "bool optim(const std::string& k)\n{\n"
+                "    return k == \"ZZ_OPTIM\";\n}\n")
+            rule = cov.Rule("optim", "mlip:src/b.cpp", r"^bool optim\(",
+                            operands={"k": ("optim_target",)})
+            with mock.patch.object(cov, "EXTRACTION", [rule]):
+                found, problems = cov.extract(hpo, mlip=mlip)
+                self.assertEqual(problems, [])
+                self.assertEqual(
+                    [(f.name, f.vocabularies, f.where) for f in found],
+                    [("ZZ_OPTIM", ("optim_target",),
+                      "mlip:src/b.cpp:3 (optim)")])
+                found, problems = cov.extract(hpo)
+                self.assertEqual(found, [])
+                self.assertEqual(problems, [
+                    "mlip:src/b.cpp: optim: the rule reads a source file "
+                    "of MLIP, and no MLIP source directory is given "
+                    "(--mlip)"])
+                out = io.StringIO()
+                with contextlib.redirect_stdout(out):
+                    code = cov.main([str(hpo), "--mlip", str(mlip),
+                                     "--registry",
+                                     str(HERE.parent / "blueprint")])
+                self.assertEqual(code, 1)
+                self.assertIn("missing from the registry: 'ZZ_OPTIM' "
+                              "(optim_target), mlip:src/b.cpp:3 (optim)",
+                              out.getvalue())
+
+
 class Compare(unittest.TestCase):
     VOCAB = ("block", "word")
 
@@ -301,8 +366,12 @@ class RealSources(unittest.TestCase):
     HPO sources, and no scanned function holds an unclassified
     comparison."""
 
+    # Pins (MLIP's files): the rules on mlip: files, the OPTIM lines,
+    # find their functions and tables in the MLIP sources of
+    # TADAH_MLIP_SOURCE_DIR, and the HPO sources hold no OPTIM rule's
+    # function. Before the fix: fails, extract() takes no MLIP directory.
     def test_rules_match_the_sources(self):
-        _, problems = cov.extract(HERE.parent)
+        _, problems = cov.extract(HERE.parent, mlip=mlip_source_dir(self))
         self.assertEqual(problems, [])
 
 
@@ -321,8 +390,14 @@ class TopLevelKeys(unittest.TestCase):
     # the same ... names").
     def test_a_name_only_the_code_holds_is_reported(self):
         with tempfile.TemporaryDirectory() as d:
-            root = pathlib.Path(d)
+            root, mlip = pathlib.Path(d) / "hpo", pathlib.Path(d) / "mlip"
+            mlip_src = mlip_source_dir(self)
             for f in sorted({r.file for r in cov.EXTRACTION}):
+                if f.startswith(cov.MLIP_PREFIX):
+                    f = f[len(cov.MLIP_PREFIX):]
+                    (mlip / f).parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy(mlip_src / f, mlip / f)
+                    continue
                 (root / f).parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy(HERE.parent / f, root / f)
             src = root / "src" / "hpo_targets.cpp"
@@ -333,7 +408,8 @@ class TopLevelKeys(unittest.TestCase):
             src.write_text(text[:at] + '"ZZTOPKEY", ' + text[at:])
             out = io.StringIO()
             with contextlib.redirect_stdout(out):
-                code = cov.main([str(root), "--registry",
+                code = cov.main([str(root), "--mlip", str(mlip),
+                                 "--registry",
                                  str(HERE.parent / "blueprint")])
         self.assertEqual(code, 1, out.getvalue())
         self.assertIn("missing from the registry: 'ZZTOPKEY' (key:ROOT), "
