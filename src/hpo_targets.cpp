@@ -3051,11 +3051,13 @@ void HPOTargets::create_archive_directory(const std::string& key,
                                           const std::string& dir) {
   std::error_code ec;
   if (fs::create_directory(dir, ec)) {
-    std::cout << "Directory created: " << dir << std::endl;
+    std::cout << "[tadah hpo] " << key << " directory '" << dir
+              << "' created" << std::endl;
     return;
   }
   if (!ec && fs::is_directory(dir, ec)) {
-    std::cout << "Directory already exists: " << dir << std::endl;
+    std::cout << "[tadah hpo] " << key << " directory '" << dir
+              << "' already exists" << std::endl;
     return;
   }
   throw std::runtime_error(

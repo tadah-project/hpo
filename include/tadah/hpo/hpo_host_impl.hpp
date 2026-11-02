@@ -10,6 +10,7 @@
 #include <tadah/core/logger.h>
 #include <tadah/core/number_format.h>
 #include <tadah/hpo/hpo_mpi.h>
+#include <tadah/hpo/host_messages.h>
 #include <tadah/hpo/lammps_sim.h>
 #include <tadah/hpo/sims_grad_lammps.h>
 #include <tadah/hpo/val_filter_forwarding.h>
@@ -3843,9 +3844,7 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
         stop_clock();
         try {
             HPOLog::instance().warning(
-                std::string("eval ") + std::to_string(r.iter) +
-                ": the evaluation stopped on an error and scores FAILSCORE: " +
-                e.what());
+                evaluation_error_warning(r.iter, e.what()));
         } catch (...) { /* logging must never abort the recovery path */ }
     } catch (...) {
         /* Same path for non-std::exception throws. */
@@ -3856,10 +3855,7 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
         c.decision.reset();
         stop_clock();
         try {
-            HPOLog::instance().warning(
-                std::string("eval ") + std::to_string(r.iter) +
-                ": the evaluation stopped on an error that carries no "
-                "message and scores FAILSCORE");
+            HPOLog::instance().warning(evaluation_error_warning(r.iter));
         } catch (...) {}
     }
 
@@ -4569,18 +4565,8 @@ void HPO_Host<P,R>::submit_result(Result&& res, const HPOTargets& trg,
                      * follow-up does not need a fresh reproduction. */
                     const std::string stuck_stages =
                         stage_watchdog::snapshot_stuck(GAP_SKIP_MS);
-                    HPOLog::instance().warning(
-                        "result files: " +
-                        (skipped == 1
-                             ? "evaluation " + std::to_string(cur)
-                             : "evaluations " + std::to_string(cur) + " to " +
-                                   std::to_string(smallest - 1)) +
-                        " did not return within " +
-                        std::to_string(GAP_SKIP_MS / 1000) + " s; " +
-                        (skipped == 1 ? "its rows are" : "their rows are") +
-                        " not written to the result files" +
-                        (stuck_stages.empty() ? std::string{}
-                            : " (stages still running: [" + stuck_stages + "])"));
+                    HPOLog::instance().warning(result_gap_warning(
+                        cur, smallest, GAP_SKIP_MS / 1000, stuck_stages));
                     _writer_debug_log("GAP_SKIP wid=" + std::to_string(_wid)
                                       + " from=" + std::to_string(cur)
                                       + " to=" + std::to_string(smallest)

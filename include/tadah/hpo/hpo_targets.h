@@ -122,8 +122,9 @@ private:
     struct ArchiveLine { std::size_t number = 0; std::string text; };
     ArchiveLine dumpPotLine, dumpBestPotLine;
     /* Creates the archive directory @p dir of the line @p key, which
-     * check_archive_directory() accepted (one that exists is kept; each is
-     * named on standard output). */
+     * check_archive_directory() accepted (one that exists is kept). Each is
+     * named on standard output with its key: "[tadah hpo] DUMP directory
+     * '<dir>' created", or "... already exists". */
     static void create_archive_directory(const std::string& key,
                                          const std::string& dir);
     /* One OPTIM line (on line @p nline of the file). The key is
