@@ -1627,6 +1627,23 @@ tadah::core::Context with_dm_blip(tadah::core::Context c, bool force)
     return c;
 }
 
+/* The training configuration of the fixture with a DM_mRLR many-body term
+ * (TYPEMB DM_mRLR 0 2 2 2 2 Ta Ta, CGRIDMB 2.8 3.6, SGRIDMB 1 1.1,
+ * CEMBFUNC 1 2, SEMBFUNC 1 1, Cut_Cos 5), whose analytical derivative
+ * with respect to WATOM covers the energy rows only, and FORCE `force`. */
+tadah::core::Context with_dm_mrlr(tadah::core::Context c, bool force)
+{
+    for (const char* key : {"INITMB", "TYPEMB", "FORCE"}) c.remove(key);
+    c.add("INITMB", "true");
+    c.add("TYPEMB", "DM_mRLR 0 2 2 2 2 Ta Ta");
+    c.add("CGRIDMB", "2.8 3.6");
+    c.add("SGRIDMB", "1.0 1.1");
+    c.add("CEMBFUNC", "1.0 2.0");
+    c.add("SEMBFUNC", "1.0 1.0");
+    c.add("FORCE", force ? "true" : "false");
+    return c;
+}
+
 /* The OPTIMIZER block of a gradient search of NLOPT:LD_LBFGS with
  * GRAD_STRATEGY `strategy`. */
 std::string lbfgs_block(const std::string& strategy)
@@ -1684,6 +1701,9 @@ std::size_t line_number(const std::string& text, const std::string& line)
  *     for OPTIM WATOM (1) on line 4 of the target file (DM_Blip
  *     differentiates it in the energy rows only, and FORCE true gives the
  *     fit force rows) ...";
+ *   - the same with DM_mRLR, named as its TYPEMB line writes it, not by the
+ *     DM_mEAD family it belongs to: "... (DM_mRLR differentiates it in the
+ *     energy rows only, and FORCE true gives the fit force rows) ...";
  *   - OPTIM LAMBDA (1) and OPTIM SGRIDMB (1) with FORCE true: both, in the
  *     order of their lines ("... for OPTIM LAMBDA (1) on line 4 of the
  *     target file (...) or OPTIM SGRIDMB (1) on line 5 (...). ... for
@@ -1697,7 +1717,9 @@ std::size_t line_number(const std::string& text, const std::string& line)
  * read "... and the descriptors of the training configuration give none
  * for ..." and "(the descriptors differentiate it in the energy rows only,
  * ...)", naming no descriptor, and the PC_FRMSE case "... and PC_FRMSE
- * measures the forces of the validation set)". Tadah! 1.5.0 passed each of
+ * measures the forces of the validation set)"; before the descriptor was
+ * named as its line writes it, the DM_mRLR case read "(DM_mEAD
+ * differentiates it ...)". Tadah! 1.5.0 passed each of
  * these setups, and its run evaluated the start and ended at its first
  * gradient, "GRAD_STRATEGY=ANALYTICAL: no analytical gradient for 1
  * parameter at this point (indices: [0]): ...". */
@@ -1721,33 +1743,43 @@ TEST_CASE("hpo --check: GRAD_STRATEGY ANALYTICAL refuses a search parameter "
         "PC_FRMSE measures the forces of the validation structures)";
     const std::string for_it =
         ". GRAD_STRATEGY HYBRID takes finite differences for it.";
+    /* The many-body term of a case: the fixture's, DM_Blip or DM_mRLR. */
+    enum class Term { Fixture, DM_Blip, DM_mRLR };
     struct Case {
         const char* name;
         std::string hpo;
-        bool dm_blip, force;
+        Term term;
+        bool force;
         std::string message;
     };
     const std::vector<Case> cases = {
-        {"OPTIM LAMBDA", root + lambda + lbfgs_block("ANALYTICAL"), false,
-         false,
+        {"OPTIM LAMBDA", root + lambda + lbfgs_block("ANALYTICAL"),
+         Term::Fixture, false,
          head + "OPTIM LAMBDA (1) on line 4 of the target file" +
              no_descriptor + for_it},
         {"DM_Blip SGRIDMB with FORCE true",
-         root + sgridmb + lbfgs_block("ANALYTICAL"), true, true,
+         root + sgridmb + lbfgs_block("ANALYTICAL"), Term::DM_Blip, true,
          head + "OPTIM SGRIDMB (1) on line 4 of the target file" +
              energy_rows + by_force + for_it},
         {"DM_Blip SGRIDMB with PC_FRMSE",
-         root + "PC_FRMSE 0 1\n" + sgridmb + lbfgs_block("ANALYTICAL"), true,
-         false,
+         root + "PC_FRMSE 0 1\n" + sgridmb + lbfgs_block("ANALYTICAL"),
+         Term::DM_Blip, false,
          head + "OPTIM SGRIDMB (1) on line 5 of the target file" +
              energy_rows + by_frmse + for_it},
         {"D2_BP and DM_Blip WATOM with FORCE true",
-         root + "OPTIM WATOM (1) 0.5 2.0\n" + lbfgs_block("ANALYTICAL"), true,
-         true,
+         root + "OPTIM WATOM (1) 0.5 2.0\n" + lbfgs_block("ANALYTICAL"),
+         Term::DM_Blip, true,
          head + "OPTIM WATOM (1) on line 4 of the target file" +
              energy_rows + by_force + for_it},
+        {"D2_BP and DM_mRLR WATOM with FORCE true",
+         root + "OPTIM WATOM (1) 0.5 2.0\n" + lbfgs_block("ANALYTICAL"),
+         Term::DM_mRLR, true,
+         head + "OPTIM WATOM (1) on line 4 of the target file" +
+             " (DM_mRLR differentiates it in the energy rows only, and " +
+             by_force + for_it},
         {"OPTIM LAMBDA and DM_Blip SGRIDMB with FORCE true",
-         root + lambda + sgridmb + lbfgs_block("ANALYTICAL"), true, true,
+         root + lambda + sgridmb + lbfgs_block("ANALYTICAL"), Term::DM_Blip,
+         true,
          head + "OPTIM LAMBDA (1) on line 4 of the target file" +
              no_descriptor + " or OPTIM SGRIDMB (1) on line 5" + energy_rows +
              by_force + ". GRAD_STRATEGY HYBRID takes finite differences "
@@ -1762,7 +1794,12 @@ TEST_CASE("hpo --check: GRAD_STRATEGY ANALYTICAL refuses a search parameter "
         const auto context = [&] {
             tadah::core::Context ctx =
                 make_ta_context("train.db", "config.hpo", "config.val");
-            return c.dm_blip ? with_dm_blip(ctx, c.force) : ctx;
+            switch (c.term) {
+            case Term::DM_Blip: return with_dm_blip(ctx, c.force);
+            case Term::DM_mRLR: return with_dm_mrlr(ctx, c.force);
+            case Term::Fixture: break;
+            }
+            return ctx;
         };
         fresh_process_state();
         ScratchDir sd("analytical");
@@ -1858,8 +1895,9 @@ namespace {
 /* The training configuration of the fixture with the two-body descriptor
  * `type2b` (D2_Blip 2 2 Ta Ta, CGRID2B 2.8 3.6, SGRID2B 1 1.1; D2_mJoin of
  * two D2_BP 1 1 Ta Ta; D2_BP: the fixture's) and the many-body term
- * `typemb` (DM_REAM: a Blip5 density, RHOFORM NONNEG; DM_mBlip; DESCRIPTOR:
- * a DESCRIPTOR block ta, DM_Embed), the cutoffs Cut_Cos 5 A. */
+ * `typemb` (DM_REAM: a Blip5 density, RHOFORM NONNEG; DM_mBlip; DM_PS_SQ
+ * 1 2 2 Ta Ta; DESCRIPTOR: a DESCRIPTOR block ta, DM_Embed), the cutoffs
+ * Cut_Cos 5 A. */
 tadah::core::Context with_terms(tadah::core::Context c,
                                 const std::string& type2b,
                                 const std::string& typemb)
@@ -1893,6 +1931,10 @@ tadah::core::Context with_terms(tadah::core::Context c,
         c.add("SGRIDMB", "0.2");
         c.add("CEMBFUNC", "1.0 2.0");
         c.add("SEMBFUNC", "1.0 1.0");
+    } else if (typemb == "DM_PS_SQ") {
+        c.add("TYPEMB", "DM_PS_SQ 1 2 2 Ta Ta");
+        c.add("CGRIDMB", "2.8 3.6");
+        c.add("SGRIDMB", "1.0 1.1");
     } else if (typemb == "DESCRIPTOR") {
         for (const char* key : {"RCTYPEMB", "RCUTMB"}) c.remove(key);
         std::istringstream in(
@@ -1921,18 +1963,23 @@ tadah::core::Context with_terms(tadah::core::Context c,
  *     WATOM (1) on line 4 of the target file (DM_REAM depends on it and
  *     does not differentiate it). GRAD_STRATEGY HYBRID takes finite
  *     differences for it.";
+ *   - D2_Blip and DM_PS_SQ, named as its TYPEMB line writes it, not by the
+ *     DM_Poly family it belongs to: "... (DM_PS_SQ depends on it and does
+ *     not differentiate it) ...";
  *   - D2_Blip and a DESCRIPTOR block: "... (DM_Embed depends on it and does
  *     not differentiate it) ...";
  *   - D2_mJoin (two D2_BP) and DM_mBlip: "... (D2_mJoin depends on it and
  *     does not differentiate it) ...";
  * and when no descriptor differentiates it, D2_mJoin and DM_REAM: "...
  * (no descriptor differentiates it) ...".
- * Before the fix: the check and the run passed the first three (the
+ * Before the fix: the check and the run passed the first four (the
  * derivative of D2_Blip, or of DM_mBlip, stood for both descriptors; the
  * run optimised on a gradient without the other descriptor's part), and
- * refused the fourth alike. Tadah! 1.5.0 ran the first and the third to
+ * refused the fifth alike; before the descriptor was named as its line
+ * writes it, the DM_PS_SQ case read "(DM_Poly depends on it ...)".
+ * Tadah! 1.5.0 ran the first, the second and the fourth to
  * the end on that gradient (RHOFORM and DESCRIPTOR blocks are new in
- * 1.6.0: it ran the first without RHOFORM, and had no second). */
+ * 1.6.0: it ran the first without RHOFORM, and had no third). */
 TEST_CASE("hpo --check: GRAD_STRATEGY ANALYTICAL refuses WATOM when a "
           "descriptor that depends on it does not differentiate it, naming "
           "the descriptor",
@@ -1955,6 +2002,8 @@ TEST_CASE("hpo --check: GRAD_STRATEGY ANALYTICAL refuses WATOM when a "
     const std::vector<Case> cases = {
         {"D2_Blip", "DM_REAM",
          "DM_REAM depends on it and does not differentiate it"},
+        {"D2_Blip", "DM_PS_SQ",
+         "DM_PS_SQ depends on it and does not differentiate it"},
         {"D2_Blip", "DESCRIPTOR",
          "DM_Embed depends on it and does not differentiate it"},
         {"D2_mJoin", "DM_mBlip",
