@@ -66,6 +66,15 @@ doc = "Blocks nest."
 check_order = ["block_lines", "removed", "inner_refusal", "group_keys",
                "init_restart_keys", "noise_keys", "log_hp", "strategy_keys",
                "block_unknown", "root_keys"]
+open_order = ["alias", "parents", "requires", "repeat", "key_alone", "open"]
+close_order = ["match", "key_alone", "close_steps", "close"]
+line_steps = { ROOT = ["repeat", "value", "options"], group = ["value", "repeat", "leftover"], block = ["value", "repeat"] }
+eof_order = ["open_block", "k_total_caps", "script_timeout_unread",
+             "loss_unread", "metric_target_loss", "density_key_arming",
+             "archive_directories", "optimizer_required",
+             "observable_with_scripts", "hotvar_injected", "hotvar_unique",
+             "observable_numerical", "observable_analytical",
+             "script_gradients"]
 end_without_open_msg = "{end} without matching {name}"
 end_mismatch_msg = "{end} does not close {open} of line {open_line}"
 end_takes_no_value_msg = "{end} closes {name} (unexpected '{tok}')"
@@ -516,6 +525,294 @@ error = "GRID_POINTS must be at least 2"
         self.edit("hpotarget.toml", '"removed", "inner_refusal"',
                   '"inner_refusal", "removed"')
         self.assertIn("check_order is not", self.errors())
+
+    # ---- what the parser's engine reads ------------------------------------
+    # Pins: [structure] gives the order of the steps of the parse:
+    # open_order (a line that opens a block), close_order (an END line),
+    # eof_order (the end of the file), each an order of the steps the
+    # loader names (each once, none other), and line_steps, the steps of a
+    # key's line at the top level, in a group and in a block (names of
+    # LINE_STEPS, each once, value among them, leftover for a group only).
+    # Before the fix: the four fields are unknown fields of [structure].
+    def test_structure_orders_of_the_parse(self):
+        reg = self.load()
+        st = reg.structure.fields
+        self.assertEqual(st["open_order"], hr.OPEN_STEPS)
+        self.assertEqual(st["close_order"], hr.CLOSE_STEPS)
+        self.assertEqual(st["eof_order"], hr.EOF_STEPS)
+        self.assertEqual(st["line_steps"]["group"],
+                         ["value", "repeat", "leftover"])
+        self.edit("hpotarget.toml", '"requires", "repeat", "key_alone"',
+                  '"key_alone", "requires", "repeat"')
+        self.assertEqual(self.load().structure.fields["open_order"],
+                         ["alias", "parents", "key_alone", "requires",
+                          "repeat", "open"])
+        self.edit("hpotarget.toml", '"key_alone", "requires", "repeat"',
+                  '"requires", "requires", "repeat"')
+        self.assertIn("open_order is not an order of alias, parents, "
+                      "requires, repeat, key_alone, open (each once)",
+                      self.errors())
+        self.edit("hpotarget.toml", '"requires", "requires", "repeat"',
+                  '"requires", "repeat", "key_alone"')
+        self.edit("hpotarget.toml", '"close_steps", "close"]', '"close"]')
+        self.assertIn("close_order is not an order of", self.errors())
+        self.edit("hpotarget.toml", '"close"]', '"close_steps", "close"]')
+        self.edit("hpotarget.toml", '"open_block", ', '"open_block", "eof", ')
+        self.assertIn("eof_order is not an order of", self.errors())
+        self.edit("hpotarget.toml", '"open_block", "eof", ', '"open_block", ')
+        self.edit("hpotarget.toml", 'block = ["value", "repeat"] }',
+                  'block = ["repeat", "leftover"], INIT = ["value"] }')
+        e = self.errors()
+        self.assertIn("line_steps has the places ROOT, group, block, each "
+                      "once", e)
+        self.assertIn("line_steps.block: the steps hold value", e)
+        self.assertIn("line_steps.block: leftover is a step of a key of a "
+                      "group", e)
+        self.edit("hpotarget.toml",
+                  'block = ["repeat", "leftover"], INIT = ["value"] }',
+                  'block = ["value", "value", "parse"] }')
+        e = self.errors()
+        self.assertIn("line_steps.block: 'parse' is not one of repeat, "
+                      "value, options, leftover", e)
+        self.assertIn("line_steps.block: a step is given twice", e)
+        self.edit("hpotarget.toml", 'block = ["value", "value", "parse"] }',
+                  'block = ["value", "repeat"] }')
+        self.edit("hpotarget.toml", 'open_order = ["alias", "parents", '
+                  '"requires", "repeat", "key_alone", "open"]\n', "")
+        self.assertIn("required field 'open_order' is missing",
+                      self.errors())
+
+    # Pins: a key's own `steps` replace those of its place (a metric line
+    # reads its values before its repeat), with the rules of line_steps.
+    # Before the fix: steps is an unknown field of a key.
+    def test_key_steps(self):
+        self.edit("hpotarget.toml", 'repeat = "last_wins"\ndoc = "The score',
+                  'repeat = "last_wins"\nsteps = ["value", "repeat", '
+                  '"options"]\ndoc = "The score')
+        fs = next(k for k in self.load().keys if k.name == "FAILSCORE")
+        self.assertEqual(fs.steps, ["value", "repeat", "options"])
+        self.assertEqual(next(k for k in self.load().keys
+                              if k.name == "LIB").steps, [])
+        self.edit("hpotarget.toml", 'steps = ["value", "repeat", "options"]',
+                  'steps = ["repeat", "leftover"]')
+        e = self.errors()
+        self.assertIn("ROOT.FAILSCORE: steps: the steps hold value", e)
+        self.assertIn("ROOT.FAILSCORE: steps: leftover is a step of a key of "
+                      "a group", e)
+        self.edit("hpotarget.toml", 'steps = ["repeat", "leftover"]', "")
+        self.edit("part_a.toml", 'repeat = "last_wins"\ndoc = "The library',
+                  'repeat = "last_wins"\nsteps = ["leftover", "value"]\n'
+                  'doc = "The library')
+        lib = next(k for k in self.load().keys if k.name == "LIB")
+        self.assertEqual(lib.steps, ["leftover", "value"])
+
+    # Pins: a block's close_steps name the checks its END line runs, in
+    # order, each a step the loader names and each in one block only.
+    # Before the fix: close_steps is an unknown field of a block.
+    def test_block_close_steps(self):
+        self.edit("hpotarget.toml", 'unknown_msg = "unknown key \'{key}\' in '
+                  'this block"', 'unknown_msg = "unknown key \'{key}\' in '
+                  'this block"\nclose_steps = ["optimizer_driver"]')
+        self.assertEqual(self.load().block("OPTIMIZER").close_steps,
+                         ["optimizer_driver"])
+        self.assertEqual(self.load().block("INNER").close_steps, [])
+        self.edit("hpotarget.toml", 'refuse_msg = "{key} is not accepted',
+                  'close_steps = ["optimizer_driver", "inner_audit"]\n'
+                  'refuse_msg = "{key} is not accepted')
+        e = self.errors()
+        self.assertIn("close_steps: 'inner_audit' is not one of "
+                      "optimizer_driver, strategy_type_keys, "
+                      "multistart_n_starts, restart_restarts, "
+                      "explore_driver, inner_driver", e)
+        self.assertIn("BLOCK.INNER: close_steps: 'optimizer_driver' is also "
+                      "a step of BLOCK.OPTIMIZER (a step runs at one END "
+                      "line)", e)
+
+    # Pins: `at` of a close check of a block names the line its refusal
+    # names (end, the default; key_line; last_end_line); a check of
+    # another kind takes none.
+    # Before the fix: at is an unknown field of a check.
+    def test_close_check_at(self):
+        self.edit("hpotarget.toml", 'doc = "The local search."',
+                  'doc = "The local search."\nclose_checks = [\n'
+                  '  { msg = "INNER needs LIB", doc = "At ENDINNER." },\n'
+                  '  { msg = "INNER needs ALGO", doc = "At ENDINNER.", '
+                  'at = "last_end_line" },\n]\n\n'
+                  '[[block.invalid]]\nwrap = "inner"\ntext = "LIB NLOPT"\n'
+                  'error = "INNER needs LIB"\n\n'
+                  '[[block.invalid]]\nwrap = "inner"\ntext = "LIB TADAH"\n'
+                  'error = "INNER needs ALGO"\n')
+        checks = self.load().block("INNER").close_checks
+        self.assertEqual([c.at for c in checks], ["end", "last_end_line"])
+        self.edit("hpotarget.toml", 'at = "last_end_line"', 'at = "start"')
+        self.assertIn("at 'start' is not one of end, key_line, "
+                      "last_end_line", self.errors())
+        self.edit("hpotarget.toml", 'at = "start"', 'at = "end"')
+        self.edit("part_b.toml", 'doc = "A value below 2." }',
+                  'doc = "A value below 2.", at = "key_line" }')
+        self.assertIn("at belongs to a close check of a block",
+                      self.errors())
+
+    # Pins: `case` says how a word is matched: `exact` (the default) or
+    # `any` case, on a word argument, a line option and a form with a word;
+    # the boolean and loss readers match in any case by their kind.
+    # Before the fix: case is an unknown field.
+    def test_word_case(self):
+        self.edit("part_a.toml", 'words = ["NLOPT", "TADAH"] }',
+                  'words = ["NLOPT", "TADAH"], case = "any" }')
+        reg = self.load()
+        lib = next(k for k in reg.keys if k.name == "LIB")
+        self.assertEqual(lib.args[0].case, "any")
+        seed = next(k for k in reg.keys if k.name == "SEED")
+        self.assertEqual(seed.args[0].case, "exact")
+        self.edit("part_a.toml", 'case = "any" }', 'case = "upper" }')
+        self.assertIn("case 'upper' is not one of exact, any", self.errors())
+        self.edit("part_a.toml", ', case = "upper" }', ' }')
+        self.edit("part_a.toml", 'max = "UINT64_MAX" }',
+                  'max = "UINT64_MAX", case = "any" }')
+        self.assertIn("case belongs to an argument of kind word",
+                      self.errors())
+        self.edit("part_a.toml", 'max = "UINT64_MAX", case = "any" }',
+                  'max = "UINT64_MAX" }')
+        self.files["part_b.toml"] += textwrap.dedent('''
+            [[line_option]]
+            id = "SEED.WIDE"
+            option = "WIDE"
+            lines = ["SEED"]
+            synopsis = "WIDE"
+            case = "any"
+            refused = "Not read."
+            doc = "A wider draw."
+
+            [[line_option.invalid]]
+            wrap = "optimizer"
+            text = "SEED 1 WIDE"
+            error = "SEED takes no further value here (unexpected 'WIDE')"
+
+            [[form]]
+            id = "SEED.word"
+            line = "FAILSCORE"
+            synopsis = "FAILSCORE <n>"
+            case = "any"
+            refused = "Not read."
+            doc = "A form."
+
+            [[form.invalid]]
+            wrap = "root"
+            text = "FAILSCORE 0"
+            error = "FAILSCORE must be a positive finite number, got '0'"
+            ''')
+        e = self.errors()
+        self.assertIn("id is FAILSCORE.<form>", e)
+        self.assertIn("case belongs to a form with a word", e)
+        self.edit("part_b.toml", 'id = "SEED.word"', 'id = "FAILSCORE.word"')
+        self.edit("part_b.toml", 'synopsis = "FAILSCORE <n>"',
+                  'word = "BIG"\nsynopsis = "FAILSCORE <n>"')
+        reg = self.load(resolve=False)
+        self.assertEqual(reg.line_options[0].case, "any")
+        self.assertEqual(reg.forms[0].case, "any")
+
+    # Pins: repeat error_until_read, of a key that a later line reads (the
+    # second line is refused while no line between reads the first), takes
+    # its repeat_msg; a line option has no such rule.
+    # Before the fix: error_until_read is no repeat rule.
+    def test_repeat_error_until_read(self):
+        self.edit("hpotarget.toml", 'repeat = "last_wins"\ndoc = "The score',
+                  'repeat = "error_until_read"\ndoc = "The score')
+        self.assertIn("ROOT.FAILSCORE: repeat_msg goes with repeat error or "
+                      "error_until_read, and only with them", self.errors())
+        self.edit("hpotarget.toml", 'repeat = "error_until_read"\n',
+                  'repeat = "error_until_read"\nrepeat_msg = "FAILSCORE '
+                  'again (first on line {first_line})"\n')
+        self.files["hpotarget.toml"] += textwrap.dedent('''
+            [[key.invalid]]
+            wrap = "root"
+            text = "FAILSCORE 1\\nFAILSCORE 2"
+            error = "FAILSCORE again (first on line 1)"
+            ''')
+        fs = next(k for k in self.load().keys if k.name == "FAILSCORE")
+        self.assertEqual(fs.repeat, "error_until_read")
+        self.files["part_b.toml"] += textwrap.dedent('''
+            [[line_option]]
+            id = "SEED.WIDE"
+            option = "WIDE"
+            lines = ["SEED"]
+            synopsis = "WIDE"
+            repeat = "error_until_read"
+            refused = "Not read."
+            doc = "A wider draw."
+            ''')
+        self.assertIn("SEED.WIDE: repeat 'error_until_read' is not one of "
+                      "add, error, last_wins, warn_last_wins", self.errors())
+
+    # Pins: `effect` of a key is the {effect} of the close check of
+    # STRATEGY: a key that a strategy type lists has one, no other key.
+    # Before the fix: effect is an unknown field of a key.
+    def test_strategy_type_key_effect(self):
+        self.files["part_b.toml"] += textwrap.dedent('''
+            [[strategy_type]]
+            id = "STRATEGY.TYPE.WIDE"
+            name = "WIDE"
+            keys = ["OPTIMIZER.SEED"]
+            doc = "A wide search."
+            ''')
+        self.assertIn("OPTIMIZER.SEED: effect goes with a key a strategy "
+                      "type lists, and only with it", self.errors())
+        self.edit("part_a.toml", 'doc = "The seed of the optimiser."',
+                  'doc = "The seed of the optimiser."\neffect = "only TYPE '
+                  'WIDE draws"')
+        seed = next(k for k in self.load().keys if k.name == "SEED")
+        self.assertEqual(seed.effect, "only TYPE WIDE draws")
+        self.edit("part_a.toml", 'effect = "only TYPE WIDE draws"',
+                  'effect = "only {type} draws"')
+        self.assertIn("effect: holds the placeholder {type}; the text goes "
+                      "into a message as it is", self.errors())
+        self.edit("part_a.toml", '\neffect = "only {type} draws"', "")
+        self.edit("part_a.toml", 'doc = "The library of the optimiser."',
+                  'doc = "The library of the optimiser."\neffect = "x"')
+        self.assertIn("OPTIMIZER.LIB: effect goes with a key a strategy "
+                      "type lists, and only with it", self.errors())
+
+    # Pins: `what` of a rule gives the {what} of its message for a line of
+    # each entry it names (what a key set in two blocks configures).
+    # Before the fix: what is an unknown field of a rule.
+    def test_rule_what(self):
+        self.edit("part_b.toml", 'keys = ["ROOT.FAILSCORE", '
+                  '"PARAM.TADAH:GRID.GRID_POINTS"]',
+                  'keys = ["ROOT.FAILSCORE", "PARAM.TADAH:GRID.GRID_POINTS"]\n'
+                  'msg = "{key} sets the {what} twice"\n'
+                  'what = { "ROOT.FAILSCORE" = "score" }\n'
+                  'untested = [{ msg = "{key} sets the {what} twice", why = '
+                  '"A test." }]')
+        rule = self.load().rules[0]
+        self.assertEqual(rule.what, {"ROOT.FAILSCORE": "score"})
+        self.edit("part_b.toml", 'what = { "ROOT.FAILSCORE" = "score" }',
+                  'what = { "OPTIMIZER.LIB" = "{lib}" }')
+        e = self.errors()
+        self.assertIn("what: 'OPTIMIZER.LIB' is not one of its keys", e)
+        self.assertIn("what.OPTIMIZER.LIB: holds the placeholder {lib}", e)
+        self.edit("part_b.toml", 'what = { "OPTIMIZER.LIB" = "{lib}" }',
+                  'what = { "ROOT.FAILSCORE" = "score" }')
+        self.edit("part_b.toml", 'msg = "{key} sets the {what} twice"\n',
+                  'msg = "{key} is set twice"\n')
+        self.edit("part_b.toml", 'untested = [{ msg = "{key} sets the {what} '
+                  'twice"', 'untested = [{ msg = "{key} is set twice"')
+        self.assertIn("what fills the {what} of the message, which has none",
+                      self.errors())
+
+    # Pins: `explain` of a PARAM key is its line of the PARAM table of
+    # `tadah explain`, a text without placeholders.
+    # Before the fix: explain is an unknown field of a PARAM key.
+    def test_param_explain(self):
+        self.edit("part_b.toml", 'doc = "Points per dimension."',
+                  'doc = "Points per dimension."\nexplain = "points per '
+                  'dimension (>= 2)"')
+        self.assertEqual(self.load().params[0].explain,
+                         "points per dimension (>= 2)")
+        self.assertEqual(self.load().keys[0].effect, "")
+        self.edit("part_b.toml", 'explain = "points per dimension (>= 2)"',
+                  'explain = "points per {name}"')
+        self.assertIn("explain: holds the placeholder {name}", self.errors())
 
     def test_rule_id_and_check(self):
         self.edit("part_b.toml", 'id = "RULE.FAILSCORE_with_GRID"',

@@ -216,7 +216,7 @@ class Generator(unittest.TestCase):
                  '{\n    "FAILSCORE",\n};', h)
         self.has("LossParam{\"delta\", 50.0, true, 0.0}", h)
         self.has("Rule{\"RULE.FAILSCORE_with_GRID\", RuleCheck::Startup, "
-                 "\"\"}", h)
+                 "\"\", Span<RuleWhat>{nullptr, 0}}", h)
         self.has("CheckStage::BlockLines,\n    CheckStage::Removed,", h)
         self.has("inline constexpr Span<LineOption> kLineOptions"
                  "{nullptr, 0};", h)
@@ -228,6 +228,89 @@ class Generator(unittest.TestCase):
                     "FAILSCORE 10", "FAILSCORE 0", "A rule between two",
                     "Points per dimension.", "A value below 2."):
             self.lacks(doc, h + p)
+
+    # Pins: the tables the parser's engine reads: the macro that says the
+    # header holds them; the order of the steps of the parse
+    # (structure::open_order, close_order, eof_order, line_steps_root,
+    # _group and _block, in the registry's order, as enumerators named
+    # after the loader's steps); a block's close_steps and the line each
+    # close check names (CheckAt, End by default); a key's own steps
+    # (empty: its place's) and its effect; the repeat rule
+    # error_until_read; the case of a word argument, an option and a form
+    # (any_case); a rule's {what} per entry; a PARAM key's explain.
+    # Before the fix: fails, the header holds none of them.
+    def test_engine_tables(self):
+        self.edit("hpotarget.toml", '"requires", "repeat", "key_alone"',
+                  '"repeat", "requires", "key_alone"')
+        self.edit("hpotarget.toml", 'unknown_msg = "unknown key \'{key}\' in '
+                  'this block"', 'unknown_msg = "unknown key \'{key}\' in '
+                  'this block"\nclose_steps = ["optimizer_driver"]\n'
+                  'close_checks = [{ msg = "no LIB", doc = "At ENDOPTIMIZER." '
+                  '}, { msg = "no ALGO", doc = "At the end.", at = '
+                  '"last_end_line" }]')
+        self.edit("hpotarget.toml", 'repeat = "last_wins"\ndoc = "The score',
+                  'repeat = "error_until_read"\nrepeat_msg = "again"\n'
+                  'steps = ["value", "repeat", "options"]\ndoc = "The score')
+        self.edit("part_a.toml", 'words = ["NLOPT", "TADAH"] }',
+                  'words = ["NLOPT", "TADAH"], case = "any" }')
+        self.edit("part_a.toml", 'doc = "The seed of the optimiser."',
+                  'doc = "The seed of the optimiser."\n'
+                  'effect = "only TYPE WIDE draws"')
+        self.files["part_b.toml"] += textwrap.dedent('''
+            [[strategy_type]]
+            id = "STRATEGY.TYPE.WIDE"
+            name = "WIDE"
+            keys = ["OPTIMIZER.SEED"]
+            doc = "A wide search."
+            ''')
+        self.edit("part_b.toml", 'keys = ["ROOT.FAILSCORE", '
+                  '"PARAM.TADAH:GRID.GRID_POINTS"]',
+                  'keys = ["ROOT.FAILSCORE", "PARAM.TADAH:GRID.GRID_POINTS"]\n'
+                  'msg = "{key} sets the {what} twice"\n'
+                  'what = { "ROOT.FAILSCORE" = "score" }')
+        self.edit("part_b.toml", 'doc = "Points per dimension."',
+                  'doc = "Points per dimension."\n'
+                  'explain = "points per dimension"')
+        texts = self.headers()
+        h, p = texts[gen.REGISTRY_HEADER], texts[gen.PARAM_HEADER]
+        self.has("#define TADAH_HPOTARGET_ENGINE_TABLES 1", h)
+        self.has("enum class OpenStep : unsigned char {\n  Alias,\n  "
+                 "Parents,\n  Requires,\n  Repeat,\n  KeyAlone,\n  Open,\n};",
+                 h)
+        self.has("enum class EofStep : unsigned char {\n  OpenBlock,\n  "
+                 "KTotalCaps,", h)
+        self.has("enum class Repeat : unsigned char {\n  Add,\n  Error,\n  "
+                 "ErrorUntilRead,\n  LastWins,\n  WarnLastWins,\n};", h)
+        self.has("inline constexpr OpenStep structure_open_order[] = {\n"
+                 "    OpenStep::Alias,\n    OpenStep::Parents,\n"
+                 "    OpenStep::Repeat,\n    OpenStep::Requires,", h)
+        self.has("inline constexpr Span<OpenStep> open_order = "
+                 "Span<OpenStep>{detail::structure_open_order, 6};", h)
+        self.has("inline constexpr Span<CloseStep> close_order =", h)
+        self.has("inline constexpr Span<EofStep> eof_order = "
+                 "Span<EofStep>{detail::structure_eof_order, 14};", h)
+        self.has("inline constexpr LineStep structure_line_steps_group[] = {\n"
+                 "    LineStep::Value,\n    LineStep::Repeat,\n"
+                 "    LineStep::Leftover,\n};", h)
+        self.has("inline constexpr Span<LineStep> line_steps_root =", h)
+        self.has("inline constexpr Span<LineStep> line_steps_block =", h)
+        self.lacks("Span<std::string_view> open_order", h)
+        self.has("inline constexpr BlockCloseStep "
+                 "BLOCK_OPTIMIZER_close_steps[] = {\n"
+                 "    BlockCloseStep::OptimizerDriver,\n};", h)
+        self.has("inline constexpr CheckAt BLOCK_OPTIMIZER_close_checks_at[] "
+                 "= {\n    CheckAt::End,\n    CheckAt::LastEndLine,\n};", h)
+        self.has("Repeat::ErrorUntilRead", h)
+        self.has("inline constexpr LineStep ROOT_FAILSCORE_steps[] = {\n"
+                 "    LineStep::Value,\n    LineStep::Repeat,\n"
+                 "    LineStep::Options,\n};", h)
+        self.has('"only TYPE WIDE draws"}', h)
+        self.has('Span<LineStep>{nullptr, 0}, ""}', h)
+        self.has('"NLOPT",\n    "TADAH",\n};', h)
+        self.has('Span<RefusedWord>{nullptr, 0}, "", "", "", false, "", '
+                 'true}', h)
+        self.has("RuleWhat{\"ROOT.FAILSCORE\", \"score\"}", h)
+        self.has('"points per dimension"}', p)
 
     # Pins: two runs write the same text, which names neither the
     # registry's directory nor the time.

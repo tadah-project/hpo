@@ -124,6 +124,53 @@ class Generated(unittest.TestCase):
         self.assertIn("FAILSCORE 10\nFAILSCORE 10",
                       c["ROOT.FAILSCORE twice"].case["file"])
 
+    # Pins: a key given twice whose repeat is error_until_read (no line
+    # between reads the first) is refused with its repeat_msg, as one of
+    # repeat error is.
+    # Before the fix: error_until_read was taken as a rule whose second
+    # line is read.
+    def test_repeat_error_until_read(self):
+        fs = next(k for k in self.reg.keys if k.name == "FAILSCORE")
+        fs.repeat = "error_until_read"
+        fs.repeat_msg = "FAILSCORE again (first on line {first_line})"
+        self.g.gen_repeat()
+        c = self.cases("repeat")["ROOT.FAILSCORE twice"]
+        self.assertIsNone(c.judge(result(
+            "line 2 of target.hpo: FAILSCORE again (first on line 1)\n"
+            "Line: FAILSCORE 10")))
+        self.assertIn("is not refused with its repeat_msg",
+                      c.judge(result()))
+
+    # Pins: the word of a word argument, written with the case of one
+    # letter changed, is refused at its line where the registry reads it
+    # as written (case exact, the default) and read where it reads it in
+    # any case; so is the word of a line option and of a form.
+    # Before the fix: there was no such check, and a word argument had no
+    # case.
+    def test_case(self):
+        self.g.gen_case()
+        c = self.cases("case")
+        self.assertEqual(set(c), {"OPTIMIZER.LIB tADAH"})
+        exact = c["OPTIMIZER.LIB tADAH"]
+        self.assertIn("LIB tADAH", exact.case["file"])
+        self.assertIn("is not refused at its line",
+                      exact.judge(result()))
+        self.assertIsNone(exact.judge(result(
+            "line 3 of target.hpo: LIB is wrong\nLine: LIB tADAH")))
+        lib = next(k for k in self.reg.keys if k.name == "LIB")
+        lib.args[0].case = "any"
+        self.g.cases.clear()
+        self.g.gen_case()
+        anycase = self.cases("case")["OPTIMIZER.LIB tADAH"]
+        self.assertIsNone(anycase.judge(result()))
+        self.assertIn("reads it in any case", anycase.judge(result(
+            "line 3 of target.hpo: LIB is wrong\nLine: LIB tADAH")))
+        self.assertEqual(gen.Generator.other_case("inhouse",
+                                                  ["inhouse", "Inhouse"]),
+                         "iNhouse")
+        self.assertEqual(gen.Generator.other_case("--x", ["--x", "--X"]),
+                         None)
+
     def test_ranges(self):
         # SEED: an integer from 0 to UINT64_MAX.
         self.g.gen_ranges()
