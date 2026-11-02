@@ -5,7 +5,7 @@
 // registry, put into its wrapper, is accepted by HPOTargets (and, unless the
 // entry says check = "parse", by validate_hpo_setup), and every `invalid`
 // entry is refused with exactly its `error`, framed as the parser frames it
-// ("Error on line N: ...\nLine: ...") at the line its `at` names, or
+// ("line N of target.hpo: ...\nLine: ...") at the line its `at` names, or
 // unframed with at = "none". blueprint/README.md ("The target-file
 // registry") describes the fields.
 //
@@ -62,6 +62,9 @@ namespace {
 namespace fs = std::filesystem;
 
 const char* const kMainFile = "hpotarget.toml";
+/* The target file of every case, as the cases name it to HPOTargets and
+ * the errors name it ({file} of the error frame). */
+const char* const kTargetFile = "target.hpo";
 /* The part files this test has a case for, in meta.parts order. */
 const std::vector<std::string> kParts = {
     "hpotarget_optimizer.toml", "hpotarget_lines.toml",
@@ -386,6 +389,7 @@ std::string expected_error(const Registry& reg, const Case& c,
         throw std::runtime_error("at names no line of the file");
     std::string msg = reg.error_frame;
     msg = replace_all(msg, "{line}", std::to_string(hit->last));
+    msg = replace_all(msg, "{file}", kTargetFile);
     msg = replace_all(msg, "{text}", hit->text);
     return replace_all(msg, "{what}", c.error);
 }
@@ -473,7 +477,7 @@ std::string run_check(const Registry& reg, const Composed& comp,
         os << f.text;
     }
     {
-        std::ofstream os("target.hpo");
+        std::ofstream os(kTargetFile);
         os << comp.file;
     }
     {
@@ -488,7 +492,7 @@ std::string run_check(const Registry& reg, const Composed& comp,
     ScopedEnv scoped(env);
     std::istringstream config(ctx_it->second.config);
     tadah::core::Context ctx = tadah::core::CoreUserConfigParser().parse(config);
-    ctx.add("HPOTARGET", "target.hpo");
+    ctx.add("HPOTARGET", kTargetFile);
     ctx.add("VALIDATION", "config.val");
     ctx.add("CHECK", "true");
     try {
@@ -516,7 +520,7 @@ Outcome run_file(const Registry& reg, const Composed& comp, bool startup,
         os << f.text;
     }
     {
-        std::ofstream os("target.hpo");
+        std::ofstream os(kTargetFile);
         os << comp.file;
     }
     ScopedEnv scoped(env);
@@ -531,7 +535,7 @@ Outcome run_file(const Registry& reg, const Composed& comp, bool startup,
     Outcome out;
     std::optional<tadah::hpo::HPOTargets> trg;
     try {
-        trg.emplace(ctx, "target.hpo");
+        trg.emplace(ctx, kTargetFile);
     } catch (const std::exception& e) {
         out.parse_error = e.what();
         if (out.parse_error.empty()) out.parse_error = "(empty message)";
@@ -727,7 +731,8 @@ struct MlipRead {
     std::vector<M::OptimTargetLine> lines;
 };
 
-/* An error HPOTargets frames, "Error on line N: what\nLine: text". */
+/* An error HPOTargets frames, "line N of target.hpo: what\nLine: text"
+ * (it was "Error on line N: what\nLine: text", without the file). */
 struct Frame {
     std::size_t line = 0;
     std::string what, text;
@@ -735,14 +740,18 @@ struct Frame {
 
 std::optional<Frame> frame_of(const std::string& e)
 {
-    const std::string head = "Error on line ";
+    const std::string head = "line ";
+    const std::string of = std::string(" of ") + kTargetFile + ": ";
     if (e.rfind(head, 0) != 0) return std::nullopt;
-    const auto colon = e.find(": ", head.size());
-    const auto at = e.rfind("\nLine: ");
-    if (colon == std::string::npos || at == std::string::npos || at < colon)
+    const auto digits_end = e.find_first_not_of("0123456789", head.size());
+    if (digits_end == head.size() || digits_end == std::string::npos ||
+        e.compare(digits_end, of.size(), of) != 0)
         return std::nullopt;
+    const auto colon = digits_end + of.size() - 2;
+    const auto at = e.rfind("\nLine: ");
+    if (at == std::string::npos || at < colon) return std::nullopt;
     Frame f;
-    f.line = std::stoul(e.substr(head.size(), colon - head.size()));
+    f.line = std::stoul(e.substr(head.size(), digits_end - head.size()));
     f.what = e.substr(colon + 2, at - colon - 2);
     f.text = e.substr(at + 7);
     return f;
@@ -920,7 +929,8 @@ std::string mlip_failure(const Registry& reg, const Case& c,
             }
         }
         const std::string m_refusal =
-            m.refused ? tadah::hpo::config_line_error(m.line, m.what, m.text)
+            m.refused ? tadah::hpo::config_line_error(kTargetFile, m.line,
+                                                      m.what, m.text)
                       : std::string();
 
         if (h_error.empty()) {

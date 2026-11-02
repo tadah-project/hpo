@@ -45,6 +45,7 @@
 // weights); the data are H2 cells.
 
 #include "catch2/catch.hpp"
+#include "target_file_text.h"
 
 #include <tadah/core/context.h>
 #include <tadah/core/periodic_table.h>
@@ -198,7 +199,7 @@ std::string parse_error(Context c, const std::string& text) {
     try {
         HPOTargets trg(c, tf.path.string());
     } catch (const std::exception& e) {
-        return e.what();
+        return hpo_test::as_target(e.what(), tf.path.string());
     }
     return "";
 }
@@ -213,7 +214,7 @@ std::string startup_error(Context c, const std::string& text,
         HPOTargets trg(c, tf.path.string());
         tadah::hpo::validate_hpo_setup(c, trg, has_train_db, true);
     } catch (const std::exception& e) {
-        return e.what();
+        return hpo_test::as_target(e.what(), tf.path.string());
     }
     return "";
 }
@@ -464,7 +465,7 @@ TEST_CASE("An OPTIM box of LAMBDA below 0 is refused at its line",
             const std::string k = key;
             const std::string bad =
                 parse_error(model_ctx(), target("OPTIM " + k + " (1) -0.5 2\n"));
-            CHECK_THAT(bad, Contains("Error on line 1") &&
+            CHECK_THAT(bad, Contains("line 1 of <target>: ") &&
                                 Contains("OPTIM " + k + " (1): the low bound "
                                          "-0.5 is negative") &&
                                 !Contains("OPTIM " + k + " (1): OPTIM"));
@@ -484,7 +485,7 @@ TEST_CASE("An OPTIM box of LAMBDA below 0 is refused at its line",
         set_key(c, "LAMBDA", "-1");
         set_key(c, "OALGO", "3");
         CHECK_THAT(parse_error(c, target("OPTIM LAMBDA (1) 1e-6 1e-2\n")),
-                   Contains("Error on line 1") &&
+                   Contains("line 1 of <target>: ") &&
                        Contains("OPTIM LAMBDA: the training configuration "
                                 "has LAMBDA -1") &&
                        Contains("evidence approximation"));
@@ -605,7 +606,7 @@ TEST_CASE("OPTIM of a key applied once at startup is refused at its line",
                 const std::string line = "OPTIM " + k + " (1) 0.5 2\n";
                 const std::string said = parse_error(m.second, target(line));
                 CHECK_THAT(said,
-                           Contains("Error on line 1") &&
+                           Contains("line 1 of <target>: ") &&
                                Contains("OPTIM " + k + " is not a valid "
                                         "search target") &&
                                Contains("applied once, when the run starts"));

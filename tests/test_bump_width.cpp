@@ -15,6 +15,7 @@
 // box) as a violation instead of skipping it.
 
 #include "catch2/catch.hpp"
+#include "target_file_text.h"
 
 #include "rhoform_test_support.h"
 
@@ -138,7 +139,7 @@ std::string parse_error(Context ctx, const std::string& target) {
   try {
     HPOTargets trg(ctx, tf.path.string());
   } catch (const std::exception& e) {
-    return e.what();
+    return hpo_test::as_target(e.what(), tf.path.string());
   }
   return "";
 }
@@ -150,7 +151,7 @@ std::string startup_error(Context ctx, const std::string& target) {
   try {
     tadah::hpo::validate_hpo_setup(ctx, trg, true, true);
   } catch (const std::exception& e) {
-    return e.what();
+    return hpo_test::as_target(e.what(), tf.path.string());
   }
   return "";
 }
@@ -174,7 +175,7 @@ TEST_CASE("an OPTIM box whose low bound on a radial bump width is <= 0 is "
       const std::string e =
           parse_error(blip_ctx("2.0 1.0", cutoff),
                       "OPTIM CGRID2B (1) 3.0 3.5\nOPTIM SGRID2B (2) 0 3\n" + tail);
-      CHECK_THAT(e, Catch::Contains("Error on line 2") &&
+      CHECK_THAT(e, Catch::Contains("line 2 of <target>: ") &&
                         Catch::Contains("OPTIM SGRID2B (2)") &&
                         Catch::Contains("the low bound 0 is not > 0") &&
                         Catch::Contains("the D2_Blip pair basis requires every "
@@ -399,7 +400,7 @@ TEST_CASE("the widths of a D2_Blip of a D2_mJoin line are held > 0, at the "
     INFO(cutoff);
     const std::string e = parse_error(joined_blip_ctx("2.0 1.0", cutoff),
                                       "OPTIM SGRID2B (4) 0 3\n" + tail);
-    CHECK_THAT(e, Catch::Contains("Error on line 1") &&
+    CHECK_THAT(e, Catch::Contains("line 1 of <target>: ") &&
                       Catch::Contains("OPTIM SGRID2B (4)") &&
                       Catch::Contains("the low bound 0 is not > 0") &&
                       Catch::Contains("the D2_Blip pair basis of the D2_mJoin "

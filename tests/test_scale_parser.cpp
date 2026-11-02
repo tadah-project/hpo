@@ -2,6 +2,7 @@
  * LOG_HP placement, PARAM GRID_POINTS, STEP override grammar, strict OPTIM
  * grammar, registry-driven STEP rejection, seed-in-box validation. */
 #include "catch2/catch.hpp"
+#include "target_file_text.h"
 #include <tadah/core/context.h>
 #include <tadah/hpo/hpo_targets.h>
 #include <tadah/hpo/scale_validation.h>
@@ -239,7 +240,7 @@ std::string strategy_lines_error(const std::string& lib, const std::string& algo
   try {
     tadah::hpo::HPOTargets trg(ctx, in.path.string());
   } catch (const std::exception& e) {
-    return e.what();
+    return hpo_test::as_target(e.what(), in.path.string());
   }
   return "";
 }
@@ -281,7 +282,7 @@ TEST_CASE("STEP values and override indices are parsed strictly at the line",
             "STEP override 'WATOM(0)': bad index list (indices start at 1)"}}) {
     INFO(c.line);
     CHECK_THAT(err(c.line),
-               Catch::StartsWith("Error on line 8: " + c.message) &&
+               Catch::StartsWith("line 8 of <target>: " + c.message) &&
                Catch::EndsWith("Line:     " + c.line));
   }
 }
@@ -302,7 +303,7 @@ TEST_CASE("PARAM: a numeric value is a finite number checked at the line",
                                 "1e-320", "1e400"}) {
     INFO(tok);
     CHECK_THAT(err("PARAM fd_step " + tok),
-               Catch::StartsWith("Error on line 8: PARAM fd_step must be a "
+               Catch::StartsWith("line 8 of <target>: PARAM fd_step must be a "
                                  "finite number, got '" + tok + "'") &&
                Catch::EndsWith("Line:     PARAM fd_step " + tok));
   }
@@ -506,9 +507,9 @@ ENDOPTIMIZER
        * read, without a frame: "LOG scale requires low > 0"). */
       ScopedTempFile in("OPTIM WATOM (1) -1.0 5.0 LOG\nOPTIMIZER\nLIB DLIB\nALGO BFGS\nMAXEVAL 5\nENDOPTIMIZER\n");
       REQUIRE_THROWS_WITH(tadah::hpo::HPOTargets(ctx, in.path.string()),
-                          Catch::Contains("Error on line 1: OPTIM WATOM: the "
+                          hpo_test::AsTarget(in.path.string(), Catch::Contains("line 1 of <target>: OPTIM WATOM: the "
                                           "line is tagged LOG, and <low> -1.0 "
-                                          "is not > 0"));
+                                          "is not > 0")));
     }
   }
   SECTION("PRESTAGE stage specs are bound to the space") {
@@ -864,7 +865,7 @@ TEST_CASE("STEP FIXWEIGHT(i) names the model weight, like OPTIM FIXWEIGHT (i)",
     try {
       tadah::hpo::HPOTargets trg(ctx, in.path.string());
       (void)tadah::hpo::resolve_step_overrides(trg.spec);
-    } catch (const std::exception& e) { threw = true; msg = e.what(); }
+    } catch (const std::exception& e) { threw = true; msg = hpo_test::as_target(e.what(), in.path.string()); }
     CHECK(threw);
     CHECK(msg.find("index 3 of FIXWEIGHT is not on an OPTIM line") != std::string::npos);
   }

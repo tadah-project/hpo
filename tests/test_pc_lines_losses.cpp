@@ -161,7 +161,7 @@ std::string startup_error(const std::string& body) {
 /* The error of a target file at line @p line, as the parser frames it. */
 std::string at_line(std::size_t line, const std::string& what,
                     const std::string& text) {
-    return "Error on line " + std::to_string(line) + ": " + what +
+    return "line " + std::to_string(line) + " of config.hpo: " + what +
            "\nLine: " + text;
 }
 
@@ -223,7 +223,7 @@ TEST_CASE("PC lines: PC_LAMMPS and PC_FAILPROBE refuse DLIB:BFGS",
         INFO(c.lines);
         const std::string e = read_error(bfgs + c.lines);
         CHECK_THAT(e, Catch::StartsWith(
-                          "Error on line 3: the STRATEGY-level optimiser: "
+                          "line 3 of config.hpo: the STRATEGY-level optimiser: "
                           "DLIB:BFGS is gradient-based, and a target file "
                           "with PC_LAMMPS or PC_FAILPROBE lines (" + c.named +
                           " on line " + c.line + ") takes a gradient-free "
@@ -239,13 +239,13 @@ TEST_CASE("PC lines: PC_LAMMPS and PC_FAILPROBE refuse DLIB:BFGS",
         "ENDOPTIMIZER\n";
     CHECK_THAT(read_error(explore + lammps),
                Catch::StartsWith(
-                   "Error on line 9: the PRESTAGE exploration (EXPLORE "
+                   "line 9 of config.hpo: the PRESTAGE exploration (EXPLORE "
                    "block): DLIB:BFGS is gradient-based, and a target file "
                    "with PC_LAMMPS or PC_FAILPROBE lines (PC_LAMMPS on line "
                    "14) takes a gradient-free optimiser ("));
     CHECK_THAT(read_error(explore + probe),
                Catch::StartsWith(
-                   "Error on line 9: the PRESTAGE exploration (EXPLORE "
+                   "line 9 of config.hpo: the PRESTAGE exploration (EXPLORE "
                    "block): DLIB:BFGS is gradient-based, and a target file "
                    "with PC_LAMMPS or PC_FAILPROBE lines (PC_FAILPROBE on line "
                    "15) takes a gradient-free optimiser ("));
@@ -255,7 +255,7 @@ TEST_CASE("PC lines: PC_LAMMPS and PC_FAILPROBE refuse DLIB:BFGS",
     CHECK(read_error(
               "OPTIMIZER\nLIB NLOPT\nALGO LN_SBPLX\nMAXEVAL 1\n"
               "GRAD_STRATEGY HYBRID\nENDOPTIMIZER\n" + probe) ==
-          "Error on line 5: the STRATEGY-level optimiser: GRAD_STRATEGY is "
+          "line 5 of config.hpo: the STRATEGY-level optimiser: GRAD_STRATEGY is "
           "refused in a target file with PC_LAMMPS or PC_FAILPROBE lines "
           "(PC_FAILPROBE on line 8): tadah hpo takes no gradient "
           "(ANALYTICAL, NUMERICAL or HYBRID) of a loss that runs LAMMPS "
@@ -264,7 +264,7 @@ TEST_CASE("PC lines: PC_LAMMPS and PC_FAILPROBE refuse DLIB:BFGS",
     CHECK_THAT(read_error("OPTIMIZER\nLIB NLOPT\nALGO GD_MLSL\nMAXEVAL 1\n"
                           "ENDOPTIMIZER\n" + probe),
                Catch::StartsWith(
-                   "Error on line 3: the STRATEGY-level optimiser: "
+                   "line 3 of config.hpo: the STRATEGY-level optimiser: "
                    "NLOPT:GD_MLSL takes a gradient: NLopt's MLSL and AUGLAG "
                    "take one for their local search, and NLopt's default "
                    "local optimiser, NLOPT:LD_MMA, is gradient-based; with "
@@ -276,7 +276,7 @@ TEST_CASE("PC lines: PC_LAMMPS and PC_FAILPROBE refuse DLIB:BFGS",
                           "MAXEVAL 1\nINNER\nLIB NLOPT\nALGO LD_LBFGS\n"
                           "ENDINNER\nENDSTRATEGY\nENDOPTIMIZER\n" + probe),
                Catch::StartsWith(
-                   "Error on line 8: the INNER block of the STRATEGY-level "
+                   "line 8 of config.hpo: the INNER block of the STRATEGY-level "
                    "optimiser: NLOPT:LD_LBFGS is gradient-based. A target "
                    "file with PC_LAMMPS or PC_FAILPROBE lines (PC_FAILPROBE "
                    "on line 13) takes a gradient-free optimiser, and an "
@@ -722,7 +722,7 @@ TEST_CASE("PC lines: a PC_OBSERVABLE term takes the LOSS line above it and a "
     }
     CHECK_THAT(read_error(kSbplx + obs + " --loss HUBER 0\n"),
                Catch::StartsWith(
-                   "Error on line 7: loss HUBER parameter (delta) must be "
+                   "line 7 of config.hpo: loss HUBER parameter (delta) must be "
                    "finite and > 0 (got 0); without it the default 50 applies"));
 }
 

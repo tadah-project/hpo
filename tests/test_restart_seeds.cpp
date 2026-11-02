@@ -11,6 +11,7 @@
 // checks the INIT seeds.
 
 #include "catch2/catch.hpp"
+#include "target_file_text.h"
 
 #include "rhoform_test_support.h"
 
@@ -151,7 +152,7 @@ std::size_t line_number(const std::string& config, const std::string& text) {
 }
 
 /* Checks that `error` is the parser's form of a refusal of the line
- * `method_line` of `config` ("Error on line N: <what>\nLine: <text>") and
+ * `method_line` of `config` ("line N of <file>: <what>\nLine: <text>") and
  * returns <what>. */
 std::string refusal_at(const std::string& config, const std::string& error,
                        const std::string& method_line) {
@@ -160,7 +161,7 @@ std::string refusal_at(const std::string& config, const std::string& error,
   REQUIRE(n > 0);
   std::smatch m;
   REQUIRE(std::regex_match(
-      error, m, std::regex(R"(Error on line (\d+): ([\s\S]*)\nLine: ([^\n]*))")));
+      error, m, std::regex(R"(line (\d+) of <target>: ([\s\S]*)\nLine: ([^\n]*))")));
   CHECK(std::stoul(m[1]) == n);
   CHECK(m[3] == method_line);
   return m[2];
@@ -174,7 +175,7 @@ std::string refusal_at(const std::string& config, const std::string& error,
  * Pins: a WARM file that is missing (in the OPTIMIZER block's INIT block,
  * an EXPLORE block's INIT block and the RESTART block), a WARM seed without
  * the OPTIM parameter under WARM_ON_MISMATCH error, and a WARM seed whose
- * RHOFORM the run refuses are refused as "Error on line N: <what>\nLine:
+ * RHOFORM the run refuses are refused as "line N of <file>: <what>\nLine:
  * <the METHOD line>", N and the text those of the METHOD WARM line, <what>
  * the refusal ("WARM: the seed file ... cannot be opened ...", "WARM: ...
  * has no value for AMPGRIDMB[1]", "WARM seed ... declares RHOFORM NONNEG,

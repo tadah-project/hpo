@@ -7,6 +7,7 @@
 // (missing flags, malformed values, unknown kinds) are flagged.
 
 #include "catch2/catch.hpp"
+#include "target_file_text.h"
 
 #include <tadah/core/context.h>
 #include <tadah/core/periodic_table.h>
@@ -53,7 +54,7 @@ tadah::core::Context make_context_for_targets() {
  * every TEST_CASE as its own process (so a static counter restarts at 1 in
  * each) and `ctest -j` runs them concurrently -- a counter-only name made
  * parallel cases overwrite each other's configs (flaky no-throw failures). */
-/* "Error on line N: " for the first line N of `body` that reads `keyword`
+/* "line N of <file>: " for the first line N of `body` that reads `keyword`
  * (leading blanks aside): the line HPOTargets names for a refusal of the
  * block that line closes. */
 std::string error_at_block_end(const std::string& body,
@@ -63,7 +64,7 @@ std::string error_at_block_end(const std::string& body,
   for (std::size_t n = 1; std::getline(in, text); ++n) {
     const auto p = text.find_first_not_of(' ');
     if (p != std::string::npos && text.substr(p) == keyword)
-      return "Error on line " + std::to_string(n) + ": ";
+      return "line " + std::to_string(n) + " of <target>: ";
   }
   return "(no line reads " + keyword + ")";
 }
@@ -367,11 +368,11 @@ PC_OBSERVABLE cohesive_energy --species Ta --target 8.100 --weight 1000 --hotvar
          * PC_OBSERVABLE but OPTIMIZER's GRAD_STRATEGY=NUMERICAL is set." */
         CHECK_THROWS_WITH(
             tadah::hpo::HPOTargets(ctx, cfg.string()),
-            Catch::Matchers::StartsWith(
-                "Error on line 5: the STRATEGY-level optimiser: GRAD_STRATEGY "
+            hpo_test::AsTarget(cfg.string(), Catch::Matchers::StartsWith(
+                "line 5 of <target>: the STRATEGY-level optimiser: GRAD_STRATEGY "
                 "NUMERICAL is refused in a target file with PC_OBSERVABLE "
                 "lines (PC_OBSERVABLE on line 8): ")
-            && Catch::Matchers::EndsWith("\nLine: GRAD_STRATEGY NUMERICAL"));
+            && Catch::Matchers::EndsWith("\nLine: GRAD_STRATEGY NUMERICAL")));
         std::filesystem::remove(cfg);
     }
 
@@ -427,13 +428,13 @@ PC_OBSERVABLE cohesive_energy --species Ta --target 8.100 --weight 1000 --hotvar
 )");
         CHECK_THROWS_WITH(
             tadah::hpo::HPOTargets(ctx, cfg.string()),
-            /* It ended "; set GRAD_STRATEGY on the enclosing STRATEGY
+            hpo_test::AsTarget(cfg.string(), /* It ended "; set GRAD_STRATEGY on the enclosing STRATEGY
              * block". */
             Catch::Matchers::StartsWith(
-                "Error on line 9: GRAD_STRATEGY is not accepted inside an "
+                "line 9 of <target>: GRAD_STRATEGY is not accepted inside an "
                 "INNER block: the GRAD_STRATEGY of the enclosing block "
                 "applies to its local search; the enclosing STRATEGY block "
-                "takes GRAD_STRATEGY"));
+                "takes GRAD_STRATEGY")));
         std::filesystem::remove(cfg);
     }
 }
@@ -601,11 +602,11 @@ TEST_CASE("HPOTargets rejects PC_OBSERVABLE and PC_LAMMPS side by side",
      * current MVP. ...". */
     CHECK_THROWS_WITH(
         tadah::hpo::HPOTargets(ctx, cfg.string()),
-        Catch::Matchers::StartsWith(
-            "Error on line 8: PC_LAMMPS: this target file also has 1 "
+        hpo_test::AsTarget(cfg.string(), Catch::Matchers::StartsWith(
+            "line 8 of <target>: PC_LAMMPS: this target file also has 1 "
             "PC_OBSERVABLE line (line 7); PC_OBSERVABLE lines do not share "
             "a target file with PC_LAMMPS or PC_FAILPROBE lines\nLine: "
-            "PC_LAMMPS --script "));
+            "PC_LAMMPS --script ")));
 
     std::filesystem::remove(cfg);
     std::filesystem::remove(script_path);
@@ -656,7 +657,7 @@ TEST_CASE("HPOTargets judges an MLSL or AUGLAG under PC_LAMMPS by its local "
         try {
             tadah::hpo::HPOTargets trg(ctx, cfg.string());
         } catch (const std::exception& e) {
-            what = e.what();
+            what = hpo_test::as_target(e.what(), cfg.string());
         }
         std::filesystem::remove(cfg);
         return what;
@@ -785,7 +786,7 @@ TEST_CASE("HPOTargets names, for an INNER block under PC_LAMMPS, the "
             tadah::hpo::HPOTargets trg(ctx, cfg.string());
             if (startup) tadah::hpo::validate_run_policy(trg.spec);
         } catch (const std::exception& e) {
-            what = e.what();
+            what = hpo_test::as_target(e.what(), cfg.string());
         }
         std::filesystem::remove(cfg);
         return what;
@@ -1044,7 +1045,7 @@ TEST_CASE("HPOTargets applies the PC_LAMMPS and PC_OBSERVABLE gradient rules "
         try {
             tadah::hpo::HPOTargets trg(ctx, cfg.string());
         } catch (const std::exception& e) {
-            what = e.what();
+            what = hpo_test::as_target(e.what(), cfg.string());
         }
         std::filesystem::remove(cfg);
         return what;
@@ -1124,7 +1125,7 @@ TEST_CASE("HPOTargets applies the PC_LAMMPS and PC_OBSERVABLE gradient rules "
         const std::string body = prestage(bobyqa, c.explore) + c.loss_line;
         INFO(body);
         CHECK_THAT(error(body), Catch::StartsWith(
-            "Error on line 14: GRAD_STRATEGY is not accepted inside an INNER "
+            "line 14 of <target>: GRAD_STRATEGY is not accepted inside an INNER "
             "block: the GRAD_STRATEGY of the enclosing block applies to its "
             "local search; the enclosing EXPLORE block takes GRAD_STRATEGY"));
     }
@@ -1289,13 +1290,15 @@ TEST_CASE("HPOTargets resolves an unset GRAD_STRATEGY to ANALYTICAL in the "
                 observable;
             INFO(body);
             const std::string at_line =
-                outer_extra.empty() ? "Error on line 10: "
-                                    : "Error on line 11: ";
+                outer_extra.empty() ? "line 10 of <target>: "
+                                    : "line 11 of <target>: ";
             auto cfg = write_temp_config(body);
             CHECK_THROWS_WITH(tadah::hpo::HPOTargets(ctx, cfg.string()),
-                              Catch::Matchers::StartsWith(
-                                  at_line + "GRAD_STRATEGY is not accepted "
-                                  "inside an INNER block"));
+                              hpo_test::AsTarget(
+                                  cfg.string(),
+                                  Catch::Matchers::StartsWith(
+                                      at_line + "GRAD_STRATEGY is not "
+                                      "accepted inside an INNER block")));
             std::filesystem::remove(cfg);
         }
 

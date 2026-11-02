@@ -7,9 +7,10 @@
 // GRAD_STRATEGY (beside a PC_LAMMPS, PC_FAILPROBE or PC_OBSERVABLE line). A
 // refusal of a combination of keys, such as STEP <KEY> overrides that cover
 // only some dimensions without a block-wide STEP, keeps the END line of the
-// block. The parser's refusals carry the frame "Error on line N: <what>\n
+// block. The parser's refusals carry the frame "line N of <file>: <what>\n
 // Line: <text>" (config_line_error).
 #include "catch2/catch.hpp"
+#include "target_file_text.h"
 
 #include <tadah/core/context.h>
 #include <tadah/core/periodic_table.h>
@@ -93,18 +94,18 @@ std::string refusal(const std::string& config)
         Context ctx = make_ctx();
         HPOTargets trg(ctx, file.string());
     } catch (const std::exception& e) {
-        what = e.what();
+        what = hpo_test::as_target(e.what(), file.string());
     }
     std::error_code ec;
     fs::remove(file, ec);
     return what;
 }
 
-/* "Error on line <n>: <what>\nLine: <text>" */
+/* "line <n> of <target>: <what>\nLine: <text>" */
 std::string framed(std::size_t n, const std::string& what,
                    const std::string& text)
 {
-    return "Error on line " + std::to_string(n) + ": " + what + "\nLine: " +
+    return "line " + std::to_string(n) + " of <target>: " + what + "\nLine: " +
            text;
 }
 
@@ -119,7 +120,7 @@ const std::string kSpace = "OPTIM CGRID2B (1) 0.5 1.5\nOPTIM CGRID2B (2) 1.6 2.5
 }  // namespace
 
 /* Pins: DLIB:GFS, which does not use STEP, refused at the STEP line, whose
- * text the frame echoes: "Error on line 5: the STRATEGY-level optimiser:
+ * text the frame echoes: "line 5 of <target>: the STRATEGY-level optimiser:
  * DLIB:GFS does not use STEP; MaxLIPO+TR sizes its own trust region from
  * the samples\nLine: STEP 0.1" with STEP after ALGO (line 5), and on line 3
  * with STEP before LIB and ALGO; a STEP <KEY> override (no block-wide STEP)
@@ -150,7 +151,7 @@ TEST_CASE("key lines: a STEP an optimiser does not use is refused at the "
           framed(3, what, "STEP CGRID2B(2) 0.2"));
 }
 
-/* Pins: the value of a STEP is refused at its line: "Error on line 5: the
+/* Pins: the value of a STEP is refused at its line: "line 5 of <target>: the
  * STRATEGY-level optimiser: NLOPT:LN_SBPLX: STEP must be a fraction of the
  * OPTIM width in (0, 0.5] (got 0.7); ...\nLine: STEP 0.7" for the
  * block-wide STEP, and the override's own line for "the STRATEGY-level
@@ -207,7 +208,7 @@ TEST_CASE("key lines: a STEP value or a STEP <KEY> override is refused at "
 
 /* Pins: beside a PC_LAMMPS line (line 11), a gradient-based optimiser is
  * refused at its ALGO line, and the message names the PC_LAMMPS line:
- * "Error on line 4: the STRATEGY-level optimiser: NLOPT:LD_LBFGS is
+ * "line 4 of <target>: the STRATEGY-level optimiser: NLOPT:LD_LBFGS is
  * gradient-based, and a target file with PC_LAMMPS or PC_FAILPROBE lines
  * (PC_LAMMPS on line 11) ...\nLine: ALGO LD_LBFGS" -- in the STRATEGY
  * block, in an EXPLORE block ("the PRESTAGE exploration (EXPLORE block)",
@@ -237,7 +238,7 @@ TEST_CASE("key lines: a gradient beside a PC_LAMMPS line is refused at the "
             "ENDSTRATEGY\nENDOPTIMIZER\nLOSS L2\n" + kSpace + pc;
         const std::string got = refusal(config);
         INFO(got);
-        CHECK(got.rfind("Error on line 4: the STRATEGY-level optimiser: "
+        CHECK(got.rfind("line 4 of <target>: the STRATEGY-level optimiser: "
                         "NLOPT:LD_LBFGS is gradient-based, and a target file "
                         "with PC_LAMMPS or PC_FAILPROBE lines (PC_LAMMPS on "
                         "line 11" + free_list, 0) == 0);
@@ -252,7 +253,7 @@ TEST_CASE("key lines: a gradient beside a PC_LAMMPS line is refused at the "
             pc;
         const std::string got = refusal(config);
         INFO(got);
-        CHECK(got.rfind("Error on line 8: the PRESTAGE exploration (EXPLORE "
+        CHECK(got.rfind("line 8 of <target>: the PRESTAGE exploration (EXPLORE "
                         "block): NLOPT:LD_LBFGS is gradient-based, and a "
                         "target file with PC_LAMMPS or PC_FAILPROBE lines "
                         "(PC_LAMMPS on line 17" + free_list, 0) == 0);
@@ -266,7 +267,7 @@ TEST_CASE("key lines: a gradient beside a PC_LAMMPS line is refused at the "
             "ENDOPTIMIZER\nLOSS L2\n" + kSpace + pc;
         const std::string got = refusal(config);
         INFO(got);
-        CHECK(got.rfind("Error on line 8: the INNER block of the "
+        CHECK(got.rfind("line 8 of <target>: the INNER block of the "
                         "STRATEGY-level optimiser: NLOPT:LD_LBFGS is "
                         "gradient-based. A target file with PC_LAMMPS or "
                         "PC_FAILPROBE lines (PC_LAMMPS on line 15) takes a "
@@ -295,12 +296,12 @@ TEST_CASE("key lines: a gradient beside a PC_LAMMPS line is refused at the "
 }
 
 /* Pins: GRAD_STRATEGY NUMERICAL beside a PC_OBSERVABLE line is refused at
- * the GRAD_STRATEGY line (line 5): "Error on line 5: the STRATEGY-level
+ * the GRAD_STRATEGY line (line 5): "line 5 of <target>: the STRATEGY-level
  * optimiser: GRAD_STRATEGY NUMERICAL is refused in a target file with
  * PC_OBSERVABLE lines (PC_OBSERVABLE on line 10): ...\nLine: GRAD_STRATEGY
  * NUMERICAL" (it said "--hpotarget defines PC_OBSERVABLE but OPTIMIZER's
  * GRAD_STRATEGY=NUMERICAL is set. ...").
- * Before the fix: "Error on line 8: ...\nLine: ENDOPTIMIZER". */
+ * Before the fix: "line 8 of <target>: ...\nLine: ENDOPTIMIZER". */
 TEST_CASE("key lines: GRAD_STRATEGY NUMERICAL beside a PC_OBSERVABLE line is "
           "refused at the GRAD_STRATEGY line",
           "[hpo][key_lines][pc_observable]")
@@ -312,7 +313,7 @@ TEST_CASE("key lines: GRAD_STRATEGY NUMERICAL beside a PC_OBSERVABLE line is "
         "--weight 1000 --hotvar a0 2.7 3.9 3.3\n" + kSpace;
     const std::string got = refusal(config);
     INFO(got);
-    CHECK(got.rfind("Error on line 5: the STRATEGY-level optimiser: "
+    CHECK(got.rfind("line 5 of <target>: the STRATEGY-level optimiser: "
                     "GRAD_STRATEGY NUMERICAL is refused in a target file with "
                     "PC_OBSERVABLE lines (PC_OBSERVABLE on line 10): ", 0) ==
           0);

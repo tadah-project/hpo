@@ -320,9 +320,11 @@ def check_refused(d, p, nranks, line, message):
     check(p.returncode == 1,
           f"{d.name}: exit status {p.returncode}, expected 1 (refused)")
     check(message in p.stderr, f"{d.name}: stderr lacks '{message}'")
-    # The startup refusal names the line its block closes at, as every
-    # startup refusal of a block's settings does (fix/hpo-correctness3).
-    expected = f"ERROR     * startup: Error on line {line}: {message}"
+    # The startup refusal names the line its block closes at and the target
+    # file, as every startup refusal of a block's settings does (it was
+    # "Error on line {line}: ...", without the file).
+    expected = (f"ERROR     * startup: line {line} of config.hpo: "
+                f"{message}")
     for j in journals(d, nranks):
         check(j.exists(), f"{d.name}: {j.name} is missing")
         check(expected in j.read_text(),

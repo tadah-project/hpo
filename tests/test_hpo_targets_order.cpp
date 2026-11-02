@@ -16,6 +16,7 @@
 // LAMMPS' message.
 
 #include "catch2/catch.hpp"
+#include "target_file_text.h"
 
 #include <tadah/core/context.h>
 #include <tadah/core/periodic_table.h>
@@ -201,9 +202,9 @@ TEST_CASE("HPOTargets: PC_LAMMPS --ncpu is rejected with the removal hint",
             tadah::hpo::HPOTargets trg(ctx, cfg_path.string());
             FAIL_CHECK("--ncpu was accepted");
         } catch (const std::runtime_error& e) {
-            const std::string msg = e.what();
+            const std::string msg = hpo_test::as_target(e.what(), cfg_path.string());
             CHECK_THAT(msg, Catch::Contains(
-                "Error on line " + std::to_string(bad_line) + ":"));
+                "line " + std::to_string(bad_line) + " of <target>:"));
             /* It was "--ncpu was removed in 1.6.0 (legacy MPI build);
              * parallelism over PC_LAMMPS scripts is THREADS /
              * PC_ISOLATION. Delete --ncpu from this line." */
@@ -227,7 +228,7 @@ TEST_CASE("HPOTargets: PC_LAMMPS --ncpu is rejected with the removal hint",
  * arguments; every evaluation then failed ("ERROR: Invalid command-line
  * argument: --hotvars") and the run spent its whole MAXEVAL before ending
  * with no usable loss. The --varlos line, which then had no --varloss, was
- * refused with "Error on line 10: LammpsSim: --varloss variable is not
+ * refused with "line 10 of <target>: LammpsSim: --varloss variable is not
  * defined.".
  * Before the review fix: the PC_FAILPROBE list also named --varloss,
  * --hotvar and --failvar, and --hotvars there was answered "did you mean
@@ -293,15 +294,15 @@ TEST_CASE("HPOTargets: an unknown -- option on a PC_LAMMPS or PC_FAILPROBE "
             tadah::hpo::HPOTargets trg(ctx, cfg_path.string());
             FAIL_CHECK("the unknown option was accepted");
         } catch (const std::runtime_error& e) {
-            CHECK(std::string(e.what()) ==
-                  "Error on line " + std::to_string(bad_line) + ": " +
+            CHECK(hpo_test::as_target(e.what(), cfg_path.string()) ==
+                  "line " + std::to_string(bad_line) + " of <target>: " +
                       c.message + "\nLine: " + c.line);
         }
     }
 }
 
 /* Pins: a single-dash option LAMMPS refuses on a PC_LAMMPS or PC_FAILPROBE
- * line (the typo -sff) is an error at its line: "Error on line N:
+ * line (the typo -sff) is an error at its line: "line N of <file>:
  * PC_LAMMPS: LAMMPS cannot start with this line's command-line options: "
  * (PC_FAILPROBE on a probe line), LAMMPS' own message ("ERROR: Invalid
  * command-line argument: -sff (...)"), then "Line: " and the line.
@@ -335,10 +336,10 @@ TEST_CASE("HPOTargets: a command-line option LAMMPS refuses is rejected at "
             tadah::hpo::HPOTargets trg(ctx, cfg_path.string());
             FAIL_CHECK("the option LAMMPS refuses was accepted");
         } catch (const std::runtime_error& e) {
-            CHECK_THAT(std::string(e.what()),
+            CHECK_THAT(hpo_test::as_target(e.what(), cfg_path.string()),
                        Catch::StartsWith(
-                           "Error on line " + std::to_string(bad_line) +
-                           ": " + c.kind + ": LAMMPS cannot start with this "
+                           "line " + std::to_string(bad_line) +
+                           " of <target>: " + c.kind + ": LAMMPS cannot start with this "
                            "line's command-line options: ERROR: Invalid "
                            "command-line argument: -sff (") &&
                        Catch::EndsWith(")\nLine: " + c.line));

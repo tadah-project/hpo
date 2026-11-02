@@ -24,6 +24,7 @@
 // a search that draws random numbers and an inactive RESTART block get
 // none.
 #include "catch2/catch.hpp"
+#include "target_file_text.h"
 
 #include <tadah/core/context.h>
 #include <tadah/core/periodic_table.h>
@@ -150,6 +151,15 @@ Startup startup(const std::string& config)
         try {
             HPOTargets trg(ctx, file.string());
             tadah::hpo::validate_hpo_setup(ctx, trg, true, true);
+        } catch (const std::exception& e) {
+            /* A refusal, with the target file written as <target>
+             * (hpo_test::as_target; the frame was "Error on line N: ",
+             * without the file). */
+            std::cerr.rdbuf(old);
+            const std::string what = hpo_test::as_target(e.what(), file.string());
+            std::error_code ec;
+            fs::remove(file, ec);
+            throw std::runtime_error(what);
         } catch (...) {
             std::cerr.rdbuf(old);
             std::error_code ec;
@@ -366,7 +376,7 @@ TEST_CASE("startup validation: RESTART on a search that does not start at "
             "ENDOPTIMIZER\n";
         CHECK_THROWS_WITH(
             startup(config),
-            Catch::Contains("Error on line 14: the INNER block of the "
+            Catch::Contains("line 14 of <target>: the INNER block of the "
                             "STRATEGY-level optimiser: NLOPT:LN_AUGLAG cannot "
                             "run NLOPT:GN_DIRECT_L as its INNER search: an "
                             "INNER search is a local search"));

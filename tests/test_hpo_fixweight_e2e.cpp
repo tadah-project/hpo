@@ -2309,7 +2309,7 @@ TEST_CASE("PRESTAGE under RESTART: every refinement seed gets a fair run",
  * "MULTISTART: all starts failing fails the run" (run_starts,
  * test_policy_host_exceptions.cpp). The refusal names the line that closes
  * the OPTIMIZER block (line 14), so the journal has it as a two-line
- * ERROR, "* startup: Error on line 14: OPTIMIZER block: GRAD_STRATEGY
+ * ERROR, "* startup: line 14 of <file>: OPTIMIZER block: GRAD_STRATEGY
  * ANALYTICAL ..." and "Line: ENDOPTIMIZER"; before the refusal named its
  * line the pin read the one-line "ERROR     startup: OPTIMIZER block:
  * GRAD_STRATEGY ANALYTICAL". */
@@ -2328,9 +2328,11 @@ TEST_CASE("MULTISTART: a setup that would fail every start fails the run "
     REQUIRE(contains(r.output, "All tests passed"));
     const std::string journal = read_text(sd.dir / "hpo_run.log");
     INFO(journal);
-    CHECK(contains(journal, "ERROR     * startup: Error on line 14: the "
-                            "STRATEGY-level optimiser: GRAD_STRATEGY "
-                            "ANALYTICAL"));
+    /* The frame names the target file (it was "Error on line 14: "). */
+    CHECK(contains(journal, "ERROR     * startup: line 14 of " +
+                                (sd.dir / "config.hpo").string() +
+                                ": the STRATEGY-level optimiser: "
+                                "GRAD_STRATEGY ANALYTICAL"));
     CHECK(contains(journal, "ERROR       Line: ENDOPTIMIZER\n"));
     CHECK_FALSE(contains(journal, "MULTISTART start 1/3"));
     CHECK(total_evaluations(journal) == 0u);

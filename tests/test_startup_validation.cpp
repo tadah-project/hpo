@@ -6,6 +6,7 @@
 // OPTIM EMBF0 rejection; plus derive_raw_embedding_f0 (EMBF0 journal).
 
 #include "catch2/catch.hpp"
+#include "target_file_text.h"
 
 #include <tadah/core/context.h>
 #include <tadah/core/periodic_table.h>
@@ -633,7 +634,7 @@ TEST_CASE("startup validation: GRAD_STRATEGY ANALYTICAL needs the settings "
     try {
       validate_hpo_setup(ctx, trg, has_train_db, true);
     } catch (const std::exception& e) {
-      what = e.what();
+      what = hpo_test::as_target(e.what(), tf.path.string());
     }
     return what;
   };
@@ -831,7 +832,7 @@ std::string startup_error(Context& ctx, const std::string& body) {
   try {
     validate_hpo_setup(ctx, trg, true, true);
   } catch (const std::exception& e) {
-    return e.what();
+    return hpo_test::as_target(e.what(), tf.path.string());
   }
   return "";
 }
@@ -921,7 +922,7 @@ TEST_CASE("startup validation: GRAD_STRATEGY ANALYTICAL needs loss terms "
  * used to be refused on the INNER block, whose resolved ANALYTICAL was
  * never used.
  * The refusal names the line that closes the block it refuses, as the
- * parser's refusals do: "Error on line N: OPTIMIZER block: GRAD_STRATEGY
+ * parser's refusals do: "line N of <file>: OPTIMIZER block: GRAD_STRATEGY
  * ANALYTICAL ...\nLine: ENDOPTIMIZER" ("EXPLORE block: ..." at
  * ENDEXPLORE). Before that fix the pins below read the message alone,
  * "OPTIMIZER block: GRAD_STRATEGY ANALYTICAL (resolved ...", which the
@@ -951,9 +952,9 @@ TEST_CASE("startup validation: the ANALYTICAL rule applies to the block "
     const std::string config = mlsl("", "");
     const auto neither = startup_error(ctx, config);
     CHECK_THAT(neither, Catch::StartsWith(
-                            "Error on line " +
+                            "line " +
                             std::to_string(line_of(config, "ENDOPTIMIZER")) +
-                            ": the STRATEGY-level optimiser: GRAD_STRATEGY "
+                            " of <target>: the STRATEGY-level optimiser: GRAD_STRATEGY "
                             "ANALYTICAL (resolved") &&
                         Catch::EndsWith("\nLine: ENDOPTIMIZER") &&
                         Catch::Contains("OALGO 4") &&
@@ -983,10 +984,10 @@ TEST_CASE("startup validation: the ANALYTICAL rule applies to the block "
     const std::string explore_inner =
         "      INNER\n        LIB NLOPT\n        ALGO LD_LBFGS\n"
         "      ENDINNER\n";
-    /* "Error on line N: " for the ENDEXPLORE line N of `config`. */
+    /* "line N of <file>: " for the ENDEXPLORE line N of `config`. */
     const auto at_endexplore = [](const std::string& config) {
-      return "Error on line " + std::to_string(line_of(config, "ENDEXPLORE")) +
-             ": ";
+      return "line " + std::to_string(line_of(config, "ENDEXPLORE")) +
+             " of <target>: ";
     };
     const std::string with_inner = prestage(explore_mlsl + explore_inner);
     CHECK_THAT(startup_error(ctx, with_inner),
@@ -1068,7 +1069,8 @@ TEST_CASE("startup validation: FAILSCORE_GRADING ON takes any FAILSCORE, "
     try {
       validate_hpo_setup(ctx, trg, true, true);
     } catch (const std::exception& e) {
-      return std::string(e.what());
+      /* The target file is named <target> (hpo_test::as_target). */
+      return hpo_test::as_target(e.what(), tf.path.string());
     }
     return std::string();
   };
@@ -1101,13 +1103,13 @@ TEST_CASE("startup validation: FAILSCORE_GRADING ON takes any FAILSCORE, "
                                        tadah::hpo::FailBand::D, inf,
                                        1.0) >= limit);
     CHECK_THAT(startup("FAILSCORE_GRADING ON\n", asa),
-               Catch::StartsWith("Error on line 8: " + refusal(
+               Catch::StartsWith("line 8 of <target>: " + refusal(
                    "the STRATEGY-level optimiser",
                    "1.7976931348623157e+308, the largest double, as without "
                    "a FAILSCORE line")) &&
                Catch::EndsWith("\nLine: ENDOPTIMIZER"));
     CHECK_THAT(startup("FAILSCORE_GRADING ON\nFAILSCORE 1e30\n", asa),
-               Catch::StartsWith("Error on line 9: " + refusal(
+               Catch::StartsWith("line 9 of <target>: " + refusal(
                    "the STRATEGY-level optimiser", "1e+30")));
     CHECK_THAT(startup("FAILSCORE_GRADING ON\nFAILSCORE 1e30\n",
                        explore_asa),
@@ -1115,7 +1117,7 @@ TEST_CASE("startup validation: FAILSCORE_GRADING ON takes any FAILSCORE, "
                    "the PRESTAGE exploration (EXPLORE block)", "1e+30")));
     CHECK_THAT(
         startup("FAILSCORE_GRADING ON\nFAILSCORE 1.0000000000003e18\n", asa),
-        Catch::StartsWith("Error on line 9: " + refusal(
+        Catch::StartsWith("line 9 of <target>: " + refusal(
             "the STRATEGY-level optimiser", "1.0000000000003e+18")));
     CHECK(startup("FAILSCORE_GRADING ON\nFAILSCORE 1.0000000000002e18\n",
                   asa) == "");
@@ -1137,13 +1139,13 @@ TEST_CASE("startup validation: FAILSCORE_GRADING ON takes any FAILSCORE, "
       try {
         validate_hpo_setup(ctx, trg, true, true);
       } catch (const std::exception& e) {
-        return std::string(e.what());
+        return hpo_test::as_target(e.what(), tf.path.string());
       }
       return std::string();
     };
     CHECK_THAT(by_env("FAILSCORE_GRADING OFF\n", true),
                Catch::StartsWith(
-                   "Error on line 8: the STRATEGY-level optimiser: ASA:ASA: "
+                   "line 8 of <target>: the STRATEGY-level optimiser: ASA:ASA: "
                    "under FAILSCORE_GRADING ON, set by "
                    "TADAH_FAILSCORE_GRADING, a failed evaluation scores from "
                    "0.999 FAILSCORE to below FAILSCORE "
@@ -1403,8 +1405,8 @@ TEST_CASE("startup validation: OPTIM EMBF0 is rejected",
        * what EMBF0 is (it was "OPTIM EMBF0 is not a valid search target:
        * ... set it in the -c potential/configuration ..."). */
       REQUIRE_THROWS_WITH(HPOTargets(ctx, tf.path.string()),
-                          "Error on line 1: " + std::string(kEmbf0Refusal) +
-                              "\nLine: OPTIM " + key + " (1) 0 1");
+                          hpo_test::AsTarget(tf.path.string(), "line 1 of <target>: " + std::string(kEmbf0Refusal) +
+                              "\nLine: OPTIM " + key + " (1) 0 1"));
       /* The rejection comes before context.size(k): the default is not
        * materialised into the run context. */
       CHECK_FALSE(ctx.has_stored("EMBF0"));
@@ -1424,8 +1426,8 @@ TEST_CASE("startup validation: OPTIM EMBF0 is rejected",
     ScopedTempFile tf("EMBF0 FREE\nPC_ERMSE 0 1\n" +
                       std::string(kOptimizerBlock));
     REQUIRE_THROWS_WITH(HPOTargets(ctx, tf.path.string()),
-                        Catch::StartsWith("Error on line 1: ") &&
-                            Catch::Contains("unknown key 'EMBF0'"));
+                        hpo_test::AsTarget(tf.path.string(), Catch::StartsWith("line 1 of <target>: ") &&
+                            Catch::Contains("unknown key 'EMBF0'")));
   }
   SECTION("an invalid stored EMBF0 of a DM_REAM configuration fails fast") {
     Context ctx = make_ream_model_ctx();

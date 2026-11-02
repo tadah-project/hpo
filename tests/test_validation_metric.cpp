@@ -1,4 +1,5 @@
 #include "catch2/catch.hpp"
+#include "target_file_text.h"
 #include <tadah/hpo/hpo_targets.h>
 #include <tadah/hpo/hpo_log.h>
 #include <tadah/hpo/pot_header_writer.h>
@@ -75,7 +76,7 @@ TEST_CASE("PC dataset declarations reject ambiguous or invalid input", "[pc_data
 
 /* A repeated top-level PC_EMAE, PC_ErRMSE or PC_ERSQ line is refused at
  * its line, naming the line of the first, as a repeated PC_ERMSE, PC_FRMSE
- * or PC_SRMSE_GPA line is ("Error on line 7: PC_EMAE: repeated declaration
+ * or PC_SRMSE_GPA line is ("line 7 of <target>: PC_EMAE: repeated declaration
  * (first declared on line 6)"); a line of each metric once is read. Before
  * the fix: the later line replaced the first without a word (the last
  * target, weight and caps won). */
@@ -87,10 +88,10 @@ TEST_CASE("A repeated PC_EMAE, PC_ErRMSE or PC_ERSQ line is refused",
         ConfigFile f(key + " 0 1\n" + key + " 0 2 --skip-above 5\n");
         tadah::core::Context ctx;
         CHECK_THROWS_WITH(HPOTargets(ctx, f.path.string()),
-                          Catch::Matchers::Contains(
-                              "Error on line 7: " + key +
+                          hpo_test::AsTarget(f.path.string(), Catch::Matchers::Contains(
+                              "line 7 of <target>: " + key +
                               ": repeated declaration (first declared on "
-                              "line 6)"));
+                              "line 6)")));
     }
     ConfigFile once("PC_EMAE 0 1\nPC_ErRMSE 0 2\nPC_ERSQ 0 3\nPC_SRMSE_GPA 0 4\n");
     tadah::core::Context ctx;
@@ -105,7 +106,7 @@ TEST_CASE("A repeated PC_EMAE, PC_ErRMSE or PC_ERSQ line is refused",
 
 /* Pins: PC_ERSQ refuses --skip-above and --skip-rel at its line: a cap
  * rejects an evaluation whose metric is above it, and R^2 is better when
- * higher, so the cap would reject the better fits ("Error on line 6:
+ * higher, so the cap would reject the better fits ("line 6 of <file>:
  * PC_ERSQ takes no --skip-above: a cap rejects an evaluation whose metric
  * is above it, and a higher R^2 is a better fit, so the cap would reject
  * the better fits"; with both options the first is named). The option is
@@ -137,8 +138,8 @@ TEST_CASE("PC_ERSQ refuses --skip-above and --skip-rel at its line",
         ConfigFile f(line + "\n");
         tadah::core::Context ctx;
         CHECK_THROWS_WITH(HPOTargets(ctx, f.path.string()),
-                          "Error on line 6: PC_ERSQ takes no " + option + why +
-                              "\nLine: " + line);
+                          hpo_test::AsTarget(f.path.string(), "line 6 of <target>: PC_ERSQ takes no " + option + why +
+                              "\nLine: " + line));
     }
     ConfigFile ok("PC_ERSQ 1 1\nPC_ERMSE 0 1 --skip-above 5 --skip-rel 2\n"
                   "PC_EMAE 0 1 --skip-above 5\n");
@@ -166,20 +167,20 @@ TEST_CASE("A repeated global PC_ERMSE or PC_FRMSE line is refused naming "
         tadah::core::Context ctx;
         ConfigFile twice(key + " 0 1\n" + key + " 0 2\n");
         CHECK_THROWS_WITH(HPOTargets(ctx, twice.path.string()),
-                          Catch::Matchers::StartsWith(
-                              "Error on line 7: " + key +
+                          hpo_test::AsTarget(twice.path.string(), Catch::Matchers::StartsWith(
+                              "line 7 of <target>: " + key +
                               ": repeated declaration (first declared on "
-                              "line 6)"));
+                              "line 6)")));
         for (const std::string body :
              {key + " (1) 0 1\n" + key + " 0 2\n",
               key + " 0 1\n" + key + " (1) 0 2\n"}) {
             ConfigFile mixed(body);
             CHECK_THROWS_WITH(HPOTargets(ctx, mixed.path.string()),
-                              Catch::Matchers::StartsWith(
-                                  "Error on line 7: " + key +
+                              hpo_test::AsTarget(mixed.path.string(), Catch::Matchers::StartsWith(
+                                  "line 7 of <target>: " + key +
                                   ": a line without an index (every "
                                   "validation dataset) and indexed lines "
-                                  "(one dataset each) are not combined"));
+                                  "(one dataset each) are not combined")));
         /* It said "<key>: cannot mix global and indexed forms". */
         }
         ConfigFile indexed(key + " (1) 0 1\n" + key + " (2) 0 2\n");

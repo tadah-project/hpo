@@ -70,7 +70,7 @@ line, its last line and the joined text."""
 comment = "#"
 continuation = "\\"
 key_case = "exact"
-error_frame = "Error on line {line}: {what}\nLine: {text}"
+error_frame = "line {line} of {file}: {what}\nLine: {text}"
 unfinished_msg = "the line ends with \\, which continues it on the next line, and the file has no next line"
 missing_file_msg = "the target file {file} (--hpotarget) cannot be opened"
 bool_true = ["true", "1", "yes", "on"]

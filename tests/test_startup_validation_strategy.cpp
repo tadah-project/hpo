@@ -37,6 +37,7 @@
 
 #include "catch2/catch.hpp"
 #include "ceres_build.h"
+#include "target_file_text.h"
 
 #include <tadah/core/context.h>
 #include <tadah/core/periodic_table.h>
@@ -239,7 +240,7 @@ std::pair<std::size_t, std::string> phase_line(const std::string& config,
 /* The parser must accept `config`; returns what validate_hpo_setup() and
  * the policy say about it ("" when they accept it). A refusal of the
  * OPTIMIZER block's settings names the line of the block it is about, in
- * the parser's form "Error on line N: <what>\nLine: <text>"
+ * the parser's form "line N of <file>: <what>\nLine: <text>"
  * (with_block_line, phase_specs.h): `startup_raw` is the refusal as
  * validate_hpo_setup() threw it, `startup` the message without that line,
  * and judge() checks the line of every refusal that names a phase against
@@ -263,7 +264,7 @@ std::string checked_refusal(const std::string& config, const std::string& raw)
     std::string message = raw;
     std::smatch m;
     const bool at_line = std::regex_match(
-        raw, m, std::regex(R"(Error on line (\d+): ([\s\S]*)\nLine: ([^\n]*))"));
+        raw, m, std::regex(R"(line (\d+) of <target>: ([\s\S]*)\nLine: ([^\n]*))"));
     if (at_line) message = m[2];
     if (names_phase(message)) {
         const auto expected = phase_line(config, message);
@@ -290,8 +291,11 @@ Verdict judge(const std::string& config)
     INFO("config:\n" << config);
     REQUIRE(parse_error == "");
     Verdict v;
-    v.startup_raw =
-        error_of([&] { validate_hpo_setup(ctx, *trg, true, true); });
+    /* The target file is named <target> (hpo_test::as_target); the frame
+     * was "Error on line N: ", without the file. */
+    v.startup_raw = hpo_test::as_target(
+        error_of([&] { validate_hpo_setup(ctx, *trg, true, true); }),
+        tf.path.string());
     v.startup = checked_refusal(config, v.startup_raw);
     v.policy  = policy_error(trg->spec);
     return v;
@@ -303,7 +307,11 @@ std::string parse_error(const std::string& config)
     PeriodicTable::initialize();
     ScopedTempFile tf(config);
     Context ctx = make_minimal_ctx();
-    return error_of([&] { HPOTargets trg(ctx, tf.path.string()); });
+    /* The target file is named <target> (hpo_test::as_target); the frame
+     * was "Error on line N: ", without the file. */
+    return hpo_test::as_target(
+        error_of([&] { HPOTargets trg(ctx, tf.path.string()); }),
+        tf.path.string());
 }
 
 /* What validate_hpo_setup() throws for `config`, with the line it names
@@ -547,14 +555,14 @@ TEST_CASE("startup validation: a phase without LIB or ALGO is rejected by "
         /* ENDOPTIMIZER is line 8. */
         const auto msg = parse_error(strategy_config(
             "    TYPE PLAIN\n    MAXEVAL 5\n"));
-        CHECK_THAT(msg, Catch::StartsWith("Error on line 8: ") &&
+        CHECK_THAT(msg, Catch::StartsWith("line 8 of <target>: ") &&
                         Catch::Contains("the OPTIMIZER block names no "
                                         "optimiser: LIB and ALGO are not set"));
     }
     SECTION("the short form without ALGO") {
         const auto msg = parse_error(
             kRoot + "OPTIMIZER\nLIB DLIB\nMAXEVAL 5\nENDOPTIMIZER\n");
-        CHECK_THAT(msg, Catch::StartsWith("Error on line 6: ") &&
+        CHECK_THAT(msg, Catch::StartsWith("line 6 of <target>: ") &&
                         Catch::Contains("the OPTIMIZER block names no "
                                         "optimiser: ALGO is not set"));
     }
@@ -578,7 +586,7 @@ TEST_CASE("startup validation: a phase without LIB or ALGO is rejected by "
         const auto msg = parse_error(strategy_config(
             "    TYPE PRESTAGE\n    LIB DLIB\n    ALGO BFGS\n    MAXEVAL 20\n"
             "    EXPLORE\n      LIB DLIB\n      MAXEVAL 12\n    ENDEXPLORE\n"));
-        CHECK_THAT(msg, Catch::StartsWith("Error on line 12: ") &&
+        CHECK_THAT(msg, Catch::StartsWith("line 12 of <target>: ") &&
                         Catch::Contains("the EXPLORE block names no "
                                         "optimiser: ALGO is not set"));
     }
@@ -591,7 +599,7 @@ TEST_CASE("startup validation: a phase without LIB or ALGO is rejected by "
         /* Refused as open, at its OPTIMIZER line (line 3), before what it
          * sets is checked: its ENDOPTIMIZER line checks the optimiser. */
         const auto msg = parse_error(kRoot + "OPTIMIZER\n  MAXEVAL 5\n");
-        CHECK(msg == "Error on line 3: OPTIMIZER block not closed with "
+        CHECK(msg == "line 3 of <target>: OPTIMIZER block not closed with "
                      "ENDOPTIMIZER\nLine: OPTIMIZER");
     }
     SECTION("a spec built outside the parser gets the same text from the "
@@ -669,8 +677,8 @@ TEST_CASE("startup validation: an INNER block without LIB or ALGO is "
              * LIB and ALGO inside the INNER block (...)"). */
             CHECK_THAT(parse_error(text),
                        Catch::StartsWith(
-                           "Error on line " + std::to_string(endinner_line) +
-                           ": the INNER block inside " + c.enclosing +
+                           "line " + std::to_string(endinner_line) +
+                           " of <target>: the INNER block inside " + c.enclosing +
                            " names no optimiser: " + c.missing +
                            "; LIB and ALGO inside the INNER block name the "
                            "local optimiser that NLopt's MLSL and AUGLAG "
@@ -684,7 +692,7 @@ TEST_CASE("startup validation: an INNER block without LIB or ALGO is "
          * line checks the optimiser. */
         const auto msg = parse_error(head + "    TYPE PLAIN\n" + mlsl +
                                      "    INNER\n      LIB NLOPT\n");
-        CHECK(msg == "Error on line 9: INNER block not closed with ENDINNER\n"
+        CHECK(msg == "line 9 of <target>: INNER block not closed with ENDINNER\n"
                      "Line:     INNER");
     }
     SECTION("an INNER block that names LIB and ALGO passes") {
@@ -722,8 +730,8 @@ TEST_CASE("startup validation: a STRATEGY key of another TYPE is rejected at "
         /* The message says where the key takes effect (it ended "; set TYPE
          * <home> or remove <key>"). */
         CHECK_THAT(msg,
-                   Catch::StartsWith("Error on line " +
-                                     std::to_string(knob_line) + ": " + key +
+                   Catch::StartsWith("line " +
+                                     std::to_string(knob_line) + " of <target>: " + key +
                                      " is not accepted with STRATEGY " +
                                      c.type_named) &&
                    Catch::EndsWith("; " + key + " takes effect under "
@@ -738,8 +746,10 @@ TEST_CASE("startup validation: a STRATEGY key of another TYPE is rejected at "
             "    N_STARTS 3\n    TOPK 1\n    TYPE PRESTAGE\n    LIB DLIB\n"
             "    ALGO BFGS\n" + kExploreGfs));
         Context ctx = make_minimal_ctx();
-        const auto msg = error_of([&] { HPOTargets trg(ctx, tf.path.string()); });
-        CHECK_THAT(msg, Catch::StartsWith("Error on line 5: N_STARTS is not "
+        const auto msg = hpo_test::as_target(
+            error_of([&] { HPOTargets trg(ctx, tf.path.string()); }),
+            tf.path.string());
+        CHECK_THAT(msg, Catch::StartsWith("line 5 of <target>: N_STARTS is not "
                                           "accepted with STRATEGY TYPE "
                                           "PRESTAGE"));
 
@@ -755,7 +765,7 @@ TEST_CASE("startup validation: a STRATEGY key of another TYPE is rejected at "
         const auto msg = parse_error(strategy_config(
             "    TYPE MULTISTART\n    N_STARTS 3\n    TYPE PLAIN\n"
             "    LIB DLIB\n    ALGO BFGS\n"));
-        CHECK_THAT(msg, Catch::StartsWith("Error on line 7: TYPE is set twice "
+        CHECK_THAT(msg, Catch::StartsWith("line 7 of <target>: TYPE is set twice "
                                           "in the STRATEGY block (first on "
                                           "line 5); each key is given once"));
     }
@@ -793,13 +803,13 @@ TEST_CASE("startup validation: STRATEGY PARALLEL is refused at its line, "
             const auto msg = parse_error(strategy_config(
                 "    TYPE " + type + "\n    PARALLEL " + value +
                 "\n    LIB DLIB\n    ALGO BFGS\n    MAXEVAL 20\n" + extra));
-            CHECK(msg == "Error on line 6: 'PARALLEL' was removed from the "
+            CHECK(msg == "line 6 of <target>: 'PARALLEL' was removed from the "
                          "grammar: " + reason + "\nLine:     PARALLEL " + value);
         }
     }
     const auto old = parse_error(strategy_config(
         "    MULTISTART_PARALLEL 2\n    LIB DLIB\n    ALGO BFGS\n"));
-    CHECK(old == "Error on line 5: 'MULTISTART_PARALLEL' was removed from the "
+    CHECK(old == "line 5 of <target>: 'MULTISTART_PARALLEL' was removed from the "
                  "grammar: " + reason + "\nLine:     MULTISTART_PARALLEL 2");
 }
 
@@ -821,13 +831,13 @@ TEST_CASE("startup validation: STRATEGY TYPE MULTISTART needs N_STARTS 2 or "
     const std::string backend = "    LIB DLIB\n    ALGO BFGS\n";
     /* TYPE on line 5. */
     CHECK(parse_error(strategy_config("    TYPE MULTISTART\n" + backend)) ==
-          "Error on line 5: STRATEGY TYPE MULTISTART needs N_STARTS 2 or "
+          "line 5 of <target>: STRATEGY TYPE MULTISTART needs N_STARTS 2 or "
           "more: without N_STARTS it runs one start, which is STRATEGY TYPE "
           "PLAIN\nLine:     TYPE MULTISTART");
     for (const std::string n : {"1", "0"})
         CHECK(parse_error(strategy_config("    TYPE MULTISTART\n    N_STARTS " +
                                           n + "\n" + backend)) ==
-              "Error on line 6: N_STARTS must be an integer >= 2, got '" + n +
+              "line 6 of <target>: N_STARTS must be an integer >= 2, got '" + n +
                   "' (one start is STRATEGY TYPE PLAIN)\nLine:     N_STARTS " +
                   n);
     /* The note is about a number of starts below 2: a token that is no
@@ -835,7 +845,7 @@ TEST_CASE("startup validation: STRATEGY TYPE MULTISTART needs N_STARTS 2 or "
     for (const std::string n : {"x", "1e5", "-1", "2.5"})
         CHECK(parse_error(strategy_config("    TYPE MULTISTART\n    N_STARTS " +
                                           n + "\n" + backend)) ==
-              "Error on line 6: N_STARTS must be an integer >= 2, got '" + n +
+              "line 6 of <target>: N_STARTS must be an integer >= 2, got '" + n +
                   "'\nLine:     N_STARTS " + n);
     PeriodicTable::initialize();
     ScopedTempFile ok(strategy_config("    TYPE MULTISTART\n    N_STARTS 2\n" +
@@ -910,26 +920,26 @@ TEST_CASE("startup validation: a MULTISTART whose INIT chain gives fewer "
         "one start is STRATEGY TYPE PLAIN, and a chain of 2 or more "
         "starting points (METHOD LHS 2, RANDOM 2 or SOBOL 2) runs 2 starts";
     CHECK(refused("2", "") ==
-          "Error on line 6: N_STARTS 2 needs 2 starting points, and the INIT "
+          "line 6 of <target>: N_STARTS 2 needs 2 starting points, and the INIT "
           "chain gives 1 (the CONFIG point: the chain has no METHOD line); " +
               one_start + line("2"));
     CHECK(refused("2", block("      SEED 4\n")) ==
-          "Error on line 6: N_STARTS 2 needs 2 starting points, and the INIT "
+          "line 6 of <target>: N_STARTS 2 needs 2 starting points, and the INIT "
           "chain gives 1 (the CONFIG point: the chain has no METHOD line); " +
               one_start + line("2"));
     CHECK(refused("3", block("      METHOD CONFIG\n      METHOD RANDOM 1\n"
                              "      SEED 4\n")) ==
-          "Error on line 6: N_STARTS 3 needs 3 starting points, and the INIT "
+          "line 6 of <target>: N_STARTS 3 needs 3 starting points, and the INIT "
           "chain gives 2 (CONFIG, RANDOM 1); a chain of 3 or more starting "
           "points (METHOD LHS 3, RANDOM 3 or SOBOL 3) runs 3 starts, and "
           "N_STARTS 2 runs one start from each of the 2 starting points" + line("3"));
     CHECK(refused("2", block("      METHOD CONFIG\n      METHOD CONFIG\n")) ==
-          "Error on line 6: N_STARTS 2 needs 2 starting points, and the INIT "
+          "line 6 of <target>: N_STARTS 2 needs 2 starting points, and the INIT "
           "chain gives 1 (CONFIG, CONFIG; the CONFIG lines give one point); " +
               one_start + line("2"));
     CHECK(refused("3", block("      METHOD CONFIG\n      METHOD RANDOM 1\n"
                              "      METHOD CONFIG\n      SEED 4\n")) ==
-          "Error on line 6: N_STARTS 3 needs 3 starting points, and the INIT "
+          "line 6 of <target>: N_STARTS 3 needs 3 starting points, and the INIT "
           "chain gives 2 (CONFIG, RANDOM 1, CONFIG; the CONFIG lines give one "
           "point); a chain of 3 or more starting points (METHOD LHS 3, RANDOM "
           "3 or SOBOL 3) runs 3 starts, and N_STARTS 2 runs one start from "
@@ -941,24 +951,24 @@ TEST_CASE("startup validation: a MULTISTART whose INIT chain gives fewer "
                                   "    TYPE MULTISTART\n    N_STARTS 2\n" +
                           backend + block("      METHOD CONFIG\n") +
                           "  ENDSTRATEGY\nENDOPTIMIZER\n") ==
-          "Error on line 9: N_STARTS 2 needs 2 starting points, and the INIT "
+          "line 9 of <target>: N_STARTS 2 needs 2 starting points, and the INIT "
           "chain gives 1 (CONFIG, CONFIG; the CONFIG lines give one point); " +
               one_start + line("2"));
     CHECK(refused("4", block("      METHOD LHS 6\n      K_TOTAL 2\n"
                              "      SEED 4\n")) ==
-          "Error on line 6: N_STARTS 4 needs 4 starting points, and the INIT "
+          "line 6 of <target>: N_STARTS 4 needs 4 starting points, and the INIT "
           "chain gives 2 (LHS 6, capped by K_TOTAL 2); with K_TOTAL 4, or "
           "without K_TOTAL, 4 starts run, and N_STARTS 2 runs one start from "
           "each of the 2 starting points" + line("4"));
     CHECK(refused("3", block("      METHOD LHS 3\n      K_TOTAL 2\n"
                              "      SEED 4\n")) ==
-          "Error on line 6: N_STARTS 3 needs 3 starting points, and the INIT "
+          "line 6 of <target>: N_STARTS 3 needs 3 starting points, and the INIT "
           "chain gives 2 (LHS 3, capped by K_TOTAL 2); without K_TOTAL, 3 "
           "starts run, and N_STARTS 2 runs one start from each of the 2 "
           "starting points" + line("3"));
     CHECK(refused("3", block("      METHOD LHS 2\n      K_TOTAL 1\n"
                              "      SEED 4\n")) ==
-          "Error on line 6: N_STARTS 3 needs 3 starting points, and the INIT "
+          "line 6 of <target>: N_STARTS 3 needs 3 starting points, and the INIT "
           "chain gives 1 (LHS 2, capped by K_TOTAL 1); one start is STRATEGY "
           "TYPE PLAIN, and a chain of 3 or more starting points (METHOD LHS 3, "
           "RANDOM 3 or SOBOL 3) without K_TOTAL runs 3 starts" + line("3"));
@@ -966,11 +976,11 @@ TEST_CASE("startup validation: a MULTISTART whose INIT chain gives fewer "
     ScopedTempFile seed("WATOM 1.0\n");
     const std::string warm = "WARM " + seed.path.string();
     CHECK(refused("2", block("      METHOD " + warm + "\n")) ==
-          "Error on line 6: N_STARTS 2 needs 2 starting points, and the INIT "
+          "line 6 of <target>: N_STARTS 2 needs 2 starting points, and the INIT "
           "chain gives at most 1 (" + warm + "); " + one_start + line("2"));
     CHECK(refused("2", block("      METHOD " + warm + "\n      METHOD " +
                              warm + "\n")) ==
-          "Error on line 6: N_STARTS 2 needs 2 starting points, and the INIT "
+          "line 6 of <target>: N_STARTS 2 needs 2 starting points, and the INIT "
           "chain gives at most 1 (" + warm + ", " + warm + "; the WARM lines "
           "of one file give one point); " + one_start + line("2"));
 
@@ -1033,7 +1043,7 @@ TEST_CASE("startup validation: a MULTISTART whose RESTART chain gives fewer "
     };
     const std::string init = init_points("3");
     const std::string head =
-        "Error on line 13: N_STARTS 3 needs 3 starting points in each "
+        "line 13 of <target>: N_STARTS 3 needs 3 starting points in each "
         "RESTART round, and the RESTART chain gives ";
     const std::string more =
         "a chain of 3 or more starting points (METHOD LHS 3, RANDOM 3 or "
@@ -1062,7 +1072,7 @@ TEST_CASE("startup validation: a MULTISTART whose RESTART chain gives fewer "
                         "      WARM_ON_MISMATCH skip\n") == "");
     /* The INIT chain first. */
     CHECK_THAT(refused("", "      METHOD RANDOM 1\n      SEED 5\n"),
-               Catch::StartsWith("Error on line 6: N_STARTS 3 needs 3 "
+               Catch::StartsWith("line 6 of <target>: N_STARTS 3 needs 3 "
                                  "starting points, and the INIT chain"));
 }
 
@@ -1108,15 +1118,15 @@ TEST_CASE("startup validation: a MULTISTART that cannot run its optimiser "
         for (const std::string& init : {std::string(), init_points("2")}) {
             INFO("INIT block: " << init);
             CHECK_THAT(startup_refusal(strategy_config(body + init)),
-                       Catch::StartsWith("Error on line ") &&
-                           Catch::Contains(": " + c.head));
+                       Catch::StartsWith("line ") &&
+                           Catch::Contains(" of <target>: " + c.head));
         }
     }
     const std::string sbplx = strategy_config(
         "    TYPE MULTISTART\n    N_STARTS 2\n    LIB NLOPT\n"
         "    ALGO LN_SBPLX\n    MAXEVAL 20\n");
     CHECK_THAT(startup_refusal(sbplx),
-               Catch::StartsWith("Error on line 6: N_STARTS 2 needs 2 "
+               Catch::StartsWith("line 6 of <target>: N_STARTS 2 needs 2 "
                                  "starting points, and the INIT chain gives "
                                  "1 (the CONFIG point: the chain has no "
                                  "METHOD line)"));
@@ -1161,8 +1171,8 @@ TEST_CASE("startup validation: a RESTART block that never restarts the "
     const std::string none =
         "; a search without restarts has no RESTART block";
     const auto missing = [&](const std::string& what, std::size_t line) {
-        return "Error on line " + std::to_string(line) +
-               ": the RESTART block never restarts the search: a restart "
+        return "line " + std::to_string(line) +
+               " of <target>: the RESTART block never restarts the search: a restart "
                "needs AFTER_STAGNATION and MAX, and the block has " + what +
                none + "\nLine:     ENDRESTART";
     };
@@ -1179,7 +1189,7 @@ TEST_CASE("startup validation: a RESTART block that never restarts the "
             key == "MAX" ? "AFTER_STAGNATION 5" : "MAX 2";
         CHECK(parse_error(with("    RESTART\n      " + key + " 0\n      " +
                                other + "\n    ENDRESTART\n")) ==
-              "Error on line 9: " + key + " must be an integer >= 1, got '0' "
+              "line 9 of <target>: " + key + " must be an integer >= 1, got '0' "
               "(0 never restarts the search" + none + ")\nLine:       " +
                   key + " 0");
         /* The note is about 0: a token that is no whole number does not
@@ -1188,7 +1198,7 @@ TEST_CASE("startup validation: a RESTART block that never restarts the "
             CHECK(parse_error(with("    RESTART\n      " + key + " " + tok +
                                    "\n      " + other +
                                    "\n    ENDRESTART\n")) ==
-                  "Error on line 9: " + key + " must be an integer >= 1, got '" +
+                  "line 9 of <target>: " + key + " must be an integer >= 1, got '" +
                       tok + "'\nLine:       " + key + " " + tok);
     }
     /* Two blocks make one: AFTER_STAGNATION in the first, MAX in the
@@ -1228,8 +1238,8 @@ TEST_CASE("startup validation: a RESTART block on a TADAH:GRID phase is "
     const std::string grid =
         "    LIB TADAH\n    ALGO GRID\n    PARAM GRID_POINTS 3\n";
     const auto refusal = [](std::size_t line, const std::string& phase) {
-        return "Error on line " + std::to_string(line) +
-               ": a RESTART round would run the grid search of " + phase +
+        return "line " + std::to_string(line) +
+               " of <target>: a RESTART round would run the grid search of " + phase +
                " (TADAH:GRID) again from its first node: a grid search "
                "evaluates its starting point and then the nodes of its grid "
                "in one fixed order, so each round would evaluate again the "
@@ -1703,7 +1713,7 @@ TEST_CASE("startup validation: a TYPE line after an EXPLORE or REFINE "
     SECTION("EXPLORE, then TYPE PLAIN") {
         const auto msg = parse_error(strategy_config(
             head + kExploreGfs + "    TYPE PLAIN\n"));
-        CHECK_THAT(msg, Catch::StartsWith("Error on line 14: " + twice) &&
+        CHECK_THAT(msg, Catch::StartsWith("line 14 of <target>: " + twice) &&
                             Catch::EndsWith("Line:     TYPE PLAIN"));
     }
     SECTION("REFINE, then TYPE MULTISTART") {
@@ -1712,13 +1722,13 @@ TEST_CASE("startup validation: a TYPE line after an EXPLORE or REFINE "
             "    REFINE\n      LIB DLIB\n      ALGO BFGS\n    ENDREFINE\n"
             "    TYPE MULTISTART\n"));
         /* REFINE opens on line 6; the second TYPE is line 10. */
-        CHECK_THAT(msg, Catch::StartsWith("Error on line 10: " + twice) &&
+        CHECK_THAT(msg, Catch::StartsWith("line 10 of <target>: " + twice) &&
                             Catch::EndsWith("Line:     TYPE MULTISTART"));
     }
     SECTION("TYPE PRESTAGE repeated after the blocks") {
         const auto msg = parse_error(strategy_config(
             head + kExploreGfs + "    TYPE PRESTAGE\n"));
-        CHECK_THAT(msg, Catch::StartsWith("Error on line 14: " + twice));
+        CHECK_THAT(msg, Catch::StartsWith("line 14 of <target>: " + twice));
     }
 }
 
@@ -1738,7 +1748,7 @@ TEST_CASE("startup validation: a second STRATEGY block is rejected at its "
             "  STRATEGY\n    TYPE PLAIN\n  ENDSTRATEGY\nENDOPTIMIZER\n");
         /* The second STRATEGY opens on line 10. */
         CHECK_THAT(twice,
-                   Catch::StartsWith("Error on line 10: STRATEGY block given "
+                   Catch::StartsWith("line 10 of <target>: STRATEGY block given "
                                      "more than once (the first opens on line "
                                      "4)") &&
                    Catch::EndsWith("Line:   STRATEGY"));
@@ -1751,7 +1761,7 @@ TEST_CASE("startup validation: a second STRATEGY block is rejected at its "
             kRoot + "OPTIMIZER\n  STRATEGY\n" + first + "  ENDSTRATEGY\n"
             "ENDOPTIMIZER\nOPTIMIZER\n  STRATEGY\n    TYPE PLAIN\n"
             "  ENDSTRATEGY\nENDOPTIMIZER\n");
-        CHECK(twice == "Error on line 11: OPTIMIZER block given more than "
+        CHECK(twice == "line 11 of <target>: OPTIMIZER block given more than "
                        "once (the first opens on line 3); one OPTIMIZER "
                        "block holds every optimiser setting\nLine: "
                        "OPTIMIZER");
@@ -1931,7 +1941,7 @@ void write_ta_db(const fs::path& path, double offset_x, double energy)
 
 /* How the journal writes the event `msg` with `tag`, without the
  * timestamp of its first line (HPOLog::event_locked): a multi-line message
- * -- a parse error, "Error on line N: ...\nLine: ..." -- is a block whose
+ * -- a parse error, "line N of <file>: ...\nLine: ..." -- is a block whose
  * first line carries a star and whose continuation lines repeat the tag. */
 std::string journal_event(const std::string& tag, const std::string& msg)
 {
@@ -2033,7 +2043,9 @@ std::string run_hpo(const std::string& optimizer)
     REQUIRE_FALSE(err.empty());
     CHECK_THAT(journal.str(),
                Catch::Contains(journal_event("ERROR", "startup: " + err)));
-    return err;
+    /* The target file is named <target> (hpo_test::as_target); the frame
+     * was "Error on line N: ", without the file. */
+    return hpo_test::as_target(err, hpo.string());
 }
 
 }  // namespace
@@ -2181,8 +2193,8 @@ TEST_CASE("startup validation: NLOPT:LN_NEWUOA_BOUND is refused at the line "
               19, "    ENDINNER", "the INNER block inside REFINE"}}) {
         INFO(c.what << ", config:\n" << c.config);
         CHECK_THAT(parse_error(c.config),
-                   Catch::StartsWith("Error on line " + std::to_string(c.line) +
-                                     ": " + c.phase + ": " + refused) &&
+                   Catch::StartsWith("line " + std::to_string(c.line) +
+                                     " of <target>: " + c.phase + ": " + refused) &&
                    Catch::Contains("The recommended replacement is "
                                    "NLOPT:LN_BOBYQA") &&
                    Catch::EndsWith("\nLine: " + c.closing));
@@ -2191,7 +2203,7 @@ TEST_CASE("startup validation: NLOPT:LN_NEWUOA_BOUND is refused at the line "
      * OPTIMIZER line, before its optimiser is checked. */
     CHECK(parse_error(kRoot + "OPTIMIZER\n  LIB NLOPT\n"
                               "  ALGO LN_NEWUOA_BOUND\n  MAXEVAL 5\n") ==
-          "Error on line 3: OPTIMIZER block not closed with ENDOPTIMIZER\n"
+          "line 3 of <target>: OPTIMIZER block not closed with ENDOPTIMIZER\n"
           "Line: OPTIMIZER");
 
     /* A spec built outside the parser. */
@@ -2270,7 +2282,7 @@ TEST_CASE("startup validation: NLOPT:GN_DIRECT_NOSCAL and "
         INFO("NLOPT:" << algo);
         CHECK(parse_error(strategy_config("    LIB NLOPT\n    ALGO " + algo +
                                           "\n    MAXEVAL 25\n")) ==
-              "Error on line 9: the STRATEGY-level optimiser: NLOPT:" + algo +
+              "line 9 of <target>: the STRATEGY-level optimiser: NLOPT:" + algo +
                   " is refused: " + reason + "\nLine: ENDOPTIMIZER");
         CHECK(tadah::hpo::find_optimizer_caps("NLOPT", algo) == nullptr);
     }
@@ -2342,7 +2354,7 @@ TEST_CASE("startup validation: NLOPT:LN_NEWUOA, the Ceres least-squares "
         std::string config;
         std::size_t line;     // the line that closes the block
         std::string closing;  // its text
-        std::string head;     // the message after "Error on line N: "
+        std::string head;     // the message after "line N of <file>: "
         std::string also;     // a part of the reason
     };
     std::vector<Case> cases = {
@@ -2391,8 +2403,8 @@ TEST_CASE("startup validation: NLOPT:LN_NEWUOA, the Ceres least-squares "
         INFO(c.what << ", config:\n" << c.config);
         const std::string msg = parse_error(c.config);
         CHECK_THAT(msg,
-                   Catch::StartsWith("Error on line " + std::to_string(c.line) +
-                                     ": " + c.head) &&
+                   Catch::StartsWith("line " + std::to_string(c.line) +
+                                     " of <target>: " + c.head) &&
                    Catch::Contains(c.also) &&
                    Catch::EndsWith("\nLine: " + c.closing));
     }
@@ -2619,7 +2631,7 @@ TEST_CASE("startup validation: NLOPT:LN_NEWUOA_BOUND is refused by hpo_run "
         "OPTIMIZER\n  STRATEGY\n    TYPE PLAIN\n    LIB NLOPT\n"
         "    ALGO LN_NEWUOA_BOUND\n    MAXEVAL 5\n  ENDSTRATEGY\n"
         "ENDOPTIMIZER\n");
-    CHECK_THAT(err, Catch::StartsWith("Error on line 8: the STRATEGY-level "
+    CHECK_THAT(err, Catch::StartsWith("line 8 of <target>: the STRATEGY-level "
                                       "optimiser: NLOPT:LN_NEWUOA_BOUND is "
                                       "refused: ") &&
                     Catch::Contains("The recommended replacement is "
@@ -2754,7 +2766,7 @@ std::pair<std::size_t, std::string> line_of(const std::string& config,
 }  // namespace
 
 /* The caps registry's refusal of a backend comes from the parser where its
- * block closes, "Error on line N: <phase>: ...\nLine: ENDOPTIMIZER"; the
+ * block closes, "line N of <file>: <phase>: ...\nLine: ENDOPTIMIZER"; the
  * refusals of a phase's settings at startup -- each backend's own checks
  * (validate_phase_backends: the CERES validators, DLIB:BFGS, TADAH:ANNEAL,
  * NLopt's, a backend that needs a stop), the per-phase checks of
@@ -2762,7 +2774,7 @@ std::pair<std::size_t, std::string> line_of(const std::string& config,
  * finite differences) and the STRATEGY TYPE and INNER rules
  * (validate_run_policy) -- named the phase and no line.
  * Pins: each names the line read() checks the phase's optimiser at, in the
- * parser's form ("Error on line N: <phase>: <message>" and "\nLine:
+ * parser's form ("line N of <file>: <phase>: <message>" and "\nLine:
  * <text>"): ENDOPTIMIZER for the STRATEGY-level optimiser, a MULTISTART
  * start and the PRESTAGE refinement (a REFINE block's included),
  * ENDEXPLORE for the exploration, ENDINNER for an INNER block, the short
@@ -2855,8 +2867,8 @@ TEST_CASE("startup validation: a phase's settings refused at startup name the "
         const auto at = line_of(c.config, c.closing);
         REQUIRE(at.first > 0);
         CHECK_THAT(judge(c.config).startup_raw,
-                   Catch::StartsWith("Error on line " +
-                                     std::to_string(at.first) + ": " +
+                   Catch::StartsWith("line " +
+                                     std::to_string(at.first) + " of <target>: " +
                                      c.message) &&
                    Catch::EndsWith("\nLine: " + at.second));
     }
@@ -2883,7 +2895,7 @@ TEST_CASE("startup validation: a phase's settings refused at startup name the "
  * phase do ("the STRATEGY-level optimiser: ...", "the PRESTAGE exploration
  * (EXPLORE block): ..."; they said "OPTIMIZER block: ..." and "EXPLORE
  * block: ...").
- * Pins: each is "Error on line N: <what>\nLine: <text>", N the line that
+ * Pins: each is "line N of <file>: <what>\nLine: <text>", N the line that
  * closes its block -- ENDOPTIMIZER for the STRATEGY-level block (each
  * MULTISTART start, the PRESTAGE refinement), ENDEXPLORE for the EXPLORE
  * block; the zero-dimension rule applies to every phase, the EXPLORE
@@ -2968,8 +2980,8 @@ TEST_CASE("startup validation: the GRAD_STRATEGY ANALYTICAL check, the "
             const auto at = line_of(c.config, c.closing);
             REQUIRE(at.first > 0);
             CHECK_THAT(judge(c.config).startup_raw,
-                       Catch::StartsWith("Error on line " +
-                                         std::to_string(at.first) + ": " +
+                       Catch::StartsWith("line " +
+                                         std::to_string(at.first) + " of <target>: " +
                                          c.message) &&
                        Catch::EndsWith("\nLine: " + at.second));
         }
@@ -3011,9 +3023,11 @@ TEST_CASE("startup validation: the GRAD_STRATEGY ANALYTICAL check, the "
             }) == "");
             const auto at = line_of(c.config, c.closing);
             REQUIRE(at.first > 0);
-            CHECK_THAT(tadah::hpo::hpo_mpi_dispatch_refusal(2, trg->spec),
-                       Catch::StartsWith("Error on line " +
-                                         std::to_string(at.first) + ": " +
+            CHECK_THAT(hpo_test::as_target(
+                           tadah::hpo::hpo_mpi_dispatch_refusal(2, trg->spec),
+                           tf.path.string()),
+                       Catch::StartsWith("line " +
+                                         std::to_string(at.first) + " of <target>: " +
                                          c.message) &&
                        Catch::EndsWith("\nLine: " + at.second));
             CHECK(tadah::hpo::hpo_mpi_dispatch_refusal(1, trg->spec).empty());
@@ -3025,7 +3039,7 @@ TEST_CASE("startup validation: the GRAD_STRATEGY ANALYTICAL check, the "
  * parser at the end of the file and again at startup) refuse a phase's
  * STEP setting: a backend that does not use STEP, a value outside (0,
  * 0.5], overrides that cover only some dimensions.
- * Pins: each refusal is "Error on line N: <what>\nLine: <text>", N the
+ * Pins: each refusal is "line N of <file>: <what>\nLine: <text>", N the
  * line of the STEP it refuses -- in the STRATEGY block, the EXPLORE block
  * and an INNER block (the STRATEGY-level one's and the EXPLORE block's),
  * the message naming the optimiser in words before it ("the STRATEGY-level
@@ -3093,8 +3107,8 @@ TEST_CASE("startup validation: the STEP rules name the STEP line, or the "
         const auto at = line_of(c.config, c.closing);
         REQUIRE(at.first > 0);
         CHECK_THAT(parse_error(c.config),
-                   Catch::StartsWith("Error on line " +
-                                     std::to_string(at.first) + ": " +
+                   Catch::StartsWith("line " +
+                                     std::to_string(at.first) + " of <target>: " +
                                      c.message) &&
                    Catch::EndsWith("\nLine: " + at.second));
     }
@@ -3564,7 +3578,7 @@ TEST_CASE("startup validation: a backend with no convergence test and no "
     /* The message names the block that takes STOPVAL (it ended "; set
      * STOPVAL on the enclosing STRATEGY block"). */
     CHECK(parse_error(strategy_config(inner_stopval)) ==
-          "Error on line 11: STOPVAL is not accepted inside an INNER block: "
+          "line 11 of <target>: STOPVAL is not accepted inside an INNER block: "
           "NLopt's MLSL and AUGLAG replace the STOPVAL of the INNER search "
           "with that of the enclosing block; the enclosing STRATEGY block "
           "takes STOPVAL\nLine:       STOPVAL 0.1");
@@ -4570,7 +4584,9 @@ TEST_CASE("startup validation: NOISE AUTO derives fd_step where the "
         REQUIRE(parse == "");
         r.startup = checked_refusal(
             config,
-            error_of([&] { validate_hpo_setup(ctx, *r.trg, true, true); }));
+            hpo_test::as_target(
+                error_of([&] { validate_hpo_setup(ctx, *r.trg, true, true); }),
+                tf.path.string()));
         log.finish("test-end");
         log.reset_for_test();
         std::ifstream is(jp);
@@ -4916,8 +4932,8 @@ TEST_CASE("startup validation: a PRESTAGE refinement or MULTISTART whose "
         const auto at = line_of(config, closing);
         REQUIRE(at.first > 0);
         CHECK(v.startup == message);
-        CHECK(v.startup_raw == "Error on line " + std::to_string(at.first) +
-                                   ": " + message + "\nLine: " + at.second);
+        CHECK(v.startup_raw == "line " + std::to_string(at.first) +
+                                   " of <target>: " + message + "\nLine: " + at.second);
         CHECK(v.policy == message);
     };
 
@@ -5110,7 +5126,8 @@ TEST_CASE("startup validation: an INNER block that names a global optimiser "
         const std::string config = strategy_config(body);
         const auto v = judge(config);
         CHECK(v.startup == message);
-        CHECK_THAT(v.startup_raw, Catch::StartsWith("Error on line ") &&
+        CHECK_THAT(v.startup_raw, Catch::StartsWith("line ") &&
+                                      Catch::Contains(" of <target>: ") &&
                                       Catch::EndsWith("ENDINNER"));
         if (policy) CHECK(v.policy == message);
     };

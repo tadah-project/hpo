@@ -138,6 +138,9 @@ from typing import Callable
 
 HERE = pathlib.Path(__file__).resolve().parent
 DEFAULT_REGISTRY = HERE.parent / "blueprint"
+# The target file of every case, as hpotarget_case_runner names it to
+# HPOTargets and the errors name it ({file} of the error frame).
+TARGET_FILE = "target.hpo"
 NUMBER = re.compile(r"(?<![A-Za-z_\d.])[-+]?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?"
                     r"(?![A-Za-z_\d])")
 CHECK_NAMES = ("blocks", "repeat", "ranges", "words", "params", "lines",
@@ -233,10 +236,12 @@ class Generator:
     def frame_what(self, error: str, line: int) -> str | None:
         """The {what} of `error` when it is framed at `line`, else None."""
         frame = self.reg.lexing.fields["error_frame"]
-        rx = self.hr.template_regex(frame, {"line": str(line)})
+        rx = self.hr.template_regex(frame, {"line": str(line),
+                                            "file": TARGET_FILE})
         if not rx.match(error):
             return None
-        pre = frame.split("{what}")[0].replace("{line}", str(line))
+        pre = (frame.split("{what}")[0].replace("{line}", str(line))
+               .replace("{file}", TARGET_FILE))
         post = frame.split("{what}")[1]
         rest = error[len(pre):]
         cut = post.split("{text}")[0]

@@ -74,7 +74,7 @@ PLACEHOLDERS = {
 }
 # Fields whose placeholders are fixed by the parser's frame.
 FIXED_PLACEHOLDERS = {
-    ("lexing", "error_frame"): {"line", "what", "text"},
+    ("lexing", "error_frame"): {"file", "line", "what", "text"},
     ("lexing", "unfinished_msg"): set(),
     ("lexing", "missing_file_msg"): {"file"},
     ("structure", "end_without_open_msg"): {"end", "name"},

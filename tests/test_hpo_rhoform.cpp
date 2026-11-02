@@ -24,6 +24,7 @@
 
 #include "tadah_test_skip.hpp"  // before catch2/catch.hpp
 #include "catch2/catch.hpp"
+#include "target_file_text.h"
 #include "rhoform_test_support.h"
 
 #include <tadah/core/context.h>
@@ -132,7 +133,7 @@ TEST_CASE("RHOFORM: OPTIM on structure keys is refused",
      * value (before the fix: "; set it in the -c potential/configuration.") */
     std::string up(key);
     for (auto& ch : up) ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
-    CHECK_THAT(e, Catch::StartsWith("Error on line 1: OPTIM " + up +
+    CHECK_THAT(e, Catch::StartsWith("line 1 of <target>: OPTIM " + up +
                                     " is not a valid search target") &&
                       Catch::Contains("structure data") &&
                       Catch::Contains("; the training configuration sets "

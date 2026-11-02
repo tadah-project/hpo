@@ -27,6 +27,7 @@
 #include "pc_process_workers.h"  // before catch2/catch.hpp
 #include "tadah_test_skip.hpp"   // before catch2/catch.hpp
 #include "catch2/catch.hpp"
+#include "target_file_text.h"
 
 #ifdef TADAH_ENABLE_OPENMP
 #include <omp.h>
@@ -1975,10 +1976,10 @@ TEST_CASE("Run record: the startup budget warning of a search that starts "
  *     needs MAXEVAL 6 or more", once, and 7 rows; at MAXEVAL 6 none, and
  *     row 8 is a step, near none of rows 1-7;
  *   - a PRESTAGE refinement NLOPT:GD_STOGO (TOPK 1, after an LN_SBPLX
- *     exploration) is refused at startup: hpo_run throws "Error on line
- *     ...: STRATEGY TYPE PRESTAGE cannot refine with NLOPT:GD_STOGO: it
+ *     exploration) is refused at startup: hpo_run throws "line ... of
+ *     <file>: STRATEGY TYPE PRESTAGE cannot refine with NLOPT:GD_STOGO: it
  *     does not start at the point it is given ...", the journal records it
- *     ("startup: Error on line ...", its first line) and nothing is
+ *     ("startup: line ... of <file>: ...", its first line) and nothing is
  *     evaluated (no loss.tadah);
  *   - under NOISE CALIBRATION 2 the first MULTISTART start (LD_LBFGS, INIT
  *     LHS 2, SEED 3, N_STARTS 2) begins at the seed point the calibration
@@ -2087,17 +2088,18 @@ TEST_CASE("Run record: the startup budget warning of NLopt's StoGO and of "
         try {
             (void)tadah::hpo::hpo_run(run.ctx);
         } catch (const std::exception& e) {
-            what = e.what();
+            what = hpo_test::as_target(e.what(), run.hpo.string());
         }
         INFO("refusal: " << what);
-        CHECK_THAT(what, Catch::StartsWith("Error on line ") &&
+        CHECK_THAT(what, Catch::StartsWith("line ") &&
+                   Catch::Contains(" of <target>: ") &&
                              Catch::Contains(
                                  "STRATEGY TYPE PRESTAGE cannot refine with "
                                  "NLOPT:GD_STOGO: it does not start at the "
                                  "point it is given") &&
                              Catch::EndsWith("\nLine: ENDOPTIMIZER"));
         /* The journal writes each line of a refusal as a line of its own. */
-        CHECK(read_file("hpo_run.log")
+        CHECK(hpo_test::as_target(read_file("hpo_run.log"), run.hpo.string())
                   .find("startup: " + what.substr(0, what.find('\n'))) !=
               std::string::npos);
         CHECK_FALSE(fs::exists("loss.tadah"));
@@ -4408,9 +4410,11 @@ TEST_CASE("Termination: MULTISTART with a RESTART round of fewer starting "
         TaRun run(target(c.restart));
         CHECK_THROWS_WITH(
             tadah::hpo::hpo_run(run.ctx),
-            "Error on line 12: N_STARTS 3 needs 3 starting points in each "
-            "RESTART round, and the RESTART chain gives " + c.chain +
-            "\nLine:     RESTART");
+            hpo_test::AsTarget(
+                run.hpo.string(),
+                "line 12 of <target>: N_STARTS 3 needs 3 starting points in "
+                "each RESTART round, and the RESTART chain gives " + c.chain +
+                "\nLine:     RESTART"));
         CHECK_FALSE(fs::exists("loss.tadah"));
     }
 
@@ -4474,12 +4478,13 @@ TEST_CASE("Termination: MULTISTART with fewer starting points than N_STARTS "
                   "  ENDSTRATEGY\nENDOPTIMIZER\n");
         CHECK_THROWS_WITH(
             tadah::hpo::hpo_run(run.ctx),
-            Catch::Contains("Error on line 9: N_STARTS " + c.n_starts +
+            hpo_test::AsTarget(run.hpo.string(),
+            Catch::Contains("line 9 of <target>: N_STARTS " + c.n_starts +
                             " needs " + c.n_starts + " starting points, and "
                             "the INIT chain gives 2 (LHS " + c.lhs +
                             ", capped by K_TOTAL 2); " + c.advice +
                             ", and N_STARTS 2 runs one start from each of the "
-                            "2 starting points\nLine:     N_STARTS " + c.n_starts));
+                            "2 starting points\nLine:     N_STARTS " + c.n_starts)));
         CHECK_FALSE(fs::exists("loss.tadah"));
     }
 }
@@ -5229,7 +5234,9 @@ std::string startup_error(const std::string& optimizer)
     try {
         const tadah::hpo::HPOTargets trg(run.ctx, run.hpo.string());
     } catch (const std::exception& e) {
-        return e.what();
+        /* The target file is named <target> (hpo_test::as_target); the
+         * frame was "Error on line N: ", without the file. */
+        return hpo_test::as_target(e.what(), run.hpo.string());
     }
     return {};
 }
@@ -5349,8 +5356,8 @@ TEST_CASE("NLopt: SEED inside an INNER block is rejected at startup, naming "
             INFO(cfg);
             const std::string msg = startup_error(cfg);
             CHECK_THAT(msg, Catch::StartsWith(
-                "Error on line " +
-                std::to_string(line_number(cfg, inner_seed)) + ": " +
+                "line " +
+                std::to_string(line_number(cfg, inner_seed)) + " of <target>: " +
                 inner_seed_error(c.enclosing)));
             CHECK_THAT(msg, Catch::EndsWith("\nLine: " + inner_seed));
         }
@@ -5388,8 +5395,8 @@ TEST_CASE("NLopt: GRAD_STRATEGY inside an INNER block is rejected at "
                 INFO(cfg);
                 const std::string msg = startup_error(cfg);
                 CHECK_THAT(msg, Catch::StartsWith(
-                    "Error on line " +
-                    std::to_string(line_number(cfg, inner_gs)) + ": " +
+                    "line " +
+                    std::to_string(line_number(cfg, inner_gs)) + " of <target>: " +
                     inner_grad_strategy_error(c.enclosing)));
                 CHECK_THAT(msg, Catch::EndsWith("\nLine: " + inner_gs));
             }
@@ -5430,9 +5437,9 @@ TEST_CASE("NLopt: STOPVAL inside an INNER block is rejected at startup, "
                 inner_stopval + "\n");
             INFO(cfg);
             const std::string msg = startup_error(cfg);
-            CHECK(msg == "Error on line " +
+            CHECK(msg == "line " +
                              std::to_string(line_number(cfg, inner_stopval)) +
-                             ": " + inner_stopval_error(c.enclosing) +
+                             " of <target>: " + inner_stopval_error(c.enclosing) +
                              "\nLine: " + inner_stopval);
         }
 
@@ -5475,8 +5482,8 @@ TEST_CASE("NLopt: the unknown-key error of an INNER block lists every "
             static_cast<std::size_t>(std::count(upto.begin(), upto.end(),
                                                 '\n')) + 1;
         CHECK_THAT(startup_error(cfg), Catch::StartsWith(
-            "Error on line " + std::to_string(line_number(cfg, bogus)) +
-            ": unknown key 'BOGUS' inside the INNER block opened on line " +
+            "line " + std::to_string(line_number(cfg, bogus)) +
+            " of <target>: unknown key 'BOGUS' inside the INNER block opened on line " +
             std::to_string(inner_line) + " (only " + keys + " are valid; "
             "ENDINNER closes it)"));
     }
@@ -5495,8 +5502,8 @@ TEST_CASE("NLopt: an INIT block inside INNER is rejected at startup, so no "
             "", init + "\n" + in + "  METHOD RANDOM 1\n" + in + "  SEED 9\n" +
                     in + "ENDINIT\n");
         CHECK_THAT(startup_error(cfg), Catch::StartsWith(
-            "Error on line " + std::to_string(line_number(cfg, init)) +
-            ": INIT block must appear inside OPTIMIZER, STRATEGY, EXPLORE, "
+            "line " + std::to_string(line_number(cfg, init)) +
+            " of <target>: INIT block must appear inside OPTIMIZER, STRATEGY, EXPLORE, "
             "or REFINE"));
     }
 }
@@ -5617,8 +5624,8 @@ TEST_CASE("Termination: NLopt MULTISTART starts draw from the STRATEGY "
     const std::string rejected =
         auglag_praxis_multistart("", "    SEED 10\n", inner_seed + "\n");
     CHECK_THAT(startup_error(rejected), Catch::StartsWith(
-        "Error on line " + std::to_string(line_number(rejected, inner_seed)) +
-        ": " + inner_seed_error("STRATEGY")));
+        "line " + std::to_string(line_number(rejected, inner_seed)) +
+        " of <target>: " + inner_seed_error("STRATEGY")));
 
     /* With the SEED on the STRATEGY block only, start i runs with SEED 10
      * + i: 10, 11 and 12, and no two starts evaluate one point; that NLopt

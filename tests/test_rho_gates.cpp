@@ -17,6 +17,7 @@
 //   - a hidden micro-benchmark: ./test_hpo "[rho_gates_bench]"
 
 #include "catch2/catch.hpp"
+#include "target_file_text.h"
 #include "rho_gate_fixtures.h"
 #include "rhoform_test_support.h"
 
@@ -140,7 +141,7 @@ std::string gates_error(Context ctx, const std::string& target) {
   try {
     dt::validate_density_gates(ctx, trg);
   } catch (const std::exception& e) {
-    return e.what();
+    return hpo_test::as_target(e.what(), tf.path.string());
   }
   return "";
 }
@@ -504,7 +505,7 @@ TEST_CASE("Density gates: a gate that no OPTIM line arms is refused at its "
       CAPTURE(gate, setup);
       const std::string line = setup.empty() ? "1" : "2";
       CHECK_THAT(err(setup + gate + "\n"),
-                 Catch::Contains("Error on line " + line + ": " + name +
+                 Catch::Contains("line " + line + " of <target>: " + name +
                                  " cannot act") &&
                      Catch::Contains(keys) &&
                      Catch::Contains("Line: " + gate));
@@ -516,12 +517,12 @@ TEST_CASE("Density gates: a gate that no OPTIM line arms is refused at its "
   }
   // both unarmed: the first gate's line
   CHECK_THAT(err("RHOBARGATE bcc 3.304 0.98 1.1\nRHOGATE 1e-5\n"),
-             Catch::Contains("Error on line 1: RHOBARGATE cannot act"));
+             Catch::Contains("line 1 of <target>: RHOBARGATE cannot act"));
   // a failing -c density under SEED WARN: refused when the target is read
   CHECK_THAT(targets_error(make_ream_ctx("SIGNED", "0.5 0.3 -0.2"),
                            "OPTIM CEMBFUNC (1) -0.5 0.1\nRHOGATE 1e-5 SEED "
                            "WARN\n" + tail),
-             Catch::Contains("Error on line 2: RHOGATE cannot act"));
+             Catch::Contains("line 2 of <target>: RHOGATE cannot act"));
 }
 
 TEST_CASE("Density gates: arming and the reachable RCUTMB",
@@ -717,7 +718,7 @@ TEST_CASE("Density gates: startup refusals and seed checks",
                                           "before training, under SEED ERROR "
                                           "and SEED WARN alike"));
         /* it stands in for the per-seed messages: one line, in its frame */
-        CHECK_THAT(e, Catch::StartsWith("Error on line 1: "));
+        CHECK_THAT(e, Catch::StartsWith("line 1 of <target>: "));
         CHECK(e.find('\n') == e.find("\nLine: "));
       }
     }

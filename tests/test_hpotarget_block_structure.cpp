@@ -42,6 +42,7 @@
 // OPTIMIZER block around it).
 
 #include "catch2/catch.hpp"
+#include "target_file_text.h"
 
 #include <tadah/core/context.h>
 #include <tadah/core/periodic_table.h>
@@ -122,7 +123,7 @@ std::string parse_error(const Lines& lines)
     try {
         HPOTargets trg(ctx, tf.path.string());
     } catch (const std::exception& e) {
-        return e.what();
+        return hpo_test::as_target(e.what(), tf.path.string());
     }
     return "";
 }
@@ -131,7 +132,7 @@ std::string parse_error(const Lines& lines)
 std::string at_line(std::size_t n, const std::string& what,
                     const std::string& text)
 {
-    return "Error on line " + std::to_string(n) + ": " + what +
+    return "line " + std::to_string(n) + " of <target>: " + what +
            "\nLine: " + text;
 }
 
@@ -969,7 +970,7 @@ TEST_CASE("hpotarget: an OPTIM index past the values kept of a potential "
     try {
         HPOTargets trg(ctx, tf.path.string());
     } catch (const std::exception& e) {
-        what = e.what();
+        what = hpo_test::as_target(e.what(), tf.path.string());
     }
     /* Before the fix: "OPTIM RCUT2B (2): Out of bound index: 2 (RCUT2B has 1
      * value: of the potential's RCUT2B 4 6, ...". */
