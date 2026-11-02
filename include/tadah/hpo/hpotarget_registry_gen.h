@@ -19,6 +19,13 @@
 #include <string>
 #include <string_view>
 
+/* Defined: the header holds the order of the steps of the parse
+ * (structure::open_order, close_order, line_steps_*, eof_order,
+ * Block::close_steps, Key::steps), the case of words (any_case) and
+ * the texts the parser puts into messages (Key::effect, Rule::what),
+ * which code compiled with an older header cannot name. */
+#define TADAH_HPOTARGET_ENGINE_TABLES 1
+
 namespace tadah {
 namespace hpo {
 namespace hpotarget_registry {
@@ -133,6 +140,7 @@ enum class ArgKind : unsigned char {
 enum class Repeat : unsigned char {
   Add,
   Error,
+  ErrorUntilRead,
   LastWins,
   WarnLastWins,
 };
@@ -156,6 +164,67 @@ enum class CheckStage : unsigned char {
   StrategyKeys,
   BlockUnknown,
   RootKeys,
+};
+
+/* A step of a line that opens a block (structure::open_order). */
+enum class OpenStep : unsigned char {
+  Alias,
+  Parents,
+  Requires,
+  Repeat,
+  KeyAlone,
+  Open,
+};
+
+/* A step of an END line (structure::close_order). */
+enum class CloseStep : unsigned char {
+  Match,
+  KeyAlone,
+  CloseSteps,
+  Close,
+};
+
+/* A step of the line of a key (structure::line_steps_*, Key::steps). */
+enum class LineStep : unsigned char {
+  Repeat,
+  Value,
+  Options,
+  Leftover,
+};
+
+/* A check at the end of the file (structure::eof_order). */
+enum class EofStep : unsigned char {
+  OpenBlock,
+  KTotalCaps,
+  ScriptTimeoutUnread,
+  LossUnread,
+  MetricTargetLoss,
+  DensityKeyArming,
+  ArchiveDirectories,
+  OptimizerRequired,
+  ObservableWithScripts,
+  HotvarInjected,
+  HotvarUnique,
+  ObservableNumerical,
+  ObservableAnalytical,
+  ScriptGradients,
+};
+
+/* A check an END line runs (Block::close_steps). */
+enum class BlockCloseStep : unsigned char {
+  OptimizerDriver,
+  StrategyTypeKeys,
+  MultistartNStarts,
+  RestartRestarts,
+  ExploreDriver,
+  InnerDriver,
+};
+
+/* The line a close check's refusal names. */
+enum class CheckAt : unsigned char {
+  End,
+  KeyLine,
+  LastEndLine,
 };
 
 /* When a rule is checked: as the file is read, or at startup. */
@@ -296,6 +365,7 @@ struct Arg {
   std::string_view noun;   // the {noun} of positive_msg
   bool has_default;
   std::string_view default_text;
+  bool any_case;           // a word matched in any case, else as written
 };
 
 /* A word a block reads as another key (INIT's STRATEGY is METHOD). */
@@ -326,6 +396,8 @@ struct Block {
   Span<std::string_view> unreachable_msgs;
   Span<std::string_view> requires_checks;   // at the opening line
   Span<std::string_view> close_checks;
+  Span<CheckAt> close_checks_at;   // the line each close check names
+  Span<BlockCloseStep> close_steps;  // what its END line checks, in order
   Span<KeyId> keys;            // the keys it takes: valid in it, not refused
 };
 
@@ -352,6 +424,8 @@ struct Key {
   bool refused;                // read only to be refused
   std::string_view env;        // the environment variable that overrides it
   Span<std::string_view> checks;
+  Span<LineStep> steps;        // empty: the line_steps of its place
+  std::string_view effect;     // the {effect} of a STRATEGY TYPE key
 };
 
 struct LineOption {
@@ -366,6 +440,7 @@ struct LineOption {
   std::string_view default_literal;
   bool refused;
   Span<std::string_view> checks;
+  bool any_case;               // the option word in any case, else as written
 };
 
 struct Form {
@@ -376,6 +451,7 @@ struct Form {
   Span<Arg> args;
   bool refused;
   Span<std::string_view> checks;
+  bool any_case;               // its word in any case, else as written
 };
 
 struct Removed {
@@ -383,10 +459,17 @@ struct Removed {
   std::string_view hint;
 };
 
+/* The {what} of a rule's message for a line of the entry `id_text`. */
+struct RuleWhat {
+  std::string_view id_text;
+  std::string_view text;
+};
+
 struct Rule {
   std::string_view id_text;
   RuleCheck check;
   std::string_view msg;
+  Span<RuleWhat> what;
 };
 
 struct Env {
@@ -458,6 +541,50 @@ inline constexpr CheckStage structure_check_order[] = {
     CheckStage::StrategyKeys,
     CheckStage::BlockUnknown,
     CheckStage::RootKeys,
+};
+inline constexpr OpenStep structure_open_order[] = {
+    OpenStep::Alias,
+    OpenStep::Parents,
+    OpenStep::Requires,
+    OpenStep::Repeat,
+    OpenStep::KeyAlone,
+    OpenStep::Open,
+};
+inline constexpr CloseStep structure_close_order[] = {
+    CloseStep::Match,
+    CloseStep::KeyAlone,
+    CloseStep::CloseSteps,
+    CloseStep::Close,
+};
+inline constexpr EofStep structure_eof_order[] = {
+    EofStep::OpenBlock,
+    EofStep::KTotalCaps,
+    EofStep::ScriptTimeoutUnread,
+    EofStep::LossUnread,
+    EofStep::MetricTargetLoss,
+    EofStep::DensityKeyArming,
+    EofStep::ArchiveDirectories,
+    EofStep::OptimizerRequired,
+    EofStep::ObservableWithScripts,
+    EofStep::HotvarInjected,
+    EofStep::HotvarUnique,
+    EofStep::ObservableNumerical,
+    EofStep::ObservableAnalytical,
+    EofStep::ScriptGradients,
+};
+inline constexpr LineStep structure_line_steps_root[] = {
+    LineStep::Repeat,
+    LineStep::Value,
+    LineStep::Options,
+};
+inline constexpr LineStep structure_line_steps_group[] = {
+    LineStep::Value,
+    LineStep::Repeat,
+    LineStep::Leftover,
+};
+inline constexpr LineStep structure_line_steps_block[] = {
+    LineStep::Value,
+    LineStep::Repeat,
 };
 inline constexpr std::string_view placeholders_block_misplaced_msg[] = {
     "parent",
@@ -609,6 +736,16 @@ inline constexpr std::string_view BLOCK_OPTIMIZER_close_checks[] = {
     "{phase}: unknown optimiser {lib}:{algo}: {why}; `tadah explain ALGO` lists the optimisers",
     "{phase}: {lib}:{algo} is refused: {why}",
 };
+inline constexpr CheckAt BLOCK_OPTIMIZER_close_checks_at[] = {
+    CheckAt::End,
+    CheckAt::End,
+    CheckAt::End,
+    CheckAt::End,
+    CheckAt::End,
+};
+inline constexpr BlockCloseStep BLOCK_OPTIMIZER_close_steps[] = {
+    BlockCloseStep::OptimizerDriver,
+};
 inline constexpr KeyId BLOCK_STRATEGY_keys[] = {
     KeyId::OPTIMIZER_LIB,
     KeyId::OPTIMIZER_ALGO,
@@ -634,6 +771,14 @@ inline constexpr KeyId BLOCK_STRATEGY_keys[] = {
 };
 inline constexpr std::string_view BLOCK_STRATEGY_close_checks[] = {
     "{key} is not accepted with STRATEGY TYPE {type}{note}: {effect}, so it would have no effect; {key} takes effect under STRATEGY TYPE {home}",
+};
+inline constexpr CheckAt BLOCK_STRATEGY_close_checks_at[] = {
+    CheckAt::KeyLine,
+};
+inline constexpr BlockCloseStep BLOCK_STRATEGY_close_steps[] = {
+    BlockCloseStep::StrategyTypeKeys,
+    BlockCloseStep::MultistartNStarts,
+    BlockCloseStep::RestartRestarts,
 };
 inline constexpr Alias BLOCK_INIT_aliases[] = {
     Alias{"STRATEGY", KeyId::INIT_METHOD},
@@ -676,6 +821,14 @@ inline constexpr std::string_view BLOCK_EXPLORE_close_checks[] = {
     "the EXPLORE block names no optimiser: {missing}; LIB and ALGO inside the EXPLORE block name the optimiser of the exploration of STRATEGY TYPE PRESTAGE",
     "the EXPLORE block: unknown optimiser {lib}:{algo}: {why}; `tadah explain ALGO` lists the optimisers",
     "the EXPLORE block: {lib}:{algo} is refused: {why}",
+};
+inline constexpr CheckAt BLOCK_EXPLORE_close_checks_at[] = {
+    CheckAt::End,
+    CheckAt::End,
+    CheckAt::End,
+};
+inline constexpr BlockCloseStep BLOCK_EXPLORE_close_steps[] = {
+    BlockCloseStep::ExploreDriver,
 };
 inline constexpr KeyId BLOCK_REFINE_keys[] = {
     KeyId::OPTIMIZER_LIB,
@@ -729,6 +882,14 @@ inline constexpr std::string_view BLOCK_INNER_close_checks[] = {
     "the INNER block inside {enclosing}: unknown optimiser {lib}:{algo}: {why}; `tadah explain ALGO` lists the optimisers",
     "the INNER block inside {enclosing}: {lib}:{algo} is refused: {why}",
 };
+inline constexpr CheckAt BLOCK_INNER_close_checks_at[] = {
+    CheckAt::End,
+    CheckAt::End,
+    CheckAt::End,
+};
+inline constexpr BlockCloseStep BLOCK_INNER_close_steps[] = {
+    BlockCloseStep::InnerDriver,
+};
 inline constexpr Alias BLOCK_RESTART_aliases[] = {
     Alias{"STRATEGY", KeyId::INIT_METHOD},
 };
@@ -743,16 +904,19 @@ inline constexpr KeyId BLOCK_RESTART_keys[] = {
 inline constexpr std::string_view BLOCK_RESTART_close_checks[] = {
     "the RESTART block never restarts the search: a restart needs AFTER_STAGNATION and MAX, and the block has {missing}; a search without restarts has no RESTART block",
 };
+inline constexpr CheckAt BLOCK_RESTART_close_checks_at[] = {
+    CheckAt::LastEndLine,
+};
 inline constexpr Arg ROOT_FAILSCORE_args[] = {
     Arg{"loss", ArgKind::Positive, false, false, Limit{}, Limit{}, false,
         false, Span<std::string_view>{nullptr, 0},
-        Span<RefusedWord>{nullptr, 0}, "{key}", "", "finite number", false,
-        ""},
+        Span<RefusedWord>{nullptr, 0}, "{key}", "", "finite number", false, "",
+        false},
 };
 inline constexpr Arg ROOT_PC_SCRIPT_TIMEOUT_args[] = {
     Arg{"time", ArgKind::Timespec, false, false, Limit{}, Limit{}, false,
         false, Span<std::string_view>{nullptr, 0},
-        Span<RefusedWord>{nullptr, 0}, "{key}", "", "", false, ""},
+        Span<RefusedWord>{nullptr, 0}, "{key}", "", "", false, "", false},
 };
 inline constexpr std::string_view ROOT_PC_SCRIPT_TIMEOUT_checks[] = {
     "{key} sets the script timeout of the PC_LAMMPS and PC_FAILPROBE lines after it that give no --maxtime, and no such line follows it; it would have no effect",
@@ -760,7 +924,7 @@ inline constexpr std::string_view ROOT_PC_SCRIPT_TIMEOUT_checks[] = {
 inline constexpr Arg ROOT_MAXTIME_args[] = {
     Arg{"time", ArgKind::Timespec, false, false, Limit{}, Limit{}, false,
         false, Span<std::string_view>{nullptr, 0},
-        Span<RefusedWord>{nullptr, 0}, "{key}", "", "", false, ""},
+        Span<RefusedWord>{nullptr, 0}, "{key}", "", "", false, "", false},
 };
 inline constexpr std::string_view ROOT_MAXTIME_checks[] = {
     "{key} sets the script timeout of the PC_LAMMPS and PC_FAILPROBE lines after it that give no --maxtime, and no such line follows it; it would have no effect",
@@ -773,7 +937,8 @@ inline constexpr Arg ROOT_PC_ISOLATION_args[] = {
     Arg{"mode", ArgKind::Word, false, false, Limit{}, Limit{}, false, false,
         Span<std::string_view>{detail::ROOT_PC_ISOLATION_arg0_words, 2},
         Span<RefusedWord>{nullptr, 0}, "",
-        "PC_ISOLATION must be THREAD or PROCESS, got '{tok}'", "", false, ""},
+        "PC_ISOLATION must be THREAD or PROCESS, got '{tok}'", "", false, "",
+        false},
 };
 inline constexpr std::string_view ROOT_PC_ISOLATION_checks[] = {
     "PC_ISOLATION PROCESS: the MPI build of tadah (-DTADAH_HPO_MPI=ON) runs the PC_LAMMPS and PC_FAILPROBE scripts inside the tadah process only (PC_ISOLATION THREAD), as a worker process cannot initialise MPI; PROCESS runs in the serial build",
@@ -783,7 +948,7 @@ inline constexpr Arg ROOT_PC_WORKER_TIMEOUT_args[] = {
         Limit{true, "0", 0.0, true, 0ull}, Limit{}, false, false,
         Span<std::string_view>{nullptr, 0}, Span<RefusedWord>{nullptr, 0}, "",
         "PC_WORKER_TIMEOUT must be a finite number of seconds >= 0 (0 derives the deadline from each script's timeout), got '{tok}'{underflow}",
-        "", false, ""},
+        "", false, "", false},
 };
 inline constexpr std::string_view ROOT_PC_WORKER_TIMEOUT_checks[] = {
     "PC_WORKER_TIMEOUT is too large for the worker deadline, got '{tok}' (it is kept in 64-bit milliseconds: at most about 9.2e15 s)",
@@ -797,7 +962,8 @@ inline constexpr Arg ROOT_FAILSCORE_GRADING_args[] = {
     Arg{"mode", ArgKind::Word, false, false, Limit{}, Limit{}, false, false,
         Span<std::string_view>{detail::ROOT_FAILSCORE_GRADING_arg0_words, 2},
         Span<RefusedWord>{nullptr, 0}, "",
-        "FAILSCORE_GRADING must be ON or OFF, got '{tok}'", "", false, ""},
+        "FAILSCORE_GRADING must be ON or OFF, got '{tok}'", "", false, "",
+        false},
 };
 inline constexpr std::string_view ROOT_FAILSCORE_GRADING_checks[] = {
     "{phase}: ASA:ASA: under FAILSCORE_GRADING ON a failed evaluation scores from 0.999 FAILSCORE to below FAILSCORE ({value}). ASA:ASA takes a cost of about 1e+18 or more for an invalid state and draws another, so it would not see the graded failures at or above that cost. A FAILSCORE of 1e+18 or less keeps every graded failure below it",
@@ -810,7 +976,8 @@ inline constexpr Arg ROOT_BUMPGATE_args[] = {
     Arg{"mode", ArgKind::Word, false, false, Limit{}, Limit{}, false, false,
         Span<std::string_view>{detail::ROOT_BUMPGATE_arg0_words, 2},
         Span<RefusedWord>{nullptr, 0}, "",
-        "BUMPGATE must be CANDIDATE or STRICT, got '{tok}'", "", false, ""},
+        "BUMPGATE must be CANDIDATE or STRICT, got '{tok}'", "", false, "",
+        false},
 };
 inline constexpr std::string_view ROOT_BUMPGATE_checks[] = {
     "BUMPGATE: a compact bump reaches past its cutoff: under a Cut_Dummy cutoff each bump vanishes at or before RCUT (c + w/eta <= RCUT), as a bump cut off there gives the energy and the forces a step at the cutoff. The bumps past the cutoff:{list}\n  A larger RCUT2B or RCUTMB in the training configuration gives a longer range; the potential stays smooth, as each bump vanishes at the edge of its own support.",
@@ -819,7 +986,8 @@ inline constexpr Arg ROOT_RHOGATE_args[] = {
     Arg{"tol", ArgKind::Number, false, false,
         Limit{true, "0", 0.0, true, 0ull}, Limit{}, false, false,
         Span<std::string_view>{nullptr, 0}, Span<RefusedWord>{nullptr, 0},
-        "RHOGATE tol", "RHOGATE tol must be >= 0, got '{tok}'", "", false, ""},
+        "RHOGATE tol", "RHOGATE tol must be >= 0, got '{tok}'", "", false, "",
+        false},
 };
 inline constexpr std::string_view ROOT_RHOGATE_checks[] = {
     "RHOGATE: the tolerance is missing; expected RHOGATE <tol> [R_LO <r>] [NPTS <n>] [SEED ERROR|WARN]",
@@ -840,16 +1008,16 @@ inline constexpr Arg ROOT_RHOBARGATE_args[] = {
         Span<std::string_view>{detail::ROOT_RHOBARGATE_arg0_words, 3},
         Span<RefusedWord>{nullptr, 0}, "",
         "RHOBARGATE lattice must be bcc, fcc or hcp, got '{tok}'", "", false,
-        ""},
+        "", true},
     Arg{"a0", ArgKind::Number, false, false, Limit{}, Limit{}, false, false,
         Span<std::string_view>{nullptr, 0}, Span<RefusedWord>{nullptr, 0},
-        "RHOBARGATE a0", "", "", false, ""},
+        "RHOBARGATE a0", "", "", false, "", false},
     Arg{"f_lo", ArgKind::Number, false, false, Limit{}, Limit{}, false, false,
         Span<std::string_view>{nullptr, 0}, Span<RefusedWord>{nullptr, 0},
-        "RHOBARGATE f_lo", "", "", false, ""},
+        "RHOBARGATE f_lo", "", "", false, "", false},
     Arg{"f_hi", ArgKind::Number, false, false, Limit{}, Limit{}, false, false,
         Span<std::string_view>{nullptr, 0}, Span<RefusedWord>{nullptr, 0},
-        "RHOBARGATE f_hi", "", "", false, ""},
+        "RHOBARGATE f_hi", "", "", false, "", false},
 };
 inline constexpr std::string_view ROOT_RHOBARGATE_checks[] = {
     "RHOBARGATE: the lattice, a0, f_lo and f_hi are required; expected RHOBARGATE <bcc|fcc|hcp> <a0> <f_lo> <f_hi> [NPTS <n>] [SEED ERROR|WARN]",
@@ -865,35 +1033,36 @@ inline constexpr std::string_view ROOT_RHOBARGATE_checks[] = {
 inline constexpr Arg ROOT_QFLUSH_args[] = {
     Arg{"n", ArgKind::Integer, false, false, Limit{true, "0", 0.0, true, 0ull},
         Limit{}, false, false, Span<std::string_view>{nullptr, 0},
-        Span<RefusedWord>{nullptr, 0}, "{key}", "", "", false, ""},
+        Span<RefusedWord>{nullptr, 0}, "{key}", "", "", false, "", false},
 };
 inline constexpr Arg ROOT_OUTPUT_args[] = {
     Arg{"n", ArgKind::Integer, false, false, Limit{true, "1", 1.0, true, 1ull},
         Limit{}, false, false, Span<std::string_view>{nullptr, 0},
         Span<RefusedWord>{nullptr, 0}, "{key}",
         "OUTPUT must be an integer >= 1, got '{tok}' (it is a cadence: the run writes every Nth evaluation; a large value, such as OUTPUT 1000000, writes as little as possible)",
-        "", false, ""},
+        "", false, "", false},
 };
 inline constexpr Arg ROOT_BOUTPUT_args[] = {
     Arg{"n", ArgKind::Integer, false, false, Limit{true, "1", 1.0, true, 1ull},
         Limit{}, false, false, Span<std::string_view>{nullptr, 0},
         Span<RefusedWord>{nullptr, 0}, "{key}",
         "BOUTPUT must be an integer >= 1, got '{tok}' (it is a cadence: the run writes every Nth new best)",
-        "", false, ""},
+        "", false, "", false},
 };
 inline constexpr Arg ROOT_DIGITS_args[] = {
     Arg{"n", ArgKind::Integer, false, false, Limit{true, "1", 1.0, true, 1ull},
         Limit{true, "15", 15.0, true, 15ull}, false, false,
         Span<std::string_view>{nullptr, 0}, Span<RefusedWord>{nullptr, 0},
-        "{key}", "", "", false, ""},
+        "{key}", "", "", false, "", false},
 };
 inline constexpr Arg ROOT_DUMP_args[] = {
     Arg{"n", ArgKind::Integer, false, false, Limit{true, "1", 1.0, true, 1ull},
         Limit{}, false, false, Span<std::string_view>{nullptr, 0},
-        Span<RefusedWord>{nullptr, 0}, "{key} cadence", "", "", false, ""},
+        Span<RefusedWord>{nullptr, 0}, "{key} cadence", "", "", false, "",
+        false},
     Arg{"directory", ArgKind::Name, false, false, Limit{}, Limit{}, false,
         false, Span<std::string_view>{nullptr, 0},
-        Span<RefusedWord>{nullptr, 0}, "", "", "", false, ""},
+        Span<RefusedWord>{nullptr, 0}, "", "", "", false, "", false},
 };
 inline constexpr std::string_view ROOT_DUMP_checks[] = {
     "{key} requires a cadence and a directory",
@@ -910,10 +1079,11 @@ inline constexpr std::string_view ROOT_DUMP_checks[] = {
 inline constexpr Arg ROOT_BDUMP_args[] = {
     Arg{"n", ArgKind::Integer, false, false, Limit{true, "1", 1.0, true, 1ull},
         Limit{}, false, false, Span<std::string_view>{nullptr, 0},
-        Span<RefusedWord>{nullptr, 0}, "{key} cadence", "", "", false, ""},
+        Span<RefusedWord>{nullptr, 0}, "{key} cadence", "", "", false, "",
+        false},
     Arg{"directory", ArgKind::Name, false, false, Limit{}, Limit{}, false,
         false, Span<std::string_view>{nullptr, 0},
-        Span<RefusedWord>{nullptr, 0}, "", "", "", false, ""},
+        Span<RefusedWord>{nullptr, 0}, "", "", "", false, "", false},
 };
 inline constexpr std::string_view ROOT_BDUMP_checks[] = {
     "{key} requires a cadence and a directory",
@@ -936,23 +1106,23 @@ inline constexpr Arg ROOT_OPTIM_SCALE_args[] = {
         Span<std::string_view>{detail::ROOT_OPTIM_SCALE_arg0_words, 2},
         Span<RefusedWord>{nullptr, 0}, "",
         "OPTIM_SCALE must be AUTO (every OPTIM dimension is mapped to [0, 1]) or NONE (each dimension stays in its OPTIM units: the value for LIN, its natural logarithm for LOG, asinh(x/c) for ASINH <c>), got '{tok}'",
-        "", false, ""},
+        "", false, "", true},
 };
 inline constexpr Arg OPTIMIZER_LIB_args[] = {
     Arg{"library", ArgKind::Name, false, false, Limit{}, Limit{}, false, false,
         Span<std::string_view>{nullptr, 0}, Span<RefusedWord>{nullptr, 0}, "",
-        "", "", false, ""},
+        "", "", false, "", false},
 };
 inline constexpr Arg OPTIMIZER_ALGO_args[] = {
     Arg{"algorithm", ArgKind::Name, false, false, Limit{}, Limit{}, false,
         false, Span<std::string_view>{nullptr, 0},
-        Span<RefusedWord>{nullptr, 0}, "", "", "", false, ""},
+        Span<RefusedWord>{nullptr, 0}, "", "", "", false, "", false},
 };
 inline constexpr Arg OPTIMIZER_MAXEVAL_args[] = {
     Arg{"n", ArgKind::Integer, false, false, Limit{true, "1", 1.0, true, 1ull},
         Limit{true, "INT_MAX", 2147483647.0, true, 2147483647ull}, false,
         false, Span<std::string_view>{nullptr, 0},
-        Span<RefusedWord>{nullptr, 0}, "{key}", "", "", false, ""},
+        Span<RefusedWord>{nullptr, 0}, "{key}", "", "", false, "", false},
 };
 inline constexpr std::string_view OPTIMIZER_MAXEVAL_checks[] = {
     "{phase}: {lib}:{algo} needs a stop: {why}; {list} gives it one",
@@ -963,7 +1133,7 @@ inline constexpr Arg OPTIMIZER_MAXTIME_args[] = {
     Arg{"seconds", ArgKind::Positive, false, false, Limit{}, Limit{}, false,
         false, Span<std::string_view>{nullptr, 0},
         Span<RefusedWord>{nullptr, 0}, "{key}", "", "number of seconds", false,
-        ""},
+        "", false},
 };
 inline constexpr std::string_view OPTIMIZER_MAXTIME_checks[] = {
     "{phase}: {lib}:{algo} does not support MAXTIME",
@@ -971,7 +1141,7 @@ inline constexpr std::string_view OPTIMIZER_MAXTIME_checks[] = {
 inline constexpr Arg OPTIMIZER_STOPVAL_args[] = {
     Arg{"loss", ArgKind::Number, false, false, Limit{}, Limit{}, false, false,
         Span<std::string_view>{nullptr, 0}, Span<RefusedWord>{nullptr, 0},
-        "{key}", "", "", false, ""},
+        "{key}", "", "", false, "", false},
 };
 inline constexpr std::string_view OPTIMIZER_STOPVAL_checks[] = {
     "{phase}: {lib}:{algo} does not support STOPVAL",
@@ -979,7 +1149,7 @@ inline constexpr std::string_view OPTIMIZER_STOPVAL_checks[] = {
 inline constexpr Arg OPTIMIZER_FTOL_REL_args[] = {
     Arg{"tolerance", ArgKind::Number, false, false, Limit{}, Limit{}, false,
         false, Span<std::string_view>{nullptr, 0},
-        Span<RefusedWord>{nullptr, 0}, "{key}", "", "", false, ""},
+        Span<RefusedWord>{nullptr, 0}, "{key}", "", "", false, "", false},
 };
 inline constexpr std::string_view OPTIMIZER_FTOL_REL_checks[] = {
     "{phase}: {lib}:{algo} does not support FTOL_REL with an INNER block: {why}; the INNER block, whose local search tests it, takes it",
@@ -992,7 +1162,7 @@ inline constexpr std::string_view OPTIMIZER_FTOL_REL_checks[] = {
 inline constexpr Arg OPTIMIZER_FTOL_ABS_args[] = {
     Arg{"tolerance", ArgKind::Number, false, false, Limit{}, Limit{}, false,
         false, Span<std::string_view>{nullptr, 0},
-        Span<RefusedWord>{nullptr, 0}, "{key}", "", "", false, ""},
+        Span<RefusedWord>{nullptr, 0}, "{key}", "", "", false, "", false},
 };
 inline constexpr std::string_view OPTIMIZER_FTOL_ABS_checks[] = {
     "{phase}: CERES:{algo} uses a relative tolerance: it takes FTOL_REL (Ceres' function_tolerance), not FTOL_ABS",
@@ -1005,7 +1175,7 @@ inline constexpr std::string_view OPTIMIZER_FTOL_ABS_checks[] = {
 inline constexpr Arg OPTIMIZER_XTOL_REL_args[] = {
     Arg{"tolerance", ArgKind::Number, false, false, Limit{}, Limit{}, false,
         false, Span<std::string_view>{nullptr, 0},
-        Span<RefusedWord>{nullptr, 0}, "{key}", "", "", false, ""},
+        Span<RefusedWord>{nullptr, 0}, "{key}", "", "", false, "", false},
 };
 inline constexpr std::string_view OPTIMIZER_XTOL_REL_checks[] = {
     "{phase}: CERES:{algo} requires XTOL_REL >= 0 (Ceres' parameter_tolerance), got {value}",
@@ -1018,7 +1188,7 @@ inline constexpr std::string_view OPTIMIZER_XTOL_REL_checks[] = {
 inline constexpr Arg OPTIMIZER_XTOL_ABS_args[] = {
     Arg{"tolerance", ArgKind::Number, false, false, Limit{}, Limit{}, false,
         false, Span<std::string_view>{nullptr, 0},
-        Span<RefusedWord>{nullptr, 0}, "{key}", "", "", false, ""},
+        Span<RefusedWord>{nullptr, 0}, "{key}", "", "", false, "", false},
 };
 inline constexpr std::string_view OPTIMIZER_XTOL_ABS_checks[] = {
     "{phase}: CERES:{algo} uses a relative tolerance: it takes XTOL_REL (Ceres' parameter_tolerance), not XTOL_ABS",
@@ -1032,7 +1202,7 @@ inline constexpr Arg OPTIMIZER_POPULATION_args[] = {
     Arg{"n", ArgKind::Integer, false, false, Limit{true, "0", 0.0, true, 0ull},
         Limit{true, "UINT_MAX", 4294967295.0, true, 4294967295ull}, false,
         false, Span<std::string_view>{nullptr, 0},
-        Span<RefusedWord>{nullptr, 0}, "{key}", "", "", false, ""},
+        Span<RefusedWord>{nullptr, 0}, "{key}", "", "", false, "", false},
 };
 inline constexpr std::string_view OPTIMIZER_POPULATION_checks[] = {
     "{phase}: TADAH:ANNEAL_PA: POPULATION must be >= 8",
@@ -1045,15 +1215,15 @@ inline constexpr std::string_view OPTIMIZER_POPULATION_checks[] = {
 inline constexpr Arg OPTIMIZER_STEP_args[] = {
     Arg{"KEY", ArgKind::Name, true, false, Limit{}, Limit{}, false, false,
         Span<std::string_view>{nullptr, 0}, Span<RefusedWord>{nullptr, 0}, "",
-        "", "", false, ""},
+        "", "", false, "", false},
     Arg{"indices", ArgKind::Indices, true, false, Limit{}, Limit{}, false,
         false, Span<std::string_view>{nullptr, 0},
-        Span<RefusedWord>{nullptr, 0}, "", "", "", false, ""},
+        Span<RefusedWord>{nullptr, 0}, "", "", "", false, "", false},
     Arg{"fraction", ArgKind::Number, false, false,
         Limit{true, "0", 0.0, true, 0ull},
         Limit{true, "0.5", 0.5, false, 0ull}, true, false,
         Span<std::string_view>{nullptr, 0}, Span<RefusedWord>{nullptr, 0}, "",
-        "", "", false, ""},
+        "", "", false, "", false},
 };
 inline constexpr std::string_view OPTIMIZER_STEP_checks[] = {
     "{phase}: {lib}:{algo} does not use STEP; {why}",
@@ -1073,7 +1243,7 @@ inline constexpr Arg OPTIMIZER_SEED_args[] = {
     Arg{"n", ArgKind::Integer, false, false, Limit{true, "0", 0.0, true, 0ull},
         Limit{true, "UINT64_MAX", 1.8446744073709552e+19, true, 18446744073709551615ull},
         false, false, Span<std::string_view>{nullptr, 0},
-        Span<RefusedWord>{nullptr, 0}, "{key}", "", "", false, ""},
+        Span<RefusedWord>{nullptr, 0}, "{key}", "", "", false, "", false},
 };
 inline constexpr std::string_view OPTIMIZER_SEED_checks[] = {
     "{phase}: {lib}:{algo} does not use SEED: it draws no random numbers",
@@ -1085,7 +1255,7 @@ inline constexpr Arg OPTIMIZER_VECTOR_ARR_args[] = {
     Arg{"n", ArgKind::Integer, false, false, Limit{true, "0", 0.0, true, 0ull},
         Limit{true, "UINT_MAX", 4294967295.0, true, 4294967295ull}, false,
         false, Span<std::string_view>{nullptr, 0},
-        Span<RefusedWord>{nullptr, 0}, "{key}", "", "", false, ""},
+        Span<RefusedWord>{nullptr, 0}, "{key}", "", "", false, "", false},
 };
 inline constexpr std::string_view OPTIMIZER_VECTOR_ARR_checks[] = {
     "{phase}: {lib}:{algo} does not use VECTOR_ARR (it is read by {list})",
@@ -1096,7 +1266,7 @@ inline constexpr Arg OPTIMIZER_THREADS_args[] = {
     Arg{"n", ArgKind::Integer, false, false, Limit{true, "1", 1.0, true, 1ull},
         Limit{true, "INT_MAX", 2147483647.0, true, 2147483647ull}, false,
         false, Span<std::string_view>{nullptr, 0},
-        Span<RefusedWord>{nullptr, 0}, "{key}", "", "", false, ""},
+        Span<RefusedWord>{nullptr, 0}, "{key}", "", "", false, "", false},
 };
 inline constexpr std::string_view OPTIMIZER_THREADS_checks[] = {
     "{phase}: {lib}:{algo} does not use THREADS in an INNER block: the THREADS of the STRATEGY-level optimiser sets the workers of the run",
@@ -1113,7 +1283,7 @@ inline constexpr Arg OPTIMIZER_GRAD_STRATEGY_args[] = {
         Span<std::string_view>{detail::OPTIMIZER_GRAD_STRATEGY_arg0_words, 3},
         Span<RefusedWord>{nullptr, 0}, "",
         "GRAD_STRATEGY must be one of NUMERICAL, ANALYTICAL, HYBRID (got '{tok}')",
-        "", false, ""},
+        "", false, "", false},
 };
 inline constexpr std::string_view OPTIMIZER_GRAD_STRATEGY_checks[] = {
     "GRAD_STRATEGY takes one value: NUMERICAL, ANALYTICAL or HYBRID",
@@ -1126,10 +1296,10 @@ inline constexpr std::string_view OPTIMIZER_GRAD_STRATEGY_checks[] = {
 inline constexpr Arg OPTIMIZER_PARAM_args[] = {
     Arg{"name", ArgKind::Name, false, false, Limit{}, Limit{}, false, false,
         Span<std::string_view>{nullptr, 0}, Span<RefusedWord>{nullptr, 0}, "",
-        "", "", false, ""},
+        "", "", false, "", false},
     Arg{"value", ArgKind::Tokens, false, false, Limit{}, Limit{}, false, false,
         Span<std::string_view>{nullptr, 0}, Span<RefusedWord>{nullptr, 0}, "",
-        "", "", false, ""},
+        "", "", false, "", false},
 };
 inline constexpr std::string_view OPTIMIZER_PARAM_checks[] = {
     "PARAM requires a name and a value",
@@ -1141,7 +1311,7 @@ inline constexpr Arg OPTIMIZER_LOG_HP_args[] = {
         Span<std::string_view>{nullptr, 0}, Span<RefusedWord>{nullptr, 0},
         "{key}",
         "LOG_HP must be a finite ratio >= 1 (a dimension is log-scaled when high/low >= LOG_HP and low > 0), got '{tok}'",
-        "", false, ""},
+        "", false, "", false},
 };
 inline constexpr std::string_view STRATEGY_TYPE_arg0_words[] = {
     "PLAIN",
@@ -1153,7 +1323,7 @@ inline constexpr Arg STRATEGY_TYPE_args[] = {
         Span<std::string_view>{detail::STRATEGY_TYPE_arg0_words, 3},
         Span<RefusedWord>{nullptr, 0}, "",
         "STRATEGY TYPE must be PLAIN, MULTISTART, or PRESTAGE (got '{tok}')",
-        "", false, ""},
+        "", false, "", false},
 };
 inline constexpr std::string_view STRATEGY_TYPE_checks[] = {
     "STRATEGY TYPE MULTISTART needs N_STARTS 2 or more: without N_STARTS it runs one start, which is STRATEGY TYPE PLAIN",
@@ -1163,7 +1333,7 @@ inline constexpr Arg STRATEGY_N_STARTS_args[] = {
         Limit{}, false, false, Span<std::string_view>{nullptr, 0},
         Span<RefusedWord>{nullptr, 0}, "{key}",
         "N_STARTS must be an integer >= 2, got '{tok}' (one start is STRATEGY TYPE PLAIN)",
-        "", false, ""},
+        "", false, "", false},
 };
 inline constexpr std::string_view STRATEGY_N_STARTS_checks[] = {
     "N_STARTS must be an integer >= 2, got '{tok}'",
@@ -1174,22 +1344,22 @@ inline constexpr Arg STRATEGY_BUDGET_PER_START_args[] = {
     Arg{"n", ArgKind::Integer, false, false, Limit{true, "1", 1.0, true, 1ull},
         Limit{true, "INT_MAX", 2147483647.0, true, 2147483647ull}, false,
         false, Span<std::string_view>{nullptr, 0},
-        Span<RefusedWord>{nullptr, 0}, "{key}", "", "", false, ""},
+        Span<RefusedWord>{nullptr, 0}, "{key}", "", "", false, "", false},
 };
 inline constexpr Arg STRATEGY_TOPK_args[] = {
     Arg{"n", ArgKind::Integer, false, false, Limit{true, "1", 1.0, true, 1ull},
         Limit{true, "1000000", 1000000.0, true, 1000000ull}, false, false,
         Span<std::string_view>{nullptr, 0}, Span<RefusedWord>{nullptr, 0},
-        "{key}", "", "", false, ""},
+        "{key}", "", "", false, "", false},
 };
 inline constexpr Arg INIT_METHOD_args[] = {
     Arg{"method", ArgKind::Name, false, false, Limit{}, Limit{}, false, false,
         Span<std::string_view>{nullptr, 0}, Span<RefusedWord>{nullptr, 0}, "",
         "{key} {tok}: unknown method; the methods are CONFIG, RANDOM, LHS, SOBOL and WARM, in upper case",
-        "", false, ""},
+        "", false, "", false},
     Arg{"value", ArgKind::Tokens, true, false, Limit{}, Limit{}, false, false,
         Span<std::string_view>{nullptr, 0}, Span<RefusedWord>{nullptr, 0}, "",
-        "", "", false, ""},
+        "", "", false, "", false},
 };
 inline constexpr std::string_view INIT_METHOD_checks[] = {
     "{key} requires a method name",
@@ -1197,7 +1367,7 @@ inline constexpr std::string_view INIT_METHOD_checks[] = {
 inline constexpr Arg INIT_K_TOTAL_args[] = {
     Arg{"n", ArgKind::Integer, false, false, Limit{true, "1", 1.0, true, 1ull},
         Limit{}, false, false, Span<std::string_view>{nullptr, 0},
-        Span<RefusedWord>{nullptr, 0}, "{key}", "", "", false, ""},
+        Span<RefusedWord>{nullptr, 0}, "{key}", "", "", false, "", false},
 };
 inline constexpr std::string_view INIT_K_TOTAL_checks[] = {
     "K_TOTAL {value} caps nothing: the METHOD lines of {parent} give at most {count} starting points ({list}), and K_TOTAL keeps the first K_TOTAL starting points",
@@ -1209,7 +1379,7 @@ inline constexpr Arg INIT_SEED_args[] = {
     Arg{"n", ArgKind::Integer, false, false, Limit{true, "0", 0.0, true, 0ull},
         Limit{true, "UINT64_MAX", 1.8446744073709552e+19, true, 18446744073709551615ull},
         false, false, Span<std::string_view>{nullptr, 0},
-        Span<RefusedWord>{nullptr, 0}, "{key}", "", "", false, ""},
+        Span<RefusedWord>{nullptr, 0}, "{key}", "", "", false, "", false},
 };
 inline constexpr std::string_view INIT_WARM_ON_MISMATCH_arg0_words[] = {
     "warn",
@@ -1221,12 +1391,12 @@ inline constexpr Arg INIT_WARM_ON_MISMATCH_args[] = {
         Span<std::string_view>{detail::INIT_WARM_ON_MISMATCH_arg0_words, 3},
         Span<RefusedWord>{nullptr, 0}, "",
         "WARM_ON_MISMATCH must be one of: warn, error, skip, got '{tok}'", "",
-        false, ""},
+        false, "", false},
 };
 inline constexpr Arg NOISE_AUTO_args[] = {
     Arg{"bool", ArgKind::Bool, true, false, Limit{}, Limit{}, false, false,
         Span<std::string_view>{nullptr, 0}, Span<RefusedWord>{nullptr, 0},
-        "NOISE.AUTO", "", "", false, ""},
+        "NOISE.AUTO", "", "", false, "", false},
 };
 inline constexpr std::string_view NOISE_AUTO_checks[] = {
     "{phase} {lib}:{algo}: NOISE AUTO has no effect: {why}.",
@@ -1235,7 +1405,7 @@ inline constexpr Arg NOISE_CALIBRATION_args[] = {
     Arg{"n", ArgKind::Integer, false, false, Limit{true, "0", 0.0, true, 0ull},
         Limit{true, "INT_MAX", 2147483647.0, true, 2147483647ull}, false,
         false, Span<std::string_view>{nullptr, 0},
-        Span<RefusedWord>{nullptr, 0}, "{key}", "", "", false, ""},
+        Span<RefusedWord>{nullptr, 0}, "{key}", "", "", false, "", false},
 };
 inline constexpr std::string_view NOISE_CALIBRATION_checks[] = {
     "NOISE.CALIBRATION must be 0 (off) or >= 2",
@@ -1246,7 +1416,7 @@ inline constexpr Arg RESTART_AFTER_STAGNATION_args[] = {
         false, false, Span<std::string_view>{nullptr, 0},
         Span<RefusedWord>{nullptr, 0}, "{key}",
         "AFTER_STAGNATION must be an integer >= 1, got '{tok}' (0 never restarts the search; a search without restarts has no RESTART block)",
-        "", false, ""},
+        "", false, "", false},
 };
 inline constexpr std::string_view RESTART_AFTER_STAGNATION_checks[] = {
     "AFTER_STAGNATION must be an integer >= 1, got '{tok}'",
@@ -1257,7 +1427,7 @@ inline constexpr Arg RESTART_MAX_args[] = {
         false, false, Span<std::string_view>{nullptr, 0},
         Span<RefusedWord>{nullptr, 0}, "{key}",
         "MAX must be an integer >= 1, got '{tok}' (0 never restarts the search; a search without restarts has no RESTART block)",
-        "", false, ""},
+        "", false, "", false},
 };
 inline constexpr std::string_view RESTART_MAX_checks[] = {
     "MAX must be an integer >= 1, got '{tok}'",
@@ -1265,12 +1435,13 @@ inline constexpr std::string_view RESTART_MAX_checks[] = {
 inline constexpr Arg ROOT_PC_EMAE_args[] = {
     Arg{"target", ArgKind::Number, false, false, Limit{}, Limit{}, false,
         false, Span<std::string_view>{nullptr, 0},
-        Span<RefusedWord>{nullptr, 0}, "{key} <target>", "", "", false, ""},
+        Span<RefusedWord>{nullptr, 0}, "{key} <target>", "", "", false, "",
+        false},
     Arg{"weight", ArgKind::Number, false, false,
         Limit{true, "0", 0.0, true, 0ull}, Limit{}, false, false,
         Span<std::string_view>{nullptr, 0}, Span<RefusedWord>{nullptr, 0},
         "{key} <weight>", "{key} <weight> must be a number >= 0, got '{tok}'",
-        "", false, ""},
+        "", false, "", false},
 };
 inline constexpr std::string_view ROOT_PC_EMAE_checks[] = {
     "tadah hpo: {keys} on the validation set: no dataset has a structure with an energy ({list}): every structure has energy priority 0 (eweight), so the energy metrics have nothing to measure",
@@ -1278,18 +1449,24 @@ inline constexpr std::string_view ROOT_PC_EMAE_checks[] = {
     "{key}: unknown flag '{tok}'",
     "{key}: indexed targets are supported only for PC_ERMSE, PC_FRMSE and PC_SRMSE_GPA",
 };
+inline constexpr LineStep ROOT_PC_EMAE_steps[] = {
+    LineStep::Value,
+    LineStep::Repeat,
+    LineStep::Options,
+};
 inline constexpr Arg ROOT_PC_ERMSE_args[] = {
     Arg{"indices", ArgKind::Indices, true, false, Limit{}, Limit{}, false,
         false, Span<std::string_view>{nullptr, 0},
-        Span<RefusedWord>{nullptr, 0}, "", "", "", false, ""},
+        Span<RefusedWord>{nullptr, 0}, "", "", "", false, "", false},
     Arg{"target", ArgKind::Number, false, false, Limit{}, Limit{}, false,
         false, Span<std::string_view>{nullptr, 0},
-        Span<RefusedWord>{nullptr, 0}, "{key} <target>", "", "", false, ""},
+        Span<RefusedWord>{nullptr, 0}, "{key} <target>", "", "", false, "",
+        false},
     Arg{"weight", ArgKind::Number, false, false,
         Limit{true, "0", 0.0, true, 0ull}, Limit{}, false, false,
         Span<std::string_view>{nullptr, 0}, Span<RefusedWord>{nullptr, 0},
         "{key} <weight>", "{key} <weight> must be a number >= 0, got '{tok}'",
-        "", false, ""},
+        "", false, "", false},
 };
 inline constexpr std::string_view ROOT_PC_ERMSE_checks[] = {
     "{key} requires validation DBFILE entries",
@@ -1309,12 +1486,13 @@ inline constexpr std::string_view ROOT_PC_ERMSE_checks[] = {
 inline constexpr Arg ROOT_PC_ErRMSE_args[] = {
     Arg{"target", ArgKind::Number, false, false, Limit{}, Limit{}, false,
         false, Span<std::string_view>{nullptr, 0},
-        Span<RefusedWord>{nullptr, 0}, "{key} <target>", "", "", false, ""},
+        Span<RefusedWord>{nullptr, 0}, "{key} <target>", "", "", false, "",
+        false},
     Arg{"weight", ArgKind::Number, false, false,
         Limit{true, "0", 0.0, true, 0ull}, Limit{}, false, false,
         Span<std::string_view>{nullptr, 0}, Span<RefusedWord>{nullptr, 0},
         "{key} <weight>", "{key} <weight> must be a number >= 0, got '{tok}'",
-        "", false, ""},
+        "", false, "", false},
 };
 inline constexpr std::string_view ROOT_PC_ErRMSE_checks[] = {
     "tadah hpo: {keys} on the validation set: no dataset has a structure with an energy ({list}): every structure has energy priority 0 (eweight), so the energy metrics have nothing to measure",
@@ -1322,15 +1500,21 @@ inline constexpr std::string_view ROOT_PC_ErRMSE_checks[] = {
     "{key}: unknown flag '{tok}'",
     "{key}: indexed targets are supported only for PC_ERMSE, PC_FRMSE and PC_SRMSE_GPA",
 };
+inline constexpr LineStep ROOT_PC_ErRMSE_steps[] = {
+    LineStep::Value,
+    LineStep::Repeat,
+    LineStep::Options,
+};
 inline constexpr Arg ROOT_PC_ERSQ_args[] = {
     Arg{"target", ArgKind::Number, false, false, Limit{}, Limit{}, false,
         false, Span<std::string_view>{nullptr, 0},
-        Span<RefusedWord>{nullptr, 0}, "{key} <target>", "", "", false, ""},
+        Span<RefusedWord>{nullptr, 0}, "{key} <target>", "", "", false, "",
+        false},
     Arg{"weight", ArgKind::Number, false, false,
         Limit{true, "0", 0.0, true, 0ull}, Limit{}, false, false,
         Span<std::string_view>{nullptr, 0}, Span<RefusedWord>{nullptr, 0},
         "{key} <weight>", "{key} <weight> must be a number >= 0, got '{tok}'",
-        "", false, ""},
+        "", false, "", false},
 };
 inline constexpr std::string_view ROOT_PC_ERSQ_checks[] = {
     "tadah hpo: {keys} on the validation set: no dataset has a structure with an energy ({list}): every structure has energy priority 0 (eweight), so the energy metrics have nothing to measure",
@@ -1340,18 +1524,24 @@ inline constexpr std::string_view ROOT_PC_ERSQ_checks[] = {
     "{key}: indexed targets are supported only for PC_ERMSE, PC_FRMSE and PC_SRMSE_GPA",
     "PC_ERSQ takes no {option}: a cap rejects an evaluation whose metric is above it, and a higher R^2 is a better fit, so the cap would reject the better fits",
 };
+inline constexpr LineStep ROOT_PC_ERSQ_steps[] = {
+    LineStep::Value,
+    LineStep::Repeat,
+    LineStep::Options,
+};
 inline constexpr Arg ROOT_PC_SRMSE_GPA_args[] = {
     Arg{"indices", ArgKind::Indices, true, false, Limit{}, Limit{}, false,
         false, Span<std::string_view>{nullptr, 0},
-        Span<RefusedWord>{nullptr, 0}, "", "", "", false, ""},
+        Span<RefusedWord>{nullptr, 0}, "", "", "", false, "", false},
     Arg{"target", ArgKind::Number, false, false, Limit{}, Limit{}, false,
         false, Span<std::string_view>{nullptr, 0},
-        Span<RefusedWord>{nullptr, 0}, "{key} <target>", "", "", false, ""},
+        Span<RefusedWord>{nullptr, 0}, "{key} <target>", "", "", false, "",
+        false},
     Arg{"weight", ArgKind::Number, false, false,
         Limit{true, "0", 0.0, true, 0ull}, Limit{}, false, false,
         Span<std::string_view>{nullptr, 0}, Span<RefusedWord>{nullptr, 0},
         "{key} <weight>", "{key} <weight> must be a number >= 0, got '{tok}'",
-        "", false, ""},
+        "", false, "", false},
 };
 inline constexpr std::string_view ROOT_PC_SRMSE_GPA_checks[] = {
     "{key} requires validation DBFILE entries",
@@ -1369,15 +1559,16 @@ inline constexpr std::string_view ROOT_PC_SRMSE_GPA_checks[] = {
 inline constexpr Arg ROOT_PC_FRMSE_args[] = {
     Arg{"indices", ArgKind::Indices, true, false, Limit{}, Limit{}, false,
         false, Span<std::string_view>{nullptr, 0},
-        Span<RefusedWord>{nullptr, 0}, "", "", "", false, ""},
+        Span<RefusedWord>{nullptr, 0}, "", "", "", false, "", false},
     Arg{"target", ArgKind::Number, false, false, Limit{}, Limit{}, false,
         false, Span<std::string_view>{nullptr, 0},
-        Span<RefusedWord>{nullptr, 0}, "{key} <target>", "", "", false, ""},
+        Span<RefusedWord>{nullptr, 0}, "{key} <target>", "", "", false, "",
+        false},
     Arg{"weight", ArgKind::Number, false, false,
         Limit{true, "0", 0.0, true, 0ull}, Limit{}, false, false,
         Span<std::string_view>{nullptr, 0}, Span<RefusedWord>{nullptr, 0},
         "{key} <weight>", "{key} <weight> must be a number >= 0, got '{tok}'",
-        "", false, ""},
+        "", false, "", false},
 };
 inline constexpr std::string_view ROOT_PC_FRMSE_checks[] = {
     "{key} requires validation DBFILE entries",
@@ -1397,10 +1588,10 @@ inline constexpr std::string_view ROOT_PC_FRMSE_checks[] = {
 inline constexpr Arg ROOT_PC_LAMMPS_args[] = {
     Arg{"option", ArgKind::Tokens, true, true, Limit{}, Limit{}, false, false,
         Span<std::string_view>{nullptr, 0}, Span<RefusedWord>{nullptr, 0}, "",
-        "", "", false, ""},
+        "", "", false, "", false},
     Arg{"LAMMPS option", ArgKind::Tokens, true, true, Limit{}, Limit{}, false,
         false, Span<std::string_view>{nullptr, 0},
-        Span<RefusedWord>{nullptr, 0}, "", "", "", false, ""},
+        Span<RefusedWord>{nullptr, 0}, "", "", "", false, "", false},
 };
 inline constexpr std::string_view ROOT_PC_LAMMPS_checks[] = {
     "{key} {option} maxtime: the variable maxtime is reserved: tadah hpo passes the script's time limit to LAMMPS in it, for `timer timeout ${maxtime}`; --maxtime on this line or PC_SCRIPT_TIMEOUT sets the limit",
@@ -1420,10 +1611,10 @@ inline constexpr std::string_view ROOT_PC_LAMMPS_checks[] = {
 inline constexpr Arg ROOT_PC_FAILPROBE_args[] = {
     Arg{"option", ArgKind::Tokens, true, true, Limit{}, Limit{}, false, false,
         Span<std::string_view>{nullptr, 0}, Span<RefusedWord>{nullptr, 0}, "",
-        "", "", false, ""},
+        "", "", false, "", false},
     Arg{"LAMMPS option", ArgKind::Tokens, true, true, Limit{}, Limit{}, false,
         false, Span<std::string_view>{nullptr, 0},
-        Span<RefusedWord>{nullptr, 0}, "", "", "", false, ""},
+        Span<RefusedWord>{nullptr, 0}, "", "", "", false, "", false},
 };
 inline constexpr std::string_view ROOT_PC_FAILPROBE_checks[] = {
     "{key}: the line has no --script option; --script <file> names the LAMMPS script the line runs",
@@ -1436,10 +1627,11 @@ inline constexpr std::string_view ROOT_PC_FAILPROBE_checks[] = {
 inline constexpr Arg ROOT_PC_OBSERVABLE_args[] = {
     Arg{"kind", ArgKind::Name, false, false, Limit{}, Limit{}, false, false,
         Span<std::string_view>{nullptr, 0}, Span<RefusedWord>{nullptr, 0}, "",
-        "PC_OBSERVABLE: unknown observable kind '{tok}'", "", false, ""},
+        "PC_OBSERVABLE: unknown observable kind '{tok}'", "", false, "",
+        false},
     Arg{"option", ArgKind::Tokens, false, true, Limit{}, Limit{}, false, false,
         Span<std::string_view>{nullptr, 0}, Span<RefusedWord>{nullptr, 0}, "",
-        "", "", false, ""},
+        "", "", false, "", false},
 };
 inline constexpr std::string_view ROOT_PC_OBSERVABLE_checks[] = {
     "PC_OBSERVABLE: empty line",
@@ -1447,7 +1639,7 @@ inline constexpr std::string_view ROOT_PC_OBSERVABLE_checks[] = {
 inline constexpr Arg ROOT_LOSS_args[] = {
     Arg{"function", ArgKind::Loss, false, false, Limit{}, Limit{}, false,
         false, Span<std::string_view>{nullptr, 0},
-        Span<RefusedWord>{nullptr, 0}, "", "", "", false, ""},
+        Span<RefusedWord>{nullptr, 0}, "", "", "", false, "", false},
 };
 inline constexpr std::string_view ROOT_LOSS_checks[] = {
     "LOSS requires a loss type",
@@ -1462,16 +1654,16 @@ inline constexpr std::string_view ROOT_LOSS_checks[] = {
 inline constexpr Arg ROOT_OPTIM_args[] = {
     Arg{"KEY", ArgKind::Name, false, false, Limit{}, Limit{}, false, false,
         Span<std::string_view>{nullptr, 0}, Span<RefusedWord>{nullptr, 0}, "",
-        "", "", false, ""},
+        "", "", false, "", false},
     Arg{"indices", ArgKind::Indices, false, false, Limit{}, Limit{}, false,
         false, Span<std::string_view>{nullptr, 0},
-        Span<RefusedWord>{nullptr, 0}, "", "", "", false, ""},
+        Span<RefusedWord>{nullptr, 0}, "", "", "", false, "", false},
     Arg{"low", ArgKind::Number, false, false, Limit{}, Limit{}, false, false,
         Span<std::string_view>{nullptr, 0}, Span<RefusedWord>{nullptr, 0}, "",
-        "", "", false, ""},
+        "", "", false, "", false},
     Arg{"high", ArgKind::Number, false, false, Limit{}, Limit{}, false, false,
         Span<std::string_view>{nullptr, 0}, Span<RefusedWord>{nullptr, 0}, "",
-        "", "", false, ""},
+        "", "", false, "", false},
 };
 inline constexpr std::string_view top_level_keys[] = {
     "FAILSCORE",
@@ -1508,7 +1700,7 @@ inline constexpr Arg RHOGATE_R_LO_args[] = {
     Arg{"r", ArgKind::Number, false, false, Limit{true, "0", 0.0, true, 0ull},
         Limit{}, false, false, Span<std::string_view>{nullptr, 0},
         Span<RefusedWord>{nullptr, 0}, "RHOGATE R_LO",
-        "RHOGATE R_LO must be >= 0, got '{tok}'", "", false, ""},
+        "RHOGATE R_LO must be >= 0, got '{tok}'", "", false, "", false},
 };
 inline constexpr std::string_view RHOGATE_R_LO_checks[] = {
     "RHOGATE: R_LO needs a value; expected RHOGATE <tol> [R_LO <r>] [NPTS <n>] [SEED ERROR|WARN]",
@@ -1521,7 +1713,7 @@ inline constexpr Arg RHOGATE_NPTS_args[] = {
     Arg{"n", ArgKind::Integer, false, false, Limit{true, "2", 2.0, true, 2ull},
         Limit{true, "10000000", 10000000.0, true, 10000000ull}, false, false,
         Span<std::string_view>{nullptr, 0}, Span<RefusedWord>{nullptr, 0},
-        "RHOGATE NPTS", "", "", false, ""},
+        "RHOGATE NPTS", "", "", false, "", false},
 };
 inline constexpr std::string_view RHOGATE_NPTS_checks[] = {
     "RHOGATE: NPTS needs a value; expected RHOGATE <tol> [R_LO <r>] [NPTS <n>] [SEED ERROR|WARN]",
@@ -1537,7 +1729,8 @@ inline constexpr Arg RHOGATE_SEED_args[] = {
     Arg{"mode", ArgKind::Word, false, false, Limit{}, Limit{}, false, false,
         Span<std::string_view>{detail::RHOGATE_SEED_arg0_words, 2},
         Span<RefusedWord>{nullptr, 0}, "",
-        "RHOGATE SEED must be ERROR or WARN, got '{tok}'", "", false, ""},
+        "RHOGATE SEED must be ERROR or WARN, got '{tok}'", "", false, "",
+        true},
 };
 inline constexpr std::string_view RHOGATE_SEED_checks[] = {
     "RHOGATE: SEED needs a value; expected RHOGATE <tol> [R_LO <r>] [NPTS <n>] [SEED ERROR|WARN]",
@@ -1549,7 +1742,7 @@ inline constexpr Arg RHOBARGATE_NPTS_args[] = {
     Arg{"n", ArgKind::Integer, false, false, Limit{true, "3", 3.0, true, 3ull},
         Limit{true, "10000000", 10000000.0, true, 10000000ull}, false, false,
         Span<std::string_view>{nullptr, 0}, Span<RefusedWord>{nullptr, 0},
-        "RHOBARGATE NPTS", "", "", false, ""},
+        "RHOBARGATE NPTS", "", "", false, "", false},
 };
 inline constexpr std::string_view RHOBARGATE_NPTS_checks[] = {
     "RHOBARGATE: NPTS needs a value; expected RHOBARGATE <bcc|fcc|hcp> <a0> <f_lo> <f_hi> [NPTS <n>] [SEED ERROR|WARN]",
@@ -1565,7 +1758,8 @@ inline constexpr Arg RHOBARGATE_SEED_args[] = {
     Arg{"mode", ArgKind::Word, false, false, Limit{}, Limit{}, false, false,
         Span<std::string_view>{detail::RHOBARGATE_SEED_arg0_words, 2},
         Span<RefusedWord>{nullptr, 0}, "",
-        "RHOBARGATE SEED must be ERROR or WARN, got '{tok}'", "", false, ""},
+        "RHOBARGATE SEED must be ERROR or WARN, got '{tok}'", "", false, "",
+        true},
 };
 inline constexpr std::string_view RHOBARGATE_SEED_checks[] = {
     "RHOBARGATE: SEED needs a value; expected RHOBARGATE <bcc|fcc|hcp> <a0> <f_lo> <f_hi> [NPTS <n>] [SEED ERROR|WARN]",
@@ -1580,7 +1774,7 @@ inline constexpr std::string_view PC_EMAE_skipabove_lines[] = {
 inline constexpr Arg PC_EMAE_skipabove_args[] = {
     Arg{"cap", ArgKind::Positive, false, false, Limit{}, Limit{}, false, false,
         Span<std::string_view>{nullptr, 0}, Span<RefusedWord>{nullptr, 0},
-        "{key} --skip-above", "", "number", false, ""},
+        "{key} --skip-above", "", "number", false, "", false},
 };
 inline constexpr std::string_view PC_EMAE_skipabove_checks[] = {
     "{key} --skip-above requires a positive number",
@@ -1596,7 +1790,7 @@ inline constexpr Arg PC_EMAE_skiprel_args[] = {
     Arg{"ratio", ArgKind::Positive, false, false, Limit{}, Limit{}, false,
         false, Span<std::string_view>{nullptr, 0},
         Span<RefusedWord>{nullptr, 0}, "{key} --skip-rel", "", "number", false,
-        ""},
+        "", false},
 };
 inline constexpr std::string_view PC_EMAE_skiprel_checks[] = {
     "{key} --skip-rel requires a positive number",
@@ -1608,7 +1802,7 @@ inline constexpr std::string_view PC_LAMMPS_script_lines[] = {
 inline constexpr Arg PC_LAMMPS_script_args[] = {
     Arg{"file", ArgKind::Name, false, false, Limit{}, Limit{}, false, false,
         Span<std::string_view>{nullptr, 0}, Span<RefusedWord>{nullptr, 0}, "",
-        "", "", false, ""},
+        "", "", false, "", false},
 };
 inline constexpr std::string_view PC_LAMMPS_script_checks[] = {
     "{key} --script takes one value, the LAMMPS script file",
@@ -1619,18 +1813,18 @@ inline constexpr std::string_view PC_LAMMPS_varloss_lines[] = {
 inline constexpr Arg PC_LAMMPS_varloss_args[] = {
     Arg{"name", ArgKind::Name, false, false, Limit{}, Limit{}, false, false,
         Span<std::string_view>{nullptr, 0}, Span<RefusedWord>{nullptr, 0}, "",
-        "", "", false, ""},
+        "", "", false, "", false},
     Arg{"target", ArgKind::Number, false, false, Limit{}, Limit{}, false,
         false, Span<std::string_view>{nullptr, 0},
         Span<RefusedWord>{nullptr, 0}, "--varloss {name} <target>", "", "",
-        false, ""},
+        false, "", false},
     Arg{"weight", ArgKind::Number, false, false, Limit{}, Limit{}, false,
         false, Span<std::string_view>{nullptr, 0},
         Span<RefusedWord>{nullptr, 0}, "--varloss {name} <weight>", "", "",
-        false, ""},
+        false, "", false},
     Arg{"loss", ArgKind::Loss, true, false, Limit{}, Limit{}, false, false,
         Span<std::string_view>{nullptr, 0}, Span<RefusedWord>{nullptr, 0}, "",
-        "", "", false, ""},
+        "", "", false, "", false},
 };
 inline constexpr std::string_view PC_LAMMPS_varloss_checks[] = {
     "{key} --varloss takes <name> <target> <weight> (the name is missing)",
@@ -1646,10 +1840,10 @@ inline constexpr std::string_view PC_LAMMPS_invar_lines[] = {
 inline constexpr Arg PC_LAMMPS_invar_args[] = {
     Arg{"name", ArgKind::Name, false, false, Limit{}, Limit{}, false, false,
         Span<std::string_view>{nullptr, 0}, Span<RefusedWord>{nullptr, 0}, "",
-        "", "", false, ""},
+        "", "", false, "", false},
     Arg{"value", ArgKind::Name, false, false, Limit{}, Limit{}, false, false,
         Span<std::string_view>{nullptr, 0}, Span<RefusedWord>{nullptr, 0}, "",
-        "", "", false, ""},
+        "", "", false, "", false},
 };
 inline constexpr std::string_view PC_LAMMPS_invar_checks[] = {
     "{key} --invar takes two values, the name of a LAMMPS variable and its value",
@@ -1664,7 +1858,7 @@ inline constexpr std::string_view PC_LAMMPS_outvar_lines[] = {
 inline constexpr Arg PC_LAMMPS_outvar_args[] = {
     Arg{"name", ArgKind::Name, false, false, Limit{}, Limit{}, false, false,
         Span<std::string_view>{nullptr, 0}, Span<RefusedWord>{nullptr, 0}, "",
-        "", "", false, ""},
+        "", "", false, "", false},
 };
 inline constexpr std::string_view PC_LAMMPS_outvar_checks[] = {
     "{key} --outvar takes one value, the name of a LAMMPS variable",
@@ -1676,7 +1870,7 @@ inline constexpr std::string_view PC_LAMMPS_failscore_lines[] = {
 inline constexpr Arg PC_LAMMPS_failscore_args[] = {
     Arg{"value", ArgKind::Number, false, false, Limit{}, Limit{}, false, false,
         Span<std::string_view>{nullptr, 0}, Span<RefusedWord>{nullptr, 0},
-        "--failscore", "", "", false, ""},
+        "--failscore", "", "", false, "", false},
 };
 inline constexpr std::string_view PC_LAMMPS_failscore_checks[] = {
     "{key} --failscore takes one value, a number",
@@ -1689,7 +1883,7 @@ inline constexpr std::string_view PC_LAMMPS_maxtime_lines[] = {
 inline constexpr Arg PC_LAMMPS_maxtime_args[] = {
     Arg{"time", ArgKind::Timespec, false, false, Limit{}, Limit{}, false,
         false, Span<std::string_view>{nullptr, 0},
-        Span<RefusedWord>{nullptr, 0}, "--maxtime", "", "", false, ""},
+        Span<RefusedWord>{nullptr, 0}, "--maxtime", "", "", false, "", false},
 };
 inline constexpr std::string_view PC_LAMMPS_maxtime_checks[] = {
     "{key} --maxtime takes one value, a time limit (off, unlimited or [[HH:]MM:]SS)",
@@ -1700,17 +1894,17 @@ inline constexpr std::string_view PC_LAMMPS_hotvar_lines[] = {
 inline constexpr Arg PC_LAMMPS_hotvar_args[] = {
     Arg{"name", ArgKind::Name, false, false, Limit{}, Limit{}, false, false,
         Span<std::string_view>{nullptr, 0}, Span<RefusedWord>{nullptr, 0}, "",
-        "", "", false, ""},
+        "", "", false, "", false},
     Arg{"min", ArgKind::Number, false, false, Limit{}, Limit{}, false, false,
         Span<std::string_view>{nullptr, 0}, Span<RefusedWord>{nullptr, 0},
-        "--hotvar {name} <min>", "", "", false, ""},
+        "--hotvar {name} <min>", "", "", false, "", false},
     Arg{"max", ArgKind::Number, false, false, Limit{}, Limit{}, false, false,
         Span<std::string_view>{nullptr, 0}, Span<RefusedWord>{nullptr, 0},
-        "--hotvar {name} <max>", "", "", false, ""},
+        "--hotvar {name} <max>", "", "", false, "", false},
     Arg{"initial", ArgKind::Number, true, false, Limit{}, Limit{}, false,
         false, Span<std::string_view>{nullptr, 0},
         Span<RefusedWord>{nullptr, 0}, "--hotvar {name} <initial>", "", "",
-        false, ""},
+        false, "", false},
 };
 inline constexpr std::string_view PC_LAMMPS_hotvar_checks[] = {
     "--hotvar requires <name> <min> <max> [<initial>]",
@@ -1726,11 +1920,11 @@ inline constexpr std::string_view PC_LAMMPS_failvar_lines[] = {
 inline constexpr Arg PC_LAMMPS_failvar_args[] = {
     Arg{"name", ArgKind::Name, false, false, Limit{}, Limit{}, false, false,
         Span<std::string_view>{nullptr, 0}, Span<RefusedWord>{nullptr, 0}, "",
-        "", "", false, ""},
+        "", "", false, "", false},
     Arg{"scale", ArgKind::Positive, true, false, Limit{}, Limit{}, false,
         false, Span<std::string_view>{nullptr, 0},
         Span<RefusedWord>{nullptr, 0}, "--failvar {name} <scale>", "",
-        "number", false, ""},
+        "number", false, "", false},
 };
 inline constexpr std::string_view PC_LAMMPS_failvar_checks[] = {
     "--failvar requires <name> [<scale>]",
@@ -1752,7 +1946,7 @@ inline constexpr std::string_view PC_FAILPROBE_gate_lines[] = {
 inline constexpr Arg PC_FAILPROBE_gate_args[] = {
     Arg{"g", ArgKind::Number, false, false, Limit{}, Limit{}, false, false,
         Span<std::string_view>{nullptr, 0}, Span<RefusedWord>{nullptr, 0},
-        "PC_FAILPROBE --gate", "", "", false, ""},
+        "PC_FAILPROBE --gate", "", "", false, "", false},
 };
 inline constexpr std::string_view PC_FAILPROBE_gate_checks[] = {
     "PC_FAILPROBE --gate requires a value",
@@ -1763,7 +1957,7 @@ inline constexpr std::string_view PC_FAILPROBE_s0_lines[] = {
 inline constexpr Arg PC_FAILPROBE_s0_args[] = {
     Arg{"s0", ArgKind::Positive, false, false, Limit{}, Limit{}, false, false,
         Span<std::string_view>{nullptr, 0}, Span<RefusedWord>{nullptr, 0},
-        "PC_FAILPROBE --s0", "", "number", false, ""},
+        "PC_FAILPROBE --s0", "", "number", false, "", false},
 };
 inline constexpr std::string_view PC_FAILPROBE_s0_checks[] = {
     "PC_FAILPROBE --s0 requires a value",
@@ -1775,7 +1969,7 @@ inline constexpr std::string_view PC_OBSERVABLE_cohesive_energy_species_lines[] 
 inline constexpr Arg PC_OBSERVABLE_cohesive_energy_species_args[] = {
     Arg{"element", ArgKind::Name, false, false, Limit{}, Limit{}, false, false,
         Span<std::string_view>{nullptr, 0}, Span<RefusedWord>{nullptr, 0}, "",
-        "", "", false, ""},
+        "", "", false, "", false},
 };
 inline constexpr std::string_view PC_OBSERVABLE_cohesive_energy_species_checks[] = {
     "PC_OBSERVABLE cohesive_energy: --species {name} is not the symbol of an element",
@@ -1788,7 +1982,7 @@ inline constexpr Arg PC_OBSERVABLE_cohesive_energy_target_args[] = {
     Arg{"E", ArgKind::Number, false, false, Limit{}, Limit{}, false, false,
         Span<std::string_view>{nullptr, 0}, Span<RefusedWord>{nullptr, 0}, "",
         "PC_OBSERVABLE cohesive_energy: --target takes a finite number (got '{tok}'){underflow}",
-        "", false, ""},
+        "", false, "", false},
 };
 inline constexpr std::string_view PC_OBSERVABLE_cohesive_energy_target_checks[] = {
     "PC_OBSERVABLE cohesive_energy --target {tok}: {why}",
@@ -1801,7 +1995,7 @@ inline constexpr Arg PC_OBSERVABLE_cohesive_energy_weight_args[] = {
         Limit{}, false, false, Span<std::string_view>{nullptr, 0},
         Span<RefusedWord>{nullptr, 0}, "",
         "PC_OBSERVABLE cohesive_energy: --weight takes a finite number (got '{tok}'){underflow}",
-        "", false, ""},
+        "", false, "", false},
 };
 inline constexpr std::string_view PC_OBSERVABLE_cohesive_energy_weight_checks[] = {
     "PC_OBSERVABLE cohesive_energy: --weight must be >= 0 (got {tok})",
@@ -1817,19 +2011,19 @@ inline constexpr Arg PC_OBSERVABLE_cohesive_energy_hotvar_args[] = {
         Span<std::string_view>{detail::PC_OBSERVABLE_cohesive_energy_hotvar_arg0_words, 1},
         Span<RefusedWord>{nullptr, 0}, "",
         "PC_OBSERVABLE cohesive_energy: --hotvar names a0, the lattice constant, the one variable of the term (got '{tok}')",
-        "", false, ""},
+        "", false, "", false},
     Arg{"lo", ArgKind::Number, false, false, Limit{}, Limit{}, false, false,
         Span<std::string_view>{nullptr, 0}, Span<RefusedWord>{nullptr, 0}, "",
         "PC_OBSERVABLE cohesive_energy: --hotvar a0 <lo> takes a finite number (got '{tok}'){underflow}",
-        "", false, ""},
+        "", false, "", false},
     Arg{"hi", ArgKind::Number, false, false, Limit{}, Limit{}, false, false,
         Span<std::string_view>{nullptr, 0}, Span<RefusedWord>{nullptr, 0}, "",
         "PC_OBSERVABLE cohesive_energy: --hotvar a0 <hi> takes a finite number (got '{tok}'){underflow}",
-        "", false, ""},
+        "", false, "", false},
     Arg{"init", ArgKind::Number, true, false, Limit{}, Limit{}, false, false,
         Span<std::string_view>{nullptr, 0}, Span<RefusedWord>{nullptr, 0}, "",
         "PC_OBSERVABLE cohesive_energy: --hotvar a0 <init> takes a finite number (got '{tok}'){underflow}",
-        "", false, ""},
+        "", false, "", false},
 };
 inline constexpr std::string_view PC_OBSERVABLE_cohesive_energy_hotvar_checks[] = {
     "PC_OBSERVABLE cohesive_energy: --hotvar a0 <hi> must be greater than <lo> (got <lo> {low}, <hi> {high})",
@@ -1846,7 +2040,7 @@ inline constexpr Arg PC_OBSERVABLE_cohesive_energy_lattice_args[] = {
         Span<std::string_view>{detail::PC_OBSERVABLE_cohesive_energy_lattice_arg0_words, 1},
         Span<RefusedWord>{nullptr, 0}, "",
         "PC_OBSERVABLE cohesive_energy: --lattice takes bcc, the one lattice of the term (got '{tok}')",
-        "", false, ""},
+        "", false, "", false},
 };
 inline constexpr std::string_view PC_OBSERVABLE_cohesive_energy_supercell_lines[] = {
     "PC_OBSERVABLE.cohesive_energy",
@@ -1857,19 +2051,22 @@ inline constexpr Arg PC_OBSERVABLE_cohesive_energy_supercell_args[] = {
         Limit{true, "INT_MAX", 2147483647.0, true, 2147483647ull}, false,
         false, Span<std::string_view>{nullptr, 0},
         Span<RefusedWord>{nullptr, 0},
-        "PC_OBSERVABLE cohesive_energy: --supercell <nx>", "", "", false, ""},
+        "PC_OBSERVABLE cohesive_energy: --supercell <nx>", "", "", false, "",
+        false},
     Arg{"ny", ArgKind::Integer, false, false,
         Limit{true, "1", 1.0, true, 1ull},
         Limit{true, "INT_MAX", 2147483647.0, true, 2147483647ull}, false,
         false, Span<std::string_view>{nullptr, 0},
         Span<RefusedWord>{nullptr, 0},
-        "PC_OBSERVABLE cohesive_energy: --supercell <ny>", "", "", false, ""},
+        "PC_OBSERVABLE cohesive_energy: --supercell <ny>", "", "", false, "",
+        false},
     Arg{"nz", ArgKind::Integer, false, false,
         Limit{true, "1", 1.0, true, 1ull},
         Limit{true, "INT_MAX", 2147483647.0, true, 2147483647ull}, false,
         false, Span<std::string_view>{nullptr, 0},
         Span<RefusedWord>{nullptr, 0},
-        "PC_OBSERVABLE cohesive_energy: --supercell <nz>", "", "", false, ""},
+        "PC_OBSERVABLE cohesive_energy: --supercell <nz>", "", "", false, "",
+        false},
 };
 inline constexpr std::string_view PC_OBSERVABLE_cohesive_energy_loss_lines[] = {
     "PC_OBSERVABLE.cohesive_energy",
@@ -1877,7 +2074,7 @@ inline constexpr std::string_view PC_OBSERVABLE_cohesive_energy_loss_lines[] = {
 inline constexpr Arg PC_OBSERVABLE_cohesive_energy_loss_args[] = {
     Arg{"function", ArgKind::Loss, false, false, Limit{}, Limit{}, false,
         false, Span<std::string_view>{nullptr, 0},
-        Span<RefusedWord>{nullptr, 0}, "", "", "", false, ""},
+        Span<RefusedWord>{nullptr, 0}, "", "", "", false, "", false},
 };
 inline constexpr std::string_view PC_OBSERVABLE_cohesive_energy_maxiter_lines[] = {
     "PC_OBSERVABLE.cohesive_energy",
@@ -1887,7 +2084,7 @@ inline constexpr Arg PC_OBSERVABLE_cohesive_energy_maxiter_args[] = {
         Limit{true, "INT_MAX", 2147483647.0, true, 2147483647ull}, false,
         false, Span<std::string_view>{nullptr, 0},
         Span<RefusedWord>{nullptr, 0},
-        "PC_OBSERVABLE cohesive_energy: --maxiter", "", "", false, ""},
+        "PC_OBSERVABLE cohesive_energy: --maxiter", "", "", false, "", false},
 };
 inline constexpr std::string_view PC_OBSERVABLE_cohesive_energy_maxeval_lines[] = {
     "PC_OBSERVABLE.cohesive_energy",
@@ -1897,7 +2094,7 @@ inline constexpr Arg PC_OBSERVABLE_cohesive_energy_maxeval_args[] = {
         Limit{true, "INT_MAX", 2147483647.0, true, 2147483647ull}, false,
         false, Span<std::string_view>{nullptr, 0},
         Span<RefusedWord>{nullptr, 0},
-        "PC_OBSERVABLE cohesive_energy: --maxeval", "", "", false, ""},
+        "PC_OBSERVABLE cohesive_energy: --maxeval", "", "", false, "", false},
 };
 inline constexpr std::string_view PC_OBSERVABLE_cohesive_energy_maxwalltime_lines[] = {
     "PC_OBSERVABLE.cohesive_energy",
@@ -1907,7 +2104,7 @@ inline constexpr Arg PC_OBSERVABLE_cohesive_energy_maxwalltime_args[] = {
         false, Span<std::string_view>{nullptr, 0},
         Span<RefusedWord>{nullptr, 0}, "",
         "PC_OBSERVABLE cohesive_energy: --max-wall-time takes a finite number (got '{tok}'){underflow}",
-        "", false, ""},
+        "", false, "", false},
 };
 inline constexpr std::string_view PC_OBSERVABLE_cohesive_energy_etol_lines[] = {
     "PC_OBSERVABLE.cohesive_energy",
@@ -1916,7 +2113,7 @@ inline constexpr Arg PC_OBSERVABLE_cohesive_energy_etol_args[] = {
     Arg{"tol", ArgKind::Number, false, false, Limit{}, Limit{}, false, false,
         Span<std::string_view>{nullptr, 0}, Span<RefusedWord>{nullptr, 0}, "",
         "PC_OBSERVABLE cohesive_energy: --etol takes a finite number (got '{tok}'){underflow}",
-        "", false, ""},
+        "", false, "", false},
 };
 inline constexpr std::string_view PC_OBSERVABLE_cohesive_energy_fmaxconverged_lines[] = {
     "PC_OBSERVABLE.cohesive_energy",
@@ -1926,7 +2123,7 @@ inline constexpr Arg PC_OBSERVABLE_cohesive_energy_fmaxconverged_args[] = {
         Limit{true, "0", 0.0, true, 0ull}, Limit{}, true, false,
         Span<std::string_view>{nullptr, 0}, Span<RefusedWord>{nullptr, 0}, "",
         "PC_OBSERVABLE cohesive_energy: --fmax-converged takes a finite number (got '{tok}'){underflow}",
-        "", false, ""},
+        "", false, "", false},
 };
 inline constexpr std::string_view PC_OBSERVABLE_cohesive_energy_fmaxconverged_checks[] = {
     "PC_OBSERVABLE cohesive_energy: --fmax-converged must be > 0 (got {tok})",
@@ -1939,7 +2136,7 @@ inline constexpr Arg PC_OBSERVABLE_cohesive_energy_ptol_args[] = {
         Limit{true, "0", 0.0, true, 0ull}, Limit{}, true, false,
         Span<std::string_view>{nullptr, 0}, Span<RefusedWord>{nullptr, 0}, "",
         "PC_OBSERVABLE cohesive_energy: --ptol takes a finite number (got '{tok}'){underflow}",
-        "", false, ""},
+        "", false, "", false},
 };
 inline constexpr std::string_view PC_OBSERVABLE_cohesive_energy_ptol_checks[] = {
     "PC_OBSERVABLE cohesive_energy: --ptol must be > 0 (got {tok})",
@@ -1956,11 +2153,11 @@ inline constexpr Arg PC_OBSERVABLE_cohesive_energy_unconverged_args[] = {
         Span<std::string_view>{detail::PC_OBSERVABLE_cohesive_energy_unconverged_arg0_words, 2},
         Span<RefusedWord>{nullptr, 0}, "",
         "PC_OBSERVABLE cohesive_energy: --unconverged kind must be 'const' or 'force-scaled' (got '{tok}')",
-        "", false, ""},
+        "", false, "", false},
     Arg{"value", ArgKind::Number, false, false, Limit{}, Limit{}, false, false,
         Span<std::string_view>{nullptr, 0}, Span<RefusedWord>{nullptr, 0}, "",
         "PC_OBSERVABLE cohesive_energy: --unconverged {kind} takes a finite number (got '{tok}'){underflow}",
-        "", false, ""},
+        "", false, "", false},
 };
 inline constexpr std::string_view PC_OBSERVABLE_cohesive_energy_unconverged_checks[] = {
     "PC_OBSERVABLE cohesive_energy: the slope of --unconverged force-scaled must be >= 0 (got {tok})",
@@ -1971,7 +2168,7 @@ inline constexpr std::string_view OPTIM_AUTO_RATIO_lines[] = {
 inline constexpr Arg OPTIM_AUTO_RATIO_args[] = {
     Arg{"f", ArgKind::Number, false, false, Limit{}, Limit{}, false, false,
         Span<std::string_view>{nullptr, 0}, Span<RefusedWord>{nullptr, 0}, "",
-        "", "", false, ""},
+        "", "", false, "", false},
 };
 inline constexpr std::string_view OPTIM_AUTO_RATIO_checks[] = {
     "OPTIM {key}: AUTO RATIO must be > 1 (got {tok})",
@@ -1984,7 +2181,7 @@ inline constexpr std::string_view OPTIM_AUTO_FRAC_lines[] = {
 inline constexpr Arg OPTIM_AUTO_FRAC_args[] = {
     Arg{"p", ArgKind::Number, false, false, Limit{}, Limit{}, false, false,
         Span<std::string_view>{nullptr, 0}, Span<RefusedWord>{nullptr, 0}, "",
-        "", "", false, ""},
+        "", "", false, "", false},
 };
 inline constexpr std::string_view OPTIM_AUTO_FRAC_checks[] = {
     "OPTIM {key}: AUTO FRAC must be >= 0 (got {tok}); FRAC 0 with FLOOR or GROUP_FLOOR gives a constant half-width",
@@ -2000,7 +2197,7 @@ inline constexpr std::string_view OPTIM_AUTO_FLOOR_lines[] = {
 inline constexpr Arg OPTIM_AUTO_FLOOR_args[] = {
     Arg{"a", ArgKind::Number, false, false, Limit{}, Limit{}, false, false,
         Span<std::string_view>{nullptr, 0}, Span<RefusedWord>{nullptr, 0}, "",
-        "", "", false, ""},
+        "", "", false, "", false},
 };
 inline constexpr std::string_view OPTIM_AUTO_FLOOR_checks[] = {
     "OPTIM {key}: AUTO FLOOR must be >= 0 (got {tok})",
@@ -2013,7 +2210,7 @@ inline constexpr std::string_view OPTIM_AUTO_GROUP_FLOOR_lines[] = {
 inline constexpr Arg OPTIM_AUTO_GROUP_FLOOR_args[] = {
     Arg{"r", ArgKind::Number, false, false, Limit{}, Limit{}, false, false,
         Span<std::string_view>{nullptr, 0}, Span<RefusedWord>{nullptr, 0}, "",
-        "", "", false, ""},
+        "", "", false, "", false},
 };
 inline constexpr std::string_view OPTIM_AUTO_GROUP_FLOOR_checks[] = {
     "OPTIM {key}: AUTO GROUP_FLOOR must be >= 0 (got {tok})",
@@ -2036,7 +2233,7 @@ inline constexpr Arg OPTIM_ASINH_args[] = {
     Arg{"c", ArgKind::Number, false, false, Limit{}, Limit{}, false, false,
         Span<std::string_view>{nullptr, 0}, Span<RefusedWord>{nullptr, 0}, "",
         "OPTIM {key}: ASINH <c> must be a finite number (got '{tok}'){underflow}",
-        "", false, ""},
+        "", false, "", false},
 };
 inline constexpr std::string_view OPTIM_ASINH_checks[] = {
     "OPTIM {key}: ASINH needs one argument <c> (the linear scale)",
@@ -2054,15 +2251,15 @@ inline constexpr std::string_view PC_OBSERVABLE_cohesive_energy_checks[] = {
 inline constexpr Arg OPTIM_range_args[] = {
     Arg{"indices", ArgKind::Indices, false, false, Limit{}, Limit{}, false,
         false, Span<std::string_view>{nullptr, 0},
-        Span<RefusedWord>{nullptr, 0}, "", "", "", false, ""},
+        Span<RefusedWord>{nullptr, 0}, "", "", "", false, "", false},
     Arg{"low", ArgKind::Number, false, false, Limit{}, Limit{}, false, false,
         Span<std::string_view>{nullptr, 0}, Span<RefusedWord>{nullptr, 0}, "",
         "OPTIM {key}: <low> must be a finite number (got '{tok}'){underflow}",
-        "", false, ""},
+        "", false, "", false},
     Arg{"high", ArgKind::Number, false, false, Limit{}, Limit{}, false, false,
         Span<std::string_view>{nullptr, 0}, Span<RefusedWord>{nullptr, 0}, "",
         "OPTIM {key}: <high> must be a finite number (got '{tok}'){underflow}",
-        "", false, ""},
+        "", false, "", false},
 };
 inline constexpr std::string_view OPTIM_range_checks[] = {
     "OPTIM {key}: unexpected token(s) '{text}' -- the grammar is OPTIM <KEY> (indices) <low> <high> [LIN | LOG | ASINH <c>] or OPTIM <KEY> (indices) AUTO [RATIO <f> | FRAC <p>] [FLOOR <a>] [GROUP_FLOOR <r>] [LIN | LOG | ASINH <c>]",
@@ -2074,7 +2271,7 @@ inline constexpr std::string_view OPTIM_range_checks[] = {
 inline constexpr Arg OPTIM_AUTO_args[] = {
     Arg{"indices", ArgKind::Indices, false, false, Limit{}, Limit{}, false,
         false, Span<std::string_view>{nullptr, 0},
-        Span<RefusedWord>{nullptr, 0}, "", "", "", false, ""},
+        Span<RefusedWord>{nullptr, 0}, "", "", "", false, "", false},
 };
 inline constexpr std::string_view OPTIM_AUTO_checks[] = {
     "OPTIM {key}: AUTO option '{tok}' needs a value -- the grammar is OPTIM <KEY> (indices) <low> <high> [LIN | LOG | ASINH <c>] or OPTIM <KEY> (indices) AUTO [RATIO <f> | FRAC <p>] [FLOOR <a>] [GROUP_FLOOR <r>] [LIN | LOG | ASINH <c>]",
@@ -2087,6 +2284,10 @@ inline constexpr std::string_view OPTIM_AUTO_checks[] = {
     "OPTIM {key}: AUTO takes RATIO or FRAC, not both",
     "OPTIM {key} ({index}): AUTO without RATIO or FRAC gives {name} the box [seed/2, seed*2] (RATIO 2), which needs a seed other than 0, and the seed is 0{hint}",
     "OPTIM {key} ({index}): the AUTO box [{low}, {high}] around the seed {seed} is not finite; a smaller RATIO or FRAC gives a finite box",
+};
+inline constexpr RuleWhat RULE_set_once_for_optimiser_what[] = {
+    RuleWhat{"GROUP.OPTIMIZER", "optimiser"},
+    RuleWhat{"OPTIMIZER.LOG_HP", "search space"},
 };
 inline constexpr std::string_view ENV_TADAH_OPTIM_SCALE_values[] = {
     "AUTO",
@@ -2140,7 +2341,7 @@ inline constexpr Arg METHOD_RANDOM_args[] = {
     Arg{"K", ArgKind::Integer, false, false, Limit{true, "1", 1.0, true, 1ull},
         Limit{true, "1000000", 1000000.0, true, 1000000ull}, false, false,
         Span<std::string_view>{nullptr, 0}, Span<RefusedWord>{nullptr, 0},
-        "{key} RANDOM: K", "", "", false, ""},
+        "{key} RANDOM: K", "", "", false, "", false},
 };
 inline constexpr std::string_view METHOD_RANDOM_checks[] = {
     "{key} RANDOM takes one value, K, the number of starting points it draws",
@@ -2149,7 +2350,7 @@ inline constexpr Arg METHOD_LHS_args[] = {
     Arg{"K", ArgKind::Integer, false, false, Limit{true, "1", 1.0, true, 1ull},
         Limit{true, "1000000", 1000000.0, true, 1000000ull}, false, false,
         Span<std::string_view>{nullptr, 0}, Span<RefusedWord>{nullptr, 0},
-        "{key} LHS: K", "", "", false, ""},
+        "{key} LHS: K", "", "", false, "", false},
 };
 inline constexpr std::string_view METHOD_LHS_checks[] = {
     "{key} LHS takes one value, K, the number of starting points it draws",
@@ -2158,7 +2359,7 @@ inline constexpr Arg METHOD_SOBOL_args[] = {
     Arg{"K", ArgKind::Integer, false, false, Limit{true, "1", 1.0, true, 1ull},
         Limit{true, "1000000", 1000000.0, true, 1000000ull}, false, false,
         Span<std::string_view>{nullptr, 0}, Span<RefusedWord>{nullptr, 0},
-        "{key} SOBOL: K", "", "", false, ""},
+        "{key} SOBOL: K", "", "", false, "", false},
 };
 inline constexpr std::string_view METHOD_SOBOL_checks[] = {
     "{key} SOBOL takes one value, K, the number of starting points it draws",
@@ -2166,7 +2367,7 @@ inline constexpr std::string_view METHOD_SOBOL_checks[] = {
 inline constexpr Arg METHOD_WARM_args[] = {
     Arg{"file", ArgKind::Name, false, false, Limit{}, Limit{}, false, false,
         Span<std::string_view>{nullptr, 0}, Span<RefusedWord>{nullptr, 0}, "",
-        "", "", false, ""},
+        "", "", false, "", false},
 };
 inline constexpr std::string_view METHOD_WARM_checks[] = {
     "{key} WARM takes one value, the potential file the starting point is read from",
@@ -2244,6 +2445,14 @@ inline constexpr std::string_view script_timeout_large_msg = "{what} is too larg
 
 namespace structure {
 inline constexpr Span<CheckStage> check_order = Span<CheckStage>{detail::structure_check_order, 10};
+inline constexpr Span<OpenStep> open_order = Span<OpenStep>{detail::structure_open_order, 6};
+inline constexpr Span<CloseStep> close_order = Span<CloseStep>{detail::structure_close_order, 4};
+inline constexpr Span<EofStep> eof_order = Span<EofStep>{detail::structure_eof_order, 14};
+/* The steps of the line of a key by its place: a top-level key, a key
+ * of a group, another key of a block. */
+inline constexpr Span<LineStep> line_steps_root = Span<LineStep>{detail::structure_line_steps_root, 3};
+inline constexpr Span<LineStep> line_steps_group = Span<LineStep>{detail::structure_line_steps_group, 3};
+inline constexpr Span<LineStep> line_steps_block = Span<LineStep>{detail::structure_line_steps_block, 2};
 inline constexpr std::string_view end_without_open_msg = "{end} without matching {name}";
 inline constexpr std::string_view end_mismatch_msg = "{end} does not close the innermost open block, the {open} block opened on line {open_line} (END{open} closes it)";
 inline constexpr std::string_view end_takes_no_value_msg = "{end} closes the {name} block and takes no value (unexpected '{tok}')";
@@ -2293,6 +2502,8 @@ inline constexpr Block kBlocks[] = {
       false, Span<Alias>{nullptr, 0}, Span<Refusal>{nullptr, 0}, "",
       Span<std::string_view>{nullptr, 0}, Span<std::string_view>{nullptr, 0},
       Span<std::string_view>{detail::BLOCK_OPTIMIZER_close_checks, 5},
+      Span<CheckAt>{detail::BLOCK_OPTIMIZER_close_checks_at, 5},
+      Span<BlockCloseStep>{detail::BLOCK_OPTIMIZER_close_steps, 1},
       Span<KeyId>{detail::BLOCK_OPTIMIZER_keys, 17}},
   Block{BlockId::STRATEGY, "STRATEGY", "ENDSTRATEGY",
       block_bit(BlockId::OPTIMIZER), BlockRepeat::Error,
@@ -2302,6 +2513,8 @@ inline constexpr Block kBlocks[] = {
       false, Span<Alias>{nullptr, 0}, Span<Refusal>{nullptr, 0}, "",
       Span<std::string_view>{nullptr, 0}, Span<std::string_view>{nullptr, 0},
       Span<std::string_view>{detail::BLOCK_STRATEGY_close_checks, 1},
+      Span<CheckAt>{detail::BLOCK_STRATEGY_close_checks_at, 1},
+      Span<BlockCloseStep>{detail::BLOCK_STRATEGY_close_steps, 3},
       Span<KeyId>{detail::BLOCK_STRATEGY_keys, 21}},
   Block{BlockId::INIT, "INIT", "ENDINIT",
       block_bit(BlockId::OPTIMIZER) | block_bit(BlockId::STRATEGY) | block_bit(BlockId::EXPLORE) | block_bit(BlockId::REFINE),
@@ -2312,6 +2525,7 @@ inline constexpr Block kBlocks[] = {
       Span<Refusal>{nullptr, 0}, "",
       Span<std::string_view>{detail::BLOCK_INIT_unreachable, 1},
       Span<std::string_view>{nullptr, 0}, Span<std::string_view>{nullptr, 0},
+      Span<CheckAt>{nullptr, 0}, Span<BlockCloseStep>{nullptr, 0},
       Span<KeyId>{detail::BLOCK_INIT_keys, 4}},
   Block{BlockId::NOISE, "NOISE", "ENDNOISE", block_bit(BlockId::OPTIMIZER),
       BlockRepeat::Merge, "",
@@ -2319,7 +2533,8 @@ inline constexpr Block kBlocks[] = {
       "unknown key '{key}' inside the NOISE block opened on line {open_line} (only AUTO and CALIBRATION are valid; ENDNOISE closes it)",
       true, Span<Alias>{nullptr, 0}, Span<Refusal>{nullptr, 0}, "",
       Span<std::string_view>{nullptr, 0}, Span<std::string_view>{nullptr, 0},
-      Span<std::string_view>{nullptr, 0},
+      Span<std::string_view>{nullptr, 0}, Span<CheckAt>{nullptr, 0},
+      Span<BlockCloseStep>{nullptr, 0},
       Span<KeyId>{detail::BLOCK_NOISE_keys, 2}},
   Block{BlockId::EXPLORE, "EXPLORE", "ENDEXPLORE",
       block_bit(BlockId::STRATEGY), BlockRepeat::Merge, "",
@@ -2329,6 +2544,8 @@ inline constexpr Block kBlocks[] = {
       Span<std::string_view>{nullptr, 0},
       Span<std::string_view>{detail::BLOCK_EXPLORE_requires, 1},
       Span<std::string_view>{detail::BLOCK_EXPLORE_close_checks, 3},
+      Span<CheckAt>{detail::BLOCK_EXPLORE_close_checks_at, 3},
+      Span<BlockCloseStep>{detail::BLOCK_EXPLORE_close_steps, 1},
       Span<KeyId>{detail::BLOCK_EXPLORE_keys, 16}},
   Block{BlockId::REFINE, "REFINE", "ENDREFINE", block_bit(BlockId::STRATEGY),
       BlockRepeat::Merge, "", "REFINE block must appear inside STRATEGY",
@@ -2336,7 +2553,8 @@ inline constexpr Block kBlocks[] = {
       false, Span<Alias>{nullptr, 0}, Span<Refusal>{nullptr, 0}, "",
       Span<std::string_view>{nullptr, 0},
       Span<std::string_view>{detail::BLOCK_REFINE_requires, 1},
-      Span<std::string_view>{nullptr, 0},
+      Span<std::string_view>{nullptr, 0}, Span<CheckAt>{nullptr, 0},
+      Span<BlockCloseStep>{nullptr, 0},
       Span<KeyId>{detail::BLOCK_REFINE_keys, 16}},
   Block{BlockId::INNER, "INNER", "ENDINNER",
       block_bit(BlockId::STRATEGY) | block_bit(BlockId::EXPLORE) | block_bit(BlockId::REFINE),
@@ -2350,6 +2568,8 @@ inline constexpr Block kBlocks[] = {
       Span<std::string_view>{detail::BLOCK_INNER_unreachable, 1},
       Span<std::string_view>{nullptr, 0},
       Span<std::string_view>{detail::BLOCK_INNER_close_checks, 3},
+      Span<CheckAt>{detail::BLOCK_INNER_close_checks_at, 3},
+      Span<BlockCloseStep>{detail::BLOCK_INNER_close_steps, 1},
       Span<KeyId>{detail::BLOCK_INNER_keys, 13}},
   Block{BlockId::RESTART, "RESTART", "ENDRESTART",
       block_bit(BlockId::STRATEGY), BlockRepeat::Merge, "",
@@ -2359,335 +2579,384 @@ inline constexpr Block kBlocks[] = {
       Span<Refusal>{nullptr, 0}, "", Span<std::string_view>{nullptr, 0},
       Span<std::string_view>{nullptr, 0},
       Span<std::string_view>{detail::BLOCK_RESTART_close_checks, 1},
+      Span<CheckAt>{detail::BLOCK_RESTART_close_checks_at, 1},
+      Span<BlockCloseStep>{nullptr, 0},
       Span<KeyId>{detail::BLOCK_RESTART_keys, 6}},
 };
 
 inline constexpr Key kKeys[] = {
   Key{KeyId::ROOT_FAILSCORE, "ROOT.FAILSCORE", "FAILSCORE", "",
       block_bit(BlockId::ROOT), Span<Arg>{detail::ROOT_FAILSCORE_args, 1},
-      Repeat::Error,
+      Repeat::ErrorUntilRead,
       "FAILSCORE is set twice (first on line {first_line}) and no line between reads the first (a PC_LAMMPS or PC_FAILPROBE line without --failscore); each key is given once",
       "", false, "", false, KeyId::ROOT_FAILSCORE, false, "",
-      Span<std::string_view>{nullptr, 0}},
+      Span<std::string_view>{nullptr, 0}, Span<LineStep>{nullptr, 0}, ""},
   Key{KeyId::ROOT_PC_SCRIPT_TIMEOUT, "ROOT.PC_SCRIPT_TIMEOUT",
       "PC_SCRIPT_TIMEOUT", "", block_bit(BlockId::ROOT),
-      Span<Arg>{detail::ROOT_PC_SCRIPT_TIMEOUT_args, 1}, Repeat::Error,
+      Span<Arg>{detail::ROOT_PC_SCRIPT_TIMEOUT_args, 1},
+      Repeat::ErrorUntilRead,
       "PC_SCRIPT_TIMEOUT is set twice (first on line {first_line}) and no line between reads the first (a PC_LAMMPS or PC_FAILPROBE line without --maxtime); each key is given once",
       "", true, "off", false, KeyId::ROOT_PC_SCRIPT_TIMEOUT, false, "",
-      Span<std::string_view>{detail::ROOT_PC_SCRIPT_TIMEOUT_checks, 1}},
+      Span<std::string_view>{detail::ROOT_PC_SCRIPT_TIMEOUT_checks, 1},
+      Span<LineStep>{nullptr, 0}, ""},
   Key{KeyId::ROOT_MAXTIME, "ROOT.MAXTIME", "MAXTIME", "",
       block_bit(BlockId::ROOT), Span<Arg>{detail::ROOT_MAXTIME_args, 1},
-      Repeat::Error,
+      Repeat::ErrorUntilRead,
       "MAXTIME is set twice (first on line {first_line}) and no line between reads the first (a PC_LAMMPS or PC_FAILPROBE line without --maxtime); each key is given once",
       "", true, "off", true, KeyId::ROOT_PC_SCRIPT_TIMEOUT, false, "",
-      Span<std::string_view>{detail::ROOT_MAXTIME_checks, 1}},
+      Span<std::string_view>{detail::ROOT_MAXTIME_checks, 1},
+      Span<LineStep>{nullptr, 0}, ""},
   Key{KeyId::ROOT_PC_ISOLATION, "ROOT.PC_ISOLATION", "PC_ISOLATION", "",
       block_bit(BlockId::ROOT), Span<Arg>{detail::ROOT_PC_ISOLATION_args, 1},
       Repeat::Error,
       "PC_ISOLATION is set twice (first on line {first_line}); each key is given once",
       "", false, "", false, KeyId::ROOT_PC_ISOLATION, false,
       "TADAH_PC_ISOLATION",
-      Span<std::string_view>{detail::ROOT_PC_ISOLATION_checks, 1}},
+      Span<std::string_view>{detail::ROOT_PC_ISOLATION_checks, 1},
+      Span<LineStep>{nullptr, 0}, ""},
   Key{KeyId::ROOT_PC_WORKER_TIMEOUT, "ROOT.PC_WORKER_TIMEOUT",
       "PC_WORKER_TIMEOUT", "", block_bit(BlockId::ROOT),
       Span<Arg>{detail::ROOT_PC_WORKER_TIMEOUT_args, 1}, Repeat::Error,
       "PC_WORKER_TIMEOUT is set twice (first on line {first_line}); each key is given once",
       "", true, "0", false, KeyId::ROOT_PC_WORKER_TIMEOUT, false,
       "TADAH_PC_WORKER_TIMEOUT",
-      Span<std::string_view>{detail::ROOT_PC_WORKER_TIMEOUT_checks, 2}},
+      Span<std::string_view>{detail::ROOT_PC_WORKER_TIMEOUT_checks, 2},
+      Span<LineStep>{nullptr, 0}, ""},
   Key{KeyId::ROOT_FAILSCORE_GRADING, "ROOT.FAILSCORE_GRADING",
       "FAILSCORE_GRADING", "", block_bit(BlockId::ROOT),
       Span<Arg>{detail::ROOT_FAILSCORE_GRADING_args, 1}, Repeat::Error,
       "FAILSCORE_GRADING is set twice (first on line {first_line}); each key is given once",
       "", true, "OFF", false, KeyId::ROOT_FAILSCORE_GRADING, false,
       "TADAH_FAILSCORE_GRADING",
-      Span<std::string_view>{detail::ROOT_FAILSCORE_GRADING_checks, 1}},
+      Span<std::string_view>{detail::ROOT_FAILSCORE_GRADING_checks, 1},
+      Span<LineStep>{nullptr, 0}, ""},
   Key{KeyId::ROOT_BUMPGATE, "ROOT.BUMPGATE", "BUMPGATE", "",
       block_bit(BlockId::ROOT), Span<Arg>{detail::ROOT_BUMPGATE_args, 1},
       Repeat::Error,
       "BUMPGATE is set twice (first on line {first_line}); each key is given once",
       "", true, "CANDIDATE", false, KeyId::ROOT_BUMPGATE, false,
       "TADAH_BUMPGATE",
-      Span<std::string_view>{detail::ROOT_BUMPGATE_checks, 1}},
+      Span<std::string_view>{detail::ROOT_BUMPGATE_checks, 1},
+      Span<LineStep>{nullptr, 0}, ""},
   Key{KeyId::ROOT_RHOGATE, "ROOT.RHOGATE", "RHOGATE", "",
       block_bit(BlockId::ROOT), Span<Arg>{detail::ROOT_RHOGATE_args, 1},
       Repeat::Error,
       "RHOGATE is set twice (first on line {first_line}); each key is given once",
       "", false, "", false, KeyId::ROOT_RHOGATE, false, "",
-      Span<std::string_view>{detail::ROOT_RHOGATE_checks, 7}},
+      Span<std::string_view>{detail::ROOT_RHOGATE_checks, 7},
+      Span<LineStep>{nullptr, 0}, ""},
   Key{KeyId::ROOT_RHOBARGATE, "ROOT.RHOBARGATE", "RHOBARGATE", "",
       block_bit(BlockId::ROOT), Span<Arg>{detail::ROOT_RHOBARGATE_args, 4},
       Repeat::Error,
       "RHOBARGATE is set twice (first on line {first_line}); each key is given once",
       "", false, "", false, KeyId::ROOT_RHOBARGATE, false, "",
-      Span<std::string_view>{detail::ROOT_RHOBARGATE_checks, 9}},
+      Span<std::string_view>{detail::ROOT_RHOBARGATE_checks, 9},
+      Span<LineStep>{nullptr, 0}, ""},
   Key{KeyId::ROOT_QFLUSH, "ROOT.QFLUSH", "QFLUSH", "",
       block_bit(BlockId::ROOT), Span<Arg>{detail::ROOT_QFLUSH_args, 1},
       Repeat::Error,
       "QFLUSH is set twice (first on line {first_line}); each key is given once",
       "", true, "10", false, KeyId::ROOT_QFLUSH, false, "",
-      Span<std::string_view>{nullptr, 0}},
+      Span<std::string_view>{nullptr, 0}, Span<LineStep>{nullptr, 0}, ""},
   Key{KeyId::ROOT_OUTPUT, "ROOT.OUTPUT", "OUTPUT", "",
       block_bit(BlockId::ROOT), Span<Arg>{detail::ROOT_OUTPUT_args, 1},
       Repeat::Error,
       "OUTPUT is set twice (first on line {first_line}); each key is given once",
       "", true, "1", false, KeyId::ROOT_OUTPUT, false, "",
-      Span<std::string_view>{nullptr, 0}},
+      Span<std::string_view>{nullptr, 0}, Span<LineStep>{nullptr, 0}, ""},
   Key{KeyId::ROOT_BOUTPUT, "ROOT.BOUTPUT", "BOUTPUT", "",
       block_bit(BlockId::ROOT), Span<Arg>{detail::ROOT_BOUTPUT_args, 1},
       Repeat::Error,
       "BOUTPUT is set twice (first on line {first_line}); each key is given once",
       "", true, "1", false, KeyId::ROOT_BOUTPUT, false, "",
-      Span<std::string_view>{nullptr, 0}},
+      Span<std::string_view>{nullptr, 0}, Span<LineStep>{nullptr, 0}, ""},
   Key{KeyId::ROOT_DIGITS, "ROOT.DIGITS", "DIGITS", "",
       block_bit(BlockId::ROOT), Span<Arg>{detail::ROOT_DIGITS_args, 1},
       Repeat::Error,
       "DIGITS is set twice (first on line {first_line}); each key is given once",
       "", true, "6", false, KeyId::ROOT_DIGITS, false, "",
-      Span<std::string_view>{nullptr, 0}},
+      Span<std::string_view>{nullptr, 0}, Span<LineStep>{nullptr, 0}, ""},
   Key{KeyId::ROOT_DUMP, "ROOT.DUMP", "DUMP", "", block_bit(BlockId::ROOT),
       Span<Arg>{detail::ROOT_DUMP_args, 2}, Repeat::Error,
       "DUMP is set twice (first on line {first_line}); each key is given once",
       "", false, "", false, KeyId::ROOT_DUMP, false, "",
-      Span<std::string_view>{detail::ROOT_DUMP_checks, 10}},
+      Span<std::string_view>{detail::ROOT_DUMP_checks, 10},
+      Span<LineStep>{nullptr, 0}, ""},
   Key{KeyId::ROOT_BDUMP, "ROOT.BDUMP", "BDUMP", "", block_bit(BlockId::ROOT),
       Span<Arg>{detail::ROOT_BDUMP_args, 2}, Repeat::Error,
       "BDUMP is set twice (first on line {first_line}); each key is given once",
       "", false, "", false, KeyId::ROOT_BDUMP, false, "",
-      Span<std::string_view>{detail::ROOT_BDUMP_checks, 10}},
+      Span<std::string_view>{detail::ROOT_BDUMP_checks, 10},
+      Span<LineStep>{nullptr, 0}, ""},
   Key{KeyId::ROOT_OPTIM_SCALE, "ROOT.OPTIM_SCALE", "OPTIM_SCALE", "",
       block_bit(BlockId::ROOT), Span<Arg>{detail::ROOT_OPTIM_SCALE_args, 1},
       Repeat::Error,
       "OPTIM_SCALE is set twice (first on line {first_line}); each key is given once",
       "", true, "AUTO", false, KeyId::ROOT_OPTIM_SCALE, false,
-      "TADAH_OPTIM_SCALE", Span<std::string_view>{nullptr, 0}},
+      "TADAH_OPTIM_SCALE", Span<std::string_view>{nullptr, 0},
+      Span<LineStep>{nullptr, 0}, ""},
   Key{KeyId::OPTIMIZER_LIB, "OPTIMIZER.LIB", "LIB", "OPTIMIZER",
       block_bit(BlockId::OPTIMIZER) | block_bit(BlockId::STRATEGY) | block_bit(BlockId::EXPLORE) | block_bit(BlockId::REFINE) | block_bit(BlockId::INNER),
       Span<Arg>{detail::OPTIMIZER_LIB_args, 1}, Repeat::Error,
       "LIB is set twice in the {block} block (first on line {first_line}); each key is given once",
       "", false, "", false, KeyId::OPTIMIZER_LIB, false, "",
-      Span<std::string_view>{nullptr, 0}},
+      Span<std::string_view>{nullptr, 0}, Span<LineStep>{nullptr, 0}, ""},
   Key{KeyId::OPTIMIZER_ALGO, "OPTIMIZER.ALGO", "ALGO", "OPTIMIZER",
       block_bit(BlockId::OPTIMIZER) | block_bit(BlockId::STRATEGY) | block_bit(BlockId::EXPLORE) | block_bit(BlockId::REFINE) | block_bit(BlockId::INNER),
       Span<Arg>{detail::OPTIMIZER_ALGO_args, 1}, Repeat::Error,
       "ALGO is set twice in the {block} block (first on line {first_line}); each key is given once",
       "", false, "", false, KeyId::OPTIMIZER_ALGO, false, "",
-      Span<std::string_view>{nullptr, 0}},
+      Span<std::string_view>{nullptr, 0}, Span<LineStep>{nullptr, 0}, ""},
   Key{KeyId::OPTIMIZER_MAXEVAL, "OPTIMIZER.MAXEVAL", "MAXEVAL", "OPTIMIZER",
       block_bit(BlockId::OPTIMIZER) | block_bit(BlockId::STRATEGY) | block_bit(BlockId::EXPLORE) | block_bit(BlockId::REFINE) | block_bit(BlockId::INNER),
       Span<Arg>{detail::OPTIMIZER_MAXEVAL_args, 1}, Repeat::Error,
       "MAXEVAL is set twice in the {block} block (first on line {first_line}); each key is given once",
       "", false, "", false, KeyId::OPTIMIZER_MAXEVAL, false, "",
-      Span<std::string_view>{detail::OPTIMIZER_MAXEVAL_checks, 3}},
+      Span<std::string_view>{detail::OPTIMIZER_MAXEVAL_checks, 3},
+      Span<LineStep>{nullptr, 0}, ""},
   Key{KeyId::OPTIMIZER_MAXTIME, "OPTIMIZER.MAXTIME", "MAXTIME", "OPTIMIZER",
       block_bit(BlockId::OPTIMIZER) | block_bit(BlockId::STRATEGY) | block_bit(BlockId::EXPLORE) | block_bit(BlockId::REFINE) | block_bit(BlockId::INNER),
       Span<Arg>{detail::OPTIMIZER_MAXTIME_args, 1}, Repeat::Error,
       "MAXTIME is set twice in the {block} block (first on line {first_line}); each key is given once",
       "", false, "", false, KeyId::OPTIMIZER_MAXTIME, false, "",
-      Span<std::string_view>{detail::OPTIMIZER_MAXTIME_checks, 1}},
+      Span<std::string_view>{detail::OPTIMIZER_MAXTIME_checks, 1},
+      Span<LineStep>{nullptr, 0}, ""},
   Key{KeyId::OPTIMIZER_STOPVAL, "OPTIMIZER.STOPVAL", "STOPVAL", "OPTIMIZER",
       block_bit(BlockId::OPTIMIZER) | block_bit(BlockId::STRATEGY) | block_bit(BlockId::EXPLORE) | block_bit(BlockId::REFINE) | block_bit(BlockId::INNER),
       Span<Arg>{detail::OPTIMIZER_STOPVAL_args, 1}, Repeat::Error,
       "STOPVAL is set twice in the {block} block (first on line {first_line}); each key is given once",
       "", false, "", false, KeyId::OPTIMIZER_STOPVAL, false, "",
-      Span<std::string_view>{detail::OPTIMIZER_STOPVAL_checks, 1}},
+      Span<std::string_view>{detail::OPTIMIZER_STOPVAL_checks, 1},
+      Span<LineStep>{nullptr, 0}, ""},
   Key{KeyId::OPTIMIZER_FTOL_REL, "OPTIMIZER.FTOL_REL", "FTOL_REL", "OPTIMIZER",
       block_bit(BlockId::OPTIMIZER) | block_bit(BlockId::STRATEGY) | block_bit(BlockId::EXPLORE) | block_bit(BlockId::REFINE) | block_bit(BlockId::INNER),
       Span<Arg>{detail::OPTIMIZER_FTOL_REL_args, 1}, Repeat::Error,
       "FTOL_REL is set twice in the {block} block (first on line {first_line}); each key is given once",
       "", false, "", false, KeyId::OPTIMIZER_FTOL_REL, false, "",
-      Span<std::string_view>{detail::OPTIMIZER_FTOL_REL_checks, 6}},
+      Span<std::string_view>{detail::OPTIMIZER_FTOL_REL_checks, 6},
+      Span<LineStep>{nullptr, 0}, ""},
   Key{KeyId::OPTIMIZER_FTOL_ABS, "OPTIMIZER.FTOL_ABS", "FTOL_ABS", "OPTIMIZER",
       block_bit(BlockId::OPTIMIZER) | block_bit(BlockId::STRATEGY) | block_bit(BlockId::EXPLORE) | block_bit(BlockId::REFINE) | block_bit(BlockId::INNER),
       Span<Arg>{detail::OPTIMIZER_FTOL_ABS_args, 1}, Repeat::Error,
       "FTOL_ABS is set twice in the {block} block (first on line {first_line}); each key is given once",
       "", false, "", false, KeyId::OPTIMIZER_FTOL_ABS, false, "",
-      Span<std::string_view>{detail::OPTIMIZER_FTOL_ABS_checks, 6}},
+      Span<std::string_view>{detail::OPTIMIZER_FTOL_ABS_checks, 6},
+      Span<LineStep>{nullptr, 0}, ""},
   Key{KeyId::OPTIMIZER_XTOL_REL, "OPTIMIZER.XTOL_REL", "XTOL_REL", "OPTIMIZER",
       block_bit(BlockId::OPTIMIZER) | block_bit(BlockId::STRATEGY) | block_bit(BlockId::EXPLORE) | block_bit(BlockId::REFINE) | block_bit(BlockId::INNER),
       Span<Arg>{detail::OPTIMIZER_XTOL_REL_args, 1}, Repeat::Error,
       "XTOL_REL is set twice in the {block} block (first on line {first_line}); each key is given once",
       "", false, "", false, KeyId::OPTIMIZER_XTOL_REL, false, "",
-      Span<std::string_view>{detail::OPTIMIZER_XTOL_REL_checks, 6}},
+      Span<std::string_view>{detail::OPTIMIZER_XTOL_REL_checks, 6},
+      Span<LineStep>{nullptr, 0}, ""},
   Key{KeyId::OPTIMIZER_XTOL_ABS, "OPTIMIZER.XTOL_ABS", "XTOL_ABS", "OPTIMIZER",
       block_bit(BlockId::OPTIMIZER) | block_bit(BlockId::STRATEGY) | block_bit(BlockId::EXPLORE) | block_bit(BlockId::REFINE) | block_bit(BlockId::INNER),
       Span<Arg>{detail::OPTIMIZER_XTOL_ABS_args, 1}, Repeat::Error,
       "XTOL_ABS is set twice in the {block} block (first on line {first_line}); each key is given once",
       "", false, "", false, KeyId::OPTIMIZER_XTOL_ABS, false, "",
-      Span<std::string_view>{detail::OPTIMIZER_XTOL_ABS_checks, 6}},
+      Span<std::string_view>{detail::OPTIMIZER_XTOL_ABS_checks, 6},
+      Span<LineStep>{nullptr, 0}, ""},
   Key{KeyId::OPTIMIZER_POPULATION, "OPTIMIZER.POPULATION", "POPULATION",
       "OPTIMIZER",
       block_bit(BlockId::OPTIMIZER) | block_bit(BlockId::STRATEGY) | block_bit(BlockId::EXPLORE) | block_bit(BlockId::REFINE) | block_bit(BlockId::INNER),
       Span<Arg>{detail::OPTIMIZER_POPULATION_args, 1}, Repeat::Error,
       "POPULATION is set twice in the {block} block (first on line {first_line}); each key is given once",
       "", false, "", false, KeyId::OPTIMIZER_POPULATION, false, "",
-      Span<std::string_view>{detail::OPTIMIZER_POPULATION_checks, 6}},
+      Span<std::string_view>{detail::OPTIMIZER_POPULATION_checks, 6},
+      Span<LineStep>{nullptr, 0}, ""},
   Key{KeyId::OPTIMIZER_STEP, "OPTIMIZER.STEP", "STEP", "OPTIMIZER",
       block_bit(BlockId::OPTIMIZER) | block_bit(BlockId::STRATEGY) | block_bit(BlockId::EXPLORE) | block_bit(BlockId::REFINE) | block_bit(BlockId::INNER),
       Span<Arg>{detail::OPTIMIZER_STEP_args, 3}, Repeat::Error,
       "STEP is set twice in the {block} block (first on line {first_line}); each key is given once",
       "", false, "", false, KeyId::OPTIMIZER_STEP, false, "",
-      Span<std::string_view>{detail::OPTIMIZER_STEP_checks, 12}},
+      Span<std::string_view>{detail::OPTIMIZER_STEP_checks, 12},
+      Span<LineStep>{nullptr, 0}, ""},
   Key{KeyId::OPTIMIZER_SEED, "OPTIMIZER.SEED", "SEED", "OPTIMIZER",
       block_bit(BlockId::OPTIMIZER) | block_bit(BlockId::STRATEGY) | block_bit(BlockId::EXPLORE) | block_bit(BlockId::REFINE) | block_bit(BlockId::INNER),
       Span<Arg>{detail::OPTIMIZER_SEED_args, 1}, Repeat::Error,
       "SEED is set twice in the {block} block (first on line {first_line}); each key is given once",
       "", false, "", false, KeyId::OPTIMIZER_SEED, false, "",
-      Span<std::string_view>{detail::OPTIMIZER_SEED_checks, 4}},
+      Span<std::string_view>{detail::OPTIMIZER_SEED_checks, 4},
+      Span<LineStep>{nullptr, 0}, ""},
   Key{KeyId::OPTIMIZER_VECTOR_ARR, "OPTIMIZER.VECTOR_ARR", "VECTOR_ARR",
       "OPTIMIZER",
       block_bit(BlockId::OPTIMIZER) | block_bit(BlockId::STRATEGY) | block_bit(BlockId::EXPLORE) | block_bit(BlockId::REFINE) | block_bit(BlockId::INNER),
       Span<Arg>{detail::OPTIMIZER_VECTOR_ARR_args, 1}, Repeat::Error,
       "VECTOR_ARR is set twice in the {block} block (first on line {first_line}); each key is given once",
       "", false, "", false, KeyId::OPTIMIZER_VECTOR_ARR, false, "",
-      Span<std::string_view>{detail::OPTIMIZER_VECTOR_ARR_checks, 3}},
+      Span<std::string_view>{detail::OPTIMIZER_VECTOR_ARR_checks, 3},
+      Span<LineStep>{nullptr, 0}, ""},
   Key{KeyId::OPTIMIZER_THREADS, "OPTIMIZER.THREADS", "THREADS", "OPTIMIZER",
       block_bit(BlockId::OPTIMIZER) | block_bit(BlockId::STRATEGY) | block_bit(BlockId::EXPLORE) | block_bit(BlockId::REFINE) | block_bit(BlockId::INNER),
       Span<Arg>{detail::OPTIMIZER_THREADS_args, 1}, Repeat::Error,
       "THREADS is set twice in the {block} block (first on line {first_line}); each key is given once",
       "", true, "1", false, KeyId::OPTIMIZER_THREADS, false, "",
-      Span<std::string_view>{detail::OPTIMIZER_THREADS_checks, 2}},
+      Span<std::string_view>{detail::OPTIMIZER_THREADS_checks, 2},
+      Span<LineStep>{nullptr, 0}, ""},
   Key{KeyId::OPTIMIZER_GRAD_STRATEGY, "OPTIMIZER.GRAD_STRATEGY",
       "GRAD_STRATEGY", "OPTIMIZER",
       block_bit(BlockId::OPTIMIZER) | block_bit(BlockId::STRATEGY) | block_bit(BlockId::EXPLORE) | block_bit(BlockId::REFINE) | block_bit(BlockId::INNER),
       Span<Arg>{detail::OPTIMIZER_GRAD_STRATEGY_args, 1}, Repeat::Error,
       "GRAD_STRATEGY is set twice in the {block} block (first on line {first_line}); each key is given once",
       "", true, "NUMERICAL", false, KeyId::OPTIMIZER_GRAD_STRATEGY, false, "",
-      Span<std::string_view>{detail::OPTIMIZER_GRAD_STRATEGY_checks, 6}},
+      Span<std::string_view>{detail::OPTIMIZER_GRAD_STRATEGY_checks, 6},
+      Span<LineStep>{nullptr, 0}, ""},
   Key{KeyId::OPTIMIZER_PARAM, "OPTIMIZER.PARAM", "PARAM", "OPTIMIZER",
       block_bit(BlockId::OPTIMIZER) | block_bit(BlockId::STRATEGY) | block_bit(BlockId::EXPLORE) | block_bit(BlockId::REFINE) | block_bit(BlockId::INNER),
       Span<Arg>{detail::OPTIMIZER_PARAM_args, 2}, Repeat::Add, "", "", false,
       "", false, KeyId::OPTIMIZER_PARAM, false, "",
-      Span<std::string_view>{detail::OPTIMIZER_PARAM_checks, 2}},
+      Span<std::string_view>{detail::OPTIMIZER_PARAM_checks, 2},
+      Span<LineStep>{nullptr, 0}, ""},
   Key{KeyId::OPTIMIZER_LOG_HP, "OPTIMIZER.LOG_HP", "LOG_HP", "",
       block_bit(BlockId::OPTIMIZER) | block_bit(BlockId::STRATEGY),
       Span<Arg>{detail::OPTIMIZER_LOG_HP_args, 1}, Repeat::Error,
       "LOG_HP is set twice in the {block} block (first on line {first_line}); each key is given once",
       "LOG_HP is written once, inside OPTIMIZER or STRATEGY: it holds for the whole search space{note}",
       false, "", false, KeyId::OPTIMIZER_LOG_HP, false, "",
-      Span<std::string_view>{nullptr, 0}},
+      Span<std::string_view>{nullptr, 0}, Span<LineStep>{nullptr, 0}, ""},
   Key{KeyId::STRATEGY_TYPE, "STRATEGY.TYPE", "TYPE", "",
       block_bit(BlockId::STRATEGY), Span<Arg>{detail::STRATEGY_TYPE_args, 1},
       Repeat::Error,
       "TYPE is set twice in the STRATEGY block (first on line {first_line}); each key is given once",
       "", true, "PLAIN", false, KeyId::STRATEGY_TYPE, false, "",
-      Span<std::string_view>{detail::STRATEGY_TYPE_checks, 1}},
+      Span<std::string_view>{detail::STRATEGY_TYPE_checks, 1},
+      Span<LineStep>{nullptr, 0}, ""},
   Key{KeyId::STRATEGY_N_STARTS, "STRATEGY.N_STARTS", "N_STARTS", "",
       block_bit(BlockId::STRATEGY),
       Span<Arg>{detail::STRATEGY_N_STARTS_args, 1}, Repeat::Error,
       "N_STARTS is set twice in the STRATEGY block (first on line {first_line}); each key is given once",
       "", false, "", false, KeyId::STRATEGY_N_STARTS, false, "",
-      Span<std::string_view>{detail::STRATEGY_N_STARTS_checks, 3}},
+      Span<std::string_view>{detail::STRATEGY_N_STARTS_checks, 3},
+      Span<LineStep>{nullptr, 0}, "only TYPE MULTISTART runs N_STARTS starts"},
   Key{KeyId::STRATEGY_BUDGET_PER_START, "STRATEGY.BUDGET_PER_START",
       "BUDGET_PER_START", "", block_bit(BlockId::STRATEGY),
       Span<Arg>{detail::STRATEGY_BUDGET_PER_START_args, 1}, Repeat::Error,
       "BUDGET_PER_START is set twice in the STRATEGY block (first on line {first_line}); each key is given once",
       "", false, "", false, KeyId::STRATEGY_BUDGET_PER_START, false, "",
-      Span<std::string_view>{nullptr, 0}},
+      Span<std::string_view>{nullptr, 0}, Span<LineStep>{nullptr, 0},
+      "only TYPE MULTISTART has starts to budget"},
   Key{KeyId::STRATEGY_TOPK, "STRATEGY.TOPK", "TOPK", "",
       block_bit(BlockId::STRATEGY), Span<Arg>{detail::STRATEGY_TOPK_args, 1},
       Repeat::Error,
       "TOPK is set twice in the STRATEGY block (first on line {first_line}); each key is given once",
       "", true, "1", false, KeyId::STRATEGY_TOPK, false, "",
-      Span<std::string_view>{nullptr, 0}},
+      Span<std::string_view>{nullptr, 0}, Span<LineStep>{nullptr, 0},
+      "only TYPE PRESTAGE forwards TOPK candidates to its refinement"},
   Key{KeyId::INIT_METHOD, "INIT.METHOD", "METHOD", "",
       block_bit(BlockId::INIT) | block_bit(BlockId::RESTART),
       Span<Arg>{detail::INIT_METHOD_args, 2}, Repeat::Add, "", "", false, "",
       false, KeyId::INIT_METHOD, false, "",
-      Span<std::string_view>{detail::INIT_METHOD_checks, 1}},
+      Span<std::string_view>{detail::INIT_METHOD_checks, 1},
+      Span<LineStep>{nullptr, 0}, ""},
   Key{KeyId::INIT_K_TOTAL, "INIT.K_TOTAL", "K_TOTAL", "",
       block_bit(BlockId::INIT) | block_bit(BlockId::RESTART),
       Span<Arg>{detail::INIT_K_TOTAL_args, 1}, Repeat::Error,
       "K_TOTAL is set twice in the {block} block (first on line {first_line}); each key is given once",
       "", false, "", false, KeyId::INIT_K_TOTAL, false, "",
-      Span<std::string_view>{detail::INIT_K_TOTAL_checks, 4}},
+      Span<std::string_view>{detail::INIT_K_TOTAL_checks, 4},
+      Span<LineStep>{nullptr, 0}, ""},
   Key{KeyId::INIT_SEED, "INIT.SEED", "SEED", "",
       block_bit(BlockId::INIT) | block_bit(BlockId::RESTART),
       Span<Arg>{detail::INIT_SEED_args, 1}, Repeat::Error,
       "SEED is set twice in the {block} block (first on line {first_line}); each key is given once",
       "", false, "", false, KeyId::INIT_SEED, false, "",
-      Span<std::string_view>{nullptr, 0}},
+      Span<std::string_view>{nullptr, 0}, Span<LineStep>{nullptr, 0}, ""},
   Key{KeyId::INIT_WARM_ON_MISMATCH, "INIT.WARM_ON_MISMATCH",
       "WARM_ON_MISMATCH", "",
       block_bit(BlockId::INIT) | block_bit(BlockId::RESTART),
       Span<Arg>{detail::INIT_WARM_ON_MISMATCH_args, 1}, Repeat::Error,
       "WARM_ON_MISMATCH is set twice in the {block} block (first on line {first_line}); each key is given once",
       "", true, "warn", false, KeyId::INIT_WARM_ON_MISMATCH, false, "",
-      Span<std::string_view>{nullptr, 0}},
+      Span<std::string_view>{nullptr, 0}, Span<LineStep>{nullptr, 0}, ""},
   Key{KeyId::NOISE_AUTO, "NOISE.AUTO", "AUTO", "", block_bit(BlockId::NOISE),
       Span<Arg>{detail::NOISE_AUTO_args, 1}, Repeat::Error,
       "AUTO is set twice in the NOISE block (first on line {first_line}); each key is given once",
       "", true, "false", false, KeyId::NOISE_AUTO, false, "",
-      Span<std::string_view>{detail::NOISE_AUTO_checks, 1}},
+      Span<std::string_view>{detail::NOISE_AUTO_checks, 1},
+      Span<LineStep>{nullptr, 0}, ""},
   Key{KeyId::NOISE_CALIBRATION, "NOISE.CALIBRATION", "CALIBRATION", "",
       block_bit(BlockId::NOISE), Span<Arg>{detail::NOISE_CALIBRATION_args, 1},
       Repeat::Error,
       "CALIBRATION is set twice in the NOISE block (first on line {first_line}); each key is given once",
       "", true, "0", false, KeyId::NOISE_CALIBRATION, false, "",
-      Span<std::string_view>{detail::NOISE_CALIBRATION_checks, 1}},
+      Span<std::string_view>{detail::NOISE_CALIBRATION_checks, 1},
+      Span<LineStep>{nullptr, 0}, ""},
   Key{KeyId::RESTART_AFTER_STAGNATION, "RESTART.AFTER_STAGNATION",
       "AFTER_STAGNATION", "", block_bit(BlockId::RESTART),
       Span<Arg>{detail::RESTART_AFTER_STAGNATION_args, 1}, Repeat::Error,
       "AFTER_STAGNATION is set twice in the RESTART block (first on line {first_line}); each key is given once",
       "", false, "", false, KeyId::RESTART_AFTER_STAGNATION, false, "",
-      Span<std::string_view>{detail::RESTART_AFTER_STAGNATION_checks, 1}},
+      Span<std::string_view>{detail::RESTART_AFTER_STAGNATION_checks, 1},
+      Span<LineStep>{nullptr, 0}, ""},
   Key{KeyId::RESTART_MAX, "RESTART.MAX", "MAX", "",
       block_bit(BlockId::RESTART), Span<Arg>{detail::RESTART_MAX_args, 1},
       Repeat::Error,
       "MAX is set twice in the RESTART block (first on line {first_line}); each key is given once",
       "", false, "", false, KeyId::RESTART_MAX, false, "",
-      Span<std::string_view>{detail::RESTART_MAX_checks, 1}},
+      Span<std::string_view>{detail::RESTART_MAX_checks, 1},
+      Span<LineStep>{nullptr, 0}, ""},
   Key{KeyId::ROOT_PC_EMAE, "ROOT.PC_EMAE", "PC_EMAE", "",
       block_bit(BlockId::ROOT), Span<Arg>{detail::ROOT_PC_EMAE_args, 2},
       Repeat::Error,
       "PC_EMAE: repeated declaration (first declared on line {first_line})",
       "", false, "", false, KeyId::ROOT_PC_EMAE, false, "",
-      Span<std::string_view>{detail::ROOT_PC_EMAE_checks, 4}},
+      Span<std::string_view>{detail::ROOT_PC_EMAE_checks, 4},
+      Span<LineStep>{detail::ROOT_PC_EMAE_steps, 3}, ""},
   Key{KeyId::ROOT_PC_ERMSE, "ROOT.PC_ERMSE", "PC_ERMSE", "",
       block_bit(BlockId::ROOT), Span<Arg>{detail::ROOT_PC_ERMSE_args, 3},
       Repeat::Add, "", "", false, "", false, KeyId::ROOT_PC_ERMSE, false, "",
-      Span<std::string_view>{detail::ROOT_PC_ERMSE_checks, 13}},
+      Span<std::string_view>{detail::ROOT_PC_ERMSE_checks, 13},
+      Span<LineStep>{nullptr, 0}, ""},
   Key{KeyId::ROOT_PC_ErRMSE, "ROOT.PC_ErRMSE", "PC_ErRMSE", "",
       block_bit(BlockId::ROOT), Span<Arg>{detail::ROOT_PC_ErRMSE_args, 2},
       Repeat::Error,
       "PC_ErRMSE: repeated declaration (first declared on line {first_line})",
       "", false, "", false, KeyId::ROOT_PC_ErRMSE, false, "",
-      Span<std::string_view>{detail::ROOT_PC_ErRMSE_checks, 4}},
+      Span<std::string_view>{detail::ROOT_PC_ErRMSE_checks, 4},
+      Span<LineStep>{detail::ROOT_PC_ErRMSE_steps, 3}, ""},
   Key{KeyId::ROOT_PC_ERSQ, "ROOT.PC_ERSQ", "PC_ERSQ", "",
       block_bit(BlockId::ROOT), Span<Arg>{detail::ROOT_PC_ERSQ_args, 2},
       Repeat::Error,
       "PC_ERSQ: repeated declaration (first declared on line {first_line})",
       "", false, "", false, KeyId::ROOT_PC_ERSQ, false, "",
-      Span<std::string_view>{detail::ROOT_PC_ERSQ_checks, 6}},
+      Span<std::string_view>{detail::ROOT_PC_ERSQ_checks, 6},
+      Span<LineStep>{detail::ROOT_PC_ERSQ_steps, 3}, ""},
   Key{KeyId::ROOT_PC_SRMSE_GPA, "ROOT.PC_SRMSE_GPA", "PC_SRMSE_GPA", "",
       block_bit(BlockId::ROOT), Span<Arg>{detail::ROOT_PC_SRMSE_GPA_args, 3},
       Repeat::Add, "", "", false, "", false, KeyId::ROOT_PC_SRMSE_GPA, false,
-      "", Span<std::string_view>{detail::ROOT_PC_SRMSE_GPA_checks, 11}},
+      "", Span<std::string_view>{detail::ROOT_PC_SRMSE_GPA_checks, 11},
+      Span<LineStep>{nullptr, 0}, ""},
   Key{KeyId::ROOT_PC_FRMSE, "ROOT.PC_FRMSE", "PC_FRMSE", "",
       block_bit(BlockId::ROOT), Span<Arg>{detail::ROOT_PC_FRMSE_args, 3},
       Repeat::Add, "", "", false, "", false, KeyId::ROOT_PC_FRMSE, false, "",
-      Span<std::string_view>{detail::ROOT_PC_FRMSE_checks, 13}},
+      Span<std::string_view>{detail::ROOT_PC_FRMSE_checks, 13},
+      Span<LineStep>{nullptr, 0}, ""},
   Key{KeyId::ROOT_PC_LAMMPS, "ROOT.PC_LAMMPS", "PC_LAMMPS", "",
       block_bit(BlockId::ROOT), Span<Arg>{detail::ROOT_PC_LAMMPS_args, 2},
       Repeat::Add, "", "", false, "", false, KeyId::ROOT_PC_LAMMPS, false, "",
-      Span<std::string_view>{detail::ROOT_PC_LAMMPS_checks, 13}},
+      Span<std::string_view>{detail::ROOT_PC_LAMMPS_checks, 13},
+      Span<LineStep>{nullptr, 0}, ""},
   Key{KeyId::ROOT_PC_FAILPROBE, "ROOT.PC_FAILPROBE", "PC_FAILPROBE", "",
       block_bit(BlockId::ROOT), Span<Arg>{detail::ROOT_PC_FAILPROBE_args, 2},
       Repeat::Error, "only one PC_FAILPROBE line is allowed", "", false, "",
       false, KeyId::ROOT_PC_FAILPROBE, false, "",
-      Span<std::string_view>{detail::ROOT_PC_FAILPROBE_checks, 6}},
+      Span<std::string_view>{detail::ROOT_PC_FAILPROBE_checks, 6},
+      Span<LineStep>{nullptr, 0}, ""},
   Key{KeyId::ROOT_PC_OBSERVABLE, "ROOT.PC_OBSERVABLE", "PC_OBSERVABLE", "",
       block_bit(BlockId::ROOT), Span<Arg>{detail::ROOT_PC_OBSERVABLE_args, 2},
       Repeat::Add, "", "", false, "", false, KeyId::ROOT_PC_OBSERVABLE, false,
-      "", Span<std::string_view>{detail::ROOT_PC_OBSERVABLE_checks, 1}},
+      "", Span<std::string_view>{detail::ROOT_PC_OBSERVABLE_checks, 1},
+      Span<LineStep>{nullptr, 0}, ""},
   Key{KeyId::ROOT_LOSS, "ROOT.LOSS", "LOSS", "", block_bit(BlockId::ROOT),
-      Span<Arg>{detail::ROOT_LOSS_args, 1}, Repeat::Error,
+      Span<Arg>{detail::ROOT_LOSS_args, 1}, Repeat::ErrorUntilRead,
       "LOSS is set twice (first on line {first_line}) and no line between reads the first (a --varloss or PC_OBSERVABLE term that names no loss function); each key is given once",
       "", true, "L2", false, KeyId::ROOT_LOSS, false, "",
-      Span<std::string_view>{detail::ROOT_LOSS_checks, 8}},
+      Span<std::string_view>{detail::ROOT_LOSS_checks, 8},
+      Span<LineStep>{nullptr, 0}, ""},
   Key{KeyId::ROOT_OPTIM, "ROOT.OPTIM", "OPTIM", "", block_bit(BlockId::ROOT),
       Span<Arg>{detail::ROOT_OPTIM_args, 4}, Repeat::Add, "", "", false, "",
-      false, KeyId::ROOT_OPTIM, false, "", Span<std::string_view>{nullptr, 0}},
+      false, KeyId::ROOT_OPTIM, false, "", Span<std::string_view>{nullptr, 0},
+      Span<LineStep>{nullptr, 0}, ""},
 };
 
 /* The top-level keys a block refuses as such: the keys valid at the top
@@ -2699,98 +2968,102 @@ inline constexpr LineOption kLineOptions[] = {
       Span<std::string_view>{detail::RHOGATE_R_LO_lines, 1},
       Span<Arg>{detail::RHOGATE_R_LO_args, 1}, Repeat::Error,
       "RHOGATE: R_LO is given twice on this line; each option is given once",
-      false, "", false,
-      Span<std::string_view>{detail::RHOGATE_R_LO_checks, 2}},
+      false, "", false, Span<std::string_view>{detail::RHOGATE_R_LO_checks, 2},
+      true},
   LineOption{LineOptionId::RHOGATE_NPTS, "RHOGATE.NPTS", "NPTS",
       Span<std::string_view>{detail::RHOGATE_NPTS_lines, 1},
       Span<Arg>{detail::RHOGATE_NPTS_args, 1}, Repeat::Error,
       "RHOGATE: NPTS is given twice on this line; each option is given once",
       true, "20001", false,
-      Span<std::string_view>{detail::RHOGATE_NPTS_checks, 1}},
+      Span<std::string_view>{detail::RHOGATE_NPTS_checks, 1}, true},
   LineOption{LineOptionId::RHOGATE_SEED, "RHOGATE.SEED", "SEED",
       Span<std::string_view>{detail::RHOGATE_SEED_lines, 1},
       Span<Arg>{detail::RHOGATE_SEED_args, 1}, Repeat::Error,
       "RHOGATE: SEED is given twice on this line; each option is given once",
       true, "ERROR", false,
-      Span<std::string_view>{detail::RHOGATE_SEED_checks, 1}},
+      Span<std::string_view>{detail::RHOGATE_SEED_checks, 1}, true},
   LineOption{LineOptionId::RHOBARGATE_NPTS, "RHOBARGATE.NPTS", "NPTS",
       Span<std::string_view>{detail::RHOBARGATE_NPTS_lines, 1},
       Span<Arg>{detail::RHOBARGATE_NPTS_args, 1}, Repeat::Error,
       "RHOBARGATE: NPTS is given twice on this line; each option is given once",
       true, "1001", false,
-      Span<std::string_view>{detail::RHOBARGATE_NPTS_checks, 1}},
+      Span<std::string_view>{detail::RHOBARGATE_NPTS_checks, 1}, true},
   LineOption{LineOptionId::RHOBARGATE_SEED, "RHOBARGATE.SEED", "SEED",
       Span<std::string_view>{detail::RHOBARGATE_SEED_lines, 1},
       Span<Arg>{detail::RHOBARGATE_SEED_args, 1}, Repeat::Error,
       "RHOBARGATE: SEED is given twice on this line; each option is given once",
       true, "ERROR", false,
-      Span<std::string_view>{detail::RHOBARGATE_SEED_checks, 1}},
+      Span<std::string_view>{detail::RHOBARGATE_SEED_checks, 1}, true},
   LineOption{LineOptionId::PC_EMAE_skipabove, "PC_EMAE.--skip-above",
       "--skip-above",
       Span<std::string_view>{detail::PC_EMAE_skipabove_lines, 5},
       Span<Arg>{detail::PC_EMAE_skipabove_args, 1}, Repeat::Error,
       "{key}: repeated --skip-above", false, "", false,
-      Span<std::string_view>{detail::PC_EMAE_skipabove_checks, 1}},
+      Span<std::string_view>{detail::PC_EMAE_skipabove_checks, 1}, false},
   LineOption{LineOptionId::PC_EMAE_skiprel, "PC_EMAE.--skip-rel", "--skip-rel",
       Span<std::string_view>{detail::PC_EMAE_skiprel_lines, 5},
       Span<Arg>{detail::PC_EMAE_skiprel_args, 1}, Repeat::Error,
       "{key}: repeated --skip-rel", false, "", false,
-      Span<std::string_view>{detail::PC_EMAE_skiprel_checks, 1}},
+      Span<std::string_view>{detail::PC_EMAE_skiprel_checks, 1}, false},
   LineOption{LineOptionId::PC_LAMMPS_script, "PC_LAMMPS.--script", "--script",
       Span<std::string_view>{detail::PC_LAMMPS_script_lines, 2},
       Span<Arg>{detail::PC_LAMMPS_script_args, 1}, Repeat::Error,
       "{key} --script is given twice on this line; each option is given once",
       false, "", false,
-      Span<std::string_view>{detail::PC_LAMMPS_script_checks, 1}},
+      Span<std::string_view>{detail::PC_LAMMPS_script_checks, 1}, false},
   LineOption{LineOptionId::PC_LAMMPS_varloss, "PC_LAMMPS.--varloss",
       "--varloss", Span<std::string_view>{detail::PC_LAMMPS_varloss_lines, 1},
       Span<Arg>{detail::PC_LAMMPS_varloss_args, 4}, Repeat::Add, "", false, "",
-      false, Span<std::string_view>{detail::PC_LAMMPS_varloss_checks, 5}},
+      false, Span<std::string_view>{detail::PC_LAMMPS_varloss_checks, 5},
+      false},
   LineOption{LineOptionId::PC_LAMMPS_invar, "PC_LAMMPS.--invar", "--invar",
       Span<std::string_view>{detail::PC_LAMMPS_invar_lines, 2},
       Span<Arg>{detail::PC_LAMMPS_invar_args, 2}, Repeat::Add, "", false, "",
-      false, Span<std::string_view>{detail::PC_LAMMPS_invar_checks, 4}},
+      false, Span<std::string_view>{detail::PC_LAMMPS_invar_checks, 4}, false},
   LineOption{LineOptionId::PC_LAMMPS_outvar, "PC_LAMMPS.--outvar", "--outvar",
       Span<std::string_view>{detail::PC_LAMMPS_outvar_lines, 2},
       Span<Arg>{detail::PC_LAMMPS_outvar_args, 1}, Repeat::Add, "", false, "",
-      false, Span<std::string_view>{detail::PC_LAMMPS_outvar_checks, 1}},
+      false, Span<std::string_view>{detail::PC_LAMMPS_outvar_checks, 1},
+      false},
   LineOption{LineOptionId::PC_LAMMPS_failscore, "PC_LAMMPS.--failscore",
       "--failscore",
       Span<std::string_view>{detail::PC_LAMMPS_failscore_lines, 2},
       Span<Arg>{detail::PC_LAMMPS_failscore_args, 1}, Repeat::Error,
       "{key} --failscore is given twice on this line; each option is given once",
       false, "", false,
-      Span<std::string_view>{detail::PC_LAMMPS_failscore_checks, 2}},
+      Span<std::string_view>{detail::PC_LAMMPS_failscore_checks, 2}, false},
   LineOption{LineOptionId::PC_LAMMPS_maxtime, "PC_LAMMPS.--maxtime",
       "--maxtime", Span<std::string_view>{detail::PC_LAMMPS_maxtime_lines, 2},
       Span<Arg>{detail::PC_LAMMPS_maxtime_args, 1}, Repeat::Error,
       "{key} --maxtime is given twice on this line; each option is given once",
       false, "", false,
-      Span<std::string_view>{detail::PC_LAMMPS_maxtime_checks, 1}},
+      Span<std::string_view>{detail::PC_LAMMPS_maxtime_checks, 1}, false},
   LineOption{LineOptionId::PC_LAMMPS_hotvar, "PC_LAMMPS.--hotvar", "--hotvar",
       Span<std::string_view>{detail::PC_LAMMPS_hotvar_lines, 1},
       Span<Arg>{detail::PC_LAMMPS_hotvar_args, 4}, Repeat::Add, "", false, "",
-      false, Span<std::string_view>{detail::PC_LAMMPS_hotvar_checks, 6}},
+      false, Span<std::string_view>{detail::PC_LAMMPS_hotvar_checks, 6},
+      false},
   LineOption{LineOptionId::PC_LAMMPS_failvar, "PC_LAMMPS.--failvar",
       "--failvar", Span<std::string_view>{detail::PC_LAMMPS_failvar_lines, 1},
       Span<Arg>{detail::PC_LAMMPS_failvar_args, 2}, Repeat::Add, "", false, "",
-      false, Span<std::string_view>{detail::PC_LAMMPS_failvar_checks, 5}},
+      false, Span<std::string_view>{detail::PC_LAMMPS_failvar_checks, 5},
+      false},
   LineOption{LineOptionId::PC_LAMMPS_ncpu, "PC_LAMMPS.--ncpu", "--ncpu",
       Span<std::string_view>{detail::PC_LAMMPS_ncpu_lines, 2},
       Span<Arg>{nullptr, 0}, Repeat::LastWins, "", false, "", true,
-      Span<std::string_view>{detail::PC_LAMMPS_ncpu_checks, 1}},
+      Span<std::string_view>{detail::PC_LAMMPS_ncpu_checks, 1}, false},
   LineOption{LineOptionId::PC_FAILPROBE_gate, "PC_FAILPROBE.--gate", "--gate",
       Span<std::string_view>{detail::PC_FAILPROBE_gate_lines, 1},
       Span<Arg>{detail::PC_FAILPROBE_gate_args, 1}, Repeat::Error,
       "PC_FAILPROBE --gate is given twice on this line; each option is given once",
       false, "", false,
-      Span<std::string_view>{detail::PC_FAILPROBE_gate_checks, 1}},
+      Span<std::string_view>{detail::PC_FAILPROBE_gate_checks, 1}, false},
   LineOption{LineOptionId::PC_FAILPROBE_s0, "PC_FAILPROBE.--s0", "--s0",
       Span<std::string_view>{detail::PC_FAILPROBE_s0_lines, 1},
       Span<Arg>{detail::PC_FAILPROBE_s0_args, 1}, Repeat::Error,
       "PC_FAILPROBE --s0 is given twice on this line; each option is given once",
       true, "1", false,
-      Span<std::string_view>{detail::PC_FAILPROBE_s0_checks, 2}},
+      Span<std::string_view>{detail::PC_FAILPROBE_s0_checks, 2}, false},
   LineOption{LineOptionId::PC_OBSERVABLE_cohesive_energy_species,
       "PC_OBSERVABLE.cohesive_energy.--species", "--species",
       Span<std::string_view>{detail::PC_OBSERVABLE_cohesive_energy_species_lines, 1},
@@ -2798,7 +3071,8 @@ inline constexpr LineOption kLineOptions[] = {
       Repeat::Error,
       "PC_OBSERVABLE cohesive_energy: --species is given twice on this line; each option is given once",
       false, "", false,
-      Span<std::string_view>{detail::PC_OBSERVABLE_cohesive_energy_species_checks, 2}},
+      Span<std::string_view>{detail::PC_OBSERVABLE_cohesive_energy_species_checks, 2},
+      false},
   LineOption{LineOptionId::PC_OBSERVABLE_cohesive_energy_target,
       "PC_OBSERVABLE.cohesive_energy.--target", "--target",
       Span<std::string_view>{detail::PC_OBSERVABLE_cohesive_energy_target_lines, 1},
@@ -2806,7 +3080,8 @@ inline constexpr LineOption kLineOptions[] = {
       Repeat::Error,
       "PC_OBSERVABLE cohesive_energy: --target is given twice on this line; each option is given once",
       false, "", false,
-      Span<std::string_view>{detail::PC_OBSERVABLE_cohesive_energy_target_checks, 1}},
+      Span<std::string_view>{detail::PC_OBSERVABLE_cohesive_energy_target_checks, 1},
+      false},
   LineOption{LineOptionId::PC_OBSERVABLE_cohesive_energy_weight,
       "PC_OBSERVABLE.cohesive_energy.--weight", "--weight",
       Span<std::string_view>{detail::PC_OBSERVABLE_cohesive_energy_weight_lines, 1},
@@ -2814,7 +3089,8 @@ inline constexpr LineOption kLineOptions[] = {
       Repeat::Error,
       "PC_OBSERVABLE cohesive_energy: --weight is given twice on this line; each option is given once",
       false, "", false,
-      Span<std::string_view>{detail::PC_OBSERVABLE_cohesive_energy_weight_checks, 1}},
+      Span<std::string_view>{detail::PC_OBSERVABLE_cohesive_energy_weight_checks, 1},
+      false},
   LineOption{LineOptionId::PC_OBSERVABLE_cohesive_energy_hotvar,
       "PC_OBSERVABLE.cohesive_energy.--hotvar", "--hotvar",
       Span<std::string_view>{detail::PC_OBSERVABLE_cohesive_energy_hotvar_lines, 1},
@@ -2822,56 +3098,57 @@ inline constexpr LineOption kLineOptions[] = {
       Repeat::Error,
       "PC_OBSERVABLE cohesive_energy: --hotvar is given twice on this line; each option is given once",
       false, "", false,
-      Span<std::string_view>{detail::PC_OBSERVABLE_cohesive_energy_hotvar_checks, 2}},
+      Span<std::string_view>{detail::PC_OBSERVABLE_cohesive_energy_hotvar_checks, 2},
+      false},
   LineOption{LineOptionId::PC_OBSERVABLE_cohesive_energy_lattice,
       "PC_OBSERVABLE.cohesive_energy.--lattice", "--lattice",
       Span<std::string_view>{detail::PC_OBSERVABLE_cohesive_energy_lattice_lines, 1},
       Span<Arg>{detail::PC_OBSERVABLE_cohesive_energy_lattice_args, 1},
       Repeat::Error,
       "PC_OBSERVABLE cohesive_energy: --lattice is given twice on this line; each option is given once",
-      false, "", false, Span<std::string_view>{nullptr, 0}},
+      false, "", false, Span<std::string_view>{nullptr, 0}, false},
   LineOption{LineOptionId::PC_OBSERVABLE_cohesive_energy_supercell,
       "PC_OBSERVABLE.cohesive_energy.--supercell", "--supercell",
       Span<std::string_view>{detail::PC_OBSERVABLE_cohesive_energy_supercell_lines, 1},
       Span<Arg>{detail::PC_OBSERVABLE_cohesive_energy_supercell_args, 3},
       Repeat::Error,
       "PC_OBSERVABLE cohesive_energy: --supercell is given twice on this line; each option is given once",
-      true, "4 4 4", false, Span<std::string_view>{nullptr, 0}},
+      true, "4 4 4", false, Span<std::string_view>{nullptr, 0}, false},
   LineOption{LineOptionId::PC_OBSERVABLE_cohesive_energy_loss,
       "PC_OBSERVABLE.cohesive_energy.--loss", "--loss",
       Span<std::string_view>{detail::PC_OBSERVABLE_cohesive_energy_loss_lines, 1},
       Span<Arg>{detail::PC_OBSERVABLE_cohesive_energy_loss_args, 1},
       Repeat::Error,
       "PC_OBSERVABLE cohesive_energy: --loss is given twice on this line; each option is given once",
-      false, "", false, Span<std::string_view>{nullptr, 0}},
+      false, "", false, Span<std::string_view>{nullptr, 0}, false},
   LineOption{LineOptionId::PC_OBSERVABLE_cohesive_energy_maxiter,
       "PC_OBSERVABLE.cohesive_energy.--maxiter", "--maxiter",
       Span<std::string_view>{detail::PC_OBSERVABLE_cohesive_energy_maxiter_lines, 1},
       Span<Arg>{detail::PC_OBSERVABLE_cohesive_energy_maxiter_args, 1},
       Repeat::Error,
       "PC_OBSERVABLE cohesive_energy: --maxiter is given twice on this line; each option is given once",
-      true, "5000", false, Span<std::string_view>{nullptr, 0}},
+      true, "5000", false, Span<std::string_view>{nullptr, 0}, false},
   LineOption{LineOptionId::PC_OBSERVABLE_cohesive_energy_maxeval,
       "PC_OBSERVABLE.cohesive_energy.--maxeval", "--maxeval",
       Span<std::string_view>{detail::PC_OBSERVABLE_cohesive_energy_maxeval_lines, 1},
       Span<Arg>{detail::PC_OBSERVABLE_cohesive_energy_maxeval_args, 1},
       Repeat::Error,
       "PC_OBSERVABLE cohesive_energy: --maxeval is given twice on this line; each option is given once",
-      true, "5000", false, Span<std::string_view>{nullptr, 0}},
+      true, "5000", false, Span<std::string_view>{nullptr, 0}, false},
   LineOption{LineOptionId::PC_OBSERVABLE_cohesive_energy_maxwalltime,
       "PC_OBSERVABLE.cohesive_energy.--max-wall-time", "--max-wall-time",
       Span<std::string_view>{detail::PC_OBSERVABLE_cohesive_energy_maxwalltime_lines, 1},
       Span<Arg>{detail::PC_OBSERVABLE_cohesive_energy_maxwalltime_args, 1},
       Repeat::Error,
       "PC_OBSERVABLE cohesive_energy: --max-wall-time is given twice on this line; each option is given once",
-      true, "0", false, Span<std::string_view>{nullptr, 0}},
+      true, "0", false, Span<std::string_view>{nullptr, 0}, false},
   LineOption{LineOptionId::PC_OBSERVABLE_cohesive_energy_etol,
       "PC_OBSERVABLE.cohesive_energy.--etol", "--etol",
       Span<std::string_view>{detail::PC_OBSERVABLE_cohesive_energy_etol_lines, 1},
       Span<Arg>{detail::PC_OBSERVABLE_cohesive_energy_etol_args, 1},
       Repeat::Error,
       "PC_OBSERVABLE cohesive_energy: --etol is given twice on this line; each option is given once",
-      true, "0", false, Span<std::string_view>{nullptr, 0}},
+      true, "0", false, Span<std::string_view>{nullptr, 0}, false},
   LineOption{LineOptionId::PC_OBSERVABLE_cohesive_energy_fmaxconverged,
       "PC_OBSERVABLE.cohesive_energy.--fmax-converged", "--fmax-converged",
       Span<std::string_view>{detail::PC_OBSERVABLE_cohesive_energy_fmaxconverged_lines, 1},
@@ -2879,7 +3156,8 @@ inline constexpr LineOption kLineOptions[] = {
       Repeat::Error,
       "PC_OBSERVABLE cohesive_energy: --fmax-converged is given twice on this line; each option is given once",
       true, "0.1", false,
-      Span<std::string_view>{detail::PC_OBSERVABLE_cohesive_energy_fmaxconverged_checks, 1}},
+      Span<std::string_view>{detail::PC_OBSERVABLE_cohesive_energy_fmaxconverged_checks, 1},
+      false},
   LineOption{LineOptionId::PC_OBSERVABLE_cohesive_energy_ptol,
       "PC_OBSERVABLE.cohesive_energy.--ptol", "--ptol",
       Span<std::string_view>{detail::PC_OBSERVABLE_cohesive_energy_ptol_lines, 1},
@@ -2887,7 +3165,8 @@ inline constexpr LineOption kLineOptions[] = {
       Repeat::Error,
       "PC_OBSERVABLE cohesive_energy: --ptol is given twice on this line; each option is given once",
       true, "1e-4", false,
-      Span<std::string_view>{detail::PC_OBSERVABLE_cohesive_energy_ptol_checks, 1}},
+      Span<std::string_view>{detail::PC_OBSERVABLE_cohesive_energy_ptol_checks, 1},
+      false},
   LineOption{LineOptionId::PC_OBSERVABLE_cohesive_energy_unconverged,
       "PC_OBSERVABLE.cohesive_energy.--unconverged", "--unconverged",
       Span<std::string_view>{detail::PC_OBSERVABLE_cohesive_energy_unconverged_lines, 1},
@@ -2895,59 +3174,63 @@ inline constexpr LineOption kLineOptions[] = {
       Repeat::Error,
       "PC_OBSERVABLE cohesive_energy: --unconverged is given twice on this line; each option is given once",
       true, "const 100", false,
-      Span<std::string_view>{detail::PC_OBSERVABLE_cohesive_energy_unconverged_checks, 1}},
+      Span<std::string_view>{detail::PC_OBSERVABLE_cohesive_energy_unconverged_checks, 1},
+      false},
   LineOption{LineOptionId::OPTIM_AUTO_RATIO, "OPTIM.AUTO.RATIO", "RATIO",
       Span<std::string_view>{detail::OPTIM_AUTO_RATIO_lines, 1},
       Span<Arg>{detail::OPTIM_AUTO_RATIO_args, 1}, Repeat::Error,
       "OPTIM {key}: AUTO RATIO is given twice on this line; each option is given once",
       false, "", false,
-      Span<std::string_view>{detail::OPTIM_AUTO_RATIO_checks, 3}},
+      Span<std::string_view>{detail::OPTIM_AUTO_RATIO_checks, 3}, true},
   LineOption{LineOptionId::OPTIM_AUTO_FRAC, "OPTIM.AUTO.FRAC", "FRAC",
       Span<std::string_view>{detail::OPTIM_AUTO_FRAC_lines, 1},
       Span<Arg>{detail::OPTIM_AUTO_FRAC_args, 1}, Repeat::Error,
       "OPTIM {key}: AUTO FRAC is given twice on this line; each option is given once",
       false, "", false,
-      Span<std::string_view>{detail::OPTIM_AUTO_FRAC_checks, 6}},
+      Span<std::string_view>{detail::OPTIM_AUTO_FRAC_checks, 6}, true},
   LineOption{LineOptionId::OPTIM_AUTO_FLOOR, "OPTIM.AUTO.FLOOR", "FLOOR",
       Span<std::string_view>{detail::OPTIM_AUTO_FLOOR_lines, 1},
       Span<Arg>{detail::OPTIM_AUTO_FLOOR_args, 1}, Repeat::Error,
       "OPTIM {key}: AUTO FLOOR is given twice on this line; each option is given once",
       false, "", false,
-      Span<std::string_view>{detail::OPTIM_AUTO_FLOOR_checks, 3}},
+      Span<std::string_view>{detail::OPTIM_AUTO_FLOOR_checks, 3}, true},
   LineOption{LineOptionId::OPTIM_AUTO_GROUP_FLOOR, "OPTIM.AUTO.GROUP_FLOOR",
       "GROUP_FLOOR",
       Span<std::string_view>{detail::OPTIM_AUTO_GROUP_FLOOR_lines, 1},
       Span<Arg>{detail::OPTIM_AUTO_GROUP_FLOOR_args, 1}, Repeat::Error,
       "OPTIM {key}: AUTO GROUP_FLOOR is given twice on this line; each option is given once",
       false, "", false,
-      Span<std::string_view>{detail::OPTIM_AUTO_GROUP_FLOOR_checks, 3}},
+      Span<std::string_view>{detail::OPTIM_AUTO_GROUP_FLOOR_checks, 3}, true},
   LineOption{LineOptionId::OPTIM_LIN, "OPTIM.LIN", "LIN",
       Span<std::string_view>{detail::OPTIM_LIN_lines, 1},
       Span<Arg>{nullptr, 0}, Repeat::Error,
       "OPTIM {key}: unexpected token(s) '{text}' -- the grammar is OPTIM <KEY> (indices) <low> <high> [LIN | LOG | ASINH <c>] or OPTIM <KEY> (indices) AUTO [RATIO <f> | FRAC <p>] [FLOOR <a>] [GROUP_FLOOR <r>] [LIN | LOG | ASINH <c>]",
-      false, "", false, Span<std::string_view>{nullptr, 0}},
+      false, "", false, Span<std::string_view>{nullptr, 0}, true},
   LineOption{LineOptionId::OPTIM_LOG, "OPTIM.LOG", "LOG",
       Span<std::string_view>{detail::OPTIM_LOG_lines, 1},
       Span<Arg>{nullptr, 0}, Repeat::Error,
       "OPTIM {key}: unexpected token(s) '{text}' -- the grammar is OPTIM <KEY> (indices) <low> <high> [LIN | LOG | ASINH <c>] or OPTIM <KEY> (indices) AUTO [RATIO <f> | FRAC <p>] [FLOOR <a>] [GROUP_FLOOR <r>] [LIN | LOG | ASINH <c>]",
-      false, "", false, Span<std::string_view>{detail::OPTIM_LOG_checks, 1}},
+      false, "", false, Span<std::string_view>{detail::OPTIM_LOG_checks, 1},
+      true},
   LineOption{LineOptionId::OPTIM_ASINH, "OPTIM.ASINH", "ASINH",
       Span<std::string_view>{detail::OPTIM_ASINH_lines, 1},
       Span<Arg>{detail::OPTIM_ASINH_args, 1}, Repeat::Error,
       "OPTIM {key}: unexpected token(s) '{text}' -- the grammar is OPTIM <KEY> (indices) <low> <high> [LIN | LOG | ASINH <c>] or OPTIM <KEY> (indices) AUTO [RATIO <f> | FRAC <p>] [FLOOR <a>] [GROUP_FLOOR <r>] [LIN | LOG | ASINH <c>]",
-      false, "", false, Span<std::string_view>{detail::OPTIM_ASINH_checks, 2}},
+      false, "", false, Span<std::string_view>{detail::OPTIM_ASINH_checks, 2},
+      true},
 };
 
 inline constexpr Form kForms[] = {
   Form{FormId::PC_OBSERVABLE_cohesive_energy, "PC_OBSERVABLE.cohesive_energy",
       "PC_OBSERVABLE", "cohesive_energy", Span<Arg>{nullptr, 0}, false,
-      Span<std::string_view>{detail::PC_OBSERVABLE_cohesive_energy_checks, 7}},
+      Span<std::string_view>{detail::PC_OBSERVABLE_cohesive_energy_checks, 7},
+      false},
   Form{FormId::OPTIM_range, "OPTIM.range", "OPTIM", "",
       Span<Arg>{detail::OPTIM_range_args, 3}, false,
-      Span<std::string_view>{detail::OPTIM_range_checks, 5}},
+      Span<std::string_view>{detail::OPTIM_range_checks, 5}, false},
   Form{FormId::OPTIM_AUTO, "OPTIM.AUTO", "OPTIM", "AUTO",
       Span<Arg>{detail::OPTIM_AUTO_args, 1}, false,
-      Span<std::string_view>{detail::OPTIM_AUTO_checks, 10}},
+      Span<std::string_view>{detail::OPTIM_AUTO_checks, 10}, true},
 };
 
 inline constexpr Removed kRemoved[] = {
@@ -2991,111 +3274,164 @@ inline constexpr Removed kRemoved[] = {
 
 inline constexpr Rule kRules[] = {
   Rule{"RULE.density_key_arming", RuleCheck::Parse,
-      "{key} cannot act: no OPTIM line searches a key that changes the density or its window ({keys} of a DM_REAM many-body term, or a DENSITY parameter <ID>.DENSITY.<parameter> of a DM_Embed component), so every candidate has the density of the training configuration and its one verdict (OPTIM WATOM only scales the density; the verdict does not change). The {key} line takes effect with an OPTIM line on one of these keys, anywhere in the file."},
+      "{key} cannot act: no OPTIM line searches a key that changes the density or its window ({keys} of a DM_REAM many-body term, or a DENSITY parameter <ID>.DENSITY.<parameter> of a DM_Embed component), so every candidate has the density of the training configuration and its one verdict (OPTIM WATOM only scales the density; the verdict does not change). The {key} line takes effect with an OPTIM line on one of these keys, anywhere in the file.",
+      Span<RuleWhat>{nullptr, 0}},
   Rule{"RULE.inner_block_required", RuleCheck::Startup,
-      "{name} needs an INNER block ({phase}): NLopt has no default local optimiser for it; an INNER block with LIB NLOPT and a local ALGO, such as LN_BOBYQA, names one, or {list} run {default} without one"},
+      "{name} needs an INNER block ({phase}): NLopt has no default local optimiser for it; an INNER block with LIB NLOPT and a local ALGO, such as LN_BOBYQA, names one, or {list} run {default} without one",
+      Span<RuleWhat>{nullptr, 0}},
   Rule{"RULE.inner_block_not_accepted", RuleCheck::Startup,
-      "{name} takes no INNER block (the INNER block of {phase}): only NLopt's MLSL and AUGLAG algorithms run a local search inside their run, and an INNER block is taken by them only ({list})"},
+      "{name} takes no INNER block (the INNER block of {phase}): only NLopt's MLSL and AUGLAG algorithms run a local search inside their run, and an INNER block is taken by them only ({list})",
+      Span<RuleWhat>{nullptr, 0}},
   Rule{"RULE.inner_not_nlopt", RuleCheck::Startup,
-      "the INNER block of {phase} names {lib}:{algo}, but {name} runs its INNER search with NLopt: the INNER block takes LIB NLOPT and an NLopt ALGO, such as LN_BOBYQA"},
+      "the INNER block of {phase} names {lib}:{algo}, but {name} runs its INNER search with NLopt: the INNER block takes LIB NLOPT and an NLopt ALGO, such as LN_BOBYQA",
+      Span<RuleWhat>{nullptr, 0}},
   Rule{"RULE.inner_needs_own_inner", RuleCheck::Startup,
-      "the INNER block of {phase} names {lib}:{algo}, which needs an INNER block of its own; INNER blocks do not nest, and the INNER block takes a local algorithm, such as LN_BOBYQA"},
+      "the INNER block of {phase} names {lib}:{algo}, which needs an INNER block of its own; INNER blocks do not nest, and the INNER block takes a local algorithm, such as LN_BOBYQA",
+      Span<RuleWhat>{nullptr, 0}},
   Rule{"RULE.inner_global_search", RuleCheck::Startup,
-      "the INNER block of {phase}: {name} cannot run {lib}:{algo} as its INNER search: an INNER search is a local search, which {name} starts at {text}, and {what}. A local NLopt algorithm in the INNER block starts at the point it is given ({list}); {lib}:{algo} runs as the exploration (EXPLORE block) or once, as STRATEGY TYPE PLAIN."},
+      "the INNER block of {phase}: {name} cannot run {lib}:{algo} as its INNER search: an INNER search is a local search, which {name} starts at {text}, and {what}. A local NLopt algorithm in the INNER block starts at the point it is given ({list}); {lib}:{algo} runs as the exploration (EXPLORE block) or once, as STRATEGY TYPE PLAIN.",
+      Span<RuleWhat>{nullptr, 0}},
   Rule{"RULE.local_search_needs_stop", RuleCheck::Startup,
-      "{phase}: the local search of {name} (NLopt's default {lib}:{algo}, as the block has no INNER block) needs a stop: {why}; {list} in the {name} block, which NLopt hands on to it, gives it one{note}"},
+      "{phase}: the local search of {name} (NLopt's default {lib}:{algo}, as the block has no INNER block) needs a stop: {why}; {list} in the {name} block, which NLopt hands on to it, gives it one{note}",
+      Span<RuleWhat>{nullptr, 0}},
   Rule{"RULE.inner_search_needs_stop", RuleCheck::Startup,
-      "{phase}: the INNER search of {name} ({lib}:{algo}) needs a stop: {why}; {list} in the INNER block gives it one, as does {keys} in the {name} block, which NLopt hands on to it{note}"},
+      "{phase}: the INNER search of {name} ({lib}:{algo}) needs a stop: {why}; {list} in the INNER block gives it one, as does {keys} in the {name} block, which NLopt hands on to it{note}",
+      Span<RuleWhat>{nullptr, 0}},
   Rule{"RULE.search_dimensions_required", RuleCheck::Startup,
-      "{phase}: {lib}:{algo} cannot optimise a zero-dimensional search space (there is no OPTIM line; the optimiser would otherwise fail only once it starts). It needs at least one OPTIM line; a TADAH optimiser runs without one and evaluates the INIT starting point once."},
+      "{phase}: {lib}:{algo} cannot optimise a zero-dimensional search space (there is no OPTIM line; the optimiser would otherwise fail only once it starts). It needs at least one OPTIM line; a TADAH optimiser runs without one and evaluates the INIT starting point once.",
+      Span<RuleWhat>{nullptr, 0}},
   Rule{"RULE.asa_search_dimensions", RuleCheck::Startup,
-      "{phase}: ASA:ASA requires at least one OPTIM dimension"},
+      "{phase}: ASA:ASA requires at least one OPTIM dimension",
+      Span<RuleWhat>{nullptr, 0}},
   Rule{"RULE.multi_rank_optimiser", RuleCheck::Startup,
-      "a run on {count} MPI ranks takes STRATEGY TYPE PLAIN with TADAH:ANNEAL_PT or TADAH:ANNEAL_PA only, and the block has STRATEGY TYPE {type} with {lib}:{algo}"},
+      "a run on {count} MPI ranks takes STRATEGY TYPE PLAIN with TADAH:ANNEAL_PT or TADAH:ANNEAL_PA only, and the block has STRATEGY TYPE {type} with {lib}:{algo}",
+      Span<RuleWhat>{nullptr, 0}},
   Rule{"RULE.multi_rank_restart", RuleCheck::Startup,
-      "a run on {count} MPI ranks takes no RESTART block (AFTER_STAGNATION {value}, MAX {max}): each rank counts its own evaluations without a new best, so one rank would restart without the others; a run with a RESTART block runs on one rank"},
+      "a run on {count} MPI ranks takes no RESTART block (AFTER_STAGNATION {value}, MAX {max}): each rank counts its own evaluations without a new best, so one rank would restart without the others; a run with a RESTART block runs on one rank",
+      Span<RuleWhat>{nullptr, 0}},
   Rule{"RULE.multi_rank_population", RuleCheck::Startup,
-      "TADAH:{algo}: {key} ({value}) must be >= the MPI world size ({count})"},
+      "TADAH:{algo}: {key} ({value}) must be >= the MPI world size ({count})",
+      Span<RuleWhat>{nullptr, 0}},
   Rule{"RULE.set_once_for_optimiser", RuleCheck::Parse,
-      "{key} is set on line {first_line} in the {open} block and again here in the {block} block; both blocks configure the same {what}, so each key is given once"},
+      "{key} is set on line {first_line} in the {open} block and again here in the {block} block; both blocks configure the same {what}, so each key is given once",
+      Span<RuleWhat>{detail::RULE_set_once_for_optimiser_what, 2}},
   Rule{"RULE.set_once_for_starting_points", RuleCheck::Parse,
-      "{key} is set on line {first_line} in the INIT block inside {parent} and again here in the INIT block inside {enclosing}; both blocks configure the same starting points, so each key is given once"},
+      "{key} is set on line {first_line} in the INIT block inside {parent} and again here in the INIT block inside {enclosing}; both blocks configure the same starting points, so each key is given once",
+      Span<RuleWhat>{nullptr, 0}},
   Rule{"RULE.restart_grid", RuleCheck::Startup,
-      "a RESTART round would run the grid search of {phase} (TADAH:GRID) again from its first node: a grid search evaluates its starting point and then the nodes of its grid in one fixed order, so each round would evaluate again the nodes the rounds before it evaluated and never reach the rest of the grid; a grid search has no RESTART block (MAXEVAL bounds it)"},
+      "a RESTART round would run the grid search of {phase} (TADAH:GRID) again from its first node: a grid search evaluates its starting point and then the nodes of its grid in one fixed order, so each round would evaluate again the nodes the rounds before it evaluated and never reach the rest of the grid; a grid search has no RESTART block (MAXEVAL bounds it)",
+      Span<RuleWhat>{nullptr, 0}},
   Rule{"RULE.OPTIM_MPARAMS", RuleCheck::Startup,
-      "OPTIM MPARAMS ({index}) is not a valid search target: {why}"},
+      "OPTIM MPARAMS ({index}) is not a valid search target: {why}",
+      Span<RuleWhat>{nullptr, 0}},
   Rule{"RULE.OPTIM_MPARAMS_positive", RuleCheck::Startup,
-      "OPTIM MPARAMS ({index}): the box [{low}, {high}] of {name}'s {key} must be positive ({key} > 0)."},
+      "OPTIM MPARAMS ({index}): the box [{low}, {high}] of {name}'s {key} must be positive ({key} > 0).",
+      Span<RuleWhat>{nullptr, 0}},
   Rule{"RULE.OPTIM_file_cutoff", RuleCheck::Startup,
-      "OPTIM {key} ({index}) is not a valid search target: {why} and refuses another value, so every candidate but the value of the training configuration would fail."},
+      "OPTIM {key} ({index}) is not a valid search target: {why} and refuses another value, so every candidate but the value of the training configuration would fail.",
+      Span<RuleWhat>{nullptr, 0}},
   Rule{"RULE.OPTIM_unread_watom", RuleCheck::Startup,
-      "OPTIM WATOM (line {line} of the target file) is not a valid search target: no descriptor of the training configuration reads WATOM (D2_EAM, DM_EAM, D2_Dummy and DM_Dummy read none), and a fit refuses a WATOM other than 1 that no descriptor reads, so every candidate other than 1 would fail its evaluation."},
+      "OPTIM WATOM (line {line} of the target file) is not a valid search target: no descriptor of the training configuration reads WATOM (D2_EAM, DM_EAM, D2_Dummy and DM_Dummy read none), and a fit refuses a WATOM other than 1 that no descriptor reads, so every candidate other than 1 would fail its evaluation.",
+      Span<RuleWhat>{nullptr, 0}},
   Rule{"RULE.settings_taken_by_lines", RuleCheck::Parse,
-      "{key} is set twice (first on line {first_line}{note}) and no line between reads the first ({list}); each key is given once"},
+      "{key} is set twice (first on line {first_line}{note}) and no line between reads the first ({list}); each key is given once",
+      Span<RuleWhat>{nullptr, 0}},
   Rule{"RULE.PC_OBSERVABLE_excludes_PC_LAMMPS", RuleCheck::Parse,
-      "{key}: this target file also has {list}; PC_OBSERVABLE lines do not share a target file with PC_LAMMPS or PC_FAILPROBE lines"},
+      "{key}: this target file also has {list}; PC_OBSERVABLE lines do not share a target file with PC_LAMMPS or PC_FAILPROBE lines",
+      Span<RuleWhat>{nullptr, 0}},
   Rule{"RULE.PC_LAMMPS_hotvar_unique", RuleCheck::Parse,
-      "PC_LAMMPS --hotvar {name}: line {line} declares --hotvar {name} as well (script {script}); one line declares each --hotvar name, as an evaluation keeps one value of each name for the scripts that read it, and the line that finished last would set it"},
+      "PC_LAMMPS --hotvar {name}: line {line} declares --hotvar {name} as well (script {script}); one line declares each --hotvar name, as an evaluation keeps one value of each name for the scripts that read it, and the line that finished last would set it",
+      Span<RuleWhat>{nullptr, 0}},
   Rule{"RULE.PC_OBSERVABLE_GRAD_STRATEGY", RuleCheck::Parse,
-      "{phase}: GRAD_STRATEGY NUMERICAL is refused in a target file with PC_OBSERVABLE lines (PC_OBSERVABLE on line {line}): PC_OBSERVABLE terms are built for the analytical gradient; GRAD_STRATEGY ANALYTICAL takes it (an unset GRAD_STRATEGY resolves to it in a block that obtains gradients; it needs the settings of the analytical gradient, such as OALGO 4 with a fixed LAMBDA >= 0, and startup names a missing one), and GRAD_STRATEGY HYBRID takes finite differences where the analytical gradient is unavailable"},
+      "{phase}: GRAD_STRATEGY NUMERICAL is refused in a target file with PC_OBSERVABLE lines (PC_OBSERVABLE on line {line}): PC_OBSERVABLE terms are built for the analytical gradient; GRAD_STRATEGY ANALYTICAL takes it (an unset GRAD_STRATEGY resolves to it in a block that obtains gradients; it needs the settings of the analytical gradient, such as OALGO 4 with a fixed LAMBDA >= 0, and startup names a missing one), and GRAD_STRATEGY HYBRID takes finite differences where the analytical gradient is unavailable",
+      Span<RuleWhat>{nullptr, 0}},
   Rule{"RULE.PC_LAMMPS_GRAD_STRATEGY", RuleCheck::Parse,
-      "{phase}: GRAD_STRATEGY is refused in a target file with PC_LAMMPS or PC_FAILPROBE lines ({key} on line {line}): tadah hpo takes no gradient (ANALYTICAL, NUMERICAL or HYBRID) of a loss that runs LAMMPS scripts, and such a file takes a gradient-free optimiser"},
+      "{phase}: GRAD_STRATEGY is refused in a target file with PC_LAMMPS or PC_FAILPROBE lines ({key} on line {line}): tadah hpo takes no gradient (ANALYTICAL, NUMERICAL or HYBRID) of a loss that runs LAMMPS scripts, and such a file takes a gradient-free optimiser",
+      Span<RuleWhat>{nullptr, 0}},
   Rule{"RULE.PC_LAMMPS_gradient_free", RuleCheck::Parse,
-      "{phase}: {lib}:{algo} is gradient-based, and a target file with PC_LAMMPS or PC_FAILPROBE lines ({key} on line {line}) takes a gradient-free optimiser ({list}); an NLopt MLSL or AUGLAG algorithm is accepted with a gradient-free INNER block."},
+      "{phase}: {lib}:{algo} is gradient-based, and a target file with PC_LAMMPS or PC_FAILPROBE lines ({key} on line {line}) takes a gradient-free optimiser ({list}); an NLopt MLSL or AUGLAG algorithm is accepted with a gradient-free INNER block.",
+      Span<RuleWhat>{nullptr, 0}},
   Rule{"RULE.PC_LAMMPS_local_optimiser", RuleCheck::Parse,
-      "{phase}: {lib}:{algo} takes a gradient: NLopt's MLSL and AUGLAG take one for their local search, and NLopt's default local optimiser, {name}, is gradient-based; with an INNER block that names a gradient-free local NLopt algorithm it takes none. A target file with PC_LAMMPS or PC_FAILPROBE lines ({key} on line {line}) takes a gradient-free optimiser ({list})."},
+      "{phase}: {lib}:{algo} takes a gradient: NLopt's MLSL and AUGLAG take one for their local search, and NLopt's default local optimiser, {name}, is gradient-based; with an INNER block that names a gradient-free local NLopt algorithm it takes none. A target file with PC_LAMMPS or PC_FAILPROBE lines ({key} on line {line}) takes a gradient-free optimiser ({list}).",
+      Span<RuleWhat>{nullptr, 0}},
   Rule{"RULE.PC_LAMMPS_INNER_local_optimiser", RuleCheck::Parse,
-      "{phase}: {lib}:{algo} takes a gradient: NLopt's MLSL and AUGLAG take one for their local search, and NLopt's default local optimiser, {name}, is gradient-based. A target file with PC_LAMMPS or PC_FAILPROBE lines ({key} on line {line}) takes a gradient-free optimiser, and an INNER block takes a local NLopt algorithm; the gradient-free ones are {list}."},
+      "{phase}: {lib}:{algo} takes a gradient: NLopt's MLSL and AUGLAG take one for their local search, and NLopt's default local optimiser, {name}, is gradient-based. A target file with PC_LAMMPS or PC_FAILPROBE lines ({key} on line {line}) takes a gradient-free optimiser, and an INNER block takes a local NLopt algorithm; the gradient-free ones are {list}.",
+      Span<RuleWhat>{nullptr, 0}},
   Rule{"RULE.PC_LAMMPS_INNER_gradient_free", RuleCheck::Parse,
-      "{phase}: {lib}:{algo} is gradient-based. A target file with PC_LAMMPS or PC_FAILPROBE lines ({key} on line {line}) takes a gradient-free optimiser, and an INNER block takes a local NLopt algorithm; the gradient-free ones are {list}."},
+      "{phase}: {lib}:{algo} is gradient-based. A target file with PC_LAMMPS or PC_FAILPROBE lines ({key} on line {line}) takes a gradient-free optimiser, and an INNER block takes a local NLopt algorithm; the gradient-free ones are {list}.",
+      Span<RuleWhat>{nullptr, 0}},
   Rule{"RULE.loss_source_required", RuleCheck::Startup,
-      "No loss source: a loss term comes from a PC_EMAE, PC_ERMSE, PC_ErRMSE, PC_ERSQ, PC_FRMSE or PC_SRMSE_GPA line (with --validation), a PC_OBSERVABLE line or a PC_LAMMPS line, and the target file has none (a PC_FAILPROBE line gives no loss term)"},
+      "No loss source: a loss term comes from a PC_EMAE, PC_ERMSE, PC_ErRMSE, PC_ERSQ, PC_FRMSE or PC_SRMSE_GPA line (with --validation), a PC_OBSERVABLE line or a PC_LAMMPS line, and the target file has none (a PC_FAILPROBE line gives no loss term)",
+      Span<RuleWhat>{nullptr, 0}},
   Rule{"RULE.metric_needs_validation", RuleCheck::Startup,
-      "PC_EMAE/PC_ERMSE/PC_ErRMSE/PC_ERSQ/PC_FRMSE/PC_SRMSE_GPA target validation-set errors but no --validation file was given."},
+      "PC_EMAE/PC_ERMSE/PC_ErRMSE/PC_ERSQ/PC_FRMSE/PC_SRMSE_GPA target validation-set errors but no --validation file was given.",
+      Span<RuleWhat>{nullptr, 0}},
   Rule{"RULE.OPTIM_LAMBDA_evidence", RuleCheck::Parse,
-      "OPTIM LAMBDA: the training configuration has LAMBDA -1, which requests the evidence approximation: each fit then finds the penalty itself, and OPTIM LAMBDA would replace it with the values of the box. LAMBDA >= 0 in the training configuration is the starting point of a search of LAMBDA; without OPTIM LAMBDA the evidence approximation finds it in every evaluation."},
+      "OPTIM LAMBDA: the training configuration has LAMBDA -1, which requests the evidence approximation: each fit then finds the penalty itself, and OPTIM LAMBDA would replace it with the values of the box. LAMBDA >= 0 in the training configuration is the starting point of a search of LAMBDA; without OPTIM LAMBDA the evidence approximation finds it in every evaluation.",
+      Span<RuleWhat>{nullptr, 0}},
   Rule{"RULE.fit_LAMBDA_negative", RuleCheck::Startup,
-      "{text}: only LAMBDA -1 requests the evidence approximation, which OALGO 3 runs; another negative value requests nothing. LAMBDA 0 fits without a penalty, and a positive LAMBDA is the ridge penalty."},
+      "{text}: only LAMBDA -1 requests the evidence approximation, which OALGO 3 runs; another negative value requests nothing. LAMBDA 0 fits without a penalty, and a positive LAMBDA is the ridge penalty.",
+      Span<RuleWhat>{nullptr, 0}},
   Rule{"RULE.fit_LAMBDA_one_value", RuleCheck::Startup,
-      "{text}: LAMBDA takes one value, the ridge penalty (0 for none, -1 for the evidence approximation of OALGO 3); a second value is not read. The rank threshold of OALGO 1 and 3 is OALGO's second value (OALGO 1 {value}, OALGO 3 {value})."},
+      "{text}: LAMBDA takes one value, the ridge penalty (0 for none, -1 for the evidence approximation of OALGO 3); a second value is not read. The rank threshold of OALGO 1 and 3 is OALGO's second value (OALGO 1 {value}, OALGO 3 {value}).",
+      Span<RuleWhat>{nullptr, 0}},
   Rule{"RULE.fit_LAMBDA_evidence_OALGO", RuleCheck::Startup,
-      "LAMBDA -1 requests the evidence approximation, which only OALGO 3 (the SVD solve) runs; the configuration has OALGO {value} (LAMBDA >= 0 fits with any OALGO)."},
+      "LAMBDA -1 requests the evidence approximation, which only OALGO 3 (the SVD solve) runs; the configuration has OALGO {value} (LAMBDA >= 0 fits with any OALGO).",
+      Span<RuleWhat>{nullptr, 0}},
   Rule{"RULE.fit_OALGO1_threshold", RuleCheck::Startup,
-      "{text}: the rank threshold M of OALGO 1 (DGELSD), its second value, is a number 0 < M < 1 (a singular value at most M times the largest is left out of the coefficients) or below 0 for the machine precision of LAPACK, 2^-53 (OALGO 1 -1); DGELSD takes the machine precision for an M of 0 or of 1 or more."},
+      "{text}: the rank threshold M of OALGO 1 (DGELSD), its second value, is a number 0 < M < 1 (a singular value at most M times the largest is left out of the coefficients) or below 0 for the machine precision of LAPACK, 2^-53 (OALGO 1 -1); DGELSD takes the machine precision for an M of 0 or of 1 or more.",
+      Span<RuleWhat>{nullptr, 0}},
   Rule{"RULE.fit_OALGO3_threshold", RuleCheck::Startup,
-      "{text}: the rank threshold M of OALGO 3, its second value, is a number 0 < M < 1 (a singular value at most M times the largest is left out of the coefficients) or 0 or below (only a singular value of 0 is left out); an M of 1 or more leaves out every singular direction, every coefficient 0."},
+      "{text}: the rank threshold M of OALGO 3, its second value, is a number 0 < M < 1 (a singular value at most M times the largest is left out of the coefficients) or 0 or below (only a singular value of 0 is left out); an M of 1 or more leaves out every singular direction, every coefficient 0.",
+      Span<RuleWhat>{nullptr, 0}},
   Rule{"RULE.fit_OALGO_one_value", RuleCheck::Startup,
-      "{text}: {name} takes one value: it keeps every direction and has no rank threshold, the second value of OALGO 1 and 3."},
+      "{text}: {name} takes one value: it keeps every direction and has no rank threshold, the second value of OALGO 1 and 3.",
+      Span<RuleWhat>{nullptr, 0}},
   Rule{"RULE.fit_OALGO_option", RuleCheck::Startup,
-      "OALGO {value}: OALGO is 1 (DGELSD), 2 (DGELS, QR), 3 (the SVD solve) or 4 (normal equations, Cholesky)."},
+      "OALGO {value}: OALGO is 1 (DGELSD), 2 (DGELS, QR), 3 (the SVD solve) or 4 (normal equations, Cholesky).",
+      Span<RuleWhat>{nullptr, 0}},
   Rule{"RULE.OPTIM_OALGO_threshold_box", RuleCheck::Parse,
-      "OPTIM OALGO (2): the box [{low}, {high}] is not inside (0, 1), but the second value of OALGO is the rank threshold M of OALGO 1 and 3, which only a value 0 < M < 1 sets: every M below 0 is the machine precision under OALGO 1, every M of 0 or below leaves out only a singular value of 0 under OALGO 3, and a fit refuses an M of 1 or more, so the box of a search is inside (0, 1)"},
+      "OPTIM OALGO (2): the box [{low}, {high}] is not inside (0, 1), but the second value of OALGO is the rank threshold M of OALGO 1 and 3, which only a value 0 < M < 1 sets: every M below 0 is the machine precision under OALGO 1, every M of 0 or below leaves out only a singular value of 0 under OALGO 3, and a fit refuses an M of 1 or more, so the box of a search is inside (0, 1)",
+      Span<RuleWhat>{nullptr, 0}},
   Rule{"RULE.fit_OALGO3_intercepts", RuleCheck::Startup,
-      "OALGO 3 (SVD with a uniform ridge) penalises every coefficient alike, and the model has {count} intercept column(s) (BIAS true with ATOM), which the ridge of OALGO 1, 2 and 4 leaves unpenalised and OALGO 3 cannot, so OALGO 3 takes LAMBDA 0 only; OALGO 1, 2 or 4 fits such a model with a LAMBDA other than 0."},
+      "OALGO 3 (SVD with a uniform ridge) penalises every coefficient alike, and the model has {count} intercept column(s) (BIAS true with ATOM), which the ridge of OALGO 1, 2 and 4 leaves unpenalised and OALGO 3 cannot, so OALGO 3 takes LAMBDA 0 only; OALGO 1, 2 or 4 fits such a model with a LAMBDA other than 0.",
+      Span<RuleWhat>{nullptr, 0}},
   Rule{"RULE.fit_OALGO3_intercepts_evidence", RuleCheck::Startup,
-      "LAMBDA -1 requests the evidence approximation, which only OALGO 3 runs; OALGO 3 penalises every coefficient alike, and the model has {count} intercept column(s) (BIAS true with ATOM), which the ridge of OALGO 1, 2 and 4 leaves unpenalised and OALGO 3 cannot. The evidence approximation needs BIAS false, or every intercept coefficient fixed with FIXINDEX and FIXWEIGHT. With BIAS true, LAMBDA 0 fits with any OALGO, and LAMBDA > 0 with OALGO 1, 2 or 4."},
+      "LAMBDA -1 requests the evidence approximation, which only OALGO 3 runs; OALGO 3 penalises every coefficient alike, and the model has {count} intercept column(s) (BIAS true with ATOM), which the ridge of OALGO 1, 2 and 4 leaves unpenalised and OALGO 3 cannot. The evidence approximation needs BIAS false, or every intercept coefficient fixed with FIXINDEX and FIXWEIGHT. With BIAS true, LAMBDA 0 fits with any OALGO, and LAMBDA > 0 with OALGO 1, 2 or 4.",
+      Span<RuleWhat>{nullptr, 0}},
   Rule{"RULE.optim_LAMBDA_OALGO3_intercepts", RuleCheck::Startup,
-      "OPTIM LAMBDA: OALGO 3 penalises every coefficient alike, and the fit has {count} intercept column(s) (BIAS true with ATOM), which the ridge of OALGO 1, 2 and 4 leaves unpenalised and OALGO 3 cannot, so every fit refuses a LAMBDA other than 0: each candidate of the box but 0 would fail its evaluation. OALGO 1, 2 or 4 fits a positive LAMBDA with the intercepts unpenalised."},
+      "OPTIM LAMBDA: OALGO 3 penalises every coefficient alike, and the fit has {count} intercept column(s) (BIAS true with ATOM), which the ridge of OALGO 1, 2 and 4 leaves unpenalised and OALGO 3 cannot, so every fit refuses a LAMBDA other than 0: each candidate of the box but 0 would fail its evaluation. OALGO 1, 2 or 4 fits a positive LAMBDA with the intercepts unpenalised.",
+      Span<RuleWhat>{nullptr, 0}},
   Rule{"RULE.fit_krr_implementation", RuleCheck::Startup,
-      "{text}: M_KRR has implementation 1, which fits the energies, forces and stresses of the structures, and implementation 2, which fits the energies per atom of whole structures (the third value of MODEL, 1 when it is left out); {value} is neither."},
+      "{text}: M_KRR has implementation 1, which fits the energies, forces and stresses of the structures, and implementation 2, which fits the energies per atom of whole structures (the third value of MODEL, 1 when it is left out); {value} is neither.",
+      Span<RuleWhat>{nullptr, 0}},
   Rule{"RULE.fit_krr_implementation2_LAMBDA", RuleCheck::Startup,
-      "MODEL M_KRR {name} 2 cannot use LAMBDA -1: implementation 2 solves (K + LAMBDA sigma^2 I) w = t, sigma = ESIGMA in eV, with a fixed LAMBDA and does not run the evidence approximation. Implementation 1 (MODEL M_KRR {name} 1) with OALGO 3 runs it; LAMBDA >= 0 fits with either."},
+      "MODEL M_KRR {name} 2 cannot use LAMBDA -1: implementation 2 solves (K + LAMBDA sigma^2 I) w = t, sigma = ESIGMA in eV, with a fixed LAMBDA and does not run the evidence approximation. Implementation 1 (MODEL M_KRR {name} 1) with OALGO 3 runs it; LAMBDA >= 0 fits with either.",
+      Span<RuleWhat>{nullptr, 0}},
   Rule{"RULE.optim_relative_error_scale", RuleCheck::Parse,
-      "OPTIM {key} ({index}): the low bound {low} is negative, but the relative part b of {key} is a number >= 0, and every fit refuses a negative one, so the low bound of its box is >= 0"},
+      "OPTIM {key} ({index}): the low bound {low} is negative, but the relative part b of {key} is a number >= 0, and every fit refuses a negative one, so the low bound of its box is >= 0",
+      Span<RuleWhat>{nullptr, 0}},
   Rule{"RULE.fit_krr_implementation2_ignores", RuleCheck::Startup,
-      "MODEL M_KRR {name} 2 fits the energies per atom of whole structures over ESIGMA, without forces, stresses or priorities: {what} would be ignored. Implementation 1 (MODEL M_KRR {name} 1) {why}; implementation 2 fits {text}."},
+      "MODEL M_KRR {name} 2 fits the energies per atom of whole structures over ESIGMA, without forces, stresses or priorities: {what} would be ignored. Implementation 1 (MODEL M_KRR {name} 1) {why}; implementation 2 fits {text}.",
+      Span<RuleWhat>{nullptr, 0}},
   Rule{"RULE.fit_krr_implementation2_OALGO", RuleCheck::Startup,
-      "MODEL M_KRR {name} 2 solves (K + LAMBDA sigma^2 I) w = t by Cholesky and reads no OALGO: {what} would be ignored. Implementation 1 (MODEL M_KRR {name} 1) solves with OALGO; implementation 2 fits {text}."},
+      "MODEL M_KRR {name} 2 solves (K + LAMBDA sigma^2 I) w = t by Cholesky and reads no OALGO: {what} would be ignored. Implementation 1 (MODEL M_KRR {name} 1) solves with OALGO; implementation 2 fits {text}.",
+      Span<RuleWhat>{nullptr, 0}},
   Rule{"RULE.fit_error_scales", RuleCheck::Startup,
-      "tadah hpo: ESIGMA {value}: the energy error scale is a number > 0 ({what} that costs as much as a force off by FSIGMA); no coefficients were fitted."},
+      "tadah hpo: ESIGMA {value}: the energy error scale is a number > 0 ({what} that costs as much as a force off by FSIGMA); no coefficients were fitted.",
+      Span<RuleWhat>{nullptr, 0}},
   Rule{"RULE.optim_error_scale_quantity_off", RuleCheck::Startup,
-      "OPTIM {key}: {name} is false: the fit has no {what}, so {key} would change nothing and every candidate would give the same fit. {name} true fits the {what}."},
+      "OPTIM {key}: {name} is false: the fit has no {what}, so {key} would change nothing and every candidate would give the same fit. {name} true fits the {what}.",
+      Span<RuleWhat>{nullptr, 0}},
   Rule{"RULE.optim_error_scale_only_quantity", RuleCheck::Startup,
-      "OPTIM {key}: the {what} are the only quantity of the fit and LAMBDA is {value}: the error scale of the only quantity scales every row of the fit alike, which changes no coefficient, so every candidate would give the same fit. With a LAMBDA > 0 the error scale weighs the data against the penalty, and with {text} in the fit, the {what} against them."},
+      "OPTIM {key}: the {what} are the only quantity of the fit and LAMBDA is {value}: the error scale of the only quantity scales every row of the fit alike, which changes no coefficient, so every candidate would give the same fit. With a LAMBDA > 0 the error scale weighs the data against the penalty, and with {text} in the fit, the {what} against them.",
+      Span<RuleWhat>{nullptr, 0}},
   Rule{"RULE.optim_wdbfile_one_dataset", RuleCheck::Startup,
-      "OPTIM WDBFILE: the run has one training dataset and LAMBDA is {value}: its WDBFILE value multiplies the priority of every row of the fit alike, which changes no coefficient, so every candidate would give the same fit. With a LAMBDA > 0 the priority weighs the data against the penalty, and with more training datasets, the dataset against the others."},
+      "OPTIM WDBFILE: the run has one training dataset and LAMBDA is {value}: its WDBFILE value multiplies the priority of every row of the fit alike, which changes no coefficient, so every candidate would give the same fit. With a LAMBDA > 0 the priority weighs the data against the penalty, and with more training datasets, the dataset against the others.",
+      Span<RuleWhat>{nullptr, 0}},
   Rule{"RULE.optim_error_scale_no_fit", RuleCheck::Startup,
-      "OPTIM {key}: the evaluations of this run fit no coefficient ({why}), so {key} would change nothing and every candidate would give the same potential."},
+      "OPTIM {key}: the evaluations of this run fit no coefficient ({why}), so {key} would change nothing and every candidate would give the same potential.",
+      Span<RuleWhat>{nullptr, 0}},
 };
 
 inline constexpr Env kEnvs[] = {

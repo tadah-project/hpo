@@ -634,6 +634,7 @@ invalid = [
 id = "PARAM.ASA:ASA.Limit_Acceptances"
 name = "Limit_Acceptances"
 optimizers = ["ASA:ASA"]
+explain = "max accepted states; 0 = no limit"
 args = [{ name = "value", kind = "number", min = 0, integral = true }]
 default = { literal = "10000" }
 doc = """\
@@ -654,6 +655,7 @@ invalid = [
 id = "PARAM.ASA:ASA.Limit_Generated"
 name = "Limit_Generated"
 optimizers = ["ASA:ASA"]
+explain = "max generated states; 0 = no limit"
 args = [{ name = "value", kind = "number", min = 0, integral = true }]
 default = { literal = "99999" }
 doc = """\
@@ -674,6 +676,7 @@ invalid = [
 id = "PARAM.ASA:ASA.Limit_Invalid_Generated_States"
 name = "Limit_Invalid_Generated_States"
 optimizers = ["ASA:ASA"]
+explain = "invalid-state budget; 0 = exit ASAP, -1 = bypass test"
 args = [{ name = "value", kind = "number", min = -1, integral = true }]
 default = { literal = "1000" }
 doc = """\
@@ -696,6 +699,7 @@ invalid = [
 id = "PARAM.ASA:ASA.Accepted_To_Generated_Ratio"
 name = "Accepted_To_Generated_Ratio"
 optimizers = ["ASA:ASA"]
+explain = "min accepted/generated ratio before reanneal test (must be > 0)"
 args = [{ name = "value", kind = "number", min = 0, min_open = true }]
 default = { literal = "1e-6" }
 doc = """\
@@ -717,6 +721,7 @@ invalid = [
 id = "PARAM.ASA:ASA.Cost_Precision"
 name = "Cost_Precision"
 optimizers = ["ASA:ASA"]
+explain = "|last-best| threshold of the cost-repeat plateau test (must be > 0)"
 args = [{ name = "value", kind = "number", min = 0, min_open = true }]
 default = { literal = "1e-18" }
 doc = """\
@@ -739,6 +744,7 @@ invalid = [
 id = "PARAM.ASA:ASA.Maximum_Cost_Repeat"
 name = "Maximum_Cost_Repeat"
 optimizers = ["ASA:ASA"]
+explain = "consecutive plateau cycles before COST_REPEATING exit; 0 = bypass"
 args = [{ name = "value", kind = "number", min = 0, integral = true }]
 default = { literal = "5" }
 doc = """\
@@ -761,6 +767,7 @@ invalid = [
 id = "PARAM.ASA:ASA.Number_Cost_Samples"
 name = "Number_Cost_Samples"
 optimizers = ["ASA:ASA"]
+explain = ">0: initial cost temp from mean |cost|; <-1: from a deviation sample"
 args = [{ name = "value", kind = "number", integral = true }]
 default = { literal = "5" }
 doc = """\
@@ -783,6 +790,7 @@ invalid = [
 id = "PARAM.ASA:ASA.Temperature_Ratio_Scale"
 name = "Temperature_Ratio_Scale"
 optimizers = ["ASA:ASA"]
+explain = "the main control of the annealing rate: m = -log(TRS)"
 args = [{ name = "value", kind = "number", min = 0, min_open = true }]
 default = { literal = "1e-5" }
 doc = """\
@@ -810,6 +818,7 @@ invalid = [
 id = "PARAM.ASA:ASA.Cost_Parameter_Scale_Ratio"
 name = "Cost_Parameter_Scale_Ratio"
 optimizers = ["ASA:ASA"]
+explain = "cost temperature schedule scale relative to parameters"
 args = [{ name = "value", kind = "number", min = 0, min_open = true }]
 default = { literal = "1.0" }
 doc = """\
@@ -831,6 +840,7 @@ invalid = [
 id = "PARAM.ASA:ASA.Temperature_Anneal_Scale"
 name = "Temperature_Anneal_Scale"
 optimizers = ["ASA:ASA"]
+explain = "n = log(TAS); above the number of dimensions for large problems"
 args = [{ name = "value", kind = "number", min = 0, min_open = true }]
 default = { literal = "100.0" }
 doc = """\
@@ -852,6 +862,7 @@ invalid = [
 id = "PARAM.ASA:ASA.Sequential_Parameters"
 name = "Sequential_Parameters"
 optimizers = ["ASA:ASA"]
+explain = "start the cyclic generation of one dimension at a time at this 0-based index (0 = the first dimension); any negative = off"
 args = [{ name = "value", kind = "number", integral = true }]
 default = { literal = "-1" }
 doc = """\
@@ -876,6 +887,7 @@ invalid = [
 id = "PARAM.ASA:ASA.Initial_Parameter_Temperature"
 name = "Initial_Parameter_Temperature"
 optimizers = ["ASA:ASA"]
+explain = "initial parameter temperature (must be > 0)"
 args = [{ name = "value", kind = "number", min = 0, min_open = true }]
 default = { literal = "1.0" }
 doc = "The initial temperature of every dimension; above 0."
@@ -895,6 +907,7 @@ invalid = [
 id = "PARAM.ASA:ASA.Acceptance_Frequency_Modulus"
 name = "Acceptance_Frequency_Modulus"
 optimizers = ["ASA:ASA"]
+explain = "a periodic test follows each state, or each block of states, that brings the count of accepted states to a multiple of this number; 0 = off"
 args = [{ name = "value", kind = "number", min = 0, integral = true }]
 default = { literal = "100" }
 doc = """\
@@ -919,6 +932,7 @@ invalid = [
 id = "PARAM.ASA:ASA.Generated_Frequency_Modulus"
 name = "Generated_Frequency_Modulus"
 optimizers = ["ASA:ASA"]
+explain = "a periodic test follows each state, or each block of states, that brings the count of generated states to a multiple of this number; 0 = off"
 args = [{ name = "value", kind = "number", min = 0, integral = true }]
 default = { literal = "10000" }
 doc = """\
@@ -943,6 +957,7 @@ invalid = [
 id = "PARAM.ASA:ASA.Reanneal_Cost"
 name = "Reanneal_Cost"
 optimizers = ["ASA:ASA"]
+explain = "0 = off, 1 = default, >1 / <-1 = deviation-sample variants (-1 invalid)"
 args = [{ name = "value", kind = "number", integral = true }]
 default = { literal = "1" }
 doc = """\
@@ -965,6 +980,7 @@ invalid = [
 id = "PARAM.ASA:ASA.Reanneal_Parameters"
 name = "Reanneal_Parameters"
 optimizers = ["ASA:ASA"]
+explain = "adapt the temperature of each dimension to its tangent sensitivity"
 args = [{ name = "value", kind = "number", min = 0, max = 1, integral = true }]
 default = { literal = "1" }
 doc = """\
@@ -988,6 +1004,7 @@ invalid = [
 id = "PARAM.ASA:ASA.Delta_X"
 name = "Delta_X"
 optimizers = ["ASA:ASA"]
+explain = "finite-difference step for tangents; 0 disables tangents"
 args = [{ name = "value", kind = "number", min = 0 }]
 default = { literal = "0.001" }
 doc = """\
@@ -1018,6 +1035,7 @@ invalid = [
 id = "PARAM.ASA:ASA.User_Tangents"
 name = "User_Tangents"
 optimizers = ["ASA:ASA"]
+explain = "unsupported: tadah hpo has no analytic tangents (1 = error)"
 args = [{ name = "value", kind = "number", min = 0, max = 0, integral = true }]
 default = { literal = "0" }
 doc = """\
@@ -1043,6 +1061,7 @@ invalid = [
 id = "PARAM.ASA:ASA.Curvature_0"
 name = "Curvature_0"
 optimizers = ["ASA:ASA"]
+explain = "1 = skip curvature array (Tadah!'s default; ASA's own default 0 costs about n^2 evaluations at the exit, n the dimensions), 0 = full curvature at exit, -1 = periodic"
 args = [{ name = "value", kind = "number", min = -1, max = 1, integral = true }]
 default = { literal = "1" }
 doc = """\
@@ -1070,6 +1089,7 @@ invalid = [
 id = "PARAM.ASA:ASA.User_Quench_Cost_Scale"
 name = "User_Quench_Cost_Scale"
 optimizers = ["ASA:ASA"]
+explain = "cost-temperature quench exponent Q (>1 quenches; proof-safe)"
 args = [{ name = "value", kind = "number", min = 0, min_open = true }]
 default = { literal = "1.0" }
 doc = """\
@@ -1091,6 +1111,7 @@ invalid = [
 id = "PARAM.ASA:ASA.User_Quench_Param_Scale"
 name = "User_Quench_Param_Scale"
 optimizers = ["ASA:ASA"]
+explain = "quench exponent Q_i of each dimension (>1 voids the sampling proof)"
 indexed = true
 args = [{ name = "value", kind = "number", min = 0, min_open = true }]
 default = { literal = "1.0" }
@@ -1115,6 +1136,7 @@ invalid = [
 id = "PARAM.ASA:ASA.User_Temperature_Ratio"
 name = "User_Temperature_Ratio"
 optimizers = ["ASA:ASA"]
+explain = "multiplier of -log(Temperature_Ratio_Scale) of each dimension"
 indexed = true
 args = [{ name = "value", kind = "number", min = 0, min_open = true }]
 default = { literal = "1.0" }
@@ -1139,6 +1161,7 @@ invalid = [
 id = "PARAM.ASA:ASA.User_Delta_Parameter"
 name = "User_Delta_Parameter"
 optimizers = ["ASA:ASA"]
+explain = "finite-difference step of each dimension (defaults to Delta_X)"
 indexed = true
 args = [{ name = "value", kind = "number", min = 0, min_open = true }]
 default = { text = "the value of Delta_X" }
@@ -1170,6 +1193,7 @@ invalid = [
 id = "PARAM.ASA:ASA.User_Parameter_Temperature"
 name = "User_Parameter_Temperature"
 optimizers = ["ASA:ASA"]
+explain = "initial temperature of each dimension (defaults to Initial_Parameter_Temperature)"
 indexed = true
 args = [{ name = "value", kind = "number", min = 0, min_open = true }]
 default = { text = "the value of Initial_Parameter_Temperature" }
@@ -1192,6 +1216,7 @@ invalid = [
 id = "PARAM.ASA:ASA.Multi_Number"
 name = "Multi_Number"
 optimizers = ["ASA:ASA"]
+explain = "track the best N distinct minima (reported in the journal)"
 args = [{ name = "value", kind = "number", min = 1, integral = true }]
 default = { literal = "1" }
 doc = """\
@@ -1212,6 +1237,7 @@ invalid = [
 id = "PARAM.ASA:ASA.Multi_Specify"
 name = "Multi_Specify"
 optimizers = ["ASA:ASA"]
+explain = "1 = strict < for new minima (Tadah!'s default); 0 = <=, as in ASA's example options"
 args = [{ name = "value", kind = "number", min = 0, max = 1, integral = true }]
 default = { literal = "1" }
 doc = """\
@@ -1235,6 +1261,7 @@ invalid = [
 id = "PARAM.ASA:ASA.Multi_Grid"
 name = "Multi_Grid"
 optimizers = ["ASA:ASA"]
+explain = "distinctness grid of each dimension for the Multi_Number minima (0 = the double-precision epsilon)"
 indexed = true
 args = [{ name = "value", kind = "number", min = 0 }]
 default = { literal = "0.0" }
@@ -1257,6 +1284,7 @@ invalid = [
 id = "PARAM.ASA:ASA.Queue_Size"
 name = "Queue_Size"
 optimizers = ["ASA:ASA"]
+explain = "size of the cache of evaluated states (FIFO); 0 = cache off"
 args = [{ name = "value", kind = "number", min = 0, integral = true }]
 default = { literal = "0" }
 doc = """\
@@ -1278,6 +1306,7 @@ invalid = [
 id = "PARAM.ASA:ASA.Queue_Resolution"
 name = "Queue_Resolution"
 optimizers = ["ASA:ASA"]
+explain = "cache-hit resolution of each dimension"
 indexed = true
 args = [{ name = "value", kind = "number", min = 0 }]
 default = { literal = "0.0" }
@@ -1304,6 +1333,7 @@ invalid = [
 id = "PARAM.ASA:ASA.Gener_Block"
 name = "Gener_Block"
 optimizers = ["ASA:ASA"]
+explain = "initial generated-state block size; 1 (with Gener_Block_Max 1) = canonical serial sampling, >1 evaluates the block concurrently (THREADS-wide) and changes sampling"
 args = [{ name = "value", kind = "number", min = 1, integral = true }]
 default = { literal = "1" }
 doc = """\
@@ -1327,6 +1357,7 @@ invalid = [
 id = "PARAM.ASA:ASA.Gener_Block_Max"
 name = "Gener_Block_Max"
 optimizers = ["ASA:ASA"]
+explain = "block-size cap (buffers sized once); the adaptive resizing keeps the block between 1 and this cap, so it can shrink below Gener_Block"
 args = [{ name = "value", kind = "number", min = 1, integral = true }]
 default = { text = "the value of Gener_Block" }
 doc = """\
@@ -1351,6 +1382,7 @@ invalid = [
 id = "PARAM.ASA:ASA.Gener_Mov_Avr"
 name = "Gener_Mov_Avr"
 optimizers = ["ASA:ASA"]
+explain = "moving-average window of the adaptive block resizing; 0 = no resizing: every block holds Gener_Block states"
 args = [{ name = "value", kind = "number", min = 0, integral = true }]
 default = { literal = "3" }
 doc = """\

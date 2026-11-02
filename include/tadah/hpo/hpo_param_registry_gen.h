@@ -82,6 +82,7 @@ struct Param {
   std::string_view default_literal;
   bool indexed;                        // the name takes [<i>]
   Span<std::string_view> checks;
+  std::string_view explain;            // its row of `tadah explain LIB:ALGO`
 };
 
 /* A PARAM key an optimiser names but does not take, and why. */
@@ -115,7 +116,7 @@ inline constexpr Arg PARAM_TADAH_GRID_GRID_POINTS_args[] = {
     Arg{"n", ArgKind::Number, false, false, Limit{true, "2", 2.0, true, 2ull},
         Limit{true, "UINT_MAX", 4294967295.0, true, 4294967295ull}, false,
         true, Span<std::string_view>{nullptr, 0},
-        Span<RefusedWord>{nullptr, 0}, "", "", "", false, ""},
+        Span<RefusedWord>{nullptr, 0}, "", "", "", false, "", false},
 };
 inline constexpr std::string_view PARAM_TADAH_GRID_GRID_POINTS_checks[] = {
     "{phase}: TADAH:GRID: PARAM GRID_POINTS must be an integer from 2 to 4294967295, got '{value}' (the points of each dimension include both of its bounds)",
@@ -127,7 +128,7 @@ inline constexpr Arg PARAM_DLIB_BFGS_tol_gradinf_args[] = {
     Arg{"tolerance", ArgKind::Number, false, false,
         Limit{true, "0", 0.0, true, 0ull}, Limit{}, true, false,
         Span<std::string_view>{nullptr, 0}, Span<RefusedWord>{nullptr, 0}, "",
-        "", "", false, ""},
+        "", "", false, "", false},
 };
 inline constexpr std::string_view PARAM_DLIB_BFGS_tol_gradinf_checks[] = {
     "{phase}: DLIB:BFGS requires PARAM tol_gradinf > 0 (got {value})",
@@ -140,7 +141,7 @@ inline constexpr Arg PARAM_CERES_tol_gradinf_args[] = {
     Arg{"tolerance", ArgKind::Number, false, false,
         Limit{true, "0", 0.0, true, 0ull}, Limit{}, true, false,
         Span<std::string_view>{nullptr, 0}, Span<RefusedWord>{nullptr, 0}, "",
-        "", "", false, ""},
+        "", "", false, "", false},
 };
 inline constexpr std::string_view PARAM_CERES_tol_gradinf_checks[] = {
     "{phase}: CERES:{algo} requires PARAM tol_gradinf > 0 (got {value})",
@@ -152,7 +153,7 @@ inline constexpr Arg PARAM_CERES_max_iter_args[] = {
     Arg{"n", ArgKind::Number, false, false, Limit{true, "0", 0.0, true, 0ull},
         Limit{true, "INT_MAX", 2147483647.0, true, 2147483647ull}, false, true,
         Span<std::string_view>{nullptr, 0}, Span<RefusedWord>{nullptr, 0}, "",
-        "", "", false, ""},
+        "", "", false, "", false},
 };
 inline constexpr std::string_view PARAM_CERES_max_iter_checks[] = {
     "{phase}: CERES:{algo} requires PARAM max_iter to be an integer from 0 to 2147483647 (Ceres' max_num_iterations), got {value}",
@@ -164,7 +165,7 @@ inline constexpr Arg PARAM_CERES_max_ls_iter_args[] = {
     Arg{"n", ArgKind::Number, false, false, Limit{true, "1", 1.0, true, 1ull},
         Limit{true, "INT_MAX", 2147483647.0, true, 2147483647ull}, false, true,
         Span<std::string_view>{nullptr, 0}, Span<RefusedWord>{nullptr, 0}, "",
-        "", "", false, ""},
+        "", "", false, "", false},
 };
 inline constexpr std::string_view PARAM_CERES_max_ls_iter_checks[] = {
     "{phase}: CERES:{algo} requires PARAM max_ls_iter to be an integer from 1 to 2147483647 (Ceres' max_num_line_search_step_size_iterations), got {value}",
@@ -176,7 +177,7 @@ inline constexpr Arg PARAM_FD_fd_step_args[] = {
     Arg{"step", ArgKind::Number, false, false,
         Limit{true, "0", 0.0, true, 0ull}, Limit{}, true, false,
         Span<std::string_view>{nullptr, 0}, Span<RefusedWord>{nullptr, 0}, "",
-        "", "", false, ""},
+        "", "", false, "", false},
 };
 inline constexpr std::string_view PARAM_FD_fd_step_checks[] = {
     "{phase} {lib}:{algo}: PARAM fd_step must be a positive finite number (got {value})",
@@ -198,7 +199,7 @@ inline constexpr std::string_view PARAM_FD_fd_kernel_arg0_words[] = {
 inline constexpr Arg PARAM_FD_fd_kernel_args[] = {
     Arg{"rule", ArgKind::Word, false, false, Limit{}, Limit{}, false, false,
         Span<std::string_view>{detail::PARAM_FD_fd_kernel_arg0_words, 4},
-        Span<RefusedWord>{nullptr, 0}, "", "", "", false, ""},
+        Span<RefusedWord>{nullptr, 0}, "", "", "", false, "", false},
 };
 inline constexpr std::string_view PARAM_FD_fd_kernel_checks[] = {
     "{phase} {lib}:{algo}: PARAM fd_kernel must be inhouse or ceres (got '{value}')",
@@ -213,7 +214,7 @@ inline constexpr Arg PARAM_FD_diff_method_args[] = {
     Arg{"scheme", ArgKind::Number, false, false,
         Limit{true, "0", 0.0, true, 0ull}, Limit{true, "1", 1.0, true, 1ull},
         false, true, Span<std::string_view>{nullptr, 0},
-        Span<RefusedWord>{nullptr, 0}, "", "", "", false, ""},
+        Span<RefusedWord>{nullptr, 0}, "", "", "", false, "", false},
 };
 inline constexpr std::string_view PARAM_FD_diff_method_checks[] = {
     "{phase} {lib}:{algo}: PARAM diff_method must be 0 (CENTRAL, the default) or 1 (FORWARD) (got {value})",
@@ -228,7 +229,7 @@ inline constexpr Arg PARAM_ASA_ASA_Limit_Acceptances_args[] = {
     Arg{"value", ArgKind::Number, false, false,
         Limit{true, "0", 0.0, true, 0ull}, Limit{}, false, true,
         Span<std::string_view>{nullptr, 0}, Span<RefusedWord>{nullptr, 0}, "",
-        "", "", false, ""},
+        "", "", false, "", false},
 };
 inline constexpr std::string_view PARAM_ASA_ASA_Limit_Acceptances_checks[] = {
     "{phase}: ASA:ASA: PARAM {key} must be an integer (got {value})",
@@ -241,7 +242,7 @@ inline constexpr Arg PARAM_ASA_ASA_Limit_Generated_args[] = {
     Arg{"value", ArgKind::Number, false, false,
         Limit{true, "0", 0.0, true, 0ull}, Limit{}, false, true,
         Span<std::string_view>{nullptr, 0}, Span<RefusedWord>{nullptr, 0}, "",
-        "", "", false, ""},
+        "", "", false, "", false},
 };
 inline constexpr std::string_view PARAM_ASA_ASA_Limit_Generated_checks[] = {
     "{phase}: ASA:ASA: PARAM {key} must be an integer (got {value})",
@@ -254,7 +255,7 @@ inline constexpr Arg PARAM_ASA_ASA_Limit_Invalid_Generated_States_args[] = {
     Arg{"value", ArgKind::Number, false, false,
         Limit{true, "-1", -1.0, false, 0ull}, Limit{}, false, true,
         Span<std::string_view>{nullptr, 0}, Span<RefusedWord>{nullptr, 0}, "",
-        "", "", false, ""},
+        "", "", false, "", false},
 };
 inline constexpr std::string_view PARAM_ASA_ASA_Limit_Invalid_Generated_States_checks[] = {
     "{phase}: ASA:ASA: PARAM {key} must be an integer (got {value})",
@@ -267,7 +268,7 @@ inline constexpr Arg PARAM_ASA_ASA_Accepted_To_Generated_Ratio_args[] = {
     Arg{"value", ArgKind::Number, false, false,
         Limit{true, "0", 0.0, true, 0ull}, Limit{}, true, false,
         Span<std::string_view>{nullptr, 0}, Span<RefusedWord>{nullptr, 0}, "",
-        "", "", false, ""},
+        "", "", false, "", false},
 };
 inline constexpr std::string_view PARAM_ASA_ASA_Accepted_To_Generated_Ratio_checks[] = {
     "{phase}: ASA:ASA: PARAM {key} must be >= {min} (got {value})",
@@ -280,7 +281,7 @@ inline constexpr Arg PARAM_ASA_ASA_Cost_Precision_args[] = {
     Arg{"value", ArgKind::Number, false, false,
         Limit{true, "0", 0.0, true, 0ull}, Limit{}, true, false,
         Span<std::string_view>{nullptr, 0}, Span<RefusedWord>{nullptr, 0}, "",
-        "", "", false, ""},
+        "", "", false, "", false},
 };
 inline constexpr std::string_view PARAM_ASA_ASA_Cost_Precision_checks[] = {
     "{phase}: ASA:ASA: PARAM {key} must be >= {min} (got {value})",
@@ -293,7 +294,7 @@ inline constexpr Arg PARAM_ASA_ASA_Maximum_Cost_Repeat_args[] = {
     Arg{"value", ArgKind::Number, false, false,
         Limit{true, "0", 0.0, true, 0ull}, Limit{}, false, true,
         Span<std::string_view>{nullptr, 0}, Span<RefusedWord>{nullptr, 0}, "",
-        "", "", false, ""},
+        "", "", false, "", false},
 };
 inline constexpr std::string_view PARAM_ASA_ASA_Maximum_Cost_Repeat_checks[] = {
     "{phase}: ASA:ASA: PARAM {key} must be an integer (got {value})",
@@ -305,7 +306,7 @@ inline constexpr std::string_view PARAM_ASA_ASA_Number_Cost_Samples_optimizers[]
 inline constexpr Arg PARAM_ASA_ASA_Number_Cost_Samples_args[] = {
     Arg{"value", ArgKind::Number, false, false, Limit{}, Limit{}, false, true,
         Span<std::string_view>{nullptr, 0}, Span<RefusedWord>{nullptr, 0}, "",
-        "", "", false, ""},
+        "", "", false, "", false},
 };
 inline constexpr std::string_view PARAM_ASA_ASA_Number_Cost_Samples_checks[] = {
     "{phase}: ASA:ASA: PARAM {key} must be an integer (got {value})",
@@ -318,7 +319,7 @@ inline constexpr Arg PARAM_ASA_ASA_Temperature_Ratio_Scale_args[] = {
     Arg{"value", ArgKind::Number, false, false,
         Limit{true, "0", 0.0, true, 0ull}, Limit{}, true, false,
         Span<std::string_view>{nullptr, 0}, Span<RefusedWord>{nullptr, 0}, "",
-        "", "", false, ""},
+        "", "", false, "", false},
 };
 inline constexpr std::string_view PARAM_ASA_ASA_Temperature_Ratio_Scale_checks[] = {
     "{phase}: ASA:ASA: PARAM {key} must be >= {min} (got {value})",
@@ -331,7 +332,7 @@ inline constexpr Arg PARAM_ASA_ASA_Cost_Parameter_Scale_Ratio_args[] = {
     Arg{"value", ArgKind::Number, false, false,
         Limit{true, "0", 0.0, true, 0ull}, Limit{}, true, false,
         Span<std::string_view>{nullptr, 0}, Span<RefusedWord>{nullptr, 0}, "",
-        "", "", false, ""},
+        "", "", false, "", false},
 };
 inline constexpr std::string_view PARAM_ASA_ASA_Cost_Parameter_Scale_Ratio_checks[] = {
     "{phase}: ASA:ASA: PARAM {key} must be >= {min} (got {value})",
@@ -344,7 +345,7 @@ inline constexpr Arg PARAM_ASA_ASA_Temperature_Anneal_Scale_args[] = {
     Arg{"value", ArgKind::Number, false, false,
         Limit{true, "0", 0.0, true, 0ull}, Limit{}, true, false,
         Span<std::string_view>{nullptr, 0}, Span<RefusedWord>{nullptr, 0}, "",
-        "", "", false, ""},
+        "", "", false, "", false},
 };
 inline constexpr std::string_view PARAM_ASA_ASA_Temperature_Anneal_Scale_checks[] = {
     "{phase}: ASA:ASA: PARAM {key} must be >= {min} (got {value})",
@@ -356,7 +357,7 @@ inline constexpr std::string_view PARAM_ASA_ASA_Sequential_Parameters_optimizers
 inline constexpr Arg PARAM_ASA_ASA_Sequential_Parameters_args[] = {
     Arg{"value", ArgKind::Number, false, false, Limit{}, Limit{}, false, true,
         Span<std::string_view>{nullptr, 0}, Span<RefusedWord>{nullptr, 0}, "",
-        "", "", false, ""},
+        "", "", false, "", false},
 };
 inline constexpr std::string_view PARAM_ASA_ASA_Sequential_Parameters_checks[] = {
     "{phase}: ASA:ASA: PARAM {key} must be an integer (got {value})",
@@ -369,7 +370,7 @@ inline constexpr Arg PARAM_ASA_ASA_Initial_Parameter_Temperature_args[] = {
     Arg{"value", ArgKind::Number, false, false,
         Limit{true, "0", 0.0, true, 0ull}, Limit{}, true, false,
         Span<std::string_view>{nullptr, 0}, Span<RefusedWord>{nullptr, 0}, "",
-        "", "", false, ""},
+        "", "", false, "", false},
 };
 inline constexpr std::string_view PARAM_ASA_ASA_Initial_Parameter_Temperature_checks[] = {
     "{phase}: ASA:ASA: PARAM {key} must be >= {min} (got {value})",
@@ -382,7 +383,7 @@ inline constexpr Arg PARAM_ASA_ASA_Acceptance_Frequency_Modulus_args[] = {
     Arg{"value", ArgKind::Number, false, false,
         Limit{true, "0", 0.0, true, 0ull}, Limit{}, false, true,
         Span<std::string_view>{nullptr, 0}, Span<RefusedWord>{nullptr, 0}, "",
-        "", "", false, ""},
+        "", "", false, "", false},
 };
 inline constexpr std::string_view PARAM_ASA_ASA_Acceptance_Frequency_Modulus_checks[] = {
     "{phase}: ASA:ASA: PARAM {key} must be an integer (got {value})",
@@ -395,7 +396,7 @@ inline constexpr Arg PARAM_ASA_ASA_Generated_Frequency_Modulus_args[] = {
     Arg{"value", ArgKind::Number, false, false,
         Limit{true, "0", 0.0, true, 0ull}, Limit{}, false, true,
         Span<std::string_view>{nullptr, 0}, Span<RefusedWord>{nullptr, 0}, "",
-        "", "", false, ""},
+        "", "", false, "", false},
 };
 inline constexpr std::string_view PARAM_ASA_ASA_Generated_Frequency_Modulus_checks[] = {
     "{phase}: ASA:ASA: PARAM {key} must be an integer (got {value})",
@@ -407,7 +408,7 @@ inline constexpr std::string_view PARAM_ASA_ASA_Reanneal_Cost_optimizers[] = {
 inline constexpr Arg PARAM_ASA_ASA_Reanneal_Cost_args[] = {
     Arg{"value", ArgKind::Number, false, false, Limit{}, Limit{}, false, true,
         Span<std::string_view>{nullptr, 0}, Span<RefusedWord>{nullptr, 0}, "",
-        "", "", false, ""},
+        "", "", false, "", false},
 };
 inline constexpr std::string_view PARAM_ASA_ASA_Reanneal_Cost_checks[] = {
     "{phase}: ASA:ASA: PARAM {key} must be an integer (got {value})",
@@ -420,7 +421,7 @@ inline constexpr Arg PARAM_ASA_ASA_Reanneal_Parameters_args[] = {
     Arg{"value", ArgKind::Number, false, false,
         Limit{true, "0", 0.0, true, 0ull}, Limit{true, "1", 1.0, true, 1ull},
         false, true, Span<std::string_view>{nullptr, 0},
-        Span<RefusedWord>{nullptr, 0}, "", "", "", false, ""},
+        Span<RefusedWord>{nullptr, 0}, "", "", "", false, "", false},
 };
 inline constexpr std::string_view PARAM_ASA_ASA_Reanneal_Parameters_checks[] = {
     "{phase}: ASA:ASA: PARAM {key} must be an integer (got {value})",
@@ -434,7 +435,7 @@ inline constexpr Arg PARAM_ASA_ASA_Delta_X_args[] = {
     Arg{"value", ArgKind::Number, false, false,
         Limit{true, "0", 0.0, true, 0ull}, Limit{}, false, false,
         Span<std::string_view>{nullptr, 0}, Span<RefusedWord>{nullptr, 0}, "",
-        "", "", false, ""},
+        "", "", false, "", false},
 };
 inline constexpr std::string_view PARAM_ASA_ASA_Delta_X_checks[] = {
     "{phase}: ASA:ASA: PARAM {key} must be >= {min} (got {value})",
@@ -447,7 +448,7 @@ inline constexpr Arg PARAM_ASA_ASA_User_Tangents_args[] = {
     Arg{"value", ArgKind::Number, false, false,
         Limit{true, "0", 0.0, true, 0ull}, Limit{true, "0", 0.0, true, 0ull},
         false, true, Span<std::string_view>{nullptr, 0},
-        Span<RefusedWord>{nullptr, 0}, "", "", "", false, ""},
+        Span<RefusedWord>{nullptr, 0}, "", "", "", false, "", false},
 };
 inline constexpr std::string_view PARAM_ASA_ASA_User_Tangents_checks[] = {
     "{phase}: ASA:ASA: PARAM {key} must be an integer (got {value})",
@@ -463,7 +464,7 @@ inline constexpr Arg PARAM_ASA_ASA_Curvature_0_args[] = {
         Limit{true, "-1", -1.0, false, 0ull},
         Limit{true, "1", 1.0, true, 1ull}, false, true,
         Span<std::string_view>{nullptr, 0}, Span<RefusedWord>{nullptr, 0}, "",
-        "", "", false, ""},
+        "", "", false, "", false},
 };
 inline constexpr std::string_view PARAM_ASA_ASA_Curvature_0_checks[] = {
     "{phase}: ASA:ASA: PARAM {key} must be an integer (got {value})",
@@ -477,7 +478,7 @@ inline constexpr Arg PARAM_ASA_ASA_User_Quench_Cost_Scale_args[] = {
     Arg{"value", ArgKind::Number, false, false,
         Limit{true, "0", 0.0, true, 0ull}, Limit{}, true, false,
         Span<std::string_view>{nullptr, 0}, Span<RefusedWord>{nullptr, 0}, "",
-        "", "", false, ""},
+        "", "", false, "", false},
 };
 inline constexpr std::string_view PARAM_ASA_ASA_User_Quench_Cost_Scale_checks[] = {
     "{phase}: ASA:ASA: PARAM {key} must be >= {min} (got {value})",
@@ -490,7 +491,7 @@ inline constexpr Arg PARAM_ASA_ASA_User_Quench_Param_Scale_args[] = {
     Arg{"value", ArgKind::Number, false, false,
         Limit{true, "0", 0.0, true, 0ull}, Limit{}, true, false,
         Span<std::string_view>{nullptr, 0}, Span<RefusedWord>{nullptr, 0}, "",
-        "", "", false, ""},
+        "", "", false, "", false},
 };
 inline constexpr std::string_view PARAM_ASA_ASA_User_Quench_Param_Scale_checks[] = {
     "{phase}: ASA:ASA: PARAM {key} must be >= {min} (got {value})",
@@ -503,7 +504,7 @@ inline constexpr Arg PARAM_ASA_ASA_User_Temperature_Ratio_args[] = {
     Arg{"value", ArgKind::Number, false, false,
         Limit{true, "0", 0.0, true, 0ull}, Limit{}, true, false,
         Span<std::string_view>{nullptr, 0}, Span<RefusedWord>{nullptr, 0}, "",
-        "", "", false, ""},
+        "", "", false, "", false},
 };
 inline constexpr std::string_view PARAM_ASA_ASA_User_Temperature_Ratio_checks[] = {
     "{phase}: ASA:ASA: PARAM {key} must be >= {min} (got {value})",
@@ -516,7 +517,7 @@ inline constexpr Arg PARAM_ASA_ASA_User_Delta_Parameter_args[] = {
     Arg{"value", ArgKind::Number, false, false,
         Limit{true, "0", 0.0, true, 0ull}, Limit{}, true, false,
         Span<std::string_view>{nullptr, 0}, Span<RefusedWord>{nullptr, 0}, "",
-        "", "", false, ""},
+        "", "", false, "", false},
 };
 inline constexpr std::string_view PARAM_ASA_ASA_User_Delta_Parameter_checks[] = {
     "{phase}: ASA:ASA: PARAM {key} must be >= {min} (got {value})",
@@ -530,7 +531,7 @@ inline constexpr Arg PARAM_ASA_ASA_User_Parameter_Temperature_args[] = {
     Arg{"value", ArgKind::Number, false, false,
         Limit{true, "0", 0.0, true, 0ull}, Limit{}, true, false,
         Span<std::string_view>{nullptr, 0}, Span<RefusedWord>{nullptr, 0}, "",
-        "", "", false, ""},
+        "", "", false, "", false},
 };
 inline constexpr std::string_view PARAM_ASA_ASA_User_Parameter_Temperature_checks[] = {
     "{phase}: ASA:ASA: PARAM {key} must be >= {min} (got {value})",
@@ -543,7 +544,7 @@ inline constexpr Arg PARAM_ASA_ASA_Multi_Number_args[] = {
     Arg{"value", ArgKind::Number, false, false,
         Limit{true, "1", 1.0, true, 1ull}, Limit{}, false, true,
         Span<std::string_view>{nullptr, 0}, Span<RefusedWord>{nullptr, 0}, "",
-        "", "", false, ""},
+        "", "", false, "", false},
 };
 inline constexpr std::string_view PARAM_ASA_ASA_Multi_Number_checks[] = {
     "{phase}: ASA:ASA: PARAM {key} must be an integer (got {value})",
@@ -556,7 +557,7 @@ inline constexpr Arg PARAM_ASA_ASA_Multi_Specify_args[] = {
     Arg{"value", ArgKind::Number, false, false,
         Limit{true, "0", 0.0, true, 0ull}, Limit{true, "1", 1.0, true, 1ull},
         false, true, Span<std::string_view>{nullptr, 0},
-        Span<RefusedWord>{nullptr, 0}, "", "", "", false, ""},
+        Span<RefusedWord>{nullptr, 0}, "", "", "", false, "", false},
 };
 inline constexpr std::string_view PARAM_ASA_ASA_Multi_Specify_checks[] = {
     "{phase}: ASA:ASA: PARAM {key} must be an integer (got {value})",
@@ -570,7 +571,7 @@ inline constexpr Arg PARAM_ASA_ASA_Multi_Grid_args[] = {
     Arg{"value", ArgKind::Number, false, false,
         Limit{true, "0", 0.0, true, 0ull}, Limit{}, false, false,
         Span<std::string_view>{nullptr, 0}, Span<RefusedWord>{nullptr, 0}, "",
-        "", "", false, ""},
+        "", "", false, "", false},
 };
 inline constexpr std::string_view PARAM_ASA_ASA_Multi_Grid_checks[] = {
     "{phase}: ASA:ASA: PARAM {key} must be >= {min} (got {value})",
@@ -582,7 +583,7 @@ inline constexpr Arg PARAM_ASA_ASA_Queue_Size_args[] = {
     Arg{"value", ArgKind::Number, false, false,
         Limit{true, "0", 0.0, true, 0ull}, Limit{}, false, true,
         Span<std::string_view>{nullptr, 0}, Span<RefusedWord>{nullptr, 0}, "",
-        "", "", false, ""},
+        "", "", false, "", false},
 };
 inline constexpr std::string_view PARAM_ASA_ASA_Queue_Size_checks[] = {
     "{phase}: ASA:ASA: PARAM {key} must be an integer (got {value})",
@@ -595,7 +596,7 @@ inline constexpr Arg PARAM_ASA_ASA_Queue_Resolution_args[] = {
     Arg{"value", ArgKind::Number, false, false,
         Limit{true, "0", 0.0, true, 0ull}, Limit{}, false, false,
         Span<std::string_view>{nullptr, 0}, Span<RefusedWord>{nullptr, 0}, "",
-        "", "", false, ""},
+        "", "", false, "", false},
 };
 inline constexpr std::string_view PARAM_ASA_ASA_Queue_Resolution_checks[] = {
     "{phase}: ASA:ASA: PARAM {key} must be >= {min} (got {value})",
@@ -607,7 +608,7 @@ inline constexpr Arg PARAM_ASA_ASA_Gener_Block_args[] = {
     Arg{"value", ArgKind::Number, false, false,
         Limit{true, "1", 1.0, true, 1ull}, Limit{}, false, true,
         Span<std::string_view>{nullptr, 0}, Span<RefusedWord>{nullptr, 0}, "",
-        "", "", false, ""},
+        "", "", false, "", false},
 };
 inline constexpr std::string_view PARAM_ASA_ASA_Gener_Block_checks[] = {
     "{phase}: ASA:ASA: PARAM {key} must be an integer (got {value})",
@@ -620,7 +621,7 @@ inline constexpr Arg PARAM_ASA_ASA_Gener_Block_Max_args[] = {
     Arg{"value", ArgKind::Number, false, false,
         Limit{true, "1", 1.0, true, 1ull}, Limit{}, false, true,
         Span<std::string_view>{nullptr, 0}, Span<RefusedWord>{nullptr, 0}, "",
-        "", "", false, ""},
+        "", "", false, "", false},
 };
 inline constexpr std::string_view PARAM_ASA_ASA_Gener_Block_Max_checks[] = {
     "{phase}: ASA:ASA: PARAM {key} must be an integer (got {value})",
@@ -634,7 +635,7 @@ inline constexpr Arg PARAM_ASA_ASA_Gener_Mov_Avr_args[] = {
     Arg{"value", ArgKind::Number, false, false,
         Limit{true, "0", 0.0, true, 0ull}, Limit{}, false, true,
         Span<std::string_view>{nullptr, 0}, Span<RefusedWord>{nullptr, 0}, "",
-        "", "", false, ""},
+        "", "", false, "", false},
 };
 inline constexpr std::string_view PARAM_ASA_ASA_Gener_Mov_Avr_checks[] = {
     "{phase}: ASA:ASA: PARAM {key} must be an integer (got {value})",
@@ -790,224 +791,258 @@ inline constexpr Param kParams[] = {
       Span<std::string_view>{detail::PARAM_TADAH_GRID_GRID_POINTS_optimizers, 1},
       Span<Arg>{detail::PARAM_TADAH_GRID_GRID_POINTS_args, 1}, true, "20",
       false,
-      Span<std::string_view>{detail::PARAM_TADAH_GRID_GRID_POINTS_checks, 1}},
+      Span<std::string_view>{detail::PARAM_TADAH_GRID_GRID_POINTS_checks, 1},
+      ""},
   Param{ParamId::PARAM_DLIB_BFGS_tol_gradinf, "PARAM.DLIB:BFGS.tol_gradinf",
       "tol_gradinf",
       Span<std::string_view>{detail::PARAM_DLIB_BFGS_tol_gradinf_optimizers, 1},
       Span<Arg>{detail::PARAM_DLIB_BFGS_tol_gradinf_args, 1}, false, "", false,
-      Span<std::string_view>{detail::PARAM_DLIB_BFGS_tol_gradinf_checks, 2}},
+      Span<std::string_view>{detail::PARAM_DLIB_BFGS_tol_gradinf_checks, 2},
+      ""},
   Param{ParamId::PARAM_CERES_tol_gradinf, "PARAM.CERES.tol_gradinf",
       "tol_gradinf",
       Span<std::string_view>{detail::PARAM_CERES_tol_gradinf_optimizers, 1},
       Span<Arg>{detail::PARAM_CERES_tol_gradinf_args, 1}, true, "1e-10", false,
-      Span<std::string_view>{detail::PARAM_CERES_tol_gradinf_checks, 1}},
+      Span<std::string_view>{detail::PARAM_CERES_tol_gradinf_checks, 1}, ""},
   Param{ParamId::PARAM_CERES_max_iter, "PARAM.CERES.max_iter", "max_iter",
       Span<std::string_view>{detail::PARAM_CERES_max_iter_optimizers, 1},
       Span<Arg>{detail::PARAM_CERES_max_iter_args, 1}, false, "", false,
-      Span<std::string_view>{detail::PARAM_CERES_max_iter_checks, 1}},
+      Span<std::string_view>{detail::PARAM_CERES_max_iter_checks, 1}, ""},
   Param{ParamId::PARAM_CERES_max_ls_iter, "PARAM.CERES.max_ls_iter",
       "max_ls_iter",
       Span<std::string_view>{detail::PARAM_CERES_max_ls_iter_optimizers, 1},
       Span<Arg>{detail::PARAM_CERES_max_ls_iter_args, 1}, false, "", false,
-      Span<std::string_view>{detail::PARAM_CERES_max_ls_iter_checks, 1}},
+      Span<std::string_view>{detail::PARAM_CERES_max_ls_iter_checks, 1}, ""},
   Param{ParamId::PARAM_FD_fd_step, "PARAM.FD.fd_step", "fd_step",
       Span<std::string_view>{detail::PARAM_FD_fd_step_optimizers, 1},
       Span<Arg>{detail::PARAM_FD_fd_step_args, 1}, true, "1e-6", false,
-      Span<std::string_view>{detail::PARAM_FD_fd_step_checks, 6}},
+      Span<std::string_view>{detail::PARAM_FD_fd_step_checks, 6}, ""},
   Param{ParamId::PARAM_FD_fd_kernel, "PARAM.FD.fd_kernel", "fd_kernel",
       Span<std::string_view>{detail::PARAM_FD_fd_kernel_optimizers, 1},
       Span<Arg>{detail::PARAM_FD_fd_kernel_args, 1}, false, "", false,
-      Span<std::string_view>{detail::PARAM_FD_fd_kernel_checks, 4}},
+      Span<std::string_view>{detail::PARAM_FD_fd_kernel_checks, 4}, ""},
   Param{ParamId::PARAM_FD_diff_method, "PARAM.FD.diff_method", "diff_method",
       Span<std::string_view>{detail::PARAM_FD_diff_method_optimizers, 1},
       Span<Arg>{detail::PARAM_FD_diff_method_args, 1}, true, "0", false,
-      Span<std::string_view>{detail::PARAM_FD_diff_method_checks, 4}},
+      Span<std::string_view>{detail::PARAM_FD_diff_method_checks, 4}, ""},
   Param{ParamId::PARAM_ASA_ASA_Limit_Acceptances,
       "PARAM.ASA:ASA.Limit_Acceptances", "Limit_Acceptances",
       Span<std::string_view>{detail::PARAM_ASA_ASA_Limit_Acceptances_optimizers, 1},
       Span<Arg>{detail::PARAM_ASA_ASA_Limit_Acceptances_args, 1}, true,
       "10000", false,
-      Span<std::string_view>{detail::PARAM_ASA_ASA_Limit_Acceptances_checks, 2}},
+      Span<std::string_view>{detail::PARAM_ASA_ASA_Limit_Acceptances_checks, 2},
+      "max accepted states; 0 = no limit"},
   Param{ParamId::PARAM_ASA_ASA_Limit_Generated,
       "PARAM.ASA:ASA.Limit_Generated", "Limit_Generated",
       Span<std::string_view>{detail::PARAM_ASA_ASA_Limit_Generated_optimizers, 1},
       Span<Arg>{detail::PARAM_ASA_ASA_Limit_Generated_args, 1}, true, "99999",
       false,
-      Span<std::string_view>{detail::PARAM_ASA_ASA_Limit_Generated_checks, 2}},
+      Span<std::string_view>{detail::PARAM_ASA_ASA_Limit_Generated_checks, 2},
+      "max generated states; 0 = no limit"},
   Param{ParamId::PARAM_ASA_ASA_Limit_Invalid_Generated_States,
       "PARAM.ASA:ASA.Limit_Invalid_Generated_States",
       "Limit_Invalid_Generated_States",
       Span<std::string_view>{detail::PARAM_ASA_ASA_Limit_Invalid_Generated_States_optimizers, 1},
       Span<Arg>{detail::PARAM_ASA_ASA_Limit_Invalid_Generated_States_args, 1},
       true, "1000", false,
-      Span<std::string_view>{detail::PARAM_ASA_ASA_Limit_Invalid_Generated_States_checks, 2}},
+      Span<std::string_view>{detail::PARAM_ASA_ASA_Limit_Invalid_Generated_States_checks, 2},
+      "invalid-state budget; 0 = exit ASAP, -1 = bypass test"},
   Param{ParamId::PARAM_ASA_ASA_Accepted_To_Generated_Ratio,
       "PARAM.ASA:ASA.Accepted_To_Generated_Ratio",
       "Accepted_To_Generated_Ratio",
       Span<std::string_view>{detail::PARAM_ASA_ASA_Accepted_To_Generated_Ratio_optimizers, 1},
       Span<Arg>{detail::PARAM_ASA_ASA_Accepted_To_Generated_Ratio_args, 1},
       true, "1e-6", false,
-      Span<std::string_view>{detail::PARAM_ASA_ASA_Accepted_To_Generated_Ratio_checks, 2}},
+      Span<std::string_view>{detail::PARAM_ASA_ASA_Accepted_To_Generated_Ratio_checks, 2},
+      "min accepted/generated ratio before reanneal test (must be > 0)"},
   Param{ParamId::PARAM_ASA_ASA_Cost_Precision, "PARAM.ASA:ASA.Cost_Precision",
       "Cost_Precision",
       Span<std::string_view>{detail::PARAM_ASA_ASA_Cost_Precision_optimizers, 1},
       Span<Arg>{detail::PARAM_ASA_ASA_Cost_Precision_args, 1}, true, "1e-18",
       false,
-      Span<std::string_view>{detail::PARAM_ASA_ASA_Cost_Precision_checks, 2}},
+      Span<std::string_view>{detail::PARAM_ASA_ASA_Cost_Precision_checks, 2},
+      "|last-best| threshold of the cost-repeat plateau test (must be > 0)"},
   Param{ParamId::PARAM_ASA_ASA_Maximum_Cost_Repeat,
       "PARAM.ASA:ASA.Maximum_Cost_Repeat", "Maximum_Cost_Repeat",
       Span<std::string_view>{detail::PARAM_ASA_ASA_Maximum_Cost_Repeat_optimizers, 1},
       Span<Arg>{detail::PARAM_ASA_ASA_Maximum_Cost_Repeat_args, 1}, true, "5",
       false,
-      Span<std::string_view>{detail::PARAM_ASA_ASA_Maximum_Cost_Repeat_checks, 2}},
+      Span<std::string_view>{detail::PARAM_ASA_ASA_Maximum_Cost_Repeat_checks, 2},
+      "consecutive plateau cycles before COST_REPEATING exit; 0 = bypass"},
   Param{ParamId::PARAM_ASA_ASA_Number_Cost_Samples,
       "PARAM.ASA:ASA.Number_Cost_Samples", "Number_Cost_Samples",
       Span<std::string_view>{detail::PARAM_ASA_ASA_Number_Cost_Samples_optimizers, 1},
       Span<Arg>{detail::PARAM_ASA_ASA_Number_Cost_Samples_args, 1}, true, "5",
       false,
-      Span<std::string_view>{detail::PARAM_ASA_ASA_Number_Cost_Samples_checks, 2}},
+      Span<std::string_view>{detail::PARAM_ASA_ASA_Number_Cost_Samples_checks, 2},
+      ">0: initial cost temp from mean |cost|; <-1: from a deviation sample"},
   Param{ParamId::PARAM_ASA_ASA_Temperature_Ratio_Scale,
       "PARAM.ASA:ASA.Temperature_Ratio_Scale", "Temperature_Ratio_Scale",
       Span<std::string_view>{detail::PARAM_ASA_ASA_Temperature_Ratio_Scale_optimizers, 1},
       Span<Arg>{detail::PARAM_ASA_ASA_Temperature_Ratio_Scale_args, 1}, true,
       "1e-5", false,
-      Span<std::string_view>{detail::PARAM_ASA_ASA_Temperature_Ratio_Scale_checks, 2}},
+      Span<std::string_view>{detail::PARAM_ASA_ASA_Temperature_Ratio_Scale_checks, 2},
+      "the main control of the annealing rate: m = -log(TRS)"},
   Param{ParamId::PARAM_ASA_ASA_Cost_Parameter_Scale_Ratio,
       "PARAM.ASA:ASA.Cost_Parameter_Scale_Ratio", "Cost_Parameter_Scale_Ratio",
       Span<std::string_view>{detail::PARAM_ASA_ASA_Cost_Parameter_Scale_Ratio_optimizers, 1},
       Span<Arg>{detail::PARAM_ASA_ASA_Cost_Parameter_Scale_Ratio_args, 1},
       true, "1.0", false,
-      Span<std::string_view>{detail::PARAM_ASA_ASA_Cost_Parameter_Scale_Ratio_checks, 2}},
+      Span<std::string_view>{detail::PARAM_ASA_ASA_Cost_Parameter_Scale_Ratio_checks, 2},
+      "cost temperature schedule scale relative to parameters"},
   Param{ParamId::PARAM_ASA_ASA_Temperature_Anneal_Scale,
       "PARAM.ASA:ASA.Temperature_Anneal_Scale", "Temperature_Anneal_Scale",
       Span<std::string_view>{detail::PARAM_ASA_ASA_Temperature_Anneal_Scale_optimizers, 1},
       Span<Arg>{detail::PARAM_ASA_ASA_Temperature_Anneal_Scale_args, 1}, true,
       "100.0", false,
-      Span<std::string_view>{detail::PARAM_ASA_ASA_Temperature_Anneal_Scale_checks, 2}},
+      Span<std::string_view>{detail::PARAM_ASA_ASA_Temperature_Anneal_Scale_checks, 2},
+      "n = log(TAS); above the number of dimensions for large problems"},
   Param{ParamId::PARAM_ASA_ASA_Sequential_Parameters,
       "PARAM.ASA:ASA.Sequential_Parameters", "Sequential_Parameters",
       Span<std::string_view>{detail::PARAM_ASA_ASA_Sequential_Parameters_optimizers, 1},
       Span<Arg>{detail::PARAM_ASA_ASA_Sequential_Parameters_args, 1}, true,
       "-1", false,
-      Span<std::string_view>{detail::PARAM_ASA_ASA_Sequential_Parameters_checks, 2}},
+      Span<std::string_view>{detail::PARAM_ASA_ASA_Sequential_Parameters_checks, 2},
+      "start the cyclic generation of one dimension at a time at this 0-based index (0 = the first dimension); any negative = off"},
   Param{ParamId::PARAM_ASA_ASA_Initial_Parameter_Temperature,
       "PARAM.ASA:ASA.Initial_Parameter_Temperature",
       "Initial_Parameter_Temperature",
       Span<std::string_view>{detail::PARAM_ASA_ASA_Initial_Parameter_Temperature_optimizers, 1},
       Span<Arg>{detail::PARAM_ASA_ASA_Initial_Parameter_Temperature_args, 1},
       true, "1.0", false,
-      Span<std::string_view>{detail::PARAM_ASA_ASA_Initial_Parameter_Temperature_checks, 2}},
+      Span<std::string_view>{detail::PARAM_ASA_ASA_Initial_Parameter_Temperature_checks, 2},
+      "initial parameter temperature (must be > 0)"},
   Param{ParamId::PARAM_ASA_ASA_Acceptance_Frequency_Modulus,
       "PARAM.ASA:ASA.Acceptance_Frequency_Modulus",
       "Acceptance_Frequency_Modulus",
       Span<std::string_view>{detail::PARAM_ASA_ASA_Acceptance_Frequency_Modulus_optimizers, 1},
       Span<Arg>{detail::PARAM_ASA_ASA_Acceptance_Frequency_Modulus_args, 1},
       true, "100", false,
-      Span<std::string_view>{detail::PARAM_ASA_ASA_Acceptance_Frequency_Modulus_checks, 2}},
+      Span<std::string_view>{detail::PARAM_ASA_ASA_Acceptance_Frequency_Modulus_checks, 2},
+      "a periodic test follows each state, or each block of states, that brings the count of accepted states to a multiple of this number; 0 = off"},
   Param{ParamId::PARAM_ASA_ASA_Generated_Frequency_Modulus,
       "PARAM.ASA:ASA.Generated_Frequency_Modulus",
       "Generated_Frequency_Modulus",
       Span<std::string_view>{detail::PARAM_ASA_ASA_Generated_Frequency_Modulus_optimizers, 1},
       Span<Arg>{detail::PARAM_ASA_ASA_Generated_Frequency_Modulus_args, 1},
       true, "10000", false,
-      Span<std::string_view>{detail::PARAM_ASA_ASA_Generated_Frequency_Modulus_checks, 2}},
+      Span<std::string_view>{detail::PARAM_ASA_ASA_Generated_Frequency_Modulus_checks, 2},
+      "a periodic test follows each state, or each block of states, that brings the count of generated states to a multiple of this number; 0 = off"},
   Param{ParamId::PARAM_ASA_ASA_Reanneal_Cost, "PARAM.ASA:ASA.Reanneal_Cost",
       "Reanneal_Cost",
       Span<std::string_view>{detail::PARAM_ASA_ASA_Reanneal_Cost_optimizers, 1},
       Span<Arg>{detail::PARAM_ASA_ASA_Reanneal_Cost_args, 1}, true, "1", false,
-      Span<std::string_view>{detail::PARAM_ASA_ASA_Reanneal_Cost_checks, 2}},
+      Span<std::string_view>{detail::PARAM_ASA_ASA_Reanneal_Cost_checks, 2},
+      "0 = off, 1 = default, >1 / <-1 = deviation-sample variants (-1 invalid)"},
   Param{ParamId::PARAM_ASA_ASA_Reanneal_Parameters,
       "PARAM.ASA:ASA.Reanneal_Parameters", "Reanneal_Parameters",
       Span<std::string_view>{detail::PARAM_ASA_ASA_Reanneal_Parameters_optimizers, 1},
       Span<Arg>{detail::PARAM_ASA_ASA_Reanneal_Parameters_args, 1}, true, "1",
       false,
-      Span<std::string_view>{detail::PARAM_ASA_ASA_Reanneal_Parameters_checks, 3}},
+      Span<std::string_view>{detail::PARAM_ASA_ASA_Reanneal_Parameters_checks, 3},
+      "adapt the temperature of each dimension to its tangent sensitivity"},
   Param{ParamId::PARAM_ASA_ASA_Delta_X, "PARAM.ASA:ASA.Delta_X", "Delta_X",
       Span<std::string_view>{detail::PARAM_ASA_ASA_Delta_X_optimizers, 1},
       Span<Arg>{detail::PARAM_ASA_ASA_Delta_X_args, 1}, true, "0.001", false,
-      Span<std::string_view>{detail::PARAM_ASA_ASA_Delta_X_checks, 2}},
+      Span<std::string_view>{detail::PARAM_ASA_ASA_Delta_X_checks, 2},
+      "finite-difference step for tangents; 0 disables tangents"},
   Param{ParamId::PARAM_ASA_ASA_User_Tangents, "PARAM.ASA:ASA.User_Tangents",
       "User_Tangents",
       Span<std::string_view>{detail::PARAM_ASA_ASA_User_Tangents_optimizers, 1},
       Span<Arg>{detail::PARAM_ASA_ASA_User_Tangents_args, 1}, true, "0", false,
-      Span<std::string_view>{detail::PARAM_ASA_ASA_User_Tangents_checks, 4}},
+      Span<std::string_view>{detail::PARAM_ASA_ASA_User_Tangents_checks, 4},
+      "unsupported: tadah hpo has no analytic tangents (1 = error)"},
   Param{ParamId::PARAM_ASA_ASA_Curvature_0, "PARAM.ASA:ASA.Curvature_0",
       "Curvature_0",
       Span<std::string_view>{detail::PARAM_ASA_ASA_Curvature_0_optimizers, 1},
       Span<Arg>{detail::PARAM_ASA_ASA_Curvature_0_args, 1}, true, "1", false,
-      Span<std::string_view>{detail::PARAM_ASA_ASA_Curvature_0_checks, 3}},
+      Span<std::string_view>{detail::PARAM_ASA_ASA_Curvature_0_checks, 3},
+      "1 = skip curvature array (Tadah!'s default; ASA's own default 0 costs about n^2 evaluations at the exit, n the dimensions), 0 = full curvature at exit, -1 = periodic"},
   Param{ParamId::PARAM_ASA_ASA_User_Quench_Cost_Scale,
       "PARAM.ASA:ASA.User_Quench_Cost_Scale", "User_Quench_Cost_Scale",
       Span<std::string_view>{detail::PARAM_ASA_ASA_User_Quench_Cost_Scale_optimizers, 1},
       Span<Arg>{detail::PARAM_ASA_ASA_User_Quench_Cost_Scale_args, 1}, true,
       "1.0", false,
-      Span<std::string_view>{detail::PARAM_ASA_ASA_User_Quench_Cost_Scale_checks, 2}},
+      Span<std::string_view>{detail::PARAM_ASA_ASA_User_Quench_Cost_Scale_checks, 2},
+      "cost-temperature quench exponent Q (>1 quenches; proof-safe)"},
   Param{ParamId::PARAM_ASA_ASA_User_Quench_Param_Scale,
       "PARAM.ASA:ASA.User_Quench_Param_Scale", "User_Quench_Param_Scale",
       Span<std::string_view>{detail::PARAM_ASA_ASA_User_Quench_Param_Scale_optimizers, 1},
       Span<Arg>{detail::PARAM_ASA_ASA_User_Quench_Param_Scale_args, 1}, true,
       "1.0", true,
-      Span<std::string_view>{detail::PARAM_ASA_ASA_User_Quench_Param_Scale_checks, 2}},
+      Span<std::string_view>{detail::PARAM_ASA_ASA_User_Quench_Param_Scale_checks, 2},
+      "quench exponent Q_i of each dimension (>1 voids the sampling proof)"},
   Param{ParamId::PARAM_ASA_ASA_User_Temperature_Ratio,
       "PARAM.ASA:ASA.User_Temperature_Ratio", "User_Temperature_Ratio",
       Span<std::string_view>{detail::PARAM_ASA_ASA_User_Temperature_Ratio_optimizers, 1},
       Span<Arg>{detail::PARAM_ASA_ASA_User_Temperature_Ratio_args, 1}, true,
       "1.0", true,
-      Span<std::string_view>{detail::PARAM_ASA_ASA_User_Temperature_Ratio_checks, 2}},
+      Span<std::string_view>{detail::PARAM_ASA_ASA_User_Temperature_Ratio_checks, 2},
+      "multiplier of -log(Temperature_Ratio_Scale) of each dimension"},
   Param{ParamId::PARAM_ASA_ASA_User_Delta_Parameter,
       "PARAM.ASA:ASA.User_Delta_Parameter", "User_Delta_Parameter",
       Span<std::string_view>{detail::PARAM_ASA_ASA_User_Delta_Parameter_optimizers, 1},
       Span<Arg>{detail::PARAM_ASA_ASA_User_Delta_Parameter_args, 1}, false, "",
       true,
-      Span<std::string_view>{detail::PARAM_ASA_ASA_User_Delta_Parameter_checks, 3}},
+      Span<std::string_view>{detail::PARAM_ASA_ASA_User_Delta_Parameter_checks, 3},
+      "finite-difference step of each dimension (defaults to Delta_X)"},
   Param{ParamId::PARAM_ASA_ASA_User_Parameter_Temperature,
       "PARAM.ASA:ASA.User_Parameter_Temperature", "User_Parameter_Temperature",
       Span<std::string_view>{detail::PARAM_ASA_ASA_User_Parameter_Temperature_optimizers, 1},
       Span<Arg>{detail::PARAM_ASA_ASA_User_Parameter_Temperature_args, 1},
       false, "", true,
-      Span<std::string_view>{detail::PARAM_ASA_ASA_User_Parameter_Temperature_checks, 2}},
+      Span<std::string_view>{detail::PARAM_ASA_ASA_User_Parameter_Temperature_checks, 2},
+      "initial temperature of each dimension (defaults to Initial_Parameter_Temperature)"},
   Param{ParamId::PARAM_ASA_ASA_Multi_Number, "PARAM.ASA:ASA.Multi_Number",
       "Multi_Number",
       Span<std::string_view>{detail::PARAM_ASA_ASA_Multi_Number_optimizers, 1},
       Span<Arg>{detail::PARAM_ASA_ASA_Multi_Number_args, 1}, true, "1", false,
-      Span<std::string_view>{detail::PARAM_ASA_ASA_Multi_Number_checks, 2}},
+      Span<std::string_view>{detail::PARAM_ASA_ASA_Multi_Number_checks, 2},
+      "track the best N distinct minima (reported in the journal)"},
   Param{ParamId::PARAM_ASA_ASA_Multi_Specify, "PARAM.ASA:ASA.Multi_Specify",
       "Multi_Specify",
       Span<std::string_view>{detail::PARAM_ASA_ASA_Multi_Specify_optimizers, 1},
       Span<Arg>{detail::PARAM_ASA_ASA_Multi_Specify_args, 1}, true, "1", false,
-      Span<std::string_view>{detail::PARAM_ASA_ASA_Multi_Specify_checks, 3}},
+      Span<std::string_view>{detail::PARAM_ASA_ASA_Multi_Specify_checks, 3},
+      "1 = strict < for new minima (Tadah!'s default); 0 = <=, as in ASA's example options"},
   Param{ParamId::PARAM_ASA_ASA_Multi_Grid, "PARAM.ASA:ASA.Multi_Grid",
       "Multi_Grid",
       Span<std::string_view>{detail::PARAM_ASA_ASA_Multi_Grid_optimizers, 1},
       Span<Arg>{detail::PARAM_ASA_ASA_Multi_Grid_args, 1}, true, "0.0", true,
-      Span<std::string_view>{detail::PARAM_ASA_ASA_Multi_Grid_checks, 1}},
+      Span<std::string_view>{detail::PARAM_ASA_ASA_Multi_Grid_checks, 1},
+      "distinctness grid of each dimension for the Multi_Number minima (0 = the double-precision epsilon)"},
   Param{ParamId::PARAM_ASA_ASA_Queue_Size, "PARAM.ASA:ASA.Queue_Size",
       "Queue_Size",
       Span<std::string_view>{detail::PARAM_ASA_ASA_Queue_Size_optimizers, 1},
       Span<Arg>{detail::PARAM_ASA_ASA_Queue_Size_args, 1}, true, "0", false,
-      Span<std::string_view>{detail::PARAM_ASA_ASA_Queue_Size_checks, 2}},
+      Span<std::string_view>{detail::PARAM_ASA_ASA_Queue_Size_checks, 2},
+      "size of the cache of evaluated states (FIFO); 0 = cache off"},
   Param{ParamId::PARAM_ASA_ASA_Queue_Resolution,
       "PARAM.ASA:ASA.Queue_Resolution", "Queue_Resolution",
       Span<std::string_view>{detail::PARAM_ASA_ASA_Queue_Resolution_optimizers, 1},
       Span<Arg>{detail::PARAM_ASA_ASA_Queue_Resolution_args, 1}, true, "0.0",
       true,
-      Span<std::string_view>{detail::PARAM_ASA_ASA_Queue_Resolution_checks, 1}},
+      Span<std::string_view>{detail::PARAM_ASA_ASA_Queue_Resolution_checks, 1},
+      "cache-hit resolution of each dimension"},
   Param{ParamId::PARAM_ASA_ASA_Gener_Block, "PARAM.ASA:ASA.Gener_Block",
       "Gener_Block",
       Span<std::string_view>{detail::PARAM_ASA_ASA_Gener_Block_optimizers, 1},
       Span<Arg>{detail::PARAM_ASA_ASA_Gener_Block_args, 1}, true, "1", false,
-      Span<std::string_view>{detail::PARAM_ASA_ASA_Gener_Block_checks, 2}},
+      Span<std::string_view>{detail::PARAM_ASA_ASA_Gener_Block_checks, 2},
+      "initial generated-state block size; 1 (with Gener_Block_Max 1) = canonical serial sampling, >1 evaluates the block concurrently (THREADS-wide) and changes sampling"},
   Param{ParamId::PARAM_ASA_ASA_Gener_Block_Max,
       "PARAM.ASA:ASA.Gener_Block_Max", "Gener_Block_Max",
       Span<std::string_view>{detail::PARAM_ASA_ASA_Gener_Block_Max_optimizers, 1},
       Span<Arg>{detail::PARAM_ASA_ASA_Gener_Block_Max_args, 1}, false, "",
       false,
-      Span<std::string_view>{detail::PARAM_ASA_ASA_Gener_Block_Max_checks, 3}},
+      Span<std::string_view>{detail::PARAM_ASA_ASA_Gener_Block_Max_checks, 3},
+      "block-size cap (buffers sized once); the adaptive resizing keeps the block between 1 and this cap, so it can shrink below Gener_Block"},
   Param{ParamId::PARAM_ASA_ASA_Gener_Mov_Avr, "PARAM.ASA:ASA.Gener_Mov_Avr",
       "Gener_Mov_Avr",
       Span<std::string_view>{detail::PARAM_ASA_ASA_Gener_Mov_Avr_optimizers, 1},
       Span<Arg>{detail::PARAM_ASA_ASA_Gener_Mov_Avr_args, 1}, true, "3", false,
-      Span<std::string_view>{detail::PARAM_ASA_ASA_Gener_Mov_Avr_checks, 2}},
+      Span<std::string_view>{detail::PARAM_ASA_ASA_Gener_Mov_Avr_checks, 2},
+      "moving-average window of the adaptive block resizing; 0 = no resizing: every block holds Gener_Block states"},
 };
 
 inline constexpr OptimiserParams kParamsByOptimiser[] = {

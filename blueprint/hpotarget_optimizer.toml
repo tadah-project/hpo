@@ -2021,6 +2021,7 @@ blocks = ["STRATEGY"]
 synopsis = "N_STARTS <n>"
 args = [ { name = "n", kind = "integer", min = 2, what = "{key}", msg = "N_STARTS must be an integer >= 2, got '{tok}' (one start is STRATEGY TYPE PLAIN)" } ]
 repeat = "error"
+effect = "only TYPE MULTISTART runs N_STARTS starts"
 repeat_msg = "N_STARTS is set twice in the STRATEGY block (first on line {first_line}); each key is given once"
 checks = [
   { msg = "N_STARTS must be an integer >= 2, got '{tok}'", doc = "When the file is read: a token that is no whole number, such as a word, a sign, a fraction or a number past the largest; the note about one start follows 0 and 1 only." },
@@ -2152,6 +2153,7 @@ blocks = ["STRATEGY"]
 synopsis = "BUDGET_PER_START <n>"
 args = [ { name = "n", kind = "integer", min = 1, max = "INT_MAX", what = "{key}" } ]
 repeat = "error"
+effect = "only TYPE MULTISTART has starts to budget"
 repeat_msg = "BUDGET_PER_START is set twice in the STRATEGY block (first on line {first_line}); each key is given once"
 default = { text = "MAXEVAL divided by the number of starts, rounded up; no budget per start without MAXEVAL." }
 doc = """\
@@ -2187,6 +2189,7 @@ blocks = ["STRATEGY"]
 synopsis = "TOPK <n>"
 args = [ { name = "n", kind = "integer", min = 1, max = 1000000, what = "{key}" } ]
 repeat = "error"
+effect = "only TYPE PRESTAGE forwards TOPK candidates to its refinement"
 repeat_msg = "TOPK is set twice in the STRATEGY block (first on line {first_line}); each key is given once"
 default = { literal = "1" }
 doc = """\
@@ -3526,6 +3529,7 @@ id = "RULE.set_once_for_optimiser"
 title = "A key of the STRATEGY-level optimiser, or LOG_HP, is given in one block"
 check = "parse"
 keys = ["BLOCK.OPTIMIZER", "BLOCK.STRATEGY", "BLOCK.REFINE", "GROUP.OPTIMIZER", "OPTIMIZER.LOG_HP"]
+what = { "GROUP.OPTIMIZER" = "optimiser", "OPTIMIZER.LOG_HP" = "search space" }
 msg = "{key} is set on line {first_line} in the {open} block and again here in the {block} block; both blocks configure the same {what}, so each key is given once"
 doc = """\
 OPTIMIZER, STRATEGY and REFINE configure the STRATEGY-level optimiser, and \

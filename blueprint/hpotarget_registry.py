@@ -21,6 +21,12 @@ library only), checks them strictly and returns a Registry of dataclasses:
     a block alias, an INNER refusal, a strategy type's keys, the lines of
     an option, a wrapper or a training configuration an example names,
     the optimisers of a PARAM key;
+  - the orders of the parse are orders of the steps this loader names
+    ([structure] open_order, close_order and eof_order, each step once;
+    line_steps and a key's own steps, the steps of a key's line; a
+    block's close_steps, each check of an END line in one block), and a
+    word's case, a close check's `at` and a key's repeat rule are values
+    the loader knows;
   - every {name} placeholder of a message is one that message may hold,
     and no example, error or wrapper text holds one by mistake;
   - every wrapper is a file with exactly one slot line, {line};
@@ -97,8 +103,41 @@ READING_PLACEHOLDERS = {"what", "min", "max", "tok", "note", "noun",
 CHECK_STAGES = ["block_lines", "removed", "inner_refusal", "group_keys",
                 "init_restart_keys", "noise_keys", "log_hp", "strategy_keys",
                 "block_unknown", "root_keys"]
+# The steps of the parse whose order the registry gives, by name: the
+# parser has one step of each name, and the registry orders them (each
+# list holds every name once). [structure] open_order: a line that opens a
+# block (an alias of the block's word, the parents, the conditions of
+# `requires`, the repeat rule, the key alone on its line, the opening);
+# close_order: an END line (the innermost open block, the key alone, the
+# block's close_steps, the closing); eof_order: the end of the file.
+OPEN_STEPS = ["alias", "parents", "requires", "repeat", "key_alone", "open"]
+CLOSE_STEPS = ["match", "key_alone", "close_steps", "close"]
+EOF_STEPS = ["open_block", "k_total_caps", "script_timeout_unread",
+             "loss_unread", "metric_target_loss", "density_key_arming",
+             "archive_directories", "optimizer_required",
+             "observable_with_scripts", "hotvar_injected", "hotvar_unique",
+             "observable_numerical", "observable_analytical",
+             "script_gradients"]
+# The checks an END line runs ([[block]] close_steps), each in one block.
+BLOCK_CLOSE_STEPS = ["optimizer_driver", "strategy_type_keys",
+                     "multistart_n_starts", "restart_restarts",
+                     "explore_driver", "inner_driver"]
+# The steps of a key's line ([structure] line_steps per place, a key's
+# own `steps`): the repeat rule, the values (each value's reader with the
+# leftover message of its reader), the options of the line, and the
+# leftover message of a group key.
+LINE_STEPS = ["repeat", "value", "options", "leftover"]
+LINE_PLACES = ["ROOT", "group", "block"]
+# The line a close check's refusal names (`at`): the END line that runs
+# it, the line of the key it is about, the last END line of its block.
+CHECK_AT = ["end", "key_line", "last_end_line"]
+# How a word is matched: as written, or in any case.
+WORD_CASES = ["exact", "any"]
 BLOCK_REPEAT = {"error", "error_per_parent", "merge"}
-KEY_REPEAT = {"last_wins", "warn_last_wins", "error", "add"}
+# error_until_read: refused while no line between reads the first.
+KEY_REPEAT = {"last_wins", "warn_last_wins", "error", "error_until_read",
+              "add"}
+OPTION_REPEAT = {"last_wins", "warn_last_wins", "error", "add"}
 ARG_KINDS = {"integer", "number", "positive", "word", "name", "bool",
              "timespec", "indices", "tokens", "loss"}
 INT_LIMITS = {"INT_MAX": 2**31 - 1, "UINT_MAX": 2**32 - 1,
@@ -142,9 +181,11 @@ class Case:
 
 @dataclass
 class Check:
-    """A refusal a block or an entry makes, with when it applies."""
+    """A refusal a block or an entry makes, with when it applies; `at`,
+    for a close check of a block, the line the refusal names (CHECK_AT)."""
     msg: str
     doc: str
+    at: str = "end"
 
 
 @dataclass
@@ -171,6 +212,7 @@ class Arg:
     noun: str = ""
     default: Any = None
     doc: str = ""
+    case: str = "exact"         # a word: matched as written, or in any case
 
 
 @dataclass
@@ -250,6 +292,7 @@ class Block:
     unreachable_msgs: list[str] = field(default_factory=list)
     requires: list[Check] = field(default_factory=list)
     close_checks: list[Check] = field(default_factory=list)
+    close_steps: list[str] = field(default_factory=list)
     quirk: str = ""
     long_doc: str = ""
     untested: list[Untested] = field(default_factory=list)
@@ -277,6 +320,8 @@ class Key:
     refused: str = ""
     quirk: str = ""
     env: str = ""
+    steps: list[str] = field(default_factory=list)  # else its place's
+    effect: str = ""            # the {effect} of a STRATEGY TYPE key
     checks: list[Check] = field(default_factory=list)
     untested: list[Untested] = field(default_factory=list)
     examples: list[Case] = field(default_factory=list)
@@ -302,6 +347,7 @@ class LineOption:
     long_doc: str = ""
     refused: str = ""
     quirk: str = ""
+    case: str = "exact"         # the option word, as written or in any case
     checks: list[Check] = field(default_factory=list)
     untested: list[Untested] = field(default_factory=list)
     examples: list[Case] = field(default_factory=list)
@@ -316,6 +362,7 @@ class Form:
     synopsis: str
     doc: str
     word: str = ""
+    case: str = "exact"         # its word, as written or in any case
     args: list[Arg] = field(default_factory=list)
     long_doc: str = ""
     refused: str = ""
@@ -348,6 +395,9 @@ class Rule:
     msg: str = ""
     msg_doc: str = ""     # what the message holds, said in words
     keys: list[str] = field(default_factory=list)
+    # The {what} of the message for a line of each entry of `keys` it
+    # gives, by the entry's id.
+    what: dict[str, str] = field(default_factory=dict)
     quirk: str = ""
     untested: list[Untested] = field(default_factory=list)
     examples: list[Case] = field(default_factory=list)
@@ -437,6 +487,7 @@ class Param:
     indexed: bool = False
     long_doc: str = ""
     quirk: str = ""
+    explain: str = ""           # its row of the PARAM table of tadah explain
     checks: list[Check] = field(default_factory=list)
     untested: list[Untested] = field(default_factory=list)
     examples: list[Case] = field(default_factory=list)
@@ -954,14 +1005,15 @@ CASE_FIELDS = {"wrap": ("str", R), "text": ("str", R), "check": ("str", O),
                "doc": ("str", O)}
 INVALID_FIELDS = dict(CASE_FIELDS, error=("str", R), at=("int|str", O),
                       msg_of=("str", O))
-CHECK_FIELDS = {"msg": ("str", R), "doc": ("str", R)}
+CHECK_FIELDS = {"msg": ("str", R), "doc": ("str", R), "at": ("str", O)}
 ARG_FIELDS = {"name": ("str", R), "kind": ("str", R),
               "optional": ("bool", O), "repeat": ("bool", O),
               "min": ("number|str", O), "max": ("number|str", O),
               "min_open": ("bool", O), "integral": ("bool", O),
               "words": ("list[str]", O), "refused_words": ("dict[str,str]", O),
               "what": ("str", O), "msg": ("str", O), "noun": ("str", O),
-              "default": ("any", O), "doc": ("str", O)}
+              "default": ("any", O), "doc": ("str", O),
+              "case": ("str", O)}
 DOC_FIELDS = {"examples": ("cases", O), "invalid": ("invalid", O),
               "untested": ("untested", O)}
 
@@ -986,6 +1038,10 @@ SCHEMA: dict[str, dict[str, tuple[str, bool]]] = {
                     script_timeout_large_msg=("str", R)),
     "structure": dict(DOC_FIELDS, doc=("str", R), long_doc=("str", O),
                       check_order=("list[str]", R),
+                      open_order=("list[str]", R),
+                      close_order=("list[str]", R),
+                      line_steps=("dict[str,list[str]]", R),
+                      eof_order=("list[str]", R),
                       end_without_open_msg=("str", R),
                       end_mismatch_msg=("str", R),
                       end_takes_no_value_msg=("str", R),
@@ -1009,6 +1065,7 @@ SCHEMA: dict[str, dict[str, tuple[str, bool]]] = {
                   aliases=("dict[str,str]", O), refuse=("refuse", O),
                   refuse_msg=("str", O), unreachable_msgs=("list[str]", O),
                   requires=("checks", O), close_checks=("checks", O),
+                  close_steps=("list[str]", O),
                   quirk=("str", O), doc=("str", R), long_doc=("str", O)),
     "key": dict(DOC_FIELDS, id=("str", R), name=("str", R),
                 group=("str", O), blocks=("list[str]", O),
@@ -1017,16 +1074,18 @@ SCHEMA: dict[str, dict[str, tuple[str, bool]]] = {
                 misplaced_msg=("str", O),
                 default=("default", O), doc=("str", R), long_doc=("str", O),
                 alias_of=("str", O), refused=("str", O), quirk=("str", O),
-                env=("str", O), checks=("checks", O)),
+                env=("str", O), steps=("list[str]", O), effect=("str", O),
+                checks=("checks", O)),
     "line_option": dict(DOC_FIELDS, id=("str", R), option=("str", R),
                         lines=("list[str]", R), synopsis=("str", R),
                         args=("args", O), repeat=("str", O),
                         repeat_msg=("str", O), default=("default", O),
                         doc=("str", R), long_doc=("str", O),
                         refused=("str", O), quirk=("str", O),
-                        checks=("checks", O)),
+                        case=("str", O), checks=("checks", O)),
     "form": dict(DOC_FIELDS, id=("str", R), line=("str", R),
-                 word=("str", O), synopsis=("str", R), args=("args", O),
+                 word=("str", O), case=("str", O), synopsis=("str", R),
+                 args=("args", O),
                  doc=("str", R), long_doc=("str", O), refused=("str", O),
                  quirk=("str", O), checks=("checks", O)),
     "removed": dict(DOC_FIELDS, name=("str", R), hint=("str", R),
@@ -1034,7 +1093,7 @@ SCHEMA: dict[str, dict[str, tuple[str, bool]]] = {
     "rule": dict(DOC_FIELDS, id=("str", R), title=("str", R),
                  doc=("str", R), check=("str", R), msg=("str", O),
                  msg_doc=("str", O), keys=("list[str]", O),
-                 quirk=("str", O)),
+                 what=("dict[str,str]", O), quirk=("str", O)),
     "env": dict(DOC_FIELDS, name=("str", R), key=("str", R),
                 doc=("str", R), values=("list[str]", O), msg=("str", O),
                 checks=("checks", O)),
@@ -1055,7 +1114,7 @@ SCHEMA: dict[str, dict[str, tuple[str, bool]]] = {
                   optimizers=("list[str]", R), args=("args", O),
                   default=("default", O), indexed=("bool", O),
                   doc=("str", R), long_doc=("str", O), quirk=("str", O),
-                  checks=("checks", O)),
+                  explain=("str", O), checks=("checks", O)),
     "param_excluded": dict(DOC_FIELDS, id=("str", R), name=("str", R),
                            optimizers=("list[str]", R), why=("str", R),
                            doc=("str", O)),
@@ -1149,6 +1208,10 @@ class _Loader:
         if typ == "dict[str,str]":
             return isinstance(v, dict) and all(
                 isinstance(x, str) for x in v.values())
+        if typ == "dict[str,list[str]]":
+            return isinstance(v, dict) and all(
+                isinstance(x, list) and all(isinstance(y, str) for y in x)
+                for x in v.values())
         if typ in ("cases", "invalid", "args", "checks", "refuse", "params",
                    "untested"):
             return isinstance(v, list) and all(isinstance(x, dict) for x in v)
@@ -1223,6 +1286,12 @@ class _Loader:
                 self.err(w, "an argument of kind word lists its words")
             if "noun" in a and kind != "positive":
                 self.err(w, "noun belongs to an argument of kind positive")
+            if "case" in a:
+                self.word_case(w, a["case"])
+                if kind != "word":
+                    self.err(w, "case belongs to an argument of kind word "
+                                "(the boolean and loss readers match in any "
+                                "case)")
             for fld in ("what", "msg"):
                 if fld in a:
                     self.placeholders(w, fld, a[fld], PLACEHOLDERS)
@@ -1244,6 +1313,12 @@ class _Loader:
             # A check's doc says when its message comes and what the
             # message's placeholders hold, so it may name them.
             self.voice(w, "doc", c.get("doc", ""))
+            if "at" in c:
+                if name != "close_checks":
+                    self.err(w, "at belongs to a close check of a block")
+                elif c["at"] not in CHECK_AT:
+                    self.err(w, f"at '{c['at']}' is not one of "
+                                f"{', '.join(CHECK_AT)}")
             out.append(Check(**c))
         return out
 
@@ -1320,6 +1395,42 @@ class _Loader:
                 allowed = (READING_PLACEHOLDERS if kind == "reading"
                            else PLACEHOLDERS)
             self.placeholders(where, name, value, allowed)
+
+    def word_case(self, where: str, case: str) -> None:
+        if case not in WORD_CASES:
+            self.err(where, f"case '{case}' is not one of "
+                            f"{', '.join(WORD_CASES)}")
+
+    def order(self, where: str, fld: str, got: list[str],
+              names: list[str]) -> None:
+        """`got` is an order of `names`: each name once, none other."""
+        if sorted(got) != sorted(names) or len(set(got)) != len(got):
+            self.err(where, f"{fld} is not an order of "
+                            f"{', '.join(names)} (each once)")
+
+    def line_step_list(self, where: str, fld: str, got: list[str],
+                       group: bool) -> None:
+        """The steps of a key's line: names of LINE_STEPS, each at most
+        once, `value` among them; `leftover` for a key of a group only."""
+        for s in got:
+            if s not in LINE_STEPS:
+                self.err(where, f"{fld}: '{s}' is not one of "
+                                f"{', '.join(LINE_STEPS)}")
+        if len(set(got)) != len(got):
+            self.err(where, f"{fld}: a step is given twice")
+        if "value" not in got:
+            self.err(where, f"{fld}: the steps hold value")
+        if "leftover" in got and not group:
+            self.err(where, f"{fld}: leftover is a step of a key of a "
+                            "group")
+
+    def no_placeholder(self, where: str, fld: str, text: str) -> None:
+        """A text the parser puts into a message: it holds no placeholder,
+        which nothing would fill."""
+        for name in PLACEHOLDER.findall(text):
+            self.err(where, f"{fld}: holds the placeholder {{{name}}}; the "
+                            "text goes into a message as it is")
+        self.voice(where, fld, text)
 
     def register_id(self, where: str, ident: str) -> None:
         if not ID_RE.match(ident):
@@ -1460,6 +1571,20 @@ class _Loader:
         if order != CHECK_STAGES:
             self.err(f"{MAIN_FILE} [structure]",
                      f"check_order is not {CHECK_STAGES}")
+        sw = f"{MAIN_FILE} [structure]"
+        sf = structure.fields
+        for fld, names in (("open_order", OPEN_STEPS),
+                           ("close_order", CLOSE_STEPS),
+                           ("eof_order", EOF_STEPS)):
+            if fld in sf:
+                self.order(sw, fld, sf[fld], names)
+        steps = sf.get("line_steps", {})
+        if "line_steps" in sf and sorted(steps) != sorted(LINE_PLACES):
+            self.err(sw, f"line_steps has the places "
+                         f"{', '.join(LINE_PLACES)}, each once")
+        for place, got in steps.items():
+            self.line_step_list(sw, f"line_steps.{place}", got,
+                                place == "group")
 
         groups: dict[str, Group] = {}
         for name, (part, t) in acc["group"].items():
@@ -1509,10 +1634,22 @@ class _Loader:
                 self.err(where, "refuse and refuse_msg go together")
             if b.end != "END" + b.name:
                 self.err(where, f"end is END{b.name}")
+            for st in b.close_steps:
+                if st not in BLOCK_CLOSE_STEPS:
+                    self.err(where, f"close_steps: '{st}' is not one of "
+                                    f"{', '.join(BLOCK_CLOSE_STEPS)}")
             blocks.append(b)
         block_names = [b.name for b in blocks]
         if len(set(block_names)) != len(block_names):
             self.err(MAIN_FILE, "a block name is given twice")
+        step_block: dict[str, str] = {}
+        for b in blocks:
+            for st in b.close_steps:
+                if st in step_block:
+                    self.err(b.id, f"close_steps: '{st}' is also a step of "
+                                   f"{step_block[st]} (a step runs at one "
+                                   "END line)")
+                step_block[st] = b.id
         places = set(block_names) | {"ROOT"}
         for b in blocks:
             for p in b.parents:
@@ -1709,9 +1846,12 @@ class _Loader:
             if k.repeat not in KEY_REPEAT:
                 self.err(w, f"repeat '{k.repeat}' is not one of "
                             f"{', '.join(sorted(KEY_REPEAT))}")
-            if (k.repeat == "error") != bool(k.repeat_msg):
-                self.err(w, "repeat_msg goes with repeat error, and only "
-                            "with it")
+            if k.repeat.startswith("error") != bool(k.repeat_msg):
+                self.err(w, "repeat_msg goes with repeat error or "
+                            "error_until_read, and only with them")
+            if k.steps:
+                self.line_step_list(w, "steps", k.steps, bool(k.group))
+            self.no_placeholder(w, "effect", k.effect)
         # Two keys of one name valid in a common block.
         seen: dict[tuple[str, str], str] = {}
         for k in reg.keys:
@@ -1727,9 +1867,10 @@ class _Loader:
             w = o._where  # type: ignore[attr-defined]
             if not o.id.endswith("." + o.option) or o.id == "." + o.option:
                 self.err(w, f"id is <line>.{o.option}")
-            if o.repeat not in KEY_REPEAT:
+            if o.repeat not in OPTION_REPEAT:
                 self.err(w, f"repeat '{o.repeat}' is not one of "
-                            f"{', '.join(sorted(KEY_REPEAT))}")
+                            f"{', '.join(sorted(OPTION_REPEAT))}")
+            self.word_case(w, o.case)
             if (o.repeat == "error") != bool(o.repeat_msg):
                 self.err(w, "repeat_msg goes with repeat error, and only "
                             "with it")
@@ -1743,6 +1884,9 @@ class _Loader:
         for fm in reg.forms:
             if not fm.id.startswith(fm.line + "."):
                 self.err(fm._where, f"id is {fm.line}.<form>")  # type: ignore[attr-defined]
+            self.word_case(fm._where, fm.case)  # type: ignore[attr-defined]
+            if fm.case != "exact" and not fm.word:
+                self.err(fm._where, "case belongs to a form with a word")  # type: ignore[attr-defined]
         prefixed = [("loss_functions", "LOSS."), ("init_methods", "METHOD."),
                     ("strategy_types", "STRATEGY.TYPE.")]
         for kind, prefix in prefixed:
@@ -1758,6 +1902,8 @@ class _Loader:
             if not (p.id.startswith("PARAM.") and p.id.endswith("." + p.name)
                     and len(p.id) > len("PARAM..") + len(p.name)):
                 self.err(p._where, f"id is PARAM.<optimiser>.{p.name}")  # type: ignore[attr-defined]
+        for p in reg.params:
+            self.no_placeholder(p._where, "explain", p.explain)  # type: ignore[attr-defined]
         for p in reg.param_excluded:
             if not (p.id.startswith("PARAM.") and p.id.endswith("." + p.name)):
                 self.err(p._where, f"id is PARAM.<optimiser>.{p.name}")  # type: ignore[attr-defined]
@@ -1776,6 +1922,14 @@ class _Loader:
             if len(r.title) > TITLE_WIDTH:
                 self.err(r._where, f"title: longer than {TITLE_WIDTH} "  # type: ignore[attr-defined]
                                    "characters")
+            if r.what and "{what}" not in r.msg:
+                self.err(r._where, "what fills the {what} of the "  # type: ignore[attr-defined]
+                                   "message, which has none")
+            for ref, text in r.what.items():
+                if ref not in r.keys:
+                    self.err(r._where, f"what: '{ref}' is not one of "  # type: ignore[attr-defined]
+                                       "its keys")
+                self.no_placeholder(r._where, f"what.{ref}", text)  # type: ignore[attr-defined]
 
     def resolve(self, where: str, ref: str, known: set[str], what: str) -> None:
         if ref in known:
@@ -1808,6 +1962,13 @@ class _Loader:
         for t in reg.strategy_types:
             for ref in t.keys:
                 self.resolve(t.id, ref, key_ids, "key")
+        # The {effect} of a STRATEGY TYPE key is its field.
+        type_keys = {ref for t in reg.strategy_types for ref in t.keys}
+        if self.full:
+            for k in reg.keys:
+                if (k.id in type_keys) != bool(k.effect):
+                    self.err(k.id, "effect goes with a key a strategy "
+                                   "type lists, and only with it")
         for r in reg.rules:
             for ref in r.keys:
                 self.resolve(r.id, ref, all_ids, "entry")

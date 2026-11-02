@@ -56,6 +56,9 @@ PARAM_HEADER = "hpo_param_registry_gen.h"
 REGENERATE_TARGET = "hpo_regenerate_hpotarget_registry"
 REGENERATE = ("cmake --build <build directory> --target "
               f"{REGENERATE_TARGET}")
+# The macro the registry header defines for the tables of the parse order,
+# of word case and of the texts the parser puts into messages.
+ENGINE_MACRO = "TADAH_HPOTARGET_ENGINE_TABLES"
 
 # The statuses of an OPTIM target the loader accepts.
 OPTIM_TARGET_STATUS = {"refused": "Refused", "special": "Special"}
@@ -335,7 +338,7 @@ def args_span(w: Writer, prefix: str, args: list[hr.Arg]) -> str:
             f"{bool_lit(a.integral)}, {words}, {refused}, {cstr(a.what)}, "
             f"{cstr(a.msg)}, {cstr(a.noun)}, "
             f"{bool_lit(a.default is not None)}, "
-            f"{cstr(default)}}}")
+            f"{cstr(default)}, {bool_lit(a.case == 'any')}}}")
     return w.array(f"{prefix}_args", "Arg", rows)
 
 
@@ -519,6 +522,13 @@ def emit_registry(reg: hr.Registry) -> str:
                 "string", "string_view"):
         w.out(f"#include <{inc}>")
     w.out()
+    w.out("/* Defined: the header holds the order of the steps of the parse")
+    w.out(" * (structure::open_order, close_order, line_steps_*, eof_order,")
+    w.out(" * Block::close_steps, Key::steps), the case of words (any_case) and")
+    w.out(" * the texts the parser puts into messages (Key::effect, Rule::what),")
+    w.out(" * which code compiled with an older header cannot name. */")
+    w.out(f"#define {ENGINE_MACRO} 1")
+    w.out()
     w.out("namespace tadah {")
     w.out("namespace hpo {")
     w.out("namespace hpotarget_registry {")
@@ -547,6 +557,25 @@ def emit_registry(reg: hr.Registry) -> str:
          [camel(k) for k in hr.CHECK_STAGES],
          "A stage of the order in which a line is tried "
          "(structure::check_order).")
+    enum(w, "OpenStep", "unsigned char",
+         [camel(k) for k in hr.OPEN_STEPS],
+         "A step of a line that opens a block (structure::open_order).")
+    enum(w, "CloseStep", "unsigned char",
+         [camel(k) for k in hr.CLOSE_STEPS],
+         "A step of an END line (structure::close_order).")
+    enum(w, "LineStep", "unsigned char",
+         [camel(k) for k in hr.LINE_STEPS],
+         "A step of the line of a key (structure::line_steps_*, "
+         "Key::steps).")
+    enum(w, "EofStep", "unsigned char",
+         [camel(k) for k in hr.EOF_STEPS],
+         "A check at the end of the file (structure::eof_order).")
+    enum(w, "BlockCloseStep", "unsigned char",
+         [camel(k) for k in hr.BLOCK_CLOSE_STEPS],
+         "A check an END line runs (Block::close_steps).")
+    enum(w, "CheckAt", "unsigned char",
+         [camel(k) for k in hr.CHECK_AT],
+         "The line a close check's refusal names.")
     enum(w, "RuleCheck", "unsigned char",
          [camel(k) for k in sorted(hr.CHECKS)],
          "When a rule is checked: as the file is read, or at startup.")
@@ -580,6 +609,7 @@ struct Arg {
   std::string_view noun;   // the {noun} of positive_msg
   bool has_default;
   std::string_view default_text;
+  bool any_case;           // a word matched in any case, else as written
 };
 
 /* A word a block reads as another key (INIT's STRATEGY is METHOD). */
@@ -610,6 +640,8 @@ struct Block {
   Span<std::string_view> unreachable_msgs;
   Span<std::string_view> requires_checks;   // at the opening line
   Span<std::string_view> close_checks;
+  Span<CheckAt> close_checks_at;   // the line each close check names
+  Span<BlockCloseStep> close_steps;  // what its END line checks, in order
   Span<KeyId> keys;            // the keys it takes: valid in it, not refused
 };
 
@@ -636,6 +668,8 @@ struct Key {
   bool refused;                // read only to be refused
   std::string_view env;        // the environment variable that overrides it
   Span<std::string_view> checks;
+  Span<LineStep> steps;        // empty: the line_steps of its place
+  std::string_view effect;     // the {effect} of a STRATEGY TYPE key
 };
 
 struct LineOption {
@@ -650,6 +684,7 @@ struct LineOption {
   std::string_view default_literal;
   bool refused;
   Span<std::string_view> checks;
+  bool any_case;               // the option word in any case, else as written
 };
 
 struct Form {
@@ -660,6 +695,7 @@ struct Form {
   Span<Arg> args;
   bool refused;
   Span<std::string_view> checks;
+  bool any_case;               // its word in any case, else as written
 };
 
 struct Removed {
@@ -667,10 +703,17 @@ struct Removed {
   std::string_view hint;
 };
 
+/* The {what} of a rule's message for a line of the entry `id_text`. */
+struct RuleWhat {
+  std::string_view id_text;
+  std::string_view text;
+};
+
 struct Rule {
   std::string_view id_text;
   RuleCheck check;
   std::string_view msg;
+  Span<RuleWhat> what;
 };
 
 struct Env {
@@ -729,7 +772,25 @@ struct OptimTarget {
               reg.structure.fields.get("check_order", [])]
     w.out("inline constexpr Span<CheckStage> check_order = "
           f"{w.array('structure_check_order', 'CheckStage', stages)};")
-    section_fields(w, reg.structure, "structure", skip=("check_order",))
+    sf = reg.structure.fields
+    for fld, enum_name in (("open_order", "OpenStep"),
+                           ("close_order", "CloseStep"),
+                           ("eof_order", "EofStep")):
+        items = [f"{enum_name}::{camel(x)}" for x in sf.get(fld, [])]
+        w.out(f"inline constexpr Span<{enum_name}> {fld} = "
+              f"{w.array('structure_' + fld, enum_name, items)};")
+    w.out("/* The steps of the line of a key by its place: a top-level key, "
+          "a key")
+    w.out(" * of a group, another key of a block. */")
+    for place in hr.LINE_PLACES:
+        items = [f"LineStep::{camel(x)}"
+                 for x in sf.get("line_steps", {}).get(place, [])]
+        name = f"line_steps_{place.lower()}"
+        w.out(f"inline constexpr Span<LineStep> {name} = "
+              f"{w.array('structure_' + name, 'LineStep', items)};")
+    section_fields(w, reg.structure, "structure",
+                   skip=("check_order", "open_order", "close_order",
+                         "eof_order", "line_steps"))
     w.out("}  // namespace structure")
     w.out()
 
@@ -774,6 +835,8 @@ struct OptimTarget {
                     f"{w.strings(f'{n}_unreachable', b.unreachable_msgs)}, "
                     f"{checks_span(w, f'{n}_requires', b.requires)}, "
                     f"{checks_span(w, f'{n}_close_checks', b.close_checks)}, "
+                    f"{w.array(f'{n}_close_checks_at', 'CheckAt', [f'CheckAt::{camel(c.at)}' for c in b.close_checks])}, "
+                    f"{w.array(f'{n}_close_steps', 'BlockCloseStep', [f'BlockCloseStep::{camel(x)}' for x in b.close_steps])}, "
                     f"{keys}}}")
     table(w, "Block", "kBlocks", rows)
 
@@ -789,7 +852,9 @@ struct OptimTarget {
                     f"{cstr(k.repeat_msg)}, {cstr(k.misplaced_msg)}, "
                     f"{has_def}, {def_lit}, {bool_lit(bool(k.alias_of))}, "
                     f"{alias}, {bool_lit(bool(k.refused))}, {cstr(k.env)}, "
-                    f"{checks_span(w, f'{n}_checks', k.checks)}}}")
+                    f"{checks_span(w, f'{n}_checks', k.checks)}, "
+                    f"{w.array(f'{n}_steps', 'LineStep', [f'LineStep::{camel(x)}' for x in k.steps])}, "
+                    f"{cstr(k.effect)}}}")
     table(w, "Key", "kKeys", rows)
     w.out("/* The top-level keys a block refuses as such: the keys valid at "
           "the top")
@@ -808,13 +873,15 @@ struct OptimTarget {
                     f"{args_span(w, n, o.args)}, Repeat::{camel(o.repeat)}, "
                     f"{cstr(o.repeat_msg)}, {has_def}, {def_lit}, "
                     f"{bool_lit(bool(o.refused))}, "
-                    f"{checks_span(w, f'{n}_checks', o.checks)}}}")
+                    f"{checks_span(w, f'{n}_checks', o.checks)}, "
+                    f"{bool_lit(o.case == 'any')}}}")
     table(w, "LineOption", "kLineOptions", rows)
     table(w, "Form", "kForms",
           [f"Form{{FormId::{m.name[f.id]}, {cstr(f.id)}, {cstr(f.line)}, "
            f"{cstr(f.word)}, {args_span(w, m.name[f.id], f.args)}, "
            f"{bool_lit(bool(f.refused))}, "
-           f"{checks_span(w, m.name[f.id] + '_checks', f.checks)}}}"
+           f"{checks_span(w, m.name[f.id] + '_checks', f.checks)}, "
+           f"{bool_lit(f.case == 'any')}}}"
            for f in reg.forms])
 
     # ---- the other tables ------------------------------------------------
@@ -822,7 +889,9 @@ struct OptimTarget {
           [f"Removed{{{cstr(r.name)}, {cstr(r.hint)}}}" for r in reg.removed])
     table(w, "Rule", "kRules",
           [f"Rule{{{cstr(r.id)}, RuleCheck::{camel(r.check)}, "
-           f"{cstr(r.msg)}}}" for r in reg.rules])
+           f"{cstr(r.msg)}, "
+           f"{w.array(m.name[r.id] + '_what', 'RuleWhat', [f'RuleWhat{{{cstr(i)}, {cstr(t)}}}' for i, t in r.what.items()])}}}"
+           for r in reg.rules])
     table(w, "Env", "kEnvs",
           [f"Env{{{cstr(e.name)}, {m.key_ref(e.key)}, "
            f"{w.strings(m.name[e.id] + '_values', e.values)}, "
@@ -948,6 +1017,7 @@ struct Param {
   std::string_view default_literal;
   bool indexed;                        // the name takes [<i>]
   Span<std::string_view> checks;
+  std::string_view explain;            // its row of `tadah explain LIB:ALGO`
 };
 
 /* A PARAM key an optimiser names but does not take, and why. */
@@ -981,7 +1051,8 @@ struct OptimiserParams {
                     f"{w.strings(n + '_optimizers', p.optimizers)}, "
                     f"{args_span(w, n, p.args)}, {has_def}, {def_lit}, "
                     f"{bool_lit(p.indexed)}, "
-                    f"{checks_span(w, n + '_checks', p.checks)}}}")
+                    f"{checks_span(w, n + '_checks', p.checks)}, "
+                    f"{cstr(p.explain)}}}")
     order: list[str] = []
     for p in reg.params:
         for o in p.optimizers:
