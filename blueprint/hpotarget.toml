@@ -417,7 +417,11 @@ How the search runs its optimiser: once (TYPE PLAIN), from several \
 starting points (MULTISTART), or as an exploration followed by a \
 refinement (PRESTAGE). Without a STRATEGY block the search is PLAIN."""
 long_doc = """\
-Its optimiser keys set the STRATEGY-level optimiser."""
+LIB, ALGO and the other optimiser keys directly inside OPTIMIZER, \
+inside STRATEGY or inside REFINE set one optimiser, the STRATEGY-level \
+optimiser; each key is given once. It runs once under TYPE PLAIN, from \
+each start under TYPE MULTISTART, and as the refinement under TYPE \
+PRESTAGE."""
 
 [[block.close_checks]]
 msg = "{key} is not accepted with STRATEGY TYPE {type}{note}: {effect}, so it would have no effect; {key} takes effect under STRATEGY TYPE {home}"
@@ -485,7 +489,10 @@ quirk = """\
 An INIT block inside OPTIMIZER, STRATEGY or REFINE sets the starting \
 points of the one STRATEGY-level optimiser. The METHOD lines of these \
 blocks make one chain, in the order of the file, and each other key is \
-given in one of them."""
+given in one of them. Under STRATEGY TYPE PRESTAGE the exploration takes \
+these points when its EXPLORE block has no INIT block with a METHOD line, \
+and the refinement starts from them only when no evaluation of the exploration has a usable \
+loss."""
 doc = """\
 The starting points of the optimiser of the block around it: a chain of \
 METHOD lines, each adding points. Inside an INIT block a STRATEGY line is \
@@ -803,12 +810,14 @@ refuse = [
 ]
 unreachable_msgs = ["INNER block has no parent OptimizerSpec"]
 doc = """\
-The local search that NLopt's MLSL and AUGLAG run inside the run of the \
-block around it. There is one INNER block for each optimiser: the STRATEGY \
+The local search that NLopt's MLSL and AUGLAG run inside the search of the \
+enclosing block. There is one INNER block for each optimiser: the STRATEGY \
 and REFINE blocks share one, and so do two EXPLORE blocks."""
 long_doc = """\
-It takes the keys of the optimiser group except SEED, GRAD_STRATEGY and \
-STOPVAL, which the enclosing block sets. Under an MLSL, an INNER search \
+It takes LIB NLOPT, a local ALGO that needs no INNER block of its own, and \
+the keys of the optimiser group except SEED, GRAD_STRATEGY and STOPVAL, \
+which the enclosing block sets. An INIT or INNER block inside it is \
+refused. Under an MLSL, an INNER search \
 with none of FTOL_REL, FTOL_ABS and XTOL_REL above 0 runs with NLopt's \
 FTOL_REL 1e-15 and XTOL_REL 1e-7."""
 quirk = """\
@@ -941,13 +950,13 @@ unknown_first = true
 aliases = { STRATEGY = "INIT.METHOD" }
 doc = """\
 The stagnation restart of the STRATEGY-level optimiser: when to restart, \
-how often, and the chain of METHOD lines that draws the points of each \
+how many times, and the chain of METHOD lines that draws the points of each \
 restart. A run on more than one MPI rank refuses a RESTART block."""
 long_doc = """\
 A second RESTART block continues the first. Inside a RESTART block a \
 STRATEGY line is read as a METHOD line. Under STRATEGY TYPE MULTISTART \
-each RESTART round runs N_STARTS starts; N_STARTS says how the points of \
-the METHOD lines are counted."""
+each RESTART round runs from the first N_STARTS points of its chain, and \
+from each point when the chain drawn gives fewer distinct points."""
 
 [[block.close_checks]]
 msg = "the RESTART block never restarts the search: a restart needs AFTER_STAGNATION and MAX, and the block has {missing}; a search without restarts has no RESTART block"
@@ -1036,8 +1045,9 @@ evaluation reported."""
 quirk = """\
 A PC_LAMMPS or PC_FAILPROBE line without --failscore takes the FAILSCORE \
 of the lines above it: a FAILSCORE line below it leaves that line's \
-failure value as it was. The loss of a failed evaluation is the value of \
-the last FAILSCORE line."""
+failure value as it was. The last FAILSCORE line sets the loss of a failed \
+evaluation: its value under FAILSCORE_GRADING OFF, a value from 0.999 times \
+it to just below it under FAILSCORE_GRADING ON."""
 
 [[key.examples]]
 wrap = "root"
@@ -1119,9 +1129,10 @@ option of a line sets that line's own. A script with a timer command of \
 its own gets no limit. Under PC_ISOLATION PROCESS a script limit t also \
 sets the deadline of a worker task, max(3t, t + 120 s), unless \
 PC_WORKER_TIMEOUT sets one: each line's own limit sizes the deadline of \
-its tasks. MAXTIME is another name for this key. A PC_LAMMPS or \
-PC_FAILPROBE line without --maxtime takes the limit of the lines above it, \
-and a line of the key that no such line follows is refused. hpo_run.log \
+its tasks. MAXTIME at the top level is another name for this key; inside an \
+OPTIMIZER block MAXTIME is a different key. A PC_LAMMPS or PC_FAILPROBE \
+line without --maxtime takes the limit of the last line of this key above \
+it, or off when there is none, and a line of the key that no such line follows is refused. hpo_run.log \
 gives the limit of each PC_LAMMPS and PC_FAILPROBE line, where it comes \
 from and the deadline of its worker tasks."""
 
@@ -1434,7 +1445,7 @@ OPTIM boxes, which a CERES optimiser can propose, is not evaluated. Under \
 ON and OFF alike its loss lies in [0.99975 FAILSCORE, FAILSCORE) and grows \
 with its distance from the boxes."""
 checks = [
-  { msg = "{phase}: ASA:ASA: under FAILSCORE_GRADING ON a failed evaluation scores from 0.999 FAILSCORE to below FAILSCORE ({value}), and ASA:ASA takes a cost of about 1e+18 or more for an invalid state and draws another, so it would not see the graded failures at or above that cost; a FAILSCORE of 1e+18 or less keeps every graded failure below it", doc = "At startup, under ON, at the line that closes the block of an ASA:ASA search, in any phase: the largest graded failure, a little below FAILSCORE, reaches the cost of about 1e18 at which ASA takes a state for an invalid one, from a FAILSCORE a little above 1e18 on, as without a FAILSCORE line; {value} is FAILSCORE." },
+  { msg = "{phase}: ASA:ASA: under FAILSCORE_GRADING ON a failed evaluation scores from 0.999 FAILSCORE to below FAILSCORE ({value}), and ASA:ASA takes a cost of about 1e+18 or more for an invalid state and draws another, so it would not see the graded failures at or above that cost; a FAILSCORE of 1e+18 or less keeps every graded failure below it", doc = "At startup, under ON, at the line that closes the block of an ASA:ASA search, in any phase: the largest graded failure, a little below FAILSCORE, reaches the cost of about 1e18 at which ASA:ASA takes a state for an invalid one. This holds for every FAILSCORE from a little above 1e18 up, the default (no FAILSCORE line) included; {value} is FAILSCORE." },
 ]
 
 [[key.examples]]
@@ -1580,11 +1591,14 @@ long_doc = """\
 The many-body term of the training configuration is a bare DM_REAM term or \
 a single DM_Embed component; a DM_mJoin or several components are refused \
 at startup. Its density form, RHOFORM for DM_REAM or the FORM of the \
-component, is SIGNED, and every density pair weight (WATOM) can be above 0 \
-(both checked at startup). An OPTIM line on a density key arms RHOGATE. At \
-startup the CONFIG and WARM starting points of the INIT and RESTART chains \
-are checked as candidates, and SEED says what a failing one does. A \
-training configuration that is no such starting point and fails has a \
+component, is SIGNED, and every density pair weight (WATOM) is above 0 at the upper \
+end of its OPTIM box, or at its value in the training configuration when \
+no OPTIM line searches it (both checked at startup, and the run is refused \
+when one fails). An OPTIM line on a density key makes RHOGATE take \
+effect. At startup the CONFIG and WARM starting points of the INIT and \
+RESTART chains are checked as candidates, and SEED says what a failing \
+one does. A training configuration that is no such starting point and \
+fails has a \
 warning instead; RANDOM, LHS and SOBOL points are checked when they are \
 evaluated."""
 quirk = """\
@@ -1615,7 +1629,7 @@ text = "RHOGATE 0 R_LO 1.7168 NPTS 2001 SEED WARN"
 [[key.examples]]
 wrap = "none"
 context = "main_dm_embed"
-doc = "A single DM_Embed component under FORM SIGNED; the OPTIM line on its density amplitudes arms RHOGATE."
+doc = "A single DM_Embed component under FORM SIGNED; the OPTIM line on its density amplitudes makes RHOGATE take effect."
 text = '''
 RHOGATE 1e-5
 OPTIM H.DENSITY.AMPLITUDES (2) 0.1 1
@@ -1751,7 +1765,7 @@ synopsis = "RHOBARGATE bcc | fcc | hcp <a0> <f_lo> <f_hi> [NPTS <n>] [SEED ERROR
 args = [
   { name = "lattice", kind = "word", words = ["bcc", "fcc", "hcp"], msg = "RHOBARGATE lattice must be bcc, fcc or hcp, got '{tok}'" },
   { name = "a0", kind = "number", what = "RHOBARGATE a0", doc = "The lattice constant in Å, above 0; for hcp the in-plane one." },
-  { name = "f_lo", kind = "number", what = "RHOBARGATE f_lo", doc = "The smallest lattice constant, as a fraction of a0, above 0 and below f_hi. The largest RCUTMB a candidate can have lies within 20 lattice constants of the smallest lattice, f_lo a0." },
+  { name = "f_lo", kind = "number", what = "RHOBARGATE f_lo", doc = "The smallest lattice constant, as a fraction of a0, above 0 and below f_hi. The run is refused at startup when the largest RCUTMB a candidate can have is more than 20 lattice constants of the smallest lattice, f_lo a0." },
   { name = "f_hi", kind = "number", what = "RHOBARGATE f_hi", doc = "The largest lattice constant, as a fraction of a0. NPTS and SEED follow it, each with its value, in any order and each at most once." },
 ]
 repeat = "error"
@@ -1765,14 +1779,18 @@ long_doc = """\
 RHOBARGATE applies under every density form. The many-body term of the \
 training configuration is a bare DM_REAM term or a single DM_Embed \
 component; a DM_mJoin or several components are refused at startup. At \
-startup, too, every density pair weight (WATOM) can be above 0, and the \
-first shell of the lattice at f_hi a0 lies inside the smallest RCUTMB a \
-candidate can have. The largest RCUTMB a candidate can have lies within 20 \
-lattice constants of the smallest lattice, f_lo a0. An OPTIM line on a \
-density key arms RHOBARGATE, and hcp takes the ideal c/a. At startup the \
-CONFIG and WARM starting points of the INIT and RESTART chains are checked \
-as candidates, and SEED says what a failing one does. A training \
-configuration that is no such starting point and fails has a warning \
+startup, too, the run is refused when a density pair weight (WATOM) is \
+not above 0 at the upper end of its OPTIM box, or at its value in the \
+training configuration when no OPTIM line searches it, or when the first \
+shell of the lattice at f_hi a0 lies beyond the smallest RCUTMB a \
+candidate can have. It is refused too when the largest RCUTMB a candidate \
+can have is more than 20 lattice constants of the smallest lattice, \
+f_lo a0, or when that largest RCUTMB divided by f_lo a0 is not finite. An \
+OPTIM line on a density key makes RHOBARGATE take effect, and hcp takes \
+the ideal c/a. At startup the CONFIG and WARM starting points of the INIT \
+and RESTART chains are checked as candidates, and SEED says what a \
+failing one does. A training configuration that is no such starting point \
+and fails has a warning \
 instead; RANDOM, LHS and SOBOL points are checked when they are evaluated."""
 quirk = """\
 The lattice, the options NPTS and SEED and the values ERROR and WARN are \
@@ -1785,6 +1803,7 @@ checks = [
   { msg = "RHOBARGATE: unexpected token '{tok}'; expected RHOBARGATE <bcc|fcc|hcp> <a0> <f_lo> <f_hi> [NPTS <n>] [SEED ERROR|WARN]", doc = "A word after f_hi, in the place of an option, is not NPTS or SEED." },
   { msg = "{keys} {what} the density of one DM_REAM many-body term or of one DM_Embed component, and {why}", doc = "At startup, at the RHOGATE or RHOBARGATE line (the first of them when both are given): as for RHOGATE." },
   { msg = "RHOBARGATE: f_lo = {low} puts the largest reachable RCUTMB, {max} A, at {value} lattice constants of the smallest lattice (a = f_lo a0 = {min} A); the limit is 20. f_lo and f_hi are fractions of a0 (0.75 scans down to 25 % compression), and a larger f_lo puts that RCUTMB at fewer lattice constants.", doc = "At startup, without a line: the largest RCUTMB a candidate can have, {max}, is more than 20 lattice constants of the smallest lattice, {min}." },
+  { msg = "RHOBARGATE: the largest reachable RCUTMB, {max} A, divided by the smallest lattice constant, f_lo a0 = {min} A, is not a finite number", doc = "At startup, without a line: the largest RCUTMB a candidate can have, {max}, divided by f_lo a0, {min}, is not a finite number, for example when f_lo a0 is so small that it underflows to 0." },
   { msg = "RHOBARGATE: seed {name} fails the lattice rhobar(a) gate: {why}. A seed that fails is refused under SEED ERROR, the default, and is evaluated as a rejected start under SEED WARN. tadah refit --edit changes the density of a potential file; a WARM seed takes the values of its search parameters from its file and the others from the training configuration.", doc = "At startup, without a line, under SEED ERROR: a CONFIG or WARM starting point of the INIT or RESTART chain fails the condition; {name} names it. Under SEED WARN hpo_run.log has a warning instead, and the run goes on." },
   { msg = "RHOBARGATE: the first {name} shell at a = f_hi a0 = {high} A lies at r = {value} A, beyond the smallest cutoff a candidate can have, RCUTMB = {max} A{note}: rhobar(a) would lose its nearest neighbours; a smaller f_hi or a0, or a larger RCUTMB, keeps the first shell inside the cutoff.", doc = "At startup, at the RHOBARGATE line: the nearest neighbours of the lattice {name} at f_hi a0, {high}, lie at {value}, beyond the smallest RCUTMB a candidate can have, {max}; {note} is \" (the largest CGRIDMB knot over its OPTIM box)\" when that knot sets it." },
 ]
@@ -1828,6 +1847,14 @@ wrap = "root"
 doc = "a0, f_lo and f_hi are read as numbers before a0 is checked."
 text = "RHOBARGATE bcc 0 x 1.1"
 error = "RHOBARGATE f_lo must be a finite number, got 'x'"
+
+[[key.invalid]]
+wrap = "main_ream"
+check = "startup"
+at = "none"
+doc = "f_lo a0 is so small that it underflows to 0."
+text = "RHOBARGATE bcc 1e-200 1e-200 1"
+error = "RHOBARGATE: the largest reachable RCUTMB, 5.5000 A, divided by the smallest lattice constant, f_lo a0 = 0 A, is not a finite number"
 
 [[key.invalid]]
 wrap = "main_ream"
@@ -1883,10 +1910,11 @@ doc = """\
 The number of evaluation results held in memory before their rows are \
 written to the output files; 0 and 1 write after each evaluation."""
 long_doc = """\
-TADAH:ANNEAL_PT, TADAH:ANNEAL_PA and ASA:ASA with Gener_Block_Max above 1 \
-hold the result of an evaluation they run at once with others in memory, \
-whatever QFLUSH is, until every lower-numbered evaluation run with it has \
-ended. The result then joins the queue that QFLUSH drains."""
+TADAH:ANNEAL_PT and TADAH:ANNEAL_PA can run several evaluations at the \
+same time, and so can ASA:ASA when Gener_Block_Max is above 1. The result \
+of such an evaluation stays in memory, whatever QFLUSH is, until every \
+lower-numbered evaluation running with it has ended. The result then joins \
+the queue that QFLUSH drains."""
 
 [[key.examples]]
 wrap = "root"
@@ -2024,7 +2052,7 @@ checks = [
 ]
 args = [
   { name = "n", kind = "integer", min = 1, what = "{key} cadence" },
-  { name = "directory", kind = "name", doc = "A directory the run can write into: one that exists, or one the run creates in a directory that exists." },
+  { name = "directory", kind = "name", doc = "A directory the run can write into: one that exists, or one the run creates in a directory that exists or in the BDUMP directory." },
 ]
 repeat = "error"
 repeat_msg = "DUMP is set twice (first on line {first_line}); each key is given once"
@@ -2040,8 +2068,8 @@ of the path. Its parent is a directory that exists and can be written \
 into, or the directory of the BDUMP line, which the run creates first. A \
 symbolic link to a directory that does not exist is refused. The path is \
 followed as the operating system follows it, symbolic links and '..' \
-included. A point outside the OPTIM box is not evaluated, and its \
-potential is not written. A candidate refused before it is trained, or \
+included. A candidate outside the bounds of the search space is not evaluated, and \
+its potential is not written. A candidate refused before it is trained, or \
 whose training fails, is written as a file with the comment header only."""
 untested = [
   { msg = "{key} directory '{name}' is not writable", why = "Needs a directory without write or read permission, which a run with the rights of root does not have." },
@@ -2215,7 +2243,7 @@ repeat_msg = "OPTIM_SCALE is set twice (first on line {first_line}); each key is
 default = { literal = "AUTO" }
 env = "TADAH_OPTIM_SCALE"
 doc = """\
-The coordinates the optimiser works in: AUTO maps every OPTIM dimension \
+The coordinates the optimiser works in: AUTO maps every search parameter \
 to [0, 1], and NONE leaves each in its OPTIM units: the value for LIN, \
 its natural logarithm for LOG and asinh(x/c) for ASINH <c>."""
 quirk = """\
@@ -2667,12 +2695,12 @@ keys = ["ROOT.RHOGATE", "ROOT.RHOBARGATE", "ROOT.OPTIM"]
 doc = """\
 A file with RHOGATE or RHOBARGATE searches a key that changes the DM_REAM \
 density or its window: AMPGRIDMB, CGRIDMB, SGRIDMB or RCUTMB, or a DENSITY \
-key of a DM_Embed component. An OPTIM line anywhere in the file counts; \
+parameter <ID>.DENSITY.<parameter> of a DM_Embed component. An OPTIM line anywhere in the file counts; \
 without one the file is refused at its first RHOGATE or RHOBARGATE line."""
 
 [[rule.examples]]
 wrap = "main_ream"
-doc = "The OPTIM line on AMPGRIDMB below the RHOGATE line arms it."
+doc = "The OPTIM line on AMPGRIDMB below the RHOGATE line makes it take effect."
 text = "RHOGATE 1e-5"
 
 [[rule.invalid]]
@@ -3025,7 +3053,7 @@ ENDOPTIMIZER
 block = "ROOT"
 doc = """\
 The slot is the first line, at the top level, of a search of a DM_REAM \
-potential whose OPTIM line on AMPGRIDMB arms RHOGATE and RHOBARGATE."""
+potential whose OPTIM line on AMPGRIDMB makes RHOGATE and RHOBARGATE take effect."""
 context = "main_ream"
 text = """
 {line}

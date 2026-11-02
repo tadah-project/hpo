@@ -782,8 +782,9 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
   const bool has_val_metrics = trg.use_emae || trg.use_ermse ||
                                trg.use_errmse || trg.use_ersq ||
                                trg.use_frmse || trg.use_srmse;
-  /* The PC_FAILPROBE line, an entry of LS, gives no loss term: a file
-   * whose only PC line it is scored 0 for every evaluation. */
+  /* The PC_FAILPROBE line, an entry of LS, gives no loss term: without this
+   * refusal a file whose only PC line it is would score 0 for every
+   * evaluation. */
   const std::size_t loss_sims =
       trg.LS.size() - (trg.failprobe_idx >= 0 ? 1u : 0u);
   if (!has_val_metrics && trg.observables.empty() && loss_sims == 0) {

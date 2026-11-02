@@ -350,7 +350,10 @@ DensityGates build_density_gates(const core::Context &master,
         g.reach.max_reachable / (t.spec.f_lo * t.spec.a0) * (1.0 + 1e-12);
     if (!std::isfinite(dmax))
       throw std::runtime_error(
-          "RHOBARGATE: the largest reachable RCUTMB is not finite");
+          "RHOBARGATE: the largest reachable RCUTMB, " +
+          f4(g.reach.max_reachable) + " A, divided by the smallest lattice "
+          "constant, f_lo a0 = " + gnum(t.spec.f_lo * t.spec.a0) +
+          " A, is not a finite number");
     if (dmax > kRhoBarMaxShellRadius)
       throw std::runtime_error(
           "RHOBARGATE: f_lo = " + gnum(t.spec.f_lo) + " puts the largest "

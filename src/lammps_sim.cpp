@@ -642,8 +642,7 @@ void LammpsSim::parse_tokens() {
       hpo_option_read("--hotvar takes <name> <min> <max> [<initial>]");
     }
     else if (tokens[i] == "--failvar") {
-      /* --failvar <name> [<scale>]  (graded-FAILSCORE Tier 2; see
-       * INVESTIGATIONS/SMOOTH_FAILSCORE_analysis.md 4.8). Convention: the
+      /* --failvar <name> [<scale>]. Convention: the
        * LAMMPS variable <name> is a nonnegative violation measure -- 0 means
        * "this sim vouches for itself", > 0 means "failed, this badly" (in
        * natural units; <scale> maps to the dimensionless band-B measure).
@@ -1266,7 +1265,7 @@ void LammpsSim::validate_requested_variables_defined_equal() const
     for (const auto &v : n_varloss)
         require_equal(v, "--varloss");
 
-    // Docs: --outvar vars must be defined & equal-style as well (you requested this requirement)
+    // --outvar variables must be defined and equal-style as well.
     for (const auto &v : n_outvar) {
         if (varloss_set.find(v) != varloss_set.end()) continue; // already checked as varloss
         require_equal(v, "--outvar");
