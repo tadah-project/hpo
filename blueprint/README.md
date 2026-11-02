@@ -543,15 +543,19 @@ cmake --build <build directory> --target hpo_regenerate_hpotarget_registry
 | `hpo_hpotarget_generated_tool` | the case generator, `check_hpotarget_generated.py`, on a synthetic registry (`tests/test_check_hpotarget_generated.py`) |
 | `hpo_hpotarget_registry_sync` | `gen_hpotarget.py --check`: a generated header that is missing or differs from what the registry and its loader give; an id of the registry that gives no C++ name, or two ids that give one |
 | `hpo_hpotarget_generator_tool` | the header generator, `gen_hpotarget.py`, on a synthetic registry (`tests/test_gen_hpotarget.py`): the C++ names and their collisions, the escaping of a message, the placeholders, the tables and what they leave out, the comment at the top of each header, `--header`, `--check` and the command it names, the help; the headers compiled with the build's C++ compiler |
+| `hpo_hpotarget_case_runner_tool` | `hpotarget_case_runner` itself (`tests/test_hpotarget_case_runner.py`): its option `--parser` (`old`, the parser of `tadah hpo`; `new`, refused while the build has no other parser of the target file), its mode `describe`, which reports what the parse set as `describe_parse()` writes it (`include/tadah/hpo/hpo_targets_testing.h`, whose comment gives the format), and the cases that read a target file and a training configuration in a copy of a directory tree |
+| `hpo_hpotarget_corpus_tool` | the collection of the corpus of target files, `tests/hpotarget_corpus.py`, on synthetic trees and on the real ones (`tests/test_hpotarget_corpus.py`; its cases on the Tadah.MLIP tree read it from `TADAH_UMBRELLA_SOURCE_DIR`, which CTest sets in a build of Tadah.MLIP) |
+| `hpo_hpotarget_corpus` | an input of the corpus (a target file of HPO's test data, a registry example in its wrapper, a target file of the tests or of the documentation of Tadah.MLIP) that `hpotarget_case_runner --parser old` reads to neither a description nor a refusal, or to two results in two runs; a source without an input; a target file without a training configuration (`hpotarget_corpus.py check`; its docstring lists the sources and what it cannot see) |
+| the Catch2 cases of tag `[hpotarget_describe]` | a setting of a target file that the description `describe_parse()` writes leaves out, two descriptions of one file, a `PC_OBSERVABLE` kind described without its options (`tests/test_hpotarget_describe_parse.cpp`) |
 | the Catch2 cases of tag `[hpotarget_mlip]` | a case of the registry, or a wrapper, that MLIP's OPTIM reader reads otherwise than `HPOTargets`: a box of another value, origin, shape or line, an `OPTIM` line refused with another message, or a refusal of the seed's preparation with another (`tests/test_hpotarget_registry_conformance.cpp`, whose comment above the cases gives the rules) |
 | the Catch2 cases of tag `[hpotarget_gen]` | a generated table that differs from the table the parser or the startup checks hold by hand, in order where a message shows the order (`tests/test_hpotarget_registry_bindings.cpp`; its header comment lists the tables and says how each is compared) |
 
-The nine entries named above have the label `docs`; CTest runs the cases
-of `[hpotarget_mlip]` and `[hpotarget_gen]` one by one, without a label,
-as the command below selects them:
+The twelve entries named above have the label `docs`; CTest runs the cases
+of `[hpotarget_mlip]`, `[hpotarget_gen]` and `[hpotarget_describe]` one by
+one, without a label, as the command below selects them:
 
 ```bash
-ctest --test-dir build_tadah -R "hpotarget generated tables|OPTIM reader reads"
+ctest --test-dir build_tadah -R "hpotarget generated tables|OPTIM reader reads|describe_parse"
 ```
 
 The conformance test reads the TOML when it runs, so a change to the
