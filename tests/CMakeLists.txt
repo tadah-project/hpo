@@ -477,6 +477,56 @@ set_tests_properties(hpo_hpotarget_generator_tool PROPERTIES
     LABELS "docs"
     TIMEOUT 120
     FAIL_REGULAR_EXPRESSION "\nRan 0 tests ")
+# The comparison of two parsers of the target file: describe_parse()
+# (include/tadah/hpo/hpo_targets_testing.h) writes what the parse of a
+# target file set as a canonical text, hpotarget_case_runner reads the
+# cases with the parser its option --parser names (old: HPOTargets::read;
+# new: refused while the build has no other parser) and reports that text
+# (mode describe), and tests/hpotarget_corpus.py collects the corpus of
+# target files the two parsers are compared on (its docstring lists the
+# sources and what it cannot see).
+#  - the Catch2 cases "describe_parse: ..." (tag [hpotarget_describe],
+#    tests/test_hpotarget_describe_parse.cpp): each setting of a target
+#    file is in the text, one file gives one text, a PC_OBSERVABLE kind
+#    without a description is refused;
+#  - hpo_hpotarget_case_runner_tool: --parser, the mode describe and the
+#    cases read in place (tests/test_hpotarget_case_runner.py);
+#  - hpo_hpotarget_corpus_tool: the collection of the corpus, on synthetic
+#    trees and on the real ones (tests/test_hpotarget_corpus.py; the
+#    Tadah.MLIP tree when this build has the `tadah` target);
+#  - hpo_hpotarget_corpus: every input of the corpus is read twice with the
+#    parser of --parser old and gives one text or one refusal both times.
+# Before the fix: the four fail; the header, the option, the mode and the
+# script do not exist.
+hpo_depend_on_has_include(
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_hpotarget_describe_parse.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include/tadah/hpo/hpo_targets_testing.h)
+set(_hpo_umbrella_source_dir
+    "$<$<TARGET_EXISTS:tadah>:$<TARGET_PROPERTY:tadah,SOURCE_DIR>>")
+add_test(NAME hpo_hpotarget_case_runner_tool
+    COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/test_hpotarget_case_runner.py)
+set_tests_properties(hpo_hpotarget_case_runner_tool PROPERTIES
+    LABELS "docs"
+    TIMEOUT 120
+    ENVIRONMENT "HPOTARGET_CASE_RUNNER=$<TARGET_FILE:hpotarget_case_runner>"
+    FAIL_REGULAR_EXPRESSION "\nRan 0 tests ")
+add_test(NAME hpo_hpotarget_corpus_tool
+    COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/test_hpotarget_corpus.py)
+set_tests_properties(hpo_hpotarget_corpus_tool PROPERTIES
+    LABELS "docs"
+    TIMEOUT 120
+    ENVIRONMENT "TADAH_UMBRELLA_SOURCE_DIR=${_hpo_umbrella_source_dir}"
+    FAIL_REGULAR_EXPRESSION "\nRan 0 tests ")
+add_test(NAME hpo_hpotarget_corpus
+    COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/hpotarget_corpus.py check
+        --runner $<TARGET_FILE:hpotarget_case_runner> --parser old
+        --tadah-mlip=${_hpo_umbrella_source_dir})
+set_tests_properties(hpo_hpotarget_corpus PROPERTIES
+    LABELS "docs"
+    TIMEOUT 900)
 # hpo_has_include_rebuild: a source that tests for headers with
 # __has_include, as test_hpotarget_registry_bindings.cpp tests for the
 # generated tables, is compiled again by the build when they appear, change
