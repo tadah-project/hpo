@@ -657,7 +657,7 @@ TEST_CASE("a --hotvar or --failvar whose read-back raises a LAMMPS error "
  * with a readable Pend -- runs on a fresh instance and succeeds. Whether
  * the variable's read-back error fails the task is the parent's call (the
  * worker does not know which names feed the loss): a --varloss variable
- * fails it, a diagnostic --outvar is NaN with a journal line -- pinned end
+ * fails it, a diagnostic --outvar has no number with a journal line -- pinned end
  * to end, message included, by [pc_readback_e2e] and
  * [.tadah_cli_pc_readback].
  * Before the fix: the LAMMPS exception (LAMMPSException for press,

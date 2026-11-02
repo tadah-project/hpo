@@ -184,8 +184,9 @@ compact_embed_fit(const core::Context &context, const models::EAMSetflIO &eam,
         key.first == "FUSE" || key.first.rfind("REFIT_CURVE_", 0) == 0 ||
         key.first == "REFIT_OBJECTIVE")
       throw std::runtime_error("tadah refit: " + key.first +
-                               " belongs to the legacy ladder; component grids "
-                               "are the compact seeds");
+                               " is not read by the DM_Embed compact refit, "
+                               "which starts from the grids of the "
+                               "components in the training configuration");
   const int iterations =
       mlip::engines::read_refit_numbers(context).component_iterations;
   std::vector<double> x;
@@ -231,11 +232,11 @@ compact_embed_fit(const core::Context &context, const models::EAMSetflIO &eam,
         "DM_Embed compact refit: the centre/scale optimisation stopped after " +
             std::to_string(iterations) +
             " iterations without converging (" + summary.message +
-            "); the potential is written at the point it reached. Raise "
+            "); the potential is written at the point it reached. A larger "
             "REFIT_COMPONENT_ITERATIONS (" + std::to_string(iterations) +
             (context.has_stored("REFIT_COMPONENT_ITERATIONS") ? ""
                                                               : ", the default") +
-            ") to let it converge.");
+            ") gives the optimisation more iterations to converge.");
   return fit;
 }
 } // namespace hpo

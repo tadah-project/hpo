@@ -15,9 +15,9 @@ the insides of string literals are not code.
 
 Rule PROCESS. The MPI build has no PC_ISOLATION PROCESS workers: hpo_run
 refuses every explicit PROCESS request, whatever lines the configuration has
-("PC_ISOLATION PROCESS is not supported in the MPI build (TADAH_HPO_MPI)
-..."), and the worker entry refuses to start ("tadah --tadah-pc-worker: not
-supported in the MPI build"). A TEST_CASE that builds a worker pool or makes
+("PC_ISOLATION PROCESS: the MPI build of tadah (-DTADAH_HPO_MPI=ON) runs
+..."), and the worker entry refuses to start ("tadah --tadah-pc-worker: the
+MPI build of tadah (-DTADAH_HPO_MPI=ON) has no worker processes"). A TEST_CASE that builds a worker pool or makes
 such a request is Skipped there: the first statement of its body is
 SKIP_WITHOUT_PC_PROCESS_WORKERS() (tests/pc_process_workers.h).
 
@@ -37,7 +37,7 @@ SKIP_WITHOUT_PC_PROCESS_WORKERS() (tests/pc_process_workers.h).
     argument) -- except as an operand of ``==`` or ``!=``. The literals of
     TEST_CASE, SECTION, INFO, WARN, FAIL and SUCCEED are names and messages,
     never a request. A request may instead sit in a brace block of the case
-    that also holds a literal with "is not supported in the MPI build" (that
+    that also holds a literal with "the MPI build of tadah" (that
     block and the blocks in it): a check of the MPI build's refusal.
 
 Outside every TEST_CASE body -- a helper function, a file-scope constant, a
@@ -84,7 +84,7 @@ from dataclasses import dataclass, field
 
 SKIP_MACRO = "SKIP_WITHOUT_PC_PROCESS_WORKERS"
 MPI_SYMBOL = "TADAH_HPO_MPI"
-REFUSAL_TEXT = "is not supported in the MPI build"
+REFUSAL_TEXT = "the MPI build of tadah"
 SOURCE_SUFFIXES = (".cpp", ".h", ".hpp")
 
 

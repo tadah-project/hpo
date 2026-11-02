@@ -7,6 +7,7 @@
 #include <tadah/models/descriptors/basis_kind.h>
 #include <tadah/models/descriptors/d_basis_functions.h>
 #include <tadah/core/logger.h>
+#include <tadah/core/number_format.h>
 #include <tadah/models/nnls.h>
 
 #include <ceres/ceres.h>
@@ -241,11 +242,20 @@ inline double bval2_d(BasisKind k, int d, double xc) {
 // from dS/dr exactly as for the bumps: dS/dmu = -dS/dr = eta B(x_c)/A and
 // dS/deta = (x - mu) (dS/dr)/eta = -(x - mu) B(x_c)/A. The one-sided knot
 // families have no step form (the fitter refuses them under MONOTONE).
+/* `v` > 0 with six significant digits, rounded up: the smallest such
+ * number at or above `v`, so a bound "at least ceil6(v)" holds. */
+std::string ceil6(double v) {
+  if (!(v > 0.0) || !std::isfinite(v)) return core::format_roundtrip(v);
+  const double scale = std::pow(10.0, 5 - std::floor(std::log10(v)));
+  return core::format_roundtrip(std::ceil(v * scale - 1e-9) / scale);
+}
+
 [[noreturn]] void no_step_kind(BasisKind k) {
   throw std::runtime_error(
-      "compact_fitter: RHOFORM MONOTONE has no step form for the one-sided "
-      "knot kind " + std::to_string(static_cast<int>(k)) +
-      " (bump kinds Blip and Blip5 only)");
+      "internal error: RHOFORM MONOTONE has no step form for a one-sided "
+      "knot family (basis kind " + std::to_string(static_cast<int>(k)) +
+      "; the bump bases Blip and Blip5 have one, and the fitter refuses "
+      "the knot families under MONOTONE first)");
 }
 inline double sval(BasisKind k, double xc) {
   switch (k) {
@@ -497,8 +507,9 @@ CompactBlipFitter::CompactBlipFitter(std::vector<double> xs,
   if (cfg_.rho_form == RhoForm::Monotone && one_sided(kind_))
     throw std::runtime_error(
         std::string("compact_fitter: RHOFORM MONOTONE is not defined for the "
-                    "one-sided knot families (use a bump basis, Blip or "
-                    "Blip5, or RHOFORM NONNEG: ") +
+                    "one-sided knot families (RHOFORM MONOTONE takes the "
+                    "bump bases Blip and Blip5, and RHOFORM NONNEG the knot "
+                    "families too: ") +
         tadah::models::monotone_knot_refusal_text() + ")");
   if (cfg_.rho_form != RhoForm::Signed && cfg_.zero_ref)
     throw std::logic_error("compact_fitter: a density form (rho) and the "
@@ -1491,11 +1502,13 @@ int clamp_bump_support_params(BlipFit &f, double hard_rcut, double span) {
     if (f.is_pinned(k))
       throw std::runtime_error(
           "compact_fitter: pinned INIT anchor " + std::to_string(k + 1) +
-          " (mu " + std::to_string(f.mu[k]) + ", eta " +
-          std::to_string(f.eta[k]) + ") has support past the hard cutoff " +
-          std::to_string(hard_rcut) + " — raise its --eta to at least " +
-          std::to_string(w / (hard_rcut - f.mu[k])) +
-          " or move the anchor inward.");
+          " (mu " + core::format_roundtrip(f.mu[k]) + ", eta " +
+          core::format_roundtrip(f.eta[k]) +
+          ") has support past the hard cutoff " +
+          core::format_roundtrip(hard_rcut) +
+          "; the anchor stays inside with an eta of at least " +
+          ceil6(w / (hard_rcut - f.mu[k])) +
+          " or a centre further in.");
     if (f.mu[k] > hard_rcut - w / eta_ub) f.mu[k] = hard_rcut - w / eta_ub;
     f.eta[k] = std::max(f.eta[k], w / (hard_rcut - f.mu[k]));
     ++moved;

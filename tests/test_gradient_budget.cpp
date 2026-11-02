@@ -13,6 +13,7 @@
 // and the budget that takes a step.
 
 #include "catch2/catch.hpp"
+#include "target_file_text.h"
 
 #include <tadah/core/context.h>
 #include <tadah/core/periodic_table.h>
@@ -171,7 +172,7 @@ std::string startup_refusal(const std::string& config)
         try {
             tadah::hpo::validate_hpo_setup(ctx, trg, true, true);
         } catch (const std::exception& e) {
-            what = e.what();
+            what = hpo_test::as_target(e.what(), file.string());
         }
     }
     std::error_code ec;
@@ -752,8 +753,10 @@ const std::string kRootObservable =
  * GRAD_STRATEGY ANALYTICAL or HYBRID, never NUMERICAL, so the budget
  * warning of its MLSL is ANALYTICAL's (or HYBRID's), not the NUMERICAL one:
  *   - GD_MLSL with INNER LD_LBFGS and GRAD_STRATEGY NUMERICAL is refused
- *     ("--hpotarget defines PC_OBSERVABLE but OPTIMIZER's
- *     GRAD_STRATEGY=NUMERICAL is set", HPOTargets);
+ *     ("the STRATEGY-level optimiser: GRAD_STRATEGY NUMERICAL is refused
+ *     in a target file with PC_OBSERVABLE lines ...", HPOTargets; it said
+ *     "--hpotarget defines PC_OBSERVABLE but OPTIMIZER's
+ *     GRAD_STRATEGY=NUMERICAL is set");
  *   - with no GRAD_STRATEGY, which resolves to ANALYTICAL with a
  *     PC_OBSERVABLE, MAXEVAL 7 warns "... then its first local search, from
  *     one of them, evaluates the loss there again (1 evaluation) and the
@@ -782,9 +785,10 @@ TEST_CASE("startup validation: the gradient budget warning of an MLSL in a "
         }
         Context ctx = make_ctx();
         CHECK_THROWS_WITH(HPOTargets(ctx, file.string()),
-                          Catch::Contains("--hpotarget defines PC_OBSERVABLE "
-                                          "but OPTIMIZER's "
-                                          "GRAD_STRATEGY=NUMERICAL is set"));
+                          Catch::Contains("the STRATEGY-level optimiser: "
+                                          "GRAD_STRATEGY NUMERICAL is refused "
+                                          "in a target file with "
+                                          "PC_OBSERVABLE lines"));
         std::error_code ec;
         fs::remove(file, ec);
     }
@@ -1077,7 +1081,8 @@ TEST_CASE("startup validation: the gradient budget warning of a search that "
                            kNoStep) == 0u);
         }
         CHECK_THAT(startup_refusal(prestage(lines, "5")),
-                   Catch::StartsWith("Error on line ") &&
+                   Catch::StartsWith("line ") &&
+                   Catch::Contains(" of <target>: ") &&
                        Catch::Contains(
                            std::string("STRATEGY TYPE PRESTAGE cannot refine "
                                        "with NLOPT:") +
@@ -1091,14 +1096,16 @@ TEST_CASE("startup validation: the gradient budget warning of a search that "
             "      ALGO GD_STOGO\n      MAXEVAL 1\n    ENDINNER\n";
         CHECK_THAT(startup_refusal(with_calibration(
                        "3", "    TYPE PLAIN\n" + auglag + "    MAXEVAL 5\n")),
-                   Catch::StartsWith("Error on line ") &&
+                   Catch::StartsWith("line ") &&
+                   Catch::Contains(" of <target>: ") &&
                        Catch::Contains("the INNER block of the STRATEGY-level "
                                        "optimiser: NLOPT:AUGLAG cannot run "
                                        "NLOPT:GD_STOGO as its INNER search: "
                                        "an INNER search is a local search") &&
                        Catch::EndsWith("ENDINNER"));
         CHECK_THAT(startup_refusal(prestage(auglag, "5")),
-                   Catch::StartsWith("Error on line ") &&
+                   Catch::StartsWith("line ") &&
+                   Catch::Contains(" of <target>: ") &&
                        Catch::Contains("the INNER block of the PRESTAGE "
                                        "refinement: NLOPT:AUGLAG cannot run "
                                        "NLOPT:GD_STOGO as its INNER search: "
@@ -1109,7 +1116,8 @@ TEST_CASE("startup validation: the gradient budget warning of a search that "
                    "GD_MLSL", "10",
                    "    INNER\n      LIB NLOPT\n      ALGO GD_STOGO\n"
                    "      MAXEVAL 1\n    ENDINNER\n")),
-               Catch::StartsWith("Error on line ") &&
+               Catch::StartsWith("line ") &&
+                   Catch::Contains(" of <target>: ") &&
                    Catch::Contains("the INNER block of the STRATEGY-level "
                                    "optimiser: NLOPT:GD_MLSL cannot run "
                                    "NLOPT:GD_STOGO as its INNER search: an "

@@ -1014,7 +1014,7 @@ TEST_CASE("ANNEAL[CORANA]: CHAIN_LENGTH is rejected as a silent no-op",
 
     StubHost stub{ [&](const Vec& x){ return x(0) * x(0); }, {} };
     REQUIRE_THROWS_WITH(run_anneal_impl<Vec>(sp, stub),
-                        Catch::Contains("CLASSIC variant"));
+                        Catch::Contains("CLASSIC kernel, and PARAM CORANA ON selects"));
 }
 
 TEST_CASE("ANNEAL: T0 probe exhaustion reports MAXEVAL and never overshoots",
@@ -1087,7 +1087,7 @@ TEST_CASE("ANNEAL: zero-dimensional seed evaluation consumes MAXEVAL budget",
     run_anneal_impl<Vec>(sp, stub);
 
     CHECK(stub.calls.size() == 1);
-    CHECK(lr.read().find("after 1 host eval(s)") != std::string::npos);
+    CHECK(lr.read().find("after 1 evaluation(s)") != std::string::npos);
 }
 
 TEST_CASE("ANNEAL: zero-dimensional non-finite loss does not invent STOPVAL",
@@ -1106,13 +1106,12 @@ TEST_CASE("ANNEAL: zero-dimensional non-finite loss does not invent STOPVAL",
 
     CHECK(stub.calls.size() == 1);
     const std::string log = lr.read();
-    CHECK(log.find("ANNEAL stopped: no optimisable dimensions") !=
+    CHECK(log.find("ANNEAL stopped: no search dimension") !=
           std::string::npos);
     CHECK(log.find("STOPVAL reached") == std::string::npos);
-    /* Pins: the status "TADAH:ANNEAL: no optimisable dimensions". Before
-     * the fix: no status. */
-    CHECK(HPOLog::instance().status() ==
-          "TADAH:ANNEAL: no optimisable dimensions");
+    /* Pins: the status "TADAH:ANNEAL: no search dimension" (it said "no
+     * optimisable dimensions"). Before the fix: no status. */
+    CHECK(HPOLog::instance().status() == "TADAH:ANNEAL: no search dimension");
 }
 
 TEST_CASE("ANNEAL: zero-dimensional finite loss still honours STOPVAL",

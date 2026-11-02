@@ -488,7 +488,7 @@ struct ScopedEnv {
 /* Pins: PC_WORKER_TIMEOUT, the deadline of a script task of a worker
  * process, is refused under PC_ISOLATION THREAD, where the scripts run
  * inside the tadah process without a worker deadline: at its line
- * ("Error on line 18: PC_WORKER_TIMEOUT sets the deadline of a script task
+ * ("line 18 of config.hpo: PC_WORKER_TIMEOUT sets the deadline of a script task
  * in a worker process (PC_ISOLATION PROCESS); under PC_ISOLATION THREAD,
  * set on line 17, the scripts run inside the tadah process without a
  * worker deadline, so it would have no effect"), for any value (0 too),
@@ -529,17 +529,17 @@ TEST_CASE("hpo --check: PC_WORKER_TIMEOUT and TADAH_PC_WORKER_TIMEOUT are "
         INFO("PC_WORKER_TIMEOUT " << v);
         CHECK(check_error("PC_ISOLATION THREAD\nPC_WORKER_TIMEOUT " + v +
                           "\n") ==
-              "Error on line 18: PC_WORKER_TIMEOUT" + why +
+              "line 18 of config.hpo: PC_WORKER_TIMEOUT" + why +
                   "set on line 17" + tail + "\nLine: PC_WORKER_TIMEOUT " + v);
     }
     /* The key before the PC_ISOLATION line. */
     CHECK(check_error("PC_WORKER_TIMEOUT 60\nPC_ISOLATION THREAD\n") ==
-          "Error on line 17: PC_WORKER_TIMEOUT" + why + "set on line 18" +
+          "line 17 of config.hpo: PC_WORKER_TIMEOUT" + why + "set on line 18" +
               tail + "\nLine: PC_WORKER_TIMEOUT 60");
     {
         ScopedEnv thread("TADAH_PC_ISOLATION", std::string("THREAD"));
         CHECK(check_error("PC_WORKER_TIMEOUT 60\n") ==
-              "Error on line 17: PC_WORKER_TIMEOUT" + why +
+              "line 17 of config.hpo: PC_WORKER_TIMEOUT" + why +
                   "set by TADAH_PC_ISOLATION" + tail +
                   "\nLine: PC_WORKER_TIMEOUT 60");
     }
@@ -563,7 +563,7 @@ TEST_CASE("hpo --check: PC_WORKER_TIMEOUT and TADAH_PC_WORKER_TIMEOUT are "
         tadah::core::Context ctx =
             make_ta_context("train.db", "config.hpo", "config.val");
         CHECK(error_of([&] { return tadah::hpo::hpo_run(ctx); }) ==
-              "Error on line 18: PC_WORKER_TIMEOUT" + why + "set on line 17" +
+              "line 18 of config.hpo: PC_WORKER_TIMEOUT" + why + "set on line 17" +
                   tail + "\nLine: PC_WORKER_TIMEOUT 60");
         CHECK_FALSE(fs::exists("loss.tadah"));
     }
@@ -576,7 +576,7 @@ TEST_CASE("hpo --check: PC_WORKER_TIMEOUT and TADAH_PC_WORKER_TIMEOUT are "
     }
 #else
     CHECK(check_error("PC_WORKER_TIMEOUT 60\n") ==
-          "Error on line 17: PC_WORKER_TIMEOUT" + why +
+          "line 17 of config.hpo: PC_WORKER_TIMEOUT" + why +
               "the only mode of the MPI build of tadah" + tail +
               "\nLine: PC_WORKER_TIMEOUT 60");
 #endif
@@ -619,7 +619,9 @@ TEST_CASE("hpo --check: a run that stops at startup creates no DUMP or "
         run_error = error_of([&] { return tadah::hpo::hpo_run(ctx); });
     }
     INFO("run: " << run_error << "\ncheck: " << check_error);
-    CHECK(contains(run_error, "preflight_audit"));
+    /* It said "preflight_audit: AUDIT=error and one or more FAIL
+     * findings:". */
+    CHECK(contains(run_error, "AUDIT error: 1 FAIL finding(s) stop the run:"));
     CHECK(check_error == run_error);
     CHECK(fs::exists("hpo_run.log"));
     CHECK_FALSE(fs::exists("pots"));
@@ -788,6 +790,47 @@ TEST_CASE("hpo --check: a run with CHECK false writes no CHECK line into "
     }
 }
 
+/* Pins: a run names the DUMP and BDUMP directories on standard output
+ * under the tag [tadah hpo], with the key of the line: for "DUMP 1 pots"
+ * and "BDUMP 1 best_pots", where best_pots exists before the run, standard
+ * output has "[tadah hpo] DUMP directory 'pots' created" and "[tadah hpo]
+ * BDUMP directory 'best_pots' already exists", each once, and no line
+ * starts "Directory ".
+ * Before the fix: "Directory created: pots" and "Directory already exists:
+ * best_pots", without the tag or the key. */
+TEST_CASE("hpo: a run names its DUMP and BDUMP directories under the tag "
+          "of tadah hpo",
+          "[HPO][hpo_check]")
+{
+    fresh_process_state();
+    ScratchDir sd("archive_lines");
+    write_inputs(kOptimizer + kRootLines);
+    fs::create_directory("best_pots");
+    tadah::core::Context ctx =
+        make_ta_context("train.db", "config.hpo", "config.val");
+    int status = -1;
+    std::string out;
+    {
+        CaptureCout capture;
+        status = tadah::hpo::hpo_run(ctx);
+        out = capture.text.str();
+    }
+    INFO(out);
+    REQUIRE(status == 0);
+    REQUIRE(fs::is_directory("pots"));
+    const auto lines_equal = [&](const std::string& line) {
+        std::size_t n = 0;
+        std::istringstream in(out);
+        for (std::string l; std::getline(in, l);)
+            if (l == line) ++n;
+        return n;
+    };
+    CHECK(lines_equal("[tadah hpo] DUMP directory 'pots' created") == 1u);
+    CHECK(lines_equal("[tadah hpo] BDUMP directory 'best_pots' already "
+                      "exists") == 1u);
+    CHECK_FALSE(contains("\n" + out, "\nDirectory "));
+}
+
 /* Pins: a check that stops at a startup error after the run's startup has
  * warned writes those WARNING and HINT lines to standard error before the
  * error propagates, as a run has them in its journal: for a setup without
@@ -820,7 +863,7 @@ TEST_CASE("hpo --check: the startup warnings before an error are written "
         err = capture.text.str();
     }
     INFO("error: " << error << "\nstandard error:\n" << err);
-    CHECK(contains(error, "preflight_audit"));
+    CHECK(contains(error, "AUDIT error: 1 FAIL finding(s) stop the run:"));
     CHECK(contains(err, "tadah hpo --check: the startup checks stopped at "
                         "the error below.\nWarnings and hints, which a run "
                         "writes to its journal (hpo_run.log):\n"));
@@ -1732,9 +1775,9 @@ TEST_CASE("hpo --check: GRAD_STRATEGY ANALYTICAL refuses a search parameter "
     const std::string lambda = "OPTIM LAMBDA (1) 1e-8 1e-2 LOG\n";
     const std::string sgridmb = "OPTIM SGRIDMB (1) 0.5 2.0\n";
     const std::string head =
-        "OPTIMIZER block: GRAD_STRATEGY ANALYTICAL needs an analytical "
-        "derivative with respect to every search parameter, and the "
-        "descriptors give none for ";
+        "the STRATEGY-level optimiser: GRAD_STRATEGY ANALYTICAL needs an "
+        "analytical derivative with respect to every search parameter, and "
+        "the descriptors give none for ";
     const std::string no_descriptor = " (no descriptor differentiates it)";
     const std::string energy_rows =
         " (DM_Blip differentiates it in the energy rows only, and ";
@@ -1788,8 +1831,8 @@ TEST_CASE("hpo --check: GRAD_STRATEGY ANALYTICAL refuses a search parameter "
     for (const Case& c : cases) {
         INFO("case: " << c.name << "\n" << c.hpo);
         const std::string expected =
-            "Error on line " +
-            std::to_string(line_number(c.hpo, "ENDOPTIMIZER")) + ": " +
+            "line " +
+            std::to_string(line_number(c.hpo, "ENDOPTIMIZER")) + " of config.hpo: " +
             c.message + "\nLine: ENDOPTIMIZER";
         const auto context = [&] {
             tadah::core::Context ctx =
@@ -1989,10 +2032,10 @@ TEST_CASE("hpo --check: GRAD_STRATEGY ANALYTICAL refuses WATOM when a "
                             "OPTIM WATOM (1) 0.5 2.0\n" +
                             lbfgs_block("ANALYTICAL");
     const std::string head =
-        "OPTIMIZER block: GRAD_STRATEGY ANALYTICAL needs an analytical "
-        "derivative with respect to every search parameter, and the "
-        "descriptors give none for OPTIM WATOM (1) on line 4 of the target "
-        "file (";
+        "the STRATEGY-level optimiser: GRAD_STRATEGY ANALYTICAL needs an "
+        "analytical derivative with respect to every search parameter, and "
+        "the descriptors give none for OPTIM WATOM (1) on line 4 of the "
+        "target file (";
     const std::string for_it =
         "). GRAD_STRATEGY HYBRID takes finite differences for it.";
     struct Case {
@@ -2013,8 +2056,8 @@ TEST_CASE("hpo --check: GRAD_STRATEGY ANALYTICAL refuses WATOM when a "
     for (const Case& c : cases) {
         INFO("case: " << c.type2b << " and " << c.typemb);
         const std::string expected =
-            "Error on line " +
-            std::to_string(line_number(hpo, "ENDOPTIMIZER")) + ": " + head +
+            "line " +
+            std::to_string(line_number(hpo, "ENDOPTIMIZER")) + " of config.hpo: " + head +
             c.why + for_it + "\nLine: ENDOPTIMIZER";
         const auto context = [&] {
             return with_terms(
@@ -2062,7 +2105,7 @@ TEST_CASE("hpo --check: a RESTART block on TADAH:GRID is refused at its "
         "      AFTER_STAGNATION 2\n      MAX 2\n      METHOD RANDOM 1\n"
         "      SEED 13\n    ENDRESTART\n  ENDSTRATEGY\nENDOPTIMIZER\n";
     const std::string expected =
-        "Error on line 11: a RESTART round would run the grid search of the "
+        "line 11 of config.hpo: a RESTART round would run the grid search of the "
         "STRATEGY-level optimiser (TADAH:GRID) again from its first node: a "
         "grid search evaluates its starting point and then the nodes of its "
         "grid in one fixed order, so each round would evaluate again the "
@@ -2236,14 +2279,14 @@ TEST_CASE("hpo --check: GRAD_STRATEGY ANALYTICAL takes a search parameter "
     const std::string root = "LOSS L2\nFAILSCORE 1e9\nPC_ERMSE 0 1\n"
                              "OPTIM RCUT2B (1) 4.5 5.5\n";
     const std::string refused =
-        "Error on line " +
+        "line " +
         std::to_string(line_number(root + lbfgs_block("ANALYTICAL"),
                                    "ENDOPTIMIZER")) +
-        ": OPTIMIZER block: GRAD_STRATEGY ANALYTICAL needs an analytical "
-        "derivative with respect to every search parameter, and the "
-        "descriptors give none for OPTIM RCUT2B (1) on line 4 of the target "
-        "file (no descriptor differentiates it). GRAD_STRATEGY HYBRID takes "
-        "finite differences for it.\nLine: ENDOPTIMIZER";
+        " of config.hpo: the STRATEGY-level optimiser: GRAD_STRATEGY ANALYTICAL needs an "
+        "analytical derivative with respect to every search parameter, and "
+        "the descriptors give none for OPTIM RCUT2B (1) on line 4 of the "
+        "target file (no descriptor differentiates it). GRAD_STRATEGY HYBRID "
+        "takes finite differences for it.\nLine: ENDOPTIMIZER";
     struct Case {
         const char* name;
         bool dimer_train, dimer_val;
@@ -2433,9 +2476,9 @@ TEST_CASE("hpo: the analytical gradient hands WATOM to finite differences "
  * check, and the next run draws another seed, so a number would repeat
  * nothing. For a STRATEGY block of TADAH:RANDOM without SEED, after an
  * INIT block on line 2 without SEED whose METHOD RANDOM 2 draws its
- * points, hpo_run() with CHECK true says on standard output "[HPO] the
+ * points, hpo_run() with CHECK true says on standard output "[tadah hpo] the
  * INIT block on line 2 has no SEED, so a run draws a seed for its starting
- * points once and names it" and "[HPO] the STRATEGY block has no SEED, and
+ * points once and names it" and "[tadah hpo] the STRATEGY block has no SEED, and
  * TADAH:RANDOM draws random numbers, so a run draws a seed for them once
  * and names it"; for NLOPT:GN_CRS2_LM after an INIT block of METHOD LHS 3,
  * whose seed it takes, the INIT line ends "... names it
@@ -2462,8 +2505,8 @@ TEST_CASE("hpo --check: a seed that a run would draw is announced without "
                algo + "\n    MAXEVAL 3\n  ENDSTRATEGY\nENDOPTIMIZER\n";
     };
     const std::string init_line =
-        "[HPO] the INIT block on line 2 has no SEED, so a run draws a seed "
-        "for its starting points once and names it";
+        "[tadah hpo] the INIT block on line 2 has no SEED, so a run draws a "
+        "seed for its starting points once and names it";
     struct Case {
         std::string method, lib, algo;
         std::vector<std::string> expected;   // lines of standard output
@@ -2471,8 +2514,8 @@ TEST_CASE("hpo --check: a seed that a run would draw is announced without "
     for (const Case& c : std::vector<Case>{
              {"METHOD RANDOM 2", "TADAH", "RANDOM",
               {init_line + "\n",
-               "[HPO] the STRATEGY block has no SEED, and TADAH:RANDOM draws "
-               "random numbers, so a run draws a seed for them once and "
+               "[tadah hpo] the STRATEGY block has no SEED, and TADAH:RANDOM "
+               "draws random numbers, so a run draws a seed for them once and "
                "names it\n"}},
              {"METHOD LHS 3", "NLOPT", "GN_CRS2_LM",
               {init_line + " (NLOPT:GN_CRS2_LM, without a SEED of its own, "

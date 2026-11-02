@@ -56,8 +56,8 @@ int pc_worker_main(int /*argc*/, char** /*argv*/) {
    * parent hard-errors on PC_ISOLATION PROCESS in the MPI build -- reaching
    * this code means something is badly wrong. */
   std::fprintf(stderr,
-               "tadah --tadah-pc-worker: not supported in the MPI build "
-               "(TADAH_HPO_MPI)\n");
+               "tadah --tadah-pc-worker: the MPI build of tadah "
+               "(-DTADAH_HPO_MPI=ON) has no worker processes\n");
   return 2;
 #else
   constexpr int kFd = 3;   /* inherited socketpair end (spawn recipe dup2) */

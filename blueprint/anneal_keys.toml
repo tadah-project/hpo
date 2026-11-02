@@ -133,7 +133,7 @@ group = "steps"
 rank = 4
 doc = "Corana kernel: the number of cycles through the dimensions between two adjustments of the steps. Under TADAH:ANNEAL_PT, the number of sweeps between two adjustments of the steps of a slot."
 min = 1
-range_note = "(Corana variant)"
+range_note = "(Corana kernel)"
 
 [[key]]
 name = "NT"
@@ -148,7 +148,7 @@ long_doc = "The default of TADAH:ANNEAL is AUTO: a number that follows from MAXE
 accepts_auto = 0.0
 auto_kinds = ["serial"]
 min = 1
-range_note = "(Corana variant)"
+range_note = "(Corana kernel)"
 
 [[key]]
 name = "CORANA_C"
@@ -631,7 +631,7 @@ msg = "PARAM V_FLOOR_FRAC requires PARAM CORANA ON"
 type = "conflicts_flag"
 key = "CHAIN_LENGTH"
 flag = "CORANA"
-msg = "PARAM CHAIN_LENGTH belongs to the CLASSIC variant"
+msg = "PARAM CHAIN_LENGTH belongs to the CLASSIC kernel, and PARAM CORANA ON selects the Corana kernel"
 
 [[rule]]
 type = "kind_reject"
@@ -735,7 +735,7 @@ msg = "PARAM STEP_TRUST_FACTOR is unused unless STEP_MODE is ADAPTIVE"
 [[renamed]]
 old = "T_INIT"
 kinds = ["pt", "pa"]
-msg = "PARAM T_INIT is the serial TADAH:ANNEAL starting temperature; use T_HOT here (the hottest ladder/start temperature)"
+msg = "PARAM T_INIT is the starting temperature of the serial TADAH:ANNEAL; TADAH:ANNEAL_PT and TADAH:ANNEAL_PA take PARAM T_HOT (the hottest temperature of the ladder, or the starting temperature)"
 
 [[renamed]]
 old = "T_HOT"
@@ -745,17 +745,17 @@ msg = "PARAM T_HOT is the ANNEAL_PT/ANNEAL_PA hot-end temperature; the serial st
 [[renamed]]
 old = "L"
 kinds = ["serial", "pt", "pa"]
-msg = "PARAM L was renamed to CHAIN_LENGTH (same meaning: CLASSIC proposals per temperature rung); update the config"
+msg = "PARAM L was renamed to CHAIN_LENGTH (same meaning: CLASSIC proposals per temperature rung)"
 
 [[renamed]]
 old = "C"
 kinds = ["serial", "pt", "pa"]
-msg = "PARAM C was renamed to CORANA_C (same meaning: the Corana step-adjust gain); update the config"
+msg = "PARAM C was renamed to CORANA_C (same meaning: the Corana step-adjust gain)"
 
 [[renamed]]
 old = "T0_PACCEPT"
 kinds = ["serial", "pt", "pa"]
-msg = "PARAM T0_PACCEPT was renamed to T0_ACCEPT (same meaning: target initial acceptance probability); update the config"
+msg = "PARAM T0_PACCEPT was renamed to T0_ACCEPT (same meaning: target initial acceptance probability)"
 
 [[renamed]]
 old = "STEP_AUTO"
@@ -765,7 +765,7 @@ msg = "PARAM STEP_AUTO was replaced by PARAM STEP_MODE (FIXED / FROZEN / ADAPTIV
 [[renamed]]
 old = "STEP_AUTO_SWEEPS"
 kinds = ["pt"]
-msg = "PARAM STEP_AUTO_SWEEPS was renamed to STEP_WARMUP_SWEEPS (same meaning: minimum calibration attempts per coordinate); update the config"
+msg = "PARAM STEP_AUTO_SWEEPS was renamed to STEP_WARMUP_SWEEPS (same meaning: minimum calibration attempts per coordinate)"
 
 [[renamed]]
 old = "STEP_ADAPT_EVERY"
@@ -775,7 +775,7 @@ msg = "PARAM STEP_ADAPT_EVERY was removed: STEP_MODE ADAPTIVE applies the robust
 [[renamed]]
 old = "LADDER_ADAPT_UPDATES"
 kinds = ["pt"]
-msg = "PARAM LADDER_ADAPT_UPDATES was removed; the pooled-evidence equalization freeze (LADDER_FREEZE) governs the adaptation lifetime"
+msg = "PARAM LADDER_ADAPT_UPDATES was removed; PARAM LADDER_FREEZE decides when the ladder adaptation stops (the equalisation freeze on pooled evidence)"
 
 [[renamed]]
 old = "RT"

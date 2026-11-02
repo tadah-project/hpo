@@ -151,38 +151,40 @@ class Generator(unittest.TestCase):
         self.has('inline constexpr std::string_view continuation = '
                  '"\\\\";', h)
         self.has('inline constexpr std::string_view error_frame = '
-                 '"Error on line {line}: {what}\\nLine: {text}";', h)
+                 '"line {line} of {file}: {what}\\nLine: {text}";', h)
         self.has('"unknown key \\"{key}\\""', h)
 
     # Pins: the placeholders of each message whose set the loader fixes
     # (FIXED_PLACEHOLDERS) are in the header, sorted, as the loader has
-    # them: a frame the loader gives {file} has "file" among them, with no
-    # change to the generator; the readers' and the entries' sets too.
+    # them: the frame's {file} is among them, and a frame the loader gives
+    # no {file} has "file" no longer, with no change to the generator; the
+    # readers' and the entries' sets too.
+    # Before the frame named the file: the frame of the registry had no
+    # {file} ("line", "text", "what"), and this case added it.
     # Before the fix: fails, gen_hpotarget.py does not exist.
     def test_placeholders_come_from_the_loader(self):
         h = self.headers()[gen.REGISTRY_HEADER]
         self.has("inline constexpr std::string_view "
                  "placeholders_lexing_error_frame[] = {\n"
-                 '    "line",\n    "text",\n    "what",\n};', h)
+                 '    "file",\n    "line",\n    "text",\n    "what",\n};',
+                 h)
         self.has("lexing_unfinished_msg = Span<std::string_view>"
                  "{nullptr, 0};", h)
         self.has("placeholders_reading[] = {", h)
         self.has("placeholders_entry[] = {", h)
         frame = ("lexing", "error_frame")
         saved = hr.FIXED_PLACEHOLDERS[frame]
-        hr.FIXED_PLACEHOLDERS[frame] = saved | {"file"}
+        hr.FIXED_PLACEHOLDERS[frame] = saved - {"file"}
         try:
             self.edit("hpotarget.toml",
-                      'error_frame = "Error on line {line}: {what}',
-                      'error_frame = "Error on line {line} of {file}: {what}')
+                      'error_frame = "line {line} of {file}: {what}',
+                      'error_frame = "line {line}: {what}')
             h = self.headers()[gen.REGISTRY_HEADER]
         finally:
             hr.FIXED_PLACEHOLDERS[frame] = saved
         self.has("placeholders_lexing_error_frame[] = {\n"
-                 '    "file",\n    "line",\n    "text",\n    "what",\n};',
-                 h)
-        self.has('"Error on line {line} of {file}: {what}\\nLine: '
-                 '{text}"', h)
+                 '    "line",\n    "text",\n    "what",\n};', h)
+        self.has('"line {line}: {what}\\nLine: {text}"', h)
 
     # Pins: the tables hold the registry's data: the blocks with their
     # parents, aliases, refusals and the keys each takes (INNER: LIB, not
@@ -311,7 +313,8 @@ class Generator(unittest.TestCase):
 
     # Pins: the headers follow the loader as well as the registry: with a
     # placeholder set the loader fixes changed (the frame's
-    # FIXED_PLACEHOLDERS given "file") and no file of the registry
+    # FIXED_PLACEHOLDERS given "key"; it was given "file" until the frame
+    # held {file}) and no file of the registry
     # changed, --check fails on hpotarget_registry_gen.h, which "differs
     # from what the registry and its loader give", and says to commit the
     # headers "with the change to the registry, its loader or the
@@ -327,7 +330,7 @@ class Generator(unittest.TestCase):
         self.assertEqual(self.main("--header", *args)[0], 0)
         frame = ("lexing", "error_frame")
         saved = hr.FIXED_PLACEHOLDERS[frame]
-        hr.FIXED_PLACEHOLDERS[frame] = saved | {"file"}
+        hr.FIXED_PLACEHOLDERS[frame] = saved | {"key"}
         try:
             code, _, err = self.main("--check", *args)
         finally:
@@ -468,7 +471,7 @@ class Generator(unittest.TestCase):
         quoted = 'a "quoted" \\ text — ${maxtime}'
         self.assertEqual(
             run.stdout.decode("utf-8"),
-            "|".join(["\\", "Error on line {line}: {what}\nLine: {text}",
+            "|".join(["\\", "line {line} of {file}: {what}\nLine: {text}",
                       quoted, "LIB", quoted, "1-2", "0", "GRID_POINTS"]))
 
 

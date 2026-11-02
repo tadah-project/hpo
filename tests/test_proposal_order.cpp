@@ -613,7 +613,7 @@ TEST_CASE("Proposal order: the equal-loss tie-break and the stagnation stop "
         CHECK(best[0].at(1) == "1");
         CHECK(best[1].at(1) == "2");
         CHECK(best[1].at(2) == "2");
-        CHECK(count_of(r->journal, "StagnationStop fired at eval 8;") == 1);
+        CHECK(count_of(r->journal, "the stagnation stop at eval 8:") == 1);
         CHECK(data_rows(r->files.at("loss.tadah")).size() == 8);
     }
     check_same_files(one, four);
@@ -684,13 +684,13 @@ TEST_CASE("Proposal order: a stop during a batch keeps the evaluations that "
  * first whose loss is below STOPVAL. The other slots make their
  * evaluations of that round and the search ends: loss.tadah has the rows
  * 1 to 16, the journal says "ANNEAL_PT stopped: STOPVAL reached after 16
- * host eval(s) (0 epoch(s)" and no evaluation "did not run" -- the same
+ * evaluation(s) (0 epoch(s)" and no evaluation "did not run" -- the same
  * files at THREADS 1, at THREADS 2 with the evaluations of each round in
  * slot order and at THREADS 4 in reverse slot order.
  * Before the fix: the replica that reached STOPVAL ended its own
  * calibration, and the other replicas went on through their whole
  * coordinate warm-up before the search ended: 79 rows ("STOPVAL reached
- * after 79 host eval(s)"). */
+ * after 79 evaluation(s)"). */
 TEST_CASE("Proposal order: a STOPVAL reached in a round of the ANNEAL_PT "
           "step calibration ends the search after that round",
           "[HPO][proposal_order][anneal_pt][stopval]")
@@ -713,7 +713,7 @@ TEST_CASE("Proposal order: a STOPVAL reached in a round of the ANNEAL_PT "
         for (std::size_t i = 12; i < 16; ++i)
             CHECK(rows[i].at(1) == std::to_string(i - 11));
         CHECK(count_of(r->journal, "ANNEAL_PT stopped: STOPVAL reached after "
-                                   "16 host eval(s) (0 epoch(s)") == 1);
+                                   "16 evaluation(s) (0 epoch(s)") == 1);
         CHECK(count_of(r->journal, "did not run") == 0);
     }
     check_same_files(one, two);
@@ -731,7 +731,7 @@ TEST_CASE("Proposal order: a STOPVAL reached in a round of the ANNEAL_PT "
  * no row" (no "the search stopped during it": the search ends after the
  * epoch, and the evaluation did not run because its slot ended its own
  * sweep) and "ANNEAL_PT stopped: STOPVAL
- * reached after 179 host eval(s) (22 epoch(s)" -- the same files at THREADS
+ * reached after 179 evaluation(s) (22 epoch(s)" -- the same files at THREADS
  * 1, at THREADS 2 in reverse and in forward slot order and at THREADS 4 in
  * reverse slot order.
  * Before the fix: a replica that reached STOPVAL stopped the others at
@@ -761,7 +761,7 @@ TEST_CASE("Proposal order: a STOPVAL reached during an ANNEAL_PT epoch ends "
                        "did not run; evaluation 174 has no row\n") == 1);
         CHECK(count_of(r->journal, "stopped during it") == 0);
         CHECK(count_of(r->journal, "ANNEAL_PT stopped: STOPVAL reached after "
-                                   "179 host eval(s) (22 epoch(s)") == 1);
+                                   "179 evaluation(s) (22 epoch(s)") == 1);
     }
     check_same_files(a, b);
     check_same_files(a, c);
@@ -779,7 +779,7 @@ TEST_CASE("Proposal order: a STOPVAL reached during an ANNEAL_PT epoch ends "
  * of TADAH:ANNEAL_PA: 4 of its 40 evaluations did not run; evaluations
  * 90-93 have no rows" (without "the search stopped during it", as the
  * search ends after the step) and "ANNEAL_PA
- * stopped: STOPVAL reached after 124 host eval(s)" -- the same files at
+ * stopped: STOPVAL reached after 124 evaluation(s)" -- the same files at
  * THREADS 1, at THREADS 2 in reverse and in forward walker order and at
  * THREADS 4 in reverse walker order.
  * Before the fix: a walker that reached STOPVAL stopped the others at
@@ -810,7 +810,7 @@ TEST_CASE("Proposal order: a STOPVAL reached during an ANNEAL_PA temperature "
                        "rows\n") == 1);
         CHECK(count_of(r->journal, "stopped during it") == 0);
         CHECK(count_of(r->journal, "ANNEAL_PA stopped: STOPVAL reached after "
-                                   "124 host eval(s)") == 1);
+                                   "124 evaluation(s)") == 1);
     }
     check_same_files(a, b);
     check_same_files(a, c);

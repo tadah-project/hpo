@@ -174,7 +174,8 @@ bool install_env_faults() noexcept
         detail::g_fault_table.store(table.release(), std::memory_order_release);
         return true;
     } catch (const std::exception& e) {
-        std::cerr << "[HPO] WARNING: ignoring malformed TADAH_HPO_TEST_IO_FAULT='"
+        std::cerr << "[tadah hpo] WARNING: ignoring malformed "
+                     "TADAH_HPO_TEST_IO_FAULT='"
                   << spec << "': " << e.what() << "\n";
         return false;
     }
@@ -213,7 +214,7 @@ const BackoffOverride& backoff_override()
             out.cap     = std::max(out.cap, out.initial);
             out.set     = true;
         } catch (const std::exception& e) {
-            std::cerr << "[HPO] WARNING: ignoring malformed "
+            std::cerr << "[tadah hpo] WARNING: ignoring malformed "
                          "TADAH_HPO_TEST_IO_BACKOFF_MS='" << v << "': "
                       << e.what() << "\n";
             out = BackoffOverride{};

@@ -45,6 +45,7 @@
 // weights); the data are H2 cells.
 
 #include "catch2/catch.hpp"
+#include "target_file_text.h"
 
 #include <tadah/core/context.h>
 #include <tadah/core/periodic_table.h>
@@ -198,7 +199,7 @@ std::string parse_error(Context c, const std::string& text) {
     try {
         HPOTargets trg(c, tf.path.string());
     } catch (const std::exception& e) {
-        return e.what();
+        return hpo_test::as_target(e.what(), tf.path.string());
     }
     return "";
 }
@@ -213,7 +214,7 @@ std::string startup_error(Context c, const std::string& text,
         HPOTargets trg(c, tf.path.string());
         tadah::hpo::validate_hpo_setup(c, trg, has_train_db, true);
     } catch (const std::exception& e) {
-        return e.what();
+        return hpo_test::as_target(e.what(), tf.path.string());
     }
     return "";
 }
@@ -426,17 +427,20 @@ TEST_CASE("tadah hpo refuses at startup OALGO 3 with a LAMBDA other than 0 "
     /* OPTIM LAMBDA with LAMBDA 0: every candidate of the box but 0 would
      * be refused by its fit, so the search is refused at startup, naming
      * the intercept columns; with the intercept pinned, or under OALGO 1,
-     * it passes (pins).
+     * it passes (pins). The intercept columns are those the ridge of
+     * OALGO 1, 2 and 4 leaves unpenalised (it said "which a ridge penalty
+     * leaves out", after "OALGO 3 penalises every coefficient alike").
      * Before the fix: the startup checks passed it, and each evaluation of
      * a candidate above 0 refused it. */
     SECTION("OPTIM LAMBDA with LAMBDA 0") {
         const std::string line = "OPTIM LAMBDA (1) 0 1e-2\n";
         const Context c = bias("0");
         CHECK(startup_error(c, target(line)) ==
-              "OPTIM LAMBDA: OALGO 3 penalises every weight alike, and the "
-              "fit has 1 intercept column(s) (BIAS true with ATOM), which a "
-              "ridge penalty leaves out, so every fit refuses a LAMBDA other "
-              "than 0: each candidate of the box but 0 would fail its "
+              "OPTIM LAMBDA: OALGO 3 penalises every coefficient alike, and "
+              "the fit has 1 intercept column(s) (BIAS true with ATOM), which "
+              "the ridge of OALGO 1, 2 and 4 leaves unpenalised and OALGO 3 "
+              "cannot, so every fit refuses a LAMBDA "
+              "other than 0: each candidate of the box but 0 would fail its "
               "evaluation. OALGO 1, 2 or 4 fits a positive LAMBDA with the "
               "intercepts unpenalised.");
         Context pinned = bias("0");
@@ -464,7 +468,7 @@ TEST_CASE("An OPTIM box of LAMBDA below 0 is refused at its line",
             const std::string k = key;
             const std::string bad =
                 parse_error(model_ctx(), target("OPTIM " + k + " (1) -0.5 2\n"));
-            CHECK_THAT(bad, Contains("Error on line 1") &&
+            CHECK_THAT(bad, Contains("line 1 of <target>: ") &&
                                 Contains("OPTIM " + k + " (1): the low bound "
                                          "-0.5 is negative") &&
                                 !Contains("OPTIM " + k + " (1): OPTIM"));
@@ -484,7 +488,7 @@ TEST_CASE("An OPTIM box of LAMBDA below 0 is refused at its line",
         set_key(c, "LAMBDA", "-1");
         set_key(c, "OALGO", "3");
         CHECK_THAT(parse_error(c, target("OPTIM LAMBDA (1) 1e-6 1e-2\n")),
-                   Contains("Error on line 1") &&
+                   Contains("line 1 of <target>: ") &&
                        Contains("OPTIM LAMBDA: the training configuration "
                                 "has LAMBDA -1") &&
                        Contains("evidence approximation"));
@@ -605,7 +609,7 @@ TEST_CASE("OPTIM of a key applied once at startup is refused at its line",
                 const std::string line = "OPTIM " + k + " (1) 0.5 2\n";
                 const std::string said = parse_error(m.second, target(line));
                 CHECK_THAT(said,
-                           Contains("Error on line 1") &&
+                           Contains("line 1 of <target>: ") &&
                                Contains("OPTIM " + k + " is not a valid "
                                         "search target") &&
                                Contains("applied once, when the run starts"));
@@ -719,7 +723,7 @@ TEST_CASE("The evidence approximation of tadah hpo is said once per run in "
         CHECK(count_of(journal, "LAMBDA -1 (evidence approximation): "
                                 "iteration 1 gave alpha") == 1);
         CHECK(count_of(journal, "once per run") == 1);
-        CHECK(count_of(journal, "eval-thread caught throw") == 0);
+        CHECK(count_of(journal, "the evaluation stopped on an error") == 0);
         const std::string threw_line = [&] {
             const std::size_t p = journal.find("Evaluations that threw");
             return p == std::string::npos

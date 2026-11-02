@@ -159,12 +159,12 @@ constexpr Refusal kRefused[] = {
      "NLopt 2.10 plans each LN_NEWUOA_BOUND step with a nested LD_MMA run "
      "that has no time limit and sees no stop request. Once a non-finite "
      "value reaches its model, each step takes about 10-60 s without "
-     "evaluating the loss. Such a value reaches it after every stop tadah "
-     "hpo makes through the objective (a signal, a RESTART stagnation "
-     "stop, an error that ends the run) from a run's (2n+1)-th evaluation "
-     "on, the last of NEWUOA's starting points for n OPTIM dimensions, as "
-     "the objective then returns HUGE_VAL, NLopt's convention for a forced "
-     "stop. It reaches it too when the loss barely changes over the trust "
+     "evaluating the loss. Such a value reaches it after every stop that "
+     "tadah hpo makes through the objective: a signal, a RESTART "
+     "stagnation stop, or an error that ends the run. This holds from a "
+     "run's (2n+1)-th evaluation on, the last of NEWUOA's starting points "
+     "for n OPTIM dimensions, as the objective then returns an infinite "
+     "loss, NLopt's convention for a forced stop. It reaches it too when the loss barely changes over the trust "
      "region. Ctrl-C, SIGTERM, MAXTIME and RESTART wait that long. The "
      "recommended replacement is NLOPT:LN_BOBYQA, Powell's "
      "bound-constrained successor of NEWUOA (its STEP rescales each "
@@ -172,7 +172,7 @@ constexpr Refusal kRefused[] = {
     {"NLOPT", "LN_NEWUOA",
      "NLopt 2.10 runs LN_NEWUOA without the OPTIM box: it passes NEWUOA no "
      "bounds, so its evaluations leave the box and the best potential can "
-     "lie outside the bounds the configuration sets (a 2-D run made 20 of "
+     "lie outside the bounds the target file sets (a 2-D run made 20 of "
      "its 25 evaluations outside the box, and its best was one of them). It "
      "also needs two OPTIM dimensions or more. The recommended replacement "
      "is NLOPT:LN_BOBYQA, Powell's bound-constrained successor of NEWUOA "
@@ -394,12 +394,12 @@ Registry build_registry()
             c.bounds_note        = "ignores the OPTIM box: Ceres' line-search solver has no "
                                    "bounds, so its line searches can propose points outside "
                                    "the box (a LOG dimension stays positive, a linear one is "
-                                   "unbounded). Such a point is not evaluated: it is scored as "
-                                   "a failure graded by its distance to the box, whose slope "
-                                   "points away from the box, so a descent step leads back "
-                                   "into it; it counts against MAXEVAL and it is never the "
-                                   "best; the first is reported with a WARNING and the "
-                                   "DIAGNOSTICS section of hpo_run.log counts them all. "
+                                   "unbounded). Such a point is not evaluated. It is scored "
+                                   "as a failure graded by its distance to the box, so the "
+                                   "score rises away from the box and a descent step leads "
+                                   "back into it. Such a point counts against MAXEVAL and is "
+                                   "never the best. The first is reported with a WARNING; "
+                                   "the DIAGNOSTICS section of hpo_run.log counts them all. "
                                    "DLIB:BFGS and the NLopt LD_* algorithms keep to the box";
             add(r, c);
         }
@@ -490,13 +490,13 @@ Registry build_registry()
                 c.ignores_forced_stop = true;
                 c.stop_note =
                     "NLopt's StoGO has no convergence test of its own and "
-                    "ignores NLopt's forced stop, by which tadah hpo ends a "
-                    "search "
-                    "(on a signal, an error, the RESTART stagnation stop, or "
-                    "a loss at or below STOPVAL that NLopt was not given): it "
-                    "then calls on, each call refused, and only NLopt's own "
-                    "evaluation count ends it promptly (MAXTIME only once the "
-                    "rest of its time has passed)";
+                    "ignores NLopt's forced stop. tadah hpo ends a search "
+                    "with that stop on a signal, an error, the RESTART "
+                    "stagnation stop, or a loss at or below STOPVAL that "
+                    "NLopt was not given. StoGO then keeps calling the "
+                    "objective, which refuses each call. Only NLopt's own "
+                    "evaluation count (MAXEVAL) ends it promptly; MAXTIME "
+                    "ends it only once the rest of its time has passed";
             }
         } else if (s == "LD_MMA" || s == "LD_CCSAQ" || s == "LD_SLSQP") {
             c.needs_stop = true;
@@ -580,18 +580,18 @@ Registry build_registry()
                     ? "StoGO evaluates the centre of the OPTIM box first (with "
                       "POPULATION 2n + 1 or more, n the OPTIM dimensions, a "
                       "random point of the box) and then samples the whole "
-                      "box; NLopt never reads that point"
+                      "box; NLopt never reads the point it is given"
                     : "StoGO evaluates the centre of the OPTIM box first and "
-                      "then samples the whole box; NLopt never reads that "
-                      "point";
+                      "then samples the whole box; NLopt never reads the "
+                      "point it is given";
         else if (starts("GN_DIRECT") || starts("GN_ORIG_DIRECT"))
             c.start_note = "DIRECT evaluates the centre of the OPTIM box first "
                            "and then divides the whole box; NLopt never reads "
-                           "that point";
+                           "the point it is given";
         else if (starts("GN_AGS"))
             c.start_note = "AGS evaluates points of a space-filling curve "
                            "through the whole OPTIM box, the first near its "
-                           "centre; NLopt never reads that point";
+                           "centre; NLopt never reads the point it is given";
         /* Which of them draw random numbers (OptimizerCaps::random_draws):
          * GD_STOGO_RAND its POPULATION trial points (stogo.cc, POP(2n)),
          * the box centre first below POPULATION 2n + 1; GN_DIRECT_L_RAND

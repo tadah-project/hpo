@@ -1,6 +1,7 @@
 #include "catch2/catch.hpp"
 
 #include <tadah/hpo/hpo_log.h>
+#include <tadah/hpo/host_messages.h>
 
 #include <atomic>
 #include <chrono>
@@ -157,15 +158,28 @@ TEST_CASE("Multiple non-adjacent throws all recoverable",
     CHECK(sim.drained_failscore_iters.size() == 2);
 }
 
+/* Pins: the journal WARNING of an evaluation that stopped on an error, as
+ * HPO_Host::operator() builds it (evaluation_error_warning,
+ * host_messages.h): "eval 50: the evaluation stopped on an error and
+ * scores FAILSCORE: synthetic", and for an error without a message "eval
+ * 50: the evaluation stopped on an error that carries no message and
+ * scores FAILSCORE"; in the journal it is one WARNING line. A run whose
+ * evaluations throw writes the line ("No usable loss: evaluations that
+ * throw count as unusable losses", test_hpo_termination.cpp).
+ * Before the fix: the case wrote a text of its own with log.warning() and
+ * found it in the journal, so a change of the host's text could not fail
+ * it; without evaluation_error_warning() this file does not compile. */
 TEST_CASE("Bug 5 fix: HPOLog records the eval-thread catch as a warning",
           "[eval-thread][bug5][log]")
 {
-    /* The catch path emits a journal warning of the form:
-     *   "eval N: eval-thread caught throw, submitting FAIL_SCORE..."
-     * We exercise the same logging path here so the journal-format
-     * contract is locked down — production breakages of the warning
-     * format would surface in operator-side tooling that greps for
-     * this string. */
+    using tadah::hpo::evaluation_error_warning;
+    CHECK(evaluation_error_warning(50, "synthetic") ==
+          "eval 50: the evaluation stopped on an error and scores "
+          "FAILSCORE: synthetic");
+    CHECK(evaluation_error_warning(50) ==
+          "eval 50: the evaluation stopped on an error that carries no "
+          "message and scores FAILSCORE");
+
     auto& log = tadah::hpo::HPOLog::instance();
     log.reset_for_test();
     const auto path = std::filesystem::temp_directory_path() /
@@ -174,10 +188,7 @@ TEST_CASE("Bug 5 fix: HPOLog records the eval-thread catch as a warning",
          ".log");
     log.open(path.string(), "test", "test_cwd", 0);
     REQUIRE(log.is_open());
-
-    log.warning(std::string("eval ") + std::to_string(50) +
-                ": eval-thread caught throw, submitting FAIL_SCORE to "
-                "keep writer queue contiguous (type=St13runtime_error): synthetic");
+    log.warning(evaluation_error_warning(50, "synthetic"));
     log.finish("TEST_DONE");
 
     std::ifstream in(path);
@@ -185,9 +196,8 @@ TEST_CASE("Bug 5 fix: HPOLog records the eval-thread catch as a warning",
     std::ostringstream ss;
     ss << in.rdbuf();
     const std::string body = ss.str();
-    CHECK(body.find("eval 50:") != std::string::npos);
-    CHECK(body.find("eval-thread caught throw") != std::string::npos);
-    CHECK(body.find("submitting FAIL_SCORE") != std::string::npos);
+    CHECK(body.find("WARNING   eval 50: the evaluation stopped on an error "
+                    "and scores FAILSCORE: synthetic\n") != std::string::npos);
 
     std::error_code ec;
     std::filesystem::remove(path, ec);

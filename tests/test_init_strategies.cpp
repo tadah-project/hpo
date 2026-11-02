@@ -7,6 +7,7 @@
  */
 
 #include "catch2/catch.hpp"
+#include "target_file_text.h"
 
 #include "finish_within.h"
 
@@ -612,7 +613,7 @@ TEST_CASE("WarmInitStrategy: missing file throws regardless of policy",
         auto strat = build_init_strategy(ispec);
         InitContext ic{sp, *st.trg, 0};
         REQUIRE_THROWS_WITH(strat->generate(ic, 1),
-                            Catch::Contains("cannot open seed file"));
+                            Catch::Contains("the seed file") && Catch::Contains("cannot be opened"));
     }
 }
 
@@ -655,7 +656,7 @@ ENDOPTIMIZER
      * parser accepted both keywords and the path reached the WARM
      * strategy -- which is what this round-trip is for. */
     REQUIRE_THROWS_WITH(tadah::hpo::HPOTargets(ctx, cfg.path.string()),
-                        Catch::Contains("cannot open seed file"));
+                        Catch::Contains("the seed file") && Catch::Contains("cannot be opened"));
 }
 
 TEST_CASE("WarmInitStrategy: HOT round-trip primes warmstart cache",
@@ -784,7 +785,7 @@ TEST_CASE("WARM_ON_MISMATCH applies to the WARM entries of its own block: "
                                             "    WARM_ON_MISMATCH error\n"));
         REQUIRE_THROWS_WITH(
             trg = std::make_unique<tadah::hpo::HPOTargets>(ctx, cfg.path.string()),
-            Catch::Contains("clamped into OPTIM bounds"));
+            Catch::Contains("holds a value outside the OPTIM box"));
     }
     SECTION("RESTART WARM_ON_MISMATCH skip: the clamped seed is dropped") {
         StrategyTempFile cfg(target("", "    " + warm +
@@ -809,7 +810,7 @@ TEST_CASE("WARM_ON_MISMATCH applies to the WARM entries of its own block: "
             "INIT\n  " + warm + "  WARM_ON_MISMATCH error\nENDINIT\n", ""));
         REQUIRE_THROWS_WITH(
             trg = std::make_unique<tadah::hpo::HPOTargets>(ctx, cfg.path.string()),
-            Catch::Contains("clamped into OPTIM bounds"));
+            Catch::Contains("holds a value outside the OPTIM box"));
     }
 }
 
@@ -915,9 +916,10 @@ TEST_CASE("WarmInitStrategy: EMBF0 of the seed vs the run's -c",
                                                    nullptr);
         const std::string ln = journal_line(txt, "declares EMBF0 FREE");
         CHECK(ln.find("WARNING") != std::string::npos);
-        CHECK(ln.find("; this run evaluates EMBF0 ZERO (from -c). WARM takes "
-                      "only the OPTIM values from the seed and evaluates them "
-                      "unchanged in the run's reference (no conversion)")
+        CHECK(ln.find("; this run evaluates EMBF0 ZERO (training "
+                      "configuration). WARM takes only the values of the "
+                      "search parameters from the seed and evaluates them "
+                      "unchanged in the reference of the run (no conversion)")
               != std::string::npos);
     }
     SECTION("seed ZERO, run FREE: WARNING") {
@@ -925,7 +927,7 @@ TEST_CASE("WarmInitStrategy: EMBF0 of the seed vs the run's -c",
                                                    "FREE");
         const std::string ln = journal_line(txt, "declares EMBF0 ZERO");
         CHECK(ln.find("WARNING") != std::string::npos);
-        CHECK(ln.find("this run evaluates EMBF0 FREE (from -c)")
+        CHECK(ln.find("this run evaluates EMBF0 FREE (training configuration)")
               != std::string::npos);
     }
     SECTION("seed without the key, run ZERO: INFO, read as ZERO") {
@@ -1102,7 +1104,7 @@ ENDOPTIMIZER
         tadah::hpo::HPOTargets trg(ctx, cfg.path.string());
     } catch (const std::exception& e) {
         caught = true;
-        msg = e.what();
+        msg = hpo_test::as_target(e.what(), cfg.path.string());
     }
     CHECK(caught);
     CHECK(msg.find("PRESTAGE") != std::string::npos);
@@ -1574,10 +1576,11 @@ ENDOPTIMIZER
     CHECK(journal_block(body, "Init strategy:").find("K_TOTAL           : 3") !=
           std::string::npos);
     CHECK(body.find("INIT_K") == std::string::npos);
-    CHECK(body.find("Run policy:") != std::string::npos);
+    /* (the heading was "Run policy:" and the key "NOISE.AUTO") */
+    CHECK(body.find("Strategy, restart and noise:") != std::string::npos);
     CHECK(body.find("MULTISTART") != std::string::npos);
     CHECK(body.find("BUDGET_PER_START") != std::string::npos);
-    CHECK(body.find("NOISE.AUTO") != std::string::npos);
+    CHECK(body.find("NOISE AUTO") != std::string::npos);
 
     std::error_code ec; std::filesystem::remove(tmp_log, ec);
 }
@@ -1866,7 +1869,7 @@ CountRead read_counts(const std::string& block)
         r.topk = trg.spec.stage_topk;
         r.calibration = trg.spec.noise.calibration_n;
     } catch (const std::exception& e) {
-        r.error = e.what();
+        r.error = hpo_test::as_target(e.what(), cfg.path.string());
     }
     return r;
 }
@@ -1911,35 +1914,35 @@ TEST_CASE("The starting points of a METHOD line, K_TOTAL and TOPK are at "
     struct Refused { std::string block, error; };
     const std::vector<Refused> refused = {
         {init_block("METHOD RANDOM 1000001\n"),
-         "Error on line 4: METHOD RANDOM: K must be an integer from 1 "
+         "line 4 of <target>: METHOD RANDOM: K must be an integer from 1 "
          "to 1000000, got '1000001'\nLine: METHOD RANDOM 1000001"},
         {init_block("METHOD LHS 1000001\n"),
-         "Error on line 4: METHOD LHS: K must be an integer from 1 to "
+         "line 4 of <target>: METHOD LHS: K must be an integer from 1 to "
          "1000000, got '1000001'\nLine: METHOD LHS 1000001"},
         {init_block("METHOD SOBOL 1000001\n"),
-         "Error on line 4: METHOD SOBOL: K must be an integer from 1 to "
+         "line 4 of <target>: METHOD SOBOL: K must be an integer from 1 to "
          "1000000, got '1000001'\nLine: METHOD SOBOL 1000001"},
         /* K_TOTAL caps the points the METHOD lines give, so a K_TOTAL as
          * large as their sum caps nothing (it was refused above 1000000,
          * and replaced the K of a lone METHOD line). */
         {init_block("METHOD RANDOM 2\nK_TOTAL 1000001\n"),
-         "Error on line 5: K_TOTAL 1000001 caps nothing: the METHOD lines of "
+         "line 5 of <target>: K_TOTAL 1000001 caps nothing: the METHOD lines of "
          "the INIT blocks inside OPTIMIZER, STRATEGY and REFINE give at most "
          "2 starting points (RANDOM 2), and K_TOTAL keeps the first K_TOTAL "
          "starting points\nLine: K_TOTAL 1000001"},
         {restart_block("METHOD RANDOM 1000001\n"),
-         "Error on line 10: METHOD RANDOM: K must be an integer from 1 "
+         "line 10 of <target>: METHOD RANDOM: K must be an integer from 1 "
          "to 1000000, got '1000001'\nLine: METHOD RANDOM 1000001"},
         {restart_block("K_TOTAL 1000001\n"),
-         "Error on line 10: K_TOTAL 1000001 caps nothing: a block without a "
+         "line 10 of <target>: K_TOTAL 1000001 caps nothing: a block without a "
          "METHOD line gives one starting point (the CONFIG point), and "
          "K_TOTAL keeps the first K_TOTAL starting points\nLine: K_TOTAL "
          "1000001"},
         {prestage_block("1000001"),
-         "Error on line 8: TOPK must be an integer from 1 to 1000000, got "
+         "line 8 of <target>: TOPK must be an integer from 1 to 1000000, got "
          "'1000001'\nLine: TOPK 1000001"},
         {"NOISE\nCALIBRATION 2147483648\nENDNOISE\n" + kSbplx,
-         "Error on line 4: CALIBRATION must be an integer from 0 to "
+         "line 4 of <target>: CALIBRATION must be an integer from 0 to "
          "2147483647, got '2147483648'\nLine: CALIBRATION 2147483648"},
     };
     for (const auto& r : refused) {
@@ -2029,72 +2032,72 @@ TEST_CASE("K_TOTAL that caps nothing, K_TOTAL 0 and METHOD RANDOM 0 are "
     struct Refused { std::string block, error; };
     const std::vector<Refused> refused = {
         {init_block("METHOD RANDOM 3\nK_TOTAL 7\n"),
-         "Error on line 5: K_TOTAL 7 caps nothing: the METHOD lines of the "
+         "line 5 of <target>: K_TOTAL 7 caps nothing: the METHOD lines of the "
          "INIT blocks inside OPTIMIZER, STRATEGY and REFINE give at most 3 "
          "starting points (RANDOM 3)" + keeps +
              "\nLine: K_TOTAL 7"},
         {init_block("METHOD CONFIG\nMETHOD RANDOM 2\nK_TOTAL 3\n"),
-         "Error on line 6: K_TOTAL 3 caps nothing: the METHOD lines of the "
+         "line 6 of <target>: K_TOTAL 3 caps nothing: the METHOD lines of the "
          "INIT blocks inside OPTIMIZER, STRATEGY and REFINE give at most 3 "
          "starting points (CONFIG, RANDOM 2)" + keeps +
              "\nLine: K_TOTAL 3"},
         {init_block("METHOD WARM no_such_seed.tadah\nK_TOTAL 1\n"),
-         "Error on line 5: K_TOTAL 1 caps nothing: the METHOD lines of the "
+         "line 5 of <target>: K_TOTAL 1 caps nothing: the METHOD lines of the "
          "INIT blocks inside OPTIMIZER, STRATEGY and REFINE give at most 1 "
          "starting point (WARM no_such_seed.tadah)" +
              keeps + "\nLine: K_TOTAL 1"},
         {init_block("METHOD CONFIG\nMETHOD CONFIG\nK_TOTAL 1\n"),
-         "Error on line 6: K_TOTAL 1 caps nothing: the METHOD lines of the "
+         "line 6 of <target>: K_TOTAL 1 caps nothing: the METHOD lines of the "
          "INIT blocks inside OPTIMIZER, STRATEGY and REFINE give at most 1 "
          "starting point (CONFIG, CONFIG; the CONFIG lines give one point)" +
              keeps + "\nLine: K_TOTAL 1"},
         {init_block("METHOD WARM no_such_seed.tadah\n"
                     "METHOD WARM no_such_seed.tadah\nMETHOD RANDOM 2\n"
                     "K_TOTAL 3\n"),
-         "Error on line 7: K_TOTAL 3 caps nothing: the METHOD lines of the "
+         "line 7 of <target>: K_TOTAL 3 caps nothing: the METHOD lines of the "
          "INIT blocks inside OPTIMIZER, STRATEGY and REFINE give at most 3 "
          "starting points (WARM no_such_seed.tadah, WARM no_such_seed.tadah, "
          "RANDOM 2; the WARM lines of one file give one point)" +
              keeps + "\nLine: K_TOTAL 3"},
         {init_block("K_TOTAL 2\n"),
-         "Error on line 4: K_TOTAL 2 caps nothing: a block without a METHOD "
+         "line 4 of <target>: K_TOTAL 2 caps nothing: a block without a METHOD "
          "line gives one starting point (the CONFIG point)" + keeps +
              "\nLine: K_TOTAL 2"},
         {"INIT\nMETHOD RANDOM 5\nSEED 2\nENDINIT\nSTRATEGY\nTYPE PRESTAGE\n"
          "LIB NLOPT\nALGO LN_SBPLX\nMAXEVAL 10\nTOPK 2\nEXPLORE\nLIB TADAH\n"
          "ALGO RANDOM\nMAXEVAL 5\nINIT\nK_TOTAL 2\nENDINIT\nENDEXPLORE\n"
          "ENDSTRATEGY\n",
-         "Error on line 18: K_TOTAL 2 caps nothing: an INIT block inside "
+         "line 18 of <target>: K_TOTAL 2 caps nothing: an INIT block inside "
          "EXPLORE without a METHOD line gives the exploration the starting "
          "points of the INIT blocks inside OPTIMIZER, STRATEGY and REFINE "
          "(the CONFIG point without one), and K_TOTAL caps only the points "
          "of the block's own METHOD lines\nLine: K_TOTAL 2"},
         {restart_block("METHOD LHS 2\nK_TOTAL 2\n"),
-         "Error on line 11: K_TOTAL 2 caps nothing: the METHOD lines of the "
+         "line 11 of <target>: K_TOTAL 2 caps nothing: the METHOD lines of the "
          "RESTART blocks give at most 2 starting points (LHS 2)" + keeps +
              "\nLine: K_TOTAL 2"},
         /* K_TOTAL in the STRATEGY-level INIT block (line 10) caps the chain
          * of the OPTIMIZER-level block's METHOD lines too. */
         {"INIT\nMETHOD LHS 3\nENDINIT\nSTRATEGY\nLIB NLOPT\nALGO LN_SBPLX\n"
          "MAXEVAL 10\nINIT\nK_TOTAL 5\nENDINIT\nENDSTRATEGY\n",
-         "Error on line 11: K_TOTAL 5 caps nothing: the METHOD lines of the "
+         "line 11 of <target>: K_TOTAL 5 caps nothing: the METHOD lines of the "
          "INIT blocks inside OPTIMIZER, STRATEGY and REFINE give at most 3 "
          "starting points (LHS 3)" + keeps + "\nLine: K_TOTAL 5"},
         /* The exploration's chain: its own METHOD lines. */
         {"STRATEGY\nTYPE PRESTAGE\nLIB NLOPT\nALGO LN_SBPLX\nMAXEVAL 10\n"
          "EXPLORE\nLIB TADAH\nALGO RANDOM\nMAXEVAL 5\nINIT\nMETHOD LHS 2\n"
          "K_TOTAL 2\nENDINIT\nENDEXPLORE\nENDSTRATEGY\n",
-         "Error on line 14: K_TOTAL 2 caps nothing: the METHOD lines of the "
+         "line 14 of <target>: K_TOTAL 2 caps nothing: the METHOD lines of the "
          "INIT blocks inside EXPLORE give at most 2 starting points (LHS 2)" +
              keeps + "\nLine: K_TOTAL 2"},
         {init_block("METHOD RANDOM 2\nK_TOTAL 0\n"),
-         "Error on line 5: K_TOTAL must be an integer >= 1, got '0'"
+         "line 5 of <target>: K_TOTAL must be an integer >= 1, got '0'"
          "\nLine: K_TOTAL 0"},
         {init_block("METHOD RANDOM 0\n"),
-         "Error on line 4: METHOD RANDOM: K must be an integer from 1 to "
+         "line 4 of <target>: METHOD RANDOM: K must be an integer from 1 to "
          "1000000, got '0'\nLine: METHOD RANDOM 0"},
         {restart_block("METHOD RANDOM 0\n"),
-         "Error on line 10: METHOD RANDOM: K must be an integer from 1 to "
+         "line 10 of <target>: METHOD RANDOM: K must be an integer from 1 to "
          "1000000, got '0'\nLine: METHOD RANDOM 0"},
     };
     for (const auto& r : refused) {

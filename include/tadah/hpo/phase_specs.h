@@ -134,7 +134,7 @@ std::optional<OptimizerSpec> search_ignoring_start(const OptimizerSpec& spec);
 
 /* `what`, a refusal of the settings of the phase that runs `spec`, at the
  * line its block closes at (OptimizerSpec::block_line), in the parser's
- * form "Error on line N: <what>\nLine: <text>" (config_line_error,
+ * form "line N of <file>: <what>\nLine: <text>" (config_line_error,
  * strict_parse.h); `what` alone for a spec built outside the parser. */
 std::string with_block_line(const OptimizerSpec& spec, const std::string& what);
 
@@ -169,7 +169,7 @@ struct PhaseSpec {
  *   PLAIN       "the STRATEGY-level optimiser": `spec`;
  *   MULTISTART  "each MULTISTART start": the first start of
  *               plan_multistart() -- the starts differ only in their INIT
- *               point and SEED + i -- or "the MULTISTART run" when the
+ *               point and SEED + i -- or "the MULTISTART search" when the
  *               plan is a single run;
  *   PRESTAGE    "the PRESTAGE exploration (EXPLORE block)": spec.prestage,
  *               and "the PRESTAGE refinement": prestage_refinement_spec()

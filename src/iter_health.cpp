@@ -152,10 +152,9 @@ void IterHealthMonitor::record(
     if (!take(std::to_string(block_idx) + ":" + kind)) return;
     tadah::core::Logger::instance().log(
         tadah::core::LogLevel::WARNING,
-        "iter_health: eval " + std::to_string(rec.iter) +
-        " block[" + std::to_string(block_idx) + "/" +
-        layout.blocks[block_idx].descriptor_label + "] " +
-        kind + " -- " + text);
+        "HEALTH_LOG: eval " + std::to_string(rec.iter) + ": descriptor " +
+        std::to_string(block_idx + 1) + " (" +
+        layout.blocks[block_idx].descriptor_label + "): " + text);
   };
 
   // NaN/Inf and a layout that does not describe the weights are the
@@ -163,23 +162,24 @@ void IterHealthMonitor::record(
   if (rec.weights_have_nan_inf && take("*:nan_inf")) {
     tadah::core::Logger::instance().log(
         tadah::core::LogLevel::WARNING,
-        "iter_health: eval " + std::to_string(rec.iter) +
-        " -- weights contain NaN/Inf entries (training likely diverged).");
+        "HEALTH_LOG: eval " + std::to_string(rec.iter) +
+        ": the coefficients contain NaN or Inf entries (the training "
+        "probably diverged).");
   }
   if (!rec.layout_matches) {
     if (take("*:layout")) {
       const std::string what =
           rec.layout_cols != rec.n_weights
               ? "the model has " + std::to_string(rec.n_weights) +
-                    " weights but its column layout has " +
+                    " coefficients but its column layout has " +
                     std::to_string(rec.layout_cols) + " columns"
               : "the column layout of the model's " +
                     std::to_string(rec.n_weights) +
-                    " weights is not contiguous from column 0";
+                    " coefficients is not contiguous from column 0";
       tadah::core::Logger::instance().log(
           tadah::core::LogLevel::WARNING,
-          "iter_health: eval " + std::to_string(rec.iter) + " -- " + what +
-          ": the per-block checks are skipped.");
+          "HEALTH_LOG: eval " + std::to_string(rec.iter) + ": " + what +
+          ": the checks of each descriptor are skipped.");
     }
     return;
   }
@@ -195,14 +195,15 @@ void IterHealthMonitor::record(
       continue;
     if (rec.block_max_abs[b] == 0.0) {
       maybe_warn(b, "max_abs",
-                 "all weights in this block are exactly zero -- the "
-                 "descriptor block contributed nothing to the fit.");
+                 "all its coefficients are exactly zero, so the descriptor "
+                 "contributes nothing to the fit.");
     }
     // Very low non-zero fraction -- almost-empty block.
     if (rec.block_nz_fraction[b] < 0.05 &&
         rec.block_max_abs[b] > 0.0) {
       maybe_warn(b, "nz_fraction",
-                 "fewer than 5% of weights in this block exceed 1e-15.");
+                 "fewer than 5% of its coefficients exceed 1e-15 in "
+                 "magnitude.");
     }
   }
 }

@@ -173,7 +173,7 @@ TEST_CASE("ladder jitter: PARAM vocabulary and gating",
         sp.param["INIT_JITTER_LADDER"] = 0.0;
         REQUIRE_THROWS_WITH(
             anneal::Knobs::parse(sp, anneal::AlgoKind::PT),
-            Catch::Contains("removed in 1.5.0") &&
+            Catch::Contains("takes a value in (0,4], AUTO or OFF (got '0')") &&
             Catch::Contains("INIT_JITTER_LADDER OFF"));
     }
     SECTION("an out-of-range gamma names the accepted tokens") {

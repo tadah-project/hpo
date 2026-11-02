@@ -179,7 +179,7 @@ template<typename Vec, typename HostT>
           "ANNEAL_PA: THREADS is not set, so the " + std::to_string(R) +
           " walkers run on 1 worker thread; THREADS <n> in the STRATEGY "
           "block evaluates up to n of them at a time";
-      std::cout << "[HPO] " << hint << "\n";
+      std::cout << "[tadah hpo] " << hint << "\n";
       HPOLog::instance().warning(hint);
     }
 
@@ -286,7 +286,7 @@ template<typename Vec, typename HostT>
             break;
         }
       }
-      std::cout << "[HPO] " << oss.str() << "\n";
+      std::cout << "[tadah hpo] " << oss.str() << "\n";
       HPOLog::instance().info(oss.str());
     }
 
@@ -309,7 +309,7 @@ template<typename Vec, typename HostT>
             << "*" << kb.sweeps << " = ";
       else
         oss << "CHAIN_LENGTH*SWEEPS = " << kb.chain_length << "*" << kb.sweeps << " = ";
-      oss << rung_cost << " evals;  population T-step = POPULATION*rung = "
+      oss << rung_cost << " evals;  population T-step = POPULATION*walker T-step = "
           << R << "*" << rung_cost << " = " << step_cost << " evals";
       HPOLog::instance().info(oss.str());
       /* Cadence registration is single-process only: the milestone
@@ -461,7 +461,9 @@ template<typename Vec, typename HostT>
                                          : 1e-12);
     if (proceed && t_min > T_hot)
       throw std::runtime_error(
-          "TADAH:ANNEAL_PA: resolved T_MIN must be <= resolved T_HOT");
+          "TADAH:ANNEAL_PA: resolved T_MIN must be <= resolved T_HOT "
+          "(T_MIN=" + core::format_roundtrip(t_min) + ", T_HOT=" +
+          core::format_roundtrip(T_hot) + ")");
 
     /* --- population (local slot block only) ------------------------------ */
     std::vector<anneal::ChainState<Vec>> walkers(n_local);
@@ -566,7 +568,7 @@ template<typename Vec, typename HostT>
           init_stopval.store(true, std::memory_order_relaxed);
       });
       pool.offer_error(init_batch.commit());
-      rethrow_pool_error("population initialization");
+      rethrow_pool_error("population initialisation");
       for (auto& w : walkers) {
         if (w.best_f < l_best) { l_best = w.best_f; l_best_x = w.best_x; }
       }
@@ -1098,7 +1100,7 @@ template<typename Vec, typename HostT>
           reason = "FTOL plateau (Corana eps-NEPS rule, population best)";
           end = EndReason::FtolPlateau; break;
         case StopReason::NoDims:
-          reason = "no optimisable dimensions"; end = EndReason::NoDims; break;
+          reason = "no search dimension"; end = EndReason::NoDims; break;
         case StopReason::NoBudget:
           reason = "MAXEVAL exhausted before SA proposal";
           end = EndReason::MaxEval; break;
@@ -1108,7 +1110,7 @@ template<typename Vec, typename HostT>
       }
       std::ostringstream oss;
       oss << "ANNEAL_PA stopped: " << reason
-          << " after " << spent_report << " host eval(s)"
+          << " after " << spent_report << " evaluation(s)"
           << " (" << step_count << " temperature step(s))";
       HPOLog::instance().info(oss.str());
       record_end("TADAH:ANNEAL_PA", end);

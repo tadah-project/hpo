@@ -11,7 +11,7 @@
 //     PC_ISOLATION THREAD path -- the only one of the MPI build, and the
 //     fallback where socketpair is blocked. QFLUSH 1 writes each
 //     evaluation's rows at once. An unreadable --varloss or --hotvar fails
-//     the evaluation and an unreadable diagnostic --outvar is NaN, each
+//     the evaluation and an unreadable diagnostic --outvar has no number, each
 //     with a journal line naming the variable and the LAMMPS message (a
 //     variable that reads an unreadable one carries that one's message);
 //     and every row of loss.tadah, outvar.tadah and stats.tadah has its
@@ -372,7 +372,7 @@ std::string line_with(const std::string& text, const std::string& needle) {
  * powers-of-two schedule, "PC_LAMMPS task failed (readback.in, occurrence
  * n): reading --varloss E after the script: " and the LAMMPS message; the
  * evaluation is a failure, not a NaN clamp, and not the evaluation-wide
- * catch ("eval-thread caught throw").
+ * catch ("the evaluation stopped on an error").
  * Before the fix: SIGSEGV at the first row write. The read's LAMMPS
  * exception left run_lammps before the losses were sized, the evaluation's
  * catch submitted the partial Result (counted as a NaN clamp), and
@@ -423,7 +423,7 @@ TEST_CASE("an unreadable --varloss variable fails the evaluation, not the run",
             CHECK_THAT(l, Catch::Contains("PC_LAMMPS task failed (") &&
                               Catch::Contains(err.lammps_text));
         }
-        CHECK(journal.find("eval-thread caught throw") == std::string::npos);
+        CHECK(journal.find("the evaluation stopped on an error") == std::string::npos);
         CHECK(journal.find("[ok] No NaN/Inf clampings were recorded.") !=
               std::string::npos);
         CHECK(journal.find("[!] No evaluation produced a usable loss.") !=
@@ -494,7 +494,7 @@ TEST_CASE("a failed PC_LAMMPS task at the default FAILSCORE is a failed "
  * column, and the evaluation keeps its loss: bit for bit the loss of the
  * same candidates when the diagnostic reads fine, E as read in that run,
  * every row header-shaped with no other NaN. The journal says, once per
- * occurrence on the powers-of-two schedule, "PC_LAMMPS --outvar is NaN
+ * occurrence on the powers-of-two schedule, "PC_LAMMPS --outvar has no number
  * (readback.in, occurrence n): reading --outvar Pend after the script: " and
  * the LAMMPS message; nothing fails and nothing is clamped.
  * Before the fix: SIGSEGV at the first row write (as for --varloss: the
@@ -567,11 +567,11 @@ TEST_CASE("an unreadable diagnostic --outvar is NaN and the evaluation keeps "
                 journal, std::string("readback.in, ") + n +
                              ": reading --outvar Pend after the script: ");
             INFO(n);
-            CHECK_THAT(l, Catch::Contains("PC_LAMMPS --outvar is NaN (") &&
+            CHECK_THAT(l, Catch::Contains("PC_LAMMPS --outvar has no number (") &&
                               Catch::Contains(err.lammps_text));
         }
         CHECK(journal.find("PC_LAMMPS task failed") == std::string::npos);
-        CHECK(journal.find("eval-thread caught throw") == std::string::npos);
+        CHECK(journal.find("the evaluation stopped on an error") == std::string::npos);
         CHECK(journal.find("[ok] No NaN/Inf clampings were recorded.") !=
               std::string::npos);
         CHECK(journal.find("[ok] Every evaluation produced a usable loss.") !=
@@ -625,7 +625,7 @@ TEST_CASE("an unreadable --hotvar fails the evaluation and the cold scripts "
                Catch::Contains("PC_LAMMPS task failed (") &&
                    Catch::Contains(kPressError.lammps_text));
     CHECK(journal.find("cold.in, occurrence") == std::string::npos);
-    CHECK(journal.find("eval-thread caught throw") == std::string::npos);
+    CHECK(journal.find("the evaluation stopped on an error") == std::string::npos);
     Host::reset_globals_for_test();
 }
 
@@ -695,7 +695,7 @@ TEST_CASE("a hot value LAMMPS refuses to inject fails the evaluation",
                    : failed.substr(at + injected.size()),
                Catch::Contains("variable hot_a0 "));
     CHECK(journal.find("cold.in, occurrence 2)") == std::string::npos);
-    CHECK(journal.find("eval-thread caught throw") == std::string::npos);
+    CHECK(journal.find("the evaluation stopped on an error") == std::string::npos);
     Host::reset_globals_for_test();
 }
 
@@ -1016,7 +1016,7 @@ TEST_CASE("a --failvar with no finite number for its value fails the "
 /* Pins: a diagnostic (--outvar only) with no number for its value after
  * the script (deleted at run time) is NaN in outvar.tadah and the
  * evaluation keeps its loss, as for one that cannot be read, and the
- * journal says so for the occurrences 1 and 2: "PC_LAMMPS --outvar is NaN
+ * journal says so for the occurrences 1 and 2: "PC_LAMMPS --outvar has no number
  * (readback.in, occurrence n): reading --outvar P after the script: no
  * value (the variable is not defined, or has no single value)".
  * Before the fix: NaN with nothing in the journal (the line checks
@@ -1052,7 +1052,7 @@ TEST_CASE("a diagnostic --outvar with no number for its value is NaN with a "
         CHECK(line_with(journal, std::string("readback.in, ") + n +
                                      ": reading --outvar P after the "
                                      "script: " + spoiled_reason(false))
-                  .find("PC_LAMMPS --outvar is NaN (") != std::string::npos);
+                  .find("PC_LAMMPS --outvar has no number (") != std::string::npos);
     }
     CHECK(journal.find("PC_LAMMPS task failed") == std::string::npos);
     Host::reset_globals_for_test();
@@ -1065,7 +1065,7 @@ TEST_CASE("a diagnostic --outvar with no number for its value is NaN with a "
  * "PC_LAMMPS task failed (probe.in, occurrence 1): reading PC_FAILPROBE
  * --outvar S after the script: no value (the variable is not defined, or
  * has no single value)" (or "...: its value 'abc' is not a number"), no
- * "--outvar is NaN" line (S is not a diagnostic), the evaluation aborted
+ * "--outvar has no number" line (S is not a diagnostic), the evaluation aborted
  * (S and the PC_LAMMPS line's E failscored in outvar.tadah) and its loss
  * FAILSCORE (OFF) or band D's top with S unavailable (ON, --s0 0.5).
  * Before the fix: S "" or 'abc' was taken for a number nobody checked: the
@@ -1118,7 +1118,7 @@ TEST_CASE("a PC_FAILPROBE S with no number for its value fails the probe",
                                       "script: "),
                    Catch::Contains("PC_LAMMPS task failed (") &&
                        Catch::Contains(spoiled_reason(as_string)));
-        CHECK(journal.find("--outvar is NaN") == std::string::npos);
+        CHECK(journal.find("--outvar has no number") == std::string::npos);
         Host::reset_globals_for_test();
     }
 }
@@ -1606,12 +1606,12 @@ TEST_CASE("a failed PC_LAMMPS simulation fails the evaluation whatever its "
  *     read first): the evaluation fails, "PC_LAMMPS task failed
  *     (readback.in, occurrence n): reading --varloss Pdiff after the
  *     script: " and Pend's LAMMPS message, Pend and Pdiff failscored in
- *     outvar.tadah, and no "PC_LAMMPS --outvar is NaN" line (Pend is not a
+ *     outvar.tadah, and no "PC_LAMMPS --outvar has no number" line (Pend is not a
  *     NaN: its task failed);
  *   - the derived diagnostic `--varloss E 0 1 --outvar P --outvar Pgpa`
  *     with Pgpa = v_P/10000: the evaluation keeps its loss, P and Pgpa are
  *     NaN, and every journalled line carries P's LAMMPS message: "PC_LAMMPS
- *     --outvar is NaN (readback.in, occurrence n): reading --outvar P after
+ *     --outvar has no number (readback.in, occurrence n): reading --outvar P after
  *     the script: " for occurrence 1 and "... reading --outvar Pgpa after
  *     the script: " for occurrences 2 and 4 (Pgpa is read second in each
  *     evaluation).
@@ -1664,7 +1664,7 @@ TEST_CASE("a variable that reads an unreadable one is journalled with its "
                                   Catch::Contains(err.lammps_text));
             }
             CHECK(journal.find("circular dependency") == std::string::npos);
-            CHECK(journal.find("PC_LAMMPS --outvar is NaN") ==
+            CHECK(journal.find("PC_LAMMPS --outvar has no number") ==
                   std::string::npos);
             Host::reset_globals_for_test();
         }
@@ -1702,14 +1702,14 @@ TEST_CASE("a variable that reads an unreadable one is journalled with its "
             CHECK_THAT(line_with(journal, "readback.in, occurrence 1): "
                                           "reading --outvar P after the "
                                           "script: "),
-                       Catch::Contains("PC_LAMMPS --outvar is NaN (") &&
+                       Catch::Contains("PC_LAMMPS --outvar has no number (") &&
                            Catch::Contains(err.lammps_text));
             for (const char* n : {"occurrence 2)", "occurrence 4)"}) {
                 const std::string l = line_with(
                     journal, std::string("readback.in, ") + n +
                                  ": reading --outvar Pgpa after the script: ");
                 INFO(n);
-                CHECK_THAT(l, Catch::Contains("PC_LAMMPS --outvar is NaN (") &&
+                CHECK_THAT(l, Catch::Contains("PC_LAMMPS --outvar has no number (") &&
                                   Catch::Contains(err.lammps_text));
             }
             CHECK(journal.find("circular dependency") == std::string::npos);
@@ -2015,7 +2015,7 @@ std::string isolation_line(const std::string& mode) {
  * for byte, outvar.tadah and best_outvar.tadah without their IT-TIME/ms
  * column (wall time).
  *   - a diagnostic --outvar Pend reading `press`: exit 0, "PC_LAMMPS
- *     --outvar is NaN (", "reading --outvar Pend after the script: ERROR:
+ *     --outvar has no number (", "reading --outvar Pend after the script: ERROR:
  *     Thermo keyword press ...", Pend NaN in outvar.tadah;
  *   - --varloss E reading `press`: exit 1, "PC_LAMMPS task failed (",
  *     "reading --varloss E after the script: ERROR: Thermo keyword press";
@@ -2026,7 +2026,7 @@ std::string isolation_line(const std::string& mode) {
  *     PC_LAMMPS line's E failscored) and graded band D with S unavailable
  *     (the band top, TOTAL_LOSS/N 1.000000e+16): exit 1, "PC_LAMMPS task
  *     failed (probe.in, occurrence 1): reading PC_FAILPROBE --outvar S after
- *     the script: ERROR: Thermo keyword press", and no "--outvar is NaN"
+ *     the script: ERROR: Thermo keyword press", and no "--outvar has no number"
  *     line (S is not a diagnostic);
  *   - FAILSCORE_GRADING ON, --varloss E reading `press` with --failvar viol
  *     1.0 (viol = 0.25): the failvar grades the failure, band B by
@@ -2078,7 +2078,7 @@ std::string isolation_line(const std::string& mode) {
  * naming the variable, failed the graded --varloss without its failvar
  * (TOTAL_LOSS/N 9.993750e+15, the failed fraction); and neither mode
  * journalled the unknown command. Before the PC_FAILPROBE fix the probe's S
- * was taken for a diagnostic: "PC_LAMMPS --outvar is NaN (probe.in, ...)",
+ * was taken for a diagnostic: "PC_LAMMPS --outvar has no number (probe.in, ...)",
  * no "task failed" line, S NaN and E computed (the evaluation not
  * aborted). Before the harness fix a TADAH_PC_ISOLATION in the test's
  * environment overrode the config's PC_ISOLATION, so with
@@ -2143,7 +2143,7 @@ TEST_CASE("tadah hpo: a PC_LAMMPS read-back or script error ends the same "
                                 "variable Pend equal press\n"),
              "PC_LAMMPS --script readback.in --varloss E 0 1 --outvar Pend\n",
              0,
-             {"PC_LAMMPS --outvar is NaN (readback.in, occurrence 1): "
+             {"PC_LAMMPS --outvar has no number (readback.in, occurrence 1): "
               "reading --outvar Pend after the script: " + press_text},
              {"PC_LAMMPS task failed"},
              "",
@@ -2184,7 +2184,7 @@ TEST_CASE("tadah hpo: a PC_LAMMPS read-back or script error ends the same "
              {"PC_LAMMPS task failed (probe.in, occurrence 1): reading "
               "PC_FAILPROBE --outvar S after the script: " + press_text,
               "no evaluation produced a usable loss"},
-             {"--outvar is NaN"},
+             {"--outvar has no number"},
              sci6(graded_failscore(1e16, FailBand::D,
                                    std::numeric_limits<double>::infinity(),
                                    0.5)),
@@ -2322,7 +2322,7 @@ TEST_CASE("tadah hpo: a PC_LAMMPS read-back or script error ends the same "
               "PC_FAILPROBE --outvar S after the script: " +
                   spoiled_reason(false),
               "no evaluation produced a usable loss"},
-             {"plain diagnostic sim", "--outvar is NaN",
+             {"plain diagnostic sim", "--outvar has no number",
               "neither grades nor gates"},
              "1.000000e+16",
              {{"S", "1.000000e+16"}, {"E", "1.000000e+16"}},
@@ -2364,9 +2364,12 @@ TEST_CASE("tadah hpo: a PC_LAMMPS read-back or script error ends the same "
                                      c.script, c.more_scripts, c.env);
         REQUIRE(WIFEXITED(rc));
         CHECK(WEXITSTATUS(rc) == 1);
+        /* It said "PC_ISOLATION PROCESS is not supported in the MPI build
+         * (TADAH_HPO_MPI)". */
         CHECK_THAT(read_text(dir / "tadah.stderr"),
-                   Catch::Contains("PC_ISOLATION PROCESS is not supported in "
-                                   "the MPI build (TADAH_HPO_MPI)"));
+                   Catch::Contains("PC_ISOLATION PROCESS: the MPI build of "
+                                   "tadah (-DTADAH_HPO_MPI=ON) runs the "
+                                   "PC_LAMMPS and PC_FAILPROBE scripts"));
     }
 #else
     const std::vector<std::string> modes{"THREAD", "PROCESS"};

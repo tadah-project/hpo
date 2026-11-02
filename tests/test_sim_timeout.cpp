@@ -9,6 +9,7 @@
 // command keeps full control.
 
 #include "catch2/catch.hpp"
+#include "target_file_text.h"
 
 #include <tadah/core/context.h>
 #include <tadah/hpo/lammps_sim.h>
@@ -262,10 +263,10 @@ TEST_CASE("both timeout keys: one key, set again after a PC_LAMMPS line "
                          "MAXTIME 7\nPC_SCRIPT_TIMEOUT 5\n");
     REQUIRE_THROWS_WITH(
         tadah::hpo::HPOTargets(ctx, twice.path.string()),
-        Catch::Contains("Error on line 6: PC_SCRIPT_TIMEOUT is set twice "
+        hpo_test::AsTarget(twice.path.string(), Catch::Contains("line 6 of <target>: PC_SCRIPT_TIMEOUT is set twice "
                         "(first on line 5, as MAXTIME) and no line between "
                         "reads the first (a PC_LAMMPS or PC_FAILPROBE line "
-                        "without --maxtime)"));
+                        "without --maxtime)")));
     ScopedTempFile script(SIMPLE_BODY);
     ScopedTempFile cfg(std::string(MIN_OPT) + "MAXTIME 7\n" + pc_line(script) +
                        "PC_SCRIPT_TIMEOUT 5\n" + pc_line(script));

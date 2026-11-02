@@ -65,12 +65,13 @@ Trailing blanks are removed, and a line left empty is skipped. A line that \
 ends with \\ continues on the next line, and the two are joined without a \
 separator. A file whose last line ends with \\ is refused. Keys are \
 written as this reference writes them: in upper case, and PC_ErRMSE with \
-its lower-case r. Each error names the line it is about: for a continued \
-line, its last line and the joined text."""
+its lower-case r. An error at a line of the target file names the file, \
+as --hpotarget gives it, and the line: for a continued line, its last line \
+and the joined text."""
 comment = "#"
 continuation = "\\"
 key_case = "exact"
-error_frame = "Error on line {line}: {what}\nLine: {text}"
+error_frame = "line {line} of {file}: {what}\nLine: {text}"
 unfinished_msg = "the line ends with \\, which continues it on the next line, and the file has no next line"
 missing_file_msg = "the target file {file} (--hpotarget) cannot be opened"
 bool_true = ["true", "1", "yes", "on"]
@@ -117,13 +118,15 @@ error = "the line ends with \\, which continues it on the next line, and the fil
 [reading]
 doc = """\
 A number is one whole token in the decimal syntax, and a finite double. An \
-integer is decimal digits only, without a sign."""
+integer of a key is decimal digits only, without a sign."""
 long_doc = """\
 The decimal syntax is an optional sign, digits with at most one decimal \
 point, and an optional exponent (5, -0.5, .5, 5., +1e-3, 2.5E+07). A \
 number is 0 or not below the smallest normal double in magnitude; \
 hexadecimal, inf and nan are refused. A boolean is one of true, 1, yes, \
-on, false, 0, no, off, in any case."""
+on, false, 0, no, off, in any case. A PARAM value is read as a number, \
+also for a PARAM key that takes a whole number: PARAM GRID_POINTS 1e1 is \
+10."""
 integer_msg = "{what} must be an integer >= {min}, got '{tok}'"
 integer_range_msg = "{what} must be an integer from {min} to {max}, got '{tok}'"
 note_msg = " ({note})"
@@ -593,7 +596,7 @@ best candidates (TOPK) the refinement starts from. A second EXPLORE block \
 continues the first, and a key set in both is refused."""
 
 [[block.requires]]
-msg = "EXPLORE block is only valid with TYPE PRESTAGE (declare TYPE before EXPLORE)"
+msg = "EXPLORE block is only valid with TYPE PRESTAGE (the TYPE line comes before the EXPLORE block)"
 doc = "At the EXPLORE line: the STRATEGY block has TYPE PRESTAGE before it."
 
 [[block.close_checks]]
@@ -621,7 +624,7 @@ ENDEXPLORE'''
 [[block.invalid]]
 wrap = "strategy"
 text = "EXPLORE"
-error = "EXPLORE block is only valid with TYPE PRESTAGE (declare TYPE before EXPLORE)"
+error = "EXPLORE block is only valid with TYPE PRESTAGE (the TYPE line comes before the EXPLORE block)"
 
 [[block.invalid]]
 wrap = "optimizer"
@@ -721,7 +724,7 @@ A second REFINE block continues the first, and a key set in both is \
 refused."""
 
 [[block.requires]]
-msg = "REFINE block is only valid with TYPE PRESTAGE (declare TYPE before REFINE)"
+msg = "REFINE block is only valid with TYPE PRESTAGE (the TYPE line comes before the REFINE block)"
 doc = "At the REFINE line: the STRATEGY block has TYPE PRESTAGE before it."
 
 [[block.examples]]
@@ -748,7 +751,7 @@ ENDOPTIMIZER'''
 [[block.invalid]]
 wrap = "strategy"
 text = "REFINE"
-error = "REFINE block is only valid with TYPE PRESTAGE (declare TYPE before REFINE)"
+error = "REFINE block is only valid with TYPE PRESTAGE (the TYPE line comes before the REFINE block)"
 
 [[block.invalid]]
 wrap = "optimizer"
@@ -804,9 +807,9 @@ misplaced_msg = "INNER block must appear inside STRATEGY, EXPLORE or REFINE: it 
 unknown_msg = "unknown key '{key}' inside the INNER block opened on line {open_line} (only {keys} are valid; ENDINNER closes it)"
 refuse_msg = "{key} is not accepted inside an INNER block: {why}; the enclosing {enclosing} block takes {key}"
 refuse = [
-  { key = "SEED", why = "NLopt draws the INNER search from the enclosing run's random stream" },
-  { key = "GRAD_STRATEGY", why = "the enclosing block's GRAD_STRATEGY applies to its local search" },
-  { key = "STOPVAL", why = "NLopt's MLSL and AUGLAG replace the INNER search's STOPVAL with the enclosing block's" },
+  { key = "SEED", why = "NLopt draws the INNER search from the random numbers of the enclosing run" },
+  { key = "GRAD_STRATEGY", why = "the GRAD_STRATEGY of the enclosing block applies to its local search" },
+  { key = "STOPVAL", why = "NLopt's MLSL and AUGLAG replace the STOPVAL of the INNER search with that of the enclosing block" },
 ]
 unreachable_msgs = ["INNER block has no parent OptimizerSpec"]
 doc = """\
@@ -874,17 +877,17 @@ error = "INNER block given twice for one optimiser (the first on line 8); STRATE
 [[block.invalid]]
 wrap = "inner"
 text = "SEED 1"
-error = "SEED is not accepted inside an INNER block: NLopt draws the INNER search from the enclosing run's random stream; the enclosing STRATEGY block takes SEED"
+error = "SEED is not accepted inside an INNER block: NLopt draws the INNER search from the random numbers of the enclosing run; the enclosing STRATEGY block takes SEED"
 
 [[block.invalid]]
 wrap = "inner"
 text = "GRAD_STRATEGY NUMERICAL"
-error = "GRAD_STRATEGY is not accepted inside an INNER block: the enclosing block's GRAD_STRATEGY applies to its local search; the enclosing STRATEGY block takes GRAD_STRATEGY"
+error = "GRAD_STRATEGY is not accepted inside an INNER block: the GRAD_STRATEGY of the enclosing block applies to its local search; the enclosing STRATEGY block takes GRAD_STRATEGY"
 
 [[block.invalid]]
 wrap = "inner"
 text = "STOPVAL 0"
-error = "STOPVAL is not accepted inside an INNER block: NLopt's MLSL and AUGLAG replace the INNER search's STOPVAL with the enclosing block's; the enclosing STRATEGY block takes STOPVAL"
+error = "STOPVAL is not accepted inside an INNER block: NLopt's MLSL and AUGLAG replace the STOPVAL of the INNER search with that of the enclosing block; the enclosing STRATEGY block takes STOPVAL"
 
 [[block.invalid]]
 wrap = "inner"
@@ -937,7 +940,7 @@ ALGO LN_NEWUOA
 ENDINNER
 ENDSTRATEGY
 ENDOPTIMIZER'''
-error = "the INNER block inside STRATEGY: NLOPT:LN_NEWUOA is refused: NLopt 2.10 runs LN_NEWUOA without the OPTIM box: it passes NEWUOA no bounds, so its evaluations leave the box and the best potential can lie outside the bounds the configuration sets (a 2-D run made 20 of its 25 evaluations outside the box, and its best was one of them). It also needs two OPTIM dimensions or more. The recommended replacement is NLOPT:LN_BOBYQA, Powell's bound-constrained successor of NEWUOA (its STEP rescales each dimension instead of setting one radius)"
+error = "the INNER block inside STRATEGY: NLOPT:LN_NEWUOA is refused: NLopt 2.10 runs LN_NEWUOA without the OPTIM box: it passes NEWUOA no bounds, so its evaluations leave the box and the best potential can lie outside the bounds the target file sets (a 2-D run made 20 of its 25 evaluations outside the box, and its best was one of them). It also needs two OPTIM dimensions or more. The recommended replacement is NLOPT:LN_BOBYQA, Powell's bound-constrained successor of NEWUOA (its STEP rescales each dimension instead of setting one radius)"
 
 [[block]]
 name = "RESTART"
@@ -1310,10 +1313,10 @@ the supported mode of the serial build: there THREAD is deprecated, and \
 hpo_run.log has a warning when the run uses it. The MPI build refuses \
 PROCESS when the file or TADAH_PC_ISOLATION sets it."""
 checks = [
-  { msg = "PC_ISOLATION PROCESS is not supported in the MPI build (TADAH_HPO_MPI): the worker processes cannot initialize MPI. Use the serial build, or PC_ISOLATION THREAD.", doc = "When the run starts, in the MPI build of tadah: the file or TADAH_PC_ISOLATION sets PROCESS. The message names no line." },
+  { msg = "PC_ISOLATION PROCESS: the MPI build of tadah (-DTADAH_HPO_MPI=ON) runs the PC_LAMMPS and PC_FAILPROBE scripts inside the tadah process only (PC_ISOLATION THREAD), as a worker process cannot initialise MPI; PROCESS runs in the serial build", doc = "When the run starts, in the MPI build of tadah: the file or TADAH_PC_ISOLATION sets PROCESS. The message names no line." },
 ]
 untested = [
-  { msg = "PC_ISOLATION PROCESS is not supported in the MPI build (TADAH_HPO_MPI): the worker processes cannot initialize MPI. Use the serial build, or PC_ISOLATION THREAD.", why = "The MPI build only; the cases run in the serial build." },
+  { msg = "PC_ISOLATION PROCESS: the MPI build of tadah (-DTADAH_HPO_MPI=ON) runs the PC_LAMMPS and PC_FAILPROBE scripts inside the tadah process only (PC_ISOLATION THREAD), as a worker process cannot initialise MPI; PROCESS runs in the serial build", why = "The MPI build only; the cases run in the serial build." },
 ]
 
 [[key.examples]]
@@ -1445,7 +1448,7 @@ OPTIM boxes, which a CERES optimiser can propose, is not evaluated. Under \
 ON and OFF alike its loss lies in [0.99975 FAILSCORE, FAILSCORE) and grows \
 with its distance from the boxes."""
 checks = [
-  { msg = "{phase}: ASA:ASA: under FAILSCORE_GRADING ON a failed evaluation scores from 0.999 FAILSCORE to below FAILSCORE ({value}), and ASA:ASA takes a cost of about 1e+18 or more for an invalid state and draws another, so it would not see the graded failures at or above that cost; a FAILSCORE of 1e+18 or less keeps every graded failure below it", doc = "At startup, under ON, at the line that closes the block of an ASA:ASA search, in any phase: the largest graded failure, a little below FAILSCORE, reaches the cost of about 1e18 at which ASA:ASA takes a state for an invalid one. This holds for every FAILSCORE from a little above 1e18 up, the default (no FAILSCORE line) included; {value} is FAILSCORE." },
+  { msg = "{phase}: ASA:ASA: under FAILSCORE_GRADING ON a failed evaluation scores from 0.999 FAILSCORE to below FAILSCORE ({value}). ASA:ASA takes a cost of about 1e+18 or more for an invalid state and draws another, so it would not see the graded failures at or above that cost. A FAILSCORE of 1e+18 or less keeps every graded failure below it", doc = "At startup, under ON, at the line that closes the block of an ASA:ASA search, in any phase: the largest graded failure, a little below FAILSCORE, reaches the cost of about 1e18 at which ASA:ASA takes a state for an invalid one. This holds for every FAILSCORE from a little above 1e18 up, the default (no FAILSCORE line) included; {value} is FAILSCORE." },
 ]
 
 [[key.examples]]
@@ -1480,7 +1483,7 @@ ALGO ASA
 MAXEVAL 10
 ENDSTRATEGY
 ENDOPTIMIZER'''
-error = "the STRATEGY-level optimiser: ASA:ASA: under FAILSCORE_GRADING ON a failed evaluation scores from 0.999 FAILSCORE to below FAILSCORE (1.7976931348623157e+308, the largest double, as without a FAILSCORE line), and ASA:ASA takes a cost of about 1e+18 or more for an invalid state and draws another, so it would not see the graded failures at or above that cost; a FAILSCORE of 1e+18 or less keeps every graded failure below it"
+error = "the STRATEGY-level optimiser: ASA:ASA: under FAILSCORE_GRADING ON a failed evaluation scores from 0.999 FAILSCORE to below FAILSCORE (1.7976931348623157e+308, the largest double, as without a FAILSCORE line). ASA:ASA takes a cost of about 1e+18 or more for an invalid state and draws another, so it would not see the graded failures at or above that cost. A FAILSCORE of 1e+18 or less keeps every graded failure below it"
 
 [[key.invalid]]
 wrap = "root"
@@ -1517,7 +1520,7 @@ Under CANDIDATE the startup checks refuse only a box with no valid point. \
 In both modes they refuse a training configuration with a bump past its \
 cutoff."""
 checks = [
-  { msg = "bump-support gate: with a hard (Cut_Dummy) cutoff every compact bump must vanish at or before RCUT (c + w/eta <= RCUT) — a truncated overhang is an energy/force STEP at the cutoff. Violations:{list}\n  To search longer range, raise RCUT2B/RCUTMB in the config (the potential stays smooth: bumps still vanish at their own support edge).", doc = "At startup, without a line: a bump basis under a Cut_Dummy cutoff has a bump past the cutoff, and {list} names each. In both modes a bump of the training configuration is refused. Under STRICT an OPTIM box whose worst corner puts a bump past the cutoff is refused, and under CANDIDATE a box with no point that keeps the bump inside it." },
+  { msg = "BUMPGATE: a compact bump reaches past its cutoff: under a Cut_Dummy cutoff each bump vanishes at or before RCUT (c + w/eta <= RCUT), as a bump cut off there gives the energy and the forces a step at the cutoff. The bumps past the cutoff:{list}\n  A larger RCUT2B or RCUTMB in the training configuration gives a longer range; the potential stays smooth, as each bump vanishes at the edge of its own support.", doc = "At startup, without a line: a bump basis under a Cut_Dummy cutoff has a bump past the cutoff, and {list} names each. In both modes a bump of the training configuration is refused. Under STRICT an OPTIM box whose worst corner puts a bump past the cutoff is refused, and under CANDIDATE a box with no point that keeps the bump inside it." },
 ]
 
 [[key.examples]]
@@ -1552,7 +1555,7 @@ doc = "Under STRICT: the worst corner of the box of bump 4 reaches past RCUT2B."
 text = '''
 BUMPGATE STRICT
 OPTIM CGRID2B (4) 4.0 5.0'''
-error = "bump-support gate: with a hard (Cut_Dummy) cutoff every compact bump must vanish at or before RCUT (c + w/eta <= RCUT) — a truncated overhang is an energy/force STEP at the cutoff. Violations:\n  - the OPTIM bounds let bump 4 of CGRID2B reach 6, past RCUT2B = 5.5 — need the OPTIM SGRID2B (4) low bound >= w/(RCUT2B - c_hi) = 6 (currently 3).\n  To search longer range, raise RCUT2B/RCUTMB in the config (the potential stays smooth: bumps still vanish at their own support edge)."
+error = "BUMPGATE: a compact bump reaches past its cutoff: under a Cut_Dummy cutoff each bump vanishes at or before RCUT (c + w/eta <= RCUT), as a bump cut off there gives the energy and the forces a step at the cutoff. The bumps past the cutoff:\n  - bump 4 of CGRID2B reaches 6, past RCUT2B = 5.5; it stays inside with an OPTIM SGRID2B (4) low bound >= w/(RCUT2B - c_hi) = 6 (the smallest eta it can take, its widest bump, is 3).\n  A larger RCUT2B or RCUTMB in the training configuration gives a longer range; the potential stays smooth, as each bump vanishes at the edge of its own support."
 
 [[key.invalid]]
 wrap = "main_ream"
@@ -1560,7 +1563,7 @@ check = "startup"
 at = "none"
 doc = "Under CANDIDATE, the default: no point of the box keeps bump 4 inside RCUT2B."
 text = "OPTIM CGRID2B (4) 5.4 5.5"
-error = "bump-support gate: with a hard (Cut_Dummy) cutoff every compact bump must vanish at or before RCUT (c + w/eta <= RCUT) — a truncated overhang is an energy/force STEP at the cutoff. Violations:\n  - no feasible point for bump 4 of CGRID2B: even its most favourable corner (centre 5.4, eta 3) reaches 6.4, past RCUT2B = 5.5 — need the OPTIM SGRID2B (4) high bound >= w/(RCUT2B - c_lo) = 30, a lower CGRID2B low bound, or a larger RCUT2B.\n  To search longer range, raise RCUT2B/RCUTMB in the config (the potential stays smooth: bumps still vanish at their own support edge)."
+error = "BUMPGATE: a compact bump reaches past its cutoff: under a Cut_Dummy cutoff each bump vanishes at or before RCUT (c + w/eta <= RCUT), as a bump cut off there gives the energy and the forces a step at the cutoff. The bumps past the cutoff:\n  - no point of the OPTIM boxes keeps bump 4 of CGRID2B inside: even its most favourable corner (centre 5.4, eta 3) reaches 6.4, past RCUT2B = 5.5; a point inside needs an OPTIM SGRID2B (4) high bound >= w/(RCUT2B - c_lo) = 30, a lower CGRID2B low bound, or a larger RCUT2B.\n  A larger RCUT2B or RCUTMB in the training configuration gives a longer range; the potential stays smooth, as each bump vanishes at the edge of its own support."
 
 [[key.invalid]]
 wrap = "main_ream"
@@ -1570,7 +1573,7 @@ doc = "Under STRICT: the box of the centre of bump 4 reaches RCUT2B."
 text = '''
 BUMPGATE STRICT
 OPTIM CGRID2B (4) 5.4 5.5'''
-error = "bump-support gate: with a hard (Cut_Dummy) cutoff every compact bump must vanish at or before RCUT (c + w/eta <= RCUT) — a truncated overhang is an energy/force STEP at the cutoff. Violations:\n  - the OPTIM bounds let bump 4 of CGRID2B reach 6.5, past RCUT2B = 5.5 — impossible while the OPTIM CGRID2B (4) high bound 5.5 >= 5.5: lower the CGRID2B high bound below RCUT2B first.\n  To search longer range, raise RCUT2B/RCUTMB in the config (the potential stays smooth: bumps still vanish at their own support edge)."
+error = "BUMPGATE: a compact bump reaches past its cutoff: under a Cut_Dummy cutoff each bump vanishes at or before RCUT (c + w/eta <= RCUT), as a bump cut off there gives the energy and the forces a step at the cutoff. The bumps past the cutoff:\n  - OPTIM CGRID2B (4) on line 2: its high bound 5.5 is at or above RCUT2B = 5.5, so bump 4 reaches 6.5, past the cutoff, whatever its width; the box stays inside with a CGRID2B high bound below RCUT2B.\n  A larger RCUT2B or RCUTMB in the training configuration gives a longer range; the potential stays smooth, as each bump vanishes at the edge of its own support."
 
 [[key]]
 id = "ROOT.RHOGATE"
@@ -1610,8 +1613,8 @@ checks = [
   { msg = "{keys} {what} the density of one DM_REAM many-body term or of one DM_Embed component, and {why}", doc = "At startup, at the RHOGATE or RHOBARGATE line (the first of them when both are given): the many-body term is neither one DM_REAM term nor one DM_Embed component. {keys} is RHOGATE, RHOBARGATE, or both joined by and, with the verb {what} agreeing. {why} says that the configuration has no many-body term, names its many-body term (DM_mJoin is not read by these checks), or gives the number of its DM_Embed components." },
   { msg = "RHOGATE: under {form} every density rho(r) is >= 0, so the sign condition of RHOGATE holds for every candidate; RHOGATE is taken under RHOFORM SIGNED only (RHOBARGATE under every form)", doc = "At startup, at its line: the density form is NONNEG or MONOTONE." },
   { msg = "{keys}: the many-body cutoff RCUTMB is not set.", doc = "At startup, at the RHOGATE or RHOBARGATE line (the first of them when both are given): the smallest RCUTMB a candidate can have is not a number above 0." },
-  { msg = "{keys}: {why} on every candidate (WATOM has no OPTIM line, or its OPTIM box does not reach above 0), so every evaluation would be refused before training, under SEED ERROR and SEED WARN alike. The checks of {keys} need every density pair weight > 0, which a WATOM above 0 gives (under RHOFORM SIGNED the sign of rho is that of the AMPGRIDMB amplitudes); without the {keys} line(s) the run makes no such check.", doc = "At startup, at the RHOGATE or RHOBARGATE line (the first of them when both are given): a density pair weight is not above 0 with WATOM at the upper end of its OPTIM box, or at its value in the training configuration when no OPTIM line searches it. {why} names the weight: \"a density pair weight W = <w> (WATOM) is not finite and > 0\"." },
-  { msg = "RHOGATE: seed {name} fails the rho(r) sign gate: {why}. A seed that fails is refused under SEED ERROR, the default, and is evaluated as a rejected start under SEED WARN. tadah refit --edit changes the density of a potential file; a WARM seed takes the values of its search parameters from its file and the others from the training configuration.", doc = "At startup, without a line, under SEED ERROR: a CONFIG or WARM starting point of the INIT or RESTART chain fails the condition; {name} names it, and {why} gives the smallest and largest density on the window. Under SEED WARN hpo_run.log has a warning instead, and the run goes on." },
+  { msg = "{keys}: {why} on every candidate (WATOM has no OPTIM line, or its OPTIM box does not reach above 0), so every evaluation would be refused before training, under SEED ERROR and SEED WARN alike. The checks of {keys} need every density pair weight > 0, which a WATOM above 0 gives (under RHOFORM SIGNED the sign of rho is that of the AMPGRIDMB amplitudes); without the {keys} line(s) the run makes no such check.", doc = "At startup, at the RHOGATE or RHOBARGATE line (the first of them when both are given): a density pair weight is not above 0 with WATOM at the upper end of its OPTIM box, or at its value in the training configuration when no OPTIM line searches it. {why} names the weight: \"a density pair weight W = <w> (WATOM) is not a finite number > 0\"." },
+  { msg = "RHOGATE: seed {name} fails the sign condition of RHOGATE: {why}. A seed that fails is refused under SEED ERROR, the default, and is evaluated as a rejected start under SEED WARN. tadah refit --edit changes the density of a potential file; a WARM seed takes the values of its search parameters from its file and the others from the training configuration.", doc = "At startup, without a line, under SEED ERROR: a CONFIG or WARM starting point of the INIT or RESTART chain fails the condition; {name} names it, and {why} gives the smallest and largest density on the window. Under SEED WARN hpo_run.log has a warning instead, and the run goes on." },
 ]
 untested = [
   { msg = "{keys}: the many-body cutoff RCUTMB is not set.", why = "Needs a DM_REAM term without RCUTMB, which the training configuration refuses first." },
@@ -1700,7 +1703,7 @@ check = "startup"
 context = "main_ream_watom0"
 doc = "WATOM 0, not searched: no candidate has a density pair weight above 0."
 text = "RHOGATE 1e-5"
-error = "RHOGATE: a density pair weight W = 0 (WATOM) is not finite and > 0 on every candidate (WATOM has no OPTIM line, or its OPTIM box does not reach above 0), so every evaluation would be refused before training, under SEED ERROR and SEED WARN alike. The checks of RHOGATE need every density pair weight > 0, which a WATOM above 0 gives (under RHOFORM SIGNED the sign of rho is that of the AMPGRIDMB amplitudes); without the RHOGATE line(s) the run makes no such check."
+error = "RHOGATE: a density pair weight W = 0 (WATOM) is not a finite number > 0 on every candidate (WATOM has no OPTIM line, or its OPTIM box does not reach above 0), so every evaluation would be refused before training, under SEED ERROR and SEED WARN alike. The checks of RHOGATE need every density pair weight > 0, which a WATOM above 0 gives (under RHOFORM SIGNED the sign of rho is that of the AMPGRIDMB amplitudes); without the RHOGATE line(s) the run makes no such check."
 
 [[key.invalid]]
 wrap = "main_ream"
@@ -1709,7 +1712,7 @@ context = "main_ream_negative"
 at = "none"
 doc = "The starting point, the training configuration, has a density that falls below 0."
 text = "RHOGATE 1e-5"
-error = "RHOGATE: seed -c pot (INIT CONFIG) fails the rho(r) sign gate: rho_min -4.9965e-01 at r 2.7990 A, rho_max 2.9956e-01, rel -1.6680e+00 < -tol = -1.0000e-05 on [0.8250, 5.5000] A (20001 points), v = 1.8694e+00. A seed that fails is refused under SEED ERROR, the default, and is evaluated as a rejected start under SEED WARN. tadah refit --edit changes the density of a potential file; a WARM seed takes the values of its search parameters from its file and the others from the training configuration."
+error = "RHOGATE: seed -c pot (INIT CONFIG) fails the sign condition of RHOGATE: rho_min -4.9965e-01 at r 2.7990 A, rho_max 2.9956e-01, rel -1.6680e+00 < -tol = -1.0000e-05 on [0.8250, 5.5000] A (20001 points), v = 1.8694e+00. A seed that fails is refused under SEED ERROR, the default, and is evaluated as a rejected start under SEED WARN. tadah refit --edit changes the density of a potential file; a WARM seed takes the values of its search parameters from its file and the others from the training configuration."
 
 [[key.examples]]
 wrap = "none"
@@ -1755,7 +1758,7 @@ METHOD CONFIG
 ENDRESTART
 ENDSTRATEGY
 ENDOPTIMIZER'''
-error = "RHOGATE: seed -c pot (RESTART CONFIG) fails the rho(r) sign gate: rho_min -4.9965e-01 at r 2.7990 A, rho_max 2.9956e-01, rel -1.6680e+00 < -tol = -1.0000e-05 on [0.8250, 5.5000] A (20001 points), v = 1.8694e+00. A seed that fails is refused under SEED ERROR, the default, and is evaluated as a rejected start under SEED WARN. tadah refit --edit changes the density of a potential file; a WARM seed takes the values of its search parameters from its file and the others from the training configuration."
+error = "RHOGATE: seed -c pot (RESTART CONFIG) fails the sign condition of RHOGATE: rho_min -4.9965e-01 at r 2.7990 A, rho_max 2.9956e-01, rel -1.6680e+00 < -tol = -1.0000e-05 on [0.8250, 5.5000] A (20001 points), v = 1.8694e+00. A seed that fails is refused under SEED ERROR, the default, and is evaluated as a rejected start under SEED WARN. tadah refit --edit changes the density of a potential file; a WARM seed takes the values of its search parameters from its file and the others from the training configuration."
 
 [[key]]
 id = "ROOT.RHOBARGATE"
@@ -1804,7 +1807,7 @@ checks = [
   { msg = "{keys} {what} the density of one DM_REAM many-body term or of one DM_Embed component, and {why}", doc = "At startup, at the RHOGATE or RHOBARGATE line (the first of them when both are given): as for RHOGATE." },
   { msg = "RHOBARGATE: f_lo = {low} puts the largest reachable RCUTMB, {max} A, at {value} lattice constants of the smallest lattice (a = f_lo a0 = {min} A); the limit is 20. f_lo and f_hi are fractions of a0 (0.75 scans down to 25 % compression), and a larger f_lo puts that RCUTMB at fewer lattice constants.", doc = "At startup, without a line: the largest RCUTMB a candidate can have, {max}, is more than 20 lattice constants of the smallest lattice, {min}." },
   { msg = "RHOBARGATE: the largest reachable RCUTMB, {max} A, divided by the smallest lattice constant, f_lo a0 = {min} A, is not a finite number", doc = "At startup, without a line: the largest RCUTMB a candidate can have, {max}, divided by f_lo a0, {min}, is not a finite number, for example when f_lo a0 is so small that it underflows to 0." },
-  { msg = "RHOBARGATE: seed {name} fails the lattice rhobar(a) gate: {why}. A seed that fails is refused under SEED ERROR, the default, and is evaluated as a rejected start under SEED WARN. tadah refit --edit changes the density of a potential file; a WARM seed takes the values of its search parameters from its file and the others from the training configuration.", doc = "At startup, without a line, under SEED ERROR: a CONFIG or WARM starting point of the INIT or RESTART chain fails the condition; {name} names it. Under SEED WARN hpo_run.log has a warning instead, and the run goes on." },
+  { msg = "RHOBARGATE: seed {name} fails the lattice condition of RHOBARGATE: {why}. A seed that fails is refused under SEED ERROR, the default, and is evaluated as a rejected start under SEED WARN. tadah refit --edit changes the density of a potential file; a WARM seed takes the values of its search parameters from its file and the others from the training configuration.", doc = "At startup, without a line, under SEED ERROR: a CONFIG or WARM starting point of the INIT or RESTART chain fails the condition; {name} names it. Under SEED WARN hpo_run.log has a warning instead, and the run goes on." },
   { msg = "RHOBARGATE: the first {name} shell at a = f_hi a0 = {high} A lies at r = {value} A, beyond the smallest cutoff a candidate can have, RCUTMB = {max} A{note}: rhobar(a) would lose its nearest neighbours; a smaller f_hi or a0, or a larger RCUTMB, keeps the first shell inside the cutoff.", doc = "At startup, at the RHOBARGATE line: the nearest neighbours of the lattice {name} at f_hi a0, {high}, lie at {value}, beyond the smallest RCUTMB a candidate can have, {max}; {note} is \" (the largest CGRIDMB knot over its OPTIM box)\" when that knot sets it." },
 ]
 
@@ -1943,7 +1946,7 @@ id = "ROOT.OUTPUT"
 name = "OUTPUT"
 blocks = ["ROOT"]
 synopsis = "OUTPUT <n>"
-args = [ { name = "n", kind = "integer", min = 1, what = "{key}", msg = "OUTPUT must be an integer >= 1, got '{tok}' (it is a cadence: write every Nth evaluation; to write as little as possible, use a large value such as OUTPUT 1000000)" } ]
+args = [ { name = "n", kind = "integer", min = 1, what = "{key}", msg = "OUTPUT must be an integer >= 1, got '{tok}' (it is a cadence: the run writes every Nth evaluation; a large value, such as OUTPUT 1000000, writes as little as possible)" } ]
 repeat = "error"
 repeat_msg = "OUTPUT is set twice (first on line {first_line}); each key is given once"
 default = { literal = "1" }
@@ -1958,7 +1961,7 @@ text = "OUTPUT 10"
 [[key.invalid]]
 wrap = "root"
 text = "OUTPUT 0"
-error = "OUTPUT must be an integer >= 1, got '0' (it is a cadence: write every Nth evaluation; to write as little as possible, use a large value such as OUTPUT 1000000)"
+error = "OUTPUT must be an integer >= 1, got '0' (it is a cadence: the run writes every Nth evaluation; a large value, such as OUTPUT 1000000, writes as little as possible)"
 
 [[key.invalid]]
 wrap = "root"
@@ -1973,7 +1976,7 @@ id = "ROOT.BOUTPUT"
 name = "BOUTPUT"
 blocks = ["ROOT"]
 synopsis = "BOUTPUT <n>"
-args = [ { name = "n", kind = "integer", min = 1, what = "{key}", msg = "BOUTPUT must be an integer >= 1, got '{tok}' (it is a cadence: write every Nth new best)" } ]
+args = [ { name = "n", kind = "integer", min = 1, what = "{key}", msg = "BOUTPUT must be an integer >= 1, got '{tok}' (it is a cadence: the run writes every Nth new best)" } ]
 repeat = "error"
 repeat_msg = "BOUTPUT is set twice (first on line {first_line}); each key is given once"
 default = { literal = "1" }
@@ -1988,7 +1991,7 @@ text = "BOUTPUT 5"
 [[key.invalid]]
 wrap = "root"
 text = "BOUTPUT 0"
-error = "BOUTPUT must be an integer >= 1, got '0' (it is a cadence: write every Nth new best)"
+error = "BOUTPUT must be an integer >= 1, got '0' (it is a cadence: the run writes every Nth new best)"
 
 [[key.invalid]]
 wrap = "root"
@@ -2481,7 +2484,7 @@ wrap = "main_ream"
 check = "startup"
 at = "none"
 text = "RHOBARGATE bcc 3.304 0.9 1.1 SEED ERROR"
-error = "RHOBARGATE: seed -c pot (INIT CONFIG) fails the lattice rhobar(a) gate: rhobar rises at 208 of 1000 steps on bcc (a0 3.304 A, a/a0 [0.9, 1.1], 1001 points), first at a/a0 = 0.9000, v = 2.9237e-02. A seed that fails is refused under SEED ERROR, the default, and is evaluated as a rejected start under SEED WARN. tadah refit --edit changes the density of a potential file; a WARM seed takes the values of its search parameters from its file and the others from the training configuration."
+error = "RHOBARGATE: seed -c pot (INIT CONFIG) fails the lattice condition of RHOBARGATE: rhobar rises at 208 of 1000 steps on bcc (a0 3.304 A, a/a0 [0.9, 1.1], 1001 points), first at a/a0 = 0.9000, v = 2.9237e-02. A seed that fails is refused under SEED ERROR, the default, and is evaluated as a rejected start under SEED WARN. tadah refit --edit changes the density of a potential file; a WARM seed takes the values of its search parameters from its file and the others from the training configuration."
 msg_of = "ROOT.RHOBARGATE"
 
 [[line_option.invalid]]
@@ -2518,30 +2521,30 @@ error = "'ENDLOCAL' was removed from the grammar: renamed to ENDINNER."
 
 [[removed]]
 name = "PRESTAGE"
-hint = "replaced by `STRATEGY { TYPE PRESTAGE EXPLORE { ... } [REFINE { ... }] }` (REFINE is optional; without it the STRATEGY-level LIB/ALGO refines)."
+hint = "replaced by STRATEGY TYPE PRESTAGE: an EXPLORE block inside the STRATEGY block runs the exploration, and a REFINE block, which may be left out, the refinement (without it, the LIB and ALGO of the STRATEGY-level optimiser refine)."
 
 [[removed.invalid]]
 wrap = "optimizer"
 text = "PRESTAGE"
-error = "'PRESTAGE' was removed from the grammar: replaced by `STRATEGY { TYPE PRESTAGE EXPLORE { ... } [REFINE { ... }] }` (REFINE is optional; without it the STRATEGY-level LIB/ALGO refines)."
+error = "'PRESTAGE' was removed from the grammar: replaced by STRATEGY TYPE PRESTAGE: an EXPLORE block inside the STRATEGY block runs the exploration, and a REFINE block, which may be left out, the refinement (without it, the LIB and ALGO of the STRATEGY-level optimiser refine)."
 
 [[removed]]
 name = "ENDPRESTAGE"
-hint = "replaced by ENDEXPLORE / ENDREFINE / ENDSTRATEGY (see STRATEGY block)."
+hint = "replaced by ENDEXPLORE and ENDREFINE, the ends of the EXPLORE and REFINE blocks inside the STRATEGY block."
 
 [[removed.invalid]]
 wrap = "explore"
 text = "ENDPRESTAGE"
-error = "'ENDPRESTAGE' was removed from the grammar: replaced by ENDEXPLORE / ENDREFINE / ENDSTRATEGY (see STRATEGY block)."
+error = "'ENDPRESTAGE' was removed from the grammar: replaced by ENDEXPLORE and ENDREFINE, the ends of the EXPLORE and REFINE blocks inside the STRATEGY block."
 
 [[removed]]
 name = "MULTISTART"
-hint = "moved into `STRATEGY { TYPE MULTISTART N_STARTS N }`."
+hint = "moved into the STRATEGY block: its lines TYPE MULTISTART and N_STARTS <n>."
 
 [[removed.invalid]]
 wrap = "strategy"
 text = "MULTISTART 4"
-error = "'MULTISTART' was removed from the grammar: moved into `STRATEGY { TYPE MULTISTART N_STARTS N }`."
+error = "'MULTISTART' was removed from the grammar: moved into the STRATEGY block: its lines TYPE MULTISTART and N_STARTS <n>."
 
 [[removed]]
 name = "MULTISTART_PARALLEL"
@@ -2568,12 +2571,12 @@ error = "'PARALLEL' was removed from the grammar: the starts of STRATEGY TYPE MU
 
 [[removed]]
 name = "MULTISTART_BUDGET_PER_START"
-hint = "moved into `STRATEGY { TYPE MULTISTART BUDGET_PER_START N }`."
+hint = "moved into the STRATEGY block: its lines TYPE MULTISTART and BUDGET_PER_START <n>."
 
 [[removed.invalid]]
 wrap = "strategy"
 text = "MULTISTART_BUDGET_PER_START 50"
-error = "'MULTISTART_BUDGET_PER_START' was removed from the grammar: moved into `STRATEGY { TYPE MULTISTART BUDGET_PER_START N }`."
+error = "'MULTISTART_BUDGET_PER_START' was removed from the grammar: moved into the STRATEGY block: its lines TYPE MULTISTART and BUDGET_PER_START <n>."
 
 [[removed]]
 name = "STAGE_GLOBAL"
@@ -2586,39 +2589,39 @@ error = "'STAGE_GLOBAL' was removed from the grammar: STRATEGY TYPE PRESTAGE run
 
 [[removed]]
 name = "RESTART_AFTER_STAGNATION"
-hint = "moved into `STRATEGY { RESTART { AFTER_STAGNATION N } ENDRESTART }`."
+hint = "moved into the RESTART block inside the STRATEGY block: its line AFTER_STAGNATION <n>."
 
 [[removed.invalid]]
 wrap = "strategy"
 text = "RESTART_AFTER_STAGNATION 20"
-error = "'RESTART_AFTER_STAGNATION' was removed from the grammar: moved into `STRATEGY { RESTART { AFTER_STAGNATION N } ENDRESTART }`."
+error = "'RESTART_AFTER_STAGNATION' was removed from the grammar: moved into the RESTART block inside the STRATEGY block: its line AFTER_STAGNATION <n>."
 
 [[removed]]
 name = "RESTART_MAX"
-hint = "moved into `STRATEGY { RESTART { MAX N } ENDRESTART }`."
+hint = "moved into the RESTART block inside the STRATEGY block: its line MAX <n>."
 
 [[removed.invalid]]
 wrap = "strategy"
 text = "RESTART_MAX 3"
-error = "'RESTART_MAX' was removed from the grammar: moved into `STRATEGY { RESTART { MAX N } ENDRESTART }`."
+error = "'RESTART_MAX' was removed from the grammar: moved into the RESTART block inside the STRATEGY block: its line MAX <n>."
 
 [[removed]]
 name = "RESTART_INIT_STRATEGY"
-hint = "moved into `RESTART { METHOD <method> ... }` (re-uses INIT-block grammar)."
+hint = "moved into the RESTART block: its METHOD lines, as in an INIT block."
 
 [[removed.invalid]]
 wrap = "restart"
 text = "RESTART_INIT_STRATEGY RANDOM"
-error = "'RESTART_INIT_STRATEGY' was removed from the grammar: moved into `RESTART { METHOD <method> ... }` (re-uses INIT-block grammar)."
+error = "'RESTART_INIT_STRATEGY' was removed from the grammar: moved into the RESTART block: its METHOD lines, as in an INIT block."
 
 [[removed]]
 name = "INIT_STRATEGY"
-hint = "moved into `INIT { METHOD <method> ... } ENDINIT` block."
+hint = "moved into the INIT block: its METHOD lines."
 
 [[removed.invalid]]
 wrap = "optimizer"
 text = "INIT_STRATEGY RANDOM"
-error = "'INIT_STRATEGY' was removed from the grammar: moved into `INIT { METHOD <method> ... } ENDINIT` block."
+error = "'INIT_STRATEGY' was removed from the grammar: moved into the INIT block: its METHOD lines."
 
 [[removed]]
 name = "INIT_K"
@@ -2658,31 +2661,31 @@ error = "'INCLUDE_CONFIG' was removed from the grammar: the values of the traini
 
 [[removed]]
 name = "NOISE_AUTO"
-hint = "moved into `NOISE { AUTO true|false } ENDNOISE` block."
+hint = "moved into the NOISE block: its line AUTO true or AUTO false."
 
 [[removed.invalid]]
 wrap = "root"
 text = "NOISE_AUTO true"
-error = "'NOISE_AUTO' was removed from the grammar: moved into `NOISE { AUTO true|false } ENDNOISE` block."
+error = "'NOISE_AUTO' was removed from the grammar: moved into the NOISE block: its line AUTO true or AUTO false."
 
 [[removed]]
 name = "NOISE_CALIBRATION"
-hint = "moved into `NOISE { CALIBRATION N } ENDNOISE` block."
+hint = "moved into the NOISE block: its line CALIBRATION <n>."
 
 [[removed.invalid]]
 wrap = "noise"
 text = "NOISE_CALIBRATION 5"
-error = "'NOISE_CALIBRATION' was removed from the grammar: moved into `NOISE { CALIBRATION N } ENDNOISE` block."
+error = "'NOISE_CALIBRATION' was removed from the grammar: moved into the NOISE block: its line CALIBRATION <n>."
 
 [[removed]]
 name = "PC_SRMSE"
-hint = "replaced by PC_SRMSE_GPA, the root mean square of the nine entries of each residual stress tensor in GPa (PC_SRMSE was that of the six entries x <= y in eV/A^3). PC_SRMSE_GPA of a residual is 160.2 times its PC_SRMSE when the six entries have equal mean squares, 130.8 times for a residual on the diagonal only (a pressure) and 185.0 times for a shear residual only: a target or --skip-above cap of PC_SRMSE times 160.2 is about that of PC_SRMSE_GPA, and a weight under LOSS L2 divided by about 25 670 (160.2 squared)."
+hint = "replaced by PC_SRMSE_GPA, the root mean square of the nine entries of each residual stress tensor in GPa (PC_SRMSE was that of the six entries x <= y in eV/A^3). PC_SRMSE_GPA of a residual is 160.2 times its PC_SRMSE when the six entries have equal mean squares, 130.8 times for a residual on the diagonal only (a pressure) and 185.0 times for a shear residual only: a target or --skip-above cap of PC_SRMSE times 160.2 is about that of PC_SRMSE_GPA, and a loss-term weight under LOSS L2 divided by about 25 670 (160.2 squared)."
 doc = "The stress metric of the nine entries of the tensor in GPa, PC_SRMSE_GPA, replaces the metric of six entries in eV/A^3."
 
 [[removed.invalid]]
 wrap = "root"
 text = "PC_SRMSE 0.001 1"
-error = "'PC_SRMSE' was removed from the grammar: replaced by PC_SRMSE_GPA, the root mean square of the nine entries of each residual stress tensor in GPa (PC_SRMSE was that of the six entries x <= y in eV/A^3). PC_SRMSE_GPA of a residual is 160.2 times its PC_SRMSE when the six entries have equal mean squares, 130.8 times for a residual on the diagonal only (a pressure) and 185.0 times for a shear residual only: a target or --skip-above cap of PC_SRMSE times 160.2 is about that of PC_SRMSE_GPA, and a weight under LOSS L2 divided by about 25 670 (160.2 squared)."
+error = "'PC_SRMSE' was removed from the grammar: replaced by PC_SRMSE_GPA, the root mean square of the nine entries of each residual stress tensor in GPa (PC_SRMSE was that of the six entries x <= y in eV/A^3). PC_SRMSE_GPA of a residual is 160.2 times its PC_SRMSE when the six entries have equal mean squares, 130.8 times for a residual on the diagonal only (a pressure) and 185.0 times for a shear residual only: a target or --skip-above cap of PC_SRMSE times 160.2 is about that of PC_SRMSE_GPA, and a loss-term weight under LOSS L2 divided by about 25 670 (160.2 squared)."
 
 # ---------------------------------------------------- cross-key rules ----
 
@@ -2757,7 +2760,7 @@ doc = """\
 Replaces FAILSCORE_GRADING of the target file when it is set and not \
 empty; the value is ON or OFF, in upper case."""
 checks = [
-  { msg = "{phase}: ASA:ASA: under FAILSCORE_GRADING ON, set by TADAH_FAILSCORE_GRADING, a failed evaluation scores from 0.999 FAILSCORE to below FAILSCORE ({value}), and ASA:ASA takes a cost of about 1e+18 or more for an invalid state and draws another, so it would not see the graded failures at or above that cost; a FAILSCORE of 1e+18 or less keeps every graded failure below it", doc = "When the run starts, at the line that closes the block of an ASA:ASA search, in any phase, when the variable sets ON: the refusal of FAILSCORE_GRADING ON with ASA:ASA, which names the variable, as the target file may say OFF." },
+  { msg = "{phase}: ASA:ASA: under FAILSCORE_GRADING ON, set by TADAH_FAILSCORE_GRADING, a failed evaluation scores from 0.999 FAILSCORE to below FAILSCORE ({value}). ASA:ASA takes a cost of about 1e+18 or more for an invalid state and draws another, so it would not see the graded failures at or above that cost. A FAILSCORE of 1e+18 or less keeps every graded failure below it", doc = "When the run starts, at the line that closes the block of an ASA:ASA search, in any phase, when the variable sets ON: the refusal of FAILSCORE_GRADING ON with ASA:ASA, which names the variable, as the target file may say OFF." },
 ]
 
 [[env.invalid]]
@@ -2785,7 +2788,7 @@ ALGO ASA
 MAXEVAL 10
 ENDSTRATEGY
 ENDOPTIMIZER'''
-error = "the STRATEGY-level optimiser: ASA:ASA: under FAILSCORE_GRADING ON, set by TADAH_FAILSCORE_GRADING, a failed evaluation scores from 0.999 FAILSCORE to below FAILSCORE (1.7976931348623157e+308, the largest double, as without a FAILSCORE line), and ASA:ASA takes a cost of about 1e+18 or more for an invalid state and draws another, so it would not see the graded failures at or above that cost; a FAILSCORE of 1e+18 or less keeps every graded failure below it"
+error = "the STRATEGY-level optimiser: ASA:ASA: under FAILSCORE_GRADING ON, set by TADAH_FAILSCORE_GRADING, a failed evaluation scores from 0.999 FAILSCORE to below FAILSCORE (1.7976931348623157e+308, the largest double, as without a FAILSCORE line). ASA:ASA takes a cost of about 1e+18 or more for an invalid state and draws another, so it would not see the graded failures at or above that cost. A FAILSCORE of 1e+18 or less keeps every graded failure below it"
 
 [[env]]
 name = "TADAH_BUMPGATE"

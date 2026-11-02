@@ -41,7 +41,7 @@
  *   FtolPlateau   FTOL plateau                the annealers' FTOL_ABS /
  *                                             FTOL_REL plateau rule
  *   GridDone      all grid points evaluated   TADAH:GRID's whole grid
- *   NoDims        no optimisable dimensions   an annealer with no OPTIM
+ *   NoDims        no search dimension         an annealer with no OPTIM
  *                                             dimension to move
  *   NoStep        no step within the OPTIM    DLIB:BFGS: neither its step
  *                 box                         nor the steepest-descent one
@@ -101,7 +101,7 @@ inline const char* end_reason_text(EndReason r)
         case EndReason::TMin:        return "T_MIN reached";
         case EndReason::FtolPlateau: return "FTOL plateau";
         case EndReason::GridDone:    return "all grid points evaluated";
-        case EndReason::NoDims:      return "no optimisable dimensions";
+        case EndReason::NoDims:      return "no search dimension";
         case EndReason::NoStep:      return "no step within the OPTIM box";
         case EndReason::Revisit:     return "back at an earlier point";
     }
@@ -123,7 +123,7 @@ inline void record_end(const std::string& backend, EndReason r)
 }
 
 /* The stop line "<backend> stopped: <reason> after <detail>" on stdout
- * ("[HPO] ...") and in the journal, then the run's status (record_end).
+ * ("[tadah hpo] ...") and in the journal, then the run's status (record_end).
  * `detail` says what the search spent and, for a tolerance, its value:
  * "51 evaluation(s): the loss changed by less than FTOL_ABS = 1e-07
  * (default) from one iteration to the next". */
@@ -132,7 +132,7 @@ inline void report_end(const std::string& backend, EndReason r,
 {
     const std::string msg = backend + " stopped: " + end_reason_text(r) +
                             " after " + detail;
-    std::cout << "[HPO] " << msg << "\n";
+    std::cout << "[tadah hpo] " << msg << "\n";
     HPOLog::instance().info(msg);
     record_end(backend, r);
 }

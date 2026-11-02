@@ -476,15 +476,18 @@ TEST_CASE("The journal's Fail score line names what scores FAILSCORE, "
         std::string name, lines, causes;
     };
     const std::vector<Case> cases = {
-        {"PC_ERMSE alone", "PC_ERMSE 0 1\n", "a skip cap or a gate reject"},
+        {"PC_ERMSE alone", "PC_ERMSE 0 1\n",
+         "a skip cap or a rejection by BUMPGATE, RHOGATE or RHOBARGATE"},
         {"PC_LAMMPS",
          "PC_ERMSE 0 1\nPC_LAMMPS --script " + script.string() +
              " --outvar A --varloss A 1.0 1.0\n",
-         "a skip cap, a failed PC_LAMMPS simulation or a gate reject"},
+         "a skip cap, a failed PC_LAMMPS simulation or a rejection by "
+         "BUMPGATE, RHOGATE or RHOBARGATE"},
         {"PC_OBSERVABLE",
          "PC_ERMSE 0 1\nPC_OBSERVABLE cohesive_energy --species Ta "
          "--target 8.1 --weight 1 --hotvar a0 3.0 3.35 3.3\n",
-         "a skip cap, a failed PC_OBSERVABLE term or a gate reject"}};
+         "a skip cap, a failed PC_OBSERVABLE term or a rejection by "
+         "BUMPGATE, RHOGATE or RHOBARGATE"}};
     for (const Case& c : cases) {
         DYNAMIC_SECTION(c.name << ", FAILSCORE_GRADING OFF") {
             auto cfg = write_file("cfg", config_head() + c.lines);

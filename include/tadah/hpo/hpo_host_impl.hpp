@@ -10,6 +10,7 @@
 #include <tadah/core/logger.h>
 #include <tadah/core/number_format.h>
 #include <tadah/hpo/hpo_mpi.h>
+#include <tadah/hpo/host_messages.h>
 #include <tadah/hpo/lammps_sim.h>
 #include <tadah/hpo/sims_grad_lammps.h>
 #include <tadah/hpo/val_filter_forwarding.h>
@@ -165,9 +166,10 @@ inline std::int64_t leave(std::size_t iter, const char* stage, LogFn&& log) {
     const auto thr = threshold_ms();
     if (thr > 0 && took_ms > thr) {
         log(std::string("eval ") + std::to_string(iter) +
-            " stage '" + stage + "' took " +
-            std::to_string(took_ms) + " ms (threshold " +
-            std::to_string(thr) + " ms) -- possible hang surface");
+            ": stage '" + stage + "' took " +
+            std::to_string(took_ms) + " ms, above the TADAH_HPO_STAGE_WARN_MS "
+            "threshold of " + std::to_string(thr) + " ms (a slow stage, or "
+            "one that hangs)");
     }
     return took_ms;
 }
@@ -764,13 +766,13 @@ struct HPO_Host<P,R>::WriterFiles {
         if (ev.transient) HPOLog::instance().record_io_retry_writer();
         try {
             HPOLog::instance().warning(
-                "HPO writer: I/O error on '" + ev.path + "' (" +
+                "result files: I/O error on '" + ev.path + "' (" +
                 ev.op + ": " + io::errno_name(ev.err) + ", " +
                 std::strerror(ev.err) + "), attempt " +
                 std::to_string(ev.attempt) +
                 (ev.transient
                      ? "; retrying in " + std::to_string(ev.next_delay.count()) + " ms"
-                     : std::string("; permanent error, re-trying once")));
+                     : std::string("; permanent error, retrying once")));
         } catch (...) {}
     };
 
@@ -861,7 +863,7 @@ void HPO_Host<P,R>::commit_writer_files(WriterFiles& wf)
         if (c.ok) {
             if (o.failures > 0 && c.attempts > 0) {
                 try {
-                    log.info("HPO writer: writes to '" + f->path() +
+                    log.info("result files: writes to '" + f->path() +
                              "' resumed; " + std::to_string(o.lost) +
                              " row(s) were lost during the outage (" +
                              std::to_string(o.failures) + " failed drain(s) over " +
@@ -877,7 +879,7 @@ void HPO_Host<P,R>::commit_writer_files(WriterFiles& wf)
                                   " (" + std::strerror(c.err) + ")";
         try {
             if (o.failures > 1) {
-                log.warning("HPO writer: '" + f->path() + "' still failing (" +
+                log.warning("result files: '" + f->path() + "' still failing (" +
                             error + "): " + std::to_string(o.lost) +
                             " row(s) lost over " + std::to_string(o.failures) +
                             " failed drains in " + WriterFiles::outage_span(o) +
@@ -895,7 +897,7 @@ void HPO_Host<P,R>::commit_writer_files(WriterFiles& wf)
                     : policy.budget.count() <= 0
                         ? std::string(" (not retried: this drain's retry budget was spent)")
                         : io::gave_up_suffix(c.attempts, c.seconds);
-                log.warning("HPO writer: " + std::to_string(c.rows_lost) +
+                log.warning("result files: " + std::to_string(c.rows_lost) +
                             " row(s) of '" + f->path() + "' lost: " + error + why +
                             "; until a write to this file succeeds, further "
                             "failures are not retried and only summarised");
@@ -919,7 +921,7 @@ void HPO_Host<P,R>::write_archive(WriterFiles& wf, const std::string& path,
     if (r.ok) {
         if (o.failures > 0) {
             try {
-                log.info("HPO writer: archives are written again ('" + path +
+                log.info("result files: archives are written again ('" + path +
                          "'); " + std::to_string(o.lost) +
                          " archive(s) were not written during the outage (over " +
                          WriterFiles::outage_span(o) + ")");
@@ -934,7 +936,7 @@ void HPO_Host<P,R>::write_archive(WriterFiles& wf, const std::string& path,
                               " (" + std::strerror(r.err) + ")";
     try {
         if (o.failures > 1) {
-            log.warning("HPO writer: archives still failing (latest '" + path +
+            log.warning("result files: archives still failing (latest '" + path +
                         "': " + error + "): " + std::to_string(o.lost) +
                         " archive(s) not written in " + WriterFiles::outage_span(o) +
                         " (reported on the 2^k-th failure or every 10 min)");
@@ -949,7 +951,7 @@ void HPO_Host<P,R>::write_archive(WriterFiles& wf, const std::string& path,
                 : policy.budget.count() <= 0
                     ? std::string(" (not retried: this drain's retry budget was spent)")
                     : io::gave_up_suffix(r.attempts, r.seconds);
-            log.warning("HPO writer: archive '" + path + "' not written: " +
+            log.warning("result files: archive '" + path + "' not written: " +
                         error + why + "; later archive failures get no backoff "
                         "until one is written, and are only summarised");
         }
@@ -1051,16 +1053,16 @@ void HPO_Host<P,R>::count_reused_repeat(const RecordedEval<P>& e) {
     if (!stagnation_warned_.exchange(true, std::memory_order_relaxed)) {
       try {
         HPOLog::instance().info(
-            "StagnationStop fired at a repeat of " +
+            "the stagnation stop at a repeat of " +
             (of_eval ? "eval " + std::to_string(*of_eval)
                      : std::string("an earlier evaluation")) +
             " answered from the run's record, after eval " +
-            std::to_string(latest) +
-            "; short-circuiting optimiser (threshold=" +
-            std::to_string(threshold) + " evals without improvement, " +
+            std::to_string(latest) + ": no new best within AFTER_STAGNATION " +
+            std::to_string(threshold) + " evaluations, " +
             std::to_string(
                 reused_since_best_.load(std::memory_order_relaxed)) +
-            " of them call(s) answered from the run's record)");
+            " of them calls answered from the run's record; the search "
+            "stops");
       } catch (...) {}
     }
     throw;
@@ -1170,7 +1172,7 @@ void HPO_Host<P,R>::finish_best_publication() const noexcept {
     const auto report = [](const std::string& msg) {
         HPOLog& log = HPOLog::instance();
         if (log.is_open()) log.warning(msg);
-        else std::cerr << "[HPO] WARNING: " << msg << std::endl;
+        else std::cerr << "[tadah hpo] WARNING: " << msg << std::endl;
     };
     const auto remove = [&](const std::string& path) {
         try {
@@ -1256,9 +1258,9 @@ HPO_Host<P,R>::HPO_Host(core::Context master_ctx,
                 dims += ch.ckey + "[" + std::to_string(b.index + 1) + "]";
             }
         HPOLog::instance().info(
-            "bump-support per-candidate gate armed on " + dims +
-            ": infeasible candidates (c + w/eta > RCUT) are rejected "
-            "before training as graded band-D failures");
+            "BUMPGATE CANDIDATE: checked in every candidate on " + dims +
+            ": a candidate with c + w/eta > RCUT is refused before training "
+            "and fails (band D under FAILSCORE_GRADING ON)");
     }
 
     /* RHOFORM NONNEG / MONOTONE: every evaluated AMPGRIDMB amplitude is
@@ -1325,17 +1327,17 @@ HPO_Host<P,R>::HPO_Host(core::Context master_ctx,
         core::CoreUserConfigParser val_parser;
         std::map<std::string, std::string> refused = {
             {"FORCE", "the validation set is not fitted; it is validated on "
-                      "forces whenever the hpotarget sets PC_FRMSE, and FORCE "
+                      "forces whenever the target file sets PC_FRMSE, and FORCE "
                       "in the training configuration (or -F) decides whether "
                       "training fits forces"},
             {"STRESS", "the validation set is not fitted; it is validated on "
-                       "stresses whenever the hpotarget sets PC_SRMSE_GPA, and "
+                       "stresses whenever the target file sets PC_SRMSE_GPA, and "
                        "STRESS in the training configuration (or -S) decides "
                        "whether training fits stresses"},
             {"ENERGY", "the validation set is not fitted; ENERGY in the "
                        "training configuration decides whether training fits "
-                       "energies, and the energy metrics of the hpotarget "
-                       "what validation measures"},
+                       "energies, and the energy metrics of the target file "
+                       "decide what validation measures"},
             {"ENORM", "the validation set is not fitted; ENORM, how the fit "
                       "normalises the residual of an energy, is set in the "
                       "training configuration"}};
@@ -1611,7 +1613,11 @@ HPO_Host<P,R>::HPO_Host(core::Context master_ctx,
         auto tr_el = mlip::StructureDB::find_unique_elements(master_ctx_);
         for(auto e: mlip::StructureDB::find_unique_elements(val_ctx))
             if(!tr_el.count(e))
-                throw std::runtime_error("Validation element missing in training");
+                throw std::runtime_error(
+                    "tadah hpo: the validation data hold the element " +
+                    e.symbol + ", which no training dataset holds; every "
+                    "element of the validation data is in the training "
+                    "data too");
     }
 
     /* all-fixed fast path ------------------------------------------------
@@ -1629,9 +1635,9 @@ HPO_Host<P,R>::HPO_Host(core::Context master_ctx,
         if (all_weights_fixed_) {
             core::Logger::instance().log(
                 tadah::core::LogLevel::INFO,
-                "FIXINDEX covers every model weight: per-eval LS solve and "
-                "design-matrix build are skipped (weights provisioned from "
-                "FIXWEIGHT).");
+                "FIXINDEX fixes every coefficient of the model: the "
+                "least-squares fit and the design matrix of each evaluation "
+                "are skipped (the coefficients come from FIXWEIGHT).");
         }
     }
 
@@ -1653,8 +1659,8 @@ HPO_Host<P,R>::HPO_Host(core::Context master_ctx,
         for (const auto& kv : trg_.optimap)
             for (bool b : kv.second.opt) if (b) ++n_opt;
         if (param_labels_.size() != n_opt)
-            throw std::runtime_error(
-                "internal: " + std::to_string(param_labels_.size()) +
+            throw std::logic_error(
+                "internal error: " + std::to_string(param_labels_.size()) +
                 " parameter label(s) for " + std::to_string(n_opt) +
                 " OPTIM dimension(s)");
     }
@@ -1698,7 +1704,7 @@ HPO_Host<P,R>::HPO_Host(core::Context master_ctx,
                 std::to_string(ev.attempt) +
                 (ev.transient
                      ? "; retrying in " + std::to_string(ev.next_delay.count()) + " ms"
-                     : std::string("; re-trying once, no backoff")));
+                     : std::string("; retrying once, no backoff")));
         } catch (...) {}
     };
     dbopts_latched_ = dbopts_;
@@ -1786,14 +1792,14 @@ void HPO_Host<P,R>::note_out_of_box(const P& p, const OutOfBox& o,
             "coordinates";
         if (k == 1) {
             const std::string msg =
-                where + ": it is not evaluated, and is " + scored + " (the "
-                "box is the configuration's contract: no point outside it is "
-                "trained or can be the best). Finite differences keep to the "
-                "box, and a point proposed within rounding of a bound is "
-                "evaluated on it, so an optimiser that ignores the bounds "
-                "(CERES:*) proposed it; such a point counts against MAXEVAL. "
+                where + ": it is not evaluated, and is " + scored + " (no "
+                "point outside the OPTIM box of the target file is trained or "
+                "can be the best). Finite differences keep to the box, and a "
+                "point proposed within rounding of a bound is evaluated on "
+                "it, so an optimiser that ignores the bounds (CERES:*) "
+                "proposed this one. Such a point counts against MAXEVAL; "
                 "DIAGNOSTICS counts every such point";
-            std::cerr << "[HPO] WARNING: " << msg << "\n";
+            std::cerr << "[tadah hpo] WARNING: " << msg << "\n";
             HPOLog::instance().warning(msg);
         } else {
             HPOLog::instance().info(where + ": not evaluated, " + scored +
@@ -1859,10 +1865,12 @@ std::string HPO_Host<P,R>::bound_hints(const P& p) const
             if (rng > 0) {
                 if ((v - lo) / rng < EDGE_FRAC)
                     hints << "Tip: " << name << " is near its LOWER bound -- "
-                          << "consider tightening or expanding the range. ";
+                          << "a lower bound further down lets the search go "
+                             "below it. ";
                 else if ((hi - v) / rng < EDGE_FRAC)
                     hints << "Tip: " << name << " is near its UPPER bound -- "
-                          << "consider expanding the range. ";
+                          << "an upper bound further up lets the search go "
+                             "above it. ";
             }
             ++idx;
         }
@@ -2143,7 +2151,7 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
       fail = true;
       if (fg_on) fail_state.record_infra();
       HPOLog::instance().warning(
-          "pc-worker returned a short result for " + lsim.script + ": "
+          "a PC worker returned a short result for " + lsim.script + ": "
           + std::to_string(tres.outvar_values.size()) + "/"
           + std::to_string(lsim.n_outvar.size()) + " outvars, "
           + std::to_string(tres.outvar_errors.size()) + "/"
@@ -2291,10 +2299,10 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
         if (why.empty()) continue;
         /* counted per run (HPOLog::count_in_run) */
         const std::size_t n =
-            HPOLog::instance().count_in_run("PC_LAMMPS --outvar is NaN");
+            HPOLog::instance().count_in_run("PC_LAMMPS --outvar has no number");
         if ((n & (n - 1)) == 0)
           HPOLog::instance().warning(
-              "PC_LAMMPS --outvar is NaN (" + lsim.script + ", occurrence "
+              "PC_LAMMPS --outvar has no number (" + lsim.script + ", occurrence "
               + std::to_string(n) + "): reading " + outvar_role
               + lsim.n_outvar[j] + " after the script: " + why);
       }
@@ -2632,13 +2640,15 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
           if (pc_process_mode) pc_worker_pool().kill_matching(r.iter);
           /* counted per run (HPOLog::count_in_run) */
           const std::size_t n =
-              HPOLog::instance().count_in_run("FAILPROBE gate");
+              HPOLog::instance().count_in_run("PC_FAILPROBE --gate");
           if (n <= 5 || (n & (n - 1)) == 0) {
             HPOLog::instance().warning(
-                "eval " + std::to_string(r.iter) + " FAILPROBE gate: S="
-                + std::to_string(S) + " > " + std::to_string(trg_.failprobe_gate)
-                + " -- eval short-circuited (total gated=" + std::to_string(n)
-                + ")");
+                "eval " + std::to_string(r.iter) + ": the PC_FAILPROBE value "
+                + tadah::core::format_roundtrip(S) + " is above its --gate "
+                + tadah::core::format_roundtrip(trg_.failprobe_gate)
+                + ": the evaluation fails, and its other scripts stop ("
+                + std::to_string(n) + (n == 1 ? " evaluation" : " evaluations")
+                + " stopped by --gate so far)");
           }
         }
       } else {
@@ -2664,13 +2674,13 @@ void HPO_Host<P,R>::run_lammps(Result& r) const
               HPOLog::instance().count_in_run("FAILPROBE no probe value");
           if (n <= 5 || (n & (n - 1)) == 0) {
             HPOLog::instance().warning(
-                "eval " + std::to_string(r.iter) + " FAILPROBE: S="
-                + tadah::core::format_roundtrip(S)
+                "eval " + std::to_string(r.iter) + ": the PC_FAILPROBE value "
+                "S=" + tadah::core::format_roundtrip(S)
                 + " is not a probe value (one is at least 0 and below the "
                   "line's --failscore, "
                 + tadah::core::format_roundtrip(LS[i].failscore)
-                + ") -- the evaluation fails (total="
-                + std::to_string(n) + ")");
+                + "): the evaluation fails (" + std::to_string(n)
+                + " so far)");
           }
         }
       }
@@ -3431,7 +3441,11 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
         if (first_fit_note("evidence approximation refused"))
             HPOLog::instance().warning(
                 "eval " + std::to_string(r.iter) + ": " + what +
-                " The candidate fails (its evaluation scores FAILSCORE). "
+                (trg_.FAILSCORE_GRADING
+                     ? " The candidate fails (its evaluation scores the top "
+                       "of band D). "
+                     : " The candidate fails (its evaluation scores "
+                       "FAILSCORE). ") +
                 "This is said once per run: a later candidate refused for "
                 "the same reason fails without a WARNING.");
         tls_trainer_theta_stale_ = true;
@@ -3652,22 +3666,40 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
     bool skip_bad_pot = false;
     double skip_excess = -1.0;
     {
-      auto check_metric = [&](const std::string& tag, bool used, double value,
+      /* `tag` keys the lowest value of the metric (MetricSkipTracker);
+       * `name` is the metric as the target file writes it. */
+      auto check_metric = [&](const std::string& tag, const std::string& name,
+                              bool used, double value,
                               const HPOTargets::SkipCaps& caps, const char* unit) {
         if (!used) return false;
         const auto hit = metric_skip_tracker_->check(
             tag, value, caps, batch ? &c.skip_best : nullptr);
         if (!hit) return false;
         skip_excess = hit->excess;
+        HPOLog::instance().record_early_rejection();
         if (hit->count <= 5 || (hit->count & (hit->count - 1)) == 0) {
+          const std::string u = unit[0] ? std::string(" ") + unit : "";
           std::ostringstream os;
-          os << "eval " << r.iter << ": skipping downstream (obs+LAMMPS) -- "
-             << tag << "=" << value << " " << unit;
-          if (hit->absolute) os << " > skip-above=" << *caps.abs_above;
-          if (hit->relative) os << " > skip-rel=" << *caps.rel_above
-                               << " * best(" << hit->best << ")";
-          os << ", total skips=" << hit->count;
+          os << "eval " << r.iter << ": " << name << " "
+             << core::format_roundtrip(value) << u << " is above its ";
+          if (hit->absolute)
+            os << "--skip-above " << core::format_roundtrip(*caps.abs_above);
+          if (hit->absolute && hit->relative) os << " and its ";
+          if (hit->relative)
+            os << "--skip-rel " << core::format_roundtrip(*caps.rel_above)
+               << " times the lowest " << name << " so far ("
+               << core::format_roundtrip(hit->best) << u << ")";
+          os << ": the evaluation fails";
+          if (!trg_.LS.empty()) os << ", and its PC_LAMMPS scripts do not run";
+          if (!trg_.observables.empty())
+            os << ", and its PC_OBSERVABLE terms are not computed";
+          os << " (" << hit->count
+             << (hit->count == 1 ? " evaluation" : " evaluations")
+             << " rejected by --skip-above or --skip-rel so far)";
           HPOLog::instance().warning(os.str());
+          if (hit->count == 1)
+            std::cerr << "[tadah hpo] WARNING: " << os.str()
+                      << "; later rejections are counted in hpo_run.log\n";
         }
         return true;
       };
@@ -3675,24 +3707,30 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
                                const std::vector<double>& values,
                                const ValidationMetricTargets& targets, const char* unit) {
         if (!used) return false;
-        if (!targets.indexed()) return check_metric(tag, true, average, targets.global().caps, unit);
+        const std::string key = std::string("PC_") + tag;
+        if (!targets.indexed())
+          return check_metric(tag, key, true, average, targets.global().caps, unit);
         const auto& assignments = targets.datasets();
         if (values.size() != assignments.size())
           throw std::logic_error("Validation skip-filter dataset count mismatch");
         for (std::size_t i = 0; i < values.size(); ++i) {
           const std::string label = std::string(tag) + "[" + std::to_string(i + 1)
                                   + "] " + targets.files().at(i);
-          if (check_metric(label, true, values[i], assignments[i].caps, unit)) return true;
+          const std::string name = key + " of validation dataset " +
+                                   std::to_string(i + 1) + " (" +
+                                   targets.files().at(i) + ")";
+          if (check_metric(label, name, true, values[i], assignments[i].caps, unit))
+            return true;
         }
         return false;
       };
       skip_bad_pot =
-          check_targets("ermse", trg_.use_ermse, r.ermse, r.v_ermse, trg_.ermse_targets, "meV/at") ||
-          check_metric("emae", trg_.use_emae, r.emae, trg_.skip_emae, "meV/at") ||
-          check_metric("eRRMSE", trg_.use_errmse, r.errmse, trg_.skip_errmse, "per mille") ||
-          check_metric("ersq", trg_.use_ersq, r.ersq, trg_.skip_ersq, "") ||
-          check_targets("frmse", trg_.use_frmse, r.frmse, r.v_frmse, trg_.frmse_targets, "eV/A") ||
-          check_targets("srmse", trg_.use_srmse, r.srmse, r.v_srmse, trg_.srmse_targets, "GPa");
+          check_targets("ERMSE", trg_.use_ermse, r.ermse, r.v_ermse, trg_.ermse_targets, "meV/atom") ||
+          check_metric("EMAE", "PC_EMAE", trg_.use_emae, r.emae, trg_.skip_emae, "meV/atom") ||
+          check_metric("ErRMSE", "PC_ErRMSE", trg_.use_errmse, r.errmse, trg_.skip_errmse, "per mille") ||
+          check_metric("ERSQ", "PC_ERSQ", trg_.use_ersq, r.ersq, trg_.skip_ersq, "") ||
+          check_targets("FRMSE", trg_.use_frmse, r.frmse, r.v_frmse, trg_.frmse_targets, "eV/A") ||
+          check_targets("SRMSE_GPA", trg_.use_srmse, r.srmse, r.v_srmse, trg_.srmse_targets, "GPa");
       if (skip_bad_pot) {
         if (trg_.FAILSCORE_GRADING) {
           /* Band D graded by how far past the cap the metric landed --
@@ -3806,10 +3844,7 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
         stop_clock();
         try {
             HPOLog::instance().warning(
-                std::string("eval ") + std::to_string(r.iter) +
-                ": eval-thread caught throw, submitting FAIL_SCORE to "
-                "keep writer queue contiguous (type=" + typeid(e).name() +
-                "): " + e.what());
+                evaluation_error_warning(r.iter, e.what()));
         } catch (...) { /* logging must never abort the recovery path */ }
     } catch (...) {
         /* Same path for non-std::exception throws. */
@@ -3820,10 +3855,7 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
         c.decision.reset();
         stop_clock();
         try {
-            HPOLog::instance().warning(
-                std::string("eval ") + std::to_string(r.iter) +
-                ": eval-thread caught unknown throw, submitting "
-                "FAIL_SCORE to keep writer queue contiguous");
+            HPOLog::instance().warning(evaluation_error_warning(r.iter));
         } catch (...) {}
     }
 
@@ -3968,7 +4000,9 @@ void HPO_Host<P,R>::commit_evaluation(Completed&& c) const
           persist_durable_best(r, durable_failure_journalled);
           if (!warmstart::promote_batch(key, r.hot_produced))
             throw durable_best::Error(
-                "HOT snapshot comparator contradicts the durable compound best key");
+                "internal error: the --hotvar values kept for the best "
+                "potential and the saved best potential disagree on which "
+                "evaluation is best");
         } catch (...) {
           persist_error = std::current_exception();
         }
@@ -4170,7 +4204,9 @@ void HPO_Host<P,R>::commit_evaluation(Completed&& c) const
         } catch (const std::exception& e) {
             save_top_breakdown.clear();
             HPOLog::instance().warning(
-                std::string("loss-breakdown failed: ") + e.what());
+                std::string("the loss breakdown of the best potential "
+                            "could not be computed, and its line in "
+                            "hpo_run.log leaves it out: ") + e.what());
         }
     }
 
@@ -4274,16 +4310,16 @@ void HPO_Host<P,R>::commit_evaluation(Completed&& c) const
                 const std::size_t reused =
                     reused_since_best_.load(std::memory_order_relaxed);
                 HPOLog::instance().info(
-                    std::string("StagnationStop fired at eval ") +
+                    std::string("the stagnation stop at eval ") +
                     std::to_string(save_iter) +
-                    "; short-circuiting optimiser, real loss preserved "
-                    "(threshold=" + std::to_string(threshold) +
-                    " evals without improvement" +
+                    ": no new best within AFTER_STAGNATION " +
+                    std::to_string(threshold) + " evaluations" +
                     (reused > 0 ? ", " + std::to_string(reused) +
-                                      " of them call(s) answered from the "
+                                      " of them calls answered from the "
                                       "run's record"
                                 : std::string()) +
-                    ")");
+                    "; the search stops, and the loss of eval " +
+                    std::to_string(save_iter) + " is recorded");
             } catch (...) {}
         }
         throw;
@@ -4459,19 +4495,21 @@ void HPO_Host<P,R>::submit_result(Result&& res, const HPOTargets& trg,
                     pot_ctx_size = it->second.pot_ctx.size();
                 }
                 HPOLog::instance().warning(
-                    std::string("HPO writer: dropping iter=") +
+                    "result files: the rows of evaluation " +
                     std::to_string(next_flush_.load()) +
-                    " (is_best=" + (is_best ? "true" : "false") +
-                    ", pot_ctx.size=" + std::to_string(pot_ctx_size) +
-                    ", exception type=" + typeid(ex).name() +
-                    "): " + ex.what());
+                    " are not written: " + std::string(ex.what()));
+                _writer_debug_log(
+                    "DROP iter=" + std::to_string(next_flush_.load()) +
+                    " is_best=" + (is_best ? "true" : "false") +
+                    " pot_ctx.size=" + std::to_string(pot_ctx_size) +
+                    " type=" + typeid(ex).name());
                 io_buf_.erase(next_flush_++);
                 ++_written;
             } catch (...) {
                 HPOLog::instance().warning(
-                    std::string("HPO writer: dropping iter=") +
+                    "result files: the rows of evaluation " +
                     std::to_string(next_flush_.load()) +
-                    " after unknown (non-std::exception) throw");
+                    " are not written: an error that carries no message");
                 io_buf_.erase(next_flush_++);
                 ++_written;
             }
@@ -4527,16 +4565,8 @@ void HPO_Host<P,R>::submit_result(Result&& res, const HPOTargets& trg,
                      * follow-up does not need a fresh reproduction. */
                     const std::string stuck_stages =
                         stage_watchdog::snapshot_stuck(GAP_SKIP_MS);
-                    HPOLog::instance().warning(
-                        std::string("HPO writer: gap-skip -- advancing next_flush_ from ") +
-                        std::to_string(cur) + " to " +
-                        std::to_string(smallest) + " (" +
-                        std::to_string(skipped) + " hung iter slot" +
-                        (skipped == 1 ? "" : "s") +
-                        " whose eval thread did not return within " +
-                        std::to_string(GAP_SKIP_MS / 1000) + " s; per-eval logs lost)" +
-                        (stuck_stages.empty() ? std::string{}
-                            : std::string(" | active stuck stages: [") + stuck_stages + "]"));
+                    HPOLog::instance().warning(result_gap_warning(
+                        cur, smallest, GAP_SKIP_MS / 1000, stuck_stages));
                     _writer_debug_log("GAP_SKIP wid=" + std::to_string(_wid)
                                       + " from=" + std::to_string(cur)
                                       + " to=" + std::to_string(smallest)
@@ -4552,9 +4582,9 @@ void HPO_Host<P,R>::submit_result(Result&& res, const HPOTargets& trg,
                             ++_written;
                         } catch (const std::exception& ex) {
                             HPOLog::instance().warning(
-                                std::string("HPO writer (post-skip): dropping iter=") +
+                                "result files: the rows of evaluation " +
                                 std::to_string(next_flush_.load()) +
-                                " exception: " + ex.what());
+                                " are not written: " + std::string(ex.what()));
                             io_buf_.erase(next_flush_++);
                             ++_written;
                         }
@@ -4580,15 +4610,15 @@ void HPO_Host<P,R>::submit_result(Result&& res, const HPOTargets& trg,
         /* Belt-and-suspenders: covers throws outside the per-iter block
          * (e.g. dequeue, ofstream construction). Token is cleared below. */
         HPOLog::instance().warning(
-            std::string("HPO writer: outer catch (next_flush=") +
-            std::to_string(next_flush_.load()) +
-            ", type=" + typeid(ex).name() + "): " + ex.what());
+            "result files: writing stopped at evaluation " +
+            std::to_string(next_flush_.load()) + ": " + std::string(ex.what()));
         _writer_debug_log("OUTER_CATCH wid=" + std::to_string(_wid)
                           + " what=" + ex.what());
     } catch (...) {
         HPOLog::instance().warning(
-            std::string("HPO writer: outer catch (next_flush=") +
-            std::to_string(next_flush_.load()) + ") unknown exception");
+            "result files: writing stopped at evaluation " +
+            std::to_string(next_flush_.load()) +
+            ": an error that carries no message");
         _writer_debug_log("OUTER_CATCH_UNKNOWN wid=" + std::to_string(_wid));
     }
 
@@ -4671,7 +4701,8 @@ bool HPO_Host<P,R>::analytical_gradient(const P& x, P& g,
         if (HPOLog::instance().first_in_run("no analytical gradient"))
             HPOLog::instance().warning(
                 "No analytical gradient for this setup: " + why +
-                "; every parameter uses finite differences in this run.");
+                "; every search parameter uses finite differences in this "
+                "run.");
         return fall_back_all_fd();
     }
 
@@ -4977,8 +5008,8 @@ bool HPO_Host<P,R>::analytical_gradient(const P& x, P& g,
                 "Analytical gradient could not be formed at this point "
                 "(occurrence " + std::to_string(n) + "): " + failure +
                 "; GRAD_STRATEGY HYBRID takes finite differences for every "
-                "parameter there, and under ANALYTICAL the point has no "
-                "usable gradient");
+                "search parameter there, and under ANALYTICAL the point has "
+                "no usable gradient");
         needs_fd.clear();
         fall_back_all_fd();
         emit_grad_diagnostic(prefs, needs_fd, /*cache_miss=*/false,
@@ -5032,11 +5063,11 @@ void HPO_Host<P,R>::emit_grad_diagnostic(
         spec_.grad_strategy.value_or(GradStrategy::Numerical));
 
     std::ostringstream oss;
-    oss << "Gradient-pipeline diagnostic (first eval): "
-        << "GRAD_STRATEGY=" << strat_name
-        << " | total_theta=" << n_total
-        << " | analytical="  << n_anal
-        << " | FD-fallback=" << n_fd;
+    oss << "Gradient diagnostic (first evaluation): "
+        << "GRAD_STRATEGY " << strat_name
+        << " | search parameters " << n_total
+        << " | analytical " << n_anal
+        << " | finite differences " << n_fd;
     if (cache_miss) {
         oss << "  [no trained model of this run's evaluation at this point "
                "on this thread yet (before its first evaluation, or after "
@@ -5045,16 +5076,16 @@ void HPO_Host<P,R>::emit_grad_diagnostic(
     } else if (ift_failed) {
         oss << "  [the analytical gradient could not be formed at this "
                "point (the WARNING above says why; normal equations of the "
-               "fit that are not positive definite want a larger LAMBDA): "
-               "HYBRID takes finite differences for every parameter there, "
-               "under ANALYTICAL the point has no usable gradient]";
+               "fit that are not positive definite need a larger LAMBDA): "
+               "HYBRID takes finite differences for every search parameter "
+               "there, under ANALYTICAL the point has no usable gradient]";
     } else if (n_total > 0 && n_fd == n_total) {
-        oss << "  [every theta routed to FD: none has an analytical "
-               "derivative here (no registered derivative, or a loss term "
-               "without one)]";
+        oss << "  [every search parameter takes finite differences: none has "
+               "an analytical derivative here (no registered derivative, or "
+               "a loss term without one)]";
     }
     if (n_fd > 0 && n_fd < n_total) {
-        oss << "\n  FD-fallback theta:";
+        oss << "\n  search parameters by finite differences:";
         for (int flat : needs_fd) {
             for (const auto& p : prefs) {
                 if (static_cast<int>(p.flat_idx) == flat) {
@@ -5065,7 +5096,7 @@ void HPO_Host<P,R>::emit_grad_diagnostic(
             }
         }
     }
-    std::cout << "[HPO] " << oss.str() << "\n";
+    std::cout << "[tadah hpo] " << oss.str() << "\n";
     HPOLog::instance().info(oss.str());
 }
 

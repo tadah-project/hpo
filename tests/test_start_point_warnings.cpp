@@ -24,6 +24,7 @@
 // a search that draws random numbers and an inactive RESTART block get
 // none.
 #include "catch2/catch.hpp"
+#include "target_file_text.h"
 
 #include <tadah/core/context.h>
 #include <tadah/core/periodic_table.h>
@@ -150,6 +151,15 @@ Startup startup(const std::string& config)
         try {
             HPOTargets trg(ctx, file.string());
             tadah::hpo::validate_hpo_setup(ctx, trg, true, true);
+        } catch (const std::exception& e) {
+            /* A refusal, with the target file written as <target>
+             * (hpo_test::as_target; the frame was "Error on line N: ",
+             * without the file). */
+            std::cerr.rdbuf(old);
+            const std::string what = hpo_test::as_target(e.what(), file.string());
+            std::error_code ec;
+            fs::remove(file, ec);
+            throw std::runtime_error(what);
         } catch (...) {
             std::cerr.rdbuf(old);
             std::error_code ec;
@@ -207,8 +217,8 @@ std::string note(const std::string& algo)
 }
 
 const std::string kAnew =
-    " For rounds that search anew, use an optimiser that starts at the point "
-    "it is given.";
+    " An optimiser that starts at the point it is given searches anew in each "
+    "round.";
 
 /* The RESTART warning of a PLAIN run whose STRATEGY-level optimiser is
  * NLOPT:`algo` (`draws`: how it draws no random numbers), RESTART on line
@@ -245,10 +255,10 @@ std::string method_lines_warning(const std::string& algo, int line = 10)
     return "the RESTART block on line " + std::to_string(line) +
            ": the STRATEGY-level optimiser NLOPT:" + algo +
            " does not start at the point it is given (" + note(algo) +
-           "), so no RESTART round evaluates the points of the block's "
-           "METHOD lines: a round's search differs from round 0's only in "
-           "the random numbers it draws. To start each round at the block's "
-           "points, use an optimiser that starts at the point it is given.";
+           "), so no RESTART round evaluates the points of the block's METHOD "
+           "lines: a round's search differs from round 0's only in the random "
+           "numbers it draws. An optimiser that starts at the point it is "
+           "given starts each round at the block's points.";
 }
 
 }  // namespace
@@ -259,10 +269,10 @@ std::string method_lines_warning(const std::string& algo, int line = 10)
  * three _NOSCAL forms (NLopt 2.10 runs all three as DIRECT-L,
  * GN_DIRECT_L_RAND_NOSCAL included), GN_ORIG_DIRECT, GN_ORIG_DIRECT_L,
  * GN_AGS -- gets exactly one startup WARNING, in the journal and on
- * standard error ("[HPO] WARNING: "): "the RESTART block on line 10: the
+ * standard error ("[tadah hpo] WARNING: "): "the RESTART block on line 10: the
  * STRATEGY-level optimiser NLOPT:GN_DIRECT_L does not start at the point
  * it is given (DIRECT evaluates the centre of the OPTIM box first and then
- * divides the whole box; NLopt never reads that point) and draws no random
+ * divides the whole box; NLopt never reads the point it is given) and draws no random
  * numbers, so every RESTART round, whatever points it starts from, asks for
  * round 0's points again, which the run's record answers: no round after
  * round 0 evaluates a new point, and the RESTART block's only effect is to
@@ -302,7 +312,7 @@ TEST_CASE("startup validation: RESTART on a search that does not start at "
             INFO("journal:\n" << s.journal << "\nstderr:\n" << s.err);
             const std::string w = plain_restart_warning(algo);
             CHECK(count_of(s.journal, w) == 1);
-            CHECK(count_of(s.err, "[HPO] WARNING: " + w + "\n") == 1);
+            CHECK(count_of(s.err, "[tadah hpo] WARNING: " + w + "\n") == 1);
             CHECK(count_of(s.journal, "the RESTART block on line") == 1);
         }
     }
@@ -366,7 +376,7 @@ TEST_CASE("startup validation: RESTART on a search that does not start at "
             "ENDOPTIMIZER\n";
         CHECK_THROWS_WITH(
             startup(config),
-            Catch::Contains("Error on line 14: the INNER block of the "
+            Catch::Contains("line 14 of <target>: the INNER block of the "
                             "STRATEGY-level optimiser: NLOPT:LN_AUGLAG cannot "
                             "run NLOPT:GN_DIRECT_L as its INNER search: an "
                             "INNER search is a local search"));
@@ -400,13 +410,12 @@ TEST_CASE("startup validation: RESTART on a search that does not start at "
                   "the RESTART block on line 15: the PRESTAGE exploration "
                   "NLOPT:GN_DIRECT_L does not start at the point it is given "
                   "(" + note("GN_DIRECT_L") + ") and draws no random numbers, "
-                  "so the exploration of every RESTART round, whatever "
-                  "points it starts from, asks for round 0's exploration "
-                  "points again, which the run's record answers: a round's "
+                  "so the exploration of every RESTART round, whatever points "
+                  "it starts from, asks for round 0's exploration points "
+                  "again, which the run's record answers: a round's "
                   "refinement starts from candidates among round 0's "
-                  "exploration points. For explorations that search anew, "
-                  "use an exploration optimiser that starts at the point it "
-                  "is given.") == 1);
+                  "exploration points. An exploration optimiser that starts "
+                  "at the point it is given searches anew in each round.") == 1);
     }
 
     SECTION("no warning: a search that starts at its point")
@@ -427,7 +436,7 @@ TEST_CASE("startup validation: RESTART on a search that does not start at "
  * OPTIM dimensions):
  *  - GD_STOGO, which obtains gradients: "the RESTART block on line 10: the
  *    STRATEGY-level optimiser NLOPT:GD_STOGO does not start at the point it
- *    is given (StoGO evaluates ...; NLopt never reads that point) and draws
+ *    is given (StoGO evaluates ...; NLopt never reads the point it is given) and draws
  *    no random numbers, so every RESTART round, whatever points it starts
  *    from, asks for round 0's points again, and their gradients: the run's
  *    record answers their losses, but a round forms its gradients itself
@@ -511,7 +520,7 @@ TEST_CASE("startup validation: the RESTART warning says what a round of a "
             INFO("journal:\n" << s.journal << "\nstderr:\n" << s.err);
             const std::string w = head + kStencils + tail;
             CHECK(count_of(s.journal, w) == 1);
-            CHECK(count_of(s.err, "[HPO] WARNING: " + w + "\n") == 1);
+            CHECK(count_of(s.err, "[tadah hpo] WARNING: " + w + "\n") == 1);
             CHECK(count_of(s.journal, "the RESTART block on line") == 1);
         }
         {
@@ -561,9 +570,9 @@ TEST_CASE("startup validation: the RESTART warning says what a round of a "
                       "points it starts from, asks for round 0's exploration "
                       "points again" + kStencils +
                       ": a round's refinement starts from candidates among "
-                      "round 0's exploration points. For explorations that "
-                      "search anew, use an exploration optimiser that starts "
-                      "at the point it is given.") == 1);
+                      "round 0's exploration points. An exploration optimiser "
+                      "that starts at the point it is given searches anew in "
+                      "each round.") == 1);
     }
 
     SECTION("GD_STOGO_RAND below POPULATION 2n + 1 repeats round 0's first "
@@ -578,9 +587,9 @@ TEST_CASE("startup validation: the RESTART warning says what a round of a "
             ": until that search ends a round evaluates no new point, and it "
             "reaches its random trial points only if the search ends before "
             "the round has had AFTER_STAGNATION 3 evaluations without a new "
-            "best. For rounds that search anew, use an optimiser that starts "
-            "at the point it is given, or POPULATION 5 (2n + 1) or more, "
-            "whose trial points are all random.";
+            "best. An optimiser that starts at the point it is given, or "
+            "POPULATION 5 (2n + 1) or more, whose trial points are all "
+            "random, searches anew in each round.";
         const std::string head =
             "the RESTART block on line 10: the STRATEGY-level optimiser "
             "NLOPT:GD_STOGO_RAND does not start at the point it is given (" +
@@ -592,7 +601,7 @@ TEST_CASE("startup validation: the RESTART warning says what a round of a "
                 head + "4 (NLopt's default, 2n for n = 2 OPTIM dimensions), "
                        "less than 2n + 1 = 5" + rest;
             CHECK(count_of(s.journal, w) == 1);
-            CHECK(count_of(s.err, "[HPO] WARNING: " + w + "\n") == 1);
+            CHECK(count_of(s.err, "[tadah hpo] WARNING: " + w + "\n") == 1);
             CHECK(count_of(s.journal, "the RESTART block on line") == 1);
         }
         {
@@ -614,7 +623,7 @@ TEST_CASE("startup validation: the RESTART warning says what a round of a "
             INFO("journal:\n" << s.journal << "\nstderr:\n" << s.err);
             const std::string w = method_lines_warning("GN_DIRECT_L_RAND");
             CHECK(count_of(s.journal, w) == 1);
-            CHECK(count_of(s.err, "[HPO] WARNING: " + w + "\n") == 1);
+            CHECK(count_of(s.err, "[tadah hpo] WARNING: " + w + "\n") == 1);
             CHECK(count_of(s.journal, "the RESTART block on line") == 1);
         }
         {
@@ -669,9 +678,9 @@ TEST_CASE("startup validation: the RESTART warning says what a round of a "
                           "refinement starts from them only when no "
                           "evaluation of its exploration has a usable loss: a "
                           "round's exploration differs from round 0's only in "
-                          "the random numbers it draws. To start each round's "
-                          "exploration at them, use an exploration optimiser "
-                          "that starts at the point it is given.") == 1);
+                          "the random numbers it draws. An exploration "
+                          "optimiser that starts at the point it is given "
+                          "starts each round's exploration at them.") == 1);
             CHECK(count_of(s.journal, "the RESTART block on line") == 1);
         }
         {
@@ -680,7 +689,10 @@ TEST_CASE("startup validation: the RESTART warning says what a round of a "
                 "      ENDINIT\n"));
             INFO("journal:\n" << s.journal);
             CHECK(count_of(s.journal, "the RESTART block on line") == 0);
-            CHECK(count_of(s.journal, "the INIT block on line 14") == 1);
+            /* One WARNING: the INFO line "the INIT block on line 14
+             * (RANDOM) gives 2 starting points" names the block too. */
+            CHECK(count_of(s.journal, "WARNING   the INIT block on line 14") ==
+                  1);
         }
     }
 }
@@ -691,7 +703,7 @@ TEST_CASE("startup validation: the RESTART warning says what a round of a "
  *  - PLAIN, the STRATEGY-level optimiser NLOPT:GN_DIRECT_L, INIT on line 5
  *    (METHOD LHS 3): "the INIT block on line 5: the STRATEGY-level
  *    optimiser NLOPT:GN_DIRECT_L does not start at the point it is given
- *    (DIRECT ...; NLopt never reads that point), so the search never
+ *    (DIRECT ...; NLopt never reads the point it is given), so the search never
  *    evaluates the block's INIT points. To start the search at them, use an
  *    optimiser that starts at the point it is given."; standard error has
  *    no "INIT chain produced 3 seeds but NLOPT:GN_DIRECT_L consumes only
@@ -740,8 +752,8 @@ TEST_CASE("startup validation: an INIT block on a search that does not "
     const std::string lhs =
         "  INIT\n    METHOD LHS 3\n    SEED 7\n  ENDINIT\n";
     const std::string tail =
-        " To start the search at them, use an optimiser that starts at the "
-        "point it is given.";
+        " An optimiser that starts at the point it is given starts the search "
+        "at them.";
     const std::string head =
         ": the STRATEGY-level optimiser NLOPT:GN_DIRECT_L does not start at "
         "the point it is given (" + note("GN_DIRECT_L") +
@@ -752,7 +764,7 @@ TEST_CASE("startup validation: an INIT block on a search that does not "
         INFO("journal:\n" << s.journal << "\nstderr:\n" << s.err);
         const std::string w = "the INIT block on line 5" + head + "." + tail;
         CHECK(count_of(s.journal, w) == 1);
-        CHECK(count_of(s.err, "[HPO] WARNING: " + w + "\n") == 1);
+        CHECK(count_of(s.err, "[tadah hpo] WARNING: " + w + "\n") == 1);
         CHECK(count_of(s.err, "consumes only the first") == 0);
     }
     {
@@ -769,8 +781,8 @@ TEST_CASE("startup validation: an INIT block on a search that does not "
         ": the PRESTAGE exploration NLOPT:GN_DIRECT_L does not start at the "
         "point it is given (" + note("GN_DIRECT_L") + ")";
     const std::string explore_tail =
-        " To start the exploration at them, use an exploration optimiser "
-        "that starts at the point it is given.";
+        " An exploration optimiser that starts at the point it is given "
+        "starts the exploration at them.";
     const auto prestage = [](const std::string& outer_init,
                              const std::string& explore_init) {
         return kRoot +
@@ -798,7 +810,9 @@ TEST_CASE("startup validation: an INIT block on a search that does not "
                        "the INIT block on line 14" + explore_head +
                            ", so the exploration never evaluates the block's "
                            "INIT points." + explore_tail) == 1);
-        CHECK(count_of(s.journal, "the INIT block on line") == 1);
+        /* One WARNING (the INFO line of the INIT points names the block
+         * too). */
+        CHECK(count_of(s.journal, "WARNING   the INIT block on line") == 1);
         // with an OPTIMIZER-level INIT block too (lines 5-8): the
         // exploration's own (now on line 18) is warned about as above, the
         // OPTIMIZER-level one as the refinement's fallback
@@ -808,13 +822,16 @@ TEST_CASE("startup validation: an INIT block on a search that does not "
                        "the INIT block on line 18" + explore_head +
                            ", so the exploration never evaluates the block's "
                            "INIT points." + explore_tail) == 1);
-        CHECK(count_of(both.journal, "the INIT block on line 18") == 1);
+        /* The WARNING lines (the INFO lines of the INIT points name the
+         * blocks too). */
+        CHECK(count_of(both.journal, "WARNING   the INIT block on line 18") ==
+              1);
         CHECK(count_of(both.journal, "the INIT block on line 5 gives 3 "
                                      "starting points, and the PRESTAGE "
                                      "exploration (EXPLORE block) starts from "
                                      "those of its own INIT block, on line "
                                      "18,") == 1);
-        CHECK(count_of(both.journal, "the INIT block on line") == 2);
+        CHECK(count_of(both.journal, "WARNING   the INIT block on line") == 2);
     }
     {
         // the OPTIMIZER-level block (line 5), which the exploration takes
@@ -903,7 +920,7 @@ TEST_CASE("startup validation: the INIT points a PLAIN search does not use "
         const Startup s =
             startup(run("    TYPE PLAIN\n", "NLOPT", "LN_BOBYQA"));
         INFO("journal:\n" << s.journal << "\nstderr:\n" << s.err);
-        CHECK(count_of(s.err, "[HPO] WARNING: " + w + "\n") == 1);
+        CHECK(count_of(s.err, "[tadah hpo] WARNING: " + w + "\n") == 1);
         CHECK(count_of(s.journal, w) == 1);
         CHECK(count_of(s.err, "seed(s)") == 0);
     }
@@ -923,7 +940,7 @@ TEST_CASE("startup validation: the INIT points a PLAIN search does not use "
         const std::string w = head + name + unused + "An " + takes_all;
         const Startup s = startup(run("    TYPE PLAIN\n", lib, algo));
         INFO("journal:\n" << s.journal << "\nstderr:\n" << s.err);
-        CHECK(count_of(s.err, "[HPO] WARNING: " + w + "\n") == 1);
+        CHECK(count_of(s.err, "[tadah hpo] WARNING: " + w + "\n") == 1);
         CHECK(count_of(s.journal, w) == 1);
         CHECK(count_of(s.err, "MULTISTART") == 0);
         CHECK(count_of(s.journal, "MULTISTART") == 0);
@@ -993,7 +1010,7 @@ TEST_CASE("startup validation: the INIT points a PRESTAGE exploration or a "
             "a usable loss)." + takes_all;
         const Startup s = startup(prestage(chain7, "NLOPT", "GN_CRS2_LM", ""));
         INFO("journal:\n" << s.journal << "\nstderr:\n" << s.err);
-        CHECK(count_of(s.err, "[HPO] WARNING: " + w + "\n") == 1);
+        CHECK(count_of(s.err, "[tadah hpo] WARNING: " + w + "\n") == 1);
         CHECK(count_of(s.journal, w) == 1);
     }
     {
@@ -1007,7 +1024,7 @@ TEST_CASE("startup validation: the INIT points a PRESTAGE exploration or a "
             "      INIT\n        METHOD RANDOM 5\n        SEED 3\n"
             "      ENDINIT\n"));
         INFO("journal:\n" << s.journal << "\nstderr:\n" << s.err);
-        CHECK(count_of(s.err, "[HPO] WARNING: " + w + "\n") == 1);
+        CHECK(count_of(s.err, "[tadah hpo] WARNING: " + w + "\n") == 1);
         CHECK(count_of(s.journal, w) == 1);
     }
     {
@@ -1036,7 +1053,7 @@ TEST_CASE("startup validation: the INIT points a PRESTAGE exploration or a "
             "them.";
         const Startup s = startup(multistart("7"));
         INFO("journal:\n" << s.journal << "\nstderr:\n" << s.err);
-        CHECK(count_of(s.err, "[HPO] WARNING: " + w + "\n") == 1);
+        CHECK(count_of(s.err, "[tadah hpo] WARNING: " + w + "\n") == 1);
         CHECK(count_of(s.journal, w) == 1);
     }
     {
@@ -1104,7 +1121,7 @@ TEST_CASE("startup validation: the OPTIMIZER-level INIT points of a "
         INFO(lib << ":" << algo);
         const Startup s = startup(prestage(lib, algo, own, ""));
         INFO("journal:\n" << s.journal << "\nstderr:\n" << s.err);
-        CHECK(count_of(s.err, "[HPO] WARNING: " + warning("") + "\n") == 1);
+        CHECK(count_of(s.err, "[tadah hpo] WARNING: " + warning("") + "\n") == 1);
         CHECK(count_of(s.journal, warning("")) == 1);
         const Startup none = startup(prestage(lib, algo, "", ""));
         INFO("journal:\n" << none.journal);
@@ -1117,7 +1134,7 @@ TEST_CASE("startup validation: the OPTIMIZER-level INIT points of a "
         INFO("journal:\n" << s.journal << "\nstderr:\n" << s.err);
         const std::string w =
             warning(" (NOISE CALIBRATION evaluates the first of them 3 times)");
-        CHECK(count_of(s.err, "[HPO] WARNING: " + w + "\n") == 1);
+        CHECK(count_of(s.err, "[tadah hpo] WARNING: " + w + "\n") == 1);
         CHECK(count_of(s.journal, w) == 1);
     }
 }

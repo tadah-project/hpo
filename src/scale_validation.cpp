@@ -1,4 +1,5 @@
 #include <tadah/hpo/scale_validation.h>
+#include <tadah/core/number_format.h>
 #include <tadah/hpo/log_index.h>
 #include <tadah/hpo/optimizer_caps.h>
 #include <tadah/hpo/phase_specs.h>        // with_block_line
@@ -64,23 +65,26 @@ bool is_log(const OptimizerSpec& sp, std::size_t i)
 
 void warn(const std::string& msg)
 {
-    std::cerr << "[HPO] " << msg << "\n";
+    std::cerr << "[tadah hpo] " << msg << "\n";
     HPOLog::instance().warning(msg);
 }
 
-void check_step_value(double v, const std::string& ctx)
+/* `what` is "STEP" or "STEP <KEY>" (an override). */
+void check_step_value(double v, const std::string& ctx, const std::string& what)
 {
     if (!metric_value_is_finite(v) || !(v > 0.0)) {
         std::ostringstream oss;
-        oss << ctx << ": STEP must be > 0 and finite (got " << v << ")";
+        oss << ctx << ": " << what << " must be > 0 and finite (got "
+            << core::format_roundtrip(v) << ")";
         throw std::runtime_error(oss.str());
     }
     if (v > kStepFracMax) {
         std::ostringstream oss;
-        oss << ctx << ": STEP must be a fraction of the OPTIM width in (0, "
-            << kStepFracMax << "] (got " << v << "); values above " << kStepFracMax
-            << " cannot satisfy BOBYQA's width >= 2*step rule and exceed NLopt's "
-               "own 0.25 default";
+        oss << ctx << ": " << what << " must be a fraction of the OPTIM width "
+            << "in (0, " << kStepFracMax << "] (got " << core::format_roundtrip(v)
+            << "); a STEP above " << kStepFracMax << " cannot meet the rule of "
+               "NLOPT:LN_BOBYQA that each width is at least twice the step, "
+               "and exceeds the 0.25 that NLopt takes by default";
         throw std::runtime_error(oss.str());
     }
 }
@@ -96,15 +100,17 @@ void validate_start_points(const OptimizerSpec& sp, const std::string& where)
                                      phase_words(sp, where);
             if (x.size() != sp.space->dim()) {
                 std::ostringstream oss;
-                oss << what << " has " << x.size() << " coordinate(s), expected "
-                    << sp.space->dim();
-                throw std::runtime_error(oss.str());
+                oss << "internal error: " << what << " has " << x.size()
+                    << " coordinate(s), expected " << sp.space->dim();
+                throw std::logic_error(oss.str());
             }
             for (std::size_t i = 0; i < x.size(); ++i) {
                 if (sp.space->at(i).tf.kind == ScaleKind::Log && !(x[i] > 0.0)) {
                     std::ostringstream oss;
-                    oss << what << ": " << sp.space->labels()[i] << " = " << x[i]
-                        << " must be > 0 on a log-scaled dimension (LOG)";
+                    oss << what << ": " << sp.space->labels()[i] << " = "
+                        << core::format_roundtrip(x[i])
+                        << " is not > 0, and the dimension is log-scaled (its "
+                           "LOG tag)";
                     throw std::runtime_error(oss.str());
                 }
             }
@@ -114,15 +120,16 @@ void validate_start_points(const OptimizerSpec& sp, const std::string& where)
     }
     const std::size_t dim = sp.low.size();
     if (sp.high.size() != dim)
-        throw std::runtime_error(where + ": mismatched lower/upper bound counts");
+        throw std::logic_error("internal error: " + where +
+                               ": mismatched lower/upper bound counts");
     for (std::size_t p = 0; p < sp.optim_init.size(); ++p) {
         const auto& x = sp.optim_init[p];
         if (x.size() != dim) {
             std::ostringstream oss;
-            oss << "the starting point " << (p + 1) << " of the INIT block of "
-                    << phase_words(sp, where)
+            oss << "internal error: the starting point " << (p + 1)
+                << " of the INIT block of " << phase_words(sp, where)
                 << " has " << x.size() << " coordinate(s), expected " << dim;
-            throw std::runtime_error(oss.str());
+            throw std::logic_error(oss.str());
         }
         for (std::size_t i = 0; i < dim; ++i) {
             const double v = x[i];
@@ -130,8 +137,8 @@ void validate_start_points(const OptimizerSpec& sp, const std::string& where)
                 std::ostringstream oss;
                 oss << "the starting point " << (p + 1) << " of the INIT block of "
                     << phase_words(sp, where)
-                    << ": " << dim_label(sp, i) << " = " << v
-                    << " is not finite";
+                    << ": " << dim_label(sp, i) << " = "
+                    << core::format_roundtrip(v) << " is not a finite number";
                 throw std::runtime_error(oss.str());
             }
             double t = v;
@@ -141,8 +148,10 @@ void validate_start_points(const OptimizerSpec& sp, const std::string& where)
                     std::ostringstream oss;
                     oss << "the starting point " << (p + 1) << " of the INIT block of "
                     << phase_words(sp, where)
-                        << ": " << dim_label(sp, i) << " = " << v
-                        << " must be > 0 on a log-scaled dimension (LOG_HP)";
+                        << ": " << dim_label(sp, i) << " = "
+                        << core::format_roundtrip(v)
+                        << " is not > 0, and the dimension is log-scaled "
+                           "(LOG_HP)";
                     throw std::runtime_error(oss.str());
                 }
                 t  = std::log(v);
@@ -154,9 +163,10 @@ void validate_start_points(const OptimizerSpec& sp, const std::string& where)
                 std::ostringstream oss;
                 oss << "the starting point " << (p + 1) << " of the INIT block of "
                     << phase_words(sp, where)
-                    << ": " << dim_label(sp, i) << " = " << v
-                    << " lies outside its OPTIM box [" << lo << ", " << hi
-                    << "]";
+                    << ": " << dim_label(sp, i) << " = "
+                    << core::format_roundtrip(v) << " lies outside its OPTIM box ["
+                    << core::format_roundtrip(lo) << ", "
+                    << core::format_roundtrip(hi) << "]";
                 throw std::runtime_error(oss.str());
             }
         }
@@ -198,7 +208,7 @@ void validate_optimizer_scaling(const OptimizerSpec& sp,
         if (sp.step) {
             const auto it = sp.key_lines.find("STEP");
             try {
-                check_step_value(*sp.step, name);
+                check_step_value(*sp.step, name, "STEP");
             } catch (const std::exception& e) {
                 throw at(it != sp.key_lines.end() ? it->second : KeyLine{},
                          e.what());
@@ -206,7 +216,7 @@ void validate_optimizer_scaling(const OptimizerSpec& sp,
         }
         for (const auto& ov : sp.step_overrides) {
             try {
-                check_step_value(ov.frac, name + " STEP " + ov.key);
+                check_step_value(ov.frac, name, "STEP " + ov.key);
                 /* The override's key and indices name OPTIM dimensions
                  * (resolve_step_overrides, of this override alone). */
                 if (sp.space) {
@@ -229,15 +239,26 @@ void validate_optimizer_scaling(const OptimizerSpec& sp,
             }
         }
 
+        /* One WARNING per run and pair of optimisers: this check runs at
+         * parse time, at startup and when each phase starts. */
         if (caps.step_use == StepUse::ForwardedToInner && sp.step && sp.inner &&
-            (sp.inner->step || !sp.inner->step_overrides.empty())) {
+            (sp.inner->step || !sp.inner->step_overrides.empty()) &&
+            HPOLog::instance().first_in_run(
+                "STEP replaces the INNER STEP: " + sp.lib + ":" + sp.algo +
+                " INNER " + sp.inner->lib + ":" + sp.inner->algo)) {
             std::ostringstream oss;
-            oss << name << ": STEP " << *sp.step << " overrides the INNER "
-                << sp.inner->lib << ":" << sp.inner->algo << " STEP";
-            if (sp.inner->step) oss << " " << *sp.inner->step;
-            else                oss << " overrides";
-            oss << " (NLopt forwards the outer initial step to the local "
-                   "optimiser); keep one of them";
+            oss << name << ": STEP " << core::format_roundtrip(*sp.step)
+                << " replaces the ";
+            if (sp.inner->step)
+                oss << "STEP " << core::format_roundtrip(*sp.inner->step)
+                    << " of its INNER block";
+            else
+                oss << "STEP <KEY> lines of its INNER block";
+            oss << " (NLopt passes the initial step of " << sp.lib << ":"
+                << sp.algo << " to the local search " << sp.inner->lib << ":"
+                << sp.inner->algo << "), so "
+                << (sp.inner->step ? "the INNER STEP has" : "they have")
+                << " no effect";
             warn(oss.str());
         }
         /* An optimiser that ignores the bounds: one WARNING per run and
@@ -269,18 +290,20 @@ void audit_search_space_widths(const OptimizerSpec& sp)
     }
     {
         std::ostringstream oss;
-        oss << "search space: " << dim << " dim(s); OPTIM width min "
+        oss << "search space: " << dim << " dimension(s); OPTIM width min "
             << wmin << " (" << dim_label(sp, imin) << ") max " << wmax
             << " (" << dim_label(sp, imax) << "); max/min ratio "
             << (wmin > 0.0 ? wmax / wmin : std::numeric_limits<double>::infinity())
-            << " (optimiser-internal units)";
+            << " (in the units the optimiser works in)";
         HPOLog::instance().info(oss.str());
     }
     for (std::size_t i : pinned) {
         std::ostringstream oss;
-        oss << "search space: " << dim_label(sp, i) << " has OPTIM width "
-            << (sp.high[i] - sp.low[i]) << " -- below 1e-12 of its magnitude, "
-               "i.e. effectively pinned; drop the OPTIM line or widen the box";
+        oss << "search space: " << dim_label(sp, i) << " has the OPTIM width "
+            << (sp.high[i] - sp.low[i]) << ", below 1e-12 of its magnitude, "
+               "so the search cannot move it in double precision; without "
+               "its OPTIM line it keeps the value of the training "
+               "configuration";
         warn(oss.str());
     }
 }

@@ -116,14 +116,15 @@ void run_noise_calibration(const OptimizerSpec& sp, const HPO_Host<V,R>& host,
     if (!should_run_noise_calibration(sp.noise.calibration_n)) return;
     const std::size_t N = sp.noise.calibration_n;
     if (sp.optim_init.empty()) {
-        log.warning("NOISE_CALIBRATION requested but no starting "
-                    "point is available; skipping.");
+        log.warning("NOISE CALIBRATION: no starting point is available, "
+                    "so no calibration runs");
         return;
     }
-    std::cout << "[HPO] NOISE_CALIBRATION: running " << N
-              << " evals at the seed point to measure objective noise\n";
-    log.info("NOISE_CALIBRATION: running " + std::to_string(N) +
-             " evals at the seed point");
+    std::cout << "[tadah hpo] NOISE CALIBRATION: " << N
+              << " evaluations at the starting point measure the noise of "
+                 "the loss\n";
+    log.info("NOISE CALIBRATION: " + std::to_string(N) +
+             " evaluations at the starting point");
 
     const auto seed_real = sp.optim_init.front();
     V seed_vec;
@@ -157,10 +158,10 @@ void run_noise_calibration(const OptimizerSpec& sp, const HPO_Host<V,R>& host,
 
     std::ostringstream oss;
     oss << std::scientific << std::setprecision(3);
-    oss << "NOISE_CALIBRATION: rel_spread=" << rel_spread
-        << "  suggested FTOL_REL=" << suggested_ftol
-        << "  (mean=" << mean << ", min=" << mn << ", max=" << mx << ")";
-    std::cout << "[HPO] " << oss.str() << "\n";
+    oss << "NOISE CALIBRATION: relative spread " << rel_spread
+        << ", suggested FTOL_REL " << suggested_ftol
+        << " (mean " << mean << ", min " << mn << ", max " << mx << ")";
+    std::cout << "[tadah hpo] " << oss.str() << "\n";
     log.info(oss.str());
 }
 
@@ -224,7 +225,7 @@ void print_best_fit_balance(const HPOTargets& trg)
             "training record");
         return;
     }
-    std::cout << "[HPO] " << path << ":\n";
+    std::cout << "[tadah hpo] " << path << ":\n";
     mlip::print_fit_balance(std::cout, lines,
                             computed && mlip::first_fit_balance_legend());
 }
@@ -285,9 +286,11 @@ PcIsolation resolve_pc_isolation(const HPOTargets& trg, HPOLog& log)
          * PROCESS quietly falls back to THREAD here. */
         if (pc.explicit_mode)
             throw std::runtime_error(
-                "PC_ISOLATION PROCESS is not supported in the MPI build "
-                "(TADAH_HPO_MPI): the worker processes cannot initialize "
-                "MPI. Use the serial build, or PC_ISOLATION THREAD.");
+                "PC_ISOLATION PROCESS: the MPI build of tadah "
+                "(-DTADAH_HPO_MPI=ON) runs the PC_LAMMPS and PC_FAILPROBE "
+                "scripts inside the tadah process only (PC_ISOLATION "
+                "THREAD), as a worker process cannot initialise MPI; "
+                "PROCESS runs in the serial build");
         pc.mode = "THREAD";
         log.info("PC_ISOLATION THREAD: the MPI build of tadah runs the "
                  "scripts inside the tadah process");
@@ -316,7 +319,8 @@ PcIsolation resolve_pc_isolation(const HPOTargets& trg, HPOLog& log)
             throw std::runtime_error("TADAH_PC_WORKER_TIMEOUT (got '" +
                                      pc.timeout_env_text + "')" + what);
         throw std::runtime_error(config_line_error(
-            trg.PC_WORKER_TIMEOUT_line, "PC_WORKER_TIMEOUT" + what,
+            trg.target_file, trg.PC_WORKER_TIMEOUT_line,
+            "PC_WORKER_TIMEOUT" + what,
             trg.PC_WORKER_TIMEOUT_text));
     }
     return pc;
@@ -690,9 +694,9 @@ int hpo_run_from_startup(core::Context& ctx, HPOLog& log,
         }
     }
     if (trg.BUMPGATE_STRICT)
-        log.info("BUMPGATE: STRICT -- OPTIM boxes on hard-cutoff bump "
-                 "channels must be feasible at the worst corner "
-                 "(legacy startup gate); no per-candidate rejection.");
+        log.info("BUMPGATE STRICT: the OPTIM boxes of the bump channels under "
+                 "a hard cutoff are checked at startup at their worst corner, "
+                 "and no candidate is refused by BUMPGATE.");
 
     /* --validation is optional: PC_OBSERVABLE / PC_LAMMPS can carry the
      * loss on their own; validate_hpo_setup below rejects setups where
@@ -1147,7 +1151,7 @@ int hpo_run_from_startup(core::Context& ctx, HPOLog& log,
             create_archive_directories_on_every_rank(trg);
             run_noise_calibration(sp, host, log);
             log.start_progress();
-            std::cout << "[HPO] " << sp.lib << ":" << sp.algo
+            std::cout << "[tadah hpo] " << sp.lib << ":" << sp.algo
                       << "   dim=" << sp.low.size() << "\n";
             policy->run(sp, host);
         },

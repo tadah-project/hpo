@@ -393,7 +393,7 @@ TEST_CASE_METHOD(PTFixture,
       parser_text = e.what();
     }
     REQUIRE(parser_text.rfind("tadah refit: a top-level OPTIMIZER block is "
-                              "no longer supported.",
+                              "refused:",
                               0) == 0);
     tadah::mlip::Task task("refit", c);
     CHECK_THROWS_WITH(tadah::hpo::engines::HPORefitEngine().validate(task),
@@ -859,11 +859,18 @@ TEST_CASE_METHOD(PTFixture,
     REQUIRE(what.empty());
     const auto note = log_lines("# REFIT_OBJECTIVE=curve:");
     REQUIRE(note.size() == 1u);
+    /* The note states what limits the cost, without an instruction (it
+     * said "cap its MAXEVAL / use REFIT_COMPACT_OPT_EVERY" and "cap
+     * REFINE's MAXEVAL, lower REFIT_COMPACT_NMAX"). */
     if (std::string(basis) == "Knot5") {
-      CHECK(note[0].find("use REFIT_COMPACT_OPT_EVERY") != std::string::npos);
+      CHECK(note[0].find("a smaller REFINE MAXEVAL, REFIT_COMPACT_OPT_EVERY "
+                         "or the gentle SBPLX-only arm limits it") !=
+            std::string::npos);
     } else {
       CHECK(note[0].find("REFIT_COMPACT_OPT_EVERY") == std::string::npos);
-      CHECK(note[0].find("lower REFIT_COMPACT_NMAX") != std::string::npos);
+      CHECK(note[0].find("a smaller REFINE MAXEVAL, a lower "
+                         "REFIT_COMPACT_NMAX or the gentle SBPLX-only arm "
+                         "limits it") != std::string::npos);
     }
   }
 }
@@ -930,12 +937,11 @@ TEST_CASE_METHOD(PTFixture,
   CHECK_FALSE(returned);
   CHECK(logic_error);
   CHECK(what ==
-        "tadah refit[compact]: internal error: the reachability analysis "
-        "gave r_reach = 0 A (REFIT_REACH_SMIN 0 x the nearest-neighbour "
-        "distance of the fcc lattice of a0 = 3.6 A), less than the step of "
-        "the table's radial grid, dr = 0.0125313 A, although the crystal "
-        "gate of tadah refit (eam_lattice::require_crystal_on_grid) refuses "
-        "every such table; this is a bug, please report it");
+        "tadah refit[compact]: internal error: the reachability analysis gave "
+        "r_reach = 0 A (REFIT_REACH_SMIN 0 x the nearest-neighbour distance "
+        "of the fcc lattice of a0 = 3.6 A), less than the step of the table's "
+        "radial grid, dr = 0.0125313 A, although the crystal check of tadah "
+        "refit (eam_lattice::require_crystal_on_grid) refuses every such table");
   CHECK(refit == nullptr);
 }
 

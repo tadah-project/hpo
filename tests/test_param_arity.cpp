@@ -146,7 +146,7 @@ TEST_CASE("PARAM: a stray token on a single-value key is left on the line",
           "[hpo][param][arity]")
 {
     /* dispatch_opt_attr consumes only what the key defines; HPOTargets::read
-     * turns this residue into "Error on line N: PARAM takes no further
+     * turns this residue into "line N of <file>: PARAM takes no further
      * value here (unexpected '0.3')". */
     std::string leftover;
     const auto sp = parse_line("PARAM STEP_FRAC 0.15 0.3", leftover);

@@ -24,6 +24,7 @@
 
 #include "tadah_test_skip.hpp"  // before catch2/catch.hpp
 #include "catch2/catch.hpp"
+#include "target_file_text.h"
 #include "rhoform_test_support.h"
 
 #include <tadah/core/context.h>
@@ -94,7 +95,7 @@ TEST_CASE("RHOFORM: HPOTargets reads the mandatory key first",
   SECTION("absent on a DM_REAM configuration: the migration message") {
     const std::string e = targets_error(make_ream_ctx(nullptr), target);
     CHECK_THAT(e, Catch::Contains("tadah hpo: DM_REAM: RHOFORM is required") &&
-                      Catch::Contains("add 'RHOFORM SIGNED'"));
+                      Catch::Contains("which a RHOFORM SIGNED line declares"));
   }
   SECTION("an invalid value") {
     const std::string e = targets_error(make_ream_ctx("SQUARE"), target);
@@ -132,7 +133,7 @@ TEST_CASE("RHOFORM: OPTIM on structure keys is refused",
      * value (before the fix: "; set it in the -c potential/configuration.") */
     std::string up(key);
     for (auto& ch : up) ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
-    CHECK_THAT(e, Catch::StartsWith("Error on line 1: OPTIM " + up +
+    CHECK_THAT(e, Catch::StartsWith("line 1 of <target>: OPTIM " + up +
                                     " is not a valid search target") &&
                       Catch::Contains("structure data") &&
                       Catch::Contains("; the training configuration sets "
@@ -388,8 +389,10 @@ TEST_CASE("RHOFORM: WARM seed form vs the run's", "[hpo][rhoform][warm]") {
           CHECK_THAT(e, Catch::Contains(c.what) &&
                             Catch::Contains("this run evaluates RHOFORM SIGNED") &&
                             Catch::Contains("a potential written before tadah "
-                                            "1.6.0 is SIGNED: add 'RHOFORM "
-                                            "SIGNED' to it"));
+                                            "1.6.0 has a SIGNED density and a "
+                                            "FREE embedding reference, which "
+                                            "RHOFORM SIGNED and EMBF0 FREE "
+                                            "lines added to it declare"));
         }
       }
     }
@@ -402,9 +405,9 @@ TEST_CASE("RHOFORM: WARM seed form vs the run's", "[hpo][rhoform][warm]") {
     CHECK_THAT(e, Catch::Contains("does not declare RHOFORM") &&
                       Catch::Contains("this run evaluates RHOFORM NONNEG") &&
                       Catch::Contains("a potential written before tadah 1.6.0 "
-                                      "is SIGNED and cannot seed a NONNEG "
-                                      "density; refit it by tadah refit with "
-                                      "RHOFORM NONNEG"));
+                                      "has a SIGNED density and cannot seed a "
+                                      "NONNEG density; tadah refit with "
+                                      "RHOFORM NONNEG refits it"));
   }
   SECTION("no density key OPTIM'd: a WARNING, the seed is used") {
     Journal j;
@@ -418,7 +421,7 @@ TEST_CASE("RHOFORM: WARM seed form vs the run's", "[hpo][rhoform][warm]") {
     CHECK_THAT(txt, Catch::Contains("WARNING") &&
                         Catch::Contains("declares RHOFORM MONOTONE; this run "
                                         "evaluates RHOFORM SIGNED") &&
-                        Catch::Contains("the seed's density is not read"));
+                        Catch::Contains("the density of the seed is not read"));
   }
   SECTION("matching form: silent") {
     Journal j;
@@ -655,7 +658,7 @@ TEST_CASE("RHOFORM NONNEG/MONOTONE: no projection WARNING when an optimiser "
     CHECK(txt.find(kOutsideBox) == std::string::npos);
     CHECK(txt.find("projected onto AMPGRIDMB") == std::string::npos);
     CHECK_THAT(txt, Catch::Contains(kNotEvaluated) &&
-                        Catch::Contains("Such a point is not evaluated: it is "
+                        Catch::Contains("Such a point is not evaluated. It is "
                                         "scored as a failure graded by its "
                                         "distance to the box"));
     CHECK(txt.find(kKernelWords) == std::string::npos);
@@ -889,13 +892,13 @@ TEST_CASE("HPO_Host: NONNEG/MONOTONE candidates outside the box are not "
       CHECK_THAT(txt, Catch::Contains("eval 1: AMPGRIDMB[3] = -1e-06 lies "
                                       "outside its OPTIM box [0, 0.5]: it is "
                                       "not evaluated, and is scored ") &&
-                          Catch::Contains("Out-of-box points       : 1 ("
-                                          "proposed outside the OPTIM box by "
+                          Catch::Contains("Out-of-box points       : 1 "
+                                          "(proposed outside the OPTIM box by "
                                           "an optimiser that\n    ignores the "
                                           "bounds, not evaluated: scored as "
                                           "failures graded by their\n    "
-                                          "distance to the box; see the first "
-                                          "such WARNING)\n"));
+                                          "distance to the box; the first has "
+                                          "a WARNING)\n"));
       CHECK(txt.find("Positive-form projection") == std::string::npos);
       CHECK(txt.find("is evaluated and recorded as 0") == std::string::npos);
       CHECK(count_of_text(txt, "lies outside its OPTIM box") == 1u);
@@ -977,7 +980,7 @@ TEST_CASE("HPO_Host: NONNEG/MONOTONE candidates outside the box are not "
       CHECK(par_rows[i].back() >= 0.0);        // never a negative amplitude
     }
     const std::string txt = j.finish();
-    CHECK(txt.find("eval-thread caught throw") == std::string::npos);
+    CHECK(txt.find("the evaluation stopped on an error") == std::string::npos);
     CHECK(txt.find("Positive-form projection") == std::string::npos);
     CHECK(txt.find("below 0 is evaluated and recorded as 0") ==
           std::string::npos);

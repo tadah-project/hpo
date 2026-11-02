@@ -388,7 +388,7 @@ void run_nlopt_impl(const OptimizerSpec& sp, HostT& host,
                 searcher + ": the " + seed_origin +
                 " start moves: " + moves + "; the search evaluates the moved "
                 "point, not the " + seed_origin + " point";
-            std::cerr << "[HPO] WARNING: " << w << "\n";
+            std::cerr << "[tadah hpo] WARNING: " << w << "\n";
             HPOLog::instance().warning(w);
         }
         start = given_plan.start;
@@ -434,7 +434,7 @@ void run_nlopt_impl(const OptimizerSpec& sp, HostT& host,
                 << " draws its sample points at random from SEED";
         oss << ".";
         if (seeded) {
-            std::cerr << "[HPO] " << oss.str() << "\n";
+            std::cerr << "[tadah hpo] " << oss.str() << "\n";
             HPOLog::instance().warning(oss.str());
         } else {
             HPOLog::instance().info(oss.str());
@@ -594,8 +594,9 @@ void run_nlopt_impl(const OptimizerSpec& sp, HostT& host,
     const unsigned long reevaluations = detail::auglag_reevaluations(sp);
     RepeatPoints<Vec> repeats(
         sp.lib + ":" + sp.algo, sp, repeat_policy<Vec>(host),
-        "a reuse is no evaluation: HPO's MAXEVAL does not count it, but "
-        "NLopt counts it among the calls its own MAXEVAL bounds",
+        "a reuse is not an evaluation: the MAXEVAL of the block does not "
+        "count it, but NLopt counts it among the calls its own MAXEVAL "
+        "bounds",
         latest_evaluation(host));
     UData udata{&sp, &host, &gp, &opt, nullptr,
                 /*local_gradient_search=*/local &&
@@ -626,9 +627,10 @@ void run_nlopt_impl(const OptimizerSpec& sp, HostT& host,
                 HPOLog::instance().info(
                     u->sp->lib + ":" + u->sp->algo + ": NLopt is given a "
                     "finite stand-in for each failed evaluation of this "
-                    "search (the worst usable loss of the search so far "
-                    "plus a margin; before any, FAILSCORE, at most 1e100); "
-                    "loss.tadah records the loss the evaluation reported");
+                    "search: the worst usable loss of the search so far "
+                    "plus a margin, or FAILSCORE (at most 1e100) before the "
+                    "first usable loss; loss.tadah records the loss the "
+                    "evaluation reported");
             }
             double slope = 1.0;
             const double v = (*u->to_nlopt)(f, slope);
@@ -757,12 +759,13 @@ void run_nlopt_impl(const OptimizerSpec& sp, HostT& host,
     if (caps.step_use == StepUse::PerDimVector && sp.stop.xtol_rel &&
         !sp.stop.xtol_abs) {
         HPOLog::instance().hint(
-            sp.algo + ": XTOL_REL is relative to each coordinate's magnitude; "
-            "dims whose optimum sits near their lower bound" +
+            sp.algo + ": XTOL_REL is relative to the magnitude of each "
+            "coordinate; a dimension whose optimum sits near its lower bound" +
             std::string(sp.space && sp.space->normalised()
                         ? " (u ~ 0 in the unit box)" : "") +
-            " cannot satisfy it -- set XTOL_ABS (a fraction of the OPTIM "
-            "width under OPTIM_SCALE AUTO) as well");
+            " cannot meet it, and XTOL_ABS (a fraction of the OPTIM width "
+            "under OPTIM_SCALE AUTO) gives such a dimension a test it can "
+            "meet");
     }
 
     /* Journal the EFFECTIVE per-dimension initial step: the plan's
@@ -792,8 +795,9 @@ void run_nlopt_impl(const OptimizerSpec& sp, HostT& host,
                     effective.dx[i]   = 0.5 * (sp.high[i] - sp.low[i]);
                     effective.frac[i] = 0.5;
                 }
-                effective.source = "STEP unset -- " + sp.algo +
-                                   " default trust half-width 0.5*width per dim";
+                effective.source = "STEP not set: the default trust "
+                                   "half-width of " + sp.algo +
+                                   ", 0.5 x the width of each dimension";
             } else {
                 std::vector<double> dx(dim, 0.0);
                 opt.get_initial_step(start, dx);
@@ -803,14 +807,15 @@ void run_nlopt_impl(const OptimizerSpec& sp, HostT& host,
                     effective.frac[i] = std::fabs(dx[i]) / (w > 0.0 ? w : 1.0);
                 }
                 if (caps.step_use == StepUse::ForwardedToInner)
-                    effective.source += "; shown for the OUTER start point -- each "
-                                        "MLSL/AUGLAG local start recomputes it from "
-                                        "its own start";
+                    effective.source += "; shown for the starting point of the "
+                                        "search: each local start of MLSL or "
+                                        "AUGLAG computes it again from its own "
+                                        "starting point";
             }
         }
         const std::string report = format_step_report(effective, sp, caps, start);
         HPOLog::instance().info(report);
-        std::cout << "[HPO] Initial step (" << sp.lib << ":" << sp.algo << "): "
+        std::cout << "[tadah hpo] Initial step (" << sp.lib << ":" << sp.algo << "): "
                   << effective.source << " -- per-dim table in hpo_run.log\n";
         /* A note of a step that differs from the STEP asked for (turned
          * inward, capped) is a WARNING; "start on a bound (kept)", where
@@ -844,7 +849,7 @@ void run_nlopt_impl(const OptimizerSpec& sp, HostT& host,
             nfo << "; NLopt counts its calls, and " << repeats.from_record()
                 << " of them asked for points the run had evaluated and "
                    "were answered without an evaluation";
-        std::cout << "[HPO] " << nfo.str() << "\n";
+        std::cout << "[tadah hpo] " << nfo.str() << "\n";
         HPOLog::instance().info(nfo.str());
     };
     /* The objective stopped the search (see UData; their order does not
@@ -873,7 +878,7 @@ void run_nlopt_impl(const OptimizerSpec& sp, HostT& host,
             else
                 nfo << "its point has no usable gradient: " << why.cause
                     << (why.detail.empty() ? "" : " (" + why.detail + ")");
-            std::cout << "[HPO] " << nfo.str() << "\n";
+            std::cout << "[tadah hpo] " << nfo.str() << "\n";
             HPOLog::instance().info(nfo.str());
             HPOLog::instance().set_status(st);
             return true;
@@ -945,19 +950,18 @@ void run_nlopt_impl(const OptimizerSpec& sp, HostT& host,
         const char* nlopt_msg = opt.get_errmsg();
         if (nlopt_msg && nlopt_msg[0] != '\0') {
             std::ostringstream oss;
-            oss << sp.algo << ": NLopt internal diagnostic was set after "
-                << evals_used.load() << " evaluation(s) -- '" << nlopt_msg
-                << "'. Algorithm reported " << status_str
-                << " but the underlying issue was masked. For "
-                   "LN_SBPLX/LN_NELDERMEAD this typically means the "
-                   "initial step shrank below precision near a near-"
-                   "optimum WARM seed; consider raising STEP (a fraction of "
-                   "each OPTIM width), setting XTOL_ABS, loosening the "
-                   "tightest bound on the seed coord, or switching to "
-                   "LD_LBFGS / DLIB:BFGS / LN_BOBYQA.";
-            std::cerr << "[HPO] " << oss.str() << "\n";
+            oss << sp.algo << ": NLopt reported " << status_str << " after "
+                << evals_used.load() << " evaluation(s), and its own message, '"
+                << nlopt_msg << "', names a problem inside the search; for "
+                   "LN_SBPLX and LN_NELDERMEAD the initial step usually "
+                   "shrank below the precision near a WARM seed close to the "
+                   "optimum, and a larger STEP (a fraction of each OPTIM "
+                   "width), XTOL_ABS or a looser bound on that coordinate "
+                   "avoids it.";
+            std::cerr << "[tadah hpo] " << oss.str() << "\n";
             HPOLog::instance().warning(oss.str());
-            status_str = "STOPPED -- masked " + status_str + ": " + nlopt_msg;
+            status_str = "STOPPED -- " + status_str + ", with NLopt's "
+                         "message: " + nlopt_msg;
         } else if (res == nlopt::MAXEVAL_REACHED) {
             maxeval_ending();
         } else {
@@ -965,9 +969,9 @@ void run_nlopt_impl(const OptimizerSpec& sp, HostT& host,
              * evaluation reported for it (UData::reported). */
             const auto r = udata.reported.find(fmin);
             std::ostringstream nfo;
-            nfo << "NLopt finished: " << status_str << "  fmin="
+            nfo << "NLopt finished: " << status_str << ", best loss "
                 << (r != udata.reported.end() ? r->second : fmin);
-            std::cout << "[HPO] " << nfo.str() << "\n";
+            std::cout << "[tadah hpo] " << nfo.str() << "\n";
             HPOLog::instance().info(nfo.str());
         }
     } catch (const std::invalid_argument& e) {
@@ -980,8 +984,9 @@ void run_nlopt_impl(const OptimizerSpec& sp, HostT& host,
          * must be classified BEFORE the message-based graceful test below:
          * nothing was optimised, the run is FAILED. */
         const std::string status = std::string("FAILED -- ") + e.what();
-        std::cout << "[HPO] NLopt rejected the setup: " << e.what() << "\n";
-        HPOLog::instance().warning(std::string("NLopt invalid argument: ") + e.what());
+        std::cout << "[tadah hpo] NLopt refused the settings: " << e.what() << "\n";
+        HPOLog::instance().warning(std::string("NLopt refused the settings: ") +
+                                   e.what());
         HPOLog::instance().set_status(status);
         throw;
     } catch (const std::exception& e) {
@@ -1004,17 +1009,22 @@ void run_nlopt_impl(const OptimizerSpec& sp, HostT& host,
         if ((forced || graceful) && ended_by_objective()) return;
         if (graceful && ended_on_rejection(what)) return;
         if (graceful) {
-            status_str = "STOPPED -- " + what +
-                " (algorithm converged; consider adding ftol_rel / xtol_rel"
-                " / maxeval to stop cleanly next time)";
-            std::cout << "[HPO] NLopt self-terminated (" << what
-                      << ") -- best result preserved.\n";
-            HPOLog::instance().warning(what +
-                " -- algorithm converged; best result preserved");
+            /* "nlopt roundoff-limited" says where NLopt could get no
+             * further; a failure or NLopt's own stop message is a
+             * problem inside the search. */
+            const std::string ended = "NLopt ended the search itself (" +
+                what + "); the best evaluation so far is kept";
+            status_str = "STOPPED -- " + ended;
+            std::cout << "[tadah hpo] " << ended << ".\n";
+            if (what == "nlopt roundoff-limited")
+                HPOLog::instance().info(ended);
+            else
+                HPOLog::instance().warning(ended);
         } else {
             status_str = std::string("FAILED -- ") + what;
-            std::cout << "[HPO] NLopt threw: " << what << "\n";
-            HPOLog::instance().warning(std::string("NLopt exception: ") + what);
+            std::cout << "[tadah hpo] NLopt stopped on an error: " << what << "\n";
+            HPOLog::instance().warning(std::string("NLopt stopped on an "
+                                                   "error: ") + what);
         }
         /* Record this run's status; the outer hpo_run() driver will call
          * finish() once after the whole policy (including MULTISTART) ends. */

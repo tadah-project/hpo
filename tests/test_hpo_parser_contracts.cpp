@@ -37,6 +37,7 @@
 
 #include "tadah_test_skip.hpp"  // before catch2/catch.hpp
 #include "catch2/catch.hpp"
+#include "target_file_text.h"
 
 #include <tadah/core/context.h>
 #include <tadah/hpo/ceres_adapter.h>
@@ -137,7 +138,7 @@ std::string parse_error(const std::string& body)
     try {
         tadah::hpo::HPOTargets trg(ctx, cfg.path.string());
     } catch (const std::exception& e) {
-        return e.what();
+        return hpo_test::as_target(e.what(), cfg.path.string());
     }
     return {};
 }
@@ -324,7 +325,7 @@ TEST_CASE("Removed PRESTAGE block keyword points at STRATEGY TYPE PRESTAGE",
     const std::string msg = parse_error(
         "OPTIMIZER\nPRESTAGE\nENDPRESTAGE\nENDOPTIMIZER\n");
     CHECK_THAT(msg, Catch::Contains("TYPE PRESTAGE"));
-    CHECK_THAT(msg, Catch::Contains("REFINE is optional"));
+    CHECK_THAT(msg, Catch::Contains("which may be left out"));
 }
 
 /* ------------------------------------------------------------------ */
@@ -512,7 +513,7 @@ TEST_CASE("PC_WORKER_TIMEOUT parses seconds and rejects invalid values",
 
 namespace {
 
-/* The parser's own wording: the "Error on line N: ..." diagnostic without
+/* The parser's own wording: the "line N of <file>: ..." diagnostic without
  * the echoed config line and without the user's quoted token, so a check
  * on it cannot be satisfied or broken by what the user typed. */
 std::string own_wording(const std::string& msg, const std::string& token)
@@ -595,7 +596,7 @@ TEST_CASE("STRATEGY TYPE BASINS and BASINSV2 are rejected with the "
     for (const std::string t : {"BASINS", "BASINSV2", "BOGUS"}) {
         INFO("TYPE " << t);
         const std::string msg = parse_error(strategy_block(t, ""));
-        CHECK_THAT(msg, Catch::Contains("Error on line 3"));
+        CHECK_THAT(msg, Catch::Contains("line 3 of <target>: "));
         CHECK_THAT(msg, Catch::Contains(
             "STRATEGY TYPE must be PLAIN, MULTISTART, or PRESTAGE (got '" +
             t + "')"));
@@ -651,7 +652,7 @@ TEST_CASE("Pre-release BASINS-era keywords get the generic unknown-key error",
         INFO(k);
         const std::string outer =
             parse_error("OPTIMIZER\n" + k + " 1\nENDOPTIMIZER\n");
-        CHECK_THAT(outer, Catch::Contains("Error on line 2"));
+        CHECK_THAT(outer, Catch::Contains("line 2 of <target>: "));
         CHECK_THAT(outer, Catch::Contains(
             "unknown key '" + k + "' inside the OPTIMIZER block opened on "
             "line 1 (ENDOPTIMIZER closes it)"));
@@ -672,15 +673,15 @@ TEST_CASE("EXPLORE and REFINE blocks name TYPE PRESTAGE as their only home",
         INFO("TYPE " << t);
         const std::string explore =
             parse_error(strategy_block(t, "  EXPLORE\n  ENDEXPLORE\n"));
-        CHECK_THAT(explore, Catch::Contains("Error on line 4"));
+        CHECK_THAT(explore, Catch::Contains("line 4 of <target>: "));
         CHECK_THAT(explore, Catch::Contains(
             "EXPLORE block is only valid with TYPE PRESTAGE "
-            "(declare TYPE before EXPLORE)"));
+            "(the TYPE line comes before the EXPLORE block)"));
         const std::string refine =
             parse_error(strategy_block(t, "  REFINE\n  ENDREFINE\n"));
         CHECK_THAT(refine, Catch::Contains(
             "REFINE block is only valid with TYPE PRESTAGE "
-            "(declare TYPE before REFINE)"));
+            "(the TYPE line comes before the REFINE block)"));
     }
     /* Without a TYPE line the strategy is PLAIN. */
     CHECK_THAT(parse_error("OPTIMIZER\nSTRATEGY\n  EXPLORE\n  ENDEXPLORE\n"
@@ -702,7 +703,7 @@ TEST_CASE("BASINS ladder/budget/pool knobs are unknown keys",
             const std::string k = first_token(line);
             const std::string msg =
                 parse_error(prestage_block("    " + line + "\n"));
-            CHECK_THAT(msg, Catch::Contains("Error on line 8"));
+            CHECK_THAT(msg, Catch::Contains("line 8 of <target>: "));
             CHECK_THAT(msg, Catch::Contains(
                 "unknown key '" + k + "' inside the EXPLORE block opened on "
                 "line 4 (ENDEXPLORE closes it)"));
@@ -729,7 +730,7 @@ TEST_CASE("BASINS ladder/budget/pool knobs are unknown keys",
                     const std::string k = first_token(line);
                     const std::string msg =
                         parse_error(strategy_block(t, "  " + line + "\n"));
-                    CHECK_THAT(msg, Catch::Contains("Error on line 4"));
+                    CHECK_THAT(msg, Catch::Contains("line 4 of <target>: "));
                     CHECK_THAT(msg, Catch::Contains(
                         "unknown key '" + k + "' inside the STRATEGY block "
                         "opened on line 2 (ENDSTRATEGY closes it)"));
@@ -838,7 +839,7 @@ TEST_CASE("build_run_policy wraps PLAIN/MULTISTART/PRESTAGE in RestartPolicy "
 /*  Strict numbers                                                     */
 /* ------------------------------------------------------------------ */
 /* Every numeric key rejects what it cannot hold, with its own message at
- * its own line ("Error on line N: ..."): a non-number, trailing junk, a
+ * its own line ("line N of <file>: ..."): a non-number, trailing junk, a
  * value the key's type cannot represent (a sign, fraction or exponent for
  * an integer, inf/nan/overflow for a real), a value outside its range, a
  * missing value and an extra token. `iss >> v` accepted most of these
@@ -865,10 +866,10 @@ struct KeyHome {
         return static_cast<std::size_t>(
                    std::count(before.begin(), before.end(), '\n')) + 1;
     }
-    /* "Error on line N: " */
+    /* "line N of <file>: " */
     std::string at() const
     {
-        return "Error on line " + std::to_string(line()) + ": ";
+        return "line " + std::to_string(line()) + " of <target>: ";
     }
 };
 
@@ -951,7 +952,7 @@ std::vector<KeyHome> optimizer_block_homes(const std::string& key)
 }
 
 /* The leftover-token error of the optimiser attributes (line-framed).
- * "Error on line N: " names the line once. */
+ * "line N of <file>: " names the line once. */
 std::string attr_extra(const KeyHome& h, const std::string& tok)
 {
     return h.at() + h.key + " takes no further value here (unexpected '" +
@@ -1291,7 +1292,7 @@ TEST_CASE("DUMP and BDUMP: a directory inside the other's is accepted in "
 
     const std::size_t line = static_cast<std::size_t>(
         std::count(kOptimizer.begin(), kOptimizer.end(), '\n')) + 2;
-    const std::string at = "Error on line " + std::to_string(line) + ": ";
+    const std::string at = "line " + std::to_string(line) + " of <target>: ";
     CHECK_THAT(parse_error(kOptimizer + "DUMP 5 " + archive.string() +
                            "\nBDUMP 5 " + (archive / "x" / "best").string() +
                            "\n"),
@@ -1344,8 +1345,8 @@ TEST_CASE("DUMP and BDUMP: a directory inside the other's is accepted in "
     const std::size_t line9 = line - 1;
     CHECK_THAT(parse_error(kOptimizer + "DUMP 5 " +
                            (root / "lnk2" / "pots").string() + "\n"),
-               Catch::StartsWith("Error on line " + std::to_string(line9) +
-                                 ": DUMP directory '" +
+               Catch::StartsWith("line " + std::to_string(line9) +
+                                 " of <target>: DUMP directory '" +
                                  (root / "lnk2" / "pots").string() +
                                  "' cannot be created: the directory '" +
                                  (root / "missing2").string() +
@@ -1405,9 +1406,9 @@ TEST_CASE("DUMP and BDUMP: a directory inside the other's is accepted in "
         CHECK_THAT(parse_error(kOptimizer + "BDUMP 5 " + best_dot +
                                "\nDUMP 5 " + (root / "best" / "pots").string() +
                                "\n"),
-                   Catch::StartsWith("Error on line " +
+                   Catch::StartsWith("line " +
                                      std::to_string(line - 1) +
-                                     ": BDUMP directory '" + best_dot +
+                                     " of <target>: BDUMP directory '" + best_dot +
                                      "' cannot be resolved: it walks '.' in '" +
                                      (root / "best").string() +
                                      "', which does not exist"));
@@ -1868,31 +1869,31 @@ TEST_CASE("Strict numbers: OPTIM explicit bounds are finite numbers",
         try {
             tadah::hpo::HPOTargets trg(ctx, cfg.path.string());
         } catch (const std::exception& e) {
-            return std::string(e.what());
+            return hpo_test::as_target(e.what(), cfg.path.string());
         }
         return std::string();
     };
     CHECK(optim_error("OPTIM WATOM (1) 0.1 5.0") == "");
-    /* "Error on line 9: " names the line; the message does not repeat it. */
+    /* "line 9 of <target>: " names the line; the message does not repeat it. */
     CHECK_THAT(optim_error("OPTIM WATOM (1) 0.1 6.0x"),
-               Catch::StartsWith("Error on line 9: OPTIM WATOM: <high> must "
+               Catch::StartsWith("line 9 of <target>: OPTIM WATOM: <high> must "
                                  "be a finite number (got '6.0x')"));
     CHECK_THAT(optim_error("OPTIM WATOM (x) 0.1 5.0"),
-               Catch::StartsWith("Error on line 9: OPTIM WATOM: bad index "
+               Catch::StartsWith("line 9 of <target>: OPTIM WATOM: bad index "
                                  "list (x): ") &&
                !Catch::Contains("process_optim_config"));
     CHECK_THAT(optim_error("OPTIM WATOM (3) 0.1 5.0"),
-               Catch::StartsWith("Error on line 9: OPTIM WATOM (3): ") &&
+               Catch::StartsWith("line 9 of <target>: OPTIM WATOM (3): ") &&
                !Catch::Contains("process_optim_config"));
     for (const std::string tok : {"0.1x", "abc", "inf", "nan", "1e400"}) {
         INFO("low '" << tok << "'");
         CHECK_THAT(optim_error("OPTIM WATOM (1) " + tok + " 5.0"),
-                   Catch::StartsWith("Error on line 9: ") &&
+                   Catch::StartsWith("line 9 of <target>: ") &&
                    Catch::Contains("<low> must be a finite number (got '" +
                                    tok + "')"));
         INFO("high '" << tok << "'");
         CHECK_THAT(optim_error("OPTIM WATOM (1) 0.1 " + tok),
-                   Catch::StartsWith("Error on line 9: ") &&
+                   Catch::StartsWith("line 9 of <target>: ") &&
                    Catch::Contains("<high> must be a finite number (got '" +
                                    tok + "')"));
     }
@@ -1909,7 +1910,7 @@ TEST_CASE("Strict numbers: PC_FAILPROBE --gate and --s0 are finite numbers",
             INFO(flag << " '" << tok << "'");
             CHECK_THAT(parse_error(kOptimizer + "PC_FAILPROBE --script p.in "
                                    "--outvar S " + flag + " " + tok + "\n"),
-                       Catch::StartsWith("Error on line 9: PC_FAILPROBE " +
+                       Catch::StartsWith("line 9 of <target>: PC_FAILPROBE " +
                                          flag + " must be " + kind + ", "
                                          "got '" + tok + "'"));
         }
@@ -1988,7 +1989,7 @@ TEST_CASE("Strict numbers: PC_LAMMPS option values",
         /* ... and through the parser, at the PC_LAMMPS line. */
         const std::string line = "PC_LAMMPS " + head + c.options;
         CHECK_THAT(parse_error(kOptimizer + line + "\n"),
-                   Catch::StartsWith("Error on line 9: " + c.message) &&
+                   Catch::StartsWith("line 9 of <target>: " + c.message) &&
                    Catch::EndsWith("Line: " + line));
     }
 
@@ -2045,7 +2046,7 @@ TEST_CASE("Strict numbers: a script timeout must be positive, 'off' or "
         /* ... and through the parser, at the PC_LAMMPS line. */
         const std::string line = "PC_LAMMPS " + head + tok;
         CHECK_THAT(parse_error(kOptimizer + line + "\n"),
-                   Catch::StartsWith("Error on line 9: " +
+                   Catch::StartsWith("line 9 of <target>: " +
                                      positive("--maxtime", tok)) &&
                    Catch::EndsWith("Line: " + line));
     }
@@ -2091,7 +2092,7 @@ TEST_CASE("Strict numbers: a timeout whose worker deadline does not fit in "
     const std::string line = "PC_LAMMPS --script " + script.path.string() +
                              " --varloss E 8.1 1 --maxtime 4e15";
     CHECK_THAT(parse_error(kOptimizer + line + "\n"),
-               Catch::StartsWith("Error on line 9: --maxtime is too large for "
+               Catch::StartsWith("line 9 of <target>: --maxtime is too large for "
                                  "the worker deadline, got '4e15'"));
 }
 
@@ -2118,7 +2119,7 @@ TEST_CASE("Strict numbers: a number too small for a double says so",
     /* PC_<METRIC> reads the same grammar: std::from_chars took 1e-320 as a
      * subnormal target that every other key rejected. */
     CHECK_THAT(parse_error(kOptimizer + "PC_ERMSE 1e-320 1\n"),
-               Catch::StartsWith("Error on line 9: PC_ERMSE <target> must be "
+               Catch::StartsWith("line 9 of <target>: PC_ERMSE <target> must be "
                                  "a finite number, got '1e-320' " + note));
 }
 
@@ -2137,7 +2138,7 @@ TEST_CASE("Strict numbers: a PC_<METRIC> number error names the key and the "
               "PC_FRMSE --skip-above must be a positive number, got '2x'"}}) {
         INFO(c.line);
         CHECK_THAT(parse_error(kOptimizer + c.line + "\n"),
-                   Catch::StartsWith("Error on line 9: " + c.message));
+                   Catch::StartsWith("line 9 of <target>: " + c.message));
     }
 }
 
@@ -2176,7 +2177,7 @@ TEST_CASE("Strict numbers: a PC_LAMMPS option takes only its own values",
                    Catch::StartsWith(c.message));
         const std::string line = "PC_LAMMPS " + head + c.options;
         CHECK_THAT(parse_error(kOptimizer + line + "\n"),
-                   Catch::StartsWith("Error on line 9: " + c.message) &&
+                   Catch::StartsWith("line 9 of <target>: " + c.message) &&
                    Catch::EndsWith("Line: " + line));
     }
     /* A bare token before any option: the message names the key (it was
@@ -2230,7 +2231,7 @@ TEST_CASE("PC_LAMMPS: the variable maxtime is reserved for the script "
         const std::string line = "PC_LAMMPS " + head + opt;
         CHECK_THAT(parse_error(kOptimizer + "PC_SCRIPT_TIMEOUT 60\n" + line +
                                "\n"),
-                   Catch::StartsWith("Error on line 10: " + what));
+                   Catch::StartsWith("line 10 of <target>: " + what));
     }
     /* A variable whose value is the word maxtime is not the variable. */
     std::string cmd = head + "-var label maxtime";
@@ -2549,13 +2550,17 @@ TEST_CASE("tadah refit: a top-level OPTIMIZER block is refused with its "
      * Before the fix: the text ended "See HPO_REFIT_2B_EAM/REDESIGN/configs
      * for examples.", a directory that is not shipped. */
     CHECK(refit_error("OPTIMIZER", "GLOBAL ALGO MLSL ENDGLOBAL") ==
-          "tadah refit: a top-level OPTIMIZER block is no longer supported. "
-          "The stage pipeline is now INIT -> EXPLORE -> REFINE -> FUSE, each "
-          "its own block, with the OPTIMIZER block NESTED inside "
-          "EXPLORE/REFINE/FUSE. Migration: GLOBAL folded into EXPLORE rung 0 "
-          "(set its global ALGO in EXPLORE's OPTIMIZER, with an INNER local); "
-          "POLISH -> REFINE; JOINT -> FUSE. The Refitting page of the "
-          "documentation has examples (Stage blocks).");
+          "tadah refit: a top-level OPTIMIZER block is refused: the stages of "
+          "tadah refit are the blocks INIT, EXPLORE, REFINE and FUSE, and an "
+          "OPTIMIZER block sits inside EXPLORE, REFINE or FUSE. The GLOBAL, "
+          "POLISH and JOINT stages of a top-level OPTIMIZER block correspond "
+          "to the OPTIMIZER block inside EXPLORE (its global ALGO with an "
+          "INNER local search, rung 0), to REFINE and to FUSE; the Refitting "
+          "page of the documentation has examples (Stage blocks).");
+    /* It said "In the grammar of the top-level OPTIMIZER block, GLOBAL is
+     * the global ALGO of the OPTIMIZER block of EXPLORE (with an INNER local
+     * search, rung 0), POLISH is REFINE and JOINT is FUSE", which did not
+     * name GLOBAL, POLISH and JOINT as stages. */
 }
 
 TEST_CASE("tadah refit: EXPLORE MAX_ADD is an integer >= 0",
@@ -2709,7 +2714,7 @@ TEST_CASE("Strict numbers: a value outside its range is named in the error",
               "PC_FAILPROBE --s0 must be a positive number, got '0'"}}) {
         INFO(c.line);
         CHECK_THAT(parse_error(kOptimizer + c.line + "\n"),
-                   Catch::StartsWith("Error on line 9: " + c.message) &&
+                   Catch::StartsWith("line 9 of <target>: " + c.message) &&
                    Catch::EndsWith("Line: " + c.line));
     }
     CHECK(parse_error(kOptimizer + "PC_EMAE 0 0 --skip-above 5\n") == "");
@@ -2725,7 +2730,7 @@ TEST_CASE("Strict numbers: a value outside its range is named in the error",
                    Catch::StartsWith(message));
         CHECK_THAT(parse_error(kOptimizer + "PC_LAMMPS " + head +
                                "--failvar F " + tok + "\n"),
-                   Catch::StartsWith("Error on line 9: " + message));
+                   Catch::StartsWith("line 9 of <target>: " + message));
     }
     CHECK(lammps_sim_error(head + "--failvar F 0.5") == "");
 }
@@ -2749,7 +2754,7 @@ TEST_CASE("Strict numbers: PC_FAILPROBE --failscore is a positive finite "
         INFO("PC_FAILPROBE --failscore " << tok);
         const std::string line = head + "--failscore " + tok;
         CHECK_THAT(parse_error(kOptimizer + line + "\n"),
-                   Catch::StartsWith("Error on line 9: PC_FAILPROBE "
+                   Catch::StartsWith("line 9 of <target>: PC_FAILPROBE "
                                      "--failscore must be a positive finite "
                                      "number, got '" + tok + "'") &&
                    Catch::EndsWith("Line: " + line));
@@ -2791,7 +2796,7 @@ TEST_CASE("Strict numbers: RHOGATE and RHOBARGATE", "[HPO][hpo_targets][strict_n
      * sign, fraction or exponent). Their first reader took strtod's forms
      * (`RHOGATE 0x1p-10`, a subnormal R_LO) and an NPTS written as a real
      * (`NPTS 2e3`, `NPTS +100`, `NPTS 100.0`). Errors name the line. */
-    const std::string at = "Error on line 9: ";
+    const std::string at = "line 9 of <target>: ";
     const auto err = [](const std::string& line) {
         return parse_error(kOptimizer + line + "\n");
     };
@@ -2917,7 +2922,7 @@ TEST_CASE("Strict numbers: a hexadecimal float is an error for every key",
               "PC_FAILPROBE --s0 must be a positive number, got '0x1p1'"}}) {
         INFO(c.line);
         CHECK_THAT(parse_error(kOptimizer + c.line + "\n"),
-                   Catch::StartsWith("Error on line 9: " + c.message));
+                   Catch::StartsWith("line 9 of <target>: " + c.message));
     }
 
     /* The optimiser attributes: the block-wide and per-key STEP, a numeric
@@ -2946,7 +2951,7 @@ TEST_CASE("Strict numbers: a hexadecimal float is an error for every key",
         try {
             tadah::hpo::HPOTargets trg(ctx, cfg.path.string());
         } catch (const std::exception& e) {
-            return std::string(e.what());
+            return hpo_test::as_target(e.what(), cfg.path.string());
         }
         return std::string();
     };
@@ -2961,7 +2966,7 @@ TEST_CASE("Strict numbers: a hexadecimal float is an error for every key",
               "OPTIM WATOM: ASINH <c> must be a finite number (got '0x1')"}}) {
         INFO(c.line);
         CHECK_THAT(optim_error(c.line),
-                   Catch::StartsWith("Error on line 9: " + c.message));
+                   Catch::StartsWith("line 9 of <target>: " + c.message));
     }
 
     /* The PC_LAMMPS options, through LammpsSim and at the PC_LAMMPS line. */
@@ -2993,7 +2998,7 @@ TEST_CASE("Strict numbers: a hexadecimal float is an error for every key",
                    Catch::StartsWith(c.message));
         CHECK_THAT(parse_error(kOptimizer + "PC_LAMMPS " + head + c.line +
                                "\n"),
-                   Catch::StartsWith("Error on line 9: " + c.message));
+                   Catch::StartsWith("line 9 of <target>: " + c.message));
     }
 
     /* PC_OBSERVABLE values. */

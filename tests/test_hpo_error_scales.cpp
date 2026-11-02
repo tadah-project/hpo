@@ -35,6 +35,7 @@
 // weights); the data are H2 cells.
 
 #include "catch2/catch.hpp"
+#include "target_file_text.h"
 
 #include <tadah/core/blueprint_parser.h>
 #include <tadah/core/context.h>
@@ -160,7 +161,7 @@ std::string parse_error(Context c, const std::string& text) {
     try {
         HPOTargets trg(c, tf.path.string());
     } catch (const std::exception& e) {
-        return e.what();
+        return hpo_test::as_target(e.what(), tf.path.string());
     }
     return "";
 }
@@ -187,7 +188,7 @@ std::string startup_error(Context c, const std::string& text,
         HPOTargets trg(c, tf.path.string());
         tadah::hpo::validate_hpo_setup(c, trg, true, true);
     } catch (const std::exception& e) {
-        what = e.what();
+        what = hpo_test::as_target(e.what(), tf.path.string());
     }
     if (err) *err = cap.text.str();
     return what;
@@ -281,7 +282,7 @@ TEST_CASE("OPTIM of an error scale or of WDBFILE searches values > 0",
                 INFO("low bound " << lo);
                 CHECK_THAT(parse_error(c, target("OPTIM " + key + " (1) " +
                                                  lo + " 2\n")),
-                           Equals("Error on line 1: OPTIM " + key +
+                           Equals("line 1 of <target>: OPTIM " + key +
                                   " (1): the low bound " + lo +
                                   " is not > 0, but " + k.why +
                                   ", so the low bound of its box is > 0\n"
@@ -350,13 +351,13 @@ TEST_CASE("OPTIM of ENORM, ENERGY or a retired key is refused at its line",
     tadah::core::PeriodicTable::initialize();
     const Context c = model_ctx();
     CHECK_THAT(parse_error(c, target("OPTIM ENORM (1) 0 1\n")),
-               Equals("Error on line 1: OPTIM ENORM is not a valid search "
+               Equals("line 1 of <target>: OPTIM ENORM is not a valid search "
                       "target: ENORM (ATOM or SQRT) chooses how the residual "
                       "of an energy is normalised, a choice rather than a "
                       "continuous parameter; the training configuration "
                       "sets it.\nLine: OPTIM ENORM (1) 0 1"));
     CHECK_THAT(parse_error(c, target("OPTIM ENERGY (1) 0 1\n")),
-               Equals("Error on line 1: OPTIM ENERGY is not a valid search "
+               Equals("line 1 of <target>: OPTIM ENERGY is not a valid search "
                       "target: ENERGY (true or false) says whether the fit "
                       "has the energies, a switch rather than a continuous "
                       "parameter; the training configuration sets it.\n"
@@ -368,7 +369,7 @@ TEST_CASE("OPTIM of ENORM, ENERGY or a retired key is refused at its line",
             const std::string said =
                 parse_error(c, target("OPTIM " + k + " (1) 0.5 2\n"));
             CHECK_THAT(said,
-                       Contains("Error on line 1: OPTIM " + k +
+                       Contains("line 1 of <target>: OPTIM " + k +
                                 " is not a valid search target: " + k +
                                 " is a retired key: ") &&
                            Contains("Replaced by: "));
@@ -858,9 +859,8 @@ TEST_CASE("A WARM seed without the line of a searched key does not have "
     TempFile old_seed("CGRID2B 1.2 1.9\nFWEIGHT 100\nSGRID2B 0.5 1.0\n",
                       ".tadah");
     CHECK_THAT(parse_error(c, text(old_seed.path.string())),
-               Contains("WARM: 1 parameter(s) not found in " +
-                        old_seed.path.string()) &&
-                   Contains("FSIGMA"));
+               Contains("WARM: " + old_seed.path.string() +
+                        " has no value for FSIGMA[1]"));
     TempFile seed("CGRID2B 1.2 1.9\nFSIGMA 0.2 0\nSGRID2B 0.5 1.0\n",
                   ".tadah");
     TempFile tf(text(seed.path.string()), ".hpo");
@@ -916,7 +916,7 @@ TEST_CASE("tadah hpo refuses OPTIM of an error scale when no evaluation "
             const std::string line = "OPTIM " + k + " (1) 0.5 2\n";
             CHECK(startup_error(pinned, target(line)) ==
                   "OPTIM " + k + ": the evaluations of this run fit no "
-                  "coefficient (FIXINDEX pins every weight), so " + k +
+                  "coefficient (FIXINDEX fixes every coefficient), so " + k +
                   " would change nothing and every candidate would give "
                   "the same potential.");
             Context fitted = model_ctx();

@@ -11,6 +11,7 @@
 // checks the INIT seeds.
 
 #include "catch2/catch.hpp"
+#include "target_file_text.h"
 
 #include "rhoform_test_support.h"
 
@@ -51,8 +52,8 @@ TEST_CASE("RESTART METHOD WARM: the seed file is read at startup",
     CHECK_THAT(targets_error(make_ream_ctx("SIGNED"),
                              head + restart_block(
                                  "    METHOD WARM no_such_restart_seed.tadah\n")),
-               Catch::Contains("WARM: cannot open seed file "
-                               "'no_such_restart_seed.tadah'"));
+               Catch::Contains("WARM: the seed file "
+                               "'no_such_restart_seed.tadah' cannot be opened"));
   }
   SECTION("the WARM RHOFORM rule applies to a RESTART seed") {
     TempFile seed(ream_seed("0.4 0.3 0.1", "RHOFORM NONNEG\n"));
@@ -128,12 +129,12 @@ TEST_CASE("RESTART seeds meet the density gates' SEED rule",
   };
   CHECK_THAT(gates_error("RHOGATE 1e-5\n"),
              Catch::Contains("RHOGATE: seed RESTART WARM " + bad.path.string()) &&
-                 Catch::Contains("fails the rho(r) sign gate"));
+                 Catch::Contains("fails the sign condition of RHOGATE"));
   rhoform_test::Journal j;
   CHECK(gates_error("RHOGATE 1e-5 SEED WARN\n").empty());
   CHECK_THAT(j.finish(),
              Catch::Contains("RHOGATE: seed RESTART WARM " + bad.path.string()) &&
-                 Catch::Contains("SEED WARN: the run proceeds"));
+                 Catch::Contains("Under SEED WARN the run goes on"));
 }
 
 namespace {
@@ -151,7 +152,7 @@ std::size_t line_number(const std::string& config, const std::string& text) {
 }
 
 /* Checks that `error` is the parser's form of a refusal of the line
- * `method_line` of `config` ("Error on line N: <what>\nLine: <text>") and
+ * `method_line` of `config` ("line N of <file>: <what>\nLine: <text>") and
  * returns <what>. */
 std::string refusal_at(const std::string& config, const std::string& error,
                        const std::string& method_line) {
@@ -160,7 +161,7 @@ std::string refusal_at(const std::string& config, const std::string& error,
   REQUIRE(n > 0);
   std::smatch m;
   REQUIRE(std::regex_match(
-      error, m, std::regex(R"(Error on line (\d+): ([\s\S]*)\nLine: ([^\n]*))")));
+      error, m, std::regex(R"(line (\d+) of <target>: ([\s\S]*)\nLine: ([^\n]*))")));
   CHECK(std::stoul(m[1]) == n);
   CHECK(m[3] == method_line);
   return m[2];
@@ -174,11 +175,12 @@ std::string refusal_at(const std::string& config, const std::string& error,
  * Pins: a WARM file that is missing (in the OPTIMIZER block's INIT block,
  * an EXPLORE block's INIT block and the RESTART block), a WARM seed without
  * the OPTIM parameter under WARM_ON_MISMATCH error, and a WARM seed whose
- * RHOFORM the run refuses are refused as "Error on line N: <what>\nLine:
+ * RHOFORM the run refuses are refused as "line N of <file>: <what>\nLine:
  * <the METHOD line>", N and the text those of the METHOD WARM line, <what>
- * the refusal as it was ("WARM: cannot open seed file ...", "WARM: 1
- * parameter(s) not found in ...: AMPGRIDMB[1]", "WARM seed ... declares
- * RHOFORM NONNEG, but ...").
+ * the refusal ("WARM: the seed file ... cannot be opened ...", "WARM: ...
+ * has no value for AMPGRIDMB[1]", "WARM seed ... declares RHOFORM NONNEG,
+ * but ..."; the first two said "WARM: cannot open seed file ..." and "WARM:
+ * 1 parameter(s) not found in ...: AMPGRIDMB[1]").
  * Before the fix: the refusals were <what> alone, no line. */
 TEST_CASE("A METHOD chain's refusal names the line of its METHOD",
           "[HPO][init][restart][restart_seeds][refusal_lines]") {
@@ -187,7 +189,8 @@ TEST_CASE("A METHOD chain's refusal names the line of its METHOD",
   const std::string plain =
       "  STRATEGY\n    TYPE PLAIN\n    LIB DLIB\n    ALGO BFGS\n"
       "    MAXEVAL 5\n  ENDSTRATEGY\n";
-  const std::string missing = "WARM: cannot open seed file 'no_such_seed.tadah'";
+  const std::string missing = "WARM: the seed file 'no_such_seed.tadah' "
+                              "cannot be opened";
 
   SECTION("the OPTIMIZER block's INIT block") {
     const std::string line = "    METHOD WARM no_such_seed.tadah";
@@ -223,8 +226,7 @@ TEST_CASE("A METHOD chain's refusal names the line of its METHOD",
         "\n    WARM_ON_MISMATCH error\n  ENDINIT\n" + plain + "ENDOPTIMIZER\n";
     CHECK(refusal_at(config, targets_error(make_ream_ctx("SIGNED"), config),
                      line) ==
-          "WARM: 1 parameter(s) not found in " + seed.path.string() +
-              ": AMPGRIDMB[1]");
+          "WARM: " + seed.path.string() + " has no value for AMPGRIDMB[1]");
   }
   SECTION("a WARM seed whose RHOFORM the run refuses") {
     TempFile seed(ream_seed("0.4 0.3 0.1", "RHOFORM NONNEG\n"));

@@ -5,6 +5,8 @@
  * potential and a four-atom bcc Ta database. Header-only; include it after
  * catch2/catch.hpp. */
 
+#include "target_file_text.h"
+
 #include <tadah/core/context.h>
 #include <tadah/hpo/hpo_log.h>
 #include <tadah/hpo/hpo_targets.h>
@@ -152,12 +154,15 @@ inline Context make_ream_ctx(const char* form,
 }
 
 /* The error HPOTargets(ctx, <target>) throws ("" when it does not). */
+/* The error HPOTargets(ctx, target) throws ("" when it does not), with
+ * the temporary target file written as <target> (hpo_test::as_target; the
+ * frame was "Error on line N: ", without the file). */
 inline std::string targets_error(Context ctx, const std::string& target) {
   TempFile tf(target);
   try {
     HPOTargets trg(ctx, tf.path.string());
   } catch (const std::exception& e) {
-    return e.what();
+    return hpo_test::as_target(e.what(), tf.path.string());
   }
   return "";
 }

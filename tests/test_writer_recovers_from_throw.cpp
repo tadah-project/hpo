@@ -72,16 +72,17 @@ struct WriterSim {
                 } catch (const std::exception& ex) {
                     dropped_iters.push_back(next_flush.load());
                     tadah::hpo::HPOLog::instance().warning(
-                        std::string("HPO writer: dropping iter=") +
+                        "result files: the rows of evaluation " +
                         std::to_string(next_flush.load()) +
-                        " (exception type=" + typeid(ex).name() + "): " +
-                        ex.what());
+                        " are not written: " + std::string(ex.what()));
                     io_buf.erase(next_flush++);
                 }
             }
         } catch (const std::exception& ex) {
             tadah::hpo::HPOLog::instance().warning(
-                std::string("HPO writer: outer catch: ") + ex.what());
+                "result files: writing stopped at evaluation " +
+                std::to_string(next_flush.load()) + ": " +
+                std::string(ex.what()));
         }
 
         writer_token.clear(std::memory_order_release);
@@ -139,7 +140,8 @@ TEST_CASE("Writer recovers from a per-iter throw and keeps draining",
     std::string body((std::istreambuf_iterator<char>(in)),
                      std::istreambuf_iterator<char>());
     in.close();
-    CHECK(body.find("dropping iter=50") != std::string::npos);
+    CHECK(body.find("the rows of evaluation 50 are not written") !=
+          std::string::npos);
     CHECK(body.find("simulated per-iter write failure") != std::string::npos);
 
     std::error_code ec;

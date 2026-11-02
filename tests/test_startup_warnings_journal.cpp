@@ -4,7 +4,7 @@
 // centre beyond the cutoff of a smooth cutoff, an OPTIM box of a bump
 // centre that reaches beyond it, the knot cutoff that the run derives from
 // the largest knot, an OPTIM RCUT of a knot channel. Each is a WARNING of
-// the run: on standard error ("[HPO] WARNING: "), in the journal, and so
+// the run: on standard error ("[tadah hpo] WARNING: "), in the journal, and so
 // among the warnings `tadah hpo --check` lists and counts (the notes a run
 // without a journal keeps, HPOLog::notes_without_journal).
 #include "catch2/catch.hpp"
@@ -175,7 +175,7 @@ std::size_t warnings_with(const std::vector<JournalNote>& notes,
 void check_warned(const Startup& s, const std::string& w)
 {
     INFO("journal:\n" << s.journal << "\nstderr:\n" << s.err);
-    CHECK(count_of(s.err, "[HPO] WARNING: " + w) == 1);
+    CHECK(count_of(s.err, "[tadah hpo] WARNING: " + w) == 1);
     CHECK(count_of(s.journal, "WARNING   " + w) == 1);
     CHECK(warnings_with(s.notes, w) == 1);
 }
@@ -204,9 +204,10 @@ TEST_CASE("startup warnings: the cutoff checks' warnings reach standard "
         const Startup s = startup(
             blip_ctx("5.5 3.0"),
             "OPTIM SGRID2B (1) 1.0 3.0\nPC_ERMSE 0 1\n" + kOptimizer);
-        check_warned(s, "CGRID2B bump 1 centre 5.5 lies beyond RCUT2B = 5 "
-                        "(pathological: only its inner shoulder can "
-                        "contribute) — move the centre below the cutoff.");
+        check_warned(s, "CGRID2B bump 1 has its centre 5.5 beyond RCUT2B = 5: "
+                        "only its inner shoulder reaches the neighbours; a "
+                        "centre below the cutoff (tadah refit --edit) gives "
+                        "the whole bump.");
     }
     {
         const Startup s = startup(
@@ -219,9 +220,12 @@ TEST_CASE("startup warnings: the cutoff checks' warnings reach standard "
     {
         const Startup s = startup(
             knot_ctx(5.0), "OPTIM RCUT2B (1) 4.5 5.5\nPC_ERMSE 0 1\n" + kOptimizer);
+        /* It ended "... re-derived on every evaluation." */
         check_warned(s, "OPTIM RCUT2B has no effect for the knot basis "
                         "family: the effective cutoff is the largest CGRID2B "
-                        "knot and RCUT2B is re-derived on every evaluation.");
+                        "knot and RCUT2B is re-derived on every evaluation, "
+                        "so the OPTIM RCUT2B line adds a search parameter "
+                        "without effect; CGRID2B sets the effective cutoff.");
     }
 }
 

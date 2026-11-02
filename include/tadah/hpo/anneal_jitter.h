@@ -479,7 +479,7 @@ JitterPlan run_jitter_calibration(const OptimizerSpec& sp, const Knobs& kb,
         << " of MAXTIME)";
     if (rank == 0) {
       log.info(o.str());
-      std::cout << "[HPO] " << o.str() << "\n" << std::flush;
+      std::cout << "[tadah hpo] " << o.str() << "\n" << std::flush;
     }
   }
 
@@ -489,8 +489,8 @@ JitterPlan run_jitter_calibration(const OptimizerSpec& sp, const Knobs& kb,
     w << tag << " init-jitter calibration may spend up to " << planned
       << " evaluation(s) before the search starts, more than MAXEVAL ("
       << *sp.stop.maxeval << "). It is not charged against MAXEVAL, but it "
-         "is real wall time. Lower INIT_JITTER_PROBES or set "
-         "INIT_JITTER_MAXEVAL.";
+         "is real wall time; a smaller INIT_JITTER_PROBES or a positive "
+         "INIT_JITTER_MAXEVAL limits it.";
     log.warning(w.str());
   }
 
@@ -647,7 +647,8 @@ JitterPlan run_jitter_calibration(const OptimizerSpec& sp, const Knobs& kb,
       << std::scientific << std::setprecision(3) << f0
       << ") gives a relative tolerance nothing to be relative to, so every "
          "dimension would pass at the cap. Falling back to the STEP_FRAC "
-         "jitter; fix the seed or use `INIT_MODE JITTER <fraction>`.";
+         "jitter; another seed or `INIT_MODE JITTER <fraction>` avoids "
+         "this.";
     log.warning(w.str());
     return plan;
   }
@@ -704,7 +705,8 @@ JitterPlan run_jitter_calibration(const OptimizerSpec& sp, const Knobs& kb,
     } else {
       o << ". The loss is NOT monotone in displacement along those axes, so "
            "sigma bounds only the points that were tested, not the interval "
-           "below it. Treat the jitter as a grid certificate there.";
+           "below it: on those axes the band is confirmed only at the tested "
+           "displacements.";
       log.hint(o.str());
     }
   }
@@ -714,8 +716,8 @@ JitterPlan run_jitter_calibration(const OptimizerSpec& sp, const Knobs& kb,
       << " dimension(s) were NOT measured (INIT_JITTER_SAMPLE=" << opt.sample
       << "); each took its family's median sigma/width and is flagged "
          "`inferred` in hpo_init_jitter.tsv. That assumes members of a family "
-         "share a sensitivity scale -- raise INIT_JITTER_SAMPLE if that is "
-         "doubtful for this basis.";
+         "share a sensitivity scale; a larger INIT_JITTER_SAMPLE measures "
+         "more of them where that is doubtful for this basis.";
     log.hint(h.str());
   }
   if (st_cut > 0) {
@@ -723,7 +725,8 @@ JitterPlan run_jitter_calibration(const OptimizerSpec& sp, const Knobs& kb,
     w << tag << " init-jitter calibration was cut short: " << st_cut
       << " dimension(s) never probed (cap " << cap
       << " or the MAXTIME share). They keep the STEP_FRAC sigma; the rest "
-         "are measured. Raise INIT_JITTER_MAXEVAL to finish the job.";
+         "are measured. A larger INIT_JITTER_MAXEVAL lets the calibration "
+         "probe more dimensions.";
     log.warning(w.str());
   }
 
@@ -770,7 +773,7 @@ JitterPlan run_jitter_calibration(const OptimizerSpec& sp, const Knobs& kb,
    * is a very reasonable bug report. Say it. */
   {
     std::ostringstream o;
-    o << tag << " init-jitter eval accounting: " << spent
+    o << tag << " init-jitter evaluation accounting: " << spent
       << " probe(s) spent, NOT charged against MAXEVAL";
     if (sp.stop.maxeval)
       o << " (" << *sp.stop.maxeval << ") -- the run's reported total is the "

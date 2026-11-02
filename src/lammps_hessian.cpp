@@ -48,12 +48,14 @@ inline StrainBasis voigt_basis(int alpha) {
 inline LAMMPS_NS::PairTadah* require_pair_tadah(LAMMPS_NS::LAMMPS* lmp) {
     if (!lmp || !lmp->force || !lmp->force->pair) {
         throw std::runtime_error(
-            "LammpsHessianAssembler: LAMMPS instance has no pair style");
+            "the LAMMPS instance has no pair style; the Hessian of the "
+            "potential needs pair_style tadah");
     }
     auto* pt = dynamic_cast<LAMMPS_NS::PairTadah*>(lmp->force->pair);
     if (!pt) {
         throw std::runtime_error(
-            "LammpsHessianAssembler: active pair style is not pair tadah");
+            "the active LAMMPS pair style is not tadah; the Hessian of the "
+            "potential needs pair_style tadah");
     }
     return pt;
 }

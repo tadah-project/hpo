@@ -164,7 +164,7 @@ TEST_CASE("joined cutoffs: the cutoff of a D2_Knot5 of a joined line is "
             "above the largest knot (4.5): the knot basis vanishes at its "
             "largest knot, so the cutoff of a D2_Knot5 descriptor is 4.5, "
             "which the CGRID2B knot positions set.";
-        CHECK(s.err.find("[HPO] WARNING: " + w) != std::string::npos);
+        CHECK(s.err.find("[tadah hpo] WARNING: " + w) != std::string::npos);
         CHECK(s.journal.find(w) != std::string::npos);
     }
     {
@@ -208,7 +208,7 @@ TEST_CASE("joined cutoffs: the bump supports of a D2_Blip of a joined line "
                                "2.5 3.5 4.5 2.5 3.0 4.5", "2 2 2");
         const Startup s = startup(ctx, "OPTIM WATOM (1) 0.1 5.0\n" + kOptimizer);
         INFO(s.error);
-        CHECK(s.error.find("bump-support gate") != std::string::npos);
+        CHECK(s.error.find("BUMPGATE: a compact bump reaches past its cutoff") != std::string::npos);
         CHECK(s.error.find("TYPE2B descriptor 2 (D2_Blip): CGRID2B bump 6 "
                            "(centre 4.5, eta 2) reaches 5.5, past RCUT2B (2) "
                            "= 5") != std::string::npos);
@@ -234,10 +234,11 @@ TEST_CASE("joined cutoffs: the bump supports of a D2_Blip of a joined line "
         INFO(s.error << "\njournal:\n" << s.journal);
         CHECK(s.error.empty());
         const std::string w =
-            "TYPE2B descriptor 2 (D2_Blip): CGRID2B bump 6 centre 5.5 lies "
-            "beyond RCUT2B (2) = 5 (pathological: only its inner shoulder can "
-            "contribute) — move the centre below the cutoff.";
-        CHECK(s.err.find("[HPO] WARNING: " + w) != std::string::npos);
+            "TYPE2B descriptor 2 (D2_Blip): CGRID2B bump 6 has its centre 5.5 "
+            "beyond RCUT2B (2) = 5: only its inner shoulder reaches the "
+            "neighbours; a centre below the cutoff (tadah refit --edit) gives "
+            "the whole bump.";
+        CHECK(s.err.find("[tadah hpo] WARNING: " + w) != std::string::npos);
         CHECK(s.journal.find(w) != std::string::npos);
     }
 }

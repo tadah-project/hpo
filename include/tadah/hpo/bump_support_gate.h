@@ -81,15 +81,15 @@ read_bump_grids(const core::Context &ctx, const std::string &ckey,
     try {
       models::D_Base::get_grid(ctx, key, out);
     } catch (const std::exception &e) {
-      throw std::runtime_error("bump-support gate: " + key +
-                               " cannot be read: " + e.what());
+      throw std::runtime_error("BUMPGATE: " + key + " cannot be read: " +
+                               e.what());
     }
   }
   if (g.first.empty() || g.first.size() != g.second.size())
     throw std::runtime_error(
-        "bump-support gate: " + ckey + " (" +
-        std::to_string(g.first.size()) + " value(s)) and " + skey + " (" +
-        std::to_string(g.second.size()) + ") do not pair up");
+        "BUMPGATE: " + ckey + " has " + std::to_string(g.first.size()) +
+        " value(s) and " + skey + " " + std::to_string(g.second.size()) +
+        ", which do not pair");
   return g;
 }
 
@@ -110,11 +110,11 @@ inline BindingRcut derive_binding_rcut(const core::Context &ctx,
   try {
     models::D_Base::get_grid(ctx, rkey, rvals);
   } catch (const std::exception &e) {
-    throw std::runtime_error("bump-support gate: " + rkey +
-                             " cannot be read: " + e.what());
+    throw std::runtime_error("BUMPGATE: " + rkey + " cannot be read: " +
+                             e.what());
   }
   if (rvals.empty())
-    throw std::runtime_error("bump-support gate: " + rkey + " has no value");
+    throw std::runtime_error("BUMPGATE: " + rkey + " has no value");
 
   /* the OPTIM entry of rkey (OPTIM keys are upper-cased at parse; the
    * density gates' reach shares this range) */
@@ -212,7 +212,7 @@ build_bump_gate_table(const core::Context &ctx, const HPOTargets &trg) {
         const double w_lo = s_opt_i ? its->second.lowbound[si] : w_seed;
         if (!(w_seed > 0.0) || !(w_lo > 0.0))
           throw std::logic_error(
-              "bump-support gate: " + bc.prefix() + ch.skey + " (" +
+              "internal error: BUMPGATE: " + bc.prefix() + ch.skey + " (" +
               std::to_string(si + 1) + ") = " + core::to_string(w_seed) +
               (s_opt_i ? " (OPTIM low bound " + core::to_string(w_lo) + ")"
                        : std::string()) +
@@ -262,8 +262,9 @@ build_bump_gate_table(const core::Context &ctx, const HPOTargets &trg) {
       double least=c.first+ch.w*(ch.physical_width?s.first:1/s.second);
       double most=c.second+ch.w*(ch.physical_width?s.second:1/s.first);
       if(least>spec.radius+tol || (trg.BUMPGATE_STRICT && most>spec.radius+tol))
-        throw std::runtime_error("DM_Embed support gate: "+ch.ckey+"["+std::to_string(i+1)+"] "+
-          (trg.BUMPGATE_STRICT?"has an infeasible box corner under BUMPGATE STRICT":"has no feasible point in its OPTIM box"));
+        throw std::runtime_error("BUMPGATE: "+ch.ckey+" ("+std::to_string(i+1)+") "+
+          (trg.BUMPGATE_STRICT?"has a corner of its OPTIM box whose support ends past the cutoff, which BUMPGATE STRICT refuses"
+                              :"has no point in its OPTIM box whose support ends inside the cutoff"));
       if(most>spec.radius+tol && (b.c_flat>=0 || b.s_flat>=0))ch.bumps.push_back(b);
     }
     if(!ch.bumps.empty())tbl.push_back(std::move(ch));
@@ -311,8 +312,9 @@ inline double bump_gate_violation(const std::vector<BumpGateChannel> &tbl,
  *  (bump_gate_violation) in the shortest round-trip form
  *  (core::format_roundtrip): exact, and a v below 5e-7 does not read 0. */
 inline std::string bump_gate_reject_what(double v) {
-  return "bump-support gate reject (c + w/eta past the cutoff, violation=" +
-         core::format_roundtrip(v) + ", graded band D)";
+  return "BUMPGATE rejected the candidate (c + w/eta past the cutoff, "
+         "violation=" +
+         core::format_roundtrip(v) + ")";
 }
 
 } // namespace detail

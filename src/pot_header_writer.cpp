@@ -278,7 +278,7 @@ void PotHeaderWriter::write_optim_section(std::ostream& os,
         std::string inner_str = sp.inner->algo;
         if (sp.inner->lib != "NOT SET")
             inner_str = sp.inner->lib + " / " + inner_str;
-        kv(os, "Inner optimizer", inner_str);
+        kv(os, "Inner optimiser", inner_str);
     }
 
     /* stop criteria -- compact, one line */

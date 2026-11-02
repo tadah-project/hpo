@@ -108,6 +108,8 @@ struct InitStrategySpec {
          * the chain is drawn names it (build_init_strategy). */
         std::size_t line = 0;
         std::string line_text;
+        /* The target file of the line, as --hpotarget gives it. */
+        std::string file;
         /* The key of the line, METHOD or STRATEGY (its other name inside
          * INIT and RESTART), as the line wrote it: the refusals of the
          * entry name it. */
@@ -291,6 +293,7 @@ struct OptimizerSpec {
           multistart(o.multistart),
           stage_topk(o.stage_topk),
           restart(o.restart),
+          source_file(o.source_file),
           block_line(o.block_line), block_line_text(o.block_line_text),
           key_lines(o.key_lines) {}
     OptimizerSpec& operator=(const OptimizerSpec& o) {
@@ -462,7 +465,11 @@ struct OptimizerSpec {
      * (inner_run_spec gives NLopt's default local optimiser the line of
      * the block it runs in). 0 for a spec built outside the parser. The
      * startup refusals of a phase's settings name it (with_block_line,
-     * phase_specs.h), as the parser's refusals of the block do. */
+     * phase_specs.h), as the parser's refusals of the block do.
+     * source_file: the target file these lines are in, as --hpotarget
+     * gives it ("" for a spec built outside the parser); the refusals at
+     * the lines of the block, its keys and its RESTART block name it. */
+    std::string      source_file;
     std::size_t      block_line = 0;
     std::string      block_line_text;
     /* The line of each key of that block whose refusal is about the key

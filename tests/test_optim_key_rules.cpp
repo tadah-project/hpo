@@ -10,6 +10,7 @@
 // error at the second line, in any case.
 
 #include "catch2/catch.hpp"
+#include "target_file_text.h"
 
 #include <tadah/core/context.h>
 #include <tadah/core/periodic_table.h>
@@ -108,9 +109,9 @@ TEST_CASE("OPTIM weights is refused like OPTIM WEIGHTS",
   KeyRulesTempFile tf("OPTIM weights (1) -1.0 1.0\n" +
                       std::string(kKeyRulesOptimizer));
   REQUIRE_THROWS_WITH(HPOTargets(ctx, tf.path.string()),
-                      Catch::Contains("Error on line 1") &&
+                      hpo_test::AsTarget(tf.path.string(), Catch::Contains("line 1 of <target>: ") &&
                       Catch::Contains("OPTIM WEIGHTS: WEIGHTS holds the "
-                                      "coefficients each evaluation fits"));
+                                      "coefficients each evaluation fits")));
 }
 
 TEST_CASE("OPTIM fixweight maps its indices through FIXINDEX",
@@ -238,7 +239,7 @@ TEST_CASE("lower-case OPTIM cgrid/sgrid keys arm the bump-support gate",
                         "PC_ERMSE 0 1\n" + std::string(kKeyRulesOptimizer));
     HPOTargets trg(ctx, tf.path.string());
     CHECK_THROWS_WITH(tadah::hpo::validate_hpo_setup(ctx, trg, true, true),
-                      Catch::Contains("bump-support gate") &&
+                      Catch::Contains("BUMPGATE: a compact bump reaches past its cutoff") &&
                       Catch::Contains("bump 1 of CGRID2B"));
   }
   SECTION("a lower-case OPTIM rcut2b bounds the neighbour list") {
@@ -259,17 +260,17 @@ TEST_CASE("an OPTIM index selected twice is an error at the second line",
     KeyRulesTempFile tf("OPTIM cgridmb (1) 0 1\nOPTIM CGRIDMB (1) 0.5 2\n" +
                         std::string(kKeyRulesOptimizer));
     REQUIRE_THROWS_WITH(HPOTargets(ctx, tf.path.string()),
-                        Catch::Contains("Error on line 2") &&
+                        hpo_test::AsTarget(tf.path.string(), Catch::Contains("line 2 of <target>: ") &&
                         Catch::Contains("OPTIM CGRIDMB (1)") &&
-                        Catch::Contains("line 1"));
+                        Catch::Contains("line 1")));
   }
   SECTION("the same key in one case, overlapping selections") {
     KeyRulesTempFile tf("OPTIM CGRIDMB (1-2) 0 3\nOPTIM CGRIDMB (2,3) 0 4\n" +
                         std::string(kKeyRulesOptimizer));
     REQUIRE_THROWS_WITH(HPOTargets(ctx, tf.path.string()),
-                        Catch::Contains("Error on line 2") &&
+                        hpo_test::AsTarget(tf.path.string(), Catch::Contains("line 2 of <target>: ") &&
                         Catch::Contains("OPTIM CGRIDMB (2)") &&
-                        Catch::Contains("line 1"));
+                        Catch::Contains("line 1")));
   }
   SECTION("the same key in two cases, other indices: one key, merged") {
     KeyRulesTempFile tf("OPTIM cgridmb (1) 0 1.5\nOPTIM CGRIDMB (3) 2 4\n" +
@@ -322,11 +323,11 @@ TEST_CASE("OPTIM on DIMER, FIXINDEX, MODEL and the OALGO algorithm is refused "
     KeyRulesTempFile tf(first + c.line + "\n" + kKeyRulesOptimizer);
     CHECK_THROWS_WITH(
         HPOTargets(ctx, tf.path.string()),
-        Catch::Contains("Error on line 2") &&
+        hpo_test::AsTarget(tf.path.string(), Catch::Contains("line 2 of <target>: ") &&
         Catch::Contains(std::string("OPTIM ") + c.key +
                         " is not a valid search target") &&
         Catch::Contains(c.what) &&
-        Catch::Contains("structure data rather than a continuous parameter"));
+        Catch::Contains("structure data rather than a continuous parameter")));
   }
 
   SECTION("OALGO: the algorithm (its first value) is refused") {
@@ -337,10 +338,10 @@ TEST_CASE("OPTIM on DIMER, FIXINDEX, MODEL and the OALGO algorithm is refused "
       KeyRulesTempFile tf(first + line + "\n" + kKeyRulesOptimizer);
       CHECK_THROWS_WITH(
           HPOTargets(ctx, tf.path.string()),
-          Catch::Contains("Error on line 2") &&
+          hpo_test::AsTarget(tf.path.string(), Catch::Contains("line 2 of <target>: ") &&
           Catch::Contains("OPTIM OALGO (1) is not a valid search target") &&
           Catch::Contains("training algorithm") &&
-          Catch::Contains("OPTIM OALGO (2)"));
+          Catch::Contains("OPTIM OALGO (2)")));
     }
   }
   SECTION("OALGO: the rcond M of options 1 and 3 (its second value) is a "
@@ -389,7 +390,7 @@ std::string startup_error(Context ctx, const std::string& line) {
     HPOTargets trg(ctx, tf.path.string());
     tadah::hpo::validate_hpo_setup(ctx, trg, true, true);
   } catch (const std::exception& e) {
-    return e.what();
+    return hpo_test::as_target(e.what(), tf.path.string());
   }
   return "";
 }
@@ -485,17 +486,17 @@ TEST_CASE("OPTIM on an integer key or an internal key is refused at its line",
     KeyRulesTempFile tf(first + "OPTIM SBASIS (1) 5 20\n" + kKeyRulesOptimizer);
     CHECK_THROWS_WITH(
         HPOTargets(ctx, tf.path.string()),
-        Catch::Contains("Error on line 2") &&
+        hpo_test::AsTarget(tf.path.string(), Catch::Contains("line 2 of <target>: ") &&
         Catch::Contains("OPTIM SBASIS (1) is not a valid search target") &&
-        Catch::Contains("integer"));
+        Catch::Contains("integer")));
   }
   {
     KeyRulesTempFile tf(first + "OPTIM ESTDEV (1) 0 1\n" + kKeyRulesOptimizer);
     CHECK_THROWS_WITH(
         HPOTargets(ctx, tf.path.string()),
-        Catch::Contains("Error on line 2") &&
+        hpo_test::AsTarget(tf.path.string(), Catch::Contains("line 2 of <target>: ") &&
         Catch::Contains("OPTIM ESTDEV is not a valid search target") &&
-        Catch::Contains("internal"));
+        Catch::Contains("internal")));
   }
   {
     KeyRulesTempFile tf(first + "OPTIM OALGO (1) 1 4\n" + kKeyRulesOptimizer);
@@ -718,7 +719,7 @@ TEST_CASE("OPTIM of a key the training configuration does not give names "
     try {
       HPOTargets trg(ctx, tf.path.string());
     } catch (const std::exception& e) {
-      what = e.what();
+      what = hpo_test::as_target(e.what(), tf.path.string());
     }
     out = cap.text.str();
     return what;
@@ -752,7 +753,7 @@ TEST_CASE("OPTIM of a key the training configuration does not give names "
     if (*c.fixindex) ctx.add("FIXINDEX", c.fixindex);
     std::string out;
     const std::string what = refusal(ctx, c.line, out);
-    CHECK(what == std::string("Error on line 1: ") + c.what + "\nLine: " +
+    CHECK(what == std::string("line 1 of <target>: ") + c.what + "\nLine: " +
                       c.line);
     INFO("standard output: " << out);
     CHECK(out.find("Context::size()") == std::string::npos);

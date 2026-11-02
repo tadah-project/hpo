@@ -272,8 +272,8 @@ TEST_CASE("End status: TADAH:ANNEAL records the MAXTIME that prevented a "
         LoggedRun lr;
         const std::string journal = run_with_deadline(sp, lr);
         CHECK(journal.find("ANNEAL re-anneal #") == std::string::npos);
-        CHECK(journal.find("ANNEAL stopped: MAXTIME exceeded after 10 host "
-                           "eval(s) (3 rung(s) completed)") !=
+        CHECK(journal.find("ANNEAL stopped: MAXTIME exceeded after 10 "
+                           "evaluation(s) (3 rung(s) completed)") !=
               std::string::npos);
         CHECK(journal.find("T < T_MIN") == std::string::npos);
         CHECK(lr.status() == "TADAH:ANNEAL: MAXTIME exceeded");
@@ -283,7 +283,7 @@ TEST_CASE("End status: TADAH:ANNEAL records the MAXTIME that prevented a "
         LoggedRun lr;
         const std::string journal = run_with_deadline(sp, lr);
         CHECK(journal.find("ANNEAL re-anneal #") == std::string::npos);
-        CHECK(journal.find("ANNEAL stopped: T < T_MIN after 10 host eval(s)") !=
+        CHECK(journal.find("ANNEAL stopped: T < T_MIN after 10 evaluation(s)") !=
               std::string::npos);
         CHECK(journal.find("MAXTIME exceeded") == std::string::npos);
         CHECK(lr.status() == "TADAH:ANNEAL: T_MIN reached");
@@ -292,7 +292,7 @@ TEST_CASE("End status: TADAH:ANNEAL records the MAXTIME that prevented a "
         sp.param_raw["REANNEAL"] = "OFF";
         LoggedRun lr;
         const std::string journal = run_with_deadline(sp, lr);
-        CHECK(journal.find("ANNEAL stopped: T < T_MIN after 10 host eval(s)") !=
+        CHECK(journal.find("ANNEAL stopped: T < T_MIN after 10 evaluation(s)") !=
               std::string::npos);
         CHECK(journal.find("MAXTIME exceeded") == std::string::npos);
         CHECK(lr.status() == "TADAH:ANNEAL: T_MIN reached");

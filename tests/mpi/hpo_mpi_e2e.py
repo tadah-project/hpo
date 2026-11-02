@@ -68,8 +68,8 @@ tests/data/ta, --data), and checks one case:
                     once with RHOGATE (SEED 29) and once with RHOBARGATE
                     (SEED 41): seeds whose global best is found in slot 3,
                     on rank 1 of 2.
-                    Pins: the 2 ranks' "of which rho-sign gate rejects" /
-                    "of which lattice-rhobar gate rejects" counts add up to
+                    Pins: the 2 ranks' "of which rejected by RHOGATE" /
+                    "of which rejected by RHOBARGATE" counts add up to
                     the 1-rank run's, which is > 0; every journal's POTENTIAL
                     SETUP density rows ("Density form", "Density rho(r), -c
                     pot", "Density rhobar, -c pot") are the 1-rank run's; the
@@ -320,9 +320,11 @@ def check_refused(d, p, nranks, line, message):
     check(p.returncode == 1,
           f"{d.name}: exit status {p.returncode}, expected 1 (refused)")
     check(message in p.stderr, f"{d.name}: stderr lacks '{message}'")
-    # The startup refusal names the line its block closes at, as every
-    # startup refusal of a block's settings does (fix/hpo-correctness3).
-    expected = f"ERROR     * startup: Error on line {line}: {message}"
+    # The startup refusal names the line its block closes at and the target
+    # file, as every startup refusal of a block's settings does (it was
+    # "Error on line {line}: ...", without the file).
+    expected = (f"ERROR     * startup: line {line} of config.hpo: "
+                f"{message}")
     for j in journals(d, nranks):
         check(j.exists(), f"{d.name}: {j.name} is missing")
         check(expected in j.read_text(),
@@ -413,8 +415,8 @@ def density_rows(text, section):
             if l.strip().startswith("Density")]
 
 
-def gate_rejects(text, label):
-    m = re.search(r"of which " + label + r" gate rejects: (\d+)", text)
+def gate_rejects(text, key):
+    m = re.search(r"of which rejected by " + key + r": (\d+)", text)
     return int(m.group(1)) if m else 0
 
 
@@ -442,12 +444,12 @@ def case_rhogates(r):
              "OPTIM AMPGRIDMB (5) -0.6 -0.05\n"
              "OPTIM AMPGRIDMB (7) -0.3 0.3\n")
     args = ["-c", "../ta2_refit_seed.tadah"]
-    for gate, label, seed in (("RHOGATE 1e-6\n", "rho-sign", 29),
+    for gate, label, seed in (("RHOGATE 1e-6\n", "RHOGATE", 29),
                               ("RHOBARGATE bcc 3.304 0.9 1.1\n",
-                               "lattice-rhobar", 41)):
+                               "RHOBARGATE", 41)):
         config = (PT_HEAD.format(seed=seed, restart="") + ECOH_SEARCH + boxes +
                   gate + TAIL)
-        name = label.replace("-", "_")
+        name = {"RHOGATE": "rho_sign", "RHOBARGATE": "lattice_rhobar"}[label]
         runs = {}
         for n in (1, 2):
             d, p = r.run(name, n, config, args)
@@ -457,10 +459,10 @@ def case_rhogates(r):
         one = (runs[1] / "hpo_run.log").read_text()
         two = [j.read_text() for j in journals(runs[2], 2)]
         n_one = gate_rejects(one, label)
-        check(n_one > 0, f"{name}: the 1-rank run has no {label} gate reject")
+        check(n_one > 0, f"{name}: the 1-rank run has no {label} rejection")
         n_two = sum(gate_rejects(t, label) for t in two)
         check(n_two == n_one,
-              f"{name}: the 2 ranks count {n_two} {label} gate rejects, the "
+              f"{name}: the 2 ranks count {n_two} {label} rejections, the "
               f"1-rank run {n_one}")
         setup = density_rows(one, "POTENTIAL SETUP")
         check(len(setup) >= 2, f"{name}: no density report in POTENTIAL SETUP")

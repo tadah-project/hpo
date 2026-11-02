@@ -431,7 +431,9 @@ TEST_CASE("a failed PC_OBSERVABLE term is a graded band-B failure under "
         }
         CHECK(losses[0] == Approx(terms / n).epsilon(1e-13));
         CHECK(census(journal, "Graded failures") == 1);
-        CHECK(journal.find("B=1 (script or observable failed)") !=
+        /* the band legend says what each band holds (it was "B=1 (script
+         * or observable failed)") */
+        CHECK(journal.find("B=1 (a script or PC_OBSERVABLE term failed)") !=
               std::string::npos);
         Host::reset_globals_for_test();
     }
@@ -809,6 +811,10 @@ TEST_CASE("a gradient search that starts where a PC_OBSERVABLE term fails "
                                   "evaluation at the point (the loss at "
                                   "RCUT2B = 5.2 is " + b.loss_text + ")") ==
                   1u);
+            /* The stop line ends in what is kept (it said "; best-so-far
+             * preserved"). */
+            CHECK(count_of(journal, "; the best evaluation so far is kept") ==
+                  1u);
             check_no_usable_loss(1, b.row);
         }
     }
@@ -888,7 +894,8 @@ TEST_CASE("a graded gradient search that starts where a PC_OBSERVABLE term "
              * simulation or a gate reject scores a graded loss ...". */
             CHECK_THAT(journal,
                        Catch::Contains("ON -- a skip cap, a failed "
-                                       "PC_OBSERVABLE term or a gate reject "
+                                       "PC_OBSERVABLE term or a rejection by "
+                                       "BUMPGATE, RHOGATE or RHOBARGATE "
                                        "scores a graded loss in [0.999, 1) x "
                                        "Fail score"));
         }
@@ -1092,7 +1099,8 @@ TEST_CASE("a run whose every evaluation has a failed PC_OBSERVABLE term has "
     CHECK_THAT(journal, Catch::Contains("1.0000e+16  (the loss of a failed "
                                         "evaluation: a NaN/Inf loss, an "
                                         "exception, a skip cap, a failed "
-                                        "PC_OBSERVABLE term or a gate reject; "
+                                        "PC_OBSERVABLE term or a rejection by "
+                                        "BUMPGATE, RHOGATE or RHOBARGATE; "
                                         "the ceiling of every loss)"));
     CHECK(journal.find("PC_LAMMPS simulation") == std::string::npos);
 }

@@ -387,7 +387,8 @@ void require_multistart_points(const OptimizerSpec& spec)
         "); " +
         (c.points == 1 ? "one start is STRATEGY TYPE PLAIN, and " + advice
                        : advice + ", and N_STARTS " + n +
-                             " starts from each of the " + n)));
+                             " runs one start from each of the " + n +
+                             " starting points")));
 }
 
 void require_restart_points(const OptimizerSpec& spec)
@@ -408,7 +409,7 @@ void require_restart_points(const OptimizerSpec& spec)
         multistart_chain_advice(c, want);
     throw std::runtime_error(
         spec.restart.line > 0
-            ? config_line_error(spec.restart.line, what,
+            ? config_line_error(spec.source_file, spec.restart.line, what,
                                 spec.restart.line_text)
             : what);
 }

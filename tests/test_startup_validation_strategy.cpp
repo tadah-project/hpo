@@ -37,6 +37,7 @@
 
 #include "catch2/catch.hpp"
 #include "ceres_build.h"
+#include "target_file_text.h"
 
 #include <tadah/core/context.h>
 #include <tadah/core/periodic_table.h>
@@ -169,19 +170,18 @@ bool starts_with(const std::string& s, const std::string& head)
 
 /* Whether `message` is the refusal of one phase's settings: it starts with
  * the phase's name (strategy_phase_specs: "the STRATEGY-level optimiser",
- * "each MULTISTART start", "the MULTISTART run", "the PRESTAGE
+ * "each MULTISTART start", "the MULTISTART search", "the PRESTAGE
  * exploration (EXPLORE block)", "the PRESTAGE refinement", "the INNER
  * block of <phase>"; validate_run_policy: "the EXPLORE block"; the check
- * of the GRAD_STRATEGY ANALYTICAL setup: "OPTIMIZER block", "EXPLORE
- * block"). */
+ * of the GRAD_STRATEGY ANALYTICAL setup names the phase too, which said
+ * "OPTIMIZER block" and "EXPLORE block"). */
 bool names_phase(const std::string& message)
 {
     for (const char* name : {"the STRATEGY-level optimiser",
-                             "each MULTISTART start", "the MULTISTART run",
+                             "each MULTISTART start", "the MULTISTART search",
                              "the PRESTAGE exploration (EXPLORE block)",
                              "the EXPLORE block", "the PRESTAGE refinement",
-                             "the INNER block of ", "OPTIMIZER block",
-                             "EXPLORE block"})
+                             "the INNER block of "})
         if (starts_with(message, name)) return true;
     return false;
 }
@@ -240,7 +240,7 @@ std::pair<std::size_t, std::string> phase_line(const std::string& config,
 /* The parser must accept `config`; returns what validate_hpo_setup() and
  * the policy say about it ("" when they accept it). A refusal of the
  * OPTIMIZER block's settings names the line of the block it is about, in
- * the parser's form "Error on line N: <what>\nLine: <text>"
+ * the parser's form "line N of <file>: <what>\nLine: <text>"
  * (with_block_line, phase_specs.h): `startup_raw` is the refusal as
  * validate_hpo_setup() threw it, `startup` the message without that line,
  * and judge() checks the line of every refusal that names a phase against
@@ -264,7 +264,7 @@ std::string checked_refusal(const std::string& config, const std::string& raw)
     std::string message = raw;
     std::smatch m;
     const bool at_line = std::regex_match(
-        raw, m, std::regex(R"(Error on line (\d+): ([\s\S]*)\nLine: ([^\n]*))"));
+        raw, m, std::regex(R"(line (\d+) of <target>: ([\s\S]*)\nLine: ([^\n]*))"));
     if (at_line) message = m[2];
     if (names_phase(message)) {
         const auto expected = phase_line(config, message);
@@ -291,8 +291,11 @@ Verdict judge(const std::string& config)
     INFO("config:\n" << config);
     REQUIRE(parse_error == "");
     Verdict v;
-    v.startup_raw =
-        error_of([&] { validate_hpo_setup(ctx, *trg, true, true); });
+    /* The target file is named <target> (hpo_test::as_target); the frame
+     * was "Error on line N: ", without the file. */
+    v.startup_raw = hpo_test::as_target(
+        error_of([&] { validate_hpo_setup(ctx, *trg, true, true); }),
+        tf.path.string());
     v.startup = checked_refusal(config, v.startup_raw);
     v.policy  = policy_error(trg->spec);
     return v;
@@ -304,7 +307,11 @@ std::string parse_error(const std::string& config)
     PeriodicTable::initialize();
     ScopedTempFile tf(config);
     Context ctx = make_minimal_ctx();
-    return error_of([&] { HPOTargets trg(ctx, tf.path.string()); });
+    /* The target file is named <target> (hpo_test::as_target); the frame
+     * was "Error on line N: ", without the file. */
+    return hpo_test::as_target(
+        error_of([&] { HPOTargets trg(ctx, tf.path.string()); }),
+        tf.path.string());
 }
 
 /* What validate_hpo_setup() throws for `config`, with the line it names
@@ -548,14 +555,14 @@ TEST_CASE("startup validation: a phase without LIB or ALGO is rejected by "
         /* ENDOPTIMIZER is line 8. */
         const auto msg = parse_error(strategy_config(
             "    TYPE PLAIN\n    MAXEVAL 5\n"));
-        CHECK_THAT(msg, Catch::StartsWith("Error on line 8: ") &&
+        CHECK_THAT(msg, Catch::StartsWith("line 8 of <target>: ") &&
                         Catch::Contains("the OPTIMIZER block names no "
                                         "optimiser: LIB and ALGO are not set"));
     }
     SECTION("the short form without ALGO") {
         const auto msg = parse_error(
             kRoot + "OPTIMIZER\nLIB DLIB\nMAXEVAL 5\nENDOPTIMIZER\n");
-        CHECK_THAT(msg, Catch::StartsWith("Error on line 6: ") &&
+        CHECK_THAT(msg, Catch::StartsWith("line 6 of <target>: ") &&
                         Catch::Contains("the OPTIMIZER block names no "
                                         "optimiser: ALGO is not set"));
     }
@@ -579,7 +586,7 @@ TEST_CASE("startup validation: a phase without LIB or ALGO is rejected by "
         const auto msg = parse_error(strategy_config(
             "    TYPE PRESTAGE\n    LIB DLIB\n    ALGO BFGS\n    MAXEVAL 20\n"
             "    EXPLORE\n      LIB DLIB\n      MAXEVAL 12\n    ENDEXPLORE\n"));
-        CHECK_THAT(msg, Catch::StartsWith("Error on line 12: ") &&
+        CHECK_THAT(msg, Catch::StartsWith("line 12 of <target>: ") &&
                         Catch::Contains("the EXPLORE block names no "
                                         "optimiser: ALGO is not set"));
     }
@@ -592,7 +599,7 @@ TEST_CASE("startup validation: a phase without LIB or ALGO is rejected by "
         /* Refused as open, at its OPTIMIZER line (line 3), before what it
          * sets is checked: its ENDOPTIMIZER line checks the optimiser. */
         const auto msg = parse_error(kRoot + "OPTIMIZER\n  MAXEVAL 5\n");
-        CHECK(msg == "Error on line 3: OPTIMIZER block not closed with "
+        CHECK(msg == "line 3 of <target>: OPTIMIZER block not closed with "
                      "ENDOPTIMIZER\nLine: OPTIMIZER");
     }
     SECTION("a spec built outside the parser gets the same text from the "
@@ -670,8 +677,8 @@ TEST_CASE("startup validation: an INNER block without LIB or ALGO is "
              * LIB and ALGO inside the INNER block (...)"). */
             CHECK_THAT(parse_error(text),
                        Catch::StartsWith(
-                           "Error on line " + std::to_string(endinner_line) +
-                           ": the INNER block inside " + c.enclosing +
+                           "line " + std::to_string(endinner_line) +
+                           " of <target>: the INNER block inside " + c.enclosing +
                            " names no optimiser: " + c.missing +
                            "; LIB and ALGO inside the INNER block name the "
                            "local optimiser that NLopt's MLSL and AUGLAG "
@@ -685,7 +692,7 @@ TEST_CASE("startup validation: an INNER block without LIB or ALGO is "
          * line checks the optimiser. */
         const auto msg = parse_error(head + "    TYPE PLAIN\n" + mlsl +
                                      "    INNER\n      LIB NLOPT\n");
-        CHECK(msg == "Error on line 9: INNER block not closed with ENDINNER\n"
+        CHECK(msg == "line 9 of <target>: INNER block not closed with ENDINNER\n"
                      "Line:     INNER");
     }
     SECTION("an INNER block that names LIB and ALGO passes") {
@@ -723,8 +730,8 @@ TEST_CASE("startup validation: a STRATEGY key of another TYPE is rejected at "
         /* The message says where the key takes effect (it ended "; set TYPE
          * <home> or remove <key>"). */
         CHECK_THAT(msg,
-                   Catch::StartsWith("Error on line " +
-                                     std::to_string(knob_line) + ": " + key +
+                   Catch::StartsWith("line " +
+                                     std::to_string(knob_line) + " of <target>: " + key +
                                      " is not accepted with STRATEGY " +
                                      c.type_named) &&
                    Catch::EndsWith("; " + key + " takes effect under "
@@ -739,8 +746,10 @@ TEST_CASE("startup validation: a STRATEGY key of another TYPE is rejected at "
             "    N_STARTS 3\n    TOPK 1\n    TYPE PRESTAGE\n    LIB DLIB\n"
             "    ALGO BFGS\n" + kExploreGfs));
         Context ctx = make_minimal_ctx();
-        const auto msg = error_of([&] { HPOTargets trg(ctx, tf.path.string()); });
-        CHECK_THAT(msg, Catch::StartsWith("Error on line 5: N_STARTS is not "
+        const auto msg = hpo_test::as_target(
+            error_of([&] { HPOTargets trg(ctx, tf.path.string()); }),
+            tf.path.string());
+        CHECK_THAT(msg, Catch::StartsWith("line 5 of <target>: N_STARTS is not "
                                           "accepted with STRATEGY TYPE "
                                           "PRESTAGE"));
 
@@ -756,7 +765,7 @@ TEST_CASE("startup validation: a STRATEGY key of another TYPE is rejected at "
         const auto msg = parse_error(strategy_config(
             "    TYPE MULTISTART\n    N_STARTS 3\n    TYPE PLAIN\n"
             "    LIB DLIB\n    ALGO BFGS\n"));
-        CHECK_THAT(msg, Catch::StartsWith("Error on line 7: TYPE is set twice "
+        CHECK_THAT(msg, Catch::StartsWith("line 7 of <target>: TYPE is set twice "
                                           "in the STRATEGY block (first on "
                                           "line 5); each key is given once"));
     }
@@ -794,13 +803,13 @@ TEST_CASE("startup validation: STRATEGY PARALLEL is refused at its line, "
             const auto msg = parse_error(strategy_config(
                 "    TYPE " + type + "\n    PARALLEL " + value +
                 "\n    LIB DLIB\n    ALGO BFGS\n    MAXEVAL 20\n" + extra));
-            CHECK(msg == "Error on line 6: 'PARALLEL' was removed from the "
+            CHECK(msg == "line 6 of <target>: 'PARALLEL' was removed from the "
                          "grammar: " + reason + "\nLine:     PARALLEL " + value);
         }
     }
     const auto old = parse_error(strategy_config(
         "    MULTISTART_PARALLEL 2\n    LIB DLIB\n    ALGO BFGS\n"));
-    CHECK(old == "Error on line 5: 'MULTISTART_PARALLEL' was removed from the "
+    CHECK(old == "line 5 of <target>: 'MULTISTART_PARALLEL' was removed from the "
                  "grammar: " + reason + "\nLine:     MULTISTART_PARALLEL 2");
 }
 
@@ -822,13 +831,13 @@ TEST_CASE("startup validation: STRATEGY TYPE MULTISTART needs N_STARTS 2 or "
     const std::string backend = "    LIB DLIB\n    ALGO BFGS\n";
     /* TYPE on line 5. */
     CHECK(parse_error(strategy_config("    TYPE MULTISTART\n" + backend)) ==
-          "Error on line 5: STRATEGY TYPE MULTISTART needs N_STARTS 2 or "
+          "line 5 of <target>: STRATEGY TYPE MULTISTART needs N_STARTS 2 or "
           "more: without N_STARTS it runs one start, which is STRATEGY TYPE "
           "PLAIN\nLine:     TYPE MULTISTART");
     for (const std::string n : {"1", "0"})
         CHECK(parse_error(strategy_config("    TYPE MULTISTART\n    N_STARTS " +
                                           n + "\n" + backend)) ==
-              "Error on line 6: N_STARTS must be an integer >= 2, got '" + n +
+              "line 6 of <target>: N_STARTS must be an integer >= 2, got '" + n +
                   "' (one start is STRATEGY TYPE PLAIN)\nLine:     N_STARTS " +
                   n);
     /* The note is about a number of starts below 2: a token that is no
@@ -836,7 +845,7 @@ TEST_CASE("startup validation: STRATEGY TYPE MULTISTART needs N_STARTS 2 or "
     for (const std::string n : {"x", "1e5", "-1", "2.5"})
         CHECK(parse_error(strategy_config("    TYPE MULTISTART\n    N_STARTS " +
                                           n + "\n" + backend)) ==
-              "Error on line 6: N_STARTS must be an integer >= 2, got '" + n +
+              "line 6 of <target>: N_STARTS must be an integer >= 2, got '" + n +
                   "'\nLine:     N_STARTS " + n);
     PeriodicTable::initialize();
     ScopedTempFile ok(strategy_config("    TYPE MULTISTART\n    N_STARTS 2\n" +
@@ -911,30 +920,30 @@ TEST_CASE("startup validation: a MULTISTART whose INIT chain gives fewer "
         "one start is STRATEGY TYPE PLAIN, and a chain of 2 or more "
         "starting points (METHOD LHS 2, RANDOM 2 or SOBOL 2) runs 2 starts";
     CHECK(refused("2", "") ==
-          "Error on line 6: N_STARTS 2 needs 2 starting points, and the INIT "
+          "line 6 of <target>: N_STARTS 2 needs 2 starting points, and the INIT "
           "chain gives 1 (the CONFIG point: the chain has no METHOD line); " +
               one_start + line("2"));
     CHECK(refused("2", block("      SEED 4\n")) ==
-          "Error on line 6: N_STARTS 2 needs 2 starting points, and the INIT "
+          "line 6 of <target>: N_STARTS 2 needs 2 starting points, and the INIT "
           "chain gives 1 (the CONFIG point: the chain has no METHOD line); " +
               one_start + line("2"));
     CHECK(refused("3", block("      METHOD CONFIG\n      METHOD RANDOM 1\n"
                              "      SEED 4\n")) ==
-          "Error on line 6: N_STARTS 3 needs 3 starting points, and the INIT "
+          "line 6 of <target>: N_STARTS 3 needs 3 starting points, and the INIT "
           "chain gives 2 (CONFIG, RANDOM 1); a chain of 3 or more starting "
           "points (METHOD LHS 3, RANDOM 3 or SOBOL 3) runs 3 starts, and "
-          "N_STARTS 2 starts from each of the 2" + line("3"));
+          "N_STARTS 2 runs one start from each of the 2 starting points" + line("3"));
     CHECK(refused("2", block("      METHOD CONFIG\n      METHOD CONFIG\n")) ==
-          "Error on line 6: N_STARTS 2 needs 2 starting points, and the INIT "
+          "line 6 of <target>: N_STARTS 2 needs 2 starting points, and the INIT "
           "chain gives 1 (CONFIG, CONFIG; the CONFIG lines give one point); " +
               one_start + line("2"));
     CHECK(refused("3", block("      METHOD CONFIG\n      METHOD RANDOM 1\n"
                              "      METHOD CONFIG\n      SEED 4\n")) ==
-          "Error on line 6: N_STARTS 3 needs 3 starting points, and the INIT "
+          "line 6 of <target>: N_STARTS 3 needs 3 starting points, and the INIT "
           "chain gives 2 (CONFIG, RANDOM 1, CONFIG; the CONFIG lines give one "
-          "point); a chain of 3 or more starting points (METHOD LHS 3, "
-          "RANDOM 3 or SOBOL 3) runs 3 starts, and N_STARTS 2 starts from "
-          "each of the 2" + line("3"));
+          "point); a chain of 3 or more starting points (METHOD LHS 3, RANDOM "
+          "3 or SOBOL 3) runs 3 starts, and N_STARTS 2 runs one start from "
+          "each of the 2 starting points" + line("3"));
     /* The INIT blocks inside OPTIMIZER and STRATEGY make one chain: N_STARTS
      * on line 9. */
     CHECK(startup_refusal(kRoot + "OPTIMIZER\n  INIT\n    METHOD CONFIG\n"
@@ -942,23 +951,24 @@ TEST_CASE("startup validation: a MULTISTART whose INIT chain gives fewer "
                                   "    TYPE MULTISTART\n    N_STARTS 2\n" +
                           backend + block("      METHOD CONFIG\n") +
                           "  ENDSTRATEGY\nENDOPTIMIZER\n") ==
-          "Error on line 9: N_STARTS 2 needs 2 starting points, and the INIT "
+          "line 9 of <target>: N_STARTS 2 needs 2 starting points, and the INIT "
           "chain gives 1 (CONFIG, CONFIG; the CONFIG lines give one point); " +
               one_start + line("2"));
     CHECK(refused("4", block("      METHOD LHS 6\n      K_TOTAL 2\n"
                              "      SEED 4\n")) ==
-          "Error on line 6: N_STARTS 4 needs 4 starting points, and the INIT "
+          "line 6 of <target>: N_STARTS 4 needs 4 starting points, and the INIT "
           "chain gives 2 (LHS 6, capped by K_TOTAL 2); with K_TOTAL 4, or "
-          "without K_TOTAL, 4 starts run, and N_STARTS 2 starts from each of "
-          "the 2" + line("4"));
+          "without K_TOTAL, 4 starts run, and N_STARTS 2 runs one start from "
+          "each of the 2 starting points" + line("4"));
     CHECK(refused("3", block("      METHOD LHS 3\n      K_TOTAL 2\n"
                              "      SEED 4\n")) ==
-          "Error on line 6: N_STARTS 3 needs 3 starting points, and the INIT "
+          "line 6 of <target>: N_STARTS 3 needs 3 starting points, and the INIT "
           "chain gives 2 (LHS 3, capped by K_TOTAL 2); without K_TOTAL, 3 "
-          "starts run, and N_STARTS 2 starts from each of the 2" + line("3"));
+          "starts run, and N_STARTS 2 runs one start from each of the 2 "
+          "starting points" + line("3"));
     CHECK(refused("3", block("      METHOD LHS 2\n      K_TOTAL 1\n"
                              "      SEED 4\n")) ==
-          "Error on line 6: N_STARTS 3 needs 3 starting points, and the INIT "
+          "line 6 of <target>: N_STARTS 3 needs 3 starting points, and the INIT "
           "chain gives 1 (LHS 2, capped by K_TOTAL 1); one start is STRATEGY "
           "TYPE PLAIN, and a chain of 3 or more starting points (METHOD LHS 3, "
           "RANDOM 3 or SOBOL 3) without K_TOTAL runs 3 starts" + line("3"));
@@ -966,11 +976,11 @@ TEST_CASE("startup validation: a MULTISTART whose INIT chain gives fewer "
     ScopedTempFile seed("WATOM 1.0\n");
     const std::string warm = "WARM " + seed.path.string();
     CHECK(refused("2", block("      METHOD " + warm + "\n")) ==
-          "Error on line 6: N_STARTS 2 needs 2 starting points, and the INIT "
+          "line 6 of <target>: N_STARTS 2 needs 2 starting points, and the INIT "
           "chain gives at most 1 (" + warm + "); " + one_start + line("2"));
     CHECK(refused("2", block("      METHOD " + warm + "\n      METHOD " +
                              warm + "\n")) ==
-          "Error on line 6: N_STARTS 2 needs 2 starting points, and the INIT "
+          "line 6 of <target>: N_STARTS 2 needs 2 starting points, and the INIT "
           "chain gives at most 1 (" + warm + ", " + warm + "; the WARM lines "
           "of one file give one point); " + one_start + line("2"));
 
@@ -1033,7 +1043,7 @@ TEST_CASE("startup validation: a MULTISTART whose RESTART chain gives fewer "
     };
     const std::string init = init_points("3");
     const std::string head =
-        "Error on line 13: N_STARTS 3 needs 3 starting points in each "
+        "line 13 of <target>: N_STARTS 3 needs 3 starting points in each "
         "RESTART round, and the RESTART chain gives ";
     const std::string more =
         "a chain of 3 or more starting points (METHOD LHS 3, RANDOM 3 or "
@@ -1062,7 +1072,7 @@ TEST_CASE("startup validation: a MULTISTART whose RESTART chain gives fewer "
                         "      WARM_ON_MISMATCH skip\n") == "");
     /* The INIT chain first. */
     CHECK_THAT(refused("", "      METHOD RANDOM 1\n      SEED 5\n"),
-               Catch::StartsWith("Error on line 6: N_STARTS 3 needs 3 "
+               Catch::StartsWith("line 6 of <target>: N_STARTS 3 needs 3 "
                                  "starting points, and the INIT chain"));
 }
 
@@ -1108,15 +1118,15 @@ TEST_CASE("startup validation: a MULTISTART that cannot run its optimiser "
         for (const std::string& init : {std::string(), init_points("2")}) {
             INFO("INIT block: " << init);
             CHECK_THAT(startup_refusal(strategy_config(body + init)),
-                       Catch::StartsWith("Error on line ") &&
-                           Catch::Contains(": " + c.head));
+                       Catch::StartsWith("line ") &&
+                           Catch::Contains(" of <target>: " + c.head));
         }
     }
     const std::string sbplx = strategy_config(
         "    TYPE MULTISTART\n    N_STARTS 2\n    LIB NLOPT\n"
         "    ALGO LN_SBPLX\n    MAXEVAL 20\n");
     CHECK_THAT(startup_refusal(sbplx),
-               Catch::StartsWith("Error on line 6: N_STARTS 2 needs 2 "
+               Catch::StartsWith("line 6 of <target>: N_STARTS 2 needs 2 "
                                  "starting points, and the INIT chain gives "
                                  "1 (the CONFIG point: the chain has no "
                                  "METHOD line)"));
@@ -1161,8 +1171,8 @@ TEST_CASE("startup validation: a RESTART block that never restarts the "
     const std::string none =
         "; a search without restarts has no RESTART block";
     const auto missing = [&](const std::string& what, std::size_t line) {
-        return "Error on line " + std::to_string(line) +
-               ": the RESTART block never restarts the search: a restart "
+        return "line " + std::to_string(line) +
+               " of <target>: the RESTART block never restarts the search: a restart "
                "needs AFTER_STAGNATION and MAX, and the block has " + what +
                none + "\nLine:     ENDRESTART";
     };
@@ -1179,7 +1189,7 @@ TEST_CASE("startup validation: a RESTART block that never restarts the "
             key == "MAX" ? "AFTER_STAGNATION 5" : "MAX 2";
         CHECK(parse_error(with("    RESTART\n      " + key + " 0\n      " +
                                other + "\n    ENDRESTART\n")) ==
-              "Error on line 9: " + key + " must be an integer >= 1, got '0' "
+              "line 9 of <target>: " + key + " must be an integer >= 1, got '0' "
               "(0 never restarts the search" + none + ")\nLine:       " +
                   key + " 0");
         /* The note is about 0: a token that is no whole number does not
@@ -1188,7 +1198,7 @@ TEST_CASE("startup validation: a RESTART block that never restarts the "
             CHECK(parse_error(with("    RESTART\n      " + key + " " + tok +
                                    "\n      " + other +
                                    "\n    ENDRESTART\n")) ==
-                  "Error on line 9: " + key + " must be an integer >= 1, got '" +
+                  "line 9 of <target>: " + key + " must be an integer >= 1, got '" +
                       tok + "'\nLine:       " + key + " " + tok);
     }
     /* Two blocks make one: AFTER_STAGNATION in the first, MAX in the
@@ -1228,8 +1238,8 @@ TEST_CASE("startup validation: a RESTART block on a TADAH:GRID phase is "
     const std::string grid =
         "    LIB TADAH\n    ALGO GRID\n    PARAM GRID_POINTS 3\n";
     const auto refusal = [](std::size_t line, const std::string& phase) {
-        return "Error on line " + std::to_string(line) +
-               ": a RESTART round would run the grid search of " + phase +
+        return "line " + std::to_string(line) +
+               " of <target>: a RESTART round would run the grid search of " + phase +
                " (TADAH:GRID) again from its first node: a grid search "
                "evaluates its starting point and then the nodes of its grid "
                "in one fixed order, so each round would evaluate again the "
@@ -1262,11 +1272,11 @@ TEST_CASE("startup validation: a RESTART block on a TADAH:GRID phase is "
  * block whose optimiser is not one of those, is refused at startup at the
  * line that closes its block: "the INNER block of the STRATEGY-level
  * optimiser: NLOPT:LN_BOBYQA does not use THREADS in an INNER block: the
- * THREADS of the STRATEGY-level optimiser sets the workers of the run;
- * remove it"; "the PRESTAGE exploration (EXPLORE block): NLOPT:GN_CRS2_LM
+ * THREADS of the STRATEGY-level optimiser sets the workers of the run";
+ * "the PRESTAGE exploration (EXPLORE block): NLOPT:GN_CRS2_LM
  * does not use THREADS: the THREADS of the STRATEGY-level optimiser sets
  * the workers of the run, and the THREADS of an EXPLORE block is read by
- * ASA:ASA, DLIB:GFS, TADAH:ANNEAL_PA, TADAH:ANNEAL_PT; remove it" (serial
+ * ASA:ASA, DLIB:GFS, TADAH:ANNEAL_PA, TADAH:ANNEAL_PT" (serial
  * TADAH:ANNEAL too). An EXPLORE block of DLIB:GFS with THREADS 2, and the
  * STRATEGY-level THREADS of every optimiser, CERES:STEEPEST_DESCENT
  * included, are accepted (in a build without Ceres, LIB CERES is refused as
@@ -1283,8 +1293,8 @@ TEST_CASE("startup validation: THREADS in an INNER block or in an EXPLORE "
     const std::string unused =
         " does not use THREADS: the THREADS of the STRATEGY-level optimiser "
         "sets the workers of the run, and the THREADS of an EXPLORE block is "
-        "read by ASA:ASA, DLIB:GFS, TADAH:ANNEAL_PA, TADAH:ANNEAL_PT; remove "
-        "it";
+        "read by ASA:ASA, DLIB:GFS, TADAH:ANNEAL_PA, TADAH:ANNEAL_PT";
+    /* Both refusals ended "; remove it". */
     {
         const auto v = judge(strategy_config(
             "    LIB NLOPT\n    ALGO G_MLSL_LDS\n    MAXEVAL 20\n"
@@ -1294,7 +1304,7 @@ TEST_CASE("startup validation: THREADS in an INNER block or in an EXPLORE "
               "the INNER block of the STRATEGY-level optimiser: "
               "NLOPT:LN_BOBYQA does not use THREADS in an INNER block: the "
               "THREADS of the STRATEGY-level optimiser sets the workers of the "
-              "run; remove it");
+              "run");
     }
     const auto explore = [](const std::string& lib, const std::string& algo,
                             const std::string& extra) {
@@ -1495,7 +1505,7 @@ TEST_CASE("startup validation: VECTOR_ARR is refused for LD_TNEWTON and "
         INFO("NLOPT:" << algo);
         CHECK(judge(lbfgs_like(algo)).startup ==
               "the STRATEGY-level optimiser: NLOPT:" + algo +
-                  " does not use VECTOR_ARR; remove it (it is read by "
+                  " does not use VECTOR_ARR (it is read by "
                   "NLOPT:LD_LBFGS, NLOPT:LD_TNEWTON_PRECOND, "
                   "NLOPT:LD_TNEWTON_PRECOND_RESTART, NLOPT:LD_VAR1, "
                   "NLOPT:LD_VAR2)");
@@ -1703,7 +1713,7 @@ TEST_CASE("startup validation: a TYPE line after an EXPLORE or REFINE "
     SECTION("EXPLORE, then TYPE PLAIN") {
         const auto msg = parse_error(strategy_config(
             head + kExploreGfs + "    TYPE PLAIN\n"));
-        CHECK_THAT(msg, Catch::StartsWith("Error on line 14: " + twice) &&
+        CHECK_THAT(msg, Catch::StartsWith("line 14 of <target>: " + twice) &&
                             Catch::EndsWith("Line:     TYPE PLAIN"));
     }
     SECTION("REFINE, then TYPE MULTISTART") {
@@ -1712,13 +1722,13 @@ TEST_CASE("startup validation: a TYPE line after an EXPLORE or REFINE "
             "    REFINE\n      LIB DLIB\n      ALGO BFGS\n    ENDREFINE\n"
             "    TYPE MULTISTART\n"));
         /* REFINE opens on line 6; the second TYPE is line 10. */
-        CHECK_THAT(msg, Catch::StartsWith("Error on line 10: " + twice) &&
+        CHECK_THAT(msg, Catch::StartsWith("line 10 of <target>: " + twice) &&
                             Catch::EndsWith("Line:     TYPE MULTISTART"));
     }
     SECTION("TYPE PRESTAGE repeated after the blocks") {
         const auto msg = parse_error(strategy_config(
             head + kExploreGfs + "    TYPE PRESTAGE\n"));
-        CHECK_THAT(msg, Catch::StartsWith("Error on line 14: " + twice));
+        CHECK_THAT(msg, Catch::StartsWith("line 14 of <target>: " + twice));
     }
 }
 
@@ -1738,7 +1748,7 @@ TEST_CASE("startup validation: a second STRATEGY block is rejected at its "
             "  STRATEGY\n    TYPE PLAIN\n  ENDSTRATEGY\nENDOPTIMIZER\n");
         /* The second STRATEGY opens on line 10. */
         CHECK_THAT(twice,
-                   Catch::StartsWith("Error on line 10: STRATEGY block given "
+                   Catch::StartsWith("line 10 of <target>: STRATEGY block given "
                                      "more than once (the first opens on line "
                                      "4)") &&
                    Catch::EndsWith("Line:   STRATEGY"));
@@ -1751,7 +1761,7 @@ TEST_CASE("startup validation: a second STRATEGY block is rejected at its "
             kRoot + "OPTIMIZER\n  STRATEGY\n" + first + "  ENDSTRATEGY\n"
             "ENDOPTIMIZER\nOPTIMIZER\n  STRATEGY\n    TYPE PLAIN\n"
             "  ENDSTRATEGY\nENDOPTIMIZER\n");
-        CHECK(twice == "Error on line 11: OPTIMIZER block given more than "
+        CHECK(twice == "line 11 of <target>: OPTIMIZER block given more than "
                        "once (the first opens on line 3); one OPTIMIZER "
                        "block holds every optimiser setting\nLine: "
                        "OPTIMIZER");
@@ -1931,7 +1941,7 @@ void write_ta_db(const fs::path& path, double offset_x, double energy)
 
 /* How the journal writes the event `msg` with `tag`, without the
  * timestamp of its first line (HPOLog::event_locked): a multi-line message
- * -- a parse error, "Error on line N: ...\nLine: ..." -- is a block whose
+ * -- a parse error, "line N of <file>: ...\nLine: ..." -- is a block whose
  * first line carries a star and whose continuation lines repeat the tag. */
 std::string journal_event(const std::string& tag, const std::string& msg)
 {
@@ -2033,7 +2043,9 @@ std::string run_hpo(const std::string& optimizer)
     REQUIRE_FALSE(err.empty());
     CHECK_THAT(journal.str(),
                Catch::Contains(journal_event("ERROR", "startup: " + err)));
-    return err;
+    /* The target file is named <target> (hpo_test::as_target); the frame
+     * was "Error on line N: ", without the file. */
+    return hpo_test::as_target(err, hpo.string());
 }
 
 }  // namespace
@@ -2074,11 +2086,12 @@ TEST_CASE("startup validation: hpo_run rejects a strategy before it loads "
 #ifdef TADAH_HPO_MPI
         /* Pins: the MPI build, which has no pool and refuses PC_ISOLATION
          * PROCESS at startup, refuses the strategy first: the error is the
-         * strategy's, not "PC_ISOLATION PROCESS is not supported in the
-         * MPI build ...". Before the fix: passes as well (a pin of what the
+         * strategy's, not "PC_ISOLATION PROCESS: the MPI build of tadah
+         * ..." (it said "PC_ISOLATION PROCESS is not supported in the MPI
+         * build ..."). Before the fix: passes as well (a pin of what the
          * MPI build's suite showed; the case did not say it). */
-        CHECK_THAT(err, !Catch::Contains("PC_ISOLATION PROCESS is not "
-                                         "supported in the MPI build"));
+        CHECK_THAT(err, !Catch::Contains("PC_ISOLATION PROCESS: the MPI build "
+                                         "of tadah"));
 #endif
     }
 }
@@ -2180,8 +2193,8 @@ TEST_CASE("startup validation: NLOPT:LN_NEWUOA_BOUND is refused at the line "
               19, "    ENDINNER", "the INNER block inside REFINE"}}) {
         INFO(c.what << ", config:\n" << c.config);
         CHECK_THAT(parse_error(c.config),
-                   Catch::StartsWith("Error on line " + std::to_string(c.line) +
-                                     ": " + c.phase + ": " + refused) &&
+                   Catch::StartsWith("line " + std::to_string(c.line) +
+                                     " of <target>: " + c.phase + ": " + refused) &&
                    Catch::Contains("The recommended replacement is "
                                    "NLOPT:LN_BOBYQA") &&
                    Catch::EndsWith("\nLine: " + c.closing));
@@ -2190,7 +2203,7 @@ TEST_CASE("startup validation: NLOPT:LN_NEWUOA_BOUND is refused at the line "
      * OPTIMIZER line, before its optimiser is checked. */
     CHECK(parse_error(kRoot + "OPTIMIZER\n  LIB NLOPT\n"
                               "  ALGO LN_NEWUOA_BOUND\n  MAXEVAL 5\n") ==
-          "Error on line 3: OPTIMIZER block not closed with ENDOPTIMIZER\n"
+          "line 3 of <target>: OPTIMIZER block not closed with ENDOPTIMIZER\n"
           "Line: OPTIMIZER");
 
     /* A spec built outside the parser. */
@@ -2269,7 +2282,7 @@ TEST_CASE("startup validation: NLOPT:GN_DIRECT_NOSCAL and "
         INFO("NLOPT:" << algo);
         CHECK(parse_error(strategy_config("    LIB NLOPT\n    ALGO " + algo +
                                           "\n    MAXEVAL 25\n")) ==
-              "Error on line 9: the STRATEGY-level optimiser: NLOPT:" + algo +
+              "line 9 of <target>: the STRATEGY-level optimiser: NLOPT:" + algo +
                   " is refused: " + reason + "\nLine: ENDOPTIMIZER");
         CHECK(tadah::hpo::find_optimizer_caps("NLOPT", algo) == nullptr);
     }
@@ -2341,7 +2354,7 @@ TEST_CASE("startup validation: NLOPT:LN_NEWUOA, the Ceres least-squares "
         std::string config;
         std::size_t line;     // the line that closes the block
         std::string closing;  // its text
-        std::string head;     // the message after "Error on line N: "
+        std::string head;     // the message after "line N of <file>: "
         std::string also;     // a part of the reason
     };
     std::vector<Case> cases = {
@@ -2390,8 +2403,8 @@ TEST_CASE("startup validation: NLOPT:LN_NEWUOA, the Ceres least-squares "
         INFO(c.what << ", config:\n" << c.config);
         const std::string msg = parse_error(c.config);
         CHECK_THAT(msg,
-                   Catch::StartsWith("Error on line " + std::to_string(c.line) +
-                                     ": " + c.head) &&
+                   Catch::StartsWith("line " + std::to_string(c.line) +
+                                     " of <target>: " + c.head) &&
                    Catch::Contains(c.also) &&
                    Catch::EndsWith("\nLine: " + c.closing));
     }
@@ -2618,7 +2631,7 @@ TEST_CASE("startup validation: NLOPT:LN_NEWUOA_BOUND is refused by hpo_run "
         "OPTIMIZER\n  STRATEGY\n    TYPE PLAIN\n    LIB NLOPT\n"
         "    ALGO LN_NEWUOA_BOUND\n    MAXEVAL 5\n  ENDSTRATEGY\n"
         "ENDOPTIMIZER\n");
-    CHECK_THAT(err, Catch::StartsWith("Error on line 8: the STRATEGY-level "
+    CHECK_THAT(err, Catch::StartsWith("line 8 of <target>: the STRATEGY-level "
                                       "optimiser: NLOPT:LN_NEWUOA_BOUND is "
                                       "refused: ") &&
                     Catch::Contains("The recommended replacement is "
@@ -2728,8 +2741,8 @@ TEST_CASE("startup validation: each phase's backend checks run at startup",
                                 "    ALGO RANDOM\n")).startup ==
           "the STRATEGY-level optimiser: TADAH:RANDOM needs a stop: uniform "
           "random search has no convergence test and runs until it is "
-          "interrupted; set MAXEVAL, MAXTIME or STOPVAL (it honours no "
-          "tolerance)");
+          "interrupted; MAXEVAL, MAXTIME or STOPVAL (it honours no "
+          "tolerance) gives it one");
 }
 
 namespace {
@@ -2753,7 +2766,7 @@ std::pair<std::size_t, std::string> line_of(const std::string& config,
 }  // namespace
 
 /* The caps registry's refusal of a backend comes from the parser where its
- * block closes, "Error on line N: <phase>: ...\nLine: ENDOPTIMIZER"; the
+ * block closes, "line N of <file>: <phase>: ...\nLine: ENDOPTIMIZER"; the
  * refusals of a phase's settings at startup -- each backend's own checks
  * (validate_phase_backends: the CERES validators, DLIB:BFGS, TADAH:ANNEAL,
  * NLopt's, a backend that needs a stop), the per-phase checks of
@@ -2761,7 +2774,7 @@ std::pair<std::size_t, std::string> line_of(const std::string& config,
  * finite differences) and the STRATEGY TYPE and INNER rules
  * (validate_run_policy) -- named the phase and no line.
  * Pins: each names the line read() checks the phase's optimiser at, in the
- * parser's form ("Error on line N: <phase>: <message>" and "\nLine:
+ * parser's form ("line N of <file>: <phase>: <message>" and "\nLine:
  * <text>"): ENDOPTIMIZER for the STRATEGY-level optimiser, a MULTISTART
  * start and the PRESTAGE refinement (a REFINE block's included),
  * ENDEXPLORE for the exploration, ENDINNER for an INNER block, the short
@@ -2854,8 +2867,8 @@ TEST_CASE("startup validation: a phase's settings refused at startup name the "
         const auto at = line_of(c.config, c.closing);
         REQUIRE(at.first > 0);
         CHECK_THAT(judge(c.config).startup_raw,
-                   Catch::StartsWith("Error on line " +
-                                     std::to_string(at.first) + ": " +
+                   Catch::StartsWith("line " +
+                                     std::to_string(at.first) + " of <target>: " +
                                      c.message) &&
                    Catch::EndsWith("\nLine: " + at.second));
     }
@@ -2878,7 +2891,11 @@ TEST_CASE("startup validation: a phase's settings refused at startup name the "
  * "OPTIMIZER block: ...", "EXPLORE block: ..."), the rule that NLOPT, DLIB
  * and CERES cannot search a space without an OPTIM line, and the
  * multi-rank dispatch refusal of a parsed spec (hpo_mpi_dispatch_refusal).
- * Pins: each is "Error on line N: <what>\nLine: <text>", N the line that
+ * The ANALYTICAL refusals name the phase as the other refusals of a
+ * phase do ("the STRATEGY-level optimiser: ...", "the PRESTAGE exploration
+ * (EXPLORE block): ..."; they said "OPTIMIZER block: ..." and "EXPLORE
+ * block: ...").
+ * Pins: each is "line N of <file>: <what>\nLine: <text>", N the line that
  * closes its block -- ENDOPTIMIZER for the STRATEGY-level block (each
  * MULTISTART start, the PRESTAGE refinement), ENDEXPLORE for the EXPLORE
  * block; the zero-dimension rule applies to every phase, the EXPLORE
@@ -2922,13 +2939,14 @@ TEST_CASE("startup validation: the GRAD_STRATEGY ANALYTICAL check, the "
         {"GRAD_STRATEGY ANALYTICAL on the STRATEGY-level DLIB:BFGS",
          strategy_config("    TYPE PLAIN\n    LIB DLIB\n    ALGO BFGS\n"
                          "    MAXEVAL 20\n    GRAD_STRATEGY ANALYTICAL\n"),
-         "ENDOPTIMIZER", "OPTIMIZER block: " + analytical},
+         "ENDOPTIMIZER", "the STRATEGY-level optimiser: " + analytical},
         {"GRAD_STRATEGY ANALYTICAL on the EXPLORE block's NLOPT:LD_LBFGS",
          strategy_config("    TYPE PRESTAGE\n    LIB NLOPT\n    ALGO LN_SBPLX\n"
                          "    MAXEVAL 20\n    EXPLORE\n      LIB NLOPT\n"
                          "      ALGO LD_LBFGS\n      MAXEVAL 12\n"
                          "      GRAD_STRATEGY ANALYTICAL\n    ENDEXPLORE\n"),
-         "ENDEXPLORE", "EXPLORE block: " + analytical},
+         "ENDEXPLORE",
+         "the PRESTAGE exploration (EXPLORE block): " + analytical},
         {"PLAIN NLOPT:LN_SBPLX without an OPTIM line",
          no_optim("    TYPE PLAIN\n    LIB NLOPT\n    ALGO LN_SBPLX\n"
                   "    MAXEVAL 20\n"),
@@ -2962,8 +2980,8 @@ TEST_CASE("startup validation: the GRAD_STRATEGY ANALYTICAL check, the "
             const auto at = line_of(c.config, c.closing);
             REQUIRE(at.first > 0);
             CHECK_THAT(judge(c.config).startup_raw,
-                       Catch::StartsWith("Error on line " +
-                                         std::to_string(at.first) + ": " +
+                       Catch::StartsWith("line " +
+                                         std::to_string(at.first) + " of <target>: " +
                                          c.message) &&
                        Catch::EndsWith("\nLine: " + at.second));
         }
@@ -3005,9 +3023,11 @@ TEST_CASE("startup validation: the GRAD_STRATEGY ANALYTICAL check, the "
             }) == "");
             const auto at = line_of(c.config, c.closing);
             REQUIRE(at.first > 0);
-            CHECK_THAT(tadah::hpo::hpo_mpi_dispatch_refusal(2, trg->spec),
-                       Catch::StartsWith("Error on line " +
-                                         std::to_string(at.first) + ": " +
+            CHECK_THAT(hpo_test::as_target(
+                           tadah::hpo::hpo_mpi_dispatch_refusal(2, trg->spec),
+                           tf.path.string()),
+                       Catch::StartsWith("line " +
+                                         std::to_string(at.first) + " of <target>: " +
                                          c.message) &&
                        Catch::EndsWith("\nLine: " + at.second));
             CHECK(tadah::hpo::hpo_mpi_dispatch_refusal(1, trg->spec).empty());
@@ -3019,7 +3039,7 @@ TEST_CASE("startup validation: the GRAD_STRATEGY ANALYTICAL check, the "
  * parser at the end of the file and again at startup) refuse a phase's
  * STEP setting: a backend that does not use STEP, a value outside (0,
  * 0.5], overrides that cover only some dimensions.
- * Pins: each refusal is "Error on line N: <what>\nLine: <text>", N the
+ * Pins: each refusal is "line N of <file>: <what>\nLine: <text>", N the
  * line of the STEP it refuses -- in the STRATEGY block, the EXPLORE block
  * and an INNER block (the STRATEGY-level one's and the EXPLORE block's),
  * the message naming the optimiser in words before it ("the STRATEGY-level
@@ -3087,8 +3107,8 @@ TEST_CASE("startup validation: the STEP rules name the STEP line, or the "
         const auto at = line_of(c.config, c.closing);
         REQUIRE(at.first > 0);
         CHECK_THAT(parse_error(c.config),
-                   Catch::StartsWith("Error on line " +
-                                     std::to_string(at.first) + ": " +
+                   Catch::StartsWith("line " +
+                                     std::to_string(at.first) + " of <target>: " +
                                      c.message) &&
                    Catch::EndsWith("\nLine: " + at.second));
     }
@@ -3247,24 +3267,30 @@ TEST_CASE("startup validation: the backend checks reject no valid "
 
 namespace {
 
+/* The stops of a refusal end "... gives it one" (they read "; set MAXEVAL,
+ * ..."). */
 const std::string kAnyTolerance =
-    "; set MAXEVAL, MAXTIME, STOPVAL or a positive tolerance it honours "
-    "(FTOL_REL, FTOL_ABS, XTOL_REL, XTOL_ABS)";
+    "; MAXEVAL, MAXTIME, STOPVAL or a positive tolerance it honours "
+    "(FTOL_REL, FTOL_ABS, XTOL_REL, XTOL_ABS) gives it one";
 const std::string kNoTolerance =
-    "; set MAXEVAL, MAXTIME or STOPVAL (it honours no tolerance)";
+    "; MAXEVAL, MAXTIME or STOPVAL (it honours no tolerance) gives it one";
 /* GD_STOGO ignores NLopt's forced stop: once HPO has to end it, only
  * NLopt's own MAXEVAL ends it promptly (MAXTIME after the rest of its
  * time). The note names the command, tadah hpo ("HPO" before the help was
  * rewritten for a user). */
+/* It said "... ignores NLopt's forced stop, by which tadah hpo ends a
+ * search (on a signal, ...): it then calls on, each call refused, and only
+ * NLopt's own evaluation count ends it promptly (MAXTIME only once the rest
+ * of its time has passed); set MAXEVAL (it honours no tolerance)". */
 const std::string kStogoNote =
     "NLopt's StoGO has no convergence test of its own and ignores NLopt's "
-    "forced stop, by which tadah hpo ends a search (on a signal, an error, "
-    "the "
-    "RESTART stagnation stop, or a loss at or below STOPVAL that NLopt was "
-    "not given): it then calls on, each call refused, and only NLopt's own "
-    "evaluation count ends it promptly (MAXTIME only once the rest of its "
-    "time has passed)";
-const std::string kStogoStops = "; set MAXEVAL (it honours no tolerance)";
+    "forced stop. tadah hpo ends a search with that stop on a signal, an "
+    "error, the RESTART stagnation stop, or a loss at or below STOPVAL that "
+    "NLopt was not given. StoGO then keeps calling the objective, which "
+    "refuses each call. Only NLopt's own evaluation count (MAXEVAL) ends it "
+    "promptly; MAXTIME ends it only once the rest of its time has passed";
+const std::string kStogoStops =
+    "; MAXEVAL (it honours no tolerance) gives it one";
 /* DIRECT tests XTOL on every rectangle it divides, the largest included:
  * an XTOL ends it, but only once the whole box is divided that finely. */
 const std::string kDirectXtol =
@@ -3336,8 +3362,9 @@ TEST_CASE("startup validation: a backend with no convergence test and no "
                          plain + "    LIB TADAH\n    ALGO ANNEAL_PT\n    " +
                              tol + "\n",
                          top + "TADAH:ANNEAL_PT needs a stop: ",
-                         "; set MAXEVAL, MAXTIME, STOPVAL or a positive "
-                         "tolerance it honours (FTOL_REL, FTOL_ABS)"});
+                         "; MAXEVAL, MAXTIME, STOPVAL or a positive "
+                         "tolerance it honours (FTOL_REL, FTOL_ABS) gives it "
+                         "one"});
     /* A RESTART that is not active (MAX 0, or no AFTER_STAGNATION), which
      * armed no stagnation stop, is refused when the file is read (the
      * case "startup validation: a RESTART block that never restarts the
@@ -3412,8 +3439,8 @@ TEST_CASE("startup validation: a backend with no convergence test and no "
     cases.push_back({"TADAH:ANNEAL_PT without a stop",
                      plain + "    LIB TADAH\n    ALGO ANNEAL_PT\n",
                      top + "TADAH:ANNEAL_PT needs a stop: ",
-                     "; set MAXEVAL, MAXTIME, STOPVAL or a positive tolerance "
-                     "it honours (FTOL_REL, FTOL_ABS)"});
+                     "; MAXEVAL, MAXTIME, STOPVAL or a positive tolerance "
+                     "it honours (FTOL_REL, FTOL_ABS) gives it one"});
     /* DLIB:GFS reads FTOL_ABS as its solver's precision, which stops
      * nothing. */
     cases.push_back({"DLIB:GFS with FTOL_ABS only",
@@ -3454,10 +3481,10 @@ TEST_CASE("startup validation: a backend with no convergence test and no "
      * tolerance test (the test case "an INNER block that names a global
      * optimiser is refused ..." below). */
     const std::string auglag_mma =
-        "; set MAXEVAL, MAXTIME or a positive tolerance it honours (FTOL_REL, "
-        "FTOL_ABS, XTOL_REL, XTOL_ABS) in the INNER block, or MAXEVAL, "
-        "MAXTIME or STOPVAL in the NLOPT:AUGLAG block, which NLopt hands on "
-        "to it";
+        "; MAXEVAL, MAXTIME or a positive tolerance it honours (FTOL_REL, "
+        "FTOL_ABS, XTOL_REL, XTOL_ABS) in the INNER block gives it one, as "
+        "does MAXEVAL, MAXTIME or STOPVAL in the NLOPT:AUGLAG block, which "
+        "NLopt hands on to it";
     cases.push_back({"NLOPT:AUGLAG with an INNER NLOPT:LD_MMA, no stop",
                      nlopt("AUGLAG", "    INNER\n      LIB NLOPT\n"
                                      "      ALGO LD_MMA\n    ENDINNER\n"),
@@ -3481,10 +3508,10 @@ TEST_CASE("startup validation: a backend with no convergence test and no "
                          top + "the local search of NLOPT:LD_AUGLAG (NLopt's "
                                "default NLOPT:LD_MMA, as the block has no "
                                "INNER block) needs a stop: ",
-                         "; set MAXEVAL, MAXTIME, STOPVAL or a positive "
+                         "; MAXEVAL, MAXTIME, STOPVAL or a positive "
                          "tolerance it honours (FTOL_REL, FTOL_ABS, XTOL_REL, "
                          "XTOL_ABS) in the NLOPT:LD_AUGLAG block, which NLopt "
-                         "hands on to it"});
+                         "hands on to it, gives it one"});
     for (const auto& c : cases) {
         INFO(c.what << "\n" << c.body);
         const auto v = judge(strategy_config(c.body));
@@ -3514,14 +3541,17 @@ TEST_CASE("startup validation: a backend with no convergence test and no "
     const std::string mlsl_inner =
         " does not support FTOL_REL with an INNER block: MLSL's multistart "
         "loop tests no tolerance, and NLopt passes the block's tolerances to "
-        "no INNER search; set it in the INNER block, whose local search "
-        "tests it";
+        "no INNER search; the INNER block, whose local search tests it, takes "
+        "it";
+    /* It ended "; set it in the INNER block, whose local search tests it",
+     * and the stops of a search that tests no tolerance "; stop it with
+     * MAXEVAL, MAXTIME or STOPVAL". */
     for (const auto& c : std::vector<Exact>{
              {"NLOPT:GN_ESCH with FTOL_REL",
               nlopt("GN_ESCH", "    FTOL_REL 1e-6\n"),
               top + "NLOPT:GN_ESCH does not support FTOL_REL: NLopt's global "
-                    "search tests no tolerance; stop it with MAXEVAL, MAXTIME "
-                    "or STOPVAL"},
+                    "search tests no tolerance; MAXEVAL, MAXTIME or STOPVAL "
+                    "stops it"},
              {"NLOPT:G_MLSL with an INNER block and FTOL_REL",
               nlopt("G_MLSL", "    FTOL_REL 1e-6\n    INNER\n"
                               "      LIB NLOPT\n      ALGO LN_BOBYQA\n"
@@ -3535,8 +3565,8 @@ TEST_CASE("startup validation: a backend with no convergence test and no "
              {"TADAH:RANDOM with a tolerance only",
               plain + "    LIB TADAH\n    ALGO RANDOM\n    FTOL_REL 1e-6\n",
               top + "TADAH:RANDOM does not support FTOL_REL: uniform random "
-                    "search has no convergence test to apply it to; stop it "
-                    "with MAXEVAL, MAXTIME or STOPVAL"}}) {
+                    "search has no convergence test to apply it to; MAXEVAL, "
+                    "MAXTIME or STOPVAL stops it"}}) {
         INFO(c.what << "\n" << c.body);
         CHECK(judge(strategy_config(c.body)).startup == c.message);
     }
@@ -3548,10 +3578,10 @@ TEST_CASE("startup validation: a backend with no convergence test and no "
     /* The message names the block that takes STOPVAL (it ended "; set
      * STOPVAL on the enclosing STRATEGY block"). */
     CHECK(parse_error(strategy_config(inner_stopval)) ==
-          "Error on line 11: STOPVAL is not accepted inside an INNER block: "
-          "NLopt's MLSL and AUGLAG replace the INNER search's STOPVAL with the "
-          "enclosing block's; the enclosing STRATEGY block takes STOPVAL\n"
-          "Line:       STOPVAL 0.1");
+          "line 11 of <target>: STOPVAL is not accepted inside an INNER block: "
+          "NLopt's MLSL and AUGLAG replace the STOPVAL of the INNER search "
+          "with that of the enclosing block; the enclosing STRATEGY block "
+          "takes STOPVAL\nLine:       STOPVAL 0.1");
 
     /* The whole message of one NLopt global search. */
     CHECK(judge(strategy_config(nlopt("GN_DIRECT", ""))).startup ==
@@ -3595,8 +3625,8 @@ TEST_CASE("startup validation: TADAH:RANDOM/GRID and DLIB:GFS reject what "
     const std::string gfs = "    TYPE PLAIN\n    LIB DLIB\n    ALGO GFS\n"
                             "    MAXEVAL 5\n";
     const std::string gfs_why =
-        ": dlib's global search has no convergence test to apply it to; stop "
-        "it with MAXEVAL, MAXTIME or STOPVAL";
+        ": dlib's global search has no convergence test to apply it to; "
+        "MAXEVAL, MAXTIME or STOPVAL stops it";
     for (const auto& c : std::vector<Case>{
              {"RANDOM PARAM", random + "    PARAM FOO 1\n",
               top + "TADAH:RANDOM: unknown PARAM 'FOO' (it takes none)"},
@@ -3628,16 +3658,18 @@ TEST_CASE("startup validation: TADAH:RANDOM/GRID and DLIB:GFS reject what "
      * did nothing. */
     const std::string random_why =
         ": uniform random search has no convergence test to apply it to; "
-        "stop it with MAXEVAL, MAXTIME or STOPVAL";
+        "MAXEVAL, MAXTIME or STOPVAL stops it";
     const std::string grid_why =
-        ": the grid search has no convergence test to apply it to; stop it "
-        "with MAXEVAL, MAXTIME or STOPVAL";
+        ": the grid search has no convergence test to apply it to; MAXEVAL, "
+        "MAXTIME or STOPVAL stops it";
+    /* They ended "; stop it with MAXEVAL, MAXTIME or STOPVAL", and the
+     * POPULATION and VECTOR_ARR refusals said "; remove it (it is read by
+     * ...)". */
     const std::string population =
-        " does not use POPULATION; remove it (it is read by " +
-        kPopulationReaders + ")";
+        " does not use POPULATION (it is read by " + kPopulationReaders + ")";
     const std::string vector_storage =
-        " does not use VECTOR_ARR; remove it (it is read by " +
-        kVectorStorageReaders + ")";
+        " does not use VECTOR_ARR (it is read by " + kVectorStorageReaders +
+        ")";
     std::vector<Case> unread;
     for (const std::string key :
          {"FTOL_REL", "FTOL_ABS", "XTOL_REL", "XTOL_ABS"}) {
@@ -3682,6 +3714,33 @@ TEST_CASE("startup validation: TADAH:RANDOM/GRID and DLIB:GFS reject what "
     }
 }
 
+/* Pins: DLIB:BFGS and the Ceres optimisers refuse VECTOR_ARR as every
+ * other backend that does not read it does, naming the backends that read
+ * it (the caps' reads_vector_storage: NLopt's LD_LBFGS, LD_VAR1/2 and the
+ * preconditioned LD_TNEWTON forms).
+ * Before the fix: "DLIB:BFGS does not support VECTOR_ARR, which DLIB:GFS
+ * and the NLopt L-BFGS algorithms read" and "CERES:STEEPEST_DESCENT does
+ * not support VECTOR_ARR, which DLIB:GFS and the global NLopt algorithms
+ * read": DLIB:GFS and the global NLopt algorithms refuse VECTOR_ARR. */
+TEST_CASE("startup validation: DLIB:BFGS and CERES refuse VECTOR_ARR naming "
+          "the backends that read it", "[startup_validation][strategy]")
+{
+    const std::string top = "the STRATEGY-level optimiser: ";
+    const std::string vector_storage =
+        " does not use VECTOR_ARR (it is read by " + kVectorStorageReaders +
+        ")";
+    CHECK(judge(strategy_config("    TYPE PLAIN\n    LIB DLIB\n    ALGO BFGS\n"
+                                "    MAXEVAL 5\n    VECTOR_ARR 5\n"))
+              .startup == top + "DLIB:BFGS" + vector_storage);
+    CHECK(judge(strategy_config("    TYPE PLAIN\n    LIB CERES\n"
+                                "    ALGO STEEPEST_DESCENT\n    MAXEVAL 5\n"
+                                "    VECTOR_ARR 5\n"))
+              .startup ==
+          hpo_test::ceres_expect(top + "CERES:STEEPEST_DESCENT" +
+                                     vector_storage,
+                                 top));
+}
+
 /* ======================================================================
  * NLopt applies every attribute to nlopt::opt (build_nlopt), and an
  * algorithm ignores those it does not read. A tolerance its search never
@@ -3723,8 +3782,8 @@ TEST_CASE("startup validation: NLopt rejects a tolerance, POPULATION or "
                              nlopt(algo, "    " + key + " 1e-4\n"),
                              top + "NLOPT:" + algo + " does not support " +
                                  key + ": NLopt's global search tests no "
-                                 "tolerance; stop it with MAXEVAL, MAXTIME or "
-                                 "STOPVAL"});
+                                 "tolerance; MAXEVAL, MAXTIME or STOPVAL "
+                                 "stops it"});
     /* GD_STOGO and GD_STOGO_RAND ignore NLopt's forced stop, so the stop
      * the message names is MAXEVAL only (backend rules: GD_STOGO needs
      * MAXEVAL). Before the merge with that rule: "...; stop it with
@@ -3735,16 +3794,16 @@ TEST_CASE("startup validation: NLopt rejects a tolerance, POPULATION or "
                              nlopt(algo, "    " + key + " 1e-4\n"),
                              top + "NLOPT:" + algo + " does not support " +
                                  key + ": NLopt's global search tests no "
-                                 "tolerance; stop it with MAXEVAL"});
+                                 "tolerance; MAXEVAL stops it"});
     for (const std::string algo : {"GN_ORIG_DIRECT", "GN_ORIG_DIRECT_L"})
         for (const std::string key : {"FTOL_REL", "FTOL_ABS", "XTOL_ABS"})
             cases.push_back({algo + " " + key,
                              nlopt(algo, "    " + key + " 1e-4\n"),
                              top + "NLOPT:" + algo + " does not support " +
                                  key + ": the original DIRECT tests only "
-                                 "XTOL_REL, its volume tolerance; stop it with "
-                                 "MAXEVAL, MAXTIME, STOPVAL or a positive "
-                                 "tolerance it honours (XTOL_REL)"});
+                                 "XTOL_REL, its volume tolerance; MAXEVAL, "
+                                 "MAXTIME, STOPVAL or a positive tolerance it "
+                                 "honours (XTOL_REL) stops it"});
     for (const std::string algo : {"GN_MLSL_LDS", "G_MLSL_LDS"})
         for (const auto& key : tolerances)
             cases.push_back({algo + " " + key + " with an INNER block",
@@ -3754,8 +3813,8 @@ TEST_CASE("startup validation: NLopt rejects a tolerance, POPULATION or "
                                  key + " with an INNER block: MLSL's "
                                  "multistart loop tests no tolerance, and "
                                  "NLopt passes the block's tolerances to no "
-                                 "INNER search; set it in the INNER block, "
-                                 "whose local search tests it"});
+                                 "INNER search; the INNER block, whose local "
+                                 "search tests it, takes it"});
     for (const std::string algo : {"AUGLAG", "LN_AUGLAG"})
         for (const auto& key : tolerances)
             cases.push_back({algo + " " + key + " with an INNER block",
@@ -3766,9 +3825,9 @@ TEST_CASE("startup validation: NLopt rejects a tolerance, POPULATION or "
                                  "when its INNER search ends (tadah hpo sets "
                                  "no constraint) and tests the block's "
                                  "tolerances only to name that ending, and "
-                                 "NLopt passes them to no INNER search; set "
-                                 "it in the INNER block, whose local search "
-                                 "tests it"});
+                                 "NLopt passes them to no INNER search; the "
+                                 "INNER block, whose local search tests it, "
+                                 "takes it"});
     /* An INNER block's own tolerance that its search does not test was
      * refused naming the phase and the stops it honours in the INNER
      * block ("the INNER block of the STRATEGY-level optimiser:
@@ -3778,12 +3837,12 @@ TEST_CASE("startup validation: NLopt rejects a tolerance, POPULATION or "
      * INNER search is a global one, refused for itself now (the test case
      * "an INNER block that names a global optimiser is refused ..."): every
      * local NLopt algorithm tests every tolerance. */
+    /* They said "; remove it (it is read by ...)". */
     const std::string population =
-        " does not use POPULATION; remove it (it is read by " +
-        kPopulationReaders + ")";
+        " does not use POPULATION (it is read by " + kPopulationReaders + ")";
     const std::string vector_storage =
-        " does not use VECTOR_ARR; remove it (it is read by " +
-        kVectorStorageReaders + ")";
+        " does not use VECTOR_ARR (it is read by " + kVectorStorageReaders +
+        ")";
     cases.push_back({"LN_BOBYQA POPULATION",
                      nlopt("LN_BOBYQA", "    POPULATION 10\n"),
                      top + "NLOPT:LN_BOBYQA" + population});
@@ -4075,17 +4134,21 @@ TEST_CASE("startup validation: finite differences fit every OPTIM box, "
      * takes no finite-difference gradients refuses them: they never took
      * effect. The first attempt named only the in-house stencil and its
      * three steps of the largest step anywhere in the box; the rules above
-     * change the messages and the cases below. */
+     * change the messages and the cases below. The messages state what
+     * fits; they said "Set PARAM fd_step to at most X; or use OPTIM_SCALE
+     * AUTO (...)", "Remove AUTO from the NOISE block and set ...", "...;
+     * remove it.", "...; remove AUTO from the NOISE block." and "...;
+     * remove one of them.". */
     const std::string bfgs =
         "    TYPE PLAIN\n    LIB DLIB\n    ALGO BFGS\n    MAXEVAL 20\n";
     const std::string auto_refusal =
         "PARAM fd_step 0.4 does not fit these OPTIM boxes: no "
         "finite-difference point is evaluated outside the box, and next to a "
-        "bound the CENTRAL stencil turns one-sided and needs two steps of "
-        "h = 0.4 of each box width (in-house rule) inside it; the step is not "
+        "bound the CENTRAL stencil turns one-sided and needs two steps of h = "
+        "0.4 of each box width (in-house rule) inside it; the step is not "
         "shrunk:\n  - WATOM: OPTIM box [0.1, 5] (internal [0, 1]); no stencil "
-        "fits at WATOM = 1.57; fd_step up to 0.333333 fits it\n  Set PARAM "
-        "fd_step to at most 0.333333.";
+        "fits at WATOM = 1.57; fd_step up to 0.333333 fits it\n  A PARAM "
+        "fd_step of at most 0.333333 fits them.";
     SECTION("OPTIM_SCALE AUTO: fd_step up to 1/3 (CENTRAL), 1/2 (FORWARD)") {
         CHECK(judge(strategy_config(bfgs + "    PARAM fd_step 0.4\n")).startup ==
               "the STRATEGY-level optimiser DLIB:BFGS: " + auto_refusal);
@@ -4105,8 +4168,8 @@ TEST_CASE("startup validation: finite differences fit every OPTIM box, "
                                      "backward and needs one step of h = 0.51 "
                                      "of each box width (in-house rule) inside "
                                      "it") &&
-                       Catch::EndsWith("fd_step up to 0.5 fits it\n  Set PARAM "
-                                       "fd_step to at most 0.5."));
+                       Catch::EndsWith("fd_step up to 0.5 fits it\n  A PARAM "
+                                       "fd_step of at most 0.5 fits them."));
         /* HYBRID: any parameter may need finite differences */
         CHECK(judge(strategy_config(bfgs + "    GRAD_STRATEGY HYBRID\n"
                                     "    PARAM fd_step 0.4\n")).startup ==
@@ -4121,8 +4184,8 @@ TEST_CASE("startup validation: finite differences fit every OPTIM box, "
                                          "    PARAM fd_step 0.51\n")).startup,
                    Catch::Contains("h = max(2^-26, 0.51 x |u|) in the unit box "
                                    "(Ceres' rule)") &&
-                       Catch::EndsWith("fd_step up to 0.5 fits it\n  Set "
-                                       "PARAM fd_step to at most 0.5."));
+                       Catch::EndsWith("fd_step up to 0.5 fits it\n  A PARAM "
+                                       "fd_step of at most 0.5 fits them."));
         CHECK(judge(strategy_config(bfgs + "    PARAM fd_kernel ceres\n"
                                     "    PARAM fd_step 0.5\n")).startup == "");
         CHECK(judge(strategy_config(bfgs + "    PARAM fd_kernel ceres\n"
@@ -4135,8 +4198,8 @@ TEST_CASE("startup validation: finite differences fit every OPTIM box, "
         CHECK_THAT(judge(strategy_config(bfgs + "    PARAM fd_kernel ceres\n"
                                          "    PARAM diff_method 1\n"
                                          "    PARAM fd_step 1.01\n")).startup,
-                   Catch::EndsWith("fd_step up to 1 fits it\n  Set PARAM "
-                                   "fd_step to at most 1."));
+                   Catch::EndsWith("fd_step up to 1 fits it\n  A PARAM "
+                                   "fd_step of at most 1 fits them."));
     }
     SECTION("each phase that takes finite-difference gradients") {
         const std::string inner =
@@ -4177,12 +4240,12 @@ TEST_CASE("startup validation: finite differences fit every OPTIM box, "
             /* It ended "; use diff_method 0 (CENTRAL, the default) or 1
              * (FORWARD)". */
             CHECK(judge(strategy_config(b)).startup ==
-                  name + ": PARAM diff_method 2 (RIDDERS) is refused: Ridders' "
-                  "extrapolation ignored PARAM fd_step, started from a step of "
-                  "0.32 x max(|u|, 1) -- outside most OPTIM boxes -- and took "
-                  "up to 20 evaluations per parameter; diff_method 0 "
-                  "(CENTRAL, the default) and 1 (FORWARD) take PARAM "
-                  "fd_step");
+                  name + ": PARAM diff_method 2 (RIDDERS) is refused: "
+                  "Ridders' extrapolation ignores PARAM fd_step, starts from "
+                  "a step of 0.32 x max(|u|, 1) -- outside most OPTIM boxes "
+                  "-- and takes up to 20 evaluations per parameter; "
+                  "diff_method 0 (CENTRAL, the default) and 1 (FORWARD) take "
+                  "PARAM fd_step");
         }
     }
     SECTION("OPTIM_SCALE NONE: Ceres' rule, the default, over the whole box") {
@@ -4202,9 +4265,9 @@ TEST_CASE("startup validation: finite differences fit every OPTIM box, "
               "max(2^-26, 1e-06 x |u|) in internal units (Ceres' rule) inside "
               "it; the step is not shrunk:\n  - WATOM: OPTIM box [1, "
               "1.000001]; no stencil fits at WATOM = 1.0000005; fd_step up to "
-              "3.33333e-07 fits it\n  Set PARAM fd_step to at most "
-              "3.33333e-07; or use OPTIM_SCALE AUTO (fd_step is then a "
-              "fraction of each box width).");
+              "3.33333e-07 fits it\n  A PARAM fd_step of at most 3.33333e-07 "
+              "fits them; under OPTIM_SCALE AUTO fd_step is a fraction of "
+              "each box width.");
         CHECK(judge(none("OPTIM WATOM (1) 1 1.000001\n",
                          "    PARAM fd_step 3.3e-7\n")).startup == "");
         /* the in-house rule under NONE, h = fd_step x max(|u|, 1): the
@@ -4215,12 +4278,12 @@ TEST_CASE("startup validation: finite differences fit every OPTIM box, "
                               "    PARAM fd_step 0.5\n")).startup,
                    Catch::Contains("\n  - WATOM: OPTIM box [0.1, 5]; no stencil "
                                    "fits at WATOM = ") &&
-                       Catch::Contains("; fd_step up to 0.485148 fits it\n  Set "
-                                       "PARAM fd_step to at most 0.485148; or "
-                                       "use OPTIM_SCALE AUTO (fd_step is then "
-                                       "a fraction of each box width); or give "
-                                       "a positive parameter that spans "
-                                       "decades a LOG box."));
+                       Catch::Contains("; fd_step up to 0.485148 fits it\n  A "
+                                       "PARAM fd_step of at most 0.485148 "
+                                       "fits them; under OPTIM_SCALE AUTO "
+                                       "fd_step is a fraction of each box "
+                                       "width; a LOG box suits a positive "
+                                       "parameter that spans decades."));
         CHECK(judge(none("OPTIM WATOM (1) 0.1 5.0\n",
                          "    PARAM fd_kernel inhouse\n"
                          "    PARAM fd_step 0.48\n")).startup == "");
@@ -4241,9 +4304,8 @@ TEST_CASE("startup validation: finite differences fit every OPTIM box, "
                                        "no stencil fits at CGRID2B[1] = ") &&
                        /* not "set PARAM fd_step", which NOISE AUTO now
                         * refuses beside it */
-                       Catch::Contains("\n  Remove AUTO from the NOISE block "
-                                       "and set PARAM fd_step to at most ") &&
-                       Catch::Contains("; or use OPTIM_SCALE AUTO") &&
+                       Catch::Contains("\n  A PARAM fd_step of at most ") &&
+                       Catch::Contains("; under OPTIM_SCALE AUTO") &&
                        !Catch::Contains("overrides NOISE AUTO") &&
                        !Catch::Contains("WATOM"));
     }
@@ -4305,17 +4367,17 @@ TEST_CASE("startup validation: finite differences fit every OPTIM box, "
                                     "      PARAM fd_step 0.4\n"
                                     "      PARAM fd_kernel ceres\n"
                                     "    ENDINNER\n")).startup ==
-              "the INNER block of the STRATEGY-level optimiser NLOPT:LD_LBFGS: "
-              "PARAM fd_step and fd_kernel never take effect: an INNER search "
-              "takes the gradient of the block it runs in, with that block's "
-              "finite-difference settings; set them in the enclosing block.");
+              "the INNER block of the STRATEGY-level optimiser "
+              "NLOPT:LD_LBFGS: PARAM fd_step and fd_kernel never take effect: "
+              "an INNER search takes the gradient of the block it runs in, "
+              "with that block's finite-difference settings; the enclosing "
+              "block takes them.");
         /* a derivative-free optimiser */
         CHECK(judge(strategy_config("    TYPE PLAIN\n    LIB NLOPT\n"
                                     "    ALGO LN_SBPLX\n    MAXEVAL 20\n"
                                     "    PARAM fd_step 0.4\n")).startup ==
               "the STRATEGY-level optimiser NLOPT:LN_SBPLX: PARAM fd_step "
-              "never takes effect: NLOPT:LN_SBPLX takes no gradient; remove "
-              "it.");
+              "never takes effect: NLOPT:LN_SBPLX takes no gradient.");
         /* Pins: NLopt's MLSL or AUGLAG whose local search is
          * derivative-free takes no gradient, whatever the D of its name
          * (it only picks the default local optimiser, LD_MMA, which the
@@ -4331,14 +4393,13 @@ TEST_CASE("startup validation: finite differences fit every OPTIM box, "
               "the STRATEGY-level optimiser NLOPT:GD_MLSL_LDS: PARAM fd_step "
               "never takes effect: NLOPT:GD_MLSL_LDS takes no gradient: "
               "NLopt's MLSL and AUGLAG take a gradient only for their local "
-              "search, and the INNER block's NLOPT:LN_BOBYQA takes none; "
-              "remove it.");
+              "search, and the INNER block's NLOPT:LN_BOBYQA takes none.");
         /* GRAD_STRATEGY ANALYTICAL takes no finite differences */
         CHECK(judge(strategy_config(bfgs + "    GRAD_STRATEGY ANALYTICAL\n"
                                     "    PARAM diff_method 1\n")).startup ==
-              "the STRATEGY-level optimiser DLIB:BFGS: PARAM diff_method never "
-              "takes effect: GRAD_STRATEGY ANALYTICAL takes no finite "
-              "differences; remove it.");
+              "the STRATEGY-level optimiser DLIB:BFGS: PARAM diff_method "
+              "never takes effect: GRAD_STRATEGY ANALYTICAL takes no finite "
+              "differences.");
     }
     SECTION("ASA's probes fit its boxes") {
         const std::string asa =
@@ -4352,13 +4413,14 @@ TEST_CASE("startup validation: finite differences fit every OPTIM box, "
               "or (1 - Delta) x when that lies outside the box -- would be "
               "evaluated outside the OPTIM box of these dimensions:\n  - "
               "WATOM: OPTIM box [1, 1.000001], the default Delta_X 0.001: a "
-              "probe of "
-              "WATOM = 1.0000005 lies outside the box; Delta_X up to "
-              "4.99999e-07 fits it\n  Lower the Delta; or use OPTIM_SCALE "
-              "AUTO, where every box is the unit box (the tangents fit for "
-              "Delta <= 1).");
-        /* the message said "PARAM Delta_X 0.001" of the default too; a
-         * written one is a PARAM */
+              "probe of WATOM = 1.0000005 lies outside the box; Delta_X up to "
+              "4.99999e-07 fits it\n  A Delta up to the value given for each "
+              "dimension keeps its probes inside the box; under OPTIM_SCALE "
+              "AUTO every box is the unit box (the tangents fit for Delta <= "
+              "1).");
+        /* It ended "\n  Lower the Delta; or use OPTIM_SCALE AUTO, where
+         * every box is the unit box (...)". The message said "PARAM Delta_X
+         * 0.001" of the default too; a written one is a PARAM */
         CHECK_THAT(judge("OPTIM_SCALE NONE\nOPTIM WATOM (1) 1 1.000001\n"
                          "PC_ERMSE 0 1\nOPTIMIZER\n  STRATEGY\n" + asa +
                          "    PARAM Delta_X 0.002\n  ENDSTRATEGY\n"
@@ -4417,7 +4479,7 @@ TEST_CASE("startup validation: GRAD_STRATEGY on a phase that takes no "
         const std::string backend = c.who.substr(c.who.rfind(' ') + 1);
         CHECK(judge(strategy_config(c.body)).startup ==
               c.who + ": GRAD_STRATEGY never takes effect: " + backend +
-                  " takes no gradient; remove it.");
+                  " takes no gradient.");
     }
     /* Pins: NLopt's MLSL and AUGLAG take a gradient only for their local
      * search (mlsl.c and auglag.c evaluate their own points with none), so
@@ -4484,7 +4546,7 @@ TEST_CASE("startup validation: GRAD_STRATEGY on a phase that takes no "
               c.who + ": GRAD_STRATEGY never takes effect: " + backend +
                   " takes no gradient: NLopt's MLSL and AUGLAG take a "
                   "gradient only for their local search, and " + c.local +
-                  " takes none; remove it.");
+                  " takes none.");
     }
     /* A phase that obtains gradients keeps it: MLSL or AUGLAG with a
      * gradient-based INNER search (its GRAD_STRATEGY obtains the gradient
@@ -4549,7 +4611,9 @@ TEST_CASE("startup validation: NOISE AUTO derives fd_step where the "
         REQUIRE(parse == "");
         r.startup = checked_refusal(
             config,
-            error_of([&] { validate_hpo_setup(ctx, *r.trg, true, true); }));
+            hpo_test::as_target(
+                error_of([&] { validate_hpo_setup(ctx, *r.trg, true, true); }),
+                tf.path.string()));
         log.finish("test-end");
         log.reset_for_test();
         std::ifstream is(jp);
@@ -4589,9 +4653,12 @@ TEST_CASE("startup validation: NOISE AUTO derives fd_step where the "
             if (r.trg->spec.param.count("fd_step"))
                 CHECK(r.trg->spec.param.at("fd_step") == 1e-3);
             CHECK(r.trg->spec.fd_step_from_noise_auto);
+            /* It said "NOISE_AUTO: PARAM fd_step set to 0.001 (diag=1,
+             * dim=1)". */
             CHECK_THAT(r.journal,
-                       Catch::Contains("NOISE_AUTO: PARAM fd_step set to 0.001 "
-                                       "(diag=1, dim=1)"));
+                       Catch::Contains("NOISE AUTO: PARAM fd_step is 0.001 "
+                                       "(1e-3 x the diagonal 1 of the search "
+                                       "space / sqrt(1 dimensions))"));
         }
     }
     SECTION("refused where no slope is measured") {
@@ -4599,8 +4666,7 @@ TEST_CASE("startup validation: NOISE AUTO derives fd_step where the "
                                     "    ALGO LN_SBPLX\n    MAXEVAL 20\n"));
         CHECK(sbplx.startup ==
               "the STRATEGY-level optimiser NLOPT:LN_SBPLX: NOISE AUTO has no "
-              "effect: NLOPT:LN_SBPLX measures no slopes; remove AUTO from "
-              "the NOISE block.");
+              "effect: NLOPT:LN_SBPLX measures no slopes.");
         CHECK(sbplx.trg->spec.param.count("fd_step") == 0u);
         CHECK(sbplx.journal.find("NOISE_AUTO") == std::string::npos);
         /* each MULTISTART start; the PRESTAGE refinement, whatever its
@@ -4610,16 +4676,14 @@ TEST_CASE("startup validation: NOISE AUTO derives fd_step where the "
                         "    N_STARTS 2\n" + init_points("2")))
                   .startup ==
               "each MULTISTART start NLOPT:LN_NELDERMEAD: NOISE AUTO has no "
-              "effect: NLOPT:LN_NELDERMEAD measures no slopes; remove AUTO "
-              "from the NOISE block.");
+              "effect: NLOPT:LN_NELDERMEAD measures no slopes.");
         CHECK(run(noise("    TYPE PRESTAGE\n    EXPLORE\n      LIB NLOPT\n"
                         "      ALGO LD_LBFGS\n      MAXEVAL 5\n    ENDEXPLORE\n"
                         "    REFINE\n      LIB NLOPT\n      ALGO LN_SBPLX\n"
                         "      MAXEVAL 20\n    ENDREFINE\n"))
                   .startup ==
               "the PRESTAGE refinement NLOPT:LN_SBPLX: NOISE AUTO has no "
-              "effect: NLOPT:LN_SBPLX measures no slopes; remove AUTO from "
-              "the NOISE block.");
+              "effect: NLOPT:LN_SBPLX measures no slopes.");
         /* Pins: NLopt's MLSL or AUGLAG whose local search is
          * derivative-free measures no slopes, whatever the D of its name,
          * and the message says which search takes no gradient.
@@ -4631,11 +4695,10 @@ TEST_CASE("startup validation: NOISE AUTO derives fd_step where the "
             "    MAXEVAL 20\n    INNER\n      LIB NLOPT\n"
             "      ALGO LN_BOBYQA\n      MAXEVAL 10\n    ENDINNER\n"));
         CHECK(auglag.startup ==
-              "the STRATEGY-level optimiser NLOPT:LD_AUGLAG: NOISE AUTO has no "
-              "effect: NLOPT:LD_AUGLAG measures no slopes: NLopt's MLSL and "
-              "AUGLAG take a gradient only for their local search, and the "
-              "INNER block's NLOPT:LN_BOBYQA takes none; remove AUTO from the "
-              "NOISE block.");
+              "the STRATEGY-level optimiser NLOPT:LD_AUGLAG: NOISE AUTO has "
+              "no effect: NLOPT:LD_AUGLAG measures no slopes: NLopt's MLSL "
+              "and AUGLAG take a gradient only for their local search, and "
+              "the INNER block's NLOPT:LN_BOBYQA takes none.");
         CHECK(auglag.trg->spec.param.count("fd_step") == 0u);
         CHECK(auglag.journal.find("NOISE_AUTO") == std::string::npos);
         /* ASA takes its slopes with probes of its own */
@@ -4644,8 +4707,7 @@ TEST_CASE("startup validation: NOISE AUTO derives fd_step where the "
                   .startup ==
               "the STRATEGY-level optimiser ASA:ASA: NOISE AUTO has no "
               "effect: ASA:ASA measures its slopes with probes of its own "
-              "(PARAM Delta_X), not with fd_step; remove AUTO from the NOISE "
-              "block.");
+              "(PARAM Delta_X), not with fd_step.");
     }
     SECTION("refused beside an explicit PARAM fd_step") {
         /* The explicit step won, with "[HPO] NOISE_AUTO: PARAM fd_step
@@ -4656,7 +4718,8 @@ TEST_CASE("startup validation: NOISE AUTO derives fd_step where the "
                                     "    PARAM fd_step 1e-4\n"));
         CHECK(plain.startup ==
               "the STRATEGY-level optimiser DLIB:BFGS: NOISE AUTO has no "
-              "effect: PARAM fd_step 0.0001 is set; remove one of them.");
+              "effect: PARAM fd_step 0.0001 is set, and NOISE AUTO estimates "
+              "PARAM fd_step only for a block without one.");
         CHECK(plain.journal.find("NOISE_AUTO") == std::string::npos);
         CHECK(run(noise("    TYPE PRESTAGE\n    EXPLORE\n      LIB TADAH\n"
                         "      ALGO RANDOM\n      MAXEVAL 3\n      SEED 1\n"
@@ -4665,12 +4728,14 @@ TEST_CASE("startup validation: NOISE AUTO derives fd_step where the "
                         "      PARAM fd_step 1e-4\n    ENDREFINE\n"))
                   .startup ==
               "the PRESTAGE refinement DLIB:BFGS: NOISE AUTO has no effect: "
-              "PARAM fd_step 0.0001 is set; remove one of them.");
+              "PARAM fd_step 0.0001 is set, and NOISE AUTO estimates PARAM "
+              "fd_step only for a block without one.");
         CHECK(run(noise("    TYPE PLAIN\n    LIB NLOPT\n    ALGO G_MLSL_LDS\n"
                         "    MAXEVAL 50\n    PARAM fd_step 1e-4\n" + inner))
                   .startup ==
               "the STRATEGY-level optimiser NLOPT:G_MLSL_LDS: NOISE AUTO has "
-              "no effect: PARAM fd_step 0.0001 is set; remove one of them.");
+              "no effect: PARAM fd_step 0.0001 is set, and NOISE AUTO "
+              "estimates PARAM fd_step only for a block without one.");
     }
     SECTION("refused under GRAD_STRATEGY ANALYTICAL, written or resolved") {
         const Run written = run(noise("    TYPE PLAIN\n    LIB DLIB\n"
@@ -4678,8 +4743,7 @@ TEST_CASE("startup validation: NOISE AUTO derives fd_step where the "
                                       "    GRAD_STRATEGY ANALYTICAL\n"));
         CHECK(written.startup ==
               "the STRATEGY-level optimiser DLIB:BFGS: NOISE AUTO has no "
-              "effect: GRAD_STRATEGY ANALYTICAL takes no finite differences; "
-              "remove AUTO from the NOISE block.");
+              "effect: GRAD_STRATEGY ANALYTICAL takes no finite differences.");
         CHECK(written.trg->spec.param.count("fd_step") == 0u);
         /* an unset GRAD_STRATEGY resolves to ANALYTICAL with PC_OBSERVABLE
          * (the check comes before the one that ANALYTICAL needs training
@@ -4692,8 +4756,7 @@ TEST_CASE("startup validation: NOISE AUTO derives fd_step where the "
         CHECK(resolved.startup ==
               "the STRATEGY-level optimiser DLIB:BFGS: NOISE AUTO has no "
               "effect: GRAD_STRATEGY ANALYTICAL takes no finite differences "
-              "(the resolution of an unset GRAD_STRATEGY with PC_OBSERVABLE); "
-              "remove AUTO from the NOISE block.");
+              "(the resolution of an unset GRAD_STRATEGY with PC_OBSERVABLE).");
         CHECK(resolved.trg->spec.param.count("fd_step") == 0u);
     }
 }
@@ -4781,7 +4844,7 @@ std::string global_inner_refusal(const std::string& phase,
            ", and NLOPT:" + inner + " is a global optimiser" +
            (note.empty() ? std::string()
                          : " that does not start at the point it is given (" +
-                               note + "; NLopt never reads that point)") +
+                               note + "; NLopt never reads the point it is given)") +
            ". A local NLopt algorithm in the INNER block starts at the point "
            "it is given (" + joined(starting_where_given(true)) + "); NLOPT:" +
            inner + " runs as the exploration (EXPLORE block) or once, as "
@@ -4799,7 +4862,7 @@ std::string global_inner_refusal(const std::string& phase,
  * STRATEGY level or in a REFINE block, is refused at startup, at the
  * ENDOPTIMIZER line, with "STRATEGY TYPE PRESTAGE cannot refine with
  * NLOPT:<ALGO>: it does not start at the point it is given (<where it
- * starts>; NLopt never reads that point), so the refinement would never use
+ * starts>; NLopt never reads the point it is given), so the refinement would never use
  * the exploration's candidates, for any TOPK. A local optimiser starts at
  * each candidate (<every local optimiser of the registry that starts at its
  * point>); NLOPT:<ALGO> runs as the exploration (EXPLORE block) or once, as
@@ -4813,7 +4876,7 @@ std::string global_inner_refusal(const std::string& phase,
  * NLOPT:AUGLAG cannot run NLOPT:GD_STOGO as its INNER search: an INNER
  * search is a local search, which NLOPT:AUGLAG starts at its own starting
  * point, and NLOPT:GD_STOGO is a global optimiser that does not start at
- * the point it is given (<where it starts>; NLopt never reads that point).
+ * the point it is given (<where it starts>; NLopt never reads the point it is given).
  * A local NLopt algorithm in the INNER block starts at the point it is
  * given (<every such NLopt algorithm>); NLOPT:GD_STOGO runs as the
  * exploration (EXPLORE block) or once, as STRATEGY TYPE PLAIN."). The lists
@@ -4884,7 +4947,7 @@ TEST_CASE("startup validation: a PRESTAGE refinement or MULTISTART whose "
     const auto own = [&](const std::string& algo) {
         return "STRATEGY TYPE PRESTAGE cannot refine with NLOPT:" + algo +
                ": it does not start at the point it is given (" +
-               start_note_of(algo) + "; NLopt never reads that point), so "
+               start_note_of(algo) + "; NLopt never reads the point it is given), so "
                "the refinement would never use the exploration's candidates, "
                "for any TOPK. A local optimiser starts at each candidate (" +
                joined(local) + "); NLOPT:" + algo + " runs as the exploration "
@@ -4896,8 +4959,8 @@ TEST_CASE("startup validation: a PRESTAGE refinement or MULTISTART whose "
         const auto at = line_of(config, closing);
         REQUIRE(at.first > 0);
         CHECK(v.startup == message);
-        CHECK(v.startup_raw == "Error on line " + std::to_string(at.first) +
-                                   ": " + message + "\nLine: " + at.second);
+        CHECK(v.startup_raw == "line " + std::to_string(at.first) +
+                                   " of <target>: " + message + "\nLine: " + at.second);
         CHECK(v.policy == message);
     };
 
@@ -5017,7 +5080,7 @@ TEST_CASE("startup validation: a PRESTAGE refinement or MULTISTART whose "
  * search is a local search, which NLOPT:<parent> starts at <the points it
  * samples in the OPTIM box | its own starting point>, and NLOPT:<inner> is a
  * global optimiser[ that does not start at the point it is given (<where it
- * starts>; NLopt never reads that point)]. A local NLopt algorithm in the
+ * starts>; NLopt never reads the point it is given)]. A local NLopt algorithm in the
  * INNER block starts at the point it is given (<every one>); NLOPT:<inner>
  * runs as the exploration (EXPLORE block) or once, as STRATEGY TYPE
  * PLAIN." (two cases spelt out whole); in every phase: an EXPLORE
@@ -5090,7 +5153,8 @@ TEST_CASE("startup validation: an INNER block that names a global optimiser "
         const std::string config = strategy_config(body);
         const auto v = judge(config);
         CHECK(v.startup == message);
-        CHECK_THAT(v.startup_raw, Catch::StartsWith("Error on line ") &&
+        CHECK_THAT(v.startup_raw, Catch::StartsWith("line ") &&
+                                      Catch::Contains(" of <target>: ") &&
                                       Catch::EndsWith("ENDINNER"));
         if (policy) CHECK(v.policy == message);
     };
@@ -5132,7 +5196,7 @@ TEST_CASE("startup validation: an INNER block that names a global optimiser "
                 "OPTIM box, and NLOPT:GD_STOGO is a global optimiser that "
                 "does not start at the point it is given (StoGO evaluates the "
                 "centre of the OPTIM box first and then samples the whole "
-                "box; NLopt never reads that point). A local NLopt algorithm "
+                "box; NLopt never reads the point it is given). A local NLopt algorithm "
                 "in the INNER block starts at the point it is given (" +
                 local_list + "); NLOPT:GD_STOGO runs as the exploration "
                 "(EXPLORE block) or once, as STRATEGY TYPE PLAIN.", false);

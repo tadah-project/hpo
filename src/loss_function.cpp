@@ -77,7 +77,8 @@ std::vector<double> LossFunction::resolve_params(Type t,
             oss << "loss " << name << " parameter ("
                 << (t == Type::HUBER ? "delta" : "c")
                 << ") must be finite and > 0 (got " << p
-                << "); omit it to use the default " << default_params(t)[0];
+                << "); without it the default " << default_params(t)[0]
+                << " applies";
             throw std::runtime_error(oss.str());
         }
     }

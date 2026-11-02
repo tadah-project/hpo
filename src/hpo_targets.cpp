@@ -209,7 +209,7 @@ bool chain_draws_from_seed(const InitStrategySpec& ispec) {
 
 /* "CONFIG, WARM" -- the chain's METHODs -- or "empty -> CONFIG fallback". */
 std::string chain_methods(const InitStrategySpec& ispec) {
-    if (ispec.chain.empty()) return "empty -> CONFIG fallback";
+    if (ispec.chain.empty()) return "METHOD CONFIG, by default";
     std::string m;
     for (const auto& e : ispec.chain) {
         if (!m.empty()) m += ", ";
@@ -252,7 +252,7 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn,
       const std::string msg =
           "potential files of tadah hpo (best_pot.tadah, BDUMP and DUMP "
           "archives): " + w;
-      std::cerr << "[HPO] WARNING: " << msg << "\n";
+      std::cerr << "[tadah hpo] WARNING: " << msg << "\n";
       HPOLog::instance().warning(msg);
     }
   }
@@ -287,8 +287,9 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn,
                                   std::string(e) + "')");
     std::ostringstream oss;
     oss << "OPTIM_SCALE " << v << " taken from the TADAH_OPTIM_SCALE environment "
-           "override" << (scale_policy_set_ ? " (config value ignored)" : "");
-    std::cerr << "[HPO] " << oss.str() << "\n";
+           "override" << (scale_policy_set_ ? " (the OPTIM_SCALE line of the "
+                                              "target file is not read)" : "");
+    std::cerr << "[tadah hpo] " << oss.str() << "\n";
     HPOLog::instance().info(oss.str());
     scale_policy_set_ = true;
   }
@@ -328,8 +329,8 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn,
     if (spec.param.count("fd_step") || spec.param_raw.count("fd_step")) {
       /* refused by validate_hpo_setup */
     } else if (spec.low.empty()) {
-      std::cerr << "[HPO] NOISE_AUTO: no optimisable dimensions; "
-                   "skipping\n";
+      std::cerr << "[tadah hpo] NOISE AUTO: the search space has no "
+                   "dimension, so no PARAM fd_step is set\n";
     } else {
       double sq = 0.0;
       for (std::size_t i = 0; i < spec.low.size(); ++i) {
@@ -345,9 +346,10 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn,
        * naming NOISE AUTO (fd_box_error), and the journal names it. */
       spec.fd_step_from_noise_auto = true;
       std::ostringstream oss;
-      oss << "NOISE_AUTO: PARAM fd_step set to " << fd
-          << " (diag=" << diag << ", dim=" << spec.low.size() << ")";
-      std::cout << "[HPO] " << oss.str() << "\n";
+      oss << "NOISE AUTO: PARAM fd_step is " << fd << " (1e-3 x the "
+          << "diagonal " << diag << " of the search space / sqrt("
+          << spec.low.size() << " dimensions))";
+      std::cout << "[tadah hpo] " << oss.str() << "\n";
       HPOLog::instance().info(oss.str());
     }
   }
@@ -390,8 +392,16 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn,
    *
    * Diagnostics tag the location ("OUTER" / "PRESTAGE") so the user can
    * see which block fired which strategy. */
-  auto resolve_init = [&](OptimizerSpec& s, const char* where) {
+  auto resolve_init = [&](OptimizerSpec& s, const std::string& phase) {
     auto strategy = build_init_strategy(s.init_strategy_spec);
+    /* The INIT block as the lines below name it: by its line, or, without
+     * an INIT block, as the INIT chain of its phase (OUTER: the
+     * STRATEGY-level optimiser, PRESTAGE: the EXPLORE block). */
+    const std::string init_name =
+        s.init_strategy_spec.line > 0
+            ? "the INIT block on line " +
+                  std::to_string(s.init_strategy_spec.line)
+            : "the INIT chain of " + phase;
     /* A SEED with no seed-consuming METHOD in the chain is a silent
      * no-op for the starting point: an empty chain falls back to
      * CONFIG, and CONFIG/WARM ignore ctx.seed. For an NLopt phase without
@@ -413,25 +423,24 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn,
       oss << "the SEED of the INIT block";
       if (s.init_strategy_spec.line > 0)
         oss << " on line " << s.init_strategy_spec.line;
-      oss << " draws the block's starting points only: " << s.lib << ":"
-          << s.algo << " draws its own random numbers with the SEED of the "
-          << s.key_lines.at("ALGO").block << " block, which has none, so "
-             "with a seed drawn once for the run";
-      std::cerr << "[HPO] " << oss.str() << "\n";
+      oss << " seeds the starting points of the block only. " << s.lib << ":"
+          << s.algo << " draws its own random numbers from the SEED of the "
+          << s.key_lines.at("ALGO").block << " block; that block has none, "
+             "so a seed is drawn once for the run";
+      std::cerr << "[tadah hpo] " << oss.str() << "\n";
       HPOLog::instance().warning(oss.str());
     }
     if (s.init_strategy_spec.seed) {
       if (!chain_draws_from_seed(s.init_strategy_spec)) {
         std::ostringstream oss;
-        oss << "INIT[" << where << "]: SEED is set but the strategy chain ("
-            << chain_methods(s.init_strategy_spec)
-            << ") contains no stochastic method, so the seed does not "
-               "affect the starting point. Add METHOD RANDOM/LHS/SOBOL "
-               "to randomise it.";
+        oss << "the SEED of " << init_name << " changes no starting point: "
+               "its methods (" << chain_methods(s.init_strategy_spec)
+            << ") draw no random numbers; a RANDOM, LHS or SOBOL method "
+               "draws with it.";
         if (s.lib == "NLOPT" && !s.seed && reads_seed(s))
-          oss << " (Without a SEED of its own, the NLopt optimiser still "
-                 "takes its random seed from it.)";
-        std::cerr << "[HPO] " << oss.str() << "\n";
+          oss << " (" << s.lib << ":" << s.algo << ", without a SEED of its "
+                 "own, still takes its random numbers from it.)";
+        std::cerr << "[tadah hpo] " << oss.str() << "\n";
         HPOLog::instance().warning(oss.str());
       }
     }
@@ -468,7 +477,7 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn,
         if (nlopt_takes_it) oss << "; " << nlopt_note;
         oss << ")";
       }
-      std::cout << "[HPO] " << oss.str() << "\n";
+      std::cout << "[tadah hpo] " << oss.str() << "\n";
       HPOLog::instance().info(oss.str());
     }
     InitContext ictx{s, *this, seed, &context};
@@ -484,26 +493,26 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn,
        * is almost never what a WARM user intended. Say so explicitly;
        * WARM_ON_MISMATCH error makes it fatal instead. */
       std::ostringstream oss;
-      oss << "InitStrategy[" << where << "] " << strategy->name()
-          << " produced 0 starting points -- the optimiser falls back to "
-             "its default start (ANNEAL family: the OPTIM box CENTRE, not "
-             "your seed). Set WARM_ON_MISMATCH error in the INIT block to "
-             "make this fatal.";
-      std::cerr << "[HPO] " << oss.str() << "\n";
+      oss << init_name << " (" << chain_methods(s.init_strategy_spec)
+          << ") gave no starting point (a WARM point that WARM_ON_MISMATCH "
+             "dropped): TADAH:ANNEAL, ANNEAL_PT and ANNEAL_PA start from the "
+             "centre of the OPTIM box, not from the WARM point; "
+             "WARM_ON_MISMATCH error in the INIT block makes this an error";
+      std::cerr << "[tadah hpo] " << oss.str() << "\n";
       HPOLog::instance().warning(oss.str());
     }
     if (!s.optim_init.empty()) {
       std::ostringstream oss;
-      oss << "InitStrategy[" << where << "] " << strategy->name()
-          << " produced " << s.optim_init.size()
-          << " starting point" << (s.optim_init.size()==1 ? "" : "s");
-      std::cout << "[HPO] " << oss.str() << "\n";
+      oss << init_name << " (" << chain_methods(s.init_strategy_spec)
+          << ") gives " << s.optim_init.size() << " starting point"
+          << (s.optim_init.size()==1 ? "" : "s");
+      std::cout << "[tadah hpo] " << oss.str() << "\n";
       HPOLog::instance().info(oss.str());
     }
     return strategy;
   };
 
-  resolve_init(spec, "OUTER");
+  resolve_init(spec, "the STRATEGY-level optimiser");
 
   /* An optimiser that draws random numbers (reads_seed: TADAH:RANDOM,
    * the annealers, ASA, an NLopt algorithm that draws them) in a block
@@ -538,7 +547,7 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn,
               : head + "it draws them with a seed drawn once for the run, " +
                     n + " (SEED " + n + " in the " + block +
                     " block draws the same numbers again)";
-    std::cout << "[HPO] " << msg << "\n";
+    std::cout << "[tadah hpo] " << msg << "\n";
     HPOLog::instance().info(msg);
   };
 
@@ -554,7 +563,7 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn,
      * and the OUTER's optim_init is *not* prepended -- PRESTAGE owns its
      * starting points. */
     if (!spec.prestage->init_strategy_spec.chain.empty())
-      resolve_init(*spec.prestage, "PRESTAGE");
+      resolve_init(*spec.prestage, "the PRESTAGE exploration (EXPLORE block)");
     spec.share_init_with_nested_phases();
   }
   draw_optimiser_seed(spec);
@@ -567,12 +576,12 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn,
   if (spec.restart.active() && spec.restart.init_strategy.seed &&
       !chain_draws_from_seed(spec.restart.init_strategy)) {
     std::ostringstream oss;
-    oss << "RESTART: SEED is set but the METHOD chain ("
+    oss << "RESTART: the SEED of the RESTART block changes no restart "
+           "point: its methods ("
         << chain_methods(spec.restart.init_strategy)
-        << ") contains no stochastic method, so the seed does not affect "
-           "the restart points. Add METHOD RANDOM/LHS/SOBOL to randomise "
-           "them.";
-    std::cerr << "[HPO] " << oss.str() << "\n";
+        << ") draw no random numbers; a RANDOM, LHS or SOBOL method draws "
+           "with it.";
+    std::cerr << "[tadah hpo] " << oss.str() << "\n";
     HPOLog::instance().warning(oss.str());
   }
 
@@ -636,11 +645,13 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn,
 static bool dispatch_init_attr(const std::string& key,
                                std::istringstream& iss,
                                InitStrategySpec& a,
+                               const std::string& file,
                                std::size_t nline, const std::string& line)
 {
     if (key=="METHOD" || key=="STRATEGY") {
         InitStrategySpec::Entry e;
         /* The line names the entry's refusals when the chain is drawn. */
+        e.file = file;
         e.line = nline;
         e.line_text = line;
         e.key = key;
@@ -668,7 +679,8 @@ static bool dispatch_init_attr(const std::string& key,
     if (key=="WARM_ON_MISMATCH") {
         const std::string v = single_value(iss, key);
         if (v!="warn" && v!="error" && v!="skip")
-            throw std::runtime_error("WARM_ON_MISMATCH must be one of: warn, error, skip");
+            throw std::runtime_error("WARM_ON_MISMATCH must be one of: warn, "
+                                     "error, skip, got '" + v + "'");
         a.warm_on_mismatch = v;
         return true;
     }
@@ -693,14 +705,14 @@ static bool dispatch_init_attr(const std::string& key,
 static const char* inner_rejects_attr(const std::string& key)
 {
     if (key == "SEED")
-        return "NLopt draws the INNER search from the enclosing run's random "
-               "stream";
+        return "NLopt draws the INNER search from the random numbers of the "
+               "enclosing run";
     if (key == "GRAD_STRATEGY")
-        return "the enclosing block's GRAD_STRATEGY applies to its local "
-               "search";
+        return "the GRAD_STRATEGY of the enclosing block applies to its "
+               "local search";
     if (key == "STOPVAL")
-        return "NLopt's MLSL and AUGLAG replace the INNER search's STOPVAL "
-               "with the enclosing block's";
+        return "NLopt's MLSL and AUGLAG replace the STOPVAL of the INNER "
+               "search with that of the enclosing block";
     return nullptr;
 }
 
@@ -755,24 +767,24 @@ static bool reject_old_keyword(const std::string& key)
     static const Rename map[] = {
         {"LOCAL",                       "renamed to INNER, the block of the local search that an NLopt MLSL or AUGLAG algorithm runs."},
         {"ENDLOCAL",                    "renamed to ENDINNER."},
-        {"PRESTAGE",                    "replaced by `STRATEGY { TYPE PRESTAGE EXPLORE { ... } [REFINE { ... }] }` (REFINE is optional; without it the STRATEGY-level LIB/ALGO refines)."},
-        {"ENDPRESTAGE",                 "replaced by ENDEXPLORE / ENDREFINE / ENDSTRATEGY (see STRATEGY block)."},
-        {"MULTISTART",                  "moved into `STRATEGY { TYPE MULTISTART N_STARTS N }`."},
+        {"PRESTAGE",                    "replaced by STRATEGY TYPE PRESTAGE: an EXPLORE block inside the STRATEGY block runs the exploration, and a REFINE block, which may be left out, the refinement (without it, the LIB and ALGO of the STRATEGY-level optimiser refine)."},
+        {"ENDPRESTAGE",                 "replaced by ENDEXPLORE and ENDREFINE, the ends of the EXPLORE and REFINE blocks inside the STRATEGY block."},
+        {"MULTISTART",                  "moved into the STRATEGY block: its lines TYPE MULTISTART and N_STARTS <n>."},
         {"MULTISTART_PARALLEL",         kParallelRemoved},
         {"PARALLEL",                    kParallelRemoved},
-        {"MULTISTART_BUDGET_PER_START", "moved into `STRATEGY { TYPE MULTISTART BUDGET_PER_START N }`."},
+        {"MULTISTART_BUDGET_PER_START", "moved into the STRATEGY block: its lines TYPE MULTISTART and BUDGET_PER_START <n>."},
         {"STAGE_GLOBAL",                "STRATEGY TYPE PRESTAGE runs an exploration and then a refinement."},
-        {"RESTART_AFTER_STAGNATION",    "moved into `STRATEGY { RESTART { AFTER_STAGNATION N } ENDRESTART }`."},
-        {"RESTART_MAX",                 "moved into `STRATEGY { RESTART { MAX N } ENDRESTART }`."},
-        {"RESTART_INIT_STRATEGY",       "moved into `RESTART { METHOD <method> ... }` (re-uses INIT-block grammar)."},
-        {"INIT_STRATEGY",               "moved into `INIT { METHOD <method> ... } ENDINIT` block."},
+        {"RESTART_AFTER_STAGNATION",    "moved into the RESTART block inside the STRATEGY block: its line AFTER_STAGNATION <n>."},
+        {"RESTART_MAX",                 "moved into the RESTART block inside the STRATEGY block: its line MAX <n>."},
+        {"RESTART_INIT_STRATEGY",       "moved into the RESTART block: its METHOD lines, as in an INIT block."},
+        {"INIT_STRATEGY",               "moved into the INIT block: its METHOD lines."},
         {"INIT_K",                      "renamed to K_TOTAL inside an INIT block."},
         {"INIT_SEED",                   "renamed to SEED inside an INIT block."},
         {"INIT_INCLUDE_CONFIG",         "the values of the training configuration for the search parameters are a starting point only when the INIT block has a `METHOD CONFIG` line."},
         {"INCLUDE_CONFIG",              "the values of the training configuration for the search parameters are a starting point only when the INIT block has a `METHOD CONFIG` line."},
-        {"NOISE_AUTO",                  "moved into `NOISE { AUTO true|false } ENDNOISE` block."},
-        {"NOISE_CALIBRATION",           "moved into `NOISE { CALIBRATION N } ENDNOISE` block."},
-        {"PC_SRMSE",                    "replaced by PC_SRMSE_GPA, the root mean square of the nine entries of each residual stress tensor in GPa (PC_SRMSE was that of the six entries x <= y in eV/A^3). PC_SRMSE_GPA of a residual is 160.2 times its PC_SRMSE when the six entries have equal mean squares, 130.8 times for a residual on the diagonal only (a pressure) and 185.0 times for a shear residual only: a target or --skip-above cap of PC_SRMSE times 160.2 is about that of PC_SRMSE_GPA, and a weight under LOSS L2 divided by about 25 670 (160.2 squared)."},
+        {"NOISE_AUTO",                  "moved into the NOISE block: its line AUTO true or AUTO false."},
+        {"NOISE_CALIBRATION",           "moved into the NOISE block: its line CALIBRATION <n>."},
+        {"PC_SRMSE",                    "replaced by PC_SRMSE_GPA, the root mean square of the nine entries of each residual stress tensor in GPa (PC_SRMSE was that of the six entries x <= y in eV/A^3). PC_SRMSE_GPA of a residual is 160.2 times its PC_SRMSE when the six entries have equal mean squares, 130.8 times for a residual on the diagonal only (a pressure) and 185.0 times for a shear residual only: a target or --skip-above cap of PC_SRMSE times 160.2 is about that of PC_SRMSE_GPA, and a loss-term weight under LOSS L2 divided by about 25 670 (160.2 squared)."},
         /* TOPK is now legal inside STRATEGY (TYPE PRESTAGE) -- don't reject it
          * unconditionally; the STRATEGY block dispatch handles it. */
     };
@@ -786,6 +798,7 @@ static bool reject_old_keyword(const std::string& key)
 
 void HPOTargets::read(const std::string& fn)
 {
+    target_file = fn;
     std::ifstream ifs(fn);
     if (!ifs)
         throw std::runtime_error("the target file " + fn +
@@ -976,9 +989,9 @@ void HPOTargets::read(const std::string& fn)
     std::vector<GateLine> gate_lines;
 
     /* Every parse error names the line it is about. */
-    auto at_line = [](std::size_t n, const std::string& what,
-                      const std::string& text) {
-        return config_line_error(n, what, text);
+    auto at_line = [&fn](std::size_t n, const std::string& what,
+                         const std::string& text) {
+        return config_line_error(fn, n, what, text);
     };
     /* An error about an earlier line than the one being read: a STRATEGY
      * key found at the end of its block to have no effect. */
@@ -1171,6 +1184,7 @@ void HPOTargets::read(const std::string& fn)
                 /* The STRATEGY-level optimiser is complete here: a short-form
                  * LIB/ALGO may follow the STRATEGY block. Its startup
                  * refusals name this line too (OptimizerSpec::block_line). */
+                spec.source_file = fn;
                 spec.block_line = nline;
                 spec.block_line_text = line;
                 require_driver(spec, DriverPhase::Run);
@@ -1234,7 +1248,7 @@ void HPOTargets::read(const std::string& fn)
                  *   - At OUTER level, it opens the STRATEGY block.
                  * Discriminate by context. */
                 if (block == INIT_BLK || block == RESTART_BLK) {
-                    if (active_init && dispatch_init_attr(key, iss, *active_init, nline, line))
+                    if (active_init && dispatch_init_attr(key, iss, *active_init, fn, nline, line))
                         continue;
                     /* fall through to error */
                 }
@@ -1291,7 +1305,7 @@ void HPOTargets::read(const std::string& fn)
                 if (spec.strategy_type != StrategyType::PRESTAGE)
                     throw std::runtime_error(
                         "EXPLORE block is only valid with TYPE PRESTAGE "
-                        "(declare TYPE before EXPLORE)");
+                        "(the TYPE line comes before the EXPLORE block)");
                 require_key_alone(iss, key);
                 if (!spec.prestage)
                     spec.prestage = std::make_unique<OptimizerSpec>();
@@ -1300,6 +1314,7 @@ void HPOTargets::read(const std::string& fn)
                 continue;
             }
             if (key=="ENDEXPLORE") {
+                spec.prestage->source_file = fn;
                 spec.prestage->block_line = nline;
                 spec.prestage->block_line_text = line;
                 require_driver(*spec.prestage, DriverPhase::Explore);
@@ -1314,7 +1329,7 @@ void HPOTargets::read(const std::string& fn)
                 if (spec.strategy_type != StrategyType::PRESTAGE)
                     throw std::runtime_error(
                         "REFINE block is only valid with TYPE PRESTAGE "
-                        "(declare TYPE before REFINE)");
+                        "(the TYPE line comes before the REFINE block)");
                 require_key_alone(iss, key);
                 open_block(REFINE_BLK);
                 refresh_active_opt();
@@ -1352,6 +1367,7 @@ void HPOTargets::read(const std::string& fn)
             if (key=="ENDINNER") {
                 /* The INNER optimiser is complete here, like an EXPLORE
                  * block's at ENDEXPLORE. */
+                active_opt->source_file = fn;
                 active_opt->block_line = nline;
                 active_opt->block_line_text = line;
                 require_inner_driver(*active_opt, inner_enclosing());
@@ -1367,6 +1383,7 @@ void HPOTargets::read(const std::string& fn)
                 require_key_alone(iss, key);
                 active_init = &spec.restart.init_strategy;
                 if (spec.restart.line == 0) {
+                    spec.source_file = fn;
                     spec.restart.line = nline;
                     spec.restart.line_text = line;
                 }
@@ -1428,6 +1445,7 @@ void HPOTargets::read(const std::string& fn)
                     ov.line_text = line;
                 } else if (key == "LIB" || key == "ALGO" || key == "STEP" ||
                            key == "GRAD_STRATEGY") {
+                    active_opt->source_file = fn;
                     active_opt->key_lines[key] =
                         KeyLine{nline, line, block_name(block)};
                 }
@@ -1467,7 +1485,7 @@ void HPOTargets::read(const std::string& fn)
 
             /* INIT / RESTART block keys */
             if (block == INIT_BLK || block == RESTART_BLK) {
-                if (active_init && dispatch_init_attr(key, iss, *active_init, nline, line)) {
+                if (active_init && dispatch_init_attr(key, iss, *active_init, fn, nline, line)) {
                     /* METHOD (and its alias STRATEGY) adds to the chain */
                     if (key != "METHOD" && key != "STRATEGY")
                         set_once(active_init, key, "starting points");
@@ -1796,14 +1814,14 @@ void HPOTargets::read(const std::string& fn)
             else if (key=="OUTPUT") {
                 outputEvery = parse_uint(single_value(iss, key), key, 1,
                     std::numeric_limits<std::uint64_t>::max(),
-                    "it is a cadence: write every Nth evaluation; to write as "
-                    "little as possible, use a large value such as OUTPUT "
-                    "1000000");
+                    "it is a cadence: the run writes every Nth evaluation; a "
+                    "large value, such as OUTPUT 1000000, writes as little as "
+                    "possible");
             }
             else if (key=="BOUTPUT") {
                 bestOutputEvery = parse_uint(single_value(iss, key), key, 1,
                     std::numeric_limits<std::uint64_t>::max(),
-                    "it is a cadence: write every Nth new best");
+                    "it is a cadence: the run writes every Nth new best");
             }
             else if (key=="DIGITS") {
                 outputDigits = static_cast<int>(
@@ -2311,20 +2329,27 @@ void HPOTargets::read(const std::string& fn)
      * GRAD_STRATEGY or ALGO line of the block, OptimizerSpec::key_lines:
      * with_key_line), or without it the line the block closes at
      * (OptimizerSpec::block_line: ENDOPTIMIZER, ENDEXPLORE, ENDINNER). */
+    /* The first PC_OBSERVABLE line, as a refusal names it
+     * ("PC_OBSERVABLE on line 12"). */
+    std::string observable_line = "PC_OBSERVABLE";
+    if (!observable_lines.empty() && observable_lines.front().number > 0)
+        observable_line +=
+            " on line " + std::to_string(observable_lines.front().number);
     auto reject_numerical_with_observable =
-        [&](const OptimizerSpec& sp, const char* tag) {
+        [&](const OptimizerSpec& sp, const std::string& phase) {
             if (sp.grad_strategy
                 && *sp.grad_strategy == GradStrategy::Numerical) {
                 throw std::runtime_error(with_key_line(sp, "GRAD_STRATEGY",
-                    std::string("--hpotarget defines PC_OBSERVABLE but ")
-                    + tag + " GRAD_STRATEGY=NUMERICAL is set. PC_OBSERVABLE "
-                    "is built for the analytical gradient: use GRAD_STRATEGY "
-                    "ANALYTICAL (an unset GRAD_STRATEGY resolves to it in a "
-                    "block that obtains gradients; it needs the settings of "
-                    "the analytical gradient, such as OALGO 4 with a fixed "
-                    "LAMBDA >= 0, and startup names a missing one) or "
-                    "GRAD_STRATEGY HYBRID, which uses finite differences "
-                    "where the analytical gradient is unavailable."));
+                    phase + ": GRAD_STRATEGY NUMERICAL is refused in a "
+                    "target file with PC_OBSERVABLE lines (" + observable_line
+                    + "): PC_OBSERVABLE terms are built for the analytical "
+                    "gradient; GRAD_STRATEGY ANALYTICAL takes it (an unset "
+                    "GRAD_STRATEGY resolves to it in a block that obtains "
+                    "gradients; it needs the settings of the analytical "
+                    "gradient, such as OALGO 4 with a fixed LAMBDA >= 0, and "
+                    "startup names a missing one), and GRAD_STRATEGY HYBRID "
+                    "takes finite differences where the analytical gradient "
+                    "is unavailable"));
             }
         };
     /* Every block that configures an optimiser: the STRATEGY-level one
@@ -2334,19 +2359,25 @@ void HPOTargets::read(const std::string& fn)
      * a GRAD_STRATEGY (the parser rejects one where it is written), so of
      * the GRAD_STRATEGY rules only the PC_LAMMPS optimiser rule has
      * something to check there. */
-    struct OptimiserBlock { OptimizerSpec* sp; const char* tag; bool inner; };
-    std::vector<OptimiserBlock> optimiser_blocks = {{&spec, "OPTIMIZER's", false}};
+    /* Each block is named as the startup checks name its phase
+     * (run_phase_name(), phase_specs.h). */
+    struct OptimiserBlock { OptimizerSpec* sp; std::string phase; bool inner; };
+    const std::string run_phase = run_phase_name(spec);
+    const std::string explore_phase = "the PRESTAGE exploration (EXPLORE block)";
+    std::vector<OptimiserBlock> optimiser_blocks = {{&spec, run_phase, false}};
     if (spec.inner)
-        optimiser_blocks.push_back({spec.inner.get(), "INNER's", true});
+        optimiser_blocks.push_back(
+            {spec.inner.get(), "the INNER block of " + run_phase, true});
     if (spec.prestage) {
-        optimiser_blocks.push_back({spec.prestage.get(), "EXPLORE's", false});
+        optimiser_blocks.push_back({spec.prestage.get(), explore_phase, false});
         if (spec.prestage->inner)
-            optimiser_blocks.push_back(
-                {spec.prestage->inner.get(), "EXPLORE INNER's", true});
+            optimiser_blocks.push_back({spec.prestage->inner.get(),
+                                        "the INNER block of " + explore_phase,
+                                        true});
     }
     if (!observables.empty())
         for (const auto& b : optimiser_blocks)
-            reject_numerical_with_observable(*b.sp, b.tag);
+            reject_numerical_with_observable(*b.sp, b.phase);
 
     /* ...and an unset GRAD_STRATEGY, which means NUMERICAL, resolves to
      * ANALYTICAL in each block that runs an optimiser and obtains gradients
@@ -2428,14 +2459,17 @@ void HPOTargets::read(const std::string& fn)
             script_line += " on line " + std::to_string(LS[i].line);
         break;
     }
+    const std::string pc_file =
+        "a target file with PC_LAMMPS or PC_FAILPROBE lines (" + script_line +
+        ")";
     auto reject_pc_lammps_grad =
-        [&](const OptimizerSpec& sp, const char* tag, bool inner) {
+        [&](const OptimizerSpec& sp, const std::string& phase, bool inner) {
             if (sp.grad_strategy) {
                 throw std::runtime_error(with_key_line(sp, "GRAD_STRATEGY",
-                    "--hpotarget defines " + script_line + " but " + tag
-                    + " GRAD_STRATEGY is set. A PC_LAMMPS or PC_FAILPROBE "
-                    "line does not support analytical/numerical/hybrid "
-                    "gradients. Drop the GRAD_STRATEGY line."));
+                    phase + ": GRAD_STRATEGY is refused in " + pc_file +
+                    ": tadah hpo takes no gradient (ANALYTICAL, NUMERICAL or "
+                    "HYBRID) of a loss that runs LAMMPS scripts, and such a "
+                    "file takes a gradient-free optimiser"));
             }
             /* read() has required LIB and ALGO of every block by now, the
              * EXPLORE and INNER blocks included (require_driver,
@@ -2446,43 +2480,45 @@ void HPOTargets::read(const std::string& fn)
             if (inner && sp.lib != "NLOPT") return;
             if (sp.inner && sp.inner->lib != "NLOPT") return;
             if (!obtains_gradients(sp)) return;
-            const std::string requires_free = inner
-                ? " A PC_LAMMPS or PC_FAILPROBE line requires a "
-                  "gradient-free optimiser, and an INNER search is a local "
-                  "NLopt algorithm; the INNER block takes a derivative-free "
-                  "one (" + nlopt_inner_searches_without_gradient() + ")."
-                : " A PC_LAMMPS or PC_FAILPROBE line requires a "
-                  "gradient-free optimiser (" +
-                      searches_without_gradient() + "); an NLopt MLSL or "
-                      "AUGLAG algorithm is accepted with a derivative-free "
-                      "INNER block.";
+            const std::string inner_free =
+                " A target file with PC_LAMMPS or PC_FAILPROBE lines (" +
+                script_line + ") takes a gradient-free optimiser, and an "
+                "INNER block takes a local NLopt algorithm; the gradient-free "
+                "ones are " + nlopt_inner_searches_without_gradient() + ".";
             if (optimizer_caps(sp).accepts_inner) {
                 /* An MLSL or AUGLAG that takes a gradient for its local
                  * search: an INNER block's is refused at that block. */
                 if (sp.inner) return;
                 /* obtains_gradients: there is a default local search. */
                 const OptimizerSpec local = inner_run_spec(sp).value();
-                throw std::runtime_error(with_key_line(sp, "ALGO",
-                    "--hpotarget defines " + script_line + " but " + tag
-                    + " optimiser " + sp.lib + ":" + sp.algo +
+                const std::string head =
+                    phase + ": " + sp.lib + ":" + sp.algo +
                     " takes a gradient: NLopt's MLSL and AUGLAG take one for "
                     "their local search, and NLopt's default local "
                     "optimiser, " + local.lib + ":" + local.algo +
-                    ", is gradient-based" +
-                    (inner ? std::string(".")
-                           : std::string("; an INNER block with a "
-                                         "derivative-free one takes "
-                                         "none.")) +
-                    requires_free));
+                    ", is gradient-based";
+                throw std::runtime_error(with_key_line(sp, "ALGO",
+                    inner ? head + "." + inner_free
+                          : head + "; with an INNER block that names a "
+                                   "gradient-free local NLopt algorithm it "
+                                   "takes none. A target file with PC_LAMMPS "
+                                   "or PC_FAILPROBE lines (" + script_line +
+                                   ") takes a gradient-free optimiser (" +
+                                   searches_without_gradient() + ")."));
             }
             throw std::runtime_error(with_key_line(sp, "ALGO",
-                "--hpotarget defines " + script_line + " but " + tag
-                + " optimiser " + sp.lib + ":" + sp.algo +
-                " is gradient-based." + requires_free));
+                inner ? phase + ": " + sp.lib + ":" + sp.algo +
+                            " is gradient-based." + inner_free
+                      : phase + ": " + sp.lib + ":" + sp.algo +
+                            " is gradient-based, and " + pc_file +
+                            " takes a gradient-free optimiser (" +
+                            searches_without_gradient() + "); an NLopt MLSL "
+                            "or AUGLAG algorithm is accepted with a "
+                            "gradient-free INNER block."));
         };
     if (!LS.empty())
         for (const auto& b : optimiser_blocks)
-            reject_pc_lammps_grad(*b.sp, b.tag, b.inner);
+            reject_pc_lammps_grad(*b.sp, b.phase, b.inner);
 }
 
 std::string HPOTargets::repeat_reuse_blocker() const {
@@ -2731,7 +2767,8 @@ void HPOTargets::check_archive_directories() const {
       check_archive_directory(self.key, self.dir, created_first);
     } catch (const std::exception& e) {
       throw std::runtime_error(
-          config_line_error(self.line.number, e.what(), self.line.text));
+          config_line_error(target_file, self.line.number, e.what(),
+                            self.line.text));
     }
   }
 }
@@ -2957,8 +2994,8 @@ void HPOTargets::warn_warm_of_best_pot() const {
                  "run has written by then, not from the file's content at "
                  "startup."
                : " and writes its best potential there, so only a copy under "
-                 "another name keeps this seed.";
-      std::cerr << "[HPO] WARNING: " << w << "\n";
+                 "another name keeps this starting potential.";
+      std::cerr << "[tadah hpo] WARNING: " << w << "\n";
       HPOLog::instance().warning(w);
     }
   }
@@ -3014,11 +3051,13 @@ void HPOTargets::create_archive_directory(const std::string& key,
                                           const std::string& dir) {
   std::error_code ec;
   if (fs::create_directory(dir, ec)) {
-    std::cout << "Directory created: " << dir << std::endl;
+    std::cout << "[tadah hpo] " << key << " directory '" << dir
+              << "' created" << std::endl;
     return;
   }
   if (!ec && fs::is_directory(dir, ec)) {
-    std::cout << "Directory already exists: " << dir << std::endl;
+    std::cout << "[tadah hpo] " << key << " directory '" << dir
+              << "' already exists" << std::endl;
     return;
   }
   throw std::runtime_error(
@@ -3135,7 +3174,7 @@ void HPOTargets::write_search_space_files(const std::string& dir) const {
       "# tadah hpo search space -- one row per optimised dimension, in optimiser order\n"
       "# (the same order as the params.tadah columns and the journal tables).\n"
       "#   dim          1-based position in the parameter vector\n"
-      "#   label        KEY[n]: n is the OPTIM index (1-based; for FIXWEIGHT the model weight\n"
+      "#   label        KEY[n]: n is the OPTIM index (1-based; for FIXWEIGHT the coefficient\n"
       "#                named in FIXINDEX); single-value keys other than FIXWEIGHT carry no index\n"
       "#   lo, hi       real bounds the optimiser may not leave\n"
       "#   origin       OPTIM = explicit bounds; AUTO FRAC / AUTO RATIO = derived from the seed;\n"
@@ -3146,11 +3185,9 @@ void HPOTargets::write_search_space_files(const std::string& dir) const {
       "#                c is the ASINH linear scale, 1 for the other shapes\n"
       "#   u0           x0 in optimiser units (0..1 under OPTIM_SCALE AUTO, raw or ln under NONE)\n"
       "#   internal_lo, internal_hi   optimiser-side bounds (0 and 1 under AUTO)\n"
-      "#   version      revision of the search space. 1 = the boxes parsed from the config; it\n"
-      "#                would only increase if a bound-adaptation step rewrote the boxes during\n"
-      "#                the run (no such step exists yet), so a journal reference\n"
-      "#                to a version can always be matched to one box set\n"
-      "# Columns are tab-separated and space-padded to equal width -- strip whitespace when parsing\n"
+      "#   version      revision of the search space: 1, the boxes read from the target file;\n"
+      "#                every journal reference to a version matches this one box set\n"
+      "# Columns are tab-separated and space-padded to equal width; a parser strips the whitespace\n"
       "# (pandas: read_csv(path, sep='\\t', comment='#') then .str.strip() on text columns).\n";
     auto emit = [&](const std::vector<std::string>& r) {
       for (std::size_t c = 0; c < r.size(); ++c) {
@@ -3163,9 +3200,9 @@ void HPOTargets::write_search_space_files(const std::string& dir) const {
   }
   if (!writes_resolved_optim_file()) return;
   std::ofstream hpo(dir + "/" + kResolvedOptimFile);
-  hpo << "# Resolved OPTIM block (explicit bounds for every searched dimension).\n"
+  hpo << "# Resolved OPTIM lines (explicit bounds for every searched dimension).\n"
          "# Written by tadah hpo because at least one box was derived by an AUTO rule;\n"
-         "# paste these lines in place of the AUTO lines to pin exactly this search space.\n";
+         "# in place of the AUTO lines, these lines give exactly this search space.\n";
   /* Lossless numbers (shortest round-trip text): pasted back, every bound
    * must parse to the very double this run searched -- 10 digits moved AUTO
    * bounds by up to 5e-11 relative. */
@@ -3244,7 +3281,7 @@ void HPOTargets::process_optim_config(std::istringstream& iss,
   /* The line read as tadah analysis check_bounds reads it (MLIP's OPTIM
    * reader: the refusals of the key, of the index list, of the box and of
    * a value two lines select, and the AUTO boxes); read() names the line
-   * of every error ("Error on line N: "). The key is upper-cased, so
+   * of every error ("line N of <file>: "). The key is upper-cased, so
    * optimap, the labels and every rule and lookup keyed on it
    * (startup_validation, the gates, the neighbour-list cutoff) see one
    * spelling whatever the case the line used. */

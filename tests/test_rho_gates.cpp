@@ -17,6 +17,7 @@
 //   - a hidden micro-benchmark: ./test_hpo "[rho_gates_bench]"
 
 #include "catch2/catch.hpp"
+#include "target_file_text.h"
 #include "rho_gate_fixtures.h"
 #include "rhoform_test_support.h"
 
@@ -140,7 +141,7 @@ std::string gates_error(Context ctx, const std::string& target) {
   try {
     dt::validate_density_gates(ctx, trg);
   } catch (const std::exception& e) {
-    return e.what();
+    return hpo_test::as_target(e.what(), tf.path.string());
   }
   return "";
 }
@@ -504,7 +505,7 @@ TEST_CASE("Density gates: a gate that no OPTIM line arms is refused at its "
       CAPTURE(gate, setup);
       const std::string line = setup.empty() ? "1" : "2";
       CHECK_THAT(err(setup + gate + "\n"),
-                 Catch::Contains("Error on line " + line + ": " + name +
+                 Catch::Contains("line " + line + " of <target>: " + name +
                                  " cannot act") &&
                      Catch::Contains(keys) &&
                      Catch::Contains("Line: " + gate));
@@ -516,12 +517,12 @@ TEST_CASE("Density gates: a gate that no OPTIM line arms is refused at its "
   }
   // both unarmed: the first gate's line
   CHECK_THAT(err("RHOBARGATE bcc 3.304 0.98 1.1\nRHOGATE 1e-5\n"),
-             Catch::Contains("Error on line 1: RHOBARGATE cannot act"));
+             Catch::Contains("line 1 of <target>: RHOBARGATE cannot act"));
   // a failing -c density under SEED WARN: refused when the target is read
   CHECK_THAT(targets_error(make_ream_ctx("SIGNED", "0.5 0.3 -0.2"),
                            "OPTIM CEMBFUNC (1) -0.5 0.1\nRHOGATE 1e-5 SEED "
                            "WARN\n" + tail),
-             Catch::Contains("Error on line 2: RHOGATE cannot act"));
+             Catch::Contains("line 2 of <target>: RHOGATE cannot act"));
 }
 
 TEST_CASE("Density gates: arming and the reachable RCUTMB",
@@ -664,8 +665,11 @@ TEST_CASE("Density gates: startup refusals and seed checks",
     const Context bad = make_ream_ctx("SIGNED", "0.5 0.3 -0.2");
     const std::string e =
         gates_error(bad, "OPTIM AMPGRIDMB (3) -0.5 0.5\nRHOGATE 1e-5\n" + tail);
+    /* The seed messages name the condition of the key; they said "fails
+     * the rho(r) sign gate", "SEED WARN: the run proceeds" and "armed per
+     * candidate on ... graded band-D failures". */
     CHECK_THAT(e, Catch::Contains("RHOGATE: seed -c pot (INIT CONFIG) fails the "
-                                  "rho(r) sign gate: rho_min -1.9966e-01 at r "
+                                  "sign condition of RHOGATE: rho_min -1.9966e-01 at r "
                                   "4.4025 A, rho_max 5.0036e-01, rel -3.9903e-01 < "
                                   "-tol = -1.0000e-05 on [0.8250, 5.5000] A (20001 "
                                   "points), v = 4.4515e-01.") &&
@@ -676,11 +680,16 @@ TEST_CASE("Density gates: startup refusals and seed checks",
                                tail) == "");
     const std::string txt = j.finish();
     CHECK_THAT(txt, Catch::Contains("WARNING") &&
-                        Catch::Contains("SEED WARN: the run proceeds") &&
-                        Catch::Contains("RHOGATE: rho(r) sign gate, tol 1.0000e-05, "
+                        Catch::Contains("Under SEED WARN the run goes on") &&
+                        Catch::Contains("RHOGATE: the sign condition of rho(r), "
+                                        "tolerance 1.0000e-05, "
                                         "window [0.15 RCUTMB, RCUTMB] of each "
                                         "candidate, 20001-point grid, SEED WARN; "
-                                        "armed per candidate on AMPGRIDMB[3]") &&
+                                        "checked in every candidate on "
+                                        "AMPGRIDMB[3]: a candidate with rho_min "
+                                        "< -tol*rho_max is refused before "
+                                        "training and fails (band D under "
+                                        "FAILSCORE_GRADING ON)") &&
                         Catch::Contains("seeds: -c pot (INIT CONFIG) FAIL"));
   }
   SECTION("a density pair weight no candidate can make positive is an error "
@@ -703,13 +712,13 @@ TEST_CASE("Density gates: startup refusals and seed checks",
         const std::string e = gates_error(wneg, gate + setup);
         /* It said "every evaluation would be rejected, under SEED ERROR or
          * WARN", without a line; it is framed at the gate line. */
-        CHECK_THAT(e, Catch::Contains("(WATOM) is not finite and > 0 on every "
-                                      "candidate") &&
+        CHECK_THAT(e, Catch::Contains("(WATOM) is not a finite number > 0 on "
+                                      "every candidate") &&
                           Catch::Contains("every evaluation would be refused "
                                           "before training, under SEED ERROR "
                                           "and SEED WARN alike"));
         /* it stands in for the per-seed messages: one line, in its frame */
-        CHECK_THAT(e, Catch::StartsWith("Error on line 1: "));
+        CHECK_THAT(e, Catch::StartsWith("line 1 of <target>: "));
         CHECK(e.find('\n') == e.find("\nLine: "));
       }
     }
@@ -717,14 +726,15 @@ TEST_CASE("Density gates: startup refusals and seed checks",
     const std::string reach =
         "OPTIM AMPGRIDMB (3) -0.5 0.5\nOPTIM WATOM (1) -2 1\n" + tail;
     CHECK_THAT(gates_error(wneg, "RHOGATE 1e-5\n" + reach),
-               Catch::Contains("RHOGATE: seed -c pot (INIT CONFIG) fails the rho(r) "
-                               "sign gate: a density pair weight W = -1 (WATOM)"));
+               Catch::Contains("RHOGATE: seed -c pot (INIT CONFIG) fails the sign "
+                               "condition of RHOGATE: a density pair weight W "
+                               "= -1 (WATOM)"));
     Journal j;
     CHECK(gates_error(wneg, "RHOGATE 1e-5 SEED WARN\n" + reach) == "");
     CHECK_THAT(j.finish(),
-               Catch::Contains("SEED WARN: the run proceeds; if the optimiser "
-                               "starts from this seed, that evaluation is "
-                               "rejected before training (band D)."));
+               Catch::Contains("Under SEED WARN the run goes on; an evaluation "
+                               "that starts from this seed is refused before "
+                               "training and fails."));
   }
   SECTION("WARM seeds: only the failing seed is named") {
     TempFile good(ream_seed("0.5 0.3 0.05"));
@@ -755,8 +765,12 @@ TEST_CASE("Density gates: startup refusals and seed checks",
                           "OPTIM AMPGRIDMB (3) -0.5 0.5\nRHOGATE 1e-5\nPC_ERMSE 0 1\n") ==
           "");
     const std::string txt = j.finish();
-    CHECK_THAT(txt, Catch::Contains("RHOGATE: -c pot fails the rho(r) sign gate") &&
-                        Catch::Contains("It is not an INIT start: the run proceeds") &&
+    /* It said "fails the rho(r) sign gate" and "It is not an INIT start:
+     * the run proceeds". */
+    CHECK_THAT(txt, Catch::Contains("RHOGATE: -c pot fails the sign condition "
+                                    "of RHOGATE") &&
+                        Catch::Contains("It is not a starting point: the run "
+                                        "goes on") &&
                         Catch::Contains("INIT WARM " + good.path.string() +
                                         " (its OPTIM dimensions over the -c "
                                         "potential) PASS"));
@@ -802,7 +816,8 @@ TEST_CASE("Density gates: combined grading and the reject text",
     REQUIRE(r);
     CHECK(r->kind == GateKind::RhoSign);
     CHECK(r->v == d.rho->v);
-    CHECK(r->what == "rho-sign gate reject (rho_min/rho_max = -3.9903e-01 at r = "
+    /* It said "rho-sign gate reject (" */
+    CHECK(r->what == "RHOGATE rejected the candidate (rho_min/rho_max = -3.9903e-01 at r = "
                      "4.4025 A, tol 1.0000e-05, v = 4.4515e-01)");
   }
   SECTION("RHOBARGATE alone") {
@@ -810,7 +825,8 @@ TEST_CASE("Density gates: combined grading and the reject text",
     REQUIRE(r);
     CHECK(r->kind == GateKind::RhoBar);
     CHECK(bits(r->v) == bits(0x1.2e6fea5fb8946p-3));
-    CHECK(r->what == "lattice-rhobar gate reject (896 rises over a/a0 [0.98, 1.1] "
+    /* It said "lattice-rhobar gate reject (" */
+    CHECK(r->what == "RHOBARGATE rejected the candidate (896 rises over a/a0 [0.98, 1.1] "
                      "on bcc, first at a/a0 = 0.9800, v = 1.4767e-01)");
   }
   SECTION("several: the first is counted, the sum grades") {
@@ -821,8 +837,10 @@ TEST_CASE("Density gates: combined grading and the reject text",
     REQUIRE(r);
     CHECK(r->kind == GateKind::Bump);
     CHECK(r->v == 0.8 + d.rho->v + d.rhobar->v);
-    CHECK_THAT(r->what, Catch::StartsWith(bump + "; also failing: rho-sign gate (v = ") &&
-                            Catch::Contains("), lattice-rhobar gate (v = ") &&
+    /* The others are named by their keys (they were "rho-sign gate" and
+     * "lattice-rhobar gate"). */
+    CHECK_THAT(r->what, Catch::StartsWith(bump + "; also failing: RHOGATE (v = ") &&
+                            Catch::Contains("), RHOBARGATE (v = ") &&
                             Catch::Contains("); graded by the summed v = "));
     r = dt::combine_gate_verdicts(0.0, "", g, d);
     CHECK(r->kind == GateKind::RhoSign);
@@ -869,16 +887,21 @@ TEST_CASE("HPOLog: per-gate counters, SUMMARY and DIAGNOSTICS lines, reset",
   CHECK(log.gate_rejects(GateKind::RhoSign) == 2);
   CHECK(log.gate_rejects(GateKind::RhoBar) == 3);
   const std::string txt = j.finish();
+  /* The SUMMARY tags keep their names (the keys in lower case); the
+   * DIAGNOSTICS lines name the keys: they said "of which bump-support gate
+   * rejects: 1 (c + w/eta past RCUT, rejected before training)", "of which
+   * rho-sign gate rejects" and "of which lattice-rhobar gate rejects". */
   CHECK_THAT(txt, Catch::Contains("D=6) bumpgate=1 rhogate=2 rhobargate=3") &&
-                      Catch::Contains("    of which bump-support gate rejects: 1 "
-                                      "(c + w/eta past RCUT, rejected before "
+                      Catch::Contains("    of which rejected by BUMPGATE: 1 "
+                                      "(c + w/eta past RCUT, before "
                                       "training)\n") &&
-                      Catch::Contains("    of which rho-sign gate rejects: 2 "
+                      Catch::Contains("    of which rejected by RHOGATE: 2 "
                                       "(rho_min < -tol*rho_max on the RHOGATE "
-                                      "window, rejected before training)\n") &&
-                      Catch::Contains("    of which lattice-rhobar gate rejects: 3 "
+                                      "window, before training)\n") &&
+                      Catch::Contains("    of which rejected by RHOBARGATE: 3 "
                                       "(rhobar(a) not strictly decreasing, "
-                                      "rejected before training)\n"));
+                                      "before training)\n"));
+  CHECK(txt.find("gate rejects") == std::string::npos);
   log.reset_for_test();
   for (GateKind k : {GateKind::Bump, GateKind::RhoSign, GateKind::RhoBar}) {
     CHECK(log.gate_rejects(k) == 0);
@@ -886,7 +909,11 @@ TEST_CASE("HPOLog: per-gate counters, SUMMARY and DIAGNOSTICS lines, reset",
   }
   log.reset_for_test();
 
-  SECTION("a bump-only run prints exactly the BUMPGATE lines of tadah 1.5.0") {
+  /* The SUMMARY tag of tadah 1.5.0 stays; its DIAGNOSTICS line names the
+   * key ("of which bump-support gate rejects: 1 (c + w/eta past RCUT,
+   * rejected before training)" in 1.5.0). */
+  SECTION("a bump-only run prints the BUMPGATE SUMMARY tag of tadah 1.5.0 and "
+          "a DIAGNOSTICS line that names BUMPGATE") {
     Journal j2;
     for (std::size_t i = 1; i <= 100; ++i) {
       log.record_eval(i, 1.0,
@@ -898,11 +925,11 @@ TEST_CASE("HPOLog: per-gate counters, SUMMARY and DIAGNOSTICS lines, reset",
     }
     const std::string t2 = j2.finish();
     CHECK_THAT(t2, Catch::Contains("D=1) bumpgate=1\n") &&
-                       Catch::Contains("    of which bump-support gate rejects: 1 "
-                                       "(c + w/eta past RCUT, rejected before "
+                       Catch::Contains("    of which rejected by BUMPGATE: 1 "
+                                       "(c + w/eta past RCUT, before "
                                        "training)\n"));
     CHECK(t2.find(" rhogate=") == std::string::npos);   // (the log's path has "rhogate")
-    CHECK(t2.find("rho-sign") == std::string::npos);
+    CHECK(t2.find("RHOGATE") == std::string::npos);
   }
 }
 
@@ -1090,12 +1117,13 @@ TEST_CASE("HPO_Host RHOGATE: graded reject before training, silent pass",
     CHECK(HPOLog::instance().gate_rejects(GateKind::RhoSign) == 2);
     host.flush_remaining();
     const std::string txt = j.finish();
-    CHECK_THAT(txt, Catch::Contains("eval 1: rho-sign gate reject (rho_min/rho_max = "
+    CHECK_THAT(txt, Catch::Contains("eval 1: RHOGATE rejected the candidate (rho_min/rho_max = "
                                     "-3.9903e-01 at r = 4.4025 A, tol 1.0000e-05, "
                                     "v = 4.4515e-01); total rejects=1") &&
                         Catch::Contains("; total rejects=2") &&
-                        Catch::Contains("D=2 (pot build / gated)") &&
-                        Catch::Contains("    of which rho-sign gate rejects: 2 "));
+                        Catch::Contains("D=2 (a potential rejected as "
+                                        "unusable)") &&
+                        Catch::Contains("    of which rejected by RHOGATE: 2 "));
     Host::reset_globals_for_test();
   }
   SECTION("a pass is bitwise the run without the gate; ctx and pot unchanged") {
@@ -1173,9 +1201,9 @@ TEST_CASE("HPO_Host RHOGATE: graded reject before training, silent pass",
        * the line prints the violation losslessly */
       CHECK(host(p) == graded(v_bump));
       const std::string line1 =
-          "eval 1: bump-support gate reject (c + w/eta past the cutoff, "
-          "violation=" + tadah::core::format_roundtrip(v_bump) +
-          ", graded band D); total rejects=1\n";
+          "eval 1: BUMPGATE rejected the candidate (c + w/eta past the "
+          "cutoff, violation=" + tadah::core::format_roundtrip(v_bump) +
+          "); total rejects=1\n";
       p(0) = -0.2;   /* now RHOGATE fails too */
       const double l2 = host(p);
       if (gated) {
@@ -1192,9 +1220,9 @@ TEST_CASE("HPO_Host RHOGATE: graded reject before training, silent pass",
       host.flush_remaining();
       const std::string txt = j.finish();
       CHECK_THAT(txt, Catch::Contains(line1) &&
-                          Catch::Contains("    of which bump-support gate rejects: 2 "));
-      CHECK(txt.find("of which rho-sign") == std::string::npos);
-      CHECK((txt.find("also failing: rho-sign gate") != std::string::npos) == (gated == 1));
+                          Catch::Contains("    of which rejected by BUMPGATE: 2 "));
+      CHECK(txt.find("of which rejected by RHOGATE") == std::string::npos);
+      CHECK((txt.find("also failing: RHOGATE") != std::string::npos) == (gated == 1));
       Host::reset_globals_for_test();
     }
   }
@@ -1250,12 +1278,12 @@ TEST_CASE("HPO_Host RHOBARGATE: graded reject before training",
       host.flush_remaining();
       const std::string txt = j.finish();
       if (gated)
-        CHECK_THAT(txt, Catch::Contains("eval 2: lattice-rhobar gate reject (896 "
+        CHECK_THAT(txt, Catch::Contains("eval 2: RHOBARGATE rejected the candidate (896 "
                                         "rises over a/a0 [0.98, 1.1] on bcc, first "
                                         "at a/a0 = 0.9800, v = 1.4767e-01); total "
                                         "rejects=1") &&
-                            Catch::Contains("    of which lattice-rhobar gate "
-                                            "rejects: 1 "));
+                            Catch::Contains("    of which rejected by "
+                                            "RHOBARGATE: 1 "));
       Host::reset_globals_for_test();
     }
     CHECK(tadah::hpo::loss_is_feasible(gated_loss[1], 1e9));
@@ -1268,7 +1296,7 @@ TEST_CASE("HPO_Host RHOBARGATE: graded reject before training",
     HPOTargets trg(ctx, cfg.string());
     REQUIRE_THROWS_WITH(validate_hpo_setup(ctx, trg, false, true),
                         Catch::Contains("RHOBARGATE: seed -c pot (INIT CONFIG) fails "
-                                        "the lattice rhobar(a) gate: rhobar rises at "
+                                        "the lattice condition of RHOBARGATE: rhobar rises at "
                                         "264 of 1000 steps on bcc (a0 3.304 A, a/a0 "
                                         "[0.75, 1.1], 1001 points), first at a/a0 = "
                                         "0.7500, v = 1.9432e-01."));
@@ -1313,8 +1341,8 @@ TEST_CASE("HPO_Host RHOBARGATE: graded reject before training",
     CHECK(HPOLog::instance().gate_rejects(GateKind::RhoSign) == 1);
     CHECK(HPOLog::instance().gate_rejects(GateKind::RhoBar) == 0);
     host.flush_remaining();
-    CHECK_THAT(j.finish(), Catch::Contains("rho-sign gate reject (") &&
-                               Catch::Contains("; also failing: lattice-rhobar gate (v = "));
+    CHECK_THAT(j.finish(), Catch::Contains("RHOGATE rejected the candidate (") &&
+                               Catch::Contains("; also failing: RHOBARGATE (v = "));
     Host::reset_globals_for_test();
   }
 }

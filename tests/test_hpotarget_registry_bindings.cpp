@@ -317,11 +317,18 @@ Context embed_ctx()
 
 /* The message HPOTargets gives for the target file `lines`, "" when it
  * reads it. */
+/* The target file parse_error() writes and reads, which its refusals name:
+ * one file, written again for each case. */
+const std::string& target_path()
+{
+    static const std::string p = (scratch() / "target.hpo").string();
+    return p;
+}
+
 std::string parse_error(const Lines& lines, Context ctx = minimal_ctx())
 {
     tadah::core::PeriodicTable::initialize();
-    static unsigned n = 0;
-    const fs::path file = scratch() / ("target_" + std::to_string(n++) + ".hpo");
+    const fs::path file = target_path();
     {
         std::ofstream os(file);
         REQUIRE(os.good());
@@ -330,11 +337,12 @@ std::string parse_error(const Lines& lines, Context ctx = minimal_ctx())
     return thrown([&] { HPOTargets t(ctx, file.string()); });
 }
 
-/* A refusal of line n, whose text is `text`. */
+/* A refusal of line n of the file parse_error() reads, whose text is
+ * `text`. */
 std::string at_line(std::size_t n, const std::string& what,
                     const std::string& text)
 {
-    return tadah::hpo::config_line_error(n, what, text);
+    return tadah::hpo::config_line_error(target_path(), n, what, text);
 }
 
 Lines operator+(Lines a, const Lines& b)
@@ -390,9 +398,12 @@ TEST_CASE("hpotarget generated tables: the frame and the reader messages "
           "are those of strict_parse", "[hpotarget_gen]")
 {
     using namespace tadah::hpo;
-    CHECK(config_line_error(7, "W", "T") ==
-          R::fill(R::lexing::error_frame,
-                  {{"line", "7"}, {"what", "W"}, {"text", "T"}}));
+    CHECK(config_line_error("t.hpo", 7, "W", "T") ==
+          R::fill(R::lexing::error_frame, {{"line", "7"}, {"file", "t.hpo"},
+                                           {"what", "W"}, {"text", "T"}}));
+    /* A line without a file (a spec a program builds) is named by its
+     * number alone. */
+    CHECK(config_line_error("", 7, "W", "T") == "line 7: W\nLine: T");
     CHECK(thrown([] { parse_uint("x", "W", 1); }) ==
           R::fill(R::reading::integer_msg,
                   {{"what", "W"}, {"min", "1"}, {"tok", "x"}}));

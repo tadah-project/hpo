@@ -65,7 +65,7 @@ class Generated(unittest.TestCase):
         self.assertEqual(data["case"][0]["fixtures"][0]["path"], "f")
 
     def test_frame_what(self):
-        err = "Error on line 4: unknown key 'X' in this block\nLine: X 1"
+        err = "line 4 of target.hpo: unknown key 'X' in this block\nLine: X 1"
         self.assertEqual(self.g.frame_what(err, 4),
                          "unknown key 'X' in this block")
         self.assertIsNone(self.g.frame_what(err, 3))
@@ -87,14 +87,14 @@ class Generated(unittest.TestCase):
                                   ("FAILSCORE", "LIB", "SEED")
                                   for p in ("ROOT", "OPTIMIZER", "INNER")})
         in_opt = c["FAILSCORE in OPTIMIZER"]
-        refused = result("Error on line 3: FAILSCORE is a top-level key "
+        refused = result("line 3 of target.hpo: FAILSCORE is a top-level key "
                          "inside OPTIMIZER of line 1 (ENDOPTIMIZER)\n"
                          "Line: FAILSCORE 10")
         self.assertIsNone(in_opt.judge(refused))
         self.assertIsNone(c["FAILSCORE in INNER"].judge(result(
-            "Error on line 4: FAILSCORE is a top-level key inside INNER of "
+            "line 4 of target.hpo: FAILSCORE is a top-level key inside INNER of "
             "line 3 (ENDINNER)\nLine: FAILSCORE 10")))
-        unknown = result("Error on line 3: unknown key 'FAILSCORE' in this "
+        unknown = result("line 3 of target.hpo: unknown key 'FAILSCORE' in this "
                          "block\nLine: FAILSCORE 10")
         self.assertIn("is not refused as out of place",
                       str(in_opt.judge(unknown)))
@@ -102,14 +102,14 @@ class Generated(unittest.TestCase):
                       in_opt.judge(result()))
         self.assertIn("is not refused as out of place",
                       str(c["SEED in INNER"].judge(result(
-                          "Error on line 4: SEED is a top-level key inside "
+                          "line 4 of target.hpo: SEED is a top-level key inside "
                           "INNER of line 3 (ENDINNER)\nLine: SEED 7"))))
         self.assertIsNone(c["FAILSCORE in ROOT"].judge(result()))
         self.assertIn("is refused in ROOT, which the registry lists",
                       c["FAILSCORE in ROOT"].judge(result(
-                          'Error on line 1: unknown key "FAILSCORE"\n'
+                          'line 1 of target.hpo: unknown key "FAILSCORE"\n'
                           'Line: FAILSCORE 10')))
-        seed = result("Error on line 4: SEED is not accepted inside an "
+        seed = result("line 4 of target.hpo: SEED is not accepted inside an "
                       "INNER block: the enclosing run draws it; set SEED on "
                       "the enclosing OPTIMIZER block\nLine: SEED 7")
         self.assertIsNone(c["SEED in INNER"].judge(seed))
@@ -120,7 +120,7 @@ class Generated(unittest.TestCase):
         # last_wins: the doubled line is read.
         self.assertIsNone(c["ROOT.FAILSCORE twice"].judge(result()))
         self.assertIn("is refused", c["ROOT.FAILSCORE twice"].judge(
-            result("Error on line 2: no\nLine: FAILSCORE 10")))
+            result("line 2 of target.hpo: no\nLine: FAILSCORE 10")))
         self.assertIn("FAILSCORE 10\nFAILSCORE 10",
                       c["ROOT.FAILSCORE twice"].case["file"])
 
@@ -134,11 +134,11 @@ class Generated(unittest.TestCase):
                           "OPTIMIZER.SEED 18446744073709551616"})
         below = c["OPTIMIZER.SEED -1"]
         self.assertIsNone(below.judge(result(
-            "Error on line 3: SEED must be an integer >= 0, got '-1'\n"
+            "line 3 of target.hpo: SEED must be an integer >= 0, got '-1'\n"
             "Line: SEED -1")))
         self.assertIn("is not refused at its line", below.judge(result()))
         self.assertIn("a message the registry does not give",
-                      below.judge(result("Error on line 3: SEED is bad\n"
+                      below.judge(result("line 3 of target.hpo: SEED is bad\n"
                                          "Line: SEED -1")))
         self.assertIsNone(c["OPTIMIZER.SEED 0"].judge(result()))
         # FAILSCORE, positive: 0 refused, 1 accepted.
@@ -199,7 +199,7 @@ class Generated(unittest.TestCase):
                       c["METHOD.RANDOM 1000001"].case["file"])
         self.assertEqual(c["METHOD.RANDOM 1000000"].case["mode"], "startup")
         self.assertIsNone(c["METHOD.RANDOM 1000001"].judge(result(
-            "Error on line 3: INIT METHOD RANDOM K must be an integer from "
+            "line 3 of target.hpo: INIT METHOD RANDOM K must be an integer from "
             "0 to 1000000, got '1000001'\nLine: METHOD RANDOM 1000001")))
         self.assertIn("is not refused at its line",
                       c["METHOD.RANDOM 1000001"].judge(result()))
@@ -218,12 +218,12 @@ class Generated(unittest.TestCase):
                          "startup")
         self.assertIn("PARAM GRID_POINTS 1", low.case["file"])
         self.assertIsNone(low.judge(result(startup=(
-            "Error on line 4: GRID_POINTS must be at least 2\n"
+            "line 4 of target.hpo: GRID_POINTS must be at least 2\n"
             "Line: ENDOPTIMIZER"))))
         self.assertIn("is not refused: tadah hpo starts",
                       low.judge(result()))
         self.assertIn("a message the registry does not give",
-                      low.judge(result(startup="Error on line 4: no\n"
+                      low.judge(result(startup="line 4 of target.hpo: no\n"
                                                "Line: ENDOPTIMIZER")))
         self.assertIn("a value in the range of PARAM.TADAH:GRID.GRID_POINTS "
                       "is refused",
@@ -250,7 +250,7 @@ class Generated(unittest.TestCase):
         self.assertIn("GRID_POINTS 2: a value in the range", problems[0])
 
     def test_frame_any(self):
-        err = "Error on line 12: it is wrong\nLine: ENDOPTIMIZER"
+        err = "line 12 of target.hpo: it is wrong\nLine: ENDOPTIMIZER"
         self.assertEqual(self.g.frame_any(err), "it is wrong")
         self.assertIsNone(self.g.frame_any("vector::reserve"))
 
@@ -262,7 +262,7 @@ class Generated(unittest.TestCase):
         self.assertIsNone(c["OPTIMIZER.LIB NLOPT"].judge(result()))
         self.assertIn("the word NLOPT is refused",
                       c["OPTIMIZER.LIB NLOPT"].judge(result(
-                          "Error on line 3: LIB is wrong\nLine: LIB NLOPT")))
+                          "line 3 of target.hpo: LIB is wrong\nLine: LIB NLOPT")))
 
     def test_params_need_wrappers_that_name_their_optimizer(self):
         self.g.gen_params()

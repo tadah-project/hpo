@@ -130,7 +130,7 @@ static void print_stops(std::ostream& os, const std::string& lib,
     add(c->supports_ftol_abs, "FTOL_ABS");
     add(c->supports_xtol_rel, "XTOL_REL");
     add(c->supports_xtol_abs, "XTOL_ABS");
-    os << "   * Stops that end a run: " << list << "\n";
+    os << "   * Stops that end a search: " << list << "\n";
     if (c->tolerance_note[0])
         os << "     " << c->tolerance_note << ".\n";
     /* require_stop() (backend_rules.h): a tolerance counts above 0, and the
@@ -173,8 +173,9 @@ static void print_tadah_caps(std::ostream& os, const std::string& algo)
             "     Corana eps-NEPS plateau; T < T_MIN ends a schedule (REANNEAL\n"
             "     restarts from the best until the budget runs out).\n"
             "   * SEED <int>  seed of the random numbers (default: one drawn from\n"
-            "     the system's random source). THREADS <n> sizes the shared\n"
-            "     per-eval fan-out pool (the chain itself is serial).\n"
+            "     the system's random source). THREADS <n> sizes the pool of\n"
+            "     workers that run the work of each evaluation (the chain\n"
+            "     itself is serial).\n"
             "   * Keys it does not read are refused: STEP, XTOL_*, VECTOR_ARR,\n"
             "     GRAD_STRATEGY, unknown PARAM keys, and\n"
             "     POPULATION, which TADAH:ANNEAL_PA reads.\n";
@@ -194,10 +195,11 @@ static void print_tadah_caps(std::ostream& os, const std::string& algo)
             "   * Stops: MAXEVAL / MAXTIME / STOPVAL; FTOL_REL/FTOL_ABS (> 0) arm the\n"
             "     best-stall stop (global best unimproved over NEPS diagnostics\n"
             "     windows). One of them is required: the ladder keeps its\n"
-            "     temperatures, so no schedule ends a run. Cooling schedules\n"
+            "     temperatures, so no schedule ends a search. Cooling schedules\n"
             "     belong to serial ANNEAL: RT/T_MIN are rejected here.\n"
-            "   * THREADS <n>  shared worker-pool width (replica evals + PC_LAMMPS\n"
-            "     fan-out + MLIP train/predict); also the REPLICAS default.\n"
+            "   * THREADS <n>  the workers of the run (the evaluations of the\n"
+            "     replicas, the PC_LAMMPS scripts, the training and prediction);\n"
+            "     also the REPLICAS default.\n"
             "   * Diagnostics: per-pair swap tables + step reports every SWAP_WINDOW\n"
             "     epochs; ladder updates in hpo_temperature_ladder.tsv; calibrated\n"
             "     step scales in hpo_step_scales.tsv. Under CORANA, the\n"
@@ -217,9 +219,10 @@ static void print_tadah_caps(std::ostream& os, const std::string& algo)
             "     SWEEPS rungs at the new T. Same SEED => same evaluated set for any\n"
             "     THREADS.\n"
             "   * POPULATION <R> population size (default 4*THREADS, min 16).\n"
-            "   * V is walker state (children inherit the parent's step calibration\n"
-            "     on resample). Per-step journal line: T, ESS, unique parents,\n"
-            "     culled, finite field (feasible fraction), population best.\n";
+            "   * The step scales are part of the state of each walker (children\n"
+            "     inherit the step calibration of their parent on resample).\n"
+            "     Per-step journal line: T, ESS, unique parents, culled, finite\n"
+            "     field (feasible fraction), population best.\n";
         print_anneal_family_caps(os, tadah::hpo::anneal_registry::KIND_PA);
     }
     else
@@ -232,7 +235,7 @@ static void print_dlib_caps(std::ostream& os, const std::string& algo)
         os<<"   * dlib's global optimiser, MaxLIPO+TR; every INIT point seeds it.\n"
             "     No PARAM.\n"
             "   * FTOL_ABS     (dlib's solver epsilon, default 1e-3; it ends no\n"
-            "                   run). FTOL_REL/XTOL_REL/XTOL_ABS are rejected.\n";
+            "                   search). FTOL_REL/XTOL_REL/XTOL_ABS are rejected.\n";
         print_stops(os, "DLIB", algo);
     }
     else if(algo=="BFGS")
@@ -245,12 +248,12 @@ static void print_dlib_caps(std::ostream& os, const std::string& algo)
             "   * PARAM diff_method 0|1       (CENTRAL, default, or FORWARD)\n"
             "   * PARAM tol_gradinf <double>  (stop once the largest component of the\n"
             "                   gradient falls below it, as CERES's; alternative to FTOL_ABS)\n"
-            "   * a point that no step can move (each coordinate at a bound its\n"
-            "                   gradient points out of, or a step below its\n"
+            "   * the search ends with 'no step within the OPTIM box' at a point\n"
+            "                   that no step can move (each coordinate at a bound\n"
+            "                   its gradient points out of, or a step below its\n"
             "                   rounding), or whose line search from the farthest\n"
-            "                   step comes back to it, ends the search, 'no step\n"
-            "                   within the OPTIM box', unless FTOL_ABS ends it\n"
-            "                   first: its loss does not change\n";
+            "                   step comes back to it. The loss does not change\n"
+            "                   there, so FTOL_ABS may end the search first.\n";
     else
         os<<"   * (unknown DLIB algo; registered: GFS, BFGS)\n";
 }
@@ -287,7 +290,7 @@ static void print_nlopt_caps(std::ostream& os,const std::string& algo)
         }
     }
     if (algo[0]=='G')        os<<"   * global optimiser\n";
-    if (algo[1]=='N') os<<"   * derivative-free\n";
+    if (algo[1]=='N') os<<"   * gradient-free\n";
     /* Initial-step policy from the registry (single source of truth). */
     try {
         const auto& c = optimizer_caps("NLOPT", algo);
@@ -324,13 +327,13 @@ static void print_nlopt_caps(std::ostream& os,const std::string& algo)
          * backend(), strategy_rules.h: a local NLopt algorithm). */
         if (c.accepts_inner) {
             const std::string text =
-                std::string("INNER ... ENDINNER: the local search it runs, "
+                std::string("INNER ... ENDINNER: the local search it runs "
                             "from ") +
                 (c.is_global ? "the points it samples in the OPTIM box"
                              : "its own starting point") +
-                ": LIB NLOPT and a local ALGO; a global one (`tadah explain "
-                "ALGO` marks each) is refused, and so is one that needs an "
-                "INNER block of its own. " +
+                ". The block takes LIB NLOPT and a local ALGO (`tadah explain "
+                "ALGO` marks each); a global ALGO is refused, and so is one "
+                "that needs an INNER block of its own. " +
                 (c.default_inner
                      ? std::string("Without one NLopt runs its default ") +
                            c.default_inner + "."
@@ -362,8 +365,8 @@ static void print_ceres_caps(std::ostream& os, const std::string& algo,
           "gradient-based (GRAD_STRATEGY NUMERICAL by default)\n";
 #ifndef TADAH_USE_CERES
     if (notes == BuildNotes::Include)
-        os << "   * this build has no Ceres (TADAH_ENABLE_CERES OFF): a run "
-              "is refused\n";
+        os << "   * this build of tadah has no Ceres: a run is refused (a "
+              "build with -DTADAH_ENABLE_CERES=ON has it)\n";
 #endif
     print_stops(os, "CERES", algo);
     os << "   * PARAM tol_gradinf <double>  (gradient tolerance, the largest "
@@ -458,7 +461,7 @@ std::string tadah::hpo::optimiser_row_text(const OptimizerCaps& c)
                               : std::string("an INNER block")) +
              ")";
     else
-        t += c.is_gradient_based ? ", gradient-based" : ", derivative-free";
+        t += c.is_gradient_based ? ", gradient-based" : ", gradient-free";
     if (c.needs_stop) t += ", needs a stop";
     if (c.ignores_bounds) t += ", ignores the OPTIM box";
     return t;
@@ -472,7 +475,7 @@ void tadah::hpo::print_optimiser_table(std::ostream& out, const std::string& lib
     for (const auto* c : all) width = std::max(width, c->algo.size());
     if (lib.empty())
         out << "ALGO, with LIB its library, names the optimiser of a `tadah "
-               "hpo` target, in\nits OPTIMIZER block or the block's STRATEGY, "
+               "hpo` target file,\nin its OPTIMIZER block or the block's STRATEGY, "
                "EXPLORE, REFINE or INNER block.\nThe optimisers of this "
                "build:\n";
     for (const std::string& l : optimizer_libraries()) {
@@ -490,8 +493,8 @@ void tadah::hpo::print_optimiser_table(std::ostream& out, const std::string& lib
                 << c->algo << optimiser_row_text(*c) << "\n";
 #ifndef TADAH_USE_CERES
         if (l == "CERES")
-            out << "  (this build has no Ceres, TADAH_ENABLE_CERES OFF: a run "
-                   "of them is refused)\n";
+            out << "  (this build of tadah has no Ceres: a run of them is "
+                   "refused; a build with -DTADAH_ENABLE_CERES=ON has it)\n";
 #endif
     }
     if (!lib.empty()) return;

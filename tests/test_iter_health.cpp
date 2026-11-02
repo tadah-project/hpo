@@ -184,9 +184,9 @@ TEST_CASE("iter_health: a non-finite weight outside the layout's blocks is "
 
 /* Pins: a layout that does not describe the weights (10 columns for 5
  * finite weights) is not taken for NaN/Inf weights: weights_have_nan_inf is
- * false, and record() in full mode prints "iter_health: eval 7 -- the
- * model has 5 weights but its column layout has 10 columns: the per-block
- * checks are skipped." and no block warning (neither block's max_abs
+ * false, and record() in full mode prints "HEALTH_LOG: eval 7: the model
+ * has 5 coefficients but its column layout has 10 columns: the checks of
+ * each descriptor are skipped." and no block warning (neither block's max_abs
  * count moves) and no NaN/Inf line.
  * Before the fix (this case was "layout/weights size mismatch sets nan_inf
  * flag" and required the flag): the block past the weights set
@@ -209,9 +209,11 @@ TEST_CASE("iter_health: a layout that does not describe the weights is "
     printed = cap.text();
   }
   INFO(printed);
-  CHECK(printed.find("iter_health: eval 7 -- the model has 5 weights but "
-                     "its column layout has 10 columns: the per-block "
-                     "checks are skipped.") != std::string::npos);
+  /* It said "iter_health: eval 7 -- the model has 5 weights but its column
+   * layout has 10 columns: the per-block checks are skipped." */
+  CHECK(printed.find("HEALTH_LOG: eval 7: the model has 5 coefficients but "
+                     "its column layout has 10 columns: the checks of each "
+                     "descriptor are skipped.") != std::string::npos);
   CHECK(printed.find("NaN/Inf") == std::string::npos);
   CHECK(mon.warning_count(0, "max_abs") == 0);
   CHECK(mon.warning_count(1, "max_abs") == 0);
@@ -220,9 +222,9 @@ TEST_CASE("iter_health: a layout that does not describe the weights is "
 /* Pins: a layout of as many columns as weights whose blocks do not
  * partition them (block 1 starts at column 5, after a column no block
  * owns) is reported for what it is: weights_have_nan_inf false, and
- * record() in full mode prints "iter_health: eval 3 -- the column layout
- * of the model's 10 weights is not contiguous from column 0: the per-block
- * checks are skipped." and no block warning.
+ * record() in full mode prints "HEALTH_LOG: eval 3: the column layout of
+ * the model's 10 coefficients is not contiguous from column 0: the checks
+ * of each descriptor are skipped." and no block warning.
  * Before the fix: the message gave both counts, "the model has 10 weights
  * but its column layout has 10 columns", which says no mismatch. */
 TEST_CASE("iter_health: a layout whose blocks do not partition the weights "
@@ -245,18 +247,23 @@ TEST_CASE("iter_health: a layout whose blocks do not partition the weights "
     printed = cap.text();
   }
   INFO(printed);
-  CHECK(printed.find("iter_health: eval 3 -- the column layout of the "
-                     "model's 10 weights is not contiguous from column 0: "
-                     "the per-block checks are skipped.") != std::string::npos);
+  /* It said "iter_health: eval 3 -- the column layout of the model's 10
+   * weights is not contiguous from column 0: the per-block checks are
+   * skipped." */
+  CHECK(printed.find("HEALTH_LOG: eval 3: the column layout of the model's "
+                     "10 coefficients is not contiguous from column 0: the "
+                     "checks of each descriptor are skipped.") !=
+        std::string::npos);
   CHECK(mon.warning_count(0, "max_abs") == 0);
   CHECK(mon.warning_count(1, "max_abs") == 0);
 }
 
 /* Pins: a block whose weights are all NaN (the DM block, D2 finite) is
  * reported as NaN/Inf weights and not as a block of zero weights: record()
- * in full mode prints "iter_health: eval 4 -- weights contain NaN/Inf
- * entries (training likely diverged)." and no block warning (no "max_abs",
- * no "nz_fraction" in the text; every block count 0).
+ * in full mode prints "HEALTH_LOG: eval 4: the coefficients contain NaN
+ * or Inf entries (the training probably diverged)." and no block warning
+ * (no "are exactly zero", no "fewer than 5%" in the text; every block
+ * count 0).
  * Before the fix: a NaN weight counted as an exact zero (|NaN| > max and
  * |NaN| > 1e-15 are false), so block 1's max_abs was 0 and record() also
  * printed "iter_health: eval 4 block[1/DM] max_abs -- all weights in this
@@ -280,11 +287,14 @@ TEST_CASE("iter_health: a block of NaN weights is reported as NaN/Inf "
     printed = cap.text();
   }
   INFO(printed);
-  CHECK(printed.find("iter_health: eval 4 -- weights contain NaN/Inf "
-                     "entries (training likely diverged).") !=
+  /* It said "iter_health: eval 4 -- weights contain NaN/Inf entries
+   * (training likely diverged).", and a block warning carried "max_abs" or
+   * "nz_fraction". */
+  CHECK(printed.find("HEALTH_LOG: eval 4: the coefficients contain NaN or "
+                     "Inf entries (the training probably diverged).") !=
         std::string::npos);
-  CHECK(printed.find("max_abs") == std::string::npos);
-  CHECK(printed.find("nz_fraction") == std::string::npos);
+  CHECK(printed.find("are exactly zero") == std::string::npos);
+  CHECK(printed.find("fewer than 5%") == std::string::npos);
   for (std::size_t b : {0u, 1u}) {
     CAPTURE(b);
     CHECK(mon.warning_count(b, "max_abs") == 0);
@@ -294,8 +304,9 @@ TEST_CASE("iter_health: a block of NaN weights is reported as NaN/Inf "
 
 /* Pins: a block of 30 weights of which 29 are NaN and one is 0.5 is not
  * reported as a sparse block: record() in full mode prints the NaN/Inf
- * line ("iter_health: eval 9 -- weights contain NaN/Inf entries ...") and
- * no block warning (no "nz_fraction", no "max_abs"; both counts 0).
+ * line ("HEALTH_LOG: eval 9: the coefficients contain NaN or Inf entries
+ * ...") and no block warning (no "fewer than 5%", no "are exactly zero";
+ * both counts 0).
  * Before the fix: the 29 NaN weights counted as exact zeros, so the
  * block's nz_fraction was 1/30 and record() also printed "iter_health:
  * eval 9 block[0/D2_BP] nz_fraction -- fewer than 5% of weights in this
@@ -321,10 +332,12 @@ TEST_CASE("iter_health: a block of mostly NaN weights is not reported as a "
     printed = cap.text();
   }
   INFO(printed);
-  CHECK(printed.find("iter_health: eval 9 -- weights contain NaN/Inf "
-                     "entries") != std::string::npos);
-  CHECK(printed.find("nz_fraction") == std::string::npos);
-  CHECK(printed.find("max_abs") == std::string::npos);
+  /* It said "iter_health: eval 9 -- weights contain NaN/Inf entries ...",
+   * and a block warning carried "nz_fraction" or "max_abs". */
+  CHECK(printed.find("HEALTH_LOG: eval 9: the coefficients contain NaN or "
+                     "Inf entries") != std::string::npos);
+  CHECK(printed.find("fewer than 5%") == std::string::npos);
+  CHECK(printed.find("are exactly zero") == std::string::npos);
   CHECK(mon.warning_count(0, "nz_fraction") == 0);
   CHECK(mon.warning_count(0, "max_abs") == 0);
 }
@@ -332,9 +345,9 @@ TEST_CASE("iter_health: a block of mostly NaN weights is not reported as a "
 /* Pins: in summary mode (window 100), a block of NaN weights does not hide
  * a block of zero weights that follows: eval 0 with every DM weight NaN,
  * then eval 1 with every DM weight 0 (D2 finite in both); the text has
- * "iter_health: eval 1 block[1/DM] max_abs -- all weights in this block are
- * exactly zero" and no "eval 0 block[1/DM]", and block 1's max_abs count is
- * 1.
+ * "HEALTH_LOG: eval 1: descriptor 2 (DM): all its coefficients are
+ * exactly zero" and no "eval 0: descriptor 2 (DM)", and block 1's max_abs
+ * count is 1.
  * Before the fix: eval 0's NaN weights counted as zeros, so the warning was
  * printed for eval 0 ("iter_health: eval 0 block[1/DM] max_abs -- ...") and
  * its cooldown suppressed the true one of eval 1 (the count 1 was eval
@@ -357,10 +370,11 @@ TEST_CASE("iter_health: a block of NaN weights does not start the cooldown "
     printed = cap.text();
   }
   INFO(printed);
-  CHECK(printed.find("iter_health: eval 1 block[1/DM] max_abs -- all "
-                     "weights in this block are exactly zero") !=
-        std::string::npos);
-  CHECK(printed.find("eval 0 block[1/DM]") == std::string::npos);
+  /* It said "iter_health: eval 1 block[1/DM] max_abs -- all weights in this
+   * block are exactly zero". */
+  CHECK(printed.find("HEALTH_LOG: eval 1: descriptor 2 (DM): all its "
+                     "coefficients are exactly zero") != std::string::npos);
+  CHECK(printed.find("eval 0: descriptor 2 (DM)") == std::string::npos);
   CHECK(mon.warning_count(1, "max_abs") == 1);
 }
 

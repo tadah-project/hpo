@@ -388,7 +388,8 @@ TEST_CASE("phase specs: every phase of each STRATEGY TYPE",
             "STRATEGY\nTYPE MULTISTART\nLIB DLIB\nALGO GFS\nMAXEVAL 12\n"
             "N_STARTS 3\nENDSTRATEGY\nENDOPTIMIZER\n"));
         REQUIRE(phases.size() == 1u);
-        CHECK(phases[0].name == "the MULTISTART run");
+        /* It said "the MULTISTART run". */
+        CHECK(phases[0].name == "the MULTISTART search");
         CHECK(phases[0].spec.stop.maxeval == std::optional<std::uint64_t>(12));
         CHECK(phases[0].spec.optim_init.size() == 3u);
     }
@@ -549,17 +550,17 @@ TEST_CASE("backend rules: validate_backend runs each backend's own checks",
      * key and ignored it). */
     for (const auto& c : std::vector<Case>{
              {"TADAH", "RANDOM", [](OptimizerSpec& s) { s.pop = 8; },
-              "TADAH:RANDOM does not use POPULATION; remove it (it is read "
-              "by NLOPT:GD_MLSL, "},
+              "TADAH:RANDOM does not use POPULATION (it is read by "
+              "NLOPT:GD_MLSL, "},
              {"TADAH", "GRID", [](OptimizerSpec& s) { s.seed = 3; },
               "TADAH:GRID does not use SEED: it draws no random numbers"},
              {"DLIB", "GFS", [](OptimizerSpec& s) { s.vector_storage = 5; },
-              "DLIB:GFS does not use VECTOR_ARR; remove it (it is read by "
+              "DLIB:GFS does not use VECTOR_ARR (it is read by "
               "NLOPT:LD_LBFGS, "},
              {"NLOPT", "GN_ESCH",
               [](OptimizerSpec& s) { s.stop.ftol_rel = 1e-6; },
               "NLOPT:GN_ESCH does not support FTOL_REL: NLopt's global search "
-              "tests no tolerance; stop it with MAXEVAL, MAXTIME or STOPVAL"},
+              "tests no tolerance; MAXEVAL, MAXTIME or STOPVAL stops it"},
              {"NLOPT", "AUGLAG",
               [](OptimizerSpec& s) {
                   s.inner = std::make_unique<OptimizerSpec>();
@@ -568,14 +569,26 @@ TEST_CASE("backend rules: validate_backend runs each backend's own checks",
                   s.inner->stop.stopval = 0.1;
               },
               "NLopt INNER spec with a STOPVAL: NLopt's MLSL and AUGLAG "
-              "replace the INNER search's STOPVAL with the enclosing "
-              "block's; set STOPVAL on the enclosing block"},
+              "replace the STOPVAL of the INNER search with that of the "
+              "enclosing block"},
              {"CERES", "STEEPEST_DESCENT", [](OptimizerSpec& s) { s.seed = 3; },
               hpo_test::ceres_expect("CERES:STEEPEST_DESCENT does not support SEED")}}) {
         INFO(c.lib << ":" << c.algo << " -> " << c.message);
         auto s = with(c.lib, c.algo);
         c.set(s);
         CHECK_THAT(error_of(s), Catch::StartsWith(c.message));
+    }
+    /* Pins: CERES refuses an integer search parameter (a spec built outside
+     * the parser, which marks none) as DLIB:BFGS does, with nothing after
+     * it. Before the fix: "..., which DLIB:GFS, the global NLopt algorithms
+     * and TADAH:GRID take": neither NLopt nor TADAH:GRID reads integer
+     * search parameters. */
+    {
+        auto ceres = with("CERES", "STEEPEST_DESCENT");
+        ceres.is_int.assign(ceres.low.size(), true);
+        CHECK(error_of(ceres) ==
+              hpo_test::ceres_expect("CERES:STEEPEST_DESCENT does not "
+                                     "support integer search parameters"));
     }
     /* Pins: the SEED refusal says what is refused and why, and nothing
      * after it: "TADAH:GRID does not use SEED: it draws no random numbers".
@@ -625,29 +638,32 @@ TEST_CASE("backend rules: a backend with no convergence test and no finite "
 
     /* The stops each honours, as its message lists them: MAXEVAL, MAXTIME,
      * STOPVAL, and the tolerances its stop tests read. */
+    /* The list ends "... gives it one" (it said "; set <stops>"). */
     struct Stops { std::string lib, algo, list; };
     for (const auto& c : std::vector<Stops>{
              {"TADAH", "RANDOM", "MAXEVAL, MAXTIME or STOPVAL (it honours no "
-                                 "tolerance)"},
+                                 "tolerance) gives it one"},
              {"DLIB", "GFS", "MAXEVAL, MAXTIME or STOPVAL (it honours no "
-                             "tolerance)"},
+                             "tolerance) gives it one"},
              {"TADAH", "ANNEAL_PT", "MAXEVAL, MAXTIME, STOPVAL or a positive "
                                     "tolerance it honours (FTOL_REL, "
-                                    "FTOL_ABS)"},
+                                    "FTOL_ABS) gives it one"},
              {"NLOPT", "GN_CRS2_LM", "MAXEVAL, MAXTIME, STOPVAL or a positive "
                                      "tolerance it honours (FTOL_REL, "
-                                     "FTOL_ABS, XTOL_REL, XTOL_ABS)"},
+                                     "FTOL_ABS, XTOL_REL, XTOL_ABS) gives it "
+                                     "one"},
              {"NLOPT", "GN_DIRECT_L", "MAXEVAL, MAXTIME, STOPVAL or a positive "
                                       "tolerance it honours (FTOL_REL, "
-                                      "FTOL_ABS, XTOL_REL, XTOL_ABS); DIRECT's "
+                                      "FTOL_ABS, XTOL_REL, XTOL_ABS) gives it "
+                                      "one; DIRECT's "
                                       "XTOL_REL and XTOL_ABS end it only once "
                                       "every rectangle is that small, after "
                                       "roughly (1/XTOL_REL)^n evaluations in n "
                                       "dimensions"},
              {"NLOPT", "GN_ESCH", "MAXEVAL, MAXTIME or STOPVAL (it honours no "
-                                  "tolerance)"},
+                                  "tolerance) gives it one"},
              {"NLOPT", "GN_MLSL_LDS", "MAXEVAL, MAXTIME or STOPVAL (it honours "
-                                      "no tolerance)"}}) {
+                                      "no tolerance) gives it one"}}) {
         INFO(c.lib << ":" << c.algo);
         auto s = local_spec(1);
         s.lib = c.lib;
@@ -655,7 +671,7 @@ TEST_CASE("backend rules: a backend with no convergence test and no finite "
         const std::string err = error_of(s);
         CHECK_THAT(err, Catch::StartsWith(c.lib + ":" + c.algo +
                                           " needs a stop: ") &&
-                        Catch::EndsWith("; set " + c.list));
+                        Catch::EndsWith("; " + c.list));
         /* Each stop it honours is enough on its own. */
         for (const auto& set : std::vector<void (*)(OptimizerSpec&)>{
                  [](OptimizerSpec& t) { t.stop.maxeval = 3; },
@@ -671,8 +687,8 @@ TEST_CASE("backend rules: a backend with no convergence test and no finite "
     random.algo = "RANDOM";
     CHECK(error_of(random) ==
           "TADAH:RANDOM needs a stop: uniform random search has no "
-          "convergence test and runs until it is interrupted; set MAXEVAL, "
-          "MAXTIME or STOPVAL (it honours no tolerance)");
+          "convergence test and runs until it is interrupted; MAXEVAL, "
+          "MAXTIME or STOPVAL (it honours no tolerance) gives it one");
     /* Pins: a tolerance a backend does not test is no stop, and it is
      * refused for itself, before the missing stop, naming the stops the
      * backend honours.
@@ -682,13 +698,13 @@ TEST_CASE("backend rules: a backend with no convergence test and no finite "
     random.stop.ftol_rel = 1e-6;
     CHECK(error_of(random) ==
           "TADAH:RANDOM does not support FTOL_REL: uniform random search has "
-          "no convergence test to apply it to; stop it with MAXEVAL, MAXTIME "
-          "or STOPVAL");
+          "no convergence test to apply it to; MAXEVAL, MAXTIME or STOPVAL "
+          "stops it");
     random.stop.maxeval = 5;
     CHECK(error_of(random) ==
           "TADAH:RANDOM does not support FTOL_REL: uniform random search has "
-          "no convergence test to apply it to; stop it with MAXEVAL, MAXTIME "
-          "or STOPVAL");
+          "no convergence test to apply it to; MAXEVAL, MAXTIME or STOPVAL "
+          "stops it");
     auto pt = local_spec(1);
     pt.lib = "TADAH";
     pt.algo = "ANNEAL_PT";
@@ -800,7 +816,8 @@ TEST_CASE("backend rules: GD_STOGO needs MAXEVAL, the stop that ends it "
         auto s = local_spec(1);
         s.lib = "NLOPT";
         s.algo = algo;
-        const std::string ends = "; set MAXEVAL (it honours no tolerance)";
+        const std::string ends = "; MAXEVAL (it honours no tolerance) gives "
+                                 "it one";
         CHECK_THAT(error_of(s),
                    Catch::StartsWith("NLOPT:" + algo + " needs a stop: ") &&
                    Catch::EndsWith(ends));
@@ -909,9 +926,9 @@ TEST_CASE("phase specs: the local search NLopt's MLSL and AUGLAG run",
     CHECK(error_of(bare) ==
           "the INNER search of NLOPT:AUGLAG (NLOPT:GN_ESCH) needs a stop: "
           "NLopt's global search has no convergence test of its own and runs "
-          "until it is interrupted; set MAXEVAL or MAXTIME in the INNER block, "
-          "or MAXEVAL, MAXTIME or STOPVAL in the NLOPT:AUGLAG block, which "
-          "NLopt hands on to it");
+          "until it is interrupted; MAXEVAL or MAXTIME in the INNER block "
+          "gives it one, as does MAXEVAL, MAXTIME or STOPVAL in the "
+          "NLOPT:AUGLAG block, which NLopt hands on to it");
     bare.stop.stopval = 0.1;
     CHECK(error_of(bare) == "");
     /* The RESTART stagnation stop ends the local search too. */
@@ -1060,20 +1077,20 @@ TEST_CASE("backend rules: the ALGO help lists the stops that end a run",
      * listed: it takes no PARAM, and FTOL_ABS is its solver epsilon. */
     const std::string gfs = help("DLIB", "GFS");
     CHECK_THAT(gfs, Catch::Contains("No PARAM") &&
-                    Catch::Contains("Stops that end a run: MAXEVAL, MAXTIME, "
+                    Catch::Contains("Stops that end a search: MAXEVAL, MAXTIME, "
                                     "STOPVAL\n") &&
                     Catch::Contains("One of them is required") &&
                     !Catch::Contains("SOLVER_EPS"));
     CHECK_THAT(help("TADAH", "RANDOM"),
-               Catch::Contains("Stops that end a run: MAXEVAL, MAXTIME, "
+               Catch::Contains("Stops that end a search: MAXEVAL, MAXTIME, "
                                "STOPVAL\n") &&
                Catch::Contains("One of them is required"));
     CHECK_THAT(help("TADAH", "GRID"),
-               Catch::Contains("Stops that end a run: MAXEVAL, MAXTIME, "
+               Catch::Contains("Stops that end a search: MAXEVAL, MAXTIME, "
                                "STOPVAL\n") &&
                !Catch::Contains("One of them is required"));
     CHECK_THAT(help("NLOPT", "GN_ESCH"),
-               Catch::Contains("Stops that end a run: MAXEVAL, MAXTIME, "
+               Catch::Contains("Stops that end a search: MAXEVAL, MAXTIME, "
                                "STOPVAL\n") &&
                Catch::Contains("One of them is required"));
     /* DIRECT's XTOL is a stop, but a costly one; a backend that needs a
@@ -1081,7 +1098,7 @@ TEST_CASE("backend rules: the ALGO help lists the stops that end a run",
      * block the parser takes restarts the search; it said "an active
      * RESTART"). */
     CHECK_THAT(help("NLOPT", "GN_DIRECT_L"),
-               Catch::Contains("Stops that end a run: MAXEVAL, MAXTIME, "
+               Catch::Contains("Stops that end a search: MAXEVAL, MAXTIME, "
                                "STOPVAL, FTOL_REL, FTOL_ABS, XTOL_REL, "
                                "XTOL_ABS\n     DIRECT's XTOL_REL and XTOL_ABS "
                                "end it only once every rectangle is that "
@@ -1093,7 +1110,7 @@ TEST_CASE("backend rules: the ALGO help lists the stops that end a run",
                Catch::Contains("One of them is required, or a RESTART "
                                "block: "));
     CHECK_THAT(help("NLOPT", "LN_SBPLX"),
-               Catch::Contains("Stops that end a run: MAXEVAL, MAXTIME, "
+               Catch::Contains("Stops that end a search: MAXEVAL, MAXTIME, "
                                "STOPVAL, FTOL_REL, FTOL_ABS, XTOL_REL, "
                                "XTOL_ABS\n") &&
                !Catch::Contains("One of them is required"));
@@ -1101,7 +1118,7 @@ TEST_CASE("backend rules: the ALGO help lists the stops that end a run",
      * Before the fix: "MAXEVAL or MAXTIME is required (STOPVAL and an
      * active RESTART do not end it)". */
     CHECK_THAT(help("NLOPT", "GD_STOGO"),
-               Catch::Contains("Stops that end a run: MAXEVAL, MAXTIME, "
+               Catch::Contains("Stops that end a search: MAXEVAL, MAXTIME, "
                                "STOPVAL\n") &&
                Catch::Contains("MAXEVAL is required (MAXTIME, STOPVAL and "
                                "a RESTART block are not enough): ") &&

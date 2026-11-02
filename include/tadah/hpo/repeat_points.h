@@ -400,16 +400,16 @@ public:
             HPOLog::instance().info(
                 backend_ + ": " + std::to_string(reused_) +
                 " calls of this search have asked for points the run had "
-                "evaluated (the latest the point of " + eval_of(e) +
-                "), answered without an evaluation");
+                "evaluated (the latest: the point of " + eval_of(e) +
+                "); each was answered without an evaluation");
         if (!noted_reuse_) {
             noted_reuse_ = true;
             std::string what;
             if (how == RepeatUse::Centre)
                 what = "the loss of " + eval_of(e) +
-                       " is reused, without an evaluation, as the loss at "
-                       "the point that the gradient's finite differences "
-                       "take, and their stencil is evaluated";
+                       " is reused, without an evaluation, as the centre of "
+                       "the finite-difference gradient; the other points of "
+                       "the stencil are evaluated";
             else if (with_gradient)
                 what = "the loss and gradient of " + eval_of(e) +
                        " are reused, without an evaluation";

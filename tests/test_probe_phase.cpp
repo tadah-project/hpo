@@ -101,7 +101,9 @@ TEST_CASE("jitter status text names each band distinctly",
     CHECK(jitter_status_text(JitterOk) == "ok");
     /* A feasibility wall (BUMPGATE) is not a cliff and not insensitivity:
      * they call for different actions, so they must not read alike. */
-    CHECK(jitter_status_text(JitterGateReject) == "gate-reject");
+    /* the status of a coordinate bounded by BUMPGATE, RHOGATE or
+     * RHOBARGATE (it was "gate-reject") */
+    CHECK(jitter_status_text(JitterGateReject) == "infeasible");
     CHECK(jitter_status_text(JitterCliff) == "cliff");
     CHECK(jitter_status_text(JitterInsensitive) == "insensitive");
     CHECK(jitter_status_text(JitterSupportCapped | JitterInsensitive)

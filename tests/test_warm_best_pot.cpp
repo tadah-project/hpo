@@ -151,12 +151,13 @@ std::size_t warnings_with(const std::vector<tadah::hpo::JournalNote>& notes,
 
 /* Pins: METHOD WARM of the run's own best_pot.tadah in an INIT block --
  * written best_pot.tadah, ./best_pot.tadah, by its absolute path, and as a
- * symbolic link to it -- gives one WARNING, on standard error ("[HPO]
+ * symbolic link to it -- gives one WARNING, on standard error ("[tadah hpo]
  * WARNING: "), in the journal and among the notes of a check without a
  * journal: "the INIT block on line 4: METHOD WARM <file> (line 5) reads
  * best_pot.tadah, the file this run writes its best potential to: the run
  * removes it before its first evaluation and writes its best potential
- * there, so only a copy under another name keeps this seed."; the file is
+ * there, so only a copy under another name keeps this starting potential."
+ * (it said "... keeps this seed."); the file is
  * read (the point is the file's). A WARM seed of another name, and a
  * best_pot.tadah that is a symbolic link to it (the run replaces the link,
  * not the file it leads to), give none.
@@ -174,7 +175,7 @@ TEST_CASE("WARM of the run's own best_pot.tadah is warned about",
                " (line 5) reads best_pot.tadah, the file this run writes its "
                "best potential to: the run removes it before its first "
                "evaluation and writes its best potential there, so only a "
-               "copy under another name keeps this seed.";
+               "copy under another name keeps this starting potential.";
     };
     for (const std::string& file :
          {std::string("best_pot.tadah"), std::string("./best_pot.tadah"),
@@ -183,7 +184,7 @@ TEST_CASE("WARM of the run's own best_pot.tadah is warned about",
         INFO("METHOD WARM " << file);
         const Read r = read_target(init_warm(file));
         INFO("journal:\n" << r.journal << "\nstderr:\n" << r.err);
-        CHECK(count_of(r.err, "[HPO] WARNING: " + warning(file) + "\n") == 1);
+        CHECK(count_of(r.err, "[tadah hpo] WARNING: " + warning(file) + "\n") == 1);
         CHECK(count_of(r.journal, warning(file)) == 1);
         CHECK(warnings_with(r.notes, warning(file)) == 1);
     }
@@ -233,7 +234,7 @@ TEST_CASE("WARM of the run's own best_pot.tadah in a RESTART block is warned "
         "not from the file's content at startup.";
     const Read r = read_target(target);
     INFO("journal:\n" << r.journal << "\nstderr:\n" << r.err);
-    CHECK(count_of(r.err, "[HPO] WARNING: " + w + "\n") == 1);
+    CHECK(count_of(r.err, "[tadah hpo] WARNING: " + w + "\n") == 1);
     CHECK(count_of(r.journal, w) == 1);
     CHECK(warnings_with(r.notes, w) == 1);
 }
@@ -284,7 +285,7 @@ TEST_CASE("WARM of best_pot.tadah in a RESTART block is warned about when "
             "has written by then, not from the file's content at startup.";
         const Read r = read_target(target);
         INFO("journal:\n" << r.journal << "\nstderr:\n" << r.err);
-        CHECK(count_of(r.err, "[HPO] WARNING: " + w + "\n") == 1);
+        CHECK(count_of(r.err, "[tadah hpo] WARNING: " + w + "\n") == 1);
         CHECK(count_of(r.journal, w) == 1);
         CHECK(warnings_with(r.notes, w) == 1);
         if (!warm_link) {

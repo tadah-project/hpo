@@ -46,7 +46,6 @@ int HPOEngine::run(mlip::Task &task) {
     }
     mlip::StructureDB::check_watom_key(context, unique_elements);
 
-    core::Logger::instance().log(tadah::core::LogLevel::INFO, "Optimising HPs...");
     status = hpo_run(context, task.getKeyProvenance());
 
     // core::Logger::instance().log(
@@ -59,25 +58,25 @@ int HPOEngine::run(mlip::Task &task) {
     //     );
 
   } catch (const std::exception &e) {
-    std::cerr << "HPOEngine error: " << e.what() << std::endl;
+    std::cerr << "ERROR: " << e.what() << std::endl;
     return EXIT_FAILURE;
   } catch (...) {
     /* hpo_run() rethrows a non-standard exception after writing its journal
      * trailer ("FAILED -- non-standard exception"); fail like any other
      * error instead of terminating. */
-    std::cerr << "HPOEngine error: unknown (non-standard) exception" << std::endl;
+    std::cerr << "ERROR: tadah hpo stopped on an error that carries no "
+                 "message" << std::endl;
     return EXIT_FAILURE;
   }
   return status;
 }
 
 void HPOEngine::validate(const tadah::mlip::Task &task) {
-  core::Logger::instance().log(tadah::core::LogLevel::INFO,
-                             "Validating HPOEngine...");
   const auto &context = task.getContext();
   if (!context.get<bool>("INIT2B") && !context.get<bool>("INITMB")) {
     throw std::runtime_error(
-        "HPOEngine requires INIT2B or/and INITMB parameters to be set");
+        "tadah hpo: INIT2B and INITMB are both false, so the potential has "
+        "no term; tadah hpo needs INIT2B true or INITMB true");
   }
 
   /* The critical-fixed-not-optimised audit runs inside hpo_run() under

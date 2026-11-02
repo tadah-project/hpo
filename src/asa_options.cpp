@@ -62,7 +62,8 @@ const Desc kDescs[] = {
   {"Temperature_Anneal_Scale", Kind::Real, false, 0, kNaN, "100.0",
    "n = log(TAS); above the number of dimensions for large problems"},
   {"Sequential_Parameters", Kind::Count, false, kNaN, kNaN, "-1",
-   "start the cyclic generation of one dimension at a time at this index; any negative = off"},
+   "start the cyclic generation of one dimension at a time at this "
+   "0-based index (0 = the first dimension); any negative = off"},
   {"Initial_Parameter_Temperature", Kind::Real, false, 0, kNaN, "1.0",
    "initial parameter temperature (must be > 0)"},
   {"Acceptance_Frequency_Modulus", Kind::Count, false, 0, kNaN, "100",
@@ -102,9 +103,10 @@ const Desc kDescs[] = {
    "1 = strict < for new minima (Tadah!'s default); 0 = <=, as in ASA's "
    "example options"},
   {"Multi_Grid", Kind::Real, true, 0, kNaN, "0.0",
-   "distinctness grid of each dimension for MULTI_MIN (0 -> EPS_DOUBLE)"},
+   "distinctness grid of each dimension for the Multi_Number minima (0 = "
+   "the double-precision epsilon)"},
   {"Queue_Size", Kind::Count, false, 0, kNaN, "0",
-   "FIFO eval-cache size; 0 = cache off"},
+   "size of the cache of evaluated states (FIFO); 0 = cache off"},
   {"Queue_Resolution", Kind::Real, true, 0, kNaN, "0.0",
    "cache-hit resolution of each dimension"},
   {"Gener_Block", Kind::Count, false, 1, kNaN, "1",
@@ -346,8 +348,9 @@ AsaOptions parse_asa_options(const OptimizerSpec& sp, std::size_t dim)
         else if (n == "Maximum_Cost_Repeat")     o.maximum_cost_repeat = (int)v;
         else if (n == "Number_Cost_Samples") {
             if (v == 0.0 || v == -1.0) throw std::runtime_error(
-                "ASA:ASA: PARAM Number_Cost_Samples must not be 0 or -1 "
-                "(>0 = mean |cost| sample, <-1 = deviation sample)");
+                "ASA:ASA: PARAM Number_Cost_Samples takes a value above 0 "
+                "(a sample of the mean |cost|) or below -1 (a sample of its "
+                "deviation), got " + std::string(v == 0.0 ? "0" : "-1"));
             o.number_cost_samples = (int)v;
         }
         else if (n == "Temperature_Ratio_Scale") {
@@ -378,8 +381,9 @@ AsaOptions parse_asa_options(const OptimizerSpec& sp, std::size_t dim)
             o.generated_frequency_modulus = (int)v;
         else if (n == "Reanneal_Cost") {
             if (v == -1.0) throw std::runtime_error(
-                "ASA:ASA: PARAM Reanneal_Cost == -1 is invalid upstream "
-                "(use 0 = off, 1 = default, >1 or <-1 = sample variants)");
+                "ASA:ASA: PARAM Reanneal_Cost takes 0 (off), 1 (the "
+                "default), or a value above 1 or below -1 (sample variants), "
+                "got -1; ASA refuses -1");
             o.reanneal_cost = (int)v;
         }
         else if (n == "Reanneal_Parameters")     o.reanneal_parameters = (int)v;

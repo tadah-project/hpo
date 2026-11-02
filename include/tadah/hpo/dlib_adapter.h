@@ -1,6 +1,7 @@
 #pragma once
 #include <dlib/global_optimization.h>
 #include <tadah/core/checkpoint.h>       // core::ShutdownRequested
+#include <tadah/core/number_format.h>
 #include <tadah/core/signal_handler.h>
 #include <tadah/hpo/log_index.h>
 #include <dlib/optimization.h>
@@ -47,7 +48,8 @@ namespace detail {
 struct MaxEvalReached : public std::exception {
   /** A fixed message naming the eval-counted MAXEVAL. */
   const char* what() const noexcept override {
-    return "DLIB:BFGS reached MAXEVAL function evaluations (eval-counted, not iter-counted)";
+    return "DLIB:BFGS reached MAXEVAL evaluations (counted by tadah hpo, "
+           "not dlib's iterations)";
   }
 };
 
@@ -91,12 +93,10 @@ inline void validate_dlib_bfgs_spec(const OptimizerSpec& sp)
   if (!sp.is_int.empty() &&
       std::any_of(sp.is_int.begin(), sp.is_int.end(), [](bool v) { return v; })) {
     throw std::runtime_error(
-        "DLIB:BFGS does not support integer-valued optimisation variables");
+        "DLIB:BFGS does not support integer search parameters");
   }
 
-  if (sp.vector_storage)
-    throw std::runtime_error(
-        "DLIB:BFGS does not support VECTOR_ARR; use ALGO GFS or an NLopt L-BFGS variant instead");
+  reject_unread_vector_storage(sp);
   if (sp.pop)
     throw std::runtime_error("DLIB:BFGS does not support POPULATION");
   /* A PRESTAGE refinement's SEED that the exploration took seeds the
@@ -117,7 +117,7 @@ inline void validate_dlib_bfgs_spec(const OptimizerSpec& sp)
   if (sp.stop.stopval)
     throw std::runtime_error("DLIB:BFGS does not support STOPVAL");
   if (sp.stop.ftol_rel)
-    throw std::runtime_error("DLIB:BFGS does not support FTOL_REL; use FTOL_ABS");
+    throw std::runtime_error("DLIB:BFGS does not support FTOL_REL; its tolerance is FTOL_ABS");
   if (sp.stop.xtol_rel)
     throw std::runtime_error("DLIB:BFGS does not support XTOL_REL");
   if (sp.stop.xtol_abs)
@@ -154,7 +154,8 @@ inline void validate_dlib_bfgs_spec(const OptimizerSpec& sp)
 
   const auto tol_gradinf = dlib_param(sp, "tol_gradinf");
   if (tol_gradinf && !(*tol_gradinf > 0.0))
-    throw std::runtime_error("DLIB:BFGS requires PARAM tol_gradinf > 0");
+    throw std::runtime_error("DLIB:BFGS requires PARAM tol_gradinf > 0 (got " +
+                             core::format_roundtrip(*tol_gradinf) + ")");
 
   if (tol_gradinf && sp.stop.ftol_abs)
     throw std::runtime_error(
@@ -192,7 +193,7 @@ template<class HostT>
           "DLIB:GFS (find_min_global, MaxLIPO+TR) is deterministic; SEED has "
           "no effect on the refinement: it seeds the exploration (EXPLORE "
           "SEED " + std::to_string(*sp.seed) + ").";
-      std::cerr << "[HPO] " << msg << "\n";
+      std::cerr << "[tadah hpo] " << msg << "\n";
       HPOLog::instance().warning(msg);
     }
 
@@ -206,14 +207,15 @@ template<class HostT>
       const bool is_int = i < sp.is_int.size() && sp.is_int[i];
       if (!is_int && sp.low[i] > 0.0 && sp.high[i] / sp.low[i] >= 1000.0) {
         std::ostringstream oss;
-        oss << "DLIB:GFS: dlib applies its own ln transform to "
+        oss << "DLIB:GFS: dlib searches "
             << (i < sp.parameter_labels.size() ? sp.parameter_labels[i]
                                                : logidx::dim_label(i))
-            << " (internal bounds [" << sp.low[i] << ", " << sp.high[i]
-            << "], ratio >= 1000) and does not transform the INIT seeds "
-               "handed to it; tag the dim LOG on its OPTIM line (or set "
-               "OPTIM_SCALE AUTO) so HPO owns the transform";
-        std::cerr << "[HPO] " << oss.str() << "\n";
+            << " on a log scale of its own (bounds [" << sp.low[i] << ", "
+            << sp.high[i] << "], ratio >= 1000) and takes the INIT starting "
+               "points it is given unchanged; the LOG tag on its OPTIM line, "
+               "or OPTIM_SCALE AUTO, makes tadah hpo apply the log scale, to "
+               "the starting points too";
+        std::cerr << "[tadah hpo] " << oss.str() << "\n";
         HPOLog::instance().warning(oss.str());
       }
     }
@@ -325,7 +327,7 @@ template<class HostT>
       std::ostringstream oss;
       oss << "DLIB:GFS seeding with " << sp.optim_init.size()
           << " starting point" << (sp.optim_init.size()==1 ? "" : "s");
-      std::cout << "[HPO] " << oss.str() << "\n";
+      std::cout << "[tadah hpo] " << oss.str() << "\n";
       HPOLog::instance().info(oss.str());
       for (const auto& seed_real : sp.optim_init) {
         const auto start_vec = sp.in(seed_real);
@@ -845,7 +847,8 @@ public:
             sp, host, &evals_, maxeval,
             host_analytical_grad_fn<Vec>(sp, host))),
         repeats_("DLIB:BFGS", sp, repeat_policy<Vec>(host),
-                 "a reuse is no evaluation, and MAXEVAL counts evaluations",
+                 "a reuse is not an evaluation, and MAXEVAL counts "
+                 "evaluations",
                  latest_evaluation(host))
   {}
   BfgsObjective(const BfgsObjective&) = delete;
@@ -1063,7 +1066,7 @@ std::string no_step_detail(const OptimizerSpec& sp, const Vec& x, const Vec& g,
   return out;
 }
 
-/* "from A = 0.5, B = 0.25 the line search from the farthest step BFGS
+/* "from A = 0.5, B = 0.25, the line search starting at the farthest step BFGS
  * takes there (0.125 of the steepest-descent step) came back to the point":
  * a NoStep of bfgs_box_search (d), at the internal point `x`. */
 template <class Vec>
@@ -1074,7 +1077,7 @@ std::string came_back_detail(const OptimizerSpec& sp, const Vec& x,
   r.precision(10);
   r << reach;
   return "from " + describe_point(sp, x) +
-         " the line search from the farthest step BFGS takes there (" +
+         ", the line search starting at the farthest step BFGS takes there (" +
          r.str() + " of the steepest-descent step) found no lower loss and "
          "came back to the point";
 }
@@ -1149,7 +1152,9 @@ template<class Vec,class Runner,class HostT>
         x(i) = start[static_cast<std::size_t>(i)];
     } else {
       throw std::runtime_error(
-          "DLIB:BFGS requires a starting point; HPO should provide one from the current config");
+          "DLIB:BFGS has no starting point: its INIT block gave none (a WARM "
+          "point that WARM_ON_MISMATCH skipped, with no other method after "
+          "it), and it starts from one point");
     }
 
     const auto maxeval = sp.stop.maxeval.has_value()
@@ -1189,9 +1194,10 @@ template<class Vec,class Runner,class HostT>
         stand_in_noted = true;
         HPOLog::instance().info(
             "DLIB:BFGS: dlib is given a finite stand-in for each failed "
-            "evaluation of this search (the worst usable loss of the search "
-            "so far plus a margin; before any, FAILSCORE, at most 1e100); "
-            "loss.tadah records the loss the evaluation reported");
+            "evaluation of this search: the worst usable loss of the search "
+            "so far plus a margin, or FAILSCORE (at most 1e100) before the "
+            "first usable loss; loss.tadah records the loss the evaluation "
+            "reported");
       }
       const double v = to_dlib(loss, given_slope);
       given_x = xin;
@@ -1301,18 +1307,19 @@ template<class Vec,class Runner,class HostT>
          * RESTART rounds) don't repeat it. */
         if (HPOLog::instance().first_in_run("DLIB:BFGS MAXEVAL preamble")) {
             const std::string preamble =
-                "DLIB:BFGS -- MAXEVAL is enforced externally by HPO "
-                "(DLIB stop strategies count iterations, not evals). "
-                "Subsequent MAXEVAL hits in this run will be summarised tersely.";
-            std::cout << "[HPO] " << preamble << "\n";
+                "DLIB:BFGS: tadah hpo stops the search at MAXEVAL "
+                "evaluations (dlib's stop rules count iterations, not "
+                "evaluations); later stops at MAXEVAL in this run are "
+                "reported in one line each";
+            std::cout << "[tadah hpo] " << preamble << "\n";
             HPOLog::instance().info(preamble);
         }
         /* The MAXEVAL stop line (the only one: no "stopped:" line), and
          * the run's status. */
         std::ostringstream oss;
-        oss << "DLIB:BFGS -- MAXEVAL=" << maxeval
-            << " reached; preserving best-so-far";
-        std::cout << "[HPO] " << oss.str() << "\n";
+        oss << "DLIB:BFGS: MAXEVAL " << maxeval
+            << " reached; the best evaluation so far is kept";
+        std::cout << "[tadah hpo] " << oss.str() << "\n";
         HPOLog::instance().info(oss.str());
         record_end("DLIB:BFGS", EndReason::MaxEval);
       } catch (const detail::GradientNotFinite& e) {

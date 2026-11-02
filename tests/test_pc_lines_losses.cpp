@@ -161,7 +161,7 @@ std::string startup_error(const std::string& body) {
 /* The error of a target file at line @p line, as the parser frames it. */
 std::string at_line(std::size_t line, const std::string& what,
                     const std::string& text) {
-    return "Error on line " + std::to_string(line) + ": " + what +
+    return "line " + std::to_string(line) + " of config.hpo: " + what +
            "\nLine: " + text;
 }
 
@@ -181,17 +181,17 @@ std::string sim_error(std::string cmd, bool failprobe = false,
 
 /* Pins: a PC_LAMMPS line, or a PC_FAILPROBE line alone, refuses DLIB:BFGS
  * as it refuses every gradient-based optimiser, in the STRATEGY block and
- * in a PRESTAGE EXPLORE block: "--hpotarget defines <line> but OPTIMIZER's
- * optimiser DLIB:BFGS is gradient-based. A PC_LAMMPS or PC_FAILPROBE line
- * requires a gradient-free optimiser (" and the list, with no exception for
- * DLIB:BFGS in the message; a gradient-free optimiser is still accepted.
+ * in a PRESTAGE EXPLORE block: "the STRATEGY-level optimiser: DLIB:BFGS is
+ * gradient-based, and a target file with PC_LAMMPS or PC_FAILPROBE lines
+ * (PC_LAMMPS on line 6) takes a gradient-free optimiser (" and the list,
+ * with no exception for DLIB:BFGS in the message; a gradient-free
+ * optimiser is still accepted.
  * The refusals name the line the file has: PC_LAMMPS when it has one, and
  * PC_FAILPROBE for a file whose only script line is the probe -- for a
  * gradient-based optimiser, an MLSL whose default local optimiser takes
  * gradients, such an INNER block and a GRAD_STRATEGY line alike.
  * Each refusal names the line of the key it refuses (ALGO, GRAD_STRATEGY)
- * and the line of the script line it names ("--hpotarget defines
- * PC_FAILPROBE on line 7 but ...").
+ * and the line of the script line it names ("(PC_FAILPROBE on line 7)").
  * Before the fix: DLIB:BFGS was the one gradient-based optimiser accepted
  * (read_error was "" for the three files), and the refusal of the others
  * said "or DLIB:BFGS, the one gradient-based optimiser it accepts". Before
@@ -211,6 +211,11 @@ TEST_CASE("PC lines: PC_LAMMPS and PC_FAILPROBE refuse DLIB:BFGS",
     const std::string probe =
         "PC_ERMSE 0 1\nPC_FAILPROBE --script p.in --outvar S\n";
     struct Case { std::string lines, named, line; };
+    /* The refusals name the phase and the script line in the message of
+     * a target file; they said "--hpotarget defines <line> on line N but
+     * OPTIMIZER's optimiser DLIB:BFGS is gradient-based. A PC_LAMMPS or
+     * PC_FAILPROBE line requires a gradient-free optimiser (", and "...
+     * GRAD_STRATEGY is set. ... Drop the GRAD_STRATEGY line." */
     for (const Case& c : std::vector<Case>{
              {lammps, "PC_LAMMPS", "6"},
              {probe, "PC_FAILPROBE", "7"},
@@ -218,10 +223,10 @@ TEST_CASE("PC lines: PC_LAMMPS and PC_FAILPROBE refuse DLIB:BFGS",
         INFO(c.lines);
         const std::string e = read_error(bfgs + c.lines);
         CHECK_THAT(e, Catch::StartsWith(
-                          "Error on line 3: --hpotarget defines " + c.named +
-                          " on line " + c.line + " but OPTIMIZER's optimiser "
-                          "DLIB:BFGS is gradient-based. A PC_LAMMPS or "
-                          "PC_FAILPROBE line requires a gradient-free "
+                          "line 3 of config.hpo: the STRATEGY-level optimiser: "
+                          "DLIB:BFGS is gradient-based, and a target file "
+                          "with PC_LAMMPS or PC_FAILPROBE lines (" + c.named +
+                          " on line " + c.line + ") takes a gradient-free "
                           "optimiser (") &&
                           Catch::EndsWith("Line: ALGO BFGS"));
         CHECK_THAT(e, !Catch::Contains("DLIB:BFGS, the one"));
@@ -234,46 +239,49 @@ TEST_CASE("PC lines: PC_LAMMPS and PC_FAILPROBE refuse DLIB:BFGS",
         "ENDOPTIMIZER\n";
     CHECK_THAT(read_error(explore + lammps),
                Catch::StartsWith(
-                   "Error on line 9: --hpotarget defines PC_LAMMPS on line "
-                   "14 but EXPLORE's optimiser DLIB:BFGS is gradient-based. "
-                   "A PC_LAMMPS or PC_FAILPROBE line requires a "
-                   "gradient-free optimiser ("));
+                   "line 9 of config.hpo: the PRESTAGE exploration (EXPLORE "
+                   "block): DLIB:BFGS is gradient-based, and a target file "
+                   "with PC_LAMMPS or PC_FAILPROBE lines (PC_LAMMPS on line "
+                   "14) takes a gradient-free optimiser ("));
     CHECK_THAT(read_error(explore + probe),
                Catch::StartsWith(
-                   "Error on line 9: --hpotarget defines PC_FAILPROBE on "
-                   "line 15 but EXPLORE's optimiser DLIB:BFGS is gradient-based. "
-                   "A PC_LAMMPS or PC_FAILPROBE line requires a "
-                   "gradient-free optimiser ("));
+                   "line 9 of config.hpo: the PRESTAGE exploration (EXPLORE "
+                   "block): DLIB:BFGS is gradient-based, and a target file "
+                   "with PC_LAMMPS or PC_FAILPROBE lines (PC_FAILPROBE on line "
+                   "15) takes a gradient-free optimiser ("));
 
     /* The other refusals of a gradient with a script line, for a file
      * whose only script line is the probe. */
     CHECK(read_error(
               "OPTIMIZER\nLIB NLOPT\nALGO LN_SBPLX\nMAXEVAL 1\n"
               "GRAD_STRATEGY HYBRID\nENDOPTIMIZER\n" + probe) ==
-          "Error on line 5: --hpotarget defines PC_FAILPROBE on line 8 but "
-          "OPTIMIZER's GRAD_STRATEGY is set. A PC_LAMMPS or PC_FAILPROBE "
-          "line does not support analytical/numerical/hybrid gradients. "
-          "Drop the GRAD_STRATEGY line.\nLine: GRAD_STRATEGY HYBRID");
+          "line 5 of config.hpo: the STRATEGY-level optimiser: GRAD_STRATEGY is "
+          "refused in a target file with PC_LAMMPS or PC_FAILPROBE lines "
+          "(PC_FAILPROBE on line 8): tadah hpo takes no gradient "
+          "(ANALYTICAL, NUMERICAL or HYBRID) of a loss that runs LAMMPS "
+          "scripts, and such a file takes a gradient-free optimiser\nLine: "
+          "GRAD_STRATEGY HYBRID");
     CHECK_THAT(read_error("OPTIMIZER\nLIB NLOPT\nALGO GD_MLSL\nMAXEVAL 1\n"
                           "ENDOPTIMIZER\n" + probe),
                Catch::StartsWith(
-                   "Error on line 3: --hpotarget defines PC_FAILPROBE on "
-                   "line 7 but OPTIMIZER's optimiser NLOPT:GD_MLSL takes a gradient: "
-                   "NLopt's MLSL and AUGLAG take one for their local "
-                   "search, and NLopt's default local optimiser, "
-                   "NLOPT:LD_MMA, is gradient-based; an INNER block with a "
-                   "derivative-free one takes none. A PC_LAMMPS or "
-                   "PC_FAILPROBE line requires a gradient-free optimiser ("));
+                   "line 3 of config.hpo: the STRATEGY-level optimiser: "
+                   "NLOPT:GD_MLSL takes a gradient: NLopt's MLSL and AUGLAG "
+                   "take one for their local search, and NLopt's default "
+                   "local optimiser, NLOPT:LD_MMA, is gradient-based; with "
+                   "an INNER block that names a gradient-free local NLopt "
+                   "algorithm it takes none. A target file with PC_LAMMPS or "
+                   "PC_FAILPROBE lines (PC_FAILPROBE on line 7) takes a "
+                   "gradient-free optimiser ("));
     CHECK_THAT(read_error("OPTIMIZER\nSTRATEGY\nLIB NLOPT\nALGO LN_AUGLAG\n"
                           "MAXEVAL 1\nINNER\nLIB NLOPT\nALGO LD_LBFGS\n"
                           "ENDINNER\nENDSTRATEGY\nENDOPTIMIZER\n" + probe),
                Catch::StartsWith(
-                   "Error on line 8: --hpotarget defines PC_FAILPROBE on "
-                   "line 13 but INNER's optimiser NLOPT:LD_LBFGS is gradient-based. A "
-                   "PC_LAMMPS or PC_FAILPROBE line requires a gradient-free "
-                   "optimiser, and an INNER search is a local NLopt "
-                   "algorithm; the INNER block takes a derivative-free one "
-                   "("));
+                   "line 8 of config.hpo: the INNER block of the STRATEGY-level "
+                   "optimiser: NLOPT:LD_LBFGS is gradient-based. A target "
+                   "file with PC_LAMMPS or PC_FAILPROBE lines (PC_FAILPROBE "
+                   "on line 13) takes a gradient-free optimiser, and an "
+                   "INNER block takes a local NLopt algorithm; the "
+                   "gradient-free ones are "));
 }
 
 /* Pins: a file whose only PC line is PC_FAILPROBE has no loss source and
@@ -714,8 +722,8 @@ TEST_CASE("PC lines: a PC_OBSERVABLE term takes the LOSS line above it and a "
     }
     CHECK_THAT(read_error(kSbplx + obs + " --loss HUBER 0\n"),
                Catch::StartsWith(
-                   "Error on line 7: loss HUBER parameter (delta) must be "
-                   "finite and > 0 (got 0); omit it to use the default 50"));
+                   "line 7 of config.hpo: loss HUBER parameter (delta) must be "
+                   "finite and > 0 (got 0); without it the default 50 applies"));
 }
 
 /* Pins: GRAD_STRATEGY ANALYTICAL accepts a PC_OBSERVABLE term of every

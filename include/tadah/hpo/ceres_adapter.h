@@ -56,6 +56,8 @@
  *     The stop line and the WARNING give the whole message.
  */
 
+#include <tadah/core/number_format.h>
+#include <tadah/hpo/backend_rules.h>        // reject_unread_vector_storage
 #include <tadah/hpo/failed_loss_stand_in.h>   // FailedLossStandIn::kCeiling
 #include <tadah/hpo/gradient_provider.h>
 #include <tadah/hpo/hpo_host.h>
@@ -166,14 +168,10 @@ inline void validate_ceres_common_(const OptimizerSpec& sp,
         std::any_of(sp.is_int.begin(), sp.is_int.end(),
                     [](bool v) { return v; })) {
         throw std::runtime_error(
-            "CERES:" + algo + " does not support integer-valued optimisation "
-            "variables; use DLIB:GFS, NLOPT global algorithms, or TADAH:GRID");
+            "CERES:" + algo + " does not support integer search parameters");
     }
 
-    if (sp.vector_storage)
-        throw std::runtime_error(
-            "CERES:" + algo + " does not support VECTOR_ARR; use DLIB:GFS or "
-            "an NLopt global algorithm");
+    reject_unread_vector_storage(sp);
     if (sp.pop)
         throw std::runtime_error("CERES:" + algo + " does not support POPULATION");
     /* GradientProblemSolver draws no random numbers; DLIB:BFGS refuses SEED
@@ -194,11 +192,13 @@ inline void validate_ceres_common_(const OptimizerSpec& sp,
     if (sp.stop.stopval)
         throw std::runtime_error("CERES:" + algo + " does not support STOPVAL");
     if (sp.stop.ftol_abs)
-        throw std::runtime_error("CERES:" + algo + " uses relative tolerance; "
-            "use FTOL_REL (mapped to function_tolerance) instead of FTOL_ABS");
+        throw std::runtime_error("CERES:" + algo + " uses a relative "
+            "tolerance: it takes FTOL_REL (Ceres' function_tolerance), not "
+            "FTOL_ABS");
     if (sp.stop.xtol_abs)
-        throw std::runtime_error("CERES:" + algo + " uses relative tolerance; "
-            "use XTOL_REL (mapped to parameter_tolerance) instead of XTOL_ABS");
+        throw std::runtime_error("CERES:" + algo + " uses a relative "
+            "tolerance: it takes XTOL_REL (Ceres' parameter_tolerance), not "
+            "XTOL_ABS");
     /* Ceres refuses a negative tolerance before it evaluates anything
      * (Solver::Options::IsValid); 0 switches the test off in effect. */
     if (sp.stop.ftol_rel && !(*sp.stop.ftol_rel >= 0.0))
@@ -257,7 +257,9 @@ inline void validate_ceres_common_(const OptimizerSpec& sp,
     }
     if (auto it = sp.param.find("tol_gradinf"); it != sp.param.end())
         if (!(it->second > 0.0))
-            throw std::runtime_error("CERES:" + algo + " requires PARAM tol_gradinf > 0");
+            throw std::runtime_error("CERES:" + algo + " requires PARAM "
+                                     "tol_gradinf > 0 (got " +
+                                     core::format_roundtrip(it->second) + ")");
     /* Ceres' iteration caps, as Ceres checks them: max_num_iterations may
      * be 0 (the start is evaluated and the solve ends), a line search
      * takes at least one step size. */
@@ -497,8 +499,9 @@ inline void run_ceres_gradient_problem(
 {
     if (sp.optim_init.empty())
         throw std::runtime_error(
-            "CERES:" + algo_label + " requires a starting point; HPO should "
-            "provide one from the current config");
+            "CERES:" + algo_label + " has no starting point: its INIT block "
+            "gave none (a WARM point that WARM_ON_MISMATCH skipped, with no "
+            "other method after it), and it starts from one point");
 
     const auto start = sp.in(sp.optim_init.front());
     if (start.size() != sp.low.size())
@@ -556,7 +559,7 @@ inline void run_ceres_gradient_problem(
     oss << "CERES:" << algo_label
         << " -- termination: " << ceres::TerminationTypeToString(summary.termination_type)
         << " | iters=" << summary.iterations.size()
-        << " | host_evals=" << evals_used.load()
+        << " | evaluations=" << evals_used.load()
         << " | initial_cost=" << fof->reported(summary.initial_cost)
         << " | final_cost="   << fof->reported(summary.final_cost);
     HPOLog::instance().info(oss.str());
@@ -598,7 +601,7 @@ inline void run_ceres_gradient_problem(
     const auto report_native = [&](const char* type, bool stopped) {
         const std::string msg = backend + " stopped: " + type + " after " +
                                 spent + "; Ceres: " + summary.message;
-        std::cout << "[HPO] " << msg << "\n";
+        std::cout << "[tadah hpo] " << msg << "\n";
         HPOLog::instance().info(msg);
         HPOLog::instance().set_status(
             std::string(stopped ? "STOPPED -- " : "") + backend + ": " +
@@ -681,8 +684,8 @@ inline void run_ceres_gradient_problem(const OptimizerSpec& sp,
 {
     (void)sp;
     throw std::runtime_error(
-        "CERES:" + algo_label + " is unavailable: build was not configured "
-        "with -DTADAH_ENABLE_CERES=ON");
+        "CERES:" + algo_label + " is not in this build of tadah; a build "
+        "with -DTADAH_ENABLE_CERES=ON (see Installation) has it");
 }
 
 #endif  // TADAH_USE_CERES

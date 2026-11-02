@@ -104,7 +104,7 @@ as the `-c`), `OPTIM RCUT2B (1) 4.0 6.0`, `OPTIM SGRIDMB (1) 0.1 0.4`, `MAXEVAL 
 20-21 s without an evaluation before the next `RESTART` (or the end), and the run took 60.8 s for 99
 evaluations. With `LN_BOBYQA` the same configuration took 0.57 s for 169 evaluations (it converged,
 roundoff-limited, before a stagnation stop). With the refusal the same configuration stops in 0.15 s:
-`HPOEngine error: Error on line 17: the STRATEGY-level optimiser: NLOPT:LN_NEWUOA_BOUND is refused: ...`.
+`ERROR: line 17 of run.hpo: the STRATEGY-level optimiser: NLOPT:LN_NEWUOA_BOUND is refused: ...`.
 
 The investigation of 2026-10-07 (scratch runs with a `tadah` built before the refusal, some alongside other
 jobs, so the seconds are indicative):

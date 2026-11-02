@@ -377,7 +377,7 @@ TEST_CASE("HPO_Host per-candidate bump gate: graded reject before training",
     REQUIRE(trg.BUMPGATE_STRICT);
     REQUIRE_THROWS_WITH(
         validate_hpo_setup(ctx_strict, trg, true, true),
-        Catch::Contains("bump-support gate"));
+        Catch::Contains("BUMPGATE: a compact bump reaches past its cutoff"));
   }
 
   Host::reset_globals_for_test();

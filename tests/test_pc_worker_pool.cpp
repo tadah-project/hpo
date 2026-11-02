@@ -762,7 +762,8 @@ TEST_CASE("pc pool: in the MPI build the worker refuses to start",
   INFO(out);
   REQUIRE(WIFEXITED(status));
   CHECK(WEXITSTATUS(status) == 2);
-  CHECK(out == "tadah --tadah-pc-worker: not supported in the MPI build "
-               "(TADAH_HPO_MPI)\n");
+  /* it said "not supported in the MPI build (TADAH_HPO_MPI)" */
+  CHECK(out == "tadah --tadah-pc-worker: the MPI build of tadah "
+               "(-DTADAH_HPO_MPI=ON) has no worker processes\n");
 }
 #endif
