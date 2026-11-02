@@ -94,7 +94,7 @@ TEST_CASE("RHOFORM: HPOTargets reads the mandatory key first",
   SECTION("absent on a DM_REAM configuration: the migration message") {
     const std::string e = targets_error(make_ream_ctx(nullptr), target);
     CHECK_THAT(e, Catch::Contains("tadah hpo: DM_REAM: RHOFORM is required") &&
-                      Catch::Contains("add 'RHOFORM SIGNED'"));
+                      Catch::Contains("which a RHOFORM SIGNED line declares"));
   }
   SECTION("an invalid value") {
     const std::string e = targets_error(make_ream_ctx("SQUARE"), target);

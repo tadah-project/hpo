@@ -619,7 +619,9 @@ TEST_CASE("hpo --check: a run that stops at startup creates no DUMP or "
         run_error = error_of([&] { return tadah::hpo::hpo_run(ctx); });
     }
     INFO("run: " << run_error << "\ncheck: " << check_error);
-    CHECK(contains(run_error, "preflight_audit"));
+    /* It said "preflight_audit: AUDIT=error and one or more FAIL
+     * findings:". */
+    CHECK(contains(run_error, "AUDIT error: 1 FAIL finding(s) stop the run:"));
     CHECK(check_error == run_error);
     CHECK(fs::exists("hpo_run.log"));
     CHECK_FALSE(fs::exists("pots"));
@@ -820,7 +822,7 @@ TEST_CASE("hpo --check: the startup warnings before an error are written "
         err = capture.text.str();
     }
     INFO("error: " << error << "\nstandard error:\n" << err);
-    CHECK(contains(error, "preflight_audit"));
+    CHECK(contains(error, "AUDIT error: 1 FAIL finding(s) stop the run:"));
     CHECK(contains(err, "tadah hpo --check: the startup checks stopped at "
                         "the error below.\nWarnings and hints, which a run "
                         "writes to its journal (hpo_run.log):\n"));

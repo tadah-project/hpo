@@ -5834,9 +5834,9 @@ error = "OPTIM OALGO (2): the box [0.001, 2] is not inside (0, 1), but the secon
 id = "RULE.fit_OALGO3_intercepts"
 title = "OALGO 3 fits an intercept column with LAMBDA 0"
 check = "startup"
-msg = "OALGO=3 (SVD with uniform ridge) does not support intercept exclusion from regularisation. The model has {count} intercept column(s) (BIAS=true with ATOM) and LAMBDA != 0; OALGO 1, 2 or 4 fits such a model with LAMBDA != 0."
+msg = "OALGO 3 (SVD with a uniform ridge) penalises every coefficient alike, and the model has {count} intercept column(s) (BIAS true with ATOM), which a ridge penalty leaves out, so OALGO 3 takes LAMBDA 0 only; OALGO 1, 2 or 4 fits such a model with a LAMBDA other than 0."
 doc = """\
-OALGO 3 penalises every weight alike, and a ridge penalty leaves the \
+OALGO 3 penalises every coefficient alike, and a ridge penalty leaves the \
 intercept columns out (BIAS true), so a fit with an intercept column that \
 FIXINDEX does not pin refuses OALGO 3 with a positive LAMBDA; tadah hpo \
 refuses it when the run starts, without a line, if its evaluations fit \
@@ -5849,13 +5849,13 @@ check = "startup"
 context = "lines_oalgo3_bias"
 at = "none"
 text = "PC_EMAE 5 1"
-error = "OALGO=3 (SVD with uniform ridge) does not support intercept exclusion from regularisation. The model has 1 intercept column(s) (BIAS=true with ATOM) and LAMBDA != 0; OALGO 1, 2 or 4 fits such a model with LAMBDA != 0."
+error = "OALGO 3 (SVD with a uniform ridge) penalises every coefficient alike, and the model has 1 intercept column(s) (BIAS true with ATOM), which a ridge penalty leaves out, so OALGO 3 takes LAMBDA 0 only; OALGO 1, 2 or 4 fits such a model with a LAMBDA other than 0."
 
 [[rule]]
 id = "RULE.fit_OALGO3_intercepts_evidence"
 title = "The evidence approximation fits no intercept column"
 check = "startup"
-msg = "LAMBDA -1 requests the evidence approximation, which only OALGO 3 runs; OALGO 3 penalises every weight alike, and the model has {count} intercept column(s) (BIAS true with ATOM), which a ridge penalty leaves out. The evidence approximation needs BIAS false, or every intercept weight pinned with FIXINDEX and FIXWEIGHT. With BIAS true, LAMBDA 0 fits with any OALGO, and LAMBDA > 0 with OALGO 1, 2 or 4."
+msg = "LAMBDA -1 requests the evidence approximation, which only OALGO 3 runs; OALGO 3 penalises every coefficient alike, and the model has {count} intercept column(s) (BIAS true with ATOM), which a ridge penalty leaves out. The evidence approximation needs BIAS false, or every intercept coefficient fixed with FIXINDEX and FIXWEIGHT. With BIAS true, LAMBDA 0 fits with any OALGO, and LAMBDA > 0 with OALGO 1, 2 or 4."
 doc = """\
 LAMBDA -1 runs the evidence approximation under OALGO 3, which penalises \
 every coefficient alike. A fit with an intercept column (BIAS true with \
@@ -5869,7 +5869,7 @@ check = "startup"
 context = "lines_oalgo3_bias_evidence"
 at = "none"
 text = "PC_EMAE 5 1"
-error = "LAMBDA -1 requests the evidence approximation, which only OALGO 3 runs; OALGO 3 penalises every weight alike, and the model has 1 intercept column(s) (BIAS true with ATOM), which a ridge penalty leaves out. The evidence approximation needs BIAS false, or every intercept weight pinned with FIXINDEX and FIXWEIGHT. With BIAS true, LAMBDA 0 fits with any OALGO, and LAMBDA > 0 with OALGO 1, 2 or 4."
+error = "LAMBDA -1 requests the evidence approximation, which only OALGO 3 runs; OALGO 3 penalises every coefficient alike, and the model has 1 intercept column(s) (BIAS true with ATOM), which a ridge penalty leaves out. The evidence approximation needs BIAS false, or every intercept coefficient fixed with FIXINDEX and FIXWEIGHT. With BIAS true, LAMBDA 0 fits with any OALGO, and LAMBDA > 0 with OALGO 1, 2 or 4."
 
 [[rule]]
 id = "RULE.optim_LAMBDA_OALGO3_intercepts"

@@ -515,7 +515,7 @@ TEST_CASE("startup validation: a model refusal ends its reason with one "
     HPOTargets trg(ctx, tf.path.string());
     CHECK_THROWS_WITH(validate_hpo_setup(ctx, trg, true, true),
                       Catch::Contains("does not build a model") &&
-                          Catch::Contains("Set SBASIS to 2 or more. Every "
+                          Catch::Contains("SBASIS 2 or more gives them. Every "
                                           "evaluation would fail") &&
                           !Catch::Contains(".."));
   }

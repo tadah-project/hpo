@@ -393,7 +393,7 @@ TEST_CASE_METHOD(PTFixture,
       parser_text = e.what();
     }
     REQUIRE(parser_text.rfind("tadah refit: a top-level OPTIMIZER block is "
-                              "no longer supported.",
+                              "refused:",
                               0) == 0);
     tadah::mlip::Task task("refit", c);
     CHECK_THROWS_WITH(tadah::hpo::engines::HPORefitEngine().validate(task),

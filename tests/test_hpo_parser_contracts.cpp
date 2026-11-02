@@ -2549,13 +2549,13 @@ TEST_CASE("tadah refit: a top-level OPTIMIZER block is refused with its "
      * Before the fix: the text ended "See HPO_REFIT_2B_EAM/REDESIGN/configs
      * for examples.", a directory that is not shipped. */
     CHECK(refit_error("OPTIMIZER", "GLOBAL ALGO MLSL ENDGLOBAL") ==
-          "tadah refit: a top-level OPTIMIZER block is no longer supported. "
-          "The stage pipeline is now INIT -> EXPLORE -> REFINE -> FUSE, each "
-          "its own block, with the OPTIMIZER block NESTED inside "
-          "EXPLORE/REFINE/FUSE. Migration: GLOBAL folded into EXPLORE rung 0 "
-          "(set its global ALGO in EXPLORE's OPTIMIZER, with an INNER local); "
-          "POLISH -> REFINE; JOINT -> FUSE. The Refitting page of the "
-          "documentation has examples (Stage blocks).");
+          "tadah refit: a top-level OPTIMIZER block is refused: the stages of "
+          "tadah refit are the blocks INIT, EXPLORE, REFINE and FUSE, and an "
+          "OPTIMIZER block sits inside EXPLORE, REFINE or FUSE. In the "
+          "grammar of the top-level OPTIMIZER block, GLOBAL is the global "
+          "ALGO of the OPTIMIZER block of EXPLORE (with an INNER local "
+          "search, rung 0), POLISH is REFINE and JOINT is FUSE; the Refitting "
+          "page of the documentation has examples (Stage blocks).");
 }
 
 TEST_CASE("tadah refit: EXPLORE MAX_ADD is an integer >= 0",

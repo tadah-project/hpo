@@ -396,7 +396,7 @@ TEST_CASE("pair_coeff warns when a DM_REAM potential has no EMBF0 line",
         REQUIRE(count_of(l_abs, absent_banner) == 1);
         // linear model: the energies-only text, with the migration
         REQUIRE(count_of(l_abs, "forces and stresses are unchanged") == 1);
-        REQUIRE(count_of(l_abs, "add 'EMBF0 FREE' to the potential") == 1);
+        REQUIRE(count_of(l_abs, "an EMBF0 FREE line in the potential") == 1);
 
         for (const auto* l : {&l_zero, &l_free}) {
             REQUIRE(count_of(*l, warn) == 0);
@@ -484,8 +484,8 @@ TEST_CASE("pair_coeff states RHOFORM, and a potential without it fails with "
         REQUIRE(count_of(text, "ERROR: pair_coeff: failed to load Tadah "
                                "potential from '" + pot_path + "': " +
                                absent) == 1);
-        REQUIRE(count_of(text, "add 'RHOFORM SIGNED' to use an existing "
-                               "potential unchanged") == 1);
+        REQUIRE(count_of(text, "which a RHOFORM SIGNED line declares for an "
+                               "existing potential") == 1);
         REQUIRE(count_of(text, "Tadah! DM_REAM density form") == 0);
 
         // the exception a library driver catches carries it as well
