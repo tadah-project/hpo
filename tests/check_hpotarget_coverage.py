@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Coverage of the target-file registry against the parser's sources.
 
-    check_hpotarget_coverage.py <HPO source directory> [--registry DIR]
+    check_hpotarget_coverage.py <HPO source directory> --mlip <MLIP source
+        directory> [--registry DIR]
 
 Reads the C++ sources of the target-file parser and extracts every name it
 recognises as a string literal, then compares the names with those the
@@ -32,6 +33,10 @@ Comments are removed first (string literals kept), so a name in a comment
 or in commented-out code does not count. Each rule of EXTRACTION below
 names a source file and, mostly, one function in it (found by a regular
 expression on its definition, which must match exactly once), and reads:
+the file is HPO's, or MLIP's when it is written mlip:<path> (the OPTIM
+lines, which MLIP's OPTIM reader reads for tadah hpo and tadah analysis
+check_bounds), read from the directory --mlip names; a rule on an MLIP
+file without --mlip is an error.
 
   - comparisons `<operand> == "<literal>"` and `!=` in the function; each
     operand that occurs is mapped to the vocabularies its literals belong
@@ -305,49 +310,51 @@ EXTRACTION: list[Rule] = [
     Rule("the top-level keys a block refuses as such", "src/hpo_targets.cpp",
          r"^static bool is_top_level_key\(", compare=False,
          tables=[(r"\bkeys", "all", ("key:ROOT",))]),
-    Rule("the OPTIM line", "src/hpo_targets.cpp",
-         r"^void HPOTargets::process_optim_config\(",
-         operands={"k": ("optim_target",),
-                   "opt": ("line_option:OPTIM.AUTO",),
+    # The OPTIM lines: MLIP's OPTIM reader, which tadah hpo and tadah
+    # analysis check_bounds read them with.
+    Rule("the OPTIM box", "mlip:src/hpotarget_syntax.cpp",
+         r"^OptimBoxSyntax read_optim_box\(",
+         operands={"opt": ("line_option:OPTIM.AUTO",),
                    "tag": ("line_option:OPTIM",),
                    "upper(toks[toks.size() - 2])": ("line_option:OPTIM",),
-                   "upper(tokens.front())": ("form",)},
+                   "upper(tokens.front())": ("form",)}),
+    Rule("the OPTIM line", "mlip:src/hpotarget_optim.cpp",
+         r"^OptimLine OptimReader::read\(",
+         operands={"k": ("optim_target",)},
          unread_ok={".compare(": "the suffix .AMPLITUDES of a DM_Embed "
                                  "component path",
                     "key != k": "a value of the potential left out, found "
-                                "by its OPTIM key"},
-         not_names={"RCUT": "the prefix of the cutoff keys that AUTO "
-                            "refuses ([optim] auto_excluded_prefix)"}),
+                                "by its OPTIM key"}),
     Rule("the OPTIM keys of the fitted coefficients and of the embedding "
-         "reference", "src/hpo_targets.cpp",
-         r"^std::string HPOTargets::optim_fitted_key_error\(",
+         "reference", "mlip:src/hpotarget_optim.cpp",
+         r"^std::string optim_fitted_key_error\(",
          operands={"k": ("optim_target",)}),
-    Rule("the OPTIM structure keys", "src/hpo_targets.cpp",
-         r"^std::string HPOTargets::optim_structure_key_error\(",
+    Rule("the OPTIM structure keys", "mlip:src/hpotarget_optim.cpp",
+         r"^std::string optim_structure_key_error\(",
          tables=[(r"\bstructure\s*\[\]", "first", ("optim_target",))],
          unread_ok={"k == e": "a key of the table, which is read as a "
                               "table"}),
-    Rule("the OPTIM keys applied once at startup", "src/hpo_targets.cpp",
-         r"^std::string HPOTargets::optim_startup_only_key_error\(",
+    Rule("the OPTIM keys applied once at startup", "mlip:src/hpotarget_optim.cpp",
+         r"^std::string optim_startup_only_key_error\(",
          tables=[(r"\bonce\s*\[\]", "all", ("optim_target",))],
          unread_ok={"k == o": "a key of the table, which is read as a "
                               "table"}),
-    Rule("the OPTIM values of the fit", "src/hpo_targets.cpp",
-         r"^std::optional<HPOTargets::FitValueRule> HPOTargets::optim_fit_value_rule\(",
+    Rule("the OPTIM values of the fit", "mlip:src/hpotarget_optim.cpp",
+         r"^std::optional<OptimFitValueRule> optim_fit_value_rule\(",
          operands={"k": ("optim_target",)}),
-    Rule("the OPTIM choices and switches of the fit", "src/hpo_targets.cpp",
-         r"^std::string HPOTargets::optim_switch_key_error\(",
+    Rule("the OPTIM choices and switches of the fit", "mlip:src/hpotarget_optim.cpp",
+         r"^std::string optim_switch_key_error\(",
          operands={"k": ("optim_target",)}),
-    Rule("the OPTIM retired keys", "src/hpo_targets.cpp",
-         r"^std::string HPOTargets::optim_retired_key_error\(",
+    Rule("the OPTIM retired keys", "mlip:src/hpotarget_optim.cpp",
+         r"^std::string optim_retired_key_error\(",
          tables=[(r"\bretired\s*\[\]", "all", ("optim_target",))],
          unread_ok={"k != r": "a key of the table, which is read as a "
                               "table"}),
-    Rule("the OPTIM discrete index", "src/hpo_targets.cpp",
-         r"^std::string HPOTargets::optim_discrete_index_error\(",
+    Rule("the OPTIM discrete index", "mlip:src/hpotarget_optim.cpp",
+         r"^std::string optim_discrete_index_error\(",
          operands={"core::to_upper(key)": ("optim_target",)}),
-    Rule("the OPTIM keys of a DM_Embed potential", "src/hpo_targets.cpp",
-         r"^std::string HPOTargets::optim_component_key_error\(",
+    Rule("the OPTIM keys of a DM_Embed potential", "mlip:src/hpotarget_optim.cpp",
+         r"^std::string optim_component_key_error\(",
          ignore={"field": "a DM_Embed component path in the message",
                  "s.cutoff": "the CUTOFF TYPE of the training "
                              "configuration, in the message"},
@@ -548,18 +555,31 @@ def name_literals(rule: Rule, src: str, offset: int, body: str,
     return out
 
 
-def extract(hpo: pathlib.Path,
-            unread: list | None = None) -> tuple[list[Found], list[str]]:
+MLIP_PREFIX = "mlip:"
+
+
+def extract(hpo: pathlib.Path, unread: list | None = None,
+            mlip: pathlib.Path | None = None) -> tuple[list[Found], list[str]]:
     """The names the rules find, and the problems of the rules. `unread`
     receives the name-shaped literals of the scanned functions that no
-    rule reads (name_literals), for compare() to look up."""
+    rule reads (name_literals), for compare() to look up. A rule's file
+    written mlip:<path> is <path> under `mlip`, MLIP's source directory; a
+    problem when `mlip` is None."""
     found: list[Found] = []
     problems: list[str] = []
     if unread is None:
         unread = []
     cache: dict[str, str] = {}
     for rule in EXTRACTION:
-        path = hpo / rule.file
+        if rule.file.startswith(MLIP_PREFIX):
+            if mlip is None:
+                problems.append(f"{rule.file}: {rule.label}: the rule reads "
+                                "a source file of MLIP, and no MLIP source "
+                                "directory is given (--mlip)")
+                continue
+            path = mlip / rule.file[len(MLIP_PREFIX):]
+        else:
+            path = hpo / rule.file
         if rule.file not in cache:
             try:
                 cache[rule.file] = strip_comments(path.read_text())
@@ -691,6 +711,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("hpo", type=pathlib.Path, help="the HPO source directory")
     ap.add_argument("--registry", type=pathlib.Path,
                     help="the registry directory (default: <hpo>/blueprint)")
+    ap.add_argument("--mlip", type=pathlib.Path,
+                    help="the MLIP source directory (the rules on mlip: "
+                         "files read it)")
     args = ap.parse_args(argv)
     registry_dir = args.registry or args.hpo / "blueprint"
     loader = registry_dir / "hpotarget_registry.py"
@@ -702,7 +725,7 @@ def main(argv: list[str] | None = None) -> int:
     import hpotarget_registry  # noqa: E402  (the registry's own loader)
 
     unread: list[tuple[str, str]] = []
-    found, problems = extract(args.hpo, unread)
+    found, problems = extract(args.hpo, unread, args.mlip)
     try:
         reg = hpotarget_registry.load(registry_dir, resolve=False)
     except hpotarget_registry.RegistryError as e:
