@@ -134,7 +134,7 @@ struct AlwaysImproving {
 };
 
 /* Runs ASA with `sp` on `rec` under a 60 s watchdog (`what` names the run
- * if it never returns) and returns ASA's "[HPO] ..." console lines. An
+ * if it never returns) and returns ASA's "[tadah hpo] ..." console lines. An
  * exception from the run propagates, with the console restored. */
 std::string run_bounded(const OptimizerSpec& sp, std::size_t dim,
                         const Recorder& rec, const std::string& what)
@@ -151,7 +151,7 @@ std::string run_bounded(const OptimizerSpec& sp, std::size_t dim,
 }
 
 /* Runs ASA with `sp` on AlwaysImproving under a 60 s watchdog; returns the
- * evaluated points and ASA's "[HPO] ..." console lines. */
+ * evaluated points and ASA's "[tadah hpo] ..." console lines. */
 std::vector<std::vector<double>> run_always_improving(const OptimizerSpec& sp,
                                                       std::size_t dim,
                                                       std::string& console)

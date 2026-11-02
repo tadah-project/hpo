@@ -164,7 +164,7 @@ TEST_CASE("joined cutoffs: the cutoff of a D2_Knot5 of a joined line is "
             "above the largest knot (4.5): the knot basis vanishes at its "
             "largest knot, so the cutoff of a D2_Knot5 descriptor is 4.5, "
             "which the CGRID2B knot positions set.";
-        CHECK(s.err.find("[HPO] WARNING: " + w) != std::string::npos);
+        CHECK(s.err.find("[tadah hpo] WARNING: " + w) != std::string::npos);
         CHECK(s.journal.find(w) != std::string::npos);
     }
     {
@@ -238,7 +238,7 @@ TEST_CASE("joined cutoffs: the bump supports of a D2_Blip of a joined line "
             "beyond RCUT2B (2) = 5: only its inner shoulder reaches the "
             "neighbours; a centre below the cutoff (tadah refit --edit) gives "
             "the whole bump.";
-        CHECK(s.err.find("[HPO] WARNING: " + w) != std::string::npos);
+        CHECK(s.err.find("[tadah hpo] WARNING: " + w) != std::string::npos);
         CHECK(s.journal.find(w) != std::string::npos);
     }
 }

@@ -2188,8 +2188,8 @@ TEST_CASE("RESTART: running out of restarts is the run's status",
     REQUIRE(contains(journal, "RESTART: no new best within the stagnation "
                               "window, and the MAX of 1 restart(s) is used"));
     CHECK(contains(r.output,
-                   "[HPO] RESTART: no new best within the stagnation window, "
-                   "and the MAX of 1 restart(s) is used: the run stops"));
+                   "[tadah hpo] RESTART: no new best within the stagnation "
+                   "window, and the MAX of 1 restart(s) is used: the run stops"));
     CHECK(line_with(journal, "Optimiser status").find(
               ": STOPPED -- stagnation: no new best in 2 evaluations after 1 "
               "restart(s)")

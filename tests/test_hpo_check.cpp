@@ -2435,9 +2435,9 @@ TEST_CASE("hpo: the analytical gradient hands WATOM to finite differences "
  * check, and the next run draws another seed, so a number would repeat
  * nothing. For a STRATEGY block of TADAH:RANDOM without SEED, after an
  * INIT block on line 2 without SEED whose METHOD RANDOM 2 draws its
- * points, hpo_run() with CHECK true says on standard output "[HPO] the
+ * points, hpo_run() with CHECK true says on standard output "[tadah hpo] the
  * INIT block on line 2 has no SEED, so a run draws a seed for its starting
- * points once and names it" and "[HPO] the STRATEGY block has no SEED, and
+ * points once and names it" and "[tadah hpo] the STRATEGY block has no SEED, and
  * TADAH:RANDOM draws random numbers, so a run draws a seed for them once
  * and names it"; for NLOPT:GN_CRS2_LM after an INIT block of METHOD LHS 3,
  * whose seed it takes, the INIT line ends "... names it
@@ -2464,8 +2464,8 @@ TEST_CASE("hpo --check: a seed that a run would draw is announced without "
                algo + "\n    MAXEVAL 3\n  ENDSTRATEGY\nENDOPTIMIZER\n";
     };
     const std::string init_line =
-        "[HPO] the INIT block on line 2 has no SEED, so a run draws a seed "
-        "for its starting points once and names it";
+        "[tadah hpo] the INIT block on line 2 has no SEED, so a run draws a "
+        "seed for its starting points once and names it";
     struct Case {
         std::string method, lib, algo;
         std::vector<std::string> expected;   // lines of standard output
@@ -2473,8 +2473,8 @@ TEST_CASE("hpo --check: a seed that a run would draw is announced without "
     for (const Case& c : std::vector<Case>{
              {"METHOD RANDOM 2", "TADAH", "RANDOM",
               {init_line + "\n",
-               "[HPO] the STRATEGY block has no SEED, and TADAH:RANDOM draws "
-               "random numbers, so a run draws a seed for them once and "
+               "[tadah hpo] the STRATEGY block has no SEED, and TADAH:RANDOM "
+               "draws random numbers, so a run draws a seed for them once and "
                "names it\n"}},
              {"METHOD LHS 3", "NLOPT", "GN_CRS2_LM",
               {init_line + " (NLOPT:GN_CRS2_LM, without a SEED of its own, "

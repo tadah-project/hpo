@@ -4,7 +4,7 @@
 // centre beyond the cutoff of a smooth cutoff, an OPTIM box of a bump
 // centre that reaches beyond it, the knot cutoff that the run derives from
 // the largest knot, an OPTIM RCUT of a knot channel. Each is a WARNING of
-// the run: on standard error ("[HPO] WARNING: "), in the journal, and so
+// the run: on standard error ("[tadah hpo] WARNING: "), in the journal, and so
 // among the warnings `tadah hpo --check` lists and counts (the notes a run
 // without a journal keeps, HPOLog::notes_without_journal).
 #include "catch2/catch.hpp"
@@ -175,7 +175,7 @@ std::size_t warnings_with(const std::vector<JournalNote>& notes,
 void check_warned(const Startup& s, const std::string& w)
 {
     INFO("journal:\n" << s.journal << "\nstderr:\n" << s.err);
-    CHECK(count_of(s.err, "[HPO] WARNING: " + w) == 1);
+    CHECK(count_of(s.err, "[tadah hpo] WARNING: " + w) == 1);
     CHECK(count_of(s.journal, "WARNING   " + w) == 1);
     CHECK(warnings_with(s.notes, w) == 1);
 }

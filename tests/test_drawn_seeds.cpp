@@ -135,7 +135,7 @@ std::size_t count_of(const std::string& text, const std::string& needle)
 
 /* Pins: an INIT block without SEED whose chain draws its points (METHOD
  * SOBOL 4, METHOD RANDOM 3) draws a seed S once for the run and keeps it as
- * the block's SEED (InitStrategySpec::seed); standard output ("[HPO] ") and
+ * the block's SEED (InitStrategySpec::seed); standard output ("[tadah hpo] ") and
  * the journal say "the INIT block on line 4 has no SEED, so its starting
  * points are drawn with a seed drawn once for the run, S (SEED S in the
  * INIT block draws the same points again)"; the same file with "SEED S" in
@@ -231,7 +231,7 @@ TEST_CASE("drawn seeds: an NLopt algorithm that draws random numbers without "
             s + " (SEED " + s + " in the STRATEGY block draws the same numbers "
             "again)";
         CHECK(count_of(a.journal, w) == 1);
-        CHECK(count_of(a.out, "[HPO] " + w + "\n") == 1);
+        CHECK(count_of(a.out, "[tadah hpo] " + w + "\n") == 1);
         CHECK(count_of(a.journal, s + " (drawn for the run)") == 1);
         CHECK(count_of(a.journal, "INIT block on line 4 has no SEED") == 0);
     }
@@ -269,7 +269,7 @@ TEST_CASE("drawn seeds: an NLopt algorithm that draws random numbers without "
             "run, " + s + " (SEED " + s + " in the OPTIMIZER block draws the "
             "same numbers again)";
         CHECK(count_of(a.journal, w) == 1);
-        CHECK(count_of(a.out, "[HPO] " + w + "\n") == 1);
+        CHECK(count_of(a.out, "[tadah hpo] " + w + "\n") == 1);
         CHECK(count_of(a.out, "STRATEGY block") == 0);
     }
     /* No seed drawn. */
@@ -345,7 +345,7 @@ TEST_CASE("drawn seeds: the annealers, ASA and TADAH:RANDOM without a SEED "
             "run, " + s + " (SEED " + s + " in the STRATEGY block draws the "
             "same numbers again)";
         CHECK(count_of(a.journal, w) == 1);
-        CHECK(count_of(a.out, "[HPO] " + w + "\n") == 1);
+        CHECK(count_of(a.out, "[tadah hpo] " + w + "\n") == 1);
         CHECK(count_of(a.journal, s + " (drawn for the run)") == 1);
         const Read b = read_target(block(lib_algo, ""), ctx);
         REQUIRE(b.trg->spec.seed.has_value());

@@ -1022,7 +1022,7 @@ TEST_CASE("Journal: the FAILSCORE_GRADING ON line names the PC_FAILPROBE "
 }
 
 /* Pins: a journal that cannot be opened is a WARNING on standard error
- * naming its path: "[HPO] WARNING: the journal <path> cannot be opened,
+ * naming its path: "[tadah hpo] WARNING: the journal <path> cannot be opened,
  * so the run writes no journal".
  * Before the fix: "[HPOLog] Cannot open log file: <path>": the check
  * fails. */
@@ -1036,7 +1036,7 @@ TEST_CASE("Journal: a journal that cannot be opened is a warning naming its "
     std::streambuf* old = std::cerr.rdbuf(err.rdbuf());
     tadah::hpo::HPOLog::instance().open(path, "test", sd.dir.string(), 0);
     std::cerr.rdbuf(old);
-    CHECK(err.str() == "[HPO] WARNING: the journal " + path +
+    CHECK(err.str() == "[tadah hpo] WARNING: the journal " + path +
                            " cannot be opened, so the run writes no "
                            "journal\n");
     tadah::hpo::HPOLog::instance().reset_for_test();

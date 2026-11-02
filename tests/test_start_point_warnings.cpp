@@ -259,7 +259,7 @@ std::string method_lines_warning(const std::string& algo, int line = 10)
  * three _NOSCAL forms (NLopt 2.10 runs all three as DIRECT-L,
  * GN_DIRECT_L_RAND_NOSCAL included), GN_ORIG_DIRECT, GN_ORIG_DIRECT_L,
  * GN_AGS -- gets exactly one startup WARNING, in the journal and on
- * standard error ("[HPO] WARNING: "): "the RESTART block on line 10: the
+ * standard error ("[tadah hpo] WARNING: "): "the RESTART block on line 10: the
  * STRATEGY-level optimiser NLOPT:GN_DIRECT_L does not start at the point
  * it is given (DIRECT evaluates the centre of the OPTIM box first and then
  * divides the whole box; NLopt never reads the point it is given) and draws no random
@@ -302,7 +302,7 @@ TEST_CASE("startup validation: RESTART on a search that does not start at "
             INFO("journal:\n" << s.journal << "\nstderr:\n" << s.err);
             const std::string w = plain_restart_warning(algo);
             CHECK(count_of(s.journal, w) == 1);
-            CHECK(count_of(s.err, "[HPO] WARNING: " + w + "\n") == 1);
+            CHECK(count_of(s.err, "[tadah hpo] WARNING: " + w + "\n") == 1);
             CHECK(count_of(s.journal, "the RESTART block on line") == 1);
         }
     }
@@ -510,7 +510,7 @@ TEST_CASE("startup validation: the RESTART warning says what a round of a "
             INFO("journal:\n" << s.journal << "\nstderr:\n" << s.err);
             const std::string w = head + kStencils + tail;
             CHECK(count_of(s.journal, w) == 1);
-            CHECK(count_of(s.err, "[HPO] WARNING: " + w + "\n") == 1);
+            CHECK(count_of(s.err, "[tadah hpo] WARNING: " + w + "\n") == 1);
             CHECK(count_of(s.journal, "the RESTART block on line") == 1);
         }
         {
@@ -591,7 +591,7 @@ TEST_CASE("startup validation: the RESTART warning says what a round of a "
                 head + "4 (NLopt's default, 2n for n = 2 OPTIM dimensions), "
                        "less than 2n + 1 = 5" + rest;
             CHECK(count_of(s.journal, w) == 1);
-            CHECK(count_of(s.err, "[HPO] WARNING: " + w + "\n") == 1);
+            CHECK(count_of(s.err, "[tadah hpo] WARNING: " + w + "\n") == 1);
             CHECK(count_of(s.journal, "the RESTART block on line") == 1);
         }
         {
@@ -613,7 +613,7 @@ TEST_CASE("startup validation: the RESTART warning says what a round of a "
             INFO("journal:\n" << s.journal << "\nstderr:\n" << s.err);
             const std::string w = method_lines_warning("GN_DIRECT_L_RAND");
             CHECK(count_of(s.journal, w) == 1);
-            CHECK(count_of(s.err, "[HPO] WARNING: " + w + "\n") == 1);
+            CHECK(count_of(s.err, "[tadah hpo] WARNING: " + w + "\n") == 1);
             CHECK(count_of(s.journal, "the RESTART block on line") == 1);
         }
         {
@@ -754,7 +754,7 @@ TEST_CASE("startup validation: an INIT block on a search that does not "
         INFO("journal:\n" << s.journal << "\nstderr:\n" << s.err);
         const std::string w = "the INIT block on line 5" + head + "." + tail;
         CHECK(count_of(s.journal, w) == 1);
-        CHECK(count_of(s.err, "[HPO] WARNING: " + w + "\n") == 1);
+        CHECK(count_of(s.err, "[tadah hpo] WARNING: " + w + "\n") == 1);
         CHECK(count_of(s.err, "consumes only the first") == 0);
     }
     {
@@ -910,7 +910,7 @@ TEST_CASE("startup validation: the INIT points a PLAIN search does not use "
         const Startup s =
             startup(run("    TYPE PLAIN\n", "NLOPT", "LN_BOBYQA"));
         INFO("journal:\n" << s.journal << "\nstderr:\n" << s.err);
-        CHECK(count_of(s.err, "[HPO] WARNING: " + w + "\n") == 1);
+        CHECK(count_of(s.err, "[tadah hpo] WARNING: " + w + "\n") == 1);
         CHECK(count_of(s.journal, w) == 1);
         CHECK(count_of(s.err, "seed(s)") == 0);
     }
@@ -930,7 +930,7 @@ TEST_CASE("startup validation: the INIT points a PLAIN search does not use "
         const std::string w = head + name + unused + "An " + takes_all;
         const Startup s = startup(run("    TYPE PLAIN\n", lib, algo));
         INFO("journal:\n" << s.journal << "\nstderr:\n" << s.err);
-        CHECK(count_of(s.err, "[HPO] WARNING: " + w + "\n") == 1);
+        CHECK(count_of(s.err, "[tadah hpo] WARNING: " + w + "\n") == 1);
         CHECK(count_of(s.journal, w) == 1);
         CHECK(count_of(s.err, "MULTISTART") == 0);
         CHECK(count_of(s.journal, "MULTISTART") == 0);
@@ -1000,7 +1000,7 @@ TEST_CASE("startup validation: the INIT points a PRESTAGE exploration or a "
             "a usable loss)." + takes_all;
         const Startup s = startup(prestage(chain7, "NLOPT", "GN_CRS2_LM", ""));
         INFO("journal:\n" << s.journal << "\nstderr:\n" << s.err);
-        CHECK(count_of(s.err, "[HPO] WARNING: " + w + "\n") == 1);
+        CHECK(count_of(s.err, "[tadah hpo] WARNING: " + w + "\n") == 1);
         CHECK(count_of(s.journal, w) == 1);
     }
     {
@@ -1014,7 +1014,7 @@ TEST_CASE("startup validation: the INIT points a PRESTAGE exploration or a "
             "      INIT\n        METHOD RANDOM 5\n        SEED 3\n"
             "      ENDINIT\n"));
         INFO("journal:\n" << s.journal << "\nstderr:\n" << s.err);
-        CHECK(count_of(s.err, "[HPO] WARNING: " + w + "\n") == 1);
+        CHECK(count_of(s.err, "[tadah hpo] WARNING: " + w + "\n") == 1);
         CHECK(count_of(s.journal, w) == 1);
     }
     {
@@ -1043,7 +1043,7 @@ TEST_CASE("startup validation: the INIT points a PRESTAGE exploration or a "
             "them.";
         const Startup s = startup(multistart("7"));
         INFO("journal:\n" << s.journal << "\nstderr:\n" << s.err);
-        CHECK(count_of(s.err, "[HPO] WARNING: " + w + "\n") == 1);
+        CHECK(count_of(s.err, "[tadah hpo] WARNING: " + w + "\n") == 1);
         CHECK(count_of(s.journal, w) == 1);
     }
     {
@@ -1111,7 +1111,7 @@ TEST_CASE("startup validation: the OPTIMIZER-level INIT points of a "
         INFO(lib << ":" << algo);
         const Startup s = startup(prestage(lib, algo, own, ""));
         INFO("journal:\n" << s.journal << "\nstderr:\n" << s.err);
-        CHECK(count_of(s.err, "[HPO] WARNING: " + warning("") + "\n") == 1);
+        CHECK(count_of(s.err, "[tadah hpo] WARNING: " + warning("") + "\n") == 1);
         CHECK(count_of(s.journal, warning("")) == 1);
         const Startup none = startup(prestage(lib, algo, "", ""));
         INFO("journal:\n" << none.journal);
@@ -1124,7 +1124,7 @@ TEST_CASE("startup validation: the OPTIMIZER-level INIT points of a "
         INFO("journal:\n" << s.journal << "\nstderr:\n" << s.err);
         const std::string w =
             warning(" (NOISE CALIBRATION evaluates the first of them 3 times)");
-        CHECK(count_of(s.err, "[HPO] WARNING: " + w + "\n") == 1);
+        CHECK(count_of(s.err, "[tadah hpo] WARNING: " + w + "\n") == 1);
         CHECK(count_of(s.journal, w) == 1);
     }
 }
