@@ -30,7 +30,7 @@ search within bounds."""
 doc = """\
 NLopt, a library of local and global optimisation algorithms. The first \
 letters of an algorithm's name give its kind: G global, L local; N \
-derivative-free, D gradient-based; the MLSL and AUGLAG forms run a local \
+gradient-free, D gradient-based; the MLSL and AUGLAG forms run a local \
 search of another algorithm."""
 
 [library.TADAH]
@@ -151,13 +151,13 @@ ranked by loss, in each generation."""
 doc = """\
 Multi-level single-linkage (MLSL): a global search that starts local \
 searches from random points of the OPTIM box, with a clustering rule that \
-avoids searching one local minimum twice; this form is derivative-free, and its local search \
+avoids searching one local minimum twice; this form is gradient-free, and its local search \
 is LN_COBYLA without an INNER block."""
 
 [optimizer."NLOPT:GN_MLSL_LDS"]
 doc = """\
 MLSL with the points of a low-discrepancy (Sobol) sequence instead of \
-random ones; this form is derivative-free, and its local search is \
+random ones; this form is gradient-free, and its local search is \
 LN_COBYLA without an INNER block."""
 
 [optimizer."NLOPT:GN_ORIG_DIRECT"]

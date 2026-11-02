@@ -206,9 +206,10 @@ shown after its message, is the place for that. The `doc` of a check, which
 says when its message comes, may name the placeholders of that message.
 
 Every refusal the parser makes inside the file is framed by
-`lexing.error_frame`, `Error on line {line}: {what}\nLine: {text}`, with the
-last physical line of the logical line and its joined text; an `error` field
-holds the `{what}` part.
+`lexing.error_frame`, `line {line} of {file}: {what}\nLine: {text}`, with
+the target file as `--hpotarget` gives it (the conformance cases name it
+`target.hpo`), the last physical line of the logical line and its joined
+text; an `error` field holds the `{what}` part.
 
 ### Examples, invalid lines, wrappers
 

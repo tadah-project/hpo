@@ -65,8 +65,9 @@ Trailing blanks are removed, and a line left empty is skipped. A line that \
 ends with \\ continues on the next line, and the two are joined without a \
 separator. A file whose last line ends with \\ is refused. Keys are \
 written as this reference writes them: in upper case, and PC_ErRMSE with \
-its lower-case r. Each error names the line it is about: for a continued \
-line, its last line and the joined text."""
+its lower-case r. Each error names the file, as --hpotarget gives it, \
+and the line it is about: for a continued line, its last line and the \
+joined text."""
 comment = "#"
 continuation = "\\"
 key_case = "exact"
@@ -117,13 +118,15 @@ error = "the line ends with \\, which continues it on the next line, and the fil
 [reading]
 doc = """\
 A number is one whole token in the decimal syntax, and a finite double. An \
-integer is decimal digits only, without a sign."""
+integer of a key is decimal digits only, without a sign."""
 long_doc = """\
 The decimal syntax is an optional sign, digits with at most one decimal \
 point, and an optional exponent (5, -0.5, .5, 5., +1e-3, 2.5E+07). A \
 number is 0 or not below the smallest normal double in magnitude; \
 hexadecimal, inf and nan are refused. A boolean is one of true, 1, yes, \
-on, false, 0, no, off, in any case."""
+on, false, 0, no, off, in any case. A PARAM value is read as a number, \
+also for a PARAM key that takes a whole number: PARAM GRID_POINTS 1e1 is \
+10."""
 integer_msg = "{what} must be an integer >= {min}, got '{tok}'"
 integer_range_msg = "{what} must be an integer from {min} to {max}, got '{tok}'"
 note_msg = " ({note})"
