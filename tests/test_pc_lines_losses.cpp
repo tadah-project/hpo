@@ -181,17 +181,17 @@ std::string sim_error(std::string cmd, bool failprobe = false,
 
 /* Pins: a PC_LAMMPS line, or a PC_FAILPROBE line alone, refuses DLIB:BFGS
  * as it refuses every gradient-based optimiser, in the STRATEGY block and
- * in a PRESTAGE EXPLORE block: "--hpotarget defines <line> but OPTIMIZER's
- * optimiser DLIB:BFGS is gradient-based. A PC_LAMMPS or PC_FAILPROBE line
- * requires a gradient-free optimiser (" and the list, with no exception for
- * DLIB:BFGS in the message; a gradient-free optimiser is still accepted.
+ * in a PRESTAGE EXPLORE block: "the STRATEGY-level optimiser: DLIB:BFGS is
+ * gradient-based, and a target file with PC_LAMMPS or PC_FAILPROBE lines
+ * (PC_LAMMPS on line 6) takes a gradient-free optimiser (" and the list,
+ * with no exception for DLIB:BFGS in the message; a gradient-free
+ * optimiser is still accepted.
  * The refusals name the line the file has: PC_LAMMPS when it has one, and
  * PC_FAILPROBE for a file whose only script line is the probe -- for a
  * gradient-based optimiser, an MLSL whose default local optimiser takes
  * gradients, such an INNER block and a GRAD_STRATEGY line alike.
  * Each refusal names the line of the key it refuses (ALGO, GRAD_STRATEGY)
- * and the line of the script line it names ("--hpotarget defines
- * PC_FAILPROBE on line 7 but ...").
+ * and the line of the script line it names ("(PC_FAILPROBE on line 7)").
  * Before the fix: DLIB:BFGS was the one gradient-based optimiser accepted
  * (read_error was "" for the three files), and the refusal of the others
  * said "or DLIB:BFGS, the one gradient-based optimiser it accepts". Before

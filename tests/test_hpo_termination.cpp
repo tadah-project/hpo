@@ -4136,9 +4136,11 @@ TEST_CASE("Termination: without a RESTART SEED the restart points come from "
  * RESTART (AFTER_STAGNATION 6, MAX 2, METHOD RANDOM 1, SEED 5), evaluates
  * exactly the points of the same run seeded by the STRATEGY block's SEED 7,
  * round after round: round r seeds NLopt with 7 + r either way. The journal
- * names the derived seed: "RESTART 1/2 -- fresh init from RANDOM; RESTART
- * SEED 6, INIT SEED 8" and "... 2/2 ...; RESTART SEED 7, INIT SEED 9" (the
- * STRATEGY-seeded run: "..., SEED 8", "..., SEED 9"). Each of the three
+ * names the derived seed: "RESTART 1/2: new starting points from RANDOM;
+ * seeds of this round: RESTART SEED + 1 = 6, INIT SEED + 1 = 8" and "...
+ * 2/2 ...: RESTART SEED + 2 = 7, INIT SEED + 2 = 9" (the STRATEGY-seeded
+ * run: "..., SEED + 1 = 8"; it was "RESTART 1/2 -- fresh init from
+ * RANDOM; RESTART SEED 6, INIT SEED 8"). Each of the three
  * rounds ends on stagnation, and rounds 1 and 2 evaluate more new points
  * than their two start points.
  * Before the fix: the INIT block's SEED was not derived: round r seeded
