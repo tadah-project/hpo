@@ -89,6 +89,7 @@
 #include <unistd.h>
 #include <sys/wait.h>
 
+#include <algorithm>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
@@ -637,7 +638,9 @@ TEST_CASE("an unreadable --hotvar fails the evaluation and the cold scripts "
  * the hot script's E computed, the cold script's E2 failscored, and the
  * journal says "PC_LAMMPS task failed (cold.in, occurrence 1): injecting
  * `variable hot_a0 equal 3.25` before the script: ERROR: Cannot redefine
- * variable hot_a0 with a different style".
+ * variable hot_a0 with a different style" (LAMMPS 11 Feb 2026; LAMMPS 30
+ * Sep 2026 words its refusal "Cannot redefine string style variable hot_a0
+ * as equal style variable": the check takes its start and the name).
  * Before the fix: passes as well (a pin). The case gave hot_a0 another
  * style with `--invar hot_a0 3.3` on the cold line, which the startup
  * checks refuse: a variable a line defines is not a --hotvar its script
@@ -678,12 +681,19 @@ TEST_CASE("a hot value LAMMPS refuses to inject fails the evaluation",
     CHECK(outv.rows[0][5] == "3.250000e+00");
     CHECK(outv.rows[1][4] != "1.000000e+16");
     CHECK(outv.rows[1][5] == "1.000000e+16");
-    CHECK_THAT(line_with(journal, "cold.in, occurrence 1): injecting "
-                                  "`variable hot_a0 equal 3.25` before the "
-                                  "script: "),
-               Catch::Contains("PC_LAMMPS task failed (") &&
-                   Catch::Contains("ERROR: Cannot redefine variable "
-                                   "hot_a0 with a different style"));
+    const std::string injected = "cold.in, occurrence 1): injecting "
+                                 "`variable hot_a0 equal 3.25` before the "
+                                 "script: ";
+    const std::string failed = line_with(journal, injected);
+    CHECK_THAT(failed, Catch::Contains("PC_LAMMPS task failed (") &&
+                           Catch::Contains(injected + "ERROR: Cannot "
+                                           "redefine "));
+    /* The LAMMPS message names the variable (after the injected line). */
+    const std::size_t at = failed.find(injected);
+    CHECK_THAT(at == std::string::npos
+                   ? std::string()
+                   : failed.substr(at + injected.size()),
+               Catch::Contains("variable hot_a0 "));
     CHECK(journal.find("cold.in, occurrence 2)") == std::string::npos);
     CHECK(journal.find("eval-thread caught throw") == std::string::npos);
     Host::reset_globals_for_test();
@@ -836,7 +846,9 @@ std::string spoiled_reason(bool as_string) {
  * second evaluation (occurrence 2); the string F stays in the cached LAMMPS
  * instance (`clear` keeps variables), so the second run of the script fails
  * at its `variable F equal pe+1` ("ERROR: Cannot redefine variable F with
- * a different style", journalled as a script error).
+ * a different style" in LAMMPS 11 Feb 2026, "ERROR: Cannot redefine string
+ * style variable F as equal style variable" in LAMMPS 30 Sep 2026; the
+ * check takes the start and the name), journalled as a script error.
  * Before the fix: F's FAIL_SCORE term was averaged with the evaluation's
  * other terms, L(ERMSE) and L(E): TOTAL_LOSS/N 3.333333e+15, below 0.999 *
  * FAILSCORE, so the evaluation counted as feasible; E was kept, F NaN, and
@@ -879,14 +891,18 @@ TEST_CASE("a --varloss variable with no number for its value fails the "
         /* The deleted F is defined afresh by the next run of the script;
          * the string F stays in the cached instance (`clear` keeps
          * variables), whose next run fails at `variable F equal pe+1`. */
-        CHECK(line_with(journal,
-                        as_string
-                            ? "readback.in, occurrence 2): ERROR: Cannot "
-                              "redefine variable F with a different style"
-                            : "readback.in, occurrence 2): reading --varloss "
-                              "F after the script: " +
-                                  spoiled_reason(false))
-                  .find("PC_LAMMPS task failed (") != std::string::npos);
+        const std::string second = line_with(
+            journal, as_string
+                         ? "readback.in, occurrence 2): ERROR: Cannot "
+                           "redefine "
+                         : "readback.in, occurrence 2): reading --varloss "
+                           "F after the script: " +
+                               spoiled_reason(false));
+        CHECK(second.find("PC_LAMMPS task failed (") != std::string::npos);
+        if (as_string)  // the LAMMPS message names the variable
+            CHECK_THAT(second.substr(std::min(second.size(),
+                                              second.find("Cannot redefine "))),
+                       Catch::Contains("variable F "));
         CHECK(journal.find("[!] No evaluation produced a usable loss.") !=
               std::string::npos);
         Host::reset_globals_for_test();
@@ -2025,7 +2041,8 @@ std::string isolation_line(const std::string& mode) {
  *     first evaluation): exit 0, "PC_LAMMPS task failed (cold.in,
  *     occurrence 1): injecting `variable hot_a0 equal 3.25` before the
  *     script: ERROR: Cannot redefine variable hot_a0 with a different
- *     style";
+ *     style" (the wording of LAMMPS 11 Feb 2026; the check takes the
+ *     message up to "Cannot redefine ", which both versions write);
  *   - a --varloss F deleted at run time: exit 1, "PC_LAMMPS task failed
  *     (readback.in, occurrence 1): reading --varloss F after the script: no
  *     value (the variable is not defined, or has no single value)", E and F
@@ -2223,7 +2240,7 @@ TEST_CASE("tadah hpo: a PC_LAMMPS read-back or script error ends the same "
              0,
              {"PC_LAMMPS task failed (cold.in, occurrence 1): injecting "
               "`variable hot_a0 equal 3.25` before the script: ERROR: Cannot "
-              "redefine variable hot_a0 with a different style"},
+              "redefine "},
              {"no evaluation produced a usable loss"},
              "",
              {},
