@@ -74,7 +74,16 @@ struct RhoBarGateSpec {
  *          again. */
 enum class TargetsPurpose { Run, Check };
 
+class HPOTargets;
+namespace testing {
+std::string describe_parse(const HPOTargets& targets);
+}
+
 class HPOTargets {
+    /* The canonical text of what read() set, for the tests
+     * (hpo_targets_testing.h): it reads the private settings too. */
+    friend std::string testing::describe_parse(const HPOTargets& targets);
+
 private:
     struct Opti {
         std::vector<bool> opt;

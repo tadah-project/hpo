@@ -2,7 +2,11 @@
  * `tadah hpo` and reports what it did, for the generated checks of the
  * target-file registry (tests/check_hpotarget_generated.py).
  *
- *   hpotarget_case_runner CASES RESULTS
+ *   hpotarget_case_runner [--parser old|new] CASES RESULTS
+ *
+ * --parser names the parser that reads the target files: old (the
+ * default), HPOTargets::read(); new, the registry-driven parser, which
+ * this build does not have yet: the runner refuses it (exit status 2).
  *
  * CASES is a TOML file of [[case]] tables:
  *   id          a name for the case
@@ -13,20 +17,38 @@
  *                          overrides of the run;
  *               "defaults" HPOTargets reads the file, and the values of
  *                          the registry entries that have a default are
- *                          reported (`values`, below)
- *   file        the target file
+ *                          reported (`values`, below);
+ *               "describe" HPOTargets reads the file, and what the parse
+ *                          set is reported (`dump`, below)
+ *   file        the target file, written as target.hpo
+ *   target_file the target file read in place, a path relative to the
+ *               working directory (instead of `file`)
  *   config      the training configuration (the --config file)
+ *   config_file the training configuration read from a file, a path
+ *               relative to the working directory (instead of `config`)
+ *   config_drop optional array of keys removed from the training
+ *               configuration, and config_add an optional table of keys
+ *               added to it (KEY = [values]), after it is read
  *   validation  optional: the validation configuration ("check" only)
  *   has_train_db, has_validation   optional booleans for validate_hpo_setup
  *   env         optional table of environment variables set for the case
+ *   tree        optional: a directory copied into the case's directory
+ *               first
+ *   cwd         optional: the working directory of the case, a directory
+ *               of the case's directory (default: the case's directory)
+ *   copies      optional array of { from, to }: files copied in the
+ *               working directory once the tree is there
  *   fixtures    optional array of { path, text }: files written first
+ *               (in the working directory)
  *
  * Each case runs in a fresh directory, its working directory while it
- * runs, as in test_hpotarget_registry_conformance.cpp. RESULTS is a JSON
- * array with one object per case: id, parse_error, startup_error,
- * check_error (an empty string when the step passed or did not run) and,
- * for "defaults", values: the registry id of each entry with a default ->
- * the values the code gives it, as text.
+ * runs (or its `cwd`), as in test_hpotarget_registry_conformance.cpp.
+ * RESULTS is a JSON array with one object per case: id, parse_error,
+ * startup_error, check_error (an empty string when the step passed or did
+ * not run), for "defaults" values: the registry id of each entry with a
+ * default -> the values the code gives it, as text, and for "describe"
+ * dump: tadah::hpo::testing::describe_parse() of the targets (empty when
+ * the parse failed; hpo_targets_testing.h describes it).
  *
  * The values of "defaults": the table `defaults_of` below maps each id to
  * the setting of the parsed HPOTargets or OptimizerSpec, or to the code's
@@ -46,6 +68,7 @@
 #include <tadah/hpo/fd_stencil.h>
 #include <tadah/hpo/hpo.h>
 #include <tadah/hpo/hpo_targets.h>
+#include <tadah/hpo/hpo_targets_testing.h>
 #include <tadah/hpo/loss_function.h>
 #include <tadah/hpo/observables/cohesive_energy.h>
 #include <tadah/hpo/optimizer_spec.h>
@@ -117,16 +140,21 @@ std::string num(double v)
 /* ---- the cases -------------------------------------------------------- */
 
 struct Fixture { std::string path, text; };
+struct Copy { std::string from, to; };
 
 struct Case {
-    std::string id, mode, file, config, validation;
+    std::string id, mode, file, target_file, config, config_file,
+        validation, tree, cwd;
     bool has_train_db = true, has_validation = true;
+    std::vector<std::string> config_drop;
+    std::map<std::string, std::vector<std::string>> config_add;
     std::map<std::string, std::string> env;
+    std::vector<Copy> copies;
     std::vector<Fixture> fixtures;
 };
 
 struct Result {
-    std::string parse_error, startup_error, check_error;
+    std::string parse_error, startup_error, check_error, dump;
     std::map<std::string, std::vector<std::string>> values;
 };
 
@@ -152,30 +180,58 @@ std::vector<Case> read_cases(const std::string& path)
         c.id = str(t, "id");
         c.mode = str(t, "mode", "parse");
         c.file = str(t, "file");
+        c.target_file = str(t, "target_file");
         c.config = str(t, "config");
+        c.config_file = str(t, "config_file");
         c.validation = str(t, "validation");
+        c.tree = str(t, "tree");
+        c.cwd = str(t, "cwd");
         c.has_train_db = flag(t, "has_train_db", true);
         c.has_validation = flag(t, "has_validation", true);
+        if (t.contains("config_drop"))
+            for (const auto& k : t.at("config_drop").as_array())
+                c.config_drop.push_back(k.as_string().str);
+        if (t.contains("config_add"))
+            for (const auto& [k, vs] : t.at("config_add").as_table())
+                for (const auto& v : vs.as_array())
+                    c.config_add[k].push_back(v.as_string().str);
         if (t.contains("env"))
             for (const auto& [k, v] : t.at("env").as_table())
                 c.env[k] = v.as_string().str;
+        if (t.contains("copies"))
+            for (const auto& f : t.at("copies").as_array())
+                c.copies.push_back({str(f, "from"), str(f, "to")});
         if (t.contains("fixtures"))
             for (const auto& f : t.at("fixtures").as_array())
                 c.fixtures.push_back({str(f, "path"), str(f, "text")});
         if (c.mode != "parse" && c.mode != "startup" && c.mode != "check" &&
-            c.mode != "defaults")
+            c.mode != "defaults" && c.mode != "describe")
             throw std::runtime_error("case " + c.id + ": mode '" + c.mode +
-                                     "' is not parse, startup, check or "
-                                     "defaults");
+                                     "' is not parse, startup, check, "
+                                     "defaults or describe");
+        if (!c.target_file.empty() && !c.file.empty())
+            throw std::runtime_error("case " + c.id + ": file and "
+                                     "target_file are both given");
+        if (!c.config_file.empty() && !c.config.empty())
+            throw std::runtime_error("case " + c.id + ": config and "
+                                     "config_file are both given");
+        if (c.mode == "check" &&
+            (!c.target_file.empty() || !c.config_file.empty() ||
+             !c.config_drop.empty() || !c.config_add.empty()))
+            throw std::runtime_error("case " + c.id + ": mode check takes "
+                                     "the target file and the training "
+                                     "configuration as text (file, "
+                                     "config)");
         out.push_back(std::move(c));
     }
     return out;
 }
 
-/* A fresh directory, the working directory while it lives. */
+/* A fresh directory, the working directory while it lives: a copy of
+ * `tree` when one is named, and its directory `cwd` when one is named. */
 class ScratchCwd {
 public:
-    ScratchCwd()
+    ScratchCwd(const std::string& tree, const std::string& cwd)
     {
         static unsigned long n = 0;
         dir_ = fs::temp_directory_path() /
@@ -184,8 +240,14 @@ public:
                 std::to_string(std::chrono::steady_clock::now()
                                    .time_since_epoch().count()));
         fs::create_directories(dir_);
+        if (!tree.empty())
+            fs::copy(tree, dir_, fs::copy_options::recursive);
+        const fs::path work = cwd.empty() ? dir_ : dir_ / cwd;
+        if (!fs::is_directory(work))
+            throw std::runtime_error("the directory " + cwd + " of the case "
+                                     "does not exist");
         old_ = fs::current_path();
-        fs::current_path(dir_);
+        fs::current_path(work);
     }
     ~ScratchCwd()
     {
@@ -237,6 +299,19 @@ tadah::core::Context parse_config(const std::string& text)
 {
     std::istringstream in(text);
     return tadah::core::CoreUserConfigParser().parse(in);
+}
+
+/* The training configuration of a case that HPOTargets reads. */
+tadah::core::Context case_config(const Case& c)
+{
+    tadah::core::Context ctx =
+        c.config_file.empty()
+            ? parse_config(c.config)
+            : tadah::core::CoreUserConfigParser().parse(c.config_file);
+    for (const auto& key : c.config_drop) ctx.remove(key);
+    for (const auto& [key, values] : c.config_add)
+        for (const auto& value : values) ctx.add(key, value);
+    return ctx;
 }
 
 /* ---- the defaults ----------------------------------------------------- */
@@ -432,9 +507,12 @@ Result run(const Case& c)
 {
     Result r;
     tadah::core::PeriodicTable::initialize();
-    ScratchCwd cwd;
+    ScratchCwd cwd(c.tree, c.cwd);
+    for (const auto& f : c.copies) fs::copy_file(f.from, f.to);
     for (const auto& f : c.fixtures) write_file(f.path, f.text);
-    write_file("target.hpo", c.file);
+    const std::string target =
+        c.target_file.empty() ? std::string("target.hpo") : c.target_file;
+    if (c.target_file.empty()) write_file(target, c.file);
     ScopedEnv scoped(c.env);
     if (c.mode == "check") {
         try {
@@ -462,14 +540,14 @@ Result run(const Case& c)
     }
     tadah::core::Context ctx;
     try {
-        ctx = parse_config(c.config);
+        ctx = case_config(c);
     } catch (const std::exception& e) {
         throw std::runtime_error("case " + c.id + ": the configuration does "
                                  "not parse: " + e.what());
     }
     std::optional<HPOTargets> trg;
     try {
-        trg.emplace(ctx, "target.hpo");
+        trg.emplace(ctx, target);
     } catch (const std::exception& e) {
         r.parse_error = e.what();
         if (r.parse_error.empty()) r.parse_error = "(empty message)";
@@ -477,6 +555,10 @@ Result run(const Case& c)
     }
     if (c.mode == "defaults") {
         r.values = defaults_of(*trg);
+        return r;
+    }
+    if (c.mode == "describe") {
+        r.dump = tadah::hpo::testing::describe_parse(*trg);
         return r;
     }
     if (c.mode != "startup") return r;
@@ -494,15 +576,47 @@ Result run(const Case& c)
 
 int main(int argc, char** argv)
 {
-    if (argc != 3) {
-        std::cerr << "usage: hpotarget_case_runner CASES RESULTS\n";
+    const char* const usage =
+        "usage: hpotarget_case_runner [--parser old|new] CASES RESULTS\n";
+    std::string parser = "old";
+    std::vector<std::string> files;
+    for (int i = 1; i < argc; ++i) {
+        const std::string a = argv[i];
+        if (a == "--parser") {
+            if (i + 1 >= argc) {
+                std::cerr << "hpotarget_case_runner: --parser takes old or "
+                             "new\n" << usage;
+                return 2;
+            }
+            parser = argv[++i];
+            if (parser != "old" && parser != "new") {
+                std::cerr << "hpotarget_case_runner: --parser takes old or "
+                             "new, not '" << parser << "'\n" << usage;
+                return 2;
+            }
+        } else if (a.rfind("--", 0) == 0) {
+            std::cerr << "hpotarget_case_runner: unknown option '" << a
+                      << "'\n" << usage;
+            return 2;
+        } else {
+            files.push_back(a);
+        }
+    }
+    if (files.size() != 2) {
+        std::cerr << usage;
+        return 2;
+    }
+    if (parser == "new") {
+        std::cerr << "hpotarget_case_runner: --parser new: this build has no "
+                     "registry-driven parser of the target file; --parser "
+                     "old reads the cases\n";
         return 2;
     }
     std::vector<Case> cases;
     try {
-        cases = read_cases(argv[1]);
+        cases = read_cases(files[0]);
     } catch (const std::exception& e) {
-        std::cerr << "hpotarget_case_runner: " << argv[1] << ": " << e.what()
+        std::cerr << "hpotarget_case_runner: " << files[0] << ": " << e.what()
                   << "\n";
         return 2;
     }
@@ -520,6 +634,7 @@ int main(int argc, char** argv)
             << ", \"parse_error\": " << json_string(r.parse_error)
             << ", \"startup_error\": " << json_string(r.startup_error)
             << ", \"check_error\": " << json_string(r.check_error)
+            << ", \"dump\": " << json_string(r.dump)
             << ", \"values\": {";
         bool first = true;
         for (const auto& [k, vs] : r.values) {
@@ -532,7 +647,7 @@ int main(int argc, char** argv)
         out << "}}" << (i + 1 < cases.size() ? ",\n" : "\n");
     }
     out << "]\n";
-    std::ofstream os(argv[2]);
+    std::ofstream os(files[1]);
     os << out.str();
     return os ? 0 : 2;
 }
