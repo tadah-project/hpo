@@ -115,7 +115,7 @@ default_doc_serial = "AUTO, from MAXEVAL"
 group = "steps"
 rank = 3
 doc = "The number of proposals of the CLASSIC kernel at each temperature step."
-long_doc = "The default of TADAH:ANNEAL is AUTO: MAXEVAL spread evenly over the cooling schedule, which hpo_run.log reports."
+long_doc = "The default of TADAH:ANNEAL is AUTO: MAXEVAL spread evenly over the cooling schedule, which hpo_run.log reports. A search without MAXEVAL is refused unless PARAM CHAIN_LENGTH is given."
 accepts_auto = 0.0
 auto_kinds = ["serial"]
 min = 1
@@ -181,7 +181,7 @@ default = "REFLECT"
 kinds = ["serial", "pt", "pa"]
 group = "steps"
 rank = 8
-doc = "What a proposal outside the OPTIM box becomes: REFLECT folds it back into the box as a mirror does; REDRAW draws each coordinate outside the box again."
+doc = "What a proposal outside the bounds of the search space becomes: REFLECT folds it back inside the bounds as a mirror does; REDRAW draws again each coordinate that lies outside its bounds."
 
 [[key]]
 name = "RESET_TO_BEST"
@@ -276,7 +276,7 @@ default = "4"
 kinds = ["serial", "pt", "pa"]
 group = "stopping"
 rank = 1
-doc = "The length of the history of the FTOL_REL and FTOL_ABS stop, which has an effect only with one of them."
+doc = "The length of the history of the FTOL_REL and FTOL_ABS stop, which has an effect only when FTOL_REL or FTOL_ABS is above 0."
 long_doc = "TADAH:ANNEAL compares the loss at the end of a temperature step with the losses at the end of this many earlier steps and with the best loss; TADAH:ANNEAL_PA applies the same rule to the lowest loss of the population after each temperature step; TADAH:ANNEAL_PT counts the successive diagnostics windows without a significant improvement of the best loss."
 custom_range = true   # >= 1 enforced only when FTOL_REL/FTOL_ABS arms the plateau
 range_doc = "an integer >= 0, and >= 1 when FTOL_REL or FTOL_ABS is above 0"
@@ -299,7 +299,7 @@ default = "0.25"
 kinds = ["serial"]
 group = "temperature"
 rank = 7
-doc = "The starting temperature of the n-th reannealing, as a fraction: the starting temperature times REANNEAL_SCALE to the power n."
+doc = "The factor for the starting temperature of each reannealing: the n-th reannealing starts at the starting temperature times REANNEAL_SCALE to the power n."
 min = 0.0
 min_open = true
 max = 1.0
@@ -407,7 +407,7 @@ doc = "The smallest gap between neighbouring temperatures of the ladder, in thei
 min = 0.0
 max = 1.0
 max_open = true
-range_note = "(0 disables the floor; 1 would leave no adaptable span)"
+range_note = "(0 sets no smallest gap; 1 would leave no adaptable span)"
 
 [[key]]
 name = "LADDER_FREEZE"
@@ -457,7 +457,7 @@ default = "12"
 kinds = ["pt"]
 group = "steps"
 rank = 11
-doc = "The smallest number of calibration attempts of each coordinate in the warm-up of the steps; the largest is twice this number."
+doc = "The smallest number of calibration attempts of each coordinate in the warm-up of the steps; the largest is twice this number. The key is refused under STEP_MODE FIXED, which runs no warm-up, and with CORANA ON."
 custom_range = true   # >= 1 enforced only when the warm-up runs (STEP_MODE != FIXED)
 range_doc = "an integer >= 1"
 
@@ -484,9 +484,9 @@ kinds = ["pt", "pa"]
 group = "init"
 rank = 1
 doc = "How the replicas or walkers start: the first at the starting point of the search; JITTER moves the others away from it, UNIFORM draws them from the OPTIM box."
-long_doc = "JITTER alone draws Gaussian displacements with the first proposal scales, and JITTER <fraction> uniform displacements of up to the fraction times the width of each box. Under TADAH:ANNEAL_PT, JITTER AUTO <p> measures the bounds of the uniform displacements of each dimension against a band of the loss relative to that of the starting point, and scales them by INIT_JITTER_LADDER, which scales the other JITTER forms too. Under TADAH:ANNEAL_PA, JITTER AUTO takes no tolerance: the bounds are the first proposal scales."
+long_doc = "JITTER alone draws Gaussian displacements with the first proposal scales, and JITTER <fraction> uniform displacements of up to the fraction times the width of the OPTIM interval of each search parameter. Under TADAH:ANNEAL_PT, JITTER AUTO <tolerance> measures the bounds of the uniform displacements of each dimension against a band of the loss relative to that of the starting point, the tolerance being the relative width of the band, and scales them by INIT_JITTER_LADDER, which scales the other JITTER forms too. Under TADAH:ANNEAL_PA, JITTER AUTO takes no tolerance: the bounds are the first proposal scales."
 
-# NOTE the INIT_JITTER_* keys below are gated on `INIT_MODE JITTER AUTO <p>`,
+# NOTE the INIT_JITTER_* keys below apply only with `INIT_MODE JITTER AUTO <tolerance>`,
 # which the rule table cannot express: AUTO is an EXTRA token on the JITTER
 # enum value, not an enum value of its own. A `requires_enum ... value = "JITTER"`
 # rule would also be DEAD, because JITTER is INIT_MODE's default and the rule
@@ -498,7 +498,7 @@ default = "0.5"
 kinds = ["pt"]
 group = "init"
 rank = 2
-doc = "Under INIT_MODE JITTER AUTO of TADAH:ANNEAL_PT, the largest measured displacement, as a fraction of the width of the OPTIM box, where the first probe lies too."
+doc = "Under INIT_MODE JITTER AUTO of TADAH:ANNEAL_PT, the largest displacement that the calibration measures, as a fraction of the width of the OPTIM interval of each search parameter. The first probe of each side lies at this displacement unless a bound is nearer."
 min = 0.0
 min_open = true
 max = 1.0
@@ -511,7 +511,7 @@ default = "8"
 kinds = ["pt"]
 group = "init"
 rank = 3
-doc = "Under INIT_MODE JITTER AUTO of TADAH:ANNEAL_PT, the largest number of probes of the loss in each dimension, split between its two sides."
+doc = "Under INIT_MODE JITTER AUTO of TADAH:ANNEAL_PT, the largest number of probes of the loss for each search parameter, split between its two sides."
 min = 2
 range_msg = "must be >= 2 (one screen probe per side)"
 
@@ -557,7 +557,7 @@ kinds = ["pt"]
 group = "init"
 rank = 8
 doc = "Scales the first displacement of each replica of TADAH:ANNEAL_PT by (T_k/T_HOT)^gamma, so that cold replicas start near the starting point and hot ones farther away. AUTO takes gamma 0.5, OFF gives every replica the same displacement, and a number above 0 and up to 4 is gamma."
-long_doc = "AUTO follows the equipartition law: about a quadratic minimum, the spread of a coordinate at equilibrium grows as the square root of the temperature; its displacements are at least the smallest change of a coordinate that the number format resolves. The scaling applies to every JITTER form of INIT_MODE, AUTO included."
+long_doc = "AUTO follows the equipartition law: about a quadratic minimum, the spread of a coordinate at equilibrium grows as the square root of the temperature; its displacements are at least the smallest change of a coordinate that the number format resolves. The scaling applies to every JITTER form of INIT_MODE, AUTO included; the key is refused when INIT_MODE is UNIFORM."
 custom_range = true   # AUTO, OFF, or 0 < gamma <= 4
 range_doc = "a number above 0, up to 4, or AUTO or OFF"
 
@@ -568,7 +568,7 @@ default = "0.25"
 kinds = ["pt"]
 group = "init"
 rank = 5
-doc = "Under INIT_MODE JITTER AUTO of TADAH:ANNEAL_PT, the share of the MAXTIME of the search that the calibration may take, when MAXTIME is set; INIT_JITTER_MAXEVAL caps its probes, which have a budget of their own."
+doc = "Under INIT_MODE JITTER AUTO of TADAH:ANNEAL_PT, the share of the MAXTIME of the search that the calibration may take, when MAXTIME is set. INIT_JITTER_MAXEVAL caps the number of calibration probes separately."
 min = 0.0
 min_open = true
 max = 1.0

@@ -141,7 +141,7 @@ weight of the datasets it lists, and the term is the average of their \
 losses."""
 long_doc = """\
 The indices count the DBFILE entries of the validation configuration \
-from 1. A file has either one line without indices or indexed lines \
+from 1. A target file has either one line without indices or indexed lines \
 that give each dataset one target and weight; when the run starts, \
 every dataset needs one, and no index may exceed the number of \
 datasets. The weight is a number >= 0. A structure with energy priority 0 \
@@ -607,11 +607,12 @@ averaged over the datasets; with one, each line sets the target and \
 weight of the datasets it lists, and the term is the average of their \
 losses."""
 long_doc = """\
-The metric is the Frobenius norm of the residual tensor that a fit with \
-STRESS true minimises, so a rotated cell has the metric of the cell; the \
+The metric depends on each residual tensor only through its Frobenius \
+norm, the residual that a fit with STRESS true minimises, so a rotated \
+cell has the metric of the cell; the \
 datasets hold stresses in eV/Å^3, and 1 GPa is 6.241509074e-3 eV/Å^3. \
 The indices count the DBFILE entries of the validation configuration \
-from 1. A file has either one line without indices or indexed lines \
+from 1. A target file has either one line without indices or indexed lines \
 that give each dataset one target and weight; when the run starts, \
 every dataset needs one, and no index may exceed the number of \
 datasets. The weight is a number >= 0, and a --skip-above cap is in GPa. \
@@ -818,7 +819,7 @@ weight of the datasets it lists, and the term is the average of their \
 losses."""
 long_doc = """\
 The indices count the DBFILE entries of the validation configuration \
-from 1. A file has either one line without indices or indexed lines \
+from 1. A target file has either one line without indices or indexed lines \
 that give each dataset one target and weight; when the run starts, \
 every dataset needs one, and no index may exceed the number of \
 datasets. The weight is a number >= 0. A dataset whose structures all \
@@ -1149,11 +1150,13 @@ include file that does not exist is an error naming its absolute path. The \
 variable maxtime is reserved for the script timeout: neither --invar nor \
 the LAMMPS option -var (-v) may set it. A script with a quit command, or \
 an if command that runs one, is refused: quit ends the process that runs \
-the script. A variable the line defines with --invar, -var or -v is no \
---hotvar of the line, nor, on a line without --hotvar, of another line \
-when the script reads it: the run injects such a --hotvar into the script \
-as an equal-style variable, which LAMMPS refuses for a variable of another \
-style. A script with a --hotvar is injected its own hot values only."""
+the script. A line cannot declare with --hotvar a variable that it also \
+defines with --invar, -var or -v. A line without --hotvar cannot define \
+with these options a variable that its script reads and that another line \
+declares with --hotvar: the run injects each --hotvar into the scripts that \
+read it as an equal-style variable, which LAMMPS refuses for a variable of \
+another style. The script of a line with --hotvar receives only the hot \
+values of that line."""
 quirk = """\
 The line takes the FAILSCORE, the PC_SCRIPT_TIMEOUT (or MAXTIME) and the \
 LOSS of the lines read before it, for the defaults of its --failscore, \
@@ -1643,8 +1646,8 @@ PC_FAILPROBE line it is a positive number, and a probe value S at or \
 above it marks a failed probe, which fails the evaluation."""
 long_doc = """\
 On a PC_LAMMPS line the value goes through the loss function like a \
-measured value, and the evaluation scores FAILSCORE all the same. Any \
-finite number is accepted there."""
+measured value; the evaluation still scores FAILSCORE, whatever this value \
+is. Any finite number is accepted there."""
 
 [[line_option.args]]
 name = "value"
@@ -1882,9 +1885,9 @@ An equal-style LAMMPS variable that measures how badly the script failed: \
 0 means the script succeeded, and a value > 0 marks it failed, so the \
 evaluation fails."""
 long_doc = """\
-In both modes hpo_run.log has a WARNING naming the variable and its \
-value. Under FAILSCORE_GRADING OFF the failed evaluation scores \
-FAILSCORE, and a <scale> is refused, as it only grades. Under \
+Under FAILSCORE_GRADING OFF and ON, hpo_run.log has a WARNING naming the \
+variable and its value. Under FAILSCORE_GRADING OFF the failed evaluation \
+scores FAILSCORE, and a <scale> is refused, as it only grades. Under \
 FAILSCORE_GRADING ON, <scale> times the value grades the failure loss; \
 the values of several --failvar options of one line add up. The \
 variables of a failed script do not enter the loss."""
@@ -1986,8 +1989,8 @@ option = "--ncpu"
 lines = ["PC_LAMMPS", "PC_FAILPROBE"]
 synopsis = "--ncpu <n>"
 refused = """\
-The scripts of the PC_LAMMPS lines run in parallel as THREADS and \
-PC_ISOLATION set; a line has no rank count of its own."""
+The scripts of the PC_LAMMPS and PC_FAILPROBE lines run in parallel as \
+THREADS and PC_ISOLATION set; a line has no rank count of its own."""
 doc = "Refused: THREADS and PC_ISOLATION set the parallelism of the scripts."
 checks = [
   { msg = "{key} --ncpu: a removed option: it set the MPI ranks of one script in an MPI build of Tadah! 1.5.0; THREADS sets the number of workers that run the scripts, and PC_ISOLATION whether they run in worker processes or inside the tadah process", doc = "At the line, wherever the option appears; {key} is PC_LAMMPS or PC_FAILPROBE." },
@@ -2017,7 +2020,8 @@ long_doc = """\
 The line takes the options of a PC_LAMMPS line except --varloss, \
 --hotvar and --failvar, and the options --gate and --s0 of its own. Its \
 --failscore is a positive number. A probe whose script fails, or whose S \
-is negative, not finite, or at or above its --failscore, has failed: the \
+cannot be read, is no number, or is negative, not finite, or at or above \
+its --failscore, has failed: the \
 evaluation fails, with the loss of the least sound evaluation under \
 FAILSCORE_GRADING ON and with FAILSCORE under OFF, and hpo_run.log has a \
 warning that gives S. The rules that relate PC_LAMMPS lines to the optimiser \
@@ -2025,7 +2029,8 @@ apply to a file with a PC_FAILPROBE line too. The script is read, and \
 LAMMPS started, as for a PC_LAMMPS line, with the same refusals. The line \
 gives no loss term: a file needs another loss source."""
 quirk = """\
-A token after --gate or --s0 is its value whatever it is."""
+The token after --gate or --s0 is read as its value, also when it starts \
+with --; a token that is no number is refused."""
 checks = [
   { msg = "{key}: the line has no --script option; --script <file> names the LAMMPS script the line runs", doc = "At the line: no --script option." },
   { msg = "PC_FAILPROBE requires --outvar <S> (the sanity scalar)", doc = "At the line: no --outvar option." },
@@ -2319,7 +2324,7 @@ doc = "An option ends the line without its value; {option} names the option or t
 
 [[form.checks]]
 msg = "PC_OBSERVABLE cohesive_energy: {option} takes a finite number (got '{tok}'){underflow}"
-doc = "A number of an option is not a number."
+doc = "The value of a numeric option is not a finite number, or it underflows (its magnitude is below the smallest normal double)."
 
 [[form.examples]]
 wrap = "root"
@@ -2375,11 +2380,11 @@ kind = "name"
 
 [[line_option.checks]]
 msg = "PC_OBSERVABLE cohesive_energy: --species {name} is not the symbol of an element"
-doc = "The word is no element symbol, in its case."
+doc = "The value is not an element symbol with its standard capitalisation (Ta is accepted, ta is not)."
 
 [[line_option.checks]]
 msg = "PC_OBSERVABLE cohesive_energy --species {name}: the potential has no element {name} (its elements: {list})"
-doc = "At startup, at the line: the element is none of the run (ATOM, or the elements of the training data)."
+doc = "At startup, at the line: the element is not one of the elements of the potential (the ATOM key, or the elements of the training data)."
 
 [[line_option.examples]]
 wrap = "root"
@@ -2431,7 +2436,7 @@ msg = "PC_OBSERVABLE cohesive_energy: --target takes a finite number (got '{tok}
 
 [[line_option.checks]]
 msg = "PC_OBSERVABLE cohesive_energy --target {tok}: {why}"
-doc = "At the end of the line: the loss function of the term cannot measure the target: MAPE divides by it, and it is 0, or RMSLE takes the logarithm of the target plus 1e-12, and it is at or below -1e-12; {why} says which."
+doc = "At the end of the line: the loss function of the term cannot measure the target. MAPE divides by the target, so a target of 0 is refused. RMSLE takes the logarithm of the target plus 1e-12, so a target at or below -1e-12 is refused. {why} says which case applies."
 
 [[line_option.examples]]
 wrap = "root"
@@ -2471,9 +2476,9 @@ synopsis = "--weight <w>"
 repeat = "error"
 repeat_msg = "PC_OBSERVABLE cohesive_energy: --weight is given twice on this line; each option is given once"
 doc = """\
-The weight of the term, a number >= 0; the line requires it. The loss of \
-an evaluation is the mean of its terms, so a term of weight 0 adds 0 and \
-still counts in the mean."""
+The loss-term weight, a number >= 0; the line requires it. The loss of \
+an evaluation is the mean of its terms, so a term with loss-term weight 0 \
+adds 0 and still counts in the mean."""
 
 [[line_option.args]]
 name = "w"
@@ -2605,7 +2610,7 @@ synopsis = "--lattice bcc"
 repeat = "error"
 repeat_msg = "PC_OBSERVABLE cohesive_energy: --lattice is given twice on this line; each option is given once"
 default = { text = "bcc, the only lattice the term takes" }
-doc = "The crystal lattice; bcc is the one lattice."
+doc = "The crystal lattice; bcc is the only value accepted."
 
 [[line_option.args]]
 name = "lattice"
@@ -2688,8 +2693,9 @@ repeat = "error"
 repeat_msg = "PC_OBSERVABLE cohesive_energy: --loss is given twice on this line; each option is given once"
 default = { text = "the LOSS of the lines read before the line; L2 without one" }
 doc = """\
-The loss function of the term, one of the loss functions of LOSS, in \
-any case, with the parameter of HUBER and TUKEY."""
+The loss function of the term: one of the loss functions of LOSS, \
+case-insensitive. HUBER and TUKEY take an optional parameter after the \
+name; the other functions take none."""
 
 [[line_option.args]]
 name = "function"
@@ -2883,8 +2889,8 @@ ends at meets both tolerances, also when it stops there at --maxiter, \
 --maxeval or --max-wall-time. It reports the --unconverged value when it \
 reaches one of these limits first, when the line search of the atoms \
 finds no lower energy, or when a step of the cell falls below 1e-12 of \
-the lattice constant before the pressure meets --ptol. One that --etol \
-stops counts as converged when its largest atomic force is below \
+the lattice constant before the pressure meets --ptol. A relaxation that \
+--etol stops counts as converged when its largest atomic force is below \
 --fmax-converged, whatever its pressure."""
 
 [[line_option.args]]
@@ -2937,10 +2943,11 @@ has relaxed when the magnitude of its pressure falls below it."""
 long_doc = """\
 The magnitude of the pressure is |dE/dε| / (3V), for the isotropic \
 strain ε of the cell and its volume V, a central difference of the \
-energy over a strain of ±1e-5. A residual pressure P leaves the energy \
+energy over a strain of ±1e-5. A residual pressure P raises the energy \
 per atom of the crystal above its minimum by about P² (V/N) / (2B), for \
-N atoms and the bulk modulus B, so the cohesive energy below its value \
-at zero pressure. The cell moves by a search for the zero of its \
+N atoms and the bulk modulus B. The cohesive energy is then lower than its \
+value at zero pressure by the same amount. The cell moves by a search for \
+the zero of its \
 pressure, which uses the pressure alone, so a tight --ptol is reached \
 also where the energy is too flat or too noisy to show the change; a \
 --ptol below the rounding error of the central difference is not met, \
@@ -2987,7 +2994,7 @@ error = "PC_OBSERVABLE cohesive_energy: --ptol must be > 0 (got 0)"
 id = "PC_OBSERVABLE.cohesive_energy.--unconverged"
 option = "--unconverged"
 lines = ["PC_OBSERVABLE.cohesive_energy"]
-synopsis = "--unconverged const <value> | --unconverged force-scaled <value>"
+synopsis = "--unconverged const <value> | --unconverged force-scaled <slope>"
 repeat = "error"
 repeat_msg = "PC_OBSERVABLE cohesive_energy: --unconverged is given twice on this line; each option is given once"
 default = { literal = "const 100" }
@@ -3196,7 +3203,7 @@ error = "PC_EMAE -1: the metric lines take the loss function of the last LOSS li
 [[loss_function]]
 id = "LOSS.L1"
 name = "L1"
-doc = "The weight times the absolute difference of the measured value and the target."
+doc = "The loss-term weight times the absolute difference of the measured value and the target."
 
 [[loss_function.examples]]
 wrap = "root"
@@ -3205,7 +3212,7 @@ text = "LOSS L1"
 [[loss_function]]
 id = "LOSS.L2"
 name = "L2"
-doc = "The weight times the squared difference of the measured value and the target."
+doc = "The loss-term weight times the squared difference of the measured value and the target."
 
 [[loss_function.examples]]
 wrap = "root"
@@ -3214,7 +3221,7 @@ text = "LOSS L2"
 [[loss_function]]
 id = "LOSS.LOG_COSH"
 name = "LOG_COSH"
-doc = "The weight times ln(cosh(r)), where r is the difference of the measured value and the target."
+doc = "The loss-term weight times ln(cosh(r)), where r is the difference of the measured value and the target."
 
 [[loss_function.examples]]
 wrap = "root"
@@ -3224,9 +3231,9 @@ text = "LOSS LOG_COSH"
 id = "LOSS.MAPE"
 name = "MAPE"
 doc = """\
-The weight times the absolute difference of the measured value and the \
-target, divided by the absolute target. A target of 0 is refused at its \
-line."""
+The loss-term weight times the absolute difference of the measured value \
+and the target, divided by the absolute target. A target of 0 is refused \
+at its line."""
 
 [[loss_function.examples]]
 wrap = "none"
@@ -3252,8 +3259,9 @@ msg_of = "ROOT.LOSS"
 id = "LOSS.HUBER"
 name = "HUBER"
 doc = """\
-The weight times r^2/2 for a difference r of the measured value and the \
-target with |r| <= delta, and times delta (|r| - delta/2) beyond it."""
+The loss-term weight times r^2/2 for a difference r of the measured value \
+and the target with |r| <= delta, and times delta (|r| - delta/2) beyond \
+it."""
 
 [[loss_function.params]]
 name = "delta"
@@ -3275,8 +3283,8 @@ msg_of = "ROOT.LOSS"
 id = "LOSS.RMSLE"
 name = "RMSLE"
 doc = """\
-The weight times the squared difference of ln(measured + 1e-12) and \
-ln(target + 1e-12). A target at or below -1e-12 is refused at its line, \
+The loss-term weight times the squared difference of ln(measured + 1e-12) \
+and ln(target + 1e-12). A target at or below -1e-12 is refused at its line, \
 and a measured value at or below -1e-12 fails the evaluation."""
 
 [[loss_function.examples]]
@@ -3287,14 +3295,15 @@ text = "LOSS RMSLE"
 id = "LOSS.TUKEY"
 name = "TUKEY"
 doc = """\
-The weight times 1 - (1 - (r/c)^2)^3 for a difference r of the measured \
-value and the target with |r| <= c, and the weight beyond it."""
+The loss-term weight times 1 - (1 - (r/c)^2)^3 for a difference r of the \
+measured value and the target with |r| <= c, and the loss-term weight \
+beyond it."""
 
 [[loss_function.params]]
 name = "c"
 default = 4.685
 gt = 0.0
-doc = "The difference beyond which the loss stays at the weight."
+doc = "The difference beyond which the loss stays at the loss-term weight."
 
 [[loss_function.examples]]
 wrap = "root"
@@ -3325,9 +3334,9 @@ parameters, such as the structure keys of the potential. A file without \
 an OPTIM line runs with a TADAH optimiser only: NLOPT, DLIB, CERES and \
 ASA refuse it at startup."""
 quirk = """\
-The key, the AUTO option names and the shape tags are read in any case \
-(OPTIM cgrid2b (1) 1 2 log), while every other key of the target file is \
-matched as written."""
+The training-configuration key <KEY>, the AUTO option names and the shape \
+tags are read in any case (OPTIM cgrid2b (1) 1 2 log), while OPTIM and every \
+other key of the target file are matched as written."""
 
 [[key.args]]
 name = "KEY"
@@ -3784,7 +3793,8 @@ indices select: [x0/f, x0*f] under RATIO, x0 +/- d under FRAC, with \
 d = max(p|x0|, a, r max|x0|) and the maximum over the values of the line."""
 long_doc = """\
 Without RATIO or FRAC the rule is RATIO 2 for the keys whose values stay \
-positive (SGRID2B, SGRIDMB, SEMBFUNC) and for a positive DM_Embed \
+positive (SGRID2B, SGRIDMB, SEMBFUNC, ESIGMA, WDBFILE, and the absolute \
+part a of FSIGMA and SSIGMA) and for a positive DM_Embed \
 parameter other than an amplitude, and FRAC 0.5 for the others. The \
 non-negative amplitudes (AMPGRIDMB under RHOFORM NONNEG or MONOTONE, a \
 DM_Embed density with non-negative amplitudes) keep a FRAC box at or \
@@ -4033,7 +4043,9 @@ repeat = "error"
 repeat_msg = "OPTIM {key}: AUTO FRAC is given twice on this line; each option is given once"
 default = { text = "FRAC 0.5 for the keys that RATIO 2 does not apply to" }
 doc = """\
-The linear box x0 +/- d with d = max(p|x0|, a, r max|x0|), for p >= 0; \
+The linear box x0 +/- d with d = max(p|x0|, a, r m), where a is the FLOOR \
+value, r the GROUP_FLOOR value and m the largest |x0| of the line, for \
+p >= 0; \
 FRAC 0 with FLOOR gives every value the half-width a."""
 
 [[line_option.args]]
@@ -4214,7 +4226,7 @@ synopsis = "GROUP_FLOOR <r>"
 repeat = "error"
 repeat_msg = "OPTIM {key}: AUTO GROUP_FLOOR is given twice on this line; each option is given once"
 default = { text = "0; 1e-3 for a non-negative amplitude under FRAC without FLOOR", unchecked = "The parser applies the floor when it makes the box; the box does not keep it." }
-doc = "The smallest half-width of a FRAC box relative to the largest |x0| of the line, r >= 0. A geometric box, given by RATIO or the default of a key whose values stay positive, refuses it."
+doc = "The smallest half-width of a FRAC box relative to the largest absolute seed value of the line, r >= 0. A geometric box, given by RATIO or the default of a key whose values stay positive, refuses it."
 
 [[line_option.args]]
 name = "r"
@@ -4332,7 +4344,7 @@ synopsis = "ASINH <c>"
 repeat = "error"
 repeat_msg = "OPTIM {key}: unexpected token(s) '{text}' -- the grammar is OPTIM <KEY> (indices) <low> <high> [LIN | LOG | ASINH <c>] or OPTIM <KEY> (indices) AUTO [RATIO <f> | FRAC <p>] [FLOOR <a>] [GROUP_FLOOR <r>] [LIN | LOG | ASINH <c>]"
 doc = """\
-The optimiser searches asinh(x/c), for a box that crosses 0: linear \
+The optimiser searches asinh(x/c), which suits a box that crosses 0: linear \
 within about c of 0 and logarithmic beyond; c > 0."""
 
 [[line_option.args]]
@@ -4379,7 +4391,7 @@ id = "OPTIM.TARGET.WEIGHTS"
 key = "WEIGHTS"
 status = "refused"
 msg = "OPTIM WEIGHTS: WEIGHTS holds the coefficients each evaluation fits, so a searched value would be replaced by the fit; FIXINDEX and FIXWEIGHT in the training configuration hold coefficients fixed, and OPTIM FIXWEIGHT (<coefficient>) <low> <high> searches them"
-doc = "Each evaluation fits the weights of a linear model; OPTIM FIXWEIGHT searches the weights FIXINDEX fixes."
+doc = "Each evaluation fits the coefficients (WEIGHTS) of the model, so OPTIM WEIGHTS is refused; OPTIM FIXWEIGHT searches the coefficients that FIXINDEX holds fixed."
 
 [[optim_target.invalid]]
 wrap = "root"
@@ -4405,8 +4417,8 @@ status = "special"
 condition = "The training configuration has FIXINDEX and FIXWEIGHT."
 msg = "OPTIM FIXWEIGHT ({index}): coefficient {index} is not in FIXINDEX ({list}); the indices of OPTIM FIXWEIGHT name coefficients, those FIXINDEX lists, not positions among the FIXWEIGHT values"
 doc = """\
-The indices of OPTIM FIXWEIGHT name model weights, each one that \
-FIXINDEX lists; the box applies to the FIXWEIGHT value of that weight."""
+The indices of OPTIM FIXWEIGHT name coefficients, each one that \
+FIXINDEX lists; the box applies to the FIXWEIGHT value of that coefficient."""
 
 [[optim_target.examples]]
 wrap = "root"
@@ -4447,7 +4459,7 @@ key = "OALGO"
 status = "refused"
 indices = [1]
 msg = "OPTIM OALGO (1) is not a valid search target: the first OALGO value selects the training algorithm (1 GELSD, 2 GELS, 3 SVD, 4 Cholesky), a discrete choice rather than a continuous parameter; the training configuration sets it. The second value, the rcond M of options 1 and 3, is continuous: OPTIM OALGO (2) <low> <high>."
-doc = "The first OALGO value selects the training algorithm; the second, the rcond of algorithms 1 and 3, is a search parameter."
+doc = "The first OALGO value selects the training algorithm and cannot be searched; the second, the rank threshold M of OALGO 1 and 3, is a search parameter whose box lies inside (0, 1)."
 
 [[optim_target.examples]]
 wrap = "root"
@@ -4476,7 +4488,7 @@ id = "OPTIM.TARGET.TYPE2B"
 key = "TYPE2B"
 status = "refused"
 msg = "OPTIM TYPE2B is not a valid search target: TYPE2B names the two-body descriptor and its structure tokens (basis code, sizes, species), structure data rather than a continuous parameter; the training configuration sets it."
-doc = "TYPE2B names the two-body descriptor and its sizes."
+doc = "TYPE2B names the two-body descriptor and its tokens (basis code, sizes, descriptor parameters, species); tadah hpo searches none of its values."
 
 [[optim_target.invalid]]
 wrap = "root"
@@ -4572,7 +4584,7 @@ id = "OPTIM.TARGET.FIXINDEX"
 key = "FIXINDEX"
 status = "refused"
 msg = "OPTIM FIXINDEX is not a valid search target: FIXINDEX names the coefficients FIXWEIGHT holds fixed (OPTIM FIXWEIGHT searches their values), structure data rather than a continuous parameter; the training configuration sets it."
-doc = "FIXINDEX lists the weights that FIXWEIGHT fixes; OPTIM FIXWEIGHT searches their values."
+doc = "FIXINDEX lists the coefficients that FIXWEIGHT fixes; OPTIM FIXWEIGHT searches their values."
 
 [[optim_target.invalid]]
 wrap = "root"
@@ -4653,7 +4665,7 @@ key = "SEMBFUNC"
 status = "refused"
 condition = "The many-body term is a DM_Embed component (a DESCRIPTOR block) and the training configuration has no SEMBFUNC."
 msg = "OPTIM SEMBFUNC: the potential has no SEMBFUNC key: its many-body term is DM_Embed component(s) (DESCRIPTOR blocks), whose embedding parameter is the named path {list}; an OPTIM line names the path, OPTIM <path> (indices) <low> <high> (the starter target file of tadah refit names the paths; a target file written for a DM_REAM many-body term names SEMBFUNC)"
-doc = "The embedding widths of a DM_Embed component are the path <ID>.EMBEDDING.ETA or <ID>.EMBEDDING.WIDTHS."
+doc = "The embedding width parameters of a DM_Embed component are the path <ID>.EMBEDDING.ETA (inverse widths η) or <ID>.EMBEDDING.WIDTHS (widths)."
 
 [[optim_target.invalid]]
 wrap = "root"
@@ -5006,7 +5018,7 @@ key = "LAMBDA"
 status = "special"
 condition = "The low bound of the box, explicit or made by AUTO, is below 0."
 msg = "OPTIM LAMBDA ({index}): the low bound {low} is negative, but LAMBDA is the ridge penalty, a number >= 0: every fit refuses a negative value other than -1, and -1, which requests the evidence approximation, is no value of a box, so the low bound of its box is >= 0"
-doc = "OPTIM LAMBDA searches the ridge penalty of the fit, a number >= 0."
+doc = "OPTIM LAMBDA searches the ridge penalty of the fit, a number >= 0. The LAMBDA of the training configuration is the starting point; LAMBDA -1 there, which requests the evidence approximation, is refused."
 
 [[optim_target.examples]]
 wrap = "root"
@@ -5073,7 +5085,7 @@ doc = """\
 An MPARAMS value that the model function needs above 0, such as the width \
 sigma of Kern_RBF, has an OPTIM box above 0. The refusal comes at startup \
 and names no line."""
-msg_doc = "The message names the function and its value."
+msg_doc = "The message names the MPARAMS index, the box, the model function and its parameter."
 
 [[rule.invalid]]
 wrap = "root"
@@ -5112,7 +5124,7 @@ error = "OPTIM RCUT2B (1) is not a valid search target: D2_EAM takes the cutoff 
 
 [[rule]]
 id = "RULE.OPTIM_unread_watom"
-title = "OPTIM does not search a WATOM that no descriptor reads"
+title = "OPTIM WATOM is refused when no descriptor reads WATOM"
 check = "startup"
 keys = ["ROOT.OPTIM"]
 msg = "OPTIM WATOM (line {line} of the target file) is not a valid search target: no descriptor of the training configuration reads WATOM (D2_EAM, DM_EAM, D2_Dummy and DM_Dummy read none), and a fit refuses a WATOM other than 1 that no descriptor reads, so every candidate other than 1 would fail its evaluation."
@@ -5148,8 +5160,9 @@ msg = "{key} is set twice (first on line {first_line}{note}) and no line between
 doc = """\
 A second FAILSCORE, LOSS or PC_SCRIPT_TIMEOUT line needs a line between \
 that reads the first, one that uses its value: a PC_LAMMPS or \
-PC_FAILPROBE line without --failscore (--maxtime), or a --varloss or \
-PC_OBSERVABLE term that names no loss function. The rest of the run \
+PC_FAILPROBE line without --failscore (for FAILSCORE) or without \
+--maxtime (for PC_SCRIPT_TIMEOUT), or a --varloss or PC_OBSERVABLE term \
+that names no loss function (for LOSS). The rest of the run \
 takes the last line: the metric terms its LOSS, a failed evaluation its \
 FAILSCORE, and the hpo_run.log summary its PC_SCRIPT_TIMEOUT."""
 msg_doc = """\
@@ -5215,7 +5228,7 @@ error = "MAXTIME is set twice (first on line 1, as PC_SCRIPT_TIMEOUT) and no lin
 
 [[rule]]
 id = "RULE.PC_OBSERVABLE_excludes_PC_LAMMPS"
-title = "PC_OBSERVABLE lines and PC_LAMMPS lines are not combined"
+title = "PC_OBSERVABLE lines are not combined with PC_LAMMPS or PC_FAILPROBE lines"
 check = "parse"
 keys = ["ROOT.PC_OBSERVABLE", "ROOT.PC_LAMMPS"]
 msg = "{key}: this target file also has {list}; PC_OBSERVABLE lines do not share a target file with PC_LAMMPS or PC_FAILPROBE lines"
@@ -5236,7 +5249,7 @@ error = "PC_LAMMPS: this target file also has 1 PC_OBSERVABLE line (line 1); PC_
 [[rule.invalid]]
 wrap = "root"
 at = 2
-doc = "A PC_FAILPROBE line, and no PC_LAMMPS line: the message counts it as a PC_LAMMPS entry."
+doc = "A PC_FAILPROBE line, and no PC_LAMMPS line: the message counts it under its own key, PC_FAILPROBE."
 text = '''
 PC_FAILPROBE --script lines_pc.in --outvar S
 PC_OBSERVABLE cohesive_energy --species H --target 2 --weight 1 --hotvar a0 1.5 2.5'''
@@ -5361,19 +5374,20 @@ error = "--hpotarget defines PC_FAILPROBE on line 2 but OPTIMIZER's GRAD_STRATEG
 [[rule]]
 id = "RULE.PC_LAMMPS_gradient_free"
 title = """\
-With PC_LAMMPS or PC_FAILPROBE every optimiser runs without gradients"""
+With PC_LAMMPS or PC_FAILPROBE every optimiser must be gradient-free"""
 check = "parse"
 keys = ["ROOT.PC_LAMMPS", "ROOT.PC_FAILPROBE", "OPTIMIZER.ALGO"]
 msg = "--hpotarget defines {key} on line {line} but {block} optimiser {lib}:{algo} is gradient-based. A PC_LAMMPS or PC_FAILPROBE line requires a gradient-free optimiser ({list}); an NLopt MLSL or AUGLAG algorithm is accepted with a derivative-free INNER block."
 doc = """\
-With a PC_LAMMPS or PC_FAILPROBE line, every optimiser of the file runs \
-without gradients, as the results of a LAMMPS script have no gradient. \
-The refusal names the ALGO line of the block."""
+With a PC_LAMMPS or PC_FAILPROBE line, every optimiser of the file must \
+be gradient-free, as the results of a LAMMPS script have no gradient; a \
+gradient-based optimiser in any block is refused. The refusal names the \
+ALGO line of the block."""
 msg_doc = """\
 The message names PC_LAMMPS and its line, or the PC_FAILPROBE line in a \
 file without a PC_LAMMPS line, the block, OPTIMIZER or EXPLORE, and its \
-optimiser, and lists the optimisers that run without gradients as a block \
-names them."""
+optimiser, and lists the optimisers that run without gradients in LIB:ALGO \
+form."""
 
 [[rule.examples]]
 wrap = "none"
@@ -5465,7 +5479,7 @@ msg_doc = """\
 The message names PC_LAMMPS and its line, or the PC_FAILPROBE line in a \
 file without a PC_LAMMPS line, the block, OPTIMIZER or EXPLORE, its \
 optimiser and the default local optimiser, and lists the optimisers that \
-run without gradients as a block names them."""
+run without gradients in LIB:ALGO form."""
 
 [[rule.invalid]]
 wrap = "none"
@@ -5644,7 +5658,8 @@ msg = "OPTIM LAMBDA: the training configuration has LAMBDA -1, which requests th
 doc = """\
 OPTIM LAMBDA searches a fixed ridge penalty. LAMBDA -1 in the training \
 configuration requests the evidence approximation, which finds the \
-penalty in each fit, so it is refused with OPTIM LAMBDA, at the line."""
+penalty in each fit, so an OPTIM LAMBDA line is refused when the training \
+configuration has LAMBDA -1."""
 
 [[rule.examples]]
 wrap = "root"
@@ -5665,8 +5680,9 @@ check = "startup"
 msg = "{text}: only LAMBDA -1 requests the evidence approximation, which OALGO 3 runs; another negative value requests nothing. LAMBDA 0 fits without a penalty, and a positive LAMBDA is the ridge penalty."
 doc = """\
 Every fit refuses a negative LAMBDA other than -1, so tadah hpo refuses it \
-when the run starts, without a line, if its evaluations fit the model: \
-with training data, unless FIXINDEX pins every weight."""
+when the run starts, if its evaluations fit the model: with training data, \
+unless FIXINDEX fixes every coefficient. The message names no line of the \
+target file."""
 msg_doc = "The message starts with the LAMBDA line of the training configuration."
 
 [[rule.invalid]]
@@ -5684,8 +5700,9 @@ check = "startup"
 msg = "{text}: LAMBDA takes one value, the ridge penalty (0 for none, -1 for the evidence approximation of OALGO 3); a second value is not read. The rank threshold of OALGO 1 and 3 is OALGO's second value (OALGO 1 {value}, OALGO 3 {value})."
 doc = """\
 Every fit refuses a second LAMBDA value, so tadah hpo refuses it when the \
-run starts, without a line, if its evaluations fit the model: with \
-training data, unless FIXINDEX pins every weight."""
+run starts, if its evaluations fit the model: with training data, unless \
+FIXINDEX fixes every coefficient. The message names no line of the target \
+file."""
 msg_doc = "The message starts with the LAMBDA line and gives its second value as the rank threshold."
 
 [[rule.invalid]]
@@ -5703,8 +5720,9 @@ check = "startup"
 msg = "LAMBDA -1 requests the evidence approximation, which only OALGO 3 (the SVD solve) runs; the configuration has OALGO {value} (LAMBDA >= 0 fits with any OALGO)."
 doc = """\
 Only OALGO 3 runs the evidence approximation that LAMBDA -1 requests, so \
-tadah hpo refuses LAMBDA -1 with another OALGO when the run starts, \
-without a line, if its evaluations fit the model."""
+tadah hpo refuses LAMBDA -1 with another OALGO when the run starts, if its \
+evaluations fit the model (with training data, unless FIXINDEX fixes every \
+coefficient). The message names no line of the target file."""
 msg_doc = "The message names the OALGO of the training configuration."
 
 [[rule.invalid]]
@@ -5721,10 +5739,11 @@ title = "OALGO 1 of the training configuration has a rank threshold DGELSD reads
 check = "startup"
 msg = "{text}: the rank threshold M of OALGO 1 (DGELSD), its second value, is a number 0 < M < 1 (a singular value at most M times the largest is left out of the coefficients) or below 0 for the machine precision of LAPACK, 2^-53 (OALGO 1 -1); DGELSD takes the machine precision for an M of 0 or of 1 or more."
 doc = """\
-Every fit refuses a rank threshold of OALGO 1 that DGELSD replaces by the \
-machine precision, so tadah hpo refuses it when the run starts, without a \
-line, if its evaluations fit the model."""
-msg_doc = "The message starts with the OALGO line of the training configuration."
+Every fit refuses a rank threshold of OALGO 1 of 0 or of 1 or more, which \
+DGELSD replaces by the machine precision (a threshold below 0 requests the \
+machine precision explicitly). tadah hpo refuses it when the run starts, if \
+its evaluations fit the model."""
+msg_doc = "The message starts with the OALGO line of the training configuration. It names no line of the target file."
 
 [[rule.invalid]]
 wrap = "root"
@@ -5741,8 +5760,8 @@ check = "startup"
 msg = "{text}: the rank threshold M of OALGO 3, its second value, is a number 0 < M < 1 (a singular value at most M times the largest is left out of the coefficients) or 0 or below (only a singular value of 0 is left out); an M of 1 or more leaves out every singular direction, every coefficient 0."
 doc = """\
 Every fit refuses a rank threshold of OALGO 3 that leaves out every \
-singular direction, so tadah hpo refuses it when the run starts, without \
-a line, if its evaluations fit the model."""
+singular direction, so tadah hpo refuses it when the run starts, if its \
+evaluations fit the model. The message names no line of the target file."""
 msg_doc = "The message starts with the OALGO line of the training configuration."
 
 [[rule.invalid]]
@@ -5760,8 +5779,8 @@ check = "startup"
 msg = "{text}: {name} takes one value: it keeps every direction and has no rank threshold, the second value of OALGO 1 and 3."
 doc = """\
 Every fit refuses a second value of OALGO 2 and 4, which no solve reads, \
-so tadah hpo refuses it when the run starts, without a line, if its \
-evaluations fit the model."""
+so tadah hpo refuses it when the run starts, if its evaluations fit the \
+model. The message names no line of the target file."""
 msg_doc = "The message starts with the OALGO line of the training configuration and names its solve."
 
 [[rule.invalid]]
@@ -5847,10 +5866,10 @@ check = "startup"
 msg = "LAMBDA -1 requests the evidence approximation, which only OALGO 3 runs; OALGO 3 penalises every weight alike, and the model has {count} intercept column(s) (BIAS true with ATOM), which a ridge penalty leaves out. The evidence approximation needs BIAS false, or every intercept weight pinned with FIXINDEX and FIXWEIGHT. With BIAS true, LAMBDA 0 fits with any OALGO, and LAMBDA > 0 with OALGO 1, 2 or 4."
 doc = """\
 LAMBDA -1 runs the evidence approximation under OALGO 3, which penalises \
-every weight alike, so a fit with an intercept column that FIXINDEX does \
-not pin refuses it; tadah hpo refuses it when the run starts, without a \
-line, if its evaluations fit the model."""
-msg_doc = "The message gives the number of intercept columns the fit has and what fits with BIAS true."
+every coefficient alike. A fit with an intercept column (BIAS true with \
+ATOM) whose coefficient FIXINDEX and FIXWEIGHT do not fix refuses LAMBDA -1 \
+when the run starts, if the evaluations of the run fit the model."""
+msg_doc = "The message gives the number of intercept columns the fit has and what fits with BIAS true. It names no line of the target file."
 
 [[rule.invalid]]
 wrap = "root"
@@ -5867,9 +5886,10 @@ check = "startup"
 keys = ["ROOT.OPTIM"]
 msg = "OPTIM LAMBDA: OALGO 3 penalises every weight alike, and the fit has {count} intercept column(s) (BIAS true with ATOM), which a ridge penalty leaves out, so every fit refuses a LAMBDA other than 0: each candidate of the box but 0 would fail its evaluation. OALGO 1, 2 or 4 fits a positive LAMBDA with the intercepts unpenalised."
 doc = """\
-Under OALGO 3 a fit with an intercept column that FIXINDEX does not pin \
+Under OALGO 3 a fit with an intercept column that FIXINDEX does not fix \
 refuses a LAMBDA other than 0, so tadah hpo refuses OPTIM LAMBDA when the \
-run starts, without a line, if its evaluations fit the model."""
+run starts, if its evaluations fit the model. The message names no line of \
+the target file."""
 msg_doc = "The message gives the number of intercept columns the fit has."
 
 [[rule.invalid]]
@@ -5887,8 +5907,9 @@ check = "startup"
 msg = "{text}: M_KRR has implementation 1, which fits the energies, forces and stresses of the structures, and implementation 2, which fits the energies per atom of whole structures (the third value of MODEL, 1 when it is left out); {value} is neither."
 doc = """\
 The third value of MODEL M_KRR selects implementation 1 or 2; tadah hpo \
-refuses another when the run starts, without a line, also when FIXINDEX \
-pins every weight: the MODEL line is the potential's."""
+refuses any other value when the run starts, also when FIXINDEX fixes every \
+coefficient: the MODEL line is the potential's. The message names no line of \
+the target file."""
 msg_doc = "The message starts with the MODEL line and names its third value."
 
 [[rule.invalid]]
@@ -5904,7 +5925,7 @@ wrap = "root"
 check = "startup"
 context = "lines_krr_implementation3_pinned"
 at = "none"
-doc = "FIXINDEX pins every weight and the run has no training data."
+doc = "FIXINDEX fixes every coefficient and the run has no training data."
 text = "PC_EMAE 5 1"
 error = "MODEL M_KRR Kern_Linear 3: M_KRR has implementation 1, which fits the energies, forces and stresses of the structures, and implementation 2, which fits the energies per atom of whole structures (the third value of MODEL, 1 when it is left out); 3 is neither."
 
@@ -5914,10 +5935,9 @@ title = "M_KRR implementation 2 has a LAMBDA of 0 or above"
 check = "startup"
 msg = "MODEL M_KRR {name} 2 cannot use LAMBDA -1: implementation 2 solves (K + LAMBDA sigma^2 I) w = t, sigma = ESIGMA in eV, with a fixed LAMBDA and does not run the evidence approximation. Implementation 1 (MODEL M_KRR {name} 1) with OALGO 3 runs it; LAMBDA >= 0 fits with either."
 doc = """\
-M_KRR implementation 2 fits with a fixed LAMBDA; tadah hpo refuses LAMBDA \
--1 with it when the run starts, without a line, if its evaluations fit \
-the model."""
-msg_doc = "The message names the kernel of MODEL."
+M_KRR implementation 2 fits with a fixed LAMBDA. tadah hpo refuses \
+LAMBDA -1 with it when the run starts, if its evaluations fit the model."""
+msg_doc = "The message names the kernel of MODEL and no line of the target file."
 
 [[rule.invalid]]
 wrap = "root"
@@ -5965,16 +5985,17 @@ keys = ["ROOT.OPTIM"]
 msg = "MODEL M_KRR {name} 2 fits the energies per atom of whole structures over ESIGMA, without forces, stresses or priorities: {what} would be ignored. Implementation 1 (MODEL M_KRR {name} 1) {why}; implementation 2 fits {text}."
 doc = """\
 M_KRR implementation 2 fits the energies per atom of whole structures, \
-their residuals over ESIGMA, which OPTIM ESIGMA may search. When the run \
-starts, without a line, tadah hpo refuses OPTIM of FSIGMA, SSIGMA or \
-WDBFILE with it, and, once it has read the training data, FORCE true, \
+their residuals divided by ESIGMA, which OPTIM ESIGMA may search. When the \
+run starts, tadah hpo refuses OPTIM FSIGMA, OPTIM SSIGMA and OPTIM WDBFILE \
+under implementation 2 and, once it has read the training data, FORCE true, \
 STRESS true, ENERGY false, ENORM SQRT, an FSIGMA or SSIGMA other than its \
 default, a WDBFILE value other than 1 and a training structure whose \
 eweight is not 1."""
 msg_doc = """\
 The message names the kernel of MODEL, what implementation 2 would ignore \
 (an OPTIM line, a key with its values, or a structure with its eweight), \
-what implementation 1 does with it and how implementation 2 fits."""
+what implementation 1 does with it and how implementation 2 fits. It names \
+no line of the target file."""
 
 [[rule.examples]]
 wrap = "root"
@@ -6013,14 +6034,14 @@ keys = ["ROOT.OPTIM"]
 msg = "MODEL M_KRR {name} 2 solves (K + LAMBDA sigma^2 I) w = t by Cholesky and reads no OALGO: {what} would be ignored. Implementation 1 (MODEL M_KRR {name} 1) solves with OALGO; implementation 2 fits {text}."
 doc = """\
 M_KRR implementation 2 solves its system by Cholesky and reads no OALGO. \
-When the run starts, without a line, tadah hpo refuses OPTIM OALGO with \
-it, and, once it has read the training data, an OALGO other than the \
-default (OALGO 1, with no second value or 1e-8)."""
+When the run starts, tadah hpo refuses OPTIM OALGO with implementation 2 \
+and, once it has read the training data, an OALGO line other than the \
+default (OALGO 1 alone, or OALGO 1 1e-8)."""
 msg_doc = """\
 The message names the kernel of MODEL, what implementation 2 would ignore \
 (OPTIM OALGO, or the OALGO line with its values) and how implementation 2 \
 fits: without OPTIM OALGO, or without an OALGO line or with the default \
-written out, OALGO 1 or OALGO 1 1e-8."""
+written out, OALGO 1 or OALGO 1 1e-8. It names no line of the target file."""
 
 [[rule.invalid]]
 wrap = "root"
@@ -6068,10 +6089,11 @@ check = "startup"
 keys = ["OPTIM.TARGET.ESIGMA", "OPTIM.TARGET.FSIGMA", "OPTIM.TARGET.SSIGMA"]
 msg = "OPTIM {key}: {name} is false: the fit has no {what}, so {key} would change nothing and every candidate would give the same fit. {name} true fits the {what}."
 doc = """\
-OPTIM ESIGMA needs ENERGY true, OPTIM FSIGMA FORCE true and OPTIM SSIGMA \
-STRESS true; tadah hpo refuses another when the run starts, without a \
-line, if its evaluations fit the model."""
-msg_doc = "The message names the key, its switch and the quantity."
+OPTIM ESIGMA needs ENERGY true, OPTIM FSIGMA needs FORCE true and OPTIM \
+SSIGMA needs STRESS true. When the evaluations of the run fit the model, \
+tadah hpo refuses the OPTIM line of an error scale whose quantity is false \
+when the run starts."""
+msg_doc = "The message names the key, its switch and the quantity, and no line of the target file."
 
 [[rule.examples]]
 wrap = "root"
@@ -6093,15 +6115,16 @@ check = "startup"
 keys = ["OPTIM.TARGET.ESIGMA", "OPTIM.TARGET.FSIGMA", "OPTIM.TARGET.SSIGMA", "OPTIM.TARGET.LAMBDA"]
 msg = "OPTIM {key}: the {what} are the only quantity of the fit and LAMBDA is {value}: the error scale of the only quantity scales every row of the fit alike, which changes no coefficient, so every candidate would give the same fit. With a LAMBDA > 0 the error scale weighs the data against the penalty, and with {text} in the fit, the {what} against them."
 doc = """\
-With LAMBDA 0 or -1, which OPTIM does not search, tadah hpo refuses OPTIM \
-of the error scale of the only quantity of the fit when the run starts, \
-without a line. When every error scale of the fit is searched with LAMBDA \
-0 or -1, or with OPTIM LAMBDA, hpo_run.log has a warning instead."""
+When LAMBDA is 0 or -1 and no OPTIM line searches it, tadah hpo refuses \
+OPTIM of the error scale of the only quantity of the fit when the run \
+starts. When every error scale of the fit is searched with LAMBDA 0 or -1, \
+or with OPTIM LAMBDA, hpo_run.log has a warning instead."""
 msg_doc = """\
 The message names the key, the quantity, the LAMBDA and the other \
-quantities. The error scale of the only quantity is ESIGMA, or the \
-absolute part of FSIGMA or SSIGMA with no relative part set or searched: \
-every error scale times c fits as LAMBDA times c^2."""
+quantities, and no line of the target file. The error scale of the only \
+quantity is ESIGMA, or the absolute part of FSIGMA or SSIGMA with no \
+relative part set or searched: every error scale times c fits as LAMBDA \
+times c^2."""
 
 [[rule.examples]]
 wrap = "root"
@@ -6123,12 +6146,12 @@ check = "startup"
 keys = ["OPTIM.TARGET.WDBFILE", "OPTIM.TARGET.LAMBDA"]
 msg = "OPTIM WDBFILE: the run has one training dataset and LAMBDA is {value}: its WDBFILE value multiplies the priority of every row of the fit alike, which changes no coefficient, so every candidate would give the same fit. With a LAMBDA > 0 the priority weighs the data against the penalty, and with more training datasets, the dataset against the others."
 doc = """\
-With one training dataset and LAMBDA 0 or -1, which OPTIM does not \
-search, tadah hpo refuses OPTIM WDBFILE when the run starts, without a \
-line. When the WDBFILE value of every training dataset is searched with \
-LAMBDA 0 or -1, or with OPTIM LAMBDA, hpo_run.log has a warning instead: \
-every priority times c fits as LAMBDA divided by c."""
-msg_doc = "The message names the LAMBDA."
+With one training dataset and LAMBDA 0 or -1, which no OPTIM line \
+searches, tadah hpo refuses OPTIM WDBFILE when the run starts. When the \
+WDBFILE value of every training dataset is searched with LAMBDA 0 or -1, or \
+with OPTIM LAMBDA, hpo_run.log has a warning instead: every priority times \
+c fits as LAMBDA divided by c."""
+msg_doc = "The message names the LAMBDA and no line of the target file."
 
 [[rule.examples]]
 wrap = "root"
@@ -6151,9 +6174,10 @@ check = "startup"
 keys = ["OPTIM.TARGET.ESIGMA", "OPTIM.TARGET.FSIGMA", "OPTIM.TARGET.SSIGMA", "OPTIM.TARGET.WDBFILE"]
 msg = "OPTIM {key}: the evaluations of this run fit no coefficient ({why}), so {key} would change nothing and every candidate would give the same potential."
 doc = """\
-Without training data, or with FIXINDEX pinning every weight, the \
+Without training data, or with FIXINDEX fixing every coefficient, the \
 evaluations fit nothing, and tadah hpo refuses OPTIM of ESIGMA, FSIGMA, \
-SSIGMA and WDBFILE when the run starts, without a line."""
+SSIGMA and WDBFILE when the run starts. The message names no line of the \
+target file."""
 msg_doc = "The message names the key and why the evaluations fit no coefficient."
 
 [[rule.invalid]]

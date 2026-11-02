@@ -24,14 +24,14 @@ args = [ { name = "library", kind = "name", doc = "ASA, CERES, DLIB, NLOPT or TA
 repeat = "error"
 repeat_msg = "LIB is set twice in the {block} block (first on line {first_line}); each key is given once"
 repeat_doc = "Once for each optimiser: a second line is refused, in the same block, in a second block of that type, or in another of OPTIMIZER, STRATEGY and REFINE, which set the same optimiser."
-default = { text = "Not set: a block that runs an optimiser is refused at its END line without LIB and ALGO." }
+default = { text = "Not set: a block that runs an optimiser is refused at its END line when LIB or ALGO is missing." }
 doc = """\
 The library of the optimiser of the block. LIB and ALGO together name the \
 optimiser, as the optimiser list gives it."""
 long_doc = """\
 The pair is checked when the block that runs the optimiser closes: a pair \
 the optimiser list does not hold, or refuses, is refused there with the \
-reason. The value is compared as written, in upper case."""
+reason. The value is compared as written, so it is given in upper case, NLOPT and not nlopt."""
 
 [[key.examples]]
 wrap = "none"
@@ -92,9 +92,9 @@ args = [ { name = "algorithm", kind = "name", doc = "An algorithm of the library
 repeat = "error"
 repeat_msg = "ALGO is set twice in the {block} block (first on line {first_line}); each key is given once"
 repeat_doc = "Once for each optimiser: a second line is refused, in the same block, in a second block of that type, or in another of OPTIMIZER, STRATEGY and REFINE, which set the same optimiser."
-default = { text = "Not set: a block that runs an optimiser is refused at its END line without LIB and ALGO." }
+default = { text = "Not set: a block that runs an optimiser is refused at its END line when LIB or ALGO is missing." }
 doc = """\
-The algorithm of the optimiser, one of the library that LIB names, such as \
+The algorithm of the optimiser, one of the algorithms of the library that LIB names, such as \
 LN_SBPLX of NLOPT or RANDOM of TADAH. The command tadah explain ALGO lists \
 them."""
 
@@ -148,15 +148,15 @@ repeat_doc = "Once for each optimiser: a second line is refused, in the same blo
 default = { text = "No evaluation limit: an optimiser that needs a stop is refused at startup without one." }
 doc = """\
 The evaluation budget of the optimiser of the block. Under STRATEGY TYPE \
-MULTISTART, and in a PRESTAGE refinement from more than one candidate, the \
-starts share it."""
+MULTISTART the starts share it, and in a PRESTAGE refinement from more \
+than one candidate the candidates share it."""
 long_doc = """\
-Each start receives MAXEVAL divided by the number of starts, rounded up; \
+Each start or candidate receives MAXEVAL divided by their number, rounded up; \
 under MULTISTART, BUDGET_PER_START sets the budget of each start instead. \
 A PRESTAGE refinement on an optimiser that takes every candidate in one \
 run, DLIB:GFS, runs once with all of them and the whole MAXEVAL. The EXPLORE \
 block of STRATEGY TYPE PRESTAGE has a MAXEVAL of its own. Under a RESTART \
-block each round runs with the whole MAXEVAL, so a run can make up \
+block each round runs with the whole MAXEVAL, so a search can make up \
 to (MAX + 1) times MAXEVAL evaluations. An optimiser without a convergence \
 test or a finite schedule of its own, such as TADAH:RANDOM, needs MAXEVAL, \
 another stop it reads or a RESTART block; the optimiser list names \
@@ -304,10 +304,10 @@ The wall-clock time of the optimiser of the block, in seconds: the search \
 stops once it has run that long."""
 long_doc = """\
 Inside a block MAXTIME is a number of seconds. MAXTIME at the top level is \
-another key, the time limit of each LAMMPS script, written as a LAMMPS \
-time. Only the optimisers that read it take it (the optimiser list names \
-the stops of each): DLIB:BFGS and CERES:STEEPEST_DESCENT refuse it at \
-startup, at the END line of the block."""
+another name of PC_SCRIPT_TIMEOUT, the time limit of each LAMMPS script, \
+written as a LAMMPS time. DLIB:BFGS and CERES:STEEPEST_DESCENT refuse it \
+at startup, at the END line of the block; the other optimisers take it \
+(the optimiser list names the stops of each)."""
 checks = [
   { msg = "{phase}: {lib}:{algo} does not support MAXTIME", doc = "At startup, at the END line of its optimiser: DLIB:BFGS or CERES:STEEPEST_DESCENT." },
 ]
@@ -379,10 +379,11 @@ that read it take it (the optimiser list names the stops of each): \
 DLIB:BFGS and CERES:STEEPEST_DESCENT refuse it at startup, at the END \
 line of the block. An INNER block refuses STOPVAL: NLopt's MLSL and \
 AUGLAG stop their local search at the STOPVAL of the enclosing block. \
-TADAH:ANNEAL_PT and TADAH:ANNEAL_PA end the search after the starting \
+TADAH:ANNEAL_PT and TADAH:ANNEAL_PA end the search at the end of the \
+stage in which a replica or walker reaches it. The stage is the starting \
 points, the epoch, the temperature step or, in a run on one MPI rank, the \
-round of the step calibration in which a replica or walker reaches it: \
-the others complete their evaluations of it. ASA:ASA with \
+round of the step calibration. The other replicas or walkers complete \
+their evaluations of that stage. ASA:ASA with \
 Gener_Block_Max above 1 ends it after the block of states in which it is \
 reached."""
 checks = [
@@ -447,7 +448,7 @@ long_doc = """\
 Only the optimisers that test it take it (the optimiser list names them); \
 another optimiser is refused at startup with this key. An NLopt MLSL or \
 AUGLAG without an INNER block hands the tolerance to NLopt's default \
-local optimiser, which tests it; with an INNER block the block refuses \
+local optimiser, which tests it; with an INNER block the optimiser's own block refuses \
 it, and the INNER block takes it. NLopt takes a value of 0 or below as no \
 tolerance; the annealers and CERES:STEEPEST_DESCENT refuse a negative \
 value at startup. The local search of an NLopt MLSL that has none of \
@@ -568,7 +569,7 @@ another optimiser is refused at startup with this key. DLIB:GFS reads it \
 as the precision of its solver, not as a stop, and refuses a value below 0 \
 at startup. An NLopt MLSL or AUGLAG \
 without an INNER block hands the tolerance to NLopt's default local \
-optimiser, which tests it; with an INNER block the block refuses it, and \
+optimiser, which tests it; with an INNER block the optimiser's own block refuses it, and \
 the INNER block takes it. NLopt takes a value of 0 or below as no \
 tolerance; the annealers refuse a negative value at startup."""
 checks = [
@@ -680,7 +681,7 @@ long_doc = """\
 Only the optimisers that test it take it (the optimiser list names them); \
 another optimiser is refused at startup with this key. An NLopt MLSL or \
 AUGLAG without an INNER block hands the tolerance to NLopt's default \
-local optimiser, which tests it; with an INNER block the block refuses \
+local optimiser, which tests it; with an INNER block the optimiser's own block refuses \
 it, and the INNER block takes it. NLopt takes a value of 0 or below as no \
 tolerance; CERES:STEEPEST_DESCENT refuses a negative value at startup. \
 The local search of an NLopt MLSL that has none of FTOL_REL, FTOL_ABS and \
@@ -779,7 +780,7 @@ long_doc = """\
 Only NLopt optimisers test it (the optimiser list names them); another \
 optimiser is refused at startup with this key. An NLopt MLSL or AUGLAG \
 without an INNER block hands the tolerance to NLopt's default local \
-optimiser, which tests it; with an INNER block the block refuses it, and \
+optimiser, which tests it; with an INNER block the optimiser's own block refuses it, and \
 the INNER block takes it. NLopt takes a value of 0 or below as no \
 tolerance."""
 checks = [
@@ -874,7 +875,7 @@ args = [ { name = "n", kind = "integer", min = 0, max = "UINT_MAX", what = "{key
 repeat = "error"
 repeat_msg = "POPULATION is set twice in the {block} block (first on line {first_line}); each key is given once"
 repeat_doc = "Once for each optimiser: a second line is refused, in the same block, in a second block of that type, or in another of OPTIMIZER, STRATEGY and REFINE, which set the same optimiser."
-default = { text = "Not set: TADAH:ANNEAL_PA takes max(4 THREADS, 16) walkers, and an NLopt optimiser chooses its own population, as for 0.", unchecked = "TADAH:ANNEAL_PA counts its walkers when it starts; no setting of the target file holds the number." }
+default = { text = "Not set: TADAH:ANNEAL_PA takes the larger of 4 times THREADS and 16 walkers, and an NLopt optimiser chooses its own population, as for 0.", unchecked = "TADAH:ANNEAL_PA counts its walkers when it starts; no setting of the target file holds the number." }
 doc = """\
 The population of an optimiser that keeps one, such as NLOPT:GN_CRS2_LM or \
 the walkers of TADAH:ANNEAL_PA, or the number of points NLopt's MLSL \
@@ -882,7 +883,8 @@ samples in each round."""
 long_doc = """\
 Only the optimisers that read it take it (the optimiser list names them); \
 another optimiser is refused at startup with this key. TADAH:ANNEAL_PA \
-takes at least 8 walkers; for NLopt, 0 is its own default."""
+takes at least 8 walkers; for an NLopt optimiser, 0 lets it choose its own \
+population."""
 checks = [
   { msg = "{phase}: TADAH:ANNEAL_PA: POPULATION must be >= 8", doc = "At startup, at the END line of its optimiser: TADAH:ANNEAL_PA with a value below 8." },
   { msg = "{phase}: TADAH:{algo} does not use POPULATION: TADAH:ANNEAL_PA runs a population", doc = "At startup, at the END line of its optimiser: TADAH:ANNEAL or TADAH:ANNEAL_PT." },
@@ -1213,7 +1215,8 @@ default = { text = "Not set: an optimiser that draws random numbers draws them w
 doc = """\
 The seed of the random numbers of the optimiser, for a reproducible \
 search. An optimiser that does not read SEED refuses it when tadah hpo \
-starts; the optimiser list shows which optimisers read it."""
+starts, unless it is a PRESTAGE refinement whose EXPLORE block takes the \
+SEED; the optimiser list shows which optimisers read it."""
 long_doc = """\
 Under STRATEGY TYPE MULTISTART start i runs with SEED + i. Under STRATEGY \
 TYPE PRESTAGE an EXPLORE block whose optimiser reads SEED, and that has no \
@@ -1467,7 +1470,8 @@ repeat_doc = "Once for each optimiser: a second line is refused, in the same blo
 default = { literal = "1" }
 doc = """\
 The number of workers that run the work of the evaluations at the same \
-time: the LAMMPS scripts and the training and prediction of the potential."""
+time: the LAMMPS scripts and the training and prediction of the potential. \
+Only the value of the STRATEGY-level optimiser sets this number."""
 long_doc = """\
 The value of the STRATEGY-level optimiser sizes the workers of the run; \
 OMP_NUM_THREADS does not change their number. The THREADS of an EXPLORE \
@@ -1723,13 +1727,13 @@ args = [
   { name = "value", kind = "tokens", doc = "Its value; INIT_MODE takes the forms of the synopsis." },
 ]
 repeat = "add"
-repeat_doc = "Each line sets one PARAM key, and one name is given once for each optimiser, as a key of the optimiser group is."
+repeat_doc = "Each line sets one PARAM key; an optimiser takes each PARAM name once, as it takes each of its other keys once."
 doc = """\
 Sets one PARAM key of the optimiser: an algorithm parameter, by name, with \
 its value. The PARAM keys each optimiser takes have entries of their own."""
 long_doc = """\
-The value is one token. A value shaped like a number must be a finite \
-number; another word is kept as written, for a PARAM key that takes a \
+The value is one token, except for INIT_MODE. A value shaped like a number \
+must be a finite number; another word is kept as written, for a PARAM key that takes a \
 word. INIT_MODE takes UNIFORM, JITTER, JITTER and a fraction, or JITTER \
 AUTO and a tolerance; the numbers of these forms must be finite numbers. \
 The line reads these extra values whatever the case of the name and of \
@@ -1969,7 +1973,7 @@ checks = [
 ]
 
 [[key.examples]]
-doc = "A search from several starting points; TYPE may follow the keys of its TYPE."
+doc = "A search from several starting points; the TYPE line may follow the N_STARTS line."
 wrap = "strategy"
 text = '''
 N_STARTS 3
@@ -2058,7 +2062,7 @@ ENDINIT'''
 
 [[key.examples]]
 wrap = "strategy"
-doc = "TYPE may follow the keys of its TYPE."
+doc = "The TYPE line may follow the N_STARTS line."
 text = '''
 N_STARTS 3
 TYPE MULTISTART
@@ -2193,11 +2197,11 @@ refinement starts from: it runs its optimiser once from each, or once from \
 all of them for an optimiser that takes several starting points in one \
 run."""
 long_doc = """\
-Above 1, the refinement optimiser must be one that runs from each start, \
-as under STRATEGY TYPE MULTISTART, or one that takes several starting \
-points in one run, such as DLIB:GFS. The refinement shares its MAXEVAL \
-among the candidates, while DLIB:GFS runs once with all of them and the \
-whole MAXEVAL."""
+Above 1, the refinement optimiser must be one that runs once from each \
+candidate, such as a local optimiser, or one that takes several starting \
+points in one run, such as DLIB:GFS. An optimiser that runs from each \
+candidate shares the refinement MAXEVAL among the candidates; DLIB:GFS runs \
+once with all of them and the whole MAXEVAL."""
 
 [[key.examples]]
 wrap = "opt_prestage"
@@ -2336,7 +2340,9 @@ keys = ["STRATEGY.TOPK"]
 doc = """\
 An exploration with the optimiser of the EXPLORE block, then a refinement \
 with the STRATEGY-level optimiser, or that of the REFINE block, from the \
-TOPK best candidates of the exploration."""
+TOPK best candidates of the exploration. With fewer candidates that have a \
+usable loss, the refinement starts from those; with none, it starts from \
+the OPTIMIZER-level INIT points."""
 
 [[strategy_type.checks]]
 msg = "STRATEGY TYPE PRESTAGE requires an EXPLORE ... ENDEXPLORE block inside the STRATEGY block (it defines the exploration phase); the refinement optimiser is the STRATEGY-level LIB/ALGO or an optional REFINE ... ENDREFINE block."
@@ -2419,7 +2425,7 @@ blocks = ["INIT", "RESTART"]
 synopsis = "METHOD <method> [<value>]"
 args = [
   { name = "method", kind = "name", msg = "{key} {tok}: unknown method; the methods are CONFIG, RANDOM, LHS, SOBOL and WARM, in upper case", doc = "CONFIG, RANDOM, LHS, SOBOL or WARM (the INIT methods)." },
-  { name = "value", kind = "tokens", optional = true, doc = "The value of the method: none for CONFIG, K for RANDOM, LHS and SOBOL, a file for WARM." },
+  { name = "value", kind = "tokens", optional = true, doc = "The value of the method: none for CONFIG, the number of starting points K for RANDOM, LHS and SOBOL, a file for WARM." },
 ]
 repeat = "add"
 default = { text = "No METHOD line: one starting point, the values of the training configuration, as METHOD CONFIG." }
@@ -2428,9 +2434,9 @@ Adds the starting points of one INIT method to the chain of the block. \
 The chain draws its METHOD lines in the order of the file, and drops a \
 point equal to an earlier one."""
 long_doc = """\
-The method and its values are checked at the line; a WARM file is read, \
-and the points are drawn, once the whole file has been read, and a \
-refusal then names the METHOD line. Inside an INIT or RESTART block a \
+The method and its values are checked at the line. A WARM file is read, \
+and the points are drawn, once the whole target file has been read; a \
+refusal at that stage names the METHOD line. Inside an INIT or RESTART block a \
 STRATEGY line is a METHOD line. The method names are compared as written, \
 in upper case."""
 checks = [
@@ -2498,7 +2504,7 @@ args = [ { name = "n", kind = "integer", min = 1, what = "{key}" } ]
 repeat = "error"
 repeat_msg = "K_TOTAL is set twice in the {block} block (first on line {first_line}); each key is given once"
 repeat_doc = """\
-Once for each set of starting points. A second line is refused in the same \
+Once for each chain. A second line is refused in the same \
 block, in a second block of that type, or in another INIT block inside \
 OPTIMIZER, STRATEGY or REFINE, which set the starting points of one \
 optimiser."""
@@ -2509,7 +2515,7 @@ first K_TOTAL points, a single METHOD line included. The INIT blocks \
 inside OPTIMIZER, STRATEGY and REFINE make one chain, those inside \
 EXPLORE another, and the RESTART blocks a third."""
 long_doc = """\
-K_TOTAL is 1 or more. One at or above the number of points the METHOD \
+K_TOTAL is 1 or more. A K_TOTAL at or above the number of points the METHOD \
 lines of its chain give caps nothing and is refused when the file is \
 read. Each RANDOM, LHS and SOBOL line gives its K points; the CONFIG \
 lines give one point, and so do the WARM lines of one file. An INIT \
@@ -2625,7 +2631,7 @@ args = [ { name = "n", kind = "integer", min = 0, max = "UINT64_MAX", what = "{k
 repeat = "error"
 repeat_msg = "SEED is set twice in the {block} block (first on line {first_line}); each key is given once"
 repeat_doc = """\
-Once for each set of starting points. A second line is refused in the same \
+Once for each chain. A second line is refused in the same \
 block, in a second block of that type, or in another INIT block inside \
 OPTIMIZER, STRATEGY or REFINE, which set the starting points of one \
 optimiser."""
@@ -2671,7 +2677,7 @@ args = [ { name = "policy", kind = "word", words = ["warn", "error", "skip"], ms
 repeat = "error"
 repeat_msg = "WARM_ON_MISMATCH is set twice in the {block} block (first on line {first_line}); each key is given once"
 repeat_doc = """\
-Once for each set of starting points. A second line is refused in the same \
+Once for each chain. A second line is refused in the same \
 block, in a second block of that type, or in another INIT block inside \
 OPTIMIZER, STRATEGY or REFINE, which set the starting points of one \
 optimiser."""
@@ -2858,6 +2864,9 @@ One starting point read from a potential file: the values of the search \
 parameters it holds. WARM_ON_MISMATCH says what happens when a value is \
 missing or outside its OPTIM box; a key the file has no line of is \
 missing, whatever its default."""
+quirk = """\
+Comment lines of the form "# HOT <script> <name> <value>" in the file also \
+set the start values of the --hotvar relaxations of the run."""
 untested = [
   { msg = "WARM: parse failure in seed file '{file}': {why}", why = "Comes when the run draws its starting points, after it reads its data, which no case does." },
   { msg = "WARM seed {file} {text}, but this run evaluates RHOFORM {type} (from -c) and takes the OPTIM density parameters ({keys}) from the seed: density parameters are meaningful only in the form they were fitted in. {hint}", why = "Needs a WARM seed of a DM_REAM potential, and comes when the run draws its starting points, after it reads its data." },
@@ -2932,7 +2941,7 @@ also sets PARAM fd_step. Like a PARAM fd_step, the derived step gives \
 every point of every OPTIM box a stencil inside the box, or startup \
 refuses it."""
 checks = [
-  { msg = "{phase} {lib}:{algo}: NOISE AUTO has no effect: {why}; remove AUTO from the NOISE block.", doc = "At startup, at the ENDOPTIMIZER line: the STRATEGY-level optimiser measures no slopes with finite differences; {why} says why." },
+  { msg = "{phase} {lib}:{algo}: NOISE AUTO has no effect: {why}; remove AUTO from the NOISE block.", doc = "At startup, at the ENDOPTIMIZER line: the STRATEGY-level optimiser takes no finite-difference gradients; {why} says why." },
 ]
 
 [[key.examples]]
@@ -3054,10 +3063,11 @@ A restart runs the whole STRATEGY TYPE again. Without a METHOD line it \
 starts from the values of the training configuration. A RESTART block \
 needs AFTER_STAGNATION and MAX, each 1 or more: a block without one of \
 them is refused when the STRATEGY block ends. TADAH:ANNEAL_PT, \
-TADAH:ANNEAL_PA and ASA:ASA with Gener_Block_Max above 1 count these \
-evaluations in the order of their numbers. When the count is reached \
-during evaluations they run at once, the others still run and are \
-recorded, and the restart follows them."""
+TADAH:ANNEAL_PA and ASA:ASA with Gener_Block_Max above 1 run several \
+evaluations at once. They count the evaluations without a better loss in \
+the order of their numbers. When the count is reached inside such a group, \
+the other evaluations of the group still run and are recorded, and the \
+restart follows them."""
 
 [[key.examples]]
 wrap = "strategy"
@@ -3182,7 +3192,8 @@ keys = ["BLOCK.INNER", "OPTIMIZER.ALGO"]
 msg = "{name} needs an INNER block ({phase}): NLopt has no default local optimiser for it; an INNER block with LIB NLOPT and a local ALGO, such as LN_BOBYQA, names one, or {list} run {default} without one"
 doc = """\
 An NLopt MLSL or AUGLAG algorithm for which NLopt has no default local \
-optimiser has an INNER block."""
+optimiser (NLOPT:AUGLAG, NLOPT:AUGLAG_EQ, NLOPT:G_MLSL, NLOPT:G_MLSL_LDS) \
+has an INNER block."""
 msg_doc = """\
 The message lists the MLSL and AUGLAG forms that have a default local \
 optimiser, and those optimisers."""
@@ -3326,9 +3337,9 @@ msg = "{phase}: the local search of {name} (NLopt's default {lib}:{algo}, as the
 doc = """\
 An NLopt MLSL or AUGLAG without an INNER block runs NLopt's default local \
 optimiser; when that optimiser needs a stop (the optimiser list says which \
-do), the block sets one, which NLopt hands on to it. The refusal names the \
-END line of its optimiser (ENDOPTIMIZER, or ENDEXPLORE for the EXPLORE \
-block)."""
+do), the block must set one, which NLopt hands on to it; a block without \
+one is refused at startup. The refusal names the END line of its optimiser \
+(ENDOPTIMIZER, or ENDEXPLORE for the EXPLORE block)."""
 msg_doc = """\
 The message names the default local optimiser, says why it needs a stop \
 and lists the stops it honours."""
@@ -3401,9 +3412,9 @@ check = "startup"
 keys = ["ROOT.OPTIM", "OPTIMIZER.LIB"]
 msg = "{phase}: {lib}:{algo} cannot optimise a zero-dimensional search space (there is no OPTIM line; the failure would only surface once the optimiser starts). Add at least one OPTIM line, or use a TADAH-native optimiser, which evaluates the INIT start point once."
 doc = """\
-An NLOPT, DLIB or CERES optimiser searches at least one OPTIM line; a \
-TADAH optimiser runs without one. The refusal names the END line of the \
-block of the optimiser."""
+An NLOPT, DLIB or CERES optimiser needs at least one OPTIM line; a target \
+file without one is refused at startup, at the END line of the block of the \
+optimiser. A TADAH optimiser runs without one."""
 
 [[rule.examples]]
 wrap = "none"
@@ -3436,8 +3447,8 @@ check = "startup"
 keys = ["ROOT.OPTIM", "OPTIMIZER.LIB"]
 msg = "{phase}: ASA:ASA requires at least one OPTIM dimension"
 doc = """\
-ASA:ASA searches at least one OPTIM line. The refusal names the END line \
-of its block."""
+ASA:ASA needs at least one OPTIM line; a target file without one is \
+refused at startup. The refusal names the END line of its block."""
 
 [[rule.invalid]]
 wrap = "none"
@@ -3464,7 +3475,7 @@ A run on more than one MPI rank, in the MPI build of tadah, has STRATEGY \
 TYPE PLAIN and the optimiser TADAH:ANNEAL_PT or TADAH:ANNEAL_PA. The \
 refusal comes when the run starts, before any evaluation, at the \
 ENDOPTIMIZER line."""
-msg_doc = "The message gives the optimiser and the number of ranks."
+msg_doc = "The message gives the number of ranks, the STRATEGY TYPE of the block and its optimiser."
 untested = [
   { msg = "a run on {count} MPI ranks takes STRATEGY TYPE PLAIN with TADAH:ANNEAL_PT or TADAH:ANNEAL_PA only, and the block has STRATEGY TYPE {type} with {lib}:{algo}", why = "A run on more than one MPI rank, in the MPI build." },
 ]
@@ -3478,7 +3489,8 @@ msg = "a run on {count} MPI ranks takes no RESTART block (AFTER_STAGNATION {valu
 doc = """\
 A run on more than one MPI rank has no RESTART block. The refusal \
 comes when the run starts, before any evaluation, at the ENDOPTIMIZER \
-line, after that of the optimiser."""
+line, after the check that such a run uses TADAH:ANNEAL_PT or \
+TADAH:ANNEAL_PA under STRATEGY TYPE PLAIN."""
 untested = [
   { msg = "a run on {count} MPI ranks takes no RESTART block (AFTER_STAGNATION {value}, MAX {max}): each rank counts its own evaluations without a new best, so one rank would restart without the others; a run with a RESTART block runs on one rank", why = "A run on more than one MPI rank, in the MPI build." },
 ]
@@ -3486,15 +3498,15 @@ untested = [
 [[rule]]
 id = "RULE.multi_rank_population"
 title = """\
-On several MPI ranks there are as many replicas or walkers as ranks"""
+On several MPI ranks there are at least as many replicas or walkers as ranks"""
 check = "startup"
 keys = ["OPTIMIZER.POPULATION", "OPTIMIZER.ALGO"]
 msg = "TADAH:{algo}: {key} ({value}) must be >= the MPI world size ({count})"
 doc = """\
 On more than one MPI rank, TADAH:ANNEAL_PT has at least as many replicas \
 (PARAM REPLICAS) and TADAH:ANNEAL_PA at least as many walkers (POPULATION) \
-as there are ranks. The refusal comes when the search starts, without a \
-line."""
+as there are ranks. The refusal comes when the search starts; the message \
+names no line of the target file."""
 msg_doc = """\
 The message names the key, REPLICAS or POPULATION, its value and the \
 number of ranks."""
@@ -3517,8 +3529,8 @@ keys = ["BLOCK.OPTIMIZER", "BLOCK.STRATEGY", "BLOCK.REFINE", "GROUP.OPTIMIZER", 
 msg = "{key} is set on line {first_line} in the {open} block and again here in the {block} block; both blocks configure the same {what}, so each key is given once"
 doc = """\
 OPTIMIZER, STRATEGY and REFINE configure the STRATEGY-level optimiser, and \
-OPTIMIZER and STRATEGY the search space. A key of the optimiser group, or \
-LOG_HP, given in two of these blocks is refused at the second line."""
+OPTIMIZER and STRATEGY the search space. A key that configures the \
+optimiser (for example ALGO or MAXEVAL), or LOG_HP, given in two of these blocks is refused at the second line."""
 msg_doc = """\
 The message names the key, the line and the block of the first line, the \
 block of the second, and what both blocks configure: the optimiser, or the \
@@ -3590,8 +3602,8 @@ starting points of the STRATEGY-level optimiser: their METHOD lines make \
 one chain, and another key given in two of them is refused at the second \
 line."""
 msg_doc = """\
-The message names the key, the line of the first, and the blocks the two \
-INIT blocks are in."""
+The message names the key, the line where it is first set, and the blocks \
+the two INIT blocks are in."""
 
 [[rule.examples]]
 wrap = "none"

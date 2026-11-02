@@ -827,6 +827,7 @@ inline constexpr std::string_view ROOT_RHOGATE_checks[] = {
     "RHOGATE: under {form} every density rho(r) is >= 0, so the sign condition of RHOGATE holds for every candidate; RHOGATE is taken under RHOFORM SIGNED only (RHOBARGATE under every form)",
     "{keys}: the many-body cutoff RCUTMB is not set.",
     "{keys}: {why} on every candidate (WATOM has no OPTIM line, or its OPTIM box does not reach above 0), so every evaluation would be refused before training, under SEED ERROR and SEED WARN alike. The checks of {keys} need every density pair weight > 0, which a WATOM above 0 gives (under RHOFORM SIGNED the sign of rho is that of the AMPGRIDMB amplitudes); without the {keys} line(s) the run makes no such check.",
+    "RHOGATE R_LO {value} A must lie below the smallest cutoff a candidate can have, RCUTMB = {min} A{note}: the window [R_LO, RCUTMB] would be empty; a smaller R_LO gives the window a width.",
     "RHOGATE: seed {name} fails the rho(r) sign gate: {why}. A seed that fails is refused under SEED ERROR, the default, and is evaluated as a rejected start under SEED WARN. tadah refit --edit changes the density of a potential file; a WARM seed takes the values of its search parameters from its file and the others from the training configuration.",
 };
 inline constexpr std::string_view ROOT_RHOBARGATE_arg0_words[] = {
@@ -857,6 +858,7 @@ inline constexpr std::string_view ROOT_RHOBARGATE_checks[] = {
     "RHOBARGATE: unexpected token '{tok}'; expected RHOBARGATE <bcc|fcc|hcp> <a0> <f_lo> <f_hi> [NPTS <n>] [SEED ERROR|WARN]",
     "{keys} {what} the density of one DM_REAM many-body term or of one DM_Embed component, and {why}",
     "RHOBARGATE: f_lo = {low} puts the largest reachable RCUTMB, {max} A, at {value} lattice constants of the smallest lattice (a = f_lo a0 = {min} A); the limit is 20. f_lo and f_hi are fractions of a0 (0.75 scans down to 25 % compression), and a larger f_lo puts that RCUTMB at fewer lattice constants.",
+    "RHOBARGATE: the largest reachable RCUTMB is not finite",
     "RHOBARGATE: seed {name} fails the lattice rhobar(a) gate: {why}. A seed that fails is refused under SEED ERROR, the default, and is evaluated as a rejected start under SEED WARN. tadah refit --edit changes the density of a potential file; a WARM seed takes the values of its search parameters from its file and the others from the training configuration.",
     "RHOBARGATE: the first {name} shell at a = f_hi a0 = {high} A lies at r = {value} A, beyond the smallest cutoff a candidate can have, RCUTMB = {max} A{note}: rhobar(a) would lose its nearest neighbours; a smaller f_hi or a0, or a larger RCUTMB, keeps the first shell inside the cutoff.",
 };
@@ -2413,13 +2415,13 @@ inline constexpr Key kKeys[] = {
       Repeat::Error,
       "RHOGATE is set twice (first on line {first_line}); each key is given once",
       "", false, "", false, KeyId::ROOT_RHOGATE, false, "",
-      Span<std::string_view>{detail::ROOT_RHOGATE_checks, 7}},
+      Span<std::string_view>{detail::ROOT_RHOGATE_checks, 8}},
   Key{KeyId::ROOT_RHOBARGATE, "ROOT.RHOBARGATE", "RHOBARGATE", "",
       block_bit(BlockId::ROOT), Span<Arg>{detail::ROOT_RHOBARGATE_args, 4},
       Repeat::Error,
       "RHOBARGATE is set twice (first on line {first_line}); each key is given once",
       "", false, "", false, KeyId::ROOT_RHOBARGATE, false, "",
-      Span<std::string_view>{detail::ROOT_RHOBARGATE_checks, 8}},
+      Span<std::string_view>{detail::ROOT_RHOBARGATE_checks, 9}},
   Key{KeyId::ROOT_QFLUSH, "ROOT.QFLUSH", "QFLUSH", "",
       block_bit(BlockId::ROOT), Span<Arg>{detail::ROOT_QFLUSH_args, 1},
       Repeat::Error,

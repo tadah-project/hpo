@@ -316,7 +316,7 @@ checks = [
   { msg = "{phase}: ASA:ASA: PARAM {key} is a scalar option (indexed form not accepted)", doc = "At startup, at the END line of its optimiser: an index on an option that has one value." },
   { msg = "{phase}: ASA:ASA: PARAM {key}: index 0 is no dimension: the indices count the dimensions of the search space from 1, as the dim column of hpo_search_space.tsv does", doc = "At startup, at the END line of its optimiser: the index 0 on an option that takes one value for each dimension." },
   { msg = "{phase}: ASA:ASA: PARAM {key}: index {index} is above the number of dimensions of the search space, {count} (indices count from 1)", doc = "At startup, at the END line of its optimiser: an index above the number of search parameters, {count}." },
-  { msg = "{phase}: ASA:ASA: malformed indexed PARAM '{name}' (expected Name[<1-based index>])", doc = "At startup, at the END line of its optimiser: a name with an opening bracket and no closing one." },
+  { msg = "{phase}: ASA:ASA: malformed indexed PARAM '{name}' (expected Name[<1-based index>])", doc = "At startup, at the END line of its optimiser: a name with an opening bracket that does not end in a closing one." },
   { msg = "{phase}: ASA:ASA: malformed index in PARAM '{name}' (expected a positive integer)", doc = "At startup, at the END line of its optimiser: an index that is no whole number." },
 ]
 
@@ -409,10 +409,10 @@ The points divide each OPTIM dimension into n - 1 equal steps in the \
 coordinates of the search: the value for LIN, its logarithm for LOG, \
 asinh(x/c) for ASINH."""
 long_doc = """\
-The grid has n to the power of the number of dimensions points, evaluated \
-in order after the starting point. MAXEVAL counts the starting point too: \
-a MAXEVAL below the number of evaluations stops the sweep after that \
-many."""
+The grid has n^d points, where d is the number of OPTIM dimensions; they \
+are evaluated in order after the starting point. MAXEVAL counts the \
+starting point too: a MAXEVAL below the starting point plus the grid \
+points stops the sweep after MAXEVAL evaluations."""
 checks = [
   { msg = "{phase}: TADAH:GRID: PARAM GRID_POINTS must be an integer from 2 to 4294967295, got '{value}' (the points of each dimension include both of its bounds)", doc = "For a number below 2, with a fraction or above 4294967295, written in its shortest form that reads back as the same number, or for a word, as written." },
 ]
@@ -436,8 +436,9 @@ args = [{ name = "tolerance", kind = "number", min = 0, min_open = true }]
 default = { text = "not set: the FTOL_ABS test ends the search, with 1e-7 when FTOL_ABS is not set", unchecked = "DLIB:BFGS takes the value when it starts; no setting of the target file holds it." }
 doc = """\
 The search ends once the largest component of the gradient, in absolute \
-value, falls below this value, above 0, as under CERES. It replaces the \
-FTOL_ABS test, and the two are not set together."""
+value, falls below this value, as under CERES. The value is above 0."""
+long_doc = """\
+The test replaces the FTOL_ABS test, and the two are not set together."""
 checks = [
   { msg = "{phase}: DLIB:BFGS requires PARAM tol_gradinf > 0", doc = "For a value of 0 or below." },
   { msg = "{phase}: DLIB:BFGS accepts either FTOL_ABS or PARAM tol_gradinf, but not both", doc = "When the block also sets FTOL_ABS." },
@@ -459,8 +460,8 @@ optimizers = ["CERES:STEEPEST_DESCENT"]
 args = [{ name = "tolerance", kind = "number", min = 0, min_open = true }]
 default = { literal = "1e-10" }
 doc = """\
-Ceres' gradient tolerance: the search ends once the largest component of \
-the gradient falls below this value, above 0."""
+Ceres' gradient tolerance, a number above 0: the search ends once the \
+largest component of the gradient falls below this value."""
 checks = [
   { msg = "{phase}: CERES:{algo} requires PARAM tol_gradinf > 0", doc = "For a value of 0 or below." },
 ]
@@ -719,8 +720,8 @@ optimizers = ["ASA:ASA"]
 args = [{ name = "value", kind = "number", min = 0, min_open = true }]
 default = { literal = "1e-18" }
 doc = """\
-The change of the best loss below which the plateau test counts a \
-repeat; above 0."""
+The difference between the last and the best loss below which a test \
+cycle counts as a plateau cycle of Maximum_Cost_Repeat; above 0."""
 checks = [
   { msg = "{phase}: ASA:ASA: PARAM {key} must be >= {min} (got {value})", doc = "For a value below 0." },
   { msg = "{phase}: ASA:ASA: PARAM Cost_Precision must be > 0 (got {value})", doc = "For a value of 0." },
@@ -740,8 +741,9 @@ optimizers = ["ASA:ASA"]
 args = [{ name = "value", kind = "number", min = 0, integral = true }]
 default = { literal = "5" }
 doc = """\
-The number of consecutive plateau cycles that ends the search \
-(COST_REPEATING); 0 switches the test off."""
+The number of consecutive plateau cycles that ends the search; 0 switches \
+the test off. A test cycle is a plateau cycle when the last loss differs \
+from the best loss by less than Cost_Precision."""
 checks = [
   { msg = "{phase}: ASA:ASA: PARAM {key} must be an integer (got {value})", doc = "For a value with a fraction." },
   { msg = "{phase}: ASA:ASA: PARAM {key} must be >= {min} (got {value})", doc = "For a value below 0." },
@@ -761,9 +763,9 @@ optimizers = ["ASA:ASA"]
 args = [{ name = "value", kind = "number", integral = true }]
 default = { literal = "5" }
 doc = """\
-The sample of the initial temperature of the loss: a positive value takes \
-the mean absolute loss of that many states, a value below -1 a deviation \
-sample."""
+The number of states sampled to set the initial temperature of the loss: \
+a positive value takes the mean absolute loss of that many states, a value \
+below -1 a deviation sample. 0 and -1 are refused."""
 checks = [
   { msg = "{phase}: ASA:ASA: PARAM {key} must be an integer (got {value})", doc = "For a value with a fraction." },
   { msg = "{phase}: ASA:ASA: PARAM Number_Cost_Samples must not be 0 or -1 (>0 = mean |cost| sample, <-1 = deviation sample)", doc = "For 0 and -1." },
@@ -895,11 +897,11 @@ optimizers = ["ASA:ASA"]
 args = [{ name = "value", kind = "number", min = 0, integral = true }]
 default = { literal = "100" }
 doc = """\
-ASA's periodic test, in which it reanneals and checks whether the cost \
+ASA's periodic test, in which it reanneals and checks whether the loss \
 repeats, follows each accepted state that brings the count of accepted states \
-to a multiple of this number; 0 switches this off. When a block holds \
-more than one state, the test follows the block in which the count \
-reaches a multiple of this number."""
+to a multiple of this number; 0 switches this off. When ASA generates more \
+than one state at a time (Gener_Block), the test follows the set of states \
+in which the count reaches a multiple of this number."""
 checks = [
   { msg = "{phase}: ASA:ASA: PARAM {key} must be an integer (got {value})", doc = "For a value with a fraction." },
   { msg = "{phase}: ASA:ASA: PARAM {key} must be >= {min} (got {value})", doc = "For a value below 0." },
@@ -919,11 +921,11 @@ optimizers = ["ASA:ASA"]
 args = [{ name = "value", kind = "number", min = 0, integral = true }]
 default = { literal = "10000" }
 doc = """\
-ASA's periodic test, in which it reanneals and checks whether the cost \
+ASA's periodic test, in which it reanneals and checks whether the loss \
 repeats, follows each state that brings the count of generated states \
-to a multiple of this number; 0 switches this off. When a block holds \
-more than one state, the test follows the block in which the count \
-reaches a multiple of this number."""
+to a multiple of this number; 0 switches this off. When ASA generates more \
+than one state at a time (Gener_Block), the test follows the set of states \
+in which the count reaches a multiple of this number."""
 checks = [
   { msg = "{phase}: ASA:ASA: PARAM {key} must be an integer (got {value})", doc = "For a value with a fraction." },
   { msg = "{phase}: ASA:ASA: PARAM {key} must be >= {min} (got {value})", doc = "For a value below 0." },
@@ -989,14 +991,14 @@ args = [{ name = "value", kind = "number", min = 0 }]
 default = { literal = "0.001" }
 doc = """\
 The relative step of the finite differences of the tangents: ASA probes at \
-(1 + Delta_X) x, x in the coordinates of the search. 0 switches the \
-tangents off."""
+(1 + Delta_X) x, or at (1 - Delta_X) x when that lies outside the box, x in \
+the coordinates of the search. 0 switches the tangents off."""
 long_doc = """\
 ASA's finite-difference probes stay inside the OPTIM box, whatever \
 Reanneal_Parameters is: at startup a Delta whose probes leave the box of \
-a dimension is refused. Under OPTIM_SCALE AUTO that holds up to 1, and up \
-to 0.5 when Curvature_0 is 0 or -1; under NONE the limit depends on each \
-box."""
+a dimension is refused. Under OPTIM_SCALE AUTO, a Delta up to 1 keeps every \
+probe inside the box, and a Delta up to 0.5 when Curvature_0 is 0 or -1; \
+under NONE the limit depends on each box."""
 checks = [
   { msg = "{phase}: ASA:ASA: PARAM {key} must be >= {min} (got {value})", doc = "For a value below 0." },
   { msg = "{phase} ASA:ASA: ASA's finite-difference probes -- the reannealing and exit tangents at (1 + Delta) x, or (1 - Delta) x when that lies outside the box{note} -- would be evaluated outside the OPTIM box of these dimensions:{list}\n  Lower the Delta{why}.", doc = "At startup: a probe falls outside the OPTIM box of a dimension. {note} adds the probes of the exit curvature when Curvature_0 is 0 or -1, and {list} has a line for each such dimension, with the largest Delta that fits it. {why} adds, under OPTIM_SCALE NONE, the limits of OPTIM_SCALE AUTO." },
@@ -1142,10 +1144,10 @@ doc = """\
 The finite-difference step of the tangents in each dimension; above 0."""
 long_doc = """\
 ASA's finite-difference probes stay inside the OPTIM box, whatever \
-Reanneal_Parameters is: at startup a Delta whose probes leave the box of \
-a dimension is refused. Under OPTIM_SCALE AUTO that holds up to 1, and up \
-to 0.5 when Curvature_0 is 0 or -1; under NONE the limit depends on each \
-box."""
+Reanneal_Parameters is: at startup a step (User_Delta_Parameter, or Delta_X \
+by default) whose probes leave the box of a dimension is refused. Under \
+OPTIM_SCALE AUTO a step up to 1 fits every box, and up to 0.5 when \
+Curvature_0 is 0 or -1; under NONE the limit depends on each box."""
 checks = [
   { msg = "{phase}: ASA:ASA: PARAM {key} must be >= {min} (got {value})", doc = "For a value below 0." },
   { msg = "{phase}: ASA:ASA: PARAM {key} must be > 0 (got {value})", doc = "For 0, as the value of every dimension or of one." },
@@ -1235,8 +1237,8 @@ indexed = true
 args = [{ name = "value", kind = "number", min = 0 }]
 default = { literal = "0.0" }
 doc = """\
-The distance in each dimension below which two minima count as one, in the \
-coordinates of the search: a fraction of the width of the OPTIM box under \
+The distance in each dimension below which two of the minima tracked by \
+Multi_Number count as one, in the coordinates of the search: a fraction of the width of the OPTIM box under \
 OPTIM_SCALE AUTO. 0 stands for the machine epsilon of a double."""
 checks = [
   { msg = "{phase}: ASA:ASA: PARAM {key} must be >= {min} (got {value})", doc = "For a value below 0." },
@@ -1280,7 +1282,11 @@ default = { literal = "0.0" }
 doc = """\
 The distance in each dimension below which two points count as one for the \
 cache, in the coordinates of the search: a fraction of the width of the \
-OPTIM box under OPTIM_SCALE AUTO."""
+OPTIM box under OPTIM_SCALE AUTO. The cache works only when Queue_Size is \
+above 0."""
+long_doc = """\
+With Queue_Resolution 0, the default, a loss is reused only for a point \
+generated again exactly."""
 checks = [
   { msg = "{phase}: ASA:ASA: PARAM {key} must be >= {min} (got {value})", doc = "For a value below 0." },
 ]
@@ -1299,9 +1305,10 @@ optimizers = ["ASA:ASA"]
 args = [{ name = "value", kind = "number", min = 1, integral = true }]
 default = { literal = "1" }
 doc = """\
-The initial number of states generated in one block; with more than one, \
-a block is evaluated concurrently on the THREADS workers, which changes \
-the sampling."""
+The initial number of states ASA generates at a time; the number then \
+adapts between 1 and Gener_Block_Max unless Gener_Mov_Avr is 0. A set of \
+more than one state is evaluated concurrently on the THREADS workers, which \
+changes the sampling."""
 checks = [
   { msg = "{phase}: ASA:ASA: PARAM {key} must be an integer (got {value})", doc = "For a value with a fraction." },
   { msg = "{phase}: ASA:ASA: PARAM {key} must be >= {min} (got {value})", doc = "For a value below 1." },
@@ -1321,8 +1328,9 @@ optimizers = ["ASA:ASA"]
 args = [{ name = "value", kind = "number", min = 1, integral = true }]
 default = { text = "the value of Gener_Block" }
 doc = """\
-The largest block size, not below Gener_Block; the adaptive resizing \
-keeps a block between 1 and this value."""
+The largest number of states ASA generates and evaluates together, not \
+below Gener_Block; the adaptive resizing keeps that number between 1 and \
+this value."""
 checks = [
   { msg = "{phase}: ASA:ASA: PARAM {key} must be an integer (got {value})", doc = "For a value with a fraction." },
   { msg = "{phase}: ASA:ASA: PARAM {key} must be >= {min} (got {value})", doc = "For a value below 1." },
@@ -1344,8 +1352,9 @@ optimizers = ["ASA:ASA"]
 args = [{ name = "value", kind = "number", min = 0, integral = true }]
 default = { literal = "3" }
 doc = """\
-The moving-average window of the adaptive block resizing; 0 switches the \
-resizing off, and every block holds Gener_Block states."""
+The moving-average window of the adaptive resizing of the set of states \
+ASA generates at a time; 0 switches the resizing off, and every such set \
+holds Gener_Block states."""
 checks = [
   { msg = "{phase}: ASA:ASA: PARAM {key} must be an integer (got {value})", doc = "For a value with a fraction." },
   { msg = "{phase}: ASA:ASA: PARAM {key} must be >= {min} (got {value})", doc = "For a value below 0." },
