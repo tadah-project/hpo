@@ -312,7 +312,37 @@ keys, the unknown-key refusal of the block, the top-level keys; the loader
 requires exactly this order); `end_without_open_msg`, `end_mismatch_msg`,
 `end_takes_no_value_msg`, `open_takes_no_value_msg`, `unclosed_msg`,
 `unknown_root_msg`, `root_key_in_block_msg` (a top-level key inside an
-open block), `removed_msg`.
+open block), `removed_msg`. The order of the other steps of the parse,
+each an order of the steps the loader names (each once):
+
+- `open_order`, a line that opens a block: `alias` (a word the enclosing
+  block reads as a key, STRATEGY inside INIT), `parents` (`misplaced_msg`),
+  `requires`, `repeat` (`repeat_msg`), `key_alone`
+  (`open_takes_no_value_msg`), `open`;
+- `close_order`, an END line: `match` (`end_without_open_msg`,
+  `end_mismatch_msg`), `key_alone` (`end_takes_no_value_msg`),
+  `close_steps` (the block's checks, below), `close`;
+- `line_steps`, the line of a key by its place: `ROOT`, `group` (a key of
+  a group), `block` (another key of a block). Its steps are `repeat` (the
+  key's repeat rule), `value` (each value, with the leftover message of
+  its reader, `single_value_msg`), `options` (the options of the line) and
+  `leftover` (the group's `leftover_msg`); `value` is one of them,
+  `leftover` a step of a group only. A key's own `steps` replace those of
+  its place;
+- `eof_order`, the checks at the end of the file: `open_block`
+  (`unclosed_msg`), `k_total_caps` (`INIT.K_TOTAL`),
+  `script_timeout_unread` (`ROOT.PC_SCRIPT_TIMEOUT`, `ROOT.MAXTIME`),
+  `loss_unread` and `metric_target_loss` (`ROOT.LOSS`),
+  `density_key_arming` (`RULE.density_key_arming`), `archive_directories`
+  (`ROOT.DUMP`, `ROOT.BDUMP`), `optimizer_required` (`BLOCK.OPTIMIZER`, a
+  file without the block), `observable_with_scripts`
+  (`RULE.PC_OBSERVABLE_excludes_PC_LAMMPS`), `hotvar_injected`
+  (`ROOT.PC_LAMMPS`), `hotvar_unique` (`RULE.PC_LAMMPS_hotvar_unique`),
+  `observable_numerical` (`RULE.PC_OBSERVABLE_GRAD_STRATEGY`),
+  `observable_analytical` (an unset `GRAD_STRATEGY` of a block that
+  obtains gradients becomes `ANALYTICAL` beside `PC_OBSERVABLE`: no
+  refusal), `script_gradients` (the rules `RULE.PC_LAMMPS_*` of the
+  gradients).
 
 `[group.<NAME>]`: `blocks` (where the keys of the group are valid),
 `leftover_msg` (a value after the last one a key reads), `doc`.
@@ -329,13 +359,24 @@ key), `aliases` (optional: a word read as another key inside the block,
 the block refuses, each with `key` and `why`), `unreachable_msgs` (optional:
 messages the parser holds for the block that no file reaches), `requires`
 (optional: conditions checked at the opening line), `close_checks`
-(optional: checks at or after the END line), `quirk`, `doc`. `requires` and
-`close_checks` are arrays of `msg` and `doc` (when the check is made).
+(optional: checks at or after the END line), `close_steps` (optional: the
+checks its END line runs, in order: `optimizer_driver`, `explore_driver`
+and `inner_driver`, the optimiser of the block; `strategy_type_keys`, the
+keys of one TYPE; `multistart_n_starts`, a MULTISTART without
+`N_STARTS`; `restart_restarts`, a RESTART block that never restarts. Each
+step is in one block: ENDSTRATEGY runs that of the RESTART blocks),
+`quirk`, `doc`. `requires` and `close_checks` are arrays of `msg` and
+`doc` (when the check is made); a close check takes `at` (optional: the
+line its refusal names, `end`, the END line that runs it and the default,
+`key_line`, the line of the key it is about, or `last_end_line`, the last
+END line of its block).
 
 `[[key]]`: `id`, `name`; `group` or `blocks` (one of them); `synopsis` (the
 line as the reference shows it, `MAXEVAL <n>`); `args` (optional);
 `repeat` (`last_wins`, `warn_last_wins`: last wins with a warning, `error`:
-refused with `repeat_msg`, `add`: each line adds an entry); `repeat_msg`;
+refused with `repeat_msg`, `error_until_read`: refused with `repeat_msg`
+while no line between reads the first, as `FAILSCORE`, `LOSS` and
+`PC_SCRIPT_TIMEOUT` are, `add`: each line adds an entry); `repeat_msg`;
 `repeat_doc` (optional: the repeat rule as the reference shows it, where
 `repeat` alone does not say it: a key whose forms repeat differently, such
 as `STEP`, a key set once for what several blocks configure, such as
@@ -347,8 +388,13 @@ valid, when the parser has one of its own); `default` (optional:
 sentence is one no setting of the parser holds, saying why); `alias_of` (optional: the id of the key it
 is another name for); `refused` (optional: the parser reads the key only to
 refuse it; the text says why); `env` (optional: the `[[env]]` name that
-overrides it); `checks` (optional: refusals of the key's values that no
-argument reader makes, `msg` and `doc`); `doc`, `long_doc`, `quirk`.
+overrides it); `steps` (optional: the steps of its line where they differ
+from those of its place, `[structure] line_steps`: a metric line reads its
+values before its repeat rule); `effect` (a key that a `[[strategy_type]]`
+lists, and only such a key: what the key does under its TYPE, the
+`{effect}` of the close check of STRATEGY); `checks` (optional: refusals
+of the key's values that no argument reader makes, `msg` and `doc`);
+`doc`, `long_doc`, `quirk`.
 
 `args`, an array of tables, one per value in the order of the line:
 `name` (the placeholder of the `synopsis`, `<name>`, or, for a word the
@@ -359,7 +405,9 @@ taken); `integral` (optional, for a `number`: whole numbers only); `words` and
 `refused_words` (a table of word = message) for a `word`; `what` (the
 `{what}` of the reader's message, often `"{key}"`); `msg` (the key's own
 message when the value is refused); `noun` (for `positive`); `default`;
-`doc`. The kinds:
+`doc`; `case` (optional, for a `word`: `exact`, the default, a word as
+written, or `any`, a word in any case; a `bool` and a `loss` are read in
+any case). The kinds:
 
 - `integer`: decimal digits only, between `min` and `max`;
 - `number`: a finite decimal number;
@@ -377,13 +425,14 @@ message when the value is refused); `noun` (for `positive`); `default`;
 
 `[[line_option]]`: `id`, `option` (as written: `--hotvar`, `RATIO`),
 `lines`, `synopsis`, `args`, `repeat`, `repeat_msg` (with `repeat = "error"`
-only), `default`, `refused`,
+only), `default`, `refused`, `case` (optional: the option word, `exact` or
+`any`, as for a word argument),
 `quirk`, `checks` (optional: refusals of the option's values, `msg` and
 `doc`), `doc`, `long_doc`.
 
 `[[form]]`: `id`, `line`, `word` (optional: the word that selects the form;
-none for the form without one), `synopsis`, `args`, `refused`, `quirk`,
-`checks`, `doc`, `long_doc`.
+none for the form without one), `case` (optional: that of its word),
+`synopsis`, `args`, `refused`, `quirk`, `checks`, `doc`, `long_doc`.
 
 `[[removed]]`: `name`, `hint` (the parser's text after `was removed from the
 grammar: `), `doc` (optional).
@@ -392,7 +441,8 @@ grammar: `), `doc` (optional).
 full stop, the heading of the rule's entry and the text of a link to it),
 `check` (`parse` or `startup`), `msg` (optional), `msg_doc` (optional: what
 the message holds, said in words), `keys` (optional: the ids of the entries
-it concerns), `quirk`, `doc`. A rule relates keys or blocks to each other,
+it concerns), `what` (optional: a table of entry id = the `{what}` of the
+message for a line of that entry, one of `keys`), `quirk`, `doc`. A rule relates keys or blocks to each other,
 such as `PC_OBSERVABLE` and `PC_LAMMPS` in one file.
 
 `[[env]]`: `name` (`TADAH_...`), `key` (the id of the key it overrides),
@@ -432,7 +482,8 @@ applies), `doc`.
 `[[param]]`: `id`, `name`, `optimizers` (the `LIB:ALGO` or `LIB` names that
 read it; `*` for a key every optimiser reads, as `doc` says), `args`,
 `default`, `indexed` (optional: the name takes a dimension suffix,
-`[<i>]`), `checks`, `quirk`, `doc`, `long_doc`.
+`[<i>]`), `explain` (optional: its text in the `PARAM` table of
+`tadah explain LIB:ALGO`), `checks`, `quirk`, `doc`, `long_doc`.
 
 `[[param_excluded]]`: `id`, `name`, `optimizers`, `why` (the parser's
 text), `doc` (optional). A `PARAM` key the optimiser names but does not
@@ -489,7 +540,13 @@ checked in:
   or at startup, and its message); the environment overrides; the loss
   functions; the `STRATEGY` types; the `INIT` methods; `[optim]` and the
   `OPTIM` targets; `[lexing]`, `[reading]` and `[structure]`, with
-  `check_order`; the top-level keys a block refuses as such (the keys valid
+  `check_order` and the order of the other steps of the parse
+  (`open_order`, `close_order`, `line_steps_root`, `_group` and `_block`,
+  `eof_order`; a block's `close_steps` and the line each close check
+  names, `close_checks_at`; a key's own `steps`); the case of each word
+  (`any_case`); the texts the parser puts into messages (a key's `effect`,
+  a rule's `what`, a `PARAM` key's `explain`); the top-level keys a block
+  refuses as such (the keys valid
   at the top level, less the names of the keys of a group); and the
   placeholders, taken from the loader, of each message whose set it fixes
   (`FIXED_PLACEHOLDERS`), of the readers' messages and of the entries'
@@ -500,7 +557,10 @@ checked in:
   excluded `PARAM` keys and the `PARAM` policies.
 
 The tables are in registry order; the placeholder sets, which come from
-the loader, are sorted. A block has an enumerator of its name
+the loader, are sorted. `hpotarget_registry_gen.h` defines
+`TADAH_HPOTARGET_ENGINE_TABLES` for the order of the parse, the case of
+words and the texts of messages, which code compiled with a header without
+them cannot name (`tests/test_hpotarget_registry_bindings.cpp` tests for it). A block has an enumerator of its name
 (`BlockId::INNER`, and `BlockId::ROOT` for the top level), and a key, an
 option, a form and a `PARAM` key one named after its id, with `.` and `:`
 written as `_` and `-` left out (`KeyId::ROOT_FAILSCORE`,
@@ -535,11 +595,11 @@ cmake --build <build directory> --target hpo_regenerate_hpotarget_registry
 | CTest entry | What fails it |
 |---|---|
 | `hpo_hpotarget_registry_python` | the loader, on synthetic registries (`tests/test_hpotarget_registry.py`) |
-| `hpo_hpotarget_registry_check` | `hpotarget_registry.py --check`: an unknown table or field, a table of an entry (`[[key.invalid]]`, ...) that follows a table of another kind instead of its entry, a wrong type, a missing field, a repeated id, a reference to nothing, a `version` other than 1, a placeholder a message may not hold, a wrapper without exactly one slot line or whose `block` is not that of its slot, a place a line can be without its wrapper, documentation text that addresses the reader or holds a placeholder, a `doc` of more than two sentences, a later example without a doc, a rule without a title, an optimiser or a library without a description, an entry without the cases it needs, an example that puts a key outside its blocks, an argument the synopsis does not name, an invalid line whose error is no message of the registry, a message without an invalid line or an `untested` reason, an example that writes at the place of a word argument a word that is not one of its `words` (compared in any case), a word of `words` that no example writes |
+| `hpo_hpotarget_registry_check` | `hpotarget_registry.py --check`: an unknown table or field, a table of an entry (`[[key.invalid]]`, ...) that follows a table of another kind instead of its entry, a wrong type, a missing field, a repeated id, a reference to nothing, a `version` other than 1, a placeholder a message may not hold, a wrapper without exactly one slot line or whose `block` is not that of its slot, a place a line can be without its wrapper, documentation text that addresses the reader or holds a placeholder, a `doc` of more than two sentences, a later example without a doc, a rule without a title, an optimiser or a library without a description, an entry without the cases it needs, an example that puts a key outside its blocks, an argument the synopsis does not name, an invalid line whose error is no message of the registry, a message without an invalid line or an `untested` reason, an example that writes at the place of a word argument a word that is not one of its `words` (compared in any case), a word of `words` that no example writes; an order of the parse that is not an order of the steps the loader names, a list of the steps of a key's line without `value` or with `leftover` outside a group, a check of an END line in two blocks, a `case`, an `at` or a repeat rule the loader does not know, an `effect` of a key no strategy type lists (or none for one it lists), a `what` of a rule whose message has no `{what}` |
 | `hpo_hpotarget_registry_coverage` | a name the parser's sources recognise without an entry, or an entry whose name they do not recognise; the keys of each block, the options of each line and the `STRATEGY` keys of each `TYPE` are compared apart, so an option given to another line fails; a name a block refuses as a top-level key that is no key of the top level (`tests/check_hpotarget_coverage.py`; its docstring says how the names are extracted and what the extraction cannot see). The coverage check reads the rules of the `OPTIM` lines from MLIP's sources, in the directory `--mlip` names (an MLIP rule without `--mlip` is an error): MLIP's OPTIM reader reads those lines for `tadah hpo` and `tadah analysis check_bounds` |
 | `hpo_hpotarget_coverage_tool` | the extraction itself, on synthetic sources (`tests/test_check_hpotarget_coverage.py`; its cases on the real sources read MLIP's from `TADAH_MLIP_SOURCE_DIR`, which CTest sets) |
 | `hpo_hpotarget_registry_conformance` | an example the parser refuses, an invalid line it accepts or refuses with another message (`tests/test_hpotarget_registry_conformance.cpp`), the script of `[lammps_script]` that does not take the candidate potential (`tests/test_hpotarget_script_contract.cpp`): every case of tag `[hpotarget_registry]` |
-| `hpo_hpotarget_registry_generated` | a case derived from the structured fields that the parser answers otherwise (`tests/check_hpotarget_generated.py`, which runs the cases through `hpotarget_case_runner`, `tests/tools/hpotarget_case_runner.cpp`; its docstring lists the checks and what they cannot see): the first example of each key in every block, accepted where the key's blocks list it and refused there otherwise; each key and option given twice, as its repeat rule says; the values at and past the limits of the argument of each key, `INIT` method, `PARAM` key and option, in the file of each example (of the first, for an option), the largest value through the startup checks and a `PARAM` value at every limit, a value in the range accepted in one example's file at least; each word of a word list accepted and each refused word refused; each `PARAM` key on each optimiser a wrapper names, accepted where the key lists the optimiser and refused otherwise; each option on every other line; the defaults, against what the code gives a file without the keys |
+| `hpo_hpotarget_registry_generated` | a case derived from the structured fields that the parser answers otherwise (`tests/check_hpotarget_generated.py`, which runs the cases through `hpotarget_case_runner`, `tests/tools/hpotarget_case_runner.cpp`; its docstring lists the checks and what they cannot see): the first example of each key in every block, accepted where the key's blocks list it and refused there otherwise; each key and option given twice, as its repeat rule says; the values at and past the limits of the argument of each key, `INIT` method, `PARAM` key and option, in the file of each example (of the first, for an option), the largest value through the startup checks and a `PARAM` value at every limit, a value in the range accepted in one example's file at least; each word of a word list accepted and each refused word refused; each `PARAM` key on each optimiser a wrapper names, accepted where the key lists the optimiser and refused otherwise; each option on every other line; the defaults, against what the code gives a file without the keys; the word of each word argument at a fixed place, of each option and of each form with a word, written with one letter in the other case: read where `case` is `any`, refused at its line where it is `exact` |
 | `hpo_hpotarget_generated_tool` | the case generator, `check_hpotarget_generated.py`, on a synthetic registry (`tests/test_check_hpotarget_generated.py`) |
 | `hpo_hpotarget_registry_sync` | `gen_hpotarget.py --check`: a generated header that is missing or differs from what the registry and its loader give; an id of the registry that gives no C++ name, or two ids that give one |
 | `hpo_hpotarget_generator_tool` | the header generator, `gen_hpotarget.py`, on a synthetic registry (`tests/test_gen_hpotarget.py`): the C++ names and their collisions, the escaping of a message, the placeholders, the tables and what they leave out, the comment at the top of each header, `--header`, `--check` and the command it names, the help; the headers compiled with the build's C++ compiler |
@@ -548,7 +608,7 @@ cmake --build <build directory> --target hpo_regenerate_hpotarget_registry
 | `hpo_hpotarget_corpus` | an input of the corpus (a target file of HPO's test data, a registry example in its wrapper, a target file of the tests or of the documentation of Tadah.MLIP) that `hpotarget_case_runner --parser old` reads to neither a description nor a refusal, or to two results in two runs; a source without an input; a target file without a training configuration (`hpotarget_corpus.py check`; its docstring lists the sources and what it cannot see) |
 | the Catch2 cases of tag `[hpotarget_describe]` | a setting of a target file that the description `describe_parse()` writes leaves out, two descriptions of one file, a `PC_OBSERVABLE` kind described without its options (`tests/test_hpotarget_describe_parse.cpp`) |
 | the Catch2 cases of tag `[hpotarget_mlip]` | a case of the registry, or a wrapper, that MLIP's OPTIM reader reads otherwise than `HPOTargets`: a box of another value, origin, shape or line, an `OPTIM` line refused with another message, or a refusal of the seed's preparation with another (`tests/test_hpotarget_registry_conformance.cpp`, whose comment above the cases gives the rules) |
-| the Catch2 cases of tag `[hpotarget_gen]` | a generated table that differs from the table the parser or the startup checks hold by hand, in order where a message shows the order (`tests/test_hpotarget_registry_bindings.cpp`; its header comment lists the tables and says how each is compared) |
+| the Catch2 cases of tag `[hpotarget_gen]` | a generated table that differs from the table the parser or the startup checks hold by hand, in order where a message shows the order; an order of the parse that differs from the parser's, which a file that two steps refuse shows; a key given again after a line reads it, an effect, a what or an explain that differs from the parser's (`tests/test_hpotarget_registry_bindings.cpp`; its header comment lists the tables and says how each is compared) |
 
 The twelve entries named above have the label `docs`; CTest runs the cases
 of `[hpotarget_mlip]`, `[hpotarget_gen]` and `[hpotarget_describe]` one by
