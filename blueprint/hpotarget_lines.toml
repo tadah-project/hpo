@@ -3085,7 +3085,7 @@ it as the default loss function of its terms, while the metric terms take \
 the last LOSS line wherever it is."""
 checks = [
   { msg = "LOSS requires a loss type", doc = "At the line: no loss function follows the key." },
-  { msg = "{what}: unknown loss function '{tok}'; the loss functions are L1, L2, LOG_COSH, MAPE, HUBER, RMSLE and TUKEY, in upper or lower case", doc = "At the line: a name that is no loss function, in upper or lower case; {what} is LOSS, --varloss <name> on a PC_LAMMPS line, or PC_OBSERVABLE cohesive_energy: --loss." },
+  { msg = "{what}: unknown loss function '{tok}'; the loss functions are L1, L2, LOG_COSH, MAPE, HUBER, RMSLE and TUKEY, in any case", doc = "At the line: a name that is no loss function, in upper or lower case; {what} is LOSS, --varloss <name> on a PC_LAMMPS line, or PC_OBSERVABLE cohesive_energy: --loss." },
   { msg = "LOSS {name}: parameter '{tok}' is not a number{underflow}", doc = "At the line: a parameter that is no number of the number grammar." },
   { msg = "loss {name} takes no parameter (got {count})", doc = "At the line: a parameter of a loss function that takes none; {count} is the number given." },
   { msg = "loss {name} takes at most {max} parameter (got {count})", doc = "At the line: more parameters than the loss function takes." },
@@ -5834,7 +5834,7 @@ error = "OPTIM OALGO (2): the box [0.001, 2] is not inside (0, 1), but the secon
 id = "RULE.fit_OALGO3_intercepts"
 title = "OALGO 3 fits an intercept column with LAMBDA 0"
 check = "startup"
-msg = "OALGO 3 (SVD with a uniform ridge) penalises every coefficient alike, and the model has {count} intercept column(s) (BIAS true with ATOM), which a ridge penalty leaves out, so OALGO 3 takes LAMBDA 0 only; OALGO 1, 2 or 4 fits such a model with a LAMBDA other than 0."
+msg = "OALGO 3 (SVD with a uniform ridge) penalises every coefficient alike, and the model has {count} intercept column(s) (BIAS true with ATOM), which the ridge of OALGO 1, 2 and 4 leaves unpenalised and OALGO 3 cannot, so OALGO 3 takes LAMBDA 0 only; OALGO 1, 2 or 4 fits such a model with a LAMBDA other than 0."
 doc = """\
 OALGO 3 penalises every coefficient alike, and a ridge penalty leaves the \
 intercept columns out (BIAS true), so a fit with an intercept column that \
@@ -5855,7 +5855,7 @@ error = "OALGO 3 (SVD with a uniform ridge) penalises every coefficient alike, a
 id = "RULE.fit_OALGO3_intercepts_evidence"
 title = "The evidence approximation fits no intercept column"
 check = "startup"
-msg = "LAMBDA -1 requests the evidence approximation, which only OALGO 3 runs; OALGO 3 penalises every coefficient alike, and the model has {count} intercept column(s) (BIAS true with ATOM), which a ridge penalty leaves out. The evidence approximation needs BIAS false, or every intercept coefficient fixed with FIXINDEX and FIXWEIGHT. With BIAS true, LAMBDA 0 fits with any OALGO, and LAMBDA > 0 with OALGO 1, 2 or 4."
+msg = "LAMBDA -1 requests the evidence approximation, which only OALGO 3 runs; OALGO 3 penalises every coefficient alike, and the model has {count} intercept column(s) (BIAS true with ATOM), which the ridge of OALGO 1, 2 and 4 leaves unpenalised and OALGO 3 cannot. The evidence approximation needs BIAS false, or every intercept coefficient fixed with FIXINDEX and FIXWEIGHT. With BIAS true, LAMBDA 0 fits with any OALGO, and LAMBDA > 0 with OALGO 1, 2 or 4."
 doc = """\
 LAMBDA -1 runs the evidence approximation under OALGO 3, which penalises \
 every coefficient alike. A fit with an intercept column (BIAS true with \
@@ -5876,7 +5876,7 @@ id = "RULE.optim_LAMBDA_OALGO3_intercepts"
 title = "OPTIM LAMBDA under OALGO 3 needs no intercept column"
 check = "startup"
 keys = ["ROOT.OPTIM"]
-msg = "OPTIM LAMBDA: OALGO 3 penalises every coefficient alike, and the fit has {count} intercept column(s) (BIAS true with ATOM), which a ridge penalty leaves out, so every fit refuses a LAMBDA other than 0: each candidate of the box but 0 would fail its evaluation. OALGO 1, 2 or 4 fits a positive LAMBDA with the intercepts unpenalised."
+msg = "OPTIM LAMBDA: OALGO 3 penalises every coefficient alike, and the fit has {count} intercept column(s) (BIAS true with ATOM), which the ridge of OALGO 1, 2 and 4 leaves unpenalised and OALGO 3 cannot, so every fit refuses a LAMBDA other than 0: each candidate of the box but 0 would fail its evaluation. OALGO 1, 2 or 4 fits a positive LAMBDA with the intercepts unpenalised."
 doc = """\
 Under OALGO 3 a fit with an intercept column that FIXINDEX does not fix \
 refuses a LAMBDA other than 0, so tadah hpo refuses OPTIM LAMBDA when the \

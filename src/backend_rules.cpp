@@ -330,13 +330,7 @@ void reject_unread_attributes(const OptimizerSpec& spec,
             backend_name(spec) + " does not use POPULATION (it is read by " +
             readers([](const OptimizerCaps& c) { return c.reads_population; }) +
             ")");
-    if (spec.vector_storage && !caps.reads_vector_storage)
-        throw std::runtime_error(
-            backend_name(spec) + " does not use VECTOR_ARR (it is read by " +
-            readers([](const OptimizerCaps& c) {
-                return c.reads_vector_storage;
-            }) +
-            ")");
+    if (!caps.reads_vector_storage) reject_unread_vector_storage(spec);
     /* A PRESTAGE refinement's SEED that the exploration took seeds the
      * exploration (OptimizerSpec::seed_seeds_exploration). Whether the run
      * reads SEED: reads_seed() (phase_specs.h), which asks an MLSL or
@@ -371,6 +365,17 @@ void reject_unread_threads(const PhaseSpec& phase)
 }
 
 }  // namespace
+
+void reject_unread_vector_storage(const OptimizerSpec& spec)
+{
+    if (!spec.vector_storage) return;
+    throw std::runtime_error(
+        backend_name(spec) + " does not use VECTOR_ARR (it is read by " +
+        readers([](const OptimizerCaps& c) {
+            return c.reads_vector_storage;
+        }) +
+        ")");
+}
 
 RestartStop restart_stop_of(const OptimizerSpec& root)
 {
@@ -598,7 +603,7 @@ void validate_backend(const OptimizerSpec& spec, RestartStop restart,
 #ifndef TADAH_USE_CERES
         throw std::runtime_error(
             "CERES:" + algo + " is not in this build of tadah; a build with "
-            "-DTADAH_ENABLE_CERES=ON (Installation) has it");
+            "-DTADAH_ENABLE_CERES=ON (see Installation) has it");
 #else
         if (algo == "STEEPEST_DESCENT") detail::validate_ceres_steepest_spec(spec);
 #endif

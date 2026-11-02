@@ -96,9 +96,7 @@ inline void validate_dlib_bfgs_spec(const OptimizerSpec& sp)
         "DLIB:BFGS does not support integer search parameters");
   }
 
-  if (sp.vector_storage)
-    throw std::runtime_error(
-        "DLIB:BFGS does not support VECTOR_ARR, which DLIB:GFS and the NLopt L-BFGS algorithms read");
+  reject_unread_vector_storage(sp);
   if (sp.pop)
     throw std::runtime_error("DLIB:BFGS does not support POPULATION");
   /* A PRESTAGE refinement's SEED that the exploration took seeds the

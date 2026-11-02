@@ -1013,7 +1013,8 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
         throw std::runtime_error(
             "OPTIM LAMBDA: OALGO 3 penalises every coefficient alike, and the fit "
             "has " + std::to_string(n) + " intercept column(s) (BIAS true "
-            "with ATOM), which a ridge penalty leaves out, so every fit "
+            "with ATOM), which the ridge of OALGO 1, 2 and 4 leaves "
+            "unpenalised and OALGO 3 cannot, so every fit "
             "refuses a LAMBDA other than 0: each candidate of the box but 0 "
             "would fail its evaluation. OALGO 1, 2 or 4 fits a positive "
             "LAMBDA with the intercepts unpenalised.");
@@ -1375,7 +1376,7 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
                 " = " + core::to_string(rcut) + "; it stays inside with an "
                 "OPTIM " + skey + " (" + sn(i) + ") low bound >= w/(" + rn +
                 " - c_hi) = " + core::to_string(w / (rcut - hi_mu)) +
-                " (the smallest width it can take is eta = " +
+                " (the smallest eta it can take, its widest bump, is " +
                 core::to_string(eta_i) + ").");
           }
         }

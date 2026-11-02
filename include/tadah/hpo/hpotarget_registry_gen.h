@@ -1089,8 +1089,6 @@ inline constexpr Arg OPTIMIZER_VECTOR_ARR_args[] = {
 };
 inline constexpr std::string_view OPTIMIZER_VECTOR_ARR_checks[] = {
     "{phase}: {lib}:{algo} does not use VECTOR_ARR (it is read by {list})",
-    "{phase}: DLIB:BFGS does not support VECTOR_ARR, which DLIB:GFS and the NLopt L-BFGS algorithms read",
-    "{phase}: CERES:{algo} does not support VECTOR_ARR, which DLIB:GFS and the global NLopt algorithms read",
     "{phase}: ASA:ASA does not accept VECTOR_ARR",
     "{phase}: TADAH:{algo} does not use VECTOR_ARR: it keeps no gradient history",
 };
@@ -1453,7 +1451,7 @@ inline constexpr Arg ROOT_LOSS_args[] = {
 };
 inline constexpr std::string_view ROOT_LOSS_checks[] = {
     "LOSS requires a loss type",
-    "{what}: unknown loss function '{tok}'; the loss functions are L1, L2, LOG_COSH, MAPE, HUBER, RMSLE and TUKEY, in upper or lower case",
+    "{what}: unknown loss function '{tok}'; the loss functions are L1, L2, LOG_COSH, MAPE, HUBER, RMSLE and TUKEY, in any case",
     "LOSS {name}: parameter '{tok}' is not a number{underflow}",
     "loss {name} takes no parameter (got {count})",
     "loss {name} takes at most {max} parameter (got {count})",
@@ -2542,7 +2540,7 @@ inline constexpr Key kKeys[] = {
       Span<Arg>{detail::OPTIMIZER_VECTOR_ARR_args, 1}, Repeat::Error,
       "VECTOR_ARR is set twice in the {block} block (first on line {first_line}); each key is given once",
       "", false, "", false, KeyId::OPTIMIZER_VECTOR_ARR, false, "",
-      Span<std::string_view>{detail::OPTIMIZER_VECTOR_ARR_checks, 5}},
+      Span<std::string_view>{detail::OPTIMIZER_VECTOR_ARR_checks, 3}},
   Key{KeyId::OPTIMIZER_THREADS, "OPTIMIZER.THREADS", "THREADS", "OPTIMIZER",
       block_bit(BlockId::OPTIMIZER) | block_bit(BlockId::STRATEGY) | block_bit(BlockId::EXPLORE) | block_bit(BlockId::REFINE) | block_bit(BlockId::INNER),
       Span<Arg>{detail::OPTIMIZER_THREADS_args, 1}, Repeat::Error,
@@ -3073,11 +3071,11 @@ inline constexpr Rule kRules[] = {
   Rule{"RULE.OPTIM_OALGO_threshold_box", RuleCheck::Parse,
       "OPTIM OALGO (2): the box [{low}, {high}] is not inside (0, 1), but the second value of OALGO is the rank threshold M of OALGO 1 and 3, which only a value 0 < M < 1 sets: every M below 0 is the machine precision under OALGO 1, every M of 0 or below leaves out only a singular value of 0 under OALGO 3, and a fit refuses an M of 1 or more, so the box of a search is inside (0, 1)"},
   Rule{"RULE.fit_OALGO3_intercepts", RuleCheck::Startup,
-      "OALGO 3 (SVD with a uniform ridge) penalises every coefficient alike, and the model has {count} intercept column(s) (BIAS true with ATOM), which a ridge penalty leaves out, so OALGO 3 takes LAMBDA 0 only; OALGO 1, 2 or 4 fits such a model with a LAMBDA other than 0."},
+      "OALGO 3 (SVD with a uniform ridge) penalises every coefficient alike, and the model has {count} intercept column(s) (BIAS true with ATOM), which the ridge of OALGO 1, 2 and 4 leaves unpenalised and OALGO 3 cannot, so OALGO 3 takes LAMBDA 0 only; OALGO 1, 2 or 4 fits such a model with a LAMBDA other than 0."},
   Rule{"RULE.fit_OALGO3_intercepts_evidence", RuleCheck::Startup,
-      "LAMBDA -1 requests the evidence approximation, which only OALGO 3 runs; OALGO 3 penalises every coefficient alike, and the model has {count} intercept column(s) (BIAS true with ATOM), which a ridge penalty leaves out. The evidence approximation needs BIAS false, or every intercept coefficient fixed with FIXINDEX and FIXWEIGHT. With BIAS true, LAMBDA 0 fits with any OALGO, and LAMBDA > 0 with OALGO 1, 2 or 4."},
+      "LAMBDA -1 requests the evidence approximation, which only OALGO 3 runs; OALGO 3 penalises every coefficient alike, and the model has {count} intercept column(s) (BIAS true with ATOM), which the ridge of OALGO 1, 2 and 4 leaves unpenalised and OALGO 3 cannot. The evidence approximation needs BIAS false, or every intercept coefficient fixed with FIXINDEX and FIXWEIGHT. With BIAS true, LAMBDA 0 fits with any OALGO, and LAMBDA > 0 with OALGO 1, 2 or 4."},
   Rule{"RULE.optim_LAMBDA_OALGO3_intercepts", RuleCheck::Startup,
-      "OPTIM LAMBDA: OALGO 3 penalises every coefficient alike, and the fit has {count} intercept column(s) (BIAS true with ATOM), which a ridge penalty leaves out, so every fit refuses a LAMBDA other than 0: each candidate of the box but 0 would fail its evaluation. OALGO 1, 2 or 4 fits a positive LAMBDA with the intercepts unpenalised."},
+      "OPTIM LAMBDA: OALGO 3 penalises every coefficient alike, and the fit has {count} intercept column(s) (BIAS true with ATOM), which the ridge of OALGO 1, 2 and 4 leaves unpenalised and OALGO 3 cannot, so every fit refuses a LAMBDA other than 0: each candidate of the box but 0 would fail its evaluation. OALGO 1, 2 or 4 fits a positive LAMBDA with the intercepts unpenalised."},
   Rule{"RULE.fit_krr_implementation", RuleCheck::Startup,
       "{text}: M_KRR has implementation 1, which fits the energies, forces and stresses of the structures, and implementation 2, which fits the energies per atom of whole structures (the third value of MODEL, 1 when it is left out); {value} is neither."},
   Rule{"RULE.fit_krr_implementation2_LAMBDA", RuleCheck::Startup,

@@ -102,9 +102,17 @@ enum class SpecRole { Phase, Inner };
  *     NLopt hands on to it");
  *   - POPULATION, VECTOR_ARR or SEED it does not read (reads_population,
  *     reads_vector_storage, reads_seed): "NLOPT:LN_BOBYQA does not use
- *     POPULATION; remove it (it is read by ...)". A PRESTAGE refinement's
+ *     POPULATION (it is read by ...)". A PRESTAGE refinement's
  *     SEED that its exploration takes is accepted: it seeds the
  *     exploration (OptimizerSpec::seed_seeds_exploration). */
+
+/* VECTOR_ARR on `spec`, whose backend does not read it, refused with the
+ * rule above: "DLIB:BFGS does not use VECTOR_ARR (it is read by
+ * NLOPT:LD_LBFGS, ...)", the backends whose caps mark
+ * reads_vector_storage. A no-op when `spec` sets no VECTOR_ARR; the caller
+ * knows that its backend does not read it. DLIB:BFGS and CERES, whose
+ * validators are in their adapters, call it, and so does the rule. */
+void reject_unread_vector_storage(const OptimizerSpec& spec);
 
 /* TADAH:RANDOM: no PARAM, no attribute it never reads (the tolerances,
  * POPULATION, VECTOR_ARR), and require_stop() (MAXEVAL, MAXTIME or

@@ -117,7 +117,7 @@ inline void detail::run_inner_dispatch(const OptimizerSpec& spec,
 #ifndef TADAH_USE_CERES
     throw std::runtime_error(
         "CERES:" + spec.algo + " is not in this build of tadah; a build with "
-        "-DTADAH_ENABLE_CERES=ON (Installation) has it");
+        "-DTADAH_ENABLE_CERES=ON (see Installation) has it");
 #else
     /* CERES:LBFGS, WOLFE and NLCG are refused (optimizer_caps.cpp). */
     if (spec.algo == "STEEPEST_DESCENT") run_ceres_steepest_descent<Vec,Runner>(spec, host);

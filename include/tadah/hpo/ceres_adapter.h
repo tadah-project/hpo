@@ -57,6 +57,7 @@
  */
 
 #include <tadah/core/number_format.h>
+#include <tadah/hpo/backend_rules.h>        // reject_unread_vector_storage
 #include <tadah/hpo/failed_loss_stand_in.h>   // FailedLossStandIn::kCeiling
 #include <tadah/hpo/gradient_provider.h>
 #include <tadah/hpo/hpo_host.h>
@@ -167,15 +168,10 @@ inline void validate_ceres_common_(const OptimizerSpec& sp,
         std::any_of(sp.is_int.begin(), sp.is_int.end(),
                     [](bool v) { return v; })) {
         throw std::runtime_error(
-            "CERES:" + algo + " does not support integer search parameters, "
-            "which DLIB:GFS, the global NLopt algorithms and TADAH:GRID "
-            "take");
+            "CERES:" + algo + " does not support integer search parameters");
     }
 
-    if (sp.vector_storage)
-        throw std::runtime_error(
-            "CERES:" + algo + " does not support VECTOR_ARR, which DLIB:GFS "
-            "and the global NLopt algorithms read");
+    reject_unread_vector_storage(sp);
     if (sp.pop)
         throw std::runtime_error("CERES:" + algo + " does not support POPULATION");
     /* GradientProblemSolver draws no random numbers; DLIB:BFGS refuses SEED
@@ -689,7 +685,7 @@ inline void run_ceres_gradient_problem(const OptimizerSpec& sp,
     (void)sp;
     throw std::runtime_error(
         "CERES:" + algo_label + " is not in this build of tadah; a build "
-        "with -DTADAH_ENABLE_CERES=ON (Installation) has it");
+        "with -DTADAH_ENABLE_CERES=ON (see Installation) has it");
 }
 
 #endif  // TADAH_USE_CERES

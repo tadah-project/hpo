@@ -20,7 +20,7 @@ LossFunction::Type LossFunction::from_string(const std::string& s)
     if(u=="TUKEY")     return Type::TUKEY;
     throw std::runtime_error("unknown loss function '" + s + "'; the loss "
                              "functions are L1, L2, LOG_COSH, MAPE, HUBER, "
-                             "RMSLE and TUKEY, in upper or lower case");
+                             "RMSLE and TUKEY, in any case");
 }
 
 LossFunction::Type LossFunction::from_name(const std::string& s,

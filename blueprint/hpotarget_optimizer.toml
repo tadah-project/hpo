@@ -1399,9 +1399,7 @@ long_doc = """\
 Only the optimisers that read it take it (the optimiser list names them); \
 another optimiser is refused at startup with this key."""
 checks = [
-  { msg = "{phase}: {lib}:{algo} does not use VECTOR_ARR (it is read by {list})", doc = "At startup, at the END line of its optimiser: an NLopt, TADAH:RANDOM, TADAH:GRID or DLIB:GFS optimiser that does not read it." },
-  { msg = "{phase}: DLIB:BFGS does not support VECTOR_ARR, which DLIB:GFS and the NLopt L-BFGS algorithms read", doc = "At startup, at the END line of its optimiser." },
-  { msg = "{phase}: CERES:{algo} does not support VECTOR_ARR, which DLIB:GFS and the global NLopt algorithms read", doc = "At startup, at the END line of its optimiser." },
+  { msg = "{phase}: {lib}:{algo} does not use VECTOR_ARR (it is read by {list})", doc = "At startup, at the END line of its optimiser: an NLopt, TADAH:RANDOM, TADAH:GRID, DLIB:GFS, DLIB:BFGS or CERES optimiser that does not read it." },
   { msg = "{phase}: ASA:ASA does not accept VECTOR_ARR", doc = "At startup, at the END line of its optimiser." },
   { msg = "{phase}: TADAH:{algo} does not use VECTOR_ARR: it keeps no gradient history", doc = "At startup, at the END line of its optimiser: an annealer." },
 ]
