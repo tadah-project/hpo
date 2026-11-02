@@ -19,6 +19,7 @@
 // compute_2b_mb_half (linear, many-body), compute_2b_mb_full (BF_Polynomial2)
 // and compute_dimers (DIMER).
 
+#include "tadah_test_skip.hpp"  // before catch2/catch.hpp
 #include "catch2/catch.hpp"
 
 #include <tadah/core/context.h>
@@ -42,6 +43,8 @@
 #include <tadah/mlip/trainer.h>
 #include <tadah/models/dc_selector.h>
 #include <tadah/tadah.lammps/lammps_tadah.h>
+
+#include "lammps_styles.h"
 
 #include <dlib/matrix.h>
 #include <atom.h>
@@ -532,9 +535,12 @@ Context dimer_potential() {
 // fixed (MLIP -13.552 eV), compute_dimers still set the intercept of
 // descriptor n from the type of local atom n (Nb Nb Ta Ta for the atoms
 // Nb Ta Nb Ta of the pair).
+// Skipped when LAMMPS has no atom_style bond (the MOLECULE package).
 TEST_CASE("pair_style tadah compute_dimers and the MLIP prediction agree for "
           "a two-species BIAS DIMER potential",
           "[multispecies_bias][lammps_oracle][dimer]") {
+  if (!lammps_has("atom", "bond"))
+    TADAH_SKIP("this LAMMPS has no atom_style bond (the MOLECULE package)");
   PeriodicTable::initialize();
   const Context pot = dimer_potential();
   // Molecule A along x from (10, 10, 10); molecule B 3.4 A further along x,

@@ -202,7 +202,9 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
  *  of the target file (no descriptor differentiates it). GRAD_STRATEGY
  *  HYBRID takes finite differences for it."; "... (DM_Blip differentiates
  *  it in the energy rows only, and FORCE true gives the fit force rows)";
- *  "... and PC_FRMSE measures the forces of the validation structures)".
+ *  "... and PC_FRMSE measures the forces of the validation structures)";
+ *  "... (DM_REAM depends on it and does not differentiate it)" (OPTIM
+ *  WATOM beside a two-body descriptor that differentiates it).
  *  A parameter the descriptors differentiate has rows of 0 in structures
  *  that hold no pair of atoms that depends on it, which the analytical
  *  gradient forms. The data decide which rows the descriptors claim, so

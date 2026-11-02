@@ -3770,8 +3770,8 @@ error = "OPTIM CGRID2B: the line is tagged LOG, and <low> 0 is not > 0, and a bo
 
 [[form.invalid]]
 wrap = "root"
-text = "OPTIM CGRID2B (2) 1 1e300 ASINH 1e-300"
-error = "OPTIM CGRID2B: under ASINH 1e-300 the box [1, 1e300] maps to [691.4686750787737, inf], which has no finite width; a c of the size of the values of the box gives one"
+text = "OPTIM CGRID2B (2) 0 1e300 ASINH 1e-300"
+error = "OPTIM CGRID2B: under ASINH 1e-300 the box [0, 1e300] maps to [0, inf], which has no finite width; a c of the size of the values of the box gives one"
 
 [[form]]
 id = "OPTIM.AUTO"

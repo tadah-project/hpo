@@ -472,7 +472,7 @@ std::string joined_with_and(const std::vector<std::string> &words) {
  * parameter `g`: "no descriptor differentiates it"; "DM_Blip
  * differentiates it in the energy rows only, and FORCE true gives the fit
  * force rows" ("... and PC_FRMSE measures the forces of the validation
- * structures"). */
+ * structures"); "DM_REAM depends on it and does not differentiate it". */
 std::string parameter_without_derivative_why(
     const ParameterWithoutDerivative &g) {
   using Why = ParameterWithoutDerivative::Why;
@@ -490,6 +490,11 @@ std::string parameter_without_derivative_why(
                   ? "FORCE true gives the fit force rows"
                   : "PC_FRMSE measures the forces of the validation "
                     "structures");
+    case Why::DependsWithoutDerivative:
+      return joined_with_and(g.descriptors) +
+             (g.descriptors.size() == 1
+                  ? " depends on it and does not differentiate it"
+                  : " depend on it and do not differentiate it");
   }
   return {};
 }
