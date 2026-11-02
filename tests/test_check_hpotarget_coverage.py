@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Unit tests of tests/check_hpotarget_coverage.py on synthetic C++ sources
 and a synthetic registry: comment stripping, brace matching, the three
-kinds of extraction (comparisons, tables, calls), the refusal of a
+kinds of extraction (comparisons, tables, calls) and a vocabulary a
+function reads from the generated tables of the registry, the refusal of a
 comparison no rule classifies, of a rule that finds nothing or whose
 function is not found once, the comparison of the names found with the
 registry's in both directions, the command without a registry, and a
@@ -284,6 +285,68 @@ class MlipFiles(unittest.TestCase):
                 self.assertIn("missing from the registry: 'ZZ_OPTIM' "
                               "(optim_target), mlip:src/b.cpp:3 (optim)",
                               out.getvalue())
+
+
+class GeneratedTables(unittest.TestCase):
+    """A function that reads a vocabulary from the generated tables of
+    the registry (hpotarget_registry_gen.h) instead of naming it."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = pathlib.Path(self._tmp.name)
+        (self.root / "src").mkdir()
+        (self.root / "src" / "g.cpp").write_text(textwrap.dedent('''\
+            bool group_key(const std::string& key)
+            {
+                for (const R::Key& k : R::kKeys)
+                    if (!k.group.empty() && k.name == key) return true;
+                return false;
+            }
+            bool other(const std::string& key) { return key == "X"; }
+            '''))
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    # Pins: a rule's `generated` names a use of a generated table (a
+    # regular expression) and the vocabularies it reads; where the
+    # function holds that use, every name of those vocabularies of the
+    # registry counts as one the parser recognises (compare(), on the
+    # names extract() reports as generated), and no name is missing; the
+    # use is reported with its place. Before the fix: fails, Rule takes no
+    # `generated`.
+    def test_a_vocabulary_read_from_the_generated_tables(self):
+        rule = cov.Rule("the group keys", "src/g.cpp",
+                        r"^bool group_key\(",
+                        generated=[(r"R::kKeys\b", ("group_key",))],
+                        ignore={"k.name": "a name of the generated table"})
+        generated: list = []
+        with mock.patch.object(cov, "EXTRACTION", [rule]):
+            found, problems = cov.extract(self.root, generated=generated)
+        self.assertEqual(problems, [])
+        self.assertEqual(found, [])
+        self.assertEqual(generated, [(("group_key",),
+                                      "src/g.cpp:3 (the group keys)")])
+        reg = FakeRegistry({"group_key": {"LIB", "ALGO"}, "block": {"A"}})
+        with mock.patch.object(cov, "VOCABULARIES", ("group_key", "block")):
+            problems = cov.compare(
+                [cov.Found("A", ("block",), "src/g.cpp:7 (other)")], reg,
+                generated=generated)
+        self.assertEqual(problems, [])
+
+    # Pins: a rule whose function holds no use of its generated table is
+    # refused ("the rule finds no use of the generated table"), as a rule
+    # that finds no name is. Before the fix: fails, Rule takes no
+    # `generated`.
+    def test_a_generated_table_the_function_does_not_read(self):
+        rule = cov.Rule("other", "src/g.cpp", r"^bool other\(",
+                        operands={"key": ("block",)},
+                        generated=[(r"R::kBlocks\b", ("block",))])
+        with mock.patch.object(cov, "EXTRACTION", [rule]):
+            _, problems = cov.extract(self.root, generated=[])
+        self.assertEqual(problems, [
+            "src/g.cpp: other: the rule finds no use of the generated "
+            "table /R::kBlocks\\b/: the extraction rule needs updating"])
 
 
 class Compare(unittest.TestCase):
