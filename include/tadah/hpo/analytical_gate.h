@@ -92,11 +92,12 @@ struct ParameterWithoutDerivative {
         /* No descriptor has a derivative with respect to it, for any pair
          * of atoms (LAMBDA, a key of the fit; RCUT2B under Cut_Dummy). */
         NoDerivative,
-        /* `descriptors` (their labels) differentiate it in the energy rows
+        /* `descriptors` (named as the TYPE2B or TYPEMB line writes them,
+         * DM_Embed for a DESCRIPTOR block) differentiate it in the energy rows
          * only, and the run has force rows: those of the fit (FORCE true)
          * when `force_rows_of_fit`, else those PC_FRMSE measures. */
         EnergyRowsOnly,
-        /* `descriptors` (their labels) depend on it (D_Base::depends_on)
+        /* `descriptors` (named likewise) depend on it (D_Base::depends_on)
          * and differentiate it in no rows, while another descriptor
          * differentiates it: WATOM, which DM_REAM, the DM_Poly descriptors,
          * DM_Embed (a DESCRIPTOR block), DM_mJoin and D2_mJoin read without
