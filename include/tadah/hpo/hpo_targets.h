@@ -157,6 +157,9 @@ public:
                const mlip::KeyProvenance *provenance = nullptr,
                TargetsPurpose purpose = TargetsPurpose::Run);
     void read(const std::string &fn);
+    /* The target file read, as --hpotarget gives it: the refusals of its
+     * lines name it ("line 9 of t.hpo: ..."; config_line_error). */
+    std::string target_file;
     std::map<std::string, Opti> optimap;  // used by HPO_Host
     std::vector<LammpsSim> LS;
 

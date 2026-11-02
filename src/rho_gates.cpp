@@ -569,8 +569,8 @@ void validate_density_gates(const core::Context &train_ctx,
       take(trg.RHOGATE->line, trg.RHOGATE->line_text);
     if (trg.RHOBARGATE && key != "RHOGATE")
       take(trg.RHOBARGATE->line, trg.RHOBARGATE->line_text);
-    return std::runtime_error(line ? config_line_error(line, what, text)
-                                   : what);
+    return std::runtime_error(
+        line ? config_line_error(trg.target_file, line, what, text) : what);
   };
   if (!context_is_bare_ream(train_ctx)) {
     const std::string head =

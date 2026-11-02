@@ -645,11 +645,13 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn,
 static bool dispatch_init_attr(const std::string& key,
                                std::istringstream& iss,
                                InitStrategySpec& a,
+                               const std::string& file,
                                std::size_t nline, const std::string& line)
 {
     if (key=="METHOD" || key=="STRATEGY") {
         InitStrategySpec::Entry e;
         /* The line names the entry's refusals when the chain is drawn. */
+        e.file = file;
         e.line = nline;
         e.line_text = line;
         e.key = key;
@@ -796,6 +798,7 @@ static bool reject_old_keyword(const std::string& key)
 
 void HPOTargets::read(const std::string& fn)
 {
+    target_file = fn;
     std::ifstream ifs(fn);
     if (!ifs)
         throw std::runtime_error("the target file " + fn +
@@ -986,9 +989,9 @@ void HPOTargets::read(const std::string& fn)
     std::vector<GateLine> gate_lines;
 
     /* Every parse error names the line it is about. */
-    auto at_line = [](std::size_t n, const std::string& what,
-                      const std::string& text) {
-        return config_line_error(n, what, text);
+    auto at_line = [&fn](std::size_t n, const std::string& what,
+                         const std::string& text) {
+        return config_line_error(fn, n, what, text);
     };
     /* An error about an earlier line than the one being read: a STRATEGY
      * key found at the end of its block to have no effect. */
@@ -1181,6 +1184,7 @@ void HPOTargets::read(const std::string& fn)
                 /* The STRATEGY-level optimiser is complete here: a short-form
                  * LIB/ALGO may follow the STRATEGY block. Its startup
                  * refusals name this line too (OptimizerSpec::block_line). */
+                spec.source_file = fn;
                 spec.block_line = nline;
                 spec.block_line_text = line;
                 require_driver(spec, DriverPhase::Run);
@@ -1244,7 +1248,7 @@ void HPOTargets::read(const std::string& fn)
                  *   - At OUTER level, it opens the STRATEGY block.
                  * Discriminate by context. */
                 if (block == INIT_BLK || block == RESTART_BLK) {
-                    if (active_init && dispatch_init_attr(key, iss, *active_init, nline, line))
+                    if (active_init && dispatch_init_attr(key, iss, *active_init, fn, nline, line))
                         continue;
                     /* fall through to error */
                 }
@@ -1310,6 +1314,7 @@ void HPOTargets::read(const std::string& fn)
                 continue;
             }
             if (key=="ENDEXPLORE") {
+                spec.prestage->source_file = fn;
                 spec.prestage->block_line = nline;
                 spec.prestage->block_line_text = line;
                 require_driver(*spec.prestage, DriverPhase::Explore);
@@ -1362,6 +1367,7 @@ void HPOTargets::read(const std::string& fn)
             if (key=="ENDINNER") {
                 /* The INNER optimiser is complete here, like an EXPLORE
                  * block's at ENDEXPLORE. */
+                active_opt->source_file = fn;
                 active_opt->block_line = nline;
                 active_opt->block_line_text = line;
                 require_inner_driver(*active_opt, inner_enclosing());
@@ -1377,6 +1383,7 @@ void HPOTargets::read(const std::string& fn)
                 require_key_alone(iss, key);
                 active_init = &spec.restart.init_strategy;
                 if (spec.restart.line == 0) {
+                    spec.source_file = fn;
                     spec.restart.line = nline;
                     spec.restart.line_text = line;
                 }
@@ -1438,6 +1445,7 @@ void HPOTargets::read(const std::string& fn)
                     ov.line_text = line;
                 } else if (key == "LIB" || key == "ALGO" || key == "STEP" ||
                            key == "GRAD_STRATEGY") {
+                    active_opt->source_file = fn;
                     active_opt->key_lines[key] =
                         KeyLine{nline, line, block_name(block)};
                 }
@@ -1477,7 +1485,7 @@ void HPOTargets::read(const std::string& fn)
 
             /* INIT / RESTART block keys */
             if (block == INIT_BLK || block == RESTART_BLK) {
-                if (active_init && dispatch_init_attr(key, iss, *active_init, nline, line)) {
+                if (active_init && dispatch_init_attr(key, iss, *active_init, fn, nline, line)) {
                     /* METHOD (and its alias STRATEGY) adds to the chain */
                     if (key != "METHOD" && key != "STRATEGY")
                         set_once(active_init, key, "starting points");
@@ -2759,7 +2767,8 @@ void HPOTargets::check_archive_directories() const {
       check_archive_directory(self.key, self.dir, created_first);
     } catch (const std::exception& e) {
       throw std::runtime_error(
-          config_line_error(self.line.number, e.what(), self.line.text));
+          config_line_error(target_file, self.line.number, e.what(),
+                            self.line.text));
     }
   }
 }
@@ -3270,7 +3279,7 @@ void HPOTargets::process_optim_config(std::istringstream& iss,
   /* The line read as tadah analysis check_bounds reads it (MLIP's OPTIM
    * reader: the refusals of the key, of the index list, of the box and of
    * a value two lines select, and the AUTO boxes); read() names the line
-   * of every error ("Error on line N: "). The key is upper-cased, so
+   * of every error ("line N of <file>: "). The key is upper-cased, so
    * optimap, the labels and every rule and lookup keyed on it
    * (startup_validation, the gates, the neighbour-list cutoff) see one
    * spelling whatever the case the line used. */

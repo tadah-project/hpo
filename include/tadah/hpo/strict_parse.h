@@ -6,7 +6,7 @@
  * key holds; anything else is an error naming the key and the token, in
  * the form
  *     <what> must be an integer >= 1, got '<tok>'
- * HPOTargets::read() prefixes "Error on line N: " and appends the line.
+ * HPOTargets::read() prefixes "line N of <file>: " and appends the line.
  * `iss >> v` and std::stod accepted a prefix ("5x" -> 5), stored 0 for a
  * non-number, wrapped a negative into a huge unsigned value and left the
  * target untouched when the value was missing.
@@ -29,14 +29,20 @@ namespace tadah::hpo {
 
 /* The form of every error HPOTargets::read() reports about a line of the
  * hpotarget file:
- *     Error on line <line>: <what>
+ *     line <line> of <file>: <what>
  *     Line: <text>
- * The startup refusals of a phase's settings name the line its block
- * closes at in the same form (with_block_line, phase_specs.h). */
-inline std::string config_line_error(std::size_t line, const std::string& what,
+ * <file> is the path of the target file as --hpotarget gives it, as the
+ * errors of the training configuration name theirs ("line 3 of
+ * config.train"); "line <line>: <what>" for a line without a file (a spec
+ * a program builds). The startup refusals of a phase's settings name the
+ * line its block closes at in the same form (with_block_line,
+ * phase_specs.h). */
+inline std::string config_line_error(const std::string& file, std::size_t line,
+                                     const std::string& what,
                                      const std::string& text)
 {
-    return "Error on line " + std::to_string(line) + ": " + what +
+    return "line " + std::to_string(line) +
+           (file.empty() ? std::string() : " of " + file) + ": " + what +
            "\nLine: " + text;
 }
 

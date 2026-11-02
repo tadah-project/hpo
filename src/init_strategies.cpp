@@ -768,9 +768,10 @@ private:
  * form (config_line_error), as the parser's own refusals of the line do. */
 class LinedEntryStrategy : public InitStrategy {
 public:
-    LinedEntryStrategy(std::unique_ptr<InitStrategy> entry, std::size_t line,
-                       std::string text)
-        : entry_(std::move(entry)), line_(line), text_(std::move(text)) {}
+    LinedEntryStrategy(std::unique_ptr<InitStrategy> entry, std::string file,
+                       std::size_t line, std::string text)
+        : entry_(std::move(entry)), file_(std::move(file)), line_(line),
+          text_(std::move(text)) {}
 
     std::vector<std::vector<double>>
     generate(const InitContext& ctx, std::size_t k) const override
@@ -778,7 +779,7 @@ public:
         try {
             return entry_->generate(ctx, k);
         } catch (const std::runtime_error& e) {
-            throw std::runtime_error(config_line_error(line_, e.what(), text_));
+            throw std::runtime_error(config_line_error(file_, line_, e.what(), text_));
         }
     }
     std::vector<std::vector<double>>
@@ -788,7 +789,7 @@ public:
         try {
             return entry_->generate_tagged(ctx, k, origins);
         } catch (const std::runtime_error& e) {
-            throw std::runtime_error(config_line_error(line_, e.what(), text_));
+            throw std::runtime_error(config_line_error(file_, line_, e.what(), text_));
         }
     }
     InitOrigin origin() const override { return entry_->origin(); }
@@ -798,6 +799,7 @@ public:
 
 private:
     std::unique_ptr<InitStrategy> entry_;
+    std::string file_;
     std::size_t line_;
     std::string text_;
 };
@@ -874,8 +876,8 @@ build_init_strategy(const InitStrategySpec& ispec)
     for (const auto& e : ispec.chain) {
         auto kid = make_one(e, ispec.warm_on_mismatch);
         if (e.line != 0)
-            kid = std::make_unique<LinedEntryStrategy>(std::move(kid), e.line,
-                                                       e.line_text);
+            kid = std::make_unique<LinedEntryStrategy>(std::move(kid), e.file,
+                                                       e.line, e.line_text);
         kids.push_back(std::move(kid));
     }
 

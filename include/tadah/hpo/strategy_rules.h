@@ -208,7 +208,7 @@ std::string run_phase_name(const OptimizerSpec& s);
  * MULTISTART that cannot run its optimiser is refused for that whatever
  * its INIT and RESTART chains. A refusal of a
  * parsed spec names the line of the block it is about
- * (OptimizerSpec::block_line, with_block_line): "Error on line N: ...
+ * (OptimizerSpec::block_line, with_block_line): "line N of <file>: ...
  * \nLine: ENDOPTIMIZER" (or the INNER block's ENDINNER, the EXPLORE
  * block's ENDEXPLORE). */
 void validate_run_policy(const OptimizerSpec& spec);

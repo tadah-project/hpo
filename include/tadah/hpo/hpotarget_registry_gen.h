@@ -481,6 +481,7 @@ inline constexpr std::string_view placeholders_group_leftover_msg[] = {
     "tok",
 };
 inline constexpr std::string_view placeholders_lexing_error_frame[] = {
+    "file",
     "line",
     "text",
     "what",
@@ -2220,7 +2221,7 @@ namespace lexing {
 inline constexpr std::string_view comment = "#";
 inline constexpr std::string_view continuation = "\\";
 inline constexpr std::string_view key_case = "exact";
-inline constexpr std::string_view error_frame = "Error on line {line}: {what}\nLine: {text}";
+inline constexpr std::string_view error_frame = "line {line} of {file}: {what}\nLine: {text}";
 inline constexpr std::string_view unfinished_msg = "the line ends with \\, which continues it on the next line, and the file has no next line";
 inline constexpr std::string_view missing_file_msg = "the target file {file} (--hpotarget) cannot be opened";
 inline constexpr Span<std::string_view> bool_true = Span<std::string_view>{detail::lexing_bool_true, 4};
@@ -2264,7 +2265,7 @@ inline constexpr Span<std::string_view> block_refuse_msg = Span<std::string_view
 inline constexpr Span<std::string_view> block_repeat_msg = Span<std::string_view>{detail::placeholders_block_repeat_msg, 1};
 inline constexpr Span<std::string_view> block_unknown_msg = Span<std::string_view>{detail::placeholders_block_unknown_msg, 3};
 inline constexpr Span<std::string_view> group_leftover_msg = Span<std::string_view>{detail::placeholders_group_leftover_msg, 2};
-inline constexpr Span<std::string_view> lexing_error_frame = Span<std::string_view>{detail::placeholders_lexing_error_frame, 3};
+inline constexpr Span<std::string_view> lexing_error_frame = Span<std::string_view>{detail::placeholders_lexing_error_frame, 4};
 inline constexpr Span<std::string_view> lexing_missing_file_msg = Span<std::string_view>{detail::placeholders_lexing_missing_file_msg, 1};
 inline constexpr Span<std::string_view> lexing_unfinished_msg = Span<std::string_view>{nullptr, 0};
 inline constexpr Span<std::string_view> structure_end_mismatch_msg = Span<std::string_view>{detail::placeholders_structure_end_mismatch_msg, 3};

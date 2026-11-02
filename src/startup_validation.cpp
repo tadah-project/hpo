@@ -826,7 +826,7 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
           if (k < trg.observable_lines.size() &&
               trg.observable_lines[k].number > 0)
             throw std::runtime_error(config_line_error(
-                trg.observable_lines[k].number, what,
+                trg.target_file, trg.observable_lines[k].number, what,
                 trg.observable_lines[k].text));
           throw std::runtime_error(what);
         }
@@ -1096,8 +1096,9 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
      * settings that only grade a failure would have no effect. Refused at
      * their line (after the TADAH_FAILSCORE_GRADING override, which
      * hpo_run applies before these checks). */
-    auto at = [](const LammpsSim &sim, const std::string &what) {
-      return sim.line > 0 ? config_line_error(sim.line, what, sim.line_text)
+    auto at = [&trg](const LammpsSim &sim, const std::string &what) {
+      return sim.line > 0 ? config_line_error(trg.target_file, sim.line, what,
+                                              sim.line_text)
                           : what;
     };
     if (trg.failprobe_s0_given && trg.failprobe_idx >= 0)

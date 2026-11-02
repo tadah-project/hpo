@@ -319,7 +319,8 @@ PcIsolation resolve_pc_isolation(const HPOTargets& trg, HPOLog& log)
             throw std::runtime_error("TADAH_PC_WORKER_TIMEOUT (got '" +
                                      pc.timeout_env_text + "')" + what);
         throw std::runtime_error(config_line_error(
-            trg.PC_WORKER_TIMEOUT_line, "PC_WORKER_TIMEOUT" + what,
+            trg.target_file, trg.PC_WORKER_TIMEOUT_line,
+            "PC_WORKER_TIMEOUT" + what,
             trg.PC_WORKER_TIMEOUT_text));
     }
     return pc;

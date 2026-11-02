@@ -679,7 +679,7 @@ void reject_restart_of_grid(const OptimizerSpec& root)
             "grid; a grid search has no RESTART block (MAXEVAL bounds it)";
         throw std::runtime_error(
             root.restart.line > 0
-                ? config_line_error(root.restart.line, what,
+                ? config_line_error(root.source_file, root.restart.line, what,
                                     root.restart.line_text)
                 : what);
     }

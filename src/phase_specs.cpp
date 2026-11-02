@@ -81,14 +81,15 @@ OptimizerSpec prestage_refinement_spec(
 std::string with_block_line(const OptimizerSpec& spec, const std::string& what)
 {
     if (spec.block_line == 0) return what;
-    return config_line_error(spec.block_line, what, spec.block_line_text);
+    return config_line_error(spec.source_file, spec.block_line, what,
+                             spec.block_line_text);
 }
 
 std::string with_line(const OptimizerSpec& spec, const KeyLine& line,
                       const std::string& what)
 {
     if (line.number == 0) return with_block_line(spec, what);
-    return config_line_error(line.number, what, line.text);
+    return config_line_error(spec.source_file, line.number, what, line.text);
 }
 
 std::string with_key_line(const OptimizerSpec& spec, const std::string& key,
@@ -112,6 +113,7 @@ std::optional<OptimizerSpec> inner_run_spec(const OptimizerSpec& parent)
          * block configures it, and its refusals name the block's line. */
         run.lib  = "NLOPT";
         run.algo = caps.default_inner;
+        run.source_file = parent.source_file;
         run.block_line = parent.block_line;
         run.block_line_text = parent.block_line_text;
         run.key_lines = parent.key_lines;
