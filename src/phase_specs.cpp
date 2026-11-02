@@ -242,7 +242,7 @@ std::vector<PhaseSpec> strategy_phase_specs(const OptimizerSpec& spec)
                 spec, spec.multistart.n_starts, spec.multistart.budget_per_start);
             phases.push_back(multistart_phase(spec, plan,
                                               "each MULTISTART start",
-                                              "the MULTISTART run"));
+                                              "the MULTISTART search"));
             break;
         }
         case StrategyType::PRESTAGE: {

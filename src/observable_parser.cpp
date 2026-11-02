@@ -278,7 +278,11 @@ parse_cohesive_energy(const std::vector<std::string>& tokens, std::size_t start,
                     ")");
         } else {
             throw std::runtime_error(
-                "PC_OBSERVABLE cohesive_energy: unknown option '" + t + "'");
+                "PC_OBSERVABLE cohesive_energy: unknown option '" + t +
+                "' (it takes --species, --target, --weight, --lattice, "
+                "--supercell, --hotvar, --loss, --maxiter, --max-wall-time, "
+                "--etol, --maxeval, --fmax-converged, --ptol and "
+                "--unconverged)");
         }
     }
 

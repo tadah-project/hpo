@@ -123,9 +123,9 @@ ModelProbe probe_model(const core::Context &train_ctx) {
     throw;
   } catch (const std::exception &e) {
     throw std::runtime_error(
-        "the -c configuration does not build a model: " +
-        as_sentence(e.what()) + " Every evaluation would fail; fix the -c "
-        "potential/configuration.");
+        "the training configuration does not build a model: " +
+        as_sentence(e.what()) + " Every evaluation would fail until the "
+        "training configuration, or the potential it reads, builds one.");
   }
 }
 
@@ -228,7 +228,7 @@ RawEmbeddingF0 derive_raw_embedding_f0(const core::Context &train_ctx) {
     if (w.size() == probe.DCS.dsize) v = probe.DCS.dmb->raw_embedding_f0(w);
     if (!v) {
       out.source.clear();
-      out.reason = "the weight vector does not match the descriptor";
+      out.reason = "the coefficients do not match the descriptor";
       return out;
     }
     out.kind = RawEmbeddingF0::Kind::Value;
@@ -431,15 +431,16 @@ void require_error_scale_search_changes_the_fit(core::Context &ctx,
  * enclosing block's GRAD_STRATEGY obtains (nlopt_adapter.h). */
 struct AnalyticalBlock {
   const OptimizerSpec *sp;
-  const char *name;
+  std::string name;   // the phase, as the other startup checks name it
 };
 
 /* The blocks of `trg` that take GRAD_STRATEGY ANALYTICAL, in the order
  * their refusals name them: OPTIMIZER, then EXPLORE. */
 std::vector<AnalyticalBlock> analytical_blocks(const HPOTargets &trg) {
-  std::vector<AnalyticalBlock> blocks = {{&trg.spec, "OPTIMIZER"}};
+  std::vector<AnalyticalBlock> blocks = {{&trg.spec, run_phase_name(trg.spec)}};
   if (trg.spec.prestage)
-    blocks.push_back({trg.spec.prestage.get(), "EXPLORE"});
+    blocks.push_back({trg.spec.prestage.get(),
+                      "the PRESTAGE exploration (EXPLORE block)"});
   std::vector<AnalyticalBlock> out;
   for (const AnalyticalBlock &b : blocks)
     if (b.sp->grad_strategy == GradStrategy::Analytical &&
@@ -448,10 +449,10 @@ std::vector<AnalyticalBlock> analytical_blocks(const HPOTargets &trg) {
   return out;
 }
 
-/* "OPTIMIZER block: GRAD_STRATEGY ANALYTICAL", with the note of a strategy
- * resolved for PC_OBSERVABLE: the head of a refusal of `b`. */
+/* "the STRATEGY-level optimiser: GRAD_STRATEGY ANALYTICAL", with the note
+ * of a strategy resolved for PC_OBSERVABLE: the head of a refusal of `b`. */
 std::string analytical_head(const AnalyticalBlock &b) {
-  return std::string(b.name) + " block: GRAD_STRATEGY ANALYTICAL" +
+  return b.name + ": GRAD_STRATEGY ANALYTICAL" +
          (b.sp->grad_strategy_resolved
               ? " (resolved for PC_OBSERVABLE: the block sets no "
                 "GRAD_STRATEGY)"
@@ -536,8 +537,9 @@ void require_analytical_parameters(const core::Context &train_ctx,
 std::set<core::Element> declared_element_set(const core::Context &train_ctx) {
   if (!train_ctx.has_stored("ATOM"))
     throw std::runtime_error(
-        "No training DBFILE: the training configuration declares the "
-        "element set with the ATOM key, such as ATOM Ta. " +
+        "No training DBFILE and no ATOM key: without training data the "
+        "training configuration declares the element set with the ATOM key, "
+        "such as ATOM Ta. " +
         tadah::mlip::potential_has_no_datasets_advice());
   std::set<core::Element> elements;
   for (const auto &sym : train_ctx("ATOM"))
@@ -630,8 +632,8 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
     if (!bad.empty()) {
       std::string msg = "the -c potential has a radial bump width <= 0:";
       for (const auto &b : bad) msg += "\n  - " + b;
-      msg += "\n  Set every width > 0 in the -c potential/configuration "
-             "(tadah refit --edit rewrites a potential).";
+      msg += "\n  Every width of a usable potential is > 0 (tadah refit "
+             "--edit rewrites a potential).";
       throw std::runtime_error(msg);
     }
   }
@@ -639,7 +641,7 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
   if (trg.optimap.count("FIXWEIGHT") && !train_ctx.contains("FIXINDEX")) {
     throw std::runtime_error(
         "OPTIM FIXWEIGHT requires FIXINDEX in the training configuration "
-        "(FIXINDEX names which model weights the FIXWEIGHT values pin).");
+        "(FIXINDEX names the coefficients that the FIXWEIGHT values fix).");
   }
 
   /* --- STRATEGY TYPE vs optimiser --------------------------------------
@@ -697,7 +699,8 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
           std::ostringstream os;
           os << std::setprecision(10) << fs.fd_step;
           e = "NOISE AUTO has no effect: PARAM fd_step " + os.str() +
-              " is set; remove one of them.";
+              " is set, and NOISE AUTO estimates PARAM fd_step only for a "
+              "block without one.";
         } else {
           e = fd_box_error(s, fs);
         }
@@ -715,25 +718,22 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
     if (s.grad_strategy && !phase.inner && !obtains_gradients(s))
       throw std::runtime_error(who + ": GRAD_STRATEGY never takes effect: " +
                                s.lib + ":" + s.algo + " takes no gradient" +
-                               no_gradient_reason(s) + "; remove it.");
+                               no_gradient_reason(s) + ".");
     /* Only the STRATEGY-level phase carries the NOISE block (spec.noise:
      * EXPLORE and INNER blocks have none). */
     if (!phase.inner && s.noise.autodetect)
       throw std::runtime_error(who + ": NOISE AUTO has no effect: " +
-                               noise_auto_unused_why(phase) +
-                               "; remove AUTO from the NOISE block.");
+                               noise_auto_unused_why(phase) + ".");
     const std::string written = fd_params_written(s);
     if (!written.empty()) {
       const bool several = written.find(" and ") != std::string::npos;
-      std::string remove;
-      if (phase.inner)
-        remove = std::string("set ") + (several ? "them" : "it") +
-                 " in the enclosing block";
-      else
-        remove = std::string("remove ") + (several ? "them" : "it");
+      const std::string enclosing =
+          phase.inner ? std::string("; the enclosing block takes ") +
+                            (several ? "them" : "it")
+                      : std::string();
       throw std::runtime_error(
           who + ": " + written + (several ? " never take" : " never takes") +
-          " effect: " + fd_params_unused_why(phase) + "; " + remove + ".");
+          " effect: " + fd_params_unused_why(phase) + enclosing + ".");
     }
     if (s.lib == "ASA") {
       const std::string e = asa_probe_box_error(s);
@@ -1011,7 +1011,7 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
               .size();
       if (optim_lambda && n > 0)
         throw std::runtime_error(
-            "OPTIM LAMBDA: OALGO 3 penalises every weight alike, and the fit "
+            "OPTIM LAMBDA: OALGO 3 penalises every coefficient alike, and the fit "
             "has " + std::to_string(n) + " intercept column(s) (BIAS true "
             "with ATOM), which a ridge penalty leaves out, so every fit "
             "refuses a LAMBDA other than 0: each candidate of the box but 0 "
@@ -1044,7 +1044,7 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
         throw std::runtime_error(
             std::string("OPTIM ") + key + ": the evaluations of this run "
             "fit no coefficient (" +
-            (has_train_db ? "FIXINDEX pins every weight"
+            (has_train_db ? "FIXINDEX fixes every coefficient"
                           : "there is no training DBFILE") +
             "), so " + key + " would change nothing and every candidate "
             "would give the same potential.");
@@ -1074,9 +1074,8 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
       throw std::runtime_error(with_block_line(*blocks.front().sp,
           analytical_head(blocks.front()) +
           " needs the analytical gradient of the loss, which this setup "
-          "cannot form: " + why + ". Change that setting, or set "
-          "GRAD_STRATEGY HYBRID to use finite differences where no "
-          "analytical gradient is available."));
+          "cannot form: " + why + "; GRAD_STRATEGY HYBRID takes finite "
+          "differences where no analytical gradient exists."));
   }
 
   /* --- FAILSCORE_GRADING ON bands the failures below FAILSCORE ---------- */
@@ -1163,9 +1162,9 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
       warn(ch.prefix() + "OPTIM " + rn + " has no effect for the knot basis "
            "family: the effective cutoff is the largest CGRID" +
            std::string(sfx) + " knot and " + rn + " is re-derived on every "
-           "evaluation. Remove the OPTIM " + rn + " line (a wasted search "
-           "dimension) and vary CGRID" + std::string(sfx) + " to change the "
-           "effective cutoff.");
+           "evaluation, so the OPTIM " + rn + " line adds a search parameter "
+           "without effect; CGRID" + std::string(sfx) + " sets the effective "
+           "cutoff.");
     }
   }
 
@@ -1199,6 +1198,13 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
       const std::string p = bc.prefix();
       auto cn = [&](std::size_t i) { return core::to_string(c0 + i + 1); };
       auto sn = [&](std::size_t i) { return core::to_string(s0 + i + 1); };
+      /* " on line N" of the OPTIM line that selected entry k of a key ("" for
+       * an entry without a line). */
+      auto on_line = [](const auto &o, std::size_t k) {
+        return k < o.line.size() && o.line[k] != 0
+                   ? " on line " + std::to_string(o.line[k])
+                   : std::string();
+      };
       /* The descriptor of this channel was built by probe_model() above, so
        * its grids are readable and pair up (read_bump_grids throws
        * otherwise). */
@@ -1241,18 +1247,20 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
               : rn;
       if (hard && rcut_is_optim) {
         if (trg.BUMPGATE_STRICT) {
-          warn(p + "OPTIM " + rn + " on a bump channel is a wasted search "
-               "dimension: the bump-support gate keeps every support inside "
-               "its LOW bound (" + core::to_string(rcut_strict) + "), so the "
-               "cutoff value cannot affect the model. Remove the OPTIM " +
-               rn + " line and set " + rkey + " in the config instead.");
+          warn(p + "OPTIM " + rn + " on a bump channel adds a search "
+               "parameter without effect: BUMPGATE STRICT keeps every support "
+               "inside the low bound of its box (" +
+               core::to_string(rcut_strict) + "), so the cutoff value cannot "
+               "change the model; without the OPTIM " + rn + " line, " + rkey +
+               " keeps the value of the training configuration.");
         } else {
-          warn(p + "OPTIM " + rn + " on a bump channel is usually a wasted "
-               "search dimension: every feasible candidate's bumps vanish at "
-               "their own support edge inside the cutoff, so the sampled " +
-               rn + " value cannot change the model's energies — it only "
-               "widens or narrows the feasible (c, eta) region. Prefer a "
-               "fixed " + rkey + " in the config.");
+          warn(p + "OPTIM " + rn + " on a bump channel usually adds a "
+               "search parameter without effect: the bumps of every feasible "
+               "candidate vanish at the edge of their own support, inside the "
+               "cutoff, so the sampled " + rn + " cannot change the energies "
+               "of the model; it only widens or narrows the feasible (c, eta) "
+               "region. Without the OPTIM " + rn + " line, " + rkey +
+               " keeps the value of the training configuration.");
         }
       }
 
@@ -1262,10 +1270,11 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
         const double reach = mu[i] + w / eta[i];
         if (mu[i] > rcut + tol) {
           const std::string m =
-              p + ckey + " bump " + cn(i) + " centre " +
-              core::to_string(mu[i]) + " lies beyond " + rname + " = " +
-              core::to_string(rcut) + " (pathological: only its inner "
-              "shoulder can contribute) — move the centre below the cutoff.";
+              p + ckey + " bump " + cn(i) + " has its centre " +
+              core::to_string(mu[i]) + " beyond " + rname + " = " +
+              core::to_string(rcut) + ": only its inner shoulder reaches "
+              "the neighbours; a centre below the cutoff (tadah refit "
+              "--edit) gives the whole bump.";
           if (hard) gate_errors.push_back(m);
           else warn(m);
           continue;
@@ -1317,10 +1326,10 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
             p + ckey + " bump " + cn(i) + " (centre " +
             core::to_string(mu[i]) + ", eta " + core::to_string(eta[i]) +
             ") reaches " + core::to_string(reach) + ", past " + rname + " = " +
-            core::to_string(rcut) + " — set " + skey + " (" + sn(i) +
-            ") >= " + core::to_string(w / (rcut - mu[i])) +
-            ", move the centre inward (tadah refit --edit), or raise " + rn +
-            ".");
+            core::to_string(rcut) + "; " + skey + " (" + sn(i) + ") >= " +
+            core::to_string(w / (rcut - mu[i])) +
+            ", a centre further in (tadah refit --edit) or a larger " + rn +
+            " keeps it inside.");
       }
       if (!hard) continue;  // smooth cutoff: overhanging boxes are legitimate
 
@@ -1351,21 +1360,21 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
           if (hi_mu + w / eta_i <= rcut + tol) continue;
           if (hi_mu >= rcut - tol) {
             gate_errors.push_back(
-                p + "the OPTIM bounds let bump " + cn(i) + " of " + ckey +
-                " reach " + core::to_string(hi_mu + w / eta_i) + ", past " +
-                rname + " = " + core::to_string(rcut) +
-                " — impossible while the OPTIM " + ckey + " (" + cn(i) +
-                ") high bound " + core::to_string(hi_mu) + " >= " +
-                core::to_string(rcut) + ": lower the " + ckey +
-                " high bound below " + rn + " first.");
+                p + "OPTIM " + ckey + " (" + cn(i) + ")" +
+                on_line(itc->second, c0 + i) + ": its high bound " +
+                core::to_string(hi_mu) + " is at or above " + rname + " = " +
+                core::to_string(rcut) + ", so bump " + cn(i) + " reaches " +
+                core::to_string(hi_mu + w / eta_i) + ", past the cutoff, "
+                "whatever its width; the box stays inside with a " + ckey +
+                " high bound below " + rn + ".");
           } else {
             gate_errors.push_back(
-                p + "the OPTIM bounds let bump " + cn(i) + " of " + ckey +
-                " reach " + core::to_string(hi_mu + w / eta_i) + ", past " +
-                rname + " = " + core::to_string(rcut) +
-                " — need the OPTIM " + skey + " (" + sn(i) +
-                ") low bound >= w/(" + rn + " - c_hi) = " +
-                core::to_string(w / (rcut - hi_mu)) + " (currently " +
+                p + "bump " + cn(i) + " of " + ckey + " reaches " +
+                core::to_string(hi_mu + w / eta_i) + ", past " + rname +
+                " = " + core::to_string(rcut) + "; it stays inside with an "
+                "OPTIM " + skey + " (" + sn(i) + ") low bound >= w/(" + rn +
+                " - c_hi) = " + core::to_string(w / (rcut - hi_mu)) +
+                " (the smallest width it can take is eta = " +
                 core::to_string(eta_i) + ").");
           }
         }
@@ -1387,22 +1396,24 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
           if (lo_mu + w / eta_hi > brc.max_reachable + tol_best) {
             if (lo_mu >= brc.max_reachable - tol_best) {
               gate_errors.push_back(
-                  p + "no feasible point for bump " + cn(i) + " of " + ckey +
-                  ": even its most favourable corner (centre " +
-                  core::to_string(lo_mu) + ", eta " + core::to_string(eta_hi) +
-                  ") reaches " + core::to_string(lo_mu + w / eta_hi) +
-                  ", past " + rn + " = " + core::to_string(brc.max_reachable) +
-                  " — impossible while the " + ckey + " low bound is at/above " +
-                  rn + ": lower the " + ckey + " low bound below " + rn +
-                  " or raise " + rn + ".");
+                  p + "no point of the OPTIM boxes keeps bump " + cn(i) +
+                  " of " + ckey + " inside: even its most favourable corner "
+                  "(centre " + core::to_string(lo_mu) + ", eta " +
+                  core::to_string(eta_hi) + ") reaches " +
+                  core::to_string(lo_mu + w / eta_hi) + ", past " + rn +
+                  " = " + core::to_string(brc.max_reachable) + ", as the " +
+                  ckey + " low bound is at or above " + rn + "; a " + ckey +
+                  " low bound below " + rn + " or a larger " + rn +
+                  " is needed.");
             } else {
               gate_errors.push_back(
-                  p + "no feasible point for bump " + cn(i) + " of " + ckey +
-                  ": even its most favourable corner (centre " +
-                  core::to_string(lo_mu) + ", eta " + core::to_string(eta_hi) +
-                  ") reaches " + core::to_string(lo_mu + w / eta_hi) +
-                  ", past " + rn + " = " + core::to_string(brc.max_reachable) +
-                  " — need the OPTIM " + skey + " (" + sn(i) +
+                  p + "no point of the OPTIM boxes keeps bump " + cn(i) +
+                  " of " + ckey + " inside: even its most favourable corner "
+                  "(centre " + core::to_string(lo_mu) + ", eta " +
+                  core::to_string(eta_hi) + ") reaches " +
+                  core::to_string(lo_mu + w / eta_hi) + ", past " + rn +
+                  " = " + core::to_string(brc.max_reachable) + "; a point "
+                  "inside needs an OPTIM " + skey + " (" + sn(i) +
                   ") high bound >= w/(" + rn + " - c_lo) = " +
                   core::to_string(w / (brc.max_reachable - lo_mu)) +
                   ", a lower " + ckey + " low bound, or a larger " + rn + ".");
@@ -1414,13 +1425,14 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
             const std::string rdesc =
                 rcut_is_optim ? ("the sampled " + rn)
                               : (rn + " = " + core::to_string(brc.min_reachable));
-            info("bump-support gate (CANDIDATE): armed for " + ckey + " bump " +
-                 cn(i) + (bc.joined ? " of " + bc.where() : std::string()) +
-                 " — candidates with c + " +
-                 core::to_string(w) + "/eta > " + rdesc + " are rejected "
-                 "before training as graded band-D failures (worst box corner "
-                 "reaches " + core::to_string(hi_mu + w / eta_lo) + "). "
-                 "BUMPGATE STRICT restores the startup box-corner error.");
+            info("BUMPGATE CANDIDATE: bump " + cn(i) + " of " + ckey +
+                 (bc.joined ? " of " + bc.where() : std::string()) +
+                 " is checked in every candidate: a candidate with c + " +
+                 core::to_string(w) + "/eta > " + rdesc + " is refused "
+                 "before training and fails (band D under FAILSCORE_GRADING "
+                 "ON; the worst box corner reaches " +
+                 core::to_string(hi_mu + w / eta_lo) + "); BUMPGATE STRICT "
+                 "refuses such a box at startup.");
           }
         }
       }
@@ -1428,14 +1440,14 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
   }
   if (!gate_errors.empty()) {
     std::string msg =
-        "bump-support gate: with a hard (Cut_Dummy) cutoff every compact "
-        "bump must vanish at or before RCUT (c + w/eta <= RCUT) — a "
-        "truncated overhang is an energy/force STEP at the cutoff. "
-        "Violations:";
+        "BUMPGATE: a compact bump reaches past its cutoff: under a Cut_Dummy "
+        "cutoff each bump vanishes at or before RCUT (c + w/eta <= RCUT), as "
+        "a bump cut off there gives the energy and the forces a step at the "
+        "cutoff. The bumps past the cutoff:";
     for (const auto &e : gate_errors) msg += "\n  - " + e;
-    msg += "\n  To search longer range, raise RCUT2B/RCUTMB in the config "
-           "(the potential stays smooth: bumps still vanish at their own "
-           "support edge).";
+    msg += "\n  A larger RCUT2B or RCUTMB in the training configuration gives "
+           "a longer range; the potential stays smooth, as each bump vanishes "
+           "at the edge of its own support.";
     throw std::runtime_error(msg);
   }
 
@@ -1467,7 +1479,7 @@ std::string validation_config_file(const core::Context &ctx) {
       "--validation (VALIDATION) takes one validation configuration file, "
       "whose DBFILE lines list the validation datasets; it has " +
       std::to_string(n) + " values: " + names +
-      ". List every validation dataset as a DBFILE line of one file.");
+      "; one file lists every validation dataset as a DBFILE line.");
 }
 
 void require_distinct_validation_datasets(const core::Context &val_ctx,
@@ -1482,9 +1494,9 @@ void require_distinct_validation_datasets(const core::Context &val_ctx,
       "twice: entry " + std::to_string(i + 1) + " (" + files[i] +
       ") and entry " + std::to_string(j + 1) + " (" + files[j] +
       ") are one file, so it would count twice in the average over the "
-      "validation datasets of every validation metric. List each dataset "
-      "once; to weight the datasets, use indexed PC_ERMSE (i) and "
-      "PC_FRMSE (i) lines.");
+      "validation datasets of every validation metric. Each dataset is "
+      "listed once, and indexed PC_ERMSE (i) and PC_FRMSE (i) lines weight "
+      "the datasets.");
 }
 
 } // namespace hpo

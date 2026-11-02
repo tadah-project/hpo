@@ -355,8 +355,12 @@ void read_block_until(const std::vector<std::string> &tok, std::size_t &pos,
       throw in_block(where, "unknown key '" + key + "' in the " +
                                 std::string(block) + " block");
     if (iss.fail())
-      throw in_block(where, "bad value for '" + key + "' in the " +
-                                std::string(block) + " block");
+      throw in_block(where, "invalid value for '" + key + "' in the " +
+                                std::string(block) + " block: " +
+                                (pos + 1 < tok.size()
+                                     ? "the value at or after '" +
+                                           tok[pos + 1] + "' is not one it takes"
+                                     : std::string("no value given")));
     {
       const std::string first = pos + 1 < tok.size() ? tok[pos + 1] : "";
       std::string attr = ukey == "MAXITER" ? std::string("MAXEVAL") : ukey;

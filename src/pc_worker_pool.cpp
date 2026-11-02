@@ -286,7 +286,8 @@ void PcWorkerPool::kill_reap_locked(Channel& ch, int slot, const char* why,
       + " (pid " + std::to_string(dead_pid) + ") killed/died: " + why
       + "; wait: " + status
       + (deliberate
-             ? "; deliberate (FAILPROBE gate) -- not counted as a slot fault"
+             ? "; stopped by PC_FAILPROBE --gate, so not counted as a fault "
+               "of the worker"
              : "; consecutive deaths: " + std::to_string(ch.consec_deaths)));
 }
 

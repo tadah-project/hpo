@@ -38,13 +38,13 @@ void ValidationMetricTargets::add(const std::vector<std::size_t>& indices,
         if (global_)
             throw std::runtime_error(key_ + ": repeated declaration (first declared on line "
                 + std::to_string(global_->line) + ")");
-        if (enabled()) throw std::runtime_error(key_ + ": cannot mix global and indexed forms");
+        if (enabled()) throw std::runtime_error(key_ + ": a line without an index (every validation dataset) and indexed lines (one dataset each) are not combined");
         global_ = a;
     } else {
-        if (global_) throw std::runtime_error(key_ + ": cannot mix global and indexed forms");
+        if (global_) throw std::runtime_error(key_ + ": a line without an index (every validation dataset) and indexed lines (one dataset each) are not combined");
         auto pending = indexed_;
         for (auto i : indices) {
-            if (i == 0) throw std::runtime_error(key_ + ": validation indices start at 1");
+            if (i == 0) throw std::runtime_error(key_ + ": the validation datasets are numbered from 1, got the index 0");
             const auto [it, inserted] = pending.emplace(i, a);
             if (!inserted)
                 throw std::runtime_error(key_ + ": duplicate assignment for dataset " + std::to_string(i)

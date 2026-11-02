@@ -387,7 +387,8 @@ void require_multistart_points(const OptimizerSpec& spec)
         "); " +
         (c.points == 1 ? "one start is STRATEGY TYPE PLAIN, and " + advice
                        : advice + ", and N_STARTS " + n +
-                             " starts from each of the " + n)));
+                             " runs one start from each of the " + n +
+                             " starting points")));
 }
 
 void require_restart_points(const OptimizerSpec& spec)

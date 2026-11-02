@@ -125,7 +125,7 @@ unsigned validate_grid_spec(const OptimizerSpec& spec);
 
 /* NLopt: MAXEVAL fits the int NLopt counts evaluations in, for the spec and
  * its INNER block; the INNER block has no seed (NLopt draws the INNER
- * search from the enclosing run's random stream), no GRAD_STRATEGY and no
+ * search from the random numbers of the enclosing run), no GRAD_STRATEGY and no
  * STOPVAL (mlsl.c and auglag.c replace it with the enclosing run's); no
  * attribute the algorithm never reads (`role`: SpecRole); require_stop()
  * and require_inner_run_stop(). Throws std::invalid_argument for the INNER

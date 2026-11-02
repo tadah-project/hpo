@@ -669,7 +669,7 @@ inline constexpr KeyId BLOCK_EXPLORE_keys[] = {
     KeyId::OPTIMIZER_PARAM,
 };
 inline constexpr std::string_view BLOCK_EXPLORE_requires[] = {
-    "EXPLORE block is only valid with TYPE PRESTAGE (declare TYPE before EXPLORE)",
+    "EXPLORE block is only valid with TYPE PRESTAGE (the TYPE line comes before the EXPLORE block)",
 };
 inline constexpr std::string_view BLOCK_EXPLORE_close_checks[] = {
     "the EXPLORE block names no optimiser: {missing}; LIB and ALGO inside the EXPLORE block name the optimiser of the exploration of STRATEGY TYPE PRESTAGE",
@@ -695,15 +695,15 @@ inline constexpr KeyId BLOCK_REFINE_keys[] = {
     KeyId::OPTIMIZER_PARAM,
 };
 inline constexpr std::string_view BLOCK_REFINE_requires[] = {
-    "REFINE block is only valid with TYPE PRESTAGE (declare TYPE before REFINE)",
+    "REFINE block is only valid with TYPE PRESTAGE (the TYPE line comes before the REFINE block)",
 };
 inline constexpr Refusal BLOCK_INNER_refuse[] = {
     Refusal{"SEED",
-        "NLopt draws the INNER search from the enclosing run's random stream"},
+        "NLopt draws the INNER search from the random numbers of the enclosing run"},
     Refusal{"GRAD_STRATEGY",
-        "the enclosing block's GRAD_STRATEGY applies to its local search"},
+        "the GRAD_STRATEGY of the enclosing block applies to its local search"},
     Refusal{"STOPVAL",
-        "NLopt's MLSL and AUGLAG replace the INNER search's STOPVAL with the enclosing block's"},
+        "NLopt's MLSL and AUGLAG replace the STOPVAL of the INNER search with that of the enclosing block"},
 };
 inline constexpr KeyId BLOCK_INNER_keys[] = {
     KeyId::OPTIMIZER_LIB,
@@ -775,7 +775,7 @@ inline constexpr Arg ROOT_PC_ISOLATION_args[] = {
         "PC_ISOLATION must be THREAD or PROCESS, got '{tok}'", "", false, ""},
 };
 inline constexpr std::string_view ROOT_PC_ISOLATION_checks[] = {
-    "PC_ISOLATION PROCESS is not supported in the MPI build (TADAH_HPO_MPI): the worker processes cannot initialize MPI. Use the serial build, or PC_ISOLATION THREAD.",
+    "PC_ISOLATION PROCESS: the MPI build of tadah (-DTADAH_HPO_MPI=ON) runs the PC_LAMMPS and PC_FAILPROBE scripts inside the tadah process only (PC_ISOLATION THREAD), as a worker process cannot initialise MPI; PROCESS runs in the serial build",
 };
 inline constexpr Arg ROOT_PC_WORKER_TIMEOUT_args[] = {
     Arg{"seconds", ArgKind::Number, false, false,
@@ -799,7 +799,7 @@ inline constexpr Arg ROOT_FAILSCORE_GRADING_args[] = {
         "FAILSCORE_GRADING must be ON or OFF, got '{tok}'", "", false, ""},
 };
 inline constexpr std::string_view ROOT_FAILSCORE_GRADING_checks[] = {
-    "{phase}: ASA:ASA: under FAILSCORE_GRADING ON a failed evaluation scores from 0.999 FAILSCORE to below FAILSCORE ({value}), and ASA:ASA takes a cost of about 1e+18 or more for an invalid state and draws another, so it would not see the graded failures at or above that cost; a FAILSCORE of 1e+18 or less keeps every graded failure below it",
+    "{phase}: ASA:ASA: under FAILSCORE_GRADING ON a failed evaluation scores from 0.999 FAILSCORE to below FAILSCORE ({value}). ASA:ASA takes a cost of about 1e+18 or more for an invalid state and draws another, so it would not see the graded failures at or above that cost. A FAILSCORE of 1e+18 or less keeps every graded failure below it",
 };
 inline constexpr std::string_view ROOT_BUMPGATE_arg0_words[] = {
     "CANDIDATE",
@@ -812,7 +812,7 @@ inline constexpr Arg ROOT_BUMPGATE_args[] = {
         "BUMPGATE must be CANDIDATE or STRICT, got '{tok}'", "", false, ""},
 };
 inline constexpr std::string_view ROOT_BUMPGATE_checks[] = {
-    "bump-support gate: with a hard (Cut_Dummy) cutoff every compact bump must vanish at or before RCUT (c + w/eta <= RCUT) — a truncated overhang is an energy/force STEP at the cutoff. Violations:{list}\n  To search longer range, raise RCUT2B/RCUTMB in the config (the potential stays smooth: bumps still vanish at their own support edge).",
+    "BUMPGATE: a compact bump reaches past its cutoff: under a Cut_Dummy cutoff each bump vanishes at or before RCUT (c + w/eta <= RCUT), as a bump cut off there gives the energy and the forces a step at the cutoff. The bumps past the cutoff:{list}\n  A larger RCUT2B or RCUTMB in the training configuration gives a longer range; the potential stays smooth, as each bump vanishes at the edge of its own support.",
 };
 inline constexpr Arg ROOT_RHOGATE_args[] = {
     Arg{"tol", ArgKind::Number, false, false,
@@ -827,7 +827,7 @@ inline constexpr std::string_view ROOT_RHOGATE_checks[] = {
     "RHOGATE: under {form} every density rho(r) is >= 0, so the sign condition of RHOGATE holds for every candidate; RHOGATE is taken under RHOFORM SIGNED only (RHOBARGATE under every form)",
     "{keys}: the many-body cutoff RCUTMB is not set.",
     "{keys}: {why} on every candidate (WATOM has no OPTIM line, or its OPTIM box does not reach above 0), so every evaluation would be refused before training, under SEED ERROR and SEED WARN alike. The checks of {keys} need every density pair weight > 0, which a WATOM above 0 gives (under RHOFORM SIGNED the sign of rho is that of the AMPGRIDMB amplitudes); without the {keys} line(s) the run makes no such check.",
-    "RHOGATE: seed {name} fails the rho(r) sign gate: {why}. A seed that fails is refused under SEED ERROR, the default, and is evaluated as a rejected start under SEED WARN. tadah refit --edit changes the density of a potential file; a WARM seed takes the values of its search parameters from its file and the others from the training configuration.",
+    "RHOGATE: seed {name} fails the sign condition of RHOGATE: {why}. A seed that fails is refused under SEED ERROR, the default, and is evaluated as a rejected start under SEED WARN. tadah refit --edit changes the density of a potential file; a WARM seed takes the values of its search parameters from its file and the others from the training configuration.",
 };
 inline constexpr std::string_view ROOT_RHOBARGATE_arg0_words[] = {
     "bcc",
@@ -858,7 +858,7 @@ inline constexpr std::string_view ROOT_RHOBARGATE_checks[] = {
     "{keys} {what} the density of one DM_REAM many-body term or of one DM_Embed component, and {why}",
     "RHOBARGATE: f_lo = {low} puts the largest reachable RCUTMB, {max} A, at {value} lattice constants of the smallest lattice (a = f_lo a0 = {min} A); the limit is 20. f_lo and f_hi are fractions of a0 (0.75 scans down to 25 % compression), and a larger f_lo puts that RCUTMB at fewer lattice constants.",
     "RHOBARGATE: the largest reachable RCUTMB, {max} A, divided by the smallest lattice constant, f_lo a0 = {min} A, is not a finite number",
-    "RHOBARGATE: seed {name} fails the lattice rhobar(a) gate: {why}. A seed that fails is refused under SEED ERROR, the default, and is evaluated as a rejected start under SEED WARN. tadah refit --edit changes the density of a potential file; a WARM seed takes the values of its search parameters from its file and the others from the training configuration.",
+    "RHOBARGATE: seed {name} fails the lattice condition of RHOBARGATE: {why}. A seed that fails is refused under SEED ERROR, the default, and is evaluated as a rejected start under SEED WARN. tadah refit --edit changes the density of a potential file; a WARM seed takes the values of its search parameters from its file and the others from the training configuration.",
     "RHOBARGATE: the first {name} shell at a = f_hi a0 = {high} A lies at r = {value} A, beyond the smallest cutoff a candidate can have, RCUTMB = {max} A{note}: rhobar(a) would lose its nearest neighbours; a smaller f_hi or a0, or a larger RCUTMB, keeps the first shell inside the cutoff.",
 };
 inline constexpr Arg ROOT_QFLUSH_args[] = {
@@ -870,14 +870,14 @@ inline constexpr Arg ROOT_OUTPUT_args[] = {
     Arg{"n", ArgKind::Integer, false, false, Limit{true, "1", 1.0, true, 1ull},
         Limit{}, false, false, Span<std::string_view>{nullptr, 0},
         Span<RefusedWord>{nullptr, 0}, "{key}",
-        "OUTPUT must be an integer >= 1, got '{tok}' (it is a cadence: write every Nth evaluation; to write as little as possible, use a large value such as OUTPUT 1000000)",
+        "OUTPUT must be an integer >= 1, got '{tok}' (it is a cadence: the run writes every Nth evaluation; a large value, such as OUTPUT 1000000, writes as little as possible)",
         "", false, ""},
 };
 inline constexpr Arg ROOT_BOUTPUT_args[] = {
     Arg{"n", ArgKind::Integer, false, false, Limit{true, "1", 1.0, true, 1ull},
         Limit{}, false, false, Span<std::string_view>{nullptr, 0},
         Span<RefusedWord>{nullptr, 0}, "{key}",
-        "BOUTPUT must be an integer >= 1, got '{tok}' (it is a cadence: write every Nth new best)",
+        "BOUTPUT must be an integer >= 1, got '{tok}' (it is a cadence: the run writes every Nth new best)",
         "", false, ""},
 };
 inline constexpr Arg ROOT_DIGITS_args[] = {
@@ -954,7 +954,7 @@ inline constexpr Arg OPTIMIZER_MAXEVAL_args[] = {
         Span<RefusedWord>{nullptr, 0}, "{key}", "", "", false, ""},
 };
 inline constexpr std::string_view OPTIMIZER_MAXEVAL_checks[] = {
-    "{phase}: {lib}:{algo} needs a stop: {why}; set {list}",
+    "{phase}: {lib}:{algo} needs a stop: {why}; {list} gives it one",
     "{phase}: TADAH:ANNEAL: CHAIN_LENGTH AUTO spreads MAXEVAL over the temperature steps, and this search has no MAXEVAL; without MAXEVAL, PARAM CHAIN_LENGTH gives the number of proposals at each temperature step",
     "{phase}: TADAH:ANNEAL: NT AUTO follows from MAXEVAL, and this search has no MAXEVAL; without MAXEVAL, PARAM NT gives the number of step adjustments of the Corana kernel at each temperature step",
 };
@@ -981,9 +981,9 @@ inline constexpr Arg OPTIMIZER_FTOL_REL_args[] = {
         Span<RefusedWord>{nullptr, 0}, "{key}", "", "", false, ""},
 };
 inline constexpr std::string_view OPTIMIZER_FTOL_REL_checks[] = {
-    "{phase}: {lib}:{algo} does not support FTOL_REL with an INNER block: {why}; set it in the INNER block, whose local search tests it",
+    "{phase}: {lib}:{algo} does not support FTOL_REL with an INNER block: {why}; the INNER block, whose local search tests it, takes it",
     "{phase}: CERES:{algo} requires FTOL_REL >= 0 (Ceres' function_tolerance), got {value}",
-    "{phase}: DLIB:BFGS does not support FTOL_REL; use FTOL_ABS",
+    "{phase}: DLIB:BFGS does not support FTOL_REL; its tolerance is FTOL_ABS",
     "{phase}: ASA:ASA does not take FTOL_REL or FTOL_ABS: ASA's own stops end the search, PARAM Cost_Precision with Maximum_Cost_Repeat (a plateau of the loss) or Accepted_To_Generated_Ratio",
     "{phase}: TADAH:{algo}: FTOL_REL must be finite and non-negative",
     "{phase}: {lib}:{algo} does not support FTOL_REL{note}",
@@ -994,12 +994,12 @@ inline constexpr Arg OPTIMIZER_FTOL_ABS_args[] = {
         Span<RefusedWord>{nullptr, 0}, "{key}", "", "", false, ""},
 };
 inline constexpr std::string_view OPTIMIZER_FTOL_ABS_checks[] = {
-    "{phase}: CERES:{algo} uses relative tolerance; use FTOL_REL (mapped to function_tolerance) instead of FTOL_ABS",
+    "{phase}: CERES:{algo} uses a relative tolerance: it takes FTOL_REL (Ceres' function_tolerance), not FTOL_ABS",
     "{phase}: ASA:ASA does not take FTOL_REL or FTOL_ABS: ASA's own stops end the search, PARAM Cost_Precision with Maximum_Cost_Repeat (a plateau of the loss) or Accepted_To_Generated_Ratio",
     "{phase}: TADAH:{algo}: FTOL_ABS must be finite and non-negative",
     "{phase}: DLIB:GFS: FTOL_ABS is the accuracy of dlib's solver and must be >= 0 (got {value})",
     "{phase}: {lib}:{algo} does not support FTOL_ABS{note}",
-    "{phase}: {lib}:{algo} does not support FTOL_ABS with an INNER block: {why}; set it in the INNER block, whose local search tests it",
+    "{phase}: {lib}:{algo} does not support FTOL_ABS with an INNER block: {why}; the INNER block, whose local search tests it, takes it",
 };
 inline constexpr Arg OPTIMIZER_XTOL_REL_args[] = {
     Arg{"tolerance", ArgKind::Number, false, false, Limit{}, Limit{}, false,
@@ -1012,7 +1012,7 @@ inline constexpr std::string_view OPTIMIZER_XTOL_REL_checks[] = {
     "{phase}: ASA:ASA does not take XTOL_REL or XTOL_ABS",
     "{phase}: TADAH:{algo} does not use XTOL_REL or XTOL_ABS: it has no convergence test on the point; FTOL_REL and FTOL_ABS end it on a plateau of the loss (the eps-NEPS test)",
     "{phase}: {lib}:{algo} does not support XTOL_REL{note}",
-    "{phase}: {lib}:{algo} does not support XTOL_REL with an INNER block: {why}; set it in the INNER block, whose local search tests it",
+    "{phase}: {lib}:{algo} does not support XTOL_REL with an INNER block: {why}; the INNER block, whose local search tests it, takes it",
 };
 inline constexpr Arg OPTIMIZER_XTOL_ABS_args[] = {
     Arg{"tolerance", ArgKind::Number, false, false, Limit{}, Limit{}, false,
@@ -1020,12 +1020,12 @@ inline constexpr Arg OPTIMIZER_XTOL_ABS_args[] = {
         Span<RefusedWord>{nullptr, 0}, "{key}", "", "", false, ""},
 };
 inline constexpr std::string_view OPTIMIZER_XTOL_ABS_checks[] = {
-    "{phase}: CERES:{algo} uses relative tolerance; use XTOL_REL (mapped to parameter_tolerance) instead of XTOL_ABS",
+    "{phase}: CERES:{algo} uses a relative tolerance: it takes XTOL_REL (Ceres' parameter_tolerance), not XTOL_ABS",
     "{phase}: DLIB:BFGS does not support XTOL_ABS",
     "{phase}: ASA:ASA does not take XTOL_REL or XTOL_ABS",
     "{phase}: TADAH:{algo} does not use XTOL_REL or XTOL_ABS: it has no convergence test on the point; FTOL_REL and FTOL_ABS end it on a plateau of the loss (the eps-NEPS test)",
     "{phase}: {lib}:{algo} does not support XTOL_ABS{note}",
-    "{phase}: {lib}:{algo} does not support XTOL_ABS with an INNER block: {why}; set it in the INNER block, whose local search tests it",
+    "{phase}: {lib}:{algo} does not support XTOL_ABS with an INNER block: {why}; the INNER block, whose local search tests it, takes it",
 };
 inline constexpr Arg OPTIMIZER_POPULATION_args[] = {
     Arg{"n", ArgKind::Integer, false, false, Limit{true, "0", 0.0, true, 0ull},
@@ -1039,7 +1039,7 @@ inline constexpr std::string_view OPTIMIZER_POPULATION_checks[] = {
     "{phase}: DLIB:BFGS does not support POPULATION",
     "{phase}: CERES:{algo} does not support POPULATION",
     "{phase}: ASA:ASA does not take POPULATION: ASA runs one chain; PARAM Gener_Block sets the number of states it generates at a time at the start (the block then adapts up to Gener_Block_Max unless Gener_Mov_Avr is 0), and the THREADS workers evaluate each block together",
-    "{phase}: {lib}:{algo} does not use POPULATION; remove it (it is read by {list})",
+    "{phase}: {lib}:{algo} does not use POPULATION (it is read by {list})",
 };
 inline constexpr Arg OPTIMIZER_STEP_args[] = {
     Arg{"KEY", ArgKind::Name, true, false, Limit{}, Limit{}, false, false,
@@ -1060,12 +1060,12 @@ inline constexpr std::string_view OPTIMIZER_STEP_checks[] = {
     "STEP override '{text}': empty index list",
     "STEP override '{text}': bad index list ({why})",
     "STEP override names OPTIM key '{key}' which is not optimised (no OPTIM line for it)",
-    "STEP {key}({index}): index {index} is not an OPTIM'd index of {key}",
-    "STEP overrides cover only some dimensions and no block-wide STEP is set; add `STEP <frac>` or override every OPTIM'd dimension",
+    "STEP {key}({index}): index {index} of {key} is not on an OPTIM line",
+    "STEP overrides cover only some dimensions and no block-wide STEP is set; the block needs `STEP <frac>` or an override for every search parameter",
     "{phase}: {lib}:{algo}: STEP must be > 0 and finite (got {value})",
-    "{phase}: {lib}:{algo} STEP {key}: STEP must be > 0 and finite (got {value})",
-    "{phase}: {lib}:{algo}: STEP must be a fraction of the OPTIM width in (0, 0.5] (got {value}); values above 0.5 cannot satisfy BOBYQA's width >= 2*step rule and exceed NLopt's own 0.25 default",
-    "{phase}: {lib}:{algo} STEP {key}: STEP must be a fraction of the OPTIM width in (0, 0.5] (got {value}); values above 0.5 cannot satisfy BOBYQA's width >= 2*step rule and exceed NLopt's own 0.25 default",
+    "{phase}: {lib}:{algo}: STEP {key} must be > 0 and finite (got {value})",
+    "{phase}: {lib}:{algo}: STEP must be a fraction of the OPTIM width in (0, 0.5] (got {value}); a STEP above 0.5 cannot meet the rule of NLOPT:LN_BOBYQA that each width is at least twice the step, and exceeds the 0.25 that NLopt takes by default",
+    "{phase}: {lib}:{algo}: STEP {key} must be a fraction of the OPTIM width in (0, 0.5] (got {value}); a STEP above 0.5 cannot meet the rule of NLOPT:LN_BOBYQA that each width is at least twice the step, and exceeds the 0.25 that NLopt takes by default",
     "STEP {key} is set twice in the {block} block (first on line {first_line}); each key is given once",
 };
 inline constexpr Arg OPTIMIZER_SEED_args[] = {
@@ -1087,9 +1087,9 @@ inline constexpr Arg OPTIMIZER_VECTOR_ARR_args[] = {
         Span<RefusedWord>{nullptr, 0}, "{key}", "", "", false, ""},
 };
 inline constexpr std::string_view OPTIMIZER_VECTOR_ARR_checks[] = {
-    "{phase}: {lib}:{algo} does not use VECTOR_ARR; remove it (it is read by {list})",
-    "{phase}: DLIB:BFGS does not support VECTOR_ARR; use ALGO GFS or an NLopt L-BFGS variant instead",
-    "{phase}: CERES:{algo} does not support VECTOR_ARR; use DLIB:GFS or an NLopt global algorithm",
+    "{phase}: {lib}:{algo} does not use VECTOR_ARR (it is read by {list})",
+    "{phase}: DLIB:BFGS does not support VECTOR_ARR, which DLIB:GFS and the NLopt L-BFGS algorithms read",
+    "{phase}: CERES:{algo} does not support VECTOR_ARR, which DLIB:GFS and the global NLopt algorithms read",
     "{phase}: ASA:ASA does not accept VECTOR_ARR",
     "{phase}: TADAH:{algo} does not use VECTOR_ARR: it keeps no gradient history",
 };
@@ -1100,8 +1100,8 @@ inline constexpr Arg OPTIMIZER_THREADS_args[] = {
         Span<RefusedWord>{nullptr, 0}, "{key}", "", "", false, ""},
 };
 inline constexpr std::string_view OPTIMIZER_THREADS_checks[] = {
-    "{phase}: {lib}:{algo} does not use THREADS in an INNER block: the THREADS of the STRATEGY-level optimiser sets the workers of the run; remove it",
-    "{phase}: {lib}:{algo} does not use THREADS: the THREADS of the STRATEGY-level optimiser sets the workers of the run, and the THREADS of an EXPLORE block is read by {list}; remove it",
+    "{phase}: {lib}:{algo} does not use THREADS in an INNER block: the THREADS of the STRATEGY-level optimiser sets the workers of the run",
+    "{phase}: {lib}:{algo} does not use THREADS: the THREADS of the STRATEGY-level optimiser sets the workers of the run, and the THREADS of an EXPLORE block is read by {list}",
 };
 inline constexpr std::string_view OPTIMIZER_GRAD_STRATEGY_arg0_words[] = {
     "NUMERICAL",
@@ -1118,11 +1118,11 @@ inline constexpr Arg OPTIMIZER_GRAD_STRATEGY_args[] = {
 };
 inline constexpr std::string_view OPTIMIZER_GRAD_STRATEGY_checks[] = {
     "GRAD_STRATEGY takes one value: NUMERICAL, ANALYTICAL or HYBRID",
-    "{block} block: GRAD_STRATEGY ANALYTICAL{note} needs the analytical gradient of the loss, which this setup cannot form: {why}. Change that setting, or set GRAD_STRATEGY HYBRID to use finite differences where no analytical gradient is available.",
-    "{block} block: GRAD_STRATEGY ANALYTICAL{note} needs an analytical derivative with respect to every search parameter, and the descriptors give none for {list}. GRAD_STRATEGY HYBRID takes finite differences for {what}.",
+    "{phase}: GRAD_STRATEGY ANALYTICAL{note} needs the analytical gradient of the loss, which this setup cannot form: {why}; GRAD_STRATEGY HYBRID takes finite differences where no analytical gradient exists.",
+    "{phase}: GRAD_STRATEGY ANALYTICAL{note} needs an analytical derivative with respect to every search parameter, and the descriptors give none for {list}. GRAD_STRATEGY HYBRID takes finite differences for {what}.",
     "{phase}: ASA:ASA does not accept GRAD_STRATEGY: it is gradient-free, and the reannealing takes its tangents by finite differences (PARAM Delta_X)",
     "{phase}: TADAH:{algo} does not use GRAD_STRATEGY: it is gradient-free",
-    "{phase} {lib}:{algo}: GRAD_STRATEGY never takes effect: {lib}:{algo} takes no gradient{note}; remove it.",
+    "{phase} {lib}:{algo}: GRAD_STRATEGY never takes effect: {lib}:{algo} takes no gradient{note}.",
 };
 inline constexpr Arg OPTIMIZER_PARAM_args[] = {
     Arg{"name", ArgKind::Name, false, false, Limit{}, Limit{}, false, false,
@@ -1221,7 +1221,8 @@ inline constexpr Arg INIT_WARM_ON_MISMATCH_args[] = {
     Arg{"policy", ArgKind::Word, false, false, Limit{}, Limit{}, false, false,
         Span<std::string_view>{detail::INIT_WARM_ON_MISMATCH_arg0_words, 3},
         Span<RefusedWord>{nullptr, 0}, "",
-        "WARM_ON_MISMATCH must be one of: warn, error, skip", "", false, ""},
+        "WARM_ON_MISMATCH must be one of: warn, error, skip, got '{tok}'", "",
+        false, ""},
 };
 inline constexpr Arg NOISE_AUTO_args[] = {
     Arg{"bool", ArgKind::Bool, true, false, Limit{}, Limit{}, false, false,
@@ -1229,7 +1230,7 @@ inline constexpr Arg NOISE_AUTO_args[] = {
         "NOISE.AUTO", "", "", false, ""},
 };
 inline constexpr std::string_view NOISE_AUTO_checks[] = {
-    "{phase} {lib}:{algo}: NOISE AUTO has no effect: {why}; remove AUTO from the NOISE block.",
+    "{phase} {lib}:{algo}: NOISE AUTO has no effect: {why}.",
 };
 inline constexpr Arg NOISE_CALIBRATION_args[] = {
     Arg{"n", ArgKind::Integer, false, false, Limit{true, "0", 0.0, true, 0ull},
@@ -1300,9 +1301,9 @@ inline constexpr std::string_view ROOT_PC_ERMSE_checks[] = {
     "{key} requires <target> <weight>",
     "{key}: unknown flag '{tok}'",
     "{key}: repeated declaration (first declared on line {first_line})",
-    "{key}: cannot mix global and indexed forms",
+    "{key}: a line without an index (every validation dataset) and indexed lines (one dataset each) are not combined",
     "{key}: duplicate assignment for dataset {index} (first declared on line {first_line})",
-    "{key}: validation indices start at 1",
+    "{key}: the validation datasets are numbered from 1, got the index 0",
     "Invalid index number '{tok}'",
     "Descending index range '{tok}'",
 };
@@ -1362,9 +1363,9 @@ inline constexpr std::string_view ROOT_PC_SRMSE_GPA_checks[] = {
     "{key} requires <target> <weight>",
     "{key}: unknown flag '{tok}'",
     "{key}: repeated declaration (first declared on line {first_line})",
-    "{key}: cannot mix global and indexed forms",
+    "{key}: a line without an index (every validation dataset) and indexed lines (one dataset each) are not combined",
     "{key}: duplicate assignment for dataset {index} (first declared on line {first_line})",
-    "{key}: validation indices start at 1",
+    "{key}: the validation datasets are numbered from 1, got the index 0",
 };
 inline constexpr Arg ROOT_PC_FRMSE_args[] = {
     Arg{"indices", ArgKind::Indices, true, false, Limit{}, Limit{}, false,
@@ -1388,9 +1389,9 @@ inline constexpr std::string_view ROOT_PC_FRMSE_checks[] = {
     "{key} requires <target> <weight>",
     "{key}: unknown flag '{tok}'",
     "{key}: repeated declaration (first declared on line {first_line})",
-    "{key}: cannot mix global and indexed forms",
+    "{key}: a line without an index (every validation dataset) and indexed lines (one dataset each) are not combined",
     "{key}: duplicate assignment for dataset {index} (first declared on line {first_line})",
-    "{key}: validation indices start at 1",
+    "{key}: the validation datasets are numbered from 1, got the index 0",
     "Invalid index number '{tok}'",
     "Descending index range '{tok}'",
 };
@@ -1411,7 +1412,7 @@ inline constexpr std::string_view ROOT_PC_LAMMPS_checks[] = {
     "{key}: LAMMPS cannot start with this line's command-line options: {why}",
     "{key}: the line has no --script option; --script <file> names the LAMMPS script the line runs",
     "PC_LAMMPS: the line has no --varloss option; a PC_LAMMPS line gives at least one --varloss <name> <target> <weight>, a loss term (--outvar records a value without one)",
-    "PC_LAMMPS validation failed for script '{script}'.\nTadah requires every --varloss/--outvar/--failvar variable to be defined in the LAMMPS script (or included files)\nas an *equal-style* variable:\n  variable <name> equal ...\n\nProblems found:\n{list}",
+    "PC_LAMMPS: the script '{script}' and the files it includes define each --varloss, --outvar and --failvar variable as an equal-style variable (variable <name> equal ...), and these are not:\n{list}",
     "{key}: unexpected '{tok}': every word after {key} is an option or a value of one (the options of {key} start with --, LAMMPS command-line options with -)",
     "{key}: unknown option '{option}'{note}: a {key} line takes the options {list}, and LAMMPS command-line options, which start with a single '-'",
     "{key}: the script {script} has a quit command, command {index} of the script with its include files read in ({text}): quit ends the process that runs the script (tadah hpo itself under PC_ISOLATION THREAD)",
@@ -1451,11 +1452,11 @@ inline constexpr Arg ROOT_LOSS_args[] = {
 };
 inline constexpr std::string_view ROOT_LOSS_checks[] = {
     "LOSS requires a loss type",
-    "{what}: unknown loss function '{tok}'; the loss functions are L1, L2, LOG_COSH, MAPE, HUBER, RMSLE and TUKEY, in any case",
+    "{what}: unknown loss function '{tok}'; the loss functions are L1, L2, LOG_COSH, MAPE, HUBER, RMSLE and TUKEY, in upper or lower case",
     "LOSS {name}: parameter '{tok}' is not a number{underflow}",
     "loss {name} takes no parameter (got {count})",
     "loss {name} takes at most {max} parameter (got {count})",
-    "loss {name} parameter ({key}) must be finite and > 0 (got {value}); omit it to use the default {default}",
+    "loss {name} parameter ({key}) must be finite and > 0 (got {value}); without it the default {default} applies",
     "LOSS sets the loss function of the --varloss and PC_OBSERVABLE terms after it that name none, and of the metric lines (PC_EMAE, PC_ERMSE, PC_ErRMSE, PC_ERSQ, PC_FRMSE, PC_SRMSE_GPA), and the file has no metric line and no such term after it; it would have no effect",
     "{key} {value}: the metric lines take the loss function of the last LOSS line (line {line}): {why}",
 };
@@ -2047,7 +2048,7 @@ inline constexpr std::string_view PC_OBSERVABLE_cohesive_energy_checks[] = {
     "PC_OBSERVABLE cohesive_energy: --target is required",
     "PC_OBSERVABLE cohesive_energy: --weight is required",
     "PC_OBSERVABLE cohesive_energy: --hotvar a0 <lo> <hi> [<init>] is required",
-    "PC_OBSERVABLE cohesive_energy: unknown option '{tok}'",
+    "PC_OBSERVABLE cohesive_energy: unknown option '{tok}' (it takes --species, --target, --weight, --lattice, --supercell, --hotvar, --loss, --maxiter, --max-wall-time, --etol, --maxeval, --fmax-converged, --ptol and --unconverged)",
     "PC_OBSERVABLE cohesive_energy: '{option}' requires a value",
     "PC_OBSERVABLE cohesive_energy: {option} takes a finite number (got '{tok}'){underflow}",
 };
@@ -2097,7 +2098,7 @@ inline constexpr std::string_view ENV_TADAH_FAILSCORE_GRADING_values[] = {
     "OFF",
 };
 inline constexpr std::string_view ENV_TADAH_FAILSCORE_GRADING_checks[] = {
-    "{phase}: ASA:ASA: under FAILSCORE_GRADING ON, set by TADAH_FAILSCORE_GRADING, a failed evaluation scores from 0.999 FAILSCORE to below FAILSCORE ({value}), and ASA:ASA takes a cost of about 1e+18 or more for an invalid state and draws another, so it would not see the graded failures at or above that cost; a FAILSCORE of 1e+18 or less keeps every graded failure below it",
+    "{phase}: ASA:ASA: under FAILSCORE_GRADING ON, set by TADAH_FAILSCORE_GRADING, a failed evaluation scores from 0.999 FAILSCORE to below FAILSCORE ({value}). ASA:ASA takes a cost of about 1e+18 or more for an invalid state and draws another, so it would not see the graded failures at or above that cost. A FAILSCORE of 1e+18 or less keeps every graded failure below it",
 };
 inline constexpr std::string_view ENV_TADAH_BUMPGATE_values[] = {
     "CANDIDATE",
@@ -2170,11 +2171,11 @@ inline constexpr Arg METHOD_WARM_args[] = {
 };
 inline constexpr std::string_view METHOD_WARM_checks[] = {
     "{key} WARM takes one value, the potential file the starting point is read from",
-    "WARM: cannot open seed file '{file}'. Provide the file (production submit scripts copy it into the run dir) or drop the WARM line to start from the in-config values.",
-    "WARM: parse failure in seed file '{file}': {why}",
-    "WARM: {count} parameter(s) not found in {file}: {list}",
-    "WARM: {count} parameter(s) from {file} clamped into OPTIM bounds -- the seed point is NOT the one on disk: {list}",
-    "WARM seed {file} {text}, but this run evaluates RHOFORM {type} (from -c) and takes the OPTIM density parameters ({keys}) from the seed: density parameters are meaningful only in the form they were fitted in. {hint}",
+    "WARM: the seed file '{file}' cannot be opened (a relative path is read from the working directory)",
+    "WARM: the seed file '{file}' cannot be read: {why}",
+    "WARM: {file} has no value for {list}",
+    "WARM: {file} holds {count} outside the OPTIM box: {list}",
+    "WARM seed {file} {text}, but this run evaluates RHOFORM {type} (training configuration) and takes the density values of its search parameters ({keys}) from the seed: density values are meaningful only in the form they were fitted in. {hint}",
 };
 inline constexpr std::string_view optim_positive_only[] = {
     "SGRID2B",
@@ -2955,27 +2956,26 @@ inline constexpr Removed kRemoved[] = {
       "renamed to INNER, the block of the local search that an NLopt MLSL or AUGLAG algorithm runs."},
   Removed{"ENDLOCAL", "renamed to ENDINNER."},
   Removed{"PRESTAGE",
-      "replaced by `STRATEGY { TYPE PRESTAGE EXPLORE { ... } [REFINE { ... }] }` (REFINE is optional; without it the STRATEGY-level LIB/ALGO refines)."},
+      "replaced by STRATEGY TYPE PRESTAGE: an EXPLORE block inside the STRATEGY block runs the exploration, and a REFINE block, which may be left out, the refinement (without it, the LIB and ALGO of the STRATEGY-level optimiser refine)."},
   Removed{"ENDPRESTAGE",
-      "replaced by ENDEXPLORE / ENDREFINE / ENDSTRATEGY (see STRATEGY block)."},
+      "replaced by ENDEXPLORE and ENDREFINE, the ends of the EXPLORE and REFINE blocks inside the STRATEGY block."},
   Removed{"MULTISTART",
-      "moved into `STRATEGY { TYPE MULTISTART N_STARTS N }`."},
+      "moved into the STRATEGY block: its lines TYPE MULTISTART and N_STARTS <n>."},
   Removed{"MULTISTART_PARALLEL",
       "the starts of STRATEGY TYPE MULTISTART run one after another; THREADS sets the number of workers that run the work of the evaluations (the LAMMPS scripts and the training and prediction of the potential)."},
   Removed{"PARALLEL",
       "the starts of STRATEGY TYPE MULTISTART run one after another; THREADS sets the number of workers that run the work of the evaluations (the LAMMPS scripts and the training and prediction of the potential)."},
   Removed{"MULTISTART_BUDGET_PER_START",
-      "moved into `STRATEGY { TYPE MULTISTART BUDGET_PER_START N }`."},
+      "moved into the STRATEGY block: its lines TYPE MULTISTART and BUDGET_PER_START <n>."},
   Removed{"STAGE_GLOBAL",
       "STRATEGY TYPE PRESTAGE runs an exploration and then a refinement."},
   Removed{"RESTART_AFTER_STAGNATION",
-      "moved into `STRATEGY { RESTART { AFTER_STAGNATION N } ENDRESTART }`."},
+      "moved into the RESTART block inside the STRATEGY block: its line AFTER_STAGNATION <n>."},
   Removed{"RESTART_MAX",
-      "moved into `STRATEGY { RESTART { MAX N } ENDRESTART }`."},
+      "moved into the RESTART block inside the STRATEGY block: its line MAX <n>."},
   Removed{"RESTART_INIT_STRATEGY",
-      "moved into `RESTART { METHOD <method> ... }` (re-uses INIT-block grammar)."},
-  Removed{"INIT_STRATEGY",
-      "moved into `INIT { METHOD <method> ... } ENDINIT` block."},
+      "moved into the RESTART block: its METHOD lines, as in an INIT block."},
+  Removed{"INIT_STRATEGY", "moved into the INIT block: its METHOD lines."},
   Removed{"INIT_K", "renamed to K_TOTAL inside an INIT block."},
   Removed{"INIT_SEED", "renamed to SEED inside an INIT block."},
   Removed{"INIT_INCLUDE_CONFIG",
@@ -2983,11 +2983,11 @@ inline constexpr Removed kRemoved[] = {
   Removed{"INCLUDE_CONFIG",
       "the values of the training configuration for the search parameters are a starting point only when the INIT block has a `METHOD CONFIG` line."},
   Removed{"NOISE_AUTO",
-      "moved into `NOISE { AUTO true|false } ENDNOISE` block."},
+      "moved into the NOISE block: its line AUTO true or AUTO false."},
   Removed{"NOISE_CALIBRATION",
-      "moved into `NOISE { CALIBRATION N } ENDNOISE` block."},
+      "moved into the NOISE block: its line CALIBRATION <n>."},
   Removed{"PC_SRMSE",
-      "replaced by PC_SRMSE_GPA, the root mean square of the nine entries of each residual stress tensor in GPa (PC_SRMSE was that of the six entries x <= y in eV/A^3). PC_SRMSE_GPA of a residual is 160.2 times its PC_SRMSE when the six entries have equal mean squares, 130.8 times for a residual on the diagonal only (a pressure) and 185.0 times for a shear residual only: a target or --skip-above cap of PC_SRMSE times 160.2 is about that of PC_SRMSE_GPA, and a weight under LOSS L2 divided by about 25 670 (160.2 squared)."},
+      "replaced by PC_SRMSE_GPA, the root mean square of the nine entries of each residual stress tensor in GPa (PC_SRMSE was that of the six entries x <= y in eV/A^3). PC_SRMSE_GPA of a residual is 160.2 times its PC_SRMSE when the six entries have equal mean squares, 130.8 times for a residual on the diagonal only (a pressure) and 185.0 times for a shear residual only: a target or --skip-above cap of PC_SRMSE times 160.2 is about that of PC_SRMSE_GPA, and a loss-term weight under LOSS L2 divided by about 25 670 (160.2 squared)."},
 };
 
 inline constexpr Rule kRules[] = {
@@ -3004,11 +3004,11 @@ inline constexpr Rule kRules[] = {
   Rule{"RULE.inner_global_search", RuleCheck::Startup,
       "the INNER block of {phase}: {name} cannot run {lib}:{algo} as its INNER search: an INNER search is a local search, which {name} starts at {text}, and {what}. A local NLopt algorithm in the INNER block starts at the point it is given ({list}); {lib}:{algo} runs as the exploration (EXPLORE block) or once, as STRATEGY TYPE PLAIN."},
   Rule{"RULE.local_search_needs_stop", RuleCheck::Startup,
-      "{phase}: the local search of {name} (NLopt's default {lib}:{algo}, as the block has no INNER block) needs a stop: {why}; set {list} in the {name} block, which NLopt hands on to it{note}"},
+      "{phase}: the local search of {name} (NLopt's default {lib}:{algo}, as the block has no INNER block) needs a stop: {why}; {list} in the {name} block, which NLopt hands on to it, gives it one{note}"},
   Rule{"RULE.inner_search_needs_stop", RuleCheck::Startup,
-      "{phase}: the INNER search of {name} ({lib}:{algo}) needs a stop: {why}; set {list} in the INNER block, or {keys} in the {name} block, which NLopt hands on to it{note}"},
+      "{phase}: the INNER search of {name} ({lib}:{algo}) needs a stop: {why}; {list} in the INNER block gives it one, as does {keys} in the {name} block, which NLopt hands on to it{note}"},
   Rule{"RULE.search_dimensions_required", RuleCheck::Startup,
-      "{phase}: {lib}:{algo} cannot optimise a zero-dimensional search space (there is no OPTIM line; the failure would only surface once the optimiser starts). Add at least one OPTIM line, or use a TADAH-native optimiser, which evaluates the INIT start point once."},
+      "{phase}: {lib}:{algo} cannot optimise a zero-dimensional search space (there is no OPTIM line; the optimiser would otherwise fail only once it starts). It needs at least one OPTIM line; a TADAH optimiser runs without one and evaluates the INIT starting point once."},
   Rule{"RULE.asa_search_dimensions", RuleCheck::Startup,
       "{phase}: ASA:ASA requires at least one OPTIM dimension"},
   Rule{"RULE.multi_rank_optimiser", RuleCheck::Startup,
@@ -3038,17 +3038,17 @@ inline constexpr Rule kRules[] = {
   Rule{"RULE.PC_LAMMPS_hotvar_unique", RuleCheck::Parse,
       "PC_LAMMPS --hotvar {name}: line {line} declares --hotvar {name} as well (script {script}); one line declares each --hotvar name, as an evaluation keeps one value of each name for the scripts that read it, and the line that finished last would set it"},
   Rule{"RULE.PC_OBSERVABLE_GRAD_STRATEGY", RuleCheck::Parse,
-      "--hpotarget defines PC_OBSERVABLE but {block} GRAD_STRATEGY=NUMERICAL is set. PC_OBSERVABLE is built for the analytical gradient: use GRAD_STRATEGY ANALYTICAL (an unset GRAD_STRATEGY resolves to it in a block that obtains gradients; it needs the settings of the analytical gradient, such as OALGO 4 with a fixed LAMBDA >= 0, and startup names a missing one) or GRAD_STRATEGY HYBRID, which uses finite differences where the analytical gradient is unavailable."},
+      "{phase}: GRAD_STRATEGY NUMERICAL is refused in a target file with PC_OBSERVABLE lines (PC_OBSERVABLE on line {line}): PC_OBSERVABLE terms are built for the analytical gradient; GRAD_STRATEGY ANALYTICAL takes it (an unset GRAD_STRATEGY resolves to it in a block that obtains gradients; it needs the settings of the analytical gradient, such as OALGO 4 with a fixed LAMBDA >= 0, and startup names a missing one), and GRAD_STRATEGY HYBRID takes finite differences where the analytical gradient is unavailable"},
   Rule{"RULE.PC_LAMMPS_GRAD_STRATEGY", RuleCheck::Parse,
-      "--hpotarget defines {key} on line {line} but {block} GRAD_STRATEGY is set. A PC_LAMMPS or PC_FAILPROBE line does not support analytical/numerical/hybrid gradients. Drop the GRAD_STRATEGY line."},
+      "{phase}: GRAD_STRATEGY is refused in a target file with PC_LAMMPS or PC_FAILPROBE lines ({key} on line {line}): tadah hpo takes no gradient (ANALYTICAL, NUMERICAL or HYBRID) of a loss that runs LAMMPS scripts, and such a file takes a gradient-free optimiser"},
   Rule{"RULE.PC_LAMMPS_gradient_free", RuleCheck::Parse,
-      "--hpotarget defines {key} on line {line} but {block} optimiser {lib}:{algo} is gradient-based. A PC_LAMMPS or PC_FAILPROBE line requires a gradient-free optimiser ({list}); an NLopt MLSL or AUGLAG algorithm is accepted with a derivative-free INNER block."},
+      "{phase}: {lib}:{algo} is gradient-based, and a target file with PC_LAMMPS or PC_FAILPROBE lines ({key} on line {line}) takes a gradient-free optimiser ({list}); an NLopt MLSL or AUGLAG algorithm is accepted with a gradient-free INNER block."},
   Rule{"RULE.PC_LAMMPS_local_optimiser", RuleCheck::Parse,
-      "--hpotarget defines {key} on line {line} but {block} optimiser {lib}:{algo} takes a gradient: NLopt's MLSL and AUGLAG take one for their local search, and NLopt's default local optimiser, {name}, is gradient-based; an INNER block with a derivative-free one takes none. A PC_LAMMPS or PC_FAILPROBE line requires a gradient-free optimiser ({list}); an NLopt MLSL or AUGLAG algorithm is accepted with a derivative-free INNER block."},
+      "{phase}: {lib}:{algo} takes a gradient: NLopt's MLSL and AUGLAG take one for their local search, and NLopt's default local optimiser, {name}, is gradient-based; with an INNER block that names a gradient-free local NLopt algorithm it takes none. A target file with PC_LAMMPS or PC_FAILPROBE lines ({key} on line {line}) takes a gradient-free optimiser ({list})."},
   Rule{"RULE.PC_LAMMPS_INNER_local_optimiser", RuleCheck::Parse,
-      "--hpotarget defines {key} on line {line} but {block} optimiser {lib}:{algo} takes a gradient: NLopt's MLSL and AUGLAG take one for their local search, and NLopt's default local optimiser, {name}, is gradient-based. A PC_LAMMPS or PC_FAILPROBE line requires a gradient-free optimiser, and an INNER search is a local NLopt algorithm; the INNER block takes a derivative-free one ({list})."},
+      "{phase}: {lib}:{algo} takes a gradient: NLopt's MLSL and AUGLAG take one for their local search, and NLopt's default local optimiser, {name}, is gradient-based. A target file with PC_LAMMPS or PC_FAILPROBE lines ({key} on line {line}) takes a gradient-free optimiser, and an INNER block takes a local NLopt algorithm; the gradient-free ones are {list}."},
   Rule{"RULE.PC_LAMMPS_INNER_gradient_free", RuleCheck::Parse,
-      "--hpotarget defines {key} on line {line} but {block} optimiser {lib}:{algo} is gradient-based. A PC_LAMMPS or PC_FAILPROBE line requires a gradient-free optimiser, and an INNER search is a local NLopt algorithm; the INNER block takes a derivative-free one ({list})."},
+      "{phase}: {lib}:{algo} is gradient-based. A target file with PC_LAMMPS or PC_FAILPROBE lines ({key} on line {line}) takes a gradient-free optimiser, and an INNER block takes a local NLopt algorithm; the gradient-free ones are {list}."},
   Rule{"RULE.loss_source_required", RuleCheck::Startup,
       "No loss source: a loss term comes from a PC_EMAE, PC_ERMSE, PC_ErRMSE, PC_ERSQ, PC_FRMSE or PC_SRMSE_GPA line (with --validation), a PC_OBSERVABLE line or a PC_LAMMPS line, and the target file has none (a PC_FAILPROBE line gives no loss term)"},
   Rule{"RULE.metric_needs_validation", RuleCheck::Startup,
@@ -3076,7 +3076,7 @@ inline constexpr Rule kRules[] = {
   Rule{"RULE.fit_OALGO3_intercepts_evidence", RuleCheck::Startup,
       "LAMBDA -1 requests the evidence approximation, which only OALGO 3 runs; OALGO 3 penalises every weight alike, and the model has {count} intercept column(s) (BIAS true with ATOM), which a ridge penalty leaves out. The evidence approximation needs BIAS false, or every intercept weight pinned with FIXINDEX and FIXWEIGHT. With BIAS true, LAMBDA 0 fits with any OALGO, and LAMBDA > 0 with OALGO 1, 2 or 4."},
   Rule{"RULE.optim_LAMBDA_OALGO3_intercepts", RuleCheck::Startup,
-      "OPTIM LAMBDA: OALGO 3 penalises every weight alike, and the fit has {count} intercept column(s) (BIAS true with ATOM), which a ridge penalty leaves out, so every fit refuses a LAMBDA other than 0: each candidate of the box but 0 would fail its evaluation. OALGO 1, 2 or 4 fits a positive LAMBDA with the intercepts unpenalised."},
+      "OPTIM LAMBDA: OALGO 3 penalises every coefficient alike, and the fit has {count} intercept column(s) (BIAS true with ATOM), which a ridge penalty leaves out, so every fit refuses a LAMBDA other than 0: each candidate of the box but 0 would fail its evaluation. OALGO 1, 2 or 4 fits a positive LAMBDA with the intercepts unpenalised."},
   Rule{"RULE.fit_krr_implementation", RuleCheck::Startup,
       "{text}: M_KRR has implementation 1, which fits the energies, forces and stresses of the structures, and implementation 2, which fits the energies per atom of whole structures (the third value of MODEL, 1 when it is left out); {value} is neither."},
   Rule{"RULE.fit_krr_implementation2_LAMBDA", RuleCheck::Startup,

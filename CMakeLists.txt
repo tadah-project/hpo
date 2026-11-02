@@ -10,7 +10,7 @@ message(STATUS "Using LAMMPS library: ${_lammps_libname}")
 if(${CMAKE_SOURCE_DIR} STREQUAL ${CMAKE_BINARY_DIR})
   message(FATAL_ERROR
     "In-source builds are not allowed.\n"
-    "Create a separate build directory and run CMake from there.")
+    "The build directory must differ from the source directory (for example: cmake -S . -B build).")
 endif()
 
 # 1. Global settings
@@ -230,11 +230,11 @@ if(NOT TADAH_LAMMPS_LIB)
     "
     TADAH_LAMMPS_LIB is not specified.
     example:
-    DTADAH_LAMMPS_LIB=liblammps.a
+    -DTADAH_LAMMPS_LIB=/path/to/liblammps.a
     CMake will exit." )
 endif()
 if(NOT EXISTS ${TADAH_LAMMPS_LIB})
-  message(FATAL_ERROR "The ${TADAH_LAMMPS_LIB} does not exist.")
+  message(FATAL_ERROR "The LAMMPS library given by TADAH_LAMMPS_LIB does not exist: ${TADAH_LAMMPS_LIB}")
 endif()
 
 # add_compile_definitions(TADAH_LAMMPS_LIB=\"${TADAH_LAMMPS_LIB}\")

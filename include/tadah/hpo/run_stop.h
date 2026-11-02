@@ -56,10 +56,12 @@ namespace tadah::hpo {
  *  RestartPolicy catches it and restarts the inner policy; every optimiser
  *  adapter and MultiStartPolicy let it through. */
 struct StagnationStop : public std::exception {
-    /** "HPO stagnation threshold reached". */
+    /** "no new best within AFTER_STAGNATION evaluations (RESTART
+     *  block)". */
     const char* what() const noexcept override
     {
-        return "HPO stagnation threshold reached";
+        return "no new best within AFTER_STAGNATION evaluations (RESTART "
+               "block)";
     }
 };
 

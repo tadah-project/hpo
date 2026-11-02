@@ -65,11 +65,12 @@ ResultDrainReport drain_remaining_results(std::map<std::size_t, Row>& buf,
             write(row);
             return true;
         } catch (const std::exception& e) {
-            warn("HPO flush_remaining: dropping iter=" + std::to_string(iter) +
-                 " after exception: " + e.what());
+            warn("result files: the rows of evaluation " +
+                 std::to_string(iter) + " are not written: " + e.what());
         } catch (...) {
-            warn("HPO flush_remaining: dropping iter=" + std::to_string(iter) +
-                 " after unknown exception");
+            warn("result files: the rows of evaluation " +
+                 std::to_string(iter) +
+                 " are not written: an error that carries no message");
         }
         ++rep.dropped;
         return false;
@@ -103,19 +104,20 @@ ResultDrainReport drain_remaining_results(std::map<std::size_t, Row>& buf,
             if (rep.missing.size() < kListed) rep.missing.push_back(k);
             ++rep.n_missing;
         }
-        warn("HPO flush_remaining: " + std::to_string(n_stranded) +
-             " result(s) stranded behind missing iteration" +
+        warn("result files: " + std::to_string(n_stranded) +
+             " result(s) wait behind the missing evaluation" +
              (rep.n_missing == 1 ? " " : "s ") +
              detail::list_iterations(rep.missing, rep.n_missing) +
-             "; writing them in iteration order (the missing iteration" +
+             "; they are written in the order of the evaluations (the "
+             "missing evaluation" +
              (rep.n_missing == 1 ? " has" : "s have") + " no row)");
     }
     if (n_late > 0) {
-        warn("HPO flush_remaining: " + std::to_string(n_late) +
-             " late result(s) for iteration(s) " +
+        warn("result files: " + std::to_string(n_late) +
+             " late result(s) of evaluation(s) " +
              detail::list_iterations(late_iters, n_late) +
-             " arrived after the writer had skipped them; writing them "
-             "out of sequence");
+             " arrived after the writer had passed them; they are written "
+             "out of order");
     }
     for (const auto& kv : buf) {
         if (!write_one(kv.first, kv.second)) continue;

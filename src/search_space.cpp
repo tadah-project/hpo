@@ -1,4 +1,5 @@
 #include <tadah/hpo/search_space.h>
+#include <tadah/core/number_format.h>
 
 #include <algorithm>
 #include <cmath>
@@ -84,8 +85,9 @@ SearchSpace SearchSpace::build(std::vector<DimSpec> dims, const ScalePolicy& pol
         }
         if (d.tf.kind == ScaleKind::Log && !(d.lo > 0.0)) {
             std::ostringstream oss;
-            oss << "OPTIM " << lbl << ": LOG scale requires low > 0 (got " << d.lo
-                << "); use ASINH <c> for sign-crossing ranges";
+            oss << "OPTIM " << lbl << ": a LOG box needs a low bound > 0 (got "
+                << core::format_roundtrip(d.lo)
+                << "); ASINH <c> takes a box that crosses 0";
             throw std::runtime_error(oss.str());
         }
         if (d.tf.kind == ScaleKind::Asinh && !(std::isfinite(d.tf.c) && d.tf.c > 0.0)) {
@@ -96,7 +98,8 @@ SearchSpace SearchSpace::build(std::vector<DimSpec> dims, const ScalePolicy& pol
         }
         if (d.is_int && policy.normalise)
             throw std::runtime_error("OPTIM " + lbl +
-                ": integer dimensions cannot be normalised (OPTIM_SCALE NONE)");
+                ": an integer search parameter is not normalised: it needs "
+                "OPTIM_SCALE NONE");
         s.t_lo_.push_back(d.tf.fwd(d.lo));
         s.t_hi_.push_back(d.tf.fwd(d.hi));
         if (!(s.t_hi_.back() > s.t_lo_.back()) ||
@@ -256,22 +259,24 @@ void SearchSpace::require_inside_real(const std::vector<double>& x,
 {
     if (x.size() != dims_.size()) {
         std::ostringstream oss;
-        oss << what << ": point has " << x.size() << " coordinate(s), expected "
-            << dims_.size();
-        throw std::runtime_error(oss.str());
+        oss << "internal error: " << what << ": the point has " << x.size()
+            << " coordinate(s), expected " << dims_.size();
+        throw std::logic_error(oss.str());
     }
     for (std::size_t i = 0; i < x.size(); ++i) {
         const DimSpec& d = dims_[i];
         if (!std::isfinite(x[i])) {
             std::ostringstream oss;
-            oss << what << ": " << labels_[i] << " = " << x[i] << " is not finite";
+            oss << what << ": " << labels_[i] << " = "
+                << core::format_roundtrip(x[i]) << " is not a finite number";
             throw std::runtime_error(oss.str());
         }
         if (x[i] < d.lo || x[i] > d.hi) {
             std::ostringstream oss;
-            oss << what << ": " << labels_[i] << " = " << x[i]
-                << " lies outside its OPTIM box [" << d.lo << ", " << d.hi
-                << "]";
+            oss << what << ": " << labels_[i] << " = "
+                << core::format_roundtrip(x[i]) << " lies outside its OPTIM box ["
+                << core::format_roundtrip(d.lo) << ", "
+                << core::format_roundtrip(d.hi) << "]";
             throw std::runtime_error(oss.str());
         }
     }

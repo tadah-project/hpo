@@ -130,7 +130,7 @@ inline constexpr Arg PARAM_DLIB_BFGS_tol_gradinf_args[] = {
         "", "", false, ""},
 };
 inline constexpr std::string_view PARAM_DLIB_BFGS_tol_gradinf_checks[] = {
-    "{phase}: DLIB:BFGS requires PARAM tol_gradinf > 0",
+    "{phase}: DLIB:BFGS requires PARAM tol_gradinf > 0 (got {value})",
     "{phase}: DLIB:BFGS accepts either FTOL_ABS or PARAM tol_gradinf, but not both",
 };
 inline constexpr std::string_view PARAM_CERES_tol_gradinf_optimizers[] = {
@@ -143,7 +143,7 @@ inline constexpr Arg PARAM_CERES_tol_gradinf_args[] = {
         "", "", false, ""},
 };
 inline constexpr std::string_view PARAM_CERES_tol_gradinf_checks[] = {
-    "{phase}: CERES:{algo} requires PARAM tol_gradinf > 0",
+    "{phase}: CERES:{algo} requires PARAM tol_gradinf > 0 (got {value})",
 };
 inline constexpr std::string_view PARAM_CERES_max_iter_optimizers[] = {
     "CERES:STEEPEST_DESCENT",
@@ -180,11 +180,11 @@ inline constexpr Arg PARAM_FD_fd_step_args[] = {
 };
 inline constexpr std::string_view PARAM_FD_fd_step_checks[] = {
     "{phase} {lib}:{algo}: PARAM fd_step must be a positive finite number (got {value})",
-    "{phase} {lib}:{algo}: PARAM fd_step never takes effect: {why}; remove it.",
-    "{phase} {lib}:{algo}: PARAM fd_step never takes effect: an INNER search takes the gradient of the block it runs in, with that block's finite-difference settings; set it in the enclosing block.",
-    "{phase} {lib}:{algo}: NOISE AUTO has no effect: PARAM fd_step {value} is set; remove one of them.",
+    "{phase} {lib}:{algo}: PARAM fd_step never takes effect: {why}.",
+    "{phase} {lib}:{algo}: PARAM fd_step never takes effect: an INNER search takes the gradient of the block it runs in, with that block's finite-difference settings; the enclosing block takes it.",
+    "{phase} {lib}:{algo}: NOISE AUTO has no effect: PARAM fd_step {value} is set, and NOISE AUTO estimates PARAM fd_step only for a block without one.",
     "{phase} {lib}:{algo}: {value} does not fit these OPTIM boxes: no finite-difference point is evaluated outside the box, and next to a bound the {why} inside it; the step is not shrunk:{list}\n  {note}.",
-    "{phase} {lib}:{algo}: PARAM {list} never take effect: {why}; remove them.",
+    "{phase} {lib}:{algo}: PARAM {list} never take effect: {why}.",
 };
 inline constexpr std::string_view PARAM_FD_fd_kernel_optimizers[] = {
     "*",
@@ -203,8 +203,8 @@ inline constexpr Arg PARAM_FD_fd_kernel_args[] = {
 inline constexpr std::string_view PARAM_FD_fd_kernel_checks[] = {
     "{phase} {lib}:{algo}: PARAM fd_kernel must be inhouse or ceres (got '{value}')",
     "{phase} {lib}:{algo}: PARAM fd_kernel must be inhouse or ceres (got {value})",
-    "{phase} {lib}:{algo}: PARAM fd_kernel never takes effect: {why}; remove it.",
-    "{phase} {lib}:{algo}: PARAM fd_kernel never takes effect: an INNER search takes the gradient of the block it runs in, with that block's finite-difference settings; set it in the enclosing block.",
+    "{phase} {lib}:{algo}: PARAM fd_kernel never takes effect: {why}.",
+    "{phase} {lib}:{algo}: PARAM fd_kernel never takes effect: an INNER search takes the gradient of the block it runs in, with that block's finite-difference settings; the enclosing block takes it.",
 };
 inline constexpr std::string_view PARAM_FD_diff_method_optimizers[] = {
     "*",
@@ -217,9 +217,9 @@ inline constexpr Arg PARAM_FD_diff_method_args[] = {
 };
 inline constexpr std::string_view PARAM_FD_diff_method_checks[] = {
     "{phase} {lib}:{algo}: PARAM diff_method must be 0 (CENTRAL, the default) or 1 (FORWARD) (got {value})",
-    "{phase} {lib}:{algo}: PARAM diff_method 2 (RIDDERS) is refused: Ridders' extrapolation ignored PARAM fd_step, started from a step of 0.32 x max(|u|, 1) -- outside most OPTIM boxes -- and took up to 20 evaluations per parameter; diff_method 0 (CENTRAL, the default) and 1 (FORWARD) take PARAM fd_step",
-    "{phase} {lib}:{algo}: PARAM diff_method never takes effect: {why}; remove it.",
-    "{phase} {lib}:{algo}: PARAM diff_method never takes effect: an INNER search takes the gradient of the block it runs in, with that block's finite-difference settings; set it in the enclosing block.",
+    "{phase} {lib}:{algo}: PARAM diff_method 2 (RIDDERS) is refused: Ridders' extrapolation ignores PARAM fd_step, starts from a step of 0.32 x max(|u|, 1) -- outside most OPTIM boxes -- and takes up to 20 evaluations per parameter; diff_method 0 (CENTRAL, the default) and 1 (FORWARD) take PARAM fd_step",
+    "{phase} {lib}:{algo}: PARAM diff_method never takes effect: {why}.",
+    "{phase} {lib}:{algo}: PARAM diff_method never takes effect: an INNER search takes the gradient of the block it runs in, with that block's finite-difference settings; the enclosing block takes it.",
 };
 inline constexpr std::string_view PARAM_ASA_ASA_Limit_Acceptances_optimizers[] = {
     "ASA:ASA",
@@ -309,7 +309,7 @@ inline constexpr Arg PARAM_ASA_ASA_Number_Cost_Samples_args[] = {
 };
 inline constexpr std::string_view PARAM_ASA_ASA_Number_Cost_Samples_checks[] = {
     "{phase}: ASA:ASA: PARAM {key} must be an integer (got {value})",
-    "{phase}: ASA:ASA: PARAM Number_Cost_Samples must not be 0 or -1 (>0 = mean |cost| sample, <-1 = deviation sample)",
+    "{phase}: ASA:ASA: PARAM Number_Cost_Samples takes a value above 0 (a sample of the mean |cost|) or below -1 (a sample of its deviation), got {value}",
 };
 inline constexpr std::string_view PARAM_ASA_ASA_Temperature_Ratio_Scale_optimizers[] = {
     "ASA:ASA",
@@ -411,7 +411,7 @@ inline constexpr Arg PARAM_ASA_ASA_Reanneal_Cost_args[] = {
 };
 inline constexpr std::string_view PARAM_ASA_ASA_Reanneal_Cost_checks[] = {
     "{phase}: ASA:ASA: PARAM {key} must be an integer (got {value})",
-    "{phase}: ASA:ASA: PARAM Reanneal_Cost == -1 is invalid upstream (use 0 = off, 1 = default, >1 or <-1 = sample variants)",
+    "{phase}: ASA:ASA: PARAM Reanneal_Cost takes 0 (off), 1 (the default), or a value above 1 or below -1 (sample variants), got -1; ASA refuses -1",
 };
 inline constexpr std::string_view PARAM_ASA_ASA_Reanneal_Parameters_optimizers[] = {
     "ASA:ASA",
@@ -438,7 +438,7 @@ inline constexpr Arg PARAM_ASA_ASA_Delta_X_args[] = {
 };
 inline constexpr std::string_view PARAM_ASA_ASA_Delta_X_checks[] = {
     "{phase}: ASA:ASA: PARAM {key} must be >= {min} (got {value})",
-    "{phase} ASA:ASA: ASA's finite-difference probes -- the reannealing and exit tangents at (1 + Delta) x, or (1 - Delta) x when that lies outside the box{note} -- would be evaluated outside the OPTIM box of these dimensions:{list}\n  Lower the Delta{why}.",
+    "{phase} ASA:ASA: ASA's finite-difference probes -- the reannealing and exit tangents at (1 + Delta) x, or (1 - Delta) x when that lies outside the box{note} -- would be evaluated outside the OPTIM box of these dimensions:{list}\n  A Delta up to the value given for each dimension keeps its probes inside the box{why}.",
 };
 inline constexpr std::string_view PARAM_ASA_ASA_User_Tangents_optimizers[] = {
     "ASA:ASA",
@@ -521,7 +521,7 @@ inline constexpr Arg PARAM_ASA_ASA_User_Delta_Parameter_args[] = {
 inline constexpr std::string_view PARAM_ASA_ASA_User_Delta_Parameter_checks[] = {
     "{phase}: ASA:ASA: PARAM {key} must be >= {min} (got {value})",
     "{phase}: ASA:ASA: PARAM {key} must be > 0 (got {value})",
-    "{phase} ASA:ASA: ASA's finite-difference probes -- the reannealing and exit tangents at (1 + Delta) x, or (1 - Delta) x when that lies outside the box{note} -- would be evaluated outside the OPTIM box of these dimensions:{list}\n  Lower the Delta{why}.",
+    "{phase} ASA:ASA: ASA's finite-difference probes -- the reannealing and exit tangents at (1 + Delta) x, or (1 - Delta) x when that lies outside the box{note} -- would be evaluated outside the OPTIM box of these dimensions:{list}\n  A Delta up to the value given for each dimension keeps its probes inside the box{why}.",
 };
 inline constexpr std::string_view PARAM_ASA_ASA_User_Parameter_Temperature_optimizers[] = {
     "ASA:ASA",

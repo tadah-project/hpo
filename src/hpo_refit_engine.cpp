@@ -189,9 +189,9 @@ void HPORefitEngine::compact_fit(const tadah::core::Context &c,
         " x the nearest-neighbour distance of the " + eam.lattice() +
         " lattice of a0 = " + core::format_roundtrip(eam.lattice_param()) +
         " A), less than the step of the table's radial grid, dr = " +
-        core::format_roundtrip(eam.dr()) + " A, although the crystal gate "
+        core::format_roundtrip(eam.dr()) + " A, although the crystal check "
         "of tadah refit (eam_lattice::require_crystal_on_grid) refuses every "
-        "such table; this is a bug, please report it");
+        "such table");
   // The compact fit of DM_Embed components (their grids are its seeds; the
   // ladder below is the DM_REAM compact fit), after the same invariant.
   if (cfg.component) {
@@ -385,7 +385,7 @@ void HPORefitEngine::compact_fit(const tadah::core::Context &c,
   tadah::mlip::engines::RefitLog rlog;
   rlog.open(sget("REFIT_LOG", "refit_opt.log"), /*append=*/false);
   rlog.raw("# tadah refit optimisation log (compact mode)");
-  rlog.raw("# one line per ladder rung. metric = energy gate (drives selection;"
+  rlog.raw("# one line per ladder rung. metric = energy criterion (drives selection;"
            " <= 1 means within REFIT_COMPACT_SHARE x tolerance). The other three"
            " are curve diagnostics vs the tabulated EAM: rmse = value RMSE,"
            " d1 = 1st-derivative (slope) RMSE, d2 = 2nd-derivative (curvature)"
@@ -398,18 +398,18 @@ void HPORefitEngine::compact_fit(const tadah::core::Context &c,
            " (REFIT_COMPACT_MERGE). 'guard merged X/Y cands' = the guard broke up"
            " coalesced impostor knot pairs (and re-inserted at the residual"
            " peaks) on X of the rung's Y candidates; the guard runs once per"
-           " candidate (Y = REFIT_COMPACT_JITTERS+1), which is why the old log"
-           " showed several identical merge lines per rung. The bracketed"
+           " candidate (Y = REFIT_COMPACT_JITTERS+1), so a rung shows one"
+           " merge line per candidate. The bracketed"
            " [explore=.. refine=..] are the winning candidate's stop reasons"
-           " (NLopt evals / Ceres iterations). refine shows the SPECIFIC Ceres"
+           " (NLopt evaluations / Ceres iterations). refine shows the SPECIFIC Ceres"
            " cause: ftol|gtol|ptol|maxiter.");
   rlog.raw("# NOTE on EXPLORE=XTOL_REACHED: for the derivative-free simplex"
            " explorers (SBPLX/NELDERMEAD/BOBYQA/PRAXIS) this is the algorithm's"
            " OWN parameter-space convergence (its simplex collapsed) and fires"
-           " regardless of XTOL_REL. XTOL_REL only gates an ADDITIONAL optional"
-           " outer early-stop; setting XTOL_REL 0 disables that gate but cannot"
-           " suppress the intrinsic simplex-collapse XTOL_REACHED. Treat it as"
-           " benign convergence (like FTOL_REACHED); the metric is the real"
+           " regardless of XTOL_REL. XTOL_REL only controls an ADDITIONAL"
+           " optional outer early stop; XTOL_REL 0 switches that stop off but"
+           " cannot suppress the intrinsic simplex-collapse XTOL_REACHED, which"
+           " is benign convergence (like FTOL_REACHED); the metric is the real"
            " progress signal.");
   if (curve_obj)
     rlog.raw("# REFIT_OBJECTIVE=curve: the 'metric' column is the NORMALISED"
@@ -418,7 +418,7 @@ void HPORefitEngine::compact_fit(const tadah::core::Context &c,
              " independent of energy mode); the ladder grows until stall/n_max."
              " deriv_weight sets value vs d1/d2 in the objective"
              " (0=pure value=crystal-faithful). EXPLORE inner, REFINE and FUSE"
-             " each run the OPTIMISER YOU CONFIGURED (honoured, not overridden;"
+             " each run the OPTIMISER OF THEIR BLOCK (honoured, not overridden;"
              " the actual stack is in the 'optimiser:' line above). The"
              " pressure-relaxed weighting (REFIT_CURVE_WEIGHTING, on by default)"
              " is what keeps an aggressive least-squares optimiser (Ceres) from"
@@ -427,13 +427,15 @@ void HPORefitEngine::compact_fit(const tadah::core::Context &c,
              " the basis count n — " +
              std::string(knotfam
                              // the knot families read the refine stride
-                             ? "cap its MAXEVAL / use REFIT_COMPACT_OPT_EVERY"
-                               " (or the gentle SBPLX-only arm) at high NMAX."
+                             ? "a smaller REFINE MAXEVAL, REFIT_COMPACT_OPT_EVERY"
+                               " or the gentle SBPLX-only arm limits it at"
+                               " high NMAX."
                              // a Blip family refuses REFIT_COMPACT_OPT_EVERY
                              // (check_refit_mode_keys), which this note named
                              // for every basis
-                             : "cap REFINE's MAXEVAL, lower REFIT_COMPACT_NMAX"
-                               " (or use the gentle SBPLX-only arm)."));
+                             : "a smaller REFINE MAXEVAL, a lower"
+                               " REFIT_COMPACT_NMAX or the gentle SBPLX-only"
+                               " arm limits it."));
   rlog.line("input element=" + eam.lattice() + " a0=" +
             core::to_string(a0, 4) + " rcut=" + core::to_string(rcut, 4));
   rlog.line("basis=" + cfg.basis +
@@ -527,7 +529,7 @@ void HPORefitEngine::compact_fit(const tadah::core::Context &c,
                      " eV removed (E/atom relative to the isolated atom; "
                      "forces unchanged)"
                    : "embedding: EMBF0 FREE — raw basis against the raw "
-                     "table F (legacy, tadah 1.5.0)");
+                     "table F (F(0) kept)");
   }
   rlog.line(
       std::string("density: RHOFORM ") + rhoform_name(rho_form) +
@@ -725,7 +727,8 @@ void HPORefitEngine::compact_fit(const tadah::core::Context &c,
                                "integrated-bump steps, which need eta > 0 "
                                "(SGRIDMB > 0)")
                  : std::string()) +
-            ". Set the anchor's width > 0: INIT " + up + " MANUAL <mu> <eta>.");
+            "; the anchor takes a width > 0 on its line: INIT " + up +
+            " MANUAL <mu> <eta>.");
       }
     }
     auto check_init = [&](const BlipFit &f, const char *nm) {
@@ -734,18 +737,18 @@ void HPORefitEngine::compact_fit(const tadah::core::Context &c,
         if (reach <= rcut + tol) continue;
         const std::string hint =
             f.mu[k] < rcut - tol
-                ? "Set its eta >= " +
+                ? "An eta >= " +
                       core::to_string(w_rad / (rcut - f.mu[k]), 6) +
-                      " or move the anchor inward."
-                : "Move the anchor below rcut (no width can fit a bump "
-                  "centred at/past the cutoff).";
+                      ", or an anchor further in, keeps the bump inside rcut."
+                : "An anchor below rcut is needed (no width fits a bump "
+                  "centred at or past the cutoff).";
         throw std::runtime_error(
             std::string("tadah refit INIT [") + nm + "]: the basis at mu " +
             core::to_string(f.mu[k], 6) + " (eta " +
             core::to_string(f.eta[k], 6) + ") has support reaching " +
             core::to_string(reach, 6) + ", past rcut = " +
-            core::to_string(rcut, 6) + " — the emitted pot is hard-truncated "
-            "there (bump-support gate). " + hint);
+            core::to_string(rcut, 6) + " — the potential written would be "
+            "cut off there (BUMPGATE). " + hint);
       }
     };
     check_init(init_phi, "phi");
@@ -788,7 +791,7 @@ void HPORefitEngine::compact_fit(const tadah::core::Context &c,
                 std::to_string(cap) + " (base " +
                 std::to_string(base_n) + "+MAX_ADD) BELOW REFIT_COMPACT_NMAX=" +
                 std::to_string(nmax) +
-                " — raise MAX_ADD to let the ladder reach NMAX.");
+                " — a larger MAX_ADD lets the ladder reach NMAX.");
     fcfg.log_fn = [&rlog, name](const std::string &m) {
       rlog.line(std::string("[") + name + "] " + m);
     };
@@ -819,8 +822,8 @@ void HPORefitEngine::compact_fit(const tadah::core::Context &c,
             std::to_string(best.n()) + "  curve_rmse=" + g(best.curve_rmse) +
             "  energy_metric=" + core::to_string(best.metric, 4) + " (" +
             (within ? "within"
-                    : "ABOVE — raise REFIT_COMPACT_NMAX / EXPLORE MAX_ADD or "
-                      "loosen REFIT_TOL_*") +
+                    : "ABOVE — a larger REFIT_COMPACT_NMAX or EXPLORE "
+                      "MAX_ADD, or a looser REFIT_TOL_*, brings it within") +
             " " + core::to_string(share, 2) + "x tolerance)");
     return best;
   };
@@ -1059,7 +1062,7 @@ void HPORefitEngine::compact_fit(const tadah::core::Context &c,
                         " rho bump(s) moved back inside rcut: max |dE|/tol = " +
                         core::to_string(e_resid_max, 4) + "  term=" +
                         joint_term + " (" + std::to_string(used) + " of " +
-                        std::to_string(max_iter) + " iterations left)");
+                        std::to_string(max_iter) + " iterations used)");
               return used;
             },
             [&](const std::string &l) { rlog.line("joint: " + l); });

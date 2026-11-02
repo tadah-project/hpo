@@ -686,8 +686,8 @@ inline Knobs Knobs::parse(const OptimizerSpec& sp, AlgoKind kind)
     if (sp.param.count(k))
       throw std::runtime_error(
           ctx + ": PARAM " + k + " takes ON or OFF (got '" +
-          fmt_knob_number(sp.param.at(k)) + "'). 0/1 booleans were removed "
-          "in 1.5.0 -- use `PARAM " + std::string(k) + " " +
+          fmt_knob_number(sp.param.at(k)) + "'); a number is refused, and "
+          "the value of this line is `PARAM " + std::string(k) + " " +
           (sp.param.at(k) != 0.0 ? "ON" : "OFF") + "`.");
   };
   auto pbool = [&](const char* k) -> bool {
@@ -977,10 +977,10 @@ inline Knobs Knobs::parse(const OptimizerSpec& sp, AlgoKind kind)
       const double g = sp.param.at("INIT_JITTER_LADDER");
       if (g == 0.0)
         throw std::runtime_error(
-            ctx + ": PARAM INIT_JITTER_LADDER 0 is no longer accepted; "
-                  "0/1 booleans and 0-means-disabled were removed in 1.5.0 -- "
-                  "write PARAM INIT_JITTER_LADDER OFF to disable ladder "
-                  "scaling, or AUTO for the sqrt(T) default");
+            ctx + ": PARAM INIT_JITTER_LADDER takes a value in (0,4], AUTO "
+                  "or OFF (got '0'): PARAM INIT_JITTER_LADDER OFF switches "
+                  "the ladder scaling off, and AUTO gives the sqrt(T) "
+                  "default");
       if (!(g > 0.0 && g <= 4.0))
         throw std::runtime_error(
             ctx + ": PARAM INIT_JITTER_LADDER must be in (0,4], or AUTO "
@@ -1015,7 +1015,7 @@ inline Knobs Knobs::parse(const OptimizerSpec& sp, AlgoKind kind)
   /* -- validation beyond the registry ranges ------------------------- */
   if (kind != AlgoKind::PT && !(kb.rt > 0.0 && kb.rt < 1.0))
     throw std::runtime_error(ctx + ": PARAM RT must be in (0,1) (got "
-        + std::to_string(kb.rt) + ")");
+        + fmt_knob_number(kb.rt) + ")");
   if (kb.t_start && kb.t_min && *kb.t_min > *kb.t_start)
     throw std::runtime_error(
         ctx + ": PARAM T_MIN must be <= " + t_start_key);
@@ -1081,11 +1081,12 @@ inline Knobs Knobs::parse(const OptimizerSpec& sp, AlgoKind kind)
     const double lo = sp.low[i], hi = sp.high[i];
     if (!std::isfinite(lo) || !std::isfinite(hi) || !(hi > lo))
       throw std::runtime_error(
-          ctx + ": every optimisable dimension requires finite low < high");
+          ctx + ": every search dimension requires finite bounds with low "
+                "< high");
     const double width = hi - lo;
     if (!std::isfinite(width))
       throw std::runtime_error(
-          ctx + ": every optimisable dimension requires a finite bound width");
+          ctx + ": every search dimension requires a finite bound width");
   }
 
   return kb;
@@ -1178,8 +1179,8 @@ inline std::vector<double> make_initial_point(const OptimizerSpec& sp,
   for (std::size_t i = 0; i < dim; ++i) {
     if (!std::isfinite(x[i]) || x[i] < sp.low[i] || x[i] > sp.high[i])
       throw std::runtime_error(
-          ctx + ": starting coordinate " + std::to_string(i) +
-          " lies outside its OPTIM bounds");
+          ctx + ": the starting value of dimension " + std::to_string(i + 1) +
+          " of the search space lies outside its OPTIM bounds");
   }
   return x;
 }
@@ -1196,8 +1197,9 @@ inline std::vector<double> make_initial_steps(const OptimizerSpec& sp,
     const double raw = kb.step_frac * width;
     if (!(raw > 0.0) || !std::isfinite(raw))
       throw std::runtime_error(
-          "anneal: proposal scale underflowed or is non-finite in dimension " +
-          std::to_string(i) + "; widen the OPTIM interval or raise STEP_FRAC");
+          "anneal: the proposal scale of dimension " + std::to_string(i + 1) +
+          " of the search space underflowed or is not finite; a wider OPTIM "
+          "box or a larger STEP_FRAC gives a usable scale");
     out[i] = kb.corana
         ? std::min(width, std::max(kb.v_floor_frac * width, raw))
         : raw;
@@ -2025,7 +2027,7 @@ RungStats corana_sweep(ChainState<Vec>& c, double T,
  * The bands are distinguished because they call for different actions and
  * because collapsing them is how a diagnostic stops being actionable:
  * "insensitive" says the objective does not respond to a coordinate over its
- * whole OPTIM range (consider dropping or fixing it), while "gate-reject"
+ * whole OPTIM range (a candidate for dropping or fixing it), while "infeasible"
  * says a perfectly sensitive coordinate is bounded by a FEASIBILITY wall
  * (BUMPGATE), not by the loss -- pre-training and therefore cheap. A cliff is
  * neither: the objective returned a non-rankable loss. */
@@ -2055,7 +2057,7 @@ inline std::string jitter_status_text(unsigned st)
   if (st & JitterOneSided)       add("one-sided");
   if (st & JitterAsymmetric)     add("asymmetric");
   if (st & JitterCliff)          add("cliff");
-  if (st & JitterGateReject)     add("gate-reject");
+  if (st & JitterGateReject)     add("infeasible");
   if (st & JitterNoAnchor)       add("no-anchor");
   if (st & JitterInterrupted)    add("interrupted");
   if (st & JitterInferred)       add("inferred");

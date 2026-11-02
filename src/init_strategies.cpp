@@ -9,6 +9,7 @@
  */
 
 #include <tadah/hpo/init_strategy.h>
+#include <tadah/hpo/count_text.h>
 #include <tadah/hpo/log_index.h>
 #include <tadah/hpo/hpo_log.h>
 #include <tadah/hpo/optimizer_spec.h>
@@ -140,7 +141,8 @@ class LhsInitStrategy : public InitStrategy {
 public:
     explicit LhsInitStrategy(std::size_t k) : k_(k) {
         /* make_one() refuses K = 0 first. */
-        if (k_ == 0) throw std::logic_error("INIT METHOD LHS K must be > 0");
+        if (k_ == 0)
+            throw std::logic_error("internal error: INIT METHOD LHS with K 0");
     }
 
     std::vector<std::vector<double>>
@@ -188,7 +190,8 @@ class SobolInitStrategy : public InitStrategy {
 public:
     explicit SobolInitStrategy(std::size_t k) : k_(k) {
         /* make_one() refuses K = 0 first. */
-        if (k_ == 0) throw std::logic_error("INIT METHOD SOBOL K must be > 0");
+        if (k_ == 0)
+            throw std::logic_error("internal error: INIT METHOD SOBOL with K 0");
     }
 
     std::vector<std::vector<double>>
@@ -285,9 +288,8 @@ public:
              * optimiser from its default point (ANNEAL: the OPTIM box
              * centre) instead of the seed the user asked for. */
             throw std::runtime_error(
-                "WARM: cannot open seed file '" + file_ + "'. Provide the "
-                "file (production submit scripts copy it into the run dir) "
-                "or drop the WARM line to start from the in-config values.");
+                "WARM: the seed file '" + file_ + "' cannot be opened (a "
+                "relative path is read from the working directory)");
         }
 
         /* Read the file into a buffer, stripping comment + blank lines.
@@ -339,8 +341,9 @@ public:
             core::report_key_notice(core::retired_keys_notice(retired));
         if (hot_loaded > 0) {
             std::ostringstream oss;
-            oss << "WARM: primed warmstart cache with " << hot_loaded
-                << " HOT entry(ies) from " << file_;
+            oss << "WARM: " << file_ << " gives the start of "
+                << count_text(hot_loaded, "--hotvar value", "--hotvar values")
+                << " (its # HOT lines)";
             std::cout << "[HPO] " << oss.str() << "\n";
             HPOLog::instance().info(oss.str());
         }
@@ -356,8 +359,8 @@ public:
              * warm-started from, and falling through would silently
              * launch from the box centre. Always fatal. */
             throw std::runtime_error(
-                std::string("WARM: parse failure in seed file '") + file_ +
-                "': " + e.what());
+                std::string("WARM: the seed file '") + file_ +
+                "' cannot be read: " + e.what());
         }
 
         /* EMBF0: WARM reads only the OPTIM dimensions, so the run evaluates
@@ -375,9 +378,11 @@ public:
                     .value_or(EmbF0Mode::Zero);
             if (!seed_valid) {
                 const std::string msg =
-                    "WARM seed " + file_ + " declares an invalid EMBF0 value "
-                    "(ZERO|FREE); ignored: this run evaluates EMBF0 " +
-                    models::embf0_name(run_mode) + " (from -c).";
+                    "WARM seed " + file_ + " declares EMBF0 '" +
+                    loaded.stored_value("EMBF0").value_or("") +
+                    "', which is neither ZERO nor FREE; it is not read: this "
+                    "run evaluates EMBF0 " + models::embf0_name(run_mode) +
+                    " (training configuration).";
                 std::cerr << "[HPO] " << msg << "\n";
                 HPOLog::instance().warning(msg);
             } else if (seed_mode.value_or(EmbF0Mode::Zero) != run_mode) {
@@ -389,19 +394,20 @@ public:
                 const std::string msg =
                     "WARM seed " + file_ + " " + seed_decl + "; this run "
                     "evaluates EMBF0 " + models::embf0_name(run_mode) +
-                    " (from -c). WARM takes only the OPTIM values from the "
-                    "seed and evaluates them unchanged in the run's reference "
-                    "(no conversion): pinned embedding weights give energies "
+                    " (training configuration). WARM takes only the values "
+                    "of the search parameters from the seed and evaluates "
+                    "them unchanged in the reference of the run (no "
+                    "conversion): fixed embedding coefficients give energies "
                     "shifted by a constant per atom (linear models: forces "
-                    "unchanged), weights re-fitted by least squares can "
-                    "differ, so the seed's recorded loss need not be "
-                    "reproduced";
+                    "unchanged), and coefficients fitted again by least "
+                    "squares can differ, so the recorded loss of the seed "
+                    "need not be reproduced";
                 std::cerr << "[HPO] " << msg << "\n";
                 HPOLog::instance().warning(msg);
             } else if (!seed_mode) {
                 const std::string msg =
                     "WARM seed " + file_ + " does not declare EMBF0: it is "
-                    "read as EMBF0 ZERO (the default), as this run evaluates.";
+                    "read as EMBF0 ZERO (the default), the EMBF0 of this run.";
                 std::cout << "[HPO] " << msg << "\n";
                 HPOLog::instance().info(msg);
             }
@@ -419,6 +425,9 @@ public:
 
         std::vector<double> point;
         std::vector<std::string> missing;
+        /* Whether each coordinate is the seed's (false: the value of the
+         * training configuration, which the seed lacks). */
+        std::vector<bool> from_seed;
 
         for (const auto& kv : ctx.targets.optimap) {
             const auto& opti = kv.second;
@@ -462,6 +471,7 @@ public:
                         if (++found == ord) {
                             try {
                                 point.push_back(core::to_double(tok));
+                                from_seed.push_back(true);
                                 resolved = true;
                             } catch (...) { /* fall through to fallback */ }
                             break;
@@ -482,25 +492,41 @@ public:
                      * the user follow WARM with CONFIG to override
                      * the per-dim fallback if desired. */
                     point.push_back(core::to_double(opti.config[i]));
+                    from_seed.push_back(false);
                 }
             }
         }
 
+        /* The search-space label of coordinate d, as every other message
+         * names it (KEY[n], n the OPTIM index). */
+        const auto label_of = [&](std::size_t d) {
+            const auto& lbls = ctx.targets.spec.parameter_labels;
+            return d < lbls.size() && !lbls[d].empty() ? lbls[d]
+                                                       : logidx::dim_label(d);
+        };
         if (!missing.empty()) {
             std::ostringstream oss;
-            oss << "WARM: " << missing.size() << " parameter(s) not found in "
-                << file_ << ": ";
+            oss << "WARM: " << file_ << " has no value for ";
             for (std::size_t i = 0; i < missing.size() && i < 5; ++i) {
                 if (i) oss << ", ";
                 oss << missing[i];
             }
-            if (missing.size() > 5) oss << ", ...";
+            if (missing.size() > 5) oss << " and " << (missing.size() - 5) << " more";
+            if (policy == "warn")
+                oss << "; the starting point takes "
+                    << (missing.size() == 1 ? "its value" : "their values")
+                    << " from the training configuration";
+            else if (policy == "skip")
+                oss << "; the seed gives no starting point (WARM_ON_MISMATCH "
+                       "skip)";
             handle_mismatch(policy, oss.str());
             if (policy == "skip") return {};
         } else {
             std::ostringstream oss;
-            oss << "WARM: loaded " << point.size()
-                << " parameter(s) from " << file_;
+            oss << "WARM: the starting point is read from " << file_
+                << ", which gives a value for each of the "
+                << count_text(point.size(), "dimension", "dimensions")
+                << " of the search space";
             std::cout << "[HPO] " << oss.str() << "\n";
             HPOLog::instance().info(oss.str());
         }
@@ -514,6 +540,7 @@ public:
          * error -> throw, skip -> drop the point, warn (default) -> log. */
         std::size_t clamped = 0;
         std::ostringstream coss;
+        const auto fmt = [](double v) { return core::format_roundtrip(v); };
         for (std::size_t d = 0; d < point.size(); ++d) {
             double lo, hi;
             if (ctx.spec.space && d < ctx.spec.space->dim()) {
@@ -529,20 +556,33 @@ public:
             if (point[d] > hi) point[d] = hi;
             if (point[d] != orig) {
                 if (clamped < 5) {
-                    coss << (clamped ? "; " : "") << logidx::dim_label(d)
-                         << " " << orig << " -> " << point[d]
-                         << " (bounds [" << lo << ", " << hi << "])";
+                    coss << (clamped ? "; " : "") << label_of(d) << " "
+                         << fmt(orig);
+                    if (d < from_seed.size() && !from_seed[d])
+                        coss << ", the value of the training configuration, "
+                                "which " << file_ << " lacks,";
+                    if (policy == "warn") coss << " -> " << fmt(point[d]);
+                    coss << " (box [" << fmt(lo) << ", " << fmt(hi) << "])";
                 }
                 ++clamped;
             }
         }
         if (clamped > 0) {
+            const std::string values =
+                clamped == 1 ? "a value" : std::to_string(clamped) + " values";
             std::ostringstream oss;
-            oss << "WARM: " << clamped << " parameter(s) from " << file_
-                << " clamped into OPTIM bounds -- the seed point is NOT the "
-                   "one on disk: " << coss.str();
-            if (clamped > 5) oss << "; ... (further entries suppressed)";
-            HPOLog::instance().warning(oss.str());
+            if (policy == "warn")
+                oss << "WARM: the starting point read from " << file_
+                    << " has " << values << " outside the OPTIM box, and "
+                       "takes the nearest bound instead: " << coss.str();
+            else if (policy == "skip")
+                oss << "WARM: " << file_ << " holds " << values
+                    << " outside the OPTIM box, so it gives no starting "
+                       "point (WARM_ON_MISMATCH skip): " << coss.str();
+            else
+                oss << "WARM: " << file_ << " holds " << values
+                    << " outside the OPTIM box: " << coss.str();
+            if (clamped > 5) oss << "; and " << (clamped - 5) << " more";
             handle_mismatch(policy, oss.str());
             if (policy == "skip") return {};
         }
@@ -584,25 +624,27 @@ private:
          * needs a seed fitted in that form. */
         const std::string remedy =
             run_form == models::RhoForm::Signed
-                ? "Use a seed written in RHOFORM SIGNED (a potential written "
-                  "before tadah 1.6.0 is SIGNED: add 'RHOFORM SIGNED' to it), "
-                  "or drop the WARM line."
-                : "Use a seed written in RHOFORM " + run_name + " (a potential "
-                  "written before tadah 1.6.0 is SIGNED and cannot seed a " +
-                  run_name + " density; refit it by tadah refit with "
-                  "RHOFORM " + run_name + "), or drop the WARM line.";
+                ? "The run needs a seed written in RHOFORM SIGNED: a potential "
+                  "written before tadah 1.6.0 has a SIGNED density and a FREE "
+                  "embedding reference, which RHOFORM SIGNED and EMBF0 FREE "
+                  "lines added to it declare."
+                : "The run needs a seed written in RHOFORM " + run_name +
+                  ": a potential written before tadah 1.6.0 has a SIGNED "
+                  "density and cannot seed a " + run_name + " density; tadah "
+                  "refit with RHOFORM " + run_name + " refits it.";
         if (!density_dims.empty())
             throw std::runtime_error(
                 "WARM seed " + file_ + " " + seed_decl + ", but this run "
-                "evaluates RHOFORM " + run_name + " (from -c) and takes the "
-                "OPTIM density parameters (" + density_dims + ") from the "
-                "seed: density parameters are meaningful only in the form "
-                "they were fitted in. " + remedy);
+                "evaluates RHOFORM " + run_name + " (training configuration) "
+                "and takes the density values of its search parameters (" +
+                density_dims + ") from the seed: density values are "
+                "meaningful only in the form they were fitted in. " + remedy);
         const std::string msg =
             "WARM seed " + file_ + " " + seed_decl + "; this run evaluates "
-            "RHOFORM " + run_name + " (from -c). No OPTIM dimension is a "
-            "density key (AMPGRIDMB, CGRIDMB, SGRIDMB), so the seed's density "
-            "is not read: every candidate has the -c density.";
+            "RHOFORM " + run_name + " (training configuration). No search "
+            "parameter is a density key (AMPGRIDMB, CGRIDMB, SGRIDMB), so the "
+            "density of the seed is not read: every candidate has the density "
+            "of the training configuration.";
         std::cerr << "[HPO] " << msg << "\n";
         HPOLog::instance().warning(msg);
     }

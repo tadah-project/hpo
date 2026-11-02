@@ -445,7 +445,7 @@ inline bool accept_exchange(double cold_temperature, double hot_temperature,
         "ANNEAL_PT exchange requires finite 0 <= T_cold <= T_hot");
   if (std::isnan(cold_loss) || std::isnan(hot_loss))
     throw std::invalid_argument(
-        "ANNEAL_PT exchange requires losses normalized away from NaN");
+        "ANNEAL_PT exchange requires losses normalised away from NaN");
 
   /* Equal beta or equal energy gives exponent zero, including 0/0 and
    * infinity/infinity limiting cases. */
@@ -1406,8 +1406,9 @@ template<typename Vec, typename HostT>
       if (hw && threads > hw) {
         std::ostringstream oss;
         oss << "ANNEAL_PT: THREADS(" << threads
-            << ") exceeds hardware_concurrency(" << hw
-            << "); the shared worker pool is oversubscribed. Set THREADS <= cores.";
+            << ") exceeds the hardware threads of this machine (" << hw
+            << "); the shared worker pool is oversubscribed, which THREADS "
+               "of at most the cores avoids.";
         std::cout << "[HPO] " << oss.str() << "\n";
         HPOLog::instance().warning(oss.str());
       }
@@ -2045,8 +2046,8 @@ template<typename Vec, typename HostT>
                "the resolvable coordinate scale; they were clamped there so "
                "the cold slots stay distinct points rather than K copies of "
                "the seed. A large share means the ladder is wider than the "
-               "search space can express -- reduce LADDER_SPAN, or set "
-               "PARAM INIT_JITTER_LADDER to a smaller gamma or OFF.";
+               "search space can express; a smaller LADDER_SPAN, or PARAM "
+               "INIT_JITTER_LADDER with a smaller gamma or OFF, avoids this.";
           HPOLog::instance().warning(w.str());
         }
       }
@@ -2096,7 +2097,7 @@ template<typename Vec, typename HostT>
           init_stopval.store(true, std::memory_order_relaxed);
       });
       pool.offer_error(init_batch.commit());
-      rethrow_pool_error("population initialization");
+      rethrow_pool_error("population initialisation");
 
       /* ---- what the jitter actually DID ----------------------------------
        * Costs no extra evaluations: every start above was already evaluated.
@@ -2138,8 +2139,9 @@ template<typename Vec, typename HostT>
             w << "ANNEAL_PT: slot(s) " << over << " start outside the "
               << kb.init_jitter_tol << " band the per-dimension jitter was "
                  "measured against. Each COORDINATE respects it; their sum "
-                 "over " << dim << " dimensions need not. Lower the AUTO "
-                 "tolerance if the warm start matters more than the spread.";
+                 "over " << dim << " dimensions need not. A lower AUTO "
+                 "tolerance suits a run where the warm start matters more "
+                 "than the spread.";
             HPOLog::instance().warning(w.str());
           }
         }
@@ -3156,7 +3158,8 @@ template<typename Vec, typename HostT>
                      "even at 100% swap acceptance (a DEO round moves a "
                      "state at most one slot). Exchanges can still couple "
                      "adjacent slots, but no lineage can complete a round trip. ";
-                w << "Raise MAXEVAL or reduce REPLICAS/SWAP_EVERY.";
+                w << "A larger MAXEVAL, or a smaller REPLICAS or SWAP_EVERY, "
+                     "makes a round trip possible.";
                 HPOLog::instance().warning(w.str());
               } else if (rounds < 4 * rt_floor) {
                 std::ostringstream h;
@@ -3164,9 +3167,10 @@ template<typename Vec, typename HostT>
                   << " < 2*(REPLICAS-1)/0.25 = " << 4 * rt_floor
                   << " -- the 25%-acceptance planning heuristic yields fewer "
                      "than ~1 nominal ladder round trip (literature reference "
-                     "values: Kone-Kofke 23%, Predescu 39% for optimization). "
+                     "values: Kone-Kofke 23%, Predescu 39% for optimisation). "
                      "Measured ladder-flow counts are authoritative. ";
-                h << "Consider a larger MAXEVAL or fewer REPLICAS.";
+                h << "A larger MAXEVAL or fewer REPLICAS give more nominal "
+                     "round trips.";
                 HPOLog::instance().hint(h.str());
               }
             }
@@ -3537,7 +3541,7 @@ template<typename Vec, typename HostT>
                   if (rank == 0)
                     HPOLog::instance().info(
                         "ANNEAL_PT ladder adaptation frozen: per-pair "
-                        "acceptance indistinguishable from equalized (<=2 "
+                        "acceptance indistinguishable from equalised (<=2 "
                         "sigma) or held at the LADDER_MIN_GAP floor, on >= " +
                         std::to_string(pt_detail::kLadderFreezeMinAttempts) +
                         " pooled attempts/pair; ladder is final "
@@ -3909,8 +3913,8 @@ template<typename Vec, typename HostT>
                      "Per-pair swap acceptance does NOT diagnose this: an "
                      "adaptive ladder equalises acceptance, and acceptance "
                      "can stay in the usual 20-40% band while transport is "
-                     "zero. See the distinct-walkers-per-slot row above -- "
-                     "slots stuck near 1 mark where the ladder is severed.";
+                     "zero. The distinct-walkers-per-slot row above shows "
+                     "where the ladder is severed: slots stuck near 1.";
                 HPOLog::instance().warning(w.str());
               } else if (rt_win == 0) {
                 std::ostringstream h;
@@ -4423,7 +4427,8 @@ template<typename Vec, typename HostT>
                  "hpo_corana_acceptance.tsv)";
           o << ". Either the objective does not respond to them over their "
                "OPTIM range, or their step collapsed onto the V floor; "
-               "compare their sigma column against V_FLOOR_FRAC x width.";
+               "their sigma column, compared with V_FLOOR_FRAC x width, "
+               "tells the two apart.";
           HPOLog::instance().hint(o.str());
         }
 
@@ -4507,7 +4512,7 @@ template<typename Vec, typename HostT>
           reason = "FTOL best-stall (global best improved by <= tol over NEPS diagnostics windows)";
           end = EndReason::FtolPlateau; break;
         case StopReason::NoDims:
-          reason = "no optimisable dimensions"; end = EndReason::NoDims; break;
+          reason = "no search dimension"; end = EndReason::NoDims; break;
         case StopReason::NoBudget:
           reason = "MAXEVAL exhausted before SA proposal";
           end = EndReason::MaxEval; break;
@@ -4517,7 +4522,7 @@ template<typename Vec, typename HostT>
       }
       std::ostringstream oss;
       oss << "ANNEAL_PT stopped: " << reason
-          << " after " << spent_report << " host eval(s)"
+          << " after " << spent_report << " evaluation(s)"
           << " (" << epoch_count << " epoch(s), "
           << exchange_rounds << " exchange round(s))";
       HPOLog::instance().info(oss.str());

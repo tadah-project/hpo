@@ -821,12 +821,12 @@ inline std::string read_entire_file(const std::string& filename)
 {
     std::ifstream file(filename.c_str(), std::ios::in | std::ios::binary);
     if (!file)
-        throw std::runtime_error("read_entire_file: cannot open \"" + filename + "\"");
+        throw std::runtime_error("cannot open the LAMMPS script \"" + filename + "\"");
 
     std::ostringstream buffer;
     buffer << file.rdbuf();            // read *everything*
     if (!file.good() && !file.eof())   // eof is fine; any other error is not
-        throw std::runtime_error("read_entire_file: error while reading \"" + filename + "\"");
+        throw std::runtime_error("cannot read the LAMMPS script \"" + filename + "\"");
 
     return buffer.str();
 }
@@ -1284,19 +1284,18 @@ void LammpsSim::validate_requested_variables_defined_equal() const
 
     if (!problems.empty()) {
         std::ostringstream oss;
-        oss << "PC_LAMMPS validation failed for script '" << script << "'.\n"
-            << "Tadah requires every --varloss/--outvar/--failvar variable to be defined in the LAMMPS script (or included files)\n"
-            << "as an *equal-style* variable:\n"
-            << "  variable <name> equal ...\n\n";
-
-        oss << "Problems found:\n";
+        oss << "PC_LAMMPS: the script '" << script << "' and the files it "
+            << "includes define each --varloss, --outvar and --failvar "
+            << "variable as an equal-style variable (variable <name> equal "
+            << "...), and these are not:\n";
         for (const auto &p : problems) {
             if (p.kind == "missing") {
-                oss << "  - " << p.name << " requested by " << p.origin << " but not defined\n";
+                oss << "  - " << p.name << " (" << p.origin << "): not defined\n";
             } else { // wrongstyle
-                oss << "  - " << p.name << " requested by " << p.origin
-                    << " but defined as style '" << p.style << "'"
-                    << " (logical command #" << p.where << " in expanded script)\n";
+                oss << "  - " << p.name << " (" << p.origin
+                    << "): defined with the style '" << p.style << "'"
+                    << " (command " << p.where << " of the script with its "
+                    << "include files read in)\n";
             }
         }
 

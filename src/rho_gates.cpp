@@ -113,7 +113,7 @@ std::unique_ptr<models::Cut_Base> candidate_cutoff(const core::Context &c,
                                                    double &r_hi) {
   const auto specs=models::embed_specs(c);
   if(!specs.empty()) {
-    if(specs.size()!=1)throw std::runtime_error("Density gates require one scalar component");
+    if(specs.size()!=1)throw std::runtime_error("RHOGATE and RHOBARGATE read one DM_Embed component");
     r_hi=specs[0].radius;
     return std::make_unique<models::Cut_Dummy>(r_hi);
   }
@@ -134,7 +134,7 @@ CandidateDensity candidate_density(const core::Context &c,
   CandidateDensity d;
   auto specs=models::embed_specs(c);
   if(!specs.empty()) {
-    if(specs.size()!=1)throw std::runtime_error("Density gates require one scalar component");
+    if(specs.size()!=1)throw std::runtime_error("RHOGATE and RHOBARGATE read one DM_Embed component");
     d.component=std::make_unique<models::EmbedEvaluator>(specs[0]);d.form=specs[0].form;
   } else {d.legacy=models::ReamDensity::from_context(c);d.legacy.validate(fc);d.form=d.legacy.form;}
   return d;
@@ -152,7 +152,7 @@ std::string weight_problem(const core::Context &c) {
   for (const double x : w)
     if (!(std::isfinite(x) && x > 0.0))
       return "a density pair weight W = " + gnum(x) +
-             " (WATOM) is not finite and > 0";
+             " (WATOM) is not a finite number > 0";
   return "";
 }
 
@@ -323,8 +323,8 @@ DensityGates build_density_gates(const core::Context &master,
   const bool gated = trg.RHOGATE.has_value() || trg.RHOBARGATE.has_value();
   if (gated && !context_is_bare_ream(master))
     throw std::runtime_error(
-        "RHOGATE / RHOBARGATE need a bare DM_REAM many-body term (INITMB "
-        "true, TYPEMB DM_REAM)");
+        "RHOGATE and RHOBARGATE read one DM_REAM many-body term (INITMB "
+        "true, TYPEMB DM_REAM) or one DM_Embed component");
   g.knot2b = has_knot_channel(master, "2B");
   g.knotmb = has_knot_channel(master, "MB");
   g.reach = knot_aware_reachable_rcut(master, trg);
@@ -335,8 +335,9 @@ DensityGates build_density_gates(const core::Context &master,
   const std::vector<std::string> armed_on = arming_dims(trg);
   if (armed_on.empty())
     throw std::logic_error(
-        "RHOGATE / RHOBARGATE without an OPTIM dimension that arms them "
-        "(HPOTargets refuses such a gate)");
+        "internal error: RHOGATE or RHOBARGATE without a search parameter "
+        "that changes the density (the target file is refused at the line "
+        "of the key)");
   if (trg.RHOGATE) {
     RhoGateTable t;
     t.spec = *trg.RHOGATE;
@@ -441,14 +442,14 @@ std::optional<GateReject> combine_gate_verdicts(double v_bump,
   };
   std::vector<Failing> fails;
   if (v_bump > 0.0)
-    fails.push_back({GateKind::Bump, v_bump, bump_what, "bump-support gate"});
+    fails.push_back({GateKind::Bump, v_bump, bump_what, "BUMPGATE"});
   if (g.rho && d.rho && d.rho->fail)
     fails.push_back({GateKind::RhoSign, d.rho->v,
-                     describe_rho_reject(*d.rho, g.rho->spec), "rho-sign gate"});
+                     describe_rho_reject(*d.rho, g.rho->spec), "RHOGATE"});
   if (g.rhobar && d.rhobar && d.rhobar->fail)
     fails.push_back({GateKind::RhoBar, d.rhobar->v,
                      describe_rhobar_reject(*d.rhobar, g.rhobar->spec),
-                     "lattice-rhobar gate"});
+                     "RHOBARGATE"});
   if (fails.empty()) return std::nullopt;
 
   GateReject out{fails.front().kind, fails.front().v, fails.front().what};
@@ -469,8 +470,8 @@ std::optional<GateReject> combine_gate_verdicts(double v_bump,
 
 std::string describe_rho_reject(const RhoGateResult &r, const RhoGateSpec &spec) {
   if (r.saturated)
-    return "rho-sign gate reject (" + r.reason + ", v = saturated)";
-  return "rho-sign gate reject (rho_min/rho_max = " + e4(r.rho_min / r.rho_max) +
+    return "RHOGATE rejected the candidate (" + r.reason + ", v = saturated)";
+  return "RHOGATE rejected the candidate (rho_min/rho_max = " + e4(r.rho_min / r.rho_max) +
          " at r = " + f4(r.r_min) + " A, tol " + e4(spec.tol) + ", v = " +
          e4(r.v) + ")";
 }
@@ -478,9 +479,9 @@ std::string describe_rho_reject(const RhoGateResult &r, const RhoGateSpec &spec)
 std::string describe_rhobar_reject(const RhoBarGateResult &r,
                                    const RhoBarGateSpec &spec) {
   if (r.saturated)
-    return "lattice-rhobar gate reject (" + r.reason + " on " + spec.lattice +
-           ", v = saturated)";
-  return "lattice-rhobar gate reject (" + std::to_string(r.rises) +
+    return "RHOBARGATE rejected the candidate (" + r.reason + " on " +
+           spec.lattice + ", v = saturated)";
+  return "RHOBARGATE rejected the candidate (" + std::to_string(r.rises) +
          " rises over a/a0 [" + gnum(spec.f_lo) + ", " + gnum(spec.f_hi) +
          "] on " + spec.lattice + ", first at a/a0 = " + f4(r.first_rise) +
          ", v = " + e4(r.v) + ")";
@@ -663,15 +664,15 @@ void validate_density_gates(const core::Context &train_ctx,
   /* Whether the optimiser starts from a given seed is not known here (a
    * single-start backend consumes only the first of several). */
   const std::string seed_warn_note =
-      " SEED WARN: the run proceeds; if the optimiser starts from this seed, "
-      "that evaluation is rejected before training (band D).";
+      " Under SEED WARN the run goes on; an evaluation that starts from this "
+      "seed is refused before training and fails.";
 
   if (g.rho) {
     const RhoGateTable &t = *g.rho;
     const std::string arm_why =
-        "armed per candidate on " + join(t.armed_on, ", ") +
-        ": candidates with rho_min < -tol*rho_max are rejected before "
-        "training as graded band-D failures";
+        "checked in every candidate on " + join(t.armed_on, ", ") +
+        ": a candidate with rho_min < -tol*rho_max is refused before "
+        "training and fails (band D under FAILSCORE_GRADING ON)";
     std::vector<std::string> verdicts;
     const bool all_rejected = !fixed_w.empty();
     for (const GateSeed &s : seeds) {
@@ -680,10 +681,10 @@ void validate_density_gates(const core::Context &train_ctx,
       verdicts.push_back(s.label() + " " + v);
       if (!r.fail || all_rejected) continue;
       const std::string m = std::string("RHOGATE: ") + (s.in_seed_set ? "seed " : "") +
-                            s.label() + " fails the rho(r) sign gate: " +
+                            s.label() + " fails the sign condition of RHOGATE: " +
                             rho_fail_detail(r, t.spec) + ".";
       if (!s.in_seed_set)
-        warn(m + " It is not an INIT start: the run proceeds.");
+        warn(m + " It is not a starting point: the run goes on.");
       else if (t.spec.seed_warn)
         warn(m + seed_warn_note);
       else
@@ -693,7 +694,8 @@ void validate_density_gates(const core::Context &train_ctx,
         t.spec.r_lo ? "[" + gnum(*t.spec.r_lo) + " A (R_LO), RCUTMB of each candidate]"
                     : std::string("[0.15 RCUTMB, RCUTMB] of each candidate");
     HPOLog::instance().info(
-        "RHOGATE: rho(r) sign gate, tol " + e4(t.spec.tol) + ", window " +
+        "RHOGATE: the sign condition of rho(r), tolerance " + e4(t.spec.tol) +
+        ", window " +
         window + ", " + std::to_string(t.spec.npts) + "-point grid, SEED " +
         (t.spec.seed_warn ? "WARN" : "ERROR") + "; " + arm_why +
         "; seeds: " + join(verdicts, ", "));
@@ -701,9 +703,10 @@ void validate_density_gates(const core::Context &train_ctx,
   if (g.rhobar) {
     const RhoBarGateTable &t = *g.rhobar;
     const std::string arm_why =
-        "armed per candidate on " + join(t.armed_on, ", ") +
-        ": candidates whose rhobar(a) is not strictly decreasing are "
-        "rejected before training as graded band-D failures";
+        "checked in every candidate on " + join(t.armed_on, ", ") +
+        ": a candidate whose rhobar(a) is not strictly decreasing is "
+        "refused before training and fails (band D under FAILSCORE_GRADING "
+        "ON)";
     std::vector<std::string> verdicts;
     const bool all_rejected = !fixed_w.empty();
     for (const GateSeed &s : seeds) {
@@ -713,17 +716,18 @@ void validate_density_gates(const core::Context &train_ctx,
       verdicts.push_back(s.label() + " " + v);
       if (!r.fail || all_rejected) continue;
       const std::string m = std::string("RHOBARGATE: ") + (s.in_seed_set ? "seed " : "") +
-                            s.label() + " fails the lattice rhobar(a) gate: " +
+                            s.label() + " fails the lattice condition of RHOBARGATE: " +
                             rhobar_fail_detail(r, t.spec) + ".";
       if (!s.in_seed_set)
-        warn(m + " It is not an INIT start: the run proceeds.");
+        warn(m + " It is not a starting point: the run goes on.");
       else if (t.spec.seed_warn)
         warn(m + seed_warn_note);
       else
         errors.push_back(m + repair);
     }
     HPOLog::instance().info(
-        "RHOBARGATE: lattice rhobar(a) gate, " + rhobar_grid_text(t.spec) +
+        "RHOBARGATE: the lattice condition of rhobar(a), " +
+        rhobar_grid_text(t.spec) +
         ", " + std::to_string(t.shells.size()) + " shells within the largest "
         "reachable RCUTMB, SEED " + (t.spec.seed_warn ? "WARN" : "ERROR") +
         "; " + arm_why + "; seeds: " + join(verdicts, ", "));
@@ -827,8 +831,9 @@ std::vector<DensityReportEntry> startup_density_report(const core::Context &ctx,
       if (!warm) continue;
       const std::string file = s.origins.front().substr(std::string("WARM ").size());
       out.push_back({"WARM " + std::to_string(++n_warm),
-                     " (file " + file + "; OPTIM dims from the seed, the rest "
-                     "from -c)",
+                     " (file " + file + "; its search parameters from the "
+                     "seed, the other values from the training "
+                     "configuration)",
                      summarise_density(g, seed_context(ctx, trg, s.point, g))});
     }
   } catch (const std::exception &e) {

@@ -151,7 +151,7 @@ inline bool set_channel_rcut(core::Context &ctx, const CutoffChannel &ch,
   if (at >= values.size())
     throw std::logic_error(ch.prefix() + key + " has " +
                            std::to_string(values.size()) +
-                           " value(s), and the descriptor's is value " +
+                           " value(s), but the descriptor uses value " +
                            std::to_string(at + 1) +
                            " (D_mJoin::parse_context refuses such a line)");
   if (values[at] == value) return false;

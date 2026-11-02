@@ -334,6 +334,15 @@ public:
      *     box within rounding (SearchSpace::snapped_onto_box), evaluated on
      *     the bound (the host). */
     std::size_t record_out_of_box_point();
+    /** Counts an evaluation rejected by a --skip-above or --skip-rel cap of
+     *  a validation metric (HPO_Host::operator()): DIAGNOSTICS prints "Early
+     *  rejections" when it is > 0, and the error of a run without a usable
+     *  loss gives it. Returns the running count. */
+    std::size_t record_early_rejection();
+    /** The evaluations rejected by --skip-above or --skip-rel so far. */
+    std::size_t early_rejections() const {
+        return n_early_reject_.load(std::memory_order_relaxed);
+    }
     std::size_t record_snap();
     std::size_t snaps() const {
         return n_snap_.load(std::memory_order_relaxed);
@@ -482,10 +491,12 @@ public:
     void record_bound_occupancy(const std::vector<BoundOccupancy::Mark>& marks,
                                 std::uint64_t eval, double edge);
 
-    /** Arm the pinned-dim audit (CORANA annealers only -- CLASSIC never
-     *  shrinks its step, so "step at the V floor" is undefined there).
-     *  Stores the per-dim bounds snapshot the milestone table prints
-     *  (bound value, v_floor = v_floor_frac*(high-low), (ln) tags) plus
+    /** Arm the pinned-dim audit (the annealers, CLASSIC and CORANA; under
+     *  CLASSIC a mark means near-bound occupancy only, as V_FLOOR_FRAC is a
+     *  CORANA setting). Stores the per-dim bounds snapshot the milestone
+     *  table prints (the OPTIM bound in the units of the target file, the
+     *  width of the box in the optimiser's coordinates, which the table
+     *  divides the gap and the tolerance by, (ln) tags) plus
      *  the chain count for the slots column (1 = serial -> column is
      *  dropped) and the work-unit display name ("rung"/"epoch"/"T-step").
      *  Re-arming clears any previous marks (fresh audit per driver run).
@@ -739,6 +750,7 @@ private:
     std::atomic<std::size_t> n_gate_note_[kGateKinds] = {};
     /* Finite differences and the OPTIM box (record_out_of_box_point, ...). */
     std::atomic<std::size_t> n_oob_point_     {0};
+    std::atomic<std::size_t> n_early_reject_  {0};
     std::atomic<std::size_t> n_snap_          {0};
     std::atomic<std::size_t> n_hybrid_centre_ {0};
     /* Repeated points (record_repeat_reused, ...); repeat_again_why_ is
@@ -821,7 +833,11 @@ private:
      * reset_for_test(). */
     bool                     keep_notes_ = false;
     std::vector<JournalNote> kept_notes_;
+    /* The OPTIM bounds of each dimension as the target file writes them
+     * (real units), and the width of its box in the optimiser's own
+     * coordinates, which the gap and the tolerance of a mark are in. */
     std::vector<double>      pin_low_, pin_high_;
+    std::vector<double>      pin_width_;
     std::vector<char>        pin_log_;             // 1 = log-scaled dim
     double                   pin_floor_frac_ = 0.0;
     int                      pin_chains_     = 0;

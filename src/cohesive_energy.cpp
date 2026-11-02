@@ -268,10 +268,10 @@ evaluate(tadah::mlip::M_Tadah_Base& model,
          * not, or slope x fmax overflows. */
         if (!std::isfinite(res.value)) {
             std::ostringstream why;
-            why << "the relaxation did not converge (";
-            const char* sep = "";
+            why << "the relaxation did not converge";
+            std::string causes;
             const auto cause = [&](bool on, const char* what) {
-                if (on) { why << sep << what; sep = ", "; }
+                if (on) causes += (causes.empty() ? "" : ", ") + std::string(what);
             };
             cause(rr.maxeval_reached, "maxeval reached");
             cause(rr.wall_time_exceeded, "wall time exceeded");
@@ -279,8 +279,8 @@ evaluate(tadah::mlip::M_Tadah_Base& model,
             cause(rr.early_rejected, "a0 left its --hotvar window");
             cause(rr.final_fmax_atoms > cfg_.eq_fmax_threshold,
                   "atom forces above the equilibrium threshold");
-            if (*sep == '\0') why << "not converged";
-            why << ") and its --unconverged ";
+            if (!causes.empty()) why << " (" << causes << ")";
+            why << " and its --unconverged ";
             switch (cfg_.unconverged_strategy) {
                 using Strat = Config::UnconvergedStrategy;
                 case Strat::Const:

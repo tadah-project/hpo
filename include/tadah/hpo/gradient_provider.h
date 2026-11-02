@@ -289,7 +289,7 @@ inline void report_gradient_stop(const std::string& backend,
   std::string line = backend + " stopped: no usable gradient: " + f.cause;
   if (!f.detail.empty()) line += " (" + f.detail + ")";
   if (!ended.empty()) line += "; " + ended;
-  line += "; best-so-far preserved";
+  line += "; the best evaluation so far is kept";
   std::cout << "[HPO] " << line << "\n";
   HPOLog::instance().warning(line);
   HPOLog::instance().set_status(gradient_stop_status(f));
@@ -527,7 +527,8 @@ struct StencilReport {
       else
         os << (taken.s > 0 ? "forward" : "backward") << " difference, at "
            << at(p1, i);
-      os << "; a difference never mixes a usable loss with a failure; "
+      os << "; a difference never mixes losses of different kinds (a "
+            "usable loss, a graded failure, a failure without a grade); "
             "DIAGNOSTICS counts such differences per dimension";
       HPOLog::instance().info(os.str());
     } catch (...) { /* journalling never fails a gradient */ }

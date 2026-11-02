@@ -299,8 +299,8 @@ FdSettings fd_settings_of(const OptimizerSpec& sp)
         } else if (v == 2.0) {
             throw std::runtime_error(
                 "PARAM diff_method 2 (RIDDERS) is refused: Ridders' "
-                "extrapolation ignored PARAM fd_step, started from a step of "
-                "0.32 x max(|u|, 1) -- outside most OPTIM boxes -- and took "
+                "extrapolation ignores PARAM fd_step, starts from a step of "
+                "0.32 x max(|u|, 1) -- outside most OPTIM boxes -- and takes "
                 "up to 20 evaluations per parameter; diff_method 0 "
                 "(CENTRAL, the default) and 1 (FORWARD) take PARAM fd_step");
         } else {
@@ -483,10 +483,10 @@ std::string fd_describe(const FdSettings& s, bool normalised, bool hybrid)
     else
         d += "; next to the upper bound: backward, same h, same cost";
     if (hybrid)
-        d += "; HYBRID: for the parameters without an analytical derivative, "
-             "and a one-sided or forward difference takes the loss at the "
-             "point itself -- the optimiser's own when it has just evaluated "
-             "that point, else one evaluation more";
+        d += "; HYBRID: finite differences for the parameters without an "
+             "analytical derivative only; a one-sided or forward difference "
+             "takes the loss at the point itself -- the optimiser's own when "
+             "it has just evaluated that point, else one evaluation more";
     return d;
 }
 
@@ -554,22 +554,21 @@ std::string fd_box_error(const OptimizerSpec& sp, const FdSettings& s)
     std::vector<std::string> fixes;
     if (smallest_fit) {
         /* NOISE AUTO is refused beside a PARAM fd_step. */
-        fixes.push_back(std::string(s.source == FdStepSource::NoiseAuto
-                                        ? "remove AUTO from the NOISE block "
-                                          "and set"
-                                        : "set") +
-                        " PARAM fd_step to at most " +
-                        fd_floor_text(*smallest_fit));
+        fixes.push_back("a PARAM fd_step of at most " +
+                        fd_floor_text(*smallest_fit) + " fits them" +
+                        (s.source == FdStepSource::NoiseAuto
+                             ? ", without AUTO in the NOISE block"
+                             : ""));
     }
     if (none_fits && s.rule == FdRule::Ceres)
-        fixes.push_back("use PARAM fd_kernel inhouse, whose step has no "
-                        "floor");
+        fixes.push_back("PARAM fd_kernel inhouse, whose step has no floor, "
+                        "fits them");
     if (!normalised) {
-        fixes.push_back("use OPTIM_SCALE AUTO (fd_step is then a fraction "
-                        "of each box width)");
+        fixes.push_back("under OPTIM_SCALE AUTO fd_step is a fraction of each "
+                        "box width");
         if (decades)
-            fixes.push_back("give a positive parameter that spans decades a "
-                            "LOG box");
+            fixes.push_back("a LOG box suits a positive parameter that spans "
+                            "decades");
     }
     for (std::size_t k = 0; k < fixes.size(); ++k) {
         if (k == 0) {
@@ -577,7 +576,7 @@ std::string fd_box_error(const OptimizerSpec& sp, const FdSettings& s)
                 static_cast<unsigned char>(fixes[k][0])));
             msg += fixes[k];
         } else {
-            msg += "; or " + fixes[k];
+            msg += "; " + fixes[k];
         }
     }
     return msg + ".";

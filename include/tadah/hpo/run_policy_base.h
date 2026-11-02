@@ -99,29 +99,34 @@ inline void detail::run_inner_dispatch(const OptimizerSpec& spec,
     else if (spec.algo == "ANNEAL")    run_anneal   <Vec,Runner>(spec, host);
     else if (spec.algo == "ANNEAL_PT") run_anneal_pt<Vec,Runner>(spec, host);
     else if (spec.algo == "ANNEAL_PA") run_anneal_pa<Vec,Runner>(spec, host);
-    else throw std::runtime_error("unknown TADAH algo " + spec.algo);
+    else throw std::logic_error("internal error: unknown TADAH algorithm " +
+                                spec.algo);
   } else if (spec.lib == "DLIB") {
     if      (spec.algo == "GFS")  run_dlib_global<Vec,Runner>(spec, host);
     else if (spec.algo == "BFGS") run_dlib_bfgs  <Vec,Runner>(spec, host);
-    else throw std::runtime_error("unknown DLIB algo " + spec.algo);
+    else throw std::logic_error("internal error: unknown DLIB algorithm " +
+                                spec.algo);
   } else if (spec.lib == "NLOPT") {
     run_nlopt<Vec,Runner>(spec, host);
   } else if (spec.lib == "ASA") {
     if (spec.algo == "ASA") run_asa<Vec,Runner>(spec, host);
-    else throw std::runtime_error("unknown ASA algo " + spec.algo +
-                                  " (the ASA library has one algorithm: "
-                                  "ALGO ASA)");
+    else throw std::logic_error("internal error: unknown ASA algorithm " +
+                                spec.algo + " (the ASA library has one "
+                                "algorithm: ALGO ASA)");
   } else if (spec.lib == "CERES") {
 #ifndef TADAH_USE_CERES
     throw std::runtime_error(
-        "CERES support is not built; reconfigure with -DTADAH_ENABLE_CERES=ON");
+        "CERES:" + spec.algo + " is not in this build of tadah; a build with "
+        "-DTADAH_ENABLE_CERES=ON (Installation) has it");
 #else
     /* CERES:LBFGS, WOLFE and NLCG are refused (optimizer_caps.cpp). */
     if (spec.algo == "STEEPEST_DESCENT") run_ceres_steepest_descent<Vec,Runner>(spec, host);
-    else throw std::runtime_error("unknown CERES algo " + spec.algo);
+    else throw std::logic_error("internal error: unknown CERES algorithm " +
+                                spec.algo);
 #endif
   } else {
-    throw std::runtime_error("unknown optimizer LIB " + spec.lib);
+    throw std::logic_error("internal error: unknown optimiser library " +
+                           spec.lib);
   }
 }
 

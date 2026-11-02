@@ -47,9 +47,10 @@ void require_search_dimensions(const OptimizerSpec& spec)
         return;
     throw std::runtime_error(
         backend_name(spec) + " cannot optimise a zero-dimensional search "
-        "space (there is no OPTIM line; the failure would only surface once "
-        "the optimiser starts). Add at least one OPTIM line, or use a "
-        "TADAH-native optimiser, which evaluates the INIT start point once.");
+        "space (there is no OPTIM line; the optimiser would otherwise fail "
+        "only once it starts). It needs at least one OPTIM line; a TADAH "
+        "optimiser runs without one and evaluates the INIT starting point "
+        "once.");
 }
 
 /* NLopt counts evaluations in an int (nlopt::opt::set_maxeval): a larger
@@ -284,15 +285,15 @@ std::string inner_tolerance_advice(const ToleranceKey& t,
     const OptimizerSpec& inner = *spec.inner;
     const OptimizerCaps& inner_caps = optimizer_caps(inner);
     if (reads_tolerance(t, inner, inner_caps))
-        return "; set it in the INNER block, whose local search tests it";
+        return "; the INNER block, whose local search tests it, takes it";
     return "; the INNER block's " + backend_name(inner) +
-           " does not test it either: stop that search with " +
+           " does not test it either: " +
            stop_list(budget_keys(inner_caps, false, inner_caps), inner_caps,
                      false) +
            " in the INNER block, or " +
            or_list(budget_keys(caps, true, inner_caps)) +
            " in the " + backend_name(spec) +
-           " block, which NLopt hands on to it";
+           " block, which NLopt hands on to it, stops that search";
 }
 
 /* Refuses an attribute the run of `spec` never reads (backend_rules.h):
@@ -312,26 +313,26 @@ void reject_unread_attributes(const OptimizerSpec& spec,
         if (caps.accepts_inner)
             msg += inner_tolerance_advice(t, spec, caps);
         else if (role == SpecRole::Inner)
-            msg += "; stop it with " +
+            msg += "; " +
                    stop_list(budget_keys(caps, false, caps), caps, false) +
                    " in the INNER block" +
                    (caps.supports_stopval && !caps.ignores_forced_stop
-                        ? ", or STOPVAL in the enclosing block" : "");
+                        ? ", or STOPVAL in the enclosing block," : "") +
+                   " stops it";
         else
-            msg += "; stop it with " +
-                   stop_list(budget_keys(caps, true, caps), caps, false);
+            msg += "; " +
+                   stop_list(budget_keys(caps, true, caps), caps, false) +
+                   " stops it";
         throw std::runtime_error(msg);
     }
     if (spec.pop && !caps.reads_population)
         throw std::runtime_error(
-            backend_name(spec) + " does not use POPULATION; remove it (it is "
-            "read by " +
+            backend_name(spec) + " does not use POPULATION (it is read by " +
             readers([](const OptimizerCaps& c) { return c.reads_population; }) +
             ")");
     if (spec.vector_storage && !caps.reads_vector_storage)
         throw std::runtime_error(
-            backend_name(spec) + " does not use VECTOR_ARR; remove it (it is "
-            "read by " +
+            backend_name(spec) + " does not use VECTOR_ARR (it is read by " +
             readers([](const OptimizerCaps& c) {
                 return c.reads_vector_storage;
             }) +
@@ -361,13 +362,12 @@ void reject_unread_threads(const PhaseSpec& phase)
         "run";
     if (phase.inner)
         throw std::runtime_error(who + " does not use THREADS in an INNER "
-                                 "block: " + run_workers + "; remove it");
+                                 "block: " + run_workers);
     if (phase.exploration && !optimizer_caps(spec).reads_threads)
         throw std::runtime_error(
             who + " does not use THREADS: " + run_workers + ", and the "
             "THREADS of an EXPLORE block is read by " +
-            readers([](const OptimizerCaps& c) { return c.reads_threads; }) +
-            "; remove it");
+            readers([](const OptimizerCaps& c) { return c.reads_threads; }));
 }
 
 }  // namespace
@@ -387,9 +387,9 @@ void require_stop(const OptimizerSpec& spec, RestartStop restart)
     const OptimizerCaps& caps = optimizer_caps(spec);
     if (!caps.needs_stop || has_stop(spec, caps, restart)) return;
     throw std::runtime_error(
-        backend_name(spec) + " needs a stop: " + caps.stop_note + "; set " +
+        backend_name(spec) + " needs a stop: " + caps.stop_note + "; " +
         stop_list(budget_keys(caps, true, caps), caps, true) +
-        tolerance_note(caps));
+        " gives it one" + tolerance_note(caps));
 }
 
 void require_inner_run_stop(const OptimizerSpec& parent, RestartStop restart)
@@ -409,17 +409,18 @@ void require_inner_run_stop(const OptimizerSpec& parent, RestartStop restart)
     if (parent.inner)
         throw std::runtime_error(
             "the INNER search of " + outer + " (" + inner + ") needs a stop: " +
-            caps.stop_note + "; set " +
+            caps.stop_note + "; " +
             stop_list(budget_keys(caps, false, caps), caps, false) +
-            " in the INNER block, or " + handed_on + tolerance_note(caps));
+            " in the INNER block gives it one, as does " + handed_on +
+            tolerance_note(caps));
     /* NLopt's default local optimiser: it takes the block's tolerances
      * too. */
     throw std::runtime_error(
         "the local search of " + outer + " (NLopt's default " + inner +
         ", as the block has no INNER block) needs a stop: " + caps.stop_note +
-        "; set " + stop_list(budget_keys(caps, true, caps), caps, false) +
-        " in the " + outer + " block, which NLopt hands on to it" +
-        tolerance_note(caps));
+        "; " + stop_list(budget_keys(caps, true, caps), caps, false) +
+        " in the " + outer + " block, which NLopt hands on to it, gives it "
+        "one" + tolerance_note(caps));
 }
 
 void validate_random_spec(const OptimizerSpec& spec, RestartStop restart)
@@ -439,7 +440,8 @@ void validate_dlib_gfs_spec(const OptimizerSpec& spec, RestartStop restart)
     if (spec.stop.ftol_abs && !(*spec.stop.ftol_abs >= 0.0)) {
         std::ostringstream oss;
         oss << "DLIB:GFS: FTOL_ABS is the accuracy of dlib's solver and must "
-               "be >= 0 (got " << *spec.stop.ftol_abs << ")";
+               "be >= 0 (got " << core::format_roundtrip(*spec.stop.ftol_abs)
+            << ")";
         throw std::runtime_error(oss.str());
     }
     require_stop(spec, restart);
@@ -486,8 +488,8 @@ void validate_nlopt_spec(const OptimizerSpec& sp, RestartStop restart,
     if (sp.inner && (sp.inner->seed || sp.inner->init_strategy_spec.seed))
         throw std::invalid_argument(
             "NLopt INNER spec with a seed: NLopt draws the INNER search from "
-            "the enclosing run's random stream; set SEED on the enclosing "
-            "block");
+            "the random numbers of the enclosing run, which the SEED of the "
+            "enclosing block seeds");
     /* The parser rejects INIT inside INNER, and nothing resolves an INNER
      * chain: a spec built outside it must not carry one either. */
     if (sp.inner && (!sp.inner->init_strategy_spec.chain.empty() ||
@@ -500,16 +502,15 @@ void validate_nlopt_spec(const OptimizerSpec& sp, RestartStop restart,
      * it must not carry one either, since it would not be used. */
     if (sp.inner && sp.inner->grad_strategy)
         throw std::invalid_argument(
-            "NLopt INNER spec with a GRAD_STRATEGY: the enclosing block's "
-            "GRAD_STRATEGY applies to its local search; set GRAD_STRATEGY on "
-            "the enclosing block");
+            "NLopt INNER spec with a GRAD_STRATEGY: the GRAD_STRATEGY of the "
+            "enclosing block applies to its local search");
     /* The parser rejects STOPVAL inside INNER: mlsl.c and auglag.c set the
      * local search's stopval to the enclosing run's (inner_run_spec()). */
     if (sp.inner && sp.inner->stop.stopval)
         throw std::invalid_argument(
             "NLopt INNER spec with a STOPVAL: NLopt's MLSL and AUGLAG replace "
-            "the INNER search's STOPVAL with the enclosing block's; set "
-            "STOPVAL on the enclosing block");
+            "the STOPVAL of the INNER search with that of the enclosing "
+            "block");
     require_nlopt_maxeval(sp);
     if (sp.inner) require_nlopt_maxeval(*sp.inner);
     reject_unread_nlopt_params(sp, optimizer_caps(sp), role);
@@ -554,10 +555,10 @@ void validate_asa_spec(const OptimizerSpec& sp)
                 : "FAILSCORE_GRADING ON";
         throw std::runtime_error(
             "ASA:ASA: under " + mode + " a failed evaluation scores "
-            "from 0.999 FAILSCORE to below FAILSCORE (" + value + "), and "
+            "from 0.999 FAILSCORE to below FAILSCORE (" + value + "). "
             "ASA:ASA takes a cost of about " + cap + " or more for "
             "an invalid state and draws another, so it would not see the "
-            "graded failures at or above that cost; a FAILSCORE of " + cap +
+            "graded failures at or above that cost. A FAILSCORE of " + cap +
             " or less keeps every graded failure below it");
     }
 }
@@ -596,8 +597,8 @@ void validate_backend(const OptimizerSpec& spec, RestartStop restart,
     } else if (lib == "CERES") {
 #ifndef TADAH_USE_CERES
         throw std::runtime_error(
-            "CERES support is not built; reconfigure with "
-            "-DTADAH_ENABLE_CERES=ON");
+            "CERES:" + algo + " is not in this build of tadah; a build with "
+            "-DTADAH_ENABLE_CERES=ON (Installation) has it");
 #else
         if (algo == "STEEPEST_DESCENT") detail::validate_ceres_steepest_spec(spec);
 #endif
@@ -1320,10 +1321,10 @@ std::vector<std::string> start_point_warnings(const OptimizerSpec& root,
                   std::to_string(root.noise.calibration_n) + " times)"
             : std::string();
     const std::string to_start =
-        prestage ? " To start the exploration at them, use an exploration "
-                   "optimiser that starts at the point it is given."
-                 : " To start the search at them, use an optimiser that "
-                   "starts at the point it is given.";
+        prestage ? " An exploration optimiser that starts at the point it "
+                   "is given starts the exploration at them."
+                 : " An optimiser that starts at the point it is given "
+                   "starts the search at them.";
 
     /* An INIT block with a METHOD: the phase's own (PLAIN: the
      * OPTIMIZER/STRATEGY-level block; PRESTAGE: the EXPLORE block's), and
@@ -1407,12 +1408,13 @@ std::vector<std::string> start_point_warnings(const OptimizerSpec& root,
                             " (2n + 1) or more, whose trial points are all "
                             "random"
                       : std::string();
-            w += prestage ? ". For explorations that search anew, use an "
-                            "exploration optimiser that starts at the point "
-                            "it is given" + population + "."
-                          : ". For rounds that search anew, use an optimiser "
-                            "that starts at the point it is given" +
-                                population + ".";
+            const std::string comma = population.empty() ? "" : ",";
+            w += prestage ? ". An exploration optimiser that starts at "
+                            "the point it is given" + population + comma +
+                            " searches anew in each round."
+                          : ". An optimiser that starts at the point it is "
+                            "given" + population + comma + " searches anew "
+                            "in each round.";
             out.push_back(w);
         } else if (!root.restart.init_strategy.chain.empty() &&
                    (!prestage || phase->init_strategy_spec.chain.empty())) {
@@ -1432,16 +1434,16 @@ std::vector<std::string> start_point_warnings(const OptimizerSpec& root,
                            "refinement starts from them only when no "
                            "evaluation of its exploration has a usable loss: "
                            "a round's exploration differs from round 0's only "
-                           "in the random numbers it draws. To start each "
-                           "round's exploration at them, use an exploration "
-                           "optimiser that starts at the point it is given."
+                           "in the random numbers it draws. An exploration "
+                           "optimiser that starts at the point it is given "
+                           "starts each round's exploration at them."
                      : ignores_its_start(who, *phase, *blind, "") +
                            ", so no RESTART round evaluates the points of the "
                            "block's METHOD lines: a round's search differs "
                            "from round 0's only in the random numbers it "
-                           "draws. To start each round at the block's points, "
-                           "use an optimiser that starts at the point it is "
-                           "given."));
+                           "draws. An optimiser that starts at the point it "
+                           "is given starts each round at the block's "
+                           "points."));
         }
     }
     return out;

@@ -133,7 +133,7 @@ resolve_step_overrides(const OptimizerSpec& sp)
             if (!found)
                 throw std::runtime_error(
                     "STEP " + ov.key + "(" + std::to_string(ui) + "): index " +
-                    std::to_string(ui) + " is not an OPTIM'd index of " + ov.key);
+                    std::to_string(ui) + " of " + ov.key + " is not on an OPTIM line");
         }
     }
     return out;
@@ -151,7 +151,7 @@ inline void require_step_coverage(const OptimizerSpec& sp)
         if (!ov[i])
             throw std::runtime_error(
                 "STEP overrides cover only some dimensions and no block-wide STEP "
-                "is set; add `STEP <frac>` or override every OPTIM'd dimension");
+                "is set; the block needs `STEP <frac>` or an override for every search parameter");
 }
 
 /* Build the plan. `start_internal` may be empty (the local searches of an

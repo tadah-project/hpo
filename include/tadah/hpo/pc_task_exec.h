@@ -337,7 +337,8 @@ PcTaskResult execute_script_task_unguarded(
     } catch (const std::exception& e) {
       tadah::core::Logger::instance().log(
           tadah::core::LogLevel::WARNING,
-          std::string("run_one: potential construction failed: ") + e.what());
+          std::string("the potential of this evaluation could not be built "
+                      "for LAMMPS: ") + e.what());
       st.pot.reset();
       st.pot_failed = true;
       res.error_msg = e.what();

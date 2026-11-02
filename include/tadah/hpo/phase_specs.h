@@ -169,7 +169,7 @@ struct PhaseSpec {
  *   PLAIN       "the STRATEGY-level optimiser": `spec`;
  *   MULTISTART  "each MULTISTART start": the first start of
  *               plan_multistart() -- the starts differ only in their INIT
- *               point and SEED + i -- or "the MULTISTART run" when the
+ *               point and SEED + i -- or "the MULTISTART search" when the
  *               plan is a single run;
  *   PRESTAGE    "the PRESTAGE exploration (EXPLORE block)": spec.prestage,
  *               and "the PRESTAGE refinement": prestage_refinement_spec()

@@ -18,6 +18,7 @@
 #include <iomanip>
 #include <iostream>
 #include <memory>
+#include <limits>
 #include <optional>
 #include <random>
 #include <sstream>
@@ -60,7 +61,8 @@ enum class StartOutcome { Completed, Stagnated, Failed };
  * (rethrow_if_best_unsaved). */
 template<class Fn>
 StartOutcome run_start_guarded(std::size_t i, std::size_t k, Fn&& fn,
-                               std::exception_ptr* failure = nullptr)
+                               std::exception_ptr* failure = nullptr,
+                               const std::string& label = "MULTISTART")
 {
   try {
     fn();
@@ -75,7 +77,7 @@ StartOutcome run_start_guarded(std::size_t i, std::size_t k, Fn&& fn,
     return StartOutcome::Stagnated;
   } catch (const std::exception& e) {
     rethrow_if_best_unsaved();
-    const std::string msg = "MULTISTART start " + std::to_string(i+1) + "/" +
+    const std::string msg = label + " start " + std::to_string(i+1) + "/" +
                             std::to_string(k) + " failed: " + e.what();
     HPOLog::instance().warning(msg);
     std::cerr << "[HPO] WARNING: " << msg << "\n";
@@ -87,27 +89,27 @@ StartOutcome run_start_guarded(std::size_t i, std::size_t k, Fn&& fn,
 /* `status` without the failed-starts note (failed_starts_suffix) at its end. */
 inline std::string strip_failed_starts_note(std::string status)
 {
-  static const std::string tail = "; see the WARNINGs)";
+  static const std::string tail = "; the WARNING lines give the reasons)";
   if (status.size() >= tail.size() &&
       status.compare(status.size() - tail.size(), tail.size(), tail) == 0) {
     const auto open = status.rfind(" (");
     if (open != std::string::npos &&
-        status.find(" MULTISTART starts failed", open) != std::string::npos)
+        status.find(" starts failed", open) != std::string::npos)
       status.erase(open);
   }
   return status;
 }
 
-/* " (N of M MULTISTART starts failed[ across L launches]; see the
- * WARNINGs)" for the run's start tally (HPOLog::start_tally), or "" when no
- * start failed. */
+/* " (N of M starts failed[ across L launches]; the WARNING lines give the
+ * reasons)" for the run's start tally (HPOLog::start_tally): the starts of
+ * MULTISTART or of the PRESTAGE refinement; "" when no start failed. */
 inline std::string failed_starts_suffix(const HPOLog::StartTally& t)
 {
   if (t.failed == 0) return {};
   std::string out = " (" + std::to_string(t.failed) + " of " +
-                    std::to_string(t.ran) + " MULTISTART starts failed";
+                    std::to_string(t.ran) + " starts failed";
   if (t.batches > 1) out += " across " + std::to_string(t.batches) + " launches";
-  return out + "; see the WARNINGs)";
+  return out + "; the WARNING lines give the reasons)";
 }
 
 /* Counts of one batch of starts (run_starts). */
@@ -142,7 +144,8 @@ struct StartsReport {
  * Stagnation is reported by the caller (report_stagnation). Generic over
  * the two callables so it runs without an HPO_Host in the unit tests. */
 template<class ResetFn, class RunOne>
-StartsReport run_starts(std::size_t k, ResetFn&& reset_window, RunOne&& run_one)
+StartsReport run_starts(std::size_t k, ResetFn&& reset_window, RunOne&& run_one,
+                        const std::string& label = "MULTISTART")
 {
   HPOLog& log = HPOLog::instance();
   StartsReport rep;
@@ -162,7 +165,7 @@ StartsReport run_starts(std::size_t k, ResetFn&& reset_window, RunOne&& run_one)
     const double      best_before  = log.best_loss();
     reset_window();
     const StartOutcome out =
-        run_start_guarded(i, k, [&] { run_one(i); }, &first_failure);
+        run_start_guarded(i, k, [&] { run_one(i); }, &first_failure, label);
     const std::size_t evals_after = log.n_eval();
     const double      best_after  = log.best_loss();
 
@@ -175,12 +178,19 @@ StartsReport run_starts(std::size_t k, ResetFn&& reset_window, RunOne&& run_one)
     }
 
     std::ostringstream done;
-    done << "MULTISTART start " << (i+1) << "/" << k
-         << " done: " << (evals_after - evals_before) << " eval(s) consumed";
+    done << label << " start " << (i+1) << "/" << k
+         << " done: " << (evals_after - evals_before) << " evaluation(s) consumed";
     {
+      /* Before any usable loss the best is the no-best value (the largest
+       * double): it is not printed as a loss. */
+      const double none = std::numeric_limits<double>::max();
       std::ostringstream tmp;
       tmp << std::scientific << std::setprecision(4);
-      if (best_after < best_before)
+      if (best_after >= none)
+        tmp << ", no usable loss yet";
+      else if (best_before >= none)
+        tmp << ", the run's first best " << best_after;
+      else if (best_after < best_before)
         tmp << ", improved global best " << best_before << " -> " << best_after;
       else
         tmp << ", no global improvement (best stays at " << best_after << ")";
@@ -189,7 +199,7 @@ StartsReport run_starts(std::size_t k, ResetFn&& reset_window, RunOne&& run_one)
     if (out == StartOutcome::Stagnated)
       done << "; stopped on stagnation (RESTART window)";
     else if (out == StartOutcome::Failed)
-      done << "; FAILED (see the WARNING above)";
+      done << "; it failed (the WARNING above gives the reason)";
     std::cout << "[HPO] " << done.str() << "\n";
     log.info(done.str());
   }
@@ -309,8 +319,10 @@ public:
 
     const std::size_t actual_k = plan.starts;
     if (actual_k < k_) warn_fewer_starts(spec, actual_k);
+    const std::string label = batch_ == detail::StartBatch::MultiStart
+                                  ? "MULTISTART" : "REFINEMENT";
     HPOLog::instance().info(
-        "MULTISTART: running " + std::to_string(actual_k) +
+        label + ": running " + std::to_string(actual_k) +
         (actual_k == 1 ? " start" : " starts"));
 
     /* Each start's MAXEVAL: BUDGET_PER_START, or the outer MAXEVAL split
@@ -318,9 +330,11 @@ public:
      * with the spec's own stop criteria. */
     if (plan.per_start_maxeval) {
       std::ostringstream oss;
-      oss << "MULTISTART per-start MAXEVAL = " << *plan.per_start_maxeval
-          << (plan.from_budget_per_start ? " (from BUDGET_PER_START)"
-                                         : " (split from outer MAXEVAL)");
+      oss << label << ": each start runs with MAXEVAL "
+          << *plan.per_start_maxeval
+          << (plan.from_budget_per_start
+                  ? " (BUDGET_PER_START)"
+                  : " (the MAXEVAL of the block, split over the starts)");
       std::cout << "[HPO] " << oss.str() << "\n";
       HPOLog::instance().info(oss.str());
     }
@@ -340,17 +354,19 @@ public:
            * takes without one, when it draws random numbers (reads_seed:
            * LN_SBPLX takes a seed it never reads). */
           const std::string start_msg =
-              "MULTISTART start " + std::to_string(i+1) + "/" +
-              std::to_string(actual_k) + " -- running inner optimiser" +
-              (sub.seed ? " (seed=" + std::to_string(*sub.seed) + ")"
+              label + " start " + std::to_string(i+1) + "/" +
+              std::to_string(actual_k) + ": " + sub.lib + ":" + sub.algo +
+              (sub.seed ? " with seed " + std::to_string(*sub.seed)
                : sub.nlopt_seed_from_init() && reads_seed(sub)
-                   ? " (INIT seed=" +
-                         std::to_string(*sub.init_strategy_spec.seed) + ")"
+                   ? " with seed " +
+                         std::to_string(*sub.init_strategy_spec.seed) +
+                         ", from the SEED of the INIT block"
                    : "");
           std::cout << "[HPO] " << start_msg << "\n";
           HPOLog::instance().info(start_msg);
           run_inner<Vec,Runner>(sub, host);
-        });
+        },
+        label);
     report(rep.n_stagnated, rep.improved, actual_k);
   }
 
@@ -444,7 +460,7 @@ private:
     const bool ms = batch_ == detail::StartBatch::MultiStart;
     std::ostringstream oss;
     oss << (ms ? "MULTISTART: " : "REFINEMENT: ") << n_stagnated << " of "
-        << k << (ms ? " start(s)" : " seed(s)") << " stopped on stagnation";
+        << k << " start(s) stopped on stagnation";
     if (!ms && improved) oss << " (the refinement improved the global best)";
     oss << "; reporting stagnation to RESTART";
     std::cout << "[HPO] " << oss.str() << "\n";
@@ -514,7 +530,7 @@ class StagedPolicy : public RunPolicy<Vec,Runner> {
 public:
   explicit StagedPolicy(std::size_t top_k) : top_k_(top_k) {
     if (top_k_ == 0)
-      throw std::runtime_error("Staged-global mode requires TOPK >= 1");
+      throw std::runtime_error("STRATEGY TYPE PRESTAGE takes TOPK >= 1");
   }
 
   /* The startup rules (strategy_rules.h), applied again when the policy
@@ -543,13 +559,13 @@ public:
     HPO_Host<Vec,Runner>::set_track_topk(top_k_, std::move(widths));
     {
       std::ostringstream oss;
-      oss << "PRESTAGE: exploration phase "
+      oss << "PRESTAGE: the exploration (EXPLORE block) "
           << spec.prestage->lib << ":" << spec.prestage->algo
-          << " (MAXEVAL=";
+          << " (MAXEVAL ";
       if (spec.prestage->stop.maxeval)
         oss << *spec.prestage->stop.maxeval << ")";
       else
-        oss << "none: no evaluation limit)";
+        oss << "not set: no evaluation limit)";
       std::cout << "[HPO] " << oss.str() << "\n";
       HPOLog::instance().info(oss.str());
     }
@@ -619,8 +635,8 @@ public:
     if (topk.empty()) {
       std::ostringstream oss;
       oss << "PRESTAGE: no evaluation of the exploration produced a usable "
-             "loss (" << explore_evals << " evaluation(s)); refining from "
-             "the OPTIMIZER-level INIT point(s) instead";
+             "loss (" << explore_evals << " evaluation(s)); the refinement "
+             "starts from the INIT points of the STRATEGY-level optimiser";
       std::cout << "[HPO] " << oss.str() << "\n";
       HPOLog::instance().warning(oss.str());
       refiner.run_one_windowed(prestage_refinement_spec(spec, spec.optim_init),
@@ -676,8 +692,8 @@ public:
 
     {
       std::ostringstream oss;
-      oss << "REFINEMENT: refining top-" << topk.size()
-          << " seed(s) via " << spec.lib << ":" << spec.algo;
+      oss << "REFINEMENT: " << spec.lib << ":" << spec.algo << " from the "
+          << topk.size() << " best point(s) of the exploration";
       std::cout << "[HPO] " << oss.str() << "\n";
       HPOLog::instance().info(oss.str());
     }
@@ -746,13 +762,13 @@ private:
  * draws new random numbers instead of replaying round 0's; round 0 keeps
  * every SEED. An INNER block has no SEED: its search draws from the
  * enclosing run's random stream. The journal's "RESTART r/MAX" line lists
- * the round's seeds: the restart points' ("RESTART SEED", drawn or the
- * block's), then the derived optimiser seeds ("INIT SEED" for an INIT
- * block's).
+ * the round's seeds: the restart points' ("RESTART SEED + r", or "drawn
+ * seed + r"), then the derived optimiser seeds, each as its key plus what
+ * the round adds ("INIT SEED + r" for an INIT block's).
  *
  * When the MAX restarts are used up, the next stagnation ends the run
  * normally, with the trailer "STOPPED -- stagnation: no new best in W
- * evals after MAX restart(s)" (and the failed-starts note of a MULTISTART
+ * evaluations after MAX restart(s)" (and the failed-starts note of a MULTISTART
  * run whose starts failed). The watchdog is armed only while this policy
  * runs: however run() ends, the threshold is reset to 0, so a later run
  * in the same process is not stopped by a stale window.
@@ -798,15 +814,16 @@ public:
         detail::rethrow_if_best_unsaved();
         if (restarts >= max_restarts_) {
           const std::string msg =
-              "RESTART: stagnation reached, max restarts (" +
-              std::to_string(max_restarts_) + ") used; stopping";
+              "RESTART: no new best within the stagnation window, and the "
+              "MAX of " + std::to_string(max_restarts_) + " restart(s) is "
+              "used: the run stops";
           std::cout << "[HPO] " << msg << "\n";
           HPOLog::instance().info(msg);
           /* Say why the run ended: whatever an inner run recorded last (a
            * per-start MAXEVAL_REACHED, say) is not the reason. */
           HPOLog::instance().set_status(
               "STOPPED -- stagnation: no new best in " +
-              std::to_string(window_) + " evals after " +
+              std::to_string(window_) + " evaluations after " +
               std::to_string(max_restarts_) + " restart(s)" +
               detail::failed_starts_suffix(HPOLog::instance().start_tally()));
           break;
@@ -847,9 +864,10 @@ public:
              * starts where the previous one did. */
             const std::string msg =
                 "RESTART " + std::to_string(restarts) + "/" +
-                std::to_string(max_restarts_) + ": the METHOD chain (" +
-                refresh_->name() + ") produced no starting point; the round "
-                "starts from the previous round's starting points";
+                std::to_string(max_restarts_) + ": the METHOD lines of the "
+                "RESTART block (" + refresh_->name() + ") gave no starting "
+                "point; the round starts from the starting points of the "
+                "previous round";
             std::cerr << "[HPO] WARNING: " << msg << "\n";
             HPOLog::instance().warning(msg);
           }
@@ -859,11 +877,14 @@ public:
         HPO_Host<Vec,Runner>::reset_stagnation();
         {
           std::ostringstream oss;
-          oss << "RESTART " << restarts << "/" << max_restarts_
-              << " -- fresh init from "
-              << (refresh_ ? refresh_->name() : std::string("(none)"));
-          const std::string seeds = describe_seeds(point_seed, cur);
-          if (!seeds.empty()) oss << "; " << seeds;
+          oss << "RESTART " << restarts << "/" << max_restarts_ << ": ";
+          if (refresh_)
+            oss << "new starting points from " << refresh_->name();
+          else
+            oss << "the starting points of the previous round";
+          const std::string seeds =
+              describe_seeds(point_seed, restarts, cur, spec);
+          if (!seeds.empty()) oss << "; seeds of this round: " << seeds;
           std::cout << "[HPO] " << oss.str() << "\n";
           HPOLog::instance().info(oss.str());
         }
@@ -885,7 +906,8 @@ private:
       drawn_seed_ = (hi << 32) ^ lo;
       const std::string msg =
           "RESTART: the RESTART block has no SEED, so its restart points "
-          "are drawn from std::random_device: restart r draws with " +
+          "use a seed drawn once for the run, " +
+          std::to_string(*drawn_seed_) + ": restart r draws with " +
           std::to_string(*drawn_seed_) + " + r (SEED " +
           std::to_string(*drawn_seed_) +
           " in the RESTART block draws the same points again)";
@@ -895,35 +917,51 @@ private:
     return *drawn_seed_;
   }
 
-  /* "RESTART SEED 43, SEED 6, EXPLORE SEED 1718": the seed the round's
-   * points were drawn with, then the seeds of the phases that have one (an
-   * INNER block has none) -- for an NLopt phase that takes its INIT block's
-   * SEED (OptimizerSpec::nlopt_seed_from_init()), that SEED as derived for
-   * the round: "INIT SEED 8", "EXPLORE INIT SEED 31". */
-  static std::string describe_seeds(
-      const std::optional<std::uint64_t>& point_seed, const OptimizerSpec& s)
+  /* "RESTART SEED + 1 = 43, SEED + 3 = 6, EXPLORE SEED + 1 = 1718": the
+   * seed the round's points were drawn with (RESTART SEED + r, or "drawn
+   * seed + r" without one), then the seeds of the phases that have one (an
+   * INNER block has none), each as its key in the round-0 spec @p base
+   * plus what the round adds (OptimizerSpec::derive_restart_seeds) -- for
+   * an NLopt phase that takes its INIT block's SEED
+   * (OptimizerSpec::nlopt_seed_from_init()), that SEED as derived for the
+   * round: "INIT SEED + 1 = 8", "EXPLORE INIT SEED + 1 = 31". */
+  std::string describe_seeds(const std::optional<std::uint64_t>& point_seed,
+                             std::size_t round, const OptimizerSpec& s,
+                             const OptimizerSpec& base) const
   {
     std::ostringstream oss;
     const char* sep = "";
-    const auto add = [&](const char* phase,
-                         const std::optional<std::uint64_t>& seed) {
+    const auto add = [&](const std::string& name,
+                         const std::optional<std::uint64_t>& seed,
+                         const std::optional<std::uint64_t>& seed0) {
       if (!seed) return;
-      oss << sep << phase << "SEED " << *seed;
+      oss << sep << name;
+      if (seed0) oss << " + " << (*seed - *seed0);
+      oss << " = " << *seed;
       sep = ", ";
     };
     /* The INIT block's SEED that an NLopt phase takes is named when the
      * phase draws random numbers (reads_seed): LD_MMA reads none. */
-    const auto add_phase = [&](const char* phase, const char* init_phase,
-                               const OptimizerSpec& p) {
+    const auto add_phase = [&](const std::string& phase,
+                               const std::string& init_phase,
+                               const OptimizerSpec& p,
+                               const OptimizerSpec& p0) {
       if (p.nlopt_seed_from_init()) {
-        if (reads_seed(p)) add(init_phase, p.init_strategy_spec.seed);
+        if (reads_seed(p))
+          add(init_phase + "SEED", p.init_strategy_spec.seed,
+              p0.init_strategy_spec.seed);
       } else {
-        add(phase, p.seed);
+        add(phase + "SEED", p.seed, p0.seed);
       }
     };
-    add("RESTART ", point_seed);
-    add_phase("", "INIT ", s);
-    if (s.prestage) add_phase("EXPLORE ", "EXPLORE INIT ", *s.prestage);
+    if (point_seed) {
+      oss << (refresh_seed_ ? "RESTART SEED" : "drawn seed") << " + "
+          << round << " = " << *point_seed;
+      sep = ", ";
+    }
+    add_phase("", "INIT ", s, base);
+    if (s.prestage && base.prestage)
+      add_phase("EXPLORE ", "EXPLORE INIT ", *s.prestage, *base.prestage);
     return oss.str();
   }
 

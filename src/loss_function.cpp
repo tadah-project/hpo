@@ -20,7 +20,7 @@ LossFunction::Type LossFunction::from_string(const std::string& s)
     if(u=="TUKEY")     return Type::TUKEY;
     throw std::runtime_error("unknown loss function '" + s + "'; the loss "
                              "functions are L1, L2, LOG_COSH, MAPE, HUBER, "
-                             "RMSLE and TUKEY, in any case");
+                             "RMSLE and TUKEY, in upper or lower case");
 }
 
 LossFunction::Type LossFunction::from_name(const std::string& s,
@@ -77,7 +77,8 @@ std::vector<double> LossFunction::resolve_params(Type t,
             oss << "loss " << name << " parameter ("
                 << (t == Type::HUBER ? "delta" : "c")
                 << ") must be finite and > 0 (got " << p
-                << "); omit it to use the default " << default_params(t)[0];
+                << "); without it the default " << default_params(t)[0]
+                << " applies";
             throw std::runtime_error(oss.str());
         }
     }

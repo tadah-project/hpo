@@ -153,8 +153,15 @@ bool run_has_usable_loss(const Host& host)
  * on stderr, the trailer, EXIT_FAILURE. */
 inline int end_without_usable_loss(HPOLog& log)
 {
-    log.event("ERROR", kNoUsableLossError);
-    std::cerr << "[HPO] ERROR: " << kNoUsableLossError << std::endl;
+    /* With the evaluations a --skip-above or --skip-rel cap rejected:
+     * those caps can leave a run without a usable loss. */
+    std::string error = kNoUsableLossError;
+    if (const std::size_t n = log.early_rejections(); n > 0)
+        error += " (" + std::to_string(n) + " of " +
+                 std::to_string(log.n_eval()) + " evaluations were rejected "
+                 "by --skip-above or --skip-rel)";
+    log.event("ERROR", error);
+    std::cerr << "[HPO] ERROR: " << error << std::endl;
     log.finish(kNoUsableLossStatus);
     return EXIT_FAILURE;
 }
@@ -269,8 +276,9 @@ int drive_run(const std::function<void()>& body, const Host& host,
             fail_persistence(ub->what);
             throw durable_best::Error(ub->what);
         }
-        log.warning("stagnation stop reached the run driver: no RESTART "
-                    "policy acted on it, so the run ends here");
+        log.warning("the stagnation stop reached the end of the run: no "
+                    "RESTART block restarted the search, so the run ends "
+                    "here");
         drain(/*retry_io=*/true);
         if (!usable) {
             ready_trailer();
@@ -291,17 +299,19 @@ int drive_run(const std::function<void()>& body, const Host& host,
         throw;
     } catch (const std::exception& e) {
         agree_on_usable_loss();
-        log.warning(std::string("Optimiser threw: ") + e.what());
+        log.warning(std::string("the optimiser stopped on an error: ") +
+                    e.what());
         drain(/*retry_io=*/true);
         ready_trailer();
         log.finish(std::string("FAILED -- ") + e.what());
         throw;
     } catch (...) {
         agree_on_usable_loss();
-        log.warning("Optimiser threw a non-standard exception");
+        log.warning("the optimiser stopped on an error that carries no "
+                    "message");
         drain(/*retry_io=*/true);
         ready_trailer();
-        log.finish("FAILED -- non-standard exception");
+        log.finish("FAILED -- an error that carries no message");
         throw;
     }
 

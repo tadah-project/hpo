@@ -340,7 +340,7 @@ void HPOLog::open(const std::string& path,
     auto tt = std::chrono::system_clock::to_time_t(t_start_);
 
     f_ << "\n" << HEAVY << "\n";
-    f_ << "  TADAH Hyperparameter Optimisation -- Run Journal\n";
+    f_ << "  Tadah! nested fitting (tadah hpo) -- Run Journal\n";
     f_ << HEAVY << "\n\n";
     f_ << "  Tadah version  : " << version << "\n";
     f_ << "  Started        : " << std::put_time(std::localtime(&tt),
@@ -509,7 +509,7 @@ void HPOLog::write_files_section(const std::string& target_file,
                                  const HPOTargets&  trg)
 {
     section("FILES");
-    kv("HPO targets",    target_file);
+    kv("Target file",    target_file);
     kv("Validation set", val_file);
     kv("Loss log",       trg.lossFile);
     kv("Outvar log",     trg.outvarFile);
@@ -539,7 +539,7 @@ void HPOLog::write_optimizer_section(const OptimizerSpec&            sp,
 
     // ---- inner optimizer (NLopt MLSL/AUGLAG sub-algo)
     if (sp.inner)
-        kv("Inner optimizer", sp.inner->lib + " / " + sp.inner->algo);
+        kv("Inner optimiser", sp.inner->lib + " / " + sp.inner->algo);
 
     // ---- how the block obtains gradients (for its INNER search too; an
     //      INNER block takes no GRAD_STRATEGY of its own)
@@ -671,7 +671,8 @@ void HPOLog::write_optimizer_section(const OptimizerSpec&            sp,
             if (is_mlsl) {
                 f_ << "    (none set -- NLopt MLSL will use defaults "
                       "ftol_rel=1e-15 xtol_rel=1e-7 for inner local searches; "
-                      "loosen these if inner descents stall on a noisy objective)\n";
+                      "looser INNER stops suit inner searches that stall on a "
+                      "noisy objective)\n";
             } else {
                 f_ << "    (none set -- the INNER search runs with the "
                       "enclosing block's MAXEVAL, MAXTIME and STOPVAL, or ends "
@@ -866,7 +867,7 @@ void HPOLog::write_optimizer_section(const OptimizerSpec&            sp,
             is_multistart || has_prestage ||
             rs.active() ||
             ns.autodetect || (ns.calibration_n >= 2);
-        f_ << "  Run policy:\n";
+        f_ << "  Strategy, restart and noise:\n";
         if (!any_extra) {
             f_ << "    (TYPE PLAIN -- single-shot dispatch)\n";
         }
@@ -925,10 +926,10 @@ void HPOLog::write_optimizer_section(const OptimizerSpec&            sp,
             write_init_strategy(rs.init_strategy, "RESTART init strategy:",
                                 "    ");
         }
-        if (ns.autodetect) f_ << "    NOISE.AUTO        : true\n";
+        if (ns.autodetect) f_ << "    NOISE AUTO        : true\n";
         if (ns.calibration_n >= 2)
-            f_ << "    NOISE.CALIBRATION : " << ns.calibration_n
-               << "  (extra evals at the seed before optimisation)\n";
+            f_ << "    NOISE CALIBRATION : " << ns.calibration_n
+               << "  (evaluations at the starting point before the search)\n";
         f_.flush();
     }
 
@@ -1053,7 +1054,10 @@ void HPOLog::write_potential_section(const core::Context&  ctx,
     if (ctx.contains("INITMB")) initmb = ctx.get<bool>("INITMB");
 
     kv("2-body terms",    std::string(bool_str(init2b))
-                          + (init2b ? "" : "  (WARNING: neither 2B nor MB active!)"));
+                          + (init2b || initmb
+                                 ? ""
+                                 : "  (WARNING: neither 2-body nor many-body "
+                                   "terms are active)"));
     kv("Many-body terms", bool_str(initmb));
 
     auto rcut_str = [&](const std::string& key) -> std::string {
@@ -1095,7 +1099,7 @@ void HPOLog::write_potential_section(const core::Context&  ctx,
                               : "isolated-atom embedding energy)");
                     break;
                 case RawEmbeddingF0::Kind::PerEvaluation:
-                    v = "determined per evaluation (the weights are fitted on "
+                    v = "determined per evaluation (the coefficients are fitted on "
                         "every evaluation; start/best under RESULT)";
                     break;
                 case RawEmbeddingF0::Kind::NotApplicable:
@@ -1112,8 +1116,8 @@ void HPOLog::write_potential_section(const core::Context&  ctx,
 
     if (!init2b && !initmb) {
         std::lock_guard<std::mutex> lg(mtx_);
-        f_ << "\n  !! Neither INIT2B nor INITMB is true -- the potential has no terms.\n"
-              "     Check your configuration file.\n";
+        f_ << "\n  [!] INIT2B and INITMB are both false: the potential has no "
+              "term.\n";
         f_.flush();
     }
 }
@@ -1207,7 +1211,7 @@ void HPOLog::write_loss_section(const HPOTargets& trg)
     std::string graded = "a skip cap";
     if (!trg.LS.empty()) graded += ", a failed PC_LAMMPS simulation";
     if (!trg.observables.empty()) graded += ", a failed PC_OBSERVABLE term";
-    graded += " or a gate reject";
+    graded += " or a rejection by BUMPGATE, RHOGATE or RHOBARGATE";
     if (trg.FAILSCORE_GRADING) {
         kv("Fail score",   fmt_double(trg.FAIL_SCORE)
                            + "  (the loss of an evaluation with a NaN/Inf loss "
@@ -1332,7 +1336,7 @@ void HPOLog::write_noise_calibration_section(
 
     if (losses.size() < 2) {
         std::lock_guard<std::mutex> lg(mtx_);
-        f_ << "  (calibration not run -- need >= 2 evals)\n";
+        f_ << "  (no calibration: it needs at least 2 evaluations)\n";
         f_.flush();
         return;
     }
@@ -1430,6 +1434,11 @@ std::size_t HPOLog::record_out_of_box_point()
     return n_oob_point_.fetch_add(1, std::memory_order_relaxed) + 1;
 }
 
+std::size_t HPOLog::record_early_rejection()
+{
+    return n_early_reject_.fetch_add(1, std::memory_order_relaxed) + 1;
+}
+
 std::size_t HPOLog::record_hybrid_centre()
 {
     return n_hybrid_centre_.fetch_add(1, std::memory_order_relaxed) + 1;
@@ -1496,6 +1505,7 @@ std::size_t HPOLog::mixed_kind(const std::string& label) const
 void HPOLog::reset_fd_counters_locked()
 {
     n_oob_point_.store(0, std::memory_order_relaxed);
+    n_early_reject_.store(0, std::memory_order_relaxed);
     n_snap_.store(0, std::memory_order_relaxed);
     n_hybrid_centre_.store(0, std::memory_order_relaxed);
     one_sided_.clear();
@@ -1799,10 +1809,12 @@ void HPOLog::record_eval(std::size_t eval_num, double wall_ms, EvalLoss loss)
                  * a CORANA knob and has no meaning for the calibrated
                  * CLASSIC step. Claiming "step at the V floor" for both
                  * would be false half the time. */
-                t << rows.size() << " OPTIM dim(s) near a bound -- x sits "
-                     "within one proposal step (tol) of an OPTIM limit "
+                t << rows.size() << " OPTIM dimension(s) near a bound -- x "
+                     "sits within one proposal step (tol) of an OPTIM limit "
                      "(under CORANA the step has also reached its floor, "
-                     "so no further shrinkage is available):\n"
+                     "so no further shrinkage is available); the bound is "
+                     "the OPTIM bound, and the gap and tol are fractions of "
+                     "the width of the box:\n"
                   << "  " << pad("dim", lw + 2) << pad("side", 6)
                   << pad("bound", 13) << pad("gap", 11) << pad("tol", 11);
                 if (multi) t << pad("slots", 8);
@@ -1811,13 +1823,16 @@ void HPOLog::record_eval(std::size_t eval_num, double wall_ms, EvalLoss loss)
                     const bool   ok = r.dim < pin_low_.size();
                     const double b  = ok ? (r.side ? pin_high_[r.dim]
                                                    : pin_low_[r.dim]) : 0.0;
+                    const double w  = r.dim < pin_width_.size() &&
+                                              pin_width_[r.dim] > 0.0
+                                          ? pin_width_[r.dim] : 1.0;
                     const std::uint64_t u = pin_unit_ >= r.since
                                             ? pin_unit_ - r.since + 1 : 1;
                     t << "\n  " << pad(label_of(r), lw + 2)
                       << pad(r.side ? "HI" : "LO", 6)
-                      << pad(fmt_double(b, 3), 13)
-                      << pad(sci1(r.gap), 11)
-                      << pad(sci1(r.tol), 11);
+                      << pad(core::format_roundtrip(b), 13)
+                      << pad(sci1(r.gap / w), 11)
+                      << pad(sci1(r.tol / w), 11);
                     if (multi)
                         t << pad(std::to_string(r.n) + "/"
                                  + std::to_string(pin_chains_), 8);
@@ -1826,8 +1841,9 @@ void HPOLog::record_eval(std::size_t eval_num, double wall_ms, EvalLoss loss)
                 event_locked("WARNING", t.str());
                 event_locked("HINT",
                     "persistent near-bound occupancy may indicate "
-                    "OPTIM bound pressure -- inspect the trace; widen or "
-                    "re-centre only when the admissible domain permits it.");
+                    "OPTIM bound pressure; the trace shows it, and a wider "
+                    "or re-centred box suits it only where the admissible "
+                    "domain permits.");
             }
             /* Stagnation hint: if we've spent more than half the recent
              * milestone window with no new best, point the user at the
@@ -1843,11 +1859,13 @@ void HPOLog::record_eval(std::size_t eval_num, double wall_ms, EvalLoss loss)
                    << "(a) inner stop tolerance too tight for objective noise; "
                    << "(b) the best basin is genuinely exhausted; "
                    << "(c) penalty cliff -- most samples land on "
-                   << "infeasible side. Inspect loss.tadah spread.\n";
+                   << "infeasible side. The spread of the losses in "
+                   << "loss.tadah shows which applies.\n";
             }
             f_.flush();
 
-            // schedule next milestone: 100, 200, 500, 1000, 2000, 5000, ...
+            // schedule next milestone: every 100 to 500, every 500 to
+            // 2000, every 1000 to 10000, then every 5000
             if      (next_milestone_ <  500)  next_milestone_ += 100;
             else if (next_milestone_ < 2000)  next_milestone_ += 500;
             else if (next_milestone_ < 10000) next_milestone_ += 1000;
@@ -1912,13 +1930,15 @@ void HPOLog::write_bound_occupancy_locked(const char* /*indent_tag*/, bool final
     if (final_table) {
         f_ << text << "\n";
         if (any_soft)
-            f_ << "    (advisory: a best that rides a bound suggests bound pressure -- widen that side\n"
-                  "     and rerun with INIT METHOD WARM; the run never changes OPTIM bounds by itself)\n";
+            f_ << "    (advisory: a best that rides a bound suggests bound pressure; a wider bound on\n"
+                  "     that side and a rerun with INIT METHOD WARM test it; the run never changes\n"
+                  "     OPTIM bounds by itself)\n";
     } else {
         event_locked("INFO", text);
         if (any_soft)
-            event_locked("HINT", "a best that keeps riding a bound suggests bound pressure -- widen that "
-                                 "side (where the physics permits) and rerun with INIT METHOD WARM");
+            event_locked("HINT", "a best that keeps riding a bound suggests bound pressure; a "
+                                 "wider bound on that side (where the physics permits) and a "
+                                 "rerun with INIT METHOD WARM test it");
     }
     f_.flush();
 }
@@ -1927,8 +1947,22 @@ void HPOLog::arm_pin_audit(const OptimizerSpec& sp, double v_floor_frac,
                            int n_chains, const std::string& unit_name)
 {
     std::lock_guard<std::mutex> lg(mtx_);
+    /* The bounds as the OPTIM line writes them: sp.low and sp.high are in
+     * the optimiser's coordinates (unit box under OPTIM_SCALE AUTO, ln of
+     * a LOG dimension). */
     pin_low_  = sp.low;
     pin_high_ = sp.high;
+    pin_width_.assign(sp.low.size(), 1.0);
+    for (std::size_t i = 0; i < sp.low.size() && i < sp.high.size(); ++i) {
+        pin_width_[i] = sp.high[i] - sp.low[i];
+        if (sp.space && i < sp.space->dim()) {
+            pin_low_[i]  = sp.space->at(i).lo;
+            pin_high_[i] = sp.space->at(i).hi;
+        } else if (i < sp.log_scaled.size() && sp.log_scaled[i]) {
+            pin_low_[i]  = std::exp(sp.low[i]);
+            pin_high_[i] = std::exp(sp.high[i]);
+        }
+    }
     /* 1 = ln-scaled, 2 = asinh-scaled (tag suffix in the milestone table). */
     pin_log_.assign(sp.low.size(), 0);
     for (std::size_t i = 0; i < pin_log_.size(); ++i) {
@@ -2263,8 +2297,8 @@ void HPOLog::finish(const std::string& status_str)
     } else {
         f_ << "  [!] " << std::fixed << std::setprecision(1) << nan_pct
            << "% of evaluations produced a non-finite loss that was clamped.\n"
-              "    This counter does not identify the cause. Inspect the matching\n"
-              "    WARNING entries before changing bounds, the model, or FAIL_SCORE.\n";
+              "    This counter does not identify the cause; the matching WARNING\n"
+              "    entries show it.\n";
     }
 
     /* Evaluations that raised an exception (a training that failed, say).
@@ -2282,8 +2316,8 @@ void HPOLog::finish(const std::string& status_str)
         f_ << "\n";
         if (nt > 0)
             f_ << "  [!] " << nt << " evaluation(s) raised an exception and "
-                  "scored FAIL_SCORE; each has a WARNING\n"
-                  "    \"eval <n>: eval-thread caught ...\" with its message.\n";
+                  "scored FAILSCORE; each has a WARNING\n"
+                  "    \"eval <n>: the evaluation stopped on an error ...\" with its message.\n";
     }
 
     /* Graded failures. Disjoint from the NaN counter above: a killed worker
@@ -2307,20 +2341,19 @@ void HPOLog::finish(const std::string& status_str)
                << "%)";
         f_ << "\n";
         if (ft > 0) {
-            f_ << "    A=" << fa << " (hot-var out of range)"
-               << "  B=" << fb << " (script or observable failed)"
-               << "  C=" << fc << " (did not complete)"
-               << "  D=" << fd << " (pot build / gated)\n";
+            f_ << "    A=" << fa << " (a --hotvar value outside its range)"
+               << "  B=" << fb << " (a script or PC_OBSERVABLE term failed)"
+               << "  C=" << fc << " (a simulation did not finish)"
+               << "  D=" << fd << " (a potential rejected as unusable)\n";
             static const char* const gate_line[kGateKinds] = {
-                "    of which bump-support gate rejects: ",
-                "    of which rho-sign gate rejects: ",
-                "    of which lattice-rhobar gate rejects: "};
+                "    of which rejected by BUMPGATE: ",
+                "    of which rejected by RHOGATE: ",
+                "    of which rejected by RHOBARGATE: "};
             static const char* const gate_why[kGateKinds] = {
-                " (c + w/eta past RCUT, rejected before training)\n",
-                " (rho_min < -tol*rho_max on the RHOGATE window, rejected "
-                "before training)\n",
-                " (rhobar(a) not strictly decreasing, rejected before "
-                "training)\n"};
+                " (c + w/eta past RCUT, before training)\n",
+                " (rho_min < -tol*rho_max on the RHOGATE window, before "
+                "training)\n",
+                " (rhobar(a) not strictly decreasing, before training)\n"};
             for (std::size_t g = 0; g < kGateKinds; ++g) {
                 const std::size_t n = n_gate_[g].load(std::memory_order_relaxed);
                 if (n > 0) f_ << gate_line[g] << n << gate_why[g];
@@ -2362,13 +2395,14 @@ void HPOLog::finish(const std::string& status_str)
         } else if (2 * nu >= total) {
             if (on_rank.empty())
                 f_ << "  [!] The majority of evaluations failed. The reported best\n"
-                      "    may predate the onset -- check when the failures started\n"
-                      "    before trusting it.\n";
+                      "    may predate the onset of the failures; the evaluation at\n"
+                      "    which they started shows whether it can be trusted.\n";
             else
                 f_ << "  [!] The majority of evaluations" << on_rank
                    << " failed.\n"
-                      "    The reported best may predate the onset -- check when\n"
-                      "    the failures started before trusting it.\n";
+                      "    The reported best may predate the onset of the failures;\n"
+                      "    the evaluation at which they started shows whether it can\n"
+                      "    be trusted.\n";
         }
     }
 
@@ -2377,6 +2411,11 @@ void HPOLog::finish(const std::string& status_str)
      * within a step of a bound stay byte-identical. */
     {
         const std::size_t oe = n_oob_point_.load(std::memory_order_relaxed);
+        const std::size_t er = n_early_reject_.load(std::memory_order_relaxed);
+        if (er > 0)
+            f_ << "  " << std::left << std::setw(KW) << "Early rejections"
+               << ": " << er << " (evaluations whose validation metric was "
+                  "above its\n    --skip-above or --skip-rel cap)\n";
         const std::size_t sn = n_snap_.load(std::memory_order_relaxed);
         const std::size_t hc = n_hybrid_centre_.load(std::memory_order_relaxed);
         if (sn > 0)
@@ -2389,7 +2428,7 @@ void HPOLog::finish(const std::string& status_str)
                << ": " << oe << " (proposed outside the OPTIM box by an "
                   "optimiser that\n    ignores the bounds, not evaluated: "
                   "scored as failures graded by their\n    distance to the "
-                  "box; see the first such WARNING)\n";
+                  "box; the first has a WARNING)\n";
         if (!one_sided_.empty()) {
             std::size_t total_os = 0;
             std::string per_dim;
@@ -2435,8 +2474,8 @@ void HPOLog::finish(const std::string& status_str)
             f_ << "  " << std::left << std::setw(KW) << "Repeated points reused"
                << ": " << rr << " (points the run had evaluated that a "
                   "search asked for, answered with the\n    loss -- and "
-                  "gradient -- of their evaluation, not evaluated again: HPO's "
-                  "MAXEVAL\n    does not count them, NLopt's own MAXEVAL counts "
+                  "gradient -- of their evaluation, not evaluated again: the "
+                  "MAXEVAL of\n    the block does not count them, NLopt's own MAXEVAL counts "
                   "them among its calls, and the\n    RESTART window counts "
                   "each as one evaluation without a new best)\n";
         if (ra > 0)
@@ -2465,11 +2504,11 @@ void HPOLog::finish(const std::string& status_str)
         if (rd + rw + rl + al > 0) {
             f_ << "  " << std::left << std::setw(KW) << "Transient I/O retries"
                << ": " << rd + rw << " (best-potential " << rd
-               << ", per-eval logs/archives " << rw << "); rows lost " << rl
+               << ", per-evaluation logs and archives " << rw << "); rows lost " << rl
                << "; archives lost " << al << "\n";
             if (rl + al > 0) {
                 f_ << "  [!] Some per-evaluation log rows or potential archives were\n"
-                      "    not written after retrying; see the WARNING entries.";
+                      "    not written after retrying; the WARNING entries name them.";
                 /* The best potential has its own, fatal path: only vouch for
                  * it when it was persisted -- a run ending on a persistence
                  * failure may have no best_pot.tadah, or a stale one. */
@@ -2523,9 +2562,9 @@ void HPOLog::finish(const std::string& status_str)
                << "exclusive): the\n"
                << "      train/predict phase dominates the eval, THREADS is "
                << "wider than the\n"
-               << "      script workload, or scripts are imbalanced. Per-script "
-               << "breakdown:\n"
-               << "      TADAH_HPO_BENCH=1 -> hpo_script_times.csv.\n";
+               << "      script workload, or scripts are imbalanced. "
+               << "TADAH_HPO_BENCH=1 writes\n"
+               << "      the time of each script to hpo_script_times.csv.\n";
     }
 
     /* -- RESULT -------------------------------------------------------- */
@@ -2632,7 +2671,7 @@ void HPOLog::finish(const std::string& status_str)
         f_ << " (write not synced) or ";
         if (have_best) f_ << "eval " << cur_best_eval_;
         else           f_ << "be absent";
-        f_ << "; check its HPO_SOURCE_EVAL header";
+        f_ << "; its HPO_SOURCE_EVAL header names the evaluation it holds";
     } else if (have_best) {
         f_ << "best_pot.tadah (eval " << cur_best_eval_ << ")";
     } else {
@@ -2663,7 +2702,7 @@ std::string nlopt_result_str(int code)
         case  5: return "MAXEVAL_REACHED -- maximum evaluations exhausted";
         case  6: return "MAXTIME_REACHED -- maximum time exhausted";
         case -1: return "FAILURE -- generic failure";
-        case -2: return "INVALID_ARGS -- invalid algorithm arguments (check bounds/dimensions)";
+        case -2: return "INVALID_ARGS -- invalid algorithm arguments (the bounds or the dimensions may be invalid)";
         case -3: return "OUT_OF_MEMORY -- insufficient memory for algorithm";
         case -4: return "ROUNDOFF_LIMITED -- progress blocked by floating-point roundoff";
         case -5: return "FORCED_STOP -- optimisation was interrupted";

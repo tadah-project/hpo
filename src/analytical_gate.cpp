@@ -27,10 +27,10 @@ std::string analytical_gradient_blocker(const core::Context& ctx,
 {
     if (!has_train_db)
         return "there is no training DBFILE (it differentiates the "
-               "least-squares fit of the weights)";
+               "least-squares fit of the coefficients)";
     if (ctx.contains("FIXINDEX"))
-        return "FIXINDEX pins model weights (it assumes every weight is "
-               "fitted)";
+        return "FIXINDEX fixes coefficients of the model (it assumes every "
+               "coefficient is fitted)";
     if (ctx.get<bool>("STRESS"))
         return "STRESS is true (stress rows are not differentiated)";
     if (ctx.get<bool>("NORM"))

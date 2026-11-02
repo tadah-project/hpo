@@ -198,7 +198,7 @@ template<typename Vec, typename Runner>
                         : " grid points (");
       if (nodes == kMax) oss << "more than " << kMax;
       else               oss << nodes;
-      oss << " = " << steps << "^" << dim << " grid nodes); evaluating the "
+      oss << " = " << steps << "^" << dim << " grid points); evaluating the "
           << "first " << budget << " in grid order";
       std::cout << "[HPO] " << oss.str() << "\n";
       HPOLog::instance().info(oss.str());
@@ -519,8 +519,8 @@ template<typename Vec, typename HostT>
     if (proceed && t_min > T0)
       throw std::runtime_error(
           "TADAH:ANNEAL: resolved T_MIN must be <= T_INIT/T0 (T_MIN=" +
-          std::to_string(t_min) + ", resolved T0=" +
-          std::to_string(T0) + ")");
+          core::format_roundtrip(t_min) + ", resolved T0=" +
+          core::format_roundtrip(T0) + ")");
 
     /* --- AUTO length resolution ----------------------------------------
      * CHAIN_LENGTH/NT default to AUTO: the remaining MAXEVAL budget
@@ -830,7 +830,7 @@ template<typename Vec, typename HostT>
           reason = "FTOL plateau (Corana eps-NEPS rule)";
           end = EndReason::FtolPlateau; break;
         case StopReason::NoDims:
-          reason = "no optimisable dimensions"; end = EndReason::NoDims; break;
+          reason = "no search dimension"; end = EndReason::NoDims; break;
         case StopReason::NoBudget:
           reason = "MAXEVAL exhausted before SA proposal";
           end = EndReason::MaxEval; break;
@@ -840,7 +840,7 @@ template<typename Vec, typename HostT>
       }
       std::ostringstream oss;
       oss << "ANNEAL stopped: " << reason
-          << " after " << budget.spent() << " host eval(s)"
+          << " after " << budget.spent() << " evaluation(s)"
           << " (" << rung_count << " rung(s) completed";
       if (reanneal_count > 0) oss << ", " << reanneal_count << " re-anneal(s)";
       oss << ")";

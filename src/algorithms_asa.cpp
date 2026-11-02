@@ -15,6 +15,7 @@
 
 #include <tadah/core/signal_handler.h>
 #include <tadah/hpo/algorithms_asa.h>
+#include <tadah/core/number_format.h>
 #include <tadah/hpo/log_index.h>
 #include <tadah/hpo/asa_options.h>
 #include <tadah/hpo/asa_testing.h>
@@ -384,8 +385,13 @@ struct AsaWorkspace {
                 if (!sp.log_scaled.empty() && sp.log_scaled[i] &&
                     (!(raw[i] > 0.0) || !std::isfinite(raw[i])))
                     throw std::runtime_error(
-                        "ASA:ASA: log-scaled starting coordinate must "
-                        "be finite and > 0");
+                        "ASA:ASA: the starting value " +
+                        core::format_roundtrip(raw[i]) + " of " +
+                        (i < sp.parameter_labels.size()
+                             ? sp.parameter_labels[i]
+                             : logidx::dim_label(i)) +
+                        " is not a finite number > 0, and the dimension is "
+                        "log-scaled");
             }
             /* REAL -> INTERNAL through the search space. */
             x = sp.in(raw);
@@ -393,14 +399,18 @@ struct AsaWorkspace {
         for (std::size_t i = 0; i < dim; ++i) {
             if (!(hi[i] - lo[i] >= EPS_DOUBLE))
                 throw std::runtime_error(
-                    "ASA:ASA: OPTIM interval of dimension " +
-                    std::to_string(i) +
-                    " is below ASA's EPS_DOUBLE resolution; ASA would "
-                    "silently freeze it -- widen the OPTIM box");
+                    "ASA:ASA: the OPTIM box of " +
+                    (i < sp.parameter_labels.size() ? sp.parameter_labels[i]
+                                                    : logidx::dim_label(i)) +
+                    " is narrower than the resolution of ASA (the double "
+                    "precision), which would keep it fixed; a wider box "
+                    "lets ASA move it");
             if (!std::isfinite(x[i]) || x[i] < lo[i] || x[i] > hi[i])
                 throw std::runtime_error(
-                    "ASA:ASA: starting coordinate " + std::to_string(i) +
-                    " lies outside its OPTIM bounds");
+                    "ASA:ASA: the starting value of " +
+                    (i < sp.parameter_labels.size() ? sp.parameter_labels[i]
+                                                    : logidx::dim_label(i)) +
+                    " lies outside its OPTIM box");
         }
 
         /* ASA's reanneal sensitivities are finite differences with an
@@ -572,10 +582,10 @@ std::string stop_reason_string(const AsaRunCtx& c, int exit_status)
         case 4: return "too many invalid states (host failures exceeded "
                        "Limit_Invalid_Generated_States)";
         case 5: return "IMMEDIATE_EXIT requested";
-        case 9: return "a host failure occurred while ASA was computing "
-                       "reanneal tangents (INVALID_COST_FUNCTION_DERIV); "
-                       "with an intermittently failing objective consider "
-                       "PARAM Reanneal_Parameters 0 or Delta_X 0";
+        case 9: return "an evaluation failed while ASA was computing "
+                       "reanneal tangents (INVALID_COST_FUNCTION_DERIV, "
+                       "which PARAM Reanneal_Parameters 0 or Delta_X 0 "
+                       "avoids when evaluations fail now and then)";
         default: return std::string("asa exit ") + asa_exit_name(exit_status);
     }
 }
@@ -652,10 +662,11 @@ std::string asa_probe_box_error(const OptimizerSpec& sp)
                "and x -+ 2 Delta |x| next to a bound (Curvature_0 " +
                std::to_string(ao.curvature_0) + ")";
     msg += " -- would be evaluated outside the OPTIM box of these "
-           "dimensions:" + bad + "\n  Lower the Delta";
+           "dimensions:" + bad + "\n  A Delta up to the value given for "
+           "each dimension keeps its probes inside the box";
     if (!(sp.space && sp.space->normalised()))
-        msg += std::string("; or use OPTIM_SCALE AUTO, where every box is "
-                           "the unit box (the tangents fit for Delta <= 1") +
+        msg += std::string("; under OPTIM_SCALE AUTO every box is the unit "
+                           "box (the tangents fit for Delta <= 1") +
                (curvature ? ", the curvature for Delta <= 0.5)" : ")");
     return msg + ".";
 }
@@ -743,20 +754,22 @@ void run_asa_erased(const OptimizerSpec& sp, std::size_t dim,
         std::cout << "[HPO] " << oss.str() << "\n";
         HPOLog::instance().info(oss.str());
         HPOLog::instance().info(
-            "ASA: upstream journal -> " + out_name +
-            " (asa() truncates it per run)");
+            "ASA: the ASA library writes its journal to " + out_name +
+            " (overwritten at the start of each search)");
         if (threads > 1 && ao.gener_block_max <= 1)
             HPOLog::instance().hint(
                 "ASA: THREADS>1 with Gener_Block(_Max)=1 evaluates one "
-                "generated state at a time -- set PARAM Gener_Block "
-                "(and Gener_Block_Max) to keep the workers busy, or "
-                "rely on the per-eval pc_lammps fan-out alone");
+                "generated state at a time; PARAM Gener_Block (and "
+                "Gener_Block_Max) above 1 keeps the workers busy, and "
+                "otherwise only the PC_LAMMPS scripts of each evaluation "
+                "use them");
         if (ao.gener_block > 1 || ao.gener_block_max > ao.gener_block)
             HPOLog::instance().info(
                 "ASA: Gener_Block>1 (or an adaptive Gener_Block_Max "
-                "above it) changes the sampled sequence vs serial ASA "
-                "(upstream-documented); results are invariant to "
-                "THREADS, and MAXTIME/STOPVAL act at block boundaries");
+                "above it) changes the sampled sequence compared with "
+                "serial ASA, as the ASA documentation states; the results "
+                "do not depend on THREADS, and MAXTIME and STOPVAL take "
+                "effect after each Gener_Block batch");
     }
     if (ao.gener_block > 1)
         HPOLog::instance().set_cadence(
@@ -837,7 +850,7 @@ void run_asa_erased(const OptimizerSpec& sp, std::size_t dim,
     {
         std::ostringstream oss;
         oss << "ASA stopped: " << reason << " after " << ctx.n_evals.load()
-            << " host eval(s) (asa exit: " << exit_text << ")";
+            << " evaluation(s) (asa exit: " << exit_text << ")";
         std::cout << "[HPO] " << oss.str() << "\n";
         HPOLog::instance().info(oss.str());
     }
@@ -852,8 +865,8 @@ void run_asa_erased(const OptimizerSpec& sp, std::size_t dim,
         (exit_status == 7 || exit_status == 8 || exit_status == -1))
         throw std::runtime_error(
             std::string("ASA:ASA aborted: ") + asa_exit_name(exit_status) +
-            " (this indicates a glue or configuration bug -- see " +
-            out_name + ")");
+            " (an error in the ASA settings or an internal error; " +
+            out_name + " gives the details)");
 }
 
 /* ------------------------------------------------------------------ */
