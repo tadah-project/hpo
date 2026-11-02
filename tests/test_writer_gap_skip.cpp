@@ -1,6 +1,7 @@
 #include "catch2/catch.hpp"
 
 #include <tadah/hpo/hpo_log.h>
+#include <tadah/hpo/host_messages.h>
 
 #include <atomic>
 #include <chrono>
@@ -194,9 +195,33 @@ TEST_CASE("Writer gap-skip: multiple consecutive missing iters",
     CHECK(sim.io_buf.empty());
 }
 
-TEST_CASE("Writer gap-skip: warning text format is grep-friendly",
-          "[writer][bug6][log]")
+/* Pins: the journal WARNING of the result writer when evaluations did not
+ * return within the gap-skip time, as HPO_Host's writer builds it
+ * (result_gap_warning, host_messages.h): for evaluation 3459 alone,
+ * "result files: evaluation 3459 did not return within 60 s; its rows are
+ * not written to the result files"; for 5 and 6, "result files:
+ * evaluations 5 to 6 did not return within 60 s; their rows are not
+ * written to the result files"; with stages still running, the line ends
+ * " (stages still running: [<stages>])". In the journal it is one WARNING
+ * line.
+ * Before the fix: the case wrote a text of its own with log.warning() and
+ * found it in the journal, so a change of the writer's text could not fail
+ * it; without result_gap_warning() this file does not compile. */
+TEST_CASE("Writer gap-skip: the WARNING names the evaluations that did not "
+          "return", "[writer][bug6][log]")
 {
+    using tadah::hpo::result_gap_warning;
+    CHECK(result_gap_warning(3459, 3460, 60, "") ==
+          "result files: evaluation 3459 did not return within 60 s; its "
+          "rows are not written to the result files");
+    CHECK(result_gap_warning(5, 7, 60, "") ==
+          "result files: evaluations 5 to 6 did not return within 60 s; "
+          "their rows are not written to the result files");
+    CHECK(result_gap_warning(5, 6, 60, "iter 5: train 61 s") ==
+          "result files: evaluation 5 did not return within 60 s; its rows "
+          "are not written to the result files (stages still running: "
+          "[iter 5: train 61 s])");
+
     auto& log = tadah::hpo::HPOLog::instance();
     log.reset_for_test();
     const auto path = std::filesystem::temp_directory_path() /
@@ -205,19 +230,16 @@ TEST_CASE("Writer gap-skip: warning text format is grep-friendly",
          ".log");
     log.open(path.string(), "test", "test_cwd", 0);
     REQUIRE(log.is_open());
-
-    log.warning(
-        "result files: evaluation " + std::to_string(3459) +
-        " did not return within 60 s; its rows are not written to the "
-        "result files");
+    log.warning(result_gap_warning(3459, 3460, 60, ""));
     log.finish("TEST_DONE");
 
     std::ifstream in(path);
     REQUIRE(in.is_open());
     std::ostringstream ss; ss << in.rdbuf();
     const std::string body = ss.str();
-    CHECK(body.find("result files: evaluation 3459") != std::string::npos);
-    CHECK(body.find("did not return within 60 s") != std::string::npos);
+    CHECK(body.find("WARNING   result files: evaluation 3459 did not return "
+                    "within 60 s; its rows are not written to the result "
+                    "files\n") != std::string::npos);
 
     std::error_code ec;
     std::filesystem::remove(path, ec);

@@ -7408,6 +7408,72 @@ TEST_CASE("No usable loss: a TADAH:RANDOM run whose every evaluation fails "
                                "20 evaluation(s)"));
 }
 
+/* Pins: a run whose every evaluation a --skip-above cap rejects says so on
+ * standard error and in its journal. The fixture's PC_ERMSE 0 1
+ * --skip-above 1e-30 rejects each of the 20 evaluations of TADAH:RANDOM:
+ *   - standard error has one WARNING, for the first rejection: "[tadah
+ *     hpo] WARNING: eval <n>: PC_ERMSE <v> meV/atom is above its
+ *     --skip-above 1e-30: the evaluation fails (1 evaluation rejected by
+ *     --skip-above or --skip-rel so far); later rejections are counted in
+ *     hpo_run.log", and no other "later rejections" line;
+ *   - the journal has that WARNING without the last clause for the
+ *     rejections 1 to 5, 8 and 16 (seven lines), and DIAGNOSTICS counts
+ *     all 20: "Early rejections        : 20 (";
+ *   - the run ends with "[tadah hpo] ERROR: no evaluation produced a
+ *     usable loss; no best_pot.tadah was written (20 of 20 evaluations were
+ *     rejected by --skip-above or --skip-rel)" on standard error and the
+ *     same ERROR line in the journal.
+ * Before the fix: standard error had no WARNING and the ERROR line ended
+ * "... was written", without the count; the journal had the rate-limited
+ * line "eval N: skipping downstream (obs+LAMMPS) -- ermse=<v> >
+ * skip-above=<cap>, total skips=N" and no "Early rejections" line. */
+TEST_CASE("No usable loss: a run whose every evaluation a --skip-above cap "
+          "rejects says how many it rejected",
+          "[HPO][termination][no_usable_loss]")
+{
+    TaRun run(kRandomAllFail, kAllFailRoot);
+    std::ostringstream err;
+    int status = -1;
+    {
+        struct Redirect {
+            std::streambuf* old;
+            explicit Redirect(std::streambuf* to) : old(std::cerr.rdbuf(to)) {}
+            ~Redirect() { std::cerr.rdbuf(old); }
+        } redirect(err.rdbuf());
+        REQUIRE_NOTHROW(status = run_within(run, std::chrono::seconds(120),
+                                            "a TADAH:RANDOM run whose every "
+                                            "evaluation a cap rejects"));
+    }
+    const std::string stderr_text = err.str();
+    INFO(stderr_text);
+    CHECK(status == 1);
+    check_no_usable_loss(20, kDefaultFailScoreRow, kNoUsableLossStatus);
+
+    const std::string rejected =
+        " (20 of 20 evaluations were rejected by --skip-above or "
+        "--skip-rel)";
+    CHECK_THAT(stderr_text,
+               Catch::Contains("[tadah hpo] ERROR: " + kNoUsableLossError +
+                               rejected + "\n"));
+    CHECK(std::regex_search(
+        stderr_text,
+        std::regex(R"(\[tadah hpo\] WARNING: eval \d+: PC_ERMSE \S+ meV/atom )"
+                   R"(is above its --skip-above 1e-30: the evaluation fails )"
+                   R"(\(1 evaluation rejected by --skip-above or --skip-rel )"
+                   R"(so far\); later rejections are counted in hpo_run\.log\n)")));
+    CHECK(count_of(stderr_text, "later rejections are counted") == 1u);
+    CHECK(count_of(stderr_text, "[tadah hpo] WARNING: eval ") == 1u);
+
+    const std::string journal = read_file("hpo_run.log");
+    CHECK_THAT(journal, Catch::Contains("ERROR     " + kNoUsableLossError +
+                                        rejected));
+    CHECK(count_of(journal, " is above its --skip-above 1e-30: the "
+                            "evaluation fails (") == 7u);
+    CHECK(count_of(journal, "later rejections are counted") == 0u);
+    CHECK_THAT(journal, Catch::Contains("Early rejections        : 20 ("));
+    CHECK(count_of(journal, "skipping downstream") == 0u);
+}
+
 TEST_CASE("No usable loss: evaluations that throw count as unusable losses",
           "[HPO][termination][no_usable_loss]")
 {
@@ -7441,6 +7507,14 @@ TEST_CASE("No usable loss: evaluations that throw count as unusable losses",
     check_no_usable_loss(6, "1.000000000000000e+09", kNoUsableLossStatus);
     const std::string journal = read_file("hpo_run.log");
     CHECK_THAT(journal, Catch::Contains("the evaluation stopped on an error"));
+    /* The journal line of each evaluation that threw, as HPO_Host writes
+     * it: "eval <n>: the evaluation stopped on an error and scores
+     * FAILSCORE: <the error's message>", one for each of the six. */
+    CHECK(count_of(journal, ": the evaluation stopped on an error and "
+                            "scores FAILSCORE: ") == 6u);
+    CHECK(std::regex_search(
+        journal, std::regex(R"(WARNING   eval 1: the evaluation stopped on )"
+                            R"(an error and scores FAILSCORE: \S)")));
     CHECK_THAT(journal,
                Catch::Contains("Evaluations that threw  : 6  (100.0%)"));
     CHECK_THAT(journal, Catch::Contains("[!] 6 evaluation(s) raised an "

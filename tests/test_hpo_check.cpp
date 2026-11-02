@@ -790,6 +790,47 @@ TEST_CASE("hpo --check: a run with CHECK false writes no CHECK line into "
     }
 }
 
+/* Pins: a run names the DUMP and BDUMP directories on standard output
+ * under the tag [tadah hpo], with the key of the line: for "DUMP 1 pots"
+ * and "BDUMP 1 best_pots", where best_pots exists before the run, standard
+ * output has "[tadah hpo] DUMP directory 'pots' created" and "[tadah hpo]
+ * BDUMP directory 'best_pots' already exists", each once, and no line
+ * starts "Directory ".
+ * Before the fix: "Directory created: pots" and "Directory already exists:
+ * best_pots", without the tag or the key. */
+TEST_CASE("hpo: a run names its DUMP and BDUMP directories under the tag "
+          "of tadah hpo",
+          "[HPO][hpo_check]")
+{
+    fresh_process_state();
+    ScratchDir sd("archive_lines");
+    write_inputs(kOptimizer + kRootLines);
+    fs::create_directory("best_pots");
+    tadah::core::Context ctx =
+        make_ta_context("train.db", "config.hpo", "config.val");
+    int status = -1;
+    std::string out;
+    {
+        CaptureCout capture;
+        status = tadah::hpo::hpo_run(ctx);
+        out = capture.text.str();
+    }
+    INFO(out);
+    REQUIRE(status == 0);
+    REQUIRE(fs::is_directory("pots"));
+    const auto lines_equal = [&](const std::string& line) {
+        std::size_t n = 0;
+        std::istringstream in(out);
+        for (std::string l; std::getline(in, l);)
+            if (l == line) ++n;
+        return n;
+    };
+    CHECK(lines_equal("[tadah hpo] DUMP directory 'pots' created") == 1u);
+    CHECK(lines_equal("[tadah hpo] BDUMP directory 'best_pots' already "
+                      "exists") == 1u);
+    CHECK_FALSE(contains("\n" + out, "\nDirectory "));
+}
+
 /* Pins: a check that stops at a startup error after the run's startup has
  * warned writes those WARNING and HINT lines to standard error before the
  * error propagates, as a run has them in its journal: for a setup without

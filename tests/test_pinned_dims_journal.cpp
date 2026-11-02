@@ -19,6 +19,7 @@
 #include <tadah/hpo/search_space.h>
 
 #include <chrono>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <memory>
@@ -209,6 +210,65 @@ TEST_CASE("HPOLog pinned-dim audit -- the table gives the OPTIM bound in the "
     CHECK(s.find("param[2] (ln)             HI    100          0          "
                  "5.8e-02") != std::string::npos);
     CHECK(s.find("0.000e+00") == std::string::npos);
+
+    log.finish("TEST");
+    log.reset_for_test();
+    std::filesystem::remove(path);
+}
+
+/* Pins: outside the unit box the gap and tol of a row are divided by the
+ * width of the box in the optimiser's coordinates. Without OPTIM_SCALE
+ * AUTO a dimension whose OPTIM box is [4, 6] runs in [4, 6] (width 2), and
+ * one tagged LOG with the box [1, 100] runs in [0, ln 100] (width ln 100,
+ * not 99): a mark at the LO bound of the first with gap 0.2 and tol 0.4
+ * reads "param[1]  LO  4  1.0e-01  2.0e-01", and a mark at the HI bound of
+ * the second with tol ln(100) / 10 reads "param[2] (ln)  HI  100  0
+ * 1.0e-01".
+ * Before the fix: the raw gap and tol in the optimiser's coordinates,
+ * "2.0e-01  4.0e-01" and "4.6e-01", and the bounds of those coordinates
+ * ("4.000e+00", "4.605e+00"). */
+TEST_CASE("HPOLog pinned-dim audit -- the gap and tol are fractions of the "
+          "width of a box that is not the unit box", "[pinned_dims][hpolog]")
+{
+    auto& log = HPOLog::instance();
+    log.reset_for_test();
+    const auto path = scratch_log_path();
+    log.open(path.string(), "test", "test_cwd", 0);
+    REQUIRE(log.is_open());
+
+    DimSpec rcut;
+    rcut.key = "RCUTMB";
+    rcut.label = "RCUTMB";
+    rcut.lo = 4.0;
+    rcut.hi = 6.0;
+    DimSpec sgrid;
+    sgrid.key = "SGRIDMB";
+    sgrid.user_index = 1;
+    sgrid.label = "SGRIDMB[1]";
+    sgrid.lo = 1.0;
+    sgrid.hi = 100.0;
+    sgrid.tf.kind = ScaleKind::Log;
+    sgrid.tagged = true;
+    ScalePolicy pol;
+    pol.normalise = false;
+    OptimizerSpec sp;
+    sp.bind_space(std::make_shared<const SearchSpace>(
+        SearchSpace::build({rcut, sgrid}, pol)));
+    REQUIRE(sp.low.size() == 2u);
+    REQUIRE(sp.low[0] == 4.0);
+    REQUIRE(sp.high[0] == 6.0);
+    REQUIRE(sp.low[1] == 0.0);
+    REQUIRE(std::abs(sp.high[1] - std::log(100.0)) < 1e-12);
+    log.arm_pin_audit(sp, 1e-3, 1, "T-step");
+    log.record_pin_state(0, 3, {{0, false, 0.2, 0.4},
+                                {1, true, 0.0, std::log(100.0) / 10.0}});
+    log.record_eval(100, 1.0, tadah::hpo::EvalLoss::Usable);
+    const std::string s = slurp(path);
+    INFO(s);
+    CHECK(s.find("param[1]                  LO    4            1.0e-01    "
+                 "2.0e-01") != std::string::npos);
+    CHECK(s.find("param[2] (ln)             HI    100          0          "
+                 "1.0e-01") != std::string::npos);
 
     log.finish("TEST");
     log.reset_for_test();
