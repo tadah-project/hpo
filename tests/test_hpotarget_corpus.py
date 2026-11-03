@@ -181,6 +181,11 @@ class SyntheticTrees(unittest.TestCase):
         self.write("HPO/tests/data/ta/target_files/fixweight_no_dbfile.hpo",
                    TARGET)
         self.write("HPO/tests/data/other/c.hpo", TARGET)
+        # The frozen corpus holds copies of the inputs: not an input.
+        self.write("HPO/tests/data/hpotarget_corpus/targets/registry/x.hpo",
+                   TARGET)
+        self.write("HPO/tests/data/hpotarget_corpus/trees/hpo-data/ta/"
+                   "target_files/a.hpo", TARGET)
         c = corpus.Corpus()
         corpus.read_hpo_data(c, hpo)
         by_id = {i.id: i.case for i in c.inputs}
@@ -197,6 +202,7 @@ class SyntheticTrees(unittest.TestCase):
         self.assertEqual(len(c.problems), 1)
         self.assertIn("other/c.hpo has no training configuration",
                       c.problems[0])
+        self.assertFalse(any("hpotarget_corpus" in i.id for i in c.inputs))
 
     def test_docs(self):
         tm = self.root / "Tadah.MLIP"
@@ -300,7 +306,7 @@ def corpus_doc_commands() -> pathlib.Path:
 # with a line REFUSE and describes the others.
 FAKE_RUNNER = """\
 #!/usr/bin/env python3
-import json, pathlib, sys, tomllib
+import json, os, pathlib, sys, tomllib
 cases = tomllib.loads(pathlib.Path(sys.argv[1]).read_text())["case"]
 out = []
 for c in cases:
@@ -319,11 +325,14 @@ for c in cases:
             f = here / name
             read.append(fixtures[name] if name in fixtures else
                         f.read_text() if f.exists() else "(missing)")
+    env = {k: os.environ[k] for k in ("TADAH_OPTIM_SCALE",)
+           if k in os.environ}
     if "REFUSE" in text:
         r["parse_error"] = "line 1 of target.hpo: refused"
     else:
         r["dump"] = "read = " + json.dumps([text, c.get("config", ""),
-                                            c.get("env", {}), read]) + "\\n"
+                                            c.get("env", {}), read, env]) \\
+            + "\\n"
     out.append(r)
 pathlib.Path(sys.argv[2]).write_text(json.dumps(out))
 """
@@ -441,6 +450,26 @@ class Write(unittest.TestCase):
                          [i.id for i in self.corpus.inputs])
         self.assertEqual(corpus.write(self.corpus, REG, self.runner, out), [])
         self.assertEqual(self.files(out), files)
+
+    # Pins: an environment override of the registry (TADAH_OPTIM_SCALE)
+    # set where write() runs does not reach the runner: the corpus written
+    # is the one written without it.
+    # Before the fix: fails, the runner reads TADAH_OPTIM_SCALE=NONE and
+    # the descriptions differ.
+    def test_write_without_the_overrides_around_it(self):
+        out, again = self.root / "corpus", self.root / "again"
+        self.assertEqual(corpus.write(self.corpus, REG, self.runner, out), [])
+        old = os.environ.get("TADAH_OPTIM_SCALE")
+        os.environ["TADAH_OPTIM_SCALE"] = "NONE"
+        try:
+            self.assertEqual(
+                corpus.write(self.corpus, REG, self.runner, again), [])
+        finally:
+            if old is None:
+                del os.environ["TADAH_OPTIM_SCALE"]
+            else:
+                os.environ["TADAH_OPTIM_SCALE"] = old
+        self.assertEqual(self.files(again), self.files(out))
 
     # Pins: an input whose frozen copy reads differently from its source
     # (here a dataset the parse would read, which the tree leaves out)

@@ -14,7 +14,10 @@
 // Pins: each input of corpus.toml, read by the program's parser
 // (HPOTargets) in a fresh directory as the corpus describes it, gives
 // exactly what the corpus holds for it, byte for byte, and the corpus holds
-// both kinds of result.
+// both kinds of result; an environment override of the registry
+// (hpotarget_registry_gen.h, kEnvs) set where the test runs does not reach
+// an input that does not set it (each input is read with the environment
+// the corpus gives it).
 //
 // Each [[input]] of corpus.toml:
 //   id, origin     the input and where it was taken from
@@ -46,17 +49,21 @@
 #include <tadah/core/periodic_table.h>
 #include <tadah/hpo/hpo_targets.h>
 #include <tadah/hpo/hpo_targets_testing.h>
+#include <tadah/hpo/hpotarget_registry_gen.h>
 
 #include <toml.hpp>
 
 #include <cstddef>
+#include <cstdlib>
 #include <exception>
 #include <filesystem>
 #include <fstream>
 #include <memory>
 #include <sstream>
 #include <stdexcept>
+#include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 #ifndef TADAH_HPOTARGET_CORPUS_DIR
@@ -152,11 +159,38 @@ std::vector<Input> read_corpus()
     return out;
 }
 
+/* The environment overrides of the registry that the input `c` does not
+ * set, unset while it lives (and restored after). */
+class OverridesUnset {
+public:
+    explicit OverridesUnset(const Case& c)
+    {
+        for (const auto& e : tadah::hpo::hpotarget_registry::kEnvs) {
+            const std::string name(e.name);
+            if (c.env.count(name)) continue;
+            const char* old = std::getenv(name.c_str());
+            if (!old) continue;
+            saved_.emplace_back(name, old);
+            ::unsetenv(name.c_str());
+        }
+    }
+    ~OverridesUnset()
+    {
+        for (const auto& [k, v] : saved_) ::setenv(k.c_str(), v.c_str(), 1);
+    }
+    OverridesUnset(const OverridesUnset&) = delete;
+    OverridesUnset& operator=(const OverridesUnset&) = delete;
+
+private:
+    std::vector<std::pair<std::string, std::string>> saved_;
+};
+
 /* What the parser of `tadah hpo` gives for the input: "<x>.dump" and the
  * description of the parse, or "<x>.error" and the refusal. */
 std::pair<std::string, std::string> read_input(const Case& c)
 {
     tadah::core::PeriodicTable::initialize();
+    const OverridesUnset unset(c);
     const hpotarget_cases::CaseDir dir(c);
     tadah::core::Context ctx = hpotarget_cases::case_config(c);
     std::unique_ptr<tadah::hpo::HPOTargets> t;
@@ -191,10 +225,30 @@ std::string first_difference(const std::string& want, const std::string& got)
     }
 }
 
-}  // namespace
+/* The variable `name` set to `value` while it lives (and restored). */
+class EnvSet {
+public:
+    EnvSet(std::string name, const std::string& value) : name_(std::move(name))
+    {
+        if (const char* old = std::getenv(name_.c_str())) old_ = old;
+        ::setenv(name_.c_str(), value.c_str(), 1);
+    }
+    ~EnvSet()
+    {
+        if (old_) ::setenv(name_.c_str(), old_->c_str(), 1);
+        else      ::unsetenv(name_.c_str());
+    }
+    EnvSet(const EnvSet&) = delete;
+    EnvSet& operator=(const EnvSet&) = delete;
 
-TEST_CASE("hpotarget corpus: every input of the frozen corpus reads as the "
-          "corpus holds", "[hpotarget_corpus]")
+private:
+    std::string name_;
+    std::optional<std::string> old_;
+};
+
+/* Every input of the corpus read and compared with what the corpus holds:
+ * the inputs whose result differs, and the number of each result. */
+void check_corpus()
 {
     if (!fs::exists(corpus_dir() / "corpus.toml"))
         FAIL("the frozen corpus " << corpus_dir().string()
@@ -228,8 +282,32 @@ TEST_CASE("hpotarget corpus: every input of the frozen corpus reads as the "
     }
     INFO(inputs.size() << " inputs, " << dumps << " read, " << errors
                        << " refused");
-    for (const std::string& w : wrong) UNSCOPED_INFO(w);
+    const std::size_t shown = 25;
+    for (std::size_t i = 0; i < wrong.size() && i < shown; ++i)
+        UNSCOPED_INFO(wrong[i]);
+    if (wrong.size() > shown)
+        UNSCOPED_INFO("... and " << wrong.size() - shown << " more inputs");
     CHECK(wrong.empty());
     CHECK(dumps > 0);
     CHECK(errors > 0);
+}
+
+}  // namespace
+
+TEST_CASE("hpotarget corpus: every input of the frozen corpus reads as the "
+          "corpus holds", "[hpotarget_corpus]")
+{
+    check_corpus();
+}
+
+/* Pins: TADAH_OPTIM_SCALE=NONE (an environment override the constructor of
+ * the targets reads) set where the test runs changes no result: the inputs
+ * that do not set it read without it.
+ * Before the fix: fails, every input without the override reads with
+ * OPTIM_SCALE NONE (scale_policy.normalise = false). */
+TEST_CASE("hpotarget corpus: an environment override set outside the corpus "
+          "does not reach its inputs", "[hpotarget_corpus]")
+{
+    const EnvSet scale("TADAH_OPTIM_SCALE", "NONE");
+    check_corpus();
 }

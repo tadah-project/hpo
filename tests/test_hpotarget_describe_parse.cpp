@@ -16,7 +16,10 @@
 //  - strings are quoted with escapes; the training configuration the
 //    targets read is in the text;
 //  - a PC_OBSERVABLE kind it has no description for is refused
-//    (std::logic_error naming the kind), not left out.
+//    (std::logic_error naming the kind), not left out;
+//  - the LAMMPS command line of a PC_LAMMPS line is given without its
+//    first argument, the LAMMPS library the build links, so one file gives
+//    one text in every build.
 // Before the fix: the header hpo_targets_testing.h does not exist and the
 // one case of this file fails.
 
@@ -455,6 +458,32 @@ TEST_CASE("describe_parse: two constructions of the targets of one file give "
     const std::string n = describe(noise);
     CHECK(has_line(n, "spec.noise.autodetect = true"));
     CHECK(has_line(n, "spec.param.size = 0"));
+}
+
+/* Pins: the LAMMPS command line of a PC_LAMMPS line (LammpsSim::invar,
+ * whose first argument is the LAMMPS library of the build,
+ * TADAH_LAMMPS_LIB) is in the text from its second argument on
+ * (`LS[i].invar[1:]`), and the library is not.
+ * Before the fix: fails, the text holds `LS[0].invar` with the library. */
+TEST_CASE("describe_parse: the LAMMPS command line of a PC_LAMMPS line "
+          "leaves out the library of the build", "[hpotarget_describe]")
+{
+    tadah::core::PeriodicTable::initialize();
+    Scratch s;
+    std::ofstream("target.hpo")
+        << root("PC_LAMMPS --script lines_pc.in --varloss E -5.0 1.0 "
+                "--invar b 1\n");
+    Context ctx = config_of(kDefaultConfig);
+    HPOTargets trg(ctx, "target.hpo");
+    REQUIRE(trg.LS.size() == 1);
+    REQUIRE(trg.LS[0].invar.size() > 1);
+    const std::string lib = trg.LS[0].invar[0];
+    const std::string d = describe_parse(trg);
+    CHECK(d.find(lib) == std::string::npos);
+    std::string args;
+    for (std::size_t i = 1; i < trg.LS[0].invar.size(); ++i)
+        args += (args.empty() ? "\"" : ", \"") + trg.LS[0].invar[i] + "\"";
+    CHECK(has_line(d, "LS[0].invar[1:] = [" + args + "]"));
 }
 
 TEST_CASE("describe_parse: a PC_OBSERVABLE kind without a description is "
