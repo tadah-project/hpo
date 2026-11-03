@@ -3835,9 +3835,9 @@ above 0, and take GROUP_FLOOR 1e-3 when the line sets neither FLOOR nor \
 GROUP_FLOOR; so does the relative part b of FSIGMA and SSIGMA. A \
 negative seed of a value that every fit takes >= 0 (a non-negative \
 amplitude, the relative part b of FSIGMA or SSIGMA, LAMBDA) is refused. The \
-distance cutoffs, RCUT2B and RCUTMB, take no AUTO box; RCUTENV, the width \
-of the envelope of DM_mBlipEnv in units of the density, takes one (FRAC \
-0.5 without RATIO or FRAC). hpo_optim_resolved.hpo records the boxes as explicit lines. The \
+distance cutoffs, RCUT2B and RCUTMB, take no AUTO box; RCUTENV, the density \
+at which the envelope of DM_mBlipEnv reaches 1, takes one (FRAC 0.5 without \
+RATIO or FRAC). hpo_optim_resolved.hpo records the boxes as explicit lines. The \
 option names are read in any case."""
 
 [[form.args]]
@@ -3897,7 +3897,7 @@ wrap = "root"
 text = "OPTIM CGRID2B (2) auto frac 0.2 log"
 
 [[form.examples]]
-doc = "The envelope width of DM_mBlipEnv, a density and no distance cutoff: RCUTENV 1.5 gives the box [0.75, 2.25]."
+doc = "The density at which the envelope of DM_mBlipEnv reaches 1, and no distance cutoff: RCUTENV 1.5 gives the box [0.75, 2.25]."
 wrap = "root"
 context = "lines_blipenv"
 text = "OPTIM RCUTENV (1) AUTO"
@@ -6277,7 +6277,7 @@ ENDOPTIMIZER
 """
 
 [context.lines_blipenv]
-doc = "The default training configuration with a DM_mBlipEnv many-body term whose envelope width RCUTENV is 1.5."
+doc = "The default training configuration with a DM_mBlipEnv many-body term whose envelope reaches 1 at the density RCUTENV 1.5."
 config = """
 ATOM H
 WATOM 1.0

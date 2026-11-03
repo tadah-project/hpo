@@ -127,9 +127,9 @@ number is 0 or not below the smallest normal double in magnitude; \
 hexadecimal, inf and nan are refused. A key that takes a boolean (NOISE \
 AUTO) reads true, 1, yes, on, false, 0, no or off, in any case; a key with \
 words of its own, such as FAILSCORE_GRADING ON or OFF, takes exactly those \
-words. A PARAM key that takes a whole number reads the same integer: \
-PARAM GRID_POINTS 10 is read, and 1e1, +10 and 10.0 are refused when tadah \
-hpo starts."""
+words. A PARAM key that takes a whole number reads its value as such an \
+integer: PARAM GRID_POINTS 10 is read, and 1e1, +10 and 10.0 are refused \
+when tadah hpo starts."""
 integer_msg = "{what} must be an integer >= {min}, got '{tok}'"
 integer_range_msg = "{what} must be an integer from {min} to {max}, got '{tok}'"
 note_msg = " ({note})"
