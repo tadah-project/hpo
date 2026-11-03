@@ -495,9 +495,18 @@ set_tests_properties(hpo_hpotarget_generator_tool PROPERTIES
 #    trees and on the real ones (tests/test_hpotarget_corpus.py; the
 #    Tadah.MLIP tree when this build has the `tadah` target);
 #  - hpo_hpotarget_corpus: every input of the corpus is read twice with the
-#    parser of --parser old and gives one text or one refusal both times.
-# Before the fix: the four fail; the header, the option, the mode and the
-# script do not exist.
+#    parser of --parser old and gives one text or one refusal both times;
+#  - the Catch2 case "hpotarget corpus: ..." (tag [hpotarget_corpus],
+#    tests/test_hpotarget_corpus.cpp): the frozen corpus,
+#    tests/data/hpotarget_corpus (written by hpotarget_corpus.py write:
+#    every input with the files it reads and what the parser gave for it),
+#    each input read by the parser of `tadah hpo` gives what the corpus
+#    holds; TADAH_HPOTARGET_CORPUS_DIR names the directory.
+# Before the fix: the four first fail; the header, the option, the mode and
+# the script do not exist. Before the corpus is written, the case of the
+# frozen corpus fails (no corpus.toml).
+target_compile_definitions(test_hpo PRIVATE
+    "TADAH_HPOTARGET_CORPUS_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/data/hpotarget_corpus\"")
 hpo_depend_on_has_include(
     ${CMAKE_CURRENT_SOURCE_DIR}/test_hpotarget_describe_parse.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/tadah/hpo/hpo_targets_testing.h)
