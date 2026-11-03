@@ -1072,11 +1072,12 @@ TEST_CASE("CERES:STEEPEST_DESCENT refuses PARAM max_lbfgs_rank and nlcg_type, "
  * Pins: the validator refuses FTOL_REL -1 and XTOL_REL -0.001 ("requires
  * FTOL_REL >= 0", "requires XTOL_REL >= 0"), PARAM max_iter -1, 1.5 and
  * 3e9 ("requires PARAM max_iter to be an integer from 0 to 2147483647"),
- * PARAM max_ls_iter 0 and 2.5 ("... from 1 to 2147483647"), naming the
- * value; the edges are accepted: FTOL_REL 0, XTOL_REL 0, max_iter 0 and
+ * PARAM max_ls_iter 0 and 2.5 ("... from 1 to 2147483647"), quoting the
+ * value (got '3e+09'; a value no line wrote, as here, as the number it
+ * is); the edges are accepted: FTOL_REL 0, XTOL_REL 0, max_iter 0 and
  * 2147483647, max_ls_iter 1.
- * Before the fix: passes as well (a pin; it also checked CERES:LBFGS's
- * max_lbfgs_rank and CERES:NLCG's nlcg_type, PARAMs refused since). */
+ * Before the fix: the integer refusals gave the value without quotes
+ * (got 3e+09). */
 TEST_CASE("CERES validators refuse the tolerances and integer PARAMs Ceres "
           "cannot take", "[HPO][optim][ceres][validate]")
 {
@@ -1109,8 +1110,8 @@ TEST_CASE("CERES validators refuse the tolerances and integer PARAMs Ceres "
                               Catch::StartsWith(
                                   who + "PARAM max_iter to be an integer "
                                         "from 0 to 2147483647") &&
-                              Catch::EndsWith(std::string(", got ") +
-                                              bad.second));
+                              Catch::EndsWith(std::string(", got '") +
+                                              bad.second + "'"));
         }
         for (const auto& bad : {std::make_pair(0.0, "0"),
                                 std::make_pair(2.5, "2.5")}) {
@@ -1120,8 +1121,8 @@ TEST_CASE("CERES validators refuse the tolerances and integer PARAMs Ceres "
                               Catch::StartsWith(
                                   who + "PARAM max_ls_iter to be an integer "
                                         "from 1 to 2147483647") &&
-                              Catch::EndsWith(std::string(", got ") +
-                                              bad.second));
+                              Catch::EndsWith(std::string(", got '") +
+                                              bad.second + "'"));
         }
         auto edges = make_minimal_ceres_spec(algo);
         edges.stop.ftol_rel = 0.0;

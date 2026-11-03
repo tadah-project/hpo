@@ -3398,7 +3398,7 @@ synopsis = [
   "OPTIM <KEY> (<indices>) AUTO [RATIO <f> | FRAC <p>] [FLOOR <a>] [GROUP_FLOOR <r>] [LIN | LOG | ASINH <c>]",
 ]
 positive_only = ["SGRID2B", "SGRIDMB", "SEMBFUNC"]
-auto_excluded_prefix = "RCUT"
+auto_excluded = ["RCUT2B", "RCUTMB"]
 untested = [
   { msg = "OPTIM {key} ({index}): the AUTO box [{low}, {high}] has the low bound {low}, which is negative, but {what} requires {value}, so the low bound of its box is >= 0", why = "Every key whose low-bound rule takes 0 is a non-negative amplitude, whose AUTO FRAC box is clamped at 0 and whose RATIO box lies above 0." },
 ]
@@ -3834,9 +3834,10 @@ DM_Embed density with non-negative amplitudes) keep a FRAC box at or \
 above 0, and take GROUP_FLOOR 1e-3 when the line sets neither FLOOR nor \
 GROUP_FLOOR; so does the relative part b of FSIGMA and SSIGMA. A \
 negative seed of a value that every fit takes >= 0 (a non-negative \
-amplitude, the relative part b of FSIGMA or SSIGMA, LAMBDA) is refused. A \
-cutoff key (a key that starts with RCUT) takes no AUTO \
-box. hpo_optim_resolved.hpo records the boxes as explicit lines. The \
+amplitude, the relative part b of FSIGMA or SSIGMA, LAMBDA) is refused. The \
+distance cutoffs, RCUT2B and RCUTMB, take no AUTO box; RCUTENV, the density \
+at which the envelope of DM_mBlipEnv reaches 1, takes one (FRAC 0.5 without \
+RATIO or FRAC). hpo_optim_resolved.hpo records the boxes as explicit lines. The \
 option names are read in any case."""
 
 [[form.args]]
@@ -3860,7 +3861,7 @@ A word followed by a number is not an AUTO option."""
 
 [[form.checks]]
 msg = "OPTIM {key}: a cutoff key takes explicit bounds, OPTIM {key} (indices) <low> <high>, and no AUTO box: the neighbour list is sized from the explicit high bound"
-doc = "The key starts with RCUT."
+doc = "The key is a distance cutoff, RCUT2B or RCUTMB."
 
 [[form.checks]]
 msg = "OPTIM {key} ({index}): the seed {value} is negative, but {what} requires every AMPGRIDMB amplitude >= 0"
@@ -3896,6 +3897,12 @@ wrap = "root"
 text = "OPTIM CGRID2B (2) auto frac 0.2 log"
 
 [[form.examples]]
+doc = "The density at which the envelope of DM_mBlipEnv reaches 1, and no distance cutoff: RCUTENV 1.5 gives the box [0.75, 2.25]."
+wrap = "root"
+context = "lines_blipenv"
+text = "OPTIM RCUTENV (1) AUTO"
+
+[[form.examples]]
 doc = "A value of 0 of a key whose values stay positive, in a FRAC box with a FLOOR (read only: the D2_BP model refuses a width of 0)."
 wrap = "root"
 check = "parse"
@@ -3921,6 +3928,13 @@ error = "OPTIM CGRID2B: 'BOGUS' is not an AUTO option (RATIO, FRAC, FLOOR or GRO
 wrap = "root"
 text = "OPTIM RCUT2B (1) AUTO"
 error = "OPTIM RCUT2B: a cutoff key takes explicit bounds, OPTIM RCUT2B (indices) <low> <high>, and no AUTO box: the neighbour list is sized from the explicit high bound"
+
+[[form.invalid]]
+wrap = "root"
+context = "lines_blipenv"
+doc = "The many-body cutoff, with an option of AUTO."
+text = "OPTIM RCUTMB (1) AUTO FRAC 0.1"
+error = "OPTIM RCUTMB: a cutoff key takes explicit bounds, OPTIM RCUTMB (indices) <low> <high>, and no AUTO box: the neighbour list is sized from the explicit high bound"
 
 [[form.invalid]]
 wrap = "root"
@@ -6260,6 +6274,33 @@ ALGO LN_SBPLX
 MAXEVAL 10
 ENDSTRATEGY
 ENDOPTIMIZER
+"""
+
+[context.lines_blipenv]
+doc = "The default training configuration with a DM_mBlipEnv many-body term whose envelope reaches 1 at the density RCUTENV 1.5."
+config = """
+ATOM H
+WATOM 1.0
+DBFILE dummy.db
+INIT2B true
+INITMB true
+TYPE2B D2_BP 2 2 H H
+CGRID2B 1.0 2.0
+SGRID2B 0.5 1.0
+RCTYPE2B Cut_Cos
+RCUT2B 5.0
+TYPEMB DM_mBlipEnv 0 1 1 2 2 H H
+CGRIDMB 0.0
+SGRIDMB 0.2
+CEMBFUNC 1.0 2.0
+SEMBFUNC 1.0 1.0
+RCUTENV 1.5
+RCTYPEMB Cut_Cos
+RCUTMB 5.0
+VERBOSE 0
+MODEL M_BLR BF_Linear
+OALGO 4
+LAMBDA 1e-3
 """
 
 [context.lines_two_datasets]

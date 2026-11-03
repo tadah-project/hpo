@@ -546,7 +546,7 @@ TEST_CASE("ASA options: rejections", "[HPO][asa][options]")
         sp.param = {{"User_Tangents", 1.5}};
         REQUIRE_THROWS_WITH(parse_asa_options(sp, 1),
                             "ASA:ASA: PARAM User_Tangents must be an integer "
-                            "(got 1.5)");
+                            "(got '1.5')");
     }
     SECTION("Number_Cost_Samples 0 / -1 invalid") {
         sp.param = {{"Number_Cost_Samples", 0.0}};
@@ -802,6 +802,70 @@ TEST_CASE("ASA hard failures map to invalid states, run survives",
     const AsaHostFn fn = rec.fn();
     run_asa_erased(sp, 1, fn);
     CHECK(rec.calls.size() == 500);  /* failures still consume budget */
+}
+
+/* Pins: ASA starts at the point it is given (User_Initial_Parameters),
+ * after the default Number_Cost_Samples 5 random states of its initial cost
+ * temperature, and does not draw another start when that point fails: it
+ * keeps the point as its first state with a cost above every cost it
+ * takes, the failed evaluation's loss (FAILSCORE 1e6) capped at the largest
+ * cost ASA takes (asa_cost_limit(), about 1e18: without a FAILSCORE line a
+ * failure scores the largest double). Each later point of the objective
+ * scores more than the one before, so ASA's best is the first point after
+ * the start (its summary's best=), and one journal line names the failed
+ * start and its cost: "ASA: the starting point gave no cost ASA takes (a
+ * loss at FAILSCORE or above, at about 1e+18 or above, or not finite); ASA
+ * keeps it as its first state with the cost 1e+06, above every cost it
+ * takes, and moves from it" (1e+18 without a FAILSCORE line).
+ * Before the fix: the failed start took the cost of the last usable
+ * evaluation (the fifth sample, 5), so it stayed ASA's best for the whole
+ * run (best=5.000000e+00) and no journal line named it. */
+TEST_CASE("ASA keeps a failed start with a cost above every cost it takes",
+          "[HPO][asa]")
+{
+    for (const bool failscore_line : {true, false}) {
+        DYNAMIC_SECTION((failscore_line ? "FAILSCORE 1e6"
+                                        : "without a FAILSCORE line")) {
+            auto sp = make_asa_spec({-2.0}, {2.0});
+            set_seed_point(sp, {1.0});
+            sp.stop.maxeval = 30;
+            if (failscore_line) sp.failscore = 1e6;
+            /* No reannealing: it evaluates the best point again. */
+            sp.param = {{"Reanneal_Parameters", 0.0}};
+            const double failed =
+                failscore_line ? 1e6 : std::numeric_limits<double>::max();
+            std::mutex m;
+            std::vector<double> values;
+            Recorder rec;
+            rec.f = [&](const std::vector<double>& x) {
+                std::lock_guard<std::mutex> lk(m);
+                const double v = x[0] == 1.0
+                                     ? failed
+                                     : static_cast<double>(values.size() + 1);
+                values.push_back(v);
+                return v;
+            };
+            anneal_test::JournalCapture jc;
+            const AsaHostFn fn = rec.fn();
+            REQUIRE_NOTHROW(run_asa_erased(sp, 1, fn));
+            const std::string journal = jc.read();
+            INFO(journal);
+            /* The start is the sixth evaluation, after the five samples. */
+            REQUIRE(values.size() > 7);
+            REQUIRE(values[5] == failed);
+            CHECK(values[4] == 5.0);
+            CHECK(values[6] == 7.0);
+            const std::string cost = failscore_line ? "1e+06" : "1e+18";
+            CHECK(journal.find("ASA: the starting point gave no cost ASA "
+                               "takes (a loss at FAILSCORE or above, at about "
+                               "1e+18 or above, or not finite); ASA keeps it "
+                               "as its first state with the cost " + cost +
+                               ", above every cost it takes, and moves from "
+                               "it\n") != std::string::npos);
+            const std::string summary = journal_line(journal, "ASA summary: ");
+            CHECK(summary.find(" best=7.000000e+00 ") != std::string::npos);
+        }
+    }
 }
 
 TEST_CASE("ASA host failure during reanneal tangents aborts gracefully "

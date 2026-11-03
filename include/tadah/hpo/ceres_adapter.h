@@ -139,12 +139,18 @@ inline void validate_ceres_int_param_(const OptimizerSpec& sp,
     const auto it = sp.param.find(key);
     if (it == sp.param.end()) return;
     const double v = it->second;
-    if (!(v >= lo && v <= std::numeric_limits<int>::max() &&
-          std::floor(v) == v))
+    /* A whole number in the integer syntax (param_is_integer: 1e1 and
+     * 10.0 are refused), refused with the value quoted as written; a value
+     * no line wrote (a spec a program builds) as ceres_value_text writes
+     * it. */
+    if (!(param_is_integer(sp, key) && v >= lo &&
+          v <= std::numeric_limits<int>::max()))
         throw std::runtime_error(
             "CERES:" + algo + " requires PARAM " + key +
             " to be an integer from " + std::to_string(lo) +
-            " to 2147483647 (" + what + "), got " + ceres_value_text(v));
+            " to 2147483647 (" + what + "), got '" +
+            (sp.param_text.count(key) ? param_value_text(sp, key)
+                                      : ceres_value_text(v)) + "'");
 }
 
 /* Common checks shared by all Ceres GradientProblemSolver validators. */

@@ -118,7 +118,8 @@ error = "the line ends with \\, which continues it on the next line, and the fil
 [reading]
 doc = """\
 A number is one whole token in the decimal syntax, and a finite double. An \
-integer of a key is decimal digits only, without a sign."""
+integer of a key is decimal digits only, without a sign; a PARAM key that \
+takes a negative whole number takes a - in front."""
 long_doc = """\
 The decimal syntax is an optional sign, digits with at most one decimal \
 point, and an optional exponent (5, -0.5, .5, 5., +1e-3, 2.5E+07). A \
@@ -126,9 +127,9 @@ number is 0 or not below the smallest normal double in magnitude; \
 hexadecimal, inf and nan are refused. A key that takes a boolean (NOISE \
 AUTO) reads true, 1, yes, on, false, 0, no or off, in any case; a key with \
 words of its own, such as FAILSCORE_GRADING ON or OFF, takes exactly those \
-words. A PARAM value is read as a number, \
-also for a PARAM key that takes a whole number: PARAM GRID_POINTS 1e1 is \
-10."""
+words. A PARAM key that takes a whole number reads its value as such an \
+integer: PARAM GRID_POINTS 10 is read, and 1e1, +10 and 10.0 are refused \
+when tadah hpo starts."""
 integer_msg = "{what} must be an integer >= {min}, got '{tok}'"
 integer_range_msg = "{what} must be an integer from {min} to {max}, got '{tok}'"
 note_msg = " ({note})"
@@ -519,7 +520,13 @@ METHOD lines, each adding points. Inside an INIT block a STRATEGY line is \
 read as a METHOD line."""
 long_doc = """\
 A second INIT block in the same block continues the first, and a key other \
-than METHOD set in both is refused."""
+than METHOD set in both is refused. A search that does not start at the \
+point it is given (NLopt's StoGO, DIRECT and AGS) takes no METHOD line in \
+its own INIT block: the STRATEGY-level optimiser under TYPE PLAIN, or the \
+exploration of TYPE PRESTAGE in its EXPLORE block. Under TYPE PRESTAGE an \
+OPTIMIZER-level INIT block with METHOD lines is taken with such an \
+exploration: the refinement starts from its points when no evaluation of \
+the exploration has a usable loss."""
 
 [[block.examples]]
 wrap = "strategy"
@@ -1467,7 +1474,8 @@ candidates that do not fail; OFF gives it FAILSCORE."""
 long_doc = """\
 ON takes any FAILSCORE, the default largest double too, with every \
 optimiser but ASA:ASA. ASA:ASA takes a loss of about 1e18 or more for an \
-invalid point and draws another, so it would not see such graded \
+invalid point: it draws another in place of a point it generated and \
+keeps its starting point with that loss, so it would not see such graded \
 failures. Under ON an ASA:ASA search, in any phase, is refused at startup \
 when its largest graded failure, a little below FAILSCORE, reaches that \
 loss; a FAILSCORE of 1e18 or less is always taken. A --failvar value \
@@ -1479,7 +1487,7 @@ OPTIM boxes, which a CERES optimiser can propose, is not evaluated. Under \
 ON and OFF alike its loss lies in [0.99975 FAILSCORE, FAILSCORE) and grows \
 with its distance from the boxes."""
 checks = [
-  { msg = "{phase}: ASA:ASA: under FAILSCORE_GRADING ON a failed evaluation scores from 0.999 FAILSCORE to below FAILSCORE ({value}). ASA:ASA takes a cost of about 1e+18 or more for an invalid state and draws another, so it would not see the graded failures at or above that cost. A FAILSCORE of 1e+18 or less keeps every graded failure below it", doc = "At startup, under ON, at the line that closes the block of an ASA:ASA search, in any phase: the largest graded failure, a little below FAILSCORE, reaches the cost of about 1e18 at which ASA:ASA takes a state for an invalid one. This holds for every FAILSCORE from a little above 1e18 up, the default (no FAILSCORE line) included; {value} is FAILSCORE." },
+  { msg = "{phase}: ASA:ASA: under FAILSCORE_GRADING ON a failed evaluation scores from 0.999 FAILSCORE to below FAILSCORE ({value}). ASA:ASA takes a cost of about 1e+18 or more for an invalid state: it draws another in place of a state it generated, and keeps its starting point with that cost, so it would not see the graded failures at or above that cost. A FAILSCORE of 1e+18 or less keeps every graded failure below it", doc = "At startup, under ON, at the line that closes the block of an ASA:ASA search, in any phase: the largest graded failure, a little below FAILSCORE, reaches the cost of about 1e18 at which ASA:ASA takes a state for an invalid one. This holds for every FAILSCORE from a little above 1e18 up, the default (no FAILSCORE line) included; {value} is FAILSCORE." },
 ]
 
 [[key.examples]]
@@ -1514,7 +1522,7 @@ ALGO ASA
 MAXEVAL 10
 ENDSTRATEGY
 ENDOPTIMIZER'''
-error = "the STRATEGY-level optimiser: ASA:ASA: under FAILSCORE_GRADING ON a failed evaluation scores from 0.999 FAILSCORE to below FAILSCORE (1.7976931348623157e+308, the largest double, as without a FAILSCORE line). ASA:ASA takes a cost of about 1e+18 or more for an invalid state and draws another, so it would not see the graded failures at or above that cost. A FAILSCORE of 1e+18 or less keeps every graded failure below it"
+error = "the STRATEGY-level optimiser: ASA:ASA: under FAILSCORE_GRADING ON a failed evaluation scores from 0.999 FAILSCORE to below FAILSCORE (1.7976931348623157e+308, the largest double, as without a FAILSCORE line). ASA:ASA takes a cost of about 1e+18 or more for an invalid state: it draws another in place of a state it generated, and keeps its starting point with that cost, so it would not see the graded failures at or above that cost. A FAILSCORE of 1e+18 or less keeps every graded failure below it"
 
 [[key.invalid]]
 wrap = "root"
@@ -2836,7 +2844,7 @@ doc = """\
 Replaces FAILSCORE_GRADING of the target file when it is set and not \
 empty; the value is ON or OFF, in upper case."""
 checks = [
-  { msg = "{phase}: ASA:ASA: under FAILSCORE_GRADING ON, set by TADAH_FAILSCORE_GRADING, a failed evaluation scores from 0.999 FAILSCORE to below FAILSCORE ({value}). ASA:ASA takes a cost of about 1e+18 or more for an invalid state and draws another, so it would not see the graded failures at or above that cost. A FAILSCORE of 1e+18 or less keeps every graded failure below it", doc = "When the run starts, at the line that closes the block of an ASA:ASA search, in any phase, when the variable sets ON: the refusal of FAILSCORE_GRADING ON with ASA:ASA, which names the variable, as the target file may say OFF." },
+  { msg = "{phase}: ASA:ASA: under FAILSCORE_GRADING ON, set by TADAH_FAILSCORE_GRADING, a failed evaluation scores from 0.999 FAILSCORE to below FAILSCORE ({value}). ASA:ASA takes a cost of about 1e+18 or more for an invalid state: it draws another in place of a state it generated, and keeps its starting point with that cost, so it would not see the graded failures at or above that cost. A FAILSCORE of 1e+18 or less keeps every graded failure below it", doc = "When the run starts, at the line that closes the block of an ASA:ASA search, in any phase, when the variable sets ON: the refusal of FAILSCORE_GRADING ON with ASA:ASA, which names the variable, as the target file may say OFF." },
 ]
 
 [[env.invalid]]
@@ -2864,7 +2872,7 @@ ALGO ASA
 MAXEVAL 10
 ENDSTRATEGY
 ENDOPTIMIZER'''
-error = "the STRATEGY-level optimiser: ASA:ASA: under FAILSCORE_GRADING ON, set by TADAH_FAILSCORE_GRADING, a failed evaluation scores from 0.999 FAILSCORE to below FAILSCORE (1.7976931348623157e+308, the largest double, as without a FAILSCORE line). ASA:ASA takes a cost of about 1e+18 or more for an invalid state and draws another, so it would not see the graded failures at or above that cost. A FAILSCORE of 1e+18 or less keeps every graded failure below it"
+error = "the STRATEGY-level optimiser: ASA:ASA: under FAILSCORE_GRADING ON, set by TADAH_FAILSCORE_GRADING, a failed evaluation scores from 0.999 FAILSCORE to below FAILSCORE (1.7976931348623157e+308, the largest double, as without a FAILSCORE line). ASA:ASA takes a cost of about 1e+18 or more for an invalid state: it draws another in place of a state it generated, and keeps its starting point with that cost, so it would not see the graded failures at or above that cost. A FAILSCORE of 1e+18 or less keeps every graded failure below it"
 
 [[env]]
 name = "TADAH_BUMPGATE"

@@ -3,6 +3,10 @@
 #include <tadah/hpo/optimizer_help.h>
 #include <tadah/hpo/asa_options.h>
 #include <tadah/hpo/anneal_keys_gen.h>
+#include <tadah/hpo/strict_parse.h>
+#include <tadah/hpo/validation_metric.h>
+#include <tadah/core/number_format.h>
+#include <cmath>
 #include <algorithm>
 #include <cctype>
 #include <iomanip>
@@ -394,6 +398,23 @@ static void print_asa_caps(std::ostream& os, const std::string& algo)
           "   * PARAM keys use the original ASA option spellings\n"
           "     (case-sensitive); an option of each dimension accepts Name[i]\n";
     print_asa_param_table(os);
+}
+
+std::string tadah::hpo::param_value_text(const OptimizerSpec& sp,
+                                         const std::string& key)
+{
+    if (const auto t = sp.param_text.find(key); t != sp.param_text.end())
+        return t->second;
+    return core::format_roundtrip(sp.param.at(key));
+}
+
+bool tadah::hpo::param_is_integer(const OptimizerSpec& sp,
+                                  const std::string& key)
+{
+    if (const auto t = sp.param_text.find(key); t != sp.param_text.end())
+        return is_integer_token(t->second);
+    const double v = sp.param.at(key);
+    return metric_value_is_finite(v) && v == std::floor(v);
 }
 
 std::optional<OptimizerSpec> tadah::hpo::anchor_seed_points(const OptimizerSpec& sp)

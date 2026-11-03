@@ -783,12 +783,15 @@ void Handlers::OPTIMIZER_PARAM(KeyRead& r)
     if (p.empty() || vals.empty())
         throw std::runtime_error("PARAM requires a name and a value");
     const std::string& raw = vals.front();
-    /* Numeric values land in `param`, a word in `param_raw`. A value
-     * shaped like a number must be a finite one. */
-    if (is_number_shaped(raw))
+    /* Numeric values land in `param`, as written in `param_text` (a key
+     * that takes a whole number judges the integer syntax on it), a word in
+     * `param_raw`. A value shaped like a number must be a finite one. */
+    if (is_number_shaped(raw)) {
         a.param[p] = parse_finite(raw, "PARAM " + p);
-    else
+        a.param_text[p] = raw;
+    } else {
         a.param_raw[p] = raw;
+    }
     /* The numbers of INIT_MODE JITTER <fraction> | JITTER AUTO
      * <tolerance>, read with the number grammar here. */
     if (ukey == "INIT_MODE")

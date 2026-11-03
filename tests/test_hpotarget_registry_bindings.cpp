@@ -1314,8 +1314,9 @@ TEST_CASE("hpotarget generated tables: the environment overrides name "
  * registry's: the options of the lines OPTIM.AUTO are
  * optim_auto_options() (RATIO, FRAC, FLOOR, GROUP_FLOOR) and those of the
  * lines OPTIM optim_shape_tags() (LIN, LOG, ASINH), as sets; the word of
- * the form OPTIM.AUTO is kOptimAutoWord; [optim] auto_excluded_prefix is
- * kOptimAutoExcludedPrefix; [lexing] comment, continuation and
+ * the form OPTIM.AUTO is kOptimAutoWord; [optim] auto_excluded is
+ * kOptimAutoExcludedKeys, as sets (it was the prefix RCUT,
+ * auto_excluded_prefix); [lexing] comment, continuation and
  * unfinished_msg are kTargetComment, kTargetContinuation and
  * kTargetUnfinishedLineMsg; [reading] underflow_note is
  * mlip::number_underflow_note of 1e-400. (The refusal tables of the OPTIM
@@ -1340,7 +1341,10 @@ TEST_CASE("hpotarget generated tables: the words of MLIP's OPTIM reader are "
         if (f.id_text == "OPTIM.AUTO") auto_form = &f;
     REQUIRE(auto_form != nullptr);
     CHECK(auto_form->word == M::kOptimAutoWord);
-    CHECK(R::optim::auto_excluded_prefix == M::kOptimAutoExcludedPrefix);
+    CHECK(std::set<std::string>(R::optim::auto_excluded.begin(),
+                                R::optim::auto_excluded.end()) ==
+          std::set<std::string>(M::kOptimAutoExcludedKeys.begin(),
+                                M::kOptimAutoExcludedKeys.end()));
     CHECK(R::lexing::comment == std::string(1, M::kTargetComment));
     CHECK(R::lexing::continuation == std::string(1, M::kTargetContinuation));
     CHECK(R::lexing::unfinished_msg ==

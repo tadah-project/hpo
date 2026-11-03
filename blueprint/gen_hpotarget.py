@@ -937,8 +937,8 @@ struct OptimTarget {
     o = reg.optim.fields if reg.optim is not None else {}
     span = w.strings("optim_positive_only", o.get("positive_only", []))
     w.out(f"inline constexpr Span<std::string_view> positive_only = {span};")
-    w.out("inline constexpr std::string_view auto_excluded_prefix = "
-          f"{cstr(o.get('auto_excluded_prefix', ''))};")
+    span = w.strings("optim_auto_excluded", o.get("auto_excluded", []))
+    w.out(f"inline constexpr Span<std::string_view> auto_excluded = {span};")
     span = checks_span(w, "optim_checks", o.get("checks", []))
     w.out(f"inline constexpr Span<std::string_view> checks = {span};")
     w.out("}  // namespace optim")

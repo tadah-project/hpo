@@ -471,11 +471,13 @@ unsigned validate_grid_spec(const OptimizerSpec& sp)
             ", got '" + value + "' (the points of each dimension include "
             "both of its bounds)");
     };
+    /* A whole number in the integer syntax (param_is_integer: 1e1, +10
+     * and 10.0 are refused), refused as written. */
     if (auto it = sp.param.find("GRID_POINTS"); it != sp.param.end()) {
         const double v = it->second;
-        if (!std::isfinite(v) || v < 2.0 || v != std::floor(v) ||
+        if (!param_is_integer(sp, "GRID_POINTS") || v < 2.0 ||
             v > static_cast<double>(std::numeric_limits<unsigned>::max()))
-            throw grid_points_error(core::format_roundtrip(v));
+            throw grid_points_error(param_value_text(sp, "GRID_POINTS"));
         steps = static_cast<unsigned>(v);
     }
     reject_unknown_params(sp, {"GRID_POINTS"});
@@ -531,8 +533,10 @@ void validate_asa_spec(const OptimizerSpec& sp)
         throw std::runtime_error(
             "ASA:ASA requires at least one OPTIM dimension");
     (void)parse_asa_options(sp, dim);
-    /* ASA takes a cost at or above asa_cost_limit() for an invalid state and
-     * draws another (algorithms_asa.cpp, cost_is_valid). A graded failure
+    /* ASA takes a cost at or above asa_cost_limit() for an invalid state: it
+     * draws another in place of a state it generated, and keeps its starting
+     * point with that cost (algorithms_asa.cpp, cost_is_valid,
+     * failed_start_cost). A graded failure
      * scores from 0.999 FAILSCORE up to its largest, band D's at saturation,
      * just below FAILSCORE (pc_fail_grading.h): when that reaches the limit,
      * ASA would take the graded failures at or above it for invalid states
@@ -562,9 +566,11 @@ void validate_asa_spec(const OptimizerSpec& sp)
             "ASA:ASA: under " + mode + " a failed evaluation scores "
             "from 0.999 FAILSCORE to below FAILSCORE (" + value + "). "
             "ASA:ASA takes a cost of about " + cap + " or more for "
-            "an invalid state and draws another, so it would not see the "
-            "graded failures at or above that cost. A FAILSCORE of " + cap +
-            " or less keeps every graded failure below it");
+            "an invalid state: it draws another in place of a state it "
+            "generated, and keeps its starting point with that cost, so it "
+            "would not see the graded failures at or above that cost. A "
+            "FAILSCORE of " + cap + " or less keeps every graded failure "
+            "below it");
     }
 }
 
@@ -1302,6 +1308,47 @@ void unused_init_point_warnings(const OptimizerSpec& root,
 
 }  // namespace
 
+void refuse_unread_init_points(const OptimizerSpec& root)
+{
+    /* The search each round starts with: PLAIN's STRATEGY-level optimiser,
+     * PRESTAGE's exploration (MULTISTART starts on such a search are
+     * refused). */
+    if (root.strategy_type == StrategyType::MULTISTART) return;
+    const bool prestage = root.strategy_type == StrategyType::PRESTAGE;
+    const OptimizerSpec* phase = prestage ? root.prestage.get() : &root;
+    if (!phase || phase->lib == "NOT SET" || phase->algo == "NOT SET")
+        return;
+    const InitStrategySpec& own = phase->init_strategy_spec;
+    if (own.chain.empty()) return;
+    const std::optional<OptimizerSpec> blind = search_ignoring_start(*phase);
+    if (!blind) return;
+    const std::string who = prestage ? "the PRESTAGE exploration"
+                                     : "the STRATEGY-level optimiser";
+    const std::string search = prestage ? "exploration" : "search";
+    /* NOISE CALIBRATION evaluates the first INIT point of the
+     * STRATEGY-level spec, the configuration's point when its INIT block
+     * has no METHOD line. */
+    const std::string calibration =
+        !prestage && should_run_noise_calibration(root.noise.calibration_n)
+            ? " (without them NOISE CALIBRATION evaluates the point of the "
+              "training configuration)"
+            : std::string();
+    const std::string ignoring = format_caps_list(
+        filter_optimizer_caps(
+            [](const OptimizerCaps& c) { return !c.starts_at_x0; }),
+        std::numeric_limits<std::size_t>::max());
+    const std::string what =
+        ignores_its_start(who, *phase, *blind, "") + ", so the " + search +
+        " would never evaluate the starting points of this INIT block" +
+        calibration + ". An optimiser that starts at the point it is given "
+        "(every optimiser but " + ignoring + ") starts the " + search +
+        " at them.";
+    const InitStrategySpec::Entry& method = own.chain.front();
+    if (method.line == 0) throw std::runtime_error(what);
+    throw std::runtime_error(
+        config_line_error(method.file, method.line, what, method.line_text));
+}
+
 std::vector<std::string> start_point_warnings(const OptimizerSpec& root,
                                               const std::string& reuse_blocker)
 {
@@ -1332,18 +1379,12 @@ std::vector<std::string> start_point_warnings(const OptimizerSpec& root,
                    "starts the search at them.";
 
     /* An INIT block with a METHOD: the phase's own (PLAIN: the
-     * OPTIMIZER/STRATEGY-level block; PRESTAGE: the EXPLORE block's), and
-     * under PRESTAGE the OPTIMIZER-level block, which the exploration takes
-     * when its EXPLORE block has none (share_init_with_nested_phases) and
-     * the refinement only when the exploration has no usable candidate. */
+     * OPTIMIZER/STRATEGY-level block; PRESTAGE: the EXPLORE block's) is
+     * refused (refuse_unread_init_points); under PRESTAGE the
+     * OPTIMIZER-level block, which the exploration takes when its EXPLORE
+     * block has none (share_init_with_nested_phases) and the refinement
+     * only when the exploration has no usable candidate, is warned about. */
     const InitStrategySpec& own = phase->init_strategy_spec;
-    if (!own.chain.empty())
-        out.push_back(
-            block_on_line("INIT", own.line) +
-            ignores_its_start(who, *phase, *blind, "") + ", so the " +
-            (prestage ? "exploration" : "search") +
-            " never evaluates the block's INIT points" +
-            (prestage ? std::string() : calibration) + "." + to_start);
     const InitStrategySpec& outer = root.init_strategy_spec;
     if (prestage && own.chain.empty() && !outer.chain.empty())
         out.push_back(

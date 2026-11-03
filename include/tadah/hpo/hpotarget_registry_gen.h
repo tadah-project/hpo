@@ -969,7 +969,7 @@ inline constexpr Arg ROOT_FAILSCORE_GRADING_args[] = {
         false},
 };
 inline constexpr std::string_view ROOT_FAILSCORE_GRADING_checks[] = {
-    "{phase}: ASA:ASA: under FAILSCORE_GRADING ON a failed evaluation scores from 0.999 FAILSCORE to below FAILSCORE ({value}). ASA:ASA takes a cost of about 1e+18 or more for an invalid state and draws another, so it would not see the graded failures at or above that cost. A FAILSCORE of 1e+18 or less keeps every graded failure below it",
+    "{phase}: ASA:ASA: under FAILSCORE_GRADING ON a failed evaluation scores from 0.999 FAILSCORE to below FAILSCORE ({value}). ASA:ASA takes a cost of about 1e+18 or more for an invalid state: it draws another in place of a state it generated, and keeps its starting point with that cost, so it would not see the graded failures at or above that cost. A FAILSCORE of 1e+18 or less keeps every graded failure below it",
 };
 inline constexpr std::string_view ROOT_BUMPGATE_arg0_words[] = {
     "CANDIDATE",
@@ -1370,6 +1370,7 @@ inline constexpr Arg INIT_METHOD_args[] = {
 };
 inline constexpr std::string_view INIT_METHOD_checks[] = {
     "{key} requires a method name",
+    "{phase} {name} does not start at the point it is given ({note}), so the {kind} would never evaluate the starting points of this INIT block{hint}. An optimiser that starts at the point it is given (every optimiser but {list}) starts the {kind} at them.",
 };
 inline constexpr Arg INIT_K_TOTAL_args[] = {
     Arg{"n", ArgKind::Integer, false, false, Limit{true, "1", 1.0, true, 1ull},
@@ -2306,7 +2307,7 @@ inline constexpr std::string_view ENV_TADAH_FAILSCORE_GRADING_values[] = {
     "OFF",
 };
 inline constexpr std::string_view ENV_TADAH_FAILSCORE_GRADING_checks[] = {
-    "{phase}: ASA:ASA: under FAILSCORE_GRADING ON, set by TADAH_FAILSCORE_GRADING, a failed evaluation scores from 0.999 FAILSCORE to below FAILSCORE ({value}). ASA:ASA takes a cost of about 1e+18 or more for an invalid state and draws another, so it would not see the graded failures at or above that cost. A FAILSCORE of 1e+18 or less keeps every graded failure below it",
+    "{phase}: ASA:ASA: under FAILSCORE_GRADING ON, set by TADAH_FAILSCORE_GRADING, a failed evaluation scores from 0.999 FAILSCORE to below FAILSCORE ({value}). ASA:ASA takes a cost of about 1e+18 or more for an invalid state: it draws another in place of a state it generated, and keeps its starting point with that cost, so it would not see the graded failures at or above that cost. A FAILSCORE of 1e+18 or less keeps every graded failure below it",
 };
 inline constexpr std::string_view ENV_TADAH_BUMPGATE_values[] = {
     "CANDIDATE",
@@ -2389,6 +2390,10 @@ inline constexpr std::string_view optim_positive_only[] = {
     "SGRID2B",
     "SGRIDMB",
     "SEMBFUNC",
+};
+inline constexpr std::string_view optim_auto_excluded[] = {
+    "RCUT2B",
+    "RCUTMB",
 };
 inline constexpr std::string_view optim_checks[] = {
     "Failed to read key from input.",
@@ -2855,7 +2860,7 @@ inline constexpr Key kKeys[] = {
       block_bit(BlockId::INIT) | block_bit(BlockId::RESTART),
       Span<Arg>{detail::INIT_METHOD_args, 2}, Repeat::Add, "", "", false, "",
       false, KeyId::INIT_METHOD, false, "",
-      Span<std::string_view>{detail::INIT_METHOD_checks, 1},
+      Span<std::string_view>{detail::INIT_METHOD_checks, 2},
       Span<LineStep>{nullptr, 0}, ""},
   Key{KeyId::INIT_K_TOTAL, "INIT.K_TOTAL", "K_TOTAL", "",
       block_bit(BlockId::INIT) | block_bit(BlockId::RESTART),
@@ -3504,7 +3509,7 @@ inline constexpr InitMethod kInitMethods[] = {
 
 namespace optim {
 inline constexpr Span<std::string_view> positive_only = Span<std::string_view>{detail::optim_positive_only, 3};
-inline constexpr std::string_view auto_excluded_prefix = "RCUT";
+inline constexpr Span<std::string_view> auto_excluded = Span<std::string_view>{detail::optim_auto_excluded, 2};
 inline constexpr Span<std::string_view> checks = Span<std::string_view>{detail::optim_checks, 26};
 }  // namespace optim
 

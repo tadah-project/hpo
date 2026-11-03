@@ -156,7 +156,7 @@ inline constexpr Arg PARAM_CERES_max_iter_args[] = {
         "", "", false, "", false},
 };
 inline constexpr std::string_view PARAM_CERES_max_iter_checks[] = {
-    "{phase}: CERES:{algo} requires PARAM max_iter to be an integer from 0 to 2147483647 (Ceres' max_num_iterations), got {value}",
+    "{phase}: CERES:{algo} requires PARAM max_iter to be an integer from 0 to 2147483647 (Ceres' max_num_iterations), got '{value}'",
 };
 inline constexpr std::string_view PARAM_CERES_max_ls_iter_optimizers[] = {
     "CERES:STEEPEST_DESCENT",
@@ -168,7 +168,7 @@ inline constexpr Arg PARAM_CERES_max_ls_iter_args[] = {
         "", "", false, "", false},
 };
 inline constexpr std::string_view PARAM_CERES_max_ls_iter_checks[] = {
-    "{phase}: CERES:{algo} requires PARAM max_ls_iter to be an integer from 1 to 2147483647 (Ceres' max_num_line_search_step_size_iterations), got {value}",
+    "{phase}: CERES:{algo} requires PARAM max_ls_iter to be an integer from 1 to 2147483647 (Ceres' max_num_line_search_step_size_iterations), got '{value}'",
 };
 inline constexpr std::string_view PARAM_FD_fd_step_optimizers[] = {
     "*",
@@ -217,7 +217,7 @@ inline constexpr Arg PARAM_FD_diff_method_args[] = {
         Span<RefusedWord>{nullptr, 0}, "", "", "", false, "", false},
 };
 inline constexpr std::string_view PARAM_FD_diff_method_checks[] = {
-    "{phase} {lib}:{algo}: PARAM diff_method must be 0 (CENTRAL, the default) or 1 (FORWARD) (got {value})",
+    "{phase} {lib}:{algo}: PARAM diff_method must be 0 (CENTRAL, the default) or 1 (FORWARD) (got '{value}')",
     "{phase} {lib}:{algo}: PARAM diff_method 2 (RIDDERS) is refused: Ridders' extrapolation ignores PARAM fd_step, starts from a step of 0.32 x max(|u|, 1) -- outside most OPTIM boxes -- and takes up to 20 evaluations per parameter; diff_method 0 (CENTRAL, the default) and 1 (FORWARD) take PARAM fd_step",
     "{phase} {lib}:{algo}: PARAM diff_method never takes effect: {why}.",
     "{phase} {lib}:{algo}: PARAM diff_method never takes effect: an INNER search takes the gradient of the block it runs in, with that block's finite-difference settings; the enclosing block takes it.",
@@ -232,7 +232,7 @@ inline constexpr Arg PARAM_ASA_ASA_Limit_Acceptances_args[] = {
         "", "", false, "", false},
 };
 inline constexpr std::string_view PARAM_ASA_ASA_Limit_Acceptances_checks[] = {
-    "{phase}: ASA:ASA: PARAM {key} must be an integer (got {value})",
+    "{phase}: ASA:ASA: PARAM {key} must be an integer (got '{value}')",
     "{phase}: ASA:ASA: PARAM {key} must be >= {min} (got {value})",
 };
 inline constexpr std::string_view PARAM_ASA_ASA_Limit_Generated_optimizers[] = {
@@ -245,7 +245,7 @@ inline constexpr Arg PARAM_ASA_ASA_Limit_Generated_args[] = {
         "", "", false, "", false},
 };
 inline constexpr std::string_view PARAM_ASA_ASA_Limit_Generated_checks[] = {
-    "{phase}: ASA:ASA: PARAM {key} must be an integer (got {value})",
+    "{phase}: ASA:ASA: PARAM {key} must be an integer (got '{value}')",
     "{phase}: ASA:ASA: PARAM {key} must be >= {min} (got {value})",
 };
 inline constexpr std::string_view PARAM_ASA_ASA_Limit_Invalid_Generated_States_optimizers[] = {
@@ -258,7 +258,7 @@ inline constexpr Arg PARAM_ASA_ASA_Limit_Invalid_Generated_States_args[] = {
         "", "", false, "", false},
 };
 inline constexpr std::string_view PARAM_ASA_ASA_Limit_Invalid_Generated_States_checks[] = {
-    "{phase}: ASA:ASA: PARAM {key} must be an integer (got {value})",
+    "{phase}: ASA:ASA: PARAM {key} must be an integer (got '{value}')",
     "{phase}: ASA:ASA: PARAM {key} must be >= {min} (got {value})",
 };
 inline constexpr std::string_view PARAM_ASA_ASA_Accepted_To_Generated_Ratio_optimizers[] = {
@@ -297,7 +297,7 @@ inline constexpr Arg PARAM_ASA_ASA_Maximum_Cost_Repeat_args[] = {
         "", "", false, "", false},
 };
 inline constexpr std::string_view PARAM_ASA_ASA_Maximum_Cost_Repeat_checks[] = {
-    "{phase}: ASA:ASA: PARAM {key} must be an integer (got {value})",
+    "{phase}: ASA:ASA: PARAM {key} must be an integer (got '{value}')",
     "{phase}: ASA:ASA: PARAM {key} must be >= {min} (got {value})",
 };
 inline constexpr std::string_view PARAM_ASA_ASA_Number_Cost_Samples_optimizers[] = {
@@ -309,7 +309,7 @@ inline constexpr Arg PARAM_ASA_ASA_Number_Cost_Samples_args[] = {
         "", "", false, "", false},
 };
 inline constexpr std::string_view PARAM_ASA_ASA_Number_Cost_Samples_checks[] = {
-    "{phase}: ASA:ASA: PARAM {key} must be an integer (got {value})",
+    "{phase}: ASA:ASA: PARAM {key} must be an integer (got '{value}')",
     "{phase}: ASA:ASA: PARAM Number_Cost_Samples takes a value above 0 (a sample of the mean |cost|) or below -1 (a sample of its deviation), got {value}",
 };
 inline constexpr std::string_view PARAM_ASA_ASA_Temperature_Ratio_Scale_optimizers[] = {
@@ -360,7 +360,7 @@ inline constexpr Arg PARAM_ASA_ASA_Sequential_Parameters_args[] = {
         "", "", false, "", false},
 };
 inline constexpr std::string_view PARAM_ASA_ASA_Sequential_Parameters_checks[] = {
-    "{phase}: ASA:ASA: PARAM {key} must be an integer (got {value})",
+    "{phase}: ASA:ASA: PARAM {key} must be an integer (got '{value}')",
     "{phase}: ASA:ASA: PARAM Sequential_Parameters must be < the number of OPTIM dimensions ({count})",
 };
 inline constexpr std::string_view PARAM_ASA_ASA_Initial_Parameter_Temperature_optimizers[] = {
@@ -386,7 +386,7 @@ inline constexpr Arg PARAM_ASA_ASA_Acceptance_Frequency_Modulus_args[] = {
         "", "", false, "", false},
 };
 inline constexpr std::string_view PARAM_ASA_ASA_Acceptance_Frequency_Modulus_checks[] = {
-    "{phase}: ASA:ASA: PARAM {key} must be an integer (got {value})",
+    "{phase}: ASA:ASA: PARAM {key} must be an integer (got '{value}')",
     "{phase}: ASA:ASA: PARAM {key} must be >= {min} (got {value})",
 };
 inline constexpr std::string_view PARAM_ASA_ASA_Generated_Frequency_Modulus_optimizers[] = {
@@ -399,7 +399,7 @@ inline constexpr Arg PARAM_ASA_ASA_Generated_Frequency_Modulus_args[] = {
         "", "", false, "", false},
 };
 inline constexpr std::string_view PARAM_ASA_ASA_Generated_Frequency_Modulus_checks[] = {
-    "{phase}: ASA:ASA: PARAM {key} must be an integer (got {value})",
+    "{phase}: ASA:ASA: PARAM {key} must be an integer (got '{value}')",
     "{phase}: ASA:ASA: PARAM {key} must be >= {min} (got {value})",
 };
 inline constexpr std::string_view PARAM_ASA_ASA_Reanneal_Cost_optimizers[] = {
@@ -411,7 +411,7 @@ inline constexpr Arg PARAM_ASA_ASA_Reanneal_Cost_args[] = {
         "", "", false, "", false},
 };
 inline constexpr std::string_view PARAM_ASA_ASA_Reanneal_Cost_checks[] = {
-    "{phase}: ASA:ASA: PARAM {key} must be an integer (got {value})",
+    "{phase}: ASA:ASA: PARAM {key} must be an integer (got '{value}')",
     "{phase}: ASA:ASA: PARAM Reanneal_Cost takes 0 (off), 1 (the default), or a value above 1 or below -1 (sample variants), got -1; ASA refuses -1",
 };
 inline constexpr std::string_view PARAM_ASA_ASA_Reanneal_Parameters_optimizers[] = {
@@ -424,7 +424,7 @@ inline constexpr Arg PARAM_ASA_ASA_Reanneal_Parameters_args[] = {
         Span<RefusedWord>{nullptr, 0}, "", "", "", false, "", false},
 };
 inline constexpr std::string_view PARAM_ASA_ASA_Reanneal_Parameters_checks[] = {
-    "{phase}: ASA:ASA: PARAM {key} must be an integer (got {value})",
+    "{phase}: ASA:ASA: PARAM {key} must be an integer (got '{value}')",
     "{phase}: ASA:ASA: PARAM {key} must be >= {min} (got {value})",
     "{phase}: ASA:ASA: PARAM {key} must be <= {max} (got {value})",
 };
@@ -451,7 +451,7 @@ inline constexpr Arg PARAM_ASA_ASA_User_Tangents_args[] = {
         Span<RefusedWord>{nullptr, 0}, "", "", "", false, "", false},
 };
 inline constexpr std::string_view PARAM_ASA_ASA_User_Tangents_checks[] = {
-    "{phase}: ASA:ASA: PARAM {key} must be an integer (got {value})",
+    "{phase}: ASA:ASA: PARAM {key} must be an integer (got '{value}')",
     "{phase}: ASA:ASA: PARAM {key} must be >= {min} (got {value})",
     "{phase}: ASA:ASA: PARAM User_Tangents takes 0 only: tadah hpo gives ASA no analytic tangents, and the reannealing takes them by finite differences (PARAM Delta_X)",
 };
@@ -466,7 +466,7 @@ inline constexpr Arg PARAM_ASA_ASA_Curvature_0_args[] = {
         "", "", false, "", false},
 };
 inline constexpr std::string_view PARAM_ASA_ASA_Curvature_0_checks[] = {
-    "{phase}: ASA:ASA: PARAM {key} must be an integer (got {value})",
+    "{phase}: ASA:ASA: PARAM {key} must be an integer (got '{value}')",
     "{phase}: ASA:ASA: PARAM {key} must be >= {min} (got {value})",
     "{phase}: ASA:ASA: PARAM {key} must be <= {max} (got {value})",
 };
@@ -546,7 +546,7 @@ inline constexpr Arg PARAM_ASA_ASA_Multi_Number_args[] = {
         "", "", false, "", false},
 };
 inline constexpr std::string_view PARAM_ASA_ASA_Multi_Number_checks[] = {
-    "{phase}: ASA:ASA: PARAM {key} must be an integer (got {value})",
+    "{phase}: ASA:ASA: PARAM {key} must be an integer (got '{value}')",
     "{phase}: ASA:ASA: PARAM {key} must be >= {min} (got {value})",
 };
 inline constexpr std::string_view PARAM_ASA_ASA_Multi_Specify_optimizers[] = {
@@ -559,7 +559,7 @@ inline constexpr Arg PARAM_ASA_ASA_Multi_Specify_args[] = {
         Span<RefusedWord>{nullptr, 0}, "", "", "", false, "", false},
 };
 inline constexpr std::string_view PARAM_ASA_ASA_Multi_Specify_checks[] = {
-    "{phase}: ASA:ASA: PARAM {key} must be an integer (got {value})",
+    "{phase}: ASA:ASA: PARAM {key} must be an integer (got '{value}')",
     "{phase}: ASA:ASA: PARAM {key} must be >= {min} (got {value})",
     "{phase}: ASA:ASA: PARAM {key} must be <= {max} (got {value})",
 };
@@ -585,7 +585,7 @@ inline constexpr Arg PARAM_ASA_ASA_Queue_Size_args[] = {
         "", "", false, "", false},
 };
 inline constexpr std::string_view PARAM_ASA_ASA_Queue_Size_checks[] = {
-    "{phase}: ASA:ASA: PARAM {key} must be an integer (got {value})",
+    "{phase}: ASA:ASA: PARAM {key} must be an integer (got '{value}')",
     "{phase}: ASA:ASA: PARAM {key} must be >= {min} (got {value})",
 };
 inline constexpr std::string_view PARAM_ASA_ASA_Queue_Resolution_optimizers[] = {
@@ -610,7 +610,7 @@ inline constexpr Arg PARAM_ASA_ASA_Gener_Block_args[] = {
         "", "", false, "", false},
 };
 inline constexpr std::string_view PARAM_ASA_ASA_Gener_Block_checks[] = {
-    "{phase}: ASA:ASA: PARAM {key} must be an integer (got {value})",
+    "{phase}: ASA:ASA: PARAM {key} must be an integer (got '{value}')",
     "{phase}: ASA:ASA: PARAM {key} must be >= {min} (got {value})",
 };
 inline constexpr std::string_view PARAM_ASA_ASA_Gener_Block_Max_optimizers[] = {
@@ -623,7 +623,7 @@ inline constexpr Arg PARAM_ASA_ASA_Gener_Block_Max_args[] = {
         "", "", false, "", false},
 };
 inline constexpr std::string_view PARAM_ASA_ASA_Gener_Block_Max_checks[] = {
-    "{phase}: ASA:ASA: PARAM {key} must be an integer (got {value})",
+    "{phase}: ASA:ASA: PARAM {key} must be an integer (got '{value}')",
     "{phase}: ASA:ASA: PARAM {key} must be >= {min} (got {value})",
     "{phase}: ASA:ASA: PARAM Gener_Block_Max must be >= Gener_Block (buffers are sized once by the cap)",
 };
@@ -637,7 +637,7 @@ inline constexpr Arg PARAM_ASA_ASA_Gener_Mov_Avr_args[] = {
         "", "", false, "", false},
 };
 inline constexpr std::string_view PARAM_ASA_ASA_Gener_Mov_Avr_checks[] = {
-    "{phase}: ASA:ASA: PARAM {key} must be an integer (got {value})",
+    "{phase}: ASA:ASA: PARAM {key} must be an integer (got '{value}')",
     "{phase}: ASA:ASA: PARAM {key} must be >= {min} (got {value})",
 };
 inline constexpr ParamId optimiser0_params[] = {
@@ -779,6 +779,7 @@ inline constexpr std::string_view PARAM_TADAH_ANNEAL_checks[] = {
     "{phase}: TADAH:ANNEAL_PA: PARAM INIT_MODE JITTER AUTO takes no tolerance (got '{tok}'): TADAH:ANNEAL_PA measures no displacement and takes the first proposal scales as the bounds; TADAH:ANNEAL_PT measures them against the tolerance",
     "{phase}: TADAH:{algo}: PARAM {key} is a key of {name}",
     "{phase}: TADAH:{algo}: PARAM {key} must be {what} (got '{tok}'{note})",
+    "{phase}: TADAH:{algo}: PARAM {key} must be a non-negative integer (got '{value}')",
     "{phase}: TADAH:{algo}: PARAM {key} must be one of: {list} (got '{tok}')",
 };
 
@@ -1127,7 +1128,7 @@ inline constexpr ParamPolicy kParamPolicies[] = {
   ParamPolicy{"PARAM.TADAH:ANNEAL",
       Span<std::string_view>{detail::PARAM_TADAH_ANNEAL_optimizers, 3},
       "{phase}: TADAH:{algo}: unknown PARAM '{key}'; accepted keys: {keys}",
-      Span<std::string_view>{detail::PARAM_TADAH_ANNEAL_checks, 4}},
+      Span<std::string_view>{detail::PARAM_TADAH_ANNEAL_checks, 5}},
 };
 
 }  // namespace param_registry

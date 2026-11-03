@@ -281,6 +281,39 @@ class Generated(unittest.TestCase):
                       c["PARAM.TADAH:GRID.GRID_POINTS 2"].judge(result(
                           startup="no")))
 
+    def test_ranges_of_integral_numbers(self):
+        # Pins: a number argument that takes whole numbers (integral) gets
+        # its min written with a decimal point and with an exponent, each
+        # refused as past the range ("PARAM GRID_POINTS 2.0" and "2e0"); a
+        # number argument without integral gets neither.
+        # Before the fix: no case wrote a whole number with a point or an
+        # exponent, so a PARAM key that read 1e1 as 10 passed.
+        prm = next(p for p in self.reg.params
+                   if p.id == "PARAM.TADAH:GRID.GRID_POINTS")
+        prm.args[0] = dataclasses.replace(prm.args[0], kind="number",
+                                          integral=True)
+        self.g.gen_ranges()
+        c = self.cases("ranges")
+        self.assertEqual({k for k in c if k.startswith("PARAM.TADAH:GRID")},
+                         {"PARAM.TADAH:GRID.GRID_POINTS 2",
+                          "PARAM.TADAH:GRID.GRID_POINTS 1",
+                          "PARAM.TADAH:GRID.GRID_POINTS 2.0",
+                          "PARAM.TADAH:GRID.GRID_POINTS 2e0"})
+        for value in ("2.0", "2e0"):
+            case = c["PARAM.TADAH:GRID.GRID_POINTS " + value]
+            self.assertIn("PARAM GRID_POINTS " + value, case.case["file"])
+            self.assertEqual(case.case["mode"], "startup")
+            self.assertIn("is not refused: tadah hpo starts",
+                          case.judge(result()))
+            self.assertIsNone(case.judge(result(startup=(
+                "line 4 of target.hpo: GRID_POINTS must be at least 2\n"
+                "Line: ENDOPTIMIZER"))))
+        prm.args[0] = dataclasses.replace(prm.args[0], integral=False)
+        self.g.cases = []
+        self.g.gen_ranges()
+        self.assertNotIn("PARAM.TADAH:GRID.GRID_POINTS 2.0",
+                         self.cases("ranges"))
+
     def test_a_group_passes_when_one_case_does(self):
         # Pins: an in-range PARAM value passes when it starts in the file
         # of one example of its entry (ASA's User_Initial_Parameters 0

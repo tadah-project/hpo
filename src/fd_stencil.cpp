@@ -290,9 +290,16 @@ FdSettings fd_settings_of(const OptimizerSpec& sp)
     if (const auto it = sp.param_raw.find("diff_method");
         it != sp.param_raw.end())
         throw std::runtime_error(dm_rule + " (got '" + it->second + "')");
+    /* A whole number in the integer syntax (param_is_integer: 1.0 and 1e0
+     * are refused), refused with the value quoted as written, as a word
+     * is. */
     if (const auto it = sp.param.find("diff_method"); it != sp.param.end()) {
         const double v = it->second;
-        if (v == 0.0) {
+        if (!param_is_integer(sp, "diff_method")) {
+            throw std::runtime_error(dm_rule + " (got '" +
+                                     param_value_text(sp, "diff_method") +
+                                     "')");
+        } else if (v == 0.0) {
             s.scheme = FdScheme::Central;
         } else if (v == 1.0) {
             s.scheme = FdScheme::Forward;
@@ -304,7 +311,9 @@ FdSettings fd_settings_of(const OptimizerSpec& sp)
                 "up to 20 evaluations per parameter; diff_method 0 "
                 "(CENTRAL, the default) and 1 (FORWARD) take PARAM fd_step");
         } else {
-            throw std::runtime_error(dm_rule + " (got " + num(v) + ")");
+            throw std::runtime_error(dm_rule + " (got '" +
+                                     param_value_text(sp, "diff_method") +
+                                     "')");
         }
     }
     return s;

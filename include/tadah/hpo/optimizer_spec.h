@@ -81,6 +81,12 @@ using ParamMap = std::unordered_map<std::string,double>;
  * silently stored as 0.0. */
 using RawParamMap = std::unordered_map<std::string,std::string>;
 
+/* The value of each numeric PARAM line as the target file writes it
+ * (name -> token 0), beside the number in ParamMap: a key that takes a
+ * whole number judges the integer syntax on it (param_is_integer), and its
+ * refusal quotes it (param_value_text). */
+using ParamTextMap = std::unordered_map<std::string,std::string>;
+
 /* Full value-token vector of a PARAM line (name -> all tokens after the
  * key), populated ONLY when a PARAM carries more than one value token --
  * e.g. `PARAM INIT_MODE JITTER AUTO 0.05` -> {"JITTER","AUTO","0.05"}.
@@ -277,7 +283,7 @@ struct OptimizerSpec {
           grad_strategy(o.grad_strategy),
           grad_strategy_resolved(o.grad_strategy_resolved), stop(o.stop),
           param(o.param), param_raw(o.param_raw),
-          param_tokens(o.param_tokens),
+          param_text(o.param_text), param_tokens(o.param_tokens),
           fd_step_from_noise_auto(o.fd_step_from_noise_auto),
           anneal_observer(o.anneal_observer), low(o.low), high(o.high),
           parameter_labels(o.parameter_labels), is_int(o.is_int),
@@ -381,6 +387,7 @@ struct OptimizerSpec {
     StopCriteria stop;
     ParamMap     param;             // algorithm-specific knobs
     RawParamMap  param_raw;         // PARAM values that were not numeric
+    ParamTextMap param_text;        // numeric PARAM values as written
     ParamTokenMap param_tokens;     // full token vector, multi-token PARAMs only
     /* PARAM fd_step was derived by the NOISE block's AUTO (HPOTargets), not
      * written: the startup refusal of a box too narrow for the step, and
@@ -689,5 +696,18 @@ struct OptimizerSpec {
  * on a bound 1e-12 inside, BOBYQA shifts a start within its initial step
  * of a bound) keeps the plain mapping. */
 std::optional<OptimizerSpec> anchor_seed_points(const OptimizerSpec& sp);
+
+/* The value of the numeric PARAM `key` of `sp` as the target file writes
+ * it (param_text); for a value no line wrote (a spec a program builds),
+ * the number in its shortest form that reads back as the same number. A
+ * refusal of the value quotes it. `key` has a value in `param`. */
+std::string param_value_text(const OptimizerSpec& sp, const std::string& key);
+
+/* Whether the numeric PARAM `key` of `sp`, of a key that takes a whole
+ * number, is one: its value as written is in the integer syntax
+ * (is_integer_token: decimal digits, a '-' for a negative value, so
+ * neither 1e1, +10 nor 10.0 is); a value no line wrote, a whole number.
+ * The range of the key is its caller's. `key` has a value in `param`. */
+bool param_is_integer(const OptimizerSpec& sp, const std::string& key);
 
 }   // namespace

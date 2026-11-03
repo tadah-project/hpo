@@ -157,6 +157,15 @@ double parse_positive(const std::string& tok, const std::string& what,
     return v;
 }
 
+bool is_integer_token(const std::string& tok)
+{
+    const std::size_t first = !tok.empty() && tok[0] == '-' ? 1 : 0;
+    if (tok.size() == first) return false;
+    for (std::size_t i = first; i < tok.size(); ++i)
+        if (!is_digit(tok[i])) return false;
+    return true;
+}
+
 bool is_number_shaped(const std::string& tok)
 {
     if (tok.empty()) return false;

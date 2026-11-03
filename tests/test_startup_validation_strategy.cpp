@@ -2826,7 +2826,7 @@ TEST_CASE("startup validation: a phase's settings refused at startup name the "
          "the PRESTAGE exploration (EXPLORE block): " +
              hpo_test::ceres_expect(
                  "CERES:STEEPEST_DESCENT requires PARAM max_iter to be an integer from "
-                 "0 to 2147483647 (Ceres' max_num_iterations), got 1.5")},
+                 "0 to 2147483647 (Ceres' max_num_iterations), got '1.5'")},
         {"a REFINE block's DLIB:BFGS MAXTIME",
          strategy_config("    TYPE PRESTAGE\n" + kExploreGfs +
                          "    REFINE\n      LIB DLIB\n      ALGO BFGS\n"
@@ -4342,7 +4342,7 @@ TEST_CASE("startup validation: finite differences fit every OPTIM box, "
         CHECK(judge(strategy_config(bfgs + "    PARAM diff_method 3\n"))
                   .startup ==
               "the STRATEGY-level optimiser DLIB:BFGS: PARAM diff_method must "
-              "be 0 (CENTRAL, the default) or 1 (FORWARD) (got 3)");
+              "be 0 (CENTRAL, the default) or 1 (FORWARD) (got '3')");
         CHECK(judge(strategy_config(
                         "    TYPE PLAIN\n    LIB NLOPT\n    ALGO LD_LBFGS\n"
                         "    MAXEVAL 20\n    PARAM fd_step 0\n")).startup ==

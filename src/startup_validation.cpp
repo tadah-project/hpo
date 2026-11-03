@@ -763,12 +763,16 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
   }
 
   /* --- settings a search that ignores its start point does not read -----
-   * A WARNING each (start_point_warnings, backend_rules.h): an INIT block
-   * whose points such a search never evaluates, a RESTART block whose
+   * Refused: an INIT block with a METHOD line of such a search, which never
+   * evaluates its points (refuse_unread_init_points, backend_rules.h).
+   * A WARNING each (start_point_warnings): an OPTIMIZER-level INIT block
+   * whose points a PRESTAGE exploration that is such a search never
+   * evaluates (the refinement's fallback reads them), a RESTART block whose
    * rounds repeat round 0 (all of it when the search draws no random
    * numbers either, its first local search for GD_STOGO_RAND below
    * POPULATION 2n + 1), and the METHOD lines of a RESTART block on such a
    * search that draws them, which no round evaluates. */
+  refuse_unread_init_points(trg.spec);
   for (const std::string &w :
        start_point_warnings(trg.spec, trg.repeat_reuse_blocker())) {
     std::cerr << "[tadah hpo] WARNING: " << w << "\n";
