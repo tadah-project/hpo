@@ -99,18 +99,20 @@ with the change that alters it.
   `hpo_hpotarget_registry_sync`): `blueprint/README.md`, "The generated
   tables", says what they are generated from and how to regenerate them.
 
-## The parser shadow
+## The frozen corpus of target files
 
-The CMake option `TADAH_HPO_PARSER_SHADOW` (`OFF` by default) configures a
-validation build in which every target file is read by both parsers of the
-target file, `ParsedTarget::read` and the registry-driven parser, and the
-first file the two read differently stops the read naming both
-(`blueprint/README.md`, "Checks"). It is a build for the tests only; the
-program is never built with it:
+`tests/data/hpotarget_corpus` holds the target files that
+`tests/hpotarget_corpus.py` collects from the repositories and what the
+parser of the target file gives for each: the description of the parse or
+the refusal, compared byte for byte (CTest cases
+`hpotarget corpus: ...`; `blueprint/README.md`, "The frozen corpus"). It
+is written by `tests/hpotarget_corpus.py write`, not by hand. A change
+that changes what `tadah hpo` reads from a target file writes the corpus
+again in the same commit, and the differences are reviewed with it:
 
 ```bash
-cmake -S . -B build-shadow -DCMAKE_BUILD_TYPE=RelWithDebInfo \
-    -DBUILD_TESTING=ON -DTADAH_HPO_PARSER_SHADOW=ON
-cmake --build build-shadow -j
-ctest --test-dir build-shadow/tests --output-on-failure
+python3 tests/hpotarget_corpus.py write tests/data/hpotarget_corpus \
+    --runner <build directory>/tests/hpotarget_case_runner \
+    --tadah-mlip <Tadah.MLIP source directory>
+git diff --stat tests/data/hpotarget_corpus
 ```

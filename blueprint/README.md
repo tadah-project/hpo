@@ -556,8 +556,8 @@ are checked in:
   optimiser as the entries name it (`LIB:ALGO`, `LIB` or `*`), the
   excluded `PARAM` keys and the `PARAM` policies;
 - `include/tadah/hpo/hpotarget_handlers_gen.h` (namespace
-  `tadah::hpo::hpotarget_registry`): the handlers of the registry-driven
-  parser ("The handlers", below), declared as the members of
+  `tadah::hpo::hpotarget_registry`): the handlers of the parser of the
+  target file ("The handlers", below), declared as the members of
   `struct Handlers`, and their addresses (`kKeyHandlers`,
   `kOptionHandlers`, `kFormHandlers`).
 
@@ -578,8 +578,9 @@ What only the documentation reads (`doc`, `long_doc`, `quirk`, `synopsis`,
 `title`, `condition`, `repeat_doc`, `msg_doc`, the sentence of a default,
 the reason of a refused entry, the keys a rule concerns), the examples and
 the invalid lines, the wrappers, the training configurations and the
-fixtures stay out of the headers. The program does not include them. The
-cases of `[hpotarget_gen]` compare generated tables with the ones the
+fixtures stay out of the headers. The parser of the target file
+(`src/hpotarget_parser.cpp`, its handlers and the readers they call) reads
+the tables of the headers. The cases of `[hpotarget_gen]` compare generated tables with the ones the
 parser and the startup checks hold by hand; the header comment of
 `tests/test_hpotarget_registry_bindings.cpp` lists the tables compared.
 
@@ -597,9 +598,9 @@ cmake --build <build directory> --target hpo_regenerate_hpotarget_registry
 
 ### The handlers
 
-The registry-driven parser of the target file (`src/hpotarget_parser.cpp`)
-reads a file as `HPOTargets` reads it (`ParsedTarget::read`), in the orders
-of `[structure]`: each line is tried in `check_order`; a line that opens a
+The parser of the target file (`src/hpotarget_parser.cpp`), with which
+`HPOTargets` reads the target file of `tadah hpo`, reads a file in the
+orders of `[structure]`: each line is tried in `check_order`; a line that opens a
 block runs `open_order`, an END line `close_order` with its block's
 `close_steps`; the line of a key runs the steps of its place
 (`line_steps_root`, `_group`, `_block`, or the key's own `steps`), its
@@ -624,14 +625,36 @@ The handlers of the keys of the optimiser group are those of
 `dispatch_opt_attr()`, which `tadah refit` calls too; the handlers of the
 options of `PC_LAMMPS` and `PC_FAILPROBE` are those of `LammpsSim`, and
 the handler of the form `cohesive_energy` and of its options those of
-`parse_pc_observable_line()`, so both parsers read them alike. The
-`STRATEGY` keys of each type, their effect and the loss functions come
-from the generated tables too.
+`parse_pc_observable_line()`. The `STRATEGY` keys of each type, their
+effect and the loss functions come from the generated tables too.
 
-The registry-driven parser does not read the target files of `tadah hpo`
-yet: the tests read with it through `make_targets()`
-(`include/tadah/hpo/hpo_targets_testing.h`), and `hpotarget_case_runner
---parser new` reads its cases with it.
+### The frozen corpus
+
+`tests/data/hpotarget_corpus` holds the target files of the repositories
+(every `*.hpo` of HPO's test data, every example of the registry in its
+wrapper, the target files of the tests and of the documentation of
+Tadah.MLIP), each with its training configuration and the files it reads,
+and what the parser gives for it: the description of the parse
+(`expected/<name>.dump`, written by `describe_parse()` of
+`include/tadah/hpo/hpo_targets_testing.h`, whose comment gives the format)
+or the message that refuses the file (`expected/<name>.error`).
+`corpus.toml` lists the inputs. `tests/hpotarget_corpus.py write` collects
+the inputs from the sources, freezes them with the files they read and
+writes the results the build's `hpotarget_case_runner` gives; it stops
+when a frozen input reads otherwise than its source. Its docstring
+describes the sources and the files of the corpus.
+
+The corpus is not regenerated with the registry: a change of the parser
+that changes a result changes what `tadah hpo` does, and the corpus is
+written again in the commit that makes that change, with the differences
+reviewed:
+
+```bash
+python3 HPO/tests/hpotarget_corpus.py write HPO/tests/data/hpotarget_corpus \
+    --runner build_tadah/_deps/tadah.hpo-build/tests/hpotarget_case_runner \
+    --tadah-mlip Tadah.MLIP
+git -C HPO diff --stat tests/data/hpotarget_corpus
+```
 
 ### Checks
 
@@ -639,50 +662,31 @@ yet: the tests read with it through `make_targets()`
 |---|---|
 | `hpo_hpotarget_registry_python` | the loader, on synthetic registries (`tests/test_hpotarget_registry.py`) |
 | `hpo_hpotarget_registry_check` | `hpotarget_registry.py --check`: an unknown table or field, a table of an entry (`[[key.invalid]]`, ...) that follows a table of another kind instead of its entry, a wrong type, a missing field, a repeated id, a reference to nothing, a `version` other than 1, a placeholder a message may not hold, a wrapper without exactly one slot line or whose `block` is not that of its slot, a place a line can be without its wrapper, documentation text that addresses the reader or holds a placeholder, a `doc` of more than two sentences, a later example without a doc, a rule without a title, an optimiser or a library without a description, an entry without the cases it needs, an example that puts a key outside its blocks, an argument the synopsis does not name, an invalid line whose error is no message of the registry, a message without an invalid line or an `untested` reason, an example that writes at the place of a word argument a word that is not one of its `words` (compared in any case), a word of `words` that no example writes; an order of the parse that is not an order of the steps the loader names, a list of the steps of a key's line without `value` or with `leftover` outside a group, a check of an END line in two blocks, a `case`, an `at` or a repeat rule the loader does not know, an `effect` of a key no strategy type lists (or none for one it lists), a `what` of a rule whose message has no `{what}` |
-| `hpo_hpotarget_registry_coverage` | a name the parser's sources recognise without an entry, or an entry whose name they do not recognise (a vocabulary a function takes from the generated tables counts whole, and the rule fails when the function no longer takes it); the keys of each block, the options of each line and the `STRATEGY` keys of each `TYPE` are compared apart, so an option given to another line fails; a name a block refuses as a top-level key that is no key of the top level (`tests/check_hpotarget_coverage.py`; its docstring says how the names are extracted and what the extraction cannot see). The coverage check reads the rules of the `OPTIM` lines from MLIP's sources, in the directory `--mlip` names (an MLIP rule without `--mlip` is an error): MLIP's OPTIM reader reads those lines for `tadah hpo` and `tadah analysis check_bounds` |
+| `hpo_hpotarget_registry_coverage` | a name the parser's sources recognise without an entry, or an entry whose name they do not recognise (a vocabulary a function takes from the generated tables counts whole, and the rule fails when the function does not take it; a handler that reads a word with `read_word()` recognises the words of its entry, and one that is no entry's fails); the keys of each block, the options of each line and the `STRATEGY` keys of each `TYPE` are compared apart, so an option given to another line fails (`tests/check_hpotarget_coverage.py`; its docstring says how the names are extracted and what the extraction cannot see). The coverage check reads the rules of the `OPTIM` lines from MLIP's sources, in the directory `--mlip` names (an MLIP rule without `--mlip` is an error): MLIP's OPTIM reader reads those lines for `tadah hpo` and `tadah analysis check_bounds` |
 | `hpo_hpotarget_coverage_tool` | the extraction itself, on synthetic sources (`tests/test_check_hpotarget_coverage.py`; its cases on the real sources read MLIP's from `TADAH_MLIP_SOURCE_DIR`, which CTest sets) |
 | `hpo_hpotarget_registry_conformance` | an example the parser refuses, an invalid line it accepts or refuses with another message (`tests/test_hpotarget_registry_conformance.cpp`), the script of `[lammps_script]` that does not take the candidate potential (`tests/test_hpotarget_script_contract.cpp`): every case of tag `[hpotarget_registry]` |
 | `hpo_hpotarget_registry_generated` | a case derived from the structured fields that the parser answers otherwise (`tests/check_hpotarget_generated.py`, which runs the cases through `hpotarget_case_runner`, `tests/tools/hpotarget_case_runner.cpp`; its docstring lists the checks and what they cannot see): the first example of each key in every block, accepted where the key's blocks list it and refused there otherwise; each key and option given twice, as its repeat rule says; the values at and past the limits of the argument of each key, `INIT` method, `PARAM` key and option, in the file of each example (of the first, for an option), the largest value through the startup checks and a `PARAM` value at every limit, a value in the range accepted in one example's file at least; each word of a word list accepted and each refused word refused; each `PARAM` key on each optimiser a wrapper names, accepted where the key lists the optimiser and refused otherwise; each option on every other line; the defaults, against what the code gives a file without the keys; the word of each word argument at a fixed place, of each option and of each form with a word, written with one letter in the other case: read where `case` is `any`, refused at its line where it is `exact` |
-| `hpo_hpotarget_generated_tool` | the case generator, `check_hpotarget_generated.py`, on a synthetic registry (`tests/test_check_hpotarget_generated.py`), and its option `--parser` (`old`, the default, `new` or `both`: the runner reads the cases with each parser named, and each one's results are judged) |
-| `hpo_hpotarget_placement_matrix` | the placement matrix: the first example of each key in every block, read by both parsers (`check_hpotarget_generated.py --only blocks --parser both`), where either parser refuses the line in a place the registry lists for the key, or accepts it, or refuses it with another message, in a place the registry does not list |
+| `hpo_hpotarget_generated_tool` | the case generator, `check_hpotarget_generated.py`, on a synthetic registry (`tests/test_check_hpotarget_generated.py`), and the runner's command, which takes no option |
 | `hpo_hpotarget_registry_sync` | `gen_hpotarget.py --check`: a generated header that is missing or differs from what the registry and its loader give; an id of the registry that gives no C++ name, or two ids that give one |
 | `hpo_hpotarget_generator_tool` | the header generator, `gen_hpotarget.py`, on a synthetic registry (`tests/test_gen_hpotarget.py`): the C++ names and their collisions, the escaping of a message, the placeholders, the tables and what they leave out, the comment at the top of each header, `--header`, `--check` and the command it names, the help; the headers compiled with the build's C++ compiler |
-| `hpo_hpotarget_case_runner_tool` | `hpotarget_case_runner` itself (`tests/test_hpotarget_case_runner.py`): its option `--parser` (`old`, the parser of `tadah hpo`; `new`, the registry-driven parser, which reads each case as `old` does and refuses mode `check`, which runs `tadah hpo --check`), its mode `describe`, which reports what the parse set as `describe_parse()` writes it (`include/tadah/hpo/hpo_targets_testing.h`, whose comment gives the format), and the cases that read a target file and a training configuration in a copy of a directory tree |
-| `hpo_hpotarget_corpus_tool` | the collection of the corpus of target files, `tests/hpotarget_corpus.py`, on synthetic trees and on the real ones (`tests/test_hpotarget_corpus.py`; its cases on the Tadah.MLIP tree read it from `TADAH_UMBRELLA_SOURCE_DIR`, which CTest sets in a build of Tadah.MLIP) |
-| `hpo_hpotarget_corpus` | an input of the corpus (a target file of HPO's test data, a registry example in its wrapper, a target file of the tests or of the documentation of Tadah.MLIP) that `hpotarget_case_runner --parser old` reads to neither a description nor a refusal, or to two results in two runs; a source without an input; a target file without a training configuration (`hpotarget_corpus.py check`; its docstring lists the sources and what it cannot see) |
-| `hpo_hpotarget_differential` | a case that the two parsers of the target file, `ParsedTarget::read` and the registry-driven parser, read differently: another description of the parse (`describe_parse()`), another refusal of the file or another refusal of the startup checks, each parser reading the case in a directory of its own, on a training configuration of its own (`tests/test_hpotarget_differential.cpp`, the hidden tag `[.hpotarget_differential]`); the cases are every example and invalid entry of the registry, every case of the generated checks and every input of the corpus, which `hpo_hpotarget_differential_cases` writes first (`tests/hpotarget_differential.py`; its docstring lists the sources) and whose failure leaves this entry not run |
-| `hpo_hpotarget_differential_tool` | the cases of the comparison, `tests/hpotarget_differential.py` (`tests/test_hpotarget_differential.py`): a registry entry, a generated case or a corpus input left out, a case in another mode or file than its source gives, two cases with one id, a cases file that does not read back as written |
+| `hpo_hpotarget_case_runner_tool` | `hpotarget_case_runner` itself (`tests/test_hpotarget_case_runner.py`): an option, which it refuses, its mode `describe`, which reports what the parse set as `describe_parse()` writes it (`include/tadah/hpo/hpo_targets_testing.h`, whose comment gives the format), and the cases that read a target file and a training configuration in a copy of a directory tree |
+| `hpo_hpotarget_corpus_tool` | the collection of the corpus of target files, `tests/hpotarget_corpus.py`, on synthetic trees and on the real ones, and its command `write`, which freezes the corpus (`tests/test_hpotarget_corpus.py`; its cases on the Tadah.MLIP tree read it from `TADAH_UMBRELLA_SOURCE_DIR`, which CTest sets in a build of Tadah.MLIP) |
+| `hpo_hpotarget_corpus` | an input of the corpus (a target file of HPO's test data, a registry example in its wrapper, a target file of the tests or of the documentation of Tadah.MLIP) that `hpotarget_case_runner` reads to neither a description nor a refusal, or to two results in two runs; a source without an input; a target file without a training configuration (`hpotarget_corpus.py check`; its docstring lists the sources and what it cannot see) |
 | `hpo_hpotarget_handlers_removal` (label `cmake`) | a handler that compiles for a key removed from a copy of the registry, or a parser that links with a key added to one (`tests/handlers_removal/check_handlers_removal.cmake`, on the probe targets of `tests/CMakeLists.txt`, which it builds) |
-| the Catch2 cases of tag `[hpotarget_engine]` | a file the registry-driven parser reads otherwise than `HPOTargets`: a refusal of another text or of another of two faults (a repeated line whose value is wrong, by the place of the key; a removed keyword inside `INNER`; `LOG_HP` in `INIT`, `INNER`, `EXPLORE` and at the top level; the checks of ENDSTRATEGY; the `--gate` of `PC_FAILPROBE`; two faults at the end of the file), or another description of a file both read (`tests/test_hpotarget_engine.cpp`) |
+| the Catch2 cases of tag `[hpotarget_engine]` | a file the parser refuses with another text or for another of two faults (a repeated line whose value is wrong, by the place of the key; a removed keyword inside `INNER`; `LOG_HP` in `INIT`, `INNER`, `EXPLORE` and at the top level; the checks of ENDSTRATEGY; the `--gate` of `PC_FAILPROBE`; two faults at the end of the file), a file of every block and line that is refused or whose description lacks a setting of its lines, and a second parser of the target file (a member `read()` of `ParsedTarget`, or a test seam that chooses or compares parsers) (`tests/test_hpotarget_engine.cpp`) |
 | the Catch2 cases of tag `[hpotarget_refit]` | a stage block of `tadah refit`, or one line, that `dispatch_opt_attr()` reads otherwise than on the hand-written tables it read before (`tests/test_optimizer_attr_reader.cpp`; the expected results in `tests/data/optimizer_attr_reader_*.inc`) |
-| the Catch2 cases of tag `[hpotarget_shadow]` | the parser shadow (`read_shadowed()`, `include/tadah/hpo/hpo_targets_testing.h`; below): two parsers that read a file alike giving other targets than the first alone, a difference in the description, the refusal (its text or its type), one refusal where the other parser reads the file, or in what the two write to standard output or standard error, that is not refused naming both parsers, two equal refusals that do not give the first parser's, the second parser's output written; a build with the CMake option `TADAH_HPO_PARSER_SHADOW` that does not compare the parsers once for each construction of `HPOTargets`, or a build without it that compares them (`tests/test_hpotarget_differential.cpp`) |
-| the Catch2 cases of tag `[hpotarget_describe]` | a setting of a target file that the description `describe_parse()` writes leaves out, two descriptions of one file, a `PC_OBSERVABLE` kind described without its options (`tests/test_hpotarget_describe_parse.cpp`) |
+| the Catch2 cases of tag `[hpotarget_describe]` | a setting of a target file that the description `describe_parse()` writes leaves out, two descriptions of one file, a `PC_OBSERVABLE` kind described without its options, the LAMMPS library of the build in the description (`tests/test_hpotarget_describe_parse.cpp`) |
+| the Catch2 cases of tag `[hpotarget_corpus]` | an input of the frozen corpus (above) whose description or refusal differs, byte for byte, from what the corpus holds, or that an environment override of the registry set outside the corpus reaches (`tests/test_hpotarget_corpus.cpp`) |
 | the Catch2 cases of tag `[hpotarget_mlip]` | a case of the registry, or a wrapper, that MLIP's OPTIM reader reads otherwise than `HPOTargets`: a box of another value, origin, shape or line, an `OPTIM` line refused with another message, or a refusal of the seed's preparation with another (`tests/test_hpotarget_registry_conformance.cpp`, whose comment above the cases gives the rules) |
 | the Catch2 cases of tag `[hpotarget_gen]` | a generated table that differs from the table the parser or the startup checks hold by hand, in order where a message shows the order; an order of the parse that differs from the parser's, which a file that two steps refuse shows; a key given again after a line reads it, an effect, a what or an explain that differs from the parser's (`tests/test_hpotarget_registry_bindings.cpp`; its header comment lists the tables and says how each is compared) |
 
-Sixteen of the entries named above have the label `docs`; CTest runs the
+Twelve of the entries named above have the label `docs`; CTest runs the
 cases of `[hpotarget_mlip]`, `[hpotarget_gen]`, `[hpotarget_describe]`,
-`[hpotarget_shadow]`, `[hpotarget_engine]` and `[hpotarget_refit]` one by
+`[hpotarget_corpus]`, `[hpotarget_engine]` and `[hpotarget_refit]` one by
 one, without a label, as the command below selects them:
 
 ```bash
-ctest --test-dir build_tadah -R "hpotarget generated tables|OPTIM reader reads|describe_parse|parser shadow|hpotarget engine|dispatch_opt_attr"
-```
-
-The parser shadow is a validation build, never the program's: configured
-with the CMake option `TADAH_HPO_PARSER_SHADOW` (`OFF` by default), the
-library reads every target file with both parsers, `ParsedTarget::read`
-first and the registry-driven parser second, each on its own copy of the
-training configuration, and a file the two read differently stops the read
-with a `std::logic_error` that names both parsers and the first difference.
-The whole test suite and the documentation runs pass through such a build
-when no file of theirs is read differently:
-
-```bash
-cmake -S Tadah.MLIP -B build_shadow -C tadah-preset.cmake \
-    -DTADAH_HPO_PARSER_SHADOW=ON
-cmake --build build_shadow
-ctest --test-dir build_shadow --output-on-failure
+ctest --test-dir build_tadah -R "hpotarget generated tables|OPTIM reader reads|describe_parse|hpotarget corpus|hpotarget engine|dispatch_opt_attr"
 ```
 
 The conformance test reads the TOML when it runs, so a change to the
