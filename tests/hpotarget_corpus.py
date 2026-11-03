@@ -6,6 +6,7 @@ as inputs of the comparison of two parsers of the target file.
     hpotarget_corpus.py cases OUT [SOURCES]
     hpotarget_corpus.py check --runner RUNNER [--parser old|new]
                               [--keep DIR] [SOURCES]
+    hpotarget_corpus.py write OUT --runner RUNNER [SOURCES]
 
 SOURCES: --hpo DIR (the HPO source tree; default: the one this file is in),
 --tadah-mlip DIR (the Tadah.MLIP source tree; without it, or empty, the
@@ -23,7 +24,8 @@ file. `check` runs the cases twice with the parser --parser names and
 exits 1 when a case gives neither a description nor a refusal, or both,
 when the two runs differ, when a source that is read has no input, or when
 a target file has no training configuration; it prints how many inputs
-each source has and how many of them parse.
+each source has and how many of them parse. `write` freezes the corpus
+into the directory OUT (below).
 
 The sources, and the id of each input
 -------------------------------------
@@ -63,6 +65,40 @@ docs        docs:<path>: each *.hpo of the documentation's files
             docs/source/nfp_examples is read with the training
             configuration of the registry's default context.
 
+The frozen corpus
+-----------------
+`write OUT` writes the frozen corpus that tests/test_hpotarget_corpus.cpp
+reads (tests/data/hpotarget_corpus): every input with the files it reads,
+and what the parser of `tadah hpo` gives for it, read by the runner (mode
+"describe"). OUT holds:
+
+corpus.toml   one [[input]] per input, in the order of the sources:
+              id, origin, the files of the input and `expected`;
+targets/      the target file of each input given as text,
+              targets/<source>/<name>.hpo (`target`);
+configs/      each training configuration given as text, once
+              (`config`): a context of the registry under its name,
+              MLIP_TESTS_CONFIG as mlip-tests.tadah;
+fixtures/     the fixture files of the registry, copied into the
+              directory of each input that writes them (`tree`; a
+              second set of fixtures would be fixtures-2/);
+trees/        each directory an input is read in, copied once,
+              trees/<source>/<name> (`tree`), without the files
+              TREE_EXCLUDE names (datasets, which no parse opens);
+expected/     what the parser gives, expected/<source>/<name>.dump
+              (the description of the parse) or <name>.error (the
+              message that refuses the file), byte for byte.
+
+<name> is the id of the input without its source, each run of characters
+other than letters, digits, '.', '_' and '-' written as '_'. An input read
+in place (`tree`) keeps target_file, config_file, cwd, copies,
+config_drop and config_add; every input keeps env. Before it writes, the
+command reads every input twice, from the sources and from the frozen
+files, and stops when the two differ (the freezing left out a file the
+parse reads) or when an input gives neither a description nor a refusal.
+OUT is replaced whole; a directory that is not empty and holds no
+corpus.toml is refused.
+
 What it cannot see
 ------------------
 - a target file a test builds from values known only when it runs (a
@@ -83,6 +119,7 @@ import ast
 import json
 import pathlib
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -629,10 +666,14 @@ def cases_text(corpus: Corpus) -> str:
     return "\n".join(lines)
 
 
-def run_runner(runner: pathlib.Path, parser: str, cases: pathlib.Path,
+def run_runner(runner: pathlib.Path, parser: str | None,
+               cases: pathlib.Path,
                results: pathlib.Path) -> tuple[list[dict] | None, str]:
-    proc = subprocess.run([str(runner), "--parser", parser, str(cases),
-                           str(results)], capture_output=True, text=True)
+    """The results of the runner on `cases` (with --parser `parser`, or
+    the runner's default parser, the program's, when None)."""
+    option = ["--parser", parser] if parser else []
+    proc = subprocess.run([str(runner), *option, str(cases), str(results)],
+                          capture_output=True, text=True)
     if proc.returncode != 0:
         return None, (proc.stdout + proc.stderr).strip() + \
             f"\n(the runner exited with {proc.returncode})"
@@ -679,11 +720,225 @@ def check(corpus: Corpus, runner: pathlib.Path, parser: str,
     return problems
 
 
+# -------------------------------------------------------------- frozen ----
+
+# The files of a tree an input is read in that the frozen corpus leaves
+# out: the datasets, which the parse of a target file does not open.
+TREE_EXCLUDE = ("*.tadahdb",)
+NAME_RUN = re.compile(r"[^A-Za-z0-9._-]+")
+
+
+@dataclass
+class Frozen:
+    """The frozen corpus before it is written: the text of each file
+    (corpus path -> text), each tree (corpus path -> source directory) and
+    the [[input]] tables, without `expected`."""
+    files: dict[str, str] = field(default_factory=dict)
+    trees: dict[str, pathlib.Path] = field(default_factory=dict)
+    inputs: list[dict] = field(default_factory=list)
+
+
+def frozen_name(iid: str, source: str) -> str:
+    rest = iid[len(source) + 1:]
+    return NAME_RUN.sub("_", rest).strip("_") or "input"
+
+
+def freeze(corpus: Corpus, reg) -> Frozen:
+    """The frozen corpus of `corpus`'s inputs (the module docstring, "The
+    frozen corpus"); the training configurations named after the context
+    of the registry whose configuration they are."""
+    fz = Frozen()
+    config_names = {MLIP_TESTS_CONFIG: "mlip-tests"}
+    for name, c in sorted(reg.contexts.items()):
+        config_names.setdefault(c.config, name)
+    configs: dict[str, str] = {}           # text -> corpus path
+    fixture_sets: dict[tuple, str] = {}    # fixtures -> corpus directory
+    trees: dict[str, str] = {}             # source directory -> corpus path
+    names: set[str] = set()
+    for i in corpus.inputs:
+        case = i.case
+        base = f"{i.source}/{frozen_name(i.id, i.source)}"
+        name, n = base, 2
+        while name in names:
+            name, n = f"{base}-{n}", n + 1
+        names.add(name)
+        entry: dict = {"id": i.id, "origin": i.origin}
+        if "tree" in case:
+            src = pathlib.Path(case["tree"])
+            tree = trees.get(str(src))
+            if tree is None:
+                stem = f"trees/{i.source}/{NAME_RUN.sub('_', src.name)}"
+                tree, k = stem, 2
+                while tree in fz.trees:
+                    tree, k = f"{stem}-{k}", k + 1
+                trees[str(src)] = tree
+                fz.trees[tree] = src
+            entry["tree"] = tree
+            for k in ("cwd", "target_file", "config_file", "copies",
+                      "config_drop", "config_add"):
+                if k in case:
+                    entry[k] = case[k]
+        else:
+            entry["target"] = f"targets/{name}.hpo"
+            fz.files[entry["target"]] = case["file"]
+            cpath = configs.get(case["config"])
+            if cpath is None:
+                stem = config_names.get(case["config"],
+                                        f"config-{len(configs) + 1}")
+                cpath = f"configs/{stem}.tadah"
+                configs[case["config"]] = cpath
+                fz.files[cpath] = case["config"]
+            entry["config"] = cpath
+            fixtures_ = tuple((f["path"], f["text"])
+                              for f in case.get("fixtures", []))
+            if fixtures_:
+                d = fixture_sets.get(fixtures_)
+                if d is None:
+                    d = "fixtures" if not fixture_sets else \
+                        f"fixtures-{len(fixture_sets) + 1}"
+                    fixture_sets[fixtures_] = d
+                    for path, text in fixtures_:
+                        fz.files[f"{d}/{path}"] = text
+                entry["tree"] = d
+        if "env" in case:
+            entry["env"] = case["env"]
+        entry["name"] = name
+        fz.inputs.append(entry)
+    return fz
+
+
+def stage(fz: Frozen, out: pathlib.Path) -> None:
+    """Writes the files and the trees of `fz` under `out`."""
+    for rel, text in fz.files.items():
+        p = out / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_bytes(text.encode("utf-8"))
+    for rel, src in fz.trees.items():
+        shutil.copytree(src, out / rel,
+                        ignore=shutil.ignore_patterns(*TREE_EXCLUDE))
+
+
+def frozen_cases_text(fz: Frozen, root: pathlib.Path) -> str:
+    """The cases of hpotarget_case_runner (mode describe) of the frozen
+    inputs staged under `root`."""
+    lines = []
+    for e in fz.inputs:
+        lines += ["[[case]]", f"id = {toml_string(e['id'])}",
+                  'mode = "describe"']
+        if "target" in e:
+            lines.append(f"file = {toml_string(fz.files[e['target']])}")
+            lines.append(f"config = {toml_string(fz.files[e['config']])}")
+        if "tree" in e:
+            lines.append(f"tree = {toml_string(str(root / e['tree']))}")
+        for k in ("cwd", "target_file", "config_file", "copies",
+                  "config_drop", "config_add", "env"):
+            if k in e:
+                lines.append(f"{k} = {toml_value(e[k])}")
+        lines.append("")
+    return "\n".join(lines)
+
+
+CORPUS_HEADER = """\
+# The frozen corpus of target files: each input of tests/hpotarget_corpus.py
+# with the files it reads and what the parser of `tadah hpo` gives for it
+# (expected/: <name>.dump the description of the parse, <name>.error the
+# refusal). tests/test_hpotarget_corpus.cpp reads every input and compares.
+# Written by `tests/hpotarget_corpus.py write` (its docstring describes the
+# fields); a change of the parser that changes a result is a change of
+# behaviour, and the corpus is written again only with it.
+"""
+
+
+def corpus_toml(fz: Frozen, expected: dict[str, str]) -> str:
+    lines = [CORPUS_HEADER]
+    for e in fz.inputs:
+        lines.append("[[input]]")
+        for k in ("id", "origin", "target", "config", "tree", "cwd",
+                  "target_file", "config_file", "copies", "config_drop",
+                  "config_add", "env"):
+            if k in e:
+                lines.append(f"{k} = {toml_value(e[k])}")
+        lines.append(f"expected = {toml_string(expected[e['id']])}")
+        lines.append("")
+    return "\n".join(lines)
+
+
+def write(corpus: Corpus, reg, runner: pathlib.Path,
+          out: pathlib.Path) -> list[str]:
+    """Writes the frozen corpus of `corpus` into `out` (the module
+    docstring); returns the problems that stopped it, and writes nothing
+    then."""
+    problems = list(corpus.problems)
+    for s in corpus.read:
+        if not any(i.source == s for i in corpus.inputs):
+            problems.append(f"{s}: no input")
+    if out.exists() and any(out.iterdir()) and \
+            not (out / "corpus.toml").exists():
+        problems.append(f"{out}: a directory that is not empty and holds "
+                        "no corpus.toml is not replaced")
+    if problems:
+        return problems
+    fz = freeze(corpus, reg)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(dir=out.parent) as tmp:
+        work = pathlib.Path(tmp)
+        staged = work / "corpus"
+        stage(fz, staged)
+        (work / "live.toml").write_text(cases_text(corpus), encoding="utf-8")
+        (work / "frozen.toml").write_text(frozen_cases_text(fz, staged),
+                                          encoding="utf-8")
+        live, err = run_runner(runner, None, work / "live.toml",
+                               work / "live.json")
+        if live is None:
+            return [err]
+        frozen, err = run_runner(runner, None, work / "frozen.toml",
+                                 work / "frozen.json")
+        if frozen is None:
+            return [err]
+        live_by_id = {r["id"]: r for r in live}
+        frozen_by_id = {r["id"]: r for r in frozen}
+        expected: dict[str, str] = {}
+        for e, i in zip(fz.inputs, corpus.inputs):
+            r = frozen_by_id.get(e["id"])
+            if r is None:
+                problems.append(f"{e['id']}: no result")
+                continue
+            if bool(r["parse_error"]) == bool(r["dump"]):
+                problems.append(f"{e['id']} ({i.origin}): the runner gave "
+                                + ("both a description and a refusal"
+                                   if r["dump"] else
+                                   "neither a description nor a refusal"))
+                continue
+            if r != live_by_id.get(e["id"]):
+                problems.append(f"{e['id']} ({i.origin}): the frozen input "
+                                "does not read as the input of its source "
+                                "(a file the parse reads is not in the "
+                                "corpus)")
+                continue
+            kind, text = (".dump", r["dump"]) if r["dump"] else \
+                (".error", r["parse_error"])
+            expected[e["id"]] = f"expected/{e['name']}{kind}"
+            fz.files[expected[e["id"]]] = text
+        if problems:
+            return problems
+        for rel in expected.values():
+            p = staged / rel
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_bytes(fz.files[rel].encode("utf-8"))
+        (staged / "corpus.toml").write_text(corpus_toml(fz, expected),
+                                            encoding="utf-8")
+        if out.exists():
+            shutil.rmtree(out)
+        shutil.move(str(staged), str(out))
+    return []
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("command", choices=("list", "cases", "check"))
+    ap.add_argument("command", choices=("list", "cases", "check", "write"))
     ap.add_argument("out", nargs="?", type=pathlib.Path,
-                    help="the cases file (cases)")
+                    help="the cases file (cases), the corpus directory "
+                         "(write)")
     ap.add_argument("--hpo", type=pathlib.Path, default=DEFAULT_HPO)
     ap.add_argument("--tadah-mlip", default="")
     ap.add_argument("--registry", type=pathlib.Path)
@@ -713,7 +968,23 @@ def main(argv: list[str] | None = None) -> int:
             print(f"problem  {p}")
         return 1 if corpus.problems else 0
     if a.runner is None:
-        ap.error("check needs --runner")
+        ap.error(f"{a.command} needs --runner")
+    if a.command == "write":
+        if a.out is None:
+            ap.error("write needs the corpus directory")
+        _, reg = load_registry(registry)
+        problems = write(corpus, reg, a.runner, a.out)
+        for p in problems:
+            print(p)
+        if problems:
+            print(f"hpotarget_corpus.py: {len(problems)} problem(s); "
+                  f"{a.out} is not written")
+            return 1
+        n = len(corpus.inputs)
+        refused = sum(1 for f in a.out.glob("expected/*/*.error"))
+        print(f"hpotarget_corpus.py: wrote {a.out}: {n} inputs, "
+              f"{n - refused} read, {refused} refused")
+        return 0
     problems = check(corpus, a.runner, a.parser, a.keep)
     for p in problems:
         print(p)
