@@ -1,0 +1,26 @@
+# FAILSCORE_GRADING ON with a finite FAILSCORE, a PC_FAILPROBE line
+# (../common/lammps/failprobe.in) and a PC_LAMMPS line with a --hotvar
+# window.
+
+OPTIMIZER
+  STRATEGY
+    TYPE PLAIN
+    LIB TADAH
+    ALGO RANDOM
+    MAXEVAL 60
+    SEED 1234
+  ENDSTRATEGY
+ENDOPTIMIZER
+
+LOSS L2
+FAILSCORE 1e9
+FAILSCORE_GRADING ON
+PC_ERMSE 0 0.0001
+PC_FAILPROBE --script ../common/lammps/failprobe.in --outvar S --s0 0.5
+PC_LAMMPS --script ../common/lammps/Ecoh.in --hotvar hot_a0 3.25 3.33 3.302 --varloss Ecoh 8.10 800
+
+OPTIM RCUT2B  (1) 4.0 6.0
+OPTIM SGRIDMB (1) 0.1 0.4
+
+OUTPUT 1
+BOUTPUT 1

@@ -1,0 +1,2 @@
+line 13 of target.hpo: FAILSCORE must be a positive finite number, got '0'
+Line: FAILSCORE 0

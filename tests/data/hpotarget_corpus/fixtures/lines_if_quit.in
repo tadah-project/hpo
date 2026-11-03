@@ -1,0 +1,2 @@
+variable S equal 0.0
+if "1 > 0" then "quit 1"

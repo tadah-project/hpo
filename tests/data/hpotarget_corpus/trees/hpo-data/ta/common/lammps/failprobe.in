@@ -1,0 +1,85 @@
+# failprobe.in — minimiser-free sanity scalar S for bcc metal.
+# The script never minimises, relaxes the box or runs dynamics (run 0
+# only), so it takes milliseconds, and it defines S even for the weirdest
+# potential. The three volumes are written out one after another, each
+# capture under a name of its own. `variable X equal $( ... )` captures
+# the value at once, and an equal-style redefinition replaces the old
+# value, so the captures stay fresh in the cached LAMMPS instance on
+# every evaluation.
+
+# -- E(V) monotonicity: 2-atom bcc cells at 0.90/1.00/1.10 a0 -----
+# (a0 = 3.30 reference lattice constant, baked into the lattice
+#  commands below)
+clear                    # scripts run in a CACHED LAMMPS instance, so
+                         # each cell starts with clear (variables survive)
+units metal
+dimension 3
+boundary p p p
+atom_style atomic
+atom_modify map array
+lattice bcc $(3.30*0.90)
+region box block 0 1 0 1 0 1
+create_box 1 box
+create_atoms 1 region box
+mass 1 180.95
+pair_style tadah
+pair_coeff * * EXTERN Ta
+run 0 post no
+variable e_m10 equal $(pe/atoms)     # captured now (immediate $)
+
+clear
+units metal
+boundary p p p
+atom_style atomic
+atom_modify map array
+lattice bcc 3.30
+region box block 0 1 0 1 0 1
+create_box 1 box
+create_atoms 1 region box
+mass 1 180.95
+pair_style tadah
+pair_coeff * * EXTERN Ta
+run 0 post no
+variable e_0 equal $(pe/atoms)
+
+clear
+units metal
+boundary p p p
+atom_style atomic
+atom_modify map array
+lattice bcc $(3.30*1.10)
+region box block 0 1 0 1 0 1
+create_box 1 box
+create_atoms 1 region box
+mass 1 180.95
+pair_style tadah
+pair_coeff * * EXTERN Ta
+run 0 post no
+variable e_p10 equal $(pe/atoms)
+
+# compressed branch must rise toward small volume; expanded branch
+# must rise toward large volume (bound state). Hinge each violation.
+variable h_comp equal $(ternary(v_e_m10<v_e_0, v_e_0-v_e_m10, 0.0))
+variable h_exp  equal $(ternary(v_e_p10<v_e_0, v_e_0-v_e_p10, 0.0))
+
+# -- force sanity: rattle a cell DETERMINISTICALLY (fixed seed) and
+# hinge on absurd forces. fmax is not probed on the ideal lattice: there
+# it is zero by symmetry for ANY potential, sick or sane.
+clear
+units metal
+boundary p p p
+atom_style atomic
+atom_modify map array
+lattice bcc 3.30
+region box block 0 2 0 2 0 2
+create_box 1 box
+create_atoms 1 region box
+mass 1 180.95
+pair_style tadah
+pair_coeff * * EXTERN Ta
+displace_atoms all random 0.05 0.05 0.05 12345 units box
+run 0 post no
+variable h_frc equal $(ternary(fmax>20.0, fmax-20.0, 0.0))
+
+# -- compose S: bounded, nonnegative, 0 for a sane potential ------
+variable S equal $(v_h_comp + v_h_exp + v_h_frc)

@@ -1,0 +1,14 @@
+FAILSCORE 1e9
+FAILSCORE_GRADING ON
+PC_LAMMPS --script lines_pc.in --varloss E -5.0 1.0 HUBER 2 \
+  --outvar S --invar b 1 --maxtime 1:30 --failscore -3 \
+  --hotvar a 1 2 1.5 --failvar V 2 -nocite
+OPTIM CGRID2B (1) 0.5 1.5
+PC_ERMSE 0 1
+OPTIMIZER
+STRATEGY
+LIB NLOPT
+ALGO LN_SBPLX
+MAXEVAL 10
+ENDSTRATEGY
+ENDOPTIMIZER

@@ -1,0 +1,7 @@
+OPTIM CGRID2B (1) 0.5 1.5
+PC_OBSERVABLE cohesive_energy --species H --target 2 --weight 1 --hotvar a0 1.5 2.5
+OPTIMIZER
+LIB NLOPT
+ALGO LD_LBFGS
+MAXEVAL 10
+ENDOPTIMIZER

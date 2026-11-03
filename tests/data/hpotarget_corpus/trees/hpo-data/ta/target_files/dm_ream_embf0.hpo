@@ -1,0 +1,23 @@
+# OPTIM CEMBFUNC on a DM_REAM potential with EMBF0 ZERO and every weight
+# pinned (../ta2_refit_seed.tadah, the training configuration), without
+# --validation, with --outvar Eiso.
+
+OPTIMIZER
+  STRATEGY
+    TYPE PLAIN
+    LIB NLOPT
+    ALGO LN_SBPLX
+    MAXEVAL 20
+    STEP 0.2
+  ENDSTRATEGY
+ENDOPTIMIZER
+
+LOSS L2
+FAILSCORE 1e16
+PC_LAMMPS --script ../common/lammps/Ecoh.in --hotvar hot_a0 2.5 4.5 3.304 --varloss Ecoh 8.10 800 --outvar Eiso
+
+OPTIM CEMBFUNC (1) -2.19 -2.15
+OPTIM CEMBFUNC (4) -0.1665 -0.1630
+
+OUTPUT 1
+BOUTPUT 1
