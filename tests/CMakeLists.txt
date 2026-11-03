@@ -527,6 +527,67 @@ add_test(NAME hpo_hpotarget_corpus
 set_tests_properties(hpo_hpotarget_corpus PROPERTIES
     LABELS "docs"
     TIMEOUT 900)
+# The two parsers of the target file compared, ParsedTarget::read (the
+# parser of `tadah hpo`) and the registry-driven parser
+# (src/hpotarget_parser.cpp):
+#  - the Catch2 cases "parser shadow: ..." (tag [hpotarget_shadow],
+#    tests/test_hpotarget_differential.cpp): the comparison the parser
+#    shadow makes on every read of a target file in a validation build
+#    with the CMake option TADAH_HPO_PARSER_SHADOW (HPO/CMakeLists.txt;
+#    test_hpo gets the option as TADAH_HPO_PARSER_SHADOW_BUILD, 1 or 0),
+#    and that such a build compares on every read and the program's build
+#    never;
+#  - hpo_hpotarget_differential: every example and invalid entry of the
+#    registry, every case of the generated checks and every input of the
+#    corpus, read by both parsers, give the same description of the parse
+#    or the same refusal, and the same refusal of the startup checks
+#    (hidden tag [.hpotarget_differential]); hpo_hpotarget_differential_cases
+#    writes the cases first (tests/hpotarget_differential.py, whose
+#    docstring lists the sources), hpo_hpotarget_differential_tool tests
+#    that script (tests/test_hpotarget_differential.py);
+#  - hpo_hpotarget_placement_matrix: the line of each key in each of the
+#    nine places a line can be, through both parsers, against the places
+#    the registry lists (check_hpotarget_generated.py --only blocks
+#    --parser both).
+# Before the fix: the Catch2 case and the four entries fail; the seam of
+# the shadow, the script and the option --parser both do not exist.
+target_compile_definitions(test_hpo PRIVATE
+    "TADAH_HPO_PARSER_SHADOW_BUILD=$<BOOL:${TADAH_HPO_PARSER_SHADOW}>")
+set(_hpo_differential_cases
+    ${CMAKE_CURRENT_BINARY_DIR}/hpotarget_differential/cases.toml)
+add_test(NAME hpo_hpotarget_differential_cases
+    COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/hpotarget_differential.py cases
+        ${_hpo_differential_cases}
+        --tadah-mlip=${_hpo_umbrella_source_dir})
+set_tests_properties(hpo_hpotarget_differential_cases PROPERTIES
+    LABELS "docs"
+    TIMEOUT 300
+    FIXTURES_SETUP hpo_hpotarget_differential)
+add_test(NAME hpo_hpotarget_differential
+    COMMAND test_hpo "[.hpotarget_differential]" --warn NoTests)
+set_tests_properties(hpo_hpotarget_differential PROPERTIES
+    LABELS "docs"
+    TIMEOUT 1800
+    FIXTURES_REQUIRED hpo_hpotarget_differential
+    ENVIRONMENT "TADAH_HPOTARGET_DIFFERENTIAL_CASES=${_hpo_differential_cases}")
+add_test(NAME hpo_hpotarget_differential_tool
+    COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/test_hpotarget_differential.py)
+set_tests_properties(hpo_hpotarget_differential_tool PROPERTIES
+    LABELS "docs"
+    TIMEOUT 120
+    ENVIRONMENT "TADAH_UMBRELLA_SOURCE_DIR=${_hpo_umbrella_source_dir}"
+    FAIL_REGULAR_EXPRESSION "\nRan 0 tests ")
+add_test(NAME hpo_hpotarget_placement_matrix
+    COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/check_hpotarget_generated.py
+        --runner $<TARGET_FILE:hpotarget_case_runner>
+        --registry ${_hpo_blueprint_dir}
+        --only blocks --parser both)
+set_tests_properties(hpo_hpotarget_placement_matrix PROPERTIES
+    LABELS "docs"
+    TIMEOUT 900)
 # hpo_has_include_rebuild: a source that tests for headers with
 # __has_include, as test_hpotarget_registry_bindings.cpp tests for the
 # generated tables, is compiled again by the build when they appear, change

@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Unit tests of tests/check_hpotarget_generated.py on the synthetic
 registry of test_hpotarget_registry.py: the TOML it writes for the runner,
-the frame it reads an error from, the cases each check generates, and what
+the frame it reads an error from, the cases each check generates, what
 each check makes of a result the parser could give (a refusal where the
 registry says there is one, an acceptance where it says there is none),
-without running the parser."""
+and the parser it has the runner read with (--parser old, new or both,
+whose results are each judged), without running the parser."""
 
 from __future__ import annotations
 
@@ -396,6 +397,34 @@ class Generated(unittest.TestCase):
         self.assertEqual(got[2][got[3]], "wide")
         self.assertIsNone(self.g.option_in_example(
             option("--wide", "SEED 7 --WIDE")))
+
+    def test_the_runner_reads_with_the_parser_named(self):
+        # --parser old, new or both: the runner is given the parser, and
+        # both runs the cases through each parser in turn.
+        self.assertEqual(
+            gen.runner_command(pathlib.Path("/r"), "new",
+                               pathlib.Path("c.toml"), pathlib.Path("o.json")),
+            ["/r", "--parser", "new", "c.toml", "o.json"])
+        self.assertEqual(gen.PARSERS, {"old": ("old",), "new": ("new",),
+                                       "both": ("old", "new")})
+
+    def test_the_results_of_each_parser_are_judged(self):
+        # Pins: with two parsers each one's results are judged against
+        # the registry, and each problem names the parser that gave it;
+        # with one parser the problems are those of judge_all.
+        self.g.gen_blocks()
+        refused = {c.case["id"]: result(parse="refused")
+                   for c in self.g.cases}
+        alone, counts = gen.judge_all(self.g, refused)
+        self.assertTrue(alone)
+        problems, got = gen.judge_parsers(self.g, {"old": refused})
+        self.assertEqual((problems, got), (alone, counts))
+        problems, got = gen.judge_parsers(self.g, {"old": refused,
+                                                   "new": refused})
+        self.assertEqual(got, counts)
+        self.assertEqual(problems,
+                         [f"--parser old: {p}" for p in alone] +
+                         [f"--parser new: {p}" for p in alone])
 
 
 if __name__ == "__main__":
