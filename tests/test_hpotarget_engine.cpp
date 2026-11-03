@@ -258,8 +258,8 @@ TEST_CASE("hpotarget engine: a repeated line whose value is wrong is "
     refuses(kRoot + Lines{"FAILSCORE 10", "FAILSCORE x"} + kOptimizer,
             at_line(4, "FAILSCORE is set twice (first on line 3) and no "
                        "line between reads the first (a PC_LAMMPS or "
-                       "PC_FAILPROBE line without --failscore); each key "
-                       "is given once", "FAILSCORE x"));
+                       "PC_FAILPROBE line without --failscore); the key is "
+                       "given again only after such a line", "FAILSCORE x"));
     refuses(kRoot + Lines{"MAXTIME 60", "PC_SCRIPT_TIMEOUT x"} +
                 kOptimizer,
             at_line(4, "PC_SCRIPT_TIMEOUT is set twice (first on line 3, "

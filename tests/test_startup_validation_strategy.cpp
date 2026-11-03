@@ -4463,7 +4463,7 @@ TEST_CASE("startup validation: finite differences fit every OPTIM box, "
                    Catch::Contains("and the exit curvature at x +- Delta |x|, "
                                    "or x -+ Delta |x| and x -+ 2 Delta |x| next "
                                    "to a bound (Curvature_0 0)") &&
-                       Catch::Contains("Delta_X up to 0.5 fits it"));
+                       Catch::Contains("Delta_X up to 0.5 fits them"));
     }
 }
 

@@ -436,7 +436,7 @@ TEST_CASE("iter_health: a HEALTH_LOG warning names the descriptor as its "
   c.remove("RCTYPEMB");
   c.add("RCTYPEMB", "Cut_Cos");
   c.add("RCUTMB", 5.0);
-  c.add("TYPEMB", "DM_mBlipEnv 0 0 0 5 5 Ta Ta");
+  c.add("TYPEMB", "DM_mBlipEnv 1 1 1 5 5 Ta Ta");
   c.add("CGRIDMB", "2.88");
   c.add("SGRIDMB", "8.0");
   c.add("CEMBFUNC", "0.5 0.75 1.0 1.25 1.5");
