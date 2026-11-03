@@ -809,7 +809,6 @@ void Handlers::OPTIMIZER_LOG_HP(KeyRead& r)
     const std::string tok = single_value(r.iss, r.word);
     p.t.spec.log_threshold = read_number_in_range(arg0(r.key), tok, r.word);
     r.target = &p.t.spec.log_threshold;
-    r.what = "search space";
 }
 
 /* ------------------------------------------------------- STRATEGY ---- */
@@ -832,7 +831,6 @@ void Handlers::STRATEGY_TYPE(KeyRead& r)
     p.type_line = p.nline;
     p.type_text = p.line;
     r.target = &p.t.spec.strategy_type;
-    r.what = "strategy";
 }
 
 /* N_STARTS 2 or more: one start is TYPE PLAIN. Its line: startup refuses
@@ -846,7 +844,6 @@ void Handlers::STRATEGY_N_STARTS(KeyRead& r)
     p.t.spec.key_lines[r.word] =
         KeyLine{p.nline, p.line, Parser::block_name(p.block())};
     r.target = &p.t.spec.strategy_type;
-    r.what = "strategy";
 }
 
 void Handlers::STRATEGY_BUDGET_PER_START(KeyRead& r)
@@ -855,7 +852,6 @@ void Handlers::STRATEGY_BUDGET_PER_START(KeyRead& r)
     p.t.spec.multistart.budget_per_start =
         read_integer(arg0(r.key), single_value(r.iss, r.word), r.word);
     r.target = &p.t.spec.strategy_type;
-    r.what = "strategy";
 }
 
 void Handlers::STRATEGY_TOPK(KeyRead& r)
@@ -864,7 +860,6 @@ void Handlers::STRATEGY_TOPK(KeyRead& r)
     p.t.spec.stage_topk =
         read_integer(arg0(r.key), single_value(r.iss, r.word), r.word);
     r.target = &p.t.spec.strategy_type;
-    r.what = "strategy";
 }
 
 /* ----------------------------------------------------- INIT, RESTART ---- */
@@ -896,7 +891,6 @@ void Handlers::INIT_K_TOTAL(KeyRead& r)
         read_integer(arg0(r.key), single_value(r.iss, r.word), r.word);
     p.k_total_lines[p.active_init] = {p.nline, p.line};
     r.target = p.active_init;
-    r.what = "starting points";
 }
 
 void Handlers::INIT_SEED(KeyRead& r)
@@ -905,7 +899,6 @@ void Handlers::INIT_SEED(KeyRead& r)
     p.active_init->seed =
         read_integer(arg0(r.key), single_value(r.iss, r.word), r.word);
     r.target = p.active_init;
-    r.what = "starting points";
 }
 
 void Handlers::INIT_WARM_ON_MISMATCH(KeyRead& r)
@@ -914,7 +907,6 @@ void Handlers::INIT_WARM_ON_MISMATCH(KeyRead& r)
     p.active_init->warm_on_mismatch =
         read_word(arg0(r.key), single_value(r.iss, r.word), r.word);
     r.target = p.active_init;
-    r.what = "starting points";
 }
 
 /* AFTER_STAGNATION and MAX, each 1 or more: 0 restarts nothing. */
@@ -924,7 +916,6 @@ void Handlers::RESTART_AFTER_STAGNATION(KeyRead& r)
     p.t.spec.restart.after_stagnation =
         read_integer(arg0(r.key), single_value(r.iss, r.word), r.word);
     r.target = &p.t.spec.restart;
-    r.what = "restarts";
 }
 
 void Handlers::RESTART_MAX(KeyRead& r)
@@ -933,7 +924,6 @@ void Handlers::RESTART_MAX(KeyRead& r)
     p.t.spec.restart.max =
         read_integer(arg0(r.key), single_value(r.iss, r.word), r.word);
     r.target = &p.t.spec.restart;
-    r.what = "restarts";
 }
 
 /* ----------------------------------------------------------- NOISE ---- */
@@ -948,7 +938,6 @@ void Handlers::NOISE_AUTO(KeyRead& r)
     p.t.spec.noise.autodetect =
         v.empty() ? true : parse_bool(v, what_of(arg0(r.key), r.word));
     r.target = &p.t.spec.noise;
-    r.what = "noise settings";
 }
 
 /* CALIBRATION: N evaluations, 0 (off) or 2 or more. */
@@ -961,7 +950,6 @@ void Handlers::NOISE_CALIBRATION(KeyRead& r)
         throw std::runtime_error(str(r.key.checks[0]));
     p.t.spec.noise.calibration_n = v;
     r.target = &p.t.spec.noise;
-    r.what = "noise settings";
 }
 
 /* ------------------------------------------------- the gate options ---- */

@@ -71,10 +71,10 @@ struct KeyRead {
     hpotarget::Parser* parser = nullptr;
     OptimizerSpec* spec = nullptr;  // the optimiser a key of the group sets
     /* Set by the handler of a key of a block: what the line sets once
-     * (its repeat rule), and what that is, for the refusal of a second
-     * line in another block that sets it. */
+     * (its repeat rule). The refusal of a second line in another block
+     * that sets it takes its {what} from the registry
+     * (RULE.set_once_for_optimiser). */
     const void* target = nullptr;
-    std::string_view what;
 
     /* The parser; a logic_error for a key read without one. */
     hpotarget::Parser& p() const;

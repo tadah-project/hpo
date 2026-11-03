@@ -178,7 +178,7 @@ std::runtime_error Parser::refuse_in_block(const std::string& key) const
 }
 
 void Parser::set_once(const void* target, const std::string& attr,
-                      std::string_view what)
+                      std::string_view entry)
 {
     const BlockId blk = block();
     const BlockId around = parent();
@@ -208,6 +208,8 @@ void Parser::set_once(const void* target, const std::string& attr,
              {"parent", block_name(first.parent)},
              {"enclosing", block_name(around)}}));
     }
+    const std::string_view what =
+        rule_what("RULE.set_once_for_optimiser", entry);
     throw std::runtime_error(fill(rule("RULE.set_once_for_optimiser").msg,
                                   {{"key", attr},
                                    {"first_line", num(first.line)},
@@ -708,13 +710,11 @@ void Parser::repeat_step(R::KeyRead& r, Place place, const std::string& attr)
         /* A key of the group is set once for its optimiser, a PARAM name
          * and a STEP override for their name and indices. */
         if (!attr.empty())
-            set_once(active_opt, attr,
-                     rule_what("RULE.set_once_for_optimiser",
-                               "GROUP." + str(k.group)));
+            set_once(active_opt, attr, "GROUP." + str(k.group));
         return;
     }
     if (place == Place::Block) {
-        if (k.repeat == R::Repeat::Error) set_once(r.target, attr, r.what);
+        if (k.repeat == R::Repeat::Error) set_once(r.target, attr, k.id_text);
         return;
     }
     switch (k.repeat) {

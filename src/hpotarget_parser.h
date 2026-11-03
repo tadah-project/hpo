@@ -123,10 +123,13 @@ public:
     };
     std::map<std::pair<const void*, std::string>, AttrSet> attr_set;
     /* Records that `attr` of `target` is set at this line, or refuses the
-     * line when an earlier one set it; `what` names what two blocks of
-     * different types that set it configure. */
+     * line when an earlier one set it. `entry` is the registry entry of the
+     * line (a key, or GROUP.<group> for a key of a group): the refusal of a
+     * line in a block of another type takes the {what} that
+     * RULE.set_once_for_optimiser gives it, and a logic_error when the
+     * rule gives it none. */
     void set_once(const void* target, const std::string& attr,
-                  std::string_view what);
+                  std::string_view entry);
 
     /* FAILSCORE, LOSS and PC_SCRIPT_TIMEOUT (MAXTIME): the last line of
      * each, its spelling and whether a line after it has read it. */
