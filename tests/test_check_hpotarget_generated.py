@@ -4,12 +4,14 @@ registry of test_hpotarget_registry.py: the TOML it writes for the runner,
 the frame it reads an error from, the cases each check generates, what
 each check makes of a result the parser could give (a refusal where the
 registry says there is one, an acceptance where it says there is none),
-and the parser it has the runner read with (--parser old, new or both,
-whose results are each judged), without running the parser."""
+and the runner's command, which reads with the parser of `tadah hpo` (the
+check takes no --parser), without running the parser."""
 
 from __future__ import annotations
 
+import contextlib
 import dataclasses
+import io
 import pathlib
 import sys
 import tempfile
@@ -398,33 +400,21 @@ class Generated(unittest.TestCase):
         self.assertIsNone(self.g.option_in_example(
             option("--wide", "SEED 7 --WIDE")))
 
-    def test_the_runner_reads_with_the_parser_named(self):
-        # --parser old, new or both: the runner is given the parser, and
-        # both runs the cases through each parser in turn.
+    # Pins: the runner reads the cases with the parser of `tadah hpo`, the
+    # one parser of the target file: its command names the cases and the
+    # results only, and the check takes no --parser (an argument error).
+    # Before the fix: fails, --parser old, new or both chose the parser.
+    def test_the_runner_reads_with_the_parser_of_the_program(self):
         self.assertEqual(
-            gen.runner_command(pathlib.Path("/r"), "new",
-                               pathlib.Path("c.toml"), pathlib.Path("o.json")),
-            ["/r", "--parser", "new", "c.toml", "o.json"])
-        self.assertEqual(gen.PARSERS, {"old": ("old",), "new": ("new",),
-                                       "both": ("old", "new")})
-
-    def test_the_results_of_each_parser_are_judged(self):
-        # Pins: with two parsers each one's results are judged against
-        # the registry, and each problem names the parser that gave it;
-        # with one parser the problems are those of judge_all.
-        self.g.gen_blocks()
-        refused = {c.case["id"]: result(parse="refused")
-                   for c in self.g.cases}
-        alone, counts = gen.judge_all(self.g, refused)
-        self.assertTrue(alone)
-        problems, got = gen.judge_parsers(self.g, {"old": refused})
-        self.assertEqual((problems, got), (alone, counts))
-        problems, got = gen.judge_parsers(self.g, {"old": refused,
-                                                   "new": refused})
-        self.assertEqual(got, counts)
-        self.assertEqual(problems,
-                         [f"--parser old: {p}" for p in alone] +
-                         [f"--parser new: {p}" for p in alone])
+            gen.runner_command(pathlib.Path("/r"), pathlib.Path("c.toml"),
+                               pathlib.Path("o.json")),
+            ["/r", "c.toml", "o.json"])
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err), \
+                self.assertRaises(SystemExit) as e:
+            gen.main(["--runner", "/r", "--parser", "old"])
+        self.assertEqual(e.exception.code, 2)
+        self.assertIn("unrecognized arguments: --parser old", err.getvalue())
 
 
 if __name__ == "__main__":

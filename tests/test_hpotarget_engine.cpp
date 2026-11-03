@@ -1,12 +1,11 @@
 // test_hpotarget_engine.cpp
 //
-// The registry-driven parser of the target file (src/hpotarget_parser.cpp
-// and src/hpotarget_handlers.cpp) against HPOTargets::read, the parser
-// `tadah hpo` reads with: each file below is read by both
-// (tadah::hpo::testing::make_targets, hpo_targets_testing.h), and both
-// give the same refusal, the one the order of the parse gives
-// (blueprint/README.md, the `[structure]` orders), or the same
-// description of what they read (describe_parse).
+// The parser of the target file (src/hpotarget_parser.cpp and
+// src/hpotarget_handlers.cpp), the registry-driven one, which `tadah hpo`
+// reads with: each file below is read by HPOTargets and gives the refusal
+// the order of the parse gives (blueprint/README.md, the `[structure]`
+// orders), or a description of what it read (describe_parse,
+// hpo_targets_testing.h).
 //
 // The orders the cases pin, each where a line or a file has two faults:
 //   - the steps of a key's line by its place (structure::line_steps_*,
@@ -24,29 +23,19 @@
 //     wrong: the --gate value is read first;
 //   - the checks at the end of the file (structure::eof_order): two faults
 //     of two checks next to each other in the order.
+// And: the registry-driven parser is the one parser of the target file
+// (ParsedTarget has no read(), the hand-written parser, and the test seam
+// chooses no parser).
 //
-// Tag [hpotarget_engine]. The file compiles with or without the parser:
-// without it (hpo_targets_testing.h does not define
-// TADAH_HPOTARGET_PARSER_CHOICE) it holds one case, which fails.
-//
-// Before the fix: the registry-driven parser does not exist; the one case
-// "hpotarget engine: the registry-driven parser exists" fails.
+// Tag [hpotarget_engine].
+// Before the fix: ParsedTarget::read() exists and hpo_targets_testing.h
+// chooses between it and the registry-driven parser; the case "hpotarget
+// engine: the registry-driven parser is the one parser of the target file"
+// fails.
 
 #include "catch2/catch.hpp"
 
 #include <tadah/hpo/hpo_targets_testing.h>
-
-#if !defined(TADAH_HPOTARGET_PARSER_CHOICE)
-
-TEST_CASE("hpotarget engine: the registry-driven parser exists",
-          "[hpotarget_engine]")
-{
-    FAIL("include/tadah/hpo/hpo_targets_testing.h has no make_targets(): "
-         "the build has no registry-driven parser of the target file "
-         "(src/hpotarget_parser.cpp) to read the cases with");
-}
-
-#else
 
 #include <tadah/core/context.h>
 #include <tadah/core/periodic_table.h>
@@ -60,6 +49,7 @@ TEST_CASE("hpotarget engine: the registry-driven parser exists",
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <type_traits>
 #include <unistd.h>
 #include <utility>
 #include <vector>
@@ -68,7 +58,6 @@ namespace {
 
 namespace fs = std::filesystem;
 using tadah::core::Context;
-using tadah::hpo::testing::TargetParser;
 using Lines = std::vector<std::string>;
 
 /* A scratch directory of this process, removed at exit. */
@@ -123,25 +112,23 @@ void write_target(const Lines& lines)
     for (const auto& l : lines) os << l << "\n";
 }
 
-/* What a parser gives for the file `lines`: its refusal, or "" and the
- * description of what it read. Each parser reads its own copy of the
+/* What the parser gives for the file `lines`: its refusal, or "" and the
+ * description of what it read. Each read takes its own copy of the
  * training configuration (a key the parse reads gets its default). */
 struct Outcome {
     std::string error;
     std::string dump;
 };
 
-Outcome read_with(TargetParser parser, const Lines& lines,
-                  const Context& base = minimal_ctx())
+Outcome read_file(const Lines& lines, const Context& base = minimal_ctx())
 {
     tadah::core::PeriodicTable::initialize();
     write_target(lines);
     Context ctx = base;
     Outcome out;
     try {
-        const auto t = tadah::hpo::testing::make_targets(ctx, target_path(),
-                                                         parser);
-        out.dump = tadah::hpo::testing::describe_parse(*t);
+        const tadah::hpo::HPOTargets t(ctx, target_path());
+        out.dump = tadah::hpo::testing::describe_parse(t);
     } catch (const std::exception& e) {
         out.error = e.what();
     }
@@ -155,25 +142,19 @@ std::string at_line(std::size_t n, const std::string& what,
     return tadah::hpo::config_line_error(target_path(), n, what, text);
 }
 
-/* Both parsers refuse the file `lines` with `expected`. */
-void both_refuse(const Lines& lines, const std::string& expected,
-                 const Context& ctx = minimal_ctx())
+/* The parser refuses the file `lines` with `expected`. */
+void refuses(const Lines& lines, const std::string& expected,
+             const Context& ctx = minimal_ctx())
 {
     CAPTURE(lines);
-    const Outcome old_parse = read_with(TargetParser::Old, lines, ctx);
-    const Outcome new_parse = read_with(TargetParser::New, lines, ctx);
-    CHECK(old_parse.error == expected);
-    CHECK(new_parse.error == expected);
+    CHECK(read_file(lines, ctx).error == expected);
 }
 
-/* The refusal both parsers give for `lines`, which must be one. */
+/* The refusal the parser gives for `lines` ("" when it reads the file). */
 std::string refusal(const Lines& lines, const Context& ctx = minimal_ctx())
 {
     CAPTURE(lines);
-    const Outcome old_parse = read_with(TargetParser::Old, lines, ctx);
-    const Outcome new_parse = read_with(TargetParser::New, lines, ctx);
-    CHECK(new_parse.error == old_parse.error);
-    return old_parse.error;
+    return read_file(lines, ctx).error;
 }
 
 Lines operator+(Lines a, const Lines& b)
@@ -229,7 +210,7 @@ Lines with_faults(Lines base, const std::vector<Fault>& on,
 }
 
 /* Two faults of one file, the first refused by an earlier check than the
- * second: both parsers refuse the file with both as the file with the
+ * second: the parser refuses the file with both as the file with the
  * first alone, and the file with the second alone with another refusal. */
 struct TwoFaults {
     std::string label;
@@ -248,7 +229,7 @@ void check_first_wins(const TwoFaults& t)
     REQUIRE(!second.empty());
     std::vector<Fault> both = t.first;
     both.insert(both.end(), t.second.begin(), t.second.end());
-    both_refuse(with_faults(t.base, both, {}), first);
+    refuses(with_faults(t.base, both, {}), first);
 }
 
 }  // namespace
@@ -268,103 +249,103 @@ TEST_CASE("hpotarget engine: a repeated line whose value is wrong is "
           "refused by the first step of its place", "[hpotarget_engine]")
 {
     /* The top level: repeat, value. */
-    both_refuse(kRoot + Lines{"QFLUSH 1", "QFLUSH x"} + kOptimizer,
-                at_line(4, "QFLUSH is set twice (first on line 3); each key "
-                           "is given once", "QFLUSH x"));
-    both_refuse(kRoot + Lines{"QFLUSH 1", "QFLUSH 1 2"} + kOptimizer,
-                at_line(4, "QFLUSH is set twice (first on line 3); each key "
-                           "is given once", "QFLUSH 1 2"));
-    both_refuse(kRoot + Lines{"FAILSCORE 10", "FAILSCORE x"} + kOptimizer,
-                at_line(4, "FAILSCORE is set twice (first on line 3) and no "
-                           "line between reads the first (a PC_LAMMPS or "
-                           "PC_FAILPROBE line without --failscore); each key "
-                           "is given once", "FAILSCORE x"));
-    both_refuse(kRoot + Lines{"MAXTIME 60", "PC_SCRIPT_TIMEOUT x"} +
-                    kOptimizer,
-                at_line(4, "PC_SCRIPT_TIMEOUT is set twice (first on line 3, "
-                           "as MAXTIME) and no line between reads the first "
-                           "(a PC_LAMMPS or PC_FAILPROBE line without "
-                           "--maxtime); each key is given once",
-                        "PC_SCRIPT_TIMEOUT x"));
+    refuses(kRoot + Lines{"QFLUSH 1", "QFLUSH x"} + kOptimizer,
+            at_line(4, "QFLUSH is set twice (first on line 3); each key "
+                       "is given once", "QFLUSH x"));
+    refuses(kRoot + Lines{"QFLUSH 1", "QFLUSH 1 2"} + kOptimizer,
+            at_line(4, "QFLUSH is set twice (first on line 3); each key "
+                       "is given once", "QFLUSH 1 2"));
+    refuses(kRoot + Lines{"FAILSCORE 10", "FAILSCORE x"} + kOptimizer,
+            at_line(4, "FAILSCORE is set twice (first on line 3) and no "
+                       "line between reads the first (a PC_LAMMPS or "
+                       "PC_FAILPROBE line without --failscore); each key "
+                       "is given once", "FAILSCORE x"));
+    refuses(kRoot + Lines{"MAXTIME 60", "PC_SCRIPT_TIMEOUT x"} +
+                kOptimizer,
+            at_line(4, "PC_SCRIPT_TIMEOUT is set twice (first on line 3, "
+                       "as MAXTIME) and no line between reads the first "
+                       "(a PC_LAMMPS or PC_FAILPROBE line without "
+                       "--maxtime); each key is given once",
+                    "PC_SCRIPT_TIMEOUT x"));
 
     /* A metric line: value, repeat, options. */
-    both_refuse(kRoot + Lines{"PC_EMAE 1 1", "PC_EMAE x 1"} + kOptimizer,
-                at_line(4, "PC_EMAE <target> must be a finite number, got "
-                           "'x'", "PC_EMAE x 1"));
-    both_refuse(kRoot + Lines{"PC_EMAE 1 1", "PC_EMAE 1 1 --bogus 1"} +
-                    kOptimizer,
-                at_line(4, "PC_EMAE: repeated declaration (first declared on "
-                           "line 3)", "PC_EMAE 1 1 --bogus 1"));
-    both_refuse(kRoot + Lines{"PC_ERMSE 0 1 --bogus"} + kOptimizer,
-                at_line(3, "PC_ERMSE: unknown flag '--bogus'",
-                        "PC_ERMSE 0 1 --bogus"));
+    refuses(kRoot + Lines{"PC_EMAE 1 1", "PC_EMAE x 1"} + kOptimizer,
+            at_line(4, "PC_EMAE <target> must be a finite number, got "
+                       "'x'", "PC_EMAE x 1"));
+    refuses(kRoot + Lines{"PC_EMAE 1 1", "PC_EMAE 1 1 --bogus 1"} +
+                kOptimizer,
+            at_line(4, "PC_EMAE: repeated declaration (first declared on "
+                       "line 3)", "PC_EMAE 1 1 --bogus 1"));
+    refuses(kRoot + Lines{"PC_ERMSE 0 1 --bogus"} + kOptimizer,
+            at_line(3, "PC_ERMSE: unknown flag '--bogus'",
+                    "PC_ERMSE 0 1 --bogus"));
 
     /* A key of the optimiser group: value, repeat, leftover. */
     const Lines strategy_head = kRoot + Lines{"OPTIMIZER", "STRATEGY",
                                               "LIB NLOPT", "ALGO LN_SBPLX"};
     const Lines strategy_tail = {"ENDSTRATEGY", "ENDOPTIMIZER"};
-    both_refuse(strategy_head + Lines{"MAXEVAL 5", "MAXEVAL x"} +
-                    strategy_tail,
-                at_line(8, "MAXEVAL must be an integer from 1 to 2147483647, "
-                           "got 'x'", "MAXEVAL x"));
-    both_refuse(strategy_head + Lines{"MAXEVAL 5", "MAXEVAL 5 6"} +
-                    strategy_tail,
-                at_line(8, "MAXEVAL is set twice in the STRATEGY block (first "
-                           "on line 7); each key is given once",
-                        "MAXEVAL 5 6"));
-    both_refuse(strategy_head + Lines{"MAXEVAL 5 6"} + strategy_tail,
-                at_line(7, "MAXEVAL takes no further value here (unexpected "
-                           "'6')", "MAXEVAL 5 6"));
+    refuses(strategy_head + Lines{"MAXEVAL 5", "MAXEVAL x"} +
+                strategy_tail,
+            at_line(8, "MAXEVAL must be an integer from 1 to 2147483647, "
+                       "got 'x'", "MAXEVAL x"));
+    refuses(strategy_head + Lines{"MAXEVAL 5", "MAXEVAL 5 6"} +
+                strategy_tail,
+            at_line(8, "MAXEVAL is set twice in the STRATEGY block (first "
+                       "on line 7); each key is given once",
+                    "MAXEVAL 5 6"));
+    refuses(strategy_head + Lines{"MAXEVAL 5 6"} + strategy_tail,
+            at_line(7, "MAXEVAL takes no further value here (unexpected "
+                       "'6')", "MAXEVAL 5 6"));
 
     /* INIT: value with its leftover, then repeat. */
     const Lines init_head = kRoot + Lines{"OPTIMIZER", "LIB NLOPT",
                                           "ALGO LN_SBPLX", "MAXEVAL 10",
                                           "INIT", "METHOD RANDOM 2"};
     const Lines init_tail = {"ENDINIT", "ENDOPTIMIZER"};
-    both_refuse(init_head + Lines{"SEED 1", "SEED x"} + init_tail,
-                at_line(10, "SEED must be an integer >= 0, got 'x'",
-                        "SEED x"));
-    both_refuse(init_head + Lines{"SEED 1", "SEED 1 2"} + init_tail,
-                at_line(10, "SEED takes one value (unexpected '2')",
-                        "SEED 1 2"));
-    both_refuse(init_head + Lines{"SEED 1", "SEED 2"} + init_tail,
-                at_line(10, "SEED is set twice in the INIT block (first on "
-                            "line 9); each key is given once", "SEED 2"));
+    refuses(init_head + Lines{"SEED 1", "SEED x"} + init_tail,
+            at_line(10, "SEED must be an integer >= 0, got 'x'",
+                    "SEED x"));
+    refuses(init_head + Lines{"SEED 1", "SEED 1 2"} + init_tail,
+            at_line(10, "SEED takes one value (unexpected '2')",
+                    "SEED 1 2"));
+    refuses(init_head + Lines{"SEED 1", "SEED 2"} + init_tail,
+            at_line(10, "SEED is set twice in the INIT block (first on "
+                        "line 9); each key is given once", "SEED 2"));
 
     /* NOISE and RESTART. */
-    both_refuse(kRoot + Lines{"OPTIMIZER", "LIB NLOPT", "ALGO LN_SBPLX",
-                              "MAXEVAL 10", "NOISE", "CALIBRATION 2",
-                              "CALIBRATION 1", "ENDNOISE", "ENDOPTIMIZER"},
-                at_line(9, "NOISE.CALIBRATION must be 0 (off) or >= 2",
-                        "CALIBRATION 1"));
-    both_refuse(strategy_head + Lines{"MAXEVAL 10", "RESTART",
-                                      "AFTER_STAGNATION 5", "MAX 2", "MAX 0",
-                                      "ENDRESTART"} + strategy_tail,
-                at_line(11, "MAX must be an integer >= 1, got '0' (0 never "
-                            "restarts the search; a search without restarts "
-                            "has no RESTART block)", "MAX 0"));
+    refuses(kRoot + Lines{"OPTIMIZER", "LIB NLOPT", "ALGO LN_SBPLX",
+                          "MAXEVAL 10", "NOISE", "CALIBRATION 2",
+                          "CALIBRATION 1", "ENDNOISE", "ENDOPTIMIZER"},
+            at_line(9, "NOISE.CALIBRATION must be 0 (off) or >= 2",
+                    "CALIBRATION 1"));
+    refuses(strategy_head + Lines{"MAXEVAL 10", "RESTART",
+                                  "AFTER_STAGNATION 5", "MAX 2", "MAX 0",
+                                  "ENDRESTART"} + strategy_tail,
+            at_line(11, "MAX must be an integer >= 1, got '0' (0 never "
+                        "restarts the search; a search without restarts "
+                        "has no RESTART block)", "MAX 0"));
 
     /* LOG_HP, set for the search space by OPTIMIZER and STRATEGY. */
-    both_refuse(kRoot + Lines{"OPTIMIZER", "LOG_HP 10", "STRATEGY",
-                              "LIB NLOPT", "ALGO LN_SBPLX", "MAXEVAL 10",
-                              "LOG_HP 0.5", "ENDSTRATEGY", "ENDOPTIMIZER"},
-                at_line(9, "LOG_HP must be a finite ratio >= 1 (a dimension "
-                           "is log-scaled when high/low >= LOG_HP and low > "
-                           "0), got '0.5'", "LOG_HP 0.5"));
-    both_refuse(kRoot + Lines{"OPTIMIZER", "LOG_HP 10", "STRATEGY",
-                              "LIB NLOPT", "ALGO LN_SBPLX", "MAXEVAL 10",
-                              "LOG_HP 20", "ENDSTRATEGY", "ENDOPTIMIZER"},
-                at_line(9, "LOG_HP is set on line 4 in the OPTIMIZER block "
-                           "and again here in the STRATEGY block; both "
-                           "blocks configure the same search space, so each "
-                           "key is given once", "LOG_HP 20"));
+    refuses(kRoot + Lines{"OPTIMIZER", "LOG_HP 10", "STRATEGY",
+                          "LIB NLOPT", "ALGO LN_SBPLX", "MAXEVAL 10",
+                          "LOG_HP 0.5", "ENDSTRATEGY", "ENDOPTIMIZER"},
+            at_line(9, "LOG_HP must be a finite ratio >= 1 (a dimension "
+                       "is log-scaled when high/low >= LOG_HP and low > "
+                       "0), got '0.5'", "LOG_HP 0.5"));
+    refuses(kRoot + Lines{"OPTIMIZER", "LOG_HP 10", "STRATEGY",
+                          "LIB NLOPT", "ALGO LN_SBPLX", "MAXEVAL 10",
+                          "LOG_HP 20", "ENDSTRATEGY", "ENDOPTIMIZER"},
+            at_line(9, "LOG_HP is set on line 4 in the OPTIMIZER block "
+                       "and again here in the STRATEGY block; both "
+                       "blocks configure the same search space, so each "
+                       "key is given once", "LOG_HP 20"));
 
     /* STRATEGY. */
-    both_refuse(strategy_head + Lines{"MAXEVAL 10", "TYPE PRESTAGE", "TOPK 2",
-                                      "TOPK 0"} + strategy_tail,
-                at_line(10, "TOPK must be an integer from 1 to " +
-                                std::to_string(tadah::hpo::kMaxStartingPoints) +
-                                ", got '0'", "TOPK 0"));
+    refuses(strategy_head + Lines{"MAXEVAL 10", "TYPE PRESTAGE", "TOPK 2",
+                                  "TOPK 0"} + strategy_tail,
+            at_line(10, "TOPK must be an integer from 1 to " +
+                            std::to_string(tadah::hpo::kMaxStartingPoints) +
+                            ", got '0'", "TOPK 0"));
 }
 
 /* Pins: a removed keyword is refused as removed in every block, INNER
@@ -378,24 +359,24 @@ TEST_CASE("hpotarget engine: a removed keyword inside INNER is refused as "
                                      "INNER", "LIB NLOPT"};
     const Lines tail = {"ALGO LN_BOBYQA", "ENDINNER", "ENDSTRATEGY",
                         "ENDOPTIMIZER"};
-    both_refuse(head + Lines{"LOCAL"} + tail,
-                at_line(10, "'LOCAL' was removed from the grammar: renamed "
-                            "to INNER, the block of the local search that an "
-                            "NLopt MLSL or AUGLAG algorithm runs.", "LOCAL"));
-    both_refuse(head + Lines{"INIT_K 2"} + tail,
-                at_line(10, "'INIT_K' was removed from the grammar: renamed "
-                            "to K_TOTAL inside an INIT block.", "INIT_K 2"));
-    both_refuse(head + Lines{"SEED 1"} + tail,
-                at_line(10, "SEED is not accepted inside an INNER block: "
-                            "NLopt draws the INNER search from the random "
-                            "numbers of the enclosing run; the enclosing "
-                            "STRATEGY block takes SEED", "SEED 1"));
-    both_refuse(head + Lines{"FOO 1"} + tail,
-                at_line(10, "unknown key 'FOO' inside the INNER block opened "
-                            "on line 8 (only LIB/ALGO/MAXEVAL/MAXTIME/FTOL_REL"
-                            "/FTOL_ABS/XTOL_REL/XTOL_ABS/POPULATION/STEP/"
-                            "VECTOR_ARR/THREADS/PARAM are valid; ENDINNER "
-                            "closes it)", "FOO 1"));
+    refuses(head + Lines{"LOCAL"} + tail,
+            at_line(10, "'LOCAL' was removed from the grammar: renamed "
+                        "to INNER, the block of the local search that an "
+                        "NLopt MLSL or AUGLAG algorithm runs.", "LOCAL"));
+    refuses(head + Lines{"INIT_K 2"} + tail,
+            at_line(10, "'INIT_K' was removed from the grammar: renamed "
+                        "to K_TOTAL inside an INIT block.", "INIT_K 2"));
+    refuses(head + Lines{"SEED 1"} + tail,
+            at_line(10, "SEED is not accepted inside an INNER block: "
+                        "NLopt draws the INNER search from the random "
+                        "numbers of the enclosing run; the enclosing "
+                        "STRATEGY block takes SEED", "SEED 1"));
+    refuses(head + Lines{"FOO 1"} + tail,
+            at_line(10, "unknown key 'FOO' inside the INNER block opened "
+                        "on line 8 (only LIB/ALGO/MAXEVAL/MAXTIME/FTOL_REL"
+                        "/FTOL_ABS/XTOL_REL/XTOL_ABS/POPULATION/STEP/"
+                        "VECTOR_ARR/THREADS/PARAM are valid; ENDINNER "
+                        "closes it)", "FOO 1"));
 }
 
 /* Pins: LOG_HP inside INIT is an unknown key of INIT (INIT refuses its
@@ -407,26 +388,26 @@ TEST_CASE("hpotarget engine: LOG_HP in INIT, INNER, EXPLORE and at the top "
 {
     const std::string written = "LOG_HP is written once, inside OPTIMIZER or "
                                 "STRATEGY: it holds for the whole search space";
-    both_refuse(kRoot + Lines{"LOG_HP 10"} + kOptimizer,
-                at_line(3, written + " and is not a top-level key",
-                        "LOG_HP 10"));
-    both_refuse(kRoot + Lines{"OPTIMIZER", "LIB NLOPT", "ALGO LN_SBPLX",
-                              "MAXEVAL 10", "INIT", "LOG_HP 10", "ENDINIT",
-                              "ENDOPTIMIZER"},
-                at_line(8, "unknown key 'LOG_HP' inside the INIT block opened "
-                           "on line 7 (ENDINIT closes it)", "LOG_HP 10"));
-    both_refuse(kRoot + Lines{"OPTIMIZER", "STRATEGY", "LIB NLOPT",
-                              "ALGO G_MLSL_LDS", "MAXEVAL 10", "INNER",
-                              "LOG_HP 10", "ENDINNER", "ENDSTRATEGY",
-                              "ENDOPTIMIZER"},
-                at_line(9, written + ", and the INNER block does not take it",
-                        "LOG_HP 10"));
-    both_refuse(kRoot + Lines{"OPTIMIZER", "STRATEGY", "TYPE PRESTAGE",
-                              "LIB NLOPT", "ALGO LN_SBPLX", "MAXEVAL 10",
-                              "EXPLORE", "LOG_HP 10", "ENDEXPLORE",
-                              "ENDSTRATEGY", "ENDOPTIMIZER"},
-                at_line(10, written + ", and the EXPLORE block does not take "
-                                      "it", "LOG_HP 10"));
+    refuses(kRoot + Lines{"LOG_HP 10"} + kOptimizer,
+            at_line(3, written + " and is not a top-level key",
+                    "LOG_HP 10"));
+    refuses(kRoot + Lines{"OPTIMIZER", "LIB NLOPT", "ALGO LN_SBPLX",
+                          "MAXEVAL 10", "INIT", "LOG_HP 10", "ENDINIT",
+                          "ENDOPTIMIZER"},
+            at_line(8, "unknown key 'LOG_HP' inside the INIT block opened "
+                       "on line 7 (ENDINIT closes it)", "LOG_HP 10"));
+    refuses(kRoot + Lines{"OPTIMIZER", "STRATEGY", "LIB NLOPT",
+                          "ALGO G_MLSL_LDS", "MAXEVAL 10", "INNER",
+                          "LOG_HP 10", "ENDINNER", "ENDSTRATEGY",
+                          "ENDOPTIMIZER"},
+            at_line(9, written + ", and the INNER block does not take it",
+                    "LOG_HP 10"));
+    refuses(kRoot + Lines{"OPTIMIZER", "STRATEGY", "TYPE PRESTAGE",
+                          "LIB NLOPT", "ALGO LN_SBPLX", "MAXEVAL 10",
+                          "EXPLORE", "LOG_HP 10", "ENDEXPLORE",
+                          "ENDSTRATEGY", "ENDOPTIMIZER"},
+            at_line(10, written + ", and the EXPLORE block does not take "
+                                  "it", "LOG_HP 10"));
 }
 
 /* Pins: ENDSTRATEGY checks the keys of one TYPE, then a MULTISTART
@@ -444,25 +425,25 @@ TEST_CASE("hpotarget engine: ENDSTRATEGY reports the first of a TYPE key, "
                                      "RESTART", "AFTER_STAGNATION 5",
                                      "ENDRESTART", "ENDSTRATEGY",
                                      "ENDOPTIMIZER"};
-    both_refuse(base,
-                at_line(10, "TOPK is not accepted with STRATEGY TYPE "
-                            "MULTISTART: only TYPE PRESTAGE forwards TOPK "
-                            "candidates to its refinement, so it would have "
-                            "no effect; TOPK takes effect under STRATEGY TYPE "
-                            "PRESTAGE", "TOPK 3"));
+    refuses(base,
+            at_line(10, "TOPK is not accepted with STRATEGY TYPE "
+                        "MULTISTART: only TYPE PRESTAGE forwards TOPK "
+                        "candidates to its refinement, so it would have "
+                        "no effect; TOPK takes effect under STRATEGY TYPE "
+                        "PRESTAGE", "TOPK 3"));
     Lines no_topk = base;
     no_topk[9] = "#";
-    both_refuse(no_topk,
-                at_line(5, "STRATEGY TYPE MULTISTART needs N_STARTS 2 or "
-                           "more: without N_STARTS it runs one start, which "
-                           "is STRATEGY TYPE PLAIN", "TYPE MULTISTART"));
+    refuses(no_topk,
+            at_line(5, "STRATEGY TYPE MULTISTART needs N_STARTS 2 or "
+                       "more: without N_STARTS it runs one start, which "
+                       "is STRATEGY TYPE PLAIN", "TYPE MULTISTART"));
     Lines restart_only = no_topk;
     restart_only[5] = "N_STARTS 3";
-    both_refuse(restart_only,
-                at_line(13, "the RESTART block never restarts the search: a "
-                            "restart needs AFTER_STAGNATION and MAX, and the "
-                            "block has no MAX line; a search without "
-                            "restarts has no RESTART block", "ENDRESTART"));
+    refuses(restart_only,
+            at_line(13, "the RESTART block never restarts the search: a "
+                        "restart needs AFTER_STAGNATION and MAX, and the "
+                        "block has no MAX line; a search without "
+                        "restarts has no RESTART block", "ENDRESTART"));
 }
 
 /* Pins: the values of --gate and --s0 of a PC_FAILPROBE line are read
@@ -474,9 +455,9 @@ TEST_CASE("hpotarget engine: a PC_FAILPROBE line reads --gate before its "
 {
     const std::string probe = "PC_FAILPROBE --bogus --script " +
                               probe_script() + " --outvar S --gate ";
-    both_refuse(kRoot + Lines{probe + "x"} + kOptimizer,
-                at_line(3, "PC_FAILPROBE --gate must be a finite number, got "
-                           "'x'", probe + "x"));
+    refuses(kRoot + Lines{probe + "x"} + kOptimizer,
+            at_line(3, "PC_FAILPROBE --gate must be a finite number, got "
+                       "'x'", probe + "x"));
     const std::string unknown = refusal(kRoot + Lines{probe + "5"} +
                                         kOptimizer);
     CHECK(unknown.find("PC_FAILPROBE: unknown option '--bogus'") !=
@@ -486,7 +467,7 @@ TEST_CASE("hpotarget engine: a PC_FAILPROBE line reads --gate before its "
 /* Pins: the checks at the end of the file run in the order of
  * structure::eof_order: a file with two faults of two checks next to each
  * other in the order is refused as the file with the fault of the earlier
- * check alone, by both parsers. The pairs no file meets together are
+ * check alone, by the parser. The pairs no file meets together are
  * those of test_hpotarget_registry_bindings.cpp.
  * Before the fix: the parser does not exist. */
 TEST_CASE("hpotarget engine: two faults at the end of the file are "
@@ -561,13 +542,15 @@ TEST_CASE("hpotarget engine: two faults at the end of the file are "
     for (const TwoFaults& t : pairs) check_first_wins(t);
 }
 
-/* Pins: a file both parsers read gives one description (describe_parse):
- * every block and their keys, the top-level keys, the metric lines with
- * their options, the PC_LAMMPS and PC_FAILPROBE lines with theirs, the
- * PC_OBSERVABLE line, the OPTIM lines and continued lines.
+/* Pins: a file with every block and their keys, the top-level keys, the
+ * metric lines with their options, the PC_LAMMPS and PC_FAILPROBE lines
+ * with theirs, the PC_OBSERVABLE line, the OPTIM lines and continued lines
+ * is read, and the description of the parse (describe_parse) holds the
+ * settings of its lines. (Every input of the frozen corpus,
+ * test_hpotarget_corpus.cpp, is compared with its whole description.)
  * Before the fix: the parser does not exist. */
-TEST_CASE("hpotarget engine: a file both parsers read gives one "
-          "description", "[hpotarget_engine]")
+TEST_CASE("hpotarget engine: a file of every block and line is read",
+          "[hpotarget_engine]")
 {
     const std::string pots = (scratch() / "pots").string();
     const std::string best = (scratch() / "best_pots").string();
@@ -619,14 +602,69 @@ TEST_CASE("hpotarget engine: a file both parsers read gives one "
          "OPTIMIZER", "LIB NLOPT", "ALGO LD_LBFGS", "MAXEVAL 10",
          "ENDOPTIMIZER"},
     };
-    for (const Lines& f : files) {
-        CAPTURE(f);
-        const Outcome old_parse = read_with(TargetParser::Old, f);
-        const Outcome new_parse = read_with(TargetParser::New, f);
-        REQUIRE(old_parse.error == "");
-        CHECK(new_parse.error == "");
-        CHECK(new_parse.dump == old_parse.dump);
+    /* Settings of each file in its description. */
+    const std::vector<std::vector<std::string>> settings = {
+        {"scale_policy.normalise = false", "globalLoss.type = HUBER",
+         "FAIL_SCORE = 100000", "QFLUSH_THRESHOLD = 3", "outputEvery = 2",
+         "bestOutputEvery = 4", "outputDigits = 8",
+         "FAILSCORE_GRADING = true", "BUMPGATE_STRICT = true",
+         "PC_ISOLATION = \"THREAD\"", "skip_emae.rel_above = 3",
+         "spec.strategy_type = MULTISTART", "spec.multistart.n_starts = 3",
+         "spec.multistart.budget_per_start = 20",
+         "spec.algo = \"LN_BOBYQA\"", "spec.stop.maxeval = 60",
+         "spec.seed = 42", "spec.log_threshold = 100",
+         "spec.noise.calibration_n = 3", "spec.restart.max = 2",
+         "spec.restart.after_stagnation = 10",
+         "spec.init_strategy_spec.k_total = 3",
+         "spec.init_strategy_spec.warm_on_mismatch = \"skip\""},
+        {"spec.strategy_type = PRESTAGE", "spec.stage_topk = 2",
+         "spec.algo = \"LN_BOBYQA\"", "spec.vector_storage = 3",
+         "spec.prestage.algo = \"G_MLSL_LDS\"", "spec.prestage.pop = 4",
+         "spec.prestage.inner.algo = \"LN_SBPLX\""},
+        {"LS.size = 3", "failprobe_gate = 0.5", "failprobe_s0 = 2",
+         "PC_WORKER_TIMEOUT = 600", "globalLoss.type = L1",
+         "LS[0].hotvars[0].name = \"a\"", "LS[2].failscore = 7"},
+        {"observables.size = 1", "spec.algo = \"LD_LBFGS\""},
+    };
+    REQUIRE(settings.size() == files.size());
+    for (std::size_t i = 0; i < files.size(); ++i) {
+        CAPTURE(files[i]);
+        const Outcome o = read_file(files[i]);
+        REQUIRE(o.error == "");
+        for (const std::string& line : settings[i]) {
+            CAPTURE(line);
+            CHECK(("\n" + o.dump).find("\n" + line + "\n") !=
+                  std::string::npos);
+        }
     }
 }
 
-#endif  // TADAH_HPOTARGET_PARSER_CHOICE
+/* Detects a member function read(const std::string&) of T. */
+template <typename T, typename = void>
+struct has_read : std::false_type {};
+template <typename T>
+struct has_read<T, std::void_t<decltype(std::declval<T&>().read(
+                       std::declval<const std::string&>()))>>
+    : std::true_type {};
+
+/* Pins: the registry-driven parser is the one parser of the target file:
+ * ParsedTarget has no read(), the hand-written parser, and the test seam
+ * (hpo_targets_testing.h) neither chooses a parser for the targets
+ * (TADAH_HPOTARGET_PARSER_CHOICE) nor compares two (the parser shadow,
+ * TADAH_HPOTARGET_PARSER_SHADOW_SEAM).
+ * Before the fix: fails, ParsedTarget::read() exists and the seam chooses
+ * between it and the registry-driven parser. */
+TEST_CASE("hpotarget engine: the registry-driven parser is the one parser "
+          "of the target file", "[hpotarget_engine]")
+{
+    CHECK_FALSE(has_read<tadah::hpo::ParsedTarget>::value);
+#if defined(TADAH_HPOTARGET_PARSER_CHOICE)
+    FAIL("hpo_targets_testing.h chooses the parser of the targets "
+         "(TADAH_HPOTARGET_PARSER_CHOICE)");
+#endif
+#if defined(TADAH_HPOTARGET_PARSER_SHADOW_SEAM)
+    FAIL("hpo_targets_testing.h compares two parsers "
+         "(TADAH_HPOTARGET_PARSER_SHADOW_SEAM)");
+#endif
+}
+

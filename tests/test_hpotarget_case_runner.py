@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 """Tests of hpotarget_case_runner (tests/tools/hpotarget_case_runner.cpp),
-which HPOTARGET_CASE_RUNNER names (CTest sets it): the parser selector
---parser old|new, the mode "describe", which reports what the parse set
-(tadah::hpo::testing::describe_parse), and the cases that read a target
-file and a training configuration in place, in a copy of a directory tree
-(tree, cwd, target_file, config_file, config_drop, config_add, copies).
+which HPOTARGET_CASE_RUNNER names (CTest sets it): it reads the cases with
+the parser of `tadah hpo` and takes no option, the mode "describe" reports
+what the parse set (tadah::hpo::testing::describe_parse), and the cases
+can read a target file and a training configuration in place, in a copy
+of a directory tree (tree, cwd, target_file, config_file, config_drop,
+config_add, copies).
 
-Before the fix: the runner takes no option and no mode "describe", and
-every test fails; --parser new is refused until the build has the
-registry-driven parser."""
+Before the fix: the runner takes --parser old|new (the parser of the
+program or the registry-driven one) and test_one_parser_and_no_option
+fails."""
 
 from __future__ import annotations
 
@@ -94,63 +95,29 @@ class Runner(unittest.TestCase):
         res = json.loads(rf.read_text()) if rf.exists() else None
         return p.returncode, p.stderr, res
 
-    def test_parser_old_is_the_default(self):
+    def test_reads_the_cases(self):
         cases = [{"id": "a", "mode": "parse", "file": TARGET,
                   "config": CONFIG},
                  {"id": "b", "mode": "parse", "file": "FOO 1\n" + TARGET,
                   "config": CONFIG}]
-        rc0, err0, res0 = self.run_cases(cases)
-        rc1, err1, res1 = self.run_cases(cases, "--parser", "old")
-        self.assertEqual((rc0, rc1), (0, 0), err0 + err1)
-        self.assertEqual(res0, res1)
-        self.assertEqual(res1[0]["parse_error"], "")
-        self.assertIn("unknown key 'FOO'", res1[1]["parse_error"])
+        rc, err, res = self.run_cases(cases)
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(res[0]["parse_error"], "")
+        self.assertIn("unknown key 'FOO'", res[1]["parse_error"])
 
-    # Pins: --parser new reads the cases with the registry-driven parser
-    # (src/hpotarget_parser.cpp) and reports as --parser old does: a file
-    # both read gives the same description, a refused one the same
-    # message; mode check, which runs tadah hpo --check and so the parser
-    # of the program, is refused with --parser new (exit status 2).
-    # Before the fix: fails, --parser new is refused (the build has no
-    # other parser).
-    def test_parser_new_reads_the_cases(self):
-        cases = [{"id": "ok", "mode": "describe", "file": TARGET,
-                  "config": CONFIG},
-                 {"id": "bad", "mode": "describe", "file": "FOO 1\n" + TARGET,
-                  "config": CONFIG},
-                 {"id": "values", "mode": "defaults", "file": TARGET,
-                  "config": CONFIG}]
-        rc0, err0, old = self.run_cases(cases, "--parser", "old")
-        rc1, err1, new = self.run_cases(cases, "--parser", "new")
-        self.assertEqual((rc0, rc1), (0, 0), err0 + err1)
-        self.assertEqual(old, new)
-        self.assertIn('\nspec.algo = "LN_SBPLX"\n', new[0]["dump"])
-        self.assertIn("unknown key 'FOO'", new[1]["parse_error"])
-        rc, err, res = self.run_cases(
-            [{"id": "a", "mode": "check", "file": TARGET, "config": CONFIG}],
-            "--parser", "new")
-        self.assertEqual(rc, 2)
-        self.assertIsNone(res)
-        self.assertIn("mode check runs tadah hpo --check, which reads the "
-                      "target file with the parser of the program; "
-                      "--parser new takes the other modes", err)
-
-    def test_parser_takes_old_or_new(self):
+    # Pins: the runner reads with the one parser of the target file, the
+    # program's, and takes no option: --parser is an unknown option (exit
+    # status 2, the usage without it).
+    # Before the fix: fails, --parser old|new chooses the parser.
+    def test_one_parser_and_no_option(self):
         case = [{"id": "a", "mode": "parse", "file": TARGET,
                  "config": CONFIG}]
-        rc, err, res = self.run_cases(case, "--parser", "newest")
-        self.assertEqual(rc, 2)
-        self.assertIsNone(res)
-        self.assertIn("--parser takes old or new, not 'newest'", err)
-        self.assertIn("usage: hpotarget_case_runner [--parser old|new] "
-                      "CASES RESULTS", err)
-        rc, err, _ = self.run_cases(case, "--frobnicate")
-        self.assertEqual(rc, 2)
-        self.assertIn("unknown option '--frobnicate'", err)
-        p = subprocess.run([str(runner()), "--parser"], capture_output=True,
-                           text=True)
-        self.assertEqual(p.returncode, 2)
-        self.assertIn("--parser takes old or new", p.stderr)
+        for option in ("--parser", "--frobnicate"):
+            rc, err, res = self.run_cases(case, option, "old")
+            self.assertEqual(rc, 2, err)
+            self.assertIsNone(res)
+            self.assertIn(f"unknown option '{option}'", err)
+            self.assertIn("usage: hpotarget_case_runner CASES RESULTS", err)
 
     def test_describe_reports_the_parse(self):
         rc, err, res = self.run_cases(
@@ -159,7 +126,7 @@ class Runner(unittest.TestCase):
              {"id": "bad", "mode": "describe", "file": "FOO 1\n" + TARGET,
               "config": CONFIG},
              {"id": "parse", "mode": "parse", "file": TARGET,
-              "config": CONFIG}], "--parser", "old")
+              "config": CONFIG}])
         self.assertEqual(rc, 0, err)
         ok, bad, parse = res
         self.assertEqual(ok["parse_error"], "")

@@ -497,6 +497,22 @@ class Write(unittest.TestCase):
         self.assertEqual(self.files(other), {"keep.txt": b"x"})
 
 
+class Command(unittest.TestCase):
+    # Pins: `check` reads the inputs with the runner, whose parser is the
+    # one of `tadah hpo`: the command takes no --parser (an argument
+    # error, exit status 2).
+    # Before the fix: fails, --parser old|new chose the runner's parser.
+    def test_no_parser_option(self):
+        import contextlib
+        import io
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err), \
+                self.assertRaises(SystemExit) as e:
+            corpus.main(["check", "--runner", "/r", "--parser", "old"])
+        self.assertEqual(e.exception.code, 2)
+        self.assertIn("unrecognized arguments: --parser old", err.getvalue())
+
+
 class RealTrees(unittest.TestCase):
     def test_hpo_and_registry(self):
         c = corpus.collect(HPO, HPO / "blueprint", None)

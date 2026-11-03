@@ -7,8 +7,9 @@ comparison no rule classifies, of a rule that finds nothing or whose
 function is not found once, the comparison of the names found with the
 registry's in both directions, the command without a registry, and a
 rule on a file of MLIP (mlip:<path>, read from the --mlip directory); on a
-copy of the HPO and MLIP sources, a name added to the top-level keys of
-is_top_level_key().
+copy of the HPO and MLIP sources, a top-level key the registry-driven
+parser compares that the registry does not know; and that no rule reads
+the hand-written parser the registry-driven one replaced.
 
 The rules on MLIP's files read the MLIP source directory that
 TADAH_MLIP_SOURCE_DIR names (CTest sets it); a test that needs it fails
@@ -437,20 +438,32 @@ class RealSources(unittest.TestCase):
         _, problems = cov.extract(HERE.parent, mlip=mlip_source_dir(self))
         self.assertEqual(problems, [])
 
+    # Pins: the target file has one parser, the registry-driven one
+    # (src/hpotarget_parser.cpp, its handlers and the readers they call):
+    # no rule reads the hand-written parser of src/hpo_targets.cpp
+    # (ParsedTarget::read and the readers only it called); the one rule on
+    # that file reads the constructor of the targets (the environment
+    # override TADAH_OPTIM_SCALE and its words).
+    # Before the fix: fails, six rules read ParsedTarget::read and its
+    # readers.
+    def test_no_rule_reads_the_hand_written_parser(self):
+        on = [r.label for r in cov.EXTRACTION
+              if r.file == "src/hpo_targets.cpp"]
+        self.assertEqual(on, ["the OPTIM_SCALE override"])
+
 
 class TopLevelKeys(unittest.TestCase):
-    """The keys a block refuses as top-level keys, the set of
-    is_top_level_key() in src/hpo_targets.cpp, are read from the sources
+    """A top-level key the registry-driven parser compares by name
+    (src/hpotarget_parser.cpp, operand `name`) is read from the sources
     and compared with the keys of the top level of the registry."""
 
-    # Pins: on a copy of the files the rules read, with "ZZTOPKEY" added to
-    # the set of is_top_level_key() (so a block would refuse it as a
-    # top-level key), the check against the registry exits 1 and reports
-    # 'ZZTOPKEY' as missing from the registry, as a key of the top level
-    # (key:ROOT), at src/hpo_targets.cpp.
-    # Before the fix: fails, no rule reads is_top_level_key(): the check
-    # passes on the copy ("OK: the registry and the parser's sources name
-    # the same ... names").
+    # Pins: on a copy of the files the rules read, with a comparison
+    # `name == "ZZTOPKEY"` added to src/hpotarget_parser.cpp (a top-level
+    # key only the code holds), the check against the registry exits 1 and
+    # reports 'ZZTOPKEY' as missing from the registry, as a key of the top
+    # level (key:ROOT), at src/hpotarget_parser.cpp.
+    # Before the fix: the test read is_top_level_key() of the hand-written
+    # parser (src/hpo_targets.cpp).
     def test_a_name_only_the_code_holds_is_reported(self):
         with tempfile.TemporaryDirectory() as d:
             root, mlip = pathlib.Path(d) / "hpo", pathlib.Path(d) / "mlip"
@@ -463,12 +476,10 @@ class TopLevelKeys(unittest.TestCase):
                     continue
                 (root / f).parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy(HERE.parent / f, root / f)
-            src = root / "src" / "hpo_targets.cpp"
+            src = root / "src" / "hpotarget_parser.cpp"
             text = src.read_text()
-            start = text.find("static bool is_top_level_key(")
-            self.assertGreaterEqual(start, 0, "is_top_level_key() not found")
-            at = text.index("= {", start) + len("= {")
-            src.write_text(text[:at] + '"ZZTOPKEY", ' + text[at:])
+            src.write_text(text + "\nbool zz_top_level(const std::string& "
+                           "name)\n{\n    return name == \"ZZTOPKEY\";\n}\n")
             out = io.StringIO()
             with contextlib.redirect_stdout(out):
                 code = cov.main([str(root), "--mlip", str(mlip),
@@ -476,7 +487,7 @@ class TopLevelKeys(unittest.TestCase):
                                  str(HERE.parent / "blueprint")])
         self.assertEqual(code, 1, out.getvalue())
         self.assertIn("missing from the registry: 'ZZTOPKEY' (key:ROOT), "
-                      "src/hpo_targets.cpp:", out.getvalue())
+                      "src/hpotarget_parser.cpp:", out.getvalue())
 
 
 if __name__ == "__main__":
