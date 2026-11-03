@@ -546,7 +546,7 @@ TEST_CASE("ASA options: rejections", "[HPO][asa][options]")
         sp.param = {{"User_Tangents", 1.5}};
         REQUIRE_THROWS_WITH(parse_asa_options(sp, 1),
                             "ASA:ASA: PARAM User_Tangents must be an integer "
-                            "(got 1.5)");
+                            "(got '1.5')");
     }
     SECTION("Number_Cost_Samples 0 / -1 invalid") {
         sp.param = {{"Number_Cost_Samples", 0.0}};

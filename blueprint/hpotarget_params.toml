@@ -496,9 +496,9 @@ examples = [
   { wrap = "params_ceres", text = "PARAM max_iter 0", doc = "0 evaluates the start and ends the search." },
 ]
 invalid = [
-  { wrap = "params_ceres", check = "startup", at = "ENDOPTIMIZER", text = "PARAM max_iter 2.5", error = "the STRATEGY-level optimiser: CERES:STEEPEST_DESCENT requires PARAM max_iter to be an integer from 0 to 2147483647 (Ceres' max_num_iterations), got 2.5" },
-  { wrap = "params_ceres", check = "startup", at = "ENDOPTIMIZER", text = "PARAM max_iter -1", error = "the STRATEGY-level optimiser: CERES:STEEPEST_DESCENT requires PARAM max_iter to be an integer from 0 to 2147483647 (Ceres' max_num_iterations), got -1" },
-  { wrap = "params_ceres", check = "startup", at = "ENDOPTIMIZER", text = "PARAM max_iter 1e1", doc = "A whole number written with an exponent.", error = "the STRATEGY-level optimiser: CERES:STEEPEST_DESCENT requires PARAM max_iter to be an integer from 0 to 2147483647 (Ceres' max_num_iterations), got 1e1" },
+  { wrap = "params_ceres", check = "startup", at = "ENDOPTIMIZER", text = "PARAM max_iter 2.5", error = "the STRATEGY-level optimiser: CERES:STEEPEST_DESCENT requires PARAM max_iter to be an integer from 0 to 2147483647 (Ceres' max_num_iterations), got '2.5'" },
+  { wrap = "params_ceres", check = "startup", at = "ENDOPTIMIZER", text = "PARAM max_iter -1", error = "the STRATEGY-level optimiser: CERES:STEEPEST_DESCENT requires PARAM max_iter to be an integer from 0 to 2147483647 (Ceres' max_num_iterations), got '-1'" },
+  { wrap = "params_ceres", check = "startup", at = "ENDOPTIMIZER", text = "PARAM max_iter 1e1", doc = "A whole number written with an exponent.", error = "the STRATEGY-level optimiser: CERES:STEEPEST_DESCENT requires PARAM max_iter to be an integer from 0 to 2147483647 (Ceres' max_num_iterations), got '1e1'" },
 ]
 
 [[param]]
@@ -517,8 +517,8 @@ examples = [
   { wrap = "params_ceres", text = "PARAM max_ls_iter 10" },
 ]
 invalid = [
-  { wrap = "params_ceres", check = "startup", at = "ENDOPTIMIZER", text = "PARAM max_ls_iter 0", error = "the STRATEGY-level optimiser: CERES:STEEPEST_DESCENT requires PARAM max_ls_iter to be an integer from 1 to 2147483647 (Ceres' max_num_line_search_step_size_iterations), got 0" },
-  { wrap = "params_ceres", check = "startup", at = "ENDOPTIMIZER", text = "PARAM max_ls_iter 3e9", error = "the STRATEGY-level optimiser: CERES:STEEPEST_DESCENT requires PARAM max_ls_iter to be an integer from 1 to 2147483647 (Ceres' max_num_line_search_step_size_iterations), got 3e9" },
+  { wrap = "params_ceres", check = "startup", at = "ENDOPTIMIZER", text = "PARAM max_ls_iter 0", error = "the STRATEGY-level optimiser: CERES:STEEPEST_DESCENT requires PARAM max_ls_iter to be an integer from 1 to 2147483647 (Ceres' max_num_line_search_step_size_iterations), got '0'" },
+  { wrap = "params_ceres", check = "startup", at = "ENDOPTIMIZER", text = "PARAM max_ls_iter 3e9", error = "the STRATEGY-level optimiser: CERES:STEEPEST_DESCENT requires PARAM max_ls_iter to be an integer from 1 to 2147483647 (Ceres' max_num_line_search_step_size_iterations), got '3e9'" },
 ]
 
 # ---------------------------------------------- finite differences ----
@@ -628,8 +628,8 @@ examples = [
 ]
 invalid = [
   { wrap = "params_lbfgs", check = "startup", at = "ENDOPTIMIZER", text = "PARAM diff_method 2", error = "the STRATEGY-level optimiser NLOPT:LD_LBFGS: PARAM diff_method 2 (RIDDERS) is refused: Ridders' extrapolation ignores PARAM fd_step, starts from a step of 0.32 x max(|u|, 1) -- outside most OPTIM boxes -- and takes up to 20 evaluations per parameter; diff_method 0 (CENTRAL, the default) and 1 (FORWARD) take PARAM fd_step" },
-  { wrap = "params_lbfgs", check = "startup", at = "ENDOPTIMIZER", text = "PARAM diff_method 0.5", error = "the STRATEGY-level optimiser NLOPT:LD_LBFGS: PARAM diff_method must be 0 (CENTRAL, the default) or 1 (FORWARD) (got 0.5)" },
-  { wrap = "params_lbfgs", check = "startup", at = "ENDOPTIMIZER", text = "PARAM diff_method 1.0", doc = "A whole number written with a decimal point.", error = "the STRATEGY-level optimiser NLOPT:LD_LBFGS: PARAM diff_method must be 0 (CENTRAL, the default) or 1 (FORWARD) (got 1.0)" },
+  { wrap = "params_lbfgs", check = "startup", at = "ENDOPTIMIZER", text = "PARAM diff_method 0.5", error = "the STRATEGY-level optimiser NLOPT:LD_LBFGS: PARAM diff_method must be 0 (CENTRAL, the default) or 1 (FORWARD) (got '0.5')" },
+  { wrap = "params_lbfgs", check = "startup", at = "ENDOPTIMIZER", text = "PARAM diff_method 1.0", doc = "A whole number written with a decimal point.", error = "the STRATEGY-level optimiser NLOPT:LD_LBFGS: PARAM diff_method must be 0 (CENTRAL, the default) or 1 (FORWARD) (got '1.0')" },
   { wrap = "params_lbfgs", check = "startup", at = "ENDOPTIMIZER", text = "PARAM diff_method central", error = "the STRATEGY-level optimiser NLOPT:LD_LBFGS: PARAM diff_method must be 0 (CENTRAL, the default) or 1 (FORWARD) (got 'central')" },
   { wrap = "strategy", check = "startup", at = "ENDOPTIMIZER", text = "PARAM diff_method 1", error = "the STRATEGY-level optimiser NLOPT:LN_SBPLX: PARAM diff_method never takes effect: NLOPT:LN_SBPLX takes no gradient." },
   { wrap = "inner", check = "startup", at = "ENDINNER", text = "PARAM diff_method 1", error = "the INNER block of the STRATEGY-level optimiser NLOPT:LN_BOBYQA: PARAM diff_method never takes effect: an INNER search takes the gradient of the block it runs in, with that block's finite-difference settings; the enclosing block takes it." },
@@ -656,8 +656,8 @@ examples = [
   { wrap = "params_asa", text = "PARAM Limit_Acceptances 500" },
 ]
 invalid = [
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Limit_Acceptances 1.5", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Limit_Acceptances must be an integer (got 1.5)" },
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Limit_Acceptances 1e3", doc = "A whole number written with an exponent.", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Limit_Acceptances must be an integer (got 1e3)" },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Limit_Acceptances 1.5", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Limit_Acceptances must be an integer (got '1.5')" },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Limit_Acceptances 1e3", doc = "A whole number written with an exponent.", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Limit_Acceptances must be an integer (got '1e3')" },
   { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Limit_Acceptances -1", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Limit_Acceptances must be >= 0 (got -1)" },
 ]
 
@@ -678,7 +678,7 @@ examples = [
   { wrap = "params_asa", text = "PARAM Limit_Generated 2000" },
 ]
 invalid = [
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Limit_Generated 1.5", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Limit_Generated must be an integer (got 1.5)" },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Limit_Generated 1.5", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Limit_Generated must be an integer (got '1.5')" },
   { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Limit_Generated -1", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Limit_Generated must be >= 0 (got -1)" },
 ]
 
@@ -701,7 +701,7 @@ examples = [
   { wrap = "params_asa", text = "PARAM Limit_Invalid_Generated_States -1" },
 ]
 invalid = [
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Limit_Invalid_Generated_States 1.5", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Limit_Invalid_Generated_States must be an integer (got 1.5)" },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Limit_Invalid_Generated_States 1.5", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Limit_Invalid_Generated_States must be an integer (got '1.5')" },
   { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Limit_Invalid_Generated_States -2", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Limit_Invalid_Generated_States must be >= -1 (got -2)" },
 ]
 
@@ -769,7 +769,7 @@ examples = [
   { wrap = "params_asa", text = "PARAM Maximum_Cost_Repeat 0" },
 ]
 invalid = [
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Maximum_Cost_Repeat 1.5", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Maximum_Cost_Repeat must be an integer (got 1.5)" },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Maximum_Cost_Repeat 1.5", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Maximum_Cost_Repeat must be an integer (got '1.5')" },
   { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Maximum_Cost_Repeat -1", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Maximum_Cost_Repeat must be >= 0 (got -1)" },
 ]
 
@@ -792,7 +792,7 @@ examples = [
   { wrap = "params_asa", text = "PARAM Number_Cost_Samples -5" },
 ]
 invalid = [
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Number_Cost_Samples 1.5", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Number_Cost_Samples must be an integer (got 1.5)" },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Number_Cost_Samples 1.5", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Number_Cost_Samples must be an integer (got '1.5')" },
   { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Number_Cost_Samples -1", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Number_Cost_Samples takes a value above 0 (a sample of the mean |cost|) or below -1 (a sample of its deviation), got -1" },
 ]
 
@@ -889,7 +889,7 @@ examples = [
   { wrap = "params_asa", text = "PARAM Sequential_Parameters 0" },
 ]
 invalid = [
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Sequential_Parameters 1.5", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Sequential_Parameters must be an integer (got 1.5)" },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Sequential_Parameters 1.5", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Sequential_Parameters must be an integer (got '1.5')" },
   { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Sequential_Parameters 1", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Sequential_Parameters must be < the number of OPTIM dimensions (1)" },
 ]
 
@@ -934,7 +934,7 @@ examples = [
   { wrap = "params_asa", text = "PARAM Acceptance_Frequency_Modulus 50" },
 ]
 invalid = [
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Acceptance_Frequency_Modulus 1.5", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Acceptance_Frequency_Modulus must be an integer (got 1.5)" },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Acceptance_Frequency_Modulus 1.5", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Acceptance_Frequency_Modulus must be an integer (got '1.5')" },
   { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Acceptance_Frequency_Modulus -1", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Acceptance_Frequency_Modulus must be >= 0 (got -1)" },
 ]
 
@@ -959,7 +959,7 @@ examples = [
   { wrap = "params_asa", text = "PARAM Generated_Frequency_Modulus 500" },
 ]
 invalid = [
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Generated_Frequency_Modulus 1.5", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Generated_Frequency_Modulus must be an integer (got 1.5)" },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Generated_Frequency_Modulus 1.5", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Generated_Frequency_Modulus must be an integer (got '1.5')" },
   { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Generated_Frequency_Modulus -1", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Generated_Frequency_Modulus must be >= 0 (got -1)" },
 ]
 
@@ -982,7 +982,7 @@ examples = [
   { wrap = "params_asa", text = "PARAM Reanneal_Cost 0" },
 ]
 invalid = [
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Reanneal_Cost 1.5", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Reanneal_Cost must be an integer (got 1.5)" },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Reanneal_Cost 1.5", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Reanneal_Cost must be an integer (got '1.5')" },
   { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Reanneal_Cost -1", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Reanneal_Cost takes 0 (off), 1 (the default), or a value above 1 or below -1 (sample variants), got -1; ASA refuses -1" },
 ]
 
@@ -1005,7 +1005,7 @@ examples = [
   { wrap = "params_asa", text = "PARAM Reanneal_Parameters 0" },
 ]
 invalid = [
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Reanneal_Parameters 1.5", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Reanneal_Parameters must be an integer (got 1.5)" },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Reanneal_Parameters 1.5", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Reanneal_Parameters must be an integer (got '1.5')" },
   { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Reanneal_Parameters -1", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Reanneal_Parameters must be >= 0 (got -1)" },
   { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Reanneal_Parameters 2", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Reanneal_Parameters must be <= 1 (got 2)" },
 ]
@@ -1060,7 +1060,7 @@ examples = [
   { wrap = "params_asa", text = "PARAM User_Tangents 0" },
 ]
 invalid = [
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM User_Tangents 1.5", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM User_Tangents must be an integer (got 1.5)" },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM User_Tangents 1.5", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM User_Tangents must be an integer (got '1.5')" },
   { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM User_Tangents -1", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM User_Tangents must be >= 0 (got -1)" },
   { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM User_Tangents 2", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM User_Tangents takes 0 only: tadah hpo gives ASA no analytic tangents, and the reannealing takes them by finite differences (PARAM Delta_X)" },
   { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM User_Tangents 1", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM User_Tangents takes 0 only: tadah hpo gives ASA no analytic tangents, and the reannealing takes them by finite differences (PARAM Delta_X)" },
@@ -1089,7 +1089,7 @@ examples = [
   { wrap = "params_asa", text = "PARAM Curvature_0 0" },
 ]
 invalid = [
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Curvature_0 1.5", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Curvature_0 must be an integer (got 1.5)" },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Curvature_0 1.5", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Curvature_0 must be an integer (got '1.5')" },
   { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Curvature_0 -2", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Curvature_0 must be >= -1 (got -2)" },
   { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Curvature_0 2", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Curvature_0 must be <= 1 (got 2)" },
 ]
@@ -1238,7 +1238,7 @@ examples = [
   { wrap = "params_asa", text = "PARAM Multi_Number 3" },
 ]
 invalid = [
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Multi_Number 1.5", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Multi_Number must be an integer (got 1.5)" },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Multi_Number 1.5", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Multi_Number must be an integer (got '1.5')" },
   { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Multi_Number 0", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Multi_Number must be >= 1 (got 0)" },
 ]
 
@@ -1261,7 +1261,7 @@ examples = [
   { wrap = "params_asa", text = "PARAM Multi_Specify 0" },
 ]
 invalid = [
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Multi_Specify 1.5", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Multi_Specify must be an integer (got 1.5)" },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Multi_Specify 1.5", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Multi_Specify must be an integer (got '1.5')" },
   { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Multi_Specify -1", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Multi_Specify must be >= 0 (got -1)" },
   { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Multi_Specify 2", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Multi_Specify must be <= 1 (got 2)" },
 ]
@@ -1307,7 +1307,7 @@ examples = [
   { wrap = "params_asa", text = "PARAM Queue_Size 100" },
 ]
 invalid = [
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Queue_Size 1.5", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Queue_Size must be an integer (got 1.5)" },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Queue_Size 1.5", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Queue_Size must be an integer (got '1.5')" },
   { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Queue_Size -1", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Queue_Size must be >= 0 (got -1)" },
 ]
 
@@ -1358,7 +1358,7 @@ examples = [
   { wrap = "params_asa", text = "PARAM Gener_Block 2" },
 ]
 invalid = [
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Gener_Block 1.5", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Gener_Block must be an integer (got 1.5)" },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Gener_Block 1.5", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Gener_Block must be an integer (got '1.5')" },
   { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Gener_Block 0", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Gener_Block must be >= 1 (got 0)" },
 ]
 
@@ -1382,7 +1382,7 @@ examples = [
   { wrap = "params_asa", text = "PARAM Gener_Block_Max 4" },
 ]
 invalid = [
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Gener_Block_Max 1.5", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Gener_Block_Max must be an integer (got 1.5)" },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Gener_Block_Max 1.5", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Gener_Block_Max must be an integer (got '1.5')" },
   { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Gener_Block_Max 0", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Gener_Block_Max must be >= 1 (got 0)" },
   { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Gener_Block 4\nPARAM Gener_Block_Max 2", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Gener_Block_Max must be >= Gener_Block (buffers are sized once by the cap)" },
 ]
@@ -1406,7 +1406,7 @@ examples = [
   { wrap = "params_asa", text = "PARAM Gener_Mov_Avr 0" },
 ]
 invalid = [
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Gener_Mov_Avr 1.5", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Gener_Mov_Avr must be an integer (got 1.5)" },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Gener_Mov_Avr 1.5", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Gener_Mov_Avr must be an integer (got '1.5')" },
   { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Gener_Mov_Avr -1", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Gener_Mov_Avr must be >= 0 (got -1)" },
 ]
 

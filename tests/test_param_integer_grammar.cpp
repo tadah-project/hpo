@@ -1,8 +1,9 @@
 // test_param_integer_grammar.cpp
 //
 // A PARAM key that takes a whole number -- integral in the target-file
-// registry (TADAH:GRID's GRID_POINTS, the counts of ASA:ASA, CERES'
-// iteration caps, diff_method), a count of the annealers (anneal_keys.toml)
+// registry (TADAH:GRID's GRID_POINTS, the whole-number options of
+// ASA:ASA, CERES' iteration caps, diff_method), a count of the annealers
+// (anneal_keys.toml)
 // -- reads the integer syntax of every whole-number key of the target file:
 // decimal digits, with a '-' for a negative value. A value written with an
 // exponent, a '+' or a decimal point is refused when tadah hpo starts, at
@@ -139,16 +140,23 @@ std::string at_end(const std::string& what)
  *    GRID_POINTS must be an integer from 2 to 4294967295, got '1e1' (the
  *    points of each dimension include both of its bounds)";
  *  - ASA:ASA, PARAM Limit_Acceptances 1e3: "ASA:ASA: PARAM
- *    Limit_Acceptances must be an integer (got 1e3)";
+ *    Limit_Acceptances must be an integer (got '1e3')";
+ *  - CERES:STEEPEST_DESCENT, PARAM max_iter 1e1: "CERES:STEEPEST_DESCENT
+ *    requires PARAM max_iter to be an integer from 0 to 2147483647
+ *    (Ceres' max_num_iterations), got '1e1'";
  *  - TADAH:ANNEAL, PARAM CHAIN_LENGTH 5e1: "TADAH:ANNEAL: PARAM
  *    CHAIN_LENGTH must be a non-negative integer (got '5e1')";
- *  - NLOPT:LD_LBFGS, PARAM diff_method 1.0: "PARAM diff_method must be 0
- *    (CENTRAL, the default) or 1 (FORWARD) (got 1.0)".
+ *  - NLOPT:LD_LBFGS, PARAM diff_method 1.0 and 3: "PARAM diff_method must
+ *    be 0 (CENTRAL, the default) or 1 (FORWARD) (got '1.0')".
+ * Every refusal quotes the value as the file writes it, as the refusal of a
+ * word does (got 'central').
  * The same keys written as decimal digits (GRID_POINTS 10, Limit_Acceptances
- * 1000, CHAIN_LENGTH 50, diff_method 1) start.
+ * 1000, max_iter 10, CHAIN_LENGTH 50, diff_method 1) start.
  * Before the fix: each value of the first list was read as the number it
  * writes (1e1 as 10) and tadah hpo started; the annealers' refusal of a
- * fraction gave no value ("must be a non-negative integer"). */
+ * fraction gave no value ("must be a non-negative integer"); the refusals
+ * of ASA:ASA, CERES and diff_method gave the value without quotes
+ * (got 1e3). */
 TEST_CASE("startup validation: a PARAM key that takes a whole number reads "
           "decimal digits only", "[startup][param][integer]")
 {
@@ -168,13 +176,19 @@ TEST_CASE("startup validation: a PARAM key that takes a whole number reads "
         {"TADAH", "GRID", "PARAM GRID_POINTS +10", grid("+10")},
         {"TADAH", "GRID", "PARAM GRID_POINTS 10.0", grid("10.0")},
         {"ASA", "ASA", "PARAM Limit_Acceptances 1e3",
-         ": ASA:ASA: PARAM Limit_Acceptances must be an integer (got 1e3)"},
+         ": ASA:ASA: PARAM Limit_Acceptances must be an integer (got '1e3')"},
+        {"CERES", "STEEPEST_DESCENT", "PARAM max_iter 1e1",
+         ": CERES:STEEPEST_DESCENT requires PARAM max_iter to be an integer "
+         "from 0 to 2147483647 (Ceres' max_num_iterations), got '1e1'"},
         {"TADAH", "ANNEAL", "PARAM CHAIN_LENGTH 5e1",
          ": TADAH:ANNEAL: PARAM CHAIN_LENGTH must be a non-negative integer "
          "(got '5e1')"},
         {"NLOPT", "LD_LBFGS", "PARAM diff_method 1.0",
          " NLOPT:LD_LBFGS: PARAM diff_method must be 0 (CENTRAL, the "
-         "default) or 1 (FORWARD) (got 1.0)"},
+         "default) or 1 (FORWARD) (got '1.0')"},
+        {"NLOPT", "LD_LBFGS", "PARAM diff_method 3",
+         " NLOPT:LD_LBFGS: PARAM diff_method must be 0 (CENTRAL, the "
+         "default) or 1 (FORWARD) (got '3')"},
     };
     for (const Case& c : refused) {
         DYNAMIC_SECTION(c.lib << ":" << c.algo << ", " << c.line) {
@@ -184,6 +198,7 @@ TEST_CASE("startup validation: a PARAM key that takes a whole number reads "
     const std::vector<Case> accepted = {
         {"TADAH", "GRID", "PARAM GRID_POINTS 10", ""},
         {"ASA", "ASA", "PARAM Limit_Acceptances 1000", ""},
+        {"CERES", "STEEPEST_DESCENT", "PARAM max_iter 10", ""},
         {"TADAH", "ANNEAL", "PARAM CHAIN_LENGTH 50", ""},
         {"NLOPT", "LD_LBFGS", "PARAM diff_method 1", ""},
     };
