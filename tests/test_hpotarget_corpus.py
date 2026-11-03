@@ -357,6 +357,7 @@ class Write(unittest.TestCase):
         (tree / "common" / "script.in").write_text("variable E equal 1\n")
         (tree / "common" / "config.tadah").write_text("ATOM Ta\n")
         (tree / "common" / "data" / "big.tadahdb").write_text("data\n")
+        (tree / "common" / "data" / "README.md").write_text("# data\n")
         self.tree = tree
         default = REG.contexts["default"].config
         fx = [{"path": "fix.in", "text": "variable E equal 2\n"}]
@@ -425,7 +426,7 @@ class Write(unittest.TestCase):
     # Pins: write() writes corpus.toml (an [[input]] per input with
     # `expected`), the frozen files and expected/<name>.dump or .error,
     # byte for byte what the runner gives; the trees leave out the
-    # datasets; a second write gives the same files.
+    # datasets and the READMEs; a second write gives the same files.
     # Before the fix: fails, hpotarget_corpus.py has no write().
     def test_write(self):
         out = self.root / "corpus"
@@ -445,6 +446,7 @@ class Write(unittest.TestCase):
         self.assertIn("variable E equal 1", a)
         self.assertIn("trees/hpo-data/ta/common/script.in", files)
         self.assertNotIn("trees/hpo-data/ta/common/data/big.tadahdb", files)
+        self.assertNotIn("trees/hpo-data/ta/common/data/README.md", files)
         self.assertEqual(doc["input"][0]["origin"], "HPO/tests/data/a.hpo")
         self.assertEqual([e["id"] for e in doc["input"]],
                          [i.id for i in self.corpus.inputs])
