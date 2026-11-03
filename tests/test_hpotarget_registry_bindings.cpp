@@ -12,14 +12,16 @@
 // hpotarget_group_specs(), the ASA help table), the two are compared entry
 // by entry. Where it is local to a function (the block names, the removed
 // keywords, the INNER refusals, the top-level and once-set keys of
-// HPOTargets::read, the options of the gate lines, line_options() of
-// lammps_sim.cpp, the options of PC_OBSERVABLE cohesive_energy, the INIT
-// methods, the STRATEGY TYPE keys, kDescs and kExcluded of
-// asa_options.cpp, the PARAM lists of the adapters, the reader messages of
-// strict_parse.cpp), each generated entry is put through the code that
-// reads it,
-// and the code's answer, a refusal with its message, is compared with the
-// entry's message filled in. A name the code knows without a generated
+// ParsedTarget::read, the options of the gate lines, the INIT methods,
+// kDescs and kExcluded of asa_options.cpp, the PARAM lists of the
+// adapters, the reader messages of strict_parse.cpp), each generated entry
+// is put through the code that reads it, and the code's answer, a refusal
+// with its message, is compared with the entry's message filled in. The
+// keys of the optimiser group, the options of PC_LAMMPS, PC_FAILPROBE and
+// PC_OBSERVABLE cohesive_energy, the STRATEGY TYPE keys and the loss
+// functions the code takes from the generated tables themselves (the
+// handlers of hpotarget_handlers.cpp read them): their cases hold what the
+// code does with them, the messages, the order and the TYPE of each key. A name the code knows without a generated
 // entry is the coverage check's (hpo_hpotarget_registry_coverage, which
 // reads these functions, the set of is_top_level_key() among them); the
 // OPTIM refusals are compared both ways over every key of the blueprint.
@@ -33,7 +35,7 @@
 // file that two steps refuse, refused as the earlier step refuses it; the
 // line a close check names (Block::close_checks_at); the keys given again
 // only after a line reads them (Repeat::ErrorUntilRead); and the texts the
-// parser puts into messages (Key::effect against kStrategyTypeKeys,
+// parser puts into messages (Key::effect against require_strategy_key(),
 // Rule::what, Param::explain against kDescs). The case of words (any_case)
 // is compared by check_hpotarget_generated.py, check `case`.
 //
@@ -648,7 +650,7 @@ TEST_CASE("hpotarget generated tables: the top-level keys set once refuse "
     }
 }
 
-/* Pins: the STRATEGY TYPE keys of the registry are kStrategyTypeKeys of
+/* Pins: the STRATEGY TYPE keys of the registry are those of
  * strategy_rules.cpp, each with its home TYPE: is_strategy_type_key()
  * names them and no other key of the STRATEGY block; require_strategy_key()
  * passes one under its TYPE and refuses it under another with the
@@ -656,7 +658,7 @@ TEST_CASE("hpotarget generated tables: the top-level keys set once refuse "
  * TYPE words are strategy_type_name()'s, in order. Before the fix: the
  * headers do not exist. */
 TEST_CASE("hpotarget generated tables: the STRATEGY TYPE keys are "
-          "kStrategyTypeKeys, each under its TYPE", "[hpotarget_gen]")
+          "strategy_rules.cpp's, each under its TYPE", "[hpotarget_gen]")
 {
     using tadah::hpo::StrategyType;
     const std::vector<StrategyType> types = {
@@ -700,14 +702,14 @@ TEST_CASE("hpotarget generated tables: the STRATEGY TYPE keys are "
     }
 }
 
-/* Pins: the options of a PC_LAMMPS and of a PC_FAILPROBE line are
- * line_options() of lammps_sim.cpp: the unknown-option refusal of each
+/* Pins: the options of a PC_LAMMPS and of a PC_FAILPROBE line are those
+ * LammpsSim reads (lammps_sim.cpp): the unknown-option refusal of each
  * line (a check of its key) lists the line's options of the registry, the
  * refused one left out, in registry order; an option of PC_FAILPROBE
  * alone on a PC_LAMMPS line is named as one. Before the fix: the headers
  * do not exist. */
 TEST_CASE("hpotarget generated tables: the options of PC_LAMMPS and "
-          "PC_FAILPROBE are line_options(), in order", "[hpotarget_gen]")
+          "PC_FAILPROBE are LammpsSim's, in order", "[hpotarget_gen]")
 {
     for (const std::string line : {"PC_LAMMPS", "PC_FAILPROBE"}) {
         CAPTURE(line);
@@ -1674,13 +1676,13 @@ TEST_CASE("hpotarget generated tables: a key given again after a line "
 }
 
 /* Pins: Key::effect of each STRATEGY TYPE key is the {effect} of the
- * close check of STRATEGY as kStrategyTypeKeys of strategy_rules.cpp
+ * close check of STRATEGY as require_strategy_key() of strategy_rules.cpp
  * writes it: require_strategy_key() refuses the key under another TYPE
  * with the check's message filled with the key, the TYPE, no note, the
  * effect and the key's TYPE; a key of no TYPE has no effect. Before the
  * fix: the header has no effect of a key. */
 TEST_CASE("hpotarget generated tables: the effect of a STRATEGY TYPE key "
-          "is kStrategyTypeKeys'", "[hpotarget_gen]")
+          "is require_strategy_key()'s", "[hpotarget_gen]")
 {
     using tadah::hpo::StrategyType;
     const std::vector<StrategyType> types = {

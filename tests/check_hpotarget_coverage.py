@@ -22,7 +22,7 @@ PC_OBSERVABLE.cohesive_energy), and the STRATEGY keys of each TYPE,
 strategy_type_key:<TYPE>. An option the registry gives a line the parser
 does not take it on fails as "not in the parser", where the sources say
 which line takes the option: the functions of each line. The keys of a
-TYPE come from the second field of kStrategyTypeKeys.
+TYPE are those its entry of the generated tables lists.
 
 Exits 1 and lists each difference, 0 when there is none.
 
@@ -416,9 +416,11 @@ EXTRACTION: list[Rule] = [
          r"^std::optional<double> parse_lammps_timespec\(",
          operands={"tok": ("word",)}),
     Rule("the STRATEGY keys of one TYPE", "src/strategy_rules.cpp",
-         compare=False,
-         tables=[(r"kStrategyTypeKeys\s*\[\]", "first",
-                  strategy_type_key_of)]),
+         r"^std::optional<StrategyTypeKey> find_strategy_type_key\(",
+         generated=[(r"R::kStrategyTypes\b",
+                     ("strategy_type_key:PLAIN",
+                      "strategy_type_key:MULTISTART",
+                      "strategy_type_key:PRESTAGE"))]),
     # The options of PC_LAMMPS and PC_FAILPROBE are the line options of
     # the generated tables, each read by its handler.
     Rule("the PC_LAMMPS and PC_FAILPROBE options", "src/lammps_sim.cpp",
@@ -478,7 +480,7 @@ EXTRACTION: list[Rule] = [
                       "line_option:PC_OBSERVABLE.cohesive_energy"))]),
     Rule("the loss functions", "src/loss_function.cpp",
          r"^LossFunction::Type LossFunction::from_string\(",
-         operands={"u": ("loss",)}),
+         generated=[(r"R::kLossFunctions\b", ("loss",))]),
     Rule("the INIT methods", "src/init_strategies.cpp", r"^make_one\(",
          operands={"e.method": ("init_method",)}),
     Rule("the ASA options", "src/asa_options.cpp",

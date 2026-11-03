@@ -1,11 +1,14 @@
 #include <tadah/hpo/strategy_rules.h>
 
+#include <tadah/hpo/hpotarget_registry_gen.h>
+
 #include <tadah/hpo/init_strategy.h>
 #include <tadah/hpo/optimizer_caps.h>
 #include <tadah/hpo/phase_specs.h>
 #include <tadah/hpo/strict_parse.h>   // config_line_error
 
 #include <algorithm>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -110,27 +113,25 @@ std::string default_inner_algorithms()
     return out;
 }
 
+namespace R = hpotarget_registry;
+
+/* A STRATEGY key of one TYPE: its entry (whose effect says what it does
+ * under its TYPE) and the TYPE that lists it in the registry. */
 struct StrategyTypeKey {
-    const char*  key;
-    StrategyType home;
-    const char*  effect;   // what the key does under its TYPE
+    const R::Key*          key;
+    const R::StrategyType* home;
 };
 
-/* The STRATEGY keys of one TYPE. */
-constexpr StrategyTypeKey kStrategyTypeKeys[] = {
-    {"N_STARTS",         StrategyType::MULTISTART,
-     "only TYPE MULTISTART runs N_STARTS starts"},
-    {"BUDGET_PER_START", StrategyType::MULTISTART,
-     "only TYPE MULTISTART has starts to budget"},
-    {"TOPK",             StrategyType::PRESTAGE,
-     "only TYPE PRESTAGE forwards TOPK candidates to its refinement"},
-};
-
-const StrategyTypeKey* find_strategy_type_key(const std::string& key)
+/* The STRATEGY keys of one TYPE are those the STRATEGY types of the
+ * registry list (the generated tables). */
+std::optional<StrategyTypeKey> find_strategy_type_key(const std::string& key)
 {
-    for (const auto& k : kStrategyTypeKeys)
-        if (key == k.key) return &k;
-    return nullptr;
+    for (const R::StrategyType& st : R::kStrategyTypes)
+        for (const R::KeyId id : st.keys) {
+            const R::Key& k = R::kKeys[static_cast<std::size_t>(id)];
+            if (k.name == key) return StrategyTypeKey{&k, &st};
+        }
+    return std::nullopt;
 }
 
 }  // namespace
@@ -521,21 +522,25 @@ void reject_refused_backends(const OptimizerSpec& spec)
 
 bool is_strategy_type_key(const std::string& key)
 {
-    return find_strategy_type_key(key) != nullptr;
+    return find_strategy_type_key(key).has_value();
 }
 
 void require_strategy_key(const std::string& key, StrategyType type,
                           bool type_given)
 {
-    const StrategyTypeKey* k = find_strategy_type_key(key);
-    if (!k || k->home == type) return;
-    const std::string home = strategy_type_name(k->home);
-    throw std::runtime_error(
-        key + " is not accepted with STRATEGY TYPE " +
-        strategy_type_name(type) +
-        (type_given ? "" : " (the default when the block has no TYPE line)") +
-        ": " + k->effect + ", so it would have no effect; " + key +
-        " takes effect under STRATEGY TYPE " + home);
+    const std::optional<StrategyTypeKey> k = find_strategy_type_key(key);
+    if (!k || k->home->name == strategy_type_name(type)) return;
+    /* The check of ENDSTRATEGY (the close check of the STRATEGY block). */
+    const R::Block* strategy = R::find_block("STRATEGY");
+    throw std::runtime_error(R::fill(
+        strategy->close_checks[0],
+        {{"key", key},
+         {"type", strategy_type_name(type)},
+         {"note", type_given ? ""
+                             : " (the default when the block has no TYPE "
+                               "line)"},
+         {"effect", k->key->effect},
+         {"home", k->home->name}}));
 }
 
 }  // namespace tadah::hpo

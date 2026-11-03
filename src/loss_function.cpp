@@ -1,26 +1,44 @@
 #include <tadah/hpo/loss_function.h>
 
+#include <tadah/hpo/hpotarget_registry_gen.h>
+
 #include <algorithm>    // std::transform
 #include <sstream>
 
 namespace tadah {
+
+namespace R = hpo::hpotarget_registry;
+
+namespace {
+/* The loss functions of the registry (the generated tables), in the order
+ * of LossFunction::Type: kLossFunctions[i] is Type(i). */
+constexpr std::size_t kLossCount =
+    sizeof(R::kLossFunctions) / sizeof(R::kLossFunctions[0]);
+static_assert(kLossCount == static_cast<std::size_t>(
+                                LossFunction::Type::TUKEY) + 1,
+              "the loss functions of the registry are those of "
+              "LossFunction::Type");
+
+const R::LossFunction& entry_of(LossFunction::Type t)
+{
+    return R::kLossFunctions[static_cast<std::size_t>(t)];
+}
+}  // namespace
 
 /* ----------  mapping strings <-> enum  ---------------------------------- */
 LossFunction::Type LossFunction::from_string(const std::string& s)
 {
     std::string u(s);                                      // upper-case copy
     std::transform(u.begin(), u.end(), u.begin(), ::toupper);
-
-    if(u=="L1")        return Type::L1;
-    if(u=="L2")        return Type::L2;
-    if(u=="LOG_COSH")  return Type::LOG_COSH;
-    if(u=="MAPE")      return Type::MAPE;
-    if(u=="HUBER")     return Type::HUBER;
-    if(u=="RMSLE")     return Type::RMSLE;
-    if(u=="TUKEY")     return Type::TUKEY;
+    std::string list;
+    for (std::size_t i = 0; i < kLossCount; ++i) {
+        const std::string_view name = R::kLossFunctions[i].name;
+        if (u == name) return static_cast<Type>(i);
+        list += (i == 0 ? "" : i + 1 == kLossCount ? " and " : ", ") +
+                std::string(name);
+    }
     throw std::runtime_error("unknown loss function '" + s + "'; the loss "
-                             "functions are L1, L2, LOG_COSH, MAPE, HUBER, "
-                             "RMSLE and TUKEY, in any case");
+                             "functions are " + list + ", in any case");
 }
 
 LossFunction::Type LossFunction::from_name(const std::string& s,
@@ -35,26 +53,19 @@ LossFunction::Type LossFunction::from_name(const std::string& s,
 
 std::string LossFunction::to_string(Type t)
 {
-    switch(t){
-      case Type::L1:        return "L1";
-      case Type::L2:        return "L2";
-      case Type::LOG_COSH:  return "LOG_COSH";
-      case Type::MAPE:      return "MAPE";
-      case Type::HUBER:     return "HUBER";
-      case Type::RMSLE:     return "RMSLE";
-      case Type::TUKEY:     return "TUKEY";
-    }
-    return "<invalid>";
+    if (static_cast<std::size_t>(t) >= kLossCount) return "<invalid>";
+    return std::string(entry_of(t).name);
 }
 
 /* ----------  default parameter lists --------------------------------- */
+/* The defaults of the registry's parameters (HUBER delta 50, TUKEY c
+ * 4.685). */
 std::vector<double> LossFunction::default_params(Type t)
 {
-    switch(t){
-      case Type::HUBER : return {50.0};      // delta
-      case Type::TUKEY : return {4.685};     // c
-      default : return {};
-    }
+    std::vector<double> out;
+    for (const R::LossParam& p : entry_of(t).params)
+        out.push_back(p.default_value);
+    return out;
 }
 
 std::vector<double> LossFunction::resolve_params(Type t,
@@ -75,7 +86,7 @@ std::vector<double> LossFunction::resolve_params(Type t,
         if (!std::isfinite(p) || !(p > 0.0)) {
             std::ostringstream oss;
             oss << "loss " << name << " parameter ("
-                << (t == Type::HUBER ? "delta" : "c")
+                << entry_of(t).params[0].name
                 << ") must be finite and > 0 (got " << p
                 << "); without it the default " << default_params(t)[0]
                 << " applies";
