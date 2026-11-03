@@ -219,7 +219,7 @@ std::string chain_methods(const InitStrategySpec& ispec) {
 }
 }
 
-void HPOTargets::Opti::resize(size_t s) {
+void ParsedTarget::Opti::resize(size_t s) {
   if (opt.size() >= s) return;
   opt.resize(s, false);
   line.resize(s, 0);
@@ -231,10 +231,29 @@ void HPOTargets::Opti::resize(size_t s) {
   highbound.resize(s, 0);
 }
 
+ParsedTarget::ParsedTarget(core::Context& c) : context(c) {}
+
+void ParsedTarget::prepare_optim_reader() {
+  optim_seed_ = mlip::prepare_optim_seed(context, "tadah hpo");
+  optim_reader_.emplace(context, optim_seed_);
+}
+
+namespace {
+/* The parser of `tadah hpo`: ParsedTarget::read. */
+void read_target_file(ParsedTarget& target, const std::string& fn) {
+  target.read(fn);
+}
+}  // namespace
+
 HPOTargets::HPOTargets(core::Context &c, std::string fn,
                        const mlip::KeyProvenance *provenance,
                        TargetsPurpose purpose)
-    : context(c) {
+    : HPOTargets(c, std::move(fn), provenance, purpose, &read_target_file) {}
+
+HPOTargets::HPOTargets(core::Context &c, std::string fn,
+                       const mlip::KeyProvenance *provenance,
+                       TargetsPurpose purpose, ReadFn read_file)
+    : ParsedTarget(c) {
   const bool check = purpose == TargetsPurpose::Check;
   models::resolve_embed_blocks(context);
   /* The training record of the potential files, taken before anything
@@ -263,13 +282,12 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn,
    * (non-negative AMPGRIDMB boxes) and the WARM seeds (form check) that
    * depend on it. MLIP's OPTIM reader reads the OPTIM lines, as tadah
    * analysis check_bounds reads them. */
-  optim_seed_ = mlip::prepare_optim_seed(context, "tadah hpo");
-  optim_reader_.emplace(context, optim_seed_);
+  prepare_optim_reader();
 
   /* LS keeps configuration order: the outvar/loss columns, the
    * per-evaluation rows and the potential-file header are emitted in LS
    * order, and failprobe_idx is recorded against it at parse time. */
-  read(fn);
+  read_file(*this, fn);
   /* ---------- search space ----------------------------------------
    * One SearchSpace from the OPTIM lines (real boxes + per-line shape
    * tags), OPTIM_SCALE and LOG_HP; bound to the outer spec and, below,
@@ -796,7 +814,7 @@ static bool reject_old_keyword(const std::string& key)
     return false;
 }
 
-void HPOTargets::read(const std::string& fn)
+void ParsedTarget::read(const std::string& fn)
 {
     target_file = fn;
     std::ifstream ifs(fn);
@@ -1969,7 +1987,7 @@ void HPOTargets::read(const std::string& fn)
                             key + ": repeated declaration (first declared on "
                             "line " + std::to_string(first->second.first) +
                             ")");
-                HPOTargets::SkipCaps caps;
+                SkipCaps caps;
                 std::string flag;
                 while (iss >> flag) {
                     if (flag != "--skip-above" && flag != "--skip-rel")
@@ -2549,7 +2567,7 @@ std::string HPOTargets::repeat_reuse_blocker() const {
   return "";
 }
 
-double HPOTargets::parse_pc_worker_timeout(const std::string& token,
+double ParsedTarget::parse_pc_worker_timeout(const std::string& token,
                                            const std::string& origin) {
   double v = 0.0;
   if (!parse_number(token, v) || v < 0.0)
@@ -2738,7 +2756,7 @@ void HPOTargets::create_archive_directories() const {
   if (bdump && !bdump_first) create_archive_directory("BDUMP", dumpBestPotDir);
 }
 
-void HPOTargets::check_archive_directories() const {
+void ParsedTarget::check_archive_directories() const {
   struct Archive {
     const char* key;
     const std::string& dir;
@@ -2773,7 +2791,7 @@ void HPOTargets::check_archive_directories() const {
   }
 }
 
-void HPOTargets::check_archive_directory(const std::string& key,
+void ParsedTarget::check_archive_directory(const std::string& key,
                                          const std::string& dir,
                                          const fs::path& created_first) {
   const std::string what = key + " directory '" + dir + "'";
@@ -3084,7 +3102,7 @@ mlip::TrainingRecord HPOTargets::record_of(const core::Context& pot) const {
   return r;
 }
 
-const std::vector<std::string>& HPOTargets::density_gate_keys() {
+const std::vector<std::string>& ParsedTarget::density_gate_keys() {
   static const std::vector<std::string> keys = {"AMPGRIDMB", "CGRIDMB",
                                                 "SGRIDMB", "RCUTMB"};
   return keys;
@@ -3276,7 +3294,7 @@ BoxOrigin box_origin_of(mlip::OptimBoxOrigin o) {
 
 }  // namespace
 
-void HPOTargets::process_optim_config(std::istringstream& iss,
+void ParsedTarget::process_optim_config(std::istringstream& iss,
                                       std::size_t nline) {
   /* The line read as tadah analysis check_bounds reads it (MLIP's OPTIM
    * reader: the refusals of the key, of the index list, of the box and of

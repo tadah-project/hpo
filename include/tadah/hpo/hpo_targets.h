@@ -74,17 +74,44 @@ struct RhoBarGateSpec {
  *          again. */
 enum class TargetsPurpose { Run, Check };
 
+class ParsedTarget;
 class HPOTargets;
 namespace testing {
-std::string describe_parse(const HPOTargets& targets);
+enum class TargetParser : unsigned char;
+std::string describe_parse(const ParsedTarget& targets);
+std::unique_ptr<HPOTargets> make_targets(core::Context& c,
+                                         const std::string& fn,
+                                         TargetParser parser,
+                                         TargetsPurpose purpose);
+}
+namespace hpotarget {
+class Parser;
+}
+namespace hpotarget_registry {
+struct Handlers;
 }
 
-class HPOTargets {
-    /* The canonical text of what read() set, for the tests
+/* What the parse of a target file sets: the settings of its lines, read
+ * against the training configuration `context` (whose blueprint defaults
+ * the keys the parse reads get, and whose values the OPTIM lines search).
+ * HPOTargets is the targets of a run (it reads its target file into its
+ * ParsedTarget and derives the rest), and a ParsedTarget can be built on
+ * its own, on a copy of a configuration, so two parsers can read one file
+ * and be compared (hpo_targets_testing.h). Two parsers fill it: read(),
+ * and the registry-driven parser of src/hpotarget_parser.cpp. */
+class ParsedTarget {
+    /* The canonical text of what the parse set, for the tests
      * (hpo_targets_testing.h): it reads the private settings too. */
-    friend std::string testing::describe_parse(const HPOTargets& targets);
+    friend std::string testing::describe_parse(const ParsedTarget& targets);
+    /* The registry-driven parser and its handlers set what read() sets. */
+    friend class hpotarget::Parser;
+    friend struct hpotarget_registry::Handlers;
 
-private:
+public:
+    /* A line of the target file: its number (0: none) and its text. */
+    struct ArchiveLine { std::size_t number = 0; std::string text; };
+
+protected:
     struct Opti {
         std::vector<bool> opt;
         /* The line of the OPTIM line that selected each token (0: none),
@@ -104,7 +131,6 @@ private:
 
         void resize(size_t s);
     };
-
     /* Throws when the run cannot create the archive directory @p dir of
      * the line @p key (DUMP, BDUMP) or write into it, and creates nothing.
      * The path is taken where the operating system puts it (every symbolic
@@ -128,21 +154,11 @@ private:
     void check_archive_directories() const;
     /* The line of the last DUMP and BDUMP line (number 0: none), for the
      * errors of check_archive_directories(). */
-    struct ArchiveLine { std::size_t number = 0; std::string text; };
     ArchiveLine dumpPotLine, dumpBestPotLine;
-    /* Creates the archive directory @p dir of the line @p key, which
-     * check_archive_directory() accepted (one that exists is kept). Each is
-     * named on standard output with its key: "[tadah hpo] DUMP directory
-     * '<dir>' created", or "... already exists". */
-    static void create_archive_directory(const std::string& key,
-                                         const std::string& dir);
     /* One OPTIM line (on line @p nline of the file). The key is
      * upper-cased: OPTIM keys are case-insensitive, as configuration keys
      * are. */
     void process_optim_config(std::istringstream& iss, std::size_t nline);
-    SearchSpace build_search_space() const;
-    void bind_space_recursive();
-
     core::Context &context;
     /* What the OPTIM lines read besides `context` (mlip::prepare_optim_seed:
      * the values of a -c potential its descriptors do not read, left out of
@@ -150,22 +166,26 @@ private:
      * OPTIM lines of the file, which keeps the line that selects each value. */
     mlip::OptimSeed optim_seed_;
     std::optional<mlip::OptimReader> optim_reader_;
-    SearchSpacePtr space_;
     /* OPTIM_SCALE (root key): AUTO by default -- every OPTIM dimension is
      * mapped to the unit box; NONE is the legacy escape hatch (raw units,
      * ln for LOG dims). LOG_HP lands on spec.log_threshold. */
     ScalePolicy    scale_policy_{std::nullopt, /*normalise=*/true};
     bool           scale_policy_set_ = false;
 
+    /* A target of the configuration `c` (the reference it keeps), with
+     * nothing read: the parse reads its file into it. */
+    explicit ParsedTarget(core::Context& c);
+    /* The reader of the OPTIM lines on `context`: the values of a -c
+     * potential its descriptors do not read left out of it, and the density
+     * form (mlip::prepare_optim_seed), which the OPTIM lines read. Before
+     * the parse. */
+    void prepare_optim_reader();
+
 public:
-    /** The targets of the run whose configuration is @p c and whose
-     * hpotarget file is @p fn. @p provenance: where the keys of @p c came
-     * from (the task's KeyProvenance, hpo_run passes it), for
-     * training_record; none: every stored key is the configuration's.
-     * @p purpose: a run, or the check of one (TargetsPurpose). */
-    HPOTargets(core::Context &c, std::string fn,
-               const mlip::KeyProvenance *provenance = nullptr,
-               TargetsPurpose purpose = TargetsPurpose::Run);
+    /* Reads the target file @p fn into these settings (the parser of
+     * the target file of `tadah hpo`; the registry-driven parser of
+     * src/hpotarget_parser.cpp reads it as this does). Every refusal names
+     * the file and the line (config_line_error). */
     void read(const std::string &fn);
     /* The target file read, as --hpotarget gives it: the refusals of its
      * lines name it ("line 9 of t.hpo: ..."; config_line_error). */
@@ -173,51 +193,6 @@ public:
     std::map<std::string, Opti> optimap;  // used by HPO_Host
     std::vector<LammpsSim> LS;
 
-    /* The search space built from the OPTIM lines + OPTIM_SCALE + LOG_HP
-     * (shared with spec and every sub-spec via bind_space). */
-    SearchSpacePtr space() const { return space_; }
-    /* The rules of the OPTIM lines, which MLIP's OPTIM reader applies
-     * (tadah/mlip/hpotarget_optim.h, which documents each): tadah hpo and
-     * tadah analysis check_bounds read the OPTIM lines with it. */
-    static bool optim_key_positive_only(const std::string& key) {
-        return mlip::optim_key_positive_only(key);
-    }
-    using FitValueRule = mlip::OptimFitValueRule;
-    static std::optional<FitValueRule> optim_fit_value_rule(
-        const std::string& key, std::size_t index) {
-        return mlip::optim_fit_value_rule(key, index);
-    }
-    static std::string optim_switch_key_error(const std::string& key) {
-        return mlip::optim_switch_key_error(key);
-    }
-    static std::string optim_retired_key_error(const std::string& key) {
-        return mlip::optim_retired_key_error(key);
-    }
-    static std::string optim_fitted_key_error(const std::string& key) {
-        return mlip::optim_fitted_key_error(key);
-    }
-    static std::string optim_structure_key_error(const std::string& key) {
-        return mlip::optim_structure_key_error(key);
-    }
-    static std::string optim_discrete_index_error(const std::string& key,
-                                                  std::size_t index) {
-        return mlip::optim_discrete_index_error(key, index);
-    }
-    static std::string optim_internal_key_error(const std::string& key) {
-        return mlip::optim_internal_key_error(key);
-    }
-    static std::string optim_startup_only_key_error(const std::string& key) {
-        return mlip::optim_startup_only_key_error(key);
-    }
-    static std::string optim_component_key_error(const core::Context& ctx,
-                                                 const std::string& key) {
-        return mlip::optim_component_key_error(ctx, key);
-    }
-    static std::string optim_integer_index_error(
-        const std::string& key, const std::vector<std::string>& config,
-        std::size_t pos, std::size_t index) {
-        return mlip::optim_integer_index_error(key, config, pos, index);
-    }
     /* The OPTIM keys that arm the density gates (RHOGATE, RHOBARGATE):
      * AMPGRIDMB, CGRIDMB, SGRIDMB, RCUTMB, the dimensions that change
      * rho_raw or the window. A gate without an OPTIM dimension on one of
@@ -235,88 +210,6 @@ public:
      * WARM seed rules (EMBF0, RHOFORM) apply to each resolution, a RESTART
      * refresh included. */
     const core::Context& run_context() const { return context; }
-    /* hpo_search_space.tsv (always) + hpo_optim_resolved.hpo (when any
-     * OPTIM box was derived by an AUTO rule) into `dir`. */
-    void write_search_space_files(const std::string& dir) const;
-    /* Creates the archive directories of the DUMP and BDUMP lines (one
-     * that exists is kept; each is named on standard output), the one
-     * inside the other's after it. The parse checks them and creates
-     * nothing; hpo_run() calls this once it has prepared best_pot.tadah
-     * (its lock taken), just before its first evaluation, so a run that
-     * stops before creates none, and `tadah hpo --check` leaves the
-     * working directory as it is. */
-    void create_archive_directories() const;
-
-    /* The names of the search-space files a run writes into the working
-     * directory (write_search_space_files). */
-    static constexpr const char* kSearchSpaceFile = "hpo_search_space.tsv";
-    static constexpr const char* kResolvedOptimFile = "hpo_optim_resolved.hpo";
-
-    /* The names of the files a run writes into the working directory:
-     * the result files and the local best potential carry the rank suffix
-     * (hpo_rank_suffix()), best_pot.tadah, the canonical best potential,
-     * none. The members below (lossFile, ...) hold them;
-     * check_run_outputs() checks them before the run has read its target
-     * file. */
-    struct OutputNames {
-        std::string loss, outvar, params, stats;
-        std::string bestLoss, bestOutvar, bestParams, bestStats;
-        std::string canonicalBestPot, localBestPot;
-    };
-    static OutputNames output_names();
-
-    /* One WARNING (stderr and the journal) for each METHOD WARM line of an
-     * INIT block (the OPTIMIZER-level one, the EXPLORE block's) or of the
-     * RESTART block whose file is the run's best_pot.tadah, by whatever
-     * path or symbolic link (canonicalBestPotFile, localBestPotFile): the
-     * run removes that file before its first evaluation and writes its best
-     * potential there. A RESTART block's path that names that directory
-     * entry is warned about whatever the entry links to: each round opens
-     * the path again, after the run has replaced the entry, link and all.
-     * Called by the constructor, once the chains are resolved. */
-    void warn_warm_of_best_pot() const;
-
-    /* Whether the run writes the search-space files: hpo_search_space.tsv
-     * when the target file has a search space, hpo_optim_resolved.hpo when
-     * a box of it comes from an AUTO rule (write_search_space_files). */
-    bool writes_search_space_file() const;
-    bool writes_resolved_optim_file() const;
-
-    /* Throw when the run cannot write its output files into the working
-     * directory, and create nothing (`tadah hpo --check` and the run
-     * alike, before any data is loaded):
-     *   - check_run_outputs(journal), before the run opens its journal: the
-     *     working directory must be a directory the run can write into
-     *     ("the working directory '<dir>' is not writable: tadah hpo
-     *     writes its journal (hpo_run.log), its result files and
-     *     best_pot.tadah there"); the journal @p journal and the result
-     *     files, when they exist, files the run can open to write, and the
-     *     lock of each best potential one it can open to read and write,
-     *     opened as the run opens them without creating or truncating
-     *     them, the refusal being the open's own error ("'loss.tadah' in
-     *     the working directory '<dir>' cannot be opened: Permission
-     *     denied (tadah hpo rewrites it)", "... (tadah hpo opens it to
-     *     lock best_pot.tadah)", the lock's own potential); a socket is
-     *     refused (the run's open fails with ENXIO), a named pipe is
-     *     checked for permission and not opened, except as a result file,
-     *     which the run reopens for each row and which a pipe would block
-     *     (refused), and a device is opened without waiting; a best
-     *     potential, which the run replaces, no directory ("... is a
-     *     directory: tadah hpo writes a file of that name");
-     *   - check_search_space_files(), once the target file is read: the
-     *     search-space files the run writes (writes_search_space_file(),
-     *     writes_resolved_optim_file()), as the result files.
-     * A file the run writes through that does not exist is checked where
-     * the operating system would create it, every symbolic link followed:
-     * a name that ends in '/' or '/.' cannot be a file, and the file must
-     * be in a directory that exists and the run can write into
-     * ("'loss.tadah' ... is a symbolic link to '<dir>/x/loss', which cannot
-     * be created: the directory '<dir>/x' does not exist"); a path the
-     * system cannot resolve is refused. A best potential, which the run
-     * replaces, is checked by its own name: a link there is replaced by
-     * the file, not followed. */
-    static void check_run_outputs(const std::string& journal);
-    void check_search_space_files() const;
 
     /* Typed observables (Tier 1 / Tier 2 of the PC_OBSERVABLE redesign).
      * Each entry is a polymorphic Observable* -- concrete subclasses live in
@@ -401,13 +294,6 @@ public:
      * (OptimizerSpec::failscore_grading, which the finite differences
      * read): change it with set_failscore_grading(). */
     bool FAILSCORE_GRADING = false;
-    /* Sets FAILSCORE_GRADING (the TADAH_FAILSCORE_GRADING override of
-     * hpo_run) and its copy in the outer spec, its INNER block, the
-     * PRESTAGE exploration and that one's INNER block, each marked as set
-     * by the variable (OptimizerSpec::failscore_grading_by_env); the specs
-     * copied from them later (MULTISTART starts, the PRESTAGE refinement,
-     * RESTART rounds) keep both. */
-    void set_failscore_grading(bool on);
 
     /* BUMPGATE CANDIDATE|STRICT: how the bump-support invariant
      * (c + w/eta <= RCUT on hard Cut_Dummy channels) is enforced over the
@@ -456,6 +342,222 @@ public:
     OptimizerSpec spec;
 
     int    outputDigits = 6;      // decimal digits in scientific notation columns (DIGITS key)
+    size_t outputEvery = 1;
+    /* Cadence over NEW BESTS (not over evaluations): best_*.tadah rows are
+     * written every Nth improvement, keyed by best_iter. Was parsed as a
+     * number but consumed as a boolean (`> 0`), so BOUTPUT 100 wrote exactly
+     * as much as BOUTPUT 1 and the key looked broken to anyone trying to
+     * shrink the artifacts -- run22 produced 1.55 GB of best_*.tadah.
+     * Must be >= 1; validated at the parse site. */
+    size_t bestOutputEvery = 1;
+    size_t dumpPotEvery = std::numeric_limits<size_t>::max(); //  archiving potentials
+    size_t dumpBestPotEvery = std::numeric_limits<size_t>::max(); // archiving best potentials
+    std::string dumpPotDir = "pots";
+    std::string dumpBestPotDir = "best_pots";
+
+    LossFunction globalLoss;
+
+    bool use_emae = false; bool use_ermse = false; bool use_errmse = false; bool use_ersq = false;
+    double emae = 0, errmse = 0, ersq = 0;
+    double w_emae = 0, w_errmse = 0, w_ersq = 0;
+    ValidationMetricTargets ermse_targets{"PC_ERMSE"};
+    ValidationMetricTargets frmse_targets{"PC_FRMSE"};
+    /* PC_SRMSE_GPA: the stress RMSE of the nine entries of each tensor, in
+     * GPa (mlip::Analytics::calc_s_rmse_gpa). */
+    ValidationMetricTargets srmse_targets{"PC_SRMSE_GPA"};
+    bool use_srmse = false;
+    bool use_frmse = false;
+
+    /* Bad-pot pre-LAMMPS skip thresholds, parsed from PC_* flags
+     *   PC_ERMSE  <target> <weight> [--skip-above <cap_meV>] [--skip-rel <ratio>]
+     * (and analogous for EMAE / FRMSE / SRMSE_GPA / ErRMSE / ERSQ).
+     *
+     * abs_above: skip the LAMMPS phase when the metric exceeds <cap>
+     *            (cap is in meV/atom for energy metrics, eV/A for forces
+     *            and GPa for stresses; the units the metric reports).
+     * rel_above: skip when the metric exceeds rel_above * best_seen_so_far.
+     *            Only fires when a finite best has been observed.
+     *
+     * Replaces the legacy env vars TADAH_HPO_BAD_POT_ERMSE_MEV /
+     * TADAH_HPO_BAD_POT_ERMSE_REL. Defaults are nullopt = no skip. */
+    using SkipCaps = MetricSkipCaps;
+    /* skip_ersq stays empty: PC_ERSQ takes no cap (read() refuses one). */
+    SkipCaps skip_emae, skip_errmse, skip_ersq;
+};
+
+/* The targets of a run: the target file read (ParsedTarget) and what the
+ * run derives from it, the search space, the starting points and the
+ * seeds, with the names of the files the run writes. */
+class HPOTargets : public ParsedTarget {
+    /* A target file read with the parser `parser` names (the registry-driven
+     * one or read()), for the tests (hpo_targets_testing.h). */
+    friend std::unique_ptr<HPOTargets> testing::make_targets(
+        core::Context& c, const std::string& fn,
+        testing::TargetParser parser, TargetsPurpose purpose);
+
+private:
+    /* Creates the archive directory @p dir of the line @p key, which
+     * check_archive_directory() accepted (one that exists is kept). Each is
+     * named on standard output with its key: "[tadah hpo] DUMP directory
+     * '<dir>' created", or "... already exists". */
+    static void create_archive_directory(const std::string& key,
+                                         const std::string& dir);
+    SearchSpace build_search_space() const;
+    void bind_space_recursive();
+    SearchSpacePtr space_;
+
+    /* A parser of the target file: it reads the file into the target. */
+    using ReadFn = void (*)(ParsedTarget& target, const std::string& fn);
+    /* The constructor below, whose target file @p read reads. */
+    HPOTargets(core::Context &c, std::string fn,
+               const mlip::KeyProvenance *provenance, TargetsPurpose purpose,
+               ReadFn read);
+
+public:
+    /** The targets of the run whose configuration is @p c and whose
+     * hpotarget file is @p fn. @p provenance: where the keys of @p c came
+     * from (the task's KeyProvenance, hpo_run passes it), for
+     * training_record; none: every stored key is the configuration's.
+     * @p purpose: a run, or the check of one (TargetsPurpose). */
+    HPOTargets(core::Context &c, std::string fn,
+               const mlip::KeyProvenance *provenance = nullptr,
+               TargetsPurpose purpose = TargetsPurpose::Run);
+    /* The search space built from the OPTIM lines + OPTIM_SCALE + LOG_HP
+     * (shared with spec and every sub-spec via bind_space). */
+    SearchSpacePtr space() const { return space_; }
+    /* The rules of the OPTIM lines, which MLIP's OPTIM reader applies
+     * (tadah/mlip/hpotarget_optim.h, which documents each): tadah hpo and
+     * tadah analysis check_bounds read the OPTIM lines with it. */
+    static bool optim_key_positive_only(const std::string& key) {
+        return mlip::optim_key_positive_only(key);
+    }
+    using FitValueRule = mlip::OptimFitValueRule;
+    static std::optional<FitValueRule> optim_fit_value_rule(
+        const std::string& key, std::size_t index) {
+        return mlip::optim_fit_value_rule(key, index);
+    }
+    static std::string optim_switch_key_error(const std::string& key) {
+        return mlip::optim_switch_key_error(key);
+    }
+    static std::string optim_retired_key_error(const std::string& key) {
+        return mlip::optim_retired_key_error(key);
+    }
+    static std::string optim_fitted_key_error(const std::string& key) {
+        return mlip::optim_fitted_key_error(key);
+    }
+    static std::string optim_structure_key_error(const std::string& key) {
+        return mlip::optim_structure_key_error(key);
+    }
+    static std::string optim_discrete_index_error(const std::string& key,
+                                                  std::size_t index) {
+        return mlip::optim_discrete_index_error(key, index);
+    }
+    static std::string optim_internal_key_error(const std::string& key) {
+        return mlip::optim_internal_key_error(key);
+    }
+    static std::string optim_startup_only_key_error(const std::string& key) {
+        return mlip::optim_startup_only_key_error(key);
+    }
+    static std::string optim_component_key_error(const core::Context& ctx,
+                                                 const std::string& key) {
+        return mlip::optim_component_key_error(ctx, key);
+    }
+    static std::string optim_integer_index_error(
+        const std::string& key, const std::vector<std::string>& config,
+        std::size_t pos, std::size_t index) {
+        return mlip::optim_integer_index_error(key, config, pos, index);
+    }
+    /* hpo_search_space.tsv (always) + hpo_optim_resolved.hpo (when any
+     * OPTIM box was derived by an AUTO rule) into `dir`. */
+    void write_search_space_files(const std::string& dir) const;
+    /* Creates the archive directories of the DUMP and BDUMP lines (one
+     * that exists is kept; each is named on standard output), the one
+     * inside the other's after it. The parse checks them and creates
+     * nothing; hpo_run() calls this once it has prepared best_pot.tadah
+     * (its lock taken), just before its first evaluation, so a run that
+     * stops before creates none, and `tadah hpo --check` leaves the
+     * working directory as it is. */
+    void create_archive_directories() const;
+
+    /* The names of the search-space files a run writes into the working
+     * directory (write_search_space_files). */
+    static constexpr const char* kSearchSpaceFile = "hpo_search_space.tsv";
+    static constexpr const char* kResolvedOptimFile = "hpo_optim_resolved.hpo";
+
+    /* The names of the files a run writes into the working directory:
+     * the result files and the local best potential carry the rank suffix
+     * (hpo_rank_suffix()), best_pot.tadah, the canonical best potential,
+     * none. The members below (lossFile, ...) hold them;
+     * check_run_outputs() checks them before the run has read its target
+     * file. */
+    struct OutputNames {
+        std::string loss, outvar, params, stats;
+        std::string bestLoss, bestOutvar, bestParams, bestStats;
+        std::string canonicalBestPot, localBestPot;
+    };
+    static OutputNames output_names();
+
+    /* One WARNING (stderr and the journal) for each METHOD WARM line of an
+     * INIT block (the OPTIMIZER-level one, the EXPLORE block's) or of the
+     * RESTART block whose file is the run's best_pot.tadah, by whatever
+     * path or symbolic link (canonicalBestPotFile, localBestPotFile): the
+     * run removes that file before its first evaluation and writes its best
+     * potential there. A RESTART block's path that names that directory
+     * entry is warned about whatever the entry links to: each round opens
+     * the path again, after the run has replaced the entry, link and all.
+     * Called by the constructor, once the chains are resolved. */
+    void warn_warm_of_best_pot() const;
+
+    /* Whether the run writes the search-space files: hpo_search_space.tsv
+     * when the target file has a search space, hpo_optim_resolved.hpo when
+     * a box of it comes from an AUTO rule (write_search_space_files). */
+    bool writes_search_space_file() const;
+    bool writes_resolved_optim_file() const;
+
+    /* Throw when the run cannot write its output files into the working
+     * directory, and create nothing (`tadah hpo --check` and the run
+     * alike, before any data is loaded):
+     *   - check_run_outputs(journal), before the run opens its journal: the
+     *     working directory must be a directory the run can write into
+     *     ("the working directory '<dir>' is not writable: tadah hpo
+     *     writes its journal (hpo_run.log), its result files and
+     *     best_pot.tadah there"); the journal @p journal and the result
+     *     files, when they exist, files the run can open to write, and the
+     *     lock of each best potential one it can open to read and write,
+     *     opened as the run opens them without creating or truncating
+     *     them, the refusal being the open's own error ("'loss.tadah' in
+     *     the working directory '<dir>' cannot be opened: Permission
+     *     denied (tadah hpo rewrites it)", "... (tadah hpo opens it to
+     *     lock best_pot.tadah)", the lock's own potential); a socket is
+     *     refused (the run's open fails with ENXIO), a named pipe is
+     *     checked for permission and not opened, except as a result file,
+     *     which the run reopens for each row and which a pipe would block
+     *     (refused), and a device is opened without waiting; a best
+     *     potential, which the run replaces, no directory ("... is a
+     *     directory: tadah hpo writes a file of that name");
+     *   - check_search_space_files(), once the target file is read: the
+     *     search-space files the run writes (writes_search_space_file(),
+     *     writes_resolved_optim_file()), as the result files.
+     * A file the run writes through that does not exist is checked where
+     * the operating system would create it, every symbolic link followed:
+     * a name that ends in '/' or '/.' cannot be a file, and the file must
+     * be in a directory that exists and the run can write into
+     * ("'loss.tadah' ... is a symbolic link to '<dir>/x/loss', which cannot
+     * be created: the directory '<dir>/x' does not exist"); a path the
+     * system cannot resolve is refused. A best potential, which the run
+     * replaces, is checked by its own name: a link there is replaced by
+     * the file, not followed. */
+    static void check_run_outputs(const std::string& journal);
+    void check_search_space_files() const;
+
+    /* Sets FAILSCORE_GRADING (the TADAH_FAILSCORE_GRADING override of
+     * hpo_run) and its copy in the outer spec, its INNER block, the
+     * PRESTAGE exploration and that one's INNER block, each marked as set
+     * by the variable (OptimizerSpec::failscore_grading_by_env); the specs
+     * copied from them later (MULTISTART starts, the PRESTAGE refinement,
+     * RESTART rounds) keep both. */
+    void set_failscore_grading(bool on);
+
     /* Significant digits of the numbers in every potential file HPO writes
      * (best_pot.tadah, BDUMP best_pot_N / DUMP pot_N archives): NUMERIC,
      * resolved once in the constructor WITHOUT default insertion
@@ -478,19 +580,7 @@ public:
      * record (OPTIM WDBFILE) holding the values @p pot stores -- the
      * candidate's, with which the evaluation fitted. */
     mlip::TrainingRecord record_of(const core::Context& pot) const;
-    size_t outputEvery = 1;
-    /* Cadence over NEW BESTS (not over evaluations): best_*.tadah rows are
-     * written every Nth improvement, keyed by best_iter. Was parsed as a
-     * number but consumed as a boolean (`> 0`), so BOUTPUT 100 wrote exactly
-     * as much as BOUTPUT 1 and the key looked broken to anyone trying to
-     * shrink the artifacts -- run22 produced 1.55 GB of best_*.tadah.
-     * Must be >= 1; validated at the parse site. */
-    size_t bestOutputEvery = 1;
-    size_t dumpPotEvery = std::numeric_limits<size_t>::max(); //  archiving potentials
-    size_t dumpBestPotEvery = std::numeric_limits<size_t>::max(); // archiving best potentials
-    std::string dumpPotDir = "pots";
-    std::string dumpBestPotDir = "best_pots";
-                           
+
     /* Fixed output names gain a ".r<rank>" suffix on every MPI rank so
      * multi-rank runs sharing one working directory never clobber each
      * other. The unsuffixed namespace is reserved for canonical shared
@@ -509,39 +599,12 @@ public:
     const std::string localBestPotFile = output_names().localBestPot;
     /* Prevent rank-local archive ordinals from truncating one shared file. */
     const std::string potArchiveSuffix = hpo_rank_suffix();
-    LossFunction globalLoss;
 
-    bool use_emae = false; bool use_ermse = false; bool use_errmse = false; bool use_ersq = false;
-    double emae = 0, errmse = 0, ersq = 0;
-    double w_emae = 0, w_errmse = 0, w_ersq = 0;
-    ValidationMetricTargets ermse_targets{"PC_ERMSE"};
-    ValidationMetricTargets frmse_targets{"PC_FRMSE"};
-    /* PC_SRMSE_GPA: the stress RMSE of the nine entries of each tensor, in
-     * GPa (mlip::Analytics::calc_s_rmse_gpa). */
-    ValidationMetricTargets srmse_targets{"PC_SRMSE_GPA"};
     void resolve_validation_targets(const std::vector<std::string>& files) {
         ermse_targets.resolve(files);
         frmse_targets.resolve(files);
         srmse_targets.resolve(files);
     }
-    bool use_srmse = false;
-    bool use_frmse = false;
-
-    /* Bad-pot pre-LAMMPS skip thresholds, parsed from PC_* flags
-     *   PC_ERMSE  <target> <weight> [--skip-above <cap_meV>] [--skip-rel <ratio>]
-     * (and analogous for EMAE / FRMSE / SRMSE_GPA / ErRMSE / ERSQ).
-     *
-     * abs_above: skip the LAMMPS phase when the metric exceeds <cap>
-     *            (cap is in meV/atom for energy metrics, eV/A for forces
-     *            and GPa for stresses; the units the metric reports).
-     * rel_above: skip when the metric exceeds rel_above * best_seen_so_far.
-     *            Only fires when a finite best has been observed.
-     *
-     * Replaces the legacy env vars TADAH_HPO_BAD_POT_ERMSE_MEV /
-     * TADAH_HPO_BAD_POT_ERMSE_REL. Defaults are nullopt = no skip. */
-    using SkipCaps = MetricSkipCaps;
-    /* skip_ersq stays empty: PC_ERSQ takes no cap (read() refuses one). */
-    SkipCaps skip_emae, skip_errmse, skip_ersq;
 
     /** Why two evaluations of one point can give different losses in this
      *  run, or "" when every evaluation is a function of its point -- the

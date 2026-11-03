@@ -2,6 +2,8 @@
 #include <tadah/core/number_format.h>
 #include <tadah/hpo/hpo_mpi.h>
 #include <tadah/hpo/lammps_sim.h>
+
+#include "hpotarget_reads.h"
 #include <tadah/hpo/hpo_targets.h>
 #include <tadah/hpo/runners.h>
 #include <tadah/hpo/strict_parse.h>
@@ -245,30 +247,6 @@ static bool is_option_token(const std::string& s)
     return !s.empty() && s[0] == '-' && !is_number_shaped(s);
 }
 
-/* HPO's "--" options on a PC_LAMMPS or PC_FAILPROBE line, and which line
- * takes each. parse_tokens() reads all but the values of --gate and --s0,
- * which HPOTargets reads from a PC_FAILPROBE line (parse_tokens() skips
- * them with their value); HPOTargets refuses --varloss, --hotvar and --failvar on a
- * PC_FAILPROBE line once parse_tokens() has read them (hpo_targets.cpp: the
- * probe grades failures and must not shape the objective). Every other
- * option goes to LAMMPS. */
-struct LineOption {
-    const char* name;
-    bool on_lammps;     // a PC_LAMMPS line takes it
-    bool on_failprobe;  // a PC_FAILPROBE line takes it
-};
-
-static const std::vector<LineOption>& line_options()
-{
-    static const std::vector<LineOption> k = {
-        {"--script", true, true},     {"--varloss", true, false},
-        {"--invar", true, true},      {"--outvar", true, true},
-        {"--failscore", true, true},  {"--maxtime", true, true},
-        {"--hotvar", true, false},    {"--failvar", true, false},
-        {"--gate", false, true},      {"--s0", false, true}};
-    return k;
-}
-
 static std::size_t edit_distance(const std::string& a, const std::string& b)
 {
     std::vector<std::size_t> prev(b.size() + 1), cur(b.size() + 1);
@@ -288,18 +266,23 @@ static std::size_t edit_distance(const std::string& a, const std::string& b)
  * src/lammps.cpp, lines 193-490 at the pinned commit 50ce71e2e0, starts
  * with a single '-', and any other argument is "Invalid command-line
  * argument"), so it would fail every evaluation. Lists the options the line
- * takes (line_options()), names the closest of them within two edits (a
- * typo such as --hotvars), and a PC_FAILPROBE option on a PC_LAMMPS line
- * as one. */
+ * takes (the line options of the registry the line takes, in its order),
+ * names the closest of them within two edits (a typo such as --hotvars),
+ * and a PC_FAILPROBE option on a PC_LAMMPS line as one. */
 static std::string unknown_option_error(const std::string& token,
                                         bool failprobe)
 {
+    namespace R = tadah::hpo::hpotarget_registry;
+    const std::string key = failprobe ? "PC_FAILPROBE" : "PC_LAMMPS";
     std::vector<std::string> known;
     std::string note;
-    for (const LineOption& o : line_options()) {
-        if (failprobe ? o.on_failprobe : o.on_lammps)
-            known.push_back(o.name);
-        else if (!failprobe && token == o.name)
+    for (const R::LineOption& o : R::kLineOptions) {
+        const bool lammps = R::takes_option(o, "PC_LAMMPS");
+        const bool probe = R::takes_option(o, "PC_FAILPROBE");
+        if (!lammps && !probe) continue;
+        if (failprobe ? probe : lammps)
+            known.push_back(std::string(o.option));
+        else if (!failprobe && token == o.option)
             note = " (a PC_FAILPROBE option)";
     }
     if (note.empty()) {
@@ -317,7 +300,6 @@ static std::string unknown_option_error(const std::string& token,
         if (i) list += (i + 1 == known.size()) ? " and " : ", ";
         list += known[i];
     }
-    const std::string key = failprobe ? "PC_FAILPROBE" : "PC_LAMMPS";
     return key + ": unknown option '" + token + "'" + note + ": a " + key +
            " line takes the options " + list + ", and LAMMPS command-line "
            "options, which start with a single '-'";
@@ -473,227 +455,29 @@ void LammpsSim::parse_tokens() {
     line_variables.push_back({name, option});
   };
 
+  /* The options of the line (the registry's line options and their
+   * handlers, hpotarget_handlers.cpp); a PC_FAILPROBE line is read with
+   * the options of a PC_LAMMPS line too, and HPOTargets refuses there
+   * those a probe takes none of (--varloss, --hotvar, --failvar). */
+  namespace R = tadah::hpo::hpotarget_registry;
   size_t i = 0;
+  R::ScriptOptions options{*this, key, tokens, i, defLoss, once,
+                           define_variable, reject_reserved, hpo_option_read};
   while (i < tokens.size()) {
-    if (tokens[i] == "--script") { // LAMMPS script file
-      once("--script");
-      if (i + 1 < tokens.size()) {
-        script = tokens[++i];
-        i++;
-        hpo_option_read("--script takes one value");
-      } else {
-        throw std::runtime_error(key + " --script takes one value, the LAMMPS "
-                                 "script file");
-      }
-    }
-    // Tadah! specific keywords
-    else if (tokens[i] == "--varloss")
-    {
-      auto is_flag = is_option_token;
-
-      std::size_t j=i+1;
-
-      if(j>=tokens.size() || is_flag(tokens[j]))
-        throw std::runtime_error(key + " --varloss takes <name> <target> "
-                                 "<weight> (the name is missing)");
-      std::string vname = tokens[j++];
-
-      if(j>=tokens.size() || is_flag(tokens[j]))
-        throw std::runtime_error(key + " --varloss takes <name> <target> "
-                                 "<weight> (" + vname + " has no target)");
-      const std::string tgt_tok = tokens[j];
-      const double tgt = parse_finite(tokens[j++], "--varloss "+vname+" <target>");
-
-      if(j>=tokens.size() || is_flag(tokens[j]))
-        throw std::runtime_error(key + " --varloss takes <name> <target> "
-                                 "<weight> (" + vname + " has no weight)");
-      /* Any finite weight; a negative one is accepted. */
-      const double wgt = parse_finite(tokens[j++], "--varloss "+vname+" <weight>");
-
-      /* optional override: <type> [<param>]. Defaults and validation of
-       * the parameter come from LossFunction::resolve_params, shared with
-       * the root LOSS key. ---------------------------------------------- */
-      tadah::LossFunction myLoss = defLoss;
-      if(j<tokens.size() && !is_flag(tokens[j])){
-        const std::string tname = tokens[j];
-        auto t = tadah::LossFunction::from_name(tokens[j++],
-                                                "--varloss " + vname);
-        std::vector<double> pars;
-        while(j<tokens.size() && !is_flag(tokens[j]))
-          pars.push_back(parse_finite(tokens[j++],
-                                      "--varloss "+vname+" "+tname+" parameter"));
-        myLoss = tadah::LossFunction(t, pars);
-      } else {
-        reads_default_loss = true;
-      }
-      /* A target the loss function cannot measure (MAPE 0, RMSLE at or
-       * below -1e-12) is refused here: every evaluation would score the
-       * term the same (MAPE) or fail it (RMSLE). */
-      if (const std::string why = myLoss.target_refusal(tgt); !why.empty())
-        throw std::runtime_error("--varloss " + vname + " " + tgt_tok +
-                                 ": " + why);
-
-      /* store ----------------------------------------------------------- */
-      if (std::find(n_outvar.begin(), n_outvar.end(), vname) == n_outvar.end()) {
-        n_outvar .push_back(vname);
-      }
-      n_varloss.push_back(vname);
-      // i_varloss.push_back(n_outvar.size()-1);
-      i_varloss.push_back(std::distance(n_outvar.begin(), std::find(n_outvar.begin(), n_outvar.end(), vname)));
-      t_varloss.push_back(tgt);
-      w_varloss.push_back(wgt);
-      lossFn   .push_back(std::move(myLoss));
-
-      i = j;
-      /* Every value up to the next option was the loss override's. */
-      hpo_option_read("--varloss takes <name> <target> <weight> "
-                      "[<loss> [<param>...]]");
-    }
-    else if (tokens[i] == "--invar") {
-      if (i + 2 < tokens.size()) {
-        reject_reserved("--invar", tokens[i + 1]);
-        define_variable("--invar", tokens[i + 1]);
-        invar.push_back("-var");
-        invar.push_back(tokens[++i].c_str());
-        invar.push_back(tokens[++i].c_str());
-        i++;
-        hpo_option_read("--invar takes <name> <value>");
-      } else {
-        throw std::runtime_error(key + " --invar takes two values, the name of "
-                                 "a LAMMPS variable and its value");
-      }
-    }
-    else if (tokens[i] == "--outvar") {
-      if (i + 1 < tokens.size()) {
-        std::string vname = tokens[++i];
-        // Only add to n_outvar if not already present
-        if (std::find(n_outvar.begin(), n_outvar.end(), vname) == n_outvar.end()) {
-          n_outvar.push_back(vname);
-        }
-        i++;
-        hpo_option_read("--outvar takes one value");
-      } else {
-        throw std::runtime_error(key + " --outvar takes one value, the name of "
-                                 "a LAMMPS variable");
-      }
-    }
-    else if (tokens[i] == "--failscore") {
-      once("--failscore");
-      if (i + 1 < tokens.size()) {
-        /* PC_LAMMPS: the value substituted for this line's variables when
-         * its simulation fails; it goes through the loss against the
-         * target into their terms like a measured value (the evaluation
-         * scores FAIL_SCORE all the same: HPO_Host::sims_loss), so any
-         * finite number (a variable may be negative). PC_FAILPROBE: a
-         * failure score -- the probe's S
-         * reads it when the probe fails, and an S at or above it is taken
-         * for a failed probe (HPO_Host::run_lammps) -- so a positive finite
-         * number, like FAILSCORE: S is nonnegative, and with 0 or below
-         * every probe would read as failed. */
-        failscore = is_failprobe
-            ? parse_positive(tokens[++i], "PC_FAILPROBE --failscore",
-                             "finite number")
-            : parse_finite(tokens[++i], "--failscore");
-        reads_default_failscore = false;
-        i++;
-        hpo_option_read("--failscore takes one value");
-      } else {
-        throw std::runtime_error(key + " --failscore takes one value, a number");
-      }
-    }
-    else if (tokens[i] == "--maxtime") {
-      once("--maxtime");
-      if (i + 1 < tokens.size()) {
-        maxtime = tokens[++i];
-        (void)parse_script_timeout(maxtime, "--maxtime");
-        reads_default_maxtime = false;
-        i++;
-        hpo_option_read("--maxtime takes one value");
-      } else {
-        throw std::runtime_error(key + " --maxtime takes one value, a time "
-                                 "limit (off, unlimited or [[HH:]MM:]SS)");
-      }
-    }
-    else if (tokens[i] == "--hotvar") {
-      /* --hotvar <name> <min> <max> [<initial>] */
-      auto is_flag = is_option_token;
-      std::size_t j = i + 1;
-      if (j+2 >= tokens.size())
-        throw std::runtime_error("--hotvar requires <name> <min> <max> [<initial>]");
-      HotVarDecl hv;
-      hv.name = tokens[j++];
-      if (hv.name.empty() || is_flag(hv.name))
-        throw std::runtime_error("--hotvar: <name> must be a non-empty identifier");
-      for (const auto& other : hotvars)
-        if (other.name == hv.name)
-          throw std::runtime_error("--hotvar " + hv.name + " is declared "
-                                   "twice on this line; each variable is "
-                                   "declared once");
-      hv.min = parse_finite(tokens[j++], "--hotvar " + hv.name + " <min>");
-      hv.max = parse_finite(tokens[j++], "--hotvar " + hv.name + " <max>");
-      if (!(hv.max > hv.min))
-        throw std::runtime_error("--hotvar " + hv.name + ": <max> must exceed <min>");
-      /* Optional <initial>: a token that is not an option is it, and must
-       * be a number -- it used to be passed on to LAMMPS when it was not. */
-      if (j < tokens.size() && !is_flag(tokens[j]))
-        hv.initial = parse_finite(tokens[j++], "--hotvar " + hv.name + " <initial>");
-      hotvars.push_back(std::move(hv));
-      i = j;
-      hpo_option_read("--hotvar takes <name> <min> <max> [<initial>]");
-    }
-    else if (tokens[i] == "--failvar") {
-      /* --failvar <name> [<scale>]. Convention: the
-       * LAMMPS variable <name> is a nonnegative violation measure -- 0 means
-       * "this sim vouches for itself", > 0 means "failed, this badly" (in
-       * natural units; <scale> maps to the dimensionless band-B measure).
-       * When it reads > 0, the sim is classified band B, its outvars are
-       * excluded from the fit, and scale*value grades the failure loss. */
-      auto is_flag = is_option_token;
-      std::size_t j = i + 1;
-      if (j >= tokens.size())
-        throw std::runtime_error("--failvar requires <name> [<scale>]");
-      FailVarDecl fv;
-      fv.name = tokens[j++];
-      if (fv.name.empty() || is_flag(fv.name))
-        throw std::runtime_error("--failvar: <name> must be a non-empty identifier");
-      for (const auto& other : failvars)
-        if (other.name == fv.name)
-          throw std::runtime_error("--failvar " + fv.name + " is declared "
-                                   "twice on this line; each variable is "
-                                   "declared once");
-      /* Optional <scale>: a token that is not an option is it, and must be
-       * a number -- it used to be passed on to LAMMPS when it was not. */
-      if (j < tokens.size() && !is_flag(tokens[j])) {
-        fv.scale = parse_positive(tokens[j++],
-                                  "--failvar " + fv.name + " <scale>");
-        fv.scale_given = true;
-      }
-      failvars.push_back(std::move(fv));
-      i = j;
-      hpo_option_read("--failvar takes <name> [<scale>]");
-    }
-    else if (tokens[i] == "--ncpu") {
-      /* Rejected, not ignored: an unrecognised option would otherwise be
-       * forwarded to LAMMPS as a command-line argument below. */
-      throw std::runtime_error(
-          key + " --ncpu: a removed option: it set the MPI ranks of one "
-          "script in an MPI build of Tadah! 1.5.0; THREADS sets the number of "
-          "workers that run the scripts, and PC_ISOLATION whether they run in "
-          "worker processes or inside the tadah process");
-    }
-    else if (is_failprobe && (tokens[i] == "--gate" || tokens[i] == "--s0")) {
-      /* HPOTargets reads the value (failprobe_gate, failprobe_s0) and
-       * refuses one that is missing; it is skipped here, so that a word
-       * after it is named with this option. */
-      const std::string option = tokens[i];
-      i += 2;
-      hpo_option_read(option + " takes one value");
+    const R::LineOption* option = R::find_option(key, tokens[i]);
+    if (!option && is_failprobe)
+      option = R::find_option("PC_LAMMPS", tokens[i]);
+    if (option) {
+      const std::string word = tokens[i];
+      R::OptionRead read{*option, word};
+      read.script = &options;
+      R::call(*option, read);
     }
     else if (tokens[i].rfind("--", 0) == 0) {
-      /* None of HPO's options (line_options(): each that parse_tokens()
-       * reads has its branch above), and not a LAMMPS option either:
-       * LAMMPS has none that starts with "--" (unknown_option_error). It
-       * used to go to LAMMPS, and every evaluation failed on it. */
+      /* None of HPO's options (the line options of the registry, each
+       * read by its handler above), and not a LAMMPS option either: LAMMPS
+       * has none that starts with "--" (unknown_option_error). It used to
+       * go to LAMMPS, and every evaluation failed on it. */
       throw std::runtime_error(unknown_option_error(tokens[i], is_failprobe));
     }
     else if (is_option_token(tokens[i])) {

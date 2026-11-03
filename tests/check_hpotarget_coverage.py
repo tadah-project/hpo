@@ -21,8 +21,7 @@ PC_FAILPROBE, the metric lines, RHOGATE, RHOBARGATE, OPTIM, OPTIM.AUTO,
 PC_OBSERVABLE.cohesive_energy), and the STRATEGY keys of each TYPE,
 strategy_type_key:<TYPE>. An option the registry gives a line the parser
 does not take it on fails as "not in the parser", where the sources say
-which line takes the option: the table of lammps_sim.cpp (its on_lammps
-and on_failprobe fields) and the functions of each line. The keys of a
+which line takes the option: the functions of each line. The keys of a
 TYPE come from the second field of kStrategyTypeKeys.
 
 Exits 1 and lists each difference, 0 when there is none.
@@ -47,7 +46,15 @@ file without --mlip is an error.
     `name[] = {...}`), each one or the first of each element, whose
     vocabulary may depend on the element's other fields;
   - calls: the literal argument of a call pattern (`param.find("...")`,
-    `ceres_param(sp, "...")`, `std::getenv("TADAH_...")`).
+    `ceres_param(sp, "...")`, `std::getenv("TADAH_...")`);
+  - generated tables: where a function takes a vocabulary from the
+    generated tables of the registry (hpotarget_registry_gen.h, as the
+    registry-driven parser of src/hpotarget_parser.cpp, its handlers and
+    the readers they share with ParsedTarget::read do), the rule names the
+    use (a regular expression, R::kKeys, find_option(...)) and the
+    vocabularies: every name of those vocabularies counts as recognised,
+    as the tables are the registry's (hpo_hpotarget_registry_sync). A rule
+    whose function holds no such use is an error.
 
 In a function a rule names, two more things are errors, so that a name
 read in another way is seen:
@@ -65,7 +72,7 @@ updating.
 
 What it cannot see
 ------------------
-  - where a key of HPOTargets::read is valid: every comparison there is on
+  - where a key of ParsedTarget::read is valid: every comparison there is on
     one variable, `key`, so a name found there counts for a block, an END
     line, a key of the optimiser group (PARAM and STEP, compared to name
     what a line sets once) or a key of ROOT, OPTIMIZER, STRATEGY, INIT
@@ -73,15 +80,14 @@ What it cannot see
     of a key are checked by tests/check_hpotarget_generated.py, which puts
     each key into every block;
   - the line of an option a function shared by two lines reads
-    (LammpsSim::parse_tokens for PC_LAMMPS and PC_FAILPROBE,
-    parse_gate_options for RHOGATE and RHOBARGATE): a name found there
+    (parse_gate_options for RHOGATE and RHOBARGATE): a name found there
     counts for both lines. check_hpotarget_generated.py puts each option
     on every line;
   - a literal that is not shaped like a name (a lower-case word, as a
     LOSS name or a lattice), outside the comparisons, tables and calls the
     rules read;
   - a name the parser builds instead of writing it: END lines are matched
-    as literals in HPOTargets::read, but block_ended_by() builds "END" +
+    as literals in ParsedTarget::read, but block_ended_by() builds "END" +
     name; a rule that compares a computed string;
   - prefix and substring tests: `k.rfind("RCUT", 0) == 0` (AUTO refused on
     the cutoff keys), `find(".DENSITY.")`, `.substr(0, 2) != "--"`;
@@ -236,9 +242,13 @@ class Rule:
                                          # no name of the target file
     not_names: dict[str, str] = dataclasses.field(
         default_factory=dict)            # literal -> why it is no name
+    generated: list[tuple[str, tuple[str, ...]]] = dataclasses.field(
+        default_factory=list)            # (use of a generated table, vocab)
 
 
 IGNORE_OPTIMISERS = "an optimiser name (LIB or ALGO value: the optimiser list)"
+GENERATED_GROUP = ("the optimiser group of the generated tables, whose keys "
+                   "the function takes")
 IGNORE_INIT_MODE = ("the INIT_MODE grammar of the annealers' PARAM keys "
                     "(anneal_keys.toml)")
 # The metric lines that take --skip-above and --skip-rel (PC_ERSQ takes
@@ -274,7 +284,7 @@ PARAM_FIND = (r'param(?:_raw)?\s*\.\s*(?:find|count)\(\s*"([^"]+)"\s*\)',
 
 EXTRACTION: list[Rule] = [
     Rule("the target-file reader", "src/hpo_targets.cpp",
-         r"^void HPOTargets::read\(",
+         r"^void ParsedTarget::read\(",
          operands={"key": READ_KEY, "t": ("strategy_type", "word"),
                    "v": ("word",), "PC_ISOLATION": ("word",),
                    "flag": METRIC_OPTIONS,
@@ -371,7 +381,7 @@ EXTRACTION: list[Rule] = [
          r"^RhoBarGateSpec parse_rhobargate\(",
          operands={"s.lattice": ("word",)}),
     Rule("the OPTIM_SCALE override", "src/hpo_targets.cpp",
-         r"^HPOTargets::HPOTargets\(",
+         r"^HPOTargets::HPOTargets\([^)]*ReadFn read_file\)",
          operands={"v": ("word",)},
          ignore={"s.lib": IGNORE_OPTIMISERS},
          calls=[(r'std::getenv\(\s*"(TADAH_[A-Z_]+)"\s*\)', ("env",))],
@@ -382,14 +392,18 @@ EXTRACTION: list[Rule] = [
                              "message"}),
     Rule("the booleans", "src/optimizer_block.cpp", r"^bool parse_bool\(",
          operands={"lo": ("word",)}),
+    # The keys of the optimiser group are those of the generated tables
+    # (hpotarget_registry_gen.h), which the reader of their lines (a
+    # handler each, hpotarget_handlers.cpp) reads for both parsers and
+    # `tadah refit`.
     Rule("the optimiser keys", "src/optimizer_block.cpp",
          r"^const std::vector<std::string> &opt_attr_keys\(",
-         tables=[(r"\bkeys", "all", ("group_key",))]),
+         ignore={"k.group": GENERATED_GROUP},
+         generated=[(r"R::kKeys\b", ("group_key",))]),
     Rule("the optimiser key reader", "src/optimizer_block.cpp",
          r"^bool dispatch_opt_attr\(",
-         operands={"key": ("group_key",), "v": ("word",)},
-         ignore={"ukey": IGNORE_INIT_MODE, "up(vals[i])": IGNORE_INIT_MODE},
-         not_names={"INIT_MODE": IGNORE_INIT_MODE}),
+         ignore={"k.group": GENERATED_GROUP},
+         generated=[(r"R::kKeys\b", ("group_key",))]),
     Rule("the PARAM value grammar", "src/optimizer_block.cpp",
          r"^bool param_takes_another_value\(",
          ignore={"key": IGNORE_INIT_MODE, "up(next)": IGNORE_INIT_MODE,
@@ -405,13 +419,18 @@ EXTRACTION: list[Rule] = [
          compare=False,
          tables=[(r"kStrategyTypeKeys\s*\[\]", "first",
                   strategy_type_key_of)]),
+    # The options of PC_LAMMPS and PC_FAILPROBE are the line options of
+    # the generated tables, each read by its handler.
     Rule("the PC_LAMMPS and PC_FAILPROBE options", "src/lammps_sim.cpp",
-         r"^static const std::vector<LineOption>& line_options\(",
-         tables=[(r"\bk", "first", pc_line_option_of)]),
+         r"^static std::string unknown_option_error\(",
+         generated=[(r"R::kLineOptions\b", ("line_option:PC_LAMMPS",
+                                            "line_option:PC_FAILPROBE"))]),
     Rule("the PC_LAMMPS reader", "src/lammps_sim.cpp",
          r"^void LammpsSim::parse_tokens\(",
          operands={"tokens[i]": ("line_option:PC_LAMMPS",
                                  "line_option:PC_FAILPROBE")},
+         generated=[(r"R::find_option\(", ("line_option:PC_LAMMPS",
+                                           "line_option:PC_FAILPROBE"))],
          ignore={"name": "the LAMMPS variable maxtime, which HPO reserves "
                          "for the script timeout"},
          ignore_literals={"-var": "a LAMMPS command-line option, passed to "
@@ -424,13 +443,39 @@ EXTRACTION: list[Rule] = [
                                 "LAMMPS as -log"}),
     Rule("the observable kinds", "src/observable_parser.cpp",
          r"^std::unique_ptr<Observable> parse_pc_observable_line\(",
-         operands={"kind": ("form",)}),
-    Rule("the cohesive_energy options", "src/observable_parser.cpp",
-         r"^parse_cohesive_energy\(",
-         operands={"t": ("line_option:PC_OBSERVABLE.cohesive_energy",),
-                   "kind": ("word",),
-                   "lattice": ("word",), "name": ("word",)},
-         ignore={"substr(0, 2)": "the option prefix --"}),
+         ignore={"f.line": "the line of a form of the generated tables"},
+         generated=[(r"R::kForms\b", ("form",))]),
+    # The parser of the registry (src/hpotarget_parser.cpp) and its
+    # handlers (src/hpotarget_handlers.cpp): the names come from the
+    # generated tables; the words a handler compares are those the
+    # registry's word arguments give (read_word).
+    Rule("the parser of the registry", "src/hpotarget_parser.cpp",
+         operands={"name": ("key:ROOT",), "word": ("group_key",),
+                   "r.word": ("group_key",)},
+         ignore={"sp.lib": IGNORE_OPTIMISERS,
+                 "sp.inner->lib": IGNORE_OPTIMISERS,
+                 "b.sp->inner->lib": IGNORE_OPTIMISERS},
+         generated=[(r"R::kBlocks\b", ("block", "block_end")),
+                    (r"R::kRemoved\b", ("removed",)),
+                    (r"\.refuse\b", ("inner_refused",)),
+                    (r"\.aliases\b", ("alias",)),
+                    (r"\bgroup_key\(", ("group_key",)),
+                    (r"\bblock_key\(", ("key:STRATEGY", "key:INIT",
+                                        "key:NOISE", "key:RESTART")),
+                    (r"R::KeyId::OPTIMIZER_LOG_HP\b", ("key:OPTIMIZER",)),
+                    (r"R::find_key\(", ("key:ROOT",))]),
+    Rule("the handlers of the registry", "src/hpotarget_handlers.cpp",
+         operands={"v": ("word",), "w": ("word",),
+                   "t": ("strategy_type", "word"), "name": ("word",),
+                   "lattice": ("word",), "kind": ("word",)},
+         ignore={"ukey": IGNORE_INIT_MODE, "upper(vals[i])": IGNORE_INIT_MODE,
+                 "substr(0, 2)": "the option prefix --"},
+         generated=[(r"\bfind_option\(",
+                     ("line_option:RHOGATE", "line_option:RHOBARGATE",
+                      "line_option:PC_EMAE", "line_option:PC_ERMSE",
+                      "line_option:PC_ErRMSE", "line_option:PC_SRMSE_GPA",
+                      "line_option:PC_FRMSE", "line_option:PC_FAILPROBE",
+                      "line_option:PC_OBSERVABLE.cohesive_energy"))]),
     Rule("the loss functions", "src/loss_function.cpp",
          r"^LossFunction::Type LossFunction::from_string\(",
          operands={"u": ("loss",)}),
@@ -559,16 +604,21 @@ MLIP_PREFIX = "mlip:"
 
 
 def extract(hpo: pathlib.Path, unread: list | None = None,
-            mlip: pathlib.Path | None = None) -> tuple[list[Found], list[str]]:
+            mlip: pathlib.Path | None = None,
+            generated: list | None = None) -> tuple[list[Found], list[str]]:
     """The names the rules find, and the problems of the rules. `unread`
     receives the name-shaped literals of the scanned functions that no
-    rule reads (name_literals), for compare() to look up. A rule's file
-    written mlip:<path> is <path> under `mlip`, MLIP's source directory; a
-    problem when `mlip` is None."""
+    rule reads (name_literals), for compare() to look up; `generated` the
+    vocabularies a function reads from the generated tables of the
+    registry, with the place of the use, for compare() to take whole. A
+    rule's file written mlip:<path> is <path> under `mlip`, MLIP's source
+    directory; a problem when `mlip` is None."""
     found: list[Found] = []
     problems: list[str] = []
     if unread is None:
         unread = []
+    if generated is None:
+        generated = []
     cache: dict[str, str] = {}
     for rule in EXTRACTION:
         if rule.file.startswith(MLIP_PREFIX):
@@ -646,6 +696,17 @@ def extract(hpo: pathlib.Path, unread: list | None = None,
                                    f"{where} ({rule.label})"))
                 rule_names.add(m.group(1))
                 n_found += 1
+        for use_re, vocab in rule.generated:
+            m = re.search(use_re, body)
+            if not m:
+                problems.append(f"{rule.file}: {rule.label}: the rule finds "
+                                "no use of the generated table "
+                                f"/{use_re}/: the extraction rule needs "
+                                "updating")
+                continue
+            where = f"{rule.file}:{line_of(src, offset + m.start())}"
+            generated.append((vocab, f"{where} ({rule.label})"))
+            n_found += 1
         if rule.function:
             problems += unread_comparisons(rule, src, offset, body)
             unread.extend(name_literals(rule, src, offset, body,
@@ -657,10 +718,12 @@ def extract(hpo: pathlib.Path, unread: list | None = None,
 
 
 def compare(found: list[Found], reg,
-            unread: list[tuple[str, str]] = ()) -> list[str]:
+            unread: list[tuple[str, str]] = (),
+            generated: list[tuple[tuple[str, ...], str]] = ()) -> list[str]:
     """The differences between the names found and the registry's, and
     the name-shaped literals no rule reads that the registry does not
-    know."""
+    know. A vocabulary of `generated` (a function reads it from the
+    generated tables of the registry) is recognised whole."""
     problems: list[str] = []
     names = vocabularies(reg) if hasattr(reg, "line_options") else \
         VOCABULARIES
@@ -691,6 +754,10 @@ def compare(found: list[Found], reg,
         for v in f.vocabularies:
             seen[v].add(f.name)
     used = {v for f in found for v in f.vocabularies}
+    for vocabs, _ in generated:
+        for v in vocabs:
+            seen.setdefault(v, set()).update(vocab.get(v, set()))
+            used.add(v)
     for v in names:
         if v not in used and vocab[v]:
             problems.append(f"no extraction rule reads the vocabulary {v}")
@@ -725,7 +792,8 @@ def main(argv: list[str] | None = None) -> int:
     import hpotarget_registry  # noqa: E402  (the registry's own loader)
 
     unread: list[tuple[str, str]] = []
-    found, problems = extract(args.hpo, unread, args.mlip)
+    generated: list[tuple[tuple[str, ...], str]] = []
+    found, problems = extract(args.hpo, unread, args.mlip, generated)
     try:
         reg = hpotarget_registry.load(registry_dir, resolve=False)
     except hpotarget_registry.RegistryError as e:
@@ -734,7 +802,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"check_hpotarget_coverage.py: the registry does not load "
               f"({len(e.errors)} error(s))")
         return 1
-    problems += compare(found, reg, unread)
+    problems += compare(found, reg, unread, generated)
     for p in problems:
         print(p)
     names = len({(f.name, f.vocabularies) for f in found})

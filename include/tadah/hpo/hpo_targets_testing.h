@@ -1,6 +1,14 @@
 #pragma once
-/* hpo_targets_testing.h -- test seam of the target-file parser
- * (HPOTargets::read). Not part of the public API.
+/* hpo_targets_testing.h -- test seam of the target-file parsers
+ * (ParsedTarget::read and the registry-driven parser of
+ * src/hpotarget_parser.cpp). Not part of the public API.
+ *
+ * make_targets() builds the targets of a run (HPOTargets) whose target
+ * file the parser `parser` reads: Old, ParsedTarget::read (the parser of
+ * `tadah hpo`), or New, the registry-driven parser; the rest of the
+ * construction is the constructor's. So two parsers of one file are
+ * compared on the targets they give, each on its own training
+ * configuration (the parse inserts the defaults of the keys it reads).
  *
  * describe_parse() writes what the parse of a target file gave as a
  * canonical text, so two parses can be compared as text: the comparison of
@@ -20,7 +28,7 @@
  *   - a LAMMPS script is given by its number of lines and the FNV-1a hash
  *     of its lines (`.size`, `.fnv1a`), not line by line.
  *
- * The dump holds every member of HPOTargets that read() sets, with the
+ * The dump holds every member of ParsedTarget the parse sets, with the
  * OptimizerSpec of the run and its INNER and PRESTAGE specs, each PC_LAMMPS
  * and PC_FAILPROBE line, each PC_OBSERVABLE term with its options, the
  * boxes of the OPTIM lines (optimap) and the training configuration the
@@ -40,15 +48,25 @@
  * Throws std::logic_error for a PC_OBSERVABLE kind it does not know, whose
  * options it could not show. */
 
+#include <tadah/hpo/hpo_targets.h>
+
+#include <memory>
 #include <string>
 
+/* Defined: make_targets() reads a target file with the parser it names. */
+#define TADAH_HPOTARGET_PARSER_CHOICE 1
+
 namespace tadah::hpo {
-
-class HPOTargets;
-
 namespace testing {
 
-std::string describe_parse(const HPOTargets& targets);
+/* The parsers of the target file. */
+enum class TargetParser : unsigned char { Old, New };
+
+std::unique_ptr<HPOTargets> make_targets(
+    core::Context& c, const std::string& fn, TargetParser parser,
+    TargetsPurpose purpose = TargetsPurpose::Run);
+
+std::string describe_parse(const ParsedTarget& targets);
 
 }  // namespace testing
 }  // namespace tadah::hpo

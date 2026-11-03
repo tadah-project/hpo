@@ -1,7 +1,10 @@
-/* describe_parse(): the canonical text of what HPOTargets::read() set
- * (hpo_targets_testing.h describes the format and what it holds). */
+/* describe_parse(): the canonical text of what the parse of a target file
+ * set, and make_targets(), the targets read with either parser
+ * (hpo_targets_testing.h describes them). */
 
 #include <tadah/hpo/hpo_targets_testing.h>
+
+#include "hpotarget_parser.h"
 
 #include <tadah/core/number_format.h>
 #include <tadah/hpo/hpo_targets.h>
@@ -365,7 +368,25 @@ void dump_observable(Dump& d, const std::string& p, const Observable& o)
 
 }  // namespace
 
-std::string describe_parse(const HPOTargets& t)
+std::unique_ptr<HPOTargets> make_targets(core::Context& c,
+                                         const std::string& fn,
+                                         TargetParser parser,
+                                         TargetsPurpose purpose)
+{
+    struct Old {
+        static void read(ParsedTarget& t, const std::string& file)
+        {
+            t.read(file);
+        }
+    };
+    const HPOTargets::ReadFn read = parser == TargetParser::New
+                                        ? &hpotarget::parse_target_file
+                                        : &Old::read;
+    return std::unique_ptr<HPOTargets>(
+        new HPOTargets(c, fn, nullptr, purpose, read));
+}
+
+std::string describe_parse(const ParsedTarget& t)
 {
     Dump d;
     d.put("target_file", quote(t.target_file));
