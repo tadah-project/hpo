@@ -1,5 +1,6 @@
 #pragma once
 #include <algorithm>
+#include <cctype>
 #include <unordered_map>
 #include <tadah/hpo/log_index.h>
 #include <optional>
@@ -481,6 +482,23 @@ struct OptimizerSpec {
      * The refusals of one key name its line (with_key_line, phase_specs.h);
      * a refusal of a combination of keys names block_line. */
     std::unordered_map<std::string, KeyLine> key_lines;
+
+    /* Where THREADS of this optimiser is written, for the messages that
+     * name it: "in its EXPLORE block" for the PRESTAGE exploration (the
+     * spec of the block whose end line is ENDEXPLORE), otherwise "for the
+     * STRATEGY-level optimiser (in its OPTIMIZER or STRATEGY block)". */
+    std::string threads_place() const
+    {
+        std::string end;
+        for (char ch : block_line_text)
+            if (!std::isspace(static_cast<unsigned char>(ch)))
+                end += static_cast<char>(
+                    std::toupper(static_cast<unsigned char>(ch)));
+        return end == "ENDEXPLORE"
+                   ? "in its EXPLORE block"
+                   : "for the STRATEGY-level optimiser (in its OPTIMIZER or "
+                     "STRATEGY block)";
+    }
 
     /* Bind the search space: low/high become the INTERNAL bounds, is_int,
      * log_scaled and parameter_labels are derived from it. Called by

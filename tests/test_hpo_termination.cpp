@@ -927,7 +927,11 @@ TEST_CASE("Journal: without PC_LAMMPS lines the PC_ISOLATION line says "
  * (pool idles on a futex); prefer 'passive' on shared nodes" and
  * "FAILSCORE_GRADING: ON -- failed evals graded in [0.999*FS, FS), bands
  * A-D (see docs); no PC_FAILPROBE (bands C/D constant)": the checks
- * fail. */
+ * fail. The band-D list is that of the run (unusable_potential_causes,
+ * which the LOSS FUNCTION section of the journal uses too): this run has
+ * no PC_FAILPROBE and no PC_LAMMPS line, so it names neither PC_FAILPROBE
+ * nor a potential LAMMPS cannot build; it named both, whatever the run
+ * had: the band check fails on that. */
 TEST_CASE("Journal: the OpenMP and FAILSCORE_GRADING lines say what they "
           "set", "[HPO][journal][termination]")
 {
@@ -963,9 +967,8 @@ TEST_CASE("Journal: the OpenMP and FAILSCORE_GRADING lines say what they "
                  "A, a --hotvar value outside its range; B, a script or "
                  "PC_OBSERVABLE term that failed; C, a simulation that did "
                  "not finish; D, a potential rejected as unusable (by "
-                 "PC_FAILPROBE --gate, a --skip-above or --skip-rel cap, "
-                 "BUMPGATE, RHOGATE or RHOBARGATE, a refused fit, or a "
-                 "potential LAMMPS cannot build); ");
+                 "a --skip-above or --skip-rel cap, BUMPGATE, RHOGATE or "
+                 "RHOBARGATE, or a refused fit); ");
     REQUIRE(grading.size() == 1u);
     CHECK_THAT(grading[0], Catch::EndsWith(
         "; no PC_FAILPROBE line: band C scores the top of its range, and band "
@@ -7524,12 +7527,15 @@ TEST_CASE("No usable loss: evaluations that throw count as unusable losses",
     /* The LOSS FUNCTION section says what scores FAILSCORE in this run,
      * which has no PC_LAMMPS or PC_OBSERVABLE term (it said "returned when
      * an evaluation produces NaN/Inf", then "... a failed script ...", then
-     * "... a failed PC_LAMMPS simulation ..." in every run;
-     * FAILSCORE_GRADING OFF here). */
+     * "... a failed PC_LAMMPS simulation ..." in every run, then "... a
+     * skip cap or a rejection by BUMPGATE, RHOGATE or RHOBARGATE; ...",
+     * without the refused fit; FAILSCORE_GRADING OFF here). */
     CHECK_THAT(journal, Catch::Contains(
                             "1.0000e+09  (the loss of a failed evaluation: a "
-                            "NaN/Inf loss, an exception, a skip cap or a "
-                            "rejection by BUMPGATE, RHOGATE or RHOBARGATE; "
+                            "NaN/Inf loss, an exception, a potential rejected "
+                            "as unusable (by a --skip-above or --skip-rel "
+                            "cap, BUMPGATE, RHOGATE or RHOBARGATE, or a "
+                            "refused fit); "
                             "the ceiling of every loss)"));
 }
 
@@ -9722,7 +9728,11 @@ TEST_CASE("PRESTAGE: the refinement starts only from usable losses, fewer "
      * top-4 seed(s)", "MULTISTART start 4/4", no fifth), status 0.
      * Before the fix: "PRESTAGE: top-6 losses: 95.2545 96.0496 99.2483
      * 99.9981 1.79769e+308 ...", "refining top-6 seed(s)": two of the six
-     * refinement starts began at the failed points 1.0 and 1.25. */
+     * refinement starts began at the failed points 1.0 and 1.25.
+     * The losses are printed as the MULTISTART lines print theirs, in
+     * scientific notation with four decimals ("9.5255e+01"); they were
+     * printed at a stream's default precision ("95.2545"): the format
+     * check fails on that. */
     TaRun run(prestage_grid_block("6", "5"), straddle_root());
     int status = -1;
     REQUIRE_NOTHROW(status = straddle_run(run, "1.9", "PRESTAGE"));
@@ -9739,6 +9749,8 @@ TEST_CASE("PRESTAGE: the refinement starts only from usable losses, fewer "
     INFO(losses);
     CHECK_THAT(losses, Catch::StartsWith("PRESTAGE: top-4 losses: "));
     CHECK(losses.find("e+308") == std::string::npos);
+    CHECK(std::regex_match(
+        losses, std::regex(R"(PRESTAGE: top-4 losses:( \d\.\d{4}e[+-]\d{2}){4})")));
     CHECK(count_of(journal,
                    "PRESTAGE: 4 usable candidate(s) for TOPK 6 (the "
                    "exploration made 6 evaluation(s), 2 without a usable "
@@ -10099,7 +10111,7 @@ const std::string kBumpGateRoot =
 
 }  // namespace
 
-TEST_CASE("GRAD_STRATEGY ANALYTICAL: a candidate the bump gate rejects "
+TEST_CASE("GRAD_STRATEGY ANALYTICAL: a candidate the bump check rejects "
           "before training has no usable gradient, and the run goes on",
           "[HPO][termination][analytical][bumpgate]")
 {
@@ -10185,7 +10197,7 @@ TEST_CASE("GRAD_STRATEGY ANALYTICAL: a candidate the bump gate rejects "
     }
 }
 
-TEST_CASE("PRESTAGE: an exploration whose every candidate the bump gate "
+TEST_CASE("PRESTAGE: an exploration whose every candidate the bump check "
           "rejects is refined from the OPTIMIZER-level INIT point",
           "[HPO][termination][prestage][bumpgate]")
 {

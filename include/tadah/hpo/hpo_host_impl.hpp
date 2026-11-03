@@ -3543,10 +3543,11 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
                 "cover every cutoff inside the OPTIM box");
         if (has_train_data_ && !all_weights_fixed_) {
             /* The WARNINGs of the fit (an evidence approximation stopped
-             * at its iteration limit) are said once per run in the
-             * journal, not once per evaluation; an evidence approximation
-             * refused for this candidate's targets fails the candidate
-             * (fail_fit), after the block. */
+             * at its iteration limit, the singular directions an OALGO 3
+             * solve drops) are said once per run in the journal, each
+             * kind once, not once per evaluation; an evidence
+             * approximation refused for this candidate's targets fails
+             * the candidate (fail_fit), after the block. */
             models::FitWarningCollector fit_warnings;
             try {
                 cache.trainer->train(train_stdb_);
@@ -3554,14 +3555,24 @@ double HPO_Host<P,R>::operator()(const P& p_in) const
                 fit_refusal = e.what();
             }
             for (const models::FitWarning& w : fit_warnings.warnings()) {
-                if (w.kind != models::FitWarningKind::EvidenceApproximationLimit)
-                    continue;
-                if (first_fit_note("evidence approximation limit"))
-                    HPOLog::instance().warning(
-                        "eval " + std::to_string(r.iter) + ": " + w.text +
-                        " This WARNING is said once per run: a later "
-                        "evaluation whose evidence approximation stops at "
-                        "its limit has none.");
+                switch (w.kind) {
+                case models::FitWarningKind::EvidenceApproximationLimit:
+                    if (first_fit_note("evidence approximation limit"))
+                        HPOLog::instance().warning(
+                            "eval " + std::to_string(r.iter) + ": " + w.text +
+                            " This WARNING is said once per run: a later "
+                            "evaluation whose evidence approximation stops "
+                            "at its limit has none.");
+                    break;
+                case models::FitWarningKind::SingularDirectionsDropped:
+                    if (first_fit_note("singular directions dropped"))
+                        HPOLog::instance().warning(
+                            "eval " + std::to_string(r.iter) + ": " + w.text +
+                            " This WARNING is said once per run: a later "
+                            "evaluation whose solve drops singular "
+                            "directions has none.");
+                    break;
+                }
             }
         } else {
             /* No training DBFILE, or FIXINDEX pins every weight: the LS
@@ -4137,7 +4148,7 @@ void HPO_Host<P,R>::commit_evaluation(Completed&& c) const
             add_dataset_metric(trg_.use_ermse, trg_.ermse_targets, "ERMSE",
                                r.ermseLoss, r.v_ermseLoss);
             if (trg_.use_errmse && r.errmseLoss > 0) comps.push_back({std::string("ErRMSE_global"), r.errmseLoss});
-            if (trg_.use_ersq   && r.ersqLoss   > 0) comps.push_back({std::string("ErSQ_global"),   r.ersqLoss});
+            if (trg_.use_ersq   && r.ersqLoss   > 0) comps.push_back({std::string("ERSQ_global"),   r.ersqLoss});
             add_dataset_metric(trg_.use_frmse, trg_.frmse_targets, "FRMSE",
                                r.frmseLoss, r.v_frmseLoss);
             add_dataset_metric(trg_.use_srmse, trg_.srmse_targets, "SRMSE_GPA",

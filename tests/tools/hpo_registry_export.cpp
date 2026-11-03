@@ -113,6 +113,7 @@ const char* random_draws_token(OptimizerCaps::RandomDraws d)
         case D::Never:        return "never";
         case D::BetweenSides: return "between_sides";
         case D::TrialPoints:  return "trial_points";
+        case D::FixedSeed:    return "fixed_seed";
     }
     throw std::runtime_error("a RandomDraws without a token");
 }

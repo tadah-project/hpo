@@ -47,6 +47,15 @@ namespace tadah::mlip { struct LoadTransformReport; }
 
 namespace tadah::hpo {
 
+/* What rejects a potential as unusable in the run of @p trg, the band-D
+ * failures under FAILSCORE_GRADING ON and failures that score FAILSCORE
+ * under OFF: "PC_FAILPROBE, " (with a PC_FAILPROBE line) "a --skip-above
+ * or --skip-rel cap, BUMPGATE, RHOGATE or RHOBARGATE, a refused fit, or a
+ * potential LAMMPS cannot build" (the last with PC_LAMMPS lines). The
+ * startup line of FAILSCORE_GRADING ON and the LOSS FUNCTION section of
+ * the journal give this one list. */
+std::string unusable_potential_causes(const HPOTargets& trg);
+
 /* What one evaluation's loss was, for the journal's DIAGNOSTICS census.
  * Only a usable loss can become the incumbent. */
 enum class EvalLoss {

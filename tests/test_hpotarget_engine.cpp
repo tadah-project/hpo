@@ -258,14 +258,15 @@ TEST_CASE("hpotarget engine: a repeated line whose value is wrong is "
     refuses(kRoot + Lines{"FAILSCORE 10", "FAILSCORE x"} + kOptimizer,
             at_line(4, "FAILSCORE is set twice (first on line 3) and no "
                        "line between reads the first (a PC_LAMMPS or "
-                       "PC_FAILPROBE line without --failscore); each key "
-                       "is given once", "FAILSCORE x"));
+                       "PC_FAILPROBE line without --failscore); the key is "
+                       "given again only after such a line", "FAILSCORE x"));
     refuses(kRoot + Lines{"MAXTIME 60", "PC_SCRIPT_TIMEOUT x"} +
                 kOptimizer,
             at_line(4, "PC_SCRIPT_TIMEOUT is set twice (first on line 3, "
                        "as MAXTIME) and no line between reads the first "
                        "(a PC_LAMMPS or PC_FAILPROBE line without "
-                       "--maxtime); each key is given once",
+                       "--maxtime); the key is given again only after such "
+                       "a line",
                     "PC_SCRIPT_TIMEOUT x"));
 
     /* A metric line: value, repeat, options. */
@@ -274,8 +275,8 @@ TEST_CASE("hpotarget engine: a repeated line whose value is wrong is "
                        "'x'", "PC_EMAE x 1"));
     refuses(kRoot + Lines{"PC_EMAE 1 1", "PC_EMAE 1 1 --bogus 1"} +
                 kOptimizer,
-            at_line(4, "PC_EMAE: repeated declaration (first declared on "
-                       "line 3)", "PC_EMAE 1 1 --bogus 1"));
+            at_line(4, "PC_EMAE is set twice (first on line 3); each key "
+                       "is given once", "PC_EMAE 1 1 --bogus 1"));
     refuses(kRoot + Lines{"PC_ERMSE 0 1 --bogus"} + kOptimizer,
             at_line(3, "PC_ERMSE: unknown flag '--bogus'",
                     "PC_ERMSE 0 1 --bogus"));
@@ -316,7 +317,8 @@ TEST_CASE("hpotarget engine: a repeated line whose value is wrong is "
     refuses(kRoot + Lines{"OPTIMIZER", "LIB NLOPT", "ALGO LN_SBPLX",
                           "MAXEVAL 10", "NOISE", "CALIBRATION 2",
                           "CALIBRATION 1", "ENDNOISE", "ENDOPTIMIZER"},
-            at_line(9, "NOISE.CALIBRATION must be 0 (off) or >= 2",
+            at_line(9, "CALIBRATION in the NOISE block must be 0 (off) or "
+                       ">= 2, got '1'",
                     "CALIBRATION 1"));
     refuses(strategy_head + Lines{"MAXEVAL 10", "RESTART",
                                   "AFTER_STAGNATION 5", "MAX 2", "MAX 0",

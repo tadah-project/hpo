@@ -75,11 +75,13 @@ TEST_CASE("PC dataset declarations reject ambiguous or invalid input", "[pc_data
 }
 
 /* A repeated top-level PC_EMAE, PC_ErRMSE or PC_ERSQ line is refused at
- * its line, naming the line of the first, as a repeated PC_ERMSE, PC_FRMSE
- * or PC_SRMSE_GPA line is ("line 7 of <target>: PC_EMAE: repeated declaration
- * (first declared on line 6)"); a line of each metric once is read. Before
- * the fix: the later line replaced the first without a word (the last
- * target, weight and caps won). */
+ * its line, naming the line of the first, as every other key set twice is
+ * ("line 7 of <target>: PC_EMAE is set twice (first on line 6); each key is
+ * given once"); a line of each metric once is read. Before the fix: the
+ * later line replaced the first without a word (the last target, weight
+ * and caps won). Then the refusal was "PC_EMAE: repeated declaration
+ * (first declared on line 6)", in words of its own: the check fails on
+ * it. */
 TEST_CASE("A repeated PC_EMAE, PC_ErRMSE or PC_ERSQ line is refused",
           "[pc_dataset][parser]") {
     for (const auto* metric : {"PC_EMAE", "PC_ErRMSE", "PC_ERSQ"}) {
@@ -90,8 +92,8 @@ TEST_CASE("A repeated PC_EMAE, PC_ErRMSE or PC_ERSQ line is refused",
         CHECK_THROWS_WITH(HPOTargets(ctx, f.path.string()),
                           hpo_test::AsTarget(f.path.string(), Catch::Matchers::Contains(
                               "line 7 of <target>: " + key +
-                              ": repeated declaration (first declared on "
-                              "line 6)")));
+                              " is set twice (first on line 6); each key is "
+                              "given once")));
     }
     ConfigFile once("PC_EMAE 0 1\nPC_ErRMSE 0 2\nPC_ERSQ 0 3\nPC_SRMSE_GPA 0 4\n");
     tadah::core::Context ctx;
@@ -152,13 +154,15 @@ TEST_CASE("PC_ERSQ refuses --skip-above and --skip-rel at its line",
 }
 
 /* A second global PC_ERMSE, PC_FRMSE or PC_SRMSE_GPA line is refused at its
- * line, naming the line of the first, as a repeated PC_EMAE is ("Error on
- * line 7:
- * PC_ERMSE: repeated declaration (first declared on line 6)"); a global
- * line with indexed ones, in either order, is refused as a mix of the two
- * forms. Lines with other indices are read.
+ * line, naming the line of the first and what is given once ("line 7 of
+ * <target>: PC_ERMSE without indices is set twice (first on line 6); a
+ * line without indices is given once": these keys take several indexed
+ * lines); a global line with indexed ones, in either order, is refused as
+ * a mix of the two forms. Lines with other indices are read.
  * Before the fix: "PC_ERMSE: repeated global declaration or mixed
- * global/indexed forms", without the first line. */
+ * global/indexed forms", without the first line. Then "PC_ERMSE: repeated
+ * declaration (first declared on line 6)", which did not say that a line
+ * without indices is what is repeated: the check fails on it. */
 TEST_CASE("A repeated global PC_ERMSE or PC_FRMSE line is refused naming "
           "the first", "[pc_dataset][parser]") {
     for (const auto* metric : {"PC_ERMSE", "PC_FRMSE", "PC_SRMSE_GPA"}) {
@@ -169,8 +173,8 @@ TEST_CASE("A repeated global PC_ERMSE or PC_FRMSE line is refused naming "
         CHECK_THROWS_WITH(HPOTargets(ctx, twice.path.string()),
                           hpo_test::AsTarget(twice.path.string(), Catch::Matchers::StartsWith(
                               "line 7 of <target>: " + key +
-                              ": repeated declaration (first declared on "
-                              "line 6)")));
+                              " without indices is set twice (first on line "
+                              "6); a line without indices is given once")));
         for (const std::string body :
              {key + " (1) 0 1\n" + key + " 0 2\n",
               key + " 0 1\n" + key + " (1) 0 2\n"}) {

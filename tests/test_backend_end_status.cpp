@@ -441,17 +441,25 @@ TEST_CASE("End status: DLIB:GFS records a spent MAXEVAL",
     CHECK(lr.status() == "DLIB:GFS: MAXEVAL reached");
 }
 
-/* DLIB:GFS is deterministic: a SEED of its spec is refused when its
- * search starts, as at startup ("DLIB:GFS does not use SEED: it draws no
- * random numbers", which ended "; remove it"; it was warned about:
- * "SEED has no effect on the search. Randomise via the INIT block ...").
+/* DLIB:GFS reads no SEED (dlib draws its random points from a fixed
+ * internal seed, which tadah hpo does not set): a SEED of its spec is
+ * refused when its search starts, as at startup ("DLIB:GFS does not use
+ * SEED: dlib draws its random points from a fixed internal seed, which
+ * tadah hpo does not set, so a search with THREADS 1 repeats its points";
+ * it ended "; remove it"; it was warned about: "SEED has no effect on the
+ * search. Randomise via the INIT block ...").
  * A PRESTAGE refinement's SEED that also seeds the exploration (an
  * exploration without a seed of its own takes the STRATEGY-level one) is
- * said to: "SEED has no effect on
- * the refinement: it seeds the exploration (EXPLORE SEED 7)".
+ * said to, in the journal: "DLIB:GFS draws its random points from a fixed
+ * internal seed and does not use SEED: SEED seeds the exploration (EXPLORE
+ * SEED 7)."; the journal does not say "deterministic".
  * Before the fix: the refinement said "SEED has no effect on the search.
  * Randomise via the INIT block (e.g. METHOD RANDOM K with SEED) instead.",
- * while the journal named the same SEED as the exploration's. */
+ * while the journal named the same SEED as the exploration's. Then the
+ * refusal said "it draws no random numbers" and the journal "DLIB:GFS
+ * (find_min_global, MaxLIPO+TR) is deterministic; SEED has no effect on
+ * the refinement: ...", though dlib draws random points: both checks fail
+ * on that. */
 TEST_CASE("End status: DLIB:GFS says what its SEED does",
           "[HPO][stop_status][gfs][seed]")
 {
@@ -463,8 +471,10 @@ TEST_CASE("End status: DLIB:GFS says what its SEED does",
         LoggedRun lr;
         StubHost host{bowl};
         CHECK_THROWS_WITH(tadah::hpo::run_dlib_global_impl(sp, host),
-                          "DLIB:GFS does not use SEED: it draws no random "
-                          "numbers");
+                          "DLIB:GFS does not use SEED: dlib draws its random "
+                          "points from a fixed internal seed, which tadah "
+                          "hpo does not set, so a search with THREADS 1 "
+                          "repeats its points");
     }
     OptimizerSpec outer = sp;
     outer.strategy_type = tadah::hpo::StrategyType::PRESTAGE;
@@ -480,10 +490,11 @@ TEST_CASE("End status: DLIB:GFS says what its SEED does",
         tadah::hpo::run_dlib_global_impl(refine, host);
         const std::string journal = lr.read();
         CHECK_THAT(journal, Catch::Contains(
-                                "DLIB:GFS (find_min_global, MaxLIPO+TR) is "
-                                "deterministic; SEED has no effect on the "
-                                "refinement: it seeds the exploration "
-                                "(EXPLORE SEED 7)."));
+                                "DLIB:GFS draws its random points from a "
+                                "fixed internal seed and does not use SEED: "
+                                "SEED seeds the exploration (EXPLORE SEED "
+                                "7)."));
+        CHECK_THAT(journal, !Catch::Contains("deterministic"));
         CHECK_THAT(journal, !Catch::Contains("Randomise via the INIT block"));
     }
 }

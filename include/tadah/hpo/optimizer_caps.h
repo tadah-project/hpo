@@ -222,7 +222,13 @@ struct OptimizerCaps {
      * A search that draws none (before its first random trial point) asks
      * for the same points in every run: the RESTART warnings of
      * start_point_warnings() (backend_rules.h). */
-    enum class RandomDraws { NotRecorded, Never, BetweenSides, TrialPoints };
+    /*   FixedSeed     DLIB:GFS (whose first call is at its point): dlib's
+     *                 global_function_search draws its random points from
+     *                 a fixed internal seed, which find_min_global does not
+     *                 set (no set_seed), so SEED cannot change them and is
+     *                 refused (seed_unread_reason, phase_specs.h). */
+    enum class RandomDraws { NotRecorded, Never, BetweenSides, TrialPoints,
+                             FixedSeed };
     RandomDraws random_draws = RandomDraws::NotRecorded;
 
     /* How the tolerances end the run when one of them is costly, the last

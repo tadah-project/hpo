@@ -28,7 +28,10 @@
 //     (at its line) or one the potential lacks (at startup), and a
 //     --hotvar a0 start outside its window;
 //   - under FAILSCORE_GRADING OFF the settings that only grade a failure
-//     (PC_FAILPROBE --s0, a --failvar scale) are refused.
+//     (PC_FAILPROBE --s0, a --failvar scale) are refused;
+//   - under FAILSCORE_GRADING ON a FAILSCORE whose grading bands are not
+//     representable, which only a process that flushes subnormal numbers
+//     to zero meets, is refused at its line.
 
 #include "catch2/catch.hpp"
 
@@ -41,6 +44,8 @@
 #include <tadah/hpo/loss_function.h>
 #include <tadah/hpo/observables/observable.h>
 #include <tadah/hpo/startup_validation.h>
+
+#include "flush_subnormals.h"
 
 #include <chrono>
 #include <cstdio>
@@ -317,15 +322,18 @@ TEST_CASE("PC lines: a file whose only PC line is PC_FAILPROBE has no loss "
  * value (--maxtime; a loss function on every --varloss, --loss on the
  * PC_OBSERVABLE line). A second line of one of the three keys with no line
  * between that reads the first is refused as set twice, naming the lines
- * that read it; a line between with its own value does not read the
- * first. A LOSS line after the last PC line is read by the metric lines, a
+ * that read it and ending with its rule ("; the key is given again only
+ * after such a line"); a line between with its own value does not read
+ * the first. A LOSS line after the last PC line is read by the metric lines, a
  * timeout before a PC_FAILPROBE line by it, and a LOSS line before a
  * PC_LAMMPS line one of whose terms names no loss function by that term.
  * Before the fix: a line read the three keys whatever it gave: the files
  * whose lines give their own values were read (read_error ""), and the
  * messages said "the PC_LAMMPS and PC_FAILPROBE lines after it, and no
  * such line follows it", "the PC_LAMMPS and PC_OBSERVABLE lines after it"
- * and "no PC_LAMMPS or PC_OBSERVABLE line between takes the first". */
+ * and "no PC_LAMMPS or PC_OBSERVABLE line between takes the first". Then
+ * the set-twice refusals ended "; each key is given once", after the
+ * exception they had just stated: those checks fail on it. */
 TEST_CASE("PC lines: a LOSS, FAILSCORE or PC_SCRIPT_TIMEOUT line that no "
           "line reads is refused", "[HPO][pc_lines][line_settings]") {
     tadah::core::PeriodicTable::initialize();
@@ -362,8 +370,8 @@ TEST_CASE("PC lines: a LOSS, FAILSCORE or PC_SCRIPT_TIMEOUT line that no "
               at_line(9,
                       std::string(key) + " is set twice (first on line 7) "
                       "and no line between reads the first (a PC_LAMMPS or "
-                      "PC_FAILPROBE line without --maxtime); each key is "
-                      "given once",
+                      "PC_FAILPROBE line without --maxtime); the key is "
+                      "given again only after such a line",
                       std::string(key) + " 7"));
     }
     CHECK(read_error(kSbplx + "FAILSCORE 1e9\nPC_LAMMPS --script p.in "
@@ -372,7 +380,8 @@ TEST_CASE("PC lines: a LOSS, FAILSCORE or PC_SCRIPT_TIMEOUT line that no "
           at_line(9,
                   "FAILSCORE is set twice (first on line 7) and no line "
                   "between reads the first (a PC_LAMMPS or PC_FAILPROBE line "
-                  "without --failscore); each key is given once",
+                  "without --failscore); the key is given again only after "
+                  "such a line",
                   "FAILSCORE 1e10"));
     CHECK(read_error(kSbplx + "FAILSCORE 1e9\n" + lammps +
                      "FAILSCORE 1e10\n" + lammps) == "");
@@ -403,7 +412,7 @@ TEST_CASE("PC lines: a LOSS, FAILSCORE or PC_SCRIPT_TIMEOUT line that no "
     const std::string loss_twice =
         "LOSS is set twice (first on line 7) and no line between reads the "
         "first (a --varloss or PC_OBSERVABLE term that names no loss "
-        "function); each key is given once";
+        "function); the key is given again only after such a line";
     CHECK(read_error(kSbplx + "LOSS L1\nPC_FAILPROBE --script p.in "
                      "--outvar S\nLOSS L2\n" + lammps) ==
           at_line(9, loss_twice, "LOSS L2"));
@@ -942,9 +951,12 @@ TEST_CASE("PC lines: a quit command in a PC_LAMMPS or PC_FAILPROBE script is "
  * grade a failure are refused at startup at their line: PC_FAILPROBE --s0
  * and the <scale> of a --failvar; under ON both are accepted, and a
  * --failvar without a scale (which fails an evaluation under OFF too) is
- * accepted under OFF.
+ * accepted under OFF. The refusal of a scale gives it as the line wrote
+ * it, to its last digit: 1234567, 0.123456789 (format_roundtrip).
  * Before the fix: both were accepted under OFF and had no effect
- * (startup_error ""). */
+ * (startup_error ""). Then the scale was printed at the default precision
+ * of a stream, six digits ("--failvar bad 1.23457e+06", "0.123457"): the
+ * checks of the two scales fail on it. */
 TEST_CASE("PC lines: under FAILSCORE_GRADING OFF the settings that only "
           "grade are refused", "[HPO][pc_lines][failure_signals]") {
     tadah::core::PeriodicTable::initialize();
@@ -968,10 +980,70 @@ TEST_CASE("PC lines: under FAILSCORE_GRADING OFF the settings that only "
                   "have no effect (--failvar bad alone fails the evaluation "
                   "when bad > 0)",
                   scale));
+    for (const std::string v : {"1234567", "0.123456789"}) {
+        const std::string wide =
+            "PC_LAMMPS --script p.in --varloss E 1 1 --failvar bad " + v;
+        INFO(wide);
+        CHECK(startup_error(kSbplx + "PC_ERMSE 0 1\n" + wide + "\n") ==
+              at_line(8,
+                      "--failvar bad " + v + ": the scale grades the "
+                      "failure, which FAILSCORE_GRADING ON does; under "
+                      "FAILSCORE_GRADING OFF a failed evaluation scores "
+                      "FAILSCORE, so the scale would have no effect "
+                      "(--failvar bad alone fails the evaluation when bad "
+                      "> 0)",
+                      wide));
+    }
     const std::string on = "FAILSCORE_GRADING ON\nFAILSCORE 1e9\n";
     CHECK(startup_error(kSbplx + on + "PC_ERMSE 0 1\n" + s0 + "\n") == "");
     CHECK(startup_error(kSbplx + on + "PC_ERMSE 0 1\n" + scale + "\n") == "");
     CHECK(startup_error(kSbplx + "PC_ERMSE 0 1\n"
                         "PC_LAMMPS --script p.in --varloss E 1 1 --failvar "
                         "bad\n") == "");
+}
+
+/* Pins: in a process that flushes subnormal numbers to zero (the bits an
+ * executable linked with -ffast-math sets at start-up; FlushSubnormals sets
+ * them here), FAILSCORE_GRADING ON with FAILSCORE 1e-307, whose grading
+ * bands have subnormal widths, is refused at startup at the FAILSCORE line,
+ * which the message gives: "line 8 of config.hpo: FAILSCORE 1e-307: the four
+ * grading bands of FAILSCORE_GRADING ON, each 0.00025 x FAILSCORE wide, are
+ * not representable at this magnitude; a FAILSCORE of 1e-290 or more has
+ * them\nLine: FAILSCORE 1e-307"; FAILSCORE 1e-290, the bound it states, is
+ * accepted there. In IEEE arithmetic FAILSCORE 1e-307 is accepted.
+ * Before the fix: passes as well (a pin: no test reached the refusal and
+ * its line, since neither test_hpo nor tadah is linked with -ffast-math
+ * and so neither flushes subnormal numbers). */
+TEST_CASE("PC lines: a FAILSCORE without grading bands where subnormal "
+          "numbers are flushed to zero is refused at its line",
+          "[HPO][pc_lines][failscore_bound]") {
+    tadah::core::PeriodicTable::initialize();
+    Scratch s;
+    const std::string on = "FAILSCORE_GRADING ON\n";
+    const std::string tiny = "FAILSCORE 1e-307";
+    if (tadah::hpo::test::subnormals_are_flushed())
+        WARN("this process flushes subnormal numbers to zero: the IEEE "
+             "arithmetic is not checked");
+    else
+        CHECK(startup_error(kSbplx + on + tiny + "\nPC_ERMSE 0 1\n") == "");
+    std::string refused, bound;
+    bool active = false;
+    {
+        tadah::hpo::test::FlushSubnormals ftz;
+        active = ftz.active();
+        refused = startup_error(kSbplx + on + tiny + "\nPC_ERMSE 0 1\n");
+        bound = startup_error(kSbplx + on + "FAILSCORE 1e-290\nPC_ERMSE 0 1\n");
+    }
+    if (!active) {
+        WARN("no flush-to-zero control on this architecture");
+        return;
+    }
+    CHECK(refused ==
+          at_line(8,
+                  "FAILSCORE 1e-307: the four grading bands of "
+                  "FAILSCORE_GRADING ON, each 0.00025 x FAILSCORE wide, are "
+                  "not representable at this magnitude; a FAILSCORE of "
+                  "1e-290 or more has them",
+                  tiny));
+    CHECK(bound == "");
 }

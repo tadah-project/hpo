@@ -353,8 +353,11 @@ Registry build_registry()
         c.reads_ftol_abs_as_setting = true;
         c.untested_tolerance_note =
             "dlib's global search has no convergence test to apply it to";
-        /* find_min_global (MaxLIPO+TR) is deterministic: SEED is refused
-         * (reads_seed false), unless it seeds a PRESTAGE exploration. */
+        /* find_min_global (MaxLIPO+TR) draws its random points from dlib's
+         * fixed internal seed (global_function_search, no set_seed): SEED
+         * is refused (reads_seed false), unless it seeds a PRESTAGE
+         * exploration. */
+        c.random_draws = OptimizerCaps::RandomDraws::FixedSeed;
         c.step_use  = StepUse::Rejected;
         c.step_note = "MaxLIPO+TR sizes its own trust region from the samples";
         add(r, c);
@@ -614,7 +617,10 @@ Registry build_registry()
                           "the coordinates are not rescaled; the later steps of every "
                           "dimension change by one progress ratio between 0.1 and 10. "
                           "The stop on a small step is relative to |x| in each "
-                          "dimension; XTOL_ABS adds an absolute one";
+                          "dimension; XTOL_ABS adds an absolute one. With STEP "
+                          "set, a start within one step of the upper bound and "
+                          "not of the lower one takes that dimension's first "
+                          "step inward, and the journal says so";
         } else if (has("BOBYQA") || has("COBYLA")) {
             c.step_use  = StepUse::PerDimRescale;
             c.step_note = "STEP rescales the coordinates, so that the first trust-region "

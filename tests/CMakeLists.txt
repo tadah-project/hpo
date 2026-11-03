@@ -370,6 +370,16 @@ add_test(NAME hpo_hpotarget_registry_check
 set_tests_properties(hpo_hpotarget_registry_check PROPERTIES
     LABELS "docs"
     TIMEOUT 60)
+# The configure messages of HPO's CMake files that refuse or warn state
+# what the configure found without addressing the reader
+# (tests/test_cmake_messages.py; its docstring says what it reads).
+add_test(NAME hpo_cmake_messages
+    COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/test_cmake_messages.py)
+set_tests_properties(hpo_cmake_messages PROPERTIES
+    LABELS "text"
+    TIMEOUT 60
+    FAIL_REGULAR_EXPRESSION "\nRan 0 tests ")
 cmake_path(SET _hpo_source_root NORMALIZE "${CMAKE_CURRENT_SOURCE_DIR}/..")
 # The OPTIM lines are read by MLIP's OPTIM reader (src/hpotarget_syntax.cpp,
 # src/hpotarget_optim.cpp): the coverage check reads MLIP's sources too.

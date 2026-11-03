@@ -1387,8 +1387,8 @@ template<typename Vec, typename HostT>
     if (!sp.num_threads) {
       const std::string hint =
           "ANNEAL_PT: THREADS is not set, so the " + std::to_string(K) +
-          " replicas run on 1 worker thread; THREADS <n> in the STRATEGY "
-          "block evaluates up to n of them at a time";
+          " replicas run on 1 worker thread; THREADS <n> " +
+          sp.threads_place() + " evaluates up to n of them at a time";
       std::cout << "[tadah hpo] " << hint << "\n";
       HPOLog::instance().warning(hint);
     }
@@ -2992,6 +2992,80 @@ template<typename Vec, typename HostT>
     };
     flow_touch_extremes();   /* initial tags only: all tags are still 0 */
 
+    /* --- measured-transport report (windowed), rank 0 of a serial run ---
+     * The cumulative flow line of the report epochs cannot distinguish
+     * "communicating" from "communicated once, an hour ago". This report
+     * gives the same tagging over the last `transport_window` exchange
+     * rounds and escalates on it, because measured transport -- not the
+     * per-pair acceptance table -- is what says whether tempering is doing
+     * anything. An adaptive ladder equalises acceptance, and acceptance can
+     * stay textbook-uniform while transport is zero. It runs right after
+     * every transport_window-th exchange round (the window closes there,
+     * whatever the length of SWAP_WINDOW: a window closed only on a report
+     * epoch covered lcm(transport_window, SWAP_WINDOW) rounds while it
+     * named transport_window), and not under SWAP_WINDOW OFF, which writes
+     * the cumulative diagnostics only (the ladder flow line and the
+     * whole-run grid of the final summary). Nothing collective: the tags
+     * are rank 0's. */
+    auto transport_report = [&]() {
+      auto grid = [&](const std::string& head, auto&& cell) {
+        HPOLog::instance().info(logidx::grid(head, K, cell));
+      };
+      const std::size_t rt_win = std::min(flow_up_win, flow_down_win);
+      {
+        std::ostringstream o;
+        o << "ANNEAL_PT ladder transport (last " << transport_window
+          << " exchange round(s)): traversals cold->hot=" << flow_up_win
+          << "  hot->cold=" << flow_down_win << "  (" << rt_win
+          << " round trip(s) in window; cumulative " << flow_up << "/"
+          << flow_down << " over " << exchange_rounds << " round(s))";
+        HPOLog::instance().info(o.str());
+      }
+      grid("ANNEAL_PT distinct walkers per slot (last " +
+               std::to_string(transport_window) +
+               " exchange round(s); " + std::to_string(K) +
+               " = fully mixed):",
+           [&](std::ostringstream& o, std::size_t s) {
+             std::size_t n = 0;
+             for (std::size_t w = 0; w < K; ++w)
+               n += slot_seen_win[s * K + w] ? 1 : 0;
+             o << "  " << std::setw(9) << n;
+           });
+      /* Severity. Both branches state only what was measured over a
+       * stated window, so both are exact -- but they differ in what
+       * they prove. Zero tags at BOTH extremes means no lineage
+       * reached either end: the ladder demonstrably did not carry
+       * anything end to end, which is a structural failure of the
+       * method and therefore a WARNING. One-sided flow is weaker
+       * evidence -- it can also be a long round trip straddling the
+       * window boundary -- so it is a HINT. */
+      if (flow_up_win == 0 && flow_down_win == 0) {
+        std::ostringstream w;
+        w << "ANNEAL_PT: no ladder traversal in the last "
+          << transport_window << " exchange round(s) -- no replica "
+             "lineage reached either temperature extreme, so the "
+             "ensemble is running as " << K
+          << " effectively independent annealers over this window. "
+             "Per-pair swap acceptance does NOT diagnose this: an "
+             "adaptive ladder equalises acceptance, and acceptance "
+             "can stay in the usual 20-40% band while transport is "
+             "zero. The distinct-walkers-per-slot row above shows "
+             "where the ladder is severed: slots stuck near 1.";
+        HPOLog::instance().warning(w.str());
+      } else if (rt_win == 0) {
+        std::ostringstream h;
+        h << "ANNEAL_PT: no COMPLETE round trip in the last "
+          << transport_window << " exchange round(s) (cold->hot="
+          << flow_up_win << ", hot->cold=" << flow_down_win
+          << "). One-sided flow can be a round trip straddling the "
+             "window boundary, but sustained one-sidedness means the "
+             "hot replicas' work is not reaching the cold end.";
+        HPOLog::instance().hint(h.str());
+      }
+      flow_up_win = flow_down_win = 0;
+      std::fill(slot_seen_win.begin(), slot_seen_win.end(), char{0});
+    };
+
     /* --- Corana per-dimension acceptance census -------------------------
      *
      * Corana's step adaptation has ALWAYS been per dimension:
@@ -3551,6 +3625,10 @@ template<typename Vec, typename HostT>
             }
           }
           flow_touch_extremes();   /* states moved -- update up/down flow */
+          if (rank == 0 && world == 1 && K >= 2 && kb.swap_window > 0 &&
+              transport_window > 0 &&
+              exchange_rounds % transport_window == 0)
+            transport_report();
         }
 
         /* --- global best + rank-0 stop decisions ----------------------
@@ -3859,75 +3937,6 @@ template<typename Vec, typename HostT>
                  << "  (~" << std::min(flow_up, flow_down)
                  << " round trip(s) so far)";
               HPOLog::instance().info(of.str());
-            }
-            /* --- measured-transport report (windowed) --------------------
-             * The cumulative line above cannot distinguish "communicating"
-             * from "communicated once, an hour ago". This block reports the
-             * same tagging over the last `transport_window` exchange rounds
-             * and escalates on it, because measured transport -- not the
-             * per-pair acceptance table -- is what says whether tempering is
-             * doing anything. An adaptive ladder equalises acceptance, and
-             * acceptance can stay textbook-uniform while transport is zero.
-             *
-             * ep_swap_rate >= 0 restricts this to epochs that actually ran
-             * an exchange round (the file's own idiom, as used by the pair
-             * tables), so the window does not re-fire when SWAP_EVERY > 1. */
-            if (K >= 2 && ep_swap_rate >= 0.0 && transport_window > 0 &&
-                exchange_rounds > 0 &&
-                exchange_rounds % transport_window == 0) {
-              const std::size_t rt_win = std::min(flow_up_win, flow_down_win);
-              {
-                std::ostringstream o;
-                o << "ANNEAL_PT ladder transport (last " << transport_window
-                  << " exchange round(s)): traversals cold->hot=" << flow_up_win
-                  << "  hot->cold=" << flow_down_win << "  (" << rt_win
-                  << " round trip(s) in window; cumulative " << flow_up << "/"
-                  << flow_down << " over " << exchange_rounds << " round(s))";
-                HPOLog::instance().info(o.str());
-              }
-              grid("ANNEAL_PT distinct walkers per slot (last " +
-                       std::to_string(transport_window) +
-                       " exchange round(s); " + std::to_string(K) +
-                       " = fully mixed):",
-                   [&](std::ostringstream& o, std::size_t s) {
-                     std::size_t n = 0;
-                     for (std::size_t w = 0; w < K; ++w)
-                       n += slot_seen_win[s * K + w] ? 1 : 0;
-                     o << "  " << std::setw(9) << n;
-                   });
-              /* Severity. Both branches state only what was measured over a
-               * stated window, so both are exact -- but they differ in what
-               * they prove. Zero tags at BOTH extremes means no lineage
-               * reached either end: the ladder demonstrably did not carry
-               * anything end to end, which is a structural failure of the
-               * method and therefore a WARNING. One-sided flow is weaker
-               * evidence -- it can also be a long round trip straddling the
-               * window boundary -- so it is a HINT. */
-              if (flow_up_win == 0 && flow_down_win == 0) {
-                std::ostringstream w;
-                w << "ANNEAL_PT: no ladder traversal in the last "
-                  << transport_window << " exchange round(s) -- no replica "
-                     "lineage reached either temperature extreme, so the "
-                     "ensemble is running as " << K
-                  << " effectively independent annealers over this window. "
-                     "Per-pair swap acceptance does NOT diagnose this: an "
-                     "adaptive ladder equalises acceptance, and acceptance "
-                     "can stay in the usual 20-40% band while transport is "
-                     "zero. The distinct-walkers-per-slot row above shows "
-                     "where the ladder is severed: slots stuck near 1.";
-                HPOLog::instance().warning(w.str());
-              } else if (rt_win == 0) {
-                std::ostringstream h;
-                h << "ANNEAL_PT: no COMPLETE round trip in the last "
-                  << transport_window << " exchange round(s) (cold->hot="
-                  << flow_up_win << ", hot->cold=" << flow_down_win
-                  << "). One-sided flow can be a round trip straddling the "
-                     "window boundary, but sustained one-sidedness means the "
-                     "hot replicas' work is not reaching the cold end.";
-                HPOLog::instance().hint(h.str());
-              }
-              flow_up_win = flow_down_win = 0;
-              std::fill(slot_seen_win.begin(), slot_seen_win.end(), char{0});
             }
             /* Corana step-vector state per slot, normalised to the box:
              * r_i = V[i]/width[i], so every slot starts at STEP_FRAC and

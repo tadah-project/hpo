@@ -1165,3 +1165,70 @@ TEST_CASE("GradientProvider: the Ceres kernel reports a failed stencil "
         CHECK(gp.failure->kind == GradientFailure::Budget);
     }
 }
+
+/* Pins: HYBRID counts its analytical pass as an evaluation only when the
+ * pass formed a component of the gradient, so the count the search budgets
+ * MAXEVAL with is the evaluations made: a pass that routes every parameter
+ * to the finite differences (the setup the analytical gradient does not
+ * cover, STRESS true; a slot of another host) adds nothing to the four
+ * evaluations of the central stencils (counter 4, the host's 4 calls); a
+ * pass that forms one component adds one (counter 3: the pass and the two
+ * stencil points of the other parameter); a pass that cannot be formed adds
+ * nothing.
+ * Before the fix: every pass was counted, so the first case counted 5
+ * evaluations for the host's 4 (with STRESS true a run journalled and wrote
+ * more evaluations than it made, and spent MAXEVAL on them), and the third
+ * 1 for none: those checks fail. */
+TEST_CASE("GradientProvider: HYBRID counts an analytical pass only when it "
+          "forms a component", "[HPO][grad_provider][hybrid][budget]")
+{
+    auto sp = inhouse_spec();
+    sp.grad_strategy = tadah::hpo::GradStrategy::Hybrid;
+    Vec g;
+    SECTION("every parameter differenced") {
+        Counted host{[](const Vec& x) { return x(0) + 2.0 * x(1); }};
+        std::atomic<unsigned long> counter{0};
+        const auto agf = [](const Vec&, Vec& g2, std::vector<int>& nfd) {
+            g2.set_size(2);
+            g2(0) = 0.0;
+            g2(1) = 0.0;
+            nfd = {0, 1};
+            return true;
+        };
+        auto gp = tadah::hpo::make_gradient_provider<Vec, void>(
+            sp, host, &counter, 0, agf);
+        REQUIRE(gp.gradient_at(point(0.5, 0.5), 1.5, g));
+        CHECK(g(0) == Approx(1.0).epsilon(1e-9));
+        CHECK(g(1) == Approx(2.0).epsilon(1e-9));
+        CHECK(host.calls.load() == 4u);
+        CHECK(counter.load() == 4u);
+    }
+    SECTION("one parameter formed by the pass") {
+        Counted host{[](const Vec& x) { return x(0) + 2.0 * x(1); }};
+        std::atomic<unsigned long> counter{0};
+        const auto agf = [](const Vec&, Vec& g2, std::vector<int>& nfd) {
+            g2.set_size(2);
+            g2(0) = 0.0;
+            g2(1) = 2.0;
+            nfd = {0};
+            return true;
+        };
+        auto gp = tadah::hpo::make_gradient_provider<Vec, void>(
+            sp, host, &counter, 0, agf);
+        REQUIRE(gp.gradient_at(point(0.5, 0.5), 1.5, g));
+        CHECK(host.calls.load() == 2u);
+        CHECK(counter.load() == 3u);
+    }
+    SECTION("a pass that cannot be formed") {
+        Counted host{[](const Vec& x) { return x(0) + 2.0 * x(1); }};
+        std::atomic<unsigned long> counter{0};
+        const auto agf = [](const Vec&, Vec&, std::vector<int>&) {
+            return false;
+        };
+        auto gp = tadah::hpo::make_gradient_provider<Vec, void>(
+            sp, host, &counter, 0, agf);
+        CHECK_FALSE(gp.gradient_at(point(0.5, 0.5), 1.5, g));
+        CHECK(host.calls.load() == 0u);
+        CHECK(counter.load() == 0u);
+    }
+}

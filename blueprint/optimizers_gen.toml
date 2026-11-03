@@ -258,7 +258,7 @@ step_consumed = false
 step_note = "MaxLIPO+TR sizes its own trust region from the samples"
 starts_at_x0 = true
 start_note = ""
-random_draws = "not_recorded"
+random_draws = "fixed_seed"
 ignores_bounds = false
 bounds_note = ""
 explain_text = """
@@ -1754,7 +1754,7 @@ untested_tolerance_note = ""
 step_use = "per_dim_vector"
 step_use_text = "one per dimension: the edges of the first simplex"
 step_consumed = true
-step_note = "the first simplex has an edge of STEP in each dimension, and the coordinates are not rescaled; the later steps of every dimension change by one progress ratio between 0.1 and 10. The stop on a small step is relative to |x| in each dimension; XTOL_ABS adds an absolute one"
+step_note = "the first simplex has an edge of STEP in each dimension, and the coordinates are not rescaled; the later steps of every dimension change by one progress ratio between 0.1 and 10. The stop on a small step is relative to |x| in each dimension; XTOL_ABS adds an absolute one. With STEP set, a start within one step of the upper bound and not of the lower one takes that dimension's first step inward, and the journal says so"
 starts_at_x0 = true
 start_note = ""
 random_draws = "not_recorded"
@@ -1766,7 +1766,7 @@ Options for NLOPT:LN_NELDERMEAD
    * PARAM: NLopt reads no PARAM key of this algorithm
    * gradient-free
    * STEP <double>  initial step; consumption: one per dimension: the edges of the first simplex
-     the first simplex has an edge of STEP in each dimension, and the coordinates are not rescaled; the later steps of every dimension change by one progress ratio between 0.1 and 10. The stop on a small step is relative to |x| in each dimension; XTOL_ABS adds an absolute one
+     the first simplex has an edge of STEP in each dimension, and the coordinates are not rescaled; the later steps of every dimension change by one progress ratio between 0.1 and 10. The stop on a small step is relative to |x| in each dimension; XTOL_ABS adds an absolute one. With STEP set, a start within one step of the upper bound and not of the lower one takes that dimension's first step inward, and the journal says so
    * SEED is rejected: it draws no random numbers
 """
 
@@ -1850,7 +1850,7 @@ untested_tolerance_note = ""
 step_use = "per_dim_vector"
 step_use_text = "one per dimension: the edges of the first simplex"
 step_consumed = true
-step_note = "the first simplex has an edge of STEP in each dimension, and the coordinates are not rescaled; the later steps of every dimension change by one progress ratio between 0.1 and 10. The stop on a small step is relative to |x| in each dimension; XTOL_ABS adds an absolute one"
+step_note = "the first simplex has an edge of STEP in each dimension, and the coordinates are not rescaled; the later steps of every dimension change by one progress ratio between 0.1 and 10. The stop on a small step is relative to |x| in each dimension; XTOL_ABS adds an absolute one. With STEP set, a start within one step of the upper bound and not of the lower one takes that dimension's first step inward, and the journal says so"
 starts_at_x0 = true
 start_note = ""
 random_draws = "not_recorded"
@@ -1862,7 +1862,7 @@ Options for NLOPT:LN_SBPLX
    * PARAM: NLopt reads no PARAM key of this algorithm
    * gradient-free
    * STEP <double>  initial step; consumption: one per dimension: the edges of the first simplex
-     the first simplex has an edge of STEP in each dimension, and the coordinates are not rescaled; the later steps of every dimension change by one progress ratio between 0.1 and 10. The stop on a small step is relative to |x| in each dimension; XTOL_ABS adds an absolute one
+     the first simplex has an edge of STEP in each dimension, and the coordinates are not rescaled; the later steps of every dimension change by one progress ratio between 0.1 and 10. The stop on a small step is relative to |x| in each dimension; XTOL_ABS adds an absolute one. With STEP set, a start within one step of the upper bound and not of the lower one takes that dimension's first step inward, and the journal says so
    * SEED is rejected: it draws no random numbers
 """
 

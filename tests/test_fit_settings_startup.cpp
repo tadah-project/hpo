@@ -735,3 +735,40 @@ TEST_CASE("The evidence approximation of tadah hpo is said once per run in "
         CHECK_THAT(threw_line, Contains(": 0"));
     }
 }
+
+/* An OALGO 3 fit (LAMBDA 0) of one training structure has two coefficients
+ * and one data row, so its solve drops one singular direction in every
+ * evaluation (MAXEVAL 3). Pins: the journal, hpo_run.log, gives the
+ * WARNING once, without a class name, "eval <n>: OALGO 3: 1 of 2 singular
+ * directions of the design matrix are at or below the rank threshold
+ * (...): the solve leaves them out of the coefficients. This WARNING is
+ * said once per run: ...", and the evaluations print none of it on
+ * standard output (VERBOSE 1).
+ * Before the fix: each evaluation's fit printed "WARNING: LinearRegressor
+ * (OALGO 3): 1 of 2 singular directions ..." on standard output (3 of 3;
+ * 75 lines in a run of 75 evaluations) and the journal had none: every
+ * check fails. */
+TEST_CASE("The OALGO 3 WARNING of dropped singular directions is said once "
+          "per run in the journal",
+          "[HPO][fit_settings_startup][oalgo3]") {
+    Context c = model_ctx();
+    set_key(c, "LAMBDA", "0");
+    set_key(c, "OALGO", "3");
+    set_key(c, "VERBOSE", "1");  // the Logger prints WARNINGs
+    ScratchDir sd;
+    write_h2_db("train.db", 1, [](std::size_t) { return 0.2; });
+    write_h2_db("val.db", 2, [](std::size_t i) { return 0.1 * i; });
+    std::string out;
+    const std::string err =
+        run_error(c, target("OPTIM RCUT2B (1) 4.5 5.5\n"), false, &out);
+    INFO("error: " << err << "\nstdout:\n" << out);
+    CHECK(err.empty());
+    const std::string journal = read_file("hpo_run.log");
+    INFO("journal:\n" << journal);
+    CHECK(count_of(journal, "OALGO 3: 1 of 2 singular directions of the "
+                            "design matrix are at or below the rank "
+                            "threshold") == 1);
+    CHECK(count_of(journal, "once per run") == 1);
+    CHECK(count_of(journal, "LinearRegressor") == 0);
+    CHECK(count_of(out, "singular directions") == 0);
+}

@@ -24,7 +24,7 @@ blocks = ["ROOT"]
 synopsis = "PC_EMAE <target> <weight> [--skip-above <cap>] [--skip-rel <ratio>]"
 repeat = "error"
 steps = ["value", "repeat", "options"]
-repeat_msg = "PC_EMAE: repeated declaration (first declared on line {first_line})"
+repeat_msg = "PC_EMAE is set twice (first on line {first_line}); each key is given once"
 doc = """\
 A loss term on the energy MAE of the validation datasets, in meV/atom: \
 the LOSS function of the metric averaged over the datasets, its target \
@@ -125,7 +125,7 @@ at = 2
 text = '''
 PC_EMAE 5 1
 PC_EMAE 4 1'''
-error = "PC_EMAE: repeated declaration (first declared on line 1)"
+error = "PC_EMAE is set twice (first on line 1); each key is given once"
 
 [[key]]
 id = "ROOT.PC_ERMSE"
@@ -147,9 +147,11 @@ that give each dataset one target and weight; when the run starts, \
 every dataset needs one, and no index may exceed the number of \
 datasets. The weight is a number >= 0. A structure with energy priority 0 \
 (eweight) is left out of the metric. A dataset whose structures all have \
-energy priority 0 is not measured: the average leaves it out, and \
-hpo_run.log names it; an indexed line that gives it a weight above 0 is \
-refused. A run in which no validation dataset has an energy is refused."""
+energy priority 0 is not measured, and hpo_run.log names it. Without \
+indices the average leaves it out; with indexed lines it adds no loss but \
+still counts among the datasets the losses are averaged over, and an \
+indexed line that gives it a weight above 0 is refused. A run in which no \
+validation dataset has an energy is refused."""
 untested = [
   { msg = "{key} requires validation DBFILE entries", why = "Needs a validation configuration without DBFILE; in tadah hpo --check the training configuration of a case is also its validation configuration, and its own checks come first." },
 ]
@@ -183,9 +185,10 @@ line: the validation configuration has no DBFILE."""
 [[key.checks]]
 msg = "{key}: dataset {index} on line {line} is outside validation DBFILE range 1-{count}"
 doc = """\
-When the run starts, without a line: the largest index of the indexed \
-lines, {index} on line {line}, exceeds the number of DBFILE entries of \
-the validation configuration, {count}."""
+When the run starts, without a line; the message itself names the \
+indexed line: the largest index of the indexed lines, {index} on line \
+{line} of the target file, exceeds the number of DBFILE entries of the \
+validation configuration, {count}."""
 
 [[key.checks]]
 msg = "{key}: missing target and weight for:{list}"
@@ -217,7 +220,7 @@ msg = "{key}: unknown flag '{tok}'"
 doc = "At the line: a token after the weight that is no option of the metric lines."
 
 [[key.checks]]
-msg = "{key}: repeated declaration (first declared on line {first_line})"
+msg = "{key} without indices is set twice (first on line {first_line}); a line without indices is given once"
 doc = "At the line: a second line without an index list."
 
 [[key.checks]]
@@ -253,7 +256,7 @@ PC_ERMSE (2-3) 4 0.5 --skip-above 40'''
 [[key.invalid]]
 wrap = "end"
 text = "PC_ERMSE 2 1"
-error = "PC_ERMSE: repeated declaration (first declared on line 2)"
+error = "PC_ERMSE without indices is set twice (first on line 2); a line without indices is given once"
 
 [[key.invalid]]
 wrap = "end"
@@ -377,7 +380,7 @@ blocks = ["ROOT"]
 synopsis = "PC_ErRMSE <target> <weight> [--skip-above <cap>] [--skip-rel <ratio>]"
 repeat = "error"
 steps = ["value", "repeat", "options"]
-repeat_msg = "PC_ErRMSE: repeated declaration (first declared on line {first_line})"
+repeat_msg = "PC_ErRMSE is set twice (first on line {first_line}); each key is given once"
 doc = """\
 A loss term on the relative energy RMSE of the validation datasets, in \
 per mille: the LOSS function of the metric averaged over the datasets, \
@@ -430,7 +433,7 @@ at = 2
 text = '''
 PC_ErRMSE 5 1
 PC_ErRMSE 4 1'''
-error = "PC_ErRMSE: repeated declaration (first declared on line 1)"
+error = "PC_ErRMSE is set twice (first on line 1); each key is given once"
 
 [[key.invalid]]
 wrap = "root"
@@ -470,7 +473,7 @@ blocks = ["ROOT"]
 synopsis = "PC_ERSQ <target> <weight>"
 repeat = "error"
 steps = ["value", "repeat", "options"]
-repeat_msg = "PC_ERSQ: repeated declaration (first declared on line {first_line})"
+repeat_msg = "PC_ERSQ is set twice (first on line {first_line}); each key is given once"
 doc = """\
 A loss term on the coefficient of determination (R squared) of the \
 energies of the validation datasets: the LOSS function of the metric \
@@ -550,7 +553,7 @@ at = 2
 text = '''
 PC_ERSQ 5 1
 PC_ERSQ 4 1'''
-error = "PC_ERSQ: repeated declaration (first declared on line 1)"
+error = "PC_ERSQ is set twice (first on line 1); each key is given once"
 
 [[key.invalid]]
 wrap = "root"
@@ -619,10 +622,12 @@ from 1. A target file has either one line without indices or indexed lines \
 that give each dataset one target and weight; when the run starts, \
 every dataset needs one, and no index may exceed the number of \
 datasets. The weight is a number >= 0, and a --skip-above cap is in GPa. \
-A dataset whose structures all have stress priority 0 is not measured: \
-the average leaves it out, and hpo_run.log names it; an indexed line that \
-gives it a weight above 0 is refused. A run in which no validation \
-dataset has a stress tensor is refused."""
+A dataset whose structures all have stress priority 0 is not measured, \
+and hpo_run.log names it. Without indices the average leaves it out; with \
+indexed lines it adds no loss but still counts among the datasets the \
+losses are averaged over, and an indexed line that gives it a weight above \
+0 is refused. A run in which no validation dataset has a stress tensor is \
+refused."""
 untested = [
   { msg = "{key} requires validation DBFILE entries", why = "Needs a validation configuration without DBFILE; in tadah hpo --check the training configuration of a case is also its validation configuration, and its own checks come first." },
 ]
@@ -656,9 +661,10 @@ line: the validation configuration has no DBFILE."""
 [[key.checks]]
 msg = "{key}: dataset {index} on line {line} is outside validation DBFILE range 1-{count}"
 doc = """\
-When the run starts, without a line: the largest index of the indexed \
-lines, {index} on line {line}, exceeds the number of DBFILE entries of \
-the validation configuration, {count}."""
+When the run starts, without a line; the message itself names the \
+indexed line: the largest index of the indexed lines, {index} on line \
+{line} of the target file, exceeds the number of DBFILE entries of the \
+validation configuration, {count}."""
 
 [[key.checks]]
 msg = "{key}: missing target and weight for:{list}"
@@ -690,7 +696,7 @@ msg = "{key}: unknown flag '{tok}'"
 doc = "At the line: a token after the weight that is no option of the metric lines."
 
 [[key.checks]]
-msg = "{key}: repeated declaration (first declared on line {first_line})"
+msg = "{key} without indices is set twice (first on line {first_line}); a line without indices is given once"
 doc = "At the line: a second line without an index list."
 
 [[key.checks]]
@@ -721,7 +727,7 @@ at = 2
 text = '''
 PC_SRMSE_GPA 0.5 4
 PC_SRMSE_GPA 1 4'''
-error = "PC_SRMSE_GPA: repeated declaration (first declared on line 1)"
+error = "PC_SRMSE_GPA without indices is set twice (first on line 1); a line without indices is given once"
 
 [[key.invalid]]
 wrap = "root"
@@ -826,9 +832,11 @@ from 1. A target file has either one line without indices or indexed lines \
 that give each dataset one target and weight; when the run starts, \
 every dataset needs one, and no index may exceed the number of \
 datasets. The weight is a number >= 0. A dataset whose structures all \
-have force priority 0 is not measured: the average leaves it out, and \
-hpo_run.log names it; an indexed line that gives it a weight above 0 is \
-refused. A run in which no validation dataset has forces is refused."""
+have force priority 0 is not measured, and hpo_run.log names it. Without \
+indices the average leaves it out; with indexed lines it adds no loss but \
+still counts among the datasets the losses are averaged over, and an \
+indexed line that gives it a weight above 0 is refused. A run in which no \
+validation dataset has forces is refused."""
 untested = [
   { msg = "{key} requires validation DBFILE entries", why = "Needs a validation configuration without DBFILE; in tadah hpo --check the training configuration of a case is also its validation configuration, and its own checks come first." },
 ]
@@ -862,9 +870,10 @@ line: the validation configuration has no DBFILE."""
 [[key.checks]]
 msg = "{key}: dataset {index} on line {line} is outside validation DBFILE range 1-{count}"
 doc = """\
-When the run starts, without a line: the largest index of the indexed \
-lines, {index} on line {line}, exceeds the number of DBFILE entries of \
-the validation configuration, {count}."""
+When the run starts, without a line; the message itself names the \
+indexed line: the largest index of the indexed lines, {index} on line \
+{line} of the target file, exceeds the number of DBFILE entries of the \
+validation configuration, {count}."""
 
 [[key.checks]]
 msg = "{key}: missing target and weight for:{list}"
@@ -895,7 +904,7 @@ msg = "{key}: unknown flag '{tok}'"
 doc = "At the line: a token after the weight that is no option of the metric lines."
 
 [[key.checks]]
-msg = "{key}: repeated declaration (first declared on line {first_line})"
+msg = "{key} without indices is set twice (first on line {first_line}); a line without indices is given once"
 doc = "At the line: a second line without an index list."
 
 [[key.checks]]
@@ -934,7 +943,7 @@ at = 2
 text = '''
 PC_FRMSE 0.1 1
 PC_FRMSE 0.2 1'''
-error = "PC_FRMSE: repeated declaration (first declared on line 1)"
+error = "PC_FRMSE without indices is set twice (first on line 1); a line without indices is given once"
 
 [[key.invalid]]
 wrap = "root"
@@ -2169,6 +2178,11 @@ doc = """\
 The scale of the probe value S in the graded failure loss of an \
 evaluation under FAILSCORE_GRADING ON; refused under OFF, where a failed \
 evaluation scores FAILSCORE."""
+long_doc = """\
+For a script whose worker process dies or is killed at its time limit, a \
+probe value above --gate, and a potential LAMMPS cannot build, the graded \
+loss grows with S/(S + s0) within the loss range of that failure: an S of \
+s0 places the failure halfway, a larger S nearer the top."""
 
 [[line_option.args]]
 name = "s0"
@@ -3067,7 +3081,7 @@ name = "LOSS"
 blocks = ["ROOT"]
 synopsis = "LOSS <function> [<param>]"
 repeat = "error_until_read"
-repeat_msg = "LOSS is set twice (first on line {first_line}) and no line between reads the first (a --varloss or PC_OBSERVABLE term that names no loss function); each key is given once"
+repeat_msg = "LOSS is set twice (first on line {first_line}) and no line between reads the first (a --varloss or PC_OBSERVABLE term that names no loss function); the key is given again only after such a line"
 repeat_doc = "Again only after a line that reads the value given above it, a --varloss or PC_OBSERVABLE term that names no loss function; a second line with no such term between is refused."
 default = { literal = "L2" }
 doc = """\
@@ -3146,7 +3160,7 @@ at = 2
 text = '''
 LOSS L1
 LOSS L2'''
-error = "LOSS is set twice (first on line 1) and no line between reads the first (a --varloss or PC_OBSERVABLE term that names no loss function); each key is given once"
+error = "LOSS is set twice (first on line 1) and no line between reads the first (a --varloss or PC_OBSERVABLE term that names no loss function); the key is given again only after such a line"
 
 [[key.invalid]]
 wrap = "none"
@@ -3369,7 +3383,7 @@ error = "OPTIM is a top-level key, and the STRATEGY block opened on line 4 is st
 doc = """\
 An OPTIM line selects values of a key of the training configuration with \
 an index list and searches each in a box. The indices count the numeric \
-values of the key from 1; for FIXWEIGHT they name model weights, those \
+values of the key from 1; for FIXWEIGHT they name coefficients, those \
 FIXINDEX lists."""
 long_doc = """\
 The index list is one or more entries separated by commas, each an index \
@@ -3719,6 +3733,10 @@ doc = "A LOG box whose lower bound is 0 or below."
 [[form.checks]]
 msg = "the starting point {index} of the INIT block of {phase}: {key} = {value} lies outside its OPTIM box [{low}, {high}]"
 doc = "At startup, without a line: a starting point of the INIT block, such as the value of the training configuration that METHOD CONFIG takes, lies outside the box. {phase} names the optimiser, such as the STRATEGY-level optimiser."
+
+[[form.checks]]
+msg = "the starting point {index} of {phase}, the value of the training configuration (no INIT block sets the start): {key} = {value} lies outside its OPTIM box [{low}, {high}]"
+doc = "At startup, without a line: without an INIT block the search starts from the value of the training configuration, and that value lies outside the box."
 [[form.examples]]
 wrap = "root"
 text = "OPTIM CGRID2B (2) 1.5 2.5"
@@ -3764,6 +3782,26 @@ check = "startup"
 at = "none"
 doc = "Without an INIT block the search starts from the values of the training configuration: CGRID2B 1.0 2.0."
 text = "OPTIM CGRID2B (2) 2.5 3.5"
+error = "the starting point 1 of the STRATEGY-level optimiser, the value of the training configuration (no INIT block sets the start): CGRID2B[2] = 2 lies outside its OPTIM box [2.5, 3.5]"
+
+[[form.invalid]]
+wrap = "none"
+check = "startup"
+at = "none"
+doc = "An INIT block of METHOD CONFIG starts from the same value of the training configuration, CGRID2B 1.0 2.0."
+text = '''
+OPTIM CGRID2B (2) 2.5 3.5
+PC_ERMSE 0 1
+OPTIMIZER
+STRATEGY
+LIB NLOPT
+ALGO LN_SBPLX
+MAXEVAL 10
+INIT
+METHOD CONFIG
+ENDINIT
+ENDSTRATEGY
+ENDOPTIMIZER'''
 error = "the starting point 1 of the INIT block of the STRATEGY-level optimiser: CGRID2B[2] = 2 lies outside its OPTIM box [2.5, 3.5]"
 
 [[form.invalid]]
@@ -5015,6 +5053,18 @@ text = "OPTIM ERROR (1) 0.5 2"
 error = "OPTIM ERROR is not a valid search target: ERROR is a retired key: ERROR, the key of --error, asked tadah predict and tadah properties pairwise for errors computed from SIGMA. Uncertainty output is removed: the errors of Tadah! 1.0.0 to 1.5.0 were not standard deviations, and no calibrated estimate replaces them. Replaced by: nothing. Deleting the line converts it: no command reads it, and the fit is unaffected."
 
 [[optim_target]]
+id = "OPTIM.TARGET.QUANTITY"
+key = "QUANTITY"
+status = "refused"
+msg = "OPTIM QUANTITY is not a valid search target: QUANTITY is a retired key: QUANTITY was read by no command; Tadah! 1.5.0 wrote it into a potential when a configuration set it. Replaced by: nothing. Deleting the line converts it: no command reads it, and the fit is unaffected."
+doc = "QUANTITY is a retired key, which no command read."
+
+[[optim_target.invalid]]
+wrap = "root"
+text = "OPTIM QUANTITY (1) 0.5 2"
+error = "OPTIM QUANTITY is not a valid search target: QUANTITY is a retired key: QUANTITY was read by no command; Tadah! 1.5.0 wrote it into a potential when a configuration set it. Replaced by: nothing. Deleting the line converts it: no command reads it, and the fit is unaffected."
+
+[[optim_target]]
 id = "OPTIM.TARGET.LAMBDA"
 key = "LAMBDA"
 status = "special"
@@ -5042,7 +5092,7 @@ msg = "OPTIM MPARAMS ({index}) is not a valid search target: {why}"
 doc = """\
 OPTIM MPARAMS searches a value that the model function of the training \
 configuration reads, a continuous one: MPARAMS (i) is the i-th MPARAMS \
-value. The refusal comes at startup and names no line."""
+value. The refusal comes at startup, at the OPTIM line."""
 msg_doc = """\
 The message says that the function reads no MPARAMS, that it reads fewer \
 values than the index, or that the value is an integer, such as the degree \
@@ -5057,7 +5107,7 @@ text = "OPTIM MPARAMS (1) 0.5 2"
 wrap = "root"
 check = "startup"
 context = "lines_mparams"
-at = "none"
+at = 1
 text = "OPTIM MPARAMS (1) 0.5 1.5"
 error = "OPTIM MPARAMS (1) is not a valid search target: BF_Linear reads no MPARAMS, so every evaluation would train the same model."
 
@@ -5065,7 +5115,7 @@ error = "OPTIM MPARAMS (1) is not a valid search target: BF_Linear reads no MPAR
 wrap = "root"
 check = "startup"
 context = "lines_rbf"
-at = "none"
+at = 1
 text = "OPTIM MPARAMS (2) 0.5 1.5"
 error = "OPTIM MPARAMS (2) is not a valid search target: Kern_RBF reads 1 MPARAMS value (sigma), so MPARAMS (2) changes nothing."
 
@@ -5073,7 +5123,7 @@ error = "OPTIM MPARAMS (2) is not a valid search target: Kern_RBF reads 1 MPARAM
 wrap = "root"
 check = "startup"
 context = "lines_poly"
-at = "none"
+at = 1
 text = "OPTIM MPARAMS (1) 1 3"
 error = "OPTIM MPARAMS (1) is not a valid search target: MPARAMS (1) of Kern_Polynomial is its d, an integer, a discrete value rather than a continuous parameter; the training configuration sets it."
 
@@ -5093,7 +5143,7 @@ msg_doc = "The message names the MPARAMS index, the box, the model function and 
 wrap = "root"
 check = "startup"
 context = "lines_rbf"
-at = "none"
+at = 1
 text = "OPTIM MPARAMS (1) 0 2"
 error = "OPTIM MPARAMS (1): the box [0, 2] of Kern_RBF's sigma must be positive (sigma > 0)."
 
@@ -5106,14 +5156,14 @@ msg = "OPTIM {key} ({index}) is not a valid search target: {why} and refuses ano
 doc = """\
 A D2_EAM or DM_EAM descriptor, alone or in a D2_mJoin or DM_mJoin, takes \
 its cutoff RCUT2B or RCUTMB from its setfl file (SETFL), and OPTIM does \
-not search that cutoff. The refusal comes at startup and names no line."""
+not search that cutoff. The refusal comes at startup, at the OPTIM line."""
 msg_doc = "The message names the descriptor, the cutoff and the file."
 
 [[rule.invalid]]
 wrap = "none"
 check = "startup"
 context = "lines_setfl"
-at = "none"
+at = 1
 text = '''
 OPTIM RCUT2B (1) 4.5 5.5
 PC_ERMSE 0 1
@@ -5129,20 +5179,20 @@ id = "RULE.OPTIM_unread_watom"
 title = "OPTIM WATOM is refused when no descriptor reads WATOM"
 check = "startup"
 keys = ["ROOT.OPTIM"]
-msg = "OPTIM WATOM (line {line} of the target file) is not a valid search target: no descriptor of the training configuration reads WATOM (D2_EAM, DM_EAM, D2_Dummy and DM_Dummy read none), and a fit refuses a WATOM other than 1 that no descriptor reads, so every candidate other than 1 would fail its evaluation."
+msg = "OPTIM WATOM is not a valid search target: no descriptor of the training configuration reads WATOM (D2_EAM, DM_EAM, D2_Dummy and DM_Dummy read none), and a fit refuses a WATOM other than 1 that no descriptor reads, so every candidate other than 1 would fail its evaluation."
 doc = """\
 OPTIM does not search WATOM when no descriptor of the training \
 configuration reads it (D2_EAM and DM_EAM take their pair and density \
 functions from the setfl file, SETFL, unweighted, and the dummies \
 D2_Dummy and DM_Dummy read none), as a fit refuses a WATOM other than 1 \
-that no descriptor reads. The refusal comes at startup."""
-msg_doc = "The message names the OPTIM WATOM line of the target file and the descriptors that read no WATOM."
+that no descriptor reads. The refusal comes at startup, at the OPTIM line."""
+msg_doc = "The message, at the OPTIM WATOM line, names the descriptors that read no WATOM."
 
 [[rule.invalid]]
 wrap = "none"
 check = "startup"
 context = "lines_setfl"
-at = "none"
+at = 1
 text = '''
 OPTIM WATOM (1) 0.5 2.0
 PC_ERMSE 0 1
@@ -5151,14 +5201,14 @@ LIB NLOPT
 ALGO LN_SBPLX
 MAXEVAL 10
 ENDOPTIMIZER'''
-error = "OPTIM WATOM (line 1 of the target file) is not a valid search target: no descriptor of the training configuration reads WATOM (D2_EAM, DM_EAM, D2_Dummy and DM_Dummy read none), and a fit refuses a WATOM other than 1 that no descriptor reads, so every candidate other than 1 would fail its evaluation."
+error = "OPTIM WATOM is not a valid search target: no descriptor of the training configuration reads WATOM (D2_EAM, DM_EAM, D2_Dummy and DM_Dummy read none), and a fit refuses a WATOM other than 1 that no descriptor reads, so every candidate other than 1 would fail its evaluation."
 
 [[rule]]
 id = "RULE.settings_taken_by_lines"
 title = "FAILSCORE, LOSS and PC_SCRIPT_TIMEOUT repeat after a line that reads them"
 check = "parse"
 keys = ["ROOT.FAILSCORE", "ROOT.LOSS", "ROOT.PC_SCRIPT_TIMEOUT", "ROOT.MAXTIME", "ROOT.PC_LAMMPS", "ROOT.PC_FAILPROBE", "ROOT.PC_OBSERVABLE"]
-msg = "{key} is set twice (first on line {first_line}{note}) and no line between reads the first ({list}); each key is given once"
+msg = "{key} is set twice (first on line {first_line}{note}) and no line between reads the first ({list}); the key is given again only after such a line"
 doc = """\
 A second FAILSCORE, LOSS or PC_SCRIPT_TIMEOUT line needs a line between \
 that reads the first, one that uses its value: a PC_LAMMPS or \
@@ -5200,7 +5250,7 @@ at = 2
 text = '''
 FAILSCORE 1e9
 FAILSCORE 1e10'''
-error = "FAILSCORE is set twice (first on line 1) and no line between reads the first (a PC_LAMMPS or PC_FAILPROBE line without --failscore); each key is given once"
+error = "FAILSCORE is set twice (first on line 1) and no line between reads the first (a PC_LAMMPS or PC_FAILPROBE line without --failscore); the key is given again only after such a line"
 
 [[rule.invalid]]
 wrap = "none"
@@ -5217,7 +5267,7 @@ LIB NLOPT
 ALGO LN_SBPLX
 MAXEVAL 10
 ENDOPTIMIZER'''
-error = "LOSS is set twice (first on line 2) and no line between reads the first (a --varloss or PC_OBSERVABLE term that names no loss function); each key is given once"
+error = "LOSS is set twice (first on line 2) and no line between reads the first (a --varloss or PC_OBSERVABLE term that names no loss function); the key is given again only after such a line"
 
 [[rule.invalid]]
 wrap = "root"
@@ -5226,7 +5276,7 @@ doc = "The two names of the script limit, with no PC_LAMMPS line between."
 text = '''
 PC_SCRIPT_TIMEOUT 10:00
 MAXTIME 5:00'''
-error = "MAXTIME is set twice (first on line 1, as PC_SCRIPT_TIMEOUT) and no line between reads the first (a PC_LAMMPS or PC_FAILPROBE line without --maxtime); each key is given once"
+error = "MAXTIME is set twice (first on line 1, as PC_SCRIPT_TIMEOUT) and no line between reads the first (a PC_LAMMPS or PC_FAILPROBE line without --maxtime); the key is given again only after such a line"
 
 [[rule]]
 id = "RULE.PC_OBSERVABLE_excludes_PC_LAMMPS"
@@ -6821,7 +6871,7 @@ LAMBDA 0
 """
 
 [context.lines_pinned_all]
-doc = "The default training configuration with both model weights fixed (FIXINDEX 1-2, FIXWEIGHT 0.1 0.2)."
+doc = "The default training configuration with both coefficients fixed (FIXINDEX 1-2, FIXWEIGHT 0.1 0.2)."
 config = """
 ATOM H
 WATOM 1.0

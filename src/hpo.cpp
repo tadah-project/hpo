@@ -653,10 +653,8 @@ int hpo_run_from_startup(core::Context& ctx, HPOLog& log,
                  "FAILSCORE up to FAILSCORE, in four bands from the lowest: "
                  "A, a --hotvar value outside its range; B, a script or "
                  "PC_OBSERVABLE term that failed; C, a simulation that did "
-                 "not finish; D, a potential rejected as unusable (by "
-                 "PC_FAILPROBE --gate, a --skip-above or --skip-rel cap, "
-                 "BUMPGATE, RHOGATE or RHOBARGATE, a refused fit, or a "
-                 "potential LAMMPS cannot build); " + probe_note);
+                 "not finish; D, a potential rejected as unusable (by " +
+                 unusable_potential_causes(trg) + "); " + probe_note);
     } else if (trg.failprobe_idx >= 0 && !std::isfinite(trg.failprobe_gate)) {
         /* Under OFF the probe is still one of the evaluation's
          * simulations: its failure -- the script's, or an S that cannot be
@@ -761,13 +759,22 @@ int hpo_run_from_startup(core::Context& ctx, HPOLog& log,
             const int v = std::atoi(e); if (v > 0) omp_w = v;
         }
 #endif
+        /* OMP_NUM_THREADS as the environment gives it: unset (or empty),
+         * the width OpenMP takes is its own choice, not the variable's. */
+        const char* omp_env = std::getenv("OMP_NUM_THREADS");
+        const std::string omp_text =
+            omp_env && *omp_env
+                ? "OMP_NUM_THREADS=" + std::string(omp_env)
+                : "OMP_NUM_THREADS (unset: OpenMP takes " +
+                      count_text(static_cast<unsigned long long>(omp_w),
+                                 "thread", "threads") + ")";
         if (!check)
             log.info("THREADS: " +
                      count_text(static_cast<unsigned long long>(exec_width),
                                 "worker runs", "workers run") +
                      " the work of the evaluations (the LAMMPS scripts and the "
-                     "training and prediction of the potential); "
-                     "OMP_NUM_THREADS=" + std::to_string(omp_w) + " sets the "
+                     "training and prediction of the potential); " +
+                     omp_text + " sets the "
                      "threads of the OpenMP parts only (neighbour lists, data "
                      "statistics)");
         /* The workers are THREADS alone: OMP_NUM_THREADS above 1 does not
@@ -776,9 +783,10 @@ int hpo_run_from_startup(core::Context& ctx, HPOLog& log,
             log.warning(
                 "THREADS is not set: one worker runs the work of the "
                 "evaluations (the LAMMPS scripts and the training and "
-                "prediction of the potential); OMP_NUM_THREADS=" +
-                std::to_string(omp_w) + " does not change that, and THREADS "
-                "<n> in the STRATEGY block gives n workers");
+                "prediction of the potential); " + omp_text +
+                " does not change that, and THREADS <n> for the "
+                "STRATEGY-level optimiser (in its OPTIMIZER or STRATEGY "
+                "block) gives n workers");
 
         const std::string& pc_mode = pc.mode;
         const bool pc_mode_explicit = pc.explicit_mode;

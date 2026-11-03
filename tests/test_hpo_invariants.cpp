@@ -54,9 +54,15 @@ tadah::hpo::OptimizerSpec asa_spec()
 
 /* Pins: ValidationMetricTargets::add refuses a target or a weight that is
  * not finite, a weight below 0 and a skip cap at or below 0, whoever calls
- * it (the target-file parser refuses each at its line first).
+ * it (the target-file parser refuses each at its line first). A skip cap
+ * the parser refuses ("PC_ERMSE --skip-above must be a positive number,
+ * got '0'") reaches add() only through a caller's defect: std::logic_error
+ * "internal error: PC_ERMSE has the skip cap 0, which the parser refuses:
+ * a skip cap is a finite number above 0", naming the key and the cap.
  * Before the fix: passes as well (a pin of the invariant the parser's
- * checks duplicate). */
+ * checks duplicate). The cap was a std::runtime_error, "PC_ERMSE skip
+ * thresholds must be finite and positive", a message that named no value
+ * and read as a refusal of a file: the cap check fails on it. */
 TEST_CASE("invariants: ValidationMetricTargets::add refuses a target, weight "
           "or cap it cannot use", "[HPO][invariants][validation_metric]")
 {
@@ -81,8 +87,10 @@ TEST_CASE("invariants: ValidationMetricTargets::add refuses a target, weight "
     a.target = 0.1;
     a.weight = 1.0;
     a.caps.abs_above = 0.0;
+    CHECK_THROWS_AS(t.add({}, a), std::logic_error);
     CHECK_THROWS_WITH(t.add({}, a),
-                      "PC_ERMSE skip thresholds must be finite and positive");
+                      "internal error: PC_ERMSE has the skip cap 0, which the "
+                      "parser refuses: a skip cap is a finite number above 0");
     a.caps.abs_above.reset();
     CHECK_NOTHROW(t.add({}, a));
     CHECK(t.enabled());

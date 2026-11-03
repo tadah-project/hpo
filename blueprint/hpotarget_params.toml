@@ -1027,8 +1027,8 @@ examples = [
 ]
 invalid = [
   { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Delta_X -1", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Delta_X must be >= 0 (got -1)" },
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Delta_X 1.5", error = "the STRATEGY-level optimiser ASA:ASA: ASA's finite-difference probes -- the reannealing and exit tangents at (1 + Delta) x, or (1 - Delta) x when that lies outside the box -- would be evaluated outside the OPTIM box of these dimensions:\n  - CGRID2B[1]: OPTIM box [0.5, 1.5] (internal [0, 1]), PARAM Delta_X 1.5: a probe of CGRID2B[1] = 1.2 lies outside the box; Delta_X up to 1 fits it\n  A Delta up to the value given for each dimension keeps its probes inside the box.", doc = "Above 1 under OPTIM_SCALE AUTO." },
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Curvature_0 0\nPARAM Delta_X 0.6", error = "the STRATEGY-level optimiser ASA:ASA: ASA's finite-difference probes -- the reannealing and exit tangents at (1 + Delta) x, or (1 - Delta) x when that lies outside the box, and the exit curvature at x +- Delta |x|, or x -+ Delta |x| and x -+ 2 Delta |x| next to a bound (Curvature_0 0) -- would be evaluated outside the OPTIM box of these dimensions:\n  - CGRID2B[1]: OPTIM box [0.5, 1.5] (internal [0, 1]), PARAM Delta_X 0.6: a probe of CGRID2B[1] = 1.3125 lies outside the box; Delta_X up to 0.5 fits it\n  A Delta up to the value given for each dimension keeps its probes inside the box.", doc = "Above 0.5 under OPTIM_SCALE AUTO with Curvature_0 0." },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Delta_X 1.5", error = "the STRATEGY-level optimiser ASA:ASA: ASA's finite-difference probes -- the reannealing and exit tangents at (1 + Delta) x, or (1 - Delta) x when that lies outside the box -- would be evaluated outside the OPTIM box of these dimensions:\n  - CGRID2B[1]: OPTIM box [0.5, 1.5] (internal [0, 1]), PARAM Delta_X 1.5: the probes from CGRID2B[1] = 1.2 lie outside the box; Delta_X up to 1 fits them\n  A Delta up to the value given for each dimension keeps its probes inside the box.", doc = "Above 1 under OPTIM_SCALE AUTO." },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Curvature_0 0\nPARAM Delta_X 0.6", error = "the STRATEGY-level optimiser ASA:ASA: ASA's finite-difference probes -- the reannealing and exit tangents at (1 + Delta) x, or (1 - Delta) x when that lies outside the box, and the exit curvature at x +- Delta |x|, or x -+ Delta |x| and x -+ 2 Delta |x| next to a bound (Curvature_0 0) -- would be evaluated outside the OPTIM box of these dimensions:\n  - CGRID2B[1]: OPTIM box [0.5, 1.5] (internal [0, 1]), PARAM Delta_X 0.6: the probes from CGRID2B[1] = 1.3125 lie outside the box; Delta_X up to 0.5 fits them\n  A Delta up to the value given for each dimension keeps its probes inside the box.", doc = "Above 0.5 under OPTIM_SCALE AUTO with Curvature_0 0." },
 ]
 
 [[param]]
@@ -1044,8 +1044,7 @@ reannealing takes them by finite differences (Delta_X)."""
 checks = [
   { msg = "{phase}: ASA:ASA: PARAM {key} must be an integer (got {value})", doc = "For a value with a fraction." },
   { msg = "{phase}: ASA:ASA: PARAM {key} must be >= {min} (got {value})", doc = "For a value below 0." },
-  { msg = "{phase}: ASA:ASA: PARAM {key} must be <= {max} (got {value})", doc = "For a value above 1." },
-  { msg = "{phase}: ASA:ASA: PARAM User_Tangents takes 0 only: tadah hpo gives ASA no analytic tangents, and the reannealing takes them by finite differences (PARAM Delta_X)", doc = "For 1." },
+  { msg = "{phase}: ASA:ASA: PARAM User_Tangents takes 0 only: tadah hpo gives ASA no analytic tangents, and the reannealing takes them by finite differences (PARAM Delta_X)", doc = "For a whole number above 0." },
 ]
 examples = [
   { wrap = "params_asa", text = "PARAM User_Tangents 0" },
@@ -1053,7 +1052,7 @@ examples = [
 invalid = [
   { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM User_Tangents 1.5", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM User_Tangents must be an integer (got 1.5)" },
   { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM User_Tangents -1", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM User_Tangents must be >= 0 (got -1)" },
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM User_Tangents 2", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM User_Tangents must be <= 1 (got 2)" },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM User_Tangents 2", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM User_Tangents takes 0 only: tadah hpo gives ASA no analytic tangents, and the reannealing takes them by finite differences (PARAM Delta_X)" },
   { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM User_Tangents 1", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM User_Tangents takes 0 only: tadah hpo gives ASA no analytic tangents, and the reannealing takes them by finite differences (PARAM Delta_X)" },
 ]
 
@@ -1186,7 +1185,7 @@ invalid = [
   { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM User_Delta_Parameter -1", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM User_Delta_Parameter must be >= 0 (got -1)" },
   { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM User_Delta_Parameter 0", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM User_Delta_Parameter must be > 0 (got 0)" },
   { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM User_Delta_Parameter[1] 0", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM User_Delta_Parameter[1] must be > 0 (got 0)" },
-  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM User_Delta_Parameter[1] 1.5", error = "the STRATEGY-level optimiser ASA:ASA: ASA's finite-difference probes -- the reannealing and exit tangents at (1 + Delta) x, or (1 - Delta) x when that lies outside the box -- would be evaluated outside the OPTIM box of these dimensions:\n  - CGRID2B[1]: OPTIM box [0.5, 1.5] (internal [0, 1]), PARAM User_Delta_Parameter[1] 1.5: a probe of CGRID2B[1] = 1.2 lies outside the box; User_Delta_Parameter[1] up to 1 fits it\n  A Delta up to the value given for each dimension keeps its probes inside the box.", doc = "Above 1 under OPTIM_SCALE AUTO." },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM User_Delta_Parameter[1] 1.5", error = "the STRATEGY-level optimiser ASA:ASA: ASA's finite-difference probes -- the reannealing and exit tangents at (1 + Delta) x, or (1 - Delta) x when that lies outside the box -- would be evaluated outside the OPTIM box of these dimensions:\n  - CGRID2B[1]: OPTIM box [0.5, 1.5] (internal [0, 1]), PARAM User_Delta_Parameter[1] 1.5: the probes from CGRID2B[1] = 1.2 lie outside the box; User_Delta_Parameter[1] up to 1 fits them\n  A Delta up to the value given for each dimension keeps its probes inside the box.", doc = "Above 1 under OPTIM_SCALE AUTO." },
 ]
 
 [[param]]

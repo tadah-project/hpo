@@ -582,10 +582,15 @@ std::string stop_reason_string(const AsaRunCtx& c, int exit_status)
         case 4: return "too many invalid states (host failures exceeded "
                        "Limit_Invalid_Generated_States)";
         case 5: return "IMMEDIATE_EXIT requested";
+        /* cost_derivatives (asa.c) evaluates the best point again before
+         * its probes, whatever Delta_X; the exit curvatures of Curvature_0
+         * FALSE keep their status apart (exit_exit_status), so only the
+         * reannealing ends ASA with this code. */
         case 9: return "an evaluation failed while ASA was computing "
-                       "reanneal tangents (INVALID_COST_FUNCTION_DERIV, "
-                       "which PARAM Reanneal_Parameters 0 or Delta_X 0 "
-                       "avoids when evaluations fail now and then)";
+                       "reanneal tangents (INVALID_COST_FUNCTION_DERIV: the "
+                       "reannealing re-evaluates the best point and probes "
+                       "around it; PARAM Reanneal_Parameters 0 avoids it "
+                       "when evaluations fail now and then)";
         default: return std::string("asa exit ") + asa_exit_name(exit_status);
     }
 }
@@ -645,13 +650,15 @@ std::string asa_probe_box_error(const OptimizerSpec& sp)
             if (real != box) box = real + " (internal " + box + ")";
             where = sp.space->to_real(i, fit.where);
         }
+        /* `where` is the point the probes are taken from (fit.where), not
+         * a probe. */
         bad += "\n  - " + label + ": OPTIM box " + box + ", " + setting +
-               ": a probe of " + label + " = " + num(where) +
-               " lies outside the box; ";
+               ": the probes from " + label + " = " + num(where) +
+               " lie outside the box; ";
         if (const auto best = asa_largest_fitting_delta(lo, hi, curvature))
-            bad += key + " up to " + fd_floor_text(*best) + " fits it";
+            bad += key + " up to " + fd_floor_text(*best) + " fits them";
         else
-            bad += "no Delta fits it";
+            bad += "no Delta fits them";
     }
     if (bad.empty()) return "";
     std::string msg =
@@ -758,11 +765,11 @@ void run_asa_erased(const OptimizerSpec& sp, std::size_t dim,
             " (overwritten at the start of each search)");
         if (threads > 1 && ao.gener_block_max <= 1)
             HPOLog::instance().hint(
-                "ASA: THREADS>1 with Gener_Block(_Max)=1 evaluates one "
-                "generated state at a time; PARAM Gener_Block (and "
-                "Gener_Block_Max) above 1 keeps the workers busy, and "
-                "otherwise only the PC_LAMMPS scripts of each evaluation "
-                "use them");
+                "ASA: THREADS above 1 with Gener_Block_Max 1 evaluates one "
+                "generated state at a time: the workers share its training, "
+                "prediction and PC_LAMMPS scripts; PARAM Gener_Block (and "
+                "Gener_Block_Max) above 1 evaluates several states "
+                "together.");
         if (ao.gener_block > 1 || ao.gener_block_max > ao.gener_block)
             HPOLog::instance().info(
                 "ASA: Gener_Block>1 (or an adaptive Gener_Block_Max "

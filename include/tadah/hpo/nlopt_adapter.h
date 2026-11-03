@@ -594,8 +594,8 @@ void run_nlopt_impl(const OptimizerSpec& sp, HostT& host,
     const unsigned long reevaluations = detail::auglag_reevaluations(sp);
     RepeatPoints<Vec> repeats(
         sp.lib + ":" + sp.algo, sp, repeat_policy<Vec>(host),
-        "a reuse is not an evaluation: the MAXEVAL of the block does not "
-        "count it, but NLopt counts it among the calls its own MAXEVAL "
+        "a reuse is not an evaluation: the run's count of evaluations does "
+        "not include it, but NLopt counts it among the calls its MAXEVAL "
         "bounds",
         latest_evaluation(host));
     UData udata{&sp, &host, &gp, &opt, nullptr,

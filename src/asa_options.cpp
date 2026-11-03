@@ -63,7 +63,8 @@ const Desc kDescs[] = {
   {"Reanneal_Cost", Kind::Count, false, kNaN, kNaN, "1"},
   {"Reanneal_Parameters", Kind::Bool, false, 0, 1, "1"},
   {"Delta_X", Kind::Real, false, 0, kNaN, "0.001"},
-  {"User_Tangents", Kind::Bool, false, 0, 1, "0"},
+  /* every value but 0 is refused with the reason (parse_asa_options) */
+  {"User_Tangents", Kind::Count, false, 0, kNaN, "0"},
   {"Curvature_0", Kind::Count, false, -1, 1, "1"},
   /* gated groups */
   {"User_Quench_Cost_Scale", Kind::Real, false, 0, kNaN, "1.0"},

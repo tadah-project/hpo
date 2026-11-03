@@ -913,6 +913,9 @@ inline constexpr Arg ROOT_FAILSCORE_args[] = {
         Span<RefusedWord>{nullptr, 0}, "{key}", "", "finite number", false, "",
         false},
 };
+inline constexpr std::string_view ROOT_FAILSCORE_checks[] = {
+    "FAILSCORE {value}: the four grading bands of FAILSCORE_GRADING ON, each 0.00025 x FAILSCORE wide, are not representable at this magnitude; a FAILSCORE of 1e-290 or more has them",
+};
 inline constexpr Arg ROOT_PC_SCRIPT_TIMEOUT_args[] = {
     Arg{"time", ArgKind::Timespec, false, false, Limit{}, Limit{}, false,
         false, Span<std::string_view>{nullptr, 0},
@@ -981,6 +984,8 @@ inline constexpr Arg ROOT_BUMPGATE_args[] = {
 };
 inline constexpr std::string_view ROOT_BUMPGATE_checks[] = {
     "BUMPGATE: a compact bump reaches past its cutoff: under a Cut_Dummy cutoff each bump vanishes at or before RCUT (c + w/eta <= RCUT), as a bump cut off there gives the energy and the forces a step at the cutoff. The bumps past the cutoff:{list}\n  A larger RCUT2B or RCUTMB in the training configuration gives a longer range; the potential stays smooth, as each bump vanishes at the edge of its own support.",
+    "BUMPGATE: {key} ({index}) has a corner of its OPTIM box whose support ends past RADIUS, which BUMPGATE STRICT refuses",
+    "BUMPGATE: {key} ({index}) has no point in its OPTIM box whose support ends at or before RADIUS",
 };
 inline constexpr Arg ROOT_RHOGATE_args[] = {
     Arg{"tol", ArgKind::Number, false, false,
@@ -1250,6 +1255,8 @@ inline constexpr std::string_view OPTIMIZER_SEED_checks[] = {
     "{phase}: {lib}:{algo} does not use SEED: in one OPTIM dimension it draws no random numbers (it draws them only to choose between equally long sides of a box)",
     "{phase}: {lib}:{algo} does not support SEED",
     "{phase}: {lib}:{algo} does not use SEED: it draws no random numbers, and the exploration ({name}) {why}",
+    "{phase}: {lib}:{algo} does not use SEED: dlib draws its random points from a fixed internal seed, which tadah hpo does not set, so a search with THREADS 1 repeats its points",
+    "{phase}: {lib}:{algo} does not use SEED: dlib draws its random points from a fixed internal seed, which tadah hpo does not set, so a search with THREADS 1 repeats its points, and the exploration ({name}) {why}",
 };
 inline constexpr Arg OPTIMIZER_VECTOR_ARR_args[] = {
     Arg{"n", ArgKind::Integer, false, false, Limit{true, "0", 0.0, true, 0ull},
@@ -1408,7 +1415,7 @@ inline constexpr Arg NOISE_CALIBRATION_args[] = {
         Span<RefusedWord>{nullptr, 0}, "{key}", "", "", false, "", false},
 };
 inline constexpr std::string_view NOISE_CALIBRATION_checks[] = {
-    "NOISE.CALIBRATION must be 0 (off) or >= 2",
+    "CALIBRATION in the NOISE block must be 0 (off) or >= 2, got '{tok}'",
 };
 inline constexpr Arg RESTART_AFTER_STAGNATION_args[] = {
     Arg{"n", ArgKind::Integer, false, false, Limit{true, "1", 1.0, true, 1ull},
@@ -1476,7 +1483,7 @@ inline constexpr std::string_view ROOT_PC_ERMSE_checks[] = {
     "tadah hpo: PC_ERMSE ({index}) gives weight {value} to validation dataset {index} ({file}), which has no structure with an energy: every one has energy priority 0 (eweight). A weight of 0 for this dataset is accepted, and so is a validation configuration without this file.",
     "{key} requires <target> <weight>",
     "{key}: unknown flag '{tok}'",
-    "{key}: repeated declaration (first declared on line {first_line})",
+    "{key} without indices is set twice (first on line {first_line}); a line without indices is given once",
     "{key}: a line without an index (every validation dataset) and indexed lines (one dataset each) are not combined",
     "{key}: duplicate assignment for dataset {index} (first declared on line {first_line})",
     "{key}: the validation datasets are numbered from 1, got the index 0",
@@ -1551,7 +1558,7 @@ inline constexpr std::string_view ROOT_PC_SRMSE_GPA_checks[] = {
     "tadah hpo: PC_SRMSE_GPA ({index}) gives weight {value} to validation dataset {index} ({file}), which has no structure with a stress tensor: every one has stress priority 0 (sweight). A weight of 0 for this dataset is accepted, and so is a validation configuration without this file.",
     "{key} requires <target> <weight>",
     "{key}: unknown flag '{tok}'",
-    "{key}: repeated declaration (first declared on line {first_line})",
+    "{key} without indices is set twice (first on line {first_line}); a line without indices is given once",
     "{key}: a line without an index (every validation dataset) and indexed lines (one dataset each) are not combined",
     "{key}: duplicate assignment for dataset {index} (first declared on line {first_line})",
     "{key}: the validation datasets are numbered from 1, got the index 0",
@@ -1578,7 +1585,7 @@ inline constexpr std::string_view ROOT_PC_FRMSE_checks[] = {
     "tadah hpo: PC_FRMSE ({index}) gives weight {value} to validation dataset {index} ({file}), which has no structure with forces: every one has force priority 0 (fweight). A weight of 0 for this dataset is accepted, and so is a validation configuration without this file.",
     "{key} requires <target> <weight>",
     "{key}: unknown flag '{tok}'",
-    "{key}: repeated declaration (first declared on line {first_line})",
+    "{key} without indices is set twice (first on line {first_line}); a line without indices is given once",
     "{key}: a line without an index (every validation dataset) and indexed lines (one dataset each) are not combined",
     "{key}: duplicate assignment for dataset {index} (first declared on line {first_line})",
     "{key}: the validation datasets are numbered from 1, got the index 0",
@@ -2267,6 +2274,7 @@ inline constexpr std::string_view OPTIM_range_checks[] = {
     "OPTIM {key}: under ASINH {value} the box [{low}, {high}] maps to [{min}, {max}], which has no finite width; a c of the size of the values of the box gives one",
     "OPTIM {key}: the line is tagged LOG, and <low> {low} is not > 0, and a box tagged LOG lies above 0{hint}",
     "the starting point {index} of the INIT block of {phase}: {key} = {value} lies outside its OPTIM box [{low}, {high}]",
+    "the starting point {index} of {phase}, the value of the training configuration (no INIT block sets the start): {key} = {value} lies outside its OPTIM box [{low}, {high}]",
 };
 inline constexpr Arg OPTIM_AUTO_args[] = {
     Arg{"indices", ArgKind::Indices, false, false, Limit{}, Limit{}, false,
@@ -2588,21 +2596,22 @@ inline constexpr Key kKeys[] = {
   Key{KeyId::ROOT_FAILSCORE, "ROOT.FAILSCORE", "FAILSCORE", "",
       block_bit(BlockId::ROOT), Span<Arg>{detail::ROOT_FAILSCORE_args, 1},
       Repeat::ErrorUntilRead,
-      "FAILSCORE is set twice (first on line {first_line}) and no line between reads the first (a PC_LAMMPS or PC_FAILPROBE line without --failscore); each key is given once",
+      "FAILSCORE is set twice (first on line {first_line}) and no line between reads the first (a PC_LAMMPS or PC_FAILPROBE line without --failscore); the key is given again only after such a line",
       "", false, "", false, KeyId::ROOT_FAILSCORE, false, "",
-      Span<std::string_view>{nullptr, 0}, Span<LineStep>{nullptr, 0}, ""},
+      Span<std::string_view>{detail::ROOT_FAILSCORE_checks, 1},
+      Span<LineStep>{nullptr, 0}, ""},
   Key{KeyId::ROOT_PC_SCRIPT_TIMEOUT, "ROOT.PC_SCRIPT_TIMEOUT",
       "PC_SCRIPT_TIMEOUT", "", block_bit(BlockId::ROOT),
       Span<Arg>{detail::ROOT_PC_SCRIPT_TIMEOUT_args, 1},
       Repeat::ErrorUntilRead,
-      "PC_SCRIPT_TIMEOUT is set twice (first on line {first_line}) and no line between reads the first (a PC_LAMMPS or PC_FAILPROBE line without --maxtime); each key is given once",
+      "PC_SCRIPT_TIMEOUT is set twice (first on line {first_line}) and no line between reads the first (a PC_LAMMPS or PC_FAILPROBE line without --maxtime); the key is given again only after such a line",
       "", true, "off", false, KeyId::ROOT_PC_SCRIPT_TIMEOUT, false, "",
       Span<std::string_view>{detail::ROOT_PC_SCRIPT_TIMEOUT_checks, 1},
       Span<LineStep>{nullptr, 0}, ""},
   Key{KeyId::ROOT_MAXTIME, "ROOT.MAXTIME", "MAXTIME", "",
       block_bit(BlockId::ROOT), Span<Arg>{detail::ROOT_MAXTIME_args, 1},
       Repeat::ErrorUntilRead,
-      "MAXTIME is set twice (first on line {first_line}) and no line between reads the first (a PC_LAMMPS or PC_FAILPROBE line without --maxtime); each key is given once",
+      "MAXTIME is set twice (first on line {first_line}) and no line between reads the first (a PC_LAMMPS or PC_FAILPROBE line without --maxtime); the key is given again only after such a line",
       "", true, "off", true, KeyId::ROOT_PC_SCRIPT_TIMEOUT, false, "",
       Span<std::string_view>{detail::ROOT_MAXTIME_checks, 1},
       Span<LineStep>{nullptr, 0}, ""},
@@ -2636,7 +2645,7 @@ inline constexpr Key kKeys[] = {
       "BUMPGATE is set twice (first on line {first_line}); each key is given once",
       "", true, "CANDIDATE", false, KeyId::ROOT_BUMPGATE, false,
       "TADAH_BUMPGATE",
-      Span<std::string_view>{detail::ROOT_BUMPGATE_checks, 1},
+      Span<std::string_view>{detail::ROOT_BUMPGATE_checks, 3},
       Span<LineStep>{nullptr, 0}, ""},
   Key{KeyId::ROOT_RHOGATE, "ROOT.RHOGATE", "RHOGATE", "",
       block_bit(BlockId::ROOT), Span<Arg>{detail::ROOT_RHOGATE_args, 1},
@@ -2776,7 +2785,7 @@ inline constexpr Key kKeys[] = {
       Span<Arg>{detail::OPTIMIZER_SEED_args, 1}, Repeat::Error,
       "SEED is set twice in the {block} block (first on line {first_line}); each key is given once",
       "", false, "", false, KeyId::OPTIMIZER_SEED, false, "",
-      Span<std::string_view>{detail::OPTIMIZER_SEED_checks, 4},
+      Span<std::string_view>{detail::OPTIMIZER_SEED_checks, 6},
       Span<LineStep>{nullptr, 0}, ""},
   Key{KeyId::OPTIMIZER_VECTOR_ARR, "OPTIMIZER.VECTOR_ARR", "VECTOR_ARR",
       "OPTIMIZER",
@@ -2898,7 +2907,7 @@ inline constexpr Key kKeys[] = {
   Key{KeyId::ROOT_PC_EMAE, "ROOT.PC_EMAE", "PC_EMAE", "",
       block_bit(BlockId::ROOT), Span<Arg>{detail::ROOT_PC_EMAE_args, 2},
       Repeat::Error,
-      "PC_EMAE: repeated declaration (first declared on line {first_line})",
+      "PC_EMAE is set twice (first on line {first_line}); each key is given once",
       "", false, "", false, KeyId::ROOT_PC_EMAE, false, "",
       Span<std::string_view>{detail::ROOT_PC_EMAE_checks, 4},
       Span<LineStep>{detail::ROOT_PC_EMAE_steps, 3}, ""},
@@ -2910,14 +2919,14 @@ inline constexpr Key kKeys[] = {
   Key{KeyId::ROOT_PC_ErRMSE, "ROOT.PC_ErRMSE", "PC_ErRMSE", "",
       block_bit(BlockId::ROOT), Span<Arg>{detail::ROOT_PC_ErRMSE_args, 2},
       Repeat::Error,
-      "PC_ErRMSE: repeated declaration (first declared on line {first_line})",
+      "PC_ErRMSE is set twice (first on line {first_line}); each key is given once",
       "", false, "", false, KeyId::ROOT_PC_ErRMSE, false, "",
       Span<std::string_view>{detail::ROOT_PC_ErRMSE_checks, 4},
       Span<LineStep>{detail::ROOT_PC_ErRMSE_steps, 3}, ""},
   Key{KeyId::ROOT_PC_ERSQ, "ROOT.PC_ERSQ", "PC_ERSQ", "",
       block_bit(BlockId::ROOT), Span<Arg>{detail::ROOT_PC_ERSQ_args, 2},
       Repeat::Error,
-      "PC_ERSQ: repeated declaration (first declared on line {first_line})",
+      "PC_ERSQ is set twice (first on line {first_line}); each key is given once",
       "", false, "", false, KeyId::ROOT_PC_ERSQ, false, "",
       Span<std::string_view>{detail::ROOT_PC_ERSQ_checks, 6},
       Span<LineStep>{detail::ROOT_PC_ERSQ_steps, 3}, ""},
@@ -2949,7 +2958,7 @@ inline constexpr Key kKeys[] = {
       Span<LineStep>{nullptr, 0}, ""},
   Key{KeyId::ROOT_LOSS, "ROOT.LOSS", "LOSS", "", block_bit(BlockId::ROOT),
       Span<Arg>{detail::ROOT_LOSS_args, 1}, Repeat::ErrorUntilRead,
-      "LOSS is set twice (first on line {first_line}) and no line between reads the first (a --varloss or PC_OBSERVABLE term that names no loss function); each key is given once",
+      "LOSS is set twice (first on line {first_line}) and no line between reads the first (a --varloss or PC_OBSERVABLE term that names no loss function); the key is given again only after such a line",
       "", true, "L2", false, KeyId::ROOT_LOSS, false, "",
       Span<std::string_view>{detail::ROOT_LOSS_checks, 8},
       Span<LineStep>{nullptr, 0}, ""},
@@ -3227,7 +3236,7 @@ inline constexpr Form kForms[] = {
       false},
   Form{FormId::OPTIM_range, "OPTIM.range", "OPTIM", "",
       Span<Arg>{detail::OPTIM_range_args, 3}, false,
-      Span<std::string_view>{detail::OPTIM_range_checks, 5}, false},
+      Span<std::string_view>{detail::OPTIM_range_checks, 6}, false},
   Form{FormId::OPTIM_AUTO, "OPTIM.AUTO", "OPTIM", "AUTO",
       Span<Arg>{detail::OPTIM_AUTO_args, 1}, false,
       Span<std::string_view>{detail::OPTIM_AUTO_checks, 10}, true},
@@ -3273,6 +3282,9 @@ inline constexpr Removed kRemoved[] = {
 };
 
 inline constexpr Rule kRules[] = {
+  Rule{"RULE.optimizer_block_required", RuleCheck::Parse,
+      "the target file has no OPTIMIZER block: an OPTIMIZER ... ENDOPTIMIZER block with LIB and ALGO names the optimiser",
+      Span<RuleWhat>{nullptr, 0}},
   Rule{"RULE.density_key_arming", RuleCheck::Parse,
       "{key} cannot act: no OPTIM line searches a key that changes the density or its window ({keys} of a DM_REAM many-body term, or a DENSITY parameter <ID>.DENSITY.<parameter> of a DM_Embed component), so every candidate has the density of the training configuration and its one verdict (OPTIM WATOM only scales the density; the verdict does not change). The {key} line takes effect with an OPTIM line on one of these keys, anywhere in the file.",
       Span<RuleWhat>{nullptr, 0}},
@@ -3331,10 +3343,10 @@ inline constexpr Rule kRules[] = {
       "OPTIM {key} ({index}) is not a valid search target: {why} and refuses another value, so every candidate but the value of the training configuration would fail.",
       Span<RuleWhat>{nullptr, 0}},
   Rule{"RULE.OPTIM_unread_watom", RuleCheck::Startup,
-      "OPTIM WATOM (line {line} of the target file) is not a valid search target: no descriptor of the training configuration reads WATOM (D2_EAM, DM_EAM, D2_Dummy and DM_Dummy read none), and a fit refuses a WATOM other than 1 that no descriptor reads, so every candidate other than 1 would fail its evaluation.",
+      "OPTIM WATOM is not a valid search target: no descriptor of the training configuration reads WATOM (D2_EAM, DM_EAM, D2_Dummy and DM_Dummy read none), and a fit refuses a WATOM other than 1 that no descriptor reads, so every candidate other than 1 would fail its evaluation.",
       Span<RuleWhat>{nullptr, 0}},
   Rule{"RULE.settings_taken_by_lines", RuleCheck::Parse,
-      "{key} is set twice (first on line {first_line}{note}) and no line between reads the first ({list}); each key is given once",
+      "{key} is set twice (first on line {first_line}{note}) and no line between reads the first ({list}); the key is given again only after such a line",
       Span<RuleWhat>{nullptr, 0}},
   Rule{"RULE.PC_OBSERVABLE_excludes_PC_LAMMPS", RuleCheck::Parse,
       "{key}: this target file also has {list}; PC_OBSERVABLE lines do not share a target file with PC_LAMMPS or PC_FAILPROBE lines",
@@ -3588,6 +3600,8 @@ inline constexpr OptimTarget kOptimTargets[] = {
       "OPTIM WNOISE is not a valid search target: WNOISE is a retired key: No release of Tadah! wrote or read WNOISE. Uncertainty output is removed: the errors of Tadah! 1.0.0 to 1.5.0 were not standard deviations, and no calibrated estimate replaces them. Replaced by: nothing. Deleting the line converts it: no prediction reads it, and the fit is unaffected."},
   OptimTarget{"ERROR", OptimTargetStatus::Refused, Span<int>{nullptr, 0},
       "OPTIM ERROR is not a valid search target: ERROR is a retired key: ERROR, the key of --error, asked tadah predict and tadah properties pairwise for errors computed from SIGMA. Uncertainty output is removed: the errors of Tadah! 1.0.0 to 1.5.0 were not standard deviations, and no calibrated estimate replaces them. Replaced by: nothing. Deleting the line converts it: no command reads it, and the fit is unaffected."},
+  OptimTarget{"QUANTITY", OptimTargetStatus::Refused, Span<int>{nullptr, 0},
+      "OPTIM QUANTITY is not a valid search target: QUANTITY is a retired key: QUANTITY was read by no command; Tadah! 1.5.0 wrote it into a potential when a configuration set it. Replaced by: nothing. Deleting the line converts it: no command reads it, and the fit is unaffected."},
   OptimTarget{"LAMBDA", OptimTargetStatus::Special, Span<int>{nullptr, 0},
       "OPTIM LAMBDA ({index}): the low bound {low} is negative, but LAMBDA is the ridge penalty, a number >= 0: every fit refuses a negative value other than -1, and -1, which requests the evidence approximation, is no value of a box, so the low bound of its box is >= 0"},
 };

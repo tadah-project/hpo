@@ -30,6 +30,7 @@
 #include <limits>
 #include <mutex>
 #include <random>
+#include <regex>
 #include <sstream>
 #include <vector>
 
@@ -559,12 +560,18 @@ TEST_CASE("ANNEAL_PT: a step warm-up that stops at its budget is a warning "
 }
 
 /* Pins: without THREADS the journal says, as a WARNING, that the replicas
- * run on one worker thread and what THREADS does: "ANNEAL_PT: THREADS is
- * not set, so the 2 replicas run on 1 worker thread; THREADS <n> in the
- * STRATEGY block evaluates up to n of them at a time".
+ * run on one worker thread and what THREADS does, naming the block the
+ * annealer reads THREADS from: "ANNEAL_PT: THREADS is not set, so the 2
+ * replicas run on 1 worker thread; THREADS <n> for the STRATEGY-level
+ * optimiser (in its OPTIMIZER or STRATEGY block) evaluates up to n of them
+ * at a time", and for an annealer of an EXPLORE block (the spec of the
+ * block whose end line is ENDEXPLORE) "...; THREADS <n> in its EXPLORE
+ * block evaluates up to n of them at a time".
  * Before the fix: "ANNEAL_PT: THREADS not set -- running 2 replicas on 1
  * worker thread. Set THREADS <n> in the STRATEGY block to evaluate replicas
- * concurrently.": the check fails. */
+ * concurrently."; then "...; THREADS <n> in the STRATEGY block evaluates up
+ * to n of them at a time" for either, of a block a file need not have and
+ * not the one an EXPLORE block's annealer reads: both checks fail. */
 TEST_CASE("ANNEAL_PT: without THREADS the journal says that the replicas "
           "run on one worker thread", "[HPO][anneal_pt][log]")
 {
@@ -579,13 +586,28 @@ TEST_CASE("ANNEAL_PT: without THREADS the journal says that the replicas "
     sp.param["T_HOT"] = 1.0;
     sp.param["T_COLD"] = 0.1;
     MtStubHost host{[](const Vec& x) { return x(0) * x(0); }, {}, {}};
+    auto explore = sp;
     run_anneal_pt_impl<Vec>(sp, host);
     const std::string log = lr.read();
     INFO(log);
     CHECK(log.find("ANNEAL_PT: THREADS is not set, so the 2 replicas "
-                   "run on 1 worker thread; THREADS <n> in the STRATEGY block "
-                   "evaluates up to n of them at a time") !=
+                   "run on 1 worker thread; THREADS <n> for the "
+                   "STRATEGY-level optimiser (in its OPTIMIZER or STRATEGY "
+                   "block) evaluates up to n of them at a time") !=
           std::string::npos);
+    explore.block_line = 12;
+    explore.block_line_text = "ENDEXPLORE";
+    {
+        LoggedRun lr_explore;
+        MtStubHost h{[](const Vec& x) { return x(0) * x(0); }, {}, {}};
+        run_anneal_pt_impl<Vec>(explore, h);
+        const std::string elog = lr_explore.read();
+        INFO(elog);
+        CHECK(elog.find("ANNEAL_PT: THREADS is not set, so the 2 replicas "
+                        "run on 1 worker thread; THREADS <n> in its EXPLORE "
+                        "block evaluates up to n of them at a time") !=
+              std::string::npos);
+    }
 }
 
 /* Pins: a ladder without a range, T_COLD not between 0 and T_HOT, is
@@ -2943,4 +2965,110 @@ TEST_CASE("ANNEAL_PT: calibration rethrows the host's exception unchanged",
             }
         }
     }
+}
+
+/* Pins: the ladder-transport line of a serial run comes every
+ * transport_window = 100 (K-1) exchange rounds, whatever the length of
+ * SWAP_WINDOW, and its counts are those of the rounds since the line before
+ * (SWAP_WINDOW OFF writes none: the case below): with REPLICAS 4
+ * (a window of 300 rounds), SWAP_EVERY 1 and SWAP_WINDOW 40 or 7, a run of
+ * about 950 exchange rounds journals "ANNEAL_PT ladder transport (last 300
+ * exchange round(s)): ..." three times, after 300, 600 and 900 rounds
+ * ("cumulative a/b over 300 round(s)", 600, 900), and the window counts of
+ * each line (cold->hot, hot->cold) are the growth of the cumulative counts
+ * since the line before.
+ * Before the fix: the window closed only on a journal report epoch (every
+ * SWAP_WINDOW epochs), so at multiples of lcm(300, SWAP_WINDOW): with
+ * SWAP_WINDOW 40 one line, after 600 rounds, whose counts covered 600
+ * rounds while it said 300; with SWAP_WINDOW 7 none (lcm 2100): both
+ * checks of the line count fail. */
+TEST_CASE("ANNEAL_PT: the ladder transport window closes every 100 (K-1) "
+          "exchange rounds, whatever the length of SWAP_WINDOW",
+          "[HPO][anneal_pt][log][flow]")
+{
+    using namespace tadah::hpo;
+    for (const double swap_window : {40.0, 7.0}) {
+        INFO("SWAP_WINDOW " << swap_window);
+        auto sp = make_pt_spec({-2.0, -2.0}, {2.0, 2.0});
+        set_seed_point(sp, {0.5, -0.5});
+        sp.seed = 4242;
+        sp.num_threads = 1;
+        sp.param["REPLICAS"] = 4.0;
+        sp.param["T_COLD"] = 0.1;
+        sp.param["T_HOT"] = 10.0;
+        sp.param["SWAP_EVERY"] = 1.0;
+        sp.param["SWAP_WINDOW"] = swap_window;
+        /* CLASSIC: an epoch is REPLICAS evaluations and one exchange round */
+        sp.stop.maxeval = 4 + 950 * 4;
+        LoggedRun lr;
+        MtStubHost stub{[](const Vec& x) { return x(0) * x(0) + x(1) * x(1); },
+                        {}, {}};
+        run_anneal_pt_impl<Vec>(sp, stub);
+        const std::string log = lr.read();
+        const std::regex line(
+            R"(ANNEAL_PT ladder transport \(last 300 exchange round\(s\)\): )"
+            R"(traversals cold->hot=(\d+)  hot->cold=(\d+)  \(\d+ round )"
+            R"(trip\(s\) in window; cumulative (\d+)/(\d+) over (\d+) )"
+            R"(round\(s\)\))");
+        std::size_t n = 0;
+        unsigned long up_before = 0, down_before = 0;
+        for (auto it = std::sregex_iterator(log.begin(), log.end(), line);
+             it != std::sregex_iterator(); ++it) {
+            ++n;
+            const auto& m = *it;
+            INFO(m[0].str());
+            CHECK(std::stoul(m[5]) == 300 * n);
+            CHECK(std::stoul(m[1]) == std::stoul(m[3]) - up_before);
+            CHECK(std::stoul(m[2]) == std::stoul(m[4]) - down_before);
+            up_before = std::stoul(m[3]);
+            down_before = std::stoul(m[4]);
+        }
+        CHECK(n == 3u);
+    }
+}
+
+/* Pins: SWAP_WINDOW OFF writes the cumulative diagnostics only, as its help
+ * says ("OFF writes cumulative tables only"): a serial run of REPLICAS 4
+ * over about 950 exchange rounds, three transport windows of 300 rounds,
+ * journals no windowed transport report ("ANNEAL_PT ladder transport (last
+ * 300 exchange round(s)): ...", the grid "ANNEAL_PT distinct walkers per
+ * slot (last 300 exchange round(s); ...") and no WARNING or HINT of a
+ * window ("... in the last 300 exchange round(s) ..."), and still the
+ * cumulative ones at the end ("ANNEAL_PT ladder flow: traversals ...",
+ * "ANNEAL_PT distinct walkers per slot over the whole run (...").
+ * Before the fix: the report came after every 300th exchange round whatever
+ * SWAP_WINDOW, OFF included: three windowed lines and grids, so the
+ * checks of their absence fail. */
+TEST_CASE("ANNEAL_PT: SWAP_WINDOW OFF writes no windowed ladder transport "
+          "report",
+          "[HPO][anneal_pt][log][flow]")
+{
+    using namespace tadah::hpo;
+    auto sp = make_pt_spec({-2.0, -2.0}, {2.0, 2.0});
+    set_seed_point(sp, {0.5, -0.5});
+    sp.seed = 4242;
+    sp.num_threads = 1;
+    sp.param["REPLICAS"] = 4.0;
+    sp.param["T_COLD"] = 0.1;
+    sp.param["T_HOT"] = 10.0;
+    sp.param["SWAP_EVERY"] = 1.0;
+    sp.param_raw["SWAP_WINDOW"] = "OFF";
+    /* CLASSIC: an epoch is REPLICAS evaluations and one exchange round */
+    sp.stop.maxeval = 4 + 950 * 4;
+    LoggedRun lr;
+    MtStubHost stub{[](const Vec& x) { return x(0) * x(0) + x(1) * x(1); },
+                    {}, {}};
+    run_anneal_pt_impl<Vec>(sp, stub);
+    const std::string log = lr.read();
+    INFO(log);
+    CHECK(log.find("ANNEAL_PT ladder transport (last") == std::string::npos);
+    CHECK(log.find("ANNEAL_PT distinct walkers per slot (last") ==
+          std::string::npos);
+    CHECK(log.find("exchange round(s) -- no replica") == std::string::npos);
+    CHECK(log.find("no COMPLETE round trip in the last") ==
+          std::string::npos);
+    CHECK(log.find("ANNEAL_PT ladder flow: traversals cold->hot=") !=
+          std::string::npos);
+    CHECK(log.find("ANNEAL_PT distinct walkers per slot over the whole run (") !=
+          std::string::npos);
 }

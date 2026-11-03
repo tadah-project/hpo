@@ -17,6 +17,17 @@ struct MetricSkipCaps {
 
 // Works in the Release build too (-ffast-math may fold std::isfinite).
 bool metric_value_is_finite(double value);
+
+/* "<label> target=<t> weight=<w>[ --skip-above <c>][ --skip-rel <r>]": a
+ * term of a metric line as the LOSS FUNCTION sections of the journal and
+ * of the best_pot.tadah header describe it; the label of a line without
+ * indices is "global (loss of average metric)", the term being the loss
+ * of the metric averaged over the datasets. */
+std::string metric_term_description(const std::string& label, double target,
+                                    double weight,
+                                    const MetricSkipCaps& caps);
+inline constexpr const char* kGlobalMetricLabel =
+    "global (loss of average metric)";
 /* A finite number of the number grammar every key reads (strict_parse.h,
  * parse_number: decimal, a leading '+' allowed, no hexadecimal). Otherwise
  * throws "<what> must be a finite number, got '<tok>'" ("Expected a finite

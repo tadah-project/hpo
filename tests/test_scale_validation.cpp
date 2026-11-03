@@ -277,6 +277,45 @@ TEST_CASE("scale_validation: start points must lie inside the OPTIM box",
     }
 }
 
+/* Pins: a starting point outside its OPTIM box is named by where it comes
+ * from: with an INIT block (its line set), "the starting point 1 of the
+ * INIT block of the STRATEGY-level optimiser: SGRIDMB[1] = 2.5 lies outside
+ * its OPTIM box [1, 2]"; without one, the value of the training
+ * configuration, "the starting point 1 of the STRATEGY-level optimiser,
+ * the value of the training configuration (no INIT block sets the start):
+ * SGRIDMB[1] = 2.5 lies outside its OPTIM box [1, 2]". The same for a
+ * value that is not finite.
+ * Before the fix: both said "the starting point 1 of the INIT block of
+ * ...", of a block a file without one does not have: the checks without
+ * an INIT block fail. */
+TEST_CASE("scale_validation: a start point outside its box names the INIT "
+          "block only when there is one",
+          "[HPO][scale][seed]")
+{
+    auto sp = make_spec("NLOPT", "LN_BOBYQA", {0.0, 1.0}, {1.0, 2.0});
+    sp.parameter_labels = {"RCUT2B", "SGRIDMB[1]"};
+    sp.optim_init = {{0.5, 2.5}};
+    const std::string out =
+        ": SGRIDMB[1] = 2.5 lies outside its OPTIM box [1, 2]";
+    sp.init_strategy_spec.line = 0;
+    REQUIRE_THROWS_WITH(validate_optimizer_scaling(sp, "OUTER"),
+                        "the starting point 1 of the STRATEGY-level "
+                        "optimiser, the value of the training configuration "
+                        "(no INIT block sets the start)" + out);
+    sp.optim_init = {{0.5, std::numeric_limits<double>::infinity()}};
+    REQUIRE_THROWS_WITH(validate_optimizer_scaling(sp, "OUTER"),
+                        Catch::StartsWith(
+                            "the starting point 1 of the STRATEGY-level "
+                            "optimiser, the value of the training "
+                            "configuration (no INIT block sets the start): "
+                            "SGRIDMB[1] = "));
+    sp.optim_init = {{0.5, 2.5}};
+    sp.init_strategy_spec.line = 7;
+    REQUIRE_THROWS_WITH(validate_optimizer_scaling(sp, "OUTER"),
+                        "the starting point 1 of the INIT block of the "
+                        "STRATEGY-level optimiser" + out);
+}
+
 TEST_CASE("scale_validation: log-scaled dims need positive seeds in real space",
           "[HPO][scale][seed][log]")
 {

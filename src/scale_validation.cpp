@@ -89,15 +89,27 @@ void check_step_value(double v, const std::string& ctx, const std::string& what)
     }
 }
 
+/* "the starting point <p> of the INIT block of <phase>", or, without an
+ * INIT block (its line 0), "the starting point <p> of <phase>, the value
+ * of the training configuration (no INIT block sets the start)". */
+std::string start_point_words(const OptimizerSpec& sp, const std::string& where,
+                              std::size_t p)
+{
+    const std::string n = std::to_string(p + 1);
+    if (sp.init_strategy_spec.line > 0)
+        return "the starting point " + n + " of the INIT block of " +
+               phase_words(sp, where);
+    return "the starting point " + n + " of " + phase_words(sp, where) +
+           ", the value of the training configuration (no INIT block sets "
+           "the start)";
+}
+
 void validate_start_points(const OptimizerSpec& sp, const std::string& where)
 {
     if (sp.space) {
         for (std::size_t p = 0; p < sp.optim_init.size(); ++p) {
             const auto& x = sp.optim_init[p];
-            const std::string what = "the starting point " +
-                                     std::to_string(p + 1) +
-                                     " of the INIT block of " +
-                                     phase_words(sp, where);
+            const std::string what = start_point_words(sp, where, p);
             if (x.size() != sp.space->dim()) {
                 std::ostringstream oss;
                 oss << "internal error: " << what << " has " << x.size()
@@ -126,8 +138,7 @@ void validate_start_points(const OptimizerSpec& sp, const std::string& where)
         const auto& x = sp.optim_init[p];
         if (x.size() != dim) {
             std::ostringstream oss;
-            oss << "internal error: the starting point " << (p + 1)
-                << " of the INIT block of " << phase_words(sp, where)
+            oss << "internal error: " << start_point_words(sp, where, p)
                 << " has " << x.size() << " coordinate(s), expected " << dim;
             throw std::logic_error(oss.str());
         }
@@ -135,8 +146,7 @@ void validate_start_points(const OptimizerSpec& sp, const std::string& where)
             const double v = x[i];
             if (!std::isfinite(v)) {
                 std::ostringstream oss;
-                oss << "the starting point " << (p + 1) << " of the INIT block of "
-                    << phase_words(sp, where)
+                oss << start_point_words(sp, where, p)
                     << ": " << dim_label(sp, i) << " = "
                     << core::format_roundtrip(v) << " is not a finite number";
                 throw std::runtime_error(oss.str());
@@ -146,8 +156,7 @@ void validate_start_points(const OptimizerSpec& sp, const std::string& where)
             if (is_log(sp, i)) {
                 if (!(v > 0.0)) {
                     std::ostringstream oss;
-                    oss << "the starting point " << (p + 1) << " of the INIT block of "
-                    << phase_words(sp, where)
+                    oss << start_point_words(sp, where, p)
                         << ": " << dim_label(sp, i) << " = "
                         << core::format_roundtrip(v)
                         << " is not > 0, and the dimension is log-scaled "
@@ -161,8 +170,7 @@ void validate_start_points(const OptimizerSpec& sp, const std::string& where)
             const double tlo = sp.low[i], thi = sp.high[i];
             if (t < tlo || t > thi) {
                 std::ostringstream oss;
-                oss << "the starting point " << (p + 1) << " of the INIT block of "
-                    << phase_words(sp, where)
+                oss << start_point_words(sp, where, p)
                     << ": " << dim_label(sp, i) << " = "
                     << core::format_roundtrip(v) << " lies outside its OPTIM box ["
                     << core::format_roundtrip(lo) << ", "

@@ -859,27 +859,34 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
       names += (names.empty() ? "" : " ") + slot.name;
     for (std::size_t t = 0; t < o.opt.size(); ++t) {
       if (!o.opt[t]) continue;
+      /* At the OPTIM line that selects the value. */
+      const auto at_line = [&](const std::string &what) {
+        return std::runtime_error(
+            o.line[t] > 0 ? config_line_error(trg.target_file, o.line[t],
+                                              what, o.line_text[t])
+                          : what);
+      };
       const std::string idx = core::to_string(t + 1);
       const std::string head =
           "OPTIM MPARAMS (" + idx + ") is not a valid search target: ";
       if (n == 0)
-        throw std::runtime_error(
+        throw at_line(
             head + model.function + " reads no MPARAMS, so every "
             "evaluation would train the same model.");
       if (t >= n)
-        throw std::runtime_error(
+        throw at_line(
             head + model.function + " reads " + core::to_string(n) +
             " MPARAMS value" + (n == 1 ? "" : "s") + " (" + names +
             "), so MPARAMS (" + idx + ") changes nothing.");
       const models::MParamSlot &slot = model.mparams[t];
       if (slot.integer)
-        throw std::runtime_error(
+        throw at_line(
             head + "MPARAMS (" + idx + ") of " + model.function +
             " is its " + slot.name + ", an integer, a discrete value rather "
             "than a continuous parameter; the training configuration sets "
             "it.");
       if (slot.positive && !(o.lowbound[t] > 0.0))
-        throw std::runtime_error(
+        throw at_line(
             "OPTIM MPARAMS (" + idx + "): the box [" +
             core::format_roundtrip(o.lowbound[t]) + ", " +
             core::format_roundtrip(o.highbound[t]) + "] of " +
@@ -904,11 +911,15 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
       if (!o.opt[t] || fixed->second[t].empty()) continue;
       const std::string idx = std::string(key) + " (" +
                               core::to_string(t + 1) + ")";
-      throw std::runtime_error(
+      const std::string what =
           "OPTIM " + idx + " is not a valid search target: " +
           fixed->second[t] + " and refuses another value, so every "
           "candidate but the value of the training configuration would "
-          "fail.");
+          "fail.";
+      throw std::runtime_error(
+          o.line[t] > 0 ? config_line_error(trg.target_file, o.line[t], what,
+                                            o.line_text[t])
+                        : what);
     }
   }
 
@@ -926,13 +937,16 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
     const auto &o = it->second;
     for (std::size_t t = 0; t < o.opt.size(); ++t) {
       if (!o.opt[t]) continue;
-      throw std::runtime_error(
-          "OPTIM WATOM (line " + core::to_string(o.line[t]) +
-          " of the target file) is not a valid search target: no "
+      const std::string what =
+          "OPTIM WATOM is not a valid search target: no "
           "descriptor of the training configuration reads WATOM (D2_EAM, "
           "DM_EAM, D2_Dummy and DM_Dummy read none), and a fit refuses a "
           "WATOM other than 1 that no descriptor reads, so every candidate "
-          "other than 1 would fail its evaluation.");
+          "other than 1 would fail its evaluation.";
+      throw std::runtime_error(
+          o.line[t] > 0 ? config_line_error(trg.target_file, o.line[t], what,
+                                            o.line_text[t])
+                        : what);
     }
   }
 
@@ -1087,10 +1101,20 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
      * too, whose graded failures every optimiser takes, except ASA:ASA,
      * which refuses a FAILSCORE whose largest graded failure reaches its
      * largest valid cost (validate_asa_spec). */
-    if (!graded_failscore_is_ordered(trg.FAIL_SCORE))
+    if (!graded_failscore_is_ordered(trg.FAIL_SCORE)) {
+      /* Reachable only in a process that flushes subnormal band widths
+       * to zero (one whose flush-to-zero bits are set, as an executable
+       * linked with -ffast-math sets them at start-up): the parser
+       * refuses a subnormal FAILSCORE, and IEEE arithmetic orders the
+       * bands of every normal one. The default (the largest double) has
+       * them, so a FAILSCORE line set this one. */
+      const std::string what = graded_failscore_refusal(trg.FAIL_SCORE);
       throw std::runtime_error(
-          "FAILSCORE_GRADING ON requires a FAILSCORE large enough to "
-          "represent four strictly ordered grading bands.");
+          trg.FAIL_SCORE_line.number > 0
+              ? config_line_error(trg.target_file, trg.FAIL_SCORE_line.number,
+                                  what, trg.FAIL_SCORE_line.text)
+              : what);
+    }
   } else {
     /* Under OFF a failure signal (a --failvar above 0, a PC_FAILPROBE S
      * above --gate) fails its evaluation, which scores FAILSCORE; the
@@ -1112,10 +1136,9 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
     for (const auto &sim : trg.LS)
       for (const auto &fv : sim.failvars)
         if (fv.scale_given) {
-          std::ostringstream scale;
-          scale << fv.scale;
           throw std::runtime_error(at(sim,
-              "--failvar " + fv.name + " " + scale.str() +
+              "--failvar " + fv.name + " " +
+              core::format_roundtrip(fv.scale) +
               ": the scale grades the failure, which FAILSCORE_GRADING ON "
               "does; under FAILSCORE_GRADING OFF a failed evaluation scores "
               "FAILSCORE, so the scale would have no effect (--failvar " +

@@ -181,8 +181,8 @@ struct DensityGateVerdict {
 DensityGateVerdict check_density_gates(const DensityGates &g,
                                        const core::Context &cand);
 
-/** \brief A pre-training reject: the gate it is counted for, the band-D
- *  measure and the journal text ("... gate reject (...)"). */
+/** \brief A pre-training reject: the check it is counted for, the band-D
+ *  measure and the journal text ("RHOGATE rejected the candidate (...)"). */
 struct GateReject {
   GateKind    kind = GateKind::Bump;
   double      v = 0.0;
@@ -200,12 +200,13 @@ std::optional<GateReject> combine_gate_verdicts(double v_bump,
                                                 const DensityGates &g,
                                                 const DensityGateVerdict &d);
 
-/** "rho-sign gate reject (rho_min/rho_max = -1.2290e-04 at r = 5.2840 A,
- *  tol 1.0000e-05, v = 1.1650e-04)" (a saturated reject names its reason). */
+/** "RHOGATE rejected the candidate (rho_min/rho_max = -1.2290e-04 at r =
+ *  5.2840 A, tol 1.0000e-05, v = 1.1650e-04)" (a saturated reject names its
+ *  reason). */
 std::string describe_rho_reject(const RhoGateResult &r, const RhoGateSpec &spec);
 
-/** "lattice-rhobar gate reject (373 rises over a/a0 [0.75, 1.1] on bcc,
- *  first at a/a0 = 0.7616, v = 2.5390e+00)". */
+/** "RHOBARGATE rejected the candidate (373 rises over a/a0 [0.75, 1.1] on
+ *  bcc, first at a/a0 = 0.7616, v = 2.5390e+00)". */
 std::string describe_rhobar_reject(const RhoBarGateResult &r,
                                    const RhoBarGateSpec &spec);
 

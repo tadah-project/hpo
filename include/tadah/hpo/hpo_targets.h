@@ -107,8 +107,10 @@ protected:
     struct Opti {
         std::vector<bool> opt;
         /* The line of the OPTIM line that selected each token (0: none),
-         * so a second line selecting it names the first. */
+         * so a second line selecting it names the first, and its text, so
+         * a startup refusal of the token shows it (config_line_error). */
         std::vector<std::size_t> line;
+        std::vector<std::string> line_text;
         std::vector<std::string> config;
         std::vector<double> lowbound;
         std::vector<double> highbound;
@@ -150,7 +152,8 @@ protected:
     /* One OPTIM line (on line @p nline of the file). The key is
      * upper-cased: OPTIM keys are case-insensitive, as configuration keys
      * are. */
-    void process_optim_config(std::istringstream& iss, std::size_t nline);
+    void process_optim_config(std::istringstream& iss, std::size_t nline,
+                              const std::string& line_text);
     core::Context &context;
     /* What the OPTIM lines read besides `context` (mlip::prepare_optim_seed:
      * the values of a -c potential its descriptors do not read, left out of
@@ -210,6 +213,9 @@ public:
 
     // int THREADS = -1; // number of threads for parallel evaluation, -1 means all available threads
     double FAIL_SCORE = std::numeric_limits<double>::max();
+    /* The FAILSCORE line that set FAIL_SCORE (number 0: none, the
+     * default), for the startup refusals of its value. */
+    ArchiveLine FAIL_SCORE_line;
     std::size_t QFLUSH_THRESHOLD = 10; // number of results to flush to disk at once
     /* Per-pc_script wall-clock limit, a LAMMPS `timer timeout` time spec
      * ("off", "unlimited" or a positive [[HH:]MM:]SS), injected into every

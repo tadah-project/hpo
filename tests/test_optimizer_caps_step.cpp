@@ -107,6 +107,26 @@ TEST_CASE("OptimizerCaps: the STEP note names a default local search only "
     }
 }
 
+/* Pins: the STEP note of LN_SBPLX and LN_NELDERMEAD, which keep no first
+ * step of their own and take tadah's inward rule, says when the first step
+ * of a dimension is turned inward and that the journal says so: "With STEP
+ * set, a start within one step of the upper bound and not of the lower one
+ * takes that dimension's first step inward, and the journal says so" (with
+ * STEP unset NLopt's own default step applies: test_step_plan.cpp).
+ * Before the fix: the note did not say it: the check fails. */
+TEST_CASE("OptimizerCaps: the STEP note of LN_SBPLX and LN_NELDERMEAD names "
+          "the inward first step", "[HPO][caps][step]")
+{
+    for (const char* algo : {"LN_SBPLX", "LN_NELDERMEAD"}) {
+        const std::string note = optimizer_caps("NLOPT", algo).step_note;
+        INFO(algo << ": " << note);
+        CHECK(note.find("With STEP set, a start within one step of the upper "
+                        "bound and not of the lower one takes that "
+                        "dimension's first step inward, and the journal says "
+                        "so") != std::string::npos);
+    }
+}
+
 TEST_CASE("OptimizerCaps: step_use_consumes and names",
           "[HPO][caps][step]")
 {

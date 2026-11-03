@@ -707,6 +707,14 @@ ENDOPTIMIZER
     std::ifstream f(dir / "hpo_optim_resolved.hpo"); std::string line, all;
     while (std::getline(f, line)) all += line + "\n";
     CHECK(all.find("OPTIM WATOM (1) 0.8 1.2") != std::string::npos);
+    /* The header says what the lines stand in for: every OPTIM line of the
+     * target file, explicit or AUTO, since the file holds a line for each
+     * searched dimension (it said "in place of the AUTO lines", and the
+     * check fails on that). */
+    CHECK(all.find("# in place of every OPTIM line of the target file, these "
+                   "lines give exactly\n# this search space.\n") !=
+          std::string::npos);
+    CHECK(all.find("in place of the AUTO lines") == std::string::npos);
 
     /* hpo_search_space.tsv: a comment header explaining every column, then a
      * header row and one row per dimension; no key/optim_index columns (the

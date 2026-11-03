@@ -1465,9 +1465,11 @@ TEST_CASE("GradientProvider Hybrid takes finite differences on every "
     REQUIRE(gp.gradient(x, g));
     CHECK(g(0) == Approx(std::cos(1.0)).margin(1e-6));
     CHECK(g(1) == Approx(1.0).margin(1e-6));
-    /* The loss at the point, the analytical pass and the central pair of
-     * each parameter. Before the fix: 5, without the loss at the point. */
-    CHECK(counter.load() == 6u);
+    /* The loss at the point and the central pair of each parameter: an
+     * analytical pass that formed no component is no evaluation. Before
+     * the fix: 5, without the loss at the point; then 6, the pass counted
+     * though it formed nothing. */
+    CHECK(counter.load() == 5u);
 }
 
 TEST_CASE("GradientProvider Hybrid without callback throws wiring error",

@@ -709,16 +709,22 @@ TEST_CASE("Repeated points: DLIB:BFGS reuses a line-search trial the box "
  * again"); DLIB:BFGS (InnerCornerBowl, whose line-search trials the box
  * puts on the corner; the steep CornerBowl until DLIB:BFGS ran on the loss
  * divided by the length of its first gradient): "a reuse is no evaluation,
- * and MAXEVAL counts evaluations". DIAGNOSTICS says both: "points the run had evaluated that a
- * search asked for, ... HPO's MAXEVAL does not count them, NLopt's own
- * MAXEVAL counts them among its calls, and the RESTART window counts each
- * as one evaluation without a new best".
+ * and MAXEVAL counts evaluations". The NLopt line says "a reuse is not an
+ * evaluation: the run's count of evaluations does not include it, but
+ * NLopt counts it among the calls its MAXEVAL bounds". DIAGNOSTICS says
+ * both: "points the run had evaluated that a search asked for, ... the
+ * run's count of evaluations does not include them; an NLopt search counts
+ * them among the calls its MAXEVAL bounds, DLIB:BFGS does not; the RESTART
+ * window counts each as one call without a new best".
  * Before the fix: both INFO lines said "(a reuse is no evaluation, and
  * MAXEVAL counts evaluations; ...)" and DIAGNOSTICS "not evaluated again,
  * not counted in MAXEVAL", while NLopt's own MAXEVAL counted the 22 reuses
  * and ended the search 22 evaluations early; until the run kept one record
  * (2026-10-12) DIAGNOSTICS said "points a search asked for again", the
- * record being the search's. */
+ * record being the search's. Then the NLopt line and DIAGNOSTICS said
+ * "the MAXEVAL of the block does not count them, NLopt's own MAXEVAL
+ * counts them", of one MAXEVAL (NLopt's is the block's): the checks of
+ * both texts fail. */
 TEST_CASE("Repeated points: the journal says how MAXEVAL takes a reuse",
           "[HPO][repeat_points][nlopt][dlib_bfgs][maxeval]")
 {
@@ -727,10 +733,10 @@ TEST_CASE("Repeated points: the journal says how MAXEVAL takes a reuse",
     CHECK(sbplx.asked.size() == 38u);
     CHECK(j_nlopt.find("NLOPT:LN_SBPLX asked again for the point of eval ") !=
           std::string::npos);
-    /* "the MAXEVAL of the block", not "HPO's MAXEVAL" */
+    /* One MAXEVAL: NLopt's is the block's. */
     CHECK(j_nlopt.find("is reused, without an evaluation (a reuse is not an "
-                       "evaluation: the MAXEVAL of the block does not count "
-                       "it, but NLopt counts it among the calls its own "
+                       "evaluation: the run's count of evaluations does not "
+                       "include it, but NLopt counts it among the calls its "
                        "MAXEVAL bounds; DIAGNOSTICS counts reuses)") !=
           std::string::npos);
     CHECK(j_nlopt.find("NLopt counts its calls, and 22 of them asked for "
@@ -739,10 +745,10 @@ TEST_CASE("Repeated points: the journal says how MAXEVAL takes a reuse",
     const std::string diag =
         "points the run had evaluated that a search asked for, answered "
         "with the\n    loss -- and gradient -- of their evaluation, not "
-        "evaluated again: the MAXEVAL of\n    the block does not count them, "
-        "NLopt's own "
-        "MAXEVAL counts them among its calls, and the\n    RESTART window "
-        "counts each as one evaluation without a new best)";
+        "evaluated again: the run's count of\n    evaluations does not "
+        "include them; an NLopt search counts them among the calls its\n"
+        "    MAXEVAL bounds, DLIB:BFGS does not; the RESTART window counts "
+        "each as one call\n    without a new best)";
     CHECK(j_nlopt.find(diag) != std::string::npos);
     CHECK(j_nlopt.find("not counted in\n    MAXEVAL") == std::string::npos);
 
