@@ -3861,7 +3861,7 @@ A word followed by a number is not an AUTO option."""
 
 [[form.checks]]
 msg = "OPTIM {key}: a cutoff key takes explicit bounds, OPTIM {key} (indices) <low> <high>, and no AUTO box: the neighbour list is sized from the explicit high bound"
-doc = "The key is a distance cutoff, RCUT2B or RCUTMB (the keys of auto_excluded)."
+doc = "The key is a distance cutoff, RCUT2B or RCUTMB."
 
 [[form.checks]]
 msg = "OPTIM {key} ({index}): the seed {value} is negative, but {what} requires every AMPGRIDMB amplitude >= 0"
