@@ -1,0 +1,1 @@
+[tadah hpo] the SEED of the INIT block on line 6 changes no starting point: its methods (METHOD CONFIG, by default) draw no random numbers; a RANDOM, LHS or SOBOL method draws with it. (NLOPT:G_MLSL_LDS, without a SEED of its own, still takes its random numbers from it.)

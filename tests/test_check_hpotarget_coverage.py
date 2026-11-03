@@ -1,13 +1,18 @@
 #!/usr/bin/env python3
 """Unit tests of tests/check_hpotarget_coverage.py on synthetic C++ sources
 and a synthetic registry: comment stripping, brace matching, the three
-kinds of extraction (comparisons, tables, calls), the refusal of a
+kinds of extraction (comparisons, tables, calls) and a vocabulary a
+function reads from the generated tables of the registry, the refusal of a
 comparison no rule classifies, of a rule that finds nothing or whose
 function is not found once, the comparison of the names found with the
 registry's in both directions, the command without a registry, and a
 rule on a file of MLIP (mlip:<path>, read from the --mlip directory); on a
-copy of the HPO and MLIP sources, a name added to the top-level keys of
-is_top_level_key().
+copy of the HPO and MLIP sources, a top-level key the registry-driven
+parser compares that the registry does not know; that no rule reads
+the hand-written parser the registry-driven one replaced and no source
+names it; that each function and constant of the check is used; and that
+the {what} of a rule and the explain of a PARAM key are written in the
+registry alone.
 
 The rules on MLIP's files read the MLIP source directory that
 TADAH_MLIP_SOURCE_DIR names (CTest sets it); a test that needs it fails
@@ -146,27 +151,21 @@ class Extraction(unittest.TestCase):
         self.assertIn('tokens[i] == "-var"', problems[2])
 
     def test_scoped_tables(self):
-        # The lines of a PC_* option and the TYPE of a STRATEGY key come
-        # from the second fields of their tables.
-        self.assertEqual(cov.pc_line_option_of('{"--gate", false, true}'),
-                         ("line_option:PC_FAILPROBE",))
-        self.assertEqual(cov.pc_line_option_of('{"--script", true, true}'),
-                         ("line_option:PC_LAMMPS",
-                          "line_option:PC_FAILPROBE"))
-        self.assertEqual(cov.strategy_type_key_of(
-            '{"TOPK", StrategyType::PRESTAGE, "why"}'),
-            ("strategy_type_key:PRESTAGE",))
+        # A table element can give its name to vocabularies that a
+        # function of the rule reads from the element's other fields.
+        def flagged(element: str) -> tuple[str, ...]:
+            flags = [f.strip() for f in element.strip("{} \n").split(",")[1:]]
+            return tuple(f"scope:{i}" for i, f in enumerate(flags)
+                         if f == "true")
         (self.root / "src" / "t.cpp").write_text(
             'static const Opt k[] = {\n  {"--a", true, false},\n'
             '  {"--b", false, true},\n};\n')
         rule = cov.Rule("t", "src/t.cpp", compare=False,
-                        tables=[(r"\bk\s*\[\]", "first",
-                                 cov.pc_line_option_of)])
+                        tables=[(r"\bk\s*\[\]", "first", flagged)])
         found, problems = self.run_rules([rule])
         self.assertEqual(problems, [])
         self.assertEqual({(f.name, f.vocabularies) for f in found},
-                         {("--a", ("line_option:PC_LAMMPS",)),
-                          ("--b", ("line_option:PC_FAILPROBE",))})
+                         {("--a", ("scope:0",)), ("--b", ("scope:1",))})
 
     def test_comparisons_the_rules_cannot_read(self):
         # A key compared with a named constant, a constructed string or
@@ -286,6 +285,151 @@ class MlipFiles(unittest.TestCase):
                               out.getvalue())
 
 
+class GeneratedTables(unittest.TestCase):
+    """A function that reads a vocabulary from the generated tables of
+    the registry (hpotarget_registry_gen.h) instead of naming it."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = pathlib.Path(self._tmp.name)
+        (self.root / "src").mkdir()
+        (self.root / "src" / "g.cpp").write_text(textwrap.dedent('''\
+            bool group_key(const std::string& key)
+            {
+                for (const R::Key& k : R::kKeys)
+                    if (!k.group.empty() && k.name == key) return true;
+                return false;
+            }
+            bool other(const std::string& key) { return key == "X"; }
+            '''))
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    # Pins: a rule's `generated` names a use of a generated table (a
+    # regular expression) and the vocabularies it reads; where the
+    # function holds that use, every name of those vocabularies of the
+    # registry counts as one the parser recognises (compare(), on the
+    # names extract() reports as generated), and no name is missing; the
+    # use is reported with its place. Before the fix: fails, Rule takes no
+    # `generated`.
+    def test_a_vocabulary_read_from_the_generated_tables(self):
+        rule = cov.Rule("the group keys", "src/g.cpp",
+                        r"^bool group_key\(",
+                        generated=[(r"R::kKeys\b", ("group_key",))],
+                        ignore={"k.name": "a name of the generated table"})
+        generated: list = []
+        with mock.patch.object(cov, "EXTRACTION", [rule]):
+            found, problems = cov.extract(self.root, generated=generated)
+        self.assertEqual(problems, [])
+        self.assertEqual(found, [])
+        self.assertEqual(generated, [(("group_key",),
+                                      "src/g.cpp:3 (the group keys)")])
+        reg = FakeRegistry({"group_key": {"LIB", "ALGO"}, "block": {"A"}})
+        with mock.patch.object(cov, "VOCABULARIES", ("group_key", "block")):
+            problems = cov.compare(
+                [cov.Found("A", ("block",), "src/g.cpp:7 (other)")], reg,
+                generated=generated)
+        self.assertEqual(problems, [])
+
+    # Pins: a rule whose function holds no use of its generated table is
+    # refused ("the rule finds no use of the generated table"), as a rule
+    # that finds no name is. Before the fix: fails, Rule takes no
+    # `generated`.
+    def test_a_generated_table_the_function_does_not_read(self):
+        rule = cov.Rule("other", "src/g.cpp", r"^bool other\(",
+                        operands={"key": ("block",)},
+                        generated=[(r"R::kBlocks\b", ("block",))])
+        with mock.patch.object(cov, "EXTRACTION", [rule]):
+            _, problems = cov.extract(self.root, generated=[])
+        self.assertEqual(problems, [
+            "src/g.cpp: other: the rule finds no use of the generated "
+            "table /R::kBlocks\\b/: the extraction rule needs updating"])
+
+
+@dataclasses.dataclass
+class FakeArg:
+    words: list
+
+
+@dataclasses.dataclass
+class FakeEntry:
+    id: str
+    args: list
+
+
+class HandlerWords(unittest.TestCase):
+    """The handlers of the registry-driven parser read the word of a word
+    argument with read_word(), which takes the words from the generated
+    tables: a handler that calls it recognises the words of the arguments
+    of its entry of the registry (the key, line option or form whose C++
+    name, gen_hpotarget.cxx_name(), is the handler's)."""
+
+    HANDLERS = textwrap.dedent('''\
+        void Handlers::ROOT_ISO(KeyRead& r)
+        {
+            r.p().t.iso =
+                read_word(arg0(r.key), single_value(r.iss, r.word), r.word);
+        }
+        void Handlers::ROOT_N(KeyRead& r)
+        {
+            r.p().t.n = 1;
+        }
+        void Handlers::GATE_SEED(OptionRead& r)
+        {
+            r.seed = read_word(arg0(r.option), r.value, r.key) == "WARN";
+        }
+        void Handlers::ROOT_GONE(KeyRead& r)
+        {
+            read_word(arg0(r.key), "x", r.word);
+        }
+        ''')
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = pathlib.Path(self._tmp.name)
+        (self.root / "src").mkdir()
+        (self.root / "src" / "h.cpp").write_text(self.HANDLERS)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    # Pins: a rule's handler_words finds each definition of a handler
+    # (`void Handlers::<name>(`) whose body calls read_word(), with the
+    # place of the call; compare() counts the words of the arguments of the handler's
+    # entry as recognised (the entry of the key ROOT.ISO for ROOT_ISO, of
+    # the line option GATE.SEED for GATE_SEED), a handler that calls no
+    # read_word() recognises none ('OTHER' of ROOT.N is not in the parser),
+    # and a handler whose name is no entry's is a problem.
+    # Before the fix: fails, Rule takes no handler_words.
+    def test_the_words_a_handler_reads(self):
+        rule = cov.Rule("the handlers", "src/h.cpp", handler_words=True,
+                        operands={"read_word(arg0(r.option), r.value, "
+                                  "r.key)": ("word",)})
+        reads: list = []
+        with mock.patch.object(cov, "EXTRACTION", [rule]):
+            found, problems = cov.extract(self.root, handler_reads=reads)
+        self.assertEqual(problems, [])
+        self.assertEqual(reads, [("ROOT_ISO", "src/h.cpp:4 (the handlers)"),
+                                 ("GATE_SEED",
+                                  "src/h.cpp:12 (the handlers)"),
+                                 ("ROOT_GONE",
+                                  "src/h.cpp:16 (the handlers)")])
+        reg = FakeRegistry({"word": {"PROCESS", "THREAD", "WARN", "ERROR",
+                                     "OTHER"}})
+        reg.entries = lambda: [
+            FakeEntry("ROOT.ISO", [FakeArg(["PROCESS", "THREAD"])]),
+            FakeEntry("ROOT.N", [FakeArg(["OTHER"])]),
+            FakeEntry("GATE.SEED", [FakeArg(["ERROR", "WARN"])])]
+        with mock.patch.object(cov, "VOCABULARIES", ("word",)):
+            problems = cov.compare(found, reg, handler_reads=reads)
+        self.assertEqual(problems, [
+            "the handler Handlers::ROOT_GONE at src/h.cpp:16 (the handlers) "
+            "reads a word, and no entry of the registry has its name",
+            "not in the parser: 'OTHER' (word) is declared in the registry, "
+            "and the parser's sources do not recognise it"])
+
+
 class Compare(unittest.TestCase):
     VOCAB = ("block", "word")
 
@@ -351,6 +495,38 @@ class Compare(unittest.TestCase):
             "scope no extraction rule reads"])
 
 
+class ModuleNames(unittest.TestCase):
+    # Pins: each function and constant at the top of
+    # check_hpotarget_coverage.py is used by the module outside its own
+    # definition: a helper that only its own unit test calls reads no
+    # source of the check.
+    # Before the fix: fails, METRIC_OPTIONS, pc_line_option_of,
+    # strategy_type_key_of and READ_KEY are used by no rule (their rules
+    # read the hand-written parser and the tables it used).
+    def test_no_name_is_left_unused(self):
+        import ast
+        tree = ast.parse(pathlib.Path(cov.__file__).read_text())
+        defined: dict[str, ast.AST] = {}
+        for node in tree.body:
+            if isinstance(node, (ast.FunctionDef, ast.ClassDef)):
+                defined[node.name] = node
+            elif isinstance(node, ast.Assign):
+                for t in node.targets:
+                    if isinstance(t, ast.Name):
+                        defined[t.id] = node
+            elif (isinstance(node, ast.AnnAssign)
+                  and isinstance(node.target, ast.Name)):
+                defined[node.target.id] = node
+        unused = []
+        for name, node in defined.items():
+            own = {id(n) for n in ast.walk(node)}
+            if not any(isinstance(n, ast.Name) and n.id == name
+                       and isinstance(n.ctx, ast.Load) and id(n) not in own
+                       for n in ast.walk(tree)):
+                unused.append(name)
+        self.assertEqual(unused, [])
+
+
 class Command(unittest.TestCase):
     def test_no_registry_fails_with_a_message(self):
         with tempfile.TemporaryDirectory() as d:
@@ -374,20 +550,124 @@ class RealSources(unittest.TestCase):
         _, problems = cov.extract(HERE.parent, mlip=mlip_source_dir(self))
         self.assertEqual(problems, [])
 
+    # Pins: the target file has one parser, the registry-driven one
+    # (src/hpotarget_parser.cpp, its handlers and the readers they call):
+    # no rule reads the hand-written parser of src/hpo_targets.cpp
+    # (ParsedTarget::read and the readers only it called); the one rule on
+    # that file reads the constructor of the targets (the environment
+    # override TADAH_OPTIM_SCALE and its words).
+    # Before the fix: fails, six rules read ParsedTarget::read and its
+    # readers.
+    def test_no_rule_reads_the_hand_written_parser(self):
+        on = [r.label for r in cov.EXTRACTION
+              if r.file == "src/hpo_targets.cpp"]
+        self.assertEqual(on, ["the OPTIM_SCALE override"])
+
+    # Pins: no source, header or test of HPO names HPOTargets::read, the
+    # hand-written parser the registry-driven one replaced: their comments
+    # name the parser of the target file (src/hpotarget_parser.cpp).
+    # Before the fix: fails, the comments of test_param_arity.cpp,
+    # test_hpotarget_block_structure.cpp,
+    # test_startup_validation_strategy.cpp, test_pc_observable_parser.cpp
+    # and test_hpotarget_registry_conformance.cpp name it.
+    def test_no_source_names_the_removed_reader(self):
+        root = HERE.parent
+        named = []
+        for d in ("src", "include", "tests"):
+            for f in sorted((root / d).rglob("*")):
+                if (f.suffix not in (".cpp", ".h", ".py", ".cmake", ".txt")
+                        or "data" in f.relative_to(root).parts):
+                    continue
+                for n, line in enumerate(f.read_text(errors="replace")
+                                         .splitlines(), 1):
+                    if "HPOTargets::read" in line and f != pathlib.Path(
+                            __file__).resolve():
+                        named.append(f"{f.relative_to(root)}:{n}")
+        self.assertEqual(named, [])
+
+
+class RegistryTexts(unittest.TestCase):
+    """The texts the registry gives the program are written in the
+    registry alone: the {what} of a rule's message
+    (RULE.set_once_for_optimiser, which the parser fills from the
+    generated tables) and the explain of a PARAM key (its row of
+    `tadah explain LIB:ALGO`)."""
+
+    @staticmethod
+    def literals(path: pathlib.Path) -> set[str]:
+        """The string literals of a C++ source, each run of adjacent
+        literals joined."""
+        import re
+        src = cov.strip_comments(path.read_text())
+        lit = r'"(?:[^"\\\n]|\\.)*"'
+        out = set()
+        for m in re.finditer(rf"{lit}(?:\s*{lit})*", src):
+            parts = re.findall(lit, m.group(0))
+            out.add("".join(p[1:-1].replace('\\"', '"')
+                            .replace("\\\\", "\\") for p in parts))
+        return out
+
+    def sources(self) -> list[pathlib.Path]:
+        root = HERE.parent
+        return [f for d in ("src", "include") for f in
+                sorted((root / d).rglob("*"))
+                if f.suffix in (".cpp", ".h") and
+                not f.name.endswith("_gen.h")]
+
+    def registry(self):
+        sys.path.insert(0, str(HERE.parent / "blueprint"))
+        import hpotarget_registry as hr
+        return hr.load(HERE.parent / "blueprint")
+
+    # Pins: no source of HPO but the generated headers holds the {what}
+    # of a rule as a string literal, and no handler sets one: the parser
+    # takes the {what} of RULE.set_once_for_optimiser from the generated
+    # tables for each entry it names.
+    # Before the fix: fails, OPTIMIZER_LOG_HP of hpotarget_handlers.cpp
+    # writes "search space", and the handlers of STRATEGY, INIT, RESTART
+    # and NOISE set texts no message holds.
+    def test_the_what_of_a_rule(self):
+        reg = self.registry()
+        texts = {t for r in reg.rules for t in r.what.values()}
+        self.assertTrue(texts)
+        held = sorted(f"{f.relative_to(HERE.parent)}: {t!r}"
+                      for f in self.sources() for t in
+                      texts & self.literals(f))
+        self.assertEqual(held, [])
+        import re
+        handlers = (HERE.parent / "src" / "hpotarget_handlers.cpp")
+        sets = [n for n, line in enumerate(cov.strip_comments(
+                    handlers.read_text()).splitlines(), 1)
+                if re.search(r"\.\s*what\s*=[^=]", line)]
+        self.assertEqual(sets, [])
+
+    # Pins: no source of HPO but the generated headers holds the explain
+    # of a PARAM key as a string literal: the PARAM table of
+    # `tadah explain ASA:ASA` takes its text from the generated tables.
+    # Before the fix: fails, kDescs of asa_options.cpp holds each row's
+    # text a second time.
+    def test_the_explain_of_a_param_key(self):
+        reg = self.registry()
+        texts = {p.explain for p in reg.params if p.explain}
+        self.assertTrue(texts)
+        held = sorted(f"{f.relative_to(HERE.parent)}: {t!r}"
+                      for f in self.sources() for t in
+                      texts & self.literals(f))
+        self.assertEqual(held, [])
+
 
 class TopLevelKeys(unittest.TestCase):
-    """The keys a block refuses as top-level keys, the set of
-    is_top_level_key() in src/hpo_targets.cpp, are read from the sources
+    """A top-level key the registry-driven parser compares by name
+    (src/hpotarget_parser.cpp, operand `name`) is read from the sources
     and compared with the keys of the top level of the registry."""
 
-    # Pins: on a copy of the files the rules read, with "ZZTOPKEY" added to
-    # the set of is_top_level_key() (so a block would refuse it as a
-    # top-level key), the check against the registry exits 1 and reports
-    # 'ZZTOPKEY' as missing from the registry, as a key of the top level
-    # (key:ROOT), at src/hpo_targets.cpp.
-    # Before the fix: fails, no rule reads is_top_level_key(): the check
-    # passes on the copy ("OK: the registry and the parser's sources name
-    # the same ... names").
+    # Pins: on a copy of the files the rules read, with a comparison
+    # `name == "ZZTOPKEY"` added to src/hpotarget_parser.cpp (a top-level
+    # key only the code holds), the check against the registry exits 1 and
+    # reports 'ZZTOPKEY' as missing from the registry, as a key of the top
+    # level (key:ROOT), at src/hpotarget_parser.cpp.
+    # Before the fix: the test read is_top_level_key() of the hand-written
+    # parser (src/hpo_targets.cpp).
     def test_a_name_only_the_code_holds_is_reported(self):
         with tempfile.TemporaryDirectory() as d:
             root, mlip = pathlib.Path(d) / "hpo", pathlib.Path(d) / "mlip"
@@ -400,12 +680,10 @@ class TopLevelKeys(unittest.TestCase):
                     continue
                 (root / f).parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy(HERE.parent / f, root / f)
-            src = root / "src" / "hpo_targets.cpp"
+            src = root / "src" / "hpotarget_parser.cpp"
             text = src.read_text()
-            start = text.find("static bool is_top_level_key(")
-            self.assertGreaterEqual(start, 0, "is_top_level_key() not found")
-            at = text.index("= {", start) + len("= {")
-            src.write_text(text[:at] + '"ZZTOPKEY", ' + text[at:])
+            src.write_text(text + "\nbool zz_top_level(const std::string& "
+                           "name)\n{\n    return name == \"ZZTOPKEY\";\n}\n")
             out = io.StringIO()
             with contextlib.redirect_stdout(out):
                 code = cov.main([str(root), "--mlip", str(mlip),
@@ -413,7 +691,7 @@ class TopLevelKeys(unittest.TestCase):
                                  str(HERE.parent / "blueprint")])
         self.assertEqual(code, 1, out.getvalue())
         self.assertIn("missing from the registry: 'ZZTOPKEY' (key:ROOT), "
-                      "src/hpo_targets.cpp:", out.getvalue())
+                      "src/hpotarget_parser.cpp:", out.getvalue())
 
 
 if __name__ == "__main__":

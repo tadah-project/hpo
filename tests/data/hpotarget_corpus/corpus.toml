@@ -1,0 +1,3454 @@
+# The frozen corpus of target files: each input of tests/hpotarget_corpus.py
+# with the files it reads and what the parser of `tadah hpo` gives for it
+# (expected/: <name>.dump the description of the parse, <name>.error the
+# refusal, <name>.stdout and <name>.stderr what the parse printed).
+# tests/test_hpotarget_corpus.cpp reads every input and compares.
+# Written by `tests/hpotarget_corpus.py write` (its docstring describes the
+# fields); a change of the parser that changes a result is a change of
+# behaviour, and the corpus is written again only with it.
+
+[[input]]
+id = "hpo-data:ta/target_files/anneal.hpo"
+origin = "HPO/tests/data/ta/target_files/anneal.hpo"
+tree = "trees/hpo-data/ta"
+cwd = "target_files"
+target_file = "anneal.hpo"
+config_file = "../common/config.tadah"
+expected = "expected/hpo-data/ta_target_files_anneal.hpo.dump"
+stdout = "expected/hpo-data/ta_target_files_anneal.hpo.stdout"
+
+[[input]]
+id = "hpo-data:ta/target_files/anneal_corana.hpo"
+origin = "HPO/tests/data/ta/target_files/anneal_corana.hpo"
+tree = "trees/hpo-data/ta"
+cwd = "target_files"
+target_file = "anneal_corana.hpo"
+config_file = "../common/config.tadah"
+expected = "expected/hpo-data/ta_target_files_anneal_corana.hpo.dump"
+stdout = "expected/hpo-data/ta_target_files_anneal_corana.hpo.stdout"
+
+[[input]]
+id = "hpo-data:ta/target_files/anneal_pa.hpo"
+origin = "HPO/tests/data/ta/target_files/anneal_pa.hpo"
+tree = "trees/hpo-data/ta"
+cwd = "target_files"
+target_file = "anneal_pa.hpo"
+config_file = "../common/config.tadah"
+expected = "expected/hpo-data/ta_target_files_anneal_pa.hpo.dump"
+stdout = "expected/hpo-data/ta_target_files_anneal_pa.hpo.stdout"
+
+[[input]]
+id = "hpo-data:ta/target_files/anneal_pt.hpo"
+origin = "HPO/tests/data/ta/target_files/anneal_pt.hpo"
+tree = "trees/hpo-data/ta"
+cwd = "target_files"
+target_file = "anneal_pt.hpo"
+config_file = "../common/config.tadah"
+expected = "expected/hpo-data/ta_target_files_anneal_pt.hpo.dump"
+stdout = "expected/hpo-data/ta_target_files_anneal_pt.hpo.stdout"
+
+[[input]]
+id = "hpo-data:ta/target_files/asa.hpo"
+origin = "HPO/tests/data/ta/target_files/asa.hpo"
+tree = "trees/hpo-data/ta"
+cwd = "target_files"
+target_file = "asa.hpo"
+config_file = "../common/config.tadah"
+expected = "expected/hpo-data/ta_target_files_asa.hpo.dump"
+stdout = "expected/hpo-data/ta_target_files_asa.hpo.stdout"
+
+[[input]]
+id = "hpo-data:ta/target_files/dlib_bfgs.hpo"
+origin = "HPO/tests/data/ta/target_files/dlib_bfgs.hpo"
+tree = "trees/hpo-data/ta"
+cwd = "target_files"
+target_file = "dlib_bfgs.hpo"
+config_file = "../common/config.tadah"
+expected = "expected/hpo-data/ta_target_files_dlib_bfgs.hpo.dump"
+stdout = "expected/hpo-data/ta_target_files_dlib_bfgs.hpo.stdout"
+
+[[input]]
+id = "hpo-data:ta/target_files/dm_ream_embf0.hpo"
+origin = "HPO/tests/data/ta/target_files/dm_ream_embf0.hpo"
+tree = "trees/hpo-data/ta"
+cwd = "target_files"
+target_file = "dm_ream_embf0.hpo"
+config_file = "../ta2_refit_seed.tadah"
+expected = "expected/hpo-data/ta_target_files_dm_ream_embf0.hpo.dump"
+stdout = "expected/hpo-data/ta_target_files_dm_ream_embf0.hpo.stdout"
+
+[[input]]
+id = "hpo-data:ta/target_files/failprobe_grading.hpo"
+origin = "HPO/tests/data/ta/target_files/failprobe_grading.hpo"
+tree = "trees/hpo-data/ta"
+cwd = "target_files"
+target_file = "failprobe_grading.hpo"
+config_file = "../common/config.tadah"
+expected = "expected/hpo-data/ta_target_files_failprobe_grading.hpo.dump"
+stdout = "expected/hpo-data/ta_target_files_failprobe_grading.hpo.stdout"
+
+[[input]]
+id = "hpo-data:ta/target_files/fixweight_mixed.hpo"
+origin = "HPO/tests/data/ta/target_files/fixweight_mixed.hpo"
+tree = "trees/hpo-data/ta"
+cwd = "target_files"
+target_file = "fixweight_mixed.hpo"
+config_file = "fixweight_mixed.tadah"
+expected = "expected/hpo-data/ta_target_files_fixweight_mixed.hpo.dump"
+stdout = "expected/hpo-data/ta_target_files_fixweight_mixed.hpo.stdout"
+
+[[input]]
+id = "hpo-data:ta/target_files/fixweight_no_dbfile.hpo"
+origin = "HPO/tests/data/ta/target_files/fixweight_no_dbfile.hpo"
+tree = "trees/hpo-data/ta"
+cwd = "target_files"
+target_file = "fixweight_no_dbfile.hpo"
+config_file = "../common/config.tadah"
+config_drop = ["DBFILE"]
+config_add = { "ATOM" = ["Ta"], "FIXINDEX" = ["1-14"], "FIXWEIGHT" = ["0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0"] }
+expected = "expected/hpo-data/ta_target_files_fixweight_no_dbfile.hpo.dump"
+stdout = "expected/hpo-data/ta_target_files_fixweight_no_dbfile.hpo.stdout"
+
+[[input]]
+id = "hpo-data:ta/target_files/init_chain.hpo"
+origin = "HPO/tests/data/ta/target_files/init_chain.hpo"
+tree = "trees/hpo-data/ta"
+cwd = "target_files"
+target_file = "init_chain.hpo"
+config_file = "../common/config.tadah"
+copies = [{ "from" = "../common/config.tadah", "to" = "seed_pot.tadah" }]
+expected = "expected/hpo-data/ta_target_files_init_chain.hpo.dump"
+stdout = "expected/hpo-data/ta_target_files_init_chain.hpo.stdout"
+
+[[input]]
+id = "hpo-data:ta/target_files/init_lhs_multistart.hpo"
+origin = "HPO/tests/data/ta/target_files/init_lhs_multistart.hpo"
+tree = "trees/hpo-data/ta"
+cwd = "target_files"
+target_file = "init_lhs_multistart.hpo"
+config_file = "../common/config.tadah"
+expected = "expected/hpo-data/ta_target_files_init_lhs_multistart.hpo.dump"
+stdout = "expected/hpo-data/ta_target_files_init_lhs_multistart.hpo.stdout"
+
+[[input]]
+id = "hpo-data:ta/target_files/init_random.hpo"
+origin = "HPO/tests/data/ta/target_files/init_random.hpo"
+tree = "trees/hpo-data/ta"
+cwd = "target_files"
+target_file = "init_random.hpo"
+config_file = "../common/config.tadah"
+expected = "expected/hpo-data/ta_target_files_init_random.hpo.dump"
+stdout = "expected/hpo-data/ta_target_files_init_random.hpo.stdout"
+
+[[input]]
+id = "hpo-data:ta/target_files/init_sobol_gfs.hpo"
+origin = "HPO/tests/data/ta/target_files/init_sobol_gfs.hpo"
+tree = "trees/hpo-data/ta"
+cwd = "target_files"
+target_file = "init_sobol_gfs.hpo"
+config_file = "../common/config.tadah"
+expected = "expected/hpo-data/ta_target_files_init_sobol_gfs.hpo.dump"
+stdout = "expected/hpo-data/ta_target_files_init_sobol_gfs.hpo.stdout"
+
+[[input]]
+id = "hpo-data:ta/target_files/init_warm.hpo"
+origin = "HPO/tests/data/ta/target_files/init_warm.hpo"
+tree = "trees/hpo-data/ta"
+cwd = "target_files"
+target_file = "init_warm.hpo"
+config_file = "../common/config.tadah"
+copies = [{ "from" = "../common/config.tadah", "to" = "seed_pot.tadah" }]
+expected = "expected/hpo-data/ta_target_files_init_warm.hpo.dump"
+stdout = "expected/hpo-data/ta_target_files_init_warm.hpo.stdout"
+
+[[input]]
+id = "hpo-data:ta/target_files/invar_outvar.hpo"
+origin = "HPO/tests/data/ta/target_files/invar_outvar.hpo"
+tree = "trees/hpo-data/ta"
+cwd = "target_files"
+target_file = "invar_outvar.hpo"
+config_file = "../common/config.tadah"
+expected = "expected/hpo-data/ta_target_files_invar_outvar.hpo.dump"
+stdout = "expected/hpo-data/ta_target_files_invar_outvar.hpo.stdout"
+
+[[input]]
+id = "hpo-data:ta/target_files/mlsl_inner.hpo"
+origin = "HPO/tests/data/ta/target_files/mlsl_inner.hpo"
+tree = "trees/hpo-data/ta"
+cwd = "target_files"
+target_file = "mlsl_inner.hpo"
+config_file = "../common/config.tadah"
+expected = "expected/hpo-data/ta_target_files_mlsl_inner.hpo.dump"
+stdout = "expected/hpo-data/ta_target_files_mlsl_inner.hpo.stdout"
+stderr = "expected/hpo-data/ta_target_files_mlsl_inner.hpo.stderr"
+
+[[input]]
+id = "hpo-data:ta/target_files/nlopt_sbplx_step.hpo"
+origin = "HPO/tests/data/ta/target_files/nlopt_sbplx_step.hpo"
+tree = "trees/hpo-data/ta"
+cwd = "target_files"
+target_file = "nlopt_sbplx_step.hpo"
+config_file = "../common/config.tadah"
+expected = "expected/hpo-data/ta_target_files_nlopt_sbplx_step.hpo.dump"
+stdout = "expected/hpo-data/ta_target_files_nlopt_sbplx_step.hpo.stdout"
+
+[[input]]
+id = "hpo-data:ta/target_files/optim_auto.hpo"
+origin = "HPO/tests/data/ta/target_files/optim_auto.hpo"
+tree = "trees/hpo-data/ta"
+cwd = "target_files"
+target_file = "optim_auto.hpo"
+config_file = "../common/config.tadah"
+expected = "expected/hpo-data/ta_target_files_optim_auto.hpo.dump"
+stdout = "expected/hpo-data/ta_target_files_optim_auto.hpo.stdout"
+
+[[input]]
+id = "hpo-data:ta/target_files/pc_isolation.hpo"
+origin = "HPO/tests/data/ta/target_files/pc_isolation.hpo"
+tree = "trees/hpo-data/ta"
+cwd = "target_files"
+target_file = "pc_isolation.hpo"
+config_file = "../common/config.tadah"
+expected = "expected/hpo-data/ta_target_files_pc_isolation.hpo.dump"
+stdout = "expected/hpo-data/ta_target_files_pc_isolation.hpo.stdout"
+
+[[input]]
+id = "hpo-data:ta/target_files/pc_observable.hpo"
+origin = "HPO/tests/data/ta/target_files/pc_observable.hpo"
+tree = "trees/hpo-data/ta"
+cwd = "target_files"
+target_file = "pc_observable.hpo"
+config_file = "pc_observable.tadah"
+expected = "expected/hpo-data/ta_target_files_pc_observable.hpo.dump"
+stdout = "expected/hpo-data/ta_target_files_pc_observable.hpo.stdout"
+
+[[input]]
+id = "hpo-data:ta/target_files/per_dataset_targets.hpo"
+origin = "HPO/tests/data/ta/target_files/per_dataset_targets.hpo"
+tree = "trees/hpo-data/ta"
+cwd = "target_files"
+target_file = "per_dataset_targets.hpo"
+config_file = "../common/config.tadah"
+expected = "expected/hpo-data/ta_target_files_per_dataset_targets.hpo.dump"
+stdout = "expected/hpo-data/ta_target_files_per_dataset_targets.hpo.stdout"
+
+[[input]]
+id = "hpo-data:ta/target_files/prestage.hpo"
+origin = "HPO/tests/data/ta/target_files/prestage.hpo"
+tree = "trees/hpo-data/ta"
+cwd = "target_files"
+target_file = "prestage.hpo"
+config_file = "../common/config.tadah"
+expected = "expected/hpo-data/ta_target_files_prestage.hpo.dump"
+stdout = "expected/hpo-data/ta_target_files_prestage.hpo.stdout"
+
+[[input]]
+id = "hpo-data:ta/target_files/restart.hpo"
+origin = "HPO/tests/data/ta/target_files/restart.hpo"
+tree = "trees/hpo-data/ta"
+cwd = "target_files"
+target_file = "restart.hpo"
+config_file = "../common/config.tadah"
+expected = "expected/hpo-data/ta_target_files_restart.hpo.dump"
+stdout = "expected/hpo-data/ta_target_files_restart.hpo.stdout"
+
+[[input]]
+id = "hpo-data:ta/target_files/skip_above.hpo"
+origin = "HPO/tests/data/ta/target_files/skip_above.hpo"
+tree = "trees/hpo-data/ta"
+cwd = "target_files"
+target_file = "skip_above.hpo"
+config_file = "../common/config.tadah"
+expected = "expected/hpo-data/ta_target_files_skip_above.hpo.dump"
+stdout = "expected/hpo-data/ta_target_files_skip_above.hpo.stdout"
+
+[[input]]
+id = "hpo-data:ta/target_files/tadah_grid.hpo"
+origin = "HPO/tests/data/ta/target_files/tadah_grid.hpo"
+tree = "trees/hpo-data/ta"
+cwd = "target_files"
+target_file = "tadah_grid.hpo"
+config_file = "../common/config.tadah"
+expected = "expected/hpo-data/ta_target_files_tadah_grid.hpo.dump"
+stdout = "expected/hpo-data/ta_target_files_tadah_grid.hpo.stdout"
+
+[[input]]
+id = "hpo-data:ta/target_files/tadah_random.hpo"
+origin = "HPO/tests/data/ta/target_files/tadah_random.hpo"
+tree = "trees/hpo-data/ta"
+cwd = "target_files"
+target_file = "tadah_random.hpo"
+config_file = "../common/config.tadah"
+expected = "expected/hpo-data/ta_target_files_tadah_random.hpo.dump"
+stdout = "expected/hpo-data/ta_target_files_tadah_random.hpo.stdout"
+
+[[input]]
+id = "registry:LEXING:0"
+origin = "hpotarget.toml (LEXING, example 1)"
+target = "targets/registry/LEXING_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/LEXING_0.dump"
+stdout = "expected/registry/LEXING_0.stdout"
+
+[[input]]
+id = "registry:LEXING:1"
+origin = "hpotarget.toml (LEXING, example 2)"
+target = "targets/registry/LEXING_1.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/LEXING_1.dump"
+stdout = "expected/registry/LEXING_1.stdout"
+
+[[input]]
+id = "registry:OPTIM:0"
+origin = "hpotarget_lines.toml (OPTIM, example 1)"
+target = "targets/registry/OPTIM_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/OPTIM_0.dump"
+stdout = "expected/registry/OPTIM_0.stdout"
+
+[[input]]
+id = "registry:OPTIM:1"
+origin = "hpotarget_lines.toml (OPTIM, example 2)"
+target = "targets/registry/OPTIM_1.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/OPTIM_1.dump"
+stdout = "expected/registry/OPTIM_1.stdout"
+
+[[input]]
+id = "registry:OPTIM:2"
+origin = "hpotarget_lines.toml (OPTIM, example 3)"
+target = "targets/registry/OPTIM_2.hpo"
+config = "configs/lines_dm_embed.tadah"
+tree = "fixtures"
+expected = "expected/registry/OPTIM_2.dump"
+stdout = "expected/registry/OPTIM_2.stdout"
+
+[[input]]
+id = "registry:OPTIM:3"
+origin = "hpotarget_lines.toml (OPTIM, example 4)"
+target = "targets/registry/OPTIM_3.hpo"
+config = "configs/lines_dm_embed.tadah"
+tree = "fixtures"
+expected = "expected/registry/OPTIM_3.dump"
+stdout = "expected/registry/OPTIM_3.stdout"
+
+[[input]]
+id = "registry:LAMMPS_SCRIPT:0"
+origin = "hpotarget_lines.toml (LAMMPS_SCRIPT, example 1)"
+target = "targets/registry/LAMMPS_SCRIPT_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/LAMMPS_SCRIPT_0.dump"
+stdout = "expected/registry/LAMMPS_SCRIPT_0.stdout"
+
+[[input]]
+id = "registry:BLOCK.OPTIMIZER:0"
+origin = "hpotarget.toml (BLOCK.OPTIMIZER, example 1)"
+target = "targets/registry/BLOCK.OPTIMIZER_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/BLOCK.OPTIMIZER_0.dump"
+stdout = "expected/registry/BLOCK.OPTIMIZER_0.stdout"
+
+[[input]]
+id = "registry:BLOCK.STRATEGY:0"
+origin = "hpotarget.toml (BLOCK.STRATEGY, example 1)"
+target = "targets/registry/BLOCK.STRATEGY_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/BLOCK.STRATEGY_0.dump"
+stdout = "expected/registry/BLOCK.STRATEGY_0.stdout"
+
+[[input]]
+id = "registry:BLOCK.INIT:0"
+origin = "hpotarget.toml (BLOCK.INIT, example 1)"
+target = "targets/registry/BLOCK.INIT_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/BLOCK.INIT_0.dump"
+stdout = "expected/registry/BLOCK.INIT_0.stdout"
+
+[[input]]
+id = "registry:BLOCK.INIT:1"
+origin = "hpotarget.toml (BLOCK.INIT, example 2)"
+target = "targets/registry/BLOCK.INIT_1.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/BLOCK.INIT_1.dump"
+stdout = "expected/registry/BLOCK.INIT_1.stdout"
+
+[[input]]
+id = "registry:BLOCK.NOISE:0"
+origin = "hpotarget.toml (BLOCK.NOISE, example 1)"
+target = "targets/registry/BLOCK.NOISE_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/BLOCK.NOISE_0.dump"
+stdout = "expected/registry/BLOCK.NOISE_0.stdout"
+
+[[input]]
+id = "registry:BLOCK.EXPLORE:0"
+origin = "hpotarget.toml (BLOCK.EXPLORE, example 1)"
+target = "targets/registry/BLOCK.EXPLORE_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/BLOCK.EXPLORE_0.dump"
+stdout = "expected/registry/BLOCK.EXPLORE_0.stdout"
+
+[[input]]
+id = "registry:BLOCK.REFINE:0"
+origin = "hpotarget.toml (BLOCK.REFINE, example 1)"
+target = "targets/registry/BLOCK.REFINE_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/BLOCK.REFINE_0.dump"
+stdout = "expected/registry/BLOCK.REFINE_0.stdout"
+
+[[input]]
+id = "registry:BLOCK.INNER:0"
+origin = "hpotarget.toml (BLOCK.INNER, example 1)"
+target = "targets/registry/BLOCK.INNER_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/BLOCK.INNER_0.dump"
+stdout = "expected/registry/BLOCK.INNER_0.stdout"
+
+[[input]]
+id = "registry:BLOCK.RESTART:0"
+origin = "hpotarget.toml (BLOCK.RESTART, example 1)"
+target = "targets/registry/BLOCK.RESTART_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/BLOCK.RESTART_0.dump"
+stdout = "expected/registry/BLOCK.RESTART_0.stdout"
+
+[[input]]
+id = "registry:ROOT.FAILSCORE:0"
+origin = "hpotarget.toml (ROOT.FAILSCORE, example 1)"
+target = "targets/registry/ROOT.FAILSCORE_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/ROOT.FAILSCORE_0.dump"
+stdout = "expected/registry/ROOT.FAILSCORE_0.stdout"
+
+[[input]]
+id = "registry:ROOT.PC_SCRIPT_TIMEOUT:0"
+origin = "hpotarget.toml (ROOT.PC_SCRIPT_TIMEOUT, example 1)"
+target = "targets/registry/ROOT.PC_SCRIPT_TIMEOUT_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/ROOT.PC_SCRIPT_TIMEOUT_0.dump"
+stdout = "expected/registry/ROOT.PC_SCRIPT_TIMEOUT_0.stdout"
+
+[[input]]
+id = "registry:ROOT.PC_SCRIPT_TIMEOUT:1"
+origin = "hpotarget.toml (ROOT.PC_SCRIPT_TIMEOUT, example 2)"
+target = "targets/registry/ROOT.PC_SCRIPT_TIMEOUT_1.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/ROOT.PC_SCRIPT_TIMEOUT_1.dump"
+stdout = "expected/registry/ROOT.PC_SCRIPT_TIMEOUT_1.stdout"
+
+[[input]]
+id = "registry:ROOT.PC_SCRIPT_TIMEOUT:2"
+origin = "hpotarget.toml (ROOT.PC_SCRIPT_TIMEOUT, example 3)"
+target = "targets/registry/ROOT.PC_SCRIPT_TIMEOUT_2.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/ROOT.PC_SCRIPT_TIMEOUT_2.dump"
+stdout = "expected/registry/ROOT.PC_SCRIPT_TIMEOUT_2.stdout"
+
+[[input]]
+id = "registry:ROOT.MAXTIME:0"
+origin = "hpotarget.toml (ROOT.MAXTIME, example 1)"
+target = "targets/registry/ROOT.MAXTIME_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/ROOT.MAXTIME_0.dump"
+stdout = "expected/registry/ROOT.MAXTIME_0.stdout"
+
+[[input]]
+id = "registry:ROOT.PC_ISOLATION:0"
+origin = "hpotarget.toml (ROOT.PC_ISOLATION, example 1)"
+target = "targets/registry/ROOT.PC_ISOLATION_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/ROOT.PC_ISOLATION_0.dump"
+stdout = "expected/registry/ROOT.PC_ISOLATION_0.stdout"
+
+[[input]]
+id = "registry:ROOT.PC_ISOLATION:1"
+origin = "hpotarget.toml (ROOT.PC_ISOLATION, example 2)"
+target = "targets/registry/ROOT.PC_ISOLATION_1.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/ROOT.PC_ISOLATION_1.dump"
+stdout = "expected/registry/ROOT.PC_ISOLATION_1.stdout"
+
+[[input]]
+id = "registry:ROOT.PC_WORKER_TIMEOUT:0"
+origin = "hpotarget.toml (ROOT.PC_WORKER_TIMEOUT, example 1)"
+target = "targets/registry/ROOT.PC_WORKER_TIMEOUT_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/ROOT.PC_WORKER_TIMEOUT_0.dump"
+stdout = "expected/registry/ROOT.PC_WORKER_TIMEOUT_0.stdout"
+
+[[input]]
+id = "registry:ROOT.FAILSCORE_GRADING:0"
+origin = "hpotarget.toml (ROOT.FAILSCORE_GRADING, example 1)"
+target = "targets/registry/ROOT.FAILSCORE_GRADING_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/ROOT.FAILSCORE_GRADING_0.dump"
+stdout = "expected/registry/ROOT.FAILSCORE_GRADING_0.stdout"
+
+[[input]]
+id = "registry:ROOT.FAILSCORE_GRADING:1"
+origin = "hpotarget.toml (ROOT.FAILSCORE_GRADING, example 2)"
+target = "targets/registry/ROOT.FAILSCORE_GRADING_1.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/ROOT.FAILSCORE_GRADING_1.dump"
+stdout = "expected/registry/ROOT.FAILSCORE_GRADING_1.stdout"
+
+[[input]]
+id = "registry:ROOT.FAILSCORE_GRADING:2"
+origin = "hpotarget.toml (ROOT.FAILSCORE_GRADING, example 3)"
+target = "targets/registry/ROOT.FAILSCORE_GRADING_2.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/ROOT.FAILSCORE_GRADING_2.dump"
+stdout = "expected/registry/ROOT.FAILSCORE_GRADING_2.stdout"
+
+[[input]]
+id = "registry:ROOT.BUMPGATE:0"
+origin = "hpotarget.toml (ROOT.BUMPGATE, example 1)"
+target = "targets/registry/ROOT.BUMPGATE_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/ROOT.BUMPGATE_0.dump"
+stdout = "expected/registry/ROOT.BUMPGATE_0.stdout"
+
+[[input]]
+id = "registry:ROOT.BUMPGATE:1"
+origin = "hpotarget.toml (ROOT.BUMPGATE, example 2)"
+target = "targets/registry/ROOT.BUMPGATE_1.hpo"
+config = "configs/main_ream.tadah"
+tree = "fixtures"
+expected = "expected/registry/ROOT.BUMPGATE_1.dump"
+stdout = "expected/registry/ROOT.BUMPGATE_1.stdout"
+
+[[input]]
+id = "registry:ROOT.RHOGATE:0"
+origin = "hpotarget.toml (ROOT.RHOGATE, example 1)"
+target = "targets/registry/ROOT.RHOGATE_0.hpo"
+config = "configs/main_ream.tadah"
+tree = "fixtures"
+expected = "expected/registry/ROOT.RHOGATE_0.dump"
+stdout = "expected/registry/ROOT.RHOGATE_0.stdout"
+
+[[input]]
+id = "registry:ROOT.RHOGATE:1"
+origin = "hpotarget.toml (ROOT.RHOGATE, example 2)"
+target = "targets/registry/ROOT.RHOGATE_1.hpo"
+config = "configs/main_ream.tadah"
+tree = "fixtures"
+expected = "expected/registry/ROOT.RHOGATE_1.dump"
+stdout = "expected/registry/ROOT.RHOGATE_1.stdout"
+
+[[input]]
+id = "registry:ROOT.RHOGATE:2"
+origin = "hpotarget.toml (ROOT.RHOGATE, example 3)"
+target = "targets/registry/ROOT.RHOGATE_2.hpo"
+config = "configs/lines_dm_embed.tadah"
+tree = "fixtures"
+expected = "expected/registry/ROOT.RHOGATE_2.dump"
+stdout = "expected/registry/ROOT.RHOGATE_2.stdout"
+
+[[input]]
+id = "registry:ROOT.RHOGATE:3"
+origin = "hpotarget.toml (ROOT.RHOGATE, example 4)"
+target = "targets/registry/ROOT.RHOGATE_3.hpo"
+config = "configs/main_ream_negative.tadah"
+tree = "fixtures"
+expected = "expected/registry/ROOT.RHOGATE_3.dump"
+stdout = "expected/registry/ROOT.RHOGATE_3.stdout"
+
+[[input]]
+id = "registry:ROOT.RHOBARGATE:0"
+origin = "hpotarget.toml (ROOT.RHOBARGATE, example 1)"
+target = "targets/registry/ROOT.RHOBARGATE_0.hpo"
+config = "configs/main_ream.tadah"
+tree = "fixtures"
+expected = "expected/registry/ROOT.RHOBARGATE_0.dump"
+stdout = "expected/registry/ROOT.RHOBARGATE_0.stdout"
+
+[[input]]
+id = "registry:ROOT.RHOBARGATE:1"
+origin = "hpotarget.toml (ROOT.RHOBARGATE, example 2)"
+target = "targets/registry/ROOT.RHOBARGATE_1.hpo"
+config = "configs/main_ream.tadah"
+tree = "fixtures"
+expected = "expected/registry/ROOT.RHOBARGATE_1.dump"
+stdout = "expected/registry/ROOT.RHOBARGATE_1.stdout"
+
+[[input]]
+id = "registry:ROOT.RHOBARGATE:2"
+origin = "hpotarget.toml (ROOT.RHOBARGATE, example 3)"
+target = "targets/registry/ROOT.RHOBARGATE_2.hpo"
+config = "configs/main_ream.tadah"
+tree = "fixtures"
+expected = "expected/registry/ROOT.RHOBARGATE_2.dump"
+stdout = "expected/registry/ROOT.RHOBARGATE_2.stdout"
+
+[[input]]
+id = "registry:ROOT.QFLUSH:0"
+origin = "hpotarget.toml (ROOT.QFLUSH, example 1)"
+target = "targets/registry/ROOT.QFLUSH_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/ROOT.QFLUSH_0.dump"
+stdout = "expected/registry/ROOT.QFLUSH_0.stdout"
+
+[[input]]
+id = "registry:ROOT.OUTPUT:0"
+origin = "hpotarget.toml (ROOT.OUTPUT, example 1)"
+target = "targets/registry/ROOT.OUTPUT_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/ROOT.OUTPUT_0.dump"
+stdout = "expected/registry/ROOT.OUTPUT_0.stdout"
+
+[[input]]
+id = "registry:ROOT.BOUTPUT:0"
+origin = "hpotarget.toml (ROOT.BOUTPUT, example 1)"
+target = "targets/registry/ROOT.BOUTPUT_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/ROOT.BOUTPUT_0.dump"
+stdout = "expected/registry/ROOT.BOUTPUT_0.stdout"
+
+[[input]]
+id = "registry:ROOT.DIGITS:0"
+origin = "hpotarget.toml (ROOT.DIGITS, example 1)"
+target = "targets/registry/ROOT.DIGITS_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/ROOT.DIGITS_0.dump"
+stdout = "expected/registry/ROOT.DIGITS_0.stdout"
+
+[[input]]
+id = "registry:ROOT.DUMP:0"
+origin = "hpotarget.toml (ROOT.DUMP, example 1)"
+target = "targets/registry/ROOT.DUMP_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/ROOT.DUMP_0.dump"
+stdout = "expected/registry/ROOT.DUMP_0.stdout"
+
+[[input]]
+id = "registry:ROOT.DUMP:1"
+origin = "hpotarget.toml (ROOT.DUMP, example 2)"
+target = "targets/registry/ROOT.DUMP_1.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/ROOT.DUMP_1.dump"
+stdout = "expected/registry/ROOT.DUMP_1.stdout"
+
+[[input]]
+id = "registry:ROOT.BDUMP:0"
+origin = "hpotarget.toml (ROOT.BDUMP, example 1)"
+target = "targets/registry/ROOT.BDUMP_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/ROOT.BDUMP_0.dump"
+stdout = "expected/registry/ROOT.BDUMP_0.stdout"
+
+[[input]]
+id = "registry:ROOT.BDUMP:1"
+origin = "hpotarget.toml (ROOT.BDUMP, example 2)"
+target = "targets/registry/ROOT.BDUMP_1.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/ROOT.BDUMP_1.dump"
+stdout = "expected/registry/ROOT.BDUMP_1.stdout"
+
+[[input]]
+id = "registry:ROOT.OPTIM_SCALE:0"
+origin = "hpotarget.toml (ROOT.OPTIM_SCALE, example 1)"
+target = "targets/registry/ROOT.OPTIM_SCALE_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/ROOT.OPTIM_SCALE_0.dump"
+stdout = "expected/registry/ROOT.OPTIM_SCALE_0.stdout"
+
+[[input]]
+id = "registry:ROOT.OPTIM_SCALE:1"
+origin = "hpotarget.toml (ROOT.OPTIM_SCALE, example 2)"
+target = "targets/registry/ROOT.OPTIM_SCALE_1.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/ROOT.OPTIM_SCALE_1.dump"
+stdout = "expected/registry/ROOT.OPTIM_SCALE_1.stdout"
+
+[[input]]
+id = "registry:OPTIMIZER.LIB:0"
+origin = "hpotarget_optimizer.toml (OPTIMIZER.LIB, example 1)"
+target = "targets/registry/OPTIMIZER.LIB_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/OPTIMIZER.LIB_0.dump"
+stdout = "expected/registry/OPTIMIZER.LIB_0.stdout"
+
+[[input]]
+id = "registry:OPTIMIZER.LIB:1"
+origin = "hpotarget_optimizer.toml (OPTIMIZER.LIB, example 2)"
+target = "targets/registry/OPTIMIZER.LIB_1.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/OPTIMIZER.LIB_1.dump"
+stdout = "expected/registry/OPTIMIZER.LIB_1.stdout"
+
+[[input]]
+id = "registry:OPTIMIZER.ALGO:0"
+origin = "hpotarget_optimizer.toml (OPTIMIZER.ALGO, example 1)"
+target = "targets/registry/OPTIMIZER.ALGO_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/OPTIMIZER.ALGO_0.dump"
+stdout = "expected/registry/OPTIMIZER.ALGO_0.stdout"
+
+[[input]]
+id = "registry:OPTIMIZER.MAXEVAL:0"
+origin = "hpotarget_optimizer.toml (OPTIMIZER.MAXEVAL, example 1)"
+target = "targets/registry/OPTIMIZER.MAXEVAL_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/OPTIMIZER.MAXEVAL_0.dump"
+stdout = "expected/registry/OPTIMIZER.MAXEVAL_0.stdout"
+
+[[input]]
+id = "registry:OPTIMIZER.MAXTIME:0"
+origin = "hpotarget_optimizer.toml (OPTIMIZER.MAXTIME, example 1)"
+target = "targets/registry/OPTIMIZER.MAXTIME_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/OPTIMIZER.MAXTIME_0.dump"
+stdout = "expected/registry/OPTIMIZER.MAXTIME_0.stdout"
+
+[[input]]
+id = "registry:OPTIMIZER.MAXTIME:1"
+origin = "hpotarget_optimizer.toml (OPTIMIZER.MAXTIME, example 2)"
+target = "targets/registry/OPTIMIZER.MAXTIME_1.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/OPTIMIZER.MAXTIME_1.dump"
+stdout = "expected/registry/OPTIMIZER.MAXTIME_1.stdout"
+
+[[input]]
+id = "registry:OPTIMIZER.STOPVAL:0"
+origin = "hpotarget_optimizer.toml (OPTIMIZER.STOPVAL, example 1)"
+target = "targets/registry/OPTIMIZER.STOPVAL_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/OPTIMIZER.STOPVAL_0.dump"
+stdout = "expected/registry/OPTIMIZER.STOPVAL_0.stdout"
+
+[[input]]
+id = "registry:OPTIMIZER.STOPVAL:1"
+origin = "hpotarget_optimizer.toml (OPTIMIZER.STOPVAL, example 2)"
+target = "targets/registry/OPTIMIZER.STOPVAL_1.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/OPTIMIZER.STOPVAL_1.dump"
+stdout = "expected/registry/OPTIMIZER.STOPVAL_1.stdout"
+
+[[input]]
+id = "registry:OPTIMIZER.FTOL_REL:0"
+origin = "hpotarget_optimizer.toml (OPTIMIZER.FTOL_REL, example 1)"
+target = "targets/registry/OPTIMIZER.FTOL_REL_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/OPTIMIZER.FTOL_REL_0.dump"
+stdout = "expected/registry/OPTIMIZER.FTOL_REL_0.stdout"
+
+[[input]]
+id = "registry:OPTIMIZER.FTOL_REL:1"
+origin = "hpotarget_optimizer.toml (OPTIMIZER.FTOL_REL, example 2)"
+target = "targets/registry/OPTIMIZER.FTOL_REL_1.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/OPTIMIZER.FTOL_REL_1.dump"
+stdout = "expected/registry/OPTIMIZER.FTOL_REL_1.stdout"
+
+[[input]]
+id = "registry:OPTIMIZER.FTOL_ABS:0"
+origin = "hpotarget_optimizer.toml (OPTIMIZER.FTOL_ABS, example 1)"
+target = "targets/registry/OPTIMIZER.FTOL_ABS_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/OPTIMIZER.FTOL_ABS_0.dump"
+stdout = "expected/registry/OPTIMIZER.FTOL_ABS_0.stdout"
+
+[[input]]
+id = "registry:OPTIMIZER.XTOL_REL:0"
+origin = "hpotarget_optimizer.toml (OPTIMIZER.XTOL_REL, example 1)"
+target = "targets/registry/OPTIMIZER.XTOL_REL_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/OPTIMIZER.XTOL_REL_0.dump"
+stdout = "expected/registry/OPTIMIZER.XTOL_REL_0.stdout"
+
+[[input]]
+id = "registry:OPTIMIZER.XTOL_ABS:0"
+origin = "hpotarget_optimizer.toml (OPTIMIZER.XTOL_ABS, example 1)"
+target = "targets/registry/OPTIMIZER.XTOL_ABS_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/OPTIMIZER.XTOL_ABS_0.dump"
+stdout = "expected/registry/OPTIMIZER.XTOL_ABS_0.stdout"
+
+[[input]]
+id = "registry:OPTIMIZER.POPULATION:0"
+origin = "hpotarget_optimizer.toml (OPTIMIZER.POPULATION, example 1)"
+target = "targets/registry/OPTIMIZER.POPULATION_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/OPTIMIZER.POPULATION_0.dump"
+stdout = "expected/registry/OPTIMIZER.POPULATION_0.stdout"
+
+[[input]]
+id = "registry:OPTIMIZER.STEP:0"
+origin = "hpotarget_optimizer.toml (OPTIMIZER.STEP, example 1)"
+target = "targets/registry/OPTIMIZER.STEP_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/OPTIMIZER.STEP_0.dump"
+stdout = "expected/registry/OPTIMIZER.STEP_0.stdout"
+
+[[input]]
+id = "registry:OPTIMIZER.STEP:1"
+origin = "hpotarget_optimizer.toml (OPTIMIZER.STEP, example 2)"
+target = "targets/registry/OPTIMIZER.STEP_1.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/OPTIMIZER.STEP_1.dump"
+stdout = "expected/registry/OPTIMIZER.STEP_1.stdout"
+
+[[input]]
+id = "registry:OPTIMIZER.STEP:2"
+origin = "hpotarget_optimizer.toml (OPTIMIZER.STEP, example 3)"
+target = "targets/registry/OPTIMIZER.STEP_2.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/OPTIMIZER.STEP_2.dump"
+stdout = "expected/registry/OPTIMIZER.STEP_2.stdout"
+
+[[input]]
+id = "registry:OPTIMIZER.STEP:3"
+origin = "hpotarget_optimizer.toml (OPTIMIZER.STEP, example 4)"
+target = "targets/registry/OPTIMIZER.STEP_3.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/OPTIMIZER.STEP_3.dump"
+stdout = "expected/registry/OPTIMIZER.STEP_3.stdout"
+
+[[input]]
+id = "registry:OPTIMIZER.STEP:4"
+origin = "hpotarget_optimizer.toml (OPTIMIZER.STEP, example 5)"
+target = "targets/registry/OPTIMIZER.STEP_4.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/OPTIMIZER.STEP_4.dump"
+stdout = "expected/registry/OPTIMIZER.STEP_4.stdout"
+
+[[input]]
+id = "registry:OPTIMIZER.STEP:5"
+origin = "hpotarget_optimizer.toml (OPTIMIZER.STEP, example 6)"
+target = "targets/registry/OPTIMIZER.STEP_5.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/OPTIMIZER.STEP_5.dump"
+stdout = "expected/registry/OPTIMIZER.STEP_5.stdout"
+stderr = "expected/registry/OPTIMIZER.STEP_5.stderr"
+
+[[input]]
+id = "registry:OPTIMIZER.SEED:0"
+origin = "hpotarget_optimizer.toml (OPTIMIZER.SEED, example 1)"
+target = "targets/registry/OPTIMIZER.SEED_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/OPTIMIZER.SEED_0.dump"
+stdout = "expected/registry/OPTIMIZER.SEED_0.stdout"
+
+[[input]]
+id = "registry:OPTIMIZER.SEED:1"
+origin = "hpotarget_optimizer.toml (OPTIMIZER.SEED, example 2)"
+target = "targets/registry/OPTIMIZER.SEED_1.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/OPTIMIZER.SEED_1.dump"
+stdout = "expected/registry/OPTIMIZER.SEED_1.stdout"
+
+[[input]]
+id = "registry:OPTIMIZER.SEED:2"
+origin = "hpotarget_optimizer.toml (OPTIMIZER.SEED, example 3)"
+target = "targets/registry/OPTIMIZER.SEED_2.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/OPTIMIZER.SEED_2.dump"
+stdout = "expected/registry/OPTIMIZER.SEED_2.stdout"
+
+[[input]]
+id = "registry:OPTIMIZER.VECTOR_ARR:0"
+origin = "hpotarget_optimizer.toml (OPTIMIZER.VECTOR_ARR, example 1)"
+target = "targets/registry/OPTIMIZER.VECTOR_ARR_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/OPTIMIZER.VECTOR_ARR_0.dump"
+stdout = "expected/registry/OPTIMIZER.VECTOR_ARR_0.stdout"
+
+[[input]]
+id = "registry:OPTIMIZER.THREADS:0"
+origin = "hpotarget_optimizer.toml (OPTIMIZER.THREADS, example 1)"
+target = "targets/registry/OPTIMIZER.THREADS_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/OPTIMIZER.THREADS_0.dump"
+stdout = "expected/registry/OPTIMIZER.THREADS_0.stdout"
+
+[[input]]
+id = "registry:OPTIMIZER.THREADS:1"
+origin = "hpotarget_optimizer.toml (OPTIMIZER.THREADS, example 2)"
+target = "targets/registry/OPTIMIZER.THREADS_1.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/OPTIMIZER.THREADS_1.dump"
+stdout = "expected/registry/OPTIMIZER.THREADS_1.stdout"
+stderr = "expected/registry/OPTIMIZER.THREADS_1.stderr"
+
+[[input]]
+id = "registry:OPTIMIZER.GRAD_STRATEGY:0"
+origin = "hpotarget_optimizer.toml (OPTIMIZER.GRAD_STRATEGY, example 1)"
+target = "targets/registry/OPTIMIZER.GRAD_STRATEGY_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/OPTIMIZER.GRAD_STRATEGY_0.dump"
+stdout = "expected/registry/OPTIMIZER.GRAD_STRATEGY_0.stdout"
+
+[[input]]
+id = "registry:OPTIMIZER.GRAD_STRATEGY:1"
+origin = "hpotarget_optimizer.toml (OPTIMIZER.GRAD_STRATEGY, example 2)"
+target = "targets/registry/OPTIMIZER.GRAD_STRATEGY_1.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/OPTIMIZER.GRAD_STRATEGY_1.dump"
+stdout = "expected/registry/OPTIMIZER.GRAD_STRATEGY_1.stdout"
+
+[[input]]
+id = "registry:OPTIMIZER.GRAD_STRATEGY:2"
+origin = "hpotarget_optimizer.toml (OPTIMIZER.GRAD_STRATEGY, example 3)"
+target = "targets/registry/OPTIMIZER.GRAD_STRATEGY_2.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/OPTIMIZER.GRAD_STRATEGY_2.dump"
+stdout = "expected/registry/OPTIMIZER.GRAD_STRATEGY_2.stdout"
+
+[[input]]
+id = "registry:OPTIMIZER.PARAM:0"
+origin = "hpotarget_optimizer.toml (OPTIMIZER.PARAM, example 1)"
+target = "targets/registry/OPTIMIZER.PARAM_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/OPTIMIZER.PARAM_0.dump"
+stdout = "expected/registry/OPTIMIZER.PARAM_0.stdout"
+
+[[input]]
+id = "registry:OPTIMIZER.PARAM:1"
+origin = "hpotarget_optimizer.toml (OPTIMIZER.PARAM, example 2)"
+target = "targets/registry/OPTIMIZER.PARAM_1.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/OPTIMIZER.PARAM_1.dump"
+stdout = "expected/registry/OPTIMIZER.PARAM_1.stdout"
+
+[[input]]
+id = "registry:OPTIMIZER.PARAM:2"
+origin = "hpotarget_optimizer.toml (OPTIMIZER.PARAM, example 3)"
+target = "targets/registry/OPTIMIZER.PARAM_2.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/OPTIMIZER.PARAM_2.dump"
+stdout = "expected/registry/OPTIMIZER.PARAM_2.stdout"
+
+[[input]]
+id = "registry:OPTIMIZER.PARAM:3"
+origin = "hpotarget_optimizer.toml (OPTIMIZER.PARAM, example 4)"
+target = "targets/registry/OPTIMIZER.PARAM_3.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/OPTIMIZER.PARAM_3.dump"
+stdout = "expected/registry/OPTIMIZER.PARAM_3.stdout"
+
+[[input]]
+id = "registry:OPTIMIZER.PARAM:4"
+origin = "hpotarget_optimizer.toml (OPTIMIZER.PARAM, example 5)"
+target = "targets/registry/OPTIMIZER.PARAM_4.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/OPTIMIZER.PARAM_4.dump"
+stdout = "expected/registry/OPTIMIZER.PARAM_4.stdout"
+
+[[input]]
+id = "registry:OPTIMIZER.LOG_HP:0"
+origin = "hpotarget_optimizer.toml (OPTIMIZER.LOG_HP, example 1)"
+target = "targets/registry/OPTIMIZER.LOG_HP_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/OPTIMIZER.LOG_HP_0.dump"
+stdout = "expected/registry/OPTIMIZER.LOG_HP_0.stdout"
+
+[[input]]
+id = "registry:OPTIMIZER.LOG_HP:1"
+origin = "hpotarget_optimizer.toml (OPTIMIZER.LOG_HP, example 2)"
+target = "targets/registry/OPTIMIZER.LOG_HP_1.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/OPTIMIZER.LOG_HP_1.dump"
+stdout = "expected/registry/OPTIMIZER.LOG_HP_1.stdout"
+
+[[input]]
+id = "registry:STRATEGY.TYPE:0"
+origin = "hpotarget_optimizer.toml (STRATEGY.TYPE, example 1)"
+target = "targets/registry/STRATEGY.TYPE_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/STRATEGY.TYPE_0.dump"
+stdout = "expected/registry/STRATEGY.TYPE_0.stdout"
+
+[[input]]
+id = "registry:STRATEGY.TYPE:1"
+origin = "hpotarget_optimizer.toml (STRATEGY.TYPE, example 2)"
+target = "targets/registry/STRATEGY.TYPE_1.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/STRATEGY.TYPE_1.dump"
+stdout = "expected/registry/STRATEGY.TYPE_1.stdout"
+
+[[input]]
+id = "registry:STRATEGY.N_STARTS:0"
+origin = "hpotarget_optimizer.toml (STRATEGY.N_STARTS, example 1)"
+target = "targets/registry/STRATEGY.N_STARTS_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/STRATEGY.N_STARTS_0.dump"
+stdout = "expected/registry/STRATEGY.N_STARTS_0.stdout"
+
+[[input]]
+id = "registry:STRATEGY.N_STARTS:1"
+origin = "hpotarget_optimizer.toml (STRATEGY.N_STARTS, example 2)"
+target = "targets/registry/STRATEGY.N_STARTS_1.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/STRATEGY.N_STARTS_1.dump"
+stdout = "expected/registry/STRATEGY.N_STARTS_1.stdout"
+
+[[input]]
+id = "registry:STRATEGY.BUDGET_PER_START:0"
+origin = "hpotarget_optimizer.toml (STRATEGY.BUDGET_PER_START, example 1)"
+target = "targets/registry/STRATEGY.BUDGET_PER_START_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/STRATEGY.BUDGET_PER_START_0.dump"
+stdout = "expected/registry/STRATEGY.BUDGET_PER_START_0.stdout"
+
+[[input]]
+id = "registry:STRATEGY.TOPK:0"
+origin = "hpotarget_optimizer.toml (STRATEGY.TOPK, example 1)"
+target = "targets/registry/STRATEGY.TOPK_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/STRATEGY.TOPK_0.dump"
+stdout = "expected/registry/STRATEGY.TOPK_0.stdout"
+
+[[input]]
+id = "registry:INIT.METHOD:0"
+origin = "hpotarget_optimizer.toml (INIT.METHOD, example 1)"
+target = "targets/registry/INIT.METHOD_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/INIT.METHOD_0.dump"
+stdout = "expected/registry/INIT.METHOD_0.stdout"
+
+[[input]]
+id = "registry:INIT.METHOD:1"
+origin = "hpotarget_optimizer.toml (INIT.METHOD, example 2)"
+target = "targets/registry/INIT.METHOD_1.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/INIT.METHOD_1.dump"
+stdout = "expected/registry/INIT.METHOD_1.stdout"
+
+[[input]]
+id = "registry:INIT.METHOD:2"
+origin = "hpotarget_optimizer.toml (INIT.METHOD, example 3)"
+target = "targets/registry/INIT.METHOD_2.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/INIT.METHOD_2.dump"
+stdout = "expected/registry/INIT.METHOD_2.stdout"
+
+[[input]]
+id = "registry:INIT.METHOD:3"
+origin = "hpotarget_optimizer.toml (INIT.METHOD, example 4)"
+target = "targets/registry/INIT.METHOD_3.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/INIT.METHOD_3.dump"
+stdout = "expected/registry/INIT.METHOD_3.stdout"
+
+[[input]]
+id = "registry:INIT.K_TOTAL:0"
+origin = "hpotarget_optimizer.toml (INIT.K_TOTAL, example 1)"
+target = "targets/registry/INIT.K_TOTAL_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/INIT.K_TOTAL_0.dump"
+stdout = "expected/registry/INIT.K_TOTAL_0.stdout"
+
+[[input]]
+id = "registry:INIT.K_TOTAL:1"
+origin = "hpotarget_optimizer.toml (INIT.K_TOTAL, example 2)"
+target = "targets/registry/INIT.K_TOTAL_1.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/INIT.K_TOTAL_1.dump"
+stdout = "expected/registry/INIT.K_TOTAL_1.stdout"
+
+[[input]]
+id = "registry:INIT.SEED:0"
+origin = "hpotarget_optimizer.toml (INIT.SEED, example 1)"
+target = "targets/registry/INIT.SEED_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/INIT.SEED_0.dump"
+stdout = "expected/registry/INIT.SEED_0.stdout"
+
+[[input]]
+id = "registry:INIT.WARM_ON_MISMATCH:0"
+origin = "hpotarget_optimizer.toml (INIT.WARM_ON_MISMATCH, example 1)"
+target = "targets/registry/INIT.WARM_ON_MISMATCH_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/INIT.WARM_ON_MISMATCH_0.dump"
+stdout = "expected/registry/INIT.WARM_ON_MISMATCH_0.stdout"
+
+[[input]]
+id = "registry:INIT.WARM_ON_MISMATCH:1"
+origin = "hpotarget_optimizer.toml (INIT.WARM_ON_MISMATCH, example 2)"
+target = "targets/registry/INIT.WARM_ON_MISMATCH_1.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/INIT.WARM_ON_MISMATCH_1.dump"
+stdout = "expected/registry/INIT.WARM_ON_MISMATCH_1.stdout"
+
+[[input]]
+id = "registry:INIT.WARM_ON_MISMATCH:2"
+origin = "hpotarget_optimizer.toml (INIT.WARM_ON_MISMATCH, example 3)"
+target = "targets/registry/INIT.WARM_ON_MISMATCH_2.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/INIT.WARM_ON_MISMATCH_2.dump"
+stdout = "expected/registry/INIT.WARM_ON_MISMATCH_2.stdout"
+stderr = "expected/registry/INIT.WARM_ON_MISMATCH_2.stderr"
+
+[[input]]
+id = "registry:NOISE.AUTO:0"
+origin = "hpotarget_optimizer.toml (NOISE.AUTO, example 1)"
+target = "targets/registry/NOISE.AUTO_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/NOISE.AUTO_0.dump"
+stdout = "expected/registry/NOISE.AUTO_0.stdout"
+
+[[input]]
+id = "registry:NOISE.AUTO:1"
+origin = "hpotarget_optimizer.toml (NOISE.AUTO, example 2)"
+target = "targets/registry/NOISE.AUTO_1.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/NOISE.AUTO_1.dump"
+stdout = "expected/registry/NOISE.AUTO_1.stdout"
+
+[[input]]
+id = "registry:NOISE.AUTO:2"
+origin = "hpotarget_optimizer.toml (NOISE.AUTO, example 3)"
+target = "targets/registry/NOISE.AUTO_2.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/NOISE.AUTO_2.dump"
+stdout = "expected/registry/NOISE.AUTO_2.stdout"
+
+[[input]]
+id = "registry:NOISE.CALIBRATION:0"
+origin = "hpotarget_optimizer.toml (NOISE.CALIBRATION, example 1)"
+target = "targets/registry/NOISE.CALIBRATION_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/NOISE.CALIBRATION_0.dump"
+stdout = "expected/registry/NOISE.CALIBRATION_0.stdout"
+
+[[input]]
+id = "registry:NOISE.CALIBRATION:1"
+origin = "hpotarget_optimizer.toml (NOISE.CALIBRATION, example 2)"
+target = "targets/registry/NOISE.CALIBRATION_1.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/NOISE.CALIBRATION_1.dump"
+stdout = "expected/registry/NOISE.CALIBRATION_1.stdout"
+
+[[input]]
+id = "registry:RESTART.AFTER_STAGNATION:0"
+origin = "hpotarget_optimizer.toml (RESTART.AFTER_STAGNATION, example 1)"
+target = "targets/registry/RESTART.AFTER_STAGNATION_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/RESTART.AFTER_STAGNATION_0.dump"
+stdout = "expected/registry/RESTART.AFTER_STAGNATION_0.stdout"
+
+[[input]]
+id = "registry:RESTART.MAX:0"
+origin = "hpotarget_optimizer.toml (RESTART.MAX, example 1)"
+target = "targets/registry/RESTART.MAX_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/RESTART.MAX_0.dump"
+stdout = "expected/registry/RESTART.MAX_0.stdout"
+
+[[input]]
+id = "registry:ROOT.PC_EMAE:0"
+origin = "hpotarget_lines.toml (ROOT.PC_EMAE, example 1)"
+target = "targets/registry/ROOT.PC_EMAE_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/ROOT.PC_EMAE_0.dump"
+stdout = "expected/registry/ROOT.PC_EMAE_0.stdout"
+
+[[input]]
+id = "registry:ROOT.PC_EMAE:1"
+origin = "hpotarget_lines.toml (ROOT.PC_EMAE, example 2)"
+target = "targets/registry/ROOT.PC_EMAE_1.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/ROOT.PC_EMAE_1.dump"
+stdout = "expected/registry/ROOT.PC_EMAE_1.stdout"
+
+[[input]]
+id = "registry:ROOT.PC_ERMSE:0"
+origin = "hpotarget_lines.toml (ROOT.PC_ERMSE, example 1)"
+target = "targets/registry/ROOT.PC_ERMSE_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/ROOT.PC_ERMSE_0.dump"
+stdout = "expected/registry/ROOT.PC_ERMSE_0.stdout"
+
+[[input]]
+id = "registry:ROOT.PC_ERMSE:1"
+origin = "hpotarget_lines.toml (ROOT.PC_ERMSE, example 2)"
+target = "targets/registry/ROOT.PC_ERMSE_1.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/ROOT.PC_ERMSE_1.dump"
+stdout = "expected/registry/ROOT.PC_ERMSE_1.stdout"
+
+[[input]]
+id = "registry:ROOT.PC_ErRMSE:0"
+origin = "hpotarget_lines.toml (ROOT.PC_ErRMSE, example 1)"
+target = "targets/registry/ROOT.PC_ErRMSE_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/ROOT.PC_ErRMSE_0.dump"
+stdout = "expected/registry/ROOT.PC_ErRMSE_0.stdout"
+
+[[input]]
+id = "registry:ROOT.PC_ERSQ:0"
+origin = "hpotarget_lines.toml (ROOT.PC_ERSQ, example 1)"
+target = "targets/registry/ROOT.PC_ERSQ_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/ROOT.PC_ERSQ_0.dump"
+stdout = "expected/registry/ROOT.PC_ERSQ_0.stdout"
+
+[[input]]
+id = "registry:ROOT.PC_SRMSE_GPA:0"
+origin = "hpotarget_lines.toml (ROOT.PC_SRMSE_GPA, example 1)"
+target = "targets/registry/ROOT.PC_SRMSE_GPA_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/ROOT.PC_SRMSE_GPA_0.dump"
+stdout = "expected/registry/ROOT.PC_SRMSE_GPA_0.stdout"
+
+[[input]]
+id = "registry:ROOT.PC_SRMSE_GPA:1"
+origin = "hpotarget_lines.toml (ROOT.PC_SRMSE_GPA, example 2)"
+target = "targets/registry/ROOT.PC_SRMSE_GPA_1.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/ROOT.PC_SRMSE_GPA_1.dump"
+stdout = "expected/registry/ROOT.PC_SRMSE_GPA_1.stdout"
+
+[[input]]
+id = "registry:ROOT.PC_FRMSE:0"
+origin = "hpotarget_lines.toml (ROOT.PC_FRMSE, example 1)"
+target = "targets/registry/ROOT.PC_FRMSE_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/ROOT.PC_FRMSE_0.dump"
+stdout = "expected/registry/ROOT.PC_FRMSE_0.stdout"
+
+[[input]]
+id = "registry:ROOT.PC_FRMSE:1"
+origin = "hpotarget_lines.toml (ROOT.PC_FRMSE, example 2)"
+target = "targets/registry/ROOT.PC_FRMSE_1.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/ROOT.PC_FRMSE_1.dump"
+stdout = "expected/registry/ROOT.PC_FRMSE_1.stdout"
+
+[[input]]
+id = "registry:ROOT.PC_LAMMPS:0"
+origin = "hpotarget_lines.toml (ROOT.PC_LAMMPS, example 1)"
+target = "targets/registry/ROOT.PC_LAMMPS_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/ROOT.PC_LAMMPS_0.dump"
+stdout = "expected/registry/ROOT.PC_LAMMPS_0.stdout"
+
+[[input]]
+id = "registry:ROOT.PC_LAMMPS:1"
+origin = "hpotarget_lines.toml (ROOT.PC_LAMMPS, example 2)"
+target = "targets/registry/ROOT.PC_LAMMPS_1.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/ROOT.PC_LAMMPS_1.dump"
+stdout = "expected/registry/ROOT.PC_LAMMPS_1.stdout"
+
+[[input]]
+id = "registry:ROOT.PC_LAMMPS:2"
+origin = "hpotarget_lines.toml (ROOT.PC_LAMMPS, example 3)"
+target = "targets/registry/ROOT.PC_LAMMPS_2.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/ROOT.PC_LAMMPS_2.dump"
+stdout = "expected/registry/ROOT.PC_LAMMPS_2.stdout"
+
+[[input]]
+id = "registry:ROOT.PC_FAILPROBE:0"
+origin = "hpotarget_lines.toml (ROOT.PC_FAILPROBE, example 1)"
+target = "targets/registry/ROOT.PC_FAILPROBE_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/ROOT.PC_FAILPROBE_0.dump"
+stdout = "expected/registry/ROOT.PC_FAILPROBE_0.stdout"
+
+[[input]]
+id = "registry:ROOT.PC_FAILPROBE:1"
+origin = "hpotarget_lines.toml (ROOT.PC_FAILPROBE, example 2)"
+target = "targets/registry/ROOT.PC_FAILPROBE_1.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/ROOT.PC_FAILPROBE_1.dump"
+stdout = "expected/registry/ROOT.PC_FAILPROBE_1.stdout"
+
+[[input]]
+id = "registry:ROOT.PC_OBSERVABLE:0"
+origin = "hpotarget_lines.toml (ROOT.PC_OBSERVABLE, example 1)"
+target = "targets/registry/ROOT.PC_OBSERVABLE_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/ROOT.PC_OBSERVABLE_0.dump"
+stdout = "expected/registry/ROOT.PC_OBSERVABLE_0.stdout"
+
+[[input]]
+id = "registry:ROOT.LOSS:0"
+origin = "hpotarget_lines.toml (ROOT.LOSS, example 1)"
+target = "targets/registry/ROOT.LOSS_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/ROOT.LOSS_0.dump"
+stdout = "expected/registry/ROOT.LOSS_0.stdout"
+
+[[input]]
+id = "registry:ROOT.LOSS:1"
+origin = "hpotarget_lines.toml (ROOT.LOSS, example 2)"
+target = "targets/registry/ROOT.LOSS_1.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/ROOT.LOSS_1.dump"
+stdout = "expected/registry/ROOT.LOSS_1.stdout"
+
+[[input]]
+id = "registry:ROOT.OPTIM:0"
+origin = "hpotarget_lines.toml (ROOT.OPTIM, example 1)"
+target = "targets/registry/ROOT.OPTIM_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/ROOT.OPTIM_0.dump"
+stdout = "expected/registry/ROOT.OPTIM_0.stdout"
+
+[[input]]
+id = "registry:ROOT.OPTIM:1"
+origin = "hpotarget_lines.toml (ROOT.OPTIM, example 2)"
+target = "targets/registry/ROOT.OPTIM_1.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/ROOT.OPTIM_1.dump"
+stdout = "expected/registry/ROOT.OPTIM_1.stdout"
+
+[[input]]
+id = "registry:RHOGATE.R_LO:0"
+origin = "hpotarget.toml (RHOGATE.R_LO, example 1)"
+target = "targets/registry/RHOGATE.R_LO_0.hpo"
+config = "configs/main_ream.tadah"
+tree = "fixtures"
+expected = "expected/registry/RHOGATE.R_LO_0.dump"
+stdout = "expected/registry/RHOGATE.R_LO_0.stdout"
+
+[[input]]
+id = "registry:RHOGATE.NPTS:0"
+origin = "hpotarget.toml (RHOGATE.NPTS, example 1)"
+target = "targets/registry/RHOGATE.NPTS_0.hpo"
+config = "configs/main_ream.tadah"
+tree = "fixtures"
+expected = "expected/registry/RHOGATE.NPTS_0.dump"
+stdout = "expected/registry/RHOGATE.NPTS_0.stdout"
+
+[[input]]
+id = "registry:RHOGATE.SEED:0"
+origin = "hpotarget.toml (RHOGATE.SEED, example 1)"
+target = "targets/registry/RHOGATE.SEED_0.hpo"
+config = "configs/main_ream.tadah"
+tree = "fixtures"
+expected = "expected/registry/RHOGATE.SEED_0.dump"
+stdout = "expected/registry/RHOGATE.SEED_0.stdout"
+
+[[input]]
+id = "registry:RHOGATE.SEED:1"
+origin = "hpotarget.toml (RHOGATE.SEED, example 2)"
+target = "targets/registry/RHOGATE.SEED_1.hpo"
+config = "configs/main_ream.tadah"
+tree = "fixtures"
+expected = "expected/registry/RHOGATE.SEED_1.dump"
+stdout = "expected/registry/RHOGATE.SEED_1.stdout"
+
+[[input]]
+id = "registry:RHOBARGATE.NPTS:0"
+origin = "hpotarget.toml (RHOBARGATE.NPTS, example 1)"
+target = "targets/registry/RHOBARGATE.NPTS_0.hpo"
+config = "configs/main_ream.tadah"
+tree = "fixtures"
+expected = "expected/registry/RHOBARGATE.NPTS_0.dump"
+stdout = "expected/registry/RHOBARGATE.NPTS_0.stdout"
+
+[[input]]
+id = "registry:RHOBARGATE.SEED:0"
+origin = "hpotarget.toml (RHOBARGATE.SEED, example 1)"
+target = "targets/registry/RHOBARGATE.SEED_0.hpo"
+config = "configs/main_ream.tadah"
+tree = "fixtures"
+expected = "expected/registry/RHOBARGATE.SEED_0.dump"
+stdout = "expected/registry/RHOBARGATE.SEED_0.stdout"
+
+[[input]]
+id = "registry:RHOBARGATE.SEED:1"
+origin = "hpotarget.toml (RHOBARGATE.SEED, example 2)"
+target = "targets/registry/RHOBARGATE.SEED_1.hpo"
+config = "configs/main_ream.tadah"
+tree = "fixtures"
+expected = "expected/registry/RHOBARGATE.SEED_1.dump"
+stdout = "expected/registry/RHOBARGATE.SEED_1.stdout"
+
+[[input]]
+id = "registry:PC_EMAE.--skip-above:0"
+origin = "hpotarget_lines.toml (PC_EMAE.--skip-above, example 1)"
+target = "targets/registry/PC_EMAE.--skip-above_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PC_EMAE.--skip-above_0.dump"
+stdout = "expected/registry/PC_EMAE.--skip-above_0.stdout"
+
+[[input]]
+id = "registry:PC_EMAE.--skip-rel:0"
+origin = "hpotarget_lines.toml (PC_EMAE.--skip-rel, example 1)"
+target = "targets/registry/PC_EMAE.--skip-rel_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PC_EMAE.--skip-rel_0.dump"
+stdout = "expected/registry/PC_EMAE.--skip-rel_0.stdout"
+
+[[input]]
+id = "registry:PC_LAMMPS.--script:0"
+origin = "hpotarget_lines.toml (PC_LAMMPS.--script, example 1)"
+target = "targets/registry/PC_LAMMPS.--script_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PC_LAMMPS.--script_0.dump"
+stdout = "expected/registry/PC_LAMMPS.--script_0.stdout"
+
+[[input]]
+id = "registry:PC_LAMMPS.--varloss:0"
+origin = "hpotarget_lines.toml (PC_LAMMPS.--varloss, example 1)"
+target = "targets/registry/PC_LAMMPS.--varloss_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PC_LAMMPS.--varloss_0.dump"
+stdout = "expected/registry/PC_LAMMPS.--varloss_0.stdout"
+
+[[input]]
+id = "registry:PC_LAMMPS.--varloss:1"
+origin = "hpotarget_lines.toml (PC_LAMMPS.--varloss, example 2)"
+target = "targets/registry/PC_LAMMPS.--varloss_1.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PC_LAMMPS.--varloss_1.dump"
+stdout = "expected/registry/PC_LAMMPS.--varloss_1.stdout"
+
+[[input]]
+id = "registry:PC_LAMMPS.--invar:0"
+origin = "hpotarget_lines.toml (PC_LAMMPS.--invar, example 1)"
+target = "targets/registry/PC_LAMMPS.--invar_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PC_LAMMPS.--invar_0.dump"
+stdout = "expected/registry/PC_LAMMPS.--invar_0.stdout"
+
+[[input]]
+id = "registry:PC_LAMMPS.--outvar:0"
+origin = "hpotarget_lines.toml (PC_LAMMPS.--outvar, example 1)"
+target = "targets/registry/PC_LAMMPS.--outvar_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PC_LAMMPS.--outvar_0.dump"
+stdout = "expected/registry/PC_LAMMPS.--outvar_0.stdout"
+
+[[input]]
+id = "registry:PC_LAMMPS.--failscore:0"
+origin = "hpotarget_lines.toml (PC_LAMMPS.--failscore, example 1)"
+target = "targets/registry/PC_LAMMPS.--failscore_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PC_LAMMPS.--failscore_0.dump"
+stdout = "expected/registry/PC_LAMMPS.--failscore_0.stdout"
+
+[[input]]
+id = "registry:PC_LAMMPS.--maxtime:0"
+origin = "hpotarget_lines.toml (PC_LAMMPS.--maxtime, example 1)"
+target = "targets/registry/PC_LAMMPS.--maxtime_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PC_LAMMPS.--maxtime_0.dump"
+stdout = "expected/registry/PC_LAMMPS.--maxtime_0.stdout"
+
+[[input]]
+id = "registry:PC_LAMMPS.--maxtime:1"
+origin = "hpotarget_lines.toml (PC_LAMMPS.--maxtime, example 2)"
+target = "targets/registry/PC_LAMMPS.--maxtime_1.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PC_LAMMPS.--maxtime_1.dump"
+stdout = "expected/registry/PC_LAMMPS.--maxtime_1.stdout"
+
+[[input]]
+id = "registry:PC_LAMMPS.--hotvar:0"
+origin = "hpotarget_lines.toml (PC_LAMMPS.--hotvar, example 1)"
+target = "targets/registry/PC_LAMMPS.--hotvar_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PC_LAMMPS.--hotvar_0.dump"
+stdout = "expected/registry/PC_LAMMPS.--hotvar_0.stdout"
+
+[[input]]
+id = "registry:PC_LAMMPS.--failvar:0"
+origin = "hpotarget_lines.toml (PC_LAMMPS.--failvar, example 1)"
+target = "targets/registry/PC_LAMMPS.--failvar_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PC_LAMMPS.--failvar_0.dump"
+stdout = "expected/registry/PC_LAMMPS.--failvar_0.stdout"
+
+[[input]]
+id = "registry:PC_LAMMPS.--failvar:1"
+origin = "hpotarget_lines.toml (PC_LAMMPS.--failvar, example 2)"
+target = "targets/registry/PC_LAMMPS.--failvar_1.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PC_LAMMPS.--failvar_1.dump"
+stdout = "expected/registry/PC_LAMMPS.--failvar_1.stdout"
+
+[[input]]
+id = "registry:PC_FAILPROBE.--gate:0"
+origin = "hpotarget_lines.toml (PC_FAILPROBE.--gate, example 1)"
+target = "targets/registry/PC_FAILPROBE.--gate_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PC_FAILPROBE.--gate_0.dump"
+stdout = "expected/registry/PC_FAILPROBE.--gate_0.stdout"
+
+[[input]]
+id = "registry:PC_FAILPROBE.--s0:0"
+origin = "hpotarget_lines.toml (PC_FAILPROBE.--s0, example 1)"
+target = "targets/registry/PC_FAILPROBE.--s0_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PC_FAILPROBE.--s0_0.dump"
+stdout = "expected/registry/PC_FAILPROBE.--s0_0.stdout"
+
+[[input]]
+id = "registry:PC_OBSERVABLE.cohesive_energy.--species:0"
+origin = "hpotarget_lines.toml (PC_OBSERVABLE.cohesive_energy.--species, example 1)"
+target = "targets/registry/PC_OBSERVABLE.cohesive_energy.--species_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PC_OBSERVABLE.cohesive_energy.--species_0.dump"
+stdout = "expected/registry/PC_OBSERVABLE.cohesive_energy.--species_0.stdout"
+
+[[input]]
+id = "registry:PC_OBSERVABLE.cohesive_energy.--target:0"
+origin = "hpotarget_lines.toml (PC_OBSERVABLE.cohesive_energy.--target, example 1)"
+target = "targets/registry/PC_OBSERVABLE.cohesive_energy.--target_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PC_OBSERVABLE.cohesive_energy.--target_0.dump"
+stdout = "expected/registry/PC_OBSERVABLE.cohesive_energy.--target_0.stdout"
+
+[[input]]
+id = "registry:PC_OBSERVABLE.cohesive_energy.--weight:0"
+origin = "hpotarget_lines.toml (PC_OBSERVABLE.cohesive_energy.--weight, example 1)"
+target = "targets/registry/PC_OBSERVABLE.cohesive_energy.--weight_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PC_OBSERVABLE.cohesive_energy.--weight_0.dump"
+stdout = "expected/registry/PC_OBSERVABLE.cohesive_energy.--weight_0.stdout"
+
+[[input]]
+id = "registry:PC_OBSERVABLE.cohesive_energy.--hotvar:0"
+origin = "hpotarget_lines.toml (PC_OBSERVABLE.cohesive_energy.--hotvar, example 1)"
+target = "targets/registry/PC_OBSERVABLE.cohesive_energy.--hotvar_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PC_OBSERVABLE.cohesive_energy.--hotvar_0.dump"
+stdout = "expected/registry/PC_OBSERVABLE.cohesive_energy.--hotvar_0.stdout"
+
+[[input]]
+id = "registry:PC_OBSERVABLE.cohesive_energy.--lattice:0"
+origin = "hpotarget_lines.toml (PC_OBSERVABLE.cohesive_energy.--lattice, example 1)"
+target = "targets/registry/PC_OBSERVABLE.cohesive_energy.--lattice_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PC_OBSERVABLE.cohesive_energy.--lattice_0.dump"
+stdout = "expected/registry/PC_OBSERVABLE.cohesive_energy.--lattice_0.stdout"
+
+[[input]]
+id = "registry:PC_OBSERVABLE.cohesive_energy.--supercell:0"
+origin = "hpotarget_lines.toml (PC_OBSERVABLE.cohesive_energy.--supercell, example 1)"
+target = "targets/registry/PC_OBSERVABLE.cohesive_energy.--supercell_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PC_OBSERVABLE.cohesive_energy.--supercell_0.dump"
+stdout = "expected/registry/PC_OBSERVABLE.cohesive_energy.--supercell_0.stdout"
+
+[[input]]
+id = "registry:PC_OBSERVABLE.cohesive_energy.--loss:0"
+origin = "hpotarget_lines.toml (PC_OBSERVABLE.cohesive_energy.--loss, example 1)"
+target = "targets/registry/PC_OBSERVABLE.cohesive_energy.--loss_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PC_OBSERVABLE.cohesive_energy.--loss_0.dump"
+stdout = "expected/registry/PC_OBSERVABLE.cohesive_energy.--loss_0.stdout"
+
+[[input]]
+id = "registry:PC_OBSERVABLE.cohesive_energy.--loss:1"
+origin = "hpotarget_lines.toml (PC_OBSERVABLE.cohesive_energy.--loss, example 2)"
+target = "targets/registry/PC_OBSERVABLE.cohesive_energy.--loss_1.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PC_OBSERVABLE.cohesive_energy.--loss_1.dump"
+stdout = "expected/registry/PC_OBSERVABLE.cohesive_energy.--loss_1.stdout"
+
+[[input]]
+id = "registry:PC_OBSERVABLE.cohesive_energy.--maxiter:0"
+origin = "hpotarget_lines.toml (PC_OBSERVABLE.cohesive_energy.--maxiter, example 1)"
+target = "targets/registry/PC_OBSERVABLE.cohesive_energy.--maxiter_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PC_OBSERVABLE.cohesive_energy.--maxiter_0.dump"
+stdout = "expected/registry/PC_OBSERVABLE.cohesive_energy.--maxiter_0.stdout"
+
+[[input]]
+id = "registry:PC_OBSERVABLE.cohesive_energy.--maxeval:0"
+origin = "hpotarget_lines.toml (PC_OBSERVABLE.cohesive_energy.--maxeval, example 1)"
+target = "targets/registry/PC_OBSERVABLE.cohesive_energy.--maxeval_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PC_OBSERVABLE.cohesive_energy.--maxeval_0.dump"
+stdout = "expected/registry/PC_OBSERVABLE.cohesive_energy.--maxeval_0.stdout"
+
+[[input]]
+id = "registry:PC_OBSERVABLE.cohesive_energy.--max-wall-time:0"
+origin = "hpotarget_lines.toml (PC_OBSERVABLE.cohesive_energy.--max-wall-time, example 1)"
+target = "targets/registry/PC_OBSERVABLE.cohesive_energy.--max-wall-time_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PC_OBSERVABLE.cohesive_energy.--max-wall-time_0.dump"
+stdout = "expected/registry/PC_OBSERVABLE.cohesive_energy.--max-wall-time_0.stdout"
+
+[[input]]
+id = "registry:PC_OBSERVABLE.cohesive_energy.--max-wall-time:1"
+origin = "hpotarget_lines.toml (PC_OBSERVABLE.cohesive_energy.--max-wall-time, example 2)"
+target = "targets/registry/PC_OBSERVABLE.cohesive_energy.--max-wall-time_1.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PC_OBSERVABLE.cohesive_energy.--max-wall-time_1.dump"
+stdout = "expected/registry/PC_OBSERVABLE.cohesive_energy.--max-wall-time_1.stdout"
+
+[[input]]
+id = "registry:PC_OBSERVABLE.cohesive_energy.--etol:0"
+origin = "hpotarget_lines.toml (PC_OBSERVABLE.cohesive_energy.--etol, example 1)"
+target = "targets/registry/PC_OBSERVABLE.cohesive_energy.--etol_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PC_OBSERVABLE.cohesive_energy.--etol_0.dump"
+stdout = "expected/registry/PC_OBSERVABLE.cohesive_energy.--etol_0.stdout"
+
+[[input]]
+id = "registry:PC_OBSERVABLE.cohesive_energy.--etol:1"
+origin = "hpotarget_lines.toml (PC_OBSERVABLE.cohesive_energy.--etol, example 2)"
+target = "targets/registry/PC_OBSERVABLE.cohesive_energy.--etol_1.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PC_OBSERVABLE.cohesive_energy.--etol_1.dump"
+stdout = "expected/registry/PC_OBSERVABLE.cohesive_energy.--etol_1.stdout"
+
+[[input]]
+id = "registry:PC_OBSERVABLE.cohesive_energy.--fmax-converged:0"
+origin = "hpotarget_lines.toml (PC_OBSERVABLE.cohesive_energy.--fmax-converged, example 1)"
+target = "targets/registry/PC_OBSERVABLE.cohesive_energy.--fmax-converged_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PC_OBSERVABLE.cohesive_energy.--fmax-converged_0.dump"
+stdout = "expected/registry/PC_OBSERVABLE.cohesive_energy.--fmax-converged_0.stdout"
+
+[[input]]
+id = "registry:PC_OBSERVABLE.cohesive_energy.--ptol:0"
+origin = "hpotarget_lines.toml (PC_OBSERVABLE.cohesive_energy.--ptol, example 1)"
+target = "targets/registry/PC_OBSERVABLE.cohesive_energy.--ptol_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PC_OBSERVABLE.cohesive_energy.--ptol_0.dump"
+stdout = "expected/registry/PC_OBSERVABLE.cohesive_energy.--ptol_0.stdout"
+
+[[input]]
+id = "registry:PC_OBSERVABLE.cohesive_energy.--unconverged:0"
+origin = "hpotarget_lines.toml (PC_OBSERVABLE.cohesive_energy.--unconverged, example 1)"
+target = "targets/registry/PC_OBSERVABLE.cohesive_energy.--unconverged_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PC_OBSERVABLE.cohesive_energy.--unconverged_0.dump"
+stdout = "expected/registry/PC_OBSERVABLE.cohesive_energy.--unconverged_0.stdout"
+
+[[input]]
+id = "registry:PC_OBSERVABLE.cohesive_energy.--unconverged:1"
+origin = "hpotarget_lines.toml (PC_OBSERVABLE.cohesive_energy.--unconverged, example 2)"
+target = "targets/registry/PC_OBSERVABLE.cohesive_energy.--unconverged_1.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PC_OBSERVABLE.cohesive_energy.--unconverged_1.dump"
+stdout = "expected/registry/PC_OBSERVABLE.cohesive_energy.--unconverged_1.stdout"
+
+[[input]]
+id = "registry:OPTIM.AUTO.RATIO:0"
+origin = "hpotarget_lines.toml (OPTIM.AUTO.RATIO, example 1)"
+target = "targets/registry/OPTIM.AUTO.RATIO_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/OPTIM.AUTO.RATIO_0.dump"
+stdout = "expected/registry/OPTIM.AUTO.RATIO_0.stdout"
+
+[[input]]
+id = "registry:OPTIM.AUTO.FRAC:0"
+origin = "hpotarget_lines.toml (OPTIM.AUTO.FRAC, example 1)"
+target = "targets/registry/OPTIM.AUTO.FRAC_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/OPTIM.AUTO.FRAC_0.dump"
+stdout = "expected/registry/OPTIM.AUTO.FRAC_0.stdout"
+
+[[input]]
+id = "registry:OPTIM.AUTO.FRAC:1"
+origin = "hpotarget_lines.toml (OPTIM.AUTO.FRAC, example 2)"
+target = "targets/registry/OPTIM.AUTO.FRAC_1.hpo"
+config = "configs/lines_zero_seed.tadah"
+tree = "fixtures"
+expected = "expected/registry/OPTIM.AUTO.FRAC_1.dump"
+stdout = "expected/registry/OPTIM.AUTO.FRAC_1.stdout"
+
+[[input]]
+id = "registry:OPTIM.AUTO.FLOOR:0"
+origin = "hpotarget_lines.toml (OPTIM.AUTO.FLOOR, example 1)"
+target = "targets/registry/OPTIM.AUTO.FLOOR_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/OPTIM.AUTO.FLOOR_0.dump"
+stdout = "expected/registry/OPTIM.AUTO.FLOOR_0.stdout"
+
+[[input]]
+id = "registry:OPTIM.AUTO.GROUP_FLOOR:0"
+origin = "hpotarget_lines.toml (OPTIM.AUTO.GROUP_FLOOR, example 1)"
+target = "targets/registry/OPTIM.AUTO.GROUP_FLOOR_0.hpo"
+config = "configs/lines_zero_seed.tadah"
+tree = "fixtures"
+expected = "expected/registry/OPTIM.AUTO.GROUP_FLOOR_0.dump"
+stdout = "expected/registry/OPTIM.AUTO.GROUP_FLOOR_0.stdout"
+
+[[input]]
+id = "registry:OPTIM.LIN:0"
+origin = "hpotarget_lines.toml (OPTIM.LIN, example 1)"
+target = "targets/registry/OPTIM.LIN_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/OPTIM.LIN_0.dump"
+stdout = "expected/registry/OPTIM.LIN_0.stdout"
+
+[[input]]
+id = "registry:OPTIM.LOG:0"
+origin = "hpotarget_lines.toml (OPTIM.LOG, example 1)"
+target = "targets/registry/OPTIM.LOG_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/OPTIM.LOG_0.dump"
+stdout = "expected/registry/OPTIM.LOG_0.stdout"
+
+[[input]]
+id = "registry:OPTIM.ASINH:0"
+origin = "hpotarget_lines.toml (OPTIM.ASINH, example 1)"
+target = "targets/registry/OPTIM.ASINH_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/OPTIM.ASINH_0.dump"
+stdout = "expected/registry/OPTIM.ASINH_0.stdout"
+
+[[input]]
+id = "registry:PC_OBSERVABLE.cohesive_energy:0"
+origin = "hpotarget_lines.toml (PC_OBSERVABLE.cohesive_energy, example 1)"
+target = "targets/registry/PC_OBSERVABLE.cohesive_energy_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PC_OBSERVABLE.cohesive_energy_0.dump"
+stdout = "expected/registry/PC_OBSERVABLE.cohesive_energy_0.stdout"
+
+[[input]]
+id = "registry:OPTIM.range:0"
+origin = "hpotarget_lines.toml (OPTIM.range, example 1)"
+target = "targets/registry/OPTIM.range_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/OPTIM.range_0.dump"
+stdout = "expected/registry/OPTIM.range_0.stdout"
+
+[[input]]
+id = "registry:OPTIM.range:1"
+origin = "hpotarget_lines.toml (OPTIM.range, example 2)"
+target = "targets/registry/OPTIM.range_1.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/OPTIM.range_1.dump"
+stdout = "expected/registry/OPTIM.range_1.stdout"
+
+[[input]]
+id = "registry:OPTIM.AUTO:0"
+origin = "hpotarget_lines.toml (OPTIM.AUTO, example 1)"
+target = "targets/registry/OPTIM.AUTO_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/OPTIM.AUTO_0.dump"
+stdout = "expected/registry/OPTIM.AUTO_0.stdout"
+
+[[input]]
+id = "registry:OPTIM.AUTO:1"
+origin = "hpotarget_lines.toml (OPTIM.AUTO, example 2)"
+target = "targets/registry/OPTIM.AUTO_1.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/OPTIM.AUTO_1.dump"
+stdout = "expected/registry/OPTIM.AUTO_1.stdout"
+
+[[input]]
+id = "registry:OPTIM.AUTO:2"
+origin = "hpotarget_lines.toml (OPTIM.AUTO, example 3)"
+target = "targets/registry/OPTIM.AUTO_2.hpo"
+config = "configs/lines_zero_width.tadah"
+tree = "fixtures"
+expected = "expected/registry/OPTIM.AUTO_2.dump"
+stdout = "expected/registry/OPTIM.AUTO_2.stdout"
+
+[[input]]
+id = "registry:RULE.density_key_arming:0"
+origin = "hpotarget.toml (RULE.density_key_arming, example 1)"
+target = "targets/registry/RULE.density_key_arming_0.hpo"
+config = "configs/main_ream.tadah"
+tree = "fixtures"
+expected = "expected/registry/RULE.density_key_arming_0.dump"
+stdout = "expected/registry/RULE.density_key_arming_0.stdout"
+
+[[input]]
+id = "registry:RULE.local_search_needs_stop:0"
+origin = "hpotarget_optimizer.toml (RULE.local_search_needs_stop, example 1)"
+target = "targets/registry/RULE.local_search_needs_stop_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/RULE.local_search_needs_stop_0.dump"
+stdout = "expected/registry/RULE.local_search_needs_stop_0.stdout"
+
+[[input]]
+id = "registry:RULE.search_dimensions_required:0"
+origin = "hpotarget_optimizer.toml (RULE.search_dimensions_required, example 1)"
+target = "targets/registry/RULE.search_dimensions_required_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/RULE.search_dimensions_required_0.dump"
+stdout = "expected/registry/RULE.search_dimensions_required_0.stdout"
+
+[[input]]
+id = "registry:RULE.set_once_for_optimiser:0"
+origin = "hpotarget_optimizer.toml (RULE.set_once_for_optimiser, example 1)"
+target = "targets/registry/RULE.set_once_for_optimiser_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/RULE.set_once_for_optimiser_0.dump"
+stdout = "expected/registry/RULE.set_once_for_optimiser_0.stdout"
+
+[[input]]
+id = "registry:RULE.set_once_for_starting_points:0"
+origin = "hpotarget_optimizer.toml (RULE.set_once_for_starting_points, example 1)"
+target = "targets/registry/RULE.set_once_for_starting_points_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/RULE.set_once_for_starting_points_0.dump"
+stdout = "expected/registry/RULE.set_once_for_starting_points_0.stdout"
+
+[[input]]
+id = "registry:RULE.OPTIM_MPARAMS:0"
+origin = "hpotarget_lines.toml (RULE.OPTIM_MPARAMS, example 1)"
+target = "targets/registry/RULE.OPTIM_MPARAMS_0.hpo"
+config = "configs/lines_rbf.tadah"
+tree = "fixtures"
+expected = "expected/registry/RULE.OPTIM_MPARAMS_0.dump"
+stdout = "expected/registry/RULE.OPTIM_MPARAMS_0.stdout"
+
+[[input]]
+id = "registry:RULE.settings_taken_by_lines:0"
+origin = "hpotarget_lines.toml (RULE.settings_taken_by_lines, example 1)"
+target = "targets/registry/RULE.settings_taken_by_lines_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/RULE.settings_taken_by_lines_0.dump"
+stdout = "expected/registry/RULE.settings_taken_by_lines_0.stdout"
+
+[[input]]
+id = "registry:RULE.PC_LAMMPS_hotvar_unique:0"
+origin = "hpotarget_lines.toml (RULE.PC_LAMMPS_hotvar_unique, example 1)"
+target = "targets/registry/RULE.PC_LAMMPS_hotvar_unique_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/RULE.PC_LAMMPS_hotvar_unique_0.dump"
+stdout = "expected/registry/RULE.PC_LAMMPS_hotvar_unique_0.stdout"
+
+[[input]]
+id = "registry:RULE.PC_OBSERVABLE_GRAD_STRATEGY:0"
+origin = "hpotarget_lines.toml (RULE.PC_OBSERVABLE_GRAD_STRATEGY, example 1)"
+target = "targets/registry/RULE.PC_OBSERVABLE_GRAD_STRATEGY_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/RULE.PC_OBSERVABLE_GRAD_STRATEGY_0.dump"
+stdout = "expected/registry/RULE.PC_OBSERVABLE_GRAD_STRATEGY_0.stdout"
+
+[[input]]
+id = "registry:RULE.PC_LAMMPS_gradient_free:0"
+origin = "hpotarget_lines.toml (RULE.PC_LAMMPS_gradient_free, example 1)"
+target = "targets/registry/RULE.PC_LAMMPS_gradient_free_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/RULE.PC_LAMMPS_gradient_free_0.dump"
+stdout = "expected/registry/RULE.PC_LAMMPS_gradient_free_0.stdout"
+
+[[input]]
+id = "registry:RULE.PC_LAMMPS_INNER_gradient_free:0"
+origin = "hpotarget_lines.toml (RULE.PC_LAMMPS_INNER_gradient_free, example 1)"
+target = "targets/registry/RULE.PC_LAMMPS_INNER_gradient_free_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/RULE.PC_LAMMPS_INNER_gradient_free_0.dump"
+stdout = "expected/registry/RULE.PC_LAMMPS_INNER_gradient_free_0.stdout"
+
+[[input]]
+id = "registry:RULE.OPTIM_LAMBDA_evidence:0"
+origin = "hpotarget_lines.toml (RULE.OPTIM_LAMBDA_evidence, example 1)"
+target = "targets/registry/RULE.OPTIM_LAMBDA_evidence_0.hpo"
+config = "configs/lines_oalgo.tadah"
+tree = "fixtures"
+expected = "expected/registry/RULE.OPTIM_LAMBDA_evidence_0.dump"
+stdout = "expected/registry/RULE.OPTIM_LAMBDA_evidence_0.stdout"
+
+[[input]]
+id = "registry:RULE.OPTIM_OALGO_threshold_box:0"
+origin = "hpotarget_lines.toml (RULE.OPTIM_OALGO_threshold_box, example 1)"
+target = "targets/registry/RULE.OPTIM_OALGO_threshold_box_0.hpo"
+config = "configs/lines_oalgo.tadah"
+tree = "fixtures"
+expected = "expected/registry/RULE.OPTIM_OALGO_threshold_box_0.dump"
+stdout = "expected/registry/RULE.OPTIM_OALGO_threshold_box_0.stdout"
+
+[[input]]
+id = "registry:RULE.optim_relative_error_scale:0"
+origin = "hpotarget_lines.toml (RULE.optim_relative_error_scale, example 1)"
+target = "targets/registry/RULE.optim_relative_error_scale_0.hpo"
+config = "configs/lines_force_relative.tadah"
+tree = "fixtures"
+expected = "expected/registry/RULE.optim_relative_error_scale_0.dump"
+stdout = "expected/registry/RULE.optim_relative_error_scale_0.stdout"
+
+[[input]]
+id = "registry:RULE.fit_krr_implementation2_ignores:0"
+origin = "hpotarget_lines.toml (RULE.fit_krr_implementation2_ignores, example 1)"
+target = "targets/registry/RULE.fit_krr_implementation2_ignores_0.hpo"
+config = "configs/lines_krr2.tadah"
+tree = "fixtures"
+expected = "expected/registry/RULE.fit_krr_implementation2_ignores_0.dump"
+stdout = "expected/registry/RULE.fit_krr_implementation2_ignores_0.stdout"
+
+[[input]]
+id = "registry:RULE.fit_krr_implementation2_ignores:1"
+origin = "hpotarget_lines.toml (RULE.fit_krr_implementation2_ignores, example 2)"
+target = "targets/registry/RULE.fit_krr_implementation2_ignores_1.hpo"
+config = "configs/lines_krr2.tadah"
+tree = "fixtures"
+expected = "expected/registry/RULE.fit_krr_implementation2_ignores_1.dump"
+stdout = "expected/registry/RULE.fit_krr_implementation2_ignores_1.stdout"
+
+[[input]]
+id = "registry:RULE.optim_error_scale_quantity_off:0"
+origin = "hpotarget_lines.toml (RULE.optim_error_scale_quantity_off, example 1)"
+target = "targets/registry/RULE.optim_error_scale_quantity_off_0.hpo"
+config = "configs/lines_force.tadah"
+tree = "fixtures"
+expected = "expected/registry/RULE.optim_error_scale_quantity_off_0.dump"
+stdout = "expected/registry/RULE.optim_error_scale_quantity_off_0.stdout"
+
+[[input]]
+id = "registry:RULE.optim_error_scale_only_quantity:0"
+origin = "hpotarget_lines.toml (RULE.optim_error_scale_only_quantity, example 1)"
+target = "targets/registry/RULE.optim_error_scale_only_quantity_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/RULE.optim_error_scale_only_quantity_0.dump"
+stdout = "expected/registry/RULE.optim_error_scale_only_quantity_0.stdout"
+
+[[input]]
+id = "registry:RULE.optim_wdbfile_one_dataset:0"
+origin = "hpotarget_lines.toml (RULE.optim_wdbfile_one_dataset, example 1)"
+target = "targets/registry/RULE.optim_wdbfile_one_dataset_0.hpo"
+config = "configs/lines_wdbfile.tadah"
+tree = "fixtures"
+expected = "expected/registry/RULE.optim_wdbfile_one_dataset_0.dump"
+stdout = "expected/registry/RULE.optim_wdbfile_one_dataset_0.stdout"
+
+[[input]]
+id = "registry:ENV.TADAH_OPTIM_SCALE:0"
+origin = "hpotarget.toml (ENV.TADAH_OPTIM_SCALE, example 1)"
+target = "targets/registry/ENV.TADAH_OPTIM_SCALE_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+env = { "TADAH_OPTIM_SCALE" = "none" }
+expected = "expected/registry/ENV.TADAH_OPTIM_SCALE_0.dump"
+stdout = "expected/registry/ENV.TADAH_OPTIM_SCALE_0.stdout"
+stderr = "expected/registry/ENV.TADAH_OPTIM_SCALE_0.stderr"
+
+[[input]]
+id = "registry:ENV.TADAH_OPTIM_SCALE:1"
+origin = "hpotarget.toml (ENV.TADAH_OPTIM_SCALE, example 2)"
+target = "targets/registry/ENV.TADAH_OPTIM_SCALE_1.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+env = { "TADAH_OPTIM_SCALE" = "" }
+expected = "expected/registry/ENV.TADAH_OPTIM_SCALE_1.dump"
+stdout = "expected/registry/ENV.TADAH_OPTIM_SCALE_1.stdout"
+
+[[input]]
+id = "registry:LOSS.L1:0"
+origin = "hpotarget_lines.toml (LOSS.L1, example 1)"
+target = "targets/registry/LOSS.L1_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/LOSS.L1_0.dump"
+stdout = "expected/registry/LOSS.L1_0.stdout"
+
+[[input]]
+id = "registry:LOSS.L2:0"
+origin = "hpotarget_lines.toml (LOSS.L2, example 1)"
+target = "targets/registry/LOSS.L2_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/LOSS.L2_0.dump"
+stdout = "expected/registry/LOSS.L2_0.stdout"
+
+[[input]]
+id = "registry:LOSS.LOG_COSH:0"
+origin = "hpotarget_lines.toml (LOSS.LOG_COSH, example 1)"
+target = "targets/registry/LOSS.LOG_COSH_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/LOSS.LOG_COSH_0.dump"
+stdout = "expected/registry/LOSS.LOG_COSH_0.stdout"
+
+[[input]]
+id = "registry:LOSS.MAPE:0"
+origin = "hpotarget_lines.toml (LOSS.MAPE, example 1)"
+target = "targets/registry/LOSS.MAPE_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/LOSS.MAPE_0.dump"
+stdout = "expected/registry/LOSS.MAPE_0.stdout"
+
+[[input]]
+id = "registry:LOSS.HUBER:0"
+origin = "hpotarget_lines.toml (LOSS.HUBER, example 1)"
+target = "targets/registry/LOSS.HUBER_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/LOSS.HUBER_0.dump"
+stdout = "expected/registry/LOSS.HUBER_0.stdout"
+
+[[input]]
+id = "registry:LOSS.RMSLE:0"
+origin = "hpotarget_lines.toml (LOSS.RMSLE, example 1)"
+target = "targets/registry/LOSS.RMSLE_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/LOSS.RMSLE_0.dump"
+stdout = "expected/registry/LOSS.RMSLE_0.stdout"
+
+[[input]]
+id = "registry:LOSS.TUKEY:0"
+origin = "hpotarget_lines.toml (LOSS.TUKEY, example 1)"
+target = "targets/registry/LOSS.TUKEY_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/LOSS.TUKEY_0.dump"
+stdout = "expected/registry/LOSS.TUKEY_0.stdout"
+
+[[input]]
+id = "registry:STRATEGY.TYPE.PLAIN:0"
+origin = "hpotarget_optimizer.toml (STRATEGY.TYPE.PLAIN, example 1)"
+target = "targets/registry/STRATEGY.TYPE.PLAIN_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/STRATEGY.TYPE.PLAIN_0.dump"
+stdout = "expected/registry/STRATEGY.TYPE.PLAIN_0.stdout"
+
+[[input]]
+id = "registry:STRATEGY.TYPE.MULTISTART:0"
+origin = "hpotarget_optimizer.toml (STRATEGY.TYPE.MULTISTART, example 1)"
+target = "targets/registry/STRATEGY.TYPE.MULTISTART_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/STRATEGY.TYPE.MULTISTART_0.dump"
+stdout = "expected/registry/STRATEGY.TYPE.MULTISTART_0.stdout"
+
+[[input]]
+id = "registry:STRATEGY.TYPE.MULTISTART:1"
+origin = "hpotarget_optimizer.toml (STRATEGY.TYPE.MULTISTART, example 2)"
+target = "targets/registry/STRATEGY.TYPE.MULTISTART_1.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/STRATEGY.TYPE.MULTISTART_1.dump"
+stdout = "expected/registry/STRATEGY.TYPE.MULTISTART_1.stdout"
+
+[[input]]
+id = "registry:STRATEGY.TYPE.PRESTAGE:0"
+origin = "hpotarget_optimizer.toml (STRATEGY.TYPE.PRESTAGE, example 1)"
+target = "targets/registry/STRATEGY.TYPE.PRESTAGE_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/STRATEGY.TYPE.PRESTAGE_0.dump"
+stdout = "expected/registry/STRATEGY.TYPE.PRESTAGE_0.stdout"
+
+[[input]]
+id = "registry:METHOD.CONFIG:0"
+origin = "hpotarget_optimizer.toml (METHOD.CONFIG, example 1)"
+target = "targets/registry/METHOD.CONFIG_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/METHOD.CONFIG_0.dump"
+stdout = "expected/registry/METHOD.CONFIG_0.stdout"
+
+[[input]]
+id = "registry:METHOD.RANDOM:0"
+origin = "hpotarget_optimizer.toml (METHOD.RANDOM, example 1)"
+target = "targets/registry/METHOD.RANDOM_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/METHOD.RANDOM_0.dump"
+stdout = "expected/registry/METHOD.RANDOM_0.stdout"
+
+[[input]]
+id = "registry:METHOD.LHS:0"
+origin = "hpotarget_optimizer.toml (METHOD.LHS, example 1)"
+target = "targets/registry/METHOD.LHS_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/METHOD.LHS_0.dump"
+stdout = "expected/registry/METHOD.LHS_0.stdout"
+
+[[input]]
+id = "registry:METHOD.SOBOL:0"
+origin = "hpotarget_optimizer.toml (METHOD.SOBOL, example 1)"
+target = "targets/registry/METHOD.SOBOL_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/METHOD.SOBOL_0.dump"
+stdout = "expected/registry/METHOD.SOBOL_0.stdout"
+
+[[input]]
+id = "registry:METHOD.WARM:0"
+origin = "hpotarget_optimizer.toml (METHOD.WARM, example 1)"
+target = "targets/registry/METHOD.WARM_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/METHOD.WARM_0.dump"
+stdout = "expected/registry/METHOD.WARM_0.stdout"
+
+[[input]]
+id = "registry:OPTIM.TARGET.FIXWEIGHT:0"
+origin = "hpotarget_lines.toml (OPTIM.TARGET.FIXWEIGHT, example 1)"
+target = "targets/registry/OPTIM.TARGET.FIXWEIGHT_0.hpo"
+config = "configs/lines_fixweight.tadah"
+tree = "fixtures"
+expected = "expected/registry/OPTIM.TARGET.FIXWEIGHT_0.dump"
+stdout = "expected/registry/OPTIM.TARGET.FIXWEIGHT_0.stdout"
+
+[[input]]
+id = "registry:OPTIM.TARGET.OALGO:0"
+origin = "hpotarget_lines.toml (OPTIM.TARGET.OALGO, example 1)"
+target = "targets/registry/OPTIM.TARGET.OALGO_0.hpo"
+config = "configs/lines_oalgo.tadah"
+tree = "fixtures"
+expected = "expected/registry/OPTIM.TARGET.OALGO_0.dump"
+stdout = "expected/registry/OPTIM.TARGET.OALGO_0.stdout"
+
+[[input]]
+id = "registry:OPTIM.TARGET.WDBFILE:0"
+origin = "hpotarget_lines.toml (OPTIM.TARGET.WDBFILE, example 1)"
+target = "targets/registry/OPTIM.TARGET.WDBFILE_0.hpo"
+config = "configs/lines_wdbfile.tadah"
+tree = "fixtures"
+expected = "expected/registry/OPTIM.TARGET.WDBFILE_0.dump"
+stdout = "expected/registry/OPTIM.TARGET.WDBFILE_0.stdout"
+
+[[input]]
+id = "registry:OPTIM.TARGET.ESIGMA:0"
+origin = "hpotarget_lines.toml (OPTIM.TARGET.ESIGMA, example 1)"
+target = "targets/registry/OPTIM.TARGET.ESIGMA_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/OPTIM.TARGET.ESIGMA_0.dump"
+stdout = "expected/registry/OPTIM.TARGET.ESIGMA_0.stdout"
+
+[[input]]
+id = "registry:OPTIM.TARGET.FSIGMA:0"
+origin = "hpotarget_lines.toml (OPTIM.TARGET.FSIGMA, example 1)"
+target = "targets/registry/OPTIM.TARGET.FSIGMA_0.hpo"
+config = "configs/lines_force.tadah"
+tree = "fixtures"
+expected = "expected/registry/OPTIM.TARGET.FSIGMA_0.dump"
+stdout = "expected/registry/OPTIM.TARGET.FSIGMA_0.stdout"
+
+[[input]]
+id = "registry:OPTIM.TARGET.FSIGMA:1"
+origin = "hpotarget_lines.toml (OPTIM.TARGET.FSIGMA, example 2)"
+target = "targets/registry/OPTIM.TARGET.FSIGMA_1.hpo"
+config = "configs/lines_force_relative.tadah"
+tree = "fixtures"
+expected = "expected/registry/OPTIM.TARGET.FSIGMA_1.dump"
+stdout = "expected/registry/OPTIM.TARGET.FSIGMA_1.stdout"
+
+[[input]]
+id = "registry:OPTIM.TARGET.SSIGMA:0"
+origin = "hpotarget_lines.toml (OPTIM.TARGET.SSIGMA, example 1)"
+target = "targets/registry/OPTIM.TARGET.SSIGMA_0.hpo"
+config = "configs/lines_stress.tadah"
+tree = "fixtures"
+expected = "expected/registry/OPTIM.TARGET.SSIGMA_0.dump"
+stdout = "expected/registry/OPTIM.TARGET.SSIGMA_0.stdout"
+
+[[input]]
+id = "registry:OPTIM.TARGET.LAMBDA:0"
+origin = "hpotarget_lines.toml (OPTIM.TARGET.LAMBDA, example 1)"
+target = "targets/registry/OPTIM.TARGET.LAMBDA_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/OPTIM.TARGET.LAMBDA_0.dump"
+stdout = "expected/registry/OPTIM.TARGET.LAMBDA_0.stdout"
+
+[[input]]
+id = "registry:PARAM.TADAH:GRID.GRID_POINTS:0"
+origin = "hpotarget_params.toml (PARAM.TADAH:GRID.GRID_POINTS, example 1)"
+target = "targets/registry/PARAM.TADAH_GRID.GRID_POINTS_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PARAM.TADAH_GRID.GRID_POINTS_0.dump"
+stdout = "expected/registry/PARAM.TADAH_GRID.GRID_POINTS_0.stdout"
+
+[[input]]
+id = "registry:PARAM.TADAH:GRID.GRID_POINTS:1"
+origin = "hpotarget_params.toml (PARAM.TADAH:GRID.GRID_POINTS, example 2)"
+target = "targets/registry/PARAM.TADAH_GRID.GRID_POINTS_1.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PARAM.TADAH_GRID.GRID_POINTS_1.dump"
+stdout = "expected/registry/PARAM.TADAH_GRID.GRID_POINTS_1.stdout"
+
+[[input]]
+id = "registry:PARAM.DLIB:BFGS.tol_gradinf:0"
+origin = "hpotarget_params.toml (PARAM.DLIB:BFGS.tol_gradinf, example 1)"
+target = "targets/registry/PARAM.DLIB_BFGS.tol_gradinf_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PARAM.DLIB_BFGS.tol_gradinf_0.dump"
+stdout = "expected/registry/PARAM.DLIB_BFGS.tol_gradinf_0.stdout"
+
+[[input]]
+id = "registry:PARAM.CERES.tol_gradinf:0"
+origin = "hpotarget_params.toml (PARAM.CERES.tol_gradinf, example 1)"
+target = "targets/registry/PARAM.CERES.tol_gradinf_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PARAM.CERES.tol_gradinf_0.dump"
+stdout = "expected/registry/PARAM.CERES.tol_gradinf_0.stdout"
+
+[[input]]
+id = "registry:PARAM.CERES.max_iter:0"
+origin = "hpotarget_params.toml (PARAM.CERES.max_iter, example 1)"
+target = "targets/registry/PARAM.CERES.max_iter_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PARAM.CERES.max_iter_0.dump"
+stdout = "expected/registry/PARAM.CERES.max_iter_0.stdout"
+
+[[input]]
+id = "registry:PARAM.CERES.max_iter:1"
+origin = "hpotarget_params.toml (PARAM.CERES.max_iter, example 2)"
+target = "targets/registry/PARAM.CERES.max_iter_1.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PARAM.CERES.max_iter_1.dump"
+stdout = "expected/registry/PARAM.CERES.max_iter_1.stdout"
+
+[[input]]
+id = "registry:PARAM.CERES.max_ls_iter:0"
+origin = "hpotarget_params.toml (PARAM.CERES.max_ls_iter, example 1)"
+target = "targets/registry/PARAM.CERES.max_ls_iter_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PARAM.CERES.max_ls_iter_0.dump"
+stdout = "expected/registry/PARAM.CERES.max_ls_iter_0.stdout"
+
+[[input]]
+id = "registry:PARAM.FD.fd_step:0"
+origin = "hpotarget_params.toml (PARAM.FD.fd_step, example 1)"
+target = "targets/registry/PARAM.FD.fd_step_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PARAM.FD.fd_step_0.dump"
+stdout = "expected/registry/PARAM.FD.fd_step_0.stdout"
+
+[[input]]
+id = "registry:PARAM.FD.fd_step:1"
+origin = "hpotarget_params.toml (PARAM.FD.fd_step, example 2)"
+target = "targets/registry/PARAM.FD.fd_step_1.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PARAM.FD.fd_step_1.dump"
+stdout = "expected/registry/PARAM.FD.fd_step_1.stdout"
+
+[[input]]
+id = "registry:PARAM.FD.fd_step:2"
+origin = "hpotarget_params.toml (PARAM.FD.fd_step, example 3)"
+target = "targets/registry/PARAM.FD.fd_step_2.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PARAM.FD.fd_step_2.dump"
+stdout = "expected/registry/PARAM.FD.fd_step_2.stdout"
+
+[[input]]
+id = "registry:PARAM.FD.fd_kernel:0"
+origin = "hpotarget_params.toml (PARAM.FD.fd_kernel, example 1)"
+target = "targets/registry/PARAM.FD.fd_kernel_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PARAM.FD.fd_kernel_0.dump"
+stdout = "expected/registry/PARAM.FD.fd_kernel_0.stdout"
+
+[[input]]
+id = "registry:PARAM.FD.fd_kernel:1"
+origin = "hpotarget_params.toml (PARAM.FD.fd_kernel, example 2)"
+target = "targets/registry/PARAM.FD.fd_kernel_1.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PARAM.FD.fd_kernel_1.dump"
+stdout = "expected/registry/PARAM.FD.fd_kernel_1.stdout"
+
+[[input]]
+id = "registry:PARAM.FD.diff_method:0"
+origin = "hpotarget_params.toml (PARAM.FD.diff_method, example 1)"
+target = "targets/registry/PARAM.FD.diff_method_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PARAM.FD.diff_method_0.dump"
+stdout = "expected/registry/PARAM.FD.diff_method_0.stdout"
+
+[[input]]
+id = "registry:PARAM.FD.diff_method:1"
+origin = "hpotarget_params.toml (PARAM.FD.diff_method, example 2)"
+target = "targets/registry/PARAM.FD.diff_method_1.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PARAM.FD.diff_method_1.dump"
+stdout = "expected/registry/PARAM.FD.diff_method_1.stdout"
+
+[[input]]
+id = "registry:PARAM.ASA:ASA.Limit_Acceptances:0"
+origin = "hpotarget_params.toml (PARAM.ASA:ASA.Limit_Acceptances, example 1)"
+target = "targets/registry/PARAM.ASA_ASA.Limit_Acceptances_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PARAM.ASA_ASA.Limit_Acceptances_0.dump"
+stdout = "expected/registry/PARAM.ASA_ASA.Limit_Acceptances_0.stdout"
+
+[[input]]
+id = "registry:PARAM.ASA:ASA.Limit_Generated:0"
+origin = "hpotarget_params.toml (PARAM.ASA:ASA.Limit_Generated, example 1)"
+target = "targets/registry/PARAM.ASA_ASA.Limit_Generated_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PARAM.ASA_ASA.Limit_Generated_0.dump"
+stdout = "expected/registry/PARAM.ASA_ASA.Limit_Generated_0.stdout"
+
+[[input]]
+id = "registry:PARAM.ASA:ASA.Limit_Invalid_Generated_States:0"
+origin = "hpotarget_params.toml (PARAM.ASA:ASA.Limit_Invalid_Generated_States, example 1)"
+target = "targets/registry/PARAM.ASA_ASA.Limit_Invalid_Generated_States_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PARAM.ASA_ASA.Limit_Invalid_Generated_States_0.dump"
+stdout = "expected/registry/PARAM.ASA_ASA.Limit_Invalid_Generated_States_0.stdout"
+
+[[input]]
+id = "registry:PARAM.ASA:ASA.Accepted_To_Generated_Ratio:0"
+origin = "hpotarget_params.toml (PARAM.ASA:ASA.Accepted_To_Generated_Ratio, example 1)"
+target = "targets/registry/PARAM.ASA_ASA.Accepted_To_Generated_Ratio_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PARAM.ASA_ASA.Accepted_To_Generated_Ratio_0.dump"
+stdout = "expected/registry/PARAM.ASA_ASA.Accepted_To_Generated_Ratio_0.stdout"
+
+[[input]]
+id = "registry:PARAM.ASA:ASA.Cost_Precision:0"
+origin = "hpotarget_params.toml (PARAM.ASA:ASA.Cost_Precision, example 1)"
+target = "targets/registry/PARAM.ASA_ASA.Cost_Precision_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PARAM.ASA_ASA.Cost_Precision_0.dump"
+stdout = "expected/registry/PARAM.ASA_ASA.Cost_Precision_0.stdout"
+
+[[input]]
+id = "registry:PARAM.ASA:ASA.Maximum_Cost_Repeat:0"
+origin = "hpotarget_params.toml (PARAM.ASA:ASA.Maximum_Cost_Repeat, example 1)"
+target = "targets/registry/PARAM.ASA_ASA.Maximum_Cost_Repeat_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PARAM.ASA_ASA.Maximum_Cost_Repeat_0.dump"
+stdout = "expected/registry/PARAM.ASA_ASA.Maximum_Cost_Repeat_0.stdout"
+
+[[input]]
+id = "registry:PARAM.ASA:ASA.Number_Cost_Samples:0"
+origin = "hpotarget_params.toml (PARAM.ASA:ASA.Number_Cost_Samples, example 1)"
+target = "targets/registry/PARAM.ASA_ASA.Number_Cost_Samples_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PARAM.ASA_ASA.Number_Cost_Samples_0.dump"
+stdout = "expected/registry/PARAM.ASA_ASA.Number_Cost_Samples_0.stdout"
+
+[[input]]
+id = "registry:PARAM.ASA:ASA.Temperature_Ratio_Scale:0"
+origin = "hpotarget_params.toml (PARAM.ASA:ASA.Temperature_Ratio_Scale, example 1)"
+target = "targets/registry/PARAM.ASA_ASA.Temperature_Ratio_Scale_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PARAM.ASA_ASA.Temperature_Ratio_Scale_0.dump"
+stdout = "expected/registry/PARAM.ASA_ASA.Temperature_Ratio_Scale_0.stdout"
+
+[[input]]
+id = "registry:PARAM.ASA:ASA.Cost_Parameter_Scale_Ratio:0"
+origin = "hpotarget_params.toml (PARAM.ASA:ASA.Cost_Parameter_Scale_Ratio, example 1)"
+target = "targets/registry/PARAM.ASA_ASA.Cost_Parameter_Scale_Ratio_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PARAM.ASA_ASA.Cost_Parameter_Scale_Ratio_0.dump"
+stdout = "expected/registry/PARAM.ASA_ASA.Cost_Parameter_Scale_Ratio_0.stdout"
+
+[[input]]
+id = "registry:PARAM.ASA:ASA.Temperature_Anneal_Scale:0"
+origin = "hpotarget_params.toml (PARAM.ASA:ASA.Temperature_Anneal_Scale, example 1)"
+target = "targets/registry/PARAM.ASA_ASA.Temperature_Anneal_Scale_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PARAM.ASA_ASA.Temperature_Anneal_Scale_0.dump"
+stdout = "expected/registry/PARAM.ASA_ASA.Temperature_Anneal_Scale_0.stdout"
+
+[[input]]
+id = "registry:PARAM.ASA:ASA.Sequential_Parameters:0"
+origin = "hpotarget_params.toml (PARAM.ASA:ASA.Sequential_Parameters, example 1)"
+target = "targets/registry/PARAM.ASA_ASA.Sequential_Parameters_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PARAM.ASA_ASA.Sequential_Parameters_0.dump"
+stdout = "expected/registry/PARAM.ASA_ASA.Sequential_Parameters_0.stdout"
+
+[[input]]
+id = "registry:PARAM.ASA:ASA.Initial_Parameter_Temperature:0"
+origin = "hpotarget_params.toml (PARAM.ASA:ASA.Initial_Parameter_Temperature, example 1)"
+target = "targets/registry/PARAM.ASA_ASA.Initial_Parameter_Temperature_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PARAM.ASA_ASA.Initial_Parameter_Temperature_0.dump"
+stdout = "expected/registry/PARAM.ASA_ASA.Initial_Parameter_Temperature_0.stdout"
+
+[[input]]
+id = "registry:PARAM.ASA:ASA.Acceptance_Frequency_Modulus:0"
+origin = "hpotarget_params.toml (PARAM.ASA:ASA.Acceptance_Frequency_Modulus, example 1)"
+target = "targets/registry/PARAM.ASA_ASA.Acceptance_Frequency_Modulus_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PARAM.ASA_ASA.Acceptance_Frequency_Modulus_0.dump"
+stdout = "expected/registry/PARAM.ASA_ASA.Acceptance_Frequency_Modulus_0.stdout"
+
+[[input]]
+id = "registry:PARAM.ASA:ASA.Generated_Frequency_Modulus:0"
+origin = "hpotarget_params.toml (PARAM.ASA:ASA.Generated_Frequency_Modulus, example 1)"
+target = "targets/registry/PARAM.ASA_ASA.Generated_Frequency_Modulus_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PARAM.ASA_ASA.Generated_Frequency_Modulus_0.dump"
+stdout = "expected/registry/PARAM.ASA_ASA.Generated_Frequency_Modulus_0.stdout"
+
+[[input]]
+id = "registry:PARAM.ASA:ASA.Reanneal_Cost:0"
+origin = "hpotarget_params.toml (PARAM.ASA:ASA.Reanneal_Cost, example 1)"
+target = "targets/registry/PARAM.ASA_ASA.Reanneal_Cost_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PARAM.ASA_ASA.Reanneal_Cost_0.dump"
+stdout = "expected/registry/PARAM.ASA_ASA.Reanneal_Cost_0.stdout"
+
+[[input]]
+id = "registry:PARAM.ASA:ASA.Reanneal_Parameters:0"
+origin = "hpotarget_params.toml (PARAM.ASA:ASA.Reanneal_Parameters, example 1)"
+target = "targets/registry/PARAM.ASA_ASA.Reanneal_Parameters_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PARAM.ASA_ASA.Reanneal_Parameters_0.dump"
+stdout = "expected/registry/PARAM.ASA_ASA.Reanneal_Parameters_0.stdout"
+
+[[input]]
+id = "registry:PARAM.ASA:ASA.Delta_X:0"
+origin = "hpotarget_params.toml (PARAM.ASA:ASA.Delta_X, example 1)"
+target = "targets/registry/PARAM.ASA_ASA.Delta_X_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PARAM.ASA_ASA.Delta_X_0.dump"
+stdout = "expected/registry/PARAM.ASA_ASA.Delta_X_0.stdout"
+
+[[input]]
+id = "registry:PARAM.ASA:ASA.User_Tangents:0"
+origin = "hpotarget_params.toml (PARAM.ASA:ASA.User_Tangents, example 1)"
+target = "targets/registry/PARAM.ASA_ASA.User_Tangents_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PARAM.ASA_ASA.User_Tangents_0.dump"
+stdout = "expected/registry/PARAM.ASA_ASA.User_Tangents_0.stdout"
+
+[[input]]
+id = "registry:PARAM.ASA:ASA.Curvature_0:0"
+origin = "hpotarget_params.toml (PARAM.ASA:ASA.Curvature_0, example 1)"
+target = "targets/registry/PARAM.ASA_ASA.Curvature_0_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PARAM.ASA_ASA.Curvature_0_0.dump"
+stdout = "expected/registry/PARAM.ASA_ASA.Curvature_0_0.stdout"
+
+[[input]]
+id = "registry:PARAM.ASA:ASA.User_Quench_Cost_Scale:0"
+origin = "hpotarget_params.toml (PARAM.ASA:ASA.User_Quench_Cost_Scale, example 1)"
+target = "targets/registry/PARAM.ASA_ASA.User_Quench_Cost_Scale_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PARAM.ASA_ASA.User_Quench_Cost_Scale_0.dump"
+stdout = "expected/registry/PARAM.ASA_ASA.User_Quench_Cost_Scale_0.stdout"
+
+[[input]]
+id = "registry:PARAM.ASA:ASA.User_Quench_Param_Scale:0"
+origin = "hpotarget_params.toml (PARAM.ASA:ASA.User_Quench_Param_Scale, example 1)"
+target = "targets/registry/PARAM.ASA_ASA.User_Quench_Param_Scale_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PARAM.ASA_ASA.User_Quench_Param_Scale_0.dump"
+stdout = "expected/registry/PARAM.ASA_ASA.User_Quench_Param_Scale_0.stdout"
+
+[[input]]
+id = "registry:PARAM.ASA:ASA.User_Quench_Param_Scale:1"
+origin = "hpotarget_params.toml (PARAM.ASA:ASA.User_Quench_Param_Scale, example 2)"
+target = "targets/registry/PARAM.ASA_ASA.User_Quench_Param_Scale_1.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PARAM.ASA_ASA.User_Quench_Param_Scale_1.dump"
+stdout = "expected/registry/PARAM.ASA_ASA.User_Quench_Param_Scale_1.stdout"
+
+[[input]]
+id = "registry:PARAM.ASA:ASA.User_Temperature_Ratio:0"
+origin = "hpotarget_params.toml (PARAM.ASA:ASA.User_Temperature_Ratio, example 1)"
+target = "targets/registry/PARAM.ASA_ASA.User_Temperature_Ratio_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PARAM.ASA_ASA.User_Temperature_Ratio_0.dump"
+stdout = "expected/registry/PARAM.ASA_ASA.User_Temperature_Ratio_0.stdout"
+
+[[input]]
+id = "registry:PARAM.ASA:ASA.User_Temperature_Ratio:1"
+origin = "hpotarget_params.toml (PARAM.ASA:ASA.User_Temperature_Ratio, example 2)"
+target = "targets/registry/PARAM.ASA_ASA.User_Temperature_Ratio_1.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PARAM.ASA_ASA.User_Temperature_Ratio_1.dump"
+stdout = "expected/registry/PARAM.ASA_ASA.User_Temperature_Ratio_1.stdout"
+
+[[input]]
+id = "registry:PARAM.ASA:ASA.User_Delta_Parameter:0"
+origin = "hpotarget_params.toml (PARAM.ASA:ASA.User_Delta_Parameter, example 1)"
+target = "targets/registry/PARAM.ASA_ASA.User_Delta_Parameter_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PARAM.ASA_ASA.User_Delta_Parameter_0.dump"
+stdout = "expected/registry/PARAM.ASA_ASA.User_Delta_Parameter_0.stdout"
+
+[[input]]
+id = "registry:PARAM.ASA:ASA.User_Delta_Parameter:1"
+origin = "hpotarget_params.toml (PARAM.ASA:ASA.User_Delta_Parameter, example 2)"
+target = "targets/registry/PARAM.ASA_ASA.User_Delta_Parameter_1.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PARAM.ASA_ASA.User_Delta_Parameter_1.dump"
+stdout = "expected/registry/PARAM.ASA_ASA.User_Delta_Parameter_1.stdout"
+
+[[input]]
+id = "registry:PARAM.ASA:ASA.User_Parameter_Temperature:0"
+origin = "hpotarget_params.toml (PARAM.ASA:ASA.User_Parameter_Temperature, example 1)"
+target = "targets/registry/PARAM.ASA_ASA.User_Parameter_Temperature_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PARAM.ASA_ASA.User_Parameter_Temperature_0.dump"
+stdout = "expected/registry/PARAM.ASA_ASA.User_Parameter_Temperature_0.stdout"
+
+[[input]]
+id = "registry:PARAM.ASA:ASA.User_Parameter_Temperature:1"
+origin = "hpotarget_params.toml (PARAM.ASA:ASA.User_Parameter_Temperature, example 2)"
+target = "targets/registry/PARAM.ASA_ASA.User_Parameter_Temperature_1.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PARAM.ASA_ASA.User_Parameter_Temperature_1.dump"
+stdout = "expected/registry/PARAM.ASA_ASA.User_Parameter_Temperature_1.stdout"
+
+[[input]]
+id = "registry:PARAM.ASA:ASA.Multi_Number:0"
+origin = "hpotarget_params.toml (PARAM.ASA:ASA.Multi_Number, example 1)"
+target = "targets/registry/PARAM.ASA_ASA.Multi_Number_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PARAM.ASA_ASA.Multi_Number_0.dump"
+stdout = "expected/registry/PARAM.ASA_ASA.Multi_Number_0.stdout"
+
+[[input]]
+id = "registry:PARAM.ASA:ASA.Multi_Specify:0"
+origin = "hpotarget_params.toml (PARAM.ASA:ASA.Multi_Specify, example 1)"
+target = "targets/registry/PARAM.ASA_ASA.Multi_Specify_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PARAM.ASA_ASA.Multi_Specify_0.dump"
+stdout = "expected/registry/PARAM.ASA_ASA.Multi_Specify_0.stdout"
+
+[[input]]
+id = "registry:PARAM.ASA:ASA.Multi_Grid:0"
+origin = "hpotarget_params.toml (PARAM.ASA:ASA.Multi_Grid, example 1)"
+target = "targets/registry/PARAM.ASA_ASA.Multi_Grid_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PARAM.ASA_ASA.Multi_Grid_0.dump"
+stdout = "expected/registry/PARAM.ASA_ASA.Multi_Grid_0.stdout"
+
+[[input]]
+id = "registry:PARAM.ASA:ASA.Multi_Grid:1"
+origin = "hpotarget_params.toml (PARAM.ASA:ASA.Multi_Grid, example 2)"
+target = "targets/registry/PARAM.ASA_ASA.Multi_Grid_1.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PARAM.ASA_ASA.Multi_Grid_1.dump"
+stdout = "expected/registry/PARAM.ASA_ASA.Multi_Grid_1.stdout"
+
+[[input]]
+id = "registry:PARAM.ASA:ASA.Queue_Size:0"
+origin = "hpotarget_params.toml (PARAM.ASA:ASA.Queue_Size, example 1)"
+target = "targets/registry/PARAM.ASA_ASA.Queue_Size_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PARAM.ASA_ASA.Queue_Size_0.dump"
+stdout = "expected/registry/PARAM.ASA_ASA.Queue_Size_0.stdout"
+
+[[input]]
+id = "registry:PARAM.ASA:ASA.Queue_Resolution:0"
+origin = "hpotarget_params.toml (PARAM.ASA:ASA.Queue_Resolution, example 1)"
+target = "targets/registry/PARAM.ASA_ASA.Queue_Resolution_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PARAM.ASA_ASA.Queue_Resolution_0.dump"
+stdout = "expected/registry/PARAM.ASA_ASA.Queue_Resolution_0.stdout"
+
+[[input]]
+id = "registry:PARAM.ASA:ASA.Queue_Resolution:1"
+origin = "hpotarget_params.toml (PARAM.ASA:ASA.Queue_Resolution, example 2)"
+target = "targets/registry/PARAM.ASA_ASA.Queue_Resolution_1.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PARAM.ASA_ASA.Queue_Resolution_1.dump"
+stdout = "expected/registry/PARAM.ASA_ASA.Queue_Resolution_1.stdout"
+
+[[input]]
+id = "registry:PARAM.ASA:ASA.Gener_Block:0"
+origin = "hpotarget_params.toml (PARAM.ASA:ASA.Gener_Block, example 1)"
+target = "targets/registry/PARAM.ASA_ASA.Gener_Block_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PARAM.ASA_ASA.Gener_Block_0.dump"
+stdout = "expected/registry/PARAM.ASA_ASA.Gener_Block_0.stdout"
+
+[[input]]
+id = "registry:PARAM.ASA:ASA.Gener_Block_Max:0"
+origin = "hpotarget_params.toml (PARAM.ASA:ASA.Gener_Block_Max, example 1)"
+target = "targets/registry/PARAM.ASA_ASA.Gener_Block_Max_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PARAM.ASA_ASA.Gener_Block_Max_0.dump"
+stdout = "expected/registry/PARAM.ASA_ASA.Gener_Block_Max_0.stdout"
+
+[[input]]
+id = "registry:PARAM.ASA:ASA.Gener_Mov_Avr:0"
+origin = "hpotarget_params.toml (PARAM.ASA:ASA.Gener_Mov_Avr, example 1)"
+target = "targets/registry/PARAM.ASA_ASA.Gener_Mov_Avr_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PARAM.ASA_ASA.Gener_Mov_Avr_0.dump"
+stdout = "expected/registry/PARAM.ASA_ASA.Gener_Mov_Avr_0.stdout"
+
+[[input]]
+id = "registry:PARAM.NLOPT:0"
+origin = "hpotarget_params.toml (PARAM.NLOPT, example 1)"
+target = "targets/registry/PARAM.NLOPT_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PARAM.NLOPT_0.dump"
+stdout = "expected/registry/PARAM.NLOPT_0.stdout"
+
+[[input]]
+id = "registry:PARAM.TADAH:ANNEAL:0"
+origin = "hpotarget_params.toml (PARAM.TADAH:ANNEAL, example 1)"
+target = "targets/registry/PARAM.TADAH_ANNEAL_0.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PARAM.TADAH_ANNEAL_0.dump"
+stdout = "expected/registry/PARAM.TADAH_ANNEAL_0.stdout"
+
+[[input]]
+id = "registry:PARAM.TADAH:ANNEAL:1"
+origin = "hpotarget_params.toml (PARAM.TADAH:ANNEAL, example 2)"
+target = "targets/registry/PARAM.TADAH_ANNEAL_1.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PARAM.TADAH_ANNEAL_1.dump"
+stdout = "expected/registry/PARAM.TADAH_ANNEAL_1.stdout"
+
+[[input]]
+id = "registry:PARAM.TADAH:ANNEAL:2"
+origin = "hpotarget_params.toml (PARAM.TADAH:ANNEAL, example 3)"
+target = "targets/registry/PARAM.TADAH_ANNEAL_2.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PARAM.TADAH_ANNEAL_2.dump"
+stdout = "expected/registry/PARAM.TADAH_ANNEAL_2.stdout"
+
+[[input]]
+id = "registry:PARAM.TADAH:ANNEAL:3"
+origin = "hpotarget_params.toml (PARAM.TADAH:ANNEAL, example 4)"
+target = "targets/registry/PARAM.TADAH_ANNEAL_3.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PARAM.TADAH_ANNEAL_3.dump"
+stdout = "expected/registry/PARAM.TADAH_ANNEAL_3.stdout"
+
+[[input]]
+id = "registry:PARAM.TADAH:ANNEAL:4"
+origin = "hpotarget_params.toml (PARAM.TADAH:ANNEAL, example 5)"
+target = "targets/registry/PARAM.TADAH_ANNEAL_4.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PARAM.TADAH_ANNEAL_4.dump"
+stdout = "expected/registry/PARAM.TADAH_ANNEAL_4.stdout"
+
+[[input]]
+id = "registry:PARAM.TADAH:ANNEAL:5"
+origin = "hpotarget_params.toml (PARAM.TADAH:ANNEAL, example 6)"
+target = "targets/registry/PARAM.TADAH_ANNEAL_5.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PARAM.TADAH_ANNEAL_5.dump"
+stdout = "expected/registry/PARAM.TADAH_ANNEAL_5.stdout"
+
+[[input]]
+id = "registry:PARAM.TADAH:ANNEAL:6"
+origin = "hpotarget_params.toml (PARAM.TADAH:ANNEAL, example 7)"
+target = "targets/registry/PARAM.TADAH_ANNEAL_6.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PARAM.TADAH_ANNEAL_6.dump"
+stdout = "expected/registry/PARAM.TADAH_ANNEAL_6.stdout"
+
+[[input]]
+id = "registry:PARAM.TADAH:ANNEAL:7"
+origin = "hpotarget_params.toml (PARAM.TADAH:ANNEAL, example 8)"
+target = "targets/registry/PARAM.TADAH_ANNEAL_7.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PARAM.TADAH_ANNEAL_7.dump"
+stdout = "expected/registry/PARAM.TADAH_ANNEAL_7.stdout"
+
+[[input]]
+id = "registry:PARAM.TADAH:ANNEAL:8"
+origin = "hpotarget_params.toml (PARAM.TADAH:ANNEAL, example 9)"
+target = "targets/registry/PARAM.TADAH_ANNEAL_8.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PARAM.TADAH_ANNEAL_8.dump"
+stdout = "expected/registry/PARAM.TADAH_ANNEAL_8.stdout"
+
+[[input]]
+id = "registry:PARAM.TADAH:ANNEAL:9"
+origin = "hpotarget_params.toml (PARAM.TADAH:ANNEAL, example 10)"
+target = "targets/registry/PARAM.TADAH_ANNEAL_9.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PARAM.TADAH_ANNEAL_9.dump"
+stdout = "expected/registry/PARAM.TADAH_ANNEAL_9.stdout"
+
+[[input]]
+id = "registry:PARAM.TADAH:ANNEAL:10"
+origin = "hpotarget_params.toml (PARAM.TADAH:ANNEAL, example 11)"
+target = "targets/registry/PARAM.TADAH_ANNEAL_10.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PARAM.TADAH_ANNEAL_10.dump"
+stdout = "expected/registry/PARAM.TADAH_ANNEAL_10.stdout"
+
+[[input]]
+id = "registry:PARAM.TADAH:ANNEAL:11"
+origin = "hpotarget_params.toml (PARAM.TADAH:ANNEAL, example 12)"
+target = "targets/registry/PARAM.TADAH_ANNEAL_11.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PARAM.TADAH_ANNEAL_11.dump"
+stdout = "expected/registry/PARAM.TADAH_ANNEAL_11.stdout"
+
+[[input]]
+id = "registry:PARAM.TADAH:ANNEAL:12"
+origin = "hpotarget_params.toml (PARAM.TADAH:ANNEAL, example 13)"
+target = "targets/registry/PARAM.TADAH_ANNEAL_12.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PARAM.TADAH_ANNEAL_12.dump"
+stdout = "expected/registry/PARAM.TADAH_ANNEAL_12.stdout"
+
+[[input]]
+id = "registry:PARAM.TADAH:ANNEAL:13"
+origin = "hpotarget_params.toml (PARAM.TADAH:ANNEAL, example 14)"
+target = "targets/registry/PARAM.TADAH_ANNEAL_13.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PARAM.TADAH_ANNEAL_13.dump"
+stdout = "expected/registry/PARAM.TADAH_ANNEAL_13.stdout"
+
+[[input]]
+id = "registry:PARAM.TADAH:ANNEAL:14"
+origin = "hpotarget_params.toml (PARAM.TADAH:ANNEAL, example 15)"
+target = "targets/registry/PARAM.TADAH_ANNEAL_14.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PARAM.TADAH_ANNEAL_14.dump"
+stdout = "expected/registry/PARAM.TADAH_ANNEAL_14.stdout"
+
+[[input]]
+id = "registry:PARAM.TADAH:ANNEAL:15"
+origin = "hpotarget_params.toml (PARAM.TADAH:ANNEAL, example 16)"
+target = "targets/registry/PARAM.TADAH_ANNEAL_15.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PARAM.TADAH_ANNEAL_15.dump"
+stdout = "expected/registry/PARAM.TADAH_ANNEAL_15.stdout"
+
+[[input]]
+id = "registry:PARAM.TADAH:ANNEAL:16"
+origin = "hpotarget_params.toml (PARAM.TADAH:ANNEAL, example 17)"
+target = "targets/registry/PARAM.TADAH_ANNEAL_16.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PARAM.TADAH_ANNEAL_16.dump"
+stdout = "expected/registry/PARAM.TADAH_ANNEAL_16.stdout"
+
+[[input]]
+id = "registry:PARAM.TADAH:ANNEAL:17"
+origin = "hpotarget_params.toml (PARAM.TADAH:ANNEAL, example 18)"
+target = "targets/registry/PARAM.TADAH_ANNEAL_17.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PARAM.TADAH_ANNEAL_17.dump"
+stdout = "expected/registry/PARAM.TADAH_ANNEAL_17.stdout"
+
+[[input]]
+id = "registry:PARAM.TADAH:ANNEAL:18"
+origin = "hpotarget_params.toml (PARAM.TADAH:ANNEAL, example 19)"
+target = "targets/registry/PARAM.TADAH_ANNEAL_18.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PARAM.TADAH_ANNEAL_18.dump"
+stdout = "expected/registry/PARAM.TADAH_ANNEAL_18.stdout"
+
+[[input]]
+id = "registry:PARAM.TADAH:ANNEAL:19"
+origin = "hpotarget_params.toml (PARAM.TADAH:ANNEAL, example 20)"
+target = "targets/registry/PARAM.TADAH_ANNEAL_19.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PARAM.TADAH_ANNEAL_19.dump"
+stdout = "expected/registry/PARAM.TADAH_ANNEAL_19.stdout"
+
+[[input]]
+id = "registry:PARAM.TADAH:ANNEAL:20"
+origin = "hpotarget_params.toml (PARAM.TADAH:ANNEAL, example 21)"
+target = "targets/registry/PARAM.TADAH_ANNEAL_20.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PARAM.TADAH_ANNEAL_20.dump"
+stdout = "expected/registry/PARAM.TADAH_ANNEAL_20.stdout"
+
+[[input]]
+id = "registry:PARAM.TADAH:ANNEAL:21"
+origin = "hpotarget_params.toml (PARAM.TADAH:ANNEAL, example 22)"
+target = "targets/registry/PARAM.TADAH_ANNEAL_21.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PARAM.TADAH_ANNEAL_21.dump"
+stdout = "expected/registry/PARAM.TADAH_ANNEAL_21.stdout"
+
+[[input]]
+id = "registry:PARAM.TADAH:ANNEAL:22"
+origin = "hpotarget_params.toml (PARAM.TADAH:ANNEAL, example 23)"
+target = "targets/registry/PARAM.TADAH_ANNEAL_22.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PARAM.TADAH_ANNEAL_22.dump"
+stdout = "expected/registry/PARAM.TADAH_ANNEAL_22.stdout"
+
+[[input]]
+id = "registry:PARAM.TADAH:ANNEAL:23"
+origin = "hpotarget_params.toml (PARAM.TADAH:ANNEAL, example 24)"
+target = "targets/registry/PARAM.TADAH_ANNEAL_23.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PARAM.TADAH_ANNEAL_23.dump"
+stdout = "expected/registry/PARAM.TADAH_ANNEAL_23.stdout"
+
+[[input]]
+id = "registry:PARAM.TADAH:ANNEAL:24"
+origin = "hpotarget_params.toml (PARAM.TADAH:ANNEAL, example 25)"
+target = "targets/registry/PARAM.TADAH_ANNEAL_24.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PARAM.TADAH_ANNEAL_24.dump"
+stdout = "expected/registry/PARAM.TADAH_ANNEAL_24.stdout"
+
+[[input]]
+id = "registry:PARAM.TADAH:ANNEAL:25"
+origin = "hpotarget_params.toml (PARAM.TADAH:ANNEAL, example 26)"
+target = "targets/registry/PARAM.TADAH_ANNEAL_25.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PARAM.TADAH_ANNEAL_25.dump"
+stdout = "expected/registry/PARAM.TADAH_ANNEAL_25.stdout"
+
+[[input]]
+id = "registry:PARAM.TADAH:ANNEAL:26"
+origin = "hpotarget_params.toml (PARAM.TADAH:ANNEAL, example 27)"
+target = "targets/registry/PARAM.TADAH_ANNEAL_26.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PARAM.TADAH_ANNEAL_26.dump"
+stdout = "expected/registry/PARAM.TADAH_ANNEAL_26.stdout"
+
+[[input]]
+id = "registry:PARAM.TADAH:ANNEAL:27"
+origin = "hpotarget_params.toml (PARAM.TADAH:ANNEAL, example 28)"
+target = "targets/registry/PARAM.TADAH_ANNEAL_27.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PARAM.TADAH_ANNEAL_27.dump"
+stdout = "expected/registry/PARAM.TADAH_ANNEAL_27.stdout"
+
+[[input]]
+id = "registry:PARAM.TADAH:ANNEAL:28"
+origin = "hpotarget_params.toml (PARAM.TADAH:ANNEAL, example 29)"
+target = "targets/registry/PARAM.TADAH_ANNEAL_28.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PARAM.TADAH_ANNEAL_28.dump"
+stdout = "expected/registry/PARAM.TADAH_ANNEAL_28.stdout"
+
+[[input]]
+id = "registry:PARAM.TADAH:ANNEAL:29"
+origin = "hpotarget_params.toml (PARAM.TADAH:ANNEAL, example 30)"
+target = "targets/registry/PARAM.TADAH_ANNEAL_29.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PARAM.TADAH_ANNEAL_29.dump"
+stdout = "expected/registry/PARAM.TADAH_ANNEAL_29.stdout"
+
+[[input]]
+id = "registry:PARAM.TADAH:ANNEAL:30"
+origin = "hpotarget_params.toml (PARAM.TADAH:ANNEAL, example 31)"
+target = "targets/registry/PARAM.TADAH_ANNEAL_30.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PARAM.TADAH_ANNEAL_30.dump"
+stdout = "expected/registry/PARAM.TADAH_ANNEAL_30.stdout"
+
+[[input]]
+id = "registry:PARAM.TADAH:ANNEAL:31"
+origin = "hpotarget_params.toml (PARAM.TADAH:ANNEAL, example 32)"
+target = "targets/registry/PARAM.TADAH_ANNEAL_31.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PARAM.TADAH_ANNEAL_31.dump"
+stdout = "expected/registry/PARAM.TADAH_ANNEAL_31.stdout"
+
+[[input]]
+id = "registry:PARAM.TADAH:ANNEAL:32"
+origin = "hpotarget_params.toml (PARAM.TADAH:ANNEAL, example 33)"
+target = "targets/registry/PARAM.TADAH_ANNEAL_32.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PARAM.TADAH_ANNEAL_32.dump"
+stdout = "expected/registry/PARAM.TADAH_ANNEAL_32.stdout"
+
+[[input]]
+id = "registry:PARAM.TADAH:ANNEAL:33"
+origin = "hpotarget_params.toml (PARAM.TADAH:ANNEAL, example 34)"
+target = "targets/registry/PARAM.TADAH_ANNEAL_33.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PARAM.TADAH_ANNEAL_33.dump"
+stdout = "expected/registry/PARAM.TADAH_ANNEAL_33.stdout"
+
+[[input]]
+id = "registry:PARAM.TADAH:ANNEAL:34"
+origin = "hpotarget_params.toml (PARAM.TADAH:ANNEAL, example 35)"
+target = "targets/registry/PARAM.TADAH_ANNEAL_34.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PARAM.TADAH_ANNEAL_34.dump"
+stdout = "expected/registry/PARAM.TADAH_ANNEAL_34.stdout"
+
+[[input]]
+id = "registry:PARAM.TADAH:ANNEAL:35"
+origin = "hpotarget_params.toml (PARAM.TADAH:ANNEAL, example 36)"
+target = "targets/registry/PARAM.TADAH_ANNEAL_35.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PARAM.TADAH_ANNEAL_35.dump"
+stdout = "expected/registry/PARAM.TADAH_ANNEAL_35.stdout"
+
+[[input]]
+id = "registry:PARAM.TADAH:ANNEAL:36"
+origin = "hpotarget_params.toml (PARAM.TADAH:ANNEAL, example 37)"
+target = "targets/registry/PARAM.TADAH_ANNEAL_36.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PARAM.TADAH_ANNEAL_36.dump"
+stdout = "expected/registry/PARAM.TADAH_ANNEAL_36.stdout"
+
+[[input]]
+id = "registry:PARAM.TADAH:ANNEAL:37"
+origin = "hpotarget_params.toml (PARAM.TADAH:ANNEAL, example 38)"
+target = "targets/registry/PARAM.TADAH_ANNEAL_37.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PARAM.TADAH_ANNEAL_37.dump"
+stdout = "expected/registry/PARAM.TADAH_ANNEAL_37.stdout"
+
+[[input]]
+id = "registry:PARAM.TADAH:ANNEAL:38"
+origin = "hpotarget_params.toml (PARAM.TADAH:ANNEAL, example 39)"
+target = "targets/registry/PARAM.TADAH_ANNEAL_38.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PARAM.TADAH_ANNEAL_38.dump"
+stdout = "expected/registry/PARAM.TADAH_ANNEAL_38.stdout"
+
+[[input]]
+id = "registry:PARAM.TADAH:ANNEAL:39"
+origin = "hpotarget_params.toml (PARAM.TADAH:ANNEAL, example 40)"
+target = "targets/registry/PARAM.TADAH_ANNEAL_39.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PARAM.TADAH_ANNEAL_39.dump"
+stdout = "expected/registry/PARAM.TADAH_ANNEAL_39.stdout"
+
+[[input]]
+id = "registry:PARAM.TADAH:ANNEAL:40"
+origin = "hpotarget_params.toml (PARAM.TADAH:ANNEAL, example 41)"
+target = "targets/registry/PARAM.TADAH_ANNEAL_40.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PARAM.TADAH_ANNEAL_40.dump"
+stdout = "expected/registry/PARAM.TADAH_ANNEAL_40.stdout"
+
+[[input]]
+id = "registry:PARAM.TADAH:ANNEAL:41"
+origin = "hpotarget_params.toml (PARAM.TADAH:ANNEAL, example 42)"
+target = "targets/registry/PARAM.TADAH_ANNEAL_41.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PARAM.TADAH_ANNEAL_41.dump"
+stdout = "expected/registry/PARAM.TADAH_ANNEAL_41.stdout"
+
+[[input]]
+id = "registry:PARAM.TADAH:ANNEAL:42"
+origin = "hpotarget_params.toml (PARAM.TADAH:ANNEAL, example 43)"
+target = "targets/registry/PARAM.TADAH_ANNEAL_42.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PARAM.TADAH_ANNEAL_42.dump"
+stdout = "expected/registry/PARAM.TADAH_ANNEAL_42.stdout"
+
+[[input]]
+id = "registry:PARAM.TADAH:ANNEAL:43"
+origin = "hpotarget_params.toml (PARAM.TADAH:ANNEAL, example 44)"
+target = "targets/registry/PARAM.TADAH_ANNEAL_43.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/registry/PARAM.TADAH_ANNEAL_43.dump"
+stdout = "expected/registry/PARAM.TADAH_ANNEAL_43.stdout"
+
+[[input]]
+id = "mlip-tests:tests/cli_balance/check_fit_balance.py:118"
+origin = "Tadah.MLIP/tests/cli_balance/check_fit_balance.py, line 118"
+target = "targets/mlip-tests/tests_cli_balance_check_fit_balance.py_118.hpo"
+config = "configs/mlip-tests.tadah"
+tree = "fixtures"
+expected = "expected/mlip-tests/tests_cli_balance_check_fit_balance.py_118.dump"
+stdout = "expected/mlip-tests/tests_cli_balance_check_fit_balance.py_118.stdout"
+
+[[input]]
+id = "mlip-tests:tests/cli_balance/check_fit_balance.py:322"
+origin = "Tadah.MLIP/tests/cli_balance/check_fit_balance.py, line 322"
+target = "targets/mlip-tests/tests_cli_balance_check_fit_balance.py_322.hpo"
+config = "configs/mlip-tests.tadah"
+tree = "fixtures"
+expected = "expected/mlip-tests/tests_cli_balance_check_fit_balance.py_322.dump"
+stdout = "expected/mlip-tests/tests_cli_balance_check_fit_balance.py_322.stdout"
+
+[[input]]
+id = "mlip-tests:tests/cli_balance/check_fit_balance.py:354"
+origin = "Tadah.MLIP/tests/cli_balance/check_fit_balance.py, line 354"
+target = "targets/mlip-tests/tests_cli_balance_check_fit_balance.py_354.hpo"
+config = "configs/mlip-tests.tadah"
+tree = "fixtures"
+expected = "expected/mlip-tests/tests_cli_balance_check_fit_balance.py_354.dump"
+stdout = "expected/mlip-tests/tests_cli_balance_check_fit_balance.py_354.stdout"
+
+[[input]]
+id = "mlip-tests:tests/cli_balance/check_fit_balance.py:442"
+origin = "Tadah.MLIP/tests/cli_balance/check_fit_balance.py, line 442"
+target = "targets/mlip-tests/tests_cli_balance_check_fit_balance.py_442.hpo"
+config = "configs/mlip-tests.tadah"
+tree = "fixtures"
+expected = "expected/mlip-tests/tests_cli_balance_check_fit_balance.py_442.dump"
+stdout = "expected/mlip-tests/tests_cli_balance_check_fit_balance.py_442.stdout"
+
+[[input]]
+id = "mlip-tests:tests/cli_failed_evaluations/check_hpo_failed_evaluations.py:149"
+origin = "Tadah.MLIP/tests/cli_failed_evaluations/check_hpo_failed_evaluations.py, line 149"
+target = "targets/mlip-tests/tests_cli_failed_evaluations_check_hpo_failed_evaluations.py_149.hpo"
+config = "configs/mlip-tests.tadah"
+tree = "fixtures"
+expected = "expected/mlip-tests/tests_cli_failed_evaluations_check_hpo_failed_evaluations.py_149.dump"
+stdout = "expected/mlip-tests/tests_cli_failed_evaluations_check_hpo_failed_evaluations.py_149.stdout"
+
+[[input]]
+id = "mlip-tests:tests/cli_failed_evaluations/check_hpo_failed_evaluations.py:167"
+origin = "Tadah.MLIP/tests/cli_failed_evaluations/check_hpo_failed_evaluations.py, line 167"
+target = "targets/mlip-tests/tests_cli_failed_evaluations_check_hpo_failed_evaluations.py_167.hpo"
+config = "configs/mlip-tests.tadah"
+tree = "fixtures"
+expected = "expected/mlip-tests/tests_cli_failed_evaluations_check_hpo_failed_evaluations.py_167.dump"
+stdout = "expected/mlip-tests/tests_cli_failed_evaluations_check_hpo_failed_evaluations.py_167.stdout"
+
+[[input]]
+id = "mlip-tests:tests/cli_failed_evaluations/check_hpo_failed_evaluations.py:193"
+origin = "Tadah.MLIP/tests/cli_failed_evaluations/check_hpo_failed_evaluations.py, line 193"
+target = "targets/mlip-tests/tests_cli_failed_evaluations_check_hpo_failed_evaluations.py_193.hpo"
+config = "configs/mlip-tests.tadah"
+tree = "fixtures"
+expected = "expected/mlip-tests/tests_cli_failed_evaluations_check_hpo_failed_evaluations.py_193.dump"
+stdout = "expected/mlip-tests/tests_cli_failed_evaluations_check_hpo_failed_evaluations.py_193.stdout"
+
+[[input]]
+id = "mlip-tests:tests/cli_failed_evaluations/check_hpo_failed_evaluations.py:214"
+origin = "Tadah.MLIP/tests/cli_failed_evaluations/check_hpo_failed_evaluations.py, line 214"
+target = "targets/mlip-tests/tests_cli_failed_evaluations_check_hpo_failed_evaluations.py_214.hpo"
+config = "configs/mlip-tests.tadah"
+tree = "fixtures"
+expected = "expected/mlip-tests/tests_cli_failed_evaluations_check_hpo_failed_evaluations.py_214.dump"
+stdout = "expected/mlip-tests/tests_cli_failed_evaluations_check_hpo_failed_evaluations.py_214.stdout"
+
+[[input]]
+id = "mlip-tests:tests/cli_failed_evaluations/check_hpo_failed_evaluations.py:231"
+origin = "Tadah.MLIP/tests/cli_failed_evaluations/check_hpo_failed_evaluations.py, line 231"
+target = "targets/mlip-tests/tests_cli_failed_evaluations_check_hpo_failed_evaluations.py_231.hpo"
+config = "configs/mlip-tests.tadah"
+tree = "fixtures"
+expected = "expected/mlip-tests/tests_cli_failed_evaluations_check_hpo_failed_evaluations.py_231.dump"
+stdout = "expected/mlip-tests/tests_cli_failed_evaluations_check_hpo_failed_evaluations.py_231.stdout"
+
+[[input]]
+id = "mlip-tests:tests/cli_failed_evaluations/check_hpo_failed_evaluations.py:264"
+origin = "Tadah.MLIP/tests/cli_failed_evaluations/check_hpo_failed_evaluations.py, line 264"
+target = "targets/mlip-tests/tests_cli_failed_evaluations_check_hpo_failed_evaluations.py_264.hpo"
+config = "configs/mlip-tests.tadah"
+tree = "fixtures"
+expected = "expected/mlip-tests/tests_cli_failed_evaluations_check_hpo_failed_evaluations.py_264.error"
+
+[[input]]
+id = "mlip-tests:tests/cli_signal/check_hpo_signal.py:62"
+origin = "Tadah.MLIP/tests/cli_signal/check_hpo_signal.py, line 62"
+target = "targets/mlip-tests/tests_cli_signal_check_hpo_signal.py_62.hpo"
+config = "configs/mlip-tests.tadah"
+tree = "fixtures"
+expected = "expected/mlip-tests/tests_cli_signal_check_hpo_signal.py_62.dump"
+stdout = "expected/mlip-tests/tests_cli_signal_check_hpo_signal.py_62.stdout"
+
+[[input]]
+id = "mlip-tests:tests/test_tadah_cli_exit_status.cpp:323"
+origin = "Tadah.MLIP/tests/test_tadah_cli_exit_status.cpp, line 323"
+target = "targets/mlip-tests/tests_test_tadah_cli_exit_status.cpp_323.hpo"
+config = "configs/mlip-tests.tadah"
+tree = "fixtures"
+expected = "expected/mlip-tests/tests_test_tadah_cli_exit_status.cpp_323.dump"
+stdout = "expected/mlip-tests/tests_test_tadah_cli_exit_status.cpp_323.stdout"
+
+[[input]]
+id = "mlip-tests:tests/test_tadah_cli_exit_status.cpp:618"
+origin = "Tadah.MLIP/tests/test_tadah_cli_exit_status.cpp, line 618"
+target = "targets/mlip-tests/tests_test_tadah_cli_exit_status.cpp_618.hpo"
+config = "configs/mlip-tests.tadah"
+tree = "fixtures"
+expected = "expected/mlip-tests/tests_test_tadah_cli_exit_status.cpp_618.dump"
+stdout = "expected/mlip-tests/tests_test_tadah_cli_exit_status.cpp_618.stdout"
+
+[[input]]
+id = "mlip-tests:tests/test_tadah_cli_exit_status.cpp:846"
+origin = "Tadah.MLIP/tests/test_tadah_cli_exit_status.cpp, line 846"
+target = "targets/mlip-tests/tests_test_tadah_cli_exit_status.cpp_846.hpo"
+config = "configs/mlip-tests.tadah"
+tree = "fixtures"
+expected = "expected/mlip-tests/tests_test_tadah_cli_exit_status.cpp_846.dump"
+stdout = "expected/mlip-tests/tests_test_tadah_cli_exit_status.cpp_846.stdout"
+
+[[input]]
+id = "mlip-tests:tests/test_tadah_cli_exit_status.cpp:912"
+origin = "Tadah.MLIP/tests/test_tadah_cli_exit_status.cpp, line 912"
+target = "targets/mlip-tests/tests_test_tadah_cli_exit_status.cpp_912.hpo"
+config = "configs/mlip-tests.tadah"
+tree = "fixtures"
+expected = "expected/mlip-tests/tests_test_tadah_cli_exit_status.cpp_912.dump"
+stdout = "expected/mlip-tests/tests_test_tadah_cli_exit_status.cpp_912.stdout"
+
+[[input]]
+id = "mlip-tests:tests/test_tadah_cli_exit_status.cpp:985"
+origin = "Tadah.MLIP/tests/test_tadah_cli_exit_status.cpp, line 985"
+target = "targets/mlip-tests/tests_test_tadah_cli_exit_status.cpp_985.hpo"
+config = "configs/mlip-tests.tadah"
+tree = "fixtures"
+expected = "expected/mlip-tests/tests_test_tadah_cli_exit_status.cpp_985.dump"
+stdout = "expected/mlip-tests/tests_test_tadah_cli_exit_status.cpp_985.stdout"
+
+[[input]]
+id = "mlip-tests:tests/test_tadah_cli_exit_status.cpp:3357"
+origin = "Tadah.MLIP/tests/test_tadah_cli_exit_status.cpp, line 3357"
+target = "targets/mlip-tests/tests_test_tadah_cli_exit_status.cpp_3357.hpo"
+config = "configs/mlip-tests.tadah"
+tree = "fixtures"
+expected = "expected/mlip-tests/tests_test_tadah_cli_exit_status.cpp_3357.error"
+
+[[input]]
+id = "mlip-tests:tests/test_tadah_cli_exit_status.cpp:4201"
+origin = "Tadah.MLIP/tests/test_tadah_cli_exit_status.cpp, line 4201"
+target = "targets/mlip-tests/tests_test_tadah_cli_exit_status.cpp_4201.hpo"
+config = "configs/mlip-tests.tadah"
+tree = "fixtures"
+expected = "expected/mlip-tests/tests_test_tadah_cli_exit_status.cpp_4201.dump"
+stdout = "expected/mlip-tests/tests_test_tadah_cli_exit_status.cpp_4201.stdout"
+
+[[input]]
+id = "mlip-tests:tests/test_tadah_cli_exit_status.cpp:4252"
+origin = "Tadah.MLIP/tests/test_tadah_cli_exit_status.cpp, line 4252"
+target = "targets/mlip-tests/tests_test_tadah_cli_exit_status.cpp_4252.hpo"
+config = "configs/mlip-tests.tadah"
+tree = "fixtures"
+expected = "expected/mlip-tests/tests_test_tadah_cli_exit_status.cpp_4252.dump"
+stdout = "expected/mlip-tests/tests_test_tadah_cli_exit_status.cpp_4252.stdout"
+
+[[input]]
+id = "mlip-tests:tests/test_tadah_cli_exit_status.cpp:5845"
+origin = "Tadah.MLIP/tests/test_tadah_cli_exit_status.cpp, line 5845"
+target = "targets/mlip-tests/tests_test_tadah_cli_exit_status.cpp_5845.hpo"
+config = "configs/mlip-tests.tadah"
+tree = "fixtures"
+expected = "expected/mlip-tests/tests_test_tadah_cli_exit_status.cpp_5845.dump"
+stdout = "expected/mlip-tests/tests_test_tadah_cli_exit_status.cpp_5845.stdout"
+
+[[input]]
+id = "mlip-tests:tests/test_tadah_cli_exit_status.cpp:6783"
+origin = "Tadah.MLIP/tests/test_tadah_cli_exit_status.cpp, line 6783"
+target = "targets/mlip-tests/tests_test_tadah_cli_exit_status.cpp_6783.hpo"
+config = "configs/mlip-tests.tadah"
+tree = "fixtures"
+expected = "expected/mlip-tests/tests_test_tadah_cli_exit_status.cpp_6783.dump"
+stdout = "expected/mlip-tests/tests_test_tadah_cli_exit_status.cpp_6783.stdout"
+
+[[input]]
+id = "mlip-tests:tests/test_tadah_cli_exit_status.cpp:7445"
+origin = "Tadah.MLIP/tests/test_tadah_cli_exit_status.cpp, line 7445"
+target = "targets/mlip-tests/tests_test_tadah_cli_exit_status.cpp_7445.hpo"
+config = "configs/mlip-tests.tadah"
+tree = "fixtures"
+expected = "expected/mlip-tests/tests_test_tadah_cli_exit_status.cpp_7445.dump"
+stdout = "expected/mlip-tests/tests_test_tadah_cli_exit_status.cpp_7445.stdout"
+
+[[input]]
+id = "mlip-tests:tests/test_tadah_cli_exit_status.cpp:9747"
+origin = "Tadah.MLIP/tests/test_tadah_cli_exit_status.cpp, line 9747"
+target = "targets/mlip-tests/tests_test_tadah_cli_exit_status.cpp_9747.hpo"
+config = "configs/mlip-tests.tadah"
+tree = "fixtures"
+expected = "expected/mlip-tests/tests_test_tadah_cli_exit_status.cpp_9747.error"
+
+[[input]]
+id = "mlip-tests:tests/test_tadah_cli_exit_status.cpp:9899"
+origin = "Tadah.MLIP/tests/test_tadah_cli_exit_status.cpp, line 9899"
+target = "targets/mlip-tests/tests_test_tadah_cli_exit_status.cpp_9899.hpo"
+config = "configs/mlip-tests.tadah"
+tree = "fixtures"
+expected = "expected/mlip-tests/tests_test_tadah_cli_exit_status.cpp_9899.dump"
+stdout = "expected/mlip-tests/tests_test_tadah_cli_exit_status.cpp_9899.stdout"
+
+[[input]]
+id = "mlip-tests:tests/test_tadah_cli_exit_status.cpp:10340"
+origin = "Tadah.MLIP/tests/test_tadah_cli_exit_status.cpp, line 10340"
+target = "targets/mlip-tests/tests_test_tadah_cli_exit_status.cpp_10340.hpo"
+config = "configs/mlip-tests.tadah"
+tree = "fixtures"
+expected = "expected/mlip-tests/tests_test_tadah_cli_exit_status.cpp_10340.dump"
+stdout = "expected/mlip-tests/tests_test_tadah_cli_exit_status.cpp_10340.stdout"
+
+[[input]]
+id = "mlip-tests:tests/test_tadah_cli_exit_status.cpp:10494"
+origin = "Tadah.MLIP/tests/test_tadah_cli_exit_status.cpp, line 10494"
+target = "targets/mlip-tests/tests_test_tadah_cli_exit_status.cpp_10494.hpo"
+config = "configs/mlip-tests.tadah"
+tree = "fixtures"
+expected = "expected/mlip-tests/tests_test_tadah_cli_exit_status.cpp_10494.dump"
+stdout = "expected/mlip-tests/tests_test_tadah_cli_exit_status.cpp_10494.stdout"
+
+[[input]]
+id = "mlip-tests:tests/test_tadah_cli_exit_status.cpp:11263"
+origin = "Tadah.MLIP/tests/test_tadah_cli_exit_status.cpp, line 11263"
+target = "targets/mlip-tests/tests_test_tadah_cli_exit_status.cpp_11263.hpo"
+config = "configs/mlip-tests.tadah"
+tree = "fixtures"
+expected = "expected/mlip-tests/tests_test_tadah_cli_exit_status.cpp_11263.dump"
+stdout = "expected/mlip-tests/tests_test_tadah_cli_exit_status.cpp_11263.stdout"
+
+[[input]]
+id = "mlip-tests:tests/test_tadah_cli_exit_status.cpp:12374"
+origin = "Tadah.MLIP/tests/test_tadah_cli_exit_status.cpp, line 12374"
+target = "targets/mlip-tests/tests_test_tadah_cli_exit_status.cpp_12374.hpo"
+config = "configs/mlip-tests.tadah"
+tree = "fixtures"
+expected = "expected/mlip-tests/tests_test_tadah_cli_exit_status.cpp_12374.dump"
+stdout = "expected/mlip-tests/tests_test_tadah_cli_exit_status.cpp_12374.stdout"
+
+[[input]]
+id = "mlip-tests:tests/test_tadah_cli_exit_status.cpp:12863"
+origin = "Tadah.MLIP/tests/test_tadah_cli_exit_status.cpp, line 12863"
+target = "targets/mlip-tests/tests_test_tadah_cli_exit_status.cpp_12863.hpo"
+config = "configs/mlip-tests.tadah"
+tree = "fixtures"
+expected = "expected/mlip-tests/tests_test_tadah_cli_exit_status.cpp_12863.dump"
+stdout = "expected/mlip-tests/tests_test_tadah_cli_exit_status.cpp_12863.stdout"
+
+[[input]]
+id = "mlip-tests:tests/test_tadah_cli_exit_status.cpp:12898"
+origin = "Tadah.MLIP/tests/test_tadah_cli_exit_status.cpp, line 12898"
+target = "targets/mlip-tests/tests_test_tadah_cli_exit_status.cpp_12898.hpo"
+config = "configs/mlip-tests.tadah"
+tree = "fixtures"
+expected = "expected/mlip-tests/tests_test_tadah_cli_exit_status.cpp_12898.dump"
+stdout = "expected/mlip-tests/tests_test_tadah_cli_exit_status.cpp_12898.stdout"
+
+[[input]]
+id = "docs:nfp_examples/first_run.hpo"
+origin = "docs/source/nfp_examples/first_run.hpo"
+target = "targets/docs/nfp_examples_first_run.hpo.hpo"
+config = "configs/default.tadah"
+tree = "fixtures"
+expected = "expected/docs/nfp_examples_first_run.hpo.dump"
+stdout = "expected/docs/nfp_examples_first_run.hpo.stdout"

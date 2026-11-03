@@ -1,0 +1,23 @@
+# DLIB:BFGS over one search parameter (RCUT2B), started at the value of
+# ../common/config.tadah, with a validation energy term (PC_ERMSE); no
+# PC_LAMMPS line, which refuses a gradient-based optimiser.
+# The MPI end-to-end test (tests/mpi/hpo_mpi_e2e.py, gradient_refusal)
+# runs this file and expects its ENDOPTIMIZER on line 14.
+
+OPTIMIZER
+  STRATEGY
+    TYPE PLAIN
+    LIB DLIB
+    ALGO BFGS
+    MAXEVAL 30
+  ENDSTRATEGY
+ENDOPTIMIZER
+
+LOSS L2
+FAILSCORE 1e16
+PC_ERMSE 0 0.0001
+
+OPTIM RCUT2B (1) 4.0 6.0
+
+OUTPUT 1
+BOUTPUT 1

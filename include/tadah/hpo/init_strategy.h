@@ -41,7 +41,7 @@ class HPOTargets;        // forward-declared -- full type pulled in by .cpp
  * starts from (K_TOTAL caps the points of the METHOD lines of its block, so
  * it asks for none of its own). The points of a block are drawn when the
  * file is read and held in memory, and each is a start of a search;
- * HPOTargets::read() refuses a larger count at its line. */
+ * the parser of the target file refuses a larger count at its line. */
 inline constexpr std::size_t kMaxStartingPoints = 1000000;
 
 /* Which block's chain draws the points (InitContext::stream): an INIT
@@ -126,7 +126,7 @@ std::unique_ptr<InitStrategy> build_init_strategy(const struct InitStrategySpec&
 
 /* Checks one chain entry the way build_init_strategy() instantiates it:
  * a known METHOD, its arity, and K a whole integer from 1 to
- * kMaxStartingPoints. HPOTargets::read() calls it
+ * kMaxStartingPoints. The parser of the target file calls it
  * at the METHOD line, so the error names that line. Throws
  * std::runtime_error. */
 void validate_init_entry(const InitStrategySpec::Entry& e);
@@ -139,7 +139,7 @@ void validate_init_entry(const InitStrategySpec::Entry& e);
  * one file, gives the same point -- or the CONFIG point when it has no
  * METHOD line. The one count of the startup check of N_STARTS
  * (require_multistart_points), of the K_TOTAL that caps nothing
- * (HPOTargets::read) and of the run-time warning of a RESTART round of
+ * (the parser of the target file) and of the run-time warning of a RESTART round of
  * MULTISTART. The chain drawn can give fewer: a WARM point that
  * WARM_ON_MISMATCH skip drops, a drawn point equal to another. */
 struct ChainPoints {

@@ -891,7 +891,7 @@ TEST_CASE("startup validation: STRATEGY TYPE MULTISTART needs N_STARTS 2 or "
  * points is refused at its RESTART line, the next case; it was accepted
  * here).
  * Before the fix: the parser refused these files when it read them
- * (HPOTargets::read), before the refusals of the optimiser at startup, and
+ * (the parser of the target file), before the refusals of the optimiser at startup, and
  * accepted the chains of two CONFIG lines and of two WARM lines of one
  * file, whose run warned "MULTISTART N_STARTS 2 requested but the resolved
  * INIT chain produced only 1 starting point; running 1 start, which is

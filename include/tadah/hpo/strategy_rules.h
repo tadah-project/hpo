@@ -3,8 +3,8 @@
  * Strategy rules -- which STRATEGY TYPE can drive which optimiser, and
  * which STRATEGY keys each TYPE takes. One set of free functions, the
  * single source of truth for:
- *   - HPOTargets::read(): require_driver() when an OPTIMIZER or EXPLORE
- *     block ends, require_inner_driver() when an INNER block ends, and
+ *   - the parser of the target file: require_driver() when an OPTIMIZER
+ *     or EXPLORE block ends, require_inner_driver() when an INNER block ends, and
  *     require_strategy_key() when a STRATEGY block ends;
  *   - validate_hpo_setup(): validate_run_policy(), at startup, before the
  *     host is built or any data is loaded;
@@ -40,15 +40,16 @@ enum class DriverPhase {
  * validate_run_policy() does: "the STRATEGY-level optimiser:
  * NLOPT:LN_NEWUOA_BOUND is refused: ...", "the PRESTAGE refinement:
  * unknown optimiser NLOPT:LD_FOO: LIB NLOPT has no ALGO LD_FOO; ..." (a
- * REFINE block's optimiser), "the EXPLORE block: ...". HPOTargets::read()
- * applies it where the block closes, so the error names that line. */
+ * REFINE block's optimiser), "the EXPLORE block: ...". The parser of the
+ * target file applies it where the block closes, so the error names that
+ * line. */
 void require_driver(const OptimizerSpec& phase_spec, DriverPhase phase);
 
 /* The same rule for an INNER block, the local optimiser NLopt's MLSL and
  * AUGLAG run: `enclosing` names the block it sits in (STRATEGY, EXPLORE or
  * REFINE): "the INNER block inside STRATEGY: NLOPT:LN_NEWUOA_BOUND is
- * refused: ...", "... unknown optimiser ...". HPOTargets::read() applies
- * it when the INNER block closes. */
+ * refused: ...", "... unknown optimiser ...". The parser of the target
+ * file applies it when the INNER block closes. */
 void require_inner_driver(const OptimizerSpec& inner_spec,
                           const std::string& enclosing);
 
@@ -106,8 +107,8 @@ bool runs_from_each_start(const OptimizerCaps& caps);
  * INNER block: LN_AUGLAG and LN_AUGLAG_EQ run NLopt's default LN_COBYLA),
  * every one, sorted, from the registry: "NLOPT:LN_AUGLAG, ...,
  * NLOPT:LN_SBPLX". The INNER searches a run with PC_LAMMPS, which takes no
- * gradient, can name: HPOTargets::read() names them when it refuses a
- * gradient-based one. */
+ * gradient, can name: the parser of the target file names them when it
+ * refuses a gradient-based one. */
 std::string nlopt_inner_searches_without_gradient();
 
 /* Every registered optimiser that runs without an INNER block and takes
@@ -116,8 +117,8 @@ std::string nlopt_inner_searches_without_gradient();
  * NLopt's MLSL and AUGLAG algorithms without a default local optimiser
  * (AUGLAG, AUGLAG_EQ, G_MLSL, G_MLSL_LDS) are left out: they need an INNER
  * block. The optimisers a block can name as written in a run with
- * PC_LAMMPS, which takes no gradient: HPOTargets::read() names them when it
- * refuses a gradient-based one. */
+ * PC_LAMMPS, which takes no gradient: the parser of the target file names
+ * them when it refuses a gradient-based one. */
 std::string searches_without_gradient();
 
 /* STRATEGY TYPE MULTISTART: `spec` names an optimiser, and a local one
@@ -231,7 +232,6 @@ void reject_refused_backends(const OptimizerSpec& spec);
  * such a key has no effect, so require_strategy_key() throws, naming the
  * TYPE the key needs. `type_given` says whether the block had a TYPE line
  * (PLAIN is the default). Keys of no single TYPE are always accepted. */
-bool is_strategy_type_key(const std::string& key);
 void require_strategy_key(const std::string& key, StrategyType type,
                           bool type_given);
 

@@ -4,8 +4,8 @@
 /** \file optimizer_block.h
  *  \brief Shared leaf utilities for parsing an `OPTIMIZER` block into an
  *  OptimizerSpec. These are the genuinely-common pieces between the
- *  `tadah hpo --hpotarget` parser (HPOTargets::read) and the `tadah refit`
- *  stage parser (RefitParser): the optimiser-attribute vocabulary
+ *  `tadah hpo --hpotarget` parser (src/hpotarget_parser.cpp) and the
+ *  `tadah refit` stage parser (RefitParser): the optimiser-attribute vocabulary
  *  (LIB/ALGO/MAXEVAL/stop-criteria/... -> OptimizerSpec) and a balanced
  *  OPTIMIZER...ENDOPTIMIZER reader (incl. a nested INNER...ENDINNER).
  *
@@ -43,8 +43,8 @@ std::string opt_attr_keys_joined(const char *sep = "/");
  *  `INIT_MODE` accepts `UNIFORM` | `JITTER [AUTO <p> | <frac>]`.
  *
  *  This is a grammar rather than a maximum count because the two callers frame
- *  their input differently: HPOTargets::read() hands dispatch_opt_attr() one
- *  LINE, while read_optimizer_block() hands it a flat token stream spanning
+ *  their input differently: the parser of the target file hands
+ *  dispatch_opt_attr() one LINE, while read_optimizer_block() hands it a flat token stream spanning
  *  the whole block. "Read up to N values" would silently consume the next key
  *  in the second framing whenever fewer than N are actually present; deciding
  *  per token is correct in both. `key` is expected uppercase. */

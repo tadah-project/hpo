@@ -21,6 +21,12 @@ ctest --test-dir build/tests --output-on-failure
 In-source builds are blocked deliberately; always pick a separate
 build directory.
 
+A CTest entry that builds in the build tree it runs in (its command runs
+`--build` on the tree or passes it as `-DBUILD_DIR`) holds
+`RESOURCE_LOCK tadah_header_check`, as the header checks do, so that
+`ctest -j` never runs two such builds at once; `hpo_build_tree_locks`
+fails on an entry without it.
+
 ### Dependencies
 
 - C++17 compiler.
@@ -93,7 +99,30 @@ with the change that alters it.
   and `blueprint/optimizers_gen.toml` (CTest
   `hpo_optimizer_registry_sync`): `blueprint/README.md` says what each is
   generated from and how to regenerate it.
-- `include/tadah/hpo/hpotarget_registry_gen.h` and
-  `include/tadah/hpo/hpo_param_registry_gen.h` (CTest
+- `include/tadah/hpo/hpotarget_registry_gen.h`,
+  `include/tadah/hpo/hpo_param_registry_gen.h` and
+  `include/tadah/hpo/hpotarget_handlers_gen.h` (CTest
   `hpo_hpotarget_registry_sync`): `blueprint/README.md`, "The generated
   tables", says what they are generated from and how to regenerate them.
+
+## The frozen corpus of target files
+
+`tests/data/hpotarget_corpus` holds the target files that
+`tests/hpotarget_corpus.py` collects from the repositories and what the
+parser of the target file gives for each: the description of the parse or
+the refusal, and what the parse prints on stdout and stderr, compared byte
+for byte (CTest cases `hpotarget corpus: ...`; `blueprint/README.md`, "The
+frozen corpus"). It is written by `tests/hpotarget_corpus.py write`, not
+by hand. A change that changes what `tadah hpo` reads from a target file
+or prints while it reads it writes the corpus again in the same commit,
+and the differences are reviewed with it. So does a change of the inputs
+(a registry example, a target file of the tests or of the documentation
+added, removed or changed): CTest `hpo_hpotarget_corpus` fails while the
+corpus is not the inputs of the sources.
+
+```bash
+python3 tests/hpotarget_corpus.py write tests/data/hpotarget_corpus \
+    --runner <build directory>/tests/hpotarget_case_runner \
+    --tadah-mlip <Tadah.MLIP source directory>
+git diff --stat tests/data/hpotarget_corpus
+```

@@ -1,14 +1,18 @@
 #!/usr/bin/env python3
 """Unit tests of tests/check_hpotarget_generated.py on the synthetic
 registry of test_hpotarget_registry.py: the TOML it writes for the runner,
-the frame it reads an error from, the cases each check generates, and what
+the frame it reads an error from, the cases each check generates, what
 each check makes of a result the parser could give (a refusal where the
 registry says there is one, an acceptance where it says there is none),
-without running the parser."""
+and the runner's command, which reads with the parser of `tadah hpo` (the
+check takes no --parser), without running the parser; and that each
+section header of the check heads code."""
 
 from __future__ import annotations
 
+import contextlib
 import dataclasses
+import io
 import pathlib
 import sys
 import tempfile
@@ -123,6 +127,53 @@ class Generated(unittest.TestCase):
             result("line 2 of target.hpo: no\nLine: FAILSCORE 10")))
         self.assertIn("FAILSCORE 10\nFAILSCORE 10",
                       c["ROOT.FAILSCORE twice"].case["file"])
+
+    # Pins: a key given twice whose repeat is error_until_read (no line
+    # between reads the first) is refused with its repeat_msg, as one of
+    # repeat error is.
+    # Before the fix: error_until_read was taken as a rule whose second
+    # line is read.
+    def test_repeat_error_until_read(self):
+        fs = next(k for k in self.reg.keys if k.name == "FAILSCORE")
+        fs.repeat = "error_until_read"
+        fs.repeat_msg = "FAILSCORE again (first on line {first_line})"
+        self.g.gen_repeat()
+        c = self.cases("repeat")["ROOT.FAILSCORE twice"]
+        self.assertIsNone(c.judge(result(
+            "line 2 of target.hpo: FAILSCORE again (first on line 1)\n"
+            "Line: FAILSCORE 10")))
+        self.assertIn("is not refused with its repeat_msg",
+                      c.judge(result()))
+
+    # Pins: the word of a word argument, written with the case of one
+    # letter changed, is refused at its line where the registry reads it
+    # as written (case exact, the default) and read where it reads it in
+    # any case; so is the word of a line option and of a form.
+    # Before the fix: there was no such check, and a word argument had no
+    # case.
+    def test_case(self):
+        self.g.gen_case()
+        c = self.cases("case")
+        self.assertEqual(set(c), {"OPTIMIZER.LIB tADAH"})
+        exact = c["OPTIMIZER.LIB tADAH"]
+        self.assertIn("LIB tADAH", exact.case["file"])
+        self.assertIn("is not refused at its line",
+                      exact.judge(result()))
+        self.assertIsNone(exact.judge(result(
+            "line 3 of target.hpo: LIB is wrong\nLine: LIB tADAH")))
+        lib = next(k for k in self.reg.keys if k.name == "LIB")
+        lib.args[0].case = "any"
+        self.g.cases.clear()
+        self.g.gen_case()
+        anycase = self.cases("case")["OPTIMIZER.LIB tADAH"]
+        self.assertIsNone(anycase.judge(result()))
+        self.assertIn("reads it in any case", anycase.judge(result(
+            "line 3 of target.hpo: LIB is wrong\nLine: LIB tADAH")))
+        self.assertEqual(gen.Generator.other_case("inhouse",
+                                                  ["inhouse", "Inhouse"]),
+                         "iNhouse")
+        self.assertEqual(gen.Generator.other_case("--x", ["--x", "--X"]),
+                         None)
 
     def test_ranges(self):
         # SEED: an integer from 0 to UINT64_MAX.
@@ -350,6 +401,46 @@ class Generated(unittest.TestCase):
         self.assertIsNone(self.g.option_in_example(
             option("--wide", "SEED 7 --WIDE")))
 
+    # Pins: the runner reads the cases with the parser of `tadah hpo`, the
+    # one parser of the target file: its command names the cases and the
+    # results only, and the check takes no --parser (an argument error).
+    # Before the fix: fails, --parser old, new or both chose the parser.
+    def test_the_runner_reads_with_the_parser_of_the_program(self):
+        self.assertEqual(
+            gen.runner_command(pathlib.Path("/r"), pathlib.Path("c.toml"),
+                               pathlib.Path("o.json")),
+            ["/r", "c.toml", "o.json"])
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err), \
+                self.assertRaises(SystemExit) as e:
+            gen.main(["--runner", "/r", "--parser", "old"])
+        self.assertEqual(e.exception.code, 2)
+        self.assertIn("unrecognized arguments: --parser old", err.getvalue())
+
+
+
+class Layout(unittest.TestCase):
+    # Pins: each section header of check_hpotarget_generated.py
+    # ("# ---- <name> ----") heads code: a line of code follows it before
+    # the next header, so a header labels the code under it.
+    # Before the fix: fails, "# ---- words ----" stands directly above
+    # "# ---- case ----", and gen_words() sits under the case header.
+    def test_each_section_header_heads_code(self):
+        import re
+        header = re.compile(r"^\s*# -{4} ?(.*?) ?-{4,}\s*$")
+        lines = pathlib.Path(gen.__file__).read_text().splitlines()
+        empty, current = [], None
+        for n, line in enumerate(lines, 1):
+            m = header.match(line)
+            if m:
+                if current is not None:
+                    empty.append(current)
+                current = f"line {n}: {m.group(1).strip(' -')}"
+            elif line.strip() and not line.lstrip().startswith("#"):
+                current = None
+        if current is not None:
+            empty.append(current)
+        self.assertEqual(empty, [])
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

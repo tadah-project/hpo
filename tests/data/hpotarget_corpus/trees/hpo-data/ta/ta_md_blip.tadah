@@ -1,0 +1,50 @@
+# The Ta potential of the relaxed cohesive-energy cases of
+# test_cohesive_energy_observable.cpp: a fit of bcc Ta MD data whose
+# crystal has its energy minimum near the DFT lattice constant.
+#
+# Provenance: the lines below are the potential of a best_pot.tadah that
+# tadah hpo wrote on 2026-10-19 (Tadah.MLIP baf39c6, HPO cf43173, MLIP
+# cc39f99, CORE 24e26fd), whose best was its first evaluation, without its
+# header, its training record and its lines of the keys EWEIGHT, FWEIGHT
+# and SWEIGHT, which Tadah! 1.6.0 retired and no load of a potential reads
+# (sha256 of the lines below: 04390ccb362b60dcb6d2c2fca3a880d6a77f4898609006
+# 334f2c630290765a81). tadah train fitted it: D2_Blip (17 functions, RCUT2B
+# 6.621) + DM_mBlipEnv (11 embedding functions, RCUTMB 5.777, SGRIDMB
+# 0.1701), Cut_Cos, M_BLR BF_Linear, OALGO 4 with LAMBDA 1e-6, 28 weights,
+# fitted to the energies and forces of 88 snapshots of 54-atom bcc Ta from
+# DFT molecular dynamics at 0, 25 and 100 GPa (VASP 5.4.4, PBE, 630 eV;
+# energies plus 3.69807734 eV per atom) with EWEIGHT 86 and FWEIGHT 100
+# (2 meV/atom for the energy of a cell, 0.1 eV/A).
+#
+# Reference: LAMMPS (pair_style tadah) relaxes its two-atom bcc cell at
+# zero pressure (fix box/relax iso 0.0 vmax 0.001; minimize 0.0 1e-10 1000
+# 10000, |P| < 1e-5 bar) to a0 = 3.305677525578418 A, where the energy of
+# the free atom less the energy per atom of the crystal is
+# 8.1263245850672 eV/atom.
+ATOM              Ta
+BIAS              false
+CEMBFUNC          0   1   2   3   4   5   6   7   8   9   10
+CGRID2B           2   2.25   2.5   2.75   3   3.25   3.5   3.75   4   4.25   4.5   4.75   5   5.25   5.5   5.75   6
+CGRIDMB           0
+DIMER             false   0   false
+FORCE             true
+INIT2B            true
+INITMB            true
+LAMBDA            9.99999999999999955e-07
+LSCALE            1
+MODEL             M_BLR   BF_Linear
+NORM              false
+OALGO             4
+RCTYPE2B          Cut_Cos
+RCTYPEMB          Cut_Cos
+RCUT2B            6.62100000000000044
+RCUTENV           1
+RCUTMB            5.77700000000000014
+SEMBFUNC          1   1   1   1   1   1   1   1   1   1   1
+SGRID2B           2   2   2   2   2   2   2   2   2   2   2   2   2   2   2   2   2
+SGRIDMB           0.170100000000000001
+STRESS            false
+TYPE2B            D2_Blip   17   17   Ta   Ta
+TYPEMB            DM_mBlipEnv   0   1   1   11   11   Ta   Ta
+WATOM             3
+WEIGHTS           -5.4440950839798683   4.75730597459348736   -9.85510980813570825   9.7747698678691286   -13.4521240759069443   13.6461044054387113   -15.5263037421453181   15.438114965831792   -15.3036374820156382   14.2927112709743955   -12.8059627445900635   11.0557696913425207   -8.84214464715900128   6.76625519873969239   -4.28614246835720447   2.48731990009052373   -0.531983869680801802   0   0   3.69251001315955385   6.71378990991255353   10.456790577393642   14.5241934425283805   18.6254053438125631   22.7722887355901271   26.9773642659299924   30.9032656478907271   35.4815570391908182

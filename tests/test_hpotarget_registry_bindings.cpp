@@ -11,21 +11,40 @@
 // opt_attr_keys(), the OPTIM refusals of HPOTargets, LossFunction,
 // hpotarget_group_specs(), the ASA help table), the two are compared entry
 // by entry. Where it is local to a function (the block names, the removed
-// keywords, the INNER refusals, the top-level and once-set keys of
-// HPOTargets::read, the options of the gate lines, line_options() of
-// lammps_sim.cpp, the options of PC_OBSERVABLE cohesive_energy, the INIT
-// methods, the STRATEGY TYPE keys, kDescs and kExcluded of
+// keywords, the INNER refusals, the top-level and once-set keys, the
+// options of the gate lines, the INIT methods, kDescs and kExcluded of
 // asa_options.cpp, the PARAM lists of the adapters, the reader messages of
 // strict_parse.cpp), each generated entry is put through the code that
-// reads it,
-// and the code's answer, a refusal with its message, is compared with the
-// entry's message filled in. A name the code knows without a generated
-// entry is the coverage check's (hpo_hpotarget_registry_coverage, which
-// reads these functions, the set of is_top_level_key() among them); the
+// reads it (the parser of the target file, HPOTargets), and the code's
+// answer, a refusal with its message, is compared with the entry's message
+// filled in. The
+// keys of the optimiser group, the options of PC_LAMMPS, PC_FAILPROBE and
+// PC_OBSERVABLE cohesive_energy, the STRATEGY TYPE keys and the loss
+// functions the code takes from the generated tables themselves (the
+// handlers of hpotarget_handlers.cpp read them): their cases hold what the
+// code does with them, the messages, the order and the TYPE of each key. A
+// name the code knows without a generated entry is the coverage check's
+// (hpo_hpotarget_registry_coverage, which reads these functions); the
 // OPTIM refusals are compared both ways over every key of the blueprint.
 //
+// The tables the parser's engine reads besides (the header defines
+// TADAH_HPOTARGET_ENGINE_TABLES once it holds them) are compared through
+// the parser's refusals: the order of the steps of a key's line
+// (structure::line_steps_*, Key::steps), of a line that opens a block and
+// of an END line (open_order, close_order), of the checks of an END line
+// (Block::close_steps) and of the end of the file (eof_order), each by a
+// file that two steps refuse, refused as the earlier step refuses it; the
+// line a close check names (Block::close_checks_at); the keys given again
+// only after a line reads them (Repeat::ErrorUntilRead); the texts the
+// parser puts into messages (Key::effect against require_strategy_key(),
+// Rule::what); and the text of a PARAM key in `tadah explain ASA:ASA`
+// (Param::explain against print_asa_param_table). The case of words
+// (any_case) is compared by check_hpotarget_generated.py, check `case`.
+//
 // Tag [hpotarget_gen]. The file compiles with or without the generated
-// headers (__has_include): without them it holds one case, which fails.
+// headers (__has_include): without them it holds one case, which fails;
+// with headers without TADAH_HPOTARGET_ENGINE_TABLES, the cases of the
+// engine's tables are one case, which fails.
 // The build compiles it again when the headers appear, change or go
 // (tests/CMakeLists.txt, hpo_depend_on_has_include(); CTest
 // hpo_has_include_rebuild checks the mechanism).
@@ -552,10 +571,9 @@ TEST_CASE("hpotarget generated tables: the removed keywords are the "
 /* Pins: kTopLevelKeys are the keys a block refuses as top-level keys
  * (is_top_level_key): each, inside INIT, is refused with
  * root_key_in_block_msg; a key of the top level that is not one of them
- * (MAXTIME, a key of the optimiser group too) is an unknown key there. A
- * name of the code's set that is no key of the top level is the coverage
- * check's, which reads the set. Before the fix: the headers do not
- * exist. */
+ * (MAXTIME, a key of the optimiser group too) is an unknown key there.
+ * The parser takes the set from the generated tables
+ * (src/hpotarget_parser.cpp). Before the fix: the headers do not exist. */
 TEST_CASE("hpotarget generated tables: the top-level keys are those a "
           "block refuses as such", "[hpotarget_gen]")
 {
@@ -586,10 +604,11 @@ TEST_CASE("hpotarget generated tables: the top-level keys are those a "
 
 /* Pins: a top-level key whose repeat is error, given twice, is refused at
  * the second line with its repeat_msg naming the first: the once-set keys
- * of HPOTargets::read (set_once), FAILSCORE, PC_SCRIPT_TIMEOUT, MAXTIME
- * and LOSS (set_for_lines: no line between reads the first), and the
- * metric and PC_FAILPROBE lines, which refuse a repeat themselves. Each
- * such key has a valid line below; a key without one fails the case.
+ * of the top level, and the metric and PC_FAILPROBE lines,
+ * which refuse a repeat themselves. (FAILSCORE, PC_SCRIPT_TIMEOUT, MAXTIME
+ * and LOSS, set_for_lines, are of repeat error_until_read: the case "a key
+ * given again after a line reads it" below.) Each such key has a valid
+ * line below; a key without one fails the case.
  * Before the fix: the headers do not exist. */
 TEST_CASE("hpotarget generated tables: the top-level keys set once refuse "
           "a second line with their repeat message", "[hpotarget_gen]")
@@ -600,9 +619,6 @@ TEST_CASE("hpotarget generated tables: the top-level keys set once refuse "
         os << "variable S equal 1.0\n";
     }
     const std::map<std::string, std::string> valid = {
-        {"FAILSCORE", "FAILSCORE 10"},
-        {"PC_SCRIPT_TIMEOUT", "PC_SCRIPT_TIMEOUT 60"},
-        {"MAXTIME", "MAXTIME 60"},
         {"PC_ISOLATION", "PC_ISOLATION THREAD"},
         {"PC_WORKER_TIMEOUT", "PC_WORKER_TIMEOUT 10"},
         {"FAILSCORE_GRADING", "FAILSCORE_GRADING OFF"},
@@ -620,8 +636,7 @@ TEST_CASE("hpotarget generated tables: the top-level keys set once refuse "
         {"PC_ErRMSE", "PC_ErRMSE 0 1"},
         {"PC_ERSQ", "PC_ERSQ 0 1"},
         {"PC_FAILPROBE",
-         "PC_FAILPROBE --script " + script.string() + " --outvar S"},
-        {"LOSS", "LOSS L2"}};
+         "PC_FAILPROBE --script " + script.string() + " --outvar S"}};
     for (const R::Key& k : R::kKeys) {
         if (!(k.blocks & R::block_bit(R::BlockId::ROOT)) ||
             k.repeat != R::Repeat::Error)
@@ -636,15 +651,15 @@ TEST_CASE("hpotarget generated tables: the top-level keys set once refuse "
     }
 }
 
-/* Pins: the STRATEGY TYPE keys of the registry are kStrategyTypeKeys of
- * strategy_rules.cpp, each with its home TYPE: is_strategy_type_key()
- * names them and no other key of the STRATEGY block; require_strategy_key()
+/* Pins: the STRATEGY TYPE keys of the registry are those of
+ * strategy_rules.cpp, each with its home TYPE: require_strategy_key()
  * passes one under its TYPE and refuses it under another with the
- * STRATEGY block's close check (its {effect} is the code's text). The
- * TYPE words are strategy_type_name()'s, in order. Before the fix: the
- * headers do not exist. */
+ * STRATEGY block's close check (its {effect} is the code's text), and
+ * passes every other key of the STRATEGY block under every TYPE. The TYPE
+ * words are strategy_type_name()'s, in order. Before the fix: the headers
+ * do not exist. */
 TEST_CASE("hpotarget generated tables: the STRATEGY TYPE keys are "
-          "kStrategyTypeKeys, each under its TYPE", "[hpotarget_gen]")
+          "strategy_rules.cpp's, each under its TYPE", "[hpotarget_gen]")
 {
     using tadah::hpo::StrategyType;
     const std::vector<StrategyType> types = {
@@ -665,7 +680,6 @@ TEST_CASE("hpotarget generated tables: the STRATEGY TYPE keys are "
             const std::string k = str(key(id).name);
             CAPTURE(k);
             type_keys.insert(k);
-            CHECK(tadah::hpo::is_strategy_type_key(k));
             for (std::size_t u = 0; u < types.size(); ++u) {
                 const std::string err = thrown([&] {
                     tadah::hpo::require_strategy_key(k, types[u], true);
@@ -684,18 +698,21 @@ TEST_CASE("hpotarget generated tables: the STRATEGY TYPE keys are "
         if (!(k.blocks & R::block_bit(R::BlockId::STRATEGY))) continue;
         if (type_keys.count(str(k.name))) continue;
         CAPTURE(k.name);
-        CHECK(!tadah::hpo::is_strategy_type_key(str(k.name)));
+        for (StrategyType t : types)
+            CHECK(thrown([&] {
+                      tadah::hpo::require_strategy_key(str(k.name), t, true);
+                  }) == "");
     }
 }
 
-/* Pins: the options of a PC_LAMMPS and of a PC_FAILPROBE line are
- * line_options() of lammps_sim.cpp: the unknown-option refusal of each
+/* Pins: the options of a PC_LAMMPS and of a PC_FAILPROBE line are those
+ * LammpsSim reads (lammps_sim.cpp): the unknown-option refusal of each
  * line (a check of its key) lists the line's options of the registry, the
  * refused one left out, in registry order; an option of PC_FAILPROBE
  * alone on a PC_LAMMPS line is named as one. Before the fix: the headers
  * do not exist. */
 TEST_CASE("hpotarget generated tables: the options of PC_LAMMPS and "
-          "PC_FAILPROBE are line_options(), in order", "[hpotarget_gen]")
+          "PC_FAILPROBE are LammpsSim's, in order", "[hpotarget_gen]")
 {
     for (const std::string line : {"PC_LAMMPS", "PC_FAILPROBE"}) {
         CAPTURE(line);
@@ -1341,5 +1358,749 @@ TEST_CASE("hpotarget generated tables: the words of MLIP's OPTIM reader are "
 }
 
 #endif  // __has_include(<tadah/mlip/hpotarget_optim.h>)
+
+#if defined(TADAH_HPOTARGET_ENGINE_TABLES)
+
+/* ------------------------------------------ the order of the parse ---- */
+
+namespace {
+
+/* The line a refusal of the file parse_error() reads names, 0 for none. */
+std::size_t line_of(const std::string& err)
+{
+    std::size_t n = 0;
+    if (err.rfind("line ", 0) != 0) return 0;
+    for (std::size_t i = 5; i < err.size() && std::isdigit(
+                                static_cast<unsigned char>(err[i]));
+         ++i)
+        n = n * 10 + static_cast<std::size_t>(err[i] - '0');
+    return n;
+}
+
+/* The {what} of a refusal of the file parse_error() reads: the text
+ * between its file and its line; the whole text of a refusal that names
+ * no line; "" for none. */
+std::string what_of(const std::string& err)
+{
+    const std::string head = target_path() + ": ";
+    const auto at = err.find(head);
+    const auto end = err.rfind("\nLine: ");
+    if (at == std::string::npos || end == std::string::npos || end < at)
+        return err;
+    return err.substr(at + head.size(), end - at - head.size());
+}
+
+/* A refusal as the line it names and its {what}: two refusals of one
+ * line whose texts differ (a word more on the line) are one. */
+using Refusal = std::pair<std::size_t, std::string>;
+
+Refusal refusal_of(const std::string& err)
+{
+    return {line_of(err), what_of(err)};
+}
+
+template <class Step>
+std::size_t position(R::Span<Step> order, Step step)
+{
+    for (std::size_t i = 0; i < order.size; ++i)
+        if (order[i] == step) return i;
+    FAIL("a step is not in its order");
+    return 0;
+}
+
+/* The steps of the line of the key k: its own, else those of its place. */
+R::Span<R::LineStep> steps_of(const R::Key& k)
+{
+    if (!k.steps.empty()) return k.steps;
+    if (!k.group.empty()) return R::structure::line_steps_group;
+    if (k.blocks & R::block_bit(R::BlockId::ROOT))
+        return R::structure::line_steps_root;
+    return R::structure::line_steps_block;
+}
+
+/* A fault of a target file: line `index` (from 0) is `faulty` where the
+ * fault is, and `fixed` where it is not. */
+struct Fault {
+    std::size_t index;
+    std::string faulty;
+    std::string fixed;
+};
+
+Lines with_faults(Lines base, const std::vector<Fault>& on,
+                  const std::vector<Fault>& off)
+{
+    for (const Fault& f : off) base.at(f.index) = f.fixed;
+    for (const Fault& f : on) base.at(f.index) = f.faulty;
+    return base;
+}
+
+/* Two faults of one file, each refused by one step of an order: the file
+ * with both is refused as the file with the fault of the earlier step
+ * alone. */
+template <class Step>
+struct TwoFaults {
+    std::string label;
+    Step a;
+    Step b;
+    Lines base;
+    std::vector<Fault> fa;
+    std::vector<Fault> fb;
+};
+
+template <class Step>
+void check_two_faults(const TwoFaults<Step>& t, R::Span<Step> order)
+{
+    CAPTURE(t.label);
+    const std::string ea = parse_error(with_faults(t.base, t.fa, t.fb));
+    const std::string eb = parse_error(with_faults(t.base, t.fb, t.fa));
+    CAPTURE(ea, eb);
+    REQUIRE(!ea.empty());
+    REQUIRE(!eb.empty());
+    REQUIRE(refusal_of(ea) != refusal_of(eb));
+    std::vector<Fault> both = t.fa;
+    both.insert(both.end(), t.fb.begin(), t.fb.end());
+    const std::string got = parse_error(with_faults(t.base, both, {}));
+    const bool a_first = position(order, t.a) < position(order, t.b);
+    CHECK(refusal_of(got) == refusal_of(a_first ? ea : eb));
+}
+
+/* One line that two steps of an order refuse, each with its refusal (line
+ * 0 and "" for a step that reads the line). */
+template <class Step>
+struct OneLine {
+    std::string label;
+    Step a;
+    Step b;
+    Lines file;
+    Refusal ra;
+    Refusal rb;
+};
+
+template <class Step>
+void check_one_line(const OneLine<Step>& t, R::Span<Step> order)
+{
+    CAPTURE(t.label);
+    REQUIRE(t.ra != t.rb);
+    const bool a_first = position(order, t.a) < position(order, t.b);
+    CHECK(refusal_of(parse_error(t.file)) == (a_first ? t.ra : t.rb));
+}
+
+/* The optimiser block of a file that runs LAMMPS scripts: a
+ * gradient-free one. */
+const Lines kFreeOptimizer = {"OPTIMIZER", "LIB NLOPT", "ALGO LN_SBPLX",
+                              "MAXEVAL 10", "ENDOPTIMIZER"};
+
+/* A LAMMPS script that sets the variables of the lines below, and one that
+ * reads the variable a. */
+const std::string& probe_script()
+{
+    static const std::string p = [] {
+        const fs::path f = scratch() / "engine_probe.in";
+        std::ofstream os(f);
+        os << "variable E equal 1.0\nvariable S equal 0.0\n"
+              "variable E2 equal 2.0\n";
+        return f.string();
+    }();
+    return p;
+}
+
+const std::string& reads_a_script()
+{
+    static const std::string p = [] {
+        const fs::path f = scratch() / "engine_reads_a.in";
+        std::ofstream os(f);
+        os << "variable E3 equal v_a+1\n";
+        return f.string();
+    }();
+    return p;
+}
+
+/* The refusal of the key `key` unknown in the block b opened on line
+ * `open_line`. */
+std::string fill_unknown(const R::Block& b, const std::string& key,
+                         std::size_t open_line)
+{
+    return R::fill(b.unknown_msg, {{"key", key},
+                                   {"open_line", std::to_string(open_line)}});
+}
+
+const R::Rule& rule(std::string_view id)
+{
+    for (const R::Rule& r : R::kRules)
+        if (r.id_text == id) return r;
+    FAIL("no rule " << id);
+    return R::kRules[0];
+}
+
+}  // namespace
+
+/* Pins: structure::line_steps_root, _group and _block, and the steps of a
+ * key of its own (Key::steps), are the parser's order of the steps of a
+ * key's line: a key given twice whose second line has a wrong value, a
+ * value too many or a wrong option is refused as the step of the two
+ * that comes first refuses it -- the repeat rule (the first line's refusal
+ * with only the second written twice) or the value, leftover or option
+ * (the refusal of the second line alone). Each step after repeat in some
+ * list, and each before it, has a case. Before the fix: the header has no
+ * order of the steps (the case "the generated header holds the tables of
+ * the engine" fails). */
+TEST_CASE("hpotarget generated tables: the steps of a key's line are the "
+          "parser's order", "[hpotarget_gen]")
+{
+    struct StepCase {
+        std::string key;
+        R::BlockId place;
+        Lines before, after;
+        std::string first, second;
+        R::LineStep step;      // the step that refuses `second` alone
+    };
+    const Lines in_opt = kRoot + Lines{"OPTIMIZER", "LIB DLIB", "ALGO BFGS"};
+    const Lines in_strategy =
+        kRoot + Lines{"OPTIMIZER", "STRATEGY", "LIB DLIB", "ALGO BFGS"};
+    const std::vector<StepCase> cases = {
+        {"QFLUSH", R::BlockId::ROOT, kRoot, kOptimizer, "QFLUSH 5",
+         "QFLUSH x", R::LineStep::Value},
+        {"FAILSCORE", R::BlockId::ROOT, kRoot, kOptimizer, "FAILSCORE 10",
+         "FAILSCORE 0", R::LineStep::Value},
+        {"LOSS", R::BlockId::ROOT, kRoot, kOptimizer, "LOSS L2", "LOSS FOO",
+         R::LineStep::Value},
+        {"RHOGATE", R::BlockId::ROOT, kRoot, kOptimizer, "RHOGATE 0",
+         "RHOGATE 0 NPTS 1", R::LineStep::Options},
+        {"PC_EMAE", R::BlockId::ROOT, kRoot, kOptimizer, "PC_EMAE 0 1",
+         "PC_EMAE x 1", R::LineStep::Value},
+        {"PC_EMAE", R::BlockId::ROOT, kRoot, kOptimizer, "PC_EMAE 0 1",
+         "PC_EMAE 0 1 --bogus 1", R::LineStep::Options},
+        {"PC_ErRMSE", R::BlockId::ROOT, kRoot, kOptimizer, "PC_ErRMSE 0 1",
+         "PC_ErRMSE 0 -1", R::LineStep::Value},
+        {"PC_ErRMSE", R::BlockId::ROOT, kRoot, kOptimizer, "PC_ErRMSE 0 1",
+         "PC_ErRMSE 0 1 --skip-above x", R::LineStep::Options},
+        {"PC_ERSQ", R::BlockId::ROOT, kRoot, kOptimizer, "PC_ERSQ 0 1",
+         "PC_ERSQ 0 x", R::LineStep::Value},
+        {"PC_ERSQ", R::BlockId::ROOT, kRoot, kOptimizer, "PC_ERSQ 0 1",
+         "PC_ERSQ 0 1 --skip-rel 1", R::LineStep::Options},
+        {"MAXEVAL", R::BlockId::OPTIMIZER, in_opt, {"ENDOPTIMIZER"},
+         "MAXEVAL 5", "MAXEVAL 0", R::LineStep::Value},
+        {"MAXEVAL", R::BlockId::OPTIMIZER, in_opt, {"ENDOPTIMIZER"},
+         "MAXEVAL 5", "MAXEVAL 5 6", R::LineStep::Leftover},
+        {"LOG_HP", R::BlockId::OPTIMIZER, in_opt, {"ENDOPTIMIZER"},
+         "LOG_HP 10", "LOG_HP 0.5", R::LineStep::Value},
+        {"SEED", R::BlockId::INIT, in_opt + Lines{"INIT"},
+         {"ENDINIT", "ENDOPTIMIZER"}, "SEED 1", "SEED x",
+         R::LineStep::Value},
+        {"CALIBRATION", R::BlockId::NOISE, in_opt + Lines{"NOISE"},
+         {"ENDNOISE", "ENDOPTIMIZER"}, "CALIBRATION 5", "CALIBRATION 1",
+         R::LineStep::Value},
+        {"TYPE", R::BlockId::STRATEGY, in_strategy,
+         {"ENDSTRATEGY", "ENDOPTIMIZER"}, "TYPE PLAIN", "TYPE FOO",
+         R::LineStep::Value},
+        {"MAX", R::BlockId::RESTART,
+         in_strategy + Lines{"RESTART", "AFTER_STAGNATION 5"},
+         {"ENDRESTART", "ENDSTRATEGY", "ENDOPTIMIZER"}, "MAX 2", "MAX 0",
+         R::LineStep::Value},
+    };
+    std::set<std::pair<const R::LineStep*, R::LineStep>> covered;
+    for (const StepCase& c : cases) {
+        CAPTURE(c.key, c.second);
+        const R::Key* k = R::find_key(c.key, c.place);
+        REQUIRE(k != nullptr);
+        const R::Span<R::LineStep> steps = steps_of(*k);
+        covered.insert({steps.data, c.step});
+        const std::size_t n = c.before.size() + 2;
+        const std::string twice =
+            parse_error(c.before + Lines{c.first, c.first} + c.after);
+        const std::string alone =
+            parse_error(c.before + Lines{"#", c.second} + c.after);
+        REQUIRE(line_of(twice) == n);
+        REQUIRE(line_of(alone) == n);
+        REQUIRE(what_of(twice) != what_of(alone));
+        const std::string got =
+            parse_error(c.before + Lines{c.first, c.second} + c.after);
+        CHECK(line_of(got) == n);
+        CHECK(what_of(got) ==
+              (position(steps, R::LineStep::Repeat) <
+                       position(steps, c.step)
+                   ? what_of(twice)
+                   : what_of(alone)));
+    }
+    /* Each step of each list of steps of a place, and of a key's own, has
+     * a case. */
+    std::vector<R::Span<R::LineStep>> lists = {
+        R::structure::line_steps_root, R::structure::line_steps_group,
+        R::structure::line_steps_block};
+    for (const R::Key& k : R::kKeys)
+        if (!k.steps.empty()) lists.push_back(k.steps);
+    for (const R::Span<R::LineStep>& l : lists)
+        for (R::LineStep s : l) {
+            if (s == R::LineStep::Repeat) continue;
+            CAPTURE(static_cast<int>(s));
+            CHECK(covered.count({l.data, s}) == 1);
+        }
+}
+
+/* Pins: the keys of repeat error_until_read (FAILSCORE, PC_SCRIPT_TIMEOUT
+ * and MAXTIME, LOSS) are given again only after a line that reads them: a
+ * second line right after the first is refused with the key's
+ * repeat_msg, and one after a PC_LAMMPS line that reads the value (no
+ * --failscore, no --maxtime, a --varloss term without a loss function) is
+ * read; a key of repeat error is refused with a reader between. Before
+ * the fix: the header has no repeat rule error_until_read. */
+TEST_CASE("hpotarget generated tables: a key given again after a line "
+          "reads it is the parser's", "[hpotarget_gen]")
+{
+    const std::string reader =
+        "PC_LAMMPS --script " + probe_script() + " --varloss E 1 1";
+    const std::map<std::string, std::pair<std::string, std::string>> lines = {
+        {"FAILSCORE", {"FAILSCORE 10", "FAILSCORE 20"}},
+        {"PC_SCRIPT_TIMEOUT", {"PC_SCRIPT_TIMEOUT 60", "PC_SCRIPT_TIMEOUT 90"}},
+        {"MAXTIME", {"MAXTIME 60", "MAXTIME 90"}},
+        {"LOSS", {"LOSS L2", "LOSS L1"}}};
+    std::size_t n = 0;
+    for (const R::Key& k : R::kKeys) {
+        if (k.repeat != R::Repeat::ErrorUntilRead) continue;
+        CAPTURE(k.id_text);
+        ++n;
+        REQUIRE(k.blocks == R::block_bit(R::BlockId::ROOT));
+        const auto it = lines.find(str(k.name));
+        if (it == lines.end())
+            FAIL("no lines of " << k.name << " in this test: add them");
+        const auto& [l1, l2] = it->second;
+        CHECK(parse_error(kRoot + Lines{l1, l2, reader} + kFreeOptimizer) ==
+              at_line(4, R::fill(k.repeat_msg, {{"first_line", "3"}}), l2));
+        CHECK(parse_error(kRoot + Lines{l1, reader, l2, reader} +
+                          kFreeOptimizer) == "");
+    }
+    CHECK(n == lines.size());
+    const R::Key& once = root_key("QFLUSH");
+    REQUIRE(once.repeat == R::Repeat::Error);
+    CHECK(parse_error(kRoot + Lines{"QFLUSH 5", reader, "QFLUSH 6"} +
+                      kFreeOptimizer) ==
+          at_line(5, R::fill(once.repeat_msg, {{"first_line", "3"}}),
+                  "QFLUSH 6"));
+}
+
+/* Pins: Key::effect of each STRATEGY TYPE key is the {effect} of the
+ * close check of STRATEGY as require_strategy_key() of strategy_rules.cpp
+ * writes it: require_strategy_key() refuses the key under another TYPE
+ * with the check's message filled with the key, the TYPE, no note, the
+ * effect and the key's TYPE; a key of no TYPE has no effect. Before the
+ * fix: the header has no effect of a key. */
+TEST_CASE("hpotarget generated tables: the effect of a STRATEGY TYPE key "
+          "is require_strategy_key()'s", "[hpotarget_gen]")
+{
+    using tadah::hpo::StrategyType;
+    const std::vector<StrategyType> types = {
+        StrategyType::PLAIN, StrategyType::MULTISTART, StrategyType::PRESTAGE};
+    REQUIRE(std::size(R::kStrategyTypes) == types.size());
+    const R::Block& strategy = block("STRATEGY");
+    std::set<std::string> with_type;
+    for (std::size_t h = 0; h < types.size(); ++h)
+        for (R::KeyId id : R::kStrategyTypes[h].keys) {
+            const R::Key& k = key(id);
+            CAPTURE(k.name);
+            with_type.insert(str(k.id_text));
+            REQUIRE(!k.effect.empty());
+            for (std::size_t u = 0; u < types.size(); ++u) {
+                if (u == h) continue;
+                CHECK(thrown([&] {
+                          tadah::hpo::require_strategy_key(str(k.name),
+                                                           types[u], true);
+                      }) ==
+                      R::fill(strategy.close_checks[0],
+                              {{"key", k.name},
+                               {"type", R::kStrategyTypes[u].name},
+                               {"note", ""},
+                               {"effect", k.effect},
+                               {"home", R::kStrategyTypes[h].name}}));
+            }
+        }
+    for (const R::Key& k : R::kKeys)
+        if (!with_type.count(str(k.id_text))) CHECK(k.effect.empty());
+}
+
+/* Pins: Param::explain of each PARAM key of ASA:ASA is its text in the
+ * PARAM table of `tadah explain ASA:ASA` (print_asa_param_table, which
+ * takes it from the registry for each row of kDescs of asa_options.cpp),
+ * the end of its row. Before the fix: the header has no explain of a PARAM
+ * key. */
+TEST_CASE("hpotarget generated tables: the explain of an ASA PARAM key is "
+          "its row of the PARAM table", "[hpotarget_gen]")
+{
+    std::ostringstream printed;
+    tadah::hpo::print_asa_param_table(printed);
+    std::istringstream table(printed.str());
+    std::vector<std::string> rows;
+    for (std::string row; std::getline(table, row);) rows.push_back(row);
+    std::size_t i = 0;
+    for (const P::Param& p : P::kParams) {
+        if (std::find(p.optimizers.begin(), p.optimizers.end(), "ASA:ASA") ==
+            p.optimizers.end())
+            continue;
+        CAPTURE(p.name);
+        REQUIRE(i < rows.size());
+        REQUIRE(!p.explain.empty());
+        const std::string tail = ")  " + str(p.explain);
+        CHECK(rows[i].size() > tail.size());
+        CHECK(rows[i].substr(rows[i].size() - std::min(tail.size(),
+                                                       rows[i].size())) ==
+              tail);
+        CHECK(rows[i].rfind("  PARAM " + str(p.name), 0) == 0);
+        ++i;
+    }
+    CHECK(i == rows.size());
+}
+
+/* Pins: Rule::what of RULE.set_once_for_optimiser is the {what} of its
+ * message for each entry it gives: a line of the optimiser group, or
+ * LOG_HP, in the OPTIMIZER block and again in its STRATEGY block is
+ * refused with the rule's message filled with it. Before the fix: the
+ * header has no what of a rule. */
+TEST_CASE("hpotarget generated tables: the what of a set-once rule is the "
+          "parser's", "[hpotarget_gen]")
+{
+    const R::Rule& r = rule("RULE.set_once_for_optimiser");
+    const std::map<std::string, std::string> line_of_entry = {
+        {"GROUP.OPTIMIZER", "MAXEVAL 10"}, {"OPTIMIZER.LOG_HP", "LOG_HP 10"}};
+    REQUIRE(r.what.size == line_of_entry.size());
+    for (const R::RuleWhat& w : r.what) {
+        CAPTURE(w.id_text);
+        const auto it = line_of_entry.find(str(w.id_text));
+        if (it == line_of_entry.end())
+            FAIL("no line of " << w.id_text << " in this test: add one");
+        const std::string& line = it->second;
+        const std::string k = line.substr(0, line.find(' '));
+        CHECK(parse_error(kRoot + Lines{"OPTIMIZER", line, "STRATEGY",
+                                        "LIB DLIB", "ALGO BFGS", line,
+                                        "ENDSTRATEGY", "ENDOPTIMIZER"}) ==
+              at_line(8,
+                      R::fill(r.msg, {{"key", k},
+                                      {"first_line", "4"},
+                                      {"open", "OPTIMIZER"},
+                                      {"block", "STRATEGY"},
+                                      {"what", w.text}}),
+                      line));
+    }
+}
+
+/* Pins: structure::open_order and close_order are the parser's order of
+ * the steps of a line that opens a block and of an END line: a line that
+ * two steps refuse (or that one reads and the other refuses: STRATEGY
+ * inside INIT is an alias of METHOD) is refused by the step of the two
+ * that comes first. The pairs of steps one line can meet have a case each
+ * (no block has both a repeat rule and `requires`). Before the fix: the
+ * header has no order of the steps. */
+TEST_CASE("hpotarget generated tables: the steps of a block's lines are "
+          "the parser's order", "[hpotarget_gen]")
+{
+    using O = R::OpenStep;
+    using C = R::CloseStep;
+    const auto fill_of = [](std::string_view t,
+                            std::initializer_list<R::Value> v) {
+        return R::fill(t, v);
+    };
+    const R::Block& opt = block("OPTIMIZER");
+    const R::Block& strategy = block("STRATEGY");
+    const R::Block& noise = block("NOISE");
+    const R::Block& explore = block("EXPLORE");
+    const std::string_view open_alone = R::structure::open_takes_no_value_msg;
+    REQUIRE(explore.requires_checks.size == 1);
+    const Lines head = kRoot + Lines{"OPTIMIZER", "STRATEGY"};
+    const std::vector<OneLine<O>> open = {
+        {"OPTIMIZER inside STRATEGY", O::Parents, O::Repeat,
+         head + Lines{"OPTIMIZER"},
+         {5, fill_of(opt.misplaced_msg,
+                     {{"parent", "STRATEGY"}, {"parent_line", "4"}})},
+         {5, fill_of(opt.repeat_msg, {{"first_line", "3"}})}},
+        {"a second STRATEGY block with a word", O::Repeat, O::KeyAlone,
+         kRoot + Lines{"OPTIMIZER", "STRATEGY", "LIB NLOPT", "ALGO LN_SBPLX",
+                       "ENDSTRATEGY", "STRATEGY X"},
+         {8, fill_of(strategy.repeat_msg, {{"first_line", "4"}})},
+         {8, fill_of(open_alone, {{"name", "STRATEGY"}, {"tok", "X"}})}},
+        {"NOISE AUTO inside STRATEGY", O::Parents, O::KeyAlone,
+         head + Lines{"NOISE AUTO"},
+         {5, str(noise.misplaced_msg)},
+         {5, fill_of(open_alone, {{"name", "NOISE"}, {"tok", "AUTO"}})}},
+        {"EXPLORE inside OPTIMIZER", O::Parents, O::Requires,
+         kRoot + Lines{"OPTIMIZER", "EXPLORE"},
+         {4, str(explore.misplaced_msg)},
+         {4, str(explore.requires_checks[0])}},
+        {"EXPLORE X without TYPE PRESTAGE", O::Requires, O::KeyAlone,
+         head + Lines{"EXPLORE X"},
+         {5, str(explore.requires_checks[0])},
+         {5, fill_of(open_alone, {{"name", "EXPLORE"}, {"tok", "X"}})}},
+        {"STRATEGY RANDOM 2 inside INIT", O::Alias, O::Parents,
+         kRoot + Lines{"OPTIMIZER", "LIB NLOPT", "ALGO LN_SBPLX",
+                       "MAXEVAL 10", "INIT", "STRATEGY RANDOM 2", "ENDINIT",
+                       "ENDOPTIMIZER"},
+         {0, ""},
+         {8, str(strategy.misplaced_msg)}},
+        {"STRATEGY RANDOM 2 inside INIT", O::Alias, O::KeyAlone,
+         kRoot + Lines{"OPTIMIZER", "LIB NLOPT", "ALGO LN_SBPLX",
+                       "MAXEVAL 10", "INIT", "STRATEGY RANDOM 2", "ENDINIT",
+                       "ENDOPTIMIZER"},
+         {0, ""},
+         {8, fill_of(open_alone, {{"name", "STRATEGY"}, {"tok", "RANDOM"}})}},
+    };
+    for (const auto& t : open) check_one_line(t, R::structure::open_order);
+
+    const std::vector<OneLine<C>> close = {
+        {"ENDOPTIMIZER X inside INIT", C::Match, C::KeyAlone,
+         kRoot + Lines{"OPTIMIZER", "INIT", "ENDOPTIMIZER X"},
+         {5, fill_of(R::structure::end_mismatch_msg,
+                     {{"end", "ENDOPTIMIZER"},
+                      {"open", "INIT"},
+                      {"open_line", "4"}})},
+         {5, fill_of(R::structure::end_takes_no_value_msg,
+                     {{"end", "ENDOPTIMIZER"},
+                      {"name", "OPTIMIZER"},
+                      {"tok", "X"}})}},
+    };
+    for (const auto& t : close) check_one_line(t, R::structure::close_order);
+
+    /* The END line holds its key alone before its block's checks: TOPK
+     * under TYPE PLAIN and a word after ENDSTRATEGY. */
+    const Lines topk = kRoot + Lines{"OPTIMIZER", "STRATEGY", "LIB NLOPT",
+                                     "ALGO LN_SBPLX", "MAXEVAL 10", "TOPK 3",
+                                     "ENDSTRATEGY", "ENDOPTIMIZER"};
+    check_two_faults(TwoFaults<C>{"ENDSTRATEGY X and TOPK under PLAIN",
+                                  C::KeyAlone, C::CloseSteps, topk,
+                                  {{8, "ENDSTRATEGY X", "ENDSTRATEGY"}},
+                                  {{7, "TOPK 3", "#"}}},
+                     R::structure::close_order);
+}
+
+/* Pins: Block::close_steps are the checks the END line of each block runs,
+ * in the parser's order, and Block::close_checks_at the line each close
+ * check's refusal names. ENDSTRATEGY checks the keys of one TYPE, then a
+ * MULTISTART without N_STARTS, then a RESTART block that never restarts:
+ * of two such faults the earlier step's is refused, and a key the
+ * STRATEGY block does not know after the fault (before ENDSTRATEGY) is
+ * refused first, as the checks wait for the END line of the block that
+ * lists them. The refusal of a TYPE key names the key's line
+ * (key_line), that of a RESTART block its last ENDRESTART line
+ * (last_end_line), that of an OPTIMIZER block without LIB and ALGO its END
+ * line (end). Before the fix: the header has no close steps. */
+TEST_CASE("hpotarget generated tables: the checks of an END line are the "
+          "parser's", "[hpotarget_gen]")
+{
+    using S = R::BlockCloseStep;
+    const R::Block* owner_of[6] = {};
+    for (const R::Block& b : R::kBlocks)
+        for (S s : b.close_steps) {
+            REQUIRE(owner_of[static_cast<int>(s)] == nullptr);
+            owner_of[static_cast<int>(s)] = &b;
+        }
+    for (const R::Block* b : owner_of) REQUIRE(b != nullptr);
+    const R::Block& strategy = block("STRATEGY");
+    REQUIRE(owner_of[static_cast<int>(S::StrategyTypeKeys)] == &strategy);
+    /* Lines 5-17 of the STRATEGY block: its TYPE and a line for N_STARTS,
+     * a line for TOPK (a PRESTAGE key), and two RESTART blocks, the first
+     * with a line for MAX; the line before ENDSTRATEGY is free. Each fault
+     * is on a line of its own. */
+    const Lines base =
+        kRoot + Lines{"OPTIMIZER", "STRATEGY", "TYPE PLAIN", "#",
+                      "LIB NLOPT", "ALGO LN_SBPLX", "MAXEVAL 10", "#",
+                      "RESTART", "AFTER_STAGNATION 5", "MAX 2", "ENDRESTART",
+                      "RESTART", "ENDRESTART", "#", "ENDSTRATEGY",
+                      "ENDOPTIMIZER"};
+    Lines multi = base;
+    multi[4] = "TYPE MULTISTART";
+    multi[5] = "N_STARTS 3";
+    const std::vector<Fault> no_n_starts = {{5, "#", "N_STARTS 3"}};
+    const std::vector<Fault> topk = {{9, "TOPK 3", "#"}};
+    const std::vector<Fault> no_max = {{12, "#", "MAX 2"}};
+    const auto steps = strategy.close_steps;
+    check_two_faults(TwoFaults<S>{"TOPK and MULTISTART without N_STARTS",
+                                  S::StrategyTypeKeys, S::MultistartNStarts,
+                                  multi, topk, no_n_starts},
+                     steps);
+    check_two_faults(TwoFaults<S>{"MULTISTART without N_STARTS and a "
+                                  "RESTART without MAX",
+                                  S::MultistartNStarts, S::RestartRestarts,
+                                  multi, no_n_starts, no_max},
+                     steps);
+    check_two_faults(TwoFaults<S>{"TOPK under PLAIN and a RESTART without "
+                                  "MAX",
+                                  S::StrategyTypeKeys, S::RestartRestarts,
+                                  base, topk, no_max},
+                     steps);
+
+    /* Each check waits for the END line of the block that lists it: an
+     * unknown key on line 17, after the fault, comes first when that block
+     * is STRATEGY. */
+    const std::string foo =
+        at_line(17, fill_unknown(strategy, "FOO", 4), "FOO 1");
+    struct Waits {
+        S step;
+        const Lines* file;
+        std::vector<Fault> fault;
+    };
+    for (const Waits& w : std::vector<Waits>{
+             {S::StrategyTypeKeys, &base, topk},
+             {S::MultistartNStarts, &multi, no_n_starts},
+             {S::RestartRestarts, &base, no_max}}) {
+        CAPTURE(static_cast<int>(w.step));
+        std::vector<Fault> with_foo = w.fault;
+        with_foo.push_back({16, "FOO 1", "#"});
+        const std::string alone = parse_error(with_faults(*w.file, w.fault,
+                                                          {}));
+        REQUIRE(!alone.empty());
+        CHECK(parse_error(with_faults(*w.file, with_foo, {})) ==
+              (owner_of[static_cast<int>(w.step)] == &strategy ? foo
+                                                               : alone));
+    }
+
+    /* The line each close check names. */
+    const auto line_at = [](R::CheckAt at, std::size_t end,
+                            std::size_t key_line, std::size_t last_end) {
+        return at == R::CheckAt::End       ? end
+               : at == R::CheckAt::KeyLine ? key_line
+                                           : last_end;
+    };
+    REQUIRE(strategy.close_checks_at.size == 1);
+    CHECK(line_of(parse_error(with_faults(base, topk, {}))) ==
+          line_at(strategy.close_checks_at[0], 18, 10, 0));
+    const R::Block& restart = block("RESTART");
+    REQUIRE(restart.close_checks_at.size == 1);
+    CHECK(line_of(parse_error(with_faults(base, no_max, {}))) ==
+          line_at(restart.close_checks_at[0], 18, 0, 16));
+    const R::Block& opt = block("OPTIMIZER");
+    REQUIRE(opt.close_checks_at.size >= 1);
+    CHECK(line_of(parse_error(kRoot + Lines{"OPTIMIZER", "MAXEVAL 10",
+                                            "ENDOPTIMIZER"})) ==
+          line_at(opt.close_checks_at[0], 5, 0, 0));
+    for (const R::Block& b : R::kBlocks)
+        CHECK(b.close_checks_at.size == b.close_checks.size);
+}
+
+/* Pins: structure::eof_order is the parser's order of the checks at the
+ * end of the file: a file with two faults that two checks refuse is
+ * refused as the file with the fault of the earlier check alone, for
+ * every two checks next to each other in the order, but those no file
+ * meets together (a LOSS no line reads needs a file without a metric
+ * line, the LOSS of a metric target one with; PC_OBSERVABLE beside
+ * PC_LAMMPS is refused before the rules of either; the resolution of an
+ * unset GRAD_STRATEGY refuses nothing). Before the fix: the header has no
+ * order of the checks at the end of the file. */
+TEST_CASE("hpotarget generated tables: the checks at the end of the file "
+          "are the parser's order", "[hpotarget_gen]")
+{
+    using E = R::EofStep;
+    const std::string bad_dump =
+        "DUMP 1 " + (scratch() / "no_such_dir" / "pots").string();
+    /* Lines 3-5 hold a fault each where a case puts one. */
+    const Lines plain = {"OPTIM WATOM (1) 0.1 5.0", "PC_ERMSE 0 1", "#",
+                         "#", "#", "OPTIMIZER", "LIB NLOPT",
+                         "ALGO LN_SBPLX", "MAXEVAL 10", "INIT",
+                         "METHOD RANDOM 2", "K_TOTAL 1", "ENDINIT",
+                         "ENDOPTIMIZER"};
+    std::vector<Fault> no_optimizer;
+    for (std::size_t i = 5; i < plain.size(); ++i)
+        no_optimizer.push_back({i, "#", plain[i]});
+    const std::string observable =
+        "PC_OBSERVABLE cohesive_energy --species H --target 2.0 --weight 1 "
+        "--hotvar a0 1.5 2.5";
+    const std::string script_line =
+        "PC_LAMMPS --script " + probe_script() + " --varloss E 1 1";
+    /* A PC_OBSERVABLE line, a slot for a PC_LAMMPS line (line 2) and one
+     * for GRAD_STRATEGY (line 9). */
+    const Lines with_observable = {"OPTIM WATOM (1) 0.1 5.0", "#",
+                                   observable, "OPTIMIZER", "LIB NLOPT",
+                                   "ALGO LD_LBFGS", "MAXEVAL 10", "#",
+                                   "#", "ENDOPTIMIZER"};
+    std::vector<Fault> no_observable_optimizer;
+    for (std::size_t i = 3; i < with_observable.size(); ++i)
+        no_observable_optimizer.push_back({i, "#", with_observable[i]});
+    /* A PC_LAMMPS line with --hotvar a, a line without one whose script
+     * reads a (line 4: the fault defines a there, --invar a) and a slot for
+     * a third line (line 5). */
+    const std::string cold_plain =
+        "PC_LAMMPS --script " + reads_a_script() + " --varloss E3 1 1";
+    const std::string cold = cold_plain + " --invar a 1";
+    const Lines with_scripts = {
+        "OPTIM WATOM (1) 0.1 5.0", "PC_ERMSE 0 1",
+        "PC_LAMMPS --script " + probe_script() +
+            " --varloss E 1 1 --hotvar a 1 2",
+        cold_plain, "#", "OPTIMIZER", "LIB NLOPT", "ALGO LN_SBPLX",
+        "MAXEVAL 10", "ENDOPTIMIZER"};
+    const std::string hot_again = "PC_LAMMPS --script " + probe_script() +
+                                  " --varloss E2 1 1 --hotvar a 1 2";
+    const std::vector<TwoFaults<E>> pairs = {
+        {"an open block and a K_TOTAL that caps nothing", E::OpenBlock,
+         E::KTotalCaps, plain, {{13, "#", "ENDOPTIMIZER"}},
+         {{11, "K_TOTAL 5", "K_TOTAL 1"}}},
+        {"a K_TOTAL that caps nothing and an unread PC_SCRIPT_TIMEOUT",
+         E::KTotalCaps, E::ScriptTimeoutUnread, plain,
+         {{11, "K_TOTAL 5", "K_TOTAL 1"}},
+         {{2, "PC_SCRIPT_TIMEOUT 60", "#"}}},
+        {"an unread PC_SCRIPT_TIMEOUT and an unread LOSS",
+         E::ScriptTimeoutUnread, E::LossUnread, plain,
+         {{2, "PC_SCRIPT_TIMEOUT 60", "#"}},
+         {{1, "#", "PC_ERMSE 0 1"}, {3, "LOSS L2", "#"}}},
+        {"an unread PC_SCRIPT_TIMEOUT and a target LOSS MAPE cannot "
+         "measure",
+         E::ScriptTimeoutUnread, E::MetricTargetLoss, plain,
+         {{2, "PC_SCRIPT_TIMEOUT 60", "#"}}, {{3, "LOSS MAPE", "#"}}},
+        {"a target LOSS MAPE cannot measure and a RHOGATE no OPTIM line "
+         "arms",
+         E::MetricTargetLoss, E::DensityKeyArming, plain,
+         {{3, "LOSS MAPE", "#"}}, {{4, "RHOGATE 0", "#"}}},
+        {"a RHOGATE no OPTIM line arms and a DUMP directory that cannot "
+         "be made",
+         E::DensityKeyArming, E::ArchiveDirectories, plain,
+         {{4, "RHOGATE 0", "#"}}, {{2, bad_dump, "#"}}},
+        {"a DUMP directory that cannot be made and no OPTIMIZER block",
+         E::ArchiveDirectories, E::OptimizerRequired, plain,
+         {{2, bad_dump, "#"}}, no_optimizer},
+        {"no OPTIMIZER block and PC_OBSERVABLE beside PC_LAMMPS",
+         E::OptimizerRequired, E::ObservableWithScripts, with_observable,
+         no_observable_optimizer, {{1, script_line, "#"}}},
+        {"PC_OBSERVABLE beside PC_LAMMPS and GRAD_STRATEGY NUMERICAL",
+         E::ObservableWithScripts, E::ObservableNumerical, with_observable,
+         {{1, script_line, "#"}}, {{7, "GRAD_STRATEGY NUMERICAL", "#"}}},
+        {"PC_OBSERVABLE beside PC_LAMMPS and a script that reads a hot "
+         "variable",
+         E::ObservableWithScripts, E::HotvarInjected, with_scripts,
+         {{4, observable, "#"}}, {{3, cold, cold_plain}}},
+        {"a script that reads a hot variable and a hot variable of two "
+         "lines",
+         E::HotvarInjected, E::HotvarUnique, with_scripts,
+         {{3, cold, cold_plain}}, {{4, hot_again, "#"}}},
+        {"a hot variable of two lines and a gradient-based optimiser",
+         E::HotvarUnique, E::ScriptGradients, with_scripts,
+         {{4, hot_again, "#"}}, {{7, "ALGO LD_LBFGS", "ALGO LN_SBPLX"}}},
+    };
+    const std::set<std::pair<E, E>> apart = {
+        {E::LossUnread, E::MetricTargetLoss},
+        {E::HotvarUnique, E::ObservableNumerical},
+        {E::ObservableNumerical, E::ObservableAnalytical},
+        {E::ObservableAnalytical, E::ScriptGradients}};
+    std::set<std::pair<E, E>> covered;
+    for (const auto& t : pairs) {
+        check_two_faults(t, R::structure::eof_order);
+        covered.insert({t.a, t.b});
+        covered.insert({t.b, t.a});
+    }
+    const auto order = R::structure::eof_order;
+    REQUIRE(order.size >= 2);
+    for (std::size_t i = 0; i + 1 < order.size; ++i) {
+        const std::pair<E, E> next{order[i], order[i + 1]};
+        CAPTURE(static_cast<int>(next.first), static_cast<int>(next.second));
+        CHECK((covered.count(next) == 1 || apart.count(next) == 1 ||
+               apart.count({next.second, next.first}) == 1));
+    }
+}
+
+#else
+
+TEST_CASE("hpotarget generated tables: the generated header holds the "
+          "tables of the engine", "[hpotarget_gen]")
+{
+    FAIL("include/tadah/hpo/hpotarget_registry_gen.h does not define "
+         "TADAH_HPOTARGET_ENGINE_TABLES: it has no order of the steps of "
+         "the parse, no case of words and no texts of messages "
+         "(blueprint/gen_hpotarget.py --header writes them)");
+}
+
+#endif  // TADAH_HPOTARGET_ENGINE_TABLES
 
 #endif  // TADAH_HPOTARGET_TABLES

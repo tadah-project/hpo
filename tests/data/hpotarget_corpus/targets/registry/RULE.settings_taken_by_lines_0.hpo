@@ -1,0 +1,11 @@
+OPTIM CGRID2B (1) 0.5 1.5
+LOSS L1
+PC_LAMMPS --script lines_pc.in --varloss E 1 1
+LOSS L2
+PC_LAMMPS --script lines_pc.in --varloss S 0 1
+PC_ERMSE 0 1
+OPTIMIZER
+LIB NLOPT
+ALGO LN_SBPLX
+MAXEVAL 10
+ENDOPTIMIZER

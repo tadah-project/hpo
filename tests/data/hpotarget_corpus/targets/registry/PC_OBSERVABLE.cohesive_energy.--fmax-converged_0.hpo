@@ -1,0 +1,10 @@
+PC_OBSERVABLE cohesive_energy --species H --target 2.0 --weight 1 --hotvar a0 1.5 2.5 --fmax-converged 0.05
+OPTIM CGRID2B (1) 0.5 1.5
+PC_ERMSE 0 1
+OPTIMIZER
+STRATEGY
+LIB NLOPT
+ALGO LN_SBPLX
+MAXEVAL 10
+ENDSTRATEGY
+ENDOPTIMIZER

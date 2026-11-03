@@ -477,6 +477,68 @@ set_tests_properties(hpo_hpotarget_generator_tool PROPERTIES
     LABELS "docs"
     TIMEOUT 120
     FAIL_REGULAR_EXPRESSION "\nRan 0 tests ")
+# The frozen corpus of target files: describe_parse()
+# (include/tadah/hpo/hpo_targets_testing.h) writes what the parse of a
+# target file set as a canonical text, hpotarget_case_runner reads cases
+# with the parser of `tadah hpo` and reports that text (mode describe), and
+# tests/hpotarget_corpus.py collects the target files of the repositories
+# and writes the frozen corpus, tests/data/hpotarget_corpus (its docstring
+# lists the sources, what it cannot see and the files of the corpus).
+#  - the Catch2 cases "describe_parse: ..." (tag [hpotarget_describe],
+#    tests/test_hpotarget_describe_parse.cpp): each setting of a target
+#    file is in the text, one file gives one text, a PC_OBSERVABLE kind
+#    without a description is refused, the LAMMPS library of the build is
+#    not in the text;
+#  - hpo_hpotarget_case_runner_tool: the runner takes no option, the mode
+#    describe and the cases read in place
+#    (tests/test_hpotarget_case_runner.py);
+#  - hpo_hpotarget_corpus_tool: the collection of the corpus, on synthetic
+#    trees and on the real ones, and how `write` freezes it
+#    (tests/test_hpotarget_corpus.py; the Tadah.MLIP tree when this build
+#    has the `tadah` target);
+#  - hpo_hpotarget_corpus: every input collected from the sources is read
+#    twice and gives one text or one refusal both times, and the frozen
+#    corpus holds the inputs of the sources read, each with the files it
+#    reads;
+#  - the Catch2 cases "hpotarget corpus: ..." (tag [hpotarget_corpus],
+#    tests/test_hpotarget_corpus.cpp): each input of the frozen corpus read
+#    by the parser of `tadah hpo` gives what the corpus holds, byte for
+#    byte, and prints what it holds, with no environment override that
+#    the input does not set;
+#    TADAH_HPOTARGET_CORPUS_DIR names the directory.
+# Before the fix: the header, the mode, the scripts and the corpus do not
+# exist, and these fail.
+target_compile_definitions(test_hpo PRIVATE
+    "TADAH_HPOTARGET_CORPUS_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/data/hpotarget_corpus\"")
+hpo_depend_on_has_include(
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_hpotarget_describe_parse.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include/tadah/hpo/hpo_targets_testing.h)
+set(_hpo_umbrella_source_dir
+    "$<$<TARGET_EXISTS:tadah>:$<TARGET_PROPERTY:tadah,SOURCE_DIR>>")
+add_test(NAME hpo_hpotarget_case_runner_tool
+    COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/test_hpotarget_case_runner.py)
+set_tests_properties(hpo_hpotarget_case_runner_tool PROPERTIES
+    LABELS "docs"
+    TIMEOUT 120
+    ENVIRONMENT "HPOTARGET_CASE_RUNNER=$<TARGET_FILE:hpotarget_case_runner>"
+    FAIL_REGULAR_EXPRESSION "\nRan 0 tests ")
+add_test(NAME hpo_hpotarget_corpus_tool
+    COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/test_hpotarget_corpus.py)
+set_tests_properties(hpo_hpotarget_corpus_tool PROPERTIES
+    LABELS "docs"
+    TIMEOUT 120
+    ENVIRONMENT "TADAH_UMBRELLA_SOURCE_DIR=${_hpo_umbrella_source_dir}"
+    FAIL_REGULAR_EXPRESSION "\nRan 0 tests ")
+add_test(NAME hpo_hpotarget_corpus
+    COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/hpotarget_corpus.py check
+        --runner $<TARGET_FILE:hpotarget_case_runner>
+        --tadah-mlip=${_hpo_umbrella_source_dir})
+set_tests_properties(hpo_hpotarget_corpus PROPERTIES
+    LABELS "docs"
+    TIMEOUT 900)
 # hpo_has_include_rebuild: a source that tests for headers with
 # __has_include, as test_hpotarget_registry_bindings.cpp tests for the
 # generated tables, is compiled again by the build when they appear, change
@@ -499,6 +561,73 @@ add_test(NAME hpo_has_include_rebuild
 set_tests_properties(hpo_has_include_rebuild PROPERTIES
     LABELS cmake
     TIMEOUT 120)
+
+# hpo_hpotarget_handlers_removal: the handlers of the registry-driven
+# parser follow the keys of the registry
+# (handlers_removal/check_handlers_removal.cmake): with a key removed from
+# a copy of the registry, regenerated into the include directory the two
+# probe targets below put first, src/hpotarget_handlers.cpp does not
+# compile; with a key added, it compiles and the probe, which takes the
+# address of every handler (hpotarget_handlers_gen.h), does not link. The
+# probes are not built by default, and compile with the headers of the
+# repository when the directory is empty. The test builds in this build
+# tree (the probes, and tadah.hpo, which they link, brought up to date), so
+# it holds the lock of the entries that do (RESOURCE_LOCK
+# tadah_header_check; hpo_build_tree_locks below). Before the fix: fails,
+# src/hpotarget_handlers.cpp does not exist.
+set(_hpo_handlers_probe_include ${CMAKE_CURRENT_BINARY_DIR}/handlers_probe/include)
+add_library(hpo_hpotarget_handlers_probe_objects OBJECT EXCLUDE_FROM_ALL
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/hpotarget_handlers.cpp)
+add_executable(hpo_hpotarget_handlers_probe EXCLUDE_FROM_ALL
+    ${CMAKE_CURRENT_SOURCE_DIR}/handlers_removal/probe_main.cpp
+    $<TARGET_OBJECTS:hpo_hpotarget_handlers_probe_objects>)
+foreach(_t hpo_hpotarget_handlers_probe_objects hpo_hpotarget_handlers_probe)
+  target_include_directories(${_t} BEFORE PRIVATE
+      ${_hpo_handlers_probe_include})
+  target_link_libraries(${_t} PRIVATE tadah.hpo)
+  set_target_properties(${_t} PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
+endforeach()
+add_test(NAME hpo_hpotarget_handlers_removal
+    COMMAND ${CMAKE_COMMAND}
+        -DPYTHON=${Python3_EXECUTABLE}
+        -DHPO_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}/..
+        -DBUILD_DIR=${CMAKE_BINARY_DIR}
+        -DPROBE_INCLUDE_DIR=${_hpo_handlers_probe_include}
+        -DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/handlers_removal
+        -DOBJECTS_TARGET=hpo_hpotarget_handlers_probe_objects
+        -DPROBE_TARGET=hpo_hpotarget_handlers_probe
+        "-DPROBE_OBJECT_DIRS=${CMAKE_CURRENT_BINARY_DIR}/CMakeFiles/hpo_hpotarget_handlers_probe_objects.dir|${CMAKE_CURRENT_BINARY_DIR}/CMakeFiles/hpo_hpotarget_handlers_probe.dir"
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/handlers_removal/check_handlers_removal.cmake)
+set_tests_properties(hpo_hpotarget_handlers_removal PROPERTIES
+    LABELS cmake
+    TIMEOUT 1800
+    RESOURCE_LOCK tadah_header_check)
+
+# hpo_build_tree_locks: every CTest entry of HPO that builds in this build
+# tree (its command runs `--build <tree>` or passes -DBUILD_DIR=<tree>)
+# holds RESOURCE_LOCK tadah_header_check, as the header checks and the
+# other entries that build in the tree do, or RUN_SERIAL
+# (check_build_tree_locks.py, which reads `ctest --show-only=json-v1`):
+# two such entries at once under `ctest -j` would build one tree together.
+# Before the fix: fails, hpo_hpotarget_handlers_removal holds no lock.
+add_test(NAME hpo_build_tree_locks
+    COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/check_build_tree_locks.py
+        --ctest ${CMAKE_CTEST_COMMAND}
+        --build-dir ${CMAKE_BINARY_DIR}
+        --source ${CMAKE_CURRENT_SOURCE_DIR}/..)
+set_tests_properties(hpo_build_tree_locks PROPERTIES
+    LABELS cmake
+    TIMEOUT 120)
+# The check itself, on synthetic ctest output
+# (tests/test_check_build_tree_locks.py).
+add_test(NAME hpo_build_tree_locks_tool
+    COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/test_check_build_tree_locks.py)
+set_tests_properties(hpo_build_tree_locks_tool PROPERTIES
+    LABELS cmake
+    TIMEOUT 60
+    FAIL_REGULAR_EXPRESSION "\nRan 0 tests ")
 
 # Boost drift gate: every Boost header HPO includes must be in the Boost
 # Tadah vendors (MLIP's external/boost, on HPO's include path through

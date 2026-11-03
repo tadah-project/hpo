@@ -160,6 +160,18 @@ that block and the line that opened it."""
 check_order = ["block_lines", "removed", "inner_refusal", "group_keys",
                "init_restart_keys", "noise_keys", "log_hp", "strategy_keys",
                "block_unknown", "root_keys"]
+# The order of the steps of the parser: a line that opens a block, an END
+# line, the line of a key by its place (a key's own `steps` replace those
+# of its place), and the end of the file (blueprint/README.md, [structure]).
+open_order = ["alias", "parents", "requires", "repeat", "key_alone", "open"]
+close_order = ["match", "key_alone", "close_steps", "close"]
+line_steps = { ROOT = ["repeat", "value", "options"], group = ["value", "repeat", "leftover"], block = ["value", "repeat"] }
+eof_order = ["open_block", "k_total_caps", "script_timeout_unread",
+             "loss_unread", "metric_target_loss", "density_key_arming",
+             "archive_directories", "optimizer_required",
+             "observable_with_scripts", "hotvar_injected", "hotvar_unique",
+             "observable_numerical", "observable_analytical",
+             "script_gradients"]
 end_without_open_msg = "{end} without matching {name}"
 end_mismatch_msg = "{end} does not close the innermost open block, the {open} block opened on line {open_line} (END{open} closes it)"
 end_takes_no_value_msg = "{end} closes the {name} block and takes no value (unexpected '{tok}')"
@@ -265,6 +277,7 @@ parents = ["ROOT"]
 repeat = "error"
 repeat_msg = "OPTIMIZER block given more than once (the first opens on line {first_line}); one OPTIMIZER block holds every optimiser setting"
 misplaced_msg = "OPTIMIZER block must appear at the top level of the file (it is inside the {parent} block opened on line {parent_line})"
+close_steps = ["optimizer_driver"]
 unknown_msg = "unknown key '{key}' inside the OPTIMIZER block opened on line {open_line} (ENDOPTIMIZER closes it)"
 doc = """\
 The search: its optimiser, its starting points, the noise settings and the \
@@ -414,6 +427,7 @@ parents = ["OPTIMIZER"]
 repeat = "error"
 repeat_msg = "STRATEGY block given more than once (the first opens on line {first_line}); one STRATEGY block holds every STRATEGY key"
 misplaced_msg = "STRATEGY block must appear directly inside OPTIMIZER"
+close_steps = ["strategy_type_keys", "multistart_n_starts", "restart_restarts"]
 unknown_msg = "unknown key '{key}' inside the STRATEGY block opened on line {open_line} (ENDSTRATEGY closes it)"
 doc = """\
 How the search runs its optimiser: once (TYPE PLAIN), from several \
@@ -428,6 +442,7 @@ PRESTAGE."""
 
 [[block.close_checks]]
 msg = "{key} is not accepted with STRATEGY TYPE {type}{note}: {effect}, so it would have no effect; {key} takes effect under STRATEGY TYPE {home}"
+at = "key_line"
 doc = """\
 At ENDSTRATEGY, reported at the line of the key: a key of one TYPE (the \
 STRATEGY types) is checked against the TYPE the block ends with, so TYPE \
@@ -589,6 +604,7 @@ end = "ENDEXPLORE"
 parents = ["STRATEGY"]
 repeat = "merge"
 misplaced_msg = "EXPLORE block must appear inside STRATEGY"
+close_steps = ["explore_driver"]
 unknown_msg = "unknown key '{key}' inside the EXPLORE block opened on line {open_line} (ENDEXPLORE closes it)"
 doc = """\
 The exploration of STRATEGY TYPE PRESTAGE: an optimiser of its own, whose \
@@ -804,6 +820,7 @@ parents = ["STRATEGY", "EXPLORE", "REFINE"]
 repeat = "error_per_parent"
 repeat_msg = "INNER block given twice for one optimiser (the first on line {first_line}); STRATEGY and REFINE configure the same optimiser, and so do two EXPLORE blocks"
 misplaced_msg = "INNER block must appear inside STRATEGY, EXPLORE or REFINE: it holds the local search that an NLopt MLSL or AUGLAG algorithm runs"
+close_steps = ["inner_driver"]
 unknown_msg = "unknown key '{key}' inside the INNER block opened on line {open_line} (only {keys} are valid; ENDINNER closes it)"
 refuse_msg = "{key} is not accepted inside an INNER block: {why}; the enclosing {enclosing} block takes {key}"
 refuse = [
@@ -963,6 +980,7 @@ from each point when the chain drawn gives fewer distinct points."""
 
 [[block.close_checks]]
 msg = "the RESTART block never restarts the search: a restart needs AFTER_STAGNATION and MAX, and the block has {missing}; a search without restarts has no RESTART block"
+at = "last_end_line"
 doc = """\
 At ENDSTRATEGY, reported at the last ENDRESTART line: {missing} is "no \
 AFTER_STAGNATION line", "no MAX line" or "no AFTER_STAGNATION line and no \
@@ -1023,7 +1041,7 @@ name = "FAILSCORE"
 blocks = ["ROOT"]
 synopsis = "FAILSCORE <loss>"
 args = [ { name = "loss", kind = "positive", what = "{key}", noun = "finite number" } ]
-repeat = "error"
+repeat = "error_until_read"
 repeat_msg = "FAILSCORE is set twice (first on line {first_line}) and no line between reads the first (a PC_LAMMPS or PC_FAILPROBE line without --failscore); each key is given once"
 repeat_doc = "Again only after a line that reads the value given above it, a PC_LAMMPS or PC_FAILPROBE line without --failscore; a second line with no such line between is refused."
 default = { text = "the largest finite double, 1.7976931348623157e308" }
@@ -1116,7 +1134,7 @@ name = "PC_SCRIPT_TIMEOUT"
 blocks = ["ROOT"]
 synopsis = "PC_SCRIPT_TIMEOUT <time>"
 args = [ { name = "time", kind = "timespec", what = "{key}", doc = "off, unlimited, or a positive time [[HH:]MM:]SS." } ]
-repeat = "error"
+repeat = "error_until_read"
 repeat_msg = "PC_SCRIPT_TIMEOUT is set twice (first on line {first_line}) and no line between reads the first (a PC_LAMMPS or PC_FAILPROBE line without --maxtime); each key is given once"
 repeat_doc = "Again only after a line that reads the value given above it, a PC_LAMMPS or PC_FAILPROBE line without --maxtime; a second line with no such line between is refused. PC_SCRIPT_TIMEOUT and MAXTIME are one key."
 default = { literal = "off" }
@@ -1230,7 +1248,7 @@ name = "MAXTIME"
 blocks = ["ROOT"]
 synopsis = "MAXTIME <time>"
 args = [ { name = "time", kind = "timespec", what = "{key}", doc = "off, unlimited, or a positive time [[HH:]MM:]SS." } ]
-repeat = "error"
+repeat = "error_until_read"
 repeat_msg = "MAXTIME is set twice (first on line {first_line}) and no line between reads the first (a PC_LAMMPS or PC_FAILPROBE line without --maxtime); each key is given once"
 repeat_doc = "Again only after a line that reads the value given above it, a PC_LAMMPS or PC_FAILPROBE line without --maxtime; a second line with no such line between is refused. MAXTIME and PC_SCRIPT_TIMEOUT are one key."
 alias_of = "ROOT.PC_SCRIPT_TIMEOUT"
@@ -1766,7 +1784,7 @@ name = "RHOBARGATE"
 blocks = ["ROOT"]
 synopsis = "RHOBARGATE bcc | fcc | hcp <a0> <f_lo> <f_hi> [NPTS <n>] [SEED ERROR | WARN]"
 args = [
-  { name = "lattice", kind = "word", words = ["bcc", "fcc", "hcp"], msg = "RHOBARGATE lattice must be bcc, fcc or hcp, got '{tok}'" },
+  { name = "lattice", kind = "word", words = ["bcc", "fcc", "hcp"], case = "any", msg = "RHOBARGATE lattice must be bcc, fcc or hcp, got '{tok}'" },
   { name = "a0", kind = "number", what = "RHOBARGATE a0", doc = "The lattice constant in Å, above 0; for hcp the in-plane one." },
   { name = "f_lo", kind = "number", what = "RHOBARGATE f_lo", doc = "The smallest lattice constant, as a fraction of a0, above 0 and below f_hi. The run is refused at startup when the largest RCUTMB a candidate can have is more than 20 lattice constants of the smallest lattice, f_lo a0." },
   { name = "f_hi", kind = "number", what = "RHOBARGATE f_hi", doc = "The largest lattice constant, as a fraction of a0. NPTS and SEED follow it, each with its value, in any order and each at most once." },
@@ -2240,7 +2258,7 @@ id = "ROOT.OPTIM_SCALE"
 name = "OPTIM_SCALE"
 blocks = ["ROOT"]
 synopsis = "OPTIM_SCALE AUTO | NONE"
-args = [ { name = "mode", kind = "word", words = ["AUTO", "NONE"], msg = "OPTIM_SCALE must be AUTO (every OPTIM dimension is mapped to [0, 1]) or NONE (each dimension stays in its OPTIM units: the value for LIN, its natural logarithm for LOG, asinh(x/c) for ASINH <c>), got '{tok}'" } ]
+args = [ { name = "mode", kind = "word", words = ["AUTO", "NONE"], case = "any", msg = "OPTIM_SCALE must be AUTO (every OPTIM dimension is mapped to [0, 1]) or NONE (each dimension stays in its OPTIM units: the value for LIN, its natural logarithm for LOG, asinh(x/c) for ASINH <c>), got '{tok}'" } ]
 repeat = "error"
 repeat_msg = "OPTIM_SCALE is set twice (first on line {first_line}); each key is given once"
 default = { literal = "AUTO" }
@@ -2289,6 +2307,7 @@ error = "OPTIM_SCALE requires a value"
 id = "RHOGATE.R_LO"
 option = "R_LO"
 lines = ["RHOGATE"]
+case = "any"
 synopsis = "R_LO <r>"
 args = [ { name = "r", kind = "number", min = 0, what = "RHOGATE R_LO", msg = "RHOGATE R_LO must be >= 0, got '{tok}'" } ]
 repeat = "error"
@@ -2336,6 +2355,7 @@ error = "RHOGATE R_LO 6 A must lie below the smallest cutoff a candidate can hav
 id = "RHOGATE.NPTS"
 option = "NPTS"
 lines = ["RHOGATE"]
+case = "any"
 synopsis = "NPTS <n>"
 args = [ { name = "n", kind = "integer", min = 2, max = 10000000, what = "RHOGATE NPTS" } ]
 repeat = "error"
@@ -2374,8 +2394,9 @@ error = "RHOGATE: NPTS is given twice on this line; each option is given once"
 id = "RHOGATE.SEED"
 option = "SEED"
 lines = ["RHOGATE"]
+case = "any"
 synopsis = "SEED ERROR | WARN"
-args = [ { name = "mode", kind = "word", words = ["ERROR", "WARN"], msg = "RHOGATE SEED must be ERROR or WARN, got '{tok}'" } ]
+args = [ { name = "mode", kind = "word", words = ["ERROR", "WARN"], case = "any", msg = "RHOGATE SEED must be ERROR or WARN, got '{tok}'" } ]
 repeat = "error"
 repeat_msg = "RHOGATE: SEED is given twice on this line; each option is given once"
 default = { literal = "ERROR" }
@@ -2416,6 +2437,7 @@ error = "RHOGATE: SEED is given twice on this line; each option is given once"
 id = "RHOBARGATE.NPTS"
 option = "NPTS"
 lines = ["RHOBARGATE"]
+case = "any"
 synopsis = "NPTS <n>"
 args = [ { name = "n", kind = "integer", min = 3, max = 10000000, what = "RHOBARGATE NPTS" } ]
 repeat = "error"
@@ -2451,8 +2473,9 @@ error = "RHOBARGATE: NPTS is given twice on this line; each option is given once
 id = "RHOBARGATE.SEED"
 option = "SEED"
 lines = ["RHOBARGATE"]
+case = "any"
 synopsis = "SEED ERROR | WARN"
-args = [ { name = "mode", kind = "word", words = ["ERROR", "WARN"], msg = "RHOBARGATE SEED must be ERROR or WARN, got '{tok}'" } ]
+args = [ { name = "mode", kind = "word", words = ["ERROR", "WARN"], case = "any", msg = "RHOBARGATE SEED must be ERROR or WARN, got '{tok}'" } ]
 repeat = "error"
 repeat_msg = "RHOBARGATE: SEED is given twice on this line; each option is given once"
 default = { literal = "ERROR" }

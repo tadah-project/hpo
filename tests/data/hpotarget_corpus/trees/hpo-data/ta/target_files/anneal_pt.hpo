@@ -1,0 +1,33 @@
+# TADAH:ANNEAL_PT with THREADS, CORANA, pinned temperatures (T_HOT,
+# T_COLD) and the swap settings. HPO/scripts/run_mpi_smoke.sh runs it on
+# 1 and 2 ranks.
+
+OPTIMIZER
+  STRATEGY
+    TYPE PLAIN
+    LIB TADAH
+    ALGO ANNEAL_PT
+    THREADS 2
+    SEED 1234
+    MAXEVAL 260
+    PARAM CORANA ON
+    PARAM NS 3                # sweeps between per-slot V adjustments
+    PARAM REPLICAS 4
+    PARAM T_HOT  0.10       # pinned: skips T0 calibration
+    PARAM T_COLD 0.001
+    PARAM SWAP_EVERY 1
+    PARAM SWAP_WINDOW 20      # diagnostics window; OFF = cumulative only
+    PARAM STEP_FRAC 0.15
+  ENDSTRATEGY
+ENDOPTIMIZER
+
+LOSS L2
+FAILSCORE 1e16
+PC_ERMSE 0 0.0001
+PC_LAMMPS --script ../common/lammps/Ecoh.in --hotvar hot_a0 2.5 4.5 3.302 --varloss Ecoh 8.10 800
+
+OPTIM RCUT2B  (1) 4.0 6.0
+OPTIM SGRIDMB (1) 0.1 0.4
+
+OUTPUT 1
+BOUTPUT 1

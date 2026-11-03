@@ -591,9 +591,9 @@ TEST_CASE("HPOTargets rejects PC_OBSERVABLE and PC_LAMMPS side by side",
         "PC_LAMMPS --script " + script_path.string() +
         " --varloss xyz 1.0 100 --outvar xyz\n");
 
-    /* PC_OBSERVABLE is mutually exclusive with PC_LAMMPS. The post-parse
-     * validation in HPOTargets::read fires a clear runtime_error mentioning
-     * both counts.
+    /* PC_OBSERVABLE is mutually exclusive with PC_LAMMPS. The parser of
+     * the target file (src/hpotarget_parser.cpp) refuses the file with a
+     * runtime_error mentioning both counts.
      * Pins: the message states the rule, without a development state, at
      * the first line of the later group (it was "--hpotarget defines both
      * PC_OBSERVABLE (1 entries) and PC_LAMMPS (1 entries); ... mutually

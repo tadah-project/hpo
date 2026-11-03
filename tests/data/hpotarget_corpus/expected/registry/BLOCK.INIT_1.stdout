@@ -1,0 +1,2 @@
+[tadah hpo] the INIT block on line 4 has no SEED, so its starting points are drawn with a seed drawn once for the run, <seed drawn for the run> (SEED <seed drawn for the run> in the INIT block draws the same points again)
+[tadah hpo] the INIT block on line 4 (CONFIG, LHS) gives 4 starting points

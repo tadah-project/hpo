@@ -31,11 +31,12 @@ blocks    The line of each key, taken from its first example, is put into
           a name the parser reads in more places (ROOT.MAXTIME), and a
           key the parser names as a top-level key in a block that the
           registry does not list at the top level only, or the reverse.
-repeat    A key whose repeat is error, last_wins or warn_last_wins: its
-          line, from its first example, is given again right after it.
-          error: the second line is refused with repeat_msg ({first_line}
-          the line of the first, {block} its block, {key} the key); the
-          other two: the file is read. The same for a line option, given
+repeat    A key whose repeat is error, error_until_read, last_wins or
+          warn_last_wins: its line, from its first example, is given again
+          right after it. error and error_until_read (no line between
+          reads the first): the second line is refused with repeat_msg
+          ({first_line} the line of the first, {block} its block, {key}
+          the key); the other two: the file is read. The same for a line option, given
           twice on its line (an option word is found in any case, as
           the parser reads it). Catches a wrong repeat rule or
           repeat_msg.
@@ -59,6 +60,14 @@ ranges    A key, INIT method, PARAM key or line option with one argument
           refused in each, at parse or at startup, with a message of its
           entry or of [reading]. Catches a changed min, max, min_open or
           kind, and a max the run refuses.
+case      A word argument at a fixed place of its line, a line option and
+          the word of a form: the word of the first example's line with
+          the case of one letter changed (a spelling no word of the
+          argument has) is read where the registry says `case = "any"`,
+          and refused at its line where it says `exact` (the default),
+          with the argument's msg when it has one. Catches a word the
+          parser reads in any case that the registry gives as exact, and
+          the reverse.
 words     A word argument at a fixed place of its line: each word of
           `words`, put into the line of the first example, is accepted;
           each of `refused_words` is refused with its message. Catches a
@@ -107,7 +116,7 @@ What it cannot see
   line as a failure, so such a case is visible, not silent);
 - the range of an argument that is not the only value of its line or
   option, of a [[form]] argument and of a loss parameter; words of an
-  argument after an optional or repeated one; a word the parser reads
+  argument after an optional or repeated one, and their case; a word the parser reads
   that is left out of `words` together with every example that shows it;
 - a value the startup checks refuse in some files only: the max of a
   range runs in the files of its examples, and its min is read only;
@@ -143,8 +152,8 @@ DEFAULT_REGISTRY = HERE.parent / "blueprint"
 TARGET_FILE = "target.hpo"
 NUMBER = re.compile(r"(?<![A-Za-z_\d.])[-+]?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?"
                     r"(?![A-Za-z_\d])")
-CHECK_NAMES = ("blocks", "repeat", "ranges", "words", "params", "lines",
-               "defaults")
+CHECK_NAMES = ("blocks", "repeat", "ranges", "case", "words", "params",
+               "lines", "defaults")
 
 
 # ------------------------------------------------------------ TOML out ----
@@ -350,7 +359,7 @@ class Generator:
             file = self.insert_after(comp.file, ln, ln.text)
             new_line = ln.last + 1
             mode = "parse"
-            if k.repeat == "error":
+            if k.repeat in ("error", "error_until_read"):
                 fill = {"first_line": str(ln.last), "block": block,
                         "key": k.name}
                 rx = hr.template_regex(k.repeat_msg, fill)
@@ -665,6 +674,94 @@ class Generator:
         self.add("ranges", label, file, context, "startup", judge,
                  group=group if ok else None)
 
+    # ---- case ---------------------------------------------------------
+    @staticmethod
+    def other_case(word: str, taken: list[str]) -> str | None:
+        """`word` with the case of one letter changed, at the first letter
+        that gives a spelling `taken` does not hold; None when no letter
+        does."""
+        for i, ch in enumerate(word):
+            if ch.swapcase() != ch:
+                v = word[:i] + ch.swapcase() + word[i + 1:]
+                if v not in taken:
+                    return v
+        return None
+
+    def add_case(self, eid, case, comp, ln, toks, at, taken, msg=""):
+        """The word at toks[at] written in another case: read where `case`
+        is any, refused at its line (with `msg`, filled, when there is one)
+        where it is exact."""
+        hr = self.hr
+        v = self.other_case(toks[at], taken)
+        if v is None:
+            return
+        file = self.replace_line(comp.file, ln,
+                                 " ".join(toks[:at] + [v] + toks[at + 1:]))
+        if case == "any":
+            def judge(res, v=v):
+                err = res["parse_error"]
+                if err:
+                    return (f"{eid}: {v}, its word in another case, is "
+                            f"refused, but the registry reads it in any "
+                            f"case: {err}")
+                return None
+        else:
+            rx = hr.template_regex(msg, {"tok": v, "key": toks[0]}) \
+                if msg else None
+
+            def judge(res, v=v, rx=rx, line=ln.first):
+                err = res["parse_error"]
+                what = self.frame_what(err, line) if err else None
+                if what is None or (rx is not None and not rx.match(what)):
+                    return (f"{eid}: {v}, its word in another case, is not "
+                            f"refused at its line with its message, but the "
+                            f"registry reads it as written: "
+                            f"{err or 'the file is read'}")
+                return None
+        self.add("case", f"{eid} {v}", file, comp.context, "parse", judge)
+
+    def gen_case(self) -> None:
+        hr, reg = self.hr, self.reg
+        for k in reg.keys:
+            if not k.examples or k.refused:
+                continue
+            for pos, a in hr.word_positions(k.args):
+                found = hr.key_line(reg, k.examples[0], k.name)
+                if found is None:
+                    continue
+                comp, ln, _ = found
+                toks = ln.text.split()
+                if len(toks) > 1 + pos:
+                    self.add_case(k.id, a.case, comp, ln, toks, 1 + pos,
+                                  a.words, a.msg)
+        for o in reg.line_options:
+            if not o.examples or o.refused:
+                continue
+            got = self.option_in_example(o)
+            if got is None:
+                continue
+            comp, ln, toks, j, n = got
+            self.add_case(o.id, o.case, comp, ln, toks, j, [o.option])
+            for pos, a in hr.word_positions(o.args):
+                if pos < n:
+                    self.add_case(o.id, a.case, comp, ln, toks, j + 1 + pos,
+                                  a.words, a.msg)
+        for f in reg.forms:
+            if not f.word or not f.examples or f.refused:
+                continue
+            c = f.examples[0]
+            comp = hr.compose(reg, c.wrap, c.text, c.context)
+            for ln in hr.logical_lines(comp.file):
+                toks = ln.text.split()
+                if ln.first < comp.slot or toks[0] != f.line:
+                    continue
+                at = [i for i, t in enumerate(toks)
+                      if i > 0 and t.casefold() == f.word.casefold()]
+                if at:
+                    self.add_case(f.id, f.case, comp, ln, toks, at[0],
+                                  [f.word])
+                    break
+
     # ---- words --------------------------------------------------------
     def gen_words(self) -> None:
         hr, reg = self.hr, self.reg
@@ -952,6 +1049,13 @@ def judge_all(g: Generator, by_id: dict[str, dict]
     return problems, counts
 
 
+def runner_command(runner: pathlib.Path, cases: pathlib.Path,
+                   results: pathlib.Path) -> list[str]:
+    """The command of the runner, which reads the cases with the parser of
+    `tadah hpo`."""
+    return [str(runner), str(cases), str(results)]
+
+
 def run(runner: pathlib.Path, registry: pathlib.Path, only: str | None,
         keep: pathlib.Path | None) -> int:
     sys.path.insert(0, str(registry))
@@ -973,9 +1077,9 @@ def run(runner: pathlib.Path, registry: pathlib.Path, only: str | None,
         d.mkdir(parents=True, exist_ok=True)
         cases_file, results_file = d / "cases.toml", d / "results.json"
         write_cases(cases_file, [c.case for c in g.cases])
-        proc = subprocess.run([str(runner), str(cases_file),
-                               str(results_file)], capture_output=True,
-                              text=True)
+        proc = subprocess.run(runner_command(runner, cases_file,
+                                             results_file),
+                              capture_output=True, text=True)
         if proc.returncode != 0:
             print(proc.stdout + proc.stderr)
             print(f"check_hpotarget_generated.py: the runner failed "

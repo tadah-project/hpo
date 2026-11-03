@@ -54,8 +54,8 @@ struct StopCriteria {
  * Configured at OPTIMIZER block level via `GRAD_STRATEGY {NUMERICAL|
  * ANALYTICAL|HYBRID}`. Default (unset) = NUMERICAL; with PC_OBSERVABLE
  * an unset value resolves to ANALYTICAL in the blocks that run an
- * optimiser and obtain gradients (HPOTargets::read). An INNER block
- * takes none (a parse error at its line): MLSL/AUGLAG hand their local
+ * optimiser and obtain gradients (the parser of the target file). An
+ * INNER block takes none (a parse error at its line): MLSL/AUGLAG hand their local
  * search the gradient the enclosing block obtains. Another word is
  * refused with the three values. */
 enum class GradStrategy { Numerical, Analytical, Hybrid };
@@ -200,8 +200,8 @@ struct RestartSpec {
     /* RESTART takes effect only when both AFTER_STAGNATION and MAX are
      * positive. The one rule for build_run_policy() and for the
      * multi-rank dispatch, which refuses an active RESTART. The parser
-     * refuses a RESTART block that is not active (HPOTargets::read): a
-     * spec without RESTART, or one built outside the parser, has it
+     * refuses a RESTART block that is not active (the parser of the target
+     * file): a spec without RESTART, or one built outside the parser, has it
      * inactive. */
     bool active() const noexcept { return after_stagnation > 0 && max > 0; }
 };
@@ -346,8 +346,8 @@ struct OptimizerSpec {
     /* seed was not written in the block but taken from the STRATEGY-level
      * SEED: a PRESTAGE exploration whose optimiser reads SEED and that has
      * no seed of its own (no SEED; for NLopt no INIT block SEED either)
-     * takes it (HPOTargets::read), as the refinement's starts and the
-     * RESTART rounds derive theirs from it. The journal says so. */
+     * takes it (the parser of the target file), as the refinement's starts
+     * and the RESTART rounds derive theirs from it. The journal says so. */
     bool seed_from_strategy = false;
     /* A PRESTAGE refinement (prestage_refinement_spec) whose SEED the
      * exploration took (its seed_from_strategy): an optimiser that reads
@@ -373,8 +373,8 @@ struct OptimizerSpec {
     /* grad_strategy was not written in the block but set by the parser:
      * with PC_OBSERVABLE an unset GRAD_STRATEGY resolves to ANALYTICAL in
      * a block that runs an optimiser and obtains gradients (the
-     * STRATEGY-level block, EXPLORE; HPOTargets::read). The journal
-     * says so. */
+     * STRATEGY-level block, EXPLORE; the parser of the target file). The
+     * journal says so. */
     bool grad_strategy_resolved = false;
 
     StopCriteria stop;
@@ -457,7 +457,7 @@ struct OptimizerSpec {
     RestartSpec      restart;                // STRATEGY { RESTART/ENDRESTART }
 
     /* -------- where the configuration completes this optimiser -------
-     * The line of the hpotarget file at which HPOTargets::read() checks
+     * The line of the hpotarget file at which the parser checks
      * the block that configures this optimiser, and its text: ENDOPTIMIZER
      * for the STRATEGY-level spec (whose copies are the MULTISTART starts
      * and the PRESTAGE refinement, a REFINE block's keys included),
@@ -475,8 +475,8 @@ struct OptimizerSpec {
     /* The line of each key of that block whose refusal is about the key
      * alone, by key: LIB, ALGO, the block-wide STEP and GRAD_STRATEGY (a
      * STEP <KEY> override keeps its line in StepOverride). Filled by
-     * HPOTargets::read(); copied with block_line (the MULTISTART starts, the
-     * PRESTAGE refinement, NLopt's default local optimiser of an MLSL or
+     * the parser of the target file; copied with block_line (the
+     * MULTISTART starts, the PRESTAGE refinement, NLopt's default local optimiser of an MLSL or
      * AUGLAG, inner_run_spec). Empty for a spec built outside the parser.
      * The refusals of one key name its line (with_key_line, phase_specs.h);
      * a refusal of a combination of keys names block_line. */

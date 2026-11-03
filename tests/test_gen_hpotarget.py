@@ -4,11 +4,12 @@ tables of the target-file registry, on the synthetic registry of
 test_hpotarget_registry.py: the C++ name of an id and the refusal of an id
 without one or of two ids of one name, the escaping of a message, the
 placeholders of the messages the loader fixes (taken from the loader, not
-written into the generator), the tables of the two headers and what they
-leave out, the comment at the top of each header, that two runs write
-the same text, the headers compiled and read back by a C++ compiler,
---header and --check with the command each failure names, and the
-help."""
+written into the generator), the tables of the headers and what they
+leave out, the handlers the parser calls (one for each key, line option
+and form it reads), the comment at the top of each header, that two runs
+write the same text, the headers compiled and read back by a C++
+compiler, --header and --check with the command each failure names, and
+the help."""
 
 from __future__ import annotations
 
@@ -216,7 +217,7 @@ class Generator(unittest.TestCase):
                  '{\n    "FAILSCORE",\n};', h)
         self.has("LossParam{\"delta\", 50.0, true, 0.0}", h)
         self.has("Rule{\"RULE.FAILSCORE_with_GRID\", RuleCheck::Startup, "
-                 "\"\"}", h)
+                 "\"\", Span<RuleWhat>{nullptr, 0}}", h)
         self.has("CheckStage::BlockLines,\n    CheckStage::Removed,", h)
         self.has("inline constexpr Span<LineOption> kLineOptions"
                  "{nullptr, 0};", h)
@@ -228,6 +229,171 @@ class Generator(unittest.TestCase):
                     "FAILSCORE 10", "FAILSCORE 0", "A rule between two",
                     "Points per dimension.", "A value below 2."):
             self.lacks(doc, h + p)
+
+    # Pins: the tables the parser's engine reads: the macro that says the
+    # header holds them; the order of the steps of the parse
+    # (structure::open_order, close_order, eof_order, line_steps_root,
+    # _group and _block, in the registry's order, as enumerators named
+    # after the loader's steps); a block's close_steps and the line each
+    # close check names (CheckAt, End by default); a key's own steps
+    # (empty: its place's) and its effect; the repeat rule
+    # error_until_read; the case of a word argument, an option and a form
+    # (any_case); a rule's {what} per entry; a PARAM key's explain.
+    # Before the fix: fails, the header holds none of them.
+    def test_engine_tables(self):
+        self.edit("hpotarget.toml", '"requires", "repeat", "key_alone"',
+                  '"repeat", "requires", "key_alone"')
+        self.edit("hpotarget.toml", 'unknown_msg = "unknown key \'{key}\' in '
+                  'this block"', 'unknown_msg = "unknown key \'{key}\' in '
+                  'this block"\nclose_steps = ["optimizer_driver"]\n'
+                  'close_checks = [{ msg = "no LIB", doc = "At ENDOPTIMIZER." '
+                  '}, { msg = "no ALGO", doc = "At the end.", at = '
+                  '"last_end_line" }]')
+        self.edit("hpotarget.toml", 'repeat = "last_wins"\ndoc = "The score',
+                  'repeat = "error_until_read"\nrepeat_msg = "again"\n'
+                  'steps = ["value", "repeat", "options"]\ndoc = "The score')
+        self.edit("part_a.toml", 'words = ["NLOPT", "TADAH"] }',
+                  'words = ["NLOPT", "TADAH"], case = "any" }')
+        self.edit("part_a.toml", 'doc = "The seed of the optimiser."',
+                  'doc = "The seed of the optimiser."\n'
+                  'effect = "only TYPE WIDE draws"')
+        self.files["part_b.toml"] += textwrap.dedent('''
+            [[strategy_type]]
+            id = "STRATEGY.TYPE.WIDE"
+            name = "WIDE"
+            keys = ["OPTIMIZER.SEED"]
+            doc = "A wide search."
+            ''')
+        self.edit("part_b.toml", 'keys = ["ROOT.FAILSCORE", '
+                  '"PARAM.TADAH:GRID.GRID_POINTS"]',
+                  'keys = ["ROOT.FAILSCORE", "PARAM.TADAH:GRID.GRID_POINTS"]\n'
+                  'msg = "{key} sets the {what} twice"\n'
+                  'what = { "ROOT.FAILSCORE" = "score" }')
+        self.edit("part_b.toml", 'doc = "Points per dimension."',
+                  'doc = "Points per dimension."\n'
+                  'explain = "points per dimension"')
+        texts = self.headers()
+        h, p = texts[gen.REGISTRY_HEADER], texts[gen.PARAM_HEADER]
+        self.has("#define TADAH_HPOTARGET_ENGINE_TABLES 1", h)
+        self.has("enum class OpenStep : unsigned char {\n  Alias,\n  "
+                 "Parents,\n  Requires,\n  Repeat,\n  KeyAlone,\n  Open,\n};",
+                 h)
+        self.has("enum class EofStep : unsigned char {\n  OpenBlock,\n  "
+                 "KTotalCaps,", h)
+        self.has("enum class Repeat : unsigned char {\n  Add,\n  Error,\n  "
+                 "ErrorUntilRead,\n  LastWins,\n  WarnLastWins,\n};", h)
+        self.has("inline constexpr OpenStep structure_open_order[] = {\n"
+                 "    OpenStep::Alias,\n    OpenStep::Parents,\n"
+                 "    OpenStep::Repeat,\n    OpenStep::Requires,", h)
+        self.has("inline constexpr Span<OpenStep> open_order = "
+                 "Span<OpenStep>{detail::structure_open_order, 6};", h)
+        self.has("inline constexpr Span<CloseStep> close_order =", h)
+        self.has("inline constexpr Span<EofStep> eof_order = "
+                 "Span<EofStep>{detail::structure_eof_order, 14};", h)
+        self.has("inline constexpr LineStep structure_line_steps_group[] = {\n"
+                 "    LineStep::Value,\n    LineStep::Repeat,\n"
+                 "    LineStep::Leftover,\n};", h)
+        self.has("inline constexpr Span<LineStep> line_steps_root =", h)
+        self.has("inline constexpr Span<LineStep> line_steps_block =", h)
+        self.lacks("Span<std::string_view> open_order", h)
+        self.has("inline constexpr BlockCloseStep "
+                 "BLOCK_OPTIMIZER_close_steps[] = {\n"
+                 "    BlockCloseStep::OptimizerDriver,\n};", h)
+        self.has("inline constexpr CheckAt BLOCK_OPTIMIZER_close_checks_at[] "
+                 "= {\n    CheckAt::End,\n    CheckAt::LastEndLine,\n};", h)
+        self.has("Repeat::ErrorUntilRead", h)
+        self.has("inline constexpr LineStep ROOT_FAILSCORE_steps[] = {\n"
+                 "    LineStep::Value,\n    LineStep::Repeat,\n"
+                 "    LineStep::Options,\n};", h)
+        self.has('"only TYPE WIDE draws"}', h)
+        self.has('Span<LineStep>{nullptr, 0}, ""}', h)
+        self.has('"NLOPT",\n    "TADAH",\n};', h)
+        self.has('Span<RefusedWord>{nullptr, 0}, "", "", "", false, "", '
+                 'true}', h)
+        self.has("RuleWhat{\"ROOT.FAILSCORE\", \"score\"}", h)
+        self.has('"points per dimension"}', p)
+
+    # Pins: hpotarget_handlers_gen.h declares the handlers the parser
+    # calls, one static member of struct Handlers for each key, named as
+    # the key's enumerator, taking a KeyRead (declared, the parser defines
+    # it); kKeyHandlers holds their addresses in the order of KeyId, so a
+    # key the registry drops leaves a definition in hpotarget_handlers.cpp
+    # that names no member, and a key it adds a member no file defines. The
+    # synthetic registry has no line option and no form: their tables are
+    # empty. The header includes the registry's and holds no text of the
+    # registry.
+    # Before the fix: fails, the generator writes no handlers header.
+    def test_handlers(self):
+        texts = self.headers()
+        self.assertEqual(sorted(texts), sorted([gen.REGISTRY_HEADER,
+                                                gen.PARAM_HEADER,
+                                                gen.HANDLERS_HEADER]))
+        h = texts[gen.HANDLERS_HEADER]
+        self.has("#include <tadah/hpo/hpotarget_registry_gen.h>", h)
+        self.has("struct KeyRead;\nstruct OptionRead;\nstruct FormRead;", h)
+        self.has("struct Handlers {\n"
+                 "  static void ROOT_FAILSCORE(KeyRead& r);\n"
+                 "  static void OPTIMIZER_LIB(KeyRead& r);\n"
+                 "  static void OPTIMIZER_SEED(KeyRead& r);\n"
+                 "};", h)
+        self.has("using KeyHandler = void (*)(KeyRead&);", h)
+        self.has("inline constexpr KeyHandler kKeyHandlers[] = {\n"
+                 "  &Handlers::ROOT_FAILSCORE,\n"
+                 "  &Handlers::OPTIMIZER_LIB,\n"
+                 "  &Handlers::OPTIMIZER_SEED,\n};", h)
+        self.has("inline constexpr Span<OptionHandler> kOptionHandlers"
+                 "{nullptr, 0};", h)
+        self.has("inline constexpr Span<FormHandler> kFormHandlers"
+                 "{nullptr, 0};", h)
+        for text in ("The score of a failed evaluation.", "FAILSCORE 10",
+                     "must be a positive"):
+            self.lacks(text, h)
+        self.assertTrue(h.startswith("// GENERATED FILE -- DO NOT EDIT."),
+                        h[:200])
+
+    # Pins: on the registry of this repository the handlers header has a
+    # handler for each option and form of a line HPO reads (PC_LAMMPS
+    # --hotvar, a gate option, a PC_OBSERVABLE cohesive_energy option, the
+    # form cohesive_energy), each table in the order of its enumeration;
+    # the options and forms of the OPTIM line, which MLIP's OPTIM reader
+    # reads (tadah/mlip/hpotarget_optim.h), have none: their entries of
+    # kOptionHandlers and kFormHandlers are nullptr. Handler names are
+    # unique across keys, options and forms.
+    # Before the fix: fails, the generator writes no handlers header.
+    def test_handlers_of_the_registry(self):
+        reg = hr.load(HERE.parent / "blueprint", templates=False)
+        h = gen.headers(reg)[gen.HANDLERS_HEADER]
+        self.has("  static void ROOT_PC_LAMMPS(KeyRead& r);", h)
+        self.has("  static void PC_LAMMPS_hotvar(OptionRead& r);", h)
+        self.has("  static void RHOGATE_NPTS(OptionRead& r);", h)
+        self.has("  static void PC_OBSERVABLE_cohesive_energy_species("
+                 "OptionRead& r);", h)
+        self.has("  static void PC_OBSERVABLE_cohesive_energy(FormRead& r);",
+                 h)
+        for name in ("OPTIM_AUTO_RATIO", "OPTIM_LIN", "OPTIM_range",
+                     "OPTIM_AUTO"):
+            self.lacks(f" {name}(", h)
+        options = re.search(r"kOptionHandlers\[\] = \{\n(.*?)\n\};", h,
+                            re.S).group(1).split("\n")
+        self.assertEqual(len(options), len(reg.line_options))
+        for o, row in zip(reg.line_options, options):
+            name = gen.cxx_name(o.id)
+            if name.startswith("OPTIM_"):
+                self.assertEqual(row.strip(), "nullptr,", o.id)
+            else:
+                self.assertEqual(row.strip(), f"&Handlers::{name},", o.id)
+        forms = re.search(r"kFormHandlers\[\] = \{\n(.*?)\n\};", h,
+                          re.S).group(1).split("\n")
+        self.assertEqual([r.strip() for r in forms],
+                         ["&Handlers::PC_OBSERVABLE_cohesive_energy,",
+                          "nullptr,", "nullptr,"])
+        keys = re.search(r"kKeyHandlers\[\] = \{\n(.*?)\n\};", h,
+                         re.S).group(1).split("\n")
+        self.assertEqual([r.strip() for r in keys],
+                         [f"&Handlers::{gen.cxx_name(k.id)}," for k in
+                          reg.keys])
+        members = re.findall(r"static void (\w+)\(", h)
+        self.assertEqual(len(members), len(set(members)))
 
     # Pins: two runs write the same text, which names neither the
     # registry's directory nor the time.
@@ -282,7 +448,8 @@ class Generator(unittest.TestCase):
         code, text, _ = self.main("--header", *args)
         self.assertEqual(code, 0)
         self.assertEqual(sorted(p.name for p in out.iterdir()),
-                         sorted([gen.REGISTRY_HEADER, gen.PARAM_HEADER]))
+                         sorted([gen.REGISTRY_HEADER, gen.PARAM_HEADER,
+                                 gen.HANDLERS_HEADER]))
         self.assertEqual(self.main("--check", *args)[0], 0)
         self.assertIn("is up to date", self.main("--header", *args)[1])
         header = out / gen.PARAM_HEADER
@@ -419,7 +586,9 @@ class Generator(unittest.TestCase):
 
     # Pins: the headers of the synthetic registry, whose tables of line
     # options and forms are empty, compile as C++17 without a warning
-    # (-Wall -Wextra -pedantic -Werror), twice included; read back, the
+    # (-Wall -Wextra -pedantic -Werror), twice included (the handlers
+    # header declares its handlers, which the program does not call);
+    # read back, the
     # continuation, the frame, an escaped message and a UTF-8 one are the
     # registry's text, the INNER block takes LIB, and fill() puts values
     # into a template (${name} kept). Needs a C++ compiler: $CXX, which
@@ -443,6 +612,8 @@ class Generator(unittest.TestCase):
             #include <tadah/hpo/hpo_param_registry_gen.h>
             #include <tadah/hpo/hpo_param_registry_gen.h>
             #include <tadah/hpo/hpotarget_registry_gen.h>
+            #include <tadah/hpo/hpotarget_handlers_gen.h>
+            #include <tadah/hpo/hpotarget_handlers_gen.h>
             #include <iostream>
             namespace R = tadah::hpo::hpotarget_registry;
             int main()
@@ -457,7 +628,8 @@ class Generator(unittest.TestCase):
                           << R::fill("{a}-{b}", {{"a", "1"}, {"b", "2"}})
                           << '|' << R::kLineOptions.size
                           << '|'
-                          << tadah::hpo::param_registry::kParams[0].name;
+                          << tadah::hpo::param_registry::kParams[0].name
+                          << '|' << R::kOptionHandlers.size;
             }
             """), encoding="utf-8")
         exe = self.dir / "read_back"
@@ -472,7 +644,8 @@ class Generator(unittest.TestCase):
         self.assertEqual(
             run.stdout.decode("utf-8"),
             "|".join(["\\", "line {line} of {file}: {what}\nLine: {text}",
-                      quoted, "LIB", quoted, "1-2", "0", "GRID_POINTS"]))
+                      quoted, "LIB", quoted, "1-2", "0", "GRID_POINTS",
+                      "0"]))
 
 
 if __name__ == "__main__":

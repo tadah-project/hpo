@@ -1,0 +1,2 @@
+[tadah hpo] NOISE AUTO: PARAM fd_step is 0.001 (1e-3 x the diagonal 1 of the search space / sqrt(1 dimensions))
+[tadah hpo] the INIT chain of the STRATEGY-level optimiser (METHOD CONFIG, by default) gives 1 starting point

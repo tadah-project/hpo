@@ -1,0 +1,21 @@
+# PC_ERMSE per validation dataset (PC_ERMSE (1) and (2)), one with
+# --skip-above; per_dataset_targets.val lists the two datasets.
+
+OPTIMIZER
+  STRATEGY
+    TYPE PLAIN
+    LIB DLIB
+    ALGO BFGS
+    MAXEVAL 30
+  ENDSTRATEGY
+ENDOPTIMIZER
+
+LOSS L2
+FAILSCORE 1e16
+PC_ERMSE (1) 0 1e-4
+PC_ERMSE (2) 0 1e-3 --skip-above 5
+
+OPTIM RCUT2B (1) 4.0 6.0
+
+OUTPUT 1
+BOUTPUT 1

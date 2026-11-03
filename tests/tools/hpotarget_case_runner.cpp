@@ -1,10 +1,12 @@
 /* hpotarget_case_runner -- runs target files through the parser of
- * `tadah hpo` and reports what it did, for the generated checks of the
- * target-file registry (tests/check_hpotarget_generated.py).
+ * `tadah hpo` (the registry-driven parser of src/hpotarget_parser.cpp,
+ * which HPOTargets reads with) and reports what it did, for the generated
+ * checks of the target-file registry (tests/check_hpotarget_generated.py)
+ * and the corpus of target files (tests/hpotarget_corpus.py).
  *
  *   hpotarget_case_runner CASES RESULTS
  *
- * CASES is a TOML file of [[case]] tables:
+ * CASES is a TOML file of [[case]] tables (read by hpotarget_cases.h):
  *   id          a name for the case
  *   mode        "parse"    HPOTargets reads the file;
  *               "startup"  and validate_hpo_setup checks it;
@@ -13,20 +15,42 @@
  *                          overrides of the run;
  *               "defaults" HPOTargets reads the file, and the values of
  *                          the registry entries that have a default are
- *                          reported (`values`, below)
- *   file        the target file
+ *                          reported (`values`, below);
+ *               "describe" HPOTargets reads the file, and what the parse
+ *                          set is reported (`dump`, below)
+ *   file        the target file, written as target.hpo
+ *   target_file the target file read in place, a path relative to the
+ *               working directory (instead of `file`)
  *   config      the training configuration (the --config file)
+ *   config_file the training configuration read from a file, a path
+ *               relative to the working directory (instead of `config`)
+ *   config_drop optional array of keys removed from the training
+ *               configuration, and config_add an optional table of keys
+ *               added to it (KEY = [values]), after it is read
  *   validation  optional: the validation configuration ("check" only)
  *   has_train_db, has_validation   optional booleans for validate_hpo_setup
  *   env         optional table of environment variables set for the case
+ *   tree        optional: a directory copied into the case's directory
+ *               first
+ *   cwd         optional: the working directory of the case, a directory
+ *               of the case's directory (default: the case's directory)
+ *   copies      optional array of { from, to }: files copied in the
+ *               working directory once the tree is there
  *   fixtures    optional array of { path, text }: files written first
+ *               (in the working directory)
  *
  * Each case runs in a fresh directory, its working directory while it
- * runs, as in test_hpotarget_registry_conformance.cpp. RESULTS is a JSON
- * array with one object per case: id, parse_error, startup_error,
- * check_error (an empty string when the step passed or did not run) and,
- * for "defaults", values: the registry id of each entry with a default ->
- * the values the code gives it, as text.
+ * runs (or its `cwd`), as in test_hpotarget_registry_conformance.cpp.
+ * RESULTS is a JSON array with one object per case: id, parse_error,
+ * startup_error, check_error (an empty string when the step passed or did
+ * not run), for "defaults" values: the registry id of each entry with a
+ * default -> the values the code gives it, as text, and for "describe"
+ * dump: tadah::hpo::testing::describe_parse() of the targets (empty when
+ * the parse failed; hpo_targets_testing.h describes it), with stdout and
+ * stderr: what the constructor of the targets printed on std::cout and on
+ * std::cerr, each seed it drew for the run written <seed drawn for the
+ * run> (hpotarget_cases.h, without_drawn_seeds; empty strings in the other
+ * modes).
  *
  * The values of "defaults": the table `defaults_of` below maps each id to
  * the setting of the parsed HPOTargets or OptimizerSpec, or to the code's
@@ -46,38 +70,34 @@
 #include <tadah/hpo/fd_stencil.h>
 #include <tadah/hpo/hpo.h>
 #include <tadah/hpo/hpo_targets.h>
+#include <tadah/hpo/hpo_targets_testing.h>
 #include <tadah/hpo/loss_function.h>
 #include <tadah/hpo/observables/cohesive_energy.h>
 #include <tadah/hpo/optimizer_spec.h>
 #include <tadah/hpo/startup_validation.h>
 #include <tadah/hpo/strategy_rules.h>
+#include "hpotarget_cases.h"
 #ifdef TADAH_USE_CERES
 #include <tadah/hpo/ceres_adapter.h>
 #endif
 
-#include <toml.hpp>
-
-#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <exception>
-#include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <map>
+#include <memory>
 #include <optional>
 #include <sstream>
 #include <stdexcept>
 #include <string>
-#include <system_error>
-#include <unistd.h>
 #include <utility>
 #include <vector>
 
 namespace {
 
-namespace fs = std::filesystem;
 using tadah::hpo::HPOTargets;
 using tadah::hpo::OptimizerSpec;
 
@@ -116,128 +136,12 @@ std::string num(double v)
 
 /* ---- the cases -------------------------------------------------------- */
 
-struct Fixture { std::string path, text; };
-
-struct Case {
-    std::string id, mode, file, config, validation;
-    bool has_train_db = true, has_validation = true;
-    std::map<std::string, std::string> env;
-    std::vector<Fixture> fixtures;
-};
+using hpotarget_cases::Case;
 
 struct Result {
-    std::string parse_error, startup_error, check_error;
+    std::string parse_error, startup_error, check_error, dump, out, err;
     std::map<std::string, std::vector<std::string>> values;
 };
-
-std::string str(const toml::value& t, const std::string& k,
-                const std::string& dflt = "")
-{
-    if (!t.contains(k)) return dflt;
-    return t.at(k).as_string().str;
-}
-
-bool flag(const toml::value& t, const std::string& k, bool dflt)
-{
-    return t.contains(k) ? t.at(k).as_boolean() : dflt;
-}
-
-std::vector<Case> read_cases(const std::string& path)
-{
-    const toml::value doc = toml::parse(path);
-    std::vector<Case> out;
-    if (!doc.contains("case")) return out;
-    for (const auto& t : doc.at("case").as_array()) {
-        Case c;
-        c.id = str(t, "id");
-        c.mode = str(t, "mode", "parse");
-        c.file = str(t, "file");
-        c.config = str(t, "config");
-        c.validation = str(t, "validation");
-        c.has_train_db = flag(t, "has_train_db", true);
-        c.has_validation = flag(t, "has_validation", true);
-        if (t.contains("env"))
-            for (const auto& [k, v] : t.at("env").as_table())
-                c.env[k] = v.as_string().str;
-        if (t.contains("fixtures"))
-            for (const auto& f : t.at("fixtures").as_array())
-                c.fixtures.push_back({str(f, "path"), str(f, "text")});
-        if (c.mode != "parse" && c.mode != "startup" && c.mode != "check" &&
-            c.mode != "defaults")
-            throw std::runtime_error("case " + c.id + ": mode '" + c.mode +
-                                     "' is not parse, startup, check or "
-                                     "defaults");
-        out.push_back(std::move(c));
-    }
-    return out;
-}
-
-/* A fresh directory, the working directory while it lives. */
-class ScratchCwd {
-public:
-    ScratchCwd()
-    {
-        static unsigned long n = 0;
-        dir_ = fs::temp_directory_path() /
-               ("tadah_hpotarget_cases_" + std::to_string(::getpid()) + "_" +
-                std::to_string(n++) + "_" +
-                std::to_string(std::chrono::steady_clock::now()
-                                   .time_since_epoch().count()));
-        fs::create_directories(dir_);
-        old_ = fs::current_path();
-        fs::current_path(dir_);
-    }
-    ~ScratchCwd()
-    {
-        std::error_code ec;
-        fs::current_path(old_, ec);
-        fs::remove_all(dir_, ec);
-    }
-    ScratchCwd(const ScratchCwd&) = delete;
-    ScratchCwd& operator=(const ScratchCwd&) = delete;
-
-private:
-    fs::path dir_, old_;
-};
-
-/* The environment variables of a case, restored when it ends. */
-class ScopedEnv {
-public:
-    explicit ScopedEnv(const std::map<std::string, std::string>& env)
-    {
-        for (const auto& [k, v] : env) {
-            const char* old = std::getenv(k.c_str());
-            saved_.emplace_back(k, old ? std::optional<std::string>(old)
-                                       : std::nullopt);
-            ::setenv(k.c_str(), v.c_str(), 1);
-        }
-    }
-    ~ScopedEnv()
-    {
-        for (const auto& [k, v] : saved_) {
-            if (v) ::setenv(k.c_str(), v->c_str(), 1);
-            else   ::unsetenv(k.c_str());
-        }
-    }
-    ScopedEnv(const ScopedEnv&) = delete;
-    ScopedEnv& operator=(const ScopedEnv&) = delete;
-
-private:
-    std::vector<std::pair<std::string, std::optional<std::string>>> saved_;
-};
-
-void write_file(const fs::path& p, const std::string& text)
-{
-    if (p.has_parent_path()) fs::create_directories(p.parent_path());
-    std::ofstream os(p);
-    os << text;
-}
-
-tadah::core::Context parse_config(const std::string& text)
-{
-    std::istringstream in(text);
-    return tadah::core::CoreUserConfigParser().parse(in);
-}
 
 /* ---- the defaults ----------------------------------------------------- */
 
@@ -430,12 +334,12 @@ Values defaults_of(const HPOTargets& trg)
 
 Result run(const Case& c)
 {
+    using hpotarget_cases::parse_config;
+    using hpotarget_cases::write_file;
     Result r;
     tadah::core::PeriodicTable::initialize();
-    ScratchCwd cwd;
-    for (const auto& f : c.fixtures) write_file(f.path, f.text);
-    write_file("target.hpo", c.file);
-    ScopedEnv scoped(c.env);
+    const hpotarget_cases::CaseDir dir(c);
+    const std::string& target = dir.target();
     if (c.mode == "check") {
         try {
             tadah::core::Context ctx = parse_config(c.config);
@@ -462,21 +366,40 @@ Result run(const Case& c)
     }
     tadah::core::Context ctx;
     try {
-        ctx = parse_config(c.config);
+        ctx = hpotarget_cases::case_config(c);
     } catch (const std::exception& e) {
         throw std::runtime_error("case " + c.id + ": the configuration does "
                                  "not parse: " + e.what());
     }
-    std::optional<HPOTargets> trg;
-    try {
-        trg.emplace(ctx, "target.hpo");
-    } catch (const std::exception& e) {
-        r.parse_error = e.what();
-        if (r.parse_error.empty()) r.parse_error = "(empty message)";
-        return r;
+    std::unique_ptr<HPOTargets> trg;
+    {
+        /* "describe": what the constructor prints is a part of the
+         * result. */
+        std::optional<hpotarget_cases::Printed> printed;
+        if (c.mode == "describe") printed.emplace();
+        try {
+            trg = std::make_unique<HPOTargets>(ctx, target);
+        } catch (const std::exception& e) {
+            r.parse_error = e.what();
+            if (r.parse_error.empty()) r.parse_error = "(empty message)";
+        }
+        if (printed) {
+            const std::vector<std::uint64_t> seeds =
+                trg ? tadah::hpo::testing::drawn_seeds(*trg)
+                    : std::vector<std::uint64_t>{};
+            r.out = hpotarget_cases::without_drawn_seeds(printed->out(),
+                                                         seeds);
+            r.err = hpotarget_cases::without_drawn_seeds(printed->err(),
+                                                         seeds);
+        }
     }
+    if (!trg) return r;
     if (c.mode == "defaults") {
         r.values = defaults_of(*trg);
+        return r;
+    }
+    if (c.mode == "describe") {
+        r.dump = tadah::hpo::testing::describe_parse(*trg);
         return r;
     }
     if (c.mode != "startup") return r;
@@ -494,15 +417,26 @@ Result run(const Case& c)
 
 int main(int argc, char** argv)
 {
-    if (argc != 3) {
-        std::cerr << "usage: hpotarget_case_runner CASES RESULTS\n";
+    const char* const usage = "usage: hpotarget_case_runner CASES RESULTS\n";
+    std::vector<std::string> files;
+    for (int i = 1; i < argc; ++i) {
+        const std::string a = argv[i];
+        if (a.rfind("--", 0) == 0) {
+            std::cerr << "hpotarget_case_runner: unknown option '" << a
+                      << "'\n" << usage;
+            return 2;
+        }
+        files.push_back(a);
+    }
+    if (files.size() != 2) {
+        std::cerr << usage;
         return 2;
     }
-    std::vector<Case> cases;
+    std::vector<hpotarget_cases::Case> cases;
     try {
-        cases = read_cases(argv[1]);
+        cases = hpotarget_cases::read_cases(files[0]);
     } catch (const std::exception& e) {
-        std::cerr << "hpotarget_case_runner: " << argv[1] << ": " << e.what()
+        std::cerr << "hpotarget_case_runner: " << files[0] << ": " << e.what()
                   << "\n";
         return 2;
     }
@@ -520,6 +454,9 @@ int main(int argc, char** argv)
             << ", \"parse_error\": " << json_string(r.parse_error)
             << ", \"startup_error\": " << json_string(r.startup_error)
             << ", \"check_error\": " << json_string(r.check_error)
+            << ", \"dump\": " << json_string(r.dump)
+            << ", \"stdout\": " << json_string(r.out)
+            << ", \"stderr\": " << json_string(r.err)
             << ", \"values\": {";
         bool first = true;
         for (const auto& [k, vs] : r.values) {
@@ -532,7 +469,7 @@ int main(int argc, char** argv)
         out << "}}" << (i + 1 < cases.size() ? ",\n" : "\n");
     }
     out << "]\n";
-    std::ofstream os(argv[2]);
+    std::ofstream os(files[1]);
     os << out.str();
     return os ? 0 : 2;
 }

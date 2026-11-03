@@ -164,6 +164,9 @@ public:
         const tadah::core::Context& ctx,
         std::optional<double> start) override;
 
+    /* The options of the PC_OBSERVABLE line, as parsed. */
+    const Config& config() const { return cfg_; }
+
     double target() const override { return cfg_.target; }
     double weight() const override { return cfg_.weight; }
     const tadah::LossFunction& lossfn() const override { return cfg_.lossfn; }

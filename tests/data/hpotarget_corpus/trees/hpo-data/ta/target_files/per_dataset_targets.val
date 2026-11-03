@@ -1,0 +1,4 @@
+# Two validation datasets for per_dataset_targets.hpo: PC_ERMSE (i)
+# refers to the i-th DBFILE line.
+DBFILE ../common/data/elastic.tadahdb
+DBFILE ../common/data/eos_bcc.tadahdb
