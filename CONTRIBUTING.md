@@ -93,7 +93,8 @@ with the change that alters it.
   and `blueprint/optimizers_gen.toml` (CTest
   `hpo_optimizer_registry_sync`): `blueprint/README.md` says what each is
   generated from and how to regenerate it.
-- `include/tadah/hpo/hpotarget_registry_gen.h` and
-  `include/tadah/hpo/hpo_param_registry_gen.h` (CTest
+- `include/tadah/hpo/hpotarget_registry_gen.h`,
+  `include/tadah/hpo/hpo_param_registry_gen.h` and
+  `include/tadah/hpo/hpotarget_handlers_gen.h` (CTest
   `hpo_hpotarget_registry_sync`): `blueprint/README.md`, "The generated
   tables", says what they are generated from and how to regenerate them.
