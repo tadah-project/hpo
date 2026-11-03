@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """The corpus of target files: the target files of the Tadah! repositories,
-as inputs of the comparison of two parsers of the target file.
+the inputs of the frozen corpus (tests/data/hpotarget_corpus) that pins
+what the parser of the target file gives for each.
 
     hpotarget_corpus.py list  [SOURCES]
     hpotarget_corpus.py cases OUT [SOURCES]
-    hpotarget_corpus.py check --runner RUNNER [--parser old|new]
-                              [--keep DIR] [SOURCES]
+    hpotarget_corpus.py check --runner RUNNER [--keep DIR] [SOURCES]
     hpotarget_corpus.py write OUT --runner RUNNER [SOURCES]
 
 SOURCES: --hpo DIR (the HPO source tree; default: the one this file is in),
@@ -20,8 +20,7 @@ inputs as the cases of hpotarget_case_runner (tests/tools/
 hpotarget_case_runner.cpp), mode "describe": the runner reads each with
 the parser of `tadah hpo` and reports what the parse set
 (tadah::hpo::testing::describe_parse) or the message that refused the
-file. `check` runs the cases twice with the parser --parser names and
-exits 1 when a case gives neither a description nor a refusal, or both,
+file. `check` runs the cases twice with the runner and exits 1 when a case gives neither a description nor a refusal, or both,
 when the two runs differ, when a source that is read has no input, or when
 a target file has no training configuration; it prints how many inputs
 each source has and how many of them parse. `write` freezes the corpus
@@ -675,15 +674,12 @@ def cases_text(corpus: Corpus) -> str:
     return "\n".join(lines)
 
 
-def run_runner(runner: pathlib.Path, parser: str | None,
-               cases: pathlib.Path, results: pathlib.Path,
-               env: dict[str, str] | None = None
+def run_runner(runner: pathlib.Path, cases: pathlib.Path,
+               results: pathlib.Path, env: dict[str, str] | None = None
                ) -> tuple[list[dict] | None, str]:
-    """The results of the runner on `cases` (with --parser `parser`, or
-    the runner's default parser, the program's, when None), run in the
-    environment `env` (None: this process's)."""
-    option = ["--parser", parser] if parser else []
-    proc = subprocess.run([str(runner), *option, str(cases), str(results)],
+    """The results of the runner on `cases`, run in the environment `env`
+    (None: this process's)."""
+    proc = subprocess.run([str(runner), str(cases), str(results)],
                           capture_output=True, text=True, env=env)
     if proc.returncode != 0:
         return None, (proc.stdout + proc.stderr).strip() + \
@@ -691,7 +687,7 @@ def run_runner(runner: pathlib.Path, parser: str | None,
     return json.loads(results.read_text(encoding="utf-8")), ""
 
 
-def check(corpus: Corpus, runner: pathlib.Path, parser: str,
+def check(corpus: Corpus, runner: pathlib.Path,
           keep: pathlib.Path | None) -> list[str]:
     problems = list(corpus.problems)
     for s in corpus.read:
@@ -704,7 +700,7 @@ def check(corpus: Corpus, runner: pathlib.Path, parser: str,
         cases.write_text(cases_text(corpus), encoding="utf-8")
         runs = []
         for k in (1, 2):
-            res, err = run_runner(runner, parser, cases,
+            res, err = run_runner(runner, cases,
                                   d / f"results{k}.json")
             if res is None:
                 return problems + [err]
@@ -903,11 +899,11 @@ def write(corpus: Corpus, reg, runner: pathlib.Path,
         # through its env.
         overrides = {e.name for e in reg.envs}
         env = {k: v for k, v in os.environ.items() if k not in overrides}
-        live, err = run_runner(runner, None, work / "live.toml",
+        live, err = run_runner(runner, work / "live.toml",
                                work / "live.json", env)
         if live is None:
             return [err]
-        frozen, err = run_runner(runner, None, work / "frozen.toml",
+        frozen, err = run_runner(runner, work / "frozen.toml",
                                  work / "frozen.json", env)
         if frozen is None:
             return [err]
@@ -959,7 +955,6 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--tadah-mlip", default="")
     ap.add_argument("--registry", type=pathlib.Path)
     ap.add_argument("--runner", type=pathlib.Path)
-    ap.add_argument("--parser", choices=("old", "new"), default="old")
     ap.add_argument("--keep", type=pathlib.Path)
     a = ap.parse_args(argv)
     tm = pathlib.Path(a.tadah_mlip) if a.tadah_mlip else None
@@ -1001,7 +996,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"hpotarget_corpus.py: wrote {a.out}: {n} inputs, "
               f"{n - refused} read, {refused} refused")
         return 0
-    problems = check(corpus, a.runner, a.parser, a.keep)
+    problems = check(corpus, a.runner, a.keep)
     for p in problems:
         print(p)
     n = len(corpus.inputs)
@@ -1009,7 +1004,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"hpotarget_corpus.py: {len(problems)} problem(s) in {n} "
               f"inputs")
         return 1
-    print(f"hpotarget_corpus.py: OK: {n} inputs (--parser {a.parser})")
+    print(f"hpotarget_corpus.py: OK: {n} inputs")
     return 0
 
 

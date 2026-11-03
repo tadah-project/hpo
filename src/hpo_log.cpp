@@ -893,8 +893,8 @@ void HPOLog::write_optimizer_section(const OptimizerSpec&            sp,
                 f_ << "    EXPLORE GRAD_STRATEGY: " << grad_strategy_text(ps)
                    << "\n";
             /* The exploration's seed: its SEED (or the STRATEGY-level
-             * SEED it takes without one, HPOTargets::read) or, for NLopt
-             * without either, its INIT block's SEED. */
+             * SEED it takes without one, the parser of the target file)
+             * or, for NLopt without either, its INIT block's SEED. */
             if (ps.seed)
                 f_ << "    EXPLORE SEED      : " << *ps.seed
                    << (ps.seed_from_strategy

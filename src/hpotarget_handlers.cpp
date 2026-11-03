@@ -10,7 +10,7 @@
  * also read the keys for `tadah refit` (dispatch_opt_attr), those of the
  * options of PC_LAMMPS and PC_FAILPROBE the options of LammpsSim, and that
  * of the form cohesive_energy a PC_OBSERVABLE line
- * (parse_pc_observable_line), for both parsers. */
+ * (parse_pc_observable_line). */
 
 #include "hpotarget_parser.h"
 

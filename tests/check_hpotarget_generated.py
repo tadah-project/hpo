@@ -3,18 +3,15 @@
 
     check_hpotarget_generated.py --runner RUNNER [--registry DIR]
                                  [--only CHECK] [--keep DIR]
-                                 [--parser old|new|both]
 
 The conformance test (test_hpotarget_registry_conformance.cpp) runs the
 examples and invalid lines written in the registry. This check derives
 more cases from the structured fields of the registry, runs them with
 hpotarget_case_runner (tests/tools/hpotarget_case_runner.cpp), which
-reads each file with the parser --parser names (old, the default: the
-parser of `tadah hpo`; new: the registry-driven parser; both: each in
-turn, each one's results judged and each problem named with its parser),
-and compares what the parser did with what the registry says. Exits 1 and
-lists each difference, 0 when there is none. --only runs one check;
---keep keeps the case and result files in DIR.
+reads each file with the parser of `tadah hpo`, and compares what the
+parser did with what the registry says. Exits 1 and lists each
+difference, 0 when there is none. --only runs one check; --keep keeps the
+case and result files in DIR.
 
 The checks, and the change of the registry each one catches
 -----------------------------------------------------------
@@ -157,8 +154,6 @@ NUMBER = re.compile(r"(?<![A-Za-z_\d.])[-+]?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?"
                     r"(?![A-Za-z_\d])")
 CHECK_NAMES = ("blocks", "repeat", "ranges", "case", "words", "params",
                "lines", "defaults")
-# The parsers --parser names: the runner reads the cases with each.
-PARSERS = {"old": ("old",), "new": ("new",), "both": ("old", "new")}
 
 
 # ------------------------------------------------------------ TOML out ----
@@ -1054,27 +1049,15 @@ def judge_all(g: Generator, by_id: dict[str, dict]
     return problems, counts
 
 
-def judge_parsers(g: Generator, results: dict[str, dict[str, dict]]
-                  ) -> tuple[list[str], dict[str, int]]:
-    """judge_all() of the results of each parser (parser -> id -> result);
-    with more than one parser each problem names its parser."""
-    problems: list[str] = []
-    counts: dict[str, int] = {}
-    for parser, by_id in results.items():
-        got, counts = judge_all(g, by_id)
-        if len(results) > 1:
-            got = [f"--parser {parser}: {p}" for p in got]
-        problems += got
-    return problems, counts
-
-
-def runner_command(runner: pathlib.Path, parser: str, cases: pathlib.Path,
+def runner_command(runner: pathlib.Path, cases: pathlib.Path,
                    results: pathlib.Path) -> list[str]:
-    return [str(runner), "--parser", parser, str(cases), str(results)]
+    """The command of the runner, which reads the cases with the parser of
+    `tadah hpo`."""
+    return [str(runner), str(cases), str(results)]
 
 
 def run(runner: pathlib.Path, registry: pathlib.Path, only: str | None,
-        keep: pathlib.Path | None, parser: str = "old") -> int:
+        keep: pathlib.Path | None) -> int:
     sys.path.insert(0, str(registry))
     import hpotarget_registry as hr  # noqa: E402
     try:
@@ -1092,22 +1075,18 @@ def run(runner: pathlib.Path, registry: pathlib.Path, only: str | None,
     with tempfile.TemporaryDirectory() as tmp:
         d = keep or pathlib.Path(tmp)
         d.mkdir(parents=True, exist_ok=True)
-        cases_file = d / "cases.toml"
+        cases_file, results_file = d / "cases.toml", d / "results.json"
         write_cases(cases_file, [c.case for c in g.cases])
-        results: dict[str, dict[str, dict]] = {}
-        for p in PARSERS[parser]:
-            results_file = d / f"results_{p}.json"
-            proc = subprocess.run(runner_command(runner, p, cases_file,
-                                                 results_file),
-                                  capture_output=True, text=True)
-            if proc.returncode != 0:
-                print(proc.stdout + proc.stderr)
-                print(f"check_hpotarget_generated.py: the runner failed "
-                      f"({proc.returncode}, --parser {p})")
-                return 1
-            results[p] = {r["id"]: r
-                          for r in json.loads(results_file.read_text())}
-    problems, counts = judge_parsers(g, results)
+        proc = subprocess.run(runner_command(runner, cases_file,
+                                             results_file),
+                              capture_output=True, text=True)
+        if proc.returncode != 0:
+            print(proc.stdout + proc.stderr)
+            print(f"check_hpotarget_generated.py: the runner failed "
+                  f"({proc.returncode})")
+            return 1
+        results = json.loads(results_file.read_text())
+    problems, counts = judge_all(g, {r["id"]: r for r in results})
     if only in (None, "defaults"):
         problems += g.judge_defaults()
     for p in problems:
@@ -1119,7 +1098,7 @@ def run(runner: pathlib.Path, registry: pathlib.Path, only: str | None,
               f"{len(g.cases)} cases ({summary})")
         return 1
     print(f"check_hpotarget_generated.py: OK: {len(g.cases)} cases "
-          f"({summary}; --parser {parser})")
+          f"({summary})")
     return 0
 
 
@@ -1130,9 +1109,8 @@ def main(argv: list[str] | None = None) -> int:
                     default=DEFAULT_REGISTRY)
     ap.add_argument("--only", choices=CHECK_NAMES)
     ap.add_argument("--keep", type=pathlib.Path)
-    ap.add_argument("--parser", choices=tuple(PARSERS), default="old")
     a = ap.parse_args(argv)
-    return run(a.runner, a.registry, a.only, a.keep, a.parser)
+    return run(a.runner, a.registry, a.only, a.keep)
 
 
 if __name__ == "__main__":

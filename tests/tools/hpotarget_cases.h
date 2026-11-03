@@ -1,10 +1,10 @@
 #pragma once
 /* hpotarget_cases.h -- the cases of target files that hpotarget_case_runner
- * (tools/hpotarget_case_runner.cpp) and the comparison of the two parsers
- * of the target file (test_hpotarget_differential.cpp) read: a TOML file of
- * [[case]] tables, each run in a fresh directory with its files, its
- * training configuration and its environment. hpotarget_case_runner.cpp
- * describes the fields. */
+ * (tools/hpotarget_case_runner.cpp) reads, a TOML file of [[case]] tables,
+ * each run in a fresh directory with its files, its training configuration
+ * and its environment (hpotarget_case_runner.cpp describes the fields),
+ * and the directory a case runs in, which the frozen corpus of target files
+ * (test_hpotarget_corpus.cpp) runs its inputs in too. */
 
 #include <tadah/core/context.h>
 #include <tadah/core/core_user_config_parser.h>

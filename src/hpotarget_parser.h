@@ -1,9 +1,8 @@
 #pragma once
 /* hpotarget_parser.h -- the registry-driven parser of the target file.
  *
- * It reads a target file into a ParsedTarget as ParsedTarget::read() does,
- * in the same order and with the same messages, driven by the generated
- * tables of the registry (blueprint/README.md, "The generated tables"):
+ * It reads a target file into a ParsedTarget (HPOTargets reads its target
+ * file with it), driven by the generated tables of the registry (blueprint/README.md, "The generated tables"):
  *   - the lexer: comments, continued lines and the frame of a refusal
  *     ([lexing]);
  *   - each line tried in structure::check_order: the block lines (a line

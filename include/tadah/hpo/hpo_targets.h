@@ -14,7 +14,6 @@
 #include <tadah/mlip/hpotarget_optim.h>
 #include <tadah/mlip/training_record.h>
 
-#include <functional>
 #include <memory>
 #include <vector>
 #include <string>
@@ -76,22 +75,8 @@ struct RhoBarGateSpec {
 enum class TargetsPurpose { Run, Check };
 
 class ParsedTarget;
-class HPOTargets;
 namespace testing {
-enum class TargetParser : unsigned char;
-struct NamedParser;
 std::string describe_parse(const ParsedTarget& targets);
-std::unique_ptr<HPOTargets> make_targets(core::Context& c,
-                                         const std::string& fn,
-                                         TargetParser parser,
-                                         TargetsPurpose purpose);
-std::unique_ptr<HPOTargets> make_targets(core::Context& c,
-                                         const std::string& fn,
-                                         const NamedParser& primary,
-                                         const NamedParser& shadow,
-                                         TargetsPurpose purpose);
-void read_shadowed(ParsedTarget& target, const std::string& fn,
-                   const NamedParser& primary, const NamedParser& shadow);
 }
 namespace hpotarget {
 class Parser;
@@ -103,23 +88,14 @@ struct Handlers;
 /* What the parse of a target file sets: the settings of its lines, read
  * against the training configuration `context` (whose blueprint defaults
  * the keys the parse reads get, and whose values the OPTIM lines search).
- * HPOTargets is the targets of a run (it reads its target file into its
- * ParsedTarget and derives the rest), and a ParsedTarget can be built on
- * its own, on a copy of a configuration, so two parsers can read one file
- * and be compared (hpo_targets_testing.h). Two parsers fill it: read(),
- * and the registry-driven parser of src/hpotarget_parser.cpp. */
+ * HPOTargets is the targets of a run: it reads its target file into its
+ * ParsedTarget with the registry-driven parser (src/hpotarget_parser.cpp
+ * and its handlers) and derives the rest. */
 class ParsedTarget {
     /* The canonical text of what the parse set, for the tests
      * (hpo_targets_testing.h): it reads the private settings too. */
     friend std::string testing::describe_parse(const ParsedTarget& targets);
-    /* The parser shadow of a validation build (hpo_targets_testing.h)
-     * reads the file a second time into a target of its own, built on a
-     * copy of this one's configuration and OPTIM reader. */
-    friend void testing::read_shadowed(ParsedTarget& target,
-                                       const std::string& fn,
-                                       const testing::NamedParser& primary,
-                                       const testing::NamedParser& shadow);
-    /* The registry-driven parser and its handlers set what read() sets. */
+    /* The registry-driven parser and its handlers set these settings. */
     friend class hpotarget::Parser;
     friend struct hpotarget_registry::Handlers;
 
@@ -198,11 +174,6 @@ protected:
     void prepare_optim_reader();
 
 public:
-    /* Reads the target file @p fn into these settings (the parser of
-     * the target file of `tadah hpo`; the registry-driven parser of
-     * src/hpotarget_parser.cpp reads it as this does). Every refusal names
-     * the file and the line (config_line_error). */
-    void read(const std::string &fn);
     /* The target file read, as --hpotarget gives it: the refusals of its
      * lines name it ("line 9 of t.hpo: ..."; config_line_error). */
     std::string target_file;
@@ -212,7 +183,7 @@ public:
     /* The OPTIM keys that arm the density gates (RHOGATE, RHOBARGATE):
      * AMPGRIDMB, CGRIDMB, SGRIDMB, RCUTMB, the dimensions that change
      * rho_raw or the window. A gate without an OPTIM dimension on one of
-     * them cannot act, and read() refuses it at the gate's line. */
+     * them cannot act, and the parse refuses it at the gate's line. */
     static const std::vector<std::string>& density_gate_keys();
     /* The DM_REAM density form of the -c configuration: RHOFORM, mandatory
      * on a configuration with a DM_REAM block and read at the top of the
@@ -397,7 +368,7 @@ public:
      * Replaces the legacy env vars TADAH_HPO_BAD_POT_ERMSE_MEV /
      * TADAH_HPO_BAD_POT_ERMSE_REL. Defaults are nullopt = no skip. */
     using SkipCaps = MetricSkipCaps;
-    /* skip_ersq stays empty: PC_ERSQ takes no cap (read() refuses one). */
+    /* skip_ersq stays empty: PC_ERSQ takes no cap (the parse refuses one). */
     SkipCaps skip_emae, skip_errmse, skip_ersq;
 };
 
@@ -405,16 +376,6 @@ public:
  * run derives from it, the search space, the starting points and the
  * seeds, with the names of the files the run writes. */
 class HPOTargets : public ParsedTarget {
-    /* A target file read with the parser `parser` names (the registry-driven
-     * one or read()), for the tests (hpo_targets_testing.h). */
-    friend std::unique_ptr<HPOTargets> testing::make_targets(
-        core::Context& c, const std::string& fn,
-        testing::TargetParser parser, TargetsPurpose purpose);
-    friend std::unique_ptr<HPOTargets> testing::make_targets(
-        core::Context& c, const std::string& fn,
-        const testing::NamedParser& primary,
-        const testing::NamedParser& shadow, TargetsPurpose purpose);
-
 private:
     /* Creates the archive directory @p dir of the line @p key, which
      * check_archive_directory() accepted (one that exists is kept). Each is
@@ -425,14 +386,6 @@ private:
     SearchSpace build_search_space() const;
     void bind_space_recursive();
     SearchSpacePtr space_;
-
-    /* A parser of the target file: it reads the file into the target. */
-    using ReadFn =
-        std::function<void(ParsedTarget& target, const std::string& fn)>;
-    /* The constructor below, whose target file @p read reads. */
-    HPOTargets(core::Context &c, std::string fn,
-               const mlip::KeyProvenance *provenance, TargetsPurpose purpose,
-               const ReadFn& read);
 
 public:
     /** The targets of the run whose configuration is @p c and whose

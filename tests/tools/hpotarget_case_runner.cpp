@@ -1,17 +1,12 @@
 /* hpotarget_case_runner -- runs target files through the parser of
- * `tadah hpo` and reports what it did, for the generated checks of the
- * target-file registry (tests/check_hpotarget_generated.py).
+ * `tadah hpo` (the registry-driven parser of src/hpotarget_parser.cpp,
+ * which HPOTargets reads with) and reports what it did, for the generated
+ * checks of the target-file registry (tests/check_hpotarget_generated.py)
+ * and the corpus of target files (tests/hpotarget_corpus.py).
  *
- *   hpotarget_case_runner [--parser old|new] CASES RESULTS
+ *   hpotarget_case_runner CASES RESULTS
  *
- * --parser names the parser that reads the target files: old (the
- * default), HPOTargets::read(); new, the registry-driven parser
- * (src/hpotarget_parser.cpp), through hpo_targets_testing.h's
- * make_targets(). Mode check runs tadah hpo --check, which reads with the
- * parser of the program: with --parser new it is an input error.
- *
- * CASES is a TOML file of [[case]] tables (read by hpotarget_cases.h, which
- * test_hpotarget_differential.cpp reads them with too):
+ * CASES is a TOML file of [[case]] tables (read by hpotarget_cases.h):
  *   id          a name for the case
  *   mode        "parse"    HPOTargets reads the file;
  *               "startup"  and validate_hpo_setup checks it;
@@ -89,6 +84,7 @@
 #include <fstream>
 #include <iostream>
 #include <map>
+#include <memory>
 #include <optional>
 #include <sstream>
 #include <stdexcept>
@@ -332,7 +328,7 @@ Values defaults_of(const HPOTargets& trg)
 
 /* ---- running a case --------------------------------------------------- */
 
-Result run(const Case& c, tadah::hpo::testing::TargetParser parser)
+Result run(const Case& c)
 {
     using hpotarget_cases::parse_config;
     using hpotarget_cases::write_file;
@@ -373,7 +369,7 @@ Result run(const Case& c, tadah::hpo::testing::TargetParser parser)
     }
     std::unique_ptr<HPOTargets> trg;
     try {
-        trg = tadah::hpo::testing::make_targets(ctx, target, parser);
+        trg = std::make_unique<HPOTargets>(ctx, target);
     } catch (const std::exception& e) {
         r.parse_error = e.what();
         if (r.parse_error.empty()) r.parse_error = "(empty message)";
@@ -402,39 +398,21 @@ Result run(const Case& c, tadah::hpo::testing::TargetParser parser)
 
 int main(int argc, char** argv)
 {
-    const char* const usage =
-        "usage: hpotarget_case_runner [--parser old|new] CASES RESULTS\n";
-    std::string parser = "old";
+    const char* const usage = "usage: hpotarget_case_runner CASES RESULTS\n";
     std::vector<std::string> files;
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
-        if (a == "--parser") {
-            if (i + 1 >= argc) {
-                std::cerr << "hpotarget_case_runner: --parser takes old or "
-                             "new\n" << usage;
-                return 2;
-            }
-            parser = argv[++i];
-            if (parser != "old" && parser != "new") {
-                std::cerr << "hpotarget_case_runner: --parser takes old or "
-                             "new, not '" << parser << "'\n" << usage;
-                return 2;
-            }
-        } else if (a.rfind("--", 0) == 0) {
+        if (a.rfind("--", 0) == 0) {
             std::cerr << "hpotarget_case_runner: unknown option '" << a
                       << "'\n" << usage;
             return 2;
-        } else {
-            files.push_back(a);
         }
+        files.push_back(a);
     }
     if (files.size() != 2) {
         std::cerr << usage;
         return 2;
     }
-    const auto which = parser == "new"
-                           ? tadah::hpo::testing::TargetParser::New
-                           : tadah::hpo::testing::TargetParser::Old;
     std::vector<hpotarget_cases::Case> cases;
     try {
         cases = hpotarget_cases::read_cases(files[0]);
@@ -443,20 +421,12 @@ int main(int argc, char** argv)
                   << "\n";
         return 2;
     }
-    for (const Case& c : cases)
-        if (c.mode == "check" && parser == "new") {
-            std::cerr << "hpotarget_case_runner: case " << c.id
-                      << ": mode check runs tadah hpo --check, which reads "
-                         "the target file with the parser of the program; "
-                         "--parser new takes the other modes\n";
-            return 2;
-        }
     std::ostringstream out;
     out << "[\n";
     for (std::size_t i = 0; i < cases.size(); ++i) {
         Result r;
         try {
-            r = run(cases[i], which);
+            r = run(cases[i]);
         } catch (const std::exception& e) {
             std::cerr << "hpotarget_case_runner: " << e.what() << "\n";
             return 2;

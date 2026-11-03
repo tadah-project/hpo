@@ -520,11 +520,6 @@ void reject_refused_backends(const OptimizerSpec& spec)
               std::string("the INNER block of ") + kExploreBlock);
 }
 
-bool is_strategy_type_key(const std::string& key)
-{
-    return find_strategy_type_key(key).has_value();
-}
-
 void require_strategy_key(const std::string& key, StrategyType type,
                           bool type_given)
 {

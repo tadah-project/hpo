@@ -1,12 +1,13 @@
 #pragma once
 /*
- * Strict parsing of the numbers in the hpotarget grammar (HPOTargets::read,
- * the optimiser attributes shared with `tadah refit`, the PC_LAMMPS
+ * Strict parsing of the numbers in the hpotarget grammar (the parser of the
+ * target file, the optimiser attributes shared with `tadah refit`, the PC_LAMMPS
  * options). A key's value is one whole token that must represent what the
  * key holds; anything else is an error naming the key and the token, in
  * the form
  *     <what> must be an integer >= 1, got '<tok>'
- * HPOTargets::read() prefixes "line N of <file>: " and appends the line.
+ * The parser of the target file prefixes "line N of <file>: " and appends
+ * the line.
  * `iss >> v` and std::stod accepted a prefix ("5x" -> 5), stored 0 for a
  * non-number, wrapped a negative into a huge unsigned value and left the
  * target untouched when the value was missing.
@@ -27,8 +28,8 @@
 
 namespace tadah::hpo {
 
-/* The form of every error HPOTargets::read() reports about a line of the
- * hpotarget file:
+/* The form of every error the parser of the target file reports about a
+ * line of the hpotarget file:
  *     line <line> of <file>: <what>
  *     Line: <text>
  * <file> is the path of the target file as --hpotarget gives it, as the

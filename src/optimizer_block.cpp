@@ -87,8 +87,8 @@ bool param_takes_another_value(const std::string &key,
  * (hpotarget_handlers.cpp), which reads exactly the values the key takes:
  * the number and integer grammar of its arguments (the registry's), the
  * STEP and PARAM grammars, the words of GRAD_STRATEGY. What follows them
- * is the caller's: HPOTargets::read() rejects a leftover token on the
- * line, and read_optimizer_block() reads the next key there. */
+ * is the caller's: the parser of the target file rejects a leftover token
+ * on the line, and read_optimizer_block() reads the next key there. */
 bool dispatch_opt_attr(const std::string &key, std::istringstream &iss,
                        OptimizerSpec &a) {
   for (const R::Key &k : R::kKeys) {
@@ -121,8 +121,8 @@ void read_block_until(const std::vector<std::string> &tok, std::size_t &pos,
                       bool allow_inner, const std::string &where) {
   const char *block = allow_inner ? "OPTIMIZER" : "INNER";
   /* Each key is set once for this block's optimiser, as in a target file
-   * (HPOTargets::read): the attribute a key sets -> the spelling it was
-   * first set with. MAXITER is MAXEVAL's alias (the refit's Ceres stages),
+   * (the parser of the target file): the attribute a key sets -> the
+   * spelling it was first set with. MAXITER is MAXEVAL's alias (the refit's Ceres stages),
    * PARAM <name> is one attribute per name, and a STEP <KEY> override
    * layers over the block-wide STEP (the refit takes no STEP: its stage
    * check refuses it). An OPTIMIZER block takes one INNER block. */

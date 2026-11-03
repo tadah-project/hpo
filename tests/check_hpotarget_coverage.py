@@ -49,12 +49,18 @@ file without --mlip is an error.
     `ceres_param(sp, "...")`, `std::getenv("TADAH_...")`);
   - generated tables: where a function takes a vocabulary from the
     generated tables of the registry (hpotarget_registry_gen.h, as the
-    registry-driven parser of src/hpotarget_parser.cpp, its handlers and
-    the readers they share with ParsedTarget::read do), the rule names the
-    use (a regular expression, R::kKeys, find_option(...)) and the
-    vocabularies: every name of those vocabularies counts as recognised,
-    as the tables are the registry's (hpo_hpotarget_registry_sync). A rule
-    whose function holds no such use is an error.
+    parser of the target file, src/hpotarget_parser.cpp, its handlers and
+    the readers they call do), the rule names the use (a regular
+    expression, R::kKeys, find_option(...)) and the vocabularies: every
+    name of those vocabularies counts as recognised, as the tables are the
+    registry's (hpo_hpotarget_registry_sync). A rule whose function holds
+    no such use is an error;
+  - the words a handler reads: on the handlers (handler_words), each
+    handler `Handlers::<name>` that calls read_word(), which takes the
+    words of a word argument from the generated tables, recognises the
+    words of the arguments of its entry of the registry (the key, line
+    option or form whose C++ name, gen_hpotarget.cxx_name(), is <name>);
+    a handler that reads a word and is no entry's is an error.
 
 In a function a rule names, two more things are errors, so that a name
 read in another way is seen:
@@ -72,23 +78,21 @@ updating.
 
 What it cannot see
 ------------------
-  - where a key of ParsedTarget::read is valid: every comparison there is on
-    one variable, `key`, so a name found there counts for a block, an END
-    line, a key of the optimiser group (PARAM and STEP, compared to name
-    what a line sets once) or a key of ROOT, OPTIMIZER, STRATEGY, INIT
-    (METHOD, which adds to its chain), NOISE or RESTART alike. The blocks
-    of a key are checked by tests/check_hpotarget_generated.py, which puts
-    each key into every block;
-  - the line of an option a function shared by two lines reads
-    (parse_gate_options for RHOGATE and RHOBARGATE): a name found there
-    counts for both lines. check_hpotarget_generated.py puts each option
-    on every line;
+  - where a key is valid: the parser takes the blocks of a key from the
+    generated tables, so a name counts for its vocabulary, not for a
+    block. The blocks of a key are checked by
+    tests/check_hpotarget_generated.py, which puts each key into every
+    block;
+  - which argument of its entry a handler reads a word of: a handler that
+    calls read_word() recognises the words of every argument of its
+    entry. check_hpotarget_generated.py (check `words`) puts each word of
+    a word argument at its place in its line;
   - a literal that is not shaped like a name (a lower-case word, as a
     LOSS name or a lattice), outside the comparisons, tables and calls the
     rules read;
-  - a name the parser builds instead of writing it: END lines are matched
-    as literals in ParsedTarget::read, but block_ended_by() builds "END" +
-    name; a rule that compares a computed string;
+  - a name the parser builds instead of writing it: the END line of a
+    block is the generated tables' (block_ended_by()); a rule that
+    compares a computed string;
   - prefix and substring tests: `k.rfind("RCUT", 0) == 0` (AUTO refused on
     the cutoff keys), `find(".DENSITY.")`, `.substr(0, 2) != "--"`;
   - names taken from data at run time: the internal keys of the training
@@ -130,6 +134,8 @@ import dataclasses
 import pathlib
 import re
 import sys
+
+HERE = pathlib.Path(__file__).resolve().parent
 
 # --------------------------------------------------------- C++ reading ----
 
@@ -244,6 +250,9 @@ class Rule:
         default_factory=dict)            # literal -> why it is no name
     generated: list[tuple[str, tuple[str, ...]]] = dataclasses.field(
         default_factory=list)            # (use of a generated table, vocab)
+    handler_words: bool = False          # each handler that calls
+                                         # read_word() reads the words of
+                                         # its entry (HANDLER, READ_WORD)
 
 
 IGNORE_OPTIMISERS = "an optimiser name (LIB or ALGO value: the optimiser list)"
@@ -283,43 +292,6 @@ PARAM_FIND = (r'param(?:_raw)?\s*\.\s*(?:find|count)\(\s*"([^"]+)"\s*\)',
               ("param",))
 
 EXTRACTION: list[Rule] = [
-    Rule("the target-file reader", "src/hpo_targets.cpp",
-         r"^void ParsedTarget::read\(",
-         operands={"key": READ_KEY, "t": ("strategy_type", "word"),
-                   "v": ("word",), "PC_ISOLATION": ("word",),
-                   "flag": METRIC_OPTIONS,
-                   "toks[i2]": ("line_option:PC_FAILPROBE",),
-                   "e.method": ("init_method",)},
-         ignore={"sp.lib": IGNORE_OPTIMISERS, "sp.algo": IGNORE_OPTIMISERS,
-                 "sp.inner->lib": IGNORE_OPTIMISERS,
-                 "b.sp->inner->lib": IGNORE_OPTIMISERS},
-         tables=[(r"kBlockNames\s*\[\]", "all", ("block",))],
-         unread_ok={"key == std::string(": "an END line: END and a block "
-                                           "name of kBlockNames, which the "
-                                           "table is read for"},
-         not_names={"END": "the prefix of an END line, joined to a block "
-                           "name of kBlockNames",
-                    "NLOPT": IGNORE_OPTIMISERS, "DLIB": IGNORE_OPTIMISERS,
-                    "BFGS": IGNORE_OPTIMISERS}),
-    Rule("the INIT and RESTART keys", "src/hpo_targets.cpp",
-         r"^static bool dispatch_init_attr\(",
-         operands={"key": ("key:INIT", "alias"),
-                   "e.method": ("init_method",), "v": ("word",)}),
-    Rule("the INNER refusals", "src/hpo_targets.cpp",
-         r"^static const char\* inner_rejects_attr\(",
-         operands={"key": ("inner_refused",)}),
-    Rule("the removed keywords", "src/hpo_targets.cpp",
-         r"^static bool reject_old_keyword\(", compare=False,
-         tables=[(r"\bmap\s*\[\]", "first", ("removed",))],
-         unread_ok={"key == r": "a keyword of the table, which is read as "
-                                "a table"}),
-    # The keys a block refuses as top-level keys: each must be a key of the
-    # top level. That each key of the top level (less the keys of a group)
-    # is refused so, and no other, the [hpotarget_gen] case of the
-    # top-level keys checks.
-    Rule("the top-level keys a block refuses as such", "src/hpo_targets.cpp",
-         r"^static bool is_top_level_key\(", compare=False,
-         tables=[(r"\bkeys", "all", ("key:ROOT",))]),
     # The OPTIM lines: MLIP's OPTIM reader, which tadah hpo and tadah
     # analysis check_bounds read them with.
     Rule("the OPTIM box", "mlip:src/hpotarget_syntax.cpp",
@@ -373,15 +345,8 @@ EXTRACTION: list[Rule] = [
                               "table"},
          not_names={f: "a field of a DM_Embed component path"
                     for f in ("CENTRES", "AMPLITUDES", "WIDTHS", "ETA")}),
-    Rule("the gate options", "src/hpo_targets.cpp",
-         r"^void parse_gate_options\(",
-         operands={"kw": ("line_option:RHOGATE", "line_option:RHOBARGATE"),
-                   "m": ("word",)}),
-    Rule("the RHOBARGATE lattice", "src/hpo_targets.cpp",
-         r"^RhoBarGateSpec parse_rhobargate\(",
-         operands={"s.lattice": ("word",)}),
     Rule("the OPTIM_SCALE override", "src/hpo_targets.cpp",
-         r"^HPOTargets::HPOTargets\([^)]*ReadFn& read_file\)",
+         r"^HPOTargets::HPOTargets\([^)]*TargetsPurpose purpose\)",
          operands={"v": ("word",)},
          ignore={"s.lib": IGNORE_OPTIMISERS},
          calls=[(r'std::getenv\(\s*"(TADAH_[A-Z_]+)"\s*\)', ("env",))],
@@ -394,7 +359,7 @@ EXTRACTION: list[Rule] = [
          operands={"lo": ("word",)}),
     # The keys of the optimiser group are those of the generated tables
     # (hpotarget_registry_gen.h), which the reader of their lines (a
-    # handler each, hpotarget_handlers.cpp) reads for both parsers and
+    # handler each, hpotarget_handlers.cpp) reads for the target file and
     # `tadah refit`.
     Rule("the optimiser keys", "src/optimizer_block.cpp",
          r"^const std::vector<std::string> &opt_attr_keys\(",
@@ -449,8 +414,9 @@ EXTRACTION: list[Rule] = [
          generated=[(r"R::kForms\b", ("form",))]),
     # The parser of the registry (src/hpotarget_parser.cpp) and its
     # handlers (src/hpotarget_handlers.cpp): the names come from the
-    # generated tables; the words a handler compares are those the
-    # registry's word arguments give (read_word).
+    # generated tables; a handler reads the words of its entry's word
+    # arguments with read_word() (handler_words), and the words it
+    # compares are read as comparisons.
     Rule("the parser of the registry", "src/hpotarget_parser.cpp",
          operands={"name": ("key:ROOT",), "word": ("group_key",),
                    "r.word": ("group_key",)},
@@ -467,6 +433,7 @@ EXTRACTION: list[Rule] = [
                     (r"R::KeyId::OPTIMIZER_LOG_HP\b", ("key:OPTIMIZER",)),
                     (r"R::find_key\(", ("key:ROOT",))]),
     Rule("the handlers of the registry", "src/hpotarget_handlers.cpp",
+         handler_words=True,
          operands={"v": ("word",), "w": ("word",),
                    "t": ("strategy_type", "word"), "name": ("word",),
                    "lattice": ("word",), "kind": ("word",)},
@@ -603,24 +570,48 @@ def name_literals(rule: Rule, src: str, offset: int, body: str,
 
 
 MLIP_PREFIX = "mlip:"
+# A handler of the registry-driven parser (src/hpotarget_handlers.cpp) and
+# the reader of a word argument, which takes the words from the generated
+# tables (src/hpotarget_reads.h).
+HANDLER = re.compile(r"^void Handlers::(\w+)\(", re.M)
+READ_WORD = re.compile(r"\bread_word\(")
+
+
+def handler_word_reads(rule: Rule, src: str) -> list[tuple[str, str]]:
+    """The handlers of `src` that read a word with read_word(): (the C++
+    name of the handler, the place of its first call)."""
+    out = []
+    for m in HANDLER.finditer(src):
+        a, b = braced(src, m.end())
+        call = READ_WORD.search(src, a, b)
+        if call:
+            out.append((m.group(1), f"{rule.file}:"
+                        f"{line_of(src, call.start())} ({rule.label})"))
+    return out
 
 
 def extract(hpo: pathlib.Path, unread: list | None = None,
             mlip: pathlib.Path | None = None,
-            generated: list | None = None) -> tuple[list[Found], list[str]]:
+            generated: list | None = None,
+            handler_reads: list | None = None
+            ) -> tuple[list[Found], list[str]]:
     """The names the rules find, and the problems of the rules. `unread`
     receives the name-shaped literals of the scanned functions that no
     rule reads (name_literals), for compare() to look up; `generated` the
     vocabularies a function reads from the generated tables of the
-    registry, with the place of the use, for compare() to take whole. A
-    rule's file written mlip:<path> is <path> under `mlip`, MLIP's source
-    directory; a problem when `mlip` is None."""
+    registry, with the place of the use, for compare() to take whole;
+    `handler_reads` the handlers that read a word with read_word()
+    (handler_word_reads), for compare() to take the words of their
+    entries. A rule's file written mlip:<path> is <path> under `mlip`,
+    MLIP's source directory; a problem when `mlip` is None."""
     found: list[Found] = []
     problems: list[str] = []
     if unread is None:
         unread = []
     if generated is None:
         generated = []
+    if handler_reads is None:
+        handler_reads = []
     cache: dict[str, str] = {}
     for rule in EXTRACTION:
         if rule.file.startswith(MLIP_PREFIX):
@@ -709,6 +700,10 @@ def extract(hpo: pathlib.Path, unread: list | None = None,
             where = f"{rule.file}:{line_of(src, offset + m.start())}"
             generated.append((vocab, f"{where} ({rule.label})"))
             n_found += 1
+        if rule.handler_words:
+            reads = handler_word_reads(rule, src)
+            handler_reads.extend(reads)
+            n_found += len(reads)
         if rule.function:
             problems += unread_comparisons(rule, src, offset, body)
             unread.extend(name_literals(rule, src, offset, body,
@@ -719,14 +714,40 @@ def extract(hpo: pathlib.Path, unread: list | None = None,
     return found, problems
 
 
+def cxx_name(ident: str) -> str:
+    """The C++ name of a registry id, the generator's
+    (blueprint/gen_hpotarget.py), which names the handlers."""
+    blueprint = str(HERE.parent / "blueprint")
+    if blueprint not in sys.path:
+        sys.path.insert(0, blueprint)
+    import gen_hpotarget  # noqa: E402
+    return gen_hpotarget.cxx_name(ident)
+
+
 def compare(found: list[Found], reg,
             unread: list[tuple[str, str]] = (),
-            generated: list[tuple[tuple[str, ...], str]] = ()) -> list[str]:
+            generated: list[tuple[tuple[str, ...], str]] = (),
+            handler_reads: list[tuple[str, str]] = ()) -> list[str]:
     """The differences between the names found and the registry's, and
     the name-shaped literals no rule reads that the registry does not
     know. A vocabulary of `generated` (a function reads it from the
-    generated tables of the registry) is recognised whole."""
+    generated tables of the registry) is recognised whole; a handler of
+    `handler_reads` recognises the words of the arguments of its entry of
+    the registry (a key, line option or form whose C++ name is the
+    handler's), and one whose name is no entry's is a problem."""
     problems: list[str] = []
+    found = list(found)
+    if handler_reads:
+        entries = {cxx_name(e.id): e for e in reg.entries()}
+        for name, where in handler_reads:
+            e = entries.get(name)
+            if e is None:
+                problems.append(f"the handler Handlers::{name} at {where} "
+                                "reads a word, and no entry of the "
+                                "registry has its name")
+                continue
+            for a in getattr(e, "args", []):
+                found += [Found(w, ("word",), where) for w in a.words]
     names = vocabularies(reg) if hasattr(reg, "line_options") else \
         VOCABULARIES
     vocab = {v: reg.vocabulary(v) for v in names}
@@ -795,7 +816,9 @@ def main(argv: list[str] | None = None) -> int:
 
     unread: list[tuple[str, str]] = []
     generated: list[tuple[tuple[str, ...], str]] = []
-    found, problems = extract(args.hpo, unread, args.mlip, generated)
+    handler_reads: list[tuple[str, str]] = []
+    found, problems = extract(args.hpo, unread, args.mlip, generated,
+                              handler_reads)
     try:
         reg = hpotarget_registry.load(registry_dir, resolve=False)
     except hpotarget_registry.RegistryError as e:
@@ -804,7 +827,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"check_hpotarget_coverage.py: the registry does not load "
               f"({len(e.errors)} error(s))")
         return 1
-    problems += compare(found, reg, unread, generated)
+    problems += compare(found, reg, unread, generated, handler_reads)
     for p in problems:
         print(p)
     names = len({(f.name, f.vocabularies) for f in found})

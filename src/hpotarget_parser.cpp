@@ -1,9 +1,8 @@
 /* hpotarget_parser.cpp -- the registry-driven parser of the target file
- * (hpotarget_parser.h describes it). Each refusal it makes is the one
- * ParsedTarget::read() makes for the same file: the messages come from the
- * generated tables where the registry holds them, and are built here where
- * a part of them is the parser's own (the set-once forms, the K_TOTAL,
- * metric, gate and script checks at the end of the file). */
+ * (hpotarget_parser.h describes it). The messages of its refusals come
+ * from the generated tables where the registry holds them, and are built
+ * here where a part of them is the parser's own (the set-once forms, the
+ * K_TOTAL, metric, gate and script checks at the end of the file). */
 
 #include "hpotarget_parser.h"
 

@@ -477,34 +477,34 @@ set_tests_properties(hpo_hpotarget_generator_tool PROPERTIES
     LABELS "docs"
     TIMEOUT 120
     FAIL_REGULAR_EXPRESSION "\nRan 0 tests ")
-# The comparison of two parsers of the target file: describe_parse()
+# The frozen corpus of target files: describe_parse()
 # (include/tadah/hpo/hpo_targets_testing.h) writes what the parse of a
-# target file set as a canonical text, hpotarget_case_runner reads the
-# cases with the parser its option --parser names (old: HPOTargets::read;
-# new: refused while the build has no other parser) and reports that text
-# (mode describe), and tests/hpotarget_corpus.py collects the corpus of
-# target files the two parsers are compared on (its docstring lists the
-# sources and what it cannot see).
+# target file set as a canonical text, hpotarget_case_runner reads cases
+# with the parser of `tadah hpo` and reports that text (mode describe), and
+# tests/hpotarget_corpus.py collects the target files of the repositories
+# and writes the frozen corpus, tests/data/hpotarget_corpus (its docstring
+# lists the sources, what it cannot see and the files of the corpus).
 #  - the Catch2 cases "describe_parse: ..." (tag [hpotarget_describe],
 #    tests/test_hpotarget_describe_parse.cpp): each setting of a target
 #    file is in the text, one file gives one text, a PC_OBSERVABLE kind
-#    without a description is refused;
-#  - hpo_hpotarget_case_runner_tool: --parser, the mode describe and the
-#    cases read in place (tests/test_hpotarget_case_runner.py);
+#    without a description is refused, the LAMMPS library of the build is
+#    not in the text;
+#  - hpo_hpotarget_case_runner_tool: the runner takes no option, the mode
+#    describe and the cases read in place
+#    (tests/test_hpotarget_case_runner.py);
 #  - hpo_hpotarget_corpus_tool: the collection of the corpus, on synthetic
-#    trees and on the real ones (tests/test_hpotarget_corpus.py; the
-#    Tadah.MLIP tree when this build has the `tadah` target);
-#  - hpo_hpotarget_corpus: every input of the corpus is read twice with the
-#    parser of --parser old and gives one text or one refusal both times;
-#  - the Catch2 case "hpotarget corpus: ..." (tag [hpotarget_corpus],
-#    tests/test_hpotarget_corpus.cpp): the frozen corpus,
-#    tests/data/hpotarget_corpus (written by hpotarget_corpus.py write:
-#    every input with the files it reads and what the parser gave for it),
-#    each input read by the parser of `tadah hpo` gives what the corpus
-#    holds; TADAH_HPOTARGET_CORPUS_DIR names the directory.
-# Before the fix: the four first fail; the header, the option, the mode and
-# the script do not exist. Before the corpus is written, the case of the
-# frozen corpus fails (no corpus.toml).
+#    trees and on the real ones, and how `write` freezes it
+#    (tests/test_hpotarget_corpus.py; the Tadah.MLIP tree when this build
+#    has the `tadah` target);
+#  - hpo_hpotarget_corpus: every input collected from the sources is read
+#    twice and gives one text or one refusal both times;
+#  - the Catch2 cases "hpotarget corpus: ..." (tag [hpotarget_corpus],
+#    tests/test_hpotarget_corpus.cpp): each input of the frozen corpus read
+#    by the parser of `tadah hpo` gives what the corpus holds, byte for
+#    byte, with no environment override that the input does not set;
+#    TADAH_HPOTARGET_CORPUS_DIR names the directory.
+# Before the fix: the header, the mode, the scripts and the corpus do not
+# exist, and these fail.
 target_compile_definitions(test_hpo PRIVATE
     "TADAH_HPOTARGET_CORPUS_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/data/hpotarget_corpus\"")
 hpo_depend_on_has_include(
@@ -531,70 +531,9 @@ set_tests_properties(hpo_hpotarget_corpus_tool PROPERTIES
 add_test(NAME hpo_hpotarget_corpus
     COMMAND ${Python3_EXECUTABLE}
         ${CMAKE_CURRENT_SOURCE_DIR}/hpotarget_corpus.py check
-        --runner $<TARGET_FILE:hpotarget_case_runner> --parser old
+        --runner $<TARGET_FILE:hpotarget_case_runner>
         --tadah-mlip=${_hpo_umbrella_source_dir})
 set_tests_properties(hpo_hpotarget_corpus PROPERTIES
-    LABELS "docs"
-    TIMEOUT 900)
-# The two parsers of the target file compared, ParsedTarget::read (the
-# parser of `tadah hpo`) and the registry-driven parser
-# (src/hpotarget_parser.cpp):
-#  - the Catch2 cases "parser shadow: ..." (tag [hpotarget_shadow],
-#    tests/test_hpotarget_differential.cpp): the comparison the parser
-#    shadow makes on every read of a target file in a validation build
-#    with the CMake option TADAH_HPO_PARSER_SHADOW (HPO/CMakeLists.txt;
-#    test_hpo gets the option as TADAH_HPO_PARSER_SHADOW_BUILD, 1 or 0),
-#    and that such a build compares on every read and the program's build
-#    never;
-#  - hpo_hpotarget_differential: every example and invalid entry of the
-#    registry, every case of the generated checks and every input of the
-#    corpus, read by both parsers, give the same description of the parse
-#    or the same refusal, and the same refusal of the startup checks
-#    (hidden tag [.hpotarget_differential]); hpo_hpotarget_differential_cases
-#    writes the cases first (tests/hpotarget_differential.py, whose
-#    docstring lists the sources), hpo_hpotarget_differential_tool tests
-#    that script (tests/test_hpotarget_differential.py);
-#  - hpo_hpotarget_placement_matrix: the line of each key in each of the
-#    nine places a line can be, through both parsers, against the places
-#    the registry lists (check_hpotarget_generated.py --only blocks
-#    --parser both).
-# Before the fix: the Catch2 case and the four entries fail; the seam of
-# the shadow, the script and the option --parser both do not exist.
-target_compile_definitions(test_hpo PRIVATE
-    "TADAH_HPO_PARSER_SHADOW_BUILD=$<BOOL:${TADAH_HPO_PARSER_SHADOW}>")
-set(_hpo_differential_cases
-    ${CMAKE_CURRENT_BINARY_DIR}/hpotarget_differential/cases.toml)
-add_test(NAME hpo_hpotarget_differential_cases
-    COMMAND ${Python3_EXECUTABLE}
-        ${CMAKE_CURRENT_SOURCE_DIR}/hpotarget_differential.py cases
-        ${_hpo_differential_cases}
-        --tadah-mlip=${_hpo_umbrella_source_dir})
-set_tests_properties(hpo_hpotarget_differential_cases PROPERTIES
-    LABELS "docs"
-    TIMEOUT 300
-    FIXTURES_SETUP hpo_hpotarget_differential)
-add_test(NAME hpo_hpotarget_differential
-    COMMAND test_hpo "[.hpotarget_differential]" --warn NoTests)
-set_tests_properties(hpo_hpotarget_differential PROPERTIES
-    LABELS "docs"
-    TIMEOUT 1800
-    FIXTURES_REQUIRED hpo_hpotarget_differential
-    ENVIRONMENT "TADAH_HPOTARGET_DIFFERENTIAL_CASES=${_hpo_differential_cases}")
-add_test(NAME hpo_hpotarget_differential_tool
-    COMMAND ${Python3_EXECUTABLE}
-        ${CMAKE_CURRENT_SOURCE_DIR}/test_hpotarget_differential.py)
-set_tests_properties(hpo_hpotarget_differential_tool PROPERTIES
-    LABELS "docs"
-    TIMEOUT 120
-    ENVIRONMENT "TADAH_UMBRELLA_SOURCE_DIR=${_hpo_umbrella_source_dir}"
-    FAIL_REGULAR_EXPRESSION "\nRan 0 tests ")
-add_test(NAME hpo_hpotarget_placement_matrix
-    COMMAND ${Python3_EXECUTABLE}
-        ${CMAKE_CURRENT_SOURCE_DIR}/check_hpotarget_generated.py
-        --runner $<TARGET_FILE:hpotarget_case_runner>
-        --registry ${_hpo_blueprint_dir}
-        --only blocks --parser both)
-set_tests_properties(hpo_hpotarget_placement_matrix PROPERTIES
     LABELS "docs"
     TIMEOUT 900)
 # hpo_has_include_rebuild: a source that tests for headers with
