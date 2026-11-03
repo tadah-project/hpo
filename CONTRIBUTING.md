@@ -98,3 +98,19 @@ with the change that alters it.
   `include/tadah/hpo/hpotarget_handlers_gen.h` (CTest
   `hpo_hpotarget_registry_sync`): `blueprint/README.md`, "The generated
   tables", says what they are generated from and how to regenerate them.
+
+## The parser shadow
+
+The CMake option `TADAH_HPO_PARSER_SHADOW` (`OFF` by default) configures a
+validation build in which every target file is read by both parsers of the
+target file, `ParsedTarget::read` and the registry-driven parser, and the
+first file the two read differently stops the read naming both
+(`blueprint/README.md`, "Checks"). It is a build for the tests only; the
+program is never built with it:
+
+```bash
+cmake -S . -B build-shadow -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+    -DBUILD_TESTING=ON -DTADAH_HPO_PARSER_SHADOW=ON
+cmake --build build-shadow -j
+ctest --test-dir build-shadow/tests --output-on-failure
+```
