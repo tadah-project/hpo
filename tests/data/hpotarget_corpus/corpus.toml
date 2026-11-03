@@ -1,7 +1,8 @@
 # The frozen corpus of target files: each input of tests/hpotarget_corpus.py
 # with the files it reads and what the parser of `tadah hpo` gives for it
 # (expected/: <name>.dump the description of the parse, <name>.error the
-# refusal). tests/test_hpotarget_corpus.cpp reads every input and compares.
+# refusal, <name>.stdout and <name>.stderr what the parse printed).
+# tests/test_hpotarget_corpus.cpp reads every input and compares.
 # Written by `tests/hpotarget_corpus.py write` (its docstring describes the
 # fields); a change of the parser that changes a result is a change of
 # behaviour, and the corpus is written again only with it.
@@ -14,6 +15,7 @@ cwd = "target_files"
 target_file = "anneal.hpo"
 config_file = "../common/config.tadah"
 expected = "expected/hpo-data/ta_target_files_anneal.hpo.dump"
+stdout = "expected/hpo-data/ta_target_files_anneal.hpo.stdout"
 
 [[input]]
 id = "hpo-data:ta/target_files/anneal_corana.hpo"
@@ -23,6 +25,7 @@ cwd = "target_files"
 target_file = "anneal_corana.hpo"
 config_file = "../common/config.tadah"
 expected = "expected/hpo-data/ta_target_files_anneal_corana.hpo.dump"
+stdout = "expected/hpo-data/ta_target_files_anneal_corana.hpo.stdout"
 
 [[input]]
 id = "hpo-data:ta/target_files/anneal_pa.hpo"
@@ -32,6 +35,7 @@ cwd = "target_files"
 target_file = "anneal_pa.hpo"
 config_file = "../common/config.tadah"
 expected = "expected/hpo-data/ta_target_files_anneal_pa.hpo.dump"
+stdout = "expected/hpo-data/ta_target_files_anneal_pa.hpo.stdout"
 
 [[input]]
 id = "hpo-data:ta/target_files/anneal_pt.hpo"
@@ -41,6 +45,7 @@ cwd = "target_files"
 target_file = "anneal_pt.hpo"
 config_file = "../common/config.tadah"
 expected = "expected/hpo-data/ta_target_files_anneal_pt.hpo.dump"
+stdout = "expected/hpo-data/ta_target_files_anneal_pt.hpo.stdout"
 
 [[input]]
 id = "hpo-data:ta/target_files/asa.hpo"
@@ -50,6 +55,7 @@ cwd = "target_files"
 target_file = "asa.hpo"
 config_file = "../common/config.tadah"
 expected = "expected/hpo-data/ta_target_files_asa.hpo.dump"
+stdout = "expected/hpo-data/ta_target_files_asa.hpo.stdout"
 
 [[input]]
 id = "hpo-data:ta/target_files/dlib_bfgs.hpo"
@@ -59,6 +65,7 @@ cwd = "target_files"
 target_file = "dlib_bfgs.hpo"
 config_file = "../common/config.tadah"
 expected = "expected/hpo-data/ta_target_files_dlib_bfgs.hpo.dump"
+stdout = "expected/hpo-data/ta_target_files_dlib_bfgs.hpo.stdout"
 
 [[input]]
 id = "hpo-data:ta/target_files/dm_ream_embf0.hpo"
@@ -68,6 +75,7 @@ cwd = "target_files"
 target_file = "dm_ream_embf0.hpo"
 config_file = "../ta2_refit_seed.tadah"
 expected = "expected/hpo-data/ta_target_files_dm_ream_embf0.hpo.dump"
+stdout = "expected/hpo-data/ta_target_files_dm_ream_embf0.hpo.stdout"
 
 [[input]]
 id = "hpo-data:ta/target_files/failprobe_grading.hpo"
@@ -77,6 +85,7 @@ cwd = "target_files"
 target_file = "failprobe_grading.hpo"
 config_file = "../common/config.tadah"
 expected = "expected/hpo-data/ta_target_files_failprobe_grading.hpo.dump"
+stdout = "expected/hpo-data/ta_target_files_failprobe_grading.hpo.stdout"
 
 [[input]]
 id = "hpo-data:ta/target_files/fixweight_mixed.hpo"
@@ -86,6 +95,7 @@ cwd = "target_files"
 target_file = "fixweight_mixed.hpo"
 config_file = "fixweight_mixed.tadah"
 expected = "expected/hpo-data/ta_target_files_fixweight_mixed.hpo.dump"
+stdout = "expected/hpo-data/ta_target_files_fixweight_mixed.hpo.stdout"
 
 [[input]]
 id = "hpo-data:ta/target_files/fixweight_no_dbfile.hpo"
@@ -97,6 +107,7 @@ config_file = "../common/config.tadah"
 config_drop = ["DBFILE"]
 config_add = { "ATOM" = ["Ta"], "FIXINDEX" = ["1-14"], "FIXWEIGHT" = ["0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0"] }
 expected = "expected/hpo-data/ta_target_files_fixweight_no_dbfile.hpo.dump"
+stdout = "expected/hpo-data/ta_target_files_fixweight_no_dbfile.hpo.stdout"
 
 [[input]]
 id = "hpo-data:ta/target_files/init_chain.hpo"
@@ -107,6 +118,7 @@ target_file = "init_chain.hpo"
 config_file = "../common/config.tadah"
 copies = [{ "from" = "../common/config.tadah", "to" = "seed_pot.tadah" }]
 expected = "expected/hpo-data/ta_target_files_init_chain.hpo.dump"
+stdout = "expected/hpo-data/ta_target_files_init_chain.hpo.stdout"
 
 [[input]]
 id = "hpo-data:ta/target_files/init_lhs_multistart.hpo"
@@ -116,6 +128,7 @@ cwd = "target_files"
 target_file = "init_lhs_multistart.hpo"
 config_file = "../common/config.tadah"
 expected = "expected/hpo-data/ta_target_files_init_lhs_multistart.hpo.dump"
+stdout = "expected/hpo-data/ta_target_files_init_lhs_multistart.hpo.stdout"
 
 [[input]]
 id = "hpo-data:ta/target_files/init_random.hpo"
@@ -125,6 +138,7 @@ cwd = "target_files"
 target_file = "init_random.hpo"
 config_file = "../common/config.tadah"
 expected = "expected/hpo-data/ta_target_files_init_random.hpo.dump"
+stdout = "expected/hpo-data/ta_target_files_init_random.hpo.stdout"
 
 [[input]]
 id = "hpo-data:ta/target_files/init_sobol_gfs.hpo"
@@ -134,6 +148,7 @@ cwd = "target_files"
 target_file = "init_sobol_gfs.hpo"
 config_file = "../common/config.tadah"
 expected = "expected/hpo-data/ta_target_files_init_sobol_gfs.hpo.dump"
+stdout = "expected/hpo-data/ta_target_files_init_sobol_gfs.hpo.stdout"
 
 [[input]]
 id = "hpo-data:ta/target_files/init_warm.hpo"
@@ -144,6 +159,7 @@ target_file = "init_warm.hpo"
 config_file = "../common/config.tadah"
 copies = [{ "from" = "../common/config.tadah", "to" = "seed_pot.tadah" }]
 expected = "expected/hpo-data/ta_target_files_init_warm.hpo.dump"
+stdout = "expected/hpo-data/ta_target_files_init_warm.hpo.stdout"
 
 [[input]]
 id = "hpo-data:ta/target_files/invar_outvar.hpo"
@@ -153,6 +169,7 @@ cwd = "target_files"
 target_file = "invar_outvar.hpo"
 config_file = "../common/config.tadah"
 expected = "expected/hpo-data/ta_target_files_invar_outvar.hpo.dump"
+stdout = "expected/hpo-data/ta_target_files_invar_outvar.hpo.stdout"
 
 [[input]]
 id = "hpo-data:ta/target_files/mlsl_inner.hpo"
@@ -162,6 +179,8 @@ cwd = "target_files"
 target_file = "mlsl_inner.hpo"
 config_file = "../common/config.tadah"
 expected = "expected/hpo-data/ta_target_files_mlsl_inner.hpo.dump"
+stdout = "expected/hpo-data/ta_target_files_mlsl_inner.hpo.stdout"
+stderr = "expected/hpo-data/ta_target_files_mlsl_inner.hpo.stderr"
 
 [[input]]
 id = "hpo-data:ta/target_files/nlopt_sbplx_step.hpo"
@@ -171,6 +190,7 @@ cwd = "target_files"
 target_file = "nlopt_sbplx_step.hpo"
 config_file = "../common/config.tadah"
 expected = "expected/hpo-data/ta_target_files_nlopt_sbplx_step.hpo.dump"
+stdout = "expected/hpo-data/ta_target_files_nlopt_sbplx_step.hpo.stdout"
 
 [[input]]
 id = "hpo-data:ta/target_files/optim_auto.hpo"
@@ -180,6 +200,7 @@ cwd = "target_files"
 target_file = "optim_auto.hpo"
 config_file = "../common/config.tadah"
 expected = "expected/hpo-data/ta_target_files_optim_auto.hpo.dump"
+stdout = "expected/hpo-data/ta_target_files_optim_auto.hpo.stdout"
 
 [[input]]
 id = "hpo-data:ta/target_files/pc_isolation.hpo"
@@ -189,6 +210,7 @@ cwd = "target_files"
 target_file = "pc_isolation.hpo"
 config_file = "../common/config.tadah"
 expected = "expected/hpo-data/ta_target_files_pc_isolation.hpo.dump"
+stdout = "expected/hpo-data/ta_target_files_pc_isolation.hpo.stdout"
 
 [[input]]
 id = "hpo-data:ta/target_files/pc_observable.hpo"
@@ -198,6 +220,7 @@ cwd = "target_files"
 target_file = "pc_observable.hpo"
 config_file = "pc_observable.tadah"
 expected = "expected/hpo-data/ta_target_files_pc_observable.hpo.dump"
+stdout = "expected/hpo-data/ta_target_files_pc_observable.hpo.stdout"
 
 [[input]]
 id = "hpo-data:ta/target_files/per_dataset_targets.hpo"
@@ -207,6 +230,7 @@ cwd = "target_files"
 target_file = "per_dataset_targets.hpo"
 config_file = "../common/config.tadah"
 expected = "expected/hpo-data/ta_target_files_per_dataset_targets.hpo.dump"
+stdout = "expected/hpo-data/ta_target_files_per_dataset_targets.hpo.stdout"
 
 [[input]]
 id = "hpo-data:ta/target_files/prestage.hpo"
@@ -216,6 +240,7 @@ cwd = "target_files"
 target_file = "prestage.hpo"
 config_file = "../common/config.tadah"
 expected = "expected/hpo-data/ta_target_files_prestage.hpo.dump"
+stdout = "expected/hpo-data/ta_target_files_prestage.hpo.stdout"
 
 [[input]]
 id = "hpo-data:ta/target_files/restart.hpo"
@@ -225,6 +250,7 @@ cwd = "target_files"
 target_file = "restart.hpo"
 config_file = "../common/config.tadah"
 expected = "expected/hpo-data/ta_target_files_restart.hpo.dump"
+stdout = "expected/hpo-data/ta_target_files_restart.hpo.stdout"
 
 [[input]]
 id = "hpo-data:ta/target_files/skip_above.hpo"
@@ -234,6 +260,7 @@ cwd = "target_files"
 target_file = "skip_above.hpo"
 config_file = "../common/config.tadah"
 expected = "expected/hpo-data/ta_target_files_skip_above.hpo.dump"
+stdout = "expected/hpo-data/ta_target_files_skip_above.hpo.stdout"
 
 [[input]]
 id = "hpo-data:ta/target_files/tadah_grid.hpo"
@@ -243,6 +270,7 @@ cwd = "target_files"
 target_file = "tadah_grid.hpo"
 config_file = "../common/config.tadah"
 expected = "expected/hpo-data/ta_target_files_tadah_grid.hpo.dump"
+stdout = "expected/hpo-data/ta_target_files_tadah_grid.hpo.stdout"
 
 [[input]]
 id = "hpo-data:ta/target_files/tadah_random.hpo"
@@ -252,6 +280,7 @@ cwd = "target_files"
 target_file = "tadah_random.hpo"
 config_file = "../common/config.tadah"
 expected = "expected/hpo-data/ta_target_files_tadah_random.hpo.dump"
+stdout = "expected/hpo-data/ta_target_files_tadah_random.hpo.stdout"
 
 [[input]]
 id = "registry:LEXING:0"
@@ -260,6 +289,7 @@ target = "targets/registry/LEXING_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/LEXING_0.dump"
+stdout = "expected/registry/LEXING_0.stdout"
 
 [[input]]
 id = "registry:LEXING:1"
@@ -268,6 +298,7 @@ target = "targets/registry/LEXING_1.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/LEXING_1.dump"
+stdout = "expected/registry/LEXING_1.stdout"
 
 [[input]]
 id = "registry:OPTIM:0"
@@ -276,6 +307,7 @@ target = "targets/registry/OPTIM_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/OPTIM_0.dump"
+stdout = "expected/registry/OPTIM_0.stdout"
 
 [[input]]
 id = "registry:OPTIM:1"
@@ -284,6 +316,7 @@ target = "targets/registry/OPTIM_1.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/OPTIM_1.dump"
+stdout = "expected/registry/OPTIM_1.stdout"
 
 [[input]]
 id = "registry:OPTIM:2"
@@ -292,6 +325,7 @@ target = "targets/registry/OPTIM_2.hpo"
 config = "configs/lines_dm_embed.tadah"
 tree = "fixtures"
 expected = "expected/registry/OPTIM_2.dump"
+stdout = "expected/registry/OPTIM_2.stdout"
 
 [[input]]
 id = "registry:OPTIM:3"
@@ -300,6 +334,7 @@ target = "targets/registry/OPTIM_3.hpo"
 config = "configs/lines_dm_embed.tadah"
 tree = "fixtures"
 expected = "expected/registry/OPTIM_3.dump"
+stdout = "expected/registry/OPTIM_3.stdout"
 
 [[input]]
 id = "registry:LAMMPS_SCRIPT:0"
@@ -308,6 +343,7 @@ target = "targets/registry/LAMMPS_SCRIPT_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/LAMMPS_SCRIPT_0.dump"
+stdout = "expected/registry/LAMMPS_SCRIPT_0.stdout"
 
 [[input]]
 id = "registry:BLOCK.OPTIMIZER:0"
@@ -316,6 +352,7 @@ target = "targets/registry/BLOCK.OPTIMIZER_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/BLOCK.OPTIMIZER_0.dump"
+stdout = "expected/registry/BLOCK.OPTIMIZER_0.stdout"
 
 [[input]]
 id = "registry:BLOCK.STRATEGY:0"
@@ -324,6 +361,7 @@ target = "targets/registry/BLOCK.STRATEGY_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/BLOCK.STRATEGY_0.dump"
+stdout = "expected/registry/BLOCK.STRATEGY_0.stdout"
 
 [[input]]
 id = "registry:BLOCK.INIT:0"
@@ -332,6 +370,7 @@ target = "targets/registry/BLOCK.INIT_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/BLOCK.INIT_0.dump"
+stdout = "expected/registry/BLOCK.INIT_0.stdout"
 
 [[input]]
 id = "registry:BLOCK.INIT:1"
@@ -340,6 +379,7 @@ target = "targets/registry/BLOCK.INIT_1.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/BLOCK.INIT_1.dump"
+stdout = "expected/registry/BLOCK.INIT_1.stdout"
 
 [[input]]
 id = "registry:BLOCK.NOISE:0"
@@ -348,6 +388,7 @@ target = "targets/registry/BLOCK.NOISE_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/BLOCK.NOISE_0.dump"
+stdout = "expected/registry/BLOCK.NOISE_0.stdout"
 
 [[input]]
 id = "registry:BLOCK.EXPLORE:0"
@@ -356,6 +397,7 @@ target = "targets/registry/BLOCK.EXPLORE_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/BLOCK.EXPLORE_0.dump"
+stdout = "expected/registry/BLOCK.EXPLORE_0.stdout"
 
 [[input]]
 id = "registry:BLOCK.REFINE:0"
@@ -364,6 +406,7 @@ target = "targets/registry/BLOCK.REFINE_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/BLOCK.REFINE_0.dump"
+stdout = "expected/registry/BLOCK.REFINE_0.stdout"
 
 [[input]]
 id = "registry:BLOCK.INNER:0"
@@ -372,6 +415,7 @@ target = "targets/registry/BLOCK.INNER_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/BLOCK.INNER_0.dump"
+stdout = "expected/registry/BLOCK.INNER_0.stdout"
 
 [[input]]
 id = "registry:BLOCK.RESTART:0"
@@ -380,6 +424,7 @@ target = "targets/registry/BLOCK.RESTART_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/BLOCK.RESTART_0.dump"
+stdout = "expected/registry/BLOCK.RESTART_0.stdout"
 
 [[input]]
 id = "registry:ROOT.FAILSCORE:0"
@@ -388,6 +433,7 @@ target = "targets/registry/ROOT.FAILSCORE_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/ROOT.FAILSCORE_0.dump"
+stdout = "expected/registry/ROOT.FAILSCORE_0.stdout"
 
 [[input]]
 id = "registry:ROOT.PC_SCRIPT_TIMEOUT:0"
@@ -396,6 +442,7 @@ target = "targets/registry/ROOT.PC_SCRIPT_TIMEOUT_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/ROOT.PC_SCRIPT_TIMEOUT_0.dump"
+stdout = "expected/registry/ROOT.PC_SCRIPT_TIMEOUT_0.stdout"
 
 [[input]]
 id = "registry:ROOT.PC_SCRIPT_TIMEOUT:1"
@@ -404,6 +451,7 @@ target = "targets/registry/ROOT.PC_SCRIPT_TIMEOUT_1.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/ROOT.PC_SCRIPT_TIMEOUT_1.dump"
+stdout = "expected/registry/ROOT.PC_SCRIPT_TIMEOUT_1.stdout"
 
 [[input]]
 id = "registry:ROOT.PC_SCRIPT_TIMEOUT:2"
@@ -412,6 +460,7 @@ target = "targets/registry/ROOT.PC_SCRIPT_TIMEOUT_2.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/ROOT.PC_SCRIPT_TIMEOUT_2.dump"
+stdout = "expected/registry/ROOT.PC_SCRIPT_TIMEOUT_2.stdout"
 
 [[input]]
 id = "registry:ROOT.MAXTIME:0"
@@ -420,6 +469,7 @@ target = "targets/registry/ROOT.MAXTIME_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/ROOT.MAXTIME_0.dump"
+stdout = "expected/registry/ROOT.MAXTIME_0.stdout"
 
 [[input]]
 id = "registry:ROOT.PC_ISOLATION:0"
@@ -428,6 +478,7 @@ target = "targets/registry/ROOT.PC_ISOLATION_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/ROOT.PC_ISOLATION_0.dump"
+stdout = "expected/registry/ROOT.PC_ISOLATION_0.stdout"
 
 [[input]]
 id = "registry:ROOT.PC_ISOLATION:1"
@@ -436,6 +487,7 @@ target = "targets/registry/ROOT.PC_ISOLATION_1.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/ROOT.PC_ISOLATION_1.dump"
+stdout = "expected/registry/ROOT.PC_ISOLATION_1.stdout"
 
 [[input]]
 id = "registry:ROOT.PC_WORKER_TIMEOUT:0"
@@ -444,6 +496,7 @@ target = "targets/registry/ROOT.PC_WORKER_TIMEOUT_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/ROOT.PC_WORKER_TIMEOUT_0.dump"
+stdout = "expected/registry/ROOT.PC_WORKER_TIMEOUT_0.stdout"
 
 [[input]]
 id = "registry:ROOT.FAILSCORE_GRADING:0"
@@ -452,6 +505,7 @@ target = "targets/registry/ROOT.FAILSCORE_GRADING_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/ROOT.FAILSCORE_GRADING_0.dump"
+stdout = "expected/registry/ROOT.FAILSCORE_GRADING_0.stdout"
 
 [[input]]
 id = "registry:ROOT.FAILSCORE_GRADING:1"
@@ -460,6 +514,7 @@ target = "targets/registry/ROOT.FAILSCORE_GRADING_1.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/ROOT.FAILSCORE_GRADING_1.dump"
+stdout = "expected/registry/ROOT.FAILSCORE_GRADING_1.stdout"
 
 [[input]]
 id = "registry:ROOT.FAILSCORE_GRADING:2"
@@ -468,6 +523,7 @@ target = "targets/registry/ROOT.FAILSCORE_GRADING_2.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/ROOT.FAILSCORE_GRADING_2.dump"
+stdout = "expected/registry/ROOT.FAILSCORE_GRADING_2.stdout"
 
 [[input]]
 id = "registry:ROOT.BUMPGATE:0"
@@ -476,6 +532,7 @@ target = "targets/registry/ROOT.BUMPGATE_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/ROOT.BUMPGATE_0.dump"
+stdout = "expected/registry/ROOT.BUMPGATE_0.stdout"
 
 [[input]]
 id = "registry:ROOT.BUMPGATE:1"
@@ -484,6 +541,7 @@ target = "targets/registry/ROOT.BUMPGATE_1.hpo"
 config = "configs/main_ream.tadah"
 tree = "fixtures"
 expected = "expected/registry/ROOT.BUMPGATE_1.dump"
+stdout = "expected/registry/ROOT.BUMPGATE_1.stdout"
 
 [[input]]
 id = "registry:ROOT.RHOGATE:0"
@@ -492,6 +550,7 @@ target = "targets/registry/ROOT.RHOGATE_0.hpo"
 config = "configs/main_ream.tadah"
 tree = "fixtures"
 expected = "expected/registry/ROOT.RHOGATE_0.dump"
+stdout = "expected/registry/ROOT.RHOGATE_0.stdout"
 
 [[input]]
 id = "registry:ROOT.RHOGATE:1"
@@ -500,6 +559,7 @@ target = "targets/registry/ROOT.RHOGATE_1.hpo"
 config = "configs/main_ream.tadah"
 tree = "fixtures"
 expected = "expected/registry/ROOT.RHOGATE_1.dump"
+stdout = "expected/registry/ROOT.RHOGATE_1.stdout"
 
 [[input]]
 id = "registry:ROOT.RHOGATE:2"
@@ -508,6 +568,7 @@ target = "targets/registry/ROOT.RHOGATE_2.hpo"
 config = "configs/lines_dm_embed.tadah"
 tree = "fixtures"
 expected = "expected/registry/ROOT.RHOGATE_2.dump"
+stdout = "expected/registry/ROOT.RHOGATE_2.stdout"
 
 [[input]]
 id = "registry:ROOT.RHOGATE:3"
@@ -516,6 +577,7 @@ target = "targets/registry/ROOT.RHOGATE_3.hpo"
 config = "configs/main_ream_negative.tadah"
 tree = "fixtures"
 expected = "expected/registry/ROOT.RHOGATE_3.dump"
+stdout = "expected/registry/ROOT.RHOGATE_3.stdout"
 
 [[input]]
 id = "registry:ROOT.RHOBARGATE:0"
@@ -524,6 +586,7 @@ target = "targets/registry/ROOT.RHOBARGATE_0.hpo"
 config = "configs/main_ream.tadah"
 tree = "fixtures"
 expected = "expected/registry/ROOT.RHOBARGATE_0.dump"
+stdout = "expected/registry/ROOT.RHOBARGATE_0.stdout"
 
 [[input]]
 id = "registry:ROOT.RHOBARGATE:1"
@@ -532,6 +595,7 @@ target = "targets/registry/ROOT.RHOBARGATE_1.hpo"
 config = "configs/main_ream.tadah"
 tree = "fixtures"
 expected = "expected/registry/ROOT.RHOBARGATE_1.dump"
+stdout = "expected/registry/ROOT.RHOBARGATE_1.stdout"
 
 [[input]]
 id = "registry:ROOT.RHOBARGATE:2"
@@ -540,6 +604,7 @@ target = "targets/registry/ROOT.RHOBARGATE_2.hpo"
 config = "configs/main_ream.tadah"
 tree = "fixtures"
 expected = "expected/registry/ROOT.RHOBARGATE_2.dump"
+stdout = "expected/registry/ROOT.RHOBARGATE_2.stdout"
 
 [[input]]
 id = "registry:ROOT.QFLUSH:0"
@@ -548,6 +613,7 @@ target = "targets/registry/ROOT.QFLUSH_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/ROOT.QFLUSH_0.dump"
+stdout = "expected/registry/ROOT.QFLUSH_0.stdout"
 
 [[input]]
 id = "registry:ROOT.OUTPUT:0"
@@ -556,6 +622,7 @@ target = "targets/registry/ROOT.OUTPUT_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/ROOT.OUTPUT_0.dump"
+stdout = "expected/registry/ROOT.OUTPUT_0.stdout"
 
 [[input]]
 id = "registry:ROOT.BOUTPUT:0"
@@ -564,6 +631,7 @@ target = "targets/registry/ROOT.BOUTPUT_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/ROOT.BOUTPUT_0.dump"
+stdout = "expected/registry/ROOT.BOUTPUT_0.stdout"
 
 [[input]]
 id = "registry:ROOT.DIGITS:0"
@@ -572,6 +640,7 @@ target = "targets/registry/ROOT.DIGITS_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/ROOT.DIGITS_0.dump"
+stdout = "expected/registry/ROOT.DIGITS_0.stdout"
 
 [[input]]
 id = "registry:ROOT.DUMP:0"
@@ -580,6 +649,7 @@ target = "targets/registry/ROOT.DUMP_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/ROOT.DUMP_0.dump"
+stdout = "expected/registry/ROOT.DUMP_0.stdout"
 
 [[input]]
 id = "registry:ROOT.DUMP:1"
@@ -588,6 +658,7 @@ target = "targets/registry/ROOT.DUMP_1.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/ROOT.DUMP_1.dump"
+stdout = "expected/registry/ROOT.DUMP_1.stdout"
 
 [[input]]
 id = "registry:ROOT.BDUMP:0"
@@ -596,6 +667,7 @@ target = "targets/registry/ROOT.BDUMP_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/ROOT.BDUMP_0.dump"
+stdout = "expected/registry/ROOT.BDUMP_0.stdout"
 
 [[input]]
 id = "registry:ROOT.BDUMP:1"
@@ -604,6 +676,7 @@ target = "targets/registry/ROOT.BDUMP_1.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/ROOT.BDUMP_1.dump"
+stdout = "expected/registry/ROOT.BDUMP_1.stdout"
 
 [[input]]
 id = "registry:ROOT.OPTIM_SCALE:0"
@@ -612,6 +685,7 @@ target = "targets/registry/ROOT.OPTIM_SCALE_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/ROOT.OPTIM_SCALE_0.dump"
+stdout = "expected/registry/ROOT.OPTIM_SCALE_0.stdout"
 
 [[input]]
 id = "registry:ROOT.OPTIM_SCALE:1"
@@ -620,6 +694,7 @@ target = "targets/registry/ROOT.OPTIM_SCALE_1.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/ROOT.OPTIM_SCALE_1.dump"
+stdout = "expected/registry/ROOT.OPTIM_SCALE_1.stdout"
 
 [[input]]
 id = "registry:OPTIMIZER.LIB:0"
@@ -628,6 +703,7 @@ target = "targets/registry/OPTIMIZER.LIB_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/OPTIMIZER.LIB_0.dump"
+stdout = "expected/registry/OPTIMIZER.LIB_0.stdout"
 
 [[input]]
 id = "registry:OPTIMIZER.LIB:1"
@@ -636,6 +712,7 @@ target = "targets/registry/OPTIMIZER.LIB_1.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/OPTIMIZER.LIB_1.dump"
+stdout = "expected/registry/OPTIMIZER.LIB_1.stdout"
 
 [[input]]
 id = "registry:OPTIMIZER.ALGO:0"
@@ -644,6 +721,7 @@ target = "targets/registry/OPTIMIZER.ALGO_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/OPTIMIZER.ALGO_0.dump"
+stdout = "expected/registry/OPTIMIZER.ALGO_0.stdout"
 
 [[input]]
 id = "registry:OPTIMIZER.MAXEVAL:0"
@@ -652,6 +730,7 @@ target = "targets/registry/OPTIMIZER.MAXEVAL_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/OPTIMIZER.MAXEVAL_0.dump"
+stdout = "expected/registry/OPTIMIZER.MAXEVAL_0.stdout"
 
 [[input]]
 id = "registry:OPTIMIZER.MAXTIME:0"
@@ -660,6 +739,7 @@ target = "targets/registry/OPTIMIZER.MAXTIME_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/OPTIMIZER.MAXTIME_0.dump"
+stdout = "expected/registry/OPTIMIZER.MAXTIME_0.stdout"
 
 [[input]]
 id = "registry:OPTIMIZER.MAXTIME:1"
@@ -668,6 +748,7 @@ target = "targets/registry/OPTIMIZER.MAXTIME_1.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/OPTIMIZER.MAXTIME_1.dump"
+stdout = "expected/registry/OPTIMIZER.MAXTIME_1.stdout"
 
 [[input]]
 id = "registry:OPTIMIZER.STOPVAL:0"
@@ -676,6 +757,7 @@ target = "targets/registry/OPTIMIZER.STOPVAL_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/OPTIMIZER.STOPVAL_0.dump"
+stdout = "expected/registry/OPTIMIZER.STOPVAL_0.stdout"
 
 [[input]]
 id = "registry:OPTIMIZER.STOPVAL:1"
@@ -684,6 +766,7 @@ target = "targets/registry/OPTIMIZER.STOPVAL_1.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/OPTIMIZER.STOPVAL_1.dump"
+stdout = "expected/registry/OPTIMIZER.STOPVAL_1.stdout"
 
 [[input]]
 id = "registry:OPTIMIZER.FTOL_REL:0"
@@ -692,6 +775,7 @@ target = "targets/registry/OPTIMIZER.FTOL_REL_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/OPTIMIZER.FTOL_REL_0.dump"
+stdout = "expected/registry/OPTIMIZER.FTOL_REL_0.stdout"
 
 [[input]]
 id = "registry:OPTIMIZER.FTOL_REL:1"
@@ -700,6 +784,7 @@ target = "targets/registry/OPTIMIZER.FTOL_REL_1.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/OPTIMIZER.FTOL_REL_1.dump"
+stdout = "expected/registry/OPTIMIZER.FTOL_REL_1.stdout"
 
 [[input]]
 id = "registry:OPTIMIZER.FTOL_ABS:0"
@@ -708,6 +793,7 @@ target = "targets/registry/OPTIMIZER.FTOL_ABS_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/OPTIMIZER.FTOL_ABS_0.dump"
+stdout = "expected/registry/OPTIMIZER.FTOL_ABS_0.stdout"
 
 [[input]]
 id = "registry:OPTIMIZER.XTOL_REL:0"
@@ -716,6 +802,7 @@ target = "targets/registry/OPTIMIZER.XTOL_REL_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/OPTIMIZER.XTOL_REL_0.dump"
+stdout = "expected/registry/OPTIMIZER.XTOL_REL_0.stdout"
 
 [[input]]
 id = "registry:OPTIMIZER.XTOL_ABS:0"
@@ -724,6 +811,7 @@ target = "targets/registry/OPTIMIZER.XTOL_ABS_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/OPTIMIZER.XTOL_ABS_0.dump"
+stdout = "expected/registry/OPTIMIZER.XTOL_ABS_0.stdout"
 
 [[input]]
 id = "registry:OPTIMIZER.POPULATION:0"
@@ -732,6 +820,7 @@ target = "targets/registry/OPTIMIZER.POPULATION_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/OPTIMIZER.POPULATION_0.dump"
+stdout = "expected/registry/OPTIMIZER.POPULATION_0.stdout"
 
 [[input]]
 id = "registry:OPTIMIZER.STEP:0"
@@ -740,6 +829,7 @@ target = "targets/registry/OPTIMIZER.STEP_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/OPTIMIZER.STEP_0.dump"
+stdout = "expected/registry/OPTIMIZER.STEP_0.stdout"
 
 [[input]]
 id = "registry:OPTIMIZER.STEP:1"
@@ -748,6 +838,7 @@ target = "targets/registry/OPTIMIZER.STEP_1.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/OPTIMIZER.STEP_1.dump"
+stdout = "expected/registry/OPTIMIZER.STEP_1.stdout"
 
 [[input]]
 id = "registry:OPTIMIZER.STEP:2"
@@ -756,6 +847,7 @@ target = "targets/registry/OPTIMIZER.STEP_2.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/OPTIMIZER.STEP_2.dump"
+stdout = "expected/registry/OPTIMIZER.STEP_2.stdout"
 
 [[input]]
 id = "registry:OPTIMIZER.STEP:3"
@@ -764,6 +856,7 @@ target = "targets/registry/OPTIMIZER.STEP_3.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/OPTIMIZER.STEP_3.dump"
+stdout = "expected/registry/OPTIMIZER.STEP_3.stdout"
 
 [[input]]
 id = "registry:OPTIMIZER.STEP:4"
@@ -772,6 +865,7 @@ target = "targets/registry/OPTIMIZER.STEP_4.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/OPTIMIZER.STEP_4.dump"
+stdout = "expected/registry/OPTIMIZER.STEP_4.stdout"
 
 [[input]]
 id = "registry:OPTIMIZER.STEP:5"
@@ -780,6 +874,8 @@ target = "targets/registry/OPTIMIZER.STEP_5.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/OPTIMIZER.STEP_5.dump"
+stdout = "expected/registry/OPTIMIZER.STEP_5.stdout"
+stderr = "expected/registry/OPTIMIZER.STEP_5.stderr"
 
 [[input]]
 id = "registry:OPTIMIZER.SEED:0"
@@ -788,6 +884,7 @@ target = "targets/registry/OPTIMIZER.SEED_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/OPTIMIZER.SEED_0.dump"
+stdout = "expected/registry/OPTIMIZER.SEED_0.stdout"
 
 [[input]]
 id = "registry:OPTIMIZER.SEED:1"
@@ -796,6 +893,7 @@ target = "targets/registry/OPTIMIZER.SEED_1.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/OPTIMIZER.SEED_1.dump"
+stdout = "expected/registry/OPTIMIZER.SEED_1.stdout"
 
 [[input]]
 id = "registry:OPTIMIZER.SEED:2"
@@ -804,6 +902,7 @@ target = "targets/registry/OPTIMIZER.SEED_2.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/OPTIMIZER.SEED_2.dump"
+stdout = "expected/registry/OPTIMIZER.SEED_2.stdout"
 
 [[input]]
 id = "registry:OPTIMIZER.VECTOR_ARR:0"
@@ -812,6 +911,7 @@ target = "targets/registry/OPTIMIZER.VECTOR_ARR_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/OPTIMIZER.VECTOR_ARR_0.dump"
+stdout = "expected/registry/OPTIMIZER.VECTOR_ARR_0.stdout"
 
 [[input]]
 id = "registry:OPTIMIZER.THREADS:0"
@@ -820,6 +920,7 @@ target = "targets/registry/OPTIMIZER.THREADS_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/OPTIMIZER.THREADS_0.dump"
+stdout = "expected/registry/OPTIMIZER.THREADS_0.stdout"
 
 [[input]]
 id = "registry:OPTIMIZER.THREADS:1"
@@ -828,6 +929,8 @@ target = "targets/registry/OPTIMIZER.THREADS_1.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/OPTIMIZER.THREADS_1.dump"
+stdout = "expected/registry/OPTIMIZER.THREADS_1.stdout"
+stderr = "expected/registry/OPTIMIZER.THREADS_1.stderr"
 
 [[input]]
 id = "registry:OPTIMIZER.GRAD_STRATEGY:0"
@@ -836,6 +939,7 @@ target = "targets/registry/OPTIMIZER.GRAD_STRATEGY_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/OPTIMIZER.GRAD_STRATEGY_0.dump"
+stdout = "expected/registry/OPTIMIZER.GRAD_STRATEGY_0.stdout"
 
 [[input]]
 id = "registry:OPTIMIZER.GRAD_STRATEGY:1"
@@ -844,6 +948,7 @@ target = "targets/registry/OPTIMIZER.GRAD_STRATEGY_1.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/OPTIMIZER.GRAD_STRATEGY_1.dump"
+stdout = "expected/registry/OPTIMIZER.GRAD_STRATEGY_1.stdout"
 
 [[input]]
 id = "registry:OPTIMIZER.GRAD_STRATEGY:2"
@@ -852,6 +957,7 @@ target = "targets/registry/OPTIMIZER.GRAD_STRATEGY_2.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/OPTIMIZER.GRAD_STRATEGY_2.dump"
+stdout = "expected/registry/OPTIMIZER.GRAD_STRATEGY_2.stdout"
 
 [[input]]
 id = "registry:OPTIMIZER.PARAM:0"
@@ -860,6 +966,7 @@ target = "targets/registry/OPTIMIZER.PARAM_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/OPTIMIZER.PARAM_0.dump"
+stdout = "expected/registry/OPTIMIZER.PARAM_0.stdout"
 
 [[input]]
 id = "registry:OPTIMIZER.PARAM:1"
@@ -868,6 +975,7 @@ target = "targets/registry/OPTIMIZER.PARAM_1.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/OPTIMIZER.PARAM_1.dump"
+stdout = "expected/registry/OPTIMIZER.PARAM_1.stdout"
 
 [[input]]
 id = "registry:OPTIMIZER.PARAM:2"
@@ -876,6 +984,7 @@ target = "targets/registry/OPTIMIZER.PARAM_2.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/OPTIMIZER.PARAM_2.dump"
+stdout = "expected/registry/OPTIMIZER.PARAM_2.stdout"
 
 [[input]]
 id = "registry:OPTIMIZER.PARAM:3"
@@ -884,6 +993,7 @@ target = "targets/registry/OPTIMIZER.PARAM_3.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/OPTIMIZER.PARAM_3.dump"
+stdout = "expected/registry/OPTIMIZER.PARAM_3.stdout"
 
 [[input]]
 id = "registry:OPTIMIZER.PARAM:4"
@@ -892,6 +1002,7 @@ target = "targets/registry/OPTIMIZER.PARAM_4.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/OPTIMIZER.PARAM_4.dump"
+stdout = "expected/registry/OPTIMIZER.PARAM_4.stdout"
 
 [[input]]
 id = "registry:OPTIMIZER.LOG_HP:0"
@@ -900,6 +1011,7 @@ target = "targets/registry/OPTIMIZER.LOG_HP_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/OPTIMIZER.LOG_HP_0.dump"
+stdout = "expected/registry/OPTIMIZER.LOG_HP_0.stdout"
 
 [[input]]
 id = "registry:OPTIMIZER.LOG_HP:1"
@@ -908,6 +1020,7 @@ target = "targets/registry/OPTIMIZER.LOG_HP_1.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/OPTIMIZER.LOG_HP_1.dump"
+stdout = "expected/registry/OPTIMIZER.LOG_HP_1.stdout"
 
 [[input]]
 id = "registry:STRATEGY.TYPE:0"
@@ -916,6 +1029,7 @@ target = "targets/registry/STRATEGY.TYPE_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/STRATEGY.TYPE_0.dump"
+stdout = "expected/registry/STRATEGY.TYPE_0.stdout"
 
 [[input]]
 id = "registry:STRATEGY.TYPE:1"
@@ -924,6 +1038,7 @@ target = "targets/registry/STRATEGY.TYPE_1.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/STRATEGY.TYPE_1.dump"
+stdout = "expected/registry/STRATEGY.TYPE_1.stdout"
 
 [[input]]
 id = "registry:STRATEGY.N_STARTS:0"
@@ -932,6 +1047,7 @@ target = "targets/registry/STRATEGY.N_STARTS_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/STRATEGY.N_STARTS_0.dump"
+stdout = "expected/registry/STRATEGY.N_STARTS_0.stdout"
 
 [[input]]
 id = "registry:STRATEGY.N_STARTS:1"
@@ -940,6 +1056,7 @@ target = "targets/registry/STRATEGY.N_STARTS_1.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/STRATEGY.N_STARTS_1.dump"
+stdout = "expected/registry/STRATEGY.N_STARTS_1.stdout"
 
 [[input]]
 id = "registry:STRATEGY.BUDGET_PER_START:0"
@@ -948,6 +1065,7 @@ target = "targets/registry/STRATEGY.BUDGET_PER_START_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/STRATEGY.BUDGET_PER_START_0.dump"
+stdout = "expected/registry/STRATEGY.BUDGET_PER_START_0.stdout"
 
 [[input]]
 id = "registry:STRATEGY.TOPK:0"
@@ -956,6 +1074,7 @@ target = "targets/registry/STRATEGY.TOPK_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/STRATEGY.TOPK_0.dump"
+stdout = "expected/registry/STRATEGY.TOPK_0.stdout"
 
 [[input]]
 id = "registry:INIT.METHOD:0"
@@ -964,6 +1083,7 @@ target = "targets/registry/INIT.METHOD_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/INIT.METHOD_0.dump"
+stdout = "expected/registry/INIT.METHOD_0.stdout"
 
 [[input]]
 id = "registry:INIT.METHOD:1"
@@ -972,6 +1092,7 @@ target = "targets/registry/INIT.METHOD_1.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/INIT.METHOD_1.dump"
+stdout = "expected/registry/INIT.METHOD_1.stdout"
 
 [[input]]
 id = "registry:INIT.METHOD:2"
@@ -980,6 +1101,7 @@ target = "targets/registry/INIT.METHOD_2.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/INIT.METHOD_2.dump"
+stdout = "expected/registry/INIT.METHOD_2.stdout"
 
 [[input]]
 id = "registry:INIT.METHOD:3"
@@ -988,6 +1110,7 @@ target = "targets/registry/INIT.METHOD_3.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/INIT.METHOD_3.dump"
+stdout = "expected/registry/INIT.METHOD_3.stdout"
 
 [[input]]
 id = "registry:INIT.K_TOTAL:0"
@@ -996,6 +1119,7 @@ target = "targets/registry/INIT.K_TOTAL_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/INIT.K_TOTAL_0.dump"
+stdout = "expected/registry/INIT.K_TOTAL_0.stdout"
 
 [[input]]
 id = "registry:INIT.K_TOTAL:1"
@@ -1004,6 +1128,7 @@ target = "targets/registry/INIT.K_TOTAL_1.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/INIT.K_TOTAL_1.dump"
+stdout = "expected/registry/INIT.K_TOTAL_1.stdout"
 
 [[input]]
 id = "registry:INIT.SEED:0"
@@ -1012,6 +1137,7 @@ target = "targets/registry/INIT.SEED_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/INIT.SEED_0.dump"
+stdout = "expected/registry/INIT.SEED_0.stdout"
 
 [[input]]
 id = "registry:INIT.WARM_ON_MISMATCH:0"
@@ -1020,6 +1146,7 @@ target = "targets/registry/INIT.WARM_ON_MISMATCH_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/INIT.WARM_ON_MISMATCH_0.dump"
+stdout = "expected/registry/INIT.WARM_ON_MISMATCH_0.stdout"
 
 [[input]]
 id = "registry:INIT.WARM_ON_MISMATCH:1"
@@ -1028,6 +1155,7 @@ target = "targets/registry/INIT.WARM_ON_MISMATCH_1.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/INIT.WARM_ON_MISMATCH_1.dump"
+stdout = "expected/registry/INIT.WARM_ON_MISMATCH_1.stdout"
 
 [[input]]
 id = "registry:INIT.WARM_ON_MISMATCH:2"
@@ -1036,6 +1164,8 @@ target = "targets/registry/INIT.WARM_ON_MISMATCH_2.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/INIT.WARM_ON_MISMATCH_2.dump"
+stdout = "expected/registry/INIT.WARM_ON_MISMATCH_2.stdout"
+stderr = "expected/registry/INIT.WARM_ON_MISMATCH_2.stderr"
 
 [[input]]
 id = "registry:NOISE.AUTO:0"
@@ -1044,6 +1174,7 @@ target = "targets/registry/NOISE.AUTO_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/NOISE.AUTO_0.dump"
+stdout = "expected/registry/NOISE.AUTO_0.stdout"
 
 [[input]]
 id = "registry:NOISE.AUTO:1"
@@ -1052,6 +1183,7 @@ target = "targets/registry/NOISE.AUTO_1.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/NOISE.AUTO_1.dump"
+stdout = "expected/registry/NOISE.AUTO_1.stdout"
 
 [[input]]
 id = "registry:NOISE.AUTO:2"
@@ -1060,6 +1192,7 @@ target = "targets/registry/NOISE.AUTO_2.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/NOISE.AUTO_2.dump"
+stdout = "expected/registry/NOISE.AUTO_2.stdout"
 
 [[input]]
 id = "registry:NOISE.CALIBRATION:0"
@@ -1068,6 +1201,7 @@ target = "targets/registry/NOISE.CALIBRATION_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/NOISE.CALIBRATION_0.dump"
+stdout = "expected/registry/NOISE.CALIBRATION_0.stdout"
 
 [[input]]
 id = "registry:NOISE.CALIBRATION:1"
@@ -1076,6 +1210,7 @@ target = "targets/registry/NOISE.CALIBRATION_1.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/NOISE.CALIBRATION_1.dump"
+stdout = "expected/registry/NOISE.CALIBRATION_1.stdout"
 
 [[input]]
 id = "registry:RESTART.AFTER_STAGNATION:0"
@@ -1084,6 +1219,7 @@ target = "targets/registry/RESTART.AFTER_STAGNATION_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/RESTART.AFTER_STAGNATION_0.dump"
+stdout = "expected/registry/RESTART.AFTER_STAGNATION_0.stdout"
 
 [[input]]
 id = "registry:RESTART.MAX:0"
@@ -1092,6 +1228,7 @@ target = "targets/registry/RESTART.MAX_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/RESTART.MAX_0.dump"
+stdout = "expected/registry/RESTART.MAX_0.stdout"
 
 [[input]]
 id = "registry:ROOT.PC_EMAE:0"
@@ -1100,6 +1237,7 @@ target = "targets/registry/ROOT.PC_EMAE_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/ROOT.PC_EMAE_0.dump"
+stdout = "expected/registry/ROOT.PC_EMAE_0.stdout"
 
 [[input]]
 id = "registry:ROOT.PC_EMAE:1"
@@ -1108,6 +1246,7 @@ target = "targets/registry/ROOT.PC_EMAE_1.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/ROOT.PC_EMAE_1.dump"
+stdout = "expected/registry/ROOT.PC_EMAE_1.stdout"
 
 [[input]]
 id = "registry:ROOT.PC_ERMSE:0"
@@ -1116,6 +1255,7 @@ target = "targets/registry/ROOT.PC_ERMSE_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/ROOT.PC_ERMSE_0.dump"
+stdout = "expected/registry/ROOT.PC_ERMSE_0.stdout"
 
 [[input]]
 id = "registry:ROOT.PC_ERMSE:1"
@@ -1124,6 +1264,7 @@ target = "targets/registry/ROOT.PC_ERMSE_1.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/ROOT.PC_ERMSE_1.dump"
+stdout = "expected/registry/ROOT.PC_ERMSE_1.stdout"
 
 [[input]]
 id = "registry:ROOT.PC_ErRMSE:0"
@@ -1132,6 +1273,7 @@ target = "targets/registry/ROOT.PC_ErRMSE_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/ROOT.PC_ErRMSE_0.dump"
+stdout = "expected/registry/ROOT.PC_ErRMSE_0.stdout"
 
 [[input]]
 id = "registry:ROOT.PC_ERSQ:0"
@@ -1140,6 +1282,7 @@ target = "targets/registry/ROOT.PC_ERSQ_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/ROOT.PC_ERSQ_0.dump"
+stdout = "expected/registry/ROOT.PC_ERSQ_0.stdout"
 
 [[input]]
 id = "registry:ROOT.PC_SRMSE_GPA:0"
@@ -1148,6 +1291,7 @@ target = "targets/registry/ROOT.PC_SRMSE_GPA_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/ROOT.PC_SRMSE_GPA_0.dump"
+stdout = "expected/registry/ROOT.PC_SRMSE_GPA_0.stdout"
 
 [[input]]
 id = "registry:ROOT.PC_SRMSE_GPA:1"
@@ -1156,6 +1300,7 @@ target = "targets/registry/ROOT.PC_SRMSE_GPA_1.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/ROOT.PC_SRMSE_GPA_1.dump"
+stdout = "expected/registry/ROOT.PC_SRMSE_GPA_1.stdout"
 
 [[input]]
 id = "registry:ROOT.PC_FRMSE:0"
@@ -1164,6 +1309,7 @@ target = "targets/registry/ROOT.PC_FRMSE_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/ROOT.PC_FRMSE_0.dump"
+stdout = "expected/registry/ROOT.PC_FRMSE_0.stdout"
 
 [[input]]
 id = "registry:ROOT.PC_FRMSE:1"
@@ -1172,6 +1318,7 @@ target = "targets/registry/ROOT.PC_FRMSE_1.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/ROOT.PC_FRMSE_1.dump"
+stdout = "expected/registry/ROOT.PC_FRMSE_1.stdout"
 
 [[input]]
 id = "registry:ROOT.PC_LAMMPS:0"
@@ -1180,6 +1327,7 @@ target = "targets/registry/ROOT.PC_LAMMPS_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/ROOT.PC_LAMMPS_0.dump"
+stdout = "expected/registry/ROOT.PC_LAMMPS_0.stdout"
 
 [[input]]
 id = "registry:ROOT.PC_LAMMPS:1"
@@ -1188,6 +1336,7 @@ target = "targets/registry/ROOT.PC_LAMMPS_1.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/ROOT.PC_LAMMPS_1.dump"
+stdout = "expected/registry/ROOT.PC_LAMMPS_1.stdout"
 
 [[input]]
 id = "registry:ROOT.PC_LAMMPS:2"
@@ -1196,6 +1345,7 @@ target = "targets/registry/ROOT.PC_LAMMPS_2.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/ROOT.PC_LAMMPS_2.dump"
+stdout = "expected/registry/ROOT.PC_LAMMPS_2.stdout"
 
 [[input]]
 id = "registry:ROOT.PC_FAILPROBE:0"
@@ -1204,6 +1354,7 @@ target = "targets/registry/ROOT.PC_FAILPROBE_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/ROOT.PC_FAILPROBE_0.dump"
+stdout = "expected/registry/ROOT.PC_FAILPROBE_0.stdout"
 
 [[input]]
 id = "registry:ROOT.PC_FAILPROBE:1"
@@ -1212,6 +1363,7 @@ target = "targets/registry/ROOT.PC_FAILPROBE_1.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/ROOT.PC_FAILPROBE_1.dump"
+stdout = "expected/registry/ROOT.PC_FAILPROBE_1.stdout"
 
 [[input]]
 id = "registry:ROOT.PC_OBSERVABLE:0"
@@ -1220,6 +1372,7 @@ target = "targets/registry/ROOT.PC_OBSERVABLE_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/ROOT.PC_OBSERVABLE_0.dump"
+stdout = "expected/registry/ROOT.PC_OBSERVABLE_0.stdout"
 
 [[input]]
 id = "registry:ROOT.LOSS:0"
@@ -1228,6 +1381,7 @@ target = "targets/registry/ROOT.LOSS_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/ROOT.LOSS_0.dump"
+stdout = "expected/registry/ROOT.LOSS_0.stdout"
 
 [[input]]
 id = "registry:ROOT.LOSS:1"
@@ -1236,6 +1390,7 @@ target = "targets/registry/ROOT.LOSS_1.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/ROOT.LOSS_1.dump"
+stdout = "expected/registry/ROOT.LOSS_1.stdout"
 
 [[input]]
 id = "registry:ROOT.OPTIM:0"
@@ -1244,6 +1399,7 @@ target = "targets/registry/ROOT.OPTIM_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/ROOT.OPTIM_0.dump"
+stdout = "expected/registry/ROOT.OPTIM_0.stdout"
 
 [[input]]
 id = "registry:ROOT.OPTIM:1"
@@ -1252,6 +1408,7 @@ target = "targets/registry/ROOT.OPTIM_1.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/ROOT.OPTIM_1.dump"
+stdout = "expected/registry/ROOT.OPTIM_1.stdout"
 
 [[input]]
 id = "registry:RHOGATE.R_LO:0"
@@ -1260,6 +1417,7 @@ target = "targets/registry/RHOGATE.R_LO_0.hpo"
 config = "configs/main_ream.tadah"
 tree = "fixtures"
 expected = "expected/registry/RHOGATE.R_LO_0.dump"
+stdout = "expected/registry/RHOGATE.R_LO_0.stdout"
 
 [[input]]
 id = "registry:RHOGATE.NPTS:0"
@@ -1268,6 +1426,7 @@ target = "targets/registry/RHOGATE.NPTS_0.hpo"
 config = "configs/main_ream.tadah"
 tree = "fixtures"
 expected = "expected/registry/RHOGATE.NPTS_0.dump"
+stdout = "expected/registry/RHOGATE.NPTS_0.stdout"
 
 [[input]]
 id = "registry:RHOGATE.SEED:0"
@@ -1276,6 +1435,7 @@ target = "targets/registry/RHOGATE.SEED_0.hpo"
 config = "configs/main_ream.tadah"
 tree = "fixtures"
 expected = "expected/registry/RHOGATE.SEED_0.dump"
+stdout = "expected/registry/RHOGATE.SEED_0.stdout"
 
 [[input]]
 id = "registry:RHOGATE.SEED:1"
@@ -1284,6 +1444,7 @@ target = "targets/registry/RHOGATE.SEED_1.hpo"
 config = "configs/main_ream.tadah"
 tree = "fixtures"
 expected = "expected/registry/RHOGATE.SEED_1.dump"
+stdout = "expected/registry/RHOGATE.SEED_1.stdout"
 
 [[input]]
 id = "registry:RHOBARGATE.NPTS:0"
@@ -1292,6 +1453,7 @@ target = "targets/registry/RHOBARGATE.NPTS_0.hpo"
 config = "configs/main_ream.tadah"
 tree = "fixtures"
 expected = "expected/registry/RHOBARGATE.NPTS_0.dump"
+stdout = "expected/registry/RHOBARGATE.NPTS_0.stdout"
 
 [[input]]
 id = "registry:RHOBARGATE.SEED:0"
@@ -1300,6 +1462,7 @@ target = "targets/registry/RHOBARGATE.SEED_0.hpo"
 config = "configs/main_ream.tadah"
 tree = "fixtures"
 expected = "expected/registry/RHOBARGATE.SEED_0.dump"
+stdout = "expected/registry/RHOBARGATE.SEED_0.stdout"
 
 [[input]]
 id = "registry:RHOBARGATE.SEED:1"
@@ -1308,6 +1471,7 @@ target = "targets/registry/RHOBARGATE.SEED_1.hpo"
 config = "configs/main_ream.tadah"
 tree = "fixtures"
 expected = "expected/registry/RHOBARGATE.SEED_1.dump"
+stdout = "expected/registry/RHOBARGATE.SEED_1.stdout"
 
 [[input]]
 id = "registry:PC_EMAE.--skip-above:0"
@@ -1316,6 +1480,7 @@ target = "targets/registry/PC_EMAE.--skip-above_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PC_EMAE.--skip-above_0.dump"
+stdout = "expected/registry/PC_EMAE.--skip-above_0.stdout"
 
 [[input]]
 id = "registry:PC_EMAE.--skip-rel:0"
@@ -1324,6 +1489,7 @@ target = "targets/registry/PC_EMAE.--skip-rel_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PC_EMAE.--skip-rel_0.dump"
+stdout = "expected/registry/PC_EMAE.--skip-rel_0.stdout"
 
 [[input]]
 id = "registry:PC_LAMMPS.--script:0"
@@ -1332,6 +1498,7 @@ target = "targets/registry/PC_LAMMPS.--script_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PC_LAMMPS.--script_0.dump"
+stdout = "expected/registry/PC_LAMMPS.--script_0.stdout"
 
 [[input]]
 id = "registry:PC_LAMMPS.--varloss:0"
@@ -1340,6 +1507,7 @@ target = "targets/registry/PC_LAMMPS.--varloss_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PC_LAMMPS.--varloss_0.dump"
+stdout = "expected/registry/PC_LAMMPS.--varloss_0.stdout"
 
 [[input]]
 id = "registry:PC_LAMMPS.--varloss:1"
@@ -1348,6 +1516,7 @@ target = "targets/registry/PC_LAMMPS.--varloss_1.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PC_LAMMPS.--varloss_1.dump"
+stdout = "expected/registry/PC_LAMMPS.--varloss_1.stdout"
 
 [[input]]
 id = "registry:PC_LAMMPS.--invar:0"
@@ -1356,6 +1525,7 @@ target = "targets/registry/PC_LAMMPS.--invar_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PC_LAMMPS.--invar_0.dump"
+stdout = "expected/registry/PC_LAMMPS.--invar_0.stdout"
 
 [[input]]
 id = "registry:PC_LAMMPS.--outvar:0"
@@ -1364,6 +1534,7 @@ target = "targets/registry/PC_LAMMPS.--outvar_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PC_LAMMPS.--outvar_0.dump"
+stdout = "expected/registry/PC_LAMMPS.--outvar_0.stdout"
 
 [[input]]
 id = "registry:PC_LAMMPS.--failscore:0"
@@ -1372,6 +1543,7 @@ target = "targets/registry/PC_LAMMPS.--failscore_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PC_LAMMPS.--failscore_0.dump"
+stdout = "expected/registry/PC_LAMMPS.--failscore_0.stdout"
 
 [[input]]
 id = "registry:PC_LAMMPS.--maxtime:0"
@@ -1380,6 +1552,7 @@ target = "targets/registry/PC_LAMMPS.--maxtime_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PC_LAMMPS.--maxtime_0.dump"
+stdout = "expected/registry/PC_LAMMPS.--maxtime_0.stdout"
 
 [[input]]
 id = "registry:PC_LAMMPS.--maxtime:1"
@@ -1388,6 +1561,7 @@ target = "targets/registry/PC_LAMMPS.--maxtime_1.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PC_LAMMPS.--maxtime_1.dump"
+stdout = "expected/registry/PC_LAMMPS.--maxtime_1.stdout"
 
 [[input]]
 id = "registry:PC_LAMMPS.--hotvar:0"
@@ -1396,6 +1570,7 @@ target = "targets/registry/PC_LAMMPS.--hotvar_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PC_LAMMPS.--hotvar_0.dump"
+stdout = "expected/registry/PC_LAMMPS.--hotvar_0.stdout"
 
 [[input]]
 id = "registry:PC_LAMMPS.--failvar:0"
@@ -1404,6 +1579,7 @@ target = "targets/registry/PC_LAMMPS.--failvar_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PC_LAMMPS.--failvar_0.dump"
+stdout = "expected/registry/PC_LAMMPS.--failvar_0.stdout"
 
 [[input]]
 id = "registry:PC_LAMMPS.--failvar:1"
@@ -1412,6 +1588,7 @@ target = "targets/registry/PC_LAMMPS.--failvar_1.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PC_LAMMPS.--failvar_1.dump"
+stdout = "expected/registry/PC_LAMMPS.--failvar_1.stdout"
 
 [[input]]
 id = "registry:PC_FAILPROBE.--gate:0"
@@ -1420,6 +1597,7 @@ target = "targets/registry/PC_FAILPROBE.--gate_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PC_FAILPROBE.--gate_0.dump"
+stdout = "expected/registry/PC_FAILPROBE.--gate_0.stdout"
 
 [[input]]
 id = "registry:PC_FAILPROBE.--s0:0"
@@ -1428,6 +1606,7 @@ target = "targets/registry/PC_FAILPROBE.--s0_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PC_FAILPROBE.--s0_0.dump"
+stdout = "expected/registry/PC_FAILPROBE.--s0_0.stdout"
 
 [[input]]
 id = "registry:PC_OBSERVABLE.cohesive_energy.--species:0"
@@ -1436,6 +1615,7 @@ target = "targets/registry/PC_OBSERVABLE.cohesive_energy.--species_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PC_OBSERVABLE.cohesive_energy.--species_0.dump"
+stdout = "expected/registry/PC_OBSERVABLE.cohesive_energy.--species_0.stdout"
 
 [[input]]
 id = "registry:PC_OBSERVABLE.cohesive_energy.--target:0"
@@ -1444,6 +1624,7 @@ target = "targets/registry/PC_OBSERVABLE.cohesive_energy.--target_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PC_OBSERVABLE.cohesive_energy.--target_0.dump"
+stdout = "expected/registry/PC_OBSERVABLE.cohesive_energy.--target_0.stdout"
 
 [[input]]
 id = "registry:PC_OBSERVABLE.cohesive_energy.--weight:0"
@@ -1452,6 +1633,7 @@ target = "targets/registry/PC_OBSERVABLE.cohesive_energy.--weight_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PC_OBSERVABLE.cohesive_energy.--weight_0.dump"
+stdout = "expected/registry/PC_OBSERVABLE.cohesive_energy.--weight_0.stdout"
 
 [[input]]
 id = "registry:PC_OBSERVABLE.cohesive_energy.--hotvar:0"
@@ -1460,6 +1642,7 @@ target = "targets/registry/PC_OBSERVABLE.cohesive_energy.--hotvar_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PC_OBSERVABLE.cohesive_energy.--hotvar_0.dump"
+stdout = "expected/registry/PC_OBSERVABLE.cohesive_energy.--hotvar_0.stdout"
 
 [[input]]
 id = "registry:PC_OBSERVABLE.cohesive_energy.--lattice:0"
@@ -1468,6 +1651,7 @@ target = "targets/registry/PC_OBSERVABLE.cohesive_energy.--lattice_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PC_OBSERVABLE.cohesive_energy.--lattice_0.dump"
+stdout = "expected/registry/PC_OBSERVABLE.cohesive_energy.--lattice_0.stdout"
 
 [[input]]
 id = "registry:PC_OBSERVABLE.cohesive_energy.--supercell:0"
@@ -1476,6 +1660,7 @@ target = "targets/registry/PC_OBSERVABLE.cohesive_energy.--supercell_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PC_OBSERVABLE.cohesive_energy.--supercell_0.dump"
+stdout = "expected/registry/PC_OBSERVABLE.cohesive_energy.--supercell_0.stdout"
 
 [[input]]
 id = "registry:PC_OBSERVABLE.cohesive_energy.--loss:0"
@@ -1484,6 +1669,7 @@ target = "targets/registry/PC_OBSERVABLE.cohesive_energy.--loss_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PC_OBSERVABLE.cohesive_energy.--loss_0.dump"
+stdout = "expected/registry/PC_OBSERVABLE.cohesive_energy.--loss_0.stdout"
 
 [[input]]
 id = "registry:PC_OBSERVABLE.cohesive_energy.--loss:1"
@@ -1492,6 +1678,7 @@ target = "targets/registry/PC_OBSERVABLE.cohesive_energy.--loss_1.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PC_OBSERVABLE.cohesive_energy.--loss_1.dump"
+stdout = "expected/registry/PC_OBSERVABLE.cohesive_energy.--loss_1.stdout"
 
 [[input]]
 id = "registry:PC_OBSERVABLE.cohesive_energy.--maxiter:0"
@@ -1500,6 +1687,7 @@ target = "targets/registry/PC_OBSERVABLE.cohesive_energy.--maxiter_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PC_OBSERVABLE.cohesive_energy.--maxiter_0.dump"
+stdout = "expected/registry/PC_OBSERVABLE.cohesive_energy.--maxiter_0.stdout"
 
 [[input]]
 id = "registry:PC_OBSERVABLE.cohesive_energy.--maxeval:0"
@@ -1508,6 +1696,7 @@ target = "targets/registry/PC_OBSERVABLE.cohesive_energy.--maxeval_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PC_OBSERVABLE.cohesive_energy.--maxeval_0.dump"
+stdout = "expected/registry/PC_OBSERVABLE.cohesive_energy.--maxeval_0.stdout"
 
 [[input]]
 id = "registry:PC_OBSERVABLE.cohesive_energy.--max-wall-time:0"
@@ -1516,6 +1705,7 @@ target = "targets/registry/PC_OBSERVABLE.cohesive_energy.--max-wall-time_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PC_OBSERVABLE.cohesive_energy.--max-wall-time_0.dump"
+stdout = "expected/registry/PC_OBSERVABLE.cohesive_energy.--max-wall-time_0.stdout"
 
 [[input]]
 id = "registry:PC_OBSERVABLE.cohesive_energy.--max-wall-time:1"
@@ -1524,6 +1714,7 @@ target = "targets/registry/PC_OBSERVABLE.cohesive_energy.--max-wall-time_1.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PC_OBSERVABLE.cohesive_energy.--max-wall-time_1.dump"
+stdout = "expected/registry/PC_OBSERVABLE.cohesive_energy.--max-wall-time_1.stdout"
 
 [[input]]
 id = "registry:PC_OBSERVABLE.cohesive_energy.--etol:0"
@@ -1532,6 +1723,7 @@ target = "targets/registry/PC_OBSERVABLE.cohesive_energy.--etol_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PC_OBSERVABLE.cohesive_energy.--etol_0.dump"
+stdout = "expected/registry/PC_OBSERVABLE.cohesive_energy.--etol_0.stdout"
 
 [[input]]
 id = "registry:PC_OBSERVABLE.cohesive_energy.--etol:1"
@@ -1540,6 +1732,7 @@ target = "targets/registry/PC_OBSERVABLE.cohesive_energy.--etol_1.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PC_OBSERVABLE.cohesive_energy.--etol_1.dump"
+stdout = "expected/registry/PC_OBSERVABLE.cohesive_energy.--etol_1.stdout"
 
 [[input]]
 id = "registry:PC_OBSERVABLE.cohesive_energy.--fmax-converged:0"
@@ -1548,6 +1741,7 @@ target = "targets/registry/PC_OBSERVABLE.cohesive_energy.--fmax-converged_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PC_OBSERVABLE.cohesive_energy.--fmax-converged_0.dump"
+stdout = "expected/registry/PC_OBSERVABLE.cohesive_energy.--fmax-converged_0.stdout"
 
 [[input]]
 id = "registry:PC_OBSERVABLE.cohesive_energy.--ptol:0"
@@ -1556,6 +1750,7 @@ target = "targets/registry/PC_OBSERVABLE.cohesive_energy.--ptol_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PC_OBSERVABLE.cohesive_energy.--ptol_0.dump"
+stdout = "expected/registry/PC_OBSERVABLE.cohesive_energy.--ptol_0.stdout"
 
 [[input]]
 id = "registry:PC_OBSERVABLE.cohesive_energy.--unconverged:0"
@@ -1564,6 +1759,7 @@ target = "targets/registry/PC_OBSERVABLE.cohesive_energy.--unconverged_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PC_OBSERVABLE.cohesive_energy.--unconverged_0.dump"
+stdout = "expected/registry/PC_OBSERVABLE.cohesive_energy.--unconverged_0.stdout"
 
 [[input]]
 id = "registry:PC_OBSERVABLE.cohesive_energy.--unconverged:1"
@@ -1572,6 +1768,7 @@ target = "targets/registry/PC_OBSERVABLE.cohesive_energy.--unconverged_1.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PC_OBSERVABLE.cohesive_energy.--unconverged_1.dump"
+stdout = "expected/registry/PC_OBSERVABLE.cohesive_energy.--unconverged_1.stdout"
 
 [[input]]
 id = "registry:OPTIM.AUTO.RATIO:0"
@@ -1580,6 +1777,7 @@ target = "targets/registry/OPTIM.AUTO.RATIO_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/OPTIM.AUTO.RATIO_0.dump"
+stdout = "expected/registry/OPTIM.AUTO.RATIO_0.stdout"
 
 [[input]]
 id = "registry:OPTIM.AUTO.FRAC:0"
@@ -1588,6 +1786,7 @@ target = "targets/registry/OPTIM.AUTO.FRAC_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/OPTIM.AUTO.FRAC_0.dump"
+stdout = "expected/registry/OPTIM.AUTO.FRAC_0.stdout"
 
 [[input]]
 id = "registry:OPTIM.AUTO.FRAC:1"
@@ -1596,6 +1795,7 @@ target = "targets/registry/OPTIM.AUTO.FRAC_1.hpo"
 config = "configs/lines_zero_seed.tadah"
 tree = "fixtures"
 expected = "expected/registry/OPTIM.AUTO.FRAC_1.dump"
+stdout = "expected/registry/OPTIM.AUTO.FRAC_1.stdout"
 
 [[input]]
 id = "registry:OPTIM.AUTO.FLOOR:0"
@@ -1604,6 +1804,7 @@ target = "targets/registry/OPTIM.AUTO.FLOOR_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/OPTIM.AUTO.FLOOR_0.dump"
+stdout = "expected/registry/OPTIM.AUTO.FLOOR_0.stdout"
 
 [[input]]
 id = "registry:OPTIM.AUTO.GROUP_FLOOR:0"
@@ -1612,6 +1813,7 @@ target = "targets/registry/OPTIM.AUTO.GROUP_FLOOR_0.hpo"
 config = "configs/lines_zero_seed.tadah"
 tree = "fixtures"
 expected = "expected/registry/OPTIM.AUTO.GROUP_FLOOR_0.dump"
+stdout = "expected/registry/OPTIM.AUTO.GROUP_FLOOR_0.stdout"
 
 [[input]]
 id = "registry:OPTIM.LIN:0"
@@ -1620,6 +1822,7 @@ target = "targets/registry/OPTIM.LIN_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/OPTIM.LIN_0.dump"
+stdout = "expected/registry/OPTIM.LIN_0.stdout"
 
 [[input]]
 id = "registry:OPTIM.LOG:0"
@@ -1628,6 +1831,7 @@ target = "targets/registry/OPTIM.LOG_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/OPTIM.LOG_0.dump"
+stdout = "expected/registry/OPTIM.LOG_0.stdout"
 
 [[input]]
 id = "registry:OPTIM.ASINH:0"
@@ -1636,6 +1840,7 @@ target = "targets/registry/OPTIM.ASINH_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/OPTIM.ASINH_0.dump"
+stdout = "expected/registry/OPTIM.ASINH_0.stdout"
 
 [[input]]
 id = "registry:PC_OBSERVABLE.cohesive_energy:0"
@@ -1644,6 +1849,7 @@ target = "targets/registry/PC_OBSERVABLE.cohesive_energy_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PC_OBSERVABLE.cohesive_energy_0.dump"
+stdout = "expected/registry/PC_OBSERVABLE.cohesive_energy_0.stdout"
 
 [[input]]
 id = "registry:OPTIM.range:0"
@@ -1652,6 +1858,7 @@ target = "targets/registry/OPTIM.range_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/OPTIM.range_0.dump"
+stdout = "expected/registry/OPTIM.range_0.stdout"
 
 [[input]]
 id = "registry:OPTIM.range:1"
@@ -1660,6 +1867,7 @@ target = "targets/registry/OPTIM.range_1.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/OPTIM.range_1.dump"
+stdout = "expected/registry/OPTIM.range_1.stdout"
 
 [[input]]
 id = "registry:OPTIM.AUTO:0"
@@ -1668,6 +1876,7 @@ target = "targets/registry/OPTIM.AUTO_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/OPTIM.AUTO_0.dump"
+stdout = "expected/registry/OPTIM.AUTO_0.stdout"
 
 [[input]]
 id = "registry:OPTIM.AUTO:1"
@@ -1676,6 +1885,7 @@ target = "targets/registry/OPTIM.AUTO_1.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/OPTIM.AUTO_1.dump"
+stdout = "expected/registry/OPTIM.AUTO_1.stdout"
 
 [[input]]
 id = "registry:OPTIM.AUTO:2"
@@ -1684,6 +1894,7 @@ target = "targets/registry/OPTIM.AUTO_2.hpo"
 config = "configs/lines_zero_width.tadah"
 tree = "fixtures"
 expected = "expected/registry/OPTIM.AUTO_2.dump"
+stdout = "expected/registry/OPTIM.AUTO_2.stdout"
 
 [[input]]
 id = "registry:RULE.density_key_arming:0"
@@ -1692,6 +1903,7 @@ target = "targets/registry/RULE.density_key_arming_0.hpo"
 config = "configs/main_ream.tadah"
 tree = "fixtures"
 expected = "expected/registry/RULE.density_key_arming_0.dump"
+stdout = "expected/registry/RULE.density_key_arming_0.stdout"
 
 [[input]]
 id = "registry:RULE.local_search_needs_stop:0"
@@ -1700,6 +1912,7 @@ target = "targets/registry/RULE.local_search_needs_stop_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/RULE.local_search_needs_stop_0.dump"
+stdout = "expected/registry/RULE.local_search_needs_stop_0.stdout"
 
 [[input]]
 id = "registry:RULE.search_dimensions_required:0"
@@ -1708,6 +1921,7 @@ target = "targets/registry/RULE.search_dimensions_required_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/RULE.search_dimensions_required_0.dump"
+stdout = "expected/registry/RULE.search_dimensions_required_0.stdout"
 
 [[input]]
 id = "registry:RULE.set_once_for_optimiser:0"
@@ -1716,6 +1930,7 @@ target = "targets/registry/RULE.set_once_for_optimiser_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/RULE.set_once_for_optimiser_0.dump"
+stdout = "expected/registry/RULE.set_once_for_optimiser_0.stdout"
 
 [[input]]
 id = "registry:RULE.set_once_for_starting_points:0"
@@ -1724,6 +1939,7 @@ target = "targets/registry/RULE.set_once_for_starting_points_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/RULE.set_once_for_starting_points_0.dump"
+stdout = "expected/registry/RULE.set_once_for_starting_points_0.stdout"
 
 [[input]]
 id = "registry:RULE.OPTIM_MPARAMS:0"
@@ -1732,6 +1948,7 @@ target = "targets/registry/RULE.OPTIM_MPARAMS_0.hpo"
 config = "configs/lines_rbf.tadah"
 tree = "fixtures"
 expected = "expected/registry/RULE.OPTIM_MPARAMS_0.dump"
+stdout = "expected/registry/RULE.OPTIM_MPARAMS_0.stdout"
 
 [[input]]
 id = "registry:RULE.settings_taken_by_lines:0"
@@ -1740,6 +1957,7 @@ target = "targets/registry/RULE.settings_taken_by_lines_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/RULE.settings_taken_by_lines_0.dump"
+stdout = "expected/registry/RULE.settings_taken_by_lines_0.stdout"
 
 [[input]]
 id = "registry:RULE.PC_LAMMPS_hotvar_unique:0"
@@ -1748,6 +1966,7 @@ target = "targets/registry/RULE.PC_LAMMPS_hotvar_unique_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/RULE.PC_LAMMPS_hotvar_unique_0.dump"
+stdout = "expected/registry/RULE.PC_LAMMPS_hotvar_unique_0.stdout"
 
 [[input]]
 id = "registry:RULE.PC_OBSERVABLE_GRAD_STRATEGY:0"
@@ -1756,6 +1975,7 @@ target = "targets/registry/RULE.PC_OBSERVABLE_GRAD_STRATEGY_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/RULE.PC_OBSERVABLE_GRAD_STRATEGY_0.dump"
+stdout = "expected/registry/RULE.PC_OBSERVABLE_GRAD_STRATEGY_0.stdout"
 
 [[input]]
 id = "registry:RULE.PC_LAMMPS_gradient_free:0"
@@ -1764,6 +1984,7 @@ target = "targets/registry/RULE.PC_LAMMPS_gradient_free_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/RULE.PC_LAMMPS_gradient_free_0.dump"
+stdout = "expected/registry/RULE.PC_LAMMPS_gradient_free_0.stdout"
 
 [[input]]
 id = "registry:RULE.PC_LAMMPS_INNER_gradient_free:0"
@@ -1772,6 +1993,7 @@ target = "targets/registry/RULE.PC_LAMMPS_INNER_gradient_free_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/RULE.PC_LAMMPS_INNER_gradient_free_0.dump"
+stdout = "expected/registry/RULE.PC_LAMMPS_INNER_gradient_free_0.stdout"
 
 [[input]]
 id = "registry:RULE.OPTIM_LAMBDA_evidence:0"
@@ -1780,6 +2002,7 @@ target = "targets/registry/RULE.OPTIM_LAMBDA_evidence_0.hpo"
 config = "configs/lines_oalgo.tadah"
 tree = "fixtures"
 expected = "expected/registry/RULE.OPTIM_LAMBDA_evidence_0.dump"
+stdout = "expected/registry/RULE.OPTIM_LAMBDA_evidence_0.stdout"
 
 [[input]]
 id = "registry:RULE.OPTIM_OALGO_threshold_box:0"
@@ -1788,6 +2011,7 @@ target = "targets/registry/RULE.OPTIM_OALGO_threshold_box_0.hpo"
 config = "configs/lines_oalgo.tadah"
 tree = "fixtures"
 expected = "expected/registry/RULE.OPTIM_OALGO_threshold_box_0.dump"
+stdout = "expected/registry/RULE.OPTIM_OALGO_threshold_box_0.stdout"
 
 [[input]]
 id = "registry:RULE.optim_relative_error_scale:0"
@@ -1796,6 +2020,7 @@ target = "targets/registry/RULE.optim_relative_error_scale_0.hpo"
 config = "configs/lines_force_relative.tadah"
 tree = "fixtures"
 expected = "expected/registry/RULE.optim_relative_error_scale_0.dump"
+stdout = "expected/registry/RULE.optim_relative_error_scale_0.stdout"
 
 [[input]]
 id = "registry:RULE.fit_krr_implementation2_ignores:0"
@@ -1804,6 +2029,7 @@ target = "targets/registry/RULE.fit_krr_implementation2_ignores_0.hpo"
 config = "configs/lines_krr2.tadah"
 tree = "fixtures"
 expected = "expected/registry/RULE.fit_krr_implementation2_ignores_0.dump"
+stdout = "expected/registry/RULE.fit_krr_implementation2_ignores_0.stdout"
 
 [[input]]
 id = "registry:RULE.fit_krr_implementation2_ignores:1"
@@ -1812,6 +2038,7 @@ target = "targets/registry/RULE.fit_krr_implementation2_ignores_1.hpo"
 config = "configs/lines_krr2.tadah"
 tree = "fixtures"
 expected = "expected/registry/RULE.fit_krr_implementation2_ignores_1.dump"
+stdout = "expected/registry/RULE.fit_krr_implementation2_ignores_1.stdout"
 
 [[input]]
 id = "registry:RULE.optim_error_scale_quantity_off:0"
@@ -1820,6 +2047,7 @@ target = "targets/registry/RULE.optim_error_scale_quantity_off_0.hpo"
 config = "configs/lines_force.tadah"
 tree = "fixtures"
 expected = "expected/registry/RULE.optim_error_scale_quantity_off_0.dump"
+stdout = "expected/registry/RULE.optim_error_scale_quantity_off_0.stdout"
 
 [[input]]
 id = "registry:RULE.optim_error_scale_only_quantity:0"
@@ -1828,6 +2056,7 @@ target = "targets/registry/RULE.optim_error_scale_only_quantity_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/RULE.optim_error_scale_only_quantity_0.dump"
+stdout = "expected/registry/RULE.optim_error_scale_only_quantity_0.stdout"
 
 [[input]]
 id = "registry:RULE.optim_wdbfile_one_dataset:0"
@@ -1836,6 +2065,7 @@ target = "targets/registry/RULE.optim_wdbfile_one_dataset_0.hpo"
 config = "configs/lines_wdbfile.tadah"
 tree = "fixtures"
 expected = "expected/registry/RULE.optim_wdbfile_one_dataset_0.dump"
+stdout = "expected/registry/RULE.optim_wdbfile_one_dataset_0.stdout"
 
 [[input]]
 id = "registry:ENV.TADAH_OPTIM_SCALE:0"
@@ -1845,6 +2075,8 @@ config = "configs/default.tadah"
 tree = "fixtures"
 env = { "TADAH_OPTIM_SCALE" = "none" }
 expected = "expected/registry/ENV.TADAH_OPTIM_SCALE_0.dump"
+stdout = "expected/registry/ENV.TADAH_OPTIM_SCALE_0.stdout"
+stderr = "expected/registry/ENV.TADAH_OPTIM_SCALE_0.stderr"
 
 [[input]]
 id = "registry:ENV.TADAH_OPTIM_SCALE:1"
@@ -1854,6 +2086,7 @@ config = "configs/default.tadah"
 tree = "fixtures"
 env = { "TADAH_OPTIM_SCALE" = "" }
 expected = "expected/registry/ENV.TADAH_OPTIM_SCALE_1.dump"
+stdout = "expected/registry/ENV.TADAH_OPTIM_SCALE_1.stdout"
 
 [[input]]
 id = "registry:LOSS.L1:0"
@@ -1862,6 +2095,7 @@ target = "targets/registry/LOSS.L1_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/LOSS.L1_0.dump"
+stdout = "expected/registry/LOSS.L1_0.stdout"
 
 [[input]]
 id = "registry:LOSS.L2:0"
@@ -1870,6 +2104,7 @@ target = "targets/registry/LOSS.L2_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/LOSS.L2_0.dump"
+stdout = "expected/registry/LOSS.L2_0.stdout"
 
 [[input]]
 id = "registry:LOSS.LOG_COSH:0"
@@ -1878,6 +2113,7 @@ target = "targets/registry/LOSS.LOG_COSH_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/LOSS.LOG_COSH_0.dump"
+stdout = "expected/registry/LOSS.LOG_COSH_0.stdout"
 
 [[input]]
 id = "registry:LOSS.MAPE:0"
@@ -1886,6 +2122,7 @@ target = "targets/registry/LOSS.MAPE_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/LOSS.MAPE_0.dump"
+stdout = "expected/registry/LOSS.MAPE_0.stdout"
 
 [[input]]
 id = "registry:LOSS.HUBER:0"
@@ -1894,6 +2131,7 @@ target = "targets/registry/LOSS.HUBER_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/LOSS.HUBER_0.dump"
+stdout = "expected/registry/LOSS.HUBER_0.stdout"
 
 [[input]]
 id = "registry:LOSS.RMSLE:0"
@@ -1902,6 +2140,7 @@ target = "targets/registry/LOSS.RMSLE_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/LOSS.RMSLE_0.dump"
+stdout = "expected/registry/LOSS.RMSLE_0.stdout"
 
 [[input]]
 id = "registry:LOSS.TUKEY:0"
@@ -1910,6 +2149,7 @@ target = "targets/registry/LOSS.TUKEY_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/LOSS.TUKEY_0.dump"
+stdout = "expected/registry/LOSS.TUKEY_0.stdout"
 
 [[input]]
 id = "registry:STRATEGY.TYPE.PLAIN:0"
@@ -1918,6 +2158,7 @@ target = "targets/registry/STRATEGY.TYPE.PLAIN_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/STRATEGY.TYPE.PLAIN_0.dump"
+stdout = "expected/registry/STRATEGY.TYPE.PLAIN_0.stdout"
 
 [[input]]
 id = "registry:STRATEGY.TYPE.MULTISTART:0"
@@ -1926,6 +2167,7 @@ target = "targets/registry/STRATEGY.TYPE.MULTISTART_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/STRATEGY.TYPE.MULTISTART_0.dump"
+stdout = "expected/registry/STRATEGY.TYPE.MULTISTART_0.stdout"
 
 [[input]]
 id = "registry:STRATEGY.TYPE.MULTISTART:1"
@@ -1934,6 +2176,7 @@ target = "targets/registry/STRATEGY.TYPE.MULTISTART_1.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/STRATEGY.TYPE.MULTISTART_1.dump"
+stdout = "expected/registry/STRATEGY.TYPE.MULTISTART_1.stdout"
 
 [[input]]
 id = "registry:STRATEGY.TYPE.PRESTAGE:0"
@@ -1942,6 +2185,7 @@ target = "targets/registry/STRATEGY.TYPE.PRESTAGE_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/STRATEGY.TYPE.PRESTAGE_0.dump"
+stdout = "expected/registry/STRATEGY.TYPE.PRESTAGE_0.stdout"
 
 [[input]]
 id = "registry:METHOD.CONFIG:0"
@@ -1950,6 +2194,7 @@ target = "targets/registry/METHOD.CONFIG_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/METHOD.CONFIG_0.dump"
+stdout = "expected/registry/METHOD.CONFIG_0.stdout"
 
 [[input]]
 id = "registry:METHOD.RANDOM:0"
@@ -1958,6 +2203,7 @@ target = "targets/registry/METHOD.RANDOM_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/METHOD.RANDOM_0.dump"
+stdout = "expected/registry/METHOD.RANDOM_0.stdout"
 
 [[input]]
 id = "registry:METHOD.LHS:0"
@@ -1966,6 +2212,7 @@ target = "targets/registry/METHOD.LHS_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/METHOD.LHS_0.dump"
+stdout = "expected/registry/METHOD.LHS_0.stdout"
 
 [[input]]
 id = "registry:METHOD.SOBOL:0"
@@ -1974,6 +2221,7 @@ target = "targets/registry/METHOD.SOBOL_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/METHOD.SOBOL_0.dump"
+stdout = "expected/registry/METHOD.SOBOL_0.stdout"
 
 [[input]]
 id = "registry:METHOD.WARM:0"
@@ -1982,6 +2230,7 @@ target = "targets/registry/METHOD.WARM_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/METHOD.WARM_0.dump"
+stdout = "expected/registry/METHOD.WARM_0.stdout"
 
 [[input]]
 id = "registry:OPTIM.TARGET.FIXWEIGHT:0"
@@ -1990,6 +2239,7 @@ target = "targets/registry/OPTIM.TARGET.FIXWEIGHT_0.hpo"
 config = "configs/lines_fixweight.tadah"
 tree = "fixtures"
 expected = "expected/registry/OPTIM.TARGET.FIXWEIGHT_0.dump"
+stdout = "expected/registry/OPTIM.TARGET.FIXWEIGHT_0.stdout"
 
 [[input]]
 id = "registry:OPTIM.TARGET.OALGO:0"
@@ -1998,6 +2248,7 @@ target = "targets/registry/OPTIM.TARGET.OALGO_0.hpo"
 config = "configs/lines_oalgo.tadah"
 tree = "fixtures"
 expected = "expected/registry/OPTIM.TARGET.OALGO_0.dump"
+stdout = "expected/registry/OPTIM.TARGET.OALGO_0.stdout"
 
 [[input]]
 id = "registry:OPTIM.TARGET.WDBFILE:0"
@@ -2006,6 +2257,7 @@ target = "targets/registry/OPTIM.TARGET.WDBFILE_0.hpo"
 config = "configs/lines_wdbfile.tadah"
 tree = "fixtures"
 expected = "expected/registry/OPTIM.TARGET.WDBFILE_0.dump"
+stdout = "expected/registry/OPTIM.TARGET.WDBFILE_0.stdout"
 
 [[input]]
 id = "registry:OPTIM.TARGET.ESIGMA:0"
@@ -2014,6 +2266,7 @@ target = "targets/registry/OPTIM.TARGET.ESIGMA_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/OPTIM.TARGET.ESIGMA_0.dump"
+stdout = "expected/registry/OPTIM.TARGET.ESIGMA_0.stdout"
 
 [[input]]
 id = "registry:OPTIM.TARGET.FSIGMA:0"
@@ -2022,6 +2275,7 @@ target = "targets/registry/OPTIM.TARGET.FSIGMA_0.hpo"
 config = "configs/lines_force.tadah"
 tree = "fixtures"
 expected = "expected/registry/OPTIM.TARGET.FSIGMA_0.dump"
+stdout = "expected/registry/OPTIM.TARGET.FSIGMA_0.stdout"
 
 [[input]]
 id = "registry:OPTIM.TARGET.FSIGMA:1"
@@ -2030,6 +2284,7 @@ target = "targets/registry/OPTIM.TARGET.FSIGMA_1.hpo"
 config = "configs/lines_force_relative.tadah"
 tree = "fixtures"
 expected = "expected/registry/OPTIM.TARGET.FSIGMA_1.dump"
+stdout = "expected/registry/OPTIM.TARGET.FSIGMA_1.stdout"
 
 [[input]]
 id = "registry:OPTIM.TARGET.SSIGMA:0"
@@ -2038,6 +2293,7 @@ target = "targets/registry/OPTIM.TARGET.SSIGMA_0.hpo"
 config = "configs/lines_stress.tadah"
 tree = "fixtures"
 expected = "expected/registry/OPTIM.TARGET.SSIGMA_0.dump"
+stdout = "expected/registry/OPTIM.TARGET.SSIGMA_0.stdout"
 
 [[input]]
 id = "registry:OPTIM.TARGET.LAMBDA:0"
@@ -2046,6 +2302,7 @@ target = "targets/registry/OPTIM.TARGET.LAMBDA_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/OPTIM.TARGET.LAMBDA_0.dump"
+stdout = "expected/registry/OPTIM.TARGET.LAMBDA_0.stdout"
 
 [[input]]
 id = "registry:PARAM.TADAH:GRID.GRID_POINTS:0"
@@ -2054,6 +2311,7 @@ target = "targets/registry/PARAM.TADAH_GRID.GRID_POINTS_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PARAM.TADAH_GRID.GRID_POINTS_0.dump"
+stdout = "expected/registry/PARAM.TADAH_GRID.GRID_POINTS_0.stdout"
 
 [[input]]
 id = "registry:PARAM.TADAH:GRID.GRID_POINTS:1"
@@ -2062,6 +2320,7 @@ target = "targets/registry/PARAM.TADAH_GRID.GRID_POINTS_1.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PARAM.TADAH_GRID.GRID_POINTS_1.dump"
+stdout = "expected/registry/PARAM.TADAH_GRID.GRID_POINTS_1.stdout"
 
 [[input]]
 id = "registry:PARAM.DLIB:BFGS.tol_gradinf:0"
@@ -2070,6 +2329,7 @@ target = "targets/registry/PARAM.DLIB_BFGS.tol_gradinf_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PARAM.DLIB_BFGS.tol_gradinf_0.dump"
+stdout = "expected/registry/PARAM.DLIB_BFGS.tol_gradinf_0.stdout"
 
 [[input]]
 id = "registry:PARAM.CERES.tol_gradinf:0"
@@ -2078,6 +2338,7 @@ target = "targets/registry/PARAM.CERES.tol_gradinf_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PARAM.CERES.tol_gradinf_0.dump"
+stdout = "expected/registry/PARAM.CERES.tol_gradinf_0.stdout"
 
 [[input]]
 id = "registry:PARAM.CERES.max_iter:0"
@@ -2086,6 +2347,7 @@ target = "targets/registry/PARAM.CERES.max_iter_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PARAM.CERES.max_iter_0.dump"
+stdout = "expected/registry/PARAM.CERES.max_iter_0.stdout"
 
 [[input]]
 id = "registry:PARAM.CERES.max_iter:1"
@@ -2094,6 +2356,7 @@ target = "targets/registry/PARAM.CERES.max_iter_1.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PARAM.CERES.max_iter_1.dump"
+stdout = "expected/registry/PARAM.CERES.max_iter_1.stdout"
 
 [[input]]
 id = "registry:PARAM.CERES.max_ls_iter:0"
@@ -2102,6 +2365,7 @@ target = "targets/registry/PARAM.CERES.max_ls_iter_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PARAM.CERES.max_ls_iter_0.dump"
+stdout = "expected/registry/PARAM.CERES.max_ls_iter_0.stdout"
 
 [[input]]
 id = "registry:PARAM.FD.fd_step:0"
@@ -2110,6 +2374,7 @@ target = "targets/registry/PARAM.FD.fd_step_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PARAM.FD.fd_step_0.dump"
+stdout = "expected/registry/PARAM.FD.fd_step_0.stdout"
 
 [[input]]
 id = "registry:PARAM.FD.fd_step:1"
@@ -2118,6 +2383,7 @@ target = "targets/registry/PARAM.FD.fd_step_1.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PARAM.FD.fd_step_1.dump"
+stdout = "expected/registry/PARAM.FD.fd_step_1.stdout"
 
 [[input]]
 id = "registry:PARAM.FD.fd_step:2"
@@ -2126,6 +2392,7 @@ target = "targets/registry/PARAM.FD.fd_step_2.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PARAM.FD.fd_step_2.dump"
+stdout = "expected/registry/PARAM.FD.fd_step_2.stdout"
 
 [[input]]
 id = "registry:PARAM.FD.fd_kernel:0"
@@ -2134,6 +2401,7 @@ target = "targets/registry/PARAM.FD.fd_kernel_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PARAM.FD.fd_kernel_0.dump"
+stdout = "expected/registry/PARAM.FD.fd_kernel_0.stdout"
 
 [[input]]
 id = "registry:PARAM.FD.fd_kernel:1"
@@ -2142,6 +2410,7 @@ target = "targets/registry/PARAM.FD.fd_kernel_1.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PARAM.FD.fd_kernel_1.dump"
+stdout = "expected/registry/PARAM.FD.fd_kernel_1.stdout"
 
 [[input]]
 id = "registry:PARAM.FD.diff_method:0"
@@ -2150,6 +2419,7 @@ target = "targets/registry/PARAM.FD.diff_method_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PARAM.FD.diff_method_0.dump"
+stdout = "expected/registry/PARAM.FD.diff_method_0.stdout"
 
 [[input]]
 id = "registry:PARAM.FD.diff_method:1"
@@ -2158,6 +2428,7 @@ target = "targets/registry/PARAM.FD.diff_method_1.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PARAM.FD.diff_method_1.dump"
+stdout = "expected/registry/PARAM.FD.diff_method_1.stdout"
 
 [[input]]
 id = "registry:PARAM.ASA:ASA.Limit_Acceptances:0"
@@ -2166,6 +2437,7 @@ target = "targets/registry/PARAM.ASA_ASA.Limit_Acceptances_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PARAM.ASA_ASA.Limit_Acceptances_0.dump"
+stdout = "expected/registry/PARAM.ASA_ASA.Limit_Acceptances_0.stdout"
 
 [[input]]
 id = "registry:PARAM.ASA:ASA.Limit_Generated:0"
@@ -2174,6 +2446,7 @@ target = "targets/registry/PARAM.ASA_ASA.Limit_Generated_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PARAM.ASA_ASA.Limit_Generated_0.dump"
+stdout = "expected/registry/PARAM.ASA_ASA.Limit_Generated_0.stdout"
 
 [[input]]
 id = "registry:PARAM.ASA:ASA.Limit_Invalid_Generated_States:0"
@@ -2182,6 +2455,7 @@ target = "targets/registry/PARAM.ASA_ASA.Limit_Invalid_Generated_States_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PARAM.ASA_ASA.Limit_Invalid_Generated_States_0.dump"
+stdout = "expected/registry/PARAM.ASA_ASA.Limit_Invalid_Generated_States_0.stdout"
 
 [[input]]
 id = "registry:PARAM.ASA:ASA.Accepted_To_Generated_Ratio:0"
@@ -2190,6 +2464,7 @@ target = "targets/registry/PARAM.ASA_ASA.Accepted_To_Generated_Ratio_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PARAM.ASA_ASA.Accepted_To_Generated_Ratio_0.dump"
+stdout = "expected/registry/PARAM.ASA_ASA.Accepted_To_Generated_Ratio_0.stdout"
 
 [[input]]
 id = "registry:PARAM.ASA:ASA.Cost_Precision:0"
@@ -2198,6 +2473,7 @@ target = "targets/registry/PARAM.ASA_ASA.Cost_Precision_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PARAM.ASA_ASA.Cost_Precision_0.dump"
+stdout = "expected/registry/PARAM.ASA_ASA.Cost_Precision_0.stdout"
 
 [[input]]
 id = "registry:PARAM.ASA:ASA.Maximum_Cost_Repeat:0"
@@ -2206,6 +2482,7 @@ target = "targets/registry/PARAM.ASA_ASA.Maximum_Cost_Repeat_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PARAM.ASA_ASA.Maximum_Cost_Repeat_0.dump"
+stdout = "expected/registry/PARAM.ASA_ASA.Maximum_Cost_Repeat_0.stdout"
 
 [[input]]
 id = "registry:PARAM.ASA:ASA.Number_Cost_Samples:0"
@@ -2214,6 +2491,7 @@ target = "targets/registry/PARAM.ASA_ASA.Number_Cost_Samples_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PARAM.ASA_ASA.Number_Cost_Samples_0.dump"
+stdout = "expected/registry/PARAM.ASA_ASA.Number_Cost_Samples_0.stdout"
 
 [[input]]
 id = "registry:PARAM.ASA:ASA.Temperature_Ratio_Scale:0"
@@ -2222,6 +2500,7 @@ target = "targets/registry/PARAM.ASA_ASA.Temperature_Ratio_Scale_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PARAM.ASA_ASA.Temperature_Ratio_Scale_0.dump"
+stdout = "expected/registry/PARAM.ASA_ASA.Temperature_Ratio_Scale_0.stdout"
 
 [[input]]
 id = "registry:PARAM.ASA:ASA.Cost_Parameter_Scale_Ratio:0"
@@ -2230,6 +2509,7 @@ target = "targets/registry/PARAM.ASA_ASA.Cost_Parameter_Scale_Ratio_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PARAM.ASA_ASA.Cost_Parameter_Scale_Ratio_0.dump"
+stdout = "expected/registry/PARAM.ASA_ASA.Cost_Parameter_Scale_Ratio_0.stdout"
 
 [[input]]
 id = "registry:PARAM.ASA:ASA.Temperature_Anneal_Scale:0"
@@ -2238,6 +2518,7 @@ target = "targets/registry/PARAM.ASA_ASA.Temperature_Anneal_Scale_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PARAM.ASA_ASA.Temperature_Anneal_Scale_0.dump"
+stdout = "expected/registry/PARAM.ASA_ASA.Temperature_Anneal_Scale_0.stdout"
 
 [[input]]
 id = "registry:PARAM.ASA:ASA.Sequential_Parameters:0"
@@ -2246,6 +2527,7 @@ target = "targets/registry/PARAM.ASA_ASA.Sequential_Parameters_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PARAM.ASA_ASA.Sequential_Parameters_0.dump"
+stdout = "expected/registry/PARAM.ASA_ASA.Sequential_Parameters_0.stdout"
 
 [[input]]
 id = "registry:PARAM.ASA:ASA.Initial_Parameter_Temperature:0"
@@ -2254,6 +2536,7 @@ target = "targets/registry/PARAM.ASA_ASA.Initial_Parameter_Temperature_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PARAM.ASA_ASA.Initial_Parameter_Temperature_0.dump"
+stdout = "expected/registry/PARAM.ASA_ASA.Initial_Parameter_Temperature_0.stdout"
 
 [[input]]
 id = "registry:PARAM.ASA:ASA.Acceptance_Frequency_Modulus:0"
@@ -2262,6 +2545,7 @@ target = "targets/registry/PARAM.ASA_ASA.Acceptance_Frequency_Modulus_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PARAM.ASA_ASA.Acceptance_Frequency_Modulus_0.dump"
+stdout = "expected/registry/PARAM.ASA_ASA.Acceptance_Frequency_Modulus_0.stdout"
 
 [[input]]
 id = "registry:PARAM.ASA:ASA.Generated_Frequency_Modulus:0"
@@ -2270,6 +2554,7 @@ target = "targets/registry/PARAM.ASA_ASA.Generated_Frequency_Modulus_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PARAM.ASA_ASA.Generated_Frequency_Modulus_0.dump"
+stdout = "expected/registry/PARAM.ASA_ASA.Generated_Frequency_Modulus_0.stdout"
 
 [[input]]
 id = "registry:PARAM.ASA:ASA.Reanneal_Cost:0"
@@ -2278,6 +2563,7 @@ target = "targets/registry/PARAM.ASA_ASA.Reanneal_Cost_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PARAM.ASA_ASA.Reanneal_Cost_0.dump"
+stdout = "expected/registry/PARAM.ASA_ASA.Reanneal_Cost_0.stdout"
 
 [[input]]
 id = "registry:PARAM.ASA:ASA.Reanneal_Parameters:0"
@@ -2286,6 +2572,7 @@ target = "targets/registry/PARAM.ASA_ASA.Reanneal_Parameters_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PARAM.ASA_ASA.Reanneal_Parameters_0.dump"
+stdout = "expected/registry/PARAM.ASA_ASA.Reanneal_Parameters_0.stdout"
 
 [[input]]
 id = "registry:PARAM.ASA:ASA.Delta_X:0"
@@ -2294,6 +2581,7 @@ target = "targets/registry/PARAM.ASA_ASA.Delta_X_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PARAM.ASA_ASA.Delta_X_0.dump"
+stdout = "expected/registry/PARAM.ASA_ASA.Delta_X_0.stdout"
 
 [[input]]
 id = "registry:PARAM.ASA:ASA.User_Tangents:0"
@@ -2302,6 +2590,7 @@ target = "targets/registry/PARAM.ASA_ASA.User_Tangents_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PARAM.ASA_ASA.User_Tangents_0.dump"
+stdout = "expected/registry/PARAM.ASA_ASA.User_Tangents_0.stdout"
 
 [[input]]
 id = "registry:PARAM.ASA:ASA.Curvature_0:0"
@@ -2310,6 +2599,7 @@ target = "targets/registry/PARAM.ASA_ASA.Curvature_0_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PARAM.ASA_ASA.Curvature_0_0.dump"
+stdout = "expected/registry/PARAM.ASA_ASA.Curvature_0_0.stdout"
 
 [[input]]
 id = "registry:PARAM.ASA:ASA.User_Quench_Cost_Scale:0"
@@ -2318,6 +2608,7 @@ target = "targets/registry/PARAM.ASA_ASA.User_Quench_Cost_Scale_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PARAM.ASA_ASA.User_Quench_Cost_Scale_0.dump"
+stdout = "expected/registry/PARAM.ASA_ASA.User_Quench_Cost_Scale_0.stdout"
 
 [[input]]
 id = "registry:PARAM.ASA:ASA.User_Quench_Param_Scale:0"
@@ -2326,6 +2617,7 @@ target = "targets/registry/PARAM.ASA_ASA.User_Quench_Param_Scale_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PARAM.ASA_ASA.User_Quench_Param_Scale_0.dump"
+stdout = "expected/registry/PARAM.ASA_ASA.User_Quench_Param_Scale_0.stdout"
 
 [[input]]
 id = "registry:PARAM.ASA:ASA.User_Quench_Param_Scale:1"
@@ -2334,6 +2626,7 @@ target = "targets/registry/PARAM.ASA_ASA.User_Quench_Param_Scale_1.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PARAM.ASA_ASA.User_Quench_Param_Scale_1.dump"
+stdout = "expected/registry/PARAM.ASA_ASA.User_Quench_Param_Scale_1.stdout"
 
 [[input]]
 id = "registry:PARAM.ASA:ASA.User_Temperature_Ratio:0"
@@ -2342,6 +2635,7 @@ target = "targets/registry/PARAM.ASA_ASA.User_Temperature_Ratio_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PARAM.ASA_ASA.User_Temperature_Ratio_0.dump"
+stdout = "expected/registry/PARAM.ASA_ASA.User_Temperature_Ratio_0.stdout"
 
 [[input]]
 id = "registry:PARAM.ASA:ASA.User_Temperature_Ratio:1"
@@ -2350,6 +2644,7 @@ target = "targets/registry/PARAM.ASA_ASA.User_Temperature_Ratio_1.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PARAM.ASA_ASA.User_Temperature_Ratio_1.dump"
+stdout = "expected/registry/PARAM.ASA_ASA.User_Temperature_Ratio_1.stdout"
 
 [[input]]
 id = "registry:PARAM.ASA:ASA.User_Delta_Parameter:0"
@@ -2358,6 +2653,7 @@ target = "targets/registry/PARAM.ASA_ASA.User_Delta_Parameter_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PARAM.ASA_ASA.User_Delta_Parameter_0.dump"
+stdout = "expected/registry/PARAM.ASA_ASA.User_Delta_Parameter_0.stdout"
 
 [[input]]
 id = "registry:PARAM.ASA:ASA.User_Delta_Parameter:1"
@@ -2366,6 +2662,7 @@ target = "targets/registry/PARAM.ASA_ASA.User_Delta_Parameter_1.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PARAM.ASA_ASA.User_Delta_Parameter_1.dump"
+stdout = "expected/registry/PARAM.ASA_ASA.User_Delta_Parameter_1.stdout"
 
 [[input]]
 id = "registry:PARAM.ASA:ASA.User_Parameter_Temperature:0"
@@ -2374,6 +2671,7 @@ target = "targets/registry/PARAM.ASA_ASA.User_Parameter_Temperature_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PARAM.ASA_ASA.User_Parameter_Temperature_0.dump"
+stdout = "expected/registry/PARAM.ASA_ASA.User_Parameter_Temperature_0.stdout"
 
 [[input]]
 id = "registry:PARAM.ASA:ASA.User_Parameter_Temperature:1"
@@ -2382,6 +2680,7 @@ target = "targets/registry/PARAM.ASA_ASA.User_Parameter_Temperature_1.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PARAM.ASA_ASA.User_Parameter_Temperature_1.dump"
+stdout = "expected/registry/PARAM.ASA_ASA.User_Parameter_Temperature_1.stdout"
 
 [[input]]
 id = "registry:PARAM.ASA:ASA.Multi_Number:0"
@@ -2390,6 +2689,7 @@ target = "targets/registry/PARAM.ASA_ASA.Multi_Number_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PARAM.ASA_ASA.Multi_Number_0.dump"
+stdout = "expected/registry/PARAM.ASA_ASA.Multi_Number_0.stdout"
 
 [[input]]
 id = "registry:PARAM.ASA:ASA.Multi_Specify:0"
@@ -2398,6 +2698,7 @@ target = "targets/registry/PARAM.ASA_ASA.Multi_Specify_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PARAM.ASA_ASA.Multi_Specify_0.dump"
+stdout = "expected/registry/PARAM.ASA_ASA.Multi_Specify_0.stdout"
 
 [[input]]
 id = "registry:PARAM.ASA:ASA.Multi_Grid:0"
@@ -2406,6 +2707,7 @@ target = "targets/registry/PARAM.ASA_ASA.Multi_Grid_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PARAM.ASA_ASA.Multi_Grid_0.dump"
+stdout = "expected/registry/PARAM.ASA_ASA.Multi_Grid_0.stdout"
 
 [[input]]
 id = "registry:PARAM.ASA:ASA.Multi_Grid:1"
@@ -2414,6 +2716,7 @@ target = "targets/registry/PARAM.ASA_ASA.Multi_Grid_1.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PARAM.ASA_ASA.Multi_Grid_1.dump"
+stdout = "expected/registry/PARAM.ASA_ASA.Multi_Grid_1.stdout"
 
 [[input]]
 id = "registry:PARAM.ASA:ASA.Queue_Size:0"
@@ -2422,6 +2725,7 @@ target = "targets/registry/PARAM.ASA_ASA.Queue_Size_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PARAM.ASA_ASA.Queue_Size_0.dump"
+stdout = "expected/registry/PARAM.ASA_ASA.Queue_Size_0.stdout"
 
 [[input]]
 id = "registry:PARAM.ASA:ASA.Queue_Resolution:0"
@@ -2430,6 +2734,7 @@ target = "targets/registry/PARAM.ASA_ASA.Queue_Resolution_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PARAM.ASA_ASA.Queue_Resolution_0.dump"
+stdout = "expected/registry/PARAM.ASA_ASA.Queue_Resolution_0.stdout"
 
 [[input]]
 id = "registry:PARAM.ASA:ASA.Queue_Resolution:1"
@@ -2438,6 +2743,7 @@ target = "targets/registry/PARAM.ASA_ASA.Queue_Resolution_1.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PARAM.ASA_ASA.Queue_Resolution_1.dump"
+stdout = "expected/registry/PARAM.ASA_ASA.Queue_Resolution_1.stdout"
 
 [[input]]
 id = "registry:PARAM.ASA:ASA.Gener_Block:0"
@@ -2446,6 +2752,7 @@ target = "targets/registry/PARAM.ASA_ASA.Gener_Block_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PARAM.ASA_ASA.Gener_Block_0.dump"
+stdout = "expected/registry/PARAM.ASA_ASA.Gener_Block_0.stdout"
 
 [[input]]
 id = "registry:PARAM.ASA:ASA.Gener_Block_Max:0"
@@ -2454,6 +2761,7 @@ target = "targets/registry/PARAM.ASA_ASA.Gener_Block_Max_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PARAM.ASA_ASA.Gener_Block_Max_0.dump"
+stdout = "expected/registry/PARAM.ASA_ASA.Gener_Block_Max_0.stdout"
 
 [[input]]
 id = "registry:PARAM.ASA:ASA.Gener_Mov_Avr:0"
@@ -2462,6 +2770,7 @@ target = "targets/registry/PARAM.ASA_ASA.Gener_Mov_Avr_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PARAM.ASA_ASA.Gener_Mov_Avr_0.dump"
+stdout = "expected/registry/PARAM.ASA_ASA.Gener_Mov_Avr_0.stdout"
 
 [[input]]
 id = "registry:PARAM.NLOPT:0"
@@ -2470,6 +2779,7 @@ target = "targets/registry/PARAM.NLOPT_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PARAM.NLOPT_0.dump"
+stdout = "expected/registry/PARAM.NLOPT_0.stdout"
 
 [[input]]
 id = "registry:PARAM.TADAH:ANNEAL:0"
@@ -2478,6 +2788,7 @@ target = "targets/registry/PARAM.TADAH_ANNEAL_0.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PARAM.TADAH_ANNEAL_0.dump"
+stdout = "expected/registry/PARAM.TADAH_ANNEAL_0.stdout"
 
 [[input]]
 id = "registry:PARAM.TADAH:ANNEAL:1"
@@ -2486,6 +2797,7 @@ target = "targets/registry/PARAM.TADAH_ANNEAL_1.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PARAM.TADAH_ANNEAL_1.dump"
+stdout = "expected/registry/PARAM.TADAH_ANNEAL_1.stdout"
 
 [[input]]
 id = "registry:PARAM.TADAH:ANNEAL:2"
@@ -2494,6 +2806,7 @@ target = "targets/registry/PARAM.TADAH_ANNEAL_2.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PARAM.TADAH_ANNEAL_2.dump"
+stdout = "expected/registry/PARAM.TADAH_ANNEAL_2.stdout"
 
 [[input]]
 id = "registry:PARAM.TADAH:ANNEAL:3"
@@ -2502,6 +2815,7 @@ target = "targets/registry/PARAM.TADAH_ANNEAL_3.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PARAM.TADAH_ANNEAL_3.dump"
+stdout = "expected/registry/PARAM.TADAH_ANNEAL_3.stdout"
 
 [[input]]
 id = "registry:PARAM.TADAH:ANNEAL:4"
@@ -2510,6 +2824,7 @@ target = "targets/registry/PARAM.TADAH_ANNEAL_4.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PARAM.TADAH_ANNEAL_4.dump"
+stdout = "expected/registry/PARAM.TADAH_ANNEAL_4.stdout"
 
 [[input]]
 id = "registry:PARAM.TADAH:ANNEAL:5"
@@ -2518,6 +2833,7 @@ target = "targets/registry/PARAM.TADAH_ANNEAL_5.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PARAM.TADAH_ANNEAL_5.dump"
+stdout = "expected/registry/PARAM.TADAH_ANNEAL_5.stdout"
 
 [[input]]
 id = "registry:PARAM.TADAH:ANNEAL:6"
@@ -2526,6 +2842,7 @@ target = "targets/registry/PARAM.TADAH_ANNEAL_6.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PARAM.TADAH_ANNEAL_6.dump"
+stdout = "expected/registry/PARAM.TADAH_ANNEAL_6.stdout"
 
 [[input]]
 id = "registry:PARAM.TADAH:ANNEAL:7"
@@ -2534,6 +2851,7 @@ target = "targets/registry/PARAM.TADAH_ANNEAL_7.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PARAM.TADAH_ANNEAL_7.dump"
+stdout = "expected/registry/PARAM.TADAH_ANNEAL_7.stdout"
 
 [[input]]
 id = "registry:PARAM.TADAH:ANNEAL:8"
@@ -2542,6 +2860,7 @@ target = "targets/registry/PARAM.TADAH_ANNEAL_8.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PARAM.TADAH_ANNEAL_8.dump"
+stdout = "expected/registry/PARAM.TADAH_ANNEAL_8.stdout"
 
 [[input]]
 id = "registry:PARAM.TADAH:ANNEAL:9"
@@ -2550,6 +2869,7 @@ target = "targets/registry/PARAM.TADAH_ANNEAL_9.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PARAM.TADAH_ANNEAL_9.dump"
+stdout = "expected/registry/PARAM.TADAH_ANNEAL_9.stdout"
 
 [[input]]
 id = "registry:PARAM.TADAH:ANNEAL:10"
@@ -2558,6 +2878,7 @@ target = "targets/registry/PARAM.TADAH_ANNEAL_10.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PARAM.TADAH_ANNEAL_10.dump"
+stdout = "expected/registry/PARAM.TADAH_ANNEAL_10.stdout"
 
 [[input]]
 id = "registry:PARAM.TADAH:ANNEAL:11"
@@ -2566,6 +2887,7 @@ target = "targets/registry/PARAM.TADAH_ANNEAL_11.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PARAM.TADAH_ANNEAL_11.dump"
+stdout = "expected/registry/PARAM.TADAH_ANNEAL_11.stdout"
 
 [[input]]
 id = "registry:PARAM.TADAH:ANNEAL:12"
@@ -2574,6 +2896,7 @@ target = "targets/registry/PARAM.TADAH_ANNEAL_12.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PARAM.TADAH_ANNEAL_12.dump"
+stdout = "expected/registry/PARAM.TADAH_ANNEAL_12.stdout"
 
 [[input]]
 id = "registry:PARAM.TADAH:ANNEAL:13"
@@ -2582,6 +2905,7 @@ target = "targets/registry/PARAM.TADAH_ANNEAL_13.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PARAM.TADAH_ANNEAL_13.dump"
+stdout = "expected/registry/PARAM.TADAH_ANNEAL_13.stdout"
 
 [[input]]
 id = "registry:PARAM.TADAH:ANNEAL:14"
@@ -2590,6 +2914,7 @@ target = "targets/registry/PARAM.TADAH_ANNEAL_14.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PARAM.TADAH_ANNEAL_14.dump"
+stdout = "expected/registry/PARAM.TADAH_ANNEAL_14.stdout"
 
 [[input]]
 id = "registry:PARAM.TADAH:ANNEAL:15"
@@ -2598,6 +2923,7 @@ target = "targets/registry/PARAM.TADAH_ANNEAL_15.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PARAM.TADAH_ANNEAL_15.dump"
+stdout = "expected/registry/PARAM.TADAH_ANNEAL_15.stdout"
 
 [[input]]
 id = "registry:PARAM.TADAH:ANNEAL:16"
@@ -2606,6 +2932,7 @@ target = "targets/registry/PARAM.TADAH_ANNEAL_16.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PARAM.TADAH_ANNEAL_16.dump"
+stdout = "expected/registry/PARAM.TADAH_ANNEAL_16.stdout"
 
 [[input]]
 id = "registry:PARAM.TADAH:ANNEAL:17"
@@ -2614,6 +2941,7 @@ target = "targets/registry/PARAM.TADAH_ANNEAL_17.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PARAM.TADAH_ANNEAL_17.dump"
+stdout = "expected/registry/PARAM.TADAH_ANNEAL_17.stdout"
 
 [[input]]
 id = "registry:PARAM.TADAH:ANNEAL:18"
@@ -2622,6 +2950,7 @@ target = "targets/registry/PARAM.TADAH_ANNEAL_18.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PARAM.TADAH_ANNEAL_18.dump"
+stdout = "expected/registry/PARAM.TADAH_ANNEAL_18.stdout"
 
 [[input]]
 id = "registry:PARAM.TADAH:ANNEAL:19"
@@ -2630,6 +2959,7 @@ target = "targets/registry/PARAM.TADAH_ANNEAL_19.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PARAM.TADAH_ANNEAL_19.dump"
+stdout = "expected/registry/PARAM.TADAH_ANNEAL_19.stdout"
 
 [[input]]
 id = "registry:PARAM.TADAH:ANNEAL:20"
@@ -2638,6 +2968,7 @@ target = "targets/registry/PARAM.TADAH_ANNEAL_20.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PARAM.TADAH_ANNEAL_20.dump"
+stdout = "expected/registry/PARAM.TADAH_ANNEAL_20.stdout"
 
 [[input]]
 id = "registry:PARAM.TADAH:ANNEAL:21"
@@ -2646,6 +2977,7 @@ target = "targets/registry/PARAM.TADAH_ANNEAL_21.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PARAM.TADAH_ANNEAL_21.dump"
+stdout = "expected/registry/PARAM.TADAH_ANNEAL_21.stdout"
 
 [[input]]
 id = "registry:PARAM.TADAH:ANNEAL:22"
@@ -2654,6 +2986,7 @@ target = "targets/registry/PARAM.TADAH_ANNEAL_22.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PARAM.TADAH_ANNEAL_22.dump"
+stdout = "expected/registry/PARAM.TADAH_ANNEAL_22.stdout"
 
 [[input]]
 id = "registry:PARAM.TADAH:ANNEAL:23"
@@ -2662,6 +2995,7 @@ target = "targets/registry/PARAM.TADAH_ANNEAL_23.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PARAM.TADAH_ANNEAL_23.dump"
+stdout = "expected/registry/PARAM.TADAH_ANNEAL_23.stdout"
 
 [[input]]
 id = "registry:PARAM.TADAH:ANNEAL:24"
@@ -2670,6 +3004,7 @@ target = "targets/registry/PARAM.TADAH_ANNEAL_24.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PARAM.TADAH_ANNEAL_24.dump"
+stdout = "expected/registry/PARAM.TADAH_ANNEAL_24.stdout"
 
 [[input]]
 id = "registry:PARAM.TADAH:ANNEAL:25"
@@ -2678,6 +3013,7 @@ target = "targets/registry/PARAM.TADAH_ANNEAL_25.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PARAM.TADAH_ANNEAL_25.dump"
+stdout = "expected/registry/PARAM.TADAH_ANNEAL_25.stdout"
 
 [[input]]
 id = "registry:PARAM.TADAH:ANNEAL:26"
@@ -2686,6 +3022,7 @@ target = "targets/registry/PARAM.TADAH_ANNEAL_26.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PARAM.TADAH_ANNEAL_26.dump"
+stdout = "expected/registry/PARAM.TADAH_ANNEAL_26.stdout"
 
 [[input]]
 id = "registry:PARAM.TADAH:ANNEAL:27"
@@ -2694,6 +3031,7 @@ target = "targets/registry/PARAM.TADAH_ANNEAL_27.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PARAM.TADAH_ANNEAL_27.dump"
+stdout = "expected/registry/PARAM.TADAH_ANNEAL_27.stdout"
 
 [[input]]
 id = "registry:PARAM.TADAH:ANNEAL:28"
@@ -2702,6 +3040,7 @@ target = "targets/registry/PARAM.TADAH_ANNEAL_28.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PARAM.TADAH_ANNEAL_28.dump"
+stdout = "expected/registry/PARAM.TADAH_ANNEAL_28.stdout"
 
 [[input]]
 id = "registry:PARAM.TADAH:ANNEAL:29"
@@ -2710,6 +3049,7 @@ target = "targets/registry/PARAM.TADAH_ANNEAL_29.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PARAM.TADAH_ANNEAL_29.dump"
+stdout = "expected/registry/PARAM.TADAH_ANNEAL_29.stdout"
 
 [[input]]
 id = "registry:PARAM.TADAH:ANNEAL:30"
@@ -2718,6 +3058,7 @@ target = "targets/registry/PARAM.TADAH_ANNEAL_30.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PARAM.TADAH_ANNEAL_30.dump"
+stdout = "expected/registry/PARAM.TADAH_ANNEAL_30.stdout"
 
 [[input]]
 id = "registry:PARAM.TADAH:ANNEAL:31"
@@ -2726,6 +3067,7 @@ target = "targets/registry/PARAM.TADAH_ANNEAL_31.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PARAM.TADAH_ANNEAL_31.dump"
+stdout = "expected/registry/PARAM.TADAH_ANNEAL_31.stdout"
 
 [[input]]
 id = "registry:PARAM.TADAH:ANNEAL:32"
@@ -2734,6 +3076,7 @@ target = "targets/registry/PARAM.TADAH_ANNEAL_32.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PARAM.TADAH_ANNEAL_32.dump"
+stdout = "expected/registry/PARAM.TADAH_ANNEAL_32.stdout"
 
 [[input]]
 id = "registry:PARAM.TADAH:ANNEAL:33"
@@ -2742,6 +3085,7 @@ target = "targets/registry/PARAM.TADAH_ANNEAL_33.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PARAM.TADAH_ANNEAL_33.dump"
+stdout = "expected/registry/PARAM.TADAH_ANNEAL_33.stdout"
 
 [[input]]
 id = "registry:PARAM.TADAH:ANNEAL:34"
@@ -2750,6 +3094,7 @@ target = "targets/registry/PARAM.TADAH_ANNEAL_34.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PARAM.TADAH_ANNEAL_34.dump"
+stdout = "expected/registry/PARAM.TADAH_ANNEAL_34.stdout"
 
 [[input]]
 id = "registry:PARAM.TADAH:ANNEAL:35"
@@ -2758,6 +3103,7 @@ target = "targets/registry/PARAM.TADAH_ANNEAL_35.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PARAM.TADAH_ANNEAL_35.dump"
+stdout = "expected/registry/PARAM.TADAH_ANNEAL_35.stdout"
 
 [[input]]
 id = "registry:PARAM.TADAH:ANNEAL:36"
@@ -2766,6 +3112,7 @@ target = "targets/registry/PARAM.TADAH_ANNEAL_36.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PARAM.TADAH_ANNEAL_36.dump"
+stdout = "expected/registry/PARAM.TADAH_ANNEAL_36.stdout"
 
 [[input]]
 id = "registry:PARAM.TADAH:ANNEAL:37"
@@ -2774,6 +3121,7 @@ target = "targets/registry/PARAM.TADAH_ANNEAL_37.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PARAM.TADAH_ANNEAL_37.dump"
+stdout = "expected/registry/PARAM.TADAH_ANNEAL_37.stdout"
 
 [[input]]
 id = "registry:PARAM.TADAH:ANNEAL:38"
@@ -2782,6 +3130,7 @@ target = "targets/registry/PARAM.TADAH_ANNEAL_38.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PARAM.TADAH_ANNEAL_38.dump"
+stdout = "expected/registry/PARAM.TADAH_ANNEAL_38.stdout"
 
 [[input]]
 id = "registry:PARAM.TADAH:ANNEAL:39"
@@ -2790,6 +3139,7 @@ target = "targets/registry/PARAM.TADAH_ANNEAL_39.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PARAM.TADAH_ANNEAL_39.dump"
+stdout = "expected/registry/PARAM.TADAH_ANNEAL_39.stdout"
 
 [[input]]
 id = "registry:PARAM.TADAH:ANNEAL:40"
@@ -2798,6 +3148,7 @@ target = "targets/registry/PARAM.TADAH_ANNEAL_40.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PARAM.TADAH_ANNEAL_40.dump"
+stdout = "expected/registry/PARAM.TADAH_ANNEAL_40.stdout"
 
 [[input]]
 id = "registry:PARAM.TADAH:ANNEAL:41"
@@ -2806,6 +3157,7 @@ target = "targets/registry/PARAM.TADAH_ANNEAL_41.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PARAM.TADAH_ANNEAL_41.dump"
+stdout = "expected/registry/PARAM.TADAH_ANNEAL_41.stdout"
 
 [[input]]
 id = "registry:PARAM.TADAH:ANNEAL:42"
@@ -2814,6 +3166,7 @@ target = "targets/registry/PARAM.TADAH_ANNEAL_42.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PARAM.TADAH_ANNEAL_42.dump"
+stdout = "expected/registry/PARAM.TADAH_ANNEAL_42.stdout"
 
 [[input]]
 id = "registry:PARAM.TADAH:ANNEAL:43"
@@ -2822,6 +3175,7 @@ target = "targets/registry/PARAM.TADAH_ANNEAL_43.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/registry/PARAM.TADAH_ANNEAL_43.dump"
+stdout = "expected/registry/PARAM.TADAH_ANNEAL_43.stdout"
 
 [[input]]
 id = "mlip-tests:tests/cli_balance/check_fit_balance.py:118"
@@ -2830,6 +3184,7 @@ target = "targets/mlip-tests/tests_cli_balance_check_fit_balance.py_118.hpo"
 config = "configs/mlip-tests.tadah"
 tree = "fixtures"
 expected = "expected/mlip-tests/tests_cli_balance_check_fit_balance.py_118.dump"
+stdout = "expected/mlip-tests/tests_cli_balance_check_fit_balance.py_118.stdout"
 
 [[input]]
 id = "mlip-tests:tests/cli_balance/check_fit_balance.py:322"
@@ -2838,6 +3193,7 @@ target = "targets/mlip-tests/tests_cli_balance_check_fit_balance.py_322.hpo"
 config = "configs/mlip-tests.tadah"
 tree = "fixtures"
 expected = "expected/mlip-tests/tests_cli_balance_check_fit_balance.py_322.dump"
+stdout = "expected/mlip-tests/tests_cli_balance_check_fit_balance.py_322.stdout"
 
 [[input]]
 id = "mlip-tests:tests/cli_balance/check_fit_balance.py:354"
@@ -2846,6 +3202,7 @@ target = "targets/mlip-tests/tests_cli_balance_check_fit_balance.py_354.hpo"
 config = "configs/mlip-tests.tadah"
 tree = "fixtures"
 expected = "expected/mlip-tests/tests_cli_balance_check_fit_balance.py_354.dump"
+stdout = "expected/mlip-tests/tests_cli_balance_check_fit_balance.py_354.stdout"
 
 [[input]]
 id = "mlip-tests:tests/cli_balance/check_fit_balance.py:442"
@@ -2854,6 +3211,7 @@ target = "targets/mlip-tests/tests_cli_balance_check_fit_balance.py_442.hpo"
 config = "configs/mlip-tests.tadah"
 tree = "fixtures"
 expected = "expected/mlip-tests/tests_cli_balance_check_fit_balance.py_442.dump"
+stdout = "expected/mlip-tests/tests_cli_balance_check_fit_balance.py_442.stdout"
 
 [[input]]
 id = "mlip-tests:tests/cli_failed_evaluations/check_hpo_failed_evaluations.py:149"
@@ -2862,6 +3220,7 @@ target = "targets/mlip-tests/tests_cli_failed_evaluations_check_hpo_failed_evalu
 config = "configs/mlip-tests.tadah"
 tree = "fixtures"
 expected = "expected/mlip-tests/tests_cli_failed_evaluations_check_hpo_failed_evaluations.py_149.dump"
+stdout = "expected/mlip-tests/tests_cli_failed_evaluations_check_hpo_failed_evaluations.py_149.stdout"
 
 [[input]]
 id = "mlip-tests:tests/cli_failed_evaluations/check_hpo_failed_evaluations.py:167"
@@ -2870,6 +3229,7 @@ target = "targets/mlip-tests/tests_cli_failed_evaluations_check_hpo_failed_evalu
 config = "configs/mlip-tests.tadah"
 tree = "fixtures"
 expected = "expected/mlip-tests/tests_cli_failed_evaluations_check_hpo_failed_evaluations.py_167.dump"
+stdout = "expected/mlip-tests/tests_cli_failed_evaluations_check_hpo_failed_evaluations.py_167.stdout"
 
 [[input]]
 id = "mlip-tests:tests/cli_failed_evaluations/check_hpo_failed_evaluations.py:193"
@@ -2878,6 +3238,7 @@ target = "targets/mlip-tests/tests_cli_failed_evaluations_check_hpo_failed_evalu
 config = "configs/mlip-tests.tadah"
 tree = "fixtures"
 expected = "expected/mlip-tests/tests_cli_failed_evaluations_check_hpo_failed_evaluations.py_193.dump"
+stdout = "expected/mlip-tests/tests_cli_failed_evaluations_check_hpo_failed_evaluations.py_193.stdout"
 
 [[input]]
 id = "mlip-tests:tests/cli_failed_evaluations/check_hpo_failed_evaluations.py:214"
@@ -2886,6 +3247,7 @@ target = "targets/mlip-tests/tests_cli_failed_evaluations_check_hpo_failed_evalu
 config = "configs/mlip-tests.tadah"
 tree = "fixtures"
 expected = "expected/mlip-tests/tests_cli_failed_evaluations_check_hpo_failed_evaluations.py_214.dump"
+stdout = "expected/mlip-tests/tests_cli_failed_evaluations_check_hpo_failed_evaluations.py_214.stdout"
 
 [[input]]
 id = "mlip-tests:tests/cli_failed_evaluations/check_hpo_failed_evaluations.py:231"
@@ -2894,6 +3256,7 @@ target = "targets/mlip-tests/tests_cli_failed_evaluations_check_hpo_failed_evalu
 config = "configs/mlip-tests.tadah"
 tree = "fixtures"
 expected = "expected/mlip-tests/tests_cli_failed_evaluations_check_hpo_failed_evaluations.py_231.dump"
+stdout = "expected/mlip-tests/tests_cli_failed_evaluations_check_hpo_failed_evaluations.py_231.stdout"
 
 [[input]]
 id = "mlip-tests:tests/cli_failed_evaluations/check_hpo_failed_evaluations.py:264"
@@ -2910,6 +3273,7 @@ target = "targets/mlip-tests/tests_cli_signal_check_hpo_signal.py_62.hpo"
 config = "configs/mlip-tests.tadah"
 tree = "fixtures"
 expected = "expected/mlip-tests/tests_cli_signal_check_hpo_signal.py_62.dump"
+stdout = "expected/mlip-tests/tests_cli_signal_check_hpo_signal.py_62.stdout"
 
 [[input]]
 id = "mlip-tests:tests/test_tadah_cli_exit_status.cpp:323"
@@ -2918,6 +3282,7 @@ target = "targets/mlip-tests/tests_test_tadah_cli_exit_status.cpp_323.hpo"
 config = "configs/mlip-tests.tadah"
 tree = "fixtures"
 expected = "expected/mlip-tests/tests_test_tadah_cli_exit_status.cpp_323.dump"
+stdout = "expected/mlip-tests/tests_test_tadah_cli_exit_status.cpp_323.stdout"
 
 [[input]]
 id = "mlip-tests:tests/test_tadah_cli_exit_status.cpp:618"
@@ -2926,6 +3291,7 @@ target = "targets/mlip-tests/tests_test_tadah_cli_exit_status.cpp_618.hpo"
 config = "configs/mlip-tests.tadah"
 tree = "fixtures"
 expected = "expected/mlip-tests/tests_test_tadah_cli_exit_status.cpp_618.dump"
+stdout = "expected/mlip-tests/tests_test_tadah_cli_exit_status.cpp_618.stdout"
 
 [[input]]
 id = "mlip-tests:tests/test_tadah_cli_exit_status.cpp:846"
@@ -2934,6 +3300,7 @@ target = "targets/mlip-tests/tests_test_tadah_cli_exit_status.cpp_846.hpo"
 config = "configs/mlip-tests.tadah"
 tree = "fixtures"
 expected = "expected/mlip-tests/tests_test_tadah_cli_exit_status.cpp_846.dump"
+stdout = "expected/mlip-tests/tests_test_tadah_cli_exit_status.cpp_846.stdout"
 
 [[input]]
 id = "mlip-tests:tests/test_tadah_cli_exit_status.cpp:912"
@@ -2942,6 +3309,7 @@ target = "targets/mlip-tests/tests_test_tadah_cli_exit_status.cpp_912.hpo"
 config = "configs/mlip-tests.tadah"
 tree = "fixtures"
 expected = "expected/mlip-tests/tests_test_tadah_cli_exit_status.cpp_912.dump"
+stdout = "expected/mlip-tests/tests_test_tadah_cli_exit_status.cpp_912.stdout"
 
 [[input]]
 id = "mlip-tests:tests/test_tadah_cli_exit_status.cpp:985"
@@ -2950,6 +3318,7 @@ target = "targets/mlip-tests/tests_test_tadah_cli_exit_status.cpp_985.hpo"
 config = "configs/mlip-tests.tadah"
 tree = "fixtures"
 expected = "expected/mlip-tests/tests_test_tadah_cli_exit_status.cpp_985.dump"
+stdout = "expected/mlip-tests/tests_test_tadah_cli_exit_status.cpp_985.stdout"
 
 [[input]]
 id = "mlip-tests:tests/test_tadah_cli_exit_status.cpp:3357"
@@ -2966,6 +3335,7 @@ target = "targets/mlip-tests/tests_test_tadah_cli_exit_status.cpp_4201.hpo"
 config = "configs/mlip-tests.tadah"
 tree = "fixtures"
 expected = "expected/mlip-tests/tests_test_tadah_cli_exit_status.cpp_4201.dump"
+stdout = "expected/mlip-tests/tests_test_tadah_cli_exit_status.cpp_4201.stdout"
 
 [[input]]
 id = "mlip-tests:tests/test_tadah_cli_exit_status.cpp:4252"
@@ -2974,6 +3344,7 @@ target = "targets/mlip-tests/tests_test_tadah_cli_exit_status.cpp_4252.hpo"
 config = "configs/mlip-tests.tadah"
 tree = "fixtures"
 expected = "expected/mlip-tests/tests_test_tadah_cli_exit_status.cpp_4252.dump"
+stdout = "expected/mlip-tests/tests_test_tadah_cli_exit_status.cpp_4252.stdout"
 
 [[input]]
 id = "mlip-tests:tests/test_tadah_cli_exit_status.cpp:5845"
@@ -2982,6 +3353,7 @@ target = "targets/mlip-tests/tests_test_tadah_cli_exit_status.cpp_5845.hpo"
 config = "configs/mlip-tests.tadah"
 tree = "fixtures"
 expected = "expected/mlip-tests/tests_test_tadah_cli_exit_status.cpp_5845.dump"
+stdout = "expected/mlip-tests/tests_test_tadah_cli_exit_status.cpp_5845.stdout"
 
 [[input]]
 id = "mlip-tests:tests/test_tadah_cli_exit_status.cpp:6783"
@@ -2990,6 +3362,7 @@ target = "targets/mlip-tests/tests_test_tadah_cli_exit_status.cpp_6783.hpo"
 config = "configs/mlip-tests.tadah"
 tree = "fixtures"
 expected = "expected/mlip-tests/tests_test_tadah_cli_exit_status.cpp_6783.dump"
+stdout = "expected/mlip-tests/tests_test_tadah_cli_exit_status.cpp_6783.stdout"
 
 [[input]]
 id = "mlip-tests:tests/test_tadah_cli_exit_status.cpp:7445"
@@ -2998,6 +3371,7 @@ target = "targets/mlip-tests/tests_test_tadah_cli_exit_status.cpp_7445.hpo"
 config = "configs/mlip-tests.tadah"
 tree = "fixtures"
 expected = "expected/mlip-tests/tests_test_tadah_cli_exit_status.cpp_7445.dump"
+stdout = "expected/mlip-tests/tests_test_tadah_cli_exit_status.cpp_7445.stdout"
 
 [[input]]
 id = "mlip-tests:tests/test_tadah_cli_exit_status.cpp:9747"
@@ -3014,6 +3388,7 @@ target = "targets/mlip-tests/tests_test_tadah_cli_exit_status.cpp_9899.hpo"
 config = "configs/mlip-tests.tadah"
 tree = "fixtures"
 expected = "expected/mlip-tests/tests_test_tadah_cli_exit_status.cpp_9899.dump"
+stdout = "expected/mlip-tests/tests_test_tadah_cli_exit_status.cpp_9899.stdout"
 
 [[input]]
 id = "mlip-tests:tests/test_tadah_cli_exit_status.cpp:10340"
@@ -3022,6 +3397,7 @@ target = "targets/mlip-tests/tests_test_tadah_cli_exit_status.cpp_10340.hpo"
 config = "configs/mlip-tests.tadah"
 tree = "fixtures"
 expected = "expected/mlip-tests/tests_test_tadah_cli_exit_status.cpp_10340.dump"
+stdout = "expected/mlip-tests/tests_test_tadah_cli_exit_status.cpp_10340.stdout"
 
 [[input]]
 id = "mlip-tests:tests/test_tadah_cli_exit_status.cpp:10494"
@@ -3030,6 +3406,7 @@ target = "targets/mlip-tests/tests_test_tadah_cli_exit_status.cpp_10494.hpo"
 config = "configs/mlip-tests.tadah"
 tree = "fixtures"
 expected = "expected/mlip-tests/tests_test_tadah_cli_exit_status.cpp_10494.dump"
+stdout = "expected/mlip-tests/tests_test_tadah_cli_exit_status.cpp_10494.stdout"
 
 [[input]]
 id = "mlip-tests:tests/test_tadah_cli_exit_status.cpp:11263"
@@ -3038,6 +3415,7 @@ target = "targets/mlip-tests/tests_test_tadah_cli_exit_status.cpp_11263.hpo"
 config = "configs/mlip-tests.tadah"
 tree = "fixtures"
 expected = "expected/mlip-tests/tests_test_tadah_cli_exit_status.cpp_11263.dump"
+stdout = "expected/mlip-tests/tests_test_tadah_cli_exit_status.cpp_11263.stdout"
 
 [[input]]
 id = "mlip-tests:tests/test_tadah_cli_exit_status.cpp:12374"
@@ -3046,6 +3424,7 @@ target = "targets/mlip-tests/tests_test_tadah_cli_exit_status.cpp_12374.hpo"
 config = "configs/mlip-tests.tadah"
 tree = "fixtures"
 expected = "expected/mlip-tests/tests_test_tadah_cli_exit_status.cpp_12374.dump"
+stdout = "expected/mlip-tests/tests_test_tadah_cli_exit_status.cpp_12374.stdout"
 
 [[input]]
 id = "mlip-tests:tests/test_tadah_cli_exit_status.cpp:12863"
@@ -3054,6 +3433,7 @@ target = "targets/mlip-tests/tests_test_tadah_cli_exit_status.cpp_12863.hpo"
 config = "configs/mlip-tests.tadah"
 tree = "fixtures"
 expected = "expected/mlip-tests/tests_test_tadah_cli_exit_status.cpp_12863.dump"
+stdout = "expected/mlip-tests/tests_test_tadah_cli_exit_status.cpp_12863.stdout"
 
 [[input]]
 id = "mlip-tests:tests/test_tadah_cli_exit_status.cpp:12898"
@@ -3062,6 +3442,7 @@ target = "targets/mlip-tests/tests_test_tadah_cli_exit_status.cpp_12898.hpo"
 config = "configs/mlip-tests.tadah"
 tree = "fixtures"
 expected = "expected/mlip-tests/tests_test_tadah_cli_exit_status.cpp_12898.dump"
+stdout = "expected/mlip-tests/tests_test_tadah_cli_exit_status.cpp_12898.stdout"
 
 [[input]]
 id = "docs:nfp_examples/first_run.hpo"
@@ -3070,3 +3451,4 @@ target = "targets/docs/nfp_examples_first_run.hpo.hpo"
 config = "configs/default.tadah"
 tree = "fixtures"
 expected = "expected/docs/nfp_examples_first_run.hpo.dump"
+stdout = "expected/docs/nfp_examples_first_run.hpo.stdout"

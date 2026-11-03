@@ -15,7 +15,9 @@
 // (HPOTargets) in a fresh directory as the corpus describes it, gives
 // exactly what the corpus holds for it, byte for byte: the description or
 // the refusal, and what the constructor prints on std::cout and on
-// std::cerr (nothing when the corpus names no file for the stream); the
+// std::cerr (nothing when the corpus names no file for the stream), each
+// seed it drew for the run written <seed drawn for the run>
+// (hpotarget_cases.h, without_drawn_seeds); the
 // corpus holds both kinds of result; an environment override of the registry
 // (hpotarget_registry_gen.h, kEnvs) set where the test runs does not reach
 // an input that does not set it (each input is read with the environment
@@ -64,7 +66,6 @@
 #include <exception>
 #include <filesystem>
 #include <fstream>
-#include <iostream>
 #include <memory>
 #include <sstream>
 #include <stdexcept>
@@ -195,29 +196,6 @@ private:
     std::vector<std::pair<std::string, std::string>> saved_;
 };
 
-/* std::cout and std::cerr written into strings while it lives. */
-class Printed {
-public:
-    Printed()
-        : old_out_(std::cout.rdbuf(out_.rdbuf())),
-          old_err_(std::cerr.rdbuf(err_.rdbuf()))
-    {}
-    ~Printed()
-    {
-        std::cout.rdbuf(old_out_);
-        std::cerr.rdbuf(old_err_);
-    }
-    Printed(const Printed&) = delete;
-    Printed& operator=(const Printed&) = delete;
-    std::string out() const { return out_.str(); }
-    std::string err() const { return err_.str(); }
-
-private:
-    std::ostringstream out_, err_;
-    std::streambuf* old_out_;
-    std::streambuf* old_err_;
-};
-
 /* What the parser of `tadah hpo` gives for the input. */
 struct Read {
     std::string kind;  // ".dump" or ".error"
@@ -234,7 +212,7 @@ Read read_input(const Case& c)
     std::unique_ptr<tadah::hpo::HPOTargets> t;
     Read r;
     {
-        const Printed printed;
+        const hpotarget_cases::Printed printed;
         try {
             t = std::make_unique<tadah::hpo::HPOTargets>(ctx, dir.target());
         } catch (const std::exception& e) {
@@ -247,6 +225,10 @@ Read read_input(const Case& c)
     if (t) {
         r.kind = ".dump";
         r.text = tadah::hpo::testing::describe_parse(*t);
+        const std::vector<std::uint64_t> seeds =
+            tadah::hpo::testing::drawn_seeds(*t);
+        r.out = hpotarget_cases::without_drawn_seeds(r.out, seeds);
+        r.err = hpotarget_cases::without_drawn_seeds(r.err, seeds);
     }
     return r;
 }

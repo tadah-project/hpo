@@ -1,0 +1,2 @@
+[tadah hpo] WARM: the starting point is read from opt_seed_outside.tadah, which gives a value for each of the 1 dimension of the search space
+[tadah hpo] the INIT block on line 4 (WARM, CONFIG) gives 1 starting point

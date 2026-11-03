@@ -1,0 +1,2 @@
+[tadah hpo] the INIT chain of the STRATEGY-level optimiser (METHOD CONFIG, by default) gives 1 starting point
+[tadah hpo] the STRATEGY block has no SEED, and NLOPT:G_MLSL_LDS draws random numbers, so it draws them with a seed drawn once for the run, <seed drawn for the run> (SEED <seed drawn for the run> in the STRATEGY block draws the same numbers again)

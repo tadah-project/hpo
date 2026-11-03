@@ -1,0 +1,1 @@
+[tadah hpo] WARM: opt_seed_outside.tadah holds a value outside the OPTIM box, so it gives no starting point (WARM_ON_MISMATCH skip): CGRID2B[1] 3 (box [0.5, 1.5])

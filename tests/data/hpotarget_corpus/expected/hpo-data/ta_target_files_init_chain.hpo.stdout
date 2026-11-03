@@ -1,0 +1,2 @@
+[tadah hpo] WARM: the starting point is read from seed_pot.tadah, which gives a value for each of the 1 dimension of the search space
+[tadah hpo] the INIT block on line 5 (WARM, LHS) gives 4 starting points

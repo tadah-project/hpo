@@ -42,16 +42,25 @@
  * applies, shows in scale_policy.
  *
  * Throws std::logic_error for a PC_OBSERVABLE kind it does not know, whose
- * options it could not show. */
+ * options it could not show.
+ *
+ * drawn_seeds() gives the seeds the constructor drew for the run (each
+ * OptimizerSpec of the dump, the run's and its INNER and PRESTAGE specs,
+ * and each INIT chain of theirs, RESTART's included, whose seed_drawn is
+ * set), which the lines it prints name and which differ from one
+ * construction to the next. */
 
 #include <tadah/hpo/hpo_targets.h>
 
+#include <cstdint>
 #include <string>
+#include <vector>
 
 namespace tadah::hpo {
 namespace testing {
 
 std::string describe_parse(const ParsedTarget& targets);
+std::vector<std::uint64_t> drawn_seeds(const ParsedTarget& targets);
 
 }  // namespace testing
 }  // namespace tadah::hpo

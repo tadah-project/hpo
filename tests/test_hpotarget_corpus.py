@@ -530,8 +530,13 @@ class Write(unittest.TestCase):
     # never opened the frozen corpus.
     def test_stale(self):
         out = self.root / "corpus"
-        self.assertEqual(corpus.write(self.corpus, REG, self.runner, out), [])
-        self.assertEqual(corpus.stale(self.corpus, REG, out), [])
+        written = corpus.Corpus()
+        written.read = self.corpus.read + ["mlip-tests"]
+        written.inputs = list(self.corpus.inputs)
+        written.add("mlip-tests", "t.py:1", "not read",
+                    {"file": "LOSS L2\n", "config": "ATOM H\n"})
+        self.assertEqual(corpus.write(written, REG, self.runner, out), [])
+        self.assertEqual(corpus.stale(written, REG, out), [])
         c = corpus.Corpus()
         c.read = list(self.corpus.read)
         for i in self.corpus.inputs:
@@ -546,8 +551,6 @@ class Write(unittest.TestCase):
                   case)
         c.add("registry", "NEW:0", "new", {"file": "LOSS L2\n",
                                            "config": "ATOM H\n"})
-        c.add("mlip-tests", "t.py:1", "not read", {"file": "LOSS L2\n",
-                                                   "config": "ATOM H\n"})
         (self.tree / "common" / "script.in").write_text("changed\n")
         problems = corpus.stale(c, REG, out)
         text = "\n".join(problems)

@@ -497,4 +497,22 @@ std::string describe_parse(const ParsedTarget& t)
     return std::move(d).text();
 }
 
+std::vector<std::uint64_t> drawn_seeds(const ParsedTarget& t)
+{
+    std::vector<std::uint64_t> out;
+    const auto init = [&out](const InitStrategySpec& s) {
+        if (s.seed_drawn && s.seed) out.push_back(*s.seed);
+    };
+    const auto spec = [&](const OptimizerSpec* s, const auto& self) -> void {
+        if (!s) return;
+        if (s->seed_drawn && s->seed) out.push_back(*s->seed);
+        init(s->init_strategy_spec);
+        init(s->restart.init_strategy);
+        self(s->inner.get(), self);
+        self(s->prestage.get(), self);
+    };
+    spec(&t.spec, spec);
+    return out;
+}
+
 }  // namespace tadah::hpo::testing

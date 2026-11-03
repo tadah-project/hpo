@@ -46,7 +46,11 @@
  * not run), for "defaults" values: the registry id of each entry with a
  * default -> the values the code gives it, as text, and for "describe"
  * dump: tadah::hpo::testing::describe_parse() of the targets (empty when
- * the parse failed; hpo_targets_testing.h describes it).
+ * the parse failed; hpo_targets_testing.h describes it), with stdout and
+ * stderr: what the constructor of the targets printed on std::cout and on
+ * std::cerr, each seed it drew for the run written <seed drawn for the
+ * run> (hpotarget_cases.h, without_drawn_seeds; empty strings in the other
+ * modes).
  *
  * The values of "defaults": the table `defaults_of` below maps each id to
  * the setting of the parsed HPOTargets or OptimizerSpec, or to the code's
@@ -135,7 +139,7 @@ std::string num(double v)
 using hpotarget_cases::Case;
 
 struct Result {
-    std::string parse_error, startup_error, check_error, dump;
+    std::string parse_error, startup_error, check_error, dump, out, err;
     std::map<std::string, std::vector<std::string>> values;
 };
 
@@ -368,13 +372,28 @@ Result run(const Case& c)
                                  "not parse: " + e.what());
     }
     std::unique_ptr<HPOTargets> trg;
-    try {
-        trg = std::make_unique<HPOTargets>(ctx, target);
-    } catch (const std::exception& e) {
-        r.parse_error = e.what();
-        if (r.parse_error.empty()) r.parse_error = "(empty message)";
-        return r;
+    {
+        /* "describe": what the constructor prints is a part of the
+         * result. */
+        std::optional<hpotarget_cases::Printed> printed;
+        if (c.mode == "describe") printed.emplace();
+        try {
+            trg = std::make_unique<HPOTargets>(ctx, target);
+        } catch (const std::exception& e) {
+            r.parse_error = e.what();
+            if (r.parse_error.empty()) r.parse_error = "(empty message)";
+        }
+        if (printed) {
+            const std::vector<std::uint64_t> seeds =
+                trg ? tadah::hpo::testing::drawn_seeds(*trg)
+                    : std::vector<std::uint64_t>{};
+            r.out = hpotarget_cases::without_drawn_seeds(printed->out(),
+                                                         seeds);
+            r.err = hpotarget_cases::without_drawn_seeds(printed->err(),
+                                                         seeds);
+        }
     }
+    if (!trg) return r;
     if (c.mode == "defaults") {
         r.values = defaults_of(*trg);
         return r;
@@ -436,6 +455,8 @@ int main(int argc, char** argv)
             << ", \"startup_error\": " << json_string(r.startup_error)
             << ", \"check_error\": " << json_string(r.check_error)
             << ", \"dump\": " << json_string(r.dump)
+            << ", \"stdout\": " << json_string(r.out)
+            << ", \"stderr\": " << json_string(r.err)
             << ", \"values\": {";
         bool first = true;
         for (const auto& [k, vs] : r.values) {

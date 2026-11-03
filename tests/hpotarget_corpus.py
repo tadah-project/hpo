@@ -5,7 +5,8 @@ what the parser of the target file gives for each.
 
     hpotarget_corpus.py list  [SOURCES]
     hpotarget_corpus.py cases OUT [SOURCES]
-    hpotarget_corpus.py check --runner RUNNER [--keep DIR] [SOURCES]
+    hpotarget_corpus.py check --runner RUNNER [--keep DIR] [--corpus DIR]
+                              [SOURCES]
     hpotarget_corpus.py write OUT --runner RUNNER [SOURCES]
 
 SOURCES: --hpo DIR (the HPO source tree; default: the one this file is in),
@@ -20,11 +21,16 @@ inputs as the cases of hpotarget_case_runner (tests/tools/
 hpotarget_case_runner.cpp), mode "describe": the runner reads each with
 the parser of `tadah hpo` and reports what the parse set
 (tadah::hpo::testing::describe_parse) or the message that refused the
-file. `check` runs the cases twice with the runner and exits 1 when a case gives neither a description nor a refusal, or both,
-when the two runs differ, when a source that is read has no input, or when
-a target file has no training configuration; it prints how many inputs
-each source has and how many of them parse. `write` freezes the corpus
-into the directory OUT (below).
+file, and what the parse printed on stdout and stderr. `check` runs the
+cases twice with the runner and exits 1 when a case gives neither a
+description nor a refusal, or both, when the two runs differ, when a
+source that is read has no input, when a target file has no training
+configuration, or when the frozen corpus (--corpus, default: HPO's
+tests/data/hpotarget_corpus) is not the inputs of the sources read: an
+input it lacks, an input it holds that the sources no longer give, or an
+input whose files or settings differ (below, "A stale corpus"); it prints
+how many inputs each source has and how many of them parse. `write`
+freezes the corpus into the directory OUT (below).
 
 The sources, and the id of each input
 -------------------------------------
@@ -88,7 +94,10 @@ trees/        each directory an input is read in, copied once,
               READMEs);
 expected/     what the parser gives, expected/<source>/<name>.dump
               (the description of the parse) or <name>.error (the
-              message that refuses the file), byte for byte.
+              message that refuses the file), byte for byte, and what
+              the parse prints on each stream that holds anything,
+              <name>.stdout and <name>.stderr (`stdout`, `stderr`; an
+              input without one printed nothing there).
 
 <name> is the id of the input without its source, each run of characters
 other than letters, digits, '.', '_' and '-' written as '_'. An input read
@@ -100,6 +109,16 @@ its own, env), and stops when the two differ (the freezing left out a file the
 parse reads) or when an input gives neither a description nor a refusal.
 OUT is replaced whole; a directory that is not empty and holds no
 corpus.toml is refused.
+
+A stale corpus
+--------------
+`check` compares the frozen corpus with the inputs of the sources it
+reads (an input of a source not read, such as mlip-tests without
+--tadah-mlip, is not compared), by id and by what each input reads: its
+target file, its training configuration, the files of its tree (without
+TREE_EXCLUDE) and its settings (cwd, target_file, config_file, copies,
+config_drop, config_add, env). A difference is a problem: the corpus is
+written again, with `write`, and the diff of the corpus reviewed.
 
 What it cannot see
 ------------------
@@ -688,8 +707,14 @@ def run_runner(runner: pathlib.Path, cases: pathlib.Path,
 
 
 def check(corpus: Corpus, runner: pathlib.Path,
-          keep: pathlib.Path | None) -> list[str]:
-    problems = list(corpus.problems)
+          keep: pathlib.Path | None, frozen: pathlib.Path,
+          reg=None) -> list[str]:
+    """The problems of the inputs of `corpus` read by `runner`, and of the
+    frozen corpus `frozen` against them (stale(); `reg`: the registry,
+    default the one the corpus was collected with)."""
+    if reg is None:
+        _, reg = load_registry(DEFAULT_HPO / "blueprint")
+    problems = list(corpus.problems) + stale(corpus, reg, frozen)
     for s in corpus.read:
         if not any(i.source == s for i in corpus.inputs):
             problems.append(f"{s}: no input")
@@ -850,7 +875,8 @@ CORPUS_HEADER = """\
 # The frozen corpus of target files: each input of tests/hpotarget_corpus.py
 # with the files it reads and what the parser of `tadah hpo` gives for it
 # (expected/: <name>.dump the description of the parse, <name>.error the
-# refusal). tests/test_hpotarget_corpus.cpp reads every input and compares.
+# refusal, <name>.stdout and <name>.stderr what the parse printed).
+# tests/test_hpotarget_corpus.cpp reads every input and compares.
 # Written by `tests/hpotarget_corpus.py write` (its docstring describes the
 # fields); a change of the parser that changes a result is a change of
 # behaviour, and the corpus is written again only with it.
@@ -867,6 +893,9 @@ def corpus_toml(fz: Frozen, expected: dict[str, str]) -> str:
             if k in e:
                 lines.append(f"{k} = {toml_value(e[k])}")
         lines.append(f"expected = {toml_string(expected[e['id']])}")
+        for stream in ("stdout", "stderr"):
+            if stream in e:
+                lines.append(f"{stream} = {toml_string(e[stream])}")
         lines.append("")
     return "\n".join(lines)
 
@@ -931,9 +960,15 @@ def write(corpus: Corpus, reg, runner: pathlib.Path,
                 (".error", r["parse_error"])
             expected[e["id"]] = f"expected/{e['name']}{kind}"
             fz.files[expected[e["id"]]] = text
+            for stream in ("stdout", "stderr"):
+                if r[stream]:
+                    e[stream] = f"expected/{e['name']}.{stream}"
+                    fz.files[e[stream]] = r[stream]
         if problems:
             return problems
-        for rel in expected.values():
+        for rel in list(expected.values()) + [
+                e[s] for e in fz.inputs for s in ("stdout", "stderr")
+                if s in e]:
             p = staged / rel
             p.parent.mkdir(parents=True, exist_ok=True)
             p.write_bytes(fz.files[rel].encode("utf-8"))
@@ -943,6 +978,105 @@ def write(corpus: Corpus, reg, runner: pathlib.Path,
             shutil.rmtree(out)
         shutil.move(str(staged), str(out))
     return []
+
+
+# The settings of an input the frozen corpus keeps as they are.
+SETTINGS = ("cwd", "target_file", "config_file", "copies", "config_drop",
+            "config_add", "env")
+
+
+def tree_files(root: pathlib.Path) -> dict[str, bytes]:
+    """The files under `root` a frozen tree keeps (without TREE_EXCLUDE),
+    relative path -> bytes."""
+    import fnmatch
+    out = {}
+    for f in sorted(root.rglob("*")):
+        rel = f.relative_to(root)
+        if not f.is_file() or any(fnmatch.fnmatch(part, pat)
+                                  for part in rel.parts
+                                  for pat in TREE_EXCLUDE):
+            continue
+        out[rel.as_posix()] = f.read_bytes()
+    return out
+
+
+def what_is_read(entry: dict, text, tree) -> dict:
+    """What an input reads: its target file and training configuration
+    given as text, the files of its tree and its settings (`text`: corpus
+    path -> text, `tree`: corpus path of a tree -> its files)."""
+    return {"target": text(entry["target"]) if "target" in entry else None,
+            "config": text(entry["config"]) if "config" in entry else None,
+            "tree": tree(entry["tree"]) if "tree" in entry else None,
+            "settings": {k: entry[k] for k in SETTINGS if k in entry}}
+
+
+def stale(corpus: Corpus, reg, frozen: pathlib.Path) -> list[str]:
+    """The differences between the frozen corpus `frozen` and the inputs
+    of `corpus` (the module docstring, "A stale corpus"), each naming the
+    input, and last how to write the corpus again; [] when they agree."""
+    toml_file = frozen / "corpus.toml"
+    if not toml_file.exists():
+        return [f"{frozen}: the frozen corpus has no corpus.toml; "
+                f"`hpotarget_corpus.py write {frozen} --runner <runner>` "
+                "writes it"]
+    import tomllib
+    held = {e["id"]: e for e in
+            tomllib.loads(toml_file.read_text(encoding="utf-8"))
+            .get("input", [])}
+    fz = freeze(corpus, reg)
+    live = {e["id"]: e for e in fz.inputs}
+    origin = {i.id: i.origin for i in corpus.inputs}
+    cache: dict[pathlib.Path, dict[str, bytes]] = {}
+
+    def files_under(root: pathlib.Path) -> dict[str, bytes]:
+        if root not in cache:
+            cache[root] = tree_files(root)
+        return cache[root]
+
+    def live_tree(t: str) -> dict[str, bytes]:
+        if t in fz.trees:
+            return files_under(fz.trees[t])
+        return {rel[len(t) + 1:]: text.encode("utf-8")
+                for rel, text in fz.files.items()
+                if rel.startswith(t + "/")}
+
+    def frozen_text(rel: str) -> str:
+        return (frozen / rel).read_bytes().decode("utf-8")
+
+    problems = []
+    for iid, e in live.items():
+        if iid not in held:
+            problems.append(f"{iid} ({origin[iid]}): not in the frozen "
+                            "corpus")
+            continue
+        now = what_is_read(e, lambda rel: fz.files[rel], live_tree)
+        was = what_is_read(held[iid], frozen_text,
+                           lambda t: files_under(frozen / t))
+        where = f"{iid} ({origin[iid]}): the frozen corpus holds"
+        if now["target"] != was["target"]:
+            problems.append(f"{where} another target file")
+        if now["config"] != was["config"]:
+            problems.append(f"{where} another training configuration")
+        if now["tree"] != was["tree"]:
+            a, b = now["tree"] or {}, was["tree"] or {}
+            names = sorted(k for k in set(a) | set(b)
+                           if a.get(k) != b.get(k))
+            problems.append(f"{where} other files: {', '.join(names)}")
+        if now["settings"] != was["settings"]:
+            keys = sorted(k for k in SETTINGS if now["settings"].get(k) !=
+                          was["settings"].get(k))
+            problems.append(f"{where} other settings: {', '.join(keys)}")
+    for iid in held:
+        if iid.split(":", 1)[0] in corpus.read and iid not in live:
+            problems.append(f"{iid}: in the frozen corpus, not an input "
+                            "of its source")
+    if problems:
+        problems.append(f"{frozen}: the frozen corpus is not the inputs of "
+                        "the sources; `hpotarget_corpus.py write "
+                        f"{frozen} --runner <runner> --tadah-mlip "
+                        "<Tadah.MLIP>` writes it again, and its diff shows "
+                        "what the parser gives for them")
+    return problems
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -956,6 +1090,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--registry", type=pathlib.Path)
     ap.add_argument("--runner", type=pathlib.Path)
     ap.add_argument("--keep", type=pathlib.Path)
+    ap.add_argument("--corpus", type=pathlib.Path,
+                    help="the frozen corpus `check` compares (default: "
+                         "tests/data/hpotarget_corpus of --hpo)")
     a = ap.parse_args(argv)
     tm = pathlib.Path(a.tadah_mlip) if a.tadah_mlip else None
     registry = a.registry or a.hpo / "blueprint"
@@ -996,7 +1133,9 @@ def main(argv: list[str] | None = None) -> int:
         print(f"hpotarget_corpus.py: wrote {a.out}: {n} inputs, "
               f"{n - refused} read, {refused} refused")
         return 0
-    problems = check(corpus, a.runner, a.keep)
+    _, reg = load_registry(registry)
+    problems = check(corpus, a.runner, a.keep,
+                     a.corpus or a.hpo / "tests" / "data" / FROZEN_DIR, reg)
     for p in problems:
         print(p)
     n = len(corpus.inputs)

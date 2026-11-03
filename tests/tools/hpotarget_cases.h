@@ -4,17 +4,21 @@
  * each run in a fresh directory with its files, its training configuration
  * and its environment (hpotarget_case_runner.cpp describes the fields),
  * and the directory a case runs in, which the frozen corpus of target files
- * (test_hpotarget_corpus.cpp) runs its inputs in too. */
+ * (test_hpotarget_corpus.cpp) runs its inputs in too, and what a parse
+ * prints (Printed, without_drawn_seeds). */
 
 #include <tadah/core/context.h>
 #include <tadah/core/core_user_config_parser.h>
 
 #include <toml.hpp>
 
+#include <cctype>
 #include <chrono>
+#include <cstdint>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <iostream>
 #include <map>
 #include <optional>
 #include <sstream>
@@ -223,5 +227,57 @@ private:
     std::string target_;
     std::optional<ScopedEnv> env_;
 };
+
+/* std::cout and std::cerr written into strings while it lives: what the
+ * constructor of the targets prints. */
+class Printed {
+public:
+    Printed()
+        : old_out_(std::cout.rdbuf(out_.rdbuf())),
+          old_err_(std::cerr.rdbuf(err_.rdbuf()))
+    {}
+    ~Printed()
+    {
+        std::cout.rdbuf(old_out_);
+        std::cerr.rdbuf(old_err_);
+    }
+    Printed(const Printed&) = delete;
+    Printed& operator=(const Printed&) = delete;
+    std::string out() const { return out_.str(); }
+    std::string err() const { return err_.str(); }
+
+private:
+    std::ostringstream out_, err_;
+    std::streambuf* old_out_;
+    std::streambuf* old_err_;
+};
+
+/* `text` with each seed of `seeds` written as a whole number (no digit
+ * before or after it) replaced by <seed drawn for the run>: the seeds the
+ * constructor of the targets drew (tadah::hpo::testing::drawn_seeds),
+ * which its lines name and which differ from one construction to the
+ * next. */
+inline std::string without_drawn_seeds(std::string text,
+                                       const std::vector<std::uint64_t>& seeds)
+{
+    static const std::string kDrawn = "<seed drawn for the run>";
+    const auto digit = [&text](std::size_t i) {
+        return std::isdigit(static_cast<unsigned char>(text[i])) != 0;
+    };
+    for (const std::uint64_t seed : seeds) {
+        const std::string n = std::to_string(seed);
+        for (std::size_t at = text.find(n); at != std::string::npos;
+             at = text.find(n, at)) {
+            if ((at > 0 && digit(at - 1)) ||
+                (at + n.size() < text.size() && digit(at + n.size()))) {
+                at += n.size();
+                continue;
+            }
+            text.replace(at, n.size(), kDrawn);
+            at += kDrawn.size();
+        }
+    }
+    return text;
+}
 
 }  // namespace hpotarget_cases

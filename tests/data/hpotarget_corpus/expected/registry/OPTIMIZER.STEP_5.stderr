@@ -1,0 +1,1 @@
+[tadah hpo] the STRATEGY-level optimiser: NLOPT:LN_AUGLAG: STEP 0.1 replaces the STEP 0.2 of its INNER block (NLopt passes the initial step of NLOPT:LN_AUGLAG to the local search NLOPT:LN_BOBYQA), so the INNER STEP has no effect
