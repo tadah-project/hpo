@@ -212,8 +212,8 @@ TEST_CASE("OPTIM FIXWEIGHT maps through FIXINDEX given as separate values",
     Context ctx = ctx_with("13,13,14", 2);
     KeyRulesTempFile tf(line);
     CHECK_THROWS_WITH(HPOTargets(ctx, tf.path.string()),
-                      Catch::Contains("FIXINDEX 13,13,14 names weight 13 "
-                                      "twice"));
+                      Catch::Contains("FIXINDEX 13,13,14 names coefficient "
+                                      "13 twice"));
   }
 }
 

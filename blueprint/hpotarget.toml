@@ -1548,8 +1548,8 @@ cutoff. For a DM_Embed density without a cutoff the startup checks name \
 the OPTIM path of the centre of the bump (<ID>.DENSITY.CENTRES)."""
 checks = [
   { msg = "BUMPGATE: a compact bump reaches past its cutoff: under a Cut_Dummy cutoff each bump vanishes at or before RCUT (c + w/eta <= RCUT), as a bump cut off there gives the energy and the forces a step at the cutoff. The bumps past the cutoff:{list}\n  A larger RCUT2B or RCUTMB in the training configuration gives a longer range; the potential stays smooth, as each bump vanishes at the edge of its own support.", doc = "At startup, without a line: a bump basis under a Cut_Dummy cutoff has a bump past the cutoff, and {list} names each. In both modes a bump of the training configuration is refused. Under STRICT an OPTIM box whose worst corner puts a bump past the cutoff is refused, and under CANDIDATE a box with no point that keeps the bump inside it." },
-  { msg = "BUMPGATE: {key} ({index}) has a corner of its OPTIM box whose support ends past the cutoff, which BUMPGATE STRICT refuses", doc = "At startup, without a line, under STRICT: a bump of a DM_Embed density without a cutoff whose support ends past RADIUS at the worst corner of the OPTIM boxes of its centre and width; {key} is the OPTIM path of its centres." },
-  { msg = "BUMPGATE: {key} ({index}) has no point in its OPTIM box whose support ends inside the cutoff", doc = "At startup, without a line: a bump of a DM_Embed density without a cutoff whose support ends past RADIUS at every point of the OPTIM boxes of its centre and width." },
+  { msg = "BUMPGATE: {key} ({index}) has a corner of its OPTIM box whose support ends past RADIUS, which BUMPGATE STRICT refuses", doc = "At startup, without a line, under STRICT: a bump of a DM_Embed density without a cutoff whose support ends past RADIUS at the worst corner of the OPTIM boxes of its centre and width; {key} is the OPTIM path of its centres." },
+  { msg = "BUMPGATE: {key} ({index}) has no point in its OPTIM box whose support ends at or before RADIUS", doc = "At startup, without a line: a bump of a DM_Embed density without a cutoff whose support ends past RADIUS at every point of the OPTIM boxes of its centre and width." },
 ]
 
 [[key.examples]]
@@ -1612,7 +1612,7 @@ doc = "Under STRICT: the box of the centre of density bump 2 of a DM_Embed compo
 text = '''
 BUMPGATE STRICT
 OPTIM H.DENSITY.CENTRES (2) 1.5 2.5'''
-error = "BUMPGATE: H.DENSITY.CENTRES (2) has a corner of its OPTIM box whose support ends past the cutoff, which BUMPGATE STRICT refuses"
+error = "BUMPGATE: H.DENSITY.CENTRES (2) has a corner of its OPTIM box whose support ends past RADIUS, which BUMPGATE STRICT refuses"
 
 [[key.invalid]]
 wrap = "main_dm_embed_none"
@@ -1620,7 +1620,7 @@ check = "startup"
 at = "none"
 doc = "Under CANDIDATE, the default: no point of the box of the centre of density bump 2 of a DM_Embed component without a cutoff keeps its support inside RADIUS."
 text = "OPTIM H.DENSITY.CENTRES (2) 2.2 2.6"
-error = "BUMPGATE: H.DENSITY.CENTRES (2) has no point in its OPTIM box whose support ends inside the cutoff"
+error = "BUMPGATE: H.DENSITY.CENTRES (2) has no point in its OPTIM box whose support ends at or before RADIUS"
 
 [[key]]
 id = "ROOT.RHOGATE"

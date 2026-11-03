@@ -242,11 +242,11 @@ TEST_CASE("startup validation: FIXINDEX is read strictly, separate values as "
     Context two = ctx_with("1,1,2", {0.5, 0.6});
     HPOTargets trg2(two, tf.path.string());
     CHECK_THROWS_WITH(validate_hpo_setup(two, trg2, true, true),
-                      Catch::Contains("FIXINDEX 1,1,2 names weight 1 twice"));
+                      Catch::Contains("FIXINDEX 1,1,2 names coefficient 1 twice"));
     Context three = ctx_with("1,1,2", {0.5, 0.6, 0.7});
     HPOTargets trg3(three, tf.path.string());
     CHECK_THROWS_WITH(validate_hpo_setup(three, trg3, true, true),
-                      Catch::Contains("FIXINDEX 1,1,2 names weight 1 twice"));
+                      Catch::Contains("FIXINDEX 1,1,2 names coefficient 1 twice"));
   }
   SECTION("a descending range is refused") {
     Context ctx = ctx_with("2-1", {0.5, 0.6});

@@ -981,8 +981,8 @@ inline constexpr Arg ROOT_BUMPGATE_args[] = {
 };
 inline constexpr std::string_view ROOT_BUMPGATE_checks[] = {
     "BUMPGATE: a compact bump reaches past its cutoff: under a Cut_Dummy cutoff each bump vanishes at or before RCUT (c + w/eta <= RCUT), as a bump cut off there gives the energy and the forces a step at the cutoff. The bumps past the cutoff:{list}\n  A larger RCUT2B or RCUTMB in the training configuration gives a longer range; the potential stays smooth, as each bump vanishes at the edge of its own support.",
-    "BUMPGATE: {key} ({index}) has a corner of its OPTIM box whose support ends past the cutoff, which BUMPGATE STRICT refuses",
-    "BUMPGATE: {key} ({index}) has no point in its OPTIM box whose support ends inside the cutoff",
+    "BUMPGATE: {key} ({index}) has a corner of its OPTIM box whose support ends past RADIUS, which BUMPGATE STRICT refuses",
+    "BUMPGATE: {key} ({index}) has no point in its OPTIM box whose support ends at or before RADIUS",
 };
 inline constexpr Arg ROOT_RHOGATE_args[] = {
     Arg{"tol", ArgKind::Number, false, false,

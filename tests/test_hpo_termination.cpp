@@ -10111,7 +10111,7 @@ const std::string kBumpGateRoot =
 
 }  // namespace
 
-TEST_CASE("GRAD_STRATEGY ANALYTICAL: a candidate the bump gate rejects "
+TEST_CASE("GRAD_STRATEGY ANALYTICAL: a candidate the bump check rejects "
           "before training has no usable gradient, and the run goes on",
           "[HPO][termination][analytical][bumpgate]")
 {
@@ -10197,7 +10197,7 @@ TEST_CASE("GRAD_STRATEGY ANALYTICAL: a candidate the bump gate rejects "
     }
 }
 
-TEST_CASE("PRESTAGE: an exploration whose every candidate the bump gate "
+TEST_CASE("PRESTAGE: an exploration whose every candidate the bump check "
           "rejects is refined from the OPTIMIZER-level INIT point",
           "[HPO][termination][prestage][bumpgate]")
 {
