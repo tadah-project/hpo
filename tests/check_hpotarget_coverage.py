@@ -381,7 +381,7 @@ EXTRACTION: list[Rule] = [
          r"^RhoBarGateSpec parse_rhobargate\(",
          operands={"s.lattice": ("word",)}),
     Rule("the OPTIM_SCALE override", "src/hpo_targets.cpp",
-         r"^HPOTargets::HPOTargets\([^)]*ReadFn read_file\)",
+         r"^HPOTargets::HPOTargets\([^)]*ReadFn& read_file\)",
          operands={"v": ("word",)},
          ignore={"s.lib": IGNORE_OPTIMISERS},
          calls=[(r'std::getenv\(\s*"(TADAH_[A-Z_]+)"\s*\)', ("env",))],

@@ -14,6 +14,7 @@
 #include <tadah/mlip/hpotarget_optim.h>
 #include <tadah/mlip/training_record.h>
 
+#include <functional>
 #include <memory>
 #include <vector>
 #include <string>
@@ -78,11 +79,19 @@ class ParsedTarget;
 class HPOTargets;
 namespace testing {
 enum class TargetParser : unsigned char;
+struct NamedParser;
 std::string describe_parse(const ParsedTarget& targets);
 std::unique_ptr<HPOTargets> make_targets(core::Context& c,
                                          const std::string& fn,
                                          TargetParser parser,
                                          TargetsPurpose purpose);
+std::unique_ptr<HPOTargets> make_targets(core::Context& c,
+                                         const std::string& fn,
+                                         const NamedParser& primary,
+                                         const NamedParser& shadow,
+                                         TargetsPurpose purpose);
+void read_shadowed(ParsedTarget& target, const std::string& fn,
+                   const NamedParser& primary, const NamedParser& shadow);
 }
 namespace hpotarget {
 class Parser;
@@ -103,6 +112,13 @@ class ParsedTarget {
     /* The canonical text of what the parse set, for the tests
      * (hpo_targets_testing.h): it reads the private settings too. */
     friend std::string testing::describe_parse(const ParsedTarget& targets);
+    /* The parser shadow of a validation build (hpo_targets_testing.h)
+     * reads the file a second time into a target of its own, built on a
+     * copy of this one's configuration and OPTIM reader. */
+    friend void testing::read_shadowed(ParsedTarget& target,
+                                       const std::string& fn,
+                                       const testing::NamedParser& primary,
+                                       const testing::NamedParser& shadow);
     /* The registry-driven parser and its handlers set what read() sets. */
     friend class hpotarget::Parser;
     friend struct hpotarget_registry::Handlers;
@@ -394,6 +410,10 @@ class HPOTargets : public ParsedTarget {
     friend std::unique_ptr<HPOTargets> testing::make_targets(
         core::Context& c, const std::string& fn,
         testing::TargetParser parser, TargetsPurpose purpose);
+    friend std::unique_ptr<HPOTargets> testing::make_targets(
+        core::Context& c, const std::string& fn,
+        const testing::NamedParser& primary,
+        const testing::NamedParser& shadow, TargetsPurpose purpose);
 
 private:
     /* Creates the archive directory @p dir of the line @p key, which
@@ -407,11 +427,12 @@ private:
     SearchSpacePtr space_;
 
     /* A parser of the target file: it reads the file into the target. */
-    using ReadFn = void (*)(ParsedTarget& target, const std::string& fn);
+    using ReadFn =
+        std::function<void(ParsedTarget& target, const std::string& fn)>;
     /* The constructor below, whose target file @p read reads. */
     HPOTargets(core::Context &c, std::string fn,
                const mlip::KeyProvenance *provenance, TargetsPurpose purpose,
-               ReadFn read);
+               const ReadFn& read);
 
 public:
     /** The targets of the run whose configuration is @p c and whose

@@ -1,5 +1,6 @@
 /* describe_parse(): the canonical text of what the parse of a target file
- * set, and make_targets(), the targets read with either parser
+ * set, make_targets(), the targets read with either parser, and
+ * read_shadowed(), the parser shadow of a validation build
  * (hpo_targets_testing.h describes them). */
 
 #include <tadah/hpo/hpo_targets_testing.h>
@@ -11,11 +12,18 @@
 #include <tadah/hpo/observables/cohesive_energy.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cstdint>
 #include <cstdio>
+#include <exception>
+#include <iostream>
 #include <optional>
+#include <sstream>
 #include <stdexcept>
+#include <streambuf>
 #include <string>
+#include <tuple>
+#include <typeinfo>
 #include <utility>
 #include <vector>
 
@@ -368,22 +376,215 @@ void dump_observable(Dump& d, const std::string& p, const Observable& o)
 
 }  // namespace
 
+/* ---- the parser shadow ----------------------------------------------- */
+
+namespace {
+
+std::atomic<std::size_t> shadowed_reads{0};
+
+/* A stream buffer that records what is written to it and, when `through`
+ * is set, passes it on. */
+class Recorder : public std::streambuf {
+public:
+    explicit Recorder(std::streambuf* through) : through_(through) {}
+    const std::string& text() const { return text_; }
+
+protected:
+    int_type overflow(int_type ch) override
+    {
+        if (traits_type::eq_int_type(ch, traits_type::eof()))
+            return traits_type::not_eof(ch);
+        text_ += traits_type::to_char_type(ch);
+        if (through_ &&
+            traits_type::eq_int_type(through_->sputc(
+                                         traits_type::to_char_type(ch)),
+                                     traits_type::eof()))
+            return traits_type::eof();
+        return ch;
+    }
+    std::streamsize xsputn(const char* s, std::streamsize n) override
+    {
+        text_.append(s, static_cast<std::size_t>(n));
+        return through_ ? through_->sputn(s, n) : n;
+    }
+    int sync() override { return through_ ? through_->pubsync() : 0; }
+
+private:
+    std::streambuf* through_;
+    std::string text_;
+};
+
+/* Standard output and standard error recorded while it lives, passed on
+ * when `through`. */
+class Recorded {
+public:
+    explicit Recorded(bool through)
+        : out_(through ? std::cout.rdbuf() : nullptr),
+          err_(through ? std::cerr.rdbuf() : nullptr),
+          old_out_(std::cout.rdbuf(&out_)),
+          old_err_(std::cerr.rdbuf(&err_))
+    {
+    }
+    ~Recorded()
+    {
+        std::cout.rdbuf(old_out_);
+        std::cerr.rdbuf(old_err_);
+    }
+    Recorded(const Recorded&) = delete;
+    Recorded& operator=(const Recorded&) = delete;
+    const std::string& out() const { return out_.text(); }
+    const std::string& err() const { return err_.text(); }
+
+private:
+    Recorder out_, err_;
+    std::streambuf* old_out_;
+    std::streambuf* old_err_;
+};
+
+/* What one parser made of the file. */
+struct Reading {
+    bool refused = false;
+    std::string what, type;
+    std::exception_ptr error;
+    std::string description, out, err;
+};
+
+Reading read_with(const NamedParser& parser, ParsedTarget& target,
+                  const std::string& fn, bool through)
+{
+    Reading r;
+    {
+        Recorded rec(through);
+        try {
+            parser.read(target, fn);
+        } catch (const std::exception& e) {
+            r.refused = true;
+            r.what = e.what();
+            r.type = typeid(e).name();
+            r.error = std::current_exception();
+        } catch (...) {
+            r.refused = true;
+            r.what = "(an exception that is not a std::exception)";
+            r.type = "(unknown)";
+            r.error = std::current_exception();
+        }
+        r.out = rec.out();
+        r.err = rec.err();
+    }
+    if (!r.refused) r.description = describe_parse(target);
+    return r;
+}
+
+/* The first line where two texts differ: its number and the two lines
+ * ("(end)" past the end of one). */
+std::optional<std::pair<std::size_t, std::pair<std::string, std::string>>>
+first_different_line(const std::string& a, const std::string& b)
+{
+    std::istringstream ia(a), ib(b);
+    std::string la, lb;
+    for (std::size_t n = 1;; ++n) {
+        const bool ga = static_cast<bool>(std::getline(ia, la));
+        const bool gb = static_cast<bool>(std::getline(ib, lb));
+        if (!ga && !gb) return std::nullopt;
+        if (!ga) la = "(end)";
+        if (!gb) lb = "(end)";
+        if (!ga || !gb || la != lb) return {{n, {la, lb}}};
+    }
+}
+
+/* The difference of two readings, "" when they are alike. */
+std::string difference(const NamedParser& pa, const Reading& a,
+                       const NamedParser& pb, const Reading& b)
+{
+    const auto said = [](const Reading& r) {
+        return r.refused ? "refuses it: " + r.what
+                         : std::string("reads the file");
+    };
+    if (a.refused != b.refused || a.what != b.what)
+        return "  " + pa.name + ": " + said(a) + "\n  " + pb.name + ": " +
+               said(b);
+    if (a.type != b.type)
+        return "  both refuse it with the same text, as exceptions of "
+               "different types:\n  " + pa.name + ": type " + a.type +
+               "\n  " + pb.name + ": type " + b.type + "\n  refusal: " +
+               a.what;
+    if (const auto d = first_different_line(a.description, b.description))
+        return "  the descriptions of the two parses (describe_parse) "
+               "first differ on their line " + std::to_string(d->first) +
+               ":\n  " + pa.name + ": " + d->second.first + "\n  " +
+               pb.name + ": " + d->second.second;
+    for (const auto& [stream, ta, tb] :
+         {std::tuple{"standard output", &a.out, &b.out},
+          std::tuple{"standard error", &a.err, &b.err}})
+        if (*ta != *tb)
+            return std::string("  the two write different text to ") +
+                   stream + ":\n  " + pa.name + ": \"" + *ta + "\"\n  " +
+                   pb.name + ": \"" + *tb + "\"";
+    return "";
+}
+
+}  // namespace
+
+void read_shadowed(ParsedTarget& target, const std::string& fn,
+                   const NamedParser& primary, const NamedParser& shadow)
+{
+    ++shadowed_reads;
+    /* The shadow's target: a copy of the configuration and of the OPTIM
+     * reader's seed as they stand before the primary reads the file. */
+    core::Context context = target.context;
+    ParsedTarget other(context);
+    other.optim_seed_ = target.optim_seed_;
+    if (target.optim_reader_)
+        other.optim_reader_.emplace(other.context, other.optim_seed_);
+
+    const Reading a = read_with(primary, target, fn, /*through=*/true);
+    const Reading b = read_with(shadow, other, fn, /*through=*/false);
+    const std::string why = difference(primary, a, shadow, b);
+    if (!why.empty())
+        throw std::logic_error(
+            "parser shadow (TADAH_HPO_PARSER_SHADOW): the two parsers of the "
+            "target file read " + fn + " differently, " + primary.name +
+            " first and " + shadow.name + " second:\n" + why);
+    if (a.refused) std::rethrow_exception(a.error);
+}
+
+std::size_t shadow_reads() { return shadowed_reads.load(); }
+
+NamedParser parser_of(TargetParser parser)
+{
+    if (parser == TargetParser::New)
+        return {&hpotarget::parse_target_file,
+                "the registry-driven parser"};
+    return {[](ParsedTarget& t, const std::string& file) { t.read(file); },
+            "ParsedTarget::read"};
+}
+
 std::unique_ptr<HPOTargets> make_targets(core::Context& c,
                                          const std::string& fn,
                                          TargetParser parser,
                                          TargetsPurpose purpose)
 {
-    struct Old {
-        static void read(ParsedTarget& t, const std::string& file)
-        {
-            t.read(file);
-        }
-    };
-    const HPOTargets::ReadFn read = parser == TargetParser::New
-                                        ? &hpotarget::parse_target_file
-                                        : &Old::read;
+#ifdef TADAH_HPO_PARSER_SHADOW
+    const TargetParser other =
+        parser == TargetParser::New ? TargetParser::Old : TargetParser::New;
+    return make_targets(c, fn, parser_of(parser), parser_of(other), purpose);
+#else
     return std::unique_ptr<HPOTargets>(
-        new HPOTargets(c, fn, nullptr, purpose, read));
+        new HPOTargets(c, fn, nullptr, purpose, parser_of(parser).read));
+#endif
+}
+
+std::unique_ptr<HPOTargets> make_targets(core::Context& c,
+                                         const std::string& fn,
+                                         const NamedParser& primary,
+                                         const NamedParser& shadow,
+                                         TargetsPurpose purpose)
+{
+    return std::unique_ptr<HPOTargets>(new HPOTargets(
+        c, fn, nullptr, purpose,
+        [&primary, &shadow](ParsedTarget& t, const std::string& file) {
+            read_shadowed(t, file, primary, shadow);
+        }));
 }
 
 std::string describe_parse(const ParsedTarget& t)

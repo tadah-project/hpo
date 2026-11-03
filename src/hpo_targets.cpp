@@ -21,6 +21,9 @@
 #include <tadah/core/retired_keys.h>
 #include <tadah/core/number_format.h>
 #include <tadah/hpo/loss_function.h>
+#ifdef TADAH_HPO_PARSER_SHADOW
+#include <tadah/hpo/hpo_targets_testing.h>
+#endif
 
 #include <algorithm>
 #include <cmath>
@@ -239,9 +242,19 @@ void ParsedTarget::prepare_optim_reader() {
 }
 
 namespace {
-/* The parser of `tadah hpo`: ParsedTarget::read. */
+/* The parser of `tadah hpo`: ParsedTarget::read. In a validation build
+ * configured with the CMake option TADAH_HPO_PARSER_SHADOW (OFF by
+ * default), the parser shadow: ParsedTarget::read, and the registry-driven
+ * parser on a copy of the configuration, the two compared on every target
+ * file (hpo_targets_testing.h, read_shadowed). */
 void read_target_file(ParsedTarget& target, const std::string& fn) {
+#ifdef TADAH_HPO_PARSER_SHADOW
+  testing::read_shadowed(target, fn,
+                         testing::parser_of(testing::TargetParser::Old),
+                         testing::parser_of(testing::TargetParser::New));
+#else
   target.read(fn);
+#endif
 }
 }  // namespace
 
@@ -252,7 +265,7 @@ HPOTargets::HPOTargets(core::Context &c, std::string fn,
 
 HPOTargets::HPOTargets(core::Context &c, std::string fn,
                        const mlip::KeyProvenance *provenance,
-                       TargetsPurpose purpose, ReadFn read_file)
+                       TargetsPurpose purpose, const ReadFn& read_file)
     : ParsedTarget(c) {
   const bool check = purpose == TargetsPurpose::Check;
   models::resolve_embed_blocks(context);

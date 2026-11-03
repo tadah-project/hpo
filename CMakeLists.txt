@@ -404,6 +404,23 @@ else()
   # target_link_libraries(tadah.hpo PUBLIC ${TADAH_LAMMPS_DIR}/src/STUBS/libmpi_stubs.a)
 endif()
 
+# The parser shadow, for a validation build only (OFF by default; the
+# program is never built with it): every target file is read by both
+# parsers of the target file, ParsedTarget::read, the parser of `tadah
+# hpo`, and the registry-driven parser (src/hpotarget_parser.cpp), each on
+# its own copy of the training configuration, and a file the two read
+# differently (the description of the parse, the refusal, the output) stops
+# the read with a std::logic_error naming both (read_shadowed,
+# include/tadah/hpo/hpo_targets_testing.h). PRIVATE: only the library's own
+# sources read it; tests/CMakeLists.txt tells test_hpo which build it is.
+option(TADAH_HPO_PARSER_SHADOW
+  "Validation build: compare the two parsers of the target file on every read (never for a program that is shipped)"
+  OFF)
+if (TADAH_HPO_PARSER_SHADOW)
+  target_compile_definitions(tadah.hpo PRIVATE TADAH_HPO_PARSER_SHADOW)
+  message(STATUS "TADAH_HPO_PARSER_SHADOW: a validation build; every target file is read by both parsers and compared")
+endif()
+
 tadah_add_tests()
 
 # Installation rules

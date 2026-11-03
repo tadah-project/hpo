@@ -46,15 +46,26 @@
  * applies, shows in scale_policy.
  *
  * Throws std::logic_error for a PC_OBSERVABLE kind it does not know, whose
- * options it could not show. */
+ * options it could not show.
+ *
+ * read_shadowed() is the parser shadow: a validation build configured with
+ * the CMake option TADAH_HPO_PARSER_SHADOW (OFF by default; HPO's
+ * CMakeLists.txt) reads every target file with it, the parser the targets
+ * name (ParsedTarget::read for `tadah hpo`) first and the other one second,
+ * and stops at the first file the two read differently. The program's
+ * build has no shadow. */
 
 #include <tadah/hpo/hpo_targets.h>
 
+#include <cstddef>
+#include <functional>
 #include <memory>
 #include <string>
 
 /* Defined: make_targets() reads a target file with the parser it names. */
 #define TADAH_HPOTARGET_PARSER_CHOICE 1
+/* Defined: read_shadowed(), the parser shadow, and its counter. */
+#define TADAH_HPOTARGET_PARSER_SHADOW_SEAM 1
 
 namespace tadah::hpo {
 namespace testing {
@@ -62,9 +73,52 @@ namespace testing {
 /* The parsers of the target file. */
 enum class TargetParser : unsigned char { Old, New };
 
+/* A parser of the target file, which reads the file `fn` into the target,
+ * and the name the shadow gives it. */
+struct NamedParser {
+    std::function<void(ParsedTarget& target, const std::string& fn)> read;
+    std::string name;
+};
+
+/* The parser `parser` names: Old, ParsedTarget::read; New, the
+ * registry-driven parser. */
+NamedParser parser_of(TargetParser parser);
+
+/* The targets of a run whose target file `parser` reads (in a build with
+ * the shadow, compared with the other parser: read_shadowed()). */
 std::unique_ptr<HPOTargets> make_targets(
     core::Context& c, const std::string& fn, TargetParser parser,
     TargetsPurpose purpose = TargetsPurpose::Run);
+
+/* The targets of a run whose target file read_shadowed() reads with
+ * `primary` and `shadow`, in any build. */
+std::unique_ptr<HPOTargets> make_targets(
+    core::Context& c, const std::string& fn, const NamedParser& primary,
+    const NamedParser& shadow, TargetsPurpose purpose = TargetsPurpose::Run);
+
+/* Reads the target file `fn` into `target` with `primary`, and with
+ * `shadow` into a target of its own, built on a copy of the training
+ * configuration and of the OPTIM reader of `target` as they stand before
+ * the read (so neither parse sees what the other inserts). What each parser
+ * writes to standard output and standard error is recorded; the primary's
+ * reaches the streams as well, the shadow's does not.
+ *   - The two read the file alike: returns, `target` holds what the
+ *     primary read. Both refuse it alike: rethrows the primary's refusal.
+ *   - Else throws std::logic_error naming the option
+ *     TADAH_HPO_PARSER_SHADOW, the file, both parsers and the difference:
+ *     one parser refuses the file and the other reads it ("<name>: refuses
+ *     it: <what>", "<name>: reads the file"); the two refusals differ in
+ *     their text or their type; the first line where the descriptions of
+ *     the two parses (describe_parse) differ ("<name>: <line>"); what the
+ *     two wrote to standard output or standard error.
+ * Each call counts in shadow_reads(). */
+void read_shadowed(ParsedTarget& target, const std::string& fn,
+                   const NamedParser& primary, const NamedParser& shadow);
+
+/* The number of reads read_shadowed() has compared in this process: in the
+ * program's build it never runs, in a build with the shadow once for each
+ * construction of HPOTargets. */
+std::size_t shadow_reads();
 
 std::string describe_parse(const ParsedTarget& targets);
 
