@@ -263,8 +263,8 @@ build_bump_gate_table(const core::Context &ctx, const HPOTargets &trg) {
       double most=c.second+ch.w*(ch.physical_width?s.second:1/s.first);
       if(least>spec.radius+tol || (trg.BUMPGATE_STRICT && most>spec.radius+tol))
         throw std::runtime_error("BUMPGATE: "+ch.ckey+" ("+std::to_string(i+1)+") "+
-          (trg.BUMPGATE_STRICT?"has a corner of its OPTIM box whose support ends past the cutoff, which BUMPGATE STRICT refuses"
-                              :"has no point in its OPTIM box whose support ends inside the cutoff"));
+          (trg.BUMPGATE_STRICT?"has a corner of its OPTIM box whose support ends past RADIUS, which BUMPGATE STRICT refuses"
+                              :"has no point in its OPTIM box whose support ends at or before RADIUS"));
       if(most>spec.radius+tol && (b.c_flat>=0 || b.s_flat>=0))ch.bumps.push_back(b);
     }
     if(!ch.bumps.empty())tbl.push_back(std::move(ch));
