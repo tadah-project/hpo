@@ -424,6 +424,7 @@ EXTRACTION: list[Rule] = [
          operands={"e.method": ("init_method",)}),
     Rule("the ASA options", "src/asa_options.cpp",
          operands={"n": ("param",), "base": ("param",)},
+         ignore={"optimizer": IGNORE_OPTIMISERS},
          tables=[(r"\bkDescs\s*\[\]", "first", ("param",)),
                  (r"\bkExcluded", "first", ("param_excluded",))]),
     Rule("the TADAH:GRID PARAM key", "src/backend_rules.cpp", compare=False,

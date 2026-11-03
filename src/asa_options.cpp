@@ -1,9 +1,13 @@
 /* asa_options.cpp -- PARAM parsing/validation for LIB ASA / ALGO ASA.
- * One descriptor table drives the parser, print_caps, and the tests.
+ * One descriptor table drives the parser, print_caps, and the tests; the
+ * text of each row of the PARAM table of `tadah explain ASA:ASA` is the
+ * explain of its PARAM key in the registry (hpotarget_params.toml,
+ * hpo_param_registry_gen.h).
  * Value ranges mirror asa_test_asa_options() in external/asa/asa.c so
  * an INVALID_USER_INPUT exit can only indicate a glue bug. */
 
 #include <tadah/hpo/asa_options.h>
+#include <tadah/hpo/hpo_param_registry_gen.h>
 #include <tadah/core/number_format.h>
 #include <tadah/hpo/hpo_log.h>
 #include <tadah/hpo/optimizer_spec.h>
@@ -19,6 +23,8 @@
 #include <ostream>
 #include <sstream>
 #include <stdexcept>
+#include <string>
+#include <string_view>
 
 namespace tadah::hpo {
 
@@ -33,7 +39,6 @@ struct Desc {
     double      min;       /* inclusive; NaN = unbounded                */
     double      max;       /* inclusive; NaN = unbounded                */
     const char* def_str;   /* default, for the help table               */
-    const char* doc;
 };
 
 constexpr double kNaN = std::numeric_limits<double>::quiet_NaN();
@@ -41,84 +46,39 @@ constexpr double kNaN = std::numeric_limits<double>::quiet_NaN();
 /* Order = asa_opt file order, then gated groups; the help table prints
  * in this order. */
 const Desc kDescs[] = {
-  {"Limit_Acceptances", Kind::Count, false, 0, kNaN, "10000",
-   "max accepted states; 0 = no limit"},
-  {"Limit_Generated", Kind::Count, false, 0, kNaN, "99999",
-   "max generated states; 0 = no limit"},
-  {"Limit_Invalid_Generated_States", Kind::Count, false, -1, kNaN, "1000",
-   "invalid-state budget; 0 = exit ASAP, -1 = bypass test"},
-  {"Accepted_To_Generated_Ratio", Kind::Real, false, 0, kNaN, "1e-6",
-   "min accepted/generated ratio before reanneal test (must be > 0)"},
-  {"Cost_Precision", Kind::Real, false, 0, kNaN, "1e-18",
-   "|last-best| threshold of the cost-repeat plateau test (must be > 0)"},
-  {"Maximum_Cost_Repeat", Kind::Count, false, 0, kNaN, "5",
-   "consecutive plateau cycles before COST_REPEATING exit; 0 = bypass"},
-  {"Number_Cost_Samples", Kind::Count, false, kNaN, kNaN, "5",
-   ">0: initial cost temp from mean |cost|; <-1: from a deviation sample"},
-  {"Temperature_Ratio_Scale", Kind::Real, false, 0, kNaN, "1e-5",
-   "the main control of the annealing rate: m = -log(TRS)"},
-  {"Cost_Parameter_Scale_Ratio", Kind::Real, false, 0, kNaN, "1.0",
-   "cost temperature schedule scale relative to parameters"},
-  {"Temperature_Anneal_Scale", Kind::Real, false, 0, kNaN, "100.0",
-   "n = log(TAS); above the number of dimensions for large problems"},
-  {"Sequential_Parameters", Kind::Count, false, kNaN, kNaN, "-1",
-   "start the cyclic generation of one dimension at a time at this "
-   "0-based index (0 = the first dimension); any negative = off"},
-  {"Initial_Parameter_Temperature", Kind::Real, false, 0, kNaN, "1.0",
-   "initial parameter temperature (must be > 0)"},
-  {"Acceptance_Frequency_Modulus", Kind::Count, false, 0, kNaN, "100",
-   "a periodic test follows each state, or each block of states, that "
-   "brings the count of accepted states to a multiple of this number; "
-   "0 = off"},
-  {"Generated_Frequency_Modulus", Kind::Count, false, 0, kNaN, "10000",
-   "a periodic test follows each state, or each block of states, that "
-   "brings the count of generated states to a multiple of this number; "
-   "0 = off"},
-  {"Reanneal_Cost", Kind::Count, false, kNaN, kNaN, "1",
-   "0 = off, 1 = default, >1 / <-1 = deviation-sample variants (-1 invalid)"},
-  {"Reanneal_Parameters", Kind::Bool, false, 0, 1, "1",
-   "adapt the temperature of each dimension to its tangent sensitivity"},
-  {"Delta_X", Kind::Real, false, 0, kNaN, "0.001",
-   "finite-difference step for tangents; 0 disables tangents"},
-  {"User_Tangents", Kind::Bool, false, 0, 1, "0",
-   "unsupported: tadah hpo has no analytic tangents (1 = error)"},
-  {"Curvature_0", Kind::Count, false, -1, 1, "1",
-   "1 = skip curvature array (Tadah!'s default; ASA's own default 0 costs "
-   "about n^2 evaluations at the exit, n the dimensions), 0 = full curvature "
-   "at exit, -1 = periodic"},
+  {"Limit_Acceptances", Kind::Count, false, 0, kNaN, "10000"},
+  {"Limit_Generated", Kind::Count, false, 0, kNaN, "99999"},
+  {"Limit_Invalid_Generated_States", Kind::Count, false, -1, kNaN, "1000"},
+  {"Accepted_To_Generated_Ratio", Kind::Real, false, 0, kNaN, "1e-6"},
+  {"Cost_Precision", Kind::Real, false, 0, kNaN, "1e-18"},
+  {"Maximum_Cost_Repeat", Kind::Count, false, 0, kNaN, "5"},
+  {"Number_Cost_Samples", Kind::Count, false, kNaN, kNaN, "5"},
+  {"Temperature_Ratio_Scale", Kind::Real, false, 0, kNaN, "1e-5"},
+  {"Cost_Parameter_Scale_Ratio", Kind::Real, false, 0, kNaN, "1.0"},
+  {"Temperature_Anneal_Scale", Kind::Real, false, 0, kNaN, "100.0"},
+  {"Sequential_Parameters", Kind::Count, false, kNaN, kNaN, "-1"},
+  {"Initial_Parameter_Temperature", Kind::Real, false, 0, kNaN, "1.0"},
+  {"Acceptance_Frequency_Modulus", Kind::Count, false, 0, kNaN, "100"},
+  {"Generated_Frequency_Modulus", Kind::Count, false, 0, kNaN, "10000"},
+  {"Reanneal_Cost", Kind::Count, false, kNaN, kNaN, "1"},
+  {"Reanneal_Parameters", Kind::Bool, false, 0, 1, "1"},
+  {"Delta_X", Kind::Real, false, 0, kNaN, "0.001"},
+  {"User_Tangents", Kind::Bool, false, 0, 1, "0"},
+  {"Curvature_0", Kind::Count, false, -1, 1, "1"},
   /* gated groups */
-  {"User_Quench_Cost_Scale", Kind::Real, false, 0, kNaN, "1.0",
-   "cost-temperature quench exponent Q (>1 quenches; proof-safe)"},
-  {"User_Quench_Param_Scale", Kind::Real, true, 0, kNaN, "1.0",
-   "quench exponent Q_i of each dimension (>1 voids the sampling proof)"},
-  {"User_Temperature_Ratio", Kind::Real, true, 0, kNaN, "1.0",
-   "multiplier of -log(Temperature_Ratio_Scale) of each dimension"},
-  {"User_Delta_Parameter", Kind::Real, true, 0, kNaN, "Delta_X",
-   "finite-difference step of each dimension (defaults to Delta_X)"},
-  {"User_Parameter_Temperature", Kind::Real, true, 0, kNaN, "IPT",
-   "initial temperature of each dimension (defaults to Initial_Parameter_Temperature)"},
-  {"Multi_Number", Kind::Count, false, 1, kNaN, "1",
-   "track the best N distinct minima (reported in the journal)"},
-  {"Multi_Specify", Kind::Bool, false, 0, 1, "1",
-   "1 = strict < for new minima (Tadah!'s default); 0 = <=, as in ASA's "
-   "example options"},
-  {"Multi_Grid", Kind::Real, true, 0, kNaN, "0.0",
-   "distinctness grid of each dimension for the Multi_Number minima (0 = "
-   "the double-precision epsilon)"},
-  {"Queue_Size", Kind::Count, false, 0, kNaN, "0",
-   "size of the cache of evaluated states (FIFO); 0 = cache off"},
-  {"Queue_Resolution", Kind::Real, true, 0, kNaN, "0.0",
-   "cache-hit resolution of each dimension"},
-  {"Gener_Block", Kind::Count, false, 1, kNaN, "1",
-   "initial generated-state block size; 1 (with Gener_Block_Max 1) = "
-   "canonical serial sampling, >1 evaluates the block concurrently "
-   "(THREADS-wide) and changes sampling"},
-  {"Gener_Block_Max", Kind::Count, false, 1, kNaN, "Gener_Block",
-   "block-size cap (buffers sized once); the adaptive resizing keeps the "
-   "block between 1 and this cap, so it can shrink below Gener_Block"},
-  {"Gener_Mov_Avr", Kind::Count, false, 0, kNaN, "3",
-   "moving-average window of the adaptive block resizing; 0 = no "
-   "resizing: every block holds Gener_Block states"},
+  {"User_Quench_Cost_Scale", Kind::Real, false, 0, kNaN, "1.0"},
+  {"User_Quench_Param_Scale", Kind::Real, true, 0, kNaN, "1.0"},
+  {"User_Temperature_Ratio", Kind::Real, true, 0, kNaN, "1.0"},
+  {"User_Delta_Parameter", Kind::Real, true, 0, kNaN, "Delta_X"},
+  {"User_Parameter_Temperature", Kind::Real, true, 0, kNaN, "IPT"},
+  {"Multi_Number", Kind::Count, false, 1, kNaN, "1"},
+  {"Multi_Specify", Kind::Bool, false, 0, 1, "1"},
+  {"Multi_Grid", Kind::Real, true, 0, kNaN, "0.0"},
+  {"Queue_Size", Kind::Count, false, 0, kNaN, "0"},
+  {"Queue_Resolution", Kind::Real, true, 0, kNaN, "0.0"},
+  {"Gener_Block", Kind::Count, false, 1, kNaN, "1"},
+  {"Gener_Block_Max", Kind::Count, false, 1, kNaN, "Gener_Block"},
+  {"Gener_Mov_Avr", Kind::Count, false, 0, kNaN, "3"},
 };
 
 /* Upstream option names deliberately not exposed: tailored errors. Two of
@@ -540,12 +500,31 @@ const char* asa_exit_name(int exit_status)
     }
 }
 
+namespace {
+
+/* The explain of the ASA:ASA PARAM key `name` in the registry
+ * (hpotarget_params.toml): its row of the PARAM table. */
+std::string_view explain_of(std::string_view name)
+{
+    for (const param_registry::Param& p : param_registry::kParams) {
+        if (p.name != name) continue;
+        for (const std::string_view optimizer : p.optimizers)
+            if (optimizer == "ASA:ASA") return p.explain;
+    }
+    throw std::logic_error("ASA:ASA PARAM " + std::string(name) +
+                           " has no entry in the registry "
+                           "(hpotarget_params.toml)");
+}
+
+}  // namespace
+
 void print_asa_param_table(std::ostream& os)
 {
     for (const auto& d : kDescs) {
         os << "  PARAM " << d.name;
         if (d.per_dim) os << "[/i]";
-        os << "  (default " << d.def_str << ")  " << d.doc << "\n";
+        os << "  (default " << d.def_str << ")  " << explain_of(d.name)
+           << "\n";
     }
 }
 

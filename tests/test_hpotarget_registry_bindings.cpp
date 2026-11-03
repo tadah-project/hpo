@@ -35,10 +35,11 @@
 // (Block::close_steps) and of the end of the file (eof_order), each by a
 // file that two steps refuse, refused as the earlier step refuses it; the
 // line a close check names (Block::close_checks_at); the keys given again
-// only after a line reads them (Repeat::ErrorUntilRead); and the texts the
+// only after a line reads them (Repeat::ErrorUntilRead); the texts the
 // parser puts into messages (Key::effect against require_strategy_key(),
-// Rule::what, Param::explain against kDescs). The case of words (any_case)
-// is compared by check_hpotarget_generated.py, check `case`.
+// Rule::what); and the text of a PARAM key in `tadah explain ASA:ASA`
+// (Param::explain against print_asa_param_table). The case of words
+// (any_case) is compared by check_hpotarget_generated.py, check `case`.
 //
 // Tag [hpotarget_gen]. The file compiles with or without the generated
 // headers (__has_include): without them it holds one case, which fails;
@@ -1717,11 +1718,12 @@ TEST_CASE("hpotarget generated tables: the effect of a STRATEGY TYPE key "
 }
 
 /* Pins: Param::explain of each PARAM key of ASA:ASA is its text in the
- * PARAM table of `tadah explain ASA:ASA` (print_asa_param_table, kDescs of
- * asa_options.cpp), the end of its row. Before the fix: the header has no
- * explain of a PARAM key. */
+ * PARAM table of `tadah explain ASA:ASA` (print_asa_param_table, which
+ * takes it from the registry for each row of kDescs of asa_options.cpp),
+ * the end of its row. Before the fix: the header has no explain of a PARAM
+ * key. */
 TEST_CASE("hpotarget generated tables: the explain of an ASA PARAM key is "
-          "its row of kDescs", "[hpotarget_gen]")
+          "its row of the PARAM table", "[hpotarget_gen]")
 {
     std::ostringstream printed;
     tadah::hpo::print_asa_param_table(printed);
