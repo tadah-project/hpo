@@ -136,6 +136,20 @@ TEST_CASE("StepPlan: near-bound rules are per dimension",
         CHECK(plan.note[0].find("inward") != std::string::npos);
         CHECK(plan.dx[1] == Approx(0.002));
     }
+    /* Pins: the inward first step is tadah's rule for a STEP it gives
+     * NLopt: with STEP unset the plan gives no step (NLopt's own default,
+     * which shortens the step near a bound, applies) and turns none
+     * inward, so the journal has no "inward" WARNING; the STEP note of
+     * LN_SBPLX and LN_NELDERMEAD says so ("With STEP set, ..."). Before
+     * the fix: passes as well (a pin of the rule the note states). */
+    SECTION("SBPLX: no inward step with STEP unset") {
+        auto sp = spec("LN_SBPLX", false);
+        sp.optim_init = {{1.9, 0.004}};
+        const auto start = sp.in(sp.optim_init.front());
+        const auto plan = make_step_plan(sp, start, optimizer_caps(sp));
+        CHECK_FALSE(plan.given);
+        for (const auto& n : plan.note) CHECK(n.find("inward") == std::string::npos);
+    }
     SECTION("no start point (INNER): no near-bound rules") {
         auto sp = spec("LN_BOBYQA", false);
         sp.step = 0.25;

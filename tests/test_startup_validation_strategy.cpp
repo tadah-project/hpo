@@ -590,10 +590,15 @@ TEST_CASE("startup validation: a phase without LIB or ALGO is rejected by "
                         Catch::Contains("the EXPLORE block names no "
                                         "optimiser: ALGO is not set"));
     }
+    /* A file without an OPTIMIZER block is told that it has none (it was
+     * "the OPTIMIZER block names no optimiser: LIB and ALGO are not set;
+     * LIB and ALGO in its STRATEGY block (or directly inside OPTIMIZER)
+     * name it", of a block and a STRATEGY block the file does not have). */
     SECTION("a configuration without an OPTIMIZER block") {
         const auto msg = parse_error(kRoot);
-        CHECK_THAT(msg, Catch::Contains("names no optimiser: LIB and ALGO are "
-                                        "not set"));
+        CHECK(msg == "the target file has no OPTIMIZER block: an OPTIMIZER "
+                     "... ENDOPTIMIZER block with LIB and ALGO names the "
+                     "optimiser");
     }
     SECTION("an OPTIMIZER block that is never closed") {
         /* Refused as open, at its OPTIMIZER line (line 3), before what it
@@ -1517,9 +1522,11 @@ TEST_CASE("startup validation: VECTOR_ARR is refused for LD_TNEWTON and "
     }
 }
 
-/* Pins: DLIB:GFS draws no random numbers, so a SEED it would run with is
- * refused at startup, as TADAH:GRID's is ("DLIB:GFS does not use SEED: it
- * draws no random numbers"): a STRATEGY-level SEED, an EXPLORE
+/* Pins: DLIB:GFS reads no SEED (dlib draws its random points from a fixed
+ * internal seed), so a SEED it would run with is refused at startup, as
+ * TADAH:GRID's is ("DLIB:GFS does not use SEED: dlib draws its random
+ * points from a fixed internal seed, which tadah hpo does not set, so a
+ * search with THREADS 1 repeats its points"): a STRATEGY-level SEED, an EXPLORE
  * block's SEED, and the STRATEGY-level SEED of a PRESTAGE refinement on
  * DLIB:GFS whose exploration has a SEED of its own. A PRESTAGE refinement's
  * SEED that the exploration takes (an exploration that reads SEED and has
@@ -1541,13 +1548,20 @@ TEST_CASE("startup validation: VECTOR_ARR is refused for LD_TNEWTON and "
  * refinement: CERES:STEEPEST_DESCENT does not support SEED" for the file
  * that the CERES leg accepts). Before the reason was given: a refused
  * refinement SEED was "DLIB:BFGS does not support SEED" or "...: it draws
- * no random numbers; remove it", without the exploration's part. */
+ * no random numbers; remove it", without the exploration's part. Before
+ * the reason named dlib's seed: DLIB:GFS's refusals said "it draws no
+ * random numbers", which dlib does (from a fixed seed): they fail on it. */
 TEST_CASE("startup validation: DLIB:GFS refuses a SEED, unless it seeds the "
           "exploration of a PRESTAGE that it refines",
           "[startup_validation][gfs][seed]")
 {
-    const std::string unread =
-        "DLIB:GFS does not use SEED: it draws no random numbers";
+    /* The reason names dlib's fixed seed (it said "it draws no random
+     * numbers": dlib draws its random points from a seed of its own). */
+    const std::string gfs_reason =
+        "dlib draws its random points from a fixed internal seed, which "
+        "tadah hpo does not set, so a search with THREADS 1 repeats its "
+        "points";
+    const std::string unread = "DLIB:GFS does not use SEED: " + gfs_reason;
     CHECK(judge(strategy_config("    LIB DLIB\n    ALGO GFS\n    MAXEVAL 20\n"
                                 "    SEED 5\n")).startup ==
           "the STRATEGY-level optimiser: " + unread);
@@ -1566,7 +1580,10 @@ TEST_CASE("startup validation: DLIB:GFS refuses a SEED, unless it seeds the "
         " does not use SEED: it draws no random numbers, and the exploration "
         "(NLOPT:GN_CRS2_LM) has a SEED of its own";
     CHECK(judge(prestage("    SEED 7\n", "      SEED 3\n")).startup ==
-          "the PRESTAGE refinement: DLIB:GFS" + own);
+          "the PRESTAGE refinement: DLIB:GFS does not use SEED: " +
+              gfs_reason +
+              ", and the exploration (NLOPT:GN_CRS2_LM) has a SEED of its "
+              "own");
     /* The refinement optimisers that read no SEED of their own. */
     const auto refine = [](const std::string& lib, const std::string& algo,
                            const std::string& explore) {
@@ -3695,10 +3712,13 @@ TEST_CASE("startup validation: TADAH:RANDOM/GRID and DLIB:GFS reject what "
                             "numbers"});
     /* DLIB:GFS's SEED, which find_min_global does not read either, is
      * refused as TADAH:GRID's is (it was accepted at startup and reported
-     * with a warning when the run started). */
+     * with a warning when the run started), naming dlib's fixed seed (it
+     * said "it draws no random numbers"). */
     unread.push_back({"GFS SEED", gfs + "    SEED 7\n",
-                      top + "DLIB:GFS does not use SEED: it draws no random "
-                            "numbers"});
+                      top + "DLIB:GFS does not use SEED: dlib draws its "
+                            "random points from a fixed internal seed, which "
+                            "tadah hpo does not set, so a search with "
+                            "THREADS 1 repeats its points"});
     for (const auto& c : unread) {
         INFO(c.what << "\n" << c.body);
         CHECK(judge(strategy_config(c.body)).startup == c.message);
@@ -4412,21 +4432,25 @@ TEST_CASE("startup validation: finite differences fit every OPTIM box, "
               "probes -- the reannealing and exit tangents at (1 + Delta) x, "
               "or (1 - Delta) x when that lies outside the box -- would be "
               "evaluated outside the OPTIM box of these dimensions:\n  - "
-              "WATOM: OPTIM box [1, 1.000001], the default Delta_X 0.001: a "
-              "probe of WATOM = 1.0000005 lies outside the box; Delta_X up to "
-              "4.99999e-07 fits it\n  A Delta up to the value given for each "
+              "WATOM: OPTIM box [1, 1.000001], the default Delta_X 0.001: the "
+              "probes from WATOM = 1.0000005 lie outside the box; Delta_X up "
+              "to 4.99999e-07 fits them\n  A Delta up to the value given for each "
               "dimension keeps its probes inside the box; under OPTIM_SCALE "
               "AUTO every box is the unit box (the tangents fit for Delta <= "
               "1).");
         /* It ended "\n  Lower the Delta; or use OPTIM_SCALE AUTO, where
          * every box is the unit box (...)". The message said "PARAM Delta_X
-         * 0.001" of the default too; a written one is a PARAM */
+         * 0.001" of the default too; a written one is a PARAM. A dimension's
+         * line named the point the probes are taken from as "a probe of
+         * WATOM = 1.0000005", which is no probe: "the probes from WATOM =
+         * 1.0000005 lie outside the box; ... fits them". */
         CHECK_THAT(judge("OPTIM_SCALE NONE\nOPTIM WATOM (1) 1 1.000001\n"
                          "PC_ERMSE 0 1\nOPTIMIZER\n  STRATEGY\n" + asa +
                          "    PARAM Delta_X 0.002\n  ENDSTRATEGY\n"
                          "ENDOPTIMIZER\n").startup,
                    Catch::Contains("\n  - WATOM: OPTIM box [1, 1.000001], "
-                                   "PARAM Delta_X 0.002: a probe of WATOM = "));
+                                   "PARAM Delta_X 0.002: the probes from "
+                                   "WATOM = "));
         /* the unit box: tangents up to Delta 1, the exit curvature up to
          * 0.5 */
         CHECK(judge(strategy_config(asa + "    PARAM Delta_X 1\n")).startup == "");

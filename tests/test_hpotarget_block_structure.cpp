@@ -896,13 +896,15 @@ TEST_CASE("hpotarget block structure: a top-level key that takes one value "
  * such a line has read the first, and is refused otherwise, naming the
  * first and the lines that read the key ("LOSS is set twice (first on
  * line 3) and no line between reads the first (a --varloss or
- * PC_OBSERVABLE term that names no loss function); each key is given
- * once"). The run-wide uses (the validation metrics' loss, the ceiling of
- * every loss) take the last line.
+ * PC_OBSERVABLE term that names no loss function); the key is given
+ * again only after such a line"). The run-wide uses (the validation
+ * metrics' loss, the ceiling of every loss) take the last line.
  * Before the fix: a second line with no PC_LAMMPS line between replaced
  * the first without a word, for the validation metrics and the run's
  * ceiling too; then the message said "and no PC_LAMMPS or PC_OBSERVABLE
- * (PC_FAILPROBE) line between takes the first". */
+ * (PC_FAILPROBE) line between takes the first"; then it ended "; each key
+ * is given once", after the exception it had just stated: the refusal
+ * checks fail on that. */
 TEST_CASE("hpotarget block structure: FAILSCORE, LOSS or PC_SCRIPT_TIMEOUT "
           "set again before a PC_LAMMPS line takes it is refused",
           "[hpotarget][block_structure]")
@@ -938,7 +940,8 @@ TEST_CASE("hpotarget block structure: FAILSCORE, LOSS or PC_SCRIPT_TIMEOUT "
                       : "a PC_LAMMPS or PC_FAILPROBE line without --maxtime";
         CHECK(parse_error(kRoot + Lines{c.first, c.second} + block) ==
               at_line(4, c.message + " and no line between reads the first (" +
-                             readers + "); each key is given once",
+                             readers + "); the key is given again only "
+                             "after such a line",
                       c.second));
         /* a PC_LAMMPS line between reads the first */
         CHECK(parse_error(kRoot + Lines{c.first, pc_lammps, c.second,

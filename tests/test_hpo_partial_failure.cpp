@@ -892,12 +892,16 @@ TEST_CASE("a graded gradient search that starts where a PC_OBSERVABLE term "
              * failed PC_OBSERVABLE term, whose band-B losses these are.
              * Before the fix: "ON -- a skip cap, a failed PC_LAMMPS
              * simulation or a gate reject scores a graded loss ...". */
+            /* (Then "ON -- a skip cap, a failed PC_OBSERVABLE term or a
+             * rejection by BUMPGATE, RHOGATE or RHOBARGATE scores ...",
+             * without the refused fit of the startup line.) */
             CHECK_THAT(journal,
-                       Catch::Contains("ON -- a skip cap, a failed "
-                                       "PC_OBSERVABLE term or a rejection by "
-                                       "BUMPGATE, RHOGATE or RHOBARGATE "
-                                       "scores a graded loss in [0.999, 1) x "
-                                       "Fail score"));
+                       Catch::Contains("ON -- a failed PC_OBSERVABLE term or "
+                                       "a potential rejected as unusable (by "
+                                       "a --skip-above or --skip-rel cap, "
+                                       "BUMPGATE, RHOGATE or RHOBARGATE, or a "
+                                       "refused fit) scores a graded loss in "
+                                       "[0.999, 1) x Fail score"));
         }
     }
 }
@@ -1096,12 +1100,17 @@ TEST_CASE("a run whose every evaluation has a failed PC_OBSERVABLE term has "
      * Before the fix: "(the loss of a failed evaluation: a NaN/Inf loss,
      * an exception, a skip cap, a failed PC_LAMMPS simulation or a gate
      * reject; ...)", while every loss was FAILSCORE through the observable. */
+    /* (Then "... an exception, a skip cap, a failed PC_OBSERVABLE term or
+     * a rejection by BUMPGATE, RHOGATE or RHOBARGATE; ...", without the
+     * refused fit.) */
     CHECK_THAT(journal, Catch::Contains("1.0000e+16  (the loss of a failed "
                                         "evaluation: a NaN/Inf loss, an "
-                                        "exception, a skip cap, a failed "
-                                        "PC_OBSERVABLE term or a rejection by "
-                                        "BUMPGATE, RHOGATE or RHOBARGATE; "
-                                        "the ceiling of every loss)"));
+                                        "exception, a failed PC_OBSERVABLE "
+                                        "term or a potential rejected as "
+                                        "unusable (by a --skip-above or "
+                                        "--skip-rel cap, BUMPGATE, RHOGATE or "
+                                        "RHOBARGATE, or a refused fit); the "
+                                        "ceiling of every loss)"));
     CHECK(journal.find("PC_LAMMPS simulation") == std::string::npos);
 }
 

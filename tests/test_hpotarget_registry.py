@@ -1292,6 +1292,13 @@ error = "GRID_POINTS must be at least 2"
         self.assertTrue(rx.match("QFLUSH is set twice (first on line 3)"))
         self.assertFalse(rx.match("DIGITS is set twice (first on line 3)"))
         self.assertEqual(hr.sentences("One. Two, e.g. this. Three"), 2)
+        # A sentence that starts lowercase (a command name) or with a
+        # backticked key counts: "One. tadah hpo reads it. `KEY` is set."
+        # is three sentences (it was counted as one: the lint let a doc of
+        # three sentences through).
+        self.assertEqual(
+            hr.sentences("One. tadah hpo reads it. `KEY` is set."), 3)
+        self.assertEqual(hr.sentences("Use 1.5 here, i.e. this. two"), 1)
 
     def give_every_message_a_reason(self):
         """untested for every message no invalid case of the synthetic

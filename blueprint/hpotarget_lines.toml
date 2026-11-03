@@ -3146,7 +3146,7 @@ at = 2
 text = '''
 LOSS L1
 LOSS L2'''
-error = "LOSS is set twice (first on line 1) and no line between reads the first (a --varloss or PC_OBSERVABLE term that names no loss function); each key is given once"
+error = "LOSS is set twice (first on line 1) and no line between reads the first (a --varloss or PC_OBSERVABLE term that names no loss function); the key is given again only after such a line"
 
 [[key.invalid]]
 wrap = "none"
@@ -3764,7 +3764,7 @@ check = "startup"
 at = "none"
 doc = "Without an INIT block the search starts from the values of the training configuration: CGRID2B 1.0 2.0."
 text = "OPTIM CGRID2B (2) 2.5 3.5"
-error = "the starting point 1 of the INIT block of the STRATEGY-level optimiser: CGRID2B[2] = 2 lies outside its OPTIM box [2.5, 3.5]"
+error = "the starting point 1 of the STRATEGY-level optimiser, the value of the training configuration (no INIT block sets the start): CGRID2B[2] = 2 lies outside its OPTIM box [2.5, 3.5]"
 
 [[form.invalid]]
 wrap = "root"
@@ -5200,7 +5200,7 @@ at = 2
 text = '''
 FAILSCORE 1e9
 FAILSCORE 1e10'''
-error = "FAILSCORE is set twice (first on line 1) and no line between reads the first (a PC_LAMMPS or PC_FAILPROBE line without --failscore); each key is given once"
+error = "FAILSCORE is set twice (first on line 1) and no line between reads the first (a PC_LAMMPS or PC_FAILPROBE line without --failscore); the key is given again only after such a line"
 
 [[rule.invalid]]
 wrap = "none"
@@ -5217,7 +5217,7 @@ LIB NLOPT
 ALGO LN_SBPLX
 MAXEVAL 10
 ENDOPTIMIZER'''
-error = "LOSS is set twice (first on line 2) and no line between reads the first (a --varloss or PC_OBSERVABLE term that names no loss function); each key is given once"
+error = "LOSS is set twice (first on line 2) and no line between reads the first (a --varloss or PC_OBSERVABLE term that names no loss function); the key is given again only after such a line"
 
 [[rule.invalid]]
 wrap = "root"
@@ -5226,7 +5226,7 @@ doc = "The two names of the script limit, with no PC_LAMMPS line between."
 text = '''
 PC_SCRIPT_TIMEOUT 10:00
 MAXTIME 5:00'''
-error = "MAXTIME is set twice (first on line 1, as PC_SCRIPT_TIMEOUT) and no line between reads the first (a PC_LAMMPS or PC_FAILPROBE line without --maxtime); each key is given once"
+error = "MAXTIME is set twice (first on line 1, as PC_SCRIPT_TIMEOUT) and no line between reads the first (a PC_LAMMPS or PC_FAILPROBE line without --maxtime); the key is given again only after such a line"
 
 [[rule]]
 id = "RULE.PC_OBSERVABLE_excludes_PC_LAMMPS"

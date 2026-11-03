@@ -599,6 +599,25 @@ TEST_CASE("backend rules: validate_backend runs each backend's own checks",
         CHECK(error_of(grid) ==
               "TADAH:GRID does not use SEED: it draws no random numbers");
     }
+    /* Pins: DLIB:GFS's SEED refusal names why it reads none: dlib draws
+     * random points from a fixed internal seed (global_function_search,
+     * which find_min_global runs without set_seed), so seed_unread_reason
+     * is "dlib draws its random points from a fixed internal seed, which
+     * tadah hpo does not set, so a search with THREADS 1 repeats its
+     * points", the reason of the refusal of validate_backend() as of the
+     * startup checks (plain and PRESTAGE forms).
+     * Before the fix: "it draws no random numbers", which dlib does: both
+     * checks fail. */
+    {
+        auto gfs = with("DLIB", "GFS");
+        gfs.seed = 3;
+        const std::string reason =
+            "dlib draws its random points from a fixed internal seed, which "
+            "tadah hpo does not set, so a search with THREADS 1 repeats its "
+            "points";
+        CHECK(tadah::hpo::seed_unread_reason(gfs) == reason);
+        CHECK(error_of(gfs) == "DLIB:GFS does not use SEED: " + reason);
+    }
 
     /* Pins: a tolerance on G_MLSL without an INNER block -- a spec built
      * outside the parser, which require_inner_backend() refuses at startup

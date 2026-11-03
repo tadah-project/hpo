@@ -1343,6 +1343,22 @@ error = "the STRATEGY-level optimiser: NLOPT:LN_SBPLX does not use SEED: it draw
 wrap = "none"
 check = "startup"
 at = "ENDOPTIMIZER"
+doc = "DLIB:GFS: dlib draws its random points from a fixed internal seed."
+text = '''
+OPTIM CGRID2B (1) 0.5 1.5
+PC_ERMSE 0 1
+OPTIMIZER
+LIB DLIB
+ALGO GFS
+MAXEVAL 10
+SEED 42
+ENDOPTIMIZER'''
+error = "the STRATEGY-level optimiser: DLIB:GFS does not use SEED: dlib draws its random points from a fixed internal seed, which tadah hpo does not set, so a search with THREADS 1 repeats its points"
+
+[[key.invalid]]
+wrap = "none"
+check = "startup"
+at = "ENDOPTIMIZER"
 doc = "NLOPT:GN_DIRECT_L_RAND in one OPTIM dimension."
 text = '''
 OPTIM CGRID2B (1) 0.5 1.5

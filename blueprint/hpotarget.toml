@@ -1115,7 +1115,7 @@ at = 2
 text = '''
 FAILSCORE 1e9
 FAILSCORE 1e10'''
-error = "FAILSCORE is set twice (first on line 1) and no line between reads the first (a PC_LAMMPS or PC_FAILPROBE line without --failscore); each key is given once"
+error = "FAILSCORE is set twice (first on line 1) and no line between reads the first (a PC_LAMMPS or PC_FAILPROBE line without --failscore); the key is given again only after such a line"
 
 [[key.invalid]]
 wrap = "root"
@@ -1126,7 +1126,7 @@ FAILSCORE 1e9
 PC_LAMMPS --script main_pc.in --varloss E -5.0 1.0 --failscore 5
 FAILSCORE 1e10
 PC_LAMMPS --script main_pc.in --varloss E -5.0 1.0'''
-error = "FAILSCORE is set twice (first on line 1) and no line between reads the first (a PC_LAMMPS or PC_FAILPROBE line without --failscore); each key is given once"
+error = "FAILSCORE is set twice (first on line 1) and no line between reads the first (a PC_LAMMPS or PC_FAILPROBE line without --failscore); the key is given again only after such a line"
 
 [[key]]
 id = "ROOT.PC_SCRIPT_TIMEOUT"
@@ -1240,7 +1240,7 @@ at = 2
 text = '''
 PC_SCRIPT_TIMEOUT 600
 PC_SCRIPT_TIMEOUT 300'''
-error = "PC_SCRIPT_TIMEOUT is set twice (first on line 1) and no line between reads the first (a PC_LAMMPS or PC_FAILPROBE line without --maxtime); each key is given once"
+error = "PC_SCRIPT_TIMEOUT is set twice (first on line 1) and no line between reads the first (a PC_LAMMPS or PC_FAILPROBE line without --maxtime); the key is given again only after such a line"
 
 [[key]]
 id = "ROOT.MAXTIME"
@@ -1298,7 +1298,7 @@ at = 2
 text = '''
 MAXTIME 10:00
 MAXTIME 5:00'''
-error = "MAXTIME is set twice (first on line 1) and no line between reads the first (a PC_LAMMPS or PC_FAILPROBE line without --maxtime); each key is given once"
+error = "MAXTIME is set twice (first on line 1) and no line between reads the first (a PC_LAMMPS or PC_FAILPROBE line without --maxtime); the key is given again only after such a line"
 
 [[key.invalid]]
 wrap = "root"
@@ -1307,7 +1307,7 @@ doc = "Both names, with no PC_LAMMPS line between."
 text = '''
 MAXTIME 10:00
 PC_SCRIPT_TIMEOUT 5:00'''
-error = "PC_SCRIPT_TIMEOUT is set twice (first on line 1, as MAXTIME) and no line between reads the first (a PC_LAMMPS or PC_FAILPROBE line without --maxtime); each key is given once"
+error = "PC_SCRIPT_TIMEOUT is set twice (first on line 1, as MAXTIME) and no line between reads the first (a PC_LAMMPS or PC_FAILPROBE line without --maxtime); the key is given again only after such a line"
 msg_of = "RULE.settings_taken_by_lines"
 
 [[key]]
@@ -1592,6 +1592,24 @@ text = '''
 BUMPGATE STRICT
 OPTIM CGRID2B (4) 5.4 5.5'''
 error = "BUMPGATE: a compact bump reaches past its cutoff: under a Cut_Dummy cutoff each bump vanishes at or before RCUT (c + w/eta <= RCUT), as a bump cut off there gives the energy and the forces a step at the cutoff. The bumps past the cutoff:\n  - OPTIM CGRID2B (4) on line 2: its high bound 5.5 is at or above RCUT2B = 5.5, so bump 4 reaches 6.5, past the cutoff, whatever its width; the box stays inside with a CGRID2B high bound below RCUT2B.\n  A larger RCUT2B or RCUTMB in the training configuration gives a longer range; the potential stays smooth, as each bump vanishes at the edge of its own support."
+
+[[key.invalid]]
+wrap = "main_dm_embed_none"
+check = "startup"
+at = "none"
+doc = "Under STRICT: the box of the centre of density bump 2 of a DM_Embed component without a cutoff puts its support past RADIUS."
+text = '''
+BUMPGATE STRICT
+OPTIM H.DENSITY.CENTRES (2) 1.5 2.5'''
+error = "BUMPGATE: H.DENSITY.CENTRES (2) has a corner of its OPTIM box whose support ends past the cutoff, which BUMPGATE STRICT refuses"
+
+[[key.invalid]]
+wrap = "main_dm_embed_none"
+check = "startup"
+at = "none"
+doc = "Under CANDIDATE, the default: no point of the box of the centre of density bump 2 of a DM_Embed component without a cutoff keeps its support inside RADIUS."
+text = "OPTIM H.DENSITY.CENTRES (2) 2.2 2.6"
+error = "BUMPGATE: H.DENSITY.CENTRES (2) has no point in its OPTIM box whose support ends inside the cutoff"
 
 [[key]]
 id = "ROOT.RHOGATE"
@@ -3094,6 +3112,24 @@ ENDSTRATEGY
 ENDOPTIMIZER
 """
 
+[wrapper.main_dm_embed_none]
+block = "ROOT"
+doc = """\
+The slot is the first line, at the top level, of a search of a potential \
+with a DM_Embed component whose density has no cutoff (CUTOFF TYPE NONE)."""
+context = "main_dm_embed_none"
+text = """
+{line}
+PC_ERMSE 0 1
+OPTIMIZER
+STRATEGY
+LIB NLOPT
+ALGO LN_SBPLX
+MAXEVAL 10
+ENDSTRATEGY
+ENDOPTIMIZER
+"""
+
 # ------------------------------------------------------------ contexts ----
 # The training configuration (-c) of a conformance case, as the
 # configuration parser reads it. A wrapper or an example names one with
@@ -3299,6 +3335,48 @@ ETA 1 1
 AMPLITUDES 1 0.5
 CUTOFF
 TYPE Cut_Poly
+RADIUS 3
+ENDCUTOFF
+ENDDENSITY
+EMBEDDING
+BASIS Gaussian
+CENTRES 0 0.5 1
+ETA 2 2 2
+REFERENCE ZERO
+ENDEMBEDDING
+ENDDESCRIPTOR
+"""
+
+[context.main_dm_embed_none]
+doc = """\
+The potential of main_dm_embed with a density without a cutoff (CUTOFF \
+TYPE NONE, RADIUS 3), whose Blip5 bumps (support 3/ETA) end inside \
+RADIUS: centres 1 and 2, ETA 3."""
+config = """
+ATOM H
+WATOM 1
+VERBOSE 0
+DBFILE dummy.db
+INIT2B true
+INITMB true
+TYPE2B D2_BP 2 2 H H
+CGRID2B 1.0 2.0
+SGRID2B 0.5 1.0
+RCTYPE2B Cut_Cos
+RCUT2B 5.0
+MODEL M_BLR BF_Linear
+LAMBDA 1e-3
+OALGO 4
+DESCRIPTOR h DM_Embed
+PAIRS H H
+DENSITY
+BASIS Blip5
+FORM SIGNED
+CENTRES 1 2
+ETA 3 3
+AMPLITUDES 1 0.5
+CUTOFF
+TYPE NONE
 RADIUS 3
 ENDCUTOFF
 ENDDENSITY

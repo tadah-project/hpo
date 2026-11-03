@@ -21,7 +21,11 @@
 #include <tadah/core/core_types.h>
 #include <tadah/core/logger.h>
 #include <tadah/hpo/iter_health.h>
+#include <tadah/core/context.h>
+#include <tadah/core/periodic_table.h>
+#include <tadah/mlip/descriptors_calc.h>
 #include <tadah/mlip/design_matrix/column_block.h>
+#include <tadah/models/dc_selector.h>
 
 #include <cmath>
 #include <iostream>
@@ -408,4 +412,49 @@ TEST_CASE("iter_health: records from concurrent evaluations are all "
   for (auto& th : threads) th.join();
   CHECK(mon.warning_count(1, "max_abs") == kThreads * kRecords);
   CHECK(mon.warning_count(0, "max_abs") == 0);
+}
+
+/* Pins: the HEALTH_LOG warning of a block names the descriptor as the
+ * training configuration names it: for TYPEMB DM_mBlipEnv (a DM_mEAD
+ * descriptor) the layout of the descriptor calculator labels the block
+ * DM_mBlipEnv, and a zero block warns "HEALTH_LOG: eval 1: descriptor 1
+ * (DM_mBlipEnv): ...".
+ * Before the fix (MODELS: DM_mEAD<F>::label()): the block was labelled
+ * DM_mEAD, the class family, for every DM_mEAD descriptor: "descriptor 1
+ * (DM_mEAD)", which no TYPEMB names: both checks fail. */
+TEST_CASE("iter_health: a HEALTH_LOG warning names the descriptor as its "
+          "TYPEMB does", "[iter_health]") {
+  tadah::core::PeriodicTable::initialize();
+  tadah::core::Context c;
+  c.add("ATOM", "Ta");
+  c.add("WATOM", 1);
+  c.remove("INIT2B");
+  c.add("INIT2B", "false");
+  c.remove("INITMB");
+  c.add("INITMB", "true");
+  c.add("VERBOSE", 0);
+  c.remove("RCTYPEMB");
+  c.add("RCTYPEMB", "Cut_Cos");
+  c.add("RCUTMB", 5.0);
+  c.add("TYPEMB", "DM_mBlipEnv 0 0 0 5 5 Ta Ta");
+  c.add("CGRIDMB", "2.88");
+  c.add("SGRIDMB", "8.0");
+  c.add("CEMBFUNC", "0.5 0.75 1.0 1.25 1.5");
+  c.add("SEMBFUNC", "2.0 2.0 2.0 2.0 2.0");
+  c.add("RCUTENV", 0.6);
+  tadah::models::DC_Selector dcs(c);
+  const tadah::mlip::DescriptorsCalc<> dc(c, *dcs.d2b, *dcs.dmb, *dcs.c2b,
+                                          *dcs.cmb);
+  const ColumnLayout layout = dc.layout(c);
+  REQUIRE(layout.blocks.size() == 1u);
+  CHECK(layout.blocks[0].descriptor_label == "DM_mBlipEnv");
+  t_type w(layout.total_cols());
+  for (std::size_t i = 0; i < w.size(); ++i) w[i] = 0.0;
+  const auto rec = compute_iter_health(1, w, layout);
+  LoggerCapture cap;
+  IterHealthMonitor mon(HealthLogMode::Full);
+  mon.record(rec, layout);
+  INFO(cap.text());
+  CHECK(cap.text().find("HEALTH_LOG: eval 1: descriptor 1 (DM_mBlipEnv): ") !=
+        std::string::npos);
 }

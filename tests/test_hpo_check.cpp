@@ -873,6 +873,89 @@ TEST_CASE("hpo --check: the startup warnings before an error are written "
 
 namespace {
 
+/* OMP_NUM_THREADS of the environment at @p value (unset for nullptr) while
+ * it lives, restored after. */
+struct OmpEnv {
+    std::optional<std::string> old;
+    explicit OmpEnv(const char* value)
+    {
+        if (const char* e = std::getenv("OMP_NUM_THREADS")) old = e;
+        if (value) ::setenv("OMP_NUM_THREADS", value, 1);
+        else       ::unsetenv("OMP_NUM_THREADS");
+    }
+    ~OmpEnv()
+    {
+        if (old) ::setenv("OMP_NUM_THREADS", old->c_str(), 1);
+        else     ::unsetenv("OMP_NUM_THREADS");
+    }
+    OmpEnv(const OmpEnv&) = delete;
+    OmpEnv& operator=(const OmpEnv&) = delete;
+};
+
+}  // namespace
+
+/* Pins: the startup of a run without THREADS whose OpenMP width is 3
+ * names OMP_NUM_THREADS as the environment gives it: unset, "OMP_NUM_THREADS
+ * (unset: OpenMP takes 3 threads)", in the journal's THREADS line ("...
+ * OMP_NUM_THREADS (unset: OpenMP takes 3 threads) sets the threads of the
+ * OpenMP parts only ...") and in its WARNING; set to 3, "OMP_NUM_THREADS=3".
+ * The WARNING names where THREADS goes, which is the STRATEGY-level
+ * optimiser's block, an OPTIMIZER block without STRATEGY as well: "THREADS
+ * <n> for the STRATEGY-level optimiser (in its OPTIMIZER or STRATEGY block)
+ * gives n workers", for a file with a STRATEGY block and one without.
+ * Before the fix: an unset OMP_NUM_THREADS was printed as
+ * "OMP_NUM_THREADS=3", the width OpenMP took, as if the variable said so
+ * (OMP_NUM_THREADS=40 on a machine of 40 threads), and the WARNING said
+ * "THREADS <n> in the STRATEGY block gives n workers", of a block a file
+ * need not have: the unset and the block checks fail. */
+TEST_CASE("hpo: the THREADS line and WARNING say whether OMP_NUM_THREADS is "
+          "set and where THREADS goes",
+          "[HPO][hpo_check][threads]")
+{
+    const std::string plain_optimizer =
+        "OPTIMIZER\n  LIB NLOPT\n  ALGO LN_SBPLX\n  MAXEVAL 5\n"
+        "ENDOPTIMIZER\n";
+    const std::string where =
+        "does not change that, and THREADS <n> for the STRATEGY-level "
+        "optimiser (in its OPTIMIZER or STRATEGY block) gives n workers";
+    struct Case { const char* env; std::string optimizer; std::string omp; };
+    for (const Case& c : std::vector<Case>{
+             {nullptr, kOptimizer, "OMP_NUM_THREADS (unset: OpenMP takes 3 "
+                                   "threads)"},
+             {nullptr, plain_optimizer, "OMP_NUM_THREADS (unset: OpenMP "
+                                        "takes 3 threads)"},
+             {"3", kOptimizer, "OMP_NUM_THREADS=3"}}) {
+        INFO("OMP_NUM_THREADS " << (c.env ? c.env : "unset") << "\n"
+                                << c.optimizer);
+        fresh_process_state();
+        ScratchDir sd("threads_omp");
+        write_inputs(c.optimizer + kRootLines);
+        const OmpEnv env(c.env);
+        const ResidualOmpWidth omp(3);
+        REQUIRE(omp.width() == 3);
+        tadah::core::Context ctx =
+            make_ta_context("train.db", "config.hpo", "config.val");
+        int status = -1;
+        {
+            CaptureCout quiet;
+            status = tadah::hpo::hpo_run(ctx);
+        }
+        REQUIRE(status == 0);
+        std::ifstream in(sd.dir / "hpo_run.log");
+        std::ostringstream journal;
+        journal << in.rdbuf();
+        const std::string text = journal.str();
+        INFO(text);
+        CHECK(contains(text, "the training and prediction of the "
+                             "potential); " + c.omp + " sets the threads of "
+                             "the OpenMP parts only"));
+        CHECK(contains(text, "prediction of the potential); " + c.omp + " " +
+                                 where));
+    }
+}
+
+namespace {
+
 /* The permissions of @p dir at read and search alone while it lives (the
  * owner's), restored to the owner's all after. */
 struct ReadOnlyDir {

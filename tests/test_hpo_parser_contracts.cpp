@@ -1683,9 +1683,11 @@ TEST_CASE("Strict numbers: NOISE CALIBRATION and LOG_HP",
      * to 2^64 - 1. */
     check_uint_key(cal, "an integer from 0 to 2147483647",
                    {"5", "0", "2", "2147483647"}, {"2147483648"});
+    /* It was "NOISE.CALIBRATION must be 0 (off) or >= 2", a dotted name
+     * no file writes, without the value. */
     CHECK_THAT(parse_error(cal.config("1")),
-               Catch::StartsWith(cal.at() + "NOISE.CALIBRATION must be 0 (off) "
-                                 "or >= 2"));
+               Catch::StartsWith(cal.at() + "CALIBRATION in the NOISE block "
+                                 "must be 0 (off) or >= 2, got '1'"));
     CHECK(parse_config(cal.config("5")).spec.noise.calibration_n == 5u);
 
     const auto log_hp = attr_home("LOG_HP");

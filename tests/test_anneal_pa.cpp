@@ -348,12 +348,16 @@ TEST_CASE("ANNEAL_PA: FAILSCORE walkers are culled at the first resample",
 }
 
 /* Pins: without THREADS the journal says, as a WARNING, that the walkers
- * run on one worker thread and what THREADS does: "ANNEAL_PA: THREADS is
- * not set, so the 8 walkers run on 1 worker thread; THREADS <n> in the
- * STRATEGY block evaluates up to n of them at a time".
+ * run on one worker thread and what THREADS does, naming the block the
+ * annealer reads THREADS from: "ANNEAL_PA: THREADS is not set, so the 8
+ * walkers run on 1 worker thread; THREADS <n> for the STRATEGY-level
+ * optimiser (in its OPTIMIZER or STRATEGY block) evaluates up to n of them
+ * at a time", and for an annealer of an EXPLORE block "...; THREADS <n> in
+ * its EXPLORE block evaluates up to n of them at a time".
  * Before the fix: "ANNEAL_PA: THREADS not set -- running 8 walkers on 1
  * worker thread. Set THREADS <n> in the STRATEGY block to evaluate walkers
- * concurrently.": the check fails. */
+ * concurrently."; then "...; THREADS <n> in the STRATEGY block evaluates up
+ * to n of them at a time" for either: both checks fail. */
 TEST_CASE("ANNEAL_PA: without THREADS the journal says that the walkers run "
           "on one worker thread", "[HPO][anneal_pa][log]")
 {
@@ -365,15 +369,32 @@ TEST_CASE("ANNEAL_PA: without THREADS the journal says that the walkers run "
     sp.stop.maxeval = 16;
     sp.param["T_HOT"] = 0.5;
     sp.param["STEP_FRAC"] = 0.1;
-    LoggedRun lr;
-    MtStubHost stub{ [&](const Vec& x){ return x(0) * x(0); }, {}, {} };
-    run_anneal_pa_impl<Vec>(sp, stub);
-    const std::string log = lr.read();
-    INFO(log);
-    CHECK(log.find("ANNEAL_PA: THREADS is not set, so the 8 walkers "
-                   "run on 1 worker thread; THREADS <n> in the STRATEGY block "
-                   "evaluates up to n of them at a time") !=
-          std::string::npos);
+    auto explore = sp;
+    {
+        LoggedRun lr;
+        MtStubHost stub{ [&](const Vec& x){ return x(0) * x(0); }, {}, {} };
+        run_anneal_pa_impl<Vec>(sp, stub);
+        const std::string log = lr.read();
+        INFO(log);
+        CHECK(log.find("ANNEAL_PA: THREADS is not set, so the 8 walkers "
+                       "run on 1 worker thread; THREADS <n> for the "
+                       "STRATEGY-level optimiser (in its OPTIMIZER or "
+                       "STRATEGY block) evaluates up to n of them at a "
+                       "time") != std::string::npos);
+    }
+    explore.block_line = 12;
+    explore.block_line_text = "ENDEXPLORE";
+    {
+        LoggedRun lr;
+        MtStubHost stub{ [&](const Vec& x){ return x(0) * x(0); }, {}, {} };
+        run_anneal_pa_impl<Vec>(explore, stub);
+        const std::string log = lr.read();
+        INFO(log);
+        CHECK(log.find("ANNEAL_PA: THREADS is not set, so the 8 walkers "
+                       "run on 1 worker thread; THREADS <n> in its EXPLORE "
+                       "block evaluates up to n of them at a time") !=
+              std::string::npos);
+    }
 }
 
 TEST_CASE("ANNEAL_PA: MAXEVAL is a hard cap across the population",

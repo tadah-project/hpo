@@ -403,9 +403,13 @@ bool has(const std::string& text, const std::string& needle) {
 
 /* Pins: OPTIM MPARAMS is refused at startup on a function that reads no
  * MPARAMS (BF_Linear, BF_Polynomial2, Kern_Linear, Kern_Quadratic,
- * Kern_LQ), naming OPTIM MPARAMS (1), the function and that it reads none.
+ * Kern_LQ), naming OPTIM MPARAMS (1), the function and that it reads none,
+ * at the OPTIM line of the target file ("line 1 of <target>: OPTIM
+ * MPARAMS (1) is not a valid search target: ...", ending "\nLine: OPTIM
+ * MPARAMS (1) 0.5 2.0").
  * Before the fix: accepted; every evaluation trained the same model, so
- * the search changed nothing. */
+ * the search changed nothing. Then the refusal named neither the file nor
+ * the line: the frame checks fail. */
 TEST_CASE("OPTIM MPARAMS is refused on a function that reads none",
           "[HPO][optim][optim_mparams]") {
   tadah::core::PeriodicTable::initialize();
@@ -419,6 +423,9 @@ TEST_CASE("OPTIM MPARAMS is refused on a function that reads none",
     CHECK(has(msg, "OPTIM MPARAMS (1) is not a valid search target"));
     CHECK(has(msg, std::string(model).substr(6)));
     CHECK(has(msg, "reads no MPARAMS"));
+    CHECK(msg.rfind("line 1 of <target>: OPTIM MPARAMS (1) is not a valid "
+                    "search target: ", 0) == 0);
+    CHECK(has(msg, "\nLine: OPTIM MPARAMS (1) 0.5 2.0"));
   }
 }
 
@@ -463,6 +470,10 @@ TEST_CASE("OPTIM MPARAMS of Kern_RBF: one positive value",
     CHECK(has(msg, "OPTIM MPARAMS (1)"));
     CHECK(has(msg, "sigma"));
     CHECK(has(msg, "must be positive"));
+    /* At its line of the target file (it named neither). */
+    CHECK(msg.rfind("line 1 of <target>: OPTIM MPARAMS (1): the box [", 0) ==
+          0);
+    CHECK(has(msg, std::string("\nLine: OPTIM MPARAMS (1) ") + box));
   }
   CHECK(startup_error(c, "OPTIM MPARAMS (1) 0.3 3.0").empty());
 }
@@ -575,7 +586,9 @@ Context eam_ctx(const std::string& setfl, const std::string& type2b,
 
 /* Pins: OPTIM on a cutoff value that a descriptor takes from its setfl
  * file (D_Base::cutoff_fixed_by) is refused at startup, naming the OPTIM
- * key and index and the file's cutoff:
+ * key and index and the file's cutoff, at the OPTIM line of the target
+ * file ("line 1 of <target>: OPTIM RCUT2B (1) ...\nLine: OPTIM RCUT2B (1)
+ * 4.5 5.5"; it named neither the file nor the line):
  *   - OPTIM RCUT2B (1) with TYPE2B D2_EAM: "OPTIM RCUT2B (1) is not a
  *     valid search target: D2_EAM takes the cutoff 5 of its setfl file
  *     '<path>' (SETFL) and refuses another value";
@@ -604,6 +617,9 @@ TEST_CASE("OPTIM on a cutoff the setfl file fixes is refused at startup",
     INFO(msg);
     CHECK(has(msg, "OPTIM RCUT2B (1) is not a valid search target: " +
                        fixed2b));
+    CHECK(msg == "line 1 of <target>: OPTIM RCUT2B (1) is not a valid "
+                 "search target: " + fixed2b +
+                 "\nLine: OPTIM RCUT2B (1) 4.5 5.5");
   }
   {
     const std::string msg = startup_error(
@@ -628,32 +644,34 @@ TEST_CASE("OPTIM on a cutoff the setfl file fixes is refused at startup",
 }
 
 /* Pins: OPTIM WATOM is refused at startup when no descriptor of the
- * training configuration reads WATOM (MODELS context_reads_watom), naming
- * the line of the target file:
+ * training configuration reads WATOM (MODELS context_reads_watom), at the
+ * line of the target file:
  *   - TYPE2B D2_EAM, TYPEMB DM_EAM, and both (each with WATOM 1), with
- *     `OPTIM WATOM (1) 0.5 2.0` on line 2: "OPTIM WATOM (line 2 of the
- *     target file) is not a valid search target: no descriptor of the
- *     training configuration reads WATOM (D2_EAM, DM_EAM, D2_Dummy and
- *     DM_Dummy read none), and a fit refuses a WATOM other than 1 that no
+ *     `OPTIM WATOM (1) 0.5 2.0` on line 2: "line 2 of <target>: OPTIM
+ *     WATOM is not a valid search target: no descriptor of the training
+ *     configuration reads WATOM (D2_EAM, DM_EAM, D2_Dummy and DM_Dummy
+ *     read none), and a fit refuses a WATOM other than 1 that no
  *     descriptor reads, so every candidate other than 1 would fail its
- *     evaluation.";
+ *     evaluation.\nLine: OPTIM WATOM (1) 0.5 2.0";
  *   - TYPE2B D2_mJoin D2_BP ... D2_EAM ..., whose D2_BP reads WATOM: the
  *     same OPTIM WATOM line is accepted.
  * Before the fix: all accepted; every candidate other than 1 was refused by
  * its fit (Tadah.MLIP require_no_unused_keys: "WATOM 0.77...: no descriptor
  * of the configuration reads it"), FAILSCORE, and the run ended with exit
- * status 0. */
+ * status 0. Then the refusal was "OPTIM WATOM (line 2 of the target file)
+ * is not ...", without the file and the line's text: the check fails on
+ * it. */
 TEST_CASE("OPTIM WATOM is refused at startup when no descriptor reads WATOM",
           "[HPO][optim][startup][eam][inert]") {
   tadah::core::PeriodicTable::initialize();
   TaSetfl setfl;
   const std::string file = setfl.path.string();
   const std::string refusal =
-      "OPTIM WATOM (line 2 of the target file) is not a valid search "
-      "target: no descriptor of the training configuration reads WATOM "
-      "(D2_EAM, DM_EAM, D2_Dummy and DM_Dummy read none), and a fit refuses "
-      "a WATOM other than 1 that no descriptor reads, so every candidate "
-      "other than 1 would fail its evaluation.";
+      "line 2 of <target>: OPTIM WATOM is not a valid search target: no "
+      "descriptor of the training configuration reads WATOM (D2_EAM, "
+      "DM_EAM, D2_Dummy and DM_Dummy read none), and a fit refuses a WATOM "
+      "other than 1 that no descriptor reads, so every candidate other "
+      "than 1 would fail its evaluation.\nLine: OPTIM WATOM (1) 0.5 2.0";
   Context both = eam_ctx(file, "D2_EAM 0 Ta Ta", "5.0", "Cut_Cos");
   both.remove("INITMB");
   both.add("INITMB", "true");

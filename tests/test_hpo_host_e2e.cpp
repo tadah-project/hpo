@@ -662,6 +662,70 @@ TEST_CASE("The new-best breakdown names indexed PC_ERMSE and PC_FRMSE terms "
     CHECK(parts == Approx(total).epsilon(0.01));
 }
 
+/* Pins: the EMAE, ErRMSE and ERSQ terms (PC_EMAE, PC_ErRMSE, PC_ERSQ, one
+ * line each, without indices) are each one loss of the average metric, and
+ * the LOSS FUNCTION sections of the journal and of the best_pot.tadah
+ * header describe them as the ERMSE family describes a global line:
+ * "global (loss of average metric) target=5 weight=2" (EMAE), "... target=50
+ * weight=1" (ErRMSE), "... target=1 weight=1" (ERSQ), without "(per-dataset
+ * + avg)"; the journal's new-best "top:" line labels the ERSQ term
+ * ERSQ_global, the metric's name (and EMAE_global, ErRMSE_global).
+ * Before the fix: the journal and the header said "(per-dataset + avg)",
+ * which the term is not, and the top line labelled the ERSQ term
+ * ErSQ_global: the description and label checks fail. */
+TEST_CASE("The EMAE, ErRMSE and ERSQ terms are described as one loss of the "
+          "average metric, and ERSQ is labelled ERSQ", "[pc_dataset][host]") {
+    DatasetHostGuard guard;
+    ScratchDir sd;
+    const auto train = sd.dir / "train.db", first = sd.dir / "first.db",
+               second = sd.dir / "second.db", pair = sd.dir / "pair.db";
+    const auto val = sd.dir / "config.val", hpo = sd.dir / "config.hpo";
+    write_minimal_ta_dbfile(train, 0);
+    write_minimal_ta_dbfile(first, 0.07, -0.04);
+    write_minimal_ta_dbfile(second, 0.13, -0.16);
+    {
+        /* one validation dataset of two structures, so that its R^2 is
+         * defined */
+        std::ofstream os(pair);
+        std::ifstream a(first), b(second);
+        os << a.rdbuf() << b.rdbuf();
+    }
+    std::ofstream(val) << "DBFILE " << pair.string() << "\n";
+    std::ofstream(hpo) << dataset_host_head
+                       << "PC_EMAE 5 2\nPC_ErRMSE 50 1\nPC_ERSQ 1 1\n";
+    auto ctx = make_ta_master_context(train, hpo, val);
+    tadah::hpo::HPOTargets trg(ctx, hpo.string());
+    Host host(ctx, trg, val.string());
+    auto& log = tadah::hpo::HPOLog::instance();
+    log.open((sd.dir / "journal.log").string(), "test", sd.dir.string(), 1);
+    log.write_loss_section(trg);
+    host.prepare_best_publication();
+    ParamVec p(1); p(0) = 0.5;
+    const double total = host(p);
+    host.flush_remaining();
+    log.finish("TEST");
+    REQUIRE(total > 0.0);
+    const auto journal = read_dataset_file(sd.dir / "journal.log");
+    const auto best = read_dataset_file(trg.canonicalBestPotFile);
+    INFO(journal << "\n" << best);
+    for (const std::string& text : {journal, best}) {
+        CHECK(text.find("(per-dataset + avg)") == std::string::npos);
+        CHECK(text.find("global (loss of average metric) target=5 weight=2") !=
+              std::string::npos);
+        CHECK(text.find("global (loss of average metric) target=50 "
+                        "weight=1") != std::string::npos);
+        CHECK(text.find("global (loss of average metric) target=1 weight=1") !=
+              std::string::npos);
+    }
+    std::istringstream in(journal);
+    std::string top;
+    for (std::string line; std::getline(in, line);)
+        if (line.find("top: ") != std::string::npos) { top = line; break; }
+    REQUIRE_FALSE(top.empty());
+    CHECK(top.find("ERSQ_global=") != std::string::npos);
+    CHECK(top.find("ErSQ") == std::string::npos);
+}
+
 TEST_CASE("PC dataset host rejects incomplete coverage and empty validation files", "[pc_dataset][host]") {
     DatasetHostGuard guard;
     ScratchDir sd;

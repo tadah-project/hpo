@@ -14,6 +14,7 @@
 #include <tadah/hpo/hpo_log.h>
 #include <tadah/hpo/hpo_targets.h>
 #include <tadah/hpo/optimizer_spec.h>
+#include <tadah/hpo/pc_fail_grading.h>
 #include <tadah/hpo/phase_specs.h>
 
 #include <cmath>
@@ -468,26 +469,44 @@ TEST_CASE("The journal's Fail score line names what scores FAILSCORE, "
      * PC_LAMMPS simulation and none a failed PC_OBSERVABLE term, which
      * scores FAILSCORE, or band B under ON, since an evaluation with one
      * fails: a PC_OBSERVABLE run's journal named a cause it cannot have
-     * and left out the one it had. */
+     * and left out the one it had. Then the lines named "a skip cap" and
+     * "a rejection by BUMPGATE, RHOGATE or RHOBARGATE" and left out the
+     * other rejections of a potential as unusable that the startup line of
+     * FAILSCORE_GRADING ON lists, from the same list of the run
+     * (unusable_potential_causes): a PC_FAILPROBE rejection, a refused fit
+     * and a potential LAMMPS cannot build. Each line names them as "a
+     * potential rejected as unusable (by ...)": every case fails on it. */
     tadah::core::PeriodicTable::initialize();
     auto ctx = make_context_for_targets();
     const auto script = write_script();
     struct Case {
         std::string name, lines, causes;
     };
+    const std::string rejected = "a potential rejected as unusable (by ";
+    const std::string d_list =
+        "a --skip-above or --skip-rel cap, BUMPGATE, RHOGATE or RHOBARGATE, "
+        "a refused fit";
+    const std::string lammps =
+        "PC_ERMSE 0 1\nPC_LAMMPS --script " + script.string() +
+        " --outvar A --varloss A 1.0 1.0\n";
     const std::vector<Case> cases = {
         {"PC_ERMSE alone", "PC_ERMSE 0 1\n",
-         "a skip cap or a rejection by BUMPGATE, RHOGATE or RHOBARGATE"},
-        {"PC_LAMMPS",
-         "PC_ERMSE 0 1\nPC_LAMMPS --script " + script.string() +
-             " --outvar A --varloss A 1.0 1.0\n",
-         "a skip cap, a failed PC_LAMMPS simulation or a rejection by "
-         "BUMPGATE, RHOGATE or RHOBARGATE"},
+         rejected + "a --skip-above or --skip-rel cap, BUMPGATE, RHOGATE or "
+                    "RHOBARGATE, or a refused fit)"},
+        {"PC_LAMMPS", lammps,
+         "a failed PC_LAMMPS simulation or " + rejected + d_list +
+             ", or a potential LAMMPS cannot build)"},
+        {"PC_LAMMPS and PC_FAILPROBE",
+         lammps + "PC_FAILPROBE --script " + script.string() +
+             " --outvar S\n",
+         "a failed PC_LAMMPS simulation or " + rejected + "PC_FAILPROBE, " +
+             d_list + ", or a potential LAMMPS cannot build)"},
         {"PC_OBSERVABLE",
          "PC_ERMSE 0 1\nPC_OBSERVABLE cohesive_energy --species Ta "
          "--target 8.1 --weight 1 --hotvar a0 3.0 3.35 3.3\n",
-         "a skip cap, a failed PC_OBSERVABLE term or a rejection by "
-         "BUMPGATE, RHOGATE or RHOBARGATE"}};
+         "a failed PC_OBSERVABLE term or " + rejected +
+             "a --skip-above or --skip-rel cap, BUMPGATE, RHOGATE or "
+             "RHOBARGATE, or a refused fit)"}};
     for (const Case& c : cases) {
         DYNAMIC_SECTION(c.name << ", FAILSCORE_GRADING OFF") {
             auto cfg = write_file("cfg", config_head() + c.lines);
@@ -519,5 +538,69 @@ TEST_CASE("The journal's Fail score line names what scores FAILSCORE, "
                                        " scores a graded loss in [0.999, 1) "
                                        "x Fail score"));
         }
+    }
+}
+
+/* Pins: the refusal of a FAILSCORE too small for the four grading bands of
+ * FAILSCORE_GRADING ON gives the value, the width of a band, the reason
+ * and a bound that suffices (graded_failscore_refusal, which the startup
+ * checks put at the FAILSCORE line): "FAILSCORE 1e-307: the four grading
+ * bands of FAILSCORE_GRADING ON, each 0.00025 x FAILSCORE wide, are not
+ * representable at this magnitude; a FAILSCORE of 1e-290 or more has
+ * them". The bound holds: graded_failscore_is_ordered is true for every
+ * power of ten from kGradedFailscoreSufficient (1e-290) to 1e308, in the
+ * flags of this build (test_tadah checks it in its own, with fast-math).
+ * The refusal is reachable only where subnormal band widths are flushed to
+ * zero (a fast-math build: 1e-307 is refused there, 1e-300 is not), since
+ * the parser refuses a subnormal FAILSCORE and IEEE arithmetic orders the
+ * bands of every normal one; no target file reaches it here.
+ * Before the fix: does not compile (no graded_failscore_refusal, no
+ * kGradedFailscoreSufficient); the refusal was "FAILSCORE_GRADING ON
+ * requires a FAILSCORE large enough to represent four strictly ordered
+ * grading bands.", without the value, its line or a bound. */
+TEST_CASE("FAILSCORE_GRADING: a FAILSCORE too small for the grading bands is "
+          "refused with its value and a bound that suffices",
+          "[failgrade][parse][failscore_bound]")
+{
+    CHECK(tadah::hpo::graded_failscore_refusal(1e-307) ==
+          "FAILSCORE 1e-307: the four grading bands of FAILSCORE_GRADING "
+          "ON, each 0.00025 x FAILSCORE wide, are not representable at this "
+          "magnitude; a FAILSCORE of 1e-290 or more has them");
+    CHECK(tadah::hpo::kGradedFailscoreSufficient == 1e-290);
+    for (int e = -290; e <= 308; ++e) {
+        const double fs = std::stod("1e" + std::to_string(e));
+        INFO("FAILSCORE 1e" << e);
+        CHECK(tadah::hpo::graded_failscore_is_ordered(fs));
+    }
+}
+
+/* Pins: the LOSS FUNCTION section of the journal opens with the loss
+ * function of the run, its name and parameters as LOSS gives them: "Loss
+ * function : HUBER 50" for LOSS HUBER 50, "L2" for LOSS L2 (no parameter).
+ * Before the fix: the section had no such line (the header of
+ * best_pot.tadah named the type, the journal did not): both checks fail. */
+TEST_CASE("The journal's LOSS FUNCTION section names the loss function",
+          "[failgrade][hpo_log][loss]")
+{
+    tadah::core::PeriodicTable::initialize();
+    auto ctx = make_context_for_targets();
+    struct Case { std::string loss, shown; };
+    for (const Case& c : std::vector<Case>{{"LOSS HUBER 50", "HUBER 50"},
+                                           {"LOSS L2", "L2"}}) {
+        INFO(c.loss);
+        auto cfg = write_file(
+            "cfg", "OPTIMIZER\nLIB NLOPT\nALGO LN_SBPLX\nMAXEVAL 1\n"
+                   "ENDOPTIMIZER\n" + c.loss + "\nPC_ERMSE 0 1\n");
+        tadah::hpo::HPOTargets trg(ctx, cfg.string());
+        const std::string loss = loss_section(trg);
+        INFO(loss);
+        const std::string line = line_of(loss, "Loss function");
+        CHECK_THAT(line, Catch::EndsWith(": " + c.shown));
+        /* the first line of the section */
+        std::istringstream in(loss);
+        std::string first, second;
+        std::getline(in, first);
+        std::getline(in, second);
+        CHECK(second == line);
     }
 }

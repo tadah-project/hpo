@@ -526,10 +526,27 @@ TEST_CASE("ASA options: rejections", "[HPO][asa][options]")
                                               "it rounds each generated value "
                                               "to a grid"));
     }
+    /* Pins: every whole value of User_Tangents other than 0 (1, 2, 7) is
+     * refused with "ASA:ASA: PARAM User_Tangents takes 0 only: tadah hpo
+     * gives ASA no analytic tangents, and the reannealing takes them by
+     * finite differences (PARAM Delta_X)"; 1.5 is refused as no integer.
+     * Before the fix: 2 and 7 were refused with "ASA:ASA: PARAM
+     * User_Tangents must be <= 1 (got 2)", the range of a key that takes 0
+     * to 1, which reads as if 1 were accepted: those two fail. */
     SECTION("User_Tangents is unsupported") {
-        sp.param = {{"User_Tangents", 1.0}};
+        for (const double v : {1.0, 2.0, 7.0}) {
+            INFO("User_Tangents " << v);
+            sp.param = {{"User_Tangents", v}};
+            REQUIRE_THROWS_WITH(
+                parse_asa_options(sp, 1),
+                "ASA:ASA: PARAM User_Tangents takes 0 only: tadah hpo gives "
+                "ASA no analytic tangents, and the reannealing takes them by "
+                "finite differences (PARAM Delta_X)");
+        }
+        sp.param = {{"User_Tangents", 1.5}};
         REQUIRE_THROWS_WITH(parse_asa_options(sp, 1),
-                            Catch::Contains("User_Tangents"));
+                            "ASA:ASA: PARAM User_Tangents must be an integer "
+                            "(got 1.5)");
     }
     SECTION("Number_Cost_Samples 0 / -1 invalid") {
         sp.param = {{"Number_Cost_Samples", 0.0}};
@@ -816,14 +833,30 @@ TEST_CASE("ASA host failure during reanneal tangents aborts gracefully "
     REQUIRE_NOTHROW(run_asa_erased(sp, 1, fn));
     CHECK(rec.calls.size() < 500);
     /* Pins: with no stop of tadah's pending, the stop line names the host
-     * failure during the tangents and ASA's own exit code.
+     * failure during the tangents and ASA's own exit code, and what avoids
+     * it: "ASA stopped: an evaluation failed while ASA was computing
+     * reanneal tangents (INVALID_COST_FUNCTION_DERIV: the reannealing
+     * re-evaluates the best point and probes around it; PARAM
+     * Reanneal_Parameters 0 avoids it when evaluations fail now and
+     * then)". Delta_X 0 does not: the re-evaluation of the best point
+     * comes first (cost_derivatives, asa.c), whatever Delta_X. The exit
+     * curvatures of Curvature_0 FALSE give no exit 9 (asa_exit takes their
+     * status apart).
      * Before the fix: passes as well (a pin of the text that a stop of
      * tadah's inside the tangents must not take); without
-     * Acceptance_Frequency_Modulus 10 it fails (P_TEMP_TOO_SMALL). */
+     * Acceptance_Frequency_Modulus 10 it fails (P_TEMP_TOO_SMALL). The
+     * line said "(INVALID_COST_FUNCTION_DERIV, which PARAM
+     * Reanneal_Parameters 0 or Delta_X 0 avoids when evaluations fail now
+     * and then)", which Delta_X 0 does not: the full-text check fails. */
     const std::string stop = journal_line(jc.read(), "ASA stopped: ");
     INFO(stop);
     CHECK(stop.find("ASA stopped: an evaluation failed while ASA was "
                     "computing reanneal tangents (INVALID_COST_FUNCTION_DERIV") != std::string::npos);
+    CHECK(stop.find("ASA stopped: an evaluation failed while ASA was "
+                    "computing reanneal tangents (INVALID_COST_FUNCTION_DERIV: "
+                    "the reannealing re-evaluates the best point and probes "
+                    "around it; PARAM Reanneal_Parameters 0 avoids it when "
+                    "evaluations fail now and then)") != std::string::npos);
     CHECK(stop.find("(asa exit: INVALID_COST_FUNCTION_DERIV)") !=
           std::string::npos);
 }
@@ -1749,4 +1782,47 @@ TEST_CASE("ASA options: a MAXTIME of 0 is refused with its value",
     sp.stop.maxtime = 0.0;
     REQUIRE_THROWS_WITH(parse_asa_options(sp, 1),
                         "ASA:ASA: MAXTIME must be > 0 seconds (got 0)");
+}
+
+/* Pins: an ASA:ASA search with THREADS above 1 and Gener_Block_Max 1 (the
+ * default) gives one HINT in the journal, which says what the workers do
+ * then: "ASA: THREADS above 1 with Gener_Block_Max 1 evaluates one
+ * generated state at a time: the workers share its training, prediction
+ * and PC_LAMMPS scripts; PARAM Gener_Block (and Gener_Block_Max) above 1
+ * evaluates several states together." With Gener_Block 2 there is none.
+ * Before the fix: the HINT said "... and otherwise only the PC_LAMMPS
+ * scripts of each evaluation use them", though THREADS also runs the
+ * training and prediction of each evaluation: the text check fails. */
+TEST_CASE("ASA: the HINT of THREADS above 1 with Gener_Block_Max 1 says what "
+          "the workers share", "[HPO][asa][parallel]")
+{
+    const std::string hint =
+        "ASA: THREADS above 1 with Gener_Block_Max 1 evaluates one generated "
+        "state at a time: the workers share its training, prediction and "
+        "PC_LAMMPS scripts; PARAM Gener_Block (and Gener_Block_Max) above 1 "
+        "evaluates several states together.";
+    for (const bool block : {false, true}) {
+        INFO((block ? "Gener_Block 2" : "the default Gener_Block"));
+        auto sp = make_asa_spec({-2.0}, {2.0});
+        set_seed_point(sp, {1.0});
+        sp.num_threads = 2;
+        sp.stop.maxeval = 30;
+        if (block)
+            sp.param = {{"Gener_Block", 2.0}, {"Gener_Block_Max", 2.0}};
+        Recorder rec;
+        rec.f = [](const std::vector<double>& x) { return x[0] * x[0]; };
+        const AsaHostFn fn = rec.fn();
+        anneal_test::JournalCapture jc;
+        run_asa_erased(sp, 1, fn);
+        const std::string journal = jc.read();
+        INFO(journal);
+        std::size_t hints = 0;
+        for (std::size_t at = journal.find("ASA: THREADS above 1");
+             at != std::string::npos;
+             at = journal.find("ASA: THREADS above 1", at + 1))
+            ++hints;
+        CHECK(hints == (block ? 0u : 1u));
+        if (!block) CHECK(journal.find(hint) != std::string::npos);
+        CHECK(journal.find("only the PC_LAMMPS scripts") == std::string::npos);
+    }
 }
