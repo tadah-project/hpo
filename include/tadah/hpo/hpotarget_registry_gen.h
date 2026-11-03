@@ -3596,6 +3596,8 @@ inline constexpr OptimTarget kOptimTargets[] = {
       "OPTIM WNOISE is not a valid search target: WNOISE is a retired key: No release of Tadah! wrote or read WNOISE. Uncertainty output is removed: the errors of Tadah! 1.0.0 to 1.5.0 were not standard deviations, and no calibrated estimate replaces them. Replaced by: nothing. Deleting the line converts it: no prediction reads it, and the fit is unaffected."},
   OptimTarget{"ERROR", OptimTargetStatus::Refused, Span<int>{nullptr, 0},
       "OPTIM ERROR is not a valid search target: ERROR is a retired key: ERROR, the key of --error, asked tadah predict and tadah properties pairwise for errors computed from SIGMA. Uncertainty output is removed: the errors of Tadah! 1.0.0 to 1.5.0 were not standard deviations, and no calibrated estimate replaces them. Replaced by: nothing. Deleting the line converts it: no command reads it, and the fit is unaffected."},
+  OptimTarget{"QUANTITY", OptimTargetStatus::Refused, Span<int>{nullptr, 0},
+      "OPTIM QUANTITY is not a valid search target: QUANTITY is a retired key: QUANTITY was read by no command; Tadah! 1.5.0 wrote it into a potential when a configuration set it. Replaced by: nothing. Deleting the line converts it: no command reads it, and the fit is unaffected."},
   OptimTarget{"LAMBDA", OptimTargetStatus::Special, Span<int>{nullptr, 0},
       "OPTIM LAMBDA ({index}): the low bound {low} is negative, but LAMBDA is the ridge penalty, a number >= 0: every fit refuses a negative value other than -1, and -1, which requests the evidence approximation, is no value of a box, so the low bound of its box is >= 0"},
 };

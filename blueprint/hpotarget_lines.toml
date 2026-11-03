@@ -5052,6 +5052,18 @@ text = "OPTIM ERROR (1) 0.5 2"
 error = "OPTIM ERROR is not a valid search target: ERROR is a retired key: ERROR, the key of --error, asked tadah predict and tadah properties pairwise for errors computed from SIGMA. Uncertainty output is removed: the errors of Tadah! 1.0.0 to 1.5.0 were not standard deviations, and no calibrated estimate replaces them. Replaced by: nothing. Deleting the line converts it: no command reads it, and the fit is unaffected."
 
 [[optim_target]]
+id = "OPTIM.TARGET.QUANTITY"
+key = "QUANTITY"
+status = "refused"
+msg = "OPTIM QUANTITY is not a valid search target: QUANTITY is a retired key: QUANTITY was read by no command; Tadah! 1.5.0 wrote it into a potential when a configuration set it. Replaced by: nothing. Deleting the line converts it: no command reads it, and the fit is unaffected."
+doc = "QUANTITY is a retired key, which no command read."
+
+[[optim_target.invalid]]
+wrap = "root"
+text = "OPTIM QUANTITY (1) 0.5 2"
+error = "OPTIM QUANTITY is not a valid search target: QUANTITY is a retired key: QUANTITY was read by no command; Tadah! 1.5.0 wrote it into a potential when a configuration set it. Replaced by: nothing. Deleting the line converts it: no command reads it, and the fit is unaffected."
+
+[[optim_target]]
 id = "OPTIM.TARGET.LAMBDA"
 key = "LAMBDA"
 status = "special"
