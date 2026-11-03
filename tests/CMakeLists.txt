@@ -497,11 +497,14 @@ set_tests_properties(hpo_hpotarget_generator_tool PROPERTIES
 #    (tests/test_hpotarget_corpus.py; the Tadah.MLIP tree when this build
 #    has the `tadah` target);
 #  - hpo_hpotarget_corpus: every input collected from the sources is read
-#    twice and gives one text or one refusal both times;
+#    twice and gives one text or one refusal both times, and the frozen
+#    corpus holds the inputs of the sources read, each with the files it
+#    reads;
 #  - the Catch2 cases "hpotarget corpus: ..." (tag [hpotarget_corpus],
 #    tests/test_hpotarget_corpus.cpp): each input of the frozen corpus read
 #    by the parser of `tadah hpo` gives what the corpus holds, byte for
-#    byte, with no environment override that the input does not set;
+#    byte, and prints what it holds, with no environment override that
+#    the input does not set;
 #    TADAH_HPOTARGET_CORPUS_DIR names the directory.
 # Before the fix: the header, the mode, the scripts and the corpus do not
 # exist, and these fail.
