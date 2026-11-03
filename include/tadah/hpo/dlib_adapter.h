@@ -182,17 +182,18 @@ template<class HostT>
     validate_dlib_gfs_spec(sp, restart);
     const auto t0 = std::chrono::steady_clock::now();
 
-    /* find_min_global (MaxLIPO+TR) is a deterministic algorithm; a SEED
-     * on this spec is refused (validate_dlib_gfs_spec), unless it is a
-     * PRESTAGE refinement's SEED that the exploration took, which seeds
-     * the exploration: the journal names it as the exploration's (EXPLORE
+    /* find_min_global (MaxLIPO+TR) draws its random points from dlib's
+     * fixed internal seed, which this call does not set; a SEED on this
+     * spec is refused (validate_dlib_gfs_spec), unless it is a PRESTAGE
+     * refinement's SEED that the exploration took, which seeds the
+     * exploration: the journal names it as the exploration's (EXPLORE
      * SEED). (INIT-block SEED is unaffected -- it feeds the INIT chain,
      * whose points are consumed below.) */
     if (sp.seed && sp.seed_seeds_exploration) {
       const std::string msg =
-          "DLIB:GFS (find_min_global, MaxLIPO+TR) is deterministic; SEED has "
-          "no effect on the refinement: it seeds the exploration (EXPLORE "
-          "SEED " + std::to_string(*sp.seed) + ").";
+          "DLIB:GFS draws its random points from a fixed internal seed and "
+          "does not use SEED: SEED seeds the exploration (EXPLORE SEED " +
+          std::to_string(*sp.seed) + ").";
       std::cerr << "[tadah hpo] " << msg << "\n";
       HPOLog::instance().warning(msg);
     }

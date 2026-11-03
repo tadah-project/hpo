@@ -173,6 +173,25 @@ inline bool graded_failscore_is_ordered(double fs) {
   return previous_top < fs;
 }
 
+/* A FAILSCORE from which on graded_failscore_is_ordered holds for every
+ * power of ten up to 1e308, in IEEE arithmetic and with subnormal numbers
+ * flushed to zero (a fast-math build, where a FAILSCORE of 1e-307 lacks
+ * its bands and one of 1e-300 has them: the smallest is not monotone
+ * there). The tests check every power of ten from it, in the flags of HPO's
+ * tests and in those of test_tadah. */
+inline constexpr double kGradedFailscoreSufficient = 1e-290;
+
+/* The refusal of a FAILSCORE whose grading bands are not ordered
+ * (graded_failscore_is_ordered false): the value, the width of a band, the
+ * reason and a bound that suffices. */
+inline std::string graded_failscore_refusal(double fs) {
+  return "FAILSCORE " + core::format_roundtrip(fs) +
+         ": the four grading bands of FAILSCORE_GRADING ON, each 0.00025 x "
+         "FAILSCORE wide, are not representable at this magnitude; a "
+         "FAILSCORE of " + core::format_roundtrip(kGradedFailscoreSufficient) +
+         " or more has them";
+}
+
 /* Compact, copyable per-eval failure record (travels inside EvalResult
  * through the writer queue). band == 0 => the eval is feasible. */
 struct PcFailInfo {

@@ -1112,11 +1112,17 @@ make_gradient_provider(const OptimizerSpec&     sp,
           needs_fd.push_back(static_cast<int>(i));
         }
       } else {
-        eval_counter->fetch_add(1);
         if (!analytical_grad_fn(x, g, needs_fd)) {
           report.analytical("could not be formed at this point");
           return false;
         }
+        /* The pass counts as an evaluation only when it formed a
+         * component: one that routes every parameter to the differences
+         * (a setup the analytical gradient does not cover, such as STRESS
+         * true; a slot of another host) did no work of its own, and the
+         * differences count theirs. */
+        if (needs_fd.size() < static_cast<std::size_t>(x.size()))
+          eval_counter->fetch_add(1);
         pull_to_internal(x, g, needs_fd);
       }
       /* Every parameter in needs_fd -- all of them when the analytical

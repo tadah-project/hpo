@@ -388,18 +388,17 @@ void PotHeaderWriter::write_loss_section(std::ostream& os,
     kv(os, "Fail score", fmt_double(trg.FAIL_SCORE));
 
     /* global metrics -- one line each, only if active */
+    /* A line without indices: one loss of the metric averaged over the
+     * datasets, described as the ERMSE family describes one. */
     auto metric = [&](const std::string& name, bool used,
-                      double target, double weight) {
+                      double target, double weight, const MetricSkipCaps& caps) {
         if (!used) return;
-        std::ostringstream s;
-        s << "target=" << fmt_double(target, 3)
-          << "  w=" << std::fixed << std::setprecision(2) << weight
-          << "  (per-dataset + avg)";
-        kv(os, name, s.str());
+        kv(os, name, metric_term_description(kGlobalMetricLabel, target,
+                                             weight, caps));
     };
-    metric("EMAE   (meV/at)",  trg.use_emae,   trg.emae,   trg.w_emae);
-    metric("ErRMSE (per mille)",  trg.use_errmse, trg.errmse, trg.w_errmse);
-    metric("ERSQ",             trg.use_ersq,   trg.ersq,   trg.w_ersq);
+    metric("EMAE   (meV/at)",  trg.use_emae,   trg.emae,   trg.w_emae, trg.skip_emae);
+    metric("ErRMSE (per mille)",  trg.use_errmse, trg.errmse, trg.w_errmse, trg.skip_errmse);
+    metric("ERSQ",             trg.use_ersq,   trg.ersq,   trg.w_ersq, trg.skip_ersq);
 
     auto dataset_metric = [&](const std::string& name, const ValidationMetricTargets& targets) {
         for (const auto& description : targets.descriptions()) kv(os, name, description);

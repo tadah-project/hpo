@@ -986,7 +986,9 @@ def sentences(text: str) -> int:
     """The number of sentences of a documentation text."""
     t = re.sub(r"`[^`]*`", "x", text)
     n = 0
-    for m in re.finditer(r"[.!?](?=\s+[A-Z(`'\"]|\s*$)", t):
+    # A sentence may start lowercase (a command name: "tadah hpo reads
+    # it.") or with a backticked key, which the line above makes "x".
+    for m in re.finditer(r"[.!?](?=\s+[A-Za-z(`'\"]|\s*$)", t):
         if re.search(r"\b(e\.g|i\.e|etc|vs|cf)\.$", t[:m.end()]):
             continue
         n += 1

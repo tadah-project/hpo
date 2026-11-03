@@ -1140,23 +1140,48 @@ void HPOLog::write_fit_switches(const FitSwitchReport& r)
     kv("Validation predicts", v);
 }
 
+std::string unusable_potential_causes(const HPOTargets& trg)
+{
+    std::vector<std::string> c;
+    if (trg.failprobe_idx >= 0) c.push_back("PC_FAILPROBE");
+    c.push_back("a --skip-above or --skip-rel cap");
+    c.push_back("BUMPGATE, RHOGATE or RHOBARGATE");
+    c.push_back("a refused fit");
+    if (!trg.LS.empty()) c.push_back("a potential LAMMPS cannot build");
+    std::string out;
+    for (std::size_t i = 0; i < c.size(); ++i) {
+        if (i > 0) out += i + 1 == c.size() ? ", or " : ", ";
+        out += c[i];
+    }
+    return out;
+}
+
 void HPOLog::write_loss_section(const HPOTargets& trg)
 {
     section("LOSS FUNCTION");
 
+    /* The loss function of LOSS, with its parameters, as the LOSS line
+     * gives them (the header of best_pot.tadah names its type). */
+    {
+        std::string loss = LossFunction::to_string(trg.globalLoss.type());
+        for (const double p : trg.globalLoss.params())
+            loss += " " + core::format_roundtrip(p);
+        kv("Loss function", loss);
+    }
+
+    /* A line without indices: one loss of the metric averaged over the
+     * datasets, described as the ERMSE family describes one. */
     auto metric_line = [&](const std::string& name, bool used,
-                           double target, double weight) {
+                           double target, double weight,
+                           const MetricSkipCaps& caps) {
         if (!used) return;
-        std::ostringstream s;
-        s << "weight=" << std::fixed << std::setprecision(2) << weight
-          << "  target=" << std::scientific << std::setprecision(3) << target
-          << "  (per-dataset + avg)";
-        kv(name, s.str());
+        kv(name, metric_term_description(kGlobalMetricLabel, target, weight,
+                                         caps));
     };
 
-    metric_line("EMAE   (meV/atom)",  trg.use_emae,   trg.emae, trg.w_emae);
-    metric_line("ErRMSE (per mille)",  trg.use_errmse, trg.errmse, trg.w_errmse);
-    metric_line("ERSQ",               trg.use_ersq,   trg.ersq,            trg.w_ersq);
+    metric_line("EMAE   (meV/atom)",  trg.use_emae,   trg.emae, trg.w_emae, trg.skip_emae);
+    metric_line("ErRMSE (per mille)",  trg.use_errmse, trg.errmse, trg.w_errmse, trg.skip_errmse);
+    metric_line("ERSQ",               trg.use_ersq,   trg.ersq,            trg.w_ersq, trg.skip_ersq);
 
     auto dataset_metric = [&](const std::string& name, const ValidationMetricTargets& targets) {
         for (const auto& description : targets.descriptions()) kv(name, description);
@@ -1208,10 +1233,11 @@ void HPOLog::write_loss_section(const HPOTargets& trg)
      * simulation (EvalResult::sims_failed) or a PC_OBSERVABLE term
      * (EvalResult::terms_failed, band B under grading); HPOTargets refuses
      * the two together. */
-    std::string graded = "a skip cap";
-    if (!trg.LS.empty()) graded += ", a failed PC_LAMMPS simulation";
-    if (!trg.observables.empty()) graded += ", a failed PC_OBSERVABLE term";
-    graded += " or a rejection by BUMPGATE, RHOGATE or RHOBARGATE";
+    std::string graded;
+    if (!trg.LS.empty()) graded += "a failed PC_LAMMPS simulation or ";
+    if (!trg.observables.empty()) graded += "a failed PC_OBSERVABLE term or ";
+    graded += "a potential rejected as unusable (by " +
+              unusable_potential_causes(trg) + ")";
     if (trg.FAILSCORE_GRADING) {
         kv("Fail score",   fmt_double(trg.FAIL_SCORE)
                            + "  (the loss of an evaluation with a NaN/Inf loss "
@@ -1376,9 +1402,9 @@ void HPOLog::write_noise_calibration_section(
         f_ << "  Note: objective looks effectively deterministic at the seed point;\n"
               "        any FTOL_REL >= 1e-6 will not be the bottleneck.\n";
     } else if (rel_spread > 1e-2) {
-        f_ << "  Note: large noise floor (>1%). Local-search FTOL_REL tighter\n"
-              "        than the suggested value will not be reachable; consider\n"
-              "        averaging multiple LAMMPS runs or tightening MD sampling.\n";
+        f_ << "  Note: large noise floor (>1%). A local search does not reach an\n"
+              "        FTOL_REL tighter than the suggested value; averaging several\n"
+              "        LAMMPS runs, or sampling the MD longer, lowers the noise floor.\n";
     }
     f_.flush();
 }
@@ -2475,9 +2501,10 @@ void HPOLog::finish(const std::string& status_str)
                << ": " << rr << " (points the run had evaluated that a "
                   "search asked for, answered with the\n    loss -- and "
                   "gradient -- of their evaluation, not evaluated again: the "
-                  "MAXEVAL of\n    the block does not count them, NLopt's own MAXEVAL counts "
-                  "them among its calls, and the\n    RESTART window counts "
-                  "each as one evaluation without a new best)\n";
+                  "run's count of\n    evaluations does not include them; an "
+                  "NLopt search counts them among the calls its\n    MAXEVAL "
+                  "bounds, DLIB:BFGS does not; the RESTART window counts each "
+                  "as one call\n    without a new best)\n";
         if (ra > 0)
             f_ << "  " << std::left << std::setw(KW) << "Repeats evaluated again"
                << ": " << ra << " (" << repeat_again_why_ << ")\n";

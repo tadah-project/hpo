@@ -325,11 +325,10 @@ endif()
 # static LAMMPS lib is compiled without fPIC so we cannot link it to shared lib
 string(FIND "${_lammps_libname}" ".so" POSITION)
 if (BUILD_SHARED_LIBS AND POSITION EQUAL -1)
-  message(FATAL_ERROR "
-    The static LAMMPS library is not compatible with a shared Tadah! build.
-    Please either link a shared LAMMPS library or rebuild Tadah! with 
-
-    -DBUILD_SHARED_LIBS=OFF.")
+  message(FATAL_ERROR
+    "The static LAMMPS library is not compatible with a shared Tadah! build: "
+    "a shared Tadah! build needs a shared LAMMPS library, and a build with "
+    "-DBUILD_SHARED_LIBS=OFF takes the static one.")
 endif()
 
 # Find and link ALL lammps external libraries, this step is necessary for static builds
@@ -393,10 +392,10 @@ if (TADAH_HPO_MPI)
       "TADAH_HPO_MPI=ON requires an MPI LAMMPS library (got "
       "'${_lammps_libname}'): the serial archive carries MPI stub symbol "
       "definitions that collide with the real MPI library at link time. "
-      "Point TADAH_LAMMPS_LIB at the MPI build (e.g. "
-      "build_lammps_mpi/liblammps_develop_mpi.a) or set "
-      "-DTADAH_HPO_MPI_SKIP_LIB_CHECK=ON if your lib name simply lacks "
-      "the 'mpi' marker.")
+      "TADAH_LAMMPS_LIB names the library of an MPI build of LAMMPS (such as "
+      "build_lammps_mpi/liblammps_develop_mpi.a); "
+      "-DTADAH_HPO_MPI_SKIP_LIB_CHECK=ON skips the check for a library "
+      "whose name lacks the 'mpi' marker.")
   endif()
   message(STATUS "TADAH_HPO_MPI: ANNEAL_PT/ANNEAL_PA replicas distribute over MPI ranks (LAMMPS on MPI_COMM_SELF)")
 else()

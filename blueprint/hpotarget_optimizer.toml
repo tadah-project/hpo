@@ -1163,6 +1163,21 @@ text = "STEP 0.1"
 error = "the PRESTAGE exploration (EXPLORE block): TADAH:RANDOM does not use STEP; uniform sampling in the OPTIM box has no initial step"
 
 [[key.invalid]]
+wrap = "none"
+doc = "DLIB:GFS sizes its trust region from its samples."
+at = 7
+text = '''
+OPTIM CGRID2B (1) 0.5 1.5
+PC_ERMSE 0 1
+OPTIMIZER
+LIB DLIB
+ALGO GFS
+MAXEVAL 10
+STEP 0.1
+ENDOPTIMIZER'''
+error = "the STRATEGY-level optimiser: DLIB:GFS does not use STEP; MaxLIPO+TR sizes its own trust region from the samples"
+
+[[key.invalid]]
 wrap = "opt_asa"
 text = "STEP 0.1"
 error = "the STRATEGY-level optimiser: ASA:ASA does not use STEP; the width of the generating distribution follows the parameter temperature of each dimension (Initial_Parameter_Temperature, Temperature_Ratio_Scale)"
@@ -1224,8 +1239,9 @@ seed of its own, takes the SEED line of the STRATEGY-level optimiser, and \
 without one draws its own. A SEED line, and for NLopt a SEED in its INIT \
 block, is a seed of its own; the refinement draws random numbers of its \
 own. A refinement whose optimiser reads no SEED \
-(DLIB:GFS, DLIB:BFGS, TADAH:GRID, CERES:STEEPEST_DESCENT, an NLopt \
-algorithm that draws no random numbers) takes a SEED \
+(DLIB:GFS, which draws from a fixed internal seed of dlib, DLIB:BFGS, \
+TADAH:GRID, CERES:STEEPEST_DESCENT, an NLopt algorithm that draws no \
+random numbers) takes a SEED \
 that the EXPLORE block takes, and refuses one when the EXPLORE block has \
 a seed of its own or reads none. Restart r of the RESTART block runs the \
 optimiser with SEED + r times the number of starts (N_STARTS under \
@@ -1235,14 +1251,18 @@ search from the random numbers of the enclosing run. An NLopt algorithm \
 reads SEED when it draws random numbers: GN_CRS2_LM, GN_ISRES, GN_ESCH, \
 GN_MLSL, GD_MLSL, G_MLSL, LN_PRAXIS, GD_STOGO_RAND, and GN_DIRECT_L_RAND \
 in two OPTIM dimensions or more; an MLSL_LDS or AUGLAG algorithm when its \
-local search draws them (an INNER block with LN_PRAXIS). The others draw \
-none and refuse it. SEED inside an INIT or RESTART block is another key, \
-the seed of the starting points."""
+local search draws them (an INNER block with LN_PRAXIS). The other NLopt \
+algorithms draw none and refuse it. DLIB:GFS refuses it too: dlib draws \
+its random points from a fixed internal seed, which tadah hpo does not \
+set. SEED inside an INIT or RESTART block is another key, the seed of the \
+starting points."""
 checks = [
   { msg = "{phase}: {lib}:{algo} does not use SEED: it draws no random numbers", doc = "At startup, at the END line of its optimiser: an optimiser that does not read SEED, outside a PRESTAGE refinement." },
   { msg = "{phase}: {lib}:{algo} does not use SEED: in one OPTIM dimension it draws no random numbers (it draws them only to choose between equally long sides of a box)", doc = "At startup, at the END line of its optimiser: NLOPT:GN_DIRECT_L_RAND in a search of one OPTIM dimension, outside a PRESTAGE refinement." },
   { msg = "{phase}: {lib}:{algo} does not support SEED", doc = "At startup, at the END line of its optimiser: DLIB:BFGS or CERES:STEEPEST_DESCENT, outside a PRESTAGE refinement." },
   { msg = "{phase}: {lib}:{algo} does not use SEED: it draws no random numbers, and the exploration ({name}) {why}", doc = "At startup, at the END line of its optimiser: the SEED of a PRESTAGE refinement whose optimiser does not read SEED, when the EXPLORE block does not take it; {why} is 'has a SEED of its own' or 'reads none'." },
+  { msg = "{phase}: {lib}:{algo} does not use SEED: dlib draws its random points from a fixed internal seed, which tadah hpo does not set, so a search with THREADS 1 repeats its points", doc = "At startup, at the END line of its optimiser: DLIB:GFS, outside a PRESTAGE refinement." },
+  { msg = "{phase}: {lib}:{algo} does not use SEED: dlib draws its random points from a fixed internal seed, which tadah hpo does not set, so a search with THREADS 1 repeats its points, and the exploration ({name}) {why}", doc = "At startup, at the END line of its optimiser: the SEED of a PRESTAGE refinement on DLIB:GFS, when the EXPLORE block does not take it." },
 ]
 
 [[key.examples]]
@@ -1343,6 +1363,31 @@ error = "the STRATEGY-level optimiser: NLOPT:LN_SBPLX does not use SEED: it draw
 wrap = "none"
 check = "startup"
 at = "ENDOPTIMIZER"
+doc = "The refinement's SEED on DLIB:GFS, which the exploration with a SEED of its own does not take."
+text = '''
+OPTIM CGRID2B (1) 0.5 1.5
+PC_ERMSE 0 1
+OPTIMIZER
+STRATEGY
+TYPE PRESTAGE
+LIB DLIB
+ALGO GFS
+MAXEVAL 10
+SEED 7
+EXPLORE
+LIB NLOPT
+ALGO GN_CRS2_LM
+MAXEVAL 12
+SEED 3
+ENDEXPLORE
+ENDSTRATEGY
+ENDOPTIMIZER'''
+error = "the PRESTAGE refinement: DLIB:GFS does not use SEED: dlib draws its random points from a fixed internal seed, which tadah hpo does not set, so a search with THREADS 1 repeats its points, and the exploration (NLOPT:GN_CRS2_LM) has a SEED of its own"
+
+[[key.invalid]]
+wrap = "none"
+check = "startup"
+at = "ENDOPTIMIZER"
 doc = "DLIB:GFS: dlib draws its random points from a fixed internal seed."
 text = '''
 OPTIM CGRID2B (1) 0.5 1.5
@@ -1396,7 +1441,7 @@ MAXEVAL 10
 SEED 5
 ENDSTRATEGY
 ENDOPTIMIZER'''
-error = "the STRATEGY-level optimiser: DLIB:GFS does not use SEED: it draws no random numbers"
+error = "the STRATEGY-level optimiser: DLIB:GFS does not use SEED: dlib draws its random points from a fixed internal seed, which tadah hpo does not set, so a search with THREADS 1 repeats its points"
 
 [[key]]
 id = "OPTIMIZER.VECTOR_ARR"
@@ -1689,6 +1734,82 @@ GRAD_STRATEGY ANALYTICAL
 ENDSTRATEGY
 ENDOPTIMIZER'''
 error = "the STRATEGY-level optimiser: GRAD_STRATEGY ANALYTICAL needs the analytical gradient of the loss, which this setup cannot form: OPTIM WDBFILE searches a priority of the fit, which the analytical gradient does not differentiate; GRAD_STRATEGY HYBRID takes finite differences where no analytical gradient exists."
+
+[[key.invalid]]
+wrap = "none"
+check = "startup"
+context = "opt_stress"
+at = "ENDOPTIMIZER"
+doc = "STRESS true: the analytical gradient does not differentiate stress rows."
+text = '''
+OPTIM CGRID2B (1) 0.5 1.5
+PC_ERMSE 0 1
+OPTIMIZER
+STRATEGY
+LIB NLOPT
+ALGO LD_LBFGS
+MAXEVAL 10
+GRAD_STRATEGY ANALYTICAL
+ENDSTRATEGY
+ENDOPTIMIZER'''
+error = "the STRATEGY-level optimiser: GRAD_STRATEGY ANALYTICAL needs the analytical gradient of the loss, which this setup cannot form: STRESS is true (stress rows are not differentiated); GRAD_STRATEGY HYBRID takes finite differences where no analytical gradient exists."
+
+[[key.invalid]]
+wrap = "none"
+check = "startup"
+context = "opt_norm"
+at = "ENDOPTIMIZER"
+doc = "NORM true: the analytical gradient works on raw features."
+text = '''
+OPTIM CGRID2B (1) 0.5 1.5
+PC_ERMSE 0 1
+OPTIMIZER
+STRATEGY
+LIB NLOPT
+ALGO LD_LBFGS
+MAXEVAL 10
+GRAD_STRATEGY ANALYTICAL
+ENDSTRATEGY
+ENDOPTIMIZER'''
+error = "the STRATEGY-level optimiser: GRAD_STRATEGY ANALYTICAL needs the analytical gradient of the loss, which this setup cannot form: NORM is true (it works on raw features); GRAD_STRATEGY HYBRID takes finite differences where no analytical gradient exists."
+
+[[key.invalid]]
+wrap = "none"
+check = "startup"
+context = "opt_fixindex"
+at = "ENDOPTIMIZER"
+doc = "FIXINDEX: the analytical gradient assumes every coefficient is fitted."
+text = '''
+OPTIM CGRID2B (1) 0.5 1.5
+PC_ERMSE 0 1
+OPTIMIZER
+STRATEGY
+LIB NLOPT
+ALGO LD_LBFGS
+MAXEVAL 10
+GRAD_STRATEGY ANALYTICAL
+ENDSTRATEGY
+ENDOPTIMIZER'''
+error = "the STRATEGY-level optimiser: GRAD_STRATEGY ANALYTICAL needs the analytical gradient of the loss, which this setup cannot form: FIXINDEX fixes coefficients of the model (it assumes every coefficient is fitted); GRAD_STRATEGY HYBRID takes finite differences where no analytical gradient exists."
+
+[[key.invalid]]
+wrap = "none"
+check = "startup"
+context = "opt_krr2"
+at = "ENDOPTIMIZER"
+doc = "M_KRR implementation 2 solves another system than the least-squares fit the analytical gradient differentiates."
+text = '''
+OPTIM CGRID2B (1) 0.5 1.5
+PC_ERMSE 0 1
+OPTIMIZER
+STRATEGY
+LIB NLOPT
+ALGO LD_LBFGS
+MAXEVAL 10
+GRAD_STRATEGY ANALYTICAL
+ENDSTRATEGY
+ENDOPTIMIZER'''
+error = "the STRATEGY-level optimiser: GRAD_STRATEGY ANALYTICAL needs the analytical gradient of the loss, which this setup cannot form: the model is MODEL M_KRR Kern_Linear 2, implementation 2 (it differentiates the least-squares fit of the training rows, that of M_BLR and of MODEL M_KRR Kern_Linear 1, implementation 1, with OALGO 4; implementation 2 solves (K + LAMBDA sigma^2 I) w = t over its basis vectors); GRAD_STRATEGY HYBRID takes finite differences where no analytical gradient exists."
 
 [[key.invalid]]
 wrap = "none"
@@ -2218,7 +2339,11 @@ Above 1, the refinement optimiser must be one that runs once from each \
 candidate, such as a local optimiser, or one that takes several starting \
 points in one run, such as DLIB:GFS. An optimiser that runs from each \
 candidate shares the refinement MAXEVAL among the candidates; DLIB:GFS runs \
-once with all of them and the whole MAXEVAL."""
+once with all of them and the whole MAXEVAL. A candidate whose loss lies \
+within 1e-6 of a kept one's (relative to that loss when its magnitude is \
+above 1, absolute below) and whose every search parameter lies within 1e-3 \
+of its box width of that one is not kept again, so the TOPK candidates are \
+distinct points."""
 
 [[key.examples]]
 wrap = "opt_prestage"
@@ -2654,9 +2779,9 @@ OPTIMIZER, STRATEGY or REFINE, which set the starting points of one \
 optimiser."""
 default = { text = "Not set: each run takes a seed of its own, so the drawn points differ between runs." }
 doc = """\
-The seed of the RANDOM, LHS and SOBOL lines of the block. An NLopt \
-optimiser that draws random numbers and has no SEED of its own takes this \
-seed too."""
+The seed of the first METHOD line of the block, from which each later \
+METHOD line derives a seed of its own. An NLopt optimiser that draws random \
+numbers and has no SEED of its own takes this seed too."""
 long_doc = """\
 Restart r of a RESTART block draws with SEED + r. A chain without RANDOM, \
 LHS or SOBOL does not use the seed, with a warning. Without SEED, an INIT \
@@ -2844,7 +2969,7 @@ name = "SOBOL"
 args = [ { name = "K", kind = "integer", min = 1, max = 1000000, what = "{key} SOBOL: K" } ]
 doc = """\
 K consecutive points of the Sobol sequence, from point (b + 1) K, b being \
-the lowest 16 bits of the seed of the block: seeds that differ in those \
+the lowest 16 bits of the seed of the line: seeds that differ in those \
 bits draw disjoint points. A K that is a power of 2 puts one point in each \
 1/K of the range of every search parameter, in the coordinates of the \
 search."""
@@ -3030,7 +3155,7 @@ long_doc = """\
 The N evaluations are written to the output files like any other, and do \
 not count towards MAXEVAL."""
 checks = [
-  { msg = "NOISE.CALIBRATION must be 0 (off) or >= 2", doc = "A value of 1." },
+  { msg = "CALIBRATION in the NOISE block must be 0 (off) or >= 2, got '{tok}'", doc = "A value of 1." },
 ]
 
 [[key.examples]]
@@ -3045,7 +3170,7 @@ text = "CALIBRATION 0"
 [[key.invalid]]
 wrap = "noise"
 text = "CALIBRATION 1"
-error = "NOISE.CALIBRATION must be 0 (off) or >= 2"
+error = "CALIBRATION in the NOISE block must be 0 (off) or >= 2, got '1'"
 
 [[key.invalid]]
 wrap = "noise"
@@ -3074,9 +3199,10 @@ checks = [
   { msg = "AFTER_STAGNATION must be an integer >= 1, got '{tok}'", doc = "When the file is read: a token that is no whole number, such as a word, a sign, a fraction or a number past the largest; the note about 0 follows 0 only." },
 ]
 doc = """\
-The number of evaluations without a better loss after which the search \
-restarts from the starting points that the METHOD lines of the RESTART \
-block draw."""
+The number of calls without a better loss (evaluations, and repeated \
+points that an NLopt or DLIB:BFGS search asks for and the run's record \
+answers) after which the search restarts from the starting points that the \
+METHOD lines of the RESTART block draw."""
 long_doc = """\
 A restart runs the whole STRATEGY TYPE again. Without a METHOD line it \
 starts from the values of the training configuration. A RESTART block \
@@ -3908,6 +4034,88 @@ RCUT2B 5.0
 VERBOSE 0
 MODEL M_BLR BF_Linear
 OALGO 1
+LAMBDA 1e-3
+"""
+
+
+[context.opt_stress]
+doc = "The default training configuration with STRESS true."
+config = """
+ATOM H
+WATOM 1.0
+DBFILE dummy.db
+INIT2B true
+INITMB false
+TYPE2B D2_BP 2 2 H H
+CGRID2B 1.0 2.0
+SGRID2B 0.5 1.0
+RCTYPE2B Cut_Cos
+RCUT2B 5.0
+VERBOSE 0
+MODEL M_BLR BF_Linear
+OALGO 4
+LAMBDA 1e-3
+STRESS true
+"""
+
+[context.opt_norm]
+doc = "The default training configuration with NORM true (and BIAS true, which NORM true with BF_Linear takes)."
+config = """
+BIAS true
+ATOM H
+WATOM 1.0
+DBFILE dummy.db
+INIT2B true
+INITMB false
+TYPE2B D2_BP 2 2 H H
+CGRID2B 1.0 2.0
+SGRID2B 0.5 1.0
+RCTYPE2B Cut_Cos
+RCUT2B 5.0
+VERBOSE 0
+MODEL M_BLR BF_Linear
+OALGO 4
+LAMBDA 1e-3
+NORM true
+"""
+
+[context.opt_fixindex]
+doc = "The default training configuration with coefficient 1 fixed (FIXINDEX 1, FIXWEIGHT 0.5)."
+config = """
+ATOM H
+WATOM 1.0
+DBFILE dummy.db
+INIT2B true
+INITMB false
+TYPE2B D2_BP 2 2 H H
+CGRID2B 1.0 2.0
+SGRID2B 0.5 1.0
+RCTYPE2B Cut_Cos
+RCUT2B 5.0
+VERBOSE 0
+MODEL M_BLR BF_Linear
+OALGO 4
+LAMBDA 1e-3
+FIXINDEX 1
+FIXWEIGHT 0.5
+"""
+
+[context.opt_krr2]
+doc = "The default training configuration with MODEL M_KRR Kern_Linear 2 (implementation 2)."
+config = """
+ATOM H
+WATOM 1.0
+DBFILE dummy.db
+INIT2B true
+INITMB false
+TYPE2B D2_BP 2 2 H H
+CGRID2B 1.0 2.0
+SGRID2B 0.5 1.0
+RCTYPE2B Cut_Cos
+RCUT2B 5.0
+VERBOSE 0
+MODEL M_KRR Kern_Linear 2
+SBASIS 2
 LAMBDA 1e-3
 """
 

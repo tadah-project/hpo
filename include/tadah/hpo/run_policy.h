@@ -666,7 +666,9 @@ public:
       std::sort(sorted.begin(), sorted.end(),
                 [](const auto& a, const auto& b){ return a.first < b.first; });
       std::ostringstream oss;
-      oss << "PRESTAGE: top-" << sorted.size() << " losses:";
+      /* As the MULTISTART lines print a loss. */
+      oss << "PRESTAGE: top-" << sorted.size() << " losses:"
+          << std::scientific << std::setprecision(4);
       const std::size_t show = std::min<std::size_t>(sorted.size(), 5);
       for (std::size_t i = 0; i < show; ++i) oss << ' ' << sorted[i].first;
       if (sorted.size() > show) oss << " ...";

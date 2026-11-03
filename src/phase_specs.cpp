@@ -171,6 +171,11 @@ std::string seed_unread_reason(const OptimizerSpec& spec)
     if (direct_rand_in_one_dimension(spec))
         return "in one OPTIM dimension it draws no random numbers (it draws "
                "them only to choose between equally long sides of a box)";
+    const OptimizerCaps* caps = find_optimizer_caps(spec.lib, spec.algo);
+    if (caps && caps->random_draws == OptimizerCaps::RandomDraws::FixedSeed)
+        return "dlib draws its random points from a fixed internal seed, "
+               "which tadah hpo does not set, so a search with THREADS 1 "
+               "repeats its points";
     return "it draws no random numbers";
 }
 

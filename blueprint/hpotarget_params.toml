@@ -1044,8 +1044,7 @@ reannealing takes them by finite differences (Delta_X)."""
 checks = [
   { msg = "{phase}: ASA:ASA: PARAM {key} must be an integer (got {value})", doc = "For a value with a fraction." },
   { msg = "{phase}: ASA:ASA: PARAM {key} must be >= {min} (got {value})", doc = "For a value below 0." },
-  { msg = "{phase}: ASA:ASA: PARAM {key} must be <= {max} (got {value})", doc = "For a value above 1." },
-  { msg = "{phase}: ASA:ASA: PARAM User_Tangents takes 0 only: tadah hpo gives ASA no analytic tangents, and the reannealing takes them by finite differences (PARAM Delta_X)", doc = "For 1." },
+  { msg = "{phase}: ASA:ASA: PARAM User_Tangents takes 0 only: tadah hpo gives ASA no analytic tangents, and the reannealing takes them by finite differences (PARAM Delta_X)", doc = "For a whole number above 0." },
 ]
 examples = [
   { wrap = "params_asa", text = "PARAM User_Tangents 0" },

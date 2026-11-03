@@ -297,6 +297,7 @@ void Handlers::ROOT_FAILSCORE(KeyRead& r)
     if (r.step != LineStep::Value) return;
     r.p().t.FAIL_SCORE =
         read_positive(arg0(r.key), single_value(r.iss, r.word), r.word);
+    r.p().t.FAIL_SCORE_line = {r.p().nline, r.p().line};
 }
 
 /* PC_SCRIPT_TIMEOUT, and MAXTIME at the top level, another name of the
@@ -597,7 +598,7 @@ void Handlers::ROOT_LOSS(KeyRead& r)
 void Handlers::ROOT_OPTIM(KeyRead& r)
 {
     if (r.step != LineStep::Value) return;
-    r.p().t.process_optim_config(r.iss, r.p().nline);
+    r.p().t.process_optim_config(r.iss, r.p().nline, r.p().line);
 }
 
 /* ------------------------------------------- the optimiser group ---- */
@@ -944,10 +945,10 @@ void Handlers::NOISE_AUTO(KeyRead& r)
 void Handlers::NOISE_CALIBRATION(KeyRead& r)
 {
     Parser& p = r.p();
-    const std::size_t v =
-        read_integer(arg0(r.key), single_value(r.iss, r.word), r.word);
+    const std::string tok = single_value(r.iss, r.word);
+    const std::size_t v = read_integer(arg0(r.key), tok, r.word);
     if (v == 1)
-        throw std::runtime_error(str(r.key.checks[0]));
+        throw std::runtime_error(fill(r.key.checks[0], {{"tok", tok}}));
     p.t.spec.noise.calibration_n = v;
     r.target = &p.t.spec.noise;
 }

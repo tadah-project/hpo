@@ -940,7 +940,11 @@ void Parser::eof_step(R::EofStep step)
         t.check_archive_directories();
         break;
     case R::EofStep::OptimizerRequired:
-        /* A file without an OPTIMIZER block names no optimiser. */
+        /* A file without an OPTIMIZER block names no optimiser: it is
+         * told so (the block's own refusal names its STRATEGY block). */
+        if (optimizer_line == 0)
+            throw std::runtime_error(
+                str(rule("RULE.optimizer_block_required").msg));
         require_driver(t.spec, DriverPhase::Run);
         break;
     case R::EofStep::ObservableWithScripts:

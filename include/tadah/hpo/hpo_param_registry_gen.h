@@ -453,7 +453,6 @@ inline constexpr Arg PARAM_ASA_ASA_User_Tangents_args[] = {
 inline constexpr std::string_view PARAM_ASA_ASA_User_Tangents_checks[] = {
     "{phase}: ASA:ASA: PARAM {key} must be an integer (got {value})",
     "{phase}: ASA:ASA: PARAM {key} must be >= {min} (got {value})",
-    "{phase}: ASA:ASA: PARAM {key} must be <= {max} (got {value})",
     "{phase}: ASA:ASA: PARAM User_Tangents takes 0 only: tadah hpo gives ASA no analytic tangents, and the reannealing takes them by finite differences (PARAM Delta_X)",
 };
 inline constexpr std::string_view PARAM_ASA_ASA_Curvature_0_optimizers[] = {
@@ -950,7 +949,7 @@ inline constexpr Param kParams[] = {
       "User_Tangents",
       Span<std::string_view>{detail::PARAM_ASA_ASA_User_Tangents_optimizers, 1},
       Span<Arg>{detail::PARAM_ASA_ASA_User_Tangents_args, 1}, true, "0", false,
-      Span<std::string_view>{detail::PARAM_ASA_ASA_User_Tangents_checks, 4},
+      Span<std::string_view>{detail::PARAM_ASA_ASA_User_Tangents_checks, 3},
       "unsupported: tadah hpo has no analytic tangents (1 = error)"},
   Param{ParamId::PARAM_ASA_ASA_Curvature_0, "PARAM.ASA:ASA.Curvature_0",
       "Curvature_0",

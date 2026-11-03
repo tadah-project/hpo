@@ -131,6 +131,7 @@ void ParsedTarget::Opti::resize(size_t s) {
   if (opt.size() >= s) return;
   opt.resize(s, false);
   line.resize(s, 0);
+  line_text.resize(s);
   config.resize(s);
   scale.resize(s);
   tagged.resize(s, false);
@@ -1158,7 +1159,7 @@ void HPOTargets::write_search_space_files(const std::string& dir) const {
   {
     /* Human-first layout: every column space-padded to one width and the
      * columns tab-separated, so the file lines up in any editor AND stays a
-     * TSV (strip whitespace when parsing). 10 significant digits -- the
+     * TSV (a reader strips the padding of each field). 10 significant digits -- the
      * exact box is what the run holds; hpo_optim_resolved.hpo is the
      * paste-ready record. */
     auto num = [](double v) {
@@ -1220,7 +1221,8 @@ void HPOTargets::write_search_space_files(const std::string& dir) const {
   std::ofstream hpo(dir + "/" + kResolvedOptimFile);
   hpo << "# Resolved OPTIM lines (explicit bounds for every searched dimension).\n"
          "# Written by tadah hpo because at least one box was derived by an AUTO rule;\n"
-         "# in place of the AUTO lines, these lines give exactly this search space.\n";
+         "# in place of every OPTIM line of the target file, these lines give exactly\n"
+         "# this search space.\n";
   /* Lossless numbers (shortest round-trip text): pasted back, every bound
    * must parse to the very double this run searched -- 10 digits moved AUTO
    * bounds by up to 5e-11 relative. */
@@ -1295,7 +1297,8 @@ BoxOrigin box_origin_of(mlip::OptimBoxOrigin o) {
 }  // namespace
 
 void ParsedTarget::process_optim_config(std::istringstream& iss,
-                                      std::size_t nline) {
+                                      std::size_t nline,
+                                      const std::string& line_text) {
   /* The line read as tadah analysis check_bounds reads it (MLIP's OPTIM
    * reader: the refusals of the key, of the index list, of the box and of
    * a value two lines select, and the AUTO boxes); the parser names the line
@@ -1311,6 +1314,7 @@ void ParsedTarget::process_optim_config(std::istringstream& iss,
   for (const mlip::OptimBox& b : l.boxes) {
     omap.opt[b.slot] = true;
     omap.line[b.slot] = nline;
+    omap.line_text[b.slot] = line_text;
     omap.lowbound[b.slot] = b.lo;
     omap.highbound[b.slot] = b.hi;
     omap.scale[b.slot] = tf;

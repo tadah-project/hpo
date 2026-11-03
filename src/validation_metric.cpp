@@ -1,5 +1,6 @@
 #include <tadah/hpo/validation_metric.h>
 #include <tadah/hpo/strict_parse.h>
+#include <tadah/core/number_format.h>
 #include <cstdint>
 #include <cstring>
 #include <iomanip>
@@ -27,17 +28,34 @@ double parse_metric_number(const std::string& token, const std::string& what) {
     return value;
 }
 
+std::string metric_term_description(const std::string& label, double target,
+                                    double weight,
+                                    const MetricSkipCaps& caps) {
+    std::ostringstream s;
+    s << label << " target=" << std::setprecision(12) << target
+      << " weight=" << weight;
+    if (caps.abs_above) s << " --skip-above " << *caps.abs_above;
+    if (caps.rel_above) s << " --skip-rel " << *caps.rel_above;
+    return s.str();
+}
+
 void ValidationMetricTargets::add(const std::vector<std::size_t>& indices,
                                    const ValidationMetricAssignment& a) {
     if (!metric_value_is_finite(a.target) || !metric_value_is_finite(a.weight) || a.weight < 0)
         throw std::runtime_error(key_ + " requires a finite target and nonnegative finite weight");
+    /* The parser refuses a cap that is not a positive number at its line
+     * (the option's kind): one here is a caller's defect. */
     for (const auto cap : {a.caps.abs_above, a.caps.rel_above})
         if (cap && (!metric_value_is_finite(*cap) || *cap <= 0))
-            throw std::runtime_error(key_ + " skip thresholds must be finite and positive");
+            throw std::logic_error("internal error: " + key_ +
+                                   " has the skip cap " +
+                                   core::format_roundtrip(*cap) +
+                                   ", which the parser refuses: a skip cap "
+                                   "is a finite number above 0");
     if (indices.empty()) {
         if (global_)
-            throw std::runtime_error(key_ + ": repeated declaration (first declared on line "
-                + std::to_string(global_->line) + ")");
+            throw std::runtime_error(key_ + " without indices is set twice (first on line "
+                + std::to_string(global_->line) + "); a line without indices is given once");
         if (enabled()) throw std::runtime_error(key_ + ": a line without an index (every validation dataset) and indexed lines (one dataset each) are not combined");
         global_ = a;
     } else {
@@ -139,13 +157,9 @@ std::vector<std::string> ValidationMetricTargets::descriptions() const {
     std::vector<std::string> out;
     if (!enabled()) return out;
     auto format = [&](const std::string& label, const ValidationMetricAssignment& a) {
-        std::ostringstream s;
-        s << label << " target=" << std::setprecision(12) << a.target << " weight=" << a.weight;
-        if (a.caps.abs_above) s << " --skip-above " << *a.caps.abs_above;
-        if (a.caps.rel_above) s << " --skip-rel " << *a.caps.rel_above;
-        out.push_back(s.str());
+        out.push_back(metric_term_description(label, a.target, a.weight, a.caps));
     };
-    if (global_) format("global (loss of average metric)", *global_);
+    if (global_) format(kGlobalMetricLabel, *global_);
     else {
         out.push_back("indexed (average of dataset losses)");
         for (const auto& [i, a] : indexed_)
