@@ -227,8 +227,8 @@ void check_value(const Desc& d, const OptimizerSpec& sp,
                                  " must be finite");
     if (d.kind != Kind::Real && !param_is_integer(sp, key))
         throw std::runtime_error("ASA:ASA: PARAM " + key +
-                                 " must be an integer (got " +
-                                 param_value_text(sp, key) + ")");
+                                 " must be an integer (got '" +
+                                 param_value_text(sp, key) + "')");
     if (!std::isnan(d.min) && v < d.min)
         throw std::runtime_error("ASA:ASA: PARAM " + key + " must be >= " +
                                  core::format_roundtrip(d.min) + got);
