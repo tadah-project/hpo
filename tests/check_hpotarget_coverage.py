@@ -260,34 +260,6 @@ GENERATED_GROUP = ("the optimiser group of the generated tables, whose keys "
                    "the function takes")
 IGNORE_INIT_MODE = ("the INIT_MODE grammar of the annealers' PARAM keys "
                     "(anneal_keys.toml)")
-# The metric lines that take --skip-above and --skip-rel (PC_ERSQ takes
-# neither: a cap would reject the better fits).
-METRIC_OPTIONS = ("line_option:PC_EMAE", "line_option:PC_ERMSE",
-                  "line_option:PC_ErRMSE", "line_option:PC_SRMSE_GPA",
-                  "line_option:PC_FRMSE")
-
-
-def pc_line_option_of(element: str) -> tuple[str, ...]:
-    """The lines an element {"--opt", on_lammps, on_failprobe} of
-    lammps_sim.cpp's line_options() table gives its option to."""
-    flags = [f.strip() for f in element.strip("{} \n").split(",")[1:3]]
-    out = []
-    if flags and flags[0] == "true":
-        out.append("line_option:PC_LAMMPS")
-    if len(flags) > 1 and flags[1] == "true":
-        out.append("line_option:PC_FAILPROBE")
-    return tuple(out)
-
-
-def strategy_type_key_of(element: str) -> tuple[str, ...]:
-    """The TYPE of an element {"KEY", StrategyType::TYPE, ...} of
-    strategy_rules.cpp's kStrategyTypeKeys."""
-    m = re.search(r"StrategyType::(\w+)", element)
-    return (f"strategy_type_key:{m.group(1)}",) if m else ()
-
-
-READ_KEY = ("block", "block_end", "group_key", "key:ROOT", "key:OPTIMIZER",
-            "key:STRATEGY", "key:INIT", "key:NOISE", "key:RESTART")
 PARAM_FIND = (r'param(?:_raw)?\s*\.\s*(?:find|count)\(\s*"([^"]+)"\s*\)',
               ("param",))
 
