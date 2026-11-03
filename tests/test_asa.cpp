@@ -1476,7 +1476,7 @@ TEST_CASE("ASA refuses a box its finite-difference probes cannot fit, before "
                                           "probes") &&
                             Catch::Contains("the default Delta_X 0.001") &&
                             Catch::Contains("Delta_X up to 4.99999e-07 fits "
-                                            "it"));
+                                            "them"));
     CHECK(calls == 0u);
     /* a Delta that fits: the run goes ahead */
     sp.param = {{"Delta_X", 4e-7}};

@@ -7527,12 +7527,15 @@ TEST_CASE("No usable loss: evaluations that throw count as unusable losses",
     /* The LOSS FUNCTION section says what scores FAILSCORE in this run,
      * which has no PC_LAMMPS or PC_OBSERVABLE term (it said "returned when
      * an evaluation produces NaN/Inf", then "... a failed script ...", then
-     * "... a failed PC_LAMMPS simulation ..." in every run;
-     * FAILSCORE_GRADING OFF here). */
+     * "... a failed PC_LAMMPS simulation ..." in every run, then "... a
+     * skip cap or a rejection by BUMPGATE, RHOGATE or RHOBARGATE; ...",
+     * without the refused fit; FAILSCORE_GRADING OFF here). */
     CHECK_THAT(journal, Catch::Contains(
                             "1.0000e+09  (the loss of a failed evaluation: a "
-                            "NaN/Inf loss, an exception, a skip cap or a "
-                            "rejection by BUMPGATE, RHOGATE or RHOBARGATE; "
+                            "NaN/Inf loss, an exception, a potential rejected "
+                            "as unusable (by a --skip-above or --skip-rel "
+                            "cap, BUMPGATE, RHOGATE or RHOBARGATE, or a "
+                            "refused fit); "
                             "the ceiling of every loss)"));
 }
 
