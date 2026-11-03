@@ -1160,14 +1160,22 @@ void HPOLog::write_loss_section(const HPOTargets& trg)
 {
     section("LOSS FUNCTION");
 
-    /* The loss function of LOSS, with its parameters, as the LOSS line
-     * gives them (the header of best_pot.tadah names its type). */
-    {
-        std::string loss = LossFunction::to_string(trg.globalLoss.type());
-        for (const double p : trg.globalLoss.params())
+    /* A loss function with its parameters, as a LOSS line or --loss gives
+     * them: "HUBER 50", "L2". */
+    auto loss_name = [](const LossFunction& fn) {
+        std::string loss = LossFunction::to_string(fn.type());
+        for (const double p : fn.params())
             loss += " " + core::format_roundtrip(p);
-        kv("Loss function", loss);
-    }
+        return loss;
+    };
+
+    /* The loss function of the metric lines: the last LOSS line's, the
+     * default L2 without one (the header of best_pot.tadah names its type).
+     * A --varloss or PC_OBSERVABLE term takes the LOSS line above its line
+     * instead, which may be an earlier one: its line below names its own. */
+    if (trg.use_emae || trg.use_ermse || trg.use_errmse || trg.use_ersq ||
+        trg.use_frmse || trg.use_srmse)
+        kv("Metric loss function", loss_name(trg.globalLoss));
 
     /* A line without indices: one loss of the metric averaged over the
      * datasets, described as the ERMSE family describes one. */
@@ -1194,7 +1202,8 @@ void HPOLog::write_loss_section(const HPOTargets& trg)
         for (std::size_t i = 0; i < lsim.n_varloss.size(); ++i) {
             std::ostringstream s;
             s << "weight=" << std::fixed << std::setprecision(2) << lsim.w_varloss[i]
-              << "  target=" << std::scientific << std::setprecision(3) << lsim.t_varloss[i];
+              << "  target=" << std::scientific << std::setprecision(3) << lsim.t_varloss[i]
+              << "  loss=" << loss_name(lsim.lossFn[i]);
             kv(lsim.n_varloss[i], s.str());
         }
     }
@@ -1215,6 +1224,7 @@ void HPOLog::write_loss_section(const HPOTargets& trg)
         std::ostringstream s;
         s << "weight=" << std::fixed << std::setprecision(2) << obs->weight()
           << "  target=" << std::scientific << std::setprecision(3) << obs->target()
+          << "  loss=" << loss_name(obs->lossfn())
           << "  columns "
           << header_detail::fit_keep_index(observable_loss_label(*obs, k + 1),
                                            title_budget)

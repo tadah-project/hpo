@@ -987,9 +987,14 @@ def sentences(text: str) -> int:
     t = re.sub(r"`[^`]*`", "x", text)
     n = 0
     # A sentence may start lowercase (a command name: "tadah hpo reads
-    # it.") or with a backticked key, which the line above makes "x".
+    # it.") or with a backticked key, which the line above makes "x". The
+    # "!" of the name Tadah! ends no sentence ("Tadah! itself"), except at
+    # the end of the text.
     for m in re.finditer(r"[.!?](?=\s+[A-Za-z(`'\"]|\s*$)", t):
         if re.search(r"\b(e\.g|i\.e|etc|vs|cf)\.$", t[:m.end()]):
+            continue
+        if (re.search(r"\bTadah!$", t[:m.end()])
+                and t[m.end():].strip()):
             continue
         n += 1
     return max(n, 1 if t.strip() else 0)

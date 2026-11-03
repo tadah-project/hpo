@@ -1102,11 +1102,12 @@ void validate_hpo_setup(core::Context &train_ctx, const HPOTargets &trg,
      * which refuses a FAILSCORE whose largest graded failure reaches its
      * largest valid cost (validate_asa_spec). */
     if (!graded_failscore_is_ordered(trg.FAIL_SCORE)) {
-      /* Reachable only where subnormal band widths are flushed to zero
-       * (a fast-math build): the parser refuses a subnormal FAILSCORE,
-       * and IEEE arithmetic orders the bands of every normal one. The
-       * default (the largest double) has them, so a FAILSCORE line set
-       * this one. */
+      /* Reachable only in a process that flushes subnormal band widths
+       * to zero (one whose flush-to-zero bits are set, as an executable
+       * linked with -ffast-math sets them at start-up): the parser
+       * refuses a subnormal FAILSCORE, and IEEE arithmetic orders the
+       * bands of every normal one. The default (the largest double) has
+       * them, so a FAILSCORE line set this one. */
       const std::string what = graded_failscore_refusal(trg.FAIL_SCORE);
       throw std::runtime_error(
           trg.FAIL_SCORE_line.number > 0

@@ -175,10 +175,12 @@ inline bool graded_failscore_is_ordered(double fs) {
 
 /* A FAILSCORE from which on graded_failscore_is_ordered holds for every
  * power of ten up to 1e308, in IEEE arithmetic and with subnormal numbers
- * flushed to zero (a fast-math build, where a FAILSCORE of 1e-307 lacks
- * its bands and one of 1e-300 has them: the smallest is not monotone
- * there). The tests check every power of ten from it, in the flags of HPO's
- * tests and in those of test_tadah. */
+ * flushed to zero (a process whose flush-to-zero and denormals-are-zero
+ * bits are set, as the start-up code of an executable linked with
+ * -ffast-math sets them; compiling with -ffast-math alone sets nothing).
+ * There a FAILSCORE of 1e-307 lacks its bands and one of 1e-300 has them:
+ * the smallest is not monotone. HPO's tests check every power of ten from
+ * it with those bits set (tests/flush_subnormals.h). */
 inline constexpr double kGradedFailscoreSufficient = 1e-290;
 
 /* The refusal of a FAILSCORE whose grading bands are not ordered

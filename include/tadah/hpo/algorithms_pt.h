@@ -3001,9 +3001,12 @@ template<typename Vec, typename HostT>
      * anything. An adaptive ladder equalises acceptance, and acceptance can
      * stay textbook-uniform while transport is zero. It runs right after
      * every transport_window-th exchange round (the window closes there,
-     * whatever SWAP_WINDOW: a window closed only on a report epoch covered
-     * lcm(transport_window, SWAP_WINDOW) rounds while it named
-     * transport_window). Nothing collective: the tags are rank 0's. */
+     * whatever the length of SWAP_WINDOW: a window closed only on a report
+     * epoch covered lcm(transport_window, SWAP_WINDOW) rounds while it
+     * named transport_window), and not under SWAP_WINDOW OFF, which writes
+     * the cumulative diagnostics only (the ladder flow line and the
+     * whole-run grid of the final summary). Nothing collective: the tags
+     * are rank 0's. */
     auto transport_report = [&]() {
       auto grid = [&](const std::string& head, auto&& cell) {
         HPOLog::instance().info(logidx::grid(head, K, cell));
@@ -3622,7 +3625,8 @@ template<typename Vec, typename HostT>
             }
           }
           flow_touch_extremes();   /* states moved -- update up/down flow */
-          if (rank == 0 && world == 1 && K >= 2 && transport_window > 0 &&
+          if (rank == 0 && world == 1 && K >= 2 && kb.swap_window > 0 &&
+              transport_window > 0 &&
               exchange_rounds % transport_window == 0)
             transport_report();
         }
