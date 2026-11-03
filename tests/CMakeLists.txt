@@ -567,23 +567,23 @@ set_tests_properties(hpo_has_include_rebuild PROPERTIES
 # compile; with a key added, it compiles and the probe, which takes the
 # address of every handler (hpotarget_handlers_gen.h), does not link. The
 # probes are not built by default, and compile with the headers of the
-# repository when the directory is empty. Before the fix: fails,
+# repository when the directory is empty. The test builds in this build
+# tree (the probes, and tadah.hpo, which they link, brought up to date), so
+# it holds the lock of the entries that do (RESOURCE_LOCK
+# tadah_header_check; hpo_build_tree_locks below). Before the fix: fails,
 # src/hpotarget_handlers.cpp does not exist.
-set(_hpo_handlers_source ${CMAKE_CURRENT_SOURCE_DIR}/../src/hpotarget_handlers.cpp)
 set(_hpo_handlers_probe_include ${CMAKE_CURRENT_BINARY_DIR}/handlers_probe/include)
-if(EXISTS ${_hpo_handlers_source})
-  add_library(hpo_hpotarget_handlers_probe_objects OBJECT EXCLUDE_FROM_ALL
-      ${_hpo_handlers_source})
-  add_executable(hpo_hpotarget_handlers_probe EXCLUDE_FROM_ALL
-      ${CMAKE_CURRENT_SOURCE_DIR}/handlers_removal/probe_main.cpp
-      $<TARGET_OBJECTS:hpo_hpotarget_handlers_probe_objects>)
-  foreach(_t hpo_hpotarget_handlers_probe_objects hpo_hpotarget_handlers_probe)
-    target_include_directories(${_t} BEFORE PRIVATE
-        ${_hpo_handlers_probe_include})
-    target_link_libraries(${_t} PRIVATE tadah.hpo)
-    set_target_properties(${_t} PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
-  endforeach()
-endif()
+add_library(hpo_hpotarget_handlers_probe_objects OBJECT EXCLUDE_FROM_ALL
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/hpotarget_handlers.cpp)
+add_executable(hpo_hpotarget_handlers_probe EXCLUDE_FROM_ALL
+    ${CMAKE_CURRENT_SOURCE_DIR}/handlers_removal/probe_main.cpp
+    $<TARGET_OBJECTS:hpo_hpotarget_handlers_probe_objects>)
+foreach(_t hpo_hpotarget_handlers_probe_objects hpo_hpotarget_handlers_probe)
+  target_include_directories(${_t} BEFORE PRIVATE
+      ${_hpo_handlers_probe_include})
+  target_link_libraries(${_t} PRIVATE tadah.hpo)
+  set_target_properties(${_t} PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
+endforeach()
 add_test(NAME hpo_hpotarget_handlers_removal
     COMMAND ${CMAKE_COMMAND}
         -DPYTHON=${Python3_EXECUTABLE}
@@ -597,7 +597,8 @@ add_test(NAME hpo_hpotarget_handlers_removal
         -P ${CMAKE_CURRENT_SOURCE_DIR}/handlers_removal/check_handlers_removal.cmake)
 set_tests_properties(hpo_hpotarget_handlers_removal PROPERTIES
     LABELS cmake
-    TIMEOUT 1800)
+    TIMEOUT 1800
+    RESOURCE_LOCK tadah_header_check)
 
 # hpo_build_tree_locks: every CTest entry of HPO that builds in this build
 # tree (its command runs `--build <tree>` or passes -DBUILD_DIR=<tree>)
