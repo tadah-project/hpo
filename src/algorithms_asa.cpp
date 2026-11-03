@@ -27,6 +27,7 @@
 #include <tadah/hpo/hpo_mpi.h>
 #include <tadah/hpo/optimizer_spec.h>
 #include <tadah/hpo/run_stop.h>
+#include <tadah/hpo/validation_metric.h>  /* metric_value_is_finite */
 #include <tadah/hpo/warmstart_cache.h>
 
 #include <atomic>
@@ -158,9 +159,11 @@ bool cost_is_valid(const AsaRunCtx& c, double loss)
  * valid cost in, last_valid_cost; a block (in_block) gives every state the
  * last valid cost before the block and leaves the record to the hook,
  * which updates it after the block in block order, so no state of a block
- * reads another's. */
+ * reads another's. An evaluation whose cost is not valid sets *failed_loss
+ * (when given) to the loss it reported. */
 double eval_core(AsaRunCtx& c, const double* x, int* valid_out,
-                 bool in_block = false, double block_sentinel = 0.0)
+                 bool in_block = false, double block_sentinel = 0.0,
+                 std::optional<double>* failed_loss = nullptr)
 {
     *valid_out = FALSE;
     const double sentinel =
@@ -184,7 +187,10 @@ double eval_core(AsaRunCtx& c, const double* x, int* valid_out,
         return sentinel;
     }
     c.n_evals.fetch_add(1, std::memory_order_relaxed);
-    if (!cost_is_valid(c, loss)) return sentinel;
+    if (!cost_is_valid(c, loss)) {
+        if (failed_loss) *failed_loss = loss;
+        return sentinel;
+    }
     *valid_out = TRUE;
     if (!in_block) c.last_valid_cost.store(loss, std::memory_order_relaxed);
     double prev = c.best_seen.load(std::memory_order_relaxed);
@@ -198,7 +204,8 @@ double eval_core(AsaRunCtx& c, const double* x, int* valid_out,
  * an evaluation from starting once the search has made one: a search makes
  * its first evaluation whatever MAXTIME, as the other drivers do (it made
  * none when MAXTIME had passed before it, and the run had no result). */
-double eval_one(AsaRunCtx& c, const double* x, int* valid_out)
+double eval_one(AsaRunCtx& c, const double* x, int* valid_out,
+                std::optional<double>* failed_loss = nullptr)
 {
     *valid_out = FALSE;
     const double sentinel = c.last_valid_cost.load(std::memory_order_relaxed);
@@ -212,7 +219,19 @@ double eval_one(AsaRunCtx& c, const double* x, int* valid_out)
         c.set_why(AsaRunCtx::Time);
         return sentinel;
     }
-    return eval_core(c, x, valid_out);
+    return eval_core(c, x, valid_out, false, 0.0, failed_loss);
+}
+
+/* The cost ASA keeps its starting point with when the point's evaluation
+ * gave no valid cost (cost_is_valid): the loss it reported, a failure's
+ * FAILSCORE (graded failures below FAILSCORE are valid costs), at most
+ * asa_cost_limit(), the largest cost asa() takes (cost_function_test);
+ * that limit for a loss that is not finite. Every valid cost lies below
+ * it: a valid cost is below FAILSCORE and below the limit. */
+double failed_start_cost(double loss)
+{
+    const double limit = MAX_DOUBLE;
+    return metric_value_is_finite(loss) && loss < limit ? loss : limit;
 }
 
 /* Progress line on the accepted-states cadence; ASA thread only. */
@@ -254,7 +273,24 @@ extern "C" double tadah_asa_cost(double* x, double* /*lo*/, double* /*hi*/,
         *cost_flag = FALSE;
         return c->last_valid_cost.load(std::memory_order_relaxed);
     }
-    const double cost = eval_one(*c, x, cost_flag);
+    std::optional<double> failed_loss;
+    double cost = eval_one(*c, x, cost_flag, &failed_loss);
+    /* The starting point (User_Initial_Parameters, the initial cost value
+     * after the cost-temperature samples): asa() keeps it as its first
+     * current and best state whatever its flag, with the cost it is given
+     * -- it draws another state only in place of one it generated. A
+     * failed start takes a cost above every valid one, not the last valid
+     * cost, which made it ASA's best for the whole run. */
+    if (failed_loss && o->Locate_Cost == 1 &&
+        o->User_Initial_Parameters == TRUE) {
+        cost = failed_start_cost(*failed_loss);
+        HPOLog::instance().info(
+            "ASA: the starting point gave no cost ASA takes (a loss at "
+            "FAILSCORE or above, at about " + core::format_sig(MAX_DOUBLE, 6) +
+            " or above, or not finite); ASA keeps it as its first state with "
+            "the cost " + core::format_sig(cost, 6) + ", above every cost it "
+            "takes, and moves from it");
+    }
     if (c->pending_stop.load(std::memory_order_relaxed))
         o->Immediate_Exit = TRUE;
     c->observe_counters(o);

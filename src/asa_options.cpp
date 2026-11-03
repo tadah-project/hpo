@@ -214,15 +214,21 @@ std::pair<std::string, long> split_indexed(const std::string& key)
                           std::numeric_limits<long>::max())))};
 }
 
-void check_value(const Desc& d, const std::string& key, double v)
+/* The value `v` of PARAM `key` of `sp` against the kind and range of its
+ * option: an option of whole numbers (Count, Bool) takes the integer
+ * syntax (param_is_integer: 1e3 and 10.0 are refused), and that refusal
+ * quotes the value as written. */
+void check_value(const Desc& d, const OptimizerSpec& sp,
+                 const std::string& key, double v)
 {
     const std::string got = " (got " + core::format_roundtrip(v) + ")";
     if (!std::isfinite(v))
         throw std::runtime_error("ASA:ASA: PARAM " + key +
                                  " must be finite");
-    if (d.kind != Kind::Real && v != std::floor(v))
+    if (d.kind != Kind::Real && !param_is_integer(sp, key))
         throw std::runtime_error("ASA:ASA: PARAM " + key +
-                                 " must be an integer" + got);
+                                 " must be an integer (got " +
+                                 param_value_text(sp, key) + ")");
     if (!std::isnan(d.min) && v < d.min)
         throw std::runtime_error("ASA:ASA: PARAM " + key + " must be >= " +
                                  core::format_roundtrip(d.min) + got);
@@ -292,7 +298,7 @@ AsaOptions parse_asa_options(const OptimizerSpec& sp, std::size_t dim)
     std::vector<std::pair<std::string, double>> indexed;
 
     auto set_scalar = [&](const Desc& d, const std::string& key, double v) {
-        check_value(d, key, v);
+        check_value(d, sp, key, v);
         const std::string n = d.name;
         if      (n == "Limit_Acceptances")       o.limit_acceptances = (long)v;
         else if (n == "Limit_Generated")         o.limit_generated = (long)v;
@@ -420,7 +426,7 @@ AsaOptions parse_asa_options(const OptimizerSpec& sp, std::size_t dim)
                     std::to_string(idx) + " is above the number of "
                     "dimensions of the search space, " + std::to_string(dim) +
                     " (indices count from 1)");
-            check_value(*d, key, val);
+            check_value(*d, sp, key, val);
             indexed.emplace_back(key, val);
         } else {
             set_scalar(*d, key, val);

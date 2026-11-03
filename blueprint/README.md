@@ -462,8 +462,8 @@ this TYPE), `checks`, `quirk`, `doc`.
 `positive_only` (optional: the keys of positive values, whose `AUTO` box
 without `RATIO` or `FRAC` is `RATIO 2`, where any other key's is
 `FRAC 0.5`),
-`auto_excluded_prefix` (optional: the key prefix `AUTO` refuses), `checks`
-(optional).
+`auto_excluded` (optional: the keys `AUTO` refuses, the distance cutoffs),
+`checks` (optional).
 
 `[lammps_script]` (in a part file): `doc`, `long_doc`, `fixture` (the
 `[fixture.*]` that is the script the reference page shows), `examples`

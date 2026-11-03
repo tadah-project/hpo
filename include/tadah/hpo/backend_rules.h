@@ -322,21 +322,14 @@ std::vector<std::string> gradient_budget_warnings(const OptimizerSpec& root,
  * strategy_rules.h). One line each, naming the line that opens the block
  * (InitStrategySpec::line, RestartSpec::line; "the INIT block: ..." for a
  * spec built outside the parser):
- *  - an INIT block with a METHOD: the search never evaluates its points --
- *    "the INIT block on line 5: the STRATEGY-level optimiser
- *    NLOPT:GN_DIRECT_L does not start at the point it is given (DIRECT
- *    evaluates the centre of the OPTIM box first and then divides the
- *    whole box; NLopt never reads that point), so the search never
- *    evaluates the block's INIT points. To start the search at them, use
- *    an optimiser that starts at the point it is given." (under NOISE
- *    CALIBRATION, which evaluates the first of them, "... INIT points
- *    (NOISE CALIBRATION evaluates the first of them 2 times). ..."); the
- *    EXPLORE block's own INIT block likewise for the exploration, and an
- *    OPTIMIZER-level one that the exploration takes, its EXPLORE block
- *    having none ("..., which is given the block's INIT points (its
- *    EXPLORE block has no INIT block), does not start ..., so the
- *    exploration never evaluates them; the refinement starts from them
- *    only when no evaluation of the exploration has a usable loss. ...");
+ *  - an OPTIMIZER-level INIT block with a METHOD that the PRESTAGE
+ *    exploration takes, its EXPLORE block having none: "the INIT block on
+ *    line 5: the PRESTAGE exploration NLOPT:GN_DIRECT_L, which is given the
+ *    block's INIT points (its EXPLORE block has no INIT block), does not
+ *    start ..., so the exploration never evaluates them; the refinement
+ *    starts from them only when no evaluation of the exploration has a
+ *    usable loss. ..." (the search's own INIT block with a METHOD is
+ *    refused, refuse_unread_init_points());
  *  - an active RESTART block, when the search draws no random numbers
  *    either (OptimizerCaps::random_draws: Never, or BetweenSides in one
  *    OPTIM dimension): every round asks for round 0's points again,
@@ -398,6 +391,29 @@ std::vector<std::string> gradient_budget_warnings(const OptimizerSpec& root,
  * NLOPT:GN_DIRECT_L does not start ..."). validate_hpo_setup() journals
  * each after the gradient-budget warnings, once the phases' backends are
  * known to be registered. */
+/* Refuses an INIT block with a METHOD line on the search a round starts
+ * with -- PLAIN's STRATEGY-level optimiser, PRESTAGE's exploration with its
+ * EXPLORE block's own INIT block -- when that search does not start at the
+ * point it is given (search_ignoring_start(): NLopt's StoGO, DIRECT and
+ * AGS): it would never evaluate the block's points. The refusal names the
+ * block's first METHOD line (config_line_error: "line 6 of config.hpo:
+ * ...\nLine: METHOD LHS 3"), the phase, its optimiser and where it starts,
+ * and the optimisers that start at the point they are given:
+ *   "the STRATEGY-level optimiser NLOPT:GN_DIRECT_L does not start at the
+ *    point it is given (DIRECT evaluates ...), so the search would never
+ *    evaluate the starting points of this INIT block. An optimiser that
+ *    starts at the point it is given (every optimiser but NLOPT:GD_STOGO,
+ *    ..., NLOPT:GN_ORIG_DIRECT_L) starts the search at them."
+ * under NOISE CALIBRATION (PLAIN) with "(without them NOISE CALIBRATION
+ * evaluates the point of the training configuration)" before the first
+ * full stop, as it then does. An OPTIMIZER-level INIT block that a PRESTAGE
+ * exploration takes is not refused: the refinement starts from its points
+ * when no evaluation of the exploration has a usable loss
+ * (start_point_warnings warns). A MULTISTART start on such a search is
+ * refused already (strategy_rules.h). validate_hpo_setup() calls it before
+ * start_point_warnings(). */
+void refuse_unread_init_points(const OptimizerSpec& root);
+
 std::vector<std::string> start_point_warnings(const OptimizerSpec& root,
                                               const std::string& reuse_blocker);
 

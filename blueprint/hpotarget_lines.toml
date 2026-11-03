@@ -3398,7 +3398,7 @@ synopsis = [
   "OPTIM <KEY> (<indices>) AUTO [RATIO <f> | FRAC <p>] [FLOOR <a>] [GROUP_FLOOR <r>] [LIN | LOG | ASINH <c>]",
 ]
 positive_only = ["SGRID2B", "SGRIDMB", "SEMBFUNC"]
-auto_excluded_prefix = "RCUT"
+auto_excluded = ["RCUT2B", "RCUTMB"]
 untested = [
   { msg = "OPTIM {key} ({index}): the AUTO box [{low}, {high}] has the low bound {low}, which is negative, but {what} requires {value}, so the low bound of its box is >= 0", why = "Every key whose low-bound rule takes 0 is a non-negative amplitude, whose AUTO FRAC box is clamped at 0 and whose RATIO box lies above 0." },
 ]

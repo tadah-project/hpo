@@ -659,14 +659,20 @@ inline Knobs Knobs::parse(const OptimizerSpec& sp, AlgoKind kind)
     parsed_values.emplace_back(&ki, v);
     return v;
   };
+  /* A count: a value a line writes takes the integer syntax
+   * (param_is_integer: 5e1 and 50.0 are refused), and its refusal quotes
+   * it as written; a default is one. */
   auto pcount = [&](const char* k) -> std::size_t {
     const double v = pget(k);
     const long double size_limit = std::ldexp(
         1.0L, std::numeric_limits<std::size_t>::digits);
-    if (v < 0.0 || std::floor(v) != v ||
-        static_cast<long double>(v) >= size_limit)
+    const bool written = sp.param.count(k) > 0;
+    if ((written && !param_is_integer(sp, k)) || v < 0.0 ||
+        std::floor(v) != v || static_cast<long double>(v) >= size_limit)
       throw std::runtime_error(
-          ctx + ": PARAM " + k + " must be a non-negative integer");
+          ctx + ": PARAM " + k + " must be a non-negative integer" +
+          (written ? " (got '" + param_value_text(sp, k) + "')"
+                   : std::string()));
     return static_cast<std::size_t>(v);
   };
   /* Booleans take the tokens ON / OFF (1.5.0). A numeric 0/1 is a hard

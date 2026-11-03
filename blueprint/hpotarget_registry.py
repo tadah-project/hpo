@@ -1059,7 +1059,7 @@ SCHEMA: dict[str, dict[str, tuple[str, bool]]] = {
     "optim": dict(DOC_FIELDS, doc=("str", R), long_doc=("str", O),
                   synopsis=("list[str]", R),
                   positive_only=("list[str]", O),
-                  auto_excluded_prefix=("str", O), checks=("checks", O)),
+                  auto_excluded=("list[str]", O), checks=("checks", O)),
     "lammps_script": dict(DOC_FIELDS, doc=("str", R), long_doc=("str", O),
                           fixture=("str", R)),
     "group": dict(DOC_FIELDS, blocks=("list[str]", R),

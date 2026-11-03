@@ -779,6 +779,7 @@ inline constexpr std::string_view PARAM_TADAH_ANNEAL_checks[] = {
     "{phase}: TADAH:ANNEAL_PA: PARAM INIT_MODE JITTER AUTO takes no tolerance (got '{tok}'): TADAH:ANNEAL_PA measures no displacement and takes the first proposal scales as the bounds; TADAH:ANNEAL_PT measures them against the tolerance",
     "{phase}: TADAH:{algo}: PARAM {key} is a key of {name}",
     "{phase}: TADAH:{algo}: PARAM {key} must be {what} (got '{tok}'{note})",
+    "{phase}: TADAH:{algo}: PARAM {key} must be a non-negative integer (got '{value}')",
     "{phase}: TADAH:{algo}: PARAM {key} must be one of: {list} (got '{tok}')",
 };
 
@@ -1127,7 +1128,7 @@ inline constexpr ParamPolicy kParamPolicies[] = {
   ParamPolicy{"PARAM.TADAH:ANNEAL",
       Span<std::string_view>{detail::PARAM_TADAH_ANNEAL_optimizers, 3},
       "{phase}: TADAH:{algo}: unknown PARAM '{key}'; accepted keys: {keys}",
-      Span<std::string_view>{detail::PARAM_TADAH_ANNEAL_checks, 4}},
+      Span<std::string_view>{detail::PARAM_TADAH_ANNEAL_checks, 5}},
 };
 
 }  // namespace param_registry

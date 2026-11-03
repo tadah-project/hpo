@@ -61,6 +61,15 @@ std::uint64_t parse_uint(const std::string& tok, const std::string& what,
                              std::numeric_limits<std::uint64_t>::max(),
                          const std::string& note = "");
 
+/* The integer syntax of every key that takes a whole number: decimal
+ * digits, with a '-' in front for a negative value ("10", "0", "-1"). No
+ * '+', decimal point, exponent, whitespace or trailing character: "1e1",
+ * "+10" and "10.0" are no integers, as parse_uint() refuses them (which
+ * takes no '-' either). A PARAM key that takes a whole number (integral in
+ * the target-file registry, a count of the annealers) holds its value as
+ * written to this syntax (OptimizerSpec::param_text). */
+bool is_integer_token(const std::string& tok);
+
 /* The number grammar of every key, the syntax LAMMPS' utils::is_double
  * accepts: an optional '+' or '-', decimal digits with at most one '.' and
  * at least one digit, then an optional exponent [eE][+-]<digits> -- "5",

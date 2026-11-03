@@ -2582,6 +2582,7 @@ STRATEGY line is a METHOD line. The method names are compared as written, \
 in upper case."""
 checks = [
   { msg = "{key} requires a method name", doc = "At the line: METHOD, or its other name STRATEGY, without a method." },
+  { msg = "{phase} {name} does not start at the point it is given ({note}), so the {kind} would never evaluate the starting points of this INIT block{hint}. An optimiser that starts at the point it is given (every optimiser but {list}) starts the {kind} at them.", doc = "At startup, at the first METHOD line of the INIT block of the search a run starts with, the STRATEGY-level optimiser under TYPE PLAIN or the exploration of TYPE PRESTAGE with the INIT block of its EXPLORE block, when that optimiser does not start at the point it is given; {note} says where it starts, {kind} is search or exploration, {hint} says under NOISE CALIBRATION that it then evaluates the point of the training configuration, and {list} names the optimisers that do not start at the point they are given. An OPTIMIZER-level INIT block that a PRESTAGE exploration takes is read by the refinement, which starts from its points when no evaluation of the exploration has a usable loss." },
 ]
 
 [[key.examples]]
@@ -2635,6 +2636,54 @@ error = "METHOD NOISE_AUTO: unknown method; the methods are CONFIG, RANDOM, LHS,
 wrap = "restart"
 text = "STRATEGY NOISE_AUTO"
 error = "STRATEGY NOISE_AUTO: unknown method; the methods are CONFIG, RANDOM, LHS, SOBOL and WARM, in upper case"
+
+[[key.invalid]]
+doc = "An INIT block with a METHOD line for a DIRECT search, which starts at the centre of the box."
+wrap = "none"
+check = "startup"
+at = 5
+text = '''
+OPTIM CGRID2B (1) 0.5 1.5
+PC_ERMSE 0 1
+OPTIMIZER
+INIT
+METHOD LHS 3
+SEED 7
+ENDINIT
+STRATEGY
+LIB NLOPT
+ALGO GN_DIRECT_L
+MAXEVAL 10
+ENDSTRATEGY
+ENDOPTIMIZER'''
+error = "the STRATEGY-level optimiser NLOPT:GN_DIRECT_L does not start at the point it is given (DIRECT evaluates the centre of the OPTIM box first and then divides the whole box; NLopt never reads the point it is given), so the search would never evaluate the starting points of this INIT block. An optimiser that starts at the point it is given (every optimiser but NLOPT:GD_STOGO, NLOPT:GD_STOGO_RAND, NLOPT:GN_AGS, NLOPT:GN_DIRECT, NLOPT:GN_DIRECT_L, NLOPT:GN_DIRECT_L_NOSCAL, NLOPT:GN_DIRECT_L_RAND, NLOPT:GN_ORIG_DIRECT, NLOPT:GN_ORIG_DIRECT_L) starts the search at them."
+
+[[key.invalid]]
+doc = "The INIT block of the EXPLORE block of a PRESTAGE exploration with DIRECT."
+wrap = "none"
+check = "startup"
+at = 14
+text = '''
+OPTIM CGRID2B (1) 0.5 1.5
+PC_ERMSE 0 1
+OPTIMIZER
+STRATEGY
+TYPE PRESTAGE
+LIB NLOPT
+ALGO LN_BOBYQA
+MAXEVAL 10
+EXPLORE
+LIB NLOPT
+ALGO GN_DIRECT_L
+MAXEVAL 8
+INIT
+METHOD RANDOM 2
+SEED 3
+ENDINIT
+ENDEXPLORE
+ENDSTRATEGY
+ENDOPTIMIZER'''
+error = "the PRESTAGE exploration NLOPT:GN_DIRECT_L does not start at the point it is given (DIRECT evaluates the centre of the OPTIM box first and then divides the whole box; NLopt never reads the point it is given), so the exploration would never evaluate the starting points of this INIT block. An optimiser that starts at the point it is given (every optimiser but NLOPT:GD_STOGO, NLOPT:GD_STOGO_RAND, NLOPT:GN_AGS, NLOPT:GN_DIRECT, NLOPT:GN_DIRECT_L, NLOPT:GN_DIRECT_L_NOSCAL, NLOPT:GN_DIRECT_L_RAND, NLOPT:GN_ORIG_DIRECT, NLOPT:GN_ORIG_DIRECT_L) starts the exploration at them."
 
 [[key]]
 id = "INIT.K_TOTAL"
