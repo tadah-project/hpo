@@ -8,8 +8,11 @@ function is not found once, the comparison of the names found with the
 registry's in both directions, the command without a registry, and a
 rule on a file of MLIP (mlip:<path>, read from the --mlip directory); on a
 copy of the HPO and MLIP sources, a top-level key the registry-driven
-parser compares that the registry does not know; and that no rule reads
-the hand-written parser the registry-driven one replaced.
+parser compares that the registry does not know; that no rule reads
+the hand-written parser the registry-driven one replaced and no source
+names it; that each function and constant of the check is used; and that
+the {what} of a rule and the explain of a PARAM key are written in the
+registry alone.
 
 The rules on MLIP's files read the MLIP source directory that
 TADAH_MLIP_SOURCE_DIR names (CTest sets it); a test that needs it fails
@@ -148,27 +151,21 @@ class Extraction(unittest.TestCase):
         self.assertIn('tokens[i] == "-var"', problems[2])
 
     def test_scoped_tables(self):
-        # The lines of a PC_* option and the TYPE of a STRATEGY key come
-        # from the second fields of their tables.
-        self.assertEqual(cov.pc_line_option_of('{"--gate", false, true}'),
-                         ("line_option:PC_FAILPROBE",))
-        self.assertEqual(cov.pc_line_option_of('{"--script", true, true}'),
-                         ("line_option:PC_LAMMPS",
-                          "line_option:PC_FAILPROBE"))
-        self.assertEqual(cov.strategy_type_key_of(
-            '{"TOPK", StrategyType::PRESTAGE, "why"}'),
-            ("strategy_type_key:PRESTAGE",))
+        # A table element can give its name to vocabularies that a
+        # function of the rule reads from the element's other fields.
+        def flagged(element: str) -> tuple[str, ...]:
+            flags = [f.strip() for f in element.strip("{} \n").split(",")[1:]]
+            return tuple(f"scope:{i}" for i, f in enumerate(flags)
+                         if f == "true")
         (self.root / "src" / "t.cpp").write_text(
             'static const Opt k[] = {\n  {"--a", true, false},\n'
             '  {"--b", false, true},\n};\n')
         rule = cov.Rule("t", "src/t.cpp", compare=False,
-                        tables=[(r"\bk\s*\[\]", "first",
-                                 cov.pc_line_option_of)])
+                        tables=[(r"\bk\s*\[\]", "first", flagged)])
         found, problems = self.run_rules([rule])
         self.assertEqual(problems, [])
         self.assertEqual({(f.name, f.vocabularies) for f in found},
-                         {("--a", ("line_option:PC_LAMMPS",)),
-                          ("--b", ("line_option:PC_FAILPROBE",))})
+                         {("--a", ("scope:0",)), ("--b", ("scope:1",))})
 
     def test_comparisons_the_rules_cannot_read(self):
         # A key compared with a named constant, a constructed string or
@@ -498,6 +495,38 @@ class Compare(unittest.TestCase):
             "scope no extraction rule reads"])
 
 
+class ModuleNames(unittest.TestCase):
+    # Pins: each function and constant at the top of
+    # check_hpotarget_coverage.py is used by the module outside its own
+    # definition: a helper that only its own unit test calls reads no
+    # source of the check.
+    # Before the fix: fails, METRIC_OPTIONS, pc_line_option_of,
+    # strategy_type_key_of and READ_KEY are used by no rule (their rules
+    # read the hand-written parser and the tables it used).
+    def test_no_name_is_left_unused(self):
+        import ast
+        tree = ast.parse(pathlib.Path(cov.__file__).read_text())
+        defined: dict[str, ast.AST] = {}
+        for node in tree.body:
+            if isinstance(node, (ast.FunctionDef, ast.ClassDef)):
+                defined[node.name] = node
+            elif isinstance(node, ast.Assign):
+                for t in node.targets:
+                    if isinstance(t, ast.Name):
+                        defined[t.id] = node
+            elif (isinstance(node, ast.AnnAssign)
+                  and isinstance(node.target, ast.Name)):
+                defined[node.target.id] = node
+        unused = []
+        for name, node in defined.items():
+            own = {id(n) for n in ast.walk(node)}
+            if not any(isinstance(n, ast.Name) and n.id == name
+                       and isinstance(n.ctx, ast.Load) and id(n) not in own
+                       for n in ast.walk(tree)):
+                unused.append(name)
+        self.assertEqual(unused, [])
+
+
 class Command(unittest.TestCase):
     def test_no_registry_fails_with_a_message(self):
         with tempfile.TemporaryDirectory() as d:
@@ -533,6 +562,98 @@ class RealSources(unittest.TestCase):
         on = [r.label for r in cov.EXTRACTION
               if r.file == "src/hpo_targets.cpp"]
         self.assertEqual(on, ["the OPTIM_SCALE override"])
+
+    # Pins: no source, header or test of HPO names HPOTargets::read, the
+    # hand-written parser the registry-driven one replaced: their comments
+    # name the parser of the target file (src/hpotarget_parser.cpp).
+    # Before the fix: fails, the comments of test_param_arity.cpp,
+    # test_hpotarget_block_structure.cpp,
+    # test_startup_validation_strategy.cpp, test_pc_observable_parser.cpp
+    # and test_hpotarget_registry_conformance.cpp name it.
+    def test_no_source_names_the_removed_reader(self):
+        root = HERE.parent
+        named = []
+        for d in ("src", "include", "tests"):
+            for f in sorted((root / d).rglob("*")):
+                if (f.suffix not in (".cpp", ".h", ".py", ".cmake", ".txt")
+                        or "data" in f.relative_to(root).parts):
+                    continue
+                for n, line in enumerate(f.read_text(errors="replace")
+                                         .splitlines(), 1):
+                    if "HPOTargets::read" in line and f != pathlib.Path(
+                            __file__).resolve():
+                        named.append(f"{f.relative_to(root)}:{n}")
+        self.assertEqual(named, [])
+
+
+class RegistryTexts(unittest.TestCase):
+    """The texts the registry gives the program are written in the
+    registry alone: the {what} of a rule's message
+    (RULE.set_once_for_optimiser, which the parser fills from the
+    generated tables) and the explain of a PARAM key (its row of
+    `tadah explain LIB:ALGO`)."""
+
+    @staticmethod
+    def literals(path: pathlib.Path) -> set[str]:
+        """The string literals of a C++ source, each run of adjacent
+        literals joined."""
+        import re
+        src = cov.strip_comments(path.read_text())
+        lit = r'"(?:[^"\\\n]|\\.)*"'
+        out = set()
+        for m in re.finditer(rf"{lit}(?:\s*{lit})*", src):
+            parts = re.findall(lit, m.group(0))
+            out.add("".join(p[1:-1].replace('\\"', '"')
+                            .replace("\\\\", "\\") for p in parts))
+        return out
+
+    def sources(self) -> list[pathlib.Path]:
+        root = HERE.parent
+        return [f for d in ("src", "include") for f in
+                sorted((root / d).rglob("*"))
+                if f.suffix in (".cpp", ".h") and
+                not f.name.endswith("_gen.h")]
+
+    def registry(self):
+        sys.path.insert(0, str(HERE.parent / "blueprint"))
+        import hpotarget_registry as hr
+        return hr.load(HERE.parent / "blueprint")
+
+    # Pins: no source of HPO but the generated headers holds the {what}
+    # of a rule as a string literal, and no handler sets one: the parser
+    # takes the {what} of RULE.set_once_for_optimiser from the generated
+    # tables for each entry it names.
+    # Before the fix: fails, OPTIMIZER_LOG_HP of hpotarget_handlers.cpp
+    # writes "search space", and the handlers of STRATEGY, INIT, RESTART
+    # and NOISE set texts no message holds.
+    def test_the_what_of_a_rule(self):
+        reg = self.registry()
+        texts = {t for r in reg.rules for t in r.what.values()}
+        self.assertTrue(texts)
+        held = sorted(f"{f.relative_to(HERE.parent)}: {t!r}"
+                      for f in self.sources() for t in
+                      texts & self.literals(f))
+        self.assertEqual(held, [])
+        import re
+        handlers = (HERE.parent / "src" / "hpotarget_handlers.cpp")
+        sets = [n for n, line in enumerate(cov.strip_comments(
+                    handlers.read_text()).splitlines(), 1)
+                if re.search(r"\.\s*what\s*=[^=]", line)]
+        self.assertEqual(sets, [])
+
+    # Pins: no source of HPO but the generated headers holds the explain
+    # of a PARAM key as a string literal: the PARAM table of
+    # `tadah explain ASA:ASA` takes its text from the generated tables.
+    # Before the fix: fails, kDescs of asa_options.cpp holds each row's
+    # text a second time.
+    def test_the_explain_of_a_param_key(self):
+        reg = self.registry()
+        texts = {p.explain for p in reg.params if p.explain}
+        self.assertTrue(texts)
+        held = sorted(f"{f.relative_to(HERE.parent)}: {t!r}"
+                      for f in self.sources() for t in
+                      texts & self.literals(f))
+        self.assertEqual(held, [])
 
 
 class TopLevelKeys(unittest.TestCase):

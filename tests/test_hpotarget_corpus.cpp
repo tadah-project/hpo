@@ -13,8 +13,10 @@
 //
 // Pins: each input of corpus.toml, read by the program's parser
 // (HPOTargets) in a fresh directory as the corpus describes it, gives
-// exactly what the corpus holds for it, byte for byte, and the corpus holds
-// both kinds of result; an environment override of the registry
+// exactly what the corpus holds for it, byte for byte: the description or
+// the refusal, and what the constructor prints on std::cout and on
+// std::cerr (nothing when the corpus names no file for the stream); the
+// corpus holds both kinds of result; an environment override of the registry
 // (hpotarget_registry_gen.h, kEnvs) set where the test runs does not reach
 // an input that does not set it (each input is read with the environment
 // the corpus gives it).
@@ -35,11 +37,15 @@
 //                  (tools/hpotarget_case_runner.cpp)
 //   expected       the file of the corpus that holds the result: <x>.dump
 //                  the description of the parse, <x>.error the refusal
+//   stdout, stderr optional: the file of the corpus that holds what the
+//                  constructor printed on the stream (<x>.stdout,
+//                  <x>.stderr); without it, it printed nothing there
 //
 // Tag [hpotarget_corpus]. The corpus directory is
 // TADAH_HPOTARGET_CORPUS_DIR (tests/CMakeLists.txt).
 // Before the expectations: the corpus has no corpus.toml and the case
-// fails.
+// fails. Before the fix (the printed output in the corpus): fails, the
+// inputs whose parse prints a line have no stdout or stderr file.
 
 #include "catch2/catch.hpp"
 
@@ -58,6 +64,7 @@
 #include <exception>
 #include <filesystem>
 #include <fstream>
+#include <iostream>
 #include <memory>
 #include <sstream>
 #include <stdexcept>
@@ -96,6 +103,7 @@ std::string corpus_text(const std::string& rel)
 struct Input {
     std::string origin;
     std::string expected;  // the corpus file of the result
+    std::string out, err;  // the corpus files of the printed output
     Case c;
 };
 
@@ -121,6 +129,8 @@ std::vector<Input> read_corpus()
         if (in.expected.empty())
             throw std::runtime_error("input " + c.id + " names no expected "
                                      "result");
+        in.out = field(t, "stdout");
+        in.err = field(t, "stderr");
         const std::string target = field(t, "target");
         const std::string config = field(t, "config");
         c.target_file = field(t, "target_file");
@@ -185,21 +195,60 @@ private:
     std::vector<std::pair<std::string, std::string>> saved_;
 };
 
-/* What the parser of `tadah hpo` gives for the input: "<x>.dump" and the
- * description of the parse, or "<x>.error" and the refusal. */
-std::pair<std::string, std::string> read_input(const Case& c)
+/* std::cout and std::cerr written into strings while it lives. */
+class Printed {
+public:
+    Printed()
+        : old_out_(std::cout.rdbuf(out_.rdbuf())),
+          old_err_(std::cerr.rdbuf(err_.rdbuf()))
+    {}
+    ~Printed()
+    {
+        std::cout.rdbuf(old_out_);
+        std::cerr.rdbuf(old_err_);
+    }
+    Printed(const Printed&) = delete;
+    Printed& operator=(const Printed&) = delete;
+    std::string out() const { return out_.str(); }
+    std::string err() const { return err_.str(); }
+
+private:
+    std::ostringstream out_, err_;
+    std::streambuf* old_out_;
+    std::streambuf* old_err_;
+};
+
+/* What the parser of `tadah hpo` gives for the input. */
+struct Read {
+    std::string kind;  // ".dump" or ".error"
+    std::string text;  // the description of the parse, or the refusal
+    std::string out, err;  // what the constructor printed
+};
+
+Read read_input(const Case& c)
 {
     tadah::core::PeriodicTable::initialize();
     const OverridesUnset unset(c);
     const hpotarget_cases::CaseDir dir(c);
     tadah::core::Context ctx = hpotarget_cases::case_config(c);
     std::unique_ptr<tadah::hpo::HPOTargets> t;
-    try {
-        t = std::make_unique<tadah::hpo::HPOTargets>(ctx, dir.target());
-    } catch (const std::exception& e) {
-        return {".error", e.what()};
+    Read r;
+    {
+        const Printed printed;
+        try {
+            t = std::make_unique<tadah::hpo::HPOTargets>(ctx, dir.target());
+        } catch (const std::exception& e) {
+            r.kind = ".error";
+            r.text = e.what();
+        }
+        r.out = printed.out();
+        r.err = printed.err();
     }
-    return {".dump", tadah::hpo::testing::describe_parse(*t)};
+    if (t) {
+        r.kind = ".dump";
+        r.text = tadah::hpo::testing::describe_parse(*t);
+    }
+    return r;
 }
 
 bool ends_with(const std::string& s, const std::string& end)
@@ -259,7 +308,9 @@ void check_corpus()
     std::size_t dumps = 0, errors = 0;
     std::vector<std::string> wrong;
     for (const Input& in : inputs) {
-        const auto [kind, got] = read_input(in.c);
+        const Read r = read_input(in.c);
+        const std::string& kind = r.kind;
+        const std::string& got = r.text;
         if (!ends_with(in.expected, ".dump") &&
             !ends_with(in.expected, ".error")) {
             wrong.push_back(in.c.id + ": the expected result " +
@@ -278,6 +329,19 @@ void check_corpus()
             wrong.push_back(in.c.id + " (" + in.origin + "): " +
                             in.expected + ", " +
                             first_difference(want, got));
+        }
+        const std::pair<const char*, std::pair<std::string, std::string>>
+            streams[] = {{"stdout", {in.out, r.out}},
+                         {"stderr", {in.err, r.err}}};
+        for (const auto& [name, files] : streams) {
+            const auto& [file, printed] = files;
+            const std::string held = file.empty() ? "" : corpus_text(file);
+            if (printed != held)
+                wrong.push_back(in.c.id + " (" + in.origin + "): " + name +
+                                (file.empty() ? " (the corpus holds "
+                                                "nothing)"
+                                              : " (" + file + ")") +
+                                ", " + first_difference(held, printed));
         }
     }
     INFO(inputs.size() << " inputs, " << dumps << " read, " << errors

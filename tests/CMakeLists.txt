@@ -599,6 +599,32 @@ set_tests_properties(hpo_hpotarget_handlers_removal PROPERTIES
     LABELS cmake
     TIMEOUT 1800)
 
+# hpo_build_tree_locks: every CTest entry of HPO that builds in this build
+# tree (its command runs `--build <tree>` or passes -DBUILD_DIR=<tree>)
+# holds RESOURCE_LOCK tadah_header_check, as the header checks and the
+# other entries that build in the tree do, or RUN_SERIAL
+# (check_build_tree_locks.py, which reads `ctest --show-only=json-v1`):
+# two such entries at once under `ctest -j` would build one tree together.
+# Before the fix: fails, hpo_hpotarget_handlers_removal holds no lock.
+add_test(NAME hpo_build_tree_locks
+    COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/check_build_tree_locks.py
+        --ctest ${CMAKE_CTEST_COMMAND}
+        --build-dir ${CMAKE_BINARY_DIR}
+        --source ${CMAKE_CURRENT_SOURCE_DIR}/..)
+set_tests_properties(hpo_build_tree_locks PROPERTIES
+    LABELS cmake
+    TIMEOUT 120)
+# The check itself, on synthetic ctest output
+# (tests/test_check_build_tree_locks.py).
+add_test(NAME hpo_build_tree_locks_tool
+    COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/test_check_build_tree_locks.py)
+set_tests_properties(hpo_build_tree_locks_tool PROPERTIES
+    LABELS cmake
+    TIMEOUT 60
+    FAIL_REGULAR_EXPRESSION "\nRan 0 tests ")
+
 # Boost drift gate: every Boost header HPO includes must be in the Boost
 # Tadah vendors (MLIP's external/boost, on HPO's include path through
 # tadah.mlip), so the build never depends on a system Boost. The include

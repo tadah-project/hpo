@@ -5,7 +5,8 @@ the frame it reads an error from, the cases each check generates, what
 each check makes of a result the parser could give (a refusal where the
 registry says there is one, an acceptance where it says there is none),
 and the runner's command, which reads with the parser of `tadah hpo` (the
-check takes no --parser), without running the parser."""
+check takes no --parser), without running the parser; and that each
+section header of the check heads code."""
 
 from __future__ import annotations
 
@@ -416,6 +417,30 @@ class Generated(unittest.TestCase):
         self.assertEqual(e.exception.code, 2)
         self.assertIn("unrecognized arguments: --parser old", err.getvalue())
 
+
+
+class Layout(unittest.TestCase):
+    # Pins: each section header of check_hpotarget_generated.py
+    # ("# ---- <name> ----") heads code: a line of code follows it before
+    # the next header, so a header labels the code under it.
+    # Before the fix: fails, "# ---- words ----" stands directly above
+    # "# ---- case ----", and gen_words() sits under the case header.
+    def test_each_section_header_heads_code(self):
+        import re
+        header = re.compile(r"^\s*# -{4} ?(.*?) ?-{4,}\s*$")
+        lines = pathlib.Path(gen.__file__).read_text().splitlines()
+        empty, current = [], None
+        for n, line in enumerate(lines, 1):
+            m = header.match(line)
+            if m:
+                if current is not None:
+                    empty.append(current)
+                current = f"line {n}: {m.group(1).strip(' -')}"
+            elif line.strip() and not line.lstrip().startswith("#"):
+                current = None
+        if current is not None:
+            empty.append(current)
+        self.assertEqual(empty, [])
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

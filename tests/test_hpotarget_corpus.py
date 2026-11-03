@@ -303,7 +303,8 @@ def corpus_doc_commands() -> pathlib.Path:
 # it reads each target file as text (from `file`, or from the tree, cwd and
 # target_file of a case read in place) and the files its lines `READS <f>`
 # name (a fixture of the case, else a file of its tree); it refuses a file
-# with a line REFUSE and describes the others.
+# with a line REFUSE and describes the others; what follows `SAY ` on a
+# line it prints on stdout, what follows `WARN ` on stderr.
 FAKE_RUNNER = """\
 #!/usr/bin/env python3
 import json, os, pathlib, sys, tomllib
@@ -316,7 +317,11 @@ for c in cases:
         here = pathlib.Path(c["tree"]) / c.get("cwd", "")
         text = (here / c["target_file"]).read_text()
     r = {"id": c["id"], "parse_error": "", "startup_error": "",
-         "check_error": "", "dump": ""}
+         "check_error": "", "dump": "",
+         "stdout": "".join(l[4:] + "\\n" for l in text.splitlines()
+                           if l.startswith("SAY ")),
+         "stderr": "".join(l[5:] + "\\n" for l in text.splitlines()
+                           if l.startswith("WARN "))}
     fixtures = {f["path"]: f["text"] for f in c.get("fixtures", [])}
     read = []
     for line in text.splitlines():
@@ -353,7 +358,7 @@ class Write(unittest.TestCase):
         (tree / "target_files").mkdir(parents=True)
         (tree / "common" / "data").mkdir(parents=True)
         (tree / "target_files" / "a.hpo").write_text(
-            "LOSS L2\nREADS ../common/script.in\n")
+            "LOSS L2\nREADS ../common/script.in\nSAY read\nWARN twice\n")
         (tree / "common" / "script.in").write_text("variable E equal 1\n")
         (tree / "common" / "config.tadah").write_text("ATOM Ta\n")
         (tree / "common" / "data" / "big.tadahdb").write_text("data\n")
@@ -376,7 +381,7 @@ class Write(unittest.TestCase):
                                                "config": default,
                                                "fixtures": fx,
                                                "env": {"K": "v"}})
-        c.add("registry", "LOSS:0", "refused", {"file": "REFUSE\n",
+        c.add("registry", "LOSS:0", "refused", {"file": "WARN no\nREFUSE\n",
                                                 "config": "ATOM H\n",
                                                 "fixtures": fx})
         self.corpus = c
@@ -425,9 +430,11 @@ class Write(unittest.TestCase):
 
     # Pins: write() writes corpus.toml (an [[input]] per input with
     # `expected`), the frozen files and expected/<name>.dump or .error,
-    # byte for byte what the runner gives; the trees leave out the
-    # datasets and the READMEs; a second write gives the same files.
-    # Before the fix: fails, hpotarget_corpus.py has no write().
+    # byte for byte what the runner gives, and what the parse prints on
+    # each stream that holds anything, expected/<name>.stdout and .stderr
+    # (`stdout`, `stderr`); the trees leave out the datasets and the
+    # READMEs; a second write gives the same files.
+    # Before the fix: fails, write() keeps no printed output.
     def test_write(self):
         out = self.root / "corpus"
         self.assertEqual(corpus.write(self.corpus, REG, self.runner, out), [])
@@ -447,6 +454,21 @@ class Write(unittest.TestCase):
         self.assertIn("trees/hpo-data/ta/common/script.in", files)
         self.assertNotIn("trees/hpo-data/ta/common/data/big.tadahdb", files)
         self.assertNotIn("trees/hpo-data/ta/common/data/README.md", files)
+        # What the parse prints: a file per stream that holds anything.
+        by_id = {e["id"]: e for e in doc["input"]}
+        a_in = by_id["hpo-data:ta/target_files/a.hpo"]
+        self.assertEqual(a_in["stdout"],
+                         "expected/hpo-data/ta_target_files_a.hpo.stdout")
+        self.assertEqual(a_in["stderr"],
+                         "expected/hpo-data/ta_target_files_a.hpo.stderr")
+        self.assertEqual(files[a_in["stdout"]], b"read\n")
+        self.assertEqual(files[a_in["stderr"]], b"twice\n")
+        self.assertEqual(by_id["registry:LOSS:0"]["stderr"],
+                         "expected/registry/LOSS_0.stderr")
+        self.assertEqual(files["expected/registry/LOSS_0.stderr"], b"no\n")
+        self.assertNotIn("stdout", by_id["registry:LOSS:0"])
+        self.assertNotIn("stdout", by_id["registry:OPTIM:1"])
+        self.assertNotIn("stderr", by_id["registry:OPTIM:1"])
         self.assertEqual(doc["input"][0]["origin"], "HPO/tests/data/a.hpo")
         self.assertEqual([e["id"] for e in doc["input"]],
                          [i.id for i in self.corpus.inputs])
@@ -496,6 +518,55 @@ class Write(unittest.TestCase):
         self.assertIn("holds no corpus.toml is not replaced", problems[0])
         self.assertEqual(self.files(other), {"keep.txt": b"x"})
 
+
+    # Pins: the frozen corpus is compared with the inputs of the sources
+    # read: an input missing from it, an input it holds that the sources
+    # no longer give, and an input whose files differ (its target file,
+    # a file of its tree, a fixture) are each reported, naming the input,
+    # and the last problem says how to write the corpus again; a source
+    # not read (here mlip-tests) is not compared; the corpus just written
+    # reports nothing; check() reports the same problems.
+    # Before the fix: fails, hpotarget_corpus.py has no stale(): `check`
+    # never opened the frozen corpus.
+    def test_stale(self):
+        out = self.root / "corpus"
+        self.assertEqual(corpus.write(self.corpus, REG, self.runner, out), [])
+        self.assertEqual(corpus.stale(self.corpus, REG, out), [])
+        c = corpus.Corpus()
+        c.read = list(self.corpus.read)
+        for i in self.corpus.inputs:
+            if i.id == "registry:LOSS:0":
+                continue
+            case = dict(i.case)
+            if i.id == "registry:OPTIM:1#2":
+                case["file"] = "LOSS L1\nSAY changed\n"
+            if i.id == "registry:OPTIM:1":
+                case["fixtures"] = [{"path": "fix.in", "text": "other\n"}]
+            c.add(i.source, i.id.split(":", 1)[1].split("#")[0], i.origin,
+                  case)
+        c.add("registry", "NEW:0", "new", {"file": "LOSS L2\n",
+                                           "config": "ATOM H\n"})
+        c.add("mlip-tests", "t.py:1", "not read", {"file": "LOSS L2\n",
+                                                   "config": "ATOM H\n"})
+        (self.tree / "common" / "script.in").write_text("changed\n")
+        problems = corpus.stale(c, REG, out)
+        text = "\n".join(problems)
+        self.assertIn("registry:NEW:0 (new): not in the frozen corpus", text)
+        self.assertIn("registry:LOSS:0: in the frozen corpus, not an input "
+                      "of its source", text)
+        self.assertIn("registry:OPTIM:1#2 (again): the frozen corpus holds "
+                      "another target file", text)
+        self.assertIn("registry:OPTIM:1 (hpotarget_lines.toml (OPTIM, "
+                      "example 2)): the frozen corpus holds other files: "
+                      "fix.in", text)
+        self.assertIn("hpo-data:ta/target_files/a.hpo (HPO/tests/data/a.hpo):"
+                      " the frozen corpus holds other files: "
+                      "common/script.in", text)
+        self.assertNotIn("mlip-tests", text)
+        self.assertEqual(len(problems), 6, problems)
+        self.assertIn("hpotarget_corpus.py write", problems[-1])
+        self.assertTrue(set(problems) <= set(
+            corpus.check(c, self.runner, None, out)))
 
 class Command(unittest.TestCase):
     # Pins: `check` reads the inputs with the runner, whose parser is the
