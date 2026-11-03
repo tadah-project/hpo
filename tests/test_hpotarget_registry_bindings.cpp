@@ -11,19 +11,20 @@
 // opt_attr_keys(), the OPTIM refusals of HPOTargets, LossFunction,
 // hpotarget_group_specs(), the ASA help table), the two are compared entry
 // by entry. Where it is local to a function (the block names, the removed
-// keywords, the INNER refusals, the top-level and once-set keys of
-// ParsedTarget::read, the options of the gate lines, the INIT methods,
-// kDescs and kExcluded of asa_options.cpp, the PARAM lists of the
-// adapters, the reader messages of strict_parse.cpp), each generated entry
-// is put through the code that reads it, and the code's answer, a refusal
-// with its message, is compared with the entry's message filled in. The
+// keywords, the INNER refusals, the top-level and once-set keys, the
+// options of the gate lines, the INIT methods, kDescs and kExcluded of
+// asa_options.cpp, the PARAM lists of the adapters, the reader messages of
+// strict_parse.cpp), each generated entry is put through the code that
+// reads it (the parser of the target file, HPOTargets), and the code's
+// answer, a refusal with its message, is compared with the entry's message
+// filled in. The
 // keys of the optimiser group, the options of PC_LAMMPS, PC_FAILPROBE and
 // PC_OBSERVABLE cohesive_energy, the STRATEGY TYPE keys and the loss
 // functions the code takes from the generated tables themselves (the
 // handlers of hpotarget_handlers.cpp read them): their cases hold what the
-// code does with them, the messages, the order and the TYPE of each key. A name the code knows without a generated
-// entry is the coverage check's (hpo_hpotarget_registry_coverage, which
-// reads these functions, the set of is_top_level_key() among them); the
+// code does with them, the messages, the order and the TYPE of each key. A
+// name the code knows without a generated entry is the coverage check's
+// (hpo_hpotarget_registry_coverage, which reads these functions); the
 // OPTIM refusals are compared both ways over every key of the blueprint.
 //
 // The tables the parser's engine reads besides (the header defines
@@ -569,10 +570,9 @@ TEST_CASE("hpotarget generated tables: the removed keywords are the "
 /* Pins: kTopLevelKeys are the keys a block refuses as top-level keys
  * (is_top_level_key): each, inside INIT, is refused with
  * root_key_in_block_msg; a key of the top level that is not one of them
- * (MAXTIME, a key of the optimiser group too) is an unknown key there. A
- * name of the code's set that is no key of the top level is the coverage
- * check's, which reads the set. Before the fix: the headers do not
- * exist. */
+ * (MAXTIME, a key of the optimiser group too) is an unknown key there.
+ * The parser takes the set from the generated tables
+ * (src/hpotarget_parser.cpp). Before the fix: the headers do not exist. */
 TEST_CASE("hpotarget generated tables: the top-level keys are those a "
           "block refuses as such", "[hpotarget_gen]")
 {
@@ -603,7 +603,7 @@ TEST_CASE("hpotarget generated tables: the top-level keys are those a "
 
 /* Pins: a top-level key whose repeat is error, given twice, is refused at
  * the second line with its repeat_msg naming the first: the once-set keys
- * of HPOTargets::read (set_once), and the metric and PC_FAILPROBE lines,
+ * of the top level, and the metric and PC_FAILPROBE lines,
  * which refuse a repeat themselves. (FAILSCORE, PC_SCRIPT_TIMEOUT, MAXTIME
  * and LOSS, set_for_lines, are of repeat error_until_read: the case "a key
  * given again after a line reads it" below.) Each such key has a valid
@@ -651,12 +651,12 @@ TEST_CASE("hpotarget generated tables: the top-level keys set once refuse "
 }
 
 /* Pins: the STRATEGY TYPE keys of the registry are those of
- * strategy_rules.cpp, each with its home TYPE: is_strategy_type_key()
- * names them and no other key of the STRATEGY block; require_strategy_key()
+ * strategy_rules.cpp, each with its home TYPE: require_strategy_key()
  * passes one under its TYPE and refuses it under another with the
- * STRATEGY block's close check (its {effect} is the code's text). The
- * TYPE words are strategy_type_name()'s, in order. Before the fix: the
- * headers do not exist. */
+ * STRATEGY block's close check (its {effect} is the code's text), and
+ * passes every other key of the STRATEGY block under every TYPE. The TYPE
+ * words are strategy_type_name()'s, in order. Before the fix: the headers
+ * do not exist. */
 TEST_CASE("hpotarget generated tables: the STRATEGY TYPE keys are "
           "strategy_rules.cpp's, each under its TYPE", "[hpotarget_gen]")
 {
@@ -679,7 +679,6 @@ TEST_CASE("hpotarget generated tables: the STRATEGY TYPE keys are "
             const std::string k = str(key(id).name);
             CAPTURE(k);
             type_keys.insert(k);
-            CHECK(tadah::hpo::is_strategy_type_key(k));
             for (std::size_t u = 0; u < types.size(); ++u) {
                 const std::string err = thrown([&] {
                     tadah::hpo::require_strategy_key(k, types[u], true);
@@ -698,7 +697,10 @@ TEST_CASE("hpotarget generated tables: the STRATEGY TYPE keys are "
         if (!(k.blocks & R::block_bit(R::BlockId::STRATEGY))) continue;
         if (type_keys.count(str(k.name))) continue;
         CAPTURE(k.name);
-        CHECK(!tadah::hpo::is_strategy_type_key(str(k.name)));
+        for (StrategyType t : types)
+            CHECK(thrown([&] {
+                      tadah::hpo::require_strategy_key(str(k.name), t, true);
+                  }) == "");
     }
 }
 
