@@ -1299,6 +1299,17 @@ error = "GRID_POINTS must be at least 2"
         self.assertEqual(
             hr.sentences("One. tadah hpo reads it. `KEY` is set."), 3)
         self.assertEqual(hr.sentences("Use 1.5 here, i.e. this. two"), 1)
+        # The product name ends no sentence: "Tadah! itself is ..." and
+        # "A build of Tadah! without NFP refuses it." are one sentence each
+        # (the lookahead for a lowercase start counted them as two), and
+        # "Tadah! The program ..." too; a "!" of the name at the end of the
+        # text still ends the sentence it closes.
+        self.assertEqual(hr.sentences("Tadah! itself is the program."), 1)
+        self.assertEqual(
+            hr.sentences("A build of Tadah! without NFP refuses it."), 1)
+        self.assertEqual(
+            hr.sentences("The optimisers of Tadah! run it. Two."), 2)
+        self.assertEqual(hr.sentences("One. It is built by Tadah!"), 2)
 
     def give_every_message_a_reason(self):
         """untested for every message no invalid case of the synthetic

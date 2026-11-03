@@ -17,6 +17,8 @@
 #include <tadah/hpo/pc_fail_grading.h>
 #include <tadah/hpo/phase_specs.h>
 
+#include "flush_subnormals.h"
+
 #include <cmath>
 #include <filesystem>
 #include <fstream>
@@ -544,20 +546,10 @@ TEST_CASE("The journal's Fail score line names what scores FAILSCORE, "
 /* Pins: the refusal of a FAILSCORE too small for the four grading bands of
  * FAILSCORE_GRADING ON gives the value, the width of a band, the reason
  * and a bound that suffices (graded_failscore_refusal, which the startup
- * checks put at the FAILSCORE line): "FAILSCORE 1e-307: the four grading
- * bands of FAILSCORE_GRADING ON, each 0.00025 x FAILSCORE wide, are not
- * representable at this magnitude; a FAILSCORE of 1e-290 or more has
- * them". The bound holds: graded_failscore_is_ordered is true for every
- * power of ten from kGradedFailscoreSufficient (1e-290) to 1e308, in the
- * flags of this build (test_tadah checks it in its own, with fast-math).
- * The refusal is reachable only where subnormal band widths are flushed to
- * zero (a fast-math build: 1e-307 is refused there, 1e-300 is not), since
- * the parser refuses a subnormal FAILSCORE and IEEE arithmetic orders the
- * bands of every normal one; no target file reaches it here.
- * Before the fix: does not compile (no graded_failscore_refusal, no
- * kGradedFailscoreSufficient); the refusal was "FAILSCORE_GRADING ON
- * requires a FAILSCORE large enough to represent four strictly ordered
- * grading bands.", without the value, its line or a bound. */
+ * checks put at the FAILSCORE line: test_pc_lines_losses.cpp): "FAILSCORE
+ * 1e-307: the four grading bands of FAILSCORE_GRADING ON, each 0.00025 x
+ * FAILSCORE wide, are not representable at this magnitude; a FAILSCORE of
+ * 1e-290 or more has them". */
 TEST_CASE("FAILSCORE_GRADING: a FAILSCORE too small for the grading bands is "
           "refused with its value and a bound that suffices",
           "[failgrade][parse][failscore_bound]")
@@ -567,40 +559,162 @@ TEST_CASE("FAILSCORE_GRADING: a FAILSCORE too small for the grading bands is "
           "ON, each 0.00025 x FAILSCORE wide, are not representable at this "
           "magnitude; a FAILSCORE of 1e-290 or more has them");
     CHECK(tadah::hpo::kGradedFailscoreSufficient == 1e-290);
-    for (int e = -290; e <= 308; ++e) {
-        const double fs = std::stod("1e" + std::to_string(e));
-        INFO("FAILSCORE 1e" << e);
-        CHECK(tadah::hpo::graded_failscore_is_ordered(fs));
+}
+
+/* Pins: the bound of that refusal holds where the refusal can happen, in a
+ * process that flushes subnormal numbers to zero (the flush-to-zero and
+ * denormals-are-zero bits set, as the start-up code of an executable linked
+ * with -ffast-math sets them; FlushSubnormals sets them here):
+ * graded_failscore_is_ordered is false for 1e-307, whose band widths are
+ * subnormal, and true for every power of ten from kGradedFailscoreSufficient
+ * (1e-290) to 1e308. In IEEE arithmetic it is true for every power of ten
+ * from 1e-307, the smallest normal one, to 1e308: the parser refuses a
+ * subnormal FAILSCORE, so no FAILSCORE is refused there.
+ * Before the fix: passes as well (a pin of a bound that was right). The
+ * check of the bound ran in the flags of the test alone, without flushing
+ * (compiling with -ffast-math flushes nothing; neither test_hpo nor
+ * test_tadah is linked with it), where every normal FAILSCORE has its
+ * bands: with kGradedFailscoreSufficient set to 1e-307 it passed, and the
+ * checks under FlushSubnormals fail. */
+TEST_CASE("FAILSCORE_GRADING: every FAILSCORE from the stated bound has its "
+          "grading bands where subnormal numbers are flushed to zero",
+          "[failgrade][parse][failscore_bound]")
+{
+    using tadah::hpo::graded_failscore_is_ordered;
+    using tadah::hpo::test::FlushSubnormals;
+    using tadah::hpo::test::subnormals_are_flushed;
+    const bool flushed_before = subnormals_are_flushed();
+    if (flushed_before)
+        WARN("this process flushes subnormal numbers to zero: the IEEE "
+             "arithmetic is not checked");
+    else
+        for (int e = -307; e <= 308; ++e) {
+            const double fs = std::stod("1e" + std::to_string(e));
+            INFO("IEEE arithmetic, FAILSCORE 1e" << e);
+            CHECK(graded_failscore_is_ordered(fs));
+        }
+    bool active = false, flushed = false;
+    std::vector<int> unordered;
+    std::vector<int> ordered_below_bound;
+    {
+        FlushSubnormals ftz;
+        active = ftz.active();
+        flushed = subnormals_are_flushed();
+        for (int e = -307; e <= 308; ++e) {
+            const double fs = std::stod("1e" + std::to_string(e));
+            const bool ok = graded_failscore_is_ordered(fs);
+            if (fs >= tadah::hpo::kGradedFailscoreSufficient && !ok)
+                unordered.push_back(e);
+            if (e == -307 && ok) ordered_below_bound.push_back(e);
+        }
     }
+    CHECK(subnormals_are_flushed() == flushed_before);   /* restored */
+    if (!active) {
+        WARN("no flush-to-zero control on this architecture: the bound is "
+             "checked in IEEE arithmetic only");
+        return;
+    }
+    REQUIRE(flushed);
+    INFO("powers of ten from the bound without their bands (exponents)");
+    CHECK(unordered.empty());
+    INFO("1e-307 has its bands");
+    CHECK(ordered_below_bound.empty());
 }
 
 /* Pins: the LOSS FUNCTION section of the journal opens with the loss
- * function of the run, its name and parameters as LOSS gives them: "Loss
- * function : HUBER 50" for LOSS HUBER 50, "L2" for LOSS L2 (no parameter).
- * Before the fix: the section had no such line (the header of
- * best_pot.tadah named the type, the journal did not): both checks fail. */
-TEST_CASE("The journal's LOSS FUNCTION section names the loss function",
+ * function of the metric lines, its name and parameters as the last LOSS
+ * line gives them: "Metric loss function : HUBER 50" for LOSS HUBER 50,
+ * "L2" for LOSS L2 (no parameter). A --varloss term and a PC_OBSERVABLE
+ * term take the LOSS line above their line, so their lines give their own:
+ * with LOSS L1, a PC_LAMMPS line with --varloss A 1.0 1.0, LOSS HUBER 50 and
+ * PC_ERMSE 0 1, the section reads "Metric loss function : HUBER 50" and
+ * "A : weight=1.00  target=1.000e+00  loss=L1"; a PC_OBSERVABLE line under
+ * LOSS TUKEY 3 reads "weight=1.00  target=8.100e+00  loss=TUKEY 3  columns
+ * ...". A file without a metric line has no "Metric loss function" line.
+ * Before the fix: the first line read "Loss function : HUBER 50" (v1-dev
+ * had no such line), given as the loss function of the run although the
+ * terms above the last LOSS line take another, and the --varloss and
+ * PC_OBSERVABLE lines named no loss function: the checks of the label and
+ * of the terms' loss functions fail. */
+TEST_CASE("The journal's LOSS FUNCTION section names the loss function of "
+          "the metric lines and of every other term",
           "[failgrade][hpo_log][loss]")
 {
     tadah::core::PeriodicTable::initialize();
     auto ctx = make_context_for_targets();
-    struct Case { std::string loss, shown; };
-    for (const Case& c : std::vector<Case>{{"LOSS HUBER 50", "HUBER 50"},
-                                           {"LOSS L2", "L2"}}) {
-        INFO(c.loss);
-        auto cfg = write_file(
-            "cfg", "OPTIMIZER\nLIB NLOPT\nALGO LN_SBPLX\nMAXEVAL 1\n"
-                   "ENDOPTIMIZER\n" + c.loss + "\nPC_ERMSE 0 1\n");
+    const auto script = write_script();
+    const std::string head =
+        "OPTIMIZER\nLIB NLOPT\nALGO LN_SBPLX\nMAXEVAL 1\nENDOPTIMIZER\n";
+    const std::string lammps = "PC_LAMMPS --script " + script.string() +
+                               " --outvar A --varloss A 1.0 1.0\n";
+    /* the line of the section whose label is @p label */
+    auto labelled = [](const std::string& section, const std::string& label) {
+        std::istringstream in(section);
+        std::string line;
+        while (std::getline(in, line)) {
+            const auto colon = line.find(": ");
+            if (colon == std::string::npos) continue;
+            std::string l = line.substr(0, colon);
+            l.erase(0, l.find_first_not_of(' '));
+            l.erase(l.find_last_not_of(' ') + 1);
+            if (l == label) return line;
+        }
+        return std::string();
+    };
+    SECTION("the metric lines take the last LOSS line") {
+        struct Case { std::string loss, shown; };
+        for (const Case& c : std::vector<Case>{{"LOSS HUBER 50", "HUBER 50"},
+                                               {"LOSS L2", "L2"}}) {
+            INFO(c.loss);
+            auto cfg = write_file("cfg", head + c.loss + "\nPC_ERMSE 0 1\n");
+            tadah::hpo::HPOTargets trg(ctx, cfg.string());
+            const std::string loss = loss_section(trg);
+            INFO(loss);
+            const std::string line = labelled(loss, "Metric loss function");
+            CHECK_THAT(line, Catch::EndsWith(": " + c.shown));
+            /* the first line of the section */
+            std::istringstream in(loss);
+            std::string first, second;
+            std::getline(in, first);
+            std::getline(in, second);
+            CHECK(second == line);
+            CHECK(labelled(loss, "Loss function").empty());
+        }
+    }
+    SECTION("a --varloss term takes the LOSS line above its line") {
+        auto cfg = write_file("cfg", head + "LOSS L1\n" + lammps +
+                                         "LOSS HUBER 50\nPC_ERMSE 0 1\n");
         tadah::hpo::HPOTargets trg(ctx, cfg.string());
         const std::string loss = loss_section(trg);
         INFO(loss);
-        const std::string line = line_of(loss, "Loss function");
-        CHECK_THAT(line, Catch::EndsWith(": " + c.shown));
-        /* the first line of the section */
-        std::istringstream in(loss);
-        std::string first, second;
-        std::getline(in, first);
-        std::getline(in, second);
-        CHECK(second == line);
+        CHECK_THAT(labelled(loss, "Metric loss function"),
+                   Catch::EndsWith(": HUBER 50"));
+        CHECK_THAT(labelled(loss, "A"),
+                   Catch::EndsWith(": weight=1.00  target=1.000e+00  "
+                                   "loss=L1"));
+    }
+    SECTION("a file without a metric line") {
+        auto cfg = write_file("cfg", head + "LOSS L1\n" + lammps);
+        tadah::hpo::HPOTargets trg(ctx, cfg.string());
+        const std::string loss = loss_section(trg);
+        INFO(loss);
+        CHECK(labelled(loss, "Metric loss function").empty());
+        CHECK(labelled(loss, "Loss function").empty());
+        CHECK_THAT(labelled(loss, "A"), Catch::EndsWith("  loss=L1"));
+    }
+    SECTION("a PC_OBSERVABLE term takes the LOSS line above its line") {
+        auto cfg = write_file(
+            "cfg", head + "LOSS TUKEY 3\n"
+                   "PC_OBSERVABLE cohesive_energy --species Ta --target 8.1 "
+                   "--weight 1 --hotvar a0 2.5 4.5\n"
+                   "LOSS HUBER 50\nPC_ERMSE 0 1\n");
+        tadah::hpo::HPOTargets trg(ctx, cfg.string());
+        REQUIRE(trg.observables.size() == 1u);
+        const std::string loss = loss_section(trg);
+        INFO(loss);
+        CHECK_THAT(labelled(loss, "Metric loss function"),
+                   Catch::EndsWith(": HUBER 50"));
+        CHECK_THAT(loss, Catch::Contains(": weight=1.00  target=8.100e+00  "
+                                         "loss=TUKEY 3  columns "));
     }
 }

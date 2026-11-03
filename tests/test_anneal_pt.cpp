@@ -2968,8 +2968,9 @@ TEST_CASE("ANNEAL_PT: calibration rethrows the host's exception unchanged",
 }
 
 /* Pins: the ladder-transport line of a serial run comes every
- * transport_window = 100 (K-1) exchange rounds, whatever SWAP_WINDOW, and
- * its counts are those of the rounds since the line before: with REPLICAS 4
+ * transport_window = 100 (K-1) exchange rounds, whatever the length of
+ * SWAP_WINDOW, and its counts are those of the rounds since the line before
+ * (SWAP_WINDOW OFF writes none: the case below): with REPLICAS 4
  * (a window of 300 rounds), SWAP_EVERY 1 and SWAP_WINDOW 40 or 7, a run of
  * about 950 exchange rounds journals "ANNEAL_PT ladder transport (last 300
  * exchange round(s)): ..." three times, after 300, 600 and 900 rounds
@@ -2982,7 +2983,7 @@ TEST_CASE("ANNEAL_PT: calibration rethrows the host's exception unchanged",
  * rounds while it said 300; with SWAP_WINDOW 7 none (lcm 2100): both
  * checks of the line count fail. */
 TEST_CASE("ANNEAL_PT: the ladder transport window closes every 100 (K-1) "
-          "exchange rounds, whatever SWAP_WINDOW",
+          "exchange rounds, whatever the length of SWAP_WINDOW",
           "[HPO][anneal_pt][log][flow]")
 {
     using namespace tadah::hpo;
@@ -3024,4 +3025,50 @@ TEST_CASE("ANNEAL_PT: the ladder transport window closes every 100 (K-1) "
         }
         CHECK(n == 3u);
     }
+}
+
+/* Pins: SWAP_WINDOW OFF writes the cumulative diagnostics only, as its help
+ * says ("OFF writes cumulative tables only"): a serial run of REPLICAS 4
+ * over about 950 exchange rounds, three transport windows of 300 rounds,
+ * journals no windowed transport report ("ANNEAL_PT ladder transport (last
+ * 300 exchange round(s)): ...", the grid "ANNEAL_PT distinct walkers per
+ * slot (last 300 exchange round(s); ...") and no WARNING or HINT of a
+ * window ("... in the last 300 exchange round(s) ..."), and still the
+ * cumulative ones at the end ("ANNEAL_PT ladder flow: traversals ...",
+ * "ANNEAL_PT distinct walkers per slot over the whole run (...").
+ * Before the fix: the report came after every 300th exchange round whatever
+ * SWAP_WINDOW, OFF included: three windowed lines and grids, so the
+ * checks of their absence fail. */
+TEST_CASE("ANNEAL_PT: SWAP_WINDOW OFF writes no windowed ladder transport "
+          "report",
+          "[HPO][anneal_pt][log][flow]")
+{
+    using namespace tadah::hpo;
+    auto sp = make_pt_spec({-2.0, -2.0}, {2.0, 2.0});
+    set_seed_point(sp, {0.5, -0.5});
+    sp.seed = 4242;
+    sp.num_threads = 1;
+    sp.param["REPLICAS"] = 4.0;
+    sp.param["T_COLD"] = 0.1;
+    sp.param["T_HOT"] = 10.0;
+    sp.param["SWAP_EVERY"] = 1.0;
+    sp.param_raw["SWAP_WINDOW"] = "OFF";
+    /* CLASSIC: an epoch is REPLICAS evaluations and one exchange round */
+    sp.stop.maxeval = 4 + 950 * 4;
+    LoggedRun lr;
+    MtStubHost stub{[](const Vec& x) { return x(0) * x(0) + x(1) * x(1); },
+                    {}, {}};
+    run_anneal_pt_impl<Vec>(sp, stub);
+    const std::string log = lr.read();
+    INFO(log);
+    CHECK(log.find("ANNEAL_PT ladder transport (last") == std::string::npos);
+    CHECK(log.find("ANNEAL_PT distinct walkers per slot (last") ==
+          std::string::npos);
+    CHECK(log.find("exchange round(s) -- no replica") == std::string::npos);
+    CHECK(log.find("no COMPLETE round trip in the last") ==
+          std::string::npos);
+    CHECK(log.find("ANNEAL_PT ladder flow: traversals cold->hot=") !=
+          std::string::npos);
+    CHECK(log.find("ANNEAL_PT distinct walkers per slot over the whole run (") !=
+          std::string::npos);
 }

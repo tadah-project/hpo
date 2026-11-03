@@ -28,7 +28,10 @@
 //     (at its line) or one the potential lacks (at startup), and a
 //     --hotvar a0 start outside its window;
 //   - under FAILSCORE_GRADING OFF the settings that only grade a failure
-//     (PC_FAILPROBE --s0, a --failvar scale) are refused.
+//     (PC_FAILPROBE --s0, a --failvar scale) are refused;
+//   - under FAILSCORE_GRADING ON a FAILSCORE whose grading bands are not
+//     representable, which only a process that flushes subnormal numbers
+//     to zero meets, is refused at its line.
 
 #include "catch2/catch.hpp"
 
@@ -41,6 +44,8 @@
 #include <tadah/hpo/loss_function.h>
 #include <tadah/hpo/observables/observable.h>
 #include <tadah/hpo/startup_validation.h>
+
+#include "flush_subnormals.h"
 
 #include <chrono>
 #include <cstdio>
@@ -995,4 +1000,50 @@ TEST_CASE("PC lines: under FAILSCORE_GRADING OFF the settings that only "
     CHECK(startup_error(kSbplx + "PC_ERMSE 0 1\n"
                         "PC_LAMMPS --script p.in --varloss E 1 1 --failvar "
                         "bad\n") == "");
+}
+
+/* Pins: in a process that flushes subnormal numbers to zero (the bits an
+ * executable linked with -ffast-math sets at start-up; FlushSubnormals sets
+ * them here), FAILSCORE_GRADING ON with FAILSCORE 1e-307, whose grading
+ * bands have subnormal widths, is refused at startup at the FAILSCORE line,
+ * which the message gives: "line 8 of config.hpo: FAILSCORE 1e-307: the four
+ * grading bands of FAILSCORE_GRADING ON, each 0.00025 x FAILSCORE wide, are
+ * not representable at this magnitude; a FAILSCORE of 1e-290 or more has
+ * them\nLine: FAILSCORE 1e-307"; FAILSCORE 1e-290, the bound it states, is
+ * accepted there. In IEEE arithmetic FAILSCORE 1e-307 is accepted.
+ * Before the fix: passes as well (a pin: no test reached the refusal and
+ * its line, since neither test_hpo nor tadah is linked with -ffast-math
+ * and so neither flushes subnormal numbers). */
+TEST_CASE("PC lines: a FAILSCORE without grading bands where subnormal "
+          "numbers are flushed to zero is refused at its line",
+          "[HPO][pc_lines][failscore_bound]") {
+    tadah::core::PeriodicTable::initialize();
+    Scratch s;
+    const std::string on = "FAILSCORE_GRADING ON\n";
+    const std::string tiny = "FAILSCORE 1e-307";
+    if (tadah::hpo::test::subnormals_are_flushed())
+        WARN("this process flushes subnormal numbers to zero: the IEEE "
+             "arithmetic is not checked");
+    else
+        CHECK(startup_error(kSbplx + on + tiny + "\nPC_ERMSE 0 1\n") == "");
+    std::string refused, bound;
+    bool active = false;
+    {
+        tadah::hpo::test::FlushSubnormals ftz;
+        active = ftz.active();
+        refused = startup_error(kSbplx + on + tiny + "\nPC_ERMSE 0 1\n");
+        bound = startup_error(kSbplx + on + "FAILSCORE 1e-290\nPC_ERMSE 0 1\n");
+    }
+    if (!active) {
+        WARN("no flush-to-zero control on this architecture");
+        return;
+    }
+    CHECK(refused ==
+          at_line(8,
+                  "FAILSCORE 1e-307: the four grading bands of "
+                  "FAILSCORE_GRADING ON, each 0.00025 x FAILSCORE wide, are "
+                  "not representable at this magnitude; a FAILSCORE of "
+                  "1e-290 or more has them",
+                  tiny));
+    CHECK(bound == "");
 }
