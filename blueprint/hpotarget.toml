@@ -294,7 +294,7 @@ msg = "the OPTIMIZER block names no optimiser: {missing}; LIB and ALGO in its ST
 doc = """\
 At ENDOPTIMIZER, under STRATEGY TYPE PLAIN. {missing} is "LIB and ALGO \
 are not set", "LIB is not set" or "ALGO is not set". A file without an \
-OPTIMIZER block is refused at its end (RULE.optimizer_block_required)."""
+OPTIMIZER block is refused at its end."""
 
 [[block.close_checks]]
 msg = "STRATEGY TYPE MULTISTART names no optimiser to run from each start: {missing}; LIB and ALGO in the STRATEGY block name it"
@@ -1063,12 +1063,12 @@ failure with a usable gradient; a failed point whose gradient fails is \
 rejected. CERES:STEEPEST_DESCENT is given a failed evaluation's loss \
 scaled to at most 1e100: for a FAILSCORE above 1e100, the loss times \
 1e100 / FAILSCORE, and its gradient likewise, so its line search does \
-not overflow. Under FAILSCORE_GRADING ON the stand-in grows with the graded \
-loss among the failures handed over before the first usable loss, and among \
-those handed over while the worst and the best usable loss stay the same: \
-there a failure higher in [0.999, 1) FAILSCORE gets a larger stand-in. A \
-stand-in is fixed when it is given, so across those states the order is \
-not kept. The result files and the journal record the loss the evaluation \
+not overflow. Under FAILSCORE_GRADING ON a failure higher in [0.999, 1) \
+FAILSCORE gets a larger stand-in than a lower one given at the same stage \
+of the search: both before the first usable loss, or both while the worst \
+and the best usable loss stay the same. A stand-in does not change once \
+given, so failures given at different stages can rank out of that order. \
+The result files and the journal record the loss the evaluation \
 reported."""
 quirk = """\
 A PC_LAMMPS or PC_FAILPROBE line without --failscore takes the FAILSCORE \
@@ -1076,6 +1076,12 @@ of the lines above it: a FAILSCORE line below it leaves that line's \
 failure value as it was. The last FAILSCORE line sets the loss of a failed \
 evaluation: its value under FAILSCORE_GRADING OFF, a value from 0.999 times \
 it to just below it under FAILSCORE_GRADING ON."""
+checks = [
+  { msg = "FAILSCORE {value}: the four grading bands of FAILSCORE_GRADING ON, each 0.00025 x FAILSCORE wide, are not representable at this magnitude; a FAILSCORE of 1e-290 or more has them", doc = "At startup, at the FAILSCORE line, under FAILSCORE_GRADING ON, only in a process that flushes subnormal numbers to zero (an executable linked with -ffast-math); tadah does not." },
+]
+untested = [
+  { msg = "FAILSCORE {value}: the four grading bands of FAILSCORE_GRADING ON, each 0.00025 x FAILSCORE wide, are not representable at this magnitude; a FAILSCORE of 1e-290 or more has them", why = "tadah does not flush subnormal numbers, so no case reaches it; HPO's tests check it with the flush bits set." },
+]
 
 [[key.examples]]
 wrap = "root"
@@ -1539,17 +1545,17 @@ How a bump basis on a channel with a discontinuous cutoff, such as \
 Cut_Dummy, is kept inside that cutoff over the OPTIM boxes. CANDIDATE \
 refuses each candidate with a bump past the cutoff before it is trained, \
 and STRICT refuses at startup a box whose worst corner puts a bump past \
-it; a DM_Embed density without a cutoff, whose bumps end at its radius, \
-is held to it alike."""
+it; the bumps of a DM_Embed density of CUTOFF TYPE NONE must end at or \
+before its RADIUS and are checked alike."""
 long_doc = """\
 Under CANDIDATE the startup checks refuse only a box with no valid point. \
 In both modes they refuse a training configuration with a bump past its \
-cutoff. For a DM_Embed density without a cutoff the startup checks name \
-the OPTIM path of the centre of the bump (<ID>.DENSITY.CENTRES)."""
+cutoff. For a DM_Embed density of CUTOFF TYPE NONE the startup checks \
+name the OPTIM path of the centre of the bump (<ID>.DENSITY.CENTRES)."""
 checks = [
   { msg = "BUMPGATE: a compact bump reaches past its cutoff: under a Cut_Dummy cutoff each bump vanishes at or before RCUT (c + w/eta <= RCUT), as a bump cut off there gives the energy and the forces a step at the cutoff. The bumps past the cutoff:{list}\n  A larger RCUT2B or RCUTMB in the training configuration gives a longer range; the potential stays smooth, as each bump vanishes at the edge of its own support.", doc = "At startup, without a line: a bump basis under a Cut_Dummy cutoff has a bump past the cutoff, and {list} names each. In both modes a bump of the training configuration is refused. Under STRICT an OPTIM box whose worst corner puts a bump past the cutoff is refused, and under CANDIDATE a box with no point that keeps the bump inside it." },
-  { msg = "BUMPGATE: {key} ({index}) has a corner of its OPTIM box whose support ends past RADIUS, which BUMPGATE STRICT refuses", doc = "At startup, without a line, under STRICT: a bump of a DM_Embed density without a cutoff whose support ends past RADIUS at the worst corner of the OPTIM boxes of its centre and width; {key} is the OPTIM path of its centres." },
-  { msg = "BUMPGATE: {key} ({index}) has no point in its OPTIM box whose support ends at or before RADIUS", doc = "At startup, without a line: a bump of a DM_Embed density without a cutoff whose support ends past RADIUS at every point of the OPTIM boxes of its centre and width." },
+  { msg = "BUMPGATE: {key} ({index}) has a corner of its OPTIM box whose support ends past RADIUS, which BUMPGATE STRICT refuses", doc = "At startup, without a line, under STRICT: a bump of a DM_Embed density of CUTOFF TYPE NONE whose support ends past RADIUS at the worst corner of the OPTIM boxes of its centre and width; {key} is the OPTIM path of its centres." },
+  { msg = "BUMPGATE: {key} ({index}) has no point in its OPTIM box whose support ends at or before RADIUS", doc = "At startup, without a line: a bump of a DM_Embed density of CUTOFF TYPE NONE whose support ends past RADIUS at every point of the OPTIM boxes of its centre and width." },
 ]
 
 [[key.examples]]
@@ -1608,7 +1614,7 @@ error = "BUMPGATE: a compact bump reaches past its cutoff: under a Cut_Dummy cut
 wrap = "main_dm_embed_none"
 check = "startup"
 at = "none"
-doc = "Under STRICT: the box of the centre of density bump 2 of a DM_Embed component without a cutoff puts its support past RADIUS."
+doc = "Under STRICT: the box of the centre of density bump 2 of a DM_Embed component of CUTOFF TYPE NONE puts its support past RADIUS."
 text = '''
 BUMPGATE STRICT
 OPTIM H.DENSITY.CENTRES (2) 1.5 2.5'''
@@ -1618,7 +1624,7 @@ error = "BUMPGATE: H.DENSITY.CENTRES (2) has a corner of its OPTIM box whose sup
 wrap = "main_dm_embed_none"
 check = "startup"
 at = "none"
-doc = "Under CANDIDATE, the default: no point of the box of the centre of density bump 2 of a DM_Embed component without a cutoff keeps its support inside RADIUS."
+doc = "Under CANDIDATE, the default: no point of the box of the centre of density bump 2 of a DM_Embed component of CUTOFF TYPE NONE keeps its support inside RADIUS."
 text = "OPTIM H.DENSITY.CENTRES (2) 2.2 2.6"
 error = "BUMPGATE: H.DENSITY.CENTRES (2) has no point in its OPTIM box whose support ends at or before RADIUS"
 
@@ -3379,8 +3385,8 @@ ENDDESCRIPTOR
 
 [context.main_dm_embed_none]
 doc = """\
-The potential of main_dm_embed with a density without a cutoff (CUTOFF \
-TYPE NONE, RADIUS 3), whose Blip5 bumps (support 3/ETA) end inside \
+The potential of main_dm_embed with a density of CUTOFF TYPE NONE \
+(RADIUS 3), whose Blip5 bumps (support 3/ETA) end inside \
 RADIUS: centres 1 and 2, ETA 3."""
 config = """
 ATOM H

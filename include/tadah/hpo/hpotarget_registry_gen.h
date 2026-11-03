@@ -913,6 +913,9 @@ inline constexpr Arg ROOT_FAILSCORE_args[] = {
         Span<RefusedWord>{nullptr, 0}, "{key}", "", "finite number", false, "",
         false},
 };
+inline constexpr std::string_view ROOT_FAILSCORE_checks[] = {
+    "FAILSCORE {value}: the four grading bands of FAILSCORE_GRADING ON, each 0.00025 x FAILSCORE wide, are not representable at this magnitude; a FAILSCORE of 1e-290 or more has them",
+};
 inline constexpr Arg ROOT_PC_SCRIPT_TIMEOUT_args[] = {
     Arg{"time", ArgKind::Timespec, false, false, Limit{}, Limit{}, false,
         false, Span<std::string_view>{nullptr, 0},
@@ -2595,7 +2598,8 @@ inline constexpr Key kKeys[] = {
       Repeat::ErrorUntilRead,
       "FAILSCORE is set twice (first on line {first_line}) and no line between reads the first (a PC_LAMMPS or PC_FAILPROBE line without --failscore); the key is given again only after such a line",
       "", false, "", false, KeyId::ROOT_FAILSCORE, false, "",
-      Span<std::string_view>{nullptr, 0}, Span<LineStep>{nullptr, 0}, ""},
+      Span<std::string_view>{detail::ROOT_FAILSCORE_checks, 1},
+      Span<LineStep>{nullptr, 0}, ""},
   Key{KeyId::ROOT_PC_SCRIPT_TIMEOUT, "ROOT.PC_SCRIPT_TIMEOUT",
       "PC_SCRIPT_TIMEOUT", "", block_bit(BlockId::ROOT),
       Span<Arg>{detail::ROOT_PC_SCRIPT_TIMEOUT_args, 1},

@@ -185,7 +185,7 @@ line: the validation configuration has no DBFILE."""
 [[key.checks]]
 msg = "{key}: dataset {index} on line {line} is outside validation DBFILE range 1-{count}"
 doc = """\
-When the run starts, without the frame of a line; the message names the \
+When the run starts, without a line; the message itself names the \
 indexed line: the largest index of the indexed lines, {index} on line \
 {line} of the target file, exceeds the number of DBFILE entries of the \
 validation configuration, {count}."""
@@ -661,7 +661,7 @@ line: the validation configuration has no DBFILE."""
 [[key.checks]]
 msg = "{key}: dataset {index} on line {line} is outside validation DBFILE range 1-{count}"
 doc = """\
-When the run starts, without the frame of a line; the message names the \
+When the run starts, without a line; the message itself names the \
 indexed line: the largest index of the indexed lines, {index} on line \
 {line} of the target file, exceeds the number of DBFILE entries of the \
 validation configuration, {count}."""
@@ -870,7 +870,7 @@ line: the validation configuration has no DBFILE."""
 [[key.checks]]
 msg = "{key}: dataset {index} on line {line} is outside validation DBFILE range 1-{count}"
 doc = """\
-When the run starts, without the frame of a line; the message names the \
+When the run starts, without a line; the message itself names the \
 indexed line: the largest index of the indexed lines, {index} on line \
 {line} of the target file, exceeds the number of DBFILE entries of the \
 validation configuration, {count}."""
@@ -2179,9 +2179,10 @@ The scale of the probe value S in the graded failure loss of an \
 evaluation under FAILSCORE_GRADING ON; refused under OFF, where a failed \
 evaluation scores FAILSCORE."""
 long_doc = """\
-In band C, and in band D for a --gate rejection or a potential LAMMPS \
-cannot build, the graded loss grows with S/(S + s0) within its band: an S \
-of s0 places the failure halfway, a larger one nearer the top."""
+For a script whose worker process dies or is killed at its time limit, a \
+probe value above --gate, and a potential LAMMPS cannot build, the graded \
+loss grows with S/(S + s0) within the loss range of that failure: an S of \
+s0 places the failure halfway, a larger S nearer the top."""
 
 [[line_option.args]]
 name = "s0"
