@@ -3834,9 +3834,10 @@ DM_Embed density with non-negative amplitudes) keep a FRAC box at or \
 above 0, and take GROUP_FLOOR 1e-3 when the line sets neither FLOOR nor \
 GROUP_FLOOR; so does the relative part b of FSIGMA and SSIGMA. A \
 negative seed of a value that every fit takes >= 0 (a non-negative \
-amplitude, the relative part b of FSIGMA or SSIGMA, LAMBDA) is refused. A \
-cutoff key (a key that starts with RCUT) takes no AUTO \
-box. hpo_optim_resolved.hpo records the boxes as explicit lines. The \
+amplitude, the relative part b of FSIGMA or SSIGMA, LAMBDA) is refused. The \
+distance cutoffs, RCUT2B and RCUTMB, take no AUTO box; RCUTENV, the width \
+of the envelope of DM_mBlipEnv in units of the density, takes one (FRAC \
+0.5 without RATIO or FRAC). hpo_optim_resolved.hpo records the boxes as explicit lines. The \
 option names are read in any case."""
 
 [[form.args]]
@@ -3860,7 +3861,7 @@ A word followed by a number is not an AUTO option."""
 
 [[form.checks]]
 msg = "OPTIM {key}: a cutoff key takes explicit bounds, OPTIM {key} (indices) <low> <high>, and no AUTO box: the neighbour list is sized from the explicit high bound"
-doc = "The key starts with RCUT."
+doc = "The key is a distance cutoff, RCUT2B or RCUTMB (the keys of auto_excluded)."
 
 [[form.checks]]
 msg = "OPTIM {key} ({index}): the seed {value} is negative, but {what} requires every AMPGRIDMB amplitude >= 0"

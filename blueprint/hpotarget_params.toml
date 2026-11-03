@@ -407,7 +407,7 @@ optimizers = ["TADAH:GRID"]
 args = [{ name = "n", kind = "number", min = 2, max = "UINT_MAX", integral = true }]
 default = { literal = "20" }
 doc = """\
-The number of grid points in each dimension, a whole number of at least 2. \
+The number of grid points in each dimension, an integer of at least 2. \
 The points divide each OPTIM dimension into n - 1 equal steps in the \
 coordinates of the search: the value for LIN, its logarithm for LOG, \
 asinh(x/c) for ASINH."""
@@ -417,7 +417,7 @@ are evaluated in order after the starting point. MAXEVAL counts the \
 starting point too: a MAXEVAL below the starting point plus the grid \
 points stops the sweep after MAXEVAL evaluations."""
 checks = [
-  { msg = "{phase}: TADAH:GRID: PARAM GRID_POINTS must be an integer from 2 to 4294967295, got '{value}' (the points of each dimension include both of its bounds)", doc = "For a number below 2, with a fraction or above 4294967295, written in its shortest form that reads back as the same number, or for a word, as written." },
+  { msg = "{phase}: TADAH:GRID: PARAM GRID_POINTS must be an integer from 2 to 4294967295, got '{value}' (the points of each dimension include both of its bounds)", doc = "For a value that is no integer (with a decimal point, an exponent or a +), below 2 or above 4294967295, or a word, as written." },
 ]
 examples = [
   { wrap = "params_grid", text = "PARAM GRID_POINTS 5" },
@@ -489,7 +489,7 @@ doc = """\
 Ceres' max_num_iterations, the largest number of iterations, a whole \
 number; 0 evaluates the start and ends the search."""
 checks = [
-  { msg = "{phase}: CERES:{algo} requires PARAM max_iter to be an integer from 0 to 2147483647 (Ceres' max_num_iterations), got {value}", doc = "For a value outside the range or with a fraction." },
+  { msg = "{phase}: CERES:{algo} requires PARAM max_iter to be an integer from 0 to 2147483647 (Ceres' max_num_iterations), got {value}", doc = "For a value that is no integer (with a decimal point, an exponent or a +) or lies outside the range, as written." },
 ]
 examples = [
   { wrap = "params_ceres", text = "PARAM max_iter 50" },
@@ -511,7 +511,7 @@ doc = """\
 Ceres' max_num_line_search_step_size_iterations, the largest number of \
 step sizes one line search tries, a whole number of at least 1."""
 checks = [
-  { msg = "{phase}: CERES:{algo} requires PARAM max_ls_iter to be an integer from 1 to 2147483647 (Ceres' max_num_line_search_step_size_iterations), got {value}", doc = "For a value outside the range or with a fraction." },
+  { msg = "{phase}: CERES:{algo} requires PARAM max_ls_iter to be an integer from 1 to 2147483647 (Ceres' max_num_line_search_step_size_iterations), got {value}", doc = "For a value that is no integer (with a decimal point, an exponent or a +) or lies outside the range, as written." },
 ]
 examples = [
   { wrap = "params_ceres", text = "PARAM max_ls_iter 10" },
@@ -649,7 +649,7 @@ default = { literal = "10000" }
 doc = """\
 The largest number of accepted states of the search; 0 sets no limit."""
 checks = [
-  { msg = "{phase}: ASA:ASA: PARAM {key} must be an integer (got {value})", doc = "For a value with a fraction." },
+  { msg = "{phase}: ASA:ASA: PARAM {key} must be an integer (got {value})", doc = "For a value that is no integer (with a decimal point, an exponent or a +), as written." },
   { msg = "{phase}: ASA:ASA: PARAM {key} must be >= {min} (got {value})", doc = "For a value below 0." },
 ]
 examples = [
@@ -671,7 +671,7 @@ default = { literal = "99999" }
 doc = """\
 The largest number of generated states of the search; 0 sets no limit."""
 checks = [
-  { msg = "{phase}: ASA:ASA: PARAM {key} must be an integer (got {value})", doc = "For a value with a fraction." },
+  { msg = "{phase}: ASA:ASA: PARAM {key} must be an integer (got {value})", doc = "For a value that is no integer (with a decimal point, an exponent or a +), as written." },
   { msg = "{phase}: ASA:ASA: PARAM {key} must be >= {min} (got {value})", doc = "For a value below 0." },
 ]
 examples = [
@@ -694,7 +694,7 @@ The number of failed evaluations in a row (a loss that is not finite, or \
 at or above FAILSCORE) after which the search ends. 0 ends it at the \
 first, and -1 switches the test off."""
 checks = [
-  { msg = "{phase}: ASA:ASA: PARAM {key} must be an integer (got {value})", doc = "For a value with a fraction." },
+  { msg = "{phase}: ASA:ASA: PARAM {key} must be an integer (got {value})", doc = "For a value that is no integer (with a decimal point, an exponent or a +), as written." },
   { msg = "{phase}: ASA:ASA: PARAM {key} must be >= {min} (got {value})", doc = "For a value below -1." },
 ]
 examples = [
@@ -762,7 +762,7 @@ The number of consecutive plateau cycles that ends the search; 0 switches \
 the test off. A periodic test is a plateau cycle when the loss of the last \
 accepted state differs from the best loss by less than Cost_Precision."""
 checks = [
-  { msg = "{phase}: ASA:ASA: PARAM {key} must be an integer (got {value})", doc = "For a value with a fraction." },
+  { msg = "{phase}: ASA:ASA: PARAM {key} must be an integer (got {value})", doc = "For a value that is no integer (with a decimal point, an exponent or a +), as written." },
   { msg = "{phase}: ASA:ASA: PARAM {key} must be >= {min} (got {value})", doc = "For a value below 0." },
 ]
 examples = [
@@ -785,7 +785,7 @@ The number of states sampled to set the initial temperature of the loss: \
 a positive value takes the mean absolute loss of that many states, a value \
 below -1 a deviation sample. 0 and -1 are refused."""
 checks = [
-  { msg = "{phase}: ASA:ASA: PARAM {key} must be an integer (got {value})", doc = "For a value with a fraction." },
+  { msg = "{phase}: ASA:ASA: PARAM {key} must be an integer (got {value})", doc = "For a value that is no integer (with a decimal point, an exponent or a +), as written." },
   { msg = "{phase}: ASA:ASA: PARAM Number_Cost_Samples takes a value above 0 (a sample of the mean |cost|) or below -1 (a sample of its deviation), got {value}", doc = "For 0 and -1." },
 ]
 examples = [
@@ -882,7 +882,7 @@ quirk = """\
 The value counts the dimensions from 0, as ASA does, while the index of \
 a per-dimension PARAM key counts them from 1."""
 checks = [
-  { msg = "{phase}: ASA:ASA: PARAM {key} must be an integer (got {value})", doc = "For a value with a fraction." },
+  { msg = "{phase}: ASA:ASA: PARAM {key} must be an integer (got {value})", doc = "For a value that is no integer (with a decimal point, an exponent or a +), as written." },
   { msg = "{phase}: ASA:ASA: PARAM Sequential_Parameters must be < the number of OPTIM dimensions ({count})", doc = "For a value not below the number of OPTIM dimensions." },
 ]
 examples = [
@@ -927,7 +927,7 @@ to a multiple of this number; 0 switches this off. When ASA generates more \
 than one state at a time (Gener_Block), the test follows the set of states \
 in which the count reaches a multiple of this number."""
 checks = [
-  { msg = "{phase}: ASA:ASA: PARAM {key} must be an integer (got {value})", doc = "For a value with a fraction." },
+  { msg = "{phase}: ASA:ASA: PARAM {key} must be an integer (got {value})", doc = "For a value that is no integer (with a decimal point, an exponent or a +), as written." },
   { msg = "{phase}: ASA:ASA: PARAM {key} must be >= {min} (got {value})", doc = "For a value below 0." },
 ]
 examples = [
@@ -952,7 +952,7 @@ to a multiple of this number; 0 switches this off. When ASA generates more \
 than one state at a time (Gener_Block), the test follows the set of states \
 in which the count reaches a multiple of this number."""
 checks = [
-  { msg = "{phase}: ASA:ASA: PARAM {key} must be an integer (got {value})", doc = "For a value with a fraction." },
+  { msg = "{phase}: ASA:ASA: PARAM {key} must be an integer (got {value})", doc = "For a value that is no integer (with a decimal point, an exponent or a +), as written." },
   { msg = "{phase}: ASA:ASA: PARAM {key} must be >= {min} (got {value})", doc = "For a value below 0." },
 ]
 examples = [
@@ -975,7 +975,7 @@ The reannealing of the temperature of the loss: 0 switches it off, 1 is \
 the default rule, and a value above 1 or below -1 selects a \
 deviation-sample variant."""
 checks = [
-  { msg = "{phase}: ASA:ASA: PARAM {key} must be an integer (got {value})", doc = "For a value with a fraction." },
+  { msg = "{phase}: ASA:ASA: PARAM {key} must be an integer (got {value})", doc = "For a value that is no integer (with a decimal point, an exponent or a +), as written." },
   { msg = "{phase}: ASA:ASA: PARAM Reanneal_Cost takes 0 (off), 1 (the default), or a value above 1 or below -1 (sample variants), got -1; ASA refuses -1", doc = "For -1." },
 ]
 examples = [
@@ -997,7 +997,7 @@ doc = """\
 1 adapts the temperature of each dimension to its tangent sensitivity; 0 \
 does not."""
 checks = [
-  { msg = "{phase}: ASA:ASA: PARAM {key} must be an integer (got {value})", doc = "For a value with a fraction." },
+  { msg = "{phase}: ASA:ASA: PARAM {key} must be an integer (got {value})", doc = "For a value that is no integer (with a decimal point, an exponent or a +), as written." },
   { msg = "{phase}: ASA:ASA: PARAM {key} must be >= {min} (got {value})", doc = "For a value below 0." },
   { msg = "{phase}: ASA:ASA: PARAM {key} must be <= {max} (got {value})", doc = "For a value above 1." },
 ]
@@ -1052,7 +1052,7 @@ doc = """\
 Only 0 is accepted: tadah hpo provides no analytic tangents, and the \
 reannealing takes them by finite differences (Delta_X)."""
 checks = [
-  { msg = "{phase}: ASA:ASA: PARAM {key} must be an integer (got {value})", doc = "For a value with a fraction." },
+  { msg = "{phase}: ASA:ASA: PARAM {key} must be an integer (got {value})", doc = "For a value that is no integer (with a decimal point, an exponent or a +), as written." },
   { msg = "{phase}: ASA:ASA: PARAM {key} must be >= {min} (got {value})", doc = "For a value below 0." },
   { msg = "{phase}: ASA:ASA: PARAM User_Tangents takes 0 only: tadah hpo gives ASA no analytic tangents, and the reannealing takes them by finite differences (PARAM Delta_X)", doc = "For a whole number above 0." },
 ]
@@ -1081,7 +1081,7 @@ The full curvature costs a number of evaluations of the order of the \
 square of the number of dimensions. ASA's own default is 0; the default \
 of tadah hpo is 1."""
 checks = [
-  { msg = "{phase}: ASA:ASA: PARAM {key} must be an integer (got {value})", doc = "For a value with a fraction." },
+  { msg = "{phase}: ASA:ASA: PARAM {key} must be an integer (got {value})", doc = "For a value that is no integer (with a decimal point, an exponent or a +), as written." },
   { msg = "{phase}: ASA:ASA: PARAM {key} must be >= {min} (got {value})", doc = "For a value below -1." },
   { msg = "{phase}: ASA:ASA: PARAM {key} must be <= {max} (got {value})", doc = "For a value above 1." },
 ]
@@ -1231,7 +1231,7 @@ default = { literal = "1" }
 doc = """\
 The number of best distinct minima ASA keeps; the journal reports them."""
 checks = [
-  { msg = "{phase}: ASA:ASA: PARAM {key} must be an integer (got {value})", doc = "For a value with a fraction." },
+  { msg = "{phase}: ASA:ASA: PARAM {key} must be an integer (got {value})", doc = "For a value that is no integer (with a decimal point, an exponent or a +), as written." },
   { msg = "{phase}: ASA:ASA: PARAM {key} must be >= {min} (got {value})", doc = "For a value below 1." },
 ]
 examples = [
@@ -1253,7 +1253,7 @@ doc = """\
 1 keeps a minimum only when its loss is strictly lower, 0 also when it \
 is equal."""
 checks = [
-  { msg = "{phase}: ASA:ASA: PARAM {key} must be an integer (got {value})", doc = "For a value with a fraction." },
+  { msg = "{phase}: ASA:ASA: PARAM {key} must be an integer (got {value})", doc = "For a value that is no integer (with a decimal point, an exponent or a +), as written." },
   { msg = "{phase}: ASA:ASA: PARAM {key} must be >= {min} (got {value})", doc = "For a value below 0." },
   { msg = "{phase}: ASA:ASA: PARAM {key} must be <= {max} (got {value})", doc = "For a value above 1." },
 ]
@@ -1300,7 +1300,7 @@ doc = """\
 The number of evaluations ASA keeps in its cache, first in, first out; 0 \
 switches the cache off."""
 checks = [
-  { msg = "{phase}: ASA:ASA: PARAM {key} must be an integer (got {value})", doc = "For a value with a fraction." },
+  { msg = "{phase}: ASA:ASA: PARAM {key} must be an integer (got {value})", doc = "For a value that is no integer (with a decimal point, an exponent or a +), as written." },
   { msg = "{phase}: ASA:ASA: PARAM {key} must be >= {min} (got {value})", doc = "For a value below 0." },
 ]
 examples = [
@@ -1351,7 +1351,7 @@ adapts between 1 and Gener_Block_Max unless Gener_Mov_Avr is 0. A set of \
 more than one state is evaluated concurrently on the THREADS workers, which \
 changes the sampling."""
 checks = [
-  { msg = "{phase}: ASA:ASA: PARAM {key} must be an integer (got {value})", doc = "For a value with a fraction." },
+  { msg = "{phase}: ASA:ASA: PARAM {key} must be an integer (got {value})", doc = "For a value that is no integer (with a decimal point, an exponent or a +), as written." },
   { msg = "{phase}: ASA:ASA: PARAM {key} must be >= {min} (got {value})", doc = "For a value below 1." },
 ]
 examples = [
@@ -1374,7 +1374,7 @@ The largest number of states ASA generates and evaluates together, not \
 below Gener_Block; the adaptive resizing keeps that number between 1 and \
 this value."""
 checks = [
-  { msg = "{phase}: ASA:ASA: PARAM {key} must be an integer (got {value})", doc = "For a value with a fraction." },
+  { msg = "{phase}: ASA:ASA: PARAM {key} must be an integer (got {value})", doc = "For a value that is no integer (with a decimal point, an exponent or a +), as written." },
   { msg = "{phase}: ASA:ASA: PARAM {key} must be >= {min} (got {value})", doc = "For a value below 1." },
   { msg = "{phase}: ASA:ASA: PARAM Gener_Block_Max must be >= Gener_Block (buffers are sized once by the cap)", doc = "For a value below Gener_Block." },
 ]
@@ -1399,7 +1399,7 @@ The moving-average window of the adaptive resizing of the set of states \
 ASA generates at a time; 0 switches the resizing off, and every such set \
 holds Gener_Block states."""
 checks = [
-  { msg = "{phase}: ASA:ASA: PARAM {key} must be an integer (got {value})", doc = "For a value with a fraction." },
+  { msg = "{phase}: ASA:ASA: PARAM {key} must be an integer (got {value})", doc = "For a value that is no integer (with a decimal point, an exponent or a +), as written." },
   { msg = "{phase}: ASA:ASA: PARAM {key} must be >= {min} (got {value})", doc = "For a value below 0." },
 ]
 examples = [
