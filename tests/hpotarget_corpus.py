@@ -85,7 +85,8 @@ fixtures/     the fixture files of the registry, copied into the
               second set of fixtures would be fixtures-2/);
 trees/        each directory an input is read in, copied once,
               trees/<source>/<name> (`tree`), without the files
-              TREE_EXCLUDE names (datasets, which no parse opens);
+              TREE_EXCLUDE names (datasets, which no parse opens, and
+              READMEs);
 expected/     what the parser gives, expected/<source>/<name>.dump
               (the description of the parse) or <name>.error (the
               message that refuses the file), byte for byte.
@@ -733,8 +734,9 @@ def check(corpus: Corpus, runner: pathlib.Path, parser: str,
 # -------------------------------------------------------------- frozen ----
 
 # The files of a tree an input is read in that the frozen corpus leaves
-# out: the datasets, which the parse of a target file does not open.
-TREE_EXCLUDE = ("*.tadahdb",)
+# out: the datasets, which the parse of a target file does not open, and
+# the READMEs, which describe the tree, not the corpus.
+TREE_EXCLUDE = ("*.tadahdb", "README.md")
 NAME_RUN = re.compile(r"[^A-Za-z0-9._-]+")
 
 
