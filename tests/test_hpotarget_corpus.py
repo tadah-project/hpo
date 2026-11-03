@@ -503,7 +503,11 @@ class RealTrees(unittest.TestCase):
         ids = {i.id for i in c.inputs}
         data = HPO / "tests" / "data"
         for f in data.rglob("*.hpo"):
-            self.assertIn(f"hpo-data:{f.relative_to(data).as_posix()}", ids)
+            rel = f.relative_to(data)
+            if rel.parts[0] == corpus.FROZEN_DIR:
+                self.assertNotIn(f"hpo-data:{rel.as_posix()}", ids)
+                continue
+            self.assertIn(f"hpo-data:{rel.as_posix()}", ids)
         examples = [x for x in REG.cases() if x.kind == "example"]
         self.assertEqual(sum(1 for i in c.inputs if i.source == "registry"),
                          len(examples))

@@ -26,7 +26,9 @@
  *     a map gives its `.size` and its entries in key order,
  *     `<path>[<key>]`;
  *   - a LAMMPS script is given by its number of lines and the FNV-1a hash
- *     of its lines (`.size`, `.fnv1a`), not line by line.
+ *     of its lines (`.size`, `.fnv1a`), not line by line, and the LAMMPS
+ *     command line of a PC_LAMMPS line from its second argument on
+ *     (`.invar[1:]`): the first is the LAMMPS library the build links.
  *
  * The dump holds every member of ParsedTarget the parse sets, with the
  * OptimizerSpec of the run and its INNER and PRESTAGE specs, each PC_LAMMPS

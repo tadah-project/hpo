@@ -29,7 +29,8 @@ into the directory OUT (below).
 
 The sources, and the id of each input
 -------------------------------------
-hpo-data    hpo-data:<path>: every *.hpo under HPO's tests/data, read in a
+hpo-data    hpo-data:<path>: every *.hpo under HPO's tests/data (but the
+            frozen corpus, tests/data/hpotarget_corpus), read in a
             copy of its directory tree, in its own directory, against the
             training configuration tests/test_ta_target_files.cpp reads it
             with (HPO_DATA_DIRS and HPO_DATA_FILES below: a <stem>.tadah
@@ -94,7 +95,8 @@ other than letters, digits, '.', '_' and '-' written as '_'. An input read
 in place (`tree`) keeps target_file, config_file, cwd, copies,
 config_drop and config_add; every input keeps env. Before it writes, the
 command reads every input twice, from the sources and from the frozen
-files, and stops when the two differ (the freezing left out a file the
+files, without the environment overrides of the registry (an input sets
+its own, env), and stops when the two differ (the freezing left out a file the
 parse reads) or when an input gives neither a description nor a refusal.
 OUT is replaced whole; a directory that is not empty and holds no
 corpus.toml is refused.
@@ -117,6 +119,7 @@ from __future__ import annotations
 import argparse
 import ast
 import json
+import os
 import pathlib
 import re
 import shutil
@@ -129,6 +132,9 @@ HERE = pathlib.Path(__file__).resolve().parent
 DEFAULT_HPO = HERE.parent
 SOURCES = ("hpo-data", "registry", "mlip-tests", "docs")
 
+# The frozen corpus under HPO's tests/data (`write`), whose target files
+# are copies of the inputs and not inputs themselves.
+FROZEN_DIR = "hpotarget_corpus"
 # The directories of HPO's tests/data that hold target files: the tree the
 # case copies, the directory it works in and the training configuration of
 # its files (paths relative to that directory), as
@@ -241,6 +247,8 @@ def read_hpo_data(corpus: Corpus, hpo: pathlib.Path) -> None:
     data = hpo / "tests" / "data"
     for f in sorted(data.rglob("*.hpo")):
         rel = f.relative_to(data).as_posix()
+        if rel.split("/", 1)[0] == FROZEN_DIR:
+            continue
         d = HPO_DATA_DIRS.get(f.parent.relative_to(data).as_posix())
         if d is None:
             corpus.problems.append(
@@ -667,13 +675,15 @@ def cases_text(corpus: Corpus) -> str:
 
 
 def run_runner(runner: pathlib.Path, parser: str | None,
-               cases: pathlib.Path,
-               results: pathlib.Path) -> tuple[list[dict] | None, str]:
+               cases: pathlib.Path, results: pathlib.Path,
+               env: dict[str, str] | None = None
+               ) -> tuple[list[dict] | None, str]:
     """The results of the runner on `cases` (with --parser `parser`, or
-    the runner's default parser, the program's, when None)."""
+    the runner's default parser, the program's, when None), run in the
+    environment `env` (None: this process's)."""
     option = ["--parser", parser] if parser else []
     proc = subprocess.run([str(runner), *option, str(cases), str(results)],
-                          capture_output=True, text=True)
+                          capture_output=True, text=True, env=env)
     if proc.returncode != 0:
         return None, (proc.stdout + proc.stderr).strip() + \
             f"\n(the runner exited with {proc.returncode})"
@@ -887,12 +897,16 @@ def write(corpus: Corpus, reg, runner: pathlib.Path,
         (work / "live.toml").write_text(cases_text(corpus), encoding="utf-8")
         (work / "frozen.toml").write_text(frozen_cases_text(fz, staged),
                                           encoding="utf-8")
+        # The environment overrides of the registry reach an input only
+        # through its env.
+        overrides = {e.name for e in reg.envs}
+        env = {k: v for k, v in os.environ.items() if k not in overrides}
         live, err = run_runner(runner, None, work / "live.toml",
-                               work / "live.json")
+                               work / "live.json", env)
         if live is None:
             return [err]
         frozen, err = run_runner(runner, None, work / "frozen.toml",
-                                 work / "frozen.json")
+                                 work / "frozen.json", env)
         if frozen is None:
             return [err]
         live_by_id = {r["id"]: r for r in live}

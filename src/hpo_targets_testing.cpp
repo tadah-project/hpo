@@ -298,7 +298,12 @@ void dump_sim(Dump& d, const std::string& p, const LammpsSim& s)
     d.put(p + ".script", quote(s.script));
     d.put(p + ".script_lines.size", integer(s.script_lines.size()));
     d.put(p + ".script_lines.fnv1a", fnv1a(s.script_lines));
-    d.put(p + ".invar", strings(s.invar));
+    /* The LAMMPS command line from its second argument on: the first is
+     * the LAMMPS library the build links (TADAH_LAMMPS_LIB), the same for
+     * every file. */
+    d.put(p + ".invar[1:]",
+          strings(std::vector<std::string>(
+              s.invar.begin() + (s.invar.empty() ? 0 : 1), s.invar.end())));
     d.put(p + ".n_outvar", strings(s.n_outvar));
     d.put(p + ".n_varloss", strings(s.n_varloss));
     d.put(p + ".t_varloss", numbers(s.t_varloss));
