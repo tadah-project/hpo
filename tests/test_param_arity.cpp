@@ -9,8 +9,9 @@
 //   * a key may declare a value arity > 1 (param_max_values); the full token
 //     vector lands in OptimizerSpec::param_tokens, while param/param_raw keep
 //     carrying token 0 so pre-existing consumers are untouched;
-//   * on the LINE-framed surface (HPOTargets::read) anything left on the line
-//     after a key has taken its values is a hard error.
+//   * on the LINE-framed surface (the parser of the target file,
+//     src/hpotarget_parser.cpp) anything left on the line after a key has
+//     taken its values is a hard error.
 //
 // The second rule is deliberately NOT applied to read_optimizer_block(): it
 // receives a flat token stream spanning the whole block, so "leftovers" there
@@ -35,8 +36,9 @@ using tadah::hpo::read_optimizer_block;
 
 namespace {
 
-/* Parse one line the way HPOTargets::read frames it, and report whatever the
- * handler left behind (that residue is what the line-framed caller rejects). */
+/* Parse one line the way the parser of the target file
+ * (src/hpotarget_parser.cpp) frames it, and report whatever the handler left
+ * behind (that residue is what the line-framed caller rejects). */
 OptimizerSpec parse_line(const std::string& line, std::string& leftover) {
     OptimizerSpec sp;
     std::istringstream iss(line);
@@ -145,8 +147,8 @@ TEST_CASE("PARAM INIT_MODE JITTER 0.01: the two-token form parses",
 TEST_CASE("PARAM: a stray token on a single-value key is left on the line",
           "[hpo][param][arity]")
 {
-    /* dispatch_opt_attr consumes only what the key defines; HPOTargets::read
-     * turns this residue into "line N of <file>: PARAM takes no further
+    /* dispatch_opt_attr consumes only what the key defines; the parser of
+     * the target file (src/hpotarget_parser.cpp) turns this residue into "line N of <file>: PARAM takes no further
      * value here (unexpected '0.3')". */
     std::string leftover;
     const auto sp = parse_line("PARAM STEP_FRAC 0.15 0.3", leftover);

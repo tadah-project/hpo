@@ -16,7 +16,8 @@
  *     (the key's handler, hpotarget_handlers.cpp) and the leftover check of
  *     the group;
  *   - the checks at the end of the file in structure::eof_order.
- * Private to HPO: the tests reach it through hpo_targets_testing.h. */
+ * Private to HPO: the tests reach it through HPOTargets, whose constructor
+ * calls parse_target_file(). */
 
 #include "hpotarget_reads.h"
 

@@ -674,7 +674,6 @@ class Generator:
         self.add("ranges", label, file, context, "startup", judge,
                  group=group if ok else None)
 
-    # ---- words --------------------------------------------------------
     # ---- case ---------------------------------------------------------
     @staticmethod
     def other_case(word: str, taken: list[str]) -> str | None:
@@ -763,6 +762,7 @@ class Generator:
                                   [f.word])
                     break
 
+    # ---- words --------------------------------------------------------
     def gen_words(self) -> None:
         hr, reg = self.hr, self.reg
         for k in reg.keys:

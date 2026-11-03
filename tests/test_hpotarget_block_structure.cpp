@@ -1,10 +1,10 @@
 // test_hpotarget_block_structure.cpp
 //
-// The block structure of the target file (--hpotarget) that
-// HPOTargets::read() accepts: one OPTIMIZER block, at the top level of the
-// file, and every block closed by its END line before the block around it
-// closes and before the file ends. Each refusal names the line it is
-// about:
+// The block structure of the target file (--hpotarget) that the parser of
+// the target file (src/hpotarget_parser.cpp) accepts: one OPTIMIZER block,
+// at the top level of the file, and every block closed by its END line
+// before the block around it closes and before the file ends. Each refusal
+// names the line it is about:
 //  - a second OPTIMIZER block, at its OPTIMIZER line, naming the line of
 //    the first;
 //  - an OPTIMIZER line inside a block, at its line, naming the innermost

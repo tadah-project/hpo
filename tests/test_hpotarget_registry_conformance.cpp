@@ -309,7 +309,8 @@ Composed compose(const Registry& reg, const Case& c)
     return out;
 }
 
-/* A logical line as HPOTargets::read() reads it: its first and last
+/* A logical line as the parser of the target file
+ * (src/hpotarget_parser.cpp) reads it: its first and last
  * physical lines, its text (comments cut, trailing blanks removed,
  * continued lines joined) and its key. */
 struct Logical {
