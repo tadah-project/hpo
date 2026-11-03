@@ -11,16 +11,21 @@
 #      compiles, and the probe, which takes the address of every handler,
 #      does not link: nothing defines ROOT_QFLUSHX.
 # The include directory is emptied at the start and at the end, so the
-# probe targets compile with the headers of the repository otherwise.
+# probe targets compile with the headers of the repository otherwise. The
+# objects of the probe targets are removed before each build: a compiler's
+# dependency file lists the headers a source included, and a header that
+# appears earlier on the include path than the one it named is not among
+# them, so an object compiled before would be kept.
 #
 #   cmake -DPYTHON=<python3> -DHPO_SOURCE_DIR=<HPO> -DBUILD_DIR=<build tree>
 #         -DPROBE_INCLUDE_DIR=<directory> -DWORK_DIR=<scratch>
 #         -DOBJECTS_TARGET=<target> -DPROBE_TARGET=<target>
+#         -DPROBE_OBJECT_DIRS=<directory>|<directory>
 #         -P check_handlers_removal.cmake
 cmake_minimum_required(VERSION 3.24)
 
 foreach(v PYTHON HPO_SOURCE_DIR BUILD_DIR PROBE_INCLUDE_DIR WORK_DIR
-          OBJECTS_TARGET PROBE_TARGET)
+          OBJECTS_TARGET PROBE_TARGET PROBE_OBJECT_DIRS)
   if(NOT DEFINED ${v} OR "${${v}}" STREQUAL "")
     message(FATAL_ERROR "check_handlers_removal.cmake: -D${v}=... is required")
   endif()
@@ -82,8 +87,16 @@ function(write_registry name text)
   endif()
 endfunction()
 
-# build(<target> <result variable> <output variable>)
+# build(<target> <result variable> <output variable>), the probe targets'
+# objects compiled again
 function(build target rc_var out_var)
+  string(REPLACE "|" ";" object_dirs "${PROBE_OBJECT_DIRS}")
+  foreach(dir IN LISTS object_dirs)
+    file(GLOB_RECURSE objects "${dir}/*.o" "${dir}/*.obj")
+    if(objects)
+      file(REMOVE ${objects})
+    endif()
+  endforeach()
   execute_process(
     COMMAND "${CMAKE_COMMAND}" --build "${BUILD_DIR}" --target "${target}"
     RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE out)

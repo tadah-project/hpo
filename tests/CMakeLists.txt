@@ -584,6 +584,7 @@ add_test(NAME hpo_hpotarget_handlers_removal
         -DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/handlers_removal
         -DOBJECTS_TARGET=hpo_hpotarget_handlers_probe_objects
         -DPROBE_TARGET=hpo_hpotarget_handlers_probe
+        "-DPROBE_OBJECT_DIRS=${CMAKE_CURRENT_BINARY_DIR}/CMakeFiles/hpo_hpotarget_handlers_probe_objects.dir|${CMAKE_CURRENT_BINARY_DIR}/CMakeFiles/hpo_hpotarget_handlers_probe.dir"
         -P ${CMAKE_CURRENT_SOURCE_DIR}/handlers_removal/check_handlers_removal.cmake)
 set_tests_properties(hpo_hpotarget_handlers_removal PROPERTIES
     LABELS cmake
