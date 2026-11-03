@@ -5,11 +5,15 @@
     gen_hpotarget.py --check  [--registry DIR] [-o DIR]
 
 Reads the target-file registry (hpotarget.toml and the part files of its
-meta.parts) with its loader, hpotarget_registry.py, and writes two headers
-into include/tadah/hpo/ of this repository (or the directory -o names):
+meta.parts) with its loader, hpotarget_registry.py, and writes three
+headers into include/tadah/hpo/ of this repository (or the directory -o
+names):
 
     hpotarget_registry_gen.h   the tables of the target-file registry
     hpo_param_registry_gen.h   its PARAM keys
+    hpotarget_handlers_gen.h   the handlers of the parser of the target
+                               file: one for each key, and for each line
+                               option and form of a line HPO reads
 
 blueprint/README.md, "The generated tables", lists what the headers hold,
 what stays out of them and how the ids are named.
@@ -53,6 +57,13 @@ DEFAULT_REGISTRY = SCRIPT_DIR
 DEFAULT_OUT = SCRIPT_DIR.parent / "include" / "tadah" / "hpo"
 REGISTRY_HEADER = "hpotarget_registry_gen.h"
 PARAM_HEADER = "hpo_param_registry_gen.h"
+HANDLERS_HEADER = "hpotarget_handlers_gen.h"
+# The line whose options and forms MLIP's OPTIM reader reads
+# (tadah/mlip/hpotarget_optim.h), for tadah hpo and tadah analysis
+# check_bounds alike: the parser of the target file hands it the line, so
+# they have no handler of HPO's (test_hpotarget_mlip_conformance.cpp holds
+# that reader's words to the registry).
+MLIP_LINE = "OPTIM"
 REGENERATE_TARGET = "hpo_regenerate_hpotarget_registry"
 REGENERATE = ("cmake --build <build directory> --target "
               f"{REGENERATE_TARGET}")
@@ -1082,10 +1093,90 @@ struct OptimiserParams {
     return finish(w, body_at)
 
 
+def read_by_mlip(reg: hr.Registry, lines: Iterable[str]) -> bool:
+    """Whether `lines` (the keys and forms an option is given on, or the
+    line of a form) are all MLIP_LINE or its forms, which MLIP's OPTIM
+    reader reads."""
+    mlip = {MLIP_LINE} | {f.id for f in reg.forms if f.line == MLIP_LINE}
+    lines = list(lines)
+    return bool(lines) and all(line in mlip for line in lines)
+
+
+def emit_handlers(reg: hr.Registry) -> str:
+    m = Model(reg)
+    w = Writer()
+    header_top(w, [
+        "HPO/blueprint/hpotarget.toml and the part files of its",
+        "meta.parts, read by HPO/blueprint/hpotarget_registry.py"], [
+        "The handlers of the registry-driven parser of the target file",
+        "(blueprint/README.md, \"The handlers\"): one for each key, and for",
+        "each line option and form of the lines HPO reads, each named as its",
+        "enumerator. src/hpotarget_handlers.cpp defines them; the tables",
+        "hold their addresses in the order of the enumerations, so a key the",
+        "registry drops leaves a definition that names no member (the",
+        "handlers do not compile), and a key it adds a member no file",
+        "defines (the parser does not link). The options and forms of the",
+        f"{MLIP_LINE} line, which MLIP's OPTIM reader reads, have none "
+        "(nullptr)."])
+    w.out("#include <tadah/hpo/hpotarget_registry_gen.h>")
+    w.out()
+    w.out("namespace tadah {")
+    w.out("namespace hpo {")
+    w.out("namespace hpotarget_registry {")
+    w.out()
+    w.out("/* What a handler reads (src/hpotarget_reads.h defines them): the "
+          "line of a")
+    w.out(" * key, an option of a line, the line of a form. */")
+    w.out("struct KeyRead;")
+    w.out("struct OptionRead;")
+    w.out("struct FormRead;")
+    w.out()
+    keys = [m.name[k.id] for k in reg.keys]
+    options = [None if read_by_mlip(reg, o.lines) else m.name[o.id]
+               for o in reg.line_options]
+    forms = [None if read_by_mlip(reg, [f.id]) else m.name[f.id]
+             for f in reg.forms]
+    members = keys + [n for n in options + forms if n is not None]
+    seen: set[str] = set()
+    for n in members:
+        if n in seen:
+            raise GenerationError(f"the handlers: two handlers are named {n}")
+        seen.add(n)
+    w.out("struct Handlers {")
+    for n in keys:
+        w.out(f"  static void {n}(KeyRead& r);")
+    for n in options:
+        if n is not None:
+            w.out(f"  static void {n}(OptionRead& r);")
+    for n in forms:
+        if n is not None:
+            w.out(f"  static void {n}(FormRead& r);")
+    w.out("};")
+    w.out()
+    w.out("using KeyHandler = void (*)(KeyRead&);")
+    w.out("using OptionHandler = void (*)(OptionRead&);")
+    w.out("using FormHandler = void (*)(FormRead&);")
+    w.out()
+    w.out("/* kKeyHandlers[i] reads the line of kKeys[i], kOptionHandlers[i] "
+          "the option")
+    w.out(" * kLineOptions[i], kFormHandlers[i] the line of kForms[i]. */")
+    table(w, "KeyHandler", "kKeyHandlers",
+          [f"&Handlers::{n}" for n in keys])
+    table(w, "OptionHandler", "kOptionHandlers",
+          [f"&Handlers::{n}" if n else "nullptr" for n in options])
+    table(w, "FormHandler", "kFormHandlers",
+          [f"&Handlers::{n}" if n else "nullptr" for n in forms])
+    w.out("}  // namespace hpotarget_registry")
+    w.out("}  // namespace hpo")
+    w.out("}  // namespace tadah")
+    return "\n".join(w.lines) + "\n"
+
+
 def headers(reg: hr.Registry) -> dict[str, str]:
     """The text of each header, by file name."""
     return {REGISTRY_HEADER: emit_registry(reg),
-            PARAM_HEADER: emit_params(reg)}
+            PARAM_HEADER: emit_params(reg),
+            HANDLERS_HEADER: emit_handlers(reg)}
 
 
 # ---------------------------------------------------------------- main ----
