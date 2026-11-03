@@ -1064,8 +1064,12 @@ rejected. CERES:STEEPEST_DESCENT is given a failed evaluation's loss \
 scaled to at most 1e100: for a FAILSCORE above 1e100, the loss times \
 1e100 / FAILSCORE, and its gradient likewise, so its line search does \
 not overflow. Under FAILSCORE_GRADING ON the stand-in grows with the graded \
-loss: a failure higher in [0.999, 1) FAILSCORE gets a larger stand-in. The \
-result files and the journal record the loss the evaluation reported."""
+loss among the failures handed over before the first usable loss, and among \
+those handed over while the worst and the best usable loss stay the same: \
+there a failure higher in [0.999, 1) FAILSCORE gets a larger stand-in. A \
+stand-in is fixed when it is given, so across those states the order is \
+not kept. The result files and the journal record the loss the evaluation \
+reported."""
 quirk = """\
 A PC_LAMMPS or PC_FAILPROBE line without --failscore takes the FAILSCORE \
 of the lines above it: a FAILSCORE line below it leaves that line's \
