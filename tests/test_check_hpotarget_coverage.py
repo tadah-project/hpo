@@ -350,6 +350,89 @@ class GeneratedTables(unittest.TestCase):
             "table /R::kBlocks\\b/: the extraction rule needs updating"])
 
 
+@dataclasses.dataclass
+class FakeArg:
+    words: list
+
+
+@dataclasses.dataclass
+class FakeEntry:
+    id: str
+    args: list
+
+
+class HandlerWords(unittest.TestCase):
+    """The handlers of the registry-driven parser read the word of a word
+    argument with read_word(), which takes the words from the generated
+    tables: a handler that calls it recognises the words of the arguments
+    of its entry of the registry (the key, line option or form whose C++
+    name, gen_hpotarget.cxx_name(), is the handler's)."""
+
+    HANDLERS = textwrap.dedent('''\
+        void Handlers::ROOT_ISO(KeyRead& r)
+        {
+            r.p().t.iso =
+                read_word(arg0(r.key), single_value(r.iss, r.word), r.word);
+        }
+        void Handlers::ROOT_N(KeyRead& r)
+        {
+            r.p().t.n = 1;
+        }
+        void Handlers::GATE_SEED(OptionRead& r)
+        {
+            r.seed = read_word(arg0(r.option), r.value, r.key) == "WARN";
+        }
+        void Handlers::ROOT_GONE(KeyRead& r)
+        {
+            read_word(arg0(r.key), "x", r.word);
+        }
+        ''')
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = pathlib.Path(self._tmp.name)
+        (self.root / "src").mkdir()
+        (self.root / "src" / "h.cpp").write_text(self.HANDLERS)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    # Pins: a rule's handler_words finds each definition of a handler
+    # (`void Handlers::<name>(`) whose body calls read_word(), with the
+    # place of the call; compare() counts the words of the arguments of the handler's
+    # entry as recognised (the entry of the key ROOT.ISO for ROOT_ISO, of
+    # the line option GATE.SEED for GATE_SEED), a handler that calls no
+    # read_word() recognises none ('OTHER' of ROOT.N is not in the parser),
+    # and a handler whose name is no entry's is a problem.
+    # Before the fix: fails, Rule takes no handler_words.
+    def test_the_words_a_handler_reads(self):
+        rule = cov.Rule("the handlers", "src/h.cpp", handler_words=True,
+                        operands={"read_word(arg0(r.option), r.value, "
+                                  "r.key)": ("word",)})
+        reads: list = []
+        with mock.patch.object(cov, "EXTRACTION", [rule]):
+            found, problems = cov.extract(self.root, handler_reads=reads)
+        self.assertEqual(problems, [])
+        self.assertEqual(reads, [("ROOT_ISO", "src/h.cpp:4 (the handlers)"),
+                                 ("GATE_SEED",
+                                  "src/h.cpp:12 (the handlers)"),
+                                 ("ROOT_GONE",
+                                  "src/h.cpp:16 (the handlers)")])
+        reg = FakeRegistry({"word": {"PROCESS", "THREAD", "WARN", "ERROR",
+                                     "OTHER"}})
+        reg.entries = lambda: [
+            FakeEntry("ROOT.ISO", [FakeArg(["PROCESS", "THREAD"])]),
+            FakeEntry("ROOT.N", [FakeArg(["OTHER"])]),
+            FakeEntry("GATE.SEED", [FakeArg(["ERROR", "WARN"])])]
+        with mock.patch.object(cov, "VOCABULARIES", ("word",)):
+            problems = cov.compare(found, reg, handler_reads=reads)
+        self.assertEqual(problems, [
+            "the handler Handlers::ROOT_GONE at src/h.cpp:16 (the handlers) "
+            "reads a word, and no entry of the registry has its name",
+            "not in the parser: 'OTHER' (word) is declared in the registry, "
+            "and the parser's sources do not recognise it"])
+
+
 class Compare(unittest.TestCase):
     VOCAB = ("block", "word")
 
