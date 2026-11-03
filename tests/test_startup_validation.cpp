@@ -1015,12 +1015,14 @@ TEST_CASE("startup validation: the ANALYTICAL rule applies to the block "
  * FAILSCORE whose largest graded failure, just below FAILSCORE
  * (graded_failscore of band D at saturation), reaches ASA's largest valid
  * cost, 1/1e-18 (asa_cost_limit): ASA takes a cost at or above it for an
- * invalid state and draws another, so it would not see the graded failures
- * there ("the STRATEGY-level optimiser: ASA:ASA: under FAILSCORE_GRADING ON
- * a failed evaluation scores from 0.999 FAILSCORE to below FAILSCORE
- * (1e+30), and ASA:ASA takes a cost of about 1e+18 or more for
- * an invalid state and draws another, so it would not see the graded
- * failures at or above that cost; a FAILSCORE of 1e+18 or less keeps every
+ * invalid state, draws another in place of a state it generated and keeps
+ * its starting point with that cost, so it would not see the graded
+ * failures there ("the STRATEGY-level optimiser: ASA:ASA: under
+ * FAILSCORE_GRADING ON a failed evaluation scores from 0.999 FAILSCORE to
+ * below FAILSCORE (1e+30). ASA:ASA takes a cost of about 1e+18 or more for
+ * an invalid state: it draws another in place of a state it generated, and
+ * keeps its starting point with that cost, so it would not see the graded
+ * failures at or above that cost. A FAILSCORE of 1e+18 or less keeps every
  * graded failure below it"; without a FAILSCORE line
  * "(1.7976931348623157e+308, the largest double, as without a FAILSCORE
  * line)"). The limit lies between FAILSCORE 1.0000000000002e18, whose
@@ -1075,14 +1077,17 @@ TEST_CASE("startup validation: FAILSCORE_GRADING ON takes any FAILSCORE, "
     return std::string();
   };
   /* It said "(<fs>), and ASA:ASA takes a cost ... at or above that cost; a
-   * FAILSCORE of 1e+18 or less ...". */
+   * FAILSCORE of 1e+18 or less ...", and then "... for an invalid state and
+   * draws another, so it would not see ...", which ASA does not do for its
+   * starting point. */
   const auto refusal = [](const std::string& phase, const std::string& fs) {
     return phase + ": ASA:ASA: under FAILSCORE_GRADING ON a failed "
            "evaluation scores from 0.999 FAILSCORE to below FAILSCORE "
            "(" + fs + "). ASA:ASA takes a cost of about 1e+18 or more for an "
-           "invalid state and draws another, so it would not see the graded "
-           "failures at or above that cost. A FAILSCORE of 1e+18 or less "
-           "keeps every graded failure below it";
+           "invalid state: it draws another in place of a state it "
+           "generated, and keeps its starting point with that cost, so it "
+           "would not see the graded failures at or above that cost. A "
+           "FAILSCORE of 1e+18 or less keeps every graded failure below it";
   };
   SECTION("the default FAILSCORE passes") {
     CHECK(startup("FAILSCORE_GRADING ON\n", kOptimizerBlock) == "");
@@ -1151,10 +1156,11 @@ TEST_CASE("startup validation: FAILSCORE_GRADING ON takes any FAILSCORE, "
                    "0.999 FAILSCORE to below FAILSCORE "
                    "(1.7976931348623157e+308, the largest double, as without "
                    "a FAILSCORE line). ASA:ASA takes a cost of about 1e+18 or "
-                   "more for an invalid state and draws another, so it would "
-                   "not see the graded failures at or above that cost. A "
-                   "FAILSCORE of 1e+18 or less keeps every graded failure "
-                   "below it") &&
+                   "more for an invalid state: it draws another in place of a "
+                   "state it generated, and keeps its starting point with "
+                   "that cost, so it would not see the graded failures at or "
+                   "above that cost. A FAILSCORE of 1e+18 or less keeps every "
+                   "graded failure below it") &&
                Catch::EndsWith("\nLine: ENDOPTIMIZER"));
     CHECK(by_env("FAILSCORE_GRADING ON\n", false) == "");
   }

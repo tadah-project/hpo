@@ -18,11 +18,16 @@
 //  - a RESTART block with METHOD lines on such a search that draws random
 //    numbers (GN_DIRECT_L_RAND in two or more dimensions, GD_STOGO_RAND at
 //    POPULATION 2n + 1 or more): no round evaluates the block's points;
-//  - an INIT block with a METHOD: the search never evaluates its points.
-// A search that starts at its point gets no RESTART warning; an INIT block
-// without a METHOD (its SEED only), a RESTART block without METHOD lines on
-// a search that draws random numbers and an inactive RESTART block get
-// none.
+//  - an OPTIMIZER-level INIT block with a METHOD that a PRESTAGE
+//    exploration takes: the exploration never evaluates its points, which
+//    the refinement starts from when no evaluation of the exploration has
+//    a usable loss.
+// An INIT block with a METHOD of the search itself (PLAIN, or an EXPLORE
+// block's own) is refused at its METHOD line: the search would never
+// evaluate its points. A search that starts at its point gets no RESTART
+// warning; an INIT block without a METHOD (its SEED only), a RESTART block
+// without METHOD lines on a search that draws random numbers and an
+// inactive RESTART block get none.
 #include "catch2/catch.hpp"
 #include "target_file_text.h"
 
@@ -683,57 +688,70 @@ TEST_CASE("startup validation: the RESTART warning says what a round of a "
                           "starts each round's exploration at them.") == 1);
             CHECK(count_of(s.journal, "the RESTART block on line") == 1);
         }
-        {
-            const Startup s = startup(prestage(
-                "      INIT\n        METHOD RANDOM 2\n        SEED 3\n"
-                "      ENDINIT\n"));
-            INFO("journal:\n" << s.journal);
-            CHECK(count_of(s.journal, "the RESTART block on line") == 0);
-            /* One WARNING: the INFO line "the INIT block on line 14
-             * (RANDOM) gives 2 starting points" names the block too. */
-            CHECK(count_of(s.journal, "WARNING   the INIT block on line 14") ==
-                  1);
-        }
+        /* An EXPLORE block with an INIT block of its own that has a METHOD
+         * line (on line 15) is refused before the RESTART block is looked
+         * at: the exploration would never evaluate the block's points (the
+         * case "startup validation: an INIT block on a search that does not
+         * start at its point is refused at its METHOD line").
+         * Before the fix: it started, with a WARNING about the INIT block
+         * and none about the RESTART block. */
+        CHECK_THROWS_WITH(
+            startup(prestage("      INIT\n        METHOD RANDOM 2\n"
+                             "        SEED 3\n      ENDINIT\n")),
+            Catch::StartsWith("line 15 of <target>: the PRESTAGE exploration "
+                              "NLOPT:GN_DIRECT_L_RAND does not start at the "
+                              "point it is given") &&
+                Catch::EndsWith("\nLine:         METHOD RANDOM 2"));
     }
 }
 
+/* The optimisers that do not start at the point they are given
+ * (OptimizerCaps::starts_at_x0), as the refusal of INIT points lists them. */
+const std::string kIgnoringStart =
+    "NLOPT:GD_STOGO, NLOPT:GD_STOGO_RAND, NLOPT:GN_AGS, NLOPT:GN_DIRECT, "
+    "NLOPT:GN_DIRECT_L, NLOPT:GN_DIRECT_L_NOSCAL, NLOPT:GN_DIRECT_L_RAND, "
+    "NLOPT:GN_ORIG_DIRECT, NLOPT:GN_ORIG_DIRECT_L";
+
 /* Pins: an INIT block with a METHOD on a phase whose search does not start
- * at the point it is given gets exactly one startup WARNING naming the
- * line of the block (INIT):
- *  - PLAIN, the STRATEGY-level optimiser NLOPT:GN_DIRECT_L, INIT on line 5
- *    (METHOD LHS 3): "the INIT block on line 5: the STRATEGY-level
- *    optimiser NLOPT:GN_DIRECT_L does not start at the point it is given
- *    (DIRECT ...; NLopt never reads the point it is given), so the search never
- *    evaluates the block's INIT points. To start the search at them, use an
- *    optimiser that starts at the point it is given."; standard error has
- *    no "INIT chain produced 3 seeds but NLOPT:GN_DIRECT_L consumes only
- *    the first" (it consumes none); under NOISE CALIBRATION 2 the sentence
- *    adds "(NOISE CALIBRATION evaluates the first of them 2 times)";
- *  - PRESTAGE, the EXPLORE block's own INIT block (line 14): "... the
- *    PRESTAGE exploration NLOPT:GN_DIRECT_L does not start ..., so the
- *    exploration never evaluates the block's INIT points. To start the
- *    exploration at them, use an exploration optimiser that starts at the
- *    point it is given." -- an OPTIMIZER-level INIT block beside it, which
- *    only the refinement's fallback and NOISE CALIBRATION read, gets not
- *    this WARNING but the one that the search evaluates its points only in
- *    the refinement ("the INIT block on line 5 gives 3 starting points,
- *    ..."; it got none until that WARNING was added);
- *  - PRESTAGE, an OPTIMIZER-level INIT block (line 5) that the exploration
- *    takes (its EXPLORE block has none): "... the PRESTAGE exploration
- *    NLOPT:GN_DIRECT_L, which is given the block's INIT points (its EXPLORE
- *    block has no INIT block), does not start ..., so the exploration never
- *    evaluates them; the refinement starts from them only when no
- *    evaluation of the exploration has a usable loss. ...".
- * No warning: no INIT block; an INIT block without a METHOD (SEED only);
- * LN_BOBYQA, which starts at its first INIT point (and keeps the
- * WARNING that it "starts from the first only" for METHOD LHS 3, which
- * said "consumes only the first" before the case "startup validation: the
- * INIT points a PLAIN search does not use are warned about in the
- * journal").
- * Before the fix: no INIT warning was given, and standard error said that
- * GN_DIRECT_L "consumes only the first" of the 3 seeds: the counts fail. */
+ * at the point it is given is refused at startup, at the block's first
+ * METHOD line, naming the phase, its optimiser and where it starts, and
+ * the optimisers that start at the point they are given (every one but
+ * kIgnoringStart):
+ *  - PLAIN, the STRATEGY-level optimiser NLOPT:GN_DIRECT_L, METHOD LHS 3
+ *    on line 6: "line 6 of <target>: the STRATEGY-level optimiser
+ *    NLOPT:GN_DIRECT_L does not start at the point it is given (DIRECT
+ *    ...; NLopt never reads the point it is given), so the search would
+ *    never evaluate the starting points of this INIT block. An optimiser
+ *    that starts at the point it is given (every optimiser but
+ *    NLOPT:GD_STOGO, ...) starts the search at them.\nLine:     METHOD LHS
+ *    3" (the line as written);
+ *    under NOISE CALIBRATION 2 the sentence adds "(without them NOISE
+ *    CALIBRATION evaluates the point of the training configuration)",
+ *    which it then evaluates (the configuration's point when the block
+ *    has no METHOD line);
+ *  - PRESTAGE, the EXPLORE block's own INIT block (METHOD RANDOM 2 on line
+ *    15): "... the PRESTAGE exploration NLOPT:GN_DIRECT_L does not start
+ *    ..., so the exploration would never evaluate the starting points of
+ *    this INIT block. ... starts the exploration at them.", with an
+ *    OPTIMIZER-level INIT block beside it as well.
+ * Still a WARNING, as the points are read elsewhere: an OPTIMIZER-level
+ * INIT block (line 5) that the exploration takes (its EXPLORE block has
+ * none), whose points the refinement starts from when no evaluation of
+ * the exploration has a usable loss: "the INIT block on line 5: the
+ * PRESTAGE exploration NLOPT:GN_DIRECT_L, which is given the block's INIT
+ * points (its EXPLORE block has no INIT block), does not start ..., so
+ * the exploration never evaluates them; the refinement starts from them
+ * only when no evaluation of the exploration has a usable loss. ...".
+ * Accepted without a word about the start: no INIT block; an INIT block
+ * without a METHOD (SEED only); LN_BOBYQA, which starts at its first INIT
+ * point (and keeps the WARNING that it "starts from the first only" for
+ * METHOD LHS 3).
+ * Before the fix: the first two were a WARNING at the INIT block's line
+ * ("the INIT block on line 5: ..., so the search never evaluates the
+ * block's INIT points. An optimiser that starts at the point it is given
+ * starts the search at them.") and tadah hpo started. */
 TEST_CASE("startup validation: an INIT block on a search that does not "
-          "start at its point warns that its points are never evaluated",
+          "start at its point is refused at its METHOD line",
           "[startup][init][start_point]")
 {
     const auto plain = [](const std::string& algo, const std::string& init,
@@ -752,30 +770,23 @@ TEST_CASE("startup validation: an INIT block on a search that does not "
     const std::string lhs =
         "  INIT\n    METHOD LHS 3\n    SEED 7\n  ENDINIT\n";
     const std::string tail =
-        " An optimiser that starts at the point it is given starts the search "
-        "at them.";
+        " An optimiser that starts at the point it is given (every optimiser "
+        "but " + kIgnoringStart + ") starts the search at them.";
     const std::string head =
         ": the STRATEGY-level optimiser NLOPT:GN_DIRECT_L does not start at "
         "the point it is given (" + note("GN_DIRECT_L") +
-        "), so the search never evaluates the block's INIT points";
+        "), so the search would never evaluate the starting points of this "
+        "INIT block";
 
-    {
-        const Startup s = startup(plain("GN_DIRECT_L", lhs));
-        INFO("journal:\n" << s.journal << "\nstderr:\n" << s.err);
-        const std::string w = "the INIT block on line 5" + head + "." + tail;
-        CHECK(count_of(s.journal, w) == 1);
-        CHECK(count_of(s.err, "[tadah hpo] WARNING: " + w + "\n") == 1);
-        CHECK(count_of(s.err, "consumes only the first") == 0);
-    }
-    {
-        const Startup s = startup(plain(
-            "GN_DIRECT_L", lhs, "  NOISE\n    CALIBRATION 2\n  ENDNOISE\n"));
-        INFO("journal:\n" << s.journal);
-        CHECK(count_of(s.journal,
-                       "the INIT block on line 8" + head +
-                           " (NOISE CALIBRATION evaluates the first of them 2 "
-                           "times)." + tail) == 1);
-    }
+    CHECK_THROWS_WITH(startup(plain("GN_DIRECT_L", lhs)),
+                      "line 6 of <target>" + head + "." + tail +
+                          "\nLine:     METHOD LHS 3");
+    CHECK_THROWS_WITH(
+        startup(plain("GN_DIRECT_L", lhs,
+                      "  NOISE\n    CALIBRATION 2\n  ENDNOISE\n")),
+        "line 9 of <target>" + head +
+            " (without them NOISE CALIBRATION evaluates the point of the "
+            "training configuration)." + tail + "\nLine:     METHOD LHS 3");
 
     const std::string explore_head =
         ": the PRESTAGE exploration NLOPT:GN_DIRECT_L does not start at the "
@@ -802,39 +813,20 @@ TEST_CASE("startup validation: an INIT block on a search that does not "
     };
     const std::string explore_init =
         "      INIT\n        METHOD RANDOM 2\n        SEED 3\n      ENDINIT\n";
+    const std::string explore_refusal =
+        explore_head + ", so the exploration would never evaluate the "
+        "starting points of this INIT block. An optimiser that starts at the "
+        "point it is given (every optimiser but " + kIgnoringStart +
+        ") starts the exploration at them.\nLine:         METHOD RANDOM 2";
+    // the EXPLORE block's own INIT block (METHOD on line 15)
+    CHECK_THROWS_WITH(startup(prestage("", explore_init)),
+                      "line 15 of <target>" + explore_refusal);
+    // with an OPTIMIZER-level INIT block too (lines 5-8): METHOD on line 19
+    CHECK_THROWS_WITH(startup(prestage(lhs, explore_init)),
+                      "line 19 of <target>" + explore_refusal);
     {
-        // INIT on line 14: the EXPLORE block's own
-        const Startup s = startup(prestage("", explore_init));
-        INFO("journal:\n" << s.journal);
-        CHECK(count_of(s.journal,
-                       "the INIT block on line 14" + explore_head +
-                           ", so the exploration never evaluates the block's "
-                           "INIT points." + explore_tail) == 1);
-        /* One WARNING (the INFO line of the INIT points names the block
-         * too). */
-        CHECK(count_of(s.journal, "WARNING   the INIT block on line") == 1);
-        // with an OPTIMIZER-level INIT block too (lines 5-8): the
-        // exploration's own (now on line 18) is warned about as above, the
-        // OPTIMIZER-level one as the refinement's fallback
-        const Startup both = startup(prestage(lhs, explore_init));
-        INFO("journal:\n" << both.journal);
-        CHECK(count_of(both.journal,
-                       "the INIT block on line 18" + explore_head +
-                           ", so the exploration never evaluates the block's "
-                           "INIT points." + explore_tail) == 1);
-        /* The WARNING lines (the INFO lines of the INIT points name the
-         * blocks too). */
-        CHECK(count_of(both.journal, "WARNING   the INIT block on line 18") ==
-              1);
-        CHECK(count_of(both.journal, "the INIT block on line 5 gives 3 "
-                                     "starting points, and the PRESTAGE "
-                                     "exploration (EXPLORE block) starts from "
-                                     "those of its own INIT block, on line "
-                                     "18,") == 1);
-        CHECK(count_of(both.journal, "WARNING   the INIT block on line") == 2);
-    }
-    {
-        // the OPTIMIZER-level block (line 5), which the exploration takes
+        // the OPTIMIZER-level block (line 5), which the exploration takes:
+        // a WARNING, as before
         const Startup s = startup(prestage(lhs, ""));
         INFO("journal:\n" << s.journal);
         CHECK(count_of(
@@ -849,7 +841,7 @@ TEST_CASE("startup validation: an INIT block on a search that does not "
                       explore_tail) == 1);
     }
 
-    // no warning
+    // accepted, without a word about the start
     for (const auto& [algo, init] :
          std::vector<std::pair<std::string, std::string>>{
              {"GN_DIRECT_L", ""},
@@ -857,9 +849,6 @@ TEST_CASE("startup validation: an INIT block on a search that does not "
              {"LN_BOBYQA", lhs}}) {
         INFO("NLOPT:" << algo << ", INIT block '" << init << "'");
         const Startup s = startup(plain(algo, init));
-        /* This case's WARNING ("the INIT block on line 5: ..."), not the
-         * one about the points a search does not evaluate ("the INIT block
-         * on line 5 gives 3 starting points, ..."). */
         CHECK(count_of(s.journal, "the INIT block on line 5: ") == 0);
         CHECK(count_of(s.journal, "does not start at the point") == 0);
         if (algo == "LN_BOBYQA")

@@ -418,12 +418,16 @@ checks = [
 ]
 examples = [
   { wrap = "params_grid", text = "PARAM GRID_POINTS 5" },
+  { wrap = "params_grid", text = "PARAM GRID_POINTS 10", doc = "A whole number is decimal digits." },
   { wrap = "none", doc = "A LOG box: the three points of the grid are 0.1, 1 and 10, equal steps in the logarithm.", text = "OPTIM CGRID2B (1) 0.1 10 LOG\nPC_ERMSE 0 1\nOPTIMIZER\nSTRATEGY\nLIB TADAH\nALGO GRID\nMAXEVAL 10\nPARAM GRID_POINTS 3\nENDSTRATEGY\nENDOPTIMIZER" },
 ]
 invalid = [
   { wrap = "params_grid", check = "startup", at = "ENDOPTIMIZER", text = "PARAM GRID_POINTS 1", error = "the STRATEGY-level optimiser: TADAH:GRID: PARAM GRID_POINTS must be an integer from 2 to 4294967295, got '1' (the points of each dimension include both of its bounds)" },
   { wrap = "params_grid", check = "startup", at = "ENDOPTIMIZER", text = "PARAM GRID_POINTS 2.5", error = "the STRATEGY-level optimiser: TADAH:GRID: PARAM GRID_POINTS must be an integer from 2 to 4294967295, got '2.5' (the points of each dimension include both of its bounds)" },
   { wrap = "params_grid", check = "startup", at = "ENDOPTIMIZER", text = "PARAM GRID_POINTS AUTO", error = "the STRATEGY-level optimiser: TADAH:GRID: PARAM GRID_POINTS must be an integer from 2 to 4294967295, got 'AUTO' (the points of each dimension include both of its bounds)" },
+  { wrap = "params_grid", check = "startup", at = "ENDOPTIMIZER", text = "PARAM GRID_POINTS 1e1", doc = "A whole number written with an exponent.", error = "the STRATEGY-level optimiser: TADAH:GRID: PARAM GRID_POINTS must be an integer from 2 to 4294967295, got '1e1' (the points of each dimension include both of its bounds)" },
+  { wrap = "params_grid", check = "startup", at = "ENDOPTIMIZER", text = "PARAM GRID_POINTS +10", doc = "A whole number written with a sign.", error = "the STRATEGY-level optimiser: TADAH:GRID: PARAM GRID_POINTS must be an integer from 2 to 4294967295, got '+10' (the points of each dimension include both of its bounds)" },
+  { wrap = "params_grid", check = "startup", at = "ENDOPTIMIZER", text = "PARAM GRID_POINTS 10.0", doc = "A whole number written with a decimal point.", error = "the STRATEGY-level optimiser: TADAH:GRID: PARAM GRID_POINTS must be an integer from 2 to 4294967295, got '10.0' (the points of each dimension include both of its bounds)" },
 ]
 
 # -------------------------------------------------------------- DLIB:BFGS ----
@@ -491,6 +495,7 @@ examples = [
 invalid = [
   { wrap = "params_ceres", check = "startup", at = "ENDOPTIMIZER", text = "PARAM max_iter 2.5", error = "the STRATEGY-level optimiser: CERES:STEEPEST_DESCENT requires PARAM max_iter to be an integer from 0 to 2147483647 (Ceres' max_num_iterations), got 2.5" },
   { wrap = "params_ceres", check = "startup", at = "ENDOPTIMIZER", text = "PARAM max_iter -1", error = "the STRATEGY-level optimiser: CERES:STEEPEST_DESCENT requires PARAM max_iter to be an integer from 0 to 2147483647 (Ceres' max_num_iterations), got -1" },
+  { wrap = "params_ceres", check = "startup", at = "ENDOPTIMIZER", text = "PARAM max_iter 1e1", doc = "A whole number written with an exponent.", error = "the STRATEGY-level optimiser: CERES:STEEPEST_DESCENT requires PARAM max_iter to be an integer from 0 to 2147483647 (Ceres' max_num_iterations), got 1e1" },
 ]
 
 [[param]]
@@ -510,7 +515,7 @@ examples = [
 ]
 invalid = [
   { wrap = "params_ceres", check = "startup", at = "ENDOPTIMIZER", text = "PARAM max_ls_iter 0", error = "the STRATEGY-level optimiser: CERES:STEEPEST_DESCENT requires PARAM max_ls_iter to be an integer from 1 to 2147483647 (Ceres' max_num_line_search_step_size_iterations), got 0" },
-  { wrap = "params_ceres", check = "startup", at = "ENDOPTIMIZER", text = "PARAM max_ls_iter 3e9", error = "the STRATEGY-level optimiser: CERES:STEEPEST_DESCENT requires PARAM max_ls_iter to be an integer from 1 to 2147483647 (Ceres' max_num_line_search_step_size_iterations), got 3e+09" },
+  { wrap = "params_ceres", check = "startup", at = "ENDOPTIMIZER", text = "PARAM max_ls_iter 3e9", error = "the STRATEGY-level optimiser: CERES:STEEPEST_DESCENT requires PARAM max_ls_iter to be an integer from 1 to 2147483647 (Ceres' max_num_line_search_step_size_iterations), got 3e9" },
 ]
 
 # ---------------------------------------------- finite differences ----
@@ -621,6 +626,7 @@ examples = [
 invalid = [
   { wrap = "params_lbfgs", check = "startup", at = "ENDOPTIMIZER", text = "PARAM diff_method 2", error = "the STRATEGY-level optimiser NLOPT:LD_LBFGS: PARAM diff_method 2 (RIDDERS) is refused: Ridders' extrapolation ignores PARAM fd_step, starts from a step of 0.32 x max(|u|, 1) -- outside most OPTIM boxes -- and takes up to 20 evaluations per parameter; diff_method 0 (CENTRAL, the default) and 1 (FORWARD) take PARAM fd_step" },
   { wrap = "params_lbfgs", check = "startup", at = "ENDOPTIMIZER", text = "PARAM diff_method 0.5", error = "the STRATEGY-level optimiser NLOPT:LD_LBFGS: PARAM diff_method must be 0 (CENTRAL, the default) or 1 (FORWARD) (got 0.5)" },
+  { wrap = "params_lbfgs", check = "startup", at = "ENDOPTIMIZER", text = "PARAM diff_method 1.0", doc = "A whole number written with a decimal point.", error = "the STRATEGY-level optimiser NLOPT:LD_LBFGS: PARAM diff_method must be 0 (CENTRAL, the default) or 1 (FORWARD) (got 1.0)" },
   { wrap = "params_lbfgs", check = "startup", at = "ENDOPTIMIZER", text = "PARAM diff_method central", error = "the STRATEGY-level optimiser NLOPT:LD_LBFGS: PARAM diff_method must be 0 (CENTRAL, the default) or 1 (FORWARD) (got 'central')" },
   { wrap = "strategy", check = "startup", at = "ENDOPTIMIZER", text = "PARAM diff_method 1", error = "the STRATEGY-level optimiser NLOPT:LN_SBPLX: PARAM diff_method never takes effect: NLOPT:LN_SBPLX takes no gradient." },
   { wrap = "inner", check = "startup", at = "ENDINNER", text = "PARAM diff_method 1", error = "the INNER block of the STRATEGY-level optimiser NLOPT:LN_BOBYQA: PARAM diff_method never takes effect: an INNER search takes the gradient of the block it runs in, with that block's finite-difference settings; the enclosing block takes it." },
@@ -648,6 +654,7 @@ examples = [
 ]
 invalid = [
   { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Limit_Acceptances 1.5", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Limit_Acceptances must be an integer (got 1.5)" },
+  { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Limit_Acceptances 1e3", doc = "A whole number written with an exponent.", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Limit_Acceptances must be an integer (got 1e3)" },
   { wrap = "params_asa", check = "startup", at = "ENDOPTIMIZER", text = "PARAM Limit_Acceptances -1", error = "the STRATEGY-level optimiser: ASA:ASA: PARAM Limit_Acceptances must be >= 0 (got -1)" },
 ]
 

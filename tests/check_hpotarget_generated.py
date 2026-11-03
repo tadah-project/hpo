@@ -58,8 +58,13 @@ ranges    A key, INIT method, PARAM key or line option with one argument
           entry's examples at least (ASA's User_Initial_Parameters 0 only
           in a search without a starting point), and past it it is
           refused in each, at parse or at startup, with a message of its
-          entry or of [reading]. Catches a changed min, max, min_open or
-          kind, and a max the run refuses.
+          entry or of [reading]. A number argument that takes whole
+          numbers (integral) also gets its min written with a decimal
+          point and with an exponent (2.0, 2e0), which are refused as
+          past the range: a whole number is decimal digits, with a '-'
+          for a negative one. Catches a changed min, max, min_open or
+          kind, a max the run refuses, and an integral key read as a
+          number.
 case      A word argument at a fixed place of its line, a line option and
           the word of a form: the word of the first example's line with
           the case of one letter changed (a spelling no word of the
@@ -465,6 +470,11 @@ class Generator:
             else:
                 out.append((self.fmt(lo), True))
                 out.append((self.fmt(lo - step), False))
+            if a.integral:
+                # The value of the min written as no whole number is
+                # written: with a decimal point and with an exponent.
+                out.append((self.fmt(lo) + ".0", False))
+                out.append((self.fmt(lo) + "e0", False))
         if hi is not None:
             if (self.fmt(hi), True) not in out:     # a range of one value
                 out.append((self.fmt(hi), True))
