@@ -18,6 +18,7 @@
 #include <fstream>
 #include <sstream>
 #include <string>
+#include <utility>
 
 using namespace rhoform_test;
 using tadah::hpo::BoxOrigin;
@@ -55,21 +56,29 @@ Context blipenv_ctx() {
   return c;
 }
 
-/* hpo_optim_resolved.hpo of the target file @p target read against
- * @p ctx. */
-std::string resolved_of(Context ctx, const std::string& target) {
+/* The file @p name that write_search_space_files writes for the target
+ * file @p target read against @p ctx. */
+std::string search_space_file_of(Context ctx, const std::string& target,
+                                 const std::string& name) {
   TempFile tf(target);
   HPOTargets trg(ctx, tf.path.string());
   const fs::path dir =
       fs::temp_directory_path() / unique_name("tadah_low_bound_ss_");
   fs::create_directories(dir);
   trg.write_search_space_files(dir.string());
-  std::ifstream is(dir / "hpo_optim_resolved.hpo");
+  std::ifstream is(dir / name);
   std::ostringstream oss;
   oss << is.rdbuf();
   std::error_code ec;
   fs::remove_all(dir, ec);
   return oss.str();
+}
+
+/* hpo_optim_resolved.hpo of the target file @p target read against
+ * @p ctx. */
+std::string resolved_of(Context ctx, const std::string& target) {
+  return search_space_file_of(std::move(ctx), target,
+                              "hpo_optim_resolved.hpo");
 }
 
 }  // namespace
@@ -181,4 +190,43 @@ TEST_CASE("tadah hpo keeps a clamped AUTO FRAC box near its seed under "
   CHECK(e.lo == 0.5);
   CHECK(e.hi == 3.0);
   CHECK_FALSE(e.auto_log);
+}
+
+/* Pins: the comment header of hpo_search_space.tsv describes the origins
+ * AUTO FRAC>=0 and AUTO FRAC>0 as the OPTIM reader gives them: AUTO
+ * FRAC>=0 for every AUTO FRAC box of a non-negative amplitude and of the
+ * relative part b of FSIGMA and SSIGMA, and for the box of another key
+ * whose values are >= 0 (a centre) only where x0 - d < 0; AUTO FRAC>0 for
+ * the box of a value that must be > 0 where x0 - d is not above 0, which
+ * starts at x0/2 (a run with both origins: RCUTENV 1.5 at FRAC 1.5 and
+ * CGRIDMB 0 at FRAC 0 FLOOR 0.5).
+ * Before the fix: the legend said that AUTO FRAC>=0 is the box of a key
+ * whose values are >= 0, the centres among them, whether or not x0 - d < 0,
+ * and named neither the relative part b of FSIGMA and SSIGMA nor WATOM. */
+TEST_CASE("the search-space file describes the origins of a clamped AUTO "
+          "FRAC box",
+          "[hpo][optim][low_bound]") {
+  const std::string tsv = search_space_file_of(
+      blipenv_ctx(),
+      std::string("OPTIM RCUTENV (1) AUTO FRAC 1.5\n"
+                  "OPTIM CGRIDMB (1) AUTO FRAC 0 FLOOR 0.5\n"
+                  "PC_ERMSE 0 1\n") + kOptimizer,
+      tadah::hpo::HPOTargets::kSearchSpaceFile);
+  CHECK_THAT(
+      tsv,
+      Catch::Contains(
+          "#   origin       OPTIM = explicit bounds; AUTO FRAC / AUTO RATIO = "
+          "derived from the seed;\n"
+          "#                AUTO FRAC>=0 = AUTO FRAC with lo = max(0, x0 - d): "
+          "every box of a non-negative\n"
+          "#                amplitude (AMPGRIDMB under RHOFORM NONNEG / "
+          "MONOTONE) and of the relative\n"
+          "#                part b of FSIGMA and SSIGMA, and a box of another "
+          "key whose values are >= 0\n"
+          "#                (the centres) where x0 - d < 0;\n"
+          "#                AUTO FRAC>0 = AUTO FRAC with lo = x0/2, a key whose "
+          "values are > 0 (the widths,\n"
+          "#                RCUTENV, WATOM under RHOFORM NONNEG / MONOTONE) "
+          "where x0 - d is not above 0\n"
+          "#   x0           starting point (real units)\n"));
 }
