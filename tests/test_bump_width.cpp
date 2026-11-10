@@ -184,11 +184,12 @@ TEST_CASE("an OPTIM box whose low bound on a radial bump width is <= 0 is "
                              "OPTIM sgrid2b (1) -1 3\n" + tail),
                  Catch::Contains("OPTIM SGRID2B (1)") &&
                      Catch::Contains("the low bound -1 is not > 0"));
-      // an AUTO FRAC box reaching below 0 (seed 2, half-width 3)
-      CHECK_THAT(parse_error(blip_ctx("2.0 1.0", cutoff),
-                             "OPTIM SGRID2B (1) AUTO FRAC 1.5\n" + tail),
-                 Catch::Contains("OPTIM SGRID2B (1)") &&
-                     Catch::Contains("every SGRID2B width > 0"));
+      // an AUTO FRAC box reaching below 0 (seed 2, half-width 3) is
+      // clamped at 1e-6, [1e-6, 5]. Before the fix that clamps an AUTO box
+      // at the low-bound rule of its key: refused ("... every SGRID2B
+      // width > 0").
+      CHECK(parse_error(blip_ctx("2.0 1.0", cutoff),
+                        "OPTIM SGRID2B (1) AUTO FRAC 1.5\n" + tail).empty());
       CHECK(parse_error(blip_ctx("2.0 1.0", cutoff),
                         "OPTIM SGRID2B (2) 0.5 3\n" + tail).empty());
     }
@@ -422,14 +423,19 @@ TEST_CASE("the widths of a D2_Blip of a D2_mJoin line are held > 0, at the "
 }
 
 /* Pins: the widths of the D2_BP of a D2_mJoin line with a D2_Blip are held
- * as those of a line of one D2_BP, which holds none > 0: an OPTIM SGRID2B
- * (1) -0.5 1.0 box on the D2_BP's width parses, and a seed D2_BP width of
- * -1 passes the startup checks, on the joined line as on the D2_BP alone;
- * the D2_Blip's own width (4) is still held (the case above).
+ * as those of a line of one D2_BP, by the limit the D2_BP declares: an
+ * OPTIM SGRID2B (1) -0.5 1.0 box on the D2_BP's width is refused at its
+ * line ("OPTIM SGRID2B (1): the low bound -0.5 is not > 0, but the D2_BP
+ * descriptor requires every SGRID2B value > 0, ..."), and a seed D2_BP
+ * width of -1 passes the startup checks of the radial bump widths, on the
+ * joined line as on the D2_BP alone; the D2_Blip's own width (4) is still
+ * held by its bump rule (the case above).
  * Before the fix: the joined line was refused at the box ("OPTIM SGRID2B
  * (1): the low bound -0.5 is not > 0, but the D2_Blip pair basis of the
  * D2_mJoin line requires every SGRID2B width > 0") and at startup
- * ("SGRID2B (1) = -1: ..."), the D2_BP alone was not. */
+ * ("SGRID2B (1) = -1: ..."), the D2_BP alone was not. Before the fix that
+ * makes the limits the descriptors declare a rule of the boxes: the box
+ * parsed on both lines. */
 TEST_CASE("the widths of a D2_BP of a D2_mJoin line with a D2_Blip are held "
           "as those of a D2_BP alone",
           "[HPO][optim][startup][bump_width][join]") {
@@ -437,8 +443,11 @@ TEST_CASE("the widths of a D2_BP of a D2_mJoin line with a D2_Blip are held "
   const std::string tail = std::string("PC_ERMSE 0 1\n") + kWidthOptimizer;
   for (const bool lone : {true, false}) {
     INFO((lone ? "D2_BP alone" : "D2_BP of a D2_mJoin with a D2_Blip"));
-    CHECK(parse_error(joined_bp_ctx("0.5 1.0", lone),
-                      "OPTIM SGRID2B (1) -0.5 1.0\n" + tail) == "");
+    CHECK_THAT(parse_error(joined_bp_ctx("0.5 1.0", lone),
+                           "OPTIM SGRID2B (1) -0.5 1.0\n" + tail),
+               Catch::Contains("OPTIM SGRID2B (1): the low bound -0.5 is not "
+                               "> 0, but the D2_BP descriptor requires every "
+                               "SGRID2B value > 0"));
     CHECK(startup_error(joined_bp_ctx("-1.0 1.0", lone),
                         std::string("OPTIM WATOM (1) 0.5 2.0\n") + tail) ==
           "");
@@ -479,8 +488,9 @@ TEST_CASE("the hint of an AUTO refusal of a D2_BP width of a D2_mJoin line "
  * gives the box [seed/2, seed*2], which needs a seed other than 0, and the
  * seed is 0; ..."), an AUTO FRAC 0 box ("OPTIM CGRID2B (2): AUTO FRAC gives
  * a zero-width box (the seed 3 times FRAC 0 is 0); ...") and an AUTO box
- * tagged LOG that reaches below 0 ("OPTIM CGRID2B (2): the line is tagged
- * LOG, and the AUTO box [-1.5, 7.5] reaches 0 or below, ...").
+ * tagged LOG that reaches 0 ("OPTIM CGRID2B (2): the line is tagged LOG,
+ * and the AUTO box [0, 7.5] reaches 0 or below, ...", the box clamped at 0,
+ * the lower limit of the centres; it was [-1.5, 7.5] before that clamp).
  * Before the fix: each said "OPTIM SGRID2B (2): OPTIM SGRID2B (2): ...",
  * the line's own prefix and then the entry's. */
 TEST_CASE("a refusal of an OPTIM entry gives the key and the entry once",
@@ -508,7 +518,7 @@ TEST_CASE("a refusal of an OPTIM entry gives the key and the entry once",
        "OPTIM CGRID2B (2): AUTO FRAC gives a zero-width box (the seed 3 "
        "times FRAC 0 is 0)"},
       {blip_ctx(), "OPTIM CGRID2B (2) AUTO FRAC 1.5 LOG",
-       "OPTIM CGRID2B (2): the line is tagged LOG, and the AUTO box [-1.5, "
+       "OPTIM CGRID2B (2): the line is tagged LOG, and the AUTO box [0, "
        "7.5] reaches 0 or below"}};
   for (const auto& [ctx, line, why] : cases) {
     INFO(line);
