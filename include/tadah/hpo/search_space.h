@@ -154,7 +154,7 @@ struct DimTransform {
  * is the linear AUTO rule with lo = max(0, x0 - d), clamped at the >= 0
  * rule of its key (AMPGRIDMB under RHOFORM NONNEG / MONOTONE, the centres,
  * the relative parts of FSIGMA and SSIGMA); AutoLinearPositive ("AUTO
- * FRAC>0") the linear AUTO rule clamped at 1e-6 by the > 0 rule of its key
+ * FRAC>0") the linear AUTO rule clamped at x0/2 by the > 0 rule of its key
  * (the widths, RCUTENV, WATOM under RHOFORM NONNEG / MONOTONE). */
 enum class BoxOrigin : std::uint8_t { Explicit, AutoLinear, AutoGeometric, Adapted,
                                       AutoLinearNonneg, AutoLinearPositive };

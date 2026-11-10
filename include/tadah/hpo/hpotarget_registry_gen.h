@@ -2417,7 +2417,7 @@ inline constexpr std::string_view optim_checks[] = {
     "OPTIM {key} ({index}): {key} has {count} that the descriptors read, so {what}{note}",
     "OPTIM {key} ({index}): {key} has no numeric value in the training configuration, so no index of OPTIM {key} selects one",
     "OPTIM {key} ({index}): the OPTIM {key} line on line {line} selects this index as well; one OPTIM line selects each index (OPTIM keys match in any case)",
-    "OPTIM {key} ({index}): the low bound {low} is not > 0, but {what} requires {value}, so the low bound of its box is > 0 (an AUTO FRAC box is clamped at 1e-06)",
+    "OPTIM {key} ({index}): the low bound {low} is not > 0, but {what} requires {value}, so the low bound of its box is > 0 (an AUTO FRAC box is clamped at half its seed)",
     "OPTIM {key} ({index}): the low bound {low} is negative, but {what} requires {value}, so the low bound of its box is >= 0 (its AUTO FRAC box, the default, is clamped at 0)",
     "OPTIM {key} ({index}): the low bound {low} is negative, but {what} requires {value}, so the low bound of its box is >= 0",
     "OPTIM FIXWEIGHT requires FIXINDEX in the training configuration (FIXINDEX names the coefficients the FIXWEIGHT values hold).",

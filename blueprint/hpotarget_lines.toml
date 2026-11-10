@@ -3484,7 +3484,7 @@ msg = "OPTIM {key} ({index}): the OPTIM {key} line on line {line} selects this i
 doc = "An earlier OPTIM line of the key selects the value."
 
 [[optim.checks]]
-msg = "OPTIM {key} ({index}): the low bound {low} is not > 0, but {what} requires {value}, so the low bound of its box is > 0 (an AUTO FRAC box is clamped at 1e-06)"
+msg = "OPTIM {key} ({index}): the low bound {low} is not > 0, but {what} requires {value}, so the low bound of its box is > 0 (an AUTO FRAC box is clamped at half its seed)"
 doc = """\
 An explicit box of a value that must be positive reaches 0 or below; \
 {what} names the rule and {value} what it requires. The values are a \
@@ -3655,26 +3655,26 @@ error = "OPTIM CGRID2B (1): the OPTIM CGRID2B line on line 1 selects this index 
 wrap = "root"
 context = "lines_blip"
 text = "OPTIM SGRID2B (1) 0 2"
-error = "OPTIM SGRID2B (1): the low bound 0 is not > 0, but the D2_Blip pair basis requires every SGRID2B width > 0 (a radial bump spans [c - w/s, c + w/s]; a width <= 0 has no support edge), so the low bound of its box is > 0 (an AUTO FRAC box is clamped at 1e-06)"
+error = "OPTIM SGRID2B (1): the low bound 0 is not > 0, but the D2_Blip pair basis requires every SGRID2B width > 0 (a radial bump spans [c - w/s, c + w/s]; a width <= 0 has no support edge), so the low bound of its box is > 0 (an AUTO FRAC box is clamped at half its seed)"
 
 [[optim.invalid]]
 wrap = "root"
 context = "lines_ream"
 text = "OPTIM WATOM (1) 0 2"
-error = "OPTIM WATOM (1): the low bound 0 is not > 0, but RHOFORM NONNEG requires every density pair weight W > 0, so the low bound of its box is > 0 (an AUTO FRAC box is clamped at 1e-06)"
+error = "OPTIM WATOM (1): the low bound 0 is not > 0, but RHOFORM NONNEG requires every density pair weight W > 0, so the low bound of its box is > 0 (an AUTO FRAC box is clamped at half its seed)"
 
 [[optim.invalid]]
 wrap = "root"
 context = "lines_blipenv"
 doc = "RCUTENV, the density at which the envelope of DM_mBlipEnv reaches 1, below 0."
 text = "OPTIM RCUTENV (1) -1 7"
-error = "OPTIM RCUTENV (1): the low bound -1 is not > 0, but the DM_mBlipEnv descriptor requires every RCUTENV value > 0, so the low bound of its box is > 0 (an AUTO FRAC box is clamped at 1e-06)"
+error = "OPTIM RCUTENV (1): the low bound -1 is not > 0, but the DM_mBlipEnv descriptor requires every RCUTENV value > 0, so the low bound of its box is > 0 (an AUTO FRAC box is clamped at half its seed)"
 
 [[optim.invalid]]
 wrap = "root"
 doc = "A Gaussian width of D2_BP from 0."
 text = "OPTIM SGRID2B (2) 0 2"
-error = "OPTIM SGRID2B (2): the low bound 0 is not > 0, but the D2_BP descriptor requires every SGRID2B value > 0, so the low bound of its box is > 0 (an AUTO FRAC box is clamped at 1e-06)"
+error = "OPTIM SGRID2B (2): the low bound 0 is not > 0, but the D2_BP descriptor requires every SGRID2B value > 0, so the low bound of its box is > 0 (an AUTO FRAC box is clamped at half its seed)"
 
 [[optim.invalid]]
 wrap = "root"
