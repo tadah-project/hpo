@@ -686,7 +686,11 @@ ENDOPTIMIZER
       REQUIRE_THROWS_WITH(tadah::hpo::HPOTargets(c2, in.path.string()), Catch::Contains("OPTIM RCUT2B: a cutoff key takes explicit bounds"));
     }
   }
-  SECTION("positive-only keys (writer table) default to the geometric rule") {
+  /* Pins: the keys whose values the descriptors declare > 0 default to
+   * the geometric rule, RCUTENV among them. Before the fix that takes them
+   * from the declared limits: RCUTENV was not one (the writer's table). */
+  SECTION("positive-only keys default to the geometric rule") {
+    CHECK(tadah::hpo::HPOTargets::optim_key_positive_only("RCUTENV"));
     CHECK(tadah::hpo::HPOTargets::optim_key_positive_only("SGRID2B"));
     CHECK(tadah::hpo::HPOTargets::optim_key_positive_only("SGRIDMB"));
     CHECK(tadah::hpo::HPOTargets::optim_key_positive_only("SEMBFUNC"));

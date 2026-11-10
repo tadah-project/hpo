@@ -2289,6 +2289,7 @@ inline constexpr std::string_view OPTIM_AUTO_checks[] = {
     "OPTIM {key}: a cutoff key takes explicit bounds, OPTIM {key} (indices) <low> <high>, and no AUTO box: the neighbour list is sized from the explicit high bound",
     "OPTIM {key} ({index}): the seed {value} is negative, but {what} requires every AMPGRIDMB amplitude >= 0",
     "OPTIM {key} ({index}): the seed {value} is negative, but {why}",
+    "OPTIM {key} ({index}): the seed {value} is not > 0, but {what} requires {text}",
     "OPTIM {key} ({index}): the line is tagged LOG, and the AUTO box [{low}, {high}] reaches 0 or below, and a box tagged LOG lies above 0{hint}",
     "OPTIM {key}: AUTO takes RATIO or FRAC, not both",
     "OPTIM {key} ({index}): AUTO without RATIO or FRAC gives {name} the box [seed/2, seed*2] (RATIO 2), which needs a seed other than 0, and the seed is 0{hint}",
@@ -2390,6 +2391,7 @@ inline constexpr std::string_view optim_positive_only[] = {
     "SGRID2B",
     "SGRIDMB",
     "SEMBFUNC",
+    "RCUTENV",
 };
 inline constexpr std::string_view optim_auto_excluded[] = {
     "RCUT2B",
@@ -2415,10 +2417,9 @@ inline constexpr std::string_view optim_checks[] = {
     "OPTIM {key} ({index}): {key} has {count} that the descriptors read, so {what}{note}",
     "OPTIM {key} ({index}): {key} has no numeric value in the training configuration, so no index of OPTIM {key} selects one",
     "OPTIM {key} ({index}): the OPTIM {key} line on line {line} selects this index as well; one OPTIM line selects each index (OPTIM keys match in any case)",
-    "OPTIM {key} ({index}): the low bound {low} is not > 0, but {what} requires {value}, so the low bound of its box is > 0",
+    "OPTIM {key} ({index}): the low bound {low} is not > 0, but {what} requires {value}, so the low bound of its box is > 0 (an AUTO FRAC box is clamped at half its seed)",
     "OPTIM {key} ({index}): the low bound {low} is negative, but {what} requires {value}, so the low bound of its box is >= 0 (its AUTO FRAC box, the default, is clamped at 0)",
-    "OPTIM {key} ({index}): the AUTO box [{low}, {high}] has the low bound {low}, which is not > 0, but {what} requires {value}, so the low bound of its box is > 0",
-    "OPTIM {key} ({index}): the AUTO box [{low}, {high}] has the low bound {low}, which is negative, but {what} requires {value}, so the low bound of its box is >= 0",
+    "OPTIM {key} ({index}): the low bound {low} is negative, but {what} requires {value}, so the low bound of its box is >= 0",
     "OPTIM FIXWEIGHT requires FIXINDEX in the training configuration (FIXINDEX names the coefficients the FIXWEIGHT values hold).",
     "OPTIM FIXWEIGHT requires FIXWEIGHT in the training configuration (the FIXWEIGHT values hold the coefficients FIXINDEX names, and OPTIM FIXWEIGHT searches those values).",
     "OPTIM FIXWEIGHT requires FIXINDEX and FIXWEIGHT in the training configuration (FIXINDEX names the coefficients the FIXWEIGHT values hold, and OPTIM FIXWEIGHT searches those values).",
@@ -3244,7 +3245,7 @@ inline constexpr Form kForms[] = {
       Span<std::string_view>{detail::OPTIM_range_checks, 6}, false},
   Form{FormId::OPTIM_AUTO, "OPTIM.AUTO", "OPTIM", "AUTO",
       Span<Arg>{detail::OPTIM_AUTO_args, 1}, false,
-      Span<std::string_view>{detail::OPTIM_AUTO_checks, 10}, true},
+      Span<std::string_view>{detail::OPTIM_AUTO_checks, 11}, true},
 };
 
 inline constexpr Removed kRemoved[] = {
@@ -3508,9 +3509,9 @@ inline constexpr InitMethod kInitMethods[] = {
 };
 
 namespace optim {
-inline constexpr Span<std::string_view> positive_only = Span<std::string_view>{detail::optim_positive_only, 3};
+inline constexpr Span<std::string_view> positive_only = Span<std::string_view>{detail::optim_positive_only, 4};
 inline constexpr Span<std::string_view> auto_excluded = Span<std::string_view>{detail::optim_auto_excluded, 2};
-inline constexpr Span<std::string_view> checks = Span<std::string_view>{detail::optim_checks, 26};
+inline constexpr Span<std::string_view> checks = Span<std::string_view>{detail::optim_checks, 25};
 }  // namespace optim
 
 inline constexpr OptimTarget kOptimTargets[] = {

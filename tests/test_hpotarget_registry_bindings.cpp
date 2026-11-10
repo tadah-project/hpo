@@ -97,6 +97,10 @@ TEST_CASE("hpotarget generated tables: the generated headers exist",
 #include <tadah/hpo/strategy_rules.h>
 #include <tadah/hpo/strict_parse.h>
 #include <tadah/mlip/engines/hpotarget_writer.h>
+#include <tadah/mlip/hpotarget_optim.h>
+#include <tadah/core/registry.h>
+#include <tadah/models/descriptors/d_base.h>
+#include <tadah/models/descriptors/dm/rhoform.h>
 
 #include <algorithm>
 #include <cctype>
@@ -1023,20 +1027,42 @@ TEST_CASE("hpotarget generated tables: the density gate rule names "
                   "RHOGATE 0"));
 }
 
-/* Pins: [optim].positive_only is the positive-only keys of
- * hpotarget_group_specs() (MLIP), which optim_key_positive_only() reads.
- * Before the fix: the headers do not exist. */
+/* Pins: [optim].positive_only is the set of keys whose values the
+ * registered descriptors declare > 0 (models::declared_low_bound_rule
+ * strict: SGRID2B, SGRIDMB, SEMBFUNC and RCUTENV), the keys of the TYPE
+ * lines and the knot degrees left out (OPTIM refuses them as structure
+ * keys), which optim_key_positive_only() reads: their AUTO box is RATIO 2
+ * by default.
+ * Before the fix: the headers do not exist. Before the fix that takes the
+ * keys from the limits the descriptors declare: they were the keys of
+ * hpotarget_group_specs() (MLIP) marked positive-only, SGRID2B, SGRIDMB and
+ * SEMBFUNC, and RCUTENV was not among them. */
 TEST_CASE("hpotarget generated tables: the positive-only OPTIM keys are "
-          "those of hpotarget_group_specs()", "[hpotarget_gen]")
+          "those whose values the descriptors declare > 0", "[hpotarget_gen]")
 {
     std::set<std::string> gen(R::optim::positive_only.begin(),
                               R::optim::positive_only.end());
-    std::set<std::string> code;
-    for (const auto& g : tadah::mlip::engines::hpotarget_group_specs()) {
-        CHECK(HPOTargets::optim_key_positive_only(g.key) == g.positive_only);
-        if (g.positive_only) code.insert(g.key);
+    std::set<std::string> declared;
+    for (const auto& label : tadah::core::Registry<tadah::models::D_Base>::names()) {
+        std::unique_ptr<tadah::models::D_Base> d(
+            tadah::core::factory<tadah::models::D_Base>(label));
+        const auto meta = d->meta();
+        if (!meta) continue;
+        for (const auto& pm : meta->params) {
+            if (pm.arg_pos > 0) continue;
+            if (!tadah::mlip::optim_structure_key_error(pm.key).empty()) continue;
+            const auto rule = tadah::models::declared_low_bound_rule(pm.key);
+            if (rule && rule->strict) declared.insert(pm.key);
+        }
     }
-    CHECK(gen == code);
+    CHECK(gen == declared);
+    CHECK(gen == std::set<std::string>{"RCUTENV", "SEMBFUNC", "SGRID2B",
+                                       "SGRIDMB"});
+    for (const auto& key : declared)
+        CHECK(HPOTargets::optim_key_positive_only(key));
+    for (const char* key : {"CGRID2B", "CGRIDMB", "RCUT2B", "AMPGRIDMB",
+                            "CEMBFUNC", "WATOM", "FIXWEIGHT"})
+        CHECK_FALSE(HPOTargets::optim_key_positive_only(key));
 }
 
 /* Pins: the gate lines take the options of the registry: each option of
