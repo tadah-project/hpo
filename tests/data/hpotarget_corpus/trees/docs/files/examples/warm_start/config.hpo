@@ -1,0 +1,37 @@
+# Target file (--hpotarget): the search of Tutorial Unit 2 for the finer
+# pair term of config.train, started at the best potential of Unit 2.
+
+# The neighbour shells and pair-centre range match Unit 2, so its bounds
+# keep their meaning for the finer pair term.
+OPTIM      RCUT2B (1) 6.0 7.5
+OPTIM      RCUTMB (1) 4.0 7.0
+OPTIM      SGRIDMB (1) 0.05 1.0 LOG
+
+# Fixed L2 loss-term weights are 1/(chosen accuracy)^2. The accuracies
+# match Unit 2, even though the pair term has more coefficients.
+PC_ERMSE   0 0.25         # 2 meV/atom
+PC_FRMSE   0 100          # 0.1 eV/Å
+PC_SRMSE_GPA 0 4          # 0.5 GPa
+
+OPTIMIZER
+    INIT
+        # Unit 2's search, the run before this one in this directory, writes
+        # this file. Only the values of the searched keys are read from it,
+        # so a seed with 17 pair blips can start a search with 33. This run
+        # reads the file at startup, deletes it before its first evaluation
+        # and rewrites it whenever the best loss improves. A repeat of this
+        # run therefore starts at the best of the first; once a run has
+        # begun its evaluations, only Unit 2's search gives the seed again.
+        METHOD            WARM best_pot.tadah
+        # A seed without a searched key, or with a value outside the
+        # bounds, stops the run: the search would not start at the seed.
+        WARM_ON_MISMATCH  error
+    ENDINIT
+    LIB      NLOPT
+    ALGO     LN_BOBYQA
+    MAXEVAL  20           # 2n+1 = 7 to start (n = 3 parameters), 13 to refine
+    # A trusted start allows first steps of 5 % of each box:
+    # additive for the cutoffs, multiplicative for the density decay.
+    STEP     0.05
+    THREADS  1            # one worker: the search runs one candidate at a time
+ENDOPTIMIZER

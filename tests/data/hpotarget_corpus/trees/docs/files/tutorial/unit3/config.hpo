@@ -1,0 +1,54 @@
+# Target file (--hpotarget): a search around the values of Unit 2, with
+# indexed energy and force targets for each validation dataset.
+
+# AUTO is refused on the distance cutoffs (the neighbour list is sized from
+# the upper bound), so both cutoffs have explicit bounds.
+# The pair cutoff from the centre of the outermost pair blip (6.0 Å) to
+# 8.0 Å. Every blip ends by 7.0 Å: above that a larger cutoff adds no
+# neighbour, it only flattens the Cut_Cos taper, which scales every pair.
+# The upper bound allows a flatter taper than Unit 2's 7.5 Å limit.
+OPTIM      RCUT2B (1) 6.0 8.0
+# The density cutoff: the bounds of Unit 2.
+OPTIM      RCUTMB (1) 4.0 7.0
+# A factor of 2 either side of the value in config.train varies the
+# Gaussian density factor exp(-SGRIDMB r^2) on a multiplicative scale.
+# The box is about 0.07552-0.3021 Å^-2. At a0 the second-shell Gaussian
+# factor is 81-43 % of the first-shell value across this box.
+# At the initial density cutoff, its low end can raise densities of the
+# 250 GPa MD cells above 12, beyond the support of the embedding blips.
+OPTIM      SGRIDMB (1) AUTO RATIO 2 LOG
+
+# Energies: one line per dataset of config.val, with loss-term weight
+# 1/(fixed accuracy)^2. The energy term is the mean of the three losses.
+PC_ERMSE   (1) 0 0.25     # MD: 2 meV/atom, as in Unit 2
+# Vacancy: 2 meV/atom is 0.11 eV on a 53-atom cell. Above 40 meV/atom
+# (2.12 eV, 71 % of the DFT vacancy formation energy, Evf of
+# dft_reference.csv) a potential is rejected.
+PC_ERMSE   (2) 0 0.25 --skip-above 40
+# Compressed crystals: 10 meV/atom, about 1 % of the energy that 20 %
+# compression adds (0.9-1.2 eV/atom).
+PC_ERMSE   (3) 0 0.01
+# Forces: a fixed accuracy of 0.1 eV/Å. The compressed crystals have zero
+# forces by symmetry, so their loss-term weight is 0. The force term is
+# the mean over the three datasets as well: in the MD and vacancy datasets
+# 0.1 eV/Å counts as much as 2 meV/atom.
+PC_FRMSE   (1-2) 0 100
+PC_FRMSE   (3) 0 0
+# Stresses: fixed accuracy 0.5 GPa gives loss-term weight 4. The global
+# target scores the mean stress error; indexed stress targets could
+# instead assign a separate accuracy to each dataset.
+PC_SRMSE_GPA 0 4
+# Rejected potentials score 1000, above this run's usable losses, in the
+# records. NLopt receives a finite stand-in based on usable losses, also
+# with the default FAILSCORE.
+FAILSCORE  1000
+
+OPTIMIZER
+    LIB      NLOPT
+    ALGO     LN_BOBYQA
+    MAXEVAL  75           # 25 per search parameter, as in Unit 2
+    # The start is Unit 2's result, but the vacancy and compressed-crystal
+    # data move the best values: first steps a quarter of a box.
+    STEP     0.25
+    THREADS  1            # one worker: the search runs one candidate at a time
+ENDOPTIMIZER

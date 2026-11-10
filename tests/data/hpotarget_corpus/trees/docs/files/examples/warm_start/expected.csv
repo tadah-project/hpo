@@ -1,0 +1,14 @@
+Quantity,Value
+Best loss (run 1),13.060
+Best RCUT2B (Å) (run 1),6.90
+Best RCUTMB (Å) (run 1),5.58
+Best SGRIDMB (Å^-2) (run 1),0.183
+Best loss (run 2),14.332
+Best loss (config.hpo),12.963
+Best RCUT2B (Å) (config.hpo),6.68
+Best RCUTMB (Å) (config.hpo),5.31
+Best SGRIDMB (Å^-2) (config.hpo),0.151
+Start loss (config.hpo),13.028
+Start RCUT2B (Å) (config.hpo),6.602
+Start RCUTMB (Å) (config.hpo),5.312
+Start SGRIDMB (Å^-2) (config.hpo),0.1510

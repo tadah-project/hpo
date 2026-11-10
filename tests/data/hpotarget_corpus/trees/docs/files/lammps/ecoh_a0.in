@@ -1,0 +1,43 @@
+# Cohesive energy Ecoh (eV/atom) and lattice constant a0 (A) of bcc Ta from
+# a zero-pressure relaxation. Ecoh = E(free atom) - E(crystal)/atom, as for
+# the DFT value. tadah hpo sets a0 before the script (--hotvar a0); the
+# relaxation starts from it, and a0 is returned relaxed.
+# Internal-style captures keep full precision in later v_ formulas;
+# equal-style references in those formulas pass through 15-digit text.
+
+# The LAMMPS instance serves the next evaluation too: clear removes its
+# atoms and settings but keeps the variables, a0 among them.
+clear
+units           metal
+atom_style      atomic
+boundary        f f f      # not periodic: the atom has no images
+region          box block -10 10 -10 10 -10 10
+create_box      1 box
+create_atoms    1 single 0 0 0
+mass            1 180.95
+pair_style      tadah
+pair_coeff      * * EXTERN Ta
+run             0
+variable        Eatom internal $(pe)
+
+# Two atoms are enough: every atom of the crystal is equivalent, and
+# LAMMPS includes every periodic image within the cutoff.
+clear
+units           metal
+atom_style      atomic
+boundary        p p p
+lattice         bcc ${a0}
+region          box block 0 1 0 1 0 1
+create_box      1 box
+create_atoms    1 box
+mass            1 180.95
+pair_style      tadah
+pair_coeff      * * EXTERN Ta
+# Atomic forces vanish by symmetry; box/relax targets zero pressure.
+# vmax permits larger cell steps than the default for a distant start.
+# Finite iteration and evaluation limits bound the work per candidate.
+# A returned a0 outside the --hotvar range fails the evaluation.
+fix            1 all box/relax iso 0.0 vmax 0.001
+minimize        0.0 1e-10 1000 10000
+variable        a0 equal $(lx)
+variable        Ecoh equal $(v_Eatom-pe/atoms)

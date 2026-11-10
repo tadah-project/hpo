@@ -1,0 +1,27 @@
+Quantity,Value
+Best loss (single.hpo),14.309
+Best RCUT2B (Å) (single.hpo),6.633
+Best RCUTMB (Å) (single.hpo),6.975
+Best loss (multistart.hpo),14.309
+Best RCUT2B (Å) (multistart.hpo),6.633
+Best RCUTMB (Å) (multistart.hpo),6.975
+Best loss of start 1 (multistart.hpo),14.309
+Best RCUT2B of start 1 (Å) (multistart.hpo),6.633
+Best RCUTMB of start 1 (Å) (multistart.hpo),6.975
+Best loss of start 2 (multistart.hpo),14.843
+Best RCUT2B of start 2 (Å) (multistart.hpo),6.831
+Best RCUTMB of start 2 (Å) (multistart.hpo),4.852
+Best loss of start 3 (multistart.hpo),14.560
+Best RCUT2B of start 3 (Å) (multistart.hpo),6.756
+Best RCUTMB of start 3 (Å) (multistart.hpo),5.399
+Best loss of start 4 (multistart.hpo),14.769
+Best RCUT2B of start 4 (Å) (multistart.hpo),6.415
+Best RCUTMB of start 4 (Å) (multistart.hpo),4.852
+Best loss of start 5 (multistart.hpo),14.309
+Best RCUT2B of start 5 (Å) (multistart.hpo),6.634
+Best RCUTMB of start 5 (Å) (multistart.hpo),6.975
+Best loss of start 6 (multistart.hpo),14.461
+Best RCUT2B of start 6 (Å) (multistart.hpo),6.330
+Best RCUTMB of start 6 (Å) (multistart.hpo),6.066
+Status (single.hpo),STOPPED -- NLopt ended the search itself (nlopt roundoff-limited); the best evaluation so far is kept
+Evaluations (multistart.hpo),300

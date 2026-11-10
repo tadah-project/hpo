@@ -1,0 +1,14 @@
+# Target file (--hpotarget): one cutoff, searched on a grid.
+
+# The lower bound is the outermost pair-blip centre, 4.0 A. The upper
+# bound extends beyond every blip, where only the Cut_Cos taper changes.
+OPTIM      RCUT2B (1) 4.0 6.5
+# A fixed accuracy of 1 meV/atom gives a loss-term weight of 1.
+PC_ERMSE   0 1
+
+OPTIMIZER
+    LIB    TADAH
+    ALGO   GRID
+    PARAM  GRID_POINTS 11     # 0.25 A apart
+    THREADS 1                 # one worker: GRID evaluates one point at a time
+ENDOPTIMIZER

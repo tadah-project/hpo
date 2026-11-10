@@ -1,0 +1,22 @@
+# Target file (--hpotarget): a short parallel-tempering run whose journal
+# (hpo_run.log) reports the hottest temperature the production run fixes.
+# The short budget exposes both temperature passes and their cost;
+# hpo_step_scales.tsv records the steps needed for the production choice.
+
+# The search space and losses of Unit 2.
+OPTIM      RCUT2B (1) 6.0 7.5
+OPTIM      RCUTMB (1) 4.0 7.0
+OPTIM      SGRIDMB (1) 0.05 1.0 LOG
+# Fixed accuracies set the L2 loss-term weights, as in Unit 2.
+PC_ERMSE   0 0.25         # 1/(2 meV/atom)^2
+PC_FRMSE   0 100          # 1/(0.1 eV/Å)^2
+PC_SRMSE_GPA 0 4          # 1/(0.5 GPa)^2
+
+OPTIMIZER
+    LIB      TADAH
+    ALGO     ANNEAL_PT
+    MAXEVAL  100          # most of it measures the temperatures and the steps
+    SEED     1
+    THREADS  2            # two workers; 1 or 4 give the same result
+    PARAM    REPLICAS 4   # the ladder of the production run
+ENDOPTIMIZER

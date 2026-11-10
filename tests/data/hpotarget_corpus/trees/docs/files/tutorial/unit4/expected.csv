@@ -1,0 +1,25 @@
+Quantity,Value
+Best loss,6.12
+Start loss,21.329
+Best ESIGMA (meV/atom),0.069
+Best RCUT2B (Å),7.057
+Best RCUTMB (Å),6.988
+Best SGRIDMB (Å^-2),0.3159
+Start ERMSE (meV/atom),17.46
+Best ERMSE (meV/atom),7.590
+Start FRMSE (eV/Å),0.3474
+Best FRMSE (eV/Å),0.514
+Start SRMSE_GPA (GPa),0.7643
+Best SRMSE_GPA (GPa),1.377
+Start Ecoh (eV/atom),8.106
+Best Ecoh (eV/atom),8.112
+Start a0 (Å),3.315
+Best a0 (Å),3.318
+Start Evf (eV),0.8381
+Best Evf (eV),2.373
+Start C11 (GPa),289.7
+Best C11 (GPa),256.5
+Start C12 (GPa),208.0
+Best C12 (GPa),164.1
+Start C44 (GPa),126.6
+Best C44 (GPa),60.1

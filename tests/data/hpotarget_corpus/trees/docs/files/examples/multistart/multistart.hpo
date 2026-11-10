@@ -1,0 +1,41 @@
+# Target file (--hpotarget): the search of single.hpo, run from six starts.
+
+# Unit 2's pair-cutoff bounds start at the last blip centre (6 Å).
+# The blips end at 7 Å: above that the cutoff changes only the cosine
+# taper, not which neighbours contribute to the pair term.
+# The upper bound leaves 0.5 Å beyond the support for a gentler taper.
+# The density cutoff spans from between the second and third bcc shells
+# at a0 (3.32, 4.70 Å) to past the sixth (6.64 Å).
+# SGRIDMB stays at the training configuration's 0.2: the densities of the
+# data then stay within the embedding support for every RCUTMB in the
+# box, avoiding starts whose densities exceed all embedding blips.
+OPTIM      RCUT2B (1) 6.0 7.5
+OPTIM      RCUTMB (1) 4.0 7.0
+
+# Fixed L2 loss-term weights are 1/(chosen accuracy)^2, as in Unit 2.
+PC_ERMSE   0 0.25         # 2 meV/atom
+PC_FRMSE   0 100          # 0.1 eV/Å
+PC_SRMSE_GPA 0 4          # 0.5 GPa
+
+OPTIMIZER
+    INIT
+        METHOD   CONFIG   # start 1: the start of single.hpo
+        # Five more starts make six searches of 50 in the 300 of single.hpo.
+        # LHS draws one in each fifth of either range, spreading the starts
+        # across the box rather than concentrating them near CONFIG.
+        METHOD   LHS 5
+        SEED     1        # the same five points in every run
+    ENDINIT
+    STRATEGY
+        TYPE             MULTISTART
+        # MULTISTART needs at least two starts; six uses CONFIG and LHS 5.
+        N_STARTS         6
+        BUDGET_PER_START 50   # 25 per search parameter
+        LIB      NLOPT
+        ALGO     LN_BOBYQA
+        # Quarter-range steps suit guesses; a near-bound start can move
+        # to keep this step rather than reduce the search scale.
+        STEP     0.25
+        THREADS  1            # one worker: one candidate at a time
+    ENDSTRATEGY
+ENDOPTIMIZER

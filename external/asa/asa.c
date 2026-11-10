@@ -3693,6 +3693,15 @@ RET1_asa:
 
 EXIT_asa:
 
+  /* TADAH-PATCH begin: final counters before asa_exit restores the
+   * at-best OPTIONS snapshots (patch 10 in TADAH-PATCHES.md). */
+#if ASA_PARALLEL
+  if (tadah_asa_final_counters_hook != NULL)
+    tadah_asa_final_counters_hook (*number_generated, *number_accepted,
+                                 OPTIONS);
+#endif
+  /* TADAH-PATCH end */
+
   asa_exit_value = asa_exit (user_cost_function,
                              &final_cost,
                              parameter_initial_final,

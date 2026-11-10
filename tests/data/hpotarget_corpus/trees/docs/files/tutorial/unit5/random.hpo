@@ -1,0 +1,22 @@
+# Target file (--hpotarget): the baseline. The training configuration's
+# values, then random points in the bounds of config.hpo (SGRIDMB on its
+# log scale), as many in all as config.hpo evaluates.
+
+OPTIM      RCUT2B (1) 6.0 8.0
+OPTIM      RCUTMB (1) 3.3 8.0
+OPTIM      SGRIDMB (1) 0.01 1.0 LOG
+
+# Fixed L2 loss-term weights are 1/(chosen accuracy)^2, as in Unit 2.
+PC_ERMSE   0 0.25         # 2 meV/atom
+PC_FRMSE   0 100          # 0.1 eV/Å
+PC_SRMSE_GPA 0 4          # 0.5 GPa
+
+OPTIMIZER
+    LIB      TADAH
+    ALGO     RANDOM
+    # config.hpo evaluates 177 points: 90 in the exploration and 29 in
+    # each local search (the first point of each is already evaluated).
+    MAXEVAL  177
+    SEED     1                # random points: the same ones in every run
+    THREADS  1                # one worker: one random point at a time
+ENDOPTIMIZER

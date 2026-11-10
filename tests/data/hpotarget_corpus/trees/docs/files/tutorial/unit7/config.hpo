@@ -1,0 +1,28 @@
+# Target file (--hpotarget): the search space, optimiser and budget of
+# Unit 2, with extended data, priorities and validation loss terms.
+
+# The bounds of Unit 2 include the seventh bcc shell at 400 GPa
+# (5.88 Å, a = 2.70 Å), even at the smallest pair cutoff.
+OPTIM      RCUT2B (1) 6.0 7.5
+OPTIM      RCUTMB (1) 4.0 7.0
+OPTIM      SGRIDMB (1) 0.05 1.0 LOG
+
+LOSS       L2
+# Fixed loss-term weights are 1/(chosen accuracy)^2: solid (1), then
+# hot, liquid and 400 GPa (2), with ten times larger chosen accuracies.
+# Each metric averages the two dataset losses, not their RMSEs.
+PC_ERMSE   (1) 0 0.25     # 2 meV/atom
+PC_ERMSE   (2) 0 0.0025   # 20 meV/atom
+PC_FRMSE   (1) 0 100      # 0.1 eV/Å
+PC_FRMSE   (2) 0 1        # 1 eV/Å
+PC_SRMSE_GPA (1) 0 4      # 0.5 GPa
+PC_SRMSE_GPA (2) 0 0.04   # 5 GPa
+
+OPTIMIZER
+    LIB      NLOPT
+    ALGO     LN_BOBYQA
+    MAXEVAL  75           # 25 per search parameter, as in Unit 2
+    # The same guessed start as Unit 2 allows a quarter-range first step.
+    STEP     0.25
+    THREADS  1            # one worker: the search runs one candidate at a time
+ENDOPTIMIZER

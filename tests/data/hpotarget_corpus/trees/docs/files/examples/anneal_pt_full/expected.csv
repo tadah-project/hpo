@@ -1,0 +1,28 @@
+Quantity,Value
+Best loss (calibrate.hpo),16.157
+Calibrated T_HOT (calibrate.hpo),1.300
+Start loss (config.hpo),19.430
+Best loss (config.hpo),5.9442
+Best RCUT2B (Å) (config.hpo),6.462
+Best RCUTMB (Å) (config.hpo),6.648
+Best SGRIDMB (Å^-2) (config.hpo),0.3473
+Best ESIGMA (meV/atom) (config.hpo),0.1890
+Best SSIGMA (GPa) (config.hpo),0.1540
+Start ERMSE (meV/atom) (config.hpo),39.21
+Best ERMSE (meV/atom) (config.hpo),31.17
+Start FRMSE (eV/Å) (config.hpo),0.2450
+Best FRMSE (eV/Å) (config.hpo),0.3117
+Start SRMSE_GPA (GPa) (config.hpo),1.840
+Best SRMSE_GPA (GPa) (config.hpo),2.159
+Best Ecoh (eV/atom) (config.hpo),8.116
+Best a0 (Å) (config.hpo),3.321
+Best Evf (eV) (config.hpo),2.141
+Best C11 (GPa) (config.hpo),268.3
+Best C12 (GPa) (config.hpo),161.3
+Best C44 (GPa) (config.hpo),70.70
+Best Ecoh - DFT (eV/atom) (config.hpo),0.002
+Best a0 - DFT (Å) (config.hpo),0.001
+Best Evf - DFT (eV) (config.hpo),-0.846
+Best C11 - DFT (GPa) (config.hpo),4.1
+Best C12 - DFT (GPa) (config.hpo),-0.2
+Best C44 - DFT (GPa) (config.hpo),-4.10

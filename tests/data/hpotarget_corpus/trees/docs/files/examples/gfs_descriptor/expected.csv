@@ -1,0 +1,14 @@
+Quantity,Value
+Best loss (seed2.hpo),13.900
+Best RCUTMB (Å) (seed2.hpo),3.585
+Best loss (config.hpo),13.789
+Best RCUT2B (Å) (config.hpo),6.796
+Best RCUTMB (Å) (config.hpo),3.591
+Best SGRIDMB (Å^-2) (config.hpo),0.02439
+Evaluations (seed2.hpo),177
+Evaluations (config.hpo),177
+Energy RMSE ta_md_test (meV/atom) (config.hpo),23.40
+Force RMSE ta_md_test (eV/Å) (config.hpo),0.3190
+Stress RMSE ta_md_test (GPa) (config.hpo),3.109
+Energy RMSE ta_strain (meV/atom) (config.hpo),701.9
+Stress RMSE ta_strain (GPa) (config.hpo),56.7

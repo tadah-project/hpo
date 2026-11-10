@@ -1,0 +1,35 @@
+# Target file (--hpotarget): a global search of four search parameters with
+# Adaptive Simulated Annealing (ASA).
+
+# The search parameters of Unit 2, with its bounds: the pair cutoff from the
+# centre of the outermost pair blip (6.0 Å) to 7.5 Å; the density cutoff
+# from between the second and third neighbours at a0 (3.32, 4.70 Å) to past
+# the sixth (6.64 Å). The Gaussian density width SGRIDMB (Å^-2) is searched
+# on a log scale. Before the cutoff factor, its second-to-first-neighbour
+# ratio spans 87-6 % at CGRIDMB 0, and 96-43 % near CGRIDMB 2.15 Å.
+OPTIM      RCUT2B (1) 6.0 7.5
+OPTIM      RCUTMB (1) 4.0 7.0
+OPTIM      SGRIDMB (1) 0.05 1.0 LOG
+# The radial factor is exp(-SGRIDMB (r - CGRIDMB)^2) times the cutoff.
+# The upper bound rounds down the shortest training distance (2.14999 Å),
+# keeping the Gaussian decreasing at every training neighbour distance.
+OPTIM      CGRIDMB (1) 0.0 2.1499
+
+# Fixed accuracies set the L2 loss-term weights, as in Unit 2.
+PC_ERMSE   0 0.25         # 1/(2 meV/atom)^2
+PC_FRMSE   0 100          # 1/(0.1 eV/Å)^2
+PC_SRMSE_GPA 0 4          # 1/(0.5 GPa)^2
+
+OPTIMIZER
+    LIB      ASA
+    ALGO     ASA
+    MAXEVAL  400          # 100 per search parameter: a global search
+    SEED     1            # ASA draws random numbers: the run repeats exactly
+    # Every 80 generated points ASA rescales the temperature of each search
+    # parameter to the sensitivity of the loss: four times in this budget,
+    # at five evaluations each (the best point and one step per search
+    # parameter). This run accepts 60 points, below the default accepted
+    # cadence of 100; the generated cadence makes ASA rescale in this run.
+    PARAM    Generated_Frequency_Modulus 80
+    THREADS  1            # one worker: ASA generates one point at a time
+ENDOPTIMIZER

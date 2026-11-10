@@ -1,0 +1,29 @@
+Quantity,Value
+Best loss (../unit2/config.hpo),14.332
+Best loss (config.hpo),12.169
+Status (../unit2/config.hpo),MAXEVAL_REACHED -- maximum evaluations exhausted
+Status (config.hpo),MAXEVAL_REACHED -- maximum evaluations exhausted
+Best RCUT2B (Å) (../unit2/config.hpo),6.602
+Best RCUT2B (Å) (config.hpo),6.041
+Best RCUTMB (Å) (../unit2/config.hpo),5.312
+Best RCUTMB (Å) (config.hpo),5.33
+Best SGRIDMB (Å^-2) (../unit2/config.hpo),0.1510
+Best SGRIDMB (Å^-2) (config.hpo),0.2055
+Energy RMSE ta_md_val (meV/atom) (../unit2/config.hpo),10.89
+Energy RMSE ta_md_val (meV/atom) (config.hpo),12.74
+Energy RMSE ta_md_test (meV/atom) (../unit2/config.hpo),28.17
+Energy RMSE ta_md_test (meV/atom) (config.hpo),19.25
+Energy RMSE ta_md_ext_val (meV/atom) (../unit2/config.hpo),5821
+Energy RMSE ta_md_ext_val (meV/atom) (config.hpo),82.5
+Force RMSE ta_md_val (eV/Å) (../unit2/config.hpo),0.338
+Force RMSE ta_md_val (eV/Å) (config.hpo),0.342
+Force RMSE ta_md_test (eV/Å) (../unit2/config.hpo),0.3243
+Force RMSE ta_md_test (eV/Å) (config.hpo),0.336
+Force RMSE ta_md_ext_val (eV/Å) (../unit2/config.hpo),11.73
+Force RMSE ta_md_ext_val (eV/Å) (config.hpo),0.955
+Stress RMSE ta_md_val (GPa) (../unit2/config.hpo),0.697
+Stress RMSE ta_md_val (GPa) (config.hpo),0.708
+Stress RMSE ta_md_test (GPa) (../unit2/config.hpo),4.03
+Stress RMSE ta_md_test (GPa) (config.hpo),0.796
+Stress RMSE ta_md_ext_val (GPa) (../unit2/config.hpo),1557
+Stress RMSE ta_md_ext_val (GPa) (config.hpo),4.52

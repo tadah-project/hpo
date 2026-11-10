@@ -1,0 +1,33 @@
+# Target file (--hpotarget): the search space, loss and budget of
+# config.hpo, with four evaluations at a time. Batches of four change the
+# sequence of points, and so the result.
+
+# The search space and the loss of config.hpo.
+OPTIM      RCUT2B (1) 6.0 7.5
+OPTIM      RCUTMB (1) 4.0 7.0
+OPTIM      SGRIDMB (1) 0.05 1.0 LOG
+OPTIM      CGRIDMB (1) 0.0 2.1499
+# Fixed accuracies set the L2 loss-term weights, as in Unit 2.
+PC_ERMSE   0 0.25         # 1/(2 meV/atom)^2
+PC_FRMSE   0 100          # 1/(0.1 eV/Å)^2
+PC_SRMSE_GPA 0 4          # 1/(0.5 GPa)^2
+
+OPTIMIZER
+    LIB      ASA
+    ALGO     ASA
+    MAXEVAL  400          # the budget of config.hpo
+    SEED     1
+    # ASA rescales its temperatures after each batch in which the count of
+    # generated points reaches a multiple of 80. Batches of four end on 80,
+    # 160, 240 and 320, so the four rescalings come at the counts of
+    # config.hpo, at five evaluations each: the best point and one probe
+    # per search parameter.
+    PARAM    Generated_Frequency_Modulus 80
+    THREADS  4            # one worker for each point of a complete batch
+    # Four points are proposed together, independently of the worker count.
+    # Gener_Mov_Avr 0 prevents resizing, keeping complete batches at four.
+    # Rows and bests follow the order in which ASA proposes the points, so
+    # THREADS 1, 2 and 4 give the same losses, points and best potential.
+    PARAM    Gener_Block 4
+    PARAM    Gener_Mov_Avr 0
+ENDOPTIMIZER

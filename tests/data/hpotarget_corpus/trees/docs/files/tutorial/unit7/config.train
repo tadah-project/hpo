@@ -1,0 +1,9 @@
+# Training configuration (--config): that of Unit 2, with the hot, liquid
+# and 400 GPa snapshots added.
+CONFIG     ../unit2/config.train
+DBFILE     ../../data/ta_md_ext_train.tadahdb  # 112 snapshots
+# The solid has priority. Chosen accuracies for the added snapshots are
+# ten times larger: 20 meV/atom, 1 eV/Å and 5 GPa. Their priority of 0.01
+# gives each squared residual the same factor as a tenfold error scale.
+# The fit sums observations; this does not equalise the datasets' totals.
+WDBFILE    1 0.01

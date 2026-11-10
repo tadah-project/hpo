@@ -1,0 +1,5 @@
+# Validation configuration (--validation): the solid snapshots of Unit 2
+# (dataset 1 of config.hpo) and the added ones (dataset 2). Separate
+# snapshots from the same MD runs measure interpolation within those runs.
+DBFILE     ../../data/ta_md_val.tadahdb
+DBFILE     ../../data/ta_md_ext_val.tadahdb

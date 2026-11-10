@@ -1,0 +1,8 @@
+Quantity,Value
+Best loss (anneal.hpo),14.272
+Best loss (anneal_pt_calibrate.hpo),14.583
+Best loss (anneal_pt.hpo),14.263
+Best RCUT2B (Å) (anneal_pt.hpo),6.299
+Best RCUTMB (Å) (anneal_pt.hpo),4.165
+Best SGRIDMB (Å^-2) (anneal_pt.hpo),0.06530
+Calibrated T_HOT (anneal_pt_calibrate.hpo),0.3088

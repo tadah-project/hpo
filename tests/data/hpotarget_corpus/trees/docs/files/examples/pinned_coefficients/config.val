@@ -1,0 +1,6 @@
+# Validation configuration (--validation): hot MD and 400 GPa snapshots.
+# The energies of the 400 GPa ones depend
+# on coefficient 26; those at 250 GPa and below, hardly at all. These snapshots
+# set coefficient 26, so ta_md_ext_train (other steps of the same MD runs)
+# stays unseen for the check after the search.
+DBFILE     ../../data/ta_md_ext_val.tadahdb

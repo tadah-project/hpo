@@ -1,0 +1,26 @@
+# Target file (--hpotarget): one pinned coefficient of the embedding term.
+
+# The start, 8.4 in config.train, continues the fitted coefficients of F.
+# The box includes 0 (no contribution from blip 8) and extends beyond twice
+# the continuation, allowing the compressed snapshots to set its value.
+# The index names model coefficient 26, not a position in FIXWEIGHT.
+OPTIM      FIXWEIGHT (26) 0 20
+
+# Loss-term weights use 1/(fixed accuracy)^2, independently of the fit.
+# The accuracies are 2 meV/atom, 0.1 eV/Å and 0.5 GPa.
+PC_ERMSE   0 0.25         # 2 meV/atom
+PC_FRMSE   0 100          # 0.1 eV/Å
+PC_SRMSE_GPA 0 4          # 0.5 GPa
+
+OPTIMIZER
+    LIB      NLOPT
+    ALGO     LN_BOBYQA
+    # No training row reaches the pinned blips, so changing their coefficients
+    # leaves the fitted part unchanged. Predictions are linear in coefficient
+    # 26. With one validation dataset, its L2 loss is a parabola.
+    # BOBYQA models the loss by a parabola: three evaluations fix it and
+    # the fourth lands on its minimum. Six further evaluations shrink the step.
+    MAXEVAL  10
+    STEP     0.25         # a guessed start: first steps 5 to either side
+    THREADS  1            # one worker: the search runs one candidate at a time
+ENDOPTIMIZER

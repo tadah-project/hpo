@@ -1,0 +1,11 @@
+# Training configuration (--config): bcc Ta, energies only, pair term.
+DBFILE     ../../data/ta_eos_train.tadahdb  # 40 cells, a from 2.70 to 3.48 A
+
+INIT2B     true
+TYPE2B     D2_Blip 9 9 Ta Ta
+RCTYPE2B   Cut_Cos
+RCUT2B     5.3            # the first value tried; config.hpo searches 4.0-6.5
+CGRID2B    LIN 9 2.0 4.0  # from below the shortest bond to the lowest cutoff
+SGRID2B    LIN 9 1.5 1.5  # 2.7 A wide (4/eta); the last blip ends near 5.3 A
+
+MODEL      M_BLR BF_Linear

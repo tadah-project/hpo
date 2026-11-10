@@ -1,0 +1,38 @@
+# Training configuration (--config) of the gradient refinement: Unit 2's
+# training configuration at the best values of its search, with the
+# settings the analytical gradient of the loss needs.
+DBFILE     ../../data/ta_md_train.tadahdb
+FORCE      true
+# The analytical gradient does not differentiate stress rows.
+STRESS     false
+# The energy and force error scales match Unit 2. The target file uses
+# these fixed accuracies for its loss-term weights.
+ESIGMA     2              # meV/atom
+FSIGMA     0.1            # eV/Å
+
+# The pair and many-body terms of Unit 2. RCUT2B, RCUTMB and SGRIDMB hold
+# the best values of the Unit 2 search: the refinement starts there.
+INIT2B     true
+TYPE2B     D2_Blip 17 17 Ta Ta
+RCTYPE2B   Cut_Cos
+RCUT2B     6.60162340810112447
+CGRID2B    LIN 17 2.0 6.0
+SGRID2B    LIN 17 2.0 2.0
+
+INITMB     true
+TYPEMB     DM_mBlipEnv 0 1 1 11 11 Ta Ta
+RCTYPEMB   Cut_Cos
+RCUTMB     5.31216961788060082
+CGRIDMB    0.0
+SGRIDMB    0.1510383506741243
+WATOM      3.0
+CEMBFUNC   0 1 2 3 4 5 6 7 8 9 10
+SEMBFUNC   1 1 1 1 1 1 1 1 1 1 1
+RCUTENV    1.0
+
+MODEL      M_BLR BF_Linear
+# The analytical gradient differentiates the normal equations (OALGO 4) at
+# a fixed penalty. A positive penalty keeps the normal equations
+# nonsingular when the training densities leave an embedding blip unobserved.
+OALGO      4
+LAMBDA     1e-6

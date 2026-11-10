@@ -1,0 +1,8 @@
+Quantity,Value
+Best loss (single.hpo),14.195
+Best loss (config.hpo),14.195
+Best RCUTMB (Å) (single.hpo),7.000
+Best RCUTMB (Å) (config.hpo),7.000
+Evaluations (single.hpo),195
+Evaluations (config.hpo),193
+Status (config.hpo),STOPPED -- stagnation: no new best in 20 evaluations after 3 restart(s)

@@ -1,0 +1,6 @@
+# Validation configuration (--validation): three datasets, numbered in the
+# order of their files on the DBFILE lines (one file per line here), as the
+# indexed lines of config.hpo count them.
+DBFILE     ../../data/ta_md_val.tadahdb       # (1) solid MD, 44 snapshots
+DBFILE     ../../data/ta_vac_val.tadahdb      # (2) vacancy MD, 20 snapshots
+DBFILE     ../../data/ta_strain_max20.tadahdb # (3) 33 compressed crystals

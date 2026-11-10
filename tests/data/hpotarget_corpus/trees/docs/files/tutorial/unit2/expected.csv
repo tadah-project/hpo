@@ -1,0 +1,6 @@
+Quantity,Value
+Best loss,14.332
+Best RCUT2B (Å),6.602
+Best RCUTMB (Å),5.312
+Best SGRIDMB (Å^-2),0.1510
+Status,MAXEVAL_REACHED -- maximum evaluations exhausted

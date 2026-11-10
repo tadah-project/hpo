@@ -1,0 +1,29 @@
+# Vacancy formation energy Evf (eV) of bcc Ta, computed as the DFT value
+# was: 54 sites at the DFT lattice constant, one site empty, ions relaxed,
+# cell fixed. Evf = E(53 atoms) - 53/54 E(54 atoms). tadah hpo sets the
+# DFT lattice constant a0_dft before the script (--invar a0_dft).
+# Internal-style captures keep full precision in later v_ formulas;
+# equal-style references in those formulas pass through 15-digit text.
+
+# The LAMMPS instance serves the next evaluation too: clear removes its
+# atoms and settings but keeps the variables.
+clear
+units           metal
+atom_style      atomic
+boundary        p p p
+lattice         bcc ${a0_dft}  # one cell for every potential
+region          box block 0 3 0 3 0 3
+create_box      1 box
+create_atoms    1 box
+mass            1 180.95
+pair_style      tadah
+pair_coeff      * * EXTERN Ta
+run             0
+variable        n internal $(atoms)
+variable        Eperfect internal $(pe)
+group           site id 1
+delete_atoms    group site
+# Only the ions relax, so every candidate uses the same cell volume.
+# Finite iteration and evaluation limits bound the work per candidate.
+minimize        0.0 1e-6 1000 10000
+variable        Evf equal $(pe-(v_n-1)/v_n*v_Eperfect)
