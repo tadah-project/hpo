@@ -28,6 +28,7 @@ const char* box_origin_name(BoxOrigin o)
         case BoxOrigin::AutoGeometric: return "AUTO RATIO";
         case BoxOrigin::Adapted:       return "ADAPTED";
         case BoxOrigin::AutoLinearNonneg: return "AUTO FRAC>=0";
+        case BoxOrigin::AutoLinearPositive: return "AUTO FRAC>0";
     }
     return "?";
 }

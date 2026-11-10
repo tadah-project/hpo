@@ -3397,11 +3397,8 @@ synopsis = [
   "OPTIM <KEY> (<indices>) <low> <high> [LIN | LOG | ASINH <c>]",
   "OPTIM <KEY> (<indices>) AUTO [RATIO <f> | FRAC <p>] [FLOOR <a>] [GROUP_FLOOR <r>] [LIN | LOG | ASINH <c>]",
 ]
-positive_only = ["SGRID2B", "SGRIDMB", "SEMBFUNC"]
+positive_only = ["SGRID2B", "SGRIDMB", "SEMBFUNC", "RCUTENV"]
 auto_excluded = ["RCUT2B", "RCUTMB"]
-untested = [
-  { msg = "OPTIM {key} ({index}): the AUTO box [{low}, {high}] has the low bound {low}, which is negative, but {what} requires {value}, so the low bound of its box is >= 0", why = "Every key whose low-bound rule takes 0 is a non-negative amplitude, whose AUTO FRAC box is clamped at 0 and whose RATIO box lies above 0." },
-]
 
 [[optim.checks]]
 msg = "Failed to read key from input."
@@ -3487,29 +3484,29 @@ msg = "OPTIM {key} ({index}): the OPTIM {key} line on line {line} selects this i
 doc = "An earlier OPTIM line of the key selects the value."
 
 [[optim.checks]]
-msg = "OPTIM {key} ({index}): the low bound {low} is not > 0, but {what} requires {value}, so the low bound of its box is > 0"
+msg = "OPTIM {key} ({index}): the low bound {low} is not > 0, but {what} requires {value}, so the low bound of its box is > 0 (an AUTO FRAC box is clamped at 1e-06)"
 doc = """\
-A box of a value that must be positive reaches 0; {what} names the rule \
-and {value} what it requires. The values are a width of a radial bump \
-basis (SGRID2B of D2_Blip and D2_Blip5, SGRIDMB of a Blip or Blip5 \
-density) and a positive DM_Embed parameter. So are WATOM under RHOFORM \
-NONNEG or MONOTONE, and SGRIDMB under MONOTONE and, for the Gaussian \
-basis, under NONNEG."""
+An explicit box of a value that must be positive reaches 0 or below; \
+{what} names the rule and {value} what it requires. The values are a \
+width (SGRID2B, SGRIDMB, SEMBFUNC: "the D2_BP descriptor requires every \
+SGRID2B value > 0"; of a radial bump basis, "the D2_Blip pair basis \
+requires every SGRID2B width > 0"), RCUTENV, and a positive DM_Embed \
+parameter; so are WATOM under RHOFORM NONNEG or MONOTONE, and SGRIDMB \
+under MONOTONE and, for the Gaussian basis, under NONNEG. An AUTO box of \
+such a value that reaches 0 or below is clamped at 1e-6."""
 
 [[optim.checks]]
 msg = "OPTIM {key} ({index}): the low bound {low} is negative, but {what} requires {value}, so the low bound of its box is >= 0 (its AUTO FRAC box, the default, is clamped at 0)"
 doc = """\
-A box of a non-negative value reaches below 0: AMPGRIDMB under RHOFORM \
-NONNEG or MONOTONE, or the amplitudes of a DM_Embed density with \
-non-negative amplitudes."""
+An explicit box of a non-negative value reaches below 0: a centre \
+(CGRID2B, CGRIDMB: "the D2_BP descriptor requires every CGRID2B value >= \
+0"), AMPGRIDMB under RHOFORM NONNEG or MONOTONE, or the amplitudes of a \
+DM_Embed density with non-negative amplitudes. An AUTO box of such a \
+value that reaches below 0 is clamped at 0."""
 
 [[optim.checks]]
-msg = "OPTIM {key} ({index}): the AUTO box [{low}, {high}] has the low bound {low}, which is not > 0, but {what} requires {value}, so the low bound of its box is > 0"
-doc = "The same for an AUTO box, which the line does not write."
-
-[[optim.checks]]
-msg = "OPTIM {key} ({index}): the AUTO box [{low}, {high}] has the low bound {low}, which is negative, but {what} requires {value}, so the low bound of its box is >= 0"
-doc = "The same for an AUTO box of a value that must not be negative."
+msg = "OPTIM {key} ({index}): the low bound {low} is negative, but {what} requires {value}, so the low bound of its box is >= 0"
+doc = "A box of a distance cutoff, RCUT2B or RCUTMB, reaches below 0 (a cutoff takes no AUTO box)."
 
 [[optim.checks]]
 msg = "OPTIM FIXWEIGHT requires FIXINDEX in the training configuration (FIXINDEX names the coefficients the FIXWEIGHT values hold)."
@@ -3658,13 +3655,38 @@ error = "OPTIM CGRID2B (1): the OPTIM CGRID2B line on line 1 selects this index 
 wrap = "root"
 context = "lines_blip"
 text = "OPTIM SGRID2B (1) 0 2"
-error = "OPTIM SGRID2B (1): the low bound 0 is not > 0, but the D2_Blip pair basis requires every SGRID2B width > 0 (a radial bump spans [c - w/s, c + w/s]; a width <= 0 has no support edge), so the low bound of its box is > 0"
+error = "OPTIM SGRID2B (1): the low bound 0 is not > 0, but the D2_Blip pair basis requires every SGRID2B width > 0 (a radial bump spans [c - w/s, c + w/s]; a width <= 0 has no support edge), so the low bound of its box is > 0 (an AUTO FRAC box is clamped at 1e-06)"
 
 [[optim.invalid]]
 wrap = "root"
 context = "lines_ream"
 text = "OPTIM WATOM (1) 0 2"
-error = "OPTIM WATOM (1): the low bound 0 is not > 0, but RHOFORM NONNEG requires every density pair weight W > 0, so the low bound of its box is > 0"
+error = "OPTIM WATOM (1): the low bound 0 is not > 0, but RHOFORM NONNEG requires every density pair weight W > 0, so the low bound of its box is > 0 (an AUTO FRAC box is clamped at 1e-06)"
+
+[[optim.invalid]]
+wrap = "root"
+context = "lines_blipenv"
+doc = "RCUTENV, the density at which the envelope of DM_mBlipEnv reaches 1, below 0."
+text = "OPTIM RCUTENV (1) -1 7"
+error = "OPTIM RCUTENV (1): the low bound -1 is not > 0, but the DM_mBlipEnv descriptor requires every RCUTENV value > 0, so the low bound of its box is > 0 (an AUTO FRAC box is clamped at 1e-06)"
+
+[[optim.invalid]]
+wrap = "root"
+doc = "A Gaussian width of D2_BP from 0."
+text = "OPTIM SGRID2B (2) 0 2"
+error = "OPTIM SGRID2B (2): the low bound 0 is not > 0, but the D2_BP descriptor requires every SGRID2B value > 0, so the low bound of its box is > 0 (an AUTO FRAC box is clamped at 1e-06)"
+
+[[optim.invalid]]
+wrap = "root"
+doc = "A centre below 0."
+text = "OPTIM CGRID2B (2) -1 2.5"
+error = "OPTIM CGRID2B (2): the low bound -1 is negative, but the D2_BP descriptor requires every CGRID2B value >= 0, so the low bound of its box is >= 0 (its AUTO FRAC box, the default, is clamped at 0)"
+
+[[optim.invalid]]
+wrap = "root"
+doc = "A distance cutoff below 0."
+text = "OPTIM RCUT2B (1) -1 6"
+error = "OPTIM RCUT2B (1): the low bound -1 is negative, but the D2_BP descriptor requires every RCUT2B value >= 0, so the low bound of its box is >= 0"
 
 [[optim.invalid]]
 wrap = "root"
@@ -3672,12 +3694,6 @@ context = "lines_ream"
 text = "OPTIM AMPGRIDMB (2) -0.1 0.5"
 error = "OPTIM AMPGRIDMB (2): the low bound -0.1 is negative, but RHOFORM NONNEG requires every AMPGRIDMB amplitude >= 0, so the low bound of its box is >= 0 (its AUTO FRAC box, the default, is clamped at 0)"
 
-[[optim.invalid]]
-wrap = "root"
-context = "lines_blip"
-doc = "An AUTO box of a width of the radial bump basis that reaches below 0."
-text = "OPTIM SGRID2B (1) AUTO FRAC 2"
-error = "OPTIM SGRID2B (1): the AUTO box [-0.5, 1.5] has the low bound -0.5, which is not > 0, but the D2_Blip pair basis requires every SGRID2B width > 0 (a radial bump spans [c - w/s, c + w/s]; a width <= 0 has no support edge), so the low bound of its box is > 0"
 
 [[optim.invalid]]
 wrap = "root"
@@ -3742,9 +3758,10 @@ wrap = "root"
 text = "OPTIM CGRID2B (2) 1.5 2.5"
 
 [[form.examples]]
-doc = "Two values in one box, with the ASINH shape of scale 0.1."
+doc = "Two embedding centres, which take any sign, in one box, with the ASINH shape of scale 0.1."
 wrap = "root"
-text = "OPTIM SGRID2B (1-2) -0.5 1.5 ASINH 0.1"
+context = "lines_blipenv"
+text = "OPTIM CEMBFUNC (1-2) -0.5 2.5 ASINH 0.1"
 
 [[form.invalid]]
 wrap = "root"
@@ -3869,7 +3886,19 @@ doc = "A non-negative amplitude has a negative value in the configuration; {what
 
 [[form.checks]]
 msg = "OPTIM {key} ({index}): the seed {value} is negative, but {why}"
-doc = "A value that every fit takes >= 0 (the relative part b of FSIGMA or SSIGMA, LAMBDA) is negative in the training configuration; {why} says what the fit takes."
+doc = """\
+A value that must be >= 0 is negative in the training configuration: \
+one that every fit takes >= 0 (the relative part b of FSIGMA or SSIGMA, \
+LAMBDA), or a centre ("the D2_BP descriptor requires every CGRID2B value \
+>= 0"); {why} says what is required."""
+
+[[form.checks]]
+msg = "OPTIM {key} ({index}): the seed {value} is not > 0, but {what} requires {text}"
+doc = """\
+A value that must be > 0 is 0 or below in the training configuration \
+(a width, RCUTENV, WATOM under RHOFORM NONNEG or MONOTONE): no AUTO box \
+around it keeps to the rule; {what} names the rule and {text} what it \
+requires."""
 
 [[form.checks]]
 msg = "OPTIM {key} ({index}): the line is tagged LOG, and the AUTO box [{low}, {high}] reaches 0 or below, and a box tagged LOG lies above 0{hint}"
@@ -3897,17 +3926,28 @@ wrap = "root"
 text = "OPTIM CGRID2B (2) auto frac 0.2 log"
 
 [[form.examples]]
-doc = "The density at which the envelope of DM_mBlipEnv reaches 1, and no distance cutoff: RCUTENV 1.5 gives the box [0.75, 2.25]."
+doc = "The density at which the envelope of DM_mBlipEnv reaches 1, a value > 0 and no distance cutoff: RCUTENV 1.5 gives the RATIO 2 box [0.75, 3]."
 wrap = "root"
 context = "lines_blipenv"
 text = "OPTIM RCUTENV (1) AUTO"
 
 [[form.examples]]
-doc = "A value of 0 of a key whose values stay positive, in a FRAC box with a FLOOR (read only: the D2_BP model refuses a width of 0)."
+doc = "A FRAC box of a value > 0 that reaches below 0, clamped at 1e-6: RCUTENV 1.5 gives the box [1e-06, 3.75]."
 wrap = "root"
-check = "parse"
-context = "lines_zero_width"
-text = "OPTIM SGRID2B (1) AUTO FRAC 0.5 FLOOR 0.5"
+context = "lines_blipenv"
+text = "OPTIM RCUTENV (1) AUTO FRAC 1.5"
+
+[[form.examples]]
+doc = "A FRAC box of a width of the radial bump basis that reaches below 0, clamped at 1e-6."
+wrap = "root"
+context = "lines_blip"
+text = "OPTIM SGRID2B (1) AUTO FRAC 2"
+
+[[form.examples]]
+doc = "A FRAC box of a centre at 0 with a FLOOR, clamped at 0: [0, 0.5]."
+wrap = "root"
+context = "lines_blipenv"
+text = "OPTIM CGRIDMB (1) AUTO FRAC 0 FLOOR 0.5"
 
 [[form.invalid]]
 wrap = "root"
@@ -3966,7 +4006,7 @@ error = "OPTIM LAMBDA (1): the seed -2 is negative, but LAMBDA is the ridge pena
 [[form.invalid]]
 wrap = "root"
 text = "OPTIM CGRID2B (2) AUTO FRAC 1.5 LOG"
-error = "OPTIM CGRID2B (2): the line is tagged LOG, and the AUTO box [-1, 5] reaches 0 or below, and a box tagged LOG lies above 0; AUTO RATIO <f> gives a box above 0 around this seed; a line without a tag, or tagged LIN or ASINH <c>, takes this box"
+error = "OPTIM CGRID2B (2): the line is tagged LOG, and the AUTO box [0, 5] reaches 0 or below, and a box tagged LOG lies above 0; AUTO RATIO <f> gives a box above 0 around this seed; a line without a tag, or tagged LIN or ASINH <c>, takes this box"
 
 [[form.invalid]]
 wrap = "root"
@@ -3989,9 +4029,9 @@ error = "OPTIM CGRID2B: '0.1' is not an AUTO option (RATIO, FRAC, FLOOR or GROUP
 [[form.invalid]]
 wrap = "root"
 context = "lines_zero_width"
-doc = "A key whose values stay positive, with a value of 0 and the default geometric box."
-text = "OPTIM SGRID2B (1) AUTO"
-error = "OPTIM SGRID2B (1): AUTO without RATIO or FRAC gives SGRID2B the box [seed/2, seed*2] (RATIO 2), which needs a seed other than 0, and the seed is 0; AUTO FRAC <p> FLOOR <a> gives a box of half-width a or more around it"
+doc = "A width of 0, which must be > 0."
+text = "OPTIM SGRID2B (1) AUTO FRAC 0.5 FLOOR 0.5"
+error = "OPTIM SGRID2B (1): the seed 0 is not > 0, but the D2_BP descriptor requires every SGRID2B value > 0"
 
 [[form.invalid]]
 wrap = "root"
@@ -4004,7 +4044,7 @@ error = "OPTIM WDBFILE (2): AUTO without RATIO or FRAC gives WDBFILE the box [se
 wrap = "root"
 doc = "A box past the largest double."
 text = "OPTIM CGRID2B (2) AUTO FRAC 1e308"
-error = "OPTIM CGRID2B (2): the AUTO box [-inf, inf] around the seed 2 is not finite; a smaller RATIO or FRAC gives a finite box"
+error = "OPTIM CGRID2B (2): the AUTO box [0, inf] around the seed 2 is not finite; a smaller RATIO or FRAC gives a finite box"
 
 # ---------------------------------------------- the AUTO options ------
 
@@ -4416,7 +4456,8 @@ doc = "c is 0 or below."
 
 [[line_option.examples]]
 wrap = "root"
-text = "OPTIM CGRID2B (2) -1 2.5 asinh 0.5"
+context = "lines_blipenv"
+text = "OPTIM CEMBFUNC (1) -1 2.5 asinh 0.5"
 
 [[line_option.invalid]]
 wrap = "root"

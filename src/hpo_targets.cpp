@@ -1197,8 +1197,10 @@ void HPOTargets::write_search_space_files(const std::string& dir) const {
       "#                named in FIXINDEX); single-value keys other than FIXWEIGHT carry no index\n"
       "#   lo, hi       real bounds the optimiser may not leave\n"
       "#   origin       OPTIM = explicit bounds; AUTO FRAC / AUTO RATIO = derived from the seed;\n"
-      "#                AUTO FRAC>=0 = AUTO FRAC with lo = max(0, x0 - d) (AMPGRIDMB under\n"
-      "#                RHOFORM NONNEG / MONOTONE); lo is 0 only where x0 - d < 0\n"
+      "#                AUTO FRAC>=0 = AUTO FRAC with lo = max(0, x0 - d), a key whose values are\n"
+      "#                >= 0 (the centres, AMPGRIDMB under RHOFORM NONNEG / MONOTONE);\n"
+      "#                AUTO FRAC>0 = AUTO FRAC with lo clamped at 1e-6, a key whose values\n"
+      "#                are > 0 (the widths, RCUTENV), where x0 - d is not above 0\n"
       "#   x0           starting point (real units)\n"
       "#   scale, c     shape of the internal coordinate: LIN, LOG (ln x) or ASINH (asinh(x/c));\n"
       "#                c is the ASINH linear scale, 1 for the other shapes\n"
@@ -1290,6 +1292,7 @@ BoxOrigin box_origin_of(mlip::OptimBoxOrigin o) {
     case mlip::OptimBoxOrigin::AutoLinear:       return BoxOrigin::AutoLinear;
     case mlip::OptimBoxOrigin::AutoGeometric:    return BoxOrigin::AutoGeometric;
     case mlip::OptimBoxOrigin::AutoLinearNonneg: return BoxOrigin::AutoLinearNonneg;
+    case mlip::OptimBoxOrigin::AutoLinearPositive: return BoxOrigin::AutoLinearPositive;
   }
   return BoxOrigin::Explicit;
 }

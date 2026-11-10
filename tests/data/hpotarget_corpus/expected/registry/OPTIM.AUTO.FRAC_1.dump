@@ -67,12 +67,12 @@ optimap.size = 1
 optimap[CGRID2B].config = ["0", "2"]
 optimap[CGRID2B].size = 2
 optimap[CGRID2B][0].line = 1
-optimap[CGRID2B][0].low = -0.25
+optimap[CGRID2B][0].low = 0
 optimap[CGRID2B][0].high = 0.25
 optimap[CGRID2B][0].scale = LIN
 optimap[CGRID2B][0].c = 1
 optimap[CGRID2B][0].tagged = false
-optimap[CGRID2B][0].origin = AUTO FRAC
+optimap[CGRID2B][0].origin = AUTO FRAC>=0
 optimap[CGRID2B][1].line = 1
 optimap[CGRID2B][1].low = 1.75
 optimap[CGRID2B][1].high = 2.25
