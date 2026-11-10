@@ -3490,10 +3490,11 @@ An explicit box of a value that must be positive reaches 0 or below; \
 {what} names the rule and {value} what it requires. The values are a \
 width (SGRID2B, SGRIDMB, SEMBFUNC: "the D2_BP descriptor requires every \
 SGRID2B value > 0"; of a radial bump basis, "the D2_Blip pair basis \
-requires every SGRID2B width > 0"), RCUTENV, and a positive DM_Embed \
-parameter; so are WATOM under RHOFORM NONNEG or MONOTONE, and SGRIDMB \
-under MONOTONE and, for the Gaussian basis, under NONNEG. An AUTO box of \
-such a value that reaches 0 or below is clamped at half its seed."""
+requires every SGRID2B width > 0"), RCUTENV, a positive DM_Embed \
+parameter, and WATOM under RHOFORM NONNEG or MONOTONE, where {what} names \
+the form, as it does for SGRIDMB under MONOTONE and, for the Gaussian \
+basis, under NONNEG. An AUTO FRAC box of such a value that reaches 0 or \
+below starts at half its seed."""
 
 [[optim.checks]]
 msg = "OPTIM {key} ({index}): the low bound {low} is negative, but {what} requires {value}, so the low bound of its box is >= 0 (its AUTO FRAC box, the default, is clamped at 0)"
@@ -3721,7 +3722,8 @@ reads it declares: > 0 for a width (SGRID2B, SGRIDMB, SEMBFUNC) and for \
 RCUTENV, >= 0 for a distance cutoff (RCUT2B, RCUTMB) and a centre \
 (CGRID2B, CGRIDMB). A DM_REAM density form and a radial bump basis have \
 rules of their own (AMPGRIDMB >= 0 and WATOM > 0 under RHOFORM NONNEG or \
-MONOTONE). A box whose <low> is below the limit is refused at its line."""
+MONOTONE). A box whose <low> the key does not admit (below 0 for a value \
+>= 0, 0 or below for a value > 0) is refused at its line."""
 
 [[form.args]]
 name = "indices"
@@ -3853,10 +3855,10 @@ Without RATIO or FRAC the rule is RATIO 2 for the keys whose values stay \
 positive (SGRID2B, SGRIDMB, SEMBFUNC, RCUTENV, ESIGMA, WDBFILE, and the \
 absolute part a of FSIGMA and SSIGMA) and for a positive DM_Embed \
 parameter other than an amplitude, and FRAC 0.5 for the others. A FRAC \
-box that reaches below the lower limit of its key (the limit of an \
-explicit box, OPTIM <KEY> (<indices>) <low> <high>) is \
-clamped at it: at 0 for a key whose values are >= 0, at half its seed \
-for a key whose values are > 0; a seed below the limit is refused. The \
+box whose low end its key does not admit (the limit of an explicit box, \
+OPTIM <KEY> (<indices>) <low> <high>: below 0 for a value >= 0, 0 or \
+below for a value > 0) starts at 0 for a value >= 0 and at half its seed \
+for a value > 0; a seed the key does not admit is refused. The \
 non-negative amplitudes (AMPGRIDMB under RHOFORM NONNEG or MONOTONE, a \
 DM_Embed density with non-negative amplitudes) keep a FRAC box at or \
 above 0, and take GROUP_FLOOR 1e-3 when the line sets neither FLOOR nor \
