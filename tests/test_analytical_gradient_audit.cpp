@@ -150,12 +150,16 @@ std::string many_body(const std::string& name, double rc)
         return "INITMB true\nTYPEMB DM_Blip 0 2 2 Ta Ta\n" + grid + cut;
     if (name == "DM_EAD")
         return "INITMB true\nTYPEMB DM_EAD 1 2 2 Ta Ta\n" + grid + cut;
+    /* The Gaussian centre of DM_mBlip and DM_mBlipEnv is 0.1, so that the
+     * box of the audit, [0.05, 0.15], keeps to the lower limit of a centre
+     * (CGRIDMB >= 0), which tadah hpo holds a box to, and the central
+     * difference stays inside it; it was 0, with the box [-0.05, 0.05]. */
     if (name == "DM_mBlip")
         return "INITMB true\nTYPEMB DM_mBlip 0 1 1 2 2 Ta Ta\n"
-               "CGRIDMB 0.0\nSGRIDMB 0.2\n" + emb + cut;
+               "CGRIDMB 0.1\nSGRIDMB 0.2\n" + emb + cut;
     if (name == "DM_mBlipEnv")
         return "INITMB true\nTYPEMB DM_mBlipEnv 0 1 1 2 2 Ta Ta\n"
-               "CGRIDMB 0.0\nSGRIDMB 0.2\n" + emb + "RCUTENV 4.0\n" + cut;
+               "CGRIDMB 0.1\nSGRIDMB 0.2\n" + emb + "RCUTENV 4.0\n" + cut;
     if (name == "DM_mRLR" || name == "DM_mSQRT")
         return "INITMB true\nTYPEMB " + name + " 0 2 2 2 2 Ta Ta\n" + grid +
                emb + cut;
@@ -170,7 +174,7 @@ std::string many_body(const std::string& name, double rc)
         return "INITMB true\nTYPEMB DM_mJoin\n"
                "TYPEMB DM_mBlip 0 1 1 2 2 Ta Ta\n" + kReamLine +
                "RCTYPEMB Cut_Cos Cut_Cos\nRCUTMB " + num(rc) + " " + num(rc) +
-               "\nCGRIDMB 0.0 2.8 3.6 4.4\nSGRIDMB 0.2 3.0 3.0 3.0\n"
+               "\nCGRIDMB 0.1 2.8 3.6 4.4\nSGRIDMB 0.2 3.0 3.0 3.0\n"
                "AMPGRIDMB 0.5 0.3 0.1\n"
                "CEMBFUNC 1.0 2.0 -0.2 0.3 0.8 1.3 1.8\n"
                "SEMBFUNC 1.0 1.0 2.0 2.0 2.0 2.0 2.0\nRHOFORM SIGNED\n";
