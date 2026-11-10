@@ -315,9 +315,10 @@ TEST_CASE("RHOFORM NONNEG/MONOTONE: explicit boxes that reach an invalid "
   SECTION("WATOM lo <= 0, explicit or AUTO") {
     CHECK_THAT(err("NONNEG", "OPTIM WATOM (1) 0 2\n"),
                Catch::Contains("density pair weight W > 0"));
-    /* An AUTO box that reaches 0 (WATOM 1, FRAC 1) is clamped at 1e-6,
-     * [1e-6, 2]. Before the fix that clamps an AUTO box at the low-bound
-     * rule of its key: refused ("... density pair weight W > 0"). */
+    /* An AUTO box that reaches 0 (WATOM 1, FRAC 1) is clamped at half its
+     * seed, [0.5, 2]. Before the fix that clamps an AUTO box at the
+     * low-bound rule of its key: refused ("... density pair weight W >
+     * 0"). */
     CHECK(err("MONOTONE", "OPTIM WATOM (1) AUTO FRAC 1\n").empty());
     CHECK(err("NONNEG", "OPTIM WATOM (1) 0.5 2\n").empty());
     CHECK(err("SIGNED", "OPTIM WATOM (1) 0 2\n").empty());

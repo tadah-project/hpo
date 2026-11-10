@@ -185,9 +185,9 @@ TEST_CASE("an OPTIM box whose low bound on a radial bump width is <= 0 is "
                  Catch::Contains("OPTIM SGRID2B (1)") &&
                      Catch::Contains("the low bound -1 is not > 0"));
       // an AUTO FRAC box reaching below 0 (seed 2, half-width 3) is
-      // clamped at 1e-6, [1e-6, 5]. Before the fix that clamps an AUTO box
-      // at the low-bound rule of its key: refused ("... every SGRID2B
-      // width > 0").
+      // clamped at half its seed, [1, 5]. Before the fix that clamps an
+      // AUTO box at the low-bound rule of its key: refused ("... every
+      // SGRID2B width > 0").
       CHECK(parse_error(blip_ctx("2.0 1.0", cutoff),
                         "OPTIM SGRID2B (1) AUTO FRAC 1.5\n" + tail).empty());
       CHECK(parse_error(blip_ctx("2.0 1.0", cutoff),
