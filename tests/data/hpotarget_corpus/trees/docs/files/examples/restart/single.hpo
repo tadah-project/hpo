@@ -1,0 +1,23 @@
+# Target file (--hpotarget): the search of config.hpo without RESTART. Its
+# budget of 207 calls is what config.hpo makes in all: its evaluations and
+# the calls that the run answers from its record.
+
+# The search space and the loss of Tutorial Unit 2.
+OPTIM      RCUT2B (1) 6.0 7.5
+OPTIM      RCUTMB (1) 4.0 7.0
+OPTIM      SGRIDMB (1) 0.05 1.0 LOG
+# Fixed L2 loss-term weights are 1/(chosen accuracy)^2.
+PC_ERMSE   0 0.25         # 2 meV/atom
+PC_FRMSE   0 100          # 0.1 eV/Å
+PC_SRMSE_GPA 0 4          # 0.5 GPa
+
+OPTIMIZER
+    LIB      NLOPT
+    ALGO     LN_SBPLX
+    # MAXEVAL counts NLopt calls, including points already evaluated that
+    # the run answers from its record without fitting the potential again,
+    # so the run makes fewer evaluations than calls.
+    MAXEVAL  207
+    STEP     0.25         # a guessed start, as in Unit 2
+    THREADS  1            # one worker: the search runs one candidate at a time
+ENDOPTIMIZER

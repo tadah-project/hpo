@@ -1,0 +1,11 @@
+Quantity,Value
+Best loss (config.hpo),13.749
+Best loss (threads.hpo),14.338
+Best RCUT2B (Å) (config.hpo),6.274
+Best RCUTMB (Å) (config.hpo),4.675
+Best CGRIDMB (Å) (config.hpo),1.75
+Best SGRIDMB (Å^-2) (config.hpo),0.992
+Best RCUT2B (Å) (threads.hpo),6.299
+Best RCUTMB (Å) (threads.hpo),4.654
+Best CGRIDMB (Å) (threads.hpo),0.338
+Best SGRIDMB (Å^-2) (threads.hpo),0.1453

@@ -1,0 +1,14 @@
+Quantity,Value
+Coefficient 20 of unpinned.tadah (eV),-2.496
+Coefficient 25 of unpinned.tadah (eV),6.546
+Coefficient 26 of unpinned.tadah (eV),0
+Coefficient 27 of unpinned.tadah (eV),0
+Coefficient 28 of unpinned.tadah (eV),0
+Best loss,3927.1
+Best FIXWEIGHT[26] (eV),5.154
+Energy RMSE ta_md_val (meV/atom) (config.hpo),12.97
+Energy RMSE ta_md_ext_train (meV/atom) (config.hpo),199.7
+Force RMSE ta_md_val (eV/Å) (config.hpo),0.3338
+Force RMSE ta_md_ext_train (eV/Å) (config.hpo),2.304
+Stress RMSE ta_md_val (GPa) (config.hpo),1.120
+Stress RMSE ta_md_ext_train (GPa) (config.hpo),24.71

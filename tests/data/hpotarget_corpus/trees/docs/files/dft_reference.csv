@@ -1,0 +1,11 @@
+quantity,value,unit,source,method
+free_atom_energy,-3.69807734,eV,COHESIVE_ENERGY/SPIN_POLARISED/OUTCAR,"spin-polarised Ta atom (3 muB) in a 16.6 A cubic box, Gamma, ENCUT 630, Gaussian sigma 0.002 eV, ISYM 0; F = E0; the --eshift of every dataset"
+Ecoh,8.11398,eV/atom,ELASTIC/archive_original_P0/OUTCAR COHESIVE_ENERGY/SPIN_POLARISED/OUTCAR,"-(F_bulk/atom - F_atom); bcc 2-atom cell a=3.320087 A, MP 18^3, ENCUT 630, MP sigma 0.2; F = free energy TOTEN (what the datasets store)"
+a0,3.32011,Å,GEOMETRY_OPTIMIZATION3_0.0001GPa/STEP_1/OUTCAR,"ISIF 3 relaxation of the 2-atom bcc cell, ENCUT 630, MP 18^3, MP sigma 0.2, EDIFFG -1e-4; final P = 0.01 kB"
+C11,264.2,GPa,ELASTIC/P000/ss_xp/OUTCAR ELASTIC/P000/ss_xm/OUTCAR,"stress-strain, central difference of the stress at normal strain +-0.01 on the 2-atom cell a=3.3200 A (P=0.019 GPa), MP 18^3, ENCUT 630, EDIFF 1e-8"
+C12,161.5,GPa,ELASTIC/P000/ss_xp/OUTCAR ELASTIC/P000/ss_xm/OUTCAR,as C11 (transverse stress)
+C44,74.8,GPa,ELASTIC/P000/ss_sp/OUTCAR ELASTIC/P000/ss_sm/OUTCAR,"as C11, shear strain gamma_yz = +-0.01"
+B,195.7,GPa,ELASTIC/P000/ss_*/OUTCAR,(C11 + 2 C12)/3
+B_eos,195.4,GPa,HS_FROZEN_PHONON/a*/OUTCAR,"third-order Birch-Murnaghan fit of F/atom vs V, a = 3.15-3.49 A (35 54-atom cells, MP 6^3); a0 of that fit 3.32011 A, B' 3.76"
+Evf,2.9873,eV,HS_VACANCY/bulk54/OUTCAR HS_VACANCY/vac53/OUTCAR,"F(vac53, ions relaxed, cell fixed) - 53/54 F(bulk54); 3x3x3 cell a=3.320087 A, Gamma-centred 6^3 for both, ENCUT 630, MP sigma 0.2; sigma->0 energies give 3.0117 eV"
+Evf_unrelaxed,3.0111,eV,HS_VACANCY/bulk54/OUTCAR HS_VACANCY/vac53/OUTCAR,"as Evf, first ionic step of vac53 (unrelaxed)"

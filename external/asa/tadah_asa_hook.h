@@ -56,6 +56,16 @@ typedef void (*tadah_asa_parallel_hook_fn) (
  * driver before calling asa(); reset to NULL after the call. */
 extern tadah_asa_parallel_hook_fn tadah_asa_parallel_hook;
 
+/* The common asa() exit calls this observer with its internal totals,
+ * before asa_exit() restores OPTIONS->N_Generated/N_Accepted to their
+ * at-best snapshots. Cached states and states consumed after the last
+ * cost callback are included. The observer must not throw or change ASA
+ * state. Installed and reset under the same single-instance mutex as
+ * the parallel hook; NULL leaves the upstream exit unchanged. */
+typedef void (*tadah_asa_final_counters_hook_fn) (
+    LONG_INT generated, LONG_INT accepted, USER_DEFINES * options);
+extern tadah_asa_final_counters_hook_fn tadah_asa_final_counters_hook;
+
 /* Live mirror of asa()'s *current_cost_temperature (the acceptance
  * temperature), refreshed by the patched spawn region before every
  * block-evaluation hook call. The TADAH driver resets it to NaN before

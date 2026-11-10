@@ -1,0 +1,32 @@
+# Target file (--hpotarget): a gradient refinement of Unit 2's best point
+# with the cohesive energy of the relaxed crystal in the loss.
+
+# The bounds match Unit 2, retaining its range of pair and density cutoffs
+# and density decay rates rather than restricting the refinement locally.
+OPTIM      RCUT2B (1) 6.0 7.5
+OPTIM      RCUTMB (1) 4.0 7.0
+OPTIM      SGRIDMB (1) 0.05 1.0 LOG
+
+# Loss-term weights are 1/(fixed accuracy)^2 in each term's units.
+PC_ERMSE   0 0.25         # 2 meV/atom
+PC_FRMSE   0 100          # 0.1 eV/Å
+# The MD data hold no perfect crystal at 0 K. Its cohesive energy (eV/atom,
+# DFT) is a target here, not only a guard against a broken crystal, so it
+# gets the acceptable error of the energies, 2 meV/atom. The lattice
+# constant starts at the DFT value; a potential that relaxes it out of
+# 3.1-3.5 Å fails the evaluation. The loss-term weight remains fixed at
+# 1/(0.002 eV/atom)^2 = 2.5e5.
+PC_OBSERVABLE cohesive_energy --species Ta --target 8.11398 \
+              --weight 2.5e5 --hotvar a0 3.1 3.5 3.32011
+
+OPTIMIZER
+    LIB      DLIB
+    ALGO     BFGS
+    THREADS  1
+    # An analytical gradient counts as one evaluation whatever the number
+    # of search parameters. At an interior point, central differences need
+    # six loss evaluations here. An iteration also evaluates its line search.
+    # The budget leaves room for line-search trials; stopping tolerances
+    # can end the refinement before this limit.
+    MAXEVAL  80
+ENDOPTIMIZER

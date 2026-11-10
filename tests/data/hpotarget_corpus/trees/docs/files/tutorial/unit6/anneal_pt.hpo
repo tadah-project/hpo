@@ -1,0 +1,33 @@
+# Target file (--hpotarget): parallel tempering with the temperatures
+# fixed after the calibration run (anneal_pt_calibrate.hpo).
+
+# The search space and losses of Unit 2.
+OPTIM      RCUT2B (1) 6.0 7.5
+OPTIM      RCUTMB (1) 4.0 7.0
+OPTIM      SGRIDMB (1) 0.05 1.0 LOG
+# Fixed accuracies set the L2 loss-term weights, as in Unit 2.
+PC_ERMSE   0 0.25         # 1/(2 meV/atom)^2
+PC_FRMSE   0 100          # 1/(0.1 eV/Å)^2
+PC_SRMSE_GPA 0 4          # 1/(0.5 GPa)^2
+
+OPTIMIZER
+    LIB      TADAH
+    ALGO     ANNEAL_PT
+    MAXEVAL  800          # about 200 moves of each replica
+    SEED     1
+    THREADS  2            # two workers; 1 or 4 give the same result
+    PARAM    REPLICAS 4
+    # The T_HOT that anneal_pt_calibrate.hpo calibrates (its second pass,
+    # measured with the moves after the step warm-up), to three digits.
+    PARAM    T_HOT 0.309
+    # A rise of 0.01 is the smallest loss difference worth resolving.
+    # This narrows the span from 1000 to 30.9 over the three ladder gaps.
+    PARAM    T_COLD 0.01
+    # The short warm-up tests no coordinate's scale: each ends at
+    # 0.1/sqrt(3) of its range. FIXED reuses these scales without warm-up;
+    # retaining STEP_FRAC 0.1 would instead use the pass-1 kernel.
+    PARAM    STEP_MODE FIXED
+    PARAM    STEP_FRAC 0.057735
+    # A pair is attempted every second epoch: 20 attempts per report.
+    PARAM    SWAP_WINDOW 40
+ENDOPTIMIZER

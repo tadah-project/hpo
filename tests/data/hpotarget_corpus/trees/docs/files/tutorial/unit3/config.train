@@ -1,0 +1,35 @@
+# Training configuration (--config): the potential of Unit 2, started at the
+# values its search found, trained on solid MD with and without a vacancy.
+DBFILE     ../../data/ta_md_train.tadahdb  # 88 snapshots, 54 atoms
+DBFILE     ../../data/ta_vac_train.tadahdb # 40 snapshots, 53 atoms
+FORCE      true
+STRESS     true
+# The error scales of Unit 2 treat both cell sizes alike.
+ESIGMA     2             # meV/atom
+FSIGMA     0.1           # eV/Å
+SSIGMA     0.5           # GPa
+
+# The pair term of Unit 2.
+INIT2B     true
+TYPE2B     D2_Blip 17 17 Ta Ta
+RCTYPE2B   Cut_Cos
+RCUT2B     6.60162340810112447 # Unit 2's best; searched over 6.0-8.0
+CGRID2B    LIN 17 2.0 6.0
+SGRID2B    LIN 17 2.0 2.0
+
+# The many-body term of Unit 2.
+INITMB     true
+TYPEMB     DM_mBlipEnv 0 1 1 11 11 Ta Ta
+RCTYPEMB   Cut_Cos
+RCUTMB     5.31216961788060082 # Unit 2's best; searched over 4.0-7.0
+CGRIDMB    0.0
+SGRIDMB    0.1510383506741243 # Unit 2's best; centre of the AUTO box
+WATOM      3.0
+CEMBFUNC   0 1 2 3 4 5 6 7 8 9 10
+SEMBFUNC   1 1 1 1 1 1 1 1 1 1 1
+RCUTENV    1.0
+
+MODEL      M_BLR BF_Linear
+# Evidence regularisation limits coefficients poorly determined by the data.
+OALGO      3
+LAMBDA     -1

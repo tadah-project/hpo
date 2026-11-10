@@ -1,0 +1,38 @@
+# Target file (--hpotarget): a local search that starts again from other
+# points after 20 optimiser calls without a lower best (the RESTART block).
+# single.hpo runs the same search without it.
+
+# The search space and the loss of Tutorial Unit 2.
+OPTIM      RCUT2B (1) 6.0 7.5
+OPTIM      RCUTMB (1) 4.0 7.0
+OPTIM      SGRIDMB (1) 0.05 1.0 LOG
+# Fixed L2 loss-term weights are 1/(chosen accuracy)^2.
+PC_ERMSE   0 0.25         # 2 meV/atom
+PC_FRMSE   0 100          # 0.1 eV/Å
+PC_SRMSE_GPA 0 4          # 0.5 GPa
+
+OPTIMIZER
+    STRATEGY
+        LIB      NLOPT
+        # LN_BOBYQA still finds a new best at the last of the 75 calls of
+        # Unit 2; LN_SBPLX stagnates, so its window fills.
+        ALGO     LN_SBPLX
+        # The first search stagnates well within 200 calls; reaching MAXEVAL
+        # would end the run without a restart.
+        MAXEVAL  200
+        STEP     0.25         # a guessed start, as in Unit 2
+        RESTART
+            # A 20-call window lets the first search reach its best (eval 119)
+            # and ends it in the next pause; single.hpo finds only small gains
+            # after that pause. A restart must beat the run's best within it.
+            AFTER_STAGNATION 20
+            # Three unsuccessful restarts cost at most 60 further calls;
+            # at most 4 x 200 if they improve (MAXEVAL bounds each search).
+            MAX      3
+            METHOD   SOBOL 1  # one start per restart, spread over the box
+            # Point 0 is the box corner; restart r draws point r+1.
+            SEED     0
+        ENDRESTART
+        THREADS  1            # one worker: one candidate at a time
+    ENDSTRATEGY
+ENDOPTIMIZER

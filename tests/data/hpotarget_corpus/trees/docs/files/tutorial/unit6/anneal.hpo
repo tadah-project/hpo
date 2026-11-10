@@ -1,0 +1,30 @@
+# Target file (--hpotarget): the search of Unit 2 by simulated annealing,
+# which also accepts moves that raise the loss and can leave a basin that
+# a local search stays in.
+
+# The search space and losses of Unit 2.
+OPTIM      RCUT2B (1) 6.0 7.5
+OPTIM      RCUTMB (1) 4.0 7.0
+OPTIM      SGRIDMB (1) 0.05 1.0 LOG
+# Fixed accuracies set the L2 loss-term weights, as in Unit 2.
+PC_ERMSE   0 0.25         # 1/(2 meV/atom)^2
+PC_FRMSE   0 100          # 1/(0.1 eV/Å)^2
+PC_SRMSE_GPA 0 4          # 1/(0.5 GPa)^2
+
+OPTIMIZER
+    LIB      TADAH
+    ALGO     ANNEAL
+    MAXEVAL  300          # the start and 20 probes leave 279 annealing moves
+    SEED     1            # the moves and their acceptance are random
+    # Gaussian proposal scales are a tenth of each range (0.15 Å
+    # in RCUT2B, 0.3 Å in RCUTMB, a factor 1.35 in SGRIDMB): small enough
+    # to stay near a good point, large enough to leave a basin while the
+    # temperature is high.
+    PARAM    STEP_FRAC 0.1
+    # No T_INIT: the start temperature is measured from the rise of such
+    # moves. The temperature is in loss units; the cooling schedule ends
+    # at 0.01, as rises below 0.07 % of the loss of Unit 2 are not worth
+    # resolving.
+    PARAM    T_MIN 0.01
+    THREADS  1            # one worker: ANNEAL tries one move at a time
+ENDOPTIMIZER

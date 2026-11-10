@@ -1,0 +1,21 @@
+# Target file (--hpotarget): the search of config.hpo from other start
+# points. Only SEED differs.
+
+OPTIM      RCUT2B (1) 6.0 8.0
+OPTIM      RCUTMB (1) 3.3 8.0
+OPTIM      SGRIDMB (1) 0.01 1.0 LOG
+
+PC_ERMSE   0 0.25         # 2 meV/atom
+PC_FRMSE   0 100          # 0.1 eV/Å
+PC_SRMSE_GPA 0 4          # 0.5 GPa
+
+OPTIMIZER
+    LIB      DLIB
+    ALGO     GFS
+    THREADS  1
+    MAXEVAL  177
+    INIT
+        METHOD   SOBOL 8
+        SEED     2        # points 24-31; no point shared with SEED 1
+    ENDINIT
+ENDOPTIMIZER

@@ -1,0 +1,47 @@
+# Elastic constants C11, C12 and C44 (GPa) of bcc Ta: central differences
+# of the stress at strains of +-1 %, the method of the DFT values. The
+# cell is built with the zero-pressure a0 that ecoh_a0.in relaxes in the
+# same evaluation (its --hotvar a0), or with a0 given by --invar a0.
+# Internal-style captures keep full precision in later v_ formulas;
+# equal-style references in those formulas pass through 15-digit text.
+
+# The LAMMPS instance serves the next evaluation too: clear removes its
+# atoms and settings but keeps the variables.
+clear
+units           metal
+atom_style      atomic
+boundary        p p p
+lattice         bcc ${a0}
+region          box prism 0 1 0 1 0 1 0 0 0    # triclinic, for the shear
+create_box      1 box
+create_atoms    1 box
+mass            1 180.95
+pair_style      tadah
+pair_coeff      * * EXTERN Ta
+# The thermo line computes the pressure tensor at the end of every run,
+# so each pxx, pyy and pyz read below belongs to the cell strained last.
+thermo_style    custom step pe pxx pyy pyz
+# No ionic relaxation: every atom of bcc is a centre of inversion, so a
+# homogeneous strain leaves the forces zero.
+variable        d internal 0.01
+
+# LAMMPS reports the pressure, minus the stress, in bar:
+# C = (p(-d) - p(+d))/(2d), divided by 1e4 for GPa.
+# Shear strain yz: the cell tilted by +-d (engineering strain).
+change_box      all yz final $(v_d*lz) remap units box
+run             0
+variable        pyz1 internal $(pyz)
+change_box      all yz final $(-v_d*lz) remap units box
+run             0
+variable        C44 equal $((pyz-v_pyz1)/(2*v_d*1e4))
+
+# Normal strain along x, from the untilted cell.
+change_box      all yz final 0.0 remap units box
+change_box      all x scale $(1+v_d) remap
+run             0
+variable        pxx1 internal $(pxx)
+variable        pyy1 internal $(pyy)
+change_box      all x scale $((1-v_d)/(1+v_d)) remap
+run             0
+variable        C11 equal $((pxx-v_pxx1)/(2*v_d*1e4))
+variable        C12 equal $((pyy-v_pyy1)/(2*v_d*1e4))

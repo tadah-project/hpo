@@ -1,0 +1,96 @@
+# The runs of the Nested Fitting pages: one line per run of the commands of
+# a page under CTest (tadah_nfp_<id>, label examples;
+# tests/nfp_docs/check_nfp_run.py runs them and describes each field).
+# Every page under docs/source/nfp that runs tadah in a bash code block,
+# and every directory here that holds a target file (*.hpo) or a training
+# configuration (*.train), needs a line: tadah_docs_tools fails otherwise.
+#
+#   <id> | <page.rst> | <dir> | <labels> | <timeout> | <tolerances>
+#        [| <searches>]
+#
+# id          the CTest entry is tadah_nfp_<id> (letters, digits, '_')
+# page.rst    the page whose bash code blocks run, relative to docs/source
+# dir         the directory they run in, relative to this directory; it
+#             holds expected.csv (Quantity,Value), the results the page
+#             quotes
+# labels      CTest labels besides examples, separated by ',', or '-';
+#             slow: a run longer than about two minutes, whose page needs
+#             a second line without slow, a short variant
+# timeout     seconds the commands may take together: a limit that stops
+#             a run that hangs, about 30 times the time of the run on a
+#             quiet machine and at least 900
+# tolerances  <name>=<relative tolerance> or <name>=abs:<tolerance>,
+#             separated by ',', or '-'; one per kind of row of
+#             expected.csv, named as check_nfp_run.py lists them
+#             (best_loss=1e-3, best_rcut2b=abs:0.01, energy_rmse=0.01);
+#             each at least the class of its rows (check_nfp_run.py,
+#             "Tolerance classes"): a loss 1e-3, a length abs:0.01 (Å), a
+#             count abs:0, every other quantity 1e-2, and a "- DFT" row
+#             1e-2 of its property, rounded up to one significant digit
+# searches    optional: the searches of the page the line runs, separated
+#             by ',', each the --hpotarget argument as the page writes it
+#             or run <n>; each runs with the commands after it up to the
+#             next search, and only their rows of expected.csv are
+#             measured. Without it the line runs every command.
+#
+# A tolerance looser than its class is named in the comment above its
+# line. It covers the results of the line on five BLAS code paths (MKL on
+# its default and its compatible path, OpenBLAS loaded in its place on
+# its SkylakeX, Haswell and Nehalem kernels): twice the largest difference from the value of
+# expected.csv, rounded up to one significant digit. A search that compares
+# two losses otherwise on another path can take another way and end at
+# another point, after another number of evaluations when a test on the
+# loss stops it. Where the loss is flat near the best, the tolerance also
+# covers the spread of the quantity (for an error, of the validation error
+# of its kind) over the evaluations whose loss lies within 1e-3 of the best
+# loss.
+
+unit1 | nfp/tutorial/unit1.rst | tutorial/unit1 | - | 900 | best_loss=1e-3, best_rcut2b=abs:0.01
+quickstart | nfp/quickstart.rst | tutorial/unit1 | - | 900 | best_loss=1e-3, best_rcut2b=abs:0.01
+# Looser: best_loss, best_rcut2b, best_rcutmb, best_sgridmb.
+unit2 | nfp/tutorial/unit2.rst | tutorial/unit2 | - | 1000 | best_loss=2e-3, best_rcut2b=abs:0.03, best_rcutmb=abs:0.05, best_sgridmb=0.02
+# Looser: best_loss, best_rcut2b, best_rcutmb, best_sgridmb, energy_rmse,
+# stress_rmse.
+unit3 | nfp/tutorial/unit3.rst | tutorial/unit3 | - | 1700 | best_loss=8e-3, best_rcut2b=abs:0.3, best_rcutmb=abs:1, best_sgridmb=0.3, energy_rmse=0.02, force_rmse=0.01, stress_rmse=0.2
+# Looser: best_loss, best_esigma, best_rcut2b, best_rcutmb, best_frmse,
+# best_srmse_gpa, best_c11, best_c12, best_c44.
+unit4 | nfp/tutorial/unit4.rst | tutorial/unit4 | - | 1900 | best_loss=0.02, start_loss=1e-3, best_esigma=0.2, best_rcut2b=abs:0.05, best_rcutmb=abs:0.02, best_sgridmb=0.01, start_ermse=0.01, best_ermse=0.01, start_frmse=0.01, best_frmse=0.02, start_srmse_gpa=0.01, best_srmse_gpa=0.05, start_ecoh=0.01, best_ecoh=0.01, start_a0=abs:0.01, best_a0=abs:0.01, start_evf=0.01, best_evf=0.01, start_c11=0.01, best_c11=0.02, start_c12=0.01, best_c12=0.06, start_c44=0.01, best_c44=0.02
+# Looser: best_rcut2b.
+unit5 | nfp/tutorial/unit5.rst | tutorial/unit5 | slow | 4900 | best_loss=1e-3, best_rcut2b=abs:0.02, best_rcutmb=abs:0.01, best_sgridmb=0.01, evaluations=abs:0
+# Looser: best_rcut2b.
+unit5_short | nfp/tutorial/unit5.rst | tutorial/unit5 | - | 2400 | best_loss=1e-3, best_rcut2b=abs:0.02, best_rcutmb=abs:0.01, best_sgridmb=0.01, evaluations=abs:0 | config.hpo
+unit6 | nfp/tutorial/unit6.rst | tutorial/unit6 | slow | 8900 | best_loss=1e-3, best_rcut2b=abs:0.01, best_rcutmb=abs:0.01, best_sgridmb=0.01, calibrated_t_hot=0.01
+unit6_short | nfp/tutorial/unit6.rst | tutorial/unit6 | - | 900 | best_loss=1e-3, calibrated_t_hot=0.01 | anneal_pt_calibrate.hpo
+# Looser: best_loss, best_rcut2b, best_rcutmb, best_sgridmb, energy_rmse,
+# force_rmse, stress_rmse.
+unit7 | nfp/tutorial/unit7.rst | tutorial/unit7 | slow | 3200 | best_loss=2e-3, best_rcut2b=abs:0.03, best_rcutmb=abs:0.2, best_sgridmb=0.04, energy_rmse=0.03, force_rmse=0.03, stress_rmse=0.03
+# Looser: best_loss, best_rcut2b, best_rcutmb, best_sgridmb, energy_rmse,
+# force_rmse, stress_rmse.
+unit7_short | nfp/tutorial/unit7.rst | tutorial/unit7 | - | 1000 | best_loss=2e-3, best_rcut2b=abs:0.03, best_rcutmb=abs:0.05, best_sgridmb=0.02, energy_rmse=0.03, force_rmse=0.03, stress_rmse=0.03 | ../unit2/config.hpo
+anneal_pt_full | nfp/examples/anneal_pt_full.rst | examples/anneal_pt_full | slow | 5800 | best_loss=1e-3, calibrated_t_hot=0.01, start_loss=1e-3, best_rcut2b=abs:0.01, best_rcutmb=abs:0.01, best_sgridmb=0.01, best_esigma=0.01, best_ssigma=0.01, start_ermse=0.01, best_ermse=0.01, start_frmse=0.01, best_frmse=0.01, start_srmse_gpa=0.01, best_srmse_gpa=0.01, best_ecoh=0.01, best_a0=abs:0.01, best_evf=0.01, best_c11=0.01, best_c12=0.01, best_c44=0.01, best_ecoh_dft=abs:0.09, best_a0_dft=abs:0.01, best_evf_dft=abs:0.03, best_c11_dft=abs:3, best_c12_dft=abs:2, best_c44_dft=abs:0.8
+anneal_pt_full_short | nfp/examples/anneal_pt_full.rst | examples/anneal_pt_full | - | 900 | best_loss=1e-3, calibrated_t_hot=0.01 | calibrate.hpo
+# Looser: best_rcut2b and best_cgridmb (threads.hpo), best_sgridmb.
+asa | nfp/examples/asa.rst | examples/asa | slow | 5800 | best_loss=1e-3, best_rcut2b=abs:0.02, best_rcutmb=abs:0.01, best_cgridmb=0.06, best_sgridmb=0.02
+# Looser: best_rcut2b, best_cgridmb, best_sgridmb.
+asa_short | nfp/examples/asa.rst | examples/asa | - | 1300 | best_loss=1e-3, best_rcut2b=abs:0.02, best_rcutmb=abs:0.01, best_cgridmb=0.06, best_sgridmb=0.02 | threads.hpo
+# Looser: best_rcutmb, best_sgridmb.
+failure_grading | nfp/examples/failure_grading.rst | examples/failure_grading | - | 1000 | best_loss=1e-3, best_rcut2b=abs:0.01, best_rcutmb=abs:0.4, best_sgridmb=0.04, graded_failures=abs:0
+# Looser: best_sgridmb, stress_rmse (config.hpo).
+gfs_descriptor | nfp/examples/gfs_descriptor.rst | examples/gfs_descriptor | slow | 5100 | best_loss=1e-3, best_rcut2b=abs:0.01, best_rcutmb=abs:0.01, best_sgridmb=0.02, evaluations=abs:0, energy_rmse=0.01, force_rmse=0.01, stress_rmse=0.03
+gfs_descriptor_short | nfp/examples/gfs_descriptor.rst | examples/gfs_descriptor | - | 2600 | best_loss=1e-3, best_rcutmb=abs:0.01, evaluations=abs:0 | seed2.hpo
+# Looser: best_rcut2b, best_rcutmb, best_rcut2b_of_start,
+# best_rcutmb_of_start.
+multistart | nfp/examples/multistart.rst | examples/multistart | slow | 5200 | best_loss=1e-3, best_rcut2b=abs:0.04, best_rcutmb=abs:0.02, best_loss_of_start=1e-3, best_rcut2b_of_start=abs:0.06, best_rcutmb_of_start=abs:0.02, evaluations=abs:0
+# Looser: best_rcut2b, best_rcutmb.
+multistart_short | nfp/examples/multistart.rst | examples/multistart | - | 1400 | best_loss=1e-3, best_rcut2b=abs:0.02, best_rcutmb=abs:0.02 | single.hpo
+# Looser: stress_rmse.
+pinned_coefficients | nfp/examples/pinned_coefficients.rst | examples/pinned_coefficients | - | 900 | best_loss=1e-3, coefficient=0.01, best_fixweight[26]=0.01, energy_rmse=0.01, force_rmse=0.01, stress_rmse=0.03
+# Looser: best_rcut2b, best_rcutmb.
+gradient_observable | nfp/examples/gradient_observable.rst | examples/gradient_observable | - | 900 | best_loss=1e-3, best_rcut2b=abs:0.04, best_rcutmb=abs:0.03, best_sgridmb=0.01
+# Looser: best_rcutmb, evaluations (single.hpo).
+restart | nfp/examples/restart.rst | examples/restart | slow | 5000 | best_loss=1e-3, evaluations=abs:2, best_rcutmb=abs:0.03
+# Looser: best_rcutmb.
+restart_short | nfp/examples/restart.rst | examples/restart | - | 2500 | best_loss=1e-3, evaluations=abs:0, best_rcutmb=abs:0.03 | config.hpo
+# Looser: best_loss, best_rcut2b, best_rcutmb, best_sgridmb, start_loss,
+# start_rcut2b, start_rcutmb, start_sgridmb.
+warm_start | nfp/examples/warm_start.rst | examples/warm_start | - | 2700 | best_loss=3e-3, best_rcut2b=abs:0.2, best_rcutmb=abs:0.5, best_sgridmb=0.1, start_loss=2e-3, start_rcut2b=abs:0.03, start_rcutmb=abs:0.05, start_sgridmb=0.02

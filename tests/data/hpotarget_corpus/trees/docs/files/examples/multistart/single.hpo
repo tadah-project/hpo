@@ -1,0 +1,18 @@
+# Target file (--hpotarget): one local search from the training
+# configuration, with the budget that multistart.hpo shares among six
+# starts. Search space and loss-term weights as in multistart.hpo.
+OPTIM      RCUT2B (1) 6.0 7.5
+OPTIM      RCUTMB (1) 4.0 7.0
+
+# Fixed L2 loss-term weights are 1/(chosen accuracy)^2, as in Unit 2.
+PC_ERMSE   0 0.25         # 2 meV/atom
+PC_FRMSE   0 100          # 0.1 eV/Å
+PC_SRMSE_GPA 0 4          # 0.5 GPa
+
+OPTIMIZER
+    LIB      NLOPT
+    ALGO     LN_BOBYQA
+    MAXEVAL  300          # six starts of 50 evaluations
+    STEP     0.25         # a guessed start, as in Unit 2
+    THREADS  1            # one worker: the search runs one candidate at a time
+ENDOPTIMIZER

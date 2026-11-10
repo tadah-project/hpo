@@ -1,0 +1,8 @@
+Quantity,Value
+Best loss,30.73
+Best RCUT2B (Å),7.99
+Best RCUTMB (Å),5.2
+Best SGRIDMB (Å^-2),0.170
+Energy RMSE ta_md_test (meV/atom),18.83
+Force RMSE ta_md_test (eV/Å),0.3242
+Stress RMSE ta_md_test (GPa),0.76

@@ -1,0 +1,34 @@
+# Target file (--hpotarget): Unit 5's search space, searched by one global
+# optimiser that needs only the bounds, a budget and its start points.
+
+# Unit 5's bounds and fixed L2 loss-term weights, chosen from the pair
+# blips, the neighbour shells and the accuracies, so that the searches
+# compare.
+OPTIM      RCUT2B (1) 6.0 8.0
+OPTIM      RCUTMB (1) 3.3 8.0
+OPTIM      SGRIDMB (1) 0.01 1.0 LOG
+
+PC_ERMSE   0 0.25         # 2 meV/atom
+PC_FRMSE   0 100          # 0.1 eV/Å
+PC_SRMSE_GPA 0 4          # 0.5 GPa
+
+# No single starting point, no step and no budget split between two phases.
+OPTIMIZER
+    LIB      DLIB
+    ALGO     GFS
+    # One thread makes GFS repeatable for the same files and build.
+    # With more threads, completion timing can change its choices.
+    THREADS  1
+    # The budget matches Unit 5's random search: 59 evaluations per search
+    # parameter, including the eight starting points.
+    MAXEVAL  177
+    INIT
+        # Eight points spread over the whole box take the place of a start
+        # value and use under 5 % of the budget. The searched-key values
+        # in the training configuration are not evaluated.
+        METHOD   SOBOL 8
+        # INIT SEED selects a Sobol block: here points 16-23, counting the
+        # origin as point 0. An optimiser-level SEED is refused by GFS.
+        SEED     1
+    ENDINIT
+ENDOPTIMIZER

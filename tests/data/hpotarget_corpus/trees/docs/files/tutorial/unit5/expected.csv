@@ -1,0 +1,8 @@
+Quantity,Value
+Best loss (random.hpo),14.005
+Best loss (config.hpo),13.545
+Best RCUT2B (Å) (config.hpo),6.387
+Best RCUTMB (Å) (config.hpo),3.920
+Best SGRIDMB (Å^-2) (config.hpo),0.05541
+Evaluations (random.hpo),177
+Evaluations (config.hpo),177

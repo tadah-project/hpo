@@ -1,0 +1,28 @@
+# Target file (--hpotarget): three search parameters, one local search.
+
+# The box of the pair cutoff begins at the last blip centre (6 Å). All blips
+# end by 7 Å: above that a larger cutoff changes only the Cut_Cos taper, not
+# which neighbours contribute to the pair term.
+OPTIM      RCUT2B (1) 6.0 7.5
+# The density cutoff spans from between the second and third bcc shells
+# at a0 (3.32, 4.70 Å) to past the sixth (6.64 Å).
+OPTIM      RCUTMB (1) 4.0 7.0
+# The Gaussian part at the second bcc shell is 87 % (0.05) to 6 % (1.0)
+# of that at the first, at a0. LOG gives equal intervals to equal ratios.
+OPTIM      SGRIDMB (1) 0.05 1.0 LOG
+
+# Fixed L2 loss-term weights are 1/(chosen accuracy)^2, using the same
+# accuracies as config.train, in meV/atom, eV/Å and GPa.
+PC_ERMSE   0 0.25         # 2 meV/atom
+PC_FRMSE   0 100          # 0.1 eV/Å
+PC_SRMSE_GPA 0 4          # 0.5 GPa
+
+OPTIMIZER
+    LIB      NLOPT
+    ALGO     LN_BOBYQA
+    MAXEVAL  75           # 25 per search parameter
+    # A guessed start allows first steps of a quarter of each box:
+    # additive for the cutoffs, multiplicative for SGRIDMB (a LOG box).
+    STEP     0.25
+    THREADS  1           # one worker: the search runs one candidate at a time
+ENDOPTIMIZER

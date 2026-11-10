@@ -1,0 +1,21 @@
+# Training configuration (--config): Tutorial Unit 2's starting descriptor,
+# with three coefficients outside the training data's reach held fixed.
+CONFIG     ../../tutorial/unit2/config.train
+# Coefficients 1-17 belong to the pair term, 18-28 to embedding blips centred
+# at rho = 0, 1, ..., 10 (blip k at rho k). Blips 8-10 (coefficients 26-28)
+# start at rho 6-8, above every training density.
+# Without these constraints their zero-centred prior gives zero
+# coefficients, and F falls back to zero inside the grid, which extends
+# to rho 12.
+# The fitted coefficients rise from -2.50 at rho 2 to 6.55 at rho 7:
+# a mean increment of 1.81. Continuing from rho 7 gives about 8.4, 10.2
+# and 12.0, the values of this start, which keeps rising until
+# the finite grid bends it over. These values specify extrapolation,
+# not a monotonicity constraint: the search can introduce a local dip in F.
+# No training density reaches these blips, so the other fitted coefficients
+# and predictions inside the training range stay unchanged to round-off.
+# Of blips 8-10, only blip 8 reaches the 400 GPa densities with the part
+# above a quarter of its peak (rho 7-9); config.hpo searches coefficient 26.
+# The data reach only blip 9's flank; blip 10 remains out of reach.
+FIXINDEX   26 27 28
+FIXWEIGHT  8.4 10.2 12.0

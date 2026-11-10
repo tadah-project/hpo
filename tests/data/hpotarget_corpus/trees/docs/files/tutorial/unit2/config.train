@@ -1,0 +1,41 @@
+# Training configuration (--config): bcc Ta, solid MD, energies, forces and
+# stresses. A pair term and a many-body term.
+DBFILE     ../../data/ta_md_train.tadahdb
+FORCE      true
+STRESS     true
+# Error scales express the chosen accuracies for energy per atom, force
+# components and stress entries. The target file uses the same accuracies.
+ESIGMA     2              # meV/atom
+FSIGMA     0.1            # eV/Å
+SSIGMA     0.5            # GPa
+
+# Pair centres span 2-6 Å, extending past the fifth bcc neighbour shell
+# at a0. Overlapping blips allow a smooth pair term over this interval.
+INIT2B     true
+TYPE2B     D2_Blip 17 17 Ta Ta
+RCTYPE2B   Cut_Cos
+RCUT2B     6.5            # config.hpo searches 6.0-7.5
+CGRID2B    LIN 17 2.0 6.0
+SGRID2B    LIN 17 2.0 2.0 # support 2 Å (4/eta); eight grid spacings
+
+# A density centred at zero gives a monotonically decaying contribution
+# exp(-SGRIDMB r^2) times the cutoff, rather than a peak at a neighbour shell.
+INITMB     true
+TYPEMB     DM_mBlipEnv 0 1 1 11 11 Ta Ta
+RCTYPEMB   Cut_Cos
+RCUTMB     5.0            # config.hpo searches 4.0-7.0
+CGRIDMB    0.0
+SGRIDMB    0.2            # config.hpo searches 0.05-1.0
+# The density amplitude stays fixed to keep the search to three parameters.
+WATOM      3.0
+# Overlapping embedding blips cover densities up to 12, rather than ending
+# at the last centre (10).
+CEMBFUNC   0 1 2 3 4 5 6 7 8 9 10
+SEMBFUNC   1 1 1 1 1 1 1 1 1 1 1
+# The envelope gives F(0) = 0, so the isolated atom has zero energy.
+RCUTENV    1.0
+
+MODEL      M_BLR BF_Linear
+# Evidence regularisation penalises coefficients weakly constrained by data.
+OALGO      3
+LAMBDA     -1

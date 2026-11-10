@@ -1,0 +1,2 @@
+line 25 of config.hpo: WARM: the seed file 'best_pot.tadah' cannot be opened (a relative path is read from the working directory)
+Line:         METHOD            WARM best_pot.tadah

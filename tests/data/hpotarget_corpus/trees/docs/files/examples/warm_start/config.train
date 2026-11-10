@@ -1,0 +1,37 @@
+# Training configuration (--config): the model of Tutorial Unit 2 with a
+# pair term of twice the resolution. Everything else is as in Unit 2.
+DBFILE     ../../data/ta_md_train.tadahdb  # 88 snapshots, 0-250 GPa
+FORCE      true
+STRESS     true
+# Error scales match Unit 2 for energy per atom, force components and
+# stress entries; only the resolution of the pair term changes.
+ESIGMA     2              # meV/atom
+FSIGMA     0.1            # eV/Å
+SSIGMA     0.5            # GPa
+
+# Pair term: a blip every 0.125 Å over the range of Unit 2 (2.0-6.0 Å),
+# twice the resolution. Each evaluation costs more than in Unit 2.
+INIT2B     true
+TYPE2B     D2_Blip 33 33 Ta Ta
+RCTYPE2B   Cut_Cos
+RCUT2B     6.5            # Unit 2's start, for a search without INIT
+CGRID2B    LIN 33 2.0 6.0
+SGRID2B    LIN 33 4.0 4.0 # each blip spans 1 Å (4/eta); eight grid spacings
+
+# Many-body term of Unit 2: an embedding energy F(rho) of a density rho
+# that falls with distance as exp(-SGRIDMB r^2) (CGRIDMB 0).
+INITMB     true
+TYPEMB     DM_mBlipEnv 0 1 1 11 11 Ta Ta
+RCTYPEMB   Cut_Cos
+RCUTMB     5.0            # Unit 2's start, for a search without INIT
+CGRIDMB    0.0
+SGRIDMB    0.2            # Unit 2's start, for a search without INIT
+WATOM      3.0
+CEMBFUNC   0 1 2 3 4 5 6 7 8 9 10
+SEMBFUNC   1 1 1 1 1 1 1 1 1 1 1
+RCUTENV    1.0
+
+MODEL      M_BLR BF_Linear
+# Evidence regularisation matches Unit 2 for the finer pair term.
+OALGO      3
+LAMBDA     -1

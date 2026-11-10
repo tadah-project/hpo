@@ -17,8 +17,8 @@ driver, RNG, and option handling (`src/algorithms_asa.cpp`).
 - `tadah_asa_config.h` — compile-time gate set of the featured build;
   the single source of truth (asa.c is compiled only through wrapper TUs).
 - `asa_build.c` — featured-build wrapper TU (config + `#include "asa.c"`).
-- `tadah_asa_hook.h` / `tadah_asa_hook.c` — parallel-evaluation hook
-  declaration and NULL definition (contract documented in the header).
+- `tadah_asa_hook.h` / `tadah_asa_hook.c` — parallel-evaluation and final-counter
+  hooks, with NULL definitions (contracts documented in the header).
 - `tadah_asa_pristine_config.h` / `asa_pristine.c` — all-algorithmic-
   gates-off reference build with `tadah_asaref_`-prefixed symbols, used
   only by the golden-neutrality unit test.
@@ -202,6 +202,23 @@ fails when a line of one of them does not end in CRLF, and
    serial runs are unchanged (golden-gated); a block run calls one test
    after each block in which a state met one, as serial ASA calls one after
    that state. Guarded `#if ASA_PARALLEL` (featured build only).
+
+10. **Final generated/accepted counter observer**: at `EXIT_asa`, a nullable
+    callback receives `*number_generated` and `*number_accepted` before
+    `asa_exit()` restores `OPTIONS->N_Generated` and `OPTIONS->N_Accepted` to
+    their at-best snapshots. Cost callbacks precede consumption of their
+    states, and cached states need no cost callback, so callback maxima miss
+    final updates, including states in a partially consumed block. The
+    observer copies the internal totals into the driver's run context without
+    changing ASA state. The summary reports these totals beside the unchanged,
+    separately labelled at-best counts. Both serial and block searches install
+    the observer under the single-instance mutex; the hook guard resets it to
+    NULL on exit. Guarded `#if ASA_PARALLEL` (featured build only); the pristine
+    build and the annealing trajectory are unchanged (golden-neutrality
+    checked). `tests/test_asa.cpp` compares summaries with the upstream exit
+    journal for fixed and adaptive blocks, serial searches, cached states,
+    multiple minima, rejected and invalid states, stops and exceptions; repeated
+    runs also check zero totals when a stop precedes generation.
 
 ## Known upstream quirks the embedding must respect
 

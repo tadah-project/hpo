@@ -53,6 +53,7 @@ extern "C" {
 #include <mutex>
 #include <optional>
 #include <random>
+#include <regex>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -228,6 +229,71 @@ std::string stopped_line(const std::string& reason, std::size_t n)
 {
     return "ASA stopped: " + reason + " after " + std::to_string(n) +
            " evaluation(s) (asa exit: IMMEDIATE_EXIT)";
+}
+
+/* Five different cost-temperature samples, then a seed and trial states
+ * of cost 10: positive temperature and every valid trial accepted, with
+ * the best staying at the seed. No tangent, resampling or periodic test
+ * adds host evaluations to these counter fixtures. */
+OptimizerSpec counter_spec(unsigned block, unsigned threads)
+{
+    auto sp = make_asa_spec({0.0}, {1.0});
+    set_seed_point(sp, {0.5});
+    sp.num_threads = threads;
+    sp.stop.maxeval = 1000;
+    sp.param = {{"Gener_Block", block}, {"Gener_Block_Max", block},
+                {"Gener_Mov_Avr", 0}, {"Reanneal_Parameters", 0},
+                {"Reanneal_Cost", 0}, {"Delta_X", 0},
+                {"Maximum_Cost_Repeat", 0},
+                {"Acceptance_Frequency_Modulus", 0},
+                {"Generated_Frequency_Modulus", 0}};
+    return sp;
+}
+
+double counter_cost(unsigned call)
+{
+    return call <= 5 ? 10.0 + call : 10.0;
+}
+
+void check_counter_summary(const std::string& journal, long generated,
+                           long accepted, unsigned host_evals,
+                           long best_generated = 0, long best_accepted = 0)
+{
+    const std::string summary = journal_line(journal, "ASA summary: ");
+    INFO(summary);
+    CHECK(summary.find("ASA summary: generated=" + std::to_string(generated) +
+                       " accepted=" + std::to_string(accepted) +
+                       " host_evals=" + std::to_string(host_evals) + " ") !=
+          std::string::npos);
+    CHECK(summary.find("(at-best: generated=" +
+                       std::to_string(best_generated) + " accepted=" +
+                       std::to_string(best_accepted) + ")") !=
+          std::string::npos);
+}
+
+/* The upstream exit journal prints the internal totals independently of
+ * the callback-visible OPTIONS counters. Read its last such line (one
+ * per minimum with Multi_Number > 1). */
+std::pair<long, long> upstream_final_counters(const std::string& journal)
+{
+    const std::string head = "ASA: the ASA library writes its journal to ";
+    const std::string line = journal_line(journal, head);
+    const auto begin = line.find(head);
+    REQUIRE(begin != std::string::npos);
+    const auto end = line.find(" (overwritten", begin);
+    REQUIRE(end != std::string::npos);
+    std::ifstream in(line.substr(begin + head.size(), end - begin - head.size()));
+    REQUIRE(in.good());
+    const std::regex counters(
+        R"(\*number_generated = (\d+), \*number_accepted = (\d+))");
+    std::pair<long, long> totals{-1, -1};
+    for (std::string row; std::getline(in, row);) {
+        std::smatch m;
+        if (std::regex_search(row, m, counters))
+            totals = {std::stol(m[1]), std::stol(m[2])};
+    }
+    REQUIRE(totals.first >= 0);
+    return totals;
 }
 
 }  // namespace
@@ -652,6 +718,229 @@ TEST_CASE("ASA print_caps names the original option spellings",
 }
 
 /* ================= serial driver =================================== */
+
+TEST_CASE("ASA final counters include a partially consumed block",
+          "[HPO][asa][counters]")
+{
+    /* Pins: with blocks of four on 1, 2 or 4 threads, MAXEVAL 11 to 14
+     * leaves 5 to 8 evaluations after the five temperature samples and the
+     * seed: one whole block and 1 to 4 states of the second. ASA consumes
+     * the valid states of that block even when MAXEVAL cuts it short, so
+     * its final totals in the exit journal are MAXEVAL - 6, and the summary
+     * prints them: "ASA summary: generated=7 accepted=7 host_evals=13" at
+     * MAXEVAL 13. The callbacks see 4/4 at the start of the second block.
+     * Before the fix: MAXEVAL 11, 12 and 13 printed "generated=4
+     * accepted=4", the counts the callbacks had seen, instead of 5/5, 6/6
+     * and 7/7; MAXEVAL 14 printed 8/8 and passed as well. */
+    for (unsigned threads : {1u, 2u, 4u}) {
+        for (unsigned budget : {11u, 12u, 13u, 14u}) {
+            CAPTURE(threads, budget);
+            auto sp = counter_spec(4, threads);
+            sp.stop.maxeval = budget;
+            std::atomic<unsigned> calls{0};
+            anneal_test::JournalCapture jc;
+            run_asa_erased(sp, 1, [&](const std::vector<double>&) {
+                return counter_cost(++calls);
+            });
+            CHECK(calls.load() == budget);
+            const auto totals = upstream_final_counters(jc.read());
+            CHECK(totals == std::make_pair(long(budget - 6), long(budget - 6)));
+            check_counter_summary(jc.read(), budget - 6, budget - 6, budget);
+        }
+    }
+}
+
+TEST_CASE("ASA final counters include the last native-stop state and cached states",
+          "[HPO][asa][counters]")
+{
+    /* Pins: Limit_Generated 7 ends ASA normally after 8 states. Serial and
+     * with blocks of four, on 1 or 2 threads, without the cache, with a
+     * cache of 8 states (Queue_Size 8) and with Multi_Number 3, the summary
+     * prints ASA's final totals, "generated=8 accepted=8", with
+     * exit=NORMAL_EXIT. The cache answers states without a cost callback.
+     * Before the fix: every case printed fewer: 7/7 serial without the
+     * cache (the last state is consumed after its callback), 0/0 serial
+     * with the cache on one thread and 7/7 on two, and 4/4 with blocks of
+     * four. */
+    for (unsigned threads : {1u, 2u}) {
+        for (unsigned block : {1u, 4u}) {
+            for (const std::string mode : {"native", "cache", "multi"}) {
+                CAPTURE(threads, block, mode);
+                auto sp = counter_spec(block, threads);
+                /* Upstream tests <= before a block, so limit 7 consumes 8. */
+                sp.param["Limit_Generated"] = 7;
+                if (mode == "cache") {
+                    sp.param["Queue_Size"] = 8;
+                    sp.param["Queue_Resolution"] = 2;
+                }
+                if (mode == "multi") sp.param["Multi_Number"] = 3;
+                std::atomic<unsigned> calls{0};
+                anneal_test::JournalCapture jc;
+                run_asa_erased(sp, 1, [&](const std::vector<double>&) {
+                    return counter_cost(++calls);
+                });
+                const unsigned expected_calls =
+                    mode == "cache" ? 7 : mode == "multi" ? 17 : 15;
+                CHECK(calls.load() == expected_calls);
+                CHECK(upstream_final_counters(jc.read()) ==
+                      std::make_pair(8L, 8L));
+                check_counter_summary(jc.read(), 8, 8, expected_calls);
+                CHECK(journal_line(jc.read(), "ASA summary: ").find(
+                          "exit=NORMAL_EXIT") != std::string::npos);
+            }
+        }
+    }
+}
+
+TEST_CASE("ASA final counters include states consumed after STOPVAL",
+          "[HPO][asa][counters]")
+{
+    /* Pins: STOPVAL 1 is met by every trial state; the summary of the
+     * stopped run prints the states ASA consumed, one serial and the
+     * whole first block of four ("generated=4 accepted=4 host_evals=10"),
+     * with at-best counts of 1/1, on 1 or 2 threads.
+     * Before the fix: all four cases printed "generated=0 accepted=0". */
+    for (unsigned threads : {1u, 2u}) {
+        for (unsigned block : {1u, 4u}) {
+            CAPTURE(threads, block);
+            auto sp = counter_spec(block, threads);
+            sp.stop.stopval = 1;
+            std::atomic<unsigned> calls{0};
+            anneal_test::JournalCapture jc;
+            run_asa_erased(sp, 1, [&](const std::vector<double>&) {
+                const auto call = ++calls;
+                return call >= 7 ? 1.0 : counter_cost(call);
+            });
+            CHECK(calls.load() == 6 + block);
+            CHECK(upstream_final_counters(jc.read()) ==
+                  std::make_pair(long(block), long(block)));
+            check_counter_summary(jc.read(), block, block, 6 + block, 1, 1);
+        }
+    }
+}
+
+TEST_CASE("ASA final counters exclude invalid states and survive exceptions",
+          "[HPO][asa][counters]")
+{
+    /* Pins: after an exception in the ninth evaluation the summary prints
+     * the states ASA consumed before it, 2/2 serial and 3/3 with blocks of
+     * four; a FAILSCORE evaluation (the ninth, blocks of four, MAXEVAL 13)
+     * gives an invalid state that is not counted: 6/6, against 7/7 without
+     * it in the first test case.
+     * Before the fix: with blocks of four, the exception case printed
+     * "generated=0 accepted=0" and the FAILSCORE case 3/3; the serial
+     * exception case printed 2/2 and passed as well. */
+    for (unsigned block : {1u, 4u}) {
+        auto sp = counter_spec(block, 1);
+        std::atomic<unsigned> calls{0};
+        const AsaHostFn host = [&](const std::vector<double>&) {
+            const auto call = ++calls;
+            if (call == 9) throw std::runtime_error("counter objective failed");
+            return counter_cost(call);
+        };
+        anneal_test::JournalCapture jc;
+        CHECK_THROWS_WITH(run_asa_erased(sp, 1, host), "counter objective failed");
+        const unsigned consumed = block == 1 ? 2 : 3;
+        const unsigned evaluated = block == 1 ? 9 : 10;
+        CHECK(calls.load() == evaluated);
+        CHECK(upstream_final_counters(jc.read()) ==
+              std::make_pair(long(consumed), long(consumed)));
+        check_counter_summary(jc.read(), consumed, consumed, evaluated);
+    }
+    auto sp = counter_spec(4, 1);
+    sp.stop.maxeval = 13;
+    sp.failscore = 100;
+    std::atomic<unsigned> calls{0};
+    anneal_test::JournalCapture jc;
+    run_asa_erased(sp, 1, [&](const std::vector<double>&) {
+        const auto call = ++calls;
+        return call == 9 ? 100.0 : counter_cost(call);
+    });
+    CHECK(calls.load() == 13);
+    CHECK(upstream_final_counters(jc.read()) == std::make_pair(6L, 6L));
+    check_counter_summary(jc.read(), 6, 6, 13);
+}
+
+TEST_CASE("ASA final counters reset for stops before generation in repeated runs",
+          "[HPO][asa][counters]")
+{
+    /* Pins: after a run that consumed states (blocks of four, MAXEVAL 13:
+     * 7/7, a case of the first test), a run that ends during the initial
+     * sampling (MAXEVAL 3, STOPVAL 100 met at the first evaluation, or an
+     * exception in the third) prints "generated=0 accepted=0": no totals
+     * and no final-counter observer are carried over from the previous run.
+     * Before the fix: the 0/0 checks pass as well (a pin of the per-run
+     * counters and of the hook guard that clears the observer); only the
+     * check of the preparatory run failed, which printed "generated=4
+     * accepted=4 host_evals=13" as in the first test. */
+    for (const std::string mode : {"budget", "stopval", "exception"}) {
+        {
+            auto sp = counter_spec(4, 1);
+            sp.stop.maxeval = 13;
+            std::atomic<unsigned> calls{0};
+            anneal_test::JournalCapture jc;
+            run_asa_erased(sp, 1, [&](const std::vector<double>&) {
+                return counter_cost(++calls);
+            });
+            check_counter_summary(jc.read(), 7, 7, 13);
+        }
+        auto sp = counter_spec(1, 1);
+        sp.stop.maxeval = 3;
+        if (mode == "stopval") sp.stop.stopval = 100;
+        std::atomic<unsigned> calls{0};
+        const AsaHostFn host = [&](const std::vector<double>&) {
+            const auto call = ++calls;
+            if (mode == "exception" && call == 3)
+                throw std::runtime_error("initial sample failed");
+            return counter_cost(call);
+        };
+        anneal_test::JournalCapture jc;
+        if (mode == "exception")
+            CHECK_THROWS_WITH(run_asa_erased(sp, 1, host), "initial sample failed");
+        else
+            REQUIRE_NOTHROW(run_asa_erased(sp, 1, host));
+        const unsigned evaluated = mode == "stopval" ? 1 : 3;
+        CHECK(calls.load() == evaluated);
+        check_counter_summary(jc.read(), 0, 0, evaluated);
+    }
+}
+
+TEST_CASE("ASA final counters match upstream totals with adaptive blocks and rejections",
+          "[HPO][asa][counters]")
+{
+    /* Pins: with adaptive blocks of 4 to 8 states (Gener_Mov_Avr 3),
+     * periodic tests and MAXEVAL 90, the summary prints ASA's final totals
+     * from its exit journal, with every trial rejected (cost 1e6) and with
+     * every trial accepted (improving costs): 84/0 and 84/84.
+     * Before the fix: the rejecting run printed "generated=77 accepted=0";
+     * the accepting run printed 84/84 and passed as well. */
+    for (const bool improving : {false, true}) {
+        auto sp = counter_spec(4, 1);
+        sp.param["Gener_Block_Max"] = 8;
+        sp.param["Gener_Mov_Avr"] = 3;
+        sp.param["Acceptance_Frequency_Modulus"] = 3;
+        sp.param["Generated_Frequency_Modulus"] = 5;
+        sp.stop.maxeval = 90;
+        std::atomic<unsigned> calls{0};
+        anneal_test::JournalCapture jc;
+        run_asa_erased(sp, 1, [&](const std::vector<double>&) {
+            const auto call = ++calls;
+            if (call <= 6) return counter_cost(call);
+            return improving ? 1.0 / call : 1e6;
+        });
+        const auto totals = upstream_final_counters(jc.read());
+        CHECK(totals.first > 0);
+        if (improving) CHECK(totals.second == totals.first);
+        else CHECK(totals.second < totals.first);
+        const std::string summary = journal_line(jc.read(), "ASA summary: ");
+        INFO(summary);
+        CHECK(summary.find("ASA summary: generated=" +
+                           std::to_string(totals.first) + " accepted=" +
+                           std::to_string(totals.second) + " host_evals=" +
+                           std::to_string(calls.load()) + " ") !=
+              std::string::npos);
+    }
+}
 
 TEST_CASE("ASA converges on a quadratic bowl", "[HPO][asa]")
 {
