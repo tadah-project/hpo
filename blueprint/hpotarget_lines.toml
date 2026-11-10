@@ -3493,7 +3493,7 @@ SGRID2B value > 0"; of a radial bump basis, "the D2_Blip pair basis \
 requires every SGRID2B width > 0"), RCUTENV, and a positive DM_Embed \
 parameter; so are WATOM under RHOFORM NONNEG or MONOTONE, and SGRIDMB \
 under MONOTONE and, for the Gaussian basis, under NONNEG. An AUTO box of \
-such a value that reaches 0 or below is clamped at 1e-6."""
+such a value that reaches 0 or below is clamped at half its seed."""
 
 [[optim.checks]]
 msg = "OPTIM {key} ({index}): the low bound {low} is negative, but {what} requires {value}, so the low bound of its box is >= 0 (its AUTO FRAC box, the default, is clamped at 0)"
@@ -3855,8 +3855,8 @@ absolute part a of FSIGMA and SSIGMA) and for a positive DM_Embed \
 parameter other than an amplitude, and FRAC 0.5 for the others. A FRAC \
 box that reaches below the lower limit of its key (the limit of an \
 explicit box, OPTIM <KEY> (<indices>) <low> <high>) is \
-clamped at it: at 0 for a key whose values are >= 0, at 1e-6 for a key \
-whose values are > 0; a seed below the limit is refused. The \
+clamped at it: at 0 for a key whose values are >= 0, at half its seed \
+for a key whose values are > 0; a seed below the limit is refused. The \
 non-negative amplitudes (AMPGRIDMB under RHOFORM NONNEG or MONOTONE, a \
 DM_Embed density with non-negative amplitudes) keep a FRAC box at or \
 above 0, and take GROUP_FLOOR 1e-3 when the line sets neither FLOOR nor \
@@ -3943,13 +3943,13 @@ context = "lines_blipenv"
 text = "OPTIM RCUTENV (1) AUTO"
 
 [[form.examples]]
-doc = "A FRAC box of a value > 0 that reaches below 0, clamped at 1e-6: RCUTENV 1.5 gives the box [1e-06, 3.75]."
+doc = "A FRAC box of a value > 0 that reaches below 0, clamped at half its seed: RCUTENV 1.5 gives the box [0.75, 3.75]."
 wrap = "root"
 context = "lines_blipenv"
 text = "OPTIM RCUTENV (1) AUTO FRAC 1.5"
 
 [[form.examples]]
-doc = "A FRAC box of a width of the radial bump basis that reaches below 0, clamped at 1e-6."
+doc = "A FRAC box of a width of the radial bump basis that reaches below 0, clamped at half its seed."
 wrap = "root"
 context = "lines_blip"
 text = "OPTIM SGRID2B (1) AUTO FRAC 2"
